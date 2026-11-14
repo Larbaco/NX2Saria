@@ -27,6 +27,7 @@
 #include "vk.h"
 #include "vk_exec.h"
 #include "vk_evo_peek.h"
+#include "vk_pass_hooks.h"
 #include "vk_target_frames.h"
 #include "vk_dlaa.h"
 
@@ -818,8 +819,10 @@ void vk_exec_pass_begin(VkExec *ex) {
     resolve_rt(ex);
     if (vk_texture_deferred()) return;   // a chunk's lookup waits for its turn (chunk_record): the op is replayed again
     // A parallel group's targets do not change: its pass hooks, which follow the frame pass by pass, run in its first
-    // chunk, which the others start after (chunk_record).
-    if (!rw_chunk || !rw_chunk->idx) {
+    // chunk, which the others start after (chunk_record), and at that chunk's first pass alone: a pass it begins again
+    // later may come after the hooks of passes further on in the stream (vk_pass_hooks.h).
+    if (pass_hooks_due(rw_chunk != NULL, rw_chunk ? rw_chunk->idx : 0,
+                       rw_chunk ? __atomic_load_n(&rw_chunk->g->hooks, __ATOMIC_RELAXED) : 0)) {
         // the submitting thread past a group: the hooks read what its first chunk's left, and wait for the whole
         // group where they change what its draws read (vk_exec_hook_turn)
         if (!rw_chunk) vk_exec_hooks_wait();
@@ -1900,7 +1903,7 @@ static void op_one(VkExec *ex, const op_hdr *h) {
 // dispatch (op_dispatch: 20x1x1 groups of cs d7566eb1, a depth probe) and nothing after it marked, since the group of
 // draws that followed was recorded by the workers, whose passes have no marks; an occlusion query slot was found
 // unavailable after its fence just before. An RX 6600 lost it the same way twice (0.9.2). The cause is not known;
-// auto gives that driver no workers (vk_exec_replay_workers_auto), and auto is the default again since 0.10.2.
+// auto gives that driver no workers (vk_exec_replay_workers_auto), and auto is the default again since 0.11.0.
 // A submission's draws come in runs between ops that have to stay in the replay's order on its own thread (dispatches,
 // copies, texture and buffer clears, events, the game's barriers, calls). Hyrule Field, standing (NX2NAVI_REPLAY_RUNS,
 // 2026-11-11): about 3,500 draws a frame in 82 runs, 96% of them in runs of 16 draws or more and 67% in runs of 256 or
@@ -1929,8 +1932,9 @@ static void op_one(VkExec *ex, const op_hdr *h) {
 // group: up to N (at most LIVE_GROUPS) groups are handed out and not in their part yet, their chunks taken from one
 // queue in the order of the stream (Q). Hyrule Field, 3 workers (2026-11-12): the frame's groups took 6.8 ms of the
 // submitting thread and the ops between them 4.6. A group's chunk 0 runs its pass hooks after the group before began
-// its pass, and waits for every earlier group where a hook acts; a turn (vk_exec_turn) waits for every earlier chunk,
-// of earlier groups too.
+// its pass, once (a pass it begins again later would run them after those of passes further on, vk_pass_hooks.h), and
+// waits for every earlier group where a hook acts; a turn (vk_exec_turn) waits for every earlier chunk, of earlier
+// groups too.
 // The submitting thread waits for the groups (group_wait), and puts their command buffers and query slots in place
 // (group_drain, oldest first: groups_put_done), only where the order needs it:
 // - for room when N groups are out, before a part is split off or submitted (a part due before a group goes to the

@@ -251,11 +251,14 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   target and copies that into the 8-bit sRGB window texture it presents. With `NX2NAVI_HDR=1` the tonemap shader gets
   the function of `shaders/hdr_tonemap.frag` spliced in where its SDR curve clamps each channel, so the float picture
   holds the HDR picture relative to the HUD's white (the function gets the values the curve takes, and the scene
-  before the game's exposure gain with that gain, which it anchors mid grey on); the game's FSR 1 pass loses its output
-  clamp; the present reads the float picture in place of the window texture and `shaders/hdr_encode.comp` writes PQ
-  for an HDR10 swapchain, showing the picture as a display of gamma 2.2 would (the game is graded for one: decoded as
-  its sRGB encode, the darkest tones would sit far above black). The look is fixed; the settings are the peak, game and
-  HUD whites.
+  before the game's exposure gain with that gain, which its default tone mapper anchors mid grey on); the game's FSR 1
+  pass loses its output clamp; the present reads the float picture in place of the window texture and
+  `shaders/hdr_encode.comp` writes PQ for an HDR10 swapchain, showing the picture as a display of gamma 2.2 would (the
+  game is graded for one: decoded as its sRGB encode, the darkest tones would sit far above black). The settings are
+  the peak, game and HUD whites, the tone mapper (`NX2NAVI_HDR_TONEMAP`: the observer-response mapper, the game's own
+  curve or the luminance mapper), what each tone mapper takes, the grading sliders and the gamma correction
+  (`NX2NAVI_HDR_GAMMA`, with every tone mapper); they travel in five vec4 the support buffer gains, and at their
+  defaults the shader leaves every grading step out.
   `NX2NAVI_HDR=native` reports an HDR10 display to the game, which then renders and presents its own PQ picture.
   The menu switches between off and `1` during a run: the splice, the HDR extensions and the settings in the support
   buffer are there from the start whatever is set (`vk_hdr_armed`), the spliced tonemap returns the game's SDR result
@@ -391,10 +394,12 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   by their growth since play began and marks those that only climbed (`mem_growth.h`).
 - Released textures by age: the game releases a texture when what uses it leaves the view and takes it back when that
   returns; the cache keeps the released image so that the take-back finds it. In play the take-backs came within a
-  minute of the release or never, so a released texture goes once it has gone unused for a hold of three minutes, six
+  minute of the release or never, so a released texture goes once it has gone unused for a hold of one minute, two
   for content only the GPU made (`vk_texture.c` `drop_aged`, `vk_tex_release.h`, `tex_released_hold`). The size bound
-  (a quarter of the video memory budget) stays as the safety net for a burst of area changes, and young textures may
-  pass it, up to twice it, while the card and the system's commit have room. Times are wall seconds from a clock of
+  (a thirty-second of the video memory budget, 384 MiB to 1 GiB) is what the cache costs in video memory: the
+  allocator's blocks go back to the driver only when empty, so what the released textures hold at their fullest
+  stays in use for the session. Young textures may pass it, up to twice it, while the card and the system's commit
+  have room. Times are wall seconds from a clock of
   the presents, not present counts. What a switched-off upscaler or SMAA held is freed after it has gone unused for a
   while (`vk_dlaa.c` `idle_release`, `vk_fsr.c` `idle_note`, `vk_aa.c` `work_idle`). What DLSS or FSR lets go of at
   a change of size or mode (a network, an FSR context, a work image) goes once the GPU is past the last submission that

@@ -416,14 +416,29 @@
 # left. In play the game took released textures back within a minute or not at all; one taken back after its drop is
 # made again and shows its stand-in for a frame. A texture whose content only the GPU made waits twice as long, and one
 # the GPU drew into since its last copy back to game memory stays. 0: released textures stay up to tex_released_mb for
-# the whole session (as before 0.10). Default: 180. Read at start.
-# tex_released_hold = 180
+# the whole session (as before 0.10). Default: 60 (180 until 0.11.0). Read at start.
+# tex_released_hold = 60
 # Megabytes the released textures may hold (0: no bound). Past it the oldest go even when young; while tex_released_hold
 # is on, young ones may stay past it, up to twice it, as long as video memory and the system's commit have room.
-# Default: a quarter of the video memory budget where the PC has an eighth of its memory to match, at least a
-# thirty-second of the PC's memory (512 to 2048), at most 8192. 1024 (the low of the 0.10 previews) holds less, but
-# textures the game takes back after their drop are made again and show their stand-in for a frame. Read at start.
-# tex_released_mb = 4096
+# What they hold at their fullest is video memory the game keeps for the rest of the session, so this is what the cache
+# costs. Default: a thirty-second of the video memory budget, at least 384 and at most 1024 (until 0.11.0 a quarter of
+# the budget, up to 8192: on a run through Hyrule Field that held 3.3 GB more video memory and saved one texture in
+# thirty from being loaded again). A larger value keeps more textures the game may take back, which are otherwise made
+# again and show their stand-in for a frame. Read at start.
+# tex_released_mb = 1024
+# A texture whose memory the game writes again with the bytes it already held is left as it is instead of being
+# uploaded (and, for most, decoded on the graphics card) a second time: its bytes are compared by a hash taken at the
+# upload. Textures up to 64 KB always were; since 0.11.0 those up to 8 MB are too. Running through Hyrule Field the
+# game does this all the time: 52,000 second uploads in three minutes without it, 600 with it. 0: only the small ones,
+# as before (for a comparison; nothing should look different). Read at start.
+# tex_same_big = 1
+# The texture cache counts its short waits in frames: a texture the game let go of may be dropped under video memory
+# pressure 2 seconds later, one nothing sampled for 2 seconds counts as idle, and so on. Above 60 fps those frame
+# counts always grew with the frame rate, so that the seconds stayed. Below 60 fps they did not shrink: the 2 seconds
+# were 4 at 30 fps and nearly 6 at 21, and the textures waiting them out held about three times the video memory on a
+# card that was already over its budget, which kept the frame rate down. 1 (the default) counts the seconds below 60
+# fps too, down to 15 fps, once the game has been under 60 fps for 8 seconds; 0: as before. Read at start.
+# tex_rate_low = 1
 # Texture compaction (experimental). Video memory is taken in blocks (vma_block_mb), and a block goes back to the
 # driver only once everything in it is freed: after a long session the blocks hold textures scattered between holes,
 # and the game holds a gigabyte or two of video memory it does not use. 1: textures no shader sampled for ten seconds
@@ -447,18 +462,25 @@
 # are what costs least to lose, and a draw that needs one later builds it again from the pipeline cache. 0: every
 # pipeline stays for the run, as before 0.10; tex_vram_pressure = 0 turns this off too. Read at start.
 # pipe_release = 1
-# Low-end GPU mode (experimental; also in the settings menu's Game tab). For older graphics cards, and ones short of
-# video memory: 1 turns on the settings written for them and measured on a Radeon RX 580, for every key below that
-# this file does not set itself. Mesh shaders run as compute where the card has none (mesh_emulation), video memory
-# stays within what the driver reports free (vram_heap_limit = auto, vram_reserve_mb = 512), large texture upload
-# batches go to the GPU early (upload_batch_mb = 256; every batch goes at 64 MiB of staging at the latest with or
-# without it, so only a value below 64 acts), game memory is copied for the GPU while a frame is recorded and
-# the game waits less for the GPU (mirror_stage = 1, submit_finish_gpu = 0), pools the game refills every frame stay
-# in system memory (mirror_hot = 25), and a texture read after another image was drawn over its memory gets memory of
-# its own (tex_clobber = 1). Frames prepared on a thread of their own (replay_async) stay off in this mode too, as they
-# can show a dark or flickering frame now and then; its row under the mode's switch turns them on. 0, the default: each of these stays as it was in 0.9.1, and none of these keys
-# is read. Read at start.
-# low_end_gpu = 0
+# The low-end GPU mode of 0.9.2 to 0.10.1 is gone: low_end_gpu = 1 in an older file does nothing, and the log says
+# so once. The settings it turned on are ordinary settings now, each off unless this file sets it, and none has a row
+# in the settings menu. Read at start.
+# mesh_emulation = 1 runs mesh shaders as compute where the card has none, in place of the mesh fallback (never on an
+# NVIDIA card). vram_heap_limit = auto and vram_reserve_mb = 512 keep video memory within what the driver reports
+# free. upload_batch_mb sends large texture upload batches to the GPU early (every batch goes at 64 MiB of staging at
+# the latest, so only a value below 64 acts). mirror_stage = 1 and submit_finish_gpu = 0 copy game memory for the GPU
+# while a frame is recorded and let the game wait less for the GPU. mirror_hot = 25 keeps pools the game refills every
+# frame in system memory. tex_clobber = 1 gives a texture read after another image was drawn over its memory memory
+# of its own. foliage = reduced draws no small grass or moss, off no foliage.
+# mesh_emulation = 0
+# vram_heap_limit = 0
+# vram_reserve_mb = 0
+# upload_batch_mb = 0
+# mirror_stage = 0
+# submit_finish_gpu = 1
+# mirror_hot = 0
+# tex_clobber = 0
+# foliage = full
 # Textures the game released that are kept as they are (1 to 16384); past this count only those that lose nothing
 # when dropped go. Default: one per 2 MB of the video memory budget, 2048 to 8192. Read at start.
 # tex_released_max = 4096
@@ -806,7 +828,7 @@
 # takes up to a frame of the game's off the delay from the controller to the screen. The game's own limiter takes the
 # limit back while a movie plays, while the window is minimised, and for the rest of the run when the frames show that
 # Reflex does not hold it; the log's "frame rate:" lines say which one holds it. 0 leaves the limit to the game's own
-# limiter, as before 0.10.2. Needs the nx2navi_dlssg.dll of 0.10.2 or later (an older one leaves the limit to the
+# limiter, as before 0.11.0. Needs the nx2navi_dlssg.dll of 0.11.0 or later (an older one leaves the limit to the
 # game). Changes while the game runs take effect at once.
 # reflex_limit = 1
 # Low latency without frame generation: 0 off, 1 on, 2 on with boost (NVIDIA's: the GPU keeps a high clock; on AMD 2
@@ -821,11 +843,10 @@
 # low_latency = 0
 
 # HDR output, two kinds (both need HDR on in Windows, "Use HDR", or a Wayland compositor with colour management;
-# without it the picture stays SDR, the game's own): hdr = 1 sends the game's scene tone mapped to your display, one
-# fixed look, and applies at once; hdr = native shows the game's own HDR mode, which the game takes up at the next
-# start. hdr_peak_nits is your display's peak, hdr_game_nits the picture's white (paper white, 203 is the HDR
-# reference) and hdr_ui_nits the HUD's and the menu's. The settings of the look of earlier versions
-# (hdr_tonemap, hdr_exposure, hdr_gamma and the rest) are read by nothing now and do no harm.
+# without it the picture stays SDR, the game's own): hdr = 1 sends the game's scene tone mapped to your display and
+# applies at once; hdr = native shows the game's own HDR mode, which the game takes up at the next start.
+# hdr_peak_nits is your display's peak, hdr_game_nits the picture's white (paper white, 203 is the HDR reference) and
+# hdr_ui_nits the HUD's and the menu's.
 # hdr = 0
 # hdr_live = 0 leaves the HDR path out of a run that starts with hdr = 0, as before hdr followed the menu: switching
 # HDR on then takes a restart. Only worth setting if the picture differs with it at 1.
@@ -833,6 +854,40 @@
 # hdr_peak_nits = 1000
 # hdr_game_nits = 203
 # hdr_ui_nits = 203
+# The settings from here to the end of this section shape the picture of hdr = 1 and apply at once; hdr = native does
+# not take them. Left as they are, they give the one look hdr = 1 had from 0.9.0 to 0.10.1, which read none of them: a
+# value your file still holds from an older version counts again.
+# The tone mapper: vanilla is the game's own curve at SDR brightness; psychov35 sends the scene through a model of the
+# eye's response, matched to the game's mid grey and tone, up to the peak; renodrt carries the game's SDR look up to
+# the peak by brightness.
+# hdr_tonemap = psychov35
+# Gamma correction, with every tone mapper: 2.2 or 2.4 shows the picture as a display of that power would, as the game
+# was made to be seen; off keeps the sRGB curve, which leaves the darkest tones well above black.
+# hdr_gamma = 2.2
+# With psychov35: where the scene's mid grey lands (vanilla: where the game's curve puts it; render: at the scene's
+# value); whether the mid tones get the contrast of the game's curve; the tone curve's steepness through mid grey from
+# 0 to 100 (50 unchanged); and in percent how much bright colours turn as where the game's SDR picture clips (fire
+# towards yellow and white).
+# hdr_midgray = vanilla
+# hdr_match_slope = 1
+# hdr_tone_slope = 50
+# hdr_hue_clip = 50
+# With psychov35 and renodrt: exposure in percent (100 unchanged); highlights, shadows, contrast and saturation from 0
+# to 100 (50 unchanged).
+# hdr_exposure = 100
+# hdr_highlights = 50
+# hdr_shadows = 50
+# hdr_contrast = 50
+# hdr_saturation = 50
+# With renodrt: highlight saturation from 0 to 100 (50 unchanged); blowout (bright parts towards white) and flare
+# (lifted blacks) from 0 to 100 (0 none); hue correction in percent (how much bright colours keep their hue); grade,
+# the percentage of the game's own colour grading the picture keeps.
+# hdr_highlight_sat = 50
+# hdr_blowout = 0
+# hdr_flare = 0
+# hdr_hue = 100
+# hdr_grade = 100
+
 [language]
 # Language: a Windows locale such as de-DE, or a Switch code (en-US, ja, zh-Hant, ...). Default: the Windows locale.
 # locale = en-US
@@ -884,7 +939,7 @@
 # audio_catchup = 1
 # When the game sends an audio value this version cannot use (an effect setting out of range, an id it does not have),
 # that effect or sound is left out and the log gets one line per kind (0, the default). 1 ends the game there instead,
-# with the details in the log, as versions before 0.10.2 did for most of them: for bug reports. Takes effect at the
+# with the details in the log, as versions before 0.11.0 did for most of them: for bug reports. Takes effect at the
 # next start.
 # audio_strict = 0
 # Volume in percent (0 to 100), on top of the game's own. Changes while the game runs take effect at once.
@@ -1056,7 +1111,9 @@
 # stands in for it) and where its committed memory lies every 3600 frames, and when the process's own commit (without
 # the video memory Windows charges to it) rose 1 GiB over the highest it was, at most once a minute (the "commit
 # census" lines). Each walk holds the address-space lock for 100-260 ms and delays the next frame by as much, so they
-# are off unless asked for: leave it off in a run whose smoothness is judged.
+# are off unless asked for: leave it off in a run whose smoothness is judged. With or without the trace, 1 also has
+# every memory report ask for the C runtime heap's summary in play, which holds every allocation of the game for as
+# long as it takes (50 to 70 ms with a heap of a few GB); without it the summary is taken before play only.
 # mem_census = 0
 # 1: with trace = perf, the process's handles counted by kind (events, sections, threads, files...) at the 600-frame
 # report when their number grew by 16 or more since the last count (the "mem: handles" line). It reads the system's
@@ -1111,7 +1168,7 @@
 # device_lost_at = 0
 # A test of the page write generations (how the renderer tells which game memory changed since it last looked): they
 # start after this number instead of 0, so a run reaches 4294967296, where the 32-bit generations of versions before
-# 0.10.2 ran out, within its first seconds (4294966000 does that). Decimal, or hexadecimal with 0x; at most
+# 0.11.0 ran out, within its first seconds (4294966000 does that). Decimal, or hexadecimal with 0x; at most
 # 4611686018427387904. The log says where they start. Nothing else changes. Read at start. Default: 0.
 # gen_seed = 0
 # Once a second, puts the crash report's exception filter back if a GPU driver or an overlay loaded after the start set

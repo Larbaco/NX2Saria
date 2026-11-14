@@ -44,8 +44,8 @@
 #define MAX_DESC 1024
 #define CHUNK_BYTES (4u << 20)
 #define ZERO_BYTES 65536u
-#define SUPPORT_BYTES 1456u   // the translator's SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
-                              // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440..1455 HDR (support_fill)
+#define SUPPORT_BYTES 1520u   // the translator's SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
+                              // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440..1519 HDR (support_fill)
 #define NVN_STAGE_VS 0
 #define NVN_STAGE_FS 1
 #define NVN_STAGE_CS 5
@@ -3323,7 +3323,7 @@ static void support_fill(uint8_t *b, float w, float h, float point_size) {
     memcpy(b + 1424, shadow_spread_params(), 16);    // shadow_spread (translator patch 0011): sun shadow filter width
     for (int i = 0; i < 73; i++) memcpy(b + 192 + 16 * i, &one, 4);   // render scale 1: the host renders at guest size
     if (vk_hdr_armed()) {   // read by the game's tonemap only, once vk_hdr.c tonemap_splice has grown its block past the translator's
-        float hdr[4];
+        float hdr[20];
         vk_hdr_support(hdr);
         memcpy(b + 1440, hdr, sizeof hdr);
     }
@@ -6358,7 +6358,7 @@ static int mesh_ring_entry(VkExec *ex, VkCommandBuffer cb, const p_draw_mesh_ind
     return 1;
 }
 
-// NX2NAVI_FOLIAGE (full, reduced, off; default full; the low-end GPU rows of the menu's Game tab): Ocarina draws its foliage with
+// NX2NAVI_FOLIAGE (full, reduced, off; default full; foliage in nx2navi.ini): Ocarina draws its foliage with
 // DrawMeshTasksIndirect, the instances its compute passes culled on the GPU. With a task stage: the small grass and moss
 // that carpet the ground; without one: ferns, leaves, clover and the other plants. Its other mesh draws (DrawMeshTasks
 // with a count: terrain, rocks, buildings, doors) are not foliage. reduced skips the indirect draws with a task stage,

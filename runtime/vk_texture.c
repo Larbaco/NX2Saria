@@ -179,11 +179,17 @@ static uint32_t submit_epoch = 1;   // bumped per queue submit: draw bindings ch
 // were set at 60 presents a second. Without a limit the game presents 85 to 240 a second (a menu), and "120 presents"
 // was then half a second and "30 s without a sample" 7 to 20 s: under memory pressure textures went three times as
 // readily as meant, and the ones still on screen showed their dark stand-ins until they were made again.
-// tex_rate is the presents per second as a multiple of 60 in 1/256 (256 at 60 or fewer), the highest of the last RATE_N
-// seconds so that one slow second does not shorten the thresholds; PRESENTS(n) is n presents at 60 in today's presents.
+// tex_rate is the presents per second as a multiple of 60 in 1/256, the highest of the last RATE_N seconds so that one
+// slow second does not shorten the thresholds; PRESENTS(n) is n presents at 60 in today's presents.
+// NX2NAVI_TEX_RATE_LOW (default 1; 0: as before): the rate follows the presents below 60 a second too, down to 15
+// (vk_tex_release.h trl_rate_sample). It stopped at 60, so at 21 presents a second a texture stayed out of the VRAM
+// pressure's reach for 5.7 s after its release and not 2, and the released ones held 2.1 GiB of a 12 GiB card that
+// was over its budget.
 #define RATE_N 8
-static uint32_t tex_rate = 256;
-#define PRESENTS(n) ((uint64_t)(n) * tex_rate >> 8)
+#define RATE_SAY 16
+#define RATE_SAY_UNDER 240u   // the log's line: under 56 presents a second (a limit of 60 measures 59 now and then)
+static uint32_t tex_rate = TRL_RATE_60;
+#define PRESENTS(n) trl_presents((uint64_t)(n), tex_rate)
 
 // The wall clock of the presents (vk_tex_release.h TrlClock): rate_tick notes the present count about once a second,
 // so that the released textures' hold (drop_aged) and the take-back ages (vk_texture_reuse_log) count seconds, not
@@ -215,12 +221,21 @@ static void rate_tick(void) {   // each submission, tex_lock held
     if (!t0) t0 = t, f0 = f, pclock_t0 = t, trl_clock_tick(&pclock, f, 0);
     if (t - t0 < 1000000000ull) return;
     trl_clock_tick(&pclock, f, (uint32_t)(play_ns / 1000000000ull));
-    uint64_t r = (f - f0) * 256ull * 1000000000ull / ((t - t0) * 60);
-    ring[at++ % RATE_N] = r < 256 ? 256 : r > 2048 ? 2048 : (uint32_t)r;
+    static int low = -1, said;
+    if (low < 0) low = rt_knob("TEX_RATE_LOW", "1") != 0;
+    ring[at++ % RATE_N] = trl_rate_sample(f - f0, t - t0, low);
     t0 = t, f0 = f;
-    uint32_t m = 256;
-    for (int i = 0; i < RATE_N; i++)
-        if (ring[i] > m) m = ring[i];
+    uint32_t m = trl_rate(ring, RATE_N);
+    // one line at each crossing of RATE_SAY_UNDER, RATE_SAY times a run: the log then shows which waits the drops went by
+    static int slow;
+    if ((m < RATE_SAY_UNDER) != slow && said < RATE_SAY) {
+        said++, slow = m < RATE_SAY_UNDER;
+        if (slow)
+            rt_log("vk: the game presents %u frames a second, fewer than 60, for %d seconds: the textures' waits count "
+                   "their seconds in these (2 s are %llu presents, not 120; NX2NAVI_TEX_RATE_LOW=0: 120)",
+                   m * 60 >> 8, RATE_N, (unsigned long long)trl_presents(120, m));
+        else rt_log("vk: the game presents 60 frames a second or more again: the textures' waits count 60 or more");
+    }
     tex_rate = m;
 }
 // Mirrored textures the GPU wrote into, sorted by address (vk_texture_cpu_stale, vk_texture_write_back). Changed under
@@ -2579,11 +2594,10 @@ void vk_texture_pool_ctx(int on) { pool_ctx = on; }
 
 static int idle(const Tex *e, uint64_t now);
 
-// NX2NAVI_TEX_RELEASED_MB (default a thirty-second of the installed memory, 512 MiB to 2 GiB, or more by the card's
-// budget, released_cap_bytes; 0 = no limit) bounds the own memory of the released entries. With the hold on (drop_aged,
-// the default) what they hold is what the last minutes released, and the bound is the safety net for a burst of area
-// changes within the hold; sweep_pressure lets young entries past it while the card and the system have room
-// (vk_tex_release.h trl_keep). Before the hold the bound was all that limited them: RELEASED_MAX alone kept 5-7 GiB of
+// NX2NAVI_TEX_RELEASED_MB (default a thirty-second of the video memory budget, 384 MiB to 1 GiB, released_cap_bytes;
+// 0 = no limit) bounds the own memory of the released entries. With the hold on (drop_aged, the default) they hold
+// what the last minute released, up to the bound; sweep_pressure lets young entries past it while the card and the
+// system have room (vk_tex_release.h trl_keep). Before the hold the bound was all that limited them: RELEASED_MAX alone kept 5-7 GiB of
 // released render targets and decoded textures after an hour of play at a 2160p game resolution, device memory the
 // driver also charges to the system's commit (the process's private bytes reached 31 GiB). A sixteenth (1 to 4 GiB)
 // still let them hold 1.3 GiB on a 32 GB PC whose commit then ran out at an area load (device lost); only entries
@@ -2616,7 +2630,6 @@ static int idle(const Tex *e, uint64_t now);
 #define COMMIT_LOW_KEEP ((uint64_t)256 << 20)
 #define PROC_COMMIT_MIN_MB 24576
 static uint64_t released_cap;   // bytes; 0 = not read yet, UINT64_MAX = no limit
-#define RELEASED_CAP_MAX_MB 8192
 static long long commit_free_mb = -2;   // -2: not read yet, -1: the default
 static long long proc_commit_mb;        // this process's bound in MB; 0 = none
 static int commit_low, commit_logs;     // commit_low: either of the two below at the last check
@@ -2633,29 +2646,19 @@ static uint64_t released_cap_bytes(void) {
         const char *by = "";   // which term set the bound, for the line below
         if (s && *s) mb = atoll(s);
         else {
-            float used, total, proc;
-            plat_mem_info(&used, &total, &proc);
-            mb = total > 0 ? (long long)(total / 32) : 1024;
-            mb = mb < 512 ? 512 : mb > 2048 ? 2048 : mb;
-            by = total > 0 ? ", a thirty-second of the installed memory (512 MiB to 2 GiB)"
-                           : ", the default without the installed memory's size";
-            // By the card too: a quarter of its budget where the PC has an eighth of its memory to match, up to
-            // RELEASED_CAP_MAX_MB. The game lets go of the textures of what leaves the view and takes them back when
-            // it returns; walking through a village the released ones passed 1 GiB within two or three minutes, and
-            // from then on each release dropped an older one that was decoded and encoded again on its way back,
-            // hundreds a second, on a card with 30 GiB free. The two pressure rules still come first: released
-            // entries go before anything else above NX2NAVI_TEX_VRAM_PRESSURE of the budget, and the bound falls to
-            // COMMIT_LOW_KEEP while the commit is low.
+            // By the card: a thirty-second of its budget, 384 MiB to 1 GiB (vk_tex_release.h trl_cap_mb, which has the
+            // run that set it). What the released textures hold at their fullest stays in use for the rest of the
+            // session, as free space inside the allocator's blocks once they are dropped, so the bound is the price of
+            // the cache; until 0.11.0 it was a quarter of the budget, up to 8 GiB. The two pressure rules still come
+            // first: released entries go before anything else above NX2NAVI_TEX_VRAM_PRESSURE of the budget, and the
+            // bound falls to COMMIT_LOW_KEEP while the commit is low.
             uint64_t vused = 0, vbudget = 0;
             int exact = 0;
-            if (vk_mem_vram(&vused, &vbudget, &exact) && total > 0) {
-                long long by_card = (long long)(vbudget >> 22), by_ram = (long long)(total / 8);   // a quarter, in MiB
-                long long more = by_card < by_ram ? by_card : by_ram;
-                const char *more_by = by_card <= by_ram ? ", a quarter of the video memory budget"
-                                                        : ", an eighth of the installed memory";
-                if (more > RELEASED_CAP_MAX_MB) more = RELEASED_CAP_MAX_MB, more_by = ", the largest the rule by the card gives";
-                if (more > mb) mb = more, by = more_by;
-            }
+            int known = vk_mem_vram(&vused, &vbudget, &exact) && vbudget;
+            mb = trl_cap_mb(known ? vbudget >> 20 : 0);
+            by = !known ? ", the default without the card's budget"
+               : mb == TRL_CAP_MAX_MB ? ", the most the rule by the card gives"
+               : mb == TRL_CAP_MIN_MB ? ", the least the rule by the card gives" : ", a thirty-second of the video memory budget";
         }
         released_cap = mb > 0 ? (uint64_t)mb << 20 : UINT64_MAX;
         if (mb > 0) rt_log("vk: released textures keep at most %lld MiB of their own memory%s (NX2NAVI_TEX_RELEASED_MB)", mb,
@@ -3437,6 +3440,12 @@ static void rel_census(uint64_t cap, int room) {   // tex_lock held
     enum { YOUNG, SLOT, SLOT_OVER, SAMPLED, LOOKED, NEXT, KINDS };
     uint64_t by[KINDS] = {0}, gpu = 0;
     int n[KINDS] = {0}, ngpu = 0;
+    // the young ones by what they wait for: fewer than STALE_FRAMES since the release; content only the GPU made
+    // (GPU_STALE_FRAMES or the gap); intact and waiting out the gap (stale_after) with nothing reaching them, which
+    // the VRAM pressure takes; intact, waiting it out and still reached
+    enum { Y_NEW, Y_GPU, Y_GAP, Y_REACHED, YKINDS };
+    uint64_t yby[YKINDS] = {0}, gap_max = 0;
+    int yn[YKINDS] = {0};
     for (const Tex *e = rel_head; e; e = e->rel_next) {
         if (!e->bytes) continue;
         int shown = e->ph && pref[e->ph - 1].refs;
@@ -3446,6 +3455,12 @@ static void rel_census(uint64_t cap, int room) {   // tex_lock held
               : !e->overwritten && !idle(e, now) ? LOOKED : NEXT;
         by[k] += e->bytes, n[k]++;
         if (!comes_back_intact(e)) gpu += e->bytes, ngpu++;
+        if (k == YOUNG) {
+            int y = now - e->rel_frame < STALE_FRAMES ? Y_NEW
+                  : !comes_back_intact(e) && !e->overwritten ? Y_GPU : idle(e, now) ? Y_GAP : Y_REACHED;
+            yby[y] += e->bytes, yn[y]++;
+            if (y >= Y_GAP && stale_after(e) > gap_max) gap_max = stale_after(e);
+        }
     }
     const double M = 1048576.0;
     rt_log("vk: released textures over their bound%s: %d entries, %.0f MiB of %.0f MiB (%d of them, %.0f MiB, hold content "
@@ -3455,6 +3470,15 @@ static void rel_census(uint64_t cap, int room) {   // tex_lock held
            room ? " (kept past it while the card has room)" : "", nreleased, rel_bytes / M, cap / M,
            ngpu, gpu / M, n[YOUNG], by[YOUNG] / M, n[SAMPLED], by[SAMPLED] / M, n[SLOT], by[SLOT] / M, n[SLOT_OVER],
            by[SLOT_OVER] / M, n[LOOKED], by[LOOKED] / M, n[NEXT], by[NEXT] / M);
+    if (n[YOUNG])
+        rt_log("vk: the ones released too lately wait: %d, %.0f MiB, the first %llu presents after a release (2 s at the "
+               "%u presents a second the waits count); %d, %.0f MiB, with content only the GPU made, %llu presents or their own "
+               "gap; %d, %.0f MiB, intact, for 8 times their longest gap before a take-back (%llu presents at most) with "
+               "nothing reaching them: the VRAM pressure takes these; %d, %.0f MiB, intact, for their gap and still "
+               "reached",
+               yn[Y_NEW], yby[Y_NEW] / M, (unsigned long long)STALE_FRAMES, tex_rate * 60 >> 8, yn[Y_GPU], yby[Y_GPU] / M,
+               (unsigned long long)GPU_STALE_FRAMES, yn[Y_GAP], yby[Y_GAP] / M, (unsigned long long)gap_max, yn[Y_REACHED],
+               yby[Y_REACHED] / M);
 }
 
 static void sweep_pressure(void) {   // tex_lock held
@@ -3681,7 +3705,7 @@ static void astc_check(const Tex *e, const uint8_t *raw, const VkAstcRegion *ar,
 // costs a staging buffer, a copy and a barrier, several microseconds, where hashing 1.5 KiB takes a fraction of one.
 // A CPU write during the hash sets the pages' write bits again, so the next check sees it.
 //
-// NX2NAVI_TEX_SAME_BIG=1 (default 0; ab): textures up to CHASH_BIG_MAX keep the hash too. While the player runs through
+// NX2NAVI_TEX_SAME_BIG (default 1 since 0.11.0; ab): textures up to CHASH_BIG_MAX keep the hash too. While the player runs through
 // a town the game moves about 32 textures to new storage every four or five frames, back to back in one block, and a
 // frame after their first upload every page of the block shows a write again. Of the ones the hash covers, 0 to 4 in a
 // hundred are uploaded again (128x128, 171x171, 256x256 BC1: 9 of 440 in one recording of 600 frames); of the others,
@@ -3689,12 +3713,17 @@ static void astc_check(const Tex *e, const uint8_t *raw, const VkAstcRegion *ar,
 // uploads in those 600 frames beside 4,233 first ones, their ASTC ones decoded and encoded on the GPU a second time.
 // The frames of those second uploads take 0.9 to 2.5 ms longer than the frames without uploads and the frames after
 // them wait 0.3 to 1.3 ms longer for the GPU (six recordings of one player, RTX 5090, 2026-11-12).
-// What the hash costs is why the switch is off: the bytes are read once more at the first upload and once at the
-// comparison, 15 to 18 us each for 300 KiB (17 to 20 GB/s, below), together about what the second upload takes on
-// the submitting thread (27 us for 300 KiB). So the gain is the GPU's work and whatever else a second upload costs a
-// frame, and that has not been measured in play. A texture the CPU really rewrites would pay the hash for nothing each
-// time: after CHASH_MISSES comparisons in a row that found other bytes its uploads take no hash any more. An area load
-// takes none either (vk_exec_pool_loading): it uploads gigabytes in a few frames.
+// What the hash costs: the bytes are read once more at the first upload and once at the comparison, 15 to 18 us each
+// for 300 KiB (17 to 20 GB/s, below), together about what the second upload takes on the submitting thread (27 us
+// for 300 KiB). The gain is the GPU's work, and a run through Hyrule Field measured it (2026-11-14, RTX 5090, about
+// three minutes of running, the same route each time): without the hash 44,000 to 52,000 second uploads of 33 to 47
+// GiB of storage in four runs of six (9,000 and 11,000 in the other two), one 1536x1536 texture 29 times within 300
+// frames with the same bytes each time, 66 thousand million texels decoded on the GPU in a run; with it 592 second
+// uploads of 195 MiB, 24 GiB found unchanged, and 24 thousand million texels decoded, which is the first uploads.
+// The second uploads took 2.9 s of the submitting thread in such a run, the two hashes about 3 s. A texture the CPU
+// really rewrites would pay the hash for nothing each time: after CHASH_MISSES comparisons in a row that found other
+// bytes its uploads take no hash any more. An area load takes none either (vk_exec_pool_loading): it uploads
+// gigabytes in a few frames. NX2NAVI_TEX_SAME_BIG=0 hashes only the textures up to CHASH_MAX, as before 0.11.0.
 // The pool log's buckets line counts the comparisons and the hashed bytes.
 enum { CHASH_MAX = 64 << 10, CHASH_BIG_MAX = 8 << 20, CHASH_MISSES = 2 };
 static uint64_t content_hash(const void *p, uint64_t n) {
@@ -3867,7 +3896,7 @@ static int astc_copy_opaque(const Tex *e, uint8_t *dst, const uint8_t *src, uint
 static int chash_wanted(const Tex *e) {
     static int mode = -1;
     if (e->t.L.size <= CHASH_MAX) return 1;
-    if (mode < 0) mode = rt_knob("TEX_SAME_BIG", "0");
+    if (mode < 0) mode = rt_knob("TEX_SAME_BIG", "1");
     return RT_KNOB_ON(mode) && e->t.L.size <= CHASH_BIG_MAX && e->chash_miss < CHASH_MISSES && !vk_exec_pool_loading();
 }
 

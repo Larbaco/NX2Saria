@@ -2451,6 +2451,21 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
     VkImageView zv = vk_exec_target_view(z->img, z->format, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT, z->level,
                                          z->base_layer, 1, 0);
     float jx = D.jit_used ? D.ux : 0.0f, jy = D.jit_used ? D.uy : 0.0f;
+    // NX2NAVI_DLAA_JITTER_TEST=<x>,<y> (test, read once): the upscaler is told the jitter the scene was drawn with
+    // times these two factors. NVIDIA's DLSS guide gives no sign for the offsets against the projection's shift and
+    // says to find it by trying (8.4.1: its development library negates, halves or doubles an axis by a key): the
+    // picture of a still scene is sharp and stands still only with the right ones. The scene, the motion vectors and
+    // frame generation keep the real jitter.
+    static float jt[2] = {1.0f, 1.0f};
+    static int jt_read;
+    if (!jt_read) {
+        jt_read = 1;
+        const char *s = cfg_get("NX2NAVI_DLAA_JITTER_TEST");
+        if (s && *s && sscanf(s, "%f,%f", &jt[0], &jt[1]) == 2)
+            rt_log("dlaa: the upscaler is told the jitter times %g, %g (NX2NAVI_DLAA_JITTER_TEST, a test)", jt[0], jt[1]);
+        else jt[0] = jt[1] = 1.0f;
+    }
+    const float tjx = jx * jt[0], tjy = jy * jt[1];
     edge_fill(cb, t, z, D.jit_used);   // before the motion vectors read the depth
     static int no_mv = -1;
     if (no_mv < 0) no_mv = !rt_knob("DLAA_MV", "1");   // NX2NAVI_DLAA_MV=0: zero motion (test)
@@ -2482,7 +2497,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
                    fm = {e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1}, fo = {e->out, VK_FORMAT_R16G16B16A16_SFLOAT, ow, oh, 1};
         VkFfxCamera fcam;
         if (!vk_dlaa_ffx_camera(&fcam)) memset(&fcam, 0, sizeof fcam);   // no camera this frame: FSR's fixed values
-        if (!vk_ffx_upscale(cb, &fc, &fz, &fm, &fo, jx, jy, D.reset, dt > 0 && dt < 100 ? (float)dt : 16.67f, &fcam))
+        if (!vk_ffx_upscale(cb, &fc, &fz, &fm, &fo, tjx, tjy, D.reset, dt > 0 && dt < 100 ? (float)dt : 16.67f, &fcam))
             return dl_fail("FSR 3.1", 0);
         static int told;
         if (!told++) rt_log("dlaa: FSR 3.1 at %ux%u -> %ux%u (scene format %d, depth format %d)", w, h, ow, oh,
@@ -2557,8 +2572,8 @@ own_feature:
     p_setp(p, "Output", &ro);
     p_setp(p, "Depth", &rz);
     p_setp(p, "MotionVectors", &rm);
-    p_setf(p, "Jitter.Offset.X", jx);
-    p_setf(p, "Jitter.Offset.Y", jy);
+    p_setf(p, "Jitter.Offset.X", tjx);
+    p_setf(p, "Jitter.Offset.Y", tjy);
     p_setf(p, "Sharpness", 0.0f);
     p_seti(p, "Reset", D.reset);
     // One bias mask: the reactive one (NX2NAVI_DLSS_REACTIVE, a test) where it ran, else the characters' (mv_pass), else
@@ -3221,8 +3236,20 @@ static void dlss_mode(void) {
         bias_on = -1;
     }
     int b = dl_active();
-    if (b != bias_on)
-        bias_on = b, vk_sampler_dlss_bias(b ? res_dlss_lod_bias() + (jitter_on() ? JITTER_LOD_BIAS : 0.0f) : 0.0f);
+    if (b != bias_on) {
+        // NX2NAVI_DLSS_LOD_BIAS_TEST=<bias> (test, read once): this bias in the place of the rule's while an upscaler
+        // runs, 0 for none: what the rule's bias does to the picture is the difference between two runs.
+        static float test;
+        static int test_on = -1;
+        if (test_on < 0) {
+            const char *s = cfg_get("NX2NAVI_DLSS_LOD_BIAS_TEST");
+            test_on = s && *s;
+            if (test_on) test = (float)atof(s), rt_log("dlaa: texture LOD bias %g while an upscaler runs "
+                                                       "(NX2NAVI_DLSS_LOD_BIAS_TEST, a test)", test);
+        }
+        float rule = res_dlss_lod_bias() + (jitter_on() ? JITTER_LOD_BIAS : 0.0f);
+        bias_on = b, vk_sampler_dlss_bias(b ? (test_on ? test : rule) : 0.0f);
+    }
 }
 
 

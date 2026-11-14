@@ -237,6 +237,26 @@ extern "C" NX2SL_API int nx2sl_frame(VkCommandBuffer cb, const Nx2SlImage *depth
     uint32_t max = g_max.load();
     int n = enable > 0 ? enable : 0;
     if (n > (int)(max ? max : 1)) n = (int)(max ? max : 1);
+    static sl::Constants last;   // the constants of the last frame that had its inputs
+    static bool have_last;
+    if (n && !(depth && mv && cam) && have_last) {
+        // Generation is on for this present and the frame has no depth, motion vectors or camera: a menu, a fade or a
+        // load, while vk_dlssg.c holds the change of state for a few frames. Streamline's guide asks for the common
+        // constants at every frame and for null tags wherever depth or motion vectors are not valid
+        // (ProgrammingGuideDLSS_G.md 5.2 and 7.0). This frame gave neither, and Streamline logged "Unable to find
+        // 'common' constants for frame" and "Failed to find global tag 'kBufferTypeDepth'" and went on with what the
+        // frame before had set. It gets the last frame's constants again, as a new start, and the three tags as null.
+        sl::Constants c = last;
+        c.reset = sl::Boolean::eTrue;
+        p_constants(c, *t, vp);
+        sl::ResourceTag none[3] = {sl::ResourceTag(nullptr, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent),
+                                   sl::ResourceTag(nullptr, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent),
+                                   sl::ResourceTag(nullptr, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent)};
+        if ((t = token(frame))) p_tag(*t, vp, none, 3, (sl::CommandBuffer *)cb);
+        static int said;
+        if (!said++) say("dlssg: a frame without depth and motion vectors while generation is on gets the last constants "
+                         "as a new start and null tags");
+    }
     if (n && depth && mv && cam) {
         sl::Constants c{};
         matrix(c.cameraViewToClip, cam->view_to_clip);
@@ -259,6 +279,7 @@ extern "C" NX2SL_API int nx2sl_frame(VkCommandBuffer cb, const Nx2SlImage *depth
         c.motionVectors3D = sl::Boolean::eFalse;
         c.reset = cam->reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
         p_constants(c, *t, vp);
+        last = c, have_last = true;
         sl::Resource rd = resource(depth), rm = resource(mv), rh = hudless ? resource(hudless) : sl::Resource{};
         sl::Extent ed{0, 0, depth->width, depth->height}, em{0, 0, mv->width, mv->height};
         sl::Extent eh{0, 0, hudless ? hudless->width : 0, hudless ? hudless->height : 0};

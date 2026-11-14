@@ -50,14 +50,12 @@ static const char *const known[] = {
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
     "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "CACHE_DIE", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COMPUTE_KEEP", "COLOR_CONTRAST", "COLOR_GAMMA",
     "COLOR_PRESET", "COLOR_SATURATION", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CRIT", "CRIT_OUT",
-    "DMABUF", "DMABUF_MB", "DRAW_CRUMBS", "GPA_LATE", "DESC_TEMPLATE", "DEVICE_PROFILE", "DISCORD_APP_ID", "DISCORD_IMAGE", "DISCORD_RPC", "DLAA", "DLAA_CAM_KEEP", "DLAA_CUT", "DLSS_IDLE_FREE", "DLAA_EDGE_FILL", "DLAA_AT_UPSCALER", "FFX_DEBUG", "FFX_KEYS", "FSR3_SHARPEN", "DLAA_JITTER", "DLAA_MV", "DLAA_MASKDEBUG", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_SURVEY", "DLAA_TARGET_KEEP", "DLAA_TIMES", "DLSS", "DLSS_CHAR_MASK", "DLSS_PRESET", "DLSS_PREBLOOM", "DLSS_RANGE", "DLSS_REACTIVE", "DUMP", "DUMP_BUF", "DUMP_DIR",
+    "DMABUF", "DMABUF_MB", "DRAW_CRUMBS", "GPA_LATE", "DESC_TEMPLATE", "DEVICE_PROFILE", "DISCORD_APP_ID", "DISCORD_IMAGE", "DISCORD_RPC", "DLAA", "DLAA_CAM_KEEP", "DLAA_CUT", "DLSS_IDLE_FREE", "DLAA_EDGE_FILL", "DLAA_AT_UPSCALER", "FFX_DEBUG", "FFX_KEYS", "FSR3_SHARPEN", "DLAA_JITTER", "DLAA_JITTER_TEST", "DLSS_LOD_BIAS_TEST", "DLAA_MV", "DLAA_MASKDEBUG", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_SURVEY", "DLAA_TARGET_KEEP", "DLAA_TIMES", "DLSS", "DLSS_CHAR_MASK", "DLSS_PRESET", "DLSS_PREBLOOM", "DLSS_RANGE", "DLSS_REACTIVE", "DUMP", "DUMP_BUF", "DUMP_DIR",
     "UPSCALER_IDLE_WAIT",
     "DUMP_LOG", "DUMP_RAW", "DUMP_SHADERS", "DUMP_FILE", "DS3", "LOG_CS_BINDS", "LOG_TEX_FLAGS", "LOG_MESH", "MESH", "POOL", "NATIVE_TENSOR", "LOG_RCOND", "LOG_RT_SIZES", "DUMP_WHITE", "DUMP_AFTER", "DUMP_MOVIE", "SUBMIT_FINISH", "ACQUIRE_WAIT", "CRASH_FILTER_GUARD", "CS_FALLBACK", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "GPU_TIMELINE",
     "FFX_PIPE_CACHE", "FLIGHT_SPIKE_MS", "FREEZE_QUIET_MS", "FREEZE_LOAD_HOLD_MS", "STUTTER_MAP", "PAR_JOBS", "PIPE_RELEASE", "FLIGHT_THUMBS", "FLIGHT_EVERY", "FLIGHT_FLASH", "FLIGHT_FLASH_DIFF", "FLIGHT_FLASH_CELLS", "FLUSH_SPAN", "FLUSH_UPLOAD", "FOG_CULL", "FOLIAGE_SHADOW_CULL", "FOLIAGE_SHADOW_VRS", "FOV", "FOV_PATCH", "FG_HUDLESS_SHOW", "FG_MULT", "FPS60", "FPS_LIMIT", "FRAMEGEN", "FRAMEGEN_MULTIPLIER", "FREEZE_IDLE", "FREEZE_ASYNC", "FREEZE_BUDGET_US", "FREE_CORES",
     "FULLSCREEN", "FXAA", "GAME_ASPECT", "GAME_RES", "GPA", "GPA_EMPTY", "GPA_TWIN", "GPA_TWIN_MAX_KB", "MIRROR_CAPTURE_KB", "WB_SKIP_MB", "GPL", "GPL_DRAW_BUILD", "GPL_FEEDBACK", "GPL_MESH", "PIPE_AHEAD", "PIPE_FAST_WORKERS", "PIPE_FRAME_WAIT_MS", "PIPE_LINK_DRAW_MS", "PIPE_SKIP_STEADY", "DRAW_WRITERS_WAIT", "PROG_LEAD", "GPU", "GPU_INDEX", "GPU_PASSES", "GPU_NAME", "HDR",
     "HDR_GAME_NITS", "HDR_LIVE", "HEAP_LAZY", "HDR_PEAK_NITS", "HDR_UI_NITS",
-    // retired: the HDR look's settings of earlier versions, now fixed (vk_hdr.c, shaders/hdr_tonemap.frag); read by
-    // nothing, listed so that a file which still sets them logs no unknown key
     "HDR_BLOWOUT", "HDR_CONTRAST", "HDR_EXPOSURE", "HDR_FLARE", "HDR_GAMMA", "HDR_GRADE", "HDR_HIGHLIGHT_SAT",
     "HDR_HIGHLIGHTS", "HDR_HUE", "HDR_HUE_CLIP", "HDR_MATCH_SLOPE", "HDR_MIDGRAY", "HDR_SATURATION", "HDR_SHADOWS",
     "HDR_TONEMAP", "HDR_TONE_SLOPE", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
@@ -68,7 +66,7 @@ static const char *const known[] = {
     "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
     "MV_SURVEY",
     "HANDLE_CENSUS",
-    "PIPE_SEED_BOOT", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PACE_HZ", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_RES_FIXED", "PATCH_SCENE", "PATCH_WIDE_ASPECT", "PATCH_WIDE_HUD", "PATCH_WIDE_MOVIE", "PATCH_WIDE_OUT", "PATCH_FREECAM", "PATCH_OCCLUSION_OFF", "PATCH_WIDE_SAVE", "PATCH_WIDE_SCENE", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPELINE_CACHE_MAX_MB", "PIPELINE_CACHE_PLAY", "PIPELINE_CACHE_PLAY_MB", "PIPE_BINARIES", "PIPE_BINARIES_MAX_MB", "PIPE_FEEDBACK", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SEED", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POWER_FULL", "TEX_SAME", "TEX_SAME_BIG", "TEX_FLAT3D", "TEX_KEEP_TAKEN", "TEX_HARD_ORDER", "TEX_STALE_KEPT", "ASTC_SCRATCH_TRIM", "PRESENT_HELD", "HELD_SYNC",
+    "PIPE_SEED_BOOT", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PACE_HZ", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_RES_FIXED", "PATCH_SCENE", "PATCH_WIDE_ASPECT", "PATCH_WIDE_HUD", "PATCH_WIDE_MOVIE", "PATCH_WIDE_OUT", "PATCH_FREECAM", "PATCH_OCCLUSION_OFF", "PATCH_WIDE_SAVE", "PATCH_WIDE_SCENE", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPELINE_CACHE_MAX_MB", "PIPELINE_CACHE_PLAY", "PIPELINE_CACHE_PLAY_MB", "PIPE_BINARIES", "PIPE_BINARIES_MAX_MB", "PIPE_FEEDBACK", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SEED", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POWER_FULL", "TEX_SAME", "TEX_SAME_BIG", "TEX_FLAT3D", "TEX_KEEP_TAKEN", "TEX_RATE_LOW", "TEX_HARD_ORDER", "TEX_STALE_KEPT", "ASTC_SCRATCH_TRIM", "PRESENT_HELD", "HELD_SYNC",
     "PRESENT_ORDER",
     "PREPARE_PIPELINES", "PREWARM_FULL", "PREWARM_FULL_S", "PREWARM_WAIT_MS", "PREWARM_XLATE", "PROBE_MOVIE", "PROBE_MOVIE_SHOT", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES", "PROFILE_REPLAY", "PROFILE_SLOW",
     "POOL_FAST", "POOL_GROUP", "POOL_GROUP_CHECK", "POOL_PRESNAP", "POOL_PRESNAP_RUNS",
@@ -113,7 +111,7 @@ static const char *const known[] = {
 
 // The nx2navi.ini section a key cfg_set may write goes to when the file lacks it (nx2navi.ini.example's sections).
 static const struct { const char *key, *section; } sections[] = {
-    // the low-end GPU mode's rows in the menu's Game tab (ui/menu.cpp rows_low_end)
+    // the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below)
     {"TEX_RELEASED_MAX", "performance"}, {"MIRROR_HOT", "performance"}, {"FREEZE_IDLE", "performance"}, {"SUBMIT_FINISH_KINDS", "performance"}, {"FOLIAGE", "performance"},
     {"ZSTD_NATIVE", "performance"},
     {"VRAM_HEAP_LIMIT", "performance"}, {"VRAM_RESERVE_MB", "performance"}, {"UPLOAD_BATCH_MB", "performance"}, {"MESH_EMULATION", "performance"},
@@ -132,7 +130,11 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_LIVE", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
-    {"HDR_UI_NITS", "display"}, {"SHADOW_RES", "display"},
+    {"HDR_UI_NITS", "display"}, {"HDR_GAMMA", "display"}, {"HDR_TONEMAP", "display"}, {"HDR_EXPOSURE", "display"},
+    {"HDR_HIGHLIGHTS", "display"}, {"HDR_SHADOWS", "display"}, {"HDR_CONTRAST", "display"}, {"HDR_SATURATION", "display"},
+    {"HDR_HIGHLIGHT_SAT", "display"}, {"HDR_BLOWOUT", "display"}, {"HDR_FLARE", "display"}, {"HDR_HUE", "display"},
+    {"HDR_GRADE", "display"}, {"HDR_MIDGRAY", "display"}, {"HDR_MATCH_SLOPE", "display"}, {"HDR_TONE_SLOPE", "display"},
+    {"HDR_HUE_CLIP", "display"}, {"SHADOW_RES", "display"},
     {"DLAA", "display"}, {"FSR4", "display"}, {"FSR4_FG", "display"}, {"DLSS", "display"}, {"DLSS_PRESET", "display"}, {"DLSS_IDLE_FREE", "display"}, {"DLSS_RANGE", "display"}, {"DLSS_PREBLOOM", "display"}, {"DLSS_CHAR_MASK", "display"}, {"FXAA", "display"}, {"AA", "display"},
     {"UPSCALER_IDLE_WAIT", "display"},
     {"FRAMEGEN", "display"}, {"FRAMEGEN_MULTIPLIER", "display"}, {"FG_MULT", "display"}, {"SKIN_MOTION", "display"},
@@ -252,13 +254,23 @@ static const CfgMeta metas[] = {
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},
     {"COLOR_CONTRAST", "100", "70..150", LIVE}, {"COLOR_SATURATION", "100", "50..200", LIVE},
     {"COLOR_GAMMA", "1", "0.8..1.2", LIVE},
-    // HDR output (vk_hdr.c): on and off apply at once (the HDR tonemap is spliced into the game's as shaders load
-    // whatever is set, vk_hdr_armed); native is the game's own and is asked for once, at start
-    // (vk_hdr_needs_restart). HDR_LIVE = 0 leaves the HDR path out of a run that starts with HDR off. The look is
-    // fixed: only the three whites are settings.
+    // HDR output (vk_hdr.c): on, off, the tone mapper and its grading apply at once (the HDR tonemap is spliced into
+    // the game's as shaders load whatever is set, vk_hdr_armed); native is the game's own and is asked for once, at
+    // start (vk_hdr_needs_restart). HDR_LIVE = 0 leaves the HDR path out of a run that starts with HDR off.
+    // The grading sliders: 50 leaves the picture as it is, exposure in percent. HDR_GAMMA is the display the present
+    // shows the picture as, with every tone mapper; off shows the sRGB code as it decodes, the dark tones lighter.
     {"HDR", "0", "0|1|native", LIVE}, {"HDR_LIVE", "1", "0|1", RESTART},
     {"HDR_PEAK_NITS", "1000", "400..10000", LIVE}, {"HDR_GAME_NITS", "203", "48..500", LIVE},
-    {"HDR_UI_NITS", "203", "48..500", LIVE},
+    {"HDR_UI_NITS", "203", "48..500", LIVE}, {"HDR_GAMMA", "2.2", "off|2.2|2.4", LIVE},
+    {"HDR_TONEMAP", "psychov35", "vanilla|psychov35|renodrt", LIVE}, {"HDR_EXPOSURE", "100", "0..200", LIVE},
+    // the observer-response mapper's: where scene grey lands, its slope there matched to the game's curve, that slope
+    // (50 unchanged) and how much of the game's hue bend at its clamp bright colours get
+    {"HDR_MIDGRAY", "vanilla", "render|vanilla", LIVE}, {"HDR_MATCH_SLOPE", "1", "0|1", LIVE},
+    {"HDR_TONE_SLOPE", "50", "0..100", LIVE}, {"HDR_HUE_CLIP", "50", "0..100", LIVE},
+    {"HDR_HIGHLIGHTS", "50", "0..100", LIVE}, {"HDR_SHADOWS", "50", "0..100", LIVE}, {"HDR_CONTRAST", "50", "0..100", LIVE},
+    {"HDR_SATURATION", "50", "0..100", LIVE}, {"HDR_HIGHLIGHT_SAT", "50", "0..100", LIVE},
+    {"HDR_BLOWOUT", "0", "0..100", LIVE}, {"HDR_FLARE", "0", "0..100", LIVE}, {"HDR_HUE", "100", "0..100", LIVE},
+    {"HDR_GRADE", "100", "0..100", LIVE},
     {"DEVICE_PROFILE", "auto", "auto|desktop|deck", RESTART},
     {"SHADOW_RES", "game", "game|256|512|768|1024|1536|2048", RESTART},
     {"SHADOW_SCALE", "1", "1..4", RESTART}, {"SHADOW_COMPARE", "1", "0|1", RESTART},   // vk_texture.c
@@ -406,7 +418,7 @@ static const CfgMeta metas[] = {
     // it for the idle seconds; 0 keeps every shader's SPIR-V plain
     {"SHADER_COMPRESS", "1", "0|1", RESTART},
     {"SHADER_COMPRESS_IDLE_S", "30", "1..3600", RESTART},
-    // the low-end GPU mode's rows in the menu's Game tab (ui/menu.cpp rows_low_end)
+    // the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below): each is read by itself now
     {"TEX_RELEASED_MAX", "", NULL, RESTART},   // vk_texture.c released_max: "" by the video memory budget, else 1..16384
     {"MIRROR_HOT", "0", "0..1000", RESTART}, {"FREEZE_IDLE", "1800", "0..100000", RESTART},
     {"SUBMIT_FINISH_KINDS", "31", "0..31", RESTART},   // vk_sync.c res_mask
@@ -424,9 +436,10 @@ static const CfgMeta metas[] = {
     {"ASTC", "auto", "auto|gpu|native|cpu", RESTART}, {"MEMORY", "auto", "auto|import|mirror|verify", RESTART},
     {"TEX_ALIAS", "1", "0|1", RESTART}, {"DEPTH_INIT_INLINE", "1", "0|1", RESTART}, {"DEPTH_ALIAS_LOG", "0", "0|1", RESTART}, {"TEX_DISUSE", "1", "0|1|2", RESTART}, {"TEX_DISUSE_EVICT", "0", "0|1", RESTART}, {"TEX_GEN_UNDO", "1", "0|1", RESTART}, {"TEX_REUSE", "1", "0|1", RESTART}, {"TEX_SPLIT_FILL", "1", "0|1|2", RESTART}, {"TEX_VRAM_PRESSURE", "80", "0..100", RESTART},
     // vk_texture.c drop_aged: seconds a released texture is kept unused (vk_tex_release.h)
-    {"TEX_RELEASED_HOLD", "180", "0..900", RESTART}, {"ASTC_BC", "", "0|1", RESTART}, {"ZSTD_NATIVE", "1", "0|1", RESTART}, {"ZSTD_CHECK", "0", "0|1", RESTART},
+    {"TEX_RELEASED_HOLD", "60", "0..900", RESTART}, {"ASTC_BC", "", "0|1", RESTART}, {"ZSTD_NATIVE", "1", "0|1", RESTART}, {"ZSTD_CHECK", "0", "0|1", RESTART},
     {"TEX_CLOBBER", "0", "0|1", RESTART},
-    {"LOW_END_GPU", "0", "0|1", RESTART},   // LOWEND below
+    // the switch of the low-end GPU mode, which is gone: still a known key, and it does nothing (lowend_set, below)
+    {"LOW_END_GPU", "0", "0|1", RESTART},
     {"STG_ARENA", "1", "0|1", RESTART}, {"ASTC_GPU_DESWIZZLE", "1", "0|1", RESTART},
     {"ASTC_SCRATCH_KEEP", "1", "0|1", RESTART}, {"ASTC_ARENA", "1", "0|1", RESTART},   // vk_astc.c scratch_get, vk_texture.c astc_arena
     // render fixes
@@ -822,54 +835,19 @@ static int on_steam_deck(void) {
 
 static const char *raw_get(const char *name);
 
-// low_end_gpu = 1 in nx2navi.ini (NX2NAVI_LOW_END_GPU): defaults for the keys the player does not set, as the device
-// profile gives them. They turn on what was written for older graphics cards and ones short of video memory or bus
-// bandwidth, and measured on a Radeon RX 580: mesh shaders run as compute where the card has none (vk_pipeline.c
-// mesh_emu_on), a texture read after another image drew over its pool memory gets memory of its own (vk_texture.c
-// mark_clobbered), game memory is copied for the GPU while the replay records and the game's wait after a frame's
-// first submission ends once the replay has submitted it (vk_memory.c stage_on, vk_sync.c vk_sync_recorded_wait),
-// texture checks share their write-watch queries (vk_memory.c snap_widen_n), video memory stays within the heaps'
-// budgets (vk_device.c vram_heap_limits, vk_vma_budget.c), large upload batches go to the queue early (vk_memory.c
-// vk_upload_end) and pools the game refills every frame stay in system memory (vk_memory.c hot_check). Without the
-// key each of these keeps what 0.9.1 did. Asynchronous replay (vk_backend.c, NX2NAVI_REPLAY_ASYNC) is not among them:
-// it can show a dark or flickering frame now and then, so the mode leaves it off and its row under the mode's switch
-// turns it on for a player who wants it.
-static const struct { const char *key, *value; } LOWEND[] = {
-    {"MESH_EMULATION", "1"}, {"TEX_CLOBBER", "1"}, {"MIRROR_STAGE", "1"}, {"SUBMIT_FINISH_GPU", "0"}, {"SNAP_WIDEN", "8"},
-    {"VRAM_HEAP_LIMIT", "auto"}, {"VRAM_RESERVE_MB", "512"}, {"UPLOAD_BATCH_MB", "256"}, {"MIRROR_HOT", "25"},
-};
-// The keys that count only while the mode is on (LOWEND_ONLY): without it each reads as unset, whatever the settings
-// file or the environment says, so nothing of the mode acts unless a player turned it on. The menu shows their rows
-// only then (ui/menu.cpp rows_low_end). Keys the game had before the mode (replay_async, freeze_idle, zstd_native,
-// tex_released_max, astc_scratch_keep) are not among them.
-static const char *const LOWEND_ONLY[] = {
-    "MESH_EMULATION", "MESH_EMU_MB", "MESH_EMU_TASKS", "MESH_EMU_BATCH", "TEX_CLOBBER", "MIRROR_STAGE", "MIRROR_HOT",
-    "SUBMIT_FINISH_GPU", "SUBMIT_FINISH_RESULTS", "SUBMIT_FINISH_KINDS", "SNAP_WIDEN", "VRAM_HEAP_LIMIT",
-    "VRAM_RESERVE_MB", "UPLOAD_BATCH_MB", "FOLIAGE", "FLUSH_SKIP_CLEAN", "VEC_INDEX_FIX", "GUEST_OPT", "PASS_TIMES",
-    "DUMP_KEY", "LOG_TEX_NEW", "SVC_WAITS",
-};
-static int lowend_only(const char *key) {
-    for (size_t i = 0; i < sizeof LOWEND_ONLY / sizeof *LOWEND_ONLY; i++)
-        if (!strcasecmp(LOWEND_ONLY[i], key)) return 1;
-    return 0;
-}
-static int lowend = -1;
+// low_end_gpu (NX2NAVI_LOW_END_GPU) was the switch of the low-end GPU mode up to 0.10.1. With it on, nine keys got
+// other defaults (mesh shaders run as compute where the card has none, a texture read after another image drew over
+// its pool memory given memory of its own, game memory copied for the GPU while the replay records, video memory kept
+// within the heaps' budgets, large upload batches sent early, pools the game refills every frame kept in system
+// memory), and those keys and a dozen more were read only while it was on. The mode is gone. Its switch is still a
+// known key, so that an old file's line is no unknown one, and does nothing. Each of its keys is read like any other,
+// with the default of its row or of its reader: a value a player set by hand counts, and a file that sets none runs
+// the game as it runs for everyone else. cfg_init says so once while the switch is on.
 // Read through raw_get, which skips switch_word, so the words are taken here as cfg_bool takes them: "low_end_gpu =
-// off" is off for the mode as for the menu and cfg_get, and any value that is not 0 or one of the off words is on.
-static int lowend_of(void) {
-    int p = __atomic_load_n(&lowend, __ATOMIC_ACQUIRE);
-    if (p >= 0) return p;
+// off" is off, and any value that is not 0 or one of the off words is on.
+static int lowend_set(void) {
     const char *set = raw_get(PREFIX "LOW_END_GPU");
-    p = set && *set && switch_of(set) != 0;
-    __atomic_store_n(&lowend, p, __ATOMIC_RELEASE);
-    return p;
-}
-int cfg_low_end_active(void) { return lowend_of(); }
-static const char *lowend_value(const char *key) {
-    if (lowend_of())
-        for (size_t i = 0; i < sizeof LOWEND / sizeof *LOWEND; i++)
-            if (!strcasecmp(LOWEND[i].key, key)) return LOWEND[i].value;
-    return NULL;
+    return set && *set && switch_of(set) != 0;
 }
 
 static int profile_of(void) {
@@ -919,12 +897,11 @@ static const char *switch_word(const char *name, const char *v) {
 static const char *cfg_get_now(const char *name) {
     const char *v = raw_get(name);
     if (strncmp(name, PREFIX, PREFIX_LEN)) return v;
-    if (!lowend_of() && lowend_only(name + PREFIX_LEN)) return NULL;   // the mode is off: its settings are not read
     if (v) return switch_word(name, v);
     if (profile_of())
         for (size_t i = 0; i < sizeof DECK / sizeof *DECK; i++)
             if (!strcasecmp(DECK[i].key, name + PREFIX_LEN)) return DECK[i].value;
-    return lowend_value(name + PREFIX_LEN);
+    return NULL;
 }
 
 // Whether name's value comes from the player (the environment or nx2navi.ini), not a profile or the table.
@@ -1029,8 +1006,6 @@ const char *cfg_default(const char *key) {
     if (profile_of())
         for (size_t i = 0; i < sizeof DECK / sizeof *DECK; i++)
             if (!strcasecmp(DECK[i].key, name)) return DECK[i].value;
-    const char *low = lowend_value(name);
-    if (low) return low;
     const CfgMeta *m = cfg_meta(key);
     return m ? m->def : NULL;
 }
@@ -1461,14 +1436,13 @@ void cfg_init(void) {
         if (e && *e) check_value(metas[i].key, e, 0);
     }
     check_end();
-    __atomic_store_n(&lowend, -1, __ATOMIC_RELEASE);   // asked before the file was read: decided again (lowend_of)
     if (profile_of())
         rt_log("cfg: device profile Steam Deck: defaults for the keys nx2navi.ini does not set (NX2NAVI_DEVICE_PROFILE=desktop "
                "turns it off)");
-    if (lowend_of())
-        rt_log("cfg: low_end_gpu = 1: the settings for older graphics cards are on for the keys nx2navi.ini does not set "
-               "(mesh shaders as compute, video memory budgets, staged uploads and the shorter wait for the GPU, frames "
-               "prepared on their own thread)");
+    if (lowend_set())
+        rt_log("cfg: low_end_gpu is on, and the low-end GPU mode was removed in 0.11.0: the line does nothing, and the game "
+               "runs as it does without it. The mode's single settings (mesh_emulation, tex_clobber, foliage, "
+               "vram_reserve_mb and the others) still count where nx2navi.ini or the environment sets them");
     start_values();
 }
 
