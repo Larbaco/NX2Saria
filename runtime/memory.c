@@ -1559,7 +1559,37 @@ static uint64_t run_start(const uint8_t *p, uint64_t i, uint8_t v) {   // first 
 
 static void query_locked(uint64_t a, RtMemoryInfo *out);
 
+// readable_locked's answer for a range inside the heap or inside the alias region, read from the page table: the
+// texture checks ask it for every pool slot they resolve and every upload (vk_texture.c), and query_locked finds the
+// whole run of equal pages around the address for it, scanning alias_pages both ways; a replay profile had 2.6% of
+// the replaying thread's samples there. A range that touches a moved stack (whose source and destination change the
+// answer, query_locked's clipping) or crosses into another region goes the general way. 1 readable, 0 not, -1 not
+// answered here. NX2NAVI_READABLE_FAST=0 turns it off, ab in the B blocks only.
+static int readable_fast(uint64_t a, uint64_t n) {
+    static int mode = -1;
+    if (mode < 0) mode = rt_knob("READABLE_FAST", "1");
+    if (!RT_KNOB_ON(mode)) return -1;
+    uint64_t end = a + n, low = L.aslr.base;
+    if (!n || end < a || end > RT_ADDRESS_LIMIT || a < low) return -1;
+    for (unsigned i = 0; i < nstack_maps; i++) {
+        const StackMap *m = &stack_maps[i];
+        if ((a < m->dst + m->size && end > m->dst) || (a < m->src + m->size && end > m->src)) return -1;
+    }
+    uint64_t heap = L.heap.base;
+    // query_locked's order: the low region (the heap among it) before the alias region
+    if (a >= heap && end <= heap + heap_size && end <= low + LOW_SIZE) return 1;   // one Normal read-write region
+    if (a < low + LOW_SIZE) return -1;
+    if (a - L.alias.base < L.alias.size && end - L.alias.base <= L.alias.size) {
+        // query_locked: a mapped alias page is Normal read-write, an unmapped one Free
+        uint64_t p0 = (a - L.alias.base) / PAGE, p1 = (end - 1 - L.alias.base) / PAGE;
+        return memchr(alias_pages + p0, 0, (size_t)(p1 - p0 + 1)) == NULL;
+    }
+    return -1;
+}
+
 static int readable_locked(uint64_t a, uint64_t n) {
+    int fast = readable_fast(a, n);
+    if (fast >= 0) return fast;
     for (uint64_t end = a + n; a < end;) {
         RtMemoryInfo r;
         query_locked(a, &r);
