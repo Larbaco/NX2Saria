@@ -8,7 +8,8 @@ You need your own dump of your own figure: a 540-byte NTAG215 image as `.bin` or
 
 When the game asks for an amiibo, the list of dumps opens over the game by itself. **A** (or a click) puts the
 highlighted figure on the reader and closes the list; **B** closes it without one. It opens again the next time the
-game asks. Turn it off under **Advanced** in the Amiibo tab (`amiibo_popup = 0`).
+game asks, with the cursor on the figure it was on last time (until the game is closed). Turn it off under
+**Advanced** in the Amiibo tab (`amiibo_popup = 0`).
 
 ## The Amiibo tab
 
@@ -17,7 +18,7 @@ Open the settings menu (F1) and pick the **Amiibo** tab.
 - The list on the left shows every 540-byte `.bin` and `.nfc` file in the amiibo folder and its subfolders (three
   levels down), by name; other files stay out of it. **A** or a click on a figure loads the dump and puts it on the
   reader. The search field above it narrows the list. The figure last loaded has a dot: cyan while it is on the reader,
-  gold after it left.
+  gold after it left. The list opens with the cursor where it was last, here or over the game.
 - **Reader** shows what the game does: ready, waiting for an amiibo, amiibo on the reader, or reading it. Under it, the
   last action, and the figure last loaded: its nickname, whether it holds game data, and **Lift the amiibo**.
 - **Advanced**:
