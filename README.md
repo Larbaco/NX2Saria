@@ -1,102 +1,172 @@
-<p align="center"><img src="docs/images/navi.png" alt="NX2navi" width="160"></p>
+<h1 align="center">
+  <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
+</h1>
 
-# NX2navi
+<p align="center">
+  <strong>Ocarina of Time · Native PC recompilation</strong><br>
+  Windows &amp; Linux · x86-64 · Vulkan
+</p>
 
-**Join the official NX2navi update discord server: https://discord.com/invite/uf6gSrsPpq** 
+<p align="center">
+  <a href="https://github.com/Larbaco/NX2navi/releases">Releases</a> ·
+  <a href="#getting-started">Getting started</a> ·
+  <a href="docs/controls.md">Controls</a> ·
+  <a href="docs/building.md">Build from source</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-**NX2navi** is a static recompilation of *The Legend of Zelda: Ocarina of Time* for Nintendo Switch 2 (game
-version 1.1.1) into a native x86-64 application for Windows, with a Vulkan renderer
-([docs/architecture.md](docs/architecture.md)).
+**NX2Saria** is Larbaco's fork for bringing *The Legend of Zelda: Ocarina of Time* to a native PC application.
+It statically recompiles the Nintendo Switch 2 edition, game version **1.1.1**, into x86-64 code and renders
+through Vulkan. The game is built locally, from your own dump.
+
+This fork brings together Linux work, changes to the settings menu and amiibo support, and selected community
+fixes. It builds on NX2navi; see [Credits and origins](#credits-and-origins) for the project it comes from.
 
 > [!IMPORTANT]
-> **No game files are included.** You need your own legally obtained copy of the game, dumped from your own console.
-> Instructions for obtaining those files will not be provided.
->
-> The game is built from your files on your machine, so the result contains the game. It is for your own use. Do not share it.
+> **Bring your own game.** No game files are included. You need your own legally obtained copy, dumped from your
+> own console. Instructions for obtaining those files are not provided. The finished build contains material
+> from your game: keep it for your own use and do not distribute it.
 
-## Status
+## What makes this fork different
 
-Early development, playable. Kokiri Forest, Kakariko Village, Death Mountain Trail and its crater, the Temple of
-Time and the Great Fairy fountains play at 60 fps and above on current GPUs, from the title screen and from saves.
-Visual bugs and occasional crashes are still expected ([Known issues](#known-issues)).
+### A place for Linux
 
-Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
+The build tools can produce a native Linux `ocarina`, alongside the Windows `ocarina.exe`. This fork adds
+**FSR 3.1 upscaling through the runtime's own shader passes**, so Linux does not need AMD's Windows DLL for it.
+The modes appear when the GPU and driver support the required shader features.
 
-## Features
+[Linux build and graphics setup →](docs/README-BuildKit.md#linux)
 
-- Native code, not emulation
-- 60 fps by default, or a limit of 30 to 240 fps, the display's refresh rate or unlimited
-- Native widescreen and ultrawide (the window's shape, 21:9 or 32:9) with the HUD, menus and movies kept 16:9
-- Game resolutions from 1080p to above the game's 1440p: 1800p, 4K, 5K or the window's own size, sharp on high-DPI
-  displays
-- Upscaling and anti-aliasing: NVIDIA DLSS (DLAA, Quality, Balanced, Performance, Ultra Performance; RTX GPUs) or
-  AMD FSR 3.1 (Native AA and the same modes; any GPU) or AMD FSR 4 (the same modes; Radeon RX 6000, RX 7000 and
-  RX 9000 GPUs), which render the 3D scene at the mode's share and keep the HUD sharp; or AMD FSR 1 or bilinear scaling to the window, with a sharpness setting; black bars or stretch
-- Frame generation: NVIDIA DLSS Frame Generation (RTX 40 and 50 GPUs, paced with Reflex) at 2x, or 3x and 4x on RTX 50
-  GPUs (one, two or three generated frames for every frame the game draws), or AMD FSR 3.1 (any GPU, Windows), a generated
-  frame between every two the game draws, with the HUD kept out of it, for about twice the frame rate on a fast
-  display; in a window of another shape than the picture, frames are generated inside the picture only, so the black
-  bars stay clean. The frame limit counts the frames the game draws, and frame generation adds its
-  frames on top of it. The frame limit can also be
-  handed to RivaTuner Statistics Server, which then limits the game in its place once it is seen holding the game;
-  the game paces movies itself, and takes the limit back while it is minimised and whenever RivaTuner is not seen
-  holding it; where frame generation or low latency keeps it out, the game says when a limit set in RivaTuner itself
-  holds the game as well
-- HDR on HDR displays, two kinds: the game's scene tone mapped to the display's peak, matched to the game's mid grey and tone, with true blacks, or the game's own native HDR; peak, game and HUD brightness in the menu, and for the tone mapped picture the tone mapper, gamma correction, exposure, highlights, shadows, contrast and saturation
-- The game's known shaders prepared when the game is built, and the pipelines met in play built again in the
-  background at each start, so play rarely stops to compile them; a shader or pipeline met for the first time can
-  still hold a frame, and a draw that must wait for its pipeline has it built on worker threads, never on the game's
-  drawing thread
-- In-game settings menu (F1, or Minus and Plus together on a gamepad) and performance overlay (F10); Ctrl+F5 reloads `nx2navi.ini` without a restart
-- Keyboard, mouse and gamepads with remapping, Nintendo, Xbox or PlayStation button layout, rumble and gyro; the game
-  follows whichever connected gamepad you press, and DualShock 3 controllers are read directly when enabled
-- Xbox, PlayStation, Steam Deck and keyboard and mouse button prompts in the game's own text, drawn on your PC when the game is
-  built; the keyboard prompts follow your key bindings
-- Stereo or 5.1 surround sound output, on the output device of your choice; the default microphone for the game's
-  microphone input
-- The monitor the game opens on, straight in fullscreen when fullscreen is on
-- Your Discord status shows "Playing NX2navi" with the play time (on by default; the Game tab of the menu or the
-  launcher's Settings turns it off)
-- Docked or handheld console mode
-- The game's textures stay compressed (BC3, about half the video memory at the same speed) unless the PC has 20 GiB of
-  video memory and 48 GiB of RAM, as Windows counts video memory against the system's commit limit
+### Settings you apply when ready
 
-## Installing
+Menu edits stay in a draft until you choose **Apply**. Settings that a game build does not support are hidden,
+and **Ctrl+F5** reloads `nx2navi.ini` while the game runs. Monitor selection, fullscreen at startup and audio
+output selection help fit the game into a desktop setup.
 
-Download `NX2navi-Setup-<version>.exe` from the releases and start it next to your `.nup` dump. It is the only file
-you need. The launcher it
-installs finds the dump, downloads the build tools, builds the game on your PC (20 to 45 minutes, once) and starts
-it; afterwards it keeps the port up to date and rebuilds only what changed ([docs/launcher.md](docs/launcher.md)).
-[docs/README-BuildKit.md](docs/README-BuildKit.md) describes the same build by hand, [docs/building.md](docs/building.md)
-building from source. Settings are in the in-game menu and in `nx2navi.ini` ([nx2navi.ini.example](nx2navi.ini.example)
-lists every key). Controls: [docs/controls.md](docs/controls.md). Amiibo: [docs/amiibo.md](docs/amiibo.md).
+[Controls and menu guide →](docs/controls.md) · [All configuration keys →](nx2navi.ini.example)
 
-Requirements: Windows 10 or later; an x86-64 CPU with SSE4.2 (AVX2/FMA machines get a faster build); 16 GB of RAM; about
-34 GB free for the game and 1.5 GB for the launcher and its tools; a GPU with Vulkan 1.3, `VK_EXT_external_memory_host`
-and `VK_EXT_mesh_shader`. The setup is not signed, so SmartScreen warns on its first start.
+### Amiibo within reach
 
-## Known issues
+When the game asks for an amiibo, a list of your own figure dumps can open over the game. The fork
+keeps each figure's game data between sessions and offers optional encrypted write-back. A separate setting
+lets you turn off the game's daily amiibo limit on version 1.1.1.
 
-- The first start after an install or update, and the first visit to an area, can pause briefly while the graphics
-  driver builds what it has not seen; later starts are smooth.
-- Machines with 16 GB of RAM can run out of system memory in Hyrule Field.
-- Integrated AMD GPUs can fail at the title screen (their host memory heap is too small for the game's memory).
-- A rare crash in the game's particle code.
+[Amiibo setup, saved data and write-back →](docs/amiibo.md)
 
-## License
+The branch also integrates community fixes for AMD textures, shader-cache warming and contact shadows, plus
+a controller-friendly frame-limit slider. Their authors remain credited in the commit history.
 
-The source is public to read. Its additions and changes are all rights reserved ([LICENSE-ADDITIONS](LICENSE-ADDITIONS)):
-no part of them may be copied or published without written permission. The base import stays under its
-[MIT License](LICENSE), and third-party code keeps its own license ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
-No license grants anything for Nintendo's game.
+## The PC experience
 
-NX2navi is an independent, non-commercial fan project, not affiliated with or endorsed by Nintendo. *The Legend
-of Zelda*, *Ocarina of Time* and *Nintendo Switch* are trademarks of Nintendo.
+- **Flexible frame rates.** 60 fps by default; choose a limit from 30 to 240, the display's refresh rate or unlimited.
+- **Widescreen and ultrawide.** Window aspect, 21:9 or 32:9, with the HUD, menus and movies kept at 16:9.
+- **Resolution and image quality.** From 1080p through 4K and beyond, with upscaling, anti-aliasing and HDR options.
+- **Your controls.** Keyboard, mouse and gamepads, remapping, rumble and gyro; Nintendo, Xbox, PlayStation,
+  Steam Deck and keyboard prompts where supported by the build.
+- **In-game access.** **F1**, or **Minus + Plus** on a gamepad, opens settings; **F10** toggles the performance overlay.
+- **Shader preparation.** Known shaders are prepared during the build, with pipeline warming at startup and
+  background compilation. New shaders or driver changes can still cause pauses.
 
-## Building from source
+<details>
+<summary><strong>Graphics options and platform differences</strong></summary>
 
-[docs/building.md](docs/building.md) lists the toolchain and the steps. `tools/make_game.py` also builds the game
-natively on Linux ([docs/README-BuildKit.md](docs/README-BuildKit.md), "Linux"); the launcher and the setup are
-Windows only. Everything the build writes stays under
-`build\` and `generated\`, which git ignores, as it does the runtime's shaders the build compiles
-(`runtime\*_spv.h`; the repository holds their source only); run `tools/check_content.py` before a commit.
+- **Upscaling and anti-aliasing:** NVIDIA DLSS / DLAA on compatible RTX GPUs, AMD FSR 3.1, or FSR 1 and bilinear
+  scaling. AMD FSR 4 is available on supported Radeon GPUs on Windows.
+- **Frame generation:** NVIDIA DLSS on compatible RTX 40 / 50 GPUs. Linux requires the separate NVIDIA DLSS-G
+  library and DLSS upscaling enabled at startup. AMD FSR 3.1 frame generation uses AMD's DLL on Windows and is
+  unavailable on Linux in this branch. FSR 3.1 **upscaling** on Linux is separate from frame generation.
+- **HDR:** the game's native HDR or an enhanced tone-mapped picture, with display, game and HUD brightness
+  controls. This fork also falls back to SDR for the run when Enhanced HDR cannot use an HDR10 display format.
+
+Availability depends on the platform, GPU, driver and required libraries. The
+[build kit guide](docs/README-BuildKit.md) covers setup; [the architecture guide](docs/architecture.md) describes
+the renderer.
+
+</details>
+
+## Getting started
+
+**This fork does not have published release packages yet.** Use the source and build kit guides below for now.
+The [Releases page](https://github.com/Larbaco/NX2navi/releases) is the place to check for future packages.
+
+NX2Saria is the fork's new name. Existing tools and documentation still use names such as
+`NX2navi-Setup-<version>.exe`, `nx2navi.ini` and the `NX2NAVI_*` environment variables.
+
+### Before you build
+
+- **Game:** your own `.nup` dump of the Nintendo Switch 2 edition with update **1.1.1**. The build kit checks the
+  version before building; do not assume another update is compatible.
+- **CPU and memory:** x86-64, SSE4.2, at least 16 GB of RAM. AVX2/FMA-capable CPUs can use a faster build.
+  Memory-heavy areas can exceed what a 16 GB system has available.
+- **Storage:** about 34 GB free for the game, in addition to the dump and build tools. The Windows launcher and
+  its tools need about another 1.5 GB.
+- **Graphics:** Vulkan 1.3 with `VK_EXT_external_memory_host` and `VK_EXT_mesh_shader`, and a current driver.
+- **Platform:** Windows 10 or later, or Linux with kernel 6.7 or later. Linux also needs the compiler and
+  development libraries listed in the build guide.
+
+### Windows
+
+Follow [Building from source](docs/building.md) to prepare the toolchain and source checkout, or
+[the manual build kit guide](docs/README-BuildKit.md) if you already have a kit. The resulting game is
+`ocarina.exe`. [The launcher guide](docs/launcher.md) explains the installer and update workflow for packaged
+Windows builds.
+
+### Linux
+
+Follow [the Linux build kit guide](docs/README-BuildKit.md#linux) for dependencies and shader translator setup,
+then run from the prepared checkout or kit:
+
+```sh
+python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"
+"$HOME/Games/Ocarina/ocarina"
+```
+
+On a 16 GB system, add `--jobs 4` to the build command to limit concurrent compiler processes. Linux support is
+still in progress; see [the platform notes](docs/building.md#linux-in-progress) for requirements and limitations.
+
+## Status and known issues
+
+**In development.** The project has playable paths, but graphics, stability and performance vary by game version,
+scene, hardware and driver. Inclusion of a community fix does not establish compatibility on every system.
+
+- The first start after installation or a driver update, and the first visit to an area, can pause for compilation.
+- A 16 GB system can run out of memory in Hyrule Field. Read the
+  [memory and page file guidance](docs/README-BuildKit.md#playing) before playing on a constrained system.
+- Some integrated AMD GPUs can fail at the title screen because of host memory heap limits.
+- Visual bugs and crashes remain, including a rare crash in the game's particle code.
+- Long Linux sessions and Steam Deck hardware validation remain open in the platform documentation.
+
+Issue tracking is not enabled on this fork yet. When preparing a bug report, follow
+[CONTRIBUTING.md](CONTRIBUTING.md): include the fork commit or package version, game update, OS, GPU and driver,
+steps to reproduce, and the relevant log. Review attachments for private paths and never upload game files or keys.
+
+## Documentation
+
+- **Playing:** [controls](docs/controls.md), [settings reference](nx2navi.ini.example), [amiibo](docs/amiibo.md).
+- **Installing and building:** [build kit](docs/README-BuildKit.md), [source build](docs/building.md),
+  [Windows launcher](docs/launcher.md).
+- **Contributing:** [contribution guide](CONTRIBUTING.md), [architecture](docs/architecture.md),
+  [Maxwell renderer notes](docs/maxwell.md).
+
+Build outputs stay in ignored `build/` and `generated/` folders. The runtime's shaders are kept as source;
+compiled headers are generated during the build. Run `python tools/check_content.py` before committing.
+
+## Credits and origins
+
+NX2Saria is maintained by **[Larbaco](https://github.com/Larbaco)**. It is an independent fork of
+**[NX2navi](https://github.com/tangerineturtle1/NX2navi)**, whose recompilation pipeline, runtime, renderer and
+launcher form its foundation. Credit belongs to the original authors and to the community contributors whose
+changes are integrated here; individual contributions and merge attributions remain in the commit history.
+
+The NX2Saria name and README artwork identify this fork. They do not imply an official NX2navi release or a
+Nintendo project. The underlying tools retain their existing names for now.
+
+## License and notices
+
+The source is public to read. Its additions and changes are all rights reserved
+([LICENSE-ADDITIONS](LICENSE-ADDITIONS)): no part of them may be copied or published without written permission.
+The base import stays under its [MIT License](LICENSE), and third-party code keeps its own license
+([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). No license grants anything for Nintendo's game.
+
+NX2Saria is an independent, non-commercial fan project, not affiliated with or endorsed by Nintendo.
+*The Legend of Zelda*, *Ocarina of Time* and *Nintendo Switch* are trademarks of Nintendo.
