@@ -7820,7 +7820,8 @@ static void lb_state(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
 // except while the start waits for the whole warm after a driver change, where cold is the expected answer. The cache
 // counts as warm when LW_WARM_SHARE of the sample was fast: a cache the driver has partly evicted (a size limit keeps
 // some of the libraries and drops others) is to be warmed, and one or two fast builds say little.
-// shader-warm.txt also keeps how far a warm came ("warming <driver> <strikes> <variant>"), written every 8,000 variants:
+// shader-warm.txt also keeps how far a warm came ("warming <driver> <strikes> <variant>"), written every 8,000 variants
+// and when the warm ends for a run before it is done (lw_keep_progress):
 // a run that ends before the warm does is followed by one that goes on from there, not from the first variant again,
 // which on a PC whose sessions were shorter than a warm under play (15 minutes) began the list again at every start.
 #define LW_SAMPLE 12
@@ -7869,6 +7870,20 @@ static double lw_build(const GfxWarmEnt *e) {
     return ms;
 }
 
+// A warm that ends for a run before it is done keeps how far it came, as the 8,000-variant marks do: the memory gate
+// stopped it (lw_worker) or the window closed (vk_pipeline_save_exit). Without it a PC whose runs each end a few hundred
+// variants in (an integrated GPU whose memory is the system's, with the commit near its limit) begins the list again
+// at every start and never gets past its first variants.
+static void lw_keep_progress(void) {
+    // the workers take the variants in order, each holds at most one unbuilt: all below this are built
+    int64_t d = LW.done;
+    size_t at = LW.from + (size_t)(d > LW.threads ? d - LW.threads : 0);
+    if (at <= LW.from) return;
+    lw_stamp_at("warming", LW.strikes, at);
+    rt_log("vk_pipeline: library warm: %lld prepared variants built in this run; the next start goes on from variant "
+           "%zu of %zu", (long long)d, at, LW.n);
+}
+
 static void lw_worker(void *arg) {
     int me = (int)(intptr_t)arg, idle = 0;   // me: its journal slot while the start waits (bf_wait)
     no_cache = 1;   // into the driver's own cache only (see no_cache)
@@ -7905,11 +7920,14 @@ static void lw_worker(void *arg) {
                    LW.n - LW.from, (now_ms() - LW.t0) / 1000, at);
         }
     }
-    if (!plat_dec32(&LW.running) && !LW.stop && !LW.short_mem) {
+    if (plat_dec32(&LW.running)) return;   // the last worker out says how the warm ended
+    if (!LW.stop && !LW.short_mem) {
         lw_stamp("done", LW.strikes);
         rt_log("vk_pipeline: library warm: done, %zu prepared variants in %.0f s on %d threads; new pipelines "
                "link from the driver's cache from here on", LW.n, (now_ms() - LW.t0) / 1000, LW.threads);
+        return;
     }
+    lw_keep_progress();   // ended for this run before it was done (no commit headroom)
 }
 
 // The median time of LW_SAMPLE prepared fragment libraries spread over the list, in ms, and in *fast how many were
@@ -9014,6 +9032,9 @@ void vk_pipeline_save(void) {
 // SAVE_WAIT_MS for the running ones to finish (cache_saving_at_exit).
 void vk_pipeline_save_exit(void) {
     journal_close();   // an orderly end during the whole warm is not a driver crash
+    // The process ends without joining the library warm's workers: a warm still under way keeps how far it came. They
+    // stop taking variants first; one that finishes its build before the exit writes the mark again, a little further.
+    if (plat_cas32(&LW.running, 0, 0) > 0 && !plat_xchg32(&LW.stop, 1)) lw_keep_progress();
     save_with(SAVE_WAIT_MS, 1);
 }
 
