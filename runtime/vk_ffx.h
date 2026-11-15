@@ -58,8 +58,8 @@ void vk_ffx_release_idle(void);
 // FSR 3.1's contexts that no upscale used in the last `recent` calls, let go of: room for an FSR 4 context whose
 // creation failed, whose caller makes their memory free (vk_ffx_dead_take after vk_upscaler_gpu_wait). Their count.
 int vk_ffx_trim_idle(uint64_t recent);
-// The FSR 3.1 and FSR 4 contexts let go of: those whose last upscale's submission is at most done are destroyed (their
-// count); the highest such submission among those left (0: none).
+// The FSR 3.1 and FSR 4 contexts let go of (outside Windows FSR 3.1's are vk_fsr3.c's): those whose last upscale's
+// submission is at most done are destroyed (their count); the highest such submission among those left (0: none).
 int vk_ffx_dead_take(uint64_t done);
 uint64_t vk_ffx_dead_fence(void);
 // The device's functions as the library is given them (ffxCreateBackendVKDesc.vkDeviceProcAddr): its pipeline creates

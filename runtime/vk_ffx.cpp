@@ -372,11 +372,18 @@ extern "C" int vk_ffx_trim_idle(uint64_t recent) {
 
 extern "C" int vk_ffx_dead_take(uint64_t done) {
     int n = g_dead.n ? upd_take(&g_dead, done, UINT64_MAX, dead_release, nullptr) : 0;
+#ifndef _WIN32
+    n += vk_fsr3_dead_take(done);   // the runtime's passes' contexts (vk_fsr3.c), FSR 3.1's there
+#endif
     return n + vk_ffx4_dead_take(done);
 }
 
 extern "C" uint64_t vk_ffx_dead_fence(void) {
     uint64_t a = upd_max_fence(&g_dead), b = vk_ffx4_dead_fence();
+#ifndef _WIN32
+    const uint64_t f = vk_fsr3_dead_fence();
+    if (f > a) a = f;
+#endif
     return a > b ? a : b;
 }
 

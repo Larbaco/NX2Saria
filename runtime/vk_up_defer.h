@@ -1,11 +1,11 @@
-// What an upscaler lets go of while the GPU may still use it (vk_dlaa.c, vk_ffx.cpp, vk_ffx4.cpp): a DLSS feature, an
-// FSR upscaling context, or an image frame generation can still read at a present. Each owner keeps a list and
-// releases an entry with its own callback, on the thread that makes the upscaler's other calls (vk_dlaa.c's pass
+// What an upscaler lets go of while the GPU may still use it (vk_dlaa.c, vk_ffx.cpp, vk_ffx4.cpp, vk_fsr3.c): a DLSS
+// feature, an FSR upscaling context, or an image frame generation can still read at a present. Each owner keeps a list
+// and releases an entry with its own callback, on the thread that makes the upscaler's other calls (vk_dlaa.c's pass
 // hooks), once the GPU timeline has reached the value of the last submission that named it (fence; 0: none did) and
 // the present count has reached presents (0: no such gate). Nothing here waits: the owner checks at its own calls
 // (upd_take), and only a full list or a refused creation falls back to a wait, in the owner.
 // A header of its own so that tests/up_defer_check.c checks it without a GPU; vk_ffx.cpp and vk_ffx4.cpp include it as
-// C++.
+// C++, vk_dlaa.c and vk_fsr3.c as C.
 #pragma once
 #include <stdint.h>
 

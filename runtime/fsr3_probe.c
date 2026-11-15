@@ -521,10 +521,12 @@ int probe_fsr3(void) {
         if (!ok) printf("probe-fsr3: FAIL the timing run\n"), bad = 1;
 #ifndef _WIN32   // where vk_ffx.cpp hands FSR 3.1 to vk_fsr3.c
         // The upscaler switched off (vk_dlaa.c retire_idle, the GPU idle after each frame here): vk_ffx_release_idle
-        // destroys the contexts, and the next upscale makes one again.
+        // lets the contexts go, vk_upscaler_let_go destroys them (the GPU is past them), and the next upscale makes
+        // one again.
         if (ok) {
             int held = vk_ffx_holds(), made = vk_fsr3_contexts_made();
             vk_ffx_release_idle();
+            vk_upscaler_let_go();
             int left = vk_ffx_holds();
             g.timed = 0, g.reset = 1;
             ok = submit_wait(&g);

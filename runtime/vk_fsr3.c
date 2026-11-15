@@ -19,18 +19,23 @@
 //
 // Contexts (ctx_for): one per render size and output size, or with the game's dynamic resolution one per output size
 // for every render size up to it, at most CTX_MAX; one no upscale used for 90 seconds goes, and all of them go while
-// the upscaler is off (vk_fsr3_release_idle). The constants live in a host-visible ring of RING slots; a slot is
+// the upscaler is off (vk_fsr3_release_idle). A context that goes is let go of (retire_ctx) and its images are
+// destroyed once the GPU is past the submission of its last upscale (g_dead, vk_dlaa.c "what the upscalers let go of"),
+// as vk_ffx.cpp does with the library's contexts. The constants live in a host-visible ring of RING slots; a slot is
 // reused RING calls later, after the GPU passed the submission that last read it.
 #include "vk.h"
 
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cfg.h"
 #include "host.h"
 #include "platform/platform.h"
+#include "vk_exec.h"
 #include "vk_fsr3.h"
+#include "vk_up_defer.h"
 
 #include "fsr3_accumulate_sharpen_spv.h"
 #include "fsr3_accumulate_spv.h"
@@ -163,6 +168,7 @@ typedef struct {
     uint32_t mw, mh, ow, oh;   // the render size it was made for (the largest it takes with drs); the output size
     int drs;                   // made for dynamic resolution: every render size up to mw x mh
     uint64_t used, used_ns;    // G.tick and the time when ctx_for last returned it
+    uint64_t fence;            // the submission of its last upscale (vk_exec_recording_fence), 0 none
     VkImage img[I_N];
     VmaAllocation mem[I_N];
     VkImageView view[I_N];
@@ -198,6 +204,12 @@ static struct {
     uint64_t tick;
     int made;   // contexts made so far (vk_fsr3_contexts_made)
 } G = {.state = -1};
+
+// The contexts let go of (retire_ctx), destroyed once the GPU is past their last upscale (vk_fsr3_dead_take, which
+// vk_ffx.cpp vk_ffx_dead_take calls at vk_dlaa.c's takes). Each entry's handle is a heap copy of the context (its images
+// and views). Only the thread that makes the upscales (vk_dlaa.c's pass hooks) touches it; vk_fsr3_release at teardown.
+static UpdList g_dead;
+enum { DEAD_CTX = 1 };   // its one kind
 
 // ---- setup
 
@@ -401,13 +413,54 @@ int vk_fsr3_contexts_made(void) { return G.made; }
 
 // ---- contexts
 
-static void destroy_ctx(Ctx *x, int deferred) {
+// A context's images and views destroyed at once: for one no submission names (half made), one the GPU is past
+// (dead_release) and teardown (the device idle).
+static void free_ctx(Ctx *x) {
     const VkCtx *c = vk_ctx();
     for (int i = 0; i < SPD_VIEWS; i++)
-        if (x->spd_mip[i]) deferred ? vk_defer_view(x->spd_mip[i]) : vkDestroyImageView(c->device, x->spd_mip[i], NULL);
+        if (x->spd_mip[i]) vkDestroyImageView(c->device, x->spd_mip[i], NULL);
     for (int i = 0; i < I_N; i++) {
-        if (x->view[i]) deferred ? vk_defer_view(x->view[i]) : vkDestroyImageView(c->device, x->view[i], NULL);
-        if (x->img[i]) deferred ? vk_defer_image(x->img[i], x->mem[i]) : vmaDestroyImage(c->vma, x->img[i], x->mem[i]);
+        if (x->view[i]) vkDestroyImageView(c->device, x->view[i], NULL);
+        if (x->img[i]) vmaDestroyImage(c->vma, x->img[i], x->mem[i]);
+    }
+    memset(x, 0, sizeof *x);
+}
+
+// One entry of g_dead, as upd_take hands it out, timed as "upscaler releases" (NX2NAVI_TRACE=perf).
+static void dead_release(const UpdEntry *e, void *arg) {
+    (void)arg;
+    uint64_t t0 = perf_mark_begin();
+    Ctx *d = (Ctx *)e->handle;
+    free_ctx(d);
+    free(d);
+    perf_mark_end(PERF_M_UPREL, t0, 0);
+}
+
+// A context let go of while the GPU may still run a command buffer that names it: its images and views go once the GPU
+// is past the submission of its last upscale (g_dead), and the slot is free at once. The caller calls
+// vk_upscaler_let_go after it (or its own caller does: vk_dlaa.c retire_idle after vk_fsr3_release_idle).
+static void retire_ctx(Ctx *x, const char *why, int log) {
+    if (log)
+        rt_log("fsr3: the context for %ux%u (render size %ux%u) let go of (destroyed once the GPU is past its last "
+               "upscale): %s", x->ow, x->oh, x->mw, x->mh, why);
+    Ctx *d = malloc(sizeof *d);
+    if (!d) {
+        // no room for the entry: the images go to vk_memory.c's deferred destruction, stamped with the submission
+        // being recorded, which comes after every submission that named them
+        for (int i = 0; i < SPD_VIEWS; i++) vk_defer_view(x->spd_mip[i]);
+        for (int i = 0; i < I_N; i++) vk_defer_view(x->view[i]), vk_defer_image(x->img[i], x->mem[i]);
+        memset(x, 0, sizeof *x);
+        return;
+    }
+    *d = *x;
+    if (!upd_put(&g_dead, DEAD_CTX, d, NULL, x->fence, 0)) {
+        // full, which the GPU's progress does not let happen: room after a wait for the device, or else all of them go,
+        // the device idle
+        vk_upscaler_settle();
+        if (!upd_put(&g_dead, DEAD_CTX, d, NULL, x->fence, 0)) {
+            upd_take_all(&g_dead, dead_release, NULL);
+            upd_put(&g_dead, DEAD_CTX, d, NULL, x->fence, 0);
+        }
     }
     memset(x, 0, sizeof *x);
 }
@@ -432,14 +485,14 @@ static int make_ctx(Ctx *x, uint32_t mw, uint32_t mh, uint32_t ow, uint32_t oh) 
         }
         if (!make_image(iw, ih, levels, IMG[i].fmt, u, &x->img[i], &x->mem[i]) ||
             !(x->view[i] = make_view(x->img[i], IMG[i].fmt, 0, levels))) {
-            destroy_ctx(x, 0);
+            free_ctx(x);   // half made: no submission names it
             return 0;
         }
     }
     for (uint32_t m = 0; m < SPD_VIEWS; m++) {
         uint32_t level = m < x->spd_levels ? m : x->spd_levels - 1;   // a small scene has fewer mips than the passes name
         if (!(x->spd_mip[m] = make_view(x->img[I_SPD], IMG[I_SPD].fmt, level, 1))) {
-            destroy_ctx(x, 0);
+            free_ctx(x);
             return 0;
         }
     }
@@ -458,10 +511,7 @@ static int make_ctx(Ctx *x, uint32_t mw, uint32_t mh, uint32_t ow, uint32_t oh) 
 static void trim(uint64_t now_ns) {
     for (int i = 0; i < CTX_MAX; i++) {
         Ctx *x = &G.ctx[i];
-        if (!x->img[0] || now_ns - x->used_ns <= CTX_IDLE_NS) continue;
-        rt_log("fsr3: the context for %ux%u (render size %ux%u) destroyed: no upscale used it for 90 s", x->ow, x->oh,
-               x->mw, x->mh);
-        destroy_ctx(x, 1);
+        if (x->img[0] && now_ns - x->used_ns > CTX_IDLE_NS) retire_ctx(x, "no upscale used it for 90 s", 1);
     }
 }
 
@@ -472,22 +522,24 @@ int vk_fsr3_holds(void) {
 }
 
 void vk_fsr3_release_idle(void) {
-    for (int i = 0; i < CTX_MAX; i++) {
-        Ctx *x = &G.ctx[i];
-        if (!x->img[0]) continue;
-        rt_log("fsr3: the context for %ux%u (render size %ux%u) destroyed: the upscaler is off", x->ow, x->oh, x->mw,
-               x->mh);
-        destroy_ctx(x, 0);   // the device is idle (the caller waited for it)
-    }
+    for (int i = 0; i < CTX_MAX; i++)
+        if (G.ctx[i].img[0]) retire_ctx(&G.ctx[i], "the upscaler is off", 1);
 }
+
+int vk_fsr3_dead_take(uint64_t done) {
+    return g_dead.n ? upd_take(&g_dead, done, UINT64_MAX, dead_release, NULL) : 0;
+}
+
+uint64_t vk_fsr3_dead_fence(void) { return upd_max_fence(&g_dead); }
 
 // One context per render size and output size, as vk_ffx.cpp context_for keeps the library's: a render size of its own
 // starts a new history, as the library's new context does. With the game's dynamic resolution on (NX2NAVI_DYN_RES,
 // dynres.c), whose steps change the render size every few seconds, one context per output size takes every render
 // size up to the output's, each call's own size coming from the constants. A context of another render size goes once
 // no command buffer still being recorded can name it (CTX_RECENT), and the game's second scenes, of another output
-// size, keep their own. When all are taken, the least recently used one goes for the new size. Its images go through
-// vk_defer_image: the GPU may still run a command buffer that names them.
+// size, keep their own. When all are taken, the least recently used one goes for the new size. A context that goes is
+// let go of (retire_ctx): the GPU may still run a command buffer that names it. Images that cannot be made while
+// contexts let go of are still in flight are tried once more after the GPU is past those and they are destroyed.
 static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     G.tick++;
     uint64_t now = plat_now_ns();
@@ -499,14 +551,13 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
             (drs ? w <= x->mw && h <= x->mh : w == x->mw && h == x->mh))
             found = x;
     }
+    int gone = 0;
     for (int i = 0; i < CTX_MAX; i++) {   // the contexts of this output size for another render size, once not recent
         Ctx *x = &G.ctx[i];
-        if (x->img[0] && x != found && x->ow == ow && x->oh == oh && G.tick - x->used >= CTX_RECENT) {
-            rt_log("fsr3: the context for %ux%u (render size %ux%u) destroyed: the render size changed", x->ow, x->oh,
-                   x->mw, x->mh);
-            destroy_ctx(x, 1);
-        }
+        if (x->img[0] && x != found && x->ow == ow && x->oh == oh && G.tick - x->used >= CTX_RECENT)
+            retire_ctx(x, "the render size changed", 1), gone++;   // their work may be in flight
     }
+    if (gone) vk_upscaler_let_go();
     if (found) {
         found->used = G.tick, found->used_ns = now;
         return found;
@@ -522,16 +573,28 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     }
     if (!slot && lru) {
         static int told;
-        if (told++ < 20)
-            rt_log("fsr3: the context for %ux%u (render size %ux%u) destroyed: its slot went to another output size",
-                   lru->ow, lru->oh, lru->mw, lru->mh);
-        destroy_ctx(lru, 1);
+        retire_ctx(lru, "its slot went to another output size", told++ < 20);   // its work may still be in flight
+        vk_upscaler_let_go();
         slot = lru;
     }
     if (!slot) return NULL;
     // the render size itself; for dynamic resolution, every size up to the output's (and a scene at the output size)
     uint32_t mw = !drs ? w : w > ow ? w : ow, mh = !drs ? h : h > oh ? h : oh;
-    if (!make_ctx(slot, mw, mh, ow, oh)) {
+    int made = make_ctx(slot, mw, mh, ow, oh);
+    if (!made && vk_ffx_dead_fence()) {
+        // Refused while contexts let go of (this file's and the other upscalers') are still in flight: most often their
+        // video memory. The GPU finishes with them (vk_upscaler_gpu_wait: those submissions only, not the device), they
+        // go, and the images are made once more, as vk_ffx.cpp context_for does for the library's contexts, rather
+        // than the upscaler failing.
+        const uint64_t w0 = plat_now_ns();
+        const int gone2 = vk_ffx_dead_take(vk_upscaler_gpu_wait(vk_ffx_dead_fence()));
+        const double waited = (double)(plat_now_ns() - w0) / 1e6;
+        if (gone2) made = make_ctx(slot, mw, mh, ow, oh);
+        rt_log("fsr3: images for %ux%u from %ux%u refused with contexts let go of still in flight: waited %.1f ms for "
+               "the GPU, %d destroyed, %s", ow, oh, mw, mh, waited, gone2,
+               !gone2 ? "not tried again" : made ? "made at the second try" : "refused again");
+    }
+    if (!made) {
         rt_log("fsr3: images for %ux%u from %ux%u could not be made", ow, oh, mw, mh);
         return NULL;
     }
@@ -652,6 +715,7 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
     trim(plat_now_ns());
     Ctx *x = ctx_for(w, h, ow, oh);
     if (!x) return 0;
+    x->fence = vk_exec_recording_fence();   // cb names its images from here on
     // the frame's camera, or where it is not known the values vk_ffx.cpp vk_ffx_upscale gives the library then
     float fov_y = cam && cam->fov_y > 0 && cam->fov_y < 3.14159f ? cam->fov_y : 1.0f;
     float znear = cam && cam->znear > 0 ? cam->znear : 0.1f, zfar = cam && cam->zfar > 0 ? cam->zfar : 1e8f;
@@ -777,10 +841,12 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
     return 1;
 }
 
+// Teardown and the probe: the device is idle.
 void vk_fsr3_release(void) {
     if (!vk_ctx()) return;
     for (int i = 0; i < CTX_MAX; i++)
-        if (G.ctx[i].img[0]) destroy_ctx(&G.ctx[i], 0);
+        if (G.ctx[i].img[0]) free_ctx(&G.ctx[i]);
+    upd_take_all(&g_dead, dead_release, NULL);
     destroy_global();
     memset(G.ring_fence, 0, sizeof G.ring_fence);
     G.ring_next = 0, G.tick = 0, G.shared_fresh = 0;

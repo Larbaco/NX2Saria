@@ -253,7 +253,9 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   `amd_fidelityfx_vk.dll` (`vk_ffx.cpp`); the other builds, which have no such library, run `vk_fsr3.c`: FSR 3.1's
   compute passes (`runtime/shaders/fsr3_*.comp` over the headers in `runtime/shaders/ffx3/`, options in
   `fsr3_options.h`) compiled into the runtime like its other shaders, with the library's contexts: one per render size,
-  or one for every size up to the output's with the game's dynamic resolution. `--probe-fsr3` runs them on a synthetic
+  or one for every size up to the output's with the game's dynamic resolution; one that goes is let go of and its
+  images destroyed once the GPU is past its last upscale, as the library's are (`vk_dlaa.c`, "what the upscalers let go
+  of"). `--probe-fsr3` runs them on a synthetic
   panning scene (`tests/fsr3_check.py`). FSR 3.1 frame generation (`vk_fg.cpp`) needs the library.
 - HDR (`vk_hdr.c`): the game tonemaps its scene into a float target, upscales it, draws the HUD into a second float
   target and copies that into the 8-bit sRGB window texture it presents. With `NX2NAVI_HDR=1` the tonemap shader gets
