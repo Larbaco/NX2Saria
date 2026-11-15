@@ -655,29 +655,37 @@ static void add(char *key, char *value, int line) {
 // value of a row with a set cut first, cut_comment)
 // Hand-edited files had values no consumer takes, and nothing said so: "sharpness = 250" is past 0..100. Only the
 // sets that are the consumers' own are checked: 0|1 (with the words switch_word reads), ranges lo..hi, and lists of
-// words. A list with a number in it is the menu's presets, and its consumer takes more (fps_limit any rate from 30 to
-// 240, render_scale 25..400), so it is left alone. A list of words names the menu's choices; a consumer may take more
-// (dlss_preset any letter a..m), so the line says no more than that. A ';' or '#' after a blank is still named where it
-// stays in the value: a free-text row's value, and the environment's. At most CHECK_LINES lines per load, then a count.
+// words. A list with a number in it is the menu's presets, and its consumer takes more (render_scale 25..400), so it
+// is left alone. A list may hold one range among its words (fps_limit 30..240|display|unlimited): a number fits it as
+// it fits a range alone. A list of words names the menu's choices; a consumer may take more (dlss_preset any letter
+// a..m), so the line says no more than that. A ';' or '#' after a blank is still named where it stays in the value: a
+// free-text row's value, and the environment's. At most CHECK_LINES lines per load, then a count.
 static int misfits;
 static int switch_of(const char *v);
+
+// Whether v is a number in the range m[0..n) ("lo..hi"): 1 yes, 0 no, -1 when m is not such a range.
+static int range_fit(const char *m, size_t n, const char *v) {
+    char s[64], *end;
+    if (n >= sizeof s) return -1;
+    memcpy(s, m, n), s[n] = 0;
+    char *dots = strstr(s, "..");
+    if (!dots || dots == s) return -1;
+    *dots = 0;   // the low end apart: strtod would take "0." of "0..100" for a number
+    double lo = strtod(s, &end);
+    if (*end) return -1;
+    double hi = strtod(dots + 2, &end);
+    if (end == dots + 2 || *end) return -1;
+    // any number: some rows with whole ends take fractions (dyn_res_target 16.7 in 0..100)
+    double x = strtod(v, &end);
+    return end != v && !*end && x == x && x >= lo && x <= hi;
+}
 
 // NULL when v fits the set, else what the log line says of it (in buf).
 static const char *misfit(const char *set, const char *v, char *buf, size_t cap) {
     if (!strcmp(set, "0|1")) return switch_of(v) < 0 ? "is not 0, 1, on, off, true, false, yes or no" : NULL;
-    const char *dots = strstr(set, "..");
-    if (dots && !strchr(set, '|')) {
-        char lo_s[32], *end;   // the low end apart: strtod would take "0." of "0..100" for a number
-        size_t ln = (size_t)(dots - set);
-        if (!ln || ln >= sizeof lo_s) return NULL;
-        memcpy(lo_s, set, ln), lo_s[ln] = 0;
-        double lo = strtod(lo_s, &end);
-        if (*end) return NULL;
-        double hi = strtod(dots + 2, &end);
-        if (end == dots + 2 || *end) return NULL;
-        // any number: some rows with whole ends take fractions (dyn_res_target 16.7 in 0..100)
-        double x = strtod(v, &end);
-        if (end != v && !*end && x == x && x >= lo && x <= hi) return NULL;
+    if (strstr(set, "..") && !strchr(set, '|')) {
+        int fit = range_fit(set, strlen(set), v);
+        if (fit) return NULL;   // fits, or a set that is no range this reads
         snprintf(buf, cap, "is not a number in %s", set);
         return buf;
     }
@@ -691,6 +699,7 @@ static const char *misfit(const char *set, const char *v, char *buf, size_t cap)
     for (const char *m = set; *m;) {
         size_t n = strcspn(m, "|");
         if (strlen(v) == n && !strncasecmp(m, v, n)) return NULL;
+        if (range_fit(m, n, v) == 1) return NULL;
         m += n + (m[n] == '|');
     }
     snprintf(buf, cap, "is none of the menu's choices %s", set);
