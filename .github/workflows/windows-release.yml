@@ -28,6 +28,9 @@ jobs:
     env:
       TAG: ${{ inputs.tag }}
       PY: uv run --no-project --python 3.14 --with numpy python
+      # make_launcher runs the release's own tools/make_game.py for the prebuilt runtime; a __pycache__ it left in the
+      # release's tools/ would be refused by the release's content check (check_content's .pyc folds its marker)
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
