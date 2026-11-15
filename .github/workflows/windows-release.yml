@@ -37,10 +37,14 @@ jobs:
           dotnet-version: '10.0.x'
       - uses: astral-sh/setup-uv@v6
       - name: Tools on PATH
-        # NativeAOT finds MSVC through vswhere (docs/building.md)
+        # NativeAOT finds MSVC through vswhere (docs/building.md). The runtime's own shaders are compiled with MSYS2
+        # UCRT64's glslc, spirv-as and spirv-val (tools/build_shaders.py looks in C:\msys64\ucrt64\bin), which the
+        # runner's MSYS2 installs from its packages
         run: |
           echo 'C:\Program Files (x86)\Microsoft Visual Studio\Installer' >> "$GITHUB_PATH"
           uv python install -q 3.14
+          /c/msys64/usr/bin/pacman.exe -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-tools
+          /c/msys64/ucrt64/bin/glslc.exe --version | head -1
       - name: Notes
         run: |
           git fetch -q --depth 1 origin "${{ inputs.notes_ref }}"
