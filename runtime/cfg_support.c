@@ -23,9 +23,10 @@ int cfg_supported(const char *key) {
     if (!strcasecmp(name, "CLOTH_REALTIME")) return has("cloth");
     if (!strcasecmp(name, "HIGHFPS_FIX")) return has("bounce") || has("fade");
     if (!strcasecmp(name, "MENU_CURSOR")) return RT_V143;   // menu_cursor.c enabled()
-    // The camera speed rewrites the player camera's pack of the 1.x Tears-of-the-Kingdom-shaped RomFS (camera_speed.c);
-    // Ocarina's has no such file, so the factor changes nothing there.
-    if (!strcasecmp(name, "STICK_SENS")) return rt_game_version != 111;
+    // STICK_SENS has no entry: romfs.c overlay_init serves the player camera's pack with its speeds multiplied
+    // (camera_overlay, camera_speed.c cam_pack_build) on every game version, 1.1.1 included, and cam_speed_tick follows
+    // a change during the run. Whether the pack was found is known only once the RomFS is up (romfs.c fs_init), which
+    // on 1.1.1 is after boot.c cfg_log_unsupported first asks, and the log says so then ("camera speed: ...").
     return 1;
 }
 
