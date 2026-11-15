@@ -43,7 +43,9 @@ static const CfgMeta kMeta[] = {
 };
 static const struct { const char *key, *value; } kSet[] = {{"VK_PRESENT", "mailbox"}, {"PERF_OVERLAY", "full"}};
 
-static const char *strip(const char *name) { return strncmp(name, "NX2NAVI_", 8) ? name : name + 8; }
+static const char *strip(const char *name) {   // the key without NX2SARIA_ or the earlier NX2NAVI_
+    return !strncmp(name, "NX2SARIA_", 9) ? name + 9 : !strncmp(name, "NX2NAVI_", 8) ? name + 8 : name;
+}
 
 extern "C" {
 const CfgMeta *cfg_meta(const char *key) {

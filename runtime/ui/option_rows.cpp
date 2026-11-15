@@ -406,6 +406,8 @@ struct Group {
     std::string label_str, from, to;
 };
 
+constexpr size_t KEY_PREFIX = sizeof "NX2SARIA_" - 1;   // Change::key starts with it; the log names the key after it
+
 struct Change {
     std::string key;       // NX2SARIA_ + upper case
     std::string gid;       // the group
@@ -423,10 +425,14 @@ unsigned g_sync_ver;
 // The row opt_choice_index answered for, which the opt_apply calls that follow belong to.
 struct { bool valid; std::string gid, from, to; UiTextId label; } g_ctx;
 
+// The draft's spelling of a setting's name: NX2SARIA_ and the key in upper case, from the key with that prefix, with
+// the earlier NX2NAVI_ or with none.
 std::string norm_key(const char *key) {
     std::string k = key;
     for (char &c : k) c = (char)toupper((unsigned char)c);
-    return k.compare(0, 8, "NX2SARIA_") ? "NX2SARIA_" + k : k;
+    if (!k.compare(0, KEY_PREFIX, "NX2SARIA_")) return k;
+    if (!k.compare(0, sizeof "NX2NAVI_" - 1, "NX2NAVI_")) k.erase(0, sizeof "NX2NAVI_" - 1);
+    return "NX2SARIA_" + k;
 }
 
 // Keys that are live in the table but stay in the draft until Apply: the window, the present mode, HDR and the frame
@@ -511,7 +517,7 @@ void record(const std::string &key, const char *value, const std::string &gid, b
         if (!n.staged) cfg_hold(key.c_str(), 1);
         g_changes.push_back(n);
         c = &g_changes.back();
-        rt_log("menu: draft + %s: %s -> %s (%s)", key.c_str() + 8, shown(n.orig_eff).c_str(), shown(eff_of(key, value)).c_str(),
+        rt_log("menu: draft + %s: %s -> %s (%s)", key.c_str() + KEY_PREFIX, shown(n.orig_eff).c_str(), shown(eff_of(key, value)).c_str(),
                n.staged ? "staged: waits for Apply" : "preview: in effect now");
     }
     if (Group *g = find_group(gid)) {
@@ -522,7 +528,7 @@ void record(const std::string &key, const char *value, const std::string &gid, b
     c->new_val = value;
     if (!c->staged) write_key(key, c->new_val);
     if (eff_of(key, c->new_val) == c->orig_eff) {   // back where it began
-        rt_log("menu: draft - %s: back to %s", key.c_str() + 8, shown(c->orig_eff).c_str());
+        rt_log("menu: draft - %s: back to %s", key.c_str() + KEY_PREFIX, shown(c->orig_eff).c_str());
         if (!c->staged) cfg_revert(key.c_str(), c->orig_val, c->orig_state);
         erase_change((size_t)(c - g_changes.data()));
     }
@@ -658,7 +664,7 @@ void opt_draft_sync(void) {
     for (size_t i = g_changes.size(); i-- > 0;) {
         const Change &c = g_changes[i];
         if (eff_now(c.key) == (c.staged ? c.orig_eff : eff_of(c.key, c.new_val))) continue;
-        rt_log("menu: draft - %s: changed outside the menu (F10, F11, a cheat) to %s, which stays", c.key.c_str() + 8,
+        rt_log("menu: draft - %s: changed outside the menu (F10, F11, a cheat) to %s, which stays", c.key.c_str() + KEY_PREFIX,
                shown(eff_now(c.key)).c_str());
         if (!c.staged) cfg_hold(c.key.c_str(), 0);
         erase_change(i);
@@ -668,7 +674,7 @@ void opt_draft_sync(void) {
 void opt_draft_discard(void) {
     if (!g_changes.empty()) rt_log("menu: draft discarded: %d change(s), nothing saved", (int)g_changes.size());
     for (const Change &c : g_changes) {
-        rt_log("menu: draft   %s back to %s%s", c.key.c_str() + 8, shown(c.orig_eff).c_str(),
+        rt_log("menu: draft   %s back to %s%s", c.key.c_str() + KEY_PREFIX, shown(c.orig_eff).c_str(),
                c.staged ? " (it never left the draft)" : " (the preview is undone)");
         if (!c.staged) cfg_revert(c.key.c_str(), c.orig_val, c.orig_state);
     }
@@ -709,7 +715,7 @@ bool opt_draft_apply(bool timed) {
     rt_log("menu: draft applied: %d change(s)%s", (int)g_changes.size(), timed ? "" : " (for a restart)");
     for (const Change &c : g_changes) {
         const bool held = c.staged && timed && group_timed(c.gid);
-        rt_log("menu: draft   %s: %s -> %s%s%s", c.key.c_str() + 8, shown(c.orig_eff).c_str(),
+        rt_log("menu: draft   %s: %s -> %s%s%s", c.key.c_str() + KEY_PREFIX, shown(c.orig_eff).c_str(),
                shown(eff_of(c.key, c.new_val)).c_str(),
                !held ? ", saved" : is_timed(c) ? ", in effect now, saved only after Keep"
                                            : ", saved only after Keep, with the display settings of its row",
@@ -745,7 +751,7 @@ int opt_display_external(void) {
 
 bool opt_display_keep(void) {
     for (const Pending &p : g_display) {
-        rt_log("menu: display kept: %s = %s", p.key.c_str() + 8, shown(eff_now(p.key)).c_str());
+        rt_log("menu: display kept: %s = %s", p.key.c_str() + KEY_PREFIX, shown(eff_now(p.key)).c_str());
         cfg_hold(p.key.c_str(), 0);
     }
     g_display.clear();
@@ -762,7 +768,7 @@ bool opt_display_revert(void) {
     }
     for (const Pending &p : g_display) {
         cfg_revert(p.key.c_str(), p.orig_val, p.orig_state);
-        rt_log("menu: display reverted: %s back to %s, not saved", p.key.c_str() + 8, shown(eff_now(p.key)).c_str());
+        rt_log("menu: display reverted: %s back to %s, not saved", p.key.c_str() + KEY_PREFIX, shown(eff_now(p.key)).c_str());
     }
     g_display.clear();
     return true;
