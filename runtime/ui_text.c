@@ -695,8 +695,13 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_FRAMEGEN_DESC_FSR] = "Adds generated frames for smoother motion. Needs FSR 3.1.",
     [UI_MENU_UPSCALING_DESC_NO_FSR] = "How the picture is smoothed and scaled to your window. Native draws the 3D scene "
                                       "at the picture's full size with no upscaler: the sharpest, and the most GPU "
+#ifdef _WIN32
                                       "work. AMD FSR 3.1 is not offered here: it needs amd_fidelityfx_vk.dll, which "
                                       "cannot be loaded.",
+#else   // no library to load: the game's own passes (vk_fsr3.c vk_fsr3_init) found the device cannot run them
+                                      "work. AMD FSR 3.1 is not offered here: the game's own FSR 3.1 cannot run on "
+                                      "this GPU or driver (see the fsr3 line in the log for why).",
+#endif
     [UI_MENU_FSR3_OFF] = "in use: off, FSR 3.1 is not available",
     [UI_MENU_FRAMEGEN_DESC_DLSS] = "Adds generated frames for smoother motion. Needs DLSS.",
     [UI_MENU_FRAMEGEN_NOTE_DLSS] = "needs DLSS",
@@ -802,8 +807,14 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                    "нагрузка на видеокарту.",
     [UI_MENU_UPSCALING_DESC_NO_FSR] = "Как картинка сглаживается и масштабируется под окно. «Родное» рисует 3D-сцену "
                                       "в полном размере картинки без апскейлера: самая чёткая картинка и самая "
+#ifdef _WIN32
                                       "большая нагрузка на видеокарту. AMD FSR 3.1 здесь не предлагается: ему нужен "
                                       "amd_fidelityfx_vk.dll, который не удаётся загрузить.",
+#else
+                                      "большая нагрузка на видеокарту. AMD FSR 3.1 здесь не предлагается: встроенный "
+                                      "в игру FSR 3.1 не может работать на этой видеокарте или с этим драйвером "
+                                      "(причина — в строке fsr3 в журнале).",
+#endif
     [UI_MENU_GAME_ASPECT] = "Широкий экран",
     [UI_MENU_GAME_ASPECT_DESC] = "Расширяет обзор. Интерфейс и меню остаются 16:9.",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9 (как в игре)", [UI_MENU_GAME_ASPECT_WINDOW] = "По окну",
@@ -1455,8 +1466,13 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                    "tamanho total da imagem, sem upscaler: a mais nítida, e a que mais exige da GPU.",
     [UI_MENU_UPSCALING_DESC_NO_FSR] = "Como a imagem é suavizada e ajustada à janela. Nativo desenha a cena 3D no "
                                       "tamanho total da imagem, sem upscaler: a mais nítida, e a que mais exige da "
+#ifdef _WIN32
                                       "GPU. O AMD FSR 3.1 não é oferecido aqui: ele precisa do amd_fidelityfx_vk.dll, "
                                       "que não pode ser carregado.",
+#else
+                                      "GPU. O AMD FSR 3.1 não é oferecido aqui: o FSR 3.1 próprio do jogo não roda "
+                                      "nesta GPU ou neste driver (veja o motivo na linha fsr3 do log).",
+#endif
     [UI_MENU_GAME_ASPECT] = "Tela larga",
     [UI_MENU_GAME_ASPECT_DESC] = "Amplia a visão. A interface e os menus continuam em 16:9.",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9 (o do jogo)", [UI_MENU_GAME_ASPECT_WINDOW] = "Formato da janela",
@@ -2127,8 +2143,13 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALING_DESC_FSR] = "画面如何平滑并缩放到窗口。原生：以画面的完整尺寸绘制 3D 场景，不使用超分辨率："
                                    "最清晰，GPU 负担也最大。",
     [UI_MENU_UPSCALING_DESC_NO_FSR] = "画面如何平滑并缩放到窗口。原生：以画面的完整尺寸绘制 3D 场景，不使用超分辨率："
+#ifdef _WIN32
                                       "最清晰，GPU 负担也最大。此处不提供 AMD FSR 3.1：它需要 "
                                       "amd_fidelityfx_vk.dll，但无法加载。",
+#else
+                                      "最清晰，GPU 负担也最大。此处不提供 AMD FSR 3.1：游戏自带的 FSR 3.1 "
+                                      "无法在此 GPU 或驱动上运行（原因见日志中的 fsr3 一行）。",
+#endif
     [UI_MENU_GAME_ASPECT] = "宽屏",
     [UI_MENU_GAME_ASPECT_DESC] = "扩大视野。界面和菜单保持 16:9。",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9（游戏原生）", [UI_MENU_GAME_ASPECT_WINDOW] = "窗口比例",

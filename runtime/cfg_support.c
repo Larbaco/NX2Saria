@@ -15,17 +15,20 @@ int cfg_supported(const char *key) {
     snprintf(k, sizeof k, "%s", key);
     const char *name = k;
     if (!strncasecmp(name, "NX2NAVI_", 8)) name += 8;
-    if (!strcasecmp(name, "FOV")) return has("fov");
+    if (!strcasecmp(name, "FOV")) return has("fov");   // resolution.c res_fov_live
+    // resolution.c decide reads both, and only res_init's patch of the output and scene sets uses them
     if (!strcasecmp(name, "OUTPUT_RES") || !strcasecmp(name, "RENDER_SCALE")) return res_adjustable();
-    if (!strcasecmp(name, "SHADOW_RES")) return has("shadow");
-    if (!strcasecmp(name, "SHADOW_RANGE")) return has("cascade");
-    if (!strcasecmp(name, "REALTIME")) return has("realtime");
-    if (!strcasecmp(name, "CLOTH_REALTIME")) return has("cloth");
-    if (!strcasecmp(name, "HIGHFPS_FIX")) return has("bounce") || has("fade");
+    if (!strcasecmp(name, "SHADOW_RES")) return has("shadow");       // resolution.c shadow_init
+    if (!strcasecmp(name, "SHADOW_RANGE")) return has("cascade");    // resolution.c res_shadow_range
+    if (!strcasecmp(name, "REALTIME")) return has("realtime");       // the set's switch (patches.c), frame_rate.c
+    if (!strcasecmp(name, "CLOTH_REALTIME")) return has("cloth");    // the set's switch (patches.c)
+    // the switch of three sets (recomp/patches-v*.txt): bounce, fade and cursor
+    if (!strcasecmp(name, "HIGHFPS_FIX")) return has("bounce") || has("fade") || has("cursor");
     if (!strcasecmp(name, "MENU_CURSOR")) return RT_V143;   // menu_cursor.c enabled()
-    // The camera speed rewrites the player camera's pack of the 1.x Tears-of-the-Kingdom-shaped RomFS (camera_speed.c);
-    // Ocarina's has no such file, so the factor changes nothing there.
-    if (!strcasecmp(name, "STICK_SENS")) return rt_game_version != 111;
+    // STICK_SENS has no entry: romfs.c overlay_init serves the player camera's pack with its speeds multiplied
+    // (camera_overlay, camera_speed.c cam_pack_build) on every game version, 1.1.1 included, and cam_speed_tick follows
+    // a change during the run. Whether the pack was found is known only once the RomFS is up (romfs.c fs_init), which
+    // on 1.1.1 is after boot.c cfg_log_unsupported first asks, and the log says so then ("camera speed: ...").
     return 1;
 }
 

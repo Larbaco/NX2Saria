@@ -911,6 +911,13 @@ static void row_low_latency(void) {
     if (nv >= 0 && nv < n) opt_apply("NX2NAVI_LOW_LATENCY", values[nv]);
 }
 
+// The row's "after restart" for a value of the setting, as row_low_latency gives it: on in a run whose device was made
+// without the driver's mode (VK_LOWLAT_RESTART). option_rows.cpp live_needs_restart asks it for the draft's list and
+// the restart box after Apply.
+extern "C" int menu_lowlat_restart_for(const char *value) {
+    return vk_lowlat_status() == VK_LOWLAT_RESTART && atoi(value) > 0;
+}
+
 // ---- the tabs
 
 // The PCI vendor of the GPU the game renders on (menu_overlay_frame reads it from the device it is given; 0 before the
@@ -1137,7 +1144,7 @@ static void row_hdr(void) {
     opt_slider("NX2NAVI_HDR_PEAK_NITS", UI_MENU_HDR_PEAK, 400, 10000, UI_MENU_HDR_PEAK_DESC, 50, "%.0f nits");
     opt_slider("NX2NAVI_HDR_GAME_NITS", UI_MENU_HDR_GAME, 48, 500, UI_MENU_HDR_GAME_DESC, 1, "%.0f nits");
     opt_slider("NX2NAVI_HDR_UI_NITS", UI_MENU_HDR_UI, 48, 500, UI_MENU_HDR_UI_DESC, 1, "%.0f nits");
-    if (!strcmp(cfg_value("NX2NAVI_HDR"), "native")) return;
+    if (!strcmp(opt_value("NX2NAVI_HDR"), "native")) return;   // the draft's value, as the row above shows it
     static const char *const curves[] = {"vanilla", "psychov35", "renodrt"};
     static const char *const curve_names[] = {"Vanilla", "PsychoV35", "RenoDRT"};
     opt_choice_list("NX2NAVI_HDR_TONEMAP", UI_MENU_HDR_TONEMAP, curves, curve_names, 3, UI_MENU_HDR_TONEMAP_DESC);
@@ -1529,9 +1536,10 @@ static void tab_game(float scale) {
         const char *names[] = {auto_name, "0", "1", "2", "3", "4", "5", "6", "7", "8"};
         opt_choice_list("NX2NAVI_REPLAY_WORKERS", UI_MENU_REPLAY_WORKERS, vals, names, 10, UI_MENU_REPLAY_WORKERS_DESC);
     }
-    const char *wset = cfg_value("NX2NAVI_REPLAY_WORKERS");
+    // the draft's values (both are read at start, so they wait for Apply): the rows below follow the rows above
+    const char *wset = opt_value("NX2NAVI_REPLAY_WORKERS");
     const bool workers = (!strcmp(wset, "auto") ? vk_exec_replay_workers_auto(nullptr) : atoi(wset)) > 0,
-               pipe = workers && cfg_int("NX2NAVI_REPLAY_PIPE") > 0;
+               pipe = workers && opt_int("NX2NAVI_REPLAY_PIPE") > 0;
     if (!workers) opt_disable_next(UI_MENU_NEEDS_WORKERS);
     opt_slider("NX2NAVI_REPLAY_PIPE", UI_MENU_REPLAY_PIPE, 0, 4, UI_MENU_REPLAY_PIPE_DESC, 1, "%.0f");
     if (!pipe) opt_disable_next(workers ? UI_MENU_NEEDS_PIPE : UI_MENU_NEEDS_WORKERS);
@@ -1724,8 +1732,21 @@ static int g_post = POST_NONE;
 static bool g_post_open;               // its popup was opened
 static int g_post_frame;               // the ImGui frame it opens in
 static uint64_t g_keep_deadline_ns;    // plat_now_ns() at which the display settings revert
-static std::vector<std::string> g_restart_lines;   // the applied restart-only settings, "label: new value"
+// The applied restart-only settings, "label: new value"; display: the row's keys wait for the keep box (the Resolution
+// row's game resolution, OptDraftItem.display), and its Revert takes the line away (keep_reverted).
+struct RestartLine {
+    std::string text;
+    bool display;
+};
+static std::vector<RestartLine> g_restart_lines;
 static const uint64_t KEEP_NS = 15ull * 1000000000ull;
+
+// The keep box put the display settings back (opt_display_revert), and with them the restart-only keys of their rows:
+// those lines no longer wait for a restart.
+static void keep_reverted(void) {
+    for (size_t i = g_restart_lines.size(); i-- > 0;)
+        if (g_restart_lines[i].display) g_restart_lines.erase(g_restart_lines.begin() + (std::ptrdiff_t)i);
+}
 
 static void leave_menu(void) {
     if (g_modal || g_post != POST_NONE) return;   // a box is open already: the player is answering it
@@ -1834,7 +1855,8 @@ static void apply_confirm(float scale) {
         g_restart_lines.clear();   // read before Apply empties the draft
         for (int i = 0; i < n; i++) {
             OptDraftItem it;
-            if (opt_draft_item(i, &it) && it.restart) g_restart_lines.push_back(std::string(it.label) + ": " + it.to);
+            if (opt_draft_item(i, &it) && it.restart)
+                g_restart_lines.push_back({std::string(it.label) + ": " + it.to, it.display});
         }
         bool ok = opt_draft_apply(true);
         // a failed write keeps the menu (its bottom row says so), unless display keys wait for their answer
@@ -1871,7 +1893,7 @@ static void post_confirm(float scale) {
         rt_log("menu: box %s: closed from outside: %s", keep_box ? "\"Keep these display settings?\"" : "restart",
                keep_box ? "Revert" : "Later");
         if (keep_box) {
-            opt_display_revert();
+            if (opt_display_revert()) keep_reverted();
             gfx_window_apply_settings();
             post_next(true);
         } else {
@@ -1917,7 +1939,7 @@ static void post_confirm(float scale) {
             if (yes) {
                 opt_display_keep();
             } else {
-                opt_display_revert();
+                if (opt_display_revert()) keep_reverted();
                 gfx_window_apply_settings();
             }
             ImGui::CloseCurrentPopup();
@@ -1928,7 +1950,7 @@ static void post_confirm(float scale) {
     } else {
         ImGui::TextUnformatted(menu_text(UI_MENU_RESTART_NOW_TITLE));
         ImGui::Spacing();
-        for (const std::string &l : g_restart_lines) ImGui::TextUnformatted(l.c_str());
+        for (const RestartLine &l : g_restart_lines) ImGui::TextUnformatted(l.text.c_str());
         const bool saving = fs_save_busy() != 0;
         if (saving)
             ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "%s", menu_text(UI_MENU_RESTART_SAVING));

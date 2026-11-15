@@ -40,7 +40,7 @@ static const char *const known[] = {
     "CORES", "TM_DISPATCH", "NVN2_CS_TABLE", "SKIP_SHADERS", "MOVIE_DEBAND", "MOVIE_FPS", "MOVIE_SKIP", "MOVIE_OVERLAY", "MOVIES", "NPLN", "NVN2_PROGRAMS", "NVN_TRAP", "OCARINA_REALTIME", "ONESHOT_BUDGET", "ONESHOT_WAIT_MS", "OCARINA_STEP", "PHYSICS_STEPS", "PHYSICS_STEPS_FULL", "PICKUP_COUNT", "WATER_STEPS", "SOUND_STEPS", "FLOOR_PROBE", "FLOOR_SCAN", "FLOOR_WATCH", "FLOOR_CARRY", "MOVIE_PTS", "STEP_STEADY", "VI_HZ", "VI_VRR", "TIME_DUMP", "SHADER_DUMP", "SHOT_AFTER", "SHOT_DIR", "SHOT_EVERY",   // Switch 2 port: movie skip (romfs.c), NVN2 proc traps (nvn_procs.c)
     "OCARINA_TIMING",
     "FSR3_PROBE_PAN", "FSR3_PROBE_PPM",   // the FSR 3.1 probe (fsr3_probe.c)
-    "AA", "AA_LOG", "AB", "AMIIBO_DIR", "AMIIBO_WRITEBACK", "AMIIBO_POPUP", "AMIIBO_KEYS", "AMIIBO_DAILY_LIMIT", "ANISO", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_CATCHUP", "AUDIO_CHANNELS", "AUDIO_DEVICE", "AUDIO_GAME_PRIO", "AUDIO_OFF", "AUDIO_PREFILL_MS", "AUDIO_RAMP", "AUDIO_STATS",
+    "AA", "AA_LOG", "AB", "AMIIBO_DAILY_LIMIT", "AMIIBO_DIR", "AMIIBO_KEYS", "AMIIBO_POPUP", "AMIIBO_WRITEBACK", "ANISO", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_CATCHUP", "AUDIO_CHANNELS", "AUDIO_DEVICE", "AUDIO_GAME_PRIO", "AUDIO_OFF", "AUDIO_PREFILL_MS", "AUDIO_RAMP", "AUDIO_STATS",
     "AUDIO_STRICT",
     "BARRIER_GAME", "MESH_AHEAD", "MESH_FALLBACK", "MESH_FALLBACK_MB", "MESH_FALLBACK_WORKERS", "MESH_FALLBACK_HOLD", "PROBE_MESHFB_DIR",
     "CAPTURE_AT", "CAPTURE_DIR", "CAPTURE_REPLAY", "CAPTURE_REPLAY_CAMERA",   // bug captures and their replays (bugcap.c)
@@ -175,7 +175,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"PIPE_SEED_BOOT", "performance"}, {"LIB_PREBUILD", "performance"}, {"LIB_PREBUILD_THREADS", "performance"}, {"LIB_WARM", "performance"}, {"PIPE_LINK_MS", "performance"}, {"PIPE_LINK_DRAW_MS", "performance"}, {"PIPE_AHEAD", "performance"}, {"LINE_WIDTH", "performance"}, {"POOL_SHOWN_FIRST", "performance"}, {"POOL_DATA_FIRST", "performance"}, {"TEX_REUSE_NAMED", "performance"}, {"TEX_OVERWRITTEN_USED", "performance"}, {"PIPE_FAST_WORKERS", "performance"}, {"GPL_FEEDBACK", "performance"}, {"GPL_MESH", "performance"}, {"FRAME_HOLD_MS", "performance"}, {"PACE_SMOOTH", "performance"}, {"OQ_BATCH", "performance"}, {"CLEAR_SMALL_CPU", "performance"}, {"PATCH_OCCLUSION_OFF", "performance"}, {"GATE_WAIT_MS", "performance"}, {"PIPE_PREBUILD", "performance"}, {"PIPE_SEED", "performance"},
     {"OQ_HOLD", "performance"}, {"QUAD_INDEX", "performance"},
     {"COMPUTE_KEEP", "performance"},
-    {"LIB_PREBUILD_BIG_BG", "performance"}, {"PIPE_FEEDBACK", "performance"}, {"PIPELINE_CACHE_MAX_MB", "performance"}, {"PIPE_BINARIES", "performance"}, {"PIPE_BINARIES_MAX_MB", "performance"}, {"ONESHOT_WAIT_MS", "performance"}, {"BIG_BUILD_FREE_MB", "performance"}, {"BIG_BUILD_MAX_MB", "performance"}, {"ZSTD_NATIVE", "performance"}, {"ZSTD_CHECK", "performance"}, {"VK_NOOPT", "performance"},
+    {"LIB_PREBUILD_BIG_BG", "performance"}, {"PIPE_FEEDBACK", "performance"}, {"PIPELINE_CACHE_MAX_MB", "performance"}, {"PIPE_BINARIES", "performance"}, {"PIPE_BINARIES_MAX_MB", "performance"}, {"ONESHOT_WAIT_MS", "performance"}, {"BIG_BUILD_FREE_MB", "performance"}, {"BIG_BUILD_MAX_MB", "performance"}, {"ZSTD_CHECK", "performance"}, {"VK_NOOPT", "performance"},
     {"PREWARM_XLATE", "performance"}, {"GPL", "performance"}, {"ASTC", "performance"}, {"MEMORY", "performance"},
     {"TEX_ALIAS", "performance"}, {"DEPTH_INIT_INLINE", "performance"}, {"DEPTH_ALIAS_LOG", "diagnostics"}, {"TEX_DISUSE", "performance"}, {"TEX_DISUSE_EVICT", "performance"}, {"TEX_GEN_UNDO", "performance"}, {"TEX_REUSE", "performance"}, {"TEX_SPLIT_FILL", "performance"}, {"TEX_VRAM_PRESSURE", "performance"}, {"TEX_RELEASED_HOLD", "performance"}, {"TEX_PROC_COMMIT_MB", "performance"}, {"ASTC_BC", "performance"}, {"LOD_GUARD", "performance"}, {"FIX_C0", "performance"}, {"FIX_ZERO", "performance"}, {"WATER_PROJECTIVE", "performance"},
     {"SHADER_COMPRESS", "performance"}, {"SHADER_COMPRESS_IDLE_S", "performance"},
@@ -777,8 +777,7 @@ static uint8_t *utf16_text(const uint8_t *d, uint64_t size) {
     return out;
 }
 
-// Calls sink(key, value, line, ctx) for each "key = value" line of the file at path (key trimmed, value as written after
-// the '=': the sink cuts a comment off it, cut_comment).
+// Calls sink(key, value, line, ctx) for each "key = value" line of the file at path (key and value trimmed, in place).
 // 0 when the file is missing.
 static int parse_ini(const char *path, void (*sink)(char *key, char *value, int line, void *ctx), void *ctx) {
     uint64_t size = 0;
@@ -801,7 +800,7 @@ static int parse_ini(const char *path, void (*sink)(char *key, char *value, int 
             if (!eq) rt_log("cfg: nx2navi.ini line %d: no '=' in '%s'", line, s);
             else {
                 *eq = 0;
-                sink(trim(s), eq + 1, line, ctx);
+                sink(trim(s), eq + 1, line, ctx);   // the value as written: the sink cuts a comment (cut_comment)
             }
         }
         if (!eol) break;
@@ -1036,7 +1035,7 @@ void cfg_hold(const char *name, int on) {
     int i = find_entry(key);
     if (i < 0 && on && n_entries < CFG_MAX_KEYS) {   // a key not set yet: an empty entry the following cfg_set fills
         i = n_entries;
-        entry_line[i] = 0, entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0};
+        entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0};
         __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
     }
     if (i >= 0) entries[i].held = on != 0;
@@ -1540,7 +1539,7 @@ static void log_file_settings(const char *file) {
 }
 
 // ---- cfg_reload_file: the file's lines as a list of (key, value), a repeated key keeping its later line.
-typedef struct { char *key, *value; } FileKey;
+typedef struct { char *key, *value; int line; } FileKey;
 typedef struct { FileKey k[CFG_MAX_KEYS]; int n; } FileKeys;
 
 static const char *file_get(const FileKeys *f, const char *key) {
@@ -1549,10 +1548,11 @@ static const char *file_get(const FileKeys *f, const char *key) {
     return NULL;
 }
 
+// As add reads a line: the comment after a value cut where cfg_load cuts it (cut_comment), one pair of quotes off.
 static void file_sink(char *key, char *value, int line, void *ctx) {
     FileKeys *f = ctx;
     key = norm_key(key);
-    value = cut_comment(key, value, line);   // as add reads the line
+    value = cut_comment(key, value, line);
     size_t vl = strlen(value);
     if (vl >= 2 && value[0] == '"' && value[vl - 1] == '"') value[vl - 1] = 0, value++;
     if (!*key || !*value) return;   // "key =" leaves the setting at its default
@@ -1560,9 +1560,10 @@ static void file_sink(char *key, char *value, int line, void *ctx) {
         if (!strcmp(f->k[i].key, key)) {
             free(f->k[i].value);
             f->k[i].value = strdup(value);
+            f->k[i].line = line;
             return;
         }
-    if (f->n < CFG_MAX_KEYS) f->k[f->n++] = (FileKey){strdup(key), strdup(value)};
+    if (f->n < CFG_MAX_KEYS) f->k[f->n++] = (FileKey){strdup(key), strdup(value), line};
 }
 
 // migrate() on the file's list: pad_layout = xbox_prompts reads as pad_layout = nintendo and prompts = xbox.
@@ -1571,15 +1572,16 @@ static void file_migrate(FileKeys *f) {
     if (!layout || strcasecmp(layout, "xbox_prompts")) return;
     for (int i = 0; i < f->n; i++)
         if (!strcmp(f->k[i].key, "PAD_LAYOUT")) free(f->k[i].value), f->k[i].value = strdup("nintendo");
-    if (!file_get(f, "PROMPTS") && f->n < CFG_MAX_KEYS) f->k[f->n++] = (FileKey){strdup("PROMPTS"), strdup("xbox")};
+    if (!file_get(f, "PROMPTS") && f->n < CFG_MAX_KEYS) f->k[f->n++] = (FileKey){strdup("PROMPTS"), strdup("xbox"), 0};
 }
 
 // ---- validation: a reloaded value is checked before it reaches a consumer. At start a bad value is the player's to fix
 // (some consumers stop the game with it: ov_language, ov_handheld, mem_init); a reload must never do that, so a value that
-// does not fit is rejected and the current one stays. The check follows the row's CfgMeta values (an "a|b|c" list, or a
-// "lo..hi" range: whole numbers when both ends are, else decimals); keys that take more than their row lists have their
-// own rule in value_ok, and keys without a row (bindings, mod lists, cheats) have consumers that fall back on their own
-// and are not checked.
+// does not fit is rejected and the current one stays. The check is the one cfg_load logs at start (misfit: 0|1 with the
+// switch words, a range lo..hi, a list of words; a list with a number in it is the menu's presets and is not checked);
+// keys whose consumers take more than their row lists, or stop the game on a miss, have their own rule in value_ok, and
+// keys without a row or a set (bindings, mod lists, cheats, free text) have consumers that fall back on their own and
+// are not checked.
 static int whole_in(const char *v, long lo, long hi) {
     char *end;
     long l = strtol(v, &end, 10);
@@ -1595,31 +1597,19 @@ static int size_in(const char *v, long min_w, long min_h, long max_w, long max_h
     return end != h_at && !*end && w >= min_w && w <= max_w && h >= min_h && h <= max_h;
 }
 
-// v against the row's values text: a list or a range.
-static int meta_ok(const CfgMeta *m, const char *v, int exact_case) {
-    const char *spec = m->values;
-    if (!spec) return 1;   // free text: a device name, a key name, a folder
-    const char *dots = strstr(spec, "..");
-    if (dots && !strchr(spec, '|')) {
-        char *end;
-        double lo = strtod(spec, NULL), hi = strtod(dots + 2, NULL);
-        int whole = !memchr(spec, '.', (size_t)(dots - spec)) && !strchr(dots + 2, '.');
-        double d = strtod(v, &end);
-        if (end == v || *end || d != d) return 0;
-        if (whole && d != (double)(long long)d) return 0;
-        return d >= lo && d <= hi;
-    }
-    for (const char *p = spec; *p;) {
+// v is one of the row's "a|b|c" values, case and all (ov_language and ov_handheld compare exactly).
+static int listed_exact(const CfgMeta *m, const char *v) {
+    if (!m || !m->values) return 1;
+    for (const char *p = m->values; *p;) {
         size_t n = strcspn(p, "|");
-        if (strlen(v) == n && !(exact_case ? strncmp(p, v, n) : strncasecmp(p, v, n))) return 1;
+        if (strlen(v) == n && !strncmp(p, v, n)) return 1;
         p += n + (p[n] == '|');
     }
     return 0;
 }
 
 static int value_ok(const char *key, const char *v) {
-    // ov_language and ov_handheld compare exactly and stop the game on a miss
-    if (!strcmp(key, "LANG") || !strcmp(key, "OPERATION_MODE")) return meta_ok(cfg_meta(key), v, 1);
+    if (!strcmp(key, "LANG") || !strcmp(key, "OPERATION_MODE")) return listed_exact(cfg_meta(key), v);
     if (!strcmp(key, "FPS_LIMIT")) return !strcasecmp(v, "display") || !strcasecmp(v, "unlimited") || whole_in(v, 30, 240);
     if (!strcmp(key, "RENDER_SCALE")) return !strcasecmp(v, "game") || whole_in(v, 25, 400);
     if (!strcmp(key, "WINDOW_SIZE")) return size_in(v, 640, 360, 7680, 4320);
@@ -1629,7 +1619,8 @@ static int value_ok(const char *key, const char *v) {
         return *v && strtoull(v, &end, 0) != 0 && !*end;
     }
     const CfgMeta *m = cfg_meta(key);
-    return !m || meta_ok(m, v, 0);
+    char buf[160];
+    return !m || !m->values || !misfit(m->values, v, buf, sizeof buf);
 }
 
 static void log_reload(const char *key, const char *value, const char *note) {
@@ -1644,7 +1635,7 @@ static int env_sets(const char *key) {   // the file's new value would not show
 
 // One key of the file that differs from memory: entry e, or NULL for a key the file gained (want is then set). set_lock
 // held. Counts the outcome in r.
-static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const char *want) {
+static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const char *want, int line) {
     if (env_sets(key)) {
         log_reload(key, want, " (overridden by environment)");
         r->env++;
@@ -1661,10 +1652,16 @@ static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const c
         return;
     }
     if (e) {
+        if (e->value) kept_n++, kept_bytes += strlen(e->value) + 1;   // cfg_sizes
         __atomic_store_n(&e->value, want ? strdup(want) : NULL, __ATOMIC_RELEASE);   // the old string stays for readers
+        entry_line[e - entries] = want ? line : 0;
     } else {
-        if (n_entries == CFG_MAX_KEYS) return;
-        entry_line[n_entries] = 0, entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0};
+        if (n_entries == CFG_MAX_KEYS) {
+            full_set(key, "is not kept");
+            return;
+        }
+        entry_line[n_entries] = line;
+        entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0};
         __atomic_store_n(&n_entries, n_entries + 1, __ATOMIC_RELEASE);
     }
     if (!cfg_supported(key)) {   // stored, so memory and file agree, but nothing reads it on this build
@@ -1683,12 +1680,17 @@ int cfg_reload_file(CfgReloadResult *r) {
     CfgReloadResult none = {0};
     if (!r) r = &none;
     *r = (CfgReloadResult){0};
+    if (bugcap_replay_dir()) {   // the capture's settings.ini stands in for nx2navi.ini in this run (load_ini)
+        rt_log("cfg: reload: not run: this run replays a bug capture's settings and does not read nx2navi.ini");
+        return 0;
+    }
     FileKeys *f = calloc(1, sizeof *f);
     if (!f || !find_ini() || !plat_file_exists(ini_path) || !parse_ini(ini_path, file_sink, f)) {
         rt_log("cfg: reload: cannot read nx2navi.ini, settings unchanged");
         free(f);
         return 0;
     }
+    check_end();   // the comments cut_comment named, counted afresh for this read
     file_migrate(f);
     plat_mutex_lock(&set_lock);
     int n = n_entries;
@@ -1696,12 +1698,15 @@ int cfg_reload_file(CfgReloadResult *r) {
         CfgEntry *e = &entries[i];
         const char *now = e->value, *want = file_get(f, e->key);
         if (now ? want && !strcmp(now, want) : !want) continue;
-        reload_one(r, e, e->key, want);
+        int line = 0;
+        for (int k = 0; k < f->n; k++)
+            if (!strcmp(f->k[k].key, e->key)) line = f->k[k].line;
+        reload_one(r, e, e->key, want, line);
     }
     for (int i = 0; i < f->n; i++) {   // keys the file gained
         int have = 0;
         for (int j = 0; j < n && !have; j++) have = !strcmp(entries[j].key, f->k[i].key);
-        if (!have) reload_one(r, NULL, f->k[i].key, f->k[i].value);
+        if (!have) reload_one(r, NULL, f->k[i].key, f->k[i].value, f->k[i].line);
     }
     if (r->changed) __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     plat_mutex_unlock(&set_lock);

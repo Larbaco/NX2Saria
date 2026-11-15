@@ -761,7 +761,8 @@ static void feat_release(NgxHandle *f) {
 //   every NGX call (NGX is not thread safe);
 // - an image frame generation can read at a present (a size's motion vectors, the HUD-less picture) goes into dead
 //   behind a present gate (FG_LATE_PRESENTS), and from there to the deferred destruction;
-// - FSR contexts go into lists of their own in vk_ffx.cpp and vk_ffx4.cpp, taken at the same points.
+// - FSR contexts go into lists of their own in vk_ffx.cpp and vk_ffx4.cpp (outside Windows FSR 3.1's in vk_fsr3.c,
+//   through vk_ffx_dead_take), taken at the same points.
 // The lists are taken at every evaluation (evaluate), at every pass while none runs (retire_idle), and where something
 // is let go of (vk_upscaler_let_go). What still waits: a feature or context creation refused while ones let go of are
 // in flight waits for the GPU to pass those (vk_upscaler_gpu_wait), and a full list for the device (vk_upscaler_settle).
@@ -806,7 +807,8 @@ static void dead_release(const UpdEntry *e, void *teardown) {
     perf_mark_end(PERF_M_UPREL, t0, 0);
 }
 
-// What the upscalers let go of goes once the GPU is past it: DLSS's here, FSR's in vk_ffx.cpp and vk_ffx4.cpp.
+// What the upscalers let go of goes once the GPU is past it: DLSS's here, FSR's in vk_ffx.cpp, vk_ffx4.cpp and
+// vk_fsr3.c.
 static void upscalers_drain(void) {
     const uint64_t done = vk_sync_fence_done();
     if (dead.n) upd_take(&dead, done, presents_now(), dead_release, NULL);

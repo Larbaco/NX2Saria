@@ -15,12 +15,14 @@ void cfg_init(void);
 int cfg_load(const char *path);
 
 // Reads nx2navi.ini again (Ctrl+F5, ui/menu.cpp) and applies what changed since it was loaded, without a restart: a line
-// changed, added or removed (the key then falls back to its default). Each new value is checked first (cfg.c value_ok:
-// the row's list or range, and the consumers that stop the game on a bad one); a value that does not fit is rejected and
-// the current one stays. Kept as they are, and logged: keys the environment sets, and keys changed in the menu and not
+// changed, added or removed (the key then falls back to its default). Each line is read as cfg_load reads it (a comment
+// after a value cut) and each new value is checked first (cfg.c value_ok: the check cfg_load logs at start for values
+// outside their rows' sets, and rules for the consumers that take more or stop the game on a bad one); a value that does
+// not fit is rejected and the current one stays. Kept as they are, and logged: keys the environment sets, and keys changed in the menu and not
 // saved yet or held by its draft (cfg_hold). Applied keys are not marked for cfg_save and cfg_version is bumped once.
 // Every key is logged ("cfg: reload ..."). Fills *r (may be NULL): changed counts the keys that now read the new value
-// on this game build, restart those of them read at start only. Returns 0 when the file cannot be read. Any thread.
+// on this game build, restart those of them read at start only. Returns 0 when the file cannot be read, and in a run
+// that replays a bug capture's settings (NX2NAVI_CAPTURE_REPLAY), which reads no nx2navi.ini. Any thread.
 typedef struct { int changed, restart, rejected, env, kept; } CfgReloadResult;
 int cfg_reload_file(CfgReloadResult *r);
 

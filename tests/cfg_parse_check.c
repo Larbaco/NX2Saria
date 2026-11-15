@@ -36,6 +36,7 @@ void rt_fatal(const char *fmt, ...) {
     exit(3);
 }
 const char *bugcap_replay_dir(void) { return NULL; }
+int cfg_supported(const char *key) { (void)key; return 1; }   // cfg_support.c: no patch sets here, every key counts
 void perf_size(PerfSizes *s, const char *name, uint64_t count, uint64_t limit, uint64_t bytes) {
     (void)s, (void)name, (void)count, (void)limit, (void)bytes;
 }
@@ -64,7 +65,6 @@ int plat_file_write_atomic(const char *p, const void *d, size_t n) { (void)p, (v
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 int plat_setenv(const char *n, const char *v) { (void)n, (void)v; return 1; }
-int cfg_supported(const char *key) { (void)key; return 1; }   // cfg_support.c: every key does something here
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);

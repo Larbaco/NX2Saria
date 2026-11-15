@@ -333,9 +333,10 @@ typedef enum {
     // the same rows' texts on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there
     UI_MENU_UPSCALING_DESC_FSR, UI_MENU_FRAMEGEN_DESC_FSR, UI_MENU_FRAMEGEN_NOTE_FSR,
     UI_MENU_FRAMEGEN_NEEDS_FSR,
-    // and on a build where FSR 3.1 does not load (vk_ffx_available): the menu leaves it out there, and these texts say so
+    // and where FSR 3.1 cannot run (vk_ffx_available: on Windows amd_fidelityfx_vk.dll does not load, elsewhere the
+    // runtime's own passes cannot run on the device, vk_fsr3.c): the menu leaves it out there, and these texts say so
     UI_MENU_UPSCALING_DESC_NO_FSR,
-    UI_MENU_FSR3_OFF,   // FSR 3.1 is still set but not loadable: "in use: off" and why
+    UI_MENU_FSR3_OFF,   // FSR 3.1 is still set but cannot run: "in use: off" and why
     UI_MENU_UPSCALING_NATIVE,   // the scene at the picture's own size, no upscaler (ui/menu.cpp share_native)
     UI_MENU_FRAMEGEN_DESC_DLSS, UI_MENU_FRAMEGEN_NOTE_DLSS, UI_MENU_FRAMEGEN_NEEDS_DLSS,   // DLSS only
     UI_MENU_FRAMEGEN_DESC_NONE, UI_MENU_FRAMEGEN_NEEDS_NONE,                               // neither runs

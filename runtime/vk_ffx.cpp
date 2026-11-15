@@ -372,11 +372,18 @@ extern "C" int vk_ffx_trim_idle(uint64_t recent) {
 
 extern "C" int vk_ffx_dead_take(uint64_t done) {
     int n = g_dead.n ? upd_take(&g_dead, done, UINT64_MAX, dead_release, nullptr) : 0;
+#ifndef _WIN32
+    n += vk_fsr3_dead_take(done);   // the runtime's passes' contexts (vk_fsr3.c), FSR 3.1's there
+#endif
     return n + vk_ffx4_dead_take(done);
 }
 
 extern "C" uint64_t vk_ffx_dead_fence(void) {
     uint64_t a = upd_max_fence(&g_dead), b = vk_ffx4_dead_fence();
+#ifndef _WIN32
+    const uint64_t f = vk_fsr3_dead_fence();
+    if (f > a) a = f;
+#endif
     return a > b ? a : b;
 }
 
@@ -508,8 +515,8 @@ extern "C" ffxReturnCode_t vk_ffx_dispatch(ffxContext *ctx, const ffxDispatchDes
 }
 
 // The upscaler is off (vk_dlaa.c retire_idle): FSR 3.1's and FSR 4's upscale contexts are let go of, made again at the
-// next upscale; the caller's vk_upscaler_let_go frees them once the GPU is past them. Outside Windows FSR 3.1's are
-// vk_fsr3.c's. Frame generation's contexts are not these.
+// next upscale; outside Windows FSR 3.1's are vk_fsr3.c's. The caller's vk_upscaler_let_go frees them once the GPU is
+// past them. Frame generation's contexts are not these.
 extern "C" int vk_ffx_holds(void) {
 #ifndef _WIN32
     if (vk_fsr3_holds()) return 1;
