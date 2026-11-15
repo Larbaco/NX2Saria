@@ -11,6 +11,19 @@ highlighted figure on the reader and closes the list; **B** closes it without on
 game asks, with the cursor on the figure it was on last time (until the game is closed). Turn it off under
 **Advanced** in the Amiibo tab (`amiibo_popup = 0`).
 
+## The daily limit
+
+The game's amiibo table (`Game/AmiiboSetting/AmiiboSetting.game__ui__AmiiboSetting.bgyml`) gives the two figures with
+a mask (numbers `0x04FD` and `0x04FF`) their mask at every tap. The figures of the Zelda series, and Link, Zelda and
+Ganon of the other series, give three to five random items (hearts, magic, ammunition) once a day; after that the game
+says "You cannot use this amiibo anymore today". Other figures give nothing.
+
+**Amiibo daily limit** in the **Game** tab (`amiibo_daily_limit`) is on by default, as in the game. Off, every tap
+gives items: the game reads each drop table's `EnableDailyLimit` when it reads a figure, and a code patch (the patch
+set `amiibo_daily`, `recomp/patches-v111.txt`) makes it read false, as the mask figures' tables say. The change applies
+to the next figure the game reads, without a restart. The table itself is not changed, so a mod's drops stay. Game
+version 1.1.1 only; on other versions the row is not shown.
+
 ## The Amiibo tab
 
 Open the settings menu (F1) and pick the **Amiibo** tab.
@@ -77,10 +90,11 @@ write into a dump the port copies it once to `<dump>.bak` (an existing `.bak` is
 ## Settings
 
 In `nx2navi.ini` ([nx2navi.ini.example](../nx2navi.ini.example), `[amiibo]`) or as `NX2NAVI_*` environment variables
-(`NX2NAVI_AMIIBO_DIR`, ...). All four apply while the game runs; a changed keys file is read at **Reload keys**.
+(`NX2NAVI_AMIIBO_DIR`, ...). All of them apply while the game runs; a changed keys file is read at **Reload keys**.
 
 | Key | Default | |
 | --- | --- | --- |
+| `amiibo_daily_limit` | `1` | `0`: no figure has the game's once-a-day limit (the Game tab's **Amiibo daily limit**; 1.1.1). |
 | `amiibo_dir` | `amiibo` | The folder the Amiibo tab lists; the keys file's default place. |
 | `amiibo_keys` | `key_retail.bin` in the amiibo folder | Your keys file. |
 | `amiibo_popup` | `1` | `0`: the list does not open over the game when it asks for an amiibo. |

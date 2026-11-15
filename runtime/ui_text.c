@@ -528,6 +528,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_POPUP] = "Show the amiibo list when the game asks for an amiibo",
     [UI_MENU_AMIIBO_POPUP_TITLE] = "The game is waiting for an amiibo",
     [UI_MENU_AMIIBO_POPUP_HINT] = "A: tap   B: close",
+    [UI_MENU_AMIIBO_DAILY_LIMIT] = "Amiibo daily limit",
+    [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "On, as in the game: a figure gives its items once a day, and after that the "
+                                        "game says you cannot use it again today. Off: it gives items every time it is "
+                                        "tapped. The two figures that give a mask have no limit either way.",
     [UI_MENU_MENU_LANG] = "Menu language", [UI_MENU_MENU_LANG_DESC] = "Language of this menu and the overlay.",
     [UI_MENU_MENU_LANG_AUTO] = "Automatic (from Windows)",
     [UI_MENU_LOW_END_GPU] = "Low-end GPU mode (experimental)",
@@ -1179,6 +1183,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_POPUP] = "Показывать список amiibo, когда игра просит amiibo",
     [UI_MENU_AMIIBO_POPUP_TITLE] = "Игра ждёт amiibo",
     [UI_MENU_AMIIBO_POPUP_HINT] = "A: приложить   B: закрыть",
+    [UI_MENU_AMIIBO_DAILY_LIMIT] = "Дневной лимит amiibo",
+    [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "Вкл., как в игре: фигурка даёт предметы раз в день, после чего игра пишет, "
+                                        "что сегодня её больше использовать нельзя. Выкл.: предметы при каждом "
+                                        "прикладывании. Две фигурки, которые дают маску, не ограничены в любом случае.",
     [UI_MENU_MENU_LANG] = "Язык меню", [UI_MENU_MENU_LANG_DESC] = "Язык этого меню и индикатора.",
     [UI_MENU_MENU_LANG_AUTO] = "Автоматически (из Windows)",
     [UI_MENU_LOW_END_GPU] = "Режим для слабых видеокарт (экспериментальный)",
@@ -1638,6 +1646,11 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_POPUP] = "Mostrar a lista de amiibos quando o jogo pedir um amiibo",
     [UI_MENU_AMIIBO_POPUP_TITLE] = "O jogo está esperando um amiibo",
     [UI_MENU_AMIIBO_POPUP_HINT] = "A: encostar   B: fechar",
+    [UI_MENU_AMIIBO_DAILY_LIMIT] = "Limite diário dos amiibos",
+    [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "Ligado, como no jogo: um amiibo dá itens uma vez por dia, e depois disso o "
+                                        "jogo diz \"Não é possível usar este amiibo novamente hoje\". Desligado: ele "
+                                        "dá itens toda vez que é encostado. Os dois amiibos que dão máscara não têm "
+                                        "limite de nenhum jeito.",
     [UI_MENU_MENU_LANG] = "Idioma do menu", [UI_MENU_MENU_LANG_DESC] = "Idioma deste menu e do indicador.",
     [UI_MENU_MENU_LANG_AUTO] = "Automático (do Windows)",
     [UI_MENU_LOW_END_GPU] = "Modo para GPUs fracas (experimental)",
@@ -2331,6 +2344,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_POPUP] = "游戏请求 amiibo 时显示 amiibo 列表",
     [UI_MENU_AMIIBO_POPUP_TITLE] = "游戏正在等待 amiibo",
     [UI_MENU_AMIIBO_POPUP_HINT] = "A：放上   B：关闭",
+    [UI_MENU_AMIIBO_DAILY_LIMIT] = "amiibo 每日限制",
+    [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "开（与游戏相同）：每个 amiibo 每天只给一次道具，之后游戏会提示今天无法再使用该 amiibo。关：每次放上都会给道具。给予面具的两个 amiibo "
+                                        "本来就没有限制。",
     [UI_MENU_MENU_LANG] = "菜单语言",
     [UI_MENU_MENU_LANG_DESC] = "本菜单和性能浮层的语言。",
     [UI_MENU_MENU_LANG_AUTO] = "自动（跟随 Windows）",

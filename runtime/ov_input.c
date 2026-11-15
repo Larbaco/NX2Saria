@@ -20,6 +20,7 @@
 #include "platform/platform.h"
 #include "sprint.h"
 #include "text_speed.h"
+#include "amiibo_daily.h"
 
 typedef struct { int64_t sampling; uint64_t buttons; int32_t lx, ly, rx, ry; uint32_t attributes, pad; } NpadState;
 typedef struct { int64_t sampling; int32_t x, y, dx, dy, wx, wy; uint32_t buttons, attributes; } MouseState;
@@ -105,6 +106,7 @@ static void npad_states(Cpu *c, uint32_t want) {
     if (live) dbg_pad(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);   // its free camera takes the sticks while it flies
     if (live) sprint_pad(&s.buttons);   // the sprint button's presses, kept from the game during gameplay (sprint.c)
     if (live) text_speed_poll();   // the text_speed setting onto the patch page (text_speed.c)
+    amiibo_daily_poll();           // the amiibo_daily_limit setting onto its patch set (amiibo_daily.c)
     *out = s;
     ret_x(c, 1);
 }

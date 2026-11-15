@@ -57,6 +57,7 @@ extern "C" {
 #include "sprint.h"
 #include "sysinfo.h"
 #include "text_speed.h"
+#include "amiibo_daily.h"
 #include "ui/menu.h"
 #include "ui_text.h"
 #include "vk_dlssg.h"
@@ -1472,6 +1473,9 @@ static void tab_game(float scale) {
         static const UiTextId speed[] = {UI_MENU_TEXT_SPEED_NORMAL, UI_MENU_TEXT_SPEED_FAST, UI_MENU_TEXT_SPEED_INSTANT};
         opt_choice("NX2NAVI_TEXT_SPEED", UI_MENU_TEXT_SPEED, speed, 3, UI_MENU_TEXT_SPEED_DESC);
     }
+    // The game's once-a-day amiibo limit (amiibo_daily.c), where the game version has the patch set amiibo_daily; live
+    if (amiibo_daily_available())
+        opt_toggle("NX2NAVI_AMIIBO_DAILY_LIMIT", UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC);
     // discord_rpc.c reads the setting on its own thread and connects or clears the status within half a second
     opt_toggle("NX2NAVI_DISCORD_RPC", UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC);
     rows_saves();
