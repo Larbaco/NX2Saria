@@ -34,7 +34,7 @@
  "phase.prepare.libraries": "Montando os shaders para o driver de vídeo",
  "phase.prepare.pack": "Juntando o cache de shaders num único arquivo",
  "phase.dlss.download": "Baixando o nvngx_dlss.dll do DLSS SDK da NVIDIA",
- "phase.cleanup.ini": "Gravando o nx2navi.ini",
+ "phase.cleanup.ini": "Gravando o nx2saria.ini",
  "phase.cleanup.temp": "Removendo os arquivos temporários",
 
  "cli.usage": "Linha de comando inválida: {detail}",
@@ -97,7 +97,7 @@
  "prepare.shaders_failed": "Falha ao preparar os shaders (código de saída {code}). Detalhes: {log}",
  "cleanup.romfs_unreadable": "Os dados do jogo em {path} estão faltando ou não podem ser lidos depois da instalação. Reinicie o Windows e execute o instalador de novo na mesma pasta: ele extrai os dados do jogo outra vez e mantém o resto.",
  "prepare.pack_failed": "Falha ao juntar o cache de shaders (código de saída {code}). Detalhes: {log}",
- "cleanup.ini_failed": "Não foi possível gravar o nx2navi.ini: {detail}",
+ "cleanup.ini_failed": "Não foi possível gravar o nx2saria.ini: {detail}",
 
  "warn.lang_needs_fonts": "Textos em {lang} precisam das fontes de sistema do Switch, e nenhuma foi informada. O jogo não inicia neste idioma até que sejam adicionadas. Escolha a pasta do firmware (Contents/registered) ou veja \"Switch system fonts\" em docs/installer.md.",
  "warn.cheats_skipped": "Não foi possível compilar os cheats da pasta de mods que alteram o código do jogo; o jogo é instalado sem eles. Detalhes: {log}",
@@ -109,7 +109,7 @@
  "warn.dlss_kept": "Já existe uma biblioteca DLSS na pasta de instalação ({path}); a instalação a mantém.",
  "warn.dlss_download_failed": "Não foi possível baixar o NVIDIA DLSS de {url}: {detail}. O jogo funciona sem ele; a próxima execução da instalação tenta de novo.",
 
- "ui.title": "Instalação do NX2navi",
+ "ui.title": "Instalação do NX2Saria",
  "ui.rebuild_title": "Recompilando o jogo para os seus mods",
  "ui.start_game": "Iniciar o jogo",
  "ui.version": "versão {version}",
@@ -186,8 +186,8 @@
  "param.input.update": "atualização",
  "param.input.keys": "chaves",
 
- "launcher.title": "Instalação do NX2navi",
- "launcher.python_missing": "Os arquivos de instalação estão incompletos: a pasta python ao lado do NX2navi-Setup.exe não existe. Extraia o arquivo compactado inteiro de novo e abra o NX2navi-Setup.exe a partir da pasta extraída.",
+ "launcher.title": "Instalação do NX2Saria",
+ "launcher.python_missing": "Os arquivos de instalação estão incompletos: a pasta python ao lado do NX2Saria-Setup.exe não existe. Extraia o arquivo compactado inteiro de novo e abra o NX2Saria-Setup.exe a partir da pasta extraída.",
 
  "lang.ja": "Japonês",
  "lang.en-US": "Inglês (EUA)",

@@ -1,4 +1,6 @@
-# NX2navi audit
+# NX2Saria audit
+
+> The audit ran while the project was called NX2navi, before the rename to NX2Saria. The names in this file are the ones the cited commits use (`NX2NAVI_*`, `nx2navi.ini`, `nx2navi.exe`, `nx2navi_xlate.exe`, `nx2navi_dlssg.dll`, crash module names such as `nx2navi+0x…`). The code now uses the NX2Saria names and still reads the older settings names; [docs/branding.md](docs/branding.md) has the list.
 
 This file holds the audit's state across sessions: the project context, the subsystem map, the threads and what they
 share, the path of one frame, the allocators, pools and caches, the leads for Phase 3, the findings ledger and what

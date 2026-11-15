@@ -1,4 +1,4 @@
-// The anti-aliasing setting (NX2NAVI_AA, nx2navi.ini aa): what runs in place of the game's own SMAA.
+// The anti-aliasing setting (NX2SARIA_AA, nx2navi.ini aa): what runs in place of the game's own SMAA.
 //
 // Ocarina anti-aliases every frame with SMAA in three compute passes right after the bloom composite: edge detection
 // into 4x4-pixel tiles, blending weights from the tiles (an indirect dispatch, with the game's area lookup texture),
@@ -46,7 +46,7 @@ static const unsigned char search_bytes[] = {
 #define SEARCH_H 16
 
 // FNV-1a over the guest code of the game's three SMAA compute programs (vk_exec_draw.c cs_guest_hash), game 1.1.1,
-// found with NX2NAVI_AA_LOG=1: the edges (a 4x4-pixel tile per invocation), the weights (an indirect dispatch over the
+// found with NX2SARIA_AA_LOG=1: the edges (a 4x4-pixel tile per invocation), the weights (an indirect dispatch over the
 // tiles with edges) and the composition (16x16 pixels per group)
 static const struct { uint64_t hash; int role; } GAME_SMAA[] = {
     {0xfcb21f2afa88378cull, VK_AA_ROLE_EDGES},
@@ -64,7 +64,7 @@ int vk_aa_role(uint64_t guest_hash) {
 static const char *const NAMES[] = {"game", "off", "fxaa", "smaa"};
 
 // DLSS or FSR anti-aliases this frame's scene: dlaa = 1 and one of them runs (vk_dlaa.c)
-static int temporal(void) { return cfg_bool("NX2NAVI_DLAA") && (vk_dlaa_available() || vk_dlaa_fsr3()); }
+static int temporal(void) { return cfg_bool("NX2SARIA_DLAA") && (vk_dlaa_available() || vk_dlaa_fsr3()); }
 
 static struct {
     uint64_t frame_read;   // atomic: the frame whose first vk_aa_mode call took the setting
@@ -87,7 +87,7 @@ int vk_aa_mode(void) {
     if (f == seen || !__atomic_compare_exchange_n(&A.frame_read, &seen, f, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
         return __atomic_load_n(&A.mode, __ATOMIC_ACQUIRE);
     work_idle(f);
-    const char *v = cfg_value("NX2NAVI_AA");
+    const char *v = cfg_value("NX2SARIA_AA");
     int want = VK_AA_GAME;
     for (int i = 1; i < 4; i++)
         if (!strcmp(v, NAMES[i])) want = i;

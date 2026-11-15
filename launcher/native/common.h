@@ -1,4 +1,4 @@
-/* Shared by NX2navi.exe (nx2navi.c) and NX2navi-Setup.exe (setup.c): paths, small files, shortcuts and the
+/* Shared by NX2Saria.exe (nx2saria.c) and NX2Saria-Setup.exe (setup.c): paths, small files, shortcuts and the
    uninstall entry. Wide-character Win32 throughout, so folder names in any language work. */
 #pragma once
 #define COBJMACROS
@@ -14,11 +14,12 @@
 #include <wchar.h>
 
 #define PATHN 1024
-#define APP_NAME L"NX2navi"
-#define UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NX2navi"
+#define APP_NAME L"NX2Saria"
+#define UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NX2Saria"
+#define LEGACY_UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NX2navi"
 /* The launcher window's taskbar identity (launcher/winsys.py app_id): a shortcut that carries it is the one the
    taskbar groups and pins the window under, with the shortcut's icon. */
-#define APP_USER_MODEL_ID L"NX2navi.Launcher"
+#define APP_USER_MODEL_ID L"NX2Saria.Launcher"
 static const PROPERTYKEY NX_PKEY_AppUserModel_ID = {
     {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
 static const IID NX_IID_IPropertyStore = {0x886d8eeb, 0x8cf2, 0x4446, {0x8d, 0x02, 0xcd, 0xba, 0x1d, 0xbd, 0xcf, 0x99}};
@@ -140,14 +141,51 @@ static inline int shortcut_path(int desktop, wchar_t *out, size_t n)
     return swprintf(out, n, L"%ls\\%ls.lnk", dir, APP_NAME) > 0;
 }
 
-/* Create (on) or remove (off) the Desktop and/or Start menu shortcut to root\NX2navi.exe. */
+static inline int legacy_shortcut_path(int desktop, wchar_t *out, size_t n)
+{
+    wchar_t dir[PATHN];
+    if (!known_folder(desktop ? &FOLDERID_Desktop : &FOLDERID_Programs, dir, PATHN)) return 0;
+    return swprintf(out, n, L"%ls\\NX2navi.lnk", dir) > 0;
+}
+
+/* A legacy shortcut may belong to a separate install. Only replace/remove it for this root. */
+static inline int shortcut_in_root(const wchar_t *lnk, const wchar_t *root)
+{
+    IShellLinkW *sl = NULL;
+    IPersistFile *pf = NULL;
+    wchar_t target[PATHN] = {0};
+    int match = 0;
+    HRESULT init = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (SUCCEEDED(CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&sl))) {
+        if (SUCCEEDED(IShellLinkW_QueryInterface(sl, &IID_IPersistFile, (void **)&pf))) {
+            if (SUCCEEDED(IPersistFile_Load(pf, lnk, STGM_READ)) &&
+                SUCCEEDED(IShellLinkW_GetPath(sl, target, PATHN, NULL, SLGP_RAWPATH))) {
+                wchar_t *end = wcsrchr(target, L'\\');
+                if (end) { *end = 0; match = !_wcsicmp(target, root); }
+            }
+            IPersistFile_Release(pf);
+        }
+        IShellLinkW_Release(sl);
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    return match;
+}
+
+/* Create (on) or remove (off) the Desktop and/or Start menu shortcut to root\NX2Saria.exe. */
 static inline int set_shortcut(const wchar_t *root, int desktop, int on)
 {
-    wchar_t lnk[PATHN], target[PATHN];
+    wchar_t lnk[PATHN], legacy[PATHN], target[PATHN];
     if (!shortcut_path(desktop, lnk, PATHN)) return 0;
-    if (!on) return DeleteFileW(lnk) || GetLastError() == ERROR_FILE_NOT_FOUND;
-    swprintf(target, PATHN, L"%ls\\NX2navi.exe", root);
-    return make_shortcut(lnk, target, root, L"Play and update NX2navi");
+    int have_legacy = legacy_shortcut_path(desktop, legacy, PATHN) && shortcut_in_root(legacy, root);
+    if (!on) {
+        int a = !shortcut_in_root(lnk, root) || DeleteFileW(lnk) || GetLastError() == ERROR_FILE_NOT_FOUND;
+        int b = !have_legacy || DeleteFileW(legacy) || GetLastError() == ERROR_FILE_NOT_FOUND;
+        return a && b;
+    }
+    swprintf(target, PATHN, L"%ls\\NX2Saria.exe", root);
+    int ok = make_shortcut(lnk, target, root, L"Play and update NX2Saria");
+    if (ok && have_legacy) DeleteFileW(legacy);
+    return ok;
 }
 
 static inline void reg_str(HKEY k, const wchar_t *name, const wchar_t *value)
@@ -160,7 +198,7 @@ static inline void reg_dword(HKEY k, const wchar_t *name, DWORD value)
     RegSetValueExW(k, name, 0, REG_DWORD, (const BYTE *)&value, sizeof value);
 }
 
-/* The entry in Settings > Apps that runs "NX2navi.exe --uninstall". */
+/* The entry in Settings > Apps that runs "NX2Saria.exe --uninstall". */
 static inline int write_uninstall_entry(const wchar_t *root, const wchar_t *version, DWORD size_kb)
 {
     HKEY k;
@@ -171,13 +209,23 @@ static inline int write_uninstall_entry(const wchar_t *root, const wchar_t *vers
     reg_str(k, L"DisplayVersion", version);
     reg_str(k, L"Publisher", APP_NAME);
     reg_str(k, L"InstallLocation", root);
-    swprintf(buf, PATHN + 64, L"\"%ls\\NX2navi.exe\",0", root);
+    swprintf(buf, PATHN + 64, L"\"%ls\\NX2Saria.exe\",0", root);
     reg_str(k, L"DisplayIcon", buf);
-    swprintf(buf, PATHN + 64, L"\"%ls\\NX2navi.exe\" --uninstall", root);
+    swprintf(buf, PATHN + 64, L"\"%ls\\NX2Saria.exe\" --uninstall", root);
     reg_str(k, L"UninstallString", buf);
     reg_dword(k, L"NoModify", 1);
     reg_dword(k, L"NoRepair", 1);
     reg_dword(k, L"EstimatedSize", size_kb);
     RegCloseKey(k);
+    wchar_t legacy_root[PATHN];
+    DWORD bytes = sizeof legacy_root, type = 0;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, LEGACY_UNINSTALL_KEY, 0, KEY_QUERY_VALUE, &k) == ERROR_SUCCESS) {
+        LONG got = RegQueryValueExW(k, L"InstallLocation", NULL, &type, (BYTE *)legacy_root, &bytes);
+        RegCloseKey(k);
+        if (got == ERROR_SUCCESS && type == REG_SZ && bytes >= sizeof(wchar_t) &&
+            bytes <= sizeof legacy_root && legacy_root[bytes / sizeof(wchar_t) - 1] == 0 &&
+            !_wcsicmp(root, legacy_root))
+            RegDeleteKeyW(HKEY_CURRENT_USER, LEGACY_UNINSTALL_KEY);
+    }
     return 1;
 }

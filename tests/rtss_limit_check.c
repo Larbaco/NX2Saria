@@ -45,7 +45,7 @@ static void settings(void) {
 
 // The kept-out reasons, for the log.
 static void reasons(void) {
-    CHECK(!strcmp(rtss_out_text(RTSS_OUT_SETTING), "NX2NAVI_RTSS=0"), "the setting");
+    CHECK(!strcmp(rtss_out_text(RTSS_OUT_SETTING), "NX2SARIA_RTSS=0"), "the setting");
     CHECK(!strcmp(rtss_out_text(RTSS_OUT_FRAMEGEN), "frame generation"), "frame generation");
     CHECK(!strcmp(rtss_out_text(RTSS_OUT_LOWLAT), "the driver's low latency"), "low latency");
     CHECK(!strcmp(rtss_out_limiter(RTSS_OUT_SETTING), "the game's limiter"), "the setting leaves the game's limiter");

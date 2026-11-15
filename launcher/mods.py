@@ -1,8 +1,8 @@
 """The game's mods folder, for the launcher's Mods screen and Play.
 
-The game reads <game>/mods (nx2navi.ini mods_dir names another folder; a relative one is under the game folder): one
+The game reads <game>/mods (mods_dir in nx2saria.ini names another folder; an existing nx2navi.ini remains supported): one
 folder per mod, each part of it where tools/mod_files.py says (runtime/mods.c). The load order and the switches are
-the game's own settings, mods_order and mods_disabled in nx2navi.ini, which this module writes as runtime/cfg.c does:
+the game's own settings, mods_order and mods_disabled in nx2saria.ini (or its existing nx2navi.ini), which this module writes as runtime/cfg.c does:
 the top mod wins a file two mods replace, and a mod nobody switched off is on.
 
 A mod as players download it often does not sit that way, so prepare() puts the mods folder in order before the game
@@ -54,7 +54,7 @@ class ModError(Exception):
 # ---------------------------------------------------------------- the folder and the settings
 
 def mods_dir(game_dir):
-    """The mods folder the game reads: nx2navi.ini mods_dir, a relative one under the game folder, else mods."""
+    """The mods folder the game reads: mods_dir in nx2saria.ini or an existing nx2navi.ini, else mods."""
     try:
         d = gameini.get(game_dir, 'MODS_DIR')
     except OSError:
@@ -93,7 +93,7 @@ def order(names, wanted):
 
 
 def set_enabled(game_dir, name, on):
-    """Switch a mod on or off for the game's next start (nx2navi.ini mods_disabled)."""
+    """Switch a mod on or off for the game's next start (mods_disabled in the current or existing legacy settings file)."""
     off = [n for n in _names(game_dir, 'MODS_DISABLED') if n != name]
     if not on:
         off.append(name)
@@ -101,7 +101,7 @@ def set_enabled(game_dir, name, on):
 
 
 def move(game_dir, name, d):
-    """Move a mod d places up (negative) or down in the load order (nx2navi.ini mods_order, every mod named)."""
+    """Move a mod d places up (negative) or down in the load order (mods_order in the current or existing legacy settings file)."""
     names = [m.name for m in scan(game_dir, details=False)]
     if name not in names:
         return
@@ -140,7 +140,7 @@ class Mod:
         if '|' in self.name:
             return 'Its folder name holds "|", which the load order list uses: rename the folder.'
         if self.code_module:
-            return ('It holds a code module (subsdk or main in its exefs folder), which NX2navi cannot run: the game '
+            return ('It holds a code module (subsdk or main in its exefs folder), which NX2Saria cannot run: the game '
                     'leaves the whole mod off.')
         if self.unsupported:
             return (f'An ExeFS patch file of it cannot be applied ({self.unsupported}): the game leaves the whole mod '

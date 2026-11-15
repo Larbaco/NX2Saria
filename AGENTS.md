@@ -1,4 +1,4 @@
-# NX2navi
+# NX2Saria
 
 Static recompilation of *Ocarina of Time* (Switch 2, ARM64, game version 1.1.1) into a native Windows x86-64 exe with a Vulkan renderer. Design: [docs/architecture.md](docs/architecture.md). Toolchain, build commands and tests: [docs/building.md](docs/building.md). The players' launcher, setup and updates: [docs/launcher.md](docs/launcher.md).
 
@@ -35,3 +35,7 @@ The repository's additions are all rights reserved (`LICENSE-ADDITIONS`). It nev
 ## Writing
 
 Code, comments, docs and commit messages are in English. Commit messages are plain sentences without type prefixes.
+
+## Names
+
+NX2Saria is the product name. New code, settings and release files use `nx2saria.ini`, `NX2SARIA_*` and the `NX2Saria-` prefix. The older names that still work, and the ones kept on purpose (stable markers, format identifiers, upstream provenance), are listed in [docs/branding.md](docs/branding.md). Do not rename those, the fork's repository URL or `THIRD_PARTY_NOTICES.md`.

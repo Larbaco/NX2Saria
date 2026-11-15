@@ -98,7 +98,7 @@ static void mesa_cache_beside_exe(void) {
 #ifdef __linux__
 // NVIDIA's Linux driver keeps the pipelines it compiles in a disk cache of its own, by default in ~/.cache/nvidia,
 // shared with every program. One process adds at most __GL_SHADER_DISK_CACHE_SIZE to it (1 GiB unless set), and a start
-// that finds more than that in several files deletes the later ones. nx2navi.exe --prepare-shaders builds the 42,142
+// that finds more than that in several files deletes the later ones. nx2saria.exe --prepare-shaders builds the 42,142
 // variants of game 1.1.1 into it in one process: with the default limit it stored about 30,700 of them and the rest
 // were compiled again by the first start after it. So unless the environment sets them, the cache goes to nvidia-cache
 // beside the exe, which nothing else writes, with a limit of NV_CACHE_BYTES. The driver makes GLCache inside that
@@ -138,7 +138,7 @@ static void nvidia_cache_beside_exe(void) {
 // own only for a submission that waits on such a value. Every other vkQueueSubmit2, the command stream's checks and
 // the kernel's ioctl, runs on the replaying thread, once for every part the replay hands to the queue early (vk_exec.c
 // maybe_split). MESA_VK_ENABLE_SUBMIT_THREAD=1 sends every submission to the queue's thread: in Kokiri Forest on an
-// RX 6800 XT (Mesa 26.2) the replay took 13.9 ms a frame with it and 15.0 ms without. NX2NAVI_SUBMIT_THREAD (default
+// RX 6800 XT (Mesa 26.2) the replay took 13.9 ms a frame with it and 15.0 ms without. NX2SARIA_SUBMIT_THREAD (default
 // 1 on Linux, 0 on Windows) sets it unless the environment already sets it; 0 leaves the driver's own choice. Drivers
 // that do not read the variable ignore it. vk_driver_cache_env calls this before any thread can load the driver.
 static const char *submit_thread_why;   // create_device logs it on a Mesa driver
@@ -149,12 +149,12 @@ static void mesa_submit_thread(void) {
         submit_thread_why = "MESA_VK_ENABLE_SUBMIT_THREAD is set in the environment";
         return;
     }
-    if (!cfg_bool("NX2NAVI_SUBMIT_THREAD")) {
-        submit_thread_why = "NX2NAVI_SUBMIT_THREAD=0: the driver's own choice";
+    if (!cfg_bool("NX2SARIA_SUBMIT_THREAD")) {
+        submit_thread_why = "NX2SARIA_SUBMIT_THREAD=0: the driver's own choice";
         return;
     }
     plat_setenv("MESA_VK_ENABLE_SUBMIT_THREAD", "1");
-    submit_thread_why = "every one on the queue's own thread (NX2NAVI_SUBMIT_THREAD=0 leaves the driver's own choice)";
+    submit_thread_why = "every one on the queue's own thread (NX2SARIA_SUBMIT_THREAD=0 leaves the driver's own choice)";
 }
 
 // A driver may read these variables when it loads, and a thread can load the Vulkan driver before create_instance:
@@ -180,9 +180,9 @@ static int create_instance(void) {
     const char *ext[12];
     uint32_t n_ext = (uint32_t)gfx_window_vk_extensions(ext, 7);
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
-    int validate = cfg_bool("NX2NAVI_VK_VALIDATION");
+    int validate = cfg_bool("NX2SARIA_VK_VALIDATION");
     if (validate && !layer_present(layers[0])) {
-        rt_log("vk: NX2NAVI_VK_VALIDATION set but %s is not installed; continuing without", layers[0]);
+        rt_log("vk: NX2SARIA_VK_VALIDATION set but %s is not installed; continuing without", layers[0]);
         validate = 0;
     }
     // DLSS Frame Generation: Streamline's plugins call its naming functions even when they say it is off
@@ -192,8 +192,8 @@ static int create_instance(void) {
     if (vk_hdr_armed() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))   // HDR10 surface formats
         ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
     vk_dlaa_instance_exts(ext, &n_ext, 12);
-    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "NX2navi",
-                             .pEngineName = "NX2navi", .apiVersion = VK_API_VERSION_1_3};
+    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "NX2Saria",
+                             .pEngineName = "NX2Saria", .apiVersion = VK_API_VERSION_1_3};
     VkInstanceCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app,
                                .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext,
                                .enabledLayerCount = validate ? 1 : 0, .ppEnabledLayerNames = layers};
@@ -248,7 +248,7 @@ static int name_has(const char *s, const char *sub) {
 }
 
 // First discrete GPU with Vulkan 1.3, the required extensions and a graphics+present queue (of one GPU listed by two
-// drivers, the newer driver's listing); NX2NAVI_GPU_INDEX (index) or NX2NAVI_GPU_NAME (case-insensitive part of the
+// drivers, the newer driver's listing); NX2SARIA_GPU_INDEX (index) or NX2SARIA_GPU_NAME (case-insensitive part of the
 // name) overrides.
 static int pick_device(void) {
     uint32_t n = 0;
@@ -256,9 +256,9 @@ static int pick_device(void) {
     if (!n) { rt_log("vk: no Vulkan device"); return 0; }
     VkPhysicalDevice *pd = calloc(n, sizeof *pd);
     vk_dlssg_enumerate(g_vk.instance, &n, pd);
-    const char *e = cfg_get("NX2NAVI_GPU_INDEX");   // no fixed default: the best device when unset
+    const char *e = cfg_get("NX2SARIA_GPU_INDEX");   // no fixed default: the best device when unset
     int want = e && *e ? atoi(e) : -1;
-    const char *name = cfg_get("NX2NAVI_GPU_NAME");
+    const char *name = cfg_get("NX2SARIA_GPU_NAME");
     int best = -1, best_score = -1, listed = 0;
     uint32_t best_driver = 0;   // the driver version of the best one so far
 retry:
@@ -307,8 +307,8 @@ retry:
     // A chosen GPU that is not usable or no longer there (the menu's GPU row, an unplugged card, a driver that lists the
     // devices in another order): the best usable one instead, so the game still starts and the choice can be changed
     if (best < 0 && (want >= 0 || (name && *name))) {
-        if (want >= 0) rt_log("vk: NX2NAVI_GPU_INDEX=%d is not usable (see above): the best usable gpu instead", want);
-        else rt_log("vk: no usable gpu matches NX2NAVI_GPU_NAME=%s (see above): the best usable gpu instead", name);
+        if (want >= 0) rt_log("vk: NX2SARIA_GPU_INDEX=%d is not usable (see above): the best usable gpu instead", want);
+        else rt_log("vk: no usable gpu matches NX2SARIA_GPU_NAME=%s (see above): the best usable gpu instead", name);
         want = -1, name = NULL, listed = 1;
         goto retry;
     }
@@ -358,10 +358,10 @@ retry:
 // the next memory type that allows it (the other device-local heap first), for every allocation: textures, render
 // targets, VRAM mirrors, pools. The limit is each device-local heap's budget when the device is made (VK_EXT_memory_budget,
 // what other programs leave) less a margin for memory VMA does not see (swapchain, FidelityFX): a tenth, at least
-// 256 MiB. NX2NAVI_VRAM_HEAP_LIMIT: auto, 0 (no limits, the default) or a number of MiB for the largest device-local
+// 256 MiB. NX2SARIA_VRAM_HEAP_LIMIT: auto, 0 (no limits, the default) or a number of MiB for the largest device-local
 // heap. The low-end GPU mode set auto up to 0.10.1.
 static int vram_heap_limits(VkDeviceSize *limit) {
-    const char *e = cfg_get("NX2NAVI_VRAM_HEAP_LIMIT");
+    const char *e = cfg_get("NX2SARIA_VRAM_HEAP_LIMIT");
     long mb = !e || !*e ? 0 : strcmp(e, "auto") ? atol(e) : -1;   // unset: no limits
     if (!mb) return 0;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT b = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
@@ -393,7 +393,7 @@ static int vram_heap_limits(VkDeviceSize *limit) {
         if (lim >= mp->memoryHeaps[h].size) continue;
         limit[h] = lim;
         rt_log("vk: memory heap %u (%llu MiB, budget %llu MiB): the allocator uses at most %llu MiB, then the next heap "
-               "(NX2NAVI_VRAM_HEAP_LIMIT)", h, (unsigned long long)(mp->memoryHeaps[h].size >> 20),
+               "(NX2SARIA_VRAM_HEAP_LIMIT)", h, (unsigned long long)(mp->memoryHeaps[h].size >> 20),
                (unsigned long long)(b.heapBudget[h] >> 20), (unsigned long long)(lim >> 20));
     }
     return 1;
@@ -443,7 +443,7 @@ static void fatal_note(void) {
            g_mesh_path);
 }
 
-// NX2NAVI_TRACE=perf: every device memory allocation VMA makes, timed as the "device memory allocations" work mark
+// NX2SARIA_TRACE=perf: every device memory allocation VMA makes, timed as the "device memory allocations" work mark
 // (perf.c mark_text). An area's first visit made 78 of them, 4.4 GB, in a frame of 421 ms of which about 180 ms
 // showed in no mark; vk_headroom.c measured 8-19 ms per 256 MiB block. VMA takes this one function from the
 // allocator's create info and the others from its static table (vk_vma.cpp VMA_STATIC_VULKAN_FUNCTIONS). A failed
@@ -498,9 +498,9 @@ static int create_device(void) {
     OPTIONAL_EXT(has_maximal_reconvergence, VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME, mrc,
                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR);
     // Compiled pipelines kept under the runtime's own keys (vk_pipeline.c pipe_create): VK_KHR_pipeline_binary, which
-    // needs VK_KHR_maintenance5 (core only from Vulkan 1.4; the instance asks for 1.3). NX2NAVI_PIPE_BINARIES=0 leaves
+    // needs VK_KHR_maintenance5 (core only from Vulkan 1.4; the instance asks for 1.3). NX2SARIA_PIPE_BINARIES=0 leaves
     // both off.
-    if (cfg_bool("NX2NAVI_PIPE_BINARIES") && has_ext(ep, ne, VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) &&
+    if (cfg_bool("NX2SARIA_PIPE_BINARIES") && has_ext(ep, ne, VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) &&
         has_ext(ep, ne, VK_KHR_MAINTENANCE_5_EXTENSION_NAME)) {
         g_vk.has_pipeline_binary = 1;
         ext[n_ext++] = VK_KHR_MAINTENANCE_5_EXTENSION_NAME;
@@ -545,7 +545,7 @@ static int create_device(void) {
     }
     // GPU breadcrumbs for a lost device (vk_crumbs.c): AMD's drivers and RADV report it.
     if (has_ext(ep, ne, VK_AMD_BUFFER_MARKER_EXTENSION_NAME)) { g_vk.has_buffer_marker = 1; ext[n_ext++] = VK_AMD_BUFFER_MARKER_EXTENSION_NAME; }
-    // Pass marks on NVIDIA (vk_crumbs.c): checkpoints only with NX2NAVI_PASS_CRUMBS=1, since NVIDIA documents a cost for
+    // Pass marks on NVIDIA (vk_crumbs.c): checkpoints only with NX2SARIA_PASS_CRUMBS=1, since NVIDIA documents a cost for
     // the extension. NVIDIA's drivers report it, AMD's do not.
     if (vk_pass_marks_want_nv() && has_ext(ep, ne, VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME)) {
         g_vk.has_nv_checkpoints = 1;
@@ -560,14 +560,14 @@ static int create_device(void) {
     // with it, or AMD's, whose calls need its feature. Each only where the driver lists it; a driver lists one of them
     // at most. Not on a device the DLSS Frame Generation proxies make (vk_dlssg_create_device): that path's own
     // low-latency plugin asks for what it needs there, and the direct path stays off for the run. And only in a run
-    // that starts with NX2NAVI_LOW_LATENCY on: with it off the device is made exactly as before the mode existed, and
+    // that starts with NX2SARIA_LOW_LATENCY on: with it off the device is made exactly as before the mode existed, and
     // a driver that lists one of the two is only remembered (lists_low_latency), so the menu can say that turning the
     // setting on takes a restart.
     g_vk.lists_low_latency = 0;
     if (!vk_dlssg_dpa() && n_ext + 2 <= sizeof ext / sizeof *ext) {
         int nv = has_ext(ep, ne, VK_NV_LOW_LATENCY_2_EXTENSION_NAME) && has_ext(ep, ne, VK_KHR_PRESENT_ID_EXTENSION_NAME);
         int amd = !nv && has_ext(ep, ne, VK_AMD_ANTI_LAG_EXTENSION_NAME);
-        if (cfg_int("NX2NAVI_LOW_LATENCY") <= 0) {
+        if (cfg_int("NX2SARIA_LOW_LATENCY") <= 0) {
             g_vk.lists_low_latency = nv || amd;
         } else if (nv) {
             g_vk.has_low_latency2 = 1;
@@ -623,9 +623,9 @@ static int create_device(void) {
     if (g_vk.has_mesh_shader) {
         // these two need features that are not enabled (multiview, primitive fragment shading rate)
         c->mesh.multiviewMeshShader = c->mesh.primitiveFragmentShadingRateMeshShader = VK_FALSE;
-        // Mesh queries for two diagnoses: NX2NAVI_GPU_PASSES (vk_crumbs.c) and the dump's primitive counts
+        // Mesh queries for two diagnoses: NX2SARIA_GPU_PASSES (vk_crumbs.c) and the dump's primitive counts
         // (vk_dump.c vk_dump_mesh_begin), which also need pipeline statistics and host query reset.
-        const char *gp = cfg_get("NX2NAVI_GPU_PASSES"), *dmp = cfg_get("NX2NAVI_DUMP");
+        const char *gp = cfg_get("NX2SARIA_GPU_PASSES"), *dmp = cfg_get("NX2SARIA_DUMP");
         int want = (gp && *gp && strcmp(gp, "0")) || (dmp && *dmp);
         g_vk.has_mesh_queries = want && c->mesh.meshShaderQueries && h->pipelineStatisticsQuery && c->f12.hostQueryReset;
         c->mesh.meshShaderQueries = g_vk.has_mesh_queries ? VK_TRUE : VK_FALSE;
@@ -636,7 +636,7 @@ static int create_device(void) {
         // for RDNA 1 and 2). Without mesh shaders the mesh emulation (mesh_emulation = 1) draws them instead.
         // has_mesh_shader keeps saying what the hardware has: the recorder thread (vk_rec.c) goes by it, not by how
         // mesh programs are drawn.
-        const char *mf = cfg_value("NX2NAVI_MESH_FALLBACK"), *me = cfg_value("NX2NAVI_MESH_EMULATION"), *why = "";
+        const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
         int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID == 0x10de, mf, me, &why);
         g_vk.mesh_fallback = path == MESH_PATH_FALLBACK;
         g_vk.mesh_emulation = path == MESH_PATH_EMULATION;
@@ -661,13 +661,13 @@ static int create_device(void) {
     g_vk.has_buffer_device_address = c->f12.bufferDeviceAddress;
     g_vk.has_astc_ldr = h->textureCompressionASTC_LDR;
     {
-        const char *e = cfg_get("NX2NAVI_FEEDBACK");
+        const char *e = cfg_get("NX2SARIA_FEEDBACK");
         int layout_ok = has_fbl && has_lr && c->fbl.attachmentFeedbackLoopLayout && c->lr.dynamicRenderingLocalRead;
         g_vk.feedback = e && !strcmp(e, "0") ? VK_FEEDBACK_OFF
                       : layout_ok && !(e && !strcmp(e, "restart")) ? VK_FEEDBACK_LAYOUT : VK_FEEDBACK_RESTART;
         rt_log("vk: feedback loops: %s (attachmentFeedbackLoopLayout %d, dynamicRenderingLocalRead %d)",
                g_vk.feedback == VK_FEEDBACK_LAYOUT ? "feedback layout + by-region barrier"
-               : g_vk.feedback == VK_FEEDBACK_RESTART ? "pass restart + full barrier" : "off (NX2NAVI_FEEDBACK=0)",
+               : g_vk.feedback == VK_FEEDBACK_RESTART ? "pass restart + full barrier" : "off (NX2SARIA_FEEDBACK=0)",
                has_fbl && c->fbl.attachmentFeedbackLoopLayout, has_lr && c->lr.dynamicRenderingLocalRead);
     }
 

@@ -246,7 +246,7 @@ static void copy_view(view_t *dst, uint8_t *has, const NVNtextureView *v) {
 //   so a freed address reused by a new pin would read as the same target: nvn_pins_sweep runs between submissions on
 //   the thread that replays them and keeps the pins it is given.
 // Instead of marking pins by walking every live recording each window, counting at copy and release walks each
-// copy's ops once more, when it is freed. NX2NAVI_PIN_SWEEP=0 keeps every copy.
+// copy's ops once more, when it is freed. NX2SARIA_PIN_SWEEP=0 keeps every copy.
 typedef struct {
     tex_t t;              // first: ops hold pins as tex_t pointers
     uint64_t last_use;    // nsubmits at the last tex_pin or the last drop of refs
@@ -366,9 +366,9 @@ void nvn_pins_sweep(uint64_t now, const tex_t *const *keep, int nkeep) {
     if (now < NVN_PIN_AGE) return;
     static int on = -1;
     if (on < 0) {
-        const char *s = cfg_get("NX2NAVI_PIN_SWEEP");
+        const char *s = cfg_get("NX2SARIA_PIN_SWEEP");
         on = !(s && !strcmp(s, "0"));
-        if (!on) rt_log("nvn: NX2NAVI_PIN_SWEEP=0: texture pin copies are kept for the run (the heap grows in long sessions)");
+        if (!on) rt_log("nvn: NX2SARIA_PIN_SWEEP=0: texture pin copies are kept for the run (the heap grows in long sessions)");
     }
     if (!on) return;
     static uint64_t logged;
@@ -557,7 +557,7 @@ static uint8_t *flatten_recording(const uint8_t *p, size_t n) {
     return out + sizeof(copy_prefix);
 }
 
-// ---------- recording copies whose control memory the game reused (NX2NAVI_COPY_RETIRE=1: a count, nothing freed)
+// ---------- recording copies whose control memory the game reused (NX2SARIA_COPY_RETIRE=1: a count, nothing freed)
 // The only event that retires a copy is AddControlMemory over its control memory again (release_copies), so a copy
 // whose control memory the game has since used for other data stays for good; a session of 2026-11-13 held 223,646
 // (56.3 MiB) by frame 39600. This counts those copies before anything retires them. Our driver never writes control
@@ -619,11 +619,11 @@ static void retire_visit(retire_rec *r, int live, uint64_t used_min, uint64_t mi
     if (state != r->state) retire_count(r->state, r->bytes, -1), retire_count(state, r->bytes, 1), r->state = state;
 }
 
-// NX2NAVI_COPY_RETIRE, read at the first copy.
+// NX2SARIA_COPY_RETIRE, read at the first copy.
 static int retire_on(void) {
     static volatile int32_t mode = -1;
     int32_t m = __atomic_load_n(&mode, __ATOMIC_RELAXED);
-    if (m < 0) __atomic_store_n(&mode, m = cfg_int("NX2NAVI_COPY_RETIRE"), __ATOMIC_RELAXED);
+    if (m < 0) __atomic_store_n(&mode, m = cfg_int("NX2SARIA_COPY_RETIRE"), __ATOMIC_RELAXED);
     return m > 0;
 }
 
@@ -750,7 +750,7 @@ static void copy_add(uintptr_t lo, uintptr_t hi, uint8_t *copy) {
         static volatile int32_t started, failed;
         if (!plat_xchg32(&started, 1) && !plat_thread_spawn(retire_main, NULL, "nvn copy sweep", 0)) {
             plat_xchg32(&failed, 1);
-            rt_log("nvn: the copy sweep thread did not start: NX2NAVI_COPY_RETIRE counts nothing");
+            rt_log("nvn: the copy sweep thread did not start: NX2SARIA_COPY_RETIRE counts nothing");
         }
         if (!__atomic_load_n(&failed, __ATOMIC_RELAXED)) retire_queue(handle, lo, made_at, bytes);
     }
@@ -1236,9 +1236,9 @@ NVN_API(nvnCommandBufferSetStencilRef) {
 // void nvnCommandBufferSetPolygonOffsetClamp(NVNcommandBuffer *cmd, float factor, float units, float clamp)
 NVN_API(nvnCommandBufferSetPolygonOffsetClamp) {
     *REC(cmd_of(c), OP_POLY_OFFSET, p_poly_offset) = (p_poly_offset){arg_s(c, 0), arg_s(c, 1), arg_s(c, 2)};
-    // NX2NAVI_POLY_OFFSET_LOG: what the game asks for, to tell a decal that relies on the offset from one that does not
+    // NX2SARIA_POLY_OFFSET_LOG: what the game asks for, to tell a decal that relies on the offset from one that does not
     static int logged, on = -1;   // the environment read once: this runs for every offset the game sets
-    if (on < 0) on = getenv("NX2NAVI_POLY_OFFSET_LOG") != NULL;
+    if (on < 0) on = cfg_env("NX2SARIA_POLY_OFFSET_LOG") != NULL;
     float f = (float)arg_s(c, 0), u = (float)arg_s(c, 1), cl = (float)arg_s(c, 2);
     if (on && logged < 24 && (f != 0.0f || u != 0.0f)) {
         logged++;
@@ -1559,7 +1559,7 @@ const char *nvn_op_name(uint32_t op) {
     return op < OP_COUNT_ ? names[op] : "?";
 }
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): live recording copies and the zombies waiting for their submissions, texture
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): live recording copies and the zombies waiting for their submissions, texture
 // pins with their sweep queue, and the recording-buffer pool.
 void nvn_copies_stats(uint64_t *n, uint64_t *bytes, uint64_t *idle_n, uint64_t *idle_bytes) {
     uint64_t m = copy_minute();
@@ -1593,7 +1593,7 @@ void nvn_cmd_sizes(PerfSizes *s) {
     perf_size(s, "of them unused for 5 minutes", idle_n, 0, idle_b);
     perf_size(s, "recording copy zombies", nz, 0, zb);
     if (retire_on()) {
-        // NX2NAVI_COPY_RETIRE: of the copies unused for 5 minutes, those whose control memory the game has written
+        // NX2SARIA_COPY_RETIRE: of the copies unused for 5 minutes, those whose control memory the game has written
         // since and those whose control memory is no longer mapped (retire_pass). A lower bound: a rewrite with the
         // same bytes is not seen.
         int64_t v[4] = {__atomic_load_n(&retire_changed_n, __ATOMIC_RELAXED),

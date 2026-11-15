@@ -59,7 +59,7 @@ The runtime makes both corrections itself (`runtime/spirv_water.c`, called from
 the translations above, it edits their SPIR-V in memory, with the steps of
 `tools/projective_recipe.py` in the same order, and builds the pipeline from the
 result. No file is read or written and nothing derived from the game is shipped.
-`water_projective = 0` in `nx2navi.ini` builds the translations as they are. The log
+`water_projective = 0` in `nx2saria.ini` builds the translations as they are. The log
 names each corrected module the first time it is built ("vk_pipeline: water: ...");
 a module that is not of the shape an edit expects is built as it is, with a line
 that says so. A coordinate pair is corrected in both stages or in neither.

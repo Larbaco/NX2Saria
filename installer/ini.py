@@ -1,6 +1,6 @@
-"""nx2navi.ini: set the game language and keep everything else (keys and syntax as runtime/cfg.c reads them).
+"""nx2saria.ini: set the game language and keep everything else (keys and syntax as runtime/cfg.c reads them).
 
-A new file starts from nx2navi.ini.example, whose lines are all commented defaults. The language goes into `lang`
+A new file starts from nx2saria.ini.example, whose lines are all commented defaults. The language goes into `lang`
 (a Switch language code, runtime/ov_system.c): an active `lang = ...` line is rewritten in place, else the commented
 `# lang = ...` line of the example is activated, else the line is added to [language] (created at the end if
 missing). Other lines, comments and line order stay as they are, byte for byte: the file's byte order mark, its line
@@ -19,8 +19,8 @@ ALIASES = {'zh-CN': 'zh-Hans', 'zh-TW': 'zh-Hant'}
 # firmware folder when the player gives one.
 NEED_SHARED_FONTS = ('ko', 'zh-Hans', 'zh-Hant')
 
-ACTIVE = re.compile(r'^(\s*)(?:nx2navi_)?lang(\s*=\s*)(.*?)(\s*)$', re.IGNORECASE)
-COMMENTED = re.compile(r'^\s*[#;]\s*(?:nx2navi_)?lang\s*=.*$', re.IGNORECASE)
+ACTIVE = re.compile(r'^(\s*)(?:(?:nx2saria|nx2navi)_)?lang(\s*=\s*)(.*?)(\s*)$', re.IGNORECASE)
+COMMENTED = re.compile(r'^\s*[#;]\s*(?:(?:nx2saria|nx2navi)_)?lang\s*=.*$', re.IGNORECASE)
 SECTION = re.compile(r'^\s*\[(.*)\]\s*$')
 BOM = '﻿'
 
@@ -90,9 +90,14 @@ def read(path):
 
 
 def write(dest, lang, example=None):
-    """Write dest/nx2navi.ini with lang; an existing file keeps every other line byte for byte (set_language).
-    Returns the path."""
-    path = Path(dest) / 'nx2navi.ini'
+    """Write the current settings file, keeping existing installs on their legacy filename when needed.
+
+    nx2saria.ini wins when both files exist. If only nx2navi.ini exists, keep writing that file so its remaining
+    settings and comments stay active on the next launch. Returns the path."""
+    folder = Path(dest)
+    current = folder / 'nx2saria.ini'
+    legacy = folder / 'nx2navi.ini'
+    path = current if current.exists() or not legacy.exists() else legacy
     old = None
     if path.is_file():
         text = old = read(path)
@@ -103,7 +108,7 @@ def write(dest, lang, example=None):
     new = set_language(text, lang)
     if new == old:
         return path
-    tmp = path.with_name('nx2navi.ini.tmp')
+    tmp = path.with_name(path.name + '.tmp')
     with open(tmp, 'w', encoding='utf-8', errors='surrogateescape', newline='') as f:
         f.write(new)
     os.replace(tmp, path)

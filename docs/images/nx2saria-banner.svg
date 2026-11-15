@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">NX2Saria</title>
+  <desc id="desc">An original three-leaf sprig beside an ivory NX2Saria wordmark, framed by a forest-green canopy and flowing gold lines.</desc>
+  <defs>
+    <linearGradient id="forest" x2="1" y2="1">
+      <stop stop-color="#193f32"/>
+      <stop offset=".55" stop-color="#0d2822"/>
+      <stop offset="1" stop-color="#081b19"/>
+    </linearGradient>
+    <radialGradient id="light">
+      <stop stop-color="#86b588" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#86b588" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="leaves" x2=".8" y2="1">
+      <stop stop-color="#a9cba0"/>
+      <stop offset="1" stop-color="#4f9179"/>
+    </linearGradient>
+    <linearGradient id="music">
+      <stop stop-color="#d9bd7a" stop-opacity="0"/>
+      <stop offset=".4" stop-color="#d9bd7a" stop-opacity=".32"/>
+      <stop offset="1" stop-color="#d9bd7a" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="360" rx="20" fill="url(#forest)"/>
+  <ellipse cx="235" cy="150" rx="330" ry="270" fill="url(#light)"/>
+  <g fill="#315b42" opacity=".24">
+    <path d="M0 0h208C164 75 82 120 0 104Z"/>
+    <path d="M145 0h176c-17 59-70 87-129 75Z"/>
+    <path d="M930 0h270v118c-128 7-215-36-270-118Z"/>
+    <path d="M1050 360h150V202c-91 32-135 82-150 158Z"/>
+  </g>
+  <g fill="none" stroke="url(#music)" stroke-width="1.2">
+    <path d="M410 273c213-47 422 73 790-48"/>
+    <path d="M410 284c213-47 422 73 790-48"/>
+    <path d="M410 295c213-47 422 73 790-48"/>
+    <path d="M410 306c213-47 422 73 790-48"/>
+    <path d="M410 317c213-47 422 73 790-48"/>
+  </g>
+  <g transform="translate(190 180)">
+    <circle r="111" fill="none" stroke="#d9bd7a" stroke-opacity=".32"/>
+    <path d="M-83-92a124 124 0 0 1 155-5M91 82a124 124 0 0 1-160 24" fill="none" stroke="#d9bd7a" stroke-width="2"/>
+    <g fill="url(#leaves)" stroke="#dce4be" stroke-width="1.8" stroke-linejoin="round">
+      <path d="M0 12C-43-15-45-70-8-103 31-63 39-23 0 12Z"/>
+      <path d="M-4 34C-55 41-88 12-90-26-44-36-14-12-4 34Z"/>
+      <path d="M7 49C7-4 41-31 82-25 84 20 51 53 7 49Z"/>
+    </g>
+    <g fill="none" stroke-linecap="round">
+      <path d="M0 78C-11 35-8-17-8-83M-66-10C-41 2-22 18-4 34M61-8C39 5 20 27 7 49" stroke="#234f3b" stroke-width="3"/>
+      <path d="M0 78C-5 60-7 45-7 30" stroke="#d9bd7a" stroke-width="3"/>
+    </g>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="360" y="191" fill="#f4f0df" font-size="108" font-weight="700" letter-spacing="-4">NX2<tspan fill="#b7d1a6">Saria</tspan></text>
+    <path d="M365 219h48" stroke="#d9bd7a" stroke-width="3" stroke-linecap="round"/>
+    <text x="430" y="227" fill="#dac995" font-size="23" letter-spacing="3">OCARINA OF TIME · NATIVE PC</text>
+  </g>
+  <g fill="#dfca8c">
+    <circle cx="327" cy="78" r="2.5" opacity=".7"/>
+    <circle cx="1003" cy="103" r="2" opacity=".6"/>
+    <circle cx="1092" cy="180" r="3" opacity=".5"/>
+    <circle cx="75" cy="287" r="2" opacity=".65"/>
+    <circle cx="947" cy="288" r="2" opacity=".5"/>
+  </g>
+  <path d="M22 338h1156" stroke="#d9bd7a" stroke-opacity=".2"/>
+</svg>

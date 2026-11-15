@@ -25,7 +25,7 @@ typedef struct {
     const char *note;     // why it is unsupported ("" otherwise)
     CheatKind kind;
     uint32_t buttons;     // CHEAT_KEY: HidNpadButton mask
-    char key[24];         // its setting, NX2NAVI_CHEAT_<hash of "<mod>/<name>">
+    char key[24];         // its setting, NX2SARIA_CHEAT_<hash of "<mod>/<name>">
 } CheatInfo;
 
 void cheats_init(void);                    // after rt_patches_init: reads the mods' files and their build status

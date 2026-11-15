@@ -10,7 +10,7 @@ from pathlib import Path
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-UNINSTALL_KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\NX2navi'
+UNINSTALL_KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\NX2Saria'
 
 
 def dpi_aware():
@@ -30,7 +30,7 @@ def app_id():
     """Group the window under the launcher's own taskbar icon rather than python's."""
     if os.name == 'nt':
         try:
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('NX2navi.Launcher')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('NX2Saria.Launcher')
         except (AttributeError, OSError):
             pass
 
@@ -366,7 +366,7 @@ def background_thread():
 
 # What the launcher puts in its folder (launcher/paths.py, the stub's python.next and python.old-<n>). Uninstall deletes
 # only these: the default game folder is <root>\game, and a folder given to the setup with --dest may hold other things.
-OWNED = ('NX2navi.exe', 'app', 'python', 'python.next', 'pydeps', 'data', 'toolchain')
+OWNED = ('NX2Saria.exe', 'NX2navi.exe', 'app', 'python', 'python.next', 'pydeps', 'data', 'toolchain')
 
 
 def uninstall_plan(layout, remove_game=''):
@@ -380,7 +380,7 @@ def uninstall_plan(layout, remove_game=''):
     except OSError:
         pass
     empty = [root]
-    if Path(layout.toolchain).parent != root:   # the toolchain went to C:\NX2navi (launcher/paths.py ansi_safe)
+    if Path(layout.toolchain).parent != root:   # the toolchain went to C:\NX2Saria (launcher/paths.py ansi_safe)
         gone.append(Path(layout.toolchain))
         empty.append(Path(layout.toolchain).parent)
     return gone, empty
@@ -407,7 +407,14 @@ def uninstall(layout, remove_game='', log=print):
     if os.name == 'nt':
         try:
             import winreg
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
+            for key in (UNINSTALL_KEY, r'Software\Microsoft\Windows\CurrentVersion\Uninstall\NX2navi'):
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as entry:
+                        installed, _ = winreg.QueryValueEx(entry, 'InstallLocation')
+                    if os.path.normcase(os.path.abspath(installed)) == os.path.normcase(os.path.abspath(layout.root)):
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
+                except OSError:
+                    pass
         except OSError:
             pass
         # one command line as cmd.exe reads it: a list would have its quotes escaped as \", which cmd.exe does not

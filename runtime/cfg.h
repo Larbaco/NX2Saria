@@ -1,20 +1,24 @@
-// Settings: the NX2NAVI_* environment variables, with nx2navi.ini next to nx2navi.exe behind them.
+// Settings: NX2SARIA_* environment variables and nx2saria.ini; existing NX2NAVI_* variables and nx2navi.ini remain supported.
 #pragma once
 #include <stddef.h>
 
-// getenv for a setting: the environment variable when set, else the nx2navi.ini key (the name without "NX2NAVI_", any
+// Environment lookup for a setting name: NX2SARIA_* takes precedence over NX2NAVI_* even when empty. Accepts either
+// prefixed spelling; non-setting names are passed directly to getenv. Used by the early platform probes too.
+const char *cfg_env(const char *name);
+
+// getenv for a setting: the environment variable when set, else the settings-file key (the name without either prefix, any
 // case), else the device profile's default (cfg.c: the Steam Deck), else NULL. Same string semantics as getenv; the pointer stays valid for the process (a value cfg_set replaces
-// is kept). A name without the NX2NAVI_ prefix goes to getenv unchanged. Safe from any thread once cfg_init has returned.
+// is kept). A name without either prefix goes to getenv unchanged. Safe from any thread once cfg_init has returned.
 const char *cfg_get(const char *name);
 
-// Reads nx2navi.ini once, from mem_init after the address space is claimed and before any setting is read. Logs the file, its key count, unknown keys and environment overrides. Keeps the restart-only settings' values (cfg_pending).
+// Reads the selected settings file once, from mem_init after the address space is claimed and before any setting is read. Logs the file, its key count, unknown keys and environment overrides. Keeps the restart-only settings' values (cfg_pending).
 void cfg_init(void);
 
 // Replaces the loaded keys with those of the file at path (tests). 1 when the file was read, 0 when missing.
 // Not thread-safe: nothing else may call cfg_get meanwhile.
 int cfg_load(const char *path);
 
-// Reads nx2navi.ini again (Ctrl+F5, ui/menu.cpp) and applies what changed since it was loaded, without a restart: a line
+// Reads the selected settings file again (Ctrl+F5, ui/menu.cpp) and applies what changed since it was loaded, without a restart: a line
 // changed, added or removed (the key then falls back to its default). Each line is read as cfg_load reads it (a comment
 // after a value cut) and each new value is checked first (cfg.c value_ok: the check cfg_load logs at start for values
 // outside their rows' sets, and rules for the consumers that take more or stop the game on a bad one); a value that does
@@ -22,17 +26,17 @@ int cfg_load(const char *path);
 // saved yet or held by its draft (cfg_hold). Applied keys are not marked for cfg_save and cfg_version is bumped once.
 // Every key is logged ("cfg: reload ..."). Fills *r (may be NULL): changed counts the keys that now read the new value
 // on this game build, restart those of them read at start only. Returns 0 when the file cannot be read, and in a run
-// that replays a bug capture's settings (NX2NAVI_CAPTURE_REPLAY), which reads no nx2navi.ini. Any thread.
+// that replays a bug capture's settings (NX2SARIA_CAPTURE_REPLAY), which reads no player settings file. Any thread.
 typedef struct { int changed, restart, rejected, env, kept; } CfgReloadResult;
 int cfg_reload_file(CfgReloadResult *r);
 
-// Live settings (the in-game menu). cfg_set stores value as the nx2navi.ini value of name (NX2NAVI_ prefixed), marks it for
+// Live settings (the in-game menu). cfg_set stores value as the settings-file value of name (NX2SARIA_ prefixed), marks it for
 // cfg_save and bumps cfg_version. cfg_get returns it unless the environment sets name. Any thread.
 void cfg_set(const char *name, const char *value);
 // Bumped by every cfg_set. A consumer that keeps a parsed value compares this with the number it last saw (one atomic
 // load) and parses again when it changed.
 unsigned cfg_version(void);
-// plat_setenv for an NX2NAVI_ variable the process reads back: also bumps cfg_version, so lookups see the new value.
+// plat_setenv for an NX2SARIA_ variable the process reads back: also bumps cfg_version, so lookups see the new value.
 int cfg_setenv(const char *name, const char *value);
 // The menu's draft (ui/option_rows.cpp): a live setting is previewed with cfg_set, and Discard puts it back. cfg_state
 // reads what cfg_revert needs of name before the first change: the stored value (NULL when none; the pointer stays valid)
@@ -46,32 +50,32 @@ void cfg_hold(const char *name, int on);
 void cfg_revert(const char *name, const char *orig_value, int orig_state);
 // 1 when the environment sets name: cfg_set cannot change what cfg_get returns (the menu greys the setting out).
 int cfg_from_env(const char *name);
-// 1 when the player set name (the environment or nx2navi.ini), 0 when cfg_get gives a device profile's default or NULL.
+// 1 when the player set name (the environment or settings file), 0 when cfg_get gives a device profile's default or NULL.
 int cfg_is_set(const char *name);
 // The keys of the file's lines that are no settings of this version, lower-case with ", " between them ("" when there
 // are none; a list too long to keep ends early), and how many there are. Such a line does nothing: the log says so at
 // start and the settings menu shows it (ui/menu.cpp), so that nobody takes one for the cause of what they see.
 const char *cfg_unknown_keys(int *count);
-// The device profile in use, "deck" or "desktop" (NX2NAVI_DEVICE_PROFILE, else what the machine is).
+// The device profile in use, "deck" or "desktop" (NX2SARIA_DEVICE_PROFILE, else what the machine is).
 const char *cfg_device_profile(void);
-// Writes the keys cfg_set changed since the last save into nx2navi.ini next to nx2navi.exe (cfg_save_to: the file at path).
+// Writes the keys cfg_set changed since the last save into the selected settings file beside the game executable (cfg_save_to: the file at path).
 // Only those lines change: the last line of a changed key gets the new value, a missing key goes under its section
 // (after the commented example line of the key when the section has one; the section is added at the end of the file
 // when missing), comments and every other line stay byte for byte. 1 on success or with nothing to write.
 int cfg_save(void);
 int cfg_save_to(const char *path);
 
-// Reset (the menu's "Reset all settings to defaults"). Removes the active line of each key (names without NX2NAVI_, any
-// case) from nx2navi.ini at the next cfg_save and its value from memory, so the consumer's own default applies again; the
+// Reset (the menu's "Reset all settings to defaults"). Removes the active line of each key (names without NX2SARIA_, any
+// case) from the selected settings file at the next cfg_save and its value from memory, so the consumer's own default applies again; the
 // commented example lines stay. Keys the environment sets are skipped. Bumps cfg_version. Returns how many it reset.
 int cfg_reset(const char *const *keys, int n);
 // 0 when the last cfg_save / cfg_save_to failed to write (the values stay set in memory, the next save tries again).
 int cfg_last_save_ok(void);
-// Every setting with a value, for a bug report ("Copy system info"): the nx2navi.ini and cfg_set keys (name without
-// NX2NAVI_, upper case; from_env 0), then the known NX2NAVI_ variables the environment sets (from_env 1).
+// Every setting with a value, for a bug report ("Copy system info"): the settings file and cfg_set keys (name without
+// either prefix, upper case; from_env 0), then the known NX2SARIA_ variables the environment sets (from_env 1).
 void cfg_each_active(void (*cb)(const char *key, const char *value, int from_env, void *ctx), void *ctx);
 
-// What the menu knows about a setting. key: without NX2NAVI_, upper case. def: what the consumer uses when the key is
+// What the menu knows about a setting. key: without NX2SARIA_, upper case. def: what the consumer uses when the key is
 // unset ("" = no fixed default, the consumer picks per machine). values: "0|1", "mailbox|fifo|immediate", a range
 // "0..300", or NULL for free text. live: applies at once; the others are read at start.
 typedef struct { const char *key, *def, *values; int live; } CfgMeta;
@@ -79,9 +83,9 @@ typedef struct { const char *key, *def, *values; int live; } CfgMeta;
 // patch set the build lacks or that only another game reads. The menu hides such rows; 1 for every other key. Call it
 // after rt_patches_init.
 int cfg_supported(const char *key);
-// 1 when key has an nx2navi.ini section of its own in cfg.c (cfg_save writes any other key under [misc]).
+// 1 when key has a settings-file section of its own in cfg.c (cfg_save writes any other key under [misc]).
 int cfg_has_section(const char *key);
-// Logs "cfg: KEY has no effect on this game version" for each key nx2navi.ini or the environment sets that is not supported.
+// Logs "cfg: KEY has no effect on this game version" for each key the settings file or environment sets that is not supported.
 void cfg_log_unsupported(void);
 // The row of key (prefix and case ignored); NULL for a key the menu does not show.
 const CfgMeta *cfg_meta(const char *key);
@@ -98,7 +102,7 @@ int cfg_pending_count(void);
 // cfg_pending for value instead of the key's own (the settings menu's draft, ui/option_rows.cpp opt_pending_count).
 int cfg_pending_for(const char *key, const char *value);
 
-// The setting's value for consumers: the environment or nx2navi.ini value, else the CfgMeta default. name has the NX2NAVI_
+// The setting's value for consumers: the environment or settings-file value, else the CfgMeta default. name has the NX2SARIA_
 // prefix, like cfg_get; a name without a row is a bug (rt_fatal). A row with an empty default has no fixed value: its
 // consumer reads cfg_get and keeps its own "unset" branch. An empty value counts as unset.
 const char *cfg_value(const char *name);

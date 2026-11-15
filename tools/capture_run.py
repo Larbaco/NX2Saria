@@ -2,11 +2,11 @@
 
     python tools/capture_run.py <capture folder or number> [--game DIR] [--set KEY=VALUE ...]
 
-The game starts on a throwaway profile holding the capture's save, with the capture's settings in place of nx2navi.ini
-(NX2NAVI_CAPTURE_REPLAY), in a window of the capture's size that does not take the focus. It loads the save, goes to
+The game starts on a throwaway profile holding the capture's save, with the capture's settings in place of the player's
+settings file (NX2SARIA_CAPTURE_REPLAY), in a window of the capture's size that does not take the focus. It loads the save, goes to
 the capture's area, walks Link to where he stood, puts the camera where it was and takes a capture of its own; this
 script then closes the game and prints both captures side by side: the positions, the distance between them, and how
-much the two pictures differ. The player's nx2navi.ini and save are not written.
+much the two pictures differ. The player's settings file and save are not written.
 
 One game at a time: the script refuses to start while a game is running.
 """
@@ -27,13 +27,14 @@ SKIP_IN_PROFILE = {'save', 'save-backup', 'save-tx', 'save-import', 'save-import
 
 
 def default_game():
-    if WIN:
-        return Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs' / 'NX2navi' / 'game'
-    return Path.home() / '.local' / 'share' / 'NX2navi' / 'game'
+    base = (Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs' if WIN else
+            Path.home() / '.local' / 'share')
+    current, legacy = base / 'NX2Saria' / 'game', base / 'NX2navi' / 'game'
+    return current if current.is_dir() or not legacy.is_dir() else legacy
 
 
 def find_exe(game):
-    for name in ('ocarina.exe', 'nx2navi.exe', 'ocarina', 'nx2navi'):
+    for name in ('ocarina.exe', 'nx2saria.exe', 'ocarina', 'nx2navi.exe', 'nx2navi'):
         if (game / name).is_file():
             return game / name
     return None
@@ -94,7 +95,7 @@ def make_profile(profile, game, capture):
                 shutil.copytree(entry, profile / entry.name)
             else:
                 shutil.copy2(entry, profile / entry.name)
-    zips = sorted(capture.glob('NX2navi-save-*.zip'))
+    zips = sorted(capture.glob('NX2Saria-save-*.zip')) or sorted(capture.glob('NX2navi-save-*.zip'))
     if not zips:
         if (src / 'save').is_dir():
             shutil.copytree(src / 'save', profile / 'save')
@@ -230,7 +231,7 @@ def main():
     ap.add_argument('--seconds', type=int, default=300, help='give up after this long (default 300)')
     ap.add_argument('--hold', type=int, default=0, help='seconds to keep the game open after its capture, to watch or test')
     ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
-                    help='a setting for this run on top of the capture\'s (NX2NAVI_ is added), e.g. --set FSR4=0')
+                    help='a setting for this run on top of the capture\'s (NX2SARIA_ is added; NX2NAVI_ is accepted), e.g. --set FSR4=0')
     ap.add_argument('--no-camera', action='store_true', help='leave the camera to the game instead of placing it')
     ap.add_argument('--fullscreen', action='store_true', help='keep the capture\'s fullscreen and window settings')
     ap.add_argument('--foreground', action='store_true', help='a normal window that takes the focus and your input')
@@ -252,10 +253,11 @@ def main():
     profile = out / f'profile-{stamp}'
     log = out / f'run-{stamp}.log'
     print(f'capture {cap.get("number", "?")} ({capture.name}): {cap.get("area", "no area")}, Link at {cap.get("player_pos", "?")}, '
-          f'camera at {cap.get("camera_pos", "not captured")}; NX2navi {cap.get("nx2navi", "?")}')
+          f'camera at {cap.get("camera_pos", "not captured")}; NX2Saria {cap.get("nx2navi", "?")}')
     print('profile:', make_profile(profile, game, capture))
 
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith('NX2NAVI_')}
+    env = {k: v for k, v in os.environ.items()
+           if not k.upper().startswith(('NX2SARIA_', 'NX2NAVI_'))}
     pins = {'CAPTURE_REPLAY': str(capture), 'CAPTURE_DIR': str(out), 'COOP': '0', 'COOP_STEAM': '0', 'DISCORD_RPC': '0'}
     if not args.fullscreen:
         pins['FULLSCREEN'] = '0'
@@ -265,17 +267,26 @@ def main():
         pins.update(BACKGROUND_WINDOW='1', ASSUME_FOCUS='1', INPUT='none')
     if args.no_camera:
         pins['CAPTURE_REPLAY_CAMERA'] = '0'
+    pin_source = {}
     for pair in args.set:
         key, sep, value = pair.partition('=')
         if not sep:
             sys.exit(f'--set takes KEY=VALUE, not "{pair}"')
         key = key.strip().upper()
-        pins[key[8:] if key.startswith('NX2NAVI_') else key] = value
+        if key.startswith('NX2SARIA_'):
+            key, source = key[len('NX2SARIA_'):], 2
+        elif key.startswith('NX2NAVI_'):
+            key, source = key[len('NX2NAVI_'):], 1
+        else:
+            source = 2
+        if source >= pin_source.get(key, 0):
+            pins[key], pin_source[key] = value, source
     for key, value in pins.items():
-        env['NX2NAVI_' + key] = value
+        env['NX2SARIA_' + key] = value
     print('this run sets:', ', '.join(f'{k}={v}' for k, v in sorted(pins.items()) if k not in ('CAPTURE_REPLAY', 'CAPTURE_DIR')))
 
-    ini = game / 'nx2navi.ini'
+    current_ini, legacy_ini = game / 'nx2saria.ini', game / 'nx2navi.ini'
+    ini = current_ini if current_ini.is_file() or not legacy_ini.is_file() else legacy_ini
     ini_before = sha(ini)
     before = {p.name for p in out.iterdir() if p.is_dir()}
     result, state = None, 'timed out'
@@ -304,7 +315,7 @@ def main():
         finally:
             print('game:', close_game(proc, exe), f'after {time.time() - t0:.0f} s; {state}')
     shutil.rmtree(profile, ignore_errors=True)
-    print('nx2navi.ini', 'unchanged' if sha(ini) == ini_before else 'CHANGED by the run: put it back from your copy')
+    print(ini.name, 'unchanged' if sha(ini) == ini_before else 'CHANGED by the run: put it back from your copy')
 
     text = log.read_text(encoding='utf-8', errors='replace')
     for line in text.splitlines():

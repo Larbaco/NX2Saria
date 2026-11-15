@@ -426,7 +426,7 @@ static void free_ctx(Ctx *x) {
     memset(x, 0, sizeof *x);
 }
 
-// One entry of g_dead, as upd_take hands it out, timed as "upscaler releases" (NX2NAVI_TRACE=perf).
+// One entry of g_dead, as upd_take hands it out, timed as "upscaler releases" (NX2SARIA_TRACE=perf).
 static void dead_release(const UpdEntry *e, void *arg) {
     (void)arg;
     uint64_t t0 = perf_mark_begin();
@@ -533,7 +533,7 @@ int vk_fsr3_dead_take(uint64_t done) {
 uint64_t vk_fsr3_dead_fence(void) { return upd_max_fence(&g_dead); }
 
 // One context per render size and output size, as vk_ffx.cpp context_for keeps the library's: a render size of its own
-// starts a new history, as the library's new context does. With the game's dynamic resolution on (NX2NAVI_DYN_RES,
+// starts a new history, as the library's new context does. With the game's dynamic resolution on (NX2SARIA_DYN_RES,
 // dynres.c), whose steps change the render size every few seconds, one context per output size takes every render
 // size up to the output's, each call's own size coming from the constants. A context of another render size goes once
 // no command buffer still being recorded can name it (CTX_RECENT), and the game's second scenes, of another output
@@ -543,7 +543,7 @@ uint64_t vk_fsr3_dead_fence(void) { return upd_max_fence(&g_dead); }
 static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     G.tick++;
     uint64_t now = plat_now_ns();
-    const int drs = cfg_bool("NX2NAVI_DYN_RES");
+    const int drs = cfg_bool("NX2SARIA_DYN_RES");
     Ctx *found = NULL;
     for (int i = 0; i < CTX_MAX; i++) {
         Ctx *x = &G.ctx[i];

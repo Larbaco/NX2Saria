@@ -1,4 +1,4 @@
-// The part of a frame that an address-space walk of NX2NAVI_MEM_CENSUS overlapped, charged to the census (perf.c
+// The part of a frame that an address-space walk of NX2SARIA_MEM_CENSUS overlapped, charged to the census (perf.c
 // ft_frame). vk_memory.c census_main walks on a thread of its own, but the walk holds the process's address-space lock,
 // which the replaying thread's write-watch queries (vk_memory.c vk_mem_mirror_begin) and every page fault take too. In
 // a session of 2026-11-13, 63 of the 66 hitches the stutter map charged to the replay sat beside such a walk, with a

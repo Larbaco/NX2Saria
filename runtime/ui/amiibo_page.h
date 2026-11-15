@@ -5,7 +5,7 @@
 void tab_amiibo(float scale);
 
 // The picker: the amiibo list ui/menu.cpp opens in the menu's place when the game starts waiting for an amiibo
-// (NX2NAVI_AMIIBO_POPUP). Present path only.
+// (NX2SARIA_AMIIBO_POPUP). Present path only.
 // Every overlay frame: true on the frame the game starts waiting for an amiibo while the popup setting is on.
 bool amiibo_picker_wanted(void);
 // The picker opens: the folder is read again and the cursor goes to the list.

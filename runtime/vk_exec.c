@@ -49,7 +49,7 @@ static int x_ready;
 // it records none: vk_exec_inline_begin hands out its command buffer.
 static _Thread_local VkExec *x_cur;
 
-// ---- parallel groups (NX2NAVI_REPLAY_WORKERS; "replay workers" below). A chunk: a part of a group's ops that one
+// ---- parallel groups (NX2SARIA_REPLAY_WORKERS; "replay workers" below). A chunk: a part of a group's ops that one
 // thread records into a command buffer of its own, from the replay state the front pass left at its first op.
 #define GROUP_CHUNKS 17                 // chunks a group is cut into at most: RW_MAX workers and the submitting thread
 #define LIVE_GROUPS 4                   // groups handed out whose command buffers are not in their part yet, at most
@@ -92,7 +92,7 @@ static struct {
 } Q;
 static PlatMutex done_lock = PLAT_MUTEX_INIT;   // Q.done moves on (groups_done_advance)
 static _Thread_local Chunk *rw_chunk;   // the chunk the calling thread records, NULL outside one
-// The submitting thread records on past groups whose chunks may not all be done yet (NX2NAVI_REPLAY_PIPE).
+// The submitting thread records on past groups whose chunks may not all be done yet (NX2SARIA_REPLAY_PIPE).
 static _Thread_local int rw_behind;
 // Why it waited for them (RW.pw_*): room for the next group, an op chunks never record, a pass's hooks, an effect that
 // waits for its turn (vk_exec_turn), a texture entry, a part split, the submission's end; and the waits that found
@@ -104,7 +104,7 @@ static _Thread_local const op_hdr *rw_op;   // in a chunk: the op it records (vk
 static _Thread_local int rw_ordered;    // every earlier chunk of its group is done
 static PlatMutex tfr_lock = PLAT_MUTEX_INIT;   // target frames (vk_target_frames.h) noted by several chunks at once
 
-// ---- NX2NAVI_TRACE=gfx frame counters
+// ---- NX2SARIA_TRACE=gfx frame counters
 
 VkExecFrame vk_exec_frame;
 static struct { const uint8_t *mem; uint32_t w, h, fmt, n; } fw[64];   // textures written this frame
@@ -121,7 +121,7 @@ void vk_exec_frame_written(const tex_t *t) {
     fw[nfw++].n = 1;
 }
 
-// ---- draw runs (NX2NAVI_REPLAY_RUNS=1, diagnostics for recording a submission on several threads)
+// ---- draw runs (NX2SARIA_REPLAY_RUNS=1, diagnostics for recording a submission on several threads)
 // How the draws of a frame fall into runs that a recording thread of their own could take: a run is the draws between
 // two ops that have to stay in the replay's order on one thread (dispatches, copies, texture and buffer clears, events,
 // the game's barriers, a held submission going on, the end of a submission). The ops a run carries that a serial front
@@ -293,7 +293,7 @@ static int view_format(const tex_t *t, const view_t *v, int blocks, VkFormat *ou
 }
 
 // ---- 3D BC render targets
-// A 3D BC texture has no block views (vk_texture.c create_tex, NX2NAVI_BLOCK_VIEWS_3D): on RDNA2 cards such an image
+// A 3D BC texture has no block views (vk_texture.c create_tex, NX2SARIA_BLOCK_VIEWS_3D): on RDNA2 cards such an image
 // made BLOCK_TEXEL_VIEW_COMPATIBLE and 2D_ARRAY_COMPATIBLE took GPU writes past the end of its memory (issue #5). Draws
 // into it through an uncompressed view of its blocks (agl's BC4 encoder fills 32x32x32 and 64x64x64 volumes and their
 // levels at the logo) go to a stand-in: a 2D array of the blocks of one level in the view's format, one layer per
@@ -518,7 +518,7 @@ static void resolve_target(const tex_t *t, const view_t *v, int has_v, int depth
 }
 
 /* The size of a pass without attachments: the far corner of viewport 0, else of the scissor, 1..16384.
-   NX2navi draws a fragment shader that only writes a storage buffer into a 1x1
+   NX2Saria draws a fragment shader that only writes a storage buffer into a 1x1
    viewport; a pass sized by the viewport's width alone puts an offset viewport outside the scissor, and the cave rock
    loses its ambient light. */
 void vk_exec_noatt_dims(const VkExec *ex, uint32_t *w, uint32_t *h) {
@@ -628,9 +628,9 @@ static TfrTarget tfr_of(const VkExecTarget *t) {
 static int steady_on(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_PIPE_SKIP_STEADY");
+        on = cfg_bool("NX2SARIA_PIPE_SKIP_STEADY");
         rt_log("vk: a pass whose targets the game has rendered in %d frames or more counts as per-frame after a "
-               "pause too, so its draws are skipped, not waited for, while a pipeline builds: %s (NX2NAVI_PIPE_SKIP_STEADY)",
+               "pause too, so its draws are skipped, not waited for, while a pipeline builds: %s (NX2SARIA_PIPE_SKIP_STEADY)",
                TFR_STEADY, on ? "on" : "off");
     }
     return on;
@@ -689,7 +689,7 @@ static VkImageMemoryBarrier2 layout_barrier(VkImage img, VkImageAspectFlags aspe
 
 // Full barrier. The images in the feedback layout become want[] (pass begin) or none (every other barrier): the others
 // go back to GENERAL and the new ones leave it, in the same command.
-// NX2NAVI_BARRIER_GAME (1; 0: every pass begin and dispatch a full barrier; ab: in the B blocks): the game's own
+// NX2SARIA_BARRIER_GAME (1; 0: every pass begin and dispatch a full barrier; ab: in the B blocks): the game's own
 // barriers order its work, as on the Switch. A pass that
 // samples what an earlier one drew, a dispatch that reads what another dispatch wrote, an indirect draw whose arguments
 // a dispatch wrote: on the Switch each needs nvnCommandBufferBarrier (ORDER_* and INVALIDATE_* bits) in the game's
@@ -719,13 +719,13 @@ static int barrier_game(void) {
         int nvidia = c && c->props.vendorID == 0x10de;
         mode = rt_knob("BARRIER_GAME", nvidia ? "1" : "0");
         if (mode)
-            rt_log("vk_exec: NX2NAVI_BARRIER_GAME=%s: passes and dispatches are ordered by the game's barriers",
+            rt_log("vk_exec: NX2SARIA_BARRIER_GAME=%s: passes and dispatches are ordered by the game's barriers",
                    mode == 2 ? "ab" : "1");
     }
     return RT_KNOB_ON(mode);
 }
 
-// NX2NAVI_TRACE=perf: barriers per frame by kind (vk_exec_barrier_log)
+// NX2SARIA_TRACE=perf: barriers per frame by kind (vk_exec_barrier_log)
 enum { BS_FULL, BS_GAME, BS_PASS_FULL, BS_PASS_ATT, BS_PASS_NONE, BS_DISP_FULL, BS_DISP_NONE, BS_N };
 static uint64_t bstat[BS_N];
 static const char *const bs_name[BS_N] = {"replay full", "game", "pass full", "pass attachment", "pass none",
@@ -901,7 +901,7 @@ void vk_exec_pass_end(VkExec *ex) {
     ex->recorded++;
     ex->in_pass = 0;
     if (ex->mark) {
-        // vk_exec_frame_log resets the frame counters at a present (NX2NAVI_TRACE=gfx): then only the draws since it count
+        // vk_exec_frame_log resets the frame counters at a present (NX2SARIA_TRACE=gfx): then only the draws since it count
         uint64_t d = vk_exec_frame.draws, d0 = ex->mark_draws0;
         ex->mark->draws = (uint32_t)(d >= d0 ? d - d0 : d);
         if (ex->mark->draws) vk_exec_draw_shaders(&ex->mark->last[0], &ex->mark->last[1]);
@@ -1018,7 +1018,7 @@ static void clear_attachment(VkExec *ex, const VkClearAttachment *a) {
     ex->fb_dirty |= bit;
 }
 
-// NX2NAVI_LOG_RCOND=1: clears issued under a render condition (the first 400), run or skipped, with their target.
+// NX2SARIA_LOG_RCOND=1: clears issued under a render condition (the first 400), run or skipped, with their target.
 static void clear_cond_log(const VkExec *ex, const char *what, int index) {
     static int on = -1, n;
     if (on < 0) on = rt_knob("LOG_RCOND", "0");
@@ -1115,23 +1115,23 @@ static void set_rt(VkExec *ex, const p_set_rt *r) {
 
 // ---- command buffer parts
 // NVN starts the GPU as soon as commands are submitted; one Vulkan command buffer per submission starts it only after
-// the whole replay. Between passes, once NX2NAVI_SPLIT_DRAWS (64; 0 off) draws and dispatches were recorded since the
+// the whole replay. Between passes, once NX2SARIA_SPLIT_DRAWS (64; 0 off) draws and dispatches were recorded since the
 // last part, the part goes to the queue (vk_sync_split) and the replay continues in a new command buffer. Only
 // command-buffer state is lost there (bindings and dynamic state: vk_exec_draw_new_cb, ex->dirty); barriers, layouts and
 // queries are not: a barrier's first scope is everything earlier in submission order, image layouts belong to the image,
 // and occlusion queries end with their pass. Fences, completion callbacks and reports stay per submission: only the last
 // part signals the value. The texture pool set a part binds is sealed when the part goes (vk_exec_pool_split): later
 // parts write and bind another, and a part is not split off while no other set is free of this submission.
-// A part also spans at least NX2NAVI_SPLIT_US (1000) of replay time: a split costs about 40 us of the render thread
+// A part also spans at least NX2SARIA_SPLIT_US (1000) of replay time: a split costs about 40 us of the render thread
 // (vkQueueSubmit2, a command buffer, the mirror prologue), and a fight frame of 2,000 draws made 15 parts on the 7900X;
 // a millisecond of recording is a fraction of a millisecond of GPU work, so the GPU still starts early.
-// With NX2NAVI_SPLIT_IDLE=1, neither limit holds the first part of a submission back while the GPU has run everything
+// With NX2SARIA_SPLIT_IDLE=1, neither limit holds the first part of a submission back while the GPU has run everything
 // submitted: it goes at the first pass boundary after a draw or dispatch. Each frame the game's thread waits for the GPU
-// to run the frame's first submission (nvn_api_core.c nvnQueueSubmitCommands, NX2NAVI_SUBMIT_FINISH), so the GPU is idle
+// to run the frame's first submission (nvn_api_core.c nvnQueueSubmitCommands, NX2SARIA_SUBMIT_FINISH), so the GPU is idle
 // when the next one replays, and waited for the first 64 draws and 1 ms of it in Kokiri Forest (2026-11-09). Off by
 // default: with it the foliage of Kokiri Forest flickered (RTX 5090, 2026-11-09), and the parts it cuts that early are
 // the one thing it changes; why they matter is not known yet.
-// Both limits also split inside a pass (NX2NAVI_SPLIT_IN_PASS, on): the pass ends there and the next draw begins it
+// Both limits also split inside a pass (NX2SARIA_SPLIT_IN_PASS, on): the pass ends there and the next draw begins it
 // again in the new part, as after a barrier (attachments load and store; occlusion queries continue in a new segment).
 // Kokiri Forest's two scene passes of ~500 draws take 2-4 ms each to replay and most of the frame's GPU time; split only
 // between passes, the GPU waited for each whole pass, idle up to 3.6 ms a frame (2026-11-09).
@@ -1141,7 +1141,7 @@ static int split_n = -1, split_idle, split_in_pass, split_draws, split_at, part_
 static uint64_t split_ns, part_t0;
 static uint64_t n_parts, n_subs, n_idle_parts, n_pass_splits, n_cuts;
 
-// ---- the early tail (NX2NAVI_TAIL_EARLY, default 1 since 0.10.0; 0 turns it off)
+// ---- the early tail (NX2SARIA_TAIL_EARLY, default 1 since 0.10.0; 0 turns it off)
 // Standing in Hyrule Field with FSR 4 (RX 7900 XT, 2026-11-13) a frame's main submission ends with one part of 4.7 ms
 // of GPU time, the temporal upscaler and the interface drawn after it, and one of 1.4 ms, the write-backs of what the
 // shaders wrote into VRAM mirrors. The game waits for all of it before it writes the next frame's data (the wait after
@@ -1188,9 +1188,9 @@ int vk_exec_tail(void) { return TL.on; }
 static int tail_enabled(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_TAIL_EARLY");
+        on = cfg_bool("NX2SARIA_TAIL_EARLY");
         if (on)
-            rt_log("vk: the write-backs go before a frame's tail, and the game's waits end there (NX2NAVI_TAIL_EARLY)");
+            rt_log("vk: the write-backs go before a frame's tail, and the game's waits end there (NX2SARIA_TAIL_EARLY)");
     }
     return on;
 }
@@ -1215,12 +1215,12 @@ static int split_wanted(void) {
 
 static void maybe_split(VkExec *ex) {
     if (split_n < 0) {
-        split_n = cfg_int("NX2NAVI_SPLIT_DRAWS");
+        split_n = cfg_int("NX2SARIA_SPLIT_DRAWS");
         if (split_n < 0) split_n = 0;
-        int us = cfg_int("NX2NAVI_SPLIT_US");
+        int us = cfg_int("NX2SARIA_SPLIT_US");
         split_ns = us > 0 ? (uint64_t)us * 1000 : 0;
-        split_idle = split_n && cfg_bool("NX2NAVI_SPLIT_IDLE");
-        split_in_pass = split_n && cfg_bool("NX2NAVI_SPLIT_IN_PASS");
+        split_idle = split_n && cfg_bool("NX2SARIA_SPLIT_IDLE");
+        split_in_pass = split_n && cfg_bool("NX2SARIA_SPLIT_IN_PASS");
         rt_log("vk: replay command buffer split every %d draws %s, parts of at least %d us%s%s", split_n,
                split_in_pass ? "(inside passes too)" : "between passes", us > 0 ? us : 0, split_n ? "" : " (off)",
                split_idle ? "; a first part at once while the GPU is idle" : "");
@@ -1270,7 +1270,7 @@ static void maybe_split(VkExec *ex) {
 // and the running state come back after. One that would still wait after CONT_MAX submissions goes on regardless, as
 // it did before (counted, logged). Only with the replay on the submitting thread: the recording copies a continuation
 // reads stay alive there until the game recycles them, which it does only after the work ran on the console.
-// NX2NAVI_EVENT_ORDER=0: every submission in the order it came.
+// NX2SARIA_EVENT_ORDER=0: every submission in the order it came.
 #define CONT_MAX 36
 #define EVO_QUEUES 16
 typedef struct Cont {
@@ -1302,7 +1302,7 @@ int vk_exec_held(void) { return __atomic_load_n(&evo_pending, __ATOMIC_RELAXED);
 
 static const op_hdr *walk(VkExec *ex, const op_hdr *h, int depth);
 
-// ---- event order trace (NX2NAVI_EVO_TRACE=1, diagnostics)
+// ---- event order trace (NX2SARIA_EVO_TRACE=1, diagnostics)
 // The order in which a frame's submissions, waits, signals and held parts were replayed, as a string of tokens:
 // |<queue>.<n> a submission of n command buffers on that queue; p it lines up behind held work of its queue; m<e> a
 // wait on event e that holds; u<e> one that does not; h the submission stops there; s<e>=<v> a replayed signal; r<queue>
@@ -1380,12 +1380,12 @@ void vk_exec_evt_frame(uint64_t frame) {
 
 static int evo_enabled(void) {
     if (evo_on < 0) {
-        const char *e = cfg_get("NX2NAVI_EVENT_ORDER");
+        const char *e = cfg_get("NX2SARIA_EVENT_ORDER");
         evo_on = !(e && !strcmp(e, "0"));
         if (evo_on && gfx_replay_async()) {
             evo_on = 0;
-            rt_log("vk: event order across queues off: the replay runs on its own thread (NX2NAVI_REPLAY_ASYNC)");
-        } else rt_log("vk: event order across queues %s (NX2NAVI_EVENT_ORDER)", evo_on ? "on" : "off");
+            rt_log("vk: event order across queues off: the replay runs on its own thread (NX2SARIA_REPLAY_ASYNC)");
+        } else rt_log("vk: event order across queues %s (NX2SARIA_EVENT_ORDER)", evo_on ? "on" : "off");
     }
     return evo_on;
 }
@@ -1463,7 +1463,7 @@ static int cont_ready(const Cont *c) {
     return !c->at || vk_exec_event_met(nvn_op_payload(c->at)) || vk_exec_submit_seq - c->since > CONT_MAX;
 }
 
-// ---- the gate: a submission that begins with a wait for the CPU's signal (NX2NAVI_GATE_WAIT_MS, default 10; 0 off)
+// ---- the gate: a submission that begins with a wait for the CPU's signal (NX2SARIA_GATE_WAIT_MS, default 10; 0 off)
 // Ocarina's main queue begins with a wait for an event the game signals from the CPU once it has written what the
 // frame reads (vk_exec_xfer.c "events the CPU signals"). The render thread submits that queue without waiting for the
 // signal, and polls the event afterwards, a millisecond at a time, before it presents. In Hyrule Field the signal
@@ -1477,7 +1477,7 @@ static int cont_ready(const Cont *c) {
 // signal here, before the copies are taken, as the console's GPU waits at the wait itself: the copies are then
 // taken after the game has finished writing, and the frame is replayed in the call the game's fence stands for.
 // Only state may precede the wait in the command buffer, and the event must be one the CPU has signalled before;
-// the wait ends after NX2NAVI_GATE_WAIT_MS at the latest, and the submission is then held as before.
+// the wait ends after NX2SARIA_GATE_WAIT_MS at the latest, and the submission is then held as before.
 // Since the last perf line: waits, their time, waits that ran out. vk_exec_gate_wait runs on the submitting thread
 // before the submission lock, so several threads add at once: atomics, and the thread whose add ends the window logs it.
 static struct { uint64_t n, ns, late; } GW;
@@ -1506,7 +1506,7 @@ static const void *gate_first_wait(const op_hdr *h) {
 void vk_exec_gate_wait(const uint64_t *handles, int n) {
     static int64_t cap_ns = -1;
     if (cap_ns < 0) {
-        int ms = cfg_int("NX2NAVI_GATE_WAIT_MS");
+        int ms = cfg_int("NX2SARIA_GATE_WAIT_MS");
         cap_ns = ms > 0 ? (int64_t)ms * 1000000 : 0;
     }
     if (!cap_ns || n < 1 || !handles[0] || !gfx_submit_queue || !evo_enabled()) return;
@@ -1552,7 +1552,7 @@ int vk_exec_held_ready(void) {
 // vk_backend.c present_main, or the one a waiting present makes, present_held) gets what any submission's recording
 // gets: the VRAM mirror sync before and the write-back after (vk_mem_mirror_begin/end), and a uniform copy (vk_usnap).
 // Without them its draws read mirrors that missed the CPU's writes since the last submission, and its GPU writes never
-// went back to guest memory: the next vk_mem_mirror_begin dropped the write-back list. NX2NAVI_HELD_SYNC=0: as before.
+// went back to guest memory: the next vk_mem_mirror_begin dropped the write-back list. NX2SARIA_HELD_SYNC=0: as before.
 static int held_sync(void) {
     static int on = -1;
     if (on < 0) on = rt_knob("HELD_SYNC", "1");
@@ -1638,7 +1638,7 @@ static void evo_resume(VkExec *ex) {
     }
 }
 
-// ---- looking ahead for pipelines (NX2NAVI_PIPE_AHEAD, default 1; 0 off)
+// ---- looking ahead for pipelines (NX2SARIA_PIPE_AHEAD, default 1; 0 off)
 // A draw whose pipeline is not there yet waits for its fast link or is skipped until a worker has built it, and the
 // next draw with a new pipeline is only found when the replay reaches it: an area's first frame, or a turn that brings
 // a dozen new materials into view, paid for them one after another (each wait a few milliseconds with the stage
@@ -1684,9 +1684,9 @@ static void ahead_set_rt(VkExec *sx, const p_set_rt *r) {
 
 void vk_exec_ahead(VkExec *ex) {
     if (AH.on < 0) {
-        AH.on = cfg_bool("NX2NAVI_PIPE_AHEAD");
+        AH.on = cfg_bool("NX2SARIA_PIPE_AHEAD");
         rt_log("vk: a draw that finds its pipeline missing has the rest of its submission read ahead for the stage "
-               "libraries the later draws need: %s (NX2NAVI_PIPE_AHEAD)", AH.on ? "on" : "off");
+               "libraries the later draws need: %s (NX2SARIA_PIPE_AHEAD)", AH.on ? "on" : "off");
     }
     if (!AH.on || !AH.live || evo_in || rw_chunk || AH.seq == vk_exec_submit_seq) return;   // not in a chunk
     AH.seq = vk_exec_submit_seq;
@@ -1893,7 +1893,7 @@ static void op_one(VkExec *ex, const op_hdr *h) {
     }
 }
 
-// ---- replay workers (NX2NAVI_REPLAY_WORKERS, default auto: as many as the CPU's cores make worth it,
+// ---- replay workers (NX2SARIA_REPLAY_WORKERS, default auto: as many as the CPU's cores make worth it,
 // vk_exec_replay_workers_auto; 0: the replay records every op on the submitting thread; the Game tab's CPU helper
 // threads row sets it)
 // 3 workers: on an RX 7900 XT with a Ryzen 7 5800X3D, Hyrule Field standing went from 41.2 to 50.4 fps (2026-11-12, one
@@ -1905,11 +1905,11 @@ static void op_one(VkExec *ex, const op_hdr *h) {
 // unavailable after its fence just before. An RX 6600 lost it the same way twice (0.9.2). The cause is not known;
 // auto gives that driver no workers (vk_exec_replay_workers_auto), and auto is the default again since 0.11.0.
 // A submission's draws come in runs between ops that have to stay in the replay's order on its own thread (dispatches,
-// copies, texture and buffer clears, events, the game's barriers, calls). Hyrule Field, standing (NX2NAVI_REPLAY_RUNS,
+// copies, texture and buffer clears, events, the game's barriers, calls). Hyrule Field, standing (NX2SARIA_REPLAY_RUNS,
 // 2026-11-11): about 3,500 draws a frame in 82 runs, 96% of them in runs of 16 draws or more and 67% in runs of 256 or
 // more, with a timestamp report beside nearly every draw and a render condition beside every second one.
 // A run is cut into groups: a group ends where the render targets change after its first draw or clear, and before an
-// inline uniform update (and a mesh draw with the mesh fallback or while NX2NAVI_GPU_PASSES copies their counts), which
+// inline uniform update (and a mesh draw with the mesh fallback or while NX2SARIA_GPU_PASSES copies their counts), which
 // the submitting thread replays itself in the order of the stream like everything outside groups. A group of
 // 2 * CHUNK_DRAWS draws or more is recorded by several threads at once:
 // - the front pass, on the submitting thread, walks the group in the order of the stream before anything of it is
@@ -1926,7 +1926,7 @@ static void op_one(VkExec *ex, const op_hdr *h) {
 // replays the op again once in turn, and so do the contact shadows' pass and the HDR pass's source. Per-object motion
 // lists its draws under a lock (vk_exec_draw.c mvobj_draw), and the occlusion queries' slots and segments follow the
 // stream (vk_exec_xfer.c vk_exec_xfer_slots, vk_exec_xfer_group_merge).
-// NX2NAVI_REPLAY_PIPE=N (1-4, default 0): the submitting thread hands the group to the workers, takes chunks of it as
+// NX2SARIA_REPLAY_PIPE=N (1-4, default 0): the submitting thread hands the group to the workers, takes chunks of it as
 // they do until none is left to take, and goes on with the ops after it, in a new command buffer after the chunks'
 // places in the part (vk_sync_append_later), while the last chunks are recorded; also into the front pass of the next
 // group: up to N (at most LIVE_GROUPS) groups are handed out and not in their part yet, their chunks taken from one
@@ -1956,7 +1956,7 @@ static void op_one(VkExec *ex, const op_hdr *h) {
 // ms a frame) but not the frame: with 1, 2 or 4 groups out the fps stayed within one of the 50 the stage 2 mode makes,
 // over three batches. A frame there is the replay (about 11.5 ms) and then the GPU's work after it (about 6.6 ms: the
 // temporal upscaler about 4, the write-back copies 1.5), which the next frame waits for (nvn_api_core.c
-// nvnQueueSubmitCommands, NX2NAVI_SUBMIT_FINISH; without that wait the game waits as long itself, 52.4 fps); during the
+// nvnQueueSubmitCommands, NX2SARIA_SUBMIT_FINISH; without that wait the game waits as long itself, 52.4 fps); during the
 // replay the GPU keeps up with what is submitted. Sending the part's command buffers up to the first chunk place still
 // being recorded while later groups record (tried) did so for at most 0.2 parts per submission and gained nothing.
 #define RW_MAX 16
@@ -1991,8 +1991,8 @@ static const char *const pw_name[PW_N] = {"next group", "op", "pass hooks", "tur
 
 static struct {
     int n;                              // workers; 0 off, -1 not read yet
-    int pipe;                           // NX2NAVI_REPLAY_PIPE: the groups out at once at most, 0 none
-    int small;                          // NX2NAVI_REPLAY_SMALL: the fewest draws of a group one worker takes whole
+    int pipe;                           // NX2SARIA_REPLAY_PIPE: the groups out at once at most, 0 none
+    int small;                          // NX2SARIA_REPLAY_SMALL: the fewest draws of a group one worker takes whole
     uint64_t small_groups, small_draws; // such groups and their draws since the last perf line
     void *help_dc;                      // the submitting thread's draw context for chunks it takes while it waits
     RwWorker *w[RW_MAX];
@@ -2004,7 +2004,7 @@ static struct {
     // the submitting thread, since the last perf line: ops outside groups by kind (SER_*), and in groups the front
     // pass, its own chunks and the wait for the others'
     uint64_t ser_n[4], ser_ns[4], front_ns, own_ns, spin_ns;
-    // NX2NAVI_REPLAY_PIPE, since the last perf line: waits by why (PW_*), the time from a group's hand-out to the end
+    // NX2SARIA_REPLAY_PIPE, since the last perf line: waits by why (PW_*), the time from a group's hand-out to the end
     // of the wait for it, and the ops that waited (PW_OP)
     uint64_t pw_n[PW_N], pw_ns[PW_N], behind_ns, pd_op[OP_COUNT_];
     volatile uint64_t turns, turn_ns, redos, chunk_ns;   // chunk_ns: the chunks' recording, every thread's
@@ -2081,7 +2081,7 @@ void vk_exec_par(void (*fn)(void *, int, int), void *arg, int n, int grain) {
 static void rw_main(void *arg) {
     RwWorker *w = arg;
     plat_thread_priority(PLAT_PRIO_HIGHEST);   // as the recording thread (rec_claim)
-    perf_lock_timing_here();   // NX2NAVI_LOCK_TIME, as on the recording thread
+    perf_lock_timing_here();   // NX2SARIA_LOCK_TIME, as on the recording thread
     vk_exec_draw_ctx_use(w->dc);
     for (;;) {
         par_help();
@@ -2109,7 +2109,7 @@ static void rw_main(void *arg) {
     }
 }
 
-// NX2NAVI_REPLAY_WORKERS = auto: the workers this PC gets. The game's own threads, the submitting thread, the present
+// NX2SARIA_REPLAY_WORKERS = auto: the workers this PC gets. The game's own threads, the submitting thread, the present
 // thread and the pipeline builders already keep about half of the cores busy, and on the 8-core CPU above 3 workers
 // gave all there was (5 and 7 measured the same), so the count is half the physical cores less one: 2 on 6 cores, 3 on
 // 8, 5 on 12, at most 6. Four cores or fewer get none: a worker would take a core from the game's threads. AMD's
@@ -2131,17 +2131,17 @@ int vk_exec_replay_workers_auto(const char **why) {
 }
 
 static void rw_init(void) {
-    const char *set = cfg_value("NX2NAVI_REPLAY_WORKERS"), *why = NULL;
+    const char *set = cfg_value("NX2SARIA_REPLAY_WORKERS"), *why = NULL;
     int autoset = !strcmp(set, "auto");
     int n = autoset ? vk_exec_replay_workers_auto(&why) : atoi(set);
     RW.n = n < 0 ? 0 : n > RW_MAX ? RW_MAX : n;
     if (autoset) {
         uint64_t all, first;
-        rt_log("vk: replay workers automatic: %d for %d physical cores (%s; NX2NAVI_REPLAY_WORKERS = a number sets "
+        rt_log("vk: replay workers automatic: %d for %d physical cores (%s; NX2SARIA_REPLAY_WORKERS = a number sets "
                "them)", RW.n, plat_cpu_cores(&all, &first), why);
     } else if (RW.n && vk_caps.amd_sc) {   // the player's number stays (vk_exec_replay_workers_auto)
         rt_log("vk: WARNING: %d replay workers set on AMD's driver for RX 6000 and older, where a game with workers lost "
-               "its device; NX2NAVI_REPLAY_WORKERS = auto or 0 avoids it", RW.n);
+               "its device; NX2SARIA_REPLAY_WORKERS = auto or 0 avoids it", RW.n);
     }
     for (int k = 0; k < RW.n; k++) {
         RwWorker *w = calloc(1, sizeof *w);
@@ -2153,25 +2153,25 @@ static void rw_init(void) {
         if (!(w->t = plat_thread_new(rw_main, w, name))) rt_fatal("vk: cannot start a replay worker");
         RW.w[k] = w;
     }
-    int pipe = cfg_int("NX2NAVI_REPLAY_PIPE");   // the groups out at once
+    int pipe = cfg_int("NX2SARIA_REPLAY_PIPE");   // the groups out at once
     RW.pipe = RW.n <= 0 || pipe <= 0 ? 0 : pipe > LIVE_GROUPS ? LIVE_GROUPS : pipe;
     if (RW.pipe) RW.help_dc = vk_exec_draw_ctx_new();
-    RW.small = RW.pipe ? cfg_int("NX2NAVI_REPLAY_SMALL") : 0;
+    RW.small = RW.pipe ? cfg_int("NX2SARIA_REPLAY_SMALL") : 0;
     if (RW.small >= 2 * CHUNK_DRAWS) {   // a group that large is cut into chunks (group_start): no group would match
-        rt_log("vk: NX2NAVI_REPLAY_SMALL = %d: groups of %d draws or more are shared out anyway, so %d is used (0..%d)",
+        rt_log("vk: NX2SARIA_REPLAY_SMALL = %d: groups of %d draws or more are shared out anyway, so %d is used (0..%d)",
                RW.small, 2 * CHUNK_DRAWS, 2 * CHUNK_DRAWS - 1, 2 * CHUNK_DRAWS - 1);
         RW.small = 2 * CHUNK_DRAWS - 1;
     }
     if (RW.small > 0)
-        rt_log("vk: a group of %d draws or more goes whole to one replay worker (NX2NAVI_REPLAY_SMALL)", RW.small);
+        rt_log("vk: a group of %d draws or more goes whole to one replay worker (NX2SARIA_REPLAY_SMALL)", RW.small);
     else RW.small = 0;
     if (RW.pipe)
         rt_log("vk: groups of %d draws or more are recorded by %d replay worker%s while the submitting thread goes on "
-               "past them, %d at once at most (NX2NAVI_REPLAY_WORKERS, NX2NAVI_REPLAY_PIPE)", 2 * CHUNK_DRAWS, RW.n,
+               "past them, %d at once at most (NX2SARIA_REPLAY_WORKERS, NX2SARIA_REPLAY_PIPE)", 2 * CHUNK_DRAWS, RW.n,
                RW.n > 1 ? "s" : "", RW.pipe);
     else if (RW.n)
         rt_log("vk: groups of %d draws or more are recorded by %d replay worker%s and the submitting thread "
-               "(NX2NAVI_REPLAY_WORKERS)", 2 * CHUNK_DRAWS, RW.n, RW.n > 1 ? "s" : "");
+               "(NX2SARIA_REPLAY_WORKERS)", 2 * CHUNK_DRAWS, RW.n, RW.n > 1 ? "s" : "");
 }
 
 // Every group before g has all its chunks done.
@@ -2255,7 +2255,7 @@ static void views_release(VkExec *ex, uint64_t fence) {
 enum { GE_RUN, GE_TARGET, GE_UB, GE_MESH, GE_LIMIT, GE_N };
 static const char *const ge_name[GE_N] = {"run end", "target change", "uniform update", "mesh draw", "read limit"};
 
-int vk_gpu_passes_capturing(void);   // vk_crumbs.c: NX2NAVI_GPU_PASSES is copying this frame's counts
+int vk_gpu_passes_capturing(void);   // vk_crumbs.c: NX2SARIA_GPU_PASSES is copying this frame's counts
 
 // The draws of the group that starts at h (it ends at *end, for the reason *why), reading at most GROUP_PEEK ops.
 static uint32_t group_peek(const VkExec *ex, const op_hdr *h, const op_hdr **end, int *why, uint32_t *end_op) {
@@ -2266,7 +2266,7 @@ static uint32_t group_peek(const VkExec *ex, const op_hdr *h, const op_hdr **end
     *why = GE_LIMIT;
     // mesh draws stay on the submitting thread with the mesh fallback (its buffers are shared), with the mesh emulation
     // (no VK_EXT_mesh_shader: its arena, queue and the part's pre-pass command buffer are the submitting thread's) and
-    // while NX2NAVI_GPU_PASSES copies their workgroup counts (one list)
+    // while NX2SARIA_GPU_PASSES copies their workgroup counts (one list)
     int mesh_serial = vk_ctx()->mesh_fallback || !vk_ctx()->has_mesh_shader || vk_gpu_passes_capturing();
     for (uint32_t ops = 0; ops < GROUP_PEEK; ops++) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_) { *why = GE_RUN; break; }   // the walk reports it
@@ -2476,7 +2476,7 @@ static const op_hdr *group_start(VkExec *ex, const op_hdr *h, int depth) {
     int n = (int)(draws / CHUNK_DRAWS);
     if (n > RW.n + 1) n = RW.n + 1;
     if (n > GROUP_CHUNKS) n = GROUP_CHUNKS;
-    // NX2NAVI_REPLAY_SMALL=N (default 0, with NX2NAVI_REPLAY_PIPE): a group of N draws or more that is too small to cut
+    // NX2SARIA_REPLAY_SMALL=N (default 0, with NX2SARIA_REPLAY_PIPE): a group of N draws or more that is too small to cut
     // goes whole to one worker, and the submitting thread goes on with what follows it without taking the chunk
     // itself. Kokiri Forest standing, 5 workers, 4 groups out, the early tail on (2026-11-13): about 700 draws a frame
     // were in such groups, 3.6 ms of the submitting thread; with 16 the replay took 10.2 instead of 11.0 ms a frame
@@ -2632,10 +2632,10 @@ static const op_hdr *walk(VkExec *ex, const op_hdr *h, int depth) {
 // The replay records on the thread the game submitted from, and the kernel schedules that like any other guest
 // thread: a preemption in the middle of a part leaves the submission late for the frame it belongs to (Kokiri
 // Forest: 274 of 2,737 frames had a late submit). The recording thread therefore keeps the highest priority so the
-// scheduler prefers it over the guest's other cores (NX2NAVI_RECORDER_PRIO=0 leaves the guest's priorities alone) and
+// scheduler prefers it over the guest's other cores (NX2SARIA_RECORDER_PRIO=0 leaves the guest's priorities alone) and
 // gets a core of its own (plat_cpu_reserve): every other thread of the process, the guest's cores, the audio, the
 // shader and pipeline workers, is kept off it, so nothing of this process preempts the recording. That core is then
-// lost to the rest, so NX2NAVI_RECORDER_CORE=auto reserves it only with 12 or more logical processors, and not while
+// lost to the rest, so NX2SARIA_RECORDER_CORE=auto reserves it only with 12 or more logical processors, and not while
 // the process runs on the die with the largest L3 alone (perf.c cpu_placement): on a two-die X3D part the game's
 // threads already have that die to themselves, and a core taken from them cost frames; 1 always, 0 never. Linux
 // reserves none with fewer than four fast cores.
@@ -2657,25 +2657,25 @@ static void rec_claim(void) {
     done = 1;
     rt_log("vk: thread %u is the recording thread (the first to spend %.1f s in it)", plat_thread_id(),
            REC_CLAIM_NS / 1e9);
-    const char *e = cfg_get("NX2NAVI_RECORDER_PRIO");
+    const char *e = cfg_get("NX2SARIA_RECORDER_PRIO");
     if (!(e && !strcmp(e, "0"))) {
         plat_thread_priority(PLAT_PRIO_HIGHEST);
-        rt_log("vk: the recording thread keeps the highest scheduling priority (NX2NAVI_RECORDER_PRIO=0 turns it off)");
+        rt_log("vk: the recording thread keeps the highest scheduling priority (NX2SARIA_RECORDER_PRIO=0 turns it off)");
     }
-    const char *rc = cfg_value("NX2NAVI_RECORDER_CORE");
+    const char *rc = cfg_value("NX2SARIA_RECORDER_CORE");
     unsigned ncpu = plat_cpu_usable();
     int cache_die = perf_cpu_on_cache_die();
     if (!strcmp(rc, "auto") && cache_die) rt_log("vk: no core is reserved for the recording thread: the process runs on "
-                                                 "the die with the largest L3 cache (NX2NAVI_RECORDER_CORE=1 reserves one)");
+                                                 "the die with the largest L3 cache (NX2SARIA_RECORDER_CORE=1 reserves one)");
     if (!strcmp(rc, "1") || (!strcmp(rc, "auto") && ncpu >= 12 && !cache_die)) {
         char which[96];
         int n = plat_cpu_reserve(which, sizeof which);
         if (n) rt_log("vk: the recording thread has a core of its own: logical processor%s %s (%d of %u; "
-                      "NX2NAVI_RECORDER_CORE=0 turns it off)", n > 1 ? "s" : "", which, n, ncpu);
+                      "NX2SARIA_RECORDER_CORE=0 turns it off)", n > 1 ? "s" : "", which, n, ncpu);
         else rt_log("vk: no core was reserved for the recording thread (too few fast cores, or the system refused it; "
-                    "NX2NAVI_RECORDER_CORE=0 stops the attempt)");
+                    "NX2SARIA_RECORDER_CORE=0 stops the attempt)");
     } else {
-        rt_log("vk: the recording thread runs on any core (NX2NAVI_RECORDER_CORE=auto or 1 reserves one)");
+        rt_log("vk: the recording thread runs on any core (NX2SARIA_RECORDER_CORE=auto or 1 reserves one)");
     }
 }
 
@@ -2704,7 +2704,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     if (vk_device_is_lost()) return 0;   // the run is ending (vk_device.c vk_device_lost_check): nothing is recorded
     uint64_t in_ns = kern_now_ns();
     gfx_tl_note('R', 0, (uint64_t)n, fence);
-    perf_lock_timing_here();   // NX2NAVI_LOCK_TIME
+    perf_lock_timing_here();   // NX2SARIA_LOCK_TIME
     if (prof_replay_tid != plat_thread_id()) perf_replay_thread();   // the profiler follows the thread replaying now
     perf_rec_waits = rec_wait_totals;
     VkExec *ex = &X;
@@ -2781,7 +2781,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     x_cur = NULL;
     vk_exec_event_sync(0);
     if (ex->recorded) vk_exec_barrier(ex), vk_exec_pool_marks(ex);   // later submissions see this one's writes
-    // NX2NAVI_WB_SPLIT: the write-backs in a part of their own, after one that signals the executed timeline
+    // NX2SARIA_WB_SPLIT: the write-backs in a part of their own, after one that signals the executed timeline
     // (vk_sync.c exec_tl): the wait after a frame's first submission then ends when the submission's passes are
     // through, not its write-backs. Off by default: vk_sync.c says what else that wait then leaves out.
     int tail = 0;   // the early tail: the write-backs go before the tail, with the executed timeline's signal
@@ -2839,7 +2839,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
         uint64_t xw, xe, xl, xm, le, lc, lo;
         vk_sync_exec_stats(&xw, &xe, &xl, &xm);
         vk_exec_late_stats(&le, &lc, &lo);
-        if (xw)   // NX2NAVI_WB_SPLIT: what the wait on the executed timeline left behind
+        if (xw)   // NX2SARIA_WB_SPLIT: what the wait on the executed timeline left behind
             rt_log("perf: waits after a submit on the executed timeline: %llu, %llu of them back before the completion "
                    "thread had run the side effects of the submissions up to theirs (through %.3f ms later on average, "
                    "%.3f at most); written into guest memory in that time: %llu event values, %llu counter reports, "
@@ -2922,7 +2922,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
                 memset(RW.pd_op, 0, sizeof RW.pd_op);
                 RW.behind_ns = 0;
                 if (RW.small)
-                    rt_log("perf: replay workers: groups one worker took whole (NX2NAVI_REPLAY_SMALL): %.2f per "
+                    rt_log("perf: replay workers: groups one worker took whole (NX2SARIA_REPLAY_SMALL): %.2f per "
                            "submission, %.1f draws each", (double)RW.small_groups / (double)n_subs,
                            RW.small_groups ? (double)RW.small_draws / (double)RW.small_groups : 0.0);
             }

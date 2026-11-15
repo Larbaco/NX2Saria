@@ -14,7 +14,8 @@ int cfg_supported(const char *key) {
     char k[64];
     snprintf(k, sizeof k, "%s", key);
     const char *name = k;
-    if (!strncasecmp(name, "NX2NAVI_", 8)) name += 8;
+    if (!strncasecmp(name, "NX2SARIA_", 9)) name += 9;
+    else if (!strncasecmp(name, "NX2SARIA_", 8)) name += 8;
     if (!strcasecmp(name, "FOV")) return has("fov");   // resolution.c res_fov_live
     // resolution.c decide reads both, and only res_init's patch of the output and scene sets uses them
     if (!strcasecmp(name, "OUTPUT_RES") || !strcasecmp(name, "RENDER_SCALE")) return res_adjustable();

@@ -14,7 +14,7 @@
 
 static int daily_set(void) { return rt_patch_set("amiibo_daily"); }
 
-// Whether the set may run at all is read once, after the start: NX2NAVI_AMIIBO_DAILY_PATCH=0, or a mod whose code
+// Whether the set may run at all is read once, after the start: NX2SARIA_AMIIBO_DAILY_PATCH=0, or a mod whose code
 // patches the same site (mods.c mods_exefs_switch), leaves it off then, and switching it on later must not undo that.
 static _Atomic int allowed = -1;
 int amiibo_daily_available(void) {
@@ -28,7 +28,7 @@ int amiibo_daily_available(void) {
 
 void amiibo_daily_poll(void) {
     if (!amiibo_daily_available()) return;
-    const int lifted = !cfg_bool("NX2NAVI_AMIIBO_DAILY_LIMIT"), set = daily_set();
+    const int lifted = !cfg_bool("NX2SARIA_AMIIBO_DAILY_LIMIT"), set = daily_set();
     if (rt_patch_enabled(set) != lifted) rt_patch_switch(set, lifted);
     static int logged = -1;
     if (lifted != logged) {

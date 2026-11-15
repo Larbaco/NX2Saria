@@ -1,4 +1,4 @@
-// NX2NAVI runtime shader translator front end. Copyright (c) 2026 jhaizhou (MIT; see THIRD_PARTY_NOTICES.md).
+// NX2SARIA runtime shader translator front end. Copyright (c) 2026 jhaizhou (MIT; see THIRD_PARTY_NOTICES.md).
 // SPIR-V for Vulkan is the only output (no MSL, no vertex-counter lowering, no near-is-minus-w rewrite); depth clip control
 // is reported as supported and non-constant texture offsets as unsupported.
 // Protocol (stdout carries replies only; diagnostics go to stderr):

@@ -126,7 +126,7 @@ _Static_assert(__builtin_offsetof(AudrenAuxParam, send_info) == 64, "auxiliary e
 #define AUDREN_WORK_BUFFER_BYTES 0x10000u                     // the host keeps its state in host memory
 #define AUDREN_BEHAVIOR_OUT 0xb0u
 #define AUDREN_RENDER_INFO_OUT 0x10u
-// Catch-up after a stall (NX2NAVI_AUDIO_CATCHUP; audren.c render_thread, audio_mixer.c audio_mixer_owed): a gap longer
+// Catch-up after a stall (NX2SARIA_AUDIO_CATCHUP; audren.c render_thread, audio_mixer.c audio_mixer_owed): a gap longer
 // than this is not caught up, the sound goes on from now.
 #define AUDIO_CATCHUP_MAX_MS 3000
 
@@ -148,7 +148,7 @@ typedef struct {
     uint32_t consumed, drops;
     struct { int16_t history[2]; int32_t buffer; uint64_t at; } adpcm;   // DSP-ADPCM decode cursor (buffer slot, next sample) and history
     float biquad_state[2][6][2];   // filter, channel: transposed direct-form II delays
-    uint64_t dry_pass;             // NX2NAVI_AUDIO_STATS: 1 + the render pass in which the voice ran out of queued
+    uint64_t dry_pass;             // NX2SARIA_AUDIO_STATS: 1 + the render pass in which the voice ran out of queued
                                    // buffers before its end of stream (audren.c advance_voice), 0 otherwise
     // Volume ramps (audio_mixer.c audio_mixer_render): what the voice was mixed with in its last render pass. The pass
     // after it starts every gain there and reaches the new volumes at its end; voice_reset (audren.c) forgets it.
@@ -195,7 +195,7 @@ typedef struct AudioRenderer {
     int logged;
     uint64_t behavior_flags, elapsed_frames;
     uint64_t stop_released, empty_played, flushed, logged_released;
-    struct AudrenStats *stats;   // NX2NAVI_AUDIO_STATS (audren.c), NULL when off
+    struct AudrenStats *stats;   // NX2SARIA_AUDIO_STATS (audren.c), NULL when off
     ServerVoice *voices;
     AudrenPoolIn *pools;
     AudrenMixIn *mixes;
@@ -203,7 +203,7 @@ typedef struct AudioRenderer {
     AudrenEffectIn *effects;
     AudrenChannelIn *channels;
     void *mixer;
-    uint8_t strict;                  // NX2NAVI_AUDIO_STRICT (OpenAudioRenderer): audio_bad ends the process
+    uint8_t strict;                  // NX2SARIA_AUDIO_STRICT (OpenAudioRenderer): audio_bad ends the process
     uint8_t bad_seen[AB_KINDS];      // audio_bad: the kinds logged so far (atomic exchange; any thread)
     uint64_t bad_count;              // audio_bad: times a value was left out (per update or per render pass) or an
                                      // update refused (atomic)
@@ -212,7 +212,7 @@ typedef struct AudioRenderer {
 
 // A value the game sent that this host cannot use: the caller refuses the update or leaves the one record, effect or
 // sink out. Logs the first of each kind per renderer, with the game frame, and counts every one; with
-// NX2NAVI_AUDIO_STRICT=1 it ends the process instead, as most of these values did before 0.11.0. Any thread; takes no
+// NX2SARIA_AUDIO_STRICT=1 it ends the process instead, as most of these values did before 0.11.0. Any thread; takes no
 // lock but the log's.
 void audio_bad(AudioRenderer *r, int kind, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 // audio_bad for a refused RequestUpdate, as an expression that gives AUDREN_R_INVALID_UPDATE.
@@ -262,16 +262,16 @@ int64_t audio_mixer_pace_ns(AudioRenderer *r, uint64_t now);
 // the caller renders one frame with `drop` set. 0: nothing is owed. -1: more than AUDIO_CATCHUP_MAX_MS was owed and is
 // forgotten.
 int audio_mixer_owed(AudioRenderer *r);
-// NX2NAVI_AUDIO_STATS: the output's counters since it opened, and the longest gap between two device requests since
+// NX2SARIA_AUDIO_STATS: the output's counters since it opened, and the longest gap between two device requests since
 // the last call (which starts that measure again). False without a device.
 typedef struct { uint64_t underruns, missing_frames, skipped_frames, overruns, queued_frames, pull_gap_max_ns; } AudioOutStats;
 int audio_mixer_out_stats(AudioRenderer *r, AudioOutStats *o);
-// NX2NAVI_AUDIO_STATS: the render passes in which at least one volume was ramped (NX2NAVI_AUDIO_RAMP), and the ramps (one
+// NX2SARIA_AUDIO_STATS: the render passes in which at least one volume was ramped (NX2SARIA_AUDIO_RAMP), and the ramps (one
 // source channel into one mix buffer), since the mixer opened.
 void audio_mixer_ramp_stats(const AudioRenderer *r, uint64_t *passes, uint64_t *ramps);
 uint64_t audio_voice_consumed(const AudioRenderer *r, ServerVoice *v, int frames);   // source samples over one frame; advances v->fraction
 int audio_buffer_empty(const AudrenWaveBuffer *b);   // no samples to decode: played as soon as it is reached
 void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);   // IAudioDevice
-void audio_channels_live(void);   // after a settings change: another NX2NAVI_AUDIO_CHANNELS reaches the game and the mixer
+void audio_channels_live(void);   // after a settings change: another NX2SARIA_AUDIO_CHANNELS reaches the game and the mixer
 void audio_dmg_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);      // auddmg:u (Switch 2)
 void audio_sysmix_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);   // audsmx:u (Switch 2)

@@ -1,9 +1,9 @@
 """The mods folder served as RomFS overlays (runtime/romfs.c, runtime/mods.c): load order, added files, case, Unicode.
 
-    .venv\\Scripts\\python tests\\mods_romfs_check.py --exe build\\v121-<tag>\\nx2navi.exe --version v121
+    .venv\\Scripts\\python tests\\mods_romfs_check.py --exe build\\v121-<tag>\\nx2saria.exe --version v121
 
 Builds a mods folder in a temp directory with files of its own bytes at real RomFS paths (from
-build/extracted/<version>/romfs/index.json), runs `nx2navi.exe --probe-fs` on it and reads the `mods:` lines of the log.
+build/extracted/<version>/romfs/index.json), runs `nx2saria.exe --probe-fs` on it and reads the `mods:` lines of the log.
 --probe-fs compares the bytes it reads through the RomFS with every overlay file, so a wrong winner fails it too.
 A second folder checks the merged resource size table the start writes to the profile (runtime/romfs.c
 restbl_overlay): a grown file's entry, an added file's, a shipped table's and another version's table's.

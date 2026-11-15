@@ -23,5 +23,5 @@ void gfx_window_focus_changed(int in);     // the window gained (1) or lost (0) 
 // (gfx_present.c rt_exit_begin)
 void gfx_window_closed(void);
 void gfx_window_set_refresh(double hz);    // the refresh rate of the window's monitor, 0 unknown
-int gfx_cfg_fullscreen(void);              // NX2NAVI_FULLSCREEN
-void gfx_cfg_window_size(int *w, int *h);  // NX2NAVI_WINDOW_SIZE, the default when unparsable or out of range
+int gfx_cfg_fullscreen(void);              // NX2SARIA_FULLSCREEN
+void gfx_cfg_window_size(int *w, int *h);  // NX2SARIA_WINDOW_SIZE, the default when unparsable or out of range

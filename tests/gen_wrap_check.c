@@ -5,13 +5,13 @@
 // shadow storage and the verify mode make must answer as it does below the boundary. Seeds: 2^32 - 8 (where 32-bit
 // generations wrapped), 2^40 - 8 (the low 32 bits pass through 0 again, so a truncation to 32 bits anywhere fails
 // there too) and 2^63 - 8. gen_next must log one line when the count reaches 2^32, and no other.
-// With --cfg the counter starts at 0 and the seed comes from NX2NAVI_GEN_SEED (vk_memory.c gen_seed), which the first
+// With --cfg the counter starts at 0 and the seed comes from NX2SARIA_GEN_SEED (vk_memory.c gen_seed), which the first
 // generation reads: the run must go on from the start expected of that value (parsed as 64 bits, capped at 2^62, a
 // value that is no number ignored), with the seed's log line expected of it ("-": none).
 // Stubs: no-op locks; a write watch that reports the pages a check marks as written by the CPU; nothing frozen; no
 // pools in the index.
 // Usage: gen_wrap_check <seed>
-//        gen_wrap_check --cfg <NX2NAVI_GEN_SEED's value, or (unset)> <expected start> <expected seed line part, or ->
+//        gen_wrap_check --cfg <NX2SARIA_GEN_SEED's value, or (unset)> <expected start> <expected seed line part, or ->
 // Prints each failed check and "gen_wrap_check: seed ...: N of M checks failed"; exit 1 on any.
 #include <stdarg.h>
 #include <stdint.h>
@@ -71,8 +71,8 @@ uint64_t mem_written_peek(uint64_t addr, uint64_t size, uint64_t *pages, uint64_
 int mem_frozen(uint64_t a) { (void)a; return 0; }
 int mem_watched(uint64_t addr, uint64_t size) { (void)addr, (void)size; return 1; }
 int nvn_gpu_only(uint64_t a) { (void)a; return 0; }
-static const char *cfg_seed;   // --cfg: what NX2NAVI_GEN_SEED reads (NULL: unset)
-static const char *cfg_get(const char *k) { return !strcmp(k, "NX2NAVI_GEN_SEED") ? cfg_seed : NULL; }
+static const char *cfg_seed;   // --cfg: what NX2SARIA_GEN_SEED reads (NULL: unset)
+static const char *cfg_get(const char *k) { return !strcmp(k, "NX2SARIA_GEN_SEED") ? cfg_seed : NULL; }
 typedef struct { uintptr_t lo, hi, base; void *buf; } pidx_ent;   // snap_widen's pool lookup: no pools
 typedef struct { int n; } pidx;
 static pidx pool_index;
@@ -80,7 +80,7 @@ static PlatMutex pool_lock;
 static const pidx_ent *pidx_find(const pidx *x, uintptr_t a, uint64_t l) { (void)x, (void)a, (void)l; return NULL; }
 enum { POOL_IMPORT = 1 };
 
-// The log: the page generation and NX2NAVI_GEN_SEED lines are kept, the others dropped.
+// The log: the page generation and NX2SARIA_GEN_SEED lines are kept, the others dropped.
 static char gen_lines[16][512];
 static int n_gen_lines;
 static void rt_log(const char *fmt, ...) {
@@ -89,7 +89,7 @@ static void rt_log(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    if (strncmp(line, "mem: page generations", 21) && strncmp(line, "mem: NX2NAVI_GEN_SEED", 21)) return;
+    if (strncmp(line, "mem: page generations", 21) && strncmp(line, "mem: NX2SARIA_GEN_SEED", 22)) return;
     if (n_gen_lines < 16) memcpy(gen_lines[n_gen_lines], line, sizeof line);
     n_gen_lines++;
 }
@@ -150,11 +150,11 @@ int main(int argc, char **argv) {
     last_now = (uint64_t)gen_now;
 
     // Before the boundary: both textures loaded (written) and checked. The first write takes the first generation,
-    // which goes on from the seed (with --cfg, the seed NX2NAVI_GEN_SEED gives).
+    // which goes on from the seed (with --cfg, the seed NX2SARIA_GEN_SEED gives).
     if (!failed) {
         vk_guest_written(TEX, 0x4000);
         CHECK((uint64_t)gen_now == seed + 1, "%s%s: the first generation is %llu, not %llu",
-              from_cfg ? "NX2NAVI_GEN_SEED=" : "seeded directly", from_cfg ? (cfg_seed ? cfg_seed : "(unset)") : "",
+              from_cfg ? "NX2SARIA_GEN_SEED=" : "seeded directly", from_cfg ? (cfg_seed ? cfg_seed : "(unset)") : "",
               (unsigned long long)gen_now, (unsigned long long)(seed + 1));
     }
     if (failed) {   // the generations cannot reach the boundary: nothing below can run
@@ -259,7 +259,7 @@ int main(int argc, char **argv) {
             CHECK(strstr(gen_lines[i], "reached 4294967296 at frame 216000 after 1.0 h of play (19884 a frame)"),
                   "the line at 2^32: %s", gen_lines[i]);
         }
-        if (strstr(gen_lines[i], "NX2NAVI_GEN_SEED")) {
+        if (strstr(gen_lines[i], "NX2SARIA_GEN_SEED")) {
             n_seed++;
             CHECK(want_line && strstr(gen_lines[i], want_line), "the seed's line is not \"%s\": %s",
                   want_line ? want_line : "(none)", gen_lines[i]);

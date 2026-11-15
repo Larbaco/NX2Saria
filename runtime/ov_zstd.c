@@ -1,4 +1,4 @@
-// The game's zstd decoder on the host's libzstd. Most RomFS files of NX2navi 1.4.3 are zstd frames, many with a
+// The game's zstd decoder on the host's libzstd. Most RomFS files of NX2Saria 1.4.3 are zstd frames, many with a
 // dictionary from Pack/ZsDic.pack.zs; the decoder is BSD zstd linked into main. The patch set "zstd"
 // (recomp/patches-v143.txt) sends every call of ZSTD_decompressMultiFrame (main+0x3a1f0) and of ZSTD_decompress_usingDDict
 // (main+0x3a1e0) to the two host functions below, on the patch page. Lifted, the decoder ran its literal and match
@@ -9,7 +9,7 @@
 // - A guest ZSTD_DDict (zstd's struct: dictBuffer, dictContent, dictSize first) becomes a host ZSTD_DDict made from a
 //   copy of its content, cached by guest address, content address, size and a fingerprint of the content.
 // - Inputs of at least AWAY_BYTES give the virtual core up while they decode (other guest threads run on it).
-// NX2NAVI_ZSTD_NATIVE=0 keeps the guest decoder (the patch set switch); NX2NAVI_ZSTD_CHECK=1 decodes each call both ways,
+// NX2SARIA_ZSTD_NATIVE=0 keeps the guest decoder (the patch set switch); NX2SARIA_ZSTD_CHECK=1 decodes each call both ways,
 // keeps the guest's result and logs every call where the two differ.
 //
 // Ocarina of Time 1.1.1 has the same decoder at other addresses (recomp/patches-v111.txt: three calls of
@@ -61,7 +61,7 @@ static struct {
 
 static int check_mode(void) {
     static int v = -1;
-    if (v < 0) v = cfg_bool("NX2NAVI_ZSTD_CHECK");
+    if (v < 0) v = cfg_bool("NX2SARIA_ZSTD_CHECK");
     return v;
 }
 
@@ -193,7 +193,7 @@ static void count(uint64_t in, uint64_t out, uint64_t ns) {
 static int trusted(void) {
     static int v = -1;
     if (v < 0) {
-        const char *e = cfg_get("NX2NAVI_ZSTD_NATIVE");
+        const char *e = cfg_get("NX2SARIA_ZSTD_NATIVE");
         v = !(e && !strcmp(e, "0")) || check_mode();
         if (!v) rt_log("zstd: the game's own decoder (zstd_native = 0; zstd_check = 1 compares the two)");
     }
@@ -299,7 +299,7 @@ static void decode(Cpu *c, uint64_t dict, uint64_t dict_size, uint64_t ddict, ui
 // The game's job stops feeding at a result of 0, which a frame gives once its content is out even when its last bytes
 // (the checksum) are still to come: such a stream keeps its slot for those bytes but is marked spent, and a new stream
 // takes a spent slot when no free one is left.
-// With NX2NAVI_ZSTD_CHECK=1 the game's feed decodes every stream as before, the host decodes the same chunks into a
+// With NX2SARIA_ZSTD_CHECK=1 the game's feed decodes every stream as before, the host decodes the same chunks into a
 // buffer of its own, and the two outputs are compared when the game ends the stream or has all its content out
 // ("zstd check: stream ..."). The check also reports a game output that did not advance through one buffer.
 // --probe-zstd (probe_zstd, at the end) runs host streams on frames it makes itself.
@@ -766,7 +766,7 @@ int probe_zstd(void) {
 
 #endif
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): host dictionaries (never freed) and stream slots taken.
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): host dictionaries (never freed) and stream slots taken.
 void zstd_sizes(PerfSizes *s) {
     uint64_t d, st = 0;
     plat_mutex_lock(&dict_lock);

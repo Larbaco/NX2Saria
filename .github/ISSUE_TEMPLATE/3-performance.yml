@@ -41,4 +41,4 @@ body:
     id: log
     attributes:
       label: Log
-      description: Drag `logs\nx2navi.log` from the game's folder into this field.
+      description: Drag `logs\nx2saria.log` from the game's folder into this field. Existing installations may also have older `nx2navi.log` files.

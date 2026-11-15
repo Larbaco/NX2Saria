@@ -1,4 +1,4 @@
-// The hang watch: a report in the log when nothing moves for NX2NAVI_HANG_WATCH_S seconds (default 20; 0 off). A
+// The hang watch: a report in the log when nothing moves for NX2SARIA_HANG_WATCH_S seconds (default 20; 0 off). A
 // present, a GPU submission or the completion of one that never comes back (a deadlock, a driver wait that does not
 // return, a GPU hang without a reset) left a log that just stopped, and nothing in it said where the threads were.
 //
@@ -98,7 +98,7 @@ static void hang_watch_main(void *arg) {
 }
 
 void hang_watch_start(void) {
-    int s = cfg_int("NX2NAVI_HANG_WATCH_S");
+    int s = cfg_int("NX2SARIA_HANG_WATCH_S");
     if (s <= 0) return;
     if (!plat_thread_spawn(hang_watch_main, (void *)(uintptr_t)s, "hang watch", 0))
         rt_log("hang watch: its thread did not start");

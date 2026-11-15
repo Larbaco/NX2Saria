@@ -17,7 +17,7 @@ report, and whoever fixes it imports it to reach the same place in the game. The
 imports the same zip; its import waits in <game>/profile/save-import for the game's next start.
 
 A save folder can come from a Switch save backup (the save's files), an emulator (nested folders named by user and
-title ids, gone down while each holds only one folder), another NX2navi game folder or its profile folder (the
+title ids, gone down while each holds only one folder), another NX2Saria game folder or its profile folder (the
 account folder inside).
 
 A whole save is account.sav, option.sav and the folders slot_00 to slot_05, each with progress.sav and caption.sav. A
@@ -48,14 +48,14 @@ def _rmtree(path):
     if Path(path).exists():
         shutil.rmtree(path, onexc=writable)
 
-README = '''NX2navi saves folder
+README = '''NX2Saria saves folder
 
-To import a save, put it here and select Saves, then Import a Save, in the NX2navi launcher:
-- a save someone shared: the NX2navi-save-....zip that NX2navi exported
+To import a save, put it here and select Saves, then Import a Save, in the NX2Saria launcher:
+- a save someone shared: the NX2Saria-save-....zip that NX2Saria exported
 - the files of a Switch save backup, or the folder that holds them
 - one save slot (a folder such as slot_00): only that slot is replaced
 - an emulator's save folder for the game
-- the profile folder (or the whole game folder) of another NX2navi install
+- the profile folder (or the whole game folder) of another NX2Saria install
 
 You can also select Import a Save and choose the zip or the folder instead.
 
@@ -413,8 +413,8 @@ def _replace_held(game, src, files, slot, stamp, log):
 
 # ---- sharing a save: one zip with the save and a manifest (export_save, import_zip)
 #
-# NX2navi-save-<date>_<time>[-bug-report].zip:
-#   manifest.json         FORMAT, FORMAT_VERSION, the game's title id and version, the NX2navi version, the export time
+# NX2Saria-save-<date>_<time>[-bug-report].zip:
+#   manifest.json         FORMAT, FORMAT_VERSION, the game's title id and version, the NX2Saria version, the export time
 #   save/...              the save's files as the game keeps them (account.sav, option.sav, slot_00/progress.sav, ...)
 #   bug-report/...        with bug_report: the game's latest log and nx2navi.ini; an import leaves them out
 # The game's own menu writes and reads the same zip (runtime/save_share.c), with the same manifest keys.
@@ -459,7 +459,7 @@ NO_SAVE = 'the game has no save yet: play until it saves, then export'
 
 
 # Settings whose values stay on the player's PC (runtime/cfg_private.h has the same list): the menu's test hook, and
-# what the co-op of versions up to 0.9.2 kept in nx2navi.ini, which a player's file may still hold.
+# what the co-op of versions up to 0.9.2 kept in the settings file, which a player's file may still hold.
 PRIVATE_SETTINGS = ('coop_room', 'coop_server', 'coop_name', 'coop_accept', 'coop_remove', 'menu_test_set')
 PRIVATE_SHOWN = b'(set, not shown)'
 
@@ -474,30 +474,44 @@ def scrub_settings(data):
         start = 3 if n == 0 and text.startswith(b'\xef\xbb\xbf') else 0
         body = text[start:].lstrip(b' \t')
         key, eq, value = body.partition(b'=')
+        normalized = key.strip(b' \t').lower()
+        for prefix in (b'nx2saria_', b'nx2navi_'):
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix):]
+                break
         if (eq and value.strip(b' \t') and body[:1] not in (b'#', b';', b'[')
-                and key.strip(b' \t').lower() in tuple(k.encode() for k in PRIVATE_SETTINGS)):
+                and normalized in tuple(k.encode() for k in PRIVATE_SETTINGS)):
             line = text[:text.index(b'=') + 1] + b' ' + PRIVATE_SHOWN + line[len(text):]
         out.append(line)
     return b'\n'.join(out)
 
 
-def _add_report_file(z, f):
-    """One file of a bug report into the zip: nx2navi.ini without its private values, anything else as it is."""
-    if f.name == 'nx2navi.ini':
-        z.writestr(REPORT_DIR + f.name, scrub_settings(f.read_bytes()))
+def _add_report_file(z, f, archive_name):
+    """Add a report file under its current archive name; scrub settings from either INI filename."""
+    if f.name.lower() in ('nx2navi.ini', 'nx2saria.ini'):
+        z.writestr(REPORT_DIR + archive_name, scrub_settings(f.read_bytes()))
     else:
-        z.write(f, REPORT_DIR + f.name)
+        z.write(f, REPORT_DIR + archive_name)
+
+
+def _report_files(game):
+    """Current files win; fall back to old runtime names without moving or overwriting them."""
+    current_log, legacy_log = game / 'logs' / 'nx2saria.log', game / 'logs' / 'nx2navi.log'
+    current_ini, legacy_ini = game / 'nx2saria.ini', game / 'nx2navi.ini'
+    log = current_log if current_log.is_file() else legacy_log
+    ini = current_ini if current_ini.is_file() else legacy_ini
+    return [(p, name) for p, name in ((log, 'nx2saria.log'), (ini, 'nx2saria.ini')) if p.is_file()]
 
 
 def _export_log(game, dest, version, log):
-    """The bug report of a game without a save (it stopped before its first one): NX2navi-log-<date>_<time>-bug-report.zip
-    with the game's latest log, nx2navi.ini and a manifest that counts no save files; import_zip refuses it as a zip
+    """The bug report of a game without a save (it stopped before its first one): NX2Saria-log-<date>_<time>-bug-report.zip
+    with the game's latest log, nx2saria.ini and a manifest that counts no save files; import_zip refuses it as a zip
     without a save. SaveError when the game has written no log either: then there is nothing to report with."""
-    extras = [f for f in (game / 'logs' / 'nx2navi.log', game / 'nx2navi.ini') if f.is_file()]
-    if not extras or extras[0].name != 'nx2navi.log':
+    extras = _report_files(game)
+    if not extras or extras[0][1] != 'nx2saria.log':
         raise SaveError(NO_SAVE)
     dest.mkdir(parents=True, exist_ok=True)
-    out = _fresh_file(dest, time.strftime('NX2navi-log-%Y-%m-%d_%H-%M-%S') + '-bug-report', '.zip')
+    out = _fresh_file(dest, time.strftime('NX2Saria-log-%Y-%m-%d_%H-%M-%S') + '-bug-report', '.zip')
     tmp = out.with_name(out.name + '.part')
     manifest = {'format': FORMAT, 'format_version': FORMAT_VERSION, 'game': GAME, 'title_id': _title_hex(),
                 'game_version': GAME_VERSION, 'nx2navi': version,
@@ -506,19 +520,19 @@ def _export_log(game, dest, version, log):
     try:
         with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as z:
             z.writestr(MANIFEST, json.dumps(manifest, indent=1) + '\n')
-            for f in extras:
-                _add_report_file(z, f)
+            for f, name in extras:
+                _add_report_file(z, f, name)
         os.replace(tmp, out)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    log(f'saves: the game has no save yet; exported {", ".join(f.name for f in extras)} to {out}')
-    return {'path': out, 'files': 0, 'extras': [f.name for f in extras]}
+    log(f'saves: the game has no save yet; exported {", ".join(name for _, name in extras)} to {out}')
+    return {'path': out, 'files': 0, 'extras': [name for _, name in extras]}
 
 
 def export_save(game, dest=None, bug_report=False, version='', log=print):
     """Write the save the game would load now into one zip in dest (default_export_dir when None), for a bug report
-    or another player. bug_report adds the game's latest log and nx2navi.ini, and still writes those two when the game
+    or another player. bug_report adds the game's latest log and nx2saria.ini, and still writes those two when the game
     has no save yet (_export_log): a game that stops before its first save is the one its player wants to report.
     Never a key file. Returns {'path', 'files', 'extras'} (files 0: no save; extras: the names of the bug report files
     that were there)."""
@@ -530,8 +544,8 @@ def export_save(game, dest=None, bug_report=False, version='', log=print):
         raise SaveError(NO_SAVE)
     account = account_dir(game)
     dest.mkdir(parents=True, exist_ok=True)
-    stem = time.strftime('NX2navi-save-%Y-%m-%d_%H-%M-%S') + ('-bug-report' if bug_report else '')
-    extras = [f for f in (game / 'logs' / 'nx2navi.log', game / 'nx2navi.ini') if bug_report and f.is_file()]
+    stem = time.strftime('NX2Saria-save-%Y-%m-%d_%H-%M-%S') + ('-bug-report' if bug_report else '')
+    extras = _report_files(game) if bug_report else []
     for attempt in range(3):
         # a running game may swap a commit in while its files are read (runtime/fs_host.c swap_in): read again
         current = _newest(game, account)
@@ -551,8 +565,8 @@ def export_save(game, dest=None, bug_report=False, version='', log=print):
                 z.writestr(MANIFEST, json.dumps(manifest, indent=1) + '\n')
                 for rel in files:
                     z.write(current / rel, SAVE_DIR + rel.as_posix())
-                for f in extras:
-                    _add_report_file(z, f)
+                for f, name in extras:
+                    _add_report_file(z, f, name)
             os.replace(tmp, out)
         except FileNotFoundError:
             tmp.unlink(missing_ok=True)
@@ -564,8 +578,8 @@ def export_save(game, dest=None, bug_report=False, version='', log=print):
             tmp.unlink(missing_ok=True)
             raise
         log(f'saves: exported {len(files)} files from {current} to {out}' +
-            (f' with {", ".join(f.name for f in extras)}' if extras else ''))
-        return {'path': out, 'files': len(files), 'extras': [f.name for f in extras]}
+            (f' with {", ".join(name for _, name in extras)}' if extras else ''))
+        return {'path': out, 'files': len(files), 'extras': [name for _, name in extras]}
 
 
 def _member_path(name):
@@ -577,14 +591,14 @@ def _member_path(name):
 
 
 def check_manifest(m):
-    """SaveError unless m is the manifest of an NX2navi save of this game that this version can read."""
+    """SaveError unless m is the manifest of an NX2Saria save of this game that this version can read."""
     if not isinstance(m, dict) or m.get('format') != FORMAT:
-        raise SaveError(f'its {MANIFEST} is not an NX2navi save manifest')
+        raise SaveError(f'its {MANIFEST} is not an NX2Saria save manifest')
     v = m.get('format_version')
     if type(v) is not int or v < 1:
         raise SaveError(f'its {MANIFEST} has no format version')
     if v > FORMAT_VERSION:
-        raise SaveError(f'it was made by a newer NX2navi ({m.get("nx2navi") or "format " + str(v)}): update NX2navi '
+        raise SaveError(f'it was made by a newer NX2Saria ({m.get("nx2navi") or "format " + str(v)}): update NX2Saria '
                         'first')
     if str(m.get('title_id', '')).lower() != _title_hex():
         raise SaveError(f'it is a save of another game ({m.get("game") or m.get("title_id") or "not named"})')
@@ -603,7 +617,7 @@ def read_zip(path):
         try:
             info = z.getinfo(MANIFEST)
         except KeyError:
-            raise SaveError(f'{name} is not a save exported by NX2navi (it has no {MANIFEST}); to import a save '
+            raise SaveError(f'{name} is not a save exported by NX2Saria (it has no {MANIFEST}); to import a save '
                             'folder, unpack the zip and choose the folder') from None
         try:
             if info.file_size > 1 << 16:
@@ -650,7 +664,7 @@ def import_zip(game, path, log=print, stamp=None):
         account, backup = _replace(game, stage, files, None, stamp or time.strftime('%Y-%m-%d %H.%M.%S'), log)
     finally:
         _rmtree(stage)
-    log(f'saves: imported {len(files)} files from {path} (exported {m.get("exported", "?")} by NX2navi '
+    log(f'saves: imported {len(files)} files from {path} (exported {m.get("exported", "?")} by NX2Saria '
         f'{m.get("nx2navi") or "?"}, game {m.get("game_version", "?")}) into {account}' +
         (f'; the old save is in {backup}' if backup else ''))
     return {'files': len(files), 'source': Path(path), 'backup': backup, 'slot': None, 'manifest': m}

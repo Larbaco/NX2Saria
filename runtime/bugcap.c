@@ -1,6 +1,6 @@
 // Bug captures (bugcap.h): what a player's F8 writes, and the run that starts from it. docs/bug-capture.md.
 //
-// A capture is one folder, <log folder>/captures/<number>-<YYYYMMDD-HHMMSS>/ (NX2NAVI_CAPTURE_DIR names another base):
+// A capture is one folder, <log folder>/captures/<number>-<YYYYMMDD-HHMMSS>/ (NX2SARIA_CAPTURE_DIR names another base):
 //
 //   capture.txt     written last, so a folder that has it is complete. "key = value" lines under [sections]: when,
 //                   versions, the area, Link's position and rotation, the camera of the frame on screen and the
@@ -11,7 +11,7 @@
 //   log-tail.txt    the end of this run's log
 //   settings.ini    every setting with a value, as nx2navi.ini lines, without the private ones (cfg_private.h): what a
 //                   replay runs with
-//   NX2navi-save-*.zip   the save the game would load next (save_share.c), which a replay starts from
+//   NX2Saria-save-*.zip   the save the game would load next (save_share.c), which a replay starts from
 //   flags.tsv, texts.tsv   the game's on/off flags and its 64-character texts, by the hash of their names
 //   flight/         the flight recorder's dump of the same moment, when flight = 1 (flight.c)
 //
@@ -20,12 +20,12 @@
 // the game's camera update for its own choice (dbg_camera_watch), and a thread of its own waits for both, writes the
 // files and then lets the note show. One capture at a time: a press while one is being written is logged and dropped.
 //
-// A replay (NX2NAVI_CAPTURE_REPLAY=<folder>) is a test run: cfg.c takes the folder's settings.ini in place of
-// nx2navi.ini, the environment still on top, and writes no settings file. On the game's thread bugcap_replay_pad
+// A replay (NX2SARIA_CAPTURE_REPLAY=<folder>) is a test run: cfg.c takes the folder's settings.ini in place of
+// the selected settings file, the environment still on top, and writes no settings file. On the game's thread bugcap_replay_pad
 // presses A until the save is loaded and bugcap_replay_tick then goes where the capture was taken with the debug
 // menu's own tools (debug_tools.c): the game's change of area to the start position nearest to the place, Link's
 // walk to it, the free camera at the captured camera. Link is walked, not put: his position cannot be written
-// (debug_tools.c). At the end the replay takes a capture of its own, into <folder>/replays unless NX2NAVI_CAPTURE_DIR
+// (debug_tools.c). At the end the replay takes a capture of its own, into <folder>/replays unless NX2SARIA_CAPTURE_DIR
 // says otherwise, whose capture.txt names the original and how far from it Link ended.
 #include <math.h>
 #include <stdarg.h>
@@ -99,7 +99,7 @@ static struct {
 
 static void replay_source(void) {
     if (rp_src.state) return;
-    const char *e = getenv("NX2NAVI_CAPTURE_REPLAY");   // the environment only: a replay is one run, never a saved setting
+    const char *e = cfg_env("NX2SARIA_CAPTURE_REPLAY");   // the environment only: a replay is one run, never a saved setting
     if (!e || !*e) {
         rp_src.state = -1;
         return;
@@ -128,7 +128,7 @@ const char *bugcap_replay_dir(void) {
 }
 
 static void base_dir(char *out, size_t cap) {
-    const char *e = cfg_get("NX2NAVI_CAPTURE_DIR");
+    const char *e = cfg_get("NX2SARIA_CAPTURE_DIR");
     char logs[PLAT_PATH_MAX];
     if (e && *e) snprintf(out, cap, "%s", e);
     else if (bugcap_replay_dir()) snprintf(out, cap, "%s/replays", rp_src.dir);
@@ -272,7 +272,7 @@ static void setting_cb(const char *key, const char *value, int from_env, void *c
     char lower[80], var[96];
     snprintf(lower, sizeof lower, "%s", key);
     for (char *p = lower; *p; p++) *p = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
-    snprintf(var, sizeof var, "NX2NAVI_%s", key);
+    snprintf(var, sizeof var, "NX2SARIA_%s", key);
     if (!from_env && cfg_from_env(var)) return;   // the file's line of a key the environment sets too: that one counts
     int private = cfg_private_key(key);
     if (s->ini && !private && *value && !run_key(key)) fprintf(s->ini, "%s = %s\n", lower, value);
@@ -412,7 +412,7 @@ static void writer(void *arg) {
         Txt t = {f};
         struct tm u;
         plat_gmtime((int64_t)(job.unix_ns / 1000000000u), &u);
-        put(&t, "# NX2navi bug capture %d. docs/bug-capture.md says how to start a run from it.\n[capture]\n", job.number);
+        put(&t, "# NX2Saria bug capture %d. docs/bug-capture.md says how to start a run from it.\n[capture]\n", job.number);
         put(&t, "number = %d\nname = %s\n", job.number, job.name);
         put(&t, "time = %04d-%02d-%02d %02d:%02d:%02d\ntime_utc = %04d-%02d-%02dT%02d:%02d:%02dZ\n", job.local.tm_year + 1900,
             job.local.tm_mon + 1, job.local.tm_mday, job.local.tm_hour, job.local.tm_min, job.local.tm_sec, u.tm_year + 1900,
@@ -475,8 +475,8 @@ static void writer(void *arg) {
         put(&t, "\n[settings that differ from the defaults]\n");
         Settings s = {open_in("settings.ini", "w"), &t, 0};
         if (s.ini)
-            fprintf(s.ini, "# The settings bug capture %d ran with, as nx2navi.ini lines: every setting that had a value, from the\n"
-                           "# file, the menu or the environment, without the private ones. NX2NAVI_CAPTURE_REPLAY reads it.\n", job.number);
+            fprintf(s.ini, "# The settings bug capture %d ran with, as settings-file lines: every setting that had a value, from the\n"
+                           "# file, the menu or the environment, without the private ones. NX2SARIA_CAPTURE_REPLAY reads it.\n", job.number);
         cfg_each_active(setting_cb, &s);
         if (s.ini) fclose(s.ini);
         if (!s.differ) put(&t, "# none\n");
@@ -588,9 +588,9 @@ void bugcap_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, uint64_
     }
     static uint64_t at[16];
     static int n_at = -1;
-    if (n_at < 0) {   // NX2NAVI_CAPTURE_AT=<frame>[,<frame>...]: captures without a key, for test runs
+    if (n_at < 0) {   // NX2SARIA_CAPTURE_AT=<frame>[,<frame>...]: captures without a key, for test runs
         n_at = 0;
-        for (const char *p = cfg_get("NX2NAVI_CAPTURE_AT"); p && *p && n_at < 16;) {
+        for (const char *p = cfg_get("NX2SARIA_CAPTURE_AT"); p && *p && n_at < 16;) {
             char *end;
             unsigned long long f = strtoull(p, &end, 10);
             if (end == p) break;
@@ -603,7 +603,7 @@ void bugcap_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, uint64_
     const char *why = key && !key_was ? "F8" : NULL;
     key_was = key;
     for (int i = 0; i < n_at; i++)
-        if (at[i] == frame) why = "NX2NAVI_CAPTURE_AT";
+        if (at[i] == frame) why = "NX2SARIA_CAPTURE_AT";
     if (__atomic_exchange_n(&replay_wants, 0, __ATOMIC_ACQ_REL)) why = "replay";
     if (why) start(frame, interval_ns, why);
 }
@@ -674,7 +674,7 @@ void bugcap_replay_tick(uint64_t tick) {
         rp.have_cam = src_get("camera_pos", text, sizeof text) && sscanf(text, "%lf %lf %lf", &rp.cam[0], &rp.cam[1], &rp.cam[2]) == 3 &&
                       src_get("camera_yaw", text, sizeof text) && sscanf(text, "%f", &rp.yaw) == 1 &&
                       src_get("camera_pitch", text, sizeof text) && sscanf(text, "%f", &rp.pitch) == 1;
-        const char *cam = getenv("NX2NAVI_CAPTURE_REPLAY_CAMERA");   // 0: the game's own camera stays
+        const char *cam = cfg_env("NX2SARIA_CAPTURE_REPLAY_CAMERA");   // 0: the game's own camera stays
         rp.cam_on = !(cam && !strcmp(cam, "0"));
         rt_log("capture: replay of %s: %s, Link at %.2f %.2f %.2f%s, camera %s", rp_src.name, rp.area[0] ? rp.area : "no area",
                rp.pos[0], rp.pos[1], rp.pos[2], rp.have_pos ? "" : " (not in the capture)",

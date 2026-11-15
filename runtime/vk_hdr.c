@@ -1,14 +1,14 @@
-// HDR output (NX2NAVI_HDR=1): an HDR10 swapchain (Rec. 2020 primaries, PQ) and a game picture tone mapped to the
-// display's range (shaders/hdr_tonemap.frag says how). Settings: NX2NAVI_HDR, on and off following the menu during a
+// HDR output (NX2SARIA_HDR=1): an HDR10 swapchain (Rec. 2020 primaries, PQ) and a game picture tone mapped to the
+// display's range (shaders/hdr_tonemap.frag says how). Settings: NX2SARIA_HDR, on and off following the menu during a
 // run (vk_hdr_wanted), the game's own HDR (native, the menu's other HDR) from the start only; the nits
-// NX2NAVI_HDR_PEAK_NITS (the display's peak), NX2NAVI_HDR_GAME_NITS (the picture's white, "paper white") and
-// NX2NAVI_HDR_UI_NITS (the HUD's and this menu's white); NX2NAVI_HDR_TONEMAP with what each tone mapper takes
-// (NX2NAVI_HDR_MIDGRAY, NX2NAVI_HDR_MATCH_SLOPE, NX2NAVI_HDR_TONE_SLOPE and NX2NAVI_HDR_HUE_CLIP, or
-// NX2NAVI_HDR_HIGHLIGHT_SAT .. NX2NAVI_HDR_GRADE), the grading sliders NX2NAVI_HDR_EXPOSURE .. NX2NAVI_HDR_SATURATION
-// of both and NX2NAVI_HDR_GAMMA, the display the present shows the picture as; all read when the settings change
+// NX2SARIA_HDR_PEAK_NITS (the display's peak), NX2SARIA_HDR_GAME_NITS (the picture's white, "paper white") and
+// NX2SARIA_HDR_UI_NITS (the HUD's and this menu's white); NX2SARIA_HDR_TONEMAP with what each tone mapper takes
+// (NX2SARIA_HDR_MIDGRAY, NX2SARIA_HDR_MATCH_SLOPE, NX2SARIA_HDR_TONE_SLOPE and NX2SARIA_HDR_HUE_CLIP, or
+// NX2SARIA_HDR_HIGHLIGHT_SAT .. NX2SARIA_HDR_GRADE), the grading sliders NX2SARIA_HDR_EXPOSURE .. NX2SARIA_HDR_SATURATION
+// of both and NX2SARIA_HDR_GAMMA, the display the present shows the picture as; all read when the settings change
 // (vk_hdr_support). Left at their defaults they give one look: the observer-response mapper anchored to the game's mid
 // grey and tone slope, half of the hue bend of the game's clamp, no grading, shown as a 2.2 display would. With
-// NX2NAVI_HDR=0 the swapchain is SDR, the spliced tonemap gives the game's own SDR picture (vk_hdr_support, p0.w = -1)
+// NX2SARIA_HDR=0 the swapchain is SDR, the spliced tonemap gives the game's own SDR picture (vk_hdr_support, p0.w = -1)
 // and the present is what it was.
 //
 // The game's picture (docs/architecture.md, "HDR"). The game tonemaps its scene into an r11g11b10f target, upscales it
@@ -56,9 +56,9 @@
 // - armed: the HDR path is set up, so the menu can switch HDR on and off without a restart: the instance and device
 //   get the HDR extensions (vk_device.c), the game's tonemap is spliced as its shaders load (vk_hdr_shader_swap) and
 //   every draw's support buffer carries the settings (vk_exec_draw.c). While the swapchain is SDR the spliced tonemap
-//   returns the game's own SDR result. Always, unless NX2NAVI_HDR_LIVE = 0 with NX2NAVI_HDR = 0 (the path left out as it
+//   returns the game's own SDR result. Always, unless NX2SARIA_HDR_LIVE = 0 with NX2SARIA_HDR = 0 (the path left out as it
 //   was before the setting followed the menu: HDR then needs a restart) or a probe turned it off (vk_hdr_off).
-// - native: NX2NAVI_HDR = native, the game's own HDR. The display is reported as HDR10 (ov_gfx.c
+// - native: NX2SARIA_HDR = native, the game's own HDR. The display is reported as HDR10 (ov_gfx.c
 //   QueryDisplayHdrStatus, with the peak and paper white of the settings), and the game then renders its HDR picture
 //   itself and presents it as PQ-encoded Rec. 2020 in A2B10G10R10 (format 64), which goes to the HDR10 swapchain as it
 //   is: no tonemap splice, no float picture, no encode (pictures still presented in 8 bits, before the switch, are
@@ -67,8 +67,8 @@ static int g_armed = -1, g_native = -1;
 
 static void hdr_start(void) {
     if (g_armed >= 0) return;
-    g_native = !strcmp(cfg_value("NX2NAVI_HDR"), "native");
-    g_armed = cfg_bool("NX2NAVI_HDR") || cfg_bool("NX2NAVI_HDR_LIVE");   // last: the mark that both are read
+    g_native = !strcmp(cfg_value("NX2SARIA_HDR"), "native");
+    g_armed = cfg_bool("NX2SARIA_HDR") || cfg_bool("NX2SARIA_HDR_LIVE");   // last: the mark that both are read
 }
 
 int vk_hdr_armed(void) {
@@ -88,21 +88,21 @@ int vk_hdr_wanted(void) {
     if (g_native) return 1;
     unsigned v = cfg_version();
     if (__atomic_load_n(&seen, __ATOMIC_ACQUIRE) != v) {
-        __atomic_store_n(&on, cfg_bool("NX2NAVI_HDR") != 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&on, cfg_bool("NX2SARIA_HDR") != 0, __ATOMIC_RELEASE);
         __atomic_store_n(&seen, v, __ATOMIC_RELEASE);
     }
     return __atomic_load_n(&on, __ATOMIC_ACQUIRE);
 }
 
 // The menu's HDR row: what is set takes a restart. To or from the game's own HDR, and switching HDR on in a run that
-// started without the HDR path (NX2NAVI_HDR_LIVE = 0). vk_hdr_restart_for: the same for a value not set yet (the
+// started without the HDR path (NX2SARIA_HDR_LIVE = 0). vk_hdr_restart_for: the same for a value not set yet (the
 // menu's draft holds HDR until Apply).
 int vk_hdr_restart_for(const char *value) {
     hdr_start();
     int native = !strcmp(value, "native"), on = native || !strcmp(value, "1");
     return native != g_native || (!g_armed && on);
 }
-int vk_hdr_needs_restart(void) { return vk_hdr_restart_for(cfg_value("NX2NAVI_HDR")); }
+int vk_hdr_needs_restart(void) { return vk_hdr_restart_for(cfg_value("NX2SARIA_HDR")); }
 
 void vk_hdr_off(void) { g_native = 0, g_armed = 0; }
 
@@ -113,7 +113,7 @@ void vk_hdr_off(void) { g_native = 0, g_armed = 0; }
 // value of 0.001, 0.08 nits at a white of 350 nits against 0.001), the floor of a dark scene lifted to grey. So the
 // present shows the picture as a 2.2 display would (hdr_encode.comp, hdr_ui.frag: the power 2.2 of the sRGB code),
 // and the tonemap aims its peak below the display's by that correction's inverse (hdr_tonemap.frag
-// peak_before_gamma). That holds for every tone mapper and is the default of NX2NAVI_HDR_GAMMA, which can make it 2.4
+// peak_before_gamma). That holds for every tone mapper and is the default of NX2SARIA_HDR_GAMMA, which can make it 2.4
 // or switch it off (the picture as its sRGB code decodes, the dark tones lighter). The game's own HDR does not take
 // the setting: what the present still encodes there (the menu, the 8-bit pictures before the game's switch) is shown
 // as a 2.2 display would.
@@ -134,37 +134,37 @@ static Nits nits(void) {
         plat_mutex_lock(&N.lock);
         if (N.seen != v) {
             Nits *n = &N.snap[!N.cur];
-            n->peak = clampf((float)cfg_double("NX2NAVI_HDR_PEAK_NITS"), 80.0f, 10000.0f);
-            n->game = clampf((float)cfg_double("NX2NAVI_HDR_GAME_NITS"), 48.0f, 500.0f);
-            n->ui = clampf((float)cfg_double("NX2NAVI_HDR_UI_NITS"), 48.0f, 500.0f);
+            n->peak = clampf((float)cfg_double("NX2SARIA_HDR_PEAK_NITS"), 80.0f, 10000.0f);
+            n->game = clampf((float)cfg_double("NX2SARIA_HDR_GAME_NITS"), 48.0f, 500.0f);
+            n->ui = clampf((float)cfg_double("NX2SARIA_HDR_UI_NITS"), 48.0f, 500.0f);
             // the tone mapper as shaders/hdr_tonemap.frag numbers it: the game's curve, the luminance mapper, the
             // observer-response mapper (the default, and what any other value gives)
-            const char *tm = cfg_value("NX2NAVI_HDR_TONEMAP");
+            const char *tm = cfg_value("NX2SARIA_HDR_TONEMAP");
             float mapper = !strcmp(tm, "vanilla") ? 0.0f : !strcmp(tm, "renodrt") ? 3.0f : 9.0f;
-            const char *g = cfg_value("NX2NAVI_HDR_GAMMA");
+            const char *g = cfg_value("NX2SARIA_HDR_GAMMA");
             n->gamma = vk_hdr_native() ? HDR_GAMMA_22
                        : !strcmp(g, "off") || !strcmp(g, "0") ? 0.0f : !strcmp(g, "2.4") ? 2.0f : HDR_GAMMA_22;
             // The sliders' 0..100 with 50 unchanged become factors around 1; blowout, hue, grade and hue clip are
             // fractions. Divided, not multiplied by a rounded reciprocal: 50 and 100 % come out as exactly 1, which
             // the shader compares for to leave a grading step out.
             float pct[10];
-            static const char *const keys[10] = {"NX2NAVI_HDR_HIGHLIGHTS", "NX2NAVI_HDR_SHADOWS", "NX2NAVI_HDR_CONTRAST",
-                                                 "NX2NAVI_HDR_SATURATION", "NX2NAVI_HDR_HIGHLIGHT_SAT", "NX2NAVI_HDR_BLOWOUT",
-                                                 "NX2NAVI_HDR_FLARE", "NX2NAVI_HDR_HUE", "NX2NAVI_HDR_TONE_SLOPE",
-                                                 "NX2NAVI_HDR_HUE_CLIP"};
+            static const char *const keys[10] = {"NX2SARIA_HDR_HIGHLIGHTS", "NX2SARIA_HDR_SHADOWS", "NX2SARIA_HDR_CONTRAST",
+                                                 "NX2SARIA_HDR_SATURATION", "NX2SARIA_HDR_HIGHLIGHT_SAT", "NX2SARIA_HDR_BLOWOUT",
+                                                 "NX2SARIA_HDR_FLARE", "NX2SARIA_HDR_HUE", "NX2SARIA_HDR_TONE_SLOPE",
+                                                 "NX2SARIA_HDR_HUE_CLIP"};
             for (int i = 0; i < 10; i++) pct[i] = clampf((float)cfg_double(keys[i]), 0.0f, 100.0f);
             float *t = n->tm;
             t[0] = n->peak, t[1] = n->game, t[2] = n->ui;
             t[3] = mapper;
-            t[4] = clampf((float)cfg_double("NX2NAVI_HDR_EXPOSURE"), 0.0f, 200.0f) / 100.0f;
+            t[4] = clampf((float)cfg_double("NX2SARIA_HDR_EXPOSURE"), 0.0f, 200.0f) / 100.0f;
             t[5] = pct[0] / 50.0f, t[6] = pct[1] / 50.0f, t[7] = pct[2] / 50.0f;
             t[8] = pct[3] / 50.0f, t[9] = pct[4] / 50.0f, t[10] = pct[5] / 100.0f, t[11] = pct[6] / 50.0f;
             t[12] = pct[7] / 100.0f;
-            t[13] = clampf((float)cfg_double("NX2NAVI_HDR_GRADE"), 0.0f, 100.0f) / 100.0f;
+            t[13] = clampf((float)cfg_double("NX2SARIA_HDR_GRADE"), 0.0f, 100.0f) / 100.0f;
             t[14] = n->gamma, t[15] = pct[8] / 50.0f;
             t[16] = pct[9] / 100.0f;
-            t[17] = !strcmp(cfg_value("NX2NAVI_HDR_MIDGRAY"), "render") ? 0.0f : 1.0f;
-            t[18] = cfg_bool("NX2NAVI_HDR_MATCH_SLOPE") ? 1.0f : 0.0f, t[19] = 0;
+            t[17] = !strcmp(cfg_value("NX2SARIA_HDR_MIDGRAY"), "render") ? 0.0f : 1.0f;
+            t[18] = cfg_bool("NX2SARIA_HDR_MATCH_SLOPE") ? 1.0f : 0.0f, t[19] = 0;
             __atomic_store_n(&N.cur, !N.cur, __ATOMIC_RELEASE);
             __atomic_store_n(&N.seen, v, __ATOMIC_RELEASE);
         }
@@ -790,7 +790,7 @@ void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words) {
 
 // ---- 2. the picture the window texture is copied from
 
-int vk_hdr_track;                 // vk_exec_draw.c calls vk_hdr_draw: set at the first present with NX2NAVI_HDR=1
+int vk_hdr_track;                 // vk_exec_draw.c calls vk_hdr_draw: set at the first present with NX2SARIA_HDR=1
 static volatile int32_t g_active;   // the swapchain is HDR10 (gfx_present.c vk_hdr_set_active)
 static PlatMutex rec_lock = PLAT_MUTEX_INIT;
 // per presented window image: what the last draw copied, and where in the stream (vk_exec_stream_pos)
@@ -861,7 +861,7 @@ void vk_hdr_image_gone(VkImage image) {   // a texture image went away: forget i
 
 // ---- swapchain
 
-// While NX2NAVI_HDR is on (vk_hdr_wanted), the HDR10 format among the surface's (10-bit UNORM, ST 2084): 1 with *out
+// While NX2SARIA_HDR is on (vk_hdr_wanted), the HDR10 format among the surface's (10-bit UNORM, ST 2084): 1 with *out
 // set, else 0 and the reason logged once.
 int vk_hdr_surface_format(const VkSurfaceFormatKHR *f, uint32_t n, VkSurfaceFormatKHR *out) {
     if (!vk_hdr_wanted()) return 0;

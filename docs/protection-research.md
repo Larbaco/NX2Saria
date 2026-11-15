@@ -1,4 +1,4 @@
-# Can NX2navi be protected from copying, including by AI tools?
+# Can NX2Saria be protected from copying, including by AI tools?
 
 Research note, 2026-11-07. Not legal advice.
 

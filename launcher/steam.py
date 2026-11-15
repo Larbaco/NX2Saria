@@ -1,5 +1,5 @@
-"""Add to Steam (Customize Launcher): the game as a non-Steam shortcut in the player's Steam library, with Navi as its
-icon and the game's title screen and logo as its pictures (launcher/gameart.py). Windows only.
+"""Add to Steam (Customize Launcher): the game as a non-Steam shortcut in the player's Steam library, with the
+NX2Saria leaf icon and the game's title screen and logo as its pictures (launcher/gameart.py). Windows only.
 
 Steam keeps the shortcuts of each account in <Steam>/userdata/<account id>/config/shortcuts.vdf, a binary key-value
 file: a map is 0x00 name 0x00 ... 0x08, a string 0x01 name 0x00 value 0x00, a 32-bit integer 0x02 name 0x00 value
@@ -16,7 +16,7 @@ shortcut nor keep it: Steam is asked to close (steam.exe -shutdown), the files a
 The shortcut starts the launcher's pythonw.exe on data/steam_play.pyw, which starts this launcher with --play: the game
 runs from its own folder with its console hidden, and the Python process waits for it, so Steam shows the game as
 running for as long as it is (the game's own Restart included). Starting ocarina.exe directly would open a console
-window beside the game, and NX2navi.exe ends a few seconds after it started the launcher.
+window beside the game, and NX2Saria.exe ends a few seconds after it started the launcher.
 """
 import os
 import shutil
@@ -26,12 +26,13 @@ import time
 import zlib
 from pathlib import Path
 
-NAME = 'The Legend of Zelda Ocarina of Time'
+NAME = 'The Legend of Zelda: Ocarina of Time (NX2Saria)'
+LEGACY_NAMES = ('The Legend of Zelda Ocarina of Time',)
 PLAY_SCRIPT = 'steam_play.pyw'
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 STEAM64_BASE = 76561197960265728
 
-PLAY_TEXT = '''"""Written by the NX2navi launcher (Customize Launcher > Add to Steam): Steam starts the game through this file.
+PLAY_TEXT = '''"""Written by the NX2Saria launcher (Customize Launcher > Add to Steam): Steam starts the game through this file.
 It runs the launcher of app/current.txt with --play, which starts the game and waits for it."""
 import os
 import runpy
@@ -40,7 +41,7 @@ import sys
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 with open(os.path.join(root, 'app', 'current.txt'), encoding='utf-8') as f:
     version = f.read().strip()
-os.environ['NX2NAVI_LAUNCHER_ROOT'] = root
+os.environ['NX2SARIA_LAUNCHER_ROOT'] = root
 sys.argv = [os.path.join(root, 'app', version, 'launcher', 'start.pyw'), '--play'] + sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name='__main__')
 '''
@@ -140,8 +141,11 @@ def add_shortcut(vdf_bytes, exe, start_dir, options, icon, name=NAME):
         if it[0] != T_MAP:
             continue
         n, a = _get(it[2], 'AppName'), _get(it[2], 'appid')
-        if (n and n[0] == T_STR and n[2] == name) or (a and a[0] == T_INT and struct.unpack('<I', a[2])[0] == sid):
+        if (n and n[0] == T_STR and n[2] in tuple(dict.fromkeys((name, NAME, *LEGACY_NAMES)))) or \
+                (a and a[0] == T_INT and struct.unpack('<I', a[2])[0] == sid):
             entry = it[2]
+            if a and a[0] == T_INT and len(a[2]) == 4:
+                sid = struct.unpack('<I', a[2])[0]   # retain Steam's per-app playtime, collections and artwork
             break
     if entry is None:
         used = {it[1] for it in root[2]}
@@ -174,8 +178,9 @@ def has_shortcut(vdf_bytes, name=NAME):
         root = _get(vdf_load(vdf_bytes), 'shortcuts') if vdf_bytes else None
     except SteamError:
         return False
+    names = tuple(dict.fromkeys((name, NAME, *LEGACY_NAMES)))
     return bool(root and root[0] == T_MAP and any(
-        it[0] == T_MAP and (_get(it[2], 'AppName') or [0, 0, None])[2] == name for it in root[2]))
+        it[0] == T_MAP and (_get(it[2], 'AppName') or [0, 0, None])[2] in names for it in root[2]))
 
 
 # ---------------------------------------------------------------- Steam on this PC
@@ -264,14 +269,15 @@ def close_steam(exe, timeout=45.0):
 
 
 def write_atomic(path, data):
-    tmp = path.with_name(path.name + '.nx2navi-tmp')
+    tmp = path.with_name(path.name + '.nx2saria-tmp')
     tmp.write_bytes(data)
     os.replace(tmp, path)
 
 
 def add(layout, game_dir, dump='', log=print, restart=True):
-    """Add the game to Steam (or update the shortcut): the pictures from the player's game, the shortcut in every
-    account's shortcuts.vdf, Steam closed first and started again. Returns the sentence the launcher shows."""
+    """Add the game to Steam (or update its old NX2navi shortcut): the pictures from the player's game, the sprig
+    icon, the shortcut in every account's shortcuts.vdf, Steam closed first and started again. Returns the sentence
+    the launcher shows."""
     from . import gameart
     from .ui import art
     found = find_steam()
@@ -301,20 +307,23 @@ def add(layout, game_dir, dump='', log=print, restart=True):
         log('steam: asking Steam to close')
         if not close_steam(exe_steam):
             raise SteamError('Steam did not close. Close Steam yourself, then select Add to Steam again.')
-    sid = appid(exe, NAME)
     try:
         for cfg in cfgs:
-            grid = cfg / 'grid'
-            grid.mkdir(parents=True, exist_ok=True)
-            icon = grid / f'{sid}_icon.png'
-            for name, file in (('icon', icon.name), ('portrait', f'{sid}p.png'), ('wide', f'{sid}.png'),
-                               ('hero', f'{sid}_hero.png'), ('logo', f'{sid}_logo.png')):
-                write_atomic(grid / file, art.png_bytes(pics[name]))
             vdf = cfg / 'shortcuts.vdf'
             try:
                 old = vdf.read_bytes()
             except FileNotFoundError:
                 old = b''
+            _, sid = add_shortcut(old, exe, start, options, '')
+            grid = cfg / 'grid'
+            grid.mkdir(parents=True, exist_ok=True)
+            icon = grid / f'{sid}_icon.png'
+            for name, file, pixels in (('icon', icon.name, art.sprig_icon(128)),
+                                       ('portrait', f'{sid}p.png', pics['portrait']),
+                                       ('wide', f'{sid}.png', pics['wide']),
+                                       ('hero', f'{sid}_hero.png', pics['hero']),
+                                       ('logo', f'{sid}_logo.png', pics['logo'])):
+                write_atomic(grid / file, art.png_bytes(pixels))
             new, got = add_shortcut(old, exe, start, options, str(icon))
             if old and not (cfg / 'shortcuts.vdf.nx2navi-backup').exists():
                 shutil.copyfile(vdf, cfg / 'shortcuts.vdf.nx2navi-backup')

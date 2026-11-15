@@ -8,7 +8,7 @@ From runtime/vk_memory.c it takes, verbatim, into build/test/gen_wrap/gen_sectio
 The program starts the generations just below each seed's boundary and checks that every compare answers across it as
 below it (texture checks, the snapshot path, the region check, the CPU-side tables, mirror and shadow cleanliness),
 and that gen_next logs one line when the count reaches 2^32 and no other. It then takes the seeds from
-NX2NAVI_GEN_SEED (gen_seed) instead: decimal and 0x hexadecimal values past 32 bits, one past the cap of 2^62, values
+NX2SARIA_GEN_SEED (gen_seed) instead: decimal and 0x hexadecimal values past 32 bits, one past the cap of 2^62, values
 that are no number, 0 and none.
 
 No GPU, no game files, any Python.
@@ -30,13 +30,13 @@ END = '// ---------------------------------------------------------------- dirty
 READERS = ('static int cpu_wrote_since(', 'static int shadow_pool_clean(', 'static int lazy_clean(',
            'static int page_dirty(')
 SEEDS = ((1 << 32) - 8, (1 << 40) - 8, (1 << 63) - 8)   # the old wrap; low 32 bits through 0 again; near 2^63
-# NX2NAVI_GEN_SEED's value, the start expected of it, and a part of the line it logs ('-': none)
+# NX2SARIA_GEN_SEED's value, the start expected of it, and a part of the line it logs ('-': none)
 CFG_SEEDS = (
-    ('4294967288', (1 << 32) - 8, 'page generations start at 4294967288 (NX2NAVI_GEN_SEED, a test switch)'),
-    ('0xfffffffff8', (1 << 40) - 8, 'start at 1099511627768 (NX2NAVI_GEN_SEED,'),   # strtoul would stop at 2^32 - 1
-    ('0x7ffffffffffffff8', 1 << 62, 'start at 4611686018427387904 (NX2NAVI_GEN_SEED capped at 2^62,'),
-    ('12abc', 0, 'NX2NAVI_GEN_SEED=12abc is not a number'),
-    ('-8', 0, 'NX2NAVI_GEN_SEED=-8 is not a number'),
+    ('4294967288', (1 << 32) - 8, 'page generations start at 4294967288 (NX2SARIA_GEN_SEED, a test switch)'),
+    ('0xfffffffff8', (1 << 40) - 8, 'start at 1099511627768 (NX2SARIA_GEN_SEED,'),   # strtoul would stop at 2^32 - 1
+    ('0x7ffffffffffffff8', 1 << 62, 'start at 4611686018427387904 (NX2SARIA_GEN_SEED capped at 2^62,'),
+    ('12abc', 0, 'NX2SARIA_GEN_SEED=12abc is not a number'),
+    ('-8', 0, 'NX2SARIA_GEN_SEED=-8 is not a number'),
     ('0', 0, '-'),
     ('(unset)', 0, '-'),
 )

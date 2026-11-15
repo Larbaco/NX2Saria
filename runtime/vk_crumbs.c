@@ -20,7 +20,7 @@
 
 // vk_pass_mark_cmd also runs on the recorder thread (vk_rec.c R_PassMark), where vk.h's macro would turn the timestamp
 // into a new packet for the part being recorded: a second producer on the ring, which corrupts it ("vk_rec: unknown
-// packet" with NX2NAVI_PASS_TIMES=1 on NVIDIA, where the recorder is on). The command goes straight into cb.
+// packet" with NX2SARIA_PASS_TIMES=1 on NVIDIA, where the recorder is on). The command goes straight into cb.
 #undef vkCmdWriteTimestamp
 
 static PFN_vkCmdWriteBufferMarkerAMD write_marker;
@@ -107,40 +107,40 @@ void vk_crumbs_report(void) {
 static VkPassMark ring[VK_PASS_MARKS];
 static uint32_t seq;                        // marks made; only the replay thread writes it
 
-// NX2NAVI_PASS_CRUMBS: unset, buffer marks where VK_AMD_buffer_marker exists; 1, also NVIDIA checkpoints; 0, neither.
+// NX2SARIA_PASS_CRUMBS: unset, buffer marks where VK_AMD_buffer_marker exists; 1, also NVIDIA checkpoints; 0, neither.
 int vk_pass_marks_want_nv(void) {
-    const char *e = cfg_get("NX2NAVI_PASS_CRUMBS");
+    const char *e = cfg_get("NX2SARIA_PASS_CRUMBS");
     return e && *e && strcmp(e, "0") != 0;
 }
 
 static void pass_marks_init(VkCtx *c) {
-    const char *e = cfg_get("NX2NAVI_PASS_CRUMBS");
+    const char *e = cfg_get("NX2SARIA_PASS_CRUMBS");
     int off = e && !strcmp(e, "0");
     set_checkpoint = c->has_nv_checkpoints
                          ? (PFN_vkCmdSetCheckpointNV)vk_dpa(c->device, "vkCmdSetCheckpointNV") : NULL;
     pm_amd = !off && write_marker && words;
     // Timestamp profiling needs pass labels, but no vendor breadcrumb extension.
-    const char *timing = cfg_get("NX2NAVI_GPU_PASSES");
+    const char *timing = cfg_get("NX2SARIA_GPU_PASSES");
     int timestamps = timing && *timing && strcmp(timing, "0");
     vk_pass_marks_on = pm_amd || set_checkpoint || timestamps;
     if (timestamps && !pm_amd && !set_checkpoint)
         rt_log("vk: pass labels on for timestamp profiling; vendor breadcrumbs unavailable");
     else if (vk_pass_marks_on)
-        rt_log("vk: pass marks on (%s%s%s; NX2NAVI_PASS_CRUMBS=0 turns them off%s)", pm_amd ? "VK_AMD_buffer_marker" : "",
+        rt_log("vk: pass marks on (%s%s%s; NX2SARIA_PASS_CRUMBS=0 turns them off%s)", pm_amd ? "VK_AMD_buffer_marker" : "",
                pm_amd && set_checkpoint ? " and " : "", set_checkpoint ? "VK_NV_device_diagnostic_checkpoints" : "",
                set_checkpoint ? "" : ", =1 adds NVIDIA checkpoints where the driver has them");
     else
-        rt_log("vk: pass marks off (%s)", off ? "NX2NAVI_PASS_CRUMBS=0"
-                                              : "no VK_AMD_buffer_marker; NX2NAVI_PASS_CRUMBS=1 asks for NVIDIA checkpoints");
-    vk_draw_marks_on = pm_amd && cfg_bool("NX2NAVI_DRAW_CRUMBS");
+        rt_log("vk: pass marks off (%s)", off ? "NX2SARIA_PASS_CRUMBS=0"
+                                              : "no VK_AMD_buffer_marker; NX2SARIA_PASS_CRUMBS=1 asks for NVIDIA checkpoints");
+    vk_draw_marks_on = pm_amd && cfg_bool("NX2SARIA_DRAW_CRUMBS");
     if (vk_draw_marks_on)
-        rt_log("vk: draw marks on (NX2NAVI_DRAW_CRUMBS): a mark at every change of shaders inside a pass, so a lost "
+        rt_log("vk: draw marks on (NX2SARIA_DRAW_CRUMBS): a mark at every change of shaders inside a pass, so a lost "
                "device names the shaders of the draws the GPU had not finished");
-    else if (cfg_bool("NX2NAVI_DRAW_CRUMBS"))
-        rt_log("vk: draw marks off: NX2NAVI_DRAW_CRUMBS needs the pass marks of VK_AMD_buffer_marker");
+    else if (cfg_bool("NX2SARIA_DRAW_CRUMBS"))
+        rt_log("vk: draw marks off: NX2SARIA_DRAW_CRUMBS needs the pass marks of VK_AMD_buffer_marker");
 }
 
-// ---- draw marks (NX2NAVI_DRAW_CRUMBS=1, off by default; with VK_AMD_buffer_marker only)
+// ---- draw marks (NX2SARIA_DRAW_CRUMBS=1, off by default; with VK_AMD_buffer_marker only)
 // A pass mark names the pass the GPU was in and the shaders of its first and last draw. The losses reported on RDNA 2
 // cards end inside one scene pass of 30 to 100 draws, and which draw the GPU never finished is not known. With this
 // on, the replay writes a mark each time the shaders or the pipeline state change inside a pass (vk_exec_draw.c
@@ -184,7 +184,7 @@ void vk_pass_mark_cmd(VkCommandBuffer cb, uint32_t id, int end) {
     if (set_checkpoint) set_checkpoint(cb, (const void *)(uintptr_t)((uint64_t)id << 1 | (end != 0)));
 }
 
-// ---- NX2NAVI_GPU_PASSES=1 (diagnosis, needs the pass marks): every GP_PERIOD presents the render passes and dispatches
+// ---- NX2SARIA_GPU_PASSES=1 (diagnosis, needs the pass marks): every GP_PERIOD presents the render passes and dispatches
 // of GP_FRAMES frames get GPU timestamps around them. Some presents later the results are summed by what the pass is
 // (targets, shaders) and the most expensive are logged in ms per frame. The timestamps run on the replay's command
 // buffers, through the recorder like the marks.
@@ -223,7 +223,7 @@ static uint64_t gp_start;
 static unsigned long long shader_id(const GfxShader *s);
 uint32_t vk_exec_mesh_counts(const uint32_t **out);   // vk_exec_draw.c
 
-// The hash NX2NAVI_SKIP_SHADERS takes and the frame dump prints: FNV-1a over the shader's SPIR-V.
+// The hash NX2SARIA_SKIP_SHADERS takes and the frame dump prints: FNV-1a over the shader's SPIR-V.
 static uint64_t gp_shader_hash(const GfxShader *s) {
     static struct { const GfxShader *s; uint64_t h; } memo[1024];
     if (!s) return 0;
@@ -537,13 +537,13 @@ static void gp_report(uint64_t frame) {
     }
 }
 
-// NX2NAVI_SET_AT=<frame>:<key>=<value>[;...]: settings changed by a test run while the game plays, as the menu would.
+// NX2SARIA_SET_AT=<frame>:<key>=<value>[;...]: settings changed by a test run while the game plays, as the menu would.
 static void set_at_frame(uint64_t frame) {
     static char buf[512];
     static const char *next;
     static int state;
     if (!state) {
-        const char *e = cfg_get("NX2NAVI_SET_AT");
+        const char *e = cfg_get("NX2SARIA_SET_AT");
         state = e && *e ? 1 : -1;
         if (state > 0) snprintf(buf, sizeof buf, "%s", e), next = buf;
     }
@@ -567,7 +567,7 @@ void vk_gpu_passes_frame(uint64_t frame) {
     VkCtx *c = vk_ctx();
     if (!gp_state) {
         gp_state = -1;
-        const char *e = cfg_get("NX2NAVI_GPU_PASSES");
+        const char *e = cfg_get("NX2SARIA_GPU_PASSES");
         if (!e || !*e || !strcmp(e, "0") || !c) return;
         VkQueryPoolCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP,
                                     .queryCount = GP_SLOTS * 2};
@@ -587,7 +587,7 @@ void vk_gpu_passes_frame(uint64_t frame) {
             if (vkCreateQueryPool(c->device, &si, NULL, &gp_stats) != VK_SUCCESS) gp_stats = VK_NULL_HANDLE;
         }
         gp_state = 1;
-        rt_log("gpu passes: timing %d frames every %d presents (NX2NAVI_GPU_PASSES)", GP_FRAMES, GP_PERIOD);
+        rt_log("gpu passes: timing %d frames every %d presents (NX2SARIA_GPU_PASSES)", GP_FRAMES, GP_PERIOD);
     }
     if (gp_phase == 0) {
         if (frame % GP_PERIOD) return;
@@ -803,7 +803,7 @@ static void draw_marks_report(void) {
     if (!vk_draw_marks_on || !words) return;
     uint32_t reached = words[4], finished = words[5];
     char t[256];
-    rt_log("vk: draw marks (NX2NAVI_DRAW_CRUMBS, %u made): the GPU last reached draw mark %u, and every draw before draw "
+    rt_log("vk: draw marks (NX2SARIA_DRAW_CRUMBS, %u made): the GPU last reached draw mark %u, and every draw before draw "
            "mark %u had finished; the draws it had not finished follow these marks. The marks are numbered as they were "
            "recorded: with replay workers on, the numbers between the two are not all later in the queue, and only the "
            "two marks named here are certain:", (unsigned)__atomic_load_n(&dseq, __ATOMIC_RELAXED), (unsigned)reached,
@@ -835,7 +835,7 @@ void vk_pass_marks_report(void) {
     nv_report();
 }
 
-// ---- pass times (NX2NAVI_PASS_TIMES=1): GPU time per render pass and dispatch, for GPUs no vendor profiler supports
+// ---- pass times (NX2SARIA_PASS_TIMES=1): GPU time per render pass and dispatch, for GPUs no vendor profiler supports
 // (RGP covers RDNA only, so an RX 580 has none, and RenderDoc cannot capture this program). Every pass mark also
 // writes a timestamp at its two points (TOP_OF_PIPE before the pass, BOTTOM_OF_PIPE after it), into the query slot
 // pair of its ring slot. pass_times_poll, on the replay thread at each new mark, takes in the marks whose submission
@@ -863,10 +863,10 @@ static double pt_ns_per_tick, pt_total_us;
 static uint64_t pt_mask, pt_frame0, pt_marks, pt_lost;
 
 static void pass_times_init(VkCtx *c) {
-    const char *e = cfg_get("NX2NAVI_PASS_TIMES");
+    const char *e = cfg_get("NX2SARIA_PASS_TIMES");
     if (!e || !*e || !strcmp(e, "0")) return;
     if (!vk_pass_marks_on) {
-        rt_log("vk: NX2NAVI_PASS_TIMES: pass marks are off (NX2NAVI_PASS_CRUMBS=0 or no marker extension): no pass times");
+        rt_log("vk: NX2SARIA_PASS_TIMES: pass marks are off (NX2SARIA_PASS_CRUMBS=0 or no marker extension): no pass times");
         return;
     }
     VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -882,7 +882,7 @@ static void pass_times_init(VkCtx *c) {
                                 .queryCount = 2 * VK_PASS_MARKS};
     if (!f12.hostQueryReset || !bits || c->props.limits.timestampPeriod <= 0 ||
         vkCreateQueryPool(c->device, &qi, NULL, &pt_pool) != VK_SUCCESS) {
-        rt_log("vk: NX2NAVI_PASS_TIMES: no hostQueryReset or no timestamps on the queue: no pass times");
+        rt_log("vk: NX2SARIA_PASS_TIMES: no hostQueryReset or no timestamps on the queue: no pass times");
         pt_pool = VK_NULL_HANDLE;
         return;
     }
@@ -891,7 +891,7 @@ static void pass_times_init(VkCtx *c) {
     pt_mask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
     pt_read = seq;
     pt_frame0 = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
-    rt_log("vk: pass times on (NX2NAVI_PASS_TIMES): GPU time per render pass and dispatch, the top %d every %d frames",
+    rt_log("vk: pass times on (NX2SARIA_PASS_TIMES): GPU time per render pass and dispatch, the top %d every %d frames",
            PT_TOP, PT_REPORT_FRAMES);
 }
 

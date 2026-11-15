@@ -1,14 +1,14 @@
-"""Compile the generated C for one game version and link it with the runtime into build/<version>/nx2navi.exe.
+"""Compile the generated C for one game version and link it with the runtime into build/<version>/nx2saria.exe.
 
 Writes build/<version>/build.ninja and runs MSYS2 UCRT64 Ninja on it. Ninja keeps the build incremental: a chunk is
 recompiled only when it, a header it includes or its flags change.
 
-On Linux the same steps make build/<version>/nx2navi with the clang, lld and ninja on PATH (or the clang and lld in --toolchain DIR/bin): the
-runtime's *_sdl.* and platform/linux.c take the place of its *_win.*, platform/win32.c and nx2navi.rc, the libraries are
+On Linux the same steps make build/<version>/nx2saria with the clang, lld and ninja on PATH (or the clang and lld in --toolchain DIR/bin): the
+runtime's *_sdl.* and platform/linux.c take the place of its *_win.*, platform/win32.c and nx2saria.rc, the libraries are
 the system's (Vulkan, SDL3, Opus, dav1d, libvpx, zstd; libstdc++ static), and the executable finds a libSDL3.so.0 beside it
 first (rpath $ORIGIN). docs/building.md lists the packages.
 
-    .venv\\Scripts\\python tools\\build_game.py                     # generated/v121 -> build/v121/nx2navi.exe
+    .venv\\Scripts\\python tools\\build_game.py                     # generated/v121 -> build/v121/nx2saria.exe
     .venv\\Scripts\\python tools\\build_game.py --modules subsdk0   # one module (links if it has no calls into others)
     .venv\\Scripts\\python tools\\build_game.py --jobs 8
     .venv\\Scripts\\python tools\\build_game.py --out build/v121-t2   # a separate build directory
@@ -17,10 +17,10 @@ first (rpath $ORIGIN). docs/building.md lists the packages.
 
 Every runtime/*.c is compiled. build/<version>/modules.c carries the layout, the linked function tables, the
 expected SHA-256 of each ExeFS file (tools/data/expected-<display version>.json) and the default game paths
-(--exefs, --romfs, --profile), which nx2navi.exe uses unless its own command line names others. --exefs and --romfs
+(--exefs, --romfs, --profile), which nx2saria.exe uses unless its own command line names others. --exefs and --romfs
 default to extracted/<version> in the work folder: the [work] dir of config.local.toml, where tools/extract.py writes
 them, else build/. tools/romfs_index.py writes build/<version>/romfs-index.bin and romfs_config.h from the RomFS
-directory's index.json (runtime/romfs.c reads the index next to nx2navi.exe). Without that index.json the build stops:
+directory's index.json (runtime/romfs.c reads the index next to nx2saria.exe). Without that index.json the build stops:
 the exe would stop at start. --no-romfs builds it anyway.
 
 Private builds reuse the main build's objects. When --out differs from build/<version>, the main build's generated
@@ -82,7 +82,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # them. MAIN_ROOT is where they land, so resolved paths still print and compare relative to a root.
 MAIN_ROOT = (ROOT / 'build').resolve().parent
 UCRT = Path(r'C:\msys64\ucrt64\bin')
-EXE = 'nx2navi.exe' if WIN else 'nx2navi'
+EXE = 'nx2saria.exe' if WIN else 'nx2saria'
 
 
 def on_path(name):
@@ -120,7 +120,7 @@ PGO_INPUT = None   # the .profdata of --pgo FILE: every compile depends on it, s
 
 
 def set_pgo(pgo, out):
-    """--pgo gen: instrument the generated code and the runtime; nx2navi.exe adds its counts to
+    """--pgo gen: instrument the generated code and the runtime; nx2saria.exe adds its counts to
     out/pgo/default_<id>.profraw every minute and at exit (runtime/platform win32.c), across runs. --pgo FILE: compile
     with that merged profile (tools/pgo.py merge). Functions the profile never saw run are optimised for size."""
     global PGO_INPUT
@@ -128,7 +128,7 @@ def set_pgo(pgo, out):
     if pgo == 'gen':
         # absolute: the instrumented exe resolves the directory against its own working directory
         flags = [f'-fprofile-generate={cmd_arg((out / "pgo").resolve().as_posix())}']
-        RT_FLAGS.append('-DNX2NAVI_PGO_GEN')
+        RT_FLAGS.append('-DNX2SARIA_PGO_GEN')
         LINK_FLAGS.append('-fprofile-generate')   # links clang_rt.profile
     else:
         PGO_INPUT = Path(pgo).resolve()
@@ -227,7 +227,7 @@ DEFAULT_DEPS = ROOT / 'toolchain' / 'deps-mingw'
 INSTALL_SIDE = {'romfs.c', 'patches.c', 'ov_zstd.c', 'mouse_direct.c', 'sprint.c'}
 LIB_NAME = 'libnx2navirt.a'
 AR = UCRT / 'llvm-ar.exe' if WIN else on_path('llvm-ar')
-WINDRES = UCRT / 'windres.exe'   # runtime/nx2navi.rc: the manifest of nx2navi.exe
+WINDRES = UCRT / 'windres.exe'   # runtime/nx2saria.rc: the manifest of nx2saria.exe
 # GNU windres runs its preprocessor through cmd.exe, and left to find it names the gcc beside it by full path: once that
 # path and the .rc's both hold a space, cmd.exe drops the outer quotes and splits the command at the first space. gcc by
 # bare name (Ninja's PATH starts with UCRT) and the .rc by its path below MAIN_ROOT keep the command line free of
@@ -311,7 +311,7 @@ def write_if_changed(path, text):
 
 
 def copy_romfs_patches(version, out):
-    """nx2navi.exe loads romfs-patches beside romfs-index.bin (runtime/romfs.c overlay_init). tools/make_romfs_patches.py
+    """nx2saria.exe loads romfs-patches beside romfs-index.bin (runtime/romfs.c overlay_init). tools/make_romfs_patches.py
     writes them into build/<version> only, so a build in another directory ran without the 60 fps overlay (the quick
     menus' captured background turned black). Copies them when their manifest differs; romfs-patches-xbox,
     romfs-patches-xbox-label and romfs-patches-pc (the same with Xbox or keyboard and mouse button prompts,
@@ -346,12 +346,12 @@ RUNTIME = ROOT / 'runtime'   # --runtime: a copy of runtime/ lets a task build w
 
 
 def other_os(name):
-    """A runtime file for another OS: Win32 ones (*_win.*, platform/win32.c, nx2navi.rc) off Windows, the SDL window's
+    """A runtime file for another OS: Win32 ones (*_win.*, platform/win32.c, nx2saria.rc) off Windows, the SDL window's
     (*_sdl.*) and platform/linux.c on Windows."""
     stem = name.rsplit('.', 1)[0]
     if WIN:
         return stem.endswith('_sdl') or name == 'linux.c'
-    return stem.endswith('_win') or name in ('win32.c', 'nx2navi.rc')
+    return stem.endswith('_win') or name in ('win32.c', 'nx2saria.rc')
 
 
 def runtime_sources(skip=()):
@@ -481,9 +481,9 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         sources += [out / 'modules.c']
     for src in sources:
         o = runtime_object(out, src)
-        if src.suffix == '.rc':   # windres writes no depfile: the files nx2navi.rc embeds are listed by hand
-            lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "nx2navi.manifest")} '
-                         f'{ninja_path(RUNTIME / "nx2navi.ico")}')
+        if src.suffix == '.rc':   # windres writes no depfile: the files nx2saria.rc embeds are listed by hand
+            lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "nx2saria.manifest")} '
+                         f'{ninja_path(RUNTIME / "nx2saria.ico")}')
         else:
             lines.append(f'build {ninja_path(o)}: cc_rt {ninja_path(src)}{pgo_dep}')
         rt.append(o)
@@ -498,7 +498,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
     rule = 'link'
     if runtime_lib:
         # Whole archive: the runtime's weak defaults (nvn_procs.c, nvn_api_core.c, vk_sync.c) would otherwise satisfy
-        # references before the linker pulls the members with the strong definitions, which would stay out of nx2navi.exe.
+        # references before the linker pulls the members with the strong definitions, which would stay out of nx2saria.exe.
         rule = 'link_lib'
         lines += ['', 'rule link_lib',
                   f'  command = $cc $ldflags @$out.rsp -Wl,--whole-archive {cmd_path(runtime_lib)} -Wl,--no-whole-archive $libs -o $out',
@@ -826,13 +826,13 @@ def main():
                     help='comma-separated runtime/*.c names to leave out (the link needs another definition of what they '
                          'define)')
     ap.add_argument('--exefs', type=Path,
-                    help="nx2navi.exe's default ExeFS directory (default <work dir>/extracted/<version>/exefs, the work "
+                    help="nx2saria.exe's default ExeFS directory (default <work dir>/extracted/<version>/exefs, the work "
                          "dir being the [work] dir of config.local.toml, else build)")
-    ap.add_argument('--romfs', type=Path, help="nx2navi.exe's default RomFS directory with romfs.bin and index.json "
+    ap.add_argument('--romfs', type=Path, help="nx2saria.exe's default RomFS directory with romfs.bin and index.json "
                                                '(default <work dir>/extracted/<version>/romfs)')
     ap.add_argument('--no-romfs', action='store_true',
                     help='build even when the RomFS directory has no index.json (the exe then stops at start)')
-    ap.add_argument('--profile', type=Path, help="nx2navi.exe's default profile directory (default build/profile for v121, "
+    ap.add_argument('--profile', type=Path, help="nx2saria.exe's default profile directory (default build/profile for v121, "
                                                  "build/profile-<version> otherwise, so trying another version leaves "
                                                  "the main profile alone; saves load on 1.2.1 and 1.4.3 alike)")
     ap.add_argument('--toolchain', type=Path, help='llvm-mingw directory (with bin/clang.exe) to build with instead of '
@@ -845,11 +845,11 @@ def main():
     ap.add_argument('--deps', type=Path, help=f'with --toolchain: include/, lib/ and bin/ of Vulkan, SDL3, Opus, libvpx '
                                               f'and VMA (default {DEFAULT_DEPS.relative_to(ROOT).as_posix()})')
     ap.add_argument('--make-runtime-lib', action='store_true',
-                    help=f'build only <out>/{LIB_NAME} from runtime/ (no generated C, no nx2navi.exe)')
+                    help=f'build only <out>/{LIB_NAME} from runtime/ (no generated C, no nx2saria.exe)')
     ap.add_argument('--runtime-lib', type=Path, help=f'link against this {LIB_NAME} instead of compiling runtime/ '
                                                     f'({", ".join(sorted(INSTALL_SIDE))} and modules.c still compile)')
     ap.add_argument('--pgo', metavar='gen|FILE',
-                    help='profile-guided optimisation, generated code at -O2: gen builds an instrumented nx2navi.exe '
+                    help='profile-guided optimisation, generated code at -O2: gen builds an instrumented nx2saria.exe '
                          '(needs --toolchain on Windows: MSYS2 clang ships no profile runtime); FILE builds with that '
                          '.profdata (tools/pgo.py merge)')
     ap.add_argument('--expected', type=Path,
@@ -1001,13 +1001,13 @@ def main():
     code, dt, peak_one, _ = run_measured(base + [flag_path(exe)], env)
     print(f'link: {dt:.1f} s, peak {mib(peak_one)}')
     if code:
-        print(f'build_game: link failed, {flag_path(exe)} is the old one (a running nx2navi.exe from this dir locks it)',
+        print(f'build_game: link failed, {flag_path(exe)} is the old one (a running nx2saria.exe from this dir locks it)',
               file=sys.stderr)
         sys.exit(code)
     if args.make_runtime_lib:
         print(f'{below_root(exe)}: {mib(exe.stat().st_size)}')
         return
-    for dll in dlls:   # dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL), found next to nx2navi.exe
+    for dll in dlls:   # dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL), found next to nx2saria.exe
         shutil.copy2(dll, exe.parent / dll.name)
     sections, image = pe_sections(exe) if WIN else elf_sections(exe)
     print(f'{below_root(exe)}: file {mib(exe.stat().st_size)}, '

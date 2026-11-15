@@ -1,4 +1,4 @@
-"""Build a release of the NX2navi launcher (docs/launcher.md, "Releases").
+"""Build a release of the NX2Saria launcher (docs/launcher.md, "Releases").
 
     python tools/make_launcher.py --xlate build/xlate [--ffx amd_fidelityfx_vk.dll] [--dlss nvngx_dlss.dll | --no-dlss]
                                   [--ffx4 FOLDER]
@@ -13,8 +13,8 @@ checked against the sha256 in PINS.
 
 The release folder (--out) holds:
 
-    NX2navi/                      the launcher folder exactly as NX2navi-Setup.exe installs it:
-      NX2navi.exe                 launcher/native/nx2navi.c with the Navi icon (launcher/ui/art.py)
+    NX2Saria/                      the launcher folder exactly as NX2Saria-Setup.exe installs it:
+      NX2Saria.exe                 launcher/native/nx2saria.c with the leaf sprig icon (launcher/ui/art.py)
       python/                     python.org's embeddable Python 3.14.9, tkinter and Tcl/Tk 9.0 from its tcltk.msi,
                                   the packages of tools/requirements-launcher.txt, runtime-id.txt
       app/current.txt, app/<version>/   launcher/ (without native/), runtime/, recomp/, the tools make_game.py uses,
@@ -36,11 +36,11 @@ The release folder (--out) holds:
                                   PlayStation, Steam Deck and keyboard and mouse prompts from, tools/prompt_art.py art_files),
                                   toolchain.lock.json (the MSYS2 packages of today, pinned), feed.json, VERSION, the
                                   licence files
-    NX2navi-Setup-<version>.exe   launcher/native/setup.c with the folder above appended as a zip: the one file
+    NX2Saria-Setup-<version>.exe   launcher/native/setup.c with the folder above appended as a zip: the one file
                                   players download
-    NX2navi-app-<version>.zip     app/<version> alone: what the launcher downloads to update itself
-    NX2navi-runtime-<id>.zip      python/ alone: downloaded only when a release changes the Python
-    NX2navi-update.json           the manifest the launcher reads (launcher/feed.py)
+    NX2Saria-app-<version>.zip     app/<version> alone: what the launcher downloads to update itself
+    NX2Saria-runtime-<id>.zip      python/ alone: downloaded only when a release changes the Python
+    NX2Saria-update.json           the manifest the launcher reads (launcher/feed.py)
 
 --prompt-art names the button art: folders that hold XGamepad, P5Gamepad and Keyboard_Mouse, or those three folders
 themselves. Only the pictures tools/pad_prompts.py reads are copied; the art stays out of the repository. Without it
@@ -49,9 +49,10 @@ the release has no prompt-art folder and builds the game with the game's own pro
 --pgo names the execution profile of a play session (docs/building.md, "Profile-guided build"). It is derived from
 the game's code and stays out of the repository; its record must name this checkout's recomp/, or the release stops
 (tools/pgo.py fitting). Without it the release builds the game as before, the lifted code at -O1. The profile is
-part of NX2navi-app-<version>.zip, so an update brings it and the launcher's next build of the game compiles with it.
+part of NX2Saria-app-<version>.zip, so an update brings it and the launcher's next build of the game compiles with it.
 
---publish uploads the four files as GitHub release v<version> of the --feed repository with the gh CLI (a draft
+--publish uploads the four files and the legacy update-manifest alias as GitHub release v<version> of the --feed
+repository with the gh CLI (a draft
 first is wiser: add --draft). check_content runs over everything before it is packed: the release holds no game data.
 """
 import argparse
@@ -91,11 +92,11 @@ PINS = {
 TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostmem.py', 'prepare_shaders.py',
          'shader_census.py', 'shader_list.py', 'pipeline_list.py', 'zstd_compat.py', 'pad_prompts.py', 'prompt_art.py', 'button_icons.py', 'romfs_check.py',
          'pack_shader_cache.py', 'mod_files.py', 'cheats.py', 'exefs_patches.py')
-TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2navi.ini.example')
+TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 SKIP_DIRS = {'__pycache__', '.pytest_cache', 'native'}
 SKIP_SUFFIXES = {'.o', '.obj', '.pyc', '.exe', '.dll', '.a', '.lib'}
 TCLTK_FILES = ('_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll', 'zlib1.dll', 'libtommath.dll')
-DEFAULT_FEED = 'Larbaco/NX2navi'   # this fork's releases (launcher/feed.py DEFAULT)
+DEFAULT_FEED = 'Larbaco/NX2navi'   # the real repository and its releases (launcher/feed.py DEFAULT)
 
 
 def say(msg):
@@ -301,7 +302,7 @@ def build_runtime_lib(folder, ver, out, wine):
     elif wine:
         def win(p):
             return 'Z:' + str(Path(p).resolve()).replace('/', '\\')
-        env = dict(os.environ, WINEDEBUG='-all', NX2NAVI_AR=win(msys / 'bin' / 'ar.exe'))
+        env = dict(os.environ, WINEDEBUG='-all', NX2SARIA_AR=win(msys / 'bin' / 'ar.exe'))
         run(['wine', folder / 'python' / 'python.exe', win(app / 'tools' / 'make_game.py'),
              *[win(a) if isinstance(a, Path) else a for a in args]], env=env)
     else:
@@ -320,7 +321,7 @@ def build_runtime_lib(folder, ver, out, wine):
 def build_native(work, cc, windres):
     from launcher.ui import art
     work.mkdir(parents=True, exist_ok=True)
-    (work / 'nx2navi.ico').write_bytes(art.navi_ico())
+    (work / 'nx2saria.ico').write_bytes(art.sprig_ico())
     shutil.copy2(ROOT / 'launcher' / 'native' / 'app.manifest', work / 'app.manifest')
     shutil.copy2(ROOT / 'launcher' / 'native' / 'res.rc', work / 'res.rc')
     res = (work / 'res.o').resolve()
@@ -333,9 +334,9 @@ def build_native(work, cc, windres):
     env = dict(os.environ, PATH=str(Path(windres[0]).parent) + os.pathsep + os.environ.get('PATH', ''))
     run([*windres, *pp, '-I', '.', 'res.rc', '-O', 'coff', '-o', res], env=env, cwd=work)
     flags = ['-municode', '-mwindows', '-O2', '-Wall', '-static', '-s']
-    stub = work / 'NX2navi.exe'
+    stub = work / 'NX2Saria.exe'
     setup = work / 'setup-stub.exe'
-    run([*cc, *flags, ROOT / 'launcher' / 'native' / 'nx2navi.c', res, '-o', stub, '-lshell32', '-lole32', '-luuid'])
+    run([*cc, *flags, ROOT / 'launcher' / 'native' / 'nx2saria.c', res, '-o', stub, '-lshell32', '-lole32', '-luuid'])
     run([*cc, *flags, ROOT / 'launcher' / 'native' / 'setup.c', res, '-o', setup, '-l:libz.a', '-lshell32',
          '-lole32', '-luuid', '-ladvapi32'])
     return stub, setup
@@ -371,6 +372,15 @@ def check_folder(folder):
 
 def entry(path):
     return {'name': path.name, 'size': path.stat().st_size, 'sha256': sha256_file(path)}
+
+
+def write_update_manifests(out, manifest):
+    """Both launcher generations discover the same verified payloads during the branding transition."""
+    paths = tuple(Path(out) / name for name in ('NX2Saria-update.json', 'NX2navi-update.json'))
+    data = json.dumps(manifest, indent=1)
+    for path in paths:
+        path.write_text(data, encoding='utf-8')
+    return paths
 
 
 def main():
@@ -420,7 +430,7 @@ def main():
         check_dlssg(a.dlssg)   # and so is nx2navi_dlssg.dll
     out = a.out
     shutil.rmtree(out, ignore_errors=True)
-    folder = out / 'NX2navi'
+    folder = out / 'NX2Saria'
     t0 = time.time()
     lock = (json.loads(a.lock.read_text(encoding='utf-8')) if a.lock
             else toolchain.make_lock(fast_repo=toolchain.FAST_REPO))
@@ -444,26 +454,25 @@ def main():
     cc, windres = native_compiler(lock)
     build_runtime_lib(folder, ver, out, a.wine)
     stub, setup_stub = build_native(out / 'native', cc, windres)
-    shutil.copy2(stub, folder / 'NX2navi.exe')
+    shutil.copy2(stub, folder / 'NX2Saria.exe')
     check_folder(folder)
-    app_zip = zip_dir(folder / 'app' / ver, out / f'NX2navi-app-{ver}.zip')
-    rt_zip = zip_dir(folder / 'python', out / f'NX2navi-runtime-{runtime_id()}.zip')
+    app_zip = zip_dir(folder / 'app' / ver, out / f'NX2Saria-app-{ver}.zip')
+    rt_zip = zip_dir(folder / 'python', out / f'NX2Saria-runtime-{runtime_id()}.zip')
     payload = zip_dir(folder, out / 'native' / 'payload.zip')
-    setup = make_setup(setup_stub, payload, out / f'NX2navi-Setup-{ver}.exe', ver)
+    setup = make_setup(setup_stub, payload, out / f'NX2Saria-Setup-{ver}.exe', ver)
     notes = a.notes.read_text(encoding='utf-8') if a.notes else ''
     manifest = {'format': 1, 'version': ver, 'build': build, 'notes': notes,
                 'app': entry(app_zip), 'runtime': {'id': runtime_id(), **entry(rt_zip)},
                 'toolchain': toolchain.lock_digest(lock), 'setup': entry(setup),
                 'made': time.strftime('%Y-%m-%d %H:%M')}
-    man = out / 'NX2navi-update.json'
-    man.write_text(json.dumps(manifest, indent=1), encoding='utf-8')
-    for p in (setup, app_zip, rt_zip, man):
+    man, legacy_man = write_update_manifests(out, manifest)
+    for p in (setup, app_zip, rt_zip, man, legacy_man):
         say(f'{p.name}: {p.stat().st_size / 1e6:.1f} MB')
     say(f'release folder {out} in {time.time() - t0:.0f} s')
     if a.publish:
-        cmd = ['gh', 'release', 'create', f'v{ver}', setup, app_zip, rt_zip, man, '--repo', a.feed,
-               '--title', f'NX2navi {ver}']
-        cmd += ['--notes-file', a.notes] if a.notes else ['--notes', f'NX2navi {ver}']
+        cmd = ['gh', 'release', 'create', f'v{ver}', setup, app_zip, rt_zip, man, legacy_man, '--repo', a.feed,
+               '--title', f'NX2Saria {ver}']
+        cmd += ['--notes-file', a.notes] if a.notes else ['--notes', f'NX2Saria {ver}']
         if a.draft:
             cmd.append('--draft')
         run(cmd)

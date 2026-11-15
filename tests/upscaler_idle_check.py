@@ -25,7 +25,7 @@ It fails when:
   vk_ffx_release, vk_ffx4.cpp vk_ffx4_release, vk_fsr3.c vk_fsr3_release) and a full list's fallback (vk_dlaa.c
   dead_put, the library files' retire_up, vk_fsr3.c retire_ctx), or there before vk_upscaler_settle's wait for the
   device;
-- NX2NAVI_UPSCALER_IDLE_WAIT has no sections[] entry in cfg.c or no line in nx2navi.ini.example (its known[] name and
+- NX2NAVI_UPSCALER_IDLE_WAIT has no sections[] entry in cfg.c or no line in nx2saria.ini.example (its known[] name and
   its metas[] row, and a // that would hide them, are tests/cfg_rows_check.py's);
 - perf.c's mark_name has another count of names than host.h has PERF_M_* kinds: a kind without a name prints a null
   string on a slow frame's line;
@@ -240,9 +240,9 @@ def main():
     cfg = (rt / 'cfg.c').read_text(encoding='utf-8-sig')
     if not re.search(r'\{\s*"%s"\s*,\s*"display"\s*\}' % key, cfg):
         fails.append(f'cfg.c: {key} has no sections[] entry in "display"')
-    ini = (root / 'nx2navi.ini.example').read_text(encoding='utf-8-sig')
+    ini = (root / 'nx2saria.ini.example').read_text(encoding='utf-8-sig')
     if not re.search(r'^#\s*%s\s*=' % key.lower(), ini, re.M):
-        fails.append(f'nx2navi.ini.example: no {key.lower()} line')
+        fails.append(f'nx2saria.ini.example: no {key.lower()} line')
 
     host = (rt / 'host.h').read_text(encoding='utf-8')
     m = re.search(r'enum\s*\{\s*(PERF_M_FILE[^}]*)\}', host)

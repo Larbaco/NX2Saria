@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
-int vk_dlssg_wanted(void);   // NX2NAVI_FRAMEGEN = dlss, with any upscaler or none (read once)
+int vk_dlssg_wanted(void);   // NX2SARIA_FRAMEGEN = dlss, with any upscaler or none (read once)
 int vk_dlssg_early(void);    // before the instance exists: loads the DLL and Streamline; 1 when its proxies are there
 // vk_device.c: the instance and device through Streamline's proxies when vk_dlssg_early succeeded, else the loader's
 VkResult vk_dlssg_create_instance(const VkInstanceCreateInfo *ci, VkInstance *out);
@@ -38,7 +38,7 @@ uint64_t vk_dlssg_shown(void);   // the frames the display got, generated ones i
 void vk_dlssg_release(void);
 
 // The multiplier: the frames the display gets per rendered frame, 2, 3 or 4 (one to three generated), set by
-// NX2NAVI_FRAMEGEN_MULTIPLIER and applied at once.
+// NX2SARIA_FRAMEGEN_MULTIPLIER and applied at once.
 // What a setting value gives where the GPU and driver allow up to max (2 to 4): the value when it is 2, 3 or 4 ("3x"
 // too) and at most max, else the nearest that is; unset or empty, 2. *why (may be NULL): the reason the value was not
 // taken as it is, for the log, or NULL.
@@ -50,7 +50,7 @@ int vk_dlssg_multiplier_max(int *old_dll);
 // The frames the display gets per game frame now: the multiplier while generation runs, 1 while it is off or paused
 // (the menu). frame_rate.c paces the game at the frame limit over it. Any thread.
 int vk_dlssg_multiplier(void);
-// Why DLSS-G runs or not: DLSSG_NOT_WANTED (NX2NAVI_FRAMEGEN was not dlss at start, or no DLSS or FSR 3.1 upscaling),
+// Why DLSS-G runs or not: DLSSG_NOT_WANTED (NX2SARIA_FRAMEGEN was not dlss at start, or no DLSS or FSR 3.1 upscaling),
 // DLSSG_NO_FILES (nx2navi_dlssg.dll, Streamline or its swapchain hooks missing or failing), DLSSG_UNAVAILABLE (Streamline
 // loaded but DLSS-G or a required plugin function was unavailable).
 enum { DLSSG_NOT_WANTED, DLSSG_RUNS, DLSSG_NO_FILES, DLSSG_UNAVAILABLE };

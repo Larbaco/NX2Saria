@@ -28,6 +28,7 @@ static int count_file(void *ctx, const char *rel, const uint8_t *data, size_t n)
 // ---- stubs for the runtime around fs_host.c (host.h and the files that define these in the game)
 const int rt_game_version = 111;
 const char rt_port_version[] = "9.9.9-check";
+const char *cfg_env(const char *name) { return getenv(name); }
 
 void rt_log(const char *fmt, ...) {
     va_list ap;

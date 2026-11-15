@@ -4,7 +4,7 @@ profile folder made here:
 
 - export: the zip holds the save the game would load next (a finished commit waiting in save-tx before the committed
   save), its manifest as the launcher writes it (launcher/saves.py check_manifest takes it), no key file; with a bug
-  report the log and nx2navi.ini; nothing saved yet is refused
+  report the log and nx2saria.ini (reading an existing nx2navi.ini); nothing saved yet is refused
 - import: zips the launcher exports wait in profile/save-import; at the next start the save the game would load goes
   to saves/backup <time> beside the program, the import becomes the save (the finished commit it replaces too), and
   the start says where the old save went; a second start changes nothing
@@ -56,7 +56,7 @@ def main():
     rt = ROOT / 'runtime'
     plat = ['platform/win32.c', 'platform/common.c'] if os.name == 'nt' else ['platform/linux.c', 'platform/common.c']
     libs = ['-lbcrypt', '-lws2_32', '-lwinmm', '-lpsapi', '-lshell32', '-lole32', '-luser32'] if os.name == 'nt' else \
-        ['-lpthread', '-ldl', '-lm']
+        ['-lpthread', '-ldl', '-lm', '-lSDL3']
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-w', '-I', str(rt), str(ROOT / 'tests' /
                            'save_share_check.c'), *(str(rt / f) for f in ('fs_host.c', 'save_share.c', 'save_zip.c',
                                                                            *plat)), '-o', str(exe), *libs], env=env)
@@ -94,21 +94,22 @@ def main():
         (ready / name).write_bytes(data)
     (ready / 'prod.keys').write_bytes(b'secret')   # a stray key file in a save folder never goes into a zip
     (work / 'nx2navi.ini').write_bytes(b'[graphics]\nfps_limit = 60\n')
-    (work / 'game.log').write_bytes(b'version: NX2navi 9.9.9-check\n')
+    (work / 'game.log').write_bytes(b'version: NX2Saria 9.9.9-check\n')
     line = run('export', profile, out, 'bug', log=work / 'game.log')
     m = re.match(r'result 0 path (.+)$', line)
     check(m is not None, f'export: {line}')
     if m:
         path = Path(m.group(1))
-        check(re.fullmatch(r'NX2navi-save-\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d-bug-report\.zip', path.name) is not None,
+        check(re.fullmatch(r'NX2Saria-save-\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d-bug-report\.zip', path.name) is not None,
               f'export name {path.name}')
         with zipfile.ZipFile(path) as z:
             check(z.testzip() is None, 'export zip CRCs')
             got = {n[len('save/'):]: z.read(n) for n in z.namelist() if n.startswith('save/')}
             # the start moved the finished commit in (swap_in) before the export read it
             check(got == newer, f'export holds the newest save: {sorted(got)}')
-            check(z.read('bug-report/nx2navi.log').startswith(b'version: NX2navi') and
-                  z.read('bug-report/nx2navi.ini').startswith(b'[graphics]'), 'bug report files')
+            check(z.read('bug-report/nx2saria.log').startswith(b'version: NX2Saria') and
+                  z.read('bug-report/nx2saria.ini').startswith(b'[graphics]'),
+                  'legacy INI source is exported under the new bundle names')
             check(not any(b'secret' in z.read(n) for n in z.namelist()), 'no key file')
             man = json.loads(z.read('manifest.json'))
         saves.check_manifest(man)

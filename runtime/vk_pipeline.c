@@ -33,7 +33,7 @@
 // binding strides only); and, where VK_EXT_extended_dynamic_state3 offers them, depth clamp, polygon mode, blend enables,
 // equations, write masks and alpha to coverage. The key holds the rest: shaders, target formats, sample count, topology
 // class, depth clip mode, logic op and what is not dynamic on the GPU. The VkPipelineCache persists to
-// pipeline-cache.bin next to nx2navi.exe (NX2NAVI_PIPELINE_CACHE overrides the path).
+// pipeline-cache.bin next to nx2saria.exe (NX2SARIA_PIPELINE_CACHE overrides the path).
 //
 // The vertex format table has a 3-component fallback. The pipeline key holds the program, target formats, blend and
 // write masks, vertex layout and sample count. The binding conventions are those of the shader translator.
@@ -91,13 +91,13 @@ static struct {
              // pipelines a draw missed, m_ready_fast became usable through a fast link, m_ready_ms after the miss in
              // all; m_lib_*: [0] their task and mesh libraries, [1] their fragment shader libraries (lib_build)
              uint64_t m_links, m_ready_fast, m_lib_n[2]; double m_link_ms, m_link_max, m_ready_ms, m_ready_max, m_lib_ms[2], m_lib_max[2]; } g;
-    int vs_outs_all;                   // NX2NAVI_VS_OUTS: 0 union of paired fragment inputs, 1 (all) all 32 output locations
+    int vs_outs_all;                   // NX2SARIA_VS_OUTS: 0 union of paired fragment inputs, 1 (all) all 32 output locations
     int dyn_vi, dyn_clamp, dyn_poly, dyn_blend_en, dyn_blend_eq, dyn_wmask, dyn_a2c;
     int f_logic_op, f_depth_clamp, f_fill_non_solid, f_dual_src, f_full_subgroups;
     int wide_lines;                      // the device draws lines of other widths than 1 (vk_pipeline_line_width)
     float line_w[2], line_gran;          // its range of widths and their step
     int cache_control;                 // pipelineCreationCacheControl: a create can ask for the pipeline caches only
-    int feedback;                      // NX2NAVI_PIPE_FEEDBACK: 1 count pipeline cache hits, 2 also log each compute and graphics build
+    int feedback;                      // NX2SARIA_PIPE_FEEDBACK: 1 count pipeline cache hits, 2 also log each compute and graphics build
     uint64_t cache_loaded;             // bytes of pipeline-cache.bin the driver took at boot
     VkPipelineCache play;              // what this run compiles (pipeline-cache-play.bin); VK_NULL_HANDLE: all goes into cache
     uint64_t play_loaded;              // bytes of pipeline-cache-play.bin the driver took at boot
@@ -144,7 +144,7 @@ typedef struct Layout {
     uint32_t n0;                       // independent layouts: b[0..n0) are set 0, the rest set 1
     VkPipelineLayout half[2];          // GPL libraries: {set 0, null}, {null, set 1} (made on first use)
     VkDescriptorUpdateTemplate tpl[2]; // per set (make_tpl); VK_NULL_HANDLE: written with write structs
-    uint8_t emu;                       // NX2NAVI_MESH_EMULATION: a mesh layout whose task and mesh stages run as compute
+    uint8_t emu;                       // NX2SARIA_MESH_EMULATION: a mesh layout whose task and mesh stages run as compute
     VkDescriptorUpdateTemplate tpl_c;  // emu: set 0's template for the compute bind point
     VkDescriptorSetLayoutBinding b[];
 } Layout;
@@ -196,10 +196,10 @@ static __thread uint64_t mm_hash;   // FNV-1a of the module make_module last cre
 // than the lookup. Only the in-memory table uses it; the key file keeps fnv.
 static uint64_t key_hash(const void *k, size_t n) { return nvn_hm_hash(k, (uint32_t)n); }
 
-// The cache file lives next to nx2navi.exe, so every build dir (the main build and each private fork) has its own:
+// The cache file lives next to nx2saria.exe, so every build dir (the main build and each private fork) has its own:
 // forks that shared build\v121's cache broke each other's runs (2026-10-22).
 static void cache_path_init(void) {
-    const char *cfg_path = cfg_get("NX2NAVI_PIPELINE_CACHE");
+    const char *cfg_path = cfg_get("NX2SARIA_PIPELINE_CACHE");
     if (cfg_path && *cfg_path && strlen(cfg_path) < sizeof P.cache_path) {
         strcpy(P.cache_path, cfg_path);
         return;
@@ -214,13 +214,13 @@ static void cache_path_init(void) {
     snprintf(P.cache_path, sizeof P.cache_path, "%s/pipeline-cache.bin", exe);
 }
 
-// ---- pipeline binaries (VK_KHR_pipeline_binary; NX2NAVI_PIPE_BINARIES, default 0 while it is being tested; 1 on)
+// ---- pipeline binaries (VK_KHR_pipeline_binary; NX2SARIA_PIPE_BINARIES, default 0 while it is being tested; 1 on)
 // pipeline-cache.bin does not carry compiled pipelines from one executable to another on NVIDIA 621.01: two
 // byte-identical exes under different names, every compute module hash-identical, and the second compiled 317 of the
 // 323 compute pipelines the first had read from the file (2026-11-09). A pipeline binary made from one exe's pipeline
 // creates the same pipeline in another in 0.5 ms instead of 26 ms. So where the driver has the extension, every
 // pipeline, stage library and compute pipeline is created through pipe_create: its driver pipeline key
-// (vkGetPipelineKeyKHR, computed from the create info) is looked up in pipeline-binaries.bin next to nx2navi.exe and
+// (vkGetPipelineKeyKHR, computed from the create info) is looked up in pipeline-binaries.bin next to nx2saria.exe and
 // the pipeline is made from the stored binaries; a key not there is compiled with its data captured, and its binaries
 // are appended to the file (autosave, every 2 s). pipeline-cache.bin is then neither read nor written: the driver's
 // own disk cache serves an unchanged exe, and the binaries serve a renamed or updated one.
@@ -231,7 +231,7 @@ static void cache_path_init(void) {
 // GPU, so the file starts empty); then records {u32 bytes after this field, u32 type, u32 key size, 32 key bytes,
 // payload}: type PB_BLOB, a binary under its binary key, payload its data; type PB_PIPE, a pipeline under its pipeline
 // key, payload {u32 count, count x {u32 key size, 32 key bytes}} naming its binaries. Only an index of the records
-// stays in memory; a pipeline's records are read from the file when it is created. NX2NAVI_PIPE_BINARIES_MAX_MB
+// stays in memory; a pipeline's records are read from the file when it is created. NX2SARIA_PIPE_BINARIES_MAX_MB
 // (default 1024, 0 no limit): a larger file starts empty.
 #define PB_VERSION 2
 // 64-bit file offsets: long is 32 bits on Windows, and a file over 2 GB read as cut short.
@@ -370,7 +370,7 @@ static void pb_init(VkCtx *c) {
     snprintf(PB.path, sizeof PB.path, "%s", P.cache_path);
     char *cut = plat_last_sep(PB.path);
     snprintf(cut ? cut + 1 : PB.path, sizeof PB.path - (size_t)(cut ? cut + 1 - PB.path : 0), "pipeline-binaries.bin");
-    uint64_t cap = (uint64_t)strtoull(cfg_value("NX2NAVI_PIPE_BINARIES_MAX_MB"), NULL, 10) << 20;
+    uint64_t cap = (uint64_t)strtoull(cfg_value("NX2SARIA_PIPE_BINARIES_MAX_MB"), NULL, 10) << 20;
     FILE *f = fopen(PB.path, "rb");
     PbHeader hd;
     const char *why = NULL;
@@ -380,7 +380,7 @@ static void pb_init(VkCtx *c) {
         len = (uint64_t)pb_tell(f);
         pb_seek(f, 0, SEEK_SET);
         if (fread(&hd, sizeof hd, 1, f) != 1 || memcmp(&hd, &want, sizeof hd)) why = "written by another driver, GPU or version";
-        else if (cap && len > cap) why = "over NX2NAVI_PIPE_BINARIES_MAX_MB";
+        else if (cap && len > cap) why = "over NX2SARIA_PIPE_BINARIES_MAX_MB";
         else good = pb_index(f, len);
         fclose(f);
     }
@@ -401,7 +401,7 @@ static void pb_init(VkCtx *c) {
     }
     PB.rf = fopen(PB.path, "rb");
     PB.on = PB.rf != NULL && PB.file_size >= sizeof want;
-    rt_log("vk_pipeline: pipeline binaries %s: %s, %u pipelines, %u binaries, %.1f MB (NX2NAVI_PIPE_BINARIES=0 goes back "
+    rt_log("vk_pipeline: pipeline binaries %s: %s, %u pipelines, %u binaries, %.1f MB (NX2SARIA_PIPE_BINARIES=0 goes back "
            "to pipeline-cache.bin)", PB.on ? "on" : "off (cannot open the file)", PB.path, PB.pipes, PB.blobs,
            PB.file_size / 1048576.0);
 }
@@ -616,13 +616,13 @@ static __thread VkPipelineCache own_cache;
 // 1 on a thread whose creates take no pipeline cache of ours at all (the library warm in play, lw_worker and lw_probe):
 // what it builds is wanted in the driver's own disk cache only. Built into P.cache, the 37,572 stage libraries of a
 // warm grew it by 1.6 GB (2026-11-11: a save of 2026.7 MB in play, +1612 MB since the boot); the file was then over
-// NX2NAVI_PIPELINE_CACHE_MAX_MB, so the next start dropped it whole and compiled the pipelines it had held.
+// NX2SARIA_PIPELINE_CACHE_MAX_MB, so the next start dropped it whole and compiled the pipelines it had held.
 static __thread int no_cache;
 // New content in P.cache that P.stats does not count, for autosave_once to save: bg_merge's merges, and the compiles
 // of pipelines built for the cache only (lb_compute keep 0).
 static volatile uint32_t cache_merges;
 
-// ---- the play cache (NX2NAVI_PIPELINE_CACHE_PLAY, default 1; needs pipelineCreationCacheControl)
+// ---- the play cache (NX2SARIA_PIPELINE_CACHE_PLAY, default 1; needs pipelineCreationCacheControl)
 // pipeline-cache.bin holds what the preparation built and what earlier runs made: 300 MB and more on an install. One
 // file can only be written whole, so a single new pipeline in play had the whole of it copied out of the driver and
 // written again (2026-11-11: saves of 358.1 MB for 0.3 MB of new data, and 302 to 306 MB written in each of seven
@@ -633,7 +633,7 @@ static volatile uint32_t cache_merges;
 // only the play file is saved; pipeline-cache.bin is not written.
 // The play file is read back at the next start, into P.play and merged into P.cache in memory (cache_load), so the
 // first create finds its pipelines. Once
-// it has grown to NX2NAVI_PIPELINE_CACHE_PLAY_MB (default 64) it is merged into P.cache at the start, before play: the
+// it has grown to NX2SARIA_PIPELINE_CACHE_PLAY_MB (default 64) it is merged into P.cache at the start, before play: the
 // autosave thread writes pipeline-cache.bin once and removes the play file (cache_save). The preparation modes
 // (--prepare-shaders, --warm-shaders, --prepare-pipelines) merge it at any size and build into P.cache alone, as before.
 // A pipeline the driver's own cache gives to the first create enters P.cache in memory only: it is in a file again
@@ -651,7 +651,7 @@ static VkResult pipe_create_in(int kind, void *ci, VkPipeline *pipe, VkPipelineC
     if (no_cache) cache = VK_NULL_HANDLE;
     int shared = cache && !own_cache;
     if (cache && own_cache) cache = own_cache;
-    uint64_t t0 = perf_mark_begin();   // NX2NAVI_TRACE=perf: the create on any thread, its wait for cache_rw included
+    uint64_t t0 = perf_mark_begin();   // NX2SARIA_TRACE=perf: the create on any thread, its wait for cache_rw included
     if (shared) cache_build_enter();
     VkResult r;
     if (shared && P.play) {
@@ -805,7 +805,7 @@ static VkResult pipe_create(int kind, void *ci, VkPipeline *pipe) {
 // The data of the pipeline cache file at path for vkCreatePipelineCache (malloc'd, its size in *size), NULL when the
 // run starts without it, which the log says with the file's size. Cache data whose header names another device or
 // driver is dropped before Vulkan sees it.
-// NX2NAVI_PIPELINE_CACHE_MAX_MB (cache_cap; 0 no limit): a larger file starts the run empty, and the run's
+// NX2SARIA_PIPELINE_CACHE_MAX_MB (cache_cap; 0 no limit): a larger file starts the run empty, and the run's
 // saves replace it. The limit bounds each of the two files, not their sum. It has to stay above what one run
 // builds: at 512, with the pipeline list of 0.9.1 (8,849 records), an RTX 2080 Ti's file held 551 MB and the play
 // file the run then wrote 541 MB, so both were dropped at every start, 7,247 of 8,531 pipelines were built again in
@@ -826,7 +826,7 @@ static VkResult pipe_create(int kind, void *ci, VkPipeline *pipe) {
 // fold (323 -> 448 -> 461 -> 489 MB in four starts) and so crosses 512 MB in a few sessions (0.8.0: a 766 MB file
 // dropped at a start). With the limit at 2048 MB the same files were read and folded: boot hits 84 %, nothing left to
 // background builds, the boot 17 s instead of 24.
-// cache_cap: NX2NAVI_PIPELINE_CACHE_MAX_MB when set (0: no limit); unset, the machine's RAM / 32 between 1024 and
+// cache_cap: NX2SARIA_PIPELINE_CACHE_MAX_MB when set (0: no limit); unset, the machine's RAM / 32 between 1024 and
 // 4096 MB (16 and 32 GB: 1024; 64 GB: 2048; 128 GB and more: 4096). Never below 1024: a full cache of the pipeline
 // list is about 550 MB on an NVIDIA card, and a limit under what the files reach compiles everything past it again at
 // every start, for good (RAM / 32 alone gave 509 MB on a 16 GB machine). The RAM and not the commit headroom at the
@@ -835,7 +835,7 @@ static VkResult pipe_create(int kind, void *ci, VkPipeline *pipe) {
 static uint64_t cache_cap(void) {
     static uint64_t cap = UINT64_MAX;
     if (cap != UINT64_MAX) return cap;
-    const char *set = cfg_get("NX2NAVI_PIPELINE_CACHE_MAX_MB");
+    const char *set = cfg_get("NX2SARIA_PIPELINE_CACHE_MAX_MB");
     float used = 0, total = 0, proc = 0;
     uint64_t mb;
     if (set && *set) mb = strtoull(set, NULL, 10);
@@ -845,10 +845,10 @@ static uint64_t cache_cap(void) {
         mb = mb < 1024 ? 1024 : mb > 4096 ? 4096 : mb;
     }
     if (set && *set)
-        rt_log("vk_pipeline: pipeline cache files up to %llu MB%s (NX2NAVI_PIPELINE_CACHE_MAX_MB)",
+        rt_log("vk_pipeline: pipeline cache files up to %llu MB%s (NX2SARIA_PIPELINE_CACHE_MAX_MB)",
                (unsigned long long)mb, mb ? "" : ": no limit");
     else
-        rt_log("vk_pipeline: pipeline cache files up to %llu MB (from %.0f GB of RAM; NX2NAVI_PIPELINE_CACHE_MAX_MB "
+        rt_log("vk_pipeline: pipeline cache files up to %llu MB (from %.0f GB of RAM; NX2SARIA_PIPELINE_CACHE_MAX_MB "
                "sets it)", (unsigned long long)mb, total / 1024.0);
     return cap = mb << 20;
 }
@@ -865,7 +865,7 @@ static void *cache_data_read(VkCtx *c, const char *path, size_t *size) {
     if (!data) {
         if (why == CACHE_FILE_OVER_CAP)
             cache_over_cap = 1,
-            rt_log("vk_pipeline: %s holds %.0f MB, over NX2NAVI_PIPELINE_CACHE_MAX_MB %llu: starting empty; it is "
+            rt_log("vk_pipeline: %s holds %.0f MB, over NX2SARIA_PIPELINE_CACHE_MAX_MB %llu: starting empty; it is "
                    "replaced when the play file is next folded in, at the next start that finds one", path, len / 1048576.0, (unsigned long long)(cap >> 20));
         // (A file over the limit comes from before the limit was kept on the write side, or from a lower limit.)
         else if (why != CACHE_FILE_NONE)
@@ -928,16 +928,16 @@ static void cache_load(VkCtx *c) {
     size_t n = strlen(P.play_path);
     if (n > 4 && !strcmp(P.play_path + n - 4, ".bin")) n -= 4;
     snprintf(P.play_path + n, sizeof P.play_path - n, "-play.bin");
-    int want = cfg_bool("NX2NAVI_PIPELINE_CACHE_PLAY") && !prep_mode, on = want && P.cache_control;
+    int want = cfg_bool("NX2SARIA_PIPELINE_CACHE_PLAY") && !prep_mode, on = want && P.cache_control;
     size_t psize = 0, pkept = 0;
     void *pdata = cache_data_read(c, P.play_path, &psize);
     if (base_over && cache_over_cap)   // what one run builds is over the limit: nothing will ever replace either file
-        rt_log("vk_pipeline: both pipeline cache files are over NX2NAVI_PIPELINE_CACHE_MAX_MB, so what one run builds does "
+        rt_log("vk_pipeline: both pipeline cache files are over NX2SARIA_PIPELINE_CACHE_MAX_MB, so what one run builds does "
                "not fit it: this start builds every pipeline again, and so will each one after it until the limit is "
-               "raised above the play file's size (pipeline_cache_max_mb in nx2navi.ini; 0 = no limit)");
+               "raised above the play file's size (pipeline_cache_max_mb in nx2saria.ini (or an existing nx2navi.ini); 0 = no limit)");
     VkPipelineCache play = psize || on ? cache_make(c, pdata, psize, &pkept) : VK_NULL_HANDLE;
     free(pdata);
-    uint64_t fold_at = (uint64_t)strtoull(cfg_value("NX2NAVI_PIPELINE_CACHE_PLAY_MB"), NULL, 10) << 20;
+    uint64_t fold_at = (uint64_t)strtoull(cfg_value("NX2SARIA_PIPELINE_CACHE_PLAY_MB"), NULL, 10) << 20;
     int fold = play && psize && (!on || psize >= fold_at || base_over);
     if (fold && on && !base_over && cache_cap()) {
         // Only a fold whose result fits: pipeline-cache.bin past the limit would be dropped whole at the next start
@@ -986,7 +986,7 @@ static void cache_load(VkCtx *c) {
             rt_log("vk_pipeline: %s: %.1f MB read, the driver holds %.1f MB of it; merged into the cache of %s, which is "
                    "written once now (%s)", P.play_path, psize / 1048576.0, pkept / 1048576.0, P.cache_path,
                    prep_mode ? "a preparation builds into that file alone"
-                   : !want ? "NX2NAVI_PIPELINE_CACHE_PLAY=0"
+                   : !want ? "NX2SARIA_PIPELINE_CACHE_PLAY=0"
                    : !P.cache_control ? "no pipelineCreationCacheControl on this device"
                    : "it reached the size at which it is folded in, before play");
             if (on) play = cache_make(c, NULL, 0, &pkept), psize = 0;
@@ -1014,7 +1014,7 @@ static void cache_load(VkCtx *c) {
                "written whole", P.cache_path);
 }
 
-// The float widths spirv_nan_preserve declares on this device (P.nan_preserve), from NX2NAVI_VK_NAN_PRESERVE: 0 off,
+// The float widths spirv_nan_preserve declares on this device (P.nan_preserve), from NX2SARIA_VK_NAN_PRESERVE: 0 off,
 // 1 on every driver; unset, on every driver except NVIDIA's own, on which the game draws right without it. Only widths
 // the driver can preserve (VkPhysicalDeviceFloatControlsProperties) are declared, and nothing without 32-bit floats.
 static void nan_preserve_init(VkCtx *c) {
@@ -1023,31 +1023,31 @@ static void nan_preserve_init(VkCtx *c) {
                                                   .pNext = &drv};
     VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &fc};
     vkGetPhysicalDeviceProperties2(c->phys, &p2);
-    const char *e = cfg_get("NX2NAVI_VK_NAN_PRESERVE");   // no fixed default: it depends on the driver, see above
+    const char *e = cfg_get("NX2SARIA_VK_NAN_PRESERVE");   // no fixed default: it depends on the driver, see above
     int set = e && *e, want = set ? strcmp(e, "0") != 0 : drv.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY;
     uint32_t can = (fc.shaderSignedZeroInfNanPreserveFloat16 ? NP_16 : 0) |
                    (fc.shaderSignedZeroInfNanPreserveFloat32 ? NP_32 : 0) |
                    (fc.shaderSignedZeroInfNanPreserveFloat64 ? NP_64 : 0);
     P.nan_preserve = want && (can & NP_32) ? can : 0;
-    // NX2NAVI_VK_NAN_BITS: 1 every driver, 0 none; unset: AMD's driver for RDNA 1 and 2 (spirv_nan_bits)
-    const char *nb = cfg_get("NX2NAVI_VK_NAN_BITS");
+    // NX2SARIA_VK_NAN_BITS: 1 every driver, 0 none; unset: AMD's driver for RDNA 1 and 2 (spirv_nan_bits)
+    const char *nb = cfg_get("NX2SARIA_VK_NAN_BITS");
     P.nan_bits = nb && *nb ? strcmp(nb, "0") != 0 : vk_caps.amd_sc;
     if (P.nan_bits)
         rt_log("vk_pipeline: game shaders test for NaN on the bits of the number, not as a float (%s)",
-               nb && *nb ? "NX2NAVI_VK_NAN_BITS=1" : "AMD's driver for RDNA 1 and 2");
+               nb && *nb ? "NX2SARIA_VK_NAN_BITS=1" : "AMD's driver for RDNA 1 and 2");
     if (P.nan_preserve)
         rt_log("vk_pipeline: game shaders keep NaN, infinity and signed zero (SignedZeroInfNanPreserve for %s32%s-bit "
-               "floats%s)", can & NP_16 ? "16, " : "", can & NP_64 ? ", 64" : "", set ? ", NX2NAVI_VK_NAN_PRESERVE=1" : "");
+               "floats%s)", can & NP_16 ? "16, " : "", can & NP_64 ? ", 64" : "", set ? ", NX2SARIA_VK_NAN_PRESERVE=1" : "");
     else
         rt_log("vk_pipeline: game shaders without SignedZeroInfNanPreserve (%s)",
-               !want ? (set ? "NX2NAVI_VK_NAN_PRESERVE=0" : "NVIDIA's driver") : "the driver cannot keep them in 32-bit floats");
+               !want ? (set ? "NX2SARIA_VK_NAN_PRESERVE=0" : "NVIDIA's driver") : "the driver cannot keep them in 32-bit floats");
 }
 
 static void keys_open(void);
 static void cu_open(void);
 static void prebuild_start(void);
 
-// ---- stage libraries for mesh pipelines (NX2NAVI_GPL_MESH, default 1; 0: each mesh pipeline is built whole, as before)
+// ---- stage libraries for mesh pipelines (NX2SARIA_GPL_MESH, default 1; 0: each mesh pipeline is built whole, as before)
 // A mesh pipeline (task and mesh stages: the game's foliage, grass and terrain) used to be left out of the stage
 // libraries: each new one was a whole build, 0.2 to 1.1 s the first time foliage of a kind appeared, and its draws
 // waited or were left out of the picture until it was done. With the setting on such a pipeline is made like a vertex
@@ -1075,15 +1075,15 @@ static void mesh_lib_init(const VkCtx *c) {
     const char *why = !c->has_mesh_shader ? "this GPU has no mesh shaders"
                     : c->mesh_fallback ? "mesh draws go through the mesh fallback (vk_device.c, mesh_fallback)"
                     : !vk_caps.gpl ? "the graphics pipeline library is off"
-                    : !cfg_bool("NX2NAVI_GPL_MESH") ? "NX2NAVI_GPL_MESH=0"
+                    : !cfg_bool("NX2SARIA_GPL_MESH") ? "NX2SARIA_GPL_MESH=0"
                     : noopt_flag_for(1) != noopt_flag_for(0) ? "they alone are built without the driver's optimiser "
-                                                               "(NX2NAVI_VK_NOOPT), which a shared library would not be"
+                                                               "(NX2SARIA_VK_NOOPT), which a shared library would not be"
                     : NULL;
     P.mesh_lib = !why;
     if (why) rt_log("vk_pipeline: mesh pipelines are built whole, without stage libraries: %s", why);
     else rt_log("vk_pipeline: mesh pipelines are linked from stage libraries like vertex pipelines: the task and mesh "
                 "stages in one pre-rasterization library, a fast link at the first draw, the whole build behind it "
-                "(NX2NAVI_GPL_MESH=0 builds each whole, as before)");
+                "(NX2SARIA_GPL_MESH=0 builds each whole, as before)");
 }
 
 static int ensure_init(void) {
@@ -1106,7 +1106,7 @@ static int ensure_init(void) {
     rt_log(P.gpl ? "vk_pipeline: graphics pipeline library on: a draw whose pipeline is building gets a fast-linked one, "
                    "the optimised build replaces it when done"
                  : "vk_pipeline: graphics pipeline library off: draws wait for or skip pipelines that are building");
-    const char *ps = cfg_get("NX2NAVI_PUSH_STAGE"), *vo = cfg_get("NX2NAVI_VS_OUTS");
+    const char *ps = cfg_get("NX2SARIA_PUSH_STAGE"), *vo = cfg_get("NX2SARIA_VS_OUTS");
     P.push_stage = ps && !strcmp(ps, "fs") ? GFX_STAGE_FS : GFX_STAGE_VS;
     P.vs_outs_all = vo && !strcmp(vo, "all");
     if (P.indep) rt_log("vk_pipeline: stage-independent layouts: vertex set 0, fragment set 1, %s set pushed; vertex outputs: %s",
@@ -1127,37 +1127,37 @@ static int ensure_init(void) {
         VkPhysicalDeviceVulkan13Properties p13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
         VkPhysicalDeviceProperties2 q2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p13};
         vkGetPhysicalDeviceProperties2(c->phys, &q2);
-        P.sg32_stages = vk_caps.sg_pin_stages;   // vk_caps.c: 32 unless NX2NAVI_VK_SUBGROUP; 0 without the pin
+        P.sg32_stages = vk_caps.sg_pin_stages;   // vk_caps.c: 32 unless NX2SARIA_VK_SUBGROUP; 0 without the pin
         rt_log("vk_pipeline: subgroup size %u-%u, requiredSubgroupSizeStages %#x, pinning %u on %#x", p13.minSubgroupSize,
                p13.maxSubgroupSize, (unsigned)p13.requiredSubgroupSizeStages, vk_caps.sg_size, (unsigned)P.sg32_stages);
     }
     // A warp reconverges where the guest compiler put it back together; Vulkan guarantees that only with maximal
-    // reconvergence (spirv_reconverge). NX2NAVI_VK_RECONVERGE=0 leaves the modules as translated.
+    // reconvergence (spirv_reconverge). NX2SARIA_VK_RECONVERGE=0 leaves the modules as translated.
     P.reconverge = c->has_maximal_reconvergence && rt_knob("VK_RECONVERGE", "1") == 1;
     rt_log("vk_pipeline: maximal reconvergence for shaders with subgroup ops: %s",
-           P.reconverge ? "on" : c->has_maximal_reconvergence ? "off (NX2NAVI_VK_RECONVERGE=0)" : "not supported by the driver");
+           P.reconverge ? "on" : c->has_maximal_reconvergence ? "off (NX2SARIA_VK_RECONVERGE=0)" : "not supported by the driver");
     nan_preserve_init(c);
     P.f_full_subgroups = v13.computeFullSubgroups;
     P.cache_control = v13.pipelineCreationCacheControl;
     // Pipeline creation feedback is core in Vulkan 1.3; the driver reports per pipeline whether P.cache held it.
-    P.feedback = c->props.apiVersion >= VK_API_VERSION_1_3 ? atoi(cfg_value("NX2NAVI_PIPE_FEEDBACK")) : 0;
+    P.feedback = c->props.apiVersion >= VK_API_VERSION_1_3 ? atoi(cfg_value("NX2SARIA_PIPE_FEEDBACK")) : 0;
     P.f_logic_op = f2.features.logicOp;
     P.f_depth_clamp = f2.features.depthClamp;
     P.f_fill_non_solid = f2.features.fillModeNonSolid;
     P.f_dual_src = f2.features.dualSrcBlend;
-    P.wide_lines = f2.features.wideLines && cfg_bool("NX2NAVI_LINE_WIDTH");
+    P.wide_lines = f2.features.wideLines && cfg_bool("NX2SARIA_LINE_WIDTH");
     P.line_w[0] = c->props.limits.lineWidthRange[0], P.line_w[1] = c->props.limits.lineWidthRange[1];
     P.line_gran = c->props.limits.lineWidthGranularity;
     if (!P.wide_lines)
         rt_log("vk_pipeline: lines are drawn 1 pixel wide whatever width the game sets (%s)",
-               f2.features.wideLines ? "NX2NAVI_LINE_WIDTH=0" : "this device has no wide lines");
+               f2.features.wideLines ? "NX2SARIA_LINE_WIDTH=0" : "this device has no wide lines");
 #define PROC(field, name) (P.field = (void *)vk_dpa(c->device, name))
     PROC(push, "vkCmdPushDescriptorSetKHR");
     // Descriptor update templates (core 1.1; the push variant comes with VK_KHR_push_descriptor on 1.1): the driver
     // walks a layout prepared when the layout is made instead of parsing write structs every draw.
-    // NX2NAVI_DESC_TEMPLATE=0 keeps the write structs.
-    if (!cfg_bool("NX2NAVI_DESC_TEMPLATE")) {
-        rt_log("vk_pipeline: descriptor update templates off (NX2NAVI_DESC_TEMPLATE=0)");
+    // NX2SARIA_DESC_TEMPLATE=0 keeps the write structs.
+    if (!cfg_bool("NX2SARIA_DESC_TEMPLATE")) {
+        rt_log("vk_pipeline: descriptor update templates off (NX2SARIA_DESC_TEMPLATE=0)");
     } else if (c->props.apiVersion >= VK_API_VERSION_1_1 && PROC(tpl_create, "vkCreateDescriptorUpdateTemplate") &&
                PROC(tpl_destroy, "vkDestroyDescriptorUpdateTemplate") && PROC(tpl_update, "vkUpdateDescriptorSetWithTemplate")) {
         P.tpl = 1;
@@ -1166,14 +1166,14 @@ static int ensure_init(void) {
     } else {
         rt_log("vk_pipeline: descriptor update templates unavailable: sets are written with write structs");
     }
-    // NX2NAVI_VK_DYN_VERTEX=0/1 forces dynamic vertex input off or on. Default off on two drivers:
+    // NX2SARIA_VK_DYN_VERTEX=0/1 forces dynamic vertex input off or on. Default off on two drivers:
     // - Intel's frozen Windows driver for its older integrated GPUs (UHD 630, Ice Lake: Vulkan 1.3.215 and older), which
     //   draws nothing with it.
     // - AMD's driver for RDNA 3 and newer (vk_caps.amd_llpc), which compiles a pipeline with dynamic vertex input again
     //   at every boot: neither pipeline-cache.bin nor the driver's own disk cache gives it back. Measured on an
-    //   RX 7900 XT (26.10.1) with NX2NAVI_PIPE_FEEDBACK=2, booting one save twice from an empty cache: the second boot
+    //   RX 7900 XT (26.10.1) with NX2SARIA_PIPE_FEEDBACK=2, booting one save twice from an empty cache: the second boot
     //   compiled all 622 recorded non-mesh pipelines again at 83 ms each, with the module and state hashes of the first
-    //   boot (the same with NX2NAVI_GPL=0, so it is not the pipeline libraries or their layouts), while the mesh
+    //   boot (the same with NX2SARIA_GPL=0, so it is not the pipeline libraries or their layouts), while the mesh
     //   pipelines, which have no vertex input, came from the file. With the vertex layout in the pipeline the second
     //   boot built 787 pipelines in 170 ms and the third 898 of 898 from the file in 233 ms, with no build left for the
     //   scene. A player's file of 3,979 records used the whole boot budget (PREWARM_PIPE_MS, 20 s) at every boot; with
@@ -1181,13 +1181,13 @@ static int ensure_init(void) {
     //   one per vertex layout (787 records against 692 for that boot); records written with dynamic vertex input still
     //   prebuild, each for the layout of the draw that recorded it. The RDNA 1 and 2 branch (vk_caps.amd_sc) is not
     //   measured and keeps dynamic vertex input.
-    const char *dv = cfg_get("NX2NAVI_VK_DYN_VERTEX");   // no fixed default: it depends on the GPU, see above
+    const char *dv = cfg_get("NX2SARIA_VK_DYN_VERTEX");   // no fixed default: it depends on the GPU, see above
     int intel_legacy = c->props.vendorID == 0x8086 && c->props.apiVersion <= VK_MAKE_API_VERSION(0, 1, 3, 215);
     int dv_on = dv && *dv ? strcmp(dv, "0") != 0 : !intel_legacy && !vk_caps.amd_llpc;
     P.dyn_vi = dv_on && c->has_vertex_input_dynamic_state && PROC(set_vi, "vkCmdSetVertexInputEXT");
     if (!dv_on && c->has_vertex_input_dynamic_state)
         rt_log("vk_pipeline: dynamic vertex input off (%s)",
-               dv && *dv ? "NX2NAVI_VK_DYN_VERTEX=0"
+               dv && *dv ? "NX2SARIA_VK_DYN_VERTEX=0"
                : intel_legacy ? "Intel's older Windows driver draws nothing with it"
                : "AMD's driver compiles pipelines that have it again at every boot");
     if (c->has_eds3) {
@@ -1198,20 +1198,20 @@ static int ensure_init(void) {
         P.dyn_wmask = e3.extendedDynamicState3ColorWriteMask && PROC(set_wmask, "vkCmdSetColorWriteMaskEXT");
         P.dyn_a2c = e3.extendedDynamicState3AlphaToCoverageEnable && PROC(set_a2c, "vkCmdSetAlphaToCoverageEnableEXT");
     }
-    // NX2NAVI_VK_DYN_A2C=0/1 forces dynamic alpha to coverage off or on. Default off on AMD's Windows driver branch for
+    // NX2SARIA_VK_DYN_A2C=0/1 forces dynamic alpha to coverage off or on. Default off on AMD's Windows driver branch for
     // RDNA 2 and older (vk_caps.amd_sc), which applies alpha to coverage while the dynamic state says off: on an RX 590
-    // (24.9.1) NX2navi, which never turns it on, drew Link and the NPCs with depth but no colour (black silhouettes) and
+    // (24.9.1) NX2Saria, which never turns it on, drew Link and the NPCs with depth but no colour (black silhouettes) and
     // dithered other surfaces into checkerboards (issue #67, RX 470/570/580). Taken out of the dynamic state, it goes
     // into the pipeline key and the characters draw. With the texture pool marks it stays out of the dynamic state
     // whatever the setting: a marked fragment shader gets early fragment tests only in a pipeline that has alpha to
     // coverage off (spirv_pool_mark), so the pipeline has to know.
-    const char *da = cfg_get("NX2NAVI_VK_DYN_A2C");   // no fixed default: it depends on the driver, see above
+    const char *da = cfg_get("NX2SARIA_VK_DYN_A2C");   // no fixed default: it depends on the driver, see above
     int marks = vk_pool_marks_enabled();
     int da_on = !marks && (da && *da ? strcmp(da, "0") != 0 : !vk_caps.amd_sc);
     if (!da_on && P.dyn_a2c) {
         P.dyn_a2c = 0;
-        rt_log("vk_pipeline: dynamic alpha to coverage off (%s)", marks ? "the texture pool marks, NX2NAVI_TEX_DISUSE"
-                                                                  : da && *da ? "NX2NAVI_VK_DYN_A2C=0"
+        rt_log("vk_pipeline: dynamic alpha to coverage off (%s)", marks ? "the texture pool marks, NX2SARIA_TEX_DISUSE"
+                                                                  : da && *da ? "NX2SARIA_VK_DYN_A2C=0"
                                                                               : "AMD's driver for RDNA 2 and older");
     }
 #undef PROC
@@ -2282,7 +2282,7 @@ int vk_pipeline_spirv_selftest(void) {
         failures += bad;
         free(o);
     }
-    const char *list = cfg_get("NX2NAVI_SPV_MARK_TEST");
+    const char *list = cfg_get("NX2SARIA_SPV_MARK_TEST");
     if (list && *list) failures += spirv_mark_list_test(list);
     return failures;
 }
@@ -2369,7 +2369,7 @@ static uint32_t *spirv_pool_rebind(const uint32_t *w, uint64_t n) {
     return o;
 }
 
-// ---- texture pool marks (NX2NAVI_TEX_DISUSE, default on; vk_texture.c "disuse" uses them)
+// ---- texture pool marks (NX2SARIA_TEX_DISUSE, default on; vk_texture.c "disuse" uses them)
 // Ocarina samples nearly every texture through the bindless pool: a shader reads a handle from memory and indexes the
 // pool array with it, so the CPU never learns which of the registered textures a frame samples, and every registered
 // texture counts as in use (vk_texture.c idle). The game keeps the textures of the areas it has loaded registered, so
@@ -2519,7 +2519,7 @@ static uint32_t *spirv_pool_mark(const uint32_t *w, uint64_t n, int early_ok, ui
         i += l;
     }
     if (marked || !sites) return POOL_MARK_FREE(), NULL;
-    // NX2NAVI_POOL_MARK_SHARED (default 1): the module's ring sites share one ring and its count, and an access notes
+    // NX2SARIA_POOL_MARK_SHARED (default 1): the module's ring sites share one ring and its count, and an access notes
     // its slot only when it differs from the slot noted just before it (consecutive repeats take no entry). With a ring
     // per site, a shader with many pool accesses in a loop (the castle moat's water: 69 shadow taps of one light's map
     // per iteration) carried 69 rings of 8 dynamically indexed words and stored up to 552 marks per fragment where it
@@ -2732,7 +2732,7 @@ static uint32_t *spirv_pool_mark(const uint32_t *w, uint64_t n, int early_ok, ui
     return o;
 }
 
-// --selftest with NX2NAVI_SPV_MARK_TEST=<list>: each line "<in.spv> <out.spv>"; the module is moved to the pools
+// --selftest with NX2SARIA_SPV_MARK_TEST=<list>: each line "<in.spv> <out.spv>"; the module is moved to the pools
 // (spirv_pool_rebind) and marked, and written to <out> when marked, for spirv-val. Prints the counts; 0 failures unless
 // a file cannot be read or written.
 static int spirv_mark_list_test(const char *list) {
@@ -2812,7 +2812,7 @@ static VkShaderModule make_module(const uint32_t *w, uint64_t words, int early_o
                     rt_log("vk_pipeline: a %s shader that indexes the texture pool could not be marked (SPIR-V %u.%u, %llu "
                            "words, hash %016llx): %s%s", stage, w[1] >> 16 & 0xff, w[1] >> 8 & 0xff,
                            (unsigned long long)words, (unsigned long long)fnv(FNV0, orig_w, (size_t)orig_words * 4), why,
-                           nth == 1 ? "; textures are not evicted by disuse this run (NX2NAVI_TEX_DISUSE)" : "");
+                           nth == 1 ? "; textures are not evicted by disuse this run (NX2SARIA_TEX_DISUSE)" : "");
                 }
             }
         }
@@ -3076,7 +3076,7 @@ static Layout *layout_get(Bindings *B) {
     return l;
 }
 
-// NX2NAVI_MESH_EMULATION (GPUs without VK_EXT_mesh_shader): the layout of an emulated mesh pipeline. The task and
+// NX2SARIA_MESH_EMULATION (GPUs without VK_EXT_mesh_shader): the layout of an emulated mesh pipeline. The task and
 // mesh stages' bindings are visible to the compute stage (they run as compute pipelines of this layout), the
 // fragment stage's stay; push constants (MESH_EMU_PC_BYTES) for the compute stages and the generated vertex shader;
 // set 0 gets a template per bind point. Caller holds P.lock.
@@ -3290,7 +3290,7 @@ static Layout *layout_pair(Bindings *B, Bindings *F) {
 
 // Vertex outputs with independent layouts: each vertex shader declares the union of the inputs of every fragment
 // shader met with it (pipeline-keys.bin at the prewarm, then each pipeline built), so its module does not depend on the
-// fragment shader of one pipeline. Unwritten ones read (0, 0, 0, 1) as before. NX2NAVI_VS_OUTS=all declares all 32.
+// fragment shader of one pipeline. Unwritten ones read (0, 0, 0, 1) as before. NX2SARIA_VS_OUTS=all declares all 32.
 #define VS_OUTS_CAP 8192
 static struct {
     PlatMutex lock;
@@ -3445,8 +3445,8 @@ static int target_count(const VkPipeState *s) {
 // fragment module whose output 1 is Location 0, Index 1 (spirv_dual_source).
 static int is_src1(unsigned f) { return f >= NVN_BLEND_FUNC_SRC1_COLOR && f <= NVN_BLEND_FUNC_ONE_MINUS_SRC1_ALPHA; }
 // Runs per draw (gkey_fill, target_wmask): only the blend factors of blend-enabled targets are read until one is SRC1,
-// which NX2navi never sets (0 of 876 pipelines in the field and fight saves).
-// NX2NAVI_VK_NOOPT=1: pipelines built without the driver's optimiser, for a driver whose shader compiler crashes on
+// which NX2Saria never sets (0 of 876 pipelines in the field and fight saves).
+// NX2SARIA_VK_NOOPT=1: pipelines built without the driver's optimiser, for a driver whose shader compiler crashes on
 // one (the test switch for such a report); slower shaders, the same picture. mesh: only pipelines with task and mesh
 // stages, the terrain's and the foliage's. 0: none.
 // Unset: mesh on AMD's Windows driver for RDNA 1 and 2 (vk_caps.amd_sc), 0 elsewhere. That driver loses the device
@@ -3457,27 +3457,27 @@ static int is_src1(unsigned f) { return f >= NVN_BLEND_FUNC_SRC1_COLOR && f <= N
 // 0.9.1 and 0.9.2 end with the game's dispatch of cs d7566eb1 finished and nothing after it marked: the group of draws
 // that followed was recorded by the replay workers, whose passes have no marks, so which draw of it hung is not known.
 // No reporter ran with the optimiser off, so that it is the cause is not shown: it costs shader speed in those
-// pipelines and not the picture, and NX2NAVI_VK_NOOPT=0 gives the optimised ones back. The flag is part of what the
+// pipelines and not the picture, and NX2SARIA_VK_NOOPT=0 gives the optimised ones back. The flag is part of what the
 // driver's cache keys a pipeline by, so those pipelines are built once more after the change.
 // Since then that driver draws mesh programs through the mesh fallback by default (vk_mesh_path.h), and no mesh
 // pipeline is built there: this applies with mesh_fallback = 0 alone, as the 0.10.x way to compare against.
 static VkPipelineCreateFlags noopt_flag_for(int mesh) {
     static int on = -1;
     if (on < 0) {
-        const char *v = cfg_get("NX2NAVI_VK_NOOPT");
+        const char *v = cfg_get("NX2SARIA_VK_NOOPT");
         int by_driver = !v || !*v;
         on = by_driver ? (vk_caps.amd_sc ? 2 : 0) : !strcmp(v, "mesh") ? 2 : strcmp(v, "0") != 0;
         if (on) rt_log("vk_pipeline: %s built without the driver's optimiser (%s)",
                        on == 2 ? "pipelines with task and mesh stages" : "pipelines",
                        by_driver ? "the default on AMD's driver for RDNA 1 and 2, where the device is lost in passes "
-                                   "that start with such a pipeline; NX2NAVI_VK_NOOPT=0 builds them optimised"
-                                 : "NX2NAVI_VK_NOOPT");
+                                   "that start with such a pipeline; NX2SARIA_VK_NOOPT=0 builds them optimised"
+                                 : "NX2SARIA_VK_NOOPT");
     }
     return on == 1 || (on == 2 && mesh) ? VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT : 0;
 }
 static VkPipelineCreateFlags noopt_flag(void) { return noopt_flag_for(0); }
 
-// ---- pipeline creation feedback (NX2NAVI_PIPE_FEEDBACK, default 1; 0 off)
+// ---- pipeline creation feedback (NX2SARIA_PIPE_FEEDBACK, default 1; 0 off)
 // Each pipeline, library and compute build asks the driver whether pipeline-cache.bin (P.cache) held it
 // (VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) and how long the create took. The counts appear
 // with the prewarm, the stage library prebuild and every cache save, so a log tells whether a slow boot compiled or
@@ -3632,7 +3632,7 @@ static uint32_t vs_union_missing(const VkPipeState *s, GfxShaderIo fin[32]) {
 }
 
 
-// ---- water corrections (docs/water-projective.md; NX2NAVI_WATER_PROJECTIVE, default 1; 0: the translations as built)
+// ---- water corrections (docs/water-projective.md; NX2SARIA_WATER_PROJECTIVE, default 1; 0: the translations as built)
 // Two of the game's water translations are built from an edited module (spirv_water.c):
 //  - the coordinate pair (mode 1). The vertex stage worked out each vertex's place on the screen (x / w and y / w,
 //    scaled to 0..1) and the fragment stage read it interpolated without perspective, to sample the scene behind the
@@ -3683,7 +3683,7 @@ static const uint32_t *water_module(uint64_t key, int kind, const WaterProfile *
         static const char *const names[] = {"vertex stage of the coordinate pair", "fragment stage of the coordinate pair",
                                             "absorption material"};
         if (c) rt_log("vk_pipeline: water: the %s (module %016llx) is built from its corrected form "
-                      "(NX2NAVI_WATER_PROJECTIVE)", names[kind], (unsigned long long)key);
+                      "(NX2SARIA_WATER_PROJECTIVE)", names[kind], (unsigned long long)key);
         else rt_log("vk_pipeline: water: the %s (module %016llx) is not of the shape its correction expects; built as "
                     "it is", names[kind], (unsigned long long)key);
     }
@@ -3698,7 +3698,7 @@ static const uint32_t *water_module(uint64_t key, int kind, const WaterProfile *
 // module, once per profile.
 static int water_projective_pair(const VkPipeState *s) {
     static int on = -1;
-    if (on < 0) on = cfg_bool("NX2NAVI_WATER_PROJECTIVE");
+    if (on < 0) on = cfg_bool("NX2SARIA_WATER_PROJECTIVE");
     if (!on || !P.indep || !s->fs) return 0;
     uint64_t wn, fh = gfx_shader_spirv_fnv(s->fs);
     for (size_t i = 0; i < sizeof water_profiles / sizeof *water_profiles; i++) {
@@ -3735,7 +3735,7 @@ static int water_mode(const VkPipeState *s, const GKey *k) {
     return mode == 1 && k->dsb ? 0 : mode;
 }
 
-// ---- line width (NX2NAVI_LINE_WIDTH, default 1; 0: every line 1 pixel wide, as before)
+// ---- line width (NX2SARIA_LINE_WIDTH, default 1; 0: every line 1 pixel wide, as before)
 // The game sets a width for its lines (nvnCommandBufferSetLineWidth, recorded as OP_BIND_STATE kind 7): 4.5 pixels
 // for two line draws a frame into a 144x144 R8 target, which were drawn 1 pixel wide. A pipeline of the line topology
 // class lists the width as dynamic state, in its whole build and in its pre-rasterization library (PrKey.lines), and
@@ -3793,7 +3793,7 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
     uint64_t wn = 0;
     const uint32_t *vwater = water_pair_vertex(vcode, vw, wmode, &wn);
     if (vwater) vcode = vwater, vw = wn;
-    if (emu) {   // NX2NAVI_MESH_EMULATION: the task and mesh stages as compute pipelines, a generated vertex shader here
+    if (emu) {   // NX2SARIA_MESH_EMULATION: the task and mesh stages as compute pipelines, a generated vertex shader here
         uint32_t toff = fs_off + (s->fs ? binding_span(s->fs) - 1 : 0);
         const MeshEmuEnt *me = emu_get(s->vs, s->ts, l->layout, toff, 1);
         if (!me || !me->ok) {
@@ -4267,7 +4267,7 @@ static struct {
     LibJob *head, *tail;
     int idle;                          // workers asleep on work_cv
     int running;                       // jobs workers are building
-    int on;                            // NX2NAVI_PIPE_WAIT: 1 workers (default), 0 the drawing thread builds them (draw);
+    int on;                            // NX2SARIA_PIPE_WAIT: 1 workers (default), 0 the drawing thread builds them (draw);
                                        // set by vk_pipeline_async_enable, before the replay runs
     int lib_workers;                   // workers that take only these jobs (lib_worker), started with the pool
     uint64_t waits, queued, by_worker, stolen, timeouts, links;
@@ -4419,7 +4419,7 @@ static void lib_keys(const VkPipeState *s, const GKey *k, ViKey *v, PrKey *pk, F
     memcpy(ok->color, k->color, sizeof ok->color), memcpy(ok->blend, k->blend, sizeof ok->blend);
 }
 
-// NX2NAVI_GPL_FEEDBACK (default 1; 0 = as before): a pipeline whose fragment shader samples an attachment of its own pass
+// NX2SARIA_GPL_FEEDBACK (default 1; 0 = as before): a pipeline whose fragment shader samples an attachment of its own pass
 // (VkPipeState.feedback: soft particles and water reading the depth buffer, decals, full-screen passes that read the
 // target they write) gets a fast link like any other. The feedback loop flags belong to the fragment output state, so
 // they are part of that library's key (FoKey.fbl) and of nothing else; the shader libraries are the ones the same
@@ -4430,8 +4430,8 @@ static void lib_keys(const VkPipeState *s, const GKey *k, ViKey *v, PrKey *pk, F
 static int gpl_feedback(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_GPL_FEEDBACK");
-        if (!on) rt_log("vk_pipeline: gpl: pipelines with a feedback loop get no fast link (NX2NAVI_GPL_FEEDBACK=0)");
+        on = cfg_bool("NX2SARIA_GPL_FEEDBACK");
+        if (!on) rt_log("vk_pipeline: gpl: pipelines with a feedback loop get no fast link (NX2SARIA_GPL_FEEDBACK=0)");
     }
     return on;
 }
@@ -4441,7 +4441,7 @@ static int gpl_feedback(void) {
 // which hold no shader, are built here); *final 0 = not yet, a worker builds them. build 1 (worker): builds the
 // missing libraries and links with P.lock released. VK_NULL_HANDLE with *final 1 when GPL cannot express the pipeline
 // (shared layout, which is also a mesh pipeline's without stage libraries; a feedback loop with
-// NX2NAVI_GPL_FEEDBACK=0) or a build failed.
+// NX2SARIA_GPL_FEEDBACK=0) or a build failed.
 // A mesh pipeline is linked from three libraries: the pre-rasterization one with its task and mesh stages, the
 // fragment shader one and the fragment output one. It has no vertex input state, and a complete pipeline needs that
 // state only where its pre-rasterization state holds a vertex shader. The link names no state of its own and no
@@ -4547,7 +4547,7 @@ static struct {
 // Every graphics pipeline built in a game run appends a KeyRec: the VkPipeState it was built from with the shader
 // pointers zeroed and the shaders named by their gfx_shader input ids instead, which do not depend on the translator,
 // so the record rebuilds the pipeline without guest memory. At the next boot vk_pipeline_prewarm (rt_boot, before the
-// guest runs; NX2NAVI_PIPE_PREBUILD=0 skips it) loads each record's shaders, translating the ones not cached under the
+// guest runs; NX2SARIA_PIPE_PREBUILD=0 skips it) loads each record's shaders, translating the ones not cached under the
 // current translator from their stored inputs (gfx_shader_prewarm; a record whose shader has neither is dropped),
 // enters each Pipe as building under the key a draw would compute, queues it to the low queue and builds the queue on
 // every core. Records are deduplicated by a hash of their bytes; they are collected under P.lock by the worker that
@@ -4692,18 +4692,18 @@ static int seen_has(uint64_t h) {   // caller holds P.lock
     return 0;
 }
 
-// The shared pipeline list as recorded pipelines (NX2NAVI_PIPE_SEED, default 1; 0: this install's own records only).
+// The shared pipeline list as recorded pipelines (NX2SARIA_PIPE_SEED, default 1; 0: this install's own records only).
 // seed-pipeline-keys.bin next to the game holds the list's records (tools/prepare_shaders.py writes it). Before, the boot
 // built only what this install drew, so a new install met every pipeline in play: in Hyrule Field one 600-frame
 // stretch of a first visit had 1,769 draws wait 461 ms in all for their pipelines, the longest frame 88 ms. The list's
 // records now follow the install's own in K.file, so the prewarm counts their pairs in the vertex output unions (and the
 // pipelines it builds from them are the ones draws ask for) and builds them as it builds the install's: the boot for at
 // most PREWARM_PIPE_MS, the pool workers the rest. The preparation builds the same list into the caches
-// (seed_pipelines, NX2NAVI_PREPARE_PIPELINES=all), so that boot finds them there. They are not added to the set or the
+// (seed_pipelines, NX2SARIA_PREPARE_PIPELINES=all), so that boot finds them there. They are not added to the set or the
 // file: pipeline-keys.bin keeps what this install drew, and a pipeline a draw builds that the prewarm did not still goes
 // into it. A list in another record layout is left out, as the preparation leaves it.
 static void keys_open_seed(void) {
-    if (!cfg_bool("NX2NAVI_PIPE_SEED")) return;
+    if (!cfg_bool("NX2SARIA_PIPE_SEED")) return;
     char path[sizeof K.path];
     snprintf(path, sizeof path, "%s", K.path);
     char *slash = strrchr(path, '\\'), *fslash = strrchr(path, '/');
@@ -4738,7 +4738,7 @@ static void keys_open_seed(void) {
     K.file_n += added;
     free(seed);
     rt_log("vk_pipeline: %s: %zu listed pipelines, %zu of them not recorded by this install; built with its own "
-           "(NX2NAVI_PIPE_SEED)", path, n, added);
+           "(NX2SARIA_PIPE_SEED)", path, n, added);
 }
 
 static void keys_open_own(void) {
@@ -4879,7 +4879,7 @@ static void u_run(LibJob *lj) {
     free(lj);
 }
 
-// NX2NAVI_PIPE_FAST_WORKERS (default 1; 0 = as before): the library workers also take the fast link of a draw-queue job
+// NX2SARIA_PIPE_FAST_WORKERS (default 1; 0 = as before): the library workers also take the fast link of a draw-queue job
 // (fast_take). A draw that is skipped rather than waiting leaves its pipeline to the pool, where a job is first
 // fast-linked and then goes back in the queue for its optimised build. The pool keeps one worker out of optimised
 // builds, so with the others inside one (about 100 ms each with the driver's cache warm, 350 ms cold) that single
@@ -4889,7 +4889,7 @@ static void u_run(LibJob *lj) {
 // linking, 23 did, 19 of them mesh pipelines, which had no fast link then (they have one with mesh_libs).
 static int fast_workers(void) {
     static int on = -1;
-    if (on < 0) on = cfg_bool("NX2NAVI_PIPE_FAST_WORKERS");
+    if (on < 0) on = cfg_bool("NX2SARIA_PIPE_FAST_WORKERS");
     return on;
 }
 
@@ -4956,8 +4956,8 @@ static void lib_worker(void *arg) {
 // builds behind a fast link), the compute pipelines and stage libraries of the boot (lb_worker), the library warm
 // (lw_worker) and the large compute shaders (bg_main). A build a draw or a dispatch waits for never does: it is needed
 // now.
-// NX2NAVI_BUILD_FREE_MB (default 4096; 0 no check): the system commit headroom that stays free of them.
-// NX2NAVI_BUILD_RESERVE_MB (default 64): what one build under way is taken to cost the driver's compiler while it
+// NX2SARIA_BUILD_FREE_MB (default 4096; 0 no check): the system commit headroom that stays free of them.
+// NX2SARIA_BUILD_RESERVE_MB (default 64): what one build under way is taken to cost the driver's compiler while it
 // runs; a large compute shader reserves GATE_BIG_MB. A build starts only when the headroom holds the part kept free,
 // the reservations of the builds under way and its own.
 // Measured on the machine this was written on (RTX 5090, 73,154 MB commit limit, warm driver cache): the boot's 3,898
@@ -4980,13 +4980,13 @@ static struct {
 } GATE = {.lock = PLAT_MUTEX_INIT};
 
 // 1 when a build estimated at est MB may start, and then est is reserved until gate_leave. est 0: an ordinary build
-// (NX2NAVI_BUILD_RESERVE_MB), whose estimate *took returns for gate_leave.
+// (NX2SARIA_BUILD_RESERVE_MB), whose estimate *took returns for gate_leave.
 static int gate_enter(double est, double *took) {
     plat_mutex_lock(&GATE.lock);
     if (!GATE.init) {
         GATE.init = 1;
-        GATE.g.free_mb = strtod(cfg_value("NX2NAVI_BUILD_FREE_MB"), NULL);
-        GATE.est = strtod(cfg_value("NX2NAVI_BUILD_RESERVE_MB"), NULL);
+        GATE.g.free_mb = strtod(cfg_value("NX2SARIA_BUILD_FREE_MB"), NULL);
+        GATE.est = strtod(cfg_value("NX2SARIA_BUILD_RESERVE_MB"), NULL);
         if (GATE.est < 0) GATE.est = 0;
         GATE.at = -GATE_SAMPLE_MS;
     }
@@ -5015,7 +5015,7 @@ static void gate_leave(double est) {
 static const char *gate_text(char *buf, size_t n) {
     plat_mutex_lock(&GATE.lock);
     snprintf(buf, n, "system commit %.0f of %.0f MB, %.0f MB reserved for builds under way, %.0f MB kept free "
-                     "(NX2NAVI_BUILD_FREE_MB), %.0f MB a build (NX2NAVI_BUILD_RESERVE_MB)", GATE.used, GATE.limit,
+                     "(NX2SARIA_BUILD_FREE_MB), %.0f MB a build (NX2SARIA_BUILD_RESERVE_MB)", GATE.used, GATE.limit,
              GATE.g.reserved_mb, GATE.g.free_mb, GATE.est);
     plat_mutex_unlock(&GATE.lock);
     return buf;
@@ -5048,8 +5048,8 @@ int vk_pipeline_probe_buildgate(void) {
     int first = gate_enter(0, &took);
     double free_mb = GATE.g.free_mb, used = GATE.used, limit = GATE.limit, est = took;
     if (first) gate_leave(took);
-    printf("probe-buildgate: system commit %.0f of %.0f MB, %.0f MB kept free (NX2NAVI_BUILD_FREE_MB), %.0f MB a build "
-           "(NX2NAVI_BUILD_RESERVE_MB)\n", used, limit, free_mb, est);
+    printf("probe-buildgate: system commit %.0f of %.0f MB, %.0f MB kept free (NX2SARIA_BUILD_FREE_MB), %.0f MB a build "
+           "(NX2SARIA_BUILD_RESERVE_MB)\n", used, limit, free_mb, est);
     double room = limit - used - free_mb;
     for (int i = 0; i < 16; i++) {
         want += free_mb <= 0 || limit < 0 || room - i * est >= est;   // the commit sample stays for GATE_SAMPLE_MS
@@ -5112,8 +5112,8 @@ static void fast_retire(Pipe *p) {
 // each one's compiled code in video memory until it is destroyed. In a 4K session with DLSS and frame generation the
 // device-local memory outside the allocator was 4.2 GB with 6,300 graphics pipelines alive, 3,589 of them not drawn
 // once in that run. On a card short of video memory those are the cheapest thing to give back: no draw has recorded
-// them. So while the device-local memory in use is over NX2NAVI_TEX_VRAM_PRESSURE percent of the budget
-// (vk_mem_vram_live, which NX2NAVI_VRAM_BUDGET_MB caps for a test), the autosave thread takes up to RELEASE_BATCH
+// them. So while the device-local memory in use is over NX2SARIA_TEX_VRAM_PRESSURE percent of the budget
+// (vk_mem_vram_live, which NX2SARIA_VRAM_BUDGET_MB caps for a test), the autosave thread takes up to RELEASE_BATCH
 // graphics pipelines that no draw has looked up in this run out of the table every RELEASE_EVERY_MS, and destroys them
 // with their entries once the GPU is past the submission being recorded and one more (as fast_retire), at most
 // RELEASE_DRAIN a tick (release_drain). Not on the completion thread: a value counts as done only after its callbacks
@@ -5127,7 +5127,7 @@ static void fast_retire(Pipe *p) {
 // The use counts the free space inside the allocator's blocks as free, as the texture evictions do (vk_texture.c
 // sweep_pressure): the driver's figure (vk_mem_vram) counts it as used, so with free blocks it could stay over the line
 // while pipelines went, and every pass would give back another batch until no unused pipeline was left.
-// NX2NAVI_PIPE_RELEASE=0 keeps every pipeline for the run, as before 0.10.0, and so does NX2NAVI_TEX_VRAM_PRESSURE=0,
+// NX2SARIA_PIPE_RELEASE=0 keeps every pipeline for the run, as before 0.10.0, and so does NX2SARIA_TEX_VRAM_PRESSURE=0,
 // which keeps the textures from giving way for video memory.
 #define RELEASE_EVERY_MS 5000
 #define RELEASE_BATCH 256
@@ -5165,14 +5165,14 @@ static void pressure_release(uint64_t now) {
     static int on = -1, pct;
     static uint64_t last;
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_PIPE_RELEASE");
-        pct = cfg_int("NX2NAVI_TEX_VRAM_PRESSURE");
+        on = cfg_bool("NX2SARIA_PIPE_RELEASE");
+        pct = cfg_int("NX2SARIA_TEX_VRAM_PRESSURE");
         if (pct < 0 || pct > 100) pct = 80;
-        if (!on) rt_log("vk_pipeline: every pipeline stays for the run, also while video memory is short (NX2NAVI_PIPE_RELEASE=0)");
+        if (!on) rt_log("vk_pipeline: every pipeline stays for the run, also while video memory is short (NX2SARIA_PIPE_RELEASE=0)");
         else if (!pct) {   // 0 turns the textures' giving way off (vk_texture.c sweep_pressure): the pipelines' too
             on = 0;
             rt_log("vk_pipeline: every pipeline stays for the run, also while video memory is short "
-                   "(NX2NAVI_TEX_VRAM_PRESSURE=0)");
+                   "(NX2SARIA_TEX_VRAM_PRESSURE=0)");
         }
     }
     if (!on || now - last < RELEASE_EVERY_MS) return;
@@ -5209,7 +5209,7 @@ static void pressure_release(uint64_t now) {
     if (rel_batches <= 16 || !(rel_batches & (rel_batches - 1)))
         rt_log("vk_pipeline: video memory in use %llu of %llu MiB (over %d%%, free space inside the allocator's blocks not "
                "counted): %d graphics pipelines no draw used in this run given back, %llu in %llu batches so far; a draw "
-               "that needs one builds it again from the pipeline cache (NX2NAVI_PIPE_RELEASE)",
+               "that needs one builds it again from the pipeline cache (NX2SARIA_PIPE_RELEASE)",
                (unsigned long long)(used >> 20), (unsigned long long)(budget >> 20), pct, n,
                (unsigned long long)rel_total, (unsigned long long)rel_batches);
 }
@@ -5251,7 +5251,7 @@ static void pipe_worker(void *arg) {
     plat_mutex_lock(&P.lock);
     for (;;) {
         // With 3 or more workers one never takes low-queue work, so a waiting draw's library starts at once
-        // (not with NX2NAVI_PIPE_WAIT=draw).
+        // (not with NX2SARIA_PIPE_WAIT=draw).
         while (!U.head && !A.head && !(A.low && (A.threads < 3 || !U.on || A.low_running < A.threads - 1))) {
             U.idle++;
             plat_cond_wait(&work_cv, &P.lock);
@@ -5375,8 +5375,8 @@ static void workers_drain(void) {
 }
 
 void vk_pipeline_async_enable(void) {
-    U.on = strcmp(cfg_value("NX2NAVI_PIPE_WAIT"), "draw") != 0;
-    const char *e = cfg_get("NX2NAVI_PIPE_SYNC");
+    U.on = strcmp(cfg_value("NX2SARIA_PIPE_WAIT"), "draw") != 0;
+    const char *e = cfg_get("NX2SARIA_PIPE_SYNC");
     if (e && *e && strcmp(e, "0")) return;
     A.on = 1;
 }
@@ -5408,13 +5408,13 @@ static void promote(Pipe *p) {
 }
 
 // A draw waits up to wait_ms for the pipeline of job j, which has no fast link (a pipeline without stage libraries,
-// as a mesh pipeline is with NX2NAVI_GPL_MESH=0, or one whose link failed) and so needs its whole build. While the
+// as a mesh pipeline is with NX2SARIA_GPL_MESH=0, or one whose link failed) and so needs its whole build. While the
 // job is still queued the wait buys nothing: the draw queue is first in, first out, and the jobs before it are the
 // fast links and builds of other draws' misses, so on a burst of new pipelines the one a draw stood waiting for
 // started last and the draw was skipped at the end of its wait all the same.
 // - The job goes to the head of the draw queue and a worker is woken, so the next free worker takes it.
 // - A wait longer than TAKE_WAIT_MS is not one of a frame's budgets (vk_exec_draw.c frame_wait is at most 500 ms): the
-//   caller wants this pipeline whatever it takes (a one-shot draw with NX2NAVI_ONESHOT_BUDGET=0). With no worker idle
+//   caller wants this pipeline whatever it takes (a one-shot draw with NX2SARIA_ONESHOT_BUDGET=0). With no worker idle
 //   the job is then built here at once (job_build), as a library no worker took is (lib_wait). A wait inside a
 //   budget is never turned into a build on this thread: a whole mesh pipeline takes 0.2 to 1.1 s to compile, and the
 //   budget exists so that the replay thread is not held that long.
@@ -5634,7 +5634,7 @@ static void lib_wait(const VkPipeState *s, const GKey *k, Layout *l, double end)
     }
 }
 
-// ---- stage libraries ahead of their draws (NX2NAVI_PIPE_AHEAD, default 1; 0 off; vk_exec.c "looking ahead")
+// ---- stage libraries ahead of their draws (NX2SARIA_PIPE_AHEAD, default 1; 0 off; vk_exec.c "looking ahead")
 // The replay names the state of a draw it has not reached yet. When no pipeline is known for it, its pre-rasterization
 // and fragment shader libraries are queued to the library workers now, so they build while the draws before it are
 // recorded, in parallel with each other and with those of the other draws named: the draw's own lookup then finds both
@@ -5645,7 +5645,7 @@ static void lib_wait(const VkPipeState *s, const GKey *k, Layout *l, double end)
 // the one that takes longest to make. Returns the libraries queued.
 static int hint_on(void) {
     static int on = -1;
-    if (on < 0) on = cfg_bool("NX2NAVI_PIPE_AHEAD");
+    if (on < 0) on = cfg_bool("NX2SARIA_PIPE_AHEAD");
     return on;
 }
 
@@ -5696,15 +5696,15 @@ static VkPipeline graphics(const VkPipeState *s, const VkPipeInfo **info, int as
     // parallel on idle workers (lib_wait; about 0.12 ms per library from the driver's disk cache, 5-180 ms cold), and
     // links them here: its own job may queue behind optimised builds of earlier pipelines. The job then only does the
     // optimised build, from the low queue. Other draws leave the libraries to the job and are skipped meanwhile.
-    // NX2NAVI_PIPE_WAIT=draw builds them on this thread one after the other instead, as before; NX2NAVI_GPL_DRAW_BUILD=0
+    // NX2SARIA_PIPE_WAIT=draw builds them on this thread one after the other instead, as before; NX2SARIA_GPL_DRAW_BUILD=0
     // leaves them to the job.
     static int draw_build = -1;
     if (draw_build < 0) {
-        const char *e = cfg_get("NX2NAVI_GPL_DRAW_BUILD");
+        const char *e = cfg_get("NX2SARIA_GPL_DRAW_BUILD");
         draw_build = !(e && !strcmp(e, "0"));
         rt_log("vk_pipeline: a draw that waits for its pipeline %s", !draw_build ? "leaves its libraries to its job"
                : U.on ? "has its libraries built in parallel on the workers, ahead of other jobs"
-                      : "builds its libraries itself (NX2NAVI_PIPE_WAIT=draw)");
+                      : "builds its libraries itself (NX2SARIA_PIPE_WAIT=draw)");
     }
     double end = wait_ms ? now_ms() + wait_ms : 0;
     if (p && p->building && P.gpl && !p->info.pipeline && !p->fast_tried && !p->link_queued && p->lay &&
@@ -5887,7 +5887,7 @@ static void bf_wait(void);
 // priority while the game runs. A draw that meets one of them before it is built gets a pipeline linked from stage
 // libraries at once (gpl_link), as for any new pipeline in play. After a driver update, when every pipeline is built
 // from nothing, the boot waits for all of them and for the rest of the warm (bf_decide). Without the library a draw
-// would have to wait for a whole build, so the boot waits for all; so it does with NX2NAVI_PREWARM_FULL=1.
+// would have to wait for a whole build, so the boot waits for all; so it does with NX2SARIA_PREWARM_FULL=1.
 #define PREWARM_PIPE_MS 20000.0
 
 void vk_pipeline_prewarm(void) {
@@ -5909,7 +5909,7 @@ void vk_pipeline_prewarm(void) {
 //    file holds them too; they are as many as the list has mesh stage pairs, not the tens of thousands of single
 //    shaders' libraries that are kept out of it.
 //  - boot (mesh_pre_start, from lb_start): one thread beside the game at idle priority, behind the memory gate
-//    (gate_wait); NX2NAVI_LIB_PREBUILD=0 leaves it out with the rest of that prebuild.
+//    (gate_wait); NX2SARIA_LIB_PREBUILD=0 leaves it out with the rest of that prebuild.
 typedef struct {
     VkPipeState s;
     GKey k;
@@ -6029,7 +6029,7 @@ static void mesh_pre_run(int threads) {
     for (int i = 0; i < n; i++) plat_thread_join(t[i]);
 }
 
-// NX2NAVI_PIPE_SEED_BOOT (auto, the default; 1; 0): whether the boot builds the pipelines of the shared list that this
+// NX2SARIA_PIPE_SEED_BOOT (auto, the default; 1; 0): whether the boot builds the pipelines of the shared list that this
 // install has never drawn (keys_open_seed), 1, or leaves them to their first draw, 0. Built at boot they are there
 // when a draw first needs them, which is what the list is for, and every one is a pipeline the driver holds for the
 // whole run: with the list of 0.9.1 the boot's pipeline stage went from about 1.6 GB of commit (0.8.0, 3,256
@@ -6049,9 +6049,9 @@ static void mesh_pre_run(int threads) {
 static int seed_boot(void) {
     static int on = -1;
     if (on >= 0) return on;
-    const char *e = cfg_get("NX2NAVI_PIPE_SEED_BOOT");
+    const char *e = cfg_get("NX2SARIA_PIPE_SEED_BOOT");
     if (e && (!strcmp(e, "0") || !strcmp(e, "1"))) return on = e[0] == '1';
-    double proc, used, limit, need = strtod(cfg_value("NX2NAVI_MEM_NEED_MB"), NULL);
+    double proc, used, limit, need = strtod(cfg_value("NX2SARIA_MEM_NEED_MB"), NULL);
     plat_commit_info(&proc, &used, &limit);
     return on = !mem_need_short(proc, used, limit, need);
 }
@@ -6060,7 +6060,7 @@ static void prewarm_run(void) {
     const char *gpu = rt_config()->gpu;
     uint32_t pr_hist[16] = {0}, fs_hist[4] = {0};   // library state of the recorded pipelines (lb_start)
     if (!A.on || (gpu && !strcmp(gpu, "null"))) return;
-    if (!cfg_bool("NX2NAVI_PIPE_PREBUILD")) {   // prebuild_start logs the off case
+    if (!cfg_bool("NX2SARIA_PIPE_PREBUILD")) {   // prebuild_start logs the off case
         if (ensure_init()) lb_start(pr_hist, fs_hist);
         return;
     }
@@ -6089,7 +6089,7 @@ static void prewarm_run(void) {
     for (size_t i = 0; i < m; i++)
         if (!u || memcmp(ids[u - 1], ids[i], 32)) memcpy(ids[u++], ids[i], 32);
     int cpus = (int)plat_cpu_usable();
-    const char *pe = cfg_get("NX2NAVI_PREWARM_XLATE");   // no fixed default: half the CPUs, at most 16, when unset
+    const char *pe = cfg_get("NX2SARIA_PREWARM_XLATE");   // no fixed default: half the CPUs, at most 16, when unset
     int procs = pe && *pe ? atoi(pe) : cpus / 2 > 16 ? 16 : cpus / 2;
     __atomic_store_n(&pw_phase, 1, __ATOMIC_RELEASE);
     gfx_shader_prewarm((const uint8_t(*)[32])ids, u, sh, cpus, procs < 1 ? 1 : procs);
@@ -6142,7 +6142,7 @@ static void prewarm_run(void) {
         s.vs = vs, s.fs = fs, s.ts = ts;
         // a mesh pipeline of the shared list (keys_open_seed) on a GPU without mesh shaders, which draws them through
         // the mesh fallback: none to build, as the preparation skips it (seed_pipelines). With the mesh emulation
-        // (NX2NAVI_MESH_EMULATION) it is a vertex pipeline and its compute stages (pipe_miss: layout_get_emu), built
+        // (NX2SARIA_MESH_EMULATION) it is a vertex pipeline and its compute stages (pipe_miss: layout_get_emu), built
         // here like the others: left to the first draw, each took 113-830 ms on an RX 580 and the draws waiting for it
         // were skipped (22 of the 48 pipelines missed entering Kokiri Forest, 0.9.1), frames held back or shown without
         // them. With the mesh fallback on a device that has mesh shaders (vk_mesh_path.h: AMD's driver for RDNA 1 and
@@ -6171,9 +6171,9 @@ static void prewarm_run(void) {
     K.loading = 0;
     plat_mutex_unlock(&P.lock);
     if (listed) {
-        const char *e = cfg_get("NX2NAVI_PIPE_SEED_BOOT");
+        const char *e = cfg_get("NX2SARIA_PIPE_SEED_BOOT");
         rt_log("vk_pipeline: prewarm: %u records of the shared pipeline list that this install has not drawn are left to "
-               "their first draw, when pipeline-cache.bin gives them (NX2NAVI_PIPE_SEED_BOOT=%s%s)", listed,
+               "their first draw, when pipeline-cache.bin gives them (NX2SARIA_PIPE_SEED_BOOT=%s%s)", listed,
                e && !strcmp(e, "0") ? "0" : "auto",
                e && !strcmp(e, "0") ? "" : ": this machine started with less commit free than the game takes in play");
     }
@@ -6182,7 +6182,7 @@ static void prewarm_run(void) {
     __atomic_store_n(&pw_pipe_done, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&pw_pipe_total, (int64_t)queued, __ATOMIC_RELAXED);
     __atomic_store_n(&pw_phase, 2, __ATOMIC_RELEASE);
-    const char *full = cfg_get("NX2NAVI_PREWARM_FULL");
+    const char *full = cfg_get("NX2SARIA_PREWARM_FULL");
     // A cache file of another device or driver (a driver update: cache_data_read) leaves every recorded pipeline to be
     // built from nothing, and the ones the boot left after PREWARM_PIPE_MS were built beside the game: on an 8-core
     // integrated GPU that start had 2,141 of 8,122 left after 20 s and took 296 s to finish them. The whole warm
@@ -6244,7 +6244,7 @@ static void prewarm_run(void) {
 // So <dir>/pipeline-prewarm-running.txt exists while they run: written before the first one, deleted when the boot's
 // share ends (or when the boot stops waiting and lets the game start). A start that finds it left over records this
 // GPU and driver in <dir>/pipeline-prewarm-skip.txt, and starts on them build no recorded pipelines ahead of play:
-// each one is built at its first draw instead, as with NX2NAVI_PIPE_PREBUILD=0. Another driver version, or deleting
+// each one is built at its first draw instead, as with NX2SARIA_PIPE_PREBUILD=0. Another driver version, or deleting
 // the file, brings the prebuild back. Only the boot's own share is covered: a crash during play, where the pool also
 // builds what the boot left, says nothing about these builds. An orderly end of the process during the boot (the
 // window closed, the guest's ExitProcess, a --seconds run) deletes the marker as well.
@@ -6376,16 +6376,16 @@ void vk_pipeline_prewarm_marker_clear(void) {
 // the preparation's journal (journal_mark), so a variant the driver's compiler dies on is skipped from the next
 // start on (skip_init) instead of ending every start; a start that was only closed or stopped then blames no variant
 // (the crash handler's note decides, as at pm_skipped).
-// The wait has a limit, NX2NAVI_PREWARM_FULL_S seconds from here (default 600, 0 none): the 425 s above are a fast
+// The wait has a limit, NX2SARIA_PREWARM_FULL_S seconds from here (default 600, 0 none): the 425 s above are a fast
 // machine's, and a slow one would sit on the screen for half an hour. At the limit the game starts and what is left
 // goes on as on any other start: the recorded pipelines on the pool's workers, the compute pipelines and the library
 // warm on their idle threads (vk_pipeline_prewarm_detach). The file then says "done" as well: the boot screen had its
-// turn, and the rest is the background's, as it always was. NX2NAVI_PREWARM_WAIT_MS and a minute without progress
+// turn, and the rest is the background's, as it always was. NX2SARIA_PREWARM_WAIT_MS and a minute without progress
 // end the wait the same way, as for any prewarm (boot_wait).
-// NX2NAVI_PREWARM_FULL=0 turns the whole warm off. Not for a --shot image, which no build timing may change and
+// NX2SARIA_PREWARM_FULL=0 turns the whole warm off. Not for a --shot image, which no build timing may change and
 // which nobody watches.
 static void bf_decide(void) {
-    const char *full = cfg_get("NX2NAVI_PREWARM_FULL");
+    const char *full = cfg_get("NX2SARIA_PREWARM_FULL");
     char dir[PLAT_PATH_MAX * 2], key[32], line[100];
     if ((full && !strcmp(full, "0")) || rt_config()->shot || !cache_dir(dir, sizeof dir)) return;
     snprintf(BF.owed, sizeof BF.owed, "%s/boot-warm-owed.txt", dir);
@@ -6409,36 +6409,36 @@ static void bf_decide(void) {
         int len = snprintf(line, sizeof line, "%s %d\n", key, tries);
         if (!plat_file_write_atomic(BF.owed, line, (size_t)len)) rt_log("vk_pipeline: cannot write %s", BF.owed);
         BF.on = 1;
-        const char *se = cfg_get("NX2NAVI_PREWARM_FULL_S");
+        const char *se = cfg_get("NX2SARIA_PREWARM_FULL_S");
         double secs = se && *se ? atof(se) : 600;
         BF.t_end = secs > 0 ? now_ms() + secs * 1000 : 0;
         rt_log("vk_pipeline: the whole warm on the boot screen (%s, start %d of %d at most): the start waits for the "
                "recorded pipelines, the compute pipelines and the driver's cache of stage libraries, for %.0f s at most "
-               "(NX2NAVI_PREWARM_FULL_S; 0 = no limit). NX2NAVI_PREWARM_FULL=0 leaves them to the background",
+               "(NX2SARIA_PREWARM_FULL_S; 0 = no limit). NX2SARIA_PREWARM_FULL=0 leaves them to the background",
                cache_foreign ? "the pipeline cache was written by another device or driver" : "an earlier start began it",
                tries, BOOT_WARM_TRIES, secs > 0 ? secs : 0.0);
     }
     free(f);
 }
 
-// ensure_init's hook: without a prewarm (NX2NAVI_PIPE_PREBUILD=0, or the device came up first elsewhere) the records
+// ensure_init's hook: without a prewarm (NX2SARIA_PIPE_PREBUILD=0, or the device came up first elsewhere) the records
 // are not built. Caller holds no lock.
 static void prebuild_start(void) {
     plat_mutex_lock(&P.lock);
     if (K.file && !K.warm) {
         rt_log("vk_pipeline: prebuild off%s; %zu records not built",
-               !cfg_bool("NX2NAVI_PIPE_PREBUILD") ? " (NX2NAVI_PIPE_PREBUILD=0)" : " (no boot prewarm)", K.file_n);
+               !cfg_bool("NX2SARIA_PIPE_PREBUILD") ? " (NX2SARIA_PIPE_PREBUILD=0)" : " (no boot prewarm)", K.file_n);
         free(K.file);
         K.file = NULL;
     }
     plat_mutex_unlock(&P.lock);
 }
 
-// NX2NAVI_SPV_OVERRIDE=<dir> (test): a compute shader whose SPIR-V hashes (FNV-1a over its bytes, the name vk_dump.c
+// NX2SARIA_SPV_OVERRIDE=<dir> (test): a compute shader whose SPIR-V hashes (FNV-1a over its bytes, the name vk_dump.c
 // gives it) to a file <dir>/<hash>.spv runs that SPIR-V instead, an edited copy with the same interface, to see a
 // shader's intermediate values in a frame dump. NULL: no override (malloc'd words otherwise).
 static uint32_t *spv_override(const uint32_t *code, uint64_t words, uint64_t *out) {
-    const char *dir = cfg_get("NX2NAVI_SPV_OVERRIDE");
+    const char *dir = cfg_get("NX2SARIA_SPV_OVERRIDE");
     if (!dir || !*dir) return NULL;
     uint64_t h = 0xcbf29ce484222325ull;
     for (uint64_t i = 0; i < words * 4; i++) h = (h ^ ((const uint8_t *)code)[i]) * 0x100000001b3ull;
@@ -6491,9 +6491,9 @@ static int fog_skip_block(const uint32_t *w, uint64_t n, uint64_t at, const uint
 // today's depth is never seen, so computing it only costs a little time: the comparison is made never true (x > x).
 // Returns the patched copy of that shader, NULL for any other. Found by its shape rather than a hash, so it holds across
 // translator updates: a branch whose other side is that exit, taken on !(distance > table) || flag.
-// NX2NAVI_FOG_CULL=1 keeps the game's skip.
+// NX2SARIA_FOG_CULL=1 keeps the game's skip.
 static uint32_t *spirv_fog_keep_froxels(const uint32_t *w, uint64_t n) {
-    const char *e = cfg_get("NX2NAVI_FOG_CULL");
+    const char *e = cfg_get("NX2SARIA_FOG_CULL");
     if (n < 6 || (e && !strcmp(e, "1"))) return NULL;
     uint32_t bound = w[3];
     int writes = 0;
@@ -6585,7 +6585,7 @@ static void compute_warm_clear(void) {
 // neither holds it (the driver returns VK_PIPELINE_COMPILE_REQUIRED, a success code, with no pipeline).
 // already_warm is only supplied by callers that need cache coverage, not a live pipeline: 1 and VK_NULL_HANDLE mean
 // an identical request already succeeded in this process. NULL preserves normal creation and has no hashing cost.
-// NX2NAVI_COMPUTE_WARM_REUSE=0 disables this reuse for comparisons without changing the prepared inventory.
+// NX2SARIA_COMPUTE_WARM_REUSE=0 disables this reuse for comparisons without changing the prepared inventory.
 static VkPipeline compute_create(const GfxShader *cs, const Layout *l, int cached_only, int *already_warm) {
     if (already_warm) *already_warm = 0;
     uint64_t words;
@@ -6612,7 +6612,7 @@ static VkPipeline compute_create(const GfxShader *cs, const Layout *l, int cache
     if (P.f_full_subgroups && vk_caps.sg_size && lx && lx % vk_caps.sg_size == 0 && uses_subgroup_ops(code, words))
         ci.stage.flags |= VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
     ComputeWarmKey warm_key = {0};
-    const char *reuse = already_warm ? cfg_get("NX2NAVI_COMPUTE_WARM_REUSE") : NULL;
+    const char *reuse = already_warm ? cfg_get("NX2SARIA_COMPUTE_WARM_REUSE") : NULL;
     int remember = already_warm && (!reuse || strcmp(reuse, "0"));
     if (remember) {
         rt_sha256(code, (size_t)words * 4, warm_key.code);
@@ -6663,7 +6663,7 @@ static Layout *compute_layout(const GfxShader *cs, Bindings *B, const char **why
 
 // ---- stage library prebuild
 // Two places build what a draw would otherwise build while the game waits:
-// - nx2navi.exe --prepare-shaders (lb_warm_prepared), after the translation, on every core: for each prepared variant
+// - nx2saria.exe --prepare-shaders (lb_warm_prepared), after the translation, on every core: for each prepared variant
 //   (shader-prepared.bin) the pre-rasterization library of a vertex shader, the fragment-shader library of a fragment
 //   shader and the pipeline of a compute shader, each built from a private shader copy and destroyed at once. What
 //   stays is the driver's own disk cache: on AMD a library built again in a later process takes 0.1 ms instead of
@@ -6675,15 +6675,15 @@ static Layout *compute_layout(const GfxShader *cs, Bindings *B, const char **why
 //   compute pipelines of every recorded and prepared compute shader (vk_pipeline_compute builds compute
 //   synchronously on the replay thread; 163 prepared): those of the shaders dispatched most recently stay, the others
 //   are built into the pipeline cache and destroyed (comment at compute-used.bin). Then the libraries of the first
-//   NX2NAVI_LIB_PREBUILD_KEEP variants play recorded (priority 0), kept in libs[] with their shaders. KEEP defaults to
+//   NX2SARIA_LIB_PREBUILD_KEEP variants play recorded (priority 0), kept in libs[] with their shaders. KEEP defaults to
 //   0: a kept library costs 140-460 KB of process memory (10,000 kept took 9 GB in run 1) to save a rebuild the driver
 //   cache makes 0.1 ms.
 // Library state: the vertex output union known now (vs_union_peek; the prewarm fills it from pipeline-keys.bin, the
 // preparation has none), the clamp, polygon mode and depth mode most recorded pipelines use (defaults without a key
 // file: clamp 0, fill, -w..w), single-sampled, no dual source; the state dynamic on this GPU is 0 in every key.
 // A draw that meets such a variant in a new pipeline then gets its libraries from libs[] or the driver cache and
-// fast-links (gpl_link). NX2NAVI_LIB_PREBUILD=0 turns the boot part off, =N stops it after N variants;
-// NX2NAVI_LIB_PREBUILD_THREADS sets its thread count, NX2NAVI_LIB_PREBUILD_BIG its compute size limit (LB_BIG_WORDS).
+// fast-links (gpl_link). NX2SARIA_LIB_PREBUILD=0 turns the boot part off, =N stops it after N variants;
+// NX2SARIA_LIB_PREBUILD_THREADS sets its thread count, NX2SARIA_LIB_PREBUILD_BIG its compute size limit (LB_BIG_WORDS).
 #define LB_MAX_THREADS 16
 // The boot part builds a compute shader over LB_BIG_WORDS SPIR-V words only from the pipeline caches (compute_create
 // cached_only); one that no cache holds is left to its first dispatch, like any shader outside the warm list. Play
@@ -6691,7 +6691,7 @@ static Layout *compute_layout(const GfxShader *cs, Bindings *B, const char **why
 // median of 3,648 compute shaders is 7,351 words, p99 64,844). NVIDIA 621.01 on an RTX 4090 compiled them on four
 // prebuild threads for minutes at 100% CPU each while the process grew from 12 GB to 28-31 GB, until RAM ran out and the
 // game stuttered and went black a few minutes after boot. None finished, so no cache held one and every boot did it
-// again. NX2NAVI_LIB_PREBUILD_BIG sets the limit in words; 0 builds every size.
+// again. NX2SARIA_LIB_PREBUILD_BIG sets the limit in words; 0 builds every size.
 #define LB_BIG_WORDS (512u * 1024)
 
 static struct {
@@ -6977,7 +6977,7 @@ static int cs_flight_remove(const GfxShader *cs) {   // 1 when a dispatch waited
     return want;
 }
 
-// ---- compute pipelines the boot keeps (compute-used.bin next to pipeline-keys.bin; NX2NAVI_COMPUTE_KEEP)
+// ---- compute pipelines the boot keeps (compute-used.bin next to pipeline-keys.bin; NX2SARIA_COMPUTE_KEEP)
 // The boot prebuild (lb_compute) used to build the pipeline of every compute shader of the warm list (the ones play
 // recorded and the prepared ones, shader-prepared.bin) and keep all of them for the process: 4,066 on an installed
 // copy (42,344 variants in its list, 42,142 of them prepared), of which a boot into the first village dispatched 95.
@@ -6997,7 +6997,7 @@ static int cs_flight_remove(const GfxShader *cs) {   // 1 when a dispatch waited
 //   background builder (bg_main). If the game does dispatch one for the first time, that dispatch builds it, which
 //   holds the frame for the compile once (0.65 to 1.9 s measured for such a shader), and the record has it built ahead
 //   from the next boot on.
-// - Of the others the boot keeps the pipelines of the NX2NAVI_COMPUTE_KEEP (default 512) dispatched most recently, and
+// - Of the others the boot keeps the pipelines of the NX2SARIA_COMPUTE_KEEP (default 512) dispatched most recently, and
 //   builds every other one into the pipeline cache and destroys it at once (lb_compute keep 0), from a copy of its
 //   shader that is released again (lb_worker): the cache then holds it, so its first dispatch creates it without
 //   compiling. On that machine 94 first dispatches in play took 0.24 ms on average and 1.6 ms at most, 14 of them in
@@ -7006,7 +7006,7 @@ static int cs_flight_remove(const GfxShader *cs) {   // 1 when a dispatch waited
 // each run that dispatches anything takes the next number. Kept at boot are the keep_n entries with the highest
 // numbers, so a short run does not push out what a long one used, and nothing is forgotten until newer shaders take
 // its place. Without a record (the first run that has one) nothing is kept and the run pays the first dispatches once.
-// NX2NAVI_COMPUTE_KEEP=all builds and keeps every compute shader of the warm list, the large ones too, as before; 0
+// NX2SARIA_COMPUTE_KEEP=all builds and keeps every compute shader of the warm list, the large ones too, as before; 0
 // keeps none.
 #define CU_VERSION 1
 typedef struct { char magic[8]; uint32_t version, rec_size, run, pad; } CuHeader;
@@ -7022,7 +7022,7 @@ static struct {
     uint32_t slot_cap;
     uint32_t run;                      // this run's number
     int quiet;                         // --probe-prewarm: its dispatches are not the game's, the file stays as it is
-    int32_t keep_n;                    // NX2NAVI_COMPUTE_KEEP; -1: all
+    int32_t keep_n;                    // NX2SARIA_COMPUTE_KEEP; -1: all
     uint32_t kept;                     // records flagged in keep
 } CU = {.lock = PLAT_MUTEX_INIT};
 
@@ -7079,9 +7079,9 @@ static long cu_parse(const uint8_t *f, uint64_t size, CuHeader *h) {
 // Reads the record and marks what the boot keeps. Caller holds P.lock (ensure_init), after keys_open.
 static void cu_open(void) {
     if (!A.on || !K.path[0]) return;
-    const char *e = cfg_value("NX2NAVI_COMPUTE_KEEP");
+    const char *e = cfg_value("NX2SARIA_COMPUTE_KEEP");
     plat_mutex_lock(&CU.lock);
-    int count = cfg_int("NX2NAVI_COMPUTE_KEEP");   // a value that is neither "all" nor a number reads as the default
+    int count = cfg_int("NX2SARIA_COMPUTE_KEEP");   // a value that is neither "all" nor a number reads as the default
     CU.keep_n = !strcmp(e, "all") ? -1 : count < 0 ? 0 : count;
     snprintf(CU.path, sizeof CU.path, "%s", K.path);
     char *cut = plat_last_sep(CU.path);
@@ -7114,7 +7114,7 @@ static void cu_open(void) {
     free(order);
     CU.opened = 1;
     rt_log("vk_pipeline: %s: %u compute shaders dispatched in earlier runs; the boot keeps the pipelines of %s%u "
-           "dispatched most recently (NX2NAVI_COMPUTE_KEEP %s)", CU.path, CU.n,
+           "dispatched most recently (NX2SARIA_COMPUTE_KEEP %s)", CU.path, CU.n,
            CU.keep_n < 0 ? "every recorded compute shader, among them the " : "the ", CU.kept, e);
     plat_mutex_unlock(&CU.lock);
 }
@@ -7339,13 +7339,13 @@ static void lb_defer(const uint8_t iid[32], uint64_t words) {
     LB.deferred++;
     plat_mutex_unlock(&LB.stat);
     rt_log("vk_pipeline: stage library prebuild: compute shader %02x%02x%02x%02x%02x%02x%02x%02x (%llu SPIR-V words) %s: "
-           "left to its first dispatch (NX2NAVI_LIB_PREBUILD_BIG %llu)", iid[0], iid[1], iid[2], iid[3], iid[4], iid[5],
+           "left to its first dispatch (NX2SARIA_LIB_PREBUILD_BIG %llu)", iid[0], iid[1], iid[2], iid[3], iid[4], iid[5],
            iid[6], iid[7], (unsigned long long)words,
            P.cache_control ? "not in the pipeline caches" : "too large to build without a cache probe (no pipelineCreationCacheControl)",
            (unsigned long long)LB.big_words);
 }
 
-// ---- large compute shaders on a background thread (NX2NAVI_LIB_PREBUILD_BIG_BG, default 1; 0 leaves them to their
+// ---- large compute shaders on a background thread (NX2SARIA_LIB_PREBUILD_BIG_BG, default 1; 0 leaves them to their
 // first dispatch as before)
 // The boot prebuild leaves a compute shader over LB.big_words that no pipeline cache holds (lb_compute). Its first
 // dispatch then compiled it on the replay thread: frames of 0.65-1.9 s in Kokiri Forest on an RTX 5090 after a
@@ -7357,7 +7357,7 @@ static void lb_defer(const uint8_t iid[32], uint64_t words) {
 
 static int bg_on(void) {
     static int on = -1;
-    if (on < 0) on = cfg_bool("NX2NAVI_LIB_PREBUILD_BIG_BG");
+    if (on < 0) on = cfg_bool("NX2SARIA_LIB_PREBUILD_BIG_BG");
     return on;
 }
 
@@ -7382,11 +7382,11 @@ static void bg_queue(const GfxShader *cs, const uint8_t iid[32], uint64_t words)
         return;
     }
     rt_log("vk_pipeline: stage library prebuild: compute shader %02x%02x%02x%02x%02x%02x%02x%02x (%llu SPIR-V words) not in "
-           "the pipeline caches: built on the background thread after the prebuild (NX2NAVI_LIB_PREBUILD_BIG_BG)",
+           "the pipeline caches: built on the background thread after the prebuild (NX2SARIA_LIB_PREBUILD_BIG_BG)",
            iid[0], iid[1], iid[2], iid[3], iid[4], iid[5], iid[6], iid[7], (unsigned long long)words);
 }
 
-// NX2NAVI_BIG_BUILD_FREE_MB (default 8192; 0 no check): the system commit headroom a large compute build waits for.
+// NX2SARIA_BIG_BUILD_FREE_MB (default 8192; 0 no check): the system commit headroom a large compute build waits for.
 // A build of one of these shaders took the process up by 1-3 GB on an RTX 5090 and four at once by 16-19 GB on an
 // RTX 4090; started on a machine near its commit limit it can end the game. While the headroom is short the shader
 // waits, and if the game dispatches it first it is built there, as without the background builder.
@@ -7394,21 +7394,21 @@ static void bg_queue(const GfxShader *cs, const uint8_t iid[32], uint64_t words)
 // then reserves GATE_BIG_MB of its own for as long as it runs, so the other background builds leave it its room.
 static int bg_room(double *used, double *limit, double *held) {
     static double need = -1;
-    if (need < 0) need = strtod(cfg_value("NX2NAVI_BIG_BUILD_FREE_MB"), NULL);
+    if (need < 0) need = strtod(cfg_value("NX2SARIA_BIG_BUILD_FREE_MB"), NULL);
     double proc;
     plat_commit_info(&proc, used, limit);
     if (!(need <= 0 || *limit < 0 || *limit - *used >= need)) return 0;
     return gate_enter(GATE_BIG_MB, held);
 }
 
-// NX2NAVI_BIG_BUILD_MAX_MB (default 4096; 0 no cap): how far the builder may raise the process commit before it stops
+// NX2SARIA_BIG_BUILD_MAX_MB (default 4096; 0 no cap): how far the builder may raise the process commit before it stops
 // and leaves the rest to their first dispatch. One of these shaders costs the driver 1-4 GB: on a 31 GB machine four of
 // them took the process from 15 to 29 GB and system commit to 60 of 65 GB, which is where a player feels the game
 // stutter. The builder exists to remove hitches, not to trade them for paging, so a machine that cannot hold them all
 // builds only what it can and pays one hitch per shader later.
 static double bg_growth_cap(void) {
     static double cap = -1;
-    if (cap < 0) cap = strtod(cfg_value("NX2NAVI_BIG_BUILD_MAX_MB"), NULL);
+    if (cap < 0) cap = strtod(cfg_value("NX2SARIA_BIG_BUILD_MAX_MB"), NULL);
     return cap;
 }
 
@@ -7475,7 +7475,7 @@ static void bg_main(void *arg) {
         plat_commit_info(&c_now, &used, &limit);
         double cap = bg_growth_cap();
         if (cap > 0 && c_now - c_start >= cap) {
-            rt_log("vk_pipeline: background compute build: stopping, the process grew %.0f MB in all (NX2NAVI_BIG_BUILD_MAX_MB "
+            rt_log("vk_pipeline: background compute build: stopping, the process grew %.0f MB in all (NX2SARIA_BIG_BUILD_MAX_MB "
                    "%.0f); the shaders left build at their first dispatch", c_now - c_start, cap);
             break;
         }
@@ -7485,7 +7485,7 @@ static void bg_main(void *arg) {
             held = -1;
             if (!waited++)
                 rt_log("vk_pipeline: background compute build: waiting for commit headroom (system %.0f of %.0f MB, "
-                       "NX2NAVI_BIG_BUILD_FREE_MB %s)", used, limit, cfg_value("NX2NAVI_BIG_BUILD_FREE_MB"));
+                       "NX2SARIA_BIG_BUILD_FREE_MB %s)", used, limit, cfg_value("NX2SARIA_BIG_BUILD_FREE_MB"));
             if (now_ms() - w0 > 30000.0) {   // waiting is only useful when the headroom will come back
                 rt_log("vk_pipeline: background compute build: no commit headroom after %.0f s; the shaders left build at "
                        "their first dispatch", (now_ms() - w0) / 1000.0);
@@ -7702,10 +7702,10 @@ static void lb_report(const char *how) {
            "%llu there; fragment %llu built (avg %.1f ms), %llu there; compute %llu built (avg %.1f ms), %llu there; driver "
            "cache only: vertex %llu (avg %.1f ms), fragment %llu (avg %.1f ms), compute %llu (avg %.1f ms); %llu failed, %llu not in the shader cache, "
            "%llu vertex/fragment skipped (graphics pipeline library off), %llu skipped (the driver crashed on them before, "
-           "shader-prepare-skip.txt), %llu large compute shaders left to their first dispatch (NX2NAVI_LIB_PREBUILD_BIG), %zu "
-           "queued for the background builder (NX2NAVI_LIB_PREBUILD_BIG_BG), %llu large compute shaders not built because "
+           "shader-prepare-skip.txt), %llu large compute shaders left to their first dispatch (NX2SARIA_LIB_PREBUILD_BIG), %zu "
+           "queued for the background builder (NX2SARIA_LIB_PREBUILD_BIG_BG), %llu large compute shaders not built because "
            "no run has dispatched them; %llu compute requests the same as one built before, not built again "
-           "(NX2NAVI_COMPUTE_WARM_REUSE); process working set %.0f MB", how, (unsigned long long)LB.done, LB.n,
+           "(NX2SARIA_COMPUTE_WARM_REUSE); process working set %.0f MB", how, (unsigned long long)LB.done, LB.n,
            now_ms() - LB.t0, (unsigned long long)LB.built[0], LB.built[0] ? LB.ms[0] / LB.built[0] : 0.0,
            (unsigned long long)LB.have[0], (unsigned long long)LB.built[1], LB.built[1] ? LB.ms[1] / LB.built[1] : 0.0,
            (unsigned long long)LB.have[1], (unsigned long long)LB.built[2], LB.built[2] ? LB.ms[2] / LB.built[2] : 0.0,
@@ -7787,7 +7787,7 @@ static void lb_state(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
     uint32_t best = 0, bf = 0;
     for (uint32_t i = 1; i < 16; i++) best = pr_hist[i] > pr_hist[best] ? i : best;
     for (uint32_t i = 1; i < 4; i++) bf = fs_hist[i] > fs_hist[bf] ? i : bf;
-    if (!pr_hist[best]) best = 8;   // no key file: NX2navi clips -w..w (all 2706 records of a recorded key file)
+    if (!pr_hist[best]) best = 8;   // no key file: NX2Saria clips -w..w (all 2706 records of a recorded key file)
     LB.clamp = (uint8_t)(best & 1), LB.poly = (uint8_t)(best >> 1 & 3), LB.minus_w = (uint8_t)(best >> 3 & 1);
     LB.samples = (uint8_t)(1u << bf);
 }
@@ -7809,7 +7809,7 @@ static void lb_state(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
 // threads while the game runs (lw_worker), as the preparation does but without stopping play. shader-warm.txt beside
 // the caches says where that stands: "warming" while it runs, so a start after a run that ended meanwhile goes on,
 // and "done" with the driver and a count of the times the cache was cold again right after a finished warm. At two in
-// a row the driver does not keep stage libraries at all and warming stops being tried (NX2NAVI_LIB_WARM=0 turns it off;
+// a row the driver does not keep stage libraries at all and warming stops being tried (NX2SARIA_LIB_WARM=0 turns it off;
 // =force warms at every start).
 // The check times builds, which a busy CPU only makes longer: as the guest starts beside the boot's background builds,
 // a sample built at below-normal priority read a warm cache as cold on an RTX 5080 (0.9.2, a median of 136 ms on 16
@@ -7990,7 +7990,7 @@ static void lw_check(void) {
     }
     free(f);
     int same = !strcmp(id, LW.id), resume = same && !strcmp(was, "warming");
-    const char *mode = cfg_value("NX2NAVI_LIB_WARM");
+    const char *mode = cfg_value("NX2SARIA_LIB_WARM");
     // A resumed warm is not sampled: the variants the earlier run built are in the driver's cache and the rest are not,
     // so a sample would read the cache as warm or cold by how far it came. It goes on from where it stopped.
     int fast = 0, got = 0;
@@ -8008,7 +8008,7 @@ static void lw_check(void) {
     if (!resume && same && strikes >= 2 && strcmp(mode, "force")) {
         rt_log("vk_pipeline: library warm: the prepared libraries are cold again (%d of %d sampled fast, median %.0f "
                "ms) after two finished warms on this driver: it does not keep them, so pipelines compile when a draw "
-               "first needs them (NX2NAVI_LIB_WARM=force warms anyway).%s", fast, got, median,
+               "first needs them (NX2SARIA_LIB_WARM=force warms anyway).%s", fast, got, median,
                lw_cold_hint(LW.vendor, LW_COLD_GAVE_UP, LW_ON_WINDOWS));
         return;
     }
@@ -8055,7 +8055,7 @@ static void lw_main(void *arg) {
 
 // Boot, once the library state is known (lb_state): the prepared list is read and the check starts on its own thread.
 static void lw_start(void) {
-    const char *mode = cfg_value("NX2NAVI_LIB_WARM");
+    const char *mode = cfg_value("NX2SARIA_LIB_WARM");
     if (!P.gpl || !strcmp(mode, "0") || plat_xchg32(&LW.started, 1)) return;
     char dir[PLAT_PATH_MAX * 2], path[PLAT_PATH_MAX * 2 + 32];
     if (!cache_dir(dir, sizeof dir)) return;
@@ -8085,10 +8085,10 @@ static void lw_stop(void) {
 // Boot: compute shaders of the warm list (recorded and prepared), those whose pipeline stays first, then the first
 // KEEP recorded graphics variants.
 static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
-    const char *e = cfg_value("NX2NAVI_LIB_PREBUILD"), *ke = cfg_get("NX2NAVI_LIB_PREBUILD_KEEP");
-    const char *te = cfg_get("NX2NAVI_LIB_PREBUILD_THREADS");   // no fixed default: 2 when unset (1 under 4 CPUs)
-    const char *be = cfg_get("NX2NAVI_LIB_PREBUILD_BIG");       // SPIR-V words; LB_BIG_WORDS when unset, 0 no limit
-    if (!A.on || !cfg_bool("NX2NAVI_LIB_PREBUILD")) return;
+    const char *e = cfg_value("NX2SARIA_LIB_PREBUILD"), *ke = cfg_get("NX2SARIA_LIB_PREBUILD_KEEP");
+    const char *te = cfg_get("NX2SARIA_LIB_PREBUILD_THREADS");   // no fixed default: 2 when unset (1 under 4 CPUs)
+    const char *be = cfg_get("NX2SARIA_LIB_PREBUILD_BIG");       // SPIR-V words; LB_BIG_WORDS when unset, 0 no limit
+    if (!A.on || !cfg_bool("NX2SARIA_LIB_PREBUILD")) return;
     mesh_pre_start();             // the recorded mesh pipelines' libraries
     lb_state(pr_hist, fs_hist);   // the libraries' state, also for lw_start
     if (BF.on) BF.lw = 1;         // after the compute pipelines, with the start waiting (bf_wait)
@@ -8129,7 +8129,7 @@ static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
     // The two take the shaders dispatched most recently (e[0..n_keep)); one goes on with the rest (lb_next), which is
     // only built into the caches. Where the rest still runs during play, two builders there cost frames: one against
     // two for the whole list, one 20 s route each on an RTX 5090, Castle Town 76.1 against 73.7 fps with 1 frame over
-    // 25 ms against 6, Hyrule Field 85.7 against 80.7 fps. NX2NAVI_LIB_PREBUILD_THREADS keeps its count for the whole
+    // 25 ms against 6, Hyrule Field 85.7 against 80.7 fps. NX2SARIA_LIB_PREBUILD_THREADS keeps its count for the whole
     // list.
     int t = te && *te ? atoi(te) : (cpus < 4 ? 1 : 2);   // idle priority; a cold driver takes ~2 s per large compute shader
     LB.tail_one = !(te && *te);
@@ -8151,15 +8151,15 @@ static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
     else snprintf(big, sizeof big, "compute shaders over %llu SPIR-V words %s", (unsigned long long)LB.big_words,
                   P.cache_control ? "only from the pipeline caches" : "left to their first dispatch");
     rt_log("vk_pipeline: stage library prebuild: %zu compute pipelines, of which %zu stay (the shaders dispatched most "
-           "recently, NX2NAVI_COMPUTE_KEEP) and the others are built into the pipeline cache and destroyed, to be created "
-           "at their first dispatch; %zu recorded variants' libraries (NX2NAVI_LIB_PREBUILD_KEEP %d); on %d %s "
-           "threads; library state clamp %u, polygon mode %u, depth -w..w %u, samples %u; %s (NX2NAVI_LIB_PREBUILD_BIG)",
+           "recently, NX2SARIA_COMPUTE_KEEP) and the others are built into the pipeline cache and destroyed, to be created "
+           "at their first dispatch; %zu recorded variants' libraries (NX2SARIA_LIB_PREBUILD_KEEP %d); on %d %s "
+           "threads; library state clamp %u, polygon mode %u, depth -w..w %u, samples %u; %s (NX2SARIA_LIB_PREBUILD_BIG)",
            n_cs < n ? n_cs : n, LB.n_keep, n > n_cs ? n - n_cs : 0, LB.keep_n, started,
            bf_waiting() ? "normal-priority (the start waits for them)" : "idle-priority", LB.clamp, LB.poly, LB.minus_w,
            LB.samples, big);
     if (LB.tail_one && started > 1 && !bf_waiting())
         rt_log("vk_pipeline: stage library prebuild: after the %zu recent compute pipelines, one worker continues the "
-               "remaining list; NX2NAVI_LIB_PREBUILD_THREADS overrides this background limit", LB.n_keep);
+               "remaining list; NX2SARIA_LIB_PREBUILD_THREADS overrides this background limit", LB.n_keep);
 }
 
 static void lb_stop(void) {
@@ -8224,9 +8224,9 @@ static void bf_wait(void) {
     rt_log("vk_pipeline: the whole warm %s: the compute pipelines (%zu) took %.0f ms of the wait, the driver's cache of "
            "stage libraries %.0f ms (%s; %lld of %zu prepared variants built so far)",
            stopped ? "stopped with the process" : over ? "is done"
-           : up ? "goes on beside the game: its time on the boot screen is up (NX2NAVI_PREWARM_FULL_S)"
+           : up ? "goes on beside the game: its time on the boot screen is up (NX2SARIA_PREWARM_FULL_S)"
                 : "goes on beside the game: the boot stopped waiting", LB.n, t1 - t0, now_ms() - t1,
-           !libs ? "not warmed: no prepared list, or the graphics pipeline library or NX2NAVI_LIB_WARM is off"
+           !libs ? "not warmed: no prepared list, or the graphics pipeline library or NX2SARIA_LIB_WARM is off"
                  : LW.done ? "being warmed" : "left as it is so far: the check found it warm, gave the warm up, or still runs",
            (long long)LW.done, LW.n);
     if (!stopped) {   // the boot screen's turn is over for this GPU and driver (boot_warm.h)
@@ -8306,7 +8306,7 @@ static int prep_sample_warm(int *fast, int *got) {
 // after an update, which first asks the driver's cache (prep_sample_warm) and builds nothing more when it has them.
 // It took 10 to 20 s on a player's PC at every update, all of it 42,000 libraries the driver gave back at once, and
 // it still takes the minutes of a full build when the driver no longer has them (a driver update, or a change of what
-// they are built with: 380 s on that PC once). NX2NAVI_LIB_WARM=force builds the whole list whatever the sample says.
+// they are built with: 380 s on that PC once). NX2SARIA_LIB_WARM=force builds the whole list whatever the sample says.
 static void lb_warm_prepared(const char *dir, int sample) {
     char path[PLAT_PATH_MAX * 2 + 32];
     snprintf(path, sizeof path, "%s/shader-prepared.bin", dir);
@@ -8350,7 +8350,7 @@ static void lb_warm_prepared(const char *dir, int sample) {
         printf("prepare-shaders: a warm of the graphics driver's cache that the game began did not finish "
                "(shader-warm.txt): all %zu variants are built into it\n", n);
     int fast = 0, got = 0;
-    if (sample && !unfinished && P.gpl && strcmp(cfg_value("NX2NAVI_LIB_WARM"), "force") &&
+    if (sample && !unfinished && P.gpl && strcmp(cfg_value("NX2SARIA_LIB_WARM"), "force") &&
         prep_sample_warm(&fast, &got)) {
         if (SK.journal) plat_file_close(SK.journal), SK.journal = NULL, plat_file_delete(jp);
         printf("prepare-shaders: progress build %zu %zu\n", n, n);
@@ -8406,7 +8406,7 @@ static void lb_warm_prepared(const char *dir, int sample) {
 // pipeline goes through the pipeline cache and so into pipeline-cache.bin and the driver's own disk cache, and is
 // dropped with the process. Nothing is added to this folder's pipeline-keys.bin; every boot then counts the list as
 // recorded pipelines beside the install's own (keys_open_seed) and builds them before play, from those caches.
-// NX2NAVI_PREPARE_PIPELINES: all (default) builds every record; mesh, the list's mesh pipelines only (and every record
+// NX2SARIA_PREPARE_PIPELINES: all (default) builds every record; mesh, the list's mesh pipelines only (and every record
 // without the graphics pipeline library); 0, none. A vertex pipeline's module depends on the vertex output union of
 // the pairs known (vs_outs): here the list's, as at the first boot of a new install, which reads the list and none of
 // its own yet, so a vertex pipeline built here is the one that boot asks for. An install that has drawn more pairs
@@ -8422,7 +8422,7 @@ static void lb_warm_prepared(const char *dir, int sample) {
 static int cache_save(uint32_t wait_ms, int exiting);
 
 static int seed_pipelines(const char *dir) {
-    const char *mode = cfg_value("NX2NAVI_PREPARE_PIPELINES");
+    const char *mode = cfg_value("NX2SARIA_PREPARE_PIPELINES");
     int all = !strcmp(mode, "all") || (!strcmp(mode, "mesh") && !P.gpl);
     char path[PLAT_PATH_MAX * 2 + 48], mark[PLAT_PATH_MAX * 2 + 48];
     snprintf(path, sizeof path, "%s/seed-pipeline-keys.bin", dir);
@@ -8431,7 +8431,7 @@ static int seed_pipelines(const char *dir) {
     if (!f) return 0;   // no list: nothing to say
     if (!strcmp(mode, "0")) {
         fclose(f);
-        printf("prepare-pipelines: off (NX2NAVI_PREPARE_PIPELINES=0)\n");
+        printf("prepare-pipelines: off (NX2SARIA_PREPARE_PIPELINES=0)\n");
         return 0;
     }
     if (plat_file_exists(mark)) {
@@ -8473,7 +8473,7 @@ static int seed_pipelines(const char *dir) {
     for (size_t i = 0; i < m; i++)
         if (!u || memcmp(ids[u - 1], ids[i], 32)) memcpy(ids[u++], ids[i], 32);
     int cpus = (int)plat_cpu_usable();
-    const char *pe = cfg_get("NX2NAVI_PREWARM_XLATE");
+    const char *pe = cfg_get("NX2SARIA_PREWARM_XLATE");
     int procs = pe && *pe ? atoi(pe) : cpus / 2 > 16 ? 16 : cpus / 2;
     gfx_shader_prewarm((const uint8_t(*)[32])ids, u, sh, cpus, procs < 1 ? 1 : procs);
     static const char note[] = "the listed pipelines are being built; a run that finds this file skips them\n";
@@ -8554,7 +8554,7 @@ static int seed_pipelines(const char *dir) {
     char msg[640];
     snprintf(msg, sizeof msg, "prepare-pipelines: %zu listed pipelines: %u built (%u mesh), %u failed, %u the same as one "
              "built before, %u without a shader this game version or its shader cache has, %u vertex pipelines left to "
-             "their first draw (NX2NAVI_PREPARE_PIPELINES=%s), %u mesh pipelines this GPU cannot draw; on %d threads in "
+             "their first draw (NX2SARIA_PREPARE_PIPELINES=%s), %u mesh pipelines this GPU cannot draw; on %d threads in "
              "%.0f ms; pipeline cache %s", n, built, mesh, failed, known, dropped, other,
              !strcmp(mode, "all") ? "all" : all ? "mesh, every record without the graphics pipeline library" : "mesh", no_mesh,
              nt ? nt : 1, now_ms() - t0,
@@ -8566,7 +8566,7 @@ static int seed_pipelines(const char *dir) {
     return 0;
 }
 
-// nx2navi.exe --prepare-pipelines: the list's pipelines alone, for a folder whose shaders are prepared already.
+// nx2saria.exe --prepare-pipelines: the list's pipelines alone, for a folder whose shaders are prepared already.
 int vk_pipeline_prepare_pipelines(void) {
     prep_mode = 1;   // builds into pipeline-cache.bin alone (cache_load)
     if (!ensure_init()) {
@@ -8584,8 +8584,8 @@ int vk_pipeline_prepare_pipelines(void) {
     return seed_pipelines(dir);
 }
 
-// nx2navi.exe --prepare-shaders (tools/prepare_shaders.py): the device sets the translator's host answers (they are in every
-// cache key), the seed next to nx2navi.exe is translated on every core, then every prepared variant's stage library or
+// nx2saria.exe --prepare-shaders (tools/prepare_shaders.py): the device sets the translator's host answers (they are in every
+// cache key), the seed next to nx2saria.exe is translated on every core, then every prepared variant's stage library or
 // compute pipeline is built once into the driver's disk cache (lb_warm_prepared). No game runs.
 int vk_pipeline_prepare_shaders(void) {
     prep_mode = 1;   // builds into pipeline-cache.bin alone (cache_load)
@@ -8596,7 +8596,7 @@ int vk_pipeline_prepare_shaders(void) {
     char dir[PLAT_PATH_MAX * 2];
     if (!cache_dir(dir, sizeof dir)) return 1;
     int cpus = (int)plat_cpu_usable();
-    const char *pe = cfg_get("NX2NAVI_PREWARM_XLATE");   // no fixed default: half the CPUs, at most 16, when unset
+    const char *pe = cfg_get("NX2SARIA_PREWARM_XLATE");   // no fixed default: half the CPUs, at most 16, when unset
     int procs = pe && *pe ? atoi(pe) : cpus / 2 > 16 ? 16 : cpus / 2;
     int rc = gfx_shader_prepare_seed(dir, cpus, procs < 1 ? 1 : procs);
     // The listed pipelines before the stage libraries: the pipeline cache is saved with them in it and without the
@@ -8606,7 +8606,7 @@ int vk_pipeline_prepare_shaders(void) {
     return rc;
 }
 
-// nx2navi.exe --warm-shaders: every variant of shader-prepared.bin built into the driver's disk cache again from the shader
+// nx2saria.exe --warm-shaders: every variant of shader-prepared.bin built into the driver's disk cache again from the shader
 // cache, without translating the seed. The AMD cache is keyed to the exe path (a relink keeps it: 29,587 variants in
 // 1.8 s) and holds a limited amount: preparing another build dir evicted this one's libraries, and a library a draw
 // needed then took 40-220 ms in play instead of 0.2 ms. Seconds when the libraries are still there.
@@ -8629,8 +8629,8 @@ int vk_pipeline_warm_shaders(void) {
     return 0;
 }
 
-// nx2navi.exe --probe-prewarm: the boot's shader and pipeline stages without the game, from the caches next to
-// nx2navi.exe (pipeline-cache.bin, pipeline-keys.bin, shader-answers.bin, the shader cache): the pipeline cache load,
+// nx2saria.exe --probe-prewarm: the boot's shader and pipeline stages without the game, from the caches next to
+// nx2saria.exe (pipeline-cache.bin, pipeline-keys.bin, shader-answers.bin, the shader cache): the pipeline cache load,
 // the shader prewarm, the recorded pipelines and the compute pipeline prebuild, each followed by vk_mem_stage_log's
 // line, so the log tells what every stage leaves in device memory and in the process's commit. Then up to
 // PROBE_DISPATCHES compute shaders whose pipeline the boot did not keep are asked for as a dispatch would
@@ -8646,8 +8646,8 @@ int vk_pipeline_probe_prewarm(void) {
     CU.quiet = 1;
     vk_pipeline_prewarm();             // brings the device up itself: it has to own the key file before ensure_init runs
     if (!P.ready) {
-        printf("probe-prewarm: SKIP (the boot prewarm brought no Vulkan device up: none on this machine, NX2NAVI_GPU=null "
-               "or NX2NAVI_PIPE_SYNC=1)\n");
+        printf("probe-prewarm: SKIP (the boot prewarm brought no Vulkan device up: none on this machine, NX2SARIA_GPU=null "
+               "or NX2SARIA_PIPE_SYNC=1)\n");
         return 0;
     }
     while (__atomic_load_n(&LB.running, __ATOMIC_ACQUIRE) > 0) plat_sleep_ms(50);
@@ -8895,13 +8895,13 @@ static int cache_save_one(int which, uint32_t wait_ms, int exiting) {
         if (exiting) __atomic_store_n(&cache_saving_at_exit, 0, __ATOMIC_RELEASE);
         if (!over_said[which]++)
             rt_log("vk_pipeline: %s not written past its last save: the cache holds %.1f MB, over the limit of %llu MB; "
-                   "pipelines made from here on compile again at the next start (NX2NAVI_PIPELINE_CACHE_MAX_MB raises "
+                   "pipelines made from here on compile again at the next start (NX2SARIA_PIPELINE_CACHE_MAX_MB raises "
                    "the limit)", path, size / 1048576.0, (unsigned long long)(cap >> 20));
         return 1;
     }
     if (sized && cap && size > cap)
         rt_log("vk_pipeline: %s holds %.1f MB, over the limit of %llu MB: written for the preparation, and dropped at "
-               "the next start unless NX2NAVI_PIPELINE_CACHE_MAX_MB is raised", path, size / 1048576.0,
+               "the next start unless NX2SARIA_PIPELINE_CACHE_MAX_MB is raised", path, size / 1048576.0,
                (unsigned long long)(cap >> 20));
     int same = sized && size == P.saved[which];
     int got = sized && !same && (data = malloc(size)) && vkGetPipelineCacheData(P.device, cache, &size, data) == VK_SUCCESS;
@@ -9409,7 +9409,7 @@ int vk_pipeline_selftest(void) {
     return ok ? 0 : 1;
 }
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): the pipeline table's entries with their pipelines and fast links (only
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): the pipeline table's entries with their pipelines and fast links (only
 // pressure_release takes entries out, while video memory is short), layouts, stage libraries, the job queues and the
 // pipeline-keys.bin set. A walk of the hash chains under P.lock
 // held shared: the workers' inserts and a draw's memo miss wait for it (well under a millisecond).

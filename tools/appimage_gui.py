@@ -4,8 +4,9 @@ command line keeps working as before.
 
 It runs AppRun itself with --events, which does what the command line does (the package check, zbic, make_game.py,
 NVIDIA's DLSS, play.sh) and prints make_game.py's "@@" progress lines (tools/make_game.py, --events) plus its own for
-the steps around it. The last dump and folder are remembered in ~/.config/nx2navi/appimage.json, the last run's output
-in ~/.cache/nx2navi/build.log (Details opens it).
+the steps around it. The last dump and folder are remembered in ~/.config/nx2saria/appimage.json, the last run's output
+in ~/.cache/nx2saria/build.log (Details opens it). Existing ~/.config/nx2navi and ~/.cache/nx2navi folders are reused
+in place when the new folders do not exist.
 
 The window is one Tk canvas. The Tk that comes with python-build-standalone has no Xft, so its only font is X11's
 bitmap "fixed", unreadable on a high-DPI screen: text is drawn with Pillow in the desktop's own font (fc-match
@@ -27,8 +28,13 @@ import threading
 import tkinter as tk
 from pathlib import Path
 
-CONFIG = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'nx2navi' / 'appimage.json'
-CACHE = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'nx2navi'
+def _brand_dir(root):
+    current, legacy = root / 'nx2saria', root / 'nx2navi'
+    return current if current.exists() or not legacy.exists() else legacy
+
+
+CONFIG = _brand_dir(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'appimage.json'
+CACHE = _brand_dir(Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache'))
 APPS = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 'share') / 'applications'
 DEFAULT_OUT = Path.home() / 'Games' / 'Ocarina'
 
@@ -37,7 +43,7 @@ STEPS = ('deps', 'check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'promp
 
 TEXT = {
     'en': {
-        'title': 'Ocarina of Time for Linux',
+        'title': 'NX2Saria for Linux',
         'intro': 'Builds the game natively on this PC from your own dump (Switch 2, game 1.1.1). No game files are included.',
         'dump': 'Game dump', 'folder': 'Game folder', 'browse': 'Browse…', 'none': 'not chosen yet',
         'install': 'Install', 'update': 'Update', 'play': 'Play', 'cancel': 'Cancel', 'confirm': 'Stop the build?',
@@ -52,7 +58,7 @@ TEXT = {
         'missing': 'Packages are missing. Install them (see Details), then press the button again.',
     },
     'fr': {
-        'title': 'Ocarina of Time pour Linux',
+        'title': 'NX2Saria pour Linux',
         'intro': 'Construit le jeu en natif sur ce PC à partir de votre dump (Switch 2, jeu 1.1.1). Aucun fichier du jeu n\'est inclus.',
         'dump': 'Dump du jeu', 'folder': 'Dossier du jeu', 'browse': 'Parcourir…', 'none': 'pas encore choisi',
         'install': 'Installer', 'update': 'Mettre à jour', 'play': 'Jouer', 'cancel': 'Annuler',
@@ -212,7 +218,7 @@ class App:
         self.status, self.status_color = T['ready'], 'dim'
         self.confirm = self.close_armed = False
         self.dirty = True
-        root.title(f"NX2navi – {T['title']}")
+        root.title(f"NX2Saria – {T['title']}")
         if icon and icon.is_file():
             try:
                 self.icon_img = tk.PhotoImage(file=str(icon))
@@ -497,12 +503,12 @@ class App:
     def add_shortcut(self):
         out = Path(self.out)
         try:
-            icon = out / 'nx2navi.png'
+            icon = out / 'nx2saria.png'
             if self.icon and self.icon.is_file() and not icon.is_file():
                 icon.write_bytes(self.icon.read_bytes())
             APPS.mkdir(parents=True, exist_ok=True)
-            (APPS / 'nx2navi-ocarina.desktop').write_text(
-                '[Desktop Entry]\nType=Application\nName=Ocarina of Time (NX2navi)\n'
+            (APPS / 'nx2saria-ocarina.desktop').write_text(
+                '[Desktop Entry]\nType=Application\nName=Ocarina of Time (NX2Saria)\n'
                 f'Exec={exec_quote(out / "play.sh")}\nPath={out}\nIcon={icon}\nTerminal=false\nCategories=Game;\n',
                 encoding='utf-8')
         except OSError:
@@ -524,7 +530,7 @@ def main():
     ap.add_argument('--apprun', type=Path, required=True)
     ap.add_argument('--icon', type=Path)
     a = ap.parse_args()
-    root = tk.Tk(className='nx2navi')
+    root = tk.Tk(className='nx2saria')
     App(root, a.apprun, a.icon)
     root.mainloop()
 

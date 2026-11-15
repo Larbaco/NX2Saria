@@ -1,7 +1,7 @@
 """Assemble the release folder of docs/installer.md ("Release layout") from pinned downloads.
 
-    .venv-py314\\Scripts\\python tools\\make_release.py --out build/release/NX2navi-Setup [--zip build/release/NX2navi-Setup.zip]
-    .venv-py314\\Scripts\\python tools\\make_release.py --out build/release/NX2navi-Setup --prove
+    .venv-py314\\Scripts\\python tools\\make_release.py --out build/release/NX2Saria-Setup [--zip build/release/NX2Saria-Setup.zip]
+    .venv-py314\\Scripts\\python tools\\make_release.py --out build/release/NX2Saria-Setup --prove
 
 Needs Python 3.14 (tarfile reads the MSYS2 .zst packages), uv on PATH and network access on the first run. Downloads are
 cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismatch stops the build. The folder holds:
@@ -9,18 +9,18 @@ cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismat
     python/    python.org embeddable 3.14.9 + the packages of tools/requirements-installer.txt + tkinter (the Tcl/Tk 9.0
                files come out of the python.org installer's own component MSI, unpacked with msiexec /a and expand.exe;
                the installer is never run)
-    llvm/      llvm-mingw, x86_64 only, the files clang and lld need to compile and link nx2navi.exe
+    llvm/      llvm-mingw, x86_64 only, the files clang and lld need to compile and link nx2saria.exe
     runtime/   libnx2navirt.a and libnx2navirt-v2.a (build_game.py --make-runtime-lib with llvm/, x86-64-v3 and v2), the
                runtime headers, romfs.c, patches.c and ov_zstd.c (compiled per install), deps/ (headers and import
                libraries of SDL3, Opus, libvpx, Vulkan and VMA)
     bin/       nx2navi_xlate.exe (+ .id), hactool.exe, SDL3.dll (upstream), libopus-0.dll, ninja.exe
-    recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, nx2navi.ini.example
+    recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, nx2saria.ini.example
     data/pgo-<v>.profdata  build/pgo's execution profile of an update (tools/pgo.py) and its .json record: the
                install compiles that update's code and the runtime libraries with it
     VERSION    the repository's VERSION plus the commit, 0.1.0+973c626; the installer's release string
-    NX2navi-Setup.exe  installer/launcher/launcher.c built with llvm/ (-mwindows): starts python/pythonw.exe -m installer.gui
+    NX2Saria-Setup.exe  installer/launcher/launcher.c built with llvm/ (-mwindows): starts python/pythonw.exe -m installer.gui
 
---prove compiles the generated C and links build/release-check/nx2navi.exe with nothing but the folder's python/, llvm/,
+--prove compiles the generated C and links build/release-check/nx2saria.exe with nothing but the folder's python/, llvm/,
 runtime/ and bin/ (PATH holds the Windows system directory and those), then runs the four probes there.
 
 Both need one game version extracted and lifted first (tools/extract.py, recomp/gen.py): generated/v121 or, without
@@ -100,7 +100,7 @@ PINS = {
 TCLTK_PAYLOAD = ('a12', 'ac87609db3f715404dd41a989c2f1706ea1512f3d86217f938d11c63af8eb505')
 SDL3_DLL_SHA256 = '2b4b128d8d510cc2d442693cf848c050d700d43dc667afe9e5fd82b0570d667e'   # SDL3.dll inside the SDL zip
 
-# llvm-mingw: what clang and lld need to compile and link nx2navi.exe for x86_64-w64-mingw32 (dynamic LLVM, libc++, compiler-rt).
+# llvm-mingw: what clang and lld need to compile and link nx2saria.exe for x86_64-w64-mingw32 (dynamic LLVM, libc++, compiler-rt).
 LLVM_BIN = {'clang.exe', 'clang++.exe', 'clang-23.exe', 'ld.lld.exe', 'llvm-ar.exe', 'llvm-ranlib.exe', 'llvm-nm.exe',
             'llvm-objdump.exe', 'llvm-objcopy.exe', 'llvm-strip.exe', 'llvm-readobj.exe', 'llvm-dlltool.exe',
             'llvm-rc.exe', 'llvm-cvtres.exe', 'llvm-windres.exe', 'llvm-wrapper.exe', 'mingw32-common.cfg',
@@ -445,7 +445,7 @@ def build_sources(out, pgo, pipelines=None):
             if f.is_file():
                 shutil.copy2(f, out / 'data' / f.name)
     copy_tree(ROOT / 'installer', out / 'installer', lambda r: '__pycache__' in r or r.startswith('launcher/'))
-    shutil.copy2(ROOT / 'nx2navi.ini.example', out / 'nx2navi.ini.example')
+    shutil.copy2(ROOT / 'nx2saria.ini.example', out / 'nx2saria.ini.example')
     shutil.copy2(ROOT / 'THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
     (out / 'VERSION').write_text(version() + '\n', encoding='utf-8')
 
@@ -459,7 +459,7 @@ def version():
     return (ROOT / 'VERSION').read_text(encoding='utf-8').strip() + '+' + r.stdout.strip()
 
 
-# ---- NX2navi-Setup.exe --------------------------------------------------------------------------------------------------
+# ---- NX2Saria-Setup.exe --------------------------------------------------------------------------------------------------
 
 def c_wide(text):
     """A C wide string literal of text: ASCII as is, everything else as a universal character name."""
@@ -498,7 +498,7 @@ def build_launcher(out, llvm):
     run([llvm / 'bin' / 'llvm-windres.exe', '-I', ROOT / 'runtime', '-O', 'coff',
          ROOT / 'installer' / 'launcher' / 'launcher.rc', '-o', res], env=env)
     run([llvm / 'bin' / 'clang.exe', '-O2', '-mwindows', '-Wall', '-Wl,-s', '-I', work,
-         ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / 'NX2navi-Setup.exe'], env=env)
+         ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / 'NX2Saria-Setup.exe'], env=env)
 
 
 # ---- checks ----------------------------------------------------------------------------------------------------------
@@ -555,7 +555,7 @@ def write_zip(out, path):
 
 
 def prove(out, cpu='v3'):
-    """Compile the generated C and link nx2navi.exe with the folder's tools only, then run the probes next to it."""
+    """Compile the generated C and link nx2saria.exe with the folder's tools only, then run the probes next to it."""
     out = out.resolve()
     version = lifted_version()
     gen = MAIN_ROOT / 'generated' / version
@@ -575,7 +575,7 @@ def prove(out, cpu='v3'):
         shutil.copy2(out / 'bin' / dll, chk / dll)
     failed = []
     for probe in PROBES:
-        r = subprocess.run([str(chk / 'nx2navi.exe'), probe], cwd=chk, env=clean_env(chk), capture_output=True, text=True,
+        r = subprocess.run([str(chk / 'nx2saria.exe'), probe], cwd=chk, env=clean_env(chk), capture_output=True, text=True,
                            timeout=900)
         tail = (r.stdout.strip().splitlines() or [''])[-1]
         print(f'{probe}: exit {r.returncode}: {tail}')

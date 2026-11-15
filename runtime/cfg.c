@@ -1,6 +1,6 @@
-﻿// nx2navi.ini: file-backed defaults for the NX2NAVI_* environment variables (docs/controls.md, nx2navi.ini.example).
+﻿// nx2saria.ini: file-backed defaults for NX2SARIA_* variables; nx2navi.ini and NX2NAVI_* remain readable aliases.
 // Format: "key = value" lines, '#' or ';' at the start of a line begins a comment, [sections] only group. A key is a
-// variable name without "NX2NAVI_" (an optional NX2NAVI_ prefix is accepted), case-insensitive. A value is the rest of the
+// variable name without either prefix (both optional prefixes are accepted), case-insensitive. A value is the rest of the
 // line, trimmed, optionally in double quotes; an empty value counts as unset. For a setting with a set of values (a row
 // of metas[] with values), a blank followed by ';' or '#' starts a comment after the value too (cut_comment). A switch
 // (values 0|1) reads false, off and no as 0 and true, on and yes as 1 (switch_word). The environment wins over the
@@ -23,6 +23,8 @@
 
 #define PREFIX "NX2NAVI_"
 #define PREFIX_LEN (sizeof PREFIX - 1)
+#define NEW_PREFIX "NX2SARIA_"
+#define NEW_PREFIX_LEN (sizeof NEW_PREFIX - 1)
 #define CFG_MAX_KEYS 512
 
 typedef struct { char *key, *value; int dirty, removed, held; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it
@@ -110,7 +112,7 @@ static const char *const known[] = {
     "COOP_STEAM", "COOP_SHARE", "COOP_NAMES", "COOP_CHAT",
 };
 
-// The nx2navi.ini section a key cfg_set may write goes to when the file lacks it (nx2navi.ini.example's sections).
+// The settings-file section a key cfg_set may write goes to when the file lacks it (the example file's sections).
 static const struct { const char *key, *section; } sections[] = {
     // the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below)
     {"TEX_RELEASED_MAX", "performance"}, {"MIRROR_HOT", "performance"}, {"FREEZE_IDLE", "performance"}, {"SUBMIT_FINISH_KINDS", "performance"}, {"FOLIAGE", "performance"},
@@ -351,10 +353,11 @@ static const CfgMeta metas[] = {
     // where the game version has the set. The Game tab switches it.
     {"AMIIBO_DAILY_LIMIT", "1", "0|1", LIVE},
     // Discord Rich Presence (discord_rpc.c): on by default (it only talks to a Discord client running on this PC, and
-    // does nothing without one); the Game tab of the settings menu and the launcher's Settings switch it. The application's id and art key default to discord_app.h's NX2NAVI_DISCORD_*_DEFAULT.
+    // does nothing without one); the Game tab of the settings menu and the launcher's Settings switch it. No application
+    // ID or art key is built in; a player may configure their own.
     {"DISCORD_RPC", "1", "0|1", LIVE},
-    {"DISCORD_APP_ID", NX2NAVI_DISCORD_APP_ID_DEFAULT, NULL, LIVE},
-    {"DISCORD_IMAGE", NX2NAVI_DISCORD_IMAGE_DEFAULT, NULL, LIVE},
+    {"DISCORD_APP_ID", NX2SARIA_DISCORD_APP_ID_DEFAULT, NULL, LIVE},
+    {"DISCORD_IMAGE", NX2SARIA_DISCORD_IMAGE_DEFAULT, NULL, LIVE},
     // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},
     {"REPLAY_PIPE", "0", "0..4", RESTART},
@@ -490,7 +493,7 @@ static const CfgMeta metas[] = {
     {"WAIT_WATCH_S", "0", "0..3600", RESTART},   // kernel.c wait_watch: a lock or thread-end wait this long is logged; 0 off
     // vk_backend.c present_order_on: a frame's bookkeeping between two replays (vk_frame_owed.h); 0 at the present
     {"PRESENT_ORDER", "1", "0|1", RESTART},
-    // perf.c hc_main: with NX2NAVI_TRACE=perf, the process's handles by kind when their count grew
+    // perf.c hc_main: with NX2SARIA_TRACE=perf, the process's handles by kind when their count grew
     {"HANDLE_CENSUS", "0", "0|1", RESTART},
     // hang_watch.c: a report when no frame is shown with the window in front, or the GPU does not finish, this long; 0 off
     {"HANG_WATCH_S", "20", "0..600", RESTART},
@@ -583,6 +586,7 @@ static char *trim(char *s) {
 // The upper-case key without the prefix, in place.
 static char *norm_key(char *key) {
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
+    if (!strncmp(key, NEW_PREFIX, NEW_PREFIX_LEN)) return key + NEW_PREFIX_LEN;
     return strncmp(key, PREFIX, PREFIX_LEN) ? key : key + PREFIX_LEN;
 }
 
@@ -618,7 +622,7 @@ static char *cut_comment(const char *key, char *raw, int line) {
         size_t k = 0;
         for (; key[k] && k < sizeof low - 1; k++) low[k] = (char)tolower((unsigned char)key[k]);
         low[k] = 0;
-        rt_log("cfg: nx2navi.ini line %d: %s = '%s', and '%s' after it is a comment", line, low, v, note);
+        rt_log("cfg: settings file line %d: %s = '%s', and '%s' after it is a comment", line, low, v, note);
     }
     return v;
 }
@@ -631,7 +635,7 @@ static void add(char *key, char *value, int line) {
     if (vl >= 2 && value[0] == '"' && value[vl - 1] == '"') value[vl - 1] = 0, value++;
     if (!*key) return;
     if (!is_known(key)) {
-        rt_log("cfg: nx2navi.ini line %d: unknown key '%s'", line, key);
+        rt_log("cfg: settings file line %d: unknown key '%s'", line, key);
         note_unknown(key);
     }
     if (!*value) return;   // "key =" leaves the setting at its default
@@ -644,7 +648,7 @@ static void add(char *key, char *value, int line) {
         }
     if (n_entries == CFG_MAX_KEYS) {
         if (!full_load_told++)
-            rt_log("cfg: nx2navi.ini has more than %d keys: line %d (%s) and the new keys after it are not read",
+            rt_log("cfg: settings file has more than %d keys: line %d (%s) and the new keys after it are not read",
                    CFG_MAX_KEYS, line, key);
         return;
     }
@@ -720,8 +724,13 @@ static void check_value(const char *key, const char *v, int line) {
     size_t n = 0;
     for (; key[n] && n < sizeof low - 1; n++) low[n] = (char)tolower((unsigned char)key[n]);
     low[n] = 0;
-    if (line) snprintf(where, sizeof where, "nx2navi.ini line %d: %s", line, low);
-    else snprintf(where, sizeof where, "the environment's " PREFIX "%s", key);
+    if (line) snprintf(where, sizeof where, "settings file line %d: %s", line, low);
+    else {
+        char current[128], legacy[128];
+        snprintf(current, sizeof current, NEW_PREFIX "%s", key);
+        snprintf(legacy, sizeof legacy, PREFIX "%s", key);
+        snprintf(where, sizeof where, "the environment's %s", getenv(current) ? current : legacy);
+    }
     rt_log("cfg: %s = '%s' %s%s%s", where, v, bad ? bad : "", bad && comment ? "; " : "",
            comment ? "a ';' or '#' after the value is part of it (a comment goes on a line of its own)" : "");
 }
@@ -756,7 +765,7 @@ static void migrate(void) {
         entry_line[n_entries] = 0, entries[n_entries++] = (CfgEntry){strdup("PROMPTS"), strdup("xbox"), 1, 0, 0};
     else if (!prompts)
         full_set("PROMPTS", "= xbox is not kept");
-    rt_log("cfg: nx2navi.ini pad_layout = xbox_prompts is read as pad_layout = nintendo and prompts = %s",
+    rt_log("cfg: settings file pad_layout = xbox_prompts is read as pad_layout = nintendo and prompts = %s",
            prompts ? prompts->value : "xbox");
 }
 
@@ -807,7 +816,7 @@ static int parse_ini(const char *path, void (*sink)(char *key, char *value, int 
         char *s = trim(p);
         char *eq = strchr(s, '=');
         if (*s && *s != '#' && *s != ';' && *s != '[') {
-            if (!eq) rt_log("cfg: nx2navi.ini line %d: no '=' in '%s'", line, s);
+            if (!eq) rt_log("cfg: settings file line %d: no '=' in '%s'", line, s);
             else {
                 *eq = 0;
                 sink(trim(s), eq + 1, line, ctx);   // the value as written: the sink cuts a comment (cut_comment)
@@ -834,8 +843,8 @@ int cfg_load(const char *path) {
     return 1;
 }
 
-// ---- device profiles: defaults for a known machine, below the environment and nx2navi.ini and above the table, so any
-// key the player sets wins and resetting a key in the menu returns to the profile's value. NX2NAVI_DEVICE_PROFILE = auto
+// ---- device profiles: defaults for a known machine, below the environment and settings file and above the table, so any
+// key the player sets wins and resetting a key in the menu returns to the profile's value. NX2SARIA_DEVICE_PROFILE = auto
 // (default: the Steam Deck when the firmware says so), desktop (none) or deck.
 //
 // The Steam Deck (LCD Jupiter, OLED Galileo; 1280x800, 16:10, 4 Zen 2 cores, RDNA 2 with 8 CUs sharing 16 GB): the game
@@ -873,7 +882,7 @@ static int on_steam_deck(void) {
 
 static const char *raw_get(const char *name);
 
-// low_end_gpu (NX2NAVI_LOW_END_GPU) was the switch of the low-end GPU mode up to 0.10.1. With it on, nine keys got
+// low_end_gpu (NX2SARIA_LOW_END_GPU, formerly NX2NAVI_LOW_END_GPU) was the switch of the low-end GPU mode up to 0.10.1. With it on, nine keys got
 // other defaults (mesh shaders run as compute where the card has none, a texture read after another image drew over
 // its pool memory given memory of its own, game memory copied for the GPU while the replay records, video memory kept
 // within the heaps' budgets, large upload batches sent early, pools the game refills every frame kept in system
@@ -901,12 +910,28 @@ static int profile_of(void) {
 
 const char *cfg_device_profile(void) { return profile_of() ? "deck" : "desktop"; }
 
+// NX2SARIA_* is the current public name; NX2NAVI_* remains an alias for existing scripts. When both exist, the
+// current name wins even when it is empty, so an explicit new setting can clear a legacy override.
+const char *cfg_env(const char *name) {
+    const char *key = name;
+    if (!strncmp(key, NEW_PREFIX, NEW_PREFIX_LEN)) key += NEW_PREFIX_LEN;
+    else if (!strncmp(key, PREFIX, PREFIX_LEN)) key += PREFIX_LEN;
+    else return getenv(name);
+    char current[128], legacy[128];
+    if (snprintf(current, sizeof current, NEW_PREFIX "%s", key) >= (int)sizeof current ||
+        snprintf(legacy, sizeof legacy, PREFIX "%s", key) >= (int)sizeof legacy) return NULL;
+    const char *e = getenv(current);
+    return e ? e : getenv(legacy);
+}
+
 static const char *raw_get(const char *name) {
-    const char *e = getenv(name);
-    if (e || strncmp(name, PREFIX, PREFIX_LEN)) return e;
+    const char *e = cfg_env(name);
+    if (strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) return e;
     int n = __atomic_load_n(&n_entries, __ATOMIC_ACQUIRE);
+    const char *key = !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN;
+    if (e) return e;
     for (int i = 0; i < n; i++)
-        if (!strcasecmp(entries[i].key, name + PREFIX_LEN)) return __atomic_load_n(&entries[i].value, __ATOMIC_ACQUIRE);
+        if (!strcasecmp(entries[i].key, key)) return __atomic_load_n(&entries[i].value, __ATOMIC_ACQUIRE);
     return NULL;
 }
 
@@ -934,11 +959,12 @@ static const char *switch_word(const char *name, const char *v) {
 
 static const char *cfg_get_now(const char *name) {
     const char *v = raw_get(name);
-    if (strncmp(name, PREFIX, PREFIX_LEN)) return v;
+    if (strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) return v;
     if (v) return switch_word(name, v);
+    const char *key = !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN;
     if (profile_of())
         for (size_t i = 0; i < sizeof DECK / sizeof *DECK; i++)
-            if (!strcasecmp(DECK[i].key, name + PREFIX_LEN)) return DECK[i].value;
+            if (!strcasecmp(DECK[i].key, key)) return DECK[i].value;
     return NULL;
 }
 
@@ -948,17 +974,21 @@ int cfg_is_set(const char *name) { return raw_get(name) != NULL; }
 unsigned cfg_version(void) { return __atomic_load_n(&version, __ATOMIC_ACQUIRE); }
 
 int cfg_setenv(const char *name, const char *value) {
+    const char *key = !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN :
+                      !strncmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : NULL;
+    char current[128];
+    if (key && snprintf(current, sizeof current, NEW_PREFIX "%s", key) < (int)sizeof current) name = current;
     int ok = plat_setenv(name, value);
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     return ok;
 }
 
-int cfg_from_env(const char *name) { return getenv(name) != NULL; }
+int cfg_from_env(const char *name) { return cfg_env(name) != NULL; }
 
 void cfg_set(const char *name, const char *value) {
-    if (strncmp(name, PREFIX, PREFIX_LEN) || !value) return;
+    if ((strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) || !value) return;
     char key[64];
-    snprintf(key, sizeof key, "%s", name + PREFIX_LEN);
+    snprintf(key, sizeof key, "%s", !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN);
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
     plat_mutex_lock(&set_lock);
     int i = 0, n = n_entries;
@@ -988,7 +1018,7 @@ int cfg_reset(const char *const *keys, int n) {
         snprintf(key, sizeof key, "%s", keys[k]);
         const char *name = norm_key(key);
         snprintf(var, sizeof var, PREFIX "%s", name);
-        if (getenv(var)) continue;   // the environment wins; the file line stays
+        if (cfg_env(var)) continue;   // the environment wins; the file line stays
         int i = 0;
         while (i < n_entries && strcmp(entries[i].key, name)) i++;
         if (i == n_entries) {   // no value in memory ("key =" in the file): the line still has to go
@@ -1020,7 +1050,9 @@ static int find_entry(const char *key) {
 }
 
 static void entry_key(const char *name, char *key, size_t size) {
-    snprintf(key, size, "%s", strncasecmp(name, PREFIX, PREFIX_LEN) ? name : name + PREFIX_LEN);
+    const char *suffix = !strncasecmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN :
+                         !strncasecmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : name;
+    snprintf(key, size, "%s", suffix);
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
 }
 
@@ -1078,7 +1110,7 @@ void cfg_each_active(void (*cb)(const char *key, const char *value, int from_env
     for (size_t i = 0; i < sizeof known / sizeof *known; i++) {
         char var[80];
         snprintf(var, sizeof var, PREFIX "%s", known[i]);
-        const char *e = getenv(var);
+        const char *e = cfg_env(var);
         if (e) cb(known[i], e, 1, ctx);
     }
 }
@@ -1117,7 +1149,7 @@ static const char *cfg_value_now(const char *name) {
 // entries and the settings table by name, and several per-draw paths ask for live settings: on the replay thread those
 // lookups were about a sixth of the samples in a play profile (ucrtbase's string routines). Each thread keeps the
 // answers it got per name until the settings version changes (cfg_set, cfg_reset, cfg_load); values stay valid that
-// long because a set keeps the old string for readers and a load bumps the version. NX2NAVI_CFG_MEMO=0 (environment
+// long because a set keeps the old string for readers and a load bumps the version. NX2SARIA_CFG_MEMO=0 (environment
 // only, read once) asks every time.
 #define CFG_MEMO_N 256
 typedef struct { unsigned ver; uint32_t h; uint8_t kind; char name[55]; const char *v; } CfgMemo;
@@ -1126,7 +1158,7 @@ static int cfg_memo_on = -1;
 
 static const char *cfg_memo_get(const char *name, int kind) {
     if (cfg_memo_on < 0) {
-        const char *e = getenv(PREFIX "CFG_MEMO");
+        const char *e = cfg_env(PREFIX "CFG_MEMO");
         cfg_memo_on = !(e && !strcmp(e, "0"));
     }
     size_t len = strlen(name);
@@ -1286,7 +1318,7 @@ static void put(Out *o, const char *s, size_t n) {
     if (o->n + n + 1 > o->cap) {
         o->cap = (o->n + n + 1) * 2;
         o->buf = realloc(o->buf, o->cap);
-        if (!o->buf) rt_fatal("cfg: out of memory writing nx2navi.ini");
+        if (!o->buf) rt_fatal("cfg: out of memory writing the settings file");
     }
     memcpy(o->buf + o->n, s, n);
     o->n += n;
@@ -1304,7 +1336,7 @@ static const char *section_of(const char *key) {
 int cfg_has_section(const char *key) { return section_of(key) != NULL; }
 
 // The section cfg_save_to writes key under. A key with none goes to [misc]: a bare line appended at the end of the file would
-// belong to whatever section happens to come last (nx2navi.ini's loader ignores section names, but a person does not).
+// belong to whatever section happens to come last (the loader ignores section names, but a person does not).
 static const char *section_for(const char *key) {
     const char *sec = section_of(key);
     return sec ? sec : "misc";
@@ -1379,7 +1411,7 @@ int cfg_save_to(const char *path) {
     // after[i]: entries to write after line i (-1 = none); replace[i]: the entry whose value line i now carries
     int *replace = malloc(sizeof(int) * ((size_t)nl + 1)), *after_key = malloc(sizeof(int) * (size_t)(n + 1));
     char *drop = calloc((size_t)nl + 1, 1);   // lines of a reset key
-    if (!lines || !replace || !after_key || !drop) rt_fatal("cfg: out of memory writing nx2navi.ini");
+    if (!lines || !replace || !after_key || !drop) rt_fatal("cfg: out of memory writing the settings file");
     for (int i = 0, at = 0; i < nl; i++) {
         size_t start = (size_t)at;
         while ((uint64_t)at < size && text[at] != '\n') at++;
@@ -1504,13 +1536,17 @@ static int find_ini(void) {
     if (!plat_exe_path(path, sizeof path)) return 0;
     char *cut = plat_last_sep(path);
     if (!cut) cut = strrchr(path, '/');
-    if (!cut || cut + 12 >= path + sizeof path) return 0;   // room for "nx2navi.ini" and its NUL after the separator
-    strcpy(cut + 1, "nx2navi.ini");
+    if (!cut || cut + 13 >= path + sizeof path) return 0;   // room for "nx2saria.ini" and its NUL after the separator
+    strcpy(cut + 1, "nx2saria.ini");
+    if (!plat_file_exists(path)) {
+        strcpy(cut + 1, "nx2navi.ini");
+        if (!plat_file_exists(path)) strcpy(cut + 1, "nx2saria.ini");
+    }
     snprintf(ini_path, sizeof ini_path, "%s", path);
     return 1;
 }
 
-// A replay of a bug capture (bugcap.c) runs on the capture's settings and leaves the player's nx2navi.ini as it is:
+// A replay of a bug capture (bugcap.c) runs on the capture's settings and leaves the player's settings file as it is:
 // nothing is saved, whatever the run sets.
 int cfg_save(void) {
     if (bugcap_replay_dir()) return 1;
@@ -1640,7 +1676,7 @@ static void log_reload(const char *key, const char *value, const char *note) {
 static int env_sets(const char *key) {   // the file's new value would not show
     char var[128];
     snprintf(var, sizeof var, PREFIX "%s", key);
-    return getenv(var) != NULL;
+    return cfg_env(var) != NULL;
 }
 
 // One key of the file that differs from memory: entry e, or NULL for a key the file gained (want is then set). set_lock
@@ -1690,13 +1726,13 @@ int cfg_reload_file(CfgReloadResult *r) {
     CfgReloadResult none = {0};
     if (!r) r = &none;
     *r = (CfgReloadResult){0};
-    if (bugcap_replay_dir()) {   // the capture's settings.ini stands in for nx2navi.ini in this run (load_ini)
-        rt_log("cfg: reload: not run: this run replays a bug capture's settings and does not read nx2navi.ini");
+    if (bugcap_replay_dir()) {   // the capture's settings.ini stands in for the player's settings file (load_ini)
+        rt_log("cfg: reload: not run: this run replays a bug capture's settings and does not read the player's settings file");
         return 0;
     }
     FileKeys *f = calloc(1, sizeof *f);
     if (!f || !find_ini() || !plat_file_exists(ini_path) || !parse_ini(ini_path, file_sink, f)) {
-        rt_log("cfg: reload: cannot read nx2navi.ini, settings unchanged");
+        rt_log("cfg: reload: cannot read the settings file, settings unchanged");
         free(f);
         return 0;
     }
@@ -1728,16 +1764,16 @@ int cfg_reload_file(CfgReloadResult *r) {
 }
 
 static void load_ini(void) {
-    // NX2NAVI_CAPTURE_REPLAY=<a bug capture's folder>: the settings that capture was taken with (its settings.ini) stand
-    // in for nx2navi.ini, which is neither read nor written in such a run; the environment still wins over them
+    // NX2SARIA_CAPTURE_REPLAY=<a bug capture's folder>: the settings that capture was taken with (its settings.ini) stand
+    // in for the player's settings file, which is neither read nor written in such a run; the environment still wins over them
     const char *replay = bugcap_replay_dir();
     if (replay) {
         char path[1100];
         snprintf(path, sizeof path, "%s/settings.ini", replay);
         int ok = cfg_load(path);
-        rt_log(ok ? "cfg: replay of the bug capture in %s: its settings.ini (%d keys) in place of nx2navi.ini, which this run does not write"
+        rt_log(ok ? "cfg: replay of the bug capture in %s: its settings.ini (%d keys) in place of the player's settings file, which this run does not write"
                   : "cfg: replay of the bug capture in %s: no settings.ini there, so every setting has its default (%d keys); "
-                    "nx2navi.ini is not read or written",
+                    "the player's settings file is not read or written",
                replay, n_entries);
         if (ok) log_file_settings("the capture's settings.ini");
         return;
@@ -1748,11 +1784,11 @@ static void load_ini(void) {
         return;
     }
     rt_log("cfg: read %s: %d keys", ini_path, n_entries);
-    log_file_settings("nx2navi.ini");
+    log_file_settings("settings file");
     for (int i = 0; i < n_entries; i++) {
         char var[128];
         snprintf(var, sizeof var, PREFIX "%s", entries[i].key);
-        if (getenv(var)) rt_log("cfg: %s is set in the environment and overrides nx2navi.ini", var);
+        if (cfg_env(var)) rt_log("cfg: NX2SARIA_%s or its legacy alias is set in the environment and overrides the settings file", entries[i].key);
     }
 }
 
@@ -1761,21 +1797,21 @@ void cfg_init(void) {
     for (size_t i = 0; i < sizeof metas / sizeof *metas; i++) {   // the environment's values, as the file's (cfg_load)
         char var[80];
         snprintf(var, sizeof var, PREFIX "%s", metas[i].key);
-        const char *e = getenv(var);
+        const char *e = cfg_env(var);
         if (e && *e) check_value(metas[i].key, e, 0);
     }
     check_end();
     if (profile_of())
-        rt_log("cfg: device profile Steam Deck: defaults for the keys nx2navi.ini does not set (NX2NAVI_DEVICE_PROFILE=desktop "
+        rt_log("cfg: device profile Steam Deck: defaults for the keys the settings file does not set (NX2SARIA_DEVICE_PROFILE=desktop "
                "turns it off)");
     if (lowend_set())
         rt_log("cfg: low_end_gpu is on, and the low-end GPU mode was removed in 0.11.0: the line does nothing, and the game "
                "runs as it does without it. The mode's single settings (mesh_emulation, tex_clobber, foliage, "
-               "vram_reserve_mb and the others) still count where nx2navi.ini or the environment sets them");
+               "vram_reserve_mb and the others) still count where the settings file or environment sets them");
     start_values();
 }
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): settings entries, and the replaced values cfg_set keeps for readers.
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): settings entries, and the replaced values cfg_set keeps for readers.
 void cfg_sizes(PerfSizes *s) {
     plat_mutex_lock(&set_lock);
     uint64_t n = (uint64_t)n_entries, kn = kept_n, kb = kept_bytes;

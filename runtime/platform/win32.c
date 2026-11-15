@@ -23,6 +23,7 @@
 #include <wctype.h>
 
 #include "platform.h"
+#include "../cfg.h"
 
 _Static_assert(sizeof(PlatMutex) == sizeof(SRWLOCK), "PlatMutex holds an SRWLOCK");
 _Static_assert(sizeof(PlatCond) == sizeof(CONDITION_VARIABLE), "PlatCond holds a CONDITION_VARIABLE");
@@ -1309,7 +1310,7 @@ void plat_aligned_free(void *p) { _aligned_free(p); }
 
 // ---- process
 
-#ifdef NX2NAVI_PGO_GEN
+#if defined(NX2SARIA_PGO_GEN) || defined(NX2NAVI_PGO_GEN)
 // compiler-rt's profile runtime (an instrumented build: --pgo gen of tools/make_game.py or tools/build_game.py). It
 // writes its counters from an atexit handler, which ExitProcess skips; __llvm_profile_dump writes them once and makes
 // later writes no-ops.
@@ -1393,7 +1394,7 @@ void (*plat_exit_hook)(void);
 void plat_exit(int code) {
     plat_exit_orderly();
     if (plat_exit_hook) plat_exit_hook();
-#ifdef NX2NAVI_PGO_GEN
+#if defined(NX2SARIA_PGO_GEN) || defined(NX2NAVI_PGO_GEN)
     __llvm_profile_dump();
 #endif
     // QuickEdit back on in a console that outlives the process (the one of the shell that started it)
@@ -1945,6 +1946,13 @@ int plat_exe_path(char *out, size_t cap) {
 }
 
 size_t plat_getenv(const char *name, char *out, size_t cap) {
+    if (!strncmp(name, "NX2NAVI_", 8) || !strncmp(name, "NX2SARIA_", 9)) {
+        const char *v = cfg_env(name);
+        size_t n = v ? strlen(v) : 0;
+        if (!n || n >= cap) return 0;
+        memcpy(out, v, n + 1);
+        return n;
+    }
     wchar_t wn[256], v[WPATH];
     if (!widen(name, wn, 256)) return 0;
     DWORD n = GetEnvironmentVariableW(wn, v, WPATH);
@@ -2789,10 +2797,10 @@ void plat_udp_close(PlatUdp *u) {
 
 
 // ---- restart
-// NX2NAVI_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
+// NX2SARIA_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
 // reused the id is not waited for. Waiting keeps the new process off the old one's files (the log it moves at start,
 // the saves) until the old one is gone; no handle is inherited, so none of them stays open in the new one either.
-#define RESTART_WAIT "NX2NAVI_RESTART_WAIT"
+#define RESTART_WAIT "NX2SARIA_RESTART_WAIT"
 
 static uint64_t process_created(HANDLE h) {
     FILETIME c, e, k, u;

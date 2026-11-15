@@ -1,13 +1,16 @@
-﻿// nx2navi.exe entry: reserves the guest address space, parses the command line and runs one mode.
+﻿// Shared game entry point: the standalone build names it nx2saria.exe; the launcher build retains ocarina.exe.
+// Reserves the guest address space, parses the command line and runs one mode.
 //
-//   nx2navi.exe [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] <mode>
-//     --audio-device VALUE   play the sound on one output device: sets NX2NAVI_AUDIO_DEVICE before the settings are read, so
-//                       it wins over nx2navi.ini's `audio_device =`. VALUE is default (the system default device),
+//   <game executable> [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] <mode>
+//     --audio-device VALUE   play the sound on one output device: sets NX2SARIA_AUDIO_DEVICE before the settings are read, so
+//                       it wins over nx2saria.ini's `audio_device =` (or an existing nx2navi.ini). VALUE is default
+//                       (the system default device),
 //                       a 1-based index as --list-audio-devices prints it (devices sorted by name), or part of a device name, case-insensitive
 //     --list-audio-devices   print each playback device's index, name, channels and frequency, mark the system default and
-//                       show which device NX2NAVI_AUDIO_DEVICE picks; needs no game files
-//     --monitor VALUE   open the game window on one monitor: sets NX2NAVI_MONITOR before the settings are read, so it wins
-//                       over nx2navi.ini's `monitor =`. VALUE is auto (default), primary, a 1-based index as --list-monitors
+//                       show which device NX2SARIA_AUDIO_DEVICE picks; needs no game files
+//     --monitor VALUE   open the game window on one monitor: sets NX2SARIA_MONITOR before the settings are read, so it wins
+//                       over nx2saria.ini's `monitor =` (or an existing nx2navi.ini). VALUE is auto (default), primary,
+//                       a 1-based index as --list-monitors
 //                       prints it, or part of a monitor's name (on Windows also of its GDI device name, DISPLAY3),
 //                       case-insensitive. Wayland places a windowed window itself: only fullscreen opens on the monitor
 //     --list-monitors   print each monitor's index, name (on Windows also its GDI device name), desktop rectangle,
@@ -34,7 +37,7 @@
 //     --boot            run the game to the first NVN call
 //     --seconds S       run the game (implies --boot's start-up) until the world clock (game time since the loaded
 //                       save's first frame) passed S seconds, then exit 0 at that present
-//     --shot PNG        with --seconds: save that frame; env NX2NAVI_GPU=null|vulkan selects the back end
+//     --shot PNG        with --seconds: save that frame; env NX2SARIA_GPU=null|vulkan selects the back end
 //     (no mode)         run the game
 //
 // Also here: the runtime services the generated code calls besides rt_dispatch and rt_svc (rt_brk, rt_udf,
@@ -59,9 +62,10 @@
 unsigned rt_trace;
 
 // Log file. A game run whose stderr is not a file already (started from Explorer, a shortcut or a console) also
-// writes its log to logs\nx2navi.log next to nx2navi.exe, so a player has one to attach to a report; run_game.py and
-// `2> file` keep their own file. Each start moves the earlier logs to nx2navi.1.log .. nx2navi.4.log. A file stops at 64 MiB
-// (NX2NAVI_TRACE can write that much). Lines from before log_open wait in a static buffer: mem_init runs first so that
+// writes its log to logs\nx2saria.log next to the game executable; existing nx2navi.log files are left in place for
+// reports and older installs. run_game.py and `2> file` keep their own file. Each start rotates nx2saria.1.log ..
+// nx2saria.4.log. A file stops at 64 MiB
+// (NX2SARIA_TRACE can write that much). Lines from before log_open wait in a static buffer: mem_init runs first so that
 // nothing else lands in the guest address space, and an earlier open would put the CRT's heap there.
 // The end of the run still reaches a file past its cap: once the process is ending (rt_log_ending at the start of an
 // orderly end, gfx_present.c rt_exit_begin, of the frame-time summary, perf.c perf_summary_flush, of a fatal error,
@@ -210,13 +214,13 @@ static void log_open(int game) {
     if (cut && (size_t)(cut - dir) + sizeof "/logs" <= sizeof dir) {
         strcpy(cut, "/logs");
         plat_file_mkdir_p(dir);
-        for (int i = LOG_KEEP - 1; i > 0; i--) {   // nx2navi.3.log -> nx2navi.4.log, ..., nx2navi.log -> nx2navi.1.log
-            if (i > 1) snprintf(from, sizeof from, "%s/nx2navi.%d.log", dir, i - 1);
-            else snprintf(from, sizeof from, "%s/nx2navi.log", dir);
-            snprintf(to, sizeof to, "%s/nx2navi.%d.log", dir, i);
+        for (int i = LOG_KEEP - 1; i > 0; i--) {   // nx2saria.3.log -> nx2saria.4.log, ..., nx2saria.log -> nx2saria.1.log
+            if (i > 1) snprintf(from, sizeof from, "%s/nx2saria.%d.log", dir, i - 1);
+            else snprintf(from, sizeof from, "%s/nx2saria.log", dir);
+            snprintf(to, sizeof to, "%s/nx2saria.%d.log", dir, i);
             if (plat_file_exists(from)) plat_file_replace(from, to, 1);
         }
-        snprintf(g_log_path, sizeof g_log_path, "%s/nx2navi.log", dir);
+        snprintf(g_log_path, sizeof g_log_path, "%s/nx2saria.log", dir);
         g_log_file = plat_append_open(g_log_path);
     }
     if (!g_log_file) {
@@ -234,15 +238,15 @@ static void log_open(int game) {
         plat_exit_note_modules();
     }
     // A game run writes its log from the log thread (logq.c), whether the lines go to a log file or to stderr alone.
-    const char *e = cfg_get("NX2NAVI_LOG_ASYNC");
+    const char *e = cfg_get("NX2SARIA_LOG_ASYNC");
     if (!game || (e && !strcmp(e, "0"))) return;
     plat_exit_hook = log_sync_ending;
-    if (logq_async()) rt_log("log: lines are written by a thread of their own (NX2NAVI_LOG_ASYNC)");
+    if (logq_async()) rt_log("log: lines are written by a thread of their own (NX2SARIA_LOG_ASYNC)");
     else rt_log("log: no log thread; every line is written by the thread that logs it");
 }
 
 static void parse_trace(void) {
-    const char *e = cfg_get("NX2NAVI_TRACE");   // no default: nothing is traced when unset
+    const char *e = cfg_get("NX2SARIA_TRACE");   // no default: nothing is traced when unset
     if (!e) return;
     static const struct { const char *name; unsigned bit; } names[] = {
         {"svc", RT_TRACE_SVC}, {"host", RT_TRACE_HOSTCALL}, {"ipc", RT_TRACE_IPC}, {"fs", RT_TRACE_FS},
@@ -253,7 +257,7 @@ static void parse_trace(void) {
         int known = 0;
         for (unsigned i = 0; i < sizeof names / sizeof *names; i++)
             if (strlen(names[i].name) == n && !strncmp(p, names[i].name, n)) rt_trace |= names[i].bit, known = 1;
-        if (!known && n) rt_log("NX2NAVI_TRACE: unknown item '%.*s' (svc, host, ipc, fs, gfx, perf, sched, audio, present, all)", (int)n, p);
+        if (!known && n) rt_log("NX2SARIA_TRACE: unknown item '%.*s' (svc, host, ipc, fs, gfx, perf, sched, audio, present, all)", (int)n, p);
         p += n + (p[n] == ',');
     }
 }
@@ -341,7 +345,7 @@ static int readable(uint64_t a, uint64_t n) { return plat_mem_readable(a, n); }
 // swapchain was made again, another an injector's layer reading a null pointer at the end of every shader
 // preparation. Vulkan layers are mostly named VkLayer_<name>.dll, and a recorder's Vulkan hook and a driver's capture
 // tool carry names of their own (the words below). The validation layer is left out: the game loads it itself when
-// NX2NAVI_VK_VALIDATION asks.
+// NX2SARIA_VK_VALIDATION asks.
 static int foreign_hook(const char *module) {
     char low[160];
     size_t n = 0;
@@ -389,7 +393,7 @@ static void crash_handler(const PlatCrash *x) {
     uintptr_t rip = x->rip;
     rt_logf("FATAL: %s (%#x) at host %p (", x->what, x->code, (void *)rip);
     if (x->module && !*x->module) rt_logf("outside every module)");
-    else rt_logf("%s+%#llx)", x->module ? x->module : "nx2navi", (unsigned long long)x->offset);
+    else rt_logf("%s+%#llx)", x->module ? x->module : "nx2saria", (unsigned long long)x->offset);
     if (x->access >= 0)
         rt_logf(", %s address %#llx", x->access == 1 ? "writing" : x->access == 8 ? "executing" : "reading",
                 (unsigned long long)x->addr);
@@ -402,7 +406,7 @@ static void crash_handler(const PlatCrash *x) {
                 "program or turn off its Vulkan capture, then start the game again\n", x->module);
     else if (module_note == CRASH_NOTE_RTSS)
         rt_logf("  the fault is on the thread that hands the frame limit to RivaTuner Statistics Server (rtss_limit.c), "
-                "in the game's calls of its library or around them; rtss = 0 in nx2navi.ini keeps the game from calling "
+                "in the game's calls of its library or around them; rtss = 0 in nx2saria.ini keeps the game from calling "
                 "it\n");
     // what the thread was doing (a pipeline build names its shaders): the stderr note crash_veh writes misses the log
     const char *note = plat_crash_context_get();
@@ -414,7 +418,7 @@ static void crash_handler(const PlatCrash *x) {
     uintptr_t exe = plat_exe_base();
     for (int i = 0; i < x->nframes; i++) {
         uint64_t g = lifted_function(x->frames[i]);
-        rt_logf("  host frame %2d: nx2navi+%#llx", i, (unsigned long long)(x->frames[i] - exe));
+        rt_logf("  host frame %2d: nx2saria+%#llx", i, (unsigned long long)(x->frames[i] - exe));
         if (g) rt_logf(" in lifted function f_%llx", (unsigned long long)g);
         rt_log_raw("\n", 1);
     }
@@ -443,7 +447,7 @@ static void crash_handler(const PlatCrash *x) {
     rtss_limit_crash();
     rt_rumble_stop_bounded();   // a controller on HD rumble stops (dispatch.c: 300 ms at most, SDL may be the crash)
     fflush(stderr);
-    prof_sampler_write();   // NX2NAVI_PROFILE: what was sampled until the crash (it gives up after 2 s if the sampler hangs)
+    prof_sampler_write();   // NX2SARIA_PROFILE: what was sampled until the crash (it gives up after 2 s if the sampler hangs)
     plat_exit(71);
 }
 
@@ -674,9 +678,9 @@ static int usage(const char *argv0) {
     return 2;
 }
 
-// Paths for a copied folder (tools/package_build.py). Per path: NX2NAVI_EXEFS, NX2NAVI_ROMFS, NX2NAVI_PROFILE_DIR, else the
-// folder next to nx2navi.exe (exefs with main.npdm, romfs with romfs.bin, any profile folder) if it is there, else the
-// path baked in at build time. A relative value is relative to nx2navi.exe's folder.
+// Paths for a copied folder (tools/package_build.py). Per path: NX2SARIA_EXEFS, NX2SARIA_ROMFS, NX2SARIA_PROFILE_DIR, else the
+// folder next to nx2saria.exe (exefs with main.npdm, romfs with romfs.bin, any profile folder) if it is there, else the
+// path baked in at build time. A relative value is relative to nx2saria.exe's folder.
 static char pp_exefs[PLAT_PATH_MAX * 2], pp_romfs[PLAT_PATH_MAX * 2], pp_profile[PLAT_PATH_MAX * 2];
 
 static const char *portable_path(const char *dir, const char *var, const char *sub, const char *must, char *out, size_t cap,
@@ -701,9 +705,9 @@ static void portable_paths(RtConfig *c) {
     char *cut = n && n < sizeof exe ? plat_last_sep(exe) : NULL;
     if (!cut) return;
     *cut = 0;
-    c->exefs = portable_path(exe, "NX2NAVI_EXEFS", "exefs", "main.npdm", pp_exefs, sizeof pp_exefs, c->exefs);
-    c->romfs = portable_path(exe, "NX2NAVI_ROMFS", "romfs", "romfs.bin", pp_romfs, sizeof pp_romfs, c->romfs);
-    c->profile = portable_path(exe, "NX2NAVI_PROFILE_DIR", "profile", NULL, pp_profile, sizeof pp_profile, c->profile);
+    c->exefs = portable_path(exe, "NX2SARIA_EXEFS", "exefs", "main.npdm", pp_exefs, sizeof pp_exefs, c->exefs);
+    c->romfs = portable_path(exe, "NX2SARIA_ROMFS", "romfs", "romfs.bin", pp_romfs, sizeof pp_romfs, c->romfs);
+    c->profile = portable_path(exe, "NX2SARIA_PROFILE_DIR", "profile", NULL, pp_profile, sizeof pp_profile, c->profile);
 }
 
 static int main_run(int argc, char **argv);
@@ -718,9 +722,9 @@ int main(int argc, char **argv) {
 }
 
 static int main_run(int argc, char **argv) {
-    mem_init();   // first: claim the guest address space before anything else can land there; reads nx2navi.ini
+    mem_init();   // first: claim the guest address space before anything else can land there; reads the settings file
     // The build that wrote the log, at its top: an attached log from another install or version shows at a glance.
-    rt_log("version: NX2navi %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,
+    rt_log("version: NX2Saria %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,
            rt_game_version % 10);
     // A restart from the settings menu (gfx_present.c gfx_window_closed) starts this process while the one it replaces
     // is still exiting: its log, RomFS and saves are free once it is gone.
@@ -731,8 +735,8 @@ static int main_run(int argc, char **argv) {
     parse_trace();
     prof_start();
     // Timed guest waits (kernel.c block_inner) sleep in whole milliseconds; at the default 15.6 ms tick a 1 ms wait
-    // costs a full tick. NX2NAVI_TIMER_1MS=0 keeps the default for comparison.
-    if (cfg_bool("NX2NAVI_TIMER_1MS")) plat_timer_1ms();
+    // costs a full tick. NX2SARIA_TIMER_1MS=0 keeps the default for comparison.
+    if (cfg_bool("NX2SARIA_TIMER_1MS")) plat_timer_1ms();
     // Before any thread pool counts the usable processors. Not in the shader preparation modes: they translate and
     // build on every processor the process was given, and the placement (perf.c cpu_placement) is for the game's own
     // threads, so narrowing them to one die would only make the preparation take longer.
@@ -741,8 +745,8 @@ static int main_run(int argc, char **argv) {
         if (!strcmp(argv[i], "--prepare-shaders") || !strcmp(argv[i], "--warm-shaders") ||
             !strcmp(argv[i], "--prepare-pipelines")) prepare = 1;
     if (!prepare) perf_cpu_start();
-    {   // NX2NAVI_POWER_FULL=0 leaves Windows' power throttling of an unfocused window in place (A/B runs)
-        const char *pf = cfg_get("NX2NAVI_POWER_FULL");
+    {   // NX2SARIA_POWER_FULL=0 leaves Windows' power throttling of an unfocused window in place (A/B runs)
+        const char *pf = cfg_get("NX2SARIA_POWER_FULL");
         if (!(pf && !strcmp(pf, "0"))) {
             int got = plat_power_full();
             rt_log("power: %s", got == 2 ? "full speed and the 1 ms timer kept when the window is not in front"
@@ -751,10 +755,10 @@ static int main_run(int argc, char **argv) {
         }
     }
     cfg = (RtConfig){.exefs = rt_default_exefs, .romfs = rt_default_romfs, .profile = rt_default_profile,
-                     .gpu = cfg_get("NX2NAVI_GPU")};
+                     .gpu = cfg_get("NX2SARIA_GPU")};
     portable_paths(&cfg);   // command-line paths below still win
     if (cfg.gpu && strcmp(cfg.gpu, "null") && strcmp(cfg.gpu, "vulkan")) {
-        rt_logf("NX2NAVI_GPU must be null or vulkan, not '%s'\n", cfg.gpu);
+        rt_logf("NX2SARIA_GPU must be null or vulkan, not '%s'\n", cfg.gpu);
         return 2;
     }
     const char *mode = NULL;
@@ -765,18 +769,18 @@ static int main_run(int argc, char **argv) {
             if (++i == argc) return usage(argv[0]);
             *path = argv[i];
         } else if (!strcmp(argv[i], "--audio-device")) {
-            // Same approach as every setting: NX2NAVI_AUDIO_DEVICE is read from the environment first (cfg.c raw_get).
+            // Same approach as every setting: NX2SARIA_AUDIO_DEVICE is read from the environment first (cfg.c raw_get).
             // cfg_init has read the settings by now, so the variable goes in through cfg_setenv, which makes the lookups
             // read again. An empty value would remove the variable (plat_setenv) and hand the choice back to
-            // nx2navi.ini, so "default" is the spelling for the system default.
+            // the settings file, so "default" is the spelling for the system default.
             if (++i == argc || !*argv[i]) return usage(argv[0]);
-            cfg_setenv("NX2NAVI_AUDIO_DEVICE", argv[i]);
+            cfg_setenv("NX2SARIA_AUDIO_DEVICE", argv[i]);
         } else if (!strcmp(argv[i], "--monitor")) {
-            // The settings read NX2NAVI_MONITOR from the environment first (cfg.c raw_get); cfg_setenv as above. An empty
-            // value would remove the variable (plat_setenv) and hand the choice back to nx2navi.ini, so "auto" is the
+            // The settings read NX2SARIA_MONITOR from the environment first (cfg.c raw_get); cfg_setenv as above. An empty
+            // value would remove the variable (plat_setenv) and hand the choice back to the settings file, so "auto" is the
             // spelling for "no monitor choice" on the command line.
             if (++i == argc || !*argv[i]) return usage(argv[0]);
-            cfg_setenv("NX2NAVI_MONITOR", argv[i]);
+            cfg_setenv("NX2SARIA_MONITOR", argv[i]);
         } else if (!strcmp(argv[i], "--seconds")) {
             char *end;
             if (++i == argc) return usage(argv[0]);
@@ -803,7 +807,7 @@ static int main_run(int argc, char **argv) {
         hang_watch_start();   // a report in the log when the frames or the GPU stop (hang_watch.c); never in tool modes
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
         vk_driver_cache_env();   // before the threads below and rt_boot's, any of which may load the Vulkan driver
-        discord_init();   // the Rich Presence thread (discord_rpc.c); it reads nx2navi.ini itself and idles while off
+        discord_init();   // the Rich Presence thread (discord_rpc.c); it reads the settings file itself and idles while off
         rt_boot();
         return 0;
     }
@@ -816,7 +820,7 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-crash-exit")) return probe_crash_exit();
     if (!strcmp(mode, "--probe-cfg")) return probe_cfg();
 #ifdef _WIN32
-    if (!strcmp(mode, "--probe-dpi")) return probe_dpi();   // the Win32 DPI awareness of nx2navi.manifest
+    if (!strcmp(mode, "--probe-dpi")) return probe_dpi();   // the Win32 DPI awareness of nx2saria.manifest
 #endif
     if (!strcmp(mode, "--probe-mods")) return probe_mods();
     if (!strcmp(mode, "--probe-discord")) return probe_discord();

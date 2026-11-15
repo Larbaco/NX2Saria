@@ -22,10 +22,10 @@ HARNESS = r'''
 #include <stdio.h>
 #include <string.h>
 
-static const char *vals[][2] = {{"NX2NAVI_A", "0"}, {"NX2NAVI_B", "1"}, {"NX2NAVI_C", "ab"}, {"NX2NAVI_D", "off"},
-                                {"NX2NAVI_E", "false"}, {"NX2NAVI_F", "0 ; a note"}, {"NX2NAVI_G", ""},
-                                {"NX2NAVI_I", "No"}, {"NX2NAVI_J", "OFF"}, {"NX2NAVI_K", "TRUE"}, {"NX2NAVI_L", "on"},
-                                {"NX2NAVI_M", "Yes"}, {"NX2NAVI_N", "enabled"}};
+static const char *vals[][2] = {{"NX2SARIA_A", "0"}, {"NX2SARIA_B", "1"}, {"NX2SARIA_C", "ab"}, {"NX2SARIA_D", "off"},
+                                {"NX2SARIA_E", "false"}, {"NX2SARIA_F", "0 ; a note"}, {"NX2SARIA_G", ""},
+                                {"NX2SARIA_I", "No"}, {"NX2SARIA_J", "OFF"}, {"NX2SARIA_K", "TRUE"}, {"NX2SARIA_L", "on"},
+                                {"NX2SARIA_M", "Yes"}, {"NX2SARIA_N", "enabled"}};
 static const char *cfg_get(const char *key) {
     for (size_t i = 0; i < sizeof vals / sizeof *vals; i++)
         if (!strcmp(vals[i][0], key)) return vals[i][1];
@@ -70,7 +70,7 @@ int main(void) {
     expect("lines for the words", logs, 0);
     expect("0 with a note", rt_knob("F", "0"), 1);
     expect("a line for it", logs, 1);
-    if (strcmp(last, "cfg: NX2NAVI_F = '0 ; a note' is not 0, 1, ab, on, off, true, false, yes or no: read as 1"))
+    if (strcmp(last, "cfg: NX2SARIA_F = '0 ; a note' is not 0, 1, ab, on, off, true, false, yes or no: read as 1"))
         printf("FAIL the line: %%s\n", last), fails++;
     for (int i = 0; i < 5; i++) rt_knob("F", "0");
     expect("read again", logs, 1);

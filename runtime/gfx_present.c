@@ -9,7 +9,7 @@
 // dirty (gfx_window_mark_dirty), the next present (or gfx_window_resize) rebuilds it.
 //
 // The in-game menu (ui/menu.h) draws over the game image in the present's command buffer, after the blit. The window's
-// size and fullscreen state are the settings NX2NAVI_WINDOW_SIZE and NX2NAVI_FULLSCREEN, which the back end applies at start
+// size and fullscreen state are the settings NX2SARIA_WINDOW_SIZE and NX2SARIA_FULLSCREEN, which the back end applies at start
 // and whenever a cfg_set changes them (window_settings_live -> gfx_window_apply_settings).
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +43,7 @@
 // ---- queue lock
 // Taking it hands the replay's held submissions to the queue first (vk_sync.c, submit batching), so whatever the
 // holder submits or waits for comes after them in queue order.
-// NX2NAVI_LOCK_TIME also names who holds it: a hold of QL_HOLD_NS or more goes into the frame-time summary under the
+// NX2SARIA_LOCK_TIME also names who holds it: a hold of QL_HOLD_NS or more goes into the frame-time summary under the
 // site that took the lock (perf.c perf_qlock_hold), beside the waits for it. A present had waited 48 ms for the lock
 // with no holder named anywhere. The taking functions are not inlined, so that their return address is the caller's
 // site, which is also the site the waits are reported under (plat_rmutex_lock_at). ql_site and ql_t0 are written by
@@ -97,7 +97,7 @@ void gfx_window_mark_dirty(void) { plat_xchg32(&g_dirty, 1); }
 // tells whether an alt-tab or an overlay came before the hang or followed it.
 void gfx_window_focus_changed(int in) {
     plat_xchg32(&g_focused, in);
-    oe_set_focus(in);                          // pinned to 1 by NX2NAVI_ASSUME_FOCUS inside
+    oe_set_focus(in);                          // pinned to 1 by NX2SARIA_ASSUME_FOCUS inside
     oe_push_message(OE_MSG_FOCUS_STATE_CHANGED);
     plat_inc32(&g_focus_msgs);
     struct tm t;
@@ -166,7 +166,7 @@ void gfx_window_closed(void) {
     rt_log("gfx: window closed; %s", restart ? "restarting" : "exiting");
     rt_exit_steps(RT_EXIT_SETTINGS);
     if (restart) {
-        cfg_setenv("NX2NAVI_REEXEC", NULL);   // the new process counts its own address-space retries (memory.c)
+        cfg_setenv("NX2SARIA_REEXEC", NULL);   // the new process counts its own address-space retries (memory.c)
         if (!plat_restart()) rt_log("gfx: the restart could not start the game again");
     }
     plat_exit(0);
@@ -177,13 +177,13 @@ void gfx_window_request_restart(void) {
     gfx_window_request_close();
 }
 
-// NX2NAVI_FULLSCREEN=1: borderless window over the monitor. NX2NAVI_WINDOW_SIZE=<w>x<h>: client area of the window (the
+// NX2SARIA_FULLSCREEN=1: borderless window over the monitor. NX2SARIA_WINDOW_SIZE=<w>x<h>: client area of the window (the
 // swapchain follows the window; the game image is scaled to it).
-int gfx_cfg_fullscreen(void) { return cfg_bool("NX2NAVI_FULLSCREEN"); }
+int gfx_cfg_fullscreen(void) { return cfg_bool("NX2SARIA_FULLSCREEN"); }
 
 void gfx_cfg_window_size(int *w, int *h) {
     int x = 0, y = 0;
-    if (sscanf(cfg_value("NX2NAVI_WINDOW_SIZE"), "%dx%d", &x, &y) != 2 || x < 640 || y < 360 || x > 7680 || y > 4320) {
+    if (sscanf(cfg_value("NX2SARIA_WINDOW_SIZE"), "%dx%d", &x, &y) != 2 || x < 640 || y < 360 || x > 7680 || y > 4320) {
         const CfgMeta *m = cfg_meta("WINDOW_SIZE");   // unparsable or out of range: the default
         if (!m || sscanf(m->def, "%dx%d", &x, &y) != 2) x = 1920, y = 1080;
     }
@@ -191,7 +191,7 @@ void gfx_cfg_window_size(int *w, int *h) {
     *h = y;
 }
 
-// The refresh rate of the window's monitor (NX2NAVI_FPS_LIMIT=display), measured by the back end's window thread when the
+// The refresh rate of the window's monitor (NX2SARIA_FPS_LIMIT=display), measured by the back end's window thread when the
 // window opens, lands on another monitor or the display mode changes; readers take the stored value.
 static volatile int32_t g_rate_mhz;   // millihertz, 0 unknown
 
@@ -206,7 +206,7 @@ double gfx_window_refresh_hz(void) { return plat_cas32(&g_rate_mhz, 0, 0) / 1000
 static PlatRMutex g_pl;
 static VkSwapchainKHR g_sc;
 static VkFormat g_sc_fmt;
-static int g_sc_hdr;                        // HDR10 (NX2NAVI_HDR, vk_hdr.c): PQ code values in Rec. 2020
+static int g_sc_hdr;                        // HDR10 (NX2SARIA_HDR, vk_hdr.c): PQ code values in Rec. 2020
 static VkExtent2D g_sc_ext;
 static int g_scaler;                        // the last present: 0 the game image 1:1, 1 scaled by the blit, 2 by FSR,
                                             // 3 shrunk by the blit and sharpened by RCAS
@@ -217,7 +217,7 @@ static VkSemaphore g_render_done[MAX_IMAGES];
 static VkCommandPool g_pool;
 static VkCommandBuffer g_cb[FRAMES];
 
-// The GPU timeline (NX2NAVI_TRACE=perf, vk.h vk_gtl_note): a timestamp pair per present slot around the present's command
+// The GPU timeline (NX2SARIA_TRACE=perf, vk.h vk_gtl_note): a timestamp pair per present slot around the present's command
 // buffer, read once the slot's fence is waited for again. Its gap before it shows a wait for the acquired image (the
 // submission waits on the acquire semaphore) as idle time with work queued before presents.
 static VkQueryPool pts_pool;
@@ -264,7 +264,7 @@ static int g_flip_on;            // vk_present_blit submitted the blit of swapch
 static uint32_t g_flip_idx;
 static uint64_t g_flip_frame;    // ... of this game frame, when a driver's low latency follows it (vk_lowlat.c); else 0
 
-// ---- NX2NAVI_FLIGHT thumbnails (flight.c; g_pl): each present also blits the swapchain image down into slot frame % g_th_n
+// ---- NX2SARIA_FLIGHT thumbnails (flight.c; g_pl): each present also blits the swapchain image down into slot frame % g_th_n
 // of a host-visible ring. A slot's tag names the frame it holds complete; recording a new frame clears the tag first,
 // and the tag is set once the fence of that present has signalled.
 #define TH_BYTES ((VkDeviceSize)FLIGHT_THUMB_W * FLIGHT_THUMB_H * 4)
@@ -371,13 +371,13 @@ int gfx_window_focused(void) { return g_focused; }
 unsigned gfx_window_focus_messages(void) { return (unsigned)g_focus_msgs; }
 
 // Present path (g_pl held): a settings change (cfg_version) reaches the window thread, which applies a changed size or
-// fullscreen; a changed NX2NAVI_VK_PRESENT or NX2NAVI_HDR rebuilds the swapchain at this present.
+// fullscreen; a changed NX2SARIA_VK_PRESENT or NX2SARIA_HDR rebuilds the swapchain at this present.
 static int g_sc_hdr_wanted;   // vk_hdr_wanted when the swapchain was made (create_swapchain)
 static int g_sc_ll_wanted;    // vk_lowlat_swapchain_wanted then
 static void window_settings_live(void) {
     static unsigned seen;
     static int started;
-    static char present[16];   // the NX2NAVI_VK_PRESENT the swapchain was made with
+    static char present[16];   // the NX2SARIA_VK_PRESENT the swapchain was made with
     unsigned v = cfg_version();
     // Frame generation that failed (vk_fg.cpp fail makes vk_fg_wanted 0 with no setting changed): its swapchain and
     // both contexts go at the next present, not when some other setting moves. Only this way round at every present: a
@@ -387,7 +387,7 @@ static void window_settings_live(void) {
     seen = v;
     res_fov_live();
     if (started && vk_fg_wanted() != vk_fg_active()) plat_xchg32(&g_dirty, 1);   // frame generation switched: its own swapchain
-    const char *e = cfg_value("NX2NAVI_VK_PRESENT");
+    const char *e = cfg_value("NX2SARIA_VK_PRESENT");
     if (!started || strncmp(e, present, sizeof present - 1)) {
         snprintf(present, sizeof present, "%s", e);
         if (started) plat_xchg32(&g_dirty, 1);
@@ -404,10 +404,10 @@ static void window_settings_live(void) {
 }
 
 // ---- swapchain
-static const char *g_present_got = "";   // the NX2NAVI_VK_PRESENT value of the mode the swapchain got; "" before one
+static const char *g_present_got = "";   // the NX2SARIA_VK_PRESENT value of the mode the swapchain got; "" before one
 
 static VkPresentModeKHR pick_present_mode(VkPhysicalDevice pd) {
-    const char *e = cfg_value("NX2NAVI_VK_PRESENT");
+    const char *e = cfg_value("NX2SARIA_VK_PRESENT");
     VkPresentModeKHR want = !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR
                           : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
     uint32_t n = 0;
@@ -431,7 +431,7 @@ static VkPresentModeKHR pick_present_mode(VkPhysicalDevice pd) {
     static int logged = -1;   // the mode last logged: a change from the menu shows in the log
     if ((int)got != logged) {
         logged = (int)got;
-        rt_log("gfx: present mode %s (NX2NAVI_VK_PRESENT=%s)",
+        rt_log("gfx: present mode %s (NX2SARIA_VK_PRESENT=%s)",
                got == VK_PRESENT_MODE_FIFO_RELAXED_KHR ? "fifo relaxed" : name, e);
     }
     return got;
@@ -521,7 +521,7 @@ static int create_swapchain(void) {
     if (nf > 64) nf = 64;
     vkGetPhysicalDeviceSurfaceFormatsKHR(c->phys, g_surface, &nf, fmts);
     if (!nf) return plat_xchg32(&g_dirty, 1), 0;
-    // UNORM: the blit writes the bytes the game wrote (no sRGB encode). NX2NAVI_HDR: HDR10 when the surface offers it.
+    // UNORM: the blit writes the bytes the game wrote (no sRGB encode). NX2SARIA_HDR: HDR10 when the surface offers it.
     VkSurfaceFormatKHR sf = fmts[0];
     g_sc_hdr_wanted = vk_hdr_wanted();
     int hdr = g_sc_hdr_wanted && vk_hdr_surface_format(fmts, nf, &sf), found = hdr;
@@ -946,7 +946,7 @@ static void save_capture(const char *path) {
 }
 
 // The rectangle {x, y, w, h} of a dw x dh swapchain image the cw x ch picture goes into: the whole image with
-// NX2NAVI_ASPECT=stretch, else (fit, the default) the largest one of the picture's own aspect ratio, centred (a 16:9 picture
+// NX2SARIA_ASPECT=stretch, else (fit, the default) the largest one of the picture's own aspect ratio, centred (a 16:9 picture
 // on the Steam Deck's 1280x800 screen gets bars of 40 rows above and below; a 16:9 picture in a 21:9 window, bars at the
 // sides).
 // Where the last present put the picture, as fractions of the swapchain (x, y, w, h; g_pic): menu_cursor.c's pointer
@@ -958,7 +958,7 @@ int gfx_picture_rect(float out[4]) {
 
 void gfx_fit_rect(int cw, int ch, int dw, int dh, int out[4]) {
     out[0] = out[1] = 0, out[2] = dw, out[3] = dh;
-    if (cw <= 0 || ch <= 0 || !strcmp(cfg_value("NX2NAVI_ASPECT"), "stretch")) return;
+    if (cw <= 0 || ch <= 0 || !strcmp(cfg_value("NX2SARIA_ASPECT"), "stretch")) return;
     if ((int64_t)dw * ch > (int64_t)dh * cw) out[2] = (int)(((int64_t)dh * cw + ch / 2) / ch);   // window wider: pillarbox
     else out[3] = (int)(((int64_t)dw * ch + cw / 2) / cw);                                        // taller: letterbox
     // A side of the window's parity keeps the two bars equal; a picture one pixel short of the window fills it
@@ -969,7 +969,7 @@ void gfx_fit_rect(int cw, int ch, int dw, int dh, int out[4]) {
 // ---- Movie overlay (ov_movie2.c): the latest decoded movie frame goes over the game image, fit to the window
 // with black bars, while frames keep coming (GFX_MOVIE_HOLD_NS after the last one it disappears). It made movies
 // visible before the game's own shaders translated; now the game draws them itself (its YUV compute pass, then the
-// upscaler fallback of vk_exec_draw.c), under its menus, so the overlay is off unless NX2NAVI_MOVIE_OVERLAY=1. One staging buffer per frame in flight: the CPU writes slot i only after
+// upscaler fallback of vk_exec_draw.c), under its menus, so the overlay is off unless NX2SARIA_MOVIE_OVERLAY=1. One staging buffer per frame in flight: the CPU writes slot i only after
 // that slot's fence (the present waits it before recording), the GPU copies it into one RGBA8 image.
 #define GFX_MOVIE_HOLD_NS 400000000ull
 static PlatMutex g_mv_lock = PLAT_MUTEX_INIT;
@@ -1027,7 +1027,7 @@ void gfx_movie_stop(void) {
 static int movie_overlay(VkCommandBuffer cb, int slot, VkImage dst) {
     static int off = -1;
     if (off < 0) {
-        const char *v = cfg_get("NX2NAVI_MOVIE_OVERLAY");
+        const char *v = cfg_get("NX2SARIA_MOVIE_OVERLAY");
         off = !(v && strcmp(v, "0"));
     }
     if (off) return 0;
@@ -1113,7 +1113,7 @@ static int movie_overlay(VkCommandBuffer cb, int slot, VkImage dst) {
 static int put_picture(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, int w, int h, const int rect[4], VkImage dst,
                        const int to[4], int general) {
     int cw = rect[2], ch = rect[3];
-    // Colour adjustment (NX2NAVI_COLOR_*, vk_color.c), or on an HDR10 swapchain the PQ encode (vk_hdr.c; the adjustment is
+    // Colour adjustment (NX2SARIA_COLOR_*, vk_color.c), or on an HDR10 swapchain the PQ encode (vk_hdr.c; the adjustment is
     // for SDR): a copy of the crop takes the game image's place below
     VkImage graded = !general ? VK_NULL_HANDLE : g_sc_hdr ? vk_hdr_encode(cb, slot, src, fmt, rect)
                                                          : vk_color_record(cb, slot, src, fmt, rect);
@@ -1121,7 +1121,7 @@ static int put_picture(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat 
     VkImage psrc = graded ? graded : src;
     VkFormat pfmt = graded ? VK_FORMAT_R16G16B16A16_SFLOAT : fmt;
     const int *prect = graded ? grect : rect;
-    // FSR (NX2NAVI_UPSCALER): EASU when the picture's rectangle is larger than the crop, the shrink and RCAS when it is
+    // FSR (NX2SARIA_UPSCALER): EASU when the picture's rectangle is larger than the crop, the shrink and RCAS when it is
     // smaller; else the bilinear blit
     int fsr = general ? vk_fsr_record(cb, slot, psrc, pfmt, graded ? cw : w, graded ? ch : h, prect, dst, to) : 0;
     if (!fsr && src) {
@@ -1225,7 +1225,7 @@ static VkImage hudless_record(VkCommandBuffer cb, unsigned slot, int w, int h, c
 
 
 // ---------------------------------------------------------------- DLSS Frame Generation through NGX (vk_ngxfg_*)
-// NX2NAVI_FRAMEGEN = dlss where Streamline does not run (every build but the Windows one; vk_ngxfg_wanted is 0 there
+// NX2SARIA_FRAMEGEN = dlss where Streamline does not run (every build but the Windows one; vk_ngxfg_wanted is 0 there
 // and none of this is reached). Each frame is composed into an image of its own (ng.bb) instead of a swapchain image.
 // At the end of the frame's command buffer DLSS Frame Generation makes the generated frames from it
 // (vk_ngxfg_evaluate, the multiplier less one) and the picture is copied aside. The presenter thread then shows them
@@ -1512,11 +1512,11 @@ static int ng_ready(void) {
     return 1;
 }
 
-// NX2NAVI_FG_MULT: 2 to 6, or dynamic: only the frames needed to reach the display's refresh rate at the rendered frame
+// NX2SARIA_FG_MULT: 2 to 6, or dynamic: only the frames needed to reach the display's refresh rate at the rendered frame
 // rate (240 Hz at 60 fps: 4x), between 2x and what the GPU allows, as NVIDIA describes its dynamic multi frame
 // generation; a new multiplier must hold for 30 frames before it is taken, so it does not flicker.
 static int ng_multiplier(int max) {
-    const char *v = cfg_value("NX2NAVI_FG_MULT");
+    const char *v = cfg_value("NX2SARIA_FG_MULT");
     int m;
     if (!strcmp(v, "dynamic")) {
         static int cur = 2, cand, held;
@@ -1722,7 +1722,7 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     int overlay = dst_view &&
                   (src ? menu_overlay_frame(__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), &mt, &menu_shot)
                        : menu_boot_frame(&mt));
-    // NX2NAVI_SHOT_EVERY=<s> with NX2NAVI_SHOT_DIR=<dir>: the presented frame as shot_<n>.png every s seconds
+    // NX2SARIA_SHOT_EVERY=<s> with NX2SARIA_SHOT_DIR=<dir>: the presented frame as shot_<n>.png every s seconds
     // (a check of what the window shows, for runs nobody watches)
     static char shot_path[1100];
     {
@@ -1730,12 +1730,12 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
         static uint64_t next_ns;
         static int n;
         if (every < 0) {
-            const char *e = cfg_get("NX2NAVI_SHOT_EVERY");
+            const char *e = cfg_get("NX2SARIA_SHOT_EVERY");
             every = e ? atof(e) : 0;
-            const char *after = cfg_get("NX2NAVI_SHOT_AFTER");   // seconds after the start before the first shot
+            const char *after = cfg_get("NX2SARIA_SHOT_AFTER");   // seconds after the start before the first shot
             next_ns = plat_now_ns() + (uint64_t)((every + (after ? atof(after) : 0)) * 1e9);
         }
-        const char *dir = cfg_get("NX2NAVI_SHOT_DIR");
+        const char *dir = cfg_get("NX2SARIA_SHOT_DIR");
         if (!menu_shot && every > 0 && dir && plat_now_ns() >= next_ns && n < 200) {
             snprintf(shot_path, sizeof shot_path, "%s/shot_%03d.png", dir, n++);
             menu_shot = shot_path;
@@ -1778,8 +1778,8 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     // DLSS's or FSR 3.1's output before the HUD was drawn over it) goes through the same steps into an image of the
     // swapchain's size, which frame generation compares with the presented one to find the HUD and leave it unwarped
     VkImage hudless = src ? hudless_record(cb, slot, w, h, rect, to, general) : VK_NULL_HANDLE;
-    static int show_hl = -1;   // NX2NAVI_FG_HUDLESS_SHOW=1 (test): the HUD-less picture on screen instead
-    if (show_hl < 0) show_hl = cfg_get("NX2NAVI_FG_HUDLESS_SHOW") && !strcmp(cfg_get("NX2NAVI_FG_HUDLESS_SHOW"), "1");
+    static int show_hl = -1;   // NX2SARIA_FG_HUDLESS_SHOW=1 (test): the HUD-less picture on screen instead
+    if (show_hl < 0) show_hl = cfg_get("NX2SARIA_FG_HUDLESS_SHOW") && !strcmp(cfg_get("NX2SARIA_FG_HUDLESS_SHOW"), "1");
     if (hudless && show_hl) {
         VkImageCopy cp = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                           .extent = {g_sc_ext.width, g_sc_ext.height, 1}};

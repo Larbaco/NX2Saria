@@ -25,14 +25,14 @@ The captures are in the game folder under `logs\captures`, one folder each, name
 | `frame.png` | The frame on screen as the window got it, the overlay included, without the capture's own note (an HDR picture converted to sRGB) |
 | `frames.tsv` | The last 600 presents before the press and the 30 after: frame, interval and replay time in ms |
 | `log-tail.txt` | The last 256 KB of the run's log |
-| `settings.ini` | Every setting that had a value (from `nx2navi.ini`, the menu or the environment) as `nx2navi.ini` lines, without the private ones (`runtime/cfg_private.h`) |
-| `NX2navi-save-<time>.zip` | The save the game would load next, as *Menu > Export save* writes it |
+| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg_private.h`) |
+| `NX2Saria-save-<time>.zip` | The save the game would load next, as *Menu > Export save* writes it |
 | `flags.tsv`, `texts.tsv` | The game's on/off flags and its 64-character texts, by the hash of their names |
 | `flight/` | With `flight = 1`: the flight recorder's dump of the same moment (`tools/flight_view.py` reads it) |
 
 `capture.txt`:
 
-- `[capture]`: `number`, `name`, `time`, `time_utc`, `trigger` (`F8`, `NX2NAVI_CAPTURE_AT`, `replay`), the NX2navi and
+- `[capture]`: `number`, `name`, `time`, `time_utc`, `trigger` (`F8`, `NX2SARIA_CAPTURE_AT`, `replay`), the NX2Saria and
   game versions, the presented `frame`, `run_seconds`, `menu_open`.
 - `[place]`: `area` (the game's own name, which says child or adult for the outdoor areas: `HyruleField_Adult`),
   `player_pos` in metres (`none` at the title screen and while loading), `player_rot` (Link's 3x3 rotation by rows) and
@@ -68,7 +68,7 @@ game folder). The script
 1. refuses to start while a game is running (one game at a time);
 2. makes a throwaway profile: the game's own profile without its saves, with the capture's save as a waiting import,
    which the game makes the save when it starts;
-3. starts the game with `NX2NAVI_CAPTURE_REPLAY=<the capture's folder>`, in a window of the capture's size that takes
+3. starts the game with `NX2SARIA_CAPTURE_REPLAY=<the capture's folder>`, in a window of the capture's size that takes
    neither the focus nor your input (`--foreground` and `--fullscreen` change that), co-op and Discord off;
 4. waits while the game presses A through the title screen and the file menu, teleports to the capture's area,
    walks Link to where he stood, puts the free camera where the camera was and takes a capture of its own;
@@ -81,9 +81,9 @@ once with `--set`. `--hold <seconds>` keeps the game open after its capture; `--
 game, for a bug that is about the camera itself. Any other test setting can ride along with `--set` (`DUMP`, `SHOT_DIR`
 and `SHOT_EVERY`, `DBG_TEST`, `TRACE`).
 
-What the game does in such a run (`NX2NAVI_CAPTURE_REPLAY`, environment only):
+What the game does in such a run (`NX2SARIA_CAPTURE_REPLAY`, environment only):
 
-- The capture's `settings.ini` stands in for `nx2navi.ini`, which is neither read nor written; the environment still
+- The capture's `settings.ini` stands in for `nx2saria.ini`, which is neither read nor written; the environment still
   wins over it. The log's first lines say so and list the settings.
 - Until Link appears the pad presses A (four reads in every hundred).
 - Three seconds later the game changes area as its own doors do (`dbg_warp`), to the start position of the capture's
@@ -95,7 +95,7 @@ What the game does in such a run (`NX2NAVI_CAPTURE_REPLAY`, environment only):
   When he does not move at all for two seconds, the game holds him (a conversation that began where the teleport
   arrived, on a save that had not been there): A is pressed until he moves, and the walk is asked for again.
 - The free camera is turned on standing (the pad still plays the game) and put at `camera_pos`, `camera_yaw`,
-  `camera_pitch`. `NX2NAVI_CAPTURE_REPLAY_CAMERA=0` leaves the game's camera.
+  `camera_pitch`. `NX2SARIA_CAPTURE_REPLAY_CAMERA=0` leaves the game's camera.
 - Three seconds later the log says `capture: replay of <name> ready: ...` with how far Link is from the captured
   place, and the run takes its own capture (`trigger = replay`), whose `capture.txt` adds `replay_of`,
   `replay_player_off_metres`, `replay_walk` and `replay_camera`.
@@ -113,18 +113,18 @@ the save starts took 45 s from start to its own capture, with Link 0.4 to 0.5 m 
 camera's position and angles equal to the last digit; one that teleports to another area and ends a conversation on
 the way took about 100 s.
 
-Without the script: set `NX2NAVI_CAPTURE_REPLAY` to the folder and start the game with `--profile <a copy of a
-profile>`; `NX2NAVI_CAPTURE_DIR` says where the run's own capture goes (default `<capture>/replays`).
+Without the script: set `NX2SARIA_CAPTURE_REPLAY` to the folder and start the game with `--profile <a copy of a
+profile>`; `NX2SARIA_CAPTURE_DIR` says where the run's own capture goes (default `<capture>/replays`).
 
 ## Test settings
 
-Environment or `nx2navi.ini`, for runs without a keyboard:
+Environment or `nx2saria.ini`, for runs without a keyboard:
 
-- `NX2NAVI_CAPTURE_AT=<frame>[,<frame>...]`: a capture at each of those presented frames (up to 16).
-- `NX2NAVI_CAPTURE_DIR=<folder>`: the folder captures go to, in place of `logs/captures`.
+- `NX2SARIA_CAPTURE_AT=<frame>[,<frame>...]`: a capture at each of those presented frames (up to 16).
+- `NX2SARIA_CAPTURE_DIR=<folder>`: the folder captures go to, in place of `logs/captures`.
 
 ## The flight recorder
 
 `flight = 1` keeps a ring of the last frames with a small picture each (`runtime/flight.c`). Its dump on F8 now
 belongs to the capture: it goes to the capture's `flight` folder. Its other dumps (a frame over `flight_spike_ms`,
-`NX2NAVI_FLIGHT_AT`, `NX2NAVI_FLIGHT_EVERY`) go to the `flight` folder beside the game folder as before.
+`NX2SARIA_FLIGHT_AT`, `NX2SARIA_FLIGHT_EVERY`) go to the `flight` folder beside the game folder as before.

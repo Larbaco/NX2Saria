@@ -249,22 +249,22 @@ static void figure_load_locked(const uint8_t *saved, uint64_t saved_size, bool d
     g_fig.decrypted = dec;
 }
 
-// NX2NAVI_AMIIBO_WRITEBACK: "1" writes the game's changes back into the dump file. Read through cfg_get, which needs no
+// NX2SARIA_AMIIBO_WRITEBACK: "1" writes the game's changes back into the dump file. Read through cfg_get, which needs no
 // settings-table row and takes no lock.
 static bool writeback_on(void) {
-    const char *v = cfg_get("NX2NAVI_AMIIBO_WRITEBACK");
+    const char *v = cfg_get("NX2SARIA_AMIIBO_WRITEBACK");
     return v && *v && strcmp(v, "0") != 0;
 }
 
-// The keys file: NX2NAVI_AMIIBO_KEYS, else <NX2NAVI_AMIIBO_DIR, or ./amiibo>/key_retail.bin. The keys loaded before are
+// The keys file: NX2SARIA_AMIIBO_KEYS, else <NX2SARIA_AMIIBO_DIR, or ./amiibo>/key_retail.bin. The keys loaded before are
 // dropped either way (amiibo_keys_load). Holding g_amiibo_io_lock, not g_amiibo_lock.
 static bool keys_load_io(void) {
     char path[1100];
-    const char *k = cfg_get("NX2NAVI_AMIIBO_KEYS");
+    const char *k = cfg_get("NX2SARIA_AMIIBO_KEYS");
     if (k && *k) {
         snprintf(path, sizeof path, "%s", k);
     } else {
-        const char *dir = cfg_get("NX2NAVI_AMIIBO_DIR");
+        const char *dir = cfg_get("NX2SARIA_AMIIBO_DIR");
         snprintf(path, sizeof path, "%s/key_retail.bin", dir && *dir ? dir : "./amiibo");
     }
     g_keys_tried = true;

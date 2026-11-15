@@ -1,11 +1,9 @@
-// Discord Rich Presence: "Playing NX2navi" with the elapsed play time in the player's Discord status, through
+// Discord Rich Presence: an activity with elapsed play time in the player's Discord status, through
 // the local IPC of a running Discord client (platform.h's plat_ipc_*). Nothing leaves the machine but the activity
-// itself, and nothing is sent while NX2NAVI_DISCORD_RPC is off (it is on by default, and does nothing without a
-// Discord client running on the same PC). NX2NAVI_DISCORD_APP_ID names the application whose name ("Playing <name>")
-// and artwork Discord shows, NX2NAVI_DISCORD_IMAGE the key of its uploaded art asset; both default to discord_app.h,
-// the one place the NX2navi application's id is written, and nx2navi.ini's discord_app_id and discord_image override
-// them. With no application id at all the thread stays idle and logs that once: there is nothing to show the status
-// under.
+// itself, and nothing is sent while NX2SARIA_DISCORD_RPC is off (it is on by default, and does nothing without a
+// Discord client running on the same PC). NX2SARIA_DISCORD_APP_ID names the player's application whose registered
+// name and artwork Discord shows; NX2SARIA_DISCORD_IMAGE is its uploaded art key. Both may also be set in either
+// nx2saria.ini or a legacy nx2navi.ini. No app ID is built in. With no ID the thread stays idle and logs that once.
 //
 // One host thread owns the connection and never holds a virtual core (kernel.c: host work runs without one). It
 // re-reads the settings when cfg_version changes (a menu change reaches it within half a second), connects to the
@@ -55,8 +53,8 @@ static int valid_image_key(const char *s) {
 }
 
 // The setting's value, or its default when the value does not fit the protocol (logged: the player sees why their
-// own app does not show), or "" when the default does not fit either (an application id discord_app.h leaves
-// empty). Called on the presence thread and by the probe, after cfg_version changed or once.
+// own app does not show), or "" when the default does not fit either. Called on the presence thread and by the probe,
+// after cfg_version changed or once.
 static void read_setting(const char *name, char *out, size_t cap, int (*valid)(const char *)) {
     const char *v = cfg_value(name), *def = cfg_meta(name)->def;
     if (valid(v)) {
@@ -65,13 +63,13 @@ static void read_setting(const char *name, char *out, size_t cap, int (*valid)(c
     }
     snprintf(out, cap, "%s", valid(def) ? def : "");
     if (*v && strcmp(v, def))
-        rt_log("discord: %s does not fit what the Rich Presence protocol takes; using %s", name + strlen("NX2NAVI_"),
+        rt_log("discord: %s does not fit what the Rich Presence protocol takes; using %s", name + strlen("NX2SARIA_"),
                *out ? out : "none");
 }
 
 static void log_no_app_id(void) {
-    rt_log("discord: no application id: set discord_app_id in nx2navi.ini, or NX2NAVI_DISCORD_APP_ID_DEFAULT in "
-           "runtime/discord_app.h, to the id of the Discord application named NX2navi");
+    rt_log("discord: no application id: set discord_app_id in nx2saria.ini or NX2SARIA_DISCORD_APP_ID in the "
+           "environment (legacy NX2NAVI_DISCORD_APP_ID is also accepted); Discord shows the name registered to your ID");
 }
 
 static void le32(uint8_t *at, uint32_t v) {
@@ -179,7 +177,7 @@ static int send_activity(PlatIpc *p, const char *image) {
     snprintf(json, sizeof json,
              "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"%u\",\"args\":{\"pid\":%lu,\"activity\":{\"details\":\"Game "
              "%d.%d.%d \\u00b7 Recomp %.*s\",\"timestamps\":{\"start\":%llu},\"assets\":{\"large_image\":\"%s\","
-             "\"large_text\":\"NX2navi %s\"}}}}",
+             "\"large_text\":\"NX2Saria %s\"}}}}",
              next_nonce(), (unsigned long)plat_process_id(), v / 100, v / 10 % 10, v % 10, port_len, rt_port_version,
              (unsigned long long)start, image, rt_port_version);
     if (!write_frame(p, OP_FRAME, json)) return 0;
@@ -194,8 +192,8 @@ static void discord_main(void *arg) {
     (void)arg;
     unsigned seen = 0;
     char app_id[APP_ID_CAP], image[IMAGE_KEY_CAP];
-    read_setting("NX2NAVI_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
-    read_setting("NX2NAVI_DISCORD_IMAGE", image, sizeof image, valid_image_key);
+    read_setting("NX2SARIA_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
+    read_setting("NX2SARIA_DISCORD_IMAGE", image, sizeof image, valid_image_key);
     PlatIpc *ipc = NULL;
     uint64_t retry_at = 0, send_at = 0;
     int said_no_client = 0, said_no_app = 0;
@@ -209,8 +207,8 @@ static void discord_main(void *arg) {
             char was_id[APP_ID_CAP], was_image[IMAGE_KEY_CAP];
             memcpy(was_id, app_id, sizeof was_id);
             memcpy(was_image, image, sizeof was_image);
-            read_setting("NX2NAVI_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
-            read_setting("NX2NAVI_DISCORD_IMAGE", image, sizeof image, valid_image_key);
+            read_setting("NX2SARIA_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
+            read_setting("NX2SARIA_DISCORD_IMAGE", image, sizeof image, valid_image_key);
             if (strcmp(was_id, app_id)) {
                 if (ipc) plat_ipc_close(ipc), ipc = NULL;
                 retry_at = 0;
@@ -219,7 +217,7 @@ static void discord_main(void *arg) {
                 send_at = 0;
             }
         }
-        if (!cfg_bool("NX2NAVI_DISCORD_RPC")) {
+        if (!cfg_bool("NX2SARIA_DISCORD_RPC")) {
             if (ipc) plat_ipc_close(ipc), ipc = NULL;
             plat_sleep_ms(500);
             continue;
@@ -267,8 +265,8 @@ int probe_discord(void) {
     static int fails;
 #define CHECK(c, what) do { if (!(c)) { fails++; fprintf(stderr, "FAIL discord: %s\n", what); } } while (0)
     char app_id[APP_ID_CAP], image[IMAGE_KEY_CAP];
-    read_setting("NX2NAVI_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
-    read_setting("NX2NAVI_DISCORD_IMAGE", image, sizeof image, valid_image_key);
+    read_setting("NX2SARIA_DISCORD_APP_ID", app_id, sizeof app_id, valid_app_id);
+    read_setting("NX2SARIA_DISCORD_IMAGE", image, sizeof image, valid_image_key);
     if (!app_id[0]) {
         log_no_app_id();
         fprintf(stderr, "discord: probe skipped: no application id (runtime/discord_app.h or discord_app_id)\n");

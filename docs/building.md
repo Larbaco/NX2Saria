@@ -86,7 +86,7 @@ of them.
    ```
 
 5. Lift the modules to C, write the RomFS overlay (the frame-rate fix), then compile and link
-   `build\<ver>\nx2navi.exe`:
+   `build\<ver>\nx2saria.exe`:
 
    ```powershell
    .venv\Scripts\python recomp\gen.py --exefs build\extracted\<ver>\exefs --out generated\<ver> --patches recomp\patches-<ver>.txt
@@ -111,7 +111,7 @@ of them.
    dispatched by a runtime CPU check stops the build. `python tests\check_isa_test.py` builds the files with such
    functions both ways and checks that they pass.
 
-   `gen.py` sizes its emit pool from the CPU count and the free memory; `--jobs N` sets it, and so does the environment variable `NX2NAVI_LIFT_JOBS=N`, which the installer's lift step honours too (it has no `--jobs`). When a worker runs out of memory, the pool restarts with half the workers (`emit: out of memory with N workers, retrying with M`), down to one; only an out-of-memory error with one worker fails the step.
+   `gen.py` sizes its emit pool from the CPU count and the free memory; `--jobs N` sets it, and so does the environment variable `NX2SARIA_LIFT_JOBS=N`, which the installer's lift step honours too (it has no `--jobs`). When a worker runs out of memory, the pool restarts with half the workers (`emit: out of memory with N workers, retrying with M`), down to one; only an out-of-memory error with one worker fails the step.
 
    Lifting takes about 15 s, a clean compile about 200 s on 24 threads; later builds recompile only what changed.
    A compiler cache in front of clang shortens it further: with `SCCACHE` set to an sccache executable, `build_game.py`
@@ -126,7 +126,7 @@ of them.
    `SDL3.dll`, `libiconv-2.dll` and `libopus-0.dll` next to the exe.
    For Xbox button prompts, run `make_romfs_patches.py` twice more, with `--prompts xbox` and `--prompts xbox-label`:
    they write `build\<ver>\romfs-patches-xbox` and `romfs-patches-xbox-label` ([controls.md](controls.md), "Xbox
-   button prompts"), which `build_game.py` copies next to `nx2navi.exe` like `romfs-patches`. `--prompts pc` writes
+   button prompts"), which `build_game.py` copies next to `nx2saria.exe` like `romfs-patches`. `--prompts pc` writes
    `romfs-patches-pc`, the keyboard and mouse prompts ([controls.md](controls.md), "PC button prompts").
 
 6. Prepare the shaders (once per build folder and translator). It needs `refs\MacNativeGames` (`tools\fetch_refs.sh`)
@@ -138,19 +138,19 @@ of them.
 
    Without this step the first launch compiles shaders and pipelines during play and stutters until the caches fill.
    The AMD driver keeps its pipeline cache per exe path and holds a limited amount: preparing another build folder can
-   evict this one's. `nx2navi.exe --warm-shaders` rebuilds it from the shader cache. A driver update empties the
+   evict this one's. `nx2saria.exe --warm-shaders` rebuilds it from the shader cache. A driver update empties the
    driver's cache too, and a change to what a stage library is built with gives every library another entry in it.
    So an update that carries the prepared shaders over runs `--warm-shaders` (`tools/make_game.py`
    `warm_driver_cache`: seconds while the libraries are there, minutes when they are not), and the game itself checks
    at every start: it builds a sample of the prepared fragment libraries and, when their median time says the cache
    is cold, builds the whole prepared list into the driver's cache again on idle-priority threads while it runs
-   (`runtime/vk_pipeline.c` `lw_start`, `NX2NAVI_LIB_WARM`; `shader-warm.txt` next to the caches says where that
+   (`runtime/vk_pipeline.c` `lw_start`, `NX2SARIA_LIB_WARM`; `shader-warm.txt` next to the caches says where that
    stands). With the cache cold every pipeline a draw first needs compiles in play: on an RX 7900 XT a library took
    93 ms (vertex) and 242 ms (fragment) on average against 0.3 and 0.6 ms from the cache, and a first walk through a
    village skipped 11,180 draws and made 94 draws wait 5.5 s in all, against 1,605 skipped (1,473 of them in the
    scene's first frames) and 60 ms of waits with the cache warm.
    A frame that still lacks draws when it is presented is not shown: the previous picture stays on screen
-   (`runtime/vk_backend.c` `frame_hold`, `NX2NAVI_FRAME_HOLD_MS`, an allowance of 120 ms that fills again at an eighth
+   (`runtime/vk_backend.c` `frame_hold`, `NX2SARIA_FRAME_HOLD_MS`, an allowance of 120 ms that fills again at an eighth
    of the clock's rate). On a first walk through a village with nothing recorded, 21 of the 23 such frames were held
    back; in a player's session a hit by a boulder had shown one black frame, its lighting pass skipped after 50 ms.
    When the driver's shader compiler crashes on a variant (NVIDIA 615.78.08 on an RTX 5080 does, issue #30),
@@ -173,10 +173,10 @@ of them.
    `tools\data\pipeline_list.bin` (`data\pipeline_list.bin` in a release folder, or `--pipeline-list`), adds the
    shader variants it names to the seed and writes its records next to the game as `seed-pipeline-keys.bin`, and
    `--prepare-shaders` builds every one of them into the pipeline cache and the driver's (`runtime/vk_pipeline.c`
-   `seed_pipelines`; `NX2NAVI_PREPARE_PIPELINES=mesh` builds only the mesh pipelines). Every start then counts the
+   `seed_pipelines`; `NX2SARIA_PREPARE_PIPELINES=mesh` builds only the mesh pipelines). Every start then counts the
    list as known pipelines beside the folder's own and builds them before play, from those caches (`keys_open_seed`;
-   `pipe_seed = 0` in `nx2navi.ini` leaves the list out). `--warm-shaders` builds them again, and
-   `nx2navi.exe --prepare-pipelines` does that step alone. The list is
+   `pipe_seed = 0` in `nx2saria.ini` leaves the list out). `--warm-shaders` builds them again, and
+   `nx2saria.exe --prepare-pipelines` does that step alone. The list is
    derived from game data: it is not in the repository (`tools/check_content.py` refuses it), and a kit, a launcher
    release or an installer release takes one with `--pipeline-list` (`tools/make_kit.py`, `make_launcher.py`,
    `make_release.py`). A list belongs to the record layout of the runtime that wrote it; another runtime says so and
@@ -188,21 +188,21 @@ of them.
    their next use) and runs `spirv-val` on the rest; `--every N` samples, `--out FILE` lists the failed ones. It writes
    nothing to the cache. `python tests\validate_shader_cache_test.py` checks the tool on a made-up cache.
 
-7. Run. The game keeps running when its window loses the focus (`assume_focus = 1` in `nx2navi.ini`, the default; the
+7. Run. The game keeps running when its window loses the focus (`assume_focus = 1` in `nx2saria.ini`, the default; the
    Game tab switches it). With 0 it pauses, as it does on the Switch when Home is pressed.
 
    ```powershell
-   build\<ver>\nx2navi.exe
+   build\<ver>\nx2saria.exe
    ```
 
-Settings live in `nx2navi.ini` next to `nx2navi.exe` ([nx2navi.ini.example](../nx2navi.ini.example) lists them). Saves go to
+Settings live in `nx2saria.ini` next to `nx2saria.exe` ([nx2saria.ini.example](../nx2saria.ini.example) lists them; an older `nx2navi.ini` is still read, see [Names and compatibility](branding.md)). Saves go to
 `build\profile` for `v121` and `build\profile-<ver>` for other versions (`build_game.py --profile` changes it).
 
 ### Portable folder
 
 `.venv\Scripts\python tools\package_build.py --version <ver>` writes `build\<ver>-portable`, which runs on another of
 your machines without MSYS2, Python or .NET. `romfs.bin` stays out unless you pass `--with-romfs`; otherwise put it in
-`romfs\` next to the exe or point `NX2NAVI_ROMFS` at its folder. Run `nx2navi.exe --prepare-shaders` once in the copied
+`romfs\` next to the exe or point `NX2SARIA_ROMFS` at its folder. Run `nx2saria.exe --prepare-shaders` once in the copied
 folder. The folder holds code and data derived from your game: for your own machines only.
 
 ### Profile-guided build
@@ -218,7 +218,7 @@ Game 1.1.1 is built by `tools/make_game.py`, on the player's PC through the laun
 compile step's log. The profile is left out, and the build is the one a kit without a profile makes (the lifted code
 at -O1), when:
 
-- the kit has no profile, or `NX2NAVI_PGO=off` is in the environment (`make_game.py --pgo off`);
+- the kit has no profile, or `NX2SARIA_PGO=off` is in the environment (`make_game.py --pgo off`);
 - its record (`pgo-v111.json`) is missing or names another `recomp/` than the kit's (`make_game.py` `pgo_record`).
   Functions are matched by name and control-flow hash, so a function whose C changed loses its counts without a
   warning; the record holds `recomp/` by content (the lifter's `.py` files and `patches-v111.txt`), and any change
@@ -254,7 +254,7 @@ a clean `recomp/`.
    python tools\make_game.py --rebuild --out <game> --msys <ucrt64> --pgo gen
    ```
 
-   From the launcher instead: start `NX2navi.exe` with `NX2NAVI_PGO=gen` in its environment and choose Rebuild the
+   From the launcher instead: start `NX2Saria.exe` with `NX2SARIA_PGO=gen` in its environment and choose Rebuild the
    Game; the launcher hands the variable on to its build.
 3. Delete `<game>\pgo\*.profraw` left from an earlier instrumented build, then play: start `<game>\ocarina.exe` (or
    Play in the launcher) and play for 20 to 30 minutes with the settings players have by default. Cover the title
@@ -281,8 +281,8 @@ a clean `recomp/`.
    ```
 
 6. Compare the two builds with the runtime's own profiler (`runtime/prof.h`, `runtime/prof_win.c`), in the same
-   place from the same save, the camera left alone, with the same settings. In `<game>\nx2navi.ini` (or as
-   `NX2NAVI_TRACE`, `NX2NAVI_PROFILE` and `NX2NAVI_PROFILE_FRAMES` in the environment):
+   place from the same save, the camera left alone, with the same settings. In `<game>\nx2saria.ini` (or as
+   `NX2SARIA_TRACE`, `NX2SARIA_PROFILE` and `NX2SARIA_PROFILE_FRAMES` in the environment):
 
    ```ini
    trace = perf
@@ -290,14 +290,14 @@ a clean `recomp/`.
    profile_frames = 7200-10800
    ```
 
-   `profile` (`NX2NAVI_PROFILE`) samples every thread each millisecond; `profile_frames` limits that to the presented
+   `profile` (`NX2SARIA_PROFILE`) samples every thread each millisecond; `profile_frames` limits that to the presented
    frames 7200 to 10800, the third minute at 60 frames a second, and the profile is written when the window ends, so
    be in place before it starts. Use `after.prof` for the second build. Then, for each, before the next build
    replaces `ocarina.map` (the report names the functions from the map of the build that was sampled):
 
    ```powershell
    python tools\prof_report.py <game>\logs\before.prof <game>\build-cache\ocarina.map
-   python tools\perf_summary.py <game>\logs\nx2navi.log 7200 10800
+   python tools\perf_summary.py <game>\logs\nx2saria.log 7200 10800
    ```
 
    At the default 60 frames a second both builds draw the same frames, so the sample counts of `guest (f_*)` (the
@@ -312,7 +312,7 @@ puts it there. `python tests\pgo_build_test.py` checks which flags a build takes
 profile, for a record of another tree and for a profile the compiler refuses, with a stand-in for the compiler.
 
 The other game versions build with `tools/build_game.py`: `--pgo gen` with an llvm-mingw toolchain makes the
-instrumented `nx2navi.exe`, which writes `<out>\pgo\*.profraw`; `tools\pgo.py merge <out> --version <ver>` merges
+instrumented `nx2saria.exe`, which writes `<out>\pgo\*.profraw`; `tools\pgo.py merge <out> --version <ver>` merges
 them, and `--pgo build\pgo\pgo-<ver>.profdata` compiles with the result. `make_release.py` ships every profile of
 `build\pgo` in `data\`, where the installer's build takes the one of its update, and warns when a record names
 another `recomp/` tree than the one released.
@@ -342,8 +342,8 @@ Requirements:
   into `toolchain/vulkan-headers/` on first use, check its hash and put it ahead of the system's (`tools/vulkan_pin.py`,
   `build_game.py` `vulkan_include`).
 
-The steps are the Windows ones with POSIX paths: `.venv/bin/python` in place of `.venv\Scripts\python`, and `nx2navi` in
-place of `nx2navi.exe`. `build_game.py` takes clang, lld and Ninja from PATH (or the ones in `<dir>/bin` with
+The steps are the Windows ones with POSIX paths: `.venv/bin/python` in place of `.venv\Scripts\python`, and `nx2saria` in
+place of `nx2saria.exe`. `build_game.py` takes clang, lld and Ninja from PATH (or the ones in `<dir>/bin` with
 `--toolchain <dir>`) and links against the system libraries, with `libstdc++` static and an `$ORIGIN` rpath;
 `build_hactool.py` builds `hactool` with make. `tools/prepare_shaders.py` reads the shader list from
 `refs/MacNativeGames` at `origin/HEAD`, which must be the pinned commit with its history (the list format changed later).
@@ -375,9 +375,9 @@ Forest (1.1.1, RTX 4090) that costs about 1 ms a frame (copy-in 0.5 ms, write-ba
 5 GB. The GPU's bytes reach guest memory in the fence's completion callback, later than an import's, so the wait
 after a frame's first submission covers the write-backs there (`runtime/vk_sync.c`, "the executed timeline"): the game
 rewrites what those passes wrote without a fence, and a write-back that landed after the rewrite left the GPU adding
-light onto its own last output, the whole scene brighter for a frame. `NX2NAVI_SHADOW=1` turns it on under Windows too. The Steam Deck's RADV has `VK_EXT_external_memory_host` as
+light onto its own last output, the whole scene brighter for a frame. `NX2SARIA_SHADOW=1` turns it on under Windows too. The Steam Deck's RADV has `VK_EXT_external_memory_host` as
 well: the shadow copies are chosen for the measured cost above, not for a missing extension. NVIDIA's own driver on Linux
-imports instead (`NX2NAVI_SHADOW=1` brings the copies back): it imports guest memory without that cost, so there the
+imports instead (`NX2SARIA_SHADOW=1` brings the copies back): it imports guest memory without that cost, so there the
 copies are only the slower path. In Kokiri Forest on 0.7.1 (RTX 4090, driver 615.78), imports with VRAM mirrors ran at
 51.9 frames a second and the copies at 27.4; on that version the copies also flickered between two looks almost every
 frame, which the wait for the write-backs under shadow storage (`vk_sync_exec_wait`) has since addressed.
@@ -388,7 +388,7 @@ mappings of one memfd, `/dev/udmabuf` makes dma-bufs of page ranges of it, and t
 (`VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`). A dma-buf pins its pages once and is not tied to the
 process's page tables, so the write watch and the freezes leave the GPU's mapping alone, and nothing is copied. RADV
 puts every imported memory object into every submission (about 0.6 us each), and the game keeps over 4,000 pools, so
-pools share their imports: guest addresses are cut into spans of 64 MiB (`NX2NAVI_DMABUF_MB`), and a pool is a buffer
+pools share their imports: guest addresses are cut into spans of 64 MiB (`NX2SARIA_DMABUF_MB`), and a pool is a buffer
 bound into its span's memory at its offset. A new span is cut back at the spans already there, so spans overlap only
 where a pool itself lies across an older span's edge: amdgpu counts every span's pages in its GTT use, an overlap twice.
 A span pins all of its pages, those the game never touched included, until some frames after its last pool is gone. It
@@ -399,8 +399,8 @@ dma-buf (where it is lower, `udmabuf.size_limit_mb=1024` on the kernel command l
 extensions, and NVIDIA's kernel module not loaded: NVIDIA's own driver imports host pointers without amdgpu's cost, as
 above. A start-up probe imports one page of guest memory as the pools will be; where anything is missing or refused, the
 pools keep their shadow copies and the log says why (`mem: dma-buf imports off`, `mem: guest memory is not a memfd's`).
-`NX2NAVI_DMABUF=0` keeps the copies, and `NX2NAVI_DMABUF=1` makes guest memory a memfd's even where NVIDIA's module is
-loaded; both only from the environment, since the reservations are made before `nx2navi.ini` is read. `NX2NAVI_SHADOW=1`
+`NX2SARIA_DMABUF=0` keeps the copies, and `NX2SARIA_DMABUF=1` makes guest memory a memfd's even where NVIDIA's module is
+loaded; both only from the environment, since the reservations are made before `nx2saria.ini` is read. `NX2SARIA_SHADOW=1`
 still forces the copies. In Kokiri Forest (1.1.1, RX 6800 XT, Mesa 26.2) the imports ran at 60.7 frames a second and the
 copies at 40.3, in Hyrule Field at 55.7 and 42.4; the spans then held 8.0 to 9.6 GiB, and amdgpu counted 8.6 to 10.1 GiB
 of its 15.8 GiB host heap in use, against 5.2 to 5.6 GiB with the copies, which are memory of their own beside guest
@@ -416,27 +416,27 @@ not include. What a shader stores through the table lands in the shadow copy
 and in the pool's VRAM mirror, and no binding names it, so nothing notes it as a GPU write: it does not come back to
 guest memory, and the next whole copy-in of its page (the CPU rewrites other words of the same records) puts guest
 memory's stale bytes back over it in both copies. In the runs measured so far that copy-in always came before the
-frame's stores, which does no harm. `NX2NAVI_SHADOW_TABLE_STORES=1` keeps the stores instead: the copy-ins then keep a
+frame's stores, which does no harm. `NX2SARIA_SHADOW_TABLE_STORES=1` keeps the stores instead: the copy-ins then keep a
 hash of each page they write, a page whose shadow no longer matches its hash was stored into, keeps a base copy from
 then on like a page with a noted GPU write, and has its stores written back to guest memory at the fence of every
 submission that uses the table. It is off by default (`runtime/vk_memory.c`, "Pages a shader stores into", says why).
-`NX2NAVI_SHADOW_CHECK=1` logs every 60 frames how often a copy-in overwrote such a store and for which pools, how many
+`NX2SARIA_SHADOW_CHECK=1` logs every 60 frames how often a copy-in overwrote such a store and for which pools, how many
 write-backs landed on pages the CPU had written since their copy-in, and what the copy-ins cost and where they went.
 `--probe-vkmem` checks the sync: the shadow of a pool that is never bound must hold `0x13579BDF`, keep it through a
 plain CPU write and a guest submission that does not bind the table, and hold the written `0x2468ACE0` after one that
-does; and with `NX2NAVI_SHADOW_TABLE_STORES=1` the store: a GPU
+does; and with `NX2SARIA_SHADOW_TABLE_STORES=1` the store: a GPU
 write into a shadow page that nothing notes must survive the CPU's writes of that page and reach guest memory. On
-Linux, run it for each backing (with `NX2NAVI_DMABUF=1` and `NX2NAVI_SHADOW=0` the pools are dma-buf imports, with
-`NX2NAVI_DMABUF=0` and `NX2NAVI_SHADOW=0` host-pointer imports):
+Linux, run it for each backing (with `NX2SARIA_DMABUF=1` and `NX2SARIA_SHADOW=0` the pools are dma-buf imports, with
+`NX2SARIA_DMABUF=0` and `NX2SARIA_SHADOW=0` host-pointer imports):
 
 ```sh
 for dmabuf in 0 1; do for shadow in 0 1; do for memory in import mirror; do
-    NX2NAVI_DMABUF=$dmabuf NX2NAVI_GPA=1 NX2NAVI_SHADOW=$shadow NX2NAVI_MEMORY=$memory ./ocarina --probe-vkmem
+    NX2SARIA_DMABUF=$dmabuf NX2SARIA_GPA=1 NX2SARIA_SHADOW=$shadow NX2SARIA_MEMORY=$memory ./ocarina --probe-vkmem
 done; done; done
 ```
 
 The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the compute decoder (`runtime/vk_astc.c`,
-`NX2NAVI_ASTC`) as on desktop AMD GPUs without it; frame times measured there include it.
+`NX2SARIA_ASTC`) as on desktop AMD GPUs without it; frame times measured there include it.
 
 ## Checks
 
@@ -444,7 +444,7 @@ Before a commit:
 
 - `python tools/check_content.py --staged`: nothing game-derived and no compiled shader is staged. CI runs the same check;
   `git config core.hooksPath .githooks` runs it before each local commit.
-- `build\<ver>\nx2navi.exe --selftest`: layout, dispatch table and host-function registry, without game files.
+- `build\<ver>\nx2saria.exe --selftest`: layout, dispatch table and host-function registry, without game files.
 - `python tools\check_platform.py` after a runtime change outside `runtime/platform/`: no shared file uses Win32 outside
   a branch that only a Windows build compiles (`#ifdef _WIN32`, the `#else` of `#ifndef _WIN32`).
   `python tests\check_platform_test.py` checks the scanner itself on made-up files.
@@ -500,7 +500,7 @@ included. Statically, a crash and a fatal error
 scenario in a process of its own, among them a want after the exit's restore and one the worker read before it, a
 worker polling without pause while the want switches, the registry and file calls a present must not make, and a run
 killed while RTSS held its limit followed by the next start, each in a process of its own (a next start with a limit,
-with frame generation on and with `NX2NAVI_RTSS=0`, and a run killed inside the save of its second limit), put backs
+with frame generation on and with `NX2SARIA_RTSS=0`, and a run killed inside the save of its second limit), put backs
 that do not land, a state file that does not read, and a crash on RTSS's own thread with no line in the file. No GPU,
 no RTSS, no game files.
 
@@ -511,7 +511,7 @@ voices of one constant sample, so a mix buffer shows the gain sample by sample: 
 volume stepped from 0 to 1 rises in equal steps across the next 5 ms frame and holds after it, for a voice into a mix,
 a voice into a splitter destination and a submix into one; a voice that starts, was silent in the frame before or was
 moved to another mix, a destination that is new or was moved, and the first frame after the renderer starts take the
-new volume at once; `NX2NAVI_AUDIO_RAMP=0` applies every volume at once. It also makes the device's requests by
+new volume at once; `NX2SARIA_AUDIO_RAMP=0` applies every volume at once. It also makes the device's requests by
 hand: the silence of an underrun, up to the prefill's return, is owed in whole render frames, which are rendered and
 not queued; the silence before the first prefill and across a stop is not owed, and more than 3 seconds of it is given
 up. The render thread's own timing (`runtime/audren.c` `render_thread`) is not built by it. No game files and no audio
@@ -533,7 +533,7 @@ section whose framing breaks between the check and the apply keeps what came bef
 of the section left out, not as a refused update. Each effect and sink whose values the renderer cannot use is passed
 through or skipped in every render pass, with nothing written to the game's rings or sink buffer, and runs again once
 its values are usable. Each kind is logged once and counted every time; valid effects of every type over 20 passes leave
-nothing out. With `NX2NAVI_AUDIO_STRICT=1` such a value ends the process, in two runs of their own. No game files and no
+nothing out. With `NX2SARIA_AUDIO_STRICT=1` such a value ends the process, in two runs of their own. No game files and no
 audio device.
 
 A change to the sprint button (`runtime/sprint.c`, the set `sprint` of `recomp/patches-v111.txt`, its call in
@@ -573,7 +573,7 @@ A change to which waits a signalled event or an ended thread wakes (`runtime/ker
 layer and the rest of the runtime stubbed and runs guest threads whose entries are host functions: a signal wakes the
 waits on its event and leaves the others asleep, a wait on several handles reports the right one, a thread's end ends
 the wait on it, timed waits keep their time, a cancel ends any wait, and 4,000 signals to eight looping waiters are
-each seen. It runs a second time with `NX2NAVI_SYNC_WAKE_ALL=1`. No game files.
+each seen. It runs a second time with `NX2SARIA_SYNC_WAKE_ALL=1`. No game files.
 
 A change to what a host thread gives back when it ends (`runtime/platform/win32.c` `thread_main`,
 `plat_thread_end_hook`) passes `python tests\thread_end_check.py`, which builds the platform layer alone: 416 threads
@@ -581,7 +581,7 @@ sleep, read a file and end, half joined and half detached; the end hook runs onc
 holds as many handles afterwards as before (each thread's sleep timer and read event are closed). No game files.
 
 A change to the census of the process's handles by kind (`runtime/platform/win32.c` `plat_handle_census`, which
-`NX2NAVI_HANDLE_CENSUS` logs) passes `python tests\handle_census_check.py`, which builds the platform layer alone: 20
+`NX2SARIA_HANDLE_CENSUS` logs) passes `python tests\handle_census_check.py`, which builds the platform layer alone: 20
 events and 5 sections made show as Event +20 and Section +5, the total stays within 2 of the process's handle count,
 the figures go back once they are closed, and the kinds past the room given are summed in the last entry. Windows
 only. No game files.
@@ -609,7 +609,7 @@ No game files.
 
 A change to the button prompts (`tools/make_romfs_patches.py --prompts`, `tools/button_icons.py`) passes
 `.venv-py314\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
-files); a change to the settings passes `nx2navi.exe --probe-cfg`.
+files); a change to the settings passes `nx2saria.exe --probe-cfg`.
 
 A change to the action prompt's diamond of face buttons (`runtime/action_prompt.c`) or to the SARC and zstd dictionary
 helpers (`runtime/sarc.c`) passes `python tests\action_prompt_check.py`. It builds them alone, with the
@@ -636,7 +636,7 @@ A change to how a run ends when the GPU device is lost (`runtime/vk_device.c` `v
 lost no completion callback runs and the submit, upload and wait paths return at once, and four threads that report a
 loss at the same moment end the process with exit code 72, one device report and one FATAL line. It needs a Vulkan
 device and opens no window; the device is not really lost, so what a driver answers after a loss is not covered.
-`device_lost_at = <n>` in `nx2navi.ini` ends a real run the same way at its n-th hand-over to the GPU queue.
+`device_lost_at = <n>` in `nx2saria.ini` ends a real run the same way at its n-th hand-over to the GPU queue.
 
 A change to how a fault ends the process (`runtime/main.c` `crash_handler`, `mode_done`) passes
 `python tests\exit_fault_check.py <game exe>`, which runs two crash probes: a fault inside a library while a mode runs
@@ -742,7 +742,7 @@ freeze doubles while slow ones come within the quiet time, fast freezes between 
 starts over after the quiet time (with a quiet time of 0, at the first fast freeze); and an area load holds the passes
 while the texture pool loads and for the hold after it or after the area's load. No GPU, no game files.
 
-A change to what writes `nx2navi.ini` outside the game (`launcher/gameini.py`, `installer/ini.py`, `tools/make_game.py`,
+A change to what writes `nx2saria.ini` outside the game (`launcher/gameini.py`, `installer/ini.py`, `tools/make_game.py`,
 `launcher/updater.py`) passes the settings-file tests of `tests\launcher_test.py` (`PlayerIniTest`, and the tests named
 `..._settings_file` of `BackgroundUpdateTest` and `MakeGameTest`): a player's file with lines that are no settings of
 the game comes through an update and a rebuild byte for byte. The game's own writer, the settings menu, is checked by
@@ -785,7 +785,7 @@ A change to how the holes in the allocator's blocks are counted or to which bloc
 builds the header alone: a block with one allocation that stays is never chosen, the block that takes the fewest moved
 bytes goes first, what moves fits the free bytes outside the chosen blocks, a plan under its smallest gain is no plan,
 and 400 random tables keep those rules. The part of `runtime/vk_texture.c` that builds the table and moves the images
-(`NX2NAVI_TEX_COMPACT`) is not built by it. No GPU, no game files.
+(`NX2SARIA_TEX_COMPACT`) is not built by it. No GPU, no game files.
 
 A change to which entry of the upscaler stand-in's scratch images serves a new size (`runtime/vk_scratch_lru.h`,
 `runtime/vk_exec_draw.c` `fallback_scratch`) passes `python tests\scratch_lru_check.py`, which builds the header alone
@@ -833,7 +833,7 @@ the given-again and the clone path run; then step by step a copy given twice in 
 both times when another submission has it), and the bind resolution (changed and unchanged arrays, binds it leaves
 alone, calls 16 deep and not 17, a corrupt record). No GPU, no game files.
 
-A change to how `runtime/memory.c` `mem_copy_readable` reads the lazy heap (`NX2NAVI_HEAP_LAZY=1`) passes
+A change to how `runtime/memory.c` `mem_copy_readable` reads the lazy heap (`NX2SARIA_HEAP_LAZY=1`) passes
 `python tests\heap_lazy_copy_check.py`, which builds `memory.c` with the Windows platform layer and its fault handler:
 every copy returns, a heap page nothing touched yet reads zero and stays reserved, and pages past the heap's end are
 left out. Windows only, no game files.
@@ -843,7 +843,7 @@ census" banner, and the readers of its tables `cpu_wrote_since`, `shadow_pool_cl
 passes `python tests\gen_wrap_check.py`, which builds those parts of the file alone and runs the generations across
 2^32 (where 32-bit generations wrapped), 2^40 and 2^63: texture checks, the snapshot path and the region check, the
 CPU-side tables, and mirror and shadow cleanliness answer as below the boundary, and one line is logged when the count
-reaches 2^32. It also takes the start from `NX2NAVI_GEN_SEED` (`gen_seed`): read as 64 bits, decimal or `0x`, capped
+reaches 2^32. It also takes the start from `NX2SARIA_GEN_SEED` (`gen_seed`): read as 64 bits, decimal or `0x`, capped
 at 2^62, a value that is no number ignored, each with its log line. No GPU, no game files.
 
 A change to `runtime/vk_memory.c`, `runtime/vk_texture.c` or `runtime/tex_probe.c` passes
@@ -888,7 +888,7 @@ helpers, the FSR trims and `release_idle` calls) calling a destroy that frees at
 `hl_destroy`, `pb_destroy`, `feat_release`, `N.release`, `vkDestroyImageView`, `vmaDestroyImage`, the FSR files'
 `A.destroy`), except after the first `image2d` of `hudless_from`, `pb_images` and `snap_for` for their half-made
 images, a whole list taken (`upd_take_all`) only at teardown or after `vk_upscaler_settle` for a full list,
-`upscaler_idle_wait`'s `sections[]` entry and `nx2navi.ini.example` line, a name in `perf.c` for each perf mark kind,
+`upscaler_idle_wait`'s `sections[]` entry and `nx2saria.ini.example` line, a name in `perf.c` for each perf mark kind,
 and `pb_images` noting the images' last use after it makes them. Any Python, no game files.
 
 A change to which frames the flight recorder takes for a one-frame flash (`runtime/flight_flash.h`, `runtime/flight.c`
@@ -904,7 +904,7 @@ of `runtime/perf.c` `perf_present`) or to how `tools/perf_summary.py` reads them
 with them and checks the present percentiles, the present thread's averages and the hand-off share the tool prints,
 and that the lines of older logs, without those fields, still parse. Any Python, no game files.
 
-A change to what the frame-time summary charges to an address-space walk of `NX2NAVI_MEM_CENSUS`
+A change to what the frame-time summary charges to an address-space walk of `NX2SARIA_MEM_CENSUS`
 (`runtime/perf_census.h` `census_charge`, `runtime/perf.c` `ft_frame`) passes `python tests\census_charge_check.py`,
 which builds the header alone: a walk before, after or around a frame, one still running, a torn read of the last walk's
 start (taken as no walk), the charge taken from the replay part first, capped by the overlap and the parts, and 100,000
@@ -915,7 +915,7 @@ which cuts the function out of the file with its warning table and builds it wit
 log: 0, 1 and ab read as before without a line, false, off and no in any case read as 0 and true, on and yes as 1
 without a line, and any other value reads as 1 and is logged once per switch. No game files.
 
-A change to how nx2navi.ini and the environment are read (`runtime/cfg.c` `cfg_load`, `cut_comment`, `switch_word`,
+A change to how nx2saria.ini and the environment are read (`runtime/cfg.c` `cfg_load`, `cut_comment`, `switch_word`,
 `cfg_bool`, `check_value`) passes `python tests\cfg_parse_check.py`, which builds `cfg.c` with stand-ins for what it
 links with and loads scratch files: a comment after a value of a setting with a set of values is cut and logged once
 with its line, free text, a value in double quotes and the environment keep theirs; switches written as words read as
@@ -944,9 +944,9 @@ change passes these, all run with `.venv`:
 A `--cpu v2` build passes the same differential tests with `--cflags=-march=x86-64-v2`; they compile `runtime/fma.c`
 too, so they check the software fma the v2 build links rather than the C runtime's.
 
-On NVIDIA Linux, `NX2NAVI_DLAA=1 ./ocarina --probe-vkdevice` logs NGX initialization and shutdown when available.
+On NVIDIA Linux, `NX2SARIA_DLAA=1 ./ocarina --probe-vkdevice` logs NGX initialization and shutdown when available.
 
-Runtime probes, each a mode of `nx2navi.exe` (the list is at the top of `runtime/main.c`): `--probe-kernel`,
+Runtime probes, each a mode of `nx2saria.exe` (the list is at the top of `runtime/main.c`): `--probe-kernel`,
 `--probe-vkexec`, `--probe-nvn-tex` and `--probe-shader` cover most runtime changes. `--probe-shader` and the draw
 part of `--probe-vkexec` translate shaders of the census below: they look for `build/<ver>/shaders/jobs.json` of the
 exe's own version first, then of the other one.
@@ -955,13 +955,13 @@ exe's own version first, then of the other one.
 direct and GPU-written workgroup counts, through `VK_EXT_mesh_shader` and through the mesh fallback, and compares the
 pictures; on a device without mesh shaders only the fallback draws. A change to `runtime/mesh_fb.c`,
 `runtime/vk_mesh_fb.c` or the fallback's part of `runtime/vk_exec_draw.c` passes it. With
-`NX2NAVI_PROBE_MESHFB_DIR=<folder>` it converts the game's own task and mesh translations instead, for `spirv-val`
+`NX2SARIA_PROBE_MESHFB_DIR=<folder>` it converts the game's own task and mesh translations instead, for `spirv-val`
 (the top of `runtime/mesh_fb_probe.c` says what the folder holds).
 A change to the texture detail (`runtime/vk_texture.c` "texture detail": `detail_skip`, `upload`, `astc_bl_regions`)
-passes it three times, with `NX2NAVI_TEXTURE_DETAIL` set to `full`, `reduced` and `low`: each time ASTC textures are
+passes it three times, with `NX2SARIA_TEXTURE_DETAIL` set to `full`, `reduced` and `low`: each time ASTC textures are
 uploaded and rewritten, and every level and layer of their images must hold the game's level it stands for.
 A change to FSR 3.1's own passes (`runtime/vk_fsr3.c`, `runtime/shaders/fsr3_*.comp`, `runtime/shaders/ffx3/`) passes
-`tests/fsr3_check.py`, which runs `--probe-fsr3` with `NX2NAVI_VK_VALIDATION=1`: the passes upscale a synthetic
+`tests/fsr3_check.py`, which runs `--probe-fsr3` with `NX2SARIA_VK_VALIDATION=1`: the passes upscale a synthetic
 panning scene, checked against a supersampled reference, against bilinear and against the jitter and motion vector
 conventions `vk_dlaa.c` hands over, at two render sizes on one output, and one upscale at the docked sizes is timed.
 `amd_fidelityfx_vk.dll` given the same inputs meets the same thresholds, its output within 3 of 255 of the passes'.

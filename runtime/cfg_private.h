@@ -1,11 +1,11 @@
 // Settings whose values stay on the player's PC: the menu's test hook, and what the co-op of versions up to 0.9.2 kept
 // in nx2navi.ini, which a player's file may still hold (a room's secret and the offer number made for it, the relay's
 // address, the player's name, the key a maker removed). The log's
-// line of what nx2navi.ini sets (cfg.c log_file_settings), "Copy system info" (sysinfo.c) and the copy of nx2navi.ini a
+// line of what the selected settings file sets (cfg.c log_file_settings), "Copy system info" (sysinfo.c) and the copy of the settings file a
 // bug report takes along (save_share.c; launcher/saves.py has the same list) show only that such a key is set.
 // Header only, so that the tests that build one of those files alone need nothing else.
-#ifndef NX2NAVI_CFG_PRIVATE_H
-#define NX2NAVI_CFG_PRIVATE_H
+#ifndef NX2SARIA_CFG_PRIVATE_H
+#define NX2SARIA_CFG_PRIVATE_H
 
 #include <ctype.h>
 #include <stddef.h>
@@ -14,8 +14,14 @@
 
 #define CFG_PRIVATE_SHOWN "(set, not shown)"
 
-// key: a setting's name without the NX2NAVI_ prefix, in any case, n bytes of it.
+// key: a setting's name, optionally carrying either supported prefix, in any case, n bytes of it.
 static inline int cfg_private_key_n(const char *key, size_t n) {
+    static const char *const prefixes[] = {"NX2SARIA_", "NX2NAVI_"};
+    for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; i++) {
+        size_t k = 0, len = strlen(prefixes[i]);
+        while (k < n && k < len && toupper((unsigned char)key[k]) == prefixes[i][k]) k++;
+        if (k == len) { key += len; n -= len; break; }
+    }
     static const char *const keys[] = {"COOP_ROOM", "COOP_SERVER", "COOP_NAME", "COOP_ACCEPT", "COOP_REMOVE",
                                        "MENU_TEST_SET"};
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) {

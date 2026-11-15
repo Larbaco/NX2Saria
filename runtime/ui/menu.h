@@ -9,8 +9,8 @@
 // cursor is released from the mouse camera. Tabs Screen, Game, Mods, Sound, Controls and Menu (L / R or Q / E switch
 // them) hold option rows (ui/option_rows.h) over the cfg settings and the mods folder (mods.h); the bottom row has
 // "Continue" and "Quit game".
-// Test hooks (ui/menu.cpp): NX2NAVI_MENU_TEST=<frame>[:<frames per page>] opens the menu at that presented frame and saves
-// one swapchain shot per tab into NX2NAVI_MENU_TEST_DIR; NX2NAVI_MENU_TEST_SET=<frame>:<key>=<value>[,...][;...] sets settings
+// Test hooks (ui/menu.cpp): NX2SARIA_MENU_TEST=<frame>[:<frames per page>] opens the menu at that presented frame and saves
+// one swapchain shot per tab into NX2SARIA_MENU_TEST_DIR; NX2SARIA_MENU_TEST_SET=<frame>:<key>=<value>[,...][;...] sets settings
 // at given frames without input (SAVE=1 writes nx2navi.ini, FOCUS=<key> puts the cursor on that setting's row).
 //
 // Threads: the event functions are called by the window thread, menu_toggle by whichever thread polls the pad, the
@@ -32,7 +32,7 @@ void menu_perf_cycle(void);               // F10: the performance overlay off, f
 // ---- events from the window adapter, used only while the menu is open. key: an ImGuiKey; coordinates in pixels of the
 // window's client area, which is the swapchain image.
 void menu_event_key(int key, int down);
-int menu_debug_enabled(void);            // NX2NAVI_DEBUG_MENU: F9 belongs to the debug menu (ui/debug_menu.cpp)
+int menu_debug_enabled(void);            // NX2SARIA_DEBUG_MENU: F9 belongs to the debug menu (ui/debug_menu.cpp)
 void menu_debug_toggle(void);            // F9
 void menu_event_mouse_pos(float x, float y);
 void menu_event_mouse_button(int button, int down);   // 0 left, 1 right, 2 middle
@@ -78,16 +78,16 @@ int menu_font_check(void);
 void menu_text_input_follow(int want);
 
 // ---- what the menu asks of the platform side (gfx_window_win.c, gfx_window_sdl.c)
-void gfx_window_apply_settings(void);     // NX2NAVI_FULLSCREEN or NX2NAVI_WINDOW_SIZE changed: the window follows
+void gfx_window_apply_settings(void);     // NX2SARIA_FULLSCREEN or NX2SARIA_WINDOW_SIZE changed: the window follows
 void gfx_window_request_close(void);      // as the window's close button: the process ends
-void gfx_window_request_restart(void);    // the same, then nx2navi.exe starts again with the same command line
+void gfx_window_request_restart(void);    // the same, then nx2saria.exe starts again with the same command line
 void gfx_window_text_input(int on);       // a menu text field is active (on) or no longer: the window delivers typed
                                           // characters to menu_event_char meanwhile, and a handheld shows its keyboard
 void gfx_window_paste(void);              // reads the clipboard on the window thread and hands it to menu_event_paste
 int gfx_window_monitor_size(int *w, int *h);   // pixels of the monitor the window is on; 0 when unknown
-double gfx_window_refresh_hz(void);            // its refresh rate (NX2NAVI_FPS_LIMIT=display); 0 when unknown
+double gfx_window_refresh_hz(void);            // its refresh rate (NX2SARIA_FPS_LIMIT=display); 0 when unknown
 unsigned gfx_window_dpi(void);                 // the window's DPI (96 at 100% display scale); any thread
-// The present mode the swapchain got, as a NX2NAVI_VK_PRESENT value ("fifo" when mailbox is missing); "" before the first
+// The present mode the swapchain got, as a NX2SARIA_VK_PRESENT value ("fifo" when mailbox is missing); "" before the first
 // swapchain. Any thread.
 const char *gfx_window_present_mode(void);
 double gfx_output_fps(void);   // frames the display gets per second with frame generation (generated ones too); 0 when off

@@ -1,7 +1,7 @@
 // Amiibo / NFC menu page (Dear ImGui). The tab: the dumps of the amiibo folder on the left (A or a click taps one), the
 // reader and the figure on it on the right, and under "Advanced" the folder, the reader's options, the figure's details,
 // the keys file and write-back. The picker: the same list on its own over the game, opened when the game starts waiting
-// for an amiibo (ui/menu.cpp, NX2NAVI_AMIIBO_POPUP).
+// for an amiibo (ui/menu.cpp, NX2SARIA_AMIIBO_POPUP).
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
@@ -67,9 +67,9 @@ static bool is_dump(const fs::directory_entry &e) {
     return e.file_size(ec) == (uintmax_t)AMIIBO_DUMP_SIZE && !ec;
 }
 
-// Reads the amiibo folder (NX2NAVI_AMIIBO_DIR, else ./amiibo) again. A missing folder lists nothing and says so.
+// Reads the amiibo folder (NX2SARIA_AMIIBO_DIR, else ./amiibo) again. A missing folder lists nothing and says so.
 static void scan_dumps(void) {
-    const char *dir = cfg_get("NX2NAVI_AMIIBO_DIR");
+    const char *dir = cfg_get("NX2SARIA_AMIIBO_DIR");
     g_root = dir && *dir ? dir : kDefaultAmiiboDir;
     g_dumps.clear();
     g_scanned = true;
@@ -95,7 +95,7 @@ static void scan_dumps(void) {
 
 // The folder a player set: saved like a row's change; "" goes back to the default.
 static void set_root(const std::string &path) {
-    opt_apply("NX2NAVI_AMIIBO_DIR", path.c_str());
+    opt_apply("NX2SARIA_AMIIBO_DIR", path.c_str());
     scan_dumps();
 }
 
@@ -270,10 +270,10 @@ static void draw_folder(bool picking) {
 }
 
 static void draw_reader_options(void) {
-    const bool env = cfg_from_env("NX2NAVI_AMIIBO_POPUP") != 0;
-    bool popup = cfg_bool("NX2NAVI_AMIIBO_POPUP") != 0;
+    const bool env = cfg_from_env("NX2SARIA_AMIIBO_POPUP") != 0;
+    bool popup = cfg_bool("NX2SARIA_AMIIBO_POPUP") != 0;
     ImGui::BeginDisabled(env);
-    if (ImGui::Checkbox(menu_text(UI_MENU_AMIIBO_POPUP), &popup)) opt_apply("NX2NAVI_AMIIBO_POPUP", popup ? "1" : "0");
+    if (ImGui::Checkbox(menu_text(UI_MENU_AMIIBO_POPUP), &popup)) opt_apply("NX2SARIA_AMIIBO_POPUP", popup ? "1" : "0");
     ImGui::EndDisabled();
     if (env) ImGui::TextDisabled("%s", menu_text(UI_MENU_SET_BY_ENV));
 
@@ -336,18 +336,18 @@ static void draw_figure_details(void) {
     }
 }
 
-// The keys file amiibo_reload_keys reads: NX2NAVI_AMIIBO_KEYS, else key_retail.bin in the amiibo folder
-// (NX2NAVI_AMIIBO_DIR, else ./amiibo).
+// The keys file amiibo_reload_keys reads: NX2SARIA_AMIIBO_KEYS, else key_retail.bin in the amiibo folder
+// (NX2SARIA_AMIIBO_DIR, else ./amiibo).
 static std::string keys_path(void) {
-    const char *keys = cfg_get("NX2NAVI_AMIIBO_KEYS");
+    const char *keys = cfg_get("NX2SARIA_AMIIBO_KEYS");
     if (keys && *keys) return keys;
-    const char *dir = cfg_get("NX2NAVI_AMIIBO_DIR");
+    const char *dir = cfg_get("NX2SARIA_AMIIBO_DIR");
     std::string path = dir && *dir ? dir : kDefaultAmiiboDir;
     if (path.back() != '/' && path.back() != '\\') path += '/';
     return path + "key_retail.bin";
 }
 
-// The keys: loaded or not, the file in effect, Reload keys; and the write-back setting (NX2NAVI_AMIIBO_WRITEBACK, a live
+// The keys: loaded or not, the file in effect, Reload keys; and the write-back setting (NX2SARIA_AMIIBO_WRITEBACK, a live
 // setting), saved like a row's change (option_rows.h opt_apply).
 static void draw_keys(void) {
     const bool loaded = amiibo_keys_loaded();
@@ -363,11 +363,11 @@ static void draw_keys(void) {
         set_status(amiibo_reload_keys() ? UI_MENU_AMIIBO_KEYS_RELOADED : UI_MENU_AMIIBO_KEYS_FAILED, path);
 
     ImGui::Spacing();
-    const bool env = cfg_from_env("NX2NAVI_AMIIBO_WRITEBACK") != 0;
-    bool writeback = cfg_bool("NX2NAVI_AMIIBO_WRITEBACK") != 0;
+    const bool env = cfg_from_env("NX2SARIA_AMIIBO_WRITEBACK") != 0;
+    bool writeback = cfg_bool("NX2SARIA_AMIIBO_WRITEBACK") != 0;
     ImGui::BeginDisabled(env);
     if (ImGui::Checkbox(menu_text(UI_MENU_AMIIBO_WRITEBACK), &writeback))
-        opt_apply("NX2NAVI_AMIIBO_WRITEBACK", writeback ? "1" : "0");
+        opt_apply("NX2SARIA_AMIIBO_WRITEBACK", writeback ? "1" : "0");
     ImGui::EndDisabled();
     if (env)
         ImGui::TextDisabled("%s", menu_text(UI_MENU_SET_BY_ENV));
@@ -489,7 +489,7 @@ bool amiibo_picker_wanted(void) {
     const bool waiting = amiibo_get_reader_state() == AMIIBO_DEV_STATE_SEARCHING;
     const bool started = waiting && !g_was_waiting;
     g_was_waiting = waiting;
-    return started && cfg_bool("NX2NAVI_AMIIBO_POPUP") && !amiibo_has_tag();
+    return started && cfg_bool("NX2SARIA_AMIIBO_POPUP") && !amiibo_has_tag();
 }
 
 void amiibo_picker_begin(void) {

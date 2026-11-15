@@ -11,7 +11,7 @@
 // mesh_fallback = auto (the default) takes the fallback on a device without mesh shaders, and on AMD's Windows driver
 // for RDNA 1 and 2 (vk_caps.amd_sc), which has them on RDNA 2. That driver lost the device ("No fault detected", a
 // timeout) minutes into play on RX 6600 to RX 6950 XT cards in every version from 0.6.0 to 0.9.2 (0.10.x built its mesh
-// pipelines without the driver's optimiser, NX2NAVI_VK_NOOPT, which no reporter has confirmed), with the pipeline
+// pipelines without the driver's optimiser, NX2SARIA_VK_NOOPT, which no reporter has confirmed), with the pipeline
 // library, the replay workers, the asynchronous replay, the lazy write-back and the low-end GPU mode each on and off.
 // Where the pass marks named the pass the GPU was in, it was one that starts with a native mesh draw. The same driver
 // on RDNA 1 has no mesh shaders and draws through this fallback, and AMD's driver for RDNA 3 and 4 (LLPC) draws them

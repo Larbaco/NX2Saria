@@ -169,8 +169,8 @@ static void arrow_box(ImDrawList *dl, ImVec2 a, ImVec2 b, bool left, bool hot, b
     dl->AddTriangleFilled(ImVec2(cx + tip, cy), ImVec2(cx + back, cy - ah), ImVec2(cx + back, cy + ah), white);
 }
 
-// ---- test hook. NX2NAVI_MENU_TEST_CLICK=<key>:<part>[,<key>:<part>...], with NX2NAVI_MENU_TEST opening the menu on the
-// page that has the rows (menu.cpp): mouse clicks on steppers by their setting's name (without NX2NAVI_), part l (the
+// ---- test hook. NX2SARIA_MENU_TEST_CLICK=<key>:<part>[,<key>:<part>...], with NX2SARIA_MENU_TEST opening the menu on the
+// page that has the rows (menu.cpp): mouse clicks on steppers by their setting's name (without NX2SARIA_), part l (the
 // left arrow), r (the right arrow) or b (the row's body, on its label). One click after another, each over a dozen
 // frames: the pointer goes there, the button goes down and up, and the log says what the setting is then. So a run
 // checks that the arrows step a setting and that an arrow at its end and a click on the body do not, with the fonts
@@ -181,12 +181,12 @@ static void click_test(const char *key, ImVec2 la, ImVec2 lb, ImVec2 ra, ImVec2 
     ClickTest &t = g_click;
     if (!t.parsed) {
         t.parsed = 1;
-        const char *s = cfg_get("NX2NAVI_MENU_TEST_CLICK");
+        const char *s = cfg_get("NX2SARIA_MENU_TEST_CLICK");
         while (s && *s && t.n < 24) {
             size_t n = strcspn(s, ",");
             const char *colon = (const char *)memchr(s, ':', n);
             if (colon) {
-                snprintf(t.c[t.n].key, sizeof t.c[0].key, "NX2NAVI_%.*s", (int)(colon - s), s);
+                snprintf(t.c[t.n].key, sizeof t.c[0].key, "NX2SARIA_%.*s", (int)(colon - s), s);
                 t.c[t.n++].part = colon[1];
             }
             s += n;
@@ -407,7 +407,7 @@ struct Group {
 };
 
 struct Change {
-    std::string key;       // NX2NAVI_ + upper case
+    std::string key;       // NX2SARIA_ + upper case
     std::string gid;       // the group
     std::string new_val;   // as the row wrote it; "" is the key unset
     std::string orig_eff;  // the value in effect before the first change
@@ -426,7 +426,7 @@ struct { bool valid; std::string gid, from, to; UiTextId label; } g_ctx;
 std::string norm_key(const char *key) {
     std::string k = key;
     for (char &c : k) c = (char)toupper((unsigned char)c);
-    return k.compare(0, 8, "NX2NAVI_") ? "NX2NAVI_" + k : k;
+    return k.compare(0, 8, "NX2SARIA_") ? "NX2SARIA_" + k : k;
 }
 
 // Keys that are live in the table but stay in the draft until Apply: the window, the present mode, HDR and the frame
@@ -587,8 +587,8 @@ extern "C" int vk_dlssg_wanted(void);
 extern "C" int vk_ngxfg_wanted(void);
 extern "C" int menu_lowlat_restart_for(const char *value);   // menu.cpp: low latency on in a run started with it off
 static bool live_needs_restart(const Change &c) {
-    if (c.key == "NX2NAVI_LOW_LATENCY") return menu_lowlat_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
-    if (c.key == "NX2NAVI_FRAMEGEN") {
+    if (c.key == "NX2SARIA_LOW_LATENCY") return menu_lowlat_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
+    if (c.key == "NX2SARIA_FRAMEGEN") {
         const bool dlss = eff_of(c.key, c.new_val) == "dlss";
 #ifdef _WIN32
         return dlss != (vk_dlssg_wanted() != 0);
@@ -596,16 +596,16 @@ static bool live_needs_restart(const Change &c) {
         return dlss && !vk_ngxfg_wanted();
 #endif
     }
-    if (c.key == "NX2NAVI_HDR") return vk_hdr_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
-    if (c.key == "NX2NAVI_DLAA" || c.key == "NX2NAVI_DLSS" || c.key == "NX2NAVI_TAA" || c.key == "NX2NAVI_DLSS_PRESET") return vk_dlaa_needs_restart() != 0;
+    if (c.key == "NX2SARIA_HDR") return vk_hdr_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
+    if (c.key == "NX2SARIA_DLAA" || c.key == "NX2SARIA_DLSS" || c.key == "NX2SARIA_TAA" || c.key == "NX2SARIA_DLSS_PRESET") return vk_dlaa_needs_restart() != 0;
     return false;
 }
 
 // The display keys the "keep these?" timer watches after an Apply (opt_draft_apply): HDR only between off and the tone
 // mapper, as to or from the game's own it waits for a restart (live_needs_restart).
 static bool is_timed(const Change &c) {
-    static const char *const timed[] = {"NX2NAVI_FULLSCREEN", "NX2NAVI_WINDOW_SIZE", "NX2NAVI_VK_PRESENT",
-                                        "NX2NAVI_HDR"};
+    static const char *const timed[] = {"NX2SARIA_FULLSCREEN", "NX2SARIA_WINDOW_SIZE", "NX2SARIA_VK_PRESENT",
+                                        "NX2SARIA_HDR"};
     if (!c.staged || live_needs_restart(c)) return false;
     for (const char *t : timed)
         if (c.key == t) return true;
@@ -625,7 +625,7 @@ int opt_pending_count(void) {
     int n = 0;
     char name[80];
     for (int i = 0; const CfgMeta *m = cfg_meta_at(i); i++) {
-        snprintf(name, sizeof name, "NX2NAVI_%s", m->key);
+        snprintf(name, sizeof name, "NX2SARIA_%s", m->key);
         n += cfg_pending_for(name, opt_value(name));
     }
     return n;
@@ -683,7 +683,7 @@ static bool g_save_logged;
 void opt_save_now(void) {
     if (!cfg_save() && !g_save_logged) {
         g_save_logged = true;
-        rt_log("menu: could not write nx2navi.ini; the changed settings hold for this session");
+        rt_log("menu: could not write the settings file; the changed settings hold for this session");
     }
 }
 
@@ -729,7 +729,7 @@ bool opt_draft_apply(bool timed) {
     g_ctx.valid = false;
     g_draft_n.store(0);
     opt_save_now();   // the held display keys stay out of it
-    rt_log("menu: draft: nx2navi.ini %s%s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)",
+    rt_log("menu: draft: settings file %s%s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)",
            g_display.empty() ? "" : "; display settings wait for Keep or Revert");
     return cfg_last_save_ok() != 0;
 }
@@ -750,7 +750,7 @@ bool opt_display_keep(void) {
     }
     g_display.clear();
     opt_save_now();
-    rt_log("menu: display: nx2navi.ini %s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)");
+    rt_log("menu: display: settings file %s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)");
     return cfg_last_save_ok() != 0;
 }
 
@@ -1091,7 +1091,7 @@ int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *
         ImGui::PopID();
     }
     char k[64];
-    snprintf(k, sizeof k, "NX2NAVI_%s", key);
+    snprintf(k, sizeof k, "NX2SARIA_%s", key);
     if (row_foc) desc_set(g_focus, menu_text(desc), k, NULL, NULL);
     if (row_hov) desc_set(g_hover, menu_text(desc), k, NULL, NULL);
     if (!g_first.text[0]) desc_set(g_first, menu_text(desc), k, NULL, NULL);

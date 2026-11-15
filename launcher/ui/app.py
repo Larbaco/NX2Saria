@@ -1,5 +1,5 @@
 """The launcher's window, laid out like the game's options menu (docs/launcher.md, "Look"): a wooden title band with
-Navi and the name in the game's Cetra Display across the whole top (the window's own title bar: drag it to move the
+the leaf sprig and NX2Saria name in the game's Cetra Display across the whole top (the window's own title bar: drag it to move the
 window, minimise and close at its right end), a list of rows on the left (a bronze label cell and a dark value cell each), a white
 glowing cursor on the selected row, filigree dividers between groups and a description box on the right that
 explains the selected row.
@@ -21,7 +21,7 @@ Mouse, keyboard (arrows, Enter or Space, Esc, F5) and an XInput gamepad (d-pad o
 
 The look is the player's (Customize Launcher): art.set_theme fills the palette every picture is drawn from, a picture
 of the player's own can replace the backdrop (picture.py), and unless Animations is off the cursor glides between
-rows, a new screen slides in, sparks drift over the backdrop and Navi bobs in the title band (animate). sound.py
+rows, a new screen slides in, sparks drift over the backdrop and the sprig bobs in the title band (animate). sound.py
 plays the game's own decide and cancel sounds, read from the player's game, for a choice and for going back.
 """
 import argparse
@@ -153,16 +153,23 @@ FATAL_TAIL = 256 << 10   # bytes of the game's log last_fatal reads from its end
 FATAL_SHOWN = 240        # characters of a FATAL line the home screen shows; the launcher's log has all of it
 
 
+def game_log_path(game_dir):
+    """Use the new log path, or read an existing legacy log until the new path is present."""
+    logs = Path(game_dir) / 'logs'
+    current, legacy = logs / 'nx2saria.log', logs / 'nx2navi.log'
+    return current if current.is_file() or not legacy.is_file() else legacy
+
+
 def last_fatal(game_dir):
     """The last FATAL line of the game's latest run, without its "FATAL: ", or ''. The game writes one before it
     exits with 70 (runtime/dispatch.c rt_fatal), 71 (runtime/main.c crash_handler) or 72 (runtime/vk_device.c
-    vk_device_lost_check) into logs/nx2navi.log, which each run starts anew (runtime/main.c log_open). A line this
+    vk_device_lost_check) into logs/nx2saria.log (older installations may still have logs/nx2navi.log). A line this
     launcher added for an earlier run's end (note_exit_in_log) ends the search: what stands before it is not this
     run's."""
     if not game_dir:
         return ''
     try:
-        with open(Path(game_dir) / 'logs' / 'nx2navi.log', 'rb') as f:
+        with open(game_log_path(game_dir), 'rb') as f:
             f.seek(max(0, f.seek(0, 2) - FATAL_TAIL))
             lines = f.read().decode('utf-8', 'replace').splitlines()
     except OSError:
@@ -185,13 +192,13 @@ LOG_CUT_LINE = 'log: the file reached 64 MiB'
 
 
 def log_has_own_exit(game_dir):
-    """Whether the end of logs/nx2navi.log holds a line of the game's own end (OWN_EXIT_LINES) for its latest run; None
+    """Whether the end of the current or legacy game log holds a line of the game's own end (OWN_EXIT_LINES); None
     when the log cannot be read, or when it was cut at its size cap (LOG_CUT_LINE) and so cannot tell. A line this
     launcher added for an earlier run's end (note_exit_in_log) ends the search."""
     if not game_dir:
         return None
     try:
-        with open(Path(game_dir) / 'logs' / 'nx2navi.log', 'rb') as f:
+        with open(game_log_path(game_dir), 'rb') as f:
             f.seek(max(0, f.seek(0, 2) - FATAL_TAIL))
             lines = f.read().decode('utf-8', 'replace').splitlines()
     except OSError:
@@ -212,7 +219,7 @@ def note_exit_in_log(game_dir, text):
     process died before it could write a line itself."""
     if not game_dir:
         return
-    log = Path(game_dir) / 'logs' / 'nx2navi.log'
+    log = game_log_path(game_dir)
     try:
         with open(log, 'a', encoding='utf-8') as f:
             f.write(f'[launcher] the game ended with code {text} at {time.strftime("%Y-%m-%d %H:%M:%S")}\n')
@@ -221,18 +228,18 @@ def note_exit_in_log(game_dir, text):
 
 
 def log_is_new(game_dir, started):
-    """Whether logs/nx2navi.log was written at or after started (time.time() before the game was started). A run that
+    """Whether the selected game log was written at or after started (time.time() before the game was started). A run that
     ends before it moves and opens its log (runtime/main.c log_open) leaves the log of a run before it in place. FAT
     and exFAT drives keep a file's time to 2 s, hence the slack."""
     if not game_dir or started is None:
         return False
     try:
-        return (Path(game_dir) / 'logs' / 'nx2navi.log').stat().st_mtime >= started - 2
+        return game_log_path(game_dir).stat().st_mtime >= started - 2
     except OSError:
         return False
 
 
-LOG_WHERE = 'Its log is logs\\nx2navi.log in the game folder.'
+LOG_WHERE = 'Its log is logs\\nx2saria.log (older builds: nx2navi.log).'
 GameEnd = collections.namedtuple('GameEnd', 'log message note alarm')
 
 
@@ -264,7 +271,7 @@ def game_end(game_dir, code, started=None, restarted=False):
     # No process of the game writes a FATAL line and exits with 0 (runtime/dispatch.c fatal_end, runtime/main.c
     # crash_handler). After code 0, or a code not known, a FATAL line in a log written since the start is a copy's that
     # the game's own Restart started (runtime/gfx_present.c gfx_window_closed): one that ended before the launcher saw
-    # it run, or one it could not follow. That copy's log is logs/nx2navi.log and holds the line already: no note.
+    # it run, or one it could not follow. That copy's log holds the line already: no note.
     fatal = last_fatal(game_dir) if log_is_new(game_dir, started) else ''
     if fatal:
         return GameEnd(f'the game ended after restarting itself; its log says: FATAL: {fatal}',
@@ -407,7 +414,7 @@ class App:
         self.picture = None
         self.sounds = sound.Sounds(self.layout.cache, 'off' if args.selftest else self.settings.get('sounds'), ctx.log)
         # the animations' state (animate): the clock and the last step's time, the cursor's place on its way to the
-        # focused row, how far the screen still stands from its place after a change, the sparks, Navi and its halo
+        # focused row, how far the screen still stands from its place after a change, the sparks, the sprig and its halo
         self.anim_t = 0.0
         self.anim_last = time.perf_counter()
         self.cur_xy = self.cur_target = None
@@ -415,7 +422,7 @@ class App:
         self.slide = 0.0
         self.slide_applied = 0
         self.sparks = []
-        self.navi_xy = None
+        self.sprig_xy = None
         self.halo = []
 
         root.title(NAME)
@@ -460,14 +467,14 @@ class App:
         self.root.geometry(f'{w}x{h}+{x}+{y}')
 
     def set_icon(self):
-        """Navi as the window's icon: Tk's photo icon everywhere, and on Windows the .ico set on the window itself, so
-        the taskbar button shows Navi rather than Python's icon."""
+        """The leaf sprig as the window's icon: Tk's photo icon everywhere, and on Windows the .ico set on the window
+        itself, so the taskbar button shows NX2Saria rather than Python's icon."""
         try:
-            self.photos['icon'] = art.photo(self.root, art.navi_icon(64))
+            self.photos['icon'] = art.photo(self.root, art.sprig_icon(64))
             self.root.iconphoto(True, self.photos['icon'])
             if os.name == 'nt':
-                data = art.navi_ico()
-                self.ico = self.layout.cache / 'nx2navi.ico'
+                data = art.sprig_ico()
+                self.ico = self.layout.cache / 'nx2saria.ico'
                 if not self.ico.is_file() or self.ico.read_bytes() != data:
                     self.ico.write_bytes(data)
         except (tk.TclError, OSError) as e:
@@ -609,20 +616,20 @@ class App:
                                                                     self.see_through())))
         c.create_image(self.X(bx0), 0, anchor='nw', tags='static',
                        image=self.sprite('band', lambda: art.band(self.X(bx1) - self.X(bx0), self.X(bh), s)))
-        k = max(1, int(round(2 * s)))   # Navi in whole pixels: two screen pixels per artwork pixel at 100 %
-        emblem = self.sprite(('navi', k), lambda: art.navi(k))
+        size = max(1, self.X(bh - 8))
+        emblem = self.sprite(('sprig', size), lambda: art.sprig_icon(size))
         ew = emblem.width()
         title_w = self.f['band'].measure(NAME)
         gap = self.X(12)
         x = self.X(W / 2) - (ew + gap + title_w) // 2
-        # Navi's halo, behind her: a soft light that pulses while the animations run
+        # A soft green halo behind the sprig pulses while the animations run.
         size = self.X(bh) - 2
         if ('halo', size) not in self.sprites:
             self.sprites[('halo', size)] = [art.photo(self.root, f) for f in art.halo_frames(size)]
         self.halo = self.sprites[('halo', size)]
         c.create_image(x + ew // 2, self.X(bh / 2), image=self.halo[0], tags=('static', 'halo'))
-        self.navi_xy = (x, self.X(bh / 2))
-        c.create_image(x, self.X(bh / 2), anchor='w', image=emblem, tags=('static', 'navi'))
+        self.sprig_xy = (x, self.X(bh / 2))
+        c.create_image(x, self.X(bh / 2), anchor='w', image=emblem, tags=('static', 'sprig'))
         tx = x + ew + gap
         c.create_text(tx + 1, self.X(bh / 2) + self.X(2), text=NAME, anchor='w', font=self.f['band'],
                       fill=P['band_shadow'], tags='static')
@@ -899,7 +906,7 @@ class App:
             self.ctx.log(f'the launcher was stopped during {left["task"]} (started '
                          f'{time.strftime("%Y-%m-%d %H:%M", time.localtime(left.get("started") or 0))}, game folder '
                          f'{left.get("game_dir") or "none"})')
-        for old in self.layout.root.glob('python.old*'):   # the Python an update replaced (launcher/native/nx2navi.c)
+        for old in self.layout.root.glob('python.old*'):   # the Python an update replaced (launcher/native/nx2saria.c)
             shutil.rmtree(old, ignore_errors=True)
         if gd or self.settings.get('dump'):
             self.fonts_from_game(gd, self.settings.get('dump'))
@@ -918,7 +925,7 @@ class App:
             if left and not self.message:
                 # make_game.py keeps the old exe until the new one is linked and records each finished step, so the
                 # game folder is playable and a rebuild goes on from there; the player is told that it is due
-                self.message = (f'NX2navi was closed or stopped during {left["task"]}, which did not finish. Play '
+                self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Play '
                                 'starts the last finished build; Rebuild the Game finishes what was left.')
                 self.render()
             if self.install_staged('a staged update waited for the launcher to start'):
@@ -930,14 +937,14 @@ class App:
                 self.check_now()
         else:
             if left and not self.message:
-                self.message = (f'NX2navi was closed or stopped during {left["task"]}, which did not finish. Begin '
+                self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Begin '
                                 'Installation goes on from the steps that were done.')
             self.show('first_run')
             self.find_dumps()
 
     def after_update_notice(self):
         if self.args.rolled_back:
-            self.message = (f'Version {self.args.rolled_back} did not start, so NX2navi went back to '
+            self.message = (f'Version {self.args.rolled_back} did not start, so NX2Saria went back to '
                             f'{versions.display(self.layout.version)}.')
 
     def show(self, screen, focus=None):
@@ -1013,9 +1020,9 @@ class App:
             Row('value', 'Install Folder', gd, big=True, on=self.choose_folder, desc=folder_desc),
             Row('divider'),
             self.toggle('Desktop Shortcut', 'desktop_shortcut',
-                        'Put an NX2navi shortcut on the desktop. The Start menu always has one.'),
+                        'Put an NX2Saria shortcut on the desktop. The Start menu always has one.'),
             self.toggle('Check for Updates at Start', 'auto_check',
-                        'Look for a new version of NX2navi when the launcher opens, and every hour while it stays '
+                        'Look for a new version of NX2Saria when the launcher opens, and every hour while it stays '
                         'open. A new version downloads in the background and installs when you are not playing; '
                         'Settings can make it wait until you choose Updates.'),
             self.channel_row(),
@@ -1043,7 +1050,7 @@ class App:
                          'released, which may have new problems.',))
 
     def discord_row(self, game_dir):
-        """The game's discord_rpc setting (runtime/discord_rpc.c), kept in the game's nx2navi.ini as the game's own
+        """The game's discord_rpc setting (runtime/discord_rpc.c), kept in nx2saria.ini or an existing nx2navi.ini as the game's own
         menu keeps it; the game reads it when it starts. On unless the file says 0, as the game reads it (cfg_bool,
         default on)."""
         def on(v):
@@ -1064,11 +1071,12 @@ class App:
         def get():
             try:
                 return gameini.get(game_dir, 'discord_rpc') != '0'
-            except OSError:   # nx2navi.ini there but unreadable: the game's default
+            except OSError:   # settings file there but unreadable: the game's default
                 return True
         return Row('toggle', 'Discord Status', on=on, get=get,
-                   desc=('Show "Playing NX2navi" with your play time in your Discord status while the game runs. '
-                         'The game\'s menu switches it too (Game tab).',))
+                   desc=('Set your own Discord application ID as NX2SARIA_DISCORD_APP_ID or discord_app_id in '
+                         'nx2saria.ini; no application ID is built in. The activity includes play time, and Discord '
+                         'shows the name registered to your ID. The game\'s menu switches it too (Game tab).',))
 
     def choose_dump(self):
         start = str(Path(self.settings.get('dump')).parent) if self.settings.get('dump') else str(Path.home())
@@ -1092,8 +1100,9 @@ class App:
         if not path:
             return
         p = Path(path)
-        if p.exists() and any(p.iterdir()) and not (p / 'build-cache').is_dir() and p.name.lower() != 'nx2navi':
-            p = p / 'NX2navi'
+        if (p.exists() and any(p.iterdir()) and not (p / 'build-cache').is_dir()
+                and p.name.lower() not in ('nx2navi', 'nx2saria')):
+            p = p / 'NX2Saria'
         self.settings['game_dir'] = str(p)
         self.settings.save()
         self.show(self.screen, self.focus)
@@ -1141,7 +1150,7 @@ class App:
                       on=self.start_update, focus_value=True, desc=self.update_desc)
         elif self.check and self.check.result is None:
             upd = Row('value', 'Updates', 'Checking…', 'dim', big=True, icon='refresh', on=lambda: None,
-                      desc=('Looking for a new version of NX2navi.',))
+                      desc=('Looking for a new version of NX2Saria.',))
         elif self.check_error:
             upd = Row('value', 'Updates', 'Could not check', 'dim', big=True, icon='refresh',
                       on=lambda: self.check_now(force=True),
@@ -1154,7 +1163,7 @@ class App:
         else:
             upd = Row('value', 'Updates', f'Version {mine}', 'normal', big=True, icon='refresh',
                       on=lambda: self.check_now(force=True),
-                      desc=(f'You have NX2navi {mine}. Select this row to look for a new version.',))
+                      desc=(f'You have NX2Saria {mine}. Select this row to look for a new version.',))
         # an update that stopped in the compile left no finished build on record, but the exe of the build before it
         unfinished = not built and build.installed(gd)
         rebuild_value = (f'Built with {versions.display(built)}' if built else
@@ -1167,7 +1176,7 @@ class App:
             play_desc += (f'The last rebuild of the game did not finish, so Play starts the build from before it. '
                           f'Rebuild the Game finishes it and brings the game to {mine}; your dump is not needed.',)
         if staged and self.settings.get('auto_install'):
-            play_desc += (f'NX2navi {staged["version"]} is downloaded and installs after you quit the game.',)
+            play_desc += (f'NX2Saria {staged["version"]} is downloaded and installs after you quit the game.',)
         if self.message:
             play_desc = (self.message,) + play_desc
         return [
@@ -1175,8 +1184,8 @@ class App:
             upd,
             Row('divider'),
             Row('value', 'Game Folder', gd, on=lambda: self.open(gd),
-                desc=('Open the game folder. The game keeps your save in its profile folder, its settings in '
-                      'nx2navi.ini and its logs in logs. Its saves folder holds saves to import and backups.',)),
+                desc=('Open the game folder. The game keeps your save in its profile folder, settings in nx2saria.ini '
+                      '(or an existing nx2navi.ini), and logs in logs. Its saves folder holds imports and backups.',)),
             self.saves_row(gd),
             self.mods_row(gd),
             Row('value', 'Rebuild the Game', rebuild_value, rebuild_style, on=self.start_rebuild,
@@ -1471,7 +1480,7 @@ class App:
     def steam_row(self):
         """Add to Steam: the game in the Steam library, started from there without the launcher (launcher/steam.py)."""
         found = steam.find_steam()
-        desc = ('Adds the game to your Steam library with its own icon and artwork, so you can start it from Steam.',
+        desc = ('Adds Ocarina of Time (NX2Saria) to Steam with the leaf icon and artwork from your game.',
                 'Steam restarts while it is added.')
         if self.steam_message:
             desc = (self.steam_message,) + desc
@@ -1591,17 +1600,17 @@ class App:
         ready = self.save_waiting(gd)
         out = self.export_dir()
         export_desc = ('Write your save into one zip file, to attach to a bug report or give to another player: every '
-                       'save slot and a note of the NX2navi and game versions, never your keys or game files. The '
+                       'save slot and a note of the NX2Saria and game versions, never your keys or game files. The '
                        'folder opens with the zip selected.',)
         if self.export_message:
             export_desc = (self.export_message,) + export_desc
-        import_desc = ('Make a save someone shared (an NX2navi-save zip) your save: every slot is replaced. Put the zip '
+        import_desc = ('Make a save someone shared (an NX2Saria-save zip) your save: every slot is replaced. Put the zip '
                        'into the saves folder of the game folder and select this row, or select this row and choose '
                        'the zip.', 'Your current save is copied to the saves folder first.')
         if gd and saves.pending_import(gd):
             import_desc += ('A save imported in the game\'s menu waits for the game\'s next start; an import here '
                             'replaces it.',)
-        folder_desc = ('Bring in a save folder: a Switch save backup, an emulator\'s save, another NX2navi install, or '
+        folder_desc = ('Bring in a save folder: a Switch save backup, an emulator\'s save, another NX2Saria install, or '
                        'one save slot (a folder named slot_00 to slot_05: only that slot is replaced).',
                        'Your current save is copied to the saves folder first.')
         if self.save_message:
@@ -1613,8 +1622,9 @@ class App:
         return [
             Row('value', 'Export Save', out.name or str(out), on=self.export_save, desc=export_desc),
             Row('toggle', 'Add Log and Settings', on=report, get=lambda: bool(self.settings.get('export_with_log')),
-                desc=('On: the zip also holds the game\'s latest log (logs\\nx2navi.log) and its settings '
-                      '(nx2navi.ini), which show what happened and with which settings. Keep it on for a bug report: '
+                desc=('On: the zip also holds the game\'s latest log (logs\\nx2saria.log) and its settings '
+                      '(nx2saria.ini), which show what happened and with which settings. Existing installations may '
+                      'still use nx2navi.log and nx2navi.ini. Keep it on for a bug report: '
                       'while the game has no save yet, Export Save then writes these two alone.',
                       'Off: the save alone, to give to another player.')),
             Row('value', 'Export To', str(out), on=self.choose_export_dir,
@@ -1681,7 +1691,7 @@ class App:
                 elif saves.waiting(gd)[0] is None:
                     src = filedialog.askopenfilename(parent=self.root, title='Choose the save to import',
                                                      initialdir=str(self.export_dir()),
-                                                     filetypes=[('NX2navi save', '*.zip'), ('All files', '*.*')])
+                                                     filetypes=[('NX2Saria save', '*.zip'), ('All files', '*.*')])
                     if not src:
                         return
                 r = saves.import_save(gd, src, log=self.ctx.log)
@@ -1696,7 +1706,7 @@ class App:
         """What an import did, for the import rows' descriptions."""
         m = r.get('manifest')
         if m:
-            text = (f'Save imported from {r["source"].name} (exported {str(m.get("exported", ""))[:10]} with NX2navi '
+            text = (f'Save imported from {r["source"].name} (exported {str(m.get("exported", ""))[:10]} with NX2Saria '
                     f'{m.get("nx2navi") or "?"}).')
         elif r['slot']:
             text = f'Save imported into {r["slot"]}.'
@@ -1941,7 +1951,7 @@ class App:
         notes = feed.plain_notes(m.get('notes', ''), 4)
         if self.settings.get('auto_install'):
             text = (f'You have {mine}. Version {nv} is downloaded and installs when you are not playing: after you '
-                    'quit the game, or when NX2navi next opens. Select this row to install it now.')
+                    'quit the game, or when NX2Saria next opens. Select this row to install it now.')
         else:
             text = f'You have {mine}. Version {nv} is downloaded. Select this row to install it.'
         return {'title': f'Version {nv} Is Ready', 'text': [text],
@@ -1975,7 +1985,7 @@ class App:
         if not force and time.time() - self.settings.get('last_check', 0) < 600 and self.release:
             return
         if force and time.time() - self.check_started < FORCED_CHECK_PAUSE:
-            self.message = 'NX2navi looked for updates less than a minute ago.'
+            self.message = 'NX2Saria looked for updates less than a minute ago.'
             if self.screen == 'home':
                 self.show('home', self.focus)
             return
@@ -2103,10 +2113,10 @@ class App:
         if not ver:
             return False
         if self.bg.restarting:
-            self.message = f'Installing NX2navi {ver}…'
+            self.message = f'Installing NX2Saria {ver}…'
             self.root.after(200, self.root.destroy)
         else:
-            self.message = f'NX2navi {ver} is installed: start NX2navi again to finish it.'
+            self.message = f'NX2Saria {ver} is installed: start NX2Saria again to finish it.'
         if self.screen == 'home':
             self.show('home', self.focus)
         return True
@@ -2139,11 +2149,11 @@ class App:
         dump = self.settings.get('dump')
         return [
             self.toggle('Check for Updates at Start', 'auto_check',
-                        'Look for a new version of NX2navi when the launcher opens, and every hour while it stays '
+                        'Look for a new version of NX2Saria when the launcher opens, and every hour while it stays '
                         'open (also while you play). A new version downloads in the background.'),
             self.toggle('Install Updates Automatically', 'auto_install',
                         'Install a downloaded update by itself when you are not playing: after you quit the game, '
-                        'or when NX2navi opens. Off: it waits until you select Updates. Updates download in the '
+                        'or when NX2Saria opens. Off: it waits until you select Updates. Updates download in the '
                         'background either way.'),
             self.toggle('Hide Launcher While Playing', 'hide_while_playing',
                         'Hide this window while the game runs; it comes back when you quit the game.'),
@@ -2154,8 +2164,8 @@ class App:
             *([self.discord_row(gd)] if gd and Path(gd).is_dir() else []),
             Row('divider'),
             Row('value', 'Game Folder', gd or 'Not chosen', on=lambda: gd and self.open(gd),
-                desc=('Open the game folder: saves in profile, the game\'s settings in nx2navi.ini, its logs in '
-                      'logs.',)),
+                desc=('Open the game folder: saves in profile, settings in nx2saria.ini (or an existing nx2navi.ini), '
+                      'and logs in logs\\nx2saria.log.',)),
             Row('value', 'Game Dump', Path(dump).name if dump else 'Not chosen', on=self.choose_dump,
                 desc=(f'The dump the game was built from: {dump}.' if dump else 'No dump chosen yet.',
                       'Select this row to choose another .nup file.')),
@@ -2163,7 +2173,7 @@ class App:
             Row('value', 'Open Logs Folder', '', 'arrow', on=lambda: self.open(self.layout.logs),
                 desc=('The launcher\'s logs. Attach launcher.log when you report a problem with installing or '
                       'updating; never send game files.',)),
-            Row('value', 'Uninstall NX2navi', 'Keeps your saves', 'salmon', on=lambda: self.show('uninstall'),
+            Row('value', 'Uninstall NX2Saria', 'Keeps your saves', 'salmon', on=lambda: self.show('uninstall'),
                 desc=('Remove the launcher and its build tools. You choose on the next screen whether the built '
                       'game goes too.',)),
             Row('action', 'Back', on=lambda: self.show('home'), height=40, desc=('Back to the main menu.',)),
@@ -2181,7 +2191,7 @@ class App:
                       'Off: the game folder and your saves stay where they are.')),
             Row('divider'),
             Row('pair', actions=[('Uninstall', self.do_uninstall), ('Cancel', lambda: self.show('settings'))],
-                desc=('Uninstall removes NX2navi, its build tools and its shortcuts. Your dump is never touched.',)),
+                desc=('Uninstall removes NX2Saria, its build tools and its shortcuts. Your dump is never touched.',)),
         ]
 
     def do_uninstall(self):
@@ -2298,7 +2308,7 @@ class App:
 
     def copy_report(self):
         j = self.job
-        report = [f'NX2navi {self.layout.version} ({"checkout" if self.layout.dev else "release"}), {sys.platform}',
+        report = [f'NX2Saria {self.layout.version} ({"checkout" if self.layout.dev else "release"}), {sys.platform}',
                   f'Job: {j.kind}, step: {j.current().label}', f'Error: {j.error}', '', 'Last lines:']
         report += j.last_lines(60)
         self.root.clipboard_clear()
@@ -2326,7 +2336,7 @@ class App:
                 if winsys.restart(self.layout, ['--continue-update', versions.display(self.layout.version)]):
                     self.root.after(200, self.root.destroy)
                     return
-                self.message = 'The update is ready: start NX2navi again to finish it.'
+                self.message = 'The update is ready: start NX2Saria again to finish it.'
             elif j.after == 'staged':
                 self.message = 'The update was downloaded; a checkout keeps running from the repository.'
             elif j.after == 'play':   # the mods' code is built in (play): the game starts
@@ -2343,7 +2353,7 @@ class App:
                 self.message = 'The game is built. Select Play.'
             elif j.kind in ('update', 'rebuild'):
                 self.message = 'The game is rebuilt and up to date.' if j.kind == 'rebuild' else \
-                    f'NX2navi is now {versions.display(self.layout.version)}.'
+                    f'NX2Saria is now {versions.display(self.layout.version)}.'
                 self.release = None
             note = getattr(j, 'note', '')   # what the file check found (jobs.Job.note_scan)
             if note and j.after is None:
@@ -2418,7 +2428,7 @@ class App:
 
     def animate(self):
         """One step of everything that moves: the cursor on its way to the focused row and its breath, the screen
-        sliding into place, the sparks and Navi. Each moves by the time since the last step (the timer comes when
+        sliding into place, the sparks and sprig. Each moves by the time since the last step (the timer comes when
         Tk gets to it, 16 to 50 ms apart), at most a tenth of a second's worth. With Animations off, while the
         window is hidden or minimised, and while another window is in front, nothing moves and the timer runs slowly.
         The last covers a launcher left open behind the game (Hide Launcher While Playing off): drawing every 15 ms
@@ -2474,9 +2484,9 @@ class App:
             if k != sp['shown']:
                 sp['shown'] = k
                 c.itemconfigure(sp['id'], image=sp['pics'][k])
-        if self.navi_xy:   # Navi rises and sinks two pixels every 2.4 s, her halo pulses with her
-            x, y = self.navi_xy
-            c.coords('navi', x, y + round(math.sin(t * 2.6) * self.X(2)))
+        if self.sprig_xy:   # the sprig rises and sinks two pixels every 2.4 s while its halo pulses
+            x, y = self.sprig_xy
+            c.coords('sprig', x, y + round(math.sin(t * 2.6) * self.X(2)))
             if self.halo:
                 c.itemconfigure('halo', image=self.halo[int(t / 2.4 * len(self.halo)) % len(self.halo)])
 
@@ -2822,7 +2832,7 @@ class App:
 
 
 def parse_args(argv):
-    ap = argparse.ArgumentParser(prog='NX2navi')
+    ap = argparse.ArgumentParser(prog='NX2Saria')
     ap.add_argument('--from', dest='source', help='a folder to look in for the dump first (the setup\'s folder)')
     ap.add_argument('--continue-update', metavar='OLD', help='finish an update after the restart (from OLD)')
     ap.add_argument('--rolled-back', metavar='VERSION', help='the stub went back from VERSION')
@@ -2877,7 +2887,7 @@ def play_only(ctx):
         job = jobs.running_job(ctx)
         if job:
             ctx.log(f'play from Steam: not started: the launcher is busy with {job["task"]}')
-            tell(f'NX2navi is busy with {job["task"]}. Start the game when it is done.')
+            tell(f'NX2Saria is busy with {job["task"]}. Start the game when it is done.')
             return 0
     if saves.game_running(gd):
         ctx.log('play from Steam: the game is already running')
@@ -2931,11 +2941,11 @@ def main(argv=None):
             # A second window on the same folder would run its own jobs into the same game folder and settings. The
             # first one may be out of sight (hidden while the game runs), so the player is told who holds the folder
             ctx.log(f'not started: {e}')
-            tell(f'NX2navi is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
+            tell(f'NX2Saria is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
                  'when you quit the game.')
             return 0
     try:
-        root = tk.Tk(className='NX2navi')
+        root = tk.Tk(className='NX2Saria')
         app = App(root, ctx, a)
         if a.selftest:
             from .selftest import run

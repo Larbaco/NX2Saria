@@ -327,8 +327,17 @@ class GameIniTest(Tmp):
 
     def test_new_file_gets_the_section(self):
         gameini.put(self.tmp, 'discord', 'discord_rpc', '1')
-        self.assertEqual((self.tmp / 'nx2navi.ini').read_bytes(), b'[discord]\ndiscord_rpc = 1\n')
+        self.assertEqual((self.tmp / 'nx2saria.ini').read_bytes(), b'[discord]\ndiscord_rpc = 1\n')
         self.assertEqual(gameini.get(self.tmp, 'discord_rpc'), '1')
+
+    def test_new_ini_wins_and_legacy_ini_is_left_untouched(self):
+        current, legacy = self.tmp / 'nx2saria.ini', self.tmp / 'nx2navi.ini'
+        current.write_text('sharpness = 80\n')
+        legacy.write_text('sharpness = 20\n')
+        self.assertEqual(gameini.get(self.tmp, 'sharpness'), '80')
+        gameini.put(self.tmp, 'display', 'sharpness', '60')
+        self.assertEqual(current.read_text(), 'sharpness = 60\n')
+        self.assertEqual(legacy.read_text(), 'sharpness = 20\n')
 
     def test_only_the_key_line_changes(self):
         # the byte order mark, the line ends and a line that is not UTF-8 stay as they were
@@ -497,8 +506,8 @@ class UninstallTest(Tmp):
 
     def test_plan_keeps_the_game_and_what_is_not_ours(self):
         from types import SimpleNamespace
-        root = self.tmp / 'NX2navi'
-        self.tree(root, ('NX2navi.exe', 'app/current.txt', 'python.old-3/x', 'game/profile/save/1/a.sav', 'mine.txt'))
+        root = self.tmp / 'NX2Saria'
+        self.tree(root, ('NX2Saria.exe', 'app/current.txt', 'python.old-3/x', 'game/profile/save/1/a.sav', 'mine.txt'))
         layout = SimpleNamespace(root=root, toolchain=root / 'toolchain')
         gone, empty = winsys.uninstall_plan(layout)
         self.assertNotIn(root / 'game', gone)
@@ -507,8 +516,8 @@ class UninstallTest(Tmp):
         self.assertEqual(empty, [root])
         gone, _ = winsys.uninstall_plan(layout, str(root / 'game'))
         self.assertEqual(gone[0], root / 'game')
-        # the toolchain moved to C:\NX2navi: that folder goes only when nothing else is left in it
-        other = self.tmp / 'C NX2navi' / 'toolchain'
+        # the toolchain moved to C:\NX2Saria: that folder goes only when nothing else is left in it
+        other = self.tmp / 'C NX2Saria' / 'toolchain'
         gone, empty = winsys.uninstall_plan(SimpleNamespace(root=root, toolchain=other))
         self.assertIn(other, gone)
         self.assertNotIn(other.parent, gone)
@@ -517,8 +526,8 @@ class UninstallTest(Tmp):
     @unittest.skipUnless(os.name == 'nt', 'runs the cmd.exe script')
     def test_script_on_windows(self):
         from types import SimpleNamespace
-        root = self.tmp / 'NX2navi ÿ x'   # spaces and a character outside ASCII
-        self.tree(root, ('NX2navi.exe', 'app/1/VERSION', 'python/pythonw.exe', 'python.old-12/x', 'pydeps/z',
+        root = self.tmp / 'NX2Saria ÿ x'   # spaces and a character outside ASCII
+        self.tree(root, ('NX2Saria.exe', 'app/1/VERSION', 'python/pythonw.exe', 'python.old-12/x', 'pydeps/z',
                          'data/launcher.json', 'toolchain/msys64/a', 'game/profile/save/1/a.sav', 'mine.txt'))
         layout = SimpleNamespace(root=root, toolchain=root / 'toolchain')
         script = winsys.uninstall_script(*winsys.uninstall_plan(layout)).replace('ping -n 3 127.0.0.1 >nul', 'echo')
@@ -833,7 +842,7 @@ class NetTest(Tmp):
         with self.low_disk(free):
             with self.assertRaises(updater.UpdateError) as refused:
                 updater.safe_extract(z, self.tmp / 'x')
-            self.assertIn('no room for the files of NX2navi-app-0.9.0.zip', str(refused.exception))
+            self.assertIn('no room for the files of NX2Saria-app-0.9.0.zip', str(refused.exception))
             self.assertFalse((self.tmp / 'x').exists())                                  # nothing was unpacked
             from launcher import mods
             with self.assertRaises(mods.ModError) as refused:
@@ -953,7 +962,7 @@ def make_app_zip(folder, ver, extra=None):
     (app / 'launcher').mkdir(parents=True)
     (app / 'launcher' / 'start.pyw').write_text('# test\n')
     (app / 'VERSION').write_text(ver + '\n')
-    z = folder / f'NX2navi-app-{ver}.zip'
+    z = folder / f'NX2Saria-app-{ver}.zip'
     with zipfile.ZipFile(z, 'w') as zf:
         for p in app.rglob('*'):
             if p.is_file():
@@ -1144,7 +1153,7 @@ class BackgroundUpdateTest(Tmp):
         z = make_app_zip(self.tmp, ver)
         m = manifest_for(z, ver)
         if runtime:
-            r = self.tmp / f'NX2navi-runtime-{runtime}.zip'
+            r = self.tmp / f'NX2Saria-runtime-{runtime}.zip'
             with zipfile.ZipFile(r, 'w') as zf:
                 zf.writestr('python.exe', 'MZ')
                 zf.writestr('runtime-id.txt', runtime + '\n')
@@ -1855,7 +1864,7 @@ class MakeGameTest(Tmp):
         self.assertEqual(calls, ['lift', 'compile', 'compile', 'lift', 'compile'])
 
     def test_shader_progress_reaches_the_launcher(self):
-        """The shaders step turns nx2navi.exe's counts into progress (translation the first half of the bar, the
+        """The shaders step turns nx2saria.exe's counts into progress (translation the first half of the bar, the
         driver build the second), sends one every few seconds while nothing is printed, says when the counts stop
         moving, and passes its other lines on to the log."""
         kit = self.tmp / 'kit'
@@ -2937,13 +2946,13 @@ class MakeGameTest(Tmp):
         that mode is gone, and a low_end_gpu line of any value changes nothing. The environment's value stays."""
         out = self.tmp / 'game'
         out.mkdir()
-        env = {k: v for k, v in os.environ.items() if k.upper() != 'NX2NAVI_GUEST_OPT'}
+        env = {k: v for k, v in os.environ.items() if k.upper() not in ('NX2NAVI_GUEST_OPT', 'NX2SARIA_GUEST_OPT')}
         for low in ('', 'low_end_gpu = 1\n', 'low_end_gpu = yes\n', 'low_end_gpu = 0\n', 'low_end_gpu = off\n',
                     'low_end_gpu = 0 ; note\n'):
             (out / 'nx2navi.ini').write_text('guest_opt = 2\n' + low)
             with mock.patch.dict(os.environ, env, clear=True):
                 self.mg.guest_opt_ini(out)
-                self.assertEqual(os.environ.get('NX2NAVI_GUEST_OPT'), '2', low)
+                self.assertEqual(os.environ.get('NX2SARIA_GUEST_OPT'), '2', low)
         (out / 'nx2navi.ini').write_text('low_end_gpu = 1\n')
         with mock.patch.dict(os.environ, env, clear=True):
             self.mg.guest_opt_ini(out)
@@ -3064,7 +3073,7 @@ class MakeGameTest(Tmp):
         obj.mkdir(parents=True)
         rt = self.tmp / 'the kit' / 'runtime'
         rt.mkdir(parents=True)
-        for name in ('nx2navi.rc', 'nx2navi.manifest', 'nx2navi.ico'):
+        for name in ('nx2saria.rc', 'nx2saria.manifest', 'nx2saria.ico'):
             shutil.copy2(ROOT / 'runtime' / name, rt / name)
         rco = self.mg.compile_resources(msys, rt, obj, dict(os.environ))
         self.assertEqual((rco, rco.read_bytes()), (obj / 'nx2navi_rc.o', b'coff'))
@@ -3075,7 +3084,7 @@ class MakeGameTest(Tmp):
         self.assertIn(f'--preprocessor={msys / "bin" / "gcc.exe"}', args)
         self.assertEqual([a for a in args if a.startswith('--preprocessor-arg=')],
                          ['--preprocessor-arg=-E', '--preprocessor-arg=-xc', '--preprocessor-arg=-DRC_INVOKED'])
-        self.assertEqual(args[args.index('-i') + 1], 'nx2navi.rc')
+        self.assertEqual(args[args.index('-i') + 1], 'nx2saria.rc')
         self.assertFalse([a for a in args if a.startswith(('-I', '--include-dir', '-D', '-U'))])
         # the temporary files went to a folder of the build cache, which is gone with the two windres left there
         self.assertEqual(seen['tmp'], seen['temp'])
@@ -3090,7 +3099,7 @@ class MakeGameTest(Tmp):
         err = io.StringIO()
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
             self.mg.compile_resources(msys, rt, obj, dict(os.environ, FAKE_WINDRES_FAIL='1'))
-        self.assertIn('windres failed on runtime/nx2navi.rc: windres: preprocessing failed.', err.getvalue())
+        self.assertIn('windres failed on runtime/nx2saria.rc: windres: preprocessing failed.', err.getvalue())
         self.assertEqual(sorted(p.name for p in obj.iterdir()), ['nx2navi_rc.o'])
 
     def test_a_cut_romfs_image_does_not_count_as_used_space(self):
@@ -3600,9 +3609,10 @@ class FileCheckTest(Tmp):
 # last looked at, as SCAN_LOGIC for the file check: a change to their logic fails
 # PromptToolsTest.test_the_prompt_tools_logic_is_the_recorded_one. If the change can alter what the tools write, give
 # PROMPT_TOOLS a new value (every install then draws its prompts again) and record both here; if it cannot, record
-# only the new digests.
+# only the new digests. The NX2Saria filename fallback changes no rendering for the same effective bindings;
+# step_key already includes those bindings, so this rename records the digest without forcing all prompts to redraw.
 PROMPT_LOGIC = ('ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249',
-                {'pad_prompts.py': '780c246b5fde7a0e9dbf3f59ad16372e1737592add6f2f2d9825bee6df4e296f',
+                {'pad_prompts.py': '9692b7632e4570df0814149a3d70f729645835f74eab1a9b34b6d963d81efca0',
                  'prompt_art.py': '87edacabcddb4952f5862373815d7d46a05c67f350e0734025ae4d2f83b12038',
                  'button_icons.py': '3804e371a030965bc9eb4226f333b611651f25efaa67ee523b404edc3257818a'})
 
@@ -4036,7 +4046,7 @@ class LockTest(Tmp):
             self.assertEqual(app.main(['--root', str(self.layout.root)]), 0)
         window.assert_not_called()                 # no second window
         self.assertEqual(len(said), 1)
-        self.assertIn(f'NX2navi is already running: the launcher window (process {other.pid}', said[0])
+        self.assertIn(f'NX2Saria is already running: the launcher window (process {other.pid}', said[0])
 
     def test_the_lock_goes_when_its_process_dies(self):
         other = self.holder(self.layout)
@@ -4614,7 +4624,7 @@ class SaveShareTest(unittest.TestCase):
                         'work/option.sav': b'not committed'})
         self.files(self.game, {'logs/nx2navi.log': b'log', 'nx2navi.ini': b'[graphics]'})
         r = saves.export_save(self.game, self.out, version='0.6.1', log=lambda m: None)
-        self.assertRegex(r['path'].name, r'^NX2navi-save-\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d\.zip$')
+        self.assertRegex(r['path'].name, r'^NX2Saria-save-\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d\.zip$')
         self.assertEqual(r['extras'], [])
         self.assertEqual([p.name for p in self.out.iterdir()], [r['path'].name])   # no .part left behind
         with zipfile.ZipFile(r['path']) as z:
@@ -4635,15 +4645,26 @@ class SaveShareTest(unittest.TestCase):
                                'prod.keys': b'secret'})
         r = saves.export_save(self.game, self.out, bug_report=True, log=lambda m: None)
         self.assertTrue(r['path'].name.endswith('-bug-report.zip'))
-        self.assertEqual(r['extras'], ['nx2navi.log', 'nx2navi.ini'])
+        self.assertEqual(r['extras'], ['nx2saria.log', 'nx2saria.ini'])
         with zipfile.ZipFile(r['path']) as z:
             names = z.namelist()
-            self.assertEqual(z.read('bug-report/nx2navi.log'), b'the log')
-            self.assertEqual(z.read('bug-report/nx2navi.ini'), b'[x]')
+            self.assertEqual(z.read('bug-report/nx2saria.log'), b'the log')
+            self.assertEqual(z.read('bug-report/nx2saria.ini'), b'[x]')
             self.assertTrue(json.loads(z.read('manifest.json'))['bug_report'])
             self.assertFalse(any(b'secret' in z.read(n) for n in names))
         self.assertFalse([n for n in names if 'keys' in n])
         self.assertEqual(len([n for n in names if n.startswith('save/')]), len(self.SAVE))
+
+    def test_new_report_paths_win_when_new_and_legacy_files_both_exist(self):
+        self.game_with_save(self.game)
+        self.files(self.game, {'logs/nx2saria.log': b'current log', 'logs/nx2navi.log': b'old log',
+                               'nx2saria.ini': b'[current]', 'nx2navi.ini': b'[legacy]'})
+        report = saves.export_save(self.game, self.out, bug_report=True, log=lambda m: None)
+        with zipfile.ZipFile(report['path']) as z:
+            self.assertEqual(z.read('bug-report/nx2saria.log'), b'current log')
+            self.assertEqual(z.read('bug-report/nx2saria.ini'), b'[current]')
+        self.assertEqual((self.game / 'logs' / 'nx2navi.log').read_bytes(), b'old log')
+        self.assertEqual((self.game / 'nx2navi.ini').read_bytes(), b'[legacy]')
 
     def test_a_bug_report_keeps_the_private_settings_values_out(self):
         """The private settings' values (a room's secret, a relay and a name that an earlier version's co-op left in
@@ -4654,7 +4675,7 @@ class SaveShareTest(unittest.TestCase):
         self.files(self.game, {'logs/nx2navi.log': b'the log', 'nx2navi.ini': ini})
         r = saves.export_save(self.game, self.out, bug_report=True, log=lambda m: None)
         with zipfile.ZipFile(r['path']) as z:
-            got = z.read('bug-report/nx2navi.ini')
+            got = z.read('bug-report/nx2saria.ini')
         self.assertEqual(got, b'\xef\xbb\xbf[coop]\r\ncoop = 1\r\n  Coop_Room = (set, not shown)\r\n'
                               b'coop_server= (set, not shown)\r\n# coop_name = in a comment\r\ncoop_name =\r\n'
                               b'coop_accept = (set, not shown)\nfps_limit = 60')
@@ -4685,12 +4706,12 @@ class SaveShareTest(unittest.TestCase):
                 saves.account_dir(self.game).mkdir(parents=True)
             with self.subTest(account=account):
                 r = saves.export_save(self.game, self.out, bug_report=True, version='0.7.1', log=lambda m: None)
-                self.assertRegex(r['path'].name, r'^NX2navi-log-.*-bug-report( \(\d+\))?\.zip$')   # (2): the same second
-                self.assertEqual((r['files'], r['extras']), (0, ['nx2navi.log', 'nx2navi.ini']))
+                self.assertRegex(r['path'].name, r'^NX2Saria-log-.*-bug-report( \(\d+\))?\.zip$')   # (2): the same second
+                self.assertEqual((r['files'], r['extras']), (0, ['nx2saria.log', 'nx2saria.ini']))
                 with zipfile.ZipFile(r['path']) as z:
-                    self.assertEqual(sorted(z.namelist()), ['bug-report/nx2navi.ini', 'bug-report/nx2navi.log',
+                    self.assertEqual(sorted(z.namelist()), ['bug-report/nx2saria.ini', 'bug-report/nx2saria.log',
                                                             'manifest.json'])
-                    self.assertEqual(z.read('bug-report/nx2navi.log'), b'FATAL: it stopped')
+                    self.assertEqual(z.read('bug-report/nx2saria.log'), b'FATAL: it stopped')
                     m = json.loads(z.read('manifest.json'))
                     self.assertEqual((m['format'], m['files'], m['bug_report'], m['nx2navi']),
                                      (saves.FORMAT, 0, True, '0.7.1'))
@@ -4819,13 +4840,13 @@ class SaveShareTest(unittest.TestCase):
 
 
 class IconTest(unittest.TestCase):
-    def test_navi(self):
+    def test_leaf_sprig_icon_has_packed_green_pixels(self):
         try:
             from launcher.ui import art
         except ImportError:
             self.skipTest('needs numpy')
-        self.assertEqual(art.navi(2).shape, (42, 44, 4))
-        data = art.navi_ico()
+        self.assertEqual(art.sprig_icon(64).shape, (64, 64, 4))
+        data = art.sprig_ico()
         count = struct.unpack_from('<H', data, 4)[0]
         sizes = [data[6 + 16 * i] or 256 for i in range(count)]
         self.assertEqual(sizes[0], 16)
@@ -4834,6 +4855,9 @@ class IconTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<Iii', data, off), (40, 16, 32))   # a bitmap entry, not PNG
         big = struct.unpack_from('<I', data, 6 + 16 * (count - 1) + 12)[0]
         self.assertEqual(data[big:big + 4], b'\x89PNG')
+        ix = sizes.index(64)
+        offset = struct.unpack_from('<I', data, 6 + 16 * ix + 12)[0]
+        self.assertIn(bytes((0xa0, 0xcb, 0xa9, 0xff)), data[offset + 40:offset + 40 + 64 * 64 * 4])
 
 
 class LookTest(Tmp):
@@ -5152,7 +5176,6 @@ def have_display():
         return False
 
 
-@unittest.skipUnless(have_display(), 'needs tkinter, numpy and a display')
 class SteamTest(Tmp):
     """launcher/steam.py on made-up Steam files: the binary shortcuts file read and written back unchanged, our
     shortcut added beside another and updated in place, its id as Steam computes it, the accounts that signed in."""
@@ -5172,25 +5195,41 @@ class SteamTest(Tmp):
         self.assertEqual(b[-4:], b'\x08\x08\x08\x08')   # tags, the shortcut, shortcuts, the file
         self.assertEqual(steam.vdf_dump(steam.vdf_load(b)), b)
         self.assertFalse(steam.has_shortcut(b))
-        new, sid = steam.add_shortcut(b, '"C:\\NX2navi\\python\\pythonw.exe"', '"C:\\NX2navi"',
-                                      '"C:\\NX2navi\\data\\steam_play.pyw"', 'C:\\grid\\x_icon.png')
-        self.assertEqual(sid, steam.appid('"C:\\NX2navi\\python\\pythonw.exe"', steam.NAME))
+        new, sid = steam.add_shortcut(b, '"C:\\NX2Saria\\python\\pythonw.exe"', '"C:\\NX2Saria"',
+                                      '"C:\\NX2Saria\\data\\steam_play.pyw"', 'C:\\grid\\x_icon.png')
+        self.assertEqual(sid, steam.appid('"C:\\NX2Saria\\python\\pythonw.exe"', steam.NAME))
         self.assertTrue(sid & 0x80000000)
         self.assertTrue(new.startswith(b[:-2]))   # the other shortcut stays byte for byte
         self.assertTrue(steam.has_shortcut(new))
         items = steam.vdf_load(new)[0][2]
         self.assertEqual([k for _, k, _ in items], ['0', '1'])
         ours = {k: v for _, k, v in items[1][2]}
-        self.assertEqual(ours['AppName'], 'The Legend of Zelda Ocarina of Time')
+        self.assertEqual(ours['AppName'], steam.NAME)
         self.assertEqual(struct.unpack('<I', ours['appid'])[0], sid)
-        self.assertEqual(ours['LaunchOptions'], '"C:\\NX2navi\\data\\steam_play.pyw"')
+        self.assertEqual(ours['LaunchOptions'], '"C:\\NX2Saria\\data\\steam_play.pyw"')
         self.assertEqual(ours['AllowOverlay'], struct.pack('<I', 1))
-        again, _ = steam.add_shortcut(new, '"D:\\NX2navi\\python\\pythonw.exe"', '"D:\\NX2navi"', '', 'x')
+        again, _ = steam.add_shortcut(new, '"D:\\NX2Saria\\python\\pythonw.exe"', '"D:\\NX2Saria"', '', 'x')
         items = steam.vdf_load(again)[0][2]
         self.assertEqual(len(items), 2)   # moved launcher: the same shortcut, updated
-        self.assertEqual({k: v for _, k, v in items[1][2]}['StartDir'], '"D:\\NX2navi"')
+        self.assertEqual({k: v for _, k, v in items[1][2]}['StartDir'], '"D:\\NX2Saria"')
         with self.assertRaises(steam.SteamError):
             steam.vdf_load(b[:-5])
+
+    def test_legacy_shortcut_is_rebranded_in_place(self):
+        from launcher import steam
+        exe = '"C:\\NX2navi\\python\\pythonw.exe"'
+        old, _ = steam.add_shortcut(b'', exe, '"C:\\NX2navi"', '"old-script.pyw"', 'old-icon.png',
+                                    name=steam.LEGACY_NAMES[0])
+        self.assertTrue(steam.has_shortcut(old))
+        current, sid = steam.add_shortcut(old, '"C:\\NX2Saria\\python\\pythonw.exe"', '"C:\\NX2Saria"',
+                                          '"new-script.pyw"', 'new-icon.png')
+        entries = steam.vdf_load(current)[0][2]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(sid, steam.appid(exe, steam.LEGACY_NAMES[0]))   # keep Steam's per-app data
+        ours = {key: value for _, key, value in entries[0][2]}
+        self.assertEqual(ours['AppName'], steam.NAME)
+        self.assertEqual(ours['icon'], 'new-icon.png')
+        self.assertTrue(steam.has_shortcut(current))
 
     def test_new_file_and_accounts(self):
         from launcher import steam
@@ -5396,7 +5435,7 @@ class WhilePlayingTest(Tmp):
         fatal = 'vk: the GPU device was lost (seen at: q). The run ends here'
         a, log = self.ended(72, f'[host] x\nFATAL: {fatal}\n[host] fatal: memory commit: this process 9000 MB\n')
         self.assertEqual(a.message, f'The game ended with a fatal error (code 72): {fatal}. Its log is '
-                                    'logs\\nx2navi.log in the game folder.')
+                                    'logs\\nx2saria.log (older builds: nx2navi.log).')
         a.ctx.log.assert_called_once_with(f'the game ended with code 72; its log says: FATAL: {fatal}')
         self.assertIn('[launcher] the game ended with code 72 (the graphics device was lost',
                       log.read_text(encoding='utf-8'))
@@ -5414,7 +5453,7 @@ class WhilePlayingTest(Tmp):
             self.skipTest(f'no window toolkit: {e}')
         a, log = self.ended(0, '[host] x\nFATAL: vk: the GPU device was lost (seen at: x)\n')
         self.assertEqual(a.message, "A copy started by the game's Restart ended with a fatal error: vk: the GPU device "
-                                    'was lost (seen at: x). Its log is logs\\nx2navi.log in the game folder.')
+                                    'was lost (seen at: x). Its log is logs\\nx2saria.log (older builds: nx2navi.log).')
         a.ctx.log.assert_called_once_with('the game ended after restarting itself; its log says: FATAL: vk: the GPU '
                                           'device was lost (seen at: x)')
         self.assertNotIn('[launcher]', log.read_text(encoding='utf-8'))
@@ -5481,7 +5520,7 @@ class WhilePlayingTest(Tmp):
         ctx, told, _ = self.play_from_steam(0, '[host] x\n', lock_held=True)
         self.start_game.assert_not_called()
         self.assertEqual([t[0] for t in told],
-                         ['NX2navi is busy with the rebuild of the game. Start the game when it is done.'])
+                         ['NX2Saria is busy with the rebuild of the game. Start the game when it is done.'])
         ctx.log.assert_called_once_with('play from Steam: not started: the launcher is busy with the rebuild of the '
                                         'game')
         self.assertTrue(marker.is_file())                              # the job's marker stays
@@ -5504,13 +5543,13 @@ class WhilePlayingTest(Tmp):
         self.assertEqual(len(told), 1)
         text, game_log, calls = told[0]
         self.assertEqual(text, 'The game ended with a fatal error (code 70): fs: another copy of the game is running. '
-                               'Its log is logs\\nx2navi.log in the game folder.')
+                               'Its log is logs\\nx2saria.log (older builds: nx2navi.log).')
         self.assertIn('[launcher] the game ended with code 70', game_log)
         self.assertIn(mock.call('play from Steam: the game ended with code 70; its log says: FATAL: fs: another copy '
                                 'of the game is running'), calls)
         _, told, _ = self.play_from_steam(0xC0000005, '[host] x\n')
         self.assertEqual([t[0] for t in told], ['The game ended with code 0xC0000005 (access violation). Its log is '
-                                                'logs\\nx2navi.log in the game folder.'])
+                                                'logs\\nx2saria.log (older builds: nx2navi.log).'])
         ctx, told, log = self.play_from_steam(0, '[host] x\n[host] gfx: window closed; exiting\n')
         self.assertEqual(told, [])
         ctx.log.assert_called_with('play from Steam: the game ended with code 0')
@@ -5529,7 +5568,7 @@ class WhilePlayingTest(Tmp):
         a, log = self.ended(70, f'[host] log: x\nFATAL: an earlier one\n[host] more\nFATAL: {fatal}\n'
                                 '[host] fatal: memory commit: this process 9000 MB, the system 30000 of 32000 MB\n')
         self.assertEqual(a.message, f'The game ended with a fatal error (code 70): {fatal}. Its log is '
-                                    'logs\\nx2navi.log in the game folder.')
+                                    'logs\\nx2saria.log (older builds: nx2navi.log).')
         a.ctx.log.assert_called_once_with(f'the game ended with code 70; its log says: FATAL: {fatal}')
         self.assertIn('[launcher] the game ended with code 70', log.read_text(encoding='utf-8'))
         # the crash report's exit code, and a line longer than the home screen shows
@@ -5545,7 +5584,7 @@ class WhilePlayingTest(Tmp):
         # any other exit code reads no FATAL line; no log at all is no error
         a, log = self.ended(0xC0000005, f'FATAL: {fatal}\n')
         self.assertEqual(a.message, 'The game ended with code 0xC0000005 (access violation). Its log is '
-                                    'logs\\nx2navi.log in the game folder.')
+                                    'logs\\nx2saria.log (older builds: nx2navi.log).')
         log.unlink()
         self.assertEqual(app.last_fatal(self.tmp), '')
         self.assertEqual(app.last_fatal(''), '')
@@ -5716,7 +5755,7 @@ class ForcedCheckTest(Tmp):
             a.check_started = time.time() - 10
             App.check_now(a, force=True)
             check.assert_not_called()
-            self.assertEqual(a.message, 'NX2navi looked for updates less than a minute ago.')
+            self.assertEqual(a.message, 'NX2Saria looked for updates less than a minute ago.')
             a.show.assert_called_once_with('home', a.focus)
             a.check_started = time.time() - app.FORCED_CHECK_PAUSE - 1
             App.check_now(a, force=True)
@@ -5917,7 +5956,7 @@ class ModsTest(Tmp):
         self.mods.set_enabled(self.game, 'Alpha', True)
         self.assertEqual(gameini.get(self.game, 'MODS_ORDER'), 'beta| Lead|Alpha')
         self.assertEqual(gameini.get(self.game, 'MODS_DISABLED'), ' Lead')
-        self.assertIn('mods_disabled = " Lead"', (self.game / 'nx2navi.ini').read_text())   # as runtime/cfg.c quotes
+        self.assertIn('mods_disabled = " Lead"', (self.game / 'nx2saria.ini').read_text())   # as runtime/cfg.c quotes
         found = self.mods.scan(self.game)
         self.assertEqual([(m.name, m.enabled) for m in found], [('beta', True), (' Lead', False), ('Alpha', True)])
         self.assertEqual(self.mods.overlaps(found), {'beta': [('Alpha', 1, True)], 'Alpha': [('beta', 1, False)]})

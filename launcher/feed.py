@@ -1,16 +1,16 @@
 """Where updates come from.
 
-Every release carries NX2navi-update.json (tools/make_launcher.py writes it):
+Every release carries NX2Saria-update.json (tools/make_launcher.py writes it):
 
     {"format": 1, "version": "0.3.11", "build": "0.3.11+abc1234", "notes": "...",
-     "app":     {"name": "NX2navi-app-0.3.11.zip", "size": n, "sha256": "..."},
-     "runtime": {"id": "py3.14.9-1", "name": "NX2navi-runtime-py3.14.9-1.zip", "size": n, "sha256": "..."},
+     "app":     {"name": "NX2Saria-app-0.3.11.zip", "size": n, "sha256": "..."},
+     "runtime": {"id": "py3.14.9-1", "name": "NX2Saria-runtime-py3.14.9-1.zip", "size": n, "sha256": "..."},
      "toolchain": "<lock digest>"}
 
 The feed (app/<version>/feed.json, or the player's override in settings) is either
     {"type": "github", "repo": "owner/name"}   the newest GitHub release (or pre-release, on the preview channel)
                                                   that has the manifest; a token reads a private repository
-    {"type": "url", "url": "https://.../NX2navi-update.json"}   one manifest; its files sit beside it
+    {"type": "url", "url": "https://.../NX2Saria-update.json"}   one manifest; its files sit beside it
 """
 import json
 import re
@@ -20,8 +20,9 @@ from pathlib import Path
 
 from . import net, versions
 
-MANIFEST = 'NX2navi-update.json'
-DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2navi'}   # this fork's releases
+MANIFEST = 'NX2Saria-update.json'
+LEGACY_MANIFEST = 'NX2navi-update.json'
+DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2navi'}   # repository identity remains unchanged
 GITHUB_API = 'https://api.github.com'
 
 
@@ -74,7 +75,7 @@ def load(layout, settings):
 
 def _check_manifest(m, where):
     if not isinstance(m, dict) or m.get('format') != 1 or 'version' not in m or 'app' not in m:
-        raise FeedError(f'{where}: not an NX2navi update manifest')
+        raise FeedError(f'{where}: not an NX2Saria update manifest')
     versions.parse(m['version'])
     return m
 
@@ -123,7 +124,8 @@ def _github(feed, channel, token, version):
         if r.get('draft') or (r.get('prerelease') and channel != 'preview'):
             continue
         assets = {a['name']: a for a in r.get('assets', [])}
-        if MANIFEST not in assets:
+        manifest_name = next((n for n in (MANIFEST, LEGACY_MANIFEST) if n in assets), None)
+        if manifest_name is None:
             continue
         if token:   # a private repository's files come through the API with the token
             urls = {n: a['url'] for n, a in assets.items()}
@@ -132,8 +134,8 @@ def _github(feed, channel, token, version):
             urls = {n: a['browser_download_url'] for n, a in assets.items()}
             asset_headers = {}
         try:
-            m = _check_manifest(json.loads(net.get_bytes(urls[MANIFEST], asset_headers, version=version)),
-                                f'{r.get("tag_name")}/{MANIFEST}')
+            m = _check_manifest(json.loads(net.get_bytes(urls[manifest_name], asset_headers, version=version)),
+                                f'{r.get("tag_name")}/{manifest_name}')
         except (FeedError, ValueError, OSError) as e:
             raise FeedError(f'{r.get("tag_name")}: {e}') from e
         return Release(m, r.get('body') or '', r.get('html_url', ''), urls, asset_headers, bool(r.get('prerelease')))

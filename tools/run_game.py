@@ -42,10 +42,10 @@ SAVES = ROOT / 'build' / 'save-backup'
 SLOTS = ROOT / 'build' / 'run-slots'
 GPU_LOCK = ROOT / 'build' / '.gpu-run.lock'
 LOCK_OFFSET = 1 << 16   # Windows byte-range lock sits past the holder text, so other processes can still read it
-MAX_RUNS = int(os.environ.get('NX2NAVI_MAX_RUNS', '3'))   # more parallel runs exhaust device memory (16 GB RX 9070)
+MAX_RUNS = int(os.environ.get('NX2SARIA_MAX_RUNS', os.environ.get('NX2NAVI_MAX_RUNS', '3')))   # more parallel runs exhaust device memory (16 GB RX 9070)
 # The game's executable as each tool names it: build_game.py, make_game.py on Windows, make_game.py on Linux,
 # build_game.py on Linux
-GAME_EXES = ('nx2navi.exe', 'ocarina.exe', 'ocarina', 'nx2navi')
+GAME_EXES = ('nx2saria.exe', 'ocarina.exe', 'ocarina', 'nx2navi.exe', 'nx2navi')
 NINJA = 'ninja.exe' if os.name == 'nt' else 'ninja'
 
 
@@ -238,9 +238,9 @@ def main():
         profile_copy(prof, profile, *(save_source(a.save, profile, scratch) if a.save else ()))
         shutil.rmtree(scratch, ignore_errors=True)
 
-        env = dict(os.environ, NX2NAVI_ASSUME_FOCUS='1', NX2NAVI_INPUT='none', NX2NAVI_INPUT_SCRIPT=str(a.script.resolve()))
+        env = dict(os.environ, NX2SARIA_ASSUME_FOCUS='1', NX2SARIA_INPUT='none', NX2SARIA_INPUT_SCRIPT=str(a.script.resolve()))
         if not a.show and os.name == 'nt':   # SDL windows open in front either way
-            env['NX2NAVI_BACKGROUND_WINDOW'] = '1'
+            env['NX2SARIA_BACKGROUND_WINDOW'] = '1'
         for kv in a.env:
             k, _, v = kv.partition('=')
             env[k] = v
