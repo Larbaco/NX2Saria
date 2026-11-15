@@ -66,15 +66,21 @@ jobs:
       - name: Shader translator
         run: $PY tools/build_xlate.py
       - name: DLSS Frame Generation DLL
+        # The whole Streamline SDK (the archive tools/streamline_pin.py pins, checked against its SHA-256): its headers
+        # for tools/build_dlssg.py, and the same folder as make_launcher's --streamline, which checks its DLLs
         run: |
           $PY tools/vulkan_pin.py --dest toolchain/vulkan-headers
-          sdk=$($PY -c 'import sys; sys.path[:0] = ["tools", "."]; import streamline_pin; print(streamline_pin.resolve(None, "toolchain/launcher-dl"))' | tail -1)
-          echo "Streamline SDK: $sdk"
-          $PY tools/build_dlssg.py --sl "$sdk" --vulkan toolchain/vulkan-headers/include --out build/dlssg
+          read -r url sha < <($PY -c 'import sys; sys.path.insert(0, "tools"); import streamline_pin as s; print(s.URL, s.SHA256)' | tail -1)
+          curl -fsSL --retry 3 -o toolchain/streamline-sdk.zip "$url"
+          echo "$sha  toolchain/streamline-sdk.zip" | sha256sum -c -
+          $PY -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' toolchain/streamline-sdk.zip toolchain/streamline-sdk
+          rm toolchain/streamline-sdk.zip
+          test -f toolchain/streamline-sdk/include/sl.h
+          $PY tools/build_dlssg.py --sl toolchain/streamline-sdk --vulkan toolchain/vulkan-headers/include --out build/dlssg
       - name: Release files
         run: |
           $PY tools/make_launcher.py --xlate build/xlate --ffx "$RUNNER_TEMP/amd/ffx3/amd_fidelityfx_vk.dll" \
-            --ffx4 "$RUNNER_TEMP/amd/ffx4" --dlssg build/dlssg/nx2navi_dlssg.dll \
+            --ffx4 "$RUNNER_TEMP/amd/ffx4" --dlssg build/dlssg/nx2navi_dlssg.dll --streamline toolchain/streamline-sdk \
             --feed "${{ github.repository }}" --notes "$RUNNER_TEMP/notes.md"
           cd build/launcher-release
           ls -la
