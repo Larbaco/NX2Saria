@@ -70,7 +70,7 @@ jobs:
         # for tools/build_dlssg.py, and the same folder as make_launcher's --streamline, which checks its DLLs
         run: |
           $PY tools/vulkan_pin.py --dest toolchain/vulkan-headers
-          read -r url sha < <($PY -c 'import sys; sys.path.insert(0, "tools"); import streamline_pin as s; print(s.URL, s.SHA256)' | tail -1)
+          read -r url sha < <($PY -c 'import sys; sys.path.insert(0, "tools"); import streamline_pin as s; print(s.URL, s.SHA256)' | tail -1 | tr -d '\r')
           curl -fsSL --retry 3 -o toolchain/streamline-sdk.zip "$url"
           echo "$sha  toolchain/streamline-sdk.zip" | sha256sum -c -
           $PY -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' toolchain/streamline-sdk.zip toolchain/streamline-sdk
