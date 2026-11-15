@@ -56,7 +56,7 @@ static int32_t plat_xchg32(volatile int32_t *p, int32_t v) { return __atomic_exc
 static void rt_log(const char *fmt, ...) { (void)fmt; }
 static void rt_fatal(const char *fmt, ...) { printf("FATAL: %%s\n", fmt); fflush(stdout); exit(3); }
 static int overlay_on;
-static const char *cfg_get(const char *name) { return !strcmp(name, "NX2NAVI_MOVIE_OVERLAY") && overlay_on ? "1" : NULL; }
+static const char *cfg_get(const char *name) { return !strcmp(name, "NX2SARIA_MOVIE_OVERLAY") && overlay_on ? "1" : NULL; }
 // Counted allocations; fail_at: the call number that returns NULL (0: none).
 static int calls, live, fail_at;
 static void *t_malloc(size_t n) {

@@ -31,19 +31,19 @@ HARNESS = r'''
 #include <string.h>
 static unsigned ver = 1;
 static const char *dlss = "quality", *dyn = "1";
-static double set_target_ms;   // NX2NAVI_DYN_RES_TARGET as cfg_double reads it (0: the default)
-static int set_step = 45;      // NX2NAVI_DYN_RES_STEP
+static double set_target_ms;   // NX2SARIA_DYN_RES_TARGET as cfg_double reads it (0: the default)
+static int set_step = 45;      // NX2SARIA_DYN_RES_STEP
 static double game_hz = 60;
 static uint64_t busy = 1, now_ns = 1000000000ull;
 static int timing, logs;
 static char last_log[256];
 static unsigned cfg_version(void) { return ver; }
 static const char *cfg_value(const char *k) {
-    return !strcmp(k, "NX2NAVI_DLSS") ? dlss : !strcmp(k, "NX2NAVI_DYN_RES") ? dyn : "0";
+    return !strcmp(k, "NX2SARIA_DLSS") ? dlss : !strcmp(k, "NX2SARIA_DYN_RES") ? dyn : "0";
 }
 static int cfg_bool(const char *k) { return strcmp(cfg_value(k), "0") != 0; }
-static double cfg_double(const char *k) { return !strcmp(k, "NX2NAVI_DYN_RES_TARGET") ? set_target_ms : 0; }
-static int cfg_int(const char *k) { return !strcmp(k, "NX2NAVI_DYN_RES_STEP") ? set_step : 0; }
+static double cfg_double(const char *k) { return !strcmp(k, "NX2SARIA_DYN_RES_TARGET") ? set_target_ms : 0; }
+static int cfg_int(const char *k) { return !strcmp(k, "NX2SARIA_DYN_RES_STEP") ? set_step : 0; }
 static double frame_step_game_hz(void) { return game_hz; }
 static uint64_t vk_gpu_busy_all(void) { return busy; }
 static void perf_gpu_timing_want(int on) { timing = on; }
