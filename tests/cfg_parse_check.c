@@ -64,6 +64,7 @@ int plat_file_write_atomic(const char *p, const void *d, size_t n) { (void)p, (v
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 int plat_setenv(const char *n, const char *v) { (void)n, (void)v; return 1; }
+int cfg_supported(const char *key) { (void)key; return 1; }   // cfg_support.c: every key does something here
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);

@@ -364,6 +364,20 @@ set text_speed NX2NAVI_TEXT_SPEED_PATCH 1
 site text_speed main 774b74 36000074 @page:x9 394d2a6a d100054a 8a0a010a f901012a 39483129 2a140129 36000069   # tbz w20, #0, #0x774b80 -> adrp x9, page; ldrb w10, [x19, #0x34a]; sub x10, x10, #1; and x10, x8, x10; str x10, [x9, #0x200]; ldrb w9, [x9, #0x20c]; orr w9, w9, w20; tbz w9, #0, #0x774b80
 site text_speed main afe1d8 bd404e61 bd404e61 @page:x22 f94102db cb13037b dac0137b d346ff7b 9e220362 bd420ac8 1e280842 1f020421   # ldr s1, [x19, #0x4c]; adrp x22, page; ldr x27, [x22, #0x200]; sub x27, x27, x19; clz x27, x27; lsr x27, x27, #6; scvtf s2, x27; ldr s8, [x22, #0x208]; fmul s2, s2, s8; fmadd s1, s1, s2, s1
 
+# Amiibo daily limit (runtime/amiibo_daily.c). The amiibo manager holds the game's amiibo table (Game/AmiiboSetting/
+# AmiiboSetting.game__ui__AmiiboSetting.bgyml, loaded at start by main+0x326b030 into its +0x290). When a figure is
+# read, main+0x326bbc0 (x19 the manager) goes through the table's drop tables and compares each one's figure type,
+# number, character and series with the figure's (+0x1388..+0x1394). For a table that matches it reads the table's
+# EnableDailyLimit through the field's getter (main+0x326f6a0: the table's own value at +0x54 when the file sets it, the
+# flag at +0x5a, else the type's default, true) and tests bit 0 (main+0x326bd74, main+0x326bd78): false goes to the
+# figure's use at once (state 4 at +0x1380), as the two mask figures' tables do, true on to the next table and the
+# once-a-day rule after the last. The site loads 0 in place of the value, so every matching table reads false. The table
+# itself stays as the game has it: a copy with the field added did not fit the memory its resource size entry gives it
+# (the parser's allocation failed at start). w8 is the only register the site writes, as the load did, and no word
+# writes the flags. The set runs only while amiibo_daily_limit is 0.
+set amiibo_daily NX2NAVI_AMIIBO_DAILY_PATCH 1
+site amiibo_daily main 326bd74 39400008 2a1f03e8   # ldrb w8, [x0] -> mov w8, wzr
+
 # The ocarina recorder's clock: the ocarina manager (its update main+0x17bad0, the vtable slot at main+0x4ba19a8)
 # keeps at +0x265fc of its object the length of the current note or rest in 60 Hz frames, and adds trunc(frames per
 # update), the time manager's +0x10, to it at four sites (fcvtzu w8, s0): main+0x32926c8 and main+0x3293410 in two of
@@ -387,16 +401,3 @@ site orecord main 3293410 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 
 site orecord main 3296b08 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 2f00e412 1e326a31 bd010911 1e390208
 site orecord main 3296da4 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 2f00e412 1e326a31 bd010911 1e390208
 
-# Amiibo daily limit (runtime/amiibo_daily.c). The amiibo manager holds the game's amiibo table (Game/AmiiboSetting/
-# AmiiboSetting.game__ui__AmiiboSetting.bgyml, loaded at start by main+0x326b030 into its +0x290). When a figure is
-# read, main+0x326bbc0 (x19 the manager) goes through the table's drop tables and compares each one's figure type,
-# number, character and series with the figure's (+0x1388..+0x1394). For a table that matches it reads the table's
-# EnableDailyLimit through the field's getter (main+0x326f6a0: the table's own value at +0x54 when the file sets it, the
-# flag at +0x5a, else the type's default, true) and tests bit 0 (main+0x326bd74, main+0x326bd78): false goes to the
-# figure's use at once (state 4 at +0x1380), as the two mask figures' tables do, true on to the next table and the
-# once-a-day rule after the last. The site loads 0 in place of the value, so every matching table reads false. The table
-# itself stays as the game has it: a copy with the field added did not fit the memory its resource size entry gives it
-# (the parser's allocation failed at start). w8 is the only register the site writes, as the load did, and no word
-# writes the flags. The set runs only while amiibo_daily_limit is 0.
-set amiibo_daily NX2NAVI_AMIIBO_DAILY_PATCH 1
-site amiibo_daily main 326bd74 39400008 2a1f03e8   # ldrb w8, [x0] -> mov w8, wzr
