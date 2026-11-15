@@ -1667,6 +1667,10 @@ int cfg_reload_file(CfgReloadResult *r) {
     CfgReloadResult none = {0};
     if (!r) r = &none;
     *r = (CfgReloadResult){0};
+    if (bugcap_replay_dir()) {   // the capture's settings.ini stands in for nx2navi.ini in this run (load_ini)
+        rt_log("cfg: reload: not run: this run replays a bug capture's settings and does not read nx2navi.ini");
+        return 0;
+    }
     FileKeys *f = calloc(1, sizeof *f);
     if (!f || !find_ini() || !plat_file_exists(ini_path) || !parse_ini(ini_path, file_sink, f)) {
         rt_log("cfg: reload: cannot read nx2navi.ini, settings unchanged");

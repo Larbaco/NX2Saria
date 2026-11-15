@@ -21,7 +21,8 @@ int cfg_load(const char *path);
 // not fit is rejected and the current one stays. Kept as they are, and logged: keys the environment sets, and keys changed in the menu and not
 // saved yet or held by its draft (cfg_hold). Applied keys are not marked for cfg_save and cfg_version is bumped once.
 // Every key is logged ("cfg: reload ..."). Fills *r (may be NULL): changed counts the keys that now read the new value
-// on this game build, restart those of them read at start only. Returns 0 when the file cannot be read. Any thread.
+// on this game build, restart those of them read at start only. Returns 0 when the file cannot be read, and in a run
+// that replays a bug capture's settings (NX2NAVI_CAPTURE_REPLAY), which reads no nx2navi.ini. Any thread.
 typedef struct { int changed, restart, rejected, env, kept; } CfgReloadResult;
 int cfg_reload_file(CfgReloadResult *r);
 
