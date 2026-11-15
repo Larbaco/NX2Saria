@@ -8,10 +8,11 @@
 # true and yes for 1; a setting with more choices than 0 and 1 takes only the choices its lines here list.
 # Only the keys in this file are settings. A line with any other key does nothing: the game's log names it at the
 # start ("no setting of this version") and the settings menu (F1) shows it in its bottom row.
-# Updates and rebuilds of the game never rewrite nx2navi.ini; the settings menu changes only the lines of the settings
-# it changes and keeps every other line as it is.
+# Updates and rebuilds of the game never rewrite nx2navi.ini; the settings menu writes only the lines of the settings
+# whose changes you apply (Apply, or Restart) and keeps every other line as it is.
 # Ctrl+F5 in the game reads this file again and applies the changes without a restart (keys marked as read at start
-# need one; a value that does not fit its key is ignored).
+# need one; a value that does not fit its key is rejected and the current one stays; with changes in the settings menu
+# not applied yet it waits).
 
 [frame rate]
 # Frame rate limit: 30, 40, 45, 60, 90, 120, 144, any whole rate from 30 to 240, display (the refresh rate of the
