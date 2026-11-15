@@ -152,9 +152,14 @@ static void empty_note(void) {
     text_disabled_wrapped(note);
 }
 
+// The dump the list's cursor was last on (moved there, clicked or tapped), in the tab or the picker, for this run: the
+// list opens on it again.
+static std::string g_cursor_path;
+
 // The dumps as one selectable line each; A, Enter or a click taps one. The loaded figure is marked: a cyan dot while it
-// is on the reader, a gold one after it left. focus: the cursor goes to the loaded figure, else the first line.
-// filter: only the lines holding g_filter. Returns the dump tapped this frame, or NULL.
+// is on the reader, a gold one after it left. focus: the cursor goes to the line it was last on (g_cursor_path), else
+// the loaded figure, else the first line. filter: only the lines holding g_filter. Returns the dump tapped this frame,
+// or NULL.
 static const Dump *dump_list(bool focus, bool filter) {
     const Dump *tapped = nullptr;
     const AmiiboInfo *info = amiibo_get_current_info();
@@ -163,13 +168,14 @@ static const Dump *dump_list(bool focus, bool filter) {
     const bool on_reader = amiibo_has_tag();
     const std::string needle = filter ? lower(g_filter) : std::string();
 
-    int focus_at = -1, first = -1;
-    for (size_t i = 0; i < g_dumps.size(); i++) {
+    int focus_at = -1, loaded_at = -1, first = -1;
+    for (size_t i = 0; focus && i < g_dumps.size(); i++) {
         if (!needle.empty() && g_dumps[i].key.find(needle) == std::string::npos) continue;
         if (first < 0) first = (int)i;
-        if (focus && loaded_any && g_dumps[i].path == info->path) focus_at = (int)i;
+        if (g_dumps[i].path == g_cursor_path) focus_at = (int)i;
+        if (loaded_any && g_dumps[i].path == info->path) loaded_at = (int)i;
     }
-    if (focus && focus_at < 0) focus_at = first;
+    if (focus_at < 0) focus_at = loaded_at >= 0 ? loaded_at : first;
 
     const float line_h = ImGui::GetTextLineHeight();
     const float indent = line_h * 1.1f;
@@ -192,9 +198,14 @@ static const Dump *dump_list(bool focus, bool filter) {
                                                                            : ImGui::GetStyleColorVec4(ImGuiCol_Text)),
                     d.label.c_str());
         if ((int)i == focus_at) {
+            // a window that appears (the picker, each time it opens) gives the cursor to its first row a frame later
+            // unless a row says it is the default
+            ImGui::SetItemDefaultFocus();
             ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
             ImGui::SetNavCursorVisible(true);
             ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleCenterY);
+        } else if (ImGui::IsItemFocused()) {
+            g_cursor_path = d.path;
         }
         ImGui::PopID();
     }
