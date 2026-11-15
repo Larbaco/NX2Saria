@@ -382,13 +382,16 @@ bool amiibo_is_device_present(void) {
 }
 
 // While the game waits for a tag it stops and starts detection again several times a second (tens with the menu open),
-// so the log names the first few and then a count every 200th start.
-static uint64_t g_detect_starts;
+// so the log names the first few and then a count every 200th start. It also stops detection whenever it finds the
+// reader active (GetDeviceState 1 to 4: main+0xeb8be0 and others), several times a frame, so stops are counted on their
+// own and named at powers of two only: a state that kept the reader active once logged 2.2 million stops in seconds.
+static uint64_t g_detect_starts, g_detect_stops;
 static uint64_t g_detect_stop_ns;   // the last stop: the menu holds "searching" across the game's restarts
 
 void amiibo_start_detection(void) {
     plat_mutex_lock(&g_amiibo_lock);
     g_detecting = true;
+    g_mounted = false;   // a new detection finds a figure left on the reader again; the game mounts it again
     uint64_t n = ++g_detect_starts;
     if (n <= 3) rt_log("amiibo: start detection");
     else if (n % 200 == 0) rt_log("amiibo: detection started %llu times so far", (unsigned long long)n);
@@ -399,7 +402,9 @@ void amiibo_stop_detection(void) {
     plat_mutex_lock(&g_amiibo_lock);
     if (g_detecting) g_detect_stop_ns = plat_now_ns();
     g_detecting = false;
-    if (g_detect_starts <= 3) rt_log("amiibo: stop detection");
+    uint64_t n = ++g_detect_stops;
+    if (n <= 3) rt_log("amiibo: stop detection");
+    else if (!(n & (n - 1))) rt_log("amiibo: detection stopped %llu times so far", (unsigned long long)n);
     plat_mutex_unlock(&g_amiibo_lock);
 }
 
@@ -436,26 +441,20 @@ bool amiibo_is_mounted(void) {
     return res;
 }
 
+// As nn::nfp: found and mounted only while detection runs; StopDetection leaves the reader Initialized with a figure
+// still on it. The game stops detection after it read a figure and again each time it finds the reader in any other
+// state, so a figure that stayed mounted after the stop kept a game thread stopping it until the figure left the reader
+// (auto-remove, 2.5 s by default; for good with auto-remove off). The figure's data stays readable after the stop
+// (g_mounted is cleared at the next start), as before.
 AmiiboDeviceState amiibo_get_device_state(void) {
     plat_mutex_lock(&g_amiibo_lock);
-    if (!g_device_present) {
-        plat_mutex_unlock(&g_amiibo_lock);
-        return AMIIBO_DEV_STATE_UNAVAILABLE;
-    }
-    if (g_mounted) {
-        plat_mutex_unlock(&g_amiibo_lock);
-        return AMIIBO_DEV_STATE_TAG_MOUNTED;
-    }
-    if (g_tag_present) {
-        plat_mutex_unlock(&g_amiibo_lock);
-        return AMIIBO_DEV_STATE_TAG_FOUND;
-    }
-    if (g_detecting) {
-        plat_mutex_unlock(&g_amiibo_lock);
-        return AMIIBO_DEV_STATE_SEARCHING;
-    }
+    AmiiboDeviceState s = !g_device_present ? AMIIBO_DEV_STATE_UNAVAILABLE
+                          : !g_detecting    ? AMIIBO_DEV_STATE_INITIALIZED
+                          : g_mounted       ? AMIIBO_DEV_STATE_TAG_MOUNTED
+                          : g_tag_present   ? AMIIBO_DEV_STATE_TAG_FOUND
+                                            : AMIIBO_DEV_STATE_SEARCHING;
     plat_mutex_unlock(&g_amiibo_lock);
-    return AMIIBO_DEV_STATE_INITIALIZED;
+    return s;
 }
 
 AmiiboDeviceState amiibo_get_reader_state(void) {
