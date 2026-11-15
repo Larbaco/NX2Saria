@@ -208,6 +208,8 @@ typedef enum {
     UI_MENU_AMIIBO_WRITEBACK_NEEDS_KEYS,
     // the picker over the game (NX2NAVI_AMIIBO_POPUP): its setting, its title and its controls
     UI_MENU_AMIIBO_POPUP, UI_MENU_AMIIBO_POPUP_TITLE, UI_MENU_AMIIBO_POPUP_HINT,
+    // the Game tab's switch for the game's once-a-day amiibo limit (NX2NAVI_AMIIBO_DAILY_LIMIT)
+    UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC,
 
     // Menu tab
     UI_MENU_MENU_LANG, UI_MENU_MENU_LANG_DESC, UI_MENU_MENU_LANG_AUTO,
