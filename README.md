@@ -86,8 +86,10 @@ the renderer.
 
 ## Getting started
 
-**This fork does not have published release packages yet.** Use the source and build kit guides below for now.
-The [Releases page](https://github.com/Larbaco/NX2navi/releases) is the place to check for future packages.
+**Packages:** the [Releases page](https://github.com/Larbaco/NX2navi/releases) has, from 0.12.1, a Windows setup
+(`NX2Saria-Setup-<version>.exe`) and a Linux AppImage (`NX2Saria-Linux-<version>-x86_64.AppImage`). Both build the
+game on your PC from your own dump; the notes of each release say how to install or update. To build from source
+instead, use the guides below.
 
 NX2Saria is the fork's name. Its settings file is `nx2saria.ini`, its environment variables start with `NX2SARIA_`,
 and its release files start with `NX2Saria-`. Settings, saves and profiles from NX2navi keep working;
