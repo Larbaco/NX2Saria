@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Larbaco/NX2navi/releases">Releases</a> ·
+  <a href="https://github.com/Larbaco/NX2Saria/releases">Releases</a> ·
   <a href="#getting-started">Getting started</a> ·
   <a href="docs/controls.md">Controls</a> ·
   <a href="docs/building.md">Build from source</a> ·
@@ -86,7 +86,7 @@ the renderer.
 
 ## Getting started
 
-**Packages:** the [Releases page](https://github.com/Larbaco/NX2navi/releases) has, from 0.12.1, a Windows setup
+**Packages:** the [Releases page](https://github.com/Larbaco/NX2Saria/releases) has, from 0.12.1, a Windows setup
 (`NX2Saria-Setup-<version>.exe`) and a Linux AppImage (`NX2Saria-Linux-<version>-x86_64.AppImage`). Both build the
 game on your PC from your own dump; the notes of each release say how to install or update. To build from source
 instead, use the guides below.

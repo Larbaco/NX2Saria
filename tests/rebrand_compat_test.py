@@ -35,7 +35,7 @@ class RebrandCompatibilityTest(unittest.TestCase):
                     for n in (name, manifest['app']['name'])]}
                 with mock.patch.object(feed.net, 'get_json', return_value=[release]), \
                      mock.patch.object(feed.net, 'get_bytes', return_value=files[0].read_bytes()):
-                    found = feed.latest({'type': 'github', 'repo': 'Larbaco/NX2navi'})
+                    found = feed.latest({'type': 'github', 'repo': 'Larbaco/NX2Saria'})
                 self.assertEqual(found.asset('app')[0], 'https://example.invalid/NX2Saria-app-1.0.0.zip')
 
     def test_reports_scrub_both_prefixed_private_settings(self):

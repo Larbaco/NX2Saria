@@ -22,7 +22,7 @@ from . import net, versions
 
 MANIFEST = 'NX2Saria-update.json'
 LEGACY_MANIFEST = 'NX2navi-update.json'
-DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2navi'}   # repository identity remains unchanged
+DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2Saria'}   # this fork's releases (Larbaco/NX2navi redirects here)
 GITHUB_API = 'https://api.github.com'
 
 

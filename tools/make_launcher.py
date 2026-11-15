@@ -96,7 +96,7 @@ TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.e
 SKIP_DIRS = {'__pycache__', '.pytest_cache', 'native'}
 SKIP_SUFFIXES = {'.o', '.obj', '.pyc', '.exe', '.dll', '.a', '.lib'}
 TCLTK_FILES = ('_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll', 'zlib1.dll', 'libtommath.dll')
-DEFAULT_FEED = 'Larbaco/NX2navi'   # the real repository and its releases (launcher/feed.py DEFAULT)
+DEFAULT_FEED = 'Larbaco/NX2Saria'   # this fork's repository and its releases (launcher/feed.py DEFAULT)
 
 
 def say(msg):
