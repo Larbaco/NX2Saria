@@ -130,7 +130,10 @@ kernel command line raises it). Otherwise the game copies as before, and the log
 
 AMD FSR 3.1 upscaling runs on Linux on any GPU through the game's own build of FSR 3.1's passes, compiled into the
 runtime like its other shaders, so it needs no AMD library: the menu offers the FSR 3.1 modes under Upscaling, and
-`dlaa = 1` with `taa = fsr3` in `nx2navi.ini` selects it (`dlss` picks the mode). FSR 3.1 frame generation needs AMD's
+`dlaa = 1` with `taa = fsr3` in `nx2navi.ini` selects it (`dlss` picks the mode). A GPU or driver that lacks what the
+passes need (storage images in the extended formats, quad subgroup operations in compute shaders) gets no FSR 3.1
+modes in the menu, and the log's `fsr3: AMD FSR 3.1 (the runtime's passes) off:` line says what is missing; no file
+brings it back. FSR 3.1 frame generation needs AMD's
 `amd_fidelityfx_vk.dll`, which only the Windows build can use: on Linux the menu does not offer it, and
 `framegen = fsr3` leaves the game's own swapchain as it is (the log says so). AMD FSR 4 is in the Windows build alone
 for the same reason, and `fsr4 = 1` does nothing on Linux.
