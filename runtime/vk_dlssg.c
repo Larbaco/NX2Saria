@@ -1,4 +1,4 @@
-// DLSS Frame Generation (NX2NAVI_FRAMEGEN = dlss; applies after a restart) through nx2navi_dlssg.dll
+// DLSS Frame Generation (NX2SARIA_FRAMEGEN = dlss; applies after a restart) through nx2navi_dlssg.dll
 // (runtime/dlssg/nx2_sl.cpp), which drives NVIDIA Streamline. Like AMD's frame generation (vk_fg.cpp) it takes the
 // depth, motion vectors and camera vk_dlaa.c makes for DLSS or FSR 3.1 upscaling, or without an upscaler for frame
 // generation alone (vk_dlaa.c fg_only_frame: the same pass at the scene's size, no jitter); it needs an RTX 40 or 50 GPU.
@@ -8,14 +8,14 @@
 // DLSS-G needs; the present path calls Streamline's swapchain functions (gfx_present.c), and every present records the
 // frame's constants and tags first (vk_dlssg_frame). Generation pauses while the menu is open.
 //
-// Multi frame generation: NX2NAVI_FRAMEGEN_MULTIPLIER (2, 3 or 4, live) is how many frames the display gets per
+// Multi frame generation: NX2SARIA_FRAMEGEN_MULTIPLIER (2, 3 or 4, live) is how many frames the display gets per
 // rendered frame, so one, two or three generated ones. Streamline says how many this GPU and driver can generate
 // (numFramesToGenerateMax: one where only 2x runs, three on an RTX 50); a higher setting is clamped to it with a log
 // line. The frame limit counts the frames the game draws and the generated ones come on top (frame_rate.c
 // limit_game_hz): 60 at 4x is 60 drawn and 240 shown. Only a limit of display is divided by the multiplier in effect
 // (vk_dlssg_multiplier), since a frame past the monitor's refresh is never seen.
 //
-// DLSS-G needs Reflex, whose low-latency mode paces the game (NX2NAVI_REFLEX, default 1; 0 off, 2 on with boost): the
+// DLSS-G needs Reflex, whose low-latency mode paces the game (NX2SARIA_REFLEX, default 1; 0 off, 2 on with boost): the
 // game's frame sleeps in Reflex where it starts (its acquire of a window image), and each frame carries the latency
 // markers from that start to the host present, all with the frame's number, the count of the game's presents up to it.
 // The mode is the swapchain's, so it is set again after each one (vk_dlssg_create_swapchain).
@@ -24,7 +24,7 @@
 // game's own pacer then keeps only the game's ceiling (vk_dlssg_pace, nvn_api_obj.c nvnQueuePresentTexture): the pacer's
 // wait came after the picture was drawn, so the pad was read up to a period before the picture left, and Reflex's sleep
 // at the frame's start already waited for the GPU. The pacer keeps the limit while a movie plays, before the first host
-// present, while none went out for DLSSG_HOLD_IDLE_NS, with NX2NAVI_REFLEX_LIMIT=0 (live), a DLL older than
+// present, while none went out for DLSSG_HOLD_IDLE_NS, with NX2SARIA_REFLEX_LIMIT=0 (live), a DLL older than
 // nx2sl_reflex2 or a limit Streamline refused, and for the rest of the run once the frames show Reflex does not hold it
 // (dlssg_pace.h). The guest thread that presents decides and the present thread hands the limit to Streamline before
 // its present (vk_dlssg_frame, under the present lock, which keeps Streamline's options calls on one thread at a time);
@@ -90,7 +90,7 @@ static void sl_line(const char *line) { rt_log("%s", line); }
 static int reflex_mode(void) {
     static int m = -1;
     if (m < 0) {
-        const char *s = cfg_get("NX2NAVI_REFLEX");
+        const char *s = cfg_get("NX2SARIA_REFLEX");
         m = s && *s ? atoi(s) : 1;
         if (m < 0 || m > 2) m = 1;
     }
@@ -116,21 +116,21 @@ static void reflex_apply(uint32_t us) {
     __atomic_store_n(&S.limit_set, ok ? us : 0, __ATOMIC_RELEASE);
 }
 
-// Reflex may hold the frame limit: NX2NAVI_REFLEX_LIMIT (default 1, live; 0 leaves the limit to the game's own limiter,
+// Reflex may hold the frame limit: NX2SARIA_REFLEX_LIMIT (default 1, live; 0 leaves the limit to the game's own limiter,
 // as before Reflex's frame limit was used), and a DLL with nx2sl_reflex2 whose limit Streamline did not refuse. The
 // setting is parsed again when a setting changed (cfg_version). Only the presenting guest thread calls it.
 static int limit_allowed(void) {
     static unsigned seen;
     static int read, on;
     unsigned v = cfg_version();
-    if (!read || v != seen) on = cfg_bool("NX2NAVI_REFLEX_LIMIT"), seen = v, read = 1;
+    if (!read || v != seen) on = cfg_bool("NX2SARIA_REFLEX_LIMIT"), seen = v, read = 1;
     return on && S.reflex2 && !__atomic_load_n(&S.limit_refused, __ATOMIC_ACQUIRE);
 }
 
 // With any upscaler or none: vk_dlaa.c makes the inputs either way (vk_dlaa_frame says which, at the start and at each
 // change).
 int vk_dlssg_wanted(void) {
-    if (S.wanted < 0) S.wanted = !strcmp(cfg_value("NX2NAVI_FRAMEGEN"), "dlss");
+    if (S.wanted < 0) S.wanted = !strcmp(cfg_value("NX2SARIA_FRAMEGEN"), "dlss");
     return S.wanted;
 }
 
@@ -303,7 +303,7 @@ int vk_dlssg_multiplier(void) { return S.active ? __atomic_load_n(&S.shown_mult,
 static int multiplier_wanted(void) {
     static char last[24];
     static int last_max = -1, m = 2;
-    const char *value = cfg_value("NX2NAVI_FRAMEGEN_MULTIPLIER");
+    const char *value = cfg_value("NX2SARIA_FRAMEGEN_MULTIPLIER");
     int max = gpu_multiplier_max(NULL);
     if (max == last_max && !strncmp(value, last, sizeof last - 1)) return m;
     snprintf(last, sizeof last, "%s", value);
@@ -341,7 +341,7 @@ VkResult vk_dlssg_acquire(VkDevice d, VkSwapchainKHR sc, uint64_t t, VkSemaphore
     return S.acquire(d, sc, t, sem, VK_NULL_HANDLE, idx);
 }
 
-// One line after the first 600 blits of a game frame and every 3600 after that (600 with NX2NAVI_TRACE=perf), on the
+// One line after the first 600 blits of a game frame and every 3600 after that (600 with NX2SARIA_TRACE=perf), on the
 // present thread outside the queue lock (vk_dlssg_frame): who holds the frame limit, and how many frame starts Reflex's
 // sleep held and for how long.
 static void stats(void) {
@@ -437,7 +437,7 @@ int vk_dlssg_pace(uint64_t period_ns) {
     else if (!want)   // (a limit Streamline has yet to take is no change: the present thread hands it over next)
         pace_say(0, 0, !allowed     ? (!S.reflex2 ? "nx2navi_dlssg.dll is older than Reflex's frame limit"
                                        : __atomic_load_n(&S.limit_refused, __ATOMIC_ACQUIRE) ? "Streamline refused the limit"
-                                                                                             : "NX2NAVI_REFLEX_LIMIT=0")
+                                                                                             : "NX2SARIA_REFLEX_LIMIT=0")
                        : S.pace.bad ? "Reflex did not hold the limit"
                        : !period_ns ? "a movie plays, or no limit"
                        : hosted     ? "no host present for 200 ms"

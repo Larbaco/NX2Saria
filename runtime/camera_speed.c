@@ -1,11 +1,11 @@
-// Camera speed: NX2NAVI_STICK_SENS (0.1 to 3, default 1) multiplies the game's own right-stick camera speeds.
+// Camera speed: NX2SARIA_STICK_SENS (0.1 to 3, default 1) multiplies the game's own right-stick camera speeds.
 // The game's Options menu offers five camera sensitivities, Very Low to Very High; their turn rates are the array
 // StickSensitivity {0.8, 1.2, 1.6, 2.0, 2.4} in Component/PlayerCameraParam/PlayerCamera.game__component__
 // PlayerCameraParam.bgyml inside Pack/Actor/PlayerCamera.pack.zs. romfs.c serves a copy of that pack with every entry
 // multiplied (cam_pack_build), so the setting raises the camera's top speed as well as its speed at a partial tilt, at
 // any of the five sensitivities. The mouse camera reaches the game as a right-stick deflection (input.c, mouse_camera),
 // divided by the same factor (cam_speed_applied) before it is limited to full tilt (input_mouse_stick), so
-// NX2NAVI_MOUSE_SENS alone sets the mouse's turn per movement, and its top speed is the game's with the factor in it.
+// NX2SARIA_MOUSE_SENS alone sets the mouse's turn per movement, and its top speed is the game's with the factor in it.
 //
 // The pack is a SARC archive compressed with the dictionary pack.zsdic of Pack/ZsDic.pack.zs. A float in a BYML array
 // is stored in the array itself, so the multiplied values take the bytes of the old ones and no offset moves.
@@ -35,7 +35,7 @@ static int base_n;                 // how many; 0 until cam_pack_build has read 
 static float served_k = 1.0f;      // the factor of the pack the game reads from the RomFS: the start's
 
 float cam_speed_wanted(void) {
-    double v = cfg_double("NX2NAVI_STICK_SENS");
+    double v = cfg_double("NX2SARIA_STICK_SENS");
     return (float)(v < 0.1 ? 0.1 : v > 3 ? 3 : v);
 }
 
@@ -164,7 +164,7 @@ static void factor(float out[8], float k) {   // the array at factor k, as cam_p
 // Pages the lazy write-back has armed (GPU-written buffers the CPU has not read since, never the camera table) are
 // left alone: a read would fetch each armed range from the GPU inside the fault handler (memory.c lazy_fault) while
 // the game runs, and hold the game's mapping calls meanwhile. A piece that holds some is gone through in STEP pieces,
-// without the armed ones; the first search that leaves some out says so, since with NX2NAVI_WB_PROBE every piece
+// without the armed ones; the first search that leaves some out says so, since with NX2SARIA_WB_PROBE every piece
 // counts as armed and the search then finds nothing.
 static int rewrite(float k, float to, int fresh) {
     enum { PIECE = 16 << 20, STEP = 64 << 10 };
@@ -223,7 +223,7 @@ static int rewrite(float k, float to, int fresh) {
     if (left_out && !told) {
         told = 1;
         rt_log("camera speed: the search left out %.1f MiB the GPU wrote and the CPU has not read since (lazy "
-               "write-back; with NX2NAVI_WB_PROBE all of it)", left_out / 1048576.0);
+               "write-back; with NX2SARIA_WB_PROBE all of it)", left_out / 1048576.0);
     }
     return found;
 }

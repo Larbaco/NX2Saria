@@ -74,7 +74,7 @@ static int tail_early, sub_parts;
 static volatile uint64_t tail_ns;      // about how long the GPU takes for a tail (a moving average)
 static volatile uint64_t tail_t0, tail_val;   // the first early return for tail_val, for tail_ns
 static volatile uint64_t tail_n, tail_waits;  // since the last vk_sync_tail_stats: early tails; waits they ended
-static int res_mask = 0x1f;            // NX2NAVI_SUBMIT_FINISH_KINDS: the kinds the wait counts
+static int res_mask = 0x1f;            // NX2SARIA_SUBMIT_FINISH_KINDS: the kinds the wait counts
 static int stop;
 static Pending *queue;            // side effects in the order they were added
 static int qhead, qn, qcap;
@@ -96,7 +96,7 @@ static void results_run(uint64_t upto);
 // - a fence wait for a value still held flushes (fence_wait_impl), as do vk_sync_finish and shutdown;
 // - the completion thread flushes what has been held for HOLD_NS, so a guest that polls memory a held submission
 //   writes, instead of waiting on its fence, still sees it soon; it only tries the lock, never waits for it.
-// H is guarded by the queue lock. NX2NAVI_SUBMIT_BATCH=0 (or 1) hands each to the queue at once; =N holds up to N.
+// H is guarded by the queue lock. NX2SARIA_SUBMIT_BATCH=0 (or 1) hands each to the queue at once; =N holds up to N.
 #define HOLD_CAP 16
 #define HOLD_NS 500000ull
 // Command buffers of one submission: the mirror prologue, the parts cut before the part with their pre-pass command
@@ -126,7 +126,7 @@ static int hold_max = -1;
 
 // ---- the executed timeline
 // The wait after a frame's first submission (nvn_api_core.c nvnQueueSubmitCommands) is there so that the GPU has run
-// that submission's passes before the game rewrites what they read. With NX2NAVI_WB_SPLIT=0 it is the fence's wait.
+// that submission's passes before the game rewrites what they read. With NX2SARIA_WB_SPLIT=0 it is the fence's wait.
 // With 1, the default, it is a wait on exec_tl, after which the waiting thread itself runs the results the game
 // reads (results_run, the last paragraph but one below). exec_tl is a second timeline that reaches a submission's value when
 // the GPU has executed its own commands: the replay ends the part before the write-backs (vk_exec.c,
@@ -146,7 +146,7 @@ static int hold_max = -1;
 //   2. the GPU finishes this frame's first submission and signals exec_tl: the wait returns and the game goes on;
 //   3. the game reads its occlusion counts (a 0 culls what the query tested) while some still hold the frame
 //      before's; half a millisecond later, more when the CPUs are busy, the callbacks are through.
-// Measured in Hyrule Field with the camera turning (RTX 5090, lazy write-back on, 2026-11-11; NX2NAVI_TRACE=perf, "waits
+// Measured in Hyrule Field with the camera turning (RTX 5090, lazy write-back on, 2026-11-11; NX2SARIA_TRACE=perf, "waits
 // after a submit on the executed timeline"): 2,267 of 2,320 such waits returned before those side effects had run,
 // which were through 0.45 to 0.8 ms later on average and 12.6 ms at most; in that time 770 to 1,015 occlusion counts,
 // 21 to 28 counter reports and 17 event values a frame were written into guest memory. The submission the game
@@ -171,8 +171,8 @@ static int hold_max = -1;
 // had 8,147 of 8,160 waits back early and 1,170 occlusion counts a frame written after them, and showed no such
 // frame either, so the scripted scene does not reproduce what the player saw. What the wait costs against the
 // bare one is not measured; the results it runs take 0.11 ms a frame on the completion thread there.
-// NX2NAVI_WB_SPLIT=3 is the wait on exec_tl alone, as it was, to measure against.
-// With shadow storage (vk_memory.c) NX2NAVI_WB_SPLIT=1 keeps the fence's wait as well: there the write-backs
+// NX2SARIA_WB_SPLIT=3 is the wait on exec_tl alone, as it was, to measure against.
+// With shadow storage (vk_memory.c) NX2SARIA_WB_SPLIT=1 keeps the fence's wait as well: there the write-backs
 // themselves reach guest memory in a completion callback. With an import a
 // write-back stores into guest memory on the GPU, right behind the passes. With a shadow copy it stores into the copy,
 // and the bytes reach guest memory in the fence's completion callback (shadow_wb_cb), after the write-back part, the
@@ -184,11 +184,11 @@ static int hold_max = -1;
 // Measured: with the split the whole 3D scene came out brighter for single frames (3.8 of 255, the interface as it
 // was), each of them a frame whose main work was held at its CPU event wait and replayed late, together with the next
 // frame's: standing outdoors, 695, 624, 443, 323 and 2 of 1,800 frames in five runs, and none in eight runs without
-// the split (RTX 5090 with NX2NAVI_SHADOW=1, 2026-11-10). A player on Linux (RX 7800 XT, RADV) saw the open field lit
+// the split (RTX 5090 with NX2SARIA_SHADOW=1, 2026-11-10). A player on Linux (RX 7800 XT, RADV) saw the open field lit
 // in one frame and flat in the next; that it is the same fault is not confirmed on their machine. Which words the
-// write-backs overtook was not traced: NX2NAVI_SHADOW_CHECK counts no byte that both sides changed to different
+// write-backs overtook was not traced: NX2SARIA_SHADOW_CHECK counts no byte that both sides changed to different
 // values, which fits a reset to the base copy's value.
-// NX2NAVI_WB_SPLIT=2 keeps the split with shadow storage too, to measure that fault.
+// NX2SARIA_WB_SPLIT=2 keeps the split with shadow storage too, to measure that fault.
 static VkSemaphore exec_tl;
 static uint64_t exec_sig;             // sub_lock: the newest value a submitted part signals on exec_tl
 
@@ -204,11 +204,11 @@ static int wb_results;                // the wait on exec_tl also runs the resul
 
 int vk_sync_wb_split(void) {
     if (wb_split < 0) {
-        const char *e = cfg_get("NX2NAVI_WB_SPLIT");
+        const char *e = cfg_get("NX2SARIA_WB_SPLIT");
         int forced = e && !strcmp(e, "2"), bare = e && !strcmp(e, "3"), shadow = vk_mem_shadow_storage();
         wb_results = !bare;
-        wb_split = cfg_bool("NX2NAVI_WB_SPLIT") && (forced || !shadow);
-        rt_log("vk: the wait after a frame's first submission %s (NX2NAVI_WB_SPLIT%s)",
+        wb_split = cfg_bool("NX2SARIA_WB_SPLIT") && (forced || !shadow);
+        rt_log("vk: the wait after a frame's first submission %s (NX2SARIA_WB_SPLIT%s)",
                !wb_split ? "is the fence's: it covers the write-backs and the completion thread's side effects"
                : wb_results ? "ends when the GPU has run the submission's own commands and the results the game reads "
                               "are in its memory: the write-backs and the other side effects are left out"
@@ -220,7 +220,7 @@ int vk_sync_wb_split(void) {
 }
 
 // What a wait on exec_tl leaves behind: the completion thread's side effects for the values up to the waiter's.
-// Counted for NX2NAVI_TRACE=perf (vk_exec.c logs them): the waits that returned with such side effects still to
+// Counted for NX2SARIA_TRACE=perf (vk_exec.c logs them): the waits that returned with such side effects still to
 // run, how long after the return they were through, and (vk_sync_effect_late, asked by the callbacks that write
 // into guest memory) how many of those ran in that time.
 static volatile uint64_t exw_n, exw_early, exw_lag_ns, exw_lag_max;   // since the last vk_sync_exec_stats
@@ -243,7 +243,7 @@ void vk_sync_exec_stats(uint64_t *waits, uint64_t *early, uint64_t *lag_ns, uint
     *lag_max_ns = __atomic_exchange_n(&exw_lag_max, 0, __ATOMIC_RELAXED);
 }
 
-// NX2NAVI_TRACE=perf: the completion thread's time by callback (st_lock), since the last vk_sync_cb_stats. A callback
+// NX2SARIA_TRACE=perf: the completion thread's time by callback (st_lock), since the last vk_sync_cb_stats. A callback
 // is named by its distance from vk_completion_add, which the build's link map turns into its function.
 #define CBT_N 32
 static struct { void (*fn)(void *); uint64_t ns, calls; } cbt[CBT_N];
@@ -263,16 +263,16 @@ void vk_sync_cb_stats(char *out, size_t n) {
     plat_mutex_unlock(&st_lock);
 }
 
-// NX2NAVI_DEVICE_LOST_AT=n (a test of the lost device's end, vk_device.c vk_device_lost_check): the n-th hand-over to
+// NX2SARIA_DEVICE_LOST_AT=n (a test of the lost device's end, vk_device.c vk_device_lost_check): the n-th hand-over to
 // the queue is not made and counts as one the driver answered with a lost device. 0 or unset: never.
 static int lost_at_due(void) {
     static int at = -1;
     static int32_t calls;
     if (at < 0) {
-        const char *e = cfg_get("NX2NAVI_DEVICE_LOST_AT");
+        const char *e = cfg_get("NX2SARIA_DEVICE_LOST_AT");
         at = e && *e ? atoi(e) : 0;
         if (at < 0) at = 0;
-        if (at) rt_log("vk: queue hand-over %d will be taken as a lost device (NX2NAVI_DEVICE_LOST_AT)", at);
+        if (at) rt_log("vk: queue hand-over %d will be taken as a lost device (NX2SARIA_DEVICE_LOST_AT)", at);
     }
     return at && ++calls == at;   // queue lock held
 }
@@ -317,10 +317,10 @@ void vk_sync_flush_held(void) {
 // The replay's submission si (signalling value, 0 for a part without a signal), held or handed to the queue.
 static void queue_submit(VkCtx *c, const VkSubmitInfo2 *si, uint64_t value) {
     if (hold_max < 0) {
-        const char *e = cfg_get("NX2NAVI_SUBMIT_BATCH");
+        const char *e = cfg_get("NX2SARIA_SUBMIT_BATCH");
         int v = e && *e ? atoi(e) : 4;
         hold_max = v < 1 ? 1 : v > HOLD_CAP ? HOLD_CAP : v;
-        rt_log("vk: up to %d submissions handed to the queue together (NX2NAVI_SUBMIT_BATCH)", hold_max);
+        rt_log("vk: up to %d submissions handed to the queue together (NX2SARIA_SUBMIT_BATCH)", hold_max);
     }
     // The present holds this lock for its whole flip. A slow flip (frame generation allocating, a swapchain remade) makes
     // the submitting thread wait here; counted as a present wait, so the slow-frame line no longer shows such a frame
@@ -370,7 +370,7 @@ static void hold_release(uint64_t value, int aged, int try_only) {
     vk_queue_unlock();
 }
 
-// ---- GPU time (NX2NAVI_TRACE=perf): each submission part (vk_sync_split) writes a timestamp when it starts and when it
+// ---- GPU time (NX2SARIA_TRACE=perf): each submission part (vk_sync_split) writes a timestamp when it starts and when it
 // ends, into a ring of query pairs. The completion thread reads a pair once the part's value is reached and adds the
 // part's interval to the busy time, counting overlap with the previous part once. Off (one log line) when the queue
 // family has no timestamp bits or the period is 0. Upload batches (vk_memory.c) are not timed.
@@ -407,7 +407,7 @@ static volatile int64_t cal_tick, cal_ns, cal_at;   // completion thread: a cali
                                                     // it was taken; the GPU timeline's notes read them from other threads
 static PFN_vkGetCalibratedTimestampsKHR cal_fn;
 
-// On the first submission that wants timing (perf_gpu_timing: NX2NAVI_TRACE=perf or the full performance overlay).
+// On the first submission that wants timing (perf_gpu_timing: NX2SARIA_TRACE=perf or the full performance overlay).
 static void ts_setup(VkCtx *c) {
     ts_state = -1;
     uint32_t nq = 0;
@@ -472,7 +472,7 @@ static void max64(volatile int64_t *m, int64_t v) {
 
 static void ts_read_cb(void *arg);
 
-// ---- the GPU timeline (NX2NAVI_TRACE=perf, vk.h vk_gtl_note): every timed piece of GPU work, with the CPU time it was
+// ---- the GPU timeline (NX2SARIA_TRACE=perf, vk.h vk_gtl_note): every timed piece of GPU work, with the CPU time it was
 // handed to the queue and its GPU start and end on the CPU clock (calibrated timestamps). The replay's parts, their
 // mirror prologues and pre-pass command buffers come from here, the upload batches from vk_memory.c, the presents from
 // gfx_present.c. Every 60 frames (vk_gtl_log) the pieces are put in GPU order and each gap between them is split:
@@ -518,7 +518,7 @@ void vk_gtl_note(int kind, uint64_t sub_ns, uint64_t start_tick, uint64_t end_ti
     vk_gtl_note_ns(kind, (int64_t)sub_ns, (int64_t)sub_ns, tick_ns(s), tick_ns(e));
 }
 
-// ---- the game's waits for GPU work (NX2NAVI_TRACE=perf): for each submission value, when the game handed it to the
+// ---- the game's waits for GPU work (NX2SARIA_TRACE=perf): for each submission value, when the game handed it to the
 // replay (vk_sync_reserve; the submit itself without asynchronous replay), when the replay had recorded and submitted it
 // (issued) and when it was done (GPU and completion). A fence wait of any thread but the replay's is split into its
 // time until the waited submission was submitted (the replay still recording it or those before it) and its time after
@@ -723,7 +723,7 @@ static void ts_read_cb(void *arg) {   // completion thread, in submission order
     free(t);
 }
 
-// NX2NAVI_TRACE=perf (perf.c): a frame whose render thread waited 20 ms or more for GPU fences gets, at the next
+// NX2SARIA_TRACE=perf (perf.c): a frame whose render thread waited 20 ms or more for GPU fences gets, at the next
 // present, a line of the timed parts that ended in its interval [t0, t1]: how many, the GPU time they took, the
 // longest ones with their kind and the time they waited in the queue, and the longest gap between two. In a session of
 // 2026-11-13 frames of 60-96 ms followed each area load by 2 to 6 frames, the render thread waiting 59-86 ms for the
@@ -780,9 +780,9 @@ void vk_gpu_parts_log(uint64_t frame, uint64_t t0, uint64_t t1, double fence_ms)
 }
 
 // ---- frame timeline
-// NX2NAVI_GPU_TIMELINE=<frame>: from that presented frame on, TL_FRAMES frames of what the CPU and the GPU did go to the
+// NX2SARIA_GPU_TIMELINE=<frame>: from that presented frame on, TL_FRAMES frames of what the CPU and the GPU did go to the
 // log once they are complete, in milliseconds from the first of those presents: each replay's begin and end and its
-// thread, each timed part's submit, GPU start and end (calibrated timestamps, so with NX2NAVI_TRACE=perf), the waits for
+// thread, each timed part's submit, GPU start and end (calibrated timestamps, so with NX2SARIA_TRACE=perf), the waits for
 // the GPU after a frame's first submission, the replay workers' groups, chunks and the submitting thread's waits for
 // them, and the presents. It tells whether the GPU waits for the replay, for a wait, or for the CPU behind one. Off
 // (and one load per note) without the setting.
@@ -846,7 +846,7 @@ static void tl_dump(void) {
 
 void gfx_tl_present(void) {
     if (tl_on < 0) {
-        const char *e = cfg_get("NX2NAVI_GPU_TIMELINE");
+        const char *e = cfg_get("NX2SARIA_GPU_TIMELINE");
         tl_from = e && *e ? strtoull(e, NULL, 0) : 0;
         tl_on = tl_from && (tl_ev = calloc(TL_CAP, sizeof *tl_ev)) != NULL;
     }
@@ -1103,7 +1103,7 @@ void vk_sync_start(void) {
     if (__atomic_load_n(&started, __ATOMIC_ACQUIRE)) return;
     plat_mutex_lock(&start_lock);
     if (!started) {
-        if (!vk_init()) rt_fatal("vk: no usable Vulkan device (see the vk: lines above; NX2NAVI_GPU=null runs without a GPU)");
+        if (!vk_init()) rt_fatal("vk: no usable Vulkan device (see the vk: lines above; NX2SARIA_GPU=null runs without a GPU)");
         VkCtx *c = vk_ctx();
         VkCommandPoolCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                       .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -1136,7 +1136,7 @@ void vk_sync_start(void) {
         completion_thread = plat_thread_new(completion_main, c, "vk completion");
         if (!completion_thread) rt_fatal("vk: cannot start the completion thread");
         __atomic_store_n(&started, 1, __ATOMIC_RELEASE);
-        vk_astc_mode();   // decides NX2NAVI_ASTC and builds the ASTC decoder now, not at the first ASTC upload
+        vk_astc_mode();   // decides NX2SARIA_ASTC and builds the ASTC decoder now, not at the first ASTC upload
     }
     plat_mutex_unlock(&start_lock);
 }
@@ -1167,7 +1167,7 @@ static CmdSlot *take_slot(VkCtx *c, uint64_t fence) {
     return &slots[cur_slot];
 }
 
-// ---- the part's pre-pass command buffer (vk.h vk_sync_pre; vk_exec_draw.c mesh emulation, NX2NAVI_MESH_EMU_BATCH)
+// ---- the part's pre-pass command buffer (vk.h vk_sync_pre; vk_exec_draw.c mesh emulation, NX2SARIA_MESH_EMU_BATCH)
 // Begun at the first call of a part, submitted right before the part (after the mirror prologue) and ended there. Its
 // own pool: with the recorder on, the recorder thread records the part (cmd_pool) while the replay records this.
 static VkCommandPool pre_pool;
@@ -1328,7 +1328,7 @@ void vk_sync_append_fill(int at, const VkCommandBuffer *cbs, int n) {
 
 // The replay workers' command buffers: each worker has a command pool of its own (a pool belongs to one thread at a
 // time) and claims command buffers from it for the submission being recorded, as the replay claims its slots. Called
-// on the worker while the submitting thread holds sub_lock and records on (NX2NAVI_REPLAY_PIPE) or waits for it: the
+// on the worker while the submitting thread holds sub_lock and records on (NX2SARIA_REPLAY_PIPE) or waits for it: the
 // part with the worker's command buffer is not submitted before it is done, so cur_fence stays put.
 #define SYNC_WORKERS 17                // the replay workers (at most 16) and the submitting thread
 static struct { VkCommandPool pool; CmdSlot *slots; int n; } WP[SYNC_WORKERS];
@@ -1484,16 +1484,16 @@ static uint64_t submit(const uint64_t *handles, int n, const OwnCommands *own) {
     plat_mutex_lock(&sub_lock);
     vk_present_frames_owed();   // frames presented while another thread replayed close before this replay begins
     if (n > 0 && !own) vk_sub_in_frame_publish();   // this submission's place in its frame, for the replay
-    vk_mem_dirty_submit();   // NX2NAVI_TRACE=perf: what a mirror would upload before this submit
+    vk_mem_dirty_submit();   // NX2SARIA_TRACE=perf: what a mirror would upload before this submit
     uint64_t fence = __atomic_load_n(&issued, __ATOMIC_ACQUIRE) + 1;
     cur_fence = fence;
     tail_early = sub_parts = 0;
     CmdSlot *s = take_slot(c, fence);
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-    // NX2NAVI_REPLAY_TIME: the replaying thread's CPU time over the replay too (perf_replay_cpu), against its wall time
+    // NX2SARIA_REPLAY_TIME: the replaying thread's CPU time over the replay too (perf_replay_cpu), against its wall time
     static int cpu_on = -1;
-    if (cpu_on < 0) cpu_on = cfg_bool("NX2NAVI_REPLAY_TIME");
+    if (cpu_on < 0) cpu_on = cfg_bool("NX2SARIA_REPLAY_TIME");
     uint32_t me = plat_thread_id();
     uint64_t t0 = perf_begin(), cpu0 = cpu_on ? plat_thread_cpu_ns(me) : 0;
     vkBeginCommandBuffer(s->cb, &bi);
@@ -1648,9 +1648,9 @@ static void results_run(uint64_t upto) {
 static int fence_wait_impl(uint64_t value, uint64_t timeout_ns);
 
 
-// The game's wait after a frame's first submission (nvn_api_core.c NX2NAVI_SUBMIT_FINISH): until the replay has
+// The game's wait after a frame's first submission (nvn_api_core.c NX2SARIA_SUBMIT_FINISH): until the replay has
 // submitted value, which took every copy of guest memory the submission reads; then also until the GPU has run it when
-// its GPU reads guest memory itself (vk_mem_take_live) or NX2NAVI_SUBMIT_FINISH_GPU=1. 1 when reached.
+// its GPU reads guest memory itself (vk_mem_take_live) or NX2SARIA_SUBMIT_FINISH_GPU=1. 1 when reached.
 int vk_sync_result_mask(void) { return res_mask; }
 
 int vk_sync_recorded_wait(uint64_t value, uint64_t timeout_ns, int (*gpu_wait)(uint64_t, uint64_t)) {
@@ -1658,15 +1658,15 @@ int vk_sync_recorded_wait(uint64_t value, uint64_t timeout_ns, int (*gpu_wait)(u
     static int gpu = -1, res_mode = 1;
     if (gpu < 0) {
         res_mode = rt_knob("SUBMIT_FINISH_RESULTS", "1");
-        const char *km = cfg_get("NX2NAVI_SUBMIT_FINISH_KINDS");   // a number (rt_knob reads only 0, 1 and ab)
+        const char *km = cfg_get("NX2SARIA_SUBMIT_FINISH_KINDS");   // a number (rt_knob reads only 0, 1 and ab)
         res_mask = (km && *km ? (int)strtol(km, NULL, 0) : 31) & 0x1f;
-        rt_log("vk: result kinds the submit wait counts: %#x (NX2NAVI_SUBMIT_FINISH_KINDS: 1 events, 2 counter reports, "
+        rt_log("vk: result kinds the submit wait counts: %#x (NX2SARIA_SUBMIT_FINISH_KINDS: 1 events, 2 counter reports, "
                "4 occlusion reports, 8 GPU writes of unmirrored memory, 16 mirror write-backs)", res_mask);
-        rt_log("vk: the wait after a frame's first submission also waits for %s (NX2NAVI_SUBMIT_FINISH_RESULTS=%d)",
+        rt_log("vk: the wait after a frame's first submission also waits for %s (NX2SARIA_SUBMIT_FINISH_RESULTS=%d)",
                res_mode == 2 ? "every submission before it" : res_mode ? "the newest submission up to it that hands the "
                "CPU results at its completion (events, counter reports, write-backs)" : "nothing more", res_mode);
         gpu = rt_knob("SUBMIT_FINISH_GPU", "1") != 0;   // the low-end GPU mode set 0 up to 0.10.1
-        rt_log("vk: the wait after a frame's first submission ends %s (NX2NAVI_SUBMIT_FINISH_GPU=%d)",
+        rt_log("vk: the wait after a frame's first submission ends %s (NX2SARIA_SUBMIT_FINISH_GPU=%d)",
                gpu ? "when the GPU has run it" : "when the replay has submitted it, or the GPU has run it where it reads guest "
                "memory itself", gpu);
     }
@@ -1764,7 +1764,7 @@ static int fence_wait_impl(uint64_t value, uint64_t timeout_ns) {
     return ok;
 }
 
-// The wait after a submit: the fence's (vk_sync_fence_wait), or with NX2NAVI_WB_SPLIT until the GPU has executed
+// The wait after a submit: the fence's (vk_sync_fence_wait), or with NX2SARIA_WB_SPLIT until the GPU has executed
 // submission value's own commands (the executed timeline) and the results the game reads are in its memory
 // (results_run), its write-backs and the completion thread's other side effects for it and for the submissions
 // before it still to come. 1 when reached.
@@ -1967,7 +1967,7 @@ int vk_sync_probe_devlost(void) {
     return 1;
 }
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): command buffer slots (read without sub_lock, which a whole replay holds),
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): command buffer slots (read without sub_lock, which a whole replay holds),
 // the completion queue and the submissions held back.
 void vk_sync_sizes(PerfSizes *s) {
     uint64_t slots = (uint64_t)__atomic_load_n(&nslots, __ATOMIC_RELAXED);

@@ -1,5 +1,5 @@
-"""Build NX2navi-Linux-<version>-x86_64.AppImage: the Linux build kit as one file, which builds Ocarina of Time on the
-player's PC from their own dump with tools/make_game.py, as NX2navi-Setup.exe does on Windows. Started without
+"""Build NX2Saria-Linux-<version>-x86_64.AppImage: the Linux build kit as one file, which builds Ocarina of Time on the
+player's PC from their own dump with tools/make_game.py, as NX2Saria-Setup.exe does on Windows. Started without
 arguments on a desktop it opens a window to install, update and play (tools/appimage_gui.py, which runs AppRun
 with --events and reads its progress lines).
 
@@ -17,7 +17,7 @@ distributions package), and a relocatable CPython 3.14 (python-build-standalone,
 make_game.py's prompts step draws from (as make_kit.py --prompt-art: the pictures tools/prompt_art.py art_files names,
 into the kit's prompt-art folder; without it that step is skipped and the game keeps the Switch prompts). zbic, the GPL
 package that unpacks the game's program files, is not bundled: the AppImage installs it with pip into
-~/.local/share/nx2navi/pydeps the first time it runs, as the Windows launcher downloads it.
+~/.local/share/nx2saria/pydeps the first time it runs. An existing ~/.local/share/nx2navi/pydeps is reused in place.
 
 The compiler and the libraries come from the system (README-BuildKit.md, "Linux"): the AppImage checks for clang,
 clang++, lld and the headers before it starts, and names the packages for Arch, Fedora and Debian/Ubuntu. Whether
@@ -34,22 +34,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 KIT_DIRS = ('recomp', 'runtime')
-KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2navi.ini.example')
+KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')   # the translator ships built (bin/); its sources stay out
 PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0', 'pillow==12.3.0')
 
 APPRUN = r'''#!/bin/bash
-# NX2navi build kit for Linux: builds Ocarina of Time (Switch 2, game 1.1.1) from the player's own dump.
+# NX2Saria build kit for Linux: builds Ocarina of Time (Switch 2, game 1.1.1) from the player's own dump.
 HERE="$(dirname "$(readlink -f "$0")")"
 PY="$HERE/usr/python/bin/python3"
 KIT="$HERE/usr/kit"
-DATA="${XDG_DATA_HOME:-$HOME/.local/share}/nx2navi"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+DATA="$DATA_HOME/nx2saria"
+if [ ! -d "$DATA/pydeps" ] && [ -d "$DATA_HOME/nx2navi/pydeps" ]; then DATA="$DATA_HOME/nx2navi"; fi
 PYDEPS="$DATA/pydeps"
 unset PYTHONPATH PYTHONHOME
 
 usage() {
     cat <<EOF
-NX2navi $(cat "$KIT/VERSION") - build Ocarina of Time (Switch 2, game 1.1.1) natively for Linux from your own dump.
+NX2Saria $(cat "$KIT/VERSION") - build Ocarina of Time (Switch 2, game 1.1.1) natively for Linux from your own dump.
 
   $(basename "${APPIMAGE:-$0}")                                     a window to install, update and play (on a desktop)
   $(basename "${APPIMAGE:-$0}") <your game.nup> [game folder]       build (default folder: ~/Games/Ocarina)
@@ -63,7 +65,7 @@ EOF
 
 # No arguments on a desktop (a double-click): the window (tools/appimage_gui.py), which runs this file with --events.
 if [ $# -eq 0 ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-    exec "$PY" -I "$KIT/tools/appimage_gui.py" --apprun "$HERE/AppRun" --icon "$HERE/nx2navi.png"
+    exec "$PY" -I "$KIT/tools/appimage_gui.py" --apprun "$HERE/AppRun" --icon "$HERE/nx2saria.png"
 fi
 case "$1" in ""|-h|--help) usage; exit 0 ;; esac
 
@@ -125,13 +127,14 @@ OUT="${2:-$HOME/Games/Ocarina}"
 # libnvidia-ngx-dlss.so.<version> there). The build places the kit's when this file carries it; when it does not
 # (made with --no-dlss) and the game folder holds none, the version tools/dlss_pin.py pins is downloaded from
 # NVIDIA's DLSS SDK repository, on machines with NVIDIA's driver only, checked against its SHA-256 and kept
-# unmodified with the notice that names its licence. NX2NAVI_NO_DLSS=1 skips it.
+# unmodified with the notice that names its licence. NX2SARIA_NO_DLSS=1 skips it (NX2NAVI_NO_DLSS remains an alias).
+if [ "${NX2SARIA_NO_DLSS+x}" = x ]; then NX2SARIA_SKIP_DLSS="$NX2SARIA_NO_DLSS"; else NX2SARIA_SKIP_DLSS="${NX2NAVI_NO_DLSS:-}"; fi
 DLSS_VERSION=@DLSS_VERSION@
 DLSS_SO=@DLSS_SO@
 DLSS_SHA256=@DLSS_SHA256@
 DLSS_URL=@DLSS_URL@
 get_dlss() {
-    [ -e /proc/driver/nvidia/version ] && [ -z "${NX2NAVI_NO_DLSS:-}" ] || return 0
+    [ -e /proc/driver/nvidia/version ] && [ -z "$NX2SARIA_SKIP_DLSS" ] || return 0
     compgen -G "$OUT/libnvidia-ngx-dlss.so.*" >/dev/null && return 0   # the kit's, or one the player put there
     echo "Downloading NVIDIA DLSS $DLSS_VERSION for Linux (NVIDIA RTX SDKs License) ..."
     # not under the library's name: the game takes any file whose name starts like it
@@ -148,7 +151,7 @@ get_dlss() {
 
 echo "Building into $OUT with $jobs compiles at a time (${mem_gb} GB of RAM); this takes 10 to 25 minutes."
 run_make_game --nup "$NUP" --out "$OUT" --jobs "$jobs" "${EVENTS[@]+"${EVENTS[@]}"}" || exit $?
-if [ -e /proc/driver/nvidia/version ] && [ -z "${NX2NAVI_NO_DLSS:-}" ]; then
+if [ -e /proc/driver/nvidia/version ] && [ -z "$NX2SARIA_SKIP_DLSS" ]; then
     ev step dlss '"state":"start"'; get_dlss; ev step dlss '"state":"done"'
 else
     ev step dlss '"state":"skip"'
@@ -168,10 +171,10 @@ echo "Done. Start the game with: $OUT/play.sh"
 
 DESKTOP = '''[Desktop Entry]
 Type=Application
-Name=NX2navi
+Name=NX2Saria
 Comment=Build Ocarina of Time natively for Linux from your own dump
 Exec=AppRun
-Icon=nx2navi
+Icon=nx2saria
 Terminal=true
 Categories=Game;
 '''
@@ -209,7 +212,7 @@ def main():
     import dlss_pin
     dlss = None if a.no_dlss else dlss_pin.resolve(a.dlss, ROOT / 'build' / 'dl', linux=True)
 
-    app = ROOT / 'build' / 'appimage' / 'NX2navi.AppDir'
+    app = ROOT / 'build' / 'appimage' / 'NX2Saria.AppDir'
     shutil.rmtree(app, ignore_errors=True)
     kit = app / 'usr' / 'kit'
     kit.mkdir(parents=True)
@@ -255,14 +258,14 @@ def main():
         apprun = apprun.replace(f'@DLSS_{key}@', value)
     (app / 'AppRun').write_text(apprun, encoding='utf-8')
     (app / 'AppRun').chmod(0o755)
-    (app / 'nx2navi.desktop').write_text(DESKTOP, encoding='utf-8')
-    from PIL import Image   # the window icon of runtime/nx2navi.ico, as PNG
-    with Image.open(ROOT / 'runtime' / 'nx2navi.ico') as ico:
+    (app / 'nx2saria.desktop').write_text(DESKTOP, encoding='utf-8')
+    from PIL import Image   # the window icon of runtime/nx2saria.ico, as PNG
+    with Image.open(ROOT / 'runtime' / 'nx2saria.ico') as ico:
         ico.size = max(ico.ico.sizes())
-        ico.convert('RGBA').save(app / 'nx2navi.png')
+        ico.convert('RGBA').save(app / 'nx2saria.png')
 
     a.out.mkdir(parents=True, exist_ok=True)
-    target = a.out / f'NX2navi-Linux-{version}-x86_64.AppImage'
+    target = a.out / f'NX2Saria-Linux-{version}-x86_64.AppImage'
     env = dict(os.environ, ARCH='x86_64')
     subprocess.run([a.appimagetool, '--no-appstream', app, target], check=True, env=env)
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

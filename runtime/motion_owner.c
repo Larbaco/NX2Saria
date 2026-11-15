@@ -32,7 +32,7 @@ static int owner_on;
 
 static void owner_init(void *unused) {
     (void)unused;
-    // NX2NAVI_SELECTIVE_MOTION (selective_motion; default 1, 0 off: the estimate from colour and depth). On, every guest
+    // NX2SARIA_SELECTIVE_MOTION (selective_motion; default 1, 0 off: the estimate from colour and depth). On, every guest
     // submission walks the player's actor, equipment and models in guest memory (motion_owner_capture), each scene
     // draw is looked up in that list (vk_fg_pose.inc pose_owner), and the player's meshes are drawn a second time
     // into the motion vectors DLSS, FSR 3.1 and frame generation read.

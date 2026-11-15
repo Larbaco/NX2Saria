@@ -34,7 +34,7 @@
  "phase.prepare.libraries": "为显卡驱动构建着色器",
  "phase.prepare.pack": "将着色器缓存打包成一个文件",
  "phase.dlss.download": "从 NVIDIA 的 DLSS SDK 下载 nvngx_dlss.dll",
- "phase.cleanup.ini": "写入 nx2navi.ini",
+ "phase.cleanup.ini": "写入 nx2saria.ini",
  "phase.cleanup.temp": "删除临时文件",
 
  "cli.usage": "命令行无效：{detail}",
@@ -97,7 +97,7 @@
  "prepare.shaders_failed": "准备着色器失败（退出代码 {code}）。详情：{log}",
  "cleanup.romfs_unreadable": "安装完成后，{path} 中的游戏数据缺失或无法读取。请重启 Windows，然后对同一文件夹再次运行安装程序：它会重新提取游戏数据，其余内容保留。",
  "prepare.pack_failed": "打包着色器缓存失败（退出代码 {code}）。详情：{log}",
- "cleanup.ini_failed": "无法写入 nx2navi.ini：{detail}",
+ "cleanup.ini_failed": "无法写入 nx2saria.ini：{detail}",
 
  "warn.lang_needs_fonts": "{lang}文本需要 Switch 系统字体，但未提供。在添加这些字体之前，游戏无法以该语言启动。请选择固件文件夹（Contents/registered），或参阅 docs/installer.md 中的“Switch system fonts”一节。",
  "warn.cheats_skipped": "无法构建 mods 文件夹中修改游戏代码的金手指；游戏将不含它们进行安装。详情：{log}",
@@ -109,7 +109,7 @@
  "warn.dlss_kept": "安装文件夹中已有 DLSS 库（{path}）；安装程序将保留它。",
  "warn.dlss_download_failed": "无法从 {url} 下载 NVIDIA DLSS：{detail}。游戏无需它也能运行；下次运行安装程序时会重试。",
 
- "ui.title": "NX2navi 安装程序",
+ "ui.title": "NX2Saria 安装程序",
  "ui.rebuild_title": "正在为你的模组重新构建游戏",
  "ui.start_game": "启动游戏",
  "ui.version": "版本 {version}",
@@ -186,8 +186,8 @@
  "param.input.update": "更新",
  "param.input.keys": "密钥",
 
- "launcher.title": "NX2navi 安装程序",
- "launcher.python_missing": "安装文件不完整：NX2navi-Setup.exe 旁边缺少 python 文件夹。请重新解压整个压缩包，然后从解压出的文件夹中启动 NX2navi-Setup.exe。",
+ "launcher.title": "NX2Saria 安装程序",
+ "launcher.python_missing": "安装文件不完整：NX2Saria-Setup.exe 旁边缺少 python 文件夹。请重新解压整个压缩包，然后从解压出的文件夹中启动 NX2Saria-Setup.exe。",
 
  "lang.ja": "日语",
  "lang.en-US": "英语（美国）",

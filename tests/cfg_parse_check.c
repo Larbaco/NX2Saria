@@ -1,4 +1,4 @@
-// runtime/cfg.c's reading of nx2navi.ini and the environment, with stand-ins for what cfg.c links against. Built and
+// runtime/cfg.c's reading of the settings file and environment, with stand-ins for what cfg.c links against. Built and
 // run by tests/cfg_parse_check.py: `cfg_parse_check <case> <ini>` loads the file the script wrote and prints every line
 // cfg.c logged ("log: ...") and what the case reads back ("got: ...").
 //   load     cfg_load on the file; then cfg_init's check of the environment (the variables the script set)
@@ -41,7 +41,12 @@ void perf_size(PerfSizes *s, const char *name, uint64_t count, uint64_t limit, u
     (void)s, (void)name, (void)count, (void)limit, (void)bytes;
 }
 static const char *ini;
-int plat_exe_path(char *out, size_t n) { (void)out, (void)n; return 0; }
+int plat_exe_path(char *out, size_t n) {
+    const char *p = getenv("NX2SARIA_TEST_EXE");
+    if (!p || strlen(p) >= n) return 0;
+    strcpy(out, p);
+    return 1;
+}
 int plat_file_exists(const char *p) {
     FILE *f = fopen(p, "rb");
     if (f) fclose(f);
@@ -74,7 +79,7 @@ int main(int argc, char **argv) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         printf("got: pace_smooth '%s'\n", cfg_get("NX2NAVI_PACE_SMOOTH") ? cfg_get("NX2NAVI_PACE_SMOOTH") : "(unset)");
         printf("--- environment\n");
-        cfg_init();   // finds no nx2navi.ini next to the stand-in exe; checks the environment's values
+        cfg_init();   // finds no settings file next to the stand-in exe; checks the environment's values
         return 0;
     }
     if (!strcmp(argv[1], "full")) {
@@ -115,6 +120,12 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "norow")) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         printf("got: cfg_int %d cfg_double %g\n", cfg_int("NX2NAVI_NO_ROW_CHECK"), cfg_double("NX2NAVI_NO_ROW_CHECK"));
+        return 0;
+    }
+    if (!strcmp(argv[1], "nearby")) {
+        cfg_init();
+        const char *v = cfg_get("NX2SARIA_SHARPNESS");
+        printf("nearby: sharpness '%s'\n", v ? v : "(unset)");
         return 0;
     }
     return 2;

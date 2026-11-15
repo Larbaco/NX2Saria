@@ -436,7 +436,7 @@ static void names_thread(void *arg) {
     rt_log("debug: names for %d of %d flags, from %d of the game's event files, in %.0f ms; %d events, %d places to teleport to "
            "(%d with their coordinates, under \"%s\")", names_found, flag_n, files, (double)(plat_now_ns() - t0) / 1e6,
            event_n, place_n, with_xyz, place_xyz_key ? place_xyz_key : "");
-    if (cfg_get("NX2NAVI_DBG_TEST"))   // test runs: every place with its coordinates, to plan routes (dbg_route)
+    if (cfg_get("NX2SARIA_DBG_TEST"))   // test runs: every place with its coordinates, to plan routes (dbg_route)
         for (int i = 0; i < place_n; i++)
             rt_log("debug: place %s > %s at %.1f %.1f %.1f%s", places[i].area, places[i].pos, places[i].xyz[0],
                    places[i].xyz[1], places[i].xyz[2], places[i].has_xyz ? "" : " (no coordinates)");
@@ -1015,7 +1015,7 @@ static int contains_nocase(const char *s, const char *part, size_t len) {
     return 0;
 }
 
-// ---- the route (test runs: NX2NAVI_DBG_TEST "route" and "routeto"): Link runs through points of the area on his
+// ---- the route (test runs: NX2SARIA_DBG_TEST "route" and "routeto"): Link runs through points of the area on his
 // own, so a walking test crosses the field instead of pressing into its walls. The left stick is turned from the way
 // he moves towards the next point (the game's camera follows behind him, so a stick to the side turns him), with an
 // integral that takes out the camera's own angle; a point counts as reached within ROUTE_NEAR metres. When he gains
@@ -1179,7 +1179,7 @@ void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
     *buttons &= ~(zl | zr | l | r);
 }
 
-// ---- NX2NAVI_DBG_TEST="<tick>:flag <hash hex> <0|1>;<tick>:speed <factor>;<tick>:find <value> <size>;
+// ---- NX2SARIA_DBG_TEST="<tick>:flag <hash hex> <0|1>;<tick>:speed <factor>;<tick>:find <value> <size>;
 // <tick>:next <mode> <value>;<tick>:setfirst <value>;<tick>:holdfirst <value>;<tick>:show [<hash hex>];
 // <tick>:warp <area> [<start position>];<tick>:event <name>;<tick>:text <game data text's name>;
 // <tick>:freecam <0|1> <sticks 0|1> <speed>;<tick>:camavoid <0|1>;<tick>:camgo <dx> <dy> <dz> [<yaw> <pitch>];
@@ -1208,7 +1208,7 @@ static void test_script(uint64_t tick) {
     static const char *next;
     static int state;
     if (!state) {
-        const char *e = cfg_get("NX2NAVI_DBG_TEST");
+        const char *e = cfg_get("NX2SARIA_DBG_TEST");
         state = e && *e ? 1 : -1;
         if (state > 0) snprintf(buf, sizeof buf, "%s", e), next = buf;
         // the places and events, read with the flag names as the menu starts them, for warp, event and routeto

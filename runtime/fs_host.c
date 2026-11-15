@@ -94,7 +94,7 @@ static char *join(const char *dir, const char *name) {
 }
 
 // Save in progress: a save-data file open for writing, or save data changed in the last 3 s and not committed yet
-// (NX2navi writes a slot's files back to back and then commits; between the files nothing is open for a moment).
+// (NX2Saria writes a slot's files back to back and then commits; between the files nothing is open for a moment).
 static volatile int32_t save_writers, save_dirty;
 static volatile int64_t save_changed_ns;
 static void save_wait_commit(void);
@@ -1292,8 +1292,8 @@ static uint32_t write_file(uint64_t h, int64_t offset, const void *buffer, uint6
     if (file->save) save_touched();
     for (uint64_t done = 0; done < size;) {
         uint32_t chunk = size - done > 0x40000000 ? 0x40000000 : (uint32_t)(size - done);
-        // NX2NAVI_WB_PROBE: the kernel reads the buffer, and a probed page would fail the write instead of faulting;
-        // so would a heap page NX2NAVI_HEAP_LAZY has not committed yet
+        // NX2SARIA_WB_PROBE: the kernel reads the buffer, and a probed page would fail the write instead of faulting;
+        // so would a heap page NX2SARIA_HEAP_LAZY has not committed yet
         if (mem_probing()) mem_thaw((uintptr_t)buffer + done, chunk);
         mem_kernel_access((uintptr_t)buffer + done, chunk);
         int64_t put = plat_file_pwrite(f, (const uint8_t *)buffer + done, chunk, (uint64_t)offset + done);
@@ -1794,7 +1794,7 @@ static uint64_t probe_romfs(void) {
     CHECK(write_open == FS_R_UNSUPPORTED_OPEN && write_existing == FS_R_UNSUPPORTED_OPEN,
           "write open -> %#x/%#x, expected 0x6402", write_open, write_existing);
 
-    // Overlays (NX2NAVI_ROMFS_PATCHES, NX2NAVI_ROMFS_MODS): served in place of the original, added files and their folders
+    // Overlays (NX2SARIA_ROMFS_PATCHES, NX2SARIA_ROMFS_MODS): served in place of the original, added files and their folders
     // exist, bytes equal the overlay file.
     size_t nov = romfs_overlay_count(), ovok = 0;
     for (size_t k = 0; k < nov; k++) {
@@ -2216,7 +2216,7 @@ int probe_fs(void) {
     return 0;
 }
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): open save-data files and directory listings against their tables.
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): open save-data files and directory listings against their tables.
 void fs_host_sizes(PerfSizes *s) {
     uint64_t nf = 0, nd = 0;
     plat_mutex_lock_shared(&lock);

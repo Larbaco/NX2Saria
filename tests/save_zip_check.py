@@ -126,7 +126,7 @@ def main():
 
     # C writes, zipfile reads
     members = {'manifest.json': b'{"format": "nx2navi-save"}', 'save/option.sav': data['save'][:3000],
-               'save/slot_00/progress.sav': data['save'], 'bug-report/nx2navi.log': data['text'],
+               'save/slot_00/progress.sav': data['save'], 'bug-report/nx2saria.log': data['text'],
                'save/empty.sav': b''}
     args = []
     for i, (n, b) in enumerate(members.items()):

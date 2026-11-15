@@ -95,7 +95,7 @@ static void check_write_watch(void) {
     CHECK(plat_mem_state(a, a + 0x10000, &end) == PLAT_PROT_RW && end == a + 0x4000, "the thawed pages are not read-write");
     CHECK(plat_mem_state(a + 0x4000, a + 0x4001, &end) == PLAT_MEM_RESERVED, "a hole got committed");
     printf("write-watch: region with reserved holes frozen and thawed by a write\n");
-    // NX2NAVI_WB_PROBE=1 (memory.c, "Probed regions"): a probed region is inaccessible until its first access, which is
+    // NX2SARIA_WB_PROBE=1 (memory.c, "Probed regions"): a probed region is inaccessible until its first access, which is
     // noted and runs again; a frozen one goes back to read-only first and then thaws on a write; mem_thaw ends a probe
     // and holds the region. With the setting off mem_probe arms nothing.
     if (mem_probing()) {

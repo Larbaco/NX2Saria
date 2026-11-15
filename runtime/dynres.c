@@ -3,14 +3,14 @@
 // scene size is the one the game composes in (resolution.c), and it moves in the steps DLSS upscales from: quality,
 // balanced, performance and ultra performance, 2/3, 0.58, 1/2 and 1/3 of the output on each axis.
 //
-// NX2NAVI_DYN_RES=1 turns it on (off by default: it changes the picture's sharpness), and it acts only while
-// NX2NAVI_DLSS is one of those upscaling modes, which is then the sharpest step it uses; the lowest is performance,
+// NX2SARIA_DYN_RES=1 turns it on (off by default: it changes the picture's sharpness), and it acts only while
+// NX2SARIA_DLSS is one of those upscaling modes, which is then the sharpest step it uses; the lowest is performance,
 // or ultra performance when that is the player's own mode. While it runs it asks for GPU timestamps
 // (perf_gpu_timing_want; vk_sync.c times every submission part) and reads their running total (vk_gpu_busy_all) once
 // per presented frame. It averages the busy time and moves one step at a time: down when the average is over the
-// target by 8 %, up when it is under 75 % of it, and holds each step for NX2NAVI_DYN_RES_STEP 60 Hz frames of the clock
+// target by 8 %, up when it is under 75 % of it, and holds each step for NX2SARIA_DYN_RES_STEP 60 Hz frames of the clock
 // (default 45, 750 ms), because a size that changes every few frames is worse to look at than a steady one. The target
-// is NX2NAVI_DYN_RES_TARGET milliseconds when that is set (1 to 100), else the frame time of the limit the game draws
+// is NX2SARIA_DYN_RES_TARGET milliseconds when that is set (1 to 100), else the frame time of the limit the game draws
 // at (frame_rate.c frame_step_game_hz: 1000 / the limit, the monitor's rate for display, the drawn frames with frame
 // generation), and 16.7 ms, a 60 Hz frame, while that rate is unknown or unlimited. A fixed 16.7 ms target let the GPU
 // take up to 18 ms a frame at full size under a 120 or 144 fps limit, and a hold of 45 presented frames lasted 0.19 s
@@ -38,7 +38,7 @@ static struct {
     uint64_t held_from;   // plat_now_ns when the step in use was taken
     uint64_t hold_ns;     // how long to hold a step
     double avg_ns;        // moving average of the GPU's busy time per frame
-    double target_ms;     // NX2NAVI_DYN_RES_TARGET; under 1: the frame time of the game's rate
+    double target_ms;     // NX2SARIA_DYN_RES_TARGET; under 1: the frame time of the game's rate
     double target_ns;     // the target in use
     double logged_ns;     // the target the log last named (the start line's, or dynres_frame's last line)
     uint64_t last_busy;   // vk_gpu_busy_all at the previous presented frame
@@ -62,11 +62,11 @@ static double target_now_ns(void) {
 // The settings, again whenever one changed (the menu switches them live).
 static void dynres_read(void) {
     D.cfg_seen = cfg_version();
-    const char *m = cfg_value("NX2NAVI_DLSS");
-    int want = cfg_bool("NX2NAVI_DYN_RES"), base = mode_index(m);
-    D.target_ms = cfg_double("NX2NAVI_DYN_RES_TARGET");
+    const char *m = cfg_value("NX2SARIA_DLSS");
+    int want = cfg_bool("NX2SARIA_DYN_RES"), base = mode_index(m);
+    D.target_ms = cfg_double("NX2SARIA_DYN_RES_TARGET");
     D.target_ns = target_now_ns();
-    int step = cfg_int("NX2NAVI_DYN_RES_STEP");
+    int step = cfg_int("NX2SARIA_DYN_RES_STEP");
     if (step < 8) step = 8;
     D.hold_ns = (uint64_t)step * 1000000000ull / 60;
     int on = want && base >= 0;

@@ -29,7 +29,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NAME = 'NX2navi-BuildKit'
+NAME = 'NX2Saria-BuildKit'
 TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostmem.py', 'prepare_shaders.py',
          'shader_census.py', 'shader_list.py', 'pipeline_list.py', 'zstd_compat.py', 'pad_prompts.py', 'prompt_art.py', 'button_icons.py', 'romfs_check.py',
          'build_game.py', 'check_isa.py', 'build_shaders.py', 'make_dlaa_mask.py', 'make_mvobj_fs.py',
@@ -38,7 +38,7 @@ TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostme
 # newer than the system's (which build_game takes from vulkan_pin), and build_game.py imports check_isa and
 # build_shaders, which reads the two make_ scripts' shaders; the lift runs cheats.py and exefs_patches.py for the mods'
 # code, and both import mod_files.py
-TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'VERSION', 'nx2navi.ini.example')
+TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'VERSION', 'nx2saria.ini.example')
 SKIP_DIRS = {'__pycache__', '.pytest_cache'}
 SKIP_SUFFIXES = {'.o', '.obj', '.pyc', '.exe', '.dll', '.a', '.lib'}
 

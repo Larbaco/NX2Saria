@@ -104,12 +104,12 @@ def place(dll, sdk, dest):
         raise SystemExit(f'{dll} does not exist')
     srcs = {n: (dll if n == DLL else sdk / 'bin' / 'x64' / n) for n in FILES}
     dest.mkdir(parents=True, exist_ok=True)
-    lines = ['DLSS Frame Generation for NX2navi. nx2navi_dlssg.dll is NX2navi\'s own code (runtime/dlssg/), built',
+    lines = ['DLSS Frame Generation for NX2Saria. nx2navi_dlssg.dll is NX2Saria\'s own code (runtime/dlssg/), built',
              'with the Streamline SDK\'s headers. The other files are NVIDIA\'s own builds, unmodified, from the',
              f'Streamline {VERSION} SDK (https://github.com/NVIDIA-RTX/Streamline): the sl.*.dll files under its',
              'MIT licence (streamline-LICENSE.txt), nvngx_dlssg.dll under the NVIDIA RTX SDKs License',
              '(nvidia-rtx-sdks-LICENSE.txt), which licenses it only for use on systems with NVIDIA GPUs. They are not',
-             'part of NX2navi and NX2navi\'s licence does not cover them.', '']
+             'part of NX2Saria and NX2Saria\'s licence does not cover them.', '']
     for n, p in srcs.items():
         shutil.copy2(p, dest / n)
         lines.append(f'{n} sha256 {sha256_file(p)}')

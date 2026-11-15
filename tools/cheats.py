@@ -333,7 +333,7 @@ def classify(main, c):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--exefs', type=Path, required=True)
-    ap.add_argument('--mods', type=Path, required=True, help='the mods folder next to nx2navi.exe')
+    ap.add_argument('--mods', type=Path, required=True, help='the mods folder next to nx2saria.exe')
     ap.add_argument('--patches', type=Path, required=True, help='the game version\'s patch file')
     ap.add_argument('--out', type=Path, required=True, help='the patch file with the cheats added')
     ap.add_argument('--status', type=Path, required=True)

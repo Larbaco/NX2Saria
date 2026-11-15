@@ -34,7 +34,7 @@
  "phase.prepare.libraries": "Сборка шейдеров для драйвера видеокарты",
  "phase.prepare.pack": "Упаковка кэша шейдеров в один файл",
  "phase.dlss.download": "Загрузка nvngx_dlss.dll из DLSS SDK от NVIDIA",
- "phase.cleanup.ini": "Запись nx2navi.ini",
+ "phase.cleanup.ini": "Запись nx2saria.ini",
  "phase.cleanup.temp": "Удаление временных файлов",
 
  "cli.usage": "Неверные параметры командной строки: {detail}",
@@ -97,7 +97,7 @@
  "prepare.shaders_failed": "Не удалось подготовить шейдеры (код выхода {code}). Подробности: {log}",
  "cleanup.romfs_unreadable": "Данные игры в {path} пропали или не читаются после установки. Перезагрузите Windows и запустите установщик снова на ту же папку: он заново распакует данные игры, остальное сохранится.",
  "prepare.pack_failed": "Не удалось упаковать кэш шейдеров (код выхода {code}). Подробности: {log}",
- "cleanup.ini_failed": "Не удаётся записать nx2navi.ini: {detail}",
+ "cleanup.ini_failed": "Не удаётся записать nx2saria.ini: {detail}",
 
  "warn.lang_needs_fonts": "Для языка «{lang}» нужны системные шрифты Switch, а они не указаны. Игра не запустится на этом языке, пока их не добавят. Выберите папку прошивки (Contents/registered) или см. раздел «Switch system fonts» в docs/installer.md.",
  "warn.npdm_differs": "main.npdm отличается от эталонного дампа {version}; используются только модули с кодом.",
@@ -109,7 +109,7 @@
  "warn.dlss_kept": "В папке установки уже есть библиотека DLSS ({path}); установка её оставляет.",
  "warn.dlss_download_failed": "Не удалось загрузить NVIDIA DLSS с {url}: {detail}. Игра работает и без него; при следующем запуске установка попробует снова.",
 
- "ui.title": "Установка NX2navi",
+ "ui.title": "Установка NX2Saria",
  "ui.rebuild_title": "Пересборка игры под ваши моды",
  "ui.start_game": "Запустить игру",
  "ui.version": "версия {version}",
@@ -186,8 +186,8 @@
  "param.input.update": "обновление",
  "param.input.keys": "ключи",
 
- "launcher.title": "Установка NX2navi",
- "launcher.python_missing": "Файлы установки неполные: рядом с NX2navi-Setup.exe нет папки python. Распакуйте архив целиком заново и запустите NX2navi-Setup.exe из распакованной папки.",
+ "launcher.title": "Установка NX2Saria",
+ "launcher.python_missing": "Файлы установки неполные: рядом с NX2Saria-Setup.exe нет папки python. Распакуйте архив целиком заново и запустите NX2Saria-Setup.exe из распакованной папки.",
 
  "lang.ja": "Японский",
  "lang.en-US": "Английский (США)",

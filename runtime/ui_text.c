@@ -30,10 +30,10 @@ typedef struct { const char *lang; const char *const *text; } Row;
 // The DLSS model file and the executable, as the player sees them on this platform.
 #ifdef _WIN32
 #define DLSS_FILE "nvngx_dlss.dll"
-#define EXE_FILE "nx2navi.exe"
+#define EXE_FILE "nx2saria.exe"
 #else
 #define DLSS_FILE "libnvidia-ngx-dlss.so"
-#define EXE_FILE "nx2navi"
+#define EXE_FILE "nx2saria"
 #endif
 
 static const char *const text_en[UI_TEXT_COUNT] = {
@@ -46,8 +46,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ON] = "On", [UI_MENU_OFF] = "Off", [UI_MENU_AUTO] = "Automatic", [UI_MENU_DEFAULT_MARK] = "default",
     [UI_MENU_AFTER_RESTART] = "after restart", [UI_MENU_SET_BY_ENV] = "set by environment variable",
     [UI_MENU_SAVE_FAILED] = "could not save settings",
-    [UI_MENU_INI_UNKNOWN] = "nx2navi.ini: not settings of this version, ignored: %s",
-    [UI_MENU_VERSION] = "NX2navi %s, game %s",
+    [UI_MENU_INI_UNKNOWN] = "nx2saria.ini: not settings of this version, ignored: %s",
+    [UI_MENU_VERSION] = "NX2Saria %s, game %s",
 
     [UI_MENU_FULLSCREEN] = "Fullscreen", [UI_MENU_FULLSCREEN_DESC] = "Play in fullscreen. F11 switches it.",
     [UI_MENU_WINDOW_SIZE] = "Window size", [UI_MENU_WINDOW_SIZE_DESC] = "Window size outside fullscreen.",
@@ -320,7 +320,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                              "button the layout above presses (with Nintendo (A right) the right button does A, so the "
                              "prompts for A show B, or circle). Keyboard and mouse: the key each button has (E, Ctrl, "
                              "Space, left click...), WASD for moving and the mouse for the camera. The prompt files "
-                             "are made from button art with tools/pad_prompts.py, the keys as nx2navi.ini binds them "
+                             "are made from button art with tools/pad_prompts.py, the keys as nx2saria.ini binds them "
                              "when it runs. The game reads its prompts at start, so they change after a restart. They "
                              "are part of the game's files, so a button you remap in Controls keeps its old prompt on "
                              "screen until the files are made again.",
@@ -332,7 +332,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_PROMPTS_RESTART] = "prompts change after restart",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "off at a game resolution not 16:9",
     [UI_MENU_PROMPTS_OFF_MODS] = "off: a RomFS mod replaces their files",
-    [UI_MENU_PROMPTS_OFF_PATCHES] = "off while NX2NAVI_ROMFS_PATCHES is set",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "off while NX2SARIA_ROMFS_PATCHES is set",
     [UI_MENU_RESTART] = "Restart now",
     [UI_MENU_RESTART_DESC] = "Closes the game and starts it again with the new prompts. Progress since your last save "
                              "is lost.",
@@ -355,11 +355,11 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_RESTART_NOW_TITLE] = "Some changes take effect after a restart",
     [UI_MENU_RESTART_NOW] = "Restart now",
     [UI_MENU_RESTART_LATER] = "Later",
-    [UI_MENU_RELOAD_NONE] = "nx2navi.ini reloaded: no changes",
-    [UI_MENU_RELOAD_DONE] = "nx2navi.ini reloaded: %d changed, %d after restart",
-    [UI_MENU_RELOAD_REJECTED] = "nx2navi.ini reloaded: %d changed, %d after restart, %d rejected",
-    [UI_MENU_RELOAD_FAILED] = "nx2navi.ini could not be read",
-    [UI_MENU_RELOAD_BUSY] = "Close the settings menu to reload nx2navi.ini",
+    [UI_MENU_RELOAD_NONE] = "nx2saria.ini reloaded: no changes",
+    [UI_MENU_RELOAD_DONE] = "nx2saria.ini reloaded: %d changed, %d after restart",
+    [UI_MENU_RELOAD_REJECTED] = "nx2saria.ini reloaded: %d changed, %d after restart, %d rejected",
+    [UI_MENU_RELOAD_FAILED] = "nx2saria.ini could not be read",
+    [UI_MENU_RELOAD_BUSY] = "Close the settings menu to reload nx2saria.ini",
     [UI_MENU_GROUP_STICKS] = "Analog sticks",
     [UI_MENU_LSTICK_DEADZONE] = "Left stick dead zone", [UI_MENU_RSTICK_DEADZONE] = "Right stick dead zone",
     [UI_MENU_STICK_DEADZONE_DESC] = "How far a stick must move to register. Raise it if a stick drifts.",
@@ -520,8 +520,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                 "FSR 3.1 or FSR 4, and for now an AMD graphics card. Without them it changes nothing.",
     [UI_MENU_NEEDS_WORKERS] = "needs CPU helper threads", [UI_MENU_NEEDS_PIPE] = "needs Helpers work ahead",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
-    [UI_MENU_DISCORD_RPC_DESC] = "Shows \"Playing NX2navi\" with the play time in your Discord status while the "
-                                 "game runs. discord_app_id and discord_image in nx2navi.ini choose the application.",
+    [UI_MENU_DISCORD_RPC_DESC] = "Sends an activity with play time to your Discord client. Set your own "
+                                 "discord_app_id in nx2saria.ini or NX2SARIA_DISCORD_APP_ID; Discord shows the name "
+                                 "registered to that ID.",
 
     [UI_MENU_ADV_WARNING] = "These settings are for testing and troubleshooting. Change them only when you know why.",
     [UI_MENU_GROUP_SCHED] = "Scheduling", [UI_MENU_GROUP_SHADERS] = "Shaders and pipelines",
@@ -647,10 +648,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_EXPORT_DESC] = "Writes your save (every slot) into one zip file in your Downloads folder, to give to "
                                  "another player or attach to a bug report. It never holds your keys or game files.",
     [UI_MENU_SAVE_EXPORT_BUG] = "Export save for a bug report",
-    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "The same zip with this run's log and your settings (nx2navi.ini) added, which "
+    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "The same zip with this run's log and your settings (nx2saria.ini) added, which "
                                      "show what happened and with which settings. Attach it to your bug report.",
     [UI_MENU_SAVE_IMPORT] = "Import a save",
-    [UI_MENU_SAVE_IMPORT_DESC] = "Choose a save someone shared (an NX2navi-save zip). It replaces your save, every slot, "
+    [UI_MENU_SAVE_IMPORT_DESC] = "Choose a save someone shared (an NX2Saria-save zip). It replaces your save, every slot, "
                                  "at the next start: the game keeps your progress in memory and would write it back "
                                  "over a save replaced now. Your current save is copied to the saves folder first.",
     [UI_MENU_SAVE_IMPORT_WAITING] = "at next start",
@@ -658,7 +659,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_IMPORT_CANCEL_DESC] = "Keeps your save as it is: the save waiting for the next start is dropped.",
     [UI_MENU_SAVE_BUSY] = "working…",
     [UI_MENU_SAVE_EXPORTED] = "Saved as %s",
-    [UI_MENU_SAVE_IMPORT_READY] = "The save (NX2navi %s) loads at the next start: select Restart below. Your current "
+    [UI_MENU_SAVE_IMPORT_READY] = "The save (NX2Saria %s) loads at the next start: select Restart below. Your current "
                                   "save is copied to the saves folder first.",
     [UI_MENU_SAVE_IMPORT_CANCELLED] = "Import cancelled; your save stays as it is.",
     [UI_MENU_SAVE_IMPORTED] = "A shared save was imported at this start. Your old save is in %s",
@@ -668,9 +669,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_E_WRITE] = "The zip could not be written into %s.",
     [UI_MENU_SAVE_E_READ] = "%s could not be read.",
     [UI_MENU_SAVE_E_STAGE] = "The save could not be prepared for the next start; the log says why.",
-    [UI_MENU_SAVE_E_NOT_SAVE] = "%s is not a save NX2navi exported.",
+    [UI_MENU_SAVE_E_NOT_SAVE] = "%s is not a save NX2Saria exported.",
     [UI_MENU_SAVE_E_OTHER_GAME] = "%s is a save of another game.",
-    [UI_MENU_SAVE_E_NEWER] = "%s was made by a newer NX2navi: update NX2navi first.",
+    [UI_MENU_SAVE_E_NEWER] = "%s was made by a newer NX2Saria: update NX2Saria first.",
     [UI_MENU_SAVE_E_DAMAGED] = "%s is damaged: download it again.",
     [UI_MENU_SAVE_E_UNSAFE] = "%s was refused: it holds files outside a save, links, or far more than a save.",
     [UI_MENU_CAPTURE_SAVED] = "Bug capture %d saved",
@@ -755,8 +756,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "по умолчанию",
     [UI_MENU_AFTER_RESTART] = "после перезапуска", [UI_MENU_SET_BY_ENV] = "задано переменной окружения",
     [UI_MENU_SAVE_FAILED] = "не удалось сохранить настройки",
-    [UI_MENU_INI_UNKNOWN] = "nx2navi.ini: не настройки этой версии, пропущены: %s",
-    [UI_MENU_VERSION] = "NX2navi %s, игра %s",
+    [UI_MENU_INI_UNKNOWN] = "nx2saria.ini: не настройки этой версии, пропущены: %s",
+    [UI_MENU_VERSION] = "NX2Saria %s, игра %s",
 
     [UI_MENU_FULLSCREEN] = "Полный экран", [UI_MENU_FULLSCREEN_DESC] = "Игра на весь экран. F11 переключает.",
     [UI_MENU_WINDOW_SIZE] = "Размер окна", [UI_MENU_WINDOW_SIZE_DESC] = "Размер окна вне полноэкранного режима.",
@@ -1036,7 +1037,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                              "кнопкой, которую нажимает раскладка выше (в Nintendo (A справа) A делает правая кнопка, "
                              "и подсказки A показывают B или круг). Клавиатура и мышь: клавиша каждой кнопки (E, Ctrl, "
                              "пробел, левый клик...), WASD для движения и мышь для камеры. Файлы подсказок создаются "
-                             "из картинок кнопок программой tools/pad_prompts.py, клавиши берутся из nx2navi.ini на "
+                             "из картинок кнопок программой tools/pad_prompts.py, клавиши берутся из nx2saria.ini на "
                              "момент её запуска. Игра читает подсказки при запуске, так что они меняются после "
                              "перезапуска. Подсказки записаны в файлах игры, поэтому у кнопки, переназначенной на "
                              "вкладке управления, на экране остаётся прежняя подсказка, пока файлы не созданы заново.",
@@ -1048,7 +1049,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PROMPTS_RESTART] = "подсказки сменятся после перезапуска",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "выкл. при разрешении игры не 16:9",
     [UI_MENU_PROMPTS_OFF_MODS] = "выкл.: мод RomFS заменяет их файлы",
-    [UI_MENU_PROMPTS_OFF_PATCHES] = "выкл., пока задан NX2NAVI_ROMFS_PATCHES",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "выкл., пока задан NX2SARIA_ROMFS_PATCHES",
     [UI_MENU_RESTART] = "Перезапустить сейчас",
     [UI_MENU_RESTART_DESC] = "Закрывает игру и запускает её снова с новыми подсказками. Прогресс после последнего "
                              "сохранения будет потерян.",
@@ -1200,8 +1201,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_MENU_LANG] = "Язык меню", [UI_MENU_MENU_LANG_DESC] = "Язык этого меню и индикатора.",
     [UI_MENU_MENU_LANG_AUTO] = "Автоматически (из Windows)",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
-    [UI_MENU_DISCORD_RPC_DESC] = "Пока игра запущена, показывает «Играю в NX2navi» со временем игры в статусе "
-                                 "Discord. Приложение выбирают discord_app_id и discord_image в nx2navi.ini.",
+    [UI_MENU_DISCORD_RPC_DESC] = "Отправляет активность и время игры в Discord. Сначала укажите свой discord_app_id "
+                                 "в nx2saria.ini или NX2SARIA_DISCORD_APP_ID; Discord показывает имя, зарегистрированное "
+                                 "для этого ID.",
 
     [UI_MENU_ADV_WARNING] = "Эти настройки нужны для тестов и поиска неполадок. Меняйте их, только если знаете зачем.",
     [UI_MENU_GROUP_SCHED] = "Планирование", [UI_MENU_GROUP_SHADERS] = "Шейдеры и конвейеры",
@@ -1328,10 +1330,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                  "передать его другому игроку или приложить к сообщению об ошибке. Ключи и файлы игры "
                                  "в него не попадают.",
     [UI_MENU_SAVE_EXPORT_BUG] = "Экспорт для сообщения об ошибке",
-    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "Тот же zip с журналом этого запуска и вашими настройками (nx2navi.ini): по ним "
+    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "Тот же zip с журналом этого запуска и вашими настройками (nx2saria.ini): по ним "
                                      "видно, что произошло и с какими настройками. Приложите его к сообщению об ошибке.",
     [UI_MENU_SAVE_IMPORT] = "Импорт сохранения",
-    [UI_MENU_SAVE_IMPORT_DESC] = "Выберите сохранение, которым с вами поделились (zip NX2navi-save). Оно заменит ваше "
+    [UI_MENU_SAVE_IMPORT_DESC] = "Выберите сохранение, которым с вами поделились (zip NX2Saria-save). Оно заменит ваше "
                                  "сохранение, все слоты, при следующем запуске: игра держит прогресс в памяти и "
                                  "записала бы его поверх сохранения, заменённого сейчас. Текущее сохранение сначала "
                                  "копируется в папку saves.",
@@ -1341,7 +1343,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                         "удаляется.",
     [UI_MENU_SAVE_BUSY] = "выполняется…",
     [UI_MENU_SAVE_EXPORTED] = "Сохранено: %s",
-    [UI_MENU_SAVE_IMPORT_READY] = "Сохранение (NX2navi %s) загрузится при следующем запуске: выберите «Перезапустить» "
+    [UI_MENU_SAVE_IMPORT_READY] = "Сохранение (NX2Saria %s) загрузится при следующем запуске: выберите «Перезапустить» "
                                   "внизу. Текущее сохранение сначала копируется в папку saves.",
     [UI_MENU_SAVE_IMPORT_CANCELLED] = "Импорт отменён, ваше сохранение не изменилось.",
     [UI_MENU_SAVE_IMPORTED] = "При этом запуске импортировано сохранение. Прежнее сохранение лежит в %s",
@@ -1351,9 +1353,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_E_WRITE] = "Не удалось записать zip в %s.",
     [UI_MENU_SAVE_E_READ] = "Не удалось прочитать %s.",
     [UI_MENU_SAVE_E_STAGE] = "Не удалось подготовить сохранение к следующему запуску; причина указана в журнале.",
-    [UI_MENU_SAVE_E_NOT_SAVE] = "%s — не сохранение, экспортированное NX2navi.",
+    [UI_MENU_SAVE_E_NOT_SAVE] = "%s — не сохранение, экспортированное NX2Saria.",
     [UI_MENU_SAVE_E_OTHER_GAME] = "%s — сохранение другой игры.",
-    [UI_MENU_SAVE_E_NEWER] = "%s создан более новой версией NX2navi: сначала обновите NX2navi.",
+    [UI_MENU_SAVE_E_NEWER] = "%s создан более новой версией NX2Saria: сначала обновите NX2Saria.",
     [UI_MENU_SAVE_E_DAMAGED] = "%s повреждён: скачайте его заново.",
     [UI_MENU_SAVE_E_UNSAFE] = "%s отклонён: в нём файлы вне сохранения, ссылки или слишком много данных.",
     [UI_MENU_CAPTURE_SAVED] = "Снимок ошибки %d сохранён",
@@ -1417,8 +1419,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "padrão",
     [UI_MENU_AFTER_RESTART] = "após reiniciar", [UI_MENU_SET_BY_ENV] = "definido por variável de ambiente",
     [UI_MENU_SAVE_FAILED] = "não foi possível salvar as configurações",
-    [UI_MENU_INI_UNKNOWN] = "nx2navi.ini: não são configurações desta versão, ignoradas: %s",
-    [UI_MENU_VERSION] = "NX2navi %s, jogo %s",
+    [UI_MENU_INI_UNKNOWN] = "nx2saria.ini: não são configurações desta versão, ignoradas: %s",
+    [UI_MENU_VERSION] = "NX2Saria %s, jogo %s",
 
     [UI_MENU_FULLSCREEN] = "Tela cheia", [UI_MENU_FULLSCREEN_DESC] = "Jogar em tela cheia. F11 alterna.",
     [UI_MENU_WINDOW_SIZE] = "Tamanho da janela",
@@ -1665,9 +1667,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_MENU_LANG] = "Idioma do menu", [UI_MENU_MENU_LANG_DESC] = "Idioma deste menu e do indicador.",
     [UI_MENU_MENU_LANG_AUTO] = "Automático (do Windows)",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
-    [UI_MENU_DISCORD_RPC_DESC] = "Mostra \"Jogando NX2navi\" com o tempo de jogo no seu status do Discord "
-                                 "enquanto o jogo roda. discord_app_id e discord_image no nx2navi.ini escolhem a "
-                                 "aplicação.",
+    [UI_MENU_DISCORD_RPC_DESC] = "Envia uma atividade e o tempo de jogo ao Discord. Primeiro informe seu próprio "
+                                 "discord_app_id no nx2saria.ini ou NX2SARIA_DISCORD_APP_ID; o Discord mostra o nome "
+                                 "registrado para esse ID.",
 
     [UI_MENU_ADV_WARNING] = "Estas configurações são para testes e solução de problemas. Altere-as só quando souber "
                             "por quê.",
@@ -1864,7 +1866,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                              "então os ícones de A mostram B, ou círculo). Teclado e mouse: a tecla de cada botão (E, "
                              "Ctrl, Espaço, clique esquerdo...), WASD para andar e o mouse para a câmera. Os arquivos "
                              "dos ícones são feitos a partir de imagens de botões com tools/pad_prompts.py, com as "
-                             "teclas como o nx2navi.ini as define quando ele roda. O jogo lê os ícones ao iniciar, "
+                             "teclas como o nx2saria.ini as define quando ele roda. O jogo lê os ícones ao iniciar, "
                              "então eles mudam depois de reiniciar. Eles fazem parte dos arquivos do jogo, então um "
                              "botão remapeado em Controles continua com o ícone antigo na tela até os arquivos serem "
                              "feitos de novo.",
@@ -1883,7 +1885,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PROMPTS_RESTART] = "os ícones mudam após reiniciar",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "desligados numa resolução de jogo que não é 16:9",
     [UI_MENU_PROMPTS_OFF_MODS] = "desligados: um mod de RomFS substitui os arquivos deles",
-    [UI_MENU_PROMPTS_OFF_PATCHES] = "desligados enquanto NX2NAVI_ROMFS_PATCHES está definido",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "desligados enquanto NX2SARIA_ROMFS_PATCHES está definido",
     [UI_MENU_RESTART] = "Reiniciar agora",
     [UI_MENU_RESTART_DESC] = "Fecha o jogo e o abre de novo com os novos ícones. O progresso desde o último "
                              "salvamento é perdido.",
@@ -1906,11 +1908,11 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_RESTART_NOW_TITLE] = "Algumas alterações só valem depois de reiniciar",
     [UI_MENU_RESTART_NOW] = "Reiniciar agora",
     [UI_MENU_RESTART_LATER] = "Depois",
-    [UI_MENU_RELOAD_NONE] = "nx2navi.ini recarregado: sem alterações",
-    [UI_MENU_RELOAD_DONE] = "nx2navi.ini recarregado: %d alterada(s), %d após reiniciar",
-    [UI_MENU_RELOAD_REJECTED] = "nx2navi.ini recarregado: %d alterada(s), %d após reiniciar, %d rejeitada(s)",
-    [UI_MENU_RELOAD_FAILED] = "Não foi possível ler o nx2navi.ini",
-    [UI_MENU_RELOAD_BUSY] = "Feche o menu de configurações para recarregar o nx2navi.ini",
+    [UI_MENU_RELOAD_NONE] = "nx2saria.ini recarregado: sem alterações",
+    [UI_MENU_RELOAD_DONE] = "nx2saria.ini recarregado: %d alterada(s), %d após reiniciar",
+    [UI_MENU_RELOAD_REJECTED] = "nx2saria.ini recarregado: %d alterada(s), %d após reiniciar, %d rejeitada(s)",
+    [UI_MENU_RELOAD_FAILED] = "Não foi possível ler o nx2saria.ini",
+    [UI_MENU_RELOAD_BUSY] = "Feche o menu de configurações para recarregar o nx2saria.ini",
     [UI_MENU_STICK_SENS] = "Velocidade da câmera (analógico)",
     [UI_MENU_STICK_SENS_DESC] = "Velocidade da câmera no analógico direito.",
     [UI_MENU_WALK_KEY] = "Tecla de andar",
@@ -1932,7 +1934,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS_DESC] = "Sombras do sol nítidas onde um objeto toca o chão e mais suaves quanto mais longe a sombra "
                           "cai (PCSS). 0 mantém o filtro do jogo. Vale no próximo início.",
     [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
-    [UI_MENU_DLAA_DESC] = "NVIDIA DLSS para a cena 3D (placas NVIDIA RTX; nvngx_dlss.dll ao lado do nx2navi.exe): bordas "
+    [UI_MENU_DLAA_DESC] = "NVIDIA DLSS para a cena 3D (placas NVIDIA RTX; nvngx_dlss.dll ao lado do nx2saria.exe): bordas "
                           "mais suaves e menos cintilação. O HUD não é afetado. O modo abaixo define a resolução de "
                           "onde ele parte. Vale após reiniciar.",
     [UI_MENU_DLSS] = "Modo do DLSS",
@@ -1997,10 +1999,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                  "outro jogador ou anexar a um relato de bug. Ele nunca contém suas chaves nem arquivos "
                                  "do jogo.",
     [UI_MENU_SAVE_EXPORT_BUG] = "Exportar para relato de bug",
-    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "O mesmo zip com o log desta execução e suas configurações (nx2navi.ini), que "
+    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "O mesmo zip com o log desta execução e suas configurações (nx2saria.ini), que "
                                      "mostram o que aconteceu e com quais configurações. Anexe-o ao seu relato de bug.",
     [UI_MENU_SAVE_IMPORT] = "Importar save",
-    [UI_MENU_SAVE_IMPORT_DESC] = "Escolha um save que alguém compartilhou (um zip NX2navi-save). Ele substitui seu save, "
+    [UI_MENU_SAVE_IMPORT_DESC] = "Escolha um save que alguém compartilhou (um zip NX2Saria-save). Ele substitui seu save, "
                                  "todos os slots, na próxima inicialização: o jogo mantém seu progresso na memória e o "
                                  "gravaria por cima de um save substituído agora. Seu save atual é copiado antes para a "
                                  "pasta saves.",
@@ -2010,7 +2012,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                         "descartado.",
     [UI_MENU_SAVE_BUSY] = "trabalhando…",
     [UI_MENU_SAVE_EXPORTED] = "Salvo como %s",
-    [UI_MENU_SAVE_IMPORT_READY] = "O save (NX2navi %s) é carregado na próxima inicialização: selecione Reiniciar abaixo. "
+    [UI_MENU_SAVE_IMPORT_READY] = "O save (NX2Saria %s) é carregado na próxima inicialização: selecione Reiniciar abaixo. "
                                   "Seu save atual é copiado antes para a pasta saves.",
     [UI_MENU_SAVE_IMPORT_CANCELLED] = "Importação cancelada; seu save continua como estava.",
     [UI_MENU_SAVE_IMPORTED] = "Um save compartilhado foi importado nesta inicialização. Seu save anterior está em %s",
@@ -2020,9 +2022,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_E_WRITE] = "Não foi possível gravar o zip em %s.",
     [UI_MENU_SAVE_E_READ] = "Não foi possível ler %s.",
     [UI_MENU_SAVE_E_STAGE] = "Não foi possível preparar o save para a próxima inicialização; o log diz o motivo.",
-    [UI_MENU_SAVE_E_NOT_SAVE] = "%s não é um save exportado pelo NX2navi.",
+    [UI_MENU_SAVE_E_NOT_SAVE] = "%s não é um save exportado pelo NX2Saria.",
     [UI_MENU_SAVE_E_OTHER_GAME] = "%s é um save de outro jogo.",
-    [UI_MENU_SAVE_E_NEWER] = "%s foi feito por um NX2navi mais novo: atualize o NX2navi primeiro.",
+    [UI_MENU_SAVE_E_NEWER] = "%s foi feito por um NX2Saria mais novo: atualize o NX2Saria primeiro.",
     [UI_MENU_SAVE_E_DAMAGED] = "%s está danificado: baixe-o de novo.",
     [UI_MENU_SAVE_E_UNSAFE] = "%s foi recusado: contém arquivos fora de um save, links ou dados demais.",
     [UI_MENU_CAPTURE_SAVED] = "Captura de bug %d salva",
@@ -2091,8 +2093,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_AFTER_RESTART] = "重启后生效",
     [UI_MENU_SET_BY_ENV] = "由环境变量设定",
     [UI_MENU_SAVE_FAILED] = "无法保存设置",
-    [UI_MENU_INI_UNKNOWN] = "nx2navi.ini：以下不是此版本的设置，已忽略：%s",
-    [UI_MENU_VERSION] = "NX2navi %s，游戏 %s",
+    [UI_MENU_INI_UNKNOWN] = "nx2saria.ini：以下不是此版本的设置，已忽略：%s",
+    [UI_MENU_VERSION] = "NX2Saria %s，游戏 %s",
     [UI_MENU_FULLSCREEN] = "全屏",
     [UI_MENU_FULLSCREEN_DESC] = "全屏运行。按 F11 切换。",
     [UI_MENU_WINDOW_SIZE] = "窗口大小",
@@ -2419,8 +2421,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_MENU_LANG_DESC] = "本菜单和性能浮层的语言。",
     [UI_MENU_MENU_LANG_AUTO] = "自动（跟随 Windows）",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
-    [UI_MENU_DISCORD_RPC_DESC] = "游戏运行时在 Discord 状态中显示“正在玩 NX2navi”及游戏时长。nx2navi.ini 中的 "
-                                 "discord_app_id 和 discord_image 选择应用。",
+    [UI_MENU_DISCORD_RPC_DESC] = "向 Discord 发送活动和游戏时长。请先在 nx2saria.ini 或 NX2SARIA_DISCORD_APP_ID "
+                                 "中设置自己的应用 ID；Discord 会显示该 ID 注册的名称。",
     [UI_MENU_ADV_WARNING] = "这些设置用于测试和排查问题，请在了解原因后再修改。",
     [UI_MENU_GROUP_SCHED] = "调度",
     [UI_MENU_GROUP_SHADERS] = "着色器和管线",
@@ -2631,7 +2633,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                              "Xbox 和 PlayStation：该手柄的按键（LB、RB、LT、RT、Menu、View；L1、R1、L2、R2、Options、Create），"
                              "A、B、X、Y 显示为上方布局所按下的按键（使用 Nintendo（A 在右）时由右侧按键执行 A，因此 A 的提示显示 B 或圆圈）。"
                              "键盘和鼠标：每个按键对应的键（E、Ctrl、空格、左键……），WASD 移动，鼠标控制镜头。"
-                             "提示文件由 tools/pad_prompts.py 根据按键图片生成，键位以生成时 nx2navi.ini 中的设置为准。"
+                             "提示文件由 tools/pad_prompts.py 根据按键图片生成，键位以生成时 nx2saria.ini 中的设置为准。"
                              "游戏在启动时读取按键提示，因此重启后才会改变。"
                              "提示属于游戏文件，在“操作”中重新映射的按键在重新生成文件之前仍显示原来的提示。",
     [UI_MENU_PROMPTS_NINTENDO] = "Nintendo",
@@ -2649,7 +2651,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_PROMPTS_RESTART] = "按键提示重启后生效",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "游戏分辨率不是 16:9 时关闭",
     [UI_MENU_PROMPTS_OFF_MODS] = "已关闭：RomFS 模组替换了它们的文件",
-    [UI_MENU_PROMPTS_OFF_PATCHES] = "设置了 NX2NAVI_ROMFS_PATCHES 时关闭",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "设置了 NX2SARIA_ROMFS_PATCHES 时关闭",
     [UI_MENU_RESTART] = "立即重启",
     [UI_MENU_RESTART_DESC] = "关闭游戏并以新的按键提示重新启动。上次存档之后的进度将会丢失。",
     [UI_MENU_RESTART_CONFIRM] = "现在重启游戏？上次存档之后的进度将会丢失。",
@@ -2675,7 +2677,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "柔和阴影",
     [UI_MENU_PCSS_DESC] = "物体接触地面处的太阳阴影锐利，阴影投得越远越柔和（PCSS）。0 保留游戏自身的过滤。下次启动时生效。",
     [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
-    [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 nx2navi.exe 旁）：边缘更平滑，闪烁更少。HUD "
+    [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 nx2saria.exe 旁）：边缘更平滑，闪烁更少。HUD "
                           "不受影响。下方的模式决定它的工作分辨率。重启后生效。",
     [UI_MENU_DLSS] = "DLSS 模式",
     [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡、性能和超级性能分别以 67%、58%、50% 和 33% 绘制，再由 DLSS 放大，以节省 GPU 时间；它们会取代 3D 渲染比例。立即生效。",
@@ -2728,10 +2730,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_EXPORT_DESC] = "将你的存档（所有存档位）写入“下载”文件夹中的一个 zip 文件，可分享给其他玩家或附在错误报告中。"
                                  "其中不含你的密钥和游戏文件。",
     [UI_MENU_SAVE_EXPORT_BUG] = "导出存档用于错误报告",
-    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "同样的 zip，另附本次运行的日志和你的设置（nx2navi.ini），可看出发生了什么以及使用了哪些"
+    [UI_MENU_SAVE_EXPORT_BUG_DESC] = "同样的 zip，另附本次运行的日志和你的设置（nx2saria.ini），可看出发生了什么以及使用了哪些"
                                      "设置。请将其附在错误报告中。",
     [UI_MENU_SAVE_IMPORT] = "导入存档",
-    [UI_MENU_SAVE_IMPORT_DESC] = "选择别人分享的存档（NX2navi-save zip）。它会在下次启动时替换你的存档（所有存档位）：游戏"
+    [UI_MENU_SAVE_IMPORT_DESC] = "选择别人分享的存档（NX2Saria-save zip）。它会在下次启动时替换你的存档（所有存档位）：游戏"
                                  "把进度保存在内存中，若现在替换，游戏会把进度写回并覆盖它。你当前的存档会先复制到 saves "
                                  "文件夹。",
     [UI_MENU_SAVE_IMPORT_WAITING] = "下次启动时",
@@ -2739,7 +2741,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_IMPORT_CANCEL_DESC] = "保留你的存档不变：丢弃等待下次启动的存档。",
     [UI_MENU_SAVE_BUSY] = "处理中…",
     [UI_MENU_SAVE_EXPORTED] = "已保存为 %s",
-    [UI_MENU_SAVE_IMPORT_READY] = "该存档（NX2navi %s）将在下次启动时载入：请选择下方的“重启”。你当前的存档会先复制到 saves "
+    [UI_MENU_SAVE_IMPORT_READY] = "该存档（NX2Saria %s）将在下次启动时载入：请选择下方的“重启”。你当前的存档会先复制到 saves "
                                   "文件夹。",
     [UI_MENU_SAVE_IMPORT_CANCELLED] = "已取消导入，你的存档保持不变。",
     [UI_MENU_SAVE_IMPORTED] = "本次启动时已导入分享的存档。你原来的存档在 %s",
@@ -2749,9 +2751,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_E_WRITE] = "无法将 zip 写入 %s。",
     [UI_MENU_SAVE_E_READ] = "无法读取 %s。",
     [UI_MENU_SAVE_E_STAGE] = "无法为下次启动准备存档；原因见日志。",
-    [UI_MENU_SAVE_E_NOT_SAVE] = "%s 不是 NX2navi 导出的存档。",
+    [UI_MENU_SAVE_E_NOT_SAVE] = "%s 不是 NX2Saria 导出的存档。",
     [UI_MENU_SAVE_E_OTHER_GAME] = "%s 是其他游戏的存档。",
-    [UI_MENU_SAVE_E_NEWER] = "%s 由更新版本的 NX2navi 制作：请先更新 NX2navi。",
+    [UI_MENU_SAVE_E_NEWER] = "%s 由更新版本的 NX2Saria 制作：请先更新 NX2Saria。",
     [UI_MENU_SAVE_E_DAMAGED] = "%s 已损坏：请重新下载。",
     [UI_MENU_SAVE_E_UNSAFE] = "%s 被拒绝：其中含有存档以外的文件、链接或过多的数据。",
     [UI_MENU_CAPTURE_SAVED] = "错误快照 %d 已保存",
@@ -2854,13 +2856,13 @@ void ui_text_visit(const char *lang, void (*visit)(void *ctx, const char *text),
         if (r->text[id] && *r->text[id]) visit(ctx, r->text[id]);
 }
 
-// The menu language, re-read when cfg_version changes. NX2NAVI_MENU_LANG names a catalog language ("en", "ru", "pt-BR",
+// The menu language, re-read when cfg_version changes. NX2SARIA_MENU_LANG names a catalog language ("en", "ru", "pt-BR",
 // "zh-Hans"); unset, it follows the system UI language, through the same code map the game language uses ("zh-CN" ->
 // "zh-Hans"). Windows names a region with it ("ru-RU"), so a tag without menu text tries its language alone ("ru"). A
 // language whose row has no menu text (only the software keyboard does) shows English, so other Windows locales keep the
 // English menu.
 static const char *resolve_menu_lang(void) {
-    const char *v = cfg_value("NX2NAVI_MENU_LANG");
+    const char *v = cfg_value("NX2SARIA_MENU_LANG");
     const char *sys = plat_ui_language();
     const char *lang = v && *v ? ui_text_lang(v) : sys && *sys ? ui_text_lang(sys) : "en";
     if (ui_text_defined(lang, UI_MENU_TITLE)) return lang;

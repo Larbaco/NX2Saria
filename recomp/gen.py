@@ -583,7 +583,7 @@ def _emit_chunk(task):
     name, number, path, fns = task
     t0 = time.perf_counter()
     # Test hook: a pool wider than this raises the MemoryError a busy machine does, so the retry can be exercised.
-    limit = os.environ.get('NX2NAVI_LIFT_TEST_OOM_ABOVE')
+    limit = setting_env('LIFT_TEST_OOM_ABOVE')[0]
     if limit and _W['jobs'] > int(limit) and number % 2 == 1:
         raise MemoryError
     e = _emitter(name)
@@ -637,20 +637,31 @@ def pick_jobs(requested):
     """Worker count and the reason for it: --jobs if given, else the CPU count capped by the free memory."""
     if requested:
         return requested, '--jobs'
-    env = os.environ.get('NX2NAVI_LIFT_JOBS', '').strip()
+    env, source = setting_env('LIFT_JOBS')
+    env = env.strip()
     if env:
         try:
             if int(env) >= 1:
-                return int(env), 'NX2NAVI_LIFT_JOBS'
+                return int(env), source
         except ValueError:
             pass
-        print(f'ignoring NX2NAVI_LIFT_JOBS={env!r}: not a positive integer', file=sys.stderr, flush=True)
+        print(f'ignoring {source}={env!r}: not a positive integer', file=sys.stderr, flush=True)
     cpus = os.cpu_count() or 4
     free = hostmem.available_ram()
     if free is None:
         return cpus, f'{cpus} CPUs, free memory unknown'
     by_mem = max(1, int(free * MEM_SHARE) // WORKER_MEM)
     return min(cpus, by_mem), f'{cpus} CPUs, {free / 2**30:.1f} GiB free memory allows {by_mem}'
+
+
+def setting_env(suffix):
+    """Read the new environment spelling first, then its legacy alias; a set empty value still takes precedence."""
+    current, legacy = f'NX2SARIA_{suffix}', f'NX2NAVI_{suffix}'
+    if current in os.environ:
+        return os.environ[current], current
+    if legacy in os.environ:
+        return os.environ[legacy], legacy
+    return '', current
 
 
 def main():

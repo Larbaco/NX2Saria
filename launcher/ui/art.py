@@ -1,7 +1,7 @@
 """The window's pictures, drawn with numpy into RGBA arrays and handed to Tk as PNG data.
 
 Everything is drawn here from shapes and colours: the misty green backdrop, the wooden title band, the bronze label
-cells with their mottled texture, the description box, the white glowing cursor, the filigree divider, Navi and
+cells with their mottled texture, the description box, the white glowing cursor, the filigree divider, the leaf sprig and
 the small icons. Tk's canvas draws lines and polygons without antialiasing on Windows, so every curved or soft
 shape is a picture; flat rectangles and text stay canvas items.
 
@@ -41,8 +41,8 @@ BASE = {
     # the title band's wood from top to bottom and the two lines under it
     'wood_0': '#4c3b26', 'wood_1': '#5a4529', 'wood_2': '#6b5232', 'wood_3': '#806239',
     'band_line_dark': '#2c2217', 'band_line_light': '#a9874f',
-    # the cursor's glow near and far from its frame, the sparks drifting over the backdrop, Navi's halo
-    'glow_near': '#afc5e8', 'glow_far': '#96b4e6', 'spark': '#cfe6ff', 'halo': '#7fc4ff',
+    # the cursor's glow near and far from its frame, the sparks drifting over the backdrop, the sprig's halo
+    'glow_near': '#b7d1a6', 'glow_far': '#86b588', 'spark': '#dfca8c', 'halo': '#86b588',
     'icon_frame': '#e9dcc0', 'icon_fill': '#efe4ca', 'chevron_dim': '#d9ccae', 'bullet': '#c99a45',
     'badge_top': '#fbbd45', 'badge_bottom': '#e2942a', 'badge_ring': '#3a2a14', 'badge_text': '#3a2208',
     'text_shadow': '#2a1e10', 'band_shadow': '#1a120a', 'frame': '#140e09',
@@ -637,7 +637,7 @@ def spark(size, alpha=1.0):
 
 
 def halo_frames(size, n=12):
-    """The light around Navi in the title band: a soft disc of the scheme's halo colour, n frames of one slow pulse."""
+    """The title sprig's light: a soft disc of the scheme's halo colour, n frames of one slow pulse."""
     ys = (np.arange(size, dtype=np.float32) + 0.5) / size * 2 - 1
     d = np.hypot(ys[:, None], ys[None, :])
     fall = np.clip(1 - d, 0, 1) ** 2
@@ -761,79 +761,43 @@ def filigree(w, s):
     return img, h
 
 
-# Navi, the launcher's emblem and icon: 22 x 21 pixels as the artwork has them. W white (the outline and the
-# wings' highlights), g the wings' grey, K the black outline of the body, B and L its two blues, . transparent.
-NAVI = (
-    'WWWW..............WWWW',
-    'WggWW............WWggW',
-    'WgggWW..........WWgggW',
-    'WgWggWW........WWggWgW',
-    'WggWggW........WggWggW',
-    'WgWgWgWW......WWgWgWgW',
-    'WggggWgWKKKKKKWgWggggW',
-    'WWggWggKBBBBBBKggWggWW',
-    '.WggggKKBBLLBBKKggggW.',
-    '.WWggKKBBLLLLBBKKggWW.',
-    '..WWgKBBLLWWLLBBKgWW..',
-    '...WWKBBLWWWWLBBKWW...',
-    '.....KBBLLWWLLBBK.....',
-    '.....KBBBLLLLBBBK.....',
-    '.....WKKBBBBBBKKW.....',
-    '....WWgKKBBBBKKgWW....',
-    '...WWgggKKKKKKgggWW...',
-    '...WggWgW....WgWggW...',
-    '...WgWggW....WggWgW...',
-    '...WWggWW....WWggWW...',
-    '....WWWW......WWWW....',
+SPRIG_LEAVES = (
+    ('M0 8C-43-19-45-74-8-107 31-67 39-27 0 8Z', '#a9cba0'),
+    ('M-4 30C-55 37-88 8-90-30-44-40-14-16-4 30Z', '#78ad8a'),
+    ('M7 45C7-8 41-35 82-29 84 16 51 49 7 45Z', '#4f9179'),
 )
-NAVI_COLORS = {'W': (255, 255, 255), 'g': (207, 216, 220), 'K': (0, 0, 0), 'B': (2, 136, 209), 'L': (79, 195, 247)}
 
 
-def navi_pixels():
-    """The artwork as a 21 x 22 RGBA uint8 array."""
-    a = np.zeros((len(NAVI), len(NAVI[0]), 4), dtype=np.uint8)
-    for y, row in enumerate(NAVI):
-        for x, ch in enumerate(row):
-            if ch in NAVI_COLORS:
-                a[y, x, :3] = NAVI_COLORS[ch]
-                a[y, x, 3] = 255
-    return a
+def sprig_icon(n):
+    """An original three-leaf sprig on the forest and gold palette, at the size Windows or Tk requests."""
+    img = new(n, n)
+    scale, cx, cy = n / 256, n / 2, n / 2
+    yy, xx = np.mgrid[:n, :n].astype(np.float32)
+    radius = np.hypot(xx + .5 - cx, yy + .5 - cy)
+    paint(img, np.clip(121 * scale + .5 - radius, 0, 1), '#0d2822')
+    circle = [(cx + 112 * scale * np.cos(t), cy + 112 * scale * np.sin(t))
+              for t in np.linspace(0, 2 * np.pi, 97)]
+    paint(img, stroke_mask(n, n, [circle], max(1, 3 * scale)), '#d9bd7a', .8)
+    leaves = []
+    for path, color in SPRIG_LEAVES:
+        line = svg_polylines(path, scale, steps=16)[0]
+        line = [(x + cx, y + cy) for x, y in line]
+        leaves.append(line)
+        paint(img, polygon_mask(n, n, line), color)
+        paint(img, stroke_mask(n, n, [line], max(1, 3 * scale)), '#dce4be')
+    stems = [svg_polylines('M0 75C-11 32-8-20-8-86', scale)[0],
+             svg_polylines('M-66-15C-41-3-22 12-4 30', scale)[0],
+             svg_polylines('M61-13C39 0 20 23 7 45', scale)[0]]
+    stems = [[(x + cx, y + cy) for x, y in line] for line in stems]
+    paint(img, stroke_mask(n, n, stems, max(1.5, 4 * scale)), '#234f3b')
+    stem = svg_polylines('M0 75C-5 57-7 41-7 26', scale)[0]
+    paint(img, stroke_mask(n, n, [[(x + cx, y + cy) for x, y in stem]], max(1.5, 4 * scale)), '#d9bd7a')
+    return img
 
 
-def navi(k):
-    """Navi with every artwork pixel k x k screen pixels (crisp edges), as a float RGBA array."""
-    a = np.repeat(np.repeat(navi_pixels(), k, axis=0), k, axis=1)
-    return a.astype(np.float32) / 255.0
-
-
-def navi_icon(n):
-    """Navi on a transparent n x n square: whole-pixel scaling where the size allows it, an average of a large
-    rendering below 22 pixels."""
-    sq = np.zeros((n, n, 4), dtype=np.float32)
-    rows, cols = len(NAVI), len(NAVI[0])
-    if n >= cols:
-        img = navi(n // cols)
-    else:   # premultiplied box average of an 8x rendering, so the edges blend instead of dropping pixels
-        big = navi(8)
-        H, W = big.shape[:2]
-        h, w = max(1, round(rows * n / cols)), n
-        ys = (np.arange(h + 1) * H / h).astype(int)
-        xs = (np.arange(w + 1) * W / w).astype(int)
-        pm = big.copy()
-        pm[..., :3] *= pm[..., 3:4]
-        img = np.zeros((h, w, 4), dtype=np.float32)
-        for y in range(h):
-            for x in range(w):
-                img[y, x] = pm[ys[y]:ys[y + 1], xs[x]:xs[x + 1]].mean(axis=(0, 1))
-        img[..., :3] = np.where(img[..., 3:4] > 0, img[..., :3] / np.maximum(img[..., 3:4], 1e-6), 0)
-    h, w = img.shape[:2]
-    over(sq, img, (n - w) // 2, (n - h) // 2)
-    return sq
-
-
-def navi_ico():
-    """The launcher's icon (NX2navi.exe, the setup, the window, the taskbar) at the sizes Windows asks for."""
-    return ico_bytes([navi_icon(n) for n in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)])
+def sprig_ico():
+    """The NX2Saria launcher, setup and taskbar icon at the sizes Windows asks for."""
+    return ico_bytes([sprig_icon(n) for n in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)])
 
 
 def title_glyph(kind, size, s):

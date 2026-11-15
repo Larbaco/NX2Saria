@@ -1,10 +1,10 @@
-# NX2navi build kit
+# NX2Saria build kit
 
 This kit builds *The Legend of Zelda: Ocarina of Time* (Nintendo Switch 2, game version 1.1.1) as a native Windows
 program **on your PC, from your own copy of the game**. The kit contains no game code or data. Everything the build
 writes (`ocarina.exe`, the RomFS image, the shader cache, your saves) comes from your game: keep it to yourself.
 
-The NX2navi launcher (`NX2navi-Setup.exe`, [launcher.md](launcher.md)) does everything below for you, the
+The NX2Saria launcher (`NX2Saria-Setup.exe`, [launcher.md](launcher.md)) does everything below for you, the
 downloads included, and keeps the game up to date. This page is the same build by hand.
 
 ## What you need
@@ -130,7 +130,7 @@ kernel command line raises it). Otherwise the game copies as before, and the log
 
 AMD FSR 3.1 upscaling runs on Linux on any GPU through the game's own build of FSR 3.1's passes, compiled into the
 runtime like its other shaders, so it needs no AMD library: the menu offers the FSR 3.1 modes under Upscaling, and
-`dlaa = 1` with `taa = fsr3` in `nx2navi.ini` selects it (`dlss` picks the mode). A GPU or driver that lacks what the
+`dlaa = 1` with `taa = fsr3` in `nx2saria.ini` selects it (`dlss` picks the mode). A GPU or driver that lacks what the
 passes need (storage images in the extended formats, quad subgroup operations in compute shaders) gets no FSR 3.1
 modes in the menu, and the log's `fsr3: AMD FSR 3.1 (the runtime's passes) off:` line says what is missing; no file
 brings it back. FSR 3.1 frame generation needs AMD's
@@ -143,7 +143,7 @@ utilities package, `nvidia-utils` on Arch) and NVIDIA's DLSS library `libnvidia-
 `ocarina`. The AppImage's kit has the library in `bin/` with `libnvidia-ngx-dlss-NOTICE.txt`, which names its licence,
 and the build copies both beside `ocarina` (`tools/make_appimage.py --no-dlss` leaves it out; such an AppImage
 downloads the same pinned library from NVIDIA's repository after a build on a machine with NVIDIA's driver, checks its
-SHA-256 and writes the notice, unless `NX2NAVI_NO_DLSS=1` is set or a library is already there). From a source checkout,
+SHA-256 and writes the notice, unless `NX2SARIA_NO_DLSS=1` is set or a library is already there). From a source checkout,
 or to use another DLSS version, put the library there yourself: NVIDIA publishes it as
 `lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.<version>` in [its DLSS repository](https://github.com/NVIDIA/DLSS), tagged
 `v<version>`, and `tools/dlss_pin.py` names the version the kit carries. Later builds keep a library they did not
@@ -153,10 +153,10 @@ DLSS Frame Generation (RTX 40 and 50 cards) runs through NGX itself on Linux, wi
 `libnvidia-ngx-dlssg.so.<version>` beside `ocarina` (the same repository, `lib/Linux_x86_64/rel/`; no kit carries it)
 and DLSS upscaling on when the game starts. *Frame generation* in the Screen menu then offers NVIDIA DLSS, which
 switches at once, with a *DLSS multiplier* of 2x to 6x (above 2x on RTX 50 cards) or Dynamic, which generates only the
-frames needed to reach the display's refresh rate (`framegen = dlss` and `fg_mult` in `nx2navi.ini`). The log says
+frames needed to reach the display's refresh rate (`framegen = dlss` and `fg_mult` in `nx2saria.ini`). The log says
 `ngxfg: DLSS Frame Generation available` when NGX found the library.
 
-`tools/make_appimage.py` packs this kit into one `NX2navi-Linux-<version>-x86_64.AppImage` with its own Python and the
+`tools/make_appimage.py` packs this kit into one `NX2Saria-Linux-<version>-x86_64.AppImage` with its own Python and the
 pinned Vulkan headers, for players without a source checkout: it checks for the packages above (their Vulkan headers
 are not needed), installs zbic with pip on its first run, picks
 `--jobs` from the memory, builds into `~/Games/Ocarina` (or the folder given after the dump) and writes `play.sh`
@@ -164,7 +164,7 @@ beside the game.
 
 ## Playing
 
-- **F1** opens the settings menu. Settings are saved in `nx2navi.ini` beside the game; saves go to `profile\`.
+- **F1** opens the settings menu. Settings are saved in `nx2saria.ini` beside the game; saves go to `profile\`.
 - Every shader was prepared during the build. After an update of your graphics driver, the next start shows
   "Preparing shaders" once while the driver rebuilds them. With a driver that has Vulkan's graphics pipeline library
   it lasts at most about 20 seconds once the shaders are translated, and the remaining pipelines are built in the
@@ -189,7 +189,7 @@ beside the game.
   until you set it back, and the Restart button at the bottom then counts the settings waiting for it.
 - **Controls** in the menu has Button prompts: the game's own, or Xbox, PlayStation, Steam Deck or keyboard and mouse ones when
   the build drew them (a kit with `prompt-art`). It takes effect after a restart. The keyboard and mouse prompts show
-  the keys `nx2navi.ini` binds when the build runs: after rebinding keys, run
+  the keys `nx2saria.ini` binds when the build runs: after rebinding keys, run
   `py -I tools\make_game.py --rebuild --out "C:\Games\Ocarina"` to draw them again (it skips everything else).
 - The build copies NVIDIA's DLSS library `nvngx_dlss.dll` (with `nvngx_dlss-NOTICE.txt`, which names its licence)
   and FSR 3.1's `amd_fidelityfx_vk.dll` beside `ocarina.exe` from the kit's `bin\`, and FSR 4's
@@ -201,7 +201,7 @@ beside the game.
   and 50 cards: the build copies `nx2navi_dlssg.dll`, NVIDIA Streamline's runtime, `nvngx_dlssg.dll` and their licence
   texts beside `ocarina.exe`, and Frame generation in the Screen menu then offers DLSS too.
 - Logs are in `logs\`. When reporting a problem, say where you were in the game and which graphics card you have, and
-  attach `logs\nx2navi.log`. Never send game files.
+  attach `logs\nx2saria.log`. Never send game files.
 
 ## If something goes wrong
 
@@ -213,4 +213,4 @@ beside the game.
 | `clang is not on PATH` (Linux) | Install the packages under "Linux" |
 | `nx2navi_xlate is missing` (Linux) | Build the translator with `python tools/build_xlate.py` |
 | `needs ... GB free` | Free space on the `--out` disk, or build to another one |
-| The game opens and closes | Update your graphics driver, then send `logs\nx2navi.log` |
+| The game opens and closes | Update your graphics driver, then send `logs\nx2saria.log` |

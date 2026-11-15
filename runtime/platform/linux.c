@@ -38,6 +38,8 @@
 #include <unistd.h>
 #include <unwind.h>
 
+#include "cfg.h"
+
 #include <SDL3/SDL_clipboard.h>
 
 #include "platform.h"
@@ -1125,7 +1127,7 @@ static void ps_set(uint64_t addr, uint64_t n, uint8_t v) {
     if (addr < PS_LIMIT) memset(pstate + addr / PG, v, (size_t)((n + PG - 1) / PG));
 }
 
-// Guest memory as a memfd's (NX2NAVI_DMABUF, read from the environment: the reservations come before nx2navi.ini; on
+// Guest memory as a memfd's (NX2SARIA_DMABUF, read from the environment: the reservations come before nx2navi.ini; on
 // by default where /dev/udmabuf opens, udmabuf's size limit is 1 GiB or more and NVIDIA's kernel module is not loaded;
 // 0 off, 1 on wherever it can be).
 // The watched reservations are MAP_SHARED mappings of one memfd, each at its own offset, so that /dev/udmabuf can make
@@ -1159,7 +1161,7 @@ static GmRes gm_res[GM_RES_MAX];       // the shared reservations and their offs
 static int gm_nres;
 static GmPin *gm_pins;                 // vm_lock: the ranges live dma-bufs pin (one entry per dma-buf)
 static int gm_npins, gm_cpins;
-static char gm_note[200];              // why the reservations are not a memfd's ("" when NX2NAVI_DMABUF=0 or they are)
+static char gm_note[200];              // why the reservations are not a memfd's ("" when NX2SARIA_DMABUF=0 or they are)
 
 // The largest dma-buf the udmabuf ioctl accepts, in bytes: the module's size_limit_mb parameter, or the module's
 // default of 64 MiB where the parameter cannot be read.
@@ -1170,7 +1172,7 @@ static uint64_t udmabuf_limit(void) {
 }
 
 static void gm_open(void) {   // vm_lock held: the first watched reservation decides
-    const char *e = getenv("NX2NAVI_DMABUF");
+    const char *e = cfg_env("NX2SARIA_DMABUF");
     int asked = e && !strcmp(e, "1");
     gm_state = -1;
     if (e && !strcmp(e, "0")) return;
@@ -1178,13 +1180,13 @@ static void gm_open(void) {   // vm_lock held: the first watched reservation dec
     // mirror_mode), and its import of these dma-bufs has not been tried, so where its kernel module is loaded the memory
     // stays private.
     if (!asked && !access("/sys/module/nvidia", F_OK)) {
-        snprintf(gm_note, sizeof gm_note, "NVIDIA's kernel module is loaded (NX2NAVI_DMABUF=1 makes it a memfd's anyway)");
+        snprintf(gm_note, sizeof gm_note, "NVIDIA's kernel module is loaded (NX2SARIA_DMABUF=1 makes it a memfd's anyway)");
         return;
     }
     gm_udev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
     if (gm_udev < 0) {   // many systems give the device to root and group kvm only
         snprintf(gm_note, sizeof gm_note, "/dev/udmabuf cannot be opened (%s)", strerror(errno));
-        fprintf(stderr, "platform: guest memory as dma-bufs (NX2NAVI_DMABUF): %s: guest memory stays private\n", gm_note);
+        fprintf(stderr, "platform: guest memory as dma-bufs (NX2SARIA_DMABUF): %s: guest memory stays private\n", gm_note);
         return;
     }
     gm_limit = udmabuf_limit();
@@ -1199,7 +1201,7 @@ static void gm_open(void) {   // vm_lock held: the first watched reservation dec
     gm_fd = (int)syscall(SYS_memfd_create, "nx2navi-guest", MFD_CLOEXEC | MFD_ALLOW_SEALING);
     if (gm_fd < 0) {
         snprintf(gm_note, sizeof gm_note, "no memfd (%s)", strerror(errno));
-        fprintf(stderr, "platform: guest memory as dma-bufs (NX2NAVI_DMABUF): %s: guest memory stays private\n", gm_note);
+        fprintf(stderr, "platform: guest memory as dma-bufs (NX2SARIA_DMABUF): %s: guest memory stays private\n", gm_note);
         close(gm_udev), gm_udev = -1;
         return;
     }
@@ -1912,7 +1914,7 @@ int plat_console_setup(void (*on_close)(const char *what)) {   // a Windows cons
 
 // ---- process
 
-#ifdef NX2NAVI_PGO_GEN
+#if defined(NX2SARIA_PGO_GEN) || defined(NX2NAVI_PGO_GEN)
 // compiler-rt's profile runtime (an instrumented build: --pgo gen of tools/make_game.py or tools/build_game.py). It
 // writes its counters from an atexit handler, which _exit skips; __llvm_profile_dump writes them once and makes later
 // writes no-ops.
@@ -1923,7 +1925,7 @@ void (*plat_exit_hook)(void);
 
 void plat_exit(int code) {
     if (plat_exit_hook) plat_exit_hook();
-#ifdef NX2NAVI_PGO_GEN
+#if defined(NX2SARIA_PGO_GEN) || defined(NX2NAVI_PGO_GEN)
     __llvm_profile_dump();
 #endif
     fflush(stdout);
@@ -2814,12 +2816,12 @@ void plat_udp_close(PlatUdp *u) {
 
 
 // ---- restart
-// NX2NAVI_RESTART_WAIT names the process that called plat_restart, as its id and start time (field 22 of /proc/<pid>/stat,
+// NX2SARIA_RESTART_WAIT names the process that called plat_restart, as its id and start time (field 22 of /proc/<pid>/stat,
 // clock ticks after boot): a process that has only reused the id is not waited for. Waiting keeps the new process off
 // the old one's files (the log it moves at start, the saves) until the old one is gone. The new process gets no
 // descriptor past stderr (glibc 2.34's closefrom file action), and the default signal mask and dispositions, whatever
 // the calling thread had.
-#define RESTART_WAIT "NX2NAVI_RESTART_WAIT"
+#define RESTART_WAIT "NX2SARIA_RESTART_WAIT"
 
 // The start time of process pid (field 22 of its /proc stat line), 0 when it is gone.
 static unsigned long long process_start(int pid) {
@@ -2920,7 +2922,7 @@ int plat_spawn(const char *const *argv, const char *cwd) {
 }
 
 int plat_restart_wait(uint32_t timeout_ms) {
-    const char *v = getenv(RESTART_WAIT);
+    const char *v = cfg_env(RESTART_WAIT);
     if (!v) return 0;
     int pid = 0;
     unsigned long long start = 0;

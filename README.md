@@ -40,10 +40,10 @@ The modes appear when the GPU and driver support the required shader features.
 ### Settings you apply when ready
 
 Menu edits stay in a draft until you choose **Apply**. Settings that a game build does not support are hidden,
-and **Ctrl+F5** reloads `nx2navi.ini` while the game runs. Monitor selection, fullscreen at startup and audio
+and **Ctrl+F5** reloads `nx2saria.ini` while the game runs. Monitor selection, fullscreen at startup and audio
 output selection help fit the game into a desktop setup.
 
-[Controls and menu guide →](docs/controls.md) · [All configuration keys →](nx2navi.ini.example)
+[Controls and menu guide →](docs/controls.md) · [All configuration keys →](nx2saria.ini.example)
 
 ### Amiibo within reach
 
@@ -89,8 +89,9 @@ the renderer.
 **This fork does not have published release packages yet.** Use the source and build kit guides below for now.
 The [Releases page](https://github.com/Larbaco/NX2navi/releases) is the place to check for future packages.
 
-NX2Saria is the fork's new name. Existing tools and documentation still use names such as
-`NX2navi-Setup-<version>.exe`, `nx2navi.ini` and the `NX2NAVI_*` environment variables.
+NX2Saria is the fork's name. Its settings file is `nx2saria.ini`, its environment variables start with `NX2SARIA_`,
+and its release files start with `NX2Saria-`. Settings, saves and profiles from NX2navi keep working;
+[names and compatibility](docs/branding.md) lists the older names.
 
 ### Before you build
 
@@ -142,11 +143,12 @@ steps to reproduce, and the relevant log. Review attachments for private paths a
 
 ## Documentation
 
-- **Playing:** [controls](docs/controls.md), [settings reference](nx2navi.ini.example), [amiibo](docs/amiibo.md).
+- **Playing:** [controls](docs/controls.md), [settings reference](nx2saria.ini.example), [amiibo](docs/amiibo.md).
 - **Installing and building:** [build kit](docs/README-BuildKit.md), [source build](docs/building.md),
   [Windows launcher](docs/launcher.md).
 - **Contributing:** [contribution guide](CONTRIBUTING.md), [architecture](docs/architecture.md),
   [Maxwell renderer notes](docs/maxwell.md).
+- **Names:** [names and compatibility](docs/branding.md), including the older names that still work.
 
 Build outputs stay in ignored `build/` and `generated/` folders. The runtime's shaders are kept as source;
 compiled headers are generated during the build. Run `python tools/check_content.py` before committing.
@@ -159,7 +161,7 @@ launcher form its foundation. Credit belongs to the original authors and to the 
 changes are integrated here; individual contributions and merge attributions remain in the commit history.
 
 The NX2Saria name and README artwork identify this fork. They do not imply an official NX2navi release or a
-Nintendo project. The underlying tools retain their existing names for now.
+Nintendo project. Some file and setting names keep the NX2navi spelling on purpose, for compatibility; [names and compatibility](docs/branding.md) lists them.
 
 ## License and notices
 

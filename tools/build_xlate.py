@@ -13,7 +13,7 @@ sources for one built from them (check_built), so no option writes an .id beside
 
   python tools/build_xlate.py [--out DIR]
 
---out builds into DIR instead of build/xlate (a task build dir: nx2navi.exe takes the translator next to it).
+--out builds into DIR instead of build/xlate (a task build dir: nx2saria.exe takes the translator next to it).
 """
 
 import argparse

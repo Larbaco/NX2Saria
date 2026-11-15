@@ -7,10 +7,10 @@
 // out with a note when an environment variable fixes it.
 //
 //   opt_begin("##screen", scale);
-//   opt_toggle("NX2NAVI_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
+//   opt_toggle("NX2SARIA_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
 //   opt_end();
 //
-// key: the setting's NX2NAVI_ name, which must have a cfg_meta row. Present path only (ImGui).
+// key: the setting's NX2SARIA_ name, which must have a cfg_meta row. Present path only (ImGui).
 #pragma once
 #include "imgui.h"
 
@@ -89,7 +89,7 @@ bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId 
                       const char *cur = nullptr, const char *note = nullptr);
 
 // Binding rows (remapping on the Controls tab): a label and three cells, each selectable on its own (left / right move between them).
-// opt_bind_header: the column titles above them. opt_bind_row: key is the setting's name without NX2NAVI_ (BIND_A; the
+// opt_bind_header: the column titles above them. opt_bind_row: key is the setting's name without NX2SARIA_ (BIND_A; the
 // description names it when the environment sets it); a disabled cell shows its text greyed and takes no cursor; note
 // (NULL none) follows the description. Returns the cell A / Enter / a click activated (0..2), 10 + the cell Delete,
 // Backspace or X cleared, or -1. opt_focus_key("<key>#<cell>") puts the cursor on a cell.
@@ -114,7 +114,7 @@ int opt_pending_count(void);
 int opt_int(const char *key);
 double opt_double(const char *key);
 bool opt_bool(const char *key);
-// A change made outside a row (a binding): key (with or without NX2NAVI_) to value ("" unsets it), named label in the
+// A change made outside a row (a binding): key (with or without NX2SARIA_) to value ("" unsets it), named label in the
 // list, which shows from -> to.
 void opt_change(const char *key, const char *value, const char *label, const char *from, const char *to);
 int opt_draft_any(void);     // changes in the draft, hidden ones included; any thread

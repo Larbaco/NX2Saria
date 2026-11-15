@@ -53,7 +53,7 @@ void nvn_guest_written(uint64_t addr, uint64_t size) {
     if (size) gfx_backend()->guest_written(addr, size);
 }
 
-// memcpy of pool storage the GPU rendered into must copy what the GPU wrote: NX2navi moves its generated grass maps
+// memcpy of pool storage the GPU rendered into must copy what the GPU wrote: NX2Saria moves its generated grass maps
 // between pools with memcpy. Copies below 1 KiB skip the check; the copy itself is memmove, as overlapping
 // arguments are undefined for memcpy anyway.
 static void ov_memcpy(Cpu *c) {
@@ -306,7 +306,7 @@ NVN_API(nvnMemoryPoolBuilderSetStorage) {
 NVN_API(nvnMemoryPoolBuilderSetFlags) { ((pool_builder_t *)arg_p(c, 0))->flags = (uint32_t)arg_x(c, 1); }
 // NVNboolean nvnMemoryPoolInitialize(NVNmemoryPool *p, const NVNmemoryPoolBuilder *b)
 // Pool setup imports, mirrors and maps memory in the back end (the driver, VirtualAlloc): up to 20 ms on the game's
-// loader threads, which held a virtual core through it while job workers waited (NX2NAVI_CORE_DIAG). The thread gives
+// loader threads, which held a virtual core through it while job workers waited (NX2SARIA_CORE_DIAG). The thread gives
 // the core up, as for any blocking host call.
 static void pool_finalize(pool_t *o);
 
@@ -692,7 +692,7 @@ NVN_API(nvnQueueFinish) {
     }
     gfx_backend()->cpu_synced(gfx_backend()->fence_done());
 }
-// ---------- Submit latency guard for NX2navi 1.2.1's per-object uniform double buffer
+// ---------- Submit latency guard for NX2Saria 1.2.1's per-object uniform double buffer
 // NVN starts the GPU when QueueSubmitCommands returns, within microseconds; here the replay into Vulkan takes 15-30 ms
 // first, and the GPU reads uniform memory only after it. The game's producer f_70008c6460 (thread 0x103e, p56)
 // rewrites the half of its per-object uniform blocks that was front until the last flip, 14-23 ms after the submit
@@ -700,17 +700,17 @@ NVN_API(nvnQueueFinish) {
 // the replay, and that frame draws other objects' matrices (phantom rocks, flat far field).
 // The guard makes the producer wait, at its commit point, until the newest submit has been replayed and completed.
 // lod_entered / lod_issued count submits that entered QueueSubmitCommands / reached the back end; lod_fence holds
-// the fence of the last LOD_RING. NX2NAVI_LOD_GUARD=0 turns the wait off.
+// the fence of the last LOD_RING. NX2SARIA_LOD_GUARD=0 turns the wait off.
 #define LOD_RING 64
 _Thread_local uintptr_t gfx_submit_queue;
-int nvn_submits_in_frame;   // nvnQueueSubmitCommands calls since the last nvnQueuePresentTexture (NX2NAVI_SUBMIT_FINISH)
+int nvn_submits_in_frame;   // nvnQueueSubmitCommands calls since the last nvnQueuePresentTexture (NX2SARIA_SUBMIT_FINISH)
 static uint64_t lod_entered, lod_issued, lod_fence[LOD_RING];
 
 // void nvnQueueSubmitCommands(NVNqueue *q, int n, const NVNcommandHandle *handles): replayed on this thread with its
-// core given up (section 2.2), or queued for the replay thread (NX2NAVI_REPLAY_ASYNC, vk_backend.c); the newest fence
+// core given up (section 2.2), or queued for the replay thread (NX2SARIA_REPLAY_ASYNC, vk_backend.c); the newest fence
 // value is what QueueFenceSync records. With the queue the fence covers replay and GPU, so the LOD guard below waits
 // for both.
-// NX2NAVI_TRACE=perf (nvn_api.h): which threads submit and present, and whether two of these calls run at once, which
+// NX2SARIA_TRACE=perf (nvn_api.h): which threads submit and present, and whether two of these calls run at once, which
 // happens in play (at area changes). With the replay on the submitting threads they take turns where it matters:
 // replays on the submission lock (vk_sync.c sub_lock), a frame's bookkeeping at its present between two replays
 // (vk_frame_owed.h), a held present put out by one thread and in order (vk_present_held.h), and a second submission of
@@ -791,18 +791,18 @@ NVN_API(nvnQueueSubmitCommands) {
     // part of a frame drew with the next frame's data, distant characters wrote NaN and bloom spread it (white dialogue
     // frames, 3% of them in 100 s of dialogue; none with this wait, at the same 58-59 fps: the GPU is idle at that
     // point). Copies of the data at submit made it worse, a mix of two frames' versions.
-    // NX2NAVI_SUBMIT_FINISH=<mask>: bit i waits after the i-th submission of a frame (default 0x1); a plain 1 waits
+    // NX2SARIA_SUBMIT_FINISH=<mask>: bit i waits after the i-th submission of a frame (default 0x1); a plain 1 waits
     // after every submission, 0 never.
     // Since the staged mirror uploads (vk_memory.c) the copies of guest memory a submission reads are taken while the
     // replay records it, and the wait ends once the replay has submitted it (vk_sync_recorded_wait); the GPU's wait
     // below remains for a submission whose GPU reads guest memory itself.
     // The wait (exec_wait, vk_sync.c vk_sync_exec_wait) ends when the GPU has run the submission's passes and the
     // results the game reads once it goes on are in its memory, the last frame's occlusion counts among them; the
-    // write-backs and the completion thread's other side effects are not waited for. NX2NAVI_WB_SPLIT=0 makes it
+    // write-backs and the completion thread's other side effects are not waited for. NX2SARIA_WB_SPLIT=0 makes it
     // the fence's wait, which covers those too (vk_sync.c "the executed timeline" has what each leaves out and costs).
     static long long finish_mask = -2;
     if (finish_mask == -2) {
-        const char *e = cfg_get("NX2NAVI_SUBMIT_FINISH");
+        const char *e = cfg_get("NX2SARIA_SUBMIT_FINISH");
         finish_mask = e && *e ? strtoll(e, NULL, 0) : 1;
         if (e && *e && finish_mask == 1 && !(e[0] == '0' && (e[1] == 'x' || e[1] == 'X'))) finish_mask = -1;   // "1": all
     }
@@ -825,7 +825,7 @@ static void obs_release_read(Cpu *c) {
     if (rt_game_version != 121 || lr != 0x70008c70c8ull) return;   // the address is 1.2.1's: no other build has this producer there
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_LOD_GUARD");
+        on = cfg_bool("NX2SARIA_LOD_GUARD");
     }
     if (!on || *(volatile uint8_t *)(uintptr_t)(obj + 0x528) != *(volatile uint8_t *)(uintptr_t)(obj + 0x529)) return;
     uint64_t e = __atomic_load_n(&lod_entered, __ATOMIC_SEQ_CST);

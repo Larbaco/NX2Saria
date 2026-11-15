@@ -3,7 +3,7 @@
 //   manifest.json   {"format": "nx2navi-save", "format_version": 1, "game", "title_id", "game_version", "nx2navi",
 //                    "exported" (UTC), "exported_by", "files", "bug_report"}
 //   save/...        the save's files as the game keeps them (account.sav, option.sav, slot_00/progress.sav, ...)
-//   bug-report/...  with a bug report: this run's log and nx2navi.ini; an import leaves them out
+//   bug-report/...  with a bug report: this run's log and settings; an import leaves them out
 //
 // An import accepts a zip whose manifest has this format, a version up to FORMAT_VERSION and the game's title id, whose
 // save/ paths stay inside the save, with no links, at most MAX_FILES files and MAX_BYTES, among them a file of this
@@ -30,7 +30,7 @@
 #define MAX_ZIP (512ll << 20)
 #define MANIFEST_MAX 65536
 
-// The executable's folder, where nx2navi.ini, logs and saves are (cfg.c find_ini, main.c log_open). 0 when unknown.
+// The executable's folder, where nx2saria.ini (or a legacy nx2navi.ini), logs and saves are. 0 when unknown.
 static int exe_dir(char *out, size_t cap) {
     if (!plat_exe_path(out, cap)) return 0;
     char *cut = plat_last_sep(out), *slash = strrchr(out, '/');
@@ -119,7 +119,7 @@ static void add_file(Export *e, const char *name, const char *path) {
     free(data);
 }
 
-// nx2navi.ini for a bug report: as it is, except that the values of the private settings (cfg_private.h) read
+// The settings file for a bug report: as it is, except that the values of the private settings (cfg_private.h) read
 // "(set, not shown)". A report goes to people the player does not know.
 static void add_settings_file(Export *e, const char *name, const char *path) {
     uint64_t n = 0;
@@ -147,10 +147,11 @@ SaveShareResult save_share_export(const char *dir, int bug_report, char *path, s
     }
     char base[PLAT_PATH_MAX], file[PLAT_PATH_MAX + 32];
     if (bug_report) {
-        add_file(&e, "bug-report/nx2navi.log", rt_log_path());
+        add_file(&e, "bug-report/nx2saria.log", rt_log_path());
         if (exe_dir(base, sizeof base)) {
-            snprintf(file, sizeof file, "%s/nx2navi.ini", base);
-            add_settings_file(&e, "bug-report/nx2navi.ini", file);
+            snprintf(file, sizeof file, "%s/nx2saria.ini", base);
+            if (!plat_file_exists(file)) snprintf(file, sizeof file, "%s/nx2navi.ini", base);
+            add_settings_file(&e, "bug-report/nx2saria.ini", file);
         }
     }
     struct tm u;
@@ -174,7 +175,7 @@ SaveShareResult save_share_export(const char *dir, int bug_report, char *path, s
     }
     plat_file_mkdir_p(dir);
     char stem[64];
-    snprintf(stem, sizeof stem, "NX2navi-save-%04d-%02d-%02d_%02d-%02d-%02d%s", t.tm_year + 1900, t.tm_mon + 1,
+    snprintf(stem, sizeof stem, "NX2Saria-save-%04d-%02d-%02d_%02d-%02d-%02d%s", t.tm_year + 1900, t.tm_mon + 1,
              t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, bug_report ? "-bug-report" : "");
     int ok = 0;
     for (int k = 1; k < 100 && !ok; k++) {   // two exports in one second: "(2)" as the launcher names them
@@ -202,7 +203,7 @@ static const SzEntry *find_member(const SzEntry *e, int count, const char *name)
     return NULL;
 }
 
-// The manifest's verdict on the zip; detail gets its NX2navi version and export date.
+// The manifest's verdict on the zip; detail gets its NX2Saria version and export date.
 static SaveShareResult check_manifest(const uint8_t *zip, size_t n, const SzEntry *e, int count, char *detail,
                                       size_t cap) {
     const SzEntry *m = find_member(e, count, "manifest.json");
@@ -280,9 +281,9 @@ SaveShareResult save_share_import(const char *zip_path, char *detail, size_t cap
     for (int i = 0; i < k; i++) free(data[i]);
     free(rels), free(data), free(sizes), free(e), free(zip);
     static const char *const why[] = {"waits for the next start", "", "the zip cannot be read", "its save cannot be put in place",
-                                      "not a zip of an NX2navi save", "a save of another game",
-                                      "made by a newer NX2navi", "damaged", "paths outside the save, links or too large"};
-    rt_log("save share: import of %s (NX2navi %s): %s", zip_path, *detail ? detail : "?", why[r]);
+                                      "not a zip of an NX2Saria save", "a save of another game",
+                                      "made by a newer NX2Saria", "damaged", "paths outside the save, links or too large"};
+    rt_log("save share: import of %s (NX2Saria %s): %s", zip_path, *detail ? detail : "?", why[r]);
     return r;
 }
 

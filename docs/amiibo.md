@@ -74,7 +74,7 @@ Without keys the port reads only the UID and the model of a dump: a figure a gam
 With your own keys file the port decrypts the dump and checks its signatures, so the nickname, write count, dates and
 the game data on the figure carry over, and the game's changes can go back into the dump (write-back, below).
 
-The keys file is 160 bytes. The port looks for `key_retail.bin` in the amiibo folder; `amiibo_keys` in `nx2navi.ini`
+The keys file is 160 bytes. The port looks for `key_retail.bin` in the amiibo folder; `amiibo_keys` in `nx2saria.ini`
 names another file. The port reads it the first time the Amiibo tab opens or a dump is loaded. The tab shows whether
 keys are loaded and which file is in effect; **Reload keys** reads it again (after you put the file in place or changed
 the folder or `amiibo_keys`) and decrypts the figure on the reader once more. Key bytes never appear in the log or
@@ -89,8 +89,8 @@ write into a dump the port copies it once to `<dump>.bak` (an existing `.bak` is
 
 ## Settings
 
-In `nx2navi.ini` ([nx2navi.ini.example](../nx2navi.ini.example), `[amiibo]`) or as `NX2NAVI_*` environment variables
-(`NX2NAVI_AMIIBO_DIR`, ...). All of them apply while the game runs; a changed keys file is read at **Reload keys**.
+In `nx2saria.ini` ([nx2saria.ini.example](../nx2saria.ini.example), `[amiibo]`) or as `NX2SARIA_*` environment variables
+(`NX2SARIA_AMIIBO_DIR`, ...). All of them apply while the game runs; a changed keys file is read at **Reload keys**. The older `nx2navi.ini` and `NX2NAVI_*` names still work ([Names and compatibility](branding.md)).
 
 | Key | Default | |
 | --- | --- | --- |

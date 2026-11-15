@@ -348,7 +348,7 @@ class IniTest(unittest.TestCase):
     def test_write_keeps_user_lines(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            example = d / 'nx2navi.ini.example'
+            example = d / 'nx2saria.ini.example'
             example.write_text(self.EXAMPLE)
             path = ini.write(d / '', 'en-GB', example)
             self.assertEqual(ini.get_language(path.read_text()), 'en-GB')
@@ -357,6 +357,29 @@ class IniTest(unittest.TestCase):
             text = path.read_text()
             self.assertIn('vk_present = fifo', text)
             self.assertEqual(ini.get_language(text), 'ja')
+
+    def test_write_uses_new_name_for_fresh_installs_and_preserves_legacy_file_in_place(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            example = folder / 'nx2saria.ini.example'
+            example.write_text(self.EXAMPLE)
+            path = ini.write(folder, 'en-GB', example)
+            self.assertEqual(path.name, 'nx2saria.ini')
+            legacy = folder / 'nx2navi.ini'
+            legacy.write_text('[language]\nlang = fr\n')
+            ini.write(folder, 'pt-BR', example)
+            self.assertEqual(legacy.read_text(), '[language]\nlang = fr\n')
+            self.assertEqual(ini.get_language((folder / 'nx2saria.ini').read_text()), 'pt-BR')
+
+    def test_write_keeps_an_existing_legacy_filename_when_it_is_the_only_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            legacy = folder / 'nx2navi.ini'
+            legacy.write_text('[language]\nlang = fr\n[display]\nfullscreen = 1\n')
+            path = ini.write(folder, 'en-US')
+            self.assertEqual(path, legacy)
+            self.assertEqual(legacy.read_text(), '[language]\nlang = en-US\n[display]\nfullscreen = 1\n')
+            self.assertFalse((folder / 'nx2saria.ini').exists())
 
 
 class CleanupTest(unittest.TestCase):
@@ -376,7 +399,7 @@ class CleanupTest(unittest.TestCase):
         self.expected = {'romfs': {'size': len(image), 'sha256': digest}}
         self.ctx = SimpleNamespace(reporter=Reporter(out=io.StringIO(), log_path=base / 'x.log'), dest=self.dest,
                                    temp=temp, lang='en-US', state={},
-                                   layout=SimpleNamespace(ini_example=ROOT / 'nx2navi.ini.example', dev=False,
+                                   layout=SimpleNamespace(ini_example=ROOT / 'nx2saria.ini.example', dev=False,
                                                           python=base / 'python' / 'python.exe', root=base / 'release'))
         self.saved = steps.expected_update
         steps.expected_update = lambda ctx: self.expected

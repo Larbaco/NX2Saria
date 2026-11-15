@@ -11,7 +11,7 @@
 // frame_step_cap_ns). RTSS_UNSET is the want before the first one.
 enum {
     RTSS_UNSET = -2,
-    RTSS_OUT_SETTING = -1,    // NX2NAVI_RTSS=0, for the whole run
+    RTSS_OUT_SETTING = -1,    // NX2SARIA_RTSS=0, for the whole run
     RTSS_OUT_FRAMEGEN = -3,   // frame generation: RTSS would count the generated frames too
     RTSS_OUT_LOWLAT = -4,     // a driver's low latency (vk_lowlat.c) holds the frames where they start
 };
@@ -20,7 +20,7 @@ enum {
 static inline const char *rtss_out_text(int64_t want) {
     return want == RTSS_OUT_FRAMEGEN ? "frame generation"
            : want == RTSS_OUT_LOWLAT ? "the driver's low latency"
-                                     : "NX2NAVI_RTSS=0";
+                                     : "NX2SARIA_RTSS=0";
 }
 
 // The limiter that holds the frames while RTSS is kept out, for the log.

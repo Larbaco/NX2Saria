@@ -20,22 +20,22 @@ static int fails;
 int probe_cfg(void) {
     // cfg_pending, before this probe's files replace the settings cfg_init read: a restart-only setting counts while its
     // value differs from the one at start, a live one never
-    if (!cfg_from_env("NX2NAVI_MICROPHONE") && !cfg_from_env("NX2NAVI_VOLUME")) {
-        const char *mic = cfg_value("NX2NAVI_MICROPHONE");
+    if (!cfg_from_env("NX2SARIA_MICROPHONE") && !cfg_from_env("NX2SARIA_VOLUME")) {
+        const char *mic = cfg_value("NX2SARIA_MICROPHONE");
         int base = cfg_pending_count();
-        CHECK(!cfg_pending("NX2NAVI_MICROPHONE"), "pending: unchanged since the start");
-        cfg_set("NX2NAVI_MICROPHONE", strcmp(mic, "0") ? "0" : "1");
-        CHECK(cfg_pending("NX2NAVI_MICROPHONE") && cfg_pending_count() == base + 1, "pending: a restart-only setting changed");
-        cfg_set("NX2NAVI_MICROPHONE", mic);
-        CHECK(!cfg_pending("NX2NAVI_MICROPHONE") && cfg_pending_count() == base, "pending: set back to its start value");
-        cfg_set("NX2NAVI_VOLUME", "7");
-        CHECK(!cfg_pending("NX2NAVI_VOLUME") && cfg_pending_count() == base, "pending: a live setting never counts");
+        CHECK(!cfg_pending("NX2SARIA_MICROPHONE"), "pending: unchanged since the start");
+        cfg_set("NX2SARIA_MICROPHONE", strcmp(mic, "0") ? "0" : "1");
+        CHECK(cfg_pending("NX2SARIA_MICROPHONE") && cfg_pending_count() == base + 1, "pending: a restart-only setting changed");
+        cfg_set("NX2SARIA_MICROPHONE", mic);
+        CHECK(!cfg_pending("NX2SARIA_MICROPHONE") && cfg_pending_count() == base, "pending: set back to its start value");
+        cfg_set("NX2SARIA_VOLUME", "7");
+        CHECK(!cfg_pending("NX2SARIA_VOLUME") && cfg_pending_count() == base, "pending: a live setting never counts");
         // a value the environment sets after the start (the command line's --monitor arrives that way) never waits:
         // no row can change it and a restart keeps it
-        if (!cfg_from_env("NX2NAVI_MONITOR")) {
-            cfg_setenv("NX2NAVI_MONITOR", "2");
-            CHECK(!cfg_pending("NX2NAVI_MONITOR") && cfg_pending_count() == base, "pending: set by the environment after the start");
-            cfg_setenv("NX2NAVI_MONITOR", NULL);
+        if (!cfg_from_env("NX2SARIA_MONITOR")) {
+            cfg_setenv("NX2SARIA_MONITOR", "2");
+            CHECK(!cfg_pending("NX2SARIA_MONITOR") && cfg_pending_count() == base, "pending: set by the environment after the start");
+            cfg_setenv("NX2SARIA_MONITOR", NULL);
         }
     }
     char path[1024];
@@ -51,38 +51,38 @@ int probe_cfg(void) {
         "Realtime=0\r\n"
         "[Display]\r\n"
         "GPU_name = \"My GPU 1\"\r\n"
-        "NX2NAVI_Locale = de-DE\r\n"
+        "NX2SARIA_Locale = de-DE\r\n"
         "lang =\r\n"
         "trace = a\r\n"
         "trace = b\r\n"
         "no_such_setting = 1\r\n"
         "no equals sign\r\n"
         "last = no newline at the end";
-    cfg_setenv("NX2NAVI_LOCALE", NULL);
-    cfg_setenv("NX2NAVI_FPS60", NULL);
+    cfg_setenv("NX2SARIA_LOCALE", NULL);
+    cfg_setenv("NX2SARIA_FPS60", NULL);
     CHECK(plat_file_write(path, ini, sizeof ini - 1), "write the probe ini");
     CHECK(cfg_load(path) == 1, "load the probe ini");
-    CHECK(EQ(cfg_get("NX2NAVI_FPS60"), "0"), "value read, whitespace trimmed, lower-case key");
-    CHECK(EQ(cfg_get("NX2NAVI_REALTIME"), "0"), "key without spaces, mixed case");
-    CHECK(EQ(cfg_get("NX2NAVI_GPU_NAME"), "My GPU 1"), "quoted value, section ignored");
-    CHECK(EQ(cfg_get("NX2NAVI_LOCALE"), "de-DE"), "NX2NAVI_ prefix accepted in the file");
-    CHECK(cfg_get("NX2NAVI_LANG") == NULL, "empty value is unset");
-    CHECK(EQ(cfg_get("NX2NAVI_TRACE"), "b"), "later line wins");
-    CHECK(cfg_get("NX2NAVI_CLOTH_REALTIME") == NULL, "absent key is NULL");
-    CHECK(cfg_get("NX2NAVI_comment") == NULL, "comment is not a key");
-    CHECK(EQ(cfg_get("NX2NAVI_NO_SUCH_SETTING"), "1"), "unknown key is still readable");
+    CHECK(EQ(cfg_get("NX2SARIA_FPS60"), "0"), "value read, whitespace trimmed, lower-case key");
+    CHECK(EQ(cfg_get("NX2SARIA_REALTIME"), "0"), "key without spaces, mixed case");
+    CHECK(EQ(cfg_get("NX2SARIA_GPU_NAME"), "My GPU 1"), "quoted value, section ignored");
+    CHECK(EQ(cfg_get("NX2SARIA_LOCALE"), "de-DE"), "NX2SARIA_ prefix accepted in the file");
+    CHECK(cfg_get("NX2SARIA_LANG") == NULL, "empty value is unset");
+    CHECK(EQ(cfg_get("NX2SARIA_TRACE"), "b"), "later line wins");
+    CHECK(cfg_get("NX2SARIA_CLOTH_REALTIME") == NULL, "absent key is NULL");
+    CHECK(cfg_get("NX2SARIA_comment") == NULL, "comment is not a key");
+    CHECK(EQ(cfg_get("NX2SARIA_NO_SUCH_SETTING"), "1"), "unknown key is still readable");
     {
         int n = -1;
         const char *u = cfg_unknown_keys(&n);
         CHECK(n == 2 && EQ(u, "no_such_setting, last"), "the keys that are no settings: listed lower-case, in the file's order");
     }
-    cfg_setenv("NX2NAVI_FPS60", "1");
-    CHECK(EQ(cfg_get("NX2NAVI_FPS60"), "1"), "environment overrides the file");
-    cfg_setenv("NX2NAVI_FPS60", NULL);
-    CHECK(EQ(cfg_get("NX2NAVI_FPS60"), "0"), "file value returns when the variable is removed");
+    cfg_setenv("NX2SARIA_FPS60", "1");
+    CHECK(EQ(cfg_get("NX2SARIA_FPS60"), "1"), "environment overrides the file");
+    cfg_setenv("NX2SARIA_FPS60", NULL);
+    CHECK(EQ(cfg_get("NX2SARIA_FPS60"), "0"), "file value returns when the variable is removed");
     plat_file_delete(path);
     CHECK(cfg_load(path) == 0, "missing file is not an error");
-    CHECK(cfg_get("NX2NAVI_FPS60") == NULL, "missing file leaves no keys");
+    CHECK(cfg_get("NX2SARIA_FPS60") == NULL, "missing file leaves no keys");
     {
         int n = -1;
         CHECK(EQ(cfg_unknown_keys(&n), "") && n == 0, "a missing file leaves no unknown keys either");
@@ -131,10 +131,10 @@ int probe_cfg(void) {
     static const char player_saved[] = PLAYER_HEAD PLAYER_MID "fps_limit = 60\n\n[audio]\nvolume = 55\n";
 #undef PLAYER_HEAD
 #undef PLAYER_MID
-    cfg_setenv("NX2NAVI_FPS_LIMIT", NULL);
-    cfg_setenv("NX2NAVI_VOLUME", NULL);
-    cfg_setenv("NX2NAVI_SHARPNESS", NULL);
-    cfg_setenv("NX2NAVI_WB_LAZY", NULL);
+    cfg_setenv("NX2SARIA_FPS_LIMIT", NULL);
+    cfg_setenv("NX2SARIA_VOLUME", NULL);
+    cfg_setenv("NX2SARIA_SHARPNESS", NULL);
+    cfg_setenv("NX2SARIA_WB_LAZY", NULL);
     CHECK(plat_file_write(path, player, sizeof player - 1), "write the player's ini");
     CHECK(cfg_load(path) == 1, "load the player's ini");
     {
@@ -142,11 +142,11 @@ int probe_cfg(void) {
         const char *u = cfg_unknown_keys(&n);
         CHECK(n == 4 && EQ(u, "async_compute, vram_safe_mode, exception_handler"),
               "the player's three lines are named as no settings; a repeat counts once, a key of other characters is only counted");
-        CHECK(EQ(cfg_get("NX2NAVI_WB_LAZY"), "0") && cfg_is_set("NX2NAVI_WB_LAZY"), "wb_lazy = 0 is a setting, and set");
-        CHECK(!cfg_is_set("NX2NAVI_VK_NAN_PRESERVE"), "a key the file lacks is not set");
+        CHECK(EQ(cfg_get("NX2SARIA_WB_LAZY"), "0") && cfg_is_set("NX2SARIA_WB_LAZY"), "wb_lazy = 0 is a setting, and set");
+        CHECK(!cfg_is_set("NX2SARIA_VK_NAN_PRESERVE"), "a key the file lacks is not set");
         static const char *const reset[] = {"SHARPNESS"};
-        cfg_set("NX2NAVI_FPS_LIMIT", "60");
-        cfg_set("NX2NAVI_VOLUME", "55");
+        cfg_set("NX2SARIA_FPS_LIMIT", "60");
+        cfg_set("NX2SARIA_VOLUME", "55");
         CHECK(cfg_reset(reset, 1) == 1 && cfg_save_to(path) == 1, "the menu changes, adds and resets a key and saves");
         uint64_t pn = 0;
         uint8_t *p = plat_file_read(path, &pn);
@@ -192,18 +192,18 @@ int probe_cfg(void) {
         "\r\n"
         "[audio]\r\n"
         "volume = 40\r\n";
-    cfg_setenv("NX2NAVI_MOTION", NULL);
-    cfg_setenv("NX2NAVI_VOLUME", NULL);
-    cfg_setenv("NX2NAVI_RUMBLE_STRENGTH", NULL);
+    cfg_setenv("NX2SARIA_MOTION", NULL);
+    cfg_setenv("NX2SARIA_VOLUME", NULL);
+    cfg_setenv("NX2SARIA_RUMBLE_STRENGTH", NULL);
     CHECK(plat_file_write(path, before, sizeof before - 1), "write the save ini");
     CHECK(cfg_load(path) == 1, "load the save ini");
     unsigned v0 = cfg_version();
-    cfg_set("NX2NAVI_FPS60", "0");
-    cfg_set("NX2NAVI_MOTION", "0");
-    cfg_set("NX2NAVI_RUMBLE_STRENGTH", "80");
-    cfg_set("NX2NAVI_VOLUME", "40");
+    cfg_set("NX2SARIA_FPS60", "0");
+    cfg_set("NX2SARIA_MOTION", "0");
+    cfg_set("NX2SARIA_RUMBLE_STRENGTH", "80");
+    cfg_set("NX2SARIA_VOLUME", "40");
     CHECK(cfg_version() == v0 + 4, "cfg_set bumps the version");
-    CHECK(EQ(cfg_get("NX2NAVI_FPS60"), "0") && EQ(cfg_get("NX2NAVI_VOLUME"), "40"), "cfg_set values are read back at once");
+    CHECK(EQ(cfg_get("NX2SARIA_FPS60"), "0") && EQ(cfg_get("NX2SARIA_VOLUME"), "40"), "cfg_set values are read back at once");
     CHECK(cfg_save_to(path) == 1, "cfg_save_to writes");
     uint64_t got_n = 0;
     uint8_t *got = plat_file_read(path, &got_n);
@@ -215,28 +215,28 @@ int probe_cfg(void) {
     got = plat_file_read(path, &got_n);
     CHECK(got && got_n == sizeof after - 1 && !memcmp(got, after, got_n), "a save with nothing changed keeps the file");
     free(got);
-    CHECK(cfg_load(path) == 1 && EQ(cfg_get("NX2NAVI_FPS60"), "0") && EQ(cfg_get("NX2NAVI_MOTION"), "0") &&
-          EQ(cfg_get("NX2NAVI_RUMBLE_STRENGTH"), "80") && EQ(cfg_get("NX2NAVI_VOLUME"), "40") &&
-          EQ(cfg_get("NX2NAVI_ROMFS_MODS"), "C:\\mods"), "the saved file reads back");
-    const char *held = cfg_get("NX2NAVI_VOLUME");
-    cfg_setenv("NX2NAVI_VOLUME", "70");
-    cfg_set("NX2NAVI_VOLUME", "90");
-    CHECK(cfg_from_env("NX2NAVI_VOLUME") && EQ(cfg_get("NX2NAVI_VOLUME"), "70"), "environment wins over cfg_set");
+    CHECK(cfg_load(path) == 1 && EQ(cfg_get("NX2SARIA_FPS60"), "0") && EQ(cfg_get("NX2SARIA_MOTION"), "0") &&
+          EQ(cfg_get("NX2SARIA_RUMBLE_STRENGTH"), "80") && EQ(cfg_get("NX2SARIA_VOLUME"), "40") &&
+          EQ(cfg_get("NX2SARIA_ROMFS_MODS"), "C:\\mods"), "the saved file reads back");
+    const char *held = cfg_get("NX2SARIA_VOLUME");
+    cfg_setenv("NX2SARIA_VOLUME", "70");
+    cfg_set("NX2SARIA_VOLUME", "90");
+    CHECK(cfg_from_env("NX2SARIA_VOLUME") && EQ(cfg_get("NX2SARIA_VOLUME"), "70"), "environment wins over cfg_set");
     CHECK(EQ(held, "40"), "a pointer cfg_get handed out stays valid after cfg_set");
-    cfg_setenv("NX2NAVI_VOLUME", NULL);
-    CHECK(!cfg_from_env("NX2NAVI_VOLUME") && EQ(cfg_get("NX2NAVI_VOLUME"), "90"), "cfg_set value returns without the variable");
+    cfg_setenv("NX2SARIA_VOLUME", NULL);
+    CHECK(!cfg_from_env("NX2SARIA_VOLUME") && EQ(cfg_get("NX2SARIA_VOLUME"), "90"), "cfg_set value returns without the variable");
     plat_file_delete(path);
     CHECK(cfg_save_to(path) == 1, "cfg_save_to creates a missing file");
     got = plat_file_read(path, &got_n);
     CHECK(got && !strcmp((const char *)got, "[audio]\nvolume = 90\n"), "new file: the section and the key");
     free(got);
     // values cfg_load would trim or unquote: mod folder names in the order list start with a space or are quoted
-    cfg_set("NX2NAVI_MODS_ORDER", " Lead|Tail ");
-    cfg_set("NX2NAVI_MODS_DISABLED", "\"Q\"");
-    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && EQ(cfg_get("NX2NAVI_MODS_ORDER"), " Lead|Tail ") &&
-          EQ(cfg_get("NX2NAVI_MODS_DISABLED"), "\"Q\""), "blanks at the ends and quotes survive a save");
-    cfg_set("NX2NAVI_MODS_ORDER", "A|B");
-    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && EQ(cfg_get("NX2NAVI_MODS_ORDER"), "A|B"),
+    cfg_set("NX2SARIA_MODS_ORDER", " Lead|Tail ");
+    cfg_set("NX2SARIA_MODS_DISABLED", "\"Q\"");
+    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && EQ(cfg_get("NX2SARIA_MODS_ORDER"), " Lead|Tail ") &&
+          EQ(cfg_get("NX2SARIA_MODS_DISABLED"), "\"Q\""), "blanks at the ends and quotes survive a save");
+    cfg_set("NX2SARIA_MODS_ORDER", "A|B");
+    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && EQ(cfg_get("NX2SARIA_MODS_ORDER"), "A|B"),
           "a plain value replacing a quoted one");
     got = plat_file_read(path, &got_n);
     CHECK(got && strstr((const char *)got, "mods_order = A|B\n") &&
@@ -284,17 +284,17 @@ int probe_cfg(void) {
     // cfg_reset: the key's active lines leave nx2navi.ini, the commented example stays
     static const char rbase[] = "[audio]\n# volume = 100\n[input]\nmotion = 0\n";
     static const char *const vol[] = {"VOLUME"};
-    cfg_setenv("NX2NAVI_VOLUME", NULL);
+    cfg_setenv("NX2SARIA_VOLUME", NULL);
     CHECK(plat_file_write(path, rbase, sizeof rbase - 1), "write the reset ini");
     CHECK(cfg_load(path) == 1, "load the reset ini");
-    cfg_set("NX2NAVI_VOLUME", "40");
+    cfg_set("NX2SARIA_VOLUME", "40");
     CHECK(cfg_save_to(path) == 1 && cfg_last_save_ok(), "reset: volume saved");
     got = plat_file_read(path, &got_n);
     CHECK(got && strstr((const char *)got, "\nvolume = 40\n"), "reset: the active line is in the file");
     free(got);
     unsigned v1 = cfg_version();
     CHECK(cfg_reset(vol, 1) == 1, "reset: one key reset");
-    CHECK(cfg_version() > v1 && cfg_get("NX2NAVI_VOLUME") == NULL, "reset: the value is gone in memory, the version moved");
+    CHECK(cfg_version() > v1 && cfg_get("NX2SARIA_VOLUME") == NULL, "reset: the value is gone in memory, the version moved");
     CHECK(cfg_reset(vol, 1) == 0, "reset: a key already reset counts 0");
     CHECK(cfg_save_to(path) == 1, "reset: save");
     got = plat_file_read(path, &got_n);
@@ -302,23 +302,23 @@ int probe_cfg(void) {
           "reset: no active volume line, the commented example and the other keys stay");
     if (got && (got_n != sizeof rbase - 1 || memcmp(got, rbase, got_n))) fprintf(stderr, "---- saved:\n%s\n----\n", got);
     free(got);
-    cfg_set("NX2NAVI_VOLUME", "55");
-    CHECK(cfg_reset(vol, 1) == 1 && cfg_get("NX2NAVI_VOLUME") == NULL, "reset: a value set after a save resets too");
-    cfg_set("NX2NAVI_VOLUME", "60");
-    CHECK(cfg_save_to(path) == 1 && EQ(cfg_get("NX2NAVI_VOLUME"), "60"), "reset then set before the save: the set wins");
+    cfg_set("NX2SARIA_VOLUME", "55");
+    CHECK(cfg_reset(vol, 1) == 1 && cfg_get("NX2SARIA_VOLUME") == NULL, "reset: a value set after a save resets too");
+    cfg_set("NX2SARIA_VOLUME", "60");
+    CHECK(cfg_save_to(path) == 1 && EQ(cfg_get("NX2SARIA_VOLUME"), "60"), "reset then set before the save: the set wins");
     got = plat_file_read(path, &got_n);
     CHECK(got && strstr((const char *)got, "\nvolume = 60\n"), "reset then set: the new line is written");
     free(got);
 
     // an active line with an empty value has no entry in memory; Reset still removes it from the file
     static const char rempty[] = "[audio]\n# volume = 100\nvolume =\n[input]\nmotion = 0\n";
-    CHECK(plat_file_write(path, rempty, sizeof rempty - 1) && cfg_load(path) == 1 && cfg_get("NX2NAVI_VOLUME") == NULL,
+    CHECK(plat_file_write(path, rempty, sizeof rempty - 1) && cfg_load(path) == 1 && cfg_get("NX2SARIA_VOLUME") == NULL,
           "reset: load an ini with an empty value");
     CHECK(cfg_reset(vol, 1) == 0 && cfg_save_to(path) == 1, "reset: an empty-valued key saves");
     got = plat_file_read(path, &got_n);
     CHECK(got && got_n == sizeof rbase - 1 && !memcmp(got, rbase, got_n), "reset: the empty-valued line is gone");
     free(got);
-    cfg_set("NX2NAVI_VOLUME", "60");
+    cfg_set("NX2SARIA_VOLUME", "60");
     CHECK(cfg_save_to(path) == 1, "reset: volume 60 again for the environment case");
 
     // a file saved as UTF-16 (little and big endian, with a line ending of two characters) reads as the same lines
@@ -330,17 +330,17 @@ int probe_cfg(void) {
         for (size_t i = 0; i + 1 < sizeof wtext; i++)
             wbuf[wn++] = be ? 0 : (uint8_t)wtext[i], wbuf[wn++] = be ? (uint8_t)wtext[i] : 0;
         CHECK(plat_file_write("cfg-probe-utf16.ini", wbuf, wn) && cfg_load("cfg-probe-utf16.ini") == 1 &&
-              EQ(cfg_get("NX2NAVI_VOLUME"), "35") && EQ(cfg_get("NX2NAVI_MOTION"), "0"),
+              EQ(cfg_get("NX2SARIA_VOLUME"), "35") && EQ(cfg_get("NX2SARIA_MOTION"), "0"),
               be ? "an ini saved as UTF-16, big endian, is not read" : "an ini saved as UTF-16, little endian, is not read");
     }
     plat_file_delete("cfg-probe-utf16.ini");
 
     // a key the environment sets is skipped and keeps its file line
-    CHECK(cfg_load(path) == 1 && EQ(cfg_get("NX2NAVI_VOLUME"), "60"), "reset: reload");
-    cfg_setenv("NX2NAVI_VOLUME", "70");
+    CHECK(cfg_load(path) == 1 && EQ(cfg_get("NX2SARIA_VOLUME"), "60"), "reset: reload");
+    cfg_setenv("NX2SARIA_VOLUME", "70");
     CHECK(cfg_reset(vol, 1) == 0, "reset: an environment-set key is skipped");
-    cfg_setenv("NX2NAVI_VOLUME", NULL);
-    CHECK(EQ(cfg_get("NX2NAVI_VOLUME"), "60"), "reset: the skipped key keeps its value");
+    cfg_setenv("NX2SARIA_VOLUME", NULL);
+    CHECK(EQ(cfg_get("NX2SARIA_VOLUME"), "60"), "reset: the skipped key keeps its value");
     CHECK(cfg_save_to(path) == 1, "reset: save after a skip");
     got = plat_file_read(path, &got_n);
     CHECK(got && strstr((const char *)got, "\nvolume = 60\n"), "reset: the skipped key keeps its file line");
@@ -348,16 +348,16 @@ int probe_cfg(void) {
 
     // a failed save: the call fails, cfg_last_save_ok says so, the value stays set and a later save works
     CHECK(cfg_last_save_ok() == 1, "save status: ok after a good save");
-    cfg_set("NX2NAVI_VOLUME", "20");
+    cfg_set("NX2SARIA_VOLUME", "20");
     char bad[1100];
     snprintf(bad, sizeof bad, "%s", path);
     strcpy(plat_last_sep(bad) + 1, "no-such-dir/cfg-probe.ini");
-    CHECK(cfg_save_to(bad) == 0 && cfg_last_save_ok() == 0 && EQ(cfg_get("NX2NAVI_VOLUME"), "20"),
+    CHECK(cfg_save_to(bad) == 0 && cfg_last_save_ok() == 0 && EQ(cfg_get("NX2SARIA_VOLUME"), "20"),
           "save status: an unwritable path fails, the value stays");
-    cfg_set("NX2NAVI_VOLUME", "21");
+    cfg_set("NX2SARIA_VOLUME", "21");
     CHECK(plat_file_write(path, rbase, sizeof rbase - 1), "write the read-only ini");
     CHECK(plat_file_set_readonly(path, 1), "set the file read-only");
-    CHECK(cfg_save_to(path) == 0 && cfg_last_save_ok() == 0 && EQ(cfg_get("NX2NAVI_VOLUME"), "21"),
+    CHECK(cfg_save_to(path) == 0 && cfg_last_save_ok() == 0 && EQ(cfg_get("NX2SARIA_VOLUME"), "21"),
           "save status: a read-only file fails, cfg_get returns the new value");
     plat_file_set_readonly(path, 0);
     CHECK(cfg_save_to(path) == 1 && cfg_last_save_ok() == 1, "save status: the retry after the failure works");
@@ -436,19 +436,19 @@ int probe_cfg(void) {
           "pad stick: a square gate's corner stays on the unit circle");
     input_pad_stick(0, 32767 / 2 + 1, 0.2f, st);
     CHECK(abs(st[1] - 32767 * 3 / 8) <= 3, "pad stick: half deflection past a 20% zone is (0.5 - 0.2) / 0.8 of full");
-    cfg_setenv("NX2NAVI_STICK_DEADZONE", "12");
-    cfg_setenv("NX2NAVI_LSTICK_DEADZONE", NULL);
-    cfg_setenv("NX2NAVI_RSTICK_DEADZONE", NULL);
+    cfg_setenv("NX2SARIA_STICK_DEADZONE", "12");
+    cfg_setenv("NX2SARIA_LSTICK_DEADZONE", NULL);
+    cfg_setenv("NX2SARIA_RSTICK_DEADZONE", NULL);
     CHECK(fabsf(input_pad_deadzone(0) - 0.12f) < 1e-6f && fabsf(input_pad_deadzone(1) - 0.12f) < 1e-6f,
           "pad dead zone: both sticks follow stick_deadzone while lstick/rstick are unset");
-    cfg_setenv("NX2NAVI_RSTICK_DEADZONE", "20");
+    cfg_setenv("NX2SARIA_RSTICK_DEADZONE", "20");
     CHECK(fabsf(input_pad_deadzone(0) - 0.12f) < 1e-6f && fabsf(input_pad_deadzone(1) - 0.20f) < 1e-6f,
           "pad dead zone: rstick_deadzone sets the right stick alone");
-    cfg_setenv("NX2NAVI_LSTICK_DEADZONE", "80");
+    cfg_setenv("NX2SARIA_LSTICK_DEADZONE", "80");
     CHECK(fabsf(input_pad_deadzone(0) - 0.5f) < 1e-6f, "pad dead zone: clamped to 50%");
-    cfg_setenv("NX2NAVI_STICK_DEADZONE", NULL);
-    cfg_setenv("NX2NAVI_LSTICK_DEADZONE", NULL);
-    cfg_setenv("NX2NAVI_RSTICK_DEADZONE", NULL);
+    cfg_setenv("NX2SARIA_STICK_DEADZONE", NULL);
+    cfg_setenv("NX2SARIA_LSTICK_DEADZONE", NULL);
+    cfg_setenv("NX2SARIA_RSTICK_DEADZONE", NULL);
     CHECK(input_stick_percent(32767, 0) > 99.99 && input_stick_percent(32767, 0) < 100.01 &&
               input_stick_percent(0, 0) == 0 && fabs(input_stick_percent(3000, -4000) - 5000 * 100.0 / 32767) < 1e-9,
           "stick percent: an axis's end is 100%, the centre 0%, round in between");
@@ -597,30 +597,30 @@ int probe_cfg(void) {
     CHECK(!strcmp(line, "none"), "edit: a stick direction without keys is none");
     // defaults live in the CfgMeta table: cfg_value and the typed accessors fall back to it
     cfg_load("cfg-probe-missing.ini");
-    cfg_setenv("NX2NAVI_FPS60", NULL);
-    cfg_setenv("NX2NAVI_MOUSE_SENS", NULL);
-    cfg_setenv("NX2NAVI_FREE_CORES", NULL);
-    CHECK(cfg_bool("NX2NAVI_FPS60") == 1, "default: unset FPS60 is on");
-    CHECK(EQ(cfg_value("NX2NAVI_VK_PRESENT"), "mailbox") && cfg_int("NX2NAVI_SPLIT_DRAWS") == 64, "default: text and integer");
-    cfg_setenv("NX2NAVI_MOUSE_SENS", "2.5");
-    CHECK(cfg_double("NX2NAVI_MOUSE_SENS") == 2.5, "double: the environment value");
-    cfg_setenv("NX2NAVI_MOUSE_SENS", "fast");
-    CHECK(cfg_double("NX2NAVI_MOUSE_SENS") == 1.0, "double: a value that does not parse gives the default");
-    cfg_setenv("NX2NAVI_MOUSE_SENS", NULL);
-    cfg_set("NX2NAVI_MOUSE_SENS", "3");
-    CHECK(cfg_double("NX2NAVI_MOUSE_SENS") == 3.0 && cfg_int("NX2NAVI_MOUSE_SENS") == 3, "a cfg_set value beats the default");
-    CHECK(cfg_bool("NX2NAVI_FREE_CORES") == 0, "free_cores unset: off");
-    cfg_setenv("NX2NAVI_FREE_CORES", "0");
-    CHECK(cfg_bool("NX2NAVI_FREE_CORES") == 0, "free_cores 0 gives the same as unset");
-    cfg_setenv("NX2NAVI_FREE_CORES", "1");
-    CHECK(cfg_bool("NX2NAVI_FREE_CORES") == 1, "free_cores 1: on");
-    cfg_setenv("NX2NAVI_FREE_CORES", NULL);
+    cfg_setenv("NX2SARIA_FPS60", NULL);
+    cfg_setenv("NX2SARIA_MOUSE_SENS", NULL);
+    cfg_setenv("NX2SARIA_FREE_CORES", NULL);
+    CHECK(cfg_bool("NX2SARIA_FPS60") == 1, "default: unset FPS60 is on");
+    CHECK(EQ(cfg_value("NX2SARIA_VK_PRESENT"), "mailbox") && cfg_int("NX2SARIA_SPLIT_DRAWS") == 64, "default: text and integer");
+    cfg_setenv("NX2SARIA_MOUSE_SENS", "2.5");
+    CHECK(cfg_double("NX2SARIA_MOUSE_SENS") == 2.5, "double: the environment value");
+    cfg_setenv("NX2SARIA_MOUSE_SENS", "fast");
+    CHECK(cfg_double("NX2SARIA_MOUSE_SENS") == 1.0, "double: a value that does not parse gives the default");
+    cfg_setenv("NX2SARIA_MOUSE_SENS", NULL);
+    cfg_set("NX2SARIA_MOUSE_SENS", "3");
+    CHECK(cfg_double("NX2SARIA_MOUSE_SENS") == 3.0 && cfg_int("NX2SARIA_MOUSE_SENS") == 3, "a cfg_set value beats the default");
+    CHECK(cfg_bool("NX2SARIA_FREE_CORES") == 0, "free_cores unset: off");
+    cfg_setenv("NX2SARIA_FREE_CORES", "0");
+    CHECK(cfg_bool("NX2SARIA_FREE_CORES") == 0, "free_cores 0 gives the same as unset");
+    cfg_setenv("NX2SARIA_FREE_CORES", "1");
+    CHECK(cfg_bool("NX2SARIA_FREE_CORES") == 1, "free_cores 1: on");
+    cfg_setenv("NX2SARIA_FREE_CORES", NULL);
     // 0.1.9's pad_layout = xbox_prompts (cfg.c migrate): read as the Nintendo layout with the Xbox prompts, saved so
-    cfg_setenv("NX2NAVI_PAD_LAYOUT", NULL);
-    cfg_setenv("NX2NAVI_PROMPTS", NULL);
+    cfg_setenv("NX2SARIA_PAD_LAYOUT", NULL);
+    cfg_setenv("NX2SARIA_PROMPTS", NULL);
     static const char old_layout[] = "[input]\r\npad_layout = xbox_prompts\r\n";
     CHECK(plat_file_write(path, old_layout, sizeof old_layout - 1) && cfg_load(path) == 1 &&
-              EQ(cfg_get("NX2NAVI_PAD_LAYOUT"), "nintendo") && EQ(cfg_get("NX2NAVI_PROMPTS"), "xbox"),
+              EQ(cfg_get("NX2SARIA_PAD_LAYOUT"), "nintendo") && EQ(cfg_get("NX2SARIA_PROMPTS"), "xbox"),
           "0.1.9's pad_layout = xbox_prompts reads as nintendo with prompts = xbox");
     CHECK(cfg_save_to(path) == 1, "the read pad layout and prompts save");
     uint64_t saved_n = 0;
@@ -630,7 +630,7 @@ int probe_cfg(void) {
     free(saved);
     static const char old_layout_own[] = "[input]\r\npad_layout = xbox_prompts\r\nprompts = nintendo\r\n";
     CHECK(plat_file_write(path, old_layout_own, sizeof old_layout_own - 1) && cfg_load(path) == 1 &&
-              EQ(cfg_get("NX2NAVI_PAD_LAYOUT"), "nintendo") && EQ(cfg_get("NX2NAVI_PROMPTS"), "nintendo"),
+              EQ(cfg_get("NX2SARIA_PAD_LAYOUT"), "nintendo") && EQ(cfg_get("NX2SARIA_PROMPTS"), "nintendo"),
           "a prompts line of the file's own wins over 0.1.9's pad_layout = xbox_prompts");
     plat_file_delete(path);
     cfg_load("cfg-probe-missing.ini");
@@ -640,7 +640,7 @@ int probe_cfg(void) {
         if (!*m->def) continue;
         listed++;
         char name[96];
-        snprintf(name, sizeof name, "NX2NAVI_%s", m->key);
+        snprintf(name, sizeof name, "NX2SARIA_%s", m->key);
         cfg_setenv(name, "");
         CHECK(EQ(cfg_value(name), m->def), "cfg_value returns the table default");
         int ok = 0;

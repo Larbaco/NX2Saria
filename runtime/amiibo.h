@@ -85,7 +85,7 @@ int amiibo_get_application_area(void *out_buf, uint32_t max_size);
 
 // ---- The figure's own data: owner, nickname, write counts and the game's application area.
 // Kept per figure UID in <profile>/amiibo/<uid>.dat; seeded from the dump when the keys decrypt it, and written back
-// into the dump file (encrypted and signed again) when NX2NAVI_AMIIBO_WRITEBACK is on and the keys read it.
+// into the dump file (encrypted and signed again) when NX2SARIA_AMIIBO_WRITEBACK is on and the keys read it.
 typedef enum {
     AMIIBO_SOURCE_NEW = 0,     // nothing stored yet: defaults (registered, nickname from the file name, no area)
     AMIIBO_SOURCE_SAVED = 1,   // <profile>/amiibo/<uid>.dat
@@ -112,7 +112,7 @@ typedef struct {
 bool amiibo_get_figure_data(AmiiboFigureData *out);
 // The menu's "erase game data": drops the application area and saves the figure. False without a loaded dump.
 bool amiibo_erase_app_area(void);
-// Loads (or reloads) the keys from NX2NAVI_AMIIBO_KEYS, or <amiibo folder>/key_retail.bin when that is unset, and
+// Loads (or reloads) the keys from NX2SARIA_AMIIBO_KEYS, or <amiibo folder>/key_retail.bin when that is unset, and
 // decrypts the loaded dump again. True when keys are loaded afterwards.
 bool amiibo_reload_keys(void);
 
@@ -131,7 +131,7 @@ uint32_t amiibo_set_app_area(const void *data, uint64_t size);
 // Create (recreate false: AMIIBO_R_AREA_EXISTS when there is one) or recreate an application area for access_id with
 // size bytes of initial data, then stores the figure as amiibo_flush_figure does.
 uint32_t amiibo_create_app_area(uint32_t access_id, const void *data, uint64_t size, bool recreate);
-// Counts and dates a write, saves the figure's data and, with NX2NAVI_AMIIBO_WRITEBACK on and a decrypted dump, writes
+// Counts and dates a write, saves the figure's data and, with NX2SARIA_AMIIBO_WRITEBACK on and a decrypted dump, writes
 // it back into the dump file (encrypted and signed again; <dump>.bak first, once).
 uint32_t amiibo_flush_figure(void);
 

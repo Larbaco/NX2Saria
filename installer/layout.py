@@ -8,13 +8,13 @@ Release (docs/installer.md "Release layout"), root = the unpacked folder:
                             each supported update (SUPPORTED)
     llvm/                   llvm-mingw (bin/clang.exe)
     runtime/                libnx2navirt.a and libnx2navirt-v2.a (x86-64-v3 / v2), the headers, install-side sources (romfs.c,
-                            patches.c, ov_zstd.c) and nx2navi.ico; runtime/deps/ holds
+                            patches.c, ov_zstd.c) and nx2saria.ico; runtime/deps/ holds
                             include/ + lib/ of Vulkan, SDL3, Opus, libvpx and VMA (build_game.py --deps)
     bin/                    nx2navi_xlate.exe (+ nx2navi_xlate.id), hactool.exe, ninja.exe, SDL3.dll, libopus-0.dll
     data/shader_list.tsv    the shared shader list
     data/pgo-<v>.profdata   the execution profile the update's code is compiled with (tools/pgo.py; Windows only);
                             without one the game is built at -O1
-    nx2navi.ini.example
+    nx2saria.ini.example
     VERSION                 the release version, one line
     temp/                   the default temp folder (created)
 
@@ -137,7 +137,7 @@ def release_layout(root):
         ninja=root / 'bin' / ('ninja' + EXE), hactool=root / 'bin' / ('hactool' + EXE),
         xlate=root / 'bin' / ('nx2navi_xlate' + EXE),
         dlls=(root / 'bin' / 'SDL3.dll', root / 'bin' / 'libopus-0.dll') if WIN else (root / 'bin' / 'libSDL3.so.0',),
-        shader_list=root / 'data' / 'shader_list.tsv', ini_example=root / 'nx2navi.ini.example',
+        shader_list=root / 'data' / 'shader_list.tsv', ini_example=root / 'nx2saria.ini.example',
         pgo_dir=root / 'data' if WIN else None,
         # Linux: None, the install folder's .setup-temp (installer/cli.py): the AppImage is mounted read-only, and on
         # a Steam Deck /home is often too full for the generated C while the install folder is on the SD card
@@ -164,7 +164,7 @@ def dev_layout(root):
         ninja=UCRT / ('ninja' + EXE), hactool=root / 'toolchain' / 'hactool' / ('hactool' + EXE),
         xlate=root / 'build' / 'xlate' / ('nx2navi_xlate' + EXE),
         dlls=tuple(sorted((deps / 'bin').glob('*.dll'))),
-        shader_list=None, ini_example=root / 'nx2navi.ini.example', temp=root / 'build' / 'install-temp',
+        shader_list=None, ini_example=root / 'nx2saria.ini.example', temp=root / 'build' / 'install-temp',
         pgo_dir=root / 'build' / 'pgo')
 
 
@@ -184,7 +184,7 @@ def dev_layout_posix(root):
         runtime_lib_v2=root / 'build' / 'install-rtlib' / 'libnx2navirt-v2.a',
         ninja=Path(ninja) if ninja else root / 'toolchain' / 'ninja-missing',
         hactool=root / 'toolchain' / 'hactool' / 'hactool', xlate=root / 'build' / 'xlate' / 'nx2navi_xlate',
-        shader_list=None, ini_example=root / 'nx2navi.ini.example', temp=root / 'build' / 'install-temp')
+        shader_list=None, ini_example=root / 'nx2saria.ini.example', temp=root / 'build' / 'install-temp')
 
 
 def find(root=None):

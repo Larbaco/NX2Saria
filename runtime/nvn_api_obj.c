@@ -76,8 +76,8 @@ NVN_API(nvnTextureBuilderSetSize2D) {
     b->d.width = (uint32_t)arg_x(c, 1);
     b->d.height = (uint32_t)arg_x(c, 2);
     b->d.depth = 1;
-    static int diag = -1, n;   // NX2NAVI_LOG_RT_SIZES=1 (diagnosis): who sizes textures in the 16:9 output's family
-    if (diag < 0) diag = cfg_get("NX2NAVI_LOG_RT_SIZES") != NULL;
+    static int diag = -1, n;   // NX2SARIA_LOG_RT_SIZES=1 (diagnosis): who sizes textures in the 16:9 output's family
+    if (diag < 0) diag = cfg_get("NX2SARIA_LOG_RT_SIZES") != NULL;
     if (diag && n < 200 && b->d.width * 9 == b->d.height * 16 && b->d.width >= 320) {
         char at[160], up[160];
         n++;
@@ -199,7 +199,7 @@ static void tex_release(tex_t *o) {
 NVN_API(nvnTextureInitialize) {
     tex_t *o = arg_p(c, 0);
     const tex_builder_t *s = arg_p(c, 1);
-    if (cfg_get("NX2NAVI_LOG_TEX_FLAGS")) {   // diagnosis: each distinct (flags, format) pair once
+    if (cfg_get("NX2SARIA_LOG_TEX_FLAGS")) {   // diagnosis: each distinct (flags, format) pair once
         static uint64_t seen[256]; static int n;
         uint64_t key = (uint64_t)(uint32_t)s->d.flags << 32 | (uint32_t)s->d.format;
         int known = 0;
@@ -446,7 +446,7 @@ NVN_API(nvnProgramFinalize) {
     prog_release(o);
     o->magic = 0;
 }
-// NX2NAVI_PROG_LEAD=1 (diagnostics): when each program was made, by serial (direct-mapped; a serial that lost its
+// NX2SARIA_PROG_LEAD=1 (diagnostics): when each program was made, by serial (direct-mapped; a serial that lost its
 // slot reads 0). vk_exec_draw.c prog_lead compares it with the program's first draw.
 #define PROG_MADE_N 16384
 static uint64_t prog_made_serial[PROG_MADE_N], prog_made_at[PROG_MADE_N];
@@ -465,7 +465,7 @@ static int prog_set_shaders(prog_t *o, int n, const NVNshaderData *sd) {
     if (n) memcpy(o->sd, sd, (size_t)n * sizeof *sd);
     o->serial = nvn_new_serial();
     static int lead = -1;
-    if (lead < 0) lead = cfg_get("NX2NAVI_PROG_LEAD") != NULL && strcmp(cfg_get("NX2NAVI_PROG_LEAD"), "0") != 0;
+    if (lead < 0) lead = cfg_get("NX2SARIA_PROG_LEAD") != NULL && strcmp(cfg_get("NX2SARIA_PROG_LEAD"), "0") != 0;
     if (lead) {
         uint32_t i = (uint32_t)o->serial & (PROG_MADE_N - 1);
         __atomic_store_n(&prog_made_at[i], plat_now_ns(), __ATOMIC_RELAXED);
@@ -511,7 +511,7 @@ NVN_API(nvnProgramSetShadersExt) {
 // nvnProgramInitializeFromBuilder(program, builder). No driver reference is available (the NVN2 driver is not in the
 // title's modules), so the signatures are taken to mirror nvnProgramSetShaders: SetShaders(builder, n, shader data).
 // The builder keeps the caller's array pointer, as NVN builders reference their inputs until the object is made.
-// NX2NAVI_SHADER_DUMP=<dir> writes each stage's control section and code there for studying the NVN2 layout, named by the
+// NX2SARIA_SHADER_DUMP=<dir> writes each stage's control section and code there for studying the NVN2 layout, named by the
 // program's serial (p<serial>_s<stage>), the number frame dumps print as "prog N" (vk_dump.c).
 typedef struct { uint32_t magic; int32_t n; NVNdevice *dev; const NVNshaderData *sd; } prog_builder_t;
 #define NVN_PROG_BUILDER_MAGIC 0x50524742u   // "BGRP"
@@ -528,7 +528,7 @@ static void shader_dump(const prog_t *o, int n, const NVNshaderData *sd) {
         if (magic == 0x98761234u && st < 32 && !(__atomic_fetch_or(&seen, 1u << st, __ATOMIC_RELAXED) >> st & 1))
             rt_log("nvn: first NVN2 program with stage %u (%d stages in the program)", st, n);
     }
-    const char *dir = cfg_get("NX2NAVI_SHADER_DUMP");
+    const char *dir = cfg_get("NX2SARIA_SHADER_DUMP");
     if (!dir || !*dir) return;
     static volatile int32_t count;
     int k = __atomic_fetch_add(&count, 1, __ATOMIC_RELAXED);
@@ -575,7 +575,7 @@ NVN_API(nvnProgramInitializeFromBuilder) {
         ret_x(c, 0);
         return;
     }
-    const char *mode = cfg_get("NX2NAVI_NVN2_PROGRAMS");   // =off: refuse every program (diagnosis)
+    const char *mode = cfg_get("NX2SARIA_NVN2_PROGRAMS");   // =off: refuse every program (diagnosis)
     if (mode && !strcmp(mode, "off")) {
         ret_x(c, 0);
         return;
@@ -762,13 +762,13 @@ NVN_API(nvnWindowSetCrop) {
 // ---------- Present pacing
 // The vsync thread ticks at a fixed 60 Hz whatever the monitor does, so one game frame lasts `interval` ticks. With
 // the real-time frame step (frame_rate.c) game speed does not depend on the interval, so a frame is shown when it is
-// ready, at most at the frame limit (NX2NAVI_FPS_LIMIT: 30 to 240 per second or the monitor's rate): holding it to the
+// ready, at most at the frame limit (NX2SARIA_FPS_LIMIT: 30 to 240 per second or the monitor's rate): holding it to the
 // 2nd or 3rd tick would only add latency and 50 ms frames.
 #define VSYNC_HZ 60ull
 static uint64_t present_period(const win_t *o) {
     if (frame_step_realtime() || frame_free_running()) return frame_step_cap_ns();   // frame_rate.c: the limit alone
-    static int pace_hz = -1;   // NX2NAVI_PACE_HZ=<n> (test runs): present at n per second whatever the game's interval
-    if (pace_hz < 0) pace_hz = cfg_get("NX2NAVI_PACE_HZ") ? atoi(cfg_get("NX2NAVI_PACE_HZ")) : 0;
+    static int pace_hz = -1;   // NX2SARIA_PACE_HZ=<n> (test runs): present at n per second whatever the game's interval
+    if (pace_hz < 0) pace_hz = cfg_get("NX2SARIA_PACE_HZ") ? atoi(cfg_get("NX2SARIA_PACE_HZ")) : 0;
     if (pace_hz > 0) return 1000000000ull / (uint64_t)pace_hz;
     return (o->interval > 0 ? (uint64_t)o->interval : 1ull) * 1000000000ull / VSYNC_HZ;
 }
@@ -778,7 +778,7 @@ static uint64_t present_period(const win_t *o) {
 // burst, except while a movie plays (frame_step_movie_hz): then the slots are kept through a lateness up to
 // MOVIE_CATCHUP_NS and the frames after a late one go at once until the game is back on them. A movie shows one
 // picture per game update and its sound plays by the clock (frame_rate.c ocarina_step), so every period dropped here
-// was a picture the movie fell behind for good: with a 70 ms frame every two seconds (NX2NAVI_TEST_HITCH=120:70) the
+// was a picture the movie fell behind for good: with a 70 ms frame every two seconds (NX2SARIA_TEST_HITCH=120:70) the
 // updates averaged 58.9 a second and the Triforce movie's picture fell 190 ms behind its sound every ten seconds, 2.2 s
 // by the end of its 117 s, at every frame limit from 60 to unlimited; with the slots kept it stayed within 22 ms. A
 // stall of a second or more (a load) restarts the slots as before. Returns the ns to wait.
@@ -846,11 +846,11 @@ NVN_API(nvnWindowAcquireTexture) {
     // frame drawn into it, so the CPU never runs more than the swapchain's depth ahead of the GPU. Here the pacer frees
     // images by the clock alone, so the acquire also waits for the GPU to finish the image's newest present. With the
     // GPU slowed (frame dump logging), this alone cut Ocarina's NaN frames from 56 to 23 of 61; the wait after a frame's
-    // first submission (nvn_api_core.c nvnQueueSubmitCommands) removes the rest. NX2NAVI_ACQUIRE_WAIT=0 leaves it to the
+    // first submission (nvn_api_core.c nvnQueueSubmitCommands) removes the rest. NX2SARIA_ACQUIRE_WAIT=0 leaves it to the
     // clock; =2 waits for the newest present of any image (one frame in flight at most).
     static int acq_wait = -1;
     if (acq_wait < 0) {   // a number: the on/off reader took every value but 0 for 1, so 2 could not be chosen
-        const char *e = cfg_get("NX2NAVI_ACQUIRE_WAIT");
+        const char *e = cfg_get("NX2SARIA_ACQUIRE_WAIT");
         acq_wait = e && (*e == '0' || *e == '2') && !e[1] ? *e - '0' : 1;
     }
     uint64_t *fe = img_fence_of(o, idx), want = fe ? *fe : 0;
@@ -886,13 +886,13 @@ NVN_API(nvnQueuePresentTexture) {
     o->presents++;
     __atomic_store_n(&nvn_submits_in_frame, 0, __ATOMIC_RELAXED);
     const tex_t *t = (const tex_t *)o->tex[idx];
-    static int hitch_every = -1, hitch_ms;   // NX2NAVI_TEST_HITCH=<every>:<ms>: a late frame every so many presents
+    static int hitch_every = -1, hitch_ms;   // NX2SARIA_TEST_HITCH=<every>:<ms>: a late frame every so many presents
     if (hitch_every < 0) {
-        const char *e = cfg_get("NX2NAVI_TEST_HITCH");
+        const char *e = cfg_get("NX2SARIA_TEST_HITCH");
         int every = 0, ms = 0;
         hitch_every = e && sscanf(e, "%d:%d", &every, &ms) == 2 && every > 0 && ms > 0 ? every : 0;
         hitch_ms = ms;
-        if (hitch_every) rt_log("nvn: a %d ms late frame every %d presents (NX2NAVI_TEST_HITCH)", hitch_ms, hitch_every);
+        if (hitch_every) rt_log("nvn: a %d ms late frame every %d presents (NX2SARIA_TEST_HITCH)", hitch_ms, hitch_every);
     }
     if (hitch_every && o->presents % (uint64_t)hitch_every == 0) plat_wait_ns((uint64_t)hitch_ms * 1000000);
     uint64_t period = present_period(o), now = kern_now_ns();

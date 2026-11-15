@@ -1,8 +1,8 @@
 """Where the launcher keeps everything.
 
-An installed launcher (NX2navi-Setup.exe puts it in %LOCALAPPDATA%\\Programs\\NX2navi) is one folder:
+An installed launcher (NX2Saria-Setup.exe puts it in %LOCALAPPDATA%\\Programs\\NX2Saria) is one folder:
 
-    NX2navi.exe              launcher/native/nx2navi.c: starts python\\pythonw.exe on app\\<current>\\launcher\\start.pyw
+    NX2Saria.exe              launcher/native/nx2saria.c: starts python\\pythonw.exe on app\\<current>\\launcher\\start.pyw
     python/                  the embeddable Python with tkinter, numpy, lz4 and zstandard (tools/make_launcher.py)
     app/current.txt          the version the stub starts; app/previous.txt the one before it, kept for a rollback
     app/<version>/           one release: launcher/, runtime/, recomp/, tools/, bin/, VERSION, toolchain.lock.json
@@ -58,7 +58,7 @@ def long_path_problem(game_dir):
         return ''
     return (f'the path of the game folder is {n} characters long, and the game\'s files need {LONGEST_IN_GAME} more: '
             f'Windows and the build tools stop at {WINDOWS_PATH_MAX + 1} for a file\'s whole path. Choose a folder '
-            f'whose path has at most {most} characters, such as D:\\Games\\NX2navi')
+            f'whose path has at most {most} characters, such as D:\\Games\\NX2Saria')
 
 
 def fixed_drive(drive):
@@ -77,7 +77,7 @@ class Layout:
     def __init__(self, root=None, app=None):
         self.app = Path(app or APP)
         self.dev = not _is_release_app(self.app)
-        env = os.environ.get('NX2NAVI_LAUNCHER_ROOT')
+        env = os.environ.get('NX2SARIA_LAUNCHER_ROOT', os.environ.get('NX2NAVI_LAUNCHER_ROOT'))
         if root:
             self.root = Path(root)
         elif env:
@@ -88,7 +88,10 @@ class Layout:
             self.root = self.app / 'build' / 'launcher-dev'
         self.apps = self.root / 'app'
         self.python = self.root / 'python'
-        self.stub = self.root / 'NX2navi.exe'
+        self.stub = self.root / 'NX2Saria.exe'
+        legacy_stub = self.root / 'NX2navi.exe'
+        if not self.stub.is_file() and legacy_stub.is_file():
+            self.stub = legacy_stub
         self.pydeps = self.root / 'pydeps'
         self.data = self.root / 'data'
         self.logs = self.data / 'logs'
@@ -100,7 +103,7 @@ class Layout:
         self.instance_lock = self.data / 'launcher.lock'
         tool_root = self.root
         if not ansi_safe(tool_root):
-            tool_root = Path(os.environ.get('SystemDrive', 'C:') + '\\') / 'NX2navi'
+            tool_root = Path(os.environ.get('SystemDrive', 'C:') + '\\') / 'NX2Saria'
         self.toolchain = tool_root / 'toolchain'
         self.msys_root = self.toolchain / 'msys64'
         self.msys = self.msys_root / 'ucrt64'
@@ -138,7 +141,7 @@ class Layout:
                 except OSError:
                     continue
                 if best is None or free > best[0]:
-                    best = (free, drive / 'Games' / 'NX2navi')
+                    best = (free, drive / 'Games' / 'NX2Saria')
         return best[1] if best else here
 
     def python_for_builds(self):

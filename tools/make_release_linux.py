@@ -1,8 +1,8 @@
 """Assemble the Linux release folder of docs/installer.md ("Linux release") and pack it as an AppImage.
 
-    .venv/bin/python tools/make_release_linux.py --out build/release/NX2navi-Setup-linux \\
-        [--appimage build/release/NX2navi-Setup-x86_64.AppImage]
-    .venv/bin/python tools/make_release_linux.py --out build/release/NX2navi-Setup-linux --prove
+    .venv/bin/python tools/make_release_linux.py --out build/release/NX2Saria-Setup-linux \\
+        [--appimage build/release/NX2Saria-Setup-x86_64.AppImage]
+    .venv/bin/python tools/make_release_linux.py --out build/release/NX2Saria-Setup-linux --prove
 
 The same model as the Windows release (tools/make_release.py, whose download cache, unpacking and checks this reuses): the
 folder carries the setup and a toolchain, never game code; the player's machine builds the game. Everything that runs on
@@ -15,14 +15,14 @@ the .NET 10 SDK and Python 3.12+ with Pillow (.venv). The folder holds:
     llvm/      LLVM 23 (clang, lld, llvm-ar, the clang resource headers) and llvm/sysroot: the files of the sniper SDK
                sysroot the game's compile and link read, nothing else (recorded while building the runtime library)
     runtime/   libnx2navirt.a and libnx2navirt-v2.a (build_game.py --make-runtime-lib --sysroot, x86-64-v3 and v2), the
-               runtime headers, romfs.c, patches.c and ov_zstd.c (compiled per install), nx2navi.png (the window icon),
+               runtime headers, romfs.c, patches.c and ov_zstd.c (compiled per install), nx2saria.png (the window icon),
                deps/ (Vulkan headers 1.4.363, VMA, zstd built static; SDL3, Opus and libvpx come from the sysroot)
     bin/       nx2navi_xlate (+ .id), hactool, ninja, libSDL3.so.0 (the sysroot's; the game finds it beside itself)
-    recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, nx2navi.ini.example, VERSION
-    AppRun, nx2navi-setup.desktop, nx2navi-setup.png   the AppImage entry: python/bin/python3 -m installer.gui
+    recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, nx2saria.ini.example, VERSION
+    AppRun, nx2saria-setup.desktop, nx2saria-setup.png   the AppImage entry: python/bin/python3 -m installer.gui
 
 --appimage packs the folder with appimagetool and the static type-2 runtime (no libfuse2 on the host). --prove compiles
-the generated C and links build/release-linux-check/nx2navi with the folder's tools only, then runs the probes beside it.
+the generated C and links build/release-linux-check/nx2saria with the folder's tools only, then runs the probes beside it.
 Like tools/make_release.py, both need one game version extracted and lifted first (generated/v121, else v143).
 
 The folder contains nothing derived from the game: check_content runs over it before the script finishes, then the
@@ -222,9 +222,9 @@ def runtime_lib(out, llvm, sysroot):
     for name in build_game.INSTALL_SIDE:
         shutil.copy2(ROOT / 'runtime' / name, rt / name)
     from PIL import Image   # Tk loads no .ico off Windows: the window and the AppImage take a PNG
-    with Image.open(ROOT / 'runtime' / 'nx2navi.ico') as ico:
+    with Image.open(ROOT / 'runtime' / 'nx2saria.ico') as ico:
         ico.size = max(ico.ico.sizes())
-        ico.convert('RGBA').save(rt / 'nx2navi.png')
+        ico.convert('RGBA').save(rt / 'nx2saria.png')
     return build
 
 
@@ -377,7 +377,7 @@ def build_python(out, llvm, sysroot):
     site = next(py.glob('lib/python3.*/site-packages'))
     # The release folder, tools/ and recomp/ on sys.path, as the Windows python's ._pth does: `python -m installer` and
     # the tools importing their siblings work from any directory
-    (site / 'nx2navi-release.pth').write_text('../../../..\n../../../../tools\n../../../../recomp\n', encoding='utf-8')
+    (site / 'nx2saria-release.pth').write_text('../../../..\n../../../../tools\n../../../../recomp\n', encoding='utf-8')
     check = subprocess.run([str(exe), '-c', 'import tkinter, numpy, lz4.block, cryptography, cffi, pycparser; '
                             'print("python ok: Tcl", tkinter.Tcl().eval("info patchlevel"), "numpy", numpy.__version__)'],
                            cwd='/', capture_output=True, text=True)
@@ -434,10 +434,10 @@ exec "$HERE/python/bin/python3" -m installer.gui "$@"
 
 DESKTOP = '''[Desktop Entry]
 Type=Application
-Name=NX2navi Setup
+Name=NX2Saria Setup
 Comment=Builds Ocarina of Time for this PC from your own game files
 Exec=AppRun
-Icon=nx2navi-setup
+Icon=nx2saria-setup
 Categories=Game;
 Terminal=false
 '''
@@ -446,9 +446,9 @@ Terminal=false
 def build_entry(out):
     (out / 'AppRun').write_text(APPRUN, encoding='utf-8')
     (out / 'AppRun').chmod(0o755)
-    (out / 'nx2navi-setup.desktop').write_text(DESKTOP, encoding='utf-8')
-    shutil.copy2(out / 'runtime' / 'nx2navi.png', out / 'nx2navi-setup.png')
-    (out / '.DirIcon').symlink_to('nx2navi-setup.png')
+    (out / 'nx2saria-setup.desktop').write_text(DESKTOP, encoding='utf-8')
+    shutil.copy2(out / 'runtime' / 'nx2saria.png', out / 'nx2saria-setup.png')
+    (out / '.DirIcon').symlink_to('nx2saria-setup.png')
 
 
 def write_appimage(out, path):
@@ -525,7 +525,7 @@ def check_bundle(out):
 
 
 def prove(out, cpu='v3'):
-    """Compile the generated C and link nx2navi with the folder's tools only, then run the probes beside it."""
+    """Compile the generated C and link nx2saria with the folder's tools only, then run the probes beside it."""
     out = out.resolve()
     version = mr.lifted_version()
     gen = MAIN_ROOT / 'generated' / version
@@ -541,15 +541,15 @@ def prove(out, cpu='v3'):
         env=env)
     print(f'prove: build {time.time() - t0:.0f} s')
     shutil.copy2(out / 'bin' / 'libSDL3.so.0', chk / 'libSDL3.so.0')
-    needed = subprocess.run(['readelf', '-d', str(chk / 'nx2navi')], capture_output=True, text=True).stdout
+    needed = subprocess.run(['readelf', '-d', str(chk / 'nx2saria')], capture_output=True, text=True).stdout
     print('prove: needs', ', '.join(re.findall(r'\[(lib[^\]]+)\]', needed)))
-    glibc = sorted(set(re.findall(r'GLIBC_(\d+\.\d+)', subprocess.run(['readelf', '-V', str(chk / 'nx2navi')],
+    glibc = sorted(set(re.findall(r'GLIBC_(\d+\.\d+)', subprocess.run(['readelf', '-V', str(chk / 'nx2saria')],
                                                                          capture_output=True, text=True).stdout)),
                    key=lambda v: tuple(map(int, v.split('.'))))
     print(f'prove: newest glibc symbol version {glibc[-1] if glibc else "none"}')
     failed = []
     for probe in ['--selftest', *mr.PROBES]:
-        r = subprocess.run([str(chk / 'nx2navi'), probe], cwd=chk, capture_output=True, text=True, timeout=900)
+        r = subprocess.run([str(chk / 'nx2saria'), probe], cwd=chk, capture_output=True, text=True, timeout=900)
         tail = (r.stdout.strip().splitlines() or [''])[-1]
         print(f'{probe}: exit {r.returncode}: {tail}')
         if r.returncode:

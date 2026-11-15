@@ -1,6 +1,5 @@
 """The pictures of the game's Steam shortcut (launcher/steam.py), made from the player's own game: nothing ships.
 
-    icon        Navi as the game's HUD draws her (HUDNaviIcon_Body_00 over the glow HUDNaviIcon_Flare_00), 128 x 128
     logo        the title screen's logo with the Master Sword and the Hylian Shield (Logo_USEU_00), cut to its outline
     hero        the title screen's moonlit field, a frame of its first movie (Event/Movie/Dm_Title_0005.webm), 1920 x 620
     portrait    that frame with the logo over it, 600 x 900 (the library's cover)
@@ -28,8 +27,7 @@ import numpy as np
 from . import gamefiles
 
 TITLE_ARCHIVE = 'UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.bntx.zs'
-COMMON_ARCHIVE = 'UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs'
-LOGO, NAVI, NAVI_GLOW = 'Logo_USEU_00', 'HUDNaviIcon_Body_00', 'HUDNaviIcon_Flare_00'
+LOGO = 'Logo_USEU_00'
 TITLE_MOVIE = 'Event/Movie/Dm_Title_0005.webm'
 TITLE_AT = 12.0     # seconds into it: the field under the full moon, as the title screen shows it first
 KIND_BC4, KIND_ASTC4 = 0x1d, 0x2d
@@ -310,43 +308,25 @@ def with_logo(bg, logo, width_share, cy):
     return out
 
 
-def navi_icon(body, glow, size=128):
-    """Navi's HUD icon on her glow, size x size RGBA: the glow tinted the pale blue of her light."""
-    out = np.zeros((size, size, 4), dtype=np.float32)
-    g = resize(glow, size, size)
-    g[..., :3] = np.array([200, 228, 255], dtype=np.float32)
-    g[..., 3] *= 0.85
-    b = resize(body, int(size * 0.8), int(size * 0.8))
-    for layer, at in ((g, 0), (b, (size - b.shape[0]) // 2)):
-        h, w = layer.shape[:2]
-        d = out[at:at + h, at:at + w]
-        sa, da = layer[..., 3:4] / 255, d[..., 3:4] / 255
-        oa = sa + da * (1 - sa)
-        d[..., :3] = (layer[..., :3] * sa + d[..., :3] * da * (1 - sa)) / np.maximum(oa, 1e-6)
-        d[..., 3:4] = oa * 255
-    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
-
-
 def rgba_of(rgb):
     return np.concatenate([rgb, np.full(rgb.shape[:2] + (1,), 255, dtype=np.uint8)], -1)
 
 
 def make(layout, game_dir='', dump=''):
-    """{name: HxWx4 uint8} for icon, logo, hero, portrait and wide, from the player's game. ArtError when the game's
-    files or the tools to read them are not there."""
+    """{name: HxWx4 uint8} for logo, hero, portrait and wide, from the player's game. ArtError when the game's files
+    or the tools to read them are not there."""
     romfs = gamefiles.open_romfs(layout, game_dir, dump)
     if romfs is None:
         raise ArtError('the game\'s files were not found (the game folder\'s romfs, or the dump)')
     zs = gamefiles.ZsReader(romfs)
-    title, common = zs.read(TITLE_ARCHIVE), zs.read(COMMON_ARCHIVE)
+    title = zs.read(TITLE_ARCHIVE)
     movie = romfs.read(TITLE_MOVIE)
-    if not title or not common or not movie:
+    if not title or not movie:
         raise ArtError('the game\'s title screen files were not found')
     lib = astc_library(layout)
     logo = texture(title, LOGO, lib)
-    body, glow = texture(common, NAVI, lib), texture(common, NAVI_GLOW, lib)
-    if logo is None or body is None or glow is None:
-        raise ArtError('the game\'s logo or Navi\'s icon was not found')
+    if logo is None:
+        raise ArtError('the game\'s logo was not found')
     logo = trim(logo)
     with tempfile.TemporaryDirectory(dir=str(layout.cache)) as work:
         frame = movie_frame(layout, movie, TITLE_AT, work)
@@ -354,5 +334,4 @@ def make(layout, game_dir='', dump=''):
     hero = crop(frame, 1920, 620, 0.5, 0.42)
     portrait = with_logo(crop(frame, 600, 900, 0.68, 0.5), logo, 0.88, 0.70)
     wide = with_logo(crop(frame, 920, 430, 0.5, 0.45), logo, 0.52, 0.55)
-    return {'icon': navi_icon(body, glow), 'logo': logo, 'hero': rgba_of(hero), 'portrait': rgba_of(portrait),
-            'wide': rgba_of(wide)}
+    return {'logo': logo, 'hero': rgba_of(hero), 'portrait': rgba_of(portrait), 'wide': rgba_of(wide)}

@@ -7,11 +7,11 @@
 // switched the question off for the rest of the run, so each session paid for it exactly once.
 //
 // The summary is therefore not asked for in play at all: only before play (the boot and the title screen, where a
-// long frame is not seen and the heap is small), and no more once one was slow there. NX2NAVI_MEM_CENSUS=1, the
+// long frame is not seen and the heap is small), and no more once one was slow there. NX2SARIA_MEM_CENSUS=1, the
 // switch that already accepts a late frame for the walk of the address space, asks for it at every report. In play
 // the report gives what the runtime knows it allocated instead, the same figure from one report to the next, which is
 // what the growth bookkeeping compares.
 #pragma once
 
-// census: NX2NAVI_MEM_CENSUS is on; in_play: a save's first frame was shown; slow: a summary took too long before.
+// census: NX2SARIA_MEM_CENSUS is on; in_play: a save's first frame was shown; slow: a summary took too long before.
 static inline int mem_heap_summary_due(int census, int in_play, int slow) { return census || (!in_play && !slow); }

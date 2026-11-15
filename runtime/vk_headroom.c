@@ -24,7 +24,7 @@
 // empty when an allocation that failed there ended the game; an integrated GPU's memory is the machine's RAM. Linux's
 // limits (plat_commit_counts_vram) do not count a discrete card's own memory, so dropping its spare would free nothing
 // they count and only put the block allocations back on the render thread.
-// NX2NAVI_VRAM_HEADROOM=0 turns it off.
+// NX2SARIA_VRAM_HEADROOM=0 turns it off.
 
 #include "cfg.h"
 #include "host.h"
@@ -48,7 +48,7 @@ static struct {
     volatile uint32_t hold_until;   // plat_now_ms(): no spare block before then (vk_headroom_release)
 } H;
 
-// NX2NAVI_VMA_BLOCK_MB (16 to 256, default 64): the size of VMA's blocks on heaps over 1 GiB (its
+// NX2SARIA_VMA_BLOCK_MB (16 to 256, default 64): the size of VMA's blocks on heaps over 1 GiB (its
 // preferredLargeHeapBlockSize; VMA's own default is 256 MiB). A freed texture or mirror leaves a hole its block keeps,
 // and the driver counts the whole block against the VRAM budget and the system's commit until its last allocation
 // goes. With 256 MiB blocks one session held 2.1 GiB free inside them beside 8.2 GiB of allocations after a few area
@@ -58,10 +58,10 @@ static struct {
 VkDeviceSize vk_vma_block_size(void) {
     static VkDeviceSize size;
     if (!size) {
-        int mb = cfg_int("NX2NAVI_VMA_BLOCK_MB");
+        int mb = cfg_int("NX2SARIA_VMA_BLOCK_MB");
         mb = mb < 16 ? 16 : mb > 256 ? 256 : mb;
         size = (VkDeviceSize)mb << 20;
-        rt_log("vk: VMA blocks of %d MiB on heaps over 1 GiB (NX2NAVI_VMA_BLOCK_MB)", mb);
+        rt_log("vk: VMA blocks of %d MiB on heaps over 1 GiB (NX2SARIA_VMA_BLOCK_MB)", mb);
     }
     return size;
 }
@@ -97,7 +97,7 @@ static void VKAPI_PTR on_allocate(VmaAllocator a, uint32_t type, VkDeviceMemory 
     plat_event_set(&H.ev);
 }
 
-// NX2NAVI_TEX_COMPACT: every device memory VMA gives back to the driver is reported to the texture compaction, which
+// NX2SARIA_TEX_COMPACT: every device memory VMA gives back to the driver is reported to the texture compaction, which
 // counts the blocks its pass emptied (vk_texture.c vk_texture_block_freed). Any thread; the callback takes no lock.
 static void VKAPI_PTR on_free(VmaAllocator a, uint32_t type, VkDeviceMemory m, VkDeviceSize size, void *user) {
     (void)a, (void)type, (void)size, (void)user;
@@ -107,8 +107,8 @@ static void VKAPI_PTR on_free(VmaAllocator a, uint32_t type, VkDeviceMemory m, V
 const VmaDeviceMemoryCallbacks *vk_headroom_callbacks(void) {
     static const VmaDeviceMemoryCallbacks cb = {.pfnAllocate = on_allocate};
     static const VmaDeviceMemoryCallbacks cb_free = {.pfnAllocate = on_allocate, .pfnFree = on_free};
-    const char *v = cfg_get("NX2NAVI_VRAM_HEADROOM");   // empty is unset: the key has no settings row for cfg_bool
-    H.on = !v || !*v || cfg_bool("NX2NAVI_VRAM_HEADROOM");
+    const char *v = cfg_get("NX2SARIA_VRAM_HEADROOM");   // empty is unset: the key has no settings row for cfg_bool
+    H.on = !v || !*v || cfg_bool("NX2SARIA_VRAM_HEADROOM");
     if (vk_texture_compact_on()) return &cb_free;   // on_allocate does nothing for the headroom while H.on is 0
     return H.on ? &cb : NULL;
 }
@@ -126,7 +126,7 @@ static int room(const VkCtx *c, uint32_t type, VkDeviceSize block) {
     vmaGetHeapBudgets(c->vma, b);
     const VmaBudget *h = &b[c->mem_props.memoryTypes[type].heapIndex];
     if (!h->budget || h->usage + 2 * block > h->budget / 100 * 85) return 0;
-    // A budget taken as smaller for a test (NX2NAVI_VRAM_BUDGET_MB, vk_mem_vram) is what the mirrors and the textures
+    // A budget taken as smaller for a test (NX2SARIA_VRAM_BUDGET_MB, vk_mem_vram) is what the mirrors and the textures
     // go by; measured against the driver's budget alone, a capped run kept its spare blocks where the card it stands
     // for keeps none. Only then: without a cap the heap's own figure above decides, heap by heap.
     uint64_t all = 0, used, capped;
@@ -230,5 +230,5 @@ void vk_headroom_start(void) {
     }
     H.started = 1;
     rt_log("vk: headroom: the next VMA block of each memory type in use is allocated on a background thread "
-           "(NX2NAVI_VRAM_HEADROOM=0 turns it off)");
+           "(NX2SARIA_VRAM_HEADROOM=0 turns it off)");
 }

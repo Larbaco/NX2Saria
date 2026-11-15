@@ -86,7 +86,7 @@ int vk_ngxfg_max(void);                 // ... and how many frames it may genera
 int vk_ffx_available(void);             // vk_ffx.cpp: FSR 3.1 upscaling can run (asked without loading the library)
 int vk_ffx_framegen_available(void);    // ... and FSR 3.1 frame generation
 int vk_ffx4_available(void);            // vk_ffx4.cpp: AMD's FSR 4 runs on this device (its libraries, card and driver)
-int vk_ffx_fsr4(void);                  // vk_ffx.cpp: ... and the setting asks for it (NX2NAVI_FSR4)
+int vk_ffx_fsr4(void);                  // vk_ffx.cpp: ... and the setting asks for it (NX2SARIA_FSR4)
 void vk_ffx4_retry(void);               // vk_ffx4.cpp: FSR 4 chosen again after failures that turned it off
 const char *vk_ffx4_name(void);         // vk_ffx4.cpp: "AMD FSR 4.1.2" once the driver's library was asked
 int vk_fg4_available(void);             // vk_fg4.cpp: the frame generation of AMD's FSR 4 library runs on this device
@@ -152,13 +152,13 @@ static int change_open(int want) {
 
 static void set_open(int open) { change_open(open); }
 
-// The debug menu (ui/debug_menu.cpp; F9 with NX2NAVI_DEBUG_MENU = 1) is laid out in this menu's place: open is the one
+// The debug menu (ui/debug_menu.cpp; F9 with NX2SARIA_DEBUG_MENU = 1) is laid out in this menu's place: open is the one
 // state for both, with its input, its sounds and the game's blocked pad, and g_debug says which window it shows.
 static std::atomic<int> g_debug{0};
 // The amiibo picker (ui/amiibo_page.cpp) is laid out in the menu's place the same way, when the game starts waiting for
 // an amiibo; F1 and the pad's combination close it like the menu.
 static std::atomic<int> g_picker{0};
-extern "C" int menu_debug_enabled(void) { return cfg_bool("NX2NAVI_DEBUG_MENU"); }
+extern "C" int menu_debug_enabled(void) { return cfg_bool("NX2SARIA_DEBUG_MENU"); }
 
 // Leaving the menu with a draft of changes asks the player first (layout_menu's "##apply"). The pad combo and F1 arrive on
 // other threads: they raise g_close_req and the present thread, which owns the draft, answers it.
@@ -583,15 +583,15 @@ extern "C" void menu_vk_release(void) {
 }
 
 // ---- test hooks
-// NX2NAVI_MENU_TEST=<frame>[,<frame>...][:<frames per page>]: at each such presented frame (up to 8) the menu opens on
+// NX2SARIA_MENU_TEST=<frame>[,<frame>...][:<frames per page>]: at each such presented frame (up to 8) the menu opens on
 // its first tab; each tab stays <frames per page> frames (default 30) and its last frame's swapchain image goes to
-// NX2NAVI_MENU_TEST_DIR (default: the working directory) as menu-test-<frame>-<page>.png; after the last tab the menu
+// NX2SARIA_MENU_TEST_DIR (default: the working directory) as menu-test-<frame>-<page>.png; after the last tab the menu
 // closes.
-// NX2NAVI_MENU_TEST_CLICK=<key>:<part>[,...]: mouse clicks on the rows of the page shown (ui/option_rows.cpp click_test).
-// NX2NAVI_MENU_TEST_SET=<frame>:<key>=<value>[,<key>=<value>...][;<frame>:...]: cfg_set of each key (NX2NAVI_ prefix
+// NX2SARIA_MENU_TEST_CLICK=<key>:<part>[,...]: mouse clicks on the rows of the page shown (ui/option_rows.cpp click_test).
+// NX2SARIA_MENU_TEST_SET=<frame>:<key>=<value>[,<key>=<value>...][;<frame>:...]: cfg_set of each key (NX2SARIA_ prefix
 // optional) at that presented frame; changes live settings with no input, menu open or not. nx2navi.ini is written only by
 // the pseudo-key SAVE=1 (cfg_save, as a row change does; a failed write shows the menu's save note). FOCUS=<key> (the
-// NX2NAVI_ prefix optional) puts the cursor on that setting's row and scrolls it into view when the row is next drawn
+// NX2SARIA_ prefix optional) puts the cursor on that setting's row and scrolls it into view when the row is next drawn
 // (opt_focus_key), so a page's shot shows a row below the first screenful; it does not switch tabs.
 // Ocarina of Time: the options this port has
 enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_COUNT };
@@ -599,18 +599,18 @@ enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16, TEST_OPENS = 8 };
 struct TestSet { uint64_t frame; char key[64], value[64]; };
 static struct {
     int parsed;
-    uint64_t at[TEST_OPENS];  // NX2NAVI_MENU_TEST frames, in order
+    uint64_t at[TEST_OPENS];  // NX2SARIA_MENU_TEST frames, in order
     int n_at, next_at;        // how many; the next to open at
     uint64_t per_page;
     uint64_t opened;      // the frame the hook opened the menu; 0 not yet
     int page;             // the tab being shot; -1 none
     TestSet sets[TEST_SETS];
-    int n_sets, next_set; // NX2NAVI_MENU_TEST_SET, in frame order
+    int n_sets, next_set; // NX2SARIA_MENU_TEST_SET, in frame order
 } g_test = {0, {}, 0, 0, 0, 0, -1, {}, 0, 0};
 
 static void test_parse(void) {
     g_test.parsed = 1;
-    if (const char *e = cfg_get("NX2NAVI_MENU_TEST")) {
+    if (const char *e = cfg_get("NX2SARIA_MENU_TEST")) {
         long long per = 0;
         if (const char *c = strchr(e, ':')) per = atoll(c + 1);
         for (const char *s = e; *s && *s != ':' && g_test.n_at < TEST_OPENS;) {
@@ -622,7 +622,7 @@ static void test_parse(void) {
         }
         g_test.per_page = per > 0 ? (uint64_t)per : TEST_PAGE_FRAMES;
     }
-    const char *s = cfg_get("NX2NAVI_MENU_TEST_SET");
+    const char *s = cfg_get("NX2SARIA_MENU_TEST_SET");
     while (s && *s) {   // groups "<frame>:<key>=<value>,..." separated by ';'
         char *end;
         unsigned long long f = strtoull(s, &end, 10);
@@ -635,7 +635,7 @@ static void test_parse(void) {
                 TestSet &t = g_test.sets[g_test.n_sets++];
                 t.frame = f;
                 int kn = (int)(eq - s), vn = (int)(s + n - eq - 1);
-                snprintf(t.key, sizeof t.key, "%s%.*s", strncmp(s, "NX2NAVI_", strlen("NX2NAVI_")) ? "NX2NAVI_" : "", kn, s);
+                snprintf(t.key, sizeof t.key, "%s%.*s", strncmp(s, "NX2SARIA_", strlen("NX2SARIA_")) ? "NX2SARIA_" : "", kn, s);
                 snprintf(t.value, sizeof t.value, "%.*s", vn, eq + 1);
             }
             s += n;
@@ -654,11 +654,11 @@ static void test_apply_sets(uint64_t frame) {
     for (; g_test.next_set < g_test.n_sets && g_test.sets[g_test.next_set].frame <= frame; g_test.next_set++) {
         const TestSet &t = g_test.sets[g_test.next_set];
         rt_log("menu: test hook: frame %llu: %s=%s", (unsigned long long)frame, t.key, t.value);
-        if (!strcmp(t.key, "NX2NAVI_SAVE")) {
+        if (!strcmp(t.key, "NX2SARIA_SAVE")) {
             rt_log("menu: test hook: cfg_save %s", cfg_save() ? "wrote" : "failed");
-        } else if (!strcmp(t.key, "NX2NAVI_FOCUS")) {
+        } else if (!strcmp(t.key, "NX2SARIA_FOCUS")) {
             char row[80];
-            snprintf(row, sizeof row, "%s%s", strncmp(t.value, "NX2NAVI_", strlen("NX2NAVI_")) ? "NX2NAVI_" : "", t.value);
+            snprintf(row, sizeof row, "%s%s", strncmp(t.value, "NX2SARIA_", strlen("NX2SARIA_")) ? "NX2SARIA_" : "", t.value);
             opt_focus_key(row);
         } else {
             cfg_set(t.key, t.value);
@@ -671,7 +671,7 @@ enum { MAX_GPUS = 8 };
 static char g_gpu_names[MAX_GPUS][VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
 static int g_gpu_n = -1;   // -1: not listed yet
 
-// The Vulkan devices in vkEnumeratePhysicalDevices order, which NX2NAVI_GPU_INDEX counts in (vk_device.c pick_device).
+// The Vulkan devices in vkEnumeratePhysicalDevices order, which NX2SARIA_GPU_INDEX counts in (vk_device.c pick_device).
 static void list_gpus(VkInstance inst) {
     if (g_gpu_n >= 0) return;
     VkPhysicalDevice pd[MAX_GPUS];
@@ -693,7 +693,7 @@ enum { MAX_SIZES = sizeof kSizes / sizeof *kSizes + 1 };
 static void row_window_size(void) {
     int sz[MAX_SIZES][2], n = 0, mw = 0, mh = 0, cw = 0, ch = 0;
     int have = gfx_window_monitor_size(&mw, &mh);
-    int cur_ok = sscanf(opt_value("NX2NAVI_WINDOW_SIZE"), "%dx%d", &cw, &ch) == 2;
+    int cur_ok = sscanf(opt_value("NX2SARIA_WINDOW_SIZE"), "%dx%d", &cw, &ch) == 2;
     bool listed = false;
     for (size_t i = 0; i < sizeof kSizes / sizeof *kSizes; i++) {
         int w = kSizes[i][0], h = kSizes[i][1];
@@ -716,7 +716,7 @@ static void row_window_size(void) {
         pv[i] = vals[i];
         pn[i] = shown[i];
     }
-    opt_choice_list("NX2NAVI_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
+    opt_choice_list("NX2SARIA_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
 }
 
 // The game resolution (resolution.c): 16:9 sizes from its smallest, 1280x720 (for weak GPUs), up, the common 21:9 and
@@ -738,7 +738,7 @@ static void row_output_res(void) {
         snprintf(shown[i], sizeof shown[i], "%d × %d", w, h);   // U+00D7, the multiplication sign
         names[i] = shown[i];
     }
-    opt_choice_list("NX2NAVI_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, N, UI_MENU_OUTPUT_RES_DESC);
+    opt_choice_list("NX2SARIA_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, N, UI_MENU_OUTPUT_RES_DESC);
 }
 
 static void row_render_scale(void) {
@@ -751,7 +751,7 @@ static void row_render_scale(void) {
         snprintf(shown[i], sizeof shown[i], "%s %%", vals[i]);
         names[i] = shown[i];
     }
-    opt_choice_list("NX2NAVI_RENDER_SCALE", UI_MENU_RENDER_SCALE, vals, names, N, UI_MENU_RENDER_SCALE_DESC);
+    opt_choice_list("NX2SARIA_RENDER_SCALE", UI_MENU_RENDER_SCALE, vals, names, N, UI_MENU_RENDER_SCALE_DESC);
 }
 
 static void row_shadow_res(void) {
@@ -760,7 +760,7 @@ static void row_shadow_res(void) {
     const char *names[N];
     names[0] = menu_text(UI_MENU_SHADOW_RES_GAME);
     for (int i = 1; i < N; i++) names[i] = vals[i];
-    opt_choice_list("NX2NAVI_SHADOW_RES", UI_MENU_SHADOW_RES, vals, names, N, UI_MENU_SHADOW_RES_DESC);
+    opt_choice_list("NX2SARIA_SHADOW_RES", UI_MENU_SHADOW_RES, vals, names, N, UI_MENU_SHADOW_RES_DESC);
 }
 
 // Texture detail (vk_texture.c "texture detail"): large surface textures made without their largest one or two mip
@@ -773,19 +773,19 @@ static void row_texture_detail(void) {
     int a = vk_texture_detail_auto();
     snprintf(picked, sizeof picked, menu_text(UI_MENU_TEX_DETAIL_AUTO), menu_text(level[a < 0 || a > 2 ? 0 : a]));
     const char *names[] = {picked, menu_text(level[0]), menu_text(level[1]), menu_text(level[2])};
-    opt_choice_list("NX2NAVI_TEXTURE_DETAIL", UI_MENU_TEX_DETAIL, vals, names, 4, UI_MENU_TEX_DETAIL_DESC);
+    opt_choice_list("NX2SARIA_TEXTURE_DETAIL", UI_MENU_TEX_DETAIL, vals, names, 4, UI_MENU_TEX_DETAIL_DESC);
 }
 
 static void row_shadow_scale(void) {
     static const char *const vals[] = {"1", "2", "3", "4"};
     static const char *const names[] = {"960 (1x)", "1920 (2x)", "2880 (3x)", "3840 (4x)"};
-    opt_choice_list("NX2NAVI_SHADOW_SCALE", UI_MENU_SHADOW_SCALE, vals, names, 4, UI_MENU_SHADOW_SCALE_DESC);
+    opt_choice_list("NX2SARIA_SHADOW_SCALE", UI_MENU_SHADOW_SCALE, vals, names, 4, UI_MENU_SHADOW_SCALE_DESC);
 }
 
 static void row_shadow_range(void) {
     static const char *const vals[] = {"100", "150", "200", "300"};
     static const char *const names[] = {"160 m (1x)", "240 m (1.5x)", "320 m (2x)", "480 m (3x)"};
-    opt_choice_list("NX2NAVI_SHADOW_RANGE", UI_MENU_SHADOW_RANGE, vals, names, 4, UI_MENU_SHADOW_RANGE_DESC);
+    opt_choice_list("NX2SARIA_SHADOW_RANGE", UI_MENU_SHADOW_RANGE, vals, names, 4, UI_MENU_SHADOW_RANGE_DESC);
 }
 
 static void row_gpu(void) {
@@ -798,7 +798,7 @@ static void row_gpu(void) {
         vals[i + 1] = idx[i];
         names[i + 1] = g_gpu_names[i];
     }
-    opt_choice_list("NX2NAVI_GPU_INDEX", UI_MENU_GPU, vals, names, g_gpu_n + 1, UI_MENU_GPU_DESC);
+    opt_choice_list("NX2SARIA_GPU_INDEX", UI_MENU_GPU, vals, names, g_gpu_n + 1, UI_MENU_GPU_DESC);
 }
 
 // The regions of the Mals/<region>.Product.<n>.sarc.zs files in the RomFS index ("USen", "EUpl"), listed once; 0 when
@@ -834,7 +834,7 @@ static void row_game_lang(void) {
     const char *vals[17], *names[17];
     vals[0] = "";
     names[0] = menu_text(UI_MENU_GAME_LANG_AUTO);
-    const char *now = opt_value("NX2NAVI_LANG");
+    const char *now = opt_value("NX2SARIA_LANG");
     int cur = *now ? -1 : 0;
     for (int i = 1; i <= n; i++) {
         vals[i] = langs[i - 1].code;
@@ -843,7 +843,7 @@ static void row_game_lang(void) {
     }
     for (int i = 1; i <= n && *now && cur < 0; i++)
         if (!strcmp(ui_text_lang(now), ui_text_lang(vals[i]))) cur = i;
-    opt_choice_list("NX2NAVI_LANG", UI_MENU_GAME_LANG, vals, names, n + 1, UI_MENU_GAME_LANG_DESC, cur);
+    opt_choice_list("NX2SARIA_LANG", UI_MENU_GAME_LANG, vals, names, n + 1, UI_MENU_GAME_LANG_DESC, cur);
 }
 
 // The frame limit (frame_rate.c): any whole rate from 30 to 240 on a slider (left and right step one, held they step
@@ -860,7 +860,7 @@ static void row_fps_limit() {
         snprintf(display, sizeof display, menu_text(UI_MENU_FPS_DISPLAY_HZ), hz);
         stop_names[0] = display;
     }
-    const char *set = opt_get("NX2NAVI_FPS_LIMIT"), *old = cfg_get("NX2NAVI_FPS60");
+    const char *set = opt_get("NX2SARIA_FPS_LIMIT"), *old = cfg_get("NX2SARIA_FPS60");
     const char *cur = (!set || !*set) && old && !strcmp(old, "0") ? "30" : nullptr;
     int rtss = rtss_limit_state();
     const char *note = rtss == 1   ? menu_text(UI_MENU_FPS_RTSS)
@@ -868,7 +868,7 @@ static void row_fps_limit() {
                        : rtss == 3 ? menu_text(UI_MENU_FPS_RTSS_IGNORED)
                        : rtss == 4 ? menu_text(UI_MENU_FPS_RTSS_TWO)
                                    : nullptr;
-    opt_slider_stops("NX2NAVI_FPS_LIMIT", UI_MENU_FPS_LIMIT, 30, 240, UI_MENU_FPS_LIMIT_DESC, "%d FPS", stop_values,
+    opt_slider_stops("NX2SARIA_FPS_LIMIT", UI_MENU_FPS_LIMIT, 30, 240, UI_MENU_FPS_LIMIT_DESC, "%d FPS", stop_values,
                      stop_names, stops, cur, note);
 }
 
@@ -878,7 +878,7 @@ static void row_fps_limit() {
 static const char *vsync_note(void) {
     const char *got = gfx_window_present_mode();
     if (!*got) return nullptr;
-    bool off = !strcmp(cfg_value("NX2NAVI_VK_PRESENT"), "immediate"), tears = !strcmp(got, "immediate");
+    bool off = !strcmp(cfg_value("NX2SARIA_VK_PRESENT"), "immediate"), tears = !strcmp(got, "immediate");
     if (off == tears) return nullptr;
     static char note[96];
     snprintf(note, sizeof note, menu_text(UI_MENU_PRESENT_IN_USE),
@@ -886,7 +886,7 @@ static const char *vsync_note(void) {
     return note;
 }
 
-// Low latency without frame generation (NX2NAVI_LOW_LATENCY, vk_lowlat.c, at once): off, on, and on with boost where
+// Low latency without frame generation (NX2SARIA_LOW_LATENCY, vk_lowlat.c, at once): off, on, and on with boost where
 // the driver's mode is NVIDIA's (AMD's has no boost; a 2 set there shows as on, which is what it does). Greyed out with
 // the reason where it cannot run: a driver with neither mode, a run in which DLSS frame generation brings its own, and
 // NVIDIA's while a frame generation presents the frames (vk_lowlat_status). Set and refused by the driver, it says so.
@@ -895,15 +895,15 @@ static void row_low_latency(void) {
     static const char *const values[] = {"0", "1", "2"};
     const char *names[] = {menu_text(UI_MENU_OFF), menu_text(UI_MENU_ON), menu_text(UI_MENU_LOW_LATENCY_BOOST)};
     const int st = vk_lowlat_status(), n = st == VK_LOWLAT_AMD ? 2 : 3;
-    int cur = cfg_int("NX2NAVI_LOW_LATENCY");
+    int cur = cfg_int("NX2SARIA_LOW_LATENCY");
     cur = cur < 0 ? 0 : cur >= n ? n - 1 : cur;
     if (st == VK_LOWLAT_NO_DRIVER) opt_disable_next(UI_MENU_LOW_LATENCY_NO_DRIVER);
     else if (st == VK_LOWLAT_DLSSG) opt_disable_next(UI_MENU_LOW_LATENCY_DLSSG);
     else if (st == VK_LOWLAT_FG) opt_disable_next(UI_MENU_LOW_LATENCY_FG);
     const char *note = st == VK_LOWLAT_FAILED && cur ? menu_text(UI_MENU_LOW_LATENCY_FAILED)
                      : st == VK_LOWLAT_RESTART && cur ? menu_text(UI_MENU_AFTER_RESTART) : nullptr;
-    int nv = opt_choice_index("NX2NAVI_LOW_LATENCY", UI_MENU_LOW_LATENCY, names, n, cur, 0, UI_MENU_LOW_LATENCY_DESC, note);
-    if (nv >= 0 && nv < n) opt_apply("NX2NAVI_LOW_LATENCY", values[nv]);
+    int nv = opt_choice_index("NX2SARIA_LOW_LATENCY", UI_MENU_LOW_LATENCY, names, n, cur, 0, UI_MENU_LOW_LATENCY_DESC, note);
+    if (nv >= 0 && nv < n) opt_apply("NX2SARIA_LOW_LATENCY", values[nv]);
 }
 
 // The row's "after restart" for a value of the setting, as row_low_latency gives it: on in a run whose device was made
@@ -924,8 +924,8 @@ static bool dlss_offered(void) {
     return v == 0 || v == 0x10de;   // unknown (no frame yet): as before, offered
 }
 
-// One upscaling choice over three settings: NX2NAVI_UPSCALER (how the picture is fitted to the window), NX2NAVI_DLAA
-// (DLSS or FSR 3.1 on) with NX2NAVI_TAA (which of them) and NX2NAVI_DLSS (the mode, the render scale: widescreen.c
+// One upscaling choice over three settings: NX2SARIA_UPSCALER (how the picture is fitted to the window), NX2SARIA_DLAA
+// (DLSS or FSR 3.1 on) with NX2SARIA_TAA (which of them) and NX2SARIA_DLSS (the mode, the render scale: widescreen.c
 // wide_present). A temporal mode fits the picture with bilinear, the upscaler having made it; DLSS's model is NVIDIA's own
 // for the mode (vk_dlaa.c evaluate, dlss_preset at its default). The list: bilinear, FSR 1, the DLSS modes where DLSS
 // runs (dlss_offered), the FSR 3.1 modes where FSR 3.1 loads (vk_ffx_available); a DLSS or FSR 3.1 mode still set where
@@ -945,7 +945,7 @@ static const char *fsr4_label(void) {
 // decodes 1:1 (vk_tonemap.c), with no DLSS or FSR. It is scene_share = 1 (widescreen.c plain_share) with dlaa = 0; a
 // scene_share of 1 or more set by hand in nx2navi.ini reads the same.
 static bool share_native(void) {
-    const char *s = cfg_get("NX2NAVI_SCENE_SHARE");
+    const char *s = cfg_get("NX2SARIA_SCENE_SHARE");
     return s && *s && atof(s) >= 1;
 }
 
@@ -955,16 +955,16 @@ static void upscaling_name(char *out, size_t size) {
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED, UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
     static const UiTextId fsr3[] = {UI_MENU_FSR3_NATIVE, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED, UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
     // FSR 3.1 set where it cannot load runs nothing (vk_dlaa.c vk_dlaa_fsr3): the game scales the picture as the rest says
-    if (!cfg_bool("NX2NAVI_DLAA") || (!strcmp(cfg_value("NX2NAVI_TAA"), "fsr3") && !vk_ffx_available())) {
+    if (!cfg_bool("NX2SARIA_DLAA") || (!strcmp(cfg_value("NX2SARIA_TAA"), "fsr3") && !vk_ffx_available())) {
         if (share_native() && wide_scene_settable()) snprintf(out, size, "%s", menu_text(UI_MENU_UPSCALING_NATIVE));
-        else if (strcmp(cfg_value("NX2NAVI_UPSCALER"), "fsr")) snprintf(out, size, "%s", menu_text(UI_MENU_UPSCALER_BILINEAR));
-        else snprintf(out, size, menu_text(UI_MENU_OV_FMT_FSR), cfg_int("NX2NAVI_SHARPNESS"));
+        else if (strcmp(cfg_value("NX2SARIA_UPSCALER"), "fsr")) snprintf(out, size, "%s", menu_text(UI_MENU_UPSCALER_BILINEAR));
+        else snprintf(out, size, menu_text(UI_MENU_OV_FMT_FSR), cfg_int("NX2SARIA_SHARPNESS"));
         return;
     }
     int mode = 0;
     for (int i = 0; i < 5; i++)
-        if (!strcmp(cfg_value("NX2NAVI_DLSS"), modes[i])) mode = i;
-    if (!strcmp(cfg_value("NX2NAVI_TAA"), "fsr3"))
+        if (!strcmp(cfg_value("NX2SARIA_DLSS"), modes[i])) mode = i;
+    if (!strcmp(cfg_value("NX2SARIA_TAA"), "fsr3"))
         snprintf(out, size, "%s %s", vk_ffx_fsr4() ? fsr4_label() : "AMD FSR 3.1", menu_text(fsr3[mode]));
     else snprintf(out, size, mode ? "DLSS %s" : "NVIDIA %s", menu_text(dlss[mode]));
 }
@@ -977,8 +977,8 @@ static void aa_name(char *out, size_t size) {
     static const UiTextId names[] = {UI_MENU_AA_GAME, UI_MENU_FRAMEGEN_OFF, UI_MENU_AA_FXAA, UI_MENU_AA_SMAA};
     int i = 0;
     for (int k = 0; k < 4; k++)
-        if (!strcmp(cfg_value("NX2NAVI_AA"), values[k])) i = k;   // taa: the game's SMAA, with the upscaler or alone
-    const bool taa = cfg_bool("NX2NAVI_DLAA") && (strcmp(cfg_value("NX2NAVI_TAA"), "fsr3") || vk_ffx_available());
+        if (!strcmp(cfg_value("NX2SARIA_AA"), values[k])) i = k;   // taa: the game's SMAA, with the upscaler or alone
+    const bool taa = cfg_bool("NX2SARIA_DLAA") && (strcmp(cfg_value("NX2SARIA_TAA"), "fsr3") || vk_ffx_available());
     if (taa && i == 1) snprintf(out, size, "TAA");
     else if (taa) snprintf(out, size, "TAA + %s", menu_text(names[i]));
     else snprintf(out, size, "%s", menu_text(names[i]));
@@ -995,7 +995,7 @@ static void row_upscaling(void) {
     // FSR 3.1's modes take the same render scales as DLSS's (Native AA is FSR's name for DLAA's full size)
     static const UiTextId fsr_names[] = {UI_MENU_FSR3_NATIVE, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                          UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
-    // FSR 4 (vk_ffx4.cpp) is the same setting as FSR 3.1 with NX2NAVI_FSR4 on, and takes the same modes: listed where
+    // FSR 4 (vk_ffx4.cpp) is the same setting as FSR 3.1 with NX2SARIA_FSR4 on, and takes the same modes: listed where
     // it runs on this device, after FSR 3.1's. Native (share_native) is listed where the scene's share can be set
     // (widescreen.c wide_scene_settable), after the two entries that enlarge the game's smaller scene.
     enum { BILINEAR, FSR1, NATIVE, DLSS, FSR3, FSR4 };
@@ -1018,11 +1018,11 @@ static void row_upscaling(void) {
         n++;
     };
     // what is set now
-    Entry now = {share_native() ? NATIVE : strcmp(opt_value("NX2NAVI_UPSCALER"), "fsr") ? BILINEAR : FSR1, 0};
-    if (opt_bool("NX2NAVI_DLAA")) {
-        now = {strcmp(opt_value("NX2NAVI_TAA"), "fsr3") ? DLSS : vk_ffx_fsr4() ? FSR4 : FSR3, 0};   // set where it does
+    Entry now = {share_native() ? NATIVE : strcmp(opt_value("NX2SARIA_UPSCALER"), "fsr") ? BILINEAR : FSR1, 0};
+    if (opt_bool("NX2SARIA_DLAA")) {
+        now = {strcmp(opt_value("NX2SARIA_TAA"), "fsr3") ? DLSS : vk_ffx_fsr4() ? FSR4 : FSR3, 0};   // set where it does
         for (int i = 0; i < 5; i++)                                                                // not run: FSR 3.1 does
-            if (!strcmp(opt_value("NX2NAVI_DLSS"), modes[i])) now.mode = i;
+            if (!strcmp(opt_value("NX2SARIA_DLSS"), modes[i])) now.mode = i;
     }
     const bool dlss = dlss_offered(), fsr = vk_ffx_available(), fsr4 = fsr && vk_ffx4_available();
     add(BILINEAR, 0);
@@ -1051,29 +1051,29 @@ static void row_upscaling(void) {
         snprintf(in_use, sizeof in_use, menu_text(UI_MENU_PRESENT_IN_USE), pct);
         note = in_use;
     }
-    int nv = opt_choice_index("NX2NAVI_UPSCALER", UI_MENU_UPSCALING, names, n, cur, 1,
+    int nv = opt_choice_index("NX2SARIA_UPSCALER", UI_MENU_UPSCALING, names, n, cur, 1,
                               !fsr ? UI_MENU_UPSCALING_DESC_NO_FSR : dlss ? UI_MENU_UPSCALING_DESC : UI_MENU_UPSCALING_DESC_FSR,
                               note);
     if (nv < 0 || nv >= n) return;
     const Entry e = list[nv];
-    opt_apply("NX2NAVI_UPSCALER", e.kind == FSR1 ? "fsr" : "bilinear");
-    opt_apply("NX2NAVI_DLAA", e.kind >= DLSS ? "1" : "0");
+    opt_apply("NX2SARIA_UPSCALER", e.kind == FSR1 ? "fsr" : "bilinear");
+    opt_apply("NX2SARIA_DLAA", e.kind >= DLSS ? "1" : "0");
     // Native is scene_share = 1. Leaving it unsets the key (the game's own share, widescreen.c PLAIN_SHARE); a share of
     // the whole picture set by hand beside DLSS or FSR stays while one of their modes is chosen
-    if (e.kind == NATIVE) opt_apply("NX2NAVI_SCENE_SHARE", "1");
-    else if (share_native() && (e.kind < DLSS || now.kind == NATIVE)) opt_apply("NX2NAVI_SCENE_SHARE", "");
-    if (e.kind >= DLSS) opt_apply("NX2NAVI_DLSS", modes[e.mode]);
-    if (e.kind >= DLSS) opt_apply("NX2NAVI_TAA", e.kind >= FSR3 ? "fsr3" : "dlss");
-    if (e.kind >= FSR3) opt_apply("NX2NAVI_FSR4", e.kind == FSR4 ? "1" : "0");
+    if (e.kind == NATIVE) opt_apply("NX2SARIA_SCENE_SHARE", "1");
+    else if (share_native() && (e.kind < DLSS || now.kind == NATIVE)) opt_apply("NX2SARIA_SCENE_SHARE", "");
+    if (e.kind >= DLSS) opt_apply("NX2SARIA_DLSS", modes[e.mode]);
+    if (e.kind >= DLSS) opt_apply("NX2SARIA_TAA", e.kind >= FSR3 ? "fsr3" : "dlss");
+    if (e.kind >= FSR3) opt_apply("NX2SARIA_FSR4", e.kind == FSR4 ? "1" : "0");
     // FSR 4 that failed in a row stays listed (it runs on this device) while FSR 3.1 serves: the row shows FSR 3.1, and
     // choosing FSR 4 again tries it anew
     if (e.kind == FSR4) vk_ffx4_retry();
     // The Anti-aliasing row keeps its choice, which runs along with DLSS's or FSR's TAA (vk_aa.c vk_aa_mode); its TAA
     // went with the temporal mode, so leaving that leaves the game's SMAA
-    if (e.kind < DLSS && !strcmp(cfg_value("NX2NAVI_AA"), "taa")) opt_apply("NX2NAVI_AA", "game");
+    if (e.kind < DLSS && !strcmp(cfg_value("NX2SARIA_AA"), "taa")) opt_apply("NX2SARIA_AA", "game");
 }
 
-// Anti-aliasing (vk_aa.c NX2NAVI_AA): the game's own SMAA (the default), off, FXAA or SMAA in its place, or TAA, which is
+// Anti-aliasing (vk_aa.c NX2SARIA_AA): the game's own SMAA (the default), off, FXAA or SMAA in its place, or TAA, which is
 // DLSS or FSR at the scene's size, the Upscaling row's temporal modes. Without a temporal mode set (dlaa), TAA is listed
 // where one runs: NVIDIA DLAA where DLSS is offered and taa does not name FSR, else FSR 4 Native AA where it runs, else
 // FSR 3.1 Native AA where it loads; choosing it sets that native mode, as the Upscaling row would. While a temporal mode
@@ -1084,7 +1084,7 @@ static void row_aa(void) {
     enum { GAME, OFF, FXAA, SMAA, TAA };
     static const char *const values[] = {"game", "off", "fxaa", "smaa", "taa"};
     const bool dlss = dlss_offered(), fsr = vk_ffx_available(), fsr4 = fsr && vk_ffx4_available();
-    const bool temporal = cfg_bool("NX2NAVI_DLAA"), fsr_set = !strcmp(cfg_value("NX2NAVI_TAA"), "fsr3");
+    const bool temporal = cfg_bool("NX2SARIA_DLAA"), fsr_set = !strcmp(cfg_value("NX2SARIA_TAA"), "fsr3");
     const char *names[5] = {menu_text(UI_MENU_AA_GAME), menu_text(UI_MENU_FRAMEGEN_OFF), menu_text(UI_MENU_AA_FXAA),
                             menu_text(UI_MENU_AA_SMAA), nullptr};
     int n = 4;
@@ -1098,28 +1098,28 @@ static void row_aa(void) {
     }
     int cur = GAME;
     for (int i = 0; i < 4; i++)
-        if (!strcmp(cfg_value("NX2NAVI_AA"), values[i])) cur = i;
+        if (!strcmp(cfg_value("NX2SARIA_AA"), values[i])) cur = i;
     // FSR 3.1 set where it cannot load runs nothing (the Upscaling row says so): no TAA joins the choice then
     const char *note = temporal && (!fsr_set || fsr) ? menu_text(UI_MENU_AA_WITH_TAA) : nullptr;
-    int nv = opt_choice_index("NX2NAVI_AA", UI_MENU_AA, names, n, cur, GAME, UI_MENU_AA_DESC, note);
+    int nv = opt_choice_index("NX2SARIA_AA", UI_MENU_AA, names, n, cur, GAME, UI_MENU_AA_DESC, note);
     if (nv < 0 || nv >= n || nv == cur) return;
     if (nv == TAA) {   // listed only without a temporal mode: the native one of that upscaler, as row_upscaling sets it
-        opt_apply("NX2NAVI_UPSCALER", "bilinear");
-        opt_apply("NX2NAVI_DLAA", "1");
-        opt_apply("NX2NAVI_DLSS", "dlaa");
-        opt_apply("NX2NAVI_TAA", kind == K_DLSS ? "dlss" : "fsr3");
-        if (kind != K_DLSS) opt_apply("NX2NAVI_FSR4", kind == K_FSR4 ? "1" : "0");
+        opt_apply("NX2SARIA_UPSCALER", "bilinear");
+        opt_apply("NX2SARIA_DLAA", "1");
+        opt_apply("NX2SARIA_DLSS", "dlaa");
+        opt_apply("NX2SARIA_TAA", kind == K_DLSS ? "dlss" : "fsr3");
+        if (kind != K_DLSS) opt_apply("NX2SARIA_FSR4", kind == K_FSR4 ? "1" : "0");
         if (kind == K_FSR4) vk_ffx4_retry();
     }
-    opt_apply("NX2NAVI_AA", values[nv]);
+    opt_apply("NX2SARIA_AA", values[nv]);
 }
 
 // Under the HDR value: "after restart" when what is set waits for one (the game's own HDR, to or from it:
 // vk_hdr_restart_for), "in use: off" when HDR is on but the swapchain is not HDR10 (the display or Windows' HDR
 // switch is off, vk_hdr_surface_format).
 static const char *hdr_note(void) {
-    if (vk_hdr_restart_for(opt_value("NX2NAVI_HDR"))) return menu_text(UI_MENU_AFTER_RESTART);   // the draft's value
-    if (!vk_hdr_wanted() || vk_hdr_active() || !*gfx_window_present_mode() || !cfg_bool("NX2NAVI_HDR")) return nullptr;
+    if (vk_hdr_restart_for(opt_value("NX2SARIA_HDR"))) return menu_text(UI_MENU_AFTER_RESTART);   // the draft's value
+    if (!vk_hdr_wanted() || vk_hdr_active() || !*gfx_window_present_mode() || !cfg_bool("NX2SARIA_HDR")) return nullptr;
     static char note[96];
     snprintf(note, sizeof note, menu_text(UI_MENU_PRESENT_IN_USE), menu_text(UI_MENU_FRAMEGEN_OFF));
     return note;
@@ -1134,43 +1134,43 @@ static const char *hdr_note(void) {
 static void row_hdr(void) {
     static const char *const values[] = {"0", "1", "native"};
     const char *names[] = {menu_text(UI_MENU_FRAMEGEN_OFF), menu_text(UI_MENU_HDR_TONEMAPPED), menu_text(UI_MENU_HDR_NATIVE)};
-    opt_choice_list("NX2NAVI_HDR", UI_MENU_HDR, values, names, 3, UI_MENU_HDR_DESC, -1, hdr_note());
-    if (!opt_bool("NX2NAVI_HDR")) return;
-    opt_slider("NX2NAVI_HDR_PEAK_NITS", UI_MENU_HDR_PEAK, 400, 10000, UI_MENU_HDR_PEAK_DESC, 50, "%.0f nits");
-    opt_slider("NX2NAVI_HDR_GAME_NITS", UI_MENU_HDR_GAME, 48, 500, UI_MENU_HDR_GAME_DESC, 1, "%.0f nits");
-    opt_slider("NX2NAVI_HDR_UI_NITS", UI_MENU_HDR_UI, 48, 500, UI_MENU_HDR_UI_DESC, 1, "%.0f nits");
-    if (!strcmp(opt_value("NX2NAVI_HDR"), "native")) return;   // the draft's value, as the row above shows it
+    opt_choice_list("NX2SARIA_HDR", UI_MENU_HDR, values, names, 3, UI_MENU_HDR_DESC, -1, hdr_note());
+    if (!opt_bool("NX2SARIA_HDR")) return;
+    opt_slider("NX2SARIA_HDR_PEAK_NITS", UI_MENU_HDR_PEAK, 400, 10000, UI_MENU_HDR_PEAK_DESC, 50, "%.0f nits");
+    opt_slider("NX2SARIA_HDR_GAME_NITS", UI_MENU_HDR_GAME, 48, 500, UI_MENU_HDR_GAME_DESC, 1, "%.0f nits");
+    opt_slider("NX2SARIA_HDR_UI_NITS", UI_MENU_HDR_UI, 48, 500, UI_MENU_HDR_UI_DESC, 1, "%.0f nits");
+    if (!strcmp(opt_value("NX2SARIA_HDR"), "native")) return;   // the draft's value, as the row above shows it
     static const char *const curves[] = {"vanilla", "psychov35", "renodrt"};
     static const char *const curve_names[] = {"Vanilla", "PsychoV35", "RenoDRT"};
-    opt_choice_list("NX2NAVI_HDR_TONEMAP", UI_MENU_HDR_TONEMAP, curves, curve_names, 3, UI_MENU_HDR_TONEMAP_DESC);
+    opt_choice_list("NX2SARIA_HDR_TONEMAP", UI_MENU_HDR_TONEMAP, curves, curve_names, 3, UI_MENU_HDR_TONEMAP_DESC);
     static const char *const gammas[] = {"off", "2.2", "2.4"};
     const char *gamma_names[] = {menu_text(UI_MENU_FRAMEGEN_OFF), "2.2", "BT.1886 (2.4)"};
-    opt_choice_list("NX2NAVI_HDR_GAMMA", UI_MENU_HDR_GAMMA, gammas, gamma_names, 3, UI_MENU_HDR_GAMMA_DESC);
-    const char *curve = cfg_value("NX2NAVI_HDR_TONEMAP");
+    opt_choice_list("NX2SARIA_HDR_GAMMA", UI_MENU_HDR_GAMMA, gammas, gamma_names, 3, UI_MENU_HDR_GAMMA_DESC);
+    const char *curve = cfg_value("NX2SARIA_HDR_TONEMAP");
     if (!strcmp(curve, "vanilla")) return;
     const bool luminance = !strcmp(curve, "renodrt");   // else the observer-response mapper, as vk_hdr.c reads the setting
     if (!luminance) {
         static const char *const greys[] = {"render", "vanilla"};
         static const char *const grey_names[] = {"Render", "Vanilla"};
-        opt_choice_list("NX2NAVI_HDR_MIDGRAY", UI_MENU_HDR_MIDGRAY, greys, grey_names, 2, UI_MENU_HDR_MIDGRAY_DESC);
-        opt_toggle("NX2NAVI_HDR_MATCH_SLOPE", UI_MENU_HDR_MATCH_SLOPE, UI_MENU_HDR_MATCH_SLOPE_DESC);
-        opt_slider("NX2NAVI_HDR_TONE_SLOPE", UI_MENU_HDR_TONE_SLOPE, 0, 100, UI_MENU_HDR_TONE_SLOPE_DESC, 1, "%.0f");
-        opt_slider("NX2NAVI_HDR_HUE_CLIP", UI_MENU_HDR_HUE_CLIP, 0, 100, UI_MENU_HDR_HUE_CLIP_DESC, 5, "%.0f %%");
+        opt_choice_list("NX2SARIA_HDR_MIDGRAY", UI_MENU_HDR_MIDGRAY, greys, grey_names, 2, UI_MENU_HDR_MIDGRAY_DESC);
+        opt_toggle("NX2SARIA_HDR_MATCH_SLOPE", UI_MENU_HDR_MATCH_SLOPE, UI_MENU_HDR_MATCH_SLOPE_DESC);
+        opt_slider("NX2SARIA_HDR_TONE_SLOPE", UI_MENU_HDR_TONE_SLOPE, 0, 100, UI_MENU_HDR_TONE_SLOPE_DESC, 1, "%.0f");
+        opt_slider("NX2SARIA_HDR_HUE_CLIP", UI_MENU_HDR_HUE_CLIP, 0, 100, UI_MENU_HDR_HUE_CLIP_DESC, 5, "%.0f %%");
     }
-    opt_slider("NX2NAVI_HDR_EXPOSURE", UI_MENU_HDR_EXPOSURE, 0, 200, UI_MENU_HDR_EXPOSURE_DESC, 5, "%.0f %%");
-    opt_slider("NX2NAVI_HDR_HIGHLIGHTS", UI_MENU_HDR_HIGHLIGHTS, 0, 100, UI_MENU_HDR_HIGHLIGHTS_DESC, 1, "%.0f");
-    opt_slider("NX2NAVI_HDR_SHADOWS", UI_MENU_HDR_SHADOWS, 0, 100, UI_MENU_HDR_SHADOWS_DESC, 1, "%.0f");
-    opt_slider("NX2NAVI_HDR_CONTRAST", UI_MENU_HDR_CONTRAST, 0, 100, UI_MENU_HDR_CONTRAST_DESC, 1, "%.0f");
-    opt_slider("NX2NAVI_HDR_SATURATION", UI_MENU_HDR_SATURATION, 0, 100, UI_MENU_HDR_SATURATION_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_EXPOSURE", UI_MENU_HDR_EXPOSURE, 0, 200, UI_MENU_HDR_EXPOSURE_DESC, 5, "%.0f %%");
+    opt_slider("NX2SARIA_HDR_HIGHLIGHTS", UI_MENU_HDR_HIGHLIGHTS, 0, 100, UI_MENU_HDR_HIGHLIGHTS_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_SHADOWS", UI_MENU_HDR_SHADOWS, 0, 100, UI_MENU_HDR_SHADOWS_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_CONTRAST", UI_MENU_HDR_CONTRAST, 0, 100, UI_MENU_HDR_CONTRAST_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_SATURATION", UI_MENU_HDR_SATURATION, 0, 100, UI_MENU_HDR_SATURATION_DESC, 1, "%.0f");
     if (!luminance) return;
-    opt_slider("NX2NAVI_HDR_HIGHLIGHT_SAT", UI_MENU_HDR_HIGHLIGHT_SAT, 0, 100, UI_MENU_HDR_HIGHLIGHT_SAT_DESC, 1, "%.0f");
-    opt_slider("NX2NAVI_HDR_BLOWOUT", UI_MENU_HDR_BLOWOUT, 0, 100, UI_MENU_HDR_BLOWOUT_DESC, 1, "%.0f");
-    opt_slider("NX2NAVI_HDR_FLARE", UI_MENU_HDR_FLARE, 0, 100, UI_MENU_HDR_FLARE_DESC, 1, "%.0f");
-    opt_slider("NX2NAVI_HDR_HUE", UI_MENU_HDR_HUE, 0, 100, UI_MENU_HDR_HUE_DESC, 5, "%.0f %%");
-    opt_slider("NX2NAVI_HDR_GRADE", UI_MENU_HDR_GRADE, 0, 100, UI_MENU_HDR_GRADE_DESC, 5, "%.0f %%");
+    opt_slider("NX2SARIA_HDR_HIGHLIGHT_SAT", UI_MENU_HDR_HIGHLIGHT_SAT, 0, 100, UI_MENU_HDR_HIGHLIGHT_SAT_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_BLOWOUT", UI_MENU_HDR_BLOWOUT, 0, 100, UI_MENU_HDR_BLOWOUT_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_FLARE", UI_MENU_HDR_FLARE, 0, 100, UI_MENU_HDR_FLARE_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_HDR_HUE", UI_MENU_HDR_HUE, 0, 100, UI_MENU_HDR_HUE_DESC, 5, "%.0f %%");
+    opt_slider("NX2SARIA_HDR_GRADE", UI_MENU_HDR_GRADE, 0, 100, UI_MENU_HDR_GRADE_DESC, 5, "%.0f %%");
 }
 
-// DLSS frame generation's multiplier (NX2NAVI_FRAMEGEN_MULTIPLIER, vk_dlssg.c, at once): 2x, 3x or 4x as far as this
+// DLSS frame generation's multiplier (NX2SARIA_FRAMEGEN_MULTIPLIER, vk_dlssg.c, at once): 2x, 3x or 4x as far as this
 // GPU and driver allow (vk_dlssg_multiplier_max, from Streamline). While DLSS's frame generation runs, the row lists only
 // those and shows the value in effect, a higher setting clamped to it, with a note saying why the rest are missing;
 // before the restart that starts it, or before Streamline reported its limit, it lists all three. Left out while it is
@@ -1185,10 +1185,10 @@ static void row_framegen_mult(bool restart) {
     if (!max) max = 4;   // not known yet: every multiplier, the setting as it is
     static const char *const values[] = {"2", "3", "4"};
     static const char *const names[] = {"2x", "3x", "4x"};
-    int n = max - 1, cur = vk_dlssg_multiplier_of(opt_value("NX2NAVI_FRAMEGEN_MULTIPLIER"), max, nullptr) - 2;
-    int nv = opt_choice_index("NX2NAVI_FRAMEGEN_MULTIPLIER", UI_MENU_FRAMEGEN_MULT, names, n, cur, 0,
+    int n = max - 1, cur = vk_dlssg_multiplier_of(opt_value("NX2SARIA_FRAMEGEN_MULTIPLIER"), max, nullptr) - 2;
+    int nv = opt_choice_index("NX2SARIA_FRAMEGEN_MULTIPLIER", UI_MENU_FRAMEGEN_MULT, names, n, cur, 0,
                               UI_MENU_FRAMEGEN_MULT_DESC, note);
-    if (nv >= 0 && nv < n) opt_apply("NX2NAVI_FRAMEGEN_MULTIPLIER", values[nv]);
+    if (nv >= 0 && nv < n) opt_apply("NX2SARIA_FRAMEGEN_MULTIPLIER", values[nv]);
 }
 
 // NVIDIA's frame generation runs through NGX itself, not through Streamline (vk_dlaa.c vk_ngxfg_*, gfx_present.c
@@ -1213,19 +1213,19 @@ static void row_framegen_mult_ngx(void) {
     for (; n < max && n < 5; n++) values[n] = mult[n], names[n] = mult_names[n];
     const int top = n - 1;
     values[n] = "dynamic", names[n++] = menu_text(UI_MENU_FG_MULT_DYNAMIC);
-    const char *v = opt_value("NX2NAVI_FG_MULT");
+    const char *v = opt_value("NX2SARIA_FG_MULT");
     int cur = strcmp(v, "dynamic") ? top : n - 1;   // a multiplier above what the GPU allows shows as the highest
     for (int i = 0; i < n; i++)
         if (!strcmp(v, values[i])) cur = i;
-    int nv = opt_choice_index("NX2NAVI_FG_MULT", UI_MENU_FRAMEGEN_MULT, names, n, cur, 0, UI_MENU_FG_MULT_DESC, nullptr);
-    if (nv >= 0 && nv < n) opt_apply("NX2NAVI_FG_MULT", values[nv]);
+    int nv = opt_choice_index("NX2SARIA_FG_MULT", UI_MENU_FRAMEGEN_MULT, names, n, cur, 0, UI_MENU_FG_MULT_DESC, nullptr);
+    if (nv >= 0 && nv < n) opt_apply("NX2SARIA_FG_MULT", values[nv]);
 }
 
 // Frame generation to or from NVIDIA's waits for a restart: AMD's follows the setting, NVIDIA's is set up with the device
 // (vk_dlssg.c). Through NGX it follows the setting too, once NGX is up, which needs DLSS upscaling on when the game
 // starts. The row's note and the Restart button's count (restart_pending).
 static bool framegen_restart(void) {
-    const bool set = !strcmp(cfg_value("NX2NAVI_FRAMEGEN"), "dlss");
+    const bool set = !strcmp(cfg_value("NX2SARIA_FRAMEGEN"), "dlss");
     if (!dlss_offered()) return false;
     return framegen_ngx() ? set && !vk_ngxfg_wanted() : set != (vk_dlssg_wanted() != 0);
 }
@@ -1238,10 +1238,10 @@ static const char *fg4_label(void) {
     snprintf(s, sizeof s, *v ? "AMD FSR 4 library (%s)" : "AMD FSR 4 library", v);
     return s;
 }
-// It is the one in use: set (NX2NAVI_FSR4_FG) with FSR 4 as the upscaler, where it runs (vk_fg.cpp use4). Without an
+// It is the one in use: set (NX2SARIA_FSR4_FG) with FSR 4 as the upscaler, where it runs (vk_fg.cpp use4). Without an
 // upscaler (dlaa = 0) the FSR 3.1 library's runs.
 static bool fg4_chosen(void) {
-    return cfg_bool("NX2NAVI_FSR4_FG") && cfg_bool("NX2NAVI_DLAA") && vk_ffx_fsr4() && vk_fg4_available() &&
+    return cfg_bool("NX2SARIA_FSR4_FG") && cfg_bool("NX2SARIA_DLAA") && vk_ffx_fsr4() && vk_fg4_available() &&
            !vk_fg4_failed();
 }
 
@@ -1253,8 +1253,8 @@ static void row_framegen(void) {
     // Through NGX (every build but the Windows one) NVIDIA's needs NGX, which comes up only with DLSS upscaling on when
     // the game starts (vk_ngxfg_wanted): before such a start it waits for a DLSS mode under Upscaling and a restart
     const bool via_ngx = framegen_ngx() && dlss;
-    const bool dlss_set = opt_bool("NX2NAVI_DLAA") && strcmp(opt_value("NX2NAVI_TAA"), "fsr3");
-    const char *v = opt_value("NX2NAVI_FRAMEGEN");
+    const bool dlss_set = opt_bool("NX2SARIA_DLAA") && strcmp(opt_value("NX2SARIA_TAA"), "fsr3");
+    const char *v = opt_value("NX2SARIA_FRAMEGEN");
     int cur = !strcmp(v, "fsr3") ? 1 : !strcmp(v, "dlss") ? 2 : 0;
     // what the texts promise follows what runs here: frame generation with any choice, NGX's start rule, or none
     const UiTextId desc = !dlss && !fsr ? UI_MENU_FRAMEGEN_DESC_NONE : via_ngx ? UI_MENU_FRAMEGEN_DESC_NGX
@@ -1268,10 +1268,10 @@ static void row_framegen(void) {
     // while it is set
     // AMD's has two libraries where FSR 4 runs: the FSR 3.1 library's, and the one of the library FSR 4 comes with,
     // listed after it as a choice of its own. That one generates only beside FSR 4 upscaling, so choosing it sets the
-    // upscaler to FSR 4 as well; both are NX2NAVI_FRAMEGEN = fsr3, told apart by NX2NAVI_FSR4_FG.
+    // upscaler to FSR 4 as well; both are NX2SARIA_FRAMEGEN = fsr3, told apart by NX2SARIA_FSR4_FG.
     enum { OFF, FSR3, FSR4LIB, DLSS };
     const bool four = cur == 1 && fg4_chosen();
-    const bool four_offered = fsr && cfg_bool("NX2NAVI_DLAA") && vk_ffx4_available() && vk_fg4_available() &&
+    const bool four_offered = fsr && cfg_bool("NX2SARIA_DLAA") && vk_ffx4_available() && vk_fg4_available() &&
                               !vk_fg4_failed();   // beside FSR 4 upscaling only: not offered without an upscaler
     const int now = cur == 2 ? DLSS : cur == 1 ? (four ? FSR4LIB : FSR3) : OFF;
     const char *all_names[] = {menu_text(UI_MENU_FRAMEGEN_OFF), "AMD FSR 3.1", fg4_label(), "NVIDIA DLSS"};
@@ -1295,24 +1295,24 @@ static void row_framegen(void) {
     if (st == DLSSG_UNAVAILABLE) note = UI_MENU_FRAMEGEN_UNAVAILABLE;
     else if (st == DLSSG_NO_FILES) note = UI_MENU_FRAMEGEN_OFF_FILES;
     // the FSR 4 library's runs beside FSR 4 and has no note of its own
-    int nv = opt_choice_index("NX2NAVI_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, at, 0, desc,
+    int nv = opt_choice_index("NX2SARIA_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, at, 0, desc,
                               (four && !restart) || note == UI_TEXT_COUNT ? NULL : menu_text(note));
     if (nv >= 0 && nv < n) {
         const int k = kinds[nv];
-        opt_apply("NX2NAVI_FRAMEGEN", k == OFF ? "off" : k == DLSS ? "dlss" : "fsr3");
+        opt_apply("NX2SARIA_FRAMEGEN", k == OFF ? "off" : k == DLSS ? "dlss" : "fsr3");
         if (k == FSR4LIB) {
-            opt_apply("NX2NAVI_FSR4_FG", "1");
-            if (!vk_ffx_fsr4()) opt_apply("NX2NAVI_TAA", "fsr3"), opt_apply("NX2NAVI_FSR4", "1"), vk_ffx4_retry();
-        } else if (k == FSR3 && cfg_bool("NX2NAVI_FSR4_FG")) {
-            opt_apply("NX2NAVI_FSR4_FG", "0");
+            opt_apply("NX2SARIA_FSR4_FG", "1");
+            if (!vk_ffx_fsr4()) opt_apply("NX2SARIA_TAA", "fsr3"), opt_apply("NX2SARIA_FSR4", "1"), vk_ffx4_retry();
+        } else if (k == FSR3 && cfg_bool("NX2SARIA_FSR4_FG")) {
+            opt_apply("NX2SARIA_FSR4_FG", "0");
         }
     }
     else if (cur == 2 && dlss && ngx) row_framegen_mult_ngx();   // nothing while NGX's frame generation cannot run
     else if (cur == 2 && dlss) row_framegen_mult(restart);
 }
 
-// One Resolution row for the picture's height (NX2NAVI_GAME_RES, widescreen.c picture_height: 1080, the game's 1440 or
-// more) and the window outside fullscreen (NX2NAVI_WINDOW_SIZE): each height is shown as the size of the game's shape at
+// One Resolution row for the picture's height (NX2SARIA_GAME_RES, widescreen.c picture_height: 1080, the game's 1440 or
+// more) and the window outside fullscreen (NX2SARIA_WINDOW_SIZE): each height is shown as the size of the game's shape at
 // it (16:9 2560 x 1440, 21:9 3440 x 1440, 32:9 5120 x 1440, the window's own shape where the picture follows the window),
 // and choosing one sets both. The window takes it at once (gfx_present.c applies a changed size at the next present),
 // within the monitor, and the picture after a restart. Native draws at the window's size and leaves the window as it is.
@@ -1322,12 +1322,12 @@ static void row_resolution(void) {
     static const int wide169[] = {1920, 2560, 3200, 3840, 5120}, wide219[] = {2560, 3440, 4300, 5120, 6880},
                      wide329[] = {3840, 5120, 6400, 7680, 10240};
     enum { N = sizeof heights / sizeof *heights };
-    const char *aspect = opt_value("NX2NAVI_GAME_ASPECT");
+    const char *aspect = opt_value("NX2SARIA_GAME_ASPECT");
     int mw = 0, mh = 0, ww = 0, wh = 0;
     int have_mon = gfx_window_monitor_size(&mw, &mh) && mw > 0 && mh > 0;
-    int have_win = sscanf(opt_value("NX2NAVI_WINDOW_SIZE"), "%dx%d", &ww, &wh) == 2 && ww > 0 && wh > 0;
+    int have_win = sscanf(opt_value("NX2SARIA_WINDOW_SIZE"), "%dx%d", &ww, &wh) == 2 && ww > 0 && wh > 0;
     // the window's shape where the picture follows it: the monitor's in fullscreen, else the window's own
-    double shape = opt_bool("NX2NAVI_FULLSCREEN") && have_mon ? (double)mw / mh : have_win ? (double)ww / wh : 16.0 / 9.0;
+    double shape = opt_bool("NX2SARIA_FULLSCREEN") && have_mon ? (double)mw / mh : have_win ? (double)ww / wh : 16.0 / 9.0;
     static char sizes[N][24], names[N + 1][48];
     const char *pn[N + 1];
     for (int i = 0; i < N; i++) {
@@ -1344,36 +1344,36 @@ static void row_resolution(void) {
         pn[i] = names[i];
     }
     pn[N] = menu_text(UI_MENU_GAME_RES_NATIVE);
-    const char *res = opt_value("NX2NAVI_GAME_RES");
+    const char *res = opt_value("NX2SARIA_GAME_RES");
     int cur = -1;
     for (int i = 0; i < N; i++)
         if (atoi(res) == heights[i]) cur = i;
     if (!strcmp(res, "window")) cur = N;
-    int nv = opt_choice_index("NX2NAVI_GAME_RES", UI_MENU_GAME_RES, pn, N + 1, cur, 1, UI_MENU_GAME_RES_DESC);
+    int nv = opt_choice_index("NX2SARIA_GAME_RES", UI_MENU_GAME_RES, pn, N + 1, cur, 1, UI_MENU_GAME_RES_DESC);
     if (nv < 0 || nv > N) return;
     if (nv == N) {
-        opt_apply("NX2NAVI_GAME_RES", "window");
+        opt_apply("NX2SARIA_GAME_RES", "window");
         return;
     }
     char h[16];
     snprintf(h, sizeof h, "%d", heights[nv]);
-    opt_apply("NX2NAVI_GAME_RES", h);
-    opt_apply("NX2NAVI_WINDOW_SIZE", sizes[nv]);
+    opt_apply("NX2SARIA_GAME_RES", h);
+    opt_apply("NX2SARIA_WINDOW_SIZE", sizes[nv]);
 }
 
 static void tab_screen(float scale) {
     opt_begin("##screen", scale);
-    opt_toggle("NX2NAVI_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
+    opt_toggle("NX2SARIA_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
     // the window's size is the Resolution row's below where the picture's size can be set (row_resolution); a build
     // without the widescreen patch sets draws the game's own size and keeps the window row
     if (!wide_available()) row_window_size();
     // On is the default mode, mailbox with its fallbacks (gfx_present.c pick_present_mode): plain fifo would drop the
     // game to 30 at every slow frame on a 60 Hz display. A fifo already saved also reads as on.
-    opt_toggle_value("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate", vsync_note());
+    opt_toggle_value("NX2SARIA_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate", vsync_note());
     row_low_latency();
     row_gpu();
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
-    opt_choice("NX2NAVI_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
+    opt_choice("NX2SARIA_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
     // The game resolution needs the output and scene patch sets (resolution.c res_adjustable): Ocarina's build has
     // none and always draws its own size, so the row would change nothing
@@ -1381,7 +1381,7 @@ static void tab_screen(float scale) {
     // Widescreen needs the patch sets of recomp/patches-v111.txt (widescreen.c wide_available)
     static const UiTextId wide[] = {UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW, UI_MENU_GAME_ASPECT_21_9,
                                     UI_MENU_GAME_ASPECT_32_9};
-    if (wide_available()) opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
+    if (wide_available()) opt_choice("NX2SARIA_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
     if (wide_available()) row_resolution();
     row_upscaling();
     row_aa();
@@ -1389,13 +1389,13 @@ static void tab_screen(float scale) {
     row_hdr();
     // The sharpening runs under FSR 1 (vk_fsr.c vk_fsr_record, RCAS) and FSR 3.1 (vk_ffx.cpp, its own RCAS); with
     // bilinear or DLSS the slider would do nothing
-    int dl = opt_bool("NX2NAVI_DLAA"), fsr3 = dl && !strcmp(opt_value("NX2NAVI_TAA"), "fsr3") && vk_ffx_available();
-    if (!fsr3 && (strcmp(opt_value("NX2NAVI_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
-    opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
+    int dl = opt_bool("NX2SARIA_DLAA"), fsr3 = dl && !strcmp(opt_value("NX2SARIA_TAA"), "fsr3") && vk_ffx_available();
+    if (!fsr3 && (strcmp(opt_value("NX2SARIA_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
+    opt_slider("NX2SARIA_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
     // Anisotropic filtering of the surface textures that tile (vk_texture.c aniso_raised), at once (vk_sampler_aniso_live)
     static const char *const aniso[] = {"game", "2", "4", "8", "16"};
     const char *aniso_names[] = {menu_text(UI_MENU_ANISO_GAME), "2x", "4x", "8x", "16x"};
-    opt_choice_list("NX2NAVI_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
+    opt_choice_list("NX2SARIA_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
     row_texture_detail();
     opt_end();
 }
@@ -1505,19 +1505,19 @@ static void tab_game(float scale) {
     row_fps_limit();   // frame_rate.c: Ocarina steps by the clock, so the pacer alone sets its rate
     row_game_lang();
     static const UiTextId mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
-    opt_choice("NX2NAVI_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);
-    opt_toggle("NX2NAVI_ASSUME_FOCUS", UI_MENU_ASSUME_FOCUS, UI_MENU_ASSUME_FOCUS_DESC);
+    opt_choice("NX2SARIA_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);
+    opt_toggle("NX2SARIA_ASSUME_FOCUS", UI_MENU_ASSUME_FOCUS, UI_MENU_ASSUME_FOCUS_DESC);
     // The message window's typing speed (text_speed.c), where the game version has the patch set text_speed; live. The
     // names follow the values in their cfg.c order.
     if (text_speed_available()) {
         static const UiTextId speed[] = {UI_MENU_TEXT_SPEED_NORMAL, UI_MENU_TEXT_SPEED_FAST, UI_MENU_TEXT_SPEED_INSTANT};
-        opt_choice("NX2NAVI_TEXT_SPEED", UI_MENU_TEXT_SPEED, speed, 3, UI_MENU_TEXT_SPEED_DESC);
+        opt_choice("NX2SARIA_TEXT_SPEED", UI_MENU_TEXT_SPEED, speed, 3, UI_MENU_TEXT_SPEED_DESC);
     }
     // The game's once-a-day amiibo limit (amiibo_daily.c), where the game version has the patch set amiibo_daily; live
     if (amiibo_daily_available())
-        opt_toggle("NX2NAVI_AMIIBO_DAILY_LIMIT", UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC);
+        opt_toggle("NX2SARIA_AMIIBO_DAILY_LIMIT", UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC);
     // discord_rpc.c reads the setting on its own thread and connects or clears the status within half a second
-    opt_toggle("NX2NAVI_DISCORD_RPC", UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC);
+    opt_toggle("NX2SARIA_DISCORD_RPC", UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC);
     rows_saves();
     // Testing: experimental rows, then the debug menu where the game version has it
     opt_group_text("Testing");
@@ -1529,36 +1529,36 @@ static void tab_game(float scale) {
         static char auto_name[64];
         snprintf(auto_name, sizeof auto_name, "%s (%d)", menu_text(UI_MENU_AUTO), vk_exec_replay_workers_auto(nullptr));
         const char *names[] = {auto_name, "0", "1", "2", "3", "4", "5", "6", "7", "8"};
-        opt_choice_list("NX2NAVI_REPLAY_WORKERS", UI_MENU_REPLAY_WORKERS, vals, names, 10, UI_MENU_REPLAY_WORKERS_DESC);
+        opt_choice_list("NX2SARIA_REPLAY_WORKERS", UI_MENU_REPLAY_WORKERS, vals, names, 10, UI_MENU_REPLAY_WORKERS_DESC);
     }
     // the draft's values (both are read at start, so they wait for Apply): the rows below follow the rows above
-    const char *wset = opt_value("NX2NAVI_REPLAY_WORKERS");
+    const char *wset = opt_value("NX2SARIA_REPLAY_WORKERS");
     const bool workers = (!strcmp(wset, "auto") ? vk_exec_replay_workers_auto(nullptr) : atoi(wset)) > 0,
-               pipe = workers && opt_int("NX2NAVI_REPLAY_PIPE") > 0;
+               pipe = workers && opt_int("NX2SARIA_REPLAY_PIPE") > 0;
     if (!workers) opt_disable_next(UI_MENU_NEEDS_WORKERS);
-    opt_slider("NX2NAVI_REPLAY_PIPE", UI_MENU_REPLAY_PIPE, 0, 4, UI_MENU_REPLAY_PIPE_DESC, 1, "%.0f");
+    opt_slider("NX2SARIA_REPLAY_PIPE", UI_MENU_REPLAY_PIPE, 0, 4, UI_MENU_REPLAY_PIPE_DESC, 1, "%.0f");
     if (!pipe) opt_disable_next(workers ? UI_MENU_NEEDS_PIPE : UI_MENU_NEEDS_WORKERS);
-    opt_slider("NX2NAVI_REPLAY_SMALL", UI_MENU_REPLAY_SMALL, 0, 60, UI_MENU_REPLAY_SMALL_DESC, 4, "%.0f");
-    opt_toggle("NX2NAVI_TAIL_EARLY", UI_MENU_TAIL_EARLY, UI_MENU_TAIL_EARLY_DESC);
+    opt_slider("NX2SARIA_REPLAY_SMALL", UI_MENU_REPLAY_SMALL, 0, 60, UI_MENU_REPLAY_SMALL_DESC, 4, "%.0f");
+    opt_toggle("NX2SARIA_TAIL_EARLY", UI_MENU_TAIL_EARLY, UI_MENU_TAIL_EARLY_DESC);
     // The debug menu, a tool for testing with English text of its own: off unless switched on here
     if (dbg_supported()) {
-        const bool on = cfg_bool("NX2NAVI_DEBUG_MENU");
+        const bool on = cfg_bool("NX2SARIA_DEBUG_MENU");
         if (opt_toggle_text("debug_menu", "Debug menu (F9)",
                             "F9 opens a window for testing: the game's flags by name, a teleport to every area's start "
                             "positions, its cutscenes to start, a free camera, the game's speed, and a search of its "
                             "memory with values to set and hold. All of these can break a save, and the game saves by itself after a change "
                             "of area: keep a copy of the save first.", on))
-            opt_apply("NX2NAVI_DEBUG_MENU", on ? "0" : "1");
+            opt_apply("NX2SARIA_DEBUG_MENU", on ? "0" : "1");
     }
     opt_end();
 }
 
 static void tab_sound(float scale) {
     opt_begin("##sound", scale);
-    opt_slider("NX2NAVI_VOLUME", UI_MENU_VOLUME, 0, 100, UI_MENU_VOLUME_DESC, 5, "%.0f %%");
-    opt_slider("NX2NAVI_MENU_SOUND_VOLUME", UI_MENU_MENU_SOUNDS, 0, 100, UI_MENU_MENU_SOUNDS_DESC, 5, "%.0f %%");
+    opt_slider("NX2SARIA_VOLUME", UI_MENU_VOLUME, 0, 100, UI_MENU_VOLUME_DESC, 5, "%.0f %%");
+    opt_slider("NX2SARIA_MENU_SOUND_VOLUME", UI_MENU_MENU_SOUNDS, 0, 100, UI_MENU_MENU_SOUNDS_DESC, 5, "%.0f %%");
     static const UiTextId channels[] = {UI_MENU_CHANNELS_AUTO, UI_MENU_CHANNELS_STEREO, UI_MENU_CHANNELS_51};
-    opt_choice("NX2NAVI_AUDIO_CHANNELS", UI_MENU_AUDIO_CHANNELS, channels, 3, UI_MENU_AUDIO_CHANNELS_DESC);
+    opt_choice("NX2SARIA_AUDIO_CHANNELS", UI_MENU_AUDIO_CHANNELS, channels, 3, UI_MENU_AUDIO_CHANNELS_DESC);
     opt_end();
 }
 
@@ -1569,7 +1569,7 @@ static bool g_modal;
 // PlayStation for a pad whose bottom button is labelled cross. NULL otherwise.
 static const char *pad_layout_note(void) {
     int got = input_pad_layout();
-    if (got < 0 || strcmp(opt_value("NX2NAVI_PAD_LAYOUT"), "auto")) return nullptr;
+    if (got < 0 || strcmp(opt_value("NX2SARIA_PAD_LAYOUT"), "auto")) return nullptr;
     static char note[96];
     UiTextId name = got != PAD_LAYOUT_XBOX                     ? UI_MENU_PAD_LAYOUT_NINTENDO
                     : input_pad_label(PAD_SOUTH) == PAD_LABEL_CROSS ? UI_MENU_PAD_LAYOUT_PLAYSTATION
@@ -1599,7 +1599,7 @@ static int key_action(const InputMap *m, int key) {
 static void row_walk_key(void) {
     static const char *const keys[] = {"none", "lshift", "lalt", "lctrl", "tab", "capslock"};
     const char *names[sizeof keys / sizeof *keys] = {menu_text(UI_MENU_OFF), "Shift", "Alt", "Ctrl", "Tab", "Caps Lock"};
-    const char *cur = opt_value("NX2NAVI_WALK_KEY");
+    const char *cur = opt_value("NX2SARIA_WALK_KEY");
     static char note[64];
     const char *n = nullptr;
     InputMap m;
@@ -1609,7 +1609,7 @@ static void row_walk_key(void) {
         int a = key_action(&m, k);
         if (a >= 0 && input_action_name(a)) snprintf(note, sizeof note, menu_text(UI_MENU_WALK_KEY_TAKEN), input_action_name(a)), n = note;
     }
-    opt_choice_list("NX2NAVI_WALK_KEY", UI_MENU_WALK_KEY, keys, names, sizeof keys / sizeof *keys, UI_MENU_WALK_KEY_DESC,
+    opt_choice_list("NX2SARIA_WALK_KEY", UI_MENU_WALK_KEY, keys, names, sizeof keys / sizeof *keys, UI_MENU_WALK_KEY_DESC,
                     -1, n);
 }
 
@@ -1617,14 +1617,14 @@ static void row_walk_key(void) {
 // layout, as a layout that puts A on the right button needs the face buttons named the other way round), but the game
 // reads its fonts and UI archive once at start (romfs.c overlay_init). While the folder in use differs: "files
 // missing" when the setup did not write the one asked for, why it was left out at start (damaged, a game resolution
-// that is not 16:9, a RomFS mod with the same files, NX2NAVI_ROMFS_PATCHES), else "prompts change after restart" with
+// that is not 16:9, a RomFS mod with the same files, NX2SARIA_ROMFS_PATCHES), else "prompts change after restart" with
 // *restart set: a restart would bring the prompts asked for. The action prompt's diamond of face buttons is laid out
 // for the pad layout at start too (romfs.c action_prompt_overlay), whatever the prompts: while the layout asks for the
 // other places, a restart would lay it out again, so *restart is set whatever the note, and with the folder in use the
 // note is "prompts change after restart". NULL when both match.
 static const char *prompts_note(bool *restart) {
-    const char *layout = opt_value("NX2NAVI_PAD_LAYOUT"), *used = romfs_prompts();
-    const char *want = input_prompts_folder(input_prompts_pick(opt_get("NX2NAVI_PROMPTS"), layout), layout);
+    const char *layout = opt_value("NX2SARIA_PAD_LAYOUT"), *used = romfs_prompts();
+    const char *want = input_prompts_folder(input_prompts_pick(opt_get("NX2SARIA_PROMPTS"), layout), layout);
     int diamond = romfs_action_prompt();   // -1 when it could not be laid out: a restart would not change it
     *restart = diamond >= 0 && diamond != input_pad_layout_pick(layout, 0);
     if (want == used || (want && used && !strcmp(want, used))) return *restart ? menu_text(UI_MENU_PROMPTS_RESTART) : nullptr;
@@ -1650,9 +1650,9 @@ static int restart_pending(void) {
     bool prompts;
     prompts_note(&prompts);
     return opt_pending_count() + upscaling_restart() + framegen_restart()
-           + (vk_hdr_restart_for(opt_value("NX2NAVI_HDR")) != 0)
+           + (vk_hdr_restart_for(opt_value("NX2SARIA_HDR")) != 0)
            + (wide_scene_settable() && wide_scene_share() > 0 && wide_scene_restart() && !upscaling_restart())
-           + (prompts && !cfg_pending_for("NX2NAVI_PROMPTS", opt_value("NX2NAVI_PROMPTS")));
+           + (prompts && !cfg_pending_for("NX2SARIA_PROMPTS", opt_value("NX2SARIA_PROMPTS")));
 }
 
 // The confirmation of the menu's Restart button, over the menu; Cancel has the cursor first. Restart writes nx2navi.ini,
@@ -1983,49 +1983,49 @@ static void tab_controls(float scale) {
     // switch the mouse camera and the cursor capture off.
     if (input_direct_mouse_available()) {
         static const UiTextId mouse_mode[] = {UI_MENU_MOUSE_STICK, UI_MENU_MOUSE_DIRECT};
-        opt_choice("NX2NAVI_MOUSE_MODE", UI_MENU_MOUSE_MODE, mouse_mode, 2, UI_MENU_MOUSE_MODE_DESC);
+        opt_choice("NX2SARIA_MOUSE_MODE", UI_MENU_MOUSE_MODE, mouse_mode, 2, UI_MENU_MOUSE_MODE_DESC);
     }
-    opt_slider("NX2NAVI_MOUSE_SENS", UI_MENU_MOUSE_SENS, 0.05f, 10, UI_MENU_MOUSE_SENS_DESC, 0.05f, "%.2f");
+    opt_slider("NX2SARIA_MOUSE_SENS", UI_MENU_MOUSE_SENS, 0.05f, 10, UI_MENU_MOUSE_SENS_DESC, 0.05f, "%.2f");
     static const UiTextId layout[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX,
                                       UI_MENU_PAD_LAYOUT_PLAYSTATION};
-    opt_choice("NX2NAVI_PAD_LAYOUT", UI_MENU_PAD_LAYOUT, layout, 4, UI_MENU_PAD_LAYOUT_DESC, pad_layout_note());
+    opt_choice("NX2SARIA_PAD_LAYOUT", UI_MENU_PAD_LAYOUT, layout, 4, UI_MENU_PAD_LAYOUT_DESC, pad_layout_note());
     // The setting's values in their cfg.c order (nintendo, xbox, playstation, steamdeck, pc). The game reads its prompts
     // at start: the row's note says when a restart would bring others, and the bar's Restart button does it.
     static const UiTextId prompts[] = {UI_MENU_PROMPTS_NINTENDO, UI_MENU_PROMPTS_XBOX, UI_MENU_PROMPTS_PLAYSTATION,
                                        UI_MENU_PROMPTS_STEAMDECK, UI_MENU_PROMPTS_PC};
     bool restart;
-    opt_choice("NX2NAVI_PROMPTS", UI_MENU_PROMPTS, prompts, 5, UI_MENU_PROMPTS_DESC, prompts_note(&restart));
-    opt_toggle("NX2NAVI_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
+    opt_choice("NX2SARIA_PROMPTS", UI_MENU_PROMPTS, prompts, 5, UI_MENU_PROMPTS_DESC, prompts_note(&restart));
+    opt_toggle("NX2SARIA_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
     // The sprint button (sprint.c), where the game version has the patch set sprint; both rows are live. The names
     // follow the values in their cfg.c order.
     if (sprint_available()) {
         static const UiTextId sprint_button[] = {UI_MENU_SPRINT_OFF, UI_MENU_SPRINT_B, UI_MENU_SPRINT_L3};
         static const UiTextId sprint_mode[] = {UI_MENU_SPRINT_TOGGLE, UI_MENU_SPRINT_HOLD};
-        opt_choice("NX2NAVI_SPRINT_BUTTON", UI_MENU_SPRINT_BUTTON, sprint_button, 3, UI_MENU_SPRINT_BUTTON_DESC);
-        opt_choice("NX2NAVI_SPRINT_MODE", UI_MENU_SPRINT_MODE, sprint_mode, 2, UI_MENU_SPRINT_MODE_DESC);
+        opt_choice("NX2SARIA_SPRINT_BUTTON", UI_MENU_SPRINT_BUTTON, sprint_button, 3, UI_MENU_SPRINT_BUTTON_DESC);
+        opt_choice("NX2SARIA_SPRINT_MODE", UI_MENU_SPRINT_MODE, sprint_mode, 2, UI_MENU_SPRINT_MODE_DESC);
     }
-    opt_slider("NX2NAVI_RUMBLE_STRENGTH", UI_MENU_RUMBLE_STRENGTH, 0, 300, UI_MENU_RUMBLE_STRENGTH_DESC, 10, "%.0f %%");
-    opt_slider("NX2NAVI_RUMBLE_CURVE", UI_MENU_RUMBLE_CURVE, 0.2f, 1.5f, UI_MENU_RUMBLE_CURVE_DESC, 0.05f, "%.2f");
-    opt_toggle("NX2NAVI_RUMBLE_TRIGGERS", UI_MENU_RUMBLE_TRIGGERS, UI_MENU_RUMBLE_TRIGGERS_DESC);
+    opt_slider("NX2SARIA_RUMBLE_STRENGTH", UI_MENU_RUMBLE_STRENGTH, 0, 300, UI_MENU_RUMBLE_STRENGTH_DESC, 10, "%.0f %%");
+    opt_slider("NX2SARIA_RUMBLE_CURVE", UI_MENU_RUMBLE_CURVE, 0.2f, 1.5f, UI_MENU_RUMBLE_CURVE_DESC, 0.05f, "%.2f");
+    opt_toggle("NX2SARIA_RUMBLE_TRIGGERS", UI_MENU_RUMBLE_TRIGGERS, UI_MENU_RUMBLE_TRIGGERS_DESC);
     // HD rumble can be switched only while the gamepad in use is one whose actuators take the game's values (a Switch
     // Pro Controller or Joy-Con, input.c hd_probe); with any other the row is greyed out and says what it needs.
     if (!input_rumble_hd_available()) opt_disable_next(UI_MENU_RUMBLE_HD_NEEDS);
-    opt_toggle("NX2NAVI_RUMBLE_HD", UI_MENU_RUMBLE_HD, UI_MENU_RUMBLE_HD_DESC);
+    opt_toggle("NX2SARIA_RUMBLE_HD", UI_MENU_RUMBLE_HD, UI_MENU_RUMBLE_HD_DESC);
     opt_group(UI_MENU_GROUP_STICKS);
     double now[2];
     bool pad = input_pad_stick_percent(now) != 0;
     char stick_note[2][64];
     for (int s = 0; s < 2; s++)
         snprintf(stick_note[s], sizeof stick_note[s], menu_text(UI_MENU_STICK_DEADZONE_NOW), now[s]);
-    opt_slider("NX2NAVI_LSTICK_DEADZONE", UI_MENU_LSTICK_DEADZONE, 0, 50, UI_MENU_STICK_DEADZONE_DESC, 1, "%.0f %%",
-               pad ? stick_note[0] : nullptr, "NX2NAVI_STICK_DEADZONE");
-    opt_slider("NX2NAVI_RSTICK_DEADZONE", UI_MENU_RSTICK_DEADZONE, 0, 50, UI_MENU_STICK_DEADZONE_DESC, 1, "%.0f %%",
-               pad ? stick_note[1] : nullptr, "NX2NAVI_STICK_DEADZONE");
-    opt_slider("NX2NAVI_STICK_SENS", UI_MENU_STICK_SENS, 0.1f, 3, UI_MENU_STICK_SENS_DESC, 0.05f, "%.2f");
+    opt_slider("NX2SARIA_LSTICK_DEADZONE", UI_MENU_LSTICK_DEADZONE, 0, 50, UI_MENU_STICK_DEADZONE_DESC, 1, "%.0f %%",
+               pad ? stick_note[0] : nullptr, "NX2SARIA_STICK_DEADZONE");
+    opt_slider("NX2SARIA_RSTICK_DEADZONE", UI_MENU_RSTICK_DEADZONE, 0, 50, UI_MENU_STICK_DEADZONE_DESC, 1, "%.0f %%",
+               pad ? stick_note[1] : nullptr, "NX2SARIA_STICK_DEADZONE");
+    opt_slider("NX2SARIA_STICK_SENS", UI_MENU_STICK_SENS, 0.1f, 3, UI_MENU_STICK_SENS_DESC, 0.05f, "%.2f");
     // The keyboard's sticks are all or nothing: the walk key scales them to the walk scale while it is held
     // (input.c walk_get)
     row_walk_key();
-    opt_slider("NX2NAVI_WALK_SCALE", UI_MENU_WALK_SCALE, 0.2f, 0.9f, UI_MENU_WALK_SCALE_DESC, 0.01f, "%.2f");
+    opt_slider("NX2SARIA_WALK_SCALE", UI_MENU_WALK_SCALE, 0.2f, 0.9f, UI_MENU_WALK_SCALE_DESC, 0.01f, "%.2f");
     binds_rows(scale);
     opt_end();
     binds_after_page();
@@ -2112,7 +2112,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     // where it would run into the title (a narrow window, a long title)
     char game[16], version[96];
     snprintf(game, sizeof game, "%d.%d.%d", rt_game_version / 100, rt_game_version / 10 % 10, rt_game_version % 10);
-    snprintf(version, sizeof version, "NX2navi %s  -  game %s", rt_port_version, game);
+    snprintf(version, sizeof version, "NX2Saria %s  -  game %s", rt_port_version, game);
     float version_x = win_s.x - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(version).x;
     if (win_p.x + version_x >= title_end + ImGui::GetStyle().ItemSpacing.x * 2) {
         ImGui::SameLine(version_x);
@@ -2222,7 +2222,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     ImGui::End();
 }
 
-// ---- the performance overlay (NX2NAVI_PERF_OVERLAY), in the top right corner. "fps": the frame rate over the presents of
+// ---- the performance overlay (NX2SARIA_PERF_OVERLAY), in the top right corner. "fps": the frame rate over the presents of
 // the last half second. "full": a panel of perfmon.c's numbers:
 // the machine's load and temperatures, the frame rate and frame times with a graph, the render thread's waits.
 // Off, it costs a cfg_version load per present.
@@ -2242,12 +2242,12 @@ extern "C" void menu_perf_cycle(void) { g_perf_cycle.fetch_add(1); }
 static void perf_cycle_once(void) {
     static const char *const modes[] = {"off", "fps", "full"};
     static const UiTextId names[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
-    int cur = perf_mode_of(cfg_value("NX2NAVI_PERF_OVERLAY")), next = (cur + 1) % 3;
+    int cur = perf_mode_of(cfg_value("NX2SARIA_PERF_OVERLAY")), next = (cur + 1) % 3;
     if (g_open.load(std::memory_order_relaxed)) {
-        opt_change("NX2NAVI_PERF_OVERLAY", modes[next], menu_text(UI_MENU_PERF_OVERLAY), menu_text(names[cur]),
+        opt_change("NX2SARIA_PERF_OVERLAY", modes[next], menu_text(UI_MENU_PERF_OVERLAY), menu_text(names[cur]),
                    menu_text(names[next]));
     } else {
-        cfg_set("NX2NAVI_PERF_OVERLAY", modes[next]);
+        cfg_set("NX2SARIA_PERF_OVERLAY", modes[next]);
         cfg_save();
     }
 }
@@ -2327,7 +2327,7 @@ static void perf_gpu_once(const MenuTarget *t) {
 static void perf_tick(uint64_t now, const MenuTarget *t) {
     if (cfg_version() != g_perf_ver) {
         g_perf_ver = cfg_version();
-        int m = perf_mode_of(cfg_value("NX2NAVI_PERF_OVERLAY"));
+        int m = perf_mode_of(cfg_value("NX2SARIA_PERF_OVERLAY"));
         if (m != g_perf_mode) {
             g_perf_last_ns = 0, g_perf_text[0] = 0;
             if (m == 2) perf_gpu_once(t);
@@ -2379,25 +2379,25 @@ static void perf_picture(const MenuTarget *t, PerfPanel *p) {
     double hz = frame_step_limit_hz();
     snprintf(v[5], sizeof v[5], "%s", menu_text(UI_MENU_OV_NONE));
     if (hz > 0) snprintf(v[5], sizeof v[5], menu_text(UI_MENU_OV_FPS), hz);
-    snprintf(v[6], sizeof v[6], "%s", menu_text(strcmp(cfg_value("NX2NAVI_VK_PRESENT"), "immediate") ? UI_MENU_ON : UI_MENU_OFF));
+    snprintf(v[6], sizeof v[6], "%s", menu_text(strcmp(cfg_value("NX2SARIA_VK_PRESENT"), "immediate") ? UI_MENU_ON : UI_MENU_OFF));
     v[7][0] = v[8][0] = 0;
     if (wide_available()) {
-        const char *a = cfg_value("NX2NAVI_GAME_ASPECT");
+        const char *a = cfg_value("NX2SARIA_GAME_ASPECT");
         snprintf(v[7], sizeof v[7], "%s", menu_text(!strcmp(a, "window") ? UI_MENU_GAME_ASPECT_WINDOW : !strcmp(a, "21:9") ? UI_MENU_GAME_ASPECT_21_9
                                                     : !strcmp(a, "32:9") ? UI_MENU_GAME_ASPECT_32_9 : UI_MENU_GAME_ASPECT_16_9));
-        const char *r = cfg_value("NX2NAVI_GAME_RES");
+        const char *r = cfg_value("NX2SARIA_GAME_RES");
         if (!strcmp(r, "window")) snprintf(v[8], sizeof v[8], "%s", menu_text(UI_MENU_GAME_RES_NATIVE));
         else snprintf(v[8], sizeof v[8], "%sp", r);
     }
-    const char *hdr = cfg_value("NX2NAVI_HDR");
-    snprintf(v[9], sizeof v[9], "%s", menu_text(!strcmp(hdr, "native") ? UI_MENU_HDR_NATIVE : cfg_bool("NX2NAVI_HDR") ? UI_MENU_HDR_TONEMAPPED : UI_MENU_FRAMEGEN_OFF));
-    const char *fg = cfg_value("NX2NAVI_FRAMEGEN");
+    const char *hdr = cfg_value("NX2SARIA_HDR");
+    snprintf(v[9], sizeof v[9], "%s", menu_text(!strcmp(hdr, "native") ? UI_MENU_HDR_NATIVE : cfg_bool("NX2SARIA_HDR") ? UI_MENU_HDR_TONEMAPPED : UI_MENU_FRAMEGEN_OFF));
+    const char *fg = cfg_value("NX2SARIA_FRAMEGEN");
     const bool fsr_fg = !strcmp(fg, "fsr3") && vk_ffx_framegen_available();   // set but not loadable: off
     snprintf(v[10], sizeof v[10], "%s", fsr_fg ? (vk_fg4_active() ? fg4_label() : "AMD FSR 3.1")
                                       : !strcmp(fg, "dlss") ? "NVIDIA DLSS" : menu_text(UI_MENU_FRAMEGEN_OFF));
     if (!strcmp(fg, "dlss") && vk_dlssg_active())   // its multiplier as set, clamped to what this GPU allows
         snprintf(v[10], sizeof v[10], "NVIDIA DLSS %dx",
-                 vk_dlssg_multiplier_of(cfg_value("NX2NAVI_FRAMEGEN_MULTIPLIER"), vk_dlssg_multiplier_max(nullptr), nullptr));
+                 vk_dlssg_multiplier_of(cfg_value("NX2SARIA_FRAMEGEN_MULTIPLIER"), vk_dlssg_multiplier_max(nullptr), nullptr));
     // The 3D scene's size is known only where resolution.c sets it (the builds with its patch sets); Ocarina sizes its
     // own scene dynamically and res_sizes would report a fixed 1600x900, so the line is left out
     p->scene_known = res_adjustable() != 0;
@@ -2497,7 +2497,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
             g_test.opened = frame;
             g_test.page = 0;
             g_tab_request = 0;
-            g_debug.store(cfg_get("NX2NAVI_MENU_TEST_DEBUG") != NULL);   // the test shoots the debug menu's tabs instead
+            g_debug.store(cfg_get("NX2SARIA_MENU_TEST_DEBUG") != NULL);   // the test shoots the debug menu's tabs instead
             g_picker.store(0);
             if (g_debug.load()) debug_menu_tab(0);
             set_open(1);
@@ -2587,12 +2587,12 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     g_cost_ns += plat_now_ns() - t0;
     if (g_test.page >= 0 && frame >= g_test.opened + g_test.per_page * (uint64_t)(g_test.page + 1)) {
         static char path[512];   // this frame's image goes to a file; then the next tab, or the menu closes
-        const char *dir = cfg_get("NX2NAVI_MENU_TEST_DIR");
+        const char *dir = cfg_get("NX2SARIA_MENU_TEST_DIR");
         snprintf(path, sizeof path, "%s/menu-test-%llu-%d.png", dir ? dir : ".", (unsigned long long)frame, g_test.page);
         *shot = path;
         if (++g_test.page == (g_debug.load() ? DEBUG_MENU_TABS : TAB_COUNT)) {
             g_test.page = -1;
-            g_test.opened = 0, g_test.next_at++;   // the next NX2NAVI_MENU_TEST frame opens it again
+            g_test.opened = 0, g_test.next_at++;   // the next NX2SARIA_MENU_TEST frame opens it again
             set_open(0);   // the next frame lays out nothing
         } else {
             g_tab_request = g_test.page;

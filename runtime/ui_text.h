@@ -5,7 +5,7 @@
 typedef enum {
     // Software keyboard
     UI_SWKBD_TITLE,          // caption of the text-entry window
-    UI_SWKBD_PROMPT,         // prompt when the game gives no header, guide or sub text (NX2navi names a horse)
+    UI_SWKBD_PROMPT,         // prompt when the game gives no header, guide or sub text (NX2Saria names a horse)
     UI_SWKBD_DEFAULT_NAME,   // text the entry starts with when the game gives none, so a controller can confirm it
     UI_SWKBD_OK,
     UI_SWKBD_CANCEL,
@@ -23,7 +23,7 @@ typedef enum {
     UI_MENU_SET_BY_ENV,       // note on a setting an environment variable fixes
     UI_MENU_SAVE_FAILED,
     UI_MENU_INI_UNKNOWN,      // "...: %s": the keys of nx2navi.ini that are no settings of this version (cfg_unknown_keys)
-    UI_MENU_VERSION,          // "NX2navi %s, game %s": the port version and the game update, beside the title
+    UI_MENU_VERSION,          // "NX2Saria %s, game %s": the port version and the game update, beside the title
 
     // Screen
     UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC,
@@ -202,13 +202,13 @@ typedef enum {
     UI_MENU_AMIIBO_NO_GAME_DATA, UI_MENU_AMIIBO_HAS_GAME_DATA, UI_MENU_AMIIBO_ERASE, UI_MENU_AMIIBO_ERASE_CONFIRM, UI_MENU_AMIIBO_ERASED,
     UI_MENU_AMIIBO_ERASE_FAILED,
     // the keys file (amiibo_crypto.h amiibo_keys_loaded, amiibo.h amiibo_reload_keys) and the write-back setting
-    // (NX2NAVI_AMIIBO_WRITEBACK); KEYS_FILE, KEYS_RELOADED and KEYS_FAILED take the file's path as "%s"
+    // (NX2SARIA_AMIIBO_WRITEBACK); KEYS_FILE, KEYS_RELOADED and KEYS_FAILED take the file's path as "%s"
     UI_MENU_AMIIBO_KEYS, UI_MENU_AMIIBO_KEYS_LOADED, UI_MENU_AMIIBO_KEYS_MISSING, UI_MENU_AMIIBO_KEYS_FILE,
     UI_MENU_AMIIBO_RELOAD_KEYS, UI_MENU_AMIIBO_KEYS_RELOADED, UI_MENU_AMIIBO_KEYS_FAILED, UI_MENU_AMIIBO_WRITEBACK,
     UI_MENU_AMIIBO_WRITEBACK_NEEDS_KEYS,
-    // the picker over the game (NX2NAVI_AMIIBO_POPUP): its setting, its title and its controls
+    // the picker over the game (NX2SARIA_AMIIBO_POPUP): its setting, its title and its controls
     UI_MENU_AMIIBO_POPUP, UI_MENU_AMIIBO_POPUP_TITLE, UI_MENU_AMIIBO_POPUP_HINT,
-    // the Game tab's switch for the game's once-a-day amiibo limit (NX2NAVI_AMIIBO_DAILY_LIMIT)
+    // the Game tab's switch for the game's once-a-day amiibo limit (NX2SARIA_AMIIBO_DAILY_LIMIT)
     UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC,
 
     // Menu tab
@@ -298,7 +298,7 @@ typedef enum {
     UI_MENU_CHEAT_REBUILD, UI_MENU_CHEAT_REBUILD_DESC, UI_MENU_CHEAT_UNSUPPORTED, UI_MENU_CHEAT_UNSUPPORTED_DESC,
     // the Game tab's Saves group (ui/menu.cpp rows_saves, save_share.c): export the save into a zip, import a shared
     // one at the next start. UI_MENU_SAVE_EXPORTED to UI_MENU_SAVE_E_UNSAFE are printf formats with at most one "%s"
-    // (a path, or the zip's NX2navi version and date)
+    // (a path, or the zip's NX2Saria version and date)
     UI_MENU_SAVES,
     UI_MENU_SAVE_EXPORT, UI_MENU_SAVE_EXPORT_DESC, UI_MENU_SAVE_EXPORT_BUG, UI_MENU_SAVE_EXPORT_BUG_DESC,
     UI_MENU_SAVE_IMPORT, UI_MENU_SAVE_IMPORT_DESC,
@@ -306,7 +306,7 @@ typedef enum {
     UI_MENU_SAVE_IMPORT_CANCEL, UI_MENU_SAVE_IMPORT_CANCEL_DESC,
     UI_MENU_SAVE_BUSY,               // note on the rows while an export or import runs
     UI_MENU_SAVE_EXPORTED,           // "%s": the zip's path
-    UI_MENU_SAVE_IMPORT_READY,       // "%s": "<NX2navi version>, <export date>" of the zip
+    UI_MENU_SAVE_IMPORT_READY,       // "%s": "<NX2Saria version>, <export date>" of the zip
     UI_MENU_SAVE_IMPORT_CANCELLED,
     UI_MENU_SAVE_IMPORTED,           // "%s": the folder the replaced save was copied to, at this start
     UI_MENU_SAVE_IMPORTED_NEW,       // the same with no save to replace
@@ -374,7 +374,7 @@ int ui_text_defined(const char *lang, UiTextId id);
 const char *ui_text_lang(const char *switch_code);
 
 // The game languages the F1 menu offers for a game build (rt_game_version): one entry per Mals language file the build
-// ships, each with the Switch code NX2NAVI_LANG takes and the id of its name. 1.4.3 adds Brazilian Portuguese (USpt).
+// ships, each with the Switch code NX2SARIA_LANG takes and the id of its name. 1.4.3 adds Brazilian Portuguese (USpt).
 // Fills out (room for max entries) and returns the count.
 typedef struct { const char *code; UiTextId name; } UiGameLang;
 int ui_text_game_langs(int game_version, UiGameLang *out, int max);
@@ -383,7 +383,7 @@ int ui_text_game_langs(int game_version, UiGameLang *out, int max);
 // not used. Returns the count.
 int ui_text_game_langs_in(const char *const *regions, int nregions, UiGameLang *out, int max);
 
-// Menu text: ui_text_in(menu language, id). The menu language is NX2NAVI_MENU_LANG ("en", "ru", "pt-BR", "zh-Hans");
+// Menu text: ui_text_in(menu language, id). The menu language is NX2SARIA_MENU_LANG ("en", "ru", "pt-BR", "zh-Hans");
 // unset, the system UI language when the catalog has menu text for it (English, Russian, Brazilian Portuguese,
 // Simplified Chinese), else English. Follows a live change of the setting.
 const char *menu_text(UiTextId id);

@@ -142,8 +142,21 @@ class AvailableRamTest(Tmp):
         self.limit('app.scope', 8 * GIB, 0)
         with mock.patch.dict(os.environ), mock.patch.object(gen.os, 'cpu_count', return_value=32):
             os.environ.pop('NX2NAVI_LIFT_JOBS', None)
+            os.environ.pop('NX2SARIA_LIFT_JOBS', None)
             jobs, why = gen.pick_jobs(None)
         self.assertEqual(jobs, 4, why)
+
+    @unittest.skipIf(gen is None, 'recomp/gen.py needs numpy')
+    def test_new_lift_jobs_spelling_precedes_legacy(self):
+        with mock.patch.dict(os.environ, {'NX2SARIA_LIFT_JOBS': '3', 'NX2NAVI_LIFT_JOBS': '1'}):
+            self.assertEqual(gen.pick_jobs(None), (3, 'NX2SARIA_LIFT_JOBS'))
+        with mock.patch.dict(os.environ, {'NX2NAVI_LIFT_JOBS': '2'}, clear=True):
+            self.assertEqual(gen.pick_jobs(None), (2, 'NX2NAVI_LIFT_JOBS'))
+        with mock.patch.dict(os.environ, {'NX2SARIA_LIFT_TEST_OOM_ABOVE': '5',
+                                          'NX2NAVI_LIFT_TEST_OOM_ABOVE': '2'}):
+            self.assertEqual(gen.setting_env('LIFT_TEST_OOM_ABOVE'), ('5', 'NX2SARIA_LIFT_TEST_OOM_ABOVE'))
+        with mock.patch.dict(os.environ, {'NX2NAVI_LIFT_TEST_OOM_ABOVE': '2'}, clear=True):
+            self.assertEqual(gen.setting_env('LIFT_TEST_OOM_ABOVE'), ('2', 'NX2NAVI_LIFT_TEST_OOM_ABOVE'))
 
 
 def cpuinfo(*flag_lists):

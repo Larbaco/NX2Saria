@@ -17,7 +17,7 @@
 
 // ---- logging and results
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));   // "[host] <msg>\n" to the log, one write
-// The log is stderr plus, in a game run whose stderr is not a file, logs\nx2navi.log next to nx2navi.exe (main.c log_open).
+// The log is stderr plus, in a game run whose stderr is not a file, logs\nx2saria.log next to nx2saria.exe (main.c log_open).
 // rt_logf and rt_log_raw write to both without the prefix and the newline: crash reports, fatal errors, guest output.
 void rt_logf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_vlogf(const char *fmt, va_list ap);
@@ -26,13 +26,13 @@ const char *rt_log_path(void);                  // the log file, NULL when this 
 void rt_log_sync(void);                         // writes the queued log lines now; later lines are written as they are made
 void rt_log_ending(void);                       // the process is ending: its lines reach the log file past its 64 MiB cap
 void rt_log_focus_lost(void);                   // main.c: the gathered lines written now, the module list noted again
-void hang_watch_start(void);                    // hang_watch.c: NX2NAVI_HANG_WATCH_S's thread, in a game run
+void hang_watch_start(void);                    // hang_watch.c: NX2SARIA_HANG_WATCH_S's thread, in a game run
 void kern_wait_report(void);                    // kernel.c: the guest threads' lock and thread-end waits, for a hang report
 void vk_sync_progress(uint64_t *issued, uint64_t *done);   // vk_sync.c: submissions issued and done, no lock or device call
 enum { RT_TRACE_SVC = 1, RT_TRACE_HOSTCALL = 2, RT_TRACE_IPC = 4, RT_TRACE_FS = 8, RT_TRACE_GFX = 16, RT_TRACE_PERF = 32,
        RT_TRACE_SCHED = 64, RT_TRACE_AUDIO = 128, RT_TRACE_PRESENT = 256 };
-extern unsigned rt_trace;                       // from NX2NAVI_TRACE=svc,host,ipc,fs,gfx,perf,sched,audio,present (or all)
-// prof_win.c: NX2NAVI_PROFILE=<path> sampling profiler; NX2NAVI_TRACE=perf frame timing (waits of the render thread)
+extern unsigned rt_trace;                       // from NX2SARIA_TRACE=svc,host,ipc,fs,gfx,perf,sched,audio,present (or all)
+// prof_win.c: NX2SARIA_PROFILE=<path> sampling profiler; NX2SARIA_TRACE=perf frame timing (waits of the render thread)
 // PERF_TEX: texture uploads on the render thread (deswizzle, decode, staging), PERF_ASTC included. PERF_HANDOFF: the
 // presenting thread's wait for the present thread to take the previous picture (vk_backend.c present_image), which is
 // where the present thread's own pacing and a slow present call (an overlay's frame limiter inside it) hold the game.
@@ -46,7 +46,7 @@ void perf_end(int kind, uint64_t t0);           // counts render-thread time onl
 void perf_end_any(int kind, uint64_t t0);
 void perf_replay(uint64_t t0);                  // replay (NVN -> Vulkan recording) time on any thread, waits inside it included
 void perf_replay_thread(void);                  // the calling thread replays for the render thread: perf_end counts its waits
-void perf_main_thread(void);                    // the calling thread is the guest main thread (NX2NAVI_PROFILE_MAIN)
+void perf_main_thread(void);                    // the calling thread is the guest main thread (NX2SARIA_PROFILE_MAIN)
 // Events per 60-frame window: graphics pipelines finished by the background workers, draws skipped while pending,
 // first texture uploads and re-uploads after CPU writes, draws skipped while a shader translates in the background,
 // draws that waited for their pending pipeline and got it, draws into a target the previous frame did not render that
@@ -58,7 +58,7 @@ enum { PERF_CNT_PIPE_ASYNC, PERF_CNT_PIPE_SKIP, PERF_CNT_TEX_UP, PERF_CNT_TEX_RE
        PERF_CNT_PIPE_WAIT, PERF_CNT_ONESHOT_WAIT, PERF_CNT_PIPE_BUILT, PERF_CNT_TEX_NEW, PERF_CNT_TEX_ALIAS,
        PERF_CNT_WB, PERF_CNT_WB_SKIP, PERF_CNT_N };
 void perf_count(int kind);
-// NX2NAVI_TRACE=perf: work on any thread that a frame can wait for besides the render thread's waits above, summed per
+// NX2SARIA_TRACE=perf: work on any thread that a frame can wait for besides the render thread's waits above, summed per
 // frame and per 60-frame window (perf.c perf_mark_add): RomFS reads, host zstd decodes, pipeline creates (vk_pipeline.c
 // pipe_create_in), guest memory maps (heap size, MapPhysicalMemory), NVN memory pool initialize and finalize
 // (vk_memory.c vk_pool_init, vk_pool_fini), device memory VMA allocates (blocks and dedicated memory, vk_device.c
@@ -71,14 +71,14 @@ enum { PERF_M_FILE, PERF_M_ZSTD, PERF_M_PIPE, PERF_M_GMEM, PERF_M_POOL, PERF_M_D
 uint64_t perf_mark_begin(void);
 void perf_mark_end(int kind, uint64_t t0, uint64_t bytes);   // nothing when t0 is 0
 void perf_mark_add(int kind, uint64_t ns, uint64_t bytes);   // nothing while the trace is off
-// NX2NAVI_TRACE=perf segments and scenes (perf.c): perf_segment ends the running segment of presents at the next present
+// NX2SARIA_TRACE=perf segments and scenes (perf.c): perf_segment ends the running segment of presents at the next present
 // with a line of its frame times (mean, 1% low, worst), the work marks above, process memory and VRAM, then the memory
 // snapshot, and starts one named name (the input script's MARK lines, input.c). perf_scene notes an area's load
 // (romfs.c, the area's static placement file) and takes the memory snapshot once no area has loaded for 10 s.
 void perf_segment(const char *name);
 void perf_scene(const char *name);
 uint64_t perf_area_load_ns(void);   // plat_now_ns of the last perf_scene (any trace setting), 0 before the first
-// NX2NAVI_TRACE=perf "mem: sizes" lines (perf.c sizes_log): the entries and bytes of the caches, pools and tables no
+// NX2SARIA_TRACE=perf "mem: sizes" lines (perf.c sizes_log): the entries and bytes of the caches, pools and tables no
 // other line gives, every 600 presents and with each memory snapshot. Each subsystem's *_sizes function (weak no-ops
 // in perf.c) adds its own with perf_size, taking its locks briefly on the present thread. count or bytes UINT64_MAX:
 // not known; limit 0: none.
@@ -101,7 +101,7 @@ void vk_usnap_sizes(PerfSizes *s);    // vk_usnap.c
 void nvn_cmd_sizes(PerfSizes *s);     // nvn_api_cmd.c
 void vk_pipeline_sizes(PerfSizes *s); // vk_pipeline.c
 void gfx_shader_sizes(PerfSizes *s);  // gfx_shader.c
-// NX2NAVI_REPLAY_TIME=1: how long the replay spends in each kind of op (perf.c perf_replay_op reports it with the
+// NX2SARIA_REPLAY_TIME=1: how long the replay spends in each kind of op (perf.c perf_replay_op reports it with the
 // frame-time summary). Draws and dispatches include their bindings and the vkCmd calls they record; binds are the state
 // and resource binds between them; xfer is copies and clears.
 enum { PERF_RP_DRAW, PERF_RP_BIND, PERF_RP_XFER, PERF_RP_OTHER, PERF_RP_N };
@@ -109,12 +109,12 @@ void perf_replay_op(int cat, uint64_t ns);
 void perf_replay_op_at(int cat, uint32_t op, uint64_t ns);
 void perf_replay_cpu(uint64_t ns);   // the replaying thread's CPU time over one submission's replay (vk_sync.c)   // as perf_replay_op, also kept per frame for slow frames
 void perf_lock_timing_here(void);
-int perf_lock_holds_on(void);                   // NX2NAVI_LOCK_TIME
-void perf_lock_hold(void *site, uint64_t ns);   // a lock held ns from site (vk_texture.c, holds over 1 ms)   // NX2NAVI_LOCK_TIME: this thread's lock waits go into the frame-time summary
+int perf_lock_holds_on(void);                   // NX2SARIA_LOCK_TIME
+void perf_lock_hold(void *site, uint64_t ns);   // a lock held ns from site (vk_texture.c, holds over 1 ms)   // NX2SARIA_LOCK_TIME: this thread's lock waits go into the frame-time summary
 void perf_qlock_hold(void *site, uint64_t ns);  // the queue lock held ns from site (gfx_present.c, 5 ms or more)
 extern void (*perf_rec_waits)(uint64_t *full_ns, uint64_t *drain_ns);   // set by the back end (vk_rec.c totals)
 void perf_present(uint64_t frame);
-void perf_cpu_start(void);   // the process's logical processors (NX2NAVI_CACHE_DIE, NX2NAVI_ONE_PER_CORE), at start
+void perf_cpu_start(void);   // the process's logical processors (NX2SARIA_CACHE_DIE, NX2SARIA_ONE_PER_CORE), at start
 int perf_cpu_on_cache_die(void);   // 1 while the process runs on the die with the largest L3 cache alone (perf.c cpu_placement)
 void perf_summary_flush(void);                  // prints the frame-time summary of the running period (exit); the 60 s lines come from perf_present
 void perf_summary_flush_try(void);              // the same at a fatal error, the stutter map only if its lock is free
@@ -128,7 +128,7 @@ void gfx_window_closed(void);
 // thread again. rt_exit_steps: the saves and the put-backs, the slow pipeline save late and the final save flush last.
 int rt_exit_begin(void);
 int rt_exit_started(void);                      // an orderly end has begun (the hang watch stops judging presents)
-enum { RT_EXIT_SETTINGS = 1 };                  // rt_exit_steps also writes the menu's changes to nx2navi.ini
+enum { RT_EXIT_SETTINGS = 1 };                  // rt_exit_steps also writes the menu's changes to the selected settings file
 void rt_exit_steps(unsigned what);
 void perf_gpu_wait(uint64_t t0);                // a wait for a GPU fence ended (any thread; the render thread's also counts as PERF_FENCE)
 // GPU side of the 60-frame perf line, filled by the graphics back end when it set perf_gpu_stats. gpu_ns: GPU busy time
@@ -144,7 +144,7 @@ typedef struct {
 } PerfGpu;
 extern void (*perf_gpu_stats)(PerfGpu *out);
 // The write-combined memory of the process (device memory the driver maps into it) as a walk of the address space
-// counted it, with the driver's device-local figure at that time (NX2NAVI_MEM_CENSUS: vk_memory.c census_main, perf.c's
+// counted it, with the driver's device-local figure at that time (NX2SARIA_MEM_CENSUS: vk_memory.c census_main, perf.c's
 // commit census). perf_wc_recent: the last such figure when it is at most max_age_ns old, else 0.
 void perf_note_wc(uint64_t wc, uint64_t vram_used);
 int perf_wc_recent(uint64_t max_age_ns, uint64_t *wc, uint64_t *vram_used);
@@ -157,9 +157,9 @@ void perf_census_walk(int begin);
 void perf_report_part(uint64_t ns);
 uint64_t perf_census_walked_frame(void);
 // The performance overlay (perfmon.c): mode 0 off, 1 fps, 2 full. While it is on, perf_present hands every frame to
-// perfmon_frame; full also takes the event counts (perf_count) and the GPU timestamps as NX2NAVI_TRACE=perf does.
+// perfmon_frame; full also takes the event counts (perf_count) and the GPU timestamps as NX2SARIA_TRACE=perf does.
 void perf_set_overlay(int mode);
-int perf_gpu_timing(void);                      // GPU timestamps wanted: NX2NAVI_TRACE=perf, the full overlay, or a
+int perf_gpu_timing(void);                      // GPU timestamps wanted: NX2SARIA_TRACE=perf, the full overlay, or a
                                                 // feature that asked (perf_gpu_timing_want)
 void perf_gpu_timing_want(int on);              // dynres.c: GPU timestamps while dynamic resolution runs
 void perf_gpu_busy(uint64_t ns);                // GPU busy time of a timed submission part (vk_sync.c, any thread)
@@ -231,17 +231,17 @@ typedef struct { uint64_t base, size; } RtRange;
 typedef struct { RtRange aslr, stack, heap, alias, kernel, hostfn; uint64_t pool; } RtGuestLayout;
 typedef struct { uint64_t base, size; uint32_t state, attr, perm, ipc, device, pad; } RtMemoryInfo;   // Horizon layout
 void mem_init(void);                                       // reserve every region; on a collision re-run the process
-                                                           // (up to 20 times, NX2NAVI_REEXEC), then fatal
+                                                           // (up to 20 times, NX2SARIA_REEXEC), then fatal
 const RtGuestLayout *mem_layout(void);
 int mem_start_note(int probe);                             // a game's start: a warning line when the free commit is
                                                            // below the game's need (mem_need.h); 1 when it is
-void mem_guest_census(uint64_t frame);   // NX2NAVI_TRACE=perf: committed bytes per guest region
+void mem_guest_census(uint64_t frame);   // NX2SARIA_TRACE=perf: committed bytes per guest region
 // The guest's ranges for a census, each with its name (the loaded modules one range each, all named "modules"), at most
 // max; mem_guest_census_log logs the bytes a walk found committed in each (committed[i] for range i).
 int mem_guest_ranges(const char **name, RtRange *r, int max);
 void mem_guest_census_log(uint64_t frame, const char *const *name, const uint64_t *committed, int n);
-void mem_lazy_heap_census(uint64_t frame);   // the census's lazy heap line (NX2NAVI_HEAP_LAZY only)
-void mem_lazy_heap_report(uint64_t frame);   // NX2NAVI_TRACE=perf: the lazy heap's faults since the last line
+void mem_lazy_heap_census(uint64_t frame);   // the census's lazy heap line (NX2SARIA_HEAP_LAZY only)
+void mem_lazy_heap_report(uint64_t frame);   // NX2SARIA_TRACE=perf: the lazy heap's faults since the last line
 // The game's own memory for the memory report (vk_memory.c owner_log): its heap's size, the part of it committed (the
 // size itself unless the heap is lazy), and the physical memory it mapped. No lock: a log may read a figure late.
 void mem_guest_usage(uint64_t *heap, uint64_t *heap_committed, uint64_t *phys_maps);
@@ -279,16 +279,16 @@ int mem_frozen(uint64_t a);                                // the 2 MiB region o
 void mem_thaw(uint64_t a, uint64_t n);                     // makes the frozen regions over [a, a+n) writable again;
                                                            // before a kernel write (file read) into guest memory;
                                                            // also commits pages the lazy heap left reserved
-void mem_kernel_access(uint64_t a, uint64_t n);            // NX2NAVI_HEAP_LAZY: commits the reserved heap pages of
+void mem_kernel_access(uint64_t a, uint64_t n);            // NX2SARIA_HEAP_LAZY: commits the reserved heap pages of
                                                            // [a, a+n) before the kernel reads them (a file write)
-uint64_t mem_untouched_run(uint64_t a, uint64_t end);    // NX2NAVI_HEAP_LAZY: the end of the run of heap pages at a
+uint64_t mem_untouched_run(uint64_t a, uint64_t end);    // NX2SARIA_HEAP_LAZY: the end of the run of heap pages at a
                                                            // that were never committed (a scan steps over it), else 0
 int mem_host_readable(uint64_t a, uint64_t n);             // plat_mem_readable that first commits the untouched
                                                            // pages of the lazy heap in [a, a+n), which read zero
 void mem_freeze_stats(uint64_t *frozen, uint64_t *freezes, uint64_t *fault_thaws, uint64_t *other_thaws,
                       uint64_t *hot_holds);   // hot_holds: quick thaws that held their region thawed (memory.c "Hot regions")
-// NX2NAVI_WB_PROBE=1 (memory.c, "Probed regions"): who reads what the GPU wrote back into guest memory.
-// NX2NAVI_WB_LAZY (memory.c, "Lazy write-back"): pages the GPU wrote that come down only when the CPU touches them.
+// NX2SARIA_WB_PROBE=1 (memory.c, "Probed regions"): who reads what the GPU wrote back into guest memory.
+// NX2SARIA_WB_LAZY (memory.c, "Lazy write-back"): pages the GPU wrote that come down only when the CPU touches them.
 typedef struct { uint64_t h0, h1, off, size; } MemLazyCopy;   // [off, off + size) of buffer h0 into buffer h1
 // fetch: the n copies after all the GPU work handed over so far, and a wait for them; called on several threads at once
 int mem_lazy_enable(void (*fetch)(const MemLazyCopy *c, int n), int (*clean)(uint64_t lo, uint64_t hi, void *ctx));
@@ -353,15 +353,15 @@ void kern_core_back(int *away);
 void kern_checkpoint(void);                                // preemption point, at every SVC and indirect call
 // A preempt request is pending for the thread (Cpu.thread): its RtThread starts with the flag (kernel.c).
 static inline int kern_preempt_pending(const void *thread) { return __atomic_load_n((const int *)thread, __ATOMIC_RELAXED); }
-// Set once before guest threads start (NX2NAVI_CORE_DIAG, NX2NAVI_ASYNC_PREEMPT): host calls (hostfn.c) and SVCs (svc.c) count their depth in
+// Set once before guest threads start (NX2SARIA_CORE_DIAG, NX2SARIA_ASYNC_PREEMPT): host calls (hostfn.c) and SVCs (svc.c) count their depth in
 // the thread's second int, so the kernel knows whether a core owner runs game code at the top level.
 extern int kern_host_track;
 static inline int *kern_host_depth(void *thread) { return (int *)thread + 1; }
 void kern_host_left(void *thread);                         // back at depth 0 with a preempt request pending
-int kern_core_diag_on(void);                               // NX2NAVI_CORE_DIAG
+int kern_core_diag_on(void);                               // NX2SARIA_CORE_DIAG
 void kern_core_diag_frame(uint64_t frame, uint64_t interval_ns);   // perf_present, every present (also logs the
                                                            // asynchronous preemption counters)
-void kern_sched_report(uint64_t frame);                    // NX2NAVI_TRACE=sched: per-thread time split, on present
+void kern_sched_report(uint64_t frame);                    // NX2SARIA_TRACE=sched: per-thread time split, on present
 uint32_t kern_handle_new(int kind, void *obj);             // kind: KERN_SESSION or KERN_TMEM (ipc.c)
 void *kern_handle_get(uint32_t h, int kind);
 void *kern_handle_hold(uint32_t h, int kind, void (*hold)(void *obj));   // kern_handle_get, hold(obj) run under the
@@ -401,8 +401,8 @@ void account_uid(uint64_t out[2]);                         // the local user's n
 // ---- movies (ov_movie.c)
 void movie_tick(Cpu *c);                                   // at every present, on the presenting guest thread: hands
                                                            // decoded movie frames over when due, signals their events
-// ---- camera speed (camera_speed.c): NX2NAVI_STICK_SENS
-float cam_speed_wanted(void);                              // the factor NX2NAVI_STICK_SENS asks for, 0.1 to 3
+// ---- camera speed (camera_speed.c): NX2SARIA_STICK_SENS
+float cam_speed_wanted(void);                              // the factor NX2SARIA_STICK_SENS asks for, 0.1 to 3
 float cam_speed_applied(void);                             // the factor in effect: 1 until romfs.c serves the pack
 int cam_pack_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, void **out, size_t *out_n);
                                                            // Pack/Actor/PlayerCamera.pack.zs with the camera speeds
@@ -410,7 +410,7 @@ int cam_pack_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, 
 void cam_pack_opened(void);                                // romfs.c: the game opened the camera's pack
 void cam_speed_tick(void);                                 // every present: a changed setting goes into the game's memory
 void cam_pack_served(void);                                // romfs.c serves the multiplied pack
-// ---- game resolution (resolution.c): NX2NAVI_OUTPUT_RES, NX2NAVI_RENDER_SCALE
+// ---- game resolution (resolution.c): NX2SARIA_OUTPUT_RES, NX2SARIA_RENDER_SCALE
 uint64_t res_heap_extra_bytes(void);                       // added to the application pool (mem_init), 2 MiB steps
 uint64_t res_heap_extra_kib(void);                         // added to the HeapDef texture heap and its parent; 0 = none
 int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n);   // the HeapDef table (.byml.zs) with
@@ -418,7 +418,7 @@ int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n);   //
 void res_heapdef_served(void);                             // romfs.c serves the grown table
 int res_heapdef_ok(void);                                  // 1 once it does; 0 after fs_init: the game has the shipped heaps
 void wide_init(void);
-void wide_present(void);                                    // each present: DLSS's render scale (res_fixed)                                      // after rt_patches_init: widescreen.c, NX2NAVI_GAME_ASPECT
+void wide_present(void);                                    // each present: DLSS's render scale (res_fixed)                                      // after rt_patches_init: widescreen.c, NX2SARIA_GAME_ASPECT
 int wide_available(void);                                  // the generated C has the widescreen sets
 void wide_picture(unsigned *w, unsigned *h);               // the picture the game draws (its scene is never larger)
 int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set
@@ -430,8 +430,8 @@ uint64_t wide_heap_extra_kib(void);                        // the texture heap's
 // game's own SetHeapSize is refused. A whole number of 2 MiB.
 uint64_t mem_heap_extra_max_kib(void);
 void res_init(void);                                       // after rt_patches_init: the patch page and the sets
-float res_dlss_lod_bias(void);                             // NX2NAVI_DLSS upscaling: texture LOD bias (<= 0)
-int res_dlss_mode(const char *mode);                       // NX2NAVI_DLSS changed while running: new scene size
+float res_dlss_lod_bias(void);                             // NX2SARIA_DLSS upscaling: texture LOD bias (<= 0)
+int res_dlss_mode(const char *mode);                       // NX2SARIA_DLSS changed while running: new scene size
 void dynres_frame(void);                                   // dynamic resolution: one presented frame (vk_backend.c)
 const char *dynres_override(void);                         // the DLSS mode dynamic resolution uses now, NULL: the setting's
 void res_fn_hit(uint64_t addr, uint64_t x0);               // main.c fnprof_hit: catches the renderer at start
@@ -441,8 +441,8 @@ void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene
 int res_adjustable(void);                                  // the build has the output and scene patch sets
 int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 (the test res_init and romfs.c share)
 int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
-void res_wanted(unsigned out[2]);                          // the output size NX2NAVI_OUTPUT_RES asks for
-void res_fov_live(void);                                   // NX2NAVI_FOV to the camera (set fov); on a settings change
+void res_wanted(unsigned out[2]);                          // the output size NX2SARIA_OUTPUT_RES asks for
+void res_fov_live(void);                                   // NX2SARIA_FOV to the camera (set fov); on a settings change
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
                                                            // page committed; logs the sets
@@ -482,12 +482,12 @@ void rtss_limit_restore(void);                            // before the process 
 void rtss_limit_crash(void);                              // a crash or fatal error: no call into RTSS, the next start
                                                            // puts the profile back (rtss-profile.txt)
 int64_t frame_step_world_us(void);                         // game time since the loaded save's first frame, -1 before
-                                                           // (NX2NAVI_FPS_LIMIT, live)
+                                                           // (NX2SARIA_FPS_LIMIT, live)
 uint64_t frame_step_ticks(void);                           // game time since the first present in 60 Hz ticks (input scripts)
-// In-launch A/B measurement: NX2NAVI_AB=<seconds> splits the world clock (frame_step_world_us) into blocks of that much
+// In-launch A/B measurement: NX2SARIA_AB=<seconds> splits the world clock (frame_step_world_us) into blocks of that much
 // game time in the order A B B A (repeated); rt_ab() is 1 in the B blocks, 0 in A blocks, before the world clock and
-// without NX2NAVI_AB. rt_knob(name, def) reads the switch
-// NX2NAVI_<name> once per call (def when unset): 0 off, 2 for "ab" (on in the B blocks only), 1 for anything else;
+// without NX2SARIA_AB. rt_knob(name, def) reads the switch
+// NX2SARIA_<name> once per call (def when unset): 0 off, 2 for "ab" (on in the B blocks only), 1 for anything else;
 // callers keep it and test it with RT_KNOB_ON. The perf line counts the B frames of its window (tools/ab_summary.py
 // compares the windows that are wholly A or wholly B).
 int rt_ab(void);
@@ -499,11 +499,11 @@ void frame_step_present(uint64_t display_ns, int interval); // nvnQueuePresentTe
 typedef struct { const char *exefs, *romfs, *profile; int boot; double seconds; const char *shot, *gpu; } RtConfig;
                                                            // romfs: directory with romfs.bin and index.json;
                                                            // frames: --frames N (0 = no limit); shot: --shot
-                                                           // PATH; gpu: NX2NAVI_GPU
+                                                           // PATH; gpu: NX2SARIA_GPU
 const RtConfig *rt_config(void);
 void rt_boot_event(const char *what, Cpu *c, const char *detail);   // checkpoint log; "nvn" ends --boot
 void rt_boot(void);                                        // boot.c
-// Modes of nx2navi.exe. main.c has run mem_init and parsed the paths; each mode calls ldr_load itself if it needs the
+// Modes of nx2saria.exe. main.c has run mem_init and parsed the paths; each mode calls ldr_load itself if it needs the
 // modules, registers its host functions, then seals (hostfn_seal, or implicitly at the first rt_call). Return the
 // process exit code.
 int list_audio_devices(void);                              // audio_mixer.c: --list-audio-devices (SDL3 on every window back end)

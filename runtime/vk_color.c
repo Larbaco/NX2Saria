@@ -1,8 +1,8 @@
 // Colour adjustment on the present (vk_color.h): brightness, contrast, saturation and gamma of the game's picture, after
-// the game and before the FSR 1 pass or the blit scale it to the window. Settings NX2NAVI_COLOR_BRIGHTNESS (-30..30, %
-// added), NX2NAVI_COLOR_CONTRAST and NX2NAVI_COLOR_SATURATION (%, 100 = unchanged) and NX2NAVI_COLOR_GAMMA (exponent, 1 =
-// unchanged), read when the settings change. NX2NAVI_COLOR_PRESET names a profile (vk_color_preset) whose values win
-// over the four, so a profile set in nx2navi.ini or by NX2NAVI_MENU_TEST_SET applies without the menu; custom uses the
+// the game and before the FSR 1 pass or the blit scale it to the window. Settings NX2SARIA_COLOR_BRIGHTNESS (-30..30, %
+// added), NX2SARIA_COLOR_CONTRAST and NX2SARIA_COLOR_SATURATION (%, 100 = unchanged) and NX2SARIA_COLOR_GAMMA (exponent, 1 =
+// unchanged), read when the settings change. NX2SARIA_COLOR_PRESET names a profile (vk_color_preset) whose values win
+// over the four, so a profile set in nx2navi.ini or by NX2SARIA_MENU_TEST_SET applies without the menu; custom uses the
 // four. At the default values nothing is recorded and the present is what it was. Design and preset values: the
 // colour profiles of issue #136.
 //
@@ -131,9 +131,9 @@ static int adjusting(void) {
     unsigned v = cfg_version();
     if (v != C.seen) {
         C.seen = v;
-        const char *const *p = vk_color_preset(cfg_value("NX2NAVI_COLOR_PRESET"));
-        static const char *const keys[4] = {"NX2NAVI_COLOR_BRIGHTNESS", "NX2NAVI_COLOR_CONTRAST",
-                                            "NX2NAVI_COLOR_SATURATION", "NX2NAVI_COLOR_GAMMA"};
+        const char *const *p = vk_color_preset(cfg_value("NX2SARIA_COLOR_PRESET"));
+        static const char *const keys[4] = {"NX2SARIA_COLOR_BRIGHTNESS", "NX2SARIA_COLOR_CONTRAST",
+                                            "NX2SARIA_COLOR_SATURATION", "NX2SARIA_COLOR_GAMMA"};
         double d[4];
         for (int i = 0; i < 4; i++) d[i] = p ? strtod(p[i], NULL) : cfg_double(keys[i]);
         C.adj[0] = (float)d[0] / 100.0f;

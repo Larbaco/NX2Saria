@@ -1,7 +1,7 @@
-/* NX2navi-Setup.exe: the one-click setup. This program with the launcher's folder appended as a zip.
+/* NX2Saria-Setup.exe: the one-click setup. This program with the launcher's folder appended as a zip.
 
-   It unpacks the zip into %LOCALAPPDATA%\Programs\NX2navi (no administrator rights), adds the Start menu and Desktop
-   shortcuts and the entry in Settings > Apps, and starts NX2navi.exe with --from <the setup's folder>, where the
+   It unpacks the zip into %LOCALAPPDATA%\Programs\NX2Saria (no administrator rights), adds the Start menu and Desktop
+   shortcuts and the entry in Settings > Apps, and starts NX2Saria.exe with --from <the setup's folder>, where the
    launcher looks for the player's dump first. A small window in the launcher's colours shows while it unpacks.
    When the folder already holds a newer version than the setup carries, the setup leaves the files alone (the
    launcher updates itself) and only repairs the shortcuts.
@@ -32,15 +32,35 @@ typedef struct {
 static Setup S;
 static HWND g_wnd;
 
-/* Navi as launcher/ui/art.py NAVI draws it: W white, g grey, K black, B and L blue, '.' transparent. */
-static const char *const NAVI[21] = {
-    "WWWW..............WWWW", "WggWW............WWggW", "WgggWW..........WWgggW", "WgWggWW........WWggWgW",
-    "WggWggW........WggWggW", "WgWgWgWW......WWgWgWgW", "WggggWgWKKKKKKWgWggggW", "WWggWggKBBBBBBKggWggWW",
-    ".WggggKKBBLLBBKKggggW.", ".WWggKKBBLLLLBBKKggWW.", "..WWgKBBLLWWLLBBKgWW..", "...WWKBBLWWWWLBBKWW...",
-    ".....KBBLLWWLLBBK.....", ".....KBBBLLLLBBBK.....", ".....WKKBBBBBBKKW.....", "....WWgKKBBBBKKgWW....",
-    "...WWgggKKKKKKgggWW...", "...WggWgW....WgWggW...", "...WgWggW....WggWgW...", "...WWggWW....WWggWW...",
-    "....WWWW......WWWW....",
-};
+/* Original three-leaf sprig in the NX2Saria forest palette; no game-derived artwork. */
+static void draw_sprig(HDC dc)
+{
+    POINT leaves[3][6] = {
+        {{60, 60}, {42, 42}, {39, 20}, {48, 8}, {63, 22}, {66, 43}},
+        {{56, 59}, {34, 57}, {17, 43}, {17, 29}, {37, 29}, {55, 43}},
+        {{64, 62}, {61, 41}, {72, 23}, {88, 22}, {89, 39}, {75, 55}},
+    };
+    HBRUSH fill[3] = {CreateSolidBrush(RGB(169, 203, 160)), CreateSolidBrush(RGB(120, 173, 138)),
+                      CreateSolidBrush(RGB(79, 145, 121))};
+    HPEN outline = CreatePen(PS_SOLID, 1, RGB(220, 228, 190));
+    HGDIOBJ old_pen = SelectObject(dc, outline), old_brush = SelectObject(dc, fill[0]);
+    for (int i = 0; i < 3; i++) {
+        SelectObject(dc, fill[i]);
+        for (int j = 0; j < 6; j++) leaves[i][j].x += 16, leaves[i][j].y += 17;
+        Polygon(dc, leaves[i], 6);
+    }
+    HPEN stem = CreatePen(PS_SOLID, 3, RGB(35, 79, 59));
+    SelectObject(dc, stem);
+    MoveToEx(dc, 60, 92, NULL); LineTo(dc, 58, 61);
+    MoveToEx(dc, 58, 73, NULL); LineTo(dc, 34, 47);
+    MoveToEx(dc, 61, 78, NULL); LineTo(dc, 84, 50);
+    HPEN gold = CreatePen(PS_SOLID, 3, RGB(217, 189, 122));
+    SelectObject(dc, gold);
+    MoveToEx(dc, 60, 92, NULL); LineTo(dc, 58, 72);
+    SelectObject(dc, old_pen); SelectObject(dc, old_brush);
+    DeleteObject(gold); DeleteObject(stem); DeleteObject(outline);
+    for (int i = 0; i < 3; i++) DeleteObject(fill[i]);
+}
 
 static void fail_msg(const wchar_t *fmt, const wchar_t *arg)
 {
@@ -215,7 +235,7 @@ static int unzip(void)
         }
         if (!make_dirs(target)) { ok = 0; break; }
         if (!extract_entry(&z, local, csize, usize, method, crc, target)) {
-            fail_msg(L"%ls could not be written. Close NX2navi if it is open, then run the setup again.", target);
+            fail_msg(L"%ls could not be written. Close NX2Saria if it is open, then run the setup again.", target);
             free(cd);
             CloseHandle(z.f);
             return 0;
@@ -230,7 +250,7 @@ static int unzip(void)
 
 /* ---------------------------------------------------------------- the work */
 
-/* The installed release ver can start: its launcher (launcher/native/nx2navi.c release_ok) and the Python it runs on. */
+/* The installed release ver can start: its launcher (launcher/native/nx2saria.c release_ok) and the Python it runs on. */
 static int installed_ok(const wchar_t *dest, const wchar_t *ver)
 {
     wchar_t p[PATHN];
@@ -280,23 +300,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT m, WPARAM wp, LPARAM lp)
         FillRect(dc, &r, edge);
         RECT in = {r.left + 2, r.top + 2, r.right - 2, r.bottom - 2};
         FillRect(dc, &in, bg);
-        /* Navi, the launcher's emblem: the artwork's 22 x 21 pixels, 4 x 4 screen pixels each */
-        for (int y = 0; y < 21; y++)
-            for (int x = 0; x < 22; x++) {
-                COLORREF col;
-                switch (NAVI[y][x]) {
-                case 'W': col = RGB(255, 255, 255); break;
-                case 'g': col = RGB(207, 216, 220); break;
-                case 'K': col = RGB(0, 0, 0); break;
-                case 'B': col = RGB(2, 136, 209); break;
-                case 'L': col = RGB(79, 195, 247); break;
-                default: continue;
-                }
-                HBRUSH b = CreateSolidBrush(col);
-                RECT px = {16 + 4 * x, 18 + 4 * y, 20 + 4 * x, 22 + 4 * y};
-                FillRect(dc, &px, b);
-                DeleteObject(b);
-            }
+        draw_sprig(dc);
         HFONT big = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
         HFONT small = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
         SetBkMode(dc, TRANSPARENT);
@@ -336,11 +340,11 @@ static void run_with_window(HINSTANCE inst)
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_WAIT);
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
-    wc.lpszClassName = L"NX2naviSetup";
+    wc.lpszClassName = L"NX2SariaSetup";
     RegisterClassW(&wc);
     int w = 440, h = 120;
     int x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - h) / 3;
-    g_wnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"NX2navi Setup", WS_POPUP | WS_VISIBLE, x, y, w, h,
+    g_wnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"NX2Saria Setup", WS_POPUP | WS_VISIBLE, x, y, w, h,
                             NULL, NULL, inst, NULL);
     SetTimer(g_wnd, 1, 200, NULL);
     HANDLE t = CreateThread(NULL, 0, work, NULL, 0, NULL);
@@ -378,12 +382,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
             if (!got || got >= PATHN - 16) return 1;
             wcscat(base, L"\\Programs");
         }
+        wchar_t legacy[PATHN];
         swprintf(S.dest, PATHN, L"%ls\\%ls", base, APP_NAME);
+        swprintf(legacy, PATHN, L"%ls\\NX2navi", base);
+        if (!is_dir(S.dest) && is_dir(legacy)) wcscpy(S.dest, legacy);   /* prefer the current install, else update in place */
     }
     size_t dl = wcslen(S.dest);
     while (dl > 3 && (S.dest[dl - 1] == L'\\' || S.dest[dl - 1] == L'/')) S.dest[--dl] = 0;
     if (!read_trailer()) {
-        MessageBoxW(NULL, L"This setup is incomplete. Download NX2navi-Setup.exe again.", APP_NAME, MB_ICONERROR);
+        MessageBoxW(NULL, L"This setup is incomplete. Download NX2Saria-Setup.exe again.", APP_NAME, MB_ICONERROR);
         return 1;
     }
     if (S.quiet) work(NULL);
@@ -395,7 +402,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
     if (S.launch) {
         static wchar_t cmd[PATHN * 3];
         wchar_t exe[PATHN];
-        swprintf(exe, PATHN, L"%ls\\NX2navi.exe", S.dest);
+        swprintf(exe, PATHN, L"%ls\\NX2Saria.exe", S.dest);
         swprintf(cmd, PATHN * 3, L"\"%ls\" --from \"%ls\"", exe, S.src_dir);
         STARTUPINFOW si = {.cb = sizeof si};
         PROCESS_INFORMATION pi;

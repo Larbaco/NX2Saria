@@ -50,7 +50,7 @@ static RtGuestLayout L;
 static uint64_t mods_lo, mods_hi;   // fixed module window
 static PlatMutex lock = PLAT_MUTEX_INIT;
 static uint64_t heap_size, alias_bytes;
-static int heap_lazy;               // NX2NAVI_HEAP_LAZY, Windows: the heap is committed page run by page run on first use
+static int heap_lazy;               // NX2SARIA_HEAP_LAZY, Windows: the heap is committed page run by page run on first use
 static uint64_t heap_lazy_faults, heap_lazy_bytes;   // accesses that committed heap pages, and the bytes they committed
 static uint64_t heap_lazy_ns, heap_lazy_max_ns;      // time in those faults, lock wait included, since the last report
 static uint8_t *alias_pages;        // 1 per mapped 4 KiB page of the alias region
@@ -73,7 +73,7 @@ static int reserve_at(uint64_t at, uint64_t size, int watch) { return plat_mem_r
 // and vm_lock come inside it, a strict thaw's page calls run under it (thaw_pages_vm), and a holder may wait for a
 // range of the lazy write-back in flight, whose fetch (vk_memory.c lazy_fetch) takes the queue lock and waits for the
 // GPU ("Ranges in flight"; in a thaw under the lock: a mapping change, the lazy heap's commit or a write fault
-// lazy_fault did not take; and with NX2NAVI_WB_LAZY_UNLOCKED=0 the fetch itself runs under frz_lock). So no holder of
+// lazy_fault did not take; and with NX2SARIA_WB_LAZY_UNLOCKED=0 the fetch itself runs under frz_lock). So no holder of
 // the queue lock may touch guest memory or take frz_lock.
 #define FRZ_SHIFT 21
 #define FRZ_SIZE (1ull << FRZ_SHIFT)
@@ -98,7 +98,7 @@ static volatile int64_t frz_hot_holds;                        // quick thaws tha
 static volatile int32_t nfrz;
 static PlatMutex frz_lock = PLAT_MUTEX_INIT;
 static volatile int64_t frz_count[4];   // freezes; thaws by a write fault, by mem_thaw, by a mapping change
-// Thaws outside frz_lock (NX2NAVI_FREEZE_ASYNC, default 1; 0: every thaw under the lock, as before). While the game
+// Thaws outside frz_lock (NX2SARIA_FREEZE_ASYNC, default 1; 0: every thaw under the lock, as before). While the game
 // streams an area it creates and finalizes up to 1,500 memory pools a second, the driver pins and unpins the imported
 // ones, and the VirtualQuery and VirtualProtect calls of a thaw then take 10-20 ms each. Under frz_lock that held the
 // replay (mem_lazy_skip, the freeze pass) and every other thread that faulted or thawed, a 25-45 ms frame. So a thaw by
@@ -120,7 +120,7 @@ static PlatMutex vm_lock = PLAT_MUTEX_INIT;
 static volatile int64_t frz_async_n;    // thaws done outside the lock, since the start
 static volatile int64_t frz_protect_fails;   // VirtualProtect failures of those thaws, since the start
 
-// Probed regions (NX2NAVI_WB_PROBE=1, a diagnosis). The back end copies what the GPU wrote into a mirrored pool back
+// Probed regions (NX2SARIA_WB_PROBE=1, a diagnosis). The back end copies what the GPU wrote into a mirrored pool back
 // into guest memory after every submission, in case the CPU or a host path reads it; whether anything does is what
 // the probe finds out. A 2 MiB region that lies wholly inside a range just written back is made inaccessible
 // (mem_probe). Its first read or write faults: probe_fault gives the region back the protection it had (read-only
@@ -153,7 +153,7 @@ static void unprobe_locked(uint64_t r) {
     plat_dec32(&nprb);
 }
 
-// Lazy write-back (NX2NAVI_WB_LAZY; unset: on under Windows except on AMD's own driver, off elsewhere, as
+// Lazy write-back (NX2SARIA_WB_LAZY; unset: on under Windows except on AMD's own driver, off elsewhere, as
 // wb_lazy_choice.h decides and gives the reasons for; vk_memory.c "lazy write-back"). It was off
 // by default in 0.7.0: with it on, single frames came out with the whole scene's shadowing missing, 10 to 180 of 1,800
 // presents standing in Hyrule Field with other programs keeping the CPU busy and none found with it off. That was
@@ -169,7 +169,7 @@ static void unprobe_locked(uint64_t r) {
 // back end copy the range's bytes down now (lz_fetch, a GPU copy after everything submitted so far), gives the pages
 // back and runs the access again, and the range stays out for a while (lz_hot: 1 s, doubling to 32 s while it keeps
 // being touched), written back every submission as before; by default only the piece around the address goes that
-// way and the rest of the range stays armed (NX2NAVI_WB_LAZY_CHUNK, below). Every thaw (before the kernel writes or reads guest
+// way and the rest of the range stays armed (NX2SARIA_WB_LAZY_CHUNK, below). Every thaw (before the kernel writes or reads guest
 // memory, and before mapping changes) releases the armed ranges of its regions the same way.
 // A region with armed pages is not frozen (freeze_locked wants every page read-write), and a frozen one is not armed.
 // A fetch brings what the GPU work handed over so far wrote. The part of a submission that is being recorded has left
@@ -205,7 +205,7 @@ static uint64_t lz_unclean;             // frz_lock: arms refused since the last
 // in the partial pages at a range's ends. They are written back at every submission that writes them.
 enum { LZ_NO_FROZEN, LZ_NO_HOT, LZ_NO_THAW, LZ_NO_PAGES, LZ_NO_EDGE, LZ_NO_N };
 static uint64_t lz_no[LZ_NO_N], lz_no_small, lz_arm_calls;   // ranges without a whole page; ranges written back
-// NX2NAVI_WB_LAZY_CHUNK (default 0 = a touch releases its whole range and holds its regions; off because with it on
+// NX2SARIA_WB_LAZY_CHUNK (default 0 = a touch releases its whole range and holds its regions; off because with it on
 // the graphics device was lost about 2 s after a save load in Hyrule Field at night, in 7 of about 22 loads on an
 // RTX 5090, a GPU read fault at the start of a large buffer, and in 0 of 15 with it off; why is not known yet): the
 // first touch of an armed range gives back only the LZ_CHUNK bytes around the address, fetched alone, and only that
@@ -273,7 +273,7 @@ static volatile uint32_t lz_fetch_ms;      // plat_now_ms() | 1 at the end of th
 // frz_lock may wait for one: its fetch takes the queue lock, and no holder of the queue lock takes frz_lock. Every
 // store to lzr is made under lz_lock, from the list, the entries and the region an arm is protecting (lz_arm_r).
 // Fetches of different ranges run at once (the back end has a slot for each, vk_memory.c lazy_fetch).
-// NX2NAVI_WB_LAZY_UNLOCKED=0 brings back 0.10.1's locking: frz_lock is kept from the moment a fault or a release takes
+// NX2SARIA_WB_LAZY_UNLOCKED=0 brings back 0.10.1's locking: frz_lock is kept from the moment a fault or a release takes
 // a range out until its entry ends, a release takes one segment at a time, mem_thaw releases under the lock, and
 // vk_memory.c mirror_evict and hot_check release their victims under pool_lock, so one fetch runs at a time. The
 // entries stay with it: a touch of a range in flight waits for that entry and runs again, the hold is set at the
@@ -285,7 +285,7 @@ static LzFly lz_fly[LZ_FLY];               // lz_lock
 static volatile int32_t lz_nfly;           // lz_lock: entries in use (read without it as a hint)
 static PlatCond lz_fly_cv = PLAT_COND_INIT;   // with lz_lock: an entry ended
 static int64_t lz_arm_r = -1;              // lz_lock: the region whose pages mem_lazy_arm is protecting, -1 none
-static int lz_unlocked = 1;                // NX2NAVI_WB_LAZY_UNLOCKED, read in mem_init
+static int lz_unlocked = 1;                // NX2SARIA_WB_LAZY_UNLOCKED, read in mem_init
 
 // lz_lock held: lzr of the regions [lo, hi) reaches, from the armed segments, the ranges in flight and the arm in
 // progress.
@@ -350,7 +350,7 @@ static int lazy_fly_start_locked(LzSeg s) {
 }
 
 // No lock held (frz_lock in a thaw under the lock: a mapping change, the lazy heap's commit or a write fault lazy_fault
-// did not take; in mem_lazy_skip's give-back, which fetches nothing; and with NX2NAVI_WB_LAZY_UNLOCKED=0): the n
+// did not take; in mem_lazy_skip's give-back, which fetches nothing; and with NX2SARIA_WB_LAZY_UNLOCKED=0): the n
 // segments s[] in flight in the entries k[] get the mirror's bytes, the stale ones in one call of lz_fetch, then their
 // pages' access, and leave flight. n is at most LZ_BATCH.
 static void lazy_fly_run(const int *k, const LzSeg *s, int n) {
@@ -464,7 +464,7 @@ static void lazy_piece_hold_locked(uint64_t a) {
     e->until = (now + (uint32_t)e->back * 1000u) | 1;
 }
 
-// frz_lock and lz_lock held: up to LZ_BATCH armed segments (one with NX2NAVI_WB_LAZY_UNLOCKED=0, each fetched on its
+// frz_lock and lz_lock held: up to LZ_BATCH armed segments (one with NX2SARIA_WB_LAZY_UNLOCKED=0, each fetched on its
 // own as in 0.10.1) that meet any of rg[j] = {lo, hi, buffer or 0 for any} leave the list into flight, into k[] and
 // s[]. Returns how many; -1 when some meet but no entry is free (wait for one with lazy_fly_room_locked, then again).
 static int lazy_take_batch_locked(const uint64_t (*rg)[3], int nr, int *k, LzSeg *s) {
@@ -724,7 +724,7 @@ int mem_lazy_armed(uint64_t a, uint64_t n) {
 // with neither (lzr, prb: a page becomes inaccessible only under that lock, after its region is marked, and a mark goes
 // only once its pages are read-write again) is copied without asking the system for its pages' state; a range in flight
 // gives its pages back meanwhile, which only makes them readable. Returns how many were copied.
-// With the lazy heap (NX2NAVI_HEAP_LAZY) a heap page nothing touched yet is still reserved, and reading it faults
+// With the lazy heap (NX2SARIA_HEAP_LAZY) a heap page nothing touched yet is still reserved, and reading it faults
 // into heap_lazy_fault, which waits for frz_lock: held here, by the same thread, so the copy never returned and every
 // later fault, thaw and freeze waited behind it. So a range that meets the heap is copied run by run as the system
 // reports its pages: the heap's reserved runs read zero, as they would once committed, without committing them.
@@ -763,7 +763,7 @@ int mem_copy_readable(uint8_t *const *dst, const uint64_t (*src)[2], int n, uint
 // Releases what is armed in each range rg[j] = {lo, hi, buffer} (buffer 0: any), and returns once the ranges of those
 // buffers in flight there have ended as well: before the buffers a fetch would read go away (vk_memory.c mirror_evict,
 // hot_check), and before the kernel's access in a thaw (mem_thaw). Up to LZ_BATCH segments go out at a time and are
-// fetched in one call, without frz_lock (with it, one segment at a time, when NX2NAVI_WB_LAZY_UNLOCKED=0).
+// fetched in one call, without frz_lock (with it, one segment at a time, when NX2SARIA_WB_LAZY_UNLOCKED=0).
 void mem_lazy_release(const uint64_t (*rg)[3], int nr) {
     if (!__atomic_load_n(&lz_on, __ATOMIC_RELAXED) || nr <= 0) return;
     for (;;) {
@@ -790,7 +790,7 @@ void mem_lazy_release(const uint64_t (*rg)[3], int nr) {
 
 // mem_thaw, before it takes frz_lock: what is armed in the 2 MiB regions of [a, a + n) is released here, its fetches
 // without that lock, and the regions are held from arms first (thaw_ms, which thaw_begin_locked sets as well), so the
-// thaw finds them settled under the lock. Nothing with NX2NAVI_WB_LAZY_UNLOCKED=0: the thaw releases them itself.
+// thaw finds them settled under the lock. Nothing with NX2SARIA_WB_LAZY_UNLOCKED=0: the thaw releases them itself.
 static void lazy_release_regions(uint64_t a, uint64_t n) {
     if (!lz_unlocked || !n || a >= RT_ADDRESS_LIMIT || !__atomic_load_n(&lz_on, __ATOMIC_RELAXED)) return;
     uint64_t r0 = a >> FRZ_SHIFT, r1 = (a + n - 1 < RT_ADDRESS_LIMIT ? a + n - 1 : RT_ADDRESS_LIMIT - 1) >> FRZ_SHIFT;
@@ -920,7 +920,7 @@ static int lazy_fault(uint64_t a, int write) {
     }
 }
 
-// Test (NX2NAVI_WB_LAZY_TOUCH): the first addresses of up to max armed segments, another set each call, for a caller
+// Test (NX2SARIA_WB_LAZY_TOUCH): the first addresses of up to max armed segments, another set each call, for a caller
 // that reads them to make the faults a game's access would.
 int mem_lazy_pick(uint64_t *addr, int max) {
     static int next;
@@ -963,7 +963,7 @@ void mem_lazy_report(uint64_t frame, uint64_t skipped) {
     int64_t an = __atomic_load_n(&frz_async_n, __ATOMIC_RELAXED), af = __atomic_load_n(&frz_protect_fails, __ATOMIC_RELAXED);
     if ((rt_trace & RT_TRACE_PERF) && an != async_said) {
         async_said = an;
-        rt_log("mem: thaws outside the freeze lock so far %lld (NX2NAVI_FREEZE_ASYNC), page protections that failed there "
+        rt_log("mem: thaws outside the freeze lock so far %lld (NX2SARIA_FREEZE_ASYNC), page protections that failed there "
                "%lld", (long long)an, (long long)af);
     }
     if (!__atomic_load_n(&lz_on, __ATOMIC_RELAXED)) return;
@@ -1122,7 +1122,7 @@ static void thaw_wait_locked(uint64_t a, uint64_t n) {
         }
 }
 
-// Lazy heap (NX2NAVI_HEAP_LAZY, Windows only; off by default). Windows charges every committed page to the system's
+// Lazy heap (NX2SARIA_HEAP_LAZY, Windows only; off by default). Windows charges every committed page to the system's
 // commit at once, and SetHeapSize asks for the whole application heap up front: in Castle Town after Hyrule Field the
 // heap held 6.8 GiB of commit of which 3.4 GiB had ever been resident, with 0.45 GB in the page file. With it on,
 // SetHeapSize only moves the heap's end, and a page of the heap is committed when something first reaches it: an access
@@ -1460,12 +1460,12 @@ static void protect(uint64_t a, uint64_t n, int prot, const char *what) {
 // The process is re-run when a region is taken: Windows places DLLs, heaps and thread stacks at random addresses,
 // and a fresh process gets a fresh layout.
 static void reexec_or_fail(const char *what) {
-    const char *e = cfg_get("NX2NAVI_REEXEC");
+    const char *e = cfg_get("NX2SARIA_REEXEC");
     int n = e ? atoi(e) : 0;
     if (n >= REEXEC_LIMIT) rt_fatal("memory: %s is not free after %d attempts", what, n);
     char buf[16];
     snprintf(buf, sizeof buf, "%d", n + 1);
-    cfg_setenv("NX2NAVI_REEXEC", buf);
+    cfg_setenv("NX2SARIA_REEXEC", buf);
     plat_reexec();
 }
 
@@ -1493,20 +1493,20 @@ void mem_init(void) {
     alias_pages = calloc(ALIAS_PAGES, 1);
     if (!alias_pages) rt_fatal("memory: cannot allocate the alias page map");
     // nx2navi.ini is read here, once the address space is claimed and before the first setting: the pool size below
-    // depends on NX2NAVI_APP_POOL and on the resolution settings (resolution.c decides them once, on this first call).
+    // depends on NX2SARIA_APP_POOL and on the resolution settings (resolution.c decides them once, on this first call).
     cfg_init();
-    if (cfg_bool("NX2NAVI_WB_PROBE")) {   // a diagnosis: off, no access fault reaches probe_fault and nothing is probed
+    if (cfg_bool("NX2SARIA_WB_PROBE")) {   // a diagnosis: off, no access fault reaches probe_fault and nothing is probed
         plat_mem_access_hook(access_fault);
         __atomic_store_n(&prb_on, 1, __ATOMIC_RELEASE);
-    } else if (cfg_bool("NX2NAVI_WB_LAZY")) {   // armed once the back end wants it and can fetch (mem_lazy_enable)
+    } else if (cfg_bool("NX2SARIA_WB_LAZY")) {   // armed once the back end wants it and can fetch (mem_lazy_enable)
         plat_mem_access_hook(access_fault);
         lz_want = 1;
-        lz_chunk = cfg_bool("NX2NAVI_WB_LAZY_CHUNK");
-        lz_unlocked = cfg_bool("NX2NAVI_WB_LAZY_UNLOCKED");   // fetches outside frz_lock ("Ranges in flight")
+        lz_chunk = cfg_bool("NX2SARIA_WB_LAZY_CHUNK");
+        lz_unlocked = cfg_bool("NX2SARIA_WB_LAZY_UNLOCKED");   // fetches outside frz_lock ("Ranges in flight")
     }
-    const char *fa = cfg_get("NX2NAVI_FREEZE_ASYNC");   // thaws outside frz_lock (FRZ_THAWING); unset: on
+    const char *fa = cfg_get("NX2SARIA_FREEZE_ASYNC");   // thaws outside frz_lock (FRZ_THAWING); unset: on
     frz_async = !fa || !*fa || atoi(fa) != 0;
-    const char *pool = cfg_get("NX2NAVI_APP_POOL");
+    const char *pool = cfg_get("NX2SARIA_APP_POOL");
     L = (RtGuestLayout){
         .aslr = {low, RT_ADDRESS_LIMIT - low},
         .stack = {low + STACK_OFF, STACK_SIZE},
@@ -1516,12 +1516,12 @@ void mem_init(void) {
         .hostfn = {RT_HOSTFN_BASE, RT_HOSTFN_SIZE},
         .pool = pool ? strtoull(pool, NULL, 0) : DEFAULT_POOL + res_heap_extra_bytes(),   // resolution.c
     };
-    if (!L.pool) rt_fatal("memory: NX2NAVI_APP_POOL is 0");
+    if (!L.pool) rt_fatal("memory: NX2SARIA_APP_POOL is 0");
 #ifdef _WIN32
-    if (cfg_bool("NX2NAVI_HEAP_LAZY")) {   // set before the game's first SetHeapSize
+    if (cfg_bool("NX2SARIA_HEAP_LAZY")) {   // set before the game's first SetHeapSize
         plat_mem_access_hook(access_fault);
         heap_lazy = 1;
-        rt_log("mem: the heap is committed on first use (NX2NAVI_HEAP_LAZY)");
+        rt_log("mem: the heap is committed on first use (NX2SARIA_HEAP_LAZY)");
     }
 #endif
 }
@@ -1529,16 +1529,16 @@ void mem_init(void) {
 const RtGuestLayout *mem_layout(void) { return &L; }
 
 // The start of a game (main.c, before the boot): one line when the machine's free commit is below what the game takes
-// in play (mem_need.h; NX2NAVI_MEM_NEED_MB, 0 no check), so a log that ends in a failed allocation, dropped textures
+// in play (mem_need.h; NX2SARIA_MEM_NEED_MB, 0 no check), so a log that ends in a failed allocation, dropped textures
 // or a lost device says at its top that the machine was short before the game took anything. 1 when it was.
 // probe: --probe-memneed, which prints the numbers either way.
 int mem_start_note(int probe) {
-    double proc, used, limit, need = strtod(cfg_value("NX2NAVI_MEM_NEED_MB"), NULL);
+    double proc, used, limit, need = strtod(cfg_value("NX2SARIA_MEM_NEED_MB"), NULL);
     plat_commit_info(&proc, &used, &limit);
     int is_short = mem_need_short(proc, used, limit, need);
     if (probe)
         printf("probe-memneed: system commit %.0f of %.0f MB in use, this process %.0f MB, the game needs %.0f MB "
-               "(NX2NAVI_MEM_NEED_MB): %s\n", used, limit, proc, need,
+               "(NX2SARIA_MEM_NEED_MB): %s\n", used, limit, proc, need,
                need <= 0 ? "not checked" : limit < 0 ? "no limit known" : is_short ? "short" : "enough");
     if (!is_short) return 0;
     char note[400] = "";
@@ -1546,7 +1546,7 @@ int mem_start_note(int probe) {
     rt_log("mem: WARNING: this machine has %.0f MB of memory left for the game and the game takes about %.0f MB in play "
            "(system commit: %.0f of %.0f MB in use; the limit is RAM plus page file%s%s). Short of memory the game "
            "stutters, loses textures or stops with an out-of-memory or lost-device error. Closing other programs or a "
-           "larger page file gives it room (mem_need_mb = 0 in nx2navi.ini turns this warning off)",
+           "larger page file gives it room (mem_need_mb = 0 in nx2saria.ini (or an existing nx2navi.ini) turns this warning off)",
            mem_need_room(proc, used, limit), need, used, limit, note[0] ? "; " : "", note);
     return 1;
 }
@@ -1593,7 +1593,7 @@ uint64_t mem_heap_extra_max_kib(void) {
 
 // ---- 0x01 SetHeapSize
 uint32_t mem_set_heap_size(uint64_t size, uint64_t *addr) {
-    uint64_t t0 = perf_mark_begin();   // NX2NAVI_TRACE=perf: the commit or decommit, the wait for the lock included
+    uint64_t t0 = perf_mark_begin();   // NX2SARIA_TRACE=perf: the commit or decommit, the wait for the lock included
     plat_mutex_lock(&lock);
     if (size > HEAP_CAP || size % 0x200000 || size + image_bytes() > L.pool) {
         plat_mutex_unlock(&lock);
@@ -1743,7 +1743,7 @@ uint32_t mem_map(uint64_t dst, uint64_t src, uint64_t n) { return stack_move(0, 
 uint32_t mem_unmap(uint64_t dst, uint64_t src, uint64_t n) { return stack_move(1, dst, src, n); }
 
 // ---- 0x2C/0x2D MapPhysicalMemory, UnmapPhysicalMemory. Horizon maps only the still-unmapped pages of the range and
-// leaves mapped pages and their contents alone; NX2navi's heaps grow by re-mapping ranges they partly own.
+// leaves mapped pages and their contents alone; NX2Saria's heaps grow by re-mapping ranges they partly own.
 static void alias_runs(uint64_t first, uint64_t count, uint8_t want, int do_commit) {   // under lock
     uint64_t i = 0;
     while (i < count) {
@@ -1843,7 +1843,7 @@ static void query_locked(uint64_t a, RtMemoryInfo *out);
 // whole run of equal pages around the address for it, scanning alias_pages both ways; a replay profile had 2.6% of
 // the replaying thread's samples there. A range that touches a moved stack (whose source and destination change the
 // answer, query_locked's clipping) or crosses into another region goes the general way. 1 readable, 0 not, -1 not
-// answered here. NX2NAVI_READABLE_FAST=0 turns it off, ab in the B blocks only.
+// answered here. NX2SARIA_READABLE_FAST=0 turns it off, ab in the B blocks only.
 static int readable_fast(uint64_t a, uint64_t n) {
     static int mode = -1;
     if (mode < 0) mode = rt_knob("READABLE_FAST", "1");
@@ -2067,7 +2067,7 @@ void mem_kernel_free(void *p, uint64_t size) {
     plat_mutex_unlock(&klock);
 }
 
-// NX2NAVI_TRACE=perf: what the lazy heap's first-use faults cost since the last line (perf.c, every perf window that had
+// NX2SARIA_TRACE=perf: what the lazy heap's first-use faults cost since the last line (perf.c, every perf window that had
 // some), so that a hitch can be told from them: the time includes the wait for frz_lock.
 void mem_lazy_heap_report(uint64_t frame) {
     static uint64_t faults_prv, bytes_prv;
@@ -2121,7 +2121,7 @@ void mem_guest_census_log(uint64_t frame, const char *const *name, const uint64_
     rt_log("%s; all %.0f", line, all / 1048576.0);
 }
 
-// NX2NAVI_MEM_CENSUS: how many bytes of each guest range are committed, so a process that has grown says which region
+// NX2SARIA_MEM_CENSUS: how many bytes of each guest range are committed, so a process that has grown says which region
 // holds the memory. A region is reserved whole at start-up and committed page by page, so the walk reads each run of
 // pages of the same state; the alias window is the largest and costs the most steps when it is full. Where the OS has
 // a walk of the whole address space (prof_win.c prof_commit_census) that walk counts these too and this one is not
@@ -2158,7 +2158,7 @@ void mem_guest_usage(uint64_t *heap, uint64_t *heap_committed, uint64_t *phys_ma
     *phys_maps = __atomic_load_n(&alias_bytes, __ATOMIC_RELAXED);
 }
 
-// NX2NAVI_TRACE=perf "mem: sizes" (perf.c): the guest heap and physical maps, the kernel region's bump and commit, the
+// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): the guest heap and physical maps, the kernel region's bump and commit, the
 // moved stacks, and the lazily written ranges with their array's room.
 void mem_sizes(PerfSizes *s) {
     plat_mutex_lock_shared(&lock);

@@ -1,4 +1,4 @@
-"""The game's own settings, nx2navi.ini in the game folder, for the few the launcher's Settings switch.
+"""The game's own settings, nx2saria.ini (or the legacy nx2navi.ini) in the game folder.
 
 Read the way runtime/cfg.c reads the file: a UTF-8 byte order mark is skipped, lines starting with #, ; or [ are
 not settings, a key is matched without regard to case and with or without its NX2NAVI_ prefix, a value in double
@@ -15,17 +15,21 @@ import os
 import re
 from pathlib import Path
 
-PREFIX = 'NX2NAVI_'
+PREFIXES = ('NX2SARIA_', 'NX2NAVI_')
 BOM = '﻿'
 
 
 def _path(game_dir):
-    return Path(game_dir) / 'nx2navi.ini'
+    folder = Path(game_dir)
+    current, legacy = folder / 'nx2saria.ini', folder / 'nx2navi.ini'
+    return current if current.exists() or not legacy.exists() else legacy
 
 
 def _key(text):
     k = text.strip().upper()
-    return k[len(PREFIX):] if k.startswith(PREFIX) else k
+    for prefix in PREFIXES:
+        if k.startswith(prefix): return k[len(prefix):]
+    return k
 
 
 def _text(game_dir):

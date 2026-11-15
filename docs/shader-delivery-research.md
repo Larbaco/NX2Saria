@@ -21,8 +21,8 @@ Current flow (from the top comments of `runtime/gfx_shader.c` and `runtime/vk_pi
 - An NVN program (control section, code, c1, translator answers) goes to `nx2navi_xlate.exe --serve` children and comes back as SPIR-V plus reflection, cached in memory and under `shader-cache/` (packed into `shader-cache.pack`). The key includes the translator identity, so any translator change invalidates every entry. `in/<input id>.in` files allow retranslation without guest memory.
 - Play records `shader-answers.bin` and `shader-programs.bin`. `pipeline-keys.bin` records every built pipeline, shaders named by input id, independent of the translator.
 - Pipelines use `VK_EXT_graphics_pipeline_library`: stage libraries, a fast link on a miss, an optimised pipeline built on a background thread. `pipeline-cache.bin` is dropped when vendor, device or cache UUID differ.
-- Boot (`vk_pipeline_prewarm`) retranslates and rebuilds what the key file names. The installer runs `nx2navi.exe --prepare-shaders`, which warms the driver's disk cache.
-- A comment in `runtime/boot.c` records a cold start (new translator or driver): 2,132 shaders translated and 1,579 pipelines built in 9.8 s. The guest waits at most `NX2NAVI_PREWARM_WAIT_MS` (default 3000), then the work continues in the background.
+- Boot (`vk_pipeline_prewarm`) retranslates and rebuilds what the key file names. The installer runs `nx2saria.exe --prepare-shaders`, which warms the driver's disk cache.
+- A comment in `runtime/boot.c` records a cold start (new translator or driver): 2,132 shaders translated and 1,579 pipelines built in 9.8 s. The guest waits at most `NX2SARIA_PREWARM_WAIT_MS` (default 3000), then the work continues in the background.
 - Compute shaders are translated and built synchronously on the replay thread, because "a skipped dispatch can change what the game computes". Graphics misses are asynchronous and the draw is skipped. So wrong lighting early in a cold start more plausibly comes from skipped graphics draws than from compute. I did not reproduce or measure it.
 
 **A D3D12 back end** would replace about 25,800 lines (28 `vk_*.c` files plus headers) using push descriptors, mesh shaders, pipeline libraries and dynamic state 3, and the translator would have to emit DXIL, not SPIR-V. My estimate is several person-months. It would still not reach ASD, because delivery needs a store submission (section 3). The local "compile a SODB, register the PSDB" test path runs the same vendor compiler on the player's machine, so it gains nothing over the existing prepare pass.
@@ -39,7 +39,7 @@ Current flow (from the top comments of `runtime/gfx_shader.c` and `runtime/vk_pi
 
 | Option | State here | Verdict |
 |---|---|---|
-| `VK_EXT_graphics_pipeline_library` | In use (`vk_device.c`, `vk_pipeline.c`, `NX2NAVI_GPL`) | Done |
+| `VK_EXT_graphics_pipeline_library` | In use (`vk_device.c`, `vk_pipeline.c`, `NX2SARIA_GPL`) | Done |
 | Driver disk cache | Used; a library built again on AMD takes 0.1 ms instead of 55 ms (`vk_pipeline.c`) | Done |
 | Fossilize-style capture | `pipeline-keys.bin`, `in/*.in` and the answer files play that role, with the translator in front | Done. [Fossilize](https://github.com/ValveSoftware/Fossilize) replays on any device. [Steam pre-caching](https://www.phoronix.com/news/Steam-Vulkan-Shader-Pre-Cache) needs Steam and uploaded data: unusable |
 | [`VK_KHR_pipeline_binary`](https://www.khronos.org/blog/bringing-explicit-pipeline-caching-control-to-vulkan) | Not used | Per-pipeline blobs with your own eviction, still per-driver. 52.8% of Windows devices expose it ([database](https://vulkan.gpuinfo.org/listextensions.php?platform=windows&extension=VK_KHR_pipeline_binary)); Mesa has it ([RADV](https://www.phoronix.com/news/RADV-Pipeline-Binary-Merged), [ANV](https://phoronix.com/news/Intel-ANV-Pipeline-Binary)). Per-vendor Windows support unconfirmed. Optional |
@@ -52,6 +52,6 @@ After a translator change the dominant cost is likely translation (CPU, translat
 
 ASD is not feasible: D3D12-only, store-gated, built from game-derived data. The practical steps:
 
-1. **Blocking "Preparing shaders" step on a cold cache (1-3 days).** When the translator identity, GPU or driver changes, run the existing prewarm to completion before the guest starts (the `NX2NAVI_PREWARM_WAIT_MS=0` behaviour), with progress shown. The `boot.c` figure is about 10 s, once. This removes the wrong-looking start.
+1. **Blocking "Preparing shaders" step on a cold cache (1-3 days).** When the translator identity, GPU or driver changes, run the existing prewarm to completion before the guest starts (the `NX2SARIA_PREWARM_WAIT_MS=0` behaviour), with progress shown. The `boot.c` figure is about 10 s, once. This removes the wrong-looking start.
 2. **Re-run the library prepare pass after a driver change (2-4 days).** `lb_warm_prepared` and `--warm-shaders` exist, and the skip list already keys on vendor:device:driverVersion. Triggering the pass when `cache_load` drops a stale cache is the local counterpart of ASD's driver-update handling. I found no such trigger in `runtime/`; confirm before building.
 3. **Measure, then decide on `VK_KHR_pipeline_binary` (1-2 weeks, low priority).** Prototype it only if the measurement points at the pipeline or driver cache. It could let libraries persist without the roughly 240 MB cache growth `vk_pipeline.c` avoids today.

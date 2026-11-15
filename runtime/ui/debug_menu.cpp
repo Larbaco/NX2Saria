@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "cfg.h"
 
 #include "imgui.h"
 
@@ -63,7 +64,7 @@ void flags_filter(void) {
         return strcmp(x, y) < 0;
     });
     f_dirty = false;
-    if (getenv("NX2NAVI_DBG_TEST")) rt_log("debug: filter \"%s\": %d flags shown", f_filter, f_rows_n);   // test runs
+    if (cfg_env("NX2SARIA_DBG_TEST")) rt_log("debug: filter \"%s\": %d flags shown", f_filter, f_rows_n);   // test runs
 }
 
 void tab_flags(void) {
@@ -204,7 +205,7 @@ void tab_teleport(void) {
         }
         t_count = count, t_group_was = t_group;
         snprintf(t_filter_was, sizeof t_filter_was, "%s", t_filter);
-        if (getenv("NX2NAVI_DBG_TEST")) rt_log("debug: teleport list: group %d, filter \"%s\": %d of %d places", t_group, t_filter, t_rows_n, count);
+        if (cfg_env("NX2SARIA_DBG_TEST")) rt_log("debug: teleport list: group %d, filter \"%s\": %d of %d places", t_group, t_filter, t_rows_n, count);
     }
     status_line();
     bool busy = dbg_busy() != 0;
@@ -242,7 +243,7 @@ void tab_events(void) {
             if (!e_filter[0] || contains(dbg_event_name(i), e_filter)) e_rows[e_rows_n++] = i;
         e_count = count;
         snprintf(e_filter_was, sizeof e_filter_was, "%s", e_filter);
-        if (getenv("NX2NAVI_DBG_TEST")) rt_log("debug: event list: filter \"%s\": %d of %d events", e_filter, e_rows_n, count);
+        if (cfg_env("NX2SARIA_DBG_TEST")) rt_log("debug: event list: filter \"%s\": %d of %d events", e_filter, e_rows_n, count);
     }
     status_line();
     bool busy = dbg_busy() != 0;

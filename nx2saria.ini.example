@@ -1,6 +1,8 @@
-# nx2navi.ini: settings for nx2navi.exe. Copy this file to nx2navi.ini next to nx2navi.exe and remove the '#' of a line to change it.
-# Each line shows the default; on a Steam Deck the device profile ([display]) changes a few of them. A NX2NAVI_*
-# environment variable of the same name (NX2NAVI_FPS_LIMIT for fps_limit) overrides the file. Keys are case-insensitive;
+# nx2saria.ini: settings for NX2Saria. Copy this file to nx2saria.ini next to the game executable and remove the '#'
+# of a line to change it. An existing nx2navi.ini is still read and updated in place when no nx2saria.ini exists.
+# Each line shows the default; on a Steam Deck the device profile ([display]) changes a few of them. A NX2SARIA_*
+# environment variable of the same name (NX2SARIA_FPS_LIMIT for fps_limit) overrides the file. Legacy NX2SARIA_* names
+# remain accepted when the matching NX2SARIA_* variable is unset. Keys are case-insensitive;
 # '#' and ';' start a comment; [sections] only group lines. After the value of a setting with a list of choices or a
 # range, a space or tab then '#' or ';' starts a comment too ("fps_limit = 144 # my monitor" is 144); a path, a name, a
 # size, a keyboard key and the settings that take any number (gpu_index, compute_keep, tex_released_max, floor_probe,
@@ -8,7 +10,7 @@
 # true and yes for 1; a setting with more choices than 0 and 1 takes only the choices its lines here list.
 # Only the keys in this file are settings. A line with any other key does nothing: the game's log names it at the
 # start ("no setting of this version") and the settings menu (F1) shows it in its bottom row.
-# Updates and rebuilds of the game never rewrite nx2navi.ini; the settings menu writes only the lines of the settings
+# Updates and rebuilds of the game never rewrite this file; the settings menu writes only the lines of the settings
 # whose changes you apply (Apply, or Restart) and keeps every other line as it is.
 # Ctrl+F5 in the game reads this file again and applies the changes without a restart (keys marked as read at start
 # need one; a value that does not fit its key is rejected and the current one stays; with changes in the settings menu
@@ -359,7 +361,7 @@
 # four times as much memory for these textures and can exhaust memory while loading.
 # Leave this setting commented for automatic selection. The renderer requests BC3 when the largest device-local GPU
 # heap is under 20 GiB or the system reports less than 47 GiB of RAM (allowing for a nominal 48 GiB PC). If the RAM
-# size is unknown, only the GPU heap decides. Look for "NX2NAVI_ASTC_BC unset" in the game log to see the decision.
+# size is unknown, only the GPU heap decides. Look for "NX2SARIA_ASTC_BC unset" in the game log to see the decision.
 # astc_bc = 1
 # With BC3 on: a texture none of whose texels is see-through is BC1, half the size of BC3 with the same texels (each
 # upload checks the blocks as it copies them). 0: every ASTC texture BC3.
@@ -629,7 +631,7 @@
 # buses short of bandwidth; on an RX 580 the pools the game refills every frame cost about 8 ms a frame in copies.
 # mirror_hot = 0
 # 2: the next Rebuild the Game compiles the game's code at -O2 instead of -O1 (faster game threads on a slower CPU, a
-# build several times longer). Read by tools/make_game.py; the environment variable NX2NAVI_GUEST_OPT wins.
+# build several times longer). Read by tools/make_game.py; the environment variable NX2SARIA_GUEST_OPT wins.
 # guest_opt = 1
 # GPUs without mesh shaders (VK_EXT_mesh_shader: AMD before RDNA 2, NVIDIA before Turing): 1 runs the game's mesh
 # and task shaders (grass and other foliage) as compute shaders and draws what they make; 0 skips those draws. The
@@ -909,17 +911,16 @@
 # menu_lang = en
 
 [discord]
-# Rich Presence: "Playing NX2navi" with the play time in your Discord status while the game runs, through the
-# local IPC of a running Discord client; without one it does nothing. 0 = off. The Game tab of the settings menu (F1)
-# and the launcher's Settings switch it too, and a change in the menu reaches the presence thread at once.
+# Rich Presence: send an activity with play time to your running Discord client; Discord displays your application's
+# registered name and art. No Discord app ID is built in. 0 = off. The Game tab of the settings menu (F1) and the
+# launcher's Settings switch it too, and a change in the menu reaches the presence thread at once.
 # discord_rpc = 1
-# The Discord application whose name ("Playing <name>") and artwork the status shows: its Application ID from
-# discord.com/developers/applications (General Information), digits only. Default: the NX2navi application, built
-# in from runtime/discord_app.h (NX2NAVI_DISCORD_APP_ID_DEFAULT). Register your own application to choose another
-# name and art.
-# discord_app_id = 1568862362969309275
+# Your Discord application's ID from discord.com/developers/applications (General Information), digits only. Discord
+# shows that application name; the value may also be set as NX2SARIA_DISCORD_APP_ID (legacy NX2NAVI_DISCORD_APP_ID is
+# accepted when the new variable is unset).
+# discord_app_id =
 # The key of the application's uploaded art asset (Rich Presence > Art Assets) shown as the status's large image.
-# discord_image = nx2navi_512x512
+# discord_image =
 
 [audio]
 # none mixes without opening an audio device.
@@ -1090,7 +1091,7 @@
 # their mods into the mods folder instead ([mods]). Default: none.
 # romfs_mods =
 # Folder with the Switch shared fonts (BFTTF files, tools/extract_fonts.py output), for Chinese and Korean text.
-# Default: shared-fonts next to nx2navi.exe. NX2NAVI_SHARED_FONTS overrides it.
+# Default: shared-fonts next to the game executable. NX2SARIA_SHARED_FONTS overrides it.
 # shared_fonts =
 
 [cheats]

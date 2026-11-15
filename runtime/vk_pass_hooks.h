@@ -7,7 +7,7 @@
 // replay's own ends it, and the next draw begins it again. On one thread the second begin runs the hooks in the same
 // place of the stream, with the same targets, and changes nothing. A parallel group's pass is recorded by several
 // threads, and its hooks run in the group's first chunk. With the submitting thread going on past the group
-// (NX2NAVI_REPLAY_PIPE) a second begin in that chunk came after the hooks of passes later in the stream had run, and
+// (NX2SARIA_REPLAY_PIPE) a second begin in that chunk came after the hooks of passes later in the stream had run, and
 // put the group's own target back as the light target: the upscaler then took an earlier image of the frame for one
 // frame, a flash of the whole scene with the interface intact (Kakariko, DLSS Performance, 3 workers, 4 groups out:
 // 51 and 52 such frames in two runs of 100 s, none with the helpers off). So a group's hooks run once, at its first

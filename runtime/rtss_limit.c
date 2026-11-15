@@ -32,16 +32,16 @@
 // executable (rtss_decide.h RtssSaved), written before the run's first change of the profile and removed once the
 // profile is back: an exit that skips the restore (a kill, a hang, the device-lost watchdog) leaves the line, and the
 // next start puts the profile back from it before it changes anything (left_start, restore_left), unless the player
-// changed the profile since; a start with NX2NAVI_RTSS=0 only logs it. A crash and a fatal error leave it to that start
+// changed the profile since; a start with NX2SARIA_RTSS=0 only logs it. A crash and a fatal error leave it to that start
 // too (rtss_limit_crash), with no call into RTSS's library from the failing process, unless the file could not be
 // written: then they put the profile back as an orderly exit does, but not from the worker's own thread.
 //
-// NX2NAVI_RTSS=0 keeps RTSS out of it. Frame generation keeps it out too (RTSS counts every presented frame, the
+// NX2SARIA_RTSS=0 keeps RTSS out of it. Frame generation keeps it out too (RTSS counts every presented frame, the
 // generated ones included), and so does a driver's low latency (vk_lowlat.c), which holds the frames where they start.
 // While RTSS is kept out the thread does not load the hooks library and only reads RTSS's own settings for the game, to
 // tell when they limit it a second time (watch), except once at the start, to put back a profile that a run which did
 // not close left with its limit (left_start); a later limit (frame generation or low latency switched off) loads it
-// and hands RTSS the limit as usual, and NX2NAVI_RTSS=0 keeps the thread read-only for the run.
+// and hands RTSS the limit as usual, and NX2SARIA_RTSS=0 keeps the thread read-only for the run.
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -128,7 +128,7 @@ static int load_hooks(void) {
 // (a comma-separated list of names) but crashes this process: it walks Profiles\*.cfg with _findfirst and _findnext and
 // keeps the find handle in 32 bits. The handle points into the process heap, which here lies above 4 GB (the guest
 // address space takes the low part, memory.c mem_init), so _findnext gets a cut pointer and faults in ntdll writing to
-// it. NX2NAVI_RTSS_ENUM=1 calls EnumProfiles anyway, to test an RTSS that keeps the whole handle.
+// it. NX2SARIA_RTSS_ENUM=1 calls EnumProfiles anyway, to test an RTSS that keeps the whole handle.
 static int profile_exists(void) {
     if (!rt_knob("RTSS_ENUM", "0")) {
         char path[MAX_PATH * 2];
@@ -363,13 +363,13 @@ static void restore_left(const RtssSaved *r) {
 // poll with the hooks library. A limit puts the profile back with the library it loads for its own writes. Frame
 // generation and low latency keep RTSS out of the run's limit, but a profile left with an old limit would hold the
 // game beside them (two limiters, and under frame generation RTSS would count the generated frames too): the library is
-// loaded for that one restore. NX2NAVI_RTSS=0 keeps the thread read-only, so the log says what the file holds.
+// loaded for that one restore. NX2SARIA_RTSS=0 keeps the thread read-only, so the log says what the file holds.
 static int left_start(int64_t w, int hooks) {
     RtssSaved r;
     if (!left_line(&r)) return 1;
     if (hooks != 1 && w == RTSS_OUT_SETTING) {
         rt_log("frame rate: %s holds the game's limit of %u/%u for RivaTuner Statistics Server's profile %s from a run "
-               "that did not close; NX2NAVI_RTSS=0 leaves the profile as it is, and a start with RTSS let in puts it "
+               "that did not close; NX2SARIA_RTSS=0 leaves the profile as it is, and a start with RTSS let in puts it "
                "back", state_path, r.limit, r.den, profile);
         return 1;
     }

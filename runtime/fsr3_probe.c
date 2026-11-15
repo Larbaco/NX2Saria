@@ -8,20 +8,20 @@
 // jitter's sign reversed and with the motion vectors' sign reversed (the conventions vk_dlaa.c hands over: a pixel
 // samples the scene at its centre minus the jitter, motion goes from the current frame to the previous one); the pan
 // sharpened; the scene still, plain and sharpened; then the scene still at 1280x720 on the same output (other_size), on
-// a context of its own, and with the game's dynamic resolution on (NX2NAVI_DYN_RES) on the context made for 960x540.
+// a context of its own, and with the game's dynamic resolution on (NX2SARIA_DYN_RES) on the context made for 960x540.
 // Checks: no NaN or infinity; on the rings FSR 3.1 beats bilinear by 0.5 dB panning, sharpened FSR 3.1 by 0.5 dB still
 // and plain FSR 3.1 is within 0.5 dB of it still (at both render sizes); the reversed jitter does worse and the
 // reversed motion much worse; the second render size makes a context of its own, and none with dynamic resolution,
 // where its picture is within 3 of 255 of the one of its own context; no validation error from the passes (run with
-// NX2NAVI_VK_VALIDATION=1). Then the GPU time of one upscale at the docked sizes (1707x960 -> 2560x1440, the Quality
+// NX2SARIA_VK_VALIDATION=1). Then the GPU time of one upscale at the docked sizes (1707x960 -> 2560x1440, the Quality
 // mode) with and without sharpening, and outside Windows the upscaler switched off: vk_ffx_release_idle leaves no
 // context, and the next upscale makes one. The pan, (1, 0.5) render pixels a frame, moves the picture by whole output
-// pixels; at most other speeds (NX2NAVI_FSR3_PROBE_PAN=vx,vy) FSR 3.1's picture of these rings comes out softer, below
+// pixels; at most other speeds (NX2SARIA_FSR3_PROBE_PAN=vx,vy) FSR 3.1's picture of these rings comes out softer, below
 // bilinear, and on a pan slower than about 0.2 render pixels a frame it runs about a third of a render pixel ahead of
 // the scene. amd_fidelityfx_vk.dll, given the same inputs, does the same: its output and the passes' are within 3 of
 // 255 (level) for the pan of (1, 0.5) and the still scene at 960x540, the still scene at 1280x720 on a context of its
 // own and on one for every size up to the output's, and a pan of (1.33, 0.67) render pixels at 960x540, where both
-// score about 28 dB on the rings, 7 dB below the pan of (1, 0.5). NX2NAVI_FSR3_PROBE_PPM=<dir> writes the outputs, the
+// score about 28 dB on the rings, 7 dB below the pan of (1, 0.5). NX2SARIA_FSR3_PROBE_PPM=<dir> writes the outputs, the
 // bilinear ones and the references as PPM images.
 #include <math.h>
 #include <stdio.h>
@@ -322,7 +322,7 @@ static void reference(float *ref, float *bil, float *lr, uint32_t w, uint32_t h,
 // context made for the first size (*first, which has run before) serves it, and its picture must be the one its own
 // context gives. *q and *q_bil: PSNR on the rings of FSR 3.1 (its own context) and of bilinear; *made and *made_drs:
 // the contexts made for it without and with dynamic resolution; *diff: the largest difference between the two
-// pictures, in 8-bit levels (level). 0 when a test image could not be made or a frame failed. NX2NAVI_DYN_RES is 0
+// pictures, in 8-bit levels (level). 0 when a test image could not be made or a frame failed. NX2SARIA_DYN_RES is 0
 // afterwards.
 static int other_size(VkCtx *c, Frame *first, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh, int frames,
                       const char *dir, double *q, double *q_bil, int *made, int *made_drs, int *diff) {
@@ -332,7 +332,7 @@ static int other_size(VkCtx *c, Frame *first, uint32_t w, uint32_t h, uint32_t o
     float *ref = calloc(n, sizeof *ref), *bil = calloc(n, sizeof *bil), *lr = calloc((size_t)w * h, sizeof *lr),
           *o = calloc(n, sizeof *o), *o2 = calloc(n, sizeof *o2);
     uint8_t *mk = calloc(n, 1);
-    cfg_set("NX2NAVI_DYN_RES", "0");
+    cfg_set("NX2SARIA_DYN_RES", "0");
     int before = vk_fsr3_contexts_made();
     int ok = ref && bil && lr && o && o2 && mk &&
              make_img(c, &g.color, w, h, VK_FORMAT_R16G16B16A16_SFLOAT, in, VK_IMAGE_ASPECT_COLOR_BIT) &&
@@ -349,13 +349,13 @@ static int other_size(VkCtx *c, Frame *first, uint32_t w, uint32_t h, uint32_t o
     if (ok) ok = run(&g, frames, 0, 0, 1.0f, 1.0f, o);
     *made = vk_fsr3_contexts_made() - before;
     if (ok) {   // dynamic resolution: one context made anew at the first size (the GPU is idle after each frame)
-        cfg_set("NX2NAVI_DYN_RES", "1");
+        cfg_set("NX2SARIA_DYN_RES", "1");
         vk_fsr3_release();
         ok = run(first, 8, 0, 0, 1.0f, 1.0f, o2);   // o2: scratch until the run below
         before = vk_fsr3_contexts_made();
         if (ok) ok = run(&g, frames, 0, 0, 1.0f, 1.0f, o2);
         *made_drs = vk_fsr3_contexts_made() - before;
-        cfg_set("NX2NAVI_DYN_RES", "0");
+        cfg_set("NX2SARIA_DYN_RES", "0");
     }
     if (ok) {
         reference(ref, bil, lr, w, h, ow, oh, 0, 0, 0);
@@ -395,8 +395,8 @@ int probe_fsr3(void) {
     }
     const uint32_t w = 960, h = 540, ow = 1920, oh = 1080;   // Performance mode (2x)
     const int frames = 48;
-    float vx = 1.0f, vy = 0.5f;   // the pan, render pixels per frame (NX2NAVI_FSR3_PROBE_PAN=vx,vy: another)
-    const char *pan = cfg_get("NX2NAVI_FSR3_PROBE_PAN");
+    float vx = 1.0f, vy = 0.5f;   // the pan, render pixels per frame (NX2SARIA_FSR3_PROBE_PAN=vx,vy: another)
+    const char *pan = cfg_get("NX2SARIA_FSR3_PROBE_PAN");
     if (pan && sscanf(pan, "%f,%f", &vx, &vy) == 2) printf("probe-fsr3: pan %.3f, %.3f\n", vx, vy);
     Frame f = {.w = w, .h = h, .ow = ow, .oh = oh, .upload = 2};
     VkImageUsageFlags in = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -420,7 +420,7 @@ int probe_fsr3(void) {
     uint8_t *mk = calloc(n, 1), *smk = calloc(n, 1);
     static const char *const what[6] = {"fsr3_native", "fsr3_jitter_reversed", "fsr3_motion_reversed",
                                         "fsr3_native_sharpened", "fsr3_static", "fsr3_static_sharpened"};
-    const char *dir = cfg_get("NX2NAVI_FSR3_PROBE_PPM");
+    const char *dir = cfg_get("NX2SARIA_FSR3_PROBE_PPM");
     if (!bad) {
         reference(ref, bil, lr, w, h, ow, oh, (float)(frames - 1), vx, vy);
         reference(sref, sbil, lr, w, h, ow, oh, 0, 0, 0);

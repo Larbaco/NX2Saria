@@ -13,7 +13,7 @@
 // the frames where they start (vk_lowlat.c), the pacer's display time is the time of the game's present, and the host
 // present goes out as soon as the blit is submitted.
 //
-// Asynchronous replay (NX2NAVI_REPLAY_ASYNC, default 0; 1 turns it on): nvnQueueSubmitCommands
+// Asynchronous replay (NX2SARIA_REPLAY_ASYNC, default 0; 1 turns it on): nvnQueueSubmitCommands
 // and nvnQueuePresentTexture only queue. Each item gets its timeline value at enqueue (vk_sync_reserve), in queue
 // order; the replay thread runs the synchronous submit and present bodies in that order, so every value is signalled
 // by the submission it was handed out for. The game runs at most one frame ahead: queueing present N waits until the
@@ -65,7 +65,7 @@ static void wait_until(uint64_t at) {
     while (kern_now_ns() < at) plat_yield();
 }
 
-// NX2NAVI_PACE_SMOOTH (default 1; 0 = off): a picture goes out no sooner than seven eighths of the recent interval
+// NX2SARIA_PACE_SMOOTH (default 1; 0 = off): a picture goes out no sooner than seven eighths of the recent interval
 // after the one before it. The game's frames reach the present thread in uneven steps although each costs about the
 // same: with the replay on the submitting thread, work held for an event is replayed with the next frame, so pictures
 // came 13 to 31 ms apart around a mean of 22 ms in a village (5th to 95th percentile), which shows as judder at a
@@ -76,7 +76,7 @@ static uint64_t pace_avg_ns;   // the present thread's
 
 static uint64_t pace_smooth(uint64_t at, uint64_t last, uint64_t now) {
     static int on = -1;
-    if (on < 0) on = cfg_bool("NX2NAVI_PACE_SMOOTH");
+    if (on < 0) on = cfg_bool("NX2SARIA_PACE_SMOOTH");
     if (!on || !last || !pace_avg_ns || vk_fg_active() || vk_dlssg_active()) return at;
     uint64_t floor = last + pace_avg_ns / 8 * 7;
     return floor > at && floor < now + 50000000ull ? floor : at;
@@ -87,7 +87,7 @@ static void pace_shown(uint64_t interval_ns) {
     pace_avg_ns = pace_avg_ns ? pace_avg_ns + (uint64_t)(((int64_t)interval_ns - (int64_t)pace_avg_ns) / 4) : interval_ns;
 }
 
-// NX2NAVI_TRACE=perf: the present thread's own window of PW_PRESENTS presents. The render thread's perf lines time the
+// NX2SARIA_TRACE=perf: the present thread's own window of PW_PRESENTS presents. The render thread's perf lines time the
 // game's side and the hand-off; these say where the present thread's time went: the blit and its submission, the
 // wait for the picture's time (pace_smooth), and the present call, which takes the queue lock and in which an overlay
 // with a frame limiter sleeps. With the presenting thread's wait to hand each picture over, which that time causes.
@@ -124,7 +124,7 @@ static void present_main(void *arg) {
         int timed = (tr & (RT_TRACE_PRESENT | RT_TRACE_PERF)) != 0;
         uint64_t b0 = timed ? kern_now_ns() : 0;
         if (j.owed) present_frame_closed(j.frame);   // vk_dlaa_frame's state of this frame, before anything reads it
-        if (flight_on || vk_dump_white) vk_thumbs_frame(j.frame);   // NX2NAVI_DUMP_WHITE reads them too
+        if (flight_on || vk_dump_white) vk_thumbs_frame(j.frame);   // NX2SARIA_DUMP_WHITE reads them too
         vk_dlssg_present_frame(j.frame);
         vk_lowlat_present_frame(j.frame);   // the frame's number for the blit's submit and the present's markers
         vk_present_blit(j.image, VK_IMAGE_LAYOUT_GENERAL, j.format, j.w, j.h, j.has_crop ? j.crop : NULL);
@@ -143,7 +143,7 @@ static void present_main(void *arg) {
         vk_present_flip();
         uint64_t t2 = timed ? kern_now_ns() : 0;
         perfmon_shown(t1);   // the overlay's frame times: the pictures as shown
-        // NX2NAVI_TRACE=present: one line per present: the host present's interval, the interval of the game's present
+        // NX2SARIA_TRACE=present: one line per present: the host present's interval, the interval of the game's present
         // calls (when the host present went out before back-edge pacing), the wait and how far past its target it went;
         // then how long the present call took and how long the presenting thread waited to hand this picture over
         if (tr & RT_TRACE_PRESENT)
@@ -169,7 +169,7 @@ void vk_present_drain(void) {
     perf_end(PERF_DRAIN, p0);
 }
 
-// NX2NAVI_FRAME_HOLD_MS (default 120; 0 = off): a frame whose draws were skipped because a shader or pipeline was
+// NX2SARIA_FRAME_HOLD_MS (default 120; 0 = off): a frame whose draws were skipped because a shader or pipeline was
 // still building (vk_exec_draw.c pending_draws) is not shown: the previous picture stays on screen until a frame is
 // complete again. Such a frame lacks what was skipped, which showed for a frame or two as a black or unlit picture with
 // the interface intact (a lighting pass), a light going out, or ground and walls missing and then back. The game runs
@@ -202,15 +202,15 @@ static struct {
 } FH = {.limit_ns = -1};
 #define FH_READ_TRIES 3
 
-// NX2NAVI_FRAME_HOLD_MS, read once by whichever thread asks first; that one logs it.
+// NX2SARIA_FRAME_HOLD_MS, read once by whichever thread asks first; that one logs it.
 static int64_t fh_limit(void) {
     int64_t lim = __atomic_load_n(&FH.limit_ns, __ATOMIC_ACQUIRE);
     if (lim >= 0) return lim;
-    long long ms = cfg_int("NX2NAVI_FRAME_HOLD_MS");
+    long long ms = cfg_int("NX2SARIA_FRAME_HOLD_MS");
     int64_t want = (int64_t)(ms < 0 ? 0 : ms > 500 ? 500 : ms) * 1000000, was = -1;
     if (__atomic_compare_exchange_n(&FH.limit_ns, &was, want, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) && want)
         rt_log("vk: a frame with draws skipped for a pipeline is not shown, the previous picture stays up to %lld ms "
-               "(NX2NAVI_FRAME_HOLD_MS)", (long long)(want / 1000000));
+               "(NX2SARIA_FRAME_HOLD_MS)", (long long)(want / 1000000));
     return want;
 }
 
@@ -302,7 +302,7 @@ static int frame_hold(uint32_t skipped, int resized, uint64_t frame) {
 // pass timing. The replay reads and writes all of it as it records, under the submission lock. With the replay on the
 // submitting threads the game presents on one thread while another may be replaying, and running it at the present
 // then reset it in the middle of that replay: a DLSS frame reset halfway (a shake, a frame without the upscaler), the
-// motion tables swapped halfway (a ghost; with NX2NAVI_MVPREV_CHECK=1 a write out of bounds), the conditional draws
+// motion tables swapped halfway (a ghost; with NX2SARIA_MVPREV_CHECK=1 a write out of bounds), the conditional draws
 // counted against the next frame. So it runs under the submission lock: at the present when the lock is free, else
 // first thing in the next submission, on whichever thread makes it (vk_sync.c submit, vk_present_frames_owed), or on
 // the present thread before the frame's blit (present_frame_closed), whichever takes the lock first. The blit reads what
@@ -311,7 +311,7 @@ static int frame_hold(uint32_t skipped, int resized, uint64_t frame) {
 // thread's replay for it; the present thread may, for a frame still owed, as it waits for the lock for the blit's
 // submission a moment later anyway. Nothing in frame_end may wait for the present thread, submit or flush with a wait:
 // the hand-off, vk_texture_get with its upload flush and vk_present_drain stay in present_image, outside the lock.
-// NX2NAVI_PRESENT_ORDER=0: at the present, whatever another thread replays, as in 0.10.1.
+// NX2SARIA_PRESENT_ORDER=0: at the present, whatever another thread replays, as in 0.10.1.
 static void frame_end(uint64_t frame, const tex_t *t) {   // t: the presented texture, for the trace = gfx line
     vk_exec_frame_log(t, frame);
     dynres_frame();   // before vk_dlaa_frame reads the DLSS mode it may override
@@ -332,8 +332,8 @@ static uint64_t fo_blit_n, fo_blit_ns;  // frames the present thread caught up b
 static int present_order_on(void) {   // read once; present_image runs one at a time
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_PRESENT_ORDER");
-        if (!on) rt_log("vk: NX2NAVI_PRESENT_ORDER=0: a frame's bookkeeping runs at the present, whatever another thread "
+        on = cfg_bool("NX2SARIA_PRESENT_ORDER");
+        if (!on) rt_log("vk: NX2SARIA_PRESENT_ORDER=0: a frame's bookkeeping runs at the present, whatever another thread "
                         "replays");
     }
     return on;
@@ -393,7 +393,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
         frame_end(frame, t);
     }
     if ((rt_trace & RT_TRACE_PERF) && frame % 600 == 0 && !gfx_replay_async()) order_log(frame, 0);
-    vk_sampler_aniso_live();   // NX2NAVI_ANISO changed in the menu: the surface textures' samplers take the new level
+    vk_sampler_aniso_live();   // NX2SARIA_ANISO changed in the menu: the surface textures' samplers take the new level
     vk_mem_census(frame);
     if (vk_dump_armed) vk_dump_present(frame);
     __atomic_store_n(&gfx_counters.validation_errors, (uint64_t)vk_validation_errors_total(), __ATOMIC_RELAXED);
@@ -411,7 +411,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
     }
     PresentJob j = {.image = img->image, .format = img->format, .w = (int)img->width, .h = (int)img->height, .frame = frame,
                     .at = at_ns, .queued = queued, .value = value, .owed = owed};
-    vk_hdr_present_source(img, &j.image, &j.format);   // NX2NAVI_HDR: the float picture the game copied into it, same size
+    vk_hdr_present_source(img, &j.image, &j.format);   // NX2SARIA_HDR: the float picture the game copied into it, same size
     if (crop) {
         j.has_crop = 1;
         for (int i = 0; i < 4; i++) j.crop[i] = crop[i];
@@ -450,7 +450,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
 //    (regs_queue_locked), so the replay applies it where the game made it among its submits, as it does a release.
 // A texture finalized while its own registration waits is released at once as before, and once more behind that
 // registration (RG_RELEASE): vk_texture_release marks the slots the texture object registered, which the first call
-// could not see. NX2NAVI_REG_ORDER=0: every registration at once, as before.
+// could not see. NX2SARIA_REG_ORDER=0: every registration at once, as before.
 enum { RG_TEX, RG_SAMP, RG_RELEASE };
 typedef struct {
     int kind, id, has_view;
@@ -468,7 +468,7 @@ static int reg_order_on(void) {
     static int on = -1;
     if (on < 0) {
         on = rt_knob("REG_ORDER", "1") != 0;
-        rt_log("vk: texture and sampler registrations take effect %s (NX2NAVI_REG_ORDER=%d)",
+        rt_log("vk: texture and sampler registrations take effect %s (NX2SARIA_REG_ORDER=%d)",
                on ? "between submissions, in the order the game made them" : "at once", on);
     }
     return on;
@@ -548,7 +548,7 @@ static int rq_head, rq_n, r_busy, r_started;
 static uint64_t r_presents_queued, r_presents_done, r_submit_done, game_frames;
 // Under rl: calls, calls that waited and the time waited per cause, since the last replay_log line and over the run.
 static uint64_t dr_calls[DR_N], dr_waits[DR_N], dr_ns[DR_N], dr_tcalls[DR_N], dr_twaits[DR_N], dr_tns[DR_N];
-// NX2NAVI_REPLAY_CHECK: ReadTexels compared with a read after a full drain (under rl): checked, differing, differing
+// NX2SARIA_REPLAY_CHECK: ReadTexels compared with a read after a full drain (under rl): checked, differing, differing
 // although no submission recorded a write to the texture in between, differing with the queue idle at the first read.
 static uint64_t ck_reads, ck_diff, ck_diff_unexplained, ck_diff_idle;
 
@@ -559,8 +559,8 @@ int vk_replay_async(void) {
         // one scene went from 450-686 frames over 50 ms a minute to 10-13, issue #88), the only place a gain was
         // measured. While it was the default, a GTX 1660 Ti at the 60 fps cap with the GPU at 26 % reported uneven
         // motion that 0.3.4 did not have (#659). It adds up to a frame of latency.
-        on = cfg_bool("NX2NAVI_REPLAY_ASYNC");
-        rt_log("vk: replay %s (NX2NAVI_REPLAY_ASYNC=%d)",
+        on = cfg_bool("NX2SARIA_REPLAY_ASYNC");
+        rt_log("vk: replay %s (NX2SARIA_REPLAY_ASYNC=%d)",
                on ? "on its own thread, at most one frame behind the game" : "on the submitting thread", on);
     }
     return on;
@@ -570,7 +570,7 @@ int vk_replay_async(void) {
 static int vk_be_gpu_wait(uint64_t value, uint64_t timeout_ns) {
     return vk_replay_async() ? vk_sync_fence_wait(value, timeout_ns) : vk_sync_exec_wait(value, timeout_ns);
 }
-// The submit wait (nvn_api_core.c NX2NAVI_SUBMIT_FINISH): the GPU's only where the submission reads guest memory on the
+// The submit wait (nvn_api_core.c NX2SARIA_SUBMIT_FINISH): the GPU's only where the submission reads guest memory on the
 // GPU (vk_sync_recorded_wait).
 static int vk_be_exec_wait(uint64_t value, uint64_t timeout_ns) {
     return vk_sync_recorded_wait(value, timeout_ns, vk_be_gpu_wait);
@@ -603,7 +603,7 @@ uint64_t gfx_replayed_submits(void) {
 // thread's empty submission, next to the following frame. So with work held at a present, what can go on now goes
 // first, in a submission of its own (held_resume); if work is still held, the present waits and goes out right after
 // the submission that replays the last of it, at the next present, or after PH_MAX submissions at the latest. Only with
-// the replay on the submitting thread, as the event order. NX2NAVI_PRESENT_HELD=0: every present goes out at once.
+// the replay on the submitting thread, as the event order. NX2SARIA_PRESENT_HELD=0: every present goes out at once.
 // The game presents from one thread while others submit, so the submission that puts a held present out may be another
 // thread's, while the presenting thread goes on to its next present. vk_present_held.h keeps that whole: one lock
 // (PH.lock) around arming, putting out and every synchronous present while held presents are on, so a held frame goes
@@ -854,7 +854,7 @@ static void replay_log(uint64_t frame, int total) {
 // the present thread caught up before their blits (present_frame_closed) and how long that took it, the wait for the
 // lock included, held presents another thread's submission put out (ph_out), and the presenting thread's waits for
 // PH.lock while one went out (vk_present_held.h ph_lock). total: the run, at exit (gfx_exit_log); else
-// NX2NAVI_TRACE=perf every 600 presents (present_image), the window since the last line, logged only when a count moved.
+// NX2SARIA_TRACE=perf every 600 presents (present_image), the window since the last line, logged only when a count moved.
 static void order_log(uint64_t frame, int total) {
     static uint64_t last[7], last_frame;   // present_image's (one at a time): the counts at the last line
     uint64_t v[7] = {__atomic_load_n(&fo_owed_n, __ATOMIC_RELAXED), __atomic_load_n(&fo_late_n, __ATOMIC_RELAXED),
@@ -1016,9 +1016,9 @@ static void vk_be_finish(void) { vk_sync_start(); replay_drain(DR_FINISH); vk_pr
 static int replay_check(void) {
     static int on = -1;
     if (on < 0) {
-        const char *e = cfg_get("NX2NAVI_REPLAY_CHECK");
+        const char *e = cfg_get("NX2SARIA_REPLAY_CHECK");
         on = e && strcmp(e, "0");
-        if (on) rt_log("vk: NX2NAVI_REPLAY_CHECK: every ReadTexels is read again after a full replay drain and compared");
+        if (on) rt_log("vk: NX2SARIA_REPLAY_CHECK: every ReadTexels is read again after a full replay drain and compared");
     }
     return on;
 }
@@ -1027,7 +1027,7 @@ static int replay_check(void) {
 // completed), not for the whole queue. The readback copy goes through the upload batch on the same queue, after every
 // submission the replay has submitted. Submissions still queued or being recorded run after the copy, as on hardware
 // when the GPU has not reached them yet: the game only sees their texels after waiting on a sync, and every sync
-// value covers replay and GPU, so a read the game synchronised sees them. NX2NAVI_REPLAY_CHECK compares with a full drain.
+// value covers replay and GPU, so a read the game synchronised sees them. NX2SARIA_REPLAY_CHECK compares with a full drain.
 static void vk_be_read_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r, uint8_t *dst, uint64_t row,
                               uint64_t img) {
     vk_sync_start();

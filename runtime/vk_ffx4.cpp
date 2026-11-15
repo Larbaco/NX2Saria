@@ -224,7 +224,7 @@ UpdList g_dead;
 const int DEAD_CTX4 = 4;   // its one kind
 
 void dead_release(const UpdEntry *e, void *) {
-    uint64_t t0 = perf_mark_begin();   // NX2NAVI_TRACE=perf: "upscaler releases"
+    uint64_t t0 = perf_mark_begin();   // NX2SARIA_TRACE=perf: "upscaler releases"
     ffxContext c = (ffxContext)e->handle;
     A.destroy(&c, nullptr);
     free(e->aux);
@@ -279,7 +279,7 @@ Up *create(Up *slot, uint32_t mw, uint32_t mh, uint32_t ow, uint32_t oh, bool dr
     m->desc.header.pNext = &m->backend.header;
     m->desc.flags =
         FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;   // a finite far plane, as FSR 3.1's
-    // NX2NAVI_FFX_DEBUG=1 (test): the library checks the values of each dispatch and says what it finds (message)
+    // NX2SARIA_FFX_DEBUG=1 (test): the library checks the values of each dispatch and says what it finds (message)
     if (rt_knob("FFX_DEBUG", "0")) m->desc.flags |= FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
     if (drs) m->desc.flags |= FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
     m->desc.maxRenderSize = {mw, mh};
@@ -327,7 +327,7 @@ Up *create(Up *slot, uint32_t mw, uint32_t mh, uint32_t ow, uint32_t oh, bool dr
 Up *context_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     up_tick++;
     uint64_t now = plat_now_ns();
-    const bool drs = cfg_bool("NX2NAVI_DYN_RES");
+    const bool drs = cfg_bool("NX2SARIA_DYN_RES");
     Up *found = nullptr;
     for (Up &u : U)
         if (u.ctx && u.ow == ow && u.oh == oh && u.drs == drs && (drs ? w <= u.mw && h <= u.mh : w == u.mw && h == u.mh))
@@ -364,7 +364,7 @@ Up *context_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
             if (o.ctx && up_tick - o.used >= UP_RECENT) retire_up(&o, "room for a context whose creation failed"), freed++;
         freed += vk_ffx_trim_idle(UP_RECENT);
         // the creation needs their memory now: a wait for the GPU to pass them all, this file's and FSR 3.1's (with
-        // NX2NAVI_UPSCALER_IDLE_WAIT=1 for the device, as before), and they go
+        // NX2SARIA_UPSCALER_IDLE_WAIT=1 for the device, as before), and they go
         const int dead = vk_ffx_dead_take(vk_upscaler_gpu_wait(vk_ffx_dead_fence()));
         if (freed || dead) u = create(slot, mw, mh, ow, oh, drs);
     }
@@ -435,7 +435,7 @@ extern "C" int vk_ffx4_upscale(VkCommandBuffer cb, const VkFfxImage *color, cons
     d.motionVectorScale = {1.0f, 1.0f};
     d.renderSize = {color->width, color->height};
     d.upscaleSize = {out->width, out->height};
-    int sharp = cfg_int("NX2NAVI_SHARPNESS");   // the slider drives the upscaler's own sharpening, as for FSR 3.1
+    int sharp = cfg_int("NX2SARIA_SHARPNESS");   // the slider drives the upscaler's own sharpening, as for FSR 3.1
     d.enableSharpening = sharp > 0;
     d.sharpness = sharp > 100 ? 1.0f : sharp / 100.0f;
     d.frameTimeDelta = dt_ms;

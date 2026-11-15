@@ -1,15 +1,15 @@
-// NX2NAVI_FLIGHT=1 flight recorder: a ring of the last NX2NAVI_FLIGHT_FRAMES (600) presents, one record each (interval,
+// NX2SARIA_FLIGHT=1 flight recorder: a ring of the last NX2SARIA_FLIGHT_FRAMES (600) presents, one record each (interval,
 // render-thread blocked time per perf kind, event counts, the game's time step) and a 640x360 thumbnail each (gfx_present.c, blitted on the
 // GPU by the present thread). A dump goes to <dir>/<YYYYMMDD-HHMMSS>-f<frame>/: events.tsv (the texture events of its
 // frames, flight_tex), f<frame>.png per thumbnail and frames.tsv, written in that order by a background thread. Triggers: a bug
 // capture (F8 while the game window has focus, bugcap.c: its dump goes into the capture's own folder, as flight/), a frame interval over
-// NX2NAVI_FLIGHT_SPIKE_MS (100; 0 off; at most one dump per 10 s), NX2NAVI_FLIGHT_AT=<frame>[,<frame>...] and
-// NX2NAVI_FLIGHT_EVERY=<n> (every n-th frame: with n under the ring's length the dumps of a run hold every frame of it
-// but the last n), and a one-frame flash (NX2NAVI_FLIGHT_FLASH, 1; at most one dump per 30 s; "The flash trigger"
+// NX2SARIA_FLIGHT_SPIKE_MS (100; 0 off; at most one dump per 10 s), NX2SARIA_FLIGHT_AT=<frame>[,<frame>...] and
+// NX2SARIA_FLIGHT_EVERY=<n> (every n-th frame: with n under the ring's length the dumps of a run hold every frame of it
+// but the last n), and a one-frame flash (NX2SARIA_FLIGHT_FLASH, 1; at most one dump per 30 s; "The flash trigger"
 // below). A dump holds the frames up to FLIGHT_POST presents after the trigger, so the aftermath is in it
 // too. tools/flight_view.py reads it.
 //
-// Records come from perf_present (prof_win.c) on the render thread; the counts are differences of the NX2NAVI_TRACE=perf
+// Records come from perf_present (prof_win.c) on the render thread; the counts are differences of the NX2SARIA_TRACE=perf
 // running totals and of vk_exec_frame. Off, the only cost is the flight_on branch in perf_present and vk_backend.c.
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,8 +91,8 @@ static volatile uint64_t tex_n;    // texture events written so far
 // presents after its frame, and flight_cells judges the frame before it there, once both its neighbours are known: a
 // frame beside one without a thumbnail is not judged. A flash found is left in flash_found for the render thread, whose
 // flight_frame starts the dump: named for the flash's frame, some presents back by then, and no more often than
-// FLIGHT_FLASH_GAP_NS. Only with thumbnails kept; NX2NAVI_FLIGHT_FLASH=0 turns it off, NX2NAVI_FLIGHT_FLASH_DIFF and
-// NX2NAVI_FLIGHT_FLASH_CELLS are the test's two thresholds. Their defaults (24 of 255, 3 cells) were tried on the
+// FLIGHT_FLASH_GAP_NS. Only with thumbnails kept; NX2SARIA_FLIGHT_FLASH=0 turns it off, NX2SARIA_FLIGHT_FLASH_DIFF and
+// NX2SARIA_FLIGHT_FLASH_CELLS are the test's two thresholds. Their defaults (24 of 255, 3 cells) were tried on the
 // thumbnails of earlier dumps, 48000 frames of scripted runs. In the runs of builds that showed the scene white for
 // single frames they flagged about 980 frames; the ones looked at were such white frames (68 to 133 cells each) and
 // one frame with other lighting than its neighbours (9 cells). In the 16000 frames of the runs without that fault
@@ -110,35 +110,35 @@ static unsigned env_u(const char *name, unsigned def) {
 }
 
 void flight_init(void) {
-    if (strcmp(cfg_value("NX2NAVI_FLIGHT"), "1")) return;
-    ring_n = (int)env_u("NX2NAVI_FLIGHT_FRAMES", 600);
+    if (strcmp(cfg_value("NX2SARIA_FLIGHT"), "1")) return;
+    ring_n = (int)env_u("NX2SARIA_FLIGHT_FRAMES", 600);
     if (ring_n < 64) ring_n = 64;
     if (ring_n > 7200) ring_n = 7200;
     if (!(ring = calloc((size_t)ring_n, sizeof *ring))) { rt_log("flight: no memory for %d records, off", ring_n); return; }
-    spike_ns = (uint64_t)cfg_int("NX2NAVI_FLIGHT_SPIKE_MS") * 1000000ull;
-    for (const char *p = cfg_get("NX2NAVI_FLIGHT_AT"); p && *p && n_at < 16;) {
+    spike_ns = (uint64_t)cfg_int("NX2SARIA_FLIGHT_SPIKE_MS") * 1000000ull;
+    for (const char *p = cfg_get("NX2SARIA_FLIGHT_AT"); p && *p && n_at < 16;) {
         char *end;
         unsigned long long f = strtoull(p, &end, 10);
         if (end == p) break;
         at_frames[n_at++] = f;
         p = *end == ',' ? end + 1 : end;
     }
-    every = env_u("NX2NAVI_FLIGHT_EVERY", 0);
-    const char *d = cfg_get("NX2NAVI_FLIGHT_DIR");
+    every = env_u("NX2SARIA_FLIGHT_EVERY", 0);
+    const char *d = cfg_get("NX2SARIA_FLIGHT_DIR");
     char tmp[PLAT_PATH_MAX];
     if (d && *d) snprintf(tmp, sizeof tmp, "%s", d);
-    else {   // <exe dir>/../flight: build/flight for build/v121*/nx2navi.exe
+    else {   // <exe dir>/../flight: build/flight for build/v121*/nx2saria.exe
         char *slash = plat_exe_path(tmp, sizeof tmp) ? plat_last_sep(tmp) : NULL;
         if (slash) snprintf(slash, sizeof tmp - (size_t)(slash - tmp), "/../flight");
         else snprintf(tmp, sizeof tmp, "flight");
     }
     if (!plat_full_path(tmp, base_dir, sizeof base_dir)) snprintf(base_dir, sizeof base_dir, "%s", tmp);
-    thumbs_on = env_u("NX2NAVI_FLIGHT_THUMBS", 1) != 0;
+    thumbs_on = env_u("NX2SARIA_FLIGHT_THUMBS", 1) != 0;
     if (thumbs_on) vk_thumbs_enable(ring_n);
-    if (thumbs_on && cfg_bool("NX2NAVI_FLIGHT_FLASH")) {
-        flash_diff = cfg_int("NX2NAVI_FLIGHT_FLASH_DIFF");
+    if (thumbs_on && cfg_bool("NX2SARIA_FLIGHT_FLASH")) {
+        flash_diff = cfg_int("NX2SARIA_FLIGHT_FLASH_DIFF");
         flash_diff = flash_diff < 4 ? 4 : flash_diff > 255 ? 255 : flash_diff;
-        flash_min_cells = cfg_int("NX2NAVI_FLIGHT_FLASH_CELLS");
+        flash_min_cells = cfg_int("NX2SARIA_FLIGHT_FLASH_CELLS");
         flash_min_cells = flash_min_cells < 1 ? 1 : flash_min_cells > FLASH_CELLS ? FLASH_CELLS : flash_min_cells;
         flight_flash_on = 1;
     }
@@ -153,10 +153,10 @@ void flight_init(void) {
                (unsigned long long)((uint64_t)ring_n * FLIGHT_THUMB_W * FLIGHT_THUMB_H * 4 >> 20));
     if (flight_flash_on)
         rt_log("flight: dump on a one-frame flash too (one per 30 s): at least %d of %d cells of the picture more than "
-               "%d of 255 brighter or darker than in the frames before and after, which agree (NX2NAVI_FLIGHT_FLASH=0: "
+               "%d of 255 brighter or darker than in the frames before and after, which agree (NX2SARIA_FLIGHT_FLASH=0: "
                "off)", flash_min_cells, FLASH_CELLS, flash_diff);
     else
-        rt_log("flight: no dump on a one-frame flash (%s)", thumbs_on ? "NX2NAVI_FLIGHT_FLASH=0" : "it needs the thumbnails");
+        rt_log("flight: no dump on a one-frame flash (%s)", thumbs_on ? "NX2SARIA_FLIGHT_FLASH=0" : "it needs the thumbnails");
 }
 
 // The recorder's memory for the memory report (vk_memory.c system_log): the frame records and the texture events in
@@ -540,7 +540,7 @@ void flight_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, const u
     r->t_ns = now_ns - t0_ns;
     r->interval_us = (uint32_t)(interval_ns / 1000);
     for (int k = 0; k < PERF_N; k++) r->blocked_us[k] = (uint32_t)(blocked_ns[k] / 1000);
-    // vk_exec_frame grows until vk_exec_frame_log resets it, which NX2NAVI_TRACE=gfx does right after this call
+    // vk_exec_frame grows until vk_exec_frame_log resets it, which NX2SARIA_TRACE=gfx does right after this call
     const VkExecFrame *x = &vk_exec_frame;
     int reset = (rt_trace & RT_TRACE_GFX) != 0;
     r->n[C_SUBMITS] = (uint32_t)(x->submits - (reset ? 0 : prev_exec.submits));
@@ -564,8 +564,8 @@ void flight_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, const u
     recorded++;
 
     for (int i = 0; i < n_at; i++)
-        if (at_frames[i] == frame) trigger(frame, interval_ns, "NX2NAVI_FLIGHT_AT");
-    if (every && frame && frame % every == 0) trigger(frame, interval_ns, "NX2NAVI_FLIGHT_EVERY");
+        if (at_frames[i] == frame) trigger(frame, interval_ns, "NX2SARIA_FLIGHT_AT");
+    if (every && frame && frame % every == 0) trigger(frame, interval_ns, "NX2SARIA_FLIGHT_EVERY");
     if (spike_ns && interval_ns > spike_ns && recorded > 30 && (!last_spike_ns || now_ns - last_spike_ns >= FLIGHT_SPIKE_GAP_NS)) {
         if (!dump_at) last_spike_ns = now_ns;
         trigger(frame, interval_ns, "spike");

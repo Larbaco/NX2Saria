@@ -1,4 +1,4 @@
-"""Build and run tests/cfg_parse_check.c: runtime/cfg.c's reading of nx2navi.ini and the environment, against stand-ins
+"""Build and run tests/cfg_parse_check.c: runtime/cfg.c's reading of the settings file and environment, against stand-ins
 for what it links with. What the readers get and what the log says about the values:
 
 - a comment after a value (cfg.c cut_comment): cut at a blank followed by ';' or '#' for a key whose row has a set of
@@ -87,7 +87,7 @@ def run(exe, env, case, text, work, extra_env=None):
     ini.write_text(text, encoding='utf-8')
     e = dict(env)
     for k in list(e):
-        if k.upper().startswith('NX2NAVI_'):
+        if k.upper().startswith(('NX2NAVI_', 'NX2SARIA_')):
             del e[k]
     e.update(extra_env or {})
     p = subprocess.run([str(exe), case, str(ini)], env=e, capture_output=True, text=True, errors='replace', timeout=60)
@@ -138,7 +138,7 @@ def main():
     ]
     for w in want:
         check(rc == 0 and w in out, f'logged: {w}', out if w not in out else '')
-    cfg_lines = [l for l in out.splitlines() if l.startswith('log: cfg: nx2navi.ini line') and 'unknown key' not in l]
+    cfg_lines = [l for l in out.splitlines() if l.startswith('log: cfg: settings file line') and 'unknown key' not in l]
     check(len(cfg_lines) == 9, f'one line each for the nine lines, none for "fullscreen = false" ({len(cfg_lines)})',
           out)
     check(not any(' line 2: ' in l and 'is not 0' in l for l in cfg_lines), 'a cut value is checked as cut', out)
@@ -171,7 +171,7 @@ def main():
                                'texture_detail', 'color_preset', 'device_profile', 'mods_rebuild', 'operation_mode',
                                'text_speed', 'sprint_mode'))
     rc, out = run(exe, env, 'load', many, work)
-    listed = sum(1 for l in out.splitlines() if l.startswith('log: cfg: nx2navi.ini line') and "= '7'" in l)
+    listed = sum(1 for l in out.splitlines() if l.startswith('log: cfg: settings file line') and "= '7'" in l)
     check(rc == 0 and listed == 16 and 'more values outside their settings' in out,
           f'20 values outside their sets: {listed} lines and a count', out)
     rc, out = run(exe, env, 'load', ''.join(f'vk_present = fifo ; note {i}\n' for i in range(20)), work)
@@ -209,6 +209,39 @@ def main():
               f'low end: {what}: {want}, the removal said {said} time(s)', out)
     rc, out = run(exe, env, 'norow', CLEAN, work, {'NX2NAVI_NO_ROW_CHECK': 'abc'})
     check(rc == 0 and 'got: cfg_int 0 cfg_double 0' in out, 'cfg_int of a set, unparsable key without a row: 0', out)
+
+    # The new environment spelling wins deterministically; the legacy spelling still supplies a value when it is alone.
+    rc, out = run(exe, env, 'read', READ, work,
+                  {'NX2SARIA_FULLSCREEN': '1', 'NX2NAVI_FULLSCREEN': '0'})
+    check(rc == 0 and "got: FULLSCREEN '1' bool 1 int 1" in out,
+          'NX2SARIA_ wins when both environment spellings are set', out)
+    rc, out = run(exe, env, 'read', READ, work,
+                  {'NX2SARIA_FULLSCREEN': '', 'NX2NAVI_FULLSCREEN': '0'})
+    check(rc == 0 and "got: FULLSCREEN '' bool 0 int 0" in out,
+          'an explicitly empty NX2SARIA_ value still takes precedence over the legacy alias', out)
+    rc, out = run(exe, env, 'read', READ, work, {'NX2NAVI_FULLSCREEN': '1'})
+    check(rc == 0 and "got: FULLSCREEN '1' bool 1 int 1" in out,
+          'legacy NX2NAVI_ environment spelling remains supported', out)
+
+    # cfg_init chooses the new adjacent INI first, falls back to the legacy filename on existing installs, and selects
+    # the new filename for a fresh install without either file.
+    game = work / 'nearby-game'
+    game.mkdir(exist_ok=True)
+    exe_path = game / 'nx2saria.exe'
+    (game / 'nx2saria.ini').write_text('sharpness = 80\n', encoding='utf-8')
+    (game / 'nx2navi.ini').write_text('sharpness = 20\n', encoding='utf-8')
+    path_env = dict(env, NX2SARIA_TEST_EXE=str(exe_path))
+    p = subprocess.run([str(exe), 'nearby', '-'], env=path_env, capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and "nearby: sharpness '80'" in p.stdout,
+          'new adjacent INI takes precedence when both filenames exist', p.stdout)
+    (game / 'nx2saria.ini').unlink()
+    p = subprocess.run([str(exe), 'nearby', '-'], env=path_env, capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and "nearby: sharpness '20'" in p.stdout,
+          'legacy adjacent INI remains readable when the new file is absent', p.stdout)
+    (game / 'nx2navi.ini').unlink()
+    p = subprocess.run([str(exe), 'nearby', '-'], env=path_env, capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and 'no settings file at ' + str(game / 'nx2saria.ini') in p.stdout,
+          'a fresh install with no adjacent INI selects the new filename', p.stdout)
     print(f'cfg_parse_check: {"FAILED" if bad else "ok"}')
     return 1 if bad else 0
 
