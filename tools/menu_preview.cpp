@@ -85,6 +85,7 @@ int vk_dlaa_needs_restart(void) { return 0; }
 int vk_hdr_restart_for(const char *) { return 0; }
 int vk_dlssg_wanted(void) { return 0; }
 int vk_ngxfg_wanted(void) { return 0; }
+int menu_lowlat_restart_for(const char *) { return 0; }
 unsigned cfg_version(void) { return 1; }
 void menu_sound_play(MenuSound) {}
 const char *ov_language(void) { return "en-US"; }

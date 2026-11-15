@@ -579,7 +579,9 @@ extern "C" int vk_dlaa_needs_restart(void);
 extern "C" int vk_hdr_restart_for(const char *value);
 extern "C" int vk_dlssg_wanted(void);
 extern "C" int vk_ngxfg_wanted(void);
+extern "C" int menu_lowlat_restart_for(const char *value);   // menu.cpp: low latency on in a run started with it off
 static bool live_needs_restart(const Change &c) {
+    if (c.key == "NX2NAVI_LOW_LATENCY") return menu_lowlat_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
     if (c.key == "NX2NAVI_FRAMEGEN") {
         const bool dlss = eff_of(c.key, c.new_val) == "dlss";
 #ifdef _WIN32
@@ -590,6 +592,26 @@ static bool live_needs_restart(const Change &c) {
     }
     if (c.key == "NX2NAVI_HDR") return vk_hdr_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
     if (c.key == "NX2NAVI_DLAA" || c.key == "NX2NAVI_DLSS" || c.key == "NX2NAVI_TAA" || c.key == "NX2NAVI_DLSS_PRESET") return vk_dlaa_needs_restart() != 0;
+    return false;
+}
+
+// The display keys the "keep these?" timer watches after an Apply (opt_draft_apply): HDR only between off and the tone
+// mapper, as to or from the game's own it waits for a restart (live_needs_restart).
+static bool is_timed(const Change &c) {
+    static const char *const timed[] = {"NX2NAVI_FULLSCREEN", "NX2NAVI_WINDOW_SIZE", "NX2NAVI_VK_PRESENT",
+                                        "NX2NAVI_HDR"};
+    if (!c.staged || live_needs_restart(c)) return false;
+    for (const char *t : timed)
+        if (c.key == t) return true;
+    return false;
+}
+
+// A row that changed a timed key and others with it is kept or reverted as one: the Resolution row (menu.cpp
+// row_resolution) sets the window's size and the game resolution together, so a Revert that put the window back and
+// kept the new resolution for the next start would leave the two apart again.
+static bool group_timed(const std::string &gid) {
+    for (const Change &c : g_changes)
+        if (c.gid == gid && is_timed(c)) return true;
     return false;
 }
 
@@ -610,6 +632,7 @@ bool opt_draft_item(int i, OptDraftItem *out) {
         snprintf(out->from, sizeof out->from, "%s", g.from.c_str());
         snprintf(out->to, sizeof out->to, "%s", g.to.c_str());
         out->restart = false;
+        out->display = group_timed(g.id);
         for (const Change &c : g_changes) {
             if (c.gid != g.id) continue;
             const CfgMeta *m = cfg_meta(c.key.c_str());
@@ -660,10 +683,12 @@ void opt_save_now(void) {
 
 // ---- the display keys a "keep these?" timer watches (menu.cpp keep_confirm)
 //
-// An Apply with timed set writes FULLSCREEN, WINDOW_SIZE and VK_PRESENT but keeps them held (cfg_hold), so no save made
-// while the timer runs (F10, a cheat, the window closing) writes them; opt_display_keep saves them, opt_display_revert puts
-// the values from before the Apply back. They are the live keys that change the window or the swapchain and so can leave
-// the player without a usable picture. The restart-only display keys (HDR, GPU_INDEX) and the other live ones are not here.
+// An Apply with timed set writes FULLSCREEN, WINDOW_SIZE, VK_PRESENT and HDR (is_timed), and the other staged keys of a
+// row that changed one of them (group_timed: the Resolution row's GAME_RES), but keeps them held (cfg_hold), so no save
+// made while the timer runs (F10, a cheat, the window closing) writes them; opt_display_keep saves them,
+// opt_display_revert puts the values from before the Apply back. They are the live keys that change the window or the
+// swapchain and so can leave the player without a usable picture. HDR to or from the game's own and GPU_INDEX wait for
+// a restart and are not here, nor are the other live keys.
 namespace {
 struct Pending {
     std::string key, applied;   // applied: the value in effect right after the Apply
@@ -671,24 +696,19 @@ struct Pending {
     int orig_state;
 };
 std::vector<Pending> g_display;
-
-bool is_timed(const std::string &key) {
-    static const char *const timed[] = {"NX2NAVI_FULLSCREEN", "NX2NAVI_WINDOW_SIZE", "NX2NAVI_VK_PRESENT", "NX2NAVI_HDR"};
-    for (const char *t : timed)
-        if (key == t) return true;
-    return false;
-}
 }  // namespace
 
 bool opt_draft_apply(bool timed) {
     g_display.clear();
     rt_log("menu: draft applied: %d change(s)%s", (int)g_changes.size(), timed ? "" : " (for a restart)");
     for (const Change &c : g_changes) {
-        const bool held = c.staged && timed && is_timed(c.key) && !live_needs_restart(c);
+        const bool held = c.staged && timed && group_timed(c.gid);
         rt_log("menu: draft   %s: %s -> %s%s%s", c.key.c_str() + 8, shown(c.orig_eff).c_str(),
-               shown(eff_of(c.key, c.new_val)).c_str(), held ? ", in effect now, saved only after Keep" : ", saved",
+               shown(eff_of(c.key, c.new_val)).c_str(),
+               !held ? ", saved" : is_timed(c) ? ", in effect now, saved only after Keep"
+                                           : ", saved only after Keep, with the display settings of its row",
                live_needs_restart(c) || (c.staged && !cfg_meta(c.key.c_str())->live) ? ", takes effect after a restart" : "");
-        if (held) {   // HDR to or from native: no timer
+        if (held) {
             cfg_hold(c.key.c_str(), 1);   // before the write: no save in between can take the new value
             write_key(c.key, c.new_val);
             g_display.push_back({c.key, eff_of(c.key, c.new_val), c.orig_val, c.orig_state});
@@ -728,17 +748,18 @@ bool opt_display_keep(void) {
     return cfg_last_save_ok() != 0;
 }
 
-void opt_display_revert(void) {
+bool opt_display_revert(void) {
     if (opt_display_external()) {   // the player took control with F11: what is on screen now stays
         rt_log("menu: display: changed outside the menu (F11) during the countdown: kept instead of reverted");
         opt_display_keep();
-        return;
+        return false;
     }
     for (const Pending &p : g_display) {
         cfg_revert(p.key.c_str(), p.orig_val, p.orig_state);
         rt_log("menu: display reverted: %s back to %s, not saved", p.key.c_str() + 8, shown(eff_now(p.key)).c_str());
     }
     g_display.clear();
+    return true;
 }
 
 // What a row writes: the draft takes it (a preview key is written too), the cursor sound plays.

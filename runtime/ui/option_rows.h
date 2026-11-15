@@ -113,19 +113,22 @@ int opt_draft_count(void);   // lines the player is shown
 struct OptDraftItem {
     char label[96], from[96], to[96];
     bool restart;   // some key of it is read at start only
+    bool display;   // a timed Apply holds it for the "keep these display settings?" box, and its Revert puts it back
 };
 bool opt_draft_item(int i, OptDraftItem *out);   // the i-th line, 0-based; false past the last
 void opt_draft_sync(void);                        // once a frame: a key something else changed leaves the draft
-// Writes the staged keys, releases the previews and saves; false if the write failed. timed: FULLSCREEN, WINDOW_SIZE and
-// VK_PRESENT are written but stay held out of every save until opt_display_keep (the "keep these?" timer); the caller
-// then wakes the window (gfx_window_apply_settings) and runs the timer. Without it every key is saved (Restart).
+// Writes the staged keys, releases the previews and saves; false if the write failed. timed: FULLSCREEN, WINDOW_SIZE,
+// VK_PRESENT and HDR (not to or from the game's own), with the other staged keys of the row that changed them (the
+// Resolution row's GAME_RES), are written but stay held out of every save until opt_display_keep (the "keep these?"
+// timer); the caller then wakes the window (gfx_window_apply_settings) and runs the timer. Without it every key is
+// saved (Restart).
 bool opt_draft_apply(bool timed = false);
 int opt_display_pending(void);     // display keys written by a timed apply and not yet kept or reverted; present thread
 int opt_display_external(void);    // 1 when something else changed one of them since (F11): the player has control
 bool opt_display_keep(void);       // releases them and saves nx2navi.ini; false if the write failed
-// Puts the values from before the apply back (the caller wakes the window again), or, when opt_display_external, keeps
-// what is on screen instead.
-void opt_display_revert(void);
+// Puts the values from before the apply back (the caller wakes the window again) and returns true, or, when
+// opt_display_external, keeps what is on screen instead and returns false.
+bool opt_display_revert(void);
 void opt_draft_discard(void);                     // puts the previews back, drops the staged keys
 // Writes nx2navi.ini now (a toggle outside the draft: a cheat).
 void opt_save_now(void);
