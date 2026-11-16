@@ -30,6 +30,7 @@
 #include "ui/menu.h"
 #include "vk.h"
 #include "vk_fg.h"
+#include "vk_fsr3fg.h"
 #include "vk_dlaa.h"
 #include "vk_dlssg.h"
 #include "vk_lowlat.h"
@@ -1224,9 +1225,11 @@ static VkImage hudless_record(VkCommandBuffer cb, unsigned slot, int w, int h, c
 }
 
 
-// ---------------------------------------------------------------- DLSS Frame Generation through NGX (vk_ngxfg_*)
-// NX2SARIA_FRAMEGEN = dlss where Streamline does not run (every build but the Windows one; vk_ngxfg_wanted is 0 there
-// and none of this is reached). Each frame is composed into an image of its own (ng.bb) instead of a swapchain image.
+// ---------------------------------------------------------------- the frame generation presenter
+// Two generators run through it, in every build but the Windows one (none of this is reached there): DLSS Frame
+// Generation through NGX (vk_ngxfg_*, NX2SARIA_FRAMEGEN = dlss where Streamline does not run) and AMD FSR 3.1's frame
+// generation through the runtime's own passes (vk_fsr3fg.c, NX2SARIA_FRAMEGEN = fsr3; one generated frame per rendered
+// frame, at the middle). ng.src names the one in use; the log lines carry its name (ngxfg, fsr3fg). Each frame is composed into an image of its own (ng.bb) instead of a swapchain image.
 // At the end of the frame's command buffer DLSS Frame Generation makes the generated frames from it
 // (vk_ngxfg_evaluate, the multiplier less one) and the picture is copied aside. The presenter thread then shows them
 // in order, each copied into a swapchain image it acquires itself, and the rendered frame last, spaced evenly over the
@@ -1257,7 +1260,14 @@ static struct {
     uint64_t signaled;              // the last value of ng.copied the presenter submitted a signal for (ng.m)
     uint64_t last_t, interval;      // average time between rendered frames (ns)
     volatile uint64_t presents;     // frames presented while it runs, generated ones included
+    int src;                        // the generator in use (NG_DLSS, NG_FSR3), 0 none
+    // pacing, on the presenter thread: the time of the last present, and the gaps between presents against the even
+    // spacing the presenter aims at (the time between rendered frames over the frames shown for each)
+    uint64_t last_present, gaps, gaps_long;
+    double gap_dev_ms, gap_max_ms;
 } ng = {.m = PLAT_MUTEX_INIT};
+enum { NG_DLSS = 1, NG_FSR3 = 2 };
+static const char *ng_name(int src) { return src == NG_FSR3 ? "fsr3fg" : "ngxfg"; }
 
 // An acquire that never blocks while it holds the queue lock: the swapchain is shared by the game thread and the
 // presenter (both acquire, the presenter presents), and an image is freed only by a present, which needs that lock.
@@ -1299,6 +1309,18 @@ static void ng_present(VkSwapchainKHR sc, uint32_t idx) {
     __atomic_add_fetch(&ng.presents, 1, __ATOMIC_RELAXED);
 }
 
+// One present's gap from the one before against the even spacing (ideal_ns); a gap over 100 ms (a pause, a load) is
+// not counted. A gap longer than 1.5 times the spacing is a pacing drop: the eye sees that frame held.
+static void ng_pace(uint64_t ideal_ns) {
+    uint64_t now = plat_now_ns(), last = ng.last_present;
+    ng.last_present = now;
+    if (!last || !ideal_ns || now - last > 100000000ull) return;
+    double gap = (double)(now - last) / 1e6, ideal = (double)ideal_ns / 1e6, dev = gap > ideal ? gap - ideal : ideal - gap;
+    ng.gaps++, ng.gap_dev_ms += dev;
+    if (dev > ng.gap_max_ms) ng.gap_max_ms = dev;
+    if (gap > 1.5 * ideal) ng.gaps_long++;
+}
+
 static void ng_signal_copied(uint64_t v) {   // after everything submitted before it (frame v's copies included)
     VkSemaphoreSubmitInfo sig = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = ng.copied, .value = v,
                                  .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
@@ -1329,7 +1351,7 @@ static int ng_show(VkImage img, int set, int slot, uint64_t n) {
     VkResult r = ng_acquire(ng.job.sc, 1000000000ull, ng.acq[set][slot], &j);
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         static int told;
-        if (told++ < 5) rt_log("ngxfg: presenter acquire failed (%d)", (int)r);
+        if (told++ < 5) rt_log("%s: presenter acquire failed (%d)", ng_name(ng.src), (int)r);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT) plat_xchg32(&g_dirty, 1);
         return 0;
     }
@@ -1384,18 +1406,35 @@ static void ng_run(void) {
     for (int i = 0; i < count; i++) {
         if (i) ng_sleep_until(t + (uint64_t)i * step);   // the first one at once: the least latency
         if (!ng_show(ng.out[set][i].img, set, i, n)) break;
+        ng_pace(step);
         ng.job.shown = i + 1;
     }
     static uint64_t jobs, gen_ok, gen_want;
     jobs++, gen_want += (uint64_t)count;
     if (count) ng_sleep_until(t + (uint64_t)count * step);
-    ng_show(ng.real[set].img, set, NG_MAX, n);   // the rendered frame, last
+    if (ng_show(ng.real[set].img, set, NG_MAX, n)) ng_pace(step);   // the rendered frame, last
     ng_signal_copied(n);   // after the copies out of this set
     gen_ok += (uint64_t)ng.job.shown;
-    if (jobs == 60 || jobs % 1200 == 0)
-        rt_log("ngxfg: presenter: %llu rendered frames, %llu of %llu generated frames shown, %llu presents; %.2f ms between rendered frames",
-               (unsigned long long)jobs, (unsigned long long)gen_ok, (unsigned long long)gen_want,
-               (unsigned long long)__atomic_load_n(&ng.presents, __ATOMIC_RELAXED), (double)ng.interval / 1e6);
+    if (jobs == 60 || jobs % 1200 == 0) {
+        rt_log("%s: presenter: %llu rendered frames, %llu of %llu generated frames shown, %llu presents; %.2f ms between "
+               "rendered frames; pacing: %llu gaps between presents, %.2f ms from the even spacing on average (%.2f at "
+               "most), %llu longer than 1.5 times it",
+               ng_name(ng.src), (unsigned long long)jobs, (unsigned long long)gen_ok, (unsigned long long)gen_want,
+               (unsigned long long)__atomic_load_n(&ng.presents, __ATOMIC_RELAXED), (double)ng.interval / 1e6,
+               (unsigned long long)ng.gaps, ng.gaps ? ng.gap_dev_ms / (double)ng.gaps : 0.0, ng.gap_max_ms,
+               (unsigned long long)ng.gaps_long);
+        ng.gap_max_ms = 0;   // the most of each period
+        if (ng.src == NG_FSR3) {   // the generator's own counts, read here on the presenter thread: a few frames old
+            VkFsr3fgStats st;
+            vk_fsr3fg_stats(&st);
+            rt_log("fsr3fg: %llu frames recorded, %llu generated, %llu history starts (cuts, resizes, the menu: no "
+                   "frame shown), %llu frames without depth and motion, %llu generated without the picture without the "
+                   "HUD; GPU %.2f ms optical flow + %.2f ms interpolation a frame (over %llu frames); %.1f MiB",
+                   (unsigned long long)st.frames, (unsigned long long)st.generated, (unsigned long long)st.cuts,
+                   (unsigned long long)st.no_inputs, (unsigned long long)st.no_hudless, st.gpu_ms_of, st.gpu_ms_fi,
+                   (unsigned long long)st.gpu_samples, st.vram / 1048576.0);
+        }
+    }
 }
 
 static void ng_thread(void *arg) {
@@ -1409,8 +1448,9 @@ static void ng_thread(void *arg) {
                 vkGetSemaphoreCounterValue(vk_ctx()->device, ng.copied, &cv);
                 static int told;
                 if (told++ < 3)
-                    rt_log("ngxfg: watchdog: no frame for 1.5 s; frames handed %llu, copied signal submitted %llu; GPU rendered %llu copied %llu",
-                           (unsigned long long)ng.n, (unsigned long long)ng.signaled, (unsigned long long)rv, (unsigned long long)cv);
+                    rt_log("%s: watchdog: no frame for 1.5 s; frames handed %llu, copied signal submitted %llu; GPU rendered %llu copied %llu",
+                           ng_name(ng.src), (unsigned long long)ng.n, (unsigned long long)ng.signaled,
+                           (unsigned long long)rv, (unsigned long long)cv);
             }
         }
         ng.pending = 0, ng.busy = 1;
@@ -1446,15 +1486,56 @@ static int ng_image(NgImg *im, uint32_t w, uint32_t h, VkFormat f) {
     return vkCreateImageView(c->device, &vi, NULL, &im->view) == VK_SUCCESS;
 }
 
+// One line at the first present and at each change: whether AMD FSR 3.1's frame generation through the runtime's passes
+// runs, at what multiplier, or why not (the setting, an HDR swapchain, a device that cannot run the passes, a failure).
+static void fsr3fg_state_line(int src, int fsr_set) {
+    static char last[160];
+    char now[160];
+    if (!vk_fsr3fg_build()) return;
+    if (!fsr_set) snprintf(now, sizeof now, "frame generation is %s: FSR 3.1's frame generation does not run",
+                           cfg_value("NX2SARIA_FRAMEGEN"));
+    else if (src == NG_FSR3) snprintf(now, sizeof now, "on: AMD FSR 3.1 frame generation through the runtime's passes, "
+                                                       "2x (one generated frame per rendered frame), no AMD library");
+    else if (vk_fsr3fg_failed()) snprintf(now, sizeof now, "set, but off: it failed earlier in this run (see above)");
+    else if (!vk_fsr3fg_available()) snprintf(now, sizeof now, "set, but off: this GPU cannot run its passes (see above)");
+    else if (g_sc_hdr) snprintf(now, sizeof now, "set, but off while HDR is on: it generates SDR pictures only");
+    else if (vk_fg_active() || vk_dlssg_active()) snprintf(now, sizeof now, "set, but off: another frame generation "
+                                                                             "holds the swapchain");
+    else snprintf(now, sizeof now, "set, but off: the presenter could not start (see above)");
+    if (!strcmp(now, last)) return;
+    snprintf(last, sizeof last, "%s", now);
+    rt_log("fsr3fg: %s", now);
+}
+
 // The presenter and the images for the current swapchain (g_pl held). 0: frames go out the plain way.
 static int ng_ready(void) {
-    if (!vk_ngxfg_wanted()) return 0;   // the Windows build, or a run that started without DLSS upscaling
-    int want = vk_ngxfg_on() && !g_sc_hdr && !vk_fg_active() && !vk_dlssg_active();
-    if (!vk_fg_wanted()) vk_dlaa_hudless_wanted = want;   // the HUD-less picture DLSS-G tells the HUD apart by
+    // the Windows build has neither (AMD's library and Streamline make their own swapchains there); NGX's needs a run
+    // that started with DLSS upscaling (vk_ngxfg_wanted), FSR 3.1's the device's passes (vk_fsr3fg_init)
+    if (!vk_ngxfg_wanted() && !vk_fsr3fg_build()) return 0;
+    const int ngx = vk_ngxfg_wanted() && vk_ngxfg_on();
+    const int fsr_set = !ngx && vk_fsr3fg_build() && !strcmp(cfg_value("NX2SARIA_FRAMEGEN"), "fsr3");
+    const int others = !g_sc_hdr && !vk_fg_active() && !vk_dlssg_active();
+    const int fsr = fsr_set && others && vk_fsr3fg_on() && vk_fsr3fg_init() == 1;
+    int want = (ngx && others) || fsr;
+    const int src = !want ? 0 : ngx ? NG_DLSS : NG_FSR3;
+    if (!vk_fg_wanted()) vk_dlaa_hudless_wanted = want;   // the HUD-less picture both tell the HUD apart by
     if (!want) {   // off (the menu switched it off live): what the presenter holds goes out first
-        if (ng.on) ng_drain(), ng.on = 0, rt_log("ngxfg: frame generation off");
+        if (ng.on) {
+            ng_drain(), ng.on = 0;
+            rt_log("%s: frame generation off", ng_name(ng.src));
+            if (ng.src == NG_FSR3) vk_fsr3fg_idle();
+        }
+        fsr3fg_state_line(0, fsr_set);
         return 0;
     }
+    if (ng.on && ng.src != src) {   // the menu switched from one generator to the other: each starts anew
+        ng_drain();
+        if (ng.src == NG_FSR3) vk_fsr3fg_idle();
+        rt_log("%s: frame generation now through %s", ng_name(ng.src), ng_name(src));
+        ng.on = 0;   // the images again, for the new generator's count of generated frames
+    }
+    ng.src = src;
+    fsr3fg_state_line(src, fsr_set);
     if (ng.on && ng.w == g_sc_ext.width && ng.h == g_sc_ext.height && ng.fmt == g_sc_fmt) return 1;
     VkCtx *c = vk_ctx();
     if (!ng.tried) {
@@ -1462,7 +1543,8 @@ static int ng_ready(void) {
         VkFormatProperties fp;
         vkGetPhysicalDeviceFormatProperties(c->phys, g_sc_fmt, &fp);
         if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
-            rt_log("ngxfg: the swapchain format %d is no storage format here: frame generation off", (int)g_sc_fmt);
+            rt_log("%s: the swapchain format %d is no storage format here: frame generation off", ng_name(src),
+                   (int)g_sc_fmt);
             return ng.on = 0, ng.tried = 2, 0;
         }
         if (!ng.thread_up) plat_cond_init(&ng.cv);
@@ -1481,7 +1563,7 @@ static int ng_ready(void) {
             for (int i = 0; i <= NG_MAX; i++) vkCreateSemaphore(c->device, &semi, NULL, &ng.acq[s][i]);
         }
         if (!ng.thread_up && !plat_thread_spawn(ng_thread, NULL, "fg present", 0)) {
-            rt_log("ngxfg: the presenter thread did not start: frame generation off");
+            rt_log("%s: the presenter thread did not start: frame generation off", ng_name(src));
             return ng.on = 0, ng.tried = 2, 0;
         }
         ng.thread_up = 1;
@@ -1497,18 +1579,22 @@ static int ng_ready(void) {
         for (int i = 0; i < NG_MAX; i++) ng_free_image(&ng.out[s][i]);
     }
     uint32_t w = g_sc_ext.width, h = g_sc_ext.height;
+    // FSR 3.1 generates one frame per rendered frame: one image a set, where DLSS Frame Generation may need NG_MAX
+    const int nout = src == NG_FSR3 ? 1 : NG_MAX;
     int ok = ng_image(&ng.bb, w, h, g_sc_fmt);
     for (int s = 0; s < 2 && ok; s++) {
         ok = ng_image(&ng.real[s], w, h, g_sc_fmt);
-        for (int i = 0; i < NG_MAX && ok; i++) ok = ng_image(&ng.out[s][i], w, h, g_sc_fmt);
+        for (int i = 0; i < nout && ok; i++) ok = ng_image(&ng.out[s][i], w, h, g_sc_fmt);
     }
     if (!ok) {
-        rt_log("ngxfg: frame generation images (%ux%u) could not be made: frame generation off", w, h);
+        rt_log("%s: frame generation images (%ux%u) could not be made: frame generation off", ng_name(src), w, h);
+        if (src == NG_FSR3) vk_fsr3fg_idle();
         return ng.on = 0;
     }
     ng.w = w, ng.h = h, ng.fmt = g_sc_fmt, ng.fresh = 1, ng.on = 1;
     vk_ngxfg_reset();
-    rt_log("ngxfg: presenter ready at %ux%u (up to %dx)", w, h, vk_ngxfg_max() + 1);
+    vk_fsr3fg_reset();
+    rt_log("%s: presenter ready at %ux%u (up to %dx)", ng_name(src), w, h, src == NG_FSR3 ? 2 : vk_ngxfg_max() + 1);
     return 1;
 }
 
@@ -1537,10 +1623,11 @@ static int ng_multiplier(int max) {
     return m;
 }
 
-// Records the copy of the frame's picture and DLSS-G's frames (the end of present_image's command buffer, dst in
-// layout *last). Returns the number of generated frames, -1 when the frame goes out the plain way.
+// Records the copy of the frame's picture and the generator's frames (the end of present_image's command buffer, dst
+// in layout *last; pic: the picture's rectangle in it). Returns the number of generated frames, -1 when the frame goes
+// out the plain way.
 static int ng_record(VkCommandBuffer cb, VkImage dst, VkImageLayout *last, VkPipelineStageFlags2 *stage, VkAccessFlags2 *write,
-                     VkImage hudless, int *set, int gen) {
+                     VkImage hudless, int *set, int gen, const int pic[4]) {
     if (!ng.on) return -1;
     if (ng.fresh) {   // every image to GENERAL, once
         NgImg *all[1 + 2 + 2 * NG_MAX];
@@ -1548,7 +1635,8 @@ static int ng_record(VkCommandBuffer cb, VkImage dst, VkImageLayout *last, VkPip
         all[k++] = &ng.bb;
         for (int s = 0; s < 2; s++) {
             all[k++] = &ng.real[s];
-            for (int i = 0; i < NG_MAX; i++) all[k++] = &ng.out[s][i];
+            for (int i = 0; i < NG_MAX; i++)
+                if (ng.out[s][i].img) all[k++] = &ng.out[s][i];   // FSR 3.1's sets have one
         }
         for (int i = 0; i < k; i++)
             sync_barrier(cb, all[i]->img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0,
@@ -1563,6 +1651,13 @@ static int ng_record(VkCommandBuffer cb, VkImage dst, VkImageLayout *last, VkPip
     int made = 0;
     if (!gen || menu_is_open()) {
         vk_ngxfg_reset();   // generation pauses while the menu is open
+        vk_fsr3fg_reset();
+    } else if (ng.src == NG_FSR3) {
+        VkNgxImage bb = {ng.bb.img, ng.bb.view, ng.fmt, ng.w, ng.h};
+        VkNgxImage hl = {hudless, g_hl_view, g_hl_fmt, g_hl_w, g_hl_h};
+        VkNgxImage out = {ng.out[*set][0].img, ng.out[*set][0].view, ng.fmt, ng.w, ng.h};
+        int hl_ok = hudless && g_hl_w == ng.w && g_hl_h == ng.h && g_hl_fmt == ng.fmt;
+        made = vk_fsr3fg_evaluate(cb, &bb, hl_ok ? &hl : NULL, &out, pic);
     } else {
         int max = vk_ngxfg_max(), want = ng_multiplier(max) - 1;
         VkNgxImage bb = {ng.bb.img, ng.bb.view, ng.fmt, ng.w, ng.h};
@@ -1840,7 +1935,7 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     // through the presenter: the picture stays in ng.bb, and DLSS Frame Generation's frames and the copy for the
     // presenter are recorded; otherwise the swapchain image is ready to present
     int ng_set = 0;
-    const int ng_count = ngp ? ng_record(cb, dst, &last, &last_stage, &last_write, hudless, &ng_set, src != VK_NULL_HANDLE) : -1;
+    const int ng_count = ngp ? ng_record(cb, dst, &last, &last_stage, &last_write, hudless, &ng_set, src != VK_NULL_HANDLE, to) : -1;
     const int via_ng = ng_count >= 0;
     if (!via_ng) sync_barrier(cb, dst, last, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, last_stage, last_write, VK_PIPELINE_STAGE_2_NONE, 0);
     vk_crumb(cb, VK_CRUMB_PRESENT_END, crumb);
@@ -1966,6 +2061,7 @@ void gfx_window_release_vk(void) {
         g_flip_on = 0;   // its blit is done (device idle); the swapchain goes away unpresented
         vk_lowlat_swapchain(VK_NULL_HANDLE, 0);
         ng_release();    // NGX frame generation's presenter shows nothing more; its images go before the device
+        vk_fsr3fg_release();   // FSR 3.1 frame generation's passes and images, made again for a later device
         menu_vk_release();
         vk_fsr_release();
         vk_color_release();

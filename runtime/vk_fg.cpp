@@ -109,6 +109,9 @@ static int use4(void) {   // NX2SARIA_FSR4_FG (default 0, live): 1 takes the SDK
 }
 
 extern "C" int vk_fg_wanted(void) {
+#ifndef _WIN32
+    return 0;   // no AMD library outside Windows: gfx_present.c's presenter runs the runtime's passes (vk_fsr3fg.c)
+#endif
     if (strcmp(cfg_value("NX2SARIA_FRAMEGEN"), "fsr3") || vk_dlssg_dpa()) return 0;
     int four = use4();
     if (vk_fg4_active()) return four;

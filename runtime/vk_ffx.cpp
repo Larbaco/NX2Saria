@@ -4,8 +4,8 @@
 // upscaler or frame generation asks for FSR 3.1.
 //
 // AMD publishes that library for Windows only. The other builds upscale with the runtime's own build of FSR 3.1's
-// passes (vk_fsr3.c), which takes the same inputs, camera and sharpness, and have no FSR 3.1 frame generation
-// (vk_ffx_framegen_available).
+// passes (vk_fsr3.c), which takes the same inputs, camera and sharpness, and generate frames with the runtime's own
+// build of FSR 3.1's frame generation passes (vk_fsr3fg.c, through gfx_present.c's presenter; vk_ffx_framegen_available).
 //
 // FSR 3.1 takes the same inputs vk_dlaa.c makes for DLSS: the scene's light target (linear HDR), its D32F depth (0
 // near, 1 far, with the near and far planes of the frame's own projection, vk_dlaa.c proj_planes) and the camera
@@ -35,6 +35,7 @@ extern "C" {
 #include "vk_exec.h"
 #include "vk_ffx.h"
 #include "vk_fg.h"
+#include "vk_fsr3fg.h"
 #include "vk_fsr3.h"
 }
 
@@ -350,13 +351,14 @@ extern "C" int vk_ffx_available(void) {
 #endif
 }
 
-// Frame generation runs through the library's own API calls (vk_ffx_create and the rest), so only where the library
-// loads; and it needs a queue for the frame generation swapchain's presents (vk_fg_has_queues).
+// Frame generation on Windows runs through the library's own API calls (vk_ffx_create and the rest), so only where the
+// library loads, and it needs a queue for the frame generation swapchain's presents (vk_fg_has_queues). Elsewhere it
+// runs through the runtime's passes and gfx_present.c's presenter, wherever the device runs them.
 extern "C" int vk_ffx_framegen_available(void) {
 #ifdef _WIN32
     return vk_ffx_available() && vk_fg_has_queues();
 #else
-    return 0;
+    return vk_fsr3fg_available();   // the runtime's passes (vk_fsr3fg.c): 1 until the device shows it cannot run them
 #endif
 }
 

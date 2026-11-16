@@ -32,6 +32,7 @@
 #include "vk_dlssg.h"
 #include "vk_exec.h"
 #include "vk_fg.h"
+#include "vk_fsr3fg.h"
 #include "vk_ffx.h"
 #include "vk_rec.h"
 #include "vk_up_defer.h"
@@ -3367,8 +3368,9 @@ static void idle_release(void) {
 // the picture without the HUD scaled to the swapchain like the picture).
 
 // Frame generation that takes this frame's inputs: NVIDIA's through Streamline (vk_dlssg.c, set up with the device),
-// AMD's swapchain in place (vk_fg.cpp, either library) or NVIDIA's through NGX, set now (vk_ngxfg_on).
-static int fg_runs(void) { return vk_dlssg_active() || vk_fg_active() || vk_ngxfg_on(); }
+// AMD's swapchain in place (vk_fg.cpp, either library), NVIDIA's through NGX or AMD FSR 3.1's through the runtime's
+// passes (vk_fsr3fg.c), set now (vk_ngxfg_on, vk_fsr3fg_on).
+static int fg_runs(void) { return vk_dlssg_active() || vk_fg_active() || vk_ngxfg_on() || vk_fsr3fg_on(); }
 
 // One line at the first present and one at each change: whether frame generation runs, and where its inputs come from.
 static void fg_state_line(int on, int fgo) {
