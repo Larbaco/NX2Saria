@@ -1049,7 +1049,7 @@ static void completion_main(void *arg) {
         // work that never finished: frees of what the GPU may still hold, records handed out again, counter reports.
         // done stays where it is, the waiters stay asleep, and the thread that saw the loss ends the process.
         if (vk_device_is_lost()) break;
-        // the merge lists first (NX2NAVI_MERGE_CPU): the results the game reads come after the write-backs before
+        // the merge lists first (NX2SARIA_MERGE_CPU): the results the game reads come after the write-backs before
         // them, as with the GPU's merge
         while (fqn && fqueue[fqhead].fence <= reached && !vk_device_is_lost()) {
             Pending p = fqueue[fqhead++];
@@ -1629,7 +1629,7 @@ static void pending_push(Pending **q, int *head, int *n, int *cap, Pending p) {
 }
 
 // As vk_completion_add, in a queue the completion thread runs first: the merge lists the CPU stores into guest memory
-// (NX2NAVI_MERGE_CPU), which the results and the other callbacks of the same value come after. From the replay thread
+// (NX2SARIA_MERGE_CPU), which the results and the other callbacks of the same value come after. From the replay thread
 // alone, in value order.
 void vk_completion_add_first(uint64_t fence, void (*fn)(void *), void *arg) {
     plat_mutex_lock(&st_lock);
@@ -1834,7 +1834,7 @@ int vk_sync_exec_wait(uint64_t value, uint64_t timeout_ns) {
     }
     // The results the game reads, of this submission and of those before it, which the GPU ran first: here, not when
     // the completion thread gets to them behind the other side effects of the last frame's submissions.
-    // The merge lists the CPU stores (NX2NAVI_MERGE_CPU) up to the value asked for, as the GPU's merges are by now.
+    // The merge lists the CPU stores (NX2SARIA_MERGE_CPU) up to the value asked for, as the GPU's merges are by now.
     if (r == VK_SUCCESS) vk_mem_merge_cpu_wait(asked);
     if (r == VK_SUCCESS && wb_results) results_run(value);
     perf_end(PERF_FENCE, p0);

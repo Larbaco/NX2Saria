@@ -7,18 +7,18 @@
 
 Each run starts the game through tools/run_game.py on a copy of its profile with <backup> as the save (run_game.py says
 which saves it takes). The input script presses A until the save has loaded (untimed lines, which stop applying once
-the world clock starts), then NX2NAVI_DBG_TEST teleports Link to the scene's area and turns the free camera on
+the world clock starts), then NX2SARIA_DBG_TEST teleports Link to the scene's area and turns the free camera on
 (runtime/debug_tools.c test_script), and timed LSTICK and RSTICK lines fly it through the area: the game draws, culls
 and loads detail for the view it is given, and nothing in its way (walls, water, a villager who wants to talk) stops it
 or changes the path. Two MARK lines in the script open the 'measure' segment after the scene's warm-up and close it at
 its end (runtime/perf.c seg_frame).
 
-What is measured comes from the game's own log with NX2NAVI_TRACE=perf and NX2NAVI_PERF_SLOW_MS=1, so every present
+What is measured comes from the game's own log with NX2SARIA_TRACE=perf and NX2SARIA_PERF_SLOW_MS=1, so every present
 gets a "perf: slow frame" line (runtime/perf.c perf_present): its interval and what the render thread waited for.
 A frame is
   gpu    when the render thread waited for the GPU's fence for at least half of it, or when the GPU was busy for 80%
          of it or more (the GPU time per frame of the 60-frame window the frame is in, the runtime's own rule: with
-         NX2NAVI_REPLAY_ASYNC=1 the replay threads wait for the GPU, not the render thread),
+         NX2SARIA_REPLAY_ASYNC=1 the replay threads wait for the GPU, not the render thread),
   stall  when pipeline builds, shader translation and texture uploads took at least a quarter of it,
   pace   when the frame limiter held it for at least 15% of it (should not happen: the runs are uncapped),
   cpu    otherwise: the game thread and the replay of its draws set the pace.
@@ -257,7 +257,7 @@ def git(*args):
 
 
 def game_version(log_text):
-    m = re.search(r'NX2navi (\d+\.\d+\.\d+)', log_text)
+    m = re.search(r'NX2(?:Saria|navi) (\d+\.\d+\.\d+)', log_text)
     return m[1] if m else ''
 
 
@@ -273,9 +273,10 @@ def cmd_run(a):
     meta = {'label': a.label, 'game': str(game), 'started': stamp, 'head': git('rev-parse', 'HEAD'),
             'origin_main': git('rev-parse', 'origin/main'), 'machine': machine(), 'set': a.set,
             'runs': a.runs, 'scenes': [s['name'] for s in scenes], 'shot': a.shot}
-    ini = game / 'nx2navi.ini'
-    if ini.is_file():
-        shutil.copyfile(ini, out / 'nx2navi.ini')
+    for name in ('nx2saria.ini', 'nx2navi.ini'):   # the settings file the game reads (nx2navi.ini before NX2Saria)
+        if (game / name).is_file():
+            shutil.copyfile(game / name, out / name)
+            break
     (out / 'meta.json').write_text(json.dumps(meta, indent=1), encoding='utf-8')
     for run in range(1, a.runs + 1):   # scene after scene inside each round, so a drift in time hits every scene
         for s in scenes:
@@ -283,8 +284,8 @@ def cmd_run(a):
             script = out / f'{s["name"]}.input.txt'
             script.write_text(make_script(s), encoding='utf-8')
             seconds = s['warmup_s'] + s['measure_s'] + 2
-            env = ['NX2NAVI_TRACE=perf', 'NX2NAVI_PERF_SLOW_MS=1', 'NX2NAVI_FPS_LIMIT=unlimited',
-                   f'NX2NAVI_DBG_TEST={dbg_test(s)}', *(e.replace('{tag}', tag) for e in a.set)]
+            env = ['NX2SARIA_TRACE=perf', 'NX2SARIA_PERF_SLOW_MS=1', 'NX2SARIA_FPS_LIMIT=unlimited',
+                   f'NX2SARIA_DBG_TEST={dbg_test(s)}', *(e.replace('{tag}', tag) for e in a.set)]
             if a.mangohud:
                 mh_dir = out / f'mangohud-{tag}'
                 mh_dir.mkdir(exist_ok=True)
@@ -352,14 +353,14 @@ def summarize(out):
         for r in rows:
             w.writerow({k: (round(v, 2) if isinstance(v, float) else v) for k, v in r.items()})
     md = [f'# Benchmark {meta.get("label", "")} ({meta.get("started", "")})', '',
-          f'- Game: {meta.get("game", "")}, NX2navi {version or "?"}',
+          f'- Game: {meta.get("game", "")}, NX2Saria {version or "?"}',
           f'- Commit: HEAD {meta.get("head", "")[:10]}, origin/main {meta.get("origin_main", "")[:10]}',
           f'- Machine: {meta.get("machine", {})}',
           # results from before the 'shot' key always ran with --shot
           '- Mode: ' + ('--shot (pipelines built on the render thread; not comparable with play mode)'
                         if meta.get('shot', True) else 'play (pipelines built in the background)'),
           f'- Extra settings: {meta.get("set") or "none"} '
-          '(plus NX2NAVI_FPS_LIMIT=unlimited; the rest from the copied nx2navi.ini)', '',
+          '(plus NX2SARIA_FPS_LIMIT=unlimited; the rest from the copied settings file)', '',
           '| Scene | Runs | Avg fps (min-max) | 1% low fps (min-max) | p99 ms | Spread avg | CPU % | GPU % | Stall % '
           '| GPU ms | Replay ms | Game says | MangoHud avg fps |',
           '|---|---|---|---|---|---|---|---|---|---|---|---|---|']

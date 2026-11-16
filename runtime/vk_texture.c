@@ -805,7 +805,7 @@ static void reuse_made(const Tex *e);
 static void reuse_taken_back(const Tex *e);
 static int compact_on(void);          // NX2SARIA_TEX_COMPACT ("compaction", near the end of the file)
 static void compact_step(void);
-static void residency_step(void);   // NX2NAVI_TEX_RESIDENCY ("residency", after the compaction)
+static void residency_step(void);   // NX2SARIA_TEX_RESIDENCY ("residency", after the compaction)
 static void compact_forget(Tex *e);
 // How an entry's content started (start_at; Tex.og_start), in the order of start_names.
 enum { START_NEW, START_UPLOAD_LIVE, START_COPY_LIVE, START_COPY_RELEASED, START_EMPTY_LIVE, START_EMPTY_RELEASED,
@@ -918,7 +918,7 @@ static uint64_t n_bind_skips;   // since the last perf line
 #define RES_DEDICATED_MIN ((VkDeviceSize)1 << 20)
 static int res_dedicated(void) {
     static int on = -1;
-    if (on < 0) on = cfg_bool("NX2NAVI_TEX_RESIDENCY");
+    if (on < 0) on = cfg_bool("NX2SARIA_TEX_RESIDENCY");
     return on;
 }
 
@@ -1287,7 +1287,7 @@ static VkResult image_alloc(VkCtx *c, const VkImageCreateInfo *ci, VmaAllocation
         {0, 0}};
     VkResult r = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     for (int i = 0; i < 2; i++) {
-        // With pageable video memory (NX2NAVI_VRAM_PAGEABLE) Windows moves allocations out by their priority when the
+        // With pageable video memory (NX2SARIA_VRAM_PAGEABLE) Windows moves allocations out by their priority when the
         // card is full: a texture goes before a render target, which every frame draws and reads. With the same priority
         // for all, the GPU's frame in Hyrule Field took 19 ms in some runs and 45 to 50 ms in others, the textures the
         // shaders sampled all in video memory.
@@ -7208,7 +7208,7 @@ void vk_texture_sizes(PerfSizes *s) {
     perf_size(s, "sampler slots", sslot, VK_POOL_SAMP, PERF_SIZE_NONE);
 }
 
-// ---- residency (NX2NAVI_TEX_RESIDENCY, default on with the texture pool marks)
+// ---- residency (NX2SARIA_TEX_RESIDENCY, default on with the texture pool marks)
 // Standing in Hyrule Field at full texture detail the live textures held 4.1 GiB, of which the shaders sampled 1.5 GiB
 // in the last 30 presents (the pool marks, "disuse"); with the released ones, the render targets, the VRAM mirrors and
 // the driver's own the game used 7.4 GiB of a 6 GiB card's 5.1 GiB budget. Past the budget the driver kept memory in
@@ -7444,8 +7444,8 @@ static void res_plan(VkCtx *c, uint64_t now) {
 // Each submission, texture lock held (vk_texture_new_submit): see above.
 static void residency_step(void) {
     if (RS.on < 0) {
-        RS.on = cfg_bool("NX2NAVI_TEX_RESIDENCY");
-        rt_log("vk: texture residency %s (NX2NAVI_TEX_RESIDENCY): textures no shader sampled for %d presents make room "
+        RS.on = cfg_bool("NX2SARIA_TEX_RESIDENCY");
+        rt_log("vk: texture residency %s (NX2SARIA_TEX_RESIDENCY): textures no shader sampled for %d presents make room "
                "in system memory past the video memory budget less %d MiB", RS.on ? "on" : "off", (int)RES_COLD,
                (int)(RES_MARGIN >> 20));
     }

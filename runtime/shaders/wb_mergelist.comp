@@ -1,7 +1,7 @@
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_ballot : require
-// Write-back merge into a list (vk_memory.c wb_merge_record with NX2NAVI_MERGE_CPU): as shaders/wb_merge.comp, a word
+// Write-back merge into a list (vk_memory.c wb_merge_record with NX2SARIA_MERGE_CPU): as shaders/wb_merge.comp, a word
 // the GPU left different from the snapshot taken before the submission's GPU work goes back to guest memory, but as an
 // entry (its place among the submission's list words: gbase + invocation, the value) in a device-local list, which
 // shaders/wb_listcopy.comp copies to host memory in whole lines and the completion thread stores (merge_apply) before
@@ -44,5 +44,5 @@ void main() {
     if (!ch) return;
     uint idx = base + subgroupBallotExclusiveBitCount(b);
     if (idx < pc.cap) lst.ent[idx] = uvec2(pc.gbase + i, v);
-    if (idx >= pc.cap || pc.check != 0u) dst[w] = v;   // NX2NAVI_MERGE_CPU_CHECK: the GPU writes them too
+    if (idx >= pc.cap || pc.check != 0u) dst[w] = v;   // NX2SARIA_MERGE_CPU_CHECK: the GPU writes them too
 }

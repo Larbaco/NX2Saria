@@ -242,7 +242,7 @@ static void slow_dump(void) {
     InterlockedExchange64(&dump_hi, 0);
 }
 
-static int is_worker(DWORD tid) {   // NX2NAVI_PROFILE_REPLAY=2: the replay workers are sampled with the replay thread
+static int is_worker(DWORD tid) {   // NX2SARIA_PROFILE_REPLAY=2: the replay workers are sampled with the replay thread
     for (int i = 0; i < 16; i++)
         if (prof_worker_tid[i] == tid) return 1;
     return 0;

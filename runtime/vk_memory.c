@@ -93,7 +93,7 @@ typedef struct PoolRec {
     uint32_t vd_wrote_sub, vd_use_sub; // verify mode: the last submission that bound it written / used its mirror
     uint64_t vd_wrote_n;               // verify mode: written bindings of it so far
     struct WbSpan { uint64_t lo, hi, fence; } *cws;   // replay: the byte ranges of its merges the CPU stores
-    int ncws, ccws;                                   // (NX2NAVI_MERGE_CPU) and their values, until done
+    int ncws, ccws;                                   // (NX2SARIA_MERGE_CPU) and their values, until done
     uint64_t mgen;                     // gen_lock: every page write stamped up to this generation is in the mirror
                                        // (or in a copy queued before its next use)
     FlushRange fl[FLUSH_RANGES + 1];   // flush_lock: nvnMemoryPoolFlushMappedRange pages not copied yet (flush_add)
@@ -129,7 +129,7 @@ typedef struct PoolRec {
 } PoolRec;
 
 static void mirror_forget(PoolRec *r);   // pool_lock exclusive: off the mirrored list
-static void cpu_span_add(PoolRec *r, uint64_t lo, uint64_t hi, uint64_t fence);   // NX2NAVI_MERGE_CPU
+static void cpu_span_add(PoolRec *r, uint64_t lo, uint64_t hi, uint64_t fence);   // NX2SARIA_MERGE_CPU
 static uint64_t cpu_span_wait(const PoolRec *r, uint64_t lo, uint64_t hi, uint64_t fence);
 static int shadow_on;                    // shadow mode: imported pools get shadow storage instead (vk_mem_class_log)
 static int shadow_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size);
@@ -2586,7 +2586,7 @@ typedef struct {
     uint64_t subs, syncs, upload_bytes, upload_copies, first_n, first_bytes, wb_bytes, wb_copies, wb_ranges;
     uint64_t presnap_queries, sync_queries, presnap_t, sync_t, prologues, presnap_bytes;
     uint64_t snap_bytes, merge_bytes, merge_dispatches, snap_allocs;   // write-back merge
-    uint64_t diff_bytes, diff_dispatches;                               // write-back by difference (NX2NAVI_WB_DIFF)
+    uint64_t diff_bytes, diff_dispatches;                               // write-back by difference (NX2SARIA_WB_DIFF)
     uint64_t page_bytes, flush_n, flush_bytes, flush_calls, flush_sum;   // what mirror_sync queues, by source
     uint64_t flush_skipped;   // flush ranges not copied: the write watch covers them
     uint64_t cap_bytes, cap_ranges, cap_left, cap_t;   // mirror_capture: copied by the CPU, left to the GPU copy, its time
@@ -3444,7 +3444,7 @@ static uint64_t merge_max(void) {
     }
     return m;
 }
-// NX2NAVI_WB_DIFF=1 (default), 0, ab: the written ranges over DIFF_MIN, up to DIFF_MAX, go back by difference
+// NX2SARIA_WB_DIFF=1 (default), 0, ab: the written ranges over DIFF_MIN, up to DIFF_MAX, go back by difference
 // (shaders/wb_diffcopy.comp) instead of by the merge: snapshotted like the merge's, then the whole 64-byte lines the
 // GPU changed are copied and the rest is left alone. The merge writes word by word, and word-sized writes into host
 // memory cost the memory controller a read-modify-write each. In Kokiri Forest the compute programs bind whole
@@ -3487,7 +3487,7 @@ static SnapChunk snap_pool[SNAP_POOL_N];
 static int nsnap_pool;
 static uint64_t snap_pool_bytes;
 enum { CHUNK_LIST = 1, CHUNK_MARKS = 2, CHUNK_MLIST = 3, CHUNK_MCOPY = 4 };   // SnapChunk.host (chunk_new)
-// The merge lists' chunks (NX2NAVI_MERGE_CPU: one in device memory and its copy in host memory a submission, each
+// The merge lists' chunks (NX2SARIA_MERGE_CPU: one in device memory and its copy in host memory a submission, each
 // twice its merge ranges' bytes) stay outside that bound, up to SNAP_POOL_LISTS of them: when the snapshots of the
 // frames in flight had filled the pool while a list was out, the list's two chunks were destroyed at every fence and
 // made again for the next frame, 12-15 ms a frame in place of 8.
@@ -3501,7 +3501,7 @@ static struct {
     VkDescriptorSetLayout dsl, ddsl;
     VkPipelineLayout layout, dlayout;
     VkPipeline pipe, dpipe;   // the merge, the difference copy
-    // NX2NAVI_MERGE_CPU: the merge into a list (shaders/wb_mergelist.comp), its copy to host memory
+    // NX2SARIA_MERGE_CPU: the merge into a list (shaders/wb_mergelist.comp), its copy to host memory
     // (shaders/wb_listcopy.comp), and the timeline merge_apply signals with a submission's value once it stored its list
     int ltried, lok;
     VkDescriptorSetLayout ldsl, cdsl;
@@ -3594,17 +3594,17 @@ static int merging(void) {
 static int wb_lazy(void);
 static int wb_direct(void) { return !shadow_on && !wb_lazy(); }
 
-static int wb_diff(void) {   // NX2NAVI_WB_DIFF; after merging(), which makes the pipeline
+static int wb_diff(void) {   // NX2SARIA_WB_DIFF; after merging(), which makes the pipeline
     static int mode = -1;
     if (mode < 0) {
         mode = rt_knob("WB_DIFF", "1");
-        if (mode != 1) rt_log("mem: written ranges up to %llu MiB go back by difference%s (NX2NAVI_WB_DIFF)",
+        if (mode != 1) rt_log("mem: written ranges up to %llu MiB go back by difference%s (NX2SARIA_WB_DIFF)",
                               (unsigned long long)(DIFF_MAX >> 20), mode == 2 ? " in the B blocks" : " never");
     }
     return RT_KNOB_ON(mode) && WM.dok && wb_direct();
 }
 
-// NX2NAVI_MERGE_CPU=1 (default), 0, ab: a submission's merge goes back through the CPU. shaders/wb_mergelist.comp
+// NX2SARIA_MERGE_CPU=1 (default), 0, ab: a submission's merge goes back through the CPU. shaders/wb_mergelist.comp
 // compares as wb_merge.comp, but puts each changed word (its place among the submission's list words, its value) into
 // a list in device-local memory; shaders/wb_listcopy.comp copies the list to host memory in whole lines, and the
 // completion thread stores the words into guest memory (merge_apply) before the submission's value counts as done and
@@ -3617,9 +3617,9 @@ static int wb_diff(void) {   // NX2NAVI_WB_DIFF; after merging(), which makes th
 //   stored after them would put older words over theirs;
 // - the lists are stored in submission order, and the list has room for every word of its ranges.
 // The CPU's stores set the write-watch bits of their pages, so those pages go up again at their next use (the
-// uploads 1.2 to 3.0 MiB a frame there). Only a submission with at least NX2NAVI_MERGE_CPU_MIN KiB of merge
+// uploads 1.2 to 3.0 MiB a frame there). Only a submission with at least NX2SARIA_MERGE_CPU_MIN KiB of merge
 // ranges (default 256) and at most MERGE_CPU_MAX uses a list; the others merge on the GPU.
-// NX2NAVI_MERGE_CPU_CHECK=1: the GPU merges as without it and the CPU compares the list with what the GPU wrote (the
+// NX2SARIA_MERGE_CPU_CHECK=1: the GPU merges as without it and the CPU compares the list with what the GPU wrote (the
 // cpu merge line counts the words that differ: a CPU write meanwhile, or a fault).
 // Measured there: one list a frame of 165,000-170,000 words, stored in 0.31-0.41 ms; the check run found them all
 // equal to the GPU's merge but 121 words the game zeroed as it exited. The GPU time 6.80 to 5.72 and 6.95 to 5.80 ms a
@@ -3629,7 +3629,7 @@ static int merge_cpu_mode(void) {
     static int mode = -1;
     if (mode < 0) {
         mode = rt_knob("MERGE_CPU", "1");
-        if (mode != 1) rt_log("mem: merges go back through the CPU %s (NX2NAVI_MERGE_CPU)", mode == 2 ? "in the B blocks" : "never");
+        if (mode != 1) rt_log("mem: merges go back through the CPU %s (NX2SARIA_MERGE_CPU)", mode == 2 ? "in the B blocks" : "never");
     }
     return mode;
 }
@@ -3637,7 +3637,7 @@ static int merge_cpu_mode(void) {
 static uint64_t merge_cpu_min(void) {   // bytes
     static int64_t v = -1;
     if (v < 0) {
-        const char *s = cfg_get("NX2NAVI_MERGE_CPU_MIN");
+        const char *s = cfg_get("NX2SARIA_MERGE_CPU_MIN");
         v = s && *s ? strtoll(s, NULL, 0) : 256;
         if (v < 0) v = 0;
     }
@@ -3647,9 +3647,9 @@ static uint64_t merge_cpu_min(void) {   // bytes
 static int merge_cpu_check(void) {
     static int v = -1;
     if (v < 0) {
-        const char *s = cfg_get("NX2NAVI_MERGE_CPU_CHECK");
+        const char *s = cfg_get("NX2SARIA_MERGE_CPU_CHECK");
         v = s && *s == '1';
-        if (v) rt_log("mem: NX2NAVI_MERGE_CPU_CHECK: the GPU merges, the CPU compares the lists");
+        if (v) rt_log("mem: NX2SARIA_MERGE_CPU_CHECK: the GPU merges, the CPU compares the lists");
     }
     return v;
 }
@@ -3662,7 +3662,7 @@ static int list_init(VkCtx *c) {
     if (!comp_pipe(c, wb_mergelist_spv, sizeof wb_mergelist_spv, 5, 20, &WM.ldsl, &WM.llayout, &WM.lpipe) ||
         !comp_pipe(c, wb_listcopy_spv, sizeof wb_listcopy_spv, 2, 4, &WM.cdsl, &WM.clayout, &WM.cpipe) ||
         vkCreateSemaphore(c->device, &si, NULL, &WM.asem) != VK_SUCCESS) {
-        rt_log("mem: NX2NAVI_MERGE_CPU: the merge list's pipelines could not be created: merges stay on the GPU");
+        rt_log("mem: NX2SARIA_MERGE_CPU: the merge list's pipelines could not be created: merges stay on the GPU");
         return 0;
     }
     return WM.lok = 1;
@@ -3678,9 +3678,9 @@ static int merge_cpu(uint64_t merge_bytes) {
     return WM.lok;
 }
 
-// NX2NAVI_MERGE_CPU statistics (any thread): lists stored, their words, the CPU time; the replay thread's waits for a
+// NX2SARIA_MERGE_CPU statistics (any thread): lists stored, their words, the CPU time; the replay thread's waits for a
 // list ([0] a write-back, [1] a prologue's copies, [2] the executed wait) and their time; words past the room,
-// without a range, different from the GPU's (NX2NAVI_MERGE_CPU_CHECK)
+// without a range, different from the GPU's (NX2SARIA_MERGE_CPU_CHECK)
 static volatile int64_t mc_lists, mc_words, mc_ns, mc_waits[3], mc_wait_ns[3], mc_over, mc_bad, mc_diff;
 
 typedef struct { uint32_t first, words; uint64_t host; } MergeSpan;   // list places [first, first + words): from host
@@ -3722,7 +3722,7 @@ static void merge_apply(void *arg) {   // completion thread, before the other ca
         else if (*p != v) {
             diff++;
             if (plat_inc32(&logged) <= 8)
-                rt_log("mem: NX2NAVI_MERGE_CPU_CHECK: %#llx holds %#x, the list %#x (value %llu)",
+                rt_log("mem: NX2SARIA_MERGE_CPU_CHECK: %#llx holds %#x, the list %#x (value %llu)",
                        (unsigned long long)(uintptr_t)p, *p, v, (unsigned long long)j->fence);
         }
     }
@@ -3784,7 +3784,7 @@ void vk_mem_merge_cpu_wait(uint64_t value) {
 // A chunk of at least size bytes in chunks[]: the smallest fitting one of the pool, else a new buffer; -1 when the
 // allocation fails. host: 0 device memory (snapshots), CHUNK_LIST host memory the CPU writes (range lists),
 // CHUNK_MARKS host memory the CPU reads back (the merge's page marks, shadow_wb_cb), CHUNK_MLIST device memory (a merge
-// list, NX2NAVI_MERGE_CPU), CHUNK_MCOPY its copy in host memory the CPU reads.
+// list, NX2SARIA_MERGE_CPU), CHUNK_MCOPY its copy in host memory the CPU reads.
 static int chunk_new(uint64_t size, int host) {
     uint64_t want = host ? SNAP_LIST_MIN : SNAP_CHUNK;
     while (want < size) want <<= 1;
@@ -3874,7 +3874,7 @@ static void merge_dispatch(VkCommandBuffer cb, const SnapRange *s, int n, uint64
     vkCmdDispatch(cb, (total + 63) / 64, 1, 1);
 }
 
-// One merge dispatch into the submission's list lbuf (shaders/wb_mergelist.comp, NX2NAVI_MERGE_CPU), as
+// One merge dispatch into the submission's list lbuf (shaders/wb_mergelist.comp, NX2SARIA_MERGE_CPU), as
 // merge_dispatch; gbase: the list place of its first word, cap: the list's room.
 static void list_dispatch(VkCommandBuffer cb, const SnapRange *s, int n, uint64_t base, uint64_t span, int list,
                           uint64_t list_off, uint32_t total, VkBuffer lbuf, uint64_t lsize, uint32_t gbase, uint32_t cap,
@@ -4010,7 +4010,7 @@ static void swb_job(uint64_t fence) {
 // vk_mem_mirror_end: the merge and difference dispatches of this submission's ranges. Returns the commands recorded; 0
 // with nsnl left as it was when the range list cannot be allocated (the caller copies them plainly). With shadow
 // storage each dispatch also marks the pages it changed, for swb_job. fence: the submission's value; *listed: 1 when
-// its merges went into a list the CPU stores at the fence (NX2NAVI_MERGE_CPU).
+// its merges went into a list the CPU stores at the fence (NX2SARIA_MERGE_CPU).
 static int wb_merge_record(VkCommandBuffer cb, uint64_t fence, int *listed) {
     VkCtx *c = vk_ctx();
     uint64_t align = c->props.limits.minStorageBufferOffsetAlignment;
@@ -4055,7 +4055,7 @@ static int wb_merge_record(VkCommandBuffer cb, uint64_t fence, int *listed) {
     VmaAllocationInfo li;
     vmaGetAllocationInfo(c->vma, chunks[list].alloc, &li);
     uint32_t *lm = li.pMappedData;
-    // NX2NAVI_MERGE_CPU: the merges into a list in device memory (ml), copied to host memory (mh) for merge_apply; room
+    // NX2SARIA_MERGE_CPU: the merges into a list in device memory (ml), copied to host memory (mh) for merge_apply; room
     // for every word of the ranges, so none is written by the GPU past it
     uint64_t lsize = 0;
     int ml = -1, mh = -1, check = 0;
@@ -4760,7 +4760,7 @@ static uint64_t span_wait(const struct WbSpan *v, int n, uint64_t lo, uint64_t h
     return w;
 }
 
-// NX2NAVI_MERGE_CPU: the bytes a submission's list stores (merge_apply), until done.
+// NX2SARIA_MERGE_CPU: the bytes a submission's list stores (merge_apply), until done.
 static void cpu_span_add(PoolRec *r, uint64_t lo, uint64_t hi, uint64_t fence) {
     span_add(&r->cws, &r->ncws, &r->ccws, lo, hi, fence);
 }
@@ -4901,7 +4901,7 @@ void vk_mem_mirror_prologue(VkCommandBuffer cb) {
     if (!npend && snl_copied == nsnl && !n_gpa_flip) return;
     mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
              VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    if (npend && merge_cpu_mode()) {   // after the merge lists still to be stored there (NX2NAVI_MERGE_CPU)
+    if (npend && merge_cpu_mode()) {   // after the merge lists still to be stored there (NX2SARIA_MERGE_CPU)
         uint64_t aw = 0, f = vk_sync_rec_fence(), w;
         for (int i = 0; i < npend; i++)
             if ((w = cpu_span_wait(pend[i].r, pend[i].off, pend[i].off + pend[i].size, f)) > aw) aw = w;
@@ -6901,7 +6901,7 @@ void vk_mem_sizes(PerfSizes *s) {
               gch * GEN_PER_CHUNK * sizeof **gen_chunk + sizeof reg_max + sizeof creg_max);
 }
 
-// ---- texture storage pools (NX2NAVI_POOL_TEX_RELEASE, default on)
+// ---- texture storage pools (NX2SARIA_POOL_TEX_RELEASE, default on)
 // An imported pool is host memory the driver maps for the GPU and counts in its host heap, which Windows holds to half
 // of the installed memory (7.4 GiB of budget with 16 GB). Standing in Hyrule Field the game had 4.3 GiB imported in
 // pools no submission ever resolved, 2.7 GiB of it in three pools that hold nothing but the storage of textures the
@@ -6958,8 +6958,8 @@ void vk_mem_tex_pools(uint64_t frame) {
     static int on = -1;
     VkCtx *c = vk_ctx();
     if (on < 0) {
-        on = cfg_bool("NX2NAVI_POOL_TEX_RELEASE") && !shadow_on && !dmabuf_on;
-        rt_log("mem: imports of pools that hold only texture storage %s (NX2NAVI_POOL_TEX_RELEASE)",
+        on = cfg_bool("NX2SARIA_POOL_TEX_RELEASE") && !shadow_on && !dmabuf_on;
+        rt_log("mem: imports of pools that hold only texture storage %s (NX2SARIA_POOL_TEX_RELEASE)",
                on ? "are given back" : "stay");
     }
     if (!on || !c) return;
