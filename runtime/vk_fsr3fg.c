@@ -296,6 +296,16 @@ static struct {
     uint8_t pt_n[RING];                  // its dispatches (0: nothing to read)
     double pt_sum[P_N];
     uint64_t pt_count[P_N];
+    // NX2SARIA_FSR3FG_DUMP=<dir> (diagnosis): every NX2SARIA_FSR3FG_DUMP_EVERY seconds (10) the picture before (without
+    // the HUD), the generated frame and the picture after (with it) are copied into dump, and written as PPM images
+    // once the slot comes round again (the GPU is done with it then); at most 20 dumps a run
+    VkBuffer dump;
+    VmaAllocation dump_mem;
+    void *dump_map;
+    uint32_t dump_w, dump_h, dump_slot;
+    VkFormat dump_fmt;
+    int dump_pending, dumps;
+    uint64_t dump_next_ns;
 } G = {.state = -1};
 
 // ---- setup
@@ -396,6 +406,8 @@ static void destroy_global(void) {
     if (G.ts) vkDestroyQueryPool(c->device, G.ts, NULL);
     if (G.pt) vkDestroyQueryPool(c->device, G.pt, NULL);
     G.pt = VK_NULL_HANDLE;
+    if (G.dump) vmaDestroyBuffer(c->vma, G.dump, G.dump_mem);
+    G.dump = VK_NULL_HANDLE, G.dump_map = NULL, G.dump_pending = 0;
     G.linear = VK_NULL_HANDLE, G.ring = VK_NULL_HANDLE, G.ring_map = NULL, G.ts = VK_NULL_HANDLE, G.ts_on = 0;
 }
 
@@ -715,6 +727,66 @@ static void pt_collect(uint32_t slot) {
     }
 }
 
+// Writes the dump the slot holds, if any (NX2SARIA_FSR3FG_DUMP): its three pictures as PPM images.
+static void dump_collect(uint32_t slot) {
+    if (!G.dump_pending || G.dump_slot != slot) return;
+    G.dump_pending = 0;
+    const char *dir = cfg_get("NX2SARIA_FSR3FG_DUMP");
+    const uint32_t w = G.dump_w, h = G.dump_h;
+    const int bgra = G.dump_fmt == VK_FORMAT_B8G8R8A8_UNORM || G.dump_fmt == VK_FORMAT_B8G8R8A8_SRGB;
+    vmaInvalidateAllocation(vk_ctx()->vma, G.dump_mem, 0, VK_WHOLE_SIZE);
+    static const char *const what[3] = {"before", "generated", "after"};
+    for (int k = 0; k < 3 && dir; k++) {
+        char path[1100];
+        snprintf(path, sizeof path, "%s/fsr3fg_%02d_%s.ppm", dir, G.dumps, what[k]);
+        FILE *fp = fopen(path, "wb");
+        if (!fp) continue;
+        fprintf(fp, "P6\n%u %u\n255\n", w, h);
+        const uint8_t *px = (const uint8_t *)G.dump_map + (size_t)k * w * h * 4;
+        for (size_t i = 0; i < (size_t)w * h; i++) {
+            uint8_t rgb[3] = {px[4 * i + (bgra ? 2 : 0)], px[4 * i + 1], px[4 * i + (bgra ? 0 : 2)]};
+            fwrite(rgb, 1, 3, fp);
+        }
+        fclose(fp);
+    }
+    rt_log("fsr3fg: dump %d written to %s (the picture before, the generated frame, the picture after)", G.dumps, dir);
+    G.dumps++;
+}
+
+// Records this call's dump copies when one is due (NX2SARIA_FSR3FG_DUMP, 8-bit pictures only).
+static void dump_record(VkCommandBuffer cb, uint32_t slot, const Ctx *x, const VkNgxImage *bb, const VkNgxImage *out) {
+    const char *dir = cfg_get("NX2SARIA_FSR3FG_DUMP");
+    if (!dir || G.dump_pending || G.dumps >= 20) return;
+    if (bb->fmt != VK_FORMAT_B8G8R8A8_UNORM && bb->fmt != VK_FORMAT_R8G8B8A8_UNORM) return;
+    uint64_t now = plat_now_ns();
+    if (now < G.dump_next_ns) return;
+    const char *e = cfg_get("NX2SARIA_FSR3FG_DUMP_EVERY");
+    double every = e ? atof(e) : 10.0;
+    G.dump_next_ns = now + (uint64_t)((every > 0.5 ? every : 0.5) * 1e9);
+    const VkDeviceSize one = (VkDeviceSize)bb->w * bb->h * 4;
+    if (G.dump && (G.dump_w != bb->w || G.dump_h != bb->h)) vmaDestroyBuffer(vk_ctx()->vma, G.dump, G.dump_mem), G.dump = 0;
+    if (!G.dump) {
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = one * 3,
+                                 .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO,
+                                      .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                                               VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT};
+        VmaAllocationInfo info;
+        if (vmaCreateBuffer(vk_ctx()->vma, &bi, &ai, &G.dump, &G.dump_mem, &info) != VK_SUCCESS) {
+            G.dump = VK_NULL_HANDLE;
+            return;
+        }
+        G.dump_map = info.pMappedData;
+    }
+    G.dump_w = bb->w, G.dump_h = bb->h, G.dump_fmt = bb->fmt, G.dump_slot = slot, G.dump_pending = 1;
+    VkBufferImageCopy r = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {bb->w, bb->h, 1}};
+    VkImage src[3] = {x->img[I_PREV_SRC], out->img, bb->img};
+    for (int k = 0; k < 3; k++) {
+        r.bufferOffset = one * (VkDeviceSize)k;
+        vkCmdCopyImageToBuffer(cb, src[k], VK_IMAGE_LAYOUT_GENERAL, G.dump, 1, &r);
+    }
+}
+
 int vk_fsr3fg_pass_ms(int i, const char **name, double *ms, uint64_t *count) {
     if (i < 0 || i >= P_N) return 0;
     *name = PASS[i].name, *count = G.pt_count[i], *ms = G.pt_count[i] ? G.pt_sum[i] / (double)G.pt_count[i] : 0;
@@ -765,6 +837,7 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     G.ring_next = (slot + 1) % RING;
     ts_collect(slot);
     pt_collect(slot);
+    dump_collect(slot);
     if (G.pt) {
         vkCmdResetQueryPool(cb, G.pt, slot * (PT_MAX + 1), PT_MAX + 1);
         vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, G.pt, slot * (PT_MAX + 1));
@@ -929,6 +1002,8 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     // ---- the picture the next frame interpolates from
     barrier(cb, CS, VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT, XF,
             VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    if (!reset) dump_record(cb, slot, x, bb, out);
+    barrier(cb, XF, VK_ACCESS_2_TRANSFER_READ_BIT, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT);   // the dump read it first
     VkImageCopy cp = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                       .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .extent = {W, H, 1}};
     vkCmdCopyImage(cb, hudless ? hudless->img : bb->img, VK_IMAGE_LAYOUT_GENERAL, x->img[I_PREV_SRC],
