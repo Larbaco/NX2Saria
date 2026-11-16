@@ -88,8 +88,7 @@ after updating can recompile the runtime to apply its new title and icon; saves 
 ## Build and release coordination
 
 - 0.12.1 is the first release under these names. `VERSION` holds the release number.
-- The fork's release packages are on its Releases page. Issues are not enabled, and these docs promise no issue
-  tracker.
+- The fork's release packages are on its Releases page, and its issues on its issue tracker.
 - The Linux AppImage workflow (`.github/workflows/linux-appimage.yml`) and the issue forms
   (`.github/ISSUE_TEMPLATE/`) must use the names above in the same change as the packages they describe.
 - Discord presence needs an application explicitly configured by its owner. The fork does not register or rename

@@ -139,7 +139,7 @@ scene, hardware and driver. Inclusion of a community fix does not establish comp
 - Visual bugs and crashes remain, including a rare crash in the game's particle code.
 - Long Linux sessions and Steam Deck hardware validation remain open in the platform documentation.
 
-Issue tracking is not enabled on this fork yet. When preparing a bug report, follow
+Report bugs on the [issue tracker](https://github.com/Larbaco/NX2Saria/issues) and follow
 [CONTRIBUTING.md](CONTRIBUTING.md): include the fork commit or package version, game update, OS, GPU and driver,
 steps to reproduce, and the relevant log. Review attachments for private paths and never upload game files or keys.
 

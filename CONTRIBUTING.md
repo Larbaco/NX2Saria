@@ -27,7 +27,7 @@ GPL code is never copied, and none goes into the game binary. Unicorn (GPL) is f
 
 ## Reporting bugs
 
-Issues are not enabled on this fork yet, so the issue form is not open. When they are, it asks for the details below. Until then, include the port version and game update from the title line of the settings menu (F1), your GPU and driver, the log (`logs\nx2saria.log` in the game folder; after a crash, copy it before you start the game again), and the steps to reproduce. Screenshots are fine; recordings of long gameplay are not needed.
+Open an issue at https://github.com/Larbaco/NX2Saria/issues; its forms ask for the details below. Include the port version and game update from the title line of the settings menu (F1), your GPU and driver, the log (`logs\nx2saria.log` in the game folder; after a crash, copy it before you start the game again), and the steps to reproduce. Screenshots are fine; recordings of long gameplay are not needed.
 
 ## Pull requests
 
