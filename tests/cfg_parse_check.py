@@ -223,22 +223,32 @@ def main():
     check(rc == 0 and "got: FULLSCREEN '1' bool 1 int 1" in out,
           'legacy NX2NAVI_ environment spelling remains supported', out)
 
-    # cfg_init chooses the new adjacent INI first, falls back to the legacy filename on existing installs, and selects
-    # the new filename for a fresh install without either file.
+    # cfg_init (find_ini) chooses the adjacent nx2saria.ini, renames an existing install's nx2navi.ini to it when there is
+    # none, keeps reading nx2navi.ini under its old name when the rename is refused, and selects nx2saria.ini for a fresh
+    # install without either file.
     game = work / 'nearby-game'
     game.mkdir(exist_ok=True)
+    for old in game.glob('*.ini'):
+        old.unlink()
     exe_path = game / 'nx2saria.exe'
     (game / 'nx2saria.ini').write_text('sharpness = 80\n', encoding='utf-8')
     (game / 'nx2navi.ini').write_text('sharpness = 20\n', encoding='utf-8')
     path_env = dict(env, NX2SARIA_TEST_EXE=str(exe_path))
     p = subprocess.run([str(exe), 'nearby', '-'], env=path_env, capture_output=True, text=True, timeout=60)
-    check(p.returncode == 0 and "nearby: sharpness '80'" in p.stdout,
-          'new adjacent INI takes precedence when both filenames exist', p.stdout)
+    check(p.returncode == 0 and "nearby: sharpness '80'" in p.stdout and 'is beside nx2saria.ini and is not read' in p.stdout
+          and (game / 'nx2navi.ini').exists(),
+          'nx2saria.ini takes precedence when both filenames exist, and the log names the other', p.stdout)
     (game / 'nx2saria.ini').unlink()
+    p = subprocess.run([str(exe), 'nearby', '-'], env=dict(path_env, NX2SARIA_TEST_RENAME_FAIL='1'),
+                       capture_output=True, text=True, timeout=60)
+    check(p.returncode == 0 and "nearby: sharpness '20'" in p.stdout and 'could not be renamed' in p.stdout
+          and (game / 'nx2navi.ini').exists() and not (game / 'nx2saria.ini').exists(),
+          'a refused rename keeps reading nx2navi.ini under its old name', p.stdout)
     p = subprocess.run([str(exe), 'nearby', '-'], env=path_env, capture_output=True, text=True, timeout=60)
-    check(p.returncode == 0 and "nearby: sharpness '20'" in p.stdout,
-          'legacy adjacent INI remains readable when the new file is absent', p.stdout)
-    (game / 'nx2navi.ini').unlink()
+    check(p.returncode == 0 and "nearby: sharpness '20'" in p.stdout and 'renamed ' in p.stdout
+          and (game / 'nx2saria.ini').read_text(encoding='utf-8') == 'sharpness = 20\n' and not (game / 'nx2navi.ini').exists(),
+          'an nx2navi.ini without an nx2saria.ini is renamed to it, settings and all', p.stdout)
+    (game / 'nx2saria.ini').unlink()
     p = subprocess.run([str(exe), 'nearby', '-'], env=path_env, capture_output=True, text=True, timeout=60)
     check(p.returncode == 0 and 'no settings file at ' + str(game / 'nx2saria.ini') in p.stdout,
           'a fresh install with no adjacent INI selects the new filename', p.stdout)

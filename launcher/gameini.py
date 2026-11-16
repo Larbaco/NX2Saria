@@ -20,9 +20,23 @@ BOM = '﻿'
 
 
 def _path(game_dir):
+    """nx2saria.ini in the game folder. An nx2navi.ini there without one, the name before NX2Saria, is renamed to it the
+    first time the launcher looks, as the game does at its start (runtime/cfg.c find_ini), so the folder keeps one
+    settings file with every setting in it; where the rename fails, the old file is read and written under its name."""
     folder = Path(game_dir)
     current, legacy = folder / 'nx2saria.ini', folder / 'nx2navi.ini'
-    return current if current.exists() or not legacy.exists() else legacy
+    if not current.exists() and legacy.exists():
+        if not legacy.is_file():   # something else by that name is left as it is, and read (and refused) as before
+            return legacy
+        try:
+            if os.name == 'nt':
+                legacy.rename(current)   # Windows refuses to replace an existing file
+            else:
+                os.link(legacy, current)   # refuses an existing file too, where rename would replace it
+                legacy.unlink()
+        except OSError:
+            return legacy if not current.exists() else current
+    return current
 
 
 def _key(text):

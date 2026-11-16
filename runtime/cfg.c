@@ -1536,17 +1536,35 @@ int cfg_save_to(const char *path) {
 
 static char ini_path[1024];
 
+// The settings file beside the game: nx2saria.ini. An nx2navi.ini there without one, the name before NX2Saria (any
+// version of NX2navi), is renamed to it the first time the game looks, so a player who moves over keeps every setting
+// and the folder holds one settings file from then on; launcher/gameini.py does the same where the launcher reads it
+// first. The rename never replaces a file (plat_fs_rename); where it fails, the old file is read and written under its
+// own name. With both there, nx2saria.ini is the one, and the log says the other is not read.
 static int find_ini(void) {
     if (ini_path[0]) return 1;
-    char path[1024];
+    char path[1024], legacy[1024];
     if (!plat_exe_path(path, sizeof path)) return 0;
     char *cut = plat_last_sep(path);
     if (!cut) cut = strrchr(path, '/');
     if (!cut || cut + 13 >= path + sizeof path) return 0;   // room for "nx2saria.ini" and its NUL after the separator
+    strcpy(cut + 1, "nx2navi.ini");
+    snprintf(legacy, sizeof legacy, "%s", path);
     strcpy(cut + 1, "nx2saria.ini");
-    if (!plat_file_exists(path)) {
-        strcpy(cut + 1, "nx2navi.ini");
-        if (!plat_file_exists(path)) strcpy(cut + 1, "nx2saria.ini");
+    int have = plat_file_exists(path), old = plat_file_exists(legacy);
+    if (!have && old) {
+        int r = plat_fs_rename(legacy, path, 1);
+        if (r == PLAT_FS_OK) {
+            rt_log("cfg: renamed %s to nx2saria.ini, the settings file's name since NX2Saria: every setting in it is kept",
+                   legacy);
+        } else {
+            rt_log("cfg: %s could not be renamed to nx2saria.ini (%s): it is read and written under its old name", legacy,
+                   r == PLAT_FS_EXISTS ? "nx2saria.ini appeared meanwhile" : r == PLAT_FS_BUSY ? "the file is in use"
+                                                                                  : "the rename was refused");
+            snprintf(path, sizeof path, "%s", legacy);
+        }
+    } else if (have && old) {
+        rt_log("cfg: %s is beside nx2saria.ini and is not read: nx2saria.ini is the settings file", legacy);
     }
     snprintf(ini_path, sizeof ini_path, "%s", path);
     return 1;

@@ -22,6 +22,24 @@ import capture_run
 
 
 class RebrandCompatibilityTest(unittest.TestCase):
+    def test_launcher_renames_a_legacy_settings_file(self):
+        from launcher import gameini
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / 'nx2navi.ini').write_text('sharpness = 20\n', encoding='utf-8')
+            self.assertEqual(gameini._path(game), game / 'nx2saria.ini')
+            self.assertEqual((game / 'nx2saria.ini').read_text(encoding='utf-8'), 'sharpness = 20\n')
+            self.assertFalse((game / 'nx2navi.ini').exists())
+            # both there: nx2saria.ini is the file, and nx2navi.ini is left as it is
+            (game / 'nx2navi.ini').write_text('sharpness = 5\n', encoding='utf-8')
+            self.assertEqual(gameini._path(game), game / 'nx2saria.ini')
+            self.assertEqual((game / 'nx2navi.ini').read_text(encoding='utf-8'), 'sharpness = 5\n')
+            # a fresh folder: nx2saria.ini, nothing renamed
+            fresh = game / 'fresh'
+            fresh.mkdir()
+            self.assertEqual(gameini._path(fresh), fresh / 'nx2saria.ini')
+            self.assertEqual(list(fresh.iterdir()), [])
+
     def test_both_update_manifest_names_discover_current_payloads(self):
         manifest = {'format': 1, 'version': '1.0.0', 'app': {
             'name': 'NX2Saria-app-1.0.0.zip', 'size': 7, 'sha256': 'a' * 64}}

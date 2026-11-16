@@ -341,7 +341,7 @@ class GameIniTest(Tmp):
 
     def test_only_the_key_line_changes(self):
         # the byte order mark, the line ends and a line that is not UTF-8 stay as they were
-        ini = self.tmp / 'nx2navi.ini'
+        ini = self.tmp / 'nx2saria.ini'
         ini.write_bytes(b'\xef\xbb\xbf[display]\r\nfullscreen = 1\r\n# caf\xe9\r\n# discord_rpc = 1\r\n[discord]\r\n'
                         b'NX2NAVI_DISCORD_RPC = "1"\r\ndiscord_app_id = 42')
         self.assertEqual(gameini.get(self.tmp, 'DISCORD_RPC'), '1')   # quotes, prefix and case as the game reads them
@@ -349,10 +349,10 @@ class GameIniTest(Tmp):
         self.assertEqual(ini.read_bytes(), b'\xef\xbb\xbf[display]\r\nfullscreen = 1\r\n# caf\xe9\r\n# discord_rpc = 1\r\n'
                          b'[discord]\r\ndiscord_rpc = 0\r\ndiscord_app_id = 42')
         self.assertEqual(gameini.get(self.tmp, 'discord_rpc'), '0')
-        self.assertFalse((self.tmp / 'nx2navi.ini.tmp').exists())
+        self.assertFalse((self.tmp / 'nx2saria.ini.tmp').exists())
 
     def test_missing_key_goes_under_its_section(self):
-        ini = self.tmp / 'nx2navi.ini'
+        ini = self.tmp / 'nx2saria.ini'
         ini.write_bytes(b'[discord]\ndiscord_app_id = 42\n[display]\nfullscreen = 1')
         self.assertEqual(gameini.get(self.tmp, 'discord_rpc'), '')
         gameini.put(self.tmp, 'discord', 'discord_rpc', '1')
@@ -360,7 +360,7 @@ class GameIniTest(Tmp):
 
     def test_an_empty_line_leaves_the_earlier_value(self):
         # runtime/cfg.c: "key =" leaves the setting as it was, so the game keeps 0 here, and a change goes to that line
-        ini = self.tmp / 'nx2navi.ini'
+        ini = self.tmp / 'nx2saria.ini'
         ini.write_bytes(b'discord_rpc = 0\ndiscord_rpc =\n')
         self.assertEqual(gameini.get(self.tmp, 'discord_rpc'), '0')
         gameini.put(self.tmp, 'discord', 'discord_rpc', '1')
@@ -380,7 +380,7 @@ class PlayerIniTest(Tmp):
     for; the lines that are no settings of the game, the comment and every other byte stay."""
 
     def test_the_launchers_setting_adds_one_line(self):
-        ini = self.tmp / 'nx2navi.ini'
+        ini = self.tmp / 'nx2saria.ini'
         ini.write_bytes(PLAYER_INI)
         self.assertEqual(gameini.get(self.tmp, 'wb_lazy'), '0')
         self.assertEqual(gameini.get(self.tmp, 'async_compute'), '1')   # read like any line; the game ignores it
@@ -394,7 +394,7 @@ class PlayerIniTest(Tmp):
         or '#' starts a comment, "key = ; note" has no value, and a value in double quotes keeps its text; free text,
         the mods folder and lists the launcher writes, keeps the whole value. tests/cfg_parse_check.py has the same
         lines for the game."""
-        ini = self.tmp / 'nx2navi.ini'
+        ini = self.tmp / 'nx2saria.ini'
         body = (b'[frame rate]\r\npace_smooth = 0 ; off\r\nfps_limit = 144 # my monitor\r\nvk_present = fifo\t; x\r\n'
                 b'aspect = ; later\r\ndlss_preset = "k ; quoted"\r\n[mods]\r\nmods_dir = D:\\My Mods #2\r\n'
                 b'mods_disabled = a #1|b ; c\r\n')
@@ -422,7 +422,7 @@ class PlayerIniTest(Tmp):
         leaves the file alone; a changed language changes that line; a byte order mark and a line that is not UTF-8
         stay too."""
         from installer import ini as inst_ini
-        path = self.tmp / 'nx2navi.ini'
+        path = self.tmp / 'nx2saria.ini'
         path.write_bytes(PLAYER_INI)
         inst_ini.write(self.tmp, 'en-US')
         want = PLAYER_INI.replace(b'[language]\r\n', b'[language]\r\nlang = en-US\r\n')
@@ -437,7 +437,7 @@ class PlayerIniTest(Tmp):
         path.write_bytes(marked)
         inst_ini.write(self.tmp, 'fr')
         self.assertEqual(path.read_bytes(), marked.replace(b'lang = ja', b'lang = fr'))
-        self.assertFalse((self.tmp / 'nx2navi.ini.tmp').exists())
+        self.assertFalse((self.tmp / 'nx2saria.ini.tmp').exists())
 
 
 class RebuildArgsTest(Tmp):

@@ -47,6 +47,16 @@ int plat_exe_path(char *out, size_t n) {
     strcpy(out, p);
     return 1;
 }
+// cfg.c find_ini renames an nx2navi.ini without an nx2saria.ini; NX2SARIA_TEST_RENAME_FAIL=1 refuses it, as a file in
+// use would be refused
+int plat_fs_rename(const char *from, const char *to, int durable) {
+    (void)durable;
+    const char *fail = getenv("NX2SARIA_TEST_RENAME_FAIL");
+    if (fail && *fail == '1') return PLAT_FS_BUSY;
+    FILE *f = fopen(to, "rb");
+    if (f) return fclose(f), PLAT_FS_EXISTS;
+    return rename(from, to) ? PLAT_FS_ERROR : PLAT_FS_OK;
+}
 int plat_file_exists(const char *p) {
     FILE *f = fopen(p, "rb");
     if (f) fclose(f);

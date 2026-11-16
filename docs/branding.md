@@ -46,7 +46,7 @@ the names kept on purpose, and what has to change together when a release is bui
 
 | Older name | What still works |
 |---|---|
-| `nx2navi.ini` | Settings. The game and the launcher read `nx2saria.ini` in the game folder; when that file is absent and `nx2navi.ini` is there, they read and keep writing `nx2navi.ini`. When both files exist, `nx2saria.ini` wins. |
+| `nx2navi.ini` | Settings. The game and the launcher read `nx2saria.ini` in the game folder. From 0.13.0, an `nx2navi.ini` there without an `nx2saria.ini` is renamed to `nx2saria.ini` the first time either looks, whatever NX2navi version wrote it, and every setting in it is kept (the game's log says so); where the rename fails, `nx2navi.ini` is read and written under its old name. When both files exist, `nx2saria.ini` wins and the log says the other is not read. |
 | `NX2NAVI_*` environment variables | The same settings as `NX2SARIA_*`. When both are set, the `NX2SARIA_*` one wins. |
 | Existing installs | An install folder made by NX2navi is not moved or renamed. Its game files, saves, profiles and mods stay where they are. New installs use the folder names above. |
 | `NX2navi.exe` launcher stub | Reused until `NX2Saria.exe` is installed in the same folder. When both exist, the current stub wins. |

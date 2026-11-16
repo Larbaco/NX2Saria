@@ -1,5 +1,6 @@
 # nx2saria.ini: settings for NX2Saria. Copy this file to nx2saria.ini next to the game executable and remove the '#'
-# of a line to change it. An existing nx2navi.ini is still read and updated in place when no nx2saria.ini exists.
+# of a line to change it. An nx2navi.ini there without an nx2saria.ini (from NX2navi) is renamed to nx2saria.ini at the
+# first start, with every setting in it.
 # Each line shows the default; on a Steam Deck the device profile ([display]) changes a few of them. A NX2SARIA_*
 # environment variable of the same name (NX2SARIA_FPS_LIMIT for fps_limit) overrides the file. Legacy NX2SARIA_* names
 # remain accepted when the matching NX2SARIA_* variable is unset. Keys are case-insensitive;
