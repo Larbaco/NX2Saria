@@ -589,10 +589,13 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, VkFormat fmt, uint32_t rw, uint32_t 
     uint32_t mw = rw > pw ? rw : pw, mh = rh > ph ? rh : ph;
     if (mw < w) mw = w;
     if (mh < h) mh = h;
-    if (!make_ctx(x, w, h, fmt, mw, mh)) {
+    // NX2SARIA_FSR3FG_TEST_FAIL=1 (test, live): the images are not made, as when video memory runs out
+    const char *tf = cfg_get("NX2SARIA_FSR3FG_TEST_FAIL");
+    const int test_fail = tf && !strcmp(tf, "1");
+    if (test_fail || !make_ctx(x, w, h, fmt, mw, mh)) {
         // another try after the GPU is idle (images it still held may have gone), then off
         idle_device();
-        if (!make_ctx(x, w, h, fmt, mw, mh)) {
+        if (test_fail || !make_ctx(x, w, h, fmt, mw, mh)) {
             char what[160];
             snprintf(what, sizeof what, "its images for %ux%u (render sizes up to %ux%u) could not be made", w, h, mw, mh);
             fail(what);

@@ -398,6 +398,19 @@ int probe_fsr3fg(void) {
            "generated, %llu history starts\n", st.vram / 1048576.0, (unsigned long long)st.frames,
            (unsigned long long)st.generated, (unsigned long long)st.cuts);
     if (st.vram) printf("probe-fsr3fg: FAIL the images were not freed\n"), bad = 1;
+    {   // last, as it is for the rest of a run: images that cannot be made turn frame generation off, nothing worse
+        cfg_set("NX2SARIA_FSR3FG_TEST_FAIL", "1");
+        Result t;
+        int ran = run(c, W, H, rw, rh, 3, vx, 1.0f, -1, &t, NULL, "fail");
+        VkFsr3fgStats f;
+        vk_fsr3fg_stats(&f);
+        printf("probe-fsr3fg: images that cannot be made: the frames %s, frame generation %s (available %d), %llu frames "
+               "recorded after it\n", ran ? "submitted" : "NOT submitted", vk_fsr3fg_failed() ? "off for the run" : "STILL ON",
+               vk_fsr3fg_available(), (unsigned long long)(f.frames - st.frames));
+        if (!ran || !vk_fsr3fg_failed() || vk_fsr3fg_available() || f.frames != st.frames)
+            printf("probe-fsr3fg: FAIL a failed context did not turn frame generation off cleanly\n"), bad = 1;
+        cfg_set("NX2SARIA_FSR3FG_TEST_FAIL", "0");
+    }
     vk_sync_shutdown();
     vk_fsr3fg_release();
     vk_mem_shutdown();
