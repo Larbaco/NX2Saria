@@ -264,7 +264,7 @@ static int frame_hold(uint32_t skipped, int resized, uint64_t frame) {
     int64_t lim = frame_hold_refill(kern_now_ns());
     static uint64_t draws_at, thin_held;
     static uint32_t prev_draws;
-    uint64_t d = vk_exec_frame.draws;   // counted up over the run; set back with NX2NAVI_TRACE=gfx
+    uint64_t d = vk_exec_frame.draws;   // counted up over the run; set back with NX2SARIA_TRACE=gfx
     uint32_t draws = (uint32_t)(d >= draws_at ? d - draws_at : d);
     int thin = RT_V111 && draws < THIN_DRAWS && prev_draws >= SCENE_DRAWS && lim > 0 && !vk_dlssg_active();
     draws_at = d, prev_draws = draws;
