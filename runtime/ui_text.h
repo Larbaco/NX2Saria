@@ -340,6 +340,10 @@ typedef enum {
     UI_MENU_UPSCALING_NATIVE,   // the scene at the picture's own size, no upscaler (ui/menu.cpp share_native)
     UI_MENU_FRAMEGEN_DESC_DLSS, UI_MENU_FRAMEGEN_NOTE_DLSS, UI_MENU_FRAMEGEN_NEEDS_DLSS,   // DLSS only
     UI_MENU_FRAMEGEN_DESC_NONE, UI_MENU_FRAMEGEN_NEEDS_NONE,                               // neither runs
+    // no DLSS, and FSR 3.1 upscales through the runtime's own passes while its frame generation needs AMD's library,
+    // which only the Windows build loads (ui/menu.cpp row_framegen fsr_win_only): the row says that, not that FSR 3.1
+    // does not run; OFF: frame generation is still set to FSR 3.1 there
+    UI_MENU_FRAMEGEN_DESC_FSR_WIN, UI_MENU_FRAMEGEN_NEEDS_FSR_WIN, UI_MENU_FRAMEGEN_OFF_FSR_WIN,
     // DLSS frame generation (ui/menu.cpp row_framegen, row_framegen_mult): the multiplier row, its notes when this GPU
     // and driver allow less than 4x, and the frame generation row's notes when DLSS's does not run
     UI_MENU_FRAMEGEN_MULT, UI_MENU_FRAMEGEN_MULT_DESC,

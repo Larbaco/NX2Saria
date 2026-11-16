@@ -1257,11 +1257,21 @@ static void row_framegen(void) {
     const char *v = opt_value("NX2SARIA_FRAMEGEN");
     int cur = !strcmp(v, "fsr3") ? 1 : !strcmp(v, "dlss") ? 2 : 0;
     // what the texts promise follows what runs here: frame generation with any choice, NGX's start rule, or none
-    const UiTextId desc = !dlss && !fsr ? UI_MENU_FRAMEGEN_DESC_NONE : via_ngx ? UI_MENU_FRAMEGEN_DESC_NGX
-                                                                            : UI_MENU_FRAMEGEN_DESC_ANY;
+    // Without DLSS, where FSR 3.1 upscales through the runtime's own passes (vk_ffx_available) and its frame generation
+    // cannot run, since that needs AMD's library and only the Windows build loads it (vk_ffx_framegen_available): the
+    // texts say so. "Needs DLSS or FSR 3.1, which do not run here" read as wrong beside FSR 3.1 chosen under Upscaling.
+#ifdef _WIN32
+    const bool fsr_win_only = false;
+#else
+    const bool fsr_win_only = !dlss && !fsr && vk_ffx_available();
+#endif
+    const UiTextId desc = fsr_win_only ? UI_MENU_FRAMEGEN_DESC_FSR_WIN
+                        : !dlss && !fsr ? UI_MENU_FRAMEGEN_DESC_NONE : via_ngx ? UI_MENU_FRAMEGEN_DESC_NGX
+                                                                                : UI_MENU_FRAMEGEN_DESC_ANY;
     // UI_TEXT_COUNT: no note
     UiTextId note = !dlss && !fsr ? UI_MENU_FRAMEGEN_NOTE : via_ngx ? UI_MENU_FRAMEGEN_NOTE_NGX : UI_TEXT_COUNT;
-    if (!dlss && !fsr && cur == 0) opt_disable_next(UI_MENU_FRAMEGEN_NEEDS_NONE);
+    if (!dlss && !fsr && cur == 0)
+        opt_disable_next(fsr_win_only ? UI_MENU_FRAMEGEN_NEEDS_FSR_WIN : UI_MENU_FRAMEGEN_NEEDS_NONE);
     else if (via_ngx && !fsr && !vk_ngxfg_wanted() && !dlss_set) opt_disable_next(UI_MENU_FRAMEGEN_NEEDS_DLSS);
     // Off, AMD's where FSR 3.1 loads and NVIDIA DLSS (vk_dlssg.c, through Streamline and nx2navi_dlssg.dll) on NVIDIA GPUs,
     // now that Reflex paces it from the frame's start and generated frames are presented; elsewhere one stays listed
@@ -1288,7 +1298,8 @@ static void row_framegen(void) {
     const bool ngx = framegen_ngx();
     const bool restart = framegen_restart();
     if (restart) note = UI_MENU_AFTER_RESTART;
-    else if (cur == 1 && !fsr) note = UI_MENU_FSR3_OFF;   // set where it cannot load: "in use: off" and why
+    else if (cur == 1 && !fsr) note = fsr_win_only ? UI_MENU_FRAMEGEN_OFF_FSR_WIN   // set where it cannot run:
+                                                   : UI_MENU_FSR3_OFF;             // "in use: off" and why
     // NVIDIA's set since the start but not running: "in use: off" and why (vk_dlssg_status; the log has the details).
     // Through NGX that is NVIDIA's frame generation library missing beside the game, or a GPU it does not run on.
     const int st = cur != 2 || restart ? DLSSG_RUNS : ngx ? (vk_ngxfg_max() ? DLSSG_RUNS : DLSSG_NO_FILES) : vk_dlssg_status();

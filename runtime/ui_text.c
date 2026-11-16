@@ -710,6 +710,12 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_FRAMEGEN_DESC_NONE] = "Adds generated frames for smoother motion. Needs DLSS or FSR 3.1, and neither runs "
                                    "here.",
     [UI_MENU_FRAMEGEN_NEEDS_NONE] = "needs DLSS or FSR 3.1, which do not run here",
+    [UI_MENU_FRAMEGEN_DESC_FSR_WIN] = "Adds generated frames for smoother motion. FSR 3.1 upscaling runs here through "
+                                      "the game's own build of its passes, but FSR 3.1's frame generation needs AMD's "
+                                      "library, which only the Windows build can load. Here frame generation needs NVIDIA "
+                                      "DLSS on a GeForce RTX 40 or 50 card.",
+    [UI_MENU_FRAMEGEN_NEEDS_FSR_WIN] = "FSR 3.1's frame generation runs on Windows only",
+    [UI_MENU_FRAMEGEN_OFF_FSR_WIN] = "in use: off, FSR 3.1's frame generation runs on Windows only",
     [UI_MENU_FRAMEGEN_MULT] = "DLSS multiplier",
     [UI_MENU_FG_MULT_DESC] = "Frames on screen for each frame the game draws with DLSS Frame Generation: 2x adds one "
                              "generated frame, up to 6x on an RTX 50 card. Dynamic adds only the frames needed to "
@@ -1443,6 +1449,12 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                   "modo DLSS em Upscaling quando o jogo inicia; depois funciona com qualquer opção em "
                                   "Upscaling.",
     [UI_MENU_FRAMEGEN_NOTE_NGX] = "precisa do DLSS ao iniciar o jogo",
+    [UI_MENU_FRAMEGEN_DESC_FSR_WIN] = "Adiciona quadros gerados para um movimento mais suave. O upscaling FSR 3.1 roda "
+                                      "aqui pelas passagens que o próprio jogo compila, mas a geração de quadros do FSR "
+                                      "3.1 precisa da biblioteca da AMD, que só a versão para Windows carrega. Aqui a "
+                                      "geração de quadros precisa do NVIDIA DLSS numa GeForce RTX 40 ou 50.",
+    [UI_MENU_FRAMEGEN_NEEDS_FSR_WIN] = "a geração de quadros do FSR 3.1 só roda no Windows",
+    [UI_MENU_FRAMEGEN_OFF_FSR_WIN] = "em uso: desligada, a geração de quadros do FSR 3.1 só roda no Windows",
     [UI_MENU_LOW_LATENCY_FAILED] = "em uso: desligado, o driver recusou (veja lowlat no log)",
     [UI_MENU_GPU] = "Placa de vídeo", [UI_MENU_GPU_DESC] = "A placa de vídeo usada pelo jogo.",
     [UI_MENU_GPU_AUTO] = "Automática",
