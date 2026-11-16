@@ -1274,6 +1274,12 @@ static void row_framegen(void) {
                   : !dlss && !fsr ? UI_MENU_FRAMEGEN_NOTE : via_ngx ? UI_MENU_FRAMEGEN_NOTE_NGX : UI_TEXT_COUNT;
     if (!dlss && !fsr && cur == 0)
         opt_disable_next(fsr_win_only ? UI_MENU_FRAMEGEN_NEEDS_FSR_WIN : UI_MENU_FRAMEGEN_NEEDS_NONE);
+    static bool told_fsr_win;   // once a run: what the row says, for the log
+    if (fsr_win_only && !told_fsr_win) {
+        told_fsr_win = true;
+        rt_log("menu: frame generation: FSR 3.1 upscales here through the runtime's own passes, and its frame generation "
+               "runs on Windows only (AMD's library): the row says so");
+    }
     else if (via_ngx && !fsr && !vk_ngxfg_wanted() && !dlss_set) opt_disable_next(UI_MENU_FRAMEGEN_NEEDS_DLSS);
     // Off, AMD's where FSR 3.1 loads and NVIDIA DLSS (vk_dlssg.c, through Streamline and nx2navi_dlssg.dll) on NVIDIA GPUs,
     // now that Reflex paces it from the frame's start and generated frames are presented; elsewhere one stays listed

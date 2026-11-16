@@ -1418,7 +1418,11 @@ static int alias_compatible(const Tex *e, const Tex *src, const char **why);
 // e, bound into pool memory, was just written by the GPU: its own content is current, and the pool-bound images of
 // another layout whose storage overlaps it no longer hold theirs.
 static void mark_clobbered(Tex *e) {
-    if (clobber_fix < 0) clobber_fix = cfg_bool("NX2SARIA_TEX_CLOBBER");
+    if (clobber_fix < 0) {
+        clobber_fix = cfg_bool("NX2SARIA_TEX_CLOBBER");
+        rt_log("vk: a texture read after another image drew over its pool memory %s (NX2SARIA_TEX_CLOBBER, Fix "
+               "overwritten textures on the Screen tab)", clobber_fix ? "gets memory of its own" : "stays in pool memory");
+    }
     e->clobbered = 0;
     if (!clobber_fix || !e->bound_to) return;
     rt_add(e);

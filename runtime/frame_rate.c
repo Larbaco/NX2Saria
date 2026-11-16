@@ -101,6 +101,69 @@ static void step_store(float seconds) {
 
 static void frame_limit_live(void);
 
+// ---- the ocarina's log: what the sets orecord and ostaff of patches-v111.txt do, read from the patch page words their
+// sites write, so a player's log shows them working. The recorder clock (orecord) stores the fraction it carries at
+// +264 on each update of the ocarina manager's note clock (playing, recording, a song played back); a played-back
+// song's staff (ostaff) stores each update's note signal (0 or 1) at +776 and moves the staff one note at an update
+// whose signal is set where the one before was clear. Every present reads both words: a stretch of ocarina use starts
+// at the first present either changed on and ends OCARINA_QUIET_NS after the last change, with one line: its length,
+// presents and frame rate, the presents the clock's fraction changed on (above 60 fps nearly every one; at 60 fps and
+// below the fraction stays 0 and nothing shows), and the notes the staff moved, as rises of the signal from one present
+// to the next (a song played back moves its staff once a note: Zelda's Lullaby 6, the Song of Time 6, Bolero of Fire
+// 8). Nothing else writes either word, so no line comes while the ocarina is put away.
+#define OCARINA_QUIET_NS 2000000000ull
+#define OCARINA_CLOCK_WORD 264
+#define OCARINA_STAFF_WORD 776
+static _Atomic uint32_t *oc_clock_word, *oc_staff_word;
+static struct {
+    uint32_t clock, staff;
+    int on;
+    uint64_t start_ns, last_ns, presents, last_presents, clock_moves, notes;   // last_*: at the last change
+} oc;
+
+static void ocarina_log_init(void) {
+    int rec = rt_patch_set("orecord"), staff = rt_patch_set("ostaff");
+    if ((rec < 0 && staff < 0) || !rt_patch_page()) return;   // another game version
+    if (rec >= 0 && rt_patch_enabled(rec)) {
+        oc_clock_word = (_Atomic uint32_t *)((uint8_t *)rt_patch_page() + OCARINA_CLOCK_WORD);
+        oc.clock = atomic_load_explicit(oc_clock_word, memory_order_relaxed);
+    }
+    if (staff >= 0 && rt_patch_enabled(staff)) {
+        oc_staff_word = (_Atomic uint32_t *)((uint8_t *)rt_patch_page() + OCARINA_STAFF_WORD);
+        oc.staff = atomic_load_explicit(oc_staff_word, memory_order_relaxed);
+    }
+    rt_log("ocarina: the log follows the recorder clock (set orecord %s) and a played-back song's staff (set ostaff %s): "
+           "one line per stretch of ocarina use",
+           rec < 0 ? "absent" : oc_clock_word ? "on" : "off", staff < 0 ? "absent" : oc_staff_word ? "on" : "off");
+}
+
+static void ocarina_end(void) {
+    double s = (double)(oc.last_ns - oc.start_ns) * 1e-9;
+    rt_log("ocarina: %.1f s of ocarina use, %llu presents (%.0f fps): the recorder clock carried a fraction on %llu of "
+           "them%s; a played-back song's staff moved %llu notes%s", s, (unsigned long long)oc.last_presents,
+           s > 0 ? (double)(oc.last_presents - 1) / s : 0.0, (unsigned long long)oc.clock_moves,
+           oc_clock_word ? "" : " (set orecord off: not watched)", (unsigned long long)oc.notes,
+           oc_staff_word ? "" : " (set ostaff off: not watched)");
+    oc.on = 0;
+}
+
+static void ocarina_watch(uint64_t now_ns) {
+    if (!oc_clock_word && !oc_staff_word) return;
+    uint32_t c = oc_clock_word ? atomic_load_explicit(oc_clock_word, memory_order_relaxed) : 0;
+    uint32_t s = oc_staff_word ? atomic_load_explicit(oc_staff_word, memory_order_relaxed) : 0;
+    int clock = c != oc.clock, staff = s != oc.staff, rise = s && !oc.staff;
+    oc.clock = c, oc.staff = s;
+    if (clock || staff) {
+        if (!oc.on) oc.on = 1, oc.start_ns = now_ns, oc.presents = oc.clock_moves = oc.notes = 0;
+        oc.last_ns = now_ns;
+        oc.clock_moves += clock, oc.notes += rise;
+    }
+    if (!oc.on) return;
+    oc.presents++;
+    if (clock || staff) oc.last_presents = oc.presents;
+    else if (now_ns - oc.last_ns > OCARINA_QUIET_NS) ocarina_end();
+}
+
 void frame_step_init(void) {
     int fps60 = rt_patch_set("fps60"), realtime = rt_patch_set("realtime"), cloth = rt_patch_set("cloth");
     int ostep = rt_patch_set("ostep");
@@ -112,6 +175,7 @@ void frame_step_init(void) {
         atomic_store_explicit(ostep_page, bits, memory_order_release);
         rt_log("frame rate: the game's frames per update follow the display interval (set ostep)");
     }
+    ocarina_log_init();
     int follow = rt_patch_set("ofollow");
     if (follow >= 0) {
         carry_page = (_Atomic uint32_t *)((uint8_t *)rt_patch_page() + 260);
@@ -1362,6 +1426,7 @@ void frame_step_present(uint64_t display_ns, int interval) {
     atomic_store_explicit(&game_us, atomic_load_explicit(&game_us, memory_order_relaxed) + (uint64_t)(game * 1e6 + 0.5),
                           memory_order_relaxed);
     world_clock(dt, step);
+    ocarina_watch(display_ns);
     floor_probe();
     if (floor_scan_left || floor_watching) {   // after its first read the scan costs this test alone while off
         float link[3];

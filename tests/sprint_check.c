@@ -4,6 +4,7 @@
 // tests/sprint_check.py, which writes the stand-in layout.h and patches.h.
 #include <assert.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -32,6 +33,15 @@ void rt_register_host(uint64_t addr, GuestFn fn) {
 static float step = 1.0f;   // frame_step_frames: the 60 Hz frames of one update of Link
 float frame_step_frames(void) { return step; }
 int mem_readable(uint64_t a, uint64_t n) { (void)n; return a != 0; }
+static int log_lines;   // rt_log: the lines sprint.c writes (a press an event takes is named)
+static char last_log[256];
+void rt_log(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(last_log, sizeof last_log, fmt, ap);
+    va_end(ap);
+    log_lines++;
+}
 
 // Link: vtable, +0x18 -> owner whose +0x270 -> a with +0x188 -> b with +0x1c0 -> the state, id at +0x28
 static uint64_t link[8], owner[0x50], a[0x40], b[0x40], state_obj[0x20], other[8];
@@ -238,7 +248,9 @@ int main(int argc, char **argv) {
         *(uint64_t *)(img + 0x4c7e090) = (uintptr_t)&ev_ptr;
         frame(0, WALK, link);
         event[0x68 / 8] = 1;   // the event starts
+        int lines = log_lines;
         assert(frame(L3, WAIT_ID, link) == L3 && !dashing());
+        assert(log_lines == lines + 1 && strstr(last_log, "while an event runs"));   // the log names the press
         assert(frame(L3, WAIT_ID, link) == L3 && !dashing());
         assert(frame(0, WAIT_ID, link) == 0 && !dashing());
         event[0x68 / 8] = 0;   // it ends: the button is the sprint's again

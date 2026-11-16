@@ -3991,6 +3991,14 @@ static VkViewport draw_viewport(VkExec *ex) {
 // on sloped surfaces, which is what shows as acne (stripes of self-shadow over slanted ground and walls). The
 // constant term counts the depth format's smallest steps, which do not change with the size, and keeps its value.
 static float slope_bias(const VkExec *ex) {
+    if (ex->pass_scale > 1) {   // the log names each scale it meets, at most 8 times a run (replay workers record too)
+        static uint32_t named;
+        static int32_t lines;
+        uint32_t k = ex->pass_scale;
+        if (__atomic_exchange_n(&named, k, __ATOMIC_RELAXED) != k && __atomic_fetch_add(&lines, 1, __ATOMIC_RELAXED) < 8)
+            rt_log("vk: a pass into a shadow map %u times larger on each side (shadow_scale): its slope-scaled depth bias "
+                   "%u times the game's", k, k);
+    }
     return ex->pass_scale > 1 ? ex->poly_offset.factor * (float)ex->pass_scale : ex->poly_offset.factor;
 }
 

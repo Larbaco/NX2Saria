@@ -151,6 +151,12 @@ void sprint_pad(uint64_t *buttons) {
     // gameplay (B: while Link moves); else the game's alone, and no sprint's.
     if (now & ~last & bit) {
         int mine = gameplay && (b != BTN_B || atomic_load(&moving));
+        static int told;   // a press an event takes (a conversation's L3 hides its text box): the log names the first ones
+        if (n < GAMEPLAY_POLLS && !gameplay && told < 16) {
+            told++;
+            rt_log("sprint: the sprint button was pressed while an event runs (a conversation, a cutscene): the game's "
+                   "press, no sprint (L3 hides a conversation's text box)");
+        }
         atomic_store(&latched, mine);
         if (mine) atomic_fetch_or(&pressed, bit);
     } else if (!(now & bit)) {
