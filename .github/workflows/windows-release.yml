@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag whose sources are built (v0.12.1)'
+        description: 'Release tag whose sources are built (v0.12.1), or a branch to try a build of'
         required: true
       notes_ref:
         description: 'Branch or tag whose docs/releases/<tag>.md gives the manifest notes'
@@ -49,9 +49,15 @@ jobs:
           /c/msys64/usr/bin/pacman.exe -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-tools
           /c/msys64/ucrt64/bin/glslc.exe --version | head -1
       - name: Notes
+        # docs/releases/<tag>.md from notes_ref; for a branch, or a tag without notes there, those of the checkout's
+        # VERSION (none when it has no notes file either)
         run: |
           git fetch -q --depth 1 origin "${{ inputs.notes_ref }}"
-          git show "FETCH_HEAD:docs/releases/$TAG.md" > "$RUNNER_TEMP/notes.md"
+          if ! git show "FETCH_HEAD:docs/releases/$TAG.md" > "$RUNNER_TEMP/notes.md" 2>/dev/null; then
+            notes="docs/releases/v$(tr -d '\r\n' < VERSION).md"
+            if [ -f "$notes" ]; then cp "$notes" "$RUNNER_TEMP/notes.md"; else : > "$RUNNER_TEMP/notes.md"; fi
+            echo "no docs/releases/$TAG.md on ${{ inputs.notes_ref }}: the notes of $notes"
+          fi
           head -3 "$RUNNER_TEMP/notes.md"
       - name: AMD FSR 3.1 and FSR 4 libraries
         run: |
