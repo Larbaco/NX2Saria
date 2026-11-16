@@ -356,6 +356,8 @@ typedef enum {
     // frame generation with any Upscaling choice, an upscaler or none (vk_dlaa.c fg_only_frame); through NGX (every
     // build but the Windows one) NVIDIA's needs DLSS upscaling on at the start, its note and description there
     UI_MENU_FRAMEGEN_DESC_ANY, UI_MENU_FRAMEGEN_DESC_NGX, UI_MENU_FRAMEGEN_NOTE_NGX,
+    // the Screen tab's Fix overwritten textures row (ui/menu.cpp tab_screen, NX2SARIA_TEX_CLOBBER) and its subtitle
+    UI_MENU_TEX_CLOBBER, UI_MENU_TEX_CLOBBER_DESC, UI_MENU_TEX_CLOBBER_NOTE,
     UI_TEXT_COUNT
 } UiTextId;
 
