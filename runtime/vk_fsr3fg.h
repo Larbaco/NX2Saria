@@ -18,6 +18,7 @@ int vk_fsr3fg_failed(void);   // a context or a recording failed in this run: fr
 // NX2SARIA_FRAMEGEN = fsr3 now (the menu switches it live), in a build of vk_fsr3fg_build, where it is available.
 int vk_fsr3fg_on(void);
 void vk_fsr3fg_reset(void);   // the next frame starts without history (a resize, the menu, a pause)
+// vk_fsr3fg_generating: declared in vk_fg.h, for frame_rate.c
 
 // One frame's inputs: the scene's depth (D32F, 0 near) and motion vectors (R16G16F, render pixels, current to
 // previous, without the jitter), both of the render size and with views, the jitter in render pixels, whether the

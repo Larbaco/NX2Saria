@@ -344,6 +344,9 @@ typedef enum {
     // which only the Windows build loads (ui/menu.cpp row_framegen fsr_win_only): the row says that, not that FSR 3.1
     // does not run; OFF: frame generation is still set to FSR 3.1 there
     UI_MENU_FRAMEGEN_DESC_FSR_WIN, UI_MENU_FRAMEGEN_NEEDS_FSR_WIN, UI_MENU_FRAMEGEN_OFF_FSR_WIN,
+    // FSR 3.1's frame generation through the runtime's own passes (every build but the Windows one, vk_fsr3fg.c): the
+    // row's note while it is chosen, and why it is off while HDR is on (it generates SDR pictures only)
+    UI_MENU_FRAMEGEN_FSR3_NATIVE, UI_MENU_FRAMEGEN_OFF_HDR,
     // DLSS frame generation (ui/menu.cpp row_framegen, row_framegen_mult): the multiplier row, its notes when this GPU
     // and driver allow less than 4x, and the frame generation row's notes when DLSS's does not run
     UI_MENU_FRAMEGEN_MULT, UI_MENU_FRAMEGEN_MULT_DESC,

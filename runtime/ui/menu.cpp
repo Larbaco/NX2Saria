@@ -1313,6 +1313,21 @@ static void row_framegen(void) {
     const int st = cur != 2 || restart ? DLSSG_RUNS : ngx ? (vk_ngxfg_max() ? DLSSG_RUNS : DLSSG_NO_FILES) : vk_dlssg_status();
     if (st == DLSSG_UNAVAILABLE) note = UI_MENU_FRAMEGEN_UNAVAILABLE;
     else if (st == DLSSG_NO_FILES) note = UI_MENU_FRAMEGEN_OFF_FILES;
+    // FSR 3.1's through the runtime's passes (every build but the Windows one): 2x, or off while HDR is on (gfx_present.c
+    // ng_ready runs it on SDR swapchains only); one line in the log for each, as the row says it
+#ifndef _WIN32
+    if (cur == 1 && fsr && !restart && note == UI_TEXT_COUNT) {
+        const char *hdr = opt_value("NX2SARIA_HDR");
+        const bool hdr_on = !strcmp(hdr, "native") || opt_bool("NX2SARIA_HDR");
+        note = hdr_on ? UI_MENU_FRAMEGEN_OFF_HDR : UI_MENU_FRAMEGEN_FSR3_NATIVE;
+        static int told = -1;
+        if (told != (int)hdr_on) {
+            told = hdr_on;
+            rt_log("menu: frame generation: AMD FSR 3.1 through the runtime's passes, %s: the row says so",
+                   hdr_on ? "off while HDR is on (SDR only)" : "2x");
+        }
+    }
+#endif
     // the FSR 4 library's runs beside FSR 4 and has no note of its own
     int nv = opt_choice_index("NX2SARIA_FRAMEGEN", UI_MENU_FRAMEGEN, names, n, at, 0, desc,
                               (four && !restart) || note == UI_TEXT_COUNT ? NULL : menu_text(note));

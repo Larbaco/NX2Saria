@@ -11,6 +11,10 @@ void vk_fg_queues(VkQueue present, uint32_t present_family, VkQueue acquire, uin
 int vk_fg_has_queues(void);                  // vk_fg_queues got a present queue: frame generation can run here
 int vk_fg_active(void);                      // the frame generation swapchain exists
 int vk_fg_generating(void);                  // ... and the last frame had generation on (not paused for the menu)
+// FSR 3.1's frame generation through the runtime's passes (vk_fsr3fg.c, every build but the Windows one): a generated
+// frame was made in the last 250 ms, so the screen shows two frames for each the game draws (frame_rate.c
+// generated_factor). 0 while off, paused for the menu, or between histories for longer than that. Any thread.
+int vk_fsr3fg_generating(void);
 // gfx_present.c's swapchain calls while vk_fg_wanted: the first create makes AMD's swapchain context, later ones
 // (window resizes) its swapchain again. Non-success from the first: the plain swapchain path stays.
 VkResult vk_fg_create_swapchain(const VkSwapchainCreateInfoKHR *ci, VkSwapchainKHR *sc);

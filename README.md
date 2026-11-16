@@ -73,8 +73,9 @@ a controller-friendly frame-limit slider. Their authors remain credited in the c
 - **Upscaling and anti-aliasing:** NVIDIA DLSS / DLAA on compatible RTX GPUs, AMD FSR 3.1, or FSR 1 and bilinear
   scaling. AMD FSR 4 is available on supported Radeon GPUs on Windows.
 - **Frame generation:** NVIDIA DLSS on compatible RTX 40 / 50 GPUs. Linux requires the separate NVIDIA DLSS-G
-  library and DLSS upscaling enabled at startup. AMD FSR 3.1 frame generation uses AMD's DLL on Windows and is
-  unavailable on Linux in this branch. FSR 3.1 **upscaling** on Linux is separate from frame generation.
+  library and DLSS upscaling enabled at startup. AMD FSR 3.1 frame generation uses AMD's DLL on Windows; on Linux it
+  runs through the game's own build of FSR 3.1's passes, on any GPU that runs them (tested on an AMD Radeon with
+  RADV), at 2x and with SDR only. It works with any Upscaling choice.
 - **HDR:** the game's native HDR or an enhanced tone-mapped picture, with display, game and HUD brightness
   controls. This fork also falls back to SDR for the run when Enhanced HDR cannot use an HDR10 display format.
 

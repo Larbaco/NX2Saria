@@ -256,7 +256,15 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   or one for every size up to the output's with the game's dynamic resolution; one that goes is let go of and its
   images destroyed once the GPU is past its last upscale, as the library's are (`vk_dlaa.c`, "what the upscalers let go
   of"). `--probe-fsr3` runs them on a synthetic
-  panning scene (`tests/fsr3_check.py`). FSR 3.1 frame generation (`vk_fg.cpp`) needs the library.
+  panning scene (`tests/fsr3_check.py`). FSR 3.1 frame generation goes through the library on Windows (`vk_fg.cpp`,
+  AMD's swapchain in the place of `gfx_present.c`'s); the other builds run `vk_fsr3fg.c`: FSR 3.1's optical flow and
+  frame interpolation passes (`runtime/shaders/fsr3of_*.comp`, `fsr3fi_*.comp` over `runtime/shaders/ffx3/opticalflow/`
+  and `frameinterpolation/`, options in `fsr3fg_options.h`), recorded at the end of each present's command buffer from
+  the picture with and without the HUD and the scene's depth and motion vectors (with an upscaler or without one). The
+  frame generation presenter of `gfx_present.c` (`ng_*`, the one DLSS Frame Generation through NGX uses) shows the
+  generated frame and then the drawn one, evenly spaced; the interpolation is at the middle, so 2x, and SDR only. A
+  device without what the passes need, or images that cannot be made, turn it off for the run with a log line.
+  `--probe-fsr3fg` runs them on a synthetic scene (`tests/fsr3fg_check.py`).
 - HDR (`vk_hdr.c`): the game tonemaps its scene into a float target, upscales it, draws the HUD into a second float
   target and copies that into the 8-bit sRGB window texture it presents. With `NX2SARIA_HDR=1` the tonemap shader gets
   the function of `shaders/hdr_tonemap.frag` spliced in where its SDR curve clamps each channel, so the float picture

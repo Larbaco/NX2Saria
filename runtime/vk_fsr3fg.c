@@ -37,6 +37,7 @@
 #include "cfg.h"
 #include "host.h"
 #include "platform/platform.h"
+#include "vk_fg.h"
 #include "vk_fsr3fg.h"
 #include "vk_rec.h"
 
@@ -291,6 +292,7 @@ static struct {
     VkFsr3fgStats st;
     double gpu_of_sum, gpu_fi_sum;
     uint64_t last_ns;
+    volatile uint64_t made_ns;   // when the last generated frame was recorded (vk_fsr3fg_generating)
     VkQueryPool pt;                      // the per-dispatch timestamps (NX2SARIA_FSR3FG_PASS_TIMES)
     uint8_t pt_pass[RING][PT_MAX];       // the pass of each dispatch of a slot's call
     uint8_t pt_n[RING];                  // its dispatches (0: nothing to read)
@@ -491,6 +493,11 @@ int vk_fsr3fg_failed(void) { return __atomic_load_n(&G.failed, __ATOMIC_RELAXED)
 int vk_fsr3fg_on(void) { return vk_fsr3fg_available() && !strcmp(cfg_value("NX2SARIA_FRAMEGEN"), "fsr3"); }
 
 void vk_fsr3fg_reset(void) { G.want_reset = 1; }
+
+int vk_fsr3fg_generating(void) {
+    uint64_t t = __atomic_load_n(&G.made_ns, __ATOMIC_RELAXED);
+    return t && plat_now_ns() - t < 250000000ull;
+}
 
 static void fail(const char *what) {
     rt_log("fsr3fg: %s: frame generation off for this run, the frames go out without it", what);
@@ -1021,6 +1028,7 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
         G.st.cuts++;
     } else {
         G.st.generated++;
+        __atomic_store_n(&G.made_ns, plat_now_ns(), __ATOMIC_RELAXED);
     }
     if (G.st.frames == 1)
         rt_log("fsr3fg: first frame recorded: %ux%u picture (rectangle %d,%d %dx%d), %ux%u depth and motion, %d "
