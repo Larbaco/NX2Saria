@@ -249,6 +249,8 @@ _Static_assert(sizeof(OfConsts) == 32, "cbOF is 32 bytes");
 enum { K_FI, K_PYR_RENDER, K_PYR_DISPLAY, K_OF, K_OF_LEVEL0, K_OFSPD = K_OF_LEVEL0 + OF_LEVELS, K_N };
 #define RING 8
 #define TS_PER 3   // timestamps per call: start, after the optical flow, end
+// NX2SARIA_FSR3FG_PASS_TIMES=1 (diagnosis): a timestamp after every dispatch too, summed by pass (vk_fsr3fg_pass_ms)
+#define PT_MAX 40
 
 typedef struct {
     uint32_t w, h, mw, mh;   // the display size (the swapchain's) and the largest render size
@@ -289,6 +291,11 @@ static struct {
     VkFsr3fgStats st;
     double gpu_of_sum, gpu_fi_sum;
     uint64_t last_ns;
+    VkQueryPool pt;                      // the per-dispatch timestamps (NX2SARIA_FSR3FG_PASS_TIMES)
+    uint8_t pt_pass[RING][PT_MAX];       // the pass of each dispatch of a slot's call
+    uint8_t pt_n[RING];                  // its dispatches (0: nothing to read)
+    double pt_sum[P_N];
+    uint64_t pt_count[P_N];
 } G = {.state = -1};
 
 // ---- setup
@@ -387,6 +394,8 @@ static void destroy_global(void) {
     if (G.linear) vkDestroySampler(c->device, G.linear, NULL);
     if (G.ring) vmaDestroyBuffer(c->vma, G.ring, G.ring_mem);
     if (G.ts) vkDestroyQueryPool(c->device, G.ts, NULL);
+    if (G.pt) vkDestroyQueryPool(c->device, G.pt, NULL);
+    G.pt = VK_NULL_HANDLE;
     G.linear = VK_NULL_HANDLE, G.ring = VK_NULL_HANDLE, G.ring_map = NULL, G.ts = VK_NULL_HANDLE, G.ts_on = 0;
 }
 
@@ -418,6 +427,12 @@ static int make_global(const VkCtx *c) {
         G.ts_period_ns = c->props.limits.timestampPeriod;
     }
     memset(G.ts_written, 0, sizeof G.ts_written);
+    if (G.ts_on && cfg_get("NX2SARIA_FSR3FG_PASS_TIMES") && !strcmp(cfg_get("NX2SARIA_FSR3FG_PASS_TIMES"), "1")) {
+        VkQueryPoolCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+                                    .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = RING * (PT_MAX + 1)};
+        if (vkCreateQueryPool(c->device, &qi, NULL, &G.pt) != VK_SUCCESS) G.pt = VK_NULL_HANDLE;
+    }
+    memset(G.pt_n, 0, sizeof G.pt_n);
     G.ring_next = 0;
     return 1;
 }
@@ -641,6 +656,7 @@ static void spd_setup(uint32_t w, uint32_t h, int mips, uint32_t groups[2], uint
 
 typedef struct {
     VkCommandBuffer cb;
+    uint32_t slot;
     VkImageView v[U_FIRST + (B_FIRST - U_FIRST)];   // the image of each slot this dispatch
     VkBuffer cnt;
     VkDeviceSize base;   // this call's slot of the ring
@@ -676,6 +692,33 @@ static void dispatch(Rec *r, int p, uint32_t gx, uint32_t gy, uint32_t gz) {
     vkCmdBindPipeline(r->cb, VK_PIPELINE_BIND_POINT_COMPUTE, G.pipe[p]);
     rec_push(G.push, r->cb, VK_PIPELINE_BIND_POINT_COMPUTE, G.layout[p], 0, PASS[p].n, wr);
     vkCmdDispatch(r->cb, gx ? gx : 1, gy ? gy : 1, gz ? gz : 1);
+    if (G.pt && G.pt_n[r->slot] < PT_MAX) {
+        G.pt_pass[r->slot][G.pt_n[r->slot]] = (uint8_t)p;
+        vkCmdWriteTimestamp2(r->cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, G.pt,
+                             r->slot * (PT_MAX + 1) + ++G.pt_n[r->slot]);
+    }
+}
+
+// The per-dispatch timestamps of the call RING calls ago in this slot (NX2SARIA_FSR3FG_PASS_TIMES)
+static void pt_collect(uint32_t slot) {
+    uint32_t n = G.pt_n[slot];
+    G.pt_n[slot] = 0;
+    if (!G.pt || !n) return;
+    uint64_t t[2 * (PT_MAX + 1)];
+    if (vkGetQueryPoolResults(vk_ctx()->device, G.pt, slot * (PT_MAX + 1), n + 1, sizeof t, t, 2 * sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != VK_SUCCESS)
+        return;
+    for (uint32_t i = 1; i <= n; i++) {
+        if (!t[2 * i + 1] || !t[2 * i - 1] || t[2 * i] < t[2 * i - 2]) return;
+        int p = G.pt_pass[slot][i - 1];
+        G.pt_sum[p] += (double)(t[2 * i] - t[2 * i - 2]) * G.ts_period_ns / 1e6, G.pt_count[p]++;
+    }
+}
+
+int vk_fsr3fg_pass_ms(int i, const char **name, double *ms, uint64_t *count) {
+    if (i < 0 || i >= P_N) return 0;
+    *name = PASS[i].name, *count = G.pt_count[i], *ms = G.pt_count[i] ? G.pt_sum[i] / (double)G.pt_count[i] : 0;
+    return 1;
 }
 
 // The timestamps of the call RING calls ago in this slot, if the GPU wrote them: the averages of the stats.
@@ -721,6 +764,11 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     const uint32_t slot = G.ring_next;
     G.ring_next = (slot + 1) % RING;
     ts_collect(slot);
+    pt_collect(slot);
+    if (G.pt) {
+        vkCmdResetQueryPool(cb, G.pt, slot * (PT_MAX + 1), PT_MAX + 1);
+        vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, G.pt, slot * (PT_MAX + 1));
+    }
     if (G.ts_on) {
         vkCmdResetQueryPool(cb, G.ts, slot * TS_PER, TS_PER);
         vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, G.ts, slot * TS_PER);
@@ -806,7 +854,7 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     }
     vmaFlushAllocation(c->vma, G.ring_mem, base, (VkDeviceSize)K_N * G.block);
 
-    Rec r = {.cb = cb, .cnt = x->cnt, .base = base, .k_of = K_OF, .k_pyr = K_PYR_RENDER};
+    Rec r = {.cb = cb, .slot = slot, .cnt = x->cnt, .base = base, .k_of = K_OF, .k_pyr = K_PYR_RENDER};
     VkImageView *v = r.v;
     const VkImageView cur_src = hudless ? hudless->view : bb->view;
 

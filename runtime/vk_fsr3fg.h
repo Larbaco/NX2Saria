@@ -58,3 +58,6 @@ typedef struct {
     uint64_t vram;                 // bytes of the context's images
 } VkFsr3fgStats;
 void vk_fsr3fg_stats(VkFsr3fgStats *s);
+// NX2SARIA_FSR3FG_PASS_TIMES=1 (diagnosis, the probe): pass i's name, average GPU time a dispatch (from the time the
+// dispatch before it ended) and dispatches timed; 0 past the last pass.
+int vk_fsr3fg_pass_ms(int i, const char **name, double *ms, uint64_t *count);
