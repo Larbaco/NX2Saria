@@ -99,6 +99,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_TEX_DETAIL_DESC] = "Sharpness of large surface textures. Reduced and Low leave out their largest versions, so that an area fits the video memory of 6 and 8 GB cards; only surfaces seen up close look softer. Automatic picks by the card's video memory.",
     [UI_MENU_TEX_DETAIL_AUTO] = "Automatic: %s",
     [UI_MENU_TEX_DETAIL_FULL] = "Full", [UI_MENU_TEX_DETAIL_REDUCED] = "Reduced", [UI_MENU_TEX_DETAIL_LOW] = "Low",
+    [UI_MENU_TEX_CLOBBER] = "Fix overwritten textures",
+    [UI_MENU_TEX_CLOBBER_DESC] = "Keeps textures intact when the game draws another image over the same memory. "
+                               "This fixes green squares in fog and can use more video memory.",
+    [UI_MENU_TEX_CLOBBER_NOTE] = "fixes green squares in fog",
     [UI_MENU_SHARPNESS] = "FSR sharpness",
     [UI_MENU_SHARPNESS_DESC] = "How sharp FSR makes the picture. 0 turns it off.",
     [UI_MENU_SHARPNESS_NEEDS_FSR] = "only with AMD FSR 1 or FSR 3.1",
@@ -1455,6 +1459,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                       "geração de quadros precisa do NVIDIA DLSS numa GeForce RTX 40 ou 50.",
     [UI_MENU_FRAMEGEN_NEEDS_FSR_WIN] = "a geração de quadros do FSR 3.1 só roda no Windows",
     [UI_MENU_FRAMEGEN_OFF_FSR_WIN] = "em uso: desligada, a geração de quadros do FSR 3.1 só roda no Windows",
+    [UI_MENU_TEX_CLOBBER] = "Corrigir texturas sobrescritas",
+    [UI_MENU_TEX_CLOBBER_DESC] = "Mantém as texturas intactas quando o jogo desenha outra imagem na mesma memória. "
+                               "Corrige os quadrados verdes na névoa e pode usar mais memória de vídeo.",
+    [UI_MENU_TEX_CLOBBER_NOTE] = "corrige quadrados verdes na névoa",
     [UI_MENU_LOW_LATENCY_FAILED] = "em uso: desligado, o driver recusou (veja lowlat no log)",
     [UI_MENU_GPU] = "Placa de vídeo", [UI_MENU_GPU_DESC] = "A placa de vídeo usada pelo jogo.",
     [UI_MENU_GPU_AUTO] = "Automática",

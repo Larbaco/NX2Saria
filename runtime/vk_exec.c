@@ -1168,8 +1168,11 @@ static uint64_t n_parts, n_subs, n_idle_parts, n_pass_splits, n_cuts;
 // 50.7 against 42.5 standing and 56.0 against 45.9 along the field route, and with FSR 3.1, whose tail the GPU runs
 // for 1.2 ms where FSR 4's takes 3.5, 51.8 against 47.8 and 54.9 against 52.3. All but a few of the tails passed the
 // tests there; in area loads and some places a tail hands the CPU results and goes as before. The pictures matched
-// those without it standing, along the route and through warps to five areas. Not measured with the lazy write-back
-// (NVIDIA's and Intel's default), where a tail's uniform updates are noted as writes and no tail goes early.
+// those without it standing, along the route and through warps to five areas. With the lazy write-back (NVIDIA's and
+// Intel's Windows default) every tail was refused there until now: its uniform updates were noted as writes, since
+// their write-backs would run before the copies that make the bytes. They go the early way now too (vk_exec_draw.c
+// op_update_ub): the bytes reach guest memory at the fence instead of by write-back, and a range the lazy fetch path
+// has armed stays refused as before. Not yet measured on those cards.
 // Not with shadow storage, emulated mesh shaders, the mesh fallback (vk_mesh_path.h: never measured with the early
 // tail), a frame dump or a pass capture, nor inside a chunk or a continuation.
 static struct {
@@ -2082,6 +2085,7 @@ static void rw_main(void *arg) {
     RwWorker *w = arg;
     plat_thread_priority(PLAT_PRIO_HIGHEST);   // as the recording thread (rec_claim)
     perf_lock_timing_here();   // NX2SARIA_LOCK_TIME, as on the recording thread
+    if (w->idx >= 0 && w->idx < 16) prof_worker_tid[w->idx] = plat_thread_id();
     vk_exec_draw_ctx_use(w->dc);
     for (;;) {
         par_help();
@@ -2615,11 +2619,14 @@ static const op_hdr *walk(VkExec *ex, const op_hdr *h, int depth) {
         default:
             if (RW.n > 0) {   // the perf line's split of the replay outside groups
                 if (Q.drained < Q.out && !pipe_op(h->op)) RW.pd_op[h->op]++, group_drain(ex, PW_OP);
+                // timed only for the perf line: two clock reads for each of the ~1,700 ops a submission replays
+                // here were 4 % of the submitting thread's replay in Hyrule Field
                 int k = ser_kind(h->op);
-                uint64_t t = kern_now_ns();
+                uint64_t t = rt_trace & RT_TRACE_PERF ? kern_now_ns() : 0;
                 op_one(ex, h);
                 if (vk_texture_deferred_take()) op_again(ex, h);
-                RW.ser_n[k]++, RW.ser_ns[k] += kern_now_ns() - t;
+                RW.ser_n[k]++;
+                if (t) RW.ser_ns[k] += kern_now_ns() - t;
             } else op_one(ex, h);
             break;
         }

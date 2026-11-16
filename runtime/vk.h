@@ -59,6 +59,7 @@ typedef struct VkCtx {
     int validation;                         // layer active
     int has_custom_border_color, has_eds, has_eds2, has_eds3, has_vertex_input_dynamic_state,
         has_conditional_rendering, has_transform_feedback, has_provoking_vertex, has_device_fault, has_memory_budget,
+        has_memory_priority, has_pageable,  // VK_EXT_memory_priority, VK_EXT_pageable_device_local_memory (NX2SARIA_VRAM_PAGEABLE)
         has_robustness2, has_buffer_device_address, has_fragment_shader_interlock, has_buffer_marker,
         has_nv_checkpoints,                 // VK_NV_device_diagnostic_checkpoints (NX2SARIA_PASS_CRUMBS=1, vk_crumbs.c)
         has_astc_ldr,                       // textureCompressionASTC_LDR (enabled when reported)
@@ -463,6 +464,10 @@ void vk_mem_lazy_part_end(void);   // lazy write-back: a part ends (before its p
 void vk_mem_lazy_handed(void);
 void vk_mem_lazy_decide(void);     // once the driver is known (after vk_caps_driver): on or off, with one log line
 void vk_mem_fatal_note(char *out, size_t n);   // the memory mode and the lazy write-back's state, for a fatal error's line
+uint64_t vk_sync_rec_fence(void);   // replay thread: the timeline value of the submission being recorded
+// vk_sync.c: submits what vk_queue_submit holds back when it is needed for the timeline to reach value
+void vk_sync_release_held(uint64_t value);
+void vk_mem_merge_cpu_wait(uint64_t value);   // NX2SARIA_MERGE_CPU: the lists up to value are stored
 // Shadow storage (vk_memory.c): vk_sync.c calls vk_mem_shadow_sync right before each submit; the replay notes every GPU
 // write into CPU-visible memory at record time (vk_mem_gpu_pending) and reports it at the fence with vk_gpu_written,
 // which copies the bytes back into guest memory before telling the texture cache (vk_guest_written).
@@ -850,6 +855,11 @@ typedef struct {
     uint64_t bytes_live_gpu, bytes_live_idle, bytes_released_young;
 } VkTexCensus;
 void vk_texture_census(VkTexCensus *s);
+// The storage ranges [lo, hi) of the textures whose content the CPU provides, sorted by lo, as pairs in a malloc'd
+// array (*n pairs); NULL when there are none.
+uint64_t *vk_texture_cpu_ranges(int *n);
+int vk_texture_host_room(uint64_t bytes);   // vk_texture.c: a pool's import found the host heaps full
+void vk_mem_tex_pools(uint64_t frame);   // vk_memory.c "texture storage pools", every few presents
 // The texture cache's host memory for the memory report (vk_memory.c system_log), in bytes: its entries and tables, and
 // the CPU's decode and write-back temporaries in use now and at most at once since the last call (which resets that).
 typedef struct { uint64_t entries, bytes, tmp, tmp_peak; } VkTexHost;
@@ -988,6 +998,9 @@ void vk_completion_add(uint64_t fence, void (*fn)(void *), void *arg);
 // The same for a side effect the game's CPU reads (an occlusion count, a counter report, an event value): run before
 // the others, and by the wait after a frame's first submission itself (vk_sync.c "the executed timeline").
 void vk_completion_add_result(uint64_t fence, void (*fn)(void *), void *arg);
+// As vk_completion_add, but before every vk_completion_add callback of the values reached (in their own order): the
+// merge lists the CPU stores into guest memory (NX2SARIA_MERGE_CPU), which the GPU events of the same value come after.
+void vk_completion_add_first(uint64_t fence, void (*fn)(void *), void *arg);
 // gfx_vulkan_backend (vk_backend.c): presents go to a present thread and run after the submissions made before them.
 void rdoc_init(void);                     // runtime/rdoc.c: NX2SARIA_RDOC debug capture; before vkCreateInstance
 int rdoc_active(void);

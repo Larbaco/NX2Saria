@@ -2680,7 +2680,7 @@ static void pool_sync_entries(VkExec *ex);
 static void pool_sync(VkExec *ex);
 
 // A chunk of a parallel group (vk_exec.c "replay workers") binds the set as vk_exec_draw_group_begin left it, up to date
-// when the group began; the chunk that takes this submission's first set takes it in turn, under pool_mt. Elsewhere the
+// when the group began; a chunk that still finds no set of this submission takes it in turn, under pool_mt. Elsewhere the
 // replay syncs the pools at every draw that binds them, as before, under pool_mt past a group whose chunks still record
 // (NX2SARIA_REPLAY_PIPE): the set is the submission's, read by the GPU when the part runs.
 static void pool_sync_draw(VkExec *ex) {
@@ -2704,7 +2704,11 @@ uint32_t vk_exec_draw_group_begin(VkExec *ex) {
     dummies_init();
     if (vk_ctx()->has_mesh_shader && !vk_ctx()->mesh_fallback) mesh_ring_make();   // the chunks' indirect mesh draws
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
-    if (pool_on() && PL.cur_fence == ex->fence && !PL.sealed) {   // the set this submission took
+    // The set this submission took, or its first one when it has none yet: taken by a chunk instead, that chunk waited
+    // for every earlier chunk of the group to be done (pool_sync_draw), and so did each chunk that reached its first
+    // draw before one had taken it, so the first group of a submission recorded one chunk at a time (Hyrule Field:
+    // 2.4 ms for 209 draws where a later group of 784 took 0.8).
+    if (pool_on() && (PL.cur_fence != ex->fence || !PL.sealed)) {
         int lk = vk_exec_shared();   // earlier groups may still record (NX2SARIA_REPLAY_PIPE)
         if (lk) plat_mutex_lock(&pool_mt);
         pool_sync(ex);
@@ -7517,10 +7521,19 @@ static void op_update_ub(VkExec *ex, const p_update_ub *u) {
     vkCmdCopyBuffer(ex->cb, b, sp.buffer, 1, &cp);
     // In a submission's tail (vk_exec.c "the early tail") an update of a mirrored block reaches guest memory with the
     // results the game reads, from the bytes here, and takes no write-back: one after the tail would land when the
-    // game is already writing the next frame's data. Not with the lazy write-back, where the block's pages may be
-    // armed and a store into them would wait for the GPU (memory.c lazy_fault): the update is noted as ever there,
-    // and the tail goes after the write-backs as before.
-    if (vk_exec_tail() && !vk_mem_wb_lazy() && vk_mem_mirrored(u->dst, u->size))
+    // game is already writing the next frame's data. This goes the same way under the lazy write-back (memory.c
+    // "Lazy write-back", NVIDIA's and Intel's Windows default), which is what kept every tail of those drivers from
+    // going early: a write-back recorded here would run before the tail, whose copy makes the bytes, and carry the
+    // pool's older ones down over the guest's. It needs no write-back either: ub_write_cb delivers these very bytes
+    // (nvn_api_cmd.c records the payload) to the guest at the fence, and the tail's own copy keeps the mirror equal
+    // to them from then on; where the game passed its data through this very block, as it usually does, the guest
+    // pages hold them already. The one case
+    // left as before is a range the lazy write-back has armed (vk_memory.c vk_gpu_written_back arms what a shader
+    // wrote, and only that: blocks updated this way never get armed): there the fetch path owns the bytes, the update
+    // is noted as ever, and the tail goes after the write-backs. A range armed only in part passes and its fetch
+    // orders after the tail's copy, so it still brings these bytes down when a touch releases it.
+    if (vk_exec_tail() && vk_mem_mirrored(u->dst, u->size) &&
+        (!vk_mem_wb_lazy() || !mem_lazy_armed(u->dst, u->size)))
         vk_exec_tail_ub(ex->fence, u->dst, u->data, u->size);
     else vk_mem_gpu_wrote(&sp, u->size);
     vk_usnap_drop(u->dst, u->size);

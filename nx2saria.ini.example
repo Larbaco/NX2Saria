@@ -74,6 +74,10 @@
 # held after an area unloaded until new sounds and then the music went silent. 1 runs the sound system 60 times a
 # second with whole frames while the frame rate is above 60; 0 is the game's own step. Read at start.
 # sound_steps = 1
+# When the game plays back a song (after Link plays it, or when one is taught), its staff moves a note for each note of
+# the melody's sound. Above 60 fps the sound's note signal now and then lasted two frames, and the staff took two notes
+# for one sound and ran a note ahead. 1 moves the staff only when the signal comes on; 0 is the game's own. Read at start.
+# song_staff = 1
 # Above 100 fps the game kept only a tenth of a moving floor's speed for whoever stood on it, so Link was left behind
 # on moving platforms (the Deku Tree's floating one). 1 makes the floor carry him as at 60 fps at any frame rate; 0 is
 # the game's own cut. Read at start; needs game code generated with this release.
@@ -468,15 +472,16 @@
 # pipeline stays for the run, as before 0.10; tex_vram_pressure = 0 turns this off too. Read at start.
 # pipe_release = 1
 # The low-end GPU mode of 0.9.2 to 0.10.1 is gone: low_end_gpu = 1 in an older file does nothing, and the log says
-# so once. The settings it turned on are ordinary settings now, each off unless this file sets it, and none has a row
-# in the settings menu. Read at start.
+# so once. The settings it turned on are ordinary settings now, each off unless this file sets it; tex_clobber has
+# a row in the settings menu (Screen, Fix overwritten textures), the others none. Read at start.
 # mesh_emulation = 1 runs mesh shaders as compute where the card has none, in place of the mesh fallback (never on an
 # NVIDIA card). vram_heap_limit = auto and vram_reserve_mb = 512 keep video memory within what the driver reports
 # free. upload_batch_mb sends large texture upload batches to the GPU early (every batch goes at 64 MiB of staging at
 # the latest, so only a value below 64 acts). mirror_stage = 1 and submit_finish_gpu = 0 copy game memory for the GPU
 # while a frame is recorded and let the game wait less for the GPU. mirror_hot = 25 keeps pools the game refills every
 # frame in system memory. tex_clobber = 1 gives a texture read after another image was drawn over its memory memory
-# of its own. foliage = reduced draws no small grass or moss, off no foliage.
+# of its own: it can fix fog corruption (green squares in Kakariko's fog) on any card, and may use more video
+# memory. foliage = reduced draws no small grass or moss, off no foliage.
 # mesh_emulation = 0
 # vram_heap_limit = 0
 # vram_reserve_mb = 0

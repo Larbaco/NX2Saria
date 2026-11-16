@@ -1388,6 +1388,8 @@ static void tab_screen(float scale) {
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
     opt_choice("NX2SARIA_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
+    opt_toggle("NX2SARIA_TEX_CLOBBER", UI_MENU_TEX_CLOBBER, UI_MENU_TEX_CLOBBER_DESC, false,
+               menu_text(UI_MENU_TEX_CLOBBER_NOTE));
     // The game resolution needs the output and scene patch sets (resolution.c res_adjustable): Ocarina's build has
     // none and always draws its own size, so the row would change nothing
     if (res_adjustable()) row_output_res();
