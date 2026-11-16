@@ -1268,8 +1268,10 @@ static void row_framegen(void) {
     const UiTextId desc = fsr_win_only ? UI_MENU_FRAMEGEN_DESC_FSR_WIN
                         : !dlss && !fsr ? UI_MENU_FRAMEGEN_DESC_NONE : via_ngx ? UI_MENU_FRAMEGEN_DESC_NGX
                                                                                 : UI_MENU_FRAMEGEN_DESC_ANY;
-    // UI_TEXT_COUNT: no note
-    UiTextId note = !dlss && !fsr ? UI_MENU_FRAMEGEN_NOTE : via_ngx ? UI_MENU_FRAMEGEN_NOTE_NGX : UI_TEXT_COUNT;
+    // UI_TEXT_COUNT: no note. Where only FSR 3.1's frame generation is missing, the row's greyed-out note says why and
+    // "needs DLSS or FSR 3.1" under the value would contradict the Upscaling row above it
+    UiTextId note = fsr_win_only ? UI_TEXT_COUNT
+                  : !dlss && !fsr ? UI_MENU_FRAMEGEN_NOTE : via_ngx ? UI_MENU_FRAMEGEN_NOTE_NGX : UI_TEXT_COUNT;
     if (!dlss && !fsr && cur == 0)
         opt_disable_next(fsr_win_only ? UI_MENU_FRAMEGEN_NEEDS_FSR_WIN : UI_MENU_FRAMEGEN_NEEDS_NONE);
     else if (via_ngx && !fsr && !vk_ngxfg_wanted() && !dlss_set) opt_disable_next(UI_MENU_FRAMEGEN_NEEDS_DLSS);
