@@ -343,8 +343,10 @@ run showed black loading frames and then the area: no title screen and no file m
 
 The first run found a bug: a second open of the save was compared with the first by whole edits, and the unused
 bytes of each made them differ, so the game loaded the save as it is (`arrived in WaterTemple ... NOT the area asked
-for`). Fixed in `d52a663c`. With the log in a file of the runner's (`2> file`, as the bench's script does), the lines
-are in that file instead of `logs/nx2saria.log`.
+for`). Fixed in `d52a663c`. The game writes `logs/nx2saria.log` unless its stderr is a file already (`2> file`); a
+run whose output goes through a pipe (`2>&1 | cat > out`) had all three lines in `logs/nx2saria.log`:
+`boot map: on: ...`, `... progress.sav is read with the boot map's place (5 values ...)` and `boot map: arrived in
+KokiriForest_Child ... 0.0 m from the start position, 15.5 s after the start`.
 
 ## Risks
 
