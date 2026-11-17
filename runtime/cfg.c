@@ -68,6 +68,7 @@ static const char *const known[] = {
     "MENU_CURSOR", "MENU_CURSOR_LOG", "MENU_TEST_CLICK", "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MICROPHONE", "MIRROR_GAP", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MONITOR", "MOTION", "MOUSE_MODE", "MOUSE_DIRECT_PATCH", "MOUSE_SENS", "MOUSE_TRACE", "MOVIE_HOST", "MOVIE_PACE", "MOVIE_CLOCK", "TEST_HITCH", "SPRINT_BUTTON", "SPRINT_MODE", "SPRINT_BUTTON_PATCH", "TEXT_SPEED", "TEXT_SPEED_PATCH", "AMIIBO_DAILY_PATCH",
     "MOTION_GUARD_DEGREES", "MOTION_POLICY_TRACE", "SELECTIVE_MOTION", "SELECTIVE_MOTION_RAW",   // motion_owner.c, vk_fg_pose.inc
     "SKIN_MOTION",   // vk_skin_motion.inc
+    "TRACKER_API", "TRACKER_API_PORT",   // the read-only view of the game's memory for a map tracker (tracker_api.c)
     "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
     "MV_SURVEY",
     "HANDLE_CENSUS",
@@ -147,6 +148,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"LOW_LATENCY", "display"}, {"REFLEX_LIMIT", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"DISCORD_RPC", "discord"}, {"DISCORD_APP_ID", "discord"}, {"DISCORD_IMAGE", "discord"},
+    {"TRACKER_API", "tracker"}, {"TRACKER_API_PORT", "tracker"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"}, {"TAA", "display"}, {"SHADOW_COMPARE", "display"},
     {"SHADOW_PCF", "display"},
@@ -363,6 +365,10 @@ static const CfgMeta metas[] = {
     {"DISCORD_RPC", "1", "0|1", LIVE},
     {"DISCORD_APP_ID", NX2SARIA_DISCORD_APP_ID_DEFAULT, NULL, LIVE},
     {"DISCORD_IMAGE", NX2SARIA_DISCORD_IMAGE_DEFAULT, NULL, LIVE},
+    // The tracker API (tracker_api.c): off by default; on, a map tracker on this PC reads the game's memory through
+    // 127.0.0.1:<port>, read-only. Read at start: the stack and heap block is placed for it in mem_init.
+    {"TRACKER_API", "0", "0|1", RESTART},
+    {"TRACKER_API_PORT", "6545", "1024..65535", RESTART},
     // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},
     {"REPLAY_PIPE", "0", "0..4", RESTART},
