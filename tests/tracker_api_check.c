@@ -10,10 +10,12 @@
 // The game data (nx2saria.game_data) is not there at first, as before the game makes it. A line "LOAD" on stdin puts
 // a game-data manager in the heap where version 1.1.1 has one (**[main+DBG_GAME_DATA_SLOT]), with a few values of each
 // kind the API answers, and prints "LOADED"; "EMPTY" before it puts the manager there with its sections still empty,
-// as the game has it before it loads a save (EMPTIED). Then each line spoils one thing and prints its answer word: "POINT" turns
-// the String64 and String64Array text pointers to the host's own memory (POINTED), "DUP" gives the Int table a second
-// pair for one entry (DUPPED), "BREAK" gives the Bool kind's middle entry another vtable, as a section read at the
-// wrong stride would have (BROKEN).
+// as the game has it before it loads a save (EMPTIED). Then each line spoils one thing and prints its answer word:
+// "POINT" turns the String64 and String64Array text pointers to the host's own memory (POINTED), "MANY" gives the
+// String64Array value 65 texts (MANIED), "DUPHASH" gives Int's second pair the first one's hash (DUPHASHED), "DUP" gives
+// it back its hash and the first one's index (DUPPED), "UNSORT" swaps two placed objects' keys (UNSORTED), "ZERO"
+// clears the Enum entry's vtable, as an entry the game is still making has it (ZEROED), and "BREAK" gives the Bool
+// kind's middle entry another vtable, as a section read at the wrong stride would have (BROKEN).
 #include "tracker_api.c"
 
 #include <stdarg.h>
@@ -201,9 +203,14 @@ int main(void) {
         if (!strcmp(buf, "LOAD\n")) gd_load(), printf("LOADED\n");
         if (!strcmp(buf, "POINT\n"))
             put64(GD_AT + 0x13000 + 0x68, HOST_AT + 0x100), put64(GD_AT + 0x14000 + 0x88, HOST_AT), printf("POINTED\n");
-        if (!strcmp(buf, "DUP\n"))   // Int's table: 2 entries, 4 pairs at hash % 4, so pairs 2 and 3 are empty
-            put32(GD_AT + 0x11000 + 2 * 0x28 + 3 * 8, 0x77777777), put32(GD_AT + 0x11000 + 2 * 0x28 + 3 * 8 + 4, 1),
-                printf("DUPPED\n");
+        // Int's table, after its 2 entries: 4 pairs at hash % 4, 0x04735978's first (index 0), 0xfbe01da1's second
+        if (!strcmp(buf, "MANY\n")) put32(GD_AT + 0x14000 + 0x80, 65), printf("MANIED\n");
+        if (!strcmp(buf, "DUPHASH\n")) put32(GD_AT + 0x11050 + 8, 0x04735978), printf("DUPHASHED\n");
+        if (!strcmp(buf, "DUP\n"))
+            put32(GD_AT + 0x11050 + 8, 0xfbe01da1), put32(GD_AT + 0x11050 + 8 + 4, 0), printf("DUPPED\n");
+        if (!strcmp(buf, "UNSORT\n"))
+            put64(GD_AT + 0x17000, 0x3f93661d8e17c1d0ull), put64(GD_AT + 0x17010, 0x10), printf("UNSORTED\n");
+        if (!strcmp(buf, "ZERO\n")) put64(GD_AT + 0x12000, 0), printf("ZEROED\n");
         if (!strcmp(buf, "BREAK\n")) put64(GD_AT + 0x10000 + 1 * 0x18, GD_VT(1)), printf("BROKEN\n");
         fflush(stdout);
     }

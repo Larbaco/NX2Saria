@@ -3,7 +3,9 @@ at the game's addresses) and talk to it as a map tracker does: newline-delimited
 answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are
 stand-ins written to the test's build folder.
 
-Checks the answers a tracker relies on (status, read_memory, search_memory, the port's own nx2saria.state), what is
+Checks the answers a tracker relies on (status, read_memory, search_memory, the port's own nx2saria.state and
+nx2saria.game_data, over a stand-in game-data manager: every kind, keys, digests, and each way of the stand-in's to
+spoil a read, refused instead of answered with made-up values), what is
 refused (bad parameters, memory the game cannot read, the host's own memory beside the game's, unknown and writing
 methods), what closes a connection (a first byte that is not '{', such as a web page's HTTP request or TLS handshake,
 JSON that is not one object, numbers JSON does not spell that way, an overlong id, a line of 4096 bytes, a request
@@ -329,6 +331,9 @@ def run_game_data_checks(port, srv, lines):
     check(got == [(0x04735978, 57), (0xfbe01da1, -1)], f'Int values: {got}')
     one = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': '0x04735978'})['result']
     check([(h, int.from_bytes(v, 'little')) for h, v in records(one, 8)] == [(0x04735978, 57)], f'Int by hash: {one}')
+    two = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': '0xfbe01da1'})['result']
+    check([(h, int.from_bytes(v, 'little', signed=True)) for h, v in records(two, 8)] == [(0xfbe01da1, -1)],
+          f'Int by the hash of its second entry: {two}')
     none = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': 0x12345678})['result']
     check(none['count'] == 0 and none['records'] == '' and none['digest'] == fnv1a(b''),
           f'Int by a hash the game does not have: {none}')
@@ -381,12 +386,20 @@ def run_game_data_checks(port, srv, lines):
     for kind in ('String64', 'String64Array'):
         ans = refused(c, {'kind': kind}, -32002, 'cannot be read now', f'{kind} pointing outside the game is refused')
         check('5345435245542d4b4559' not in json.dumps(ans), f'{kind}: the host\'s memory is not read: {ans}')
+    spoil(srv, lines, 'MANY', 'MANIED')
+    refused(c, {'kind': 'String64Array'}, -32002, 'more than 64 texts', 'a String64Array value of 65 texts')
+    spoil(srv, lines, 'DUPHASH', 'DUPHASHED')
+    refused(c, {'kind': 'Int'}, -32002, 'table changed while it was read', 'an Int table with one hash twice')
     spoil(srv, lines, 'DUP', 'DUPPED')
     refused(c, {'kind': 'Int'}, -32002, 'table changed while it was read', 'an Int table with two pairs for one entry')
+    spoil(srv, lines, 'UNSORT', 'UNSORTED')
+    refused(c, {'kind': 'Bool64bitKey'}, -32002, 'not sorted', 'placed objects out of order')
+    spoil(srv, lines, 'ZERO', 'ZEROED')
+    refused(c, {'kind': 'Enum'}, -32002, 'still being made', 'an Enum entry without its vtable yet')
     spoil(srv, lines, 'BREAK', 'BROKEN')
     for _ in range(3):
         refused(c, {'kind': 'Bool'}, -32003, 'not laid out', 'a Bool entry with another vtable is not answered')
-    check('result' in c.call('nx2saria.game_data', {'kind': 'Enum'}), 'the other kinds still answer')
+    check('result' in c.call('nx2saria.game_data', {'kind': 'Int64'}), 'the other kinds still answer')
     c.close()
 
 def check_log(log):
@@ -411,9 +424,11 @@ def check_log(log):
         'tracker api: first nx2saria.game_data of Int answered: 2 values, 16 bytes',
         'tracker api: first nx2saria.game_data of String64Array answered: 1 value, 136 bytes',
         'tracker api: first nx2saria.game_data of Bool64bitKey answered: 2 values, 32 bytes',
-        'tracker api: nx2saria.game_data refused: nx2saria.game_data takes a kind',
+        'tracker api: nx2saria.game_data refused: nx2saria.game_data takes kind (Bool',
         "tracker api: nx2saria.game_data Bool could not be answered: this kind's entries are not laid out as version "
-        '1.1.1 lays them out (error -32003; the first such answer for this kind)',
+        '1.1.1 lays them out (error -32003; the first such answer for this kind and error)',
+        'tracker api: nx2saria.game_data Enum could not be answered: this kind\'s entries are still being made',
+        'tracker api: nx2saria.game_data Bool64bitKey could not be answered: the placed objects\' flags are not sorted',
         'tracker api: nx2saria.game_data String64 could not be answered: a text of this kind cannot be read now',
         'tracker api: nx2saria.game_data Int could not be answered: this kind\'s table changed while it was read',
         '49 requests (status 6, read_memory 22, search_memory 15, nx2saria.state 1, other 5), 28 refused',
