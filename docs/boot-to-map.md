@@ -353,8 +353,10 @@ without one it says so and boots normally.
 - **Other saved state stays the save's**: the map position (`World_PlayerPos`, Vector3 8773f02d), the warp
   points, the flags and the items. A place reached early with a late save (or the reverse) may play events in an
   order the game never meant.
-- **No checksum was seen in the save.** If one exists, the game would refuse the patched save. The log would then
-  show a load that does not arrive, with no arrival line.
+- **No checksum was seen in the save.** Three slots of different content have the same bytes where a checksum
+  could sit: the header is zero from 0x0c to 0x28, and the last pair and the file's last 16 bytes are equal in all
+  three. A sum over the content would differ from slot to slot. A check the game computes and keeps elsewhere is not
+  ruled out. It would refuse the patched save, and the log would show a load with no arrival line.
 - **Master Quest:** the game adds 6 to the slot when the account's Master Quest mode is on. The setting reads
   `IsLastSelectedMQMode` in `account.sav`: then it picks the latest among `slot_06` to `slot_11`, and it checks and
   patches `slot_<N+6>`. The +6 also needs a second byte of the save manager (`+0x151`), which was not traced. A
