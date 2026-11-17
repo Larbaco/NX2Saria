@@ -669,6 +669,13 @@ value no machine has free. What the builders do when they are refused (`warm_bui
 `lw_worker`) shows in a run's log: start the game with `build_free_mb` set above the machine's free commit and read the
 `vk_pipeline:` lines that name the commit headroom.
 
+A change to the play gate of the background pipeline builds (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c`
+`play_rest`, `pipe_worker`, `lw_worker`, `runtime/vk_backend.c` `frame_end`) passes
+`python tests\play_gate_check.py`, which builds the header alone: the builds rest while the frame shown in play has
+`bg_build_play_draws` draws or more and was shown within half a second, never in a light moment or with the setting at
+0, and the log's counts. What it changes in the frame rate needs a run: `docs/performance.md`, "Background builds in
+play".
+
 A change to when the pipeline caches are saved in play (`runtime/vk_save_retry.h`, `runtime/vk_pipeline.c`
 `autosave_once`) passes `python tests\save_retry_check.py`, which builds the header alone: a save for new content, none
 without, and after a save that did not happen a bounded row of tries at the save interval.

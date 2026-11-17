@@ -57,6 +57,7 @@
 #include "vk_build_gate.h"
 #include "vk_cache_file.h"
 #include "vk_cache_stamp.h"
+#include "vk_play_gate.h"
 #include "vk_exec.h"
 #include "vk_save_retry.h"
 #include "vk_warm_hint.h"
@@ -904,6 +905,8 @@ static VkPipelineCache cache_make(VkCtx *c, const void *data, size_t size, size_
     return cache;
 }
 
+static int pg_draws_min(void);   // "the play gate", after gate_wait: its setting, logged once
+
 // The translator stamp of the two pipeline cache files (vk_cache_stamp.h, where the rules are): pipeline-cache.id beside
 // pipeline-cache.bin names the translator whose pipelines the files hold. Called by cache_load before either file is
 // read. A stamp of another translator whose shaders the carry no longer serves (or any other translator in a
@@ -1284,6 +1287,7 @@ static int ensure_init(void) {
     vk_mem_stage_log("device creation");
     cache_load(c);
     vk_mem_stage_log("the pipeline cache load");
+    pg_draws_min();   // the play gate's line at the start
     rt_log("vk_pipeline: max push descriptors %u; dynamic vertex input %d, depth clamp %d, polygon mode %d, blend enable %d, "
            "blend equation %d, write mask %d, alpha to coverage %d; cache %s",
            P.max_push, P.dyn_vi, P.dyn_clamp, P.dyn_poly, P.dyn_blend_en, P.dyn_blend_eq, P.dyn_wmask, P.dyn_a2c,
@@ -4570,6 +4574,7 @@ typedef struct Job {
     uint32_t fs_off;
     uint8_t low;                       // in the low queue, or running at below-normal priority
     uint8_t prebuild, demanded;        // from the key file; a draw asked for it before it was ready
+    uint8_t rested;                    // counted as held back by the play gate (low_held)
     int worker;                        // running on A.thread[worker]; -1 queued; JOB_ON_DRAW on the thread that waits for it
     VkPipeState s;
     GKey k;
@@ -5085,6 +5090,110 @@ static int gate_wait(const char *who, volatile int32_t *stop, double *took) {
     return 1;
 }
 
+// ---- the play gate (vk_play_gate.h, where the reasons are)
+// NX2SARIA_BG_BUILD_PLAY_DRAWS (default 600; 0: off): builds made ahead of their first use rest while the frame last
+// shown had this many draws or more and was shown within PLAY_GATE_SHOWN_MS. Those are the pool's low queue
+// (pipe_worker) when stage libraries are on, and the library warm (lw_worker). A pipeline a draw waits for never rests:
+// the draw queue and the libraries of waiting draws are not gated, and a draw that needs a low job moves it to the draw
+// queue (promote), which wakes a resting worker and gets the job's fast link first. Without stage libraries that draw
+// would wait for a whole build instead, so the low queue does not rest then. The stage library prebuild (lb_worker)
+// does not rest: its list starts with the compute shaders the game is about to dispatch, a compute pipeline not built
+// is built on the replay thread at its dispatch, and the large compute builds (bg_main, which hold a frame for seconds
+// when left to their dispatch) start only once it is done. Nothing rests during an area load, while the boot screen
+// waits for the warm (bf_waiting) or in a preparation. vk_backend.c frame_end gives each frame's draws
+// (vk_pipeline_frame_note); the start logs the setting, and save_with what the gate held back.
+static int bf_waiting(void);
+static struct {
+    PlatMutex lock;                  // the counts
+    PlayGateCount n, logged;
+    volatile int32_t draws_min;      // the setting, read once; -1 before
+    volatile uint32_t draws_last;    // the draws of the frame last shown
+    volatile uint64_t shown_ns;      // when it was shown (plat_now_ns); 0: none yet
+} PG = {.lock = PLAT_MUTEX_INIT, .draws_min = -1};
+
+static int pg_draws_min(void) {
+    int m = __atomic_load_n(&PG.draws_min, __ATOMIC_ACQUIRE);
+    if (m >= 0) return m;
+    plat_mutex_lock(&PG.lock);
+    if ((m = PG.draws_min) < 0) {
+        m = cfg_int("NX2SARIA_BG_BUILD_PLAY_DRAWS");
+        if (m < 0) m = 0;
+        if (m)
+            rt_log("vk_pipeline: background builds rest in play: while the frame shown has %d draws or more "
+                   "(NX2SARIA_BG_BUILD_PLAY_DRAWS; 0: they build in every frame); a pipeline a draw waits for is always "
+                   "built", m);
+        else
+            rt_log("vk_pipeline: background builds rest in play: off (NX2SARIA_BG_BUILD_PLAY_DRAWS 0): they build in "
+                   "every frame");
+        __atomic_store_n(&PG.draws_min, m, __ATOMIC_RELEASE);
+    }
+    plat_mutex_unlock(&PG.lock);
+    return m;
+}
+
+// 1 when background builds rest now (vk_play_gate.h play_gate_rest).
+static int play_rest(void) {
+    int m = pg_draws_min();
+    if (!m) return 0;
+    uint64_t shown = __atomic_load_n(&PG.shown_ns, __ATOMIC_ACQUIRE);
+    int light = prep_mode || bf_waiting() || vk_exec_pool_loading();
+    return play_gate_rest(m, __atomic_load_n(&PG.draws_last, __ATOMIC_RELAXED), now_ms(),
+                          shown ? (double)shown / 1e6 : -1.0, light);
+}
+
+void vk_pipeline_frame_note(uint32_t draws) {
+    __atomic_store_n(&PG.draws_last, draws, __ATOMIC_RELAXED);
+    __atomic_store_n(&PG.shown_ns, plat_now_ns(), __ATOMIC_RELEASE);
+    if (!pg_draws_min()) return;
+    int rest = play_rest();
+    plat_mutex_lock(&PG.lock);
+    play_gate_frame(&PG.n, rest);
+    plat_mutex_unlock(&PG.lock);
+}
+
+static void pg_rest_begin(uint64_t held) {
+    plat_mutex_lock(&PG.lock);
+    play_gate_rest_begin(&PG.n, held);
+    plat_mutex_unlock(&PG.lock);
+}
+
+static void pg_rest_end(double ms) {
+    plat_mutex_lock(&PG.lock);
+    play_gate_rest_end(&PG.n, ms);
+    plat_mutex_unlock(&PG.lock);
+}
+
+// The low queue's jobs no rest has counted yet, now counted (Job.rested). Caller holds P.lock. Walked once a rest, when
+// it begins (not at each look in it): a job queued during a rest is counted by the next rest that finds it queued.
+static uint64_t low_held(void) {
+    uint64_t n = 0;
+    for (Job *j = A.low; j; j = j->next)
+        if (!j->rested) j->rested = 1, n++;
+    return n;
+}
+
+// The library warm's rest before its next build (lw_worker): it holds one build back.
+static void play_rest_wait(volatile int32_t *stop) {
+    if (*stop || !play_rest()) return;
+    double t0 = now_ms();
+    pg_rest_begin(1);
+    while (!*stop && play_rest()) plat_sleep_ms(100);
+    pg_rest_end(now_ms() - t0);
+}
+
+// The log's line of what the gate held back, when that changed since the last one (save_with: each save in play and
+// the one at the end).
+static void pg_log(void) {
+    if (pg_draws_min() <= 0) return;
+    plat_mutex_lock(&PG.lock);
+    if (play_gate_changed(&PG.n, &PG.logged))
+        rt_log("vk_pipeline: background builds paused in play: %llu frames, %llu builds deferred (%llu rests, %.1f s of "
+               "builder time at rest; NX2SARIA_BG_BUILD_PLAY_DRAWS %d)", (unsigned long long)PG.n.frames,
+               (unsigned long long)PG.n.deferred, (unsigned long long)PG.n.rests, PG.n.rest_ms / 1000.0,
+               (int)PG.draws_min);
+    plat_mutex_unlock(&PG.lock);
+}
+
 // --probe-buildgate (host.h): the gate with this machine's commit and the settings in effect, without a device and
 // without a build. It prints what the settings and the system give, asks for sixteen ordinary builds and one large
 // one, and checks the answers against the same numbers: the builds admitted are those that fit with the earlier
@@ -5297,16 +5406,20 @@ static void job_build(Job *j, int lowrun) {
 
 static void pipe_worker(void *arg) {
     int me = (int)(intptr_t)arg;
+    int resting = 0;     // at rest for the play gate (play_rest), since rest_t0
+    double rest_t0 = 0;
     plat_mutex_lock(&P.lock);
     for (;;) {
         // With 3 or more workers one never takes low-queue work, so a waiting draw's library starts at once
         // (not with NX2SARIA_PIPE_WAIT=draw).
         while (!U.head && !A.head && !(A.low && (A.threads < 3 || !U.on || A.low_running < A.threads - 1))) {
+            if (resting) resting = 0, pg_rest_end(now_ms() - rest_t0);
             U.idle++;
             plat_cond_wait(&work_cv, &P.lock);
             U.idle--;
         }
         if (U.head) {   // a library a draw waits for
+            if (resting) resting = 0, pg_rest_end(now_ms() - rest_t0);
             LibJob *lj = U.head;
             if (!(U.head = lj->next)) U.tail = NULL;
             if (lj->b) lj->b->job = NULL;
@@ -5317,6 +5430,18 @@ static void pipe_worker(void *arg) {
         Job *j = A.head;
         int lowrun = !j;
         double held = 0;   // the low job's reservation at the memory gate
+        if (!j && P.gpl && play_rest()) {
+            // A heavy frame in play (play_rest): the low job stays queued. A draw that needs its pipeline moves it to
+            // the draw queue (promote), which wakes this wait; otherwise the frame is looked at again in 100 ms. A
+            // resting worker counts as idle: a draw that waits gives its job to the pool rather than building it on
+            // its own thread (job_wanted).
+            if (!resting) resting = 1, rest_t0 = now_ms(), pg_rest_begin(low_held());
+            U.idle++;
+            plat_cond_wait_ns(&work_cv, &P.lock, 100000000ull);
+            U.idle--;
+            continue;
+        }
+        if (resting) resting = 0, pg_rest_end(now_ms() - rest_t0);
         if (!j && !gate_enter(0, &held)) {
             // No room for a background build now (gate_enter). The job stays queued: a draw that needs its pipeline
             // moves it to the draw queue (promote), which wakes this wait; otherwise the gate is asked again in 2 s.
@@ -7785,6 +7910,7 @@ static void lb_worker(void *arg) {
         }
         // The memory gate (gate_wait): without room for another build the worker waits, and after GATE_WAIT_MS it and
         // the other workers end. What they leave is built at its first dispatch or draw, as what a run never recorded.
+        // (The play gate leaves this prebuild alone: see "the play gate".)
         double held;
         if (LB.short_mem || !gate_wait("stage library prebuild", &LB.stop, &held)) {
             if (!LB.stop && !plat_xchg32(&LB.short_mem, 1)) {
@@ -7944,8 +8070,9 @@ static void lw_worker(void *arg) {
         }
         size_t i = (size_t)plat_inc64(&LW.next) - 1;
         if (i >= LW.n || LW.stop) break;
-        // The memory gate (gate_wait): without room the warm waits, and after GATE_WAIT_MS it ends for this run.
-        // shader-warm.txt keeps saying "warming", so the next start goes on with it.
+        // The play gate (play_rest_wait), then the memory gate (gate_wait): without room the warm waits, and after
+        // GATE_WAIT_MS it ends for this run. shader-warm.txt keeps saying "warming", so the next start goes on with it.
+        play_rest_wait(&LW.stop);
         double held;
         if (LW.short_mem || !gate_wait("library warm", &LW.stop, &held)) {
             if (!LW.stop && !plat_xchg32(&LW.short_mem, 1)) {
@@ -9099,6 +9226,7 @@ static int save_with(uint32_t wait_ms, int exiting) {
                    "compute pipelines built on the replay thread %llu", (unsigned long long)P.g.pre_used[LIB_PR],
                    (unsigned long long)P.g.pre_used[LIB_FS], (unsigned long long)LB.cs_draw);
     }
+    pg_log();
     gfx_shader_record_flush(1);
     if (P.ready && !P.cache) pb_log("at a save");   // with P.cache the line comes with its own save below
     int saved = cache_save(wait_ms, exiting);

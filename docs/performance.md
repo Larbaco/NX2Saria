@@ -66,3 +66,34 @@ How to measure the frame rate of a scene the same way twice, and how to read the
 
 The numbers come from `NX2SARIA_TRACE=perf` with `NX2SARIA_PERF_SLOW_MS=1`, which logs a line per frame
 (`runtime/perf.c` `perf_present`). `tests/bench_check.py` checks the parser against the runtime's format strings.
+
+## Background builds in play
+
+Pipelines built ahead of their first use rest while the frame shown has `bg_build_play_draws` draws or more, 600 by
+default, and go on in light frames: the title, menus, the pause and map screens, an area load, a frame not shown for
+half a second (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c` `play_rest`). Those are the pool's background queue
+(the boot's records left to the background, and the optimised build that replaces a fast link), when stage libraries
+are on, and the library warm. A pipeline a draw waits for is always built; the stage library prebuild and the large
+compute builds do not rest. The start logs `vk_pipeline: background builds rest in play: while the frame shown has
+600 draws or more ...`, and each save in play and the one at the end `vk_pipeline: background builds paused in play: N
+frames, M builds deferred (R rests, S s of builder time at rest; ...)` when those numbers moved.
+
+To measure what it changes, run the same scenes with the gate and without it, in play mode (not `--shot`, which builds
+on the render thread). An ordinary session with warm caches has little background work, so give both runs the same
+amount: `lib_warm = force` warms the driver's cache of stage libraries at every start, beside the game, from the same
+list each time.
+
+```sh
+.venv/bin/python tools/bench.py run ~/Games/Ocarina --save <save backup> --label gate \
+    --set NX2SARIA_LIB_WARM=force
+.venv/bin/python tools/bench.py run ~/Games/Ocarina --save <save backup> --label nogate \
+    --set NX2SARIA_LIB_WARM=force --set NX2SARIA_BG_BUILD_PLAY_DRAWS=0
+```
+
+Compare the two `summary.md`: avg fps, 1% low and p99 should be better with the gate, and the stall % no worse (a
+draw's own builds are not gated). GPU ms may rise a little with the gate, as a fast-linked pipeline stays in use longer
+before its optimised build replaces it. Read the runs' logs too: in the gate run the `background builds paused in play`
+line must show frames and builds deferred, or the scenes had no background work and the comparison says nothing; in the
+`nogate` run the start line says `off`. The library warm's own line says how far it got in each run: with the gate it
+gets less far in heavy scenes, which is the point. The same two runs without `lib_warm = force` show what an ordinary
+session gains.

@@ -284,6 +284,12 @@
 # What each such build is counted for while it runs, in MB: the working memory of the video driver's shader compiler.
 # A very large compute shader is counted for 4096. Default: 64.
 # build_reserve_mb = 64
+# Pipelines built ahead of their first use (the background queue, the library warm) rest
+# while the frame shown has at least this many draws: the game in play. They go on in light frames (title, menus, the
+# pause and map screens, loading), since a build in the background still slows the frame it runs beside. A pipeline a
+# draw is waiting for is always built. The log's line "background builds paused in play" counts what waited.
+# 0: they build in every frame. Default: 600.
+# bg_build_play_draws = 600
 # 1: the log says how many pipelines came from pipeline-cache.bin; 2 also logs every compute pipeline built. 0: off.
 # pipe_feedback = 1
 # The limit of pipeline-cache.bin and of pipeline-cache-play.bin, each, in MB (0: no limit). A file larger than
