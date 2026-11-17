@@ -31,6 +31,7 @@
 #include <strings.h>
 
 #include "action_prompt.h"
+#include "wide_hud.h"
 #include "cfg.h"
 #include "dispatch.h"
 #include "fs.h"
@@ -604,6 +605,10 @@ static int serve_generated(const char *rel, Overlay *base, void *out, size_t out
     }
     Identity id = identity_of(r);
     plat_file_close(r);
+    // a base under the profile folder is one an earlier change wrote here (the action prompt's), not a mod's
+    size_t pl = strlen(rt_config()->profile);
+    int generated = base && !strncmp(base->path, rt_config()->profile, pl) &&
+                    (base->path[pl] == '/' || base->path[pl] == '\\');
     char *copy = strdup(file);
     need(copy != NULL, "overlay path copy");
     if (base) {
@@ -621,7 +626,8 @@ static int serve_generated(const char *rel, Overlay *base, void *out, size_t out
         need(name != NULL, "overlay path copy");
         overlays[noverlay++] = (Overlay){lower(rel), out_n, copy, name, id};
     }
-    rt_log("RomFS overlay: %s (%zu bytes, %s) replaces %s", file, out_n, what, base ? "the mod's file" : "the original");
+    rt_log("RomFS overlay: %s (%zu bytes, %s) replaces %s", file, out_n, what,
+           !base ? "the original" : generated ? "the file another change made" : "the mod's file");
     return 1;
 }
 
@@ -811,6 +817,47 @@ static void action_prompt_overlay(void) {
 
 int romfs_action_prompt(void) { return action_prompt_for; }
 
+// The HUD at the picture's edges (NX2SARIA_WIDE_HUD = edges) and the loading screen's icon in the middle 16:9
+// (NX2SARIA_WIDE_MENUS = center), wide_hud.c: the Common layout archive the game would read (a mod's, the action
+// prompt's above, else the RomFS's) is served with them, for the picture wide_init sets up, written to
+// <profile>/wide-hud/. On a build with the widescreen sets, one line says the HUD's mode, the picture's shape and what
+// each layout moves, whether or not anything does, so a player's log shows the setting in effect.
+static void wide_hud_overlay(void) {
+    if (!wide_available()) return;   // no squeeze to place anything against (cfg_support.c: the settings do nothing)
+    unsigned w, h;
+    int edges = !strcmp(cfg_value("NX2SARIA_WIDE_HUD"), "edges");
+    int menus = !strcmp(cfg_value("NX2SARIA_WIDE_MENUS"), "center");
+    int wide = wide_start_picture(&w, &h);
+    float wider = wide ? wide_hud_out(w, h) : 0;   // 0 for a picture of 16:9 or narrower
+    WideHudShift shift = {edges ? wider : 0, menus && wider > 0 ? (float)(16.0 / 9.0) / ((float)w / h) : 1};
+    char what[240] = "";
+    if (shift.out > 0) {
+        WideHudCount c[4];
+        int n = wide_hud_counts(c, 4), at = snprintf(what, sizeof what, "%g layout units out: ", (double)shift.out);
+        for (int i = 0; i < n && at > 0 && at < (int)sizeof what; i++) {
+            at += snprintf(what + at, sizeof what - at, "%s%s %d panes", i ? ", " : "", c[i].layout, c[i].panes);
+            if (c[i].keys && at < (int)sizeof what)
+                at += snprintf(what + at, sizeof what - at, " and %d animation keys", c[i].keys);
+        }
+    }
+    rt_log("wide hud: %s, picture %ux%u (%.3f:1, 16:9 is 1.778): %s", edges ? "edges" : "center", w, h,
+           (double)w / h, shift.out > 0 ? what : "no pane moves, the HUD stays in the middle 16:9");
+    if (!(shift.out > 0) && !(shift.squeeze < 1)) return;
+    static const char keeps[] = "the HUD and the loading icon stay where the game lays them out";
+    Overlay *base, *dic_base;
+    size_t n, dn, out_n = 0;
+    void *in = read_served(WIDE_HUD_ARCHIVE, &base, &n, keeps), *z = NULL;
+    void *dic = in ? read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keeps) : NULL;
+    int made = in && dic ? wide_hud_build(in, n, dic, dn, &shift, &z, &out_n) : -1;
+    free(in);
+    free(dic);
+    const char *what_made = shift.out > 0 && shift.squeeze < 1 ? "the HUD at the picture's edges, the loading icon in "
+                                                                  "the middle 16:9"
+                          : shift.out > 0 ? "the HUD at the picture's edges"
+                                          : "the loading icon in the middle 16:9";
+    if (made > 0) serve_generated(WIDE_HUD_ARCHIVE, base, z, out_n, "wide-hud", what_made, keeps);
+}
+
 // The button prompts' folders (input_prompts_folder) and whether each had a manifest next to romfs-index.bin at start;
 // the one the settings asked for at start, the one overlay_init loaded (NULL: the game's own prompts) and why the first
 // did not load (ROMFS_PROMPTS_*). The menu compares them with the settings in effect (ui/menu.cpp prompts_note).
@@ -968,6 +1015,7 @@ static void overlay_init(void) {
     heapdef_overlay();
     camera_overlay();
     action_prompt_overlay();
+    wide_hud_overlay();   // after the action prompt's: it edits the same archive, as that one serves it
     added_init();
     if (noverlay) qsort(overlays, noverlay, sizeof *overlays, overlay_order);
     for (size_t k = 1; k < noverlay; k++)   // overlay_contest left one per file; the generated ones replace in place

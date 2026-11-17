@@ -421,6 +421,7 @@ void wide_init(void);
 void wide_present(void);                                    // each present: DLSS's render scale (res_fixed)                                      // after rt_patches_init: widescreen.c, NX2SARIA_GAME_ASPECT
 int wide_available(void);                                  // the generated C has the widescreen sets
 void wide_picture(unsigned *w, unsigned *h);               // the picture the game draws (its scene is never larger)
+int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init will set it, asked before it (romfs.c); 0 16:9
 int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set
 double wide_scene_share(void);                             // the scene's share of the picture now (0: the game's own)
 double wide_scene_wanted(void);                            // ... what the settings ask for, before the heap's limit

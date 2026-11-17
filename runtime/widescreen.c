@@ -339,6 +339,10 @@ static int32_t save_extra(unsigned ow, unsigned oh) {
     return wider > 1 ? 2 * (int32_t)lround(SAVE_W * (wider - 1) / 2) : 0;
 }
 
+// The picture wide_init set up (started once it has decided): what wide_start_picture answers from then on.
+static unsigned start_w, start_h;
+static int start_wide, started;
+
 void wide_init(void) {
     int so = rt_patch_set("wide_out"), ss = rt_patch_set("wide_scene"), sa = rt_patch_set("wide_aspect"),
         sh = rt_patch_set("wide_hud"), sm = rt_patch_set("wide_movie"), sv = rt_patch_set("wide_save");
@@ -359,8 +363,10 @@ void wide_init(void) {
                    "the game's own 2560x1440", PLAIN_SHARE * 100);
         }
     }
-    if (!picture_size(&ow, &oh, 0)) return;   // the game's own sizes: every set stays off
-    if (heap_unserved) return;                // a larger picture's targets do not fit the shipped heap
+    if (!picture_size(&ow, &oh, 0) || heap_unserved) {   // the game's own sizes (or the shipped heap): every set stays off
+        start_w = GAME_W, start_h = GAME_H, start_wide = 0, started = 1;
+        return;
+    }
     if (so < 0 || ss < 0 || sa < 0 || sh < 0 || sm < 0) {
         rt_log("widescreen: the generated C has no widescreen patch sets (gen.py --patches recomp/patches-v111.txt); "
                "the game's own 2560x1440 picture");
@@ -398,6 +404,7 @@ void wide_init(void) {
     rt_patch_switch(sh, 1);
     rt_patch_switch(sm, 1);
     if (extra > 0) rt_patch_switch(sv, 1);
+    start_w = ow, start_h = oh, start_wide = 1, started = 1;
     scale_k = oh > GAME_H ? (double)oh / GAME_H : 1.0;
     rt_log("widescreen: picture %ux%u, scene %ux%u (%.0f%% of it), camera aspect ratio %.4f (16:9 is %.4f), UI and movies "
            "in the middle %.1f%%", ow, oh, sw, sch, f * 100, ratio, game, squeeze * 100);
@@ -406,6 +413,28 @@ void wide_init(void) {
                SAVE_W + extra, SAVE_W);
     else if (extra > 0)
         rt_log("widescreen: the generated C has no set wide_save; a save's picture holds the whole picture, squeezed");
+}
+
+// The picture wide_init sets up, asked while the RomFS comes up (romfs.c wide_hud_overlay). Once wide_init has decided,
+// its own answer. Before that (the RomFS comes up from within wide_init when the texture heap grows: its fs_init) the
+// tests it makes, once, and the answer kept: the game's own 2560x1440 when the setting is 16:9 or narrower, the
+// generated C has no widescreen sets, or a grown texture heap was needed and not served (res_heapdef_ok is known once
+// the RomFS's HeapDef overlay is made, which comes before the layouts'). 1 for a picture of the settings' size.
+int wide_start_picture(unsigned *w, unsigned *h) {
+    static unsigned kw, kh;
+    static int kept = -1;
+    if (started) {
+        *w = start_w, *h = start_h;
+        return start_wide;
+    }
+    if (kept < 0) {
+        unsigned ow, oh;
+        kw = GAME_W, kh = GAME_H, kept = 0;
+        if (wide_available() && picture_size(&ow, &oh, 1) && !(wide_heap_extra_kib() && !res_heapdef_ok()))
+            kw = ow, kh = oh, kept = 1;
+    }
+    *w = kw, *h = kh;
+    return kept;
 }
 
 // The picture the game draws: the widescreen one wide_init set up, else the game's own 2560x1440. DLSS's largest mode
