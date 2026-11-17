@@ -690,6 +690,13 @@ A change to how `pipeline-cache.bin` is read (`runtime/vk_cache_file.h`, `runtim
 through it: measured and read whole without a size limit, refused by its real size under one. No game files, no GPU;
 about 2 GB of memory for a few seconds.
 
+A change to the translator stamp of the pipeline cache files (`runtime/vk_cache_stamp.h`, `runtime/vk_pipeline.c`
+`cache_stamp_check`) passes `python tests\cache_stamp_check.py`, which builds the header alone: how
+`pipeline-cache.id` is written and read back (cut, empty or foreign text is no stamp), and what a start does with the
+files for a stamp that matches, one of another translator that the carry still serves, one that it does not serve,
+and none, through the starts of a translator update. What a start did shows in the log's
+`vk_pipeline: pipeline cache stamp <id> matches|differs|none: <action>, <MB>` line; no game files, no GPU.
+
 A change to how `pipeline-binaries.bin` is indexed or cut back (`runtime/vk_pipeline.c` `pb_index`, `pb_keep`,
 `pb_init`) passes `python tests\pb_torn_check.py`, which cuts the record layout, the index walk and `pb_keep` out of
 `vk_pipeline.c` and walks files of whole records, with a last record cut short at many lengths and with a malformed

@@ -56,6 +56,7 @@
 #include "tex.h"
 #include "vk_build_gate.h"
 #include "vk_cache_file.h"
+#include "vk_cache_stamp.h"
 #include "vk_exec.h"
 #include "vk_save_retry.h"
 #include "vk_warm_hint.h"
@@ -903,6 +904,56 @@ static VkPipelineCache cache_make(VkCtx *c, const void *data, size_t size, size_
     return cache;
 }
 
+// The translator stamp of the two pipeline cache files (vk_cache_stamp.h, where the rules are): pipeline-cache.id beside
+// pipeline-cache.bin names the translator whose pipelines the files hold. Called by cache_load before either file is
+// read. A stamp of another translator whose shaders the carry no longer serves (or any other translator in a
+// preparation: prep_mode) deletes both files, so their dead entries are neither read nor held twice in memory nor
+// carried on by the next save; the play file goes too, since what one run compiled under the earlier translator is as
+// dead. One log line says what a start that reads the files did and how many MB they held. NX2SARIA_PIPELINE_CACHE_STAMP (default 1); 0 reads the files whichever translator wrote them and
+// leaves the stamp as it is.
+static void cache_stamp_check(void) {
+    if (!P.cache_path[0]) return;
+    if (!cfg_bool("NX2SARIA_PIPELINE_CACHE_STAMP")) {
+        rt_log("vk_pipeline: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0): the files are read whichever "
+               "translator wrote them");
+        return;
+    }
+    static const uint8_t zero[32];
+    const uint8_t *cur = gfx_shader_identity();
+    if (!memcmp(cur, zero, 32)) {
+        rt_log("vk_pipeline: pipeline cache stamp none: no translator identity, so the files are read and not stamped");
+        return;
+    }
+    char stamp[sizeof P.cache_path + 8], play[sizeof P.play_path];
+    cache_stamp_sibling(P.cache_path, ".id", stamp, sizeof stamp);
+    cache_stamp_sibling(P.cache_path, "-play.bin", play, sizeof play);
+    uint64_t n = 0;
+    char *text = (char *)plat_file_read(stamp, &n);
+    uint8_t was[32] = {0};
+    int state = cache_stamp_state(text, text ? (size_t)n : 0, cur, was);
+    free(text);
+    int act = cache_stamp_action(state, state == CACHE_STAMP_DIFFERS && gfx_shader_carries(was), prep_mode);
+    int64_t s0 = plat_file_size(P.cache_path), s1 = plat_file_size(play);
+    double mb = ((s0 > 0 ? s0 : 0) + (s1 > 0 ? s1 : 0)) / 1048576.0;
+    const char *left = "";
+    if (act == CACHE_STAMP_DROP) {
+        plat_file_delete(P.cache_path);
+        plat_file_delete(play);
+        if (plat_file_exists(P.cache_path) || plat_file_exists(play))   // held open elsewhere: read as before, unstamped
+            act = CACHE_STAMP_READ, left = " (not deleted: a file is in use; read, the stamp kept)";
+    }
+    if (act == CACHE_STAMP_DROP || act == CACHE_STAMP_READ_STAMP) {
+        char line[66];
+        cache_stamp_format(cur, line);
+        if (!plat_file_write_atomic(stamp, line, 65)) left = " (the stamp could not be written)";
+    }
+    char was_text[40] = "";
+    if (state == CACHE_STAMP_DIFFERS)
+        snprintf(was_text, sizeof was_text, " (the files' %02x%02x%02x%02x)", was[0], was[1], was[2], was[3]);
+    rt_log("vk_pipeline: pipeline cache stamp %02x%02x%02x%02x %s%s: %s%s, %.1f MB (%s)", cur[0], cur[1], cur[2], cur[3],
+           cache_stamp_state_name(state), was_text, cache_stamp_action_name(act), left, mb, stamp);
+}
+
 static void cache_load(VkCtx *c) {
     cache_path_init();
     pb_init(c);
@@ -910,6 +961,7 @@ static void cache_load(VkCtx *c) {
         rt_log("vk_pipeline: %s is not read or written while pipeline binaries are on", P.cache_path);
         return;
     }
+    cache_stamp_check();
     size_t size = 0, kept = 0;
     void *data = cache_data_read(c, P.cache_path, &size);
     int base_over = cache_over_cap;   // an oversized file is never read again: the play file takes its place at once
@@ -924,10 +976,7 @@ static void cache_load(VkCtx *c) {
     if (!P.cache || !P.cache_path[0]) return;
 
     // The play cache (see above pipe_create_in).
-    snprintf(P.play_path, sizeof P.play_path, "%s", P.cache_path);
-    size_t n = strlen(P.play_path);
-    if (n > 4 && !strcmp(P.play_path + n - 4, ".bin")) n -= 4;
-    snprintf(P.play_path + n, sizeof P.play_path - n, "-play.bin");
+    cache_stamp_sibling(P.cache_path, "-play.bin", P.play_path, sizeof P.play_path);
     int want = cfg_bool("NX2SARIA_PIPELINE_CACHE_PLAY") && !prep_mode, on = want && P.cache_control;
     size_t psize = 0, pkept = 0;
     void *pdata = cache_data_read(c, P.play_path, &psize);
