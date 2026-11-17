@@ -97,3 +97,19 @@ line must show frames and builds deferred, or the scenes had no background work 
 `nogate` run the start line says `off`. The library warm's own line says how far it got in each run: with the gate it
 gets less far in heavy scenes, which is the point. The same two runs without `lib_warm = force` show what an ordinary
 session gains.
+
+Measured on the Linux bench (RX 6700 with RADV, an 8-core 16-thread CPU) on 2026-11-17: `kokiri` at 1280x720 without
+DLAA or AA, `lib_warm = force`, and `MESA_SHADER_CACHE_DIR` pointed at an empty folder for each run so that the warm
+compiles for real. The sides alternated, two runs each. A forced warm goes on from where the previous run stopped
+(`shader-warm.txt`), so each run warms other variants of the same list.
+
+| | avg fps | 1% low fps | p99 ms | CPU-bound % | replay ms | paused frames / builds deferred | variants warmed |
+|---|---|---|---|---|---|---|---|
+| gate | 28.1, 26.7 | 15.8, 14.1 | 59.1, 59.2 | 15.7, 10.2 | 11.9, 12.2 | 1210 / 77, 1182 / 80 | 2470, 3642 |
+| nogate | 24.7, 24.8 | 11.9, 15.4 | 69.9, 63.6 | 44.2, 40.3 | 14.9, 14.9 | off | 9039, 8951 |
+
+GPU ms stayed between 22.7 and 24.4 in all four runs, and none stalled. With the game folder's own settings and warm
+caches the scene is bound by the GPU and both sides read about 23.5 fps: there the gate changes nothing.
+
+The 600 draws come from traced runs of the same build (`NX2SARIA_TRACE=gfx`). The title, the menus and the area loads
+draw 243 or fewer per frame, and 97% of the frames of play in `kokiri` draw 600 or more (5th percentile 640, median 952).
