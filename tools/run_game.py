@@ -16,10 +16,19 @@ or a save folder or .zip from elsewhere, such as a crash report's zipped profile
 tools/input/load_save.txt (title screen to the first save slot), and a recording made with NX2NAVI_INPUT_RECORD replays
 the same way. --wall ends a run whose script never reaches the world clock; NX2NAVI_SHOT_EVERY takes its pictures by
 wall time.
+
+--boot-map <area>[:<start position>] starts the game in that area from the save without the title screen or the file
+menu (runtime/boot_map.c, docs/boot-to-map.md), with --boot-map-slot, --boot-map-age and --boot-map-time beside it. Its
+input script defaults to tools/input/boot_map.txt, which presses nothing. The run fails (exit code 3) when the log has
+no "boot map: arrived in" line for the area asked for; the boot map's lines are printed at the end.
+
+    python3 tools/run_game.py <game folder> --save <backup> --boot-map HyruleField_Child:HyruleField_FrontOfMarket \
+        --boot-map-time 21:00 --seconds 10 --wall 180 --tag field-night
 """
 import argparse
 import ctypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -201,13 +210,32 @@ def profile_copy(dest, src, save=None, slot=None, skip=()):
         shutil.rmtree(dest / 'save-tx', ignore_errors=True)
 
 
+def boot_map_report(log, asked, rc):
+    """Prints the boot map's lines of the run's log; 3 in place of a clean exit when Link did not arrive in the area
+    asked for (runtime/boot_map.c boot_map_tick writes the line)."""
+    area = asked.split(':', 1)[0]
+    text = log.read_text(encoding='utf-8', errors='replace')
+    lines = [l.split('] ', 1)[-1] for l in text.splitlines() if 'boot map: ' in l]
+    for l in lines:
+        print(l)
+    arrived = any(re.match(rf'boot map: arrived in {re.escape(area)} \(asked {re.escape(area)}\)', l) for l in lines)
+    if not arrived:
+        print(f'run_game: no "boot map: arrived in {area}" line in {log}')
+    return rc if arrived or rc not in (0, 124) else 3
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('exe_dir', type=Path, help='build directory or game folder holding ' + ', '.join(GAME_EXES))
     ap.add_argument('--save', help="the save to run: a backup's name in build/save-backup or the profile's save-backup, "
                                    "or a save folder or .zip from elsewhere (a crash report's zipped profile folder); "
                                    'default: the profile as it is')
-    ap.add_argument('--script', type=Path, default=ROOT / 'tools' / 'input' / 'load_save.txt', help='NX2NAVI_INPUT_SCRIPT')
+    ap.add_argument('--script', type=Path, help='NX2NAVI_INPUT_SCRIPT (default: tools/input/load_save.txt, or '
+                                                 'tools/input/boot_map.txt with --boot-map)')
+    ap.add_argument('--boot-map', metavar='AREA[:START]', help='start in that area without the title screen (NX2SARIA_BOOT_MAP)')
+    ap.add_argument('--boot-map-slot', metavar='N', help='the slot it loads, 0 to 5 or latest (NX2SARIA_BOOT_MAP_SLOT)')
+    ap.add_argument('--boot-map-age', choices=('child', 'adult', 'save'), help='NX2SARIA_BOOT_MAP_AGE')
+    ap.add_argument('--boot-map-time', metavar='HH:MM', help='the time of day it starts at (NX2SARIA_BOOT_MAP_TIME)')
     ap.add_argument('--seconds', type=float, required=True,
                     help='game time to run: the run ends once the world clock (game time since the save loaded) passed '
                          'this many seconds (shot is taken of that frame)')
@@ -221,6 +249,8 @@ def main():
     ap.add_argument('--show', action='store_true',
                     help='Windows: open the window on top; by default it opens behind other windows')
     a = ap.parse_args()
+    if a.script is None:
+        a.script = ROOT / 'tools' / 'input' / ('boot_map.txt' if a.boot_map else 'load_save.txt')
 
     exe_dir = a.exe_dir.resolve()
     exe = game_exe(exe_dir)
@@ -241,6 +271,10 @@ def main():
         env = dict(os.environ, NX2SARIA_ASSUME_FOCUS='1', NX2SARIA_INPUT='none', NX2SARIA_INPUT_SCRIPT=str(a.script.resolve()))
         if not a.show and os.name == 'nt':   # SDL windows open in front either way
             env['NX2SARIA_BACKGROUND_WINDOW'] = '1'
+        for key, value in (('BOOT_MAP', a.boot_map), ('BOOT_MAP_SLOT', a.boot_map_slot),
+                           ('BOOT_MAP_AGE', a.boot_map_age), ('BOOT_MAP_TIME', a.boot_map_time)):
+            if value:
+                env['NX2SARIA_' + key] = value
         for kv in a.env:
             k, _, v = kv.partition('=')
             env[k] = v
@@ -268,6 +302,8 @@ def main():
             shutil.rmtree(prof, ignore_errors=True)
     finally:
         release_gpu_lock(gpu)
+    if a.boot_map:
+        rc = boot_map_report(log, a.boot_map, rc)
     print(f'{log}: rc={rc}')
     sys.exit(rc)
 
