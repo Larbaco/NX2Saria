@@ -335,7 +335,9 @@ Found here, worth carrying to `atlas-integration`:
 comments and pages only), started without a window or sound with `tracker_api=1`, an input script pressing A through
 the title screen to the first save, then walking Link in four directions. The bench client
 (`tools/tracker_api_client.py --save … --watch 25`) and the patched tracker's `ApiSession` ran against it in the same
-run. The run's output (the game's log lines, as its stderr went to a file) is in the session's scratchpad.
+run. A second run (04:13, the same build, the client and `ApiSession` again) left the game's stderr on a pipe, so the
+game wrote its own `logs/nx2saria.log`; the lines below are from that file (the first run's stderr went to a file,
+which the runtime then takes for its log instead of writing `logs/`).
 
 - **Build:** 10.4 min, the whole lifted code compiled once; `--probe-cfg` failed only on the read-only file test, as
   expected on NTFS.
@@ -345,9 +347,12 @@ run. The run's output (the game's log lines, as its stderr went to a file) is in
 - **When the game data is there:** `nx2saria.state` answered `game_data: true` before the game's first frame, on the
   boot screen, with no save loaded: the game makes its game data at start with its defaults (this page and
   `tracker-api.md` said "when it loads a save" before this run). The area came 14 s later, Link 9 s after that.
-- **Every kind answered**, the first answers logged once each: `Bool answered: 11292 values, 90336 bytes, in 1.89 ms`,
-  Int 1,259 in 0.13 ms, Enum 130, String64 54, String64Array 5 (2,280 bytes), Int64 33, Bool64bitKey 360 set; no
-  refusal and no "could not be answered" line in the whole run.
+- **Every kind answered**, the first answers logged once each in `logs/nx2saria.log`:
+  `tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 1.28 ms` (1.89 ms in the
+  first run), Int 1,259 in 0.11 ms, Enum 130, String64 54, String64Array 5 (2,280 bytes), Int64 33, Bool64bitKey 360
+  set; with them `first status answered: powered_on 1, game 1.1.1, build e0f3ccfaf50065ae`, main found by its header
+  at `0x7003c4705c` in 24 ms, `first read_memory answered`; no refusal and no "could not be answered" line in either
+  run. The second run gave the same values against the save.
 - **Against the save that loaded (`slot_02`):** Bool 10,212 in the save, none missing, 1 different (a flag set after
   the load); Int 1,144, none different; Enum 101, none different; 360 placed objects set in the save, all 360 set live.
   The other slots differ by a few dozen values, as other saves of the same playthrough do.
