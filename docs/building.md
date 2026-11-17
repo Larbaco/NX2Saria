@@ -626,6 +626,13 @@ header comment describes, and checks that:
 No game files. `--romfs <folder with romfs.bin and index.json>` also runs it on the game's own archive: four copies laid
 out, 208 fields, the same dictionary and unpacked size, and no byte changed outside the layout's copies.
 
+A change to the HUD at the picture's edges (`runtime/wide_hud.c`, `wide_hud = edges`) or to `runtime/sarc.c` also
+passes `python tests\wide_hud_check.py`, built the same way, on the three layouts it edits made from the format its
+header comment describes: the panes and animation keys that move and nothing else, a second run that finds nothing to
+do, refusals that leave the file as it was (each check of `docs/wide-hud.md`), every prefix of each file and the packed
+archive. `--romfs` also runs it on the game's own archive for six shapes of picture, alone and after the action
+prompt's edit: 132 words changed, all of them where the 1.1.1 files have the moved fields.
+
 A change to what the library warm logs when the driver's cache of stage libraries is cold (`runtime/vk_warm_hint.h`,
 `runtime/vk_pipeline.c` `lw_main`) passes `python tests\warm_hint_check.py`, which builds the header alone and checks
 the added text by GPU vendor and by why the cache was cold. No game files.
