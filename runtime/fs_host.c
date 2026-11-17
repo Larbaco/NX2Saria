@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "boot_map.h"
 #include "fs.h"
 #include "host.h"
 #include "platform/platform.h"
@@ -40,7 +41,8 @@ enum { M_FREE, M_SAVE, M_TEMP, M_CACHE, M_SAVE_RO };   // M_SAVE: the working co
 typedef struct { int kind; char name[32]; char root[1024]; } Mount;
 // h NULL = free; save: on a save-data mount; users: calls using h now (file_of .. file_release); closing: CloseFile
 // came while users > 0, and the last of them closes h. users and closing are read without `lock` (file_release).
-typedef struct { PlatFile *h; int mode, save; int32_t users; int32_t closing; } File;
+// boot_map: the boot map changes what is read of this file (boot_map.c boot_map_save_open).
+typedef struct { PlatFile *h; int mode, save, boot_map; int32_t users; int32_t closing; } File;
 typedef struct { char *name; int kind; uint64_t size; } Listed;
 typedef struct { Listed *e; int n, next, mode, used; } Dir;   // the directory's entries at open; used 0 = free
 
@@ -788,6 +790,16 @@ static int export_tree(const char *dir, const char *rel, FsSaveVisit visit, void
     return n;
 }
 
+uint8_t *fs_save_load(const char *rel, uint64_t *size) {
+    ready();
+    plat_mutex_lock(&tx_lock);   // as fs_save_export: no commit swaps the save meanwhile
+    char *path = join(newest_save(), rel);
+    uint8_t *data = path && plat_fs_kind(path) == PLAT_FS_FILE ? plat_file_read(path, size) : NULL;
+    plat_mutex_unlock(&tx_lock);
+    free(path);
+    return data;
+}
+
 int fs_save_export(FsSaveVisit visit, void *ctx) {
     ready();
     // the commit thread holds tx_lock while it swaps a commit in, and the committed save is never written in place
@@ -1182,7 +1194,7 @@ static void file_closed(PlatFile *h, int save) {
 // Empties a slot, under the exclusive lock. users and closing are stored as atomics: the call that has just left the
 // slot may still read closing without the lock (file_release). open_file fills only h, mode and save.
 static void file_clear(File *f) {
-    f->h = NULL, f->mode = 0, f->save = 0;
+    f->h = NULL, f->mode = 0, f->save = 0, f->boot_map = 0;
     __atomic_store_n(&f->users, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&f->closing, 0, __ATOMIC_RELAXED);
 }
@@ -1228,10 +1240,12 @@ static uint32_t open_file(uint64_t *out, const char *path, int mode) {
     int err = 0;
     PlatFile *f = plat_fs_open(p, (mode & FS_OPEN_WRITE) != 0, &err);
     if (!f) return fs_result(err);
+    // a save file read to be loaded while a boot map is pending: its reads get the boot map's place (boot_map.c)
+    int boot_map = (kind == M_SAVE || kind == M_SAVE_RO) && !(mode & FS_OPEN_WRITE) && boot_map_save_open(path, f);
     plat_mutex_lock(&lock);
     for (int i = 0; i < NFILES; i++)
         if (!files[i].h) {   // users and closing are 0 in a free slot (file_clear)
-            files[i].h = f, files[i].mode = mode, files[i].save = save_writer;
+            files[i].h = f, files[i].mode = mode, files[i].save = save_writer, files[i].boot_map = boot_map;
             *out = FILE_BASE + (uint64_t)i;
             plat_mutex_unlock(&lock);
             if (save_writer) {
@@ -1262,6 +1276,7 @@ static uint32_t read_file(uint64_t *out, uint64_t h, int64_t offset, void *buffe
         if (!n) break;
         done += (uint64_t)n;
     }
+    if (file->boot_map) boot_map_save_read((uint64_t)offset, buffer, done);
     file_release(file);
     *out = done;
     return 0;

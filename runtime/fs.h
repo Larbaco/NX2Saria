@@ -78,6 +78,9 @@ void fs_save_wait(void);                                   // wait for a save Co
 // the save the game would load next, under the commit lock; visit returns 0 to fail. The number of files (0: no save
 // yet), -1 when one could not be read or visit failed.
 typedef int (*FsSaveVisit)(void *ctx, const char *rel, const uint8_t *data, size_t n);
+// The bytes of rel (a path below the save with '/', "slot_02/progress.sav") in the save the game would load next,
+// malloc'd; NULL when the file is absent, empty or unreadable. Storage starts first (a waiting import becomes the save).
+uint8_t *fs_save_load(const char *rel, uint64_t *size);
 int fs_save_export(FsSaveVisit visit, void *ctx);
 // The menu's import: count files (relative '/' paths, bytes) become <profile>/save-import, which the next start makes
 // the save, backing up the save it replaces; one waiting already is replaced. 0 on success.

@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "boot_map.h"
 #include "cfg.h"
 #include "cheats.h"
 #include "fs.h"
@@ -415,6 +416,7 @@ void rt_boot(void) {
     wide_init();   // Ocarina's widescreen sets (recomp/patches-v111.txt)
     cfg_log_unsupported();   // the settings this build ignores
     cheats_init();   // after the patch sets: a cheat's set follows its setting
+    boot_map_init();   // before the guest reads its first file: what it reads of the title and the save (boot_map.c)
     cb_addr[0] = hostfn_register("<rtld loader_ready>", cb_loader_ready);
     cb_addr[1] = hostfn_register("<rtld module_inits>", cb_module_inits);
     cb_addr[2] = hostfn_register("<rtld module_finis>", cb_module_finis);
