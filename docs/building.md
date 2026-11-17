@@ -852,6 +852,17 @@ A change to `runtime/vk_memory.c`, `runtime/vk_texture.c` or `runtime/tex_probe.
 format left at 32 bits would bring their wrap back without a word. Any narrowing in these files takes an explicit cast.
 It needs the shader headers (`tools/build_shaders.py`); no GPU, no game files.
 
+A change to FSR 3.1 frame generation through the runtime's passes (`runtime/vk_fsr3fg.c`, `runtime/shaders/fsr3fi_*`,
+`fsr3of_*`, `fsr3fg_options.h`, the presenter in `runtime/gfx_present.c`) passes `python tests/fsr3fg_check.py
+<game folder>/ocarina` (outside Windows), which runs `--probe-fsr3fg` with Vulkan's validation on: a textured picture
+with a square moving 16 pixels a frame, a HUD bar only in the picture with the HUD and black bars around the picture.
+The generated frame must put the square within 2 pixels of halfway, keep the HUD as drawn (2 of 255) and the bars
+black, show nothing at the first frame and at a reset, keep a still square still and free its images when frame
+generation goes off, with no validation error; the probe then times a generated frame at 2560x1080 and 1920x1080.
+`NX2SARIA_FSR3FG_PASS_TIMES=1` adds each pass's GPU time; `NX2SARIA_FSR3FG_DUMP=<dir>` in a game run writes the picture
+before, the generated frame and the picture after as PPM images every `NX2SARIA_FSR3FG_DUMP_EVERY` seconds. It needs a
+Vulkan device that runs the passes (it says SKIP otherwise), no game files.
+
 A change to which frames FSR 3.1 frame generation is told are camera cuts (`runtime/vk_fg_reset.h`, `runtime/vk_fg.cpp`
 `generate` and `vk_fg_frame`) passes `python tests\fg_reset_check.py`, which builds the header alone and checks that each
 frame id gets its own frame's cut, that an id never noted or no longer held counts as a cut, and that a slot rewritten

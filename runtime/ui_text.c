@@ -720,6 +720,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                       "DLSS on a GeForce RTX 40 or 50 card.",
     [UI_MENU_FRAMEGEN_NEEDS_FSR_WIN] = "FSR 3.1's frame generation runs on Windows only",
     [UI_MENU_FRAMEGEN_OFF_FSR_WIN] = "in use: off, FSR 3.1's frame generation runs on Windows only",
+    [UI_MENU_FRAMEGEN_FSR3_NATIVE] = "2x, the game's own FSR 3.1 passes",
+    [UI_MENU_FRAMEGEN_OFF_HDR] = "in use: off while HDR is on (SDR only)",
     [UI_MENU_FRAMEGEN_MULT] = "DLSS multiplier",
     [UI_MENU_FG_MULT_DESC] = "Frames on screen for each frame the game draws with DLSS Frame Generation: 2x adds one "
                              "generated frame, up to 6x on an RTX 50 card. Dynamic adds only the frames needed to "
@@ -1459,6 +1461,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                       "geração de quadros precisa do NVIDIA DLSS numa GeForce RTX 40 ou 50.",
     [UI_MENU_FRAMEGEN_NEEDS_FSR_WIN] = "a geração de quadros do FSR 3.1 só roda no Windows",
     [UI_MENU_FRAMEGEN_OFF_FSR_WIN] = "em uso: desligada, a geração de quadros do FSR 3.1 só roda no Windows",
+    [UI_MENU_FRAMEGEN_FSR3_NATIVE] = "2x, passagens FSR 3.1 do próprio jogo",
+    [UI_MENU_FRAMEGEN_OFF_HDR] = "em uso: desligada com HDR (só SDR)",
     [UI_MENU_TEX_CLOBBER] = "Corrigir texturas sobrescritas",
     [UI_MENU_TEX_CLOBBER_DESC] = "Mantém as texturas intactas quando o jogo desenha outra imagem na mesma memória. "
                                "Corrige os quadrados verdes na névoa e pode usar mais memória de vídeo.",

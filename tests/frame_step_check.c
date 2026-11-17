@@ -31,6 +31,7 @@ double gfx_window_refresh_hz(void) { return 144; }
 static int movie;   // a movie plays (frame_rate.c movie_cap_hz)
 int ov_movie_live(void) { return movie; }
 int vk_fg_generating(void) { return 0; }
+int vk_fsr3fg_generating(void) { return 0; }
 float dbg_speed_factor(void) { return 1.0f; }   // the debug menu's game speed: normal
 int vk_fg_active(void) { return 0; }
 int vk_fg_wanted(void) { return 0; }

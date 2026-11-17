@@ -322,9 +322,10 @@ static int movie_cap_hz(void) {
     return hz && ov_movie_live() ? hz : 0;
 }
 
-// Frames on screen per game frame while frame generation runs: 2 with AMD's (vk_fg.cpp, one generated frame), the
-// multiplier with NVIDIA's (vk_dlssg.c, one to three); 1 while neither generates (off, or paused for the menu).
-static int generated_factor(void) { return vk_fg_generating() ? 2 : vk_dlssg_multiplier(); }
+// Frames on screen per game frame while frame generation runs: 2 with AMD's (vk_fg.cpp through AMD's library, vk_fsr3fg.c
+// through the runtime's passes: one generated frame), the multiplier with NVIDIA's (vk_dlssg.c, one to three); 1 while
+// none generates (off, or paused for the menu).
+static int generated_factor(void) { return vk_fg_generating() || vk_fsr3fg_generating() ? 2 : vk_dlssg_multiplier(); }
 
 // The limit counts the frames the game draws, and frame generation adds its frames on top: a limit of 60 at 4x is 60
 // drawn and 240 shown. Counted on the screen instead, the game was paced at the limit over the factor, so each step up

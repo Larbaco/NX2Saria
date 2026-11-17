@@ -814,8 +814,9 @@
 # The FXAA switch of the game this runtime was first written for; Ocarina has no such pass, so it changes nothing here
 # (aa above is the setting).
 # fxaa = 1
-# Frame generation: off, fsr3 (AMD FSR 3.1 on any GPU where amd_fidelityfx_vk.dll loads, so not on Linux: one generated
-# frame between every two the game draws, the HUD kept out of it) or dlss (NVIDIA DLSS Frame Generation on GeForce RTX
+# Frame generation: off, fsr3 (AMD FSR 3.1: one generated frame between every two the game draws, the HUD kept out of
+# it; on Windows through amd_fidelityfx_vk.dll, on Linux through the game's own build of FSR 3.1's passes, on any GPU
+# that runs them, SDR only: the log's "fsr3fg:" lines say whether it runs and why not) or dlss (NVIDIA DLSS Frame Generation on GeForce RTX
 # 40 and 50 GPUs, paced with Reflex; it needs nx2navi_dlssg.dll and NVIDIA Streamline's files next to the executable,
 # which the setup puts there). Both run with any upscaling: with DLSS or FSR 3.1 (dlaa = 1) they take its depth and
 # motion vectors, and without one (dlaa = 0) the same ones made for them alone, with no jitter (the log's "dlaa: frame
