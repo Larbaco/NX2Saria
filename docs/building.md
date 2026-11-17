@@ -742,6 +742,14 @@ freeze doubles while slow ones come within the quiet time, fast freezes between 
 starts over after the quiet time (with a quiet time of 0, at the first fast freeze); and an area load holds the passes
 while the texture pool loads and for the hold after it or after the area's load. No GPU, no game files.
 
+A change to what a boot map changes in what the game reads (`runtime/boot_map_core.h`, `runtime/boot_map.c`,
+`docs/boot-to-map.md`) passes `python tests\boot_map_check.py`, which builds the header alone on made-up files: the
+title graph's command `Root` moves to the Sequential of a Simultaneous and `TitleToMainWithLoadSave.module`, and a graph
+without exactly that is refused; both `Index` inputs of the slot's graph become the slot, and an input that is already
+a constant is refused; a save gets the area, position, heading, dungeon room, age and clock, however its reads are cut,
+and a save without one of the values asked for is refused; the file menu's dates order the slots; the heading, the time
+and the age of an area name. No GPU, no game files.
+
 A change to what writes `nx2saria.ini` outside the game (`launcher/gameini.py`, `installer/ini.py`, `tools/make_game.py`,
 `launcher/updater.py`) passes the settings-file tests of `tests\launcher_test.py` (`PlayerIniTest`, and the tests named
 `..._settings_file` of `BackgroundUpdateTest` and `MakeGameTest`): a player's file with lines that are no settings of

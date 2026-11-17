@@ -54,10 +54,24 @@ lines do not follow:
 ```
 boot map: HyruleFeld_Child is not an area of the game's start positions (StartPos.byml): normal boot
 boot map: slot 4 has no save (slot_04/progress.sav): normal boot
-boot map: NormalTitle.module.ainb is not the 1.1.1 file this setting knows (Root node 12, expected 35): normal boot
+boot map: Sequence/NormalTitle.module.ainb is not the 1.1.1 file this setting knows (Root does not start a Simultaneous node): normal boot
+boot map: the save of slot 2 lacks a value this setting changes (no PlayerStatus.SavePos): normal boot
 ```
 
-A save whose area or start position the game lacks fails the same way. A save that cannot be read also fails.
+A bad value of any of the four keys fails the same way, as do a file a mod or a RomFS overlay serves and a game
+version other than 1.1.1.
+
+Two more lines can come in between. When the game opens the slot's save:
+
+```
+boot map: <mount>:/slot_02/progress.sav is read with the boot map's place (6 values changed in what the game reads)
+```
+
+When Link has not appeared 300 s after the start, the changes stop, and the game's return to its title is its own:
+
+```
+boot map: no arrival 300 s after the start (the save or the area did not load; see the lines above): the boot map's changes stop
+```
 
 A boot map run must use a copy of the profile (`--profile`, as `tools/capture_run.py` does). The game saves the place it
 starts in, through its own autosave, into the slot it loaded (see *Risks*).
@@ -266,7 +280,7 @@ The setting takes the third way. While a boot map is pending:
   - `PlayerStatus.SavePos` := the start position's `Trans`;
   - `PlayerStatus.SavePosRadY` := the yaw of its `Rot`. With R = Rz·Ry·Rx, the yaw is atan2 of the forward vector's
     x and z **[I]**: the axis order was not traced;
-  - `DungeonRoom` := -1 when the area changes, so that the save's dungeon room does not go with it **[I]**;
+  - `DungeonRoom` := -1, so that the save's dungeon room does not go with Link to another place **[I]**;
   - `Sequence_IsChildhood` := the age, when one is asked for or the area fixes it;
   - the low word of ef10b80f := the time of day, when one is asked for.
 
@@ -318,5 +332,35 @@ without one it says so and boots normally.
   order the game never meant.
 - **No checksum was seen in the save.** If one exists, the game would refuse the patched save. The log would then
   show a load that does not arrive, with no arrival line.
-- **Master Quest:** the slot index gets +6 inside the game when the account's MQ mode is on. The setting checks the
-  file of the slot it patches (`slot_NN` with that offset) the same way.
+- **Master Quest:** the game adds 6 to the slot when the account's Master Quest mode is on. The setting reads
+  `IsLastSelectedMQMode` in `account.sav`: then it picks the latest among `slot_06` to `slot_11`, and it checks and
+  patches `slot_<N+6>`. The +6 also needs a second byte of the save manager (`+0x151`), which was not traced. A
+  Master Quest account is untested.
+
+## When the build is allowed: what to run
+
+1. `python tests/boot_map_check.py` (docs/building.md, *Checks*) and `python tests/cfg_rows_check.py`.
+2. Build the game as usual (`tools/build_game.py`). The patch file is unchanged, so the translator's output is the
+   same.
+3. Without the setting, a normal start: the log has `boot map: off`, and the title, the file menu and a save load
+   behave as before.
+4. On a copy of the profile (`--profile`), with a save in slot 0 to 5, in the bench's run without a window:
+
+   ```sh
+   SDL_VIDEODRIVER=offscreen SDL_AUDIO_DRIVER=dummy NX2SARIA_AUDIO=none \
+     NX2SARIA_BOOT_MAP=KokiriForest_Child timeout 150 ./run.sh linux-test -- --profile <copy>
+   ```
+
+   The log should have `boot map: on: ...`, then `... progress.sav is read with the boot map's place ...`, then
+   `boot map: arrived in KokiriForest_Child ...` a few metres from the start position. A `NX2SARIA_CAPTURE_AT` shot,
+   or the window, shows that no title or file menu came first.
+5. The same with a start position (`HyruleField_Child:HyruleField_FrontOfMarket`), with an adult area
+   (`HyruleField_Adult`) from a child save, with a dungeon and an age (`InsideTheDekuTree`, `boot_map_age = child`),
+   with `boot_map_time = 21:00` (night), and with `boot_map_slot` set to each slot that has a save.
+6. Check the facing: Link should face the way the area's start position faces (the yaw formula is inferred).
+7. The refusals: an unknown area, an unknown start position, an empty slot, `boot_map_time = 25:00`. Each should give
+   one line and a normal title.
+8. Go back to the title from the pause menu after a boot map run, and note what happens (see *Risks*: the graphs
+   may stay changed).
+9. After each run, compare the profile copy's slot with the original. The slot changes only after the game's own
+   save, and then it holds the boot map's place.
