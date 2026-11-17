@@ -11,6 +11,7 @@
 // The in-game menu (ui/menu.h) draws over the game image in the present's command buffer, after the blit. The window's
 // size and fullscreen state are the settings NX2SARIA_WINDOW_SIZE and NX2SARIA_FULLSCREEN, which the back end applies at start
 // and whenever a cfg_set changes them (window_settings_live -> gfx_window_apply_settings).
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1922,13 +1923,13 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     VkImage dst = ngp ? ng.bb.img : g_sc_img[idx];
     sync_barrier(cb, dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0,
                  VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    const int rect[4] = {cx, cy, cw, ch};
     int to[4];   // where the picture goes in the swapchain image: {x, y, w, h}
     gfx_fit_rect(cw, ch, (int)g_sc_ext.width, (int)g_sc_ext.height, to);
     if (src && g_sc_ext.width && g_sc_ext.height) {
         for (int i = 0; i < 4; i++) g_pic[i] = (float)to[i] / (float)(i & 1 ? g_sc_ext.height : g_sc_ext.width);
         __atomic_store_n(&g_pic_ok, 1, __ATOMIC_RELEASE);
     }
+    const int rect[4] = {cx, cy, cw, ch};
     if (!src || to[2] != (int)g_sc_ext.width || to[3] != (int)g_sc_ext.height) {   // black bars beside or above and below it
         VkClearColorValue black = {.float32 = {0, 0, 0, 1}};
         VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -1958,6 +1959,32 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     VkImageLayout last = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     VkPipelineStageFlags2 last_stage = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     VkAccessFlags2 last_write = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    // The menus in the middle 16:9 (widescreen.c wide_menu_sides): while the game draws no 3D scene, the picture's sides
+    // outside its middle 16:9 are cleared to black where the picture went, after the picture itself went there whole as
+    // on any other frame (a smaller crop would change the size of the colour, HDR and FSR passes' images, and each change
+    // waits for the device). The HUD-less picture for frame generation and the menu's pointer (g_pic) keep the whole one.
+    double sides = src && dst_view ? wide_menu_sides() : 0;
+    int side_w = (int)lround(to[2] * sides);
+    if (side_w > 0 && 2 * side_w < to[2]) {
+        sync_barrier(cb, dst, last, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, last_stage, last_write,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = dst_view,
+                                        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
+        VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_sc_ext}, .layerCount = 1,
+                              .colorAttachmentCount = 1, .pColorAttachments = &ca};
+        VkClearAttachment black = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .colorAttachment = 0,
+                                   .clearValue = {.color = {.float32 = {0, 0, 0, 1}}}};
+        VkClearRect bars[2] = {{{{to[0], to[1]}, {(uint32_t)side_w, (uint32_t)to[3]}}, 0, 1},
+                               {{{to[0] + to[2] - side_w, to[1]}, {(uint32_t)side_w, (uint32_t)to[3]}}, 0, 1}};
+        vkCmdBeginRendering(cb, &ri);
+        vkCmdClearAttachments(cb, 1, &black, 2, bars);
+        vkCmdEndRendering(cb);
+        last = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        last_stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        last_write = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    }
     // HDR10: the menu goes into vk_hdr.c's RGBA8 image, which is then blended onto the swapchain image at the HUD's white
     VkImageView menu_view = overlay && g_sc_hdr ? vk_hdr_ui_target(cb, g_sc_ext.width, g_sc_ext.height) : VK_NULL_HANDLE;
     if (overlay && g_sc_hdr && !menu_view) overlay = 0;

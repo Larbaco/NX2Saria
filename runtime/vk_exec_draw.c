@@ -7313,6 +7313,12 @@ static void untranslated_dispatch_fallback(VkExec *ex) {
     VkFormat df = dst ? dst->format : VK_FORMAT_UNDEFINED;
     vk_texture_unlock();
     if (!si || !di) return;
+    // the scene upscaler (widescreen.c wide_menu_sides): it writes the light target (vk_dlaa.c vk_dlaa_upscaler asks the
+    // same) at the picture's size, or at three quarters of it in handheld mode, from the 3D scene and not from a movie's
+    // frame; a smaller target of that format is some other pass
+    unsigned pw, ph;
+    wide_picture(&pw, &ph);
+    if (df == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && !fmt_rgba8(sf) && 2 * dw >= pw && 2 * dh >= ph) wide_scene_drawn();
     static int logged;
     if (!logged++) rt_log("vk_exec: untranslated compute dispatch: its output image (%ux%u) gets a linear blit of its "
                           "largest input (%ux%u) instead (NX2SARIA_CS_FALLBACK=0 turns this off)", dw, dh, sw, sh);
