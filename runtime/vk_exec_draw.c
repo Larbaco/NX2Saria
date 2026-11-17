@@ -584,6 +584,8 @@ static void dummies_init(void) {
     Z.samp = vk_sampler_for(&sp);
     sp.cmp_mode = 1, sp.cmp_func = NVN_DEPTH_FUNC_ALWAYS;
     Z.samp_shadow = vk_sampler_for(&sp);
+    // The samplers every other one falls back to (tex_info_full, pool_sync_entries): without them there is none.
+    if (!Z.samp || !Z.samp_shadow) rt_fatal("vk: the default samplers could not be made (see the vkCreateSampler line above)");
 
     for (int i = 0; i < DV_COUNT; i++)
         make_dummy(i, VK_FORMAT_R8G8B8A8_UNORM, &DUMMY_SAMPLED, &Z.img[i].image, &Z.img[i].alloc, &Z.img[i].view, &Z.img[i].sview);

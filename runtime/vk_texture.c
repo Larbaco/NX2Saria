@@ -19,6 +19,7 @@
 #include "cfg.h"
 #include "flight.h"
 #include "gfx.h"
+#include "gfx_guard.h"
 #include "host.h"
 #include "nvn_api.h"
 #include "nvn_hmap.h"
@@ -252,6 +253,11 @@ static uint32_t tex_gen = 1;
 // Bumped with tex_gen and whenever a slot is registered: what vk_texture_by_id returns for any slot may have changed.
 static uint32_t slots_gen = 1;
 static uint32_t samp_gen = 1;   // bumped whenever a sampler slot is registered: vk_sampler_by_id may answer otherwise
+// After a sampler that could not be made (make_sampler): when the next attempt is due (plat_now_ns), 0 when none is
+// pending. Until then sampler_for makes no sampler that is not cached; at that time vk_sampler_gen bumps samp_gen once,
+// so the descriptor caches and the sampler pool look their samplers up again and the slots left without one try again.
+static uint64_t samp_retry_at;
+#define SAMP_RETRY_NS 250000000ull
 static uint64_t n_checks;    // draw-binding storage checks (make_fresh_snap) since the last perf line
 // tex_gen per storage address (hashed): a slot resolves through the entries at its own address only (slot_resolve), so
 // a slot's resolution stays valid while its address's generation does. NX2Saria finalizes and initializes transient
@@ -5301,7 +5307,13 @@ uint64_t vk_texture_slot_token(int id) {
     uint64_t v = __atomic_load_n(&si[id], __ATOMIC_ACQUIRE);
     return v ? (v >> 16) << 32 | __atomic_load_n(&agen[v & 0xffff], __ATOMIC_ACQUIRE) : 0;
 }
-uint32_t vk_sampler_gen(void) { return __atomic_load_n(&samp_gen, __ATOMIC_RELAXED); }
+uint32_t vk_sampler_gen(void) {
+    uint64_t at = __atomic_load_n(&samp_retry_at, __ATOMIC_RELAXED);   // a sampler that was not made is due again
+    if (__builtin_expect(at != 0, 0) && plat_now_ns() >= at &&
+        __atomic_compare_exchange_n(&samp_retry_at, &at, 0, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+        __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELAXED);
+    return __atomic_load_n(&samp_gen, __ATOMIC_RELAXED);
+}
 int vk_texture_slot_count_locked(void) { return ntslots; }
 int vk_sampler_slot_count_locked(void) { return nsslots; }
 
@@ -6120,10 +6132,29 @@ static VkSampler make_sampler(VkCtx *c, const samp_par *d) {
         rm.reductionMode = d->reduction == NVN_SAMPLER_REDUCTION_MIN ? VK_SAMPLER_REDUCTION_MODE_MIN : VK_SAMPLER_REDUCTION_MODE_MAX;
         *tail = &rm;
     }
-    VkSampler s;
+    VkSampler s = VK_NULL_HANDLE;
     VkResult r = vkCreateSampler(c->device, &si, NULL, &s);
-    if (r != VK_SUCCESS) rt_fatal("vk: vkCreateSampler failed (%d)", (int)r);
-    return s;
+    if (r == VK_SUCCESS) return s;
+    // Not made: the driver ran out of samplers, of custom border colour samplers or of memory. Once more without the
+    // custom border colour, the reduction mode and anisotropy, which a driver bounds or allocates for, and that
+    // sampler stands for these parameters; otherwise none, and the draw's descriptor takes the default sampler
+    // (vk_exec_draw.c tex_info_full, pool_sync_entries) until sampler_for tries again. The game used to end here.
+    VkResult r2 = r;
+    if (si.pNext || si.anisotropyEnable) {
+        VkSamplerCreateInfo plain = si;
+        plain.pNext = NULL;
+        plain.anisotropyEnable = VK_FALSE, plain.maxAnisotropy = 0;
+        if (plain.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT) plain.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        s = VK_NULL_HANDLE;
+        r2 = vkCreateSampler(c->device, &plain, NULL, &s);
+    }
+    static volatile int32_t n_failed;
+    uint32_t k = (uint32_t)plat_inc32(&n_failed);
+    if (gfx_fail_log_due(k))
+        rt_log("vk: vkCreateSampler failed (%d), %u times: %s", (int)r, k,
+               r2 == VK_SUCCESS ? "made without its custom border colour, reduction and anisotropy"
+                                : "the default sampler in its place, made again in 250 ms");
+    return r2 == VK_SUCCESS ? s : VK_NULL_HANDLE;
 }
 
 void vk_sampler_register(int id, const samp_par *s) {
@@ -6140,7 +6171,7 @@ void vk_sampler_register(int id, const samp_par *s) {
     sslots[id].p = *s;
     sslots[id].s = sslots[id].sp = sslots[id].sc = sslots[id].sd[0] = sslots[id].sd[1] = VK_NULL_HANDLE;
     sslots[id].used = 1;
-    samp_gen++;
+    __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELAXED);   // vk_sampler_gen bumps it too, unlocked
     unlock();
 }
 
@@ -6162,7 +6193,7 @@ void vk_sampler_dlss_bias(float b) {
         dlss_bias = b;
         for (int i = 0; i < nsslots; i++)   // looked up again (the key moves)
             sslots[i].s = sslots[i].sp = sslots[i].sc = sslots[i].sd[0] = sslots[i].sd[1] = VK_NULL_HANDLE;
-        samp_gen++;
+        __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELAXED);   // vk_sampler_gen bumps it too, unlocked
     }
     unlock();
 }
@@ -6184,13 +6215,14 @@ void vk_sampler_aniso_live(void) {
         aniso_log();
         for (int i = 0; i < nsslots; i++)   // looked up again (the key moves)
             sslots[i].s = sslots[i].sp = sslots[i].sc = sslots[i].sd[0] = sslots[i].sd[1] = VK_NULL_HANDLE;
-        samp_gen++;
+        __atomic_add_fetch(&samp_gen, 1, __ATOMIC_RELAXED);   // vk_sampler_gen bumps it too, unlocked
     }
     unlock();
 }
 
-// Caller holds the lock.
-static VkSampler sampler_for(VkCtx *c, const samp_par *s) {
+// Caller holds the lock. gated: a lookup of a slot's sampler, which within SAMP_RETRY_NS of a failure makes none; 0 for
+// vk_sampler_for (the default samplers every other falls back to, made once at the start, and the probes).
+static VkSampler sampler_make_for(VkCtx *c, const samp_par *s, int gated) {
     sampler_features(c);
     samp_par k;
     memset(&k, 0, sizeof k);
@@ -6199,17 +6231,27 @@ static VkSampler sampler_for(VkCtx *c, const samp_par *s) {
     if (aniso_raised(&k)) k.aniso = sf.aniso;                          // likewise
     VkSampler v = (VkSampler)nvn_hm_get(&samplers, &k);
     if (!v) {
+        // Within SAMP_RETRY_NS of a sampler that was not made, no new one is tried: a slot without one asks at each
+        // lookup, which would call into the driver for every draw that binds it.
+        uint64_t at = __atomic_load_n(&samp_retry_at, __ATOMIC_RELAXED);
+        if (gated && at && plat_now_ns() < at) return VK_NULL_HANDLE;   // the default sampler meanwhile
         v = make_sampler(c, &k);
+        if (!v) {   // never cached (nvn_hm_put takes no null), so it is made again after the wait
+            __atomic_store_n(&samp_retry_at, plat_now_ns() + SAMP_RETRY_NS, __ATOMIC_RELAXED);
+            return VK_NULL_HANDLE;
+        }
         nvn_hm_put(&samplers, &k, (void *)v);
     }
     return v;
 }
 
+static VkSampler sampler_for(VkCtx *c, const samp_par *s) { return sampler_make_for(c, s, 1); }
+
 VkSampler vk_sampler_for(const samp_par *s) {
     VkCtx *c = vk_ctx();
     if (!c || !s) return VK_NULL_HANDLE;
     lock();
-    VkSampler v = sampler_for(c, s);
+    VkSampler v = sampler_make_for(c, s, 0);
     unlock();
     return v;
 }

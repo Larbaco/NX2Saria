@@ -638,6 +638,16 @@ loss at the same moment end the process with exit code 72, one device report and
 device and opens no window; the device is not really lost, so what a driver answers after a loss is not covered.
 `device_lost_at = <n>` in `nx2saria.ini` ends a real run the same way at its n-th hand-over to the GPU queue.
 
+A change to the checks of the presentation and sampler paths (`runtime/gfx_guard.h`, `runtime/gfx_present.c`
+`create_swapchain`, `present_image`, `ng_ready`, `gfx_window_start`, `runtime/vk_texture.c` `make_sampler`,
+`sampler_for`) passes `python tests\gfx_guard_check.py`. It builds the header alone, with the signed overflow
+sanitizer where the compiler has it: the game's crop cut to the image against a 64-bit model over edge and random guest
+values up to `INT_MAX`, a swapchain image list taken whole or not at all (an error, `VK_INCOMPLETE`, fewer images than
+counted, more than the arrays hold), and how often a repeating failure is logged. Then it scans `gfx_present.c` and
+`vk_texture.c`: no swapchain image query, semaphore, fence, command pool, command buffer or sampler create may drop
+its result, and a failed `vkCreateSampler` may not end the game. No game files, no GPU; what a driver does after such
+a failure needs a run (`gfx: ... failed (<result>; <n> images), <n> times`, `vk: vkCreateSampler failed`).
+
 A change to how a fault ends the process (`runtime/main.c` `crash_handler`, `mode_done`) passes
 `python tests\exit_fault_check.py <game exe>`, which runs two crash probes: a fault inside a library while a mode runs
 is a crash (one FATAL line, exit code 71), and the same fault after the mode has returned, while the process is ending,
