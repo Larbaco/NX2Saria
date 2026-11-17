@@ -1293,6 +1293,48 @@ static int handle_source(uint64_t h, PlatFile **f, uint64_t *base, uint64_t *siz
     return 1;
 }
 
+// ---- read patches (fs.h romfs_read_patch): a few bytes of an original file, changed in the reads that cover them.
+// Registered before the guest starts and only switched off later, so romfs_read looks at the table without a lock.
+#define READ_PATCH_MAX 8
+static struct { uint64_t base, offset; uint32_t n; uint8_t repl[16]; } read_patch[READ_PATCH_MAX];
+static int read_patch_n;
+static int32_t read_patch_on;
+
+int romfs_read_patch(const char *rel, uint64_t offset, const void *orig, const void *repl, uint32_t n, char *why, size_t cap) {
+    fs_init();
+    uint64_t i = rel && image ? file_index(rel) : UINT64_MAX;
+    uint8_t have[16];
+    const char *no = i >= file_count                               ? "not in the RomFS"
+                     : overlay_slot(i)                             ? "served by a mod or a RomFS overlay"
+                     : !n || n > sizeof have || read_patch_n == READ_PATCH_MAX ? "too many bytes to change"
+                                                                   : NULL;
+    if (!no) {
+        Entry e = entry(i);
+        if (offset + n > e.size) no = "shorter than the change";
+        else if (read_at(image, have, n, e.offset + offset) != (int64_t)n || memcmp(have, orig, n)) no = "not the file the change is for";
+        else {
+            read_patch[read_patch_n].base = e.offset, read_patch[read_patch_n].offset = offset, read_patch[read_patch_n].n = n;
+            memcpy(read_patch[read_patch_n].repl, repl, n);
+            read_patch_n++;
+            __atomic_store_n(&read_patch_on, 1, __ATOMIC_RELEASE);
+        }
+    }
+    if (no && why) snprintf(why, cap, "%s %s", rel ? rel : "(none)", no);
+    return !no;
+}
+
+void romfs_read_patches_off(void) { __atomic_store_n(&read_patch_on, 0, __ATOMIC_RELEASE); }
+
+// The read patches of the original file at image offset base that fall into the n bytes read at offset.
+static void read_patch_apply(uint64_t base, uint64_t offset, uint8_t *buf, uint64_t n) {
+    for (int k = 0; k < read_patch_n; k++) {
+        uint64_t a = read_patch[k].offset, b = a + read_patch[k].n;
+        if (read_patch[k].base != base || b <= offset || a >= offset + n) continue;
+        uint64_t from = a > offset ? a : offset, to = b < offset + n ? b : offset + n;
+        memcpy(buf + (from - offset), read_patch[k].repl + (from - a), (size_t)(to - from));
+    }
+}
+
 uint32_t romfs_read(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uint64_t size) {
     PlatFile *f;
     uint64_t base, fsize;
@@ -1309,6 +1351,7 @@ uint32_t romfs_read(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uin
         if (r <= 0) rt_fatal("RomFS read failure at %#llx", (unsigned long long)(base + offset + done));
         done += (uint64_t)r;
     }
+    if (f == image && __atomic_load_n(&read_patch_on, __ATOMIC_ACQUIRE)) read_patch_apply(base, (uint64_t)offset, buffer, done);
     perf_mark_end(PERF_M_FILE, t0, done);
     *out = done;
     return 0;

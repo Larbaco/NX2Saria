@@ -55,6 +55,12 @@ int romfs_prompts_off(const char *folder);
 // (action_prompt.c); -1 when the layout by label was asked for but the layout file could not be changed.
 int romfs_action_prompt(void);
 const char *romfs_overlay(size_t k, const char **file, uint64_t *size, int *is_added);   // RomFS path of overlay k
+// Bytes changed in what the game reads of an original RomFS file (boot_map.c): from offset on, the n bytes orig become
+// repl in every read of rel that covers them, while the read patches are on. Before the guest starts. 0 when rel is not
+// in the RomFS, an overlay or a mod serves it, n is over 16, the file is shorter, or its bytes there are not orig (why
+// says which). romfs_read_patches_off ends all of them; romfs_load always gives the original.
+int romfs_read_patch(const char *rel, uint64_t offset, const void *orig, const void *repl, uint32_t n, char *why, size_t cap);
+void romfs_read_patches_off(void);
 void fs_trace(const char *what, const char *path);         // NX2SARIA_TRACE=fs: one line per open
 
 // ---- fs_host.c
