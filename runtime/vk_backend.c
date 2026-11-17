@@ -331,8 +331,9 @@ static int frame_hold(uint32_t skipped, int resized, uint64_t frame) {
 // the hand-off, vk_texture_get with its upload flush and vk_present_drain stay in present_image, outside the lock.
 // NX2SARIA_PRESENT_ORDER=0: at the present, whatever another thread replays, as in 0.10.1.
 static void frame_end(uint64_t frame, const tex_t *t) {   // t: the presented texture, for the trace = gfx line
-    // The frame's draws for the play gate of the background pipeline builds (vk_pipeline.c vk_pipeline_frame_note),
-    // read before vk_exec_frame_log, which sets the run's count back with NX2SARIA_TRACE=gfx.
+    // The frame's draws for the play gate of the background pipeline builds (vk_pipeline.c vk_pipeline_frame_note):
+    // the game's draws the replay recorded for it, the count frame_hold tells a scene from a thin frame by. Read
+    // before vk_exec_frame_log, which sets the run's count back with NX2SARIA_TRACE=gfx.
     static uint64_t pg_draws_at;
     uint64_t d = vk_exec_frame.draws;
     vk_pipeline_frame_note((uint32_t)(d >= pg_draws_at ? d - pg_draws_at : d));

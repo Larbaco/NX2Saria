@@ -5120,11 +5120,11 @@ static int pg_draws_min(void) {
         m = cfg_int("NX2SARIA_BG_BUILD_PLAY_DRAWS");
         if (m < 0) m = 0;
         if (m)
-            rt_log("vk_pipeline: background builds rest in play: while the frame shown has %d draws or more "
+            rt_log("vk: background builds rest in play: while the frame shown has %d draws or more "
                    "(NX2SARIA_BG_BUILD_PLAY_DRAWS; 0: they build in every frame); a pipeline a draw waits for is always "
                    "built", m);
         else
-            rt_log("vk_pipeline: background builds rest in play: off (NX2SARIA_BG_BUILD_PLAY_DRAWS 0): they build in "
+            rt_log("vk: background builds rest in play: off (NX2SARIA_BG_BUILD_PLAY_DRAWS 0): they build in "
                    "every frame");
         __atomic_store_n(&PG.draws_min, m, __ATOMIC_RELEASE);
     }
@@ -5188,7 +5188,7 @@ static void pg_log(void) {
     if (pg_draws_min() <= 0) return;
     plat_mutex_lock(&PG.lock);
     if (play_gate_changed(&PG.n, &PG.logged))
-        rt_log("vk_pipeline: background builds paused in play: %llu frames, %llu builds deferred (%llu rests, %.1f s of "
+        rt_log("vk: background builds paused in play: %llu frames, %llu builds deferred (%llu rests, %.1f s of "
                "builder time at rest; NX2SARIA_BG_BUILD_PLAY_DRAWS %d)", (unsigned long long)PG.n.frames,
                (unsigned long long)PG.n.deferred, (unsigned long long)PG.n.rests, PG.n.rest_ms / 1000.0,
                (int)PG.draws_min);

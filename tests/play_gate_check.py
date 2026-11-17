@@ -10,6 +10,7 @@ What the builders do at rest, and what it changes in the frame rate, shows only 
 Usage: play_gate_check.py
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,7 +40,20 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
                            str(ROOT / 'tests' / 'play_gate_check.c'), '-o', str(exe)], env=env)
-    return subprocess.run([str(exe)], env=env).returncode
+    return subprocess.run([str(exe)], env=env).returncode | log_lines()
+
+
+LOG_LINES = ['"vk: background builds paused in play: %llu frames, %llu builds deferred', '"vk: background builds rest in play: while the frame shown has %d draws or more', '"vk: background builds rest in play: off \\(']   # the log's lines a run is checked by (the formats in the runtime's source)
+
+
+def log_lines():
+    """0 when every log line this change leaves is in the runtime's source as its format string."""
+    src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['vk_pipeline.c'])
+    src = re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
+    missing = [p for p in LOG_LINES if not re.search(p, src)]
+    for p in missing:
+        print('play_gate_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['vk_pipeline.c'])))
+    return 1 if missing else 0
 
 
 if __name__ == '__main__':

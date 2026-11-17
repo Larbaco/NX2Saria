@@ -74,8 +74,8 @@ default, and go on in light frames: the title, menus, the pause and map screens,
 half a second (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c` `play_rest`). Those are the pool's background queue
 (the boot's records left to the background, and the optimised build that replaces a fast link), when stage libraries
 are on, and the library warm. A pipeline a draw waits for is always built; the stage library prebuild and the large
-compute builds do not rest. The start logs `vk_pipeline: background builds rest in play: while the frame shown has
-600 draws or more ...`, and each save in play and the one at the end `vk_pipeline: background builds paused in play: N
+compute builds do not rest. The start logs `vk: background builds rest in play: while the frame shown has
+600 draws or more ...`, and each save in play and the one at the end `vk: background builds paused in play: N
 frames, M builds deferred (R rests, S s of builder time at rest; ...)` when those numbers moved.
 
 To measure what it changes, run the same scenes with the gate and without it, in play mode (not `--shot`, which builds
