@@ -39,6 +39,10 @@ How to measure the frame rate of a scene the same way twice, and how to read the
   stalls far longer than in play: on an RX 570 with empty caches, the Market was blocked on pipeline builds for 123 s
   with `--shot` and 15 s without. Compare runs of the same mode only; `summary.md` says which mode a run used, and
   results from before the mode was recorded were all `--shot` runs.
+- **Boot map**: `--boot-map` starts each scene in its area without the title screen or the teleport: the scene's
+  `warp` step becomes the boot map (`docs/boot-to-map.md`), the area loads once, from the save, and nothing is pressed.
+  A run gets to its scene sooner and always the same way, but its warm-up starts at the arrival instead of in the
+  save's own area, so compare `--boot-map` runs with each other only (`meta.json` has `"boot_map": true`).
 - **MangoHud**: `--mangohud` runs the game with MangoHud's logging on and puts its average fps beside the game's,
   over the same stretch.
 - **One game at a time**: a run waits while another copy of the game or Ninja runs (`run_game.py --quiet`). Leave the

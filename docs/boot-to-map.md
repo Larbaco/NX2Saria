@@ -5,10 +5,10 @@ and its file menu never show. It is a test and debugging setting: a run without 
 tests in one area load, and nothing has to press through menus. Code: `runtime/boot_map.c`. Ocarina of Time 1.1.1 only.
 On other game versions the setting is ignored, and the log says so.
 
-This page records how the game goes from its title to play, what the setting changes and why there, and what is
-known, inferred or untested. Everything below was read from the 1.1.1 game files and code (build id `e0f3ccfa`).
-The research was done before the first run; *Runs* below says what the first runs showed. **[C]** marks what was read
-in the files or the code. **[I]** marks what is inferred.
+This page records how the game goes from its title to play, what the setting changes and why there, how to use it
+for tests and benchmarks, and what was seen in the first runs. The research was read from the 1.1.1 game files and
+code (build id `e0f3ccfa`). **[C]** marks what was read in the files or the code, or seen in a run. **[I]** marks
+what is inferred.
 
 ## Using it
 
@@ -25,14 +25,32 @@ Area names are the game's own. They are the keys of `Banc/BancBasedResource/Star
 teleport list shows them (F9 with `debug_menu = 1`). An area without a start position, or with an empty one,
 uses the area's default: the first entry of its list, which is where the game itself puts Link for an unknown name.
 
-Example of a run without a window or sound on Linux (`ocarina` is the game's executable there, `nx2saria.exe` on
-Windows), on a copy of the profile:
+### Controlled runs: tests and benchmarks
+
+A boot map loads a save and then the game saves the new place into it (*Risks*), so a run that should be the same
+every time starts from a fixed save on a throwaway copy of the profile. `tools/run_game.py` does that: it copies the
+game folder's profile, puts the save in it (`--save`: a `profile/save-backup/<time>` folder, a save folder or an
+exported save `.zip`), runs the game for a given game time and deletes the copy:
 
 ```sh
-SDL_VIDEODRIVER=offscreen SDL_AUDIO_DRIVER=dummy NX2SARIA_AUDIO=none \
-  NX2SARIA_BOOT_MAP=HyruleField_Child:HyruleField_FrontOfMarket NX2SARIA_BOOT_MAP_SLOT=2 \
-  timeout 150 ./ocarina --profile <copy of the profile>
+python tools/run_game.py <game folder> --save <backup> --boot-map HyruleField_Child:HyruleField_FrontOfMarket \
+    --boot-map-time 21:00 --seconds 10 --wall 180 --tag field-night
 ```
+
+- `--boot-map`, `--boot-map-slot`, `--boot-map-age` and `--boot-map-time` set the four keys.
+- The input script defaults to `tools/input/boot_map.txt`, which presses nothing: the title's A presses of
+  `load_save.txt` are not needed, and an A on arrival could start a conversation.
+- `--seconds` counts game time from the save's first frame, which is the arrival here.
+- The run's log goes to `<game folder>/logs/<tag>.log` (`--log` names another); the boot map's lines are printed at
+  the end, and the exit code is 3 when there is no `boot map: arrived in <area>` line for the area asked for.
+- Without a window or sound on Linux, put `SDL_VIDEODRIVER=offscreen SDL_AUDIO_DRIVER=dummy NX2SARIA_AUDIO=none`
+  in front of it.
+
+`tools/bench.py run ... --boot-map` starts each benchmark scene this way: the scene's `warp` step becomes the boot map
+(`docs/performance.md`).
+
+The same setting by hand, on a copy of the profile: `NX2SARIA_BOOT_MAP=<area>[:<start position>]` in the
+environment, or `boot_map = ...` in `nx2saria.ini`, and the game started with `--profile <copy>`.
 
 ### What the log says
 
@@ -348,27 +366,35 @@ run whose output goes through a pipe (`2>&1 | cat > out`) had all three lines in
 `boot map: on: ...`, `... progress.sav is read with the boot map's place (5 values ...)` and `boot map: arrived in
 KokiriForest_Child ... 0.0 m from the start position, 15.5 s after the start`.
 
+Through the tools, from the save backup `20261116-185859-539` (its latest slot is 3): `run_game.py --boot-map
+KokiriForest_Child --seconds 15` arrived 0.0 m from the start position 15.7 s after the start and exited with 0;
+`bench.py run --only kokiri --runs 1 --boot-map` booted to `KokiriForest_Child:ReturnFromDreamWorld` (arrived 0.0 m,
+16.0 s) and measured the scene as usual. With `NX2SARIA_TRACE=fs` the game opened every `Sequence/*.ainb` once, 0.9
+to 3.0 s after the start, and none again.
+
 ## Risks
 
-- **Tested on Linux only, on one account's saves.** *Runs* below lists what was seen. Windows, Master Quest, and a
-  return to the title after a boot map are not tried yet.
+- **Tested on Linux only, on one account's saves.** *Runs* above lists what was seen. Windows and Master Quest are
+  not tried yet.
 - **The read path is not a risk.** Every read of a game file reaches the changes **[C]**. The game reads files only
   through `nn::fs::ReadFile`, and the runtime replaces all three overloads of it (`fs_host.c` `ov_read_file`,
   `ov_read_options` and `ov_read_exact`). Each goes to `read_file`, which hands a RomFS handle to `romfs_read` and
-  applies a save handle's changes itself. Not known: whether the game reads a graph once at boot or again on each
-  return to the title (see the next risks).
+  applies a save handle's changes itself.
 - **The save changes after the game saves.** The game saves the patched values as the real ones. The area change
   ends with an autosave **[I]**, and from then on the slot holds the new area, age and time. Use a copy of the
   profile, as a capture replay does (`tools/capture_run.py` makes one).
-- **The patched graphs may stay loaded.** If the game reads the graphs once and keeps them, going back to the
-  title later in the same session goes straight back into the save. Loading another slot from the title then loads
-  the boot map's slot. The setting is meant for single test runs.
+- **The changed graphs stay loaded for the session.** The game reads every sequence graph once, at boot **[C]**
+  (*Runs*), so the title's and the slot's graphs keep the boot map's changes after the arrival. Going back to the
+  title later in that session goes straight into a load of the same slot again, from the place the game last saved
+  in it, and no other slot or new game can be chosen **[I]**. Start the game again for a normal title. The setting is
+  meant for single test runs.
 - **Skipped steps of the title.** Node 35 also sets `UI_Debug_IsOpenedTitle`, loads and closes `SystemOverlay_00`,
   and runs `SeqOneShotOnTitleBancOptimize`. The list and the check run `OnLoadList` / `OnLoadCheckBancOptimize`. These
   look like preloads that make the next load faster **[I]**; skipping them should cost only time. The steps of
   `LoadCheck`'s *Yes* are also skipped (its loading fade, `ChangePreGamePause`, `GamePauseOn`).
   `PrepareScreensOfLoading` in `TitleToMainWithLoadSave` opens its own loading fade.
-- **The facing.** The yaw formula is inferred. Link may face another way than at the start position.
+- **The facing.** The yaw formula is inferred from the start positions' rotations; the runs' pictures showed Link
+  facing a plausible way, not a measured one.
 - **A save that never reached the age asked for.** Without a sword or tunic of that age, Link may be missing
   equipment, or the game may refuse something. The overworld areas fix the age, so this concerns dungeons.
 - **Other saved state stays the save's**: the map position (`World_PlayerPos`, Vector3 8773f02d), the warp
@@ -383,30 +409,14 @@ KokiriForest_Child ... 0.0 m from the start position, 15.5 s after the start`.
   patches `slot_<N+6>`. The +6 also needs a second byte of the save manager (`+0x151`), which was not traced. A
   Master Quest account is untested.
 
-## When the build is allowed: what to run
+## Checking a change to it
 
-1. `python tests/boot_map_check.py` (docs/building.md, *Checks*) and `python tests/cfg_rows_check.py`.
-2. Build the game as usual (`tools/build_game.py`). The patch file is unchanged, so the translator's output is the
-   same.
-3. Without the setting, a normal start: the log has `boot map: off`, and the title, the file menu and a save load
-   behave as before.
-4. On a copy of the profile (`--profile`), with a save in slot 0 to 5, in a run without a window:
-
-   ```sh
-   SDL_VIDEODRIVER=offscreen SDL_AUDIO_DRIVER=dummy NX2SARIA_AUDIO=none \
-     NX2SARIA_BOOT_MAP=KokiriForest_Child timeout 150 ./ocarina --profile <copy of the profile>
-   ```
-
-   The log should have `boot map: on: ...`, then `... progress.sav is read with the boot map's place ...`, then
-   `boot map: arrived in KokiriForest_Child ...` a few metres from the start position. A `NX2SARIA_CAPTURE_AT` shot,
-   or the window, shows that no title or file menu came first.
-5. The same with a start position (`HyruleField_Child:HyruleField_FrontOfMarket`), with an adult area
-   (`HyruleField_Adult`) from a child save, with a dungeon and an age (`InsideTheDekuTree`, `boot_map_age = child`),
-   with `boot_map_time = 21:00` (night), and with `boot_map_slot` set to each slot that has a save.
-6. Check the facing: Link should face the way the area's start position faces (the yaw formula is inferred).
-7. The refusals: an unknown area, an unknown start position, an empty slot, `boot_map_time = 25:00`. Each should give
-   one line and a normal title.
-8. Go back to the title from the pause menu after a boot map run, and note what happens (see *Risks*: the graphs
-   may stay changed).
-9. After each run, compare the profile copy's slot with the original. The slot changes only after the game's own
-   save, and then it holds the boot map's place.
+1. `python tests/boot_map_check.py` (`docs/building.md`, *Checks*), `python tests/bench_check.py` and
+   `python tests/cfg_rows_check.py`.
+2. Without the setting the log has `boot map: off` and the title comes as before.
+3. `tools/run_game.py --boot-map` (above) for an overworld area, a start position with `--boot-map-time 21:00`, a
+   dungeon with `--boot-map-age child`, and another `--boot-map-slot`: each exits with 0 and prints its arrival line.
+   `NX2SARIA_SHOT_DIR` with `NX2SARIA_SHOT_EVERY=2` shows no title or file menu before the area.
+4. An unknown area, an unknown start position, an empty slot or `boot_map_time = 25:00` gives one line and the normal
+   title (`run_game.py` exits with 3: no arrival).
+5. Not yet run: Windows, a Master Quest account.
