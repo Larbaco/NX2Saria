@@ -22,6 +22,12 @@
 // - NumDisplay_00: the count that slides in from the right when rupees or an item's count change (two rows), to the
 //   right, where it stays next to the item slot.
 //
+// With NX2SARIA_WIDE_MENUS = center the loading screen keeps the whole picture (its fade must cover it), and the present
+// blacks out the picture's sides while the game draws no 3D scene (widescreen.c wide_menu_sides). Its icon,
+// LoadingFade_00's N_IconIn_00 (1778: bottom right), would be stretched over the whole picture with its layout and land in
+// that black side: its x and scale x are multiplied by 16:9 over the picture's ratio (the squeeze), which puts it in
+// the bottom right corner of the middle 16:9 at its own width, where a squeezed layout would draw it.
+//
 // The layout files are BFFH: little-endian records that point at each other by 64-bit offsets from the file's start.
 // - The header has a group of slots per table: +0x00 the offset of the list of name offsets, +0x08 that of the list
 //   of record offsets, +0x18 the count. Panes at 0x118 (in the order of the records: parents before children),
@@ -33,7 +39,7 @@
 //   floats, +0x40 their count, +0x48 one component byte a constant.
 // - A track: the offset of a 6-byte target code, +0x08 its first curve (0xffff none), +0x0a its first constant, +0x0c
 //   the curves' count, +0x0d the constants'. The code: bits 8-10 7 for a pane's own property, the pane's index in bits
-//   11-14 and 16-18 (the high part), bit 22 and byte 3 the property (1 and 1: translate).
+//   11-14 and 16-18 (the high part), bit 22 and byte 3 the property (1 and 0: scale; 1 and 1: translate).
 // - A curve: the offsets of its frames and of its values. The frames: their count at +0x10. The values: +0x00 the
 //   last value less the first (its span), +0x08 the offset of the floats, +0x10 their count, (value, slope) a key.
 //   The track's 7 bits of pane index name at most 128 panes; the game's largest layout here has 102.
@@ -54,13 +60,16 @@ enum { PANE_TABLE = 0x118, ANIM_TABLE = 0x238 };
 enum { PANE_SCALE_X = 0x10, PANE_ROTATE = 0x18, PANE_X = 0x1c, PANE_PARENT = 0x28, PANE_NEEDS = 0x2c };
 enum { ANIM_TRACKS = 0x08, ANIM_CURVES = 0x18, ANIM_COMPONENTS = 0x28, ANIM_CONSTANTS = 0x38, ANIM_CONST_COMPONENTS = 0x48 };
 enum { NO_INDEX = 0xffff, PANE_KIND = 7, COMPONENT_X = 0, MAX_PANES = 128 };
+enum { PROP_SCALE = 0, PROP_TRANSLATE = 1 };
 
 // ---- the plan
-// A pane moved out to a side (-1 left, 1 right); x: its translate x in the game's file.
+// A pane moved out to a side (-1 left, 1 right) by the HUD's distance, or (side 0) squeezed: its x and its scale x
+// multiplied by the squeeze. x and scale: its translate x and scale x in the game's file.
 typedef struct {
     const char *pane;
     float x;
     int side;
+    float scale;
 } Move;
 // The keys of one animation's curve of a pane's translate x at the minimap's place; at_place of keys in all.
 typedef struct {
@@ -74,20 +83,23 @@ typedef struct {
     int nmoves;
     const KeyMove *keys;
     int nkeys;
+    int menus;   // 0: the HUD's (WideHudShift out), 1: the menus' (WideHudShift squeeze)
 } Plan;
 
-static const Move player_status[] = {
-    {"N_ScaleL_00", -1920, -1}, {"N_ScaleR_00", 1920, 1}, {"N_SubItemBaseFishing_00", 1270, 1}, {"N_VRS_00", 1626, 1}};
-static const Move map_menu[] = {{"N_MiniMap_00", 0, 1}, {"N_EventEndIn_01", 0, 1}, {"N_MiniMapCap_00", 1470, 1},
-                                {"N_VRS_00", 1536, 1},   {"Pa_KeySmall_00", 0, 1}};
+static const Move player_status[] = {{"N_ScaleL_00", -1920, -1, 1}, {"N_ScaleR_00", 1920, 1, 1},
+                                     {"N_SubItemBaseFishing_00", 1270, 1, 1}, {"N_VRS_00", 1626, 1, 1}};
+static const Move map_menu[] = {{"N_MiniMap_00", 0, 1, 1}, {"N_EventEndIn_01", 0, 1, 1}, {"N_MiniMapCap_00", 1470, 1, 1},
+                                {"N_VRS_00", 1536, 1, 1},   {"Pa_KeySmall_00", 0, 1, 1}};
 static const KeyMove map_menu_keys[] = {{"MapType", "N_MapIcon_00", 1490, 1, 2, 7},
                                         {"DungeonMiniMapPattern", "N_PatternDungeonMini_01", 1536, 1, 19, 21}};
-static const Move num_display[] = {{"N_NumDisplayFirst_00", 0, 1}, {"N_NumDisplaySecond_00", 0, 1}};
+static const Move num_display[] = {{"N_NumDisplayFirst_00", 0, 1, 1}, {"N_NumDisplaySecond_00", 0, 1, 1}};
+static const Move loading_fade[] = {{"N_IconIn_00", 1778, 0, 1}};
 #define N(a) (int)(sizeof a / sizeof *a)
 static const Plan plans[] = {
-    {"PlayerStatus_00", player_status, N(player_status), NULL, 0},
-    {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys)},
-    {"NumDisplay_00", num_display, N(num_display), NULL, 0},
+    {"PlayerStatus_00", player_status, N(player_status), NULL, 0, 0},
+    {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys), 0},
+    {"NumDisplay_00", num_display, N(num_display), NULL, 0, 0},
+    {"LoadingFade_00", loading_fade, N(loading_fade), NULL, 0, 1},
 };
 enum { NPLANS = sizeof plans / sizeof *plans };
 // The most fields one layout's edit writes: its panes, its keys and each curve's span of values.
@@ -99,9 +111,15 @@ float wide_hud_out(unsigned w, unsigned h) {
     return r < wide * 1.01 ? 0 : (float)(1080.0 * r - 1920.0);
 }
 
+// The plan applies to this shift: the HUD's with a distance, the menus' with a squeeze.
+static int applies(const Plan *plan, const WideHudShift *s) {
+    return plan->menus ? s->squeeze > 0 && s->squeeze < 1 : s->out > 0;
+}
+
 int wide_hud_counts(WideHudCount *out, int max) {
     int k = 0;
     for (int i = 0; i < NPLANS && k < max; i++) {
+        if (plans[i].menus) continue;
         int keys = 0;
         for (int j = 0; j < plans[i].nkeys; j++) keys += plans[i].keys[j].at_place;
         out[k++] = (WideHudCount){plans[i].layout, plans[i].nmoves, keys};
@@ -181,8 +199,9 @@ static int plain_ancestors(const uint8_t *p, size_t n, const char *layout, const
     return 0;
 }
 
-// The translate x tracks of pane `index` in the layout's animations: the curves' offsets (their animation's name in
-// anim[]) and the constants' value offsets. Returns how many there are, -1 when the animations do not fit the file.
+// The x tracks of property `prop` (PROP_TRANSLATE, PROP_SCALE) of pane `index` in the layout's animations: the curves'
+// offsets (their animation's name in anim[]) and the constants' value offsets. Returns how many there are, -1 when the
+// animations do not fit the file.
 enum { MAX_TRACKS = 16 };
 typedef struct {
     const char *anim;
@@ -190,7 +209,7 @@ typedef struct {
     uint64_t constant;   // the offset of a constant's float
 } Track;
 
-static int x_tracks(const uint8_t *p, size_t n, uint32_t index, Track *out, int max) {
+static int x_tracks(const uint8_t *p, size_t n, uint32_t index, int prop, Track *out, int max) {
     uint64_t names, records;
     uint32_t count;
     int found = 0;
@@ -219,7 +238,7 @@ static int x_tracks(const uint8_t *p, size_t n, uint32_t index, Track *out, int 
             uint64_t v = 0;
             for (int i = 5; i >= 0; i--) v = v << 8 | code[i];
             uint32_t kind = (v >> 8) & 7, pane = ((v >> 11) & 0xf) | (((v >> 16) & 7) << 4);
-            if (kind != PANE_KIND || pane != index || !((v >> 22) & 1) || code[3] != 1) continue;   // its translate
+            if (kind != PANE_KIND || pane != index || !((v >> 22) & 1) || code[3] != prop) continue;
             unsigned first = head[0] | head[1] << 8, cfirst = head[2] | head[3] << 8, nc = head[4], nk = head[5];
             for (unsigned k = first; first != NO_INDEX && k < first + nc; k++) {
                 uint64_t c;
@@ -259,6 +278,33 @@ static int track_holds(const uint8_t *p, size_t n, const Track *t, float v) {
     return 0;
 }
 
+// For a squeezed pane, whose x is a distance from the grid's centre: each ancestor sits at x 0, and no animation keys
+// an ancestor's x or scale x, so that the pane's own x is where it lands. 1, or 0 with why.
+static int centred_ancestors(const uint8_t *p, size_t n, const char *layout, const char *pane, uint64_t rec, char *why,
+                             size_t why_n) {
+    uint64_t names, records, r = rec;
+    uint32_t count;
+    Track tr[MAX_TRACKS];
+    if (!table(p, n, PANE_TABLE, &names, &records, &count)) return 0;
+    for (uint32_t step = 0; step <= count; step++) {
+        uint32_t parent;
+        float x;
+        if (!u32_at(p, n, r + PANE_PARENT, &parent)) break;
+        if (parent == 0xffffffffu) return 1;
+        if (parent >= count || !u64_at(p, n, records + 8 * (uint64_t)parent, &r) || r > n || n - r < PANE_NEEDS ||
+            !f32_at(p, n, r + PANE_X, &x))
+            break;
+        if (!same(x, 0) || x_tracks(p, n, parent, PROP_TRANSLATE, tr, MAX_TRACKS) ||
+            x_tracks(p, n, parent, PROP_SCALE, tr, MAX_TRACKS)) {
+            snprintf(why, why_n, "%s %s is inside a pane at x %g or one an animation moves or scales", layout, pane,
+                     (double)x);
+            return 0;
+        }
+    }
+    snprintf(why, why_n, "%s %s has a damaged chain of parents", layout, pane);
+    return 0;
+}
+
 // ---- the edit: every float it writes, found and checked first
 typedef struct {
     uint64_t at;
@@ -285,13 +331,18 @@ static void say(char *report, size_t report_n, const char *fmt, ...) {
 // The edits of `plan` on p[0..n): from the game's values to the moved ones (moved = 0), or what reading the moved file
 // back finds (moved = 1: from and to both the moved values). Every field read must hold its from value. Returns the
 // count, -1 with why.
-static int gather(const uint8_t *p, size_t n, const Plan *plan, float out, int moved, Edit *e, char *report,
-                  size_t report_n, char *why, size_t why_n) {
+static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShift *s, int moved, Edit *e,
+                  char *report, size_t report_n, char *why, size_t why_n) {
+    float out = s->out, q = s->squeeze;
     int k = 0;
     const char *L = plan->layout;
     uint64_t names, records;
     uint32_t npanes;
-    if (!table(p, n, PANE_TABLE, &names, &records, &npanes) || npanes > MAX_PANES) {
+    if (!table(p, n, PANE_TABLE, &names, &records, &npanes)) {
+        snprintf(why, why_n, "%s has a damaged table of panes", L);
+        return -1;
+    }
+    if (npanes > MAX_PANES) {
         snprintf(why, why_n, "%s has %u panes, more than the %d its animations can name", L, npanes, MAX_PANES);
         return -1;
     }
@@ -299,9 +350,11 @@ static int gather(const uint8_t *p, size_t n, const Plan *plan, float out, int m
         const Move *m = &plan->moves[i];
         uint64_t rec;
         int index = table_find(p, n, PANE_TABLE, m->pane, PANE_NEEDS, &rec);
-        float x, to = m->x + m->side * out, from = moved ? to : m->x;
+        int squeeze = !m->side;
+        float x, sx, to = squeeze ? m->x * q : m->x + m->side * out, from = moved ? to : m->x;
+        float sto = m->scale * q, sfrom = moved ? sto : m->scale;
         Track tr[MAX_TRACKS];
-        if (index < 0 || !f32_at(p, n, rec + PANE_X, &x)) {
+        if (index < 0 || !f32_at(p, n, rec + PANE_X, &x) || !f32_at(p, n, rec + PANE_SCALE_X, &sx)) {
             snprintf(why, why_n, "%s has no pane %s", L, m->pane);
             return -1;
         }
@@ -309,25 +362,38 @@ static int gather(const uint8_t *p, size_t n, const Plan *plan, float out, int m
             snprintf(why, why_n, "%s %s x is %g, not %g", L, m->pane, (double)x, (double)from);
             return -1;
         }
-        int keyed = x_tracks(p, n, (uint32_t)index, tr, MAX_TRACKS);
-        if (keyed < 0) {
-            snprintf(why, why_n, "%s's animations are damaged", L);
+        if (squeeze && !same(sx, sfrom)) {
+            snprintf(why, why_n, "%s %s scale x is %g, not %g", L, m->pane, (double)sx, (double)sfrom);
             return -1;
         }
-        if (keyed > 0) {
-            snprintf(why, why_n, "%s %s has its x keyed by %s", L, m->pane, tr[0].anim);
-            return -1;
+        // its x (and, squeezed, its scale x) no animation keys: a key would put back what the file says
+        for (int prop = PROP_TRANSLATE; prop >= (squeeze ? PROP_SCALE : PROP_TRANSLATE); prop--) {
+            int keyed = x_tracks(p, n, (uint32_t)index, prop, tr, MAX_TRACKS);
+            if (keyed < 0) {
+                snprintf(why, why_n, "%s's animations are damaged", L);
+                return -1;
+            }
+            if (keyed > 0) {
+                snprintf(why, why_n, "%s %s has its %s keyed by %s", L, m->pane, prop == PROP_SCALE ? "scale x" : "x",
+                         tr[0].anim);
+                return -1;
+            }
         }
         if (!plain_ancestors(p, n, L, m->pane, rec, why, why_n)) return -1;
+        if (squeeze && !centred_ancestors(p, n, L, m->pane, rec, why, why_n)) return -1;
         k = add(e, k, rec + PANE_X, from, to);
         say(report, report_n, "%s%s x %g -> %g", i ? ", " : "", m->pane, (double)m->x, (double)to);
+        if (squeeze) {
+            k = add(e, k, rec + PANE_SCALE_X, sfrom, sto);
+            say(report, report_n, ", scale x %g -> %g", (double)m->scale, (double)sto);
+        }
     }
     for (int i = 0; i < plan->nkeys; i++) {
         const KeyMove *km = &plan->keys[i];
         uint64_t rec;
         int index = table_find(p, n, PANE_TABLE, km->pane, PANE_NEEDS, &rec);
         Track tr[MAX_TRACKS];
-        int nt = index < 0 ? -1 : x_tracks(p, n, (uint32_t)index, tr, MAX_TRACKS), found = 0;
+        int nt = index < 0 ? -1 : x_tracks(p, n, (uint32_t)index, PROP_TRANSLATE, tr, MAX_TRACKS), found = 0;
         if (nt < 0 || nt > MAX_TRACKS) {
             snprintf(why, why_n, index < 0 ? "%s has no pane %s" : "%s's animations of %s cannot be read", L, km->pane);
             return -1;
@@ -399,21 +465,21 @@ static const Plan *plan_of(const char *member) {
     return NULL;
 }
 
-int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, float out, char *report, size_t report_n, char *why,
-                     size_t why_n) {
+int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift *s, char *report, size_t report_n,
+                     char *why, size_t why_n) {
     const Plan *plan = plan_of(member);
     if (report && report_n) report[0] = 0;
-    if (!plan || !(out > 0)) return 0;
+    if (!plan || !applies(plan, s)) return 0;
     if (n < 4 || memcmp(p, "BFFH", 4)) {
         snprintf(why, why_n, "%s is not a BFFH layout", member);
         return -1;
     }
     Edit e[MAX_EDITS], back[MAX_EDITS];
-    int k = gather(p, n, plan, out, 0, e, report, report_n, why, why_n);
+    int k = gather(p, n, plan, s, 0, e, report, report_n, why, why_n);
     if (k < 0) {
         char why2[200];
         // moved already (by an earlier start's file a mod serves, say): nothing to change
-        if (gather(p, n, plan, out, 1, back, NULL, 0, why2, sizeof why2) >= 0) {
+        if (gather(p, n, plan, s, 1, back, NULL, 0, why2, sizeof why2) >= 0) {
             if (report && report_n) report[0] = 0;
             return 0;
         }
@@ -430,7 +496,7 @@ int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, float out, char *
     // Read the layout again as the game will: each field where it was, with its new value. A file whose fields lie
     // on the records that lead to them reads otherwise; it gets its bytes back, last written first.
     char why2[200];
-    int kb = gather(p, n, plan, out, 1, back, NULL, 0, why2, sizeof why2);
+    int kb = gather(p, n, plan, s, 1, back, NULL, 0, why2, sizeof why2);
     int ok = kb == k;
     for (int i = 0; ok && i < k; i++) ok = back[i].at == e[i].at;
     if (!ok) {
@@ -478,14 +544,18 @@ static int copies_of(const uint8_t *sarc, size_t n, const char *member, Copies *
     return 1;
 }
 
-int wide_hud_archive(uint8_t *sarc, size_t n, float out, char *why, size_t why_n) {
-    if (!(out > 0)) return 0;
+int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
     Copies c[NPLANS];
     char member[64], report[NPLANS][600], trial_report[600];
+    int any = 0;
     for (int i = 0; i < NPLANS; i++) {
+        c[i].copies = 0;   // a plan that does not apply has none
+        if (!applies(&plans[i], s)) continue;
+        any = 1;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
         if (!copies_of(sarc, n, member, &c[i], why, why_n)) return -1;
     }
+    if (!any) return 0;
     // Layouts that share bytes with another layout cannot be edited alone.
     for (int i = 0; i < NPLANS; i++)
         for (int a = 0; a < c[i].copies; a++)
@@ -508,7 +578,7 @@ int wide_hud_archive(uint8_t *sarc, size_t n, float out, char *why, size_t why_n
                 return -1;
             }
             memcpy(trial, sarc + c[i].at[j], c[i].size[j]);
-            int r = wide_hud_lay_out(trial, c[i].size[j], member, out, trial_report, sizeof trial_report, why, why_n);
+            int r = wide_hud_lay_out(trial, c[i].size[j], member, s, trial_report, sizeof trial_report, why, why_n);
             free(trial);
             if (r < 0) return -1;
             if (r > 0) memcpy(report[i], trial_report, sizeof trial_report);
@@ -520,24 +590,35 @@ int wide_hud_archive(uint8_t *sarc, size_t n, float out, char *why, size_t why_n
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
         for (int j = 0; j < c[i].copies; j++) {
             // copies that share their bytes are laid out once: the second finds them moved and changes nothing
-            int r = wide_hud_lay_out(sarc + c[i].at[j], c[i].size[j], member, out, NULL, 0, why, why_n);
+            int r = wide_hud_lay_out(sarc + c[i].at[j], c[i].size[j], member, s, NULL, 0, why, why_n);
             if (r < 0) return -1;   // not after a trial of the same bytes; kept so that a change here cannot hide one
             fields += r;
         }
         total += fields;
         if (fields)
-            rt_log("wide hud: %s (%d cop%s, %d fields): %s%s", plans[i].layout, c[i].copies,
+            rt_log("%s: %s (%d cop%s, %d fields): %s%s", plans[i].menus ? "widescreen: menus" : "wide hud",
+                   plans[i].layout, c[i].copies,
                    c[i].copies == 1 ? "y" : "ies", fields, report[i],
                    strlen(report[i]) + 1 >= sizeof report[i] ? " ..." : "");
     }
     return total;
 }
 
-int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, float out, void **out_z,
+// What the shift edits, for the log: "the HUD's edge elements 660 units out, the loading icon at 0.744 of its width".
+static void shift_words(const WideHudShift *s, char *out, size_t out_n) {
+    out[0] = 0;
+    if (s->out > 0) say(out, out_n, "the HUD's edge elements %g units out", (double)s->out);
+    if (s->squeeze > 0 && s->squeeze < 1)
+        say(out, out_n, "%sthe loading icon at %.3f of its width", out[0] ? ", " : "", (double)s->squeeze);
+}
+
+int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s, void **out_z,
                    size_t *out_n) {
     uint64_t t0 = plat_now_ns();
     *out_z = NULL;
-    if (!(out > 0)) return 0;
+    char what[160];
+    shift_words(s, what, sizeof what);
+    if (!what[0]) return 0;
     int result = -1;
     uint8_t *dics = NULL, *raw = NULL;
     void *z = NULL;
@@ -572,7 +653,7 @@ int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, 
         snprintf(why, sizeof why, "the layout archive does not decompress");
         goto done;
     }
-    int changed = wide_hud_archive(raw, (size_t)rn, out, why, sizeof why);
+    int changed = wide_hud_archive(raw, (size_t)rn, s, why, sizeof why);
     if (changed <= 0) {
         result = changed;
         goto done;
@@ -590,12 +671,12 @@ int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, 
     }
     *out_z = z, *out_n = zn, z = NULL;
     result = 1;
-    rt_log("wide hud: the HUD's edge elements moved %g units out, %d fields (%.0f ms)", (double)out, changed,
+    rt_log("wide hud: the layout archive edited (%s), %d fields (%.0f ms)", what, changed,
            (double)(plat_now_ns() - t0) / 1e6);
 done:
-    if (result == 0) rt_log("wide hud: the layout archive has the HUD's edge elements moved %g units out already", (double)out);
-    if (result < 0) rt_log("wide hud: %s; the layout archive is served as it is (the game's own keeps the HUD in the "
-                           "middle 16:9)", why);
+    if (result == 0) rt_log("wide hud: the layout archive has these edits already (%s)", what);
+    if (result < 0) rt_log("wide hud: %s; the layout archive is served as it is (the game's own keeps the HUD and the "
+                           "loading icon where the game lays them out)", why);
     free(z);
     free(raw);
     free(dics);

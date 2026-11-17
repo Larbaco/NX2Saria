@@ -19,6 +19,11 @@
 #include "sarc.h"
 #include "wide_hud.h"
 
+// A shift of the HUD alone (out units), of the loading icon alone (squeeze q), or both.
+#define HUD(o) (&(WideHudShift){(o), 1.0f})
+#define MENUS(q) (&(WideHudShift){0, (q)})
+#define BOTH(o, q) (&(WideHudShift){(o), (q)})
+
 static int fails;
 #define CHECK(c, ...)                                                                                                  \
     do {                                                                                                               \
@@ -240,12 +245,21 @@ static const PaneDef num_panes[] = {{"RootPane", -1, 0, 0, 1, 0},
 static const CurveDef num_in[] = {{"Pa_NumDisplay_00", 1, 0, 2, {380, 0}}};
 static const AnimDef num_anims[] = {{"In", num_in, 1, NULL, 0}};
 
+static const PaneDef loading_panes[] = {{"RootPane", -1, 0, 0, 1, 0},
+                                        {"N_In_00", 0, 0, 0, 1, 0},
+                                        {"P_Fade_00", 1, 0, 0, 1, 0},
+                                        {"N_IconIn_00", 0, 1778, -936, 1, 0},
+                                        {"N_LoadIcon_00", 3, 0, 0, 1, 0}};
+static const CurveDef loading_in[] = {{"N_IconIn_00", 4, 0, 2, {0, 1}}, {"N_In_00", 4, 0, 2, {0, 1}}};
+static const AnimDef loading_anims[] = {{"NormalIn", loading_in, 2, NULL, 0}};
+
 static const LayoutDef layouts[] = {
     {"PlayerStatus_00.buil", status_panes, sizeof status_panes / sizeof *status_panes, status_anims, 2},
     {"MapMenu_00.buil", map_panes, sizeof map_panes / sizeof *map_panes, map_anims, 3},
     {"NumDisplay_00.buil", num_panes, sizeof num_panes / sizeof *num_panes, num_anims, 1},
+    {"LoadingFade_00.buil", loading_panes, sizeof loading_panes / sizeof *loading_panes, loading_anims, 1},
 };
-enum { NLAYOUTS = 3 };
+enum { NLAYOUTS = 4 };
 
 // ---- a SARC: one other member, then members[i] (bytes[i], sizes[i]) in order
 enum { MAX_MEMBERS = 32 };
@@ -355,7 +369,7 @@ static void check_layouts(void) {
     // PlayerStatus_00: the four panes out to their sides, nothing else
     uint8_t *p = malloc(made_n[0]);
     memcpy(p, made[0], made_n[0]);
-    int r = wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", out, report, sizeof report, why, sizeof why);
+    int r = wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", HUD(out), report, sizeof report, why, sizeof why);
     CHECK(r == 4, "PlayerStatus_00: %d fields (%s)", r, why);
     CHECK(pane_x(p, 0, "N_ScaleL_00") == -2580 && pane_x(p, 0, "N_ScaleR_00") == 2580 &&
               pane_x(p, 0, "N_SubItemBaseFishing_00") == 1930 && pane_x(p, 0, "N_VRS_00") == 2286,
@@ -370,9 +384,9 @@ static void check_layouts(void) {
     // moved already: nothing more; by another distance: refused, unchanged
     uint8_t *q = malloc(made_n[0]);
     memcpy(q, p, made_n[0]);
-    r = wide_hud_lay_out(q, made_n[0], "PlayerStatus_00.buil", out, report, sizeof report, why, sizeof why);
+    r = wide_hud_lay_out(q, made_n[0], "PlayerStatus_00.buil", HUD(out), report, sizeof report, why, sizeof why);
     CHECK(r == 0 && !memcmp(q, p, made_n[0]) && !report[0], "PlayerStatus_00 again: %d", r);
-    r = wide_hud_lay_out(q, made_n[0], "PlayerStatus_00.buil", 1920, report, sizeof report, why, sizeof why);
+    r = wide_hud_lay_out(q, made_n[0], "PlayerStatus_00.buil", HUD(1920), report, sizeof report, why, sizeof why);
     CHECK(r == -1 && !memcmp(q, p, made_n[0]) && strstr(why, "N_ScaleL_00 x is -2580"), "PlayerStatus_00 at 1920 over "
           "660: %d (%s)", r, why);
     free(q);
@@ -381,7 +395,7 @@ static void check_layouts(void) {
     // MapMenu_00: the minimap's panes and the keys at its place; the pause map's pane and keys stay
     p = malloc(made_n[1]);
     memcpy(p, made[1], made_n[1]);
-    r = wide_hud_lay_out(p, made_n[1], "MapMenu_00.buil", out, report, sizeof report, why, sizeof why);
+    r = wide_hud_lay_out(p, made_n[1], "MapMenu_00.buil", HUD(out), report, sizeof report, why, sizeof why);
     CHECK(r == 5 + 2 + 19 + 1, "MapMenu_00: %d fields (%s)", r, why);
     CHECK(pane_x(p, 1, "N_MiniMap_00") == 660 && pane_x(p, 1, "N_EventEndIn_01") == 660 &&
               pane_x(p, 1, "N_MiniMapCap_00") == 2130 && pane_x(p, 1, "N_VRS_00") == 2196 &&
@@ -409,22 +423,44 @@ static void check_layouts(void) {
     // NumDisplay_00: both rows to the right; the part's own slide keys stay
     p = malloc(made_n[2]);
     memcpy(p, made[2], made_n[2]);
-    r = wide_hud_lay_out(p, made_n[2], "NumDisplay_00.buil", out, report, sizeof report, why, sizeof why);
+    r = wide_hud_lay_out(p, made_n[2], "NumDisplay_00.buil", HUD(out), report, sizeof report, why, sizeof why);
     CHECK(r == 2 && pane_x(p, 2, "N_NumDisplayFirst_00") == 660 && pane_x(p, 2, "N_NumDisplaySecond_00") == 660 &&
               pane_x(p, 2, "Pa_NumDisplay_00") == 1580 && rf(p, made_values_at[2][0][0] + 24) == 380,
           "NumDisplay_00: %d (%s)", r, why);
     free(p);
 
+    // LoadingFade_00: its icon squeezed into the middle 16:9's corner, for the menus' shift alone
+    p = malloc(made_n[3]);
+    memcpy(p, made[3], made_n[3]);
+    CHECK(wide_hud_lay_out(p, made_n[3], "LoadingFade_00.buil", HUD(660), report, sizeof report, why, sizeof why) == 0 &&
+              !memcmp(p, made[3], made_n[3]),
+          "LoadingFade_00 changed by the HUD's shift");
+    r = wide_hud_lay_out(p, made_n[3], "LoadingFade_00.buil", MENUS(0.75f), report, sizeof report, why, sizeof why);
+    CHECK(r == 2 && pane_x(p, 3, "N_IconIn_00") == 1333.5f &&
+              rf(p, made_pane_at[3][pane_index(&layouts[3], "N_IconIn_00")] + 0x10) == 0.75f &&
+              pane_x(p, 3, "N_LoadIcon_00") == 0 && !strcmp(report, "N_IconIn_00 x 1778 -> 1333.5, scale x 1 -> 0.75"),
+          "LoadingFade_00: %d, report %s (%s)", r, report, why);
+    CHECK(wide_hud_lay_out(p, made_n[3], "LoadingFade_00.buil", MENUS(0.75f), report, sizeof report, why, sizeof why) ==
+              0,
+          "LoadingFade_00 again");
+    free(p);
+    p = malloc(made_n[0]);
+    memcpy(p, made[0], made_n[0]);
+    CHECK(wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", MENUS(0.75f), report, sizeof report, why, sizeof why) ==
+              0 && !memcmp(p, made[0], made_n[0]),
+          "PlayerStatus_00 changed by the menus' shift");
+    free(p);
+
     // a member edges mode does not edit, and no distance: nothing
     p = malloc(made_n[0]);
     memcpy(p, made[0], made_n[0]);
-    CHECK(wide_hud_lay_out(p, made_n[0], "DoCommand_00.buil", out, report, sizeof report, why, sizeof why) == 0 &&
-              wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", 0, report, sizeof report, why, sizeof why) == 0 &&
+    CHECK(wide_hud_lay_out(p, made_n[0], "DoCommand_00.buil", HUD(out), report, sizeof report, why, sizeof why) == 0 &&
+              wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", HUD(0), report, sizeof report, why, sizeof why) == 0 &&
               !memcmp(p, made[0], made_n[0]),
           "an unedited member or out 0 changed something");
     // not a BFFH file
     p[0] = 'X';
-    CHECK(wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", out, report, sizeof report, why, sizeof why) == -1,
+    CHECK(wide_hud_lay_out(p, made_n[0], "PlayerStatus_00.buil", HUD(out), report, sizeof report, why, sizeof why) == -1,
           "a file without BFFH");
     free(p);
 }
@@ -436,7 +472,8 @@ static void refused(int layout, const char *what, const char *expect, void (*fau
     memcpy(p, made[layout], made_n[layout]);
     fault(p);
     memcpy(keep, p, made_n[layout]);
-    int r = wide_hud_lay_out(p, made_n[layout], layouts[layout].member, 660, report, sizeof report, why, sizeof why);
+    int r = wide_hud_lay_out(p, made_n[layout], layouts[layout].member, BOTH(660, 0.75f), report, sizeof report, why,
+                             sizeof why);
     CHECK(r == -1 && !memcmp(p, keep, made_n[layout]) && strstr(why, expect), "%s: %d, why \"%s\" (expected \"%s\")",
           what, r, why, expect);
     free(p);
@@ -469,6 +506,12 @@ static const ConstDef keyed_const[] = {{"N_VRS_00", 1, 0, 1626}};
 static const AnimDef keyed_const_anims[] = {{"IsSubItemVisible", NULL, 0, keyed_const, 1}};
 
 static void f_common_scale(uint8_t *p) { set_pane_f(p, 1, "N_Common_00", 0x10, 0.5f); }
+static void f_icon_scale(uint8_t *p) { set_pane_f(p, 3, "N_IconIn_00", 0x10, 0.9f); }
+static void f_root_x(uint8_t *p) { set_pane_f(p, 3, "RootPane", 0x1c, 10); }
+static const CurveDef root_scaled_in[] = {{"RootPane", 0, 0, 2, {0.5f, 1}}};
+static const AnimDef root_scaled[] = {{"NormalIn", root_scaled_in, 1, NULL, 0}};
+static const CurveDef icon_scale_in[] = {{"N_IconIn_00", 0, 0, 2, {0.5f, 1}}};
+static const AnimDef icon_scaled[] = {{"NormalIn", icon_scale_in, 1, NULL, 0}};
 // Points pane `a`'s record offset in the pane table at `at` (another record, or a place inside one).
 static void set_record(uint8_t *p, int layout, const char *a, uint64_t at) {
     uint64_t records;
@@ -500,7 +543,7 @@ static void refused_layout(const LayoutDef *L, const char *what, const char *exp
     size_t n = make_layout(L);
     uint8_t *keep = malloc(n);
     memcpy(keep, file, n);
-    int r = wide_hud_lay_out(file, n, L->member, 660, NULL, 0, why, sizeof why);
+    int r = wide_hud_lay_out(file, n, L->member, BOTH(660, 0.75f), NULL, 0, why, sizeof why);
     CHECK(r == -1 && !memcmp(file, keep, n) && strstr(why, expect), "%s: %d, why \"%s\" (expected \"%s\")", what, r, why,
           expect);
     free(keep);
@@ -515,6 +558,16 @@ static void check_refusals(void) {
     refused(2, "a broken chain of parents", "damaged chain of parents", f_parent);
     refused(2, "a pane renamed", "has no pane N_NumDisplayFirst_00", f_name);
     refused(1, "a scaled parent of a keyed pane", "N_MapIcon_00 is inside a pane scaled 0.5", f_common_scale);
+    refused(3, "the loading icon's scale not the game's", "N_IconIn_00 scale x is 0.9, not 1", f_icon_scale);
+    refused(3, "the loading icon in a parent off the centre", "N_IconIn_00 is inside a pane at x 10", f_root_x);
+    {
+        LayoutDef F = layouts[3];
+        F.anims = icon_scaled, F.nanims = 1;
+        refused_layout(&F, "the loading icon's scale keyed", "N_IconIn_00 has its scale x keyed by NormalIn");
+        F.anims = root_scaled;
+        refused_layout(&F, "the loading icon's parent scaled by an animation",
+                       "N_IconIn_00 is inside a pane at x 0 or one an animation moves or scales");
+    }
     refused(1, "two moved panes on one record", "two moved values in one place", f_shared);
     // a moved value that lies on what leads to another field: N_MiniMapCap_00's record laid over N_MiniMap_00's so
     // that its parent index is N_MiniMap_00's x (0, the root) and its x N_MiniMap_00's scale; moving N_MiniMap_00 makes
@@ -529,7 +582,7 @@ static void check_refusals(void) {
         memcpy(p + mini + 0x10, &x, 4);
         memcpy(p + mini + 0x1c, &zero, 4);   // a zero whose bits are 0: the root's index
         memcpy(keep, p, made_n[1]);
-        int r = wide_hud_lay_out(p, made_n[1], "MapMenu_00.buil", 660, NULL, 0, why, sizeof why);
+        int r = wide_hud_lay_out(p, made_n[1], "MapMenu_00.buil", HUD(660), NULL, 0, why, sizeof why);
         CHECK(r == -1 && !memcmp(p, keep, made_n[1]) && strstr(why, "reads otherwise after the edit"),
               "a field over another's parent index: %d (%s)", r, why);
         free(p);
@@ -562,18 +615,18 @@ static void check_refusals(void) {
     char why[240] = "";
     L.anims = keyed_anims, L.nanims = 1;
     size_t n = make_layout(&L);
-    int r = wide_hud_lay_out(file, n, L.member, 660, NULL, 0, why, sizeof why);
+    int r = wide_hud_lay_out(file, n, L.member, HUD(660), NULL, 0, why, sizeof why);
     CHECK(r == -1 && strstr(why, "N_ScaleR_00 has its x keyed by HeartPos"), "keyed by a curve: %d (%s)", r, why);
     L.anims = keyed_const_anims;
     n = make_layout(&L);
-    r = wide_hud_lay_out(file, n, L.member, 660, NULL, 0, why, sizeof why);
+    r = wide_hud_lay_out(file, n, L.member, HUD(660), NULL, 0, why, sizeof why);
     CHECK(r == -1 && strstr(why, "N_VRS_00 has its x keyed by IsSubItemVisible"), "keyed by a constant: %d (%s)", r, why);
     // every prefix of each layout: refused, never a read past it (the sanitizers watch)
     for (int i = 0; i < NLAYOUTS; i++)
         for (size_t cut = 0; cut < made_n[i]; cut += 3) {
             uint8_t *p = malloc(cut ? cut : 1);
             memcpy(p, made[i], cut);
-            r = wide_hud_lay_out(p, cut, layouts[i].member, 660, NULL, 0, why, sizeof why);
+            r = wide_hud_lay_out(p, cut, layouts[i].member, BOTH(660, 0.75f), NULL, 0, why, sizeof why);
             CHECK(r == -1, "%s cut to %zu bytes: %d", layouts[i].member, cut, r);
             free(p);
             if (r != -1) break;
@@ -588,7 +641,7 @@ static void check_archive(void) {
     size_t n = archive(a, CAP, 2);
     memcpy(b, a, n);
     nlog = 0;
-    int r = wide_hud_archive(b, n, 660, why, sizeof why);
+    int r = wide_hud_archive(b, n, HUD(660), why, sizeof why);
     CHECK(r == 2 * (4 + 27 + 2), "archive: %d fields (%s)", r, why);
     for (int c = 0; c < 2; c++) {
         CHECK(pane_x(b + member_at[c], 0, "N_ScaleL_00") == -2580, "archive: PlayerStatus_00 copy %d", c);
@@ -606,7 +659,7 @@ static void check_archive(void) {
     nlog = 0;
     uint8_t *c2 = malloc(CAP);
     memcpy(c2, b, n);
-    r = wide_hud_archive(c2, n, 660, why, sizeof why);
+    r = wide_hud_archive(c2, n, HUD(660), why, sizeof why);
     CHECK(r == 0 && !memcmp(c2, b, n) && nlog == 0, "archive again: %d, %d lines", r, nlog);
     // one bad copy of one layout: nothing changes in any layout
     memcpy(c2, a, n);
@@ -614,7 +667,7 @@ static void check_archive(void) {
     memcpy(c2 + member_at[5] + made_pane_at[2][pane_index(&layouts[2], "N_NumDisplayFirst_00")] + 0x1c, &bad, 4);
     uint8_t *keep = malloc(CAP);
     memcpy(keep, c2, n);
-    r = wide_hud_archive(c2, n, 660, why, sizeof why);
+    r = wide_hud_archive(c2, n, HUD(660), why, sizeof why);
     CHECK(r == -1 && !memcmp(c2, keep, n) && strstr(why, "N_NumDisplayFirst_00 x is 1"), "archive with a bad copy: %d (%s)",
           r, why);
     size_t m;
@@ -624,9 +677,33 @@ static void check_archive(void) {
     size_t sizes[] = {made_n[0], made_n[1]};
     m = make_sarc(c2, CAP, names, bytes, sizes, 2);
     memcpy(keep, c2, m);
-    r = wide_hud_archive(c2, m, 660, why, sizeof why);
+    r = wide_hud_archive(c2, m, HUD(660), why, sizeof why);
     CHECK(r == -1 && !memcmp(c2, keep, m) && strstr(why, "has no NumDisplay_00.buil"), "archive without NumDisplay_00: "
           "%d (%s)", r, why);
+    // the menus' shift too: LoadingFade_00's two copies, one line of its own; the menus' alone: only those
+    memcpy(c2, a, n);
+    nlog = 0;
+    r = wide_hud_archive(c2, n, BOTH(660, 0.75f), why, sizeof why);
+    CHECK(r == 66 + 4 && pane_x(c2 + member_at[6], 3, "N_IconIn_00") == 1333.5f &&
+              pane_x(c2 + member_at[7], 3, "N_IconIn_00") == 1333.5f &&
+              log_find("widescreen: menus: LoadingFade_00 (2 copies, 4 fields): N_IconIn_00 x 1778 -> 1333.5, scale x 1 "
+                       "-> 0.75") && nlog == 4,
+          "archive with both shifts: %d, %d lines (%s)", r, nlog, why);
+    memcpy(c2, a, n);
+    r = wide_hud_archive(c2, n, MENUS(0.75f), why, sizeof why);
+    size_t diff = 0;
+    for (size_t i = 0; i < n; i++) diff += c2[i] != a[i];
+    CHECK(r == 4 && diff <= 16, "archive with the menus' shift: %d, %zu bytes", r, diff);
+    {
+        const char *nm[] = {layouts[0].member, layouts[1].member, layouts[2].member};
+        const uint8_t *by[] = {made[0], made[1], made[2]};
+        size_t sz[] = {made_n[0], made_n[1], made_n[2]};
+        m = make_sarc(c2, CAP, nm, by, sz, 3);
+        r = wide_hud_archive(c2, m, MENUS(0.75f), why, sizeof why);
+        CHECK(r == -1 && strstr(why, "has no LoadingFade_00.buil"), "menus' shift without LoadingFade_00: %d (%s)", r,
+              why);
+        CHECK(wide_hud_archive(c2, m, HUD(660), why, sizeof why) == 33, "the HUD's shift without LoadingFade_00");
+    }
     // more than 16 copies of a layout
     {
         const char *nm[20];
@@ -636,41 +713,41 @@ static void check_archive(void) {
         nm[17] = layouts[1].member, by[17] = made[1], sz[17] = made_n[1];
         nm[18] = layouts[2].member, by[18] = made[2], sz[18] = made_n[2];
         m = make_sarc(c2, CAP, nm, by, sz, 19);
-        r = wide_hud_archive(c2, m, 660, why, sizeof why);
+        r = wide_hud_archive(c2, m, HUD(660), why, sizeof why);
         CHECK(r == -1 && strstr(why, "more than 16 times"), "17 copies: %d (%s)", r, why);
     }
     // copies of one layout that share some of their bytes, and two layouts that share bytes
     n = archive(c2, CAP, 2);
     set_range(c2, 1, member_at[0] + 0x100, made_n[0]);
     memcpy(keep, c2, n);
-    r = wide_hud_archive(c2, n, 660, why, sizeof why);
+    r = wide_hud_archive(c2, n, HUD(660), why, sizeof why);
     CHECK(r == -1 && !memcmp(c2, keep, n) && strstr(why, "two copies of PlayerStatus_00.buil in the layout archive "
           "overlap"), "copies that overlap: %d (%s)", r, why);
     n = archive(c2, CAP, 2);
     set_range(c2, 4, member_at[2], made_n[2]);   // a copy of NumDisplay_00 over MapMenu_00's first
-    r = wide_hud_archive(c2, n, 660, why, sizeof why);
+    r = wide_hud_archive(c2, n, HUD(660), why, sizeof why);
     CHECK(r == -1 && strstr(why, "NumDisplay_00 and MapMenu_00 share bytes"), "layouts that share bytes: %d (%s)", r,
           why);
     // copies that are the same bytes are moved once
     n = archive(c2, CAP, 2);
     set_range(c2, 1, member_at[0], made_n[0]);
-    r = wide_hud_archive(c2, n, 660, why, sizeof why);
+    r = wide_hud_archive(c2, n, HUD(660), why, sizeof why);
     CHECK(r == 4 + 2 * 27 + 2 * 2 && pane_x(c2 + member_at[0], 0, "N_ScaleL_00") == -2580, "copies of the same bytes: %d "
           "(%s)", r, why);
     // one copy moved already, the other not: the line says what the other moved
     n = archive(c2, CAP, 2);
-    CHECK(wide_hud_lay_out(c2 + member_at[0], made_n[0], layouts[0].member, 660, NULL, 0, why, sizeof why) == 4,
+    CHECK(wide_hud_lay_out(c2 + member_at[0], made_n[0], layouts[0].member, HUD(660), NULL, 0, why, sizeof why) == 4,
           "moving one copy");
     nlog = 0;
-    r = wide_hud_archive(c2, n, 660, why, sizeof why);
+    r = wide_hud_archive(c2, n, HUD(660), why, sizeof why);
     CHECK(r == 4 + 2 * 27 + 2 * 2 && log_find("wide hud: PlayerStatus_00 (2 copies, 4 fields): N_ScaleL_00 x -1920 -> "
                                               "-2580"),
           "one copy moved already: %d (%s)", r, nlog ? log_lines[0] : "no line");
     // nothing at out 0
     memcpy(c2, a, n);
-    CHECK(wide_hud_archive(c2, n, 0, why, sizeof why) == 0 && !memcmp(c2, a, n), "archive at out 0");
+    CHECK(wide_hud_archive(c2, n, HUD(0), why, sizeof why) == 0 && !memcmp(c2, a, n), "archive at out 0");
     // damaged: a SARC cut short
-    CHECK(wide_hud_archive(c2, 40, 660, why, sizeof why) == -1, "a damaged archive");
+    CHECK(wide_hud_archive(c2, 40, HUD(660), why, sizeof why) == -1, "a damaged archive");
     free(keep);
     free(c2);
     free(b);
@@ -711,10 +788,10 @@ static void check_build(void) {
     void *out = NULL, *again = NULL;
     size_t out_n = 0, again_n = 0;
     nlog = 0;
-    int r = wide_hud_build(z, zn, zdic, zdn, 660, &out, &out_n);
+    int r = wide_hud_build(z, zn, zdic, zdn, HUD(660), &out, &out_n);
     CHECK(r == 1 && out, "build: %d (%s)", r, last_log());
-    CHECK(log_find("wide hud: the HUD's edge elements moved 660 units out, 66 fields"), "build: its line: %s",
-          last_log());
+    CHECK(log_find("wide hud: the layout archive edited (the HUD's edge elements 660 units out), 66 fields"),
+          "build: its line: %s", last_log());
     if (r == 1) {
         CHECK(ZSTD_getDictID_fromFrame(out, out_n) == 0x1234 && ZSTD_getFrameContentSize(out, out_n) == n,
               "build: another dictionary or size");
@@ -724,16 +801,16 @@ static void check_build(void) {
         ZSTD_freeDCtx(dc);
         char why[240];
         memcpy(expect, a, n);
-        wide_hud_archive(expect, n, 660, why, sizeof why);
+        wide_hud_archive(expect, n, HUD(660), why, sizeof why);
         CHECK(got == n && !memcmp(raw, expect, n), "build: not the archive edited in memory");
-        r = wide_hud_build(out, out_n, zdic, zdn, 660, &again, &again_n);
-        CHECK(r == 0 && !again && strstr(last_log(), "moved 660 units out already"), "build again: %d (%s)", r,
-              last_log());
+        r = wide_hud_build(out, out_n, zdic, zdn, HUD(660), &again, &again_n);
+        CHECK(r == 0 && !again && strstr(last_log(), "has these edits already (the HUD's edge elements 660 units out)"),
+              "build again: %d (%s)", r, last_log());
         free(raw);
         free(expect);
     }
-    CHECK(wide_hud_build(z, zn, zdic, zdn, 0, &again, &again_n) == 0 && !again, "build at out 0");
-    CHECK(wide_hud_build(z, zn / 2, zdic, zdn, 660, &again, &again_n) == -1 && strstr(last_log(), "the layout archive is served as it is"),
+    CHECK(wide_hud_build(z, zn, zdic, zdn, HUD(0), &again, &again_n) == 0 && !again, "build at out 0");
+    CHECK(wide_hud_build(z, zn / 2, zdic, zdn, HUD(660), &again, &again_n) == -1 && strstr(last_log(), "the layout archive is served as it is"),
           "build of a cut frame: %s", last_log());
     free(out);
     free(z);
@@ -828,7 +905,7 @@ static void game_archive(char **argv) {
         void *z = NULL;
         size_t zn = 0, on = 0, outside = 0;
         nlog = 0;
-        int made_z = wide_hud_build(a, an, d, dn, out, &z, &zn);
+        int made_z = wide_hud_build(a, an, d, dn, HUD(out), &z, &zn);
         CHECK(made_z == 1, "game %ux%u: build %d (%s)", shapes[s].w, shapes[s].h, made_z, last_log());
         uint8_t *got = made_z == 1 ? unpack(z, zn, dics, pn, &on) : NULL;
         CHECK(got && on == rn, "game %ux%u: the built archive does not unpack", shapes[s].w, shapes[s].h);
@@ -851,12 +928,35 @@ static void game_archive(char **argv) {
         free(got);
         free(z);
     }
+    // the menus' shift with the HUD's (a 3440x1440 picture): the loading icon's x and scale x in its four copies too
+    {
+        float out = wide_hud_out(3440, 1440), q = (float)(16.0 / 9.0) / ((float)3440 / 1440);
+        static const char *const with_icon[] = {"PlayerStatus_00.buil", "MapMenu_00.buil", "NumDisplay_00.buil",
+                                                "LoadingFade_00.buil"};
+        void *z = NULL;
+        size_t zn = 0, on = 0, outside = 0;
+        nlog = 0;
+        int made_z = wide_hud_build(a, an, d, dn, BOTH(out, q), &z, &zn);
+        uint8_t *got = made_z == 1 ? unpack(z, zn, dics, pn, &on) : NULL;
+        CHECK(got && on == rn, "game with the menus' shift: build %d (%s)", made_z, last_log());
+        if (got && on == rn) {
+            size_t changed = words_changed(raw, got, rn, with_icon, 4, &outside);
+            CHECK(changed == 4 * (33 + 2) && !outside && each_copy(got, rn, "LoadingFade_00.buil", 0x548, 1778 * q) &&
+                      each_copy(got, rn, "LoadingFade_00.buil", 0x53c, 1 * q),
+                  "game with the menus' shift: %zu words changed, %zu outside", changed, outside);
+            const char *line = log_find("widescreen: menus: LoadingFade_00");
+            printf("game 3440x1440 with menus = center: %s\n", line ? line : "(no line)");
+            CHECK(line != NULL, "game with the menus' shift: no LoadingFade_00 line");
+        }
+        free(got);
+        free(z);
+    }
     // after the action prompt's edit of the same archive (romfs.c serves it first): both edits, nothing else
     void *ap = NULL, *z = NULL;
     size_t apn = 0, zn = 0, on = 0, outside = 0;
     int r = action_prompt_build(a, an, d, dn, 1, &ap, &apn);
     CHECK(r == 1, "game: the action prompt's build %d", r);
-    r = r == 1 ? wide_hud_build(ap, apn, d, dn, 660, &z, &zn) : -1;
+    r = r == 1 ? wide_hud_build(ap, apn, d, dn, HUD(660), &z, &zn) : -1;
     CHECK(r == 1, "game: the HUD's build on the action prompt's archive %d (%s)", r, last_log());
     uint8_t *got = r == 1 ? unpack(z, zn, dics, pn, &on) : NULL;
     if (got && on == rn) {
