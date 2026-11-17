@@ -25,12 +25,13 @@ Area names are the game's own. They are the keys of `Banc/BancBasedResource/Star
 teleport list shows them (F9 with `debug_menu = 1`). An area without a start position, or with an empty one,
 uses the area's default: the first entry of its list, which is where the game itself puts Link for an unknown name.
 
-Example of a run without a window (the bench's `CLAUDE.md`):
+Example of a run without a window or sound on Linux (`ocarina` is the game's executable there, `nx2saria.exe` on
+Windows), on a copy of the profile:
 
 ```sh
 SDL_VIDEODRIVER=offscreen SDL_AUDIO_DRIVER=dummy NX2SARIA_AUDIO=none \
   NX2SARIA_BOOT_MAP=HyruleField_Child:HyruleField_FrontOfMarket NX2SARIA_BOOT_MAP_SLOT=2 \
-  timeout 150 ./run.sh linux-test
+  timeout 150 ./ocarina --profile <copy of the profile>
 ```
 
 ### What the log says
@@ -39,13 +40,13 @@ Each start writes one line, whether the setting is on or not:
 
 ```
 boot map: off
-boot map: on: HyruleField_Child, start position HyruleField_FrontOfMarket at 54.2 150.3 63.9 (yaw 3.14), slot 2 (the latest), age child (the area's), time from the save
+boot map: on: HyruleField_Child, start position HyruleField_FrontOfMarket at 54.2 150.3 63.9 (yaw 3.14), slot 2 (asked for), age child (the area's), time from the save
 ```
 
 When Link appears in the area, a second line gives where he arrived, the slot, and the time since the process started:
 
 ```
-boot map: arrived in HyruleField_Child (asked HyruleField_Child), slot 2, Link at 54.21 150.31 63.88, 3.1 m from the start position, 21.4 s after the start
+boot map: arrived in HyruleField_Child (asked HyruleField_Child), slot 2, Link at 54.21 150.31 63.88, 0.0 m from the start position, 21.4 s after the start
 ```
 
 When the destination cannot be used, one line says why, and the game boots as it always does. The other boot map
@@ -61,10 +62,24 @@ boot map: the save of slot 2 lacks a value this setting changes (no PlayerStatus
 A bad value of any of the four keys fails the same way, as do a file a mod or a RomFS overlay serves and a game
 version other than 1.1.1.
 
-Two more lines can come in between. When the game opens the slot's save:
+More lines can come in between. In Master Quest mode, after the first line:
 
 ```
-boot map: <mount>:/slot_02/progress.sav is read with the boot map's place (6 values changed in what the game reads)
+boot map: Master Quest mode: the game loads slot_08
+```
+
+When the game opens the slot's save (5 values here: the area, the position, the heading, the dungeon room and the
+area's age; a time asked for makes 6):
+
+```
+boot map: <mount>:/slot_02/progress.sav is read with the boot map's place (5 values changed in what the game reads)
+```
+
+When the save the game opens has changed since the start and lacks a value now, or its values moved (a commit in
+between), it loads as it is:
+
+```
+boot map: <mount>:/slot_02/progress.sav lacks a value this setting changes now (no PlayerStatus.SavePos): the game loads it as it is
 ```
 
 When Link has not appeared 300 s after the start, the changes stop, and the game's return to its title is its own:
@@ -296,8 +311,11 @@ Each patch checks the bytes it replaces before it is used:
 - The AINB patches find their nodes by name and type in the file: the command `Root`, node 35 a `Simultaneous`, the
   `Sequential` whose children are the pause and `TitleToMainWithLoadSave.module`, and the two nodes' linked `Index`
   inputs. A file that differs from 1.1.1 in any of those makes the setting refuse, with the log line above.
-- The save patch finds each value by its name hash in the file's own sections. A save without one of the five values
-  makes the setting refuse at that read, and the game then loads the save as it is. The log says so.
+- The save patch finds each value by its name hash in the file's own sections. `Sequence_CurrentBanc`,
+  `PlayerStatus.SavePos` and `PlayerStatus.SavePosRadY` are always needed, `Sequence_IsChildhood` when an age is
+  applied (the area's or the one asked for) and the clock when a time is asked for; `DungeonRoom` is changed when the
+  save has it. A save without a needed value is refused at start (normal boot), and at the game's read the save then
+  loads as it is. The log says which.
 
 Area, start position and coordinates come from the player's own `StartPos.byml` (`debug_tools.c`, read at start).
 None of the game's lists is kept in the code.
@@ -344,11 +362,11 @@ without one it says so and boots normally.
    same.
 3. Without the setting, a normal start: the log has `boot map: off`, and the title, the file menu and a save load
    behave as before.
-4. On a copy of the profile (`--profile`), with a save in slot 0 to 5, in the bench's run without a window:
+4. On a copy of the profile (`--profile`), with a save in slot 0 to 5, in a run without a window:
 
    ```sh
    SDL_VIDEODRIVER=offscreen SDL_AUDIO_DRIVER=dummy NX2SARIA_AUDIO=none \
-     NX2SARIA_BOOT_MAP=KokiriForest_Child timeout 150 ./run.sh linux-test -- --profile <copy>
+     NX2SARIA_BOOT_MAP=KokiriForest_Child timeout 150 ./ocarina --profile <copy of the profile>
    ```
 
    The log should have `boot map: on: ...`, then `... progress.sav is read with the boot map's place ...`, then
