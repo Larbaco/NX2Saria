@@ -306,10 +306,11 @@
 # pipeline_cache_play_mb = 64
 # 1: pipeline-cache.id names the translator whose pipelines the two cache files hold. When the game's translator
 # changes (an update) and none of the earlier translator's shaders are still in use, both files are deleted at the
-# start instead of being read, since nothing will ask for their pipelines again; the log line "pipeline cache stamp"
-# says what the start did and how many MB the files held. Two installs that share one pipeline_cache path with
-# different translators delete each other's files: give each its own path, or set this to 0 for them. 0: the files
-# are read whichever translator wrote them.
+# start instead of being read, since nothing will ask for their pipelines again, and that session writes
+# pipeline-cache.bin again at its exit, with the pipelines the driver's own cache still has; the log line "pipeline
+# cache stamp" says what the start did and how many MB the files held. Two installs that share one pipeline_cache
+# path with different translators delete each other's files: give each its own path, or set this to 0 for them. 0:
+# the files are read whichever translator wrote them.
 # pipeline_cache_stamp = 1
 # 1: the pipelines FSR 3.1 makes for upscaling and frame generation are kept in the pipeline cache files, so a later
 # start does not compile them again. 0: FSR 3.1 creates them without those files, as the graphics driver alone keeps

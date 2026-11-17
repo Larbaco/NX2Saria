@@ -107,6 +107,7 @@ static struct {
     volatile uint64_t held[2];         // the data size of cache [0] and play [1] when last asked (cache_save_one,
                                        // cache_sizes_ask); 0: not asked yet (the memory report takes the loaded size)
     int fold;                          // the play file's content was merged into cache: saving cache removes the play file
+    int base_at_exit;                  // the start found no pipeline-cache.bin: the save at exit writes it (cache_load)
     volatile uint64_t play_made;       // pipelines this run compiled into play
     int pv_last;                       // provokingVertexLast enabled: NVN's default is the last vertex
     VkShaderStageFlags sg32_stages;    // stages that accept requiredSubgroupSize = 32 (0: not available)
@@ -632,14 +633,17 @@ static volatile uint32_t cache_merges;
 // own, pipeline-cache-play.bin beside the first: a create asks P.cache with
 // VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT, which gives the pipeline when that cache or the driver's
 // own has it and VK_PIPELINE_COMPILE_REQUIRED when not, and only then builds into P.play (pipe_create_in). In play
-// only the play file is saved; pipeline-cache.bin is not written.
+// only the play file is saved; pipeline-cache.bin is not written, except once at the exit of a run that started without
+// it (P.base_at_exit: the translator stamp had deleted it (cache_stamp_check), a run before ended without that save, or
+// no preparation ever wrote it).
 // The play file is read back at the next start, into P.play and merged into P.cache in memory (cache_load), so the
 // first create finds its pipelines. Once
 // it has grown to NX2SARIA_PIPELINE_CACHE_PLAY_MB (default 64) it is merged into P.cache at the start, before play: the
 // autosave thread writes pipeline-cache.bin once and removes the play file (cache_save). The preparation modes
 // (--prepare-shaders, --warm-shaders, --prepare-pipelines) merge it at any size and build into P.cache alone, as before.
 // A pipeline the driver's own cache gives to the first create enters P.cache in memory only: it is in a file again
-// when the play file is next folded in, or when the driver no longer has it and it is compiled.
+// when the play file is next folded in, when the driver no longer has it and it is compiled, or at the exit of a run
+// that started without pipeline-cache.bin.
 // Without the device feature, with pipeline binaries on, or with the setting 0, P.play stays VK_NULL_HANDLE and
 // everything goes into P.cache as before.
 static int prep_mode;   // a preparation mode (set before ensure_init): no play cache
@@ -912,8 +916,10 @@ static int pg_draws_min(void);   // "the play gate", after gate_wait: its settin
 // read. A stamp of another translator whose shaders the carry no longer serves (or any other translator in a
 // preparation: prep_mode) deletes both files, so their dead entries are neither read nor held twice in memory nor
 // carried on by the next save; the play file goes too, since what one run compiled under the earlier translator is as
-// dead. One log line says what a start that reads the files did and how many MB they held. NX2SARIA_PIPELINE_CACHE_STAMP (default 1); 0 reads the files whichever translator wrote them and
-// leaves the stamp as it is.
+// dead. After a deletion outside a preparation the run writes pipeline-cache.bin again at its exit (cache_load sets
+// P.base_at_exit by vk_cache_stamp.h cache_base_at_exit), and the line says so. One log line says what a start that
+// reads the files did and how many MB they held. NX2SARIA_PIPELINE_CACHE_STAMP (default 1); 0 reads the files
+// whichever translator wrote them and leaves the stamp as it is.
 static void cache_stamp_check(void) {
     if (!P.cache_path[0]) return;
     if (!cfg_bool("NX2SARIA_PIPELINE_CACHE_STAMP")) {
@@ -953,9 +959,12 @@ static void cache_stamp_check(void) {
     char was_text[40] = "";
     if (state == CACHE_STAMP_DIFFERS)
         snprintf(was_text, sizeof was_text, "the files' translator %02x%02x%02x%02x; ", was[0], was[1], was[2], was[3]);
+    // The rule cache_load then applies (P.base_at_exit): a start without pipeline-cache.bin writes it at its exit.
+    int at_exit = cache_base_at_exit(prep_mode, plat_file_size(P.cache_path));
     // "vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>", then what the numbers need to be checked
-    rt_log("vk: pipeline cache stamp %02x%02x%02x%02x %s: %s%s, %.1f MB (%s%s)", cur[0], cur[1], cur[2], cur[3],
-           cache_stamp_state_name(state), cache_stamp_action_name(act), left, mb, was_text, stamp);
+    rt_log("vk: pipeline cache stamp %02x%02x%02x%02x %s: %s%s, %.1f MB (%s%s%s)", cur[0], cur[1], cur[2], cur[3],
+           cache_stamp_state_name(state), cache_stamp_action_name(act), left, mb, was_text,
+           at_exit ? "pipeline-cache.bin is written at this run's exit; " : "", stamp);
 }
 
 static void cache_load(VkCtx *c) {
@@ -966,6 +975,9 @@ static void cache_load(VkCtx *c) {
         return;
     }
     cache_stamp_check();
+    // No pipeline-cache.bin after the stamp's check (deleted by it, or its run ended before writing the file again):
+    // the save at exit writes it (vk_cache_stamp.h cache_base_at_exit, cache_save).
+    P.base_at_exit = P.cache_path[0] && cache_base_at_exit(prep_mode, plat_file_size(P.cache_path));
     size_t size = 0, kept = 0;
     void *data = cache_data_read(c, P.cache_path, &size);
     int base_over = cache_over_cap;   // an oversized file is never read again: the play file takes its place at once
@@ -973,7 +985,10 @@ static void cache_load(VkCtx *c) {
     free(data);
     P.cache_loaded = kept;
     // The file holds this data when the driver took all of it: a save is due only once the cache has grown (cache_save).
-    P.saved[0] = size && kept == size ? kept : 0;
+    // Without data read from the file the empty cache's own size counts as saved, as the play cache's does below: a
+    // run that took nothing into it does not write a file of a header alone, which the next start would refuse as too
+    // short (cache_file_read) while it no longer counts as missing (P.base_at_exit).
+    P.saved[0] = !size || kept == size ? kept : 0;
     if (size)
         rt_log("vk_pipeline: %s: %.1f MB read, the driver holds %.1f MB of it", P.cache_path, size / 1048576.0,
                kept / 1048576.0);
@@ -1061,7 +1076,10 @@ static void cache_load(VkCtx *c) {
     // An empty play cache is not written (its data is a header): its size counts as saved, as a whole file's does.
     P.saved[1] = P.play && (!psize || pkept == psize) ? pkept : 0;
     if (P.play)
-        rt_log("vk_pipeline: what this run compiles goes into %s; %s is not written in play", P.play_path, P.cache_path);
+        rt_log("vk_pipeline: what this run compiles goes into %s; %s %s", P.play_path, P.cache_path,
+               P.base_at_exit ? "was not there at the start, so the save at this run's exit writes it once, with what "
+                                "the run takes from the driver's own cache"
+                              : "is not written in play");
     else if (want && !P.cache_control)
         rt_log("vk_pipeline: no play cache (no pipelineCreationCacheControl on this device): a new pipeline has %s "
                "written whole", P.cache_path);
@@ -9035,7 +9053,8 @@ static PlatMutex save_lock = PLAT_MUTEX_INIT;   // one cache save at a time; shu
 // Copies a pipeline cache's data into its file, with cache_rw held exclusively for the copy only (not the file write):
 // P.play into pipeline-cache-play.bin when there is a play cache, else P.cache into pipeline-cache.bin; and P.cache
 // once, with or without a play cache, after the play file was merged into it at the start (P.fold), which then
-// removes the play file.
+// removes the play file, and at the exit of a run that started without pipeline-cache.bin (P.base_at_exit;
+// vk_cache_stamp.h cache_save_writes_base chooses).
 // Only when the data changed: the size of a cache's data is asked first, and a cache whose data has the size its file
 // holds is neither copied nor written. A pipeline cache only gains entries, so the same size is the same data. Before,
 // every save copied and wrote the whole cache whenever a pipeline had been created since the last one, also when the
@@ -9138,7 +9157,10 @@ static int cache_save(uint32_t wait_ms, int exiting) {
         return 1;
     }
     int ok = 1, r;
-    if (!P.play || P.fold) ok = cache_save_one(0, wait_ms, exiting);
+    // pipeline-cache.bin: at every save without a play cache, once for a fold, and at the exit of a run that started
+    // without it (P.base_at_exit); the play file beside it as usual.
+    if (cache_save_writes_base(P.play != VK_NULL_HANDLE, P.fold, P.base_at_exit, exiting))
+        ok = cache_save_one(0, wait_ms, exiting);
     // While a fold is not written yet (P.fold: refused at the limit, or no build-free moment) the play file still holds
     // what was folded in memory only: written over with this run's play cache, that would be in neither file.
     static int fold_kept_said;
@@ -9260,8 +9282,8 @@ void vk_pipeline_boot_abandon(void) { journal_close(); }
 // each cache's data, asked once a minute here on the autosave thread, and by every save (cache_save_one). The size is
 // asked as the save asks it, at a moment no build runs into either cache (cache_rw, tried once and never waited for),
 // and under save_lock, which the shutdown takes before it destroys the caches. The play file holds what this run
-// compiled, but pipeline-cache.bin is not written in play: its cache grows in memory with the compute pipelines the boot
-// builds for it alone, and only this query says by how much.
+// compiled, but pipeline-cache.bin is not written in play (only at the exit of a run that started without it): its
+// cache grows in memory with the compute pipelines the boot builds for it alone, and only this query says by how much.
 #define SIZES_EVERY_MS 60000
 static void cache_sizes_ask(void) {
     if (!plat_mutex_trylock(&save_lock)) return;

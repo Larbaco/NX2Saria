@@ -5,9 +5,11 @@ gate, a vkCreateSampler that fails on request), and run through a session's even
 to build/test/log_trace/nx2saria-sample.log, and each line a player's log is read by must be there with the numbers
 the events give:
 
-- runtime/vk_pipeline.c cache_stamp_check over four starts (no stamp, the same translator, another one the carry
-  serves, another one it does not): "vk: pipeline cache stamp <id> none|matches|differs: <action>, <MB>", and the
-  files deleted or kept as the line says;
+- runtime/vk_pipeline.c cache_stamp_check over the starts of an update (no stamp, the same translator, another one the
+  carry serves, another one it does not while a file is held open and then free, the starts after) and a preparation
+  under yet another translator: "vk: pipeline cache stamp <id> none|matches|differs: <action>, <MB>", the files
+  deleted or kept as the line says, and the line's note that the run's exit writes pipeline-cache.bin on exactly the
+  starts in play without that file (which saves write it: tests/cache_stamp_check.c);
 - the play gate ("the play gate" to vk_pipeline_probe_buildgate): the start's line, then frames shown while builders
   rest, and "vk: background builds paused in play: N frames, M builds deferred" with those counts; with the setting
   at 0 the start's "off" line and no other;
@@ -81,7 +83,7 @@ STAMP = COMMON + r'''
 #include "vk_cache_stamp.h"
 #define PLAT_PATH_MAX 260
 static struct { char cache_path[PLAT_PATH_MAX * 2]; char play_path[PLAT_PATH_MAX * 2 + 8]; } P;
-static int prep_mode, stamp_on = 1, carried;
+static int prep_mode, stamp_on = 1, carried, del_fail;
 static uint8_t cur_id[32];
 static int cfg_bool(const char *k) { (void)k; return stamp_on; }
 static const uint8_t *gfx_shader_identity(void) { return cur_id; }
@@ -105,7 +107,7 @@ static int64_t plat_file_size(const char *p) {
     fclose(f);
     return len;
 }
-static void plat_file_delete(const char *p) { remove(p); }
+static void plat_file_delete(const char *p) { if (!del_fail) remove(p); }   // del_fail: a file held open elsewhere
 static int plat_file_exists(const char *p) { return plat_file_size(p) >= 0; }
 static int plat_file_write_atomic(const char *p, const void *d, size_t n) {
     FILE *f = fopen(p, "wb");
@@ -132,12 +134,22 @@ int main(int argc, char **argv) {
     cur_id[0] = 0x11;                          // 3: an update; the carry still serves the earlier translator
     carried = 1;
     cache_stamp_check();
-    carried = 0;                               // 4: the carry pass is done: the files go
+    carried = 0;                               // 4: the carry pass is done, but a file is held open: read, kept
+    del_fail = 1;
     cache_stamp_check();
-    printf("%%d %%d\n", plat_file_exists(P.cache_path), plat_file_exists(play));
-    cache_stamp_check();                       // 5: the start after: matches, nothing left
+    printf("held %%d %%d\n", plat_file_exists(P.cache_path), plat_file_exists(play));
+    del_fail = 0;                              // 5: the files go; this run writes pipeline-cache.bin at its exit
+    cache_stamp_check();
+    printf("drop %%d %%d\n", plat_file_exists(P.cache_path), plat_file_exists(play));
+    cache_stamp_check();                       // 6: that run ended before its exit: matches, the file still due
+    put(P.cache_path, 30);                     // 7: an exit wrote it: matches, nothing due
+    cache_stamp_check();
+    cur_id[0] = 0x22;                          // 8: a preparation under yet another translator: deleted, and the
+    prep_mode = 1;                             //    preparation writes the file itself
+    cache_stamp_check();
+    prep_mode = 0;
     stamp_on = 0;
-    cache_stamp_check();                       // 6: the setting off
+    cache_stamp_check();                       // 9: the setting off
     return 0;
 }
 '''
@@ -319,20 +331,33 @@ def main():
             fails += 1
             print('log_trace_check: FAIL: ' + what)
 
-    # The stamp: none, matches, differs kept for the carry, differs deleted (650 MB, both files), matches, off.
+    # The stamp: none, matches, differs kept for the carry, differs read while a file is held open, differs deleted
+    # (650 MB, both files), matches with the file still due (its run ended before its exit), matches once written, a
+    # preparation's deletion (it writes the file itself), off. Only a start in play without pipeline-cache.bin says
+    # that its exit writes it.
     st = [ln for ln in lines if 'pipeline cache stamp' in ln]
-    want(len(st) == 6, f'{len(st)} stamp lines, expected 6')
-    if len(st) == 6:
+    due = "pipeline-cache.bin is written at this run's exit; "
+    want(len(st) == 9, f'{len(st)} stamp lines, expected 9')
+    if len(st) == 9:
         want(re.search(r'\] vk: pipeline cache stamp a0a1a2a3 none: read, stamped for the next start, 650\.0 MB', st[0]),
              'start 1: ' + st[0])
         want(re.search(r'\] vk: pipeline cache stamp a0a1a2a3 matches: read, 650\.0 MB', st[1]), 'start 2: ' + st[1])
         want(re.search(r"\] vk: pipeline cache stamp 11a1a2a3 differs: read for the carried shaders, stamp kept, "
                        r"650\.0 MB \(the files' translator a0a1a2a3; ", st[2]), 'start 3: ' + st[2])
+        want(re.search(r"\] vk: pipeline cache stamp 11a1a2a3 differs: read \(not deleted: a file is in use; read, the "
+                       r"stamp kept\), 650\.0 MB \(the files' translator a0a1a2a3; ", st[3]), 'start 4: ' + st[3])
         want(re.search(r"\] vk: pipeline cache stamp 11a1a2a3 differs: deleted, starting empty, 650\.0 MB \(the files' "
-                       r"translator a0a1a2a3; ", st[3]), 'start 4: ' + st[3])
-        want(re.search(r'\] vk: pipeline cache stamp 11a1a2a3 matches: read, 0\.0 MB', st[4]), 'start 5: ' + st[4])
-        want('vk: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0)' in st[5], 'start 6: ' + st[5])
-    want(out['stamp'].strip() == '0 0', 'the files were not deleted at start 4: ' + out['stamp'].strip())
+                       r"translator a0a1a2a3; " + re.escape(due), st[4]), 'start 5: ' + st[4])
+        want(re.search(r'\] vk: pipeline cache stamp 11a1a2a3 matches: read, 0\.0 MB \(' + re.escape(due), st[5]),
+             'start 6: ' + st[5])
+        want(re.search(r'\] vk: pipeline cache stamp 11a1a2a3 matches: read, 30\.0 MB', st[6]), 'start 7: ' + st[6])
+        want(re.search(r"\] vk: pipeline cache stamp 22a1a2a3 differs: deleted, starting empty, 30\.0 MB \(the files' "
+                       r"translator 11a1a2a3; ", st[7]), 'start 8, a preparation: ' + st[7])
+        want('vk: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0)' in st[8], 'start 9: ' + st[8])
+        for i in (0, 1, 2, 3, 6, 7):
+            want(due not in st[i], f'start {i + 1} says its exit writes pipeline-cache.bin: ' + st[i])
+    # The files kept while one is held open (start 4), gone at start 5.
+    want(out['stamp'].split() == 'held 1 1 drop 0 0'.split(), 'the files: ' + ' '.join(out['stamp'].split()))
 
     # The play gate: on at 600, a rest only in play; of the 120 heavy frames the first came before the builders began
     # their rest, so 119 count; five builds held back, each once though two builders rested.

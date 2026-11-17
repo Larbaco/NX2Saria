@@ -19,10 +19,12 @@
 //   and the stamp names the current one;
 // - no stamp (files from before the stamp, or none at all): the files are read and the stamp names the current one.
 // The cost: what the runs under a carry compiled for the current translator went into the same files, and goes with
-// them at the deletion, to be compiled once more. The carry pass usually ends in the first session after an update,
-// so that is what that one session compiled. A deletion is not a driver change: the start that follows builds in the
-// background as any other (vk_pipeline.c bf_decide), as it did when the files were read and none of their pipelines
-// matched the new translator's SPIR-V.
+// them at the deletion. The carry pass usually ends in the first session after an update, so that is what that one
+// session compiled, and the driver's own cache mostly still has it: the run that deletes the files takes those
+// pipelines from there and writes pipeline-cache.bin again at its exit (cache_base_at_exit below), so the start after
+// it reads them from the file once more. What the driver no longer has is compiled again. A deletion is not a driver
+// change: the start that follows builds in the background as any other (vk_pipeline.c bf_decide), as it did when the
+// files were read and none of their pipelines matched the new translator's SPIR-V.
 #pragma once
 
 #include <stdint.h>
@@ -84,6 +86,24 @@ static inline int cache_stamp_action(int state, int carried, int prep) {
     case CACHE_STAMP_DIFFERS: return carried && !prep ? CACHE_STAMP_CARRY : CACHE_STAMP_DROP;
     default: return CACHE_STAMP_READ_STAMP;
     }
+}
+
+// Whether the run writes pipeline-cache.bin at its exit (vk_pipeline.c P.base_at_exit). In play only the play file is
+// saved, and a pipeline the driver's own cache gives enters the cache of pipeline-cache.bin in memory only, so after a
+// start that finds no pipeline-cache.bin (the stamp has just deleted it, or the run that started without it ended
+// before its exit) every start would ask the driver again for the same pipelines, about 5 ms each against 0.1 ms from
+// the file (RADV, 2026-11-17), until a fold. Such a run writes the file once, at its exit, with what it took from the
+// driver's cache and built for that cache: a write at every autosave would copy all of it again each time, which is
+// what the play file is there to avoid. A run that ends without that save leaves the file missing, and the next start
+// does the same. base_size: the file's size after the stamp's check, -1 when there is none. prep: a preparation,
+// which builds into that file alone and writes it at every save anyway.
+static inline int cache_base_at_exit(int prep, int64_t base_size) { return !prep && base_size <= 0; }
+
+// Whether a save writes pipeline-cache.bin (vk_pipeline.c cache_save). play: the run has a play cache (without one
+// everything goes into the one cache, written at every save); fold: the play file was merged into it at the start and
+// is written once; base_at_exit: cache_base_at_exit's answer for this run; exiting: the save as the process ends.
+static inline int cache_save_writes_base(int play, int fold, int base_at_exit, int exiting) {
+    return !play || fold || (base_at_exit && exiting);
 }
 
 // path with its ".bin" replaced by suffix into out (cap bytes): pipeline-cache.bin gives pipeline-cache.id and

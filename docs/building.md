@@ -717,7 +717,8 @@ A change to the translator stamp of the pipeline cache files (`runtime/vk_cache_
 `cache_stamp_check`) passes `python tests\cache_stamp_check.py`, which builds the header alone: how
 `pipeline-cache.id` is written and read back (cut, empty or foreign text is no stamp), and what a start does with the
 files for a stamp that matches, one of another translator that the carry still serves, one that it does not serve,
-and none, through the starts of a translator update. What a start did shows in the log's
+and none, through the starts of a translator update, and which saves write `pipeline-cache.bin` (in play, the exit of
+a run that started without it, again after a run that ended before that save). What a start did shows in the log's
 `vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>` line, which the check finds in the source; no
 game files, no GPU.
 

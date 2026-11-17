@@ -89,6 +89,34 @@ int main(void) {
     cache_stamp_sibling("/g/pipeline-cache.bin", "-play.bin", out, 12);
     CHECK(strlen(out) == 11 && !strncmp(out, "/g/pipeline", 11), "cut to 12 bytes: %s", out);
 
+    // pipeline-cache.bin at the exit of a run that started without it, in play alone: never with the file there, never
+    // in a preparation (which writes it at every save). An empty file is none.
+    CHECK(cache_base_at_exit(0, -1), "no file in play: not written at exit");
+    CHECK(cache_base_at_exit(0, 0), "an empty file in play: not written at exit");
+    CHECK(!cache_base_at_exit(0, (int64_t)650 << 20), "a file there: written at exit too");
+    CHECK(!cache_base_at_exit(1, -1), "a preparation without the file: due at exit too");
+
+    // Which saves write it: every save without a play cache; with one, a fold's, and the exit's of a run that started
+    // without the file, not that run's autosaves, nor any save of a run that read the file.
+    CHECK(cache_save_writes_base(0, 0, 0, 0), "no play cache: an autosave does not write it");
+    CHECK(!cache_save_writes_base(1, 0, 0, 0) && !cache_save_writes_base(1, 0, 0, 1), "read at the start: written in play");
+    CHECK(cache_save_writes_base(1, 1, 0, 0), "a fold: its autosave does not write it");
+    CHECK(!cache_save_writes_base(1, 0, 1, 0), "started without it: an autosave writes it");
+    CHECK(cache_save_writes_base(1, 0, 1, 1), "started without it: the save at exit does not write it");
+
+    // Through the end of an update in play: the start that deletes the files is due to write pipeline-cache.bin and
+    // ends before its exit (a crash); the next start finds none and is due again, and its exit writes it; the start
+    // after reads it and writes the play file alone.
+    int64_t base = -1;   // deleted by the stamp
+    int due = cache_base_at_exit(0, base), wrote = 0;
+    CHECK(due, "the deleting start: not due");
+    due = cache_base_at_exit(0, base);   // that run crashed: the file is still missing
+    if (cache_save_writes_base(1, 0, due, 0)) wrote++;   // an autosave
+    if (cache_save_writes_base(1, 0, due, 1)) wrote++, base = (int64_t)30 << 20;   // the exit
+    CHECK(due && wrote == 1 && base > 0, "the start after a crash: due %d, written %d times", due, wrote);
+    due = cache_base_at_exit(0, base);
+    CHECK(!due && !cache_save_writes_base(1, 0, due, 1), "the start after the file was written: due again");
+
     // The words of the log line.
     CHECK(!strcmp(cache_stamp_state_name(CACHE_STAMP_MATCHES), "matches") &&
           !strcmp(cache_stamp_state_name(CACHE_STAMP_DIFFERS), "differs") &&
