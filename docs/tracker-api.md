@@ -6,6 +6,10 @@ the newline-delimited JSON protocol that trackers already speak to a console emu
 reads this game there reads it here too, with nothing to install and no memory-reading permission to grant.
 [ocarina-atlas.md](ocarina-atlas.md) covers one such tracker.
 
+A tracker that reads the save files instead (the game's progress as values known by the hashes of their names) asks
+the same server for the same values in the running game, `nx2saria.game_data`, and needs neither memory addresses nor
+the game's layout. [hyrule-tracker.md](hyrule-tracker.md) covers one such tracker.
+
 The API is off by default. The code is `runtime/tracker_api.c`; the listener is `plat_tcp_listen_loopback` in
 `runtime/platform/`.
 
@@ -28,7 +32,8 @@ where it goes with the API off, and the log says so (below).
 ## Safety
 
 - **This PC only.** The socket is bound to `127.0.0.1` and to no other address. Nothing on the network can reach it.
-- **Read-only.** No method writes. Unknown methods, write methods included, are refused.
+- **Read-only.** No method writes. Unknown methods, write methods included, are refused. `nx2saria.game_data` reads
+  the game data through the same guest-only copy as `read_memory`.
 - **Guest memory only.** A read or a search covers only the game's own regions (its modules, stack, heap, mapped
   physical memory and thread storage) and, within them, what the game can read. The runtime's own memory, and
   anything it read (the keys, the settings), lies outside those regions and cannot be named, even where it sits
@@ -77,7 +82,8 @@ TCP, one JSON object per line (`\n`, a `\r` before it is accepted), UTF-8.
 | -32602 | The parameters are missing, out of range or do not parse |
 | -32001 | The memory asked for is not memory the game can read now |
 | -32601 | Unknown method (every method that would write is unknown) |
-| -32002 | The game has no memory for the answer now |
+| -32002 | The game has no memory for the answer now, or nothing to answer yet: asking again later may answer |
+| -32003 | Not on this game build: asking again will not answer (`nx2saria.game_data` outside version 1.1.1, or a kind not laid out as 1.1.1 lays it out) |
 
 ### status
 
@@ -85,7 +91,7 @@ The game and the API. Trackers call it about once a second.
 
 ```json
 {"id":1,"method":"status","params":{"fps_window_ms":0}}
-{"id":1,"result":{"powered_on":true,"program_id":"0400486024DEC000","emulator":"nx2saria","build_id":"e0f3ccfaf50065ae…","game_version":"1.1.1","port_version":"0.14.0","api_version":1,"read_only":true}}
+{"id":1,"result":{"powered_on":true,"program_id":"0400486024DEC000","emulator":"nx2saria","build_id":"e0f3ccfaf50065ae…","game_version":"1.1.1","port_version":"0.14.0","api_version":1,"read_only":true,"methods":["status","read_memory","search_memory","nx2saria.state","nx2saria.game_data"]}}
 ```
 
 | Field | Meaning |
@@ -97,6 +103,7 @@ The game and the API. Trackers call it about once a second.
 | `game_version` | `1.1.1` (or the other version the build was made from). |
 | `port_version`, `api_version` | This port's version, and this API's (below). |
 | `read_only` | Always `true`. |
+| `methods` | The methods this server answers. `nx2saria.game_data` is listed where the game data is known (version 1.1.1). |
 
 `fps_window_ms` and any other parameter are ignored.
 
@@ -138,7 +145,7 @@ game updates, as far as this port supports them.
 
 ```json
 {"id":4,"method":"nx2saria.state"}
-{"id":4,"result":{"api_version":1,"powered_on":true,"presents":81234,"area":"HyruleField_Adult","player":{"x":12.5,"y":-3.25,"z":100.0},"main":"0x7000000000","heap":{"base":"0x1030000000","size":"0x300000000"}}}
+{"id":4,"result":{"api_version":1,"powered_on":true,"presents":81234,"area":"HyruleField_Adult","player":{"x":12.5,"y":-3.25,"z":100.0,"rotation":[0,0,1,0,1,0,-1,0,0]},"game_data":true,"main":"0x7000000000","heap":{"base":"0x1030000000","size":"0x300000000"}}}
 ```
 
 | Field | Meaning |
@@ -146,8 +153,58 @@ game updates, as far as this port supports them.
 | `presents` | The game's frames so far, one per update of the game. |
 | `area` | The area the game is in, by its name in the game's files (`HyruleField_Adult`, `DekuTree`…), or `null` before a save is loaded. Outdoor areas carry the age in their name. Version 1.1.1 only. |
 | `player` | Link's position in metres, or `null` while there is no player. Version 1.1.1 only. |
+| `player.rotation` | Link's rotation, a 3x3 matrix by rows as the game holds it (`debug_tools.c dbg_player_rot`), or `null`. Which axis is his forward one is to be confirmed on the bench (`tools/tracker_api_client.py --watch`). |
+| `game_data` | The game has loaded its game data (it does when it loads a save), so `nx2saria.game_data` answers. |
 | `main` | main's base address. |
 | `heap` | The heap's reserved range: its base, and the size the game may grow it to. |
+
+### nx2saria.game_data
+
+The game's progress values of one kind, each with the key the save files know it by: the MurmurHash3 (x86, 32 bits,
+seed 0) of the value's name. The kinds are named and numbered as in the save files. The game keeps these values in its
+game-data manager (`**[main+0x4c7e180]` in version 1.1.1); this method reads them there, so a tracker needs neither
+the manager's place nor its layout, and gets what the next save will hold.
+
+```json
+{"id":5,"method":"nx2saria.game_data","params":{"kind":"Int","hash":"0x04735978"}}
+{"id":5,"result":{"kind":"Int","format":1,"count":1,"record_size":8,"presents":81234,"digest":"8f1c0d2e4a6b7c90","records":"7859730439000000"}}
+{"id":6,"method":"nx2saria.game_data","params":{"kind":"Bool","if_digest":"5e2f…"}}
+{"id":6,"result":{"kind":"Bool","format":1,"count":11292,"record_size":8,"presents":81240,"digest":"5e2f…","unchanged":true}}
+```
+
+| Parameter | Meaning |
+|---|---|
+| `kind` | `Bool`, `Int`, `Enum`, `String64`, `String64Array`, `Int64` or `Bool64bitKey`. Required. |
+| `hash` | Optional: only the value with this key (1 to 32 bits; a number, or a string in hex with `0x` or decimal). A key the game does not have gives `count` 0. Not for `Bool64bitKey`. |
+| `filter` | `Bool64bitKey` only: `set` (the default) for the objects whose flag is set, `all` for every placed object. |
+| `if_digest` | Optional: the `digest` of an earlier answer. When the records are the same, the answer has `"unchanged":true` and no `records`. |
+
+`records` is the bytes of every value in hex, sorted by key, each record little-endian:
+
+| Kind | Record (`record_size`) |
+|---|---|
+| `Bool` | u32 key, u32 value, 0 or 1 (8) |
+| `Int` | u32 key, s32 value (8) |
+| `Enum` | u32 key, u32 the hash of the value's name, as in the save files (8) |
+| `String64` | u32 key, 64 bytes of text, zero from its end on (68) |
+| `String64Array` | u32 key, u32 n (at most 64), then n × 64 bytes of text (`record_size` 0: records vary) |
+| `Int64` | u32 key, s64 value (12) |
+| `Bool64bitKey` | u64 key (the placed object's 64-bit hash); u32 its class as the game holds it (bit 0x40: the game clears it again, a respawning object); u8 set, 0 or 1; 3 bytes 0 (16). Sorted by the u64 key. |
+
+`format` is the records' layout above (1); a change of it gives another number, so a tracker checks it. `count` is the
+number of records, `presents` the game's frames when they were read (the kinds are read one request at a time, at
+different frames), and `digest` a 64-bit FNV-1a of the record bytes (16 lowercase hex digits). A tracker that polls
+sends each kind's last digest and gets a short answer while nothing changed. The Ints change all the time (play
+time), the others when the player does something.
+
+The values are read as the game holds them now: a change the game has queued (it applies changes at its next update)
+shows one update later. The game fills its game data when it loads a save; until then every kind answers -32002.
+-32002 also answers a kind the game changed while it was read, or a value it cannot read now; -32003 a game version
+other than 1.1.1, or a kind that does not read as 1.1.1 keeps it (an entry that does not start with the kind's
+vtable). The message says which. A value is never made up: a kind is answered whole or refused.
+
+The other kinds of the save files (`Float`, `UInt`, the arrays of numbers, vectors, `Binary`…) are not answered: no
+tracker asks for them yet, and their layout in memory is not checked. They can be added within this version.
 
 ### Versions and frequency
 
@@ -156,7 +213,10 @@ or a method that changes its answer, gives a new version. A tracker checks `api_
 
 The client sets the pace. One request is answered at a time per connection, and up to four connections are served at
 the same time. A tracker that reads three values every 120 ms and the status once a second is well within what the API
-answers; a read takes a fraction of a millisecond.
+answers; a read takes a fraction of a millisecond. An item tracker that asks every kind of `nx2saria.game_data` twice a
+second, with their digests, gets the Ints (about 20 KiB of hex) and a few short answers; the first answer of `Bool`
+is about 180 KiB and the placed objects with `filter` `all` (once) about 370 KiB. A request copies one kind (for Bool
+about 265 KiB of entries and 175 KiB of table, a fraction of a millisecond), one request at a time.
 
 ## The log
 
@@ -165,12 +225,15 @@ All lines start with `tracker api:` (`logs/nx2saria.log`):
 | When | Line |
 |---|---|
 | Start, API off | `tracker api: off (tracker_api = 1 in nx2saria.ini or NX2SARIA_TRACKER_API=1 lets a map tracker …)` |
-| Start, API on | `tracker api: on, read-only, listening on 127.0.0.1:6545 (this PC only; status, read_memory, search_memory, nx2saria.state; API version 1); the game's heap at 0x1030000000, above the 0x1000000000 trackers take heap pointers from` (`below` when the block did not fit at 64 GiB) |
+| Start, API on | `tracker api: on, read-only, listening on 127.0.0.1:6545 (this PC only; status, read_memory, search_memory, nx2saria.state, nx2saria.game_data; API version 1); the game's heap at 0x1030000000, above the 0x1000000000 trackers take heap pointers from` (`below` when the block did not fit at 64 GiB) |
 | Port taken | `tracker api: on, but 127.0.0.1:6545 is taken (error 98), by another program or a closing one; trying again every 5 s; the game's heap at …`, then `tracker api: listening on 127.0.0.1:6545 after 3 tries` |
 | A client's first request | `tracker api: client 1 (127.0.0.1:50412) asks: its first request is status (1 open)` |
 | A client leaves | `tracker api: client 1 (127.0.0.1:50412) left after 812.4 s, the client closed the connection: 21056 requests (status 812, read_memory 20230, search_memory 14), 3 refused, 1.21 MiB sent (0 open)` |
 | First answers | `tracker api: first status answered: …`, `first read_memory answered: …`, `first search_memory answered: …`, `first search_memory that found its pattern: … the first at 0x7003c4705c …`, `first nx2saria.state answered: area …, Link at (…)` |
 | First refusal of each kind | `tracker api: read_memory refused: 8 bytes at 0x1000 are not memory the game can read now (the first such answer; the closing lines count the others)` |
+| Game data asked before a save is loaded | `tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, for Bool; the closing lines count the others)` (once) |
+| First game data of each kind | `tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 0.42 ms` (one line per kind) |
+| Game data that could not be answered | `tracker api: nx2saria.game_data Bool could not be answered: this kind's entries are not laid out as version 1.1.1 lays them out (error -32003; the first such answer for this kind)` (once per kind) |
 | Port checks | `tracker api: a program connected and left without a request (a tracker checking whether the port is taken); later checks are counted in the summaries` |
 | Not a request | `tracker api: client 5 sent something that is not a JSON request ("POST / HTTP/1.1."); closed. …` (once) |
 | Searches' minute spent | `tracker api: searches read 8192 MiB in the last minute, the most they may; …` (once) |
@@ -183,6 +246,8 @@ Client lines stop after 20 a session and summaries after 36; the line that reach
 
 - `python tests/tracker_api_check.py` builds `runtime/tracker_api.c` with the platform layer and a guest memory of its
   own at the game's addresses (no game files, no game build) and talks to it as a tracker does.
-- `python tools/tracker_api_client.py [--port 6545] [--watch 30]`, with the game running and the API on, asks the game
-  what a tracker asks and says whether each step works: the status, the heap's place, main by its header, Link by the
-  tracker's chain and by the port's own, the game data and the Gold Skulltula count.
+- `python tools/tracker_api_client.py [--port 6545] [--watch 30] [--save <game>/profile/save]`, with the game
+  running and the API on, asks the game what a tracker asks and says whether each step works: the status, the heap's
+  place, main by its header, Link by the tracker's chain and by the port's own, the game data and the Gold Skulltula
+  count, every kind of `nx2saria.game_data` (with `--save`, compared with the newest save), and with `--watch` Link's
+  heading from his rotation beside the way he moves.
