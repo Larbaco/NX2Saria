@@ -254,6 +254,15 @@ static inline int bm_save_edits(const uint8_t *s, size_t n, const BmPlace *p, Bm
     return k;
 }
 
+// Whether two lists of edits change the same bytes into the same values (only the bytes in use count: the rest of
+// orig and repl holds nothing).
+static inline int bm_edits_same(const BmEdit *a, int na, const BmEdit *b, int nb) {
+    if (na != nb) return 0;
+    for (int k = 0; k < na; k++)
+        if (a[k].off != b[k].off || a[k].n != b[k].n || memcmp(a[k].repl, b[k].repl, a[k].n)) return 0;
+    return 1;
+}
+
 // Applies edits to the n bytes read at offset off.
 static inline void bm_edits_apply(const BmEdit *e, int count, uint64_t off, uint8_t *buf, uint64_t n) {
     for (int k = 0; k < count; k++) {

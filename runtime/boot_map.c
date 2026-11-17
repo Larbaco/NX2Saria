@@ -222,7 +222,7 @@ int boot_map_save_open(const char *path, PlatFile *f) {
     plat_mutex_lock(&save_lock);
     int first = count && !save_edit_n;
     if (first) memcpy(save_edit, e, sizeof e), save_edit_n = count;
-    else if (count && (count != save_edit_n || memcmp(e, save_edit, sizeof(BmEdit) * (size_t)count))) {
+    else if (count && !bm_edits_same(e, count, save_edit, save_edit_n)) {
         count = 0;
         snprintf(why, sizeof why, "its values are not where the first open of the save found them");
     }

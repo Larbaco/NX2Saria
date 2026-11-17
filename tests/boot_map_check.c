@@ -203,6 +203,17 @@ static void save_checks(void) {
               "reads of %zu bytes: area %d pos %g %g %g yaw %g room %d child %u clock %u day %u", step, area_ok, pos[0],
               pos[1], pos[2], yaw, (int32_t)room, child, secs, bm_u32(read + v + 4));
     }
+    // the same file gives the same edits, whatever the unused bytes of the lists hold; another place does not
+    {
+        BmEdit a[8], b[8];
+        memset(a, 0x11, sizeof a), memset(b, 0x77, sizeof b);
+        int na = bm_save_edits(s, n, &p, a, why, sizeof why), nb = bm_save_edits(s, n, &p, b, why, sizeof why);
+        CHECK(na == 6 && bm_edits_same(a, na, b, nb), "a second open of the same save matches the first");
+        BmPlace q = p;
+        q.pos[0] += 1;
+        nb = bm_save_edits(s, n, &q, b, why, sizeof why);
+        CHECK(!bm_edits_same(a, na, b, nb), "another position does not match");
+    }
     // the save's own area, no age and no time asked: the area, position, heading and dungeon room
     p.area = "WaterTemple", p.child = -1, p.day_seconds = -1;
     k = bm_save_edits(s, n, &p, e, why, sizeof why);
