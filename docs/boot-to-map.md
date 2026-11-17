@@ -7,8 +7,8 @@ On other game versions the setting is ignored, and the log says so.
 
 This page records how the game goes from its title to play, what the setting changes and why there, and what is
 known, inferred or untested. Everything below was read from the 1.1.1 game files and code (build id `e0f3ccfa`).
-Nothing of it was run before this page was written. **[C]** marks what was read in the files or the code. **[I]** marks
-what is inferred.
+The research was done before the first run; *Runs* below says what the first runs showed. **[C]** marks what was read
+in the files or the code. **[I]** marks what is inferred.
 
 ## Using it
 
@@ -327,10 +327,29 @@ A new game is the title's node 13 and `Opening.module`. That path plays the intr
 the root's string and skipping the introduction's boot event. The setting does not do that. It needs a save, and
 without one it says so and boots normally.
 
+## Runs
+
+The first runs, on Linux (RX 6700 XT), without a window or sound, each on a copy of the profile, with the game's
+build of `d52a663c`. The account had six slots, all in `WaterTemple`; slot 2 was the latest and adult. Every boot map
+run showed black loading frames and then the area: no title screen and no file menu (a picture every few seconds).
+
+| Settings | Log | Seen |
+|---|---|---|
+| `boot_map = KokiriForest_Child` | `boot map: arrived in KokiriForest_Child (asked KokiriForest_Child), slot 2, Link at -46.09 118.44 15.39, 0.0 m from the start position, 19.6 s after the start` | child Link in his house, the area's name shown on arrival |
+| `boot_map = HyruleField_Child:HyruleField_FrontOfMarket`, `boot_map_time = 21:00` | 6 values changed; `arrived in HyruleField_Child ... 0.1 m from the start position, 18.4 s after the start` | night, child Link on the drawbridge in front of the market |
+| `boot_map = InsideTheDekuTree:Entrance`, `boot_map_age = child`, `boot_map_slot = 5` | 5 values changed; `arrived in InsideTheDekuTree ... slot 5 ... 0.0 m from the start position, 15.5 s after the start` | child Link inside the Deku Tree, map floor A1 |
+| `boot_map = HyruleFeld_Child` | `boot map: HyruleFeld_Child is not an area of the game's start positions (StartPos.byml): normal boot` | the title screen |
+| none | `boot map: off` | the title screen |
+
+The first run found a bug: a second open of the save was compared with the first by whole edits, and the unused
+bytes of each made them differ, so the game loaded the save as it is (`arrived in WaterTemple ... NOT the area asked
+for`). Fixed in `d52a663c`. With the log in a file of the runner's (`2> file`, as the bench's script does), the lines
+are in that file instead of `logs/nx2saria.log`.
+
 ## Risks
 
-- **Untested.** This was written from the game's files and code. Nothing was run. The first run settles what the
-  checklist below asks.
+- **Tested on Linux only, on one account's saves.** *Runs* below lists what was seen. Windows, Master Quest, and a
+  return to the title after a boot map are not tried yet.
 - **The read path is not a risk.** Every read of a game file reaches the changes **[C]**. The game reads files only
   through `nn::fs::ReadFile`, and the runtime replaces all three overloads of it (`fs_host.c` `ov_read_file`,
   `ov_read_options` and `ov_read_exact`). Each goes to `read_file`, which hands a RomFS handle to `romfs_read` and
