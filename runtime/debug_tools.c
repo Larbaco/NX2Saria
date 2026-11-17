@@ -383,6 +383,85 @@ static void places_in(const uint8_t *p, size_t n) {
     places = list, place_n = count;
 }
 
+// The three floats under key name of a dictionary node (0xc1) at off: 0 when it has no such array of three floats.
+static int byml_dict_vec3(const uint8_t *p, size_t n, uint32_t keys, uint32_t off, const char *name, float out[3]) {
+    if ((size_t)off + 4 > n || p[off] != 0xc1) return 0;
+    uint32_t count = u24(p + off + 1);
+    for (uint32_t i = 0; i < count && (size_t)off + 12 + 8 * (size_t)i <= n; i++) {
+        const uint8_t *e = p + off + 4 + 8 * (size_t)i;
+        const char *key = byml_key(p, n, keys, u24(e));
+        uint32_t at;
+        memcpy(&at, e + 4, 4);
+        if (key && !strcmp(key, name)) return byml_vec3(p, n, keys, at, e[3], out, 0, NULL);
+    }
+    return 0;
+}
+
+// The start position pos of area in the game's StartPos.byml, read here and now (boot_map.c asks before the guest
+// starts, long before names_thread reads the menu's list). An empty pos, or none, is the area's entry 0: what the game
+// itself takes for an area's default (main+0xb679e0) and for a name the area does not list. *name gets the entry's
+// name ("" for the area's unnamed one), xyz its Trans and rot its Rot (radians). 1 found; 0 with why: the area, or the
+// named position, is not in the file, or the file cannot be read.
+int dbg_start_pos(const char *area, const char *pos, char name[64], float xyz[3], float rot[3], char *why, size_t cap) {
+    uint64_t dn = 0, zn = 0;
+    uint8_t *dz = romfs_load("Pack/ZsDic.pack.zs", &dn), *dics = NULL, *z = romfs_load("Banc/BancBasedResource/StartPos.byml.zs", &zn);
+    uint8_t *raw = NULL;
+    ZSTD_DDict *dd = NULL;
+    ZSTD_DCtx *dctx = ZSTD_createDCtx();
+    unsigned long long dsize = dz ? ZSTD_getFrameContentSize(dz, (size_t)dn) : 0, rn = z ? ZSTD_getFrameContentSize(z, (size_t)zn) : 0;
+    size_t at = 0, size = 0;
+    if (dz && dsize && dsize < (64u << 20) && (dics = malloc((size_t)dsize)) &&
+        ZSTD_decompress(dics, (size_t)dsize, dz, (size_t)dn) == dsize && sarc_member(dics, (size_t)dsize, "zs.zsdic", &at, &size))
+        dd = ZSTD_createDDict(dics + at, size);
+    if (dd && dctx && rn && rn < (16u << 20) && (raw = malloc((size_t)rn)) &&
+        ZSTD_decompress_usingDDict(dctx, raw, (size_t)rn, z, (size_t)zn, dd) != rn) {
+        free(raw);
+        raw = NULL;
+    }
+    ZSTD_freeDCtx(dctx);
+    ZSTD_freeDDict(dd);
+    free(dics);
+    free(dz);
+    free(z);
+    int found = 0;
+    const char *no = "the game's StartPos.byml cannot be read";
+    uint32_t keys = 0, root = 0;
+    if (raw && rn >= 16 && !memcmp(raw, "YB", 2)) {
+        memcpy(&keys, raw + 4, 4), memcpy(&root, raw + 12, 4);
+        no = (size_t)root + 4 <= rn && raw[root] == 0xc1 ? NULL : no;
+    }
+    uint32_t areas = no ? 0 : u24(raw + root + 1), spots_at = 0;
+    if (!no) no = "is not an area of the game's start positions (StartPos.byml)";
+    for (uint32_t i = 0; raw && i < areas && (size_t)root + 12 + 8 * (size_t)i <= rn; i++) {
+        const uint8_t *e = raw + root + 4 + 8 * (size_t)i;
+        const char *key = byml_key(raw, (size_t)rn, keys, u24(e));
+        uint32_t v;
+        memcpy(&v, e + 4, 4);
+        if (key && !strcmp(key, area) && e[3] == 0xc1 && (size_t)v + 4 <= rn && raw[v] == 0xc1) spots_at = v, no = NULL;
+    }
+    if (spots_at) {
+        uint32_t spots = u24(raw + spots_at + 1);
+        no = spots ? "lists no start position" : "has no start positions";
+        for (uint32_t k = 0; k < spots && !found && (size_t)spots_at + 12 + 8 * (size_t)k <= rn; k++) {
+            const uint8_t *pe = raw + spots_at + 4 + 8 * (size_t)k;
+            const char *key = byml_key(raw, (size_t)rn, keys, u24(pe));
+            uint32_t v;
+            memcpy(&v, pe + 4, 4);
+            if (!key || strlen(key) > 63 || ((pos && pos[0]) ? strcmp(key, pos) : k != 0)) continue;
+            if (pe[3] != 0xc1 || !byml_dict_vec3(raw, (size_t)rn, keys, v, "Trans", xyz)) {
+                no = "has that start position without its coordinates";
+                break;
+            }
+            if (!byml_dict_vec3(raw, (size_t)rn, keys, v, "Rot", rot)) rot[0] = rot[1] = rot[2] = 0;
+            snprintf(name, 64, "%s", key);
+            found = 1;
+        }
+    }
+    if (!found && why) snprintf(why, cap, "%s %s%s%s", area, no, spots_at && pos && pos[0] ? " " : "", spots_at && pos && pos[0] ? pos : "");
+    free(raw);
+    return found;
+}
+
 static void names_thread(void *arg) {
     (void)arg;
     uint64_t t0 = plat_now_ns(), dn = 0;

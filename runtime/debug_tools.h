@@ -1,5 +1,6 @@
 // The debug menu's access to the game (debug_tools.c). Everything but dbg_tick is for the menu's thread.
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef __cplusplus
@@ -43,6 +44,10 @@ const char *dbg_place_pos(int i);      // never "": a teleport without a listed 
 void dbg_warp(const char *area, const char *pos);
 // The start position of area nearest to xyz (metres) among those with coordinates: its name and distance; 0 none.
 int dbg_place_nearest(const char *area, const float xyz[3], char name[64], float *dist);
+// Any thread, at once (boot_map.c, before the guest starts): start position pos of area read from the game's file,
+// the area's default (its entry 0) for an empty pos; *name the entry's name, xyz and rot (radians) its Trans and Rot.
+// 0 with why when it is not there.
+int dbg_start_pos(const char *area, const char *pos, char name[64], float xyz[3], float rot[3], char *why, size_t cap);
 int dbg_events(void);
 const char *dbg_event_name(int i);
 void dbg_event_start(const char *name);
