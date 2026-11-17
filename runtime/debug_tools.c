@@ -144,7 +144,7 @@ void dbg_unfreeze_all(void) {
 
 // ---- the flags
 static uint64_t gmd(void) {
-    uint64_t slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e180);
+    uint64_t slot = rd_ptr(MOD_MAIN_BASE + DBG_GAME_DATA_SLOT);
     return slot ? rd_ptr(slot) : 0;
 }
 

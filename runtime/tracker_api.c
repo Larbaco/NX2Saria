@@ -13,8 +13,11 @@
 //   bytes appear. "all" reads the game's modules first and ends there when they hold the pattern (a tracker finds main
 //   by its MOD0 header that way, and asks for more copies than main has); then the heap, then the other regions.
 // - nx2saria.state: this port's own summary, which needs no knowledge of the game's structures: the area the game is
-//   in and Link's position (debug_tools.c dbg_area, dbg_player_pos), the presents so far, and where main and the heap
-//   are.
+//   in and Link's position and rotation (debug_tools.c dbg_area, dbg_player_pos, dbg_player_rot), whether the game
+//   data is there, the presents so far, and where main and the heap are.
+// - nx2saria.game_data {kind, hash, if_digest, filter}: the game's progress values of one kind (Bool, Int, Enum,
+//   String64, String64Array, Int64, Bool64bitKey) with the keys the save files know them by, so a tracker that reads
+//   the save files reads the running game the same way, without the game-data manager's place or layout.
 //
 // What can be read: guest addresses are host addresses in this runtime (host.h), and mem_query answers for the whole
 // address space below 2^39, the host's own allocations included (as memory the game cannot have). So a read or a
@@ -88,8 +91,10 @@
 #define SUMMARY_MS 600000
 #define SUMMARY_LOGS 36
 
-enum { M_STATUS, M_READ, M_SEARCH, M_STATE, M_OTHER, M_N };
-static const char *const method_name[M_N] = {"status", "read_memory", "search_memory", "nx2saria.state", "other"};
+enum { M_STATUS, M_READ, M_SEARCH, M_STATE, M_GAMEDATA, M_OTHER, M_N };
+static const char *const method_name[M_N] = {"status", "read_memory", "search_memory", "nx2saria.state",
+                                             "nx2saria.game_data", "other"};
+#define METHODS "status, read_memory, search_memory, nx2saria.state and nx2saria.game_data"
 
 static int port;
 static char build_id[65];
@@ -97,7 +102,7 @@ static PlatMutex search_lock = PLAT_MUTEX_INIT;
 static uint64_t search_tokens = SEARCH_BYTES_PER_MIN, search_tokens_ms;   // search_lock: bytes searches may still read
 static int32_t open_clients, client_seq, client_logs;
 static uint64_t win_req[M_N], win_errors, win_bytes, win_checks;   // the summary's window, atomics
-static int32_t said_first[M_N], said_refusal[M_N][4], said_hit, said_check, said_bytes, said_accept;
+static int32_t said_first[M_N], said_refusal[M_N][5], said_hit, said_check, said_bytes, said_accept;
 
 // ---- logging helpers
 
@@ -406,8 +411,8 @@ static void open_answer(Out *o, const Req *r) {
     if (r->id[0]) out_f(o, "\"id\":%s,", r->id);
 }
 
-enum { E_PARAMS, E_UNREADABLE, E_METHOD, E_NOT_YET };
-static const int error_code[] = {-32602, -32001, -32601, -32002};
+enum { E_PARAMS, E_UNREADABLE, E_METHOD, E_NOT_YET, E_UNSUPPORTED, E_KINDS };
+static const int error_code[E_KINDS] = {-32602, -32001, -32601, -32002, -32003};
 
 static void error_answer(Out *o, const Req *r, int kind, int m, const char *fmt, ...) {
     char msg[200];
@@ -445,7 +450,10 @@ static void do_status(Out *o, const Req *r) {
              "\"build_id\":\"%s\",\"game_version\":\"%s\",\"port_version\":",
           on ? "true" : "false", build_id, game_version());
     out_text(o, rt_port_version);
-    out_f(o, ",\"api_version\":%d,\"read_only\":true}}\n", TRACKER_API_VERSION);
+    out_f(o, ",\"api_version\":%d,\"read_only\":true,\"methods\":[", TRACKER_API_VERSION);
+    for (int m = 0; m < M_OTHER; m++)   // nx2saria.game_data where the game data is known (1.1.1)
+        if (m != M_GAMEDATA || RT_V111) out_f(o, "%s\"%s\"", m ? "," : "", method_name[m]);
+    out_put(o, "]}}\n", 4);
     if (once(&said_first[M_STATUS]))
         rt_log("tracker api: first status answered: powered_on %d, game %s, build %.16s", on, game_version(), build_id);
 }
@@ -723,18 +731,342 @@ static void do_search(Out *o, const Req *r) {
                (unsigned long long)(SEARCH_BYTES_PER_MIN >> 20));
 }
 
+// ---- the game data (nx2saria.game_data)
+//
+// The game keeps its progress in a game-data manager, **[main+DBG_GAME_DATA_SLOT] in version 1.1.1 (debug_tools.c
+// gmd). Its values are the ones the save files hold, under the same keys: the MurmurHash3 of each value's name. For
+// each kind of value the manager has a section of 0x60 bytes at the kind's number times 0x60, the kinds numbered as
+// the save files number them: the entries' count (u32) at +0x10, the entries at +0x18, a table of {u32 hash,
+// u32 index} pairs at +0x20 (hash 0 for an empty pair, probed from hash % size on) and the table's size (u32) at
+// +0x2c. Every entry of a kind starts with the same pointer into main, the kind's vtable (Bool's and Int's are known);
+// that tells a real section from one read at the wrong place or stride. The game fills the sections when it loads a
+// save; until then their counts are 0. The placed objects' flags (Gold Skulltulas, Heart Pieces in the world: each
+// object's flag under its placement's 64-bit hash) are a table of 16-byte entries sorted by their u64 key, a u32 class
+// at +8 (bit 0x40: the game clears it again, a respawning object) and the value byte at +12; its count (u32) is at
+// manager+0xc58 and its address at +0xc60. A value is read as the game holds it now: a change the game has queued
+// shows after its next update.
+//
+// The answer is each value with its key, sorted by key, as little-endian records in hex: a tracker that reads the save
+// files reads the running game with the keys it already has. A digest of the records lets a tracker that polls skip an
+// answer that did not change (if_digest). Each request copies one kind, through guest_copy (the game's own regions
+// only), on this thread, one request at a time (gd_lock), and refuses rather than answering a value it could not read:
+// -32002 when asking again may answer (no game data yet, a copy the game changed meanwhile, a value it cannot read
+// now), -32003 when it will not (another game version, a kind not laid out as 1.1.1 lays it out).
+enum { GD_INLINE, GD_TEXT, GD_TEXTS, GD_KEYS };
+typedef struct {
+    const char *name;
+    int number, how;
+    uint32_t stride;   // bytes of one entry
+    uint32_t at;       // GD_INLINE: the value in the entry; GD_TEXT: the text's pointer; GD_TEXTS: the texts' count
+    uint32_t size;     // GD_INLINE: the value's bytes
+    uint32_t record;   // bytes of one record in the answer; 0 when they vary
+    uint32_t max;      // most entries taken for the kind
+    uint64_t vtable;   // the entries' vtable, main+this, where it is known; 0: any one pointer into main
+} GdKind;
+static const GdKind gd_kinds[] = {
+    {"Bool", 0, GD_INLINE, 0x18, 0x16, 1, 8, 200000, 0x4c20658},   // record: u32 hash, u32 the value (0 or 1)
+    {"Int", 2, GD_INLINE, 0x28, 0x1c, 4, 8, 100000, 0x4c20718},     // u32 hash, s32 value
+    {"Enum", 6, GD_INLINE, 0x38, 0x1c, 4, 8, 50000, 0},             // u32 hash, u32 the hash of the value's name
+    {"String64", 16, GD_TEXT, 0x108, 0x68, 0, 68, 10000, 0},        // u32 hash, 64 bytes of text, zero after its end
+    {"String64Array", 17, GD_TEXTS, 0x90, 0x80, 0, 0, 2000, 0},     // u32 hash, u32 n, n x 64 bytes of text
+    {"Int64", 22, GD_INLINE, 0x30, 0x20, 8, 12, 50000, 0},          // u32 hash, s64 value
+    {"Bool64bitKey", 32, GD_KEYS, 16, 0, 0, 16, 200000, 0},         // u64 key, u32 class, u8 set (0 or 1), 3 zero
+};
+#define GD_KINDS (int)(sizeof gd_kinds / sizeof *gd_kinds)
+#define GD_FORMAT 1                 // the records' layout above; a change of it gives another number
+#define GD_TABLE_MAX 1000000u       // pairs of a kind's {hash, index} table
+#define GD_TEXT_ELEMENTS 64u        // texts of one String64Array value
+#define GD_TEXTS_STRIDE 0x50        // a String64Array element: its text at +0x0c
+#define GD_TEXTS_AT 0x0c
+#define GD_KEYS_COUNT 0xc58         // manager+: the placed objects' flags, count (u32), then at +0xc60 their address
+#define GD_ANSWER_MAX (8u << 20)    // bytes of records in one answer (String64Array's texts could be many)
+static PlatMutex gd_lock = PLAT_MUTEX_INIT;
+static int32_t said_kind[GD_KINDS], said_kind_refused[GD_KINDS], said_not_loaded;
+static const char gd_not_loaded[] = "the game has not loaded its game data yet";   // the usual wait, logged once
+
+static uint64_t gd_manager(void) {
+    uint64_t slot = 0, m = 0;
+    if (!RT_V111 || !guest_copy(MOD_MAIN_BASE + DBG_GAME_DATA_SLOT, &slot, 8) || !slot || !guest_copy(slot, &m, 8))
+        return 0;
+    return m;
+}
+
+// The game has loaded its game data: the manager is there and its Bool section has entries.
+static int gd_ready(void) {
+    uint64_t m = gd_manager();
+    uint32_t bools = 0;
+    return m && guest_copy(m + 0x10, &bools, 4) && bools;
+}
+
+static int in_main(uint64_t p) { return p >= MOD_MAIN_BASE && p < MOD_MAIN_BASE + MOD_MAIN_SIZE; }
+
+typedef struct { uint32_t hash, index; } GdPair;
+static int gd_by_hash(const void *a, const void *b) {
+    uint32_t x = ((const GdPair *)a)->hash, y = ((const GdPair *)b)->hash;
+    return x < y ? -1 : x > y;
+}
+
+static uint64_t fnv1a(uint64_t h, const uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++) h = (h ^ p[i]) * 0x100000001b3ull;
+    return h;
+}
+
+typedef struct { uint8_t *rec; size_t n; uint32_t count; const char *why; int err; } GdAnswer;
+
+static int gd_fail(GdAnswer *a, int err, const char *why) {
+    free(a->rec);
+    a->rec = NULL, a->n = 0, a->count = 0, a->err = err, a->why = why;
+    return 0;
+}
+
+// A text of 64 bytes as it goes into a record: the bytes up to its first NUL, zero after it.
+static void text_record(uint8_t *to, const uint8_t *text) {
+    size_t n = 0;
+    while (n < 64 && text[n]) n++;
+    memcpy(to, text, n);
+    memset(to + n, 0, 64 - n);
+}
+
+// The placed objects' flags, sorted by key: all of them, or the set ones.
+static int gd_keys(uint64_t m, const GdKind *k, int set_only, GdAnswer *a) {
+    uint64_t head[2] = {0, 0}, again[2] = {0, 0};   // the count (its low 32 bits), the address
+    if (!guest_copy(m + GD_KEYS_COUNT, head, sizeof head)) return gd_fail(a, E_NOT_YET, "the game data cannot be read now");
+    head[0] &= 0xffffffffu;
+    if (!head[0] || !head[1]) return gd_fail(a, E_NOT_YET, gd_not_loaded);
+    if (head[0] > k->max)
+        return gd_fail(a, E_UNSUPPORTED, "the placed objects' flags are not where version 1.1.1 keeps them");
+    uint8_t *t = malloc((size_t)head[0] * 16);
+    if (!t) return gd_fail(a, E_NOT_YET, "the port has no memory for the answer now");
+    if (!guest_copy(head[1], t, (size_t)head[0] * 16) || !guest_copy(m + GD_KEYS_COUNT, again, sizeof again) ||
+        (again[0] &= 0xffffffffu, memcmp(head, again, sizeof head))) {
+        free(t);
+        return gd_fail(a, E_NOT_YET, "the placed objects' flags cannot be read now, or changed while they were read");
+    }
+    size_t kept = 0;
+    uint64_t prev = 0;
+    for (uint64_t i = 0; i < head[0]; i++) {
+        uint64_t key;
+        uint32_t cls;
+        uint8_t set = t[i * 16 + 12] & 1;
+        memcpy(&key, t + i * 16, 8), memcpy(&cls, t + i * 16 + 8, 4);
+        if (key <= prev) {   // the game keeps them sorted, without key 0
+            free(t);
+            return gd_fail(a, E_NOT_YET, "the placed objects' flags are not sorted as version 1.1.1 keeps them");
+        }
+        prev = key;
+        if (set_only && !set) continue;
+        uint8_t *r = t + kept++ * 16;   // at or before entry i, which was read above
+        memcpy(r, &key, 8), memcpy(r + 8, &cls, 4);
+        memset(r + 12, 0, 4);
+        r[12] = set;
+    }
+    a->rec = t, a->n = kept * 16, a->count = (uint32_t)kept;
+    return 1;
+}
+
+// One kind's records, sorted by key, into a (malloc'd): 1, or 0 with a->err and a->why.
+static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, int set_only, GdAnswer *a) {
+    memset(a, 0, sizeof *a);
+    if (k->how == GD_KEYS) return gd_keys(m, k, set_only, a);
+
+    uint8_t sec[0x30], again[0x30];
+    uint32_t total = 0, size = 0;
+    uint64_t entries = 0, table = 0;
+    if (!guest_copy(m + (uint64_t)k->number * 0x60, sec, sizeof sec)) return gd_fail(a, E_NOT_YET, "the game data cannot be read now");
+    memcpy(&total, sec + 0x10, 4), memcpy(&entries, sec + 0x18, 8), memcpy(&table, sec + 0x20, 8);
+    memcpy(&size, sec + 0x2c, 4);
+    if (!total || !entries || !table) return gd_fail(a, E_NOT_YET, gd_not_loaded);
+    if (total > k->max || size < total || size > GD_TABLE_MAX)
+        return gd_fail(a, E_UNSUPPORTED, "this kind is not where version 1.1.1 keeps it");
+
+    // The {hash, index} pairs: all of them, or the one of the hash, probed as the game probes (debug_tools.c gmd_entry)
+    GdPair *pairs = malloc((size_t)size * sizeof *pairs);
+    if (!pairs) return gd_fail(a, E_NOT_YET, "the port has no memory for the answer now");
+    if (!guest_copy(table, pairs, (size_t)size * sizeof *pairs)) {
+        free(pairs);
+        return gd_fail(a, E_NOT_YET, "this kind's table cannot be read now");
+    }
+    uint32_t np = 0;
+    if (has_hash) {
+        for (uint32_t i = hash % size, n = 0; n < size && pairs[i].hash; i = i + 1 < size ? i + 1 : 0, n++)
+            if (pairs[i].hash == hash) {
+                pairs[np++] = pairs[i];
+                break;
+            }
+    } else {
+        for (uint32_t i = 0; i < size; i++)
+            if (pairs[i].hash) pairs[np++] = pairs[i];
+        qsort(pairs, np, sizeof *pairs, gd_by_hash);
+    }
+    uint8_t *seen = calloc((size_t)total / 8 + 1, 1);
+    int odd = np > total || !seen;
+    for (uint32_t i = 0; i < np && !odd; i++) {   // each index below the count, once; each hash once
+        odd = pairs[i].index >= total || (seen[pairs[i].index / 8] >> (pairs[i].index % 8) & 1) ||
+              (i && pairs[i].hash == pairs[i - 1].hash);
+        if (!odd) seen[pairs[i].index / 8] |= (uint8_t)(1u << (pairs[i].index % 8));
+    }
+    free(seen);
+    if (odd) {
+        free(pairs);
+        return gd_fail(a, E_NOT_YET, "this kind's table changed while it was read, or does not read as version 1.1.1 "
+                                     "keeps it");
+    }
+
+    // The entries: every one (each checked for the kind's vtable), or the one asked for and the first
+    size_t span = has_hash ? (size_t)k->stride : (size_t)total * k->stride;
+    uint8_t *ent = malloc(span ? span : 1);
+    uint64_t vt = k->vtable ? MOD_MAIN_BASE + k->vtable : 0, from = entries;
+    if (has_hash && np) from = entries + (uint64_t)pairs[0].index * k->stride;
+    if (!ent || (span && !guest_copy(from, ent, span)) || (!vt && !guest_copy(entries, &vt, 8))) {
+        free(pairs), free(ent);
+        return gd_fail(a, E_NOT_YET, "this kind's values cannot be read now");
+    }
+    for (size_t o = 0; o < span; o += k->stride) {
+        uint64_t v;
+        memcpy(&v, ent + o, 8);
+        if (v != vt || !in_main(v)) {
+            free(pairs), free(ent);
+            return gd_fail(a, E_UNSUPPORTED, "this kind's entries are not laid out as version 1.1.1 lays them out");
+        }
+    }
+#define ENTRY(i) (ent + (has_hash ? 0 : (size_t)pairs[i].index * k->stride))
+
+    size_t cap = (size_t)np * k->record;
+    for (uint32_t i = 0; !k->record && i < np; i++) {   // GD_TEXTS: 8 bytes and the texts of each value
+        uint32_t c = 0;
+        memcpy(&c, ENTRY(i) + k->at, 4);
+        if (c > GD_TEXT_ELEMENTS) {
+            free(pairs), free(ent);
+            return gd_fail(a, E_NOT_YET, "a String64Array value holds more than 64 texts");
+        }
+        cap += 8 + (size_t)c * 64;
+    }
+    if (cap > GD_ANSWER_MAX) {
+        free(pairs), free(ent);
+        return gd_fail(a, E_NOT_YET, "the answer would be over 8 MiB");
+    }
+    uint8_t *rec = malloc(cap ? cap : 1), text[GD_TEXT_ELEMENTS * GD_TEXTS_STRIDE];
+    size_t w = 0;
+    int unread = !rec;
+    for (uint32_t i = 0; !unread && i < np; i++) {
+        const uint8_t *e = ENTRY(i);
+        memcpy(rec + w, &pairs[i].hash, 4);
+        if (k->how == GD_INLINE) {
+            uint32_t v32 = 0;
+            if (k->size == 1) v32 = e[k->at] & 1;
+            else if (k->size == 4) memcpy(&v32, e + k->at, 4);
+            if (k->size == 8) memcpy(rec + w + 4, e + k->at, 8);
+            else memcpy(rec + w + 4, &v32, 4);
+            w += k->record;
+        } else if (k->how == GD_TEXT) {
+            uint64_t p = 0;
+            memcpy(&p, e + k->at, 8);
+            unread = !p || !guest_copy(p, text, 64);
+            if (!unread) text_record(rec + w + 4, text);
+            w += k->record;
+        } else {   // GD_TEXTS: the element count at +0x80, their address at +0x88
+            uint32_t c = 0;
+            uint64_t p = 0;
+            memcpy(&c, e + k->at, 4), memcpy(&p, e + k->at + 8, 8);
+            unread = c && (!p || !guest_copy(p, text, (size_t)c * GD_TEXTS_STRIDE));
+            memcpy(rec + w + 4, &c, 4);
+            for (uint32_t j = 0; !unread && j < c; j++)
+                text_record(rec + w + 8 + (size_t)j * 64, text + (size_t)j * GD_TEXTS_STRIDE + GD_TEXTS_AT);
+            w += 8 + (size_t)c * 64;
+        }
+    }
+#undef ENTRY
+    free(pairs), free(ent);
+    // The section as it was when the copies began: else the indices may be of another table than the entries
+    if (unread || !guest_copy(m + (uint64_t)k->number * 0x60, again, sizeof again) || memcmp(sec, again, sizeof sec)) {
+        const char *why = rec ? "a text of this kind cannot be read now, or the kind changed while it was read"
+                              : "the port has no memory for the answer now";
+        free(rec);
+        return gd_fail(a, E_NOT_YET, why);
+    }
+    a->rec = rec, a->n = w, a->count = np;
+    return 1;
+}
+
+static void do_game_data(Out *o, const Req *r) {
+    const char *kind = param_str(r, "kind"), *filter = param_str(r, "filter"), *if_digest = param_str(r, "if_digest");
+    const GdKind *k = NULL;
+    for (int i = 0; kind && i < GD_KINDS && !k; i++)
+        if (!strcmp(kind, gd_kinds[i].name)) k = &gd_kinds[i];
+    uint64_t h64 = 0;
+    int has_hash = param(r, "hash") != NULL;
+    if (!k || (has_hash && (!param_u64(r, "hash", &h64) || !h64 || h64 > 0xffffffffull || k->how == GD_KEYS)) ||
+        (filter && (k->how != GD_KEYS || (strcmp(filter, "set") && strcmp(filter, "all")))) ||
+        (param(r, "filter") && !filter) || (param(r, "if_digest") && !if_digest)) {
+        error_answer(o, r, E_PARAMS, M_GAMEDATA, "nx2saria.game_data takes a kind (Bool, Int, Enum, String64, "
+                     "String64Array, Int64, Bool64bitKey), a hash of 1 to 32 bits (not for Bool64bitKey), filter set "
+                     "or all (Bool64bitKey only) and if_digest");
+        return;
+    }
+    if (!RT_V111) {
+        error_answer(o, r, E_UNSUPPORTED, M_GAMEDATA, "nx2saria.game_data knows version 1.1.1's game data only");
+        return;
+    }
+    uint64_t m = gd_manager(), t0 = plat_now_ns();
+    GdAnswer a = {.err = E_NOT_YET, .why = gd_not_loaded};
+    int ok = 0;
+    if (m) {
+        plat_mutex_lock(&gd_lock);
+        ok = gd_records(m, k, has_hash, (uint32_t)h64, !filter || !strcmp(filter, "set"), &a);
+        plat_mutex_unlock(&gd_lock);
+    }
+    int i = (int)(k - gd_kinds);
+    if (!ok) {   // logged here: the wait for the game data once, anything else once per kind
+        __atomic_store_n(&said_refusal[M_GAMEDATA][a.err], 1, __ATOMIC_RELEASE);
+        if (a.why == gd_not_loaded && once(&said_not_loaded))
+            rt_log("tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, "
+                   "for %s; the closing lines count the others)", k->name);
+        else if (a.why != gd_not_loaded && once(&said_kind_refused[i]))
+            rt_log("tracker api: nx2saria.game_data %s could not be answered: %s (error %d; the first such answer for "
+                   "this kind)", k->name, a.why, error_code[a.err]);
+        error_answer(o, r, a.err, M_GAMEDATA, "%s: %s", k->name, a.why);
+        return;
+    }
+    char digest[17];
+    snprintf(digest, sizeof digest, "%016llx", (unsigned long long)fnv1a(0xcbf29ce484222325ull, a.rec, a.n));
+    open_answer(o, r);
+    out_f(o, "\"result\":{\"kind\":\"%s\",\"format\":%d,\"count\":%u,\"record_size\":%u,\"presents\":%llu,"
+          "\"digest\":\"%s\",", k->name, GD_FORMAT, a.count, k->record, (unsigned long long)frame_step_presents(),
+          digest);
+    if (if_digest && !strcmp(if_digest, digest)) {
+        out_put(o, "\"unchanged\":true}}\n", 19);
+    } else {
+        out_put(o, "\"records\":\"", 11);
+        hex_bytes(o, a.rec, a.n);
+        out_put(o, "\"}}\n", 4);
+    }
+    free(a.rec);
+    if (once(&said_kind[i]))
+        rt_log("tracker api: first nx2saria.game_data of %s answered: %u value%s, %zu bytes, in %.2f ms%s", k->name,
+               a.count, a.count == 1 ? "" : "s", a.n, (double)(plat_now_ns() - t0) / 1e6, has_hash ? " (one hash)" : "");
+}
+
 static void do_state(Out *o, const Req *r) {
     char area[64] = "";
-    float xyz[3];
-    int has_area = dbg_area(area), has_pos = dbg_player_pos(xyz);
+    float xyz[3], rot[9];
+    int has_area = dbg_area(area), has_pos = dbg_player_pos(xyz), has_rot = has_pos && dbg_player_rot(rot);
     const RtGuestLayout *l = mem_layout();
     open_answer(o, r);
     out_f(o, "\"result\":{\"api_version\":%d,\"powered_on\":%s,\"presents\":%llu,\"area\":", TRACKER_API_VERSION,
           game_running() ? "true" : "false", (unsigned long long)frame_step_presents());
     if (has_area) out_text(o, area);
     else out_put(o, "null", 4);
-    if (has_pos) out_f(o, ",\"player\":{\"x\":%.4f,\"y\":%.4f,\"z\":%.4f}", xyz[0], xyz[1], xyz[2]);
-    else out_put(o, ",\"player\":null", 14);
+    if (has_pos) {
+        out_f(o, ",\"player\":{\"x\":%.4f,\"y\":%.4f,\"z\":%.4f,\"rotation\":", xyz[0], xyz[1], xyz[2]);
+        if (has_rot)
+            out_f(o, "[%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f]}", rot[0], rot[1], rot[2], rot[3], rot[4], rot[5],
+                  rot[6], rot[7], rot[8]);
+        else
+            out_put(o, "null}", 5);
+    } else {
+        out_put(o, ",\"player\":null", 14);
+    }
+    out_f(o, ",\"game_data\":%s", gd_ready() ? "true" : "false");
     out_f(o, ",\"main\":\"0x%llx\",\"heap\":{\"base\":\"0x%llx\",\"size\":\"0x%llx\"}}}\n",
           (unsigned long long)MOD_MAIN_BASE, (unsigned long long)l->heap.base, (unsigned long long)l->heap.size);
     if (once(&said_first[M_STATE])) {
@@ -773,8 +1105,9 @@ static int handle_line(Client *cl, const char *line, size_t n, Out *o) {
         not_a_request(cl, line, n);
         return 0;
     }
-    int m = r.method_cut ? M_OTHER : !strcmp(r.method, "status") ? M_STATUS : !strcmp(r.method, "read_memory") ? M_READ
-          : !strcmp(r.method, "search_memory") ? M_SEARCH : !strcmp(r.method, "nx2saria.state") ? M_STATE : M_OTHER;
+    int m = M_OTHER;
+    for (int k = 0; k < M_OTHER && !r.method_cut && m == M_OTHER; k++)
+        if (!strcmp(r.method, method_name[k])) m = k;
     uint64_t before = 0;
     for (int k = 0; k < M_N; k++) before += cl->req[k];
     if (!before && client_log_slot())
@@ -785,9 +1118,10 @@ static int handle_line(Client *cl, const char *line, size_t n, Out *o) {
     case M_READ: do_read(o, &r); break;
     case M_SEARCH: do_search(o, &r); break;
     case M_STATE: do_state(o, &r); break;
+    case M_GAMEDATA: do_game_data(o, &r); break;
     default:
-        error_answer(o, &r, E_METHOD, M_OTHER, "unknown method \"%.32s\": this API is read-only and answers status, "
-                     "read_memory, search_memory and nx2saria.state", r.method);
+        error_answer(o, &r, E_METHOD, M_OTHER, "unknown method \"%.32s\": this API is read-only and answers " METHODS,
+                     r.method);
     }
     cl->req[m]++;
     __atomic_add_fetch(&win_req[m], 1, __ATOMIC_RELAXED);
@@ -863,6 +1197,7 @@ static void client_main(void *arg) {
             }
             cl->bytes += o.n;
             __atomic_add_fetch(&win_bytes, o.n, __ATOMIC_RELAXED);
+            if (o.cap > (1u << 20)) free(o.p), o.p = NULL, o.cap = 0;   // a large answer's room is not kept
             have -= n + 1;
             memmove(line, nl + 1, have);
             line_since = plat_now_ms();
@@ -1007,15 +1342,18 @@ void tracker_api_init(void) {
     }
     snprintf(build_id, sizeof build_id, "%s", mods_main_build_id());   // here, once: the getter is not thread-safe
     uint64_t heap = mem_layout()->heap.base;
-    char where[160];
+    char where[160], methods[160] = "";
+    for (int m = 0, n = 0; m < M_OTHER; m++)   // the start line names them as status answers them
+        if (m != M_GAMEDATA || RT_V111)
+            n += snprintf(methods + n, sizeof methods - (size_t)n, "%s%s", m ? ", " : "", method_name[m]);
     snprintf(where, sizeof where, "the game's heap at %#llx, %s the 0x1000000000 trackers take heap pointers from",
              (unsigned long long)heap, heap >= HEAP_POINTER_FLOOR ? "above" : "below");
     int err = 0;
     Listener *ls = malloc(sizeof *ls);
     PlatTcp *l = listen_now(&err);
     if (l)
-        rt_log("tracker api: on, read-only, listening on 127.0.0.1:%d (this PC only; status, read_memory, "
-               "search_memory, nx2saria.state; API version %d); %s", port, TRACKER_API_VERSION, where);
+        rt_log("tracker api: on, read-only, listening on 127.0.0.1:%d (this PC only; %s; API version %d); %s", port,
+               methods, TRACKER_API_VERSION, where);
     else
         rt_log("tracker api: on, but 127.0.0.1:%d is taken (error %d), by another program or a closing one; trying "
                "again every %d s; %s", port, err, RETRY_LISTEN_MS / 1000, where);
