@@ -331,6 +331,11 @@ without one it says so and boots normally.
 
 - **Untested.** This was written from the game's files and code. Nothing was run. The first run settles what the
   checklist below asks.
+- **The read path is not a risk.** Every read of a game file reaches the changes **[C]**. The game reads files only
+  through `nn::fs::ReadFile`, and the runtime replaces all three overloads of it (`fs_host.c` `ov_read_file`,
+  `ov_read_options` and `ov_read_exact`). Each goes to `read_file`, which hands a RomFS handle to `romfs_read` and
+  applies a save handle's changes itself. Not known: whether the game reads a graph once at boot or again on each
+  return to the title (see the next risks).
 - **The save changes after the game saves.** The game saves the patched values as the real ones. The area change
   ends with an autosave **[I]**, and from then on the slot holds the new area, age and time. Use a copy of the
   profile, as a capture replay does (`tools/capture_run.py` makes one).
