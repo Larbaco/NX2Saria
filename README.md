@@ -146,7 +146,8 @@ steps to reproduce, and the relevant log. Review attachments for private paths a
 
 ## Documentation
 
-- **Playing:** [controls](docs/controls.md), [settings reference](nx2saria.ini.example), [amiibo](docs/amiibo.md).
+- **Playing:** [controls](docs/controls.md), [settings reference](nx2saria.ini.example), [amiibo](docs/amiibo.md),
+  [map trackers](docs/tracker-api.md).
 - **Installing and building:** [build kit](docs/README-BuildKit.md), [source build](docs/building.md),
   [Windows launcher](docs/launcher.md).
 - **Contributing:** [contribution guide](CONTRIBUTING.md), [architecture](docs/architecture.md),
