@@ -39,7 +39,7 @@ index f28bf8d..3666fb4 100644
  
 diff --git a/src/gamedata/nx2saria.ts b/src/gamedata/nx2saria.ts
 new file mode 100644
-index 0000000..f075ba9
+index 0000000..b25172a
 --- /dev/null
 +++ b/src/gamedata/nx2saria.ts
 @@ -0,0 +1,280 @@
@@ -205,8 +205,8 @@ index 0000000..f075ba9
 +
 +/**
 + * Link's heading in degrees from his rotation (a 3x3 matrix by rows): his forward axis (the matrix's third column)
-+ * on the ground, measured as player.ts measures the direction he moves in. The axis is to be confirmed against the
-+ * game (NX2Saria's tools/tracker_api_client.py prints both).
++ * on the ground, measured as player.ts measures the direction he moves in. Checked against the way he moves in
++ * NX2Saria 0.14.0 (its tools/tracker_api_client.py --watch prints both).
 + */
 +export function yawFromRotation(m: number[] | null | undefined): number | null {
 +  if (!m || m.length !== 9) return null;

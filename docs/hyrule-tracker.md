@@ -28,10 +28,10 @@ built or run for this study.
   use (the MurmurHash3 of each value's name), read from the game's own game-data manager. The tracker lays them over
   the save it already read, as it does with values from memory. Live tracking then works on Linux too, without any
   permission to read another process and without searching memory.
-- **Prototype:** written, tested against a stand-in for the game's memory (`tests/tracker_api_check.py`) and, end to
-  end, with the patched tracker reading the fork's server code (the check's build of it, over that stand-in). The
-  checklist at the end proves it with the game, including the parts that were read in the game's code and not yet
-  seen live.
+- **Prototype:** written, tested against a stand-in for the game's memory (`tests/tracker_api_check.py`), and run
+  with the game on the Linux bench ([First run](#first-run)): every kind answered, the live values agree with the save
+  that loaded, Link's heading reads right, and the patched tracker goes live against the running game. Not yet run on
+  Windows, and the tracker app itself (Electron) was not started.
 
 ## What hyrule-tracker is
 
@@ -101,7 +101,7 @@ It reads no small-key counts, current health or magic, or entrances.
 
 Version 1.1.1; `main+X` is guest (and host) address `0x7000000000 + X`. The game data lives in one manager,
 `**[main+0x4c7e180]` (`runtime/debug_tools.c` `gmd`; the object at `*(main+0x4e842a8)`), a 0xd38-byte singleton the
-game fills when it loads a save. For each kind it holds a section of 0x60 bytes at `manager + number × 0x60`: entries'
+game fills at start, before its first frame, with its game data list's defaults, and sets from a save when one loads. For each kind it holds a section of 0x60 bytes at `manager + number × 0x60`: entries'
 count (u32) at +0x10, the entries at +0x18, a `{u32 hash, u32 index}` table at +0x20, probed from `hash % size` on, its
 size (u32) at +0x2c. The kinds are numbered as in the save files. Everything in the table was read in the game's own
 code (its getters and loader) and in its GameDataList, and the counts were checked against the bench's saves; the
@@ -124,12 +124,13 @@ live values are what the first run checks.
 | Gold Skulltulas (100), Heart Pieces in the world (14), Heart Containers (8) | the placed objects' table, 11,657 | count u32 at manager+0xc58, 16-byte records at `*(manager+0xc60)`: u64 key, u32 class, u8 value; sorted, the game binary-searches it | the placed object's 64-bit hash `H` (Gold Skulltulas also set `H ^ 2`) | `Bool64bitKey` |
 | Link's position | — | `[[main+0x4e371d0]+0x480]+0x31c` (`debug_tools.c dbg_player_pos`) | | `nx2saria.state.player` |
 | Link's rotation (heading) | — | the same actor +0x328, 3x3 (`dbg_player_rot`) | | `nx2saria.state.player.rotation` |
-| The game data is loaded | — | the Bool section's count is not 0 | | `nx2saria.state.game_data` |
+| The game data is made | — | the Bool section's count is not 0 | | `nx2saria.state.game_data` |
 | Save files | — | `<profile>/save/<account>/slot_00..05/{progress,caption}.sav`, written through `profile/save-tx` | | the tracker's own reader |
 
-Not established statically, checked on the first run: the stride of String64Array (its five values are the ones a
-tracker uses; 0x90 is what the tracker saw in another port of the same build), the axis of the rotation that is Link's
-forward one, and which wallet is which. Unread kinds (Float, UInt, the arrays of numbers, vectors) are left out of the
+Checked on the first run ([First run](#first-run)): the live values of every kind against the save that loaded, the
+stride of String64Array (0x90, what the tracker saw in another port of the same build), the axis of the rotation that
+is Link's forward one (the third column), and the manager's vtables. Not established: which wallet is which. Unread
+kinds (Float, UInt, the arrays of numbers, vectors) are left out of the
 API until a tracker needs them; their layouts were read in the game's code, not checked live (Float and UInt 0x28 with
 the value at +0x1c; the arrays of numbers 0x40, EnumArray 0x50, each with the count at +0x20 and the elements' address
 at +0x28).
@@ -328,15 +329,59 @@ Found here, worth carrying to `atlas-integration`:
 - With `nx2saria.game_data`, Atlas could read those flags without walking the manager; nothing requires it to.
 - The start line now names `nx2saria.game_data` (the example in `ocarina-atlas.md` predates it).
 
+## First run
+
+2026-11-17, Linux bench, the bench script's build of `380444b7` (the code of this branch; the commits after it change
+comments and pages only), started without a window or sound with `tracker_api=1`, an input script pressing A through
+the title screen to the first save, then walking Link in four directions. The bench client
+(`tools/tracker_api_client.py --save … --watch 25`) and the patched tracker's `ApiSession` ran against it in the same
+run. The run's output (the game's log lines, as its stderr went to a file) is in the session's scratchpad.
+
+- **Build:** 10.4 min, the whole lifted code compiled once; `--probe-cfg` failed only on the read-only file test, as
+  expected on NTFS.
+- **Start line:** `tracker api: on, read-only, listening on 127.0.0.1:6545 (this PC only; status, read_memory,
+  search_memory, nx2saria.state, nx2saria.game_data; API version 1); the game's heap at 0x1030000000, above the
+  0x1000000000 trackers take heap pointers from`.
+- **When the game data is there:** `nx2saria.state` answered `game_data: true` before the game's first frame, on the
+  boot screen, with no save loaded: the game makes its game data at start with its defaults (this page and
+  `tracker-api.md` said "when it loads a save" before this run). The area came 14 s later, Link 9 s after that.
+- **Every kind answered**, the first answers logged once each: `Bool answered: 11292 values, 90336 bytes, in 1.89 ms`,
+  Int 1,259 in 0.13 ms, Enum 130, String64 54, String64Array 5 (2,280 bytes), Int64 33, Bool64bitKey 360 set; no
+  refusal and no "could not be answered" line in the whole run.
+- **Against the save that loaded (`slot_02`):** Bool 10,212 in the save, none missing, 1 different (a flag set after
+  the load); Int 1,144, none different; Enum 101, none different; 360 placed objects set in the save, all 360 set live.
+  The other slots differ by a few dozen values, as other saves of the same playthrough do.
+- **The area and the place within it:** `Sequence_CurrentBanc` `WaterTemple`; the String64Array place list
+  `["WaterTemple", "", "", ""]` (the 0x90 stride reads).
+- **Link:** his position by the port's chain and by Atlas's agree to 0.000 m; his heading from the rotation
+  (`atan2(m[2], -m[8])`) equals the direction he moves in at every step of the walk (172.5, 180.0/181.1 while turning,
+  282.9, 331.0, 30.5, 140.3, 221.1…).
+- **The manager:** starts with `main+0x4c1f120`, `main+0x4c1f140`, as read in main; Atlas's object + 0x168 is the
+  manager in this run; Gold Skulltula tokens 49.
+- **Reads:** 275 reads of the client's walk, median 0.04 ms, slowest 0.75 ms; main found by its header in 24 ms.
+- **hyrule-tracker (the patch's `ApiSession`, from its checkout):** `isNx2Saria` found the game, `player()` gave the
+  position, heading and area, and `read()` against each slot's save matched the playthrough; against `slot_02`: Bool
+  10,211 of 10,212 agree (2,900 of 2,900 set flags kept), Int 1,144/1,144, Enum 101/101, String64 30/30, Int64 26/28,
+  placed objects 360/360, 2,444 objects marked respawning; a whole read (seven requests) in 6 to 25 ms.
+- **The log's client lines** reached their limit of 20 within the run: the check that waited for the game opened one
+  connection a second (`tracker api: 20 client lines logged; later clients are counted in the summaries only`). The
+  run lasted about a minute, under the 10-minute summary, and ended by SIGTERM, so no summary line came.
+- **After:** the game ended, `nx2saria.ini` and `test.ini` unchanged.
+
+Not covered by this run: Windows, the tracker app itself (its window, its overlay, `live.ts`), collecting something
+while it watches (checklist step 4), Atlas and the tracker at once, and a session of more than ten minutes.
+
 ## Checklist for the first run
+
+Steps 2 and 3 are done ([First run](#first-run)); the rest is still to do.
 
 When the game may be built and run again (after Atlas's checklist, steps 1 to 3, which build this branch too):
 
 1. `python tests/tracker_api_check.py` on Windows (MSYS2 clang) as well.
 2. Build this branch (Linux and Windows). Start the game with `tracker_api = 1` (bench: `test-linux.ini` /
    `test.ini`, keep a copy and compare it after) and stay on the title screen: the start line names
-   `nx2saria.game_data`; `python tools/tracker_api_client.py` shows step 6 "no game data yet", and the log has the
-   "asked before the game loaded its game data" line at most once.
+   `nx2saria.game_data`; the game data answers with its defaults (it is made before the first frame), which a tracker
+   tells from a save by comparing with one.
 3. Load a save, save in the game at once, then run
    `python tools/tracker_api_client.py --save <game folder>/profile/save --watch 30` while Link walks and turns:
    - step 6: every kind answers with about 11,292 Bool, 1,259 Int, 130 Enum, 54 String64, 5 String64Array, 33 Int64
@@ -358,6 +403,6 @@ When the game may be built and run again (after Atlas's checklist, steps 1 to 3,
    when the right file is loaded.
 7. Atlas and hyrule-tracker open at the same time: both live, two clients in the log, none refused.
 8. Read the session's `tracker api:` lines: the summaries every 10 minutes count `nx2saria.game_data`, and nothing is
-   refused but the waits before a save is loaded.
-9. Then decide: pin the manager's vtable (step 3) in `gd_manager`, confirm the String64Array stride, and offer the
-   tracker PR to its author with the heading settled.
+   refused.
+9. Then decide: pin the manager's vtable (`main+0x4c1f120`, seen in the first run) in `gd_manager`, and offer the
+   tracker PR to its author (the heading is settled).

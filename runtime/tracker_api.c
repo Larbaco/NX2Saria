@@ -739,8 +739,9 @@ static void do_search(Out *o, const Req *r) {
 // the save files number them: the entries' count (u32) at +0x10, the entries at +0x18, a table of {u32 hash,
 // u32 index} pairs at +0x20 (hash 0 for an empty pair, probed from hash % size on) and the table's size (u32) at
 // +0x2c. Every entry of a kind starts with the same pointer into main, the kind's vtable (Bool's and Int's are known);
-// that tells a real section from one read at the wrong place or stride. The game fills the sections when it loads a
-// save; until then their counts are 0. The placed objects' flags (Gold Skulltulas, Heart Pieces in the world: each
+// that tells a real section from one read at the wrong place or stride. The game fills the sections at start, before
+// its first frame, with its game data list's defaults (a save's load then sets the save's values); until then their
+// counts are 0. The placed objects' flags (Gold Skulltulas, Heart Pieces in the world: each
 // object's flag under its placement's 64-bit hash) are a table of 16-byte entries sorted by their u64 key, a u32 class
 // at +8 (bit 0x40: the game clears it again, a respawning object) and the value byte at +12; its count (u32) is at
 // manager+0xc58 and its address at +0xc60. A value is read as the game holds it now: a change the game has queued
@@ -877,7 +878,7 @@ static int gd_fields(uint64_t m, const GdKind *k, uint64_t f[4]) {
 }
 
 // A kind that does not read as 1.1.1 keeps it: -32003 when its section is still as it was read (else the game was
-// changing it, while it loads a save, and -32002).
+// changing it, as while it makes its game data, and -32002).
 static int gd_unsupported(uint64_t m, const GdKind *k, const uint64_t f[4], GdAnswer *a, const char *why) {
     uint64_t now[4];
     if (!gd_fields(m, k, now) || memcmp(f, now, sizeof now))

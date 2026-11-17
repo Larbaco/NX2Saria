@@ -33,16 +33,18 @@ the copyright holder's decision to contribute it. Background: [hyrule-tracker.md
 >   request copies one kind, one request at a time: for `Bool`, the most, about 265 KiB of entries and 175 KiB of
 >   table. Entries per kind and the answer's size are capped; an answer's room over 1 MiB is not kept.
 > - The log: the start line names the new method (from the method table, as `status` lists them); one line the first
->   time the game data is asked for before a save is loaded; one line for the first answer of each kind (count,
+>   time the game data is asked for before the game has made it; one line for the first answer of each kind (count,
 >   bytes, time); one line per kind the first time it cannot be answered, with the reason and the error.
 >
 > **Tested:** `tests/tracker_api_check.py` on Linux (a stand-in manager at the game's address, empty and then loaded,
 > every kind, hashes, digests checked against FNV-1a, filters, refused parameters, text pointers into the host's own
 > memory, a duplicated pair, a wrong vtable in a middle entry, one log line per kind); `clang -fsyntax-only` for Linux
 > and `x86_64-w64-mingw32`; `tools/check_platform.py`, `tests/cfg_rows_check.py`; `tools/tracker_api_client.py` against
-> the stand-in; the patched hyrule-tracker reading this server end to end. **Not yet:** a build and a run of the game.
-> The checklist in docs/hyrule-tracker.md proves the live values of every kind against a save, the String64Array
-> stride and the axis of the rotation.
+> the stand-in; the patched hyrule-tracker reading this server end to end. **With the game** (Linux bench, build of
+> `380444b7`, a save loaded by an input script): every kind answered (11,292 Bool, 1,259 Int, 130 Enum, 54 String64,
+> 5 String64Array, 33 Int64, 360 placed objects set), against the slot that loaded 0 missing and 1 Bool, 0 Int, 0 Enum
+> and 0 placed objects different; the heading from the rotation equal to the way Link moves; the patched hyrule-tracker
+> live against the running game. docs/hyrule-tracker.md, "First run", has the details. Not yet on Windows.
 
 **Commits:** the method and the state fields; the check; the bench client's game-data and heading steps; the docs.
 
@@ -94,13 +96,14 @@ added, 280 of them the module and 165 its test.
 >
 > For the other ports and emulators live mode reads as before; what they see change is a connection attempt to
 > `127.0.0.1:6545` every 3 s while no game is attached, made beside the process search. Tested with
-> `npm run typecheck` and `npm test` (108 passed, 11 skipped as before), and end to end against NX2Saria's server code
-> over a stand-in for the game's memory. `live.ts`'s own changes are not covered by a test (they run in Electron's
-> main process).
+> `npm run typecheck` and `npm test` (108 passed, 11 skipped as before), end to end against NX2Saria's server code
+> over a stand-in for the game's memory, and `ApiSession` against the running game on Linux: live against the loaded
+> save (10,211 of its 10,212 Bools, every Int, Enum and placed object agreeing), a whole read in 6 to 25 ms.
+> `live.ts`'s own changes are not covered by a test (they run in Electron's main process), and the app itself was not
+> started (Windows).
 >
-> Open point: the heading. NX2Saria gives Link's rotation as a 3x3 matrix; `yawFromRotation` takes its third column
-> as his forward axis. That is to be confirmed in the game (NX2Saria's bench client prints both); until then the pin
-> may point the wrong way, never the wrong place.
+> The heading: NX2Saria gives Link's rotation as a 3x3 matrix; `yawFromRotation` takes its third column as his
+> forward axis, which NX2Saria's bench run confirmed (the heading equals the way he moves at every step).
 
 **What the tracker gains:** live tracking on Linux, and on Windows without reading another process's memory; no table
 search (the first read is immediate); the place within an area and the placed objects as for the other ports.

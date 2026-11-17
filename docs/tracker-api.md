@@ -153,8 +153,8 @@ game updates, as far as this port supports them.
 | `presents` | The game's frames so far, one per update of the game. |
 | `area` | The area the game is in, by its name in the game's files (`HyruleField_Adult`, `DekuTree`…), or `null` before a save is loaded. Outdoor areas carry the age in their name. Version 1.1.1 only. |
 | `player` | Link's position in metres, or `null` while there is no player. Version 1.1.1 only. |
-| `player.rotation` | Link's rotation, a 3x3 matrix by rows as the game holds it (`debug_tools.c dbg_player_rot`), or `null`. Which axis is his forward one is to be confirmed on the bench (`tools/tracker_api_client.py --watch`). |
-| `game_data` | The game has loaded its game data (it does when it loads a save), so `nx2saria.game_data` answers. Version 1.1.1 only (always `false` on the others). |
+| `player.rotation` | Link's rotation, a 3x3 matrix by rows as the game holds it (`debug_tools.c dbg_player_rot`), or `null`. His forward axis is the third column: on the ground (`m[2]`, `m[8]`), so his heading in degrees is `atan2(m[2], -m[8])`, the way he moves when he runs forward (checked on the bench with `tools/tracker_api_client.py --watch`). |
+| `game_data` | The game has made its game data, so `nx2saria.game_data` answers. It does at start, before its first frame, with its game data list's defaults; a save's load then sets the save's values, so a tracker tells the title screen from a save by comparing with one. Version 1.1.1 only (always `false` on the others). |
 | `main` | main's base address. |
 | `heap` | The heap's reserved range: its base, and the size the game may grow it to. |
 
@@ -198,8 +198,9 @@ sends each kind's last digest and gets a short answer while nothing changed. The
 time), the others when the player does something.
 
 The values are read as the game holds them now: a change the game has queued (it applies changes at its next update)
-shows one update later. The game fills its game data when it loads a save; until then every kind answers -32002, and
-once it has, a kind it holds nothing of answers `count` 0. -32002 also answers a kind the game changed while it was
+shows one update later. The game makes its game data at start, before its first frame (until then every kind answers
+-32002), with its list's defaults, and sets a save's values when it loads one; once it has made it, a kind it holds
+nothing of answers `count` 0. -32002 also answers a kind the game changed while it was
 read (its section's count, entries, table or size, a pair for an entry that is not there, an entry with two pairs, a
 key twice, placed objects out of order), an entry whose vtable is still 0 (being made), a String64Array value of more
 than 64 texts, or a value it cannot read now. -32003 answers a game version other than 1.1.1, or a kind that does not
@@ -236,7 +237,7 @@ All lines start with `tracker api:` (`logs/nx2saria.log`):
 | A client leaves | `tracker api: client 1 (127.0.0.1:50412) left after 812.4 s, the client closed the connection: 21056 requests (status 812, read_memory 20230, search_memory 14), 3 refused, 1.21 MiB sent (0 open)` |
 | First answers | `tracker api: first status answered: …`, `first read_memory answered: …`, `first search_memory answered: …`, `first search_memory that found its pattern: … the first at 0x7003c4705c …`, `first nx2saria.state answered: area …, Link at (…)` |
 | First refusal of each kind | `tracker api: read_memory refused: 8 bytes at 0x1000 are not memory the game can read now (the first such answer; the closing lines count the others)` |
-| Game data asked before a save is loaded | `tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, for Bool; the closing lines count the others)` (once) |
+| Game data asked before the game has made it (before its first frame) | `tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, for Bool; the closing lines count the others)` (once) |
 | First game data of each kind | `tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 0.42 ms` (one line per kind; ` (one hash)` after it when the first request asked one hash) |
 | Game data that could not be answered | `tracker api: nx2saria.game_data Bool could not be answered: this kind's entries are not laid out as version 1.1.1 lays them out (error -32003; the first such answer for this kind and error)` (once per kind and error) |
 | Port checks | `tracker api: a program connected and left without a request (a tracker checking whether the port is taken); later checks are counted in the summaries` |
