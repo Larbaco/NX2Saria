@@ -424,14 +424,19 @@ int dbg_start_pos(const char *area, const char *pos, char name[64], float xyz[3]
     free(dz);
     free(z);
     int found = 0;
-    const char *no = "the game's StartPos.byml cannot be read";
+    const char *no = NULL;
     uint32_t keys = 0, root = 0;
     if (raw && rn >= 16 && !memcmp(raw, "YB", 2)) {
         memcpy(&keys, raw + 4, 4), memcpy(&root, raw + 12, 4);
-        no = (size_t)root + 4 <= rn && raw[root] == 0xc1 ? NULL : no;
+        if ((size_t)root + 4 > rn || raw[root] != 0xc1) root = 0;
     }
-    uint32_t areas = no ? 0 : u24(raw + root + 1), spots_at = 0;
-    if (!no) no = "is not an area of the game's start positions (StartPos.byml)";
+    if (!root) {
+        if (why) snprintf(why, cap, "the game's StartPos.byml cannot be read");
+        free(raw);
+        return 0;
+    }
+    uint32_t areas = u24(raw + root + 1), spots_at = 0;
+    no = "is not an area of the game's start positions (StartPos.byml)";
     for (uint32_t i = 0; raw && i < areas && (size_t)root + 12 + 8 * (size_t)i <= rn; i++) {
         const uint8_t *e = raw + root + 4 + 8 * (size_t)i;
         const char *key = byml_key(raw, (size_t)rn, keys, u24(e));
@@ -457,7 +462,8 @@ int dbg_start_pos(const char *area, const char *pos, char name[64], float xyz[3]
             found = 1;
         }
     }
-    if (!found && why) snprintf(why, cap, "%s %s%s%s", area, no, spots_at && pos && pos[0] ? " " : "", spots_at && pos && pos[0] ? pos : "");
+    int named = spots_at && pos && pos[0] && !strcmp(no, "lists no start position");
+    if (!found && why) snprintf(why, cap, "%s %s%s%s", area, no, named ? " " : "", named ? pos : "");
     free(raw);
     return found;
 }

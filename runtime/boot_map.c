@@ -216,11 +216,16 @@ int boot_map_save_open(const char *path, PlatFile *f) {
     BmEdit e[8];
     int count = ok ? bm_save_edits(d, (size_t)id.size, &bm.place, e, why, sizeof why) : 0;
     free(d);
-    // the first open that has every value sets the edits; a later one that does not reads its file as it is, and the
-    // handles of the first keep theirs
+    // the first open that has every value sets the edits, which every handle reads by. A later open is changed only
+    // when its file gives the same edits (a commit in between may have moved the values); otherwise it reads its file
+    // as it is, and the handles of the first keep theirs.
     plat_mutex_lock(&save_lock);
     int first = count && !save_edit_n;
     if (first) memcpy(save_edit, e, sizeof e), save_edit_n = count;
+    else if (count && (count != save_edit_n || memcmp(e, save_edit, sizeof(BmEdit) * (size_t)count))) {
+        count = 0;
+        snprintf(why, sizeof why, "its values are not where the first open of the save found them");
+    }
     plat_mutex_unlock(&save_lock);
     static int32_t said_ok, said_no;
     if (first && !__atomic_fetch_add(&said_ok, 1, __ATOMIC_RELAXED))

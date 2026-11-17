@@ -1306,7 +1306,8 @@ int romfs_read_patch(const char *rel, uint64_t offset, const void *orig, const v
     uint8_t have[16];
     const char *no = i >= file_count                               ? "not in the RomFS"
                      : overlay_slot(i)                             ? "served by a mod or a RomFS overlay"
-                     : !n || n > sizeof have || read_patch_n == READ_PATCH_MAX ? "too many bytes to change"
+                     : !n || n > sizeof have                       ? "too many bytes to change"
+                     : read_patch_n == READ_PATCH_MAX              ? "one change too many (the table is full)"
                                                                    : NULL;
     if (!no) {
         Entry e = entry(i);
