@@ -33,6 +33,12 @@ is skipped. --shot also saves a PNG of the last frame, for comparing pictures be
 builds every pipeline on the render thread before it draws (runtime/boot.c), so the picture does not depend on build
 timing: a scene's first frames stall far longer than in play, and its numbers are not comparable with a run without it.
 
+--boot-map starts each scene with a boot map (runtime/boot_map.c, docs/boot-to-map.md) instead of the title screen and
+a teleport: the scene's first "warp <area> <start position>" step becomes NX2SARIA_BOOT_MAP=<area>:<start position>,
+the input script presses nothing, and the game loads the area once, from the save, with no title or file menu first.
+The warm-up then counts from the arrival rather than from the save's own area, so its numbers are compared with other
+--boot-map runs only (meta.json says which).
+
 --mangohud runs the game under MangoHud with logging on (MANGOHUD=1) and compares the frame times it saw over the same
 stretch with the game's own.
 """
@@ -227,6 +233,17 @@ def make_script(scene, title_ticks=6000):
     return '\n'.join(lines) + '\n'
 
 
+def boot_map_of(scene):
+    """(boot map value, the scene without its teleport) for --boot-map: the first warp step of the scene's dbg list is
+    the place to boot to; None when the scene has no warp."""
+    for k, (_, step) in enumerate(scene.get('dbg', [])):
+        parts = step.split()
+        if parts[0] == 'warp' and len(parts) in (2, 3):
+            rest = [s for j, s in enumerate(scene['dbg']) if j != k]
+            return ':'.join(parts[1:]), {**scene, 'dbg': rest}
+    return None, scene
+
+
 def dbg_test(scene):
     parts = [f'{t}:{cmd}' for t, cmd in scene.get('dbg', [])]
     return ';'.join(parts)
@@ -272,7 +289,7 @@ def cmd_run(a):
     scenes = load_scenes(a.scenes, a.only)
     meta = {'label': a.label, 'game': str(game), 'started': stamp, 'head': git('rev-parse', 'HEAD'),
             'origin_main': git('rev-parse', 'origin/main'), 'machine': machine(), 'set': a.set,
-            'runs': a.runs, 'scenes': [s['name'] for s in scenes], 'shot': a.shot}
+            'runs': a.runs, 'scenes': [s['name'] for s in scenes], 'shot': a.shot, 'boot_map': a.boot_map}
     for name in ('nx2saria.ini', 'nx2navi.ini'):   # the settings file the game reads (nx2navi.ini before NX2Saria)
         if (game / name).is_file():
             shutil.copyfile(game / name, out / name)
@@ -282,7 +299,12 @@ def cmd_run(a):
         for s in scenes:
             tag = f'{s["name"]}-{run}'
             script = out / f'{s["name"]}.input.txt'
-            script.write_text(make_script(s), encoding='utf-8')
+            boot_map = None
+            if a.boot_map:
+                boot_map, s = boot_map_of(s)
+                if not boot_map:
+                    sys.exit(f'bench: --boot-map: the scene {s["name"]} has no warp step to boot to')
+            script.write_text(make_script(s, title_ticks=0 if boot_map else 6000), encoding='utf-8')
             seconds = s['warmup_s'] + s['measure_s'] + 2
             env = ['NX2SARIA_TRACE=perf', 'NX2SARIA_PERF_SLOW_MS=1', 'NX2SARIA_FPS_LIMIT=unlimited',
                    f'NX2SARIA_DBG_TEST={dbg_test(s)}', *(e.replace('{tag}', tag) for e in a.set)]
@@ -295,6 +317,7 @@ def cmd_run(a):
                 env += ['MANGOHUD=1', f'MANGOHUD_CONFIG=fps_only,autostart_log=1,log_interval=0,'
                                       f'output_folder={mh_dir}']
             cmd = [sys.executable, str(RUN_GAME), str(game), '--save', a.save, '--script', str(script),
+                   *(['--boot-map', boot_map] if boot_map else []),
                    '--seconds', str(seconds), '--wall', str(seconds + a.boot_wall), '--tag', f'bench-{tag}',
                    '--log', str(out / f'{tag}.log'), '--quiet']
             if a.shot:
@@ -397,6 +420,8 @@ def main():
     r.add_argument('--label', default='bench')
     r.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
                    help='extra environment, repeatable; {tag} becomes the run\'s scene and number')
+    r.add_argument('--boot-map', action='store_true',
+                   help='start each scene in its area without the title screen (its first warp step becomes the boot map)')
     r.add_argument('--mangohud', action='store_true')
     r.add_argument('--shot', action='store_true',
                    help='save a PNG of each run\'s last frame; the runtime then builds pipelines on the render thread '
