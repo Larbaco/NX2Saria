@@ -6151,7 +6151,7 @@ static VkSampler make_sampler(VkCtx *c, const samp_par *d) {
     static volatile int32_t n_failed;
     uint32_t k = (uint32_t)plat_inc32(&n_failed);
     if (gfx_fail_log_due(k))
-        rt_log("vk: vkCreateSampler failed (%d), %u times: %s", (int)r, k,
+        rt_log("gfx: vkCreateSampler failed (%d), %u times: %s", (int)r, k,
                r2 == VK_SUCCESS ? "made without its custom border colour, reduction and anisotropy"
                                 : "the default sampler in its place, made again in 250 ms");
     return r2 == VK_SUCCESS ? s : VK_NULL_HANDLE;

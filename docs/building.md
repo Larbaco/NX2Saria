@@ -646,7 +646,7 @@ values up to `INT_MAX`, a swapchain image list taken whole or not at all (an err
 counted, more than the arrays hold), and how often a repeating failure is logged. Then it scans `gfx_present.c` and
 `vk_texture.c`: no swapchain image query, semaphore, fence, command pool, command buffer or sampler create may drop
 its result, and a failed `vkCreateSampler` may not end the game. No game files, no GPU; what a driver does after such
-a failure needs a run (`gfx: ... failed (<result>; <n> images), <n> times`, `vk: vkCreateSampler failed`).
+a failure needs a run (`gfx: <call> failed (<result>), <n> times: ...`). The check also finds those lines in the source.
 
 A change to how a fault ends the process (`runtime/main.c` `crash_handler`, `mode_done`) passes
 `python tests\exit_fault_check.py <game exe>`, which runs two crash probes: a fault inside a library while a mode runs

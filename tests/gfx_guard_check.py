@@ -149,7 +149,20 @@ def main():
     for p in problems:
         print('gfx_guard_check: FAIL: ' + p)
     print('gfx_guard_check: the scan of %s found %d problems' % (', '.join(SCANNED), len(problems)))
-    return 1 if rc or problems else 0
+    return 1 if rc or problems or log_lines() else 0
+
+
+LOG_LINES = ['"gfx: %s failed \\(%d\\), %u times: %s; the swapchain is made again', '"gfx: vkCreateSampler failed \\(%d\\), %u times: %s"', '"gfx: %s failed \\(%d\\), %d times: the %s presenter', '"gfx: presentation checks on \\(no setting\\)', '"gfx: the game\\\'s crop %d,%d %dx%d %s the %dx%d image: .*%u times"']   # the log's lines a run is checked by (the formats in the runtime's source)
+
+
+def log_lines():
+    """0 when every log line this change leaves is in the runtime's source as its format string."""
+    src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['gfx_present.c', 'vk_texture.c'])
+    src = re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
+    missing = [p for p in LOG_LINES if not re.search(p, src)]
+    for p in missing:
+        print('gfx_guard_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['gfx_present.c', 'vk_texture.c'])))
+    return 1 if missing else 0
 
 
 if __name__ == '__main__':

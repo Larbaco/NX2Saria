@@ -508,13 +508,15 @@ static void ng_drain(void);
 
 // The swapchain create_swapchain just made cannot be used: its image list (gfx_guard.h gfx_sc_images_ok) or a
 // semaphore for one of its images failed. A present with it would name images or semaphores that are not there, so it
-// goes with what was made for it, and the next present makes one again (g_dirty). what says which step failed and
-// how (its result and counts); *count is that step's failures, logged as gfx_fail_log_due allows. Caller holds the
-// queue lock, which this releases. Returns 0, create_swapchain's failure.
-static int swapchain_unusable(VkCtx *c, volatile int32_t *count, const char *what) {
+// goes with what was made for it, and the next present makes one again (g_dirty). call names the step that failed, r
+// its result, detail the counts; *count is that step's failures, logged as gfx_fail_log_due allows: "gfx: <call>
+// failed (<r>), <n> times: <detail>". Caller holds the queue lock, which this releases. Returns 0, create_swapchain's
+// failure.
+static int swapchain_unusable(VkCtx *c, volatile int32_t *count, const char *call, VkResult r, const char *detail) {
     uint32_t k = (uint32_t)plat_inc32(count);
     if (gfx_fail_log_due(k))
-        rt_log("gfx: %s failed, %u times: the swapchain is made again at the next present", what, k);
+        rt_log("gfx: %s failed (%d), %u times: %s; the swapchain is made again at the next present", call, (int)r, k,
+               detail);
     vk_lowlat_swapchain(VK_NULL_HANDLE, 0);
     if (vk_fg_active()) vk_fg_destroy_swapchain(g_sc), g_sc = VK_NULL_HANDLE;   // AMD's: its own destroy
     drop_swapchain_locked(c);
@@ -662,18 +664,17 @@ static int create_swapchain(void) {
     }
     char why[160];
     if (!gfx_sc_images_ok((int)rc, n_img, (int)rl, got, MAX_IMAGES)) {
-        if (rc != VK_SUCCESS) snprintf(why, sizeof why, "vkGetSwapchainImagesKHR for the count (%d)", (int)rc);
-        else if (!n_img || n_img > MAX_IMAGES)
-            snprintf(why, sizeof why, "vkGetSwapchainImagesKHR (%u images; room for 1 to %d)", n_img, MAX_IMAGES);
-        else snprintf(why, sizeof why, "vkGetSwapchainImagesKHR for the list (%d; %u of %u images)", (int)rl, got, n_img);
-        return swapchain_unusable(c, &n_list_failed, why);
+        if (rc != VK_SUCCESS) snprintf(why, sizeof why, "the image count");
+        else if (!n_img || n_img > MAX_IMAGES) snprintf(why, sizeof why, "%u images, room for 1 to %d", n_img, MAX_IMAGES);
+        else snprintf(why, sizeof why, "the image list, %u of %u images", got, n_img);
+        return swapchain_unusable(c, &n_list_failed, "vkGetSwapchainImagesKHR", rc != VK_SUCCESS ? rc : rl, why);
     }
     g_sc_n = got;
     for (uint32_t i = 0; i < g_sc_n; i++)   // a null image in a list that came whole is a broken list: an acquire
         if (!g_sc_img[i]) {                 // may name it, or one past it
-            snprintf(why, sizeof why, "vkGetSwapchainImagesKHR (image %u of %u is null)", i, got);
+            snprintf(why, sizeof why, "image %u of %u is null", i, got);
             g_sc_n = 0;
-            return swapchain_unusable(c, &n_list_failed, why);
+            return swapchain_unusable(c, &n_list_failed, "vkGetSwapchainImagesKHR", rl, why);
         }
     VkSemaphoreCreateInfo semi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (uint32_t i = 0; i < g_sc_n; i++) {
@@ -682,8 +683,8 @@ static int create_swapchain(void) {
         VkResult rs = vkCreateSemaphore(c->device, &semi, NULL, &g_render_done[i]);
         if (rs != VK_SUCCESS) {
             g_render_done[i] = VK_NULL_HANDLE;
-            snprintf(why, sizeof why, "vkCreateSemaphore for swapchain image %u of %u (%d)", i, g_sc_n, (int)rs);
-            return swapchain_unusable(c, &n_sem_failed, why);
+            snprintf(why, sizeof why, "the render-done semaphore of swapchain image %u of %u", i, g_sc_n);
+            return swapchain_unusable(c, &n_sem_failed, "vkCreateSemaphore", rs, why);
         }
         VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = g_sc_img[i],
                                     .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = sf.format,
@@ -1612,7 +1613,9 @@ static int ng_ready(void) {
                     ng.acq[s][i] = VK_NULL_HANDLE, what = "vkCreateSemaphore";
         }
         if (rr != VK_SUCCESS) {
-            rt_log("gfx: %s for the %s presenter failed (%d): frame generation off", what, ng_name(src), (int)rr);
+            static volatile int32_t n_ng_failed;   // once a run (ng.tried = 2), counted all the same
+            rt_log("gfx: %s failed (%d), %d times: the %s presenter's; frame generation off", what, (int)rr,
+                   plat_inc32(&n_ng_failed), ng_name(src));
             if (ng.rendered) vkDestroySemaphore(c->device, ng.rendered, NULL);
             if (ng.copied) vkDestroySemaphore(c->device, ng.copied, NULL);
             for (int s = 0; s < 2; s++)
