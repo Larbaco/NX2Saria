@@ -669,6 +669,12 @@ value no machine has free. What the builders do when they are refused (`warm_bui
 `lw_worker`) shows in a run's log: start the game with `build_free_mb` set above the machine's free commit and read the
 `vk_pipeline:` lines that name the commit headroom.
 
+The log lines those three changes leave pass `python tests\log_trace_check.py`, which cuts the functions that write
+them from `runtime/vk_pipeline.c` (`cache_stamp_check`, the play gate), `runtime/gfx_present.c` (`swapchain_unusable`)
+and `runtime/vk_texture.c` (`make_sampler`), builds each with stand-ins (real files for the stamp, a clock the harness
+moves, a `vkCreateSampler` that fails on request), runs a session's events through them and checks every line they
+log, with its numbers, in `build/test/log_trace/nx2saria-sample.log`. Vulkan headers only; no game files, no GPU.
+
 A change to the play gate of the background pipeline builds (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c`
 `play_rest`, `pipe_worker`, `lw_worker`, `runtime/vk_backend.c` `frame_end`) passes
 `python tests\play_gate_check.py`, which builds the header alone: the builds rest while the frame shown in play has
