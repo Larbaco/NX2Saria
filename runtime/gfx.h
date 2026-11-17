@@ -86,6 +86,12 @@ const uint8_t *gfx_shader_input_id(const GfxShader *s);     // the 32-byte input
 // Where the translation in use came from: 0 the shader cache, under the current translator; 1 the shader cache, a
 // previous translator's (gfx_shader.c "Carry"); 2 translated in this process, so nothing was prepared from it.
 int gfx_shader_origin(const GfxShader *s);
+// The translator's base identity (before the host options are mixed in; the one identities.txt lists): 32 bytes,
+// all zero when there is no translator. vk_pipeline.c stamps the pipeline cache files with it (cache_stamp_check).
+const uint8_t *gfx_shader_identity(void);
+// 1 when the shader cache's carry is on and lists the translator id among the previous ones it holds translations of
+// (see "Carry" in gfx_shader.c). A preparation carries nothing whatever this says (gfx_shader.c C.suspended).
+int gfx_shader_carries(const uint8_t id[32]);
 // By input id from memory or disk; xlate 1 also translates it from its stored inputs. NULL if absent.
 const GfxShader *gfx_shader_load_input(const uint8_t iid[32], int xlate);
 // Boot prewarm: out[i] = gfx_shader_load_input(iids[i], 1) on `threads` threads with up to `procs` translators, then

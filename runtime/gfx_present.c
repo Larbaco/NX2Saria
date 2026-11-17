@@ -21,6 +21,7 @@
 #include "flight_flash.h"
 #include "fs.h"
 #include "gfx.h"
+#include "gfx_guard.h"
 #include "gfx_wsys.h"
 #include "input.h"
 #include "logq.h"
@@ -504,6 +505,26 @@ static void drop_swapchain_locked(VkCtx *c) {
 // sets it again, where clearing it at the end lost that resize and kept a swapchain of the old size, whose acquires
 // then timed out frame after frame behind AMD's presenter (the picture stopped).
 static void ng_drain(void);
+
+// The swapchain create_swapchain just made cannot be used: its image list (gfx_guard.h gfx_sc_images_ok) or a
+// semaphore for one of its images failed. A present with it would name images or semaphores that are not there, so it
+// goes with what was made for it, and the next present makes one again (g_dirty). call names the step that failed, r
+// its result, detail the counts; *count is that step's failures, logged as gfx_fail_log_due allows: "gfx: <call>
+// failed (<r>), <n> times: <detail>". Caller holds the queue lock, which this releases. Returns 0, create_swapchain's
+// failure.
+static int swapchain_unusable(VkCtx *c, volatile int32_t *count, const char *call, VkResult r, const char *detail) {
+    uint32_t k = (uint32_t)plat_inc32(count);
+    if (gfx_fail_log_due(k))
+        rt_log("gfx: %s failed (%d), %u times: %s; the swapchain is made again at the next present", call, (int)r, k,
+               detail);
+    vk_lowlat_swapchain(VK_NULL_HANDLE, 0);
+    if (vk_fg_active()) vk_fg_destroy_swapchain(g_sc), g_sc = VK_NULL_HANDLE;   // AMD's: its own destroy
+    drop_swapchain_locked(c);
+    vk_queue_unlock();
+    plat_xchg32(&g_dirty, 1);
+    return 0;
+}
+
 static int create_swapchain(void) {
     flip_locked();   // the acquired image goes out before its swapchain is replaced
     ng_drain();      // and what the NGX frame generation presenter still holds (nothing unless it runs)
@@ -624,26 +645,47 @@ static int create_swapchain(void) {
     if (hdr) vk_hdr_metadata(g_sc, 1);
     g_sc_ext = ext;
     vk_lowlat_swapchain(ll_sc ? g_sc : VK_NULL_HANDLE, 1);   // the sleep mode is set on it; none: not one for that path
-    g_sc_n = MAX_IMAGES;
-    if (vk_fg_active()) {   // AMD's swapchain: the count first (a larger capacity is not cut down to it)
-        uint32_t n = 0;
-        vk_fg_get_images(g_sc, &n, NULL);
-        g_sc_n = n < MAX_IMAGES ? n : MAX_IMAGES;
-        memset(g_sc_img, 0, sizeof g_sc_img);
-        vk_fg_get_images(g_sc, &g_sc_n, g_sc_img);
-    } else if (vk_dlssg_active()) {   // Streamline's swapchain too: the count first, then only that many images
-        uint32_t n = 0;
-        vk_dlssg_get_images(c->device, g_sc, &n, NULL);
-        g_sc_n = n < MAX_IMAGES ? n : MAX_IMAGES;
-        memset(g_sc_img, 0, sizeof g_sc_img);
-        if (vk_dlssg_get_images(c->device, g_sc, &g_sc_n, g_sc_img) < 0) g_sc_n = 0;
-        for (uint32_t i = 0; i < g_sc_n; i++)
-            if (!g_sc_img[i]) g_sc_n = i;   // never a view of a null image
+    // The image list, the count first and then that many images, on every path (AMD's swapchain does not cut a larger
+    // capacity down to its count). An acquire returns an index below the count, and every array here has
+    // MAX_IMAGES slots: a list that did not come whole (an error, VK_INCOMPLETE, fewer images than counted, more
+    // than the arrays hold) leaves the swapchain unused rather than presenting with images that are not there.
+    static volatile int32_t n_list_failed, n_sem_failed;
+    uint32_t n_img = 0, got = 0;
+    memset(g_sc_img, 0, sizeof g_sc_img);
+    VkResult rc = vk_fg_active()    ? vk_fg_get_images(g_sc, &n_img, NULL)
+                : vk_dlssg_active() ? vk_dlssg_get_images(c->device, g_sc, &n_img, NULL)
+                                    : vkGetSwapchainImagesKHR(c->device, g_sc, &n_img, NULL);
+    VkResult rl = VK_ERROR_INITIALIZATION_FAILED;
+    if (rc == VK_SUCCESS && n_img > 0 && n_img <= MAX_IMAGES) {
+        got = n_img;
+        rl = vk_fg_active()    ? vk_fg_get_images(g_sc, &got, g_sc_img)
+           : vk_dlssg_active() ? vk_dlssg_get_images(c->device, g_sc, &got, g_sc_img)
+                               : vkGetSwapchainImagesKHR(c->device, g_sc, &got, g_sc_img);
     }
-    else vkGetSwapchainImagesKHR(c->device, g_sc, &g_sc_n, g_sc_img);
+    char why[160];
+    if (!gfx_sc_images_ok((int)rc, n_img, (int)rl, got, MAX_IMAGES)) {
+        if (rc != VK_SUCCESS) snprintf(why, sizeof why, "the image count");
+        else if (!n_img || n_img > MAX_IMAGES) snprintf(why, sizeof why, "%u images, room for 1 to %d", n_img, MAX_IMAGES);
+        else snprintf(why, sizeof why, "the image list, %u of %u images", got, n_img);
+        return swapchain_unusable(c, &n_list_failed, "vkGetSwapchainImagesKHR", rc != VK_SUCCESS ? rc : rl, why);
+    }
+    g_sc_n = got;
+    for (uint32_t i = 0; i < g_sc_n; i++)   // a null image in a list that came whole is a broken list: an acquire
+        if (!g_sc_img[i]) {                 // may name it, or one past it
+            snprintf(why, sizeof why, "image %u of %u is null", i, got);
+            g_sc_n = 0;
+            return swapchain_unusable(c, &n_list_failed, "vkGetSwapchainImagesKHR", rl, why);
+        }
     VkSemaphoreCreateInfo semi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (uint32_t i = 0; i < g_sc_n; i++) {
-        vkCreateSemaphore(c->device, &semi, NULL, &g_render_done[i]);
+        // Each image's render-done semaphore: the present of that image waits on it, so an image without one cannot
+        // be shown at all (the handles not made are null, which drop_swapchain_locked skips).
+        VkResult rs = vkCreateSemaphore(c->device, &semi, NULL, &g_render_done[i]);
+        if (rs != VK_SUCCESS) {
+            g_render_done[i] = VK_NULL_HANDLE;
+            snprintf(why, sizeof why, "the render-done semaphore of swapchain image %u of %u", i, g_sc_n);
+            return swapchain_unusable(c, &n_sem_failed, "vkCreateSemaphore", rs, why);
+        }
         VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = g_sc_img[i],
                                     .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = sf.format,
                                     .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
@@ -927,8 +969,7 @@ static void save_capture(const char *path) {
     if (__atomic_load_n(&g_pic_ok, __ATOMIC_ACQUIRE)) {
         rect[0] = (int)(g_pic[0] * (float)g_cap_w + 0.5f), rect[1] = (int)(g_pic[1] * (float)g_cap_h + 0.5f);
         rect[2] = (int)(g_pic[2] * (float)g_cap_w + 0.5f), rect[3] = (int)(g_pic[3] * (float)g_cap_h + 0.5f);
-        if (rect[2] <= 0 || rect[3] <= 0 || rect[0] + rect[2] > g_cap_w || rect[1] + rect[3] > g_cap_h)
-            rect[0] = rect[1] = 0, rect[2] = g_cap_w, rect[3] = g_cap_h;
+        if (!gfx_rect_inside(rect, g_cap_w, g_cap_h)) rect[0] = rect[1] = 0, rect[2] = g_cap_w, rect[3] = g_cap_h;
     }
     float st[7];
     vk_hdr_luminance_stats(g_cap_ptr, g_cap_w, rect, a2r, st);
@@ -1550,17 +1591,40 @@ static int ng_ready(void) {
         if (!ng.thread_up) plat_cond_init(&ng.cv);
         VkSemaphoreTypeCreateInfo tl = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE};
         VkSemaphoreCreateInfo tci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &tl};
-        vkCreateSemaphore(c->device, &tci, NULL, &ng.rendered);
-        vkCreateSemaphore(c->device, &tci, NULL, &ng.copied);
+        // The presenter's semaphores, command pool and command buffers. One that is not made turns frame generation
+        // off for the run, as the checks above do, with what was made released: the presenter would otherwise wait on
+        // or submit null handles.
+        VkResult rr = vkCreateSemaphore(c->device, &tci, NULL, &ng.rendered);
+        const char *what = "vkCreateSemaphore";
+        if (rr != VK_SUCCESS) ng.rendered = VK_NULL_HANDLE;
+        if (rr == VK_SUCCESS && (rr = vkCreateSemaphore(c->device, &tci, NULL, &ng.copied)) != VK_SUCCESS)
+            ng.copied = VK_NULL_HANDLE;
         VkSemaphoreCreateInfo semi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VkCommandPoolCreateInfo pci = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = c->gfx_family};
-        vkCreateCommandPool(c->device, &pci, NULL, &ng.pool);
-        for (int s = 0; s < 2; s++) {
+        if (rr == VK_SUCCESS && (rr = vkCreateCommandPool(c->device, &pci, NULL, &ng.pool)) != VK_SUCCESS)
+            ng.pool = VK_NULL_HANDLE, what = "vkCreateCommandPool";
+        for (int s = 0; s < 2 && rr == VK_SUCCESS; s++) {
             VkCommandBufferAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = ng.pool,
                                               .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = NG_MAX + 1};
-            vkAllocateCommandBuffers(c->device, &ai, ng.cb[s]);
-            for (int i = 0; i <= NG_MAX; i++) vkCreateSemaphore(c->device, &semi, NULL, &ng.acq[s][i]);
+            if ((rr = vkAllocateCommandBuffers(c->device, &ai, ng.cb[s])) != VK_SUCCESS) what = "vkAllocateCommandBuffers";
+            for (int i = 0; i <= NG_MAX && rr == VK_SUCCESS; i++)
+                if ((rr = vkCreateSemaphore(c->device, &semi, NULL, &ng.acq[s][i])) != VK_SUCCESS)
+                    ng.acq[s][i] = VK_NULL_HANDLE, what = "vkCreateSemaphore";
+        }
+        if (rr != VK_SUCCESS) {
+            static volatile int32_t n_ng_failed;   // once a run (ng.tried = 2), counted all the same
+            rt_log("gfx: %s failed (%d), %d times: the %s presenter's; frame generation off", what, (int)rr,
+                   plat_inc32(&n_ng_failed), ng_name(src));
+            if (ng.rendered) vkDestroySemaphore(c->device, ng.rendered, NULL);
+            if (ng.copied) vkDestroySemaphore(c->device, ng.copied, NULL);
+            for (int s = 0; s < 2; s++)
+                for (int i = 0; i <= NG_MAX; i++)
+                    if (ng.acq[s][i]) vkDestroySemaphore(c->device, ng.acq[s][i], NULL), ng.acq[s][i] = VK_NULL_HANDLE;
+            if (ng.pool) vkDestroyCommandPool(c->device, ng.pool, NULL);   // its command buffers with it
+            ng.rendered = ng.copied = VK_NULL_HANDLE, ng.pool = VK_NULL_HANDLE;
+            if (src == NG_FSR3) vk_fsr3fg_idle();
+            return ng.on = 0, ng.tried = 2, 0;
         }
         if (!ng.thread_up && !plat_thread_spawn(ng_thread, NULL, "fg present", 0)) {
             rt_log("%s: the presenter thread did not start: frame generation off", ng_name(src));
@@ -1797,14 +1861,20 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
         if (flight_flash_on && g_th_ptr) thumb_cells(done);
     }
 
-    int cx = 0, cy = 0, cw = w, ch = h;
-    if (crop && crop[2] > 0 && crop[3] > 0) { cx = crop[0]; cy = crop[1]; cw = crop[2]; ch = crop[3]; }
-    if (cx < 0) cx = 0;
-    if (cy < 0) cy = 0;
-    if (cx + cw > w) cw = w - cx;
-    if (cy + ch > h) ch = h - cy;
-    if (cw <= 0 || ch <= 0) cx = cy = 0, cw = w, ch = h;   // a crop outside the image (the game's nvnWindowSetCrop):
-                                                             // the whole image, not an inverted blit rectangle
+    // The game's crop (nvnWindowSetCrop, guest values) cut to the image without overflow (gfx_guard.h gfx_crop_clip);
+    // a crop outside the image is the whole image, not an inverted blit rectangle. A crop that had to be cut or
+    // replaced is logged with its values, as gfx_fail_log_due allows.
+    int src_rect[4];
+    int crop_how = gfx_crop_clip(crop, w, h, src_rect);
+    int cx = src_rect[0], cy = src_rect[1], cw = src_rect[2], ch = src_rect[3];
+    if (crop_how == GFX_CROP_CUT || crop_how == GFX_CROP_OUTSIDE) {
+        static volatile int32_t n_crop;
+        uint32_t k = (uint32_t)plat_inc32(&n_crop);
+        if (gfx_fail_log_due(k))
+            rt_log("gfx: the game's crop %d,%d %dx%d %s the %dx%d image: %d,%d %dx%d presented, %u times", crop[0],
+                   crop[1], crop[2], crop[3], crop_how == GFX_CROP_CUT ? "reaches past" : "lies outside", w, h, cx, cy,
+                   cw, ch, k);
+    }
     window_settings_live();
     cam_speed_tick();
     // The menu overlay: laid out before recording (its first frame starts the ImGui back end and uploads the font)
@@ -2101,16 +2171,26 @@ void gfx_window_start(void) {
 
         VkCommandPoolCreateInfo pci = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = c->gfx_family};
-        vkCreateCommandPool(c->device, &pci, NULL, &g_pool);
+        // The frame slots' command pool, command buffers, fences and acquire semaphores: every present uses them, so
+        // one that is not made ends the start with its call and result, where a null handle used to fail later
+        // inside the driver.
+        VkResult r = vkCreateCommandPool(c->device, &pci, NULL, &g_pool);
+        if (r != VK_SUCCESS) rt_fatal("gfx: vkCreateCommandPool for the frames failed (%d)", (int)r);
         VkCommandBufferAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = g_pool,
                                           .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = FRAMES};
-        vkAllocateCommandBuffers(c->device, &ai, g_cb);
+        if ((r = vkAllocateCommandBuffers(c->device, &ai, g_cb)) != VK_SUCCESS)
+            rt_fatal("gfx: vkAllocateCommandBuffers for the frames failed (%d)", (int)r);
         VkFenceCreateInfo fi = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
         VkSemaphoreCreateInfo semi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         for (int i = 0; i < FRAMES; i++) {
-            vkCreateFence(c->device, &fi, NULL, &g_fence[i]);
-            vkCreateSemaphore(c->device, &semi, NULL, &g_acquire[i]);
+            if ((r = vkCreateFence(c->device, &fi, NULL, &g_fence[i])) != VK_SUCCESS)
+                rt_fatal("gfx: vkCreateFence for frame slot %d failed (%d)", i, (int)r);
+            if ((r = vkCreateSemaphore(c->device, &semi, NULL, &g_acquire[i])) != VK_SUCCESS)
+                rt_fatal("gfx: vkCreateSemaphore for frame slot %d failed (%d)", i, (int)r);
         }
+        rt_log("gfx: presentation checks on (no setting): the swapchain's image list and semaphores are checked and a "
+               "failed one is made again; the game's crop is cut to the image without overflow; a failed sampler "
+               "falls back and is tried again");
         g_frame = 0;
         g_started = 1;
         plat_rmutex_lock(&g_pl);

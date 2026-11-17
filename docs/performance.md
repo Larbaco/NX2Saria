@@ -66,3 +66,50 @@ How to measure the frame rate of a scene the same way twice, and how to read the
 
 The numbers come from `NX2SARIA_TRACE=perf` with `NX2SARIA_PERF_SLOW_MS=1`, which logs a line per frame
 (`runtime/perf.c` `perf_present`). `tests/bench_check.py` checks the parser against the runtime's format strings.
+
+## Background builds in play
+
+Pipelines built ahead of their first use rest while the frame shown has `bg_build_play_draws` draws or more, 600 by
+default, and go on in light frames: the title, menus, the pause and map screens, an area load, a frame not shown for
+half a second (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c` `play_rest`). Those are the pool's background queue
+(the boot's records left to the background, and the optimised build that replaces a fast link), when stage libraries
+are on, and the library warm. A pipeline a draw waits for is always built; the stage library prebuild and the large
+compute builds do not rest. The start logs `vk: background builds rest in play: while the frame shown has
+600 draws or more ...`, and each save in play and the one at the end `vk: background builds paused in play: N
+frames, M builds deferred (R rests, S s of builder time at rest; ...)` when those numbers moved.
+
+To measure what it changes, run the same scenes with the gate and without it, in play mode (not `--shot`, which builds
+on the render thread). An ordinary session with warm caches has little background work, so give both runs the same
+amount: `lib_warm = force` warms the driver's cache of stage libraries at every start, beside the game, from the same
+list each time.
+
+```sh
+.venv/bin/python tools/bench.py run ~/Games/Ocarina --save <save backup> --label gate \
+    --set NX2SARIA_LIB_WARM=force
+.venv/bin/python tools/bench.py run ~/Games/Ocarina --save <save backup> --label nogate \
+    --set NX2SARIA_LIB_WARM=force --set NX2SARIA_BG_BUILD_PLAY_DRAWS=0
+```
+
+Compare the two `summary.md`: avg fps, 1% low and p99 should be better with the gate, and the stall % no worse (a
+draw's own builds are not gated). GPU ms may rise a little with the gate, as a fast-linked pipeline stays in use longer
+before its optimised build replaces it. Read the runs' logs too: in the gate run the `background builds paused in play`
+line must show frames and builds deferred, or the scenes had no background work and the comparison says nothing; in the
+`nogate` run the start line says `off`. The library warm's own line says how far it got in each run: with the gate it
+gets less far in heavy scenes, which is the point. The same two runs without `lib_warm = force` show what an ordinary
+session gains.
+
+Measured on the Linux bench (RX 6700 with RADV, an 8-core 16-thread CPU) on 2026-11-17: `kokiri` at 1280x720 without
+DLAA or AA, `lib_warm = force`, and `MESA_SHADER_CACHE_DIR` pointed at an empty folder for each run so that the warm
+compiles for real. The sides alternated, two runs each. A forced warm goes on from where the previous run stopped
+(`shader-warm.txt`), so each run warms other variants of the same list.
+
+| | avg fps | 1% low fps | p99 ms | CPU-bound % | replay ms | paused frames / builds deferred | variants warmed |
+|---|---|---|---|---|---|---|---|
+| gate | 28.1, 26.7 | 15.8, 14.1 | 59.1, 59.2 | 15.7, 10.2 | 11.9, 12.2 | 1210 / 77, 1182 / 80 | 2470, 3642 |
+| nogate | 24.7, 24.8 | 11.9, 15.4 | 69.9, 63.6 | 44.2, 40.3 | 14.9, 14.9 | off | 9039, 8951 |
+
+GPU ms stayed between 22.7 and 24.4 in all four runs, and none stalled. With the game folder's own settings and warm
+caches the scene is bound by the GPU and both sides read about 23.5 fps: there the gate changes nothing.
+
+The 600 draws come from traced runs of the same build (`NX2SARIA_TRACE=gfx`). The title, the menus and the area loads
+draw 243 or fewer per frame, and 97% of the frames of play in `kokiri` draw 600 or more (5th percentile 640, median 952).

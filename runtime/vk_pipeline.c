@@ -56,6 +56,8 @@
 #include "tex.h"
 #include "vk_build_gate.h"
 #include "vk_cache_file.h"
+#include "vk_cache_stamp.h"
+#include "vk_play_gate.h"
 #include "vk_exec.h"
 #include "vk_save_retry.h"
 #include "vk_warm_hint.h"
@@ -105,6 +107,7 @@ static struct {
     volatile uint64_t held[2];         // the data size of cache [0] and play [1] when last asked (cache_save_one,
                                        // cache_sizes_ask); 0: not asked yet (the memory report takes the loaded size)
     int fold;                          // the play file's content was merged into cache: saving cache removes the play file
+    int base_at_exit;                  // the start found no pipeline-cache.bin: the save at exit writes it (cache_load)
     volatile uint64_t play_made;       // pipelines this run compiled into play
     int pv_last;                       // provokingVertexLast enabled: NVN's default is the last vertex
     VkShaderStageFlags sg32_stages;    // stages that accept requiredSubgroupSize = 32 (0: not available)
@@ -630,14 +633,17 @@ static volatile uint32_t cache_merges;
 // own, pipeline-cache-play.bin beside the first: a create asks P.cache with
 // VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT, which gives the pipeline when that cache or the driver's
 // own has it and VK_PIPELINE_COMPILE_REQUIRED when not, and only then builds into P.play (pipe_create_in). In play
-// only the play file is saved; pipeline-cache.bin is not written.
+// only the play file is saved; pipeline-cache.bin is not written, except once at the exit of a run that started without
+// it (P.base_at_exit: the translator stamp had deleted it (cache_stamp_check), a run before ended without that save, or
+// no preparation ever wrote it).
 // The play file is read back at the next start, into P.play and merged into P.cache in memory (cache_load), so the
 // first create finds its pipelines. Once
 // it has grown to NX2SARIA_PIPELINE_CACHE_PLAY_MB (default 64) it is merged into P.cache at the start, before play: the
 // autosave thread writes pipeline-cache.bin once and removes the play file (cache_save). The preparation modes
 // (--prepare-shaders, --warm-shaders, --prepare-pipelines) merge it at any size and build into P.cache alone, as before.
 // A pipeline the driver's own cache gives to the first create enters P.cache in memory only: it is in a file again
-// when the play file is next folded in, or when the driver no longer has it and it is compiled.
+// when the play file is next folded in, when the driver no longer has it and it is compiled, or at the exit of a run
+// that started without pipeline-cache.bin.
 // Without the device feature, with pipeline binaries on, or with the setting 0, P.play stays VK_NULL_HANDLE and
 // everything goes into P.cache as before.
 static int prep_mode;   // a preparation mode (set before ensure_init): no play cache
@@ -903,6 +909,64 @@ static VkPipelineCache cache_make(VkCtx *c, const void *data, size_t size, size_
     return cache;
 }
 
+static int pg_draws_min(void);   // "the play gate", after gate_wait: its setting, logged once
+
+// The translator stamp of the two pipeline cache files (vk_cache_stamp.h, where the rules are): pipeline-cache.id beside
+// pipeline-cache.bin names the translator whose pipelines the files hold. Called by cache_load before either file is
+// read. A stamp of another translator whose shaders the carry no longer serves (or any other translator in a
+// preparation: prep_mode) deletes both files, so their dead entries are neither read nor held twice in memory nor
+// carried on by the next save; the play file goes too, since what one run compiled under the earlier translator is as
+// dead. After a deletion outside a preparation the run writes pipeline-cache.bin again at its exit (cache_load sets
+// P.base_at_exit by vk_cache_stamp.h cache_base_at_exit), and the line says so. One log line says what a start that
+// reads the files did and how many MB they held. NX2SARIA_PIPELINE_CACHE_STAMP (default 1); 0 reads the files
+// whichever translator wrote them and leaves the stamp as it is.
+static void cache_stamp_check(void) {
+    if (!P.cache_path[0]) return;
+    if (!cfg_bool("NX2SARIA_PIPELINE_CACHE_STAMP")) {
+        rt_log("vk: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0): the files are read whichever "
+               "translator wrote them");
+        return;
+    }
+    static const uint8_t zero[32];
+    const uint8_t *cur = gfx_shader_identity();
+    if (!memcmp(cur, zero, 32)) {
+        rt_log("vk: pipeline cache stamp none: no translator identity, so the files are read and not stamped");
+        return;
+    }
+    char stamp[sizeof P.cache_path + 8], play[sizeof P.play_path];
+    cache_stamp_sibling(P.cache_path, ".id", stamp, sizeof stamp);
+    cache_stamp_sibling(P.cache_path, "-play.bin", play, sizeof play);
+    uint64_t n = 0;
+    char *text = (char *)plat_file_read(stamp, &n);
+    uint8_t was[32] = {0};
+    int state = cache_stamp_state(text, text ? (size_t)n : 0, cur, was);
+    free(text);
+    int act = cache_stamp_action(state, state == CACHE_STAMP_DIFFERS && gfx_shader_carries(was), prep_mode);
+    int64_t s0 = plat_file_size(P.cache_path), s1 = plat_file_size(play);
+    double mb = ((s0 > 0 ? s0 : 0) + (s1 > 0 ? s1 : 0)) / 1048576.0;
+    const char *left = "";
+    if (act == CACHE_STAMP_DROP) {
+        plat_file_delete(P.cache_path);
+        plat_file_delete(play);
+        if (plat_file_exists(P.cache_path) || plat_file_exists(play))   // held open elsewhere: read as before, unstamped
+            act = CACHE_STAMP_READ, left = " (not deleted: a file is in use; read, the stamp kept)";
+    }
+    if (act == CACHE_STAMP_DROP || act == CACHE_STAMP_READ_STAMP) {
+        char line[66];
+        cache_stamp_format(cur, line);
+        if (!plat_file_write_atomic(stamp, line, 65)) left = " (the stamp could not be written)";
+    }
+    char was_text[40] = "";
+    if (state == CACHE_STAMP_DIFFERS)
+        snprintf(was_text, sizeof was_text, "the files' translator %02x%02x%02x%02x; ", was[0], was[1], was[2], was[3]);
+    // The rule cache_load then applies (P.base_at_exit): a start without pipeline-cache.bin writes it at its exit.
+    int at_exit = cache_base_at_exit(prep_mode, plat_file_size(P.cache_path));
+    // "vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>", then what the numbers need to be checked
+    rt_log("vk: pipeline cache stamp %02x%02x%02x%02x %s: %s%s, %.1f MB (%s%s%s)", cur[0], cur[1], cur[2], cur[3],
+           cache_stamp_state_name(state), cache_stamp_action_name(act), left, mb, was_text,
+           at_exit ? "pipeline-cache.bin is written at this run's exit; " : "", stamp);
+}
+
 static void cache_load(VkCtx *c) {
     cache_path_init();
     pb_init(c);
@@ -910,6 +974,10 @@ static void cache_load(VkCtx *c) {
         rt_log("vk_pipeline: %s is not read or written while pipeline binaries are on", P.cache_path);
         return;
     }
+    cache_stamp_check();
+    // No pipeline-cache.bin after the stamp's check (deleted by it, or its run ended before writing the file again):
+    // the save at exit writes it (vk_cache_stamp.h cache_base_at_exit, cache_save).
+    P.base_at_exit = P.cache_path[0] && cache_base_at_exit(prep_mode, plat_file_size(P.cache_path));
     size_t size = 0, kept = 0;
     void *data = cache_data_read(c, P.cache_path, &size);
     int base_over = cache_over_cap;   // an oversized file is never read again: the play file takes its place at once
@@ -917,17 +985,17 @@ static void cache_load(VkCtx *c) {
     free(data);
     P.cache_loaded = kept;
     // The file holds this data when the driver took all of it: a save is due only once the cache has grown (cache_save).
-    P.saved[0] = size && kept == size ? kept : 0;
+    // Without data read from the file the empty cache's own size counts as saved, as the play cache's does below: a
+    // run that took nothing into it does not write a file of a header alone, which the next start would refuse as too
+    // short (cache_file_read) while it no longer counts as missing (P.base_at_exit).
+    P.saved[0] = !size || kept == size ? kept : 0;
     if (size)
         rt_log("vk_pipeline: %s: %.1f MB read, the driver holds %.1f MB of it", P.cache_path, size / 1048576.0,
                kept / 1048576.0);
     if (!P.cache || !P.cache_path[0]) return;
 
     // The play cache (see above pipe_create_in).
-    snprintf(P.play_path, sizeof P.play_path, "%s", P.cache_path);
-    size_t n = strlen(P.play_path);
-    if (n > 4 && !strcmp(P.play_path + n - 4, ".bin")) n -= 4;
-    snprintf(P.play_path + n, sizeof P.play_path - n, "-play.bin");
+    cache_stamp_sibling(P.cache_path, "-play.bin", P.play_path, sizeof P.play_path);
     int want = cfg_bool("NX2SARIA_PIPELINE_CACHE_PLAY") && !prep_mode, on = want && P.cache_control;
     size_t psize = 0, pkept = 0;
     void *pdata = cache_data_read(c, P.play_path, &psize);
@@ -1008,7 +1076,10 @@ static void cache_load(VkCtx *c) {
     // An empty play cache is not written (its data is a header): its size counts as saved, as a whole file's does.
     P.saved[1] = P.play && (!psize || pkept == psize) ? pkept : 0;
     if (P.play)
-        rt_log("vk_pipeline: what this run compiles goes into %s; %s is not written in play", P.play_path, P.cache_path);
+        rt_log("vk_pipeline: what this run compiles goes into %s; %s %s", P.play_path, P.cache_path,
+               P.base_at_exit ? "was not there at the start, so the save at this run's exit writes it once, with what "
+                                "the run takes from the driver's own cache"
+                              : "is not written in play");
     else if (want && !P.cache_control)
         rt_log("vk_pipeline: no play cache (no pipelineCreationCacheControl on this device): a new pipeline has %s "
                "written whole", P.cache_path);
@@ -1235,6 +1306,7 @@ static int ensure_init(void) {
     vk_mem_stage_log("device creation");
     cache_load(c);
     vk_mem_stage_log("the pipeline cache load");
+    pg_draws_min();   // the play gate's line at the start
     rt_log("vk_pipeline: max push descriptors %u; dynamic vertex input %d, depth clamp %d, polygon mode %d, blend enable %d, "
            "blend equation %d, write mask %d, alpha to coverage %d; cache %s",
            P.max_push, P.dyn_vi, P.dyn_clamp, P.dyn_poly, P.dyn_blend_en, P.dyn_blend_eq, P.dyn_wmask, P.dyn_a2c,
@@ -4521,6 +4593,7 @@ typedef struct Job {
     uint32_t fs_off;
     uint8_t low;                       // in the low queue, or running at below-normal priority
     uint8_t prebuild, demanded;        // from the key file; a draw asked for it before it was ready
+    uint8_t rested;                    // counted as held back by the play gate (low_held)
     int worker;                        // running on A.thread[worker]; -1 queued; JOB_ON_DRAW on the thread that waits for it
     VkPipeState s;
     GKey k;
@@ -5036,6 +5109,110 @@ static int gate_wait(const char *who, volatile int32_t *stop, double *took) {
     return 1;
 }
 
+// ---- the play gate (vk_play_gate.h, where the reasons are)
+// NX2SARIA_BG_BUILD_PLAY_DRAWS (default 600; 0: off): builds made ahead of their first use rest while the frame last
+// shown had this many draws or more and was shown within PLAY_GATE_SHOWN_MS. Those are the pool's low queue
+// (pipe_worker) when stage libraries are on, and the library warm (lw_worker). A pipeline a draw waits for never rests:
+// the draw queue and the libraries of waiting draws are not gated, and a draw that needs a low job moves it to the draw
+// queue (promote), which wakes a resting worker and gets the job's fast link first. Without stage libraries that draw
+// would wait for a whole build instead, so the low queue does not rest then. The stage library prebuild (lb_worker)
+// does not rest: its list starts with the compute shaders the game is about to dispatch, a compute pipeline not built
+// is built on the replay thread at its dispatch, and the large compute builds (bg_main, which hold a frame for seconds
+// when left to their dispatch) start only once it is done. Nothing rests during an area load, while the boot screen
+// waits for the warm (bf_waiting) or in a preparation. vk_backend.c frame_end gives each frame's draws
+// (vk_pipeline_frame_note); the start logs the setting, and save_with what the gate held back.
+static int bf_waiting(void);
+static struct {
+    PlatMutex lock;                  // the counts
+    PlayGateCount n, logged;
+    volatile int32_t draws_min;      // the setting, read once; -1 before
+    volatile uint32_t draws_last;    // the draws of the frame last shown
+    volatile uint64_t shown_ns;      // when it was shown (plat_now_ns); 0: none yet
+} PG = {.lock = PLAT_MUTEX_INIT, .draws_min = -1};
+
+static int pg_draws_min(void) {
+    int m = __atomic_load_n(&PG.draws_min, __ATOMIC_ACQUIRE);
+    if (m >= 0) return m;
+    plat_mutex_lock(&PG.lock);
+    if ((m = PG.draws_min) < 0) {
+        m = cfg_int("NX2SARIA_BG_BUILD_PLAY_DRAWS");
+        if (m < 0) m = 0;
+        if (m)
+            rt_log("vk: background builds rest in play: while the frame shown has %d draws or more "
+                   "(NX2SARIA_BG_BUILD_PLAY_DRAWS; 0: they build in every frame); a pipeline a draw waits for is always "
+                   "built", m);
+        else
+            rt_log("vk: background builds rest in play: off (NX2SARIA_BG_BUILD_PLAY_DRAWS 0): they build in "
+                   "every frame");
+        __atomic_store_n(&PG.draws_min, m, __ATOMIC_RELEASE);
+    }
+    plat_mutex_unlock(&PG.lock);
+    return m;
+}
+
+// 1 when background builds rest now (vk_play_gate.h play_gate_rest).
+static int play_rest(void) {
+    int m = pg_draws_min();
+    if (!m) return 0;
+    uint64_t shown = __atomic_load_n(&PG.shown_ns, __ATOMIC_ACQUIRE);
+    int light = prep_mode || bf_waiting() || vk_exec_pool_loading();
+    return play_gate_rest(m, __atomic_load_n(&PG.draws_last, __ATOMIC_RELAXED), now_ms(),
+                          shown ? (double)shown / 1e6 : -1.0, light);
+}
+
+void vk_pipeline_frame_note(uint32_t draws) {
+    __atomic_store_n(&PG.draws_last, draws, __ATOMIC_RELAXED);
+    __atomic_store_n(&PG.shown_ns, plat_now_ns(), __ATOMIC_RELEASE);
+    if (!pg_draws_min()) return;
+    int rest = play_rest();
+    plat_mutex_lock(&PG.lock);
+    play_gate_frame(&PG.n, rest);
+    plat_mutex_unlock(&PG.lock);
+}
+
+static void pg_rest_begin(uint64_t held) {
+    plat_mutex_lock(&PG.lock);
+    play_gate_rest_begin(&PG.n, held);
+    plat_mutex_unlock(&PG.lock);
+}
+
+static void pg_rest_end(double ms) {
+    plat_mutex_lock(&PG.lock);
+    play_gate_rest_end(&PG.n, ms);
+    plat_mutex_unlock(&PG.lock);
+}
+
+// The low queue's jobs no rest has counted yet, now counted (Job.rested). Caller holds P.lock. Walked once a rest, when
+// it begins (not at each look in it): a job queued during a rest is counted by the next rest that finds it queued.
+static uint64_t low_held(void) {
+    uint64_t n = 0;
+    for (Job *j = A.low; j; j = j->next)
+        if (!j->rested) j->rested = 1, n++;
+    return n;
+}
+
+// The library warm's rest before its next build (lw_worker): it holds one build back.
+static void play_rest_wait(volatile int32_t *stop) {
+    if (*stop || !play_rest()) return;
+    double t0 = now_ms();
+    pg_rest_begin(1);
+    while (!*stop && play_rest()) plat_sleep_ms(100);
+    pg_rest_end(now_ms() - t0);
+}
+
+// The log's line of what the gate held back, when that changed since the last one (save_with: each save in play and
+// the one at the end).
+static void pg_log(void) {
+    if (pg_draws_min() <= 0) return;
+    plat_mutex_lock(&PG.lock);
+    if (play_gate_changed(&PG.n, &PG.logged))
+        rt_log("vk: background builds paused in play: %llu frames, %llu builds deferred (%llu rests, %.1f s of "
+               "builder time at rest; NX2SARIA_BG_BUILD_PLAY_DRAWS %d)", (unsigned long long)PG.n.frames,
+               (unsigned long long)PG.n.deferred, (unsigned long long)PG.n.rests, PG.n.rest_ms / 1000.0,
+               (int)PG.draws_min);
+    plat_mutex_unlock(&PG.lock);
+}
+
 // --probe-buildgate (host.h): the gate with this machine's commit and the settings in effect, without a device and
 // without a build. It prints what the settings and the system give, asks for sixteen ordinary builds and one large
 // one, and checks the answers against the same numbers: the builds admitted are those that fit with the earlier
@@ -5248,16 +5425,20 @@ static void job_build(Job *j, int lowrun) {
 
 static void pipe_worker(void *arg) {
     int me = (int)(intptr_t)arg;
+    int resting = 0;     // at rest for the play gate (play_rest), since rest_t0
+    double rest_t0 = 0;
     plat_mutex_lock(&P.lock);
     for (;;) {
         // With 3 or more workers one never takes low-queue work, so a waiting draw's library starts at once
         // (not with NX2SARIA_PIPE_WAIT=draw).
         while (!U.head && !A.head && !(A.low && (A.threads < 3 || !U.on || A.low_running < A.threads - 1))) {
+            if (resting) resting = 0, pg_rest_end(now_ms() - rest_t0);
             U.idle++;
             plat_cond_wait(&work_cv, &P.lock);
             U.idle--;
         }
         if (U.head) {   // a library a draw waits for
+            if (resting) resting = 0, pg_rest_end(now_ms() - rest_t0);
             LibJob *lj = U.head;
             if (!(U.head = lj->next)) U.tail = NULL;
             if (lj->b) lj->b->job = NULL;
@@ -5268,6 +5449,18 @@ static void pipe_worker(void *arg) {
         Job *j = A.head;
         int lowrun = !j;
         double held = 0;   // the low job's reservation at the memory gate
+        if (!j && P.gpl && play_rest()) {
+            // A heavy frame in play (play_rest): the low job stays queued. A draw that needs its pipeline moves it to
+            // the draw queue (promote), which wakes this wait; otherwise the frame is looked at again in 100 ms. A
+            // resting worker counts as idle: a draw that waits gives its job to the pool rather than building it on
+            // its own thread (job_wanted).
+            if (!resting) resting = 1, rest_t0 = now_ms(), pg_rest_begin(low_held());
+            U.idle++;
+            plat_cond_wait_ns(&work_cv, &P.lock, 100000000ull);
+            U.idle--;
+            continue;
+        }
+        if (resting) resting = 0, pg_rest_end(now_ms() - rest_t0);
         if (!j && !gate_enter(0, &held)) {
             // No room for a background build now (gate_enter). The job stays queued: a draw that needs its pipeline
             // moves it to the draw queue (promote), which wakes this wait; otherwise the gate is asked again in 2 s.
@@ -7736,6 +7929,7 @@ static void lb_worker(void *arg) {
         }
         // The memory gate (gate_wait): without room for another build the worker waits, and after GATE_WAIT_MS it and
         // the other workers end. What they leave is built at its first dispatch or draw, as what a run never recorded.
+        // (The play gate leaves this prebuild alone: see "the play gate".)
         double held;
         if (LB.short_mem || !gate_wait("stage library prebuild", &LB.stop, &held)) {
             if (!LB.stop && !plat_xchg32(&LB.short_mem, 1)) {
@@ -7895,8 +8089,9 @@ static void lw_worker(void *arg) {
         }
         size_t i = (size_t)plat_inc64(&LW.next) - 1;
         if (i >= LW.n || LW.stop) break;
-        // The memory gate (gate_wait): without room the warm waits, and after GATE_WAIT_MS it ends for this run.
-        // shader-warm.txt keeps saying "warming", so the next start goes on with it.
+        // The play gate (play_rest_wait), then the memory gate (gate_wait): without room the warm waits, and after
+        // GATE_WAIT_MS it ends for this run. shader-warm.txt keeps saying "warming", so the next start goes on with it.
+        play_rest_wait(&LW.stop);
         double held;
         if (LW.short_mem || !gate_wait("library warm", &LW.stop, &held)) {
             if (!LW.stop && !plat_xchg32(&LW.short_mem, 1)) {
@@ -8858,7 +9053,8 @@ static PlatMutex save_lock = PLAT_MUTEX_INIT;   // one cache save at a time; shu
 // Copies a pipeline cache's data into its file, with cache_rw held exclusively for the copy only (not the file write):
 // P.play into pipeline-cache-play.bin when there is a play cache, else P.cache into pipeline-cache.bin; and P.cache
 // once, with or without a play cache, after the play file was merged into it at the start (P.fold), which then
-// removes the play file.
+// removes the play file, and at the exit of a run that started without pipeline-cache.bin (P.base_at_exit;
+// vk_cache_stamp.h cache_save_writes_base chooses).
 // Only when the data changed: the size of a cache's data is asked first, and a cache whose data has the size its file
 // holds is neither copied nor written. A pipeline cache only gains entries, so the same size is the same data. Before,
 // every save copied and wrote the whole cache whenever a pipeline had been created since the last one, also when the
@@ -8961,7 +9157,10 @@ static int cache_save(uint32_t wait_ms, int exiting) {
         return 1;
     }
     int ok = 1, r;
-    if (!P.play || P.fold) ok = cache_save_one(0, wait_ms, exiting);
+    // pipeline-cache.bin: at every save without a play cache, once for a fold, and at the exit of a run that started
+    // without it (P.base_at_exit); the play file beside it as usual.
+    if (cache_save_writes_base(P.play != VK_NULL_HANDLE, P.fold, P.base_at_exit, exiting))
+        ok = cache_save_one(0, wait_ms, exiting);
     // While a fold is not written yet (P.fold: refused at the limit, or no build-free moment) the play file still holds
     // what was folded in memory only: written over with this run's play cache, that would be in neither file.
     static int fold_kept_said;
@@ -9050,6 +9249,7 @@ static int save_with(uint32_t wait_ms, int exiting) {
                    "compute pipelines built on the replay thread %llu", (unsigned long long)P.g.pre_used[LIB_PR],
                    (unsigned long long)P.g.pre_used[LIB_FS], (unsigned long long)LB.cs_draw);
     }
+    pg_log();
     gfx_shader_record_flush(1);
     if (P.ready && !P.cache) pb_log("at a save");   // with P.cache the line comes with its own save below
     int saved = cache_save(wait_ms, exiting);
@@ -9082,8 +9282,8 @@ void vk_pipeline_boot_abandon(void) { journal_close(); }
 // each cache's data, asked once a minute here on the autosave thread, and by every save (cache_save_one). The size is
 // asked as the save asks it, at a moment no build runs into either cache (cache_rw, tried once and never waited for),
 // and under save_lock, which the shutdown takes before it destroys the caches. The play file holds what this run
-// compiled, but pipeline-cache.bin is not written in play: its cache grows in memory with the compute pipelines the boot
-// builds for it alone, and only this query says by how much.
+// compiled, but pipeline-cache.bin is not written in play (only at the exit of a run that started without it): its
+// cache grows in memory with the compute pipelines the boot builds for it alone, and only this query says by how much.
 #define SIZES_EVERY_MS 60000
 static void cache_sizes_ask(void) {
     if (!plat_mutex_trylock(&save_lock)) return;

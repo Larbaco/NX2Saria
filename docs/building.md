@@ -638,6 +638,16 @@ loss at the same moment end the process with exit code 72, one device report and
 device and opens no window; the device is not really lost, so what a driver answers after a loss is not covered.
 `device_lost_at = <n>` in `nx2saria.ini` ends a real run the same way at its n-th hand-over to the GPU queue.
 
+A change to the checks of the presentation and sampler paths (`runtime/gfx_guard.h`, `runtime/gfx_present.c`
+`create_swapchain`, `present_image`, `ng_ready`, `gfx_window_start`, `runtime/vk_texture.c` `make_sampler`,
+`sampler_for`) passes `python tests\gfx_guard_check.py`. It builds the header alone, with the signed overflow
+sanitizer where the compiler has it: the game's crop cut to the image against a 64-bit model over edge and random guest
+values up to `INT_MAX`, a swapchain image list taken whole or not at all (an error, `VK_INCOMPLETE`, fewer images than
+counted, more than the arrays hold), and how often a repeating failure is logged. Then it scans `gfx_present.c` and
+`vk_texture.c`: no swapchain image query, semaphore, fence, command pool, command buffer or sampler create may drop
+its result, and a failed `vkCreateSampler` may not end the game. No game files, no GPU; what a driver does after such
+a failure needs a run (`gfx: <call> failed (<result>), <n> times: ...`). The check also finds those lines in the source.
+
 A change to how a fault ends the process (`runtime/main.c` `crash_handler`, `mode_done`) passes
 `python tests\exit_fault_check.py <game exe>`, which runs two crash probes: a fault inside a library while a mode runs
 is a crash (one FATAL line, exit code 71), and the same fault after the mode has returned, while the process is ending,
@@ -658,6 +668,19 @@ admits and refuses and that builds under way count through their reservations. W
 value no machine has free. What the builders do when they are refused (`warm_builder`, `pipe_worker`, `lb_worker`,
 `lw_worker`) shows in a run's log: start the game with `build_free_mb` set above the machine's free commit and read the
 `vk_pipeline:` lines that name the commit headroom.
+
+The log lines those three changes leave pass `python tests\log_trace_check.py`, which cuts the functions that write
+them from `runtime/vk_pipeline.c` (`cache_stamp_check`, the play gate), `runtime/gfx_present.c` (`swapchain_unusable`)
+and `runtime/vk_texture.c` (`make_sampler`), builds each with stand-ins (real files for the stamp, a clock the harness
+moves, a `vkCreateSampler` that fails on request), runs a session's events through them and checks every line they
+log, with its numbers, in `build/test/log_trace/nx2saria-sample.log`. Vulkan headers only; no game files, no GPU.
+
+A change to the play gate of the background pipeline builds (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c`
+`play_rest`, `pipe_worker`, `lw_worker`, `runtime/vk_backend.c` `frame_end`) passes
+`python tests\play_gate_check.py`, which builds the header alone: the builds rest while the frame shown in play has
+`bg_build_play_draws` draws or more and was shown within half a second, never in a light moment or with the setting at
+0, and the log's counts. What it changes in the frame rate needs a run: `docs/performance.md`, "Background builds in
+play".
 
 A change to when the pipeline caches are saved in play (`runtime/vk_save_retry.h`, `runtime/vk_pipeline.c`
 `autosave_once`) passes `python tests\save_retry_check.py`, which builds the header alone: a save for new content, none
@@ -689,6 +712,15 @@ A change to how `pipeline-cache.bin` is read (`runtime/vk_cache_file.h`, `runtim
 `python tests\pipeline_cache_file_check.py`, which builds the header alone and reads a sparse file just over 2 GB
 through it: measured and read whole without a size limit, refused by its real size under one. No game files, no GPU;
 about 2 GB of memory for a few seconds.
+
+A change to the translator stamp of the pipeline cache files (`runtime/vk_cache_stamp.h`, `runtime/vk_pipeline.c`
+`cache_stamp_check`) passes `python tests\cache_stamp_check.py`, which builds the header alone: how
+`pipeline-cache.id` is written and read back (cut, empty or foreign text is no stamp), and what a start does with the
+files for a stamp that matches, one of another translator that the carry still serves, one that it does not serve,
+and none, through the starts of a translator update, and which saves write `pipeline-cache.bin` (in play, the exit of
+a run that started without it, again after a run that ended before that save). What a start did shows in the log's
+`vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>` line, which the check finds in the source; no
+game files, no GPU.
 
 A change to how `pipeline-binaries.bin` is indexed or cut back (`runtime/vk_pipeline.c` `pb_index`, `pb_keep`,
 `pb_init`) passes `python tests\pb_torn_check.py`, which cuts the record layout, the index walk and `pb_keep` out of

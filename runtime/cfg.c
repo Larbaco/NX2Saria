@@ -64,14 +64,14 @@ static const char *const known[] = {
     "HDR_BLOWOUT", "HDR_CONTRAST", "HDR_EXPOSURE", "HDR_FLARE", "HDR_GAMMA", "HDR_GRADE", "HDR_HIGHLIGHT_SAT",
     "HDR_HIGHLIGHTS", "HDR_HUE", "HDR_HUE_CLIP", "HDR_MATCH_SLOPE", "HDR_MIDGRAY", "HDR_SATURATION", "HDR_SHADOWS",
     "HDR_TONEMAP", "HDR_TONE_SLOPE", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
-    "BIG_BUILD_FREE_MB", "BIG_BUILD_MAX_MB", "BUILD_FREE_MB", "BUILD_RESERVE_MB", "LIB_PREBUILD_BIG", "LIB_PREBUILD_BIG_BG", "COMPUTE_WARM_REUSE", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIB_WARM", "LINE_WIDTH", "POOL_SHOWN_FIRST", "POOL_TEX_RELEASE", "POOL_DATA_FIRST", "TEX_REUSE_NAMED", "TEX_OVERWRITTEN_USED", "PIPE_LINK_MS", "FRAME_HOLD_MS", "PACE_SMOOTH", "OQ_BATCH", "OQ_HOLD", "QUAD_INDEX", "CLEAR_SMALL_CPU", "GATE_WAIT_MS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY", "MEM_CENSUS", "MEM_NEED_MB", "MENU_LANG", "MENU_SOUND_VOLUME", "MENU_TEST",
+    "BIG_BUILD_FREE_MB", "BIG_BUILD_MAX_MB", "BG_BUILD_PLAY_DRAWS", "BUILD_FREE_MB", "BUILD_RESERVE_MB", "LIB_PREBUILD_BIG", "LIB_PREBUILD_BIG_BG", "COMPUTE_WARM_REUSE", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIB_WARM", "LINE_WIDTH", "POOL_SHOWN_FIRST", "POOL_TEX_RELEASE", "POOL_DATA_FIRST", "TEX_REUSE_NAMED", "TEX_OVERWRITTEN_USED", "PIPE_LINK_MS", "FRAME_HOLD_MS", "PACE_SMOOTH", "OQ_BATCH", "OQ_HOLD", "QUAD_INDEX", "CLEAR_SMALL_CPU", "GATE_WAIT_MS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY", "MEM_CENSUS", "MEM_NEED_MB", "MENU_LANG", "MENU_SOUND_VOLUME", "MENU_TEST",
     "MENU_CURSOR", "MENU_CURSOR_LOG", "MENU_TEST_CLICK", "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MICROPHONE", "MIRROR_GAP", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MONITOR", "MOTION", "MOUSE_MODE", "MOUSE_DIRECT_PATCH", "MOUSE_SENS", "MOUSE_TRACE", "MOVIE_HOST", "MOVIE_PACE", "MOVIE_CLOCK", "TEST_HITCH", "SPRINT_BUTTON", "SPRINT_MODE", "SPRINT_BUTTON_PATCH", "TEXT_SPEED", "TEXT_SPEED_PATCH", "AMIIBO_DAILY_PATCH",
     "MOTION_GUARD_DEGREES", "MOTION_POLICY_TRACE", "SELECTIVE_MOTION", "SELECTIVE_MOTION_RAW",   // motion_owner.c, vk_fg_pose.inc
     "SKIN_MOTION",   // vk_skin_motion.inc
     "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
     "MV_SURVEY",
     "HANDLE_CENSUS",
-    "PIPE_SEED_BOOT", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PACE_HZ", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_RES_FIXED", "PATCH_SCENE", "PATCH_WIDE_ASPECT", "PATCH_WIDE_HUD", "PATCH_WIDE_MOVIE", "PATCH_WIDE_OUT", "PATCH_FREECAM", "PATCH_OCCLUSION_OFF", "PATCH_WIDE_SAVE", "PATCH_WIDE_SCENE", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPELINE_CACHE_MAX_MB", "PIPELINE_CACHE_PLAY", "PIPELINE_CACHE_PLAY_MB", "PIPE_BINARIES", "PIPE_BINARIES_MAX_MB", "PIPE_FEEDBACK", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SEED", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POWER_FULL", "TEX_SAME", "TEX_SAME_BIG", "TEX_FLAT3D", "TEX_KEEP_TAKEN", "TEX_RATE_LOW", "TEX_HARD_ORDER", "TEX_STALE_KEPT", "ASTC_SCRATCH_TRIM", "PRESENT_HELD", "HELD_SYNC",
+    "PIPE_SEED_BOOT", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PACE_HZ", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_RES_FIXED", "PATCH_SCENE", "PATCH_WIDE_ASPECT", "PATCH_WIDE_HUD", "PATCH_WIDE_MOVIE", "PATCH_WIDE_OUT", "PATCH_FREECAM", "PATCH_OCCLUSION_OFF", "PATCH_WIDE_SAVE", "PATCH_WIDE_SCENE", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPELINE_CACHE_MAX_MB", "PIPELINE_CACHE_PLAY", "PIPELINE_CACHE_PLAY_MB", "PIPELINE_CACHE_STAMP", "PIPE_BINARIES", "PIPE_BINARIES_MAX_MB", "PIPE_FEEDBACK", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SEED", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POWER_FULL", "TEX_SAME", "TEX_SAME_BIG", "TEX_FLAT3D", "TEX_KEEP_TAKEN", "TEX_RATE_LOW", "TEX_HARD_ORDER", "TEX_STALE_KEPT", "ASTC_SCRATCH_TRIM", "PRESENT_HELD", "HELD_SYNC",
     "PRESENT_ORDER",
     "PREPARE_PIPELINES", "PREWARM_FULL", "PREWARM_FULL_S", "PREWARM_WAIT_MS", "PREWARM_XLATE", "PROBE_MOVIE", "PROBE_MOVIE_SHOT", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES", "PROFILE_REPLAY", "PROFILE_SLOW",
     "POOL_FAST", "POOL_GROUP", "POOL_GROUP_CHECK", "POOL_PRESNAP", "POOL_PRESNAP_RUNS",
@@ -172,7 +172,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"RECORDER_CORE", "performance"}, {"RECORDER_PRIO", "performance"}, {"READABLE_FAST", "performance"},
     {"BIND_REUSE", "performance"},
     {"DYN_DELTA", "performance"}, {"STG_ARENA", "performance"}, {"SUBMIT_BATCH", "performance"}, {"SUBMIT_THREAD", "performance"},
-    {"BUILD_FREE_MB", "performance"}, {"BUILD_RESERVE_MB", "performance"}, {"MEM_NEED_MB", "diagnostics"},
+    {"BUILD_FREE_MB", "performance"}, {"BG_BUILD_PLAY_DRAWS", "performance"}, {"BUILD_RESERVE_MB", "performance"}, {"MEM_NEED_MB", "diagnostics"},
     {"ASTC_GPU_DESWIZZLE", "performance"}, {"ASTC_SCRATCH_KEEP", "performance"}, {"ASTC_ARENA", "performance"}, {"ASTC_BC1", "performance"}, {"POOL_CREATE_BUDGET", "performance"},
     {"POOL_CREATE_MS", "performance"}, {"POOL_FINI_IDLE", "performance"}, {"FREEZE_BUDGET_US", "performance"}, {"FREEZE_QUIET_MS", "performance"}, {"FREEZE_LOAD_HOLD_MS", "performance"}, {"POOL_LOAD_BACKLOG", "performance"}, {"POOL_LOAD_MS", "performance"},
     {"TIMER_1MS", "performance"}, {"PIPE_WAIT", "performance"}, {"PIPE_SKIP", "performance"}, {"ONESHOT_BUDGET", "performance"},
@@ -185,7 +185,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"PREWARM_XLATE", "performance"}, {"GPL", "performance"}, {"ASTC", "performance"}, {"MEMORY", "performance"},
     {"TEX_ALIAS", "performance"}, {"DEPTH_INIT_INLINE", "performance"}, {"DEPTH_ALIAS_LOG", "diagnostics"}, {"TEX_DISUSE", "performance"}, {"POOL_MARK_SHARED", "performance"}, {"TEX_DISUSE_EVICT", "performance"}, {"TEX_GEN_UNDO", "performance"}, {"TEX_REUSE", "performance"}, {"TEX_SPLIT_FILL", "performance"}, {"TEX_VRAM_PRESSURE", "performance"}, {"TEX_RESIDENCY", "performance"}, {"VRAM_PAGEABLE", "performance"}, {"POOL_TEX_RELEASE", "performance"}, {"TEX_RELEASED_HOLD", "performance"}, {"TEX_PROC_COMMIT_MB", "performance"}, {"ASTC_BC", "performance"}, {"LOD_GUARD", "performance"}, {"FIX_C0", "performance"}, {"FIX_ZERO", "performance"}, {"WATER_PROJECTIVE", "performance"},
     {"SHADER_COMPRESS", "performance"}, {"SHADER_COMPRESS_IDLE_S", "performance"},
-    {"BIND_SKIP", "performance"}, {"SHADER_CACHE_FLUSH", "performance"}, {"SHADER_CARRY", "performance"}, {"PIPELINE_CACHE_PLAY", "performance"}, {"PIPELINE_CACHE_PLAY_MB", "performance"}, {"FFX_PIPE_CACHE", "performance"}, {"SHADER_MEMO", "performance"}, {"PIPE_MEMO", "performance"}, {"TEX_MEMO", "performance"}, {"DESC_TEMPLATE", "performance"},
+    {"BIND_SKIP", "performance"}, {"SHADER_CACHE_FLUSH", "performance"}, {"SHADER_CARRY", "performance"}, {"PIPELINE_CACHE_PLAY", "performance"}, {"PIPELINE_CACHE_PLAY_MB", "performance"}, {"PIPELINE_CACHE_STAMP", "performance"}, {"FFX_PIPE_CACHE", "performance"}, {"SHADER_MEMO", "performance"}, {"PIPE_MEMO", "performance"}, {"TEX_MEMO", "performance"}, {"DESC_TEMPLATE", "performance"},
     {"TEX_CLOBBER", "performance"}, {"LOW_END_GPU", "performance"},
     {"PUSH_SKIP", "performance"}, {"SPLIT_DRAWS", "performance"}, {"SPLIT_IDLE", "performance"}, {"SPLIT_IN_PASS", "performance"}, {"SPLIT_US", "performance"}, {"VK_VALIDATION", "performance"},
     {"VK_DYN_VERTEX", "performance"}, {"VK_DYN_A2C", "performance"}, {"VK_SUBGROUP_PIN", "performance"}, {"VK_RECONVERGE", "performance"},
@@ -432,9 +432,11 @@ static const CfgMeta metas[] = {
     {"PIPELINE_CACHE_MAX_MB", "", "0..65536", RESTART},   // vk_pipeline.c cache_cap: unset, from the RAM (1024 to 4096)
     {"FFX_PIPE_CACHE", "1", "0|1", RESTART},   // vk_ffx.cpp vk_ffx_proc_addr: FSR 3.1's pipelines through the pipeline caches
     {"PIPELINE_CACHE_PLAY", "1", "0|1", RESTART}, {"PIPELINE_CACHE_PLAY_MB", "64", "1..65536", RESTART},   // vk_pipeline.c "the play cache": what a run compiles goes into a file of its own
+    {"PIPELINE_CACHE_STAMP", "1", "0|1", RESTART},   // vk_pipeline.c cache_stamp_check: files of a translator nothing serves any more are deleted
     {"PIPE_BINARIES", "0", "0|1", RESTART}, {"ONESHOT_WAIT_MS", "30000", "0..60000", RESTART}, {"ONESHOT_BUDGET", "1", "0|1", RESTART}, {"PIPE_BINARIES_MAX_MB", "1024", "0..65536", RESTART}, {"BIG_BUILD_FREE_MB", "8192", "0..262144", RESTART},
     {"BIG_BUILD_MAX_MB", "4096", "0..262144", RESTART},
     {"BUILD_FREE_MB", "4096", "0..1048576", RESTART}, {"BUILD_RESERVE_MB", "64", "0..65536", RESTART},   // vk_pipeline.c gate_enter
+    {"BG_BUILD_PLAY_DRAWS", "600", "0..1000000", RESTART},   // vk_pipeline.c play_rest: background builds rest in heavy frames
     {"MEM_NEED_MB", "24576", "0..1048576", RESTART},   // memory.c mem_start_note; the default is mem_need.h MEM_NEED_DEFAULT_MB
     // all|<count>: the compute pipelines the boot keeps, those dispatched most recently (vk_pipeline.c, compute-used.bin)
     {"COMPUTE_KEEP", "512", NULL, RESTART},

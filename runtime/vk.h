@@ -1116,6 +1116,9 @@ void vk_pipeline_boot_abandon(void);   // an end before the guest starts that sa
 // boot_wait calls it when it lets the game start while the prewarm goes on: the builders of the whole warm after a
 // driver change (vk_pipeline.c bf_decide) go on as in play, at idle priority and in the background's numbers.
 void vk_pipeline_prewarm_detach(void);
+// The draws of a frame as it is closed (vk_backend.c frame_end): background pipeline builds rest while frames in play
+// are heavy (vk_pipeline.c play_rest). Any thread; called in replay order.
+void vk_pipeline_frame_note(uint32_t draws);
 typedef struct {
     // 0 starting (device, key file), 1 shaders, 2 pipelines, 5 done. Only in the whole warm after a driver change
     // (vk_pipeline.c bf_decide): 3 compute pipelines, 4 the prepared variants built into the driver's cache.

@@ -230,6 +230,18 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   into the large one at a start once it reached `pipeline_cache_play_mb`, and by every preparation; the stage
   libraries the library warm builds in play go to the driver's own cache alone (`runtime/vk_pipeline.c`, "the play
   cache", `cache_save`).
+  `pipeline-cache.id` names the translator whose pipelines both files hold. A start that finds another translator
+  there, one whose translations the shader carry no longer serves, deletes both files before reading them: a new
+  translator makes other SPIR-V, so nothing asks for those pipelines again, and without the stamp the files kept
+  them for good (650 MB, 15-18 % of it used). While the carry still serves the earlier translator's shaders the
+  files are read and the stamp is kept; what those runs compiled for the new translator goes with the files at the
+  deletion. The driver's own cache mostly still has it, and a pipeline taken from there stays out of both files until
+  the next fold, since in play `pipeline-cache.bin` is written only by a fold: so a run that started without
+  `pipeline-cache.bin` writes it once at its exit, and the start after reads those pipelines from the file (a run that
+  ends without that save leaves it to the next). A preparation carries nothing, so it deletes the files at once and
+  writes the file itself (`runtime/vk_cache_stamp.h`, `runtime/vk_pipeline.c` `cache_stamp_check`;
+  `pipeline_cache_stamp = 0` turns the stamp off). The write at exit does not depend on the stamp: any start in play
+  that finds no `pipeline-cache.bin` makes it (`cache_base_at_exit`, `cache_load`, `cache_save`).
 - The game's tensor-core upscaler is replaced by a decode-and-scale pass (`vk_tonemap.c`), which enlarges the scene
   with FSR 1's edge-adaptive filter (`NX2SARIA_STANDIN_FILTER`, `bilinear` for the plain one) unless DLSS or FSR 3.1
   scales it; `NX2SARIA_NATIVE_TENSOR=1` runs the game's own network programs instead (`vk_exec_draw.c` `native_tensor`,
