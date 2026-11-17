@@ -1108,6 +1108,15 @@
 # cheat_0123abcd = 1
 
 [diagnostics]
+# Test runs (Ocarina of Time 1.1.1): start straight in an area, <area>[:<start position>] by the game's own names
+# (the debug menu's teleport list shows them), from the save of a slot (0 to 5, or latest), without the title screen
+# and its file menu. boot_map_age (child, adult or save) matters where the area's name has no age (dungeons);
+# boot_map_time is HH:MM or save. The slot's save holds the new place after the game's next save: use a copy of the
+# profile. The log says where Link arrived, or why the game booted normally. docs/boot-to-map.md. Read at start.
+# boot_map = KokiriForest_Child
+# boot_map_slot = latest
+# boot_map_age = save
+# boot_map_time = save
 # Extra lines in the log, comma separated: svc, host, ipc, fs, gfx, perf, sched, audio, present or all. The menu's
 # Performance log sets perf (frame timings). Default: none.
 # trace = perf

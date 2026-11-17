@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "boot_map.h"
 #include "debug_tools.h"
 #include "cfg.h"
 #include "gfx.h"
@@ -102,6 +103,7 @@ static void npad_states(Cpu *c, uint32_t want) {
         s.attributes = ATTR_CONNECTED;
         input_poll(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);
     }
+    boot_map_tick();   // a boot map ends once Link is in the world (boot_map.c)
     dbg_tick(c);   // the debug menu's changes to the game, between two of its frames (debug_tools.c)
     if (live) dbg_pad(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);   // its free camera takes the sticks while it flies
     if (live) sprint_pad(&s.buttons);   // the sprint button's presses, kept from the game during gameplay (sprint.c)

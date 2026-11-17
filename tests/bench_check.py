@@ -123,6 +123,20 @@ def main():
           and '@40000 MARK end' in s, 'script')
     check(bench.dbg_test({'dbg': [['@1000', 'warp A B'], [900, 'route 1 2']]}) == '@1000:warp A B;900:route 1 2', 'dbg test')
 
+    # --boot-map: the scene's warp becomes the boot map, its other steps stay, and the script presses nothing before
+    # the world clock
+    scene = {'name': 'k', 'warmup_s': 14, 'measure_s': 40,
+             'dbg': [['@1000', 'warp KokiriForest_Child ReturnFromDreamWorld'], ['@10000', 'freecam 1 1 2']]}
+    where, rest = bench.boot_map_of(scene)
+    check(where == 'KokiriForest_Child:ReturnFromDreamWorld' and rest['dbg'] == [['@10000', 'freecam 1 1 2']] and
+          len(scene['dbg']) == 2, f'boot map of a scene: {where} {rest["dbg"]}')
+    check(bench.boot_map_of({'name': 'n', 'dbg': [['@1', 'freecam 1 1 2']]})[0] is None, 'a scene without a warp')
+    check(bench.boot_map_of({'name': 'a', 'dbg': [['@1', 'warp HyruleField_Child']]})[0] == 'HyruleField_Child',
+          'a warp without a start position')
+    s = bench.make_script(rest, title_ticks=0)
+    check(not any(l.split()[1] == 'A' for l in s.splitlines() if l and not l.startswith('#')) and '@14000 MARK measure' in s,
+          'no presses before the world clock with --boot-map')
+
     print('bench_check:', 'ok' if not failures else f'{failures} failed')
     sys.exit(1 if failures else 0)
 
