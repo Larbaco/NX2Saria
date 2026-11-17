@@ -29,8 +29,9 @@ built or run for this study.
   the save it already read, as it does with values from memory. Live tracking then works on Linux too, without any
   permission to read another process and without searching memory.
 - **Prototype:** written, tested against a stand-in for the game's memory (`tests/tracker_api_check.py`) and, end to
-  end, with the patched tracker reading the fork's real server. Not yet proven with the game; the checklist at the end
-  proves it in one run, including the parts that were read in the game's code and not yet seen live.
+  end, with the patched tracker reading the fork's server code (the check's build of it, over that stand-in). The
+  checklist at the end proves it with the game, including the parts that were read in the game's code and not yet
+  seen live.
 
 ## What hyrule-tracker is
 
@@ -110,13 +111,13 @@ live values are what the first run checks.
 |---|---|---|---|---|
 | Items, equipment, songs, upgrades ever obtained | Bool (0), 11,292 (10,212 saved) | 0x18 bytes, value u8 at +0x16, vtable main+0x4c20658 | `IsGet.Item_Hookshot` `0xff98ed58` | `nx2saria.game_data` `Bool` |
 | Item counts (sticks, nuts, bombs, arrows, beans, tokens, Heart Pieces held) | Int (2), 1,259 (1,144 saved) | 0x28 bytes, s32 at +0x1c, vtable main+0x4c20718 | `PouchData.Item_Token_Gold.StockNum` `0x04735978` | `Int` |
-| Max health, magic | Int (2) | as above | `PlayerStatus.MaxLife` `0xfbe01da1` | `Int` |
-| Small keys | Int (2), 14 dungeons | as above | `DungeonInfo.ForestTemple.SmallKeyNum` `0x90237092` | `Int` |
-| Map, compass, boss key | Bool (0) | as above | `DungeonInfo.ForestTemple.IsGetBossKey` `0x427333a0` | `Bool` |
+| Max health, magic | Int (2) | 0x28 bytes, s32 at +0x1c | `PlayerStatus.MaxLife` `0xfbe01da1` | `Int` |
+| Small keys | Int (2), 14 dungeons | 0x28 bytes, s32 at +0x1c | `DungeonInfo.ForestTemple.SmallKeyNum` `0x90237092` | `Int` |
+| Map, compass, boss key | Bool (0) | 0x18 bytes, value u8 at +0x16 | `DungeonInfo.ForestTemple.IsGetBossKey` `0x427333a0` | `Bool` |
 | Strength, bottle contents, quest steps | Enum (6), 130 (101 saved) | 0x38 bytes, u32 at +0x1c (hash of the value's name) | `PlayerStatus.LiftGrade` `0x59979321` | `Enum` |
-| Age | Bool (0) | as above | `Sequence_IsChildhood` `0xcea220d3` (1 child) | `Bool` |
-| Chests (206) | Bool (0) | as above | `IsTreasureBoxOpen.<placement hash in decimal>` | `Bool` |
-| Events, conversations | Bool (0): 3,647 `HavePlayedEvent`, 199 `HavePlayedGetEvent` | as above | | `Bool` |
+| Age | Bool (0) | 0x18 bytes, value u8 at +0x16 | `Sequence_IsChildhood` `0xcea220d3` (1 child) | `Bool` |
+| Chests (206) | Bool (0) | 0x18 bytes, value u8 at +0x16 | `IsTreasureBoxOpen.<placement hash in decimal>` | `Bool` |
+| Events, conversations | Bool (0): 3,647 `HavePlayedEvent`, 199 `HavePlayedGetEvent` | 0x18 bytes, value u8 at +0x16 | | `Bool` |
 | Area | String64 (16), 54 | 0x108 bytes, pointer to the text at +0x68 | `Sequence_CurrentBanc` `0x1d6189da` | `String64`, or `nx2saria.state.area` |
 | Place within the area | String64Array (17), 5 | 0x90 bytes, count at +0x80, elements at +0x88 (0x50 each, text at +0x0c) | `0xc458f1eb` | `String64Array` |
 | Sun's Song counter and other 64-bit counts | Int64 (22), 33 | 0x30 bytes, s64 at +0x20 | `0xd457ee3a` | `Int64` |
@@ -129,8 +130,9 @@ live values are what the first run checks.
 Not established statically, checked on the first run: the stride of String64Array (its five values are the ones a
 tracker uses; 0x90 is what the tracker saw in another port of the same build), the axis of the rotation that is Link's
 forward one, and which wallet is which. Unread kinds (Float, UInt, the arrays of numbers, vectors) are left out of the
-API until a tracker needs them; their layouts are known (Float and UInt 0x28 with the value at +0x1c; the arrays of numbers
-0x40, EnumArray 0x50, each with the count at +0x20 and the elements' address at +0x28).
+API until a tracker needs them; their layouts were read in the game's code, not checked live (Float and UInt 0x28 with
+the value at +0x1c; the arrays of numbers 0x40, EnumArray 0x50, each with the count at +0x20 and the elements' address
+at +0x28).
 
 ## Changes in the fork (this branch)
 
@@ -138,11 +140,11 @@ This branch is `main` (`0170e49d`) with `atlas-integration` (`dbd8d6c4`) merged 
 
 | Change | Where |
 |---|---|
-| `nx2saria.game_data {kind, hash, filter, if_digest}`: the values of one kind with their keys, sorted, in hex, with `format`, `presents` and an FNV-1a `digest`; one request at a time; a kind answered whole or refused (-32002 to ask again, -32003 not on this build) | `runtime/tracker_api.c` (`gd_kinds`, `gd_records`, `gd_keys`, `do_game_data`) |
+| `nx2saria.game_data {kind, hash, filter, if_digest}`: the values of one kind with their keys, sorted, in hex, with `format`, `presents` and an FNV-1a `digest`; one request at a time; a kind answered whole or refused (-32002 to ask again, -32003 not on this build, only after its section read the same twice) | `runtime/tracker_api.c` (`gd_kinds`, `gd_records`, `gd_keys`, `gd_unsupported`, `do_game_data`) |
 | `status.methods`; `nx2saria.state.player.rotation` and `nx2saria.state.game_data` | `runtime/tracker_api.c` (`do_status`, `do_state`) |
 | The manager's slot shared by the debug menu and the API | `runtime/debug_tools.h` (`DBG_GAME_DATA_SLOT`), `runtime/debug_tools.c` |
 | The answer's room freed after an answer over 1 MiB | `runtime/tracker_api.c` `client_main` |
-| The check: a stand-in manager at the game's address, empty first and then loaded as the game loads it, every kind, keys, digests, filters, refused parameters, and each way a read fails (text pointers into the host's memory, a duplicated pair, a wrong vtable in the middle) | `tests/tracker_api_check.c`, `tests/tracker_api_check.py` |
+| The check: a stand-in manager at the game's address, empty first and then loaded as the game loads it, every kind, keys (by hash at two indices), digests, filters, refused parameters, and the stand-in's ways to spoil a read: text pointers into the host's memory, 65 texts, a hash twice, two pairs for one entry, placed objects out of order, an entry still being made, a wrong vtable in the middle | `tests/tracker_api_check.c`, `tests/tracker_api_check.py` |
 | The bench client: every kind, compared with the newest save (`--save`), the manager's vtables, and Link's heading from his rotation beside the way he moves (`--watch`) | `tools/tracker_api_client.py` |
 | The protocol, this page, the PR drafts and the tracker patch | `docs/tracker-api.md`, `docs/hyrule-tracker.md`, `docs/hyrule-tracker-prs.md`, `docs/hyrule-tracker-pr.patch` |
 
@@ -151,27 +153,34 @@ with the rest. Not done: a row for the API in the settings menu and the launcher
 
 ## Changes in the tracker
 
-A new live source; nothing else changes for the other ports and emulators
-([hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against `fbfafe5`, five files, about 470 lines added):
+A new live source ([hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against `fbfafe5`, five files, about 520 lines
+added):
 
 1. `src/gamedata/nx2saria.ts` (new): the API client (newline-delimited JSON, one request at a time, timeouts), the
    decoding of each kind into the values its save parser gives, `overlay` (the reference save with the live values,
    and the same `Agreement`s as `buildLive`, so `matchesReference` decides as for memory; every set Bool of the save
    counts, those the game did not answer too), the heading from the rotation, and `ApiSession` (each kind asked with
-   its last digest, the placed objects' classes once).
-2. `src/main/live.ts`: while no game is attached, `127.0.0.1:6545` is tried first; when it answers as NX2Saria with
-   `nx2saria.game_data`, the source reads through it and looks for no process. Without memory access (Linux) live mode
-   waits for NX2Saria instead of being unavailable. The decision after a read and the player update are shared with
-   the memory path.
-3. `src/gamedata/saves.ts`: NX2Saria's game files and label, `<game>\profile\save` and the launcher's
-   `<install>\game\profile\save`, `NX2Saria` among the default install folders.
-4. `test/nx2saria.test.ts`: decoding, heading, overlay, playthrough check, a session against a stand-in server.
+   its last digest, the placed objects' classes once; Bool, Int, Enum and the placed objects required, the area
+   kinds left out when the game refuses them, as the memory path does without the area).
+2. `src/main/live.ts`: while no game is attached, `127.0.0.1:6545` is asked beside the process search (no added wait);
+   when it answers as NX2Saria with `nx2saria.game_data`, the source reads through it. Without memory access (Linux)
+   live mode still says it cannot read memory, and goes live when NX2Saria answers. A refusal for a moment (a save
+   being written or loaded) keeps the live state up to 3 s; -32003 or another `format` says the API does not read this
+   game version. A stop during a request changes nothing after it. The decision after a read and the player update are
+   shared with the memory path.
+3. `src/gamedata/saves.ts`: NX2Saria's game files (`ocarina.exe`, `nx2saria.exe`; without `.exe` off Windows, files
+   only) and label, `<game>\profile\save` and the launcher's `<install>\game\profile\save`, `NX2Saria` among the
+   default install folders.
+4. `test/nx2saria.test.ts`: decoding, heading, overlay, playthrough check, sessions against a stand-in server (digests,
+   the classes asked once, the wait before a save, optional kinds refused, -32003, another format, another program
+   on the port).
 5. README: NX2Saria and how to turn on its API.
 
-Checked: `tsc --noEmit` passes and `vitest` passes (106 tests, 11 skipped as before). End to end, the patched
-`ApiSession` read the fork's own server (the check's build of `runtime/tracker_api.c` with its stand-in memory) and
+Checked: `tsc --noEmit` passes and `vitest` passes (108 tests, 11 skipped as before). End to end, the patched
+`ApiSession` read the fork's server code (the check's build of `runtime/tracker_api.c` with its stand-in memory) and
 built the expected live data: values over the save, the place within the area, the keys and their classes, the same
-fingerprint on a second read.
+fingerprint on a second read. Not tested: `live.ts`'s own changes (they need Electron's main process), and the
+activity screenshot, which needs a process id the API does not give (it stays off for NX2Saria).
 
 ## Pull requests
 
@@ -248,10 +257,15 @@ for Atlas.
   `tests/check_platform_test.py` and `tests/cfg_rows_check.py` pass. `tests/branding_package_check.py` needs `fontTools`,
   which this machine's Python lacks; it does not touch these files.
 - `tools/tracker_api_client.py --save` runs against the check's server and a save made for it.
-- A reviewer read the method and its check before the commit. Its findings (allocations a corrupted table could make
-  huge, values made up where a read failed, only two entries' vtables checked, a table changing during the copy, the
-  Bool byte unmasked, stale bytes in the digest, the whole kind copied for one hash, one log flag for every kind, one
-  error code for "wait" and "never") are fixed and tested above.
+- Two reviews read the method, its check, the tracker patch and these pages. The first one's findings (allocations a
+  corrupted table could make huge, values made up where a read failed, only two entries' vtables checked, a table
+  changing during the copy, the Bool byte unmasked, stale bytes in the digest, the whole kind copied for one hash,
+  one log flag for every kind, one error code for "wait" and "never") are fixed. The second one's (-32003 for a save
+  being loaded, the tracker blocked by one refused kind or flickering on a moment's refusal, tests that did not reach
+  the checks they were credited with, wording) are fixed too. The check reaches every refusal listed above; the
+  section re-read during a load, the size caps and the probe wrapping round the table are in the code but not
+  exercised by it. (Commit `28c62b66` says the check covers "each way a read can fail"; the list above is what it
+  covers.)
 - The tracker's side: its tests, its type check, and the end-to-end read of the fork's server, above.
 
 ## Expected log lines
@@ -265,26 +279,26 @@ tracker api: client 1 (127.0.0.1:50412) asks: its first request is status (1 ope
 tracker api: first status answered: powered_on 1, game 1.1.1, build e0f3ccfaf50065ae
 tracker api: first nx2saria.state answered: area HyruleField_Adult, Link at (12.50, -3.25, 100.00)
 tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, for Bool; the closing lines count the others)
-tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 0.4 ms
-tracker api: first nx2saria.game_data of Int answered: 1259 values, 10072 bytes, in 0.1 ms
-tracker api: first nx2saria.game_data of Enum answered: 130 values, 1040 bytes, in 0.0 ms
-tracker api: first nx2saria.game_data of String64 answered: 54 values, 3672 bytes, in 0.1 ms
-tracker api: first nx2saria.game_data of String64Array answered: 5 values, … bytes, in 0.0 ms
-tracker api: first nx2saria.game_data of Int64 answered: 33 values, 396 bytes, in 0.0 ms
-tracker api: first nx2saria.game_data of Bool64bitKey answered: … values, … bytes, in 0.1 ms
+tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 0.42 ms
+tracker api: first nx2saria.game_data of Int answered: 1259 values, 10072 bytes, in 0.08 ms
+tracker api: first nx2saria.game_data of Enum answered: 130 values, 1040 bytes, in 0.02 ms
+tracker api: first nx2saria.game_data of String64 answered: 54 values, 3672 bytes, in 0.10 ms
+tracker api: first nx2saria.game_data of String64Array answered: 5 values, … bytes, in 0.02 ms
+tracker api: first nx2saria.game_data of Int64 answered: 33 values, 396 bytes, in 0.02 ms
+tracker api: first nx2saria.game_data of Bool64bitKey answered: … values, … bytes, in 0.10 ms
 tracker api: the last 10 min: 9600 requests (status 1, nx2saria.state 1200, nx2saria.game_data 8399), 0 refused, 24.1 MiB sent, 0 port checks, 1 client open
 tracker api: client 1 (127.0.0.1:50412) left after 812.4 s, the client closed the connection: …
 ```
 
 The counts are 1.1.1's GameDataList; the first run says the real ones. A kind that does not read as 1.1.1 keeps it
 logs `tracker api: nx2saria.game_data <kind> could not be answered: <why> (error -32003; the first such answer for this
-kind)`, once per kind.
+kind and error)`, once per kind and error.
 
 ## Licenses
 
 - **hyrule-tracker: MIT** (`LICENSE`, "Copyright (c) 2026 João Victor Prado"). Its notices say its player chain comes
   from Ocarina Atlas under MIT (`docs/atlas-license.txt`), while the Atlas study found Atlas's repository under the
-  AGPL-3.0; that is the tracker's and Atlas's matter, and nothing of either is copied here. Game images are not in its
+  AGPL-3.0; that is the tracker's and Atlas's matter. No code of either is in the fork's code. Game images are not in its
   repository (fetched by scripts, credited to their owners).
 - **The fork: MIT** for the base import (`LICENSE`), **all rights reserved** for the additions (`LICENSE-ADDITIONS`).
 - **What is allowed:**
@@ -293,8 +307,9 @@ kind)`, once per kind.
     interoperate.
   - The tracker and NX2Saria are two programs that talk over a socket; neither license reaches the other through it.
   - The tracker patch's new lines would be contributed under MIT, the tracker's license; that is the copyright
-    holder's decision. The patch quotes some of the tracker's lines as diff context, which stay MIT and the tracker's.
-    MIT code may be copied into the fork with its notice (`AGENTS.md`), but none was: the fork needs none of it.
+    holder's decision. The patch quotes some of the tracker's lines as diff context, which stay MIT and the tracker's:
+    its header carries the MIT notice and `THIRD_PARTY_NOTICES.md` has the row. No tracker code went into the fork's
+    code: it needs none.
   - Bundling the tracker with an NX2Saria release would be allowed under MIT (its notice kept); pointing players to
     its releases is simpler.
   - No issue or pull request was opened in the tracker's repository.
@@ -326,8 +341,9 @@ When the game may be built and run again (after Atlas's checklist, steps 1 to 3,
    `python tools/tracker_api_client.py --save <game folder>/profile/save --watch 30` while Link walks and turns:
    - step 6: every kind answers with about 11,292 Bool, 1,259 Int, 130 Enum, 54 String64, 5 String64Array, 33 Int64
      and about 11,657 placed objects; the manager's vtables read `main+0x4c1f120`, `main+0x4c1f140`;
-   - against the save: no Bool, Int or Enum missing, no Bool or Enum different, only counters among the Ints; no
-     placed object of the save unset live; the area and the place within it read right;
+   - against the save of the slot that loaded: no Bool, Int or Enum missing, no Bool or Enum different (the client
+     passes up to 1%), only counters among the Ints; no placed object of the save unset live; the area and the place
+     within it read right;
    - step 7: the heading from the rotation follows the way Link moves (same angle while he runs forward). If it is
      off by a constant (90°, 180°) or mirrored, the axis in the tracker patch's `yawFromRotation` changes.
    The log has one "first nx2saria.game_data of …" line per kind and no "could not be answered" line.

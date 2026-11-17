@@ -56,7 +56,8 @@ a save.
 ## 2. hyrule-tracker (jv-prado/hyrule-tracker): NX2Saria as a live source
 
 **Patch:** [hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against hyrule-tracker `master` at `fbfafe5` (v1.1.1;
-applies cleanly). Five files, about 470 lines added, 270 of them the module and 140 its test.
+applies cleanly; its header carries the tracker's MIT notice for the lines it quotes). Five files, about 520 lines
+added, 280 of them the module and 165 its test.
 
 **Title:** Read NX2Saria live through its tracker API, and find its saves
 
@@ -76,22 +77,26 @@ applies cleanly). Five files, about 470 lines added, 270 of them the module and 
 >    and fills the same `Agreement`s as `buildLive`, so `matchesReference` decides as for memory. `ApiSession` asks each
 >    kind with the digest of its last answer, so an unchanged kind costs a short answer, and the placed objects'
 >    classes once.
-> 2. `src/main/live.ts`: every 3 s while no game is attached, `LiveSource` first asks `127.0.0.1:6545` for `status`;
->    when it answers as NX2Saria with `nx2saria.game_data`, it reads through it (`apiStep`) and does not look for a
->    process. Without memory access (Linux) live mode now waits for NX2Saria instead of being unavailable. The
->    decision after a read (`publish`) and the player update (`setPlayer`) are shared with the memory path.
-> 3. `src/gamedata/saves.ts`: NX2Saria's game files (`ocarina.exe`, `nx2saria.exe`, and without `.exe` on Linux) in
->    the install search and its label, `<game>/profile/save` and the launcher's `<install>/game/profile/save` in
+> 2. `src/main/live.ts`: every 3 s while no game is attached, `LiveSource` asks `127.0.0.1:6545` for `status` beside
+>    its process search (so finding the other ports waits no longer); when it answers as NX2Saria with
+>    `nx2saria.game_data`, it reads through it (`apiStep`). Bool, Int, Enum and the placed objects are required; the
+>    area, the place within it and the Int64s are left out when the game refuses them. A refusal for a moment (a save
+>    being written or loaded) keeps the live state up to 3 s; "not on this build" (-32003) or another `format` says so.
+>    Without memory access (Linux) the status stays "unavailable" until NX2Saria answers. The decision after a read
+>    (`publish`) and the player update (`setPlayer`) are shared with the memory path.
+> 3. `src/gamedata/saves.ts`: NX2Saria's game files (`ocarina.exe`, `nx2saria.exe`; without `.exe` off Windows, and
+>    only files) in the install search and its label, `<game>/profile/save` and the launcher's `<install>/game/profile/save` in
 >    `resolveUserFolders`, `NX2Saria` among the default install folders.
-> 4. `test/nx2saria.test.ts`: decoding of every kind, the heading, the overlay and the playthrough check, a session
->    against a stand-in server (digests, the classes asked once, the wait before the game data, another program on
->    the port).
+> 4. `test/nx2saria.test.ts`: decoding of every kind, the heading, the overlay and the playthrough check, sessions
+>    against a stand-in server (digests, the classes asked once, the wait before the game data, optional kinds
+>    refused, -32003, another format, another program on the port).
 > 5. README: NX2Saria among the installs, and how to turn its API on.
 >
-> Nothing else changes for the other ports and emulators: their live mode is read as before when NX2Saria does not
-> answer. Tested with `npm run typecheck` and `npm test` (106 passed, 11 skipped as before), and end to end against
-> NX2Saria's own server over a stand-in for the game's memory. Answers of another `format`, and the API's "not now"
-> (-32002) and "not on this build" (-32003), leave live mode waiting.
+> For the other ports and emulators live mode reads as before; what they see change is a connection attempt to
+> `127.0.0.1:6545` every 3 s while no game is attached, made beside the process search. Tested with
+> `npm run typecheck` and `npm test` (108 passed, 11 skipped as before), and end to end against NX2Saria's server code
+> over a stand-in for the game's memory. `live.ts`'s own changes are not covered by a test (they run in Electron's
+> main process).
 >
 > Open point: the heading. NX2Saria gives Link's rotation as a 3x3 matrix; `yawFromRotation` takes its third column
 > as his forward axis. That is to be confirmed in the game (NX2Saria's bench client prints both); until then the pin
@@ -101,8 +106,9 @@ applies cleanly). Five files, about 470 lines added, 270 of them the module and 
 search (the first read is immediate); the place within an area and the placed objects as for the other ports.
 
 **Not proposed:** following NX2Saria's save folder when it starts (`followGame` needs the game's exe path, which the
-API does not give; the install search finds the folder, or the player picks it). A Linux build of the tracker's
-release (its `dist` script builds Windows only; `npm start` runs it from the source on Linux).
+API does not give; the install search finds the folder, or the player picks it). The activity screenshot for NX2Saria
+(`captureGame` needs the game's process id, which the API does not give). A Linux build of the tracker's release (its
+`dist` script builds Windows only; `npm start` runs it from the source on Linux).
 
 **License:** the patch's new lines would be contributed under the tracker's MIT license. The patch quotes some of
 the tracker's lines as diff context; they stay MIT and the tracker's.

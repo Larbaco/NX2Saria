@@ -1,3 +1,27 @@
+A draft patch for hyrule-tracker (https://github.com/jv-prado/hyrule-tracker), against master at
+fbfafe582909e6c23380d15a811605773af03549; docs/hyrule-tracker-prs.md describes it. Apply it in that repository with
+`git apply`, which skips this text.
+
+The lines this patch adds are this repository's, drafted for contribution to hyrule-tracker under its MIT license. Its
+context lines (those starting with a space, and the removed ones) are hyrule-tracker's own, quoted under its license:
+
+  MIT License
+
+  Copyright (c) 2026 João Victor Prado
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+  documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+  rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+  Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+  WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+  COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 diff --git a/README.md b/README.md
 index f28bf8d..3666fb4 100644
 --- a/README.md
@@ -15,10 +39,10 @@ index f28bf8d..3666fb4 100644
  
 diff --git a/src/gamedata/nx2saria.ts b/src/gamedata/nx2saria.ts
 new file mode 100644
-index 0000000..3e9744e
+index 0000000..f075ba9
 --- /dev/null
 +++ b/src/gamedata/nx2saria.ts
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,280 @@
 +// NX2Saria (a native PC port of the game, Windows and Linux) answers the running game's progress itself, read-only
 +// and to this PC only, through its tracker API on 127.0.0.1:6545 (`tracker_api = 1` in its nx2saria.ini): the
 +// values of the game data by the same Murmur3 keys the save files use (nx2saria.game_data), and Link's place
@@ -33,6 +57,8 @@ index 0000000..3e9744e
 +/** The kinds read every tick, as the save files name them. Bool64bitKey (the placed objects) is read apart. */
 +export const API_KINDS = ['Bool', 'Int', 'Enum', 'String64', 'String64Array', 'Int64'] as const;
 +export type ApiKind = (typeof API_KINDS)[number];
++/** Kinds live tracking does without when the game does not answer them (the area, the place in it, the day counter). */
++const OPTIONAL = new Set<string>(['String64', 'String64Array', 'Int64']);
 +
 +export class ApiError extends Error {
 +  constructor(message: string, readonly code?: number) { super(message); }
@@ -118,7 +144,13 @@ index 0000000..3e9744e
 +/** The records' layout this module reads (nx2saria.game_data's `format`). */
 +export const GAME_DATA_FORMAT = 1;
 +/** -32002: nothing to answer yet (no save loaded, or the game changed it meanwhile); -32003: not on this game build. */
-+const NOT_NOW = new Set([-32002, -32003]);
++const NOT_NOW = -32002, UNSUPPORTED = -32003;
++/** Why a read gave no data: the game data is not there now, or not readable by this tracker on this game build. */
++export type NoRead = { none: 'wait' | 'unsupported' };
++function refusal(e: unknown): NoRead | undefined {
++  if (!(e instanceof ApiError)) return undefined;
++  return e.code === NOT_NOW ? { none: 'wait' } : e.code === UNSUPPORTED ? { none: 'unsupported' } : undefined;
++}
 +
 +/** The game answering is NX2Saria with the game-data method. */
 +export function isNx2Saria(s: ApiStatus | undefined): boolean {
@@ -251,7 +283,8 @@ index 0000000..3e9744e
 +
 +  /**
 +   * The live data over `ref`, and a fingerprint of what the tracker follows (as live.ts fingerprint: every Bool,
-+   * Enum, text and placed object, and the Ints in watchInts). undefined while the game has no game data.
++   * Enum, text and placed object, and the Ints in watchInts); or why there is none. An optional kind the game does
++   * not answer is left out (the save's values stay), as the memory path does without the area.
 +   */
 +  async read(ref: GameDataFile, watchInts: Set<number>) {
 +    const kinds = new Map<string, Map<number, Value>>();
@@ -262,10 +295,12 @@ index 0000000..3e9744e
 +      try {
 +        a = await this.client.call<GameDataAnswer>('nx2saria.game_data', was ? { kind, if_digest: was.digest } : { kind });
 +      } catch (e) {
-+        if (e instanceof ApiError && NOT_NOW.has(e.code ?? 0)) return undefined;
-+        throw e;
++        const no = refusal(e);
++        if (!no) throw e;
++        if (OPTIONAL.has(kind)) { this.last.delete(kind); print.push('-'); continue; }
++        return no;
 +      }
-+      if (a.format !== GAME_DATA_FORMAT) return undefined; // records laid out otherwise than decodeRecords reads
++      if (a.format !== GAME_DATA_FORMAT) return { none: 'unsupported' } as NoRead; // laid out otherwise than decodeRecords reads
 +      const values = a.unchanged && was ? was.values : decodeRecords(a);
 +      this.last.set(kind, { digest: a.digest, values });
 +      kinds.set(kind, values);
@@ -280,15 +315,16 @@ index 0000000..3e9744e
 +      const k = await this.client.call<GameDataAnswer>('nx2saria.game_data', this.keys ? { kind: 'Bool64bitKey', if_digest: this.keys.digest } : { kind: 'Bool64bitKey' });
 +      if (!k.unchanged || !this.keys) this.keys = { digest: k.digest, set: decodeKeys(k).set };
 +    } catch (e) {
-+      if (e instanceof ApiError && NOT_NOW.has(e.code ?? 0)) return undefined;
-+      throw e;
++      const no = refusal(e);
++      if (!no) throw e;
++      return no;
 +    }
 +    print.push(this.keys.digest);
 +    return { ...overlay(ref, kinds, this.keys.set, this.resettable), print: print.join('|') };
 +  }
 +}
 diff --git a/src/gamedata/saves.ts b/src/gamedata/saves.ts
-index 586eade..ec44927 100644
+index 586eade..c2ac92a 100644
 --- a/src/gamedata/saves.ts
 +++ b/src/gamedata/saves.ts
 @@ -30,7 +30,9 @@ export function resolveUserFolders(start: string): string[] {
@@ -302,7 +338,18 @@ index 586eade..ec44927 100644
    const out: string[] = [];
    for (const t of tries) {
      for (const n of readdir(t)) {
-@@ -77,12 +79,17 @@ function emulatorDataDirs(appData = process.env.APPDATA ?? path.join(os.homedir(
+@@ -46,6 +48,10 @@ function readdir(dir: string): string[] {
+   try { return fs.readdirSync(dir); } catch { return []; }
+ }
+ 
++function isFile(p: string): boolean {
++  try { return fs.statSync(p).isFile(); } catch { return false; }
++}
++
+ /** Ocarina of Time's title id: emulators keep its saves in a folder named after it. */
+ export const OOT_TITLE_ID = '0400486024DEC000';
+ 
+@@ -77,12 +83,17 @@ function emulatorDataDirs(appData = process.env.APPDATA ?? path.join(os.homedir(
  
  export const NATIVE_EXES = ['Triforce.exe', 'hookshot.exe', 'Longshot.exe', 'nx2navi.exe', 'relink-game.exe',
    'ocarina-reborn-game.exe', 'ocarina-reborn.exe', 'OcarinaReborn.exe'];
@@ -312,7 +359,7 @@ index 586eade..ec44927 100644
 + * NX2Saria's game (ocarina.exe from its launcher, nx2saria.exe from a source build; no .exe on Linux). It answers
 + * through its tracker API (nx2saria.ts), so it is not in NATIVE_EXES: its memory is not laid out as theirs.
 + */
-+export const NX2SARIA_EXES = ['ocarina.exe', 'nx2saria.exe', 'ocarina', 'nx2saria'];
++export const NX2SARIA_EXES = process.platform === 'win32' ? ['ocarina.exe', 'nx2saria.exe'] : ['ocarina', 'nx2saria'];
 +const GAME_NAMES = /zelda|ocarina|hookshot|longshot|triforce|nx2navi|nx2saria|relink|fritchii|lichii|eden|orchid|eglantine|pokedinner/i;
 +const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, ...NX2SARIA_EXES, 'ReLink.exe'].map(n => n.toLowerCase()));
  const installations: Record<string, string> = {
@@ -323,15 +370,18 @@ index 586eade..ec44927 100644
    ocarinareborn: 'Ocarina Reborn', relink: 'ReLink', 'relink-game': 'ReLink',
  };
  export function installationLabel(saveDir: string): string | undefined {
-@@ -93,6 +100,7 @@ export function installationLabel(saveDir: string): string | undefined {
+@@ -93,6 +104,10 @@ export function installationLabel(saveDir: string): string | undefined {
      if (name) return name;
      if (/^(save|user|nand|[0-9a-f]{16,32})$/i.test(path.basename(dir))) continue;
      const game = readdir(dir).find(name => GAME_FILES.has(name.toLowerCase()));
-+    if (game && NX2SARIA_EXES.includes(game.toLowerCase())) return 'NX2Saria';
++    if (game && NX2SARIA_EXES.includes(game.toLowerCase())) {
++      if (isFile(path.join(dir, game))) return 'NX2Saria';
++      continue; // a folder of that name
++    }
      if (game) return installations[path.basename(game, '.exe').toLowerCase().replace(/\.exe$/, '')];
    }
  }
-@@ -118,7 +126,7 @@ function baseDirs() {
+@@ -118,7 +133,7 @@ function baseDirs() {
  /** Install folders the ports and emulators use by default, or that launcher config points to. Cheap: no directory walk. */
  export function knownGameFolders(): string[] {
    const { roaming, local, storage } = baseDirs();
@@ -341,7 +391,7 @@ index 586eade..ec44927 100644
      ...storage.flatMap(base => native.map(name => path.join(base, name))),
      ...configPaths(local, 'Ocarina Reborn/Config/settings.json', ['game_dir']),
 diff --git a/src/main/live.ts b/src/main/live.ts
-index 21f1686..9786b9a 100644
+index 21f1686..6a35d29 100644
 --- a/src/main/live.ts
 +++ b/src/main/live.ts
 @@ -1,9 +1,11 @@
@@ -357,7 +407,7 @@ index 21f1686..9786b9a 100644
  import { ProcessMemory, findProcesses, initMemoryAccess } from './procmem.js';
  import { NATIVE_EXES, EMULATOR_EXES } from '../gamedata/saves.js';
  import type { LiveInfo } from '../shared/types.js';
-@@ -58,12 +60,17 @@ export class LiveSource {
+@@ -58,12 +60,19 @@ export class LiveSource {
    private inFlight?: Promise<void>;
    private playerReader?: PlayerReader;
    private playerNow?: LivePlayer & { atMs: number };
@@ -365,6 +415,8 @@ index 21f1686..9786b9a 100644
 +  private api?: ApiSession;
 +  /** Reading another process's memory works on this system (Windows). */
 +  private memoryAccess = false;
++  /** Ticks in a row the API gave no data while live: a few are a save being written or loaded. */
++  private apiMisses = 0;
    watchInts = new Set<number>();
  
    constructor(private opts: LiveOptions) {}
@@ -376,7 +428,7 @@ index 21f1686..9786b9a 100644
      this.set({ status: 'no-game' });
      this.timer = setInterval(() => void this.tick(), TICK_MS);
      void this.tick();
-@@ -85,7 +92,7 @@ export class LiveSource {
+@@ -85,7 +94,7 @@ export class LiveSource {
    }
  
    /** Link's latest live position, while a game is attached and it could be read. */
@@ -385,7 +437,7 @@ index 21f1686..9786b9a 100644
  
    /** Live data, only while it matches the reference save. */
    current() { return this.info.status === 'live' ? this.snapshot : undefined; }
-@@ -108,6 +115,8 @@ export class LiveSource {
+@@ -108,6 +117,8 @@ export class LiveSource {
    private detach() {
      this.mem?.close();
      this.mem = undefined;
@@ -394,7 +446,15 @@ index 21f1686..9786b9a 100644
      this.tables = undefined;
      this.snapshot = undefined;
      this.lastPrint = undefined;
-@@ -129,10 +138,17 @@ export class LiveSource {
+@@ -119,6 +130,7 @@ export class LiveSource {
+ 
+   private tick() {
+     this.inFlight ??= this.step().catch(e => {
++      if (!this.timer) return; // stopped while a request was out
+       console.error('live', e);
+       this.detach();
+       this.set({ status: 'no-game', detail: String((e as Error).message ?? e) });
+@@ -129,12 +141,17 @@ export class LiveSource {
    }
  
    private async step() {
@@ -404,15 +464,17 @@ index 21f1686..9786b9a 100644
      if (!this.mem) {
        if (Date.now() - this.lastFind < FIND_EVERY_MS) return;
        this.lastFind = Date.now();
-+      // NX2Saria first: a game that answers for itself needs no memory reading.
-+      const api = await ApiSession.open();
+-      const game = await findGame();
+-      if (!this.timer) return;
++      // NX2Saria answers for itself and needs no memory reading: asked beside the process search, preferred.
++      const [api, game] = await Promise.all([ApiSession.open(), this.memoryAccess ? findGame() : undefined]);
 +      if (!this.timer) { api?.close(); return; }
-+      if (api) { this.api = api; return this.apiStep(); }
-+      if (!this.memoryAccess) return this.set({ status: 'no-game' });
-       const game = await findGame();
-       if (!this.timer) return;
++      if (api) { this.api = api; this.apiMisses = 0; return this.apiStep(); }
++      if (!this.memoryAccess) return this.set({ status: 'unavailable', detail: 'Reading game memory is not available on this system.' });
        if (!game) return this.set({ status: 'no-game' });
-@@ -151,7 +167,24 @@ export class LiveSource {
+       this.mem = new ProcessMemory(game.pid);
+       this.emulator = !!game.emulator;
+@@ -151,7 +168,32 @@ export class LiveSource {
      const print = fingerprint(this.tables!, raw, this.watchInts);
      // Nothing tracked changed: skip rebuilding (most ticks).
      if (print === this.lastPrint && this.info.status === 'live') return;
@@ -424,11 +486,19 @@ index 21f1686..9786b9a 100644
 +  private async apiStep() {
 +    const api = this.api!;
 +    const p = await api.player();
++    if (!this.timer || this.api !== api) return;
 +    if (p) this.setPlayer(p);
 +    if (!this.ref) return this.set({ status: 'searching', detail: 'Waiting for a save to compare with.' });
 +    const live = await api.read(this.ref, this.watchInts);
 +    if (!this.timer || this.api !== api) return;
-+    if (!live) return this.set({ status: 'waiting', detail: "Couldn't find the progress tables yet. Load your file in the game." });
++    if ('none' in live) {
++      if (live.none === 'unsupported')
++        return this.set({ status: 'waiting', detail: "NX2Saria's tracker API doesn't read this game version's progress." });
++      // A save being written or loaded refuses for a moment: stay live a few ticks before saying so.
++      if (this.info.status === 'live' && ++this.apiMisses <= 6) return;
++      return this.set({ status: 'waiting', detail: "Couldn't find the progress tables yet. Load your file in the game." });
++    }
++    this.apiMisses = 0;
 +    if (live.print === this.lastPrint && this.info.status === 'live') return;
 +    this.publish(live.print, live);
 +  }
@@ -438,7 +508,7 @@ index 21f1686..9786b9a 100644
      if (!matchesReference(live.agreement)) {
        this.snapshot = undefined;
        this.lastPrint = undefined;
-@@ -168,7 +201,10 @@ export class LiveSource {
+@@ -168,7 +210,10 @@ export class LiveSource {
  
    private readPlayer() {
      const p = this.playerReader?.read();
@@ -452,10 +522,10 @@ index 21f1686..9786b9a 100644
        Math.abs(prev.pos.y - p.pos.y) > 0.05 || Math.abs(prev.pos.z - p.pos.z) > 0.05 || Math.abs(prev.pos.yaw - p.pos.yaw) > 2;
 diff --git a/test/nx2saria.test.ts b/test/nx2saria.test.ts
 new file mode 100644
-index 0000000..8a91e6d
+index 0000000..9531bef
 --- /dev/null
 +++ b/test/nx2saria.test.ts
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,166 @@
 +import { describe, it, expect, afterEach } from 'vitest';
 +import net from 'node:net';
 +import { decodeRecords, decodeKeys, overlay, yawFromRotation, ApiSession, isNx2Saria, type GameDataAnswer } from '../src/gamedata/nx2saria';
@@ -532,7 +602,7 @@ index 0000000..8a91e6d
 +  afterEach(() => { server?.close(); server = undefined; });
 +
 +  // A stand-in for the game: answers one JSON line per request, as NX2Saria does.
-+  async function serve(gameData: boolean) {
++  async function serve(gameData: boolean, refuse: Record<string, number> = {}, format = 1) {
 +    const asked: { method: string; params: Record<string, unknown> }[] = [];
 +    server = net.createServer(sock => {
 +      let buf = '';
@@ -550,6 +620,8 @@ index 0000000..8a91e6d
 +            result = { area: 'HyruleField_Child', player: { x: 1.234, y: 2, z: 3, rotation: [0, 0, 1, 0, 1, 0, -1, 0, 0] }, game_data: gameData };
 +          } else if (!gameData) {
 +            error = { code: -32002, message: 'Bool: the game has not loaded its game data yet' };
++          } else if (refuse[req.params.kind]) {
++            error = { code: refuse[req.params.kind], message: `${req.params.kind}: refused` };
 +          } else {
 +            const p = req.params;
 +            const a: GameDataAnswer =
@@ -557,6 +629,7 @@ index 0000000..8a91e6d
 +              p.kind === 'Int' ? answer('Int', 8, [rec(0x04735978, 3)]) :
 +              p.kind === 'Bool64bitKey' ? answer('Bool64bitKey', 16, [key(0x10n, 0x18, 1), key(0x20n, 0x18, 1)]) :
 +              answer(p.kind, p.kind === 'String64' ? 68 : p.kind === 'Int64' ? 12 : p.kind === 'String64Array' ? 0 : 8, []);
++            a.format = format;
 +            result = p.if_digest === a.digest ? { ...a, records: undefined, unchanged: true } : a;
 +          }
 +          sock.write(JSON.stringify(error ? { id: req.id, error } : { id: req.id, result }) + '\n');
@@ -574,9 +647,9 @@ index 0000000..8a91e6d
 +    const p = await api!.player();
 +    expect(p).toEqual({ pos: { x: 1.23, y: 2, z: 3, yaw: 90 }, scene: 'HyruleField_Child' });
 +    const first = await api!.read(ref(), new Set([0x04735978]));
-+    expect(first && matchesReference(first.agreement)).toBe(true);
++    expect('agreement' in first && matchesReference(first.agreement)).toBe(true);
 +    const again = await api!.read(ref(), new Set([0x04735978]));
-+    expect(again?.print).toBe(first?.print);
++    expect('print' in again && 'print' in first && again.print === first.print).toBe(true);
 +    // The second read asks each kind with its digest, and the placed objects' classes only once.
 +    const bools = asked.filter(a => a.params.kind === 'Bool');
 +    expect(bools.map(a => a.params.if_digest)).toEqual([undefined, 'd-Bool']);
@@ -587,7 +660,28 @@ index 0000000..8a91e6d
 +  it('waits while the game has no game data', async () => {
 +    const { port } = await serve(false);
 +    const api = await ApiSession.open(port);
-+    expect(await api!.read(ref(), new Set())).toBeUndefined();
++    expect(await api!.read(ref(), new Set())).toEqual({ none: 'wait' });
++    api!.close();
++  });
++
++  it('does without the area kinds the game does not answer, never without the flags', async () => {
++    let { port } = await serve(true, { String64Array: -32003, String64: -32002, Int64: -32003 });
++    let api = await ApiSession.open(port);
++    const live = await api!.read(ref(), new Set());
++    expect('agreement' in live && matchesReference(live.agreement)).toBe(true);
++    expect('data' in live && live.data.entries.get(STAGE_KEY)?.value).toBe('LostWood_Child'); // the save's
++    api!.close();
++    server!.close();
++    ({ port } = await serve(true, { Bool: -32003 }));
++    api = await ApiSession.open(port);
++    expect(await api!.read(ref(), new Set())).toEqual({ none: 'unsupported' });
++    api!.close();
++  });
++
++  it('reads no records of another format', async () => {
++    const { port } = await serve(true, {}, 2);
++    const api = await ApiSession.open(port);
++    expect(await api!.read(ref(), new Set())).toEqual({ none: 'unsupported' });
 +    api!.close();
 +  });
 +

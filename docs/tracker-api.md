@@ -83,7 +83,7 @@ TCP, one JSON object per line (`\n`, a `\r` before it is accepted), UTF-8.
 | -32001 | The memory asked for is not memory the game can read now |
 | -32601 | Unknown method (every method that would write is unknown) |
 | -32002 | The game has no memory for the answer now, or nothing to answer yet: asking again later may answer |
-| -32003 | Not on this game build: asking again will not answer (`nx2saria.game_data` outside version 1.1.1, or a kind not laid out as 1.1.1 lays it out) |
+| -32003 | Not on this game build: asking again will not answer (`nx2saria.game_data` outside version 1.1.1, or a kind not where or not laid out as 1.1.1 keeps it, its section read the same twice) |
 
 ### status
 
@@ -154,7 +154,7 @@ game updates, as far as this port supports them.
 | `area` | The area the game is in, by its name in the game's files (`HyruleField_Adult`, `DekuTree`…), or `null` before a save is loaded. Outdoor areas carry the age in their name. Version 1.1.1 only. |
 | `player` | Link's position in metres, or `null` while there is no player. Version 1.1.1 only. |
 | `player.rotation` | Link's rotation, a 3x3 matrix by rows as the game holds it (`debug_tools.c dbg_player_rot`), or `null`. Which axis is his forward one is to be confirmed on the bench (`tools/tracker_api_client.py --watch`). |
-| `game_data` | The game has loaded its game data (it does when it loads a save), so `nx2saria.game_data` answers. |
+| `game_data` | The game has loaded its game data (it does when it loads a save), so `nx2saria.game_data` answers. Version 1.1.1 only (always `false` on the others). |
 | `main` | main's base address. |
 | `heap` | The heap's reserved range: its base, and the size the game may grow it to. |
 
@@ -167,7 +167,7 @@ the manager's place nor its layout, and gets what the next save will hold.
 
 ```json
 {"id":5,"method":"nx2saria.game_data","params":{"kind":"Int","hash":"0x04735978"}}
-{"id":5,"result":{"kind":"Int","format":1,"count":1,"record_size":8,"presents":81234,"digest":"8f1c0d2e4a6b7c90","records":"7859730439000000"}}
+{"id":5,"result":{"kind":"Int","format":1,"count":1,"record_size":8,"presents":81234,"digest":"ff669bf90fe06404","records":"7859730439000000"}}
 {"id":6,"method":"nx2saria.game_data","params":{"kind":"Bool","if_digest":"5e2f…"}}
 {"id":6,"result":{"kind":"Bool","format":1,"count":11292,"record_size":8,"presents":81240,"digest":"5e2f…","unchanged":true}}
 ```
@@ -198,13 +198,18 @@ sends each kind's last digest and gets a short answer while nothing changed. The
 time), the others when the player does something.
 
 The values are read as the game holds them now: a change the game has queued (it applies changes at its next update)
-shows one update later. The game fills its game data when it loads a save; until then every kind answers -32002.
--32002 also answers a kind the game changed while it was read, or a value it cannot read now; -32003 a game version
-other than 1.1.1, or a kind that does not read as 1.1.1 keeps it (an entry that does not start with the kind's
-vtable). The message says which. A value is never made up: a kind is answered whole or refused.
+shows one update later. The game fills its game data when it loads a save; until then every kind answers -32002, and
+once it has, a kind it holds nothing of answers `count` 0. -32002 also answers a kind the game changed while it was
+read (its section's count, entries, table or size, a pair for an entry that is not there, an entry with two pairs, a
+key twice, placed objects out of order), an entry whose vtable is still 0 (being made), a String64Array value of more
+than 64 texts, or a value it cannot read now. -32003 answers a game version other than 1.1.1, or a kind that does not
+read as 1.1.1 keeps it (a count or size out of range, an entry with another vtable than the kind's), only after its
+section read the same twice, so a save being loaded is not taken for it. The message says which. A value is never
+made up: a kind is answered whole or refused.
 
 The other kinds of the save files (`Float`, `UInt`, the arrays of numbers, vectors, `Binary`…) are not answered: no
-tracker asks for them yet, and their layout in memory is not checked. They can be added within this version.
+tracker asks for them yet. Their layouts were read in the game's code but not checked live; they can be added within
+this version.
 
 ### Versions and frequency
 
@@ -232,8 +237,8 @@ All lines start with `tracker api:` (`logs/nx2saria.log`):
 | First answers | `tracker api: first status answered: …`, `first read_memory answered: …`, `first search_memory answered: …`, `first search_memory that found its pattern: … the first at 0x7003c4705c …`, `first nx2saria.state answered: area …, Link at (…)` |
 | First refusal of each kind | `tracker api: read_memory refused: 8 bytes at 0x1000 are not memory the game can read now (the first such answer; the closing lines count the others)` |
 | Game data asked before a save is loaded | `tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, for Bool; the closing lines count the others)` (once) |
-| First game data of each kind | `tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 0.42 ms` (one line per kind) |
-| Game data that could not be answered | `tracker api: nx2saria.game_data Bool could not be answered: this kind's entries are not laid out as version 1.1.1 lays them out (error -32003; the first such answer for this kind)` (once per kind) |
+| First game data of each kind | `tracker api: first nx2saria.game_data of Bool answered: 11292 values, 90336 bytes, in 0.42 ms` (one line per kind; ` (one hash)` after it when the first request asked one hash) |
+| Game data that could not be answered | `tracker api: nx2saria.game_data Bool could not be answered: this kind's entries are not laid out as version 1.1.1 lays them out (error -32003; the first such answer for this kind and error)` (once per kind and error) |
 | Port checks | `tracker api: a program connected and left without a request (a tracker checking whether the port is taken); later checks are counted in the summaries` |
 | Not a request | `tracker api: client 5 sent something that is not a JSON request ("POST / HTTP/1.1."); closed. …` (once) |
 | Searches' minute spent | `tracker api: searches read 8192 MiB in the last minute, the most they may; …` (once) |
