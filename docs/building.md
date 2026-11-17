@@ -712,7 +712,8 @@ A change to the translator stamp of the pipeline cache files (`runtime/vk_cache_
 `pipeline-cache.id` is written and read back (cut, empty or foreign text is no stamp), and what a start does with the
 files for a stamp that matches, one of another translator that the carry still serves, one that it does not serve,
 and none, through the starts of a translator update. What a start did shows in the log's
-`vk_pipeline: pipeline cache stamp <id> matches|differs|none: <action>, <MB>` line; no game files, no GPU.
+`vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>` line, which the check finds in the source; no
+game files, no GPU.
 
 A change to how `pipeline-binaries.bin` is indexed or cut back (`runtime/vk_pipeline.c` `pb_index`, `pb_keep`,
 `pb_init`) passes `python tests\pb_torn_check.py`, which cuts the record layout, the index walk and `pb_keep` out of

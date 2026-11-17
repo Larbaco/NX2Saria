@@ -917,14 +917,14 @@ static int pg_draws_min(void);   // "the play gate", after gate_wait: its settin
 static void cache_stamp_check(void) {
     if (!P.cache_path[0]) return;
     if (!cfg_bool("NX2SARIA_PIPELINE_CACHE_STAMP")) {
-        rt_log("vk_pipeline: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0): the files are read whichever "
+        rt_log("vk: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0): the files are read whichever "
                "translator wrote them");
         return;
     }
     static const uint8_t zero[32];
     const uint8_t *cur = gfx_shader_identity();
     if (!memcmp(cur, zero, 32)) {
-        rt_log("vk_pipeline: pipeline cache stamp none: no translator identity, so the files are read and not stamped");
+        rt_log("vk: pipeline cache stamp none: no translator identity, so the files are read and not stamped");
         return;
     }
     char stamp[sizeof P.cache_path + 8], play[sizeof P.play_path];
@@ -952,9 +952,10 @@ static void cache_stamp_check(void) {
     }
     char was_text[40] = "";
     if (state == CACHE_STAMP_DIFFERS)
-        snprintf(was_text, sizeof was_text, " (the files' %02x%02x%02x%02x)", was[0], was[1], was[2], was[3]);
-    rt_log("vk_pipeline: pipeline cache stamp %02x%02x%02x%02x %s%s: %s%s, %.1f MB (%s)", cur[0], cur[1], cur[2], cur[3],
-           cache_stamp_state_name(state), was_text, cache_stamp_action_name(act), left, mb, stamp);
+        snprintf(was_text, sizeof was_text, "the files' translator %02x%02x%02x%02x; ", was[0], was[1], was[2], was[3]);
+    // "vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>", then what the numbers need to be checked
+    rt_log("vk: pipeline cache stamp %02x%02x%02x%02x %s: %s%s, %.1f MB (%s%s)", cur[0], cur[1], cur[2], cur[3],
+           cache_stamp_state_name(state), cache_stamp_action_name(act), left, mb, was_text, stamp);
 }
 
 static void cache_load(VkCtx *c) {
