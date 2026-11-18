@@ -128,23 +128,42 @@ static int ui_now(Ui *u) {
     return game_object(u->ctl, CTL_FLAGS + 4);
 }
 // The screen part of the game's entry test (main+0x769d70): open, shown, not blocked, its controller taking input
-// (+0x40 bit 1) and its level not below the manager's two floors (a dialog over a menu lifts them)
-static int screen_open(uint64_t mgr, uint64_t s) {
-    if (!game_object(s, SCR_PROJ + 64) || rd8(s + SCR_STATE) != SCR_OPEN || (int8_t)rd8(s + SCR_HIDDEN) < 0 ||
-        (rd8(s + SCR_BLOCK0) & 1) || (rd8(s + SCR_BLOCK1) & 1))
-        return 0;
+// (+0x40 bit 1) and its level not below the manager's two floors (a dialog over a menu lifts them): screen_open_why
+// Why no screen is for the mouse: one line each time the reason or the objects change (a field that moved in another
+// game build shows here), at most 12 a session, 60 with NX2SARIA_MENU_CURSOR_LOG=1
+static void why_none(const Ui *u, const char *why) {
+    static char last[200];
+    static int lines;
+    char line[200];
+    uint64_t c2 = rd64(u->focus + FM_CONTROL + 8), e = rd64(u->ctl + CTL_FOCUSED), sc = ok_at(e, ENT_SCREEN + 8) ? rd64(e + ENT_SCREEN) : 0;
+    uint64_t e2 = ok_at(c2, CTL_FOCUSED + 8) ? rd64(c2 + CTL_FOCUSED) : 0;
+    snprintf(line, sizeof line, "%s (players %#x, entry %#llx, its screen %#llx state %d, second control's entry %#llx)", why,
+             rd8(u->focus + FM_PLAYERS), (unsigned long long)e, (unsigned long long)sc,
+             ok_at(sc, SCR_STATE + 1) ? rd8(sc + SCR_STATE) : -1, (unsigned long long)e2);
+    if (!strcmp(line, last)) return;
+    snprintf(last, sizeof last, "%s", line);
+    const char *v = cfg_get("NX2SARIA_MENU_CURSOR_LOG");
+    if (lines++ < (v && !strcmp(v, "1") ? 60 : 12)) rt_log("menu_mouse: no menu for the mouse: %s", line);
+}
+static const char *g_why;   // focus_screen's reason for 0
+static int screen_open_why(uint64_t mgr, uint64_t s) {
+    if (!game_object(s, SCR_PROJ + 64)) return g_why = "the entry's screen is no object", 0;
+    if (rd8(s + SCR_STATE) != SCR_OPEN || (int8_t)rd8(s + SCR_HIDDEN) < 0) return g_why = "the screen is not open", 0;
+    if ((rd8(s + SCR_BLOCK0) & 1) || (rd8(s + SCR_BLOCK1) & 1)) return g_why = "the screen is blocked", 0;
     uint64_t ctl = rd64(s + SCR_CONTROLLER);
-    if (!ok_at(ctl, 0x48) || !(rd8(ctl + 0x40) & 2) || !ok_at(mgr, SM_LEVEL1 + 4)) return 0;
+    if (!ok_at(ctl, 0x48) || !(rd8(ctl + 0x40) & 2)) return g_why = "the screen's controller takes no input", 0;
+    if (!ok_at(mgr, SM_LEVEL1 + 4)) return g_why = "no manager levels", 0;
     uint32_t lv = rd32(s + SCR_LEVEL);
-    return lv >= rd32(mgr + SM_LEVEL0) && lv >= rd32(mgr + SM_LEVEL1);
+    if (lv < rd32(mgr + SM_LEVEL0) || lv < rd32(mgr + SM_LEVEL1)) return g_why = "the screen's level is below the manager's", 0;
+    return 1;
 }
 // The screen of the focused entry, 0: none (gameplay)
 static uint64_t focus_screen(const Ui *u, uint64_t *entry) {
-    if (!(rd8(u->focus + FM_PLAYERS) & 1)) return 0;
+    if (!(rd8(u->focus + FM_PLAYERS) & 1)) return g_why = "the focus manager takes no input from player 1", 0;
     uint64_t e = rd64(u->ctl + CTL_FOCUSED);
-    if (!game_object(e, ENT_SCREEN + 8)) return 0;
+    if (!game_object(e, ENT_SCREEN + 8)) return g_why = "no focused entry", 0;
     uint64_t s = rd64(e + ENT_SCREEN);
-    if (!screen_open(u->mgr, s)) return 0;
+    if (!screen_open_why(u->mgr, s)) return 0;
     *entry = e;
     return s;
 }
@@ -265,7 +284,8 @@ void menu_mouse_screen_host(Cpu *c) {
     if (!enabled() || input_game_input_blocked()) { input_menu_wheel_take(); return; }   // (no notches kept for later)
     Ui u;
     uint64_t focused = 0, fs = 0;
-    if (!ui_now(&u) || !(fs = focus_screen(&u, &focused))) { input_menu_wheel_take(); return; }
+    if (!ui_now(&u)) { input_menu_wheel_take(); return; }
+    if (!(fs = focus_screen(&u, &focused))) { why_none(&u, g_why); input_menu_wheel_take(); return; }
     if (fs != s) return;   // another screen's update: the focused one's comes in this frame too
     uint64_t now = plat_now_ms();
     char name[48];
@@ -289,7 +309,13 @@ void menu_mouse_screen_host(Cpu *c) {
     entries_of(s, &ent);   // (the boxes slide with a page: read each frame)
     int has_focused = 0;
     for (int i = 0; i < ent.n && !has_focused; i++) has_focused = ent.entry[i] == focused;
-    if (!has_focused) { input_menu_wheel_take(); return; }
+    if (!has_focused) {
+        char why[96];
+        snprintf(why, sizeof why, "the focused entry is not among the %d of %d that take the focus", ent.n, ent.listed);
+        why_none(&u, why);
+        input_menu_wheel_take();
+        return;
+    }
     __atomic_store_n(&g_active_ms, now, __ATOMIC_RELEASE);
     int kbm = input_kbm_last();
     float px = 0, py = 0, ux, uy;
