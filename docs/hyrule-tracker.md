@@ -439,7 +439,10 @@ When the game may be built and run again (after Atlas's checklist, steps 1 to 3,
 4. Collect a Gold Skulltula, open a chest, get a Heart Piece: step 6 again (no save in between) shows the token count
    up by one and the digest of Bool and of the placed objects changed.
 5. hyrule-tracker with the patch (Windows: `npm ci`, `npm start` in its checkout with the patch applied; Linux the
-   same): it finds the saves by itself (label "NX2Saria"), shows **Live** within a few seconds of loading the save,
+   same). A checkout has no game images (maps, photos, icons: its `src/renderer/public/images/` is ignored): run its
+   `node scripts/fetch-atlas.mjs`, `fetch-reference-images.mjs` and `fetch-item-images.mjs` (FFmpeg for the icons)
+   before `npm start`, then `git checkout -- data/atlas.json docs/atlas-license.txt`, which the first one rewrites from
+   Atlas's current sources. Then: it finds the saves by itself (label "NX2Saria"), shows **Live** within a few seconds of loading the save,
    Link's pin moves and points the way he faces, and collecting something ticks its row without a save. The game's
    log shows the client's lines; the frame rate does not change with the tracker open (compare five minutes with and
    without, `NX2SARIA_TRACE=perf` if wanted).
