@@ -314,6 +314,26 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_HD_DESC] = "Sends the game's detailed vibration to a Switch Pro Controller or Joy-Con as it is. "
                                "The vibration strength still applies: its default is the game's own.",
     [UI_MENU_RUMBLE_HD_NEEDS] = "Needs a Switch Pro Controller or Joy-Con",
+    [UI_MENU_GROUP_GYRO] = "Gyro",
+    [UI_MENU_GYRO_CALIBRATION] = "Gyro calibration",
+    [UI_MENU_GYRO_CALIBRATION_DESC] = "Learns the gyro's reading at rest whenever the controller lies still for a "
+                                      "moment and subtracts it, so the aim does not drift. Set the controller down for "
+                                      "a second after connecting it.",
+    [UI_MENU_GYRO_DEADZONE] = "Gyro dead zone",
+    [UI_MENU_GYRO_DEADZONE_DESC] = "Turns slower than the level are ignored; the levels are the console's. Low "
+                                   "steadies a still controller and keeps slow aiming; Standard and High steady a "
+                                   "controller that jitters but swallow the slowest turns. Off passes every reading.",
+    [UI_MENU_GYRO_DEADZONE_OFF] = "Off", [UI_MENU_GYRO_DEADZONE_LOW] = "Low",
+    [UI_MENU_GYRO_DEADZONE_STANDARD] = "Standard", [UI_MENU_GYRO_DEADZONE_HIGH] = "High",
+    [UI_MENU_GYRO_TURN_SENS] = "Turn sensitivity",
+    [UI_MENU_GYRO_TURN_SENS_DESC] = "How far the aim moves left and right for a turn of the controller. 100 % passes "
+                                    "the turn unchanged.",
+    [UI_MENU_GYRO_TURN_INVERT] = "Invert turn", [UI_MENU_GYRO_TURN_INVERT_DESC] = "Swaps the gyro's left and right.",
+    [UI_MENU_GYRO_TILT_SENS] = "Tilt sensitivity",
+    [UI_MENU_GYRO_TILT_SENS_DESC] = "How far the aim moves up and down for a tilt of the controller. 100 % passes "
+                                    "the tilt unchanged.",
+    [UI_MENU_GYRO_TILT_INVERT] = "Invert tilt", [UI_MENU_GYRO_TILT_INVERT_DESC] = "Swaps the gyro's up and down.",
+    [UI_MENU_GYRO_NEEDS_MOTION] = "Needs motion controls on",
     [UI_MENU_PAD_LAYOUT] = "Button layout",
     [UI_MENU_PAD_LAYOUT_DESC] = "Sets which button acts as A. Nintendo: by position, A right, B bottom, X top, Y "
                                 "left. Xbox and PlayStation: by label, A bottom, B right, X left, Y top (on a "
@@ -1047,6 +1067,29 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_HD_DESC] = "Передаёт детальную вибрацию игры на Switch Pro Controller или Joy-Con без изменений. "
                                "Сила вибрации по-прежнему действует: значение по умолчанию — как в игре.",
     [UI_MENU_RUMBLE_HD_NEEDS] = "Нужен Switch Pro Controller или Joy-Con",
+    [UI_MENU_GROUP_GYRO] = "Гироскоп",
+    [UI_MENU_GYRO_CALIBRATION] = "Калибровка гироскопа",
+    [UI_MENU_GYRO_CALIBRATION_DESC] = "Запоминает показания гироскопа в покое, когда контроллер ненадолго замирает, и "
+                                      "вычитает их, чтобы прицел не дрейфовал. После подключения положите контроллер и "
+                                      "не трогайте его секунду.",
+    [UI_MENU_GYRO_DEADZONE] = "Мёртвая зона гироскопа",
+    [UI_MENU_GYRO_DEADZONE_DESC] = "Повороты медленнее порога не учитываются; уровни — как на консоли. Низкая "
+                                   "успокаивает неподвижный контроллер и сохраняет медленное прицеливание; "
+                                   "Стандартная и Высокая усмиряют дрожащий контроллер, но глушат самые медленные "
+                                   "повороты. Выкл.: проходят все показания.",
+    [UI_MENU_GYRO_DEADZONE_OFF] = "Выкл.", [UI_MENU_GYRO_DEADZONE_LOW] = "Низкая",
+    [UI_MENU_GYRO_DEADZONE_STANDARD] = "Стандартная", [UI_MENU_GYRO_DEADZONE_HIGH] = "Высокая",
+    [UI_MENU_GYRO_TURN_SENS] = "Чувствительность поворота",
+    [UI_MENU_GYRO_TURN_SENS_DESC] = "Насколько прицел смещается влево и вправо при повороте контроллера. 100 % — поворот "
+                                    "без изменений.",
+    [UI_MENU_GYRO_TURN_INVERT] = "Инверсия поворота",
+    [UI_MENU_GYRO_TURN_INVERT_DESC] = "Инвертирует горизонтальное движение гироскопа.",
+    [UI_MENU_GYRO_TILT_SENS] = "Чувствительность наклона",
+    [UI_MENU_GYRO_TILT_SENS_DESC] = "Насколько прицел смещается вверх и вниз при наклоне контроллера. 100 % — наклон без "
+                                    "изменений.",
+    [UI_MENU_GYRO_TILT_INVERT] = "Инверсия наклона",
+    [UI_MENU_GYRO_TILT_INVERT_DESC] = "Инвертирует вертикальное движение гироскопа.",
+    [UI_MENU_GYRO_NEEDS_MOTION] = "Нужно включить управление движением",
     [UI_MENU_PAD_LAYOUT] = "Раскладка кнопок",
     [UI_MENU_PAD_LAYOUT_DESC] = "Какая кнопка работает как A. Nintendo: по положению, A справа, B снизу, X сверху, "
                                 "Y слева. Xbox и PlayStation: по подписи, A снизу, B справа, X слева, Y сверху (на "
@@ -1570,6 +1613,29 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_HD_DESC] = "Envia a vibração detalhada do jogo a um Pro Controller do Switch ou Joy-Con como ela "
                                "é. A intensidade da vibração continua valendo: o valor padrão é a do jogo.",
     [UI_MENU_RUMBLE_HD_NEEDS] = "Requer um Pro Controller do Switch ou Joy-Con",
+    [UI_MENU_GROUP_GYRO] = "Giroscópio",
+    [UI_MENU_GYRO_CALIBRATION] = "Calibração do giroscópio",
+    [UI_MENU_GYRO_CALIBRATION_DESC] = "Aprende a leitura do giroscópio em repouso sempre que o controle fica parado "
+                                      "por um momento e a desconta, para a mira não derivar. Deixe o controle "
+                                      "parado por um segundo depois de conectá-lo.",
+    [UI_MENU_GYRO_DEADZONE] = "Zona morta do giroscópio",
+    [UI_MENU_GYRO_DEADZONE_DESC] = "Giros mais lentos que o nível são ignorados; os níveis são os do console. "
+                                   "Baixa firma um controle parado e mantém a mira lenta; Padrão e Alta firmam um "
+                                   "controle que treme, mas engolem os giros mais lentos. Desligada deixa passar "
+                                   "todas as leituras.",
+    [UI_MENU_GYRO_DEADZONE_OFF] = "Desligada", [UI_MENU_GYRO_DEADZONE_LOW] = "Baixa",
+    [UI_MENU_GYRO_DEADZONE_STANDARD] = "Padrão", [UI_MENU_GYRO_DEADZONE_HIGH] = "Alta",
+    [UI_MENU_GYRO_TURN_SENS] = "Sensibilidade horizontal",
+    [UI_MENU_GYRO_TURN_SENS_DESC] = "Quanto a mira se move para a esquerda e a direita ao girar o controle. 100 % passa "
+                                    "o giro sem mudança.",
+    [UI_MENU_GYRO_TURN_INVERT] = "Inverter horizontal",
+    [UI_MENU_GYRO_TURN_INVERT_DESC] = "Inverte o movimento horizontal do giroscópio.",
+    [UI_MENU_GYRO_TILT_SENS] = "Sensibilidade vertical",
+    [UI_MENU_GYRO_TILT_SENS_DESC] = "Quanto a mira se move para cima e para baixo ao inclinar o controle. 100 % passa "
+                                    "a inclinação sem mudança.",
+    [UI_MENU_GYRO_TILT_INVERT] = "Inverter vertical",
+    [UI_MENU_GYRO_TILT_INVERT_DESC] = "Inverte o movimento vertical do giroscópio.",
+    [UI_MENU_GYRO_NEEDS_MOTION] = "Requer os controles de movimento ativados",
     [UI_MENU_PAD_LAYOUT] = "Layout dos botões",
     [UI_MENU_PAD_LAYOUT_DESC] = "Define qual botão funciona como A. Nintendo: pela posição, A à direita, B embaixo, "
                                 "X em cima, Y à esquerda. Xbox e PlayStation: pela letra, A embaixo, B à direita, X à "
@@ -2280,6 +2346,23 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_RUMBLE_HD] = "HD 振动（Switch）",
     [UI_MENU_RUMBLE_HD_DESC] = "将游戏的细腻振动原样发送到 Switch Pro 手柄或 Joy-Con。振动强度仍然有效：默认值即游戏原本的强度。",
     [UI_MENU_RUMBLE_HD_NEEDS] = "需要 Switch Pro 手柄或 Joy-Con",
+    [UI_MENU_GROUP_GYRO] = "陀螺仪",
+    [UI_MENU_GYRO_CALIBRATION] = "陀螺仪校准",
+    [UI_MENU_GYRO_CALIBRATION_DESC] = "手柄静止片刻时记下陀螺仪的静止读数并将其减去，防止准星漂移。连接手柄后请将其放下静置一秒。",
+    [UI_MENU_GYRO_DEADZONE] = "陀螺仪死区",
+    [UI_MENU_GYRO_DEADZONE_DESC] = "转动慢于所选档位时视为不动，档位与主机相同。低：消除静止手柄的微小抖动，并保留缓慢瞄准；"
+                                   "标准和高：让抖动的手柄更稳定，但会忽略最慢的转动。关：所有读数都会通过。",
+    [UI_MENU_GYRO_DEADZONE_OFF] = "关", [UI_MENU_GYRO_DEADZONE_LOW] = "低",
+    [UI_MENU_GYRO_DEADZONE_STANDARD] = "标准", [UI_MENU_GYRO_DEADZONE_HIGH] = "高",
+    [UI_MENU_GYRO_TURN_SENS] = "转向灵敏度",
+    [UI_MENU_GYRO_TURN_SENS_DESC] = "转动手柄时准星左右移动的幅度。100 % 即按原样传递转动。",
+    [UI_MENU_GYRO_TURN_INVERT] = "反转转向",
+    [UI_MENU_GYRO_TURN_INVERT_DESC] = "将陀螺仪的左右方向反转。",
+    [UI_MENU_GYRO_TILT_SENS] = "倾斜灵敏度",
+    [UI_MENU_GYRO_TILT_SENS_DESC] = "倾斜手柄时准星上下移动的幅度。100 % 即按原样传递倾斜。",
+    [UI_MENU_GYRO_TILT_INVERT] = "反转倾斜",
+    [UI_MENU_GYRO_TILT_INVERT_DESC] = "将陀螺仪的上下方向反转。",
+    [UI_MENU_GYRO_NEEDS_MOTION] = "需要开启体感操作",
     [UI_MENU_PAD_LAYOUT] = "按键布局",
     [UI_MENU_PAD_LAYOUT_DESC] = "设置哪个按键作为 A 键。Nintendo：按位置，A 在右、B 在下、X 在上、Y 在左。Xbox 和 PlayStation："
                                 "按标注，A 在下、B 在右、X 在左、Y 在上（PlayStation 手柄上为叉、圆圈、方块和三角）。自动："

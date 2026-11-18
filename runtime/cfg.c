@@ -68,6 +68,7 @@ static const char *const known[] = {
     "MENU_CURSOR", "MENU_CURSOR_LOG", "MENU_TEST_CLICK", "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MICROPHONE", "MIRROR_GAP", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MONITOR", "MOTION", "MOUSE_MODE", "MOUSE_DIRECT_PATCH", "MOUSE_SENS", "MOUSE_TRACE", "MOVIE_HOST", "MOVIE_PACE", "MOVIE_CLOCK", "TEST_HITCH", "SPRINT_BUTTON", "SPRINT_MODE", "SPRINT_BUTTON_PATCH", "TEXT_SPEED", "TEXT_SPEED_PATCH", "AMIIBO_DAILY_PATCH",
     "MOTION_GUARD_DEGREES", "MOTION_POLICY_TRACE", "SELECTIVE_MOTION", "SELECTIVE_MOTION_RAW",   // motion_owner.c, vk_fg_pose.inc
     "SKIN_MOTION",   // vk_skin_motion.inc
+    "GYRO_CALIBRATION", "GYRO_DEADZONE", "GYRO_TURN_SENS", "GYRO_TILT_SENS", "GYRO_TURN_INVERT", "GYRO_TILT_INVERT", "TEST_PAD_GYRO",   // input.c motion_options_refresh and test_pad_make (TEST_PAD_GYRO): the gyro
     "TRACKER_API", "TRACKER_API_PORT",   // the read-only view of the game's memory for a map tracker (tracker_api.c)
     "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
     "MV_SURVEY",
@@ -160,6 +161,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"AUDIO_STRICT", "audio"},
     {"MOTION", "input"}, {"SPRINT_BUTTON", "input"}, {"SPRINT_MODE", "input"}, {"RUMBLE_STRENGTH", "input"}, {"RUMBLE_CURVE", "input"}, {"RUMBLE_TRIGGERS", "input"}, {"RUMBLE_HD", "input"}, {"DS3", "input"},
     {"PAD_LAYOUT", "input"}, {"PROMPTS", "input"}, {"STICK_DEADZONE", "input"}, {"LSTICK_DEADZONE", "input"}, {"RSTICK_DEADZONE", "input"},
+    {"GYRO_CALIBRATION", "input"}, {"GYRO_DEADZONE", "input"}, {"GYRO_TURN_SENS", "input"}, {"GYRO_TILT_SENS", "input"}, {"GYRO_TURN_INVERT", "input"}, {"GYRO_TILT_INVERT", "input"},
     {"STICK_SENS", "input"}, {"DEBUG_MENU", "input"}, {"AMIIBO_DIR", "files"},
     {"MENU_CURSOR", "input"}, {"MOUSE_MODE", "input"}, {"MOUSE_SENS", "input"}, {"WALK_KEY", "input"}, {"WALK_SCALE", "input"}, {"INPUT_RECORD", "input"},
     {"BIND_A", "input"}, {"BIND_B", "input"}, {"BIND_X", "input"}, {"BIND_Y", "input"}, {"BIND_LCLICK", "input"},
@@ -346,6 +348,10 @@ static const CfgMeta metas[] = {
     {"DS3", "0", "0|1", LIVE},   // input_ds3_win.c ds3_read: read a DualShock 3 directly; off: no HID scan
     // input.c hd_setting: a Switch Pro Controller or Joy-Con gets the game's vibration values as they are
     {"RUMBLE_HD", "0", "0|1", LIVE},
+    // input.c motion_options_refresh: the gyro's rest calibration, dead zone, and turn / tilt sensitivity and inversion
+    {"GYRO_CALIBRATION", "1", "0|1", LIVE}, {"GYRO_DEADZONE", "low", "off|low|standard|high", LIVE},
+    {"GYRO_TURN_SENS", "100", "10..400", LIVE}, {"GYRO_TILT_SENS", "100", "10..400", LIVE},
+    {"GYRO_TURN_INVERT", "0", "0|1", LIVE}, {"GYRO_TILT_INVERT", "0", "0|1", LIVE},
     {"PROMPTS", "nintendo", "nintendo|xbox|playstation|steamdeck|pc", RESTART},
     {"STICK_DEADZONE", "8", "0..50", LIVE}, {"STICK_SENS", "1", "0.1..3", LIVE},   // camera_speed.c cam_speed_tick
     {"DEBUG_MENU", "0", "0|1", LIVE},   // ui/menu.cpp menu_debug_toggle

@@ -1037,6 +1037,19 @@
 # milliseconds (5 to 50, default 15): raise it if a controller on Bluetooth stutters or disconnects with HD rumble on.
 # rumble_hd = 0
 # rumble_hd_ms = 15
+# Gyro aiming while motion = 1; the Controls tab's Gyro group sets these and changes take effect at once.
+# gyro_calibration: 1 (default) learns the gyro's reading at rest whenever the controller lies still for a moment and
+# subtracts it, so the aim does not creep; 0 uses the readings as the controller sends them.
+# gyro_calibration = 1
+# gyro_deadzone: turns slower than the chosen level count as none, at the console's levels: off, low (the default, 0.002
+# revolutions a second), standard (0.007) or high (0.01).
+# gyro_deadzone = low
+# Sensitivity in percent (10 to 400, default 100) of the turn about the world's up (left and right aim) and of the
+# tilt (up and down aim), and 1 to invert either.
+# gyro_turn_sens = 100
+# gyro_tilt_sens = 100
+# gyro_turn_invert = 0
+# gyro_tilt_invert = 0
 # PlayStation 3 controller (DualShock 3), Windows: 1 reads its buttons, sticks and rumble directly from the controller
 # when no driver presents it to the game as a gamepad; 0 (default) leaves it to SDL and XInput. Changes while the game
 # runs take effect at once.
