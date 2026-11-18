@@ -9,6 +9,13 @@
 // The shared interface layouts of the game, which hold the HUD (PlayerStatus_00, MapMenu_00, NumDisplay_00) and the
 // loading screen (LoadingFade_00).
 #define WIDE_HUD_ARCHIVE "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs"
+// The title screen's layouts (Title_00, TitleMenuBG_00, PaCommonBtnTitle_00): its menu backdrop is part of the menus'
+// redesign (wide_menus = full).
+#define WIDE_HUD_TITLE_ARCHIVE "UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.blarc.zs"
+// The archives the edit serves, for the functions below that take one.
+enum { WIDE_HUD_COMMON, WIDE_HUD_TITLE };
+// The RomFS path of an archive above; NULL for a number that is not one.
+const char *wide_hud_archive_path(int archive);
 
 // How far, in units of the game's 3840x2160 layout grid, an element at a side of the middle 16:9 moves out to reach the
 // same side of a picture w x h, once the UI is squeezed into that middle 16:9 (widescreen.c, set wide_hud):
@@ -51,11 +58,18 @@ int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShif
 // Returns the count of fields changed over all copies, 0 when everything was moved already, -1 when any layout is not
 // the one this expects.
 int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n);
+// The same for the archive WIDE_HUD_COMMON or WIDE_HUD_TITLE names: only that archive's layouts are edited (the Title
+// archive's TitleMenuBG_00 only when s->menus > 0). wide_hud_archive is the Common one.
+int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n);
 
 // The Common layout archive's zstd file in[0..n) with the shift's edits, compressed again with
 // the dictionary of Pack/ZsDic.pack.zs (zsdic) the original names: *out_z (malloc'd) and *out_n. Returns 1 when *out_z
 // was made, 0 when there is nothing to serve, -1 when it cannot be (logged; the archive is served as it is).
 int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s, void **out_z,
                    size_t *out_n);
+// The same for the archive WIDE_HUD_COMMON or WIDE_HUD_TITLE names (in is that archive's file). Returns 0, without
+// reading it, when the shift edits nothing in that archive (the Title one with s->menus 0). wide_hud_build is the Common one.
+int wide_hud_build_in(int archive, const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s,
+                      void **out_z, size_t *out_n);
 
 #endif

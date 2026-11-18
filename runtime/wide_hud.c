@@ -28,6 +28,12 @@
 // that black side: its x and scale x are multiplied by 16:9 over the picture's ratio (the squeeze), which puts it in
 // the bottom right corner of the middle 16:9 at its own width, where a squeezed layout would draw it.
 //
+// With NX2SARIA_WIDE_MENUS = full the menus' redesign (the plans of group G_FULL below) also edits a second archive, the
+// title screen's UI/Layout2Archive/Title.Product.* (WIDE_HUD_TITLE): TitleMenuBG_00's backdrop capture over the whole
+// picture. The game squeezes that canvas into the middle 16:9 like every layout off the keep list (widescreen.c
+// wide_init), so it is laid out for the picture's width the same way as the message log's backdrop. The archive is
+// served beside the Common one (romfs.c wide_hud_overlay); each plan names the archive it belongs to.
+//
 // The layout files are BFFH: little-endian records that point at each other by 64-bit offsets from the file's start.
 // - The header has a group of slots per table: +0x00 the offset of the list of name offsets, +0x08 that of the list
 //   of record offsets, +0x18 the count. Panes at 0x118 (in the order of the records: parents before children),
@@ -104,12 +110,14 @@ typedef struct {
     float slope_f;
 } KeyOp;
 
+// The layout archive a plan's layout lives in (WIDE_HUD_COMMON or WIDE_HUD_TITLE of wide_hud.h).
 typedef struct {
     const char *layout;
     const PaneOp *ops;
     int nops;
     const KeyOp *keys;
     int nkeys;
+    int archive;
 } Plan;
 
 static const PaneOp player_status[] = {
@@ -315,28 +323,38 @@ static const PaneOp staff_roll_end_full[] = {
     {"W_GuideBg_00", OP_MOVE, G_FULL, 1, 2110, 1, 0},
     {"Pa_Guide_00", OP_MOVE, G_FULL, 1, 1795, 1, 0},
 };
+// The title screen's backdrop (UI/Layout2Archive/Title.Product.*, wide_menus = full): the capture of the title scene
+// behind the menu's buttons, a fixed 3840 x 2160 under a pane of its own like the message log's. The canvas is squeezed
+// into the middle 16:9 as every layout's not on the keep list is (widescreen.c wide_init), so the capture and the two
+// pictures that draw it (and its noise) are made as wide as the whole picture, 2 * menus units wider.
+static const PaneOp title_menu_bg_full[] = {
+    {"C_Capture_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Capture_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Noise_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+};
 #define N(a) (int)(sizeof a / sizeof *a)
 static const Plan plans[] = {
-    {"PlayerStatus_00", player_status, N(player_status), NULL, 0},
-    {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys)},
-    {"NumDisplay_00", num_display, N(num_display), NULL, 0},
-    {"LoadingFade_00", loading_fade, N(loading_fade), NULL, 0},
-    {"MenuOverlay_00", menu_overlay_full, N(menu_overlay_full), NULL, 0},
-    {"PlusMenu_00", plus_menu_full, N(plus_menu_full), plus_menu_full_keys, N(plus_menu_full_keys)},
-    {"PaCollectMenu_00", pa_collect_menu_full, N(pa_collect_menu_full), pa_collect_menu_full_keys, N(pa_collect_menu_full_keys)},
-    {"PaEquipmentMenu_00", pa_equipment_menu_full, N(pa_equipment_menu_full), pa_equipment_menu_full_keys, N(pa_equipment_menu_full_keys)},
-    {"PaItemMenu_00", pa_item_menu_full, N(pa_item_menu_full), pa_item_menu_full_keys, N(pa_item_menu_full_keys)},
-    {"PaSystemMenu_00", pa_system_menu_full, N(pa_system_menu_full), NULL, 0},
-    {"ImportantMenu_01", important_menu1_full, N(important_menu1_full), NULL, 0},
-    {"ChallengeMenu_01", challenge_menu1_full, N(challenge_menu1_full), NULL, 0},
-    {"ShortCut_01", short_cut1_full, N(short_cut1_full), NULL, 0},
-    {"PaShortCutSlideList_00", pa_short_cut_slide_list_full, N(pa_short_cut_slide_list_full), NULL, 0},
-    {"SystemOverlay_00", system_overlay_full, N(system_overlay_full), NULL, 0},
-    {"SystemOption_00", system_option_full, N(system_option_full), NULL, 0},
-    {"SystemActionGuide_00", system_action_guide_full, N(system_action_guide_full), system_action_guide_full_keys, N(system_action_guide_full_keys)},
-    {"GameOver_00", game_over_full, N(game_over_full), NULL, 0},
-    {"MessageLog_01", message_log1_full, N(message_log1_full), NULL, 0},
-    {"StaffRollEnd_00", staff_roll_end_full, N(staff_roll_end_full), NULL, 0},
+    {"PlayerStatus_00", player_status, N(player_status), NULL, 0, WIDE_HUD_COMMON},
+    {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys), WIDE_HUD_COMMON},
+    {"NumDisplay_00", num_display, N(num_display), NULL, 0, WIDE_HUD_COMMON},
+    {"LoadingFade_00", loading_fade, N(loading_fade), NULL, 0, WIDE_HUD_COMMON},
+    {"MenuOverlay_00", menu_overlay_full, N(menu_overlay_full), NULL, 0, WIDE_HUD_COMMON},
+    {"PlusMenu_00", plus_menu_full, N(plus_menu_full), plus_menu_full_keys, N(plus_menu_full_keys), WIDE_HUD_COMMON},
+    {"PaCollectMenu_00", pa_collect_menu_full, N(pa_collect_menu_full), pa_collect_menu_full_keys, N(pa_collect_menu_full_keys), WIDE_HUD_COMMON},
+    {"PaEquipmentMenu_00", pa_equipment_menu_full, N(pa_equipment_menu_full), pa_equipment_menu_full_keys, N(pa_equipment_menu_full_keys), WIDE_HUD_COMMON},
+    {"PaItemMenu_00", pa_item_menu_full, N(pa_item_menu_full), pa_item_menu_full_keys, N(pa_item_menu_full_keys), WIDE_HUD_COMMON},
+    {"PaSystemMenu_00", pa_system_menu_full, N(pa_system_menu_full), NULL, 0, WIDE_HUD_COMMON},
+    {"ImportantMenu_01", important_menu1_full, N(important_menu1_full), NULL, 0, WIDE_HUD_COMMON},
+    {"ChallengeMenu_01", challenge_menu1_full, N(challenge_menu1_full), NULL, 0, WIDE_HUD_COMMON},
+    {"ShortCut_01", short_cut1_full, N(short_cut1_full), NULL, 0, WIDE_HUD_COMMON},
+    {"PaShortCutSlideList_00", pa_short_cut_slide_list_full, N(pa_short_cut_slide_list_full), NULL, 0, WIDE_HUD_COMMON},
+    {"SystemOverlay_00", system_overlay_full, N(system_overlay_full), NULL, 0, WIDE_HUD_COMMON},
+    {"SystemOption_00", system_option_full, N(system_option_full), NULL, 0, WIDE_HUD_COMMON},
+    {"SystemActionGuide_00", system_action_guide_full, N(system_action_guide_full), system_action_guide_full_keys, N(system_action_guide_full_keys), WIDE_HUD_COMMON},
+    {"GameOver_00", game_over_full, N(game_over_full), NULL, 0, WIDE_HUD_COMMON},
+    {"MessageLog_01", message_log1_full, N(message_log1_full), NULL, 0, WIDE_HUD_COMMON},
+    {"StaffRollEnd_00", staff_roll_end_full, N(staff_roll_end_full), NULL, 0, WIDE_HUD_COMMON},
+    {"TitleMenuBG_00", title_menu_bg_full, N(title_menu_bg_full), NULL, 0, WIDE_HUD_TITLE},
 };
 enum { NPLANS = sizeof plans / sizeof *plans };
 // The most fields one layout's edit writes: its panes, its keys (with their slopes) and each curve's span of values.
@@ -999,13 +1017,25 @@ static int trial(const uint8_t *sarc, const Copies *c, const char *member, const
     return 1;
 }
 
-int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
+// The groups of the shift that edit something in the archive: the union of its plans' groups, asked for.
+static int archive_groups(int archive, const WideHudShift *s) {
+    int g = 0, want = groups_of(s);
+    for (int i = 0; i < NPLANS; i++)
+        if (plans[i].archive == archive) g |= plan_groups(&plans[i]) & want;
+    return g;
+}
+
+const char *wide_hud_archive_path(int archive) {
+    return archive == WIDE_HUD_TITLE ? WIDE_HUD_TITLE_ARCHIVE : archive == WIDE_HUD_COMMON ? WIDE_HUD_ARCHIVE : NULL;
+}
+
+int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
     Copies c[NPLANS];
     char member[64], report[NPLANS][1200];
     int want = groups_of(s), groups[NPLANS] = {0}, any = 0;
     for (int i = 0; i < NPLANS; i++) {
-        c[i].copies = 0;   // a plan the shift does not ask for has none
-        if (!(plan_groups(&plans[i]) & want)) continue;
+        c[i].copies = 0;   // a plan the shift does not ask for, or of another archive, has none
+        if (plans[i].archive != archive || !(plan_groups(&plans[i]) & want)) continue;
         any = 1;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
         if (!copies_of(sarc, n, member, &c[i], why, why_n)) {
@@ -1073,6 +1103,10 @@ int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, 
     return total;
 }
 
+int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
+    return wide_hud_archive_in(WIDE_HUD_COMMON, sarc, n, s, why, why_n);
+}
+
 // What the shift edits, for the log: "the HUD's edge elements 660 units out, the loading icon at 0.744 of its width".
 static void shift_words(const WideHudShift *s, char *out, size_t out_n) {
     out[0] = 0;
@@ -1083,13 +1117,17 @@ static void shift_words(const WideHudShift *s, char *out, size_t out_n) {
         say(out, out_n, "%sthe loading icon at %.3f of its width", out[0] ? ", " : "", (double)s->squeeze);
 }
 
-int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s, void **out_z,
-                   size_t *out_n) {
+int wide_hud_build_in(int archive, const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s,
+                      void **out_z, size_t *out_n) {
     uint64_t t0 = plat_now_ns();
     *out_z = NULL;
+    // only what the archive's layouts take: the title archive has the menus' redesign alone
+    int has = archive_groups(archive, s);
+    WideHudShift own = {has & G_HUD ? s->out : 0, has & G_CENTER ? s->squeeze : 1, has & G_FULL ? s->menus : 0};
     char what[160];
-    shift_words(s, what, sizeof what);
+    shift_words(&own, what, sizeof what);
     if (!what[0]) return 0;
+    const char *noun = archive == WIDE_HUD_TITLE ? "the title layout archive" : "the layout archive";
     int result = -1;
     uint8_t *dics = NULL, *raw = NULL;
     void *z = NULL;
@@ -1124,7 +1162,7 @@ int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, 
         snprintf(why, sizeof why, "the layout archive does not decompress");
         goto done;
     }
-    int changed = wide_hud_archive(raw, (size_t)rn, s, why, sizeof why);
+    int changed = wide_hud_archive_in(archive, raw, (size_t)rn, s, why, sizeof why);
     if (changed <= 0) {
         result = changed;
         goto done;
@@ -1142,16 +1180,24 @@ int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, 
     }
     *out_z = z, *out_n = zn, z = NULL;
     result = 1;
-    rt_log("wide hud: the layout archive edited (%s), %d fields (%.0f ms)", what, changed,
+    rt_log("wide hud: %s edited (%s), %d fields (%.0f ms)", noun, what, changed,
            (double)(plat_now_ns() - t0) / 1e6);
 done:
-    if (result == 0) rt_log("wide hud: the layout archive has these edits already (%s)", what);
-    if (result < 0) rt_log("wide hud: %s; the layout archive is served as it is (the game's own keeps the HUD and the "
-                           "loading icon where the game lays them out)", why);
+    if (result == 0) rt_log("wide hud: %s has these edits already (%s)", noun, what);
+    if (result < 0)
+        rt_log("wide hud: %s; %s is served as it is (%s)", why, noun,
+               archive == WIDE_HUD_TITLE ? "the game's own keeps the title menu's backdrop in the middle 16:9"
+                                         : "the game's own keeps the HUD and the loading icon where the game lays "
+                                           "them out");
     free(z);
     free(raw);
     free(dics);
     ZSTD_freeDDict(dd);
     ZSTD_freeCDict(cd);
     return result;
+}
+
+int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s, void **out_z,
+                   size_t *out_n) {
+    return wide_hud_build_in(WIDE_HUD_COMMON, in, n, zsdic, zsdic_n, s, out_z, out_n);
 }

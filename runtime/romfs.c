@@ -831,7 +831,7 @@ static void wide_hud_overlay(void) {
     float wider = wide ? wide_hud_out(w, h) : 0;   // 0 for a picture of 16:9 or narrower
     WideHudShift shift = {edges ? wider : 0, center && wider > 0 ? (float)(16.0 / 9.0) / ((float)w / h) : 1,
                           !center ? wider : 0};
-    char what[240] = "", menus_what[600] = "";
+    char what[240] = "", menus_what[1024] = "";
     for (int m = 0; m < 2; m++) {   // what the HUD's edges, then the menus' redesign, change in each layout
         float by = m ? shift.menus : shift.out;
         char *out = m ? menus_what : what;
@@ -850,20 +850,34 @@ static void wide_hud_overlay(void) {
            (double)w / h, shift.out > 0 ? what : "no pane moves, the HUD stays in the middle 16:9");
     if (shift.menus > 0) rt_log("wide menus: full, picture %ux%u: %s", w, h, menus_what);
     if (!(shift.out > 0) && !(shift.squeeze < 1) && !(shift.menus > 0)) return;
-    static const char keeps[] = "the HUD and the loading icon stay where the game lays them out";
-    Overlay *base, *dic_base;
-    size_t n, dn, out_n = 0;
-    void *in = read_served(WIDE_HUD_ARCHIVE, &base, &n, keeps), *z = NULL;
-    void *dic = in ? read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keeps) : NULL;
-    int made = in && dic ? wide_hud_build(in, n, dic, dn, &shift, &z, &out_n) : -1;
-    free(in);
-    free(dic);
-    char what_made[160] = "";
-    if (shift.out > 0) snprintf(what_made, sizeof what_made, "the HUD at the picture's edges");
-    if (shift.menus > 0 || shift.squeeze < 1)
-        snprintf(what_made + strlen(what_made), sizeof what_made - strlen(what_made), "%s%s", what_made[0] ? ", " : "",
-                 shift.menus > 0 ? "the menus over the whole picture" : "the loading icon in the middle 16:9");
-    if (made > 0) serve_generated(WIDE_HUD_ARCHIVE, base, z, out_n, "wide-hud", what_made, keeps);
+    // The Common layout archive (the HUD, the loading icon and most of the menus' redesign), then the title screen's
+    // when the menus fill the picture: each is the file the game would read (a mod's, else the RomFS's), edited and
+    // written to <profile>/wide-hud/.
+    for (int archive = WIDE_HUD_COMMON; archive <= WIDE_HUD_TITLE; archive++) {
+        const char *rel = wide_hud_archive_path(archive);
+        static const char keeps[] = "the HUD and the loading icon stay where the game lays them out";
+        static const char keeps_title[] = "the title menu's backdrop stays in the middle 16:9";
+        const char *keep = archive == WIDE_HUD_TITLE ? keeps_title : keeps;
+        if (archive == WIDE_HUD_TITLE && !(shift.menus > 0)) continue;
+        Overlay *base, *dic_base;
+        size_t n, dn, out_n = 0;
+        void *in = read_served(rel, &base, &n, keep), *z = NULL;
+        void *dic = in ? read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keep) : NULL;
+        int made = in && dic ? wide_hud_build_in(archive, in, n, dic, dn, &shift, &z, &out_n) : -1;
+        free(in);
+        free(dic);
+        char what_made[160] = "";
+        if (archive == WIDE_HUD_TITLE) {
+            snprintf(what_made, sizeof what_made, "the title menu's backdrop over the whole picture");
+        } else {
+            if (shift.out > 0) snprintf(what_made, sizeof what_made, "the HUD at the picture's edges");
+            if (shift.menus > 0 || shift.squeeze < 1)
+                snprintf(what_made + strlen(what_made), sizeof what_made - strlen(what_made), "%s%s",
+                         what_made[0] ? ", " : "",
+                         shift.menus > 0 ? "the menus over the whole picture" : "the loading icon in the middle 16:9");
+        }
+        if (made > 0) serve_generated(rel, base, z, out_n, "wide-hud", what_made, keep);
+    }
 }
 
 // The button prompts' folders (input_prompts_folder) and whether each had a manifest next to romfs-index.bin at start;
