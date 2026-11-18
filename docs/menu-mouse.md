@@ -52,7 +52,7 @@ The box is the pane the game's focus frame takes (button +0x60): its size, the s
 matrix, and its base position (`runtime/menu_mouse_geom.h` `mm_pane_box`). It is in the layout's units: 3840 x 2160,
 origin at the centre, y up. Where boxes overlap, the smallest wins.
 
-## Ultrawide (G5)
+## Ultrawide pictures
 
 On a picture wider than 16:9 the runtime squeezes the first row of the interface's projection (set `wide_hud`), so a
 layout is drawn in the picture's middle 16:9 and reaches ±1920 / squeeze units across the whole picture. The
@@ -69,7 +69,7 @@ menus unchanged and keeps the capture. While the pointer shows, `input_cursor_al
 released and the mouse camera gets no counts. The bound mouse buttons (Y, ZL) never reach the game, because
 `poll_merged` drops mouse buttons while the cursor is not captured. When no menu has had the focus for 350 ms
 (gameplay, a movie), the pad read takes the pointer away and the camera captures again. A focus still on a screen
-that opens or closes counts as a menu, so going from one menu to the next keeps the pointer; when it does go for a
+that opens or closes counts as a menu for up to 1.5 s, so going from one menu to the next keeps the pointer; when it does go for a
 moment, it comes back where the player left it instead of on the focused button. While the settings overlay or
 a text entry is open, the host function does nothing: the overlay has the mouse.
 
@@ -78,7 +78,7 @@ a text entry is open, the host function does nothing: the overlay has the mouse.
 - `menu_mouse: on for 1.1.1 (NX2SARIA_MENU_CURSOR 1; set menu_mouse on, the screens' site main+0x2d13b0)`: at the
   first pad read. It says `off` with the reason, or `missing from this build`.
 - `menu_mouse: the screens' site runs (thread N); interface system found`: the first time the site runs.
-- `menu_mouse: screen <name>: K of N entries take the focus, squeeze S`: each menu screen the focus goes to (the
+- `menu_mouse: screen <name>: K of N entries take the focus, layout W x H units across the picture`: each menu screen the focus goes to (the
   first 24; all of them with `NX2SARIA_MENU_CURSOR_LOG=1`).
 - `menu_mouse: <name>: focus moved H, left clicks C (A a, on no button m), right clicks (B) b, wheel notches w; hit
   test h on a button, o off`: when the focus leaves a menu the mouse was used in, for another screen or for none

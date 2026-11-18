@@ -1279,10 +1279,12 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
         if (ikb_foreground()) {
             uint8_t down[KEY_COUNT] = {0};
             // Mouse buttons count only while the cursor is captured, and a button already held when the capture began
-            // (the click that refocused the window) is ignored until it is released.
+            // (the click that refocused the window) is ignored until it is released. Not while a game menu has the
+            // pointer (menu_cursor.c, menu_mouse.c): its clicks are A and B there, also in the moment before the
+            // window thread has released the capture.
             static int was_captured;
             static uint8_t mouse_ignore[KEY_COUNT];
-            int cap = ikb_captured();
+            int cap = ikb_captured() && !menu_cursor_pointer() && !menu_mouse_pointer();
             // A scan is one key state system call per key (about 95). The game reads several pads in a row: reads
             // within a millisecond of a scan get its answers again.
             static uint8_t raw[KEY_COUNT];

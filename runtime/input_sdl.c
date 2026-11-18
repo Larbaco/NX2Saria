@@ -169,8 +169,7 @@ static void cursor_apply(void) {
         if (SDL_GetWindowSize(win, &w, &h) && w > 0 && h > 0) {
             float x = bitsf(warp_x) * (float)w, y = bitsf(warp_y) * (float)h;
             SDL_WarpMouseInWindow(win, x, y);
-            pointer_at(x, y);
-            plat_xchg32(&ptr_inside, 1);
+            pointer_read();   // where it is now: a compositor may leave it where it was (Wayland)
             warp_motion = 1;   // the motion event the warp makes is not the player's
         }
     }

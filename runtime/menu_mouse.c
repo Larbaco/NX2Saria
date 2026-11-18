@@ -127,15 +127,13 @@ static int ui_now(Ui *u) {
     u->ctl = rd64(u->focus + FM_CONTROL);
     return game_object(u->ctl, CTL_FLAGS + 4);
 }
-// The screen part of the game's entry test (main+0x769d70): open, shown, not blocked, its controller taking input
-// (+0x40 bit 1): screen_open_why
 // Why no screen is for the mouse: one line each time the reason or the objects change (a field that moved in another
 // game build shows here), at most 12 a session, 60 with NX2SARIA_MENU_CURSOR_LOG=1
 static void why_none(const Ui *u, const char *why) {
     static char last[200];
     static int lines;
     char line[200];
-    uint64_t c2 = rd64(u->focus + FM_CONTROL + 8), e = rd64(u->ctl + CTL_FOCUSED), sc = ok_at(e, ENT_SCREEN + 8) ? rd64(e + ENT_SCREEN) : 0;
+    uint64_t c2 = ok_at(u->focus + FM_CONTROL + 8, 8) ? rd64(u->focus + FM_CONTROL + 8) : 0, e = rd64(u->ctl + CTL_FOCUSED), sc = ok_at(e, ENT_SCREEN + 8) ? rd64(e + ENT_SCREEN) : 0;
     uint64_t e2 = ok_at(c2, CTL_FOCUSED + 8) ? rd64(c2 + CTL_FOCUSED) : 0;
     snprintf(line, sizeof line, "%s (players %#x, entry %#llx, its screen %#llx state %d, second control's entry %#llx)", why,
              rd8(u->focus + FM_PLAYERS), (unsigned long long)e, (unsigned long long)sc,
@@ -146,6 +144,8 @@ static void why_none(const Ui *u, const char *why) {
     if (lines++ < (v && !strcmp(v, "1") ? 60 : 12)) rt_log("menu_mouse: no menu for the mouse: %s", line);
 }
 static const char *g_why;   // focus_screen's reason for 0
+// The screen part of the game's entry test (main+0x769d70): open, shown, not blocked, its controller taking input
+// (+0x40 bit 1). 0 with the reason in g_why.
 static int screen_open_why(uint64_t mgr, uint64_t s) {
     if (!game_object(s, SCR_PROJ + 64)) return g_why = "the entry's screen is no object", 0;
     if (rd8(s + SCR_STATE) != SCR_OPEN || (int8_t)rd8(s + SCR_HIDDEN) < 0) return g_why = "the screen is not open", 0;
@@ -206,15 +206,13 @@ static void entries_of(uint64_t s, Entries *out) {
 // The focus to entry e of screen s: the writes of the game's focus setter with its flag 0 (a slide, as the d-pad moves).
 // (The method's busy guard, its +0x1f bit 5 with the focused button's +0x40 bit 5, is not taken: it held on the save
 // files' list the whole time the list waited for input, and the d-pad's moves there do not go through it.)
-static int reserve_focus(const Ui *u, uint64_t s, uint64_t e, uint64_t focused) {
-    (void)focused;
+static void reserve_focus(const Ui *u, uint64_t s, uint64_t e) {
     memcpy((void *)(uintptr_t)(u->ctl + CTL_RESERVED), &e, 8);
     __atomic_fetch_and((uint32_t *)(uintptr_t)(u->ctl + CTL_FLAGS), ~8u, __ATOMIC_SEQ_CST);
     if (rd64(s + SCR_REQ_ENTRY) != e) {
         memcpy((void *)(uintptr_t)(s + SCR_REQ_ENTRY), &e, 8);
         __atomic_fetch_or((uint16_t *)(uintptr_t)(s + SCR_REQUEST), (uint16_t)4, __ATOMIC_SEQ_CST);
     }
-    return 1;
 }
 
 // ---- the pad presses the pad read adds (menu_mouse_poll): counts the interface thread raises, the pad read spends
@@ -224,8 +222,15 @@ static volatile int32_t pending[P_COUNT];
 static volatile int32_t g_pointer;           // a menu has the pointer: input_cursor_allowed releases the capture
 static volatile uint64_t g_active_ms;        // the last interface update that found a menu for the mouse, or a focus
                                              // on a screen that opens or closes (between two menus)
+static uint64_t g_menu_ms;                   // interface thread: the last update that found a menu for the mouse
 static volatile uint64_t g_hidden_ms;        // when the pad read last hid the pointer
 #define IDLE_MS 350                          // no menu that long: the pointer goes back to the camera
+
+// The wheel's queued up and down presses go when their menu does: in play the d-pad is the ocarina, Navi, the boots
+static void drop_wheel_presses(void) {
+    plat_xchg32(&pending[P_UP], 0);
+    plat_xchg32(&pending[P_DOWN], 0);
+}
 
 int menu_mouse_pointer(void) { return __atomic_load_n(&g_pointer, __ATOMIC_RELAXED); }
 
@@ -295,9 +300,12 @@ void menu_mouse_screen_host(Cpu *c) {
     uint64_t focused = 0, fs = 0;
     if (!ui_now(&u)) { input_menu_wheel_take(); return; }
     if (!(fs = focus_screen(&u, &focused))) {   // no menu has the focus: the last one's line now
-        // (a focus still on a screen that opens or closes keeps the pointer: one menu giving way to the next)
-        if (game_object(rd64(u.ctl + CTL_FOCUSED), ENT_SCREEN + 8))
-            __atomic_store_n(&g_active_ms, plat_now_ms(), __ATOMIC_RELEASE);
+        // (a focus still on a screen that opens or closes keeps the pointer for up to 1.5 s: one menu giving way to
+        // the next)
+        uint64_t t = plat_now_ms();
+        if (game_object(rd64(u.ctl + CTL_FOCUSED), ENT_SCREEN + 8) && t - g_menu_ms < 1500)
+            __atomic_store_n(&g_active_ms, t, __ATOMIC_RELEASE);
+        drop_wheel_presses();
         why_none(&u, g_why);
         input_menu_wheel_take();
         if (last_screen) stats_flush(last_name, &st), last_screen = 0;
@@ -320,6 +328,7 @@ void menu_mouse_screen_host(Cpu *c) {
                    proj ? "" : " (no projection read: 16:9 taken)");
         snprintf(last_name, sizeof last_name, "%s", name);
         last_screen = s, pend_until = 0, asked = 0;
+        drop_wheel_presses();
     }
     // A menu for the mouse: some entry takes the focus, the focused one among them (a screen of the play, whose focus
     // sits on nothing shown, never takes the pointer from the camera)
@@ -331,9 +340,11 @@ void menu_mouse_screen_host(Cpu *c) {
         snprintf(why, sizeof why, "the focused entry is not among the %d of %d that take the focus", ent.n, ent.listed);
         why_none(&u, why);
         input_menu_wheel_take();
+        drop_wheel_presses();
         return;
     }
     __atomic_store_n(&g_active_ms, now, __ATOMIC_RELEASE);
+    g_menu_ms = now;
     int kbm = input_kbm_last();
     float px = 0, py = 0, ux, uy;
     screen_units(s, &ux, &uy);
@@ -365,6 +376,10 @@ void menu_mouse_screen_host(Cpu *c) {
         return;
     }
     int l = input_menu_mouse_down(0), r = input_menu_mouse_down(1);
+    static int was_fg = 1;
+    int fg = ikb_foreground() || pos == 2;
+    if (fg && !was_fg) held_l = l, held_r = r;   // the click that brought the window back is not a menu click
+    was_fg = fg;
     int click_l = l && !held_l, click_r = r && !held_r;
     held_l = l, held_r = r;
     if (click_r) plat_add32(&pending[P_B], 1), st.click_b++;
@@ -379,7 +394,7 @@ void menu_mouse_screen_host(Cpu *c) {
     if (pend_until) {   // a click on another button: A once the focus is there, the reservation renewed till then
         if (focused == pend_entry) plat_add32(&pending[P_A], 1), pend_until = 0, st.click_a++;
         else if (now > pend_until) pend_until = 0;
-        else reserve_focus(&u, s, pend_entry, focused);
+        else reserve_focus(&u, s, pend_entry);
         return;
     }
     if (!pos) return;
@@ -400,12 +415,12 @@ void menu_mouse_screen_host(Cpu *c) {
     // A hover asks once; asked again after 150 ms if the game has not taken it (a reservation it refused)
     if (e == focused) asked = 0;
     else if (click_l || e != asked || now - asked_ms > 150) {
-        int ok = reserve_focus(&u, s, e, focused);
+        reserve_focus(&u, s, e);
         st.hover += e != asked, asked = e, asked_ms = now;
         if (verbose_log(40))
-            rt_log("menu_mouse: pointer (%.0f, %.0f): entry %d of %d (%.0f..%.0f, %.0f..%.0f) %s, the focus on %#llx",
+            rt_log("menu_mouse: pointer (%.0f, %.0f): entry %d of %d (%.0f..%.0f, %.0f..%.0f) reserved, the focus on %#llx",
                    (double)x, (double)y, i, ent.n, (double)ent.box[i].x0, (double)ent.box[i].x1, (double)ent.box[i].y0,
-                   (double)ent.box[i].y1, ok ? "reserved" : "not reserved", (unsigned long long)focused);
+                   (double)ent.box[i].y1, (unsigned long long)focused);
     }
     if (click_l) {
         if (e == focused) plat_add32(&pending[P_A], 1), st.click_a++;
