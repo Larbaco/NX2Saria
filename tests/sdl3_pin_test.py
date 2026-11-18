@@ -101,6 +101,7 @@ class Sdl3PinTest(unittest.TestCase):
                   mock.patch.object(sdl3_pin, 'CONTENT_SHA256', sdl3_pin.content_digest(kept)),
                   mock.patch.object(sdl3_pin, 'SYSROOT', ('https://example.invalid/sysroot.tar.gz',
                                                           hashlib.sha256(self.sysroot).hexdigest())),
+                  mock.patch.object(sdl3_pin, 'SYSROOT_SIZE', len(self.sysroot)),
                   mock.patch.object(sdl3_pin.urllib.request, 'urlopen', no_download)):
             p.start()
             self.addCleanup(p.stop)
@@ -204,6 +205,13 @@ class Sdl3PinTest(unittest.TestCase):
         self.assertIsNone(folder)
         self.assertRegex(said, r'(SHA-256 differs|reading .* failed)')
         self.assertFalse((self.tmp / 'refused').exists())
+        # a download cut short after the archive's end marker is told from another file
+        longer = self.sysroot + bytes(100)   # the pinned file; local holds it without its last 100 bytes
+        with mock.patch.object(sdl3_pin, 'SYSROOT', (sdl3_pin.SYSROOT[0], hashlib.sha256(longer).hexdigest())), \
+                mock.patch.object(sdl3_pin, 'SYSROOT_SIZE', len(longer)):
+            folder, said, _ = self.resolve(self.tmp / 'short', sysroot=local)
+        self.assertIsNone(folder)
+        self.assertIn(f'cut short: {len(self.sysroot)} of {len(self.sysroot) + 100} bytes', said)
         urlopen, _ = self.urlopen({})
         with mock.patch.object(sdl3_pin.urllib.request, 'urlopen', urlopen):
             folder, said, _ = self.resolve(self.tmp / 'offline')

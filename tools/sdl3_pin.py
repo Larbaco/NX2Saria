@@ -2,7 +2,10 @@
 
 The runtime's window, input and audio are SDL 3. Ubuntu 24.04 LTS and the distributions built on it (Linux Mint 22 and
 others on the noble base) package no SDL3 at all, so a build with the system's compiler there found no SDL3/SDL.h
-(issue #11). This is the SDL3 a kit carries for them, in toolchain/sdl3.
+(issue #11). This is the SDL3 a kit carries for them, in toolchain/sdl3. tools/make_game.py takes it where the
+compiler finds no SDL3 headers of the system's (sdl3_choice): the runtime is compiled and the game linked against it,
+libSDL3.so.0 goes beside the game (place_sdl3), and the preflight runs a program linked against it, so that a library
+it needs and the system lacks stops the build, by name, before the long steps.
 
 It is SDL 3.4.18 as the Steam Runtime 3 builds it, the build the sniper SDK sysroot of tools/make_release_linux.py
 holds. Built for the Steam Runtime's glibc (its newest symbol version is GLIBC_2.29), it runs on any distribution at
@@ -202,7 +205,8 @@ def sysroot_files(f, source):
     except (tarfile.TarError, EOFError, OSError, http.client.HTTPException) as e:
         sys.exit(f'sdl3_pin: reading {source} failed after {r.n / 1e6:.0f} MB ({e})')
     if r.h.hexdigest() != SYSROOT[1]:
-        sys.exit(f'sdl3_pin: {source} is not the pinned sniper SDK sysroot (SHA-256 differs)')
+        sys.exit(f'sdl3_pin: {source} is not the pinned sniper SDK sysroot (' +
+                 (f'cut short: {r.n} of {SYSROOT_SIZE} bytes)' if r.n < SYSROOT_SIZE else 'SHA-256 differs)'))
     return kept
 
 
