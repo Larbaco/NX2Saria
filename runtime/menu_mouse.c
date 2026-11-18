@@ -235,16 +235,24 @@ static int enabled(void) {
 }
 
 // ---- the log: one line per menu the mouse was used in, when the focus leaves it (at most LOG_MENUS a session)
-typedef struct { unsigned hover, click_a, click_miss, click_b, wheel, hits, misses; } Stats;
+typedef struct { unsigned hover, refused, click_a, click_miss, click_b, wheel, hits, misses; } Stats;
 #define LOG_MENUS 48
 static void stats_flush(const char *name, Stats *st) {
     static int lines;
-    if (!st->hover && !st->click_a && !st->click_miss && !st->click_b && !st->wheel) return;
+    if (!st->hover && !st->refused && !st->click_a && !st->click_miss && !st->click_b && !st->wheel) return;
     if (lines++ < LOG_MENUS)
-        rt_log("menu_mouse: %s: focus moved %u, left clicks %u (A %u, on no button %u), right clicks (B) %u, wheel "
-               "notches %u; hit test %u on a button, %u off", name, st->hover, st->click_a + st->click_miss,
-               st->click_a, st->click_miss, st->click_b, st->wheel, st->hits, st->misses);
+        rt_log("menu_mouse: %s: focus moved %u (refused by the game's guard %u), left clicks %u (A %u, on no button "
+               "%u), right clicks (B) %u, wheel notches %u; hit test %u on a button, %u off", name, st->hover,
+               st->refused, st->click_a + st->click_miss, st->click_a, st->click_miss, st->click_b, st->wheel,
+               st->hits, st->misses);
     memset(st, 0, sizeof *st);
+}
+
+// NX2SARIA_MENU_CURSOR_LOG=1: one more of at most n lines of what the pointer does
+static int verbose_log(int n) {
+    static int lines;
+    const char *v = cfg_get("NX2SARIA_MENU_CURSOR_LOG");
+    return v && !strcmp(v, "1") && lines++ < n;
 }
 
 // The pointer on the picture, 0..1 from its top left (the present's fit, letterbox or pillarbox); 2: the script's
@@ -370,6 +378,7 @@ void menu_mouse_screen_host(Cpu *c) {
     mm_to_layout(px, py, ux, uy, &x, &y);
     int i = mm_pick(ent.box, ent.n, x, y);
     if (i < 0) {
+        if (verbose_log(40)) rt_log("menu_mouse: pointer (%.0f, %.0f): on none of %d entries", (double)x, (double)y, ent.n);
         st.misses++;
         if (click_l) st.click_miss++;
         return;
@@ -379,7 +388,13 @@ void menu_mouse_screen_host(Cpu *c) {
     // A hover asks once; asked again after 150 ms if the game has not taken it (a reservation it refused)
     if (e == focused) asked = 0;
     else if (click_l || e != asked || now - asked_ms > 150) {
-        if (reserve_focus(&u, s, e, focused)) st.hover += e != asked, asked = e, asked_ms = now;
+        int ok = reserve_focus(&u, s, e, focused);
+        if (ok) st.hover += e != asked, asked = e, asked_ms = now;
+        else st.refused++;
+        if (verbose_log(40))
+            rt_log("menu_mouse: pointer (%.0f, %.0f): entry %d of %d (%.0f..%.0f, %.0f..%.0f) %s, the focus on %#llx",
+                   (double)x, (double)y, i, ent.n, (double)ent.box[i].x0, (double)ent.box[i].x1, (double)ent.box[i].y0,
+                   (double)ent.box[i].y1, ok ? "reserved" : "refused", (unsigned long long)focused);
     }
     if (click_l) {
         if (e == focused) plat_add32(&pending[P_A], 1), st.click_a++;
