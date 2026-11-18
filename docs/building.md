@@ -493,6 +493,8 @@ for all three, rounded up by `osolver` and at least 4 every update by `osolverfu
 game's words and the set's: the page's cut is 100 at 60 and 30 fps, and from 90 to 240 fps the set cuts a floor's
 velocity at the time scales where the game cuts it at 60 fps and nowhere else. No game files.
 
+A change to the six-axis sensor fusion (`runtime/motion_fusion.c`) or the gyro settings passes `python tests\motion_fusion_check.py`, which builds `motion_fusion.c` with stand-ins for the log and feeds it synthetic gyro and accelerometer sequences: still controllers with a bias, the dead zone levels, known rotations, hand tremor, the per-controller bias, the turn and tilt factors and the integral term ([Gyro](gyro.md#checks)). No game files.
+
 A change to how the frame limit goes to RivaTuner Statistics Server (`runtime/rtss_limit.c`, `runtime/rtss_decide.h`)
 passes `python tests\rtss_limit_check.py`. It builds `rtss_decide.h` alone and checks its reader of RTSS's shared
 memory against a fake `RTSSSharedMemoryV2` (a bad header, short entries, an entry past the memory or past the 4096th
