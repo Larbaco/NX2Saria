@@ -14,13 +14,13 @@ typedef struct { float x0, y0, x1, y1; } MmBox;
 
 // A pane's box in layout units from the fields menu_mouse.c reads (as the game's focus frame takes it, main+0x769650):
 // its size w, h, the scales m00 and m11 and the translation tx, ty of its global matrix, its flags word (+0xa8: bits
-// 11..17 the base position, bit 10 an extra width or, with bit 9, height of `extra`). Returns 0 for a box with no area
-// or a value that is not a number.
+// 11..17 the base position, bit 10 an extra height of `extra` or, with bit 9, an extra width: main+0x769930). Returns 0
+// for a box with no area or a value that is not a number.
 static inline int mm_pane_box(float w, float h, float m00, float m11, float tx, float ty, unsigned flags, float extra,
                               MmBox *out) {
     if (flags & (1u << 10)) {
-        if (flags & (1u << 9)) h += extra;
-        else w += extra;
+        if (flags & (1u << 9)) w += extra;
+        else h += extra;
     }
     float hw = fabsf(w * m00) * 0.5f, hh = fabsf(h * m11) * 0.5f;
     if (!(hw > 0.5f && hh > 0.5f) || !isfinite(hw) || !isfinite(hh) || !isfinite(tx) || !isfinite(ty)) return 0;
@@ -30,24 +30,28 @@ static inline int mm_pane_box(float w, float h, float m00, float m11, float tx, 
     return 1;
 }
 
-// The squeeze of a screen from the first two diagonal entries of its 2D projection (the canvas's 4 x 4 at the screen's
-// +0x1c0): 2 / 3840 times the squeeze across, 2 / 2160 down. 1 when the matrix is not such a projection.
-static inline float mm_squeeze(float m00, float m11) {
-    float sx = fabsf(m00) * 1920.0f, sy = fabsf(m11) * 1080.0f;
-    if (!(fabsf(sy - 1.0f) < 0.01f) || !(sx > 0.2f && sx < 1.01f)) return 1.0f;
-    return sx;
+// The layout units from the picture's centre to its edge, across (*ux) and down (*uy), from the first two diagonal
+// entries of a screen's 2D projection (the canvas's 4 x 4 at the screen's +0x1c0): 2 / 3840 times the squeeze across
+// and 2 / 2160 down for the game's 3840 x 2160 layouts, so 1920 / squeeze and 1080; another layout size reads as its
+// own. Returns 0 (and the 16:9 3840 x 2160 values) when the matrix is no such projection.
+static inline int mm_units(float m00, float m11, float *ux, float *uy) {
+    float x = 1.0f / fabsf(m00), y = 1.0f / fabsf(m11);
+    *ux = 1920.0f, *uy = 1080.0f;
+    if (!(x >= 100.0f && x <= 20000.0f) || !(y >= 100.0f && y <= 20000.0f)) return 0;
+    *ux = x, *uy = y;
+    return 1;
 }
 
 // The pointer at (px, py), fractions of the picture from its top left, in layout units
-static inline void mm_to_layout(float px, float py, float squeeze, float *x, float *y) {
-    *x = (px * 2 - 1) * 1920.0f / squeeze;
-    *y = (1 - py * 2) * 1080.0f;
+static inline void mm_to_layout(float px, float py, float ux, float uy, float *x, float *y) {
+    *x = (px * 2 - 1) * ux;
+    *y = (1 - py * 2) * uy;
 }
 
 // The inverse: a point of the layout as fractions of the picture
-static inline void mm_to_picture(float x, float y, float squeeze, float *px, float *py) {
-    *px = (x * squeeze / 1920.0f + 1) * 0.5f;
-    *py = (1 - y / 1080.0f) * 0.5f;
+static inline void mm_to_picture(float x, float y, float ux, float uy, float *px, float *py) {
+    *px = (x / ux + 1) * 0.5f;
+    *py = (1 - y / uy) * 0.5f;
 }
 
 // The box (x, y) is in; the smallest when boxes overlap (a slot inside a panel). -1: none.

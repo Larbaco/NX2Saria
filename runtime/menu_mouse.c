@@ -18,12 +18,14 @@
 //  - a control: +0x78 the focused entry, +0x80 the reserved one, +0xb4 bit 3 the reserved move's "no slide" flag;
 //  - an entry: +0x18 its button, +0x20 its screen; a screen's entries are a list, head at +0x88, first node +0x90, the
 //    entry at the node less the int32 at +0x9c, the next node at the node's +8;
-//  - a screen: +0x1a6 its state (2 open), +0x1a5, +0x1aa, +0x1ab the entry test's other bytes (main+0x769d70), +0x188
+//  - a screen: +0x1a6 its state (2 open), +0x1a5, +0x1aa, +0x1ab the entry test's other bytes (main+0x769d70), +0x38
+//    its controller (+0x40 bit 1: takes input), +0x170 its level (against the manager's +0xdc and +0xe0), +0x188
 //    the requested entry, +0x1ae bit 2 the request, +0x1c0 its 2D projection (4 x 4), +0x28 its layout (the name);
 //  - a button: +0x40 bit 4 enabled, +0x58 its root pane (shown), +0x60 the pane its focus frame takes (the box);
 //  - a pane (0xb0 bytes, in its layout's array at +0x100): +0x18 its layout, +0x28 its global matrix (3 x 4 by column:
 //    +0x28 m00, +0x38 m11, +0x4c, +0x50 the translation), +0x58 its size, +0x74 its alpha (0..1), +0x80 the extra size,
-//    +0xa8 its flags (bit 0 shown, bit 3 alpha inherited, bits 9..17 the extra size's axis and the base position).
+//    +0xa8 its flags (bit 0 shown, bit 3 alpha inherited, bit 10 an extra height or with bit 9 width, bits 11..17 the
+//    base position).
 //
 // NX2SARIA_MENU_CURSOR (live, default 1): 0 leaves the menus to the keys and the pad. NX2SARIA_MENU_CURSOR_LOG=1 logs
 // every screen the focus goes to. NX2SARIA_MENU_MOUSE_PATCH=0 removes the site.
@@ -47,10 +49,12 @@
 #define UI_SYSTEM_VT 0x4c73ce0ull       // its vtable
 #define MAIN_SIZE 0x4ea0000ull          // main's image, up to the patch page
 
-enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, FM_PLAYERS = 0x22, FM_CONTROL = 0x28 };
+enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, SM_LEVEL0 = 0xdc, SM_LEVEL1 = 0xe0, FM_GUARD = 0x1f, FM_PLAYERS = 0x22,
+       FM_CONTROL = 0x28 };
 enum { CTL_FOCUSED = 0x78, CTL_RESERVED = 0x80, CTL_FLAGS = 0xb4 };
 enum { ENT_BUTTON = 0x18, ENT_SCREEN = 0x20 };
-enum { SCR_LAYOUT = 0x28, SCR_CONTROLLER = 0x38, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c, SCR_REQ_ENTRY = 0x188,
+enum { SCR_LAYOUT = 0x28, SCR_CONTROLLER = 0x38, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c, SCR_LEVEL = 0x170,
+       SCR_REQ_ENTRY = 0x188,
        SCR_HIDDEN = 0x1a5, SCR_STATE = 0x1a6, SCR_BLOCK0 = 0x1aa, SCR_BLOCK1 = 0x1ab, SCR_REQUEST = 0x1ae, SCR_PROJ = 0x1c0,
        SCR_OPEN = 2 };
 enum { BTN_FLAGS = 0x40, BTN_ROOT = 0x58, BTN_BOX = 0x60 };
@@ -76,7 +80,10 @@ static int game_object(uint64_t p, uint64_t n) {
 }
 
 // ---- panes
-static int pane_alpha(uint64_t p) { return (int)(rdf(p + PANE_ALPHA) * 255.0f) != 0; }
+static int pane_alpha(uint64_t p) {
+    float a = rdf(p + PANE_ALPHA) * 255.0f;
+    return a >= 1.0f && a < 1e6f;   // (int)a != 0, as the game truncates; a NaN is transparent
+}
 // The pane's parent: in its layout's tree, or for the layout's first pane the pane that holds the layout (a part)
 static uint64_t pane_parent(uint64_t p) {
     uint64_t lyt = rd64(p + PANE_LAYOUT);
@@ -120,9 +127,16 @@ static int ui_now(Ui *u) {
     u->ctl = rd64(u->focus + FM_CONTROL);
     return game_object(u->ctl, CTL_FLAGS + 4);
 }
-static int screen_open(uint64_t s) {
-    return game_object(s, SCR_PROJ + 64) && rd8(s + SCR_STATE) == SCR_OPEN && (int8_t)rd8(s + SCR_HIDDEN) >= 0 &&
-           !(rd8(s + SCR_BLOCK0) & 1) && !(rd8(s + SCR_BLOCK1) & 1);
+// The screen part of the game's entry test (main+0x769d70): open, shown, not blocked, its controller taking input
+// (+0x40 bit 1) and its level not below the manager's two floors (a dialog over a menu lifts them)
+static int screen_open(uint64_t mgr, uint64_t s) {
+    if (!game_object(s, SCR_PROJ + 64) || rd8(s + SCR_STATE) != SCR_OPEN || (int8_t)rd8(s + SCR_HIDDEN) < 0 ||
+        (rd8(s + SCR_BLOCK0) & 1) || (rd8(s + SCR_BLOCK1) & 1))
+        return 0;
+    uint64_t ctl = rd64(s + SCR_CONTROLLER);
+    if (!ok_at(ctl, 0x48) || !(rd8(ctl + 0x40) & 2) || !ok_at(mgr, SM_LEVEL1 + 4)) return 0;
+    uint32_t lv = rd32(s + SCR_LEVEL);
+    return lv >= rd32(mgr + SM_LEVEL0) && lv >= rd32(mgr + SM_LEVEL1);
 }
 // The screen of the focused entry, 0: none (gameplay)
 static uint64_t focus_screen(const Ui *u, uint64_t *entry) {
@@ -130,7 +144,7 @@ static uint64_t focus_screen(const Ui *u, uint64_t *entry) {
     uint64_t e = rd64(u->ctl + CTL_FOCUSED);
     if (!game_object(e, ENT_SCREEN + 8)) return 0;
     uint64_t s = rd64(e + ENT_SCREEN);
-    if (!screen_open(s)) return 0;
+    if (!screen_open(u->mgr, s)) return 0;
     *entry = e;
     return s;
 }
@@ -145,8 +159,8 @@ static void screen_name(uint64_t s, char *out, size_t n) {
         if (*q < 0x20 || *q > 0x7e) { *q = 0; break; }
     if (!out[0]) snprintf(out, n, "?");
 }
-// The screen's squeeze, from its projection
-static float screen_squeeze(uint64_t s) { return mm_squeeze(rdf(s + SCR_PROJ), rdf(s + SCR_PROJ + 0x14)); }
+// The layout units from the picture's centre to its edge, from the screen's projection (squeezed on ultrawide)
+static int screen_units(uint64_t s, float *ux, float *uy) { return mm_units(rdf(s + SCR_PROJ), rdf(s + SCR_PROJ + 0x14), ux, uy); }
 
 #define MAX_ENTRIES 256
 typedef struct { uint64_t entry[MAX_ENTRIES]; MmBox box[MAX_ENTRIES]; int n, listed; } Entries;
@@ -171,14 +185,18 @@ static void entries_of(uint64_t s, Entries *out) {
         out->entry[out->n] = e, out->box[out->n] = b, out->n++;
     }
 }
-// The focus to entry e of screen s: the writes of the game's focus setter with its flag 0 (a slide, as the d-pad moves)
-static void reserve_focus(const Ui *u, uint64_t s, uint64_t e) {
+// The focus to entry e of screen s: the writes of the game's focus setter with its flag 0 (a slide, as the d-pad moves).
+// Not while the game's method would refuse: its guard (+0x1f bit 5) with the focused button busy (+0x40 bit 5).
+static int reserve_focus(const Ui *u, uint64_t s, uint64_t e, uint64_t focused) {
+    uint64_t fb = rd64(focused + ENT_BUTTON);
+    if ((rd8(u->focus + FM_GUARD) & 0x20) && ok_at(fb, BTN_FLAGS + 4) && (rd32(fb + BTN_FLAGS) & 0x20)) return 0;
     memcpy((void *)(uintptr_t)(u->ctl + CTL_RESERVED), &e, 8);
     __atomic_fetch_and((uint32_t *)(uintptr_t)(u->ctl + CTL_FLAGS), ~8u, __ATOMIC_SEQ_CST);
     if (rd64(s + SCR_REQ_ENTRY) != e) {
         memcpy((void *)(uintptr_t)(s + SCR_REQ_ENTRY), &e, 8);
         __atomic_fetch_or((uint16_t *)(uintptr_t)(s + SCR_REQUEST), (uint16_t)4, __ATOMIC_SEQ_CST);
     }
+    return 1;
 }
 
 // ---- the pad presses the pad read adds (menu_mouse_poll): counts the interface thread raises, the pad read spends
@@ -233,7 +251,7 @@ void menu_mouse_screen_host(Cpu *c) {
     static Stats st;
     static float last_px = -1, last_py = -1;
     static int held_l, held_r, shown;
-    static uint64_t pend_entry, pend_until, asked;
+    static uint64_t pend_entry, pend_until, asked, asked_ms;
     static Entries ent;
     uint64_t s = c->x[19];
     if (!inited) {
@@ -244,44 +262,57 @@ void menu_mouse_screen_host(Cpu *c) {
                ui_now(&u) ? "found" : "not found yet");
     }
     if (shown && !menu_mouse_pointer()) shown = 0;   // the pad read took the pointer away: it comes anew
-    if (!enabled() || input_game_input_blocked()) return;
+    if (!enabled() || input_game_input_blocked()) { input_menu_wheel_take(); return; }   // (no notches kept for later)
     Ui u;
-    uint64_t focused = 0, fs;
-    if (!ui_now(&u) || !(fs = focus_screen(&u, &focused)) || fs != s) return;
+    uint64_t focused = 0, fs = 0;
+    if (!ui_now(&u) || !(fs = focus_screen(&u, &focused))) { input_menu_wheel_take(); return; }
+    if (fs != s) return;   // another screen's update: the focused one's comes in this frame too
     uint64_t now = plat_now_ms();
-    __atomic_store_n(&g_active_ms, now, __ATOMIC_RELAXED);
     char name[48];
     if (s != last_screen) {   // the focus went to another screen: the last one's line, this one's start
         if (last_screen) stats_flush(last_name, &st);
         screen_name(s, name, sizeof name);
         entries_of(s, &ent);
+        float ux, uy;
+        int proj = screen_units(s, &ux, &uy);
         static int lines;
         const char *e = cfg_get("NX2SARIA_MENU_CURSOR_LOG");
         if (lines++ < 24 || (e && !strcmp(e, "1")))
-            rt_log("menu_mouse: screen %s: %d of %d entries take the focus, squeeze %.3f", name, ent.n, ent.listed,
-                   (double)screen_squeeze(s));
+            rt_log("menu_mouse: screen %s: %d of %d entries take the focus, layout %.0f x %.0f units across the "
+                   "picture%s", name, ent.n, ent.listed, 2 * (double)ux, 2 * (double)uy,
+                   proj ? "" : " (no projection read: 16:9 taken)");
         snprintf(last_name, sizeof last_name, "%s", name);
         last_screen = s, pend_until = 0, asked = 0;
     }
+    // A menu for the mouse: some entry takes the focus, the focused one among them (a screen of the play, whose focus
+    // sits on nothing shown, never takes the pointer from the camera)
+    entries_of(s, &ent);   // (the boxes slide with a page: read each frame)
+    int has_focused = 0;
+    for (int i = 0; i < ent.n && !has_focused; i++) has_focused = ent.entry[i] == focused;
+    if (!has_focused) { input_menu_wheel_take(); return; }
+    __atomic_store_n(&g_active_ms, now, __ATOMIC_RELEASE);
     int kbm = input_kbm_last();
-    float px = 0, py = 0;
+    float px = 0, py = 0, ux, uy;
+    screen_units(s, &ux, &uy);
     int pos = picture_pos(&px, &py);
     int on = kbm || pos == 2;   // a scripted pointer stands for the mouse used last
     if (!on) {   // the gamepad: the menus as on the console, the capture kept
         if (shown) shown = 0, set_pointer(0);
         held_l = held_r = 0, last_px = last_py = -1, pend_until = 0;
+        for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
         input_menu_wheel_take();
         return;
     }
     if (!shown) {   // the pointer comes: on the focused button, so nothing moves until the mouse does
         shown = 1;
         set_pointer(1);
+        input_menu_wheel_take();
         MmBox b;
         float r[4];
         uint64_t btn = rd64(focused + ENT_BUTTON);
         if (pos != 2 && ok_at(btn, BTN_BOX + 8) && pane_box(rd64(btn + BTN_BOX), &b) && gfx_picture_rect(r)) {
             float fx, fy;
-            mm_to_picture((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, screen_squeeze(s), &fx, &fy);
+            mm_to_picture((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, ux, uy, &fx, &fy);
             ikb_pointer_set(r[0] + fx * r[2], r[1] + fy * r[3]);
             last_px = fx, last_py = fy;
         } else last_px = px, last_py = py;
@@ -293,23 +324,25 @@ void menu_mouse_screen_host(Cpu *c) {
     held_l = l, held_r = r;
     if (click_r) plat_add32(&pending[P_B], 1), st.click_b++;
     int32_t wheel = input_menu_wheel_take();
-    if (wheel) {   // a notch is the d-pad's up or down: a list moves a row, as the pad moves it
-        int k = wheel < 0 ? -wheel : wheel;
-        plat_add32(&pending[wheel > 0 ? P_UP : P_DOWN], k > 6 ? 6 : k);
+    if (wheel) {   // a notch is the d-pad's up or down: a list moves a row, as the pad moves it; at most 3 queued
+        int k = wheel < 0 ? -wheel : wheel, d = wheel > 0 ? P_UP : P_DOWN;
+        plat_xchg32(&pending[d == P_UP ? P_DOWN : P_UP], 0);   // a turn the other way drops what is left
+        int32_t q = pending[d] + k;
+        plat_xchg32(&pending[d], q > 3 ? 3 : q);
         st.wheel += (unsigned)k;
     }
-    if (pend_until) {   // a click on another button: A once the focus is there
-        if (rd64(u.ctl + CTL_FOCUSED) == pend_entry) plat_add32(&pending[P_A], 1), pend_until = 0, st.click_a++;
+    if (pend_until) {   // a click on another button: A once the focus is there, the reservation renewed till then
+        if (focused == pend_entry) plat_add32(&pending[P_A], 1), pend_until = 0, st.click_a++;
         else if (now > pend_until) pend_until = 0;
+        else reserve_focus(&u, s, pend_entry, focused);
         return;
     }
     if (!pos) return;
     int moved = mm_moved(px, py, last_px, last_py);
     if (!moved && !click_l) return;
     if (moved) last_px = px, last_py = py;
-    entries_of(s, &ent);   // (the boxes slide with a page: read each time)
     float x, y;
-    mm_to_layout(px, py, screen_squeeze(s), &x, &y);
+    mm_to_layout(px, py, ux, uy, &x, &y);
     int i = mm_pick(ent.box, ent.n, x, y);
     if (i < 0) {
         st.misses++;
@@ -318,8 +351,11 @@ void menu_mouse_screen_host(Cpu *c) {
     }
     st.hits++;
     uint64_t e = ent.entry[i];
-    if (e != focused && (moved || click_l) && e != asked) reserve_focus(&u, s, e), st.hover++, asked = e;
+    // A hover asks once; asked again after 150 ms if the game has not taken it (a reservation it refused)
     if (e == focused) asked = 0;
+    else if (click_l || e != asked || now - asked_ms > 150) {
+        if (reserve_focus(&u, s, e, focused)) st.hover += e != asked, asked = e, asked_ms = now;
+    }
     if (click_l) {
         if (e == focused) plat_add32(&pending[P_A], 1), st.click_a++;
         else pend_entry = e, pend_until = now + 300;
@@ -337,9 +373,9 @@ void menu_mouse_poll(uint64_t *buttons) {
                enabled() ? "on for 1.1.1" : "off", cfg_value("NX2SARIA_MENU_CURSOR"),
                set < 0 ? "missing from this build" : rt_patch_enabled(set) ? "on" : "off");
     }
-    uint64_t now = plat_now_ms();
+    uint64_t active = __atomic_load_n(&g_active_ms, __ATOMIC_ACQUIRE), now = plat_now_ms();
     // No menu for the mouse for 200 ms (gameplay, a movie, the overlay): the pointer goes, the camera takes the mouse
-    if (menu_mouse_pointer() && now - __atomic_load_n(&g_active_ms, __ATOMIC_RELAXED) > 200) {
+    if (menu_mouse_pointer() && (int64_t)(now - active) > 200) {
         set_pointer(0);
         for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
     }

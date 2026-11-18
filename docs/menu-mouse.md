@@ -57,8 +57,9 @@ origin at the centre, y up. Where boxes overlap, the smallest wins.
 On a picture wider than 16:9 the runtime squeezes the first row of the interface's projection (set `wide_hud`), so a
 layout is drawn in the picture's middle 16:9 and reaches ±1920 / squeeze units across the whole picture. The
 `wide_menus` and `wide_hud` edits move and widen panes in the layout files, so their matrices already hold the new
-places. Only the pointer needs the squeeze: it is read from each screen's own projection (+0x1c0: 2 / 3840 times the
-squeeze). The screens the runtime keeps unsqueezed (backgrounds, fades) read 1. With `wide_menus = full` a button
+places. Only the pointer needs the squeeze: the layout units the picture spans are read from each screen's own
+projection (+0x1c0: 2 / 3840 times the squeeze across, 2 / 2160 down), so the screens the runtime keeps unsqueezed
+(backgrounds, fades) and a layout of another size map right too. With `wide_menus = full` a button
 moved out to the edge is hit where it is drawn; with `center` the pointer over the black sides finds no button.
 
 ## The device and the camera
