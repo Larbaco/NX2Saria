@@ -5,7 +5,8 @@ left origin anchored to its parent's right edge, a part that instantiates Sub) a
 animation with a curve of the group's translate x and a constant of the picture's scale x. The checks: the tables,
 panes, parts and tracks read back; the panes' extents on the grid; the curve's value between keys; the dump's text,
 JSON and --find-animated output; each edit operation of a spec and the span of a curve whose keys move; a spec whose
-expected value differs is refused and changes nothing; the preview's SVG files and index.
+expected value differs is refused and changes nothing; the preview's SVG files and index. A separate layout checks
+picture bindings, UV transforms, default alpha and texture patterns. With NumPy it also checks pixels and clipping.
 
 Usage: python3 -I tests/layout_tools_check.py
 """
@@ -61,14 +62,18 @@ class Bffh:
         struct.pack_into('<II', rec, ld.PANE_END, 0, flags)
         return self.put(bytes(rec))
 
-    def part(self, layout, pane_index):
+    def part(self, layout, pane_index, animation=None):
         rec = bytearray(0x48)
         struct.pack_into('<Q', rec, 0, self.string(layout))
         struct.pack_into('<I', rec, 0x40, pane_index)
+        if animation:
+            name, frame = animation
+            entry = self.put(struct.pack('<Qf', self.string(name), frame))
+            struct.pack_into('<QII', rec, 0x28, self.put(struct.pack('<Q', entry)), 1, 8)
         return self.put(bytes(rec))
 
-    def code(self, pane, group, prop):
-        v = 0x7f | 7 << 8 | (pane & 0xf) << 11 | (pane >> 4) << 16 | group << 22 | prop << 24
+    def code(self, pane, group, prop, target=7, field=0x7f):
+        v = field | target << 8 | (pane & 0xf) << 11 | (pane >> 4) << 16 | group << 22 | prop << 24
         return self.put(v.to_bytes(6, 'little'), 1)
 
     def curve(self, keys):
@@ -79,7 +84,7 @@ class Bffh:
         va = self.put(struct.pack('<fIQII', keys[-1][1] - keys[0][1], 0, floats, 2 * len(keys), 4))
         return self.put(struct.pack('<QQQ', fr, va, 0))
 
-    def animation(self, name, length, tracks):
+    def animation(self, name, length, tracks, target=7, target_field=0x7f):
         """tracks: [(pane, group, prop, [(component, keys)], [(component, value)])]"""
         curves, ccomp, consts, kcomp, entries = [], [], [], [], []
         for pane, group, prop, tcurves, tconsts in tracks:
@@ -91,7 +96,7 @@ class Bffh:
             for comp, value in tconsts:
                 consts.append(value)
                 kcomp.append(comp)
-            entries.append(self.put(struct.pack('<QHHBB', self.code(pane, group, prop), first, cfirst,
+            entries.append(self.put(struct.pack('<QHHBB', self.code(pane, group, prop, target, target_field), first, cfirst,
                                                 len(tcurves), len(tconsts)) + bytes(2)))
         lists = [(self.put(b''.join(struct.pack('<Q', e) for e in entries)), len(entries)),
                  (self.put(b''.join(struct.pack('<Q', c) for c in curves) or bytes(8)), len(curves)),
@@ -119,7 +124,7 @@ def main_layout():
              ('Pa_Sub_00', f.pane(-1000, 0, 200, 200, 0, 6, sx=0.5, sy=0.5)),
              ('P_Hidden_00', f.pane(0, -500, 100, 100, 0, 1, visible=False))]
     f.table(ld.TABLES['panes'], panes)
-    f.table(ld.TABLES['parts'], [('Pa_Sub_00', f.part('Sub', 4))])
+    f.table(ld.TABLES['parts'], [('Pa_Sub_00', f.part('Sub', 4, ('SubState', 2.5)))])
     slide = f.animation('Slide', 10, [(1, 1, 1, [(0, [(0, 100, 0), (10, 300, 0)])], [(4, 50.0)]),
                                       (2, 1, 0, [], [(0, 2.0)]),
                                       (5, 1, 2, [(0, [(0, 0, 0), (5, 0, 0), (5, 1, 0)])], [])])
@@ -137,6 +142,99 @@ def sub_layout():
         if name != 'panes':
             f.table(slot, [])
     return bytes(f.b)
+
+
+def textured_layout():
+    f = Bffh()
+    panes = [('RootPane', f.pane(0, 0, 0, 0, -1, 0)),
+             ('S_Clip', f.pane(0, 0, 4, 4, 0, 4)),
+             ('P_Strip', f.pane(0, -2, 8, 4, 1, 1, anchor=(2, 4))),
+             ('P_Over', f.pane(1, 0, 2, 2, 0, 1))]
+    struct.pack_into('<I', f.b, panes[1][1] + 0x24, 1)
+    f.table(0x118, panes)
+    alpha_values = [f.put(bytes(0x10) + struct.pack('<f', a)) for a in (1.0, 0.5)]
+    alpha = f.put(struct.pack('<QQ', *alpha_values))
+    struct.pack_into('<QI', f.b, 0x2e0, alpha, 2)
+
+    alternatives = f.put(struct.pack('<QQ', f.string('first'), f.string('flipped')))
+    mapping = f.put(struct.pack('<QII5f', alternatives, 2, 8, -1.0, 1.0, 0.125, 0.0, 0.0))
+    maps = f.put(struct.pack('<Q', mapping))
+    strip_mat = f.put(struct.pack('<QIIII', maps, 1, 8, 0, 0) + bytes(0x40 - 0x18))
+    solid_mat = f.put(bytes(0x40))
+    struct.pack_into('<I', f.b, solid_mat + 0x14, 1)
+    struct.pack_into('<I', f.b, solid_mat + 0x28, 1)
+    f.table(0x138, [('M_Strip', strip_mat), ('M_Over', solid_mat)])
+
+    sampler = f.put(struct.pack('<IIQ', 0x0102, 0, f.string('first')))
+    samplers = f.put(struct.pack('<Q', sampler))
+    render = f.put(struct.pack('<QI', samplers, 1))
+    solid_render = f.put(bytes(0x10))
+    render_list = f.put(struct.pack('<QQ', render, solid_render))
+    struct.pack_into('<QI', f.b, 0x228, render_list, 2)
+    palette = f.put(struct.pack('<8f', 1, 1, 1, 1, 0, 0, 1, 0.5))
+    struct.pack_into('<QI', f.b, 0x2c0, palette, 2)
+
+    pic = f.put(bytes(0x18))
+    over = f.put(bytes(0x10) + struct.pack('<H', 1))
+    f.table(0x158, [('P_Strip', pic), ('P_Over', over)])
+    anim = f.animation('Pattern', 1, [(2, 1, 28, [], [(0, 1)])], target=0, target_field=0)
+    f.table(ld.TABLES['animations'], [('Pattern', anim)])
+    return f.b, pic
+
+
+def check_textures(tmp):
+    data, pic = textured_layout()
+    layout = ld.Layout('TextureTest', data)
+    pictures = layout.pictures()
+    check(pictures['P_Strip'] == ld.Picture(ld.Material('M_Strip', (
+        ld.TextureMap('first', ('first', 'flipped'), (-1, 1), (0.125, 0), 0, (2, 1)),
+    ), (1, 1, 1, 1)), False), f'picture material and UVs {pictures}')
+    check(pictures['P_Over'].material.colour == (0, 0, 1, 0.5), 'material palette')
+    check(layout.pane_alpha(layout.by_name['S_Clip']) == 0.5, 'pane default alpha')
+    check(ld.place(layout)[2].py == 0, 'a top anchor moves a child up on the grid')
+    check(ld.animated_state(layout, 'Pattern', 1, material=True) == {2: {(0, ld.TEXTURE_PATTERN, 0): 1}},
+          'material pattern selects the alternate binding')
+    bad = bytearray(data)
+    struct.pack_into('<H', bad, pic + 0x10, 2)
+    try:
+        ld.Layout('TextureTest', bad).pictures()
+        check(False, 'a picture with an invalid material was read')
+    except ld.FormatError:
+        pass
+
+    try:
+        import layout_textures as lt
+    except ModuleNotFoundError as e:
+        if e.name != 'numpy':
+            raise
+        return
+
+    class SyntheticTextures:
+        def get(self, archive, name):
+            check(name == 'flipped', f'active texture name {name}')
+            return lt.np.array([[(255, 0, 0, 255), (255, 0, 0, 255), (0, 255, 0, 255), (0, 255, 0, 255)]],
+                               dtype=lt.np.uint8)
+
+    anims = [('TextureTest', 'Pattern', 1)]
+    renderer = lt.Renderer(8, 1, SyntheticTextures(), lp.COLOURS)
+
+    def state(lay, instance, initial, *, material=False):
+        return lp.state_for(lay, anims, instance, initial, material=material)
+
+    renderer.draw(layout, {}, state, 1, 0, 0)
+    pixels = renderer.finish()
+    check(pixels[1080, 1, 3] == 0 and pixels[1080, 6, 3] == 0, 'scissor clips the picture')
+    check(tuple(pixels[1080, 2]) == (0, 255, 0, 128), f'mirrored UV and inherited alpha {pixels[1080, 2]}')
+    check(pixels[1080, 5, 2] > pixels[1080, 5, 0] and pixels[1080, 5, 3] == 192,
+          f'picture records composite in order {pixels[1080, 5]}')
+    path = tmp / 'texture-test.png'
+    pillow = lt.Image
+    try:
+        lt.Image = None
+        lt.png(path, pixels)
+    finally:
+        lt.Image = pillow
+    check(path.read_bytes()[:8] == b'\x89PNG\r\n\x1a\n', 'write PNG without Pillow')
 
 
 def sarc(members):
@@ -178,6 +276,7 @@ def main():
         check(main_l.canvas == (3840.0, 2160.0), 'canvas')
         check([p.kind_name for p in main_l.panes] == ['null', 'null', 'picture', 'text', 'part', 'picture'], 'kinds')
         check(main_l.parts == {'Pa_Sub_00': 'Sub'}, f'parts {main_l.parts}')
+        check(main_l.part_animations('Pa_Sub_00') == [('SubState', 2.5)], 'authored part animation frame')
         check(main_l.panes[1].children == [2, 3], 'children')
 
         # extents on the grid: the group at x 100 scaled 2; the picture 50 in it, 40 wide; the text anchored to the
@@ -298,6 +397,7 @@ def main():
             except ld.FormatError:
                 pass
         check(isinstance(lp.FULL_WIDTH, set), 'preview module loads')
+        check_textures(tmp)
 
     if FAILS:
         print(f'layout_tools_check: {len(FAILS)} failure(s)')

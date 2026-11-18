@@ -19,6 +19,23 @@ The format (docs/wide-hud.md, "The layout format (BFFH)"): records point at each
 file's start. The header has a slot of 0x20 bytes per table (+0x00 the list of name offsets, +0x08 the list of record
 offsets, +0x18 the count), and the canvas size as two floats at 0x2f8. The grid's origin is the canvas's centre, y up.
 
+A picture (table 0x158) has a material index (u16) at +0x10 and an optional window record offset at +0x08. The
+material (table 0x138) has an array of texture-map offsets at +0x00 with the count at +0x08. Each map starts with an
+optional list of texture-name offsets and a count at +0x08. These names are the alternatives for a texture pattern.
+Its UV scale, translation and rotation in radians start at +0x10, +0x18 and +0x20. An ordinary picture generates
+unit-square UVs (top-left = 0,0), which the map transforms in normalized texture space. The picture's +0x20 list
+of four pointers is a separate set of corner parameters (normally all four pairs are 2.0, 16.0).
+The material's u32 at +0x14 indexes the render-material offset array (header 0x228, count at 0x230).
+Each render material starts with a sampler offset array and count at +0x08. A sampler has U/V wrap bytes at +0/+1
+and the default texture-name offset at +0x08. A pane's u32 at +0x24 indexes the parameter offset array (header
+0x2e0, count 0x2e8), where +0x10 is its default alpha. The material's u32 at +0x28 indexes the RGBA float
+palette (header 0x2c0, count 0x2c8).
+
+A part's initial animation states are an offset array at +0x28 (count at +0x30). Each entry names the child
+animation by string offset at +0x00 and gives its initial frame as a float at +0x08. A texture-pattern track
+(target 0, property group 1 and code 28) addresses a pane's material. Its first code byte selects the texture map
+and component 0 selects a name from that map's alternatives.
+
 layout_preview.py and tests/layout_tools_check.py import this file; it uses the standard library only.
 """
 import argparse
@@ -59,10 +76,12 @@ BODY_TRACKS, BODY_CURVES, BODY_CURVE_COMPONENTS, BODY_CONSTANTS, BODY_CONSTANT_C
 ANIM_LENGTH = 0x28   # in the animation record: its length in frames (the name's offset follows at +0x30)
 NO_INDEX = 0xffff
 TARGET_PANE = 7      # bits 8-10 of a track's code for a pane's property (0 for a material's)
-# (bit 22, byte 3) of a pane track's code. Others (colours, text and material values) are reported by number.
+# (bit 22, byte 3) of a pane track's code. Text and material values are reported by number.
 PROPERTIES = {(1, 0): 'scale', (1, 1): 'translate', (1, 2): 'visibility', (1, 4): 'alpha', (0, 1): 'rotation',
-              (0, 2): 'size'}
+              (0, 2): 'size', (0, 47): 'colour'}
 SCALE, TRANSLATE, VISIBILITY, ALPHA, ROTATION, SIZE = (1, 0), (1, 1), (1, 2), (1, 4), (0, 1), (0, 2)
+COLOUR = (0, 47)
+TEXTURE_PATTERN, UV_SCALE, UV_TRANSLATE = (1, 28), (0, 31), (0, 32)
 COMPONENTS = {0: 'x', 4: 'y', 8: 'z'}
 SAME = 1e-3          # the game stores some zeros as -2.8e-14
 
@@ -294,6 +313,29 @@ class Animation:
     tracks: list
 
 
+@dataclass(frozen=True)
+class TextureMap:
+    name: str
+    alternatives: tuple = ()
+    scale: tuple = (1.0, 1.0)
+    translate: tuple = (0.0, 0.0)
+    rotation: float = 0.0
+    wrap: tuple = (2, 2)
+
+
+@dataclass(frozen=True)
+class Material:
+    name: str
+    textures: tuple
+    colour: tuple
+
+
+@dataclass(frozen=True)
+class Picture:
+    material: Material
+    window: bool
+
+
 class Layout:
     def __init__(self, name, data, archive='', copies=1):
         self.name, self.data, self.archive, self.copies = name, data, archive, copies
@@ -318,7 +360,77 @@ class Layout:
         # A part record starts with the offset of the name of the layout it instantiates; the table's own names are
         # the part panes' names.
         self.parts = {pname: cstr(d, u64(d, at)) for pname, at in self.tables['parts']}
+        self.part_records = dict(self.tables['parts'])
         self.animations = [self.animation(an, at) for an, at in self.tables['animations']]
+
+    def pane_alpha(self, pane):
+        d = self.data
+        params = u64(d, 0x2e0)
+        if not params:
+            return 1.0
+        index = u32(d, pane.at + 0x24)
+        if index >= u32(d, 0x2e8):
+            raise FormatError(f'{self.name}: no pane parameters for {pane.name}')
+        return f32(d, u64(d, params + 8 * index) + 0x10)
+
+    def part_animations(self, pane_name):
+        d, at = self.data, self.part_records[pane_name]
+        entries, count = u64(d, at + 0x28), u32(d, at + 0x30)
+        if count > (len(d) - entries) // 8:
+            raise FormatError(f'{self.name}: animation list for {pane_name} past the end')
+        out = []
+        for i in range(count):
+            entry = u64(d, entries + 8 * i)
+            out.append((cstr(d, u64(d, entry)), f32(d, entry + 8)))
+        return out
+
+    def pictures(self):
+        """Picture records by pane name, with their texture bindings and UV transforms."""
+        d = self.data
+        materials = self.tables['materials']
+        result = {}
+        for name, at in self.tables['pictures']:
+            index = u16(d, at + 0x10)
+            if index >= len(materials):
+                raise FormatError(f'{self.name}: no material {index} for {name}')
+            mname, mat = materials[index]
+            textures = self.texture_maps(mat)
+            palette, colour_index = u64(d, 0x2c0), u32(d, mat + 0x28)
+            colour = (1.0,) * 4
+            if palette:
+                if colour_index >= u32(d, 0x2c8):
+                    raise FormatError(f'{self.name}: no palette colour {colour_index} for {mname}')
+                colour = tuple(f32(d, palette + 16 * colour_index + 4 * i) for i in range(4))
+            result[name] = Picture(Material(mname, textures, colour), bool(u64(d, at + 8)))
+        return result
+
+    def texture_maps(self, mat):
+        d = self.data
+        index = u32(d, mat + 0x14)
+        if index >= u32(d, 0x230):
+            raise FormatError(f'{self.name}: no render material {index}')
+        render = u64(d, u64(d, 0x228) + index * 8)
+        samplers, count = u64(d, render), u32(d, render + 8)
+        maps, map_count = u64(d, mat), u32(d, mat + 8)
+        if count > (len(d) - samplers) // 8 or map_count > (len(d) - maps) // 8:
+            raise FormatError(f'{self.name}: texture binding list past the end')
+        textures = []
+        for i in range(count):
+            sampler = u64(d, samplers + 8 * i)
+            name = u64(d, sampler + 8)
+            wrap = (u8(d, sampler), u8(d, sampler + 1))
+            params = {}
+            if i < map_count:
+                mapping = u64(d, maps + 8 * i)
+                alternatives, n = u64(d, mapping), u32(d, mapping + 8)
+                if n > (len(d) - alternatives) // 8:
+                    raise FormatError(f'{self.name}: texture pattern list past the end')
+                params = dict(alternatives=tuple(cstr(d, u64(d, alternatives + 8 * j)) for j in range(n)),
+                              scale=(f32(d, mapping + 0x10), f32(d, mapping + 0x14)),
+                              translate=(f32(d, mapping + 0x18), f32(d, mapping + 0x1c)),
+                              rotation=f32(d, mapping + 0x20))
+            textures.append(TextureMap(cstr(d, name) if name else '', wrap=wrap, **params))
+        return tuple(textures)
 
     def table(self, slot):
         d = self.data
@@ -398,20 +510,23 @@ def evaluate(curve, frame):
             (-2 * t3 + 3 * t2) * v[i + 1][0] + (t3 - t2) * dt * v[i + 1][1])
 
 
-def animated_state(layout, anim_name, frame):
-    """{pane index: {(PROPERTIES key, component): value}} an animation sets at a frame."""
-    out = {}
+def animated_state(layout, anim_name, frame, *, material=False):
+    """Pane properties at a frame, or material properties by (texture map, property, component)."""
     for a in layout.animations:
         if a.name != anim_name:
             continue
+        out = {}
         for t in a.tracks:
-            if t.target != TARGET_PANE:
+            if t.target != (0 if material else TARGET_PANE):
                 continue
             slot = out.setdefault(t.pane, {})
+            key = (t.code[0], t.key) if material else (t.key,)
             for c in t.curves:
-                slot[(t.key, c.component)] = evaluate(c, frame)
+                value = evaluate(c, frame)
+                if value is not None:
+                    slot[(*key, c.component)] = value
             for k in t.constants:
-                slot[(t.key, k.component)] = k.value
+                slot[(*key, k.component)] = k.value
         return out
     raise SpecError(f'{layout.name} has no animation {anim_name}')
 
@@ -432,6 +547,21 @@ class Box:
     rotated: bool
 
 
+def pane_geometry(pane, state):
+    """Animated translate, scale, size and Z rotation, in the parent's coordinates."""
+    return (state.get((TRANSLATE, 0), pane.x), state.get((TRANSLATE, 4), pane.y),
+            state.get((SCALE, 0), pane.sx), state.get((SCALE, 4), pane.sy),
+            state.get((SIZE, 0), pane.w), state.get((SIZE, 4), pane.h), state.get((ROTATION, 8), pane.rot))
+
+
+def anchor_offset(pane, parent, width, height):
+    """The child's anchor point on the parent's box, relative to the parent's origin."""
+    qh, qv = parent.origin
+    ah, av = pane.anchor
+    return ((H_CODES.get(ah, ('', .5))[1] - H_CODES.get(qh, ('', .5))[1]) * width,
+            (V_CODES.get(av, ('', .5))[1] - V_CODES.get(qv, ('', .5))[1]) * height)
+
+
 def place(layout, state=None, at=(0.0, 0.0), scale=(1.0, 1.0)):
     """Every pane's Box on the grid. A child's position is its parent's position plus the parent's scale times (the
     anchor's point on the parent's box plus the child's translate); its box spans its size times its scale on the grid
@@ -440,22 +570,15 @@ def place(layout, state=None, at=(0.0, 0.0), scale=(1.0, 1.0)):
     state = state or {}
     boxes = []
     for p in layout.panes:
-        s = state.get(p.index, {})
-        x, y = s.get((TRANSLATE, 0), p.x), s.get((TRANSLATE, 4), p.y)
-        sx, sy = s.get((SCALE, 0), p.sx), s.get((SCALE, 4), p.sy)
-        pw, ph = s.get((SIZE, 0), p.w), s.get((SIZE, 4), p.h)
-        rotated = not same(s.get((ROTATION, 8), p.rot), 0)
+        x, y, sx, sy, pw, ph, angle = pane_geometry(p, state.get(p.index, {}))
+        rotated = not same(angle, 0)
         if p.parent < 0:
             px, py, psx, psy, rot = at[0], at[1], scale[0], scale[1], False
             ax = ay = 0.0
         else:
             q, qp = boxes[p.parent], layout.panes[p.parent]
             px, py, psx, psy, rot = q.px, q.py, q.gsx, q.gsy, q.rotated
-            # the anchor's point on the parent's own box, in the parent's space
-            qh, qv = qp.origin
-            ah, av = p.anchor
-            ax = (H_CODES.get(ah, ('', .5))[1] - H_CODES.get(qh, ('', .5))[1]) * q.w
-            ay = (V_CODES.get(qv, ('', .5))[1] - V_CODES.get(av, ('', .5))[1]) * q.h
+            ax, ay = anchor_offset(p, qp, q.w, q.h)
         gx, gy = px + psx * (ax + x), py + psy * (ay + y)
         gsx, gsy = psx * sx, psy * sy
         oh, ov = p.origin

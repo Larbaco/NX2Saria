@@ -1,7 +1,7 @@
-"""Draw the game's interface layouts as SVG at a picture shape, to design menu edits without running the game.
+"""Draw the game's interface layouts as SVG boxes or textured PNGs for one or more picture shapes.
 
     layout_preview.py <archive.blarc | romfs folder> --layout PlusMenu_00 [--layout ...] --aspect 21:9
-                      [--aspect 32:9 ...] [--spec spec.json] [--anim [LAYOUT/]NAME:FRAME ...] [--hud] [--png]
+                      [--aspect 32:9 ...] [--spec spec.json] [--anim [LAYOUT[/PART...]/]NAME:FRAME ...] [--hud] [--png]
                       --out build/wide-menus/preview/
 
 Each pane is a rectangle at its place on the 3840 x 2160 grid (every ancestor's translate, scale and anchor applied),
@@ -11,7 +11,7 @@ the grid's centre (3840 at 16:9, 5120 at 21:9, 7680 at 32:9); its outline is sol
 dashed, and what lies outside the picture is shaded.
 
 --anim applies an animation at a frame (Hermite interpolation of its keys), e.g. EquipToItem:28 to show the pause
-menu scrolled to the item page; LAYOUT/ limits it to one layout (a part's among them).
+menu scrolled to the item page. LAYOUT/ limits it to one layout. LAYOUT/PART/.../ addresses one part instance.
 
 --spec applies edit operations first and draws "before | after" side by side. The spec is JSON,
 {"<Layout>": [operation, ...]}, where out = 1080 * aspect - 1920 grid units (0 at 16:9, 640 at 21:9, 1920 at 32:9):
@@ -31,11 +31,24 @@ part is drawn edited in "after").
 keeps over the whole picture (widescreen.c wide_init's keep list) are drawn stretched to it, as the game does.
 
 Writes <out>/<Layout>_<aspect>.svg for each layout and shape, and <out>/index.html linking them; --png also renders
-each SVG to PNG with rsvg-convert or ImageMagick's convert, whichever exists. Standard library only.
+each SVG to PNG with rsvg-convert or ImageMagick's convert, whichever exists. SVG uses the standard library.
+
+--stack A,B draws the named layouts together, from back to front. --textures draws directly to an RGBA PNG using
+the textures from the RomFS folder (--romfs is required if the layout source is an archive). Each panel is clipped
+to the picture. --scale gives the fraction of the 2160-pixel picture height (default 0.25), and --boxes adds pane
+outlines and, with Pillow, labels. Text is shown as faint outlines. Pictures use the first available static texture
+of their material, including single-texture window fills. Multi-texture windows and live captures are omitted.
+Custom material effects and live layout state are approximated by the stored textures and animation tracks.
+Use --dump-texture LAYOUT/PANE for a pane's source texture at its native size.
+
+Texture mode needs NumPy and zstd. Pillow is optional. For uncached ASTC textures it builds the standalone CPU
+decoder with a C compiler and the runtime headers. Set NX2SARIA_VMA_INCLUDE if vk_mem_alloc.h is outside the
+usual toolchain include paths. Textured output and the decoded texture cache stay under build/.
 """
 import argparse
 import html
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -96,16 +109,25 @@ def hidden_of(layout, state):
     return out
 
 
+def state_for(layout, anims, instance, initial=(), *, material=False):
+    state = {}
+    available = {a.name for a in layout.animations}
+    frames = [*initial, *((aname, frame) for scope, aname, frame in anims
+                          if scope in (None, layout.name, instance))]
+    for aname, frame in frames:
+        if aname in available:
+            for k, v in ld.animated_state(layout, aname, frame, material=material).items():
+                state.setdefault(k, {}).update(v)
+    return state
+
+
 def draw_layout(panel, layout, layouts, anims, at=(0.0, 0.0), scale=(1.0, 1.0), depth=0, max_depth=4,
-                hidden=False, mark=frozenset(), outline=None, stretch=1.0, label_depth=1):
+                hidden=False, mark=frozenset(), outline=None, stretch=1.0, label_depth=1, instance=None):
     """Add a layout's panes to the panel; part panes recurse into their layouts (to max_depth; panes deeper than
     label_depth go unlabelled). outline: draw only outlines in that colour (the --hud overlay). stretch: the x factor
     of a layout drawn over the whole picture. mark: pane names an edit names, drawn in red at any depth."""
-    state = {}
-    for lname, aname, frame in anims:
-        if lname in (None, layout.name) and any(a.name == aname for a in layout.animations):
-            for k, v in ld.animated_state(layout, aname, frame).items():
-                state.setdefault(k, {}).update(v)
+    instance = instance or layout.name
+    state = state_for(layout, anims, instance)
     boxes = ld.place(layout, state, at, scale)
     hid = hidden_of(layout, state)
     for p, b in zip(layout.panes, boxes):
@@ -124,7 +146,7 @@ def draw_layout(panel, layout, layouts, anims, at=(0.0, 0.0), scale=(1.0, 1.0), 
             target = layouts.get(layout.parts.get(p.name, ''))
             if target is not None:
                 draw_layout(panel, target, layouts, anims, (b.px * stretch, b.py), (b.gsx * stretch, b.gsy),
-                            depth + 1, max_depth, faint, mark, outline, 1.0, label_depth)
+                            depth + 1, max_depth, faint, mark, outline, 1.0, label_depth, f'{instance}/{p.name}')
 
 
 def frame_items(panel, visible):
@@ -188,9 +210,12 @@ def parse_anim(text):
     try:
         who, frame = text.rsplit(':', 1)
         lname, _, aname = who.rpartition('/')
-        return (lname or None, aname, float(frame))
+        frame = float(frame)
+        if not math.isfinite(frame):
+            raise ValueError
+        return (lname or None, aname, frame)
     except ValueError:
-        raise SystemExit(f'layout_preview: --anim takes [LAYOUT/]NAME:FRAME, not {text!r}')
+        raise SystemExit(f'layout_preview: --anim takes [LAYOUT[/PART...]/]NAME:FRAME, not {text!r}')
 
 
 def aspect_tag(text):
@@ -215,21 +240,58 @@ def render_png(svg_path):
     return png
 
 
-def build(layouts, names, aspects, spec, anims, hud, out_dir, png=False, max_depth=4, label_depth=1, log=print):
-    """Write the SVGs (and PNGs) and index.html; returns [(layout, aspect text, svg path, [edit lines])]."""
+def textured_png(path, group, layouts, edited, visible, scale, store, anims, box_overlay, marks, hud,
+                 max_depth, label_depth):
+    import layout_textures as lt
+
+    def state(layout, instance, initial, *, material=False):
+        return state_for(layout, anims, instance, initial, material=material)
+
+    panels = []
+    for level in (layouts, edited) if edited is not None else (layouts,):
+        panel = lt.Renderer(visible, scale, store, COLOURS)
+        for name in group:
+            stretch = visible / 3840 if name in FULL_WIDTH else 1.0
+            panel.draw(level[name], level, state, stretch, max_depth, label_depth, box_overlay,
+                       marks if level is edited else frozenset())
+        if hud and level is edited:
+            for name in group:
+                stretch = visible / 3840 if name in FULL_WIDTH else 1.0
+                panel.draw(layouts[name], layouts, state, stretch, max_depth, label_depth, hud=True)
+        panels.append(panel.finish())
+    lt.save_panels(path, panels, round(GAP * scale))
+
+
+def build(layouts, names, aspects, spec, anims, hud, out_dir, png=False, max_depth=4, label_depth=1, log=print,
+          *, stacks=(), texture_store=None, output_scale=0.25, boxes=False):
+    """Write previews and index.html; returns [(layout or stack, aspect text, image path, edit lines)]."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    for lname, aname, _f in anims:
-        if lname is not None and lname not in layouts:
-            raise ld.SpecError(f'--anim names layout {lname}, which the archive does not hold')
-        holders = [n for n in layouts if lname in (None, n) and any(a.name == aname for a in layouts[n].animations)]
-        if not holders:
+    for scope, aname, _f in anims:
+        candidates = layouts.values()
+        if scope is not None:
+            root, *parts = scope.split('/')
+            target = layouts.get(root)
+            for part in parts:
+                target = layouts.get(target.parts.get(part)) if target is not None else None
+            if target is None:
+                raise ld.SpecError(f'--anim names unknown layout or part {scope}')
+            candidates = (target,)
+        if not any(a.name == aname for layout in candidates for a in layout.animations):
             raise ld.SpecError(f'no layout has an animation {aname}')
     for lname in spec:
         if lname not in layouts:
             raise ld.SpecError(f'the spec edits {lname}, which the archive does not hold')
+    groups = {name: (name,) for name in names}
+    groups.update(('+'.join(stack), stack) for stack in stacks)
+    mark = frozenset((lname, op.get('pane')) for lname, ops in spec.items() for op in ops)
     results = []
     for aspect_text in aspects:
-        aspect = ld.parse_aspect(aspect_text)
+        try:
+            aspect = ld.parse_aspect(aspect_text)
+        except (ValueError, ZeroDivisionError) as e:
+            raise ld.SpecError(f'invalid picture shape {aspect_text!r}') from e
+        if not math.isfinite(aspect) or aspect <= 0:
+            raise ld.SpecError(f'invalid picture shape {aspect_text!r}')
         visible, out = 2160 * aspect, ld.out_units(aspect)
         edited, lines = dict(layouts), {}
         for lname, ops in spec.items():
@@ -237,43 +299,50 @@ def build(layouts, names, aspects, spec, anims, hud, out_dir, png=False, max_dep
             for line in lines[lname]:
                 log(f'{aspect_text} {lname}: {line}')
         view_w = visible + 2 * MARGIN
-        for name in names:
-            stretch = visible / 3840 if name in FULL_WIDTH else 1.0
-            mark = frozenset((lname, op.get('pane')) for lname, ops in spec.items() for op in ops)
-            panels = []
+        for name, group in groups.items():
+            basename = f'{name}_{aspect_tag(aspect_text)}'
+            edit_lines = [ln for lname in spec for ln in lines[lname]]
+            if texture_store is not None:
+                path = out_dir / f'{basename}.png'
+                textured_png(path, group, layouts, edited if spec else None, visible, output_scale, texture_store,
+                             anims, boxes, mark, hud, max_depth, label_depth)
+                results.append((name, aspect_text, path, edit_lines))
+                continue
             if spec:
                 before = Panel(0, view_w, f'{name} {aspect_text}: before (the game today)')
                 after = Panel(view_w + GAP, view_w, f'after (out = {out:g} units)')
-                common = dict(max_depth=max_depth, label_depth=label_depth, stretch=stretch)
-                draw_layout(before, layouts[name], layouts, anims, **common)
-                draw_layout(after, edited[name], edited, anims, mark=mark, **common)
-                if hud:
-                    draw_layout(after, layouts[name], layouts, anims, outline='#e67e22', **common)
                 panels = [before, after]
             else:
-                one = Panel(0, view_w, f'{name} {aspect_text} (out = {out:g} units)')
-                draw_layout(one, layouts[name], layouts, anims, max_depth=max_depth, label_depth=label_depth,
-                            stretch=stretch)
-                panels = [one]
+                panels = [Panel(0, view_w, f'{name} {aspect_text} (out = {out:g} units)')]
+            for lname in group:
+                stretch = visible / 3840 if lname in FULL_WIDTH else 1.0
+                common = dict(max_depth=max_depth, label_depth=label_depth, stretch=stretch)
+                draw_layout(panels[0], layouts[lname], layouts, anims, **common)
+                if spec:
+                    draw_layout(panels[1], edited[lname], edited, anims, mark=mark, **common)
+                    if hud:
+                        draw_layout(panels[1], layouts[lname], layouts, anims, outline='#e67e22', **common)
             heading = f'{name} at {aspect_text}'
-            svg = out_dir / f'{name}_{aspect_tag(aspect_text)}.svg'
+            svg = out_dir / f'{basename}.svg'
             svg.write_text(svg_of(panels, visible, heading))
             if png:
                 render_png(svg)
-            results.append((name, aspect_text, svg, [ln for lname in spec for ln in lines.get(lname, [])]))
+            results.append((name, aspect_text, svg, edit_lines))
     rows = []
-    for name in names:
+    for name in groups:
         cells = ''.join(f'<td><a href="{html.escape(svg.name)}">{html.escape(a)}</a></td>'
                         for n, a, svg, _ in results if n == name)
         rows.append(f'<tr><th>{html.escape(name)}</th>{cells}</tr>')
-    figs = ''.join(f'<figure><figcaption>{html.escape(n)} at {html.escape(a)}</figcaption>'
+    comparison = ' · Before | after' if texture_store is not None and spec else ''
+    figs = ''.join(f'<figure><figcaption>{html.escape(n)} at {html.escape(a)}{comparison}</figcaption>'
                    f'<img src="{html.escape(svg.name)}" alt="{html.escape(n)} at {html.escape(a)}"></figure>'
                    for n, a, svg, _ in results)
     edits = ''.join(f'<li>{html.escape(ln)}</li>' for _n, _a, _s, lines_ in results[:1] for ln in lines_)
+    matte = 'background:#0d0c0b;' if texture_store is not None else ''
     (out_dir / 'index.html').write_text(
         '<!doctype html><meta charset="utf-8"><title>Layout previews</title>'
         '<style>body{font-family:sans-serif;margin:16px;background:#fff;color:#111}img{max-width:100%;'
-        'border:1px solid #ccc}figure{margin:24px 0}td,th{padding:4px 10px;text-align:left}</style>'
+        f'{matte}border:1px solid #ccc}}figure{{margin:24px 0}}td,th{{padding:4px 10px;text-align:left}}</style>'
         f'<h1>Layout previews</h1><table>{"".join(rows)}</table>'
         + (f'<h2>Edits (first shape)</h2><ul>{edits}</ul>' if edits else '') + figs + '\n')
     return results
@@ -282,33 +351,71 @@ def build(layouts, names, aspects, spec, anims, hud, out_dir, png=False, max_dep
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('source', type=Path, help='a decompressed layout archive (.blarc) or a RomFS folder')
-    ap.add_argument('--layout', action='append', required=True, help='a layout to draw (repeatable)')
+    ap.add_argument('--layout', action='append', default=[], help='a layout to draw (repeatable)')
+    ap.add_argument('--stack', action='append', default=[], help='comma-separated layouts, back to front (repeatable)')
     ap.add_argument('--aspect', action='append', help='picture shape, as 21:9, 3440x1440 or 2.39 (repeatable; '
                                                       'default 16:9, 21:9 and 32:9)')
     ap.add_argument('--spec', type=Path, help='JSON edit operations, drawn before | after')
-    ap.add_argument('--anim', action='append', default=[], help='[LAYOUT/]NAME:FRAME (repeatable)')
+    ap.add_argument('--anim', action='append', default=[], help='[LAYOUT[/PART...]/]NAME:FRAME (repeatable)')
     ap.add_argument('--hud', action='store_true', help="outline the layout as the game draws it today over 'after'")
     ap.add_argument('--png', action='store_true', help='also render each SVG to PNG')
+    ap.add_argument('--textures', action='store_true', help='draw static picture textures directly to PNG')
+    ap.add_argument('--romfs', type=Path, help='RomFS folder for textures when the source is a layout archive')
+    ap.add_argument('--scale', type=float, default=0.25, help='textured PNG resolution relative to 2160p')
+    ap.add_argument('--boxes', action='store_true', help='overlay pane boxes on the textured PNG')
+    ap.add_argument('--dump-texture', metavar='LAYOUT/PANE', help="write the pane's source texture as a standalone PNG")
     ap.add_argument('--depth', type=int, default=4, help='how deep parts are drawn (default 4)')
     ap.add_argument('--label-depth', type=int, default=1, help='label panes down to this part depth (default 1)')
-    ap.add_argument('--out', type=Path, default=ld.ROOT / 'build' / 'wide-menus' / 'preview')
+    ap.add_argument('--out', type=Path, help='output folder under build/ for textured PNGs')
     args = ap.parse_args(argv)
+    stacks = [tuple(name.strip() for name in stack.split(',')) for stack in args.stack]
+    if not (args.layout or stacks or args.dump_texture):
+        ap.error('provide --layout, --stack or --dump-texture')
+    if args.depth < 0:
+        ap.error('--depth must be nonnegative')
+    texture_mode = args.textures or args.dump_texture
+    out = args.out or ld.ROOT / 'build' / 'wide-menus' / ('textured' if texture_mode else 'preview')
     try:
+        store = None
+        if texture_mode:
+            if not math.isfinite(args.scale) or args.scale <= 0:
+                raise ld.SpecError('--scale must be a finite positive number')
+            if not out.resolve().is_relative_to((ld.ROOT / 'build').resolve()):
+                raise ld.SpecError('textured output must stay under build/')
+            romfs = args.romfs or (args.source if args.source.is_dir() else None)
+            if romfs is None:
+                raise ld.SpecError('pass --romfs ROMFS when the source is a .blarc')
+            try:
+                import layout_textures as lt
+            except ModuleNotFoundError as e:
+                if e.name != 'numpy':
+                    raise
+                raise ld.SpecError('texture mode needs a Python environment with NumPy') from e
+            store = lt.TextureStore(romfs)
         layouts = ld.load(args.source)
-        missing = [n for n in args.layout if n not in layouts]
+        missing = [n for group in [args.layout, *stacks] for n in group if n not in layouts]
         if missing:
             raise ld.SpecError(f'no layout {", ".join(missing)}')
+        if args.dump_texture:
+            name, sep, pane = args.dump_texture.partition('/')
+            if not sep or name not in layouts or not pane:
+                raise ld.SpecError('--dump-texture needs LAYOUT/PANE from the layout archive')
+            out.mkdir(parents=True, exist_ok=True)
+            path, texture = lt.dump_texture(layouts[name], pane, store, out)
+            print(f'{name}/{pane} ({texture}): {path}')
+            if not (args.layout or stacks):
+                return
         spec = json.loads(args.spec.read_text()) if args.spec else {}
         if not isinstance(spec, dict) or not all(isinstance(v, list) for v in spec.values()):
             raise ld.SpecError('the spec is {"<Layout>": [operation, ...]}')
         results = build(layouts, args.layout, args.aspect or ['16:9', '21:9', '32:9'], spec,
-                        [parse_anim(a) for a in args.anim], args.hud, args.out, args.png, args.depth,
-                        args.label_depth)
+                        [parse_anim(a) for a in args.anim], args.hud, out, args.png, args.depth,
+                        args.label_depth, stacks=stacks, texture_store=store, output_scale=args.scale, boxes=args.boxes)
     except (ld.FormatError, ld.SpecError, OSError, ValueError, KeyError) as e:
         sys.exit(f'layout_preview: {e}')
-    for name, aspect, svg, _ in results:
-        print(f'{name} {aspect}: {svg}')
-    print(f'index: {args.out / "index.html"}')
+    for name, aspect, path, _ in results:
+        print(f'{name} {aspect}: {path}')
+    print(f'index: {out / "index.html"}')
 
 
 if __name__ == '__main__':
