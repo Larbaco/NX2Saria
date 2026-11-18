@@ -14,3 +14,4 @@ jobs:
           python-version: "3.12"
       - run: python tools/check_content.py
       - run: python tests/cfg_rows_check.py
+      - run: python tools/docs_i18n.py check

@@ -11,6 +11,9 @@
   <a href="https://github.com/Larbaco/NX2Saria/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Larbaco/NX2Saria?label=release"></a>
 </p>
 
+<!-- languages -->
+<!-- /languages -->
+
 <p align="center">
   <a href="docs/install.md"><strong>Install</strong></a> ·
   <a href="https://github.com/Larbaco/NX2Saria/releases">Releases</a> ·

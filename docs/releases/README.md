@@ -20,7 +20,8 @@ it into the update manifest, which the launcher's *What's New* shows. Since 0.15
 
 Install steps and the known issues that carry from release to release are not repeated in the notes: they live in
 `docs/install.md` and `docs/known-issues.md`. Update `docs/known-issues.md` in the release commit when a problem is
-found or fixed.
+found or fixed. Its translations (`docs/<lang>/known-issues.md`) are brought up to date in the same commit where
+possible; `python tools/docs_i18n.py status` lists the stale ones ([translating.md](../translating.md)).
 
 When a pre-release becomes stable, take its pre-release line out of the notes, of the GitHub release and of both
 update manifests (`NX2Saria-update.json` and `NX2navi-update.json`, with `SHA256SUMS-windows.txt` again).

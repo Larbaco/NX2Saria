@@ -41,4 +41,7 @@ Open an issue at https://github.com/Larbaco/NX2Saria/issues; its forms ask for t
 ## Code and docs
 
 - Code, comments, commit messages and documentation are in English.
+- The player docs are also translated into Brazilian Portuguese, Russian and Simplified Chinese. A correction to a
+  translation, a review by a speaker of its language, or a new language is welcome: [docs/translating.md](docs/translating.md)
+  says how, and `python tools/docs_i18n.py check` checks links, anchors and the language links before you push.
 - Generated code is never edited by hand: change the generator.
