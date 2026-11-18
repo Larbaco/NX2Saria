@@ -559,8 +559,27 @@ static void ov_pub_six_start(Cpu *c) { ov_six_start(c); }
 static void ov_pub_six_states(Cpu *c) {
     ret_x(c, (uint64_t)(int64_t)six_fill(arg_p(c, 0), (int)arg_x(c, 1), arg_p(c, 2), "GetSixAxisSensorStates"));
 }
-// void SetGyroscopeZeroDriftMode(const SixAxisSensorHandle &, const GyroscopeZeroDriftMode &): the host gyro has
-// its own calibration
+// void SetGyroscopeZeroDriftMode(const SixAxisSensorHandle &, const GyroscopeZeroDriftMode &): the sensor is left as
+// it is. The dead zone the mode would pick is the player's gyro_deadzone setting instead (input.c
+// motion_options_refresh, applied by motion_fusion.c); the mode the game asks for is only logged, the first call and
+// each change of mode, 8 lines at most.
+static void ov_pub_zero_drift(Cpu *c) {
+    static const char *const names[] = {"loose", "standard", "tight"};
+    static volatile int32_t lines, last = -1;
+    uint32_t h = *need_handle(arg_p(c, 0), "SetGyroscopeZeroDriftMode");
+    const uint32_t *mode = arg_p(c, 1);
+    if (!mode) rt_fatal("nn::hid::SetGyroscopeZeroDriftMode: null mode");
+    uint32_t m = *mode;
+    if (plat_xchg32(&last, (int32_t)m) != (int32_t)m && plat_xadd32(&lines, 1) < 8) {
+        // the level in force: input.c motion_options_refresh takes any other gyro_deadzone value as low
+        const char *dz = cfg_value("NX2SARIA_GYRO_DEADZONE");
+        if (!dz || (strcmp(dz, "off") && strcmp(dz, "low") && strcmp(dz, "standard") && strcmp(dz, "high"))) dz = "low";
+        rt_log("hid: the game sets the gyroscope zero-drift mode %s (%u) on handle %#x; the gyro dead zone setting "
+               "decides instead (gyro_deadzone = %s)", m < 3 ? names[m] : "unknown", m, h, dz);
+    }
+    ret_x(c, 0);
+}
+// void FinalizeSensorFusion(), FinalizeNmouse(), the Jcms functions: nothing to do
 static void ov_pub_nothing(Cpu *c) { ret_x(c, 0); }
 // void InitializeVibrationDevice(const VibrationDeviceHandle &) / void SendVibrationValue(handle, value)
 static void ov_pub_vib_init(Cpu *c) { ov_vib_init(c); }
@@ -581,7 +600,7 @@ HOST_OVERRIDE("_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE", ov_
 HOST_OVERRIDE("_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE",
               ov_pub_six_states);
 HOST_OVERRIDE("_ZN2nn3hid25SetGyroscopeZeroDriftModeERKNS0_19SixAxisSensorHandleERKNS0_22GyroscopeZeroDriftModeE",
-              ov_pub_nothing);
+              ov_pub_zero_drift);
 HOST_OVERRIDE("_ZN2nn3hid25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE", ov_pub_vib_init);
 HOST_OVERRIDE("_ZN2nn3hid18SendVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE", ov_pub_vib_send);
 HOST_OVERRIDE("_ZN2nn3hid29IsOunceVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE", ov_pub_vib_ounce_mounted);
