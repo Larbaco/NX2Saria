@@ -1,5 +1,5 @@
 <!-- languages -->
-**English** · [Português (Brasil)](pt-BR/install.md)
+**English** · [Português (Brasil)](pt-BR/install.md) · [Русский](ru/install.md)
 <!-- /languages -->
 
 # Installing and updating NX2Saria

@@ -1,6 +1,6 @@
 <!-- translation: lang=pt-BR source=docs/amiibo.md source-hash=210d257ef6ba95ef84d8ab6018ac025884e0f5ac reviewed=no -->
 <!-- languages -->
-[English](../amiibo.md) · **Português (Brasil)**
+[English](../amiibo.md) · **Português (Brasil)** · [Русский](../ru/amiibo.md)
 
 > Tradução da [versão em inglês](../amiibo.md). Se as duas divergirem, vale a versão em inglês.
 >

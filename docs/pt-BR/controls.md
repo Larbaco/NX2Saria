@@ -1,6 +1,6 @@
 <!-- translation: lang=pt-BR source=docs/controls.md source-hash=fd067c49a6d643d83b64e1e6ac60179ae5173d7e reviewed=no -->
 <!-- languages -->
-[English](../controls.md) · **Português (Brasil)**
+[English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md)
 
 > Tradução da [versão em inglês](../controls.md). Se as duas divergirem, vale a versão em inglês.
 >
