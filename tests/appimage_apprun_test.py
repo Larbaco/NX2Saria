@@ -126,7 +126,8 @@ class AppRunTest(unittest.TestCase):
         rc, out, err, ran = self.run_apprun(self.nup, out_dir)
         self.assertEqual(rc, 0, err)
         self.assertIn('check: clang, clang++, ld.lld and the headers of Opus, libvpx, dav1d and zstd are found', out)
-        build = [r for r in ran if f'--nup {self.nup} --out {out_dir} --jobs' in r]
+        build = [r for r in ran if f'--nup {self.nup} --out {out_dir}' in r]
+        self.assertNotIn('--jobs', build[0] if build else '')   # the memory gate decides
         self.assertEqual(len(build), 1, ran)
         self.assertTrue((out_dir / 'play.sh').is_file())
 

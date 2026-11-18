@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = 'NX2Saria-BuildKit'
-TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostmem.py', 'prepare_shaders.py',
+TOOLS = ('make_game.py', 'nup.py', 'romfs_index.py', 'check_content.py', 'hostmem.py', 'memgate.py', 'prepare_shaders.py',
          'shader_census.py', 'shader_list.py', 'pipeline_list.py', 'zstd_compat.py', 'pad_prompts.py', 'prompt_art.py', 'button_icons.py', 'romfs_check.py',
          'build_game.py', 'check_isa.py', 'build_shaders.py', 'make_dlaa_mask.py', 'make_mvobj_fs.py',
          'pack_shader_cache.py', 'vulkan_pin.py', 'sdl3_pin.py', 'mod_files.py', 'cheats.py', 'exefs_patches.py')

@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=README.md source-hash=3c5819d3be54bedd4441713d93231e32ef2a94fc reviewed=no -->
+<!-- translation: lang=ru source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -130,9 +130,13 @@
 Linux, после установки [пакетов](docs/README-BuildKit.md#linux) (на английском):
 
 ```sh
-python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"   # при 16 ГБ добавьте --jobs 4
+python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"
 "$HOME/Games/Ocarina/ocarina"
 ```
+
+Сборка запускает каждую компиляцию, когда свободной памяти для неё достаточно, поэтому на ПК с небольшим объёмом ОЗУ
+никакие параметры не нужны; `--jobs` и `--mem-limit` лишь ограничивают её сильнее
+([контроль памяти при сборке](docs/build-memory.md), на английском).
 
 ## Состояние и известные проблемы
 

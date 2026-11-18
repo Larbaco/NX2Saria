@@ -167,9 +167,9 @@ the compiler, the linker and `tar` would not take it.
    - The RomFS image (26 GB, mostly disk work) is packed beside the lift and the compile (processor work), so a first
      build takes about as long as the longer of the two. Only `romfs.c`, which includes the RomFS index's
      `romfs_config.h`, waits for the image.
-   - Every logical processor compiles, the largest files first, so no big file starts last and runs on alone; fewer
-     compiles run when memory is short, as many as 80 % of the free memory holds at 768 MiB each (`make_game.py`
-     `default_jobs`).
+   - Up to one compile per logical processor runs at a time, the longest first, so no big file starts last and runs on
+     alone. The memory gate starts each compile only when the free memory holds its estimated peak, learned from
+     earlier builds (`tools/memgate.py`; [the build's memory gate](build-memory.md)).
    - The lifted code compiles with MSYS2 CLANG64's clang when the toolchain has it: the same LLVM release as
      UCRT64's, built with profile-guided optimisation, about a fifth faster on this code and writing the same objects
      (it reads UCRT64's headers; `make_game.py` `fast_clang` checks that both report the same version and target).

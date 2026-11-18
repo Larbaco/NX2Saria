@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=README.md source-hash=3c5819d3be54bedd4441713d93231e32ef2a94fc reviewed=no -->
+<!-- translation: lang=zh-Hans source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -85,9 +85,11 @@
 [从源码构建](docs/building.md)（英文）介绍如何搭建工具链并获取代码；[构建套件指南](docs/README-BuildKit.md)（英文）介绍如何从准备好的套件构建。在 Linux 上，安装好[所需的软件包](docs/README-BuildKit.md#linux)（英文）之后：
 
 ```sh
-python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"   # 16 GB 内存时加上 --jobs 4
+python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"
 "$HOME/Games/Ocarina/ocarina"
 ```
+
+构建会在空闲内存足够时才启动每个编译任务，因此内存较少的电脑也无需任何选项；`--jobs` 和 `--mem-limit` 只用于进一步限制（[构建的内存控制](docs/build-memory.md)（英文））。
 
 ## 现状与已知问题
 

@@ -119,9 +119,12 @@ how a launcher installed from NX2navi switches to NX2Saria's releases.
 builds from a prepared kit. On Linux, once [the packages](docs/README-BuildKit.md#linux) are installed:
 
 ```sh
-python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"   # add --jobs 4 on 16 GB
+python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"
 "$HOME/Games/Ocarina/ocarina"
 ```
+
+The build starts each compile when the free memory holds it, so it needs no option for a PC with little RAM;
+`--jobs` and `--mem-limit` only limit it further ([the build's memory gate](docs/build-memory.md)).
 
 ## Status and known issues
 

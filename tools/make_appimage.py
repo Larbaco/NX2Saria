@@ -122,10 +122,6 @@ if ! "$PY" -I -c 'import sys; sys.path[:0] = [sys.argv[1]]; import zbic' "$PYDEP
 fi
 ev step deps '"state":"done"'
 
-# One compile per 4 GB of RAM at most: with 16 GB, one per thread beside the RomFS image fills memory and swap.
-mem_gb=$(awk '/MemTotal/ {print int($2 / 1048576)}' /proc/meminfo)
-jobs=$(( mem_gb / 4 )); [ "$jobs" -lt 2 ] && jobs=2; [ "$jobs" -gt "$(nproc)" ] && jobs=$(nproc)
-
 run_make_game() {
     "$PY" -I -c 'import sys; sys.path[:0] = [sys.argv[1], sys.argv[2] + "/tools"]; s = sys.argv[2] + "/tools/make_game.py"; sys.argv = [s] + sys.argv[3:]; import runpy; runpy.run_path(s, run_name="__main__")' \
         "$PYDEPS" "$KIT" "$@"
@@ -165,8 +161,9 @@ get_dlss() {
     fi
 }
 
-echo "Building into $OUT with $jobs compiles at a time (${mem_gb} GB of RAM); this takes 10 to 25 minutes."
-run_make_game --nup "$NUP" --out "$OUT" --jobs "$jobs" "${EVENTS[@]+"${EVENTS[@]}"}" || exit $?
+# No --jobs: make_game.py's memory gate starts each compile when the free memory holds it (docs/build-memory.md)
+echo "Building into $OUT; this takes 10 to 25 minutes."
+run_make_game --nup "$NUP" --out "$OUT" "${EVENTS[@]+"${EVENTS[@]}"}" || exit $?
 if [ -e /proc/driver/nvidia/version ] && [ -z "$NX2SARIA_SKIP_DLSS" ]; then
     ev step dlss '"state":"start"'; get_dlss; ev step dlss '"state":"done"'
 else
