@@ -1999,6 +1999,15 @@ int plat_module_of(uintptr_t addr, char *name, size_t cap, uintptr_t *base) {
     return WideCharToMultiByte(CP_UTF8, 0, n, -1, name, (int)cap, NULL, NULL) != 0;
 }
 
+int plat_library_path(const char *name, char *out, size_t cap) {
+    wchar_t wname[MAX_PATH], w[WPATH];
+    if (!MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, MAX_PATH)) return 0;
+    HMODULE m = GetModuleHandleW(wname);
+    DWORD n = m ? GetModuleFileNameW(m, w, WPATH) : 0;
+    if (!n || n >= WPATH) return 0;
+    return WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)cap, NULL, NULL) != 0;
+}
+
 int plat_exe_path(char *out, size_t cap) {
     wchar_t w[WPATH];
     DWORD n = GetModuleFileNameW(NULL, w, WPATH);

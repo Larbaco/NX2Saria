@@ -8,6 +8,9 @@
 // Down=15) and the stick directions (StickLLeft..Down 16-19, StickRLeft..Down 20-23, derived from the sticks).
 // Sticks are -32767..32767, up is +y. NX2SARIA_INPUT=none reports no input. Callable from any thread.
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
+// The SDL the process loaded (SDL_GetVersion) and, into *built, the one its headers were (SDL_VERSION), both as
+// SDL_VERSIONNUM values: input is the SDL part both platforms share (main.c log_libs).
+int input_sdl_version(int *built);
 // 1 when keyboard and mouse are the device the player used last, 0 when the gamepad is: what is shown for pointing
 // (menu_cursor.c shows the pointer in the game's menus only for the keyboard and mouse)
 int input_kbm_last(void);
