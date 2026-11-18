@@ -83,6 +83,9 @@ a text entry is open, the host function does nothing: the overlay has the mouse.
 - `menu_mouse: <name>: focus moved H, left clicks C (A a, on no button m), right clicks (B) b, wheel notches w; hit
   test h on a button, o off`: when the focus leaves a menu the mouse was used in, for another screen or for none
   (at most 48 a session).
+- `menu_mouse: <name>: keyboard and mouse used last: the pointer shown` and `... the gamepad was used last: the
+  pointer hidden`: the device switch in a menu (8 lines each).
+- `menu_mouse: <name>: the settings overlay or a text entry is open: the mouse is its until it closes` (8 lines).
 - `menu_mouse: no menu for 350 ms: the pointer hidden, the mouse back to the camera`: the menus closed while the
   pointer showed (the first 8 times).
 - `menu_mouse: no menu for the mouse: <reason> (...)`: why no screen is for the mouse, each time the reason or the
@@ -91,7 +94,8 @@ a text entry is open, the host function does nothing: the overlay has the mouse.
 ## Testing
 
 `NX2SARIA_INPUT_SCRIPT` takes `POINTER x y`, `MOUSEL`/`MOUSER [hold]` and `WHEEL n` lines
-([controls.md](controls.md#scripted-input)). They feed only this module, so a windowless run can point and click.
+([controls.md](controls.md#scripted-input)). They feed only this module, so a windowless run can point and click. Like the mouse they make keyboard and mouse
+the device used last, so a gamepad press (`NX2SARIA_TEST_PAD_AT`) can take the pointer away again.
 `tests/menu_mouse_check.py` checks the box and pointer arithmetic on 16:9, 21:9 and 32:9 pictures.
 
 ## Not done

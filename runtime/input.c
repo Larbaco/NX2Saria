@@ -185,8 +185,9 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
             __atomic_store_n(&script_ptr[0], u[0], __ATOMIC_RELAXED);
             __atomic_store_n(&script_ptr[1], u[1], __ATOMIC_RELAXED);
             plat_xchg32(&script_ptr_on, 1);
-        } else if (e->mouse == SM_WHEEL) plat_add32(&script_wheel, e->x);
-        else if (e->mouse) mb |= e->mouse == SM_LEFT ? 1 : 2;
+            __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // as the mouse moved: keyboard and mouse used last
+        } else if (e->mouse == SM_WHEEL) plat_add32(&script_wheel, e->x), __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
+        else if (e->mouse) mb |= e->mouse == SM_LEFT ? 1 : 2, __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
         else if (e->stick == 3) {
             int64_t x = (int64_t)script_mouse[0] + e->x, y = (int64_t)script_mouse[1] + e->y;
             script_mouse[0] = (int32_t)(x < INT32_MIN ? INT32_MIN : x > INT32_MAX ? INT32_MAX : x);

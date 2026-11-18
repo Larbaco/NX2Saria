@@ -295,7 +295,18 @@ void menu_mouse_screen_host(Cpu *c) {
                ui_now(&u) ? "found" : "not found yet");
     }
     if (shown && !menu_mouse_pointer()) shown = 0;   // the pad read took the pointer away: it comes anew
-    if (!enabled() || input_game_input_blocked()) { input_menu_wheel_take(); return; }   // (no notches kept for later)
+    static int blocked_logged;
+    if (enabled() && input_game_input_blocked()) {   // the settings overlay or a text entry has the input and the mouse
+        if (!blocked_logged && last_screen) {
+            static int lines;
+            if (lines++ < 8) rt_log("menu_mouse: %s: the settings overlay or a text entry is open: the mouse is its until it closes", last_name);
+            blocked_logged = 1;
+        }
+        input_menu_wheel_take();
+        return;
+    }
+    blocked_logged = 0;
+    if (!enabled()) { input_menu_wheel_take(); return; }   // (no notches kept for later)
     Ui u;
     uint64_t focused = 0, fs = 0;
     if (!ui_now(&u)) { input_menu_wheel_take(); return; }
@@ -349,9 +360,12 @@ void menu_mouse_screen_host(Cpu *c) {
     float px = 0, py = 0, ux, uy;
     screen_units(s, &ux, &uy);
     int pos = picture_pos(&px, &py);
-    int on = kbm || pos == 2;   // a scripted pointer stands for the mouse used last
-    if (!on) {   // the gamepad: the menus as on the console, the capture kept
-        if (shown) shown = 0, set_pointer(0);
+    if (!kbm) {   // the gamepad: the menus as on the console, the capture kept
+        if (shown) {
+            shown = 0, set_pointer(0);
+            static int lines;
+            if (lines++ < 8) rt_log("menu_mouse: %s: the gamepad was used last: the pointer hidden", last_name);
+        }
         held_l = held_r = 0, last_px = last_py = -1, pend_until = 0;
         for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
         input_menu_wheel_take();
@@ -360,6 +374,8 @@ void menu_mouse_screen_host(Cpu *c) {
     if (!shown) {   // the pointer comes: on the focused button, so nothing moves until the mouse does
         shown = 1;
         set_pointer(1);
+        static int lines;
+        if (lines++ < 8) rt_log("menu_mouse: %s: keyboard and mouse used last: the pointer shown", last_name);
         input_menu_wheel_take();
         MmBox b;
         float r[4];
