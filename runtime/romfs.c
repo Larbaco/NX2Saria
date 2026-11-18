@@ -587,6 +587,16 @@ static void *read_served(const char *rel, Overlay **base, size_t *n, const char 
     return in;
 }
 
+// The overlay that serves RomFS file rel now (the last one, as read_served picks it), or NULL. A pointer read_served
+// gave goes stale once anything adds an overlay, since the table can move (serve_generated's realloc): ask again.
+static Overlay *served_overlay(const char *rel) {
+    uint64_t i = lower(rel);
+    Overlay *o = NULL;
+    for (size_t k = 0; k < noverlay; k++)
+        if (overlays[k].index == i) o = &overlays[k];
+    return o;
+}
+
 // Serves out[0..out_n) (malloc'd, freed here) in place of RomFS file `rel` and of an overlay that replaces it (base):
 // written to <profile>/<sub>/<file name of rel>. `what` names the change in the log. 0 when it cannot be written.
 static int serve_generated(const char *rel, Overlay *base, void *out, size_t out_n, const char *sub, const char *what,
@@ -930,7 +940,8 @@ static void wide_hud_overlay(void) {
                          what_made[0] ? ", " : "",
                          shift.menus > 0 ? "the menus over the whole picture" : "the loading icon in the middle 16:9");
         }
-        if (made > 0) serve_generated(rel, base, z, out_n, "wide-hud", what_made, keep);
+        // base again: restbl_room may have added the resource size table's overlay, which can move the table
+        if (made > 0) serve_generated(rel, served_overlay(rel), z, out_n, "wide-hud", what_made, keep);
     }
 }
 

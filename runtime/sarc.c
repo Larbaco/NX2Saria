@@ -78,7 +78,10 @@ uint8_t *sarc_rebuild(const uint8_t *p, size_t n, const uint8_t *const *with, co
     enum { MAX_ALIGN = 0x2000 };
     uint32_t data;
     uint16_t head, count;
-    if (!sarc_head(p, n, &head, &count, &data) || data > n) return NULL;
+    // the members' data starts after their entries and the name table's header (SFNT, 8 bytes): a data offset inside
+    // them would let the copies below write over entries still to be read
+    if (!sarc_head(p, n, &head, &count, &data) || data > n || data < (size_t)head + 12 + (size_t)count * 16 + 8)
+        return NULL;
     Range *r = malloc(((size_t)count + 1) * sizeof *r);
     uint64_t *at = malloc(((size_t)count + 1) * sizeof *at);   // each entry's new start, from the data's
     uint8_t *out = NULL;
@@ -117,9 +120,9 @@ uint8_t *sarc_rebuild(const uint8_t *p, size_t n, const uint8_t *const *with, co
     memcpy(out, p, data);
     for (unsigned i = 0; i < count; i++) {
         uint8_t *e = out + head + 12 + (size_t)i * 16;
-        uint32_t lo, hi;
-        memcpy(&lo, e + 8, 4);
-        memcpy(&hi, e + 12, 4);
+        uint32_t lo, hi;   // from the input, which nothing writes: the ranges checked above
+        memcpy(&lo, p + head + 12 + (size_t)i * 16 + 8, 4);
+        memcpy(&hi, p + head + 12 + (size_t)i * 16 + 12, 4);
         size_t size = with[i] ? with_n[i] : hi - lo;
         memcpy(out + data + at[i], with[i] ? with[i] : p + data + lo, size);
         uint32_t nlo = (uint32_t)at[i], nhi = (uint32_t)(at[i] + size);
