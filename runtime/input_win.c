@@ -86,6 +86,7 @@ uint32_t input_key_char(int key) {
 // ---- mouse camera: raw motion accumulated by the window thread, one stick sample per presented frame
 static volatile LONG mouse_dx, mouse_dy;   // raw counts since the last frame sample
 static volatile LONG mouse_travel;          // raw counts moved in total, captured or not (ikb_mouse_travel)
+static volatile LONG wheel_delta;          // WM_MOUSEWHEEL deltas not taken yet (WHEEL_DELTA a notch, up positive)
 static volatile LONG cur_captured;         // cursor hidden and confined to the client area
 static volatile LONG cur_active;           // WM_ACTIVATEAPP: the window's application is active
 // Bits: CUR_REL, Esc or activation by a click on the title bar or border: until a client click; CUR_ESC, set with CUR_REL
@@ -153,6 +154,9 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
     }
     case WM_SETCURSOR:
         if (cur_captured && LOWORD(l) == HTCLIENT) { SetCursor(NULL); *res = TRUE; return 1; }
+        break;
+    case WM_MOUSEWHEEL:   // counted for the game's menus (ikb_wheel_take); the menu's own handler still sees it
+        InterlockedAdd(&wheel_delta, GET_WHEEL_DELTA_WPARAM(w));
         break;
     case WM_SYSCOMMAND:   // Alt pressed alone would enter the window menu loop, which stalls the game: Alt is a game key
         if ((w & 0xFFF0) == SC_KEYMENU && l == 0) { *res = 0; return 1; }
@@ -232,6 +236,13 @@ void ikb_pointer_set(float nx, float ny) {
 }
 
 uint32_t ikb_mouse_travel(void) { return (uint32_t)mouse_travel; }
+
+// Whole notches since the last call; a smooth wheel's part of a notch stays for the next
+int32_t ikb_wheel_take(void) {
+    LONG o, n;
+    do { o = wheel_delta; n = o % WHEEL_DELTA; } while (InterlockedCompareExchange(&wheel_delta, n, o) != o);
+    return (int32_t)((o - n) / WHEEL_DELTA);
+}
 
 void ikb_mouse_take(int32_t *dx, int32_t *dy) {
     *dx = InterlockedExchange(&mouse_dx, 0);

@@ -13,6 +13,7 @@ void ikb_pointer_set(float nx, float ny);   // moves the pointer there (the wind
 int ikb_captured(void);                       // the cursor is captured for the mouse camera
 void ikb_mouse_take(int32_t *dx, int32_t *dy);   // raw mouse motion since the last call, in counts
 uint32_t ikb_mouse_travel(void);              // raw counts the mouse moved in total (|dx| + |dy|), captured or not
+int32_t ikb_wheel_take(void);                 // wheel notches since the last call, up positive (as the system scrolls)
 void ikb_cursor_update(void);                 // what input_cursor_allowed says may have changed
 void ikb_menu_closed(void);                   // the menu closed: a capture that Esc gave up comes back
 
