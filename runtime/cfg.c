@@ -263,9 +263,9 @@ static const CfgMeta metas[] = {
     // romfs.c wide_hud_overlay, wide_hud.c: the HUD's corner elements at the edges of a picture wider than 16:9 (edges)
     // or in the corners of its middle 16:9 (center, the game's layout); the layouts are read once at start
     {"WIDE_HUD", "center", "center|edges", RESTART},
-    // widescreen.c wide_init and wide_menu_sides: the pause, system and loading screens over the whole picture (full)
-    // or in its middle 16:9 with the sides black while the game draws no 3D scene (center; wide_hud.c moves the
-    // loading icon into that middle)
+    // the pause, system, map and loading screens on a picture wider than 16:9: full fills the screen (wide_hud.c
+    // lays their layouts out over the whole picture), center keeps them in the middle 16:9 with black bars at the
+    // sides while the game draws no 3D scene (widescreen.c wide_menu_sides; wide_hud.c moves the loading icon there)
     {"WIDE_MENUS", "full", "full|center", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "16", "game|2|4|8|16", LIVE},   // vk_texture.c sampler_features, vk_sampler_aniso_live; 16: the game asks 1x or 2x

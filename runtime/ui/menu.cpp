@@ -1396,18 +1396,17 @@ static void row_resolution(void) {
 }
 
 // Where the HUD and the menus go on a picture wider than 16:9: NX2SARIA_WIDE_HUD (romfs.c wide_hud_overlay moves the
-// HUD's edge elements out to the picture's sides) and NX2SARIA_WIDE_MENUS (widescreen.c wide_menu_sides: the pause,
-// system and loading screens in the middle 16:9). Both are read at start, so a change waits in the draft until Apply
-// and the row says "after restart". While the Widescreen row shows the game's 16:9 (its draft value, opt_value) they
-// change nothing and are greyed out with a note; a window of 16:9 under "Window shape" is not known here, and the
-// start's "wide hud:" and "widescreen: menus" lines say what applied.
+// HUD's edge elements out to the picture's sides) and NX2SARIA_WIDE_MENUS (full: the menus' layouts fill the picture,
+// wide_hud.c; center: black bars at the sides while a menu is up, widescreen.c wide_menu_sides). Both are read at
+// start, so a change waits in the draft until Apply and the row says "after restart". They exist only for a picture
+// that is not 16:9: while the Widescreen row shows the game's 16:9 (its draft value, opt_value) both rows are left
+// out, as the HDR rows are while HDR is off, and come back as soon as another shape is picked. A window of 16:9 under
+// "Window shape" is not known here; the start's "wide hud:" and "widescreen: menus" lines say what applied.
 static void row_wide_placement(void) {
+    if (!strcmp(opt_value("NX2SARIA_GAME_ASPECT"), "16:9")) return;
     static const UiTextId hud[] = {UI_MENU_WIDE_HUD_CENTER, UI_MENU_WIDE_HUD_EDGES};
     static const UiTextId menus[] = {UI_MENU_WIDE_MENUS_FULL, UI_MENU_WIDE_MENUS_CENTER};
-    int flat = !strcmp(opt_value("NX2SARIA_GAME_ASPECT"), "16:9");
-    if (flat) opt_disable_next(UI_MENU_WIDE_NEEDS_ASPECT);
     opt_choice("NX2SARIA_WIDE_HUD", UI_MENU_WIDE_HUD, hud, 2, UI_MENU_WIDE_HUD_DESC);
-    if (flat) opt_disable_next(UI_MENU_WIDE_NEEDS_ASPECT);
     opt_choice("NX2SARIA_WIDE_MENUS", UI_MENU_WIDE_MENUS, menus, 2, UI_MENU_WIDE_MENUS_DESC);
 }
 

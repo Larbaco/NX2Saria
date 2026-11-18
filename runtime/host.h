@@ -422,7 +422,10 @@ void wide_present(void);                                    // each present: DLS
 int wide_available(void);                                  // the generated C has the widescreen sets
 void wide_picture(unsigned *w, unsigned *h);               // the picture the game draws (its scene is never larger)
 int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init will set it, asked before it (romfs.c); 0 16:9
-void wide_scene_drawn(void);                               // vk_exec_draw.c: the game's upscaler took the 3D scene
+enum { WIDE_SCENE_DRAW = 1, WIDE_SCENE_UPSCALER = 2 };
+void wide_scene_drawn(int how, unsigned w, unsigned h);    // vk_exec_draw.c: the game drew its 3D scene (a draw
+                                                           // into its light target with the scene depth, or its
+                                                           // upscaler wrote that target), w x h that target's size
 double wide_menu_sides(void);                              // gfx_present.c, each present: the share of the width to black
                                                            // out on each side (NX2SARIA_WIDE_MENUS = center), 0 none
 int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set

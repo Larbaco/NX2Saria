@@ -4557,6 +4557,12 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     // a new pass may have another scale (pass_scale): the viewport, the scissor and the slope bias (slope_bias) follow it
     if (!ex->in_pass) ex->dirty |= VK_EXEC_DIRTY_VIEWPORT | VK_EXEC_DIRTY_SCISSOR | VK_EXEC_DIRTY_DEPTH_BIAS;
     vk_exec_pass_begin(ex);
+    // The game draws its 3D scene: a draw into its light target (B10G11R11) with the scene depth (D32F) bound, which
+    // the menus' black sides wait for (widescreen.c wide_menu_sides; it leaves out a target under a fifth of the
+    // picture). Counted before a skip for a pipeline that builds: the game drew its world either way.
+    if (ex->pass_ncolor && ex->color[0].image && ex->color[0].format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 &&
+        ex->depth.image && ex->depth.format == VK_FORMAT_D32_SFLOAT)
+        wide_scene_drawn(WIDE_SCENE_DRAW, ex->color[0].width, ex->color[0].height);
     VkRect2D sc = vk_exec_scissor(ex);
     if (!sc.extent.width || !sc.extent.height) return draw_skipped(ex, mesh, SK_SCISSOR);
     if (!ex->prog) return draw_skipped(ex, mesh, SK_NO_PROGRAM);
@@ -7315,10 +7321,8 @@ static void untranslated_dispatch_fallback(VkExec *ex) {
     if (!si || !di) return;
     // the scene upscaler (widescreen.c wide_menu_sides): it writes the light target (vk_dlaa.c vk_dlaa_upscaler asks the
     // same) at the picture's size, or at three quarters of it in handheld mode, from the 3D scene and not from a movie's
-    // frame; a smaller target of that format is some other pass
-    unsigned pw, ph;
-    wide_picture(&pw, &ph);
-    if (df == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && !fmt_rgba8(sf) && 2 * dw >= pw && 2 * dh >= ph) wide_scene_drawn();
+    // frame; widescreen.c leaves out a target of that format under half the picture (some other pass)
+    if (df == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && !fmt_rgba8(sf)) wide_scene_drawn(WIDE_SCENE_UPSCALER, dw, dh);
     static int logged;
     if (!logged++) rt_log("vk_exec: untranslated compute dispatch: its output image (%ux%u) gets a linear blit of its "
                           "largest input (%ux%u) instead (NX2SARIA_CS_FALLBACK=0 turns this off)", dw, dh, sw, sh);

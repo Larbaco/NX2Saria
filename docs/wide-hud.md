@@ -7,11 +7,13 @@ where the HUD and the menus go from there. Both are read at start and both do no
 | Setting (`nx2saria.ini`, `[display]`) | Environment | Values | Default |
 |---|---|---|---|
 | `wide_hud` | `NX2SARIA_WIDE_HUD` | `center` (the game's layout in the middle 16:9), `edges` (the HUD's corner elements at the picture's sides) | `center` |
-| `wide_menus` | `NX2SARIA_WIDE_MENUS` | `full` (the pause, system and loading screens' backgrounds over the whole picture), `center` (those screens in the middle 16:9 too, the sides black while the game draws no 3D scene) | `full` |
+| `wide_menus` | `NX2SARIA_WIDE_MENUS` | `full` (fill the screen: the pause, system, map and loading screens laid out over the whole picture), `center` (black bars: those screens in the middle 16:9, the sides black while the game draws no 3D scene) | `full` |
 
 The in-game menu has both on the *Screen* tab, under *Widescreen*: *HUD position* (*Middle 16:9* / *Screen edges*)
-and *Menus* (*Full width* / *Centered 16:9*). They are greyed out while *Widescreen* is at the game's 16:9. As with
-every setting read at start, a change waits in the menu's draft until *Apply* and then shows *after restart*.
+and *Menus* (*Fill the screen* / *Black bars*). They exist only for a picture that is not 16:9: while *Widescreen*
+shows the game's 16:9 (the menu's draft, before *Apply*) both rows are left out, and they come back as soon as
+another shape is picked. A *Window shape* that turns out 16:9 still shows them; the start's log says what applied. As
+with every setting read at start, a change waits in the menu's draft until *Apply* and then shows *after restart*.
 
 ## How the interface reaches the middle 16:9
 
@@ -118,32 +120,41 @@ There is no separate clock, rupee or key HUD in this version: rupees and item co
 
 ## `wide_menus = center`
 
-The menus' contents are in the middle 16:9 with either value. With `full` (as before), the pause and system menus'
-background and the loading screen keep the whole width (the keep list above): their capture fills the picture, and
-the loading icon is stretched with its layout to the picture's bottom right corner.
+With `full` (the default) the menus fill the screen: their layouts are laid out over the whole picture, and the
+present clears nothing. With `center` the menus' contents stay in the middle 16:9, the keep list above stays as it
+is, and the present clears the picture's sides outside its middle 16:9 to black while the game draws no 3D scene
+(`widescreen.c` `wide_menu_sides`, `gfx_present.c`, after the picture is put in the window as on any other frame).
+Under the pause menu, the map, a loading screen or a movie the game does not draw the world, so those screens then
+show the middle 16:9 of their whole-width backgrounds, at their own width, and black sides. Squeezing their
+backgrounds instead was the first idea and is left out: the pause background redraws a capture of the whole picture,
+which squeezed would land in the middle at the wrong width (as the item wheel's does), and a loading fade squeezed into
+the middle would leave the scene showing at the sides while it fades in. The loading icon, stretched over the
+whole picture with its layout, would sit in the black side: `wide_hud.c` squeezes it (`LoadingFade_00` `N_IconIn_00`:
+x 1778 and scale x 1 times 16:9 over the picture's ratio, 1323.2 and 0.744 for 3440 x 1440), which puts it in the
+middle 16:9's bottom right corner at its own width, where a squeezed layout would draw it.
 
-With `center` the keep list stays as it is, and the present clears the picture's sides outside its middle 16:9 to black
-while the game draws no 3D scene (`widescreen.c` `wide_menu_sides`, `gfx_present.c`, after the picture is put in the
-window as on any other frame). Under the pause menu, the map, a loading screen or a movie the game does not draw the
-world, so those screens then show the middle 16:9 of their whole-width backgrounds, at their own width, and black
-sides. Squeezing their backgrounds instead was the first idea and is left out: the pause background redraws a capture
-of the whole picture, which squeezed would land in the middle at the wrong width (as the item wheel's does), and a
-loading fade squeezed into the middle would leave the scene showing at the sides while it fades in. The loading icon,
-stretched over the whole picture with its layout, would sit in the black side: `wide_hud.c` squeezes it
-(`LoadingFade_00` `N_IconIn_00`: x 1778 and scale x 1 times 16:9 over the picture's ratio, 1323.2 and 0.744 for
-3440 x 1440), which puts it in the middle 16:9's bottom right corner at its own width, where a squeezed layout would
-draw it.
+"The game draws its 3D scene" means either of:
 
-"No 3D scene" means that the game's scene upscaler did not run for more than 3 presents: `vk_exec_draw.c`
-`untranslated_dispatch_fallback` calls `wide_scene_drawn` when it writes the scene's light target (B10G11R11, the test
-`vk_dlaa.c` `vk_dlaa_upscaler` makes) from a source that is not a movie's RGBA8 frame. DLSS and FSR 3.1 run from that
-same call, so they count too. That covers the pause menu, the map, loading screens and movies (which `wide_movie`
-already shows in the middle 16:9), and the item wheel when the game stops drawing the world under it. A run in which
-the upscaler's stand-in never runs (`NX2SARIA_NATIVE_TENSOR=1`, `NX2SARIA_CS_FALLBACK=0`) never blacks out, and nothing
-goes black before the game's first 3D scene (the boot's logos). A light target smaller than half the picture is some
-other pass and does not count (handheld mode's scene upscaler writes three quarters of it). The sides
-go black 4 presents after the last scene, so a frame or two of the replay's lag never shows black sides in play, and
-come back with the first frame that draws the scene.
+- a draw into the scene's light target (B10G11R11) with the scene's depth (D32F) bound, the light target at least a
+  fifth of the picture's width and height (the smallest scene the game's dynamic resolution and DLSS's modes render):
+  `vk_exec_draw.c` `prepare_draw_ex` calls `wide_scene_drawn`, before a draw is skipped for a pipeline that builds;
+- the game's scene upscaler writing that light target, at least half the picture, from a source that is not a movie's
+  RGBA8 frame (`vk_exec_draw.c` `untranslated_dispatch_fallback`).
+
+The sides go black once neither came for more than 3 presents and at least 100 ms, so a frame or two of the replay's
+lag, or a frame without the world at a high frame rate, never shows black sides in play, and come back with the first
+present after a frame that draws the scene. Nothing goes black before the game's first 3D scene (the boot's logos).
+
+The upscaler alone was the signal at first, and the sides flickered in play: seven times within 400 presents they went
+black for 17 to 69 presents, the world drawn all along. The game draws its scene into one of a few pooled light
+targets of the same size and moves to another whenever its pass list changes (`vk_dlaa.c` `target_changed`). In the
+log every switch to the second target (`dlaa: frame N: the light target changed from A to B`, after `a second scene
+after DLSS ran (4 passes into light target B ...)`) was followed two presents later by `the picture's sides black`,
+and every switch back by `shown again`, while DLSS ran on the scene in each of those frames (`frames 301-600: ... 0
+frames without the DLAA point`). With that pass list the upscaler's stand-in did not count the scene (no source of the
+scene's format, or no dispatch at all). A real pause menu or loading screen is the other kind of frame: `dlaa: frame N
+without the DLAA point: never armed; 0 scene-depth draws`, nothing drawn into a D32F depth of the scene's size, which is
+what the draw test above looks for.
 
 ## The log
 
@@ -157,17 +168,20 @@ At start, with `game_aspect = 21:9` at 1440 lines, `wide_hud = edges` and `wide_
     wide hud: the layout archive edited (the HUD's edge elements 642 units out, the loading icon at 0.749 of its width), 140 fields (16 ms)
     RomFS overlay: <profile>/wide-hud/Common.Product.100.Nin_Ounce_NVN2.blarc.zs (... bytes, the HUD at the picture's edges, the loading icon in the middle 16:9) replaces the original
     ...
-    widescreen: menus center: the picture's sides black while the game draws no 3D scene (the pause and system menus, the map, loading screens, movies), the loading icon in the middle 16:9's corner
+    widescreen: menus center: black bars: the picture's sides black while the game draws no 3D scene (the pause and system menus, the map, loading screens, movies), the loading icon in the middle 16:9's corner
 
-and during the game, at most 16 times a run:
+and during the game, at most 16 times a run, with what started and ended it:
 
-    widescreen: menus: the picture's sides black from present 5120 (no 3D scene for 4 presents)
-    widescreen: menus: the picture's sides shown again at present 5480, after 360 presents black
+    widescreen: menus: the picture's sides black from present 5120: no 3D scene drawn for 17 presents (103 ms): a pause or system menu, the map or a loading screen
+    widescreen: menus: the picture's sides shown again at present 5480, after 360 presents black: the game draws its 3D scene (a draw into its light target and depth)
+
+While a movie plays the first line ends `: a movie plays`, and the scene's return names the upscaler when that came
+first (`its upscaler wrote the light target`).
 
 With the defaults, or at 16:9, the start still says what is in effect:
 
     wide hud: center, picture 3440x1440 (2.389:1, 16:9 is 1.778): no pane moves, the HUD stays in the middle 16:9
-    widescreen: menus full: the pause and system menus' background and the loading screen over the whole picture
+    widescreen: menus full: fill the screen: the pause, system and loading screens over the whole picture, with their layouts laid out for its width
     wide hud: edges, picture 2560x1440 (1.778:1, 16:9 is 1.778): no pane moves, the HUD stays in the middle 16:9
     widescreen: menus center: the picture is the game's own 2560x1440, nothing to keep in it
     widescreen: menus center: the picture 3840x2160 is 16:9, nothing to keep in it
@@ -229,7 +243,10 @@ What a run has to show, by shape (screenshots at each of 21:9, 32:9, a 3440x1440
 - the pause menu's map in its usual place, with its icons on it, and the minimap back in the corner after closing it;
 - a rupee pick-up and an item count, next to the item slot;
 - the action prompt, a message window, the targeting pointer and an enemy's information, in the middle;
-- with `wide_menus = center`: the pause menu, the map, a loading screen (its icon in the middle's corner) and a movie
-  in the middle with black sides, the item wheel, and the return to the game (the sides shown again at once); with
-  `full`, the same screens as before;
+- with `wide_menus = center`: the pause menu on each of its pages (R and L), the map, a loading screen (its icon in
+  the middle's corner) and a movie in the middle with black sides, the item wheel, and the return to the game (the
+  sides shown again at once); no `widescreen: menus: ... black` line while walking, rolling, Z-targeting, in a
+  conversation or across a room or area change outside a loading screen; with `full`, no black sides at all;
+- the *Menus* and *HUD position* rows gone while *Widescreen* is at 16:9, back at 21:9, and their labels in the four
+  menu languages;
 - 16:9 and 16:10: the game's own layout and no black sides.

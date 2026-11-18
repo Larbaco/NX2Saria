@@ -339,45 +339,72 @@ static int32_t save_extra(unsigned ow, unsigned oh) {
     return wider > 1 ? 2 * (int32_t)lround(SAVE_W * (wider - 1) / 2) : 0;
 }
 
-// ---- menus in the middle 16:9 (NX2SARIA_WIDE_MENUS = center)
-// The menus' contents are in the middle 16:9 already (set wide_hud); four screens keep the whole picture (wide_init's
-// keep list): the item wheel's background, the pause and system menus' background (a capture of the whole picture,
-// which squeezed would land in the middle at the wrong width), the event fade and the loading fade (a fade over the
-// middle alone would leave the scene showing at the sides). With center the list stays, and the present clears the
-// picture's sides outside its middle 16:9 to black while the game draws no 3D scene (gfx_present.c): under the pause
-// menu, the map, a loading screen, a movie and, when the game stops drawing the world there, the item wheel. Those
-// screens then show the middle 16:9 of their whole-picture backgrounds, at their own width. The loading screen's icon,
-// stretched over the whole picture with its layout, would sit in the black side: wide_hud.c squeezes it into the middle
-// 16:9's corner (romfs.c wide_hud_overlay). The scene is the input of the game's upscaler: vk_exec_draw.c
-// untranslated_dispatch_fallback calls wide_scene_drawn when it writes the scene's light target (not a movie's frame).
-// Nothing goes black before the first scene (the boot's logos), so a run in which it never comes (NX2SARIA_NATIVE_TENSOR,
-// NX2SARIA_CS_FALLBACK=0) never blacks out.
-#define SIDES_AFTER 3    // presents without a 3D scene before the sides go black (a frame or two of replay lag stays clear)
-#define SIDES_TOLD 16    // changes of the sides logged a run
+// ---- the menus with black bars (NX2SARIA_WIDE_MENUS = center)
+// The menus' contents are in the middle 16:9 (set wide_hud); four screens keep the whole picture (wide_init's keep
+// list): the item wheel's background, the pause and system menus' background (a capture of the whole picture, which
+// squeezed would land in the middle at the wrong width), the event fade and the loading fade (a fade over the middle
+// alone would leave the scene showing at the sides). With full (the default) the menus fill the picture: their layouts
+// are laid out for its width (wide_hud.c) and nothing here runs. With center the keep list stays, and the present
+// clears the picture's sides outside its middle 16:9 to black while the game draws no 3D scene (gfx_present.c): under
+// the pause and system menus, the map, a loading screen, a movie and, when the game stops drawing the world there, the
+// item wheel. Those screens then show the middle 16:9 of their whole-picture backgrounds, at their own width. The
+// loading screen's icon, stretched over the whole picture with its layout, would sit in the black side: wide_hud.c
+// squeezes it into the middle 16:9's corner (romfs.c wide_hud_overlay).
+// The 3D scene is the game drawing its world: a draw into its light target (B10G11R11) with the scene's depth (D32F)
+// bound, at least a fifth of the picture's width and height, the smallest scene the game's dynamic resolution and
+// DLSS's modes render (vk_exec_draw.c prepare_draw_ex), or its upscaler writing that light target at the picture's
+// size from the scene (vk_exec_draw.c untranslated_dispatch_fallback). The upscaler alone was the signal first and
+// flickered in play: the game draws its scene into one of a few pooled light targets and moves to another whenever its
+// pass list changes, and with one of them the upscaler's stand-in did not count the scene (no source of the scene's
+// format, or no dispatch) while DLSS ran on that scene every frame; the sides went black for 17 to 69 presents at a
+// time, seven times within 400 presents of play. Under the pause menu and on a loading screen the game draws nothing
+// into a D32F depth of that size (vk_dlaa.c logs "0 scene-depth draws" for those frames).
+// The sides go black only after SIDES_AFTER presents and SIDES_AFTER_MS without a scene, so a frame or two of replay
+// lag, or a frame the game draws without its world at a high frame rate, never shows black sides in play; they come
+// back with the first present after a frame that draws the scene. Nothing goes black before the first scene (the
+// boot's logos).
+#define SIDES_AFTER 3        // presents without a 3D scene before the sides go black
+#define SIDES_AFTER_MS 100   // ... and at least this long (at 165 fps 4 presents are 24 ms)
+#define SIDES_TOLD 16        // changes of the sides logged a run
 static int menus_center;      // wide_init: the setting at start, on a picture wider than 16:9 with the sets on
 static double menus_margin;   // the share of the picture's width on each side of its middle 16:9
+static unsigned scene_min_w, scene_min_h;   // the smallest light target a scene draw counts for (a fifth of the
+static unsigned up_min_w, up_min_h;         // picture), and upscaler output (half of it)
 static uint64_t side_presents, scene_present;   // presents counted by wide_menu_sides; that count + 1 at the last scene
+static int scene_how;                           // what told of the last scene (WIDE_SCENE_DRAW or WIDE_SCENE_UPSCALER)
 
-void wide_scene_drawn(void) {
-    __atomic_store_n(&scene_present, __atomic_load_n(&side_presents, __ATOMIC_RELAXED) + 1, __ATOMIC_RELAXED);
+// Called for every draw into a light target with a scene depth, from the replay's threads at once: the shared words
+// are written only when they change (once a present at most), so the draws of a frame do not contend for them.
+void wide_scene_drawn(int how, unsigned w, unsigned h) {
+    if (!menus_center) return;
+    if (how == WIDE_SCENE_DRAW ? w < scene_min_w || h < scene_min_h : w < up_min_w || h < up_min_h) return;
+    uint64_t at = __atomic_load_n(&side_presents, __ATOMIC_RELAXED) + 1;
+    if (__atomic_load_n(&scene_present, __ATOMIC_RELAXED) != at) __atomic_store_n(&scene_present, at, __ATOMIC_RELAXED);
+    if (__atomic_load_n(&scene_how, __ATOMIC_RELAXED) != how) __atomic_store_n(&scene_how, how, __ATOMIC_RELAXED);
 }
 
 double wide_menu_sides(void) {
     if (!menus_center) return 0;
     uint64_t n = __atomic_add_fetch(&side_presents, 1, __ATOMIC_RELAXED);
-    uint64_t at = __atomic_load_n(&scene_present, __ATOMIC_RELAXED);
-    int black = at && n > at + SIDES_AFTER;
+    uint64_t at = __atomic_load_n(&scene_present, __ATOMIC_RELAXED), now = kern_now_ns();
+    static uint64_t seen_at, seen_ns;   // the last scene this saw, and when (its first present after it)
+    if (at != seen_at) seen_at = at, seen_ns = now;
+    int black = at && n > at + SIDES_AFTER && now - seen_ns >= SIDES_AFTER_MS * 1000000ull;
     static int was, told;
     static uint64_t since;
     if (black != was) {
         if (told < SIDES_TOLD) {
             told++;
             if (black)
-                rt_log("widescreen: menus: the picture's sides black from present %llu (no 3D scene for %d presents)",
-                       (unsigned long long)n, SIDES_AFTER + 1);
+                rt_log("widescreen: menus: the picture's sides black from present %llu: no 3D scene drawn for %llu "
+                       "presents (%.0f ms): %s", (unsigned long long)n, (unsigned long long)(n - at),
+                       (now - seen_ns) / 1e6,
+                       ov_movie_live() ? "a movie plays" : "a pause or system menu, the map or a loading screen");
             else
-                rt_log("widescreen: menus: the picture's sides shown again at present %llu, after %llu presents black",
-                       (unsigned long long)n, (unsigned long long)(n - since));
+                rt_log("widescreen: menus: the picture's sides shown again at present %llu, after %llu presents black: "
+                       "the game draws its 3D scene (%s)", (unsigned long long)n, (unsigned long long)(n - since),
+                       __atomic_load_n(&scene_how, __ATOMIC_RELAXED) == WIDE_SCENE_UPSCALER
+                           ? "its upscaler wrote the light target" : "a draw into its light target and depth");
             if (told == SIDES_TOLD) rt_log("widescreen: menus: further changes of the sides are not logged");
         }
         since = n, was = black;
@@ -457,14 +484,17 @@ void wide_init(void) {
     // A picture of 16:9 at another height has no sides (within 1%, as wide_hud.c wide_hud_out decides)
     int wider = ratio > match * (1 + tolerance);
     menus_center = center && wider, menus_margin = margin;
+    scene_min_w = ow / 5, scene_min_h = oh / 5, up_min_w = (ow + 1) / 2, up_min_h = (oh + 1) / 2;
     start_w = ow, start_h = oh, start_wide = 1, started = 1;
     if (!wider)
         rt_log("widescreen: menus %s: the picture %ux%u is 16:9, nothing to keep in it", menus, ow, oh);
     else
         rt_log("widescreen: menus %s: %s", menus,
-           menus_center ? "the picture's sides black while the game draws no 3D scene (the pause and system menus, the "
-                          "map, loading screens, movies), the loading icon in the middle 16:9's corner"
-                        : "the pause and system menus' background and the loading screen over the whole picture");
+               menus_center ? "black bars: the picture's sides black while the game draws no 3D scene (the pause and "
+                              "system menus, the map, loading screens, movies), the loading icon in the middle 16:9's "
+                              "corner"
+                            : "fill the screen: the pause, system and loading screens over the whole picture, with "
+                              "their layouts laid out for its width");
     scale_k = oh > GAME_H ? (double)oh / GAME_H : 1.0;
     rt_log("widescreen: picture %ux%u, scene %ux%u (%.0f%% of it), camera aspect ratio %.4f (16:9 is %.4f), UI and movies "
            "in the middle %.1f%%", ow, oh, sw, sch, f * 100, ratio, game, squeeze * 100);
