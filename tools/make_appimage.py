@@ -12,17 +12,22 @@ NVIDIA's DLSS library with its notice (bin/, tools/dlss_pin.py: downloaded from 
 checked, or --dlss; not with --no-dlss: an AppImage made without the library downloads it after a build on machines with
 NVIDIA's driver, AppRun's get_dlss), the pinned Vulkan Memory Allocator header, the pinned Vulkan headers
 (toolchain/vulkan-headers, tools/vulkan_pin.py: the runtime names Vulkan extensions newer than the headers many
-distributions package), and a relocatable CPython 3.14 (python-build-standalone, as `uv python install 3.14` puts in
-~/.local/share/uv/python) with numpy, lz4, zstandard, fonttools and pillow, and with --prompt-art the button art
-make_game.py's prompts step draws from (as make_kit.py --prompt-art: the pictures tools/prompt_art.py art_files names,
-into the kit's prompt-art folder; without it that step is skipped and the game keeps the Switch prompts). zbic, the GPL
-package that unpacks the game's program files, is not bundled: the AppImage installs it with pip into
-~/.local/share/nx2saria/pydeps the first time it runs. An existing ~/.local/share/nx2navi/pydeps is reused in place.
+distributions package), the pinned SDL3 (toolchain/sdl3, tools/sdl3_pin.py: its headers and libSDL3.so.0, for the
+distributions that package no SDL3, Ubuntu 24.04 and Linux Mint 22 among them; tools/make_game.py sdl3_choice takes the
+system's where the compiler finds it), and a relocatable CPython 3.14 (python-build-standalone, as `uv python install
+3.14` puts in ~/.local/share/uv/python) with numpy, lz4, zstandard, fonttools and pillow, and with --prompt-art the
+button art make_game.py's prompts step draws from (as make_kit.py --prompt-art: the pictures tools/prompt_art.py
+art_files names, into the kit's prompt-art folder; without it that step is skipped and the game keeps the Switch
+prompts). zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with pip
+into ~/.local/share/nx2saria/pydeps the first time it runs. An existing ~/.local/share/nx2navi/pydeps is reused in
+place.
 
-The compiler and the libraries come from the system (README-BuildKit.md, "Linux"): the AppImage checks for clang,
-clang++, lld and the headers before it starts, and names the packages for Arch, Fedora and Debian/Ubuntu. Whether
-they are new enough is found out by trying them: tools/make_game.py checks the runtime's sources with that compiler
-and links against those libraries before the build's long steps (preflight).
+The compiler and the other libraries come from the system (README-BuildKit.md, "Linux"): before a build the AppImage
+checks for clang, clang++ and lld, asks that compiler for the libraries' headers (so headers it finds through its own
+folders or CPATH count), and names the packages for Arch, Fedora and Debian, Ubuntu and Mint; --check, which reads
+the dump only, needs none of them. Whether they are new enough is found out by trying them: tools/make_game.py
+checks the runtime's sources with that compiler, and links and runs a program against those libraries, before the
+build's long steps (preflight).
 """
 import argparse
 import os
@@ -76,13 +81,23 @@ ev() { [ ${#EVENTS[@]} -gt 0 ] && printf '@@{"ev":"%s","step":"%s"%s}\n' "$1" "$
 if [ "$1" = --events ]; then EVENTS=(--events); shift; fi
 ev step deps '"state":"start"'
 
-missing=()
-for tool in clang clang++ ld.lld; do command -v "$tool" >/dev/null || missing+=("$tool"); done
-# The Vulkan headers come with this file (the kit's toolchain/vulkan-headers): a distribution's may be too old.
-for h in SDL3/SDL.h opus/opus.h vpx/vpx_decoder.h dav1d/dav1d.h zstd.h; do
-    [ -e "/usr/include/$h" ] || [ -e "/usr/local/include/$h" ] || missing+=("$h")
-done
-if [ ${#missing[@]} -gt 0 ]; then
+# The compiler and the libraries a build needs (not --check, which reads the dump only, nor --make-game, whose
+# make_game.py checks them itself). The headers are asked of the compiler, which answers from its own folders and
+# CPATH. The Vulkan headers and SDL3 come with this file (the kit's toolchain/vulkan-headers and toolchain/sdl3): a
+# distribution's Vulkan headers may be too old, and Ubuntu 24.04 and the distributions on it package no SDL3;
+# tools/make_game.py takes the system's SDL3 where the compiler finds it.
+need_packages() {
+    local missing=() tool h
+    for tool in clang clang++ ld.lld; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+    if command -v clang >/dev/null; then
+        for h in opus/opus.h vpx/vpx_decoder.h dav1d/dav1d.h zstd.h; do
+            printf '#include <%s>\n' "$h" | clang -E -x c - -o /dev/null 2>/dev/null || missing+=("$h")
+        done
+    fi
+    if [ ${#missing[@]} -eq 0 ]; then
+        echo "check: clang, clang++, ld.lld and the headers of Opus, libvpx, dav1d and zstd are found"
+        return 0
+    fi
     cat >&2 <<EOF
 Missing: ${missing[*]}
 Install the compiler and libraries, then run this again:
@@ -91,12 +106,13 @@ Install the compiler and libraries, then run this again:
   Fedora:
     sudo dnf install clang lld SDL3-devel opus-devel libvpx-devel libdav1d-devel libzstd-devel \\
         vulkan-headers vulkan-loader-devel libstdc++-static libatomic
-  Debian, Ubuntu:
-    sudo apt install clang lld libsdl3-dev libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev
+  Debian, Ubuntu, Linux Mint (SDL3 comes with this file where the distribution has none):
+    sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev
 EOF
     ev error deps '"message":"missing packages"'
     exit 1
-fi
+}
+case "$1" in --check|--make-game) ;; *) need_packages ;; esac
 
 if ! "$PY" -I -c 'import sys; sys.path[:0] = [sys.argv[1]]; import zbic' "$PYDEPS" 2>/dev/null; then
     echo "Installing zbic (GPL-2.0, unpacks the game's program files) into $PYDEPS ..."
@@ -184,6 +200,22 @@ def copy_tree(src, dst, skip=()):
     shutil.copytree(src, dst, ignore=lambda d, names: [n for n in names if n in skip or n == '__pycache__'])
 
 
+def carry_sdl3(kit):
+    """The pinned SDL3 (tools/sdl3_pin.py) into the kit's toolchain/sdl3, fetched and checked into this checkout's
+    toolchain/sdl3 first when it is not there yet: tools/make_game.py builds against it on a system without SDL3. The
+    copy is checked file by file against the pinned files' digest, so a checkout's folder changed since its fetch
+    does not go into a release."""
+    import sdl3_pin
+    dst = kit / sdl3_pin.FOLDER
+    shutil.copytree(sdl3_pin.resolve(ROOT / sdl3_pin.FOLDER), dst)
+    kept = {f.relative_to(dst): f.read_bytes() for f in dst.rglob('*') if f.is_file() and f.name != sdl3_pin.STAMP}
+    if not sdl3_pin.have(dst) or sdl3_pin.content_digest(kept) != sdl3_pin.CONTENT_SHA256:
+        sys.exit(f'{dst} does not hold the pinned SDL3 after the copy, exactly its files: '
+                 f'delete {ROOT / sdl3_pin.FOLDER} and run this again to fetch it')
+    print(f'SDL3 {sdl3_pin.VERSION} ({sdl3_pin.DEB_VERSION}): {dst}')
+    return dst
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--python', type=Path, required=True,
@@ -239,6 +271,7 @@ def main():
     # (tools/build_game.py vulkan_include finds them in the kit): fetched and checked here when not there yet
     import vulkan_pin
     shutil.copytree(vulkan_pin.resolve(ROOT / vulkan_pin.FOLDER), kit / vulkan_pin.FOLDER)
+    carry_sdl3(kit)
     if a.prompt_art:
         import prompt_art
         n, size = prompt_art.copy_art(a.prompt_art, kit / prompt_art.FOLDER)
