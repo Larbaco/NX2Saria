@@ -1,8 +1,12 @@
+<!-- languages -->
+**English** · [Português (Brasil)](pt-BR/install.md) · [Русский](ru/install.md) · [简体中文](zh-Hans/install.md)
+<!-- /languages -->
+
 # Installing and updating NX2Saria
 
 Every release on the [Releases page](https://github.com/Larbaco/NX2Saria/releases) has a Windows setup and a Linux
 AppImage. Neither carries any game data: both build the game on your PC from your own `.nup` dump of the Nintendo
-Switch 2 edition with update 1.1.1. The [README](../README.md#before-you-build) lists what your PC needs.
+Switch 2 edition with update 1.1.1. The [README](../README.md#requirements) lists what your PC needs.
 
 ## Windows
 

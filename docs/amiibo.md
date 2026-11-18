@@ -1,3 +1,7 @@
+<!-- languages -->
+**English** · [Português (Brasil)](pt-BR/amiibo.md) · [Русский](ru/amiibo.md) · [简体中文](zh-Hans/amiibo.md)
+<!-- /languages -->
+
 # Amiibo
 
 The port has no NFC reader of its own: it puts an amiibo dump file on an emulated reader when the game asks for an

@@ -36,6 +36,11 @@ The repository's additions are all rights reserved (`LICENSE-ADDITIONS`). It nev
 
 Code, comments, docs and commit messages are in English. Commit messages are plain sentences without type prefixes.
 
+The player docs also have translations (`README.<lang>.md`, `docs/<lang>/`), made and kept as
+[docs/translating.md](docs/translating.md) says. After changing an English page that has them, run
+`python tools/docs_i18n.py status`; update the translations you can write, and leave the others to show as stale.
+`python tools/docs_i18n.py check` (in CI) fails on a broken link or anchor in any Markdown file.
+
 ## Names
 
 NX2Saria is the product name. New code, settings and release files use `nx2saria.ini`, `NX2SARIA_*` and the `NX2Saria-` prefix. The older names that still work, and the ones kept on purpose (stable markers, format identifiers, upstream provenance), are listed in [docs/branding.md](docs/branding.md). Do not rename those, the fork's repository URL or `THIRD_PARTY_NOTICES.md`.

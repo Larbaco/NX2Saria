@@ -1,3 +1,7 @@
+<!-- languages -->
+**English** · [Português (Brasil)](pt-BR/known-issues.md) · [Русский](ru/known-issues.md) · [简体中文](zh-Hans/known-issues.md)
+<!-- /languages -->
+
 # Known issues
 
 Problems we know of in the current release, and what avoids them. When one is fixed, it leaves this list and the
