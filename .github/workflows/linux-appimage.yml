@@ -86,5 +86,19 @@ jobs:
           appimage=$(ls dist/NX2Saria-Linux-*-x86_64.AppImage)
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --help | head -3
           (cd dist && sha256sum NX2Saria-Linux-*-x86_64.AppImage > SHA256SUMS-linux.txt && cat SHA256SUMS-linux.txt)
+      - name: Checks with the runner's clang
+        # The runner is Ubuntu 24.04, whose default clang (18) and missing SDL3 stopped the AppImage on players' PCs
+        # (issue #11): runtime/sha256.c's two forms, the game log's libs line, the pinned SDL3 and the choice of it,
+        # and AppRun's checks. After the AppImage step, which fetched the pinned SDL3 into toolchain/sdl3, where
+        # tests/library_path_check.py finds its headers.
+        run: |
+          clang --version | head -1
+          rc=0   # every test runs; the step fails when one did
+          for t in sha256_paths_check lib_origin_check library_path_check sdl3_pin_test make_game_sdl3_test \
+                   appimage_apprun_test; do
+            echo "== tests/$t.py"
+            .venv/bin/python "tests/$t.py" || { echo "::error::tests/$t.py failed"; rc=1; }
+          done
+          exit $rc
       - name: Attach to the release
         run: gh release upload "$TAG" --clobber dist/NX2Saria-Linux-*-x86_64.AppImage dist/SHA256SUMS-linux.txt
