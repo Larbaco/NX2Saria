@@ -19,7 +19,7 @@
 //  - an entry: +0x18 its button, +0x20 its screen; a screen's entries are a list, head at +0x88, first node +0x90, the
 //    entry at the node less the int32 at +0x9c, the next node at the node's +8;
 //  - a screen: +0x1a6 its state (2 open), +0x1a5, +0x1aa, +0x1ab the entry test's other bytes (main+0x769d70), +0x38
-//    its controller (+0x40 bit 1: takes input), +0x170 its level (against the manager's +0xdc and +0xe0), +0x188
+//    its controller (+0x40 bit 1: takes input), +0x188
 //    the requested entry, +0x1ae bit 2 the request, +0x1c0 its 2D projection (4 x 4), +0x28 its layout (the name);
 //  - a button: +0x40 bit 4 enabled, +0x58 its root pane (shown), +0x60 the pane its focus frame takes (the box);
 //  - a pane (0xb0 bytes, in its layout's array at +0x100): +0x18 its layout, +0x28 its global matrix (3 x 4 by column:
@@ -49,11 +49,11 @@
 #define UI_SYSTEM_VT 0x4c73ce0ull       // its vtable
 #define MAIN_SIZE 0x4ea0000ull          // main's image, up to the patch page
 
-enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, SM_LEVEL0 = 0xdc, SM_LEVEL1 = 0xe0, FM_GUARD = 0x1f, FM_PLAYERS = 0x22,
+enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, FM_GUARD = 0x1f, FM_PLAYERS = 0x22,
        FM_CONTROL = 0x28 };
 enum { CTL_FOCUSED = 0x78, CTL_RESERVED = 0x80, CTL_FLAGS = 0xb4 };
 enum { ENT_BUTTON = 0x18, ENT_SCREEN = 0x20 };
-enum { SCR_LAYOUT = 0x28, SCR_CONTROLLER = 0x38, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c, SCR_LEVEL = 0x170,
+enum { SCR_LAYOUT = 0x28, SCR_CONTROLLER = 0x38, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c,
        SCR_REQ_ENTRY = 0x188,
        SCR_HIDDEN = 0x1a5, SCR_STATE = 0x1a6, SCR_BLOCK0 = 0x1aa, SCR_BLOCK1 = 0x1ab, SCR_REQUEST = 0x1ae, SCR_PROJ = 0x1c0,
        SCR_OPEN = 2 };
@@ -128,7 +128,7 @@ static int ui_now(Ui *u) {
     return game_object(u->ctl, CTL_FLAGS + 4);
 }
 // The screen part of the game's entry test (main+0x769d70): open, shown, not blocked, its controller taking input
-// (+0x40 bit 1) and its level not below the manager's two floors (a dialog over a menu lifts them): screen_open_why
+// (+0x40 bit 1): screen_open_why
 // Why no screen is for the mouse: one line each time the reason or the objects change (a field that moved in another
 // game build shows here), at most 12 a session, 60 with NX2SARIA_MENU_CURSOR_LOG=1
 static void why_none(const Ui *u, const char *why) {
@@ -152,9 +152,8 @@ static int screen_open_why(uint64_t mgr, uint64_t s) {
     if ((rd8(s + SCR_BLOCK0) & 1) || (rd8(s + SCR_BLOCK1) & 1)) return g_why = "the screen is blocked", 0;
     uint64_t ctl = rd64(s + SCR_CONTROLLER);
     if (!ok_at(ctl, 0x48) || !(rd8(ctl + 0x40) & 2)) return g_why = "the screen's controller takes no input", 0;
-    if (!ok_at(mgr, SM_LEVEL1 + 4)) return g_why = "no manager levels", 0;
-    uint32_t lv = rd32(s + SCR_LEVEL);
-    if (lv < rd32(mgr + SM_LEVEL0) || lv < rd32(mgr + SM_LEVEL1)) return g_why = "the screen's level is below the manager's", 0;
+    (void)mgr;   // (the entry test's level floors, +0x170 against the manager's +0xdc, +0xe0, are not taken: read as u32
+                 // they refused the save files' list while it had the focus; the focused entry is the manager's choice)
     return 1;
 }
 // The screen of the focused entry, 0: none (gameplay)
