@@ -87,7 +87,7 @@ static const char *const known[] = {
     "SHOTS_FULL", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_IDLE", "SPLIT_IN_PASS", "SPLIT_US", "SPV_MARK_TEST", "SPV_OVERRIDE", "STICK_DEADZONE", "STICK_SENS",
     "SWKBD_ANSWER",
     "SET_AT", "SWKBD_TEST", "TAA", "DBG_TEST", "DEBUG_MENU", "MENU_TEST_DEBUG", "FSR4", "FSR4_FG", "FG4_VERSION", "FG4_SWAPCHAIN", "TEST_PAD", "TEST_PAD_AT", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "DEPTH_INIT_INLINE", "DEPTH_ALIAS_LOG", "TEX_DISUSE", "POOL_MARK_SHARED", "TEX_DISUSE_EVICT", "TEX_GEN_UNDO", "TEX_MEMO", "TEX_VRAM_PRESSURE", "TEX_RELEASED_MB", "TEX_RESIDENCY", "TEX_RELEASED_MAX", "TEX_RELEASED_HOLD", "TEX_REUSE", "TEX_SPLIT_FILL", "TEX_COMMIT_FREE_MB", "TEX_PROC_COMMIT_MB", "TEX_EVICT", "TEX_COMMIT_EVICT", "MIRROR_EVICT", "VRAM_BUDGET_MB", "TIMER_1MS", "TRACE", "TXD_TRANSPOSE", "UBO_SNAPSHOT", "EVO_TRACE", "EVENT_AT_SYNC", "UPSCALER", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NAN_PRESERVE", "VK_NOOPT", "VK_NO_FLOAT64",
-    "VK_PRESENT", "VK_RECONVERGE", "VK_NAN_BITS", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS", "WATER_PROJECTIVE",
+    "VK_PRESENT", "VK_RECONVERGE", "VK_NAN_BITS", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_MESH_SUBGROUPS", "VK_MESH_INVARIANT", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS", "WATER_PROJECTIVE",
     "WAIT_WATCH_S", "WALK_KEY", "WALK_SCALE", "WB_EXACT", "WB_FENCE_LIMIT", "WB_MERGE", "WB_NO_REUP", "WB_MERGE_MAX", "WB_PROBE", "WB_SPLIT", "WB_LAZY", "WB_LAZY_CHUNK", "WB_LAZY_TOUCH", "WB_LAZY_UNLOCKED", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_KEEP", "XLATE_PROCS",
     "UPLOAD_BATCH_MB", "VRAM_HEAP_LIMIT", "VRAM_PAGEABLE", "VRAM_RESERVE_MB", "TEX_CLOBBER", "TEX_OVERSIZE_ALIAS", "LOW_END_GPU",
     "ZSTD_CHECK", "ZSTD_NATIVE",
@@ -190,7 +190,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"BIND_SKIP", "performance"}, {"SHADER_CACHE_FLUSH", "performance"}, {"SHADER_CARRY", "performance"}, {"PIPELINE_CACHE_PLAY", "performance"}, {"PIPELINE_CACHE_PLAY_MB", "performance"}, {"PIPELINE_CACHE_STAMP", "performance"}, {"FFX_PIPE_CACHE", "performance"}, {"SHADER_MEMO", "performance"}, {"PIPE_MEMO", "performance"}, {"TEX_MEMO", "performance"}, {"DESC_TEMPLATE", "performance"},
     {"TEX_CLOBBER", "performance"}, {"LOW_END_GPU", "performance"},
     {"PUSH_SKIP", "performance"}, {"SPLIT_DRAWS", "performance"}, {"SPLIT_IDLE", "performance"}, {"SPLIT_IN_PASS", "performance"}, {"SPLIT_US", "performance"}, {"VK_VALIDATION", "performance"},
-    {"VK_DYN_VERTEX", "performance"}, {"VK_DYN_A2C", "performance"}, {"VK_SUBGROUP_PIN", "performance"}, {"VK_RECONVERGE", "performance"},
+    {"VK_DYN_VERTEX", "performance"}, {"VK_DYN_A2C", "performance"}, {"VK_SUBGROUP_PIN", "performance"}, {"VK_MESH_SUBGROUPS", "performance"}, {"VK_MESH_INVARIANT", "performance"}, {"VK_RECONVERGE", "performance"},
     {"VK_NAN_PRESERVE", "performance"}, {"VK_NAN_BITS", "performance"},
     {"DRAW_CRUMBS", "diagnostics"}, {"TRACE", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"PASS_CRUMBS", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"}, {"STUTTER_MAP", "diagnostics"}, {"PAR_JOBS", "performance"}, {"PIPE_RELEASE", "performance"},
     {"FLIGHT_FLASH", "diagnostics"}, {"FLIGHT_FLASH_DIFF", "diagnostics"}, {"FLIGHT_FLASH_CELLS", "diagnostics"},
@@ -494,6 +494,8 @@ static const CfgMeta metas[] = {
     {"VK_VALIDATION", "0", "0|1", RESTART}, {"VK_DYN_VERTEX", "", "0|1", RESTART},
     {"VK_DYN_A2C", "", "0|1", RESTART}, {"VK_SUBGROUP_PIN", "1", "0|1", RESTART},
     {"VK_RECONVERGE", "1", "0|1", RESTART},   // vk_pipeline.c spirv_reconverge
+    {"VK_MESH_SUBGROUPS", "1", "0|1", RESTART},   // vk_pipeline.c mesh_stages_init, stage_sg
+    {"VK_MESH_INVARIANT", "1", "0|1", RESTART},   // vk_pipeline.c spirv_mesh_invariant
     {"VK_NAN_PRESERVE", "", "0|1", RESTART},   // vk_pipeline.c spirv_nan_preserve; unset: every driver but NVIDIA's
     {"VK_NAN_BITS", "", "0|1", RESTART},   // vk_pipeline.c spirv_nan_bits; unset: AMD's driver for RDNA 1 and 2
     {"VK_NOOPT", "", "0|1|mesh", RESTART},   // vk_pipeline.c noopt_flag_for; unset: mesh on AMD's driver for RDNA 1 and 2

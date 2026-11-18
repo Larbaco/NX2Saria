@@ -585,6 +585,13 @@
 # Keep a shader's threads together after divergent code where the game's shaders expect it (maximal reconvergence,
 # when the driver supports it). 0 turns it off; leaves then go missing from the foliage's colour pass.
 # vk_reconverge = 1
+# Task and mesh shaders (the game's ground, plants and fog) run in groups of 32 lanes, as the game's shaders are made
+# for, with every group full. Without it a driver that can also run 16 lanes (Intel Arc) left holes in the fog. 0 leaves
+# the group size to the driver, as earlier versions did. Read at start.
+# vk_mesh_subgroups = 1
+# Mesh shaders compute each position the same way in every draw that uses them, as vertex shaders already did. 0 leaves
+# them as translated, as earlier versions did. Read at start.
+# vk_mesh_invariant = 1
 # Ask the GPU driver to keep NaN, infinity and signed zero in the game's shader maths as the Switch does, 0 or 1.
 # Without it a driver may assume they never occur. The AMD symptoms it is for: Navi drawn without her orb (only her
 # sparkles), black and white blocks on her and on Link, shadows blown up. Default: on, except on NVIDIA's driver,
@@ -602,8 +609,11 @@
 # fps_limit = 40, cores = 4 (the game's six cores share the Deck's four), astc_bc = 1 and spin_handoff_us = 30
 # (starting points, not measured yet). Read at start.
 # device_profile = auto
-# Presentation mode: mailbox (default when the driver offers it, vsync otherwise), fifo (vsync) or immediate. The menu's
-# VSync switch sets mailbox when on and immediate when off.
+# Presentation mode: mailbox (default), fifo (vsync) or immediate. The menu's VSync switch sets mailbox when on and
+# immediate when off. A driver without mailbox (some AMD and Intel drivers) gets relaxed FIFO instead, which waits for
+# the display but shows a late frame at once, and where that is missing too, immediate: no vsync, so the picture can
+# tear. fifo gives strict vsync on every driver, at the cost of the frame rate dropping to half for each frame that
+# misses a refresh. The log's "gfx: present mode" line names the mode in use.
 # vk_present = mailbox
 # Window client area in screen pixels (640x360 to 7680x4320), and borderless fullscreen. Windows display scaling does
 # not apply: at 150% scale, 1920x1080 covers the area 1280x720 covers at 100%. F11 switches fullscreen and saves it

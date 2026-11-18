@@ -436,6 +436,10 @@ static VkPresentModeKHR pick_present_mode(VkPhysicalDevice pd) {
         logged = (int)got;
         rt_log("gfx: present mode %s (NX2SARIA_VK_PRESENT=%s)",
                got == VK_PRESENT_MODE_FIFO_RELAXED_KHR ? "fifo relaxed" : name, e);
+        if (want == VK_PRESENT_MODE_MAILBOX_KHR && got == VK_PRESENT_MODE_IMMEDIATE_KHR)
+            rt_log("gfx: the driver offers neither mailbox nor relaxed FIFO for this window, so VSync on presents "
+                   "immediately: no vsync, the picture can tear. vk_present = fifo gives strict vsync, with the frame rate "
+                   "halved for each frame that misses a refresh");
     }
     return got;
 }
