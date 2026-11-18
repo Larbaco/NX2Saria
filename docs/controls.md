@@ -1,3 +1,7 @@
+<!-- languages -->
+**English** · [Português (Brasil)](pt-BR/controls.md)
+<!-- /languages -->
+
 # Controls
 
 Input comes from SDL3 gamepads, the keyboard and the mouse, merged into one Switch controller (`runtime/input.c`,

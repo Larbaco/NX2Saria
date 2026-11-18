@@ -12,6 +12,7 @@
 </p>
 
 <!-- languages -->
+<p align="center"><strong>English</strong> · <a href="README.pt-BR.md">Português (Brasil)</a></p>
 <!-- /languages -->
 
 <p align="center">

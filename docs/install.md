@@ -1,3 +1,7 @@
+<!-- languages -->
+**English** · [Português (Brasil)](pt-BR/install.md)
+<!-- /languages -->
+
 # Installing and updating NX2Saria
 
 Every release on the [Releases page](https://github.com/Larbaco/NX2Saria/releases) has a Windows setup and a Linux
