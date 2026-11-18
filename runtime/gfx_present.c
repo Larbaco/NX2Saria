@@ -1959,10 +1959,11 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     VkImageLayout last = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     VkPipelineStageFlags2 last_stage = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     VkAccessFlags2 last_write = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    // The menus in the middle 16:9 (widescreen.c wide_menu_sides): while the game draws no 3D scene, the picture's sides
-    // outside its middle 16:9 are cleared to black where the picture went, after the picture itself went there whole as
-    // on any other frame (a smaller crop would change the size of the colour, HDR and FSR passes' images, and each change
-    // waits for the device). The HUD-less picture for frame generation and the menu's pointer (g_pic) keep the whole one.
+    // The menus in the middle 16:9 (wide_bars.c wide_menu_sides): while a pause or system menu, a loading screen or a
+    // movie is up, the picture's sides outside its middle 16:9 are cleared to black where the picture went, after the
+    // picture itself went there whole as on any other frame (a smaller crop would change the size of the colour, HDR and
+    // FSR passes' images, and each change waits for the device). The HUD-less picture for frame generation and the
+    // menu's pointer (g_pic) keep the whole one.
     double sides = src && dst_view ? wide_menu_sides() : 0;
     int side_w = (int)lround(to[2] * sides);
     if (side_w > 0 && 2 * side_w < to[2]) {

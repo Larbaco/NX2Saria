@@ -7,7 +7,7 @@ where the HUD and the menus go from there. Both are read at start and both do no
 | Setting (`nx2saria.ini`, `[display]`) | Environment | Values | Default |
 |---|---|---|---|
 | `wide_hud` | `NX2SARIA_WIDE_HUD` | `center` (the game's layout in the middle 16:9), `edges` (the HUD's corner elements at the picture's sides) | `center` |
-| `wide_menus` | `NX2SARIA_WIDE_MENUS` | `full` (fill the screen: the pause, system, map and loading screens laid out over the whole picture), `center` (black bars: those screens in the middle 16:9, the sides black while the game draws no 3D scene) | `full` |
+| `wide_menus` | `NX2SARIA_WIDE_MENUS` | `full` (fill the screen: the pause, system, map and loading screens laid out over the whole picture), `center` (black bars: those screens in the middle 16:9, the sides black while a pause or system menu, a loading screen or a movie is up) | `full` |
 
 The in-game menu has both on the *Screen* tab, under *Widescreen*: *HUD position* (*Middle 16:9* / *Screen edges*)
 and *Menus* (*Fill the screen* / *Black bars*). They exist only for a picture that is not 16:9: while *Widescreen*
@@ -122,39 +122,47 @@ There is no separate clock, rupee or key HUD in this version: rupees and item co
 
 With `full` (the default) the menus fill the screen: their layouts are laid out over the whole picture, and the
 present clears nothing. With `center` the menus' contents stay in the middle 16:9, the keep list above stays as it
-is, and the present clears the picture's sides outside its middle 16:9 to black while the game draws no 3D scene
-(`widescreen.c` `wide_menu_sides`, `gfx_present.c`, after the picture is put in the window as on any other frame).
-Under the pause menu, the map, a loading screen or a movie the game does not draw the world, so those screens then
-show the middle 16:9 of their whole-width backgrounds, at their own width, and black sides. Squeezing their
-backgrounds instead was the first idea and is left out: the pause background redraws a capture of the whole picture,
-which squeezed would land in the middle at the wrong width (as the item wheel's does), and a loading fade squeezed into
-the middle would leave the scene showing at the sides while it fades in. The loading icon, stretched over the
-whole picture with its layout, would sit in the black side: `wide_hud.c` squeezes it (`LoadingFade_00` `N_IconIn_00`:
-x 1778 and scale x 1 times 16:9 over the picture's ratio, 1323.2 and 0.744 for 3440 x 1440), which puts it in the
-middle 16:9's bottom right corner at its own width, where a squeezed layout would draw it.
+is, and the present clears the picture's sides outside its middle 16:9 to black while a pause or system menu, a
+loading screen or a movie is up (`wide_bars.c` `wide_menu_sides`, `gfx_present.c`, after the picture is put in the
+window as on any other frame). Those screens then show the middle 16:9 of their whole-width backgrounds, at their own
+width, and black sides; the item wheel keeps its sides, the world going on behind it. Squeezing their backgrounds
+instead was the first idea and is left out: the pause background redraws a capture of the whole picture, which squeezed
+would land in the middle at the wrong width (as the item wheel's does), and a loading fade squeezed into the middle
+would leave the scene showing at the sides while it fades in. The loading icon, stretched over the whole picture with
+its layout, would sit in the black side: `wide_hud.c` squeezes it (`LoadingFade_00` `N_IconIn_00`: x 1778 and scale x
+1 times 16:9 over the picture's ratio, 1323.2 and 0.744 for 3440 x 1440), which puts it in the middle 16:9's bottom
+right corner at its own width, where a squeezed layout would draw it.
 
-"The game draws its 3D scene" means either of:
+The signal is the game's own state of the screens behind those menus. Every interface screen is an object whose byte
++0x1a6 says where it is in its life:
 
-- a draw into the scene's light target (B10G11R11) with the scene's depth (D32F) bound, the light target at least a
-  fifth of the picture's width and height (the smallest scene the game's dynamic resolution and DLSS's modes render):
-  `vk_exec_draw.c` `prepare_draw_ex` calls `wide_scene_drawn`, before a draw is skipped for a pipeline that builds;
-- the game's scene upscaler writing that light target, at least half the picture, from a source that is not a movie's
-  RGBA8 frame (`vk_exec_draw.c` `untranslated_dispatch_fallback`).
+| state | set by |
+|---|---|
+| 0 closed | main+0xc60a10 (vtable +0x258), once the screen has closed |
+| 1 opening | main+0x2d62e0, when the screen is asked to open |
+| 2 open | main+0x2cda10 (vtable +0x240) |
+| 3 closing | main+0x2d8af0 (vtable +0x248) |
 
-The sides go black once neither came for more than 3 presents and at least 100 ms, so a frame or two of the replay's
-lag, or a frame without the world at a high frame rate, never shows black sides in play, and come back with the first
-present after a frame that draws the scene. Nothing goes black before the game's first 3D scene (the boot's logos).
+Two classes are watched, by their vtables, the ones the keep list names:
 
-The upscaler alone was the signal at first, and the sides flickered in play: seven times within 400 presents they went
-black for 17 to 69 presents, the world drawn all along. The game draws its scene into one of a few pooled light
-targets of the same size and moves to another whenever its pass list changes (`vk_dlaa.c` `target_changed`). In the
-log every switch to the second target (`dlaa: frame N: the light target changed from A to B`, after `a second scene
-after DLSS ran (4 passes into light target B ...)`) was followed two presents later by `the picture's sides black`,
-and every switch back by `shown again`, while DLSS ran on the scene in each of those frames (`frames 301-600: ... 0
-frames without the DLAA point`). With that pass list the upscaler's stand-in did not count the scene (no source of the
-scene's format, or no dispatch at all). A real pause menu or loading screen is the other kind of frame: `dlaa: frame N
-without the DLAA point: never armed; 0 scene-depth draws`, nothing drawn into a D32F depth of the scene's size, which is
-what the draw test above looks for.
+- main+0x4be4fb0, the pause and system menus' background (`MenuBG_00`, `SystemBG_00`): on (1 to 3) for as long as
+  such a menu is up, so the sides go black as the menu starts to open and come back once it has closed;
+- main+0x4be7b30, the loading fade (`LoadingFade_00`): only while open (2). Its opening and closing are the fade
+  itself, during which black sides would show before the rest of the picture is dark.
+
+A movie (`ov_movie2.c` `ov_movie_live`) blacks the sides by itself. The runtime learns the screens' addresses from the
+patch set `wide_bars` (`recomp/patches-v111.txt`): the screens' setup (main+0x773b90, vtable +0x80, the one that sets
+up the canvas the set `wide_hud` keeps or squeezes) gets a call of the patch page's +0xef0 right after its canvas setup
+(main+0x774064), with the screen in x19, where `wide_bars.c` `wide_bars_screen_host` keeps the screens of those two
+vtables. The setup runs once when the game makes a screen, which lives on from there; a screen the game destroys gets
+another vtable, which the present notices and frees its entry for. The set is switched on only with `center` on a
+picture wider than 16:9, so `full` runs the game's setup as it is and costs nothing. `tests/wide_bars_check.py`
+checks the site as the generator lifts it and plays the present against stand-in screens.
+
+Whether the game drew a 3D scene was the signal before, and does not tell a menu from play: under the pause menu the
+game keeps drawing 3D into a full-size light target with the scene depth (the selected item's model on the items page,
+Link on the equipment page), and DLSS keeps running, so the sides never went black. Its upscaler alone, before that,
+flickered in play whenever the game moved its scene to another of its pooled light targets.
 
 ## The log
 
@@ -168,15 +176,20 @@ At start, with `game_aspect = 21:9` at 1440 lines, `wide_hud = edges` and `wide_
     wide hud: the layout archive edited (the HUD's edge elements 642 units out, the loading icon at 0.749 of its width), 140 fields (16 ms)
     RomFS overlay: <profile>/wide-hud/Common.Product.100.Nin_Ounce_NVN2.blarc.zs (... bytes, the HUD at the picture's edges, the loading icon in the middle 16:9) replaces the original
     ...
-    widescreen: menus center: black bars: the picture's sides black while the game draws no 3D scene (the pause and system menus, the map, loading screens, movies), the loading icon in the middle 16:9's corner
+    widescreen: menus center: black bars: the picture's sides black while a pause or system menu, a loading screen or a movie is up, the loading icon in the middle 16:9's corner
 
-and during the game, at most 16 times a run, with what started and ended it:
+and during the game, the watched screens and their states (at most 48 lines a run):
 
-    widescreen: menus: the picture's sides black from present 5120: no 3D scene drawn for 17 presents (103 ms): a pause or system menu, the map or a loading screen
-    widescreen: menus: the picture's sides shown again at present 5480, after 360 presents black: the game draws its 3D scene (a draw into its light target and depth)
+    widescreen: menus: watching the pause or system menu background (MenuBG_00, SystemBG_00) screen at 0x... (state closed)
+    widescreen: menus: the pause or system menu background (MenuBG_00, SystemBG_00) screen at 0x...: closed -> opening at present 2402
 
-While a movie plays the first line ends `: a movie plays`, and the scene's return names the upscaler when that came
-first (`its upscaler wrote the light target`).
+and the sides, at most 24 times a run, with what started and ended it:
+
+    widescreen: menus: the picture's sides black from present 2402: a pause or system menu is up (its background on)
+    widescreen: menus: the picture's sides shown again at present 4020, after 1618 presents black: the menu's background screen closed
+
+A loading screen says `a loading screen is up (the loading fade open)` and `the loading fade closed`, a movie `a movie
+plays` and `the movie ended`. Without the set in the generated C the start says so, and only a movie blacks the sides.
 
 With the defaults, or at 16:9, the start still says what is in effect:
 

@@ -648,8 +648,8 @@
 # minimap with its key counter and the rupee count on the right. Read at start.
 # wide_hud = center
 # The pause menu, system menu, map and loading screens on such a picture: full fills the screen, their layouts laid
-# out over the whole picture; center keeps them in the middle 16:9 with black bars at the sides, which show while the
-# game draws no 3D scene (the pause and system menus, the map, loading screens and movies). Both do nothing at 16:9.
+# out over the whole picture; center keeps them in the middle 16:9 with black bars at the sides, which show while a
+# pause or system menu, a loading screen or a movie is up. Both do nothing at 16:9.
 # Read at start.
 # wide_menus = full
 # 3D render scale: the scene's size relative to the game resolution, game (5/6, the game's own 1600x900 at 1080p) or

@@ -633,6 +633,14 @@ do, refusals that leave the file as it was (each check of `docs/wide-hud.md`), e
 archive. `--romfs` also runs it on the game's own archive for six shapes of picture, alone and after the action
 prompt's edit: 132 words changed, all of them where the 1.1.1 files have the moved fields.
 
+A change to the menus' black bars (`runtime/wide_bars.c`, `wide_menus = center`) or to the set `wide_bars` in
+`recomp/patches-v111.txt` passes `python tests\wide_bars_check.py`. It lifts the set's one site as the generator does
+(the screen setup's load kept, then a call of the patch page's +0xef0, a slot no other set or host function uses), then
+builds `wide_bars.c` with the rest of the runtime stubbed and plays presents against stand-in screens: black sides for
+a menu background from opening to closed, an open loading fade and a movie, none for other screens, destroyed screens
+dropped, a full table logged once, every register kept by the host function, and a start without the set. No game
+files.
+
 A change to what the library warm logs when the driver's cache of stage libraries is cold (`runtime/vk_warm_hint.h`,
 `runtime/vk_pipeline.c` `lw_main`) passes `python tests\warm_hint_check.py`, which builds the header alone and checks
 the added text by GPU vendor and by why the cache was cold. No game files.

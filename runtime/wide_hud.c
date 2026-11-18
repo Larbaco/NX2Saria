@@ -23,7 +23,7 @@
 //   right, where it stays next to the item slot.
 //
 // With NX2SARIA_WIDE_MENUS = center the loading screen keeps the whole picture (its fade must cover it), and the present
-// blacks out the picture's sides while the game draws no 3D scene (widescreen.c wide_menu_sides). Its icon,
+// blacks out the picture's sides while that screen is open (wide_bars.c wide_menu_sides). Its icon,
 // LoadingFade_00's N_IconIn_00 (1778: bottom right), would be stretched over the whole picture with its layout and land in
 // that black side: its x and scale x are multiplied by 16:9 over the picture's ratio (the squeeze), which puts it in
 // the bottom right corner of the middle 16:9 at its own width, where a squeezed layout would draw it.
