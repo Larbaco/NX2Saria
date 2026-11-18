@@ -637,18 +637,53 @@ PICTURE_POINTERS = (0x00, 0x20, 0x48, 0x50, 0x58, 0x60)   # its offsets that poi
 MATERIAL_RECORD = 0x40
 SECTION_POOL = 0xd0                  # the second BFSI section (StringPool): +0x08 its size
 FILE_SIZE = 0x08
-HASH_SEED = 0x5157_4944_4548_5544    # made-up names' hashes: FNV-1a from this seed (they only need to differ)
+MATERIAL_EXTRA = 0x300               # a u32 array, one per material (+0x08 its count, +0x0c its stride, 4)
+PART_PANE, CAPTURE_PANE = 0x40, 0x04 # the u32 pane index a part's and a capture's record hold
+M64 = 0xFFFFFFFFFFFFFFFF
+K0, K1, K2 = 0xc3a5c85c97cb3127, 0xb492b66fbe98f273, 0x9ae16a3b2f90404f
 
 
 def _align(n, a=8):
     return (n + a - 1) // a * a
 
 
+def _rot(v, s):
+    return ((v >> s) | (v << (64 - s))) & M64 if s else v
+
+
+def _len16(u, v, mul):
+    a = ((u ^ v) * mul) & M64
+    a ^= a >> 47
+    b = ((v ^ a) * mul) & M64
+    b ^= b >> 47
+    return (b * mul) & M64
+
+
 def name_hash(name):
-    h = HASH_SEED
-    for c in name.encode():
-        h = ((h ^ c) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
-    return h
+    """The 64-bit hash each table keeps beside a name, which the game's lookup by name compares: CityHash64 of the
+    name's bytes (names up to 32 bytes; every layout name is shorter)."""
+    s = name.encode()
+    n = len(s)
+    q = lambda o: struct.unpack_from('<Q', s, o)[0]
+    if n > 32:
+        raise SpecError(f'name {name!r} is longer than the 32 bytes name_hash covers')
+    if n > 16:
+        mul = (K2 + n * 2) & M64
+        a, b = (q(0) * K1) & M64, q(8)
+        c, d = (q(n - 8) * mul) & M64, (q(n - 16) * K2) & M64
+        return _len16((_rot((a + b) & M64, 43) + _rot(c, 30) + d) & M64, (a + _rot((b + K2) & M64, 18) + c) & M64, mul)
+    if n >= 8:
+        mul = (K2 + n * 2) & M64
+        a, b = (q(0) + K2) & M64, q(n - 8)
+        return _len16((_rot(b, 37) * mul + a) & M64, ((_rot(a, 25) + b) * mul) & M64, mul)
+    if n >= 4:
+        mul = (K2 + n * 2) & M64
+        return _len16((n + (struct.unpack_from('<I', s, 0)[0] << 3)) & M64, struct.unpack_from('<I', s, n - 4)[0], mul)
+    if n:
+        y, z = (s[0] + (s[n >> 1] << 8)) & M64, (n + (s[n - 1] << 2)) & M64
+        v = ((y * K2) ^ (z * K0)) & M64
+        return ((v ^ (v >> 47)) * K2) & M64
+    return K2
 
 
 def split_picture(layout, op, out):
@@ -704,6 +739,10 @@ def split_picture(layout, op, out):
         return (t0 + t1) / 2, t1 - t0, sx * (su1 - su0), tx + ((su0 + su1) / 2 - 0.5) * sx
 
     # renumber what follows the pane, in place, before anything is appended
+    for slot, field in ((TABLES['parts'], PART_PANE), (TABLES['captures'], CAPTURE_PANE)):
+        for _n, rec in layout.table(slot):
+            if u32(d, rec + field) > i:
+                struct.pack_into('<I', d, rec + field, u32(d, rec + field) + extra)
     for q in layout.panes:
         if q.parent > i:
             struct.pack_into('<i', d, q.at + PANE_PARENT, q.parent + extra)
@@ -787,9 +826,19 @@ def split_picture(layout, op, out):
     tables = [new_table(TABLES['panes'], new_panes, i + 1),
               new_table(TABLES['pictures'], new_pics, len(pics)),
               new_table(TABLES['materials'], new_mats, len(mats))]
+    # the per-material u32 array grows with the materials: each new one takes the piece's source material's value
+    extra_at, extra_n, stride = u64(d, MATERIAL_EXTRA), u32(d, MATERIAL_EXTRA + 8), u32(d, MATERIAL_EXTRA + 12)
+    grown = None
+    if extra_at:
+        if extra_n != len(mats) or stride != 4:
+            raise SpecError(f'{layout.name}: its per-material array holds {extra_n} entries of {stride} bytes')
+        values = [u32(d, extra_at + 4 * j) for j in range(extra_n)] + [u32(d, extra_at + 4 * mat_index)] * extra
+        grown = put(b''.join(struct.pack('<I', v) for v in values))
     d += b'\0' * (base - len(d)) + blob
     for slot, lists, count in tables:
         struct.pack_into('<QQQI', d, slot, *lists, count)
+    if grown is not None:
+        struct.pack_into('<QI', d, MATERIAL_EXTRA, grown, len(mats) + extra)
     pool_start = u64(d, SECTION_POOL + 0x10)
     struct.pack_into('<I', d, SECTION_POOL + 8, len(d) - pool_start)
     struct.pack_into('<I', d, FILE_SIZE, len(d))

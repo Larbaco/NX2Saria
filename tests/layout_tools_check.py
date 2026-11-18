@@ -220,6 +220,10 @@ def split_layout():
 
 
 def check_split():
+    # the names' hash, CityHash64, on names of the game's layouts (both of its short-name branches and the 17-32 one)
+    for name, want in (('RootPane', 0x55a7ab4a9d264968), ('N_All_00', 0x7b2f820ba988bfbc),
+                       ('P_MenuBg_00', 0x8fb0748a44554936), ('P_Equipment3DFade_00', 0x8a617cf9dbbc0ad)):
+        check(ld.name_hash(name) == want, f'name_hash({name}) = {ld.name_hash(name):#x}, not {want:#x}')
     lay = ld.Layout('Split', bytearray(split_layout()))
     pieces = [{'src': [0, 400], 'at': [0, 400], 'f': [1, 1]},       # the left part, moved by out
               {'src': [390, 410], 'at': [400, 400], 'f': [1, 2]},   # a seam over the gap the next piece's move opens
@@ -249,6 +253,8 @@ def check_split():
     check(ld.u32(d, ld.FILE_SIZE) == len(d) and ld.u64(d, ld.SECTION_POOL + 0x10) + ld.u32(d, ld.SECTION_POOL + 8) ==
           len(d), 'split: file and string pool sizes cover the new records')
     check(len(lines) == 3, f'split: {len(lines)} lines')
+    hashes = ld.u64(d, ld.TABLES['panes'] + 16)
+    check([ld.u64(d, hashes + 8 * j) for j in range(6)] == [ld.name_hash(n) for n in names], 'split: pane name hashes')
     # what the split refuses: a pane with children, a rotated or scaled picture, a piece outside the picture
     for bad, what in (({'op': 'split', 'pane': 'N_Strip', 'pieces': pieces}, 'a group'),
                       ({'op': 'split', 'pane': 'P_Bg', 'pieces': [{'src': [-50, 400], 'at': [0, 400], 'f': [0, 0]}]},
