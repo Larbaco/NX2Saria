@@ -198,12 +198,13 @@ activity screenshot, which needs a process id the API does not give (it stays of
 
 ## Pull requests
 
-Drafts in [hyrule-tracker-prs.md](hyrule-tracker-prs.md). None is open.
+Both opened on 2026-11-18 (drafts in [hyrule-tracker-prs.md](hyrule-tracker-prs.md)):
 
-1. **Fork:** the game data on the tracker API, ready on this branch, based on `main` (the API it extends is there since
-   0.16.0).
-2. **hyrule-tracker:** NX2Saria as a live source and its saves; the patch above. It waits for the copyright holder's
-   decision to contribute it, and nothing was opened or posted in the tracker's repository.
+1. **Fork:** [NX2Saria#8](https://github.com/Larbaco/NX2Saria/pull/8), the game data on the tracker API and the save
+   folder in `status`, from this branch, based on `main` (the API it extends is there since 0.16.0).
+2. **hyrule-tracker:** [jv-prado/hyrule-tracker#8](https://github.com/jv-prado/hyrule-tracker/pull/8), NX2Saria as a
+   live source and its saves: the patch above, against v1.4.2. It needs a release of NX2Saria with #8; until then the
+   tracker does not take NX2Saria for a live source and goes on as before.
 
 ## The API: one for both trackers
 

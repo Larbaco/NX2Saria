@@ -1,7 +1,11 @@
 # Pull request drafts for hyrule-tracker support
 
-Two drafts. Neither is open. The fork's is ready on the branch `hyrule-tracker-integration`. The tracker's waits for
-the copyright holder's decision to contribute it. Background: [hyrule-tracker.md](hyrule-tracker.md).
+The two pull requests as drafted. Both were opened on 2026-11-18, after the bench runs and a test of the tracker's app:
+the fork's as [NX2Saria#8](https://github.com/Larbaco/NX2Saria/pull/8), the tracker's as
+[jv-prado/hyrule-tracker#8](https://github.com/jv-prado/hyrule-tracker/pull/8) (from `Larbaco/hyrule-tracker`, branch
+`nx2saria-tracker-api`: the patch in two commits, with a description in Portuguese and English as the tracker's earlier
+pull request had). The texts below are the drafts; the pull requests carry the final ones. Background:
+[hyrule-tracker.md](hyrule-tracker.md).
 
 ## 1. Fork (Larbaco/NX2Saria): the game data on the tracker API
 
