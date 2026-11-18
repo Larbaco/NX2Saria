@@ -1010,6 +1010,15 @@ change passes these, all run with `.venv`:
 A `--cpu v2` build passes the same differential tests with `--cflags=-march=x86-64-v2`; they compile `runtime/fma.c`
 too, so they check the software fma the v2 build links rather than the C runtime's.
 
+A change to how `recomp/gen.py` groups functions into chunks (`estimate_costs`, `partition`) changes which file each
+function lands in, never its text. `python tools/lift_compare.py OLD_LIFT NEW_LIFT` on a lift from before and one from
+after the change proves it: each module's functions are the same, each defined once with the same text byte for byte,
+exactly the addresses of its function table, every call in a chunk has its prototype, nothing but includes, comments
+and declarations comes before a chunk's first function, and the function tables, `layout.h`, `layout.json` and
+`patches.h` are identical. A lift `tools/make_game.py` made carries its two bring-up fixes in `sdk`, so compare it with
+one made the same way. `python tests/lift_compare_test.py` checks the comparison itself on made-up lifts, and
+`tests/gen_partition_test.py` (`.venv`) the chunking. No game files for either.
+
 On NVIDIA Linux, `NX2SARIA_DLAA=1 ./ocarina --probe-vkdevice` logs NGX initialization and shutdown when available.
 
 Runtime probes, each a mode of `nx2saria.exe` (the list is at the top of `runtime/main.c`): `--probe-kernel`,
