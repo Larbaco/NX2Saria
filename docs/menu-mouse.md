@@ -67,8 +67,10 @@ moved out to the edge is hit where it is drawn; with `center` the pointer over t
 The pointer shows only while keyboard and mouse are the device used last (`input_kbm_last`). A gamepad player sees the
 menus unchanged and keeps the capture. While the pointer shows, `input_cursor_allowed` is false, so the capture is
 released and the mouse camera gets no counts. The bound mouse buttons (Y, ZL) never reach the game, because
-`poll_merged` drops mouse buttons while the cursor is not captured. When no menu has had the focus for 200 ms
-(gameplay, a movie), the pad read takes the pointer away and the camera captures again. While the settings overlay or
+`poll_merged` drops mouse buttons while the cursor is not captured. When no menu has had the focus for 350 ms
+(gameplay, a movie), the pad read takes the pointer away and the camera captures again. A focus still on a screen
+that opens or closes counts as a menu, so going from one menu to the next keeps the pointer; when it does go for a
+moment, it comes back where the player left it instead of on the focused button. While the settings overlay or
 a text entry is open, the host function does nothing: the overlay has the mouse.
 
 ## Log
@@ -81,7 +83,7 @@ a text entry is open, the host function does nothing: the overlay has the mouse.
 - `menu_mouse: <name>: focus moved H, left clicks C (A a, on no button m), right clicks (B) b, wheel notches w; hit
   test h on a button, o off`: when the focus leaves a menu the mouse was used in, for another screen or for none
   (at most 48 a session).
-- `menu_mouse: no menu for 200 ms: the pointer hidden, the mouse back to the camera`: the menus closed while the
+- `menu_mouse: no menu for 350 ms: the pointer hidden, the mouse back to the camera`: the menus closed while the
   pointer showed (the first 8 times).
 - `menu_mouse: no menu for the mouse: <reason> (...)`: why no screen is for the mouse, each time the reason or the
   objects change (12 lines; 60 with `NX2SARIA_MENU_CURSOR_LOG=1`). In play it says `no focused entry`.

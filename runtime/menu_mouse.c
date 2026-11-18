@@ -222,7 +222,10 @@ enum { P_A, P_B, P_UP, P_DOWN, P_COUNT };
 static const int press_bit[P_COUNT] = {B_A, B_B, B_UP, B_DOWN};
 static volatile int32_t pending[P_COUNT];
 static volatile int32_t g_pointer;           // a menu has the pointer: input_cursor_allowed releases the capture
-static volatile uint64_t g_active_ms;        // the last interface update that found a menu for the mouse
+static volatile uint64_t g_active_ms;        // the last interface update that found a menu for the mouse, or a focus
+                                             // on a screen that opens or closes (between two menus)
+static volatile uint64_t g_hidden_ms;        // when the pad read last hid the pointer
+#define IDLE_MS 350                          // no menu that long: the pointer goes back to the camera
 
 int menu_mouse_pointer(void) { return __atomic_load_n(&g_pointer, __ATOMIC_RELAXED); }
 
@@ -292,6 +295,9 @@ void menu_mouse_screen_host(Cpu *c) {
     uint64_t focused = 0, fs = 0;
     if (!ui_now(&u)) { input_menu_wheel_take(); return; }
     if (!(fs = focus_screen(&u, &focused))) {   // no menu has the focus: the last one's line now
+        // (a focus still on a screen that opens or closes keeps the pointer: one menu giving way to the next)
+        if (game_object(rd64(u.ctl + CTL_FOCUSED), ENT_SCREEN + 8))
+            __atomic_store_n(&g_active_ms, plat_now_ms(), __ATOMIC_RELEASE);
         why_none(&u, g_why);
         input_menu_wheel_take();
         if (last_screen) stats_flush(last_name, &st), last_screen = 0;
@@ -347,7 +353,9 @@ void menu_mouse_screen_host(Cpu *c) {
         MmBox b;
         float r[4];
         uint64_t btn = rd64(focused + ENT_BUTTON);
-        if (pos != 2 && ok_at(btn, BTN_BOX + 8) && pane_box(rd64(btn + BTN_BOX), &b) && gfx_picture_rect(r)) {
+        // (not when it was hidden only a moment ago, between two menus: it stays where the player left it)
+        int moment = (int64_t)(now - __atomic_load_n(&g_hidden_ms, __ATOMIC_RELAXED)) < 1500;
+        if (pos != 2 && !moment && ok_at(btn, BTN_BOX + 8) && pane_box(rd64(btn + BTN_BOX), &b) && gfx_picture_rect(r)) {
             float fx, fy;
             mm_to_picture((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, ux, uy, &fx, &fy);
             ikb_pointer_set(r[0] + fx * r[2], r[1] + fy * r[3]);
@@ -417,10 +425,11 @@ void menu_mouse_poll(uint64_t *buttons) {
                set < 0 ? "missing from this build" : rt_patch_enabled(set) ? "on" : "off");
     }
     uint64_t active = __atomic_load_n(&g_active_ms, __ATOMIC_ACQUIRE), now = plat_now_ms();
-    // No menu for the mouse for 200 ms (gameplay, a movie, the overlay): the pointer goes, the camera takes the mouse
-    if (menu_mouse_pointer() && (int64_t)(now - active) > 200) {
+    // No menu for the mouse for IDLE_MS (gameplay, a movie, the overlay): the pointer goes, the camera takes the mouse
+    if (menu_mouse_pointer() && (int64_t)(now - active) > IDLE_MS) {
         static int lines;
-        if (lines++ < 8) rt_log("menu_mouse: no menu for 200 ms: the pointer hidden, the mouse back to the camera");
+        if (lines++ < 8) rt_log("menu_mouse: no menu for %d ms: the pointer hidden, the mouse back to the camera", IDLE_MS);
+        __atomic_store_n(&g_hidden_ms, now, __ATOMIC_RELAXED);
         set_pointer(0);
         for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
     }
