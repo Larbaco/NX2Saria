@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=141a24538b667915f871fbbf518daaabba09ea67 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=c68aa705240b333abc792fc7d1285e532ba5594a reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -416,6 +416,28 @@ botão de corrida `b` retém enquanto o Link se move: nesse caso, use `l3`. As f
 de patches em +0xf40 e +0xf30. O conjunto só roda enquanto um botão está escolhido, então com o botão de corrida
 desligado os pontos dele não custam nada. `NX2SARIA_SPRINT_BUTTON_PATCH=0` (ou um mod cujo código altera os mesmos
 pontos) mantém o conjunto de patches desligado e esconde as linhas.
+
+## Giroscópio
+
+O jogo lê o giroscópio e o acelerômetro do controle como o sensor de seis eixos do Switch e mira com eles o estilingue,
+o arco, o hookshot e o bumerangue. Qualquer controle que o SDL apresente com giroscópio e acelerômetro funciona: um
+Switch Pro Controller, um par de Joy-Con (os sensores do Joy-Con direito), um DualSense ou um DualShock 4. O grupo
+*Giroscópio* na aba Controles reúne as configurações, todas aplicadas na hora (`runtime/input.c`
+`motion_options_refresh`, `runtime/motion_fusion.c`):
+
+| Configuração | Linha | Valores |
+|---|---|---|
+| `motion` | *Controles de movimento* | `1` (padrão) ou `0`: o sensor lê um controle parado |
+| `gyro_calibration` | *Calibração do giroscópio* | `1` (padrão): a leitura do giroscópio em repouso, o seu viés, é aprendida sempre que o controle fica parado por um momento e subtraída, para que a mira não derive; `0` passa as leituras como o controle as envia |
+| `gyro_deadzone` | *Zona morta do giroscópio* | giros mais lentos que o nível contam como nenhum: `off`, `low` (padrão, 0,002 rotação por segundo, 0,72°/s), `standard` (0,007) ou `high` (0,01), os três níveis de deriva zero do console |
+| `gyro_turn_sens`, `gyro_turn_invert` | *Sensibilidade horizontal*, *Inverter horizontal* | porcentagem (10 a 400, padrão 100) do giro em torno do eixo vertical do mundo, ou seja, a mira para a esquerda e a direita; `1` a inverte |
+| `gyro_tilt_sens`, `gyro_tilt_invert` | *Sensibilidade vertical*, *Inverter vertical* | porcentagem (10 a 400, padrão 100) do resto da rotação, a mira para cima e para baixo; `1` a inverte |
+
+Depois de conectar o controle, deixe-o parado por um segundo, numa mesa, por exemplo: o log então diz `motion: bias
+learned +0.31/-0.12/+0.05 deg/s after 1500 ms still ("Nintendo Switch Pro Controller", calibration 1)`, e o viés é
+aprendido de novo cada vez que o controle fica parado. Cada controle guarda o seu. Se nada tiver sido aprendido após 30 s
+de jogo, o log diz `motion: no still moment yet on "...": set the controller down for a second so its gyro bias is
+learned`. Como funciona e o que significa cada linha do log: [Gyro](../gyro.md) (em inglês).
 
 ## Controles do Nintendo Switch 2
 

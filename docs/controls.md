@@ -194,7 +194,7 @@ The game reads the controller's gyroscope and accelerometer as the Switch's six-
 | `gyro_turn_sens`, `gyro_turn_invert` | *Turn sensitivity*, *Invert turn* | percent (10 to 400, default 100) of the turn about the world's up, that is left and right aim; `1` inverts it |
 | `gyro_tilt_sens`, `gyro_tilt_invert` | *Tilt sensitivity*, *Invert tilt* | percent (10 to 400, default 100) of the rest of the rotation, up and down aim; `1` inverts it |
 
-Set the controller down for a second after connecting it, on a table or your lap: the log then says `motion: bias learned +0.31/-0.12/+0.05 deg/s after 1500 ms still ("Nintendo Switch Pro Controller", calibration 1)`, and the bias is learned again each time the controller lies still. Each controller keeps its own. If nothing has been learned after 30 s of play the log says `motion: no still moment yet on "...": set the controller down for a second so its gyro bias is learned`. How it works and what each log line means: [Gyro](gyro.md).
+Set the controller down for a second after connecting it, on a table, say: the log then says `motion: bias learned +0.31/-0.12/+0.05 deg/s after 1500 ms still ("Nintendo Switch Pro Controller", calibration 1)`, and the bias is learned again each time the controller lies still. Each controller keeps its own. If nothing has been learned after 30 s of play the log says `motion: no still moment yet on "...": set the controller down for a second so its gyro bias is learned`. How it works and what each log line means: [Gyro](gyro.md).
 
 ## Nintendo Switch 2 controllers
 

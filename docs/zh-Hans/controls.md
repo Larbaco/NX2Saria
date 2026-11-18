@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=141a24538b667915f871fbbf518daaabba09ea67 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=c68aa705240b333abc792fc7d1285e532ba5594a reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -169,6 +169,20 @@ bind_Y = pad:north, key:mouse_l
 ## 冲刺按键
 
 在 1.1.1 上，`NX2SARIA_SPRINT_BUTTON`（`sprint_button`，操作标签页中的 *Sprint button* 行，实时生效）提供一个按键，让 Link 不必先翻滚就能冲刺：`l3`（左摇杆按下，它唯一的其他用途是在对话中隐藏文本框）、`b`（游戏的 B 按键，即 Nintendo 布局下方的正面按键），或 `off`（默认）。`NX2SARIA_SPRINT_MODE`（`sprint_mode`，*Sprint mode* 行）为 `toggle`（默认：按一下开始冲刺，再按一下结束）或 `hold`（按住按键时 Link 冲刺）。当 Link 的输入标志包含冲刺输入时，他就会冲刺；`recomp/patches-v111.txt` 中的补丁集 `sprint` 会在 Link 的移动更新以及随后加载这些标志的姿态更新之后调用 `runtime/sprint.c`，冲刺开启期间，宿主函数会添加冲刺输入，因此运行的是游戏自己的冲刺，带有它的速度、动画和镜头。切换式冲刺会在跳跃、滑行、翻滚和落地中持续，并在 Link 处于其他任何状态时（攻击、使用道具、游泳、攀爬、过场动画）、按住 ZL 时，或者静止站立四个 60 Hz 帧后（如果是在站立时按下、Link 还没移动过，则为九十帧）结束，与帧率无关。在游玩期间（Link 的更新在最近八次控制器轮询内运行过，并且没有对话之类的事件在进行），该按键不会传给游戏，因此不会同时触发它自己的动作；B 的按下只有在 Link 移动时开始才会被拦截，并且一直拦截到松开为止，因此在其他情况下 B 会像平常一样收起武器，游戏也永远不会只收到半次按下。在设置菜单、游戏菜单、对话或过场动画中，每个按键都保持原有作用（L3 隐藏文本框），在那里的按下也不会开始冲刺（B 关闭暂停菜单）。当游戏的 Swap Jump Controls 开启时，B 是跳跃，而 Link 移动时 `b` 冲刺按键会把它拦截下来：这时请使用 `l3`。该补丁集的宿主函数位于补丁页的 +0xf40 和 +0xf30。只有选择了按键时该补丁集才会运行，因此冲刺按键关闭时，它的补丁位置没有任何开销。`NX2SARIA_SPRINT_BUTTON_PATCH=0`（或者一个代码补丁修改了相同位置的模组）会让该补丁集保持关闭，并隐藏这些行。
+
+## 陀螺仪
+
+游戏把手柄的陀螺仪和加速度计当作 Switch 的六轴传感器读取，并用它瞄准弹弓、弓、钩爪和回旋镖。任何 SDL 能识别出陀螺仪和加速度计的手柄都可以：Switch Pro 手柄、一对 Joy-Con（使用右侧 Joy-Con 的传感器）、DualSense 或 DualShock 4。操作标签页中的 *陀螺仪* 分组包含其设置，全部实时生效（`runtime/input.c` `motion_options_refresh`、`runtime/motion_fusion.c`）：
+
+| 设置 | 行 | 取值 |
+|---|---|---|
+| `motion` | *体感操作* | `1`（默认）或 `0`：传感器读数为静止放置的手柄 |
+| `gyro_calibration` | *陀螺仪校准* | `1`（默认）：手柄静止片刻时，就记下陀螺仪的静止读数（即其偏差）并将其减去，使准星不漂移；`0` 按手柄发送的原样传递读数 |
+| `gyro_deadzone` | *陀螺仪死区* | 慢于所选档位的转动视为不动：`off`、`low`（默认，每秒 0.002 圈，0.72°/s）、`standard`（0.007）或 `high`（0.01），即主机的三档零漂移级别 |
+| `gyro_turn_sens`、`gyro_turn_invert` | *转向灵敏度*、*反转转向* | 绕世界竖直轴转动（即左右瞄准）的百分比（10 到 400，默认 100）；`1` 将其反转 |
+| `gyro_tilt_sens`、`gyro_tilt_invert` | *倾斜灵敏度*、*反转倾斜* | 其余转动（即上下瞄准）的百分比（10 到 400，默认 100）；`1` 将其反转 |
+
+连接手柄后，把它放在桌上等处静置一秒：日志随后显示 `motion: bias learned +0.31/-0.12/+0.05 deg/s after 1500 ms still ("Nintendo Switch Pro Controller", calibration 1)`，并且每当手柄静止时都会重新记下偏差。每个手柄各自保存自己的偏差。如果游玩 30 秒后仍未记下任何偏差，日志会显示 `motion: no still moment yet on "...": set the controller down for a second so its gyro bias is learned`。工作原理以及每行日志的含义：[Gyro](../gyro.md)（英文）。
 
 ## Nintendo Switch 2 手柄
 
