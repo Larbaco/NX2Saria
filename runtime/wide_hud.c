@@ -1077,8 +1077,10 @@ int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift
                 snprintf(why, why_n, "out of memory");
                 return -1;
             }
-            rt_log("wide menus: %s; %s keeps the game's menu layout%s", why_full, plans[i].layout,
-                   g ? " (the HUD's edit of it goes ahead)" : "");
+            // said once the HUD's own trial is known: when it fails too, the whole archive stays as it is
+            if (r)
+                rt_log("wide menus: %s; %s keeps the game's menu layout%s", why_full, plans[i].layout,
+                       g ? " (the HUD's edit of it goes ahead)" : "");
         }
         if (!r) return -1;
         groups[i] = g;

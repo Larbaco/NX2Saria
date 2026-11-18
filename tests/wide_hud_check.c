@@ -1117,10 +1117,11 @@ static void check_menu_counts(void) {
     int n = wide_hud_counts_of(1, c, 32), nh = wide_hud_counts_of(0, h, 32);
     static const struct { const char *layout; int panes, keys; } want[] = {
         {"MapMenu_00", 11, 0},     {"LoadingFade_00", 1, 0}, {"MenuOverlay_00", 8, 0},
-        {"PlusMenu_00", 19, 32},   {"PaItemMenu_00", 2, 3},  {"PaShortCutSlideList_00", 2, 0},
+        {"PlusMenu_00", 16, 32},   {"PaItemMenu_00", 2, 3},  {"PaShortCutSlideList_00", 2, 0},
         {"PaCollectMenu_00", 2, 3}, {"SystemActionGuide_00", 2, 2},
     };
-    CHECK(n == 18 && !count_of(c, n, "PlayerStatus_00") && !count_of(c, n, "NumDisplay_00"),
+    CHECK(n == 19 && count_of(c, n, "TitleMenuBG_00") && !count_of(c, n, "PlayerStatus_00") &&
+              !count_of(c, n, "NumDisplay_00"),
           "wide_hud_counts_of(1): %d layouts", n);
     for (size_t i = 0; i < sizeof want / sizeof *want; i++) {
         const WideHudCount *k = count_of(c, n, want[i].layout);
@@ -1568,9 +1569,9 @@ static void check_menus_archive(void) {
     memcpy(keep, b, n);
     nlog = 0;
     r = wide_hud_archive(b, n, HUD_FULL(660, 660), why, sizeof why);
+    // the HUD's part fails too: the archive stays as it is, and no line says the HUD's edit goes ahead
     CHECK(r == -1 && !memcmp(b, keep, n) && strstr(why, "MapMenu_00 N_MiniMapCap_00 x is 1400, not 1470") &&
-              log_find("wide menus: MapMenu_00 N_MiniMapCap_00 x is 1400, not 1470; MapMenu_00 keeps the game's menu "
-                       "layout (the HUD's edit of it goes ahead)"),
+              !log_find("wide menus: MapMenu_00 N_MiniMapCap_00 x is 1400, not 1470; MapMenu_00 keeps"),
           "menus archive, MapMenu_00's HUD not fitting: %d (%s; last: %s)", r, why, last_log());
     by[1] = NULL;
     free(f);
