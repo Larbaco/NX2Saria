@@ -748,6 +748,46 @@ static void restbl_overlay(void) {
                "added files estimated), %.0f ms", tables, merged, raised, estimated, (now_s() - t0) * 1000);
 }
 
+// The resource size table with the entry of rel (a file of the game's that a change of ours serves larger: its
+// decompressed size from was to now) raised to hold it (restbl.c restbl_fit: the growth added to the entry the table
+// served has, a mod's higher merged entry included), served in its place and written to <profile>/<sub>/. The game
+// sizes the buffer it reads a file into from its entry, so a larger file needs a larger one. Runs after
+// restbl_overlay, whose table, when it served one, is the one raised. 1 when served, 0 with why.
+static int restbl_room(const char *rel, uint64_t was, uint64_t now, const char *sub, char *why, size_t why_n) {
+    static const char keeps[] = "the file it would size keeps its own size";
+    char key[300];
+    uint32_t from = 0, to = 0;
+    Overlay *base;
+    size_t zn = 0, rn = 0;
+    if (!restbl_rel[0]) {
+        snprintf(why, why_n, "the RomFS has no resource size table");
+        return 0;
+    }
+    void *z = read_served(restbl_rel, &base, &zn, keeps);
+    Restbl *t = z ? restbl_unpack(z, zn) : NULL;
+    free(z);
+    restbl_key(rel, key, sizeof key);
+    int ok = t && restbl_fit(t, key, was, now, &from, &to) && to >= now;
+    uint8_t *raw = ok ? restbl_write(t, &rn) : NULL;
+    restbl_free(t);
+    size_t cap = raw ? ZSTD_compressBound(rn) : 0;
+    void *out = raw ? malloc(cap) : NULL;
+    zn = out ? ZSTD_compress(out, cap, raw, rn, 3) : 0;
+    free(raw);
+    if (!out || ZSTD_isError(zn)) {
+        free(out);
+        snprintf(why, why_n, "%s cannot be read, raised or packed again", restbl_rel);
+        return 0;
+    }
+    if (!serve_generated(restbl_rel, base, out, zn, sub, "a larger file's resource size", keeps)) {
+        snprintf(why, why_n, "%s cannot be written", restbl_rel);
+        return 0;
+    }
+    rt_log("RomFS: resource size table: %s raised %u -> %u for the file's %llu -> %llu bytes", key, from, to,
+           (unsigned long long)was, (unsigned long long)now);
+    return 1;
+}
+
 // The HeapDef table a bigger game resolution needs (resolution.c): its texture heap and that heap's parent grow. The
 // base is an overlay that replaces the table (a mod's heap sizes stay), else the RomFS original; the grown table is
 // written to <profile>/resolution/ and served in the base's place. Switch titles name it for NX, Switch 2 ones
@@ -864,6 +904,20 @@ static void wide_hud_overlay(void) {
         void *in = read_served(rel, &base, &n, keep), *z = NULL;
         void *dic = in ? read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keep) : NULL;
         int made = in && dic ? wide_hud_build_in(archive, in, n, dic, dn, &shift, &z, &out_n) : -1;
+        // A larger archive (the pause menu's backdrop in pieces) needs a larger resource size table entry; without
+        // one the game's buffer would be too small, so the archive is made again without what grew it.
+        unsigned long long was = made > 0 ? ZSTD_getFrameContentSize(in, n) : 0,
+                           now = made > 0 ? ZSTD_getFrameContentSize(z, out_n) : 0;
+        char why[300] = "the archive's decompressed size cannot be read";
+        int sized = was < ZSTD_CONTENTSIZE_ERROR && now < ZSTD_CONTENTSIZE_ERROR;
+        if (made > 0 && (!sized || (now > was && !restbl_room(rel, was, now, "wide-hud", why, sizeof why)))) {
+            rt_log("wide hud: %s; %s is made again without the edits that make it larger", why, rel);
+            free(z);
+            z = NULL;
+            WideHudShift same = shift;
+            same.no_growth = 1;
+            made = wide_hud_build_in(archive, in, n, dic, dn, &same, &z, &out_n);
+        }
         free(in);
         free(dic);
         char what_made[160] = "";
