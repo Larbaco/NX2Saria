@@ -115,6 +115,10 @@ static struct {
     uint32_t nan_preserve;             // float widths that get SignedZeroInfNanPreserve (spirv_nan_preserve): NP_16|NP_32|NP_64
     int nan_bits;                      // NaN tests as integer bit tests (spirv_nan_bits)
     volatile uint32_t nan_bits_tests, nan_bits_selects, nan_bits_modules;   // rewritten so far (the first log line)
+    int mesh_invariant;                // mesh modules' position gets Invariant (spirv_mesh_invariant)
+    volatile uint32_t mesh_invariant_modules;   // so far
+    int mesh_sg;                       // task stages pinned to 32 and task and mesh stages run full subgroups (stage_sg)
+    volatile uint32_t sg_task_pinned, sg_task_full, sg_mesh_full;   // stage create infos given them so far
     VkDynamicState dyn[32];
     uint32_t n_dyn;
     PFN_vkCmdPushDescriptorSetKHR push;
@@ -1085,6 +1089,32 @@ static void cache_load(VkCtx *c) {
                "written whole", P.cache_path);
 }
 
+// The two settings for the task and mesh stages, and one line with what they do on this device (sg_min, sg_max: its
+// subgroup size range, 0 without subgroup size control).
+// - NX2SARIA_VK_MESH_SUBGROUPS (stage_sg): the translator writes task and mesh programs for 32-lane subgroups, as it
+//   does compute programs. The mesh stage was already pinned to 32, the task stage was not, and neither asked for full
+//   subgroups, so a driver whose subgroups run 16 to 32 lanes (Intel Arc) could run a task workgroup as partial or
+//   16-lane subgroups. The task program hands out mesh work by ballots over its lanes, and the fog's depth pre-pass and
+//   colour pass, two pipelines with the same task program, could then emit different sets of fog quads: the suspected
+//   cause of the holes an Arc B390 showed in Kokiri Forest's fog (issue #13), which the mesh fallback, whose task
+//   programs run as compute with these requirements, did not show. Where subgroups are always 32 lanes (NVIDIA),
+//   pinning changes nothing.
+// - NX2SARIA_VK_MESH_INVARIANT (spirv_mesh_invariant).
+static void mesh_stages_init(uint32_t sg_min, uint32_t sg_max) {
+    P.mesh_sg = rt_knob("VK_MESH_SUBGROUPS", "1") == 1;
+    P.mesh_invariant = rt_knob("VK_MESH_INVARIANT", "1") == 1;
+    const VkShaderStageFlags task = VK_SHADER_STAGE_TASK_BIT_EXT, mesh = VK_SHADER_STAGE_MESH_BIT_EXT;
+    const char *why = !P.mesh_sg ? "off (NX2SARIA_VK_MESH_SUBGROUPS=0)"
+                    : !sg_max ? "not available (no subgroup size control)"
+                    : !(P.sg32_stages & task) ? "the task stage cannot be pinned here (not in requiredSubgroupSizeStages, "
+                                                "32 outside the device's range, or NX2SARIA_VK_SUBGROUP_PIN=0)"
+                    : sg_min == 32 && sg_max == 32 ? "on (subgroups are always 32 lanes here: no change)" : "on";
+    rt_log("vk_pipeline: task and mesh stages: subgroup size 32 on the task stage and full subgroups %s; device %u-%u lanes, "
+           "pinnable stages task %s mesh %s, full subgroups %s; mesh positions Invariant %s",
+           why, sg_min, sg_max, P.sg32_stages & task ? "yes" : "no", P.sg32_stages & mesh ? "yes" : "no",
+           P.f_full_subgroups ? "yes" : "no", P.mesh_invariant ? "on" : "off (NX2SARIA_VK_MESH_INVARIANT=0)");
+}
+
 // The float widths spirv_nan_preserve declares on this device (P.nan_preserve), from NX2SARIA_VK_NAN_PRESERVE: 0 off,
 // 1 on every driver; unset, on every driver except NVIDIA's own, on which the game draws right without it. Only widths
 // the driver can preserve (VkPhysicalDeviceFloatControlsProperties) are declared, and nothing without 32-bit floats.
@@ -1194,11 +1224,13 @@ static int ensure_init(void) {
     P.pv_last = c->has_provoking_vertex && pvf.provokingVertexLast;
     if (!P.pv_last) rt_log("vk_pipeline: provokingVertexLast unavailable: flat outputs come from the first vertex (NVN: last)");
     // Maxwell warps have 32 lanes; the translator assumes it (maxwell.md 3.4). Pin 32 where the driver allows it.
+    uint32_t sg_min = 0, sg_max = 0;
     if (v13.subgroupSizeControl) {
         VkPhysicalDeviceVulkan13Properties p13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
         VkPhysicalDeviceProperties2 q2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p13};
         vkGetPhysicalDeviceProperties2(c->phys, &q2);
         P.sg32_stages = vk_caps.sg_pin_stages;   // vk_caps.c: 32 unless NX2SARIA_VK_SUBGROUP; 0 without the pin
+        sg_min = p13.minSubgroupSize, sg_max = p13.maxSubgroupSize;
         rt_log("vk_pipeline: subgroup size %u-%u, requiredSubgroupSizeStages %#x, pinning %u on %#x", p13.minSubgroupSize,
                p13.maxSubgroupSize, (unsigned)p13.requiredSubgroupSizeStages, vk_caps.sg_size, (unsigned)P.sg32_stages);
     }
@@ -1209,6 +1241,7 @@ static int ensure_init(void) {
            P.reconverge ? "on" : c->has_maximal_reconvergence ? "off (NX2SARIA_VK_RECONVERGE=0)" : "not supported by the driver");
     nan_preserve_init(c);
     P.f_full_subgroups = v13.computeFullSubgroups;
+    mesh_stages_init(sg_min, sg_max);
     P.cache_control = v13.pipelineCreationCacheControl;
     // Pipeline creation feedback is core in Vulkan 1.3; the driver reports per pipeline whether P.cache held it.
     P.feedback = c->props.apiVersion >= VK_API_VERSION_1_3 ? atoi(cfg_value("NX2SARIA_PIPE_FEEDBACK")) : 0;
@@ -2087,6 +2120,53 @@ static uint32_t *spirv_reconverge(const uint32_t *w, uint64_t n, uint64_t *out_n
     return o;
 }
 
+// Ocarina draws a fog sheet twice: a depth pre-pass, then a colour pass that discards where gl_FragCoord.z is behind
+// the pre-pass's depth. Both are mesh pipelines with different mesh programs, so on Maxwell the sheet's positions match
+// bit for bit, and the comparison relies on it. The translator marks a vertex shader's position Invariant (patch 0007),
+// which holds the driver to computing the same expression the same way in every pipeline; the mesh modules it makes
+// (tools/xlate/MeshSpirv.cs) declare the position without it. This adds Invariant to the Position built-in of a MeshEXT
+// module, as OpDecorate on a variable or OpMemberDecorate on a block member, right after its BuiltIn decoration. NULL:
+// nothing to change (not a mesh module, no position, Invariant already there, or no memory). Once MeshSpirv.cs
+// declares it, this finds it there and changes nothing.
+static uint32_t *spirv_mesh_invariant(const uint32_t *w, uint64_t n, uint64_t *out_n) {
+    enum { OP_MEMBER_DECORATE = 72, DEC_INVARIANT = 18, BUILTIN_POSITION = 0, MODEL_MESH = 5365 };
+    if (n < 5) return NULL;
+    int mesh = 0;
+    uint64_t at = 0;                    // the word after the position's BuiltIn decoration
+    uint32_t target = 0, member = ~0u;  // the decorated id, and its member for OpMemberDecorate
+    for (uint64_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, l = w[i] >> 16;
+        if (!l || i + l > n) return NULL;
+        if (op == SPV_OP_ENTRY_POINT && l >= 2 && w[i + 1] == MODEL_MESH) mesh = 1;
+        else if (op == SPV_OP_DECORATE && l >= 4 && w[i + 2] == SPV_DEC_BUILTIN && w[i + 3] == BUILTIN_POSITION && !at)
+            at = i + l, target = w[i + 1];
+        else if (op == OP_MEMBER_DECORATE && l >= 5 && w[i + 3] == SPV_DEC_BUILTIN && w[i + 4] == BUILTIN_POSITION && !at)
+            at = i + l, target = w[i + 1], member = w[i + 2];
+        else if (op == SPV_OP_FUNCTION) break;
+        i += l;
+    }
+    if (!mesh || !at) return NULL;
+    for (uint64_t i = 5; i < n;) {   // already Invariant
+        uint32_t op = w[i] & 0xffff, l = w[i] >> 16;
+        if (op == SPV_OP_FUNCTION) break;
+        if (member == ~0u && op == SPV_OP_DECORATE && l >= 3 && w[i + 1] == target && w[i + 2] == DEC_INVARIANT) return NULL;
+        if (member != ~0u && op == OP_MEMBER_DECORATE && l >= 4 && w[i + 1] == target && w[i + 2] == member &&
+            w[i + 3] == DEC_INVARIANT)
+            return NULL;
+        i += l;
+    }
+    uint32_t add = member == ~0u ? 3 : 4;
+    uint32_t *o = malloc((n + add) * 4);
+    if (!o) return NULL;
+    memcpy(o, w, at * 4);
+    uint64_t p = at;
+    if (member == ~0u) o[p++] = 3u << 16 | SPV_OP_DECORATE, o[p++] = target, o[p++] = DEC_INVARIANT;
+    else o[p++] = 4u << 16 | OP_MEMBER_DECORATE, o[p++] = target, o[p++] = member, o[p++] = DEC_INVARIANT;
+    memcpy(o + p, w + at, (n - at) * 4), p += n - at;
+    *out_n = p;
+    return o;
+}
+
 // Maxwell computes in IEEE 754, and the game's shaders rely on it: its compiler writes an unordered comparison as
 // `x > c || isnan(x)`, a normalisation of a zero-length vector gives an infinity that a later comparison sorts out, and
 // integer masks such as 0xffffffff travel through float moves and selects. The translator's own guards are isnan
@@ -2378,6 +2458,42 @@ static uint32_t local_size_x(const uint32_t *w, uint64_t words) {
         i += n;
     }
     return 0;
+}
+
+// A task or mesh stage's subgroup requirements under NX2SARIA_VK_MESH_SUBGROUPS (mesh_stages_init), from its SPIR-V
+// while the caller still has it: pin, 32 lanes (the task stage; the mesh stage takes pin_subgroup32 as before), and
+// full, every subgroup of the workgroup full, where its width is a whole number of 32-lane subgroups.
+typedef struct { uint8_t pin, full; } StageSg;
+static StageSg stage_sg(VkShaderStageFlagBits stage, const uint32_t *w, uint64_t words) {
+    StageSg g = {0, 0};
+    if (!P.mesh_sg || !(P.sg32_stages & stage) || !w || !uses_subgroup_ops(w, words)) return g;
+    uint32_t lx = local_size_x(w, words);
+    g.pin = stage == VK_SHADER_STAGE_TASK_BIT_EXT;
+    g.full = P.f_full_subgroups && vk_caps.sg_size && lx && lx % vk_caps.sg_size == 0;
+    return g;
+}
+
+// Puts g on a stage's create info; rq must live as long as it. The mesh stage's pin is already chained (pin_subgroup32).
+static void stage_sg_apply(VkPipelineShaderStageCreateInfo *st, VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *rq,
+                           StageSg g) {
+    if (g.pin) {
+        *rq = (VkPipelineShaderStageRequiredSubgroupSizeCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+            .requiredSubgroupSize = vk_caps.sg_size};
+        st->pNext = rq;
+        __atomic_add_fetch(&P.sg_task_pinned, 1, __ATOMIC_RELAXED);
+    }
+    if (g.full && st->pNext) {   // full subgroups only with the size pinned: the requirement is then a multiple of it
+        st->flags |= VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
+        __atomic_add_fetch(st->stage == VK_SHADER_STAGE_TASK_BIT_EXT ? &P.sg_task_full : &P.sg_mesh_full, 1,
+                           __ATOMIC_RELAXED);
+    }
+    if (!g.pin && !g.full) return;
+    uint32_t n = __atomic_load_n(&P.sg_task_pinned, __ATOMIC_RELAXED) + __atomic_load_n(&P.sg_mesh_full, __ATOMIC_RELAXED);
+    if (n == 1 || n == 10 || n == 100 || n == 1000)
+        rt_log("vk_pipeline: task and mesh subgroups so far: %u task stages pinned to 32 (%u with full subgroups), %u mesh "
+               "stages with full subgroups (NX2SARIA_VK_MESH_SUBGROUPS)", __atomic_load_n(&P.sg_task_pinned, __ATOMIC_RELAXED),
+               __atomic_load_n(&P.sg_task_full, __ATOMIC_RELAXED), __atomic_load_n(&P.sg_mesh_full, __ATOMIC_RELAXED));
 }
 
 // Pool arrays (the translator's bindless texture and sampler arrays of VK_POOL_TEX / VK_POOL_SAMP elements, found by
@@ -2912,6 +3028,15 @@ static VkShaderModule make_module(const uint32_t *w, uint64_t words, int early_o
         if (__atomic_add_fetch(&P.nan_bits_modules, 1, __ATOMIC_RELAXED) == 1)
             rt_log("vk_pipeline: first module with NaN tests made integer: %u tests, %u selects of NaN bits", nb_tests,
                    nb_sels);
+    }
+    uint64_t mi_n = 0;
+    uint32_t *mi = P.mesh_invariant ? spirv_mesh_invariant(w, words, &mi_n) : NULL;
+    if (mi) {
+        free(fixed);
+        w = fixed = mi, words = mi_n;
+        uint32_t k = __atomic_add_fetch(&P.mesh_invariant_modules, 1, __ATOMIC_RELAXED);
+        if (k == 1 || k == 10 || k == 100 || k == 1000)
+            rt_log("vk_pipeline: mesh positions made Invariant: %u mesh modules so far (NX2SARIA_VK_MESH_INVARIANT)", k);
     }
     if (P.feedback >= 2) mm_hash = fnv(FNV0, w, (size_t)words * 4);
     VkShaderModuleCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = (size_t)words * 4, .pCode = w};
@@ -3891,11 +4016,13 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
         mesh = 0;   // a vertex pipeline from here on
     }
     VkShaderModule tm = VK_NULL_HANDLE;
+    StageSg tsg = {0, 0};
     if (mesh && s->ts) {   // the task stage's bindings follow another stage's in its set (task_off)
         uint64_t tw;
         const uint32_t *tcode = gfx_shader_spirv_pin(s->ts, &tw);
         uint32_t toff = task_off(s, l, fs_off);
         uint32_t *t = tcode && toff ? spirv_rebind(tcode, tw, toff) : NULL;
+        tsg = stage_sg(VK_SHADER_STAGE_TASK_BIT_EXT, tcode, tw);
         tm = make_module(t ? t : tcode, tw, 0);
         free(t);
         gfx_shader_spirv_unpin(s->ts);
@@ -3961,14 +4088,16 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
          .module = vm, .pName = "main"},
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = fm, .pName = "main"},
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_TASK_BIT_EXT, .module = tm, .pName = "main"}};
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rqv, rqf, rqt;
+    if (!emu) pin_subgroup32(&stages[0], &rqv, vplain, vw0);   // vcode may be a patched copy that is freed by now
+    if (mesh) stage_sg_apply(&stages[0], &rqv, stage_sg(VK_SHADER_STAGE_MESH_BIT_EXT, vplain, vw0));
+    if (tm) stage_sg_apply(&stages[2], &rqt, tsg);
     uint32_t n_stages = 1;
     if (s->fs) n_stages = 2;
     if (tm) {
         if (!s->fs) stages[1] = stages[2];
         n_stages++;
     }
-    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rqv, rqf;
-    if (!emu) pin_subgroup32(&stages[0], &rqv, vplain, vw0);   // vcode may be a patched copy that is freed by now
     if (s->fs) pin_subgroup32(&stages[1], &rqf, fplain, fw0);
     VkVertexInputAttributeDescription va[32];
     VkVertexInputBindingDescription vb[17];
@@ -4161,7 +4290,7 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
     VkShaderModule m = VK_NULL_HANDLE, tm = VK_NULL_HANDLE;
     VkPipelineShaderStageCreateInfo st = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pName = "main"};
     VkPipelineShaderStageCreateInfo mst[2];   // a mesh pipeline's pre-rasterization stages: mesh, then task
-    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rq;
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rq, rqt;
     VkVertexInputAttributeDescription va[32];
     VkVertexInputBindingDescription vb[17];
     VkPipelineVertexInputStateCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
@@ -4210,6 +4339,7 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
         if (!vcode || !(m = make_module(vcode, vw, 0))) goto out;
         mst[0] = st, mst[0].stage = VK_SHADER_STAGE_MESH_BIT_EXT, mst[0].module = m;
         pin_subgroup32(&mst[0], &rq, vcode, vw);
+        stage_sg_apply(&mst[0], &rq, stage_sg(VK_SHADER_STAGE_MESH_BIT_EXT, vcode, vw));
         pi.stageCount = 1;
         if (s->ts) {
             const uint32_t *tcode = gfx_shader_spirv_pin(pinned[1] = s->ts, &tw);
@@ -4217,6 +4347,7 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
             patched = tcode && toff ? spirv_rebind(tcode, tw, toff) : NULL;
             if (!tcode || !(tm = make_module(patched ? patched : tcode, tw, 0))) goto out;
             mst[1] = st, mst[1].stage = VK_SHADER_STAGE_TASK_BIT_EXT, mst[1].module = tm;
+            stage_sg_apply(&mst[1], &rqt, stage_sg(VK_SHADER_STAGE_TASK_BIT_EXT, tcode, tw));
             pi.stageCount = 2;
         }
         pi.pStages = mst, pi.pViewportState = &vp, pi.pRasterizationState = &rs;
