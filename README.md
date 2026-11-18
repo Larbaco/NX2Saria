@@ -59,7 +59,8 @@ a controller-friendly frame-limit slider. Their authors remain credited in the c
 ## The PC experience
 
 - **Flexible frame rates.** 60 fps by default; choose a limit from 30 to 240, the display's refresh rate or unlimited.
-- **Widescreen and ultrawide.** Window aspect, 21:9 or 32:9, with the HUD, menus and movies kept at 16:9.
+- **Widescreen and ultrawide.** Window aspect, 21:9 or 32:9, with the HUD, menus and movies kept at 16:9, or the HUD's
+  corners at the screen's edges and the menus framed in the middle ([docs/wide-hud.md](docs/wide-hud.md)).
 - **Resolution and image quality.** From 1080p through 4K and beyond, with upscaling, anti-aliasing and HDR options.
 - **Your controls.** Keyboard, mouse and gamepads, remapping, rumble and gyro; Nintendo, Xbox, PlayStation,
   Steam Deck and keyboard prompts where supported by the build.

@@ -643,6 +643,15 @@
 # FSR 3.1 modes render their share of this picture. Read at start.
 # game_aspect = 16:9
 # game_res = 1440
+# The HUD on a picture wider than 16:9 (Ocarina of Time): center keeps it in the middle 16:9, as the game lays it out;
+# edges puts its corner elements at the picture's sides: the hearts and magic top left, the item slot top right, the
+# minimap with its key counter and the rupee count on the right. Read at start.
+# wide_hud = center
+# The pause menu, system menu, map and loading screens on such a picture: full fills the screen, their layouts laid
+# out over the whole picture; center keeps them in the middle 16:9 with black bars at the sides, which show while a
+# pause or system menu, a loading screen or a movie is up. Both do nothing at 16:9.
+# Read at start.
+# wide_menus = full
 # 3D render scale: the scene's size relative to the game resolution, game (5/6, the game's own 1600x900 at 1080p) or
 # a percentage (25 to 400, at most 4096 pixels a side); above 100 supersamples the scene (anti-aliasing). Read at start.
 # render_scale = game

@@ -26,6 +26,8 @@ int cfg_supported(const char *key) {
     // the switch of three sets (recomp/patches-v*.txt): bounce, fade and cursor
     if (!strcasecmp(name, "HIGHFPS_FIX")) return has("bounce") || has("fade") || has("cursor");
     if (!strcasecmp(name, "MENU_CURSOR")) return RT_V143;   // menu_cursor.c enabled()
+    // the squeeze of the UI into the middle 16:9 (set wide_hud) is what both place their elements against
+    if (!strcasecmp(name, "WIDE_HUD") || !strcasecmp(name, "WIDE_MENUS")) return has("wide_hud");
     // STICK_SENS has no entry: romfs.c overlay_init serves the player camera's pack with its speeds multiplied
     // (camera_overlay, camera_speed.c cam_pack_build) on every game version, 1.1.1 included, and cam_speed_tick follows
     // a change during the run. Whether the pack was found is known only once the RomFS is up (romfs.c fs_init), which

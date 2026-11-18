@@ -306,6 +306,17 @@ site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:
 set wide_save NX2NAVI_PATCH_WIDE_SAVE 0
 site wide_save main 284824 f9400108 f9400108 @page:x16 295c2e0a 51087c69 5104c88c 2a0c0129 2a010129 2a020129 5ac01129 53057d29 1b0a0521 1b0b0d23   # ldr x8, [x8]; ldp w10, w11, [x16, #224]; sub w9, w3, #543; sub w12, w4, #306; orr w9, w9, w12; orr w9, w9, w1; orr w9, w9, w2; clz w9, w9; lsr w9, w9, #5; madd w1, w9, w10, w1; madd w3, w9, w11, w3
 
+# The menus' black bars (NX2SARIA_WIDE_MENUS = center, runtime/wide_bars.c): each interface screen's setup
+# (main+0x773b90, vtable +0x80, the same function that sets up the canvas the set wide_hud keeps or squeezes) sets up
+# the screen's 2D canvas with the call at main+0x774064, which every path of the function reaches, and then reads the
+# screen's vtable at main+0x774068. There the site calls the page's +0xef0 after the load (runtime/wide_bars.c
+# wide_bars_screen_host), with the screen in x19: the runtime keeps the menus' background screens and the loading fade
+# it is handed and reads their state byte (+0x1a6) at each present. The function saved its
+# x30 in its prologue and calls through x8 right after, so the call's x30 is overwritten before anything reads it; the
+# host function changes no register. The set is on only with center on a picture wider than 16:9.
+set wide_bars NX2NAVI_PATCH_WIDE_BARS 0
+site wide_bars main 774068 f9400268 f9400268 951cb3a2   # ldr x8, [x19] -> ldr x8, [x19]; bl page+0xef0
+
 # The game's zstd decoder (BSD zstd, statically linked into main) through the host's libzstd (runtime/ov_zstd.c): the
 # three calls of ZSTD_decompressMultiFrame (main+0xeb380: dctx, dst, capacity, src, size, dict, dict size, ddict) go to
 # the host function on the patch page (+0xff0). main+0xe910c is the file loader's call for a file that fits one read

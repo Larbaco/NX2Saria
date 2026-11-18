@@ -234,3 +234,14 @@ uint32_t restbl_grow(const char *key, uint32_t entry, uint64_t old, uint64_t new
     uint64_t e = entry + ((new_size - old) * f + 999) / 1000;
     return clamp32((e + 31) & ~(uint64_t)31);
 }
+
+int restbl_fit(Restbl *t, const char *key, uint64_t was, uint64_t now, uint32_t *from, uint32_t *to) {
+    uint32_t entry = 0;
+    int has = restbl_get(t, key, &entry);
+    uint32_t want = has ? restbl_grow(key, entry, was, now, 0) : restbl_estimate(key, now);
+    if (!want) return 0;
+    restbl_raise(t, key, want);
+    *from = has ? entry : 0;
+    restbl_get(t, key, to);
+    return 1;
+}

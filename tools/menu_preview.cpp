@@ -38,6 +38,7 @@ static const CfgMeta kMeta[] = {
     {"FULLSCREEN", "1", "0|1", 1},       {"WINDOW_SIZE", "", NULL, 1},  {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", 1},
     {"GPU_INDEX", "", NULL, 0},          {"PERF_OVERLAY", "off", "off|fps|full", 1},
     {"GAME_ASPECT", "16:9", "16:9|window|21:9|32:9", 0}, {"RENDER_SCALE", "", NULL, 0},
+    {"WIDE_HUD", "center", "center|edges", 0},           {"WIDE_MENUS", "full", "full|center", 0},
     {"UPSCALER", "bilinear", "bilinear|fsr", 0},         {"SHARPNESS", "50", "0..100", 1},
     {"ASPECT", "fit", "fit|stretch", 1}, {"MENU_LANG", "", NULL, 1},
 };
@@ -231,6 +232,10 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
             static const UiTextId wide[] = {UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW, UI_MENU_GAME_ASPECT_21_9,
                                             UI_MENU_GAME_ASPECT_32_9};
             opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
+            static const UiTextId hud[] = {UI_MENU_WIDE_HUD_CENTER, UI_MENU_WIDE_HUD_EDGES};
+            opt_choice("NX2NAVI_WIDE_HUD", UI_MENU_WIDE_HUD, hud, 2, UI_MENU_WIDE_HUD_DESC);
+            static const UiTextId menus[] = {UI_MENU_WIDE_MENUS_FULL, UI_MENU_WIDE_MENUS_CENTER};
+            opt_choice("NX2NAVI_WIDE_MENUS", UI_MENU_WIDE_MENUS, menus, 2, UI_MENU_WIDE_MENUS_DESC);
             opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
             opt_end();
             ImGui::EndTabItem();

@@ -59,7 +59,7 @@ static const char *const known[] = {
     "UPSCALER_IDLE_WAIT",
     "DUMP_LOG", "DUMP_RAW", "DUMP_SHADERS", "DUMP_FILE", "DS3", "LOG_CS_BINDS", "LOG_TEX_FLAGS", "LOG_MESH", "MESH", "POOL", "NATIVE_TENSOR", "LOG_RCOND", "LOG_RT_SIZES", "DUMP_WHITE", "DUMP_AFTER", "DUMP_MOVIE", "SUBMIT_FINISH", "ACQUIRE_WAIT", "CRASH_FILTER_GUARD", "CS_FALLBACK", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "GPU_TIMELINE",
     "FFX_PIPE_CACHE", "FLIGHT_SPIKE_MS", "FREEZE_QUIET_MS", "FREEZE_LOAD_HOLD_MS", "STUTTER_MAP", "PAR_JOBS", "PIPE_RELEASE", "FLIGHT_THUMBS", "FLIGHT_EVERY", "FLIGHT_FLASH", "FLIGHT_FLASH_DIFF", "FLIGHT_FLASH_CELLS", "FLUSH_SPAN", "FLUSH_UPLOAD", "FOG_CULL", "FOLIAGE_SHADOW_CULL", "FOLIAGE_SHADOW_VRS", "FOV", "FOV_PATCH", "FG_HUDLESS_SHOW", "FG_MULT", "FPS60", "FPS_LIMIT", "FRAMEGEN", "FRAMEGEN_MULTIPLIER", "FREEZE_IDLE", "FREEZE_ASYNC", "FREEZE_BUDGET_US", "FREE_CORES",
-    "FULLSCREEN", "FXAA", "GAME_ASPECT", "GAME_RES", "GPA", "GPA_EMPTY", "GPA_TWIN", "GPA_TWIN_MAX_KB", "MIRROR_CAPTURE_KB", "WB_SKIP_MB", "GPL", "GPL_DRAW_BUILD", "GPL_FEEDBACK", "GPL_MESH", "PIPE_AHEAD", "PIPE_FAST_WORKERS", "PIPE_FRAME_WAIT_MS", "PIPE_LINK_DRAW_MS", "PIPE_SKIP_STEADY", "DRAW_WRITERS_WAIT", "PROG_LEAD", "GPU", "GPU_INDEX", "GPU_PASSES", "GPU_NAME", "HDR",
+    "FULLSCREEN", "FXAA", "GAME_ASPECT", "GAME_RES", "WIDE_HUD", "WIDE_MENUS", "GPA", "GPA_EMPTY", "GPA_TWIN", "GPA_TWIN_MAX_KB", "MIRROR_CAPTURE_KB", "WB_SKIP_MB", "GPL", "GPL_DRAW_BUILD", "GPL_FEEDBACK", "GPL_MESH", "PIPE_AHEAD", "PIPE_FAST_WORKERS", "PIPE_FRAME_WAIT_MS", "PIPE_LINK_DRAW_MS", "PIPE_SKIP_STEADY", "DRAW_WRITERS_WAIT", "PROG_LEAD", "GPU", "GPU_INDEX", "GPU_PASSES", "GPU_NAME", "HDR",
     "HDR_GAME_NITS", "HDR_LIVE", "HEAP_LAZY", "HDR_PEAK_NITS", "HDR_UI_NITS",
     "HDR_BLOWOUT", "HDR_CONTRAST", "HDR_EXPOSURE", "HDR_FLARE", "HDR_GAMMA", "HDR_GRADE", "HDR_HIGHLIGHT_SAT",
     "HDR_HIGHLIGHTS", "HDR_HUE", "HDR_HUE_CLIP", "HDR_MATCH_SLOPE", "HDR_MIDGRAY", "HDR_SATURATION", "HDR_SHADOWS",
@@ -72,7 +72,7 @@ static const char *const known[] = {
     "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
     "MV_SURVEY",
     "HANDLE_CENSUS",
-    "PIPE_SEED_BOOT", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PACE_HZ", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_RES_FIXED", "PATCH_SCENE", "PATCH_WIDE_ASPECT", "PATCH_WIDE_HUD", "PATCH_WIDE_MOVIE", "PATCH_WIDE_OUT", "PATCH_FREECAM", "PATCH_OCCLUSION_OFF", "PATCH_WIDE_SAVE", "PATCH_WIDE_SCENE", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPELINE_CACHE_MAX_MB", "PIPELINE_CACHE_PLAY", "PIPELINE_CACHE_PLAY_MB", "PIPELINE_CACHE_STAMP", "PIPE_BINARIES", "PIPE_BINARIES_MAX_MB", "PIPE_FEEDBACK", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SEED", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POWER_FULL", "TEX_SAME", "TEX_SAME_BIG", "TEX_FLAT3D", "TEX_KEEP_TAKEN", "TEX_RATE_LOW", "TEX_HARD_ORDER", "TEX_STALE_KEPT", "ASTC_SCRATCH_TRIM", "PRESENT_HELD", "HELD_SYNC",
+    "PIPE_SEED_BOOT", "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PACE_HZ", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_RES_FIXED", "PATCH_SCENE", "PATCH_WIDE_ASPECT", "PATCH_WIDE_HUD", "PATCH_WIDE_MOVIE", "PATCH_WIDE_OUT", "PATCH_FREECAM", "PATCH_OCCLUSION_OFF", "PATCH_WIDE_SAVE", "PATCH_WIDE_SCENE", "PATCH_WIDE_BARS", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPELINE_CACHE_MAX_MB", "PIPELINE_CACHE_PLAY", "PIPELINE_CACHE_PLAY_MB", "PIPELINE_CACHE_STAMP", "PIPE_BINARIES", "PIPE_BINARIES_MAX_MB", "PIPE_FEEDBACK", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SEED", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "POWER_FULL", "TEX_SAME", "TEX_SAME_BIG", "TEX_FLAT3D", "TEX_KEEP_TAKEN", "TEX_RATE_LOW", "TEX_HARD_ORDER", "TEX_STALE_KEPT", "ASTC_SCRATCH_TRIM", "PRESENT_HELD", "HELD_SYNC",
     "PRESENT_ORDER",
     "PREPARE_PIPELINES", "PREWARM_FULL", "PREWARM_FULL_S", "PREWARM_WAIT_MS", "PREWARM_XLATE", "PROBE_MOVIE", "PROBE_MOVIE_SHOT", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES", "PROFILE_REPLAY", "PROFILE_SLOW",
     "POOL_FAST", "POOL_GROUP", "POOL_GROUP_CHECK", "POOL_PRESNAP", "POOL_PRESNAP_RUNS",
@@ -131,7 +131,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"SOUND_STEPS", "frame rate"}, {"SONG_STAFF", "frame rate"}, {"FLOOR_CARRY", "frame rate"}, {"OCARINA_TIMING", "frame rate"},
     {"MOVIE_PTS", "frame rate"}, {"STEP_STEADY", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
-    {"GPU_INDEX", "display"}, {"MONITOR", "display"}, {"OUTPUT_RES", "display"}, {"GAME_ASPECT", "display"}, {"GAME_RES", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
+    {"GPU_INDEX", "display"}, {"MONITOR", "display"}, {"OUTPUT_RES", "display"}, {"GAME_ASPECT", "display"}, {"GAME_RES", "display"}, {"WIDE_HUD", "display"}, {"WIDE_MENUS", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
     {"SHARPNESS", "display"}, {"STANDIN_FILTER", "display"}, {"SCENE_SHARE", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"ANISO", "display"},
     {"TEXTURE_DETAIL", "display"},
     {"COLOR_PRESET", "display"},
@@ -260,6 +260,13 @@ static const CfgMeta metas[] = {
     {"AA", "game", "game|off|fxaa|smaa|taa", LIVE},   // vk_aa.c: what runs in place of the game's SMAA
     {"GAME_ASPECT", "16:9", "16:9|window|21:9|32:9", RESTART},   // widescreen.c
     {"GAME_RES", "1440", "1080|1440|1800|2160|2880|window", RESTART},   // widescreen.c: the picture's height
+    // romfs.c wide_hud_overlay, wide_hud.c: the HUD's corner elements at the edges of a picture wider than 16:9 (edges)
+    // or in the corners of its middle 16:9 (center, the game's layout); the layouts are read once at start
+    {"WIDE_HUD", "center", "center|edges", RESTART},
+    // the pause, system, map and loading screens on a picture wider than 16:9: full fills the screen (wide_hud.c
+    // lays their layouts out over the whole picture), center keeps them in the middle 16:9 with black bars at the
+    // sides while one is up (wide_bars.c wide_menu_sides; wide_hud.c moves the loading icon into the middle)
+    {"WIDE_MENUS", "full", "full|center", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "16", "game|2|4|8|16", LIVE},   // vk_texture.c sampler_features, vk_sampler_aniso_live; 16: the game asks 1x or 2x
     {"TEXTURE_DETAIL", "auto", "auto|full|reduced|low", RESTART},   // vk_texture.c "texture detail", read at the first texture

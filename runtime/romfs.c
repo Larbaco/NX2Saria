@@ -31,6 +31,7 @@
 #include <strings.h>
 
 #include "action_prompt.h"
+#include "wide_hud.h"
 #include "cfg.h"
 #include "dispatch.h"
 #include "fs.h"
@@ -586,6 +587,16 @@ static void *read_served(const char *rel, Overlay **base, size_t *n, const char 
     return in;
 }
 
+// The overlay that serves RomFS file rel now (the last one, as read_served picks it), or NULL. A pointer read_served
+// gave goes stale once anything adds an overlay, since the table can move (serve_generated's realloc): ask again.
+static Overlay *served_overlay(const char *rel) {
+    uint64_t i = lower(rel);
+    Overlay *o = NULL;
+    for (size_t k = 0; k < noverlay; k++)
+        if (overlays[k].index == i) o = &overlays[k];
+    return o;
+}
+
 // Serves out[0..out_n) (malloc'd, freed here) in place of RomFS file `rel` and of an overlay that replaces it (base):
 // written to <profile>/<sub>/<file name of rel>. `what` names the change in the log. 0 when it cannot be written.
 static int serve_generated(const char *rel, Overlay *base, void *out, size_t out_n, const char *sub, const char *what,
@@ -604,6 +615,10 @@ static int serve_generated(const char *rel, Overlay *base, void *out, size_t out
     }
     Identity id = identity_of(r);
     plat_file_close(r);
+    // a base under the profile folder is one an earlier change wrote here (the action prompt's), not a mod's
+    size_t pl = strlen(rt_config()->profile);
+    int generated = base && !strncmp(base->path, rt_config()->profile, pl) &&
+                    (base->path[pl] == '/' || base->path[pl] == '\\');
     char *copy = strdup(file);
     need(copy != NULL, "overlay path copy");
     if (base) {
@@ -621,7 +636,8 @@ static int serve_generated(const char *rel, Overlay *base, void *out, size_t out
         need(name != NULL, "overlay path copy");
         overlays[noverlay++] = (Overlay){lower(rel), out_n, copy, name, id};
     }
-    rt_log("RomFS overlay: %s (%zu bytes, %s) replaces %s", file, out_n, what, base ? "the mod's file" : "the original");
+    rt_log("RomFS overlay: %s (%zu bytes, %s) replaces %s", file, out_n, what,
+           !base ? "the original" : generated ? "the file another change made" : "the mod's file");
     return 1;
 }
 
@@ -742,6 +758,46 @@ static void restbl_overlay(void) {
                "added files estimated), %.0f ms", tables, merged, raised, estimated, (now_s() - t0) * 1000);
 }
 
+// The resource size table with the entry of rel (a file of the game's that a change of ours serves larger: its
+// decompressed size from was to now) raised to hold it (restbl.c restbl_fit: the growth added to the entry the table
+// served has, a mod's higher merged entry included), served in its place and written to <profile>/<sub>/. The game
+// sizes the buffer it reads a file into from its entry, so a larger file needs a larger one. Runs after
+// restbl_overlay, whose table, when it served one, is the one raised. 1 when served, 0 with why.
+static int restbl_room(const char *rel, uint64_t was, uint64_t now, const char *sub, char *why, size_t why_n) {
+    static const char keeps[] = "the file it would size keeps its own size";
+    char key[300];
+    uint32_t from = 0, to = 0;
+    Overlay *base;
+    size_t zn = 0, rn = 0;
+    if (!restbl_rel[0]) {
+        snprintf(why, why_n, "the RomFS has no resource size table");
+        return 0;
+    }
+    void *z = read_served(restbl_rel, &base, &zn, keeps);
+    Restbl *t = z ? restbl_unpack(z, zn) : NULL;
+    free(z);
+    restbl_key(rel, key, sizeof key);
+    int ok = t && restbl_fit(t, key, was, now, &from, &to) && to >= now;
+    uint8_t *raw = ok ? restbl_write(t, &rn) : NULL;
+    restbl_free(t);
+    size_t cap = raw ? ZSTD_compressBound(rn) : 0;
+    void *out = raw ? malloc(cap) : NULL;
+    zn = out ? ZSTD_compress(out, cap, raw, rn, 3) : 0;
+    free(raw);
+    if (!out || ZSTD_isError(zn)) {
+        free(out);
+        snprintf(why, why_n, "%s cannot be read, raised or packed again", restbl_rel);
+        return 0;
+    }
+    if (!serve_generated(restbl_rel, base, out, zn, sub, "a larger file's resource size", keeps)) {
+        snprintf(why, why_n, "%s cannot be written", restbl_rel);
+        return 0;
+    }
+    rt_log("RomFS: resource size table: %s raised %u -> %u for the file's %llu -> %llu bytes", key, from, to,
+           (unsigned long long)was, (unsigned long long)now);
+    return 1;
+}
+
 // The HeapDef table a bigger game resolution needs (resolution.c): its texture heap and that heap's parent grow. The
 // base is an overlay that replaces the table (a mod's heap sizes stay), else the RomFS original; the grown table is
 // written to <profile>/resolution/ and served in the base's place. Switch titles name it for NX, Switch 2 ones
@@ -810,6 +866,84 @@ static void action_prompt_overlay(void) {
 }
 
 int romfs_action_prompt(void) { return action_prompt_for; }
+
+// The HUD at the picture's edges (NX2SARIA_WIDE_HUD = edges) and the loading screen's icon in the middle 16:9
+// (NX2SARIA_WIDE_MENUS = center), wide_hud.c: the Common layout archive the game would read (a mod's, the action
+// prompt's above, else the RomFS's) is served with them, for the picture wide_init sets up, written to
+// <profile>/wide-hud/. On a build with the widescreen sets, one line says the HUD's mode, the picture's shape and what
+// each layout moves, whether or not anything does, so a player's log shows the setting in effect.
+static void wide_hud_overlay(void) {
+    if (!wide_available()) return;   // no squeeze to place anything against (cfg_support.c: the settings do nothing)
+    unsigned w, h;
+    int edges = !strcmp(cfg_value("NX2SARIA_WIDE_HUD"), "edges");
+    int center = !strcmp(cfg_value("NX2SARIA_WIDE_MENUS"), "center");
+    int wide = wide_start_picture(&w, &h);
+    float wider = wide ? wide_hud_out(w, h) : 0;   // 0 for a picture of 16:9 or narrower
+    WideHudShift shift = {edges ? wider : 0, center && wider > 0 ? (float)(16.0 / 9.0) / ((float)w / h) : 1,
+                          !center ? wider : 0, 0};
+    char what[240] = "", menus_what[1024] = "";
+    for (int m = 0; m < 2; m++) {   // what the HUD's edges, then the menus' redesign, change in each layout
+        float by = m ? shift.menus : shift.out;
+        char *out = m ? menus_what : what;
+        size_t cap = m ? sizeof menus_what : sizeof what;
+        if (!(by > 0)) continue;
+        WideHudCount c[64];
+        int n = wide_hud_counts_of(m, c, 64), at = snprintf(out, cap, "%g layout units %s: ", (double)by,
+                                                             m ? "wider on each side" : "out");
+        if (m && !n) snprintf(out, cap, "no layout has a redesign yet, the menus stay in the middle 16:9");
+        for (int i = 0; i < n && at > 0 && at < (int)cap; i++) {
+            at += snprintf(out + at, cap - at, "%s%s %d panes", i ? ", " : "", c[i].layout, c[i].panes);
+            if (c[i].keys && at < (int)cap) at += snprintf(out + at, cap - at, " and %d animation keys", c[i].keys);
+        }
+    }
+    rt_log("wide hud: %s, picture %ux%u (%.3f:1, 16:9 is 1.778): %s", edges ? "edges" : "center", w, h,
+           (double)w / h, shift.out > 0 ? what : "no pane moves, the HUD stays in the middle 16:9");
+    if (shift.menus > 0) rt_log("wide menus: full, picture %ux%u: %s", w, h, menus_what);
+    if (!(shift.out > 0) && !(shift.squeeze < 1) && !(shift.menus > 0)) return;
+    // The Common layout archive (the HUD, the loading icon and most of the menus' redesign), then the title screen's
+    // when the menus fill the picture: each is the file the game would read (a mod's, else the RomFS's), edited and
+    // written to <profile>/wide-hud/.
+    for (int archive = WIDE_HUD_COMMON; archive <= WIDE_HUD_TITLE; archive++) {
+        const char *rel = wide_hud_archive_path(archive);
+        static const char keeps[] = "the HUD and the loading icon stay where the game lays them out";
+        static const char keeps_title[] = "the title menu's backdrop stays in the middle 16:9";
+        const char *keep = archive == WIDE_HUD_TITLE ? keeps_title : keeps;
+        if (archive == WIDE_HUD_TITLE && !(shift.menus > 0)) continue;
+        Overlay *base, *dic_base;
+        size_t n, dn, out_n = 0;
+        void *in = read_served(rel, &base, &n, keep), *z = NULL;
+        void *dic = in ? read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keep) : NULL;
+        int made = in && dic ? wide_hud_build_in(archive, in, n, dic, dn, &shift, &z, &out_n) : -1;
+        // A larger archive (the pause menu's backdrop in pieces) needs a larger resource size table entry; without
+        // one the game's buffer would be too small, so the archive is made again without what grew it.
+        unsigned long long was = made > 0 ? ZSTD_getFrameContentSize(in, n) : 0,
+                           now = made > 0 ? ZSTD_getFrameContentSize(z, out_n) : 0;
+        char why[300] = "the archive's decompressed size cannot be read";
+        int sized = was < ZSTD_CONTENTSIZE_ERROR && now < ZSTD_CONTENTSIZE_ERROR;
+        if (made > 0 && (!sized || (now > was && !restbl_room(rel, was, now, "wide-hud", why, sizeof why)))) {
+            rt_log("wide hud: %s; %s is made again without the edits that make it larger", why, rel);
+            free(z);
+            z = NULL;
+            WideHudShift same = shift;
+            same.no_growth = 1;
+            made = wide_hud_build_in(archive, in, n, dic, dn, &same, &z, &out_n);
+        }
+        free(in);
+        free(dic);
+        char what_made[160] = "";
+        if (archive == WIDE_HUD_TITLE) {
+            snprintf(what_made, sizeof what_made, "the title menu's backdrop over the whole picture");
+        } else {
+            if (shift.out > 0) snprintf(what_made, sizeof what_made, "the HUD at the picture's edges");
+            if (shift.menus > 0 || shift.squeeze < 1)
+                snprintf(what_made + strlen(what_made), sizeof what_made - strlen(what_made), "%s%s",
+                         what_made[0] ? ", " : "",
+                         shift.menus > 0 ? "the menus over the whole picture" : "the loading icon in the middle 16:9");
+        }
+        // base again: restbl_room may have added the resource size table's overlay, which can move the table
+        if (made > 0) serve_generated(rel, served_overlay(rel), z, out_n, "wide-hud", what_made, keep);
+    }
+}
 
 // The button prompts' folders (input_prompts_folder) and whether each had a manifest next to romfs-index.bin at start;
 // the one the settings asked for at start, the one overlay_init loaded (NULL: the game's own prompts) and why the first
@@ -968,6 +1102,7 @@ static void overlay_init(void) {
     heapdef_overlay();
     camera_overlay();
     action_prompt_overlay();
+    wide_hud_overlay();   // after the action prompt's: it edits the same archive, as that one serves it
     added_init();
     if (noverlay) qsort(overlays, noverlay, sizeof *overlays, overlay_order);
     for (size_t k = 1; k < noverlay; k++)   // overlay_contest left one per file; the generated ones replace in place

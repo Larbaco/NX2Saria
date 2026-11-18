@@ -13,6 +13,18 @@ int sarc_next(const uint8_t *p, size_t n, const char *name, unsigned *next, size
 // The first member named `name`: 1 with its start and size; 0 when there is none or the archive is damaged.
 int sarc_member(const uint8_t *p, size_t n, const char *name, size_t *at, size_t *size);
 
+// The number of member entries of the SARC p[0..n); -1 when its header is damaged.
+int sarc_count(const uint8_t *p, size_t n);
+
+// The SARC p[0..n) with the data of some members replaced: entry i (of sarc_count's) takes with[i][0..with_n[i]) in
+// place of its own bytes, or keeps them where with[i] is NULL. The header, the entries' order, hashes and names, and
+// SFNT stay; the members' data is laid out again in the order the archive has it, each member at the first offset past
+// the one before that keeps its start's alignment (the largest power of two dividing it, up to 8 KiB), and the entries'
+// ranges and the archive's size follow. Entries that shared one range share it still unless one of them is replaced;
+// a replaced entry gets a range of its own. malloc'd, *out_n its size; NULL when the archive is damaged, two entries'
+// ranges overlap without being the same, or out of memory.
+uint8_t *sarc_rebuild(const uint8_t *p, size_t n, const uint8_t *const *with, const size_t *with_n, size_t *out_n);
+
 // Pack/ZsDic.pack.zs's archive (z[0..zn), a frame compressed without a dictionary) unpacked: malloc'd, *n its size;
 // NULL when it is not a zstd frame that says its size, or that size is over max.
 uint8_t *zsdic_unpack(const void *z, size_t zn, size_t max, size_t *n);

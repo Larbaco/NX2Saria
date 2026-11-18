@@ -43,6 +43,11 @@ __attribute__((constructor)) static void day_register(void) {
     rt_register_host(RT_PATCH_PAGE + 0xf10, frame_rate_sound_gate_host);
     rt_register_host(RT_PATCH_PAGE + 0xf00, frame_rate_sound_step_host);
 }
+// The screens' setup site of the set wide_bars (patches-v111.txt) calls the page's +0xef0: wide_bars.c watches the
+// menus' background screens and the loading fade it hands over, for the black bars of NX2SARIA_WIDE_MENUS = center.
+__attribute__((constructor)) static void wide_bars_register(void) {
+    if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xef0, wide_bars_screen_host);
+}
 #endif
 
 #if RT_PATCH_COUNT
