@@ -830,7 +830,7 @@ static void wide_hud_overlay(void) {
     int wide = wide_start_picture(&w, &h);
     float wider = wide ? wide_hud_out(w, h) : 0;   // 0 for a picture of 16:9 or narrower
     WideHudShift shift = {edges ? wider : 0, center && wider > 0 ? (float)(16.0 / 9.0) / ((float)w / h) : 1,
-                          !center ? wider : 0};
+                          !center ? wider : 0, 0};
     char what[240] = "", menus_what[1024] = "";
     for (int m = 0; m < 2; m++) {   // what the HUD's edges, then the menus' redesign, change in each layout
         float by = m ? shift.menus : shift.out;

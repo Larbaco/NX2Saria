@@ -26,9 +26,12 @@ float wide_hud_out(unsigned w, unsigned h);
 // NX2SARIA_WIDE_HUD = center). squeeze: 16:9 over the picture's ratio, by which the loading screen's icon is narrowed
 // and brought in so that it sits in the middle 16:9's corner at its own width (1 none; NX2SARIA_WIDE_MENUS = center).
 // menus: the menus' layouts redesigned to fill a picture that many units wider on each side (wide_hud_out; 0 none;
-// NX2SARIA_WIDE_MENUS = full).
+// NX2SARIA_WIDE_MENUS = full). no_growth: 1 leaves out the edits that make the archive larger (the pause menu's
+// backdrop drawn in pieces, wide_hud_split), with the rest of their layout's redesign (it keeps the game's menu
+// layout): for a game whose resource size table cannot be raised to hold a larger archive.
 typedef struct {
     float out, squeeze, menus;
+    int no_growth;
 } WideHudShift;
 
 // The edits of edges mode, one per layout: what the start-up line counts (romfs.c wide_hud_overlay).
@@ -52,19 +55,36 @@ int wide_hud_counts_of(int menus, WideHudCount *out, int max);
 int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift *s, char *report, size_t report_n,
                      char *why, size_t why_n);
 
-// The same on the decompressed Common layout archive (a SARC) for every layout the shift edits, on every copy of each:
-// all of them change or none. Logs one line per layout that moved ("wide hud: PlayerStatus_00 (4 copies, 16 fields):
-// N_ScaleL_00 x -1920 -> -2580, ...", "widescreen: menus: LoadingFade_00 (...)").
-// Returns the count of fields changed over all copies, 0 when everything was moved already, -1 when any layout is not
-// the one this expects.
-int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n);
+// The pause menu's backdrop drawn in pieces (wide_menus = full): one layout file p[0..n) (PlusMenu_00.buil) with its
+// picture P_MenuBg_00 cut into pieces that each move with the column of the pages above it, the pieces after the first
+// new panes inserted after it, the file grown to hold them (wide_hud.c split_layout). *out (malloc'd) and *out_n.
+// Returns the number of panes added; 0 for a member the shift splits nothing in or one split so already (*out NULL);
+// -1 when it is not the layout this expects (why; nothing written). report (may be NULL): "P_MenuBg_00 in 7 pieces".
+int wide_hud_split(const uint8_t *p, size_t n, const char *member, const WideHudShift *s, uint8_t **out, size_t *out_n,
+                   char *report, size_t report_n, char *why, size_t why_n);
+// The 64-bit hash a layout keeps beside each name in its tables of panes, pictures and materials, which the game's
+// lookup by name compares: CityHash64 of the name's bytes. 0 for a name longer than 32 bytes (no layout has one).
+uint64_t wide_hud_name_hash(const char *name);
+
+// The same on the decompressed Common layout archive (a SARC, *sarc malloc'd, *n its size) for every layout the shift
+// edits, on every copy of each: all of them change or none, the edits in place first, then the splits. A split grows
+// its layout, so the archive is then laid out again (sarc.c sarc_rebuild): *sarc is replaced (the old one freed) and
+// *n follows. Logs one line per layout that changed ("wide hud: PlayerStatus_00 (4 copies, 16 fields): N_ScaleL_00 x
+// -1920 -> -2580, ...", "wide menus: PlusMenu_00 (4 copies, 340 fields, P_MenuBg_00 in 7 pieces, 24 new panes): ...",
+// "widescreen: menus: LoadingFade_00 (...)"). Returns the count of fields changed and panes added over all copies, 0
+// when everything was done already, -1 when any layout is not the one this expects (the archive as it was, but for
+// running out of memory during a split, which may leave the edits in place made).
+int wide_hud_archive(uint8_t **sarc, size_t *n, const WideHudShift *s, char *why, size_t why_n);
 // The same for the archive WIDE_HUD_COMMON or WIDE_HUD_TITLE names: only that archive's layouts are edited (the Title
 // archive's TitleMenuBG_00 only when s->menus > 0). wide_hud_archive is the Common one.
-int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n);
+int wide_hud_archive_in(int archive, uint8_t **sarc, size_t *n, const WideHudShift *s, char *why, size_t why_n);
 
 // The Common layout archive's zstd file in[0..n) with the shift's edits, compressed again with
-// the dictionary of Pack/ZsDic.pack.zs (zsdic) the original names: *out_z (malloc'd) and *out_n. Returns 1 when *out_z
-// was made, 0 when there is nothing to serve, -1 when it cannot be (logged; the archive is served as it is).
+// the dictionary of Pack/ZsDic.pack.zs (zsdic) the original names: *out_z (malloc'd) and *out_n. Its frame records
+// the decompressed size, larger than the original's when a split grew the archive: the game sizes the buffer it reads
+// the archive into from the resource size table, whose entry must then grow too (romfs.c wide_hud_overlay). Returns 1
+// when *out_z was made, 0 when there is nothing to serve, -1 when it cannot be (logged; the archive is served as it
+// is).
 int wide_hud_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, const WideHudShift *s, void **out_z,
                    size_t *out_n);
 // The same for the archive WIDE_HUD_COMMON or WIDE_HUD_TITLE names (in is that archive's file). Returns 0, without

@@ -18,8 +18,8 @@
 #include "wide_hud.h"
 
 // The menus' shift alone (a layout's grid units wider on each side), or the HUD's alone.
-#define MENUS(m) (&(WideHudShift){0, 1.0f, (m)})
-#define HUD(o) (&(WideHudShift){(o), 1.0f, 0})
+#define MENUS(m) (&(WideHudShift){0, 1.0f, (m), 0})
+#define HUD(o) (&(WideHudShift){(o), 1.0f, 0, 0})
 
 static int fails;
 #define CHECK(c, ...)                                                                                                  \
@@ -190,6 +190,18 @@ static float width_of(const uint8_t *p, size_t n, const char *member, int copy, 
     return -1;
 }
 
+// wide_hud_archive_in on b[0..n), which nothing here makes larger: the archive edited in b.
+static int archive_in(int archive, uint8_t *b, size_t n, const WideHudShift *s, char *why, size_t why_n) {
+    uint8_t *p = malloc(n ? n : 1);
+    size_t m = n;
+    memcpy(p, b, n);
+    int r = wide_hud_archive_in(archive, &p, &m, s, why, why_n);
+    CHECK(m == n, "the archive grew from %zu to %zu bytes", n, m);
+    if (m == n) memcpy(b, p, n);
+    free(p);
+    return r;
+}
+
 // ---- checks on the made archive
 static void check_synthetic(void) {
     enum { CAP = 1 << 18 };
@@ -200,16 +212,16 @@ static void check_synthetic(void) {
     // the Common archive's edit leaves the Title archive alone
     memcpy(b, a, n);
     nlog = 0;
-    CHECK(wide_hud_archive_in(WIDE_HUD_COMMON, b, n, MENUS(menus), why, sizeof why) == 0 && !memcmp(a, b, n),
+    CHECK(archive_in(WIDE_HUD_COMMON, b, n, MENUS(menus), why, sizeof why) == 0 && !memcmp(a, b, n),
           "the Common archive's edit of the title archive: %s", why);
     CHECK(!log_find("wide menus: TitleMenuBG_00"), "the Common archive's edit named TitleMenuBG_00");
     // HUD's edges alone: nothing in the Title archive
     nlog = 0;
-    CHECK(wide_hud_archive_in(WIDE_HUD_TITLE, b, n, HUD(660), why, sizeof why) == 0 && !memcmp(a, b, n) && nlog == 0,
+    CHECK(archive_in(WIDE_HUD_TITLE, b, n, HUD(660), why, sizeof why) == 0 && !memcmp(a, b, n) && nlog == 0,
           "the HUD's edit of the title archive: %d lines", nlog);
     // the menus' shift: three widths in each of two copies, one log line
     nlog = 0;
-    int r = wide_hud_archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why);
+    int r = archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why);
     CHECK(r == 6, "title archive: %d fields (%s)", r, why);
     for (int c = 0; c < 2; c++)
         for (int k = 0; k < 3; k++)
@@ -232,7 +244,7 @@ static void check_synthetic(void) {
           "title archive: %d lines, the first: %s", nlog, nlog ? log_lines[0] : "");
     // again: nothing to change, no line
     nlog = 0;
-    CHECK(wide_hud_archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why) == 0 && nlog == 0,
+    CHECK(archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why) == 0 && nlog == 0,
           "the title archive edited twice: %d lines", nlog);
     // an archive that holds a layout with another width keeps the game's, and says why; the rest is untouched
     memcpy(b, a, n);
@@ -241,7 +253,7 @@ static void check_synthetic(void) {
     uint8_t *odd = malloc(n);
     memcpy(odd, b, n);
     nlog = 0;
-    r = wide_hud_archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why);
+    r = archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why);
     CHECK(r == 0 && !memcmp(b, odd, n) && log_find("wide menus: TitleMenuBG_00 P_Capture_00 width is 3000, not 3840"),
           "a title archive with another width: %d (%s)", r, last_log());
     CHECK(log_find("wide menus: TitleMenuBG_00 P_Capture_00") && strstr(last_log(), "TitleMenuBG_00 keeps the game's menu layout"),
@@ -254,17 +266,17 @@ static void check_synthetic(void) {
         uint8_t *c3 = malloc(CAP);
         size_t m = make_sarc(c3, CAP, names, bytes, sizes, 1);
         nlog = 0;
-        r = wide_hud_archive_in(WIDE_HUD_TITLE, c3, m, MENUS(menus), why, sizeof why);
+        r = archive_in(WIDE_HUD_TITLE, c3, m, MENUS(menus), why, sizeof why);
         CHECK(r == 0 && strstr(last_log(), "TitleMenuBG_00 stays as the game lays it out"),
               "a title archive without TitleMenuBG_00: %d (%s)", r, last_log());
         free(c3);
     }
     // a damaged archive: the menus keep the game's, as for a layout that is not there
     nlog = 0;
-    CHECK(wide_hud_archive_in(WIDE_HUD_TITLE, a, 40, MENUS(menus), why, sizeof why) == 0 &&
+    CHECK(archive_in(WIDE_HUD_TITLE, a, 40, MENUS(menus), why, sizeof why) == 0 &&
               strstr(last_log(), "the layout archive is damaged; TitleMenuBG_00 stays as the game lays it out"),
           "a damaged title archive: %s", last_log());
-    CHECK(wide_hud_archive_in(7, a, n, MENUS(menus), why, sizeof why) == 0, "an archive number that is not one");
+    CHECK(archive_in(7, a, n, MENUS(menus), why, sizeof why) == 0, "an archive number that is not one");
     CHECK(wide_hud_archive_path(WIDE_HUD_TITLE) && !strcmp(wide_hud_archive_path(WIDE_HUD_TITLE), WIDE_HUD_TITLE_ARCHIVE) &&
               !strcmp(wide_hud_archive_path(WIDE_HUD_COMMON), WIDE_HUD_ARCHIVE) && !wide_hud_archive_path(5),
           "the archive paths");
@@ -320,7 +332,7 @@ static void check_build(void) {
         ZSTD_freeDCtx(dc);
         char why[240];
         memcpy(expect, a, n);
-        wide_hud_archive_in(WIDE_HUD_TITLE, expect, n, MENUS(640), why, sizeof why);
+        archive_in(WIDE_HUD_TITLE, expect, n, MENUS(640), why, sizeof why);
         CHECK(got == n && !memcmp(raw, expect, n), "build: not the archive edited in memory");
         r = wide_hud_build_in(WIDE_HUD_TITLE, out, out_n, zdic, zdn, MENUS(640), &again, &again_n);
         CHECK(r == 0 && !again && strstr(last_log(), "the title layout archive has these edits already (the menus over"),
@@ -330,7 +342,7 @@ static void check_build(void) {
     }
     // a shift with the HUD's edges and the loading icon asks nothing of this archive: it is not even read
     nlog = 0;
-    CHECK(wide_hud_build_in(WIDE_HUD_TITLE, z, zn / 2, zdic, zdn, &(WideHudShift){660, 0.75f, 0}, &again, &again_n) == 0 &&
+    CHECK(wide_hud_build_in(WIDE_HUD_TITLE, z, zn / 2, zdic, zdn, &(WideHudShift){660, 0.75f, 0, 0}, &again, &again_n) == 0 &&
               !again && nlog == 0,
           "build with no menus: %s", last_log());
     CHECK(wide_hud_build_in(WIDE_HUD_TITLE, z, zn, zdic, zdn, MENUS(0), &again, &again_n) == 0 && !again,
@@ -429,7 +441,7 @@ static void game_archive(char **argv) {
                   "grown by 2 * %g",
                   shapes[s].w, shapes[s].h, changed, 3 * copies, outside, wrong, (double)out);
             char why[240] = "";
-            CHECK(wide_hud_archive_in(WIDE_HUD_TITLE, got, on, MENUS(out), why, sizeof why) == 0,
+            CHECK(archive_in(WIDE_HUD_TITLE, got, on, MENUS(out), why, sizeof why) == 0,
                   "game %ux%u: a second pass changes something", shapes[s].w, shapes[s].h);
             const char *line = log_find("wide menus: TitleMenuBG_00");
             printf("game %ux%u (menus %g units wider): %s\n", shapes[s].w, shapes[s].h, (double)out,

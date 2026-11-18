@@ -34,9 +34,18 @@
 // wide_init), so it is laid out for the picture's width the same way as the message log's backdrop. The archive is
 // served beside the Common one (romfs.c wide_hud_overlay); each plan names the archive it belongs to.
 //
+// The pause menu's backdrop (PlusMenu_00's P_MenuBg_00) has the slots of its pages' grids painted in, under columns the
+// plan moves apart by different distances, so it is neither moved nor stretched: the split (the splits table below)
+// cuts it into pieces that each move with their column, as new panes inserted after it, with a plain stretch of the
+// picture drawn over each gap. A split grows its layout, so it runs after the edits in place, and the archive is laid
+// out again around the grown copies (sarc.c sarc_rebuild). The game sizes the buffer it reads the archive into from
+// the resource size table, so the archive served larger needs that entry raised (romfs.c restbl_room); when it
+// cannot be, the archive is made again without the split, and PlusMenu_00 keeps the game's menu layout
+// (WideHudShift.no_growth), its pages never moved without their backdrop.
+//
 // The layout files are BFFH: little-endian records that point at each other by 64-bit offsets from the file's start.
 // - The header has a group of slots per table: +0x00 the offset of the list of name offsets, +0x08 that of the list
-//   of record offsets, +0x18 the count. Panes at 0x118 (in the order of the records: parents before children),
+//   of record offsets, +0x10 that of the names' hashes, +0x18 the count. Panes at 0x118 (in the order of the records: parents before children),
 //   animations at 0x238.
 // - A pane record: scale x at +0x10, rotation at +0x18, translate x at +0x1c (in its parent's space, the grid's centre
 //   at 0), the parent's index at +0x28 (-1 for the root).
@@ -170,8 +179,6 @@ static const PaneOp plus_menu_full[] = {
     {"P_InfoBg_02", OP_MOVE, G_FULL, 4.5, 9660, 1, 0},
     {"P_InfoBg_02", OP_GROW, G_FULL, 0.5, 0, 1, 1742},
     {"P_InfoBg_03", OP_MOVE, G_FULL, 5, 10681, 1, 0},
-    {"P_MenuBg_00", OP_MOVE, G_FULL, 2, 4280, 1, 0},
-    {"P_MenuBg_00", OP_GROW, G_FULL, 2, 0, 1, 9200},
     {"P_MenuBgAmiibo_00", OP_MOVE, G_FULL, 1, 2932, 1, 0},
     {"P_MenuBgArrow_00", OP_MOVE, G_FULL, 3, 7876, 1, 0},
     {"P_SystemBg_00", OP_MOVE, G_FULL, 5, 11512, 1, 0},
@@ -357,6 +364,42 @@ static const Plan plans[] = {
     {"TitleMenuBG_00", title_menu_bg_full, N(title_menu_bg_full), NULL, 0, WIDE_HUD_TITLE},
 };
 enum { NPLANS = sizeof plans / sizeof *plans };
+
+// A picture drawn in pieces, each a pane of its own that moves on its own (group G_FULL). A piece {a, b, x0, x1, f0,
+// f1} shows the picture's texture from x a to b (the game's picture, in its pane's parent's space) between
+// x0 + f0 * u and x1 + f1 * u. The first piece is the pane itself; piece k is a new pane <pane>_k right after it, with
+// a picture and a material of the same name (split_layout below says how the file changes).
+typedef struct {
+    double a, b, x0, x1, f0, f1;
+} Piece;
+typedef struct {
+    const char *layout, *pane;
+    int group;
+    const Piece *pieces;
+    int npieces;
+} Split;
+// The pause menu's backdrop, P_MenuBg_00 (9200 wide at x 4280, from -320 to 8880, under N_MenuChange_00 with the
+// three pages' panes): its painted slots sit under the columns the plan moves apart (the equipment's grid one u, the
+// item grid three), which a stretched picture would leave. Each piece moves with its column, and a plain stretch of
+// the picture without slots (x 1880 to 2010) covers each gap that opens between them, from one piece's place to the
+// next one's.
+static const Piece menu_bg_pieces[] = {
+    {1880, 2010, -320, -320, 0, 1},   // a seam left of the collection grid, out to the picture's left side
+    {-320, 3380, -320, 3380, 1, 1},   // the collection grid, the scroll ornament, the equipment's left column
+    {1880, 2010, 3380, 3380, 1, 2},   // a seam
+    {3380, 4980, 3380, 4980, 2, 2},   // the portrait's oval, the middle of the equipment page
+    {1880, 2010, 4980, 4980, 2, 3},   // a seam
+    {4980, 8880, 4980, 8880, 3, 3},   // the equipment's right grid, the scroll ornament, the item grid
+    {1880, 2010, 8880, 8880, 3, 4},   // a seam up to the item page's info panel
+};
+static const Split splits[] = {{"PlusMenu_00", "P_MenuBg_00", G_FULL, menu_bg_pieces, N(menu_bg_pieces)}};
+enum { NSPLITS = sizeof splits / sizeof *splits };
+
+static const Split *split_of(const char *layout) {
+    for (int i = 0; i < NSPLITS; i++)
+        if (!strcmp(splits[i].layout, layout)) return &splits[i];
+    return NULL;
+}
 // The most fields one layout's edit writes: its panes, its keys (with their slopes) and each curve's span of values.
 enum { MAX_EDITS = 2048 };
 
@@ -382,6 +425,7 @@ static int plan_groups(const Plan *plan) {
     int g = 0;
     for (int i = 0; i < plan->nops; i++) g |= plan->ops[i].group;
     for (int i = 0; i < plan->nkeys; i++) g |= key_groups(&plan->keys[i]);
+    if (split_of(plan->layout)) g |= split_of(plan->layout)->group;
     return g;
 }
 
@@ -394,6 +438,13 @@ int wide_hud_counts_of(int menus, WideHudCount *out, int max) {
             for (int q = 0; q < j && !seen; q++)
                 seen = plans[i].ops[q].group == want && !strcmp(plans[i].ops[q].pane, plans[i].ops[j].pane);
             panes += plans[i].ops[j].group == want && !seen;
+        }
+        const Split *sp = split_of(plans[i].layout);
+        if (sp && sp->group == want) {   // the pane drawn in pieces, once
+            int seen = 0;
+            for (int j = 0; j < plans[i].nops && !seen; j++)
+                seen = plans[i].ops[j].group == want && !strcmp(plans[i].ops[j].pane, sp->pane);
+            panes += !seen;
         }
         for (int j = 0; j < plans[i].nkeys; j++)
             for (int m = 0; m < MAX_MAP && plans[i].keys[j].map[m].at > 0; m++)
@@ -956,9 +1007,607 @@ int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShif
     return lay_out(p, n, member, s, groups_of(s), report, report_n, why, why_n);
 }
 
+// ---- the split: a picture drawn in pieces, each a pane of its own (the splits table above)
+// A split inserts new panes after its pane, so it rewrites more than floats:
+// - The pane is a picture (bits 7-10 of its flags at +0x38 are 1) without children, unturned at scale x 1, with its
+//   origin's horizontal code (flags bits 11-13) 2, the centre. +0x34 is the index one past its subtree's last pane,
+//   +0x3c its material's index (u16) and +0x42 its picture's (u16).
+// - The pane, picture (0x158) and material (0x138) tables also keep at +0x10 the offset of a list of 64-bit name
+//   hashes, CityHash64 of each name (wide_hud_name_hash), which the game's lookup by name compares: the three lists
+//   of a table stay in one order.
+// - The picture record has no window (+0x08 0) and its material's index at +0x10 (u16); its colour and corner lists
+//   lie inside its own 0x88 bytes, pointed at from +0x00, +0x20, +0x48, +0x50, +0x58 and +0x60. The material has one
+//   texture map: its list of maps (+0x00, count +0x08) at +0x40 right after the record, the map right after that at
+//   +0x48, with no list of texture names (+0x00 of the map 0), its UV scale at +0x10, translate at +0x18 and rotation
+//   at +0x20. The game turns each offset into a pointer in place, once per record it visits, so a new pane gets its
+//   own copy of both, offsets and all, never one shared with the pane.
+// - Each pane after it has its index one higher per new pane, so these move with it: a pane's parent (+0x28) and
+//   subtree end (+0x34) past it, the pane index of the parts (table 0x1b8, record +0x40) and captures (table 0x1d8,
+//   record +0x04), and each animation track's target code, once per code (any target kind).
+// - The u32 array at 0x300 (count 0x308, stride 0x30c, 4), one entry per material, grows with the materials.
+// - Everything new goes past the end of the file: new lists of names, records and hashes for the three tables (the
+//   old ones left unused), the new records, the grown array. The string pool section (the second BFSI at 0xd0: its
+//   start at +0x04 and +0x10, its size at +0x08) reached the end and grows to cover them, with the file's size at
+//   +0x08. The game reads the records from the header's offsets, wherever in the file they lie.
+// Each step mirrors tools/layout_dump.py split_picture, byte for byte (tests/wide_hud_check.py compares the two).
+#pragma STDC FP_CONTRACT OFF   // the doubles below computed as that script computes them, without fused steps
+enum { MAT_TABLE = 0x138, PIC_TABLE = 0x158, PART_TABLE = 0x1b8, CAPTURE_TABLE = 0x1d8 };
+enum { PANE_END = 0x34, PANE_FLAGS = 0x38, PANE_MATERIAL = 0x3c, PANE_PICTURE = 0x42, PANE_SIZE = 0x44 };
+enum { PIC_WINDOW = 0x08, PIC_MATERIAL = 0x10, PICTURE_BLOB = 0x88, MAT_MAPS = 0x40, MAT_MAP = 0x48,
+       MATERIAL_BLOB = 0x40 + 8 + 0x30, MAP_UV_SCALE = 0x10, MAP_UV_TRANSLATE = 0x18, MAP_ROTATE = 0x20 };
+enum { FILE_SIZE = 0x08, POOL_SECTION = 0xd0, MATERIAL_EXTRA = 0x300, PART_PANE = 0x40, CAPTURE_PANE = 0x04 };
+enum { CODE_SIZE = 6, MAX_NAME = 32 };
+static const unsigned picture_pointers[] = {0x00, 0x20, 0x48, 0x50, 0x58, 0x60};
+
+static uint64_t rd64(const uint8_t *s) {
+    uint64_t v;
+    memcpy(&v, s, 8);
+    return v;
+}
+static uint64_t rot64(uint64_t v, int s) { return s ? v >> s | v << (64 - s) : v; }
+static uint64_t len16(uint64_t u, uint64_t v, uint64_t mul) {
+    uint64_t a = (u ^ v) * mul;
+    a ^= a >> 47;
+    uint64_t b = (v ^ a) * mul;
+    b ^= b >> 47;
+    return b * mul;
+}
+
+uint64_t wide_hud_name_hash(const char *name) {
+    static const uint64_t k0 = 0xc3a5c85c97cb3127ull, k1 = 0xb492b66fbe98f273ull, k2 = 0x9ae16a3b2f90404full;
+    const uint8_t *s = (const uint8_t *)name;
+    size_t n = strlen(name);
+    uint64_t mul = k2 + n * 2;
+    if (n > MAX_NAME) return 0;
+    if (n > 16) {
+        uint64_t a = rd64(s) * k1, b = rd64(s + 8), c = rd64(s + n - 8) * mul, d = rd64(s + n - 16) * k2;
+        return len16(rot64(a + b, 43) + rot64(c, 30) + d, a + rot64(b + k2, 18) + c, mul);
+    }
+    if (n >= 8) {
+        uint64_t a = rd64(s) + k2, b = rd64(s + n - 8);
+        return len16(rot64(b, 37) * mul + a, (rot64(a, 25) + b) * mul, mul);
+    }
+    if (n >= 4) {
+        uint32_t x, y;
+        memcpy(&x, s, 4);
+        memcpy(&y, s + n - 4, 4);
+        return len16(n + ((uint64_t)x << 3), y, mul);
+    }
+    if (n) {
+        uint64_t y = s[0] + ((uint64_t)s[n >> 1] << 8), z = n + ((uint64_t)s[n - 1] << 2), v = y * k2 ^ z * k0;
+        return (v ^ v >> 47) * k2;
+    }
+    return k2;
+}
+
+static int u16_at(const uint8_t *p, size_t n, uint64_t off, uint16_t *v) {
+    if (off > n || n - off < 2) return 0;
+    memcpy(v, p + off, 2);
+    return 1;
+}
+static void put16(uint8_t *p, uint64_t at, uint16_t v) { memcpy(p + at, &v, 2); }
+static void put32(uint8_t *p, uint64_t at, uint32_t v) { memcpy(p + at, &v, 4); }
+static void put64(uint8_t *p, uint64_t at, uint64_t v) { memcpy(p + at, &v, 8); }
+// src[0..len) (zeros for NULL) at the first offset from *at aligned to `align` in q, *at moved past it: where it went.
+static uint64_t put_at(uint8_t *q, uint64_t *at, const void *src, size_t len, unsigned align) {
+    *at = (*at + align - 1) & ~(uint64_t)(align - 1);
+    uint64_t r = *at;
+    if (src) memcpy(q + r, src, len);
+    *at += len;
+    return r;
+}
+static void putf(uint8_t *p, uint64_t at, double v) {
+    float f = (float)v;
+    memcpy(p + at, &f, 4);
+}
+
+// A table with its list of name hashes: 0 when its lists do not fit the file.
+typedef struct {
+    uint64_t names, records, hashes;
+    uint32_t count;
+} Table;
+static int table3(const uint8_t *p, size_t n, size_t slot, Table *t) {
+    return table(p, n, slot, &t->names, &t->records, &t->count) && u64_at(p, n, slot + 16, &t->hashes) &&
+           (!t->count || t->hashes) && t->hashes <= n && (n - t->hashes) / 8 >= t->count;
+}
+// Entry i's name, NULL when it does not lie in the file; its record, at least size bytes, 0 when it does not.
+static const char *entry_name(const uint8_t *p, size_t n, const Table *t, uint32_t i) {
+    uint64_t s;
+    return u64_at(p, n, t->names + 8 * (uint64_t)i, &s) ? str_at(p, n, s) : NULL;
+}
+static uint64_t entry_record(const uint8_t *p, size_t n, const Table *t, uint32_t i, size_t size) {
+    uint64_t r;
+    return u64_at(p, n, t->records + 8 * (uint64_t)i, &r) && r && r <= n && n - r >= size ? r : 0;
+}
+
+// Where a piece lands at distance u and the UV window of the texture it shows, from the picture's x and width and its
+// texture map's UV scale and translate x: 0 when the piece lies outside the picture or runs backwards.
+typedef struct {
+    double cx, w, usx, utx;
+} Window;
+static int window_of(const Piece *pc, double x, double w, double sx, double tx, double u, Window *out) {
+    double left = x - w / 2, t0 = pc->x0 + pc->f0 * u, t1 = pc->x1 + pc->f1 * u;
+    if (!(left - 1e-3 <= pc->a && pc->a < pc->b && pc->b <= left + w + 1e-3) || t1 < t0) return 0;
+    double su0 = (pc->a - left) / w, su1 = (pc->b - left) / w;
+    *out = (Window){(t0 + t1) / 2, t1 - t0, sx * (su1 - su0), tx + ((su0 + su1) / 2 - 0.5) * sx};
+    return 1;
+}
+
+// The animations' track target codes, each once, sorted: malloc'd (*codes), their count; -1 when they do not fit the
+// file or two of them overlap.
+static int code_order(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return x < y ? -1 : x > y;
+}
+static int track_codes(const uint8_t *p, size_t n, uint64_t **codes) {
+    uint64_t names, records;
+    uint32_t count;
+    size_t k = 0, cap = 0;
+    *codes = NULL;
+    if (!table(p, n, ANIM_TABLE, &names, &records, &count)) return -1;
+    for (uint32_t a = 0; a < count; a++) {
+        uint64_t r, body, tracks;
+        uint32_t ntracks;
+        if (!u64_at(p, n, records + 8 * (uint64_t)a, &r) || !u64_at(p, n, r, &body) ||
+            !u64_at(p, n, body + ANIM_TRACKS, &tracks) || !u32_at(p, n, body + ANIM_TRACKS + 8, &ntracks) ||
+            tracks > n || (n - tracks) / 8 < ntracks)
+            goto fail;
+        for (uint32_t t = 0; t < ntracks; t++) {
+            uint64_t e, code;
+            if (!u64_at(p, n, tracks + 8 * (uint64_t)t, &e) || !u64_at(p, n, e, &code) || code > n ||
+                n - code < CODE_SIZE)
+                goto fail;
+            if (k == cap) {
+                uint64_t *grown = realloc(*codes, (cap = cap ? 2 * cap : 64) * sizeof *grown);
+                if (!grown) goto fail;
+                *codes = grown;
+            }
+            (*codes)[k++] = code;
+        }
+    }
+    if (k) qsort(*codes, k, sizeof **codes, code_order);
+    size_t u = 0;
+    for (size_t j = 0; j < k; j++) {
+        if (u && (*codes)[j] == (*codes)[u - 1]) continue;
+        if (u && (*codes)[j] - (*codes)[u - 1] < CODE_SIZE) goto fail;
+        (*codes)[u++] = (*codes)[j];
+    }
+    return (int)u;
+fail:
+    free(*codes);
+    *codes = NULL;
+    return -1;
+}
+
+// The pane index a code names (bits 11-14 and 16-18), and the code with another.
+static unsigned code_pane(const uint8_t *c) {
+    uint64_t v = 0;
+    for (int i = CODE_SIZE - 1; i >= 0; i--) v = v << 8 | c[i];
+    return (unsigned)(((v >> 11) & 0xf) | (((v >> 16) & 7) << 4));
+}
+static void code_set_pane(uint8_t *c, unsigned index) {
+    uint64_t v = 0;
+    for (int i = CODE_SIZE - 1; i >= 0; i--) v = v << 8 | c[i];
+    v = (v & ~((uint64_t)0xf << 11 | (uint64_t)7 << 16)) | (uint64_t)(index & 0xf) << 11 |
+        (uint64_t)(index >> 4 & 7) << 16;
+    for (int i = 0; i < CODE_SIZE; i++) c[i] = (uint8_t)(v >> (8 * i));
+}
+
+// The piece's pane, picture and material records in a split file: the pane itself for piece 0, <pane>_k after it.
+// 0 with why when one of them is not where the split puts it.
+typedef struct {
+    uint64_t pane, pic, mat;
+    uint16_t pic_index, mat_index;
+} PieceRecs;
+
+// The file q[0..qn) as split_layout leaves it: the pane tree whole (each parent before its children, each subtree
+// end past its pane and within its parent's), the new panes after the pane with their names and hashes, each piece's
+// pane at its place and width for distance u with a picture and a material of its own whose texture map shows its
+// window, the per-material array as long as the materials, every track naming a pane that exists, the file's and the
+// string pool's sizes reaching its end. From the game's file (orig, sizes read before the split): the UV windows
+// exactly; without it (NULL: a file split before), that the pieces' windows agree on one picture. 1, or 0 with why.
+typedef struct {
+    double x, w, sx, tx;
+} Orig;
+static int check_split(const uint8_t *q, size_t qn, const Split *sp, float u, const Orig *orig, char *why,
+                       size_t why_n) {
+    const char *L = sp->layout, *P = sp->pane;
+    Table panes, pics, mats;
+    uint64_t rec, *codes = NULL;
+    uint32_t extra = (uint32_t)sp->npieces - 1, v32, pool, pool_n;
+    int i;
+    char name[64];
+    if (!table3(q, qn, PANE_TABLE, &panes) || !table3(q, qn, PIC_TABLE, &pics) || !table3(q, qn, MAT_TABLE, &mats) ||
+        (i = table_find(q, qn, PANE_TABLE, P, PANE_SIZE, &rec)) < 0 || (uint64_t)i + extra >= panes.count ||
+        pics.count <= extra || mats.count <= extra) {
+        snprintf(why, why_n, "%s's tables of panes, pictures and materials do not hold %s's pieces", L, P);
+        return 0;
+    }
+    for (uint32_t j = 0; j < panes.count; j++) {
+        uint64_t r = entry_record(q, qn, &panes, j, PANE_SIZE), pr;
+        uint32_t parent, end, pend;
+        if (!r || !u32_at(q, qn, r + PANE_PARENT, &parent) || !u32_at(q, qn, r + PANE_END, &end) ||
+            (parent != 0xffffffffu && parent >= j) || end <= j || end > panes.count ||
+            (parent != 0xffffffffu && (!(pr = entry_record(q, qn, &panes, parent, PANE_SIZE)) ||
+                                       !u32_at(q, qn, pr + PANE_END, &pend) || end > pend || j >= pend))) {
+            snprintf(why, why_n, "%s's tree of panes is broken at pane %u", L, j);
+            return 0;
+        }
+    }
+    PieceRecs pr[MAX_PANES];
+    double ratio = 0, base = 0;
+    uint64_t pic_ptr[sizeof picture_pointers / sizeof *picture_pointers];
+    for (uint32_t k = 0; k <= extra; k++) {
+        PieceRecs *c = &pr[k];
+        uint32_t at = (uint32_t)i + k;
+        const char *pn = entry_name(q, qn, &panes, at);
+        uint64_t hash;
+        snprintf(name, sizeof name, k ? "%s_%u" : "%s", P, k);
+        if (!pn || strcmp(pn, name) || !u64_at(q, qn, panes.hashes + 8 * (uint64_t)at, &hash) ||
+            hash != wide_hud_name_hash(name) || !(c->pane = entry_record(q, qn, &panes, at, PANE_SIZE)) ||
+            !u16_at(q, qn, c->pane + PANE_PICTURE, &c->pic_index) ||
+            !u16_at(q, qn, c->pane + PANE_MATERIAL, &c->mat_index) || c->pic_index >= pics.count ||
+            c->mat_index >= mats.count || (k && (c->pic_index != pics.count - extra + k - 1 ||
+                                                 c->mat_index != mats.count - extra + k - 1))) {
+            snprintf(why, why_n, "%s's pane %u is not %s's piece %u", L, at, P, k);
+            return 0;
+        }
+        const char *picn = entry_name(q, qn, &pics, c->pic_index), *matn = entry_name(q, qn, &mats, c->mat_index);
+        uint16_t pm;
+        uint64_t maps, map;
+        uint32_t nmaps;
+        if (!picn || strcmp(picn, name) || !matn || strcmp(matn, name) ||
+            !(c->pic = entry_record(q, qn, &pics, c->pic_index, PICTURE_BLOB)) ||
+            !u16_at(q, qn, c->pic + PIC_MATERIAL, &pm) || pm != c->mat_index ||
+            !(c->mat = entry_record(q, qn, &mats, c->mat_index, MATERIAL_BLOB)) || !u64_at(q, qn, c->mat, &maps) ||
+            !u32_at(q, qn, c->mat + 8, &nmaps) || !u64_at(q, qn, c->mat + MAT_MAPS, &map) ||
+            maps != c->mat + MAT_MAPS || nmaps != 1 || map != c->mat + MAT_MAP) {
+            snprintf(why, why_n, "%s %s has not a picture and a material of its own", L, name);
+            return 0;
+        }
+        for (size_t o = 0; o < sizeof picture_pointers / sizeof *picture_pointers; o++) {
+            uint64_t to;
+            u64_at(q, qn, c->pic + picture_pointers[o], &to);
+            if (!k) pic_ptr[o] = to - c->pic;
+            if (to - c->pic != pic_ptr[o] || to - c->pic >= PICTURE_BLOB) {
+                snprintf(why, why_n, "%s %s's picture record does not point inside itself", L, name);
+                return 0;
+            }
+        }
+        // where it lands, and its texture's window
+        const Piece *pc = &sp->pieces[k];
+        double t0 = pc->x0 + pc->f0 * (double)u, t1 = pc->x1 + pc->f1 * (double)u;
+        float x, w, usx, utx;
+        f32_at(q, qn, c->pane + PANE_X, &x);
+        f32_at(q, qn, c->pane + PANE_W, &w);
+        f32_at(q, qn, c->mat + MAT_MAP + MAP_UV_SCALE, &usx);
+        f32_at(q, qn, c->mat + MAT_MAP + MAP_UV_TRANSLATE, &utx);
+        Window win;
+        int placed = same(x, (float)((t0 + t1) / 2)) && same(w, (float)(t1 - t0)), shows;
+        if (orig) {
+            shows = window_of(pc, orig->x, orig->w, orig->sx, orig->tx, u, &win) && x == (float)win.cx &&
+                    w == (float)win.w && usx == (float)win.usx && utx == (float)win.utx;
+        } else {   // utx = tx + sx * ((a + b) / 2 - left) / width - sx / 2, usx = sx * (b - a) / width
+            double r = usx / (pc->b - pc->a), b0 = utx - r * (pc->a + pc->b) / 2;
+            if (!k) ratio = r, base = b0;
+            shows = fabs(r - ratio) <= 1e-6 * fabs(ratio) + 1e-9 && fabs(b0 - base) < 1e-4;
+        }
+        if (!placed || !shows) {
+            snprintf(why, why_n, "%s %s is at x %g, width %g, uv scale %g, translate %g, not where piece %u goes", L,
+                     name, (double)x, (double)w, (double)usx, (double)utx, k);
+            return 0;
+        }
+    }
+    uint64_t extra_at;
+    if (!u64_at(q, qn, MATERIAL_EXTRA, &extra_at) || (extra_at && (!u32_at(q, qn, MATERIAL_EXTRA + 8, &v32) ||
+                                                                   v32 != mats.count))) {
+        snprintf(why, why_n, "%s's per-material array is not as long as its %u materials", L, mats.count);
+        return 0;
+    }
+    int nc = track_codes(q, qn, &codes);
+    for (int c = 0; c < nc; c++)
+        if (code_pane(q + codes[c]) >= panes.count) nc = -1;
+    free(codes);
+    if (nc < 0) {
+        snprintf(why, why_n, "%s's animations name a pane past its %u", L, panes.count);
+        return 0;
+    }
+    if (!u32_at(q, qn, FILE_SIZE, &v32) || v32 != qn || !u32_at(q, qn, POOL_SECTION + 4, &pool) ||
+        !u32_at(q, qn, POOL_SECTION + 8, &pool_n) || (uint64_t)pool + pool_n != qn) {
+        snprintf(why, why_n, "%s's size or its string pool's does not reach its end", L);
+        return 0;
+    }
+    return 1;
+}
+
+// The layout p[0..n) with the split's pane drawn in its pieces at distance u: *out (malloc'd), *out_n. Returns the
+// number of panes added; 0 when the file is split so already (checked, *out NULL); -1 with why when it is not the
+// layout this expects (nothing written). report: "P_MenuBg_00 in 7 pieces".
+static int split_layout(const uint8_t *p, size_t n, const Split *sp, float u, uint8_t **out, size_t *out_n,
+                        char *report, size_t report_n, char *why, size_t why_n) {
+    const char *L = sp->layout, *P = sp->pane;
+    Table panes, pics, mats;
+    uint64_t rec, *codes = NULL, parts_n, parts_r, caps_n, caps_r;
+    uint32_t extra = (uint32_t)sp->npieces - 1, nparts, ncaps;
+    uint8_t *q = NULL;
+    char name[64], why2[200];
+    int i, ncodes = -1, result = -1;
+    *out = NULL;
+    if (report && report_n) report[0] = 0;
+    if (n < 4 || memcmp(p, "BFFH", 4)) {
+        snprintf(why, why_n, "%s is not a BFFH layout", L);
+        return -1;
+    }
+    if (!table3(p, n, PANE_TABLE, &panes)) {
+        snprintf(why, why_n, "%s has a damaged table of panes", L);
+        return -1;
+    }
+    snprintf(name, sizeof name, "%s_1", P);
+    if (table_find(p, n, PANE_TABLE, name, PANE_SIZE, &rec) >= 0) {   // split before (an earlier start's file)
+        if (check_split(p, n, sp, u, NULL, why2, sizeof why2)) return 0;
+        snprintf(why, why_n, "%s has %s but is not split so (%s)", L, name, why2);
+        return -1;
+    }
+    // ---- everything read and checked before anything is written
+    uint32_t flags, end, v32, pool, pool_n, extra_n = 0, stride = 0;
+    float x, w, sx, rot, msx, mtx, mrot;
+    uint16_t pic_index, mat_index, pane_mat;
+    uint64_t pic = 0, mat = 0, maps, map, window, map_names, pool64, extra_at = 0;
+    if (sp->npieces < 1 || (i = table_find(p, n, PANE_TABLE, P, PANE_SIZE, &rec)) < 0) {
+        snprintf(why, why_n, "%s has no pane %s", L, P);
+        return -1;
+    }
+    if (panes.count + extra > MAX_PANES) {
+        snprintf(why, why_n, "%s would have %u panes, more than the %d its animations can name", L, panes.count + extra,
+                 MAX_PANES);
+        return -1;
+    }
+    for (uint32_t j = 0; j < panes.count; j++) {
+        uint64_t r = entry_record(p, n, &panes, j, PANE_SIZE);
+        uint32_t parent;
+        if (!r || !u32_at(p, n, r + PANE_PARENT, &parent) || (parent != 0xffffffffu && parent >= j)) {
+            snprintf(why, why_n, "%s has a damaged pane %u", L, j);
+            return -1;
+        }
+        for (uint32_t k = 0; k < j; k++)
+            if (entry_record(p, n, &panes, k, PANE_SIZE) == r) {
+                snprintf(why, why_n, "%s's panes %u and %u share a record", L, k, j);
+                return -1;
+            }
+        if (parent == (uint32_t)i) {
+            snprintf(why, why_n, "%s %s has children", L, P);
+            return -1;
+        }
+    }
+    u32_at(p, n, rec + PANE_FLAGS, &flags);
+    u32_at(p, n, rec + PANE_END, &end);
+    f32_at(p, n, rec + PANE_X, &x), f32_at(p, n, rec + PANE_W, &w);
+    f32_at(p, n, rec + PANE_SCALE_X, &sx), f32_at(p, n, rec + PANE_ROTATE, &rot);
+    u16_at(p, n, rec + PANE_PICTURE, &pic_index), u16_at(p, n, rec + PANE_MATERIAL, &pane_mat);
+    if ((flags >> 7 & 0xf) != 1 || end != (uint32_t)i + 1 || !(w > 0)) {
+        snprintf(why, why_n, "%s %s is not a picture pane of its own", L, P);
+        return -1;
+    }
+    if (!same(rot, 0) || !same(sx, 1) || (flags >> 11 & 7) != 2) {
+        snprintf(why, why_n, "%s %s is turned %g or scaled %g, or its origin is not at its centre", L, P, (double)rot,
+                 (double)sx);
+        return -1;
+    }
+    const char *pn;
+    if (!table3(p, n, PIC_TABLE, &pics) || !table3(p, n, MAT_TABLE, &mats) || pic_index >= pics.count ||
+        !(pn = entry_name(p, n, &pics, pic_index)) || strcmp(pn, P) ||
+        !(pic = entry_record(p, n, &pics, pic_index, PICTURE_BLOB)) || !u16_at(p, n, pic + PIC_MATERIAL, &mat_index) ||
+        mat_index != pane_mat || mat_index >= mats.count ||
+        !(mat = entry_record(p, n, &mats, mat_index, MATERIAL_BLOB))) {
+        snprintf(why, why_n, "%s %s's picture or material is not the one its pane names", L, P);
+        return -1;
+    }
+    uint32_t nmaps;
+    u64_at(p, n, pic + PIC_WINDOW, &window);
+    u64_at(p, n, mat, &maps), u32_at(p, n, mat + 8, &nmaps), u64_at(p, n, mat + MAT_MAPS, &map);
+    u64_at(p, n, mat + MAT_MAP, &map_names);
+    if (window || nmaps != 1 || maps != mat + MAT_MAPS || map != mat + MAT_MAP || map_names) {
+        snprintf(why, why_n, "%s %s is not a plain picture with one texture map", L, P);
+        return -1;
+    }
+    for (size_t o = 0; o < sizeof picture_pointers / sizeof *picture_pointers; o++) {
+        uint64_t to;
+        u64_at(p, n, pic + picture_pointers[o], &to);
+        if (to < pic || to >= pic + PICTURE_BLOB) {
+            snprintf(why, why_n, "%s %s's picture record is not laid out as expected", L, P);
+            return -1;
+        }
+    }
+    f32_at(p, n, map + MAP_UV_SCALE, &msx), f32_at(p, n, map + MAP_UV_TRANSLATE, &mtx);
+    f32_at(p, n, map + MAP_ROTATE, &mrot);
+    if (!same(mrot, 0)) {
+        snprintf(why, why_n, "%s %s's texture map is turned %g", L, P, (double)mrot);
+        return -1;
+    }
+    Orig orig = {x, w, msx, mtx};
+    Window win[MAX_PANES];
+    for (int k = 0; k < sp->npieces; k++)
+        if (!window_of(&sp->pieces[k], orig.x, orig.w, orig.sx, orig.tx, u, &win[k])) {
+            snprintf(why, why_n, "%s %s's piece %d lies outside the picture or runs backwards", L, P, k);
+            return -1;
+        }
+    for (uint32_t k = 1; k <= extra; k++)
+        if (snprintf(name, sizeof name, "%s_%u", P, k) > MAX_NAME) {
+            snprintf(why, why_n, "%s %s's pieces' names would be longer than %d bytes", L, P, MAX_NAME);
+            return -1;
+        }
+    if (!table(p, n, PART_TABLE, &parts_n, &parts_r, &nparts) ||
+        !table(p, n, CAPTURE_TABLE, &caps_n, &caps_r, &ncaps)) {
+        snprintf(why, why_n, "%s has a damaged table of parts or captures", L);
+        return -1;
+    }
+    for (int t = 0; t < 2; t++) {
+        uint64_t records = t ? caps_r : parts_r;
+        uint32_t count = t ? ncaps : nparts, field = t ? CAPTURE_PANE : PART_PANE;
+        for (uint32_t j = 0; j < count; j++) {
+            uint64_t r, r2;
+            int ok = u64_at(p, n, records + 8 * (uint64_t)j, &r) && r && r <= n && n - r >= field + 4;
+            for (uint32_t k = 0; ok && k < j; k++) ok = u64_at(p, n, records + 8 * (uint64_t)k, &r2) && r2 != r;
+            if (!ok) {
+                snprintf(why, why_n, "%s has a damaged or shared %s record", L, t ? "capture" : "part");
+                return -1;
+            }
+        }
+    }
+    if ((ncodes = track_codes(p, n, &codes)) < 0) {
+        snprintf(why, why_n, "%s's animations' tracks cannot be read", L);
+        return -1;
+    }
+    for (int c = 0; c < ncodes; c++)
+        if (code_pane(p + codes[c]) > (unsigned)i && code_pane(p + codes[c]) + extra >= MAX_PANES) {
+            snprintf(why, why_n, "%s: a track would name pane %u, past the %d a code can name", L,
+                     code_pane(p + codes[c]) + extra, MAX_PANES);
+            goto done;
+        }
+    if (memcmp(p + POOL_SECTION, "BFSI", 4) || !u32_at(p, n, POOL_SECTION + 4, &pool) ||
+        !u32_at(p, n, POOL_SECTION + 8, &pool_n) || !u64_at(p, n, POOL_SECTION + 0x10, &pool64) || pool64 != pool ||
+        (uint64_t)pool + pool_n != n || !u32_at(p, n, FILE_SIZE, &v32) || v32 != n) {
+        snprintf(why, why_n, "%s's string pool section or size does not reach its end", L);
+        goto done;
+    }
+    if (!u64_at(p, n, MATERIAL_EXTRA, &extra_at) ||
+        (extra_at && (!u32_at(p, n, MATERIAL_EXTRA + 8, &extra_n) || !u32_at(p, n, MATERIAL_EXTRA + 12, &stride) ||
+                      extra_n != mats.count || stride != 4 || extra_at > n || (n - extra_at) / 4 < extra_n))) {
+        snprintf(why, why_n, "%s's per-material array holds %u entries of %u bytes, not %u of 4", L, extra_n, stride,
+                 mats.count);
+        goto done;
+    }
+    // ---- the new file: room for every record and list, each 8-aligned
+    size_t cap = n + 8 + (size_t)extra * (MAX_NAME + 1 + MATERIAL_BLOB + PICTURE_BLOB + PANE_SIZE + 4 * 8) +
+                 3 * (8 * ((size_t)panes.count + pics.count + mats.count + 3 * (size_t)extra) + 3 * 8) +
+                 4 * ((size_t)mats.count + extra) + 8;
+    if (cap > UINT32_MAX || !(q = calloc(cap, 1))) {
+        snprintf(why, why_n, "out of memory");
+        goto done;
+    }
+    memcpy(q, p, n);
+    // what follows the pane, renumbered in place before anything is appended
+    for (int t = 0; t < 2; t++) {
+        uint64_t records = t ? caps_r : parts_r, r;
+        uint32_t count = t ? ncaps : nparts, field = t ? CAPTURE_PANE : PART_PANE, v;
+        for (uint32_t j = 0; j < count; j++) {
+            u64_at(q, n, records + 8 * (uint64_t)j, &r);
+            u32_at(q, n, r + field, &v);
+            if (v > (uint32_t)i) put32(q, r + field, v + extra);
+        }
+    }
+    for (uint32_t j = 0; j < panes.count; j++) {
+        uint64_t r = entry_record(q, n, &panes, j, PANE_SIZE);
+        uint32_t parent, e;
+        u32_at(q, n, r + PANE_PARENT, &parent), u32_at(q, n, r + PANE_END, &e);
+        if (parent != 0xffffffffu && parent > (uint32_t)i) put32(q, r + PANE_PARENT, parent + extra);
+        if (e > (uint32_t)i && j != (uint32_t)i) put32(q, r + PANE_END, e + extra);
+    }
+    for (int c = 0; c < ncodes; c++)
+        if (code_pane(q + codes[c]) > (unsigned)i) code_set_pane(q + codes[c], code_pane(q + codes[c]) + extra);
+    // the pane itself shows the first piece
+    putf(q, rec + PANE_X, win[0].cx), putf(q, rec + PANE_W, win[0].w);
+    putf(q, map + MAP_UV_SCALE, win[0].usx), putf(q, map + MAP_UV_TRANSLATE, win[0].utx);
+    uint64_t at = (n + 7) & ~(uint64_t)7, name_at[MAX_PANES], pane_at[MAX_PANES], pic_at[MAX_PANES],
+             mat_at[MAX_PANES];
+    for (uint32_t k = 1; k <= extra; k++) {
+        size_t len = (size_t)snprintf(name, sizeof name, "%s_%u", P, k) + 1;
+        name_at[k] = put_at(q, &at, name, len, 1);
+        // the material: its record, its one-entry list of maps and the map, its offsets moved with them
+        uint64_t m = mat_at[k] = put_at(q, &at, q + mat, MATERIAL_BLOB, 8);
+        put64(q, m, m + MAT_MAPS), put64(q, m + MAT_MAPS, m + MAT_MAP);
+        putf(q, m + MAT_MAP + MAP_UV_SCALE, win[k].usx), putf(q, m + MAT_MAP + MAP_UV_TRANSLATE, win[k].utx);
+        // the picture record, pointing at the new material
+        uint64_t pr = pic_at[k] = put_at(q, &at, q + pic, PICTURE_BLOB, 8);
+        for (size_t o = 0; o < sizeof picture_pointers / sizeof *picture_pointers; o++) {
+            uint64_t to;
+            u64_at(q, n, pic + picture_pointers[o], &to);
+            put64(q, pr + picture_pointers[o], to - pic + pr);
+        }
+        put16(q, pr + PIC_MATERIAL, (uint16_t)(mats.count + k - 1));
+        // the pane record
+        uint64_t pa = pane_at[k] = put_at(q, &at, q + rec, PANE_SIZE, 8);
+        putf(q, pa + PANE_X, win[k].cx), putf(q, pa + PANE_W, win[k].w);
+        put32(q, pa + PANE_END, (uint32_t)i + k + 1);
+        put16(q, pa + PANE_MATERIAL, (uint16_t)(mats.count + k - 1));
+        put16(q, pa + PANE_PICTURE, (uint16_t)(pics.count + k - 1));
+    }
+    // the three tables' new lists of names, records and hashes, the new entries at insert
+    const struct {
+        size_t slot;
+        const Table *t;
+        uint32_t insert;
+        const uint64_t *records;
+    } tables[3] = {{PANE_TABLE, &panes, (uint32_t)i + 1, pane_at},
+                   {PIC_TABLE, &pics, pics.count, pic_at},
+                   {MAT_TABLE, &mats, mats.count, mat_at}};
+    uint64_t lists[3][3];
+    for (int t = 0; t < 3; t++) {
+        const Table *T = tables[t].t;
+        uint32_t count = T->count + extra;
+        for (int l = 0; l < 3; l++) {
+            uint64_t list = lists[t][l] = put_at(q, &at, NULL, 8 * (size_t)count, 8);
+            uint64_t from = l == 0 ? T->names : l == 1 ? T->records : T->hashes;
+            for (uint32_t r = 0, old = 0; r < count; r++) {
+                uint32_t k = r - tables[t].insert + 1;   // the new entry's piece, for insert <= r < insert + extra
+                uint64_t v;
+                if (r >= tables[t].insert && k <= extra) {
+                    snprintf(name, sizeof name, "%s_%u", P, k);
+                    v = l == 0 ? name_at[k] : l == 1 ? tables[t].records[k] : wide_hud_name_hash(name);
+                } else {
+                    u64_at(q, n, from + 8 * (uint64_t)old++, &v);
+                }
+                put64(q, list + 8 * (uint64_t)r, v);
+            }
+        }
+    }
+    // the per-material array, each new material with its source's value
+    uint64_t grown = 0;
+    if (extra_at) {
+        uint32_t v, src;
+        grown = put_at(q, &at, NULL, 4 * ((size_t)mats.count + extra), 8);
+        for (uint32_t j = 0; j < mats.count; j++) {
+            u32_at(q, n, extra_at + 4 * (uint64_t)j, &v);
+            put32(q, grown + 4 * (uint64_t)j, v);
+        }
+        u32_at(q, n, extra_at + 4 * (uint64_t)mat_index, &src);
+        for (uint32_t k = 0; k < extra; k++) put32(q, grown + 4 * ((uint64_t)mats.count + k), src);
+    }
+    for (int t = 0; t < 3; t++) {
+        put64(q, tables[t].slot, lists[t][0]), put64(q, tables[t].slot + 8, lists[t][1]);
+        put64(q, tables[t].slot + 16, lists[t][2]), put32(q, tables[t].slot + 24, tables[t].t->count + extra);
+    }
+    if (extra_at) put64(q, MATERIAL_EXTRA, grown), put32(q, MATERIAL_EXTRA + 8, mats.count + extra);
+    put32(q, POOL_SECTION + 8, (uint32_t)(at - pool));
+    put32(q, FILE_SIZE, (uint32_t)at);
+    // read it again as the game will
+    if (!check_split(q, (size_t)at, sp, u, &orig, why2, sizeof why2)) {
+        snprintf(why, why_n, "%s reads otherwise after the split of %s (%s)", L, P, why2);
+        goto done;
+    }
+    *out = q, *out_n = (size_t)at, q = NULL;
+    say(report, report_n, "%s in %d pieces", P, sp->npieces);
+    result = (int)extra;
+done:
+    free(q);
+    free(codes);
+    return result;
+}
+
+int wide_hud_split(const uint8_t *p, size_t n, const char *member, const WideHudShift *s, uint8_t **out, size_t *out_n,
+                   char *report, size_t report_n, char *why, size_t why_n) {
+    const Plan *plan = plan_of(member);
+    const Split *sp = plan ? split_of(plan->layout) : NULL;
+    *out = NULL;
+    if (report && report_n) report[0] = 0;
+    if (!sp || !(sp->group & groups_of(s))) return 0;
+    return split_layout(p, n, sp, unit_of(sp->group, s), out, out_n, report, report_n, why, why_n);
+}
+
 enum { MAX_COPIES = 16 };
 typedef struct {
     size_t at[MAX_COPIES], size[MAX_COPIES];
+    unsigned slot[MAX_COPIES];   // the copy's entry in the archive (sarc_rebuild's numbering)
     int copies;
 } Copies;
 
@@ -972,7 +1621,7 @@ static int copies_of(const uint8_t *sarc, size_t n, const char *member, Copies *
             snprintf(why, why_n, "the layout archive holds %s more than %d times", member, MAX_COPIES);
             return 0;
         }
-        c->at[c->copies] = a, c->size[c->copies++] = s;
+        c->at[c->copies] = a, c->size[c->copies] = s, c->slot[c->copies++] = next - 1;
     }
     if (found < 0) {
         snprintf(why, why_n, "the layout archive is damaged");
@@ -999,20 +1648,33 @@ static const char *edit_name(int groups) {
                                                                                                     : "widescreen: menus";
 }
 
-// Every copy of one layout, each tried on a copy of its own, for the groups given: 1 when all of them take the edit
-// (report: what a copy that changed moved), 0 with why when one does not, -1 out of memory.
-static int trial(const uint8_t *sarc, const Copies *c, const char *member, const WideHudShift *s, int groups,
-                 char *report, size_t report_n, char *why, size_t why_n) {
-    char got[1200];
-    report[0] = 0;
+// The split of plan's layout the groups ask for, or NULL.
+static const Split *split_in(const Plan *plan, int groups) {
+    const Split *sp = split_of(plan->layout);
+    return sp && (sp->group & groups) ? sp : NULL;
+}
+
+// Every copy of one layout, each tried on a copy of its own, for the groups given: its edit in place, then its split:
+// 1 when all of them take both (report: what a copy that changed moved, split: how a copy that was split was), 0 with
+// why when one does not, -1 out of memory.
+static int trial(const uint8_t *sarc, const Copies *c, const Plan *plan, const char *member, const WideHudShift *s,
+                 int groups, char *report, size_t report_n, char *split, size_t split_n, char *why, size_t why_n) {
+    char got[1200], cut[120];
+    const Split *sp = split_in(plan, groups);
+    report[0] = split[0] = 0;
     for (int j = 0; j < c->copies; j++) {
-        uint8_t *t = malloc(c->size[j] ? c->size[j] : 1);
+        uint8_t *t = malloc(c->size[j] ? c->size[j] : 1), *o = NULL;
+        size_t on = 0;
         if (!t) return -1;
         memcpy(t, sarc + c->at[j], c->size[j]);
         int r = lay_out(t, c->size[j], member, s, groups, got, sizeof got, why, why_n);
+        int k = r < 0 || !sp ? 0 : split_layout(t, c->size[j], sp, unit_of(sp->group, s), &o, &on, cut, sizeof cut,
+                                                why, why_n);
         free(t);
-        if (r < 0) return 0;
+        free(o);
+        if (r < 0 || k < 0) return 0;
         if (r > 0) snprintf(report, report_n, "%s", got);
+        if (k > 0) snprintf(split, split_n, "%s", cut);
     }
     return 1;
 }
@@ -1029,16 +1691,19 @@ const char *wide_hud_archive_path(int archive) {
     return archive == WIDE_HUD_TITLE ? WIDE_HUD_TITLE_ARCHIVE : archive == WIDE_HUD_COMMON ? WIDE_HUD_ARCHIVE : NULL;
 }
 
-int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
+// wide_hud_archive_in, with *added the panes the splits added over all copies.
+static int archive_in(int archive, uint8_t **sarc, size_t *n, const WideHudShift *s, int *added, char *why,
+                      size_t why_n) {
     Copies c[NPLANS];
-    char member[64], report[NPLANS][1200];
+    char member[64], report[NPLANS][1200], split[NPLANS][120];
     int want = groups_of(s), groups[NPLANS] = {0}, any = 0;
+    *added = 0;
     for (int i = 0; i < NPLANS; i++) {
         c[i].copies = 0;   // a plan the shift does not ask for, or of another archive, has none
         if (plans[i].archive != archive || !(plan_groups(&plans[i]) & want)) continue;
         any = 1;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
-        if (!copies_of(sarc, n, member, &c[i], why, why_n)) {
+        if (!copies_of(*sarc, *n, member, &c[i], why, why_n)) {
             if (plan_groups(&plans[i]) & want & (G_HUD | G_CENTER)) return -1;
             rt_log("wide menus: %s; %s stays as the game lays it out", why, plans[i].layout);
             c[i].copies = 0;
@@ -1057,13 +1722,22 @@ int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift
                     }
     // Every copy of every layout is tried first: either all copies of a layout change or none. The HUD's edges and
     // the loading icon of the menus in the middle 16:9 are all or nothing over the archive, as both sides of the
-    // HUD belong together. A layout the menus' redesign does not fit (a mod's, say) keeps the game's, alone: the
-    // rest of the redesign and the HUD go ahead, and the line says why.
+    // HUD belong together. A layout the menus' redesign does not fit (a mod's, say), its split included, keeps the
+    // game's, alone: the rest of the redesign and the HUD go ahead, and the line says why. A layout with a split
+    // keeps the game's too when the archive may not grow (s->no_growth), so that its pages never move without their
+    // backdrop.
     for (int i = 0; i < NPLANS; i++) {
         if (!c[i].copies) continue;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
-        int g = plan_groups(&plans[i]) & want;
-        int r = trial(sarc, &c[i], member, s, g, report[i], sizeof report[i], why, why_n);
+        int g = plan_groups(&plans[i]) & want, r;
+        const Split *sp = split_in(&plans[i], g);
+        if (sp && s->no_growth) {
+            snprintf(why, why_n, "the layout archive may not grow for %s's pieces", sp->pane);
+            r = 0;
+        } else {
+            r = trial(*sarc, &c[i], &plans[i], member, s, g, report[i], sizeof report[i], split[i], sizeof split[i],
+                      why, why_n);
+        }
         if (r < 0) {
             snprintf(why, why_n, "out of memory");
             return -1;
@@ -1072,7 +1746,8 @@ int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift
             char why_full[240];
             snprintf(why_full, sizeof why_full, "%s", why);
             g &= ~G_FULL;
-            r = !g ? 1 : trial(sarc, &c[i], member, s, g, report[i], sizeof report[i], why, why_n);
+            r = !g ? 1 : trial(*sarc, &c[i], &plans[i], member, s, g, report[i], sizeof report[i], split[i],
+                               sizeof split[i], why, why_n);
             if (r < 0) {
                 snprintf(why, why_n, "out of memory");
                 return -1;
@@ -1085,27 +1760,80 @@ int wide_hud_archive_in(int archive, uint8_t *sarc, size_t n, const WideHudShift
         if (!r) return -1;
         groups[i] = g;
     }
-    int total = 0;
+    int total = 0, fields[NPLANS] = {0}, pieces[NPLANS] = {0}, count = sarc_count(*sarc, *n);
     for (int i = 0; i < NPLANS; i++) {
-        int fields = 0;
         if (!groups[i]) continue;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
         for (int j = 0; j < c[i].copies; j++) {
             // copies that share their bytes are laid out once: the second finds them moved and changes nothing
-            int r = lay_out(sarc + c[i].at[j], c[i].size[j], member, s, groups[i], NULL, 0, why, why_n);
+            int r = lay_out(*sarc + c[i].at[j], c[i].size[j], member, s, groups[i], NULL, 0, why, why_n);
             if (r < 0) return -1;   // not after a trial of the same bytes; kept so that a change here cannot hide one
-            fields += r;
+            fields[i] += r;
         }
-        total += fields;
-        if (fields)
-            rt_log("%s: %s (%d cop%s, %d fields): %s%s", edit_name(groups[i]), plans[i].layout, c[i].copies,
-                   c[i].copies == 1 ? "y" : "ies", fields, report[i],
-                   strlen(report[i]) + 1 >= sizeof report[i] ? " ..." : "");
+        total += fields[i];
     }
-    return total;
+    // The splits, on the copies edited in place: each split copy grows, so the archive is laid out again around them,
+    // every copy in a range of its own.
+    int splits_asked = 0, result = -1, grown = 0;
+    for (int i = 0; i < NPLANS; i++) splits_asked |= groups[i] && split_in(&plans[i], groups[i]);
+    const uint8_t **with = splits_asked && count > 0 ? calloc((size_t)count, sizeof *with) : NULL;
+    size_t *with_n = splits_asked && count > 0 ? calloc((size_t)count, sizeof *with_n) : NULL;
+    if (splits_asked && (!with || !with_n)) {
+        snprintf(why, why_n, count < 0 ? "the layout archive is damaged" : "out of memory");
+        goto done;
+    }
+    for (int i = 0; i < NPLANS; i++) {
+        const Split *sp = groups[i] ? split_in(&plans[i], groups[i]) : NULL;
+        for (int j = 0; sp && j < c[i].copies; j++) {
+            uint8_t *o = NULL;
+            size_t on = 0;
+            int k = split_layout(*sarc + c[i].at[j], c[i].size[j], sp, unit_of(sp->group, s), &o, &on, NULL, 0, why,
+                                 why_n);
+            if (k < 0) goto done;   // not after a trial of the same bytes
+            if (!k) continue;
+            if ((int)c[i].slot[j] >= count || with[c[i].slot[j]]) {
+                free(o);
+                snprintf(why, why_n, "the layout archive is damaged");
+                goto done;
+            }
+            with[c[i].slot[j]] = o, with_n[c[i].slot[j]] = on;
+            pieces[i] += k, grown = 1;
+        }
+    }
+    if (grown) {
+        size_t rn = 0;
+        uint8_t *rebuilt = sarc_rebuild(*sarc, *n, with, with_n, &rn);
+        if (!rebuilt) {
+            snprintf(why, why_n, "the layout archive cannot be laid out again around its grown layouts");
+            goto done;
+        }
+        free(*sarc);
+        *sarc = rebuilt, *n = rn;
+    }
+    for (int i = 0; i < NPLANS; i++) {
+        if (!fields[i] && !pieces[i]) continue;
+        char parts[200] = "";
+        if (pieces[i])
+            snprintf(parts, sizeof parts, ", %s, %d new panes", split[i], pieces[i]);
+        rt_log("%s: %s (%d cop%s, %d fields%s): %s%s", edit_name(groups[i]), plans[i].layout, c[i].copies,
+               c[i].copies == 1 ? "y" : "ies", fields[i], parts, report[i],
+               strlen(report[i]) + 1 >= sizeof report[i] ? " ..." : "");
+        *added += pieces[i];
+    }
+    result = total + *added;
+done:
+    for (int k = 0; with && k < count; k++) free((void *)with[k]);
+    free(with);
+    free(with_n);
+    return result;
 }
 
-int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
+int wide_hud_archive_in(int archive, uint8_t **sarc, size_t *n, const WideHudShift *s, char *why, size_t why_n) {
+    int added;
+    return archive_in(archive, sarc, n, s, &added, why, why_n);
+}
+
+int wide_hud_archive(uint8_t **sarc, size_t *n, const WideHudShift *s, char *why, size_t why_n) {
     return wide_hud_archive_in(WIDE_HUD_COMMON, sarc, n, s, why, why_n);
 }
 
@@ -1125,7 +1853,8 @@ int wide_hud_build_in(int archive, const void *in, size_t n, const void *zsdic, 
     *out_z = NULL;
     // only what the archive's layouts take: the title archive has the menus' redesign alone
     int has = archive_groups(archive, s);
-    WideHudShift own = {has & G_HUD ? s->out : 0, has & G_CENTER ? s->squeeze : 1, has & G_FULL ? s->menus : 0};
+    WideHudShift own = {has & G_HUD ? s->out : 0, has & G_CENTER ? s->squeeze : 1, has & G_FULL ? s->menus : 0,
+                        s->no_growth};
     char what[160];
     shift_words(&own, what, sizeof what);
     if (!what[0]) return 0;
@@ -1164,17 +1893,18 @@ int wide_hud_build_in(int archive, const void *in, size_t n, const void *zsdic, 
         snprintf(why, sizeof why, "the layout archive does not decompress");
         goto done;
     }
-    int changed = wide_hud_archive_in(archive, raw, (size_t)rn, s, why, sizeof why);
+    size_t raw_n = (size_t)rn;
+    int added = 0, changed = archive_in(archive, &raw, &raw_n, s, &added, why, sizeof why);
     if (changed <= 0) {
         result = changed;
         goto done;
     }
     // Level 3, as the action prompt's edit of the same archive: about 15 ms for its 10 MB.
-    size_t cap = ZSTD_compressBound((size_t)rn), zn = 0;
+    size_t cap = ZSTD_compressBound(raw_n), zn = 0;
     ZSTD_CCtx *cctx = ZSTD_createCCtx();
     if (cctx && (z = malloc(cap)))
-        zn = cd ? ZSTD_compress_usingCDict(cctx, z, cap, raw, (size_t)rn, cd)
-                : ZSTD_compressCCtx(cctx, z, cap, raw, (size_t)rn, 3);
+        zn = cd ? ZSTD_compress_usingCDict(cctx, z, cap, raw, raw_n, cd)
+                : ZSTD_compressCCtx(cctx, z, cap, raw, raw_n, 3);
     ZSTD_freeCCtx(cctx);
     if (!z || !zn || ZSTD_isError(zn)) {
         snprintf(why, sizeof why, "the layout archive cannot be compressed again");
@@ -1182,7 +1912,11 @@ int wide_hud_build_in(int archive, const void *in, size_t n, const void *zsdic, 
     }
     *out_z = z, *out_n = zn, z = NULL;
     result = 1;
-    rt_log("wide hud: %s edited (%s), %d fields (%.0f ms)", noun, what, changed,
+    char grew[120] = "";
+    if (added)
+        snprintf(grew, sizeof grew, " and %d new panes, the archive %llu -> %zu bytes", added, (unsigned long long)rn,
+                 raw_n);
+    rt_log("wide hud: %s edited (%s), %d fields%s (%.0f ms)", noun, what, changed - added, grew,
            (double)(plat_now_ns() - t0) / 1e6);
 done:
     if (result == 0) rt_log("wide hud: %s has these edits already (%s)", noun, what);
