@@ -86,6 +86,7 @@ uint32_t input_key_char(int key) {
 // ---- mouse camera: raw motion accumulated by the window thread, one stick sample per presented frame
 static volatile LONG mouse_dx, mouse_dy;   // raw counts since the last frame sample
 static volatile LONG mouse_travel;          // raw counts moved in total, captured or not (ikb_mouse_travel)
+static volatile LONG presses[2];           // left and right button presses so far (ikb_mouse_presses)
 static volatile LONG wheel_delta;          // WM_MOUSEWHEEL deltas not taken yet (WHEEL_DELTA a notch, up positive)
 static volatile LONG cur_captured;         // cursor hidden and confined to the client area
 static volatile LONG cur_active;           // WM_ACTIVATEAPP: the window's application is active
@@ -165,6 +166,7 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
         if (w == VK_ESCAPE && !(cur_rel & CUR_REL)) { cur_rel_update(rel_esc); cursor_update(h); }
         break;
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:   // client area only; poll_merged drops the click
+        if (m != WM_MBUTTONDOWN) InterlockedIncrement(&presses[m == WM_RBUTTONDOWN]);
         if (cur_rel & CUR_REL) { cur_rel_update(rel_clear); cursor_update(h); }
         break;
     case WM_MOUSEACTIVATE:   // sent before WM_ACTIVATEAPP: a title bar or border click must not capture
@@ -236,6 +238,7 @@ void ikb_pointer_set(float nx, float ny) {
 }
 
 uint32_t ikb_mouse_travel(void) { return (uint32_t)mouse_travel; }
+uint32_t ikb_mouse_presses(int right) { return (uint32_t)presses[right != 0]; }
 
 // Whole notches since the last call; a smooth wheel's part of a notch stays for the next
 int32_t ikb_wheel_take(void) {

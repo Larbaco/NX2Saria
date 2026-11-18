@@ -66,7 +66,7 @@ static const SDL_GamepadButton pad_sdl[PAD_COUNT] = {
 // The game menus' mouse (menu_mouse.c) has its own lines: "<frame> POINTER <x> <y>" places the pointer at those
 // fractions of the window (0..1 from its top left; it stays there until the next POINTER), "<frame> MOUSEL|MOUSER
 // [hold]" holds the left or right mouse button for it, "<frame> WHEEL <notches>" turns the wheel (up positive). They
-// reach only that module (input_menu_pointer, input_menu_mouse_down, input_menu_wheel_take), never the key bindings.
+// reach only that module (input_menu_pointer, input_menu_mouse_presses, input_menu_wheel_take), never the key bindings.
 // <frame> and its hold are 60 Hz ticks of game time since the first present (frame_step_ticks: presents at 60 fps), so
 // the title menus get the presses at the same game time at any frame limit. A line "@<ms> ..." is timed instead: <ms>
 // and its hold are milliseconds of the world clock (frame_step_world_us, game time since the loaded save's first
@@ -85,10 +85,11 @@ static ScriptEv *script_ev;
 static int script_n, script_state;   // 0 not loaded, 1 loaded
 static int script_mixed;             // the script has timed lines: its untimed ones end where the world clock starts
 static int32_t script_mouse[2];      // one-shot raw counts, consumed by the camera hook; under lock
-// The menus' mouse from the script: the pointer (float bits of x, y; script_ptr_on once placed), the buttons held this
-// poll (bit 0 left, bit 1 right) and wheel notches not taken yet. Written under lock, read by any thread.
+// The menus' mouse from the script: the pointer (float bits of x, y; script_ptr_on once placed) and wheel notches not
+// taken yet. Written under lock, read by any thread.
 static volatile uint32_t script_ptr[2];
-static volatile int32_t script_ptr_on, script_mbuttons, script_wheel;
+static volatile int32_t script_ptr_on, script_wheel;
+static volatile uint32_t script_presses[2];   // MOUSEL / MOUSER lines started so far
 
 static void script_load(void) {
     script_state = 1;
@@ -162,7 +163,6 @@ static void script_load(void) {
 static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
     if (!script_state) script_load();
     if (!script_n) return;
-    int32_t mb = 0;
     uint64_t fr = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), tick = frame_step_ticks();
     int64_t w = frame_step_world_us();
     for (int i = 0; i < script_n; i++) {
@@ -175,6 +175,8 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
         if (once && e->logged) continue;
         if (!e->logged) {
             e->logged = 1;
+            if (e->mouse == SM_LEFT || e->mouse == SM_RIGHT)
+                __atomic_add_fetch(&script_presses[e->mouse == SM_RIGHT], 1, __ATOMIC_RELAXED);
             if (e->timed) rt_log("input: script frame %llu at %.1f ms: %s", (unsigned long long)fr, w / 1000.0, e->text);
             else rt_log("input: script frame %llu tick %llu: %s", (unsigned long long)fr, (unsigned long long)tick, e->text);
         }
@@ -187,7 +189,7 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
             plat_xchg32(&script_ptr_on, 1);
             __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // as the mouse moved: keyboard and mouse used last
         } else if (e->mouse == SM_WHEEL) plat_add32(&script_wheel, e->x), __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
-        else if (e->mouse) mb |= e->mouse == SM_LEFT ? 1 : 2, __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
+        else if (e->mouse) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // a button held, as the mouse's
         else if (e->stick == 3) {
             int64_t x = (int64_t)script_mouse[0] + e->x, y = (int64_t)script_mouse[1] + e->y;
             script_mouse[0] = (int32_t)(x < INT32_MIN ? INT32_MIN : x > INT32_MAX ? INT32_MAX : x);
@@ -195,7 +197,6 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
         } else if (e->stick) { int32_t *s = e->stick == 1 ? sl : sr; s[0] = e->x; s[1] = e->y; }
         else *b |= 1ull << e->bit;
     }
-    plat_xchg32(&script_mbuttons, mb);
 }
 
 int input_menu_pointer(float *nx, float *ny) {
@@ -207,9 +208,8 @@ int input_menu_pointer(float *nx, float *ny) {
     return ikb_pointer(nx, ny);
 }
 
-int input_menu_mouse_down(int right) {
-    return (__atomic_load_n(&script_mbuttons, __ATOMIC_RELAXED) >> (right != 0) & 1) ||
-           (ikb_foreground() && ikb_down(right ? KEY_MOUSE_R : KEY_MOUSE_L));
+uint32_t input_menu_mouse_presses(int right) {
+    return __atomic_load_n(&script_presses[right != 0], __ATOMIC_RELAXED) + ikb_mouse_presses(right);
 }
 
 int32_t input_menu_wheel_take(void) { return plat_xchg32(&script_wheel, 0) + ikb_wheel_take(); }

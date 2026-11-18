@@ -283,7 +283,8 @@ void menu_mouse_screen_host(Cpu *c) {
     static char last_name[48];
     static Stats st;
     static float last_px = -1, last_py = -1;
-    static int held_l, held_r, shown;
+    static int shown;
+    static uint32_t seen_l, seen_r;   // the button presses already taken
     static uint64_t pend_entry, pend_until, asked, asked_ms;
     static Entries ent;
     uint64_t s = c->x[19];
@@ -366,7 +367,8 @@ void menu_mouse_screen_host(Cpu *c) {
             static int lines;
             if (lines++ < 8) rt_log("menu_mouse: %s: the gamepad was used last: the pointer hidden", last_name);
         }
-        held_l = held_r = 0, last_px = last_py = -1, pend_until = 0;
+        seen_l = input_menu_mouse_presses(0), seen_r = input_menu_mouse_presses(1);
+        last_px = last_py = -1, pend_until = 0;
         for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
         input_menu_wheel_take();
         return;
@@ -388,16 +390,18 @@ void menu_mouse_screen_host(Cpu *c) {
             ikb_pointer_set(r[0] + fx * r[2], r[1] + fy * r[3]);
             last_px = fx, last_py = fy;
         } else last_px = px, last_py = py;
-        held_l = input_menu_mouse_down(0), held_r = input_menu_mouse_down(1);   // a button already down is not a click
+        seen_l = input_menu_mouse_presses(0), seen_r = input_menu_mouse_presses(1);   // presses before it are no clicks
         return;
     }
-    int l = input_menu_mouse_down(0), r = input_menu_mouse_down(1);
+    // Clicks are presses counted at the window's event, so one shorter than a frame is not lost at a low frame rate;
+    // several between two looks are one
+    uint32_t pl = input_menu_mouse_presses(0), pr = input_menu_mouse_presses(1);
     static int was_fg = 1;
     int fg = ikb_foreground() || pos == 2;
-    if (fg && !was_fg) held_l = l, held_r = r;   // the click that brought the window back is not a menu click
+    if (fg && !was_fg) seen_l = pl, seen_r = pr;   // the click that brought the window back is not a menu click
     was_fg = fg;
-    int click_l = l && !held_l, click_r = r && !held_r;
-    held_l = l, held_r = r;
+    int click_l = pl != seen_l, click_r = pr != seen_r;
+    seen_l = pl, seen_r = pr;
     if (click_r) plat_add32(&pending[P_B], 1), st.click_b++;
     int32_t wheel = input_menu_wheel_take();
     if (wheel) {   // a notch is the d-pad's up or down: a list moves a row, as the pad moves it; at most 3 queued

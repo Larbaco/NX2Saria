@@ -47,10 +47,10 @@ int menu_mouse_pointer(void);
 int input_game_input_blocked(void);
 // The mouse for the game's own menus (menu_mouse.c), from the window or from NX2SARIA_INPUT_SCRIPT's POINTER, MOUSEL,
 // MOUSER and WHEEL lines. pointer: fractions of the window, 0..1 from its top left; 0 when the window is not in front,
-// the pointer is outside it or the camera has it captured; 2 when the script placed it. mouse_down: the left (0) or
-// right (1) button held. wheel_take: notches since the last call, up positive. Any thread.
+// the pointer is outside it or the camera has it captured; 2 when the script placed it. mouse_presses: the left (0) or
+// right (1) button's presses so far. wheel_take: notches since the last call, up positive. Any thread.
 int input_menu_pointer(float *nx, float *ny);
-int input_menu_mouse_down(int right);
+uint32_t input_menu_mouse_presses(int right);   // presses so far, counted at the event: a click shorter than a frame counts
 int32_t input_menu_wheel_take(void);
 // The same for host UI (the text entry): never blocked. input_block(1) while a text entry is open: input_poll then
 // reports nothing; input_block(0) when it closes: nothing until all buttons and stick directions are released.

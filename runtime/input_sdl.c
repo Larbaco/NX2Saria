@@ -32,6 +32,7 @@ static volatile uint32_t ptr_x, ptr_y;
 static volatile int32_t ptr_inside, ptr_warp;   // ptr_warp: ikb_pointer_set asked the window thread to move it there
 static volatile uint32_t warp_x, warp_y;
 static volatile uint32_t mouse_travel;           // counts the mouse moved in total, captured or not (|dx| + |dy|)
+static volatile uint32_t presses[2];            // left and right button presses so far (ikb_mouse_presses)
 static volatile int32_t wheel_steps;             // wheel notches not taken yet, up positive (ikb_wheel_take)
 static float wheel_rem;                          // window thread: the part of a notch a smooth wheel left over
 static int warp_motion;                          // window thread: the next motion event is a warp's
@@ -229,6 +230,7 @@ void input_sdl_event(const SDL_Event *e) {
         int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
         int k = mouse_key(e->button.button);
         if (k) key_held[k] = (uint8_t)down;
+        if (down && (k == KEY_MOUSE_L || k == KEY_MOUSE_R)) __atomic_add_fetch(&presses[k == KEY_MOUSE_R], 1, __ATOMIC_RELAXED);
         if (down && (cur_rel & CUR_REL)) plat_xchg32(&cur_rel, 0);   // a click in the window captures again
         break;
     }
@@ -300,6 +302,7 @@ void ikb_pointer_set(float nx, float ny) {
 }
 uint32_t ikb_mouse_travel(void) { return __atomic_load_n(&mouse_travel, __ATOMIC_RELAXED); }
 int32_t ikb_wheel_take(void) { return plat_xchg32(&wheel_steps, 0); }
+uint32_t ikb_mouse_presses(int right) { return __atomic_load_n(&presses[right != 0], __ATOMIC_RELAXED); }
 
 void ikb_mouse_take(int32_t *dx, int32_t *dy) {
     *dx = plat_xchg32(&mouse_dx, 0);
