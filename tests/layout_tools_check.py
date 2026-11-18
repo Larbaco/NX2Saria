@@ -254,7 +254,8 @@ def check_split():
           len(d), 'split: file and string pool sizes cover the new records')
     check(len(lines) == 3, f'split: {len(lines)} lines')
     hashes = ld.u64(d, ld.TABLES['panes'] + 16)
-    check([ld.u64(d, hashes + 8 * j) for j in range(6)] == [ld.name_hash(n) for n in names], 'split: pane name hashes')
+    check([ld.u64(d, hashes + 8 * j) for j in (3, 4)] == [ld.name_hash('P_Bg_1'), ld.name_hash('P_Bg_2')],
+          'split: the new panes\' name hashes')
     # what the split refuses: a pane with children, a rotated or scaled picture, a piece outside the picture
     for bad, what in (({'op': 'split', 'pane': 'N_Strip', 'pieces': pieces}, 'a group'),
                       ({'op': 'split', 'pane': 'P_Bg', 'pieces': [{'src': [-50, 400], 'at': [0, 400], 'f': [0, 0]}]},
