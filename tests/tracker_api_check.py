@@ -114,6 +114,7 @@ def run_checks(port):
     check(st['game_version'] == '1.1.1' and st['api_version'] == 1 and st['read_only'] is True, f'status: {st}')
     check(st['methods'] == ['status', 'read_memory', 'search_memory', 'nx2saria.state', 'nx2saria.game_data'],
           f'status methods: {st}')
+    check(st['save_dir'] == 'C:\\Users\\Jo\u00e3o "x"\\profile\\save\\0123', f'status save_dir, escaped as JSON: {st}')
 
     # main by its MOD0 header, as a tracker finds it: a range below the module window first (no hit), then all regions
     pattern = '4d4f44305467030124fb0f016c342501'
@@ -409,7 +410,7 @@ def check_log(log):
         'tracker api: client 1 (127.0.0.1:',
         ') asks: its first request is status (1 open)',
         'tracker api: a program connected and left without a request',
-        'tracker api: first status answered: powered_on 1, game 1.1.1, build e0f3ccfaf50065ae',
+        'tracker api: first status answered: powered_on 1, game 1.1.1, build e0f3ccfaf50065ae, saves in C:\\Users\\Jo',
         'tracker api: first search_memory answered: a 16-byte pattern in all regions, 0 hits',
         'tracker api: first search_memory that found its pattern: a 16-byte pattern in all regions, 1 hit, the first at 0x7003c4705c',
         f'tracker api: searches read {SEARCH_MIB_PER_MIN} MiB in the last minute',

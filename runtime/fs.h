@@ -68,6 +68,8 @@ void fs_host_set_profile(const char *dir);                 // profile directory;
                                                            // (default rt_config()->profile)
 void fs_host_lock_profile(void);                           // the one-game-per-profile lock; fatal when another copy
                                                            // holds it (rt_boot, before the prewarm; storage_init)
+const char *fs_save_dir(void);                             // <profile>/save/<account>: the committed save's folder,
+                                                           // where a tracker reads the slots; "" until storage is made
 int fs_save_busy(void);                                    // a save is being written: a save file open for writing,
                                                            // or save data changed in the last 3 s and not committed
 void fs_save_flush(void);                                  // wait for a save Commit still running in the background;

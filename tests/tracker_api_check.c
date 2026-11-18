@@ -67,6 +67,8 @@ char *SDL_GetClipboardText(void) { return NULL; }
 void SDL_free(void *p) { (void)p; }
 
 uint64_t frame_step_presents(void) { return 1234; }
+// The save folder as a Windows profile under an accented user name has it: backslashes, a quote, UTF-8.
+const char *fs_save_dir(void) { return "C:\\Users\\Jo\xc3\xa3o \"x\"\\profile\\save\\0123"; }
 const RtGuestLayout *mem_layout(void) { return &layout; }
 const char *mods_main_build_id(void) { return "e0f3ccfaf50065ae000000000000000000000000000000000000000000000000"; }
 void mem_kernel_access(uint64_t a, uint64_t n) { (void)a, (void)n; }

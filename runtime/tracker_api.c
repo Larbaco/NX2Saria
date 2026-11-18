@@ -7,7 +7,9 @@
 //   answer is one line {"id": <the same>, "result": {...}} or {"id": ..., "error": {"code": <n>, "message": <text>}},
 //   in the order the requests came. Nothing is ever sent without a request.
 // - status: whether the game runs (it has presented a frame), the title id, this port's name ("nx2saria"), main's
-//   build id, the game version, the port's version and the API's version (TRACKER_API_VERSION).
+//   build id, the game version, the port's version, the API's version (TRACKER_API_VERSION), the methods, and the
+//   folder of the save the game loads and writes (fs_host.c fs_save_dir), so a tracker that reads the save files
+//   reads this game's and not another install's.
 // - read_memory {address, size, as: "hex"}: up to READ_MAX bytes of guest memory as lowercase hex.
 // - search_memory {pattern (hex), start, end, regions: "all" | "heap", max_hits, budget_ms}: the addresses where the
 //   bytes appear. "all" reads the game's modules first and ends there when they hold the pattern (a tracker finds main
@@ -57,6 +59,7 @@
 
 #include "cfg.h"
 #include "debug_tools.h"
+#include "fs.h"
 #include "host.h"
 #include "layout.h"
 #include "mods.h"
@@ -407,6 +410,19 @@ static void out_text(Out *o, const char *s) {
     out_put(o, "\"", 1);
 }
 
+// A string as JSON spells it, its bytes kept (a path is UTF-8): quotes and backslashes escaped (a Windows path has
+// them), control characters as \u00XX.
+static void out_json_string(Out *o, const char *s) {
+    out_put(o, "\"", 1);
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\') out_put(o, "\\", 1), out_put(o, s, 1);
+        else if (c < 0x20) out_f(o, "\\u%04x", c);
+        else out_put(o, s, 1);
+    }
+    out_put(o, "\"", 1);
+}
+
 static void open_answer(Out *o, const Req *r) {
     out_put(o, "{", 1);
     if (r->id[0]) out_f(o, "\"id\":%s,", r->id);
@@ -453,9 +469,14 @@ static void do_status(Out *o, const Req *r) {
     out_f(o, ",\"api_version\":%d,\"read_only\":true,\"methods\":[", TRACKER_API_VERSION);
     for (int m = 0; m < M_OTHER; m++)   // nx2saria.game_data where the game data is known (1.1.1)
         if (m != M_GAMEDATA || RT_V111) out_f(o, "%s\"%s\"", m ? "," : "", method_name[m]);
-    out_put(o, "]}}\n", 4);
+    const char *saves = fs_save_dir();
+    out_put(o, "],\"save_dir\":", 13);
+    if (*saves) out_json_string(o, saves);
+    else out_put(o, "null", 4);
+    out_put(o, "}}\n", 3);
     if (once(&said_first[M_STATUS]))
-        rt_log("tracker api: first status answered: powered_on %d, game %s, build %.16s", on, game_version(), build_id);
+        rt_log("tracker api: first status answered: powered_on %d, game %s, build %.16s, saves in %s", on, game_version(),
+               build_id, *saves ? saves : "(not made yet)");
 }
 
 static void hex_bytes(Out *o, const uint8_t *b, size_t n) {

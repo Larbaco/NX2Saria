@@ -44,7 +44,7 @@ where it goes with the API off, and the log says so (below).
   patterns of 64 bytes, 64 hits, a search budget of 3 s, one search at a time, 4 GiB/s read by a search and 8 GiB a
   minute by all of them, 60 s without a request before a client is closed, 2 s for a client to take an answer.
 - **Other users of the PC.** Any program of the PC can connect while the API is on, including those of another user
-  account. Leave it off on a shared machine.
+  account, and `status` tells it the save folder's path. Leave it off on a shared machine.
 
 ## Cost
 
@@ -91,7 +91,7 @@ The game and the API. Trackers call it about once a second.
 
 ```json
 {"id":1,"method":"status","params":{"fps_window_ms":0}}
-{"id":1,"result":{"powered_on":true,"program_id":"0400486024DEC000","emulator":"nx2saria","build_id":"e0f3ccfaf50065ae…","game_version":"1.1.1","port_version":"0.14.0","api_version":1,"read_only":true,"methods":["status","read_memory","search_memory","nx2saria.state","nx2saria.game_data"]}}
+{"id":1,"result":{"powered_on":true,"program_id":"0400486024DEC000","emulator":"nx2saria","build_id":"e0f3ccfaf50065ae…","game_version":"1.1.1","port_version":"0.14.0","api_version":1,"read_only":true,"methods":["status","read_memory","search_memory","nx2saria.state","nx2saria.game_data"],"save_dir":"C:\\Jogos\\oot\\profile/save/11d5af24c6de7dbccf5cc9a0c0f9bfd4"}}
 ```
 
 | Field | Meaning |
@@ -104,6 +104,7 @@ The game and the API. Trackers call it about once a second.
 | `port_version`, `api_version` | This port's version, and this API's (below). |
 | `read_only` | Always `true`. |
 | `methods` | The methods this server answers. `nx2saria.game_data` is listed where the game data is known (version 1.1.1). |
+| `save_dir` | The folder of the save this game loads and writes (`<profile>/save/<account>`, with `slot_00` to `slot_05`), as a JSON string (UTF-8, its backslashes escaped), or `null` before the game made its save storage. A tracker that reads the save files follows this one rather than another install's. |
 
 `fps_window_ms` and any other parameter are ignored.
 
