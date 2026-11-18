@@ -22,6 +22,10 @@ menu scrolled to the item page. LAYOUT/ limits it to one layout. LAYOUT/PART/...
     {"op": "narrow", "pane": P}             scale x *= 1920 / (1920 + out)
     {"op": "keys", "anim": A, "pane": P, "prop": "translate" | "scale" | "size", ["component": "x" | "y",]
      "map": [{"value": V, "f": F}, ...]}    the track's keys and constants equal to V become V + F * out
+    {"op": "split", "pane": P, "pieces": [{"src": [A, B], "at": [X0, X1], "f": [F0, F1]}, ...]}
+                                            picture P drawn in pieces: each shows its texture from A to B between
+                                            X0 + F0 * out and X1 + F1 * out (layout_dump.py split_picture adds a pane,
+                                            picture and material for each piece after the first)
 
 Each operation may state the value it expects ("x", "y", "w", "h", "sx", "sy" of the pane): the tool stops with an
 error when the layout holds another, as an edit of the game's files would. A spec may edit a part's layout too (the

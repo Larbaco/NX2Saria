@@ -631,6 +631,171 @@ def _put_f32(layout, off, value):
     struct.pack_into('<f', layout.data, off, value)
 
 
+# ---- the "split" edit: a picture drawn in pieces, each a pane of its own
+PICTURE_BLOB = 0x88                  # a picture record without a window, with its colour and corner lists
+PICTURE_POINTERS = (0x00, 0x20, 0x48, 0x50, 0x58, 0x60)   # its offsets that point inside it
+MATERIAL_RECORD = 0x40
+SECTION_POOL = 0xd0                  # the second BFSI section (StringPool): +0x08 its size
+FILE_SIZE = 0x08
+HASH_SEED = 0x5157_4944_4548_5544    # made-up names' hashes: FNV-1a from this seed (they only need to differ)
+
+
+def _align(n, a=8):
+    return (n + a - 1) // a * a
+
+
+def name_hash(name):
+    h = HASH_SEED
+    for c in name.encode():
+        h = ((h ^ c) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def split_picture(layout, op, out):
+    """The layout's bytes with picture pane op['pane'] drawn in pieces, and a line per piece. Each piece
+    {"src": [a, b], "at": [x0, x1], "f": [f0, f1]} shows the picture's texture from a to b (x in the pane's parent, the
+    picture unrotated at scale 1 with its centre origin) between x0 + f0 * out and x1 + f1 * out. The first piece is
+    the pane itself; the others are copies inserted right after it in pane order, each with a copy of the picture
+    record and of the material, whose texture map gets the piece's UV window. New lists of names, records and hashes
+    replace the pane, picture and material tables' (the old ones are left unused); everything new is appended past the
+    end of the file, which the string pool section grows to cover. Every pane index past the pane's (parents, subtree
+    ends, the animation track codes) moves by the number of copies."""
+    d = bytearray(layout.data)
+    p = layout.by_name.get(op.get('pane'))
+    if not p or p.kind != 1 or p.children:
+        raise SpecError(f'{layout.name}: split needs a picture pane without children, not {op.get("pane")!r}')
+    if not same(p.rot, 0) or not same(p.sx, 1) or p.origin[0] != 2:
+        raise SpecError(f'{layout.name} {p.name}: split needs a picture unrotated at scale 1 with its origin centred')
+    pieces = op['pieces']
+    if not pieces:
+        raise SpecError(f'{layout.name} {p.name}: split with no pieces')
+    pics, mats = layout.tables['pictures'], layout.tables['materials']
+    pic_index = u16(d, p.at + 0x42)
+    if pic_index >= len(pics) or pics[pic_index][0] != p.name:
+        raise SpecError(f'{layout.name} {p.name}: its picture record is not the one its pane names')
+    pic_at = pics[pic_index][1]
+    mat_index = u16(d, pic_at + 0x10)
+    if mat_index != u16(d, p.at + 0x3c) or mat_index >= len(mats):
+        raise SpecError(f'{layout.name} {p.name}: its material is not the one its picture names')
+    mat_at = mats[mat_index][1]
+    if u64(d, pic_at + 8) or u32(d, mat_at + 8) != 1 or u64(d, mat_at) != mat_at + MATERIAL_RECORD:
+        raise SpecError(f'{layout.name} {p.name}: split needs a plain picture with one texture map')
+    for off in PICTURE_POINTERS:
+        if not pic_at <= u64(d, pic_at + off) < pic_at + PICTURE_BLOB:
+            raise SpecError(f'{layout.name} {p.name}: its picture record is not laid out as expected')
+    map_at = u64(d, mat_at + MATERIAL_RECORD)
+    if map_at != mat_at + MATERIAL_RECORD + 8 or u64(d, map_at):
+        raise SpecError(f'{layout.name} {p.name}: its texture map is not laid out as expected')
+    mat_blob = MATERIAL_RECORD + 8 + 0x30
+    sx, tx = f32(d, map_at + 0x10), f32(d, map_at + 0x18)
+    if not same(f32(d, map_at + 0x20), 0):
+        raise SpecError(f'{layout.name} {p.name}: its texture map is rotated')
+    left = p.x - p.w / 2
+    extra = len(pieces) - 1
+    i = p.index
+    lines = []
+
+    def windows(piece):
+        (a, b), (x0, x1), (f0, f1) = piece['src'], piece['at'], piece['f']
+        t0, t1 = x0 + f0 * out, x1 + f1 * out
+        if not (left - SAME <= a < b <= left + p.w + SAME) or t1 < t0:
+            raise SpecError(f'{layout.name} {p.name}: piece {piece} is outside the picture or reversed')
+        su0, su1 = (a - left) / p.w, (b - left) / p.w
+        return (t0 + t1) / 2, t1 - t0, sx * (su1 - su0), tx + ((su0 + su1) / 2 - 0.5) * sx
+
+    # renumber what follows the pane, in place, before anything is appended
+    for q in layout.panes:
+        if q.parent > i:
+            struct.pack_into('<i', d, q.at + PANE_PARENT, q.parent + extra)
+        if q.end > i and q.index != i:   # its ancestors' and later panes' subtrees end further on
+            struct.pack_into('<I', d, q.at + PANE_END, q.end + extra)
+    codes = set()
+    for an, at in layout.tables['animations']:
+        body = u64(d, at)
+        tl, tn = u64(d, body + BODY_TRACKS), u32(d, body + BODY_TRACKS + 8)
+        for k in range(tn):
+            codes.add(u64(d, u64(d, tl + 8 * k)))
+    for c in sorted(codes):
+        v = int.from_bytes(d[c:c + 6], 'little')
+        idx = ((v >> 11) & 0xf) | (((v >> 16) & 7) << 4)
+        if idx > i:
+            n = idx + extra
+            if n > 127:
+                raise SpecError(f'{layout.name}: a track would name pane {n}, past the 128 a code can name')
+            v = (v & ~((0xf << 11) | (7 << 16))) | ((n & 0xf) << 11) | (((n >> 4) & 7) << 16)
+            d[c:c + 6] = v.to_bytes(6, 'little')
+
+    blob = bytearray()
+    base = _align(len(d))
+
+    def put(data, align=8):
+        nonlocal blob
+        pad = _align(base + len(blob), align) - (base + len(blob))
+        blob += b'\0' * pad
+        at = base + len(blob)
+        blob += data
+        return at
+
+    # the pane itself shows the first piece
+    cx, w, usx, utx = windows(pieces[0])
+    struct.pack_into('<f', d, p.at + PANE_X, cx)
+    struct.pack_into('<f', d, p.at + PANE_W, w)
+    struct.pack_into('<ff', d, map_at + 0x10, usx, f32(d, map_at + 0x14))
+    struct.pack_into('<ff', d, map_at + 0x18, utx, f32(d, map_at + 0x1c))
+    lines.append(f'{p.name} piece 0: x {p.x:g} -> {cx:g}, width {p.w:g} -> {w:g}, uv scale {sx:g} -> {usx:g}, '
+                 f'translate {tx:g} -> {utx:g}')
+    new_panes, new_pics, new_mats = [], [], []
+    for k, piece in enumerate(pieces[1:], 1):
+        name = f'{p.name}_{k}'
+        cx, w, usx, utx = windows(piece)
+        name_at = put(name.encode() + b'\0', 1)
+        # material: record, its one-entry map list and the map, internal pointers moved with them
+        m = bytearray(d[mat_at:mat_at + mat_blob])
+        mat_new = put(bytes(m))
+        struct.pack_into('<Q', blob, mat_new - base, mat_new + MATERIAL_RECORD)
+        struct.pack_into('<Q', blob, mat_new - base + MATERIAL_RECORD, mat_new + MATERIAL_RECORD + 8)
+        mp = mat_new - base + MATERIAL_RECORD + 8
+        struct.pack_into('<ff', blob, mp + 0x10, usx, f32(d, map_at + 0x14))
+        struct.pack_into('<ff', blob, mp + 0x18, utx, f32(d, map_at + 0x1c))
+        new_mats.append((name_at, mat_new, name))
+        # picture record, pointing at the new material
+        pr = bytearray(d[pic_at:pic_at + PICTURE_BLOB])
+        pic_new = put(bytes(pr))
+        for off in PICTURE_POINTERS:
+            struct.pack_into('<Q', blob, pic_new - base + off, u64(d, pic_at + off) - pic_at + pic_new)
+        struct.pack_into('<H', blob, pic_new - base + 0x10, len(mats) + k - 1)
+        new_pics.append((name_at, pic_new, name))
+        # pane record
+        pn = bytearray(d[p.at:p.at + PANE_SIZE])
+        struct.pack_into('<f', pn, PANE_X, cx)
+        struct.pack_into('<f', pn, PANE_W, w)
+        struct.pack_into('<I', pn, PANE_END, i + k + 1)
+        struct.pack_into('<H', pn, 0x3c, len(mats) + k - 1)
+        struct.pack_into('<H', pn, 0x42, len(pics) + k - 1)
+        pane_new = put(bytes(pn))
+        new_panes.append((name_at, pane_new, name))
+        lines.append(f'{name} piece {k}: x {cx:g}, width {w:g}, uv scale {usx:g}, translate {utx:g}')
+
+    def new_table(slot, entries, insert_at):
+        names, records, hashes, count = u64(d, slot), u64(d, slot + 8), u64(d, slot + 16), u32(d, slot + 24)
+        rows = [(u64(d, names + 8 * j), u64(d, records + 8 * j), u64(d, hashes + 8 * j)) for j in range(count)]
+        add = [(na, ra, name_hash(nm)) for na, ra, nm in entries]
+        rows = rows[:insert_at] + add + rows[insert_at:]
+        lists = [put(b''.join(struct.pack('<Q', r[c]) for r in rows)) for c in range(3)]
+        return slot, lists, len(rows)
+
+    tables = [new_table(TABLES['panes'], new_panes, i + 1),
+              new_table(TABLES['pictures'], new_pics, len(pics)),
+              new_table(TABLES['materials'], new_mats, len(mats))]
+    d += b'\0' * (base - len(d)) + blob
+    for slot, lists, count in tables:
+        struct.pack_into('<QQQI', d, slot, *lists, count)
+    pool_start = u64(d, SECTION_POOL + 0x10)
+    struct.pack_into('<I', d, SECTION_POOL + 8, len(d) - pool_start)
+    struct.pack_into('<I', d, FILE_SIZE, len(d))
+    return d, lines
+
+
 def apply_ops(layout, ops, out):
     """Apply a list of edit operations to a layout's bytes (a bytearray) and return the reparsed layout and a line per
     operation. Raises SpecError, leaving `layout` untouched, when an operation names what the layout does not hold or a
@@ -649,6 +814,11 @@ def apply_ops(layout, ops, out):
 
     for op in ops:
         kind = op.get('op')
+        if kind == 'split':
+            data, split_lines = split_picture(trial, op, out)
+            trial = Layout(trial.name, data, trial.archive, trial.copies)
+            lines += split_lines
+            continue
         if kind == 'move':
             p = pane_of(op)
             nx = p.x + float(op['f']) * out

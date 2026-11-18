@@ -182,6 +182,85 @@ def textured_layout():
     return f.b, pic
 
 
+def split_layout():
+    """RootPane, N_Strip (a group), P_Bg (a 1000-wide picture at x 500 in it, made like the game's: its record with the
+    colour and corner lists inside it, a material with one texture map), P_After (a group after it, whose x an
+    animation keys), and the two sections' headers, so that the split moves what follows P_Bg."""
+    f = Bffh()
+    panes = [('RootPane', f.pane(0, 0, 0, 0, -1, 0)),
+             ('N_Strip', f.pane(0, 0, 0, 0, 0, 0)),
+             ('P_Bg', f.pane(500, 0, 1000, 200, 1, 1)),
+             ('P_After', f.pane(0, 300, 10, 10, 0, 0))]
+    for idx, end in ((0, 4), (1, 3), (2, 3), (3, 4)):
+        struct.pack_into('<I', f.b, panes[idx][1] + ld.PANE_END, end)
+    struct.pack_into('<HHHH', f.b, panes[2][1] + 0x3c, 0, 0xffff, 0xffff, 0)
+    f.table(ld.TABLES['panes'], panes)
+    mat = f.put(bytes(ld.MATERIAL_RECORD + 8 + 0x30))
+    struct.pack_into('<QI', f.b, mat, mat + ld.MATERIAL_RECORD, 1)
+    struct.pack_into('<Q', f.b, mat + ld.MATERIAL_RECORD, mat + ld.MATERIAL_RECORD + 8)
+    struct.pack_into('<5f', f.b, mat + ld.MATERIAL_RECORD + 8 + 0x10, 1.0, 1.0, 0.0, 0.0, 0.0)
+    f.table(ld.TABLES['materials'], [('P_Bg', mat)])
+    pic = f.put(bytes(ld.PICTURE_BLOB))
+    for off, to in ((0x00, 0x18), (0x20, 0x48), (0x48, 0x68), (0x50, 0x70), (0x58, 0x78), (0x60, 0x80)):
+        struct.pack_into('<Q', f.b, pic + off, pic + to)
+    f.table(ld.TABLES['pictures'], [('P_Bg', pic)])
+    sampler = f.put(struct.pack('<IIQ', 0x0202, 0, f.string('bg')))
+    render = f.put(struct.pack('<QI', f.put(struct.pack('<Q', sampler)), 1))
+    struct.pack_into('<QI', f.b, 0x228, f.put(struct.pack('<Q', render)), 1)
+    slide = f.animation('Slide', 10, [(3, 1, 1, [(0, [(0, 0, 0), (10, 50, 0)])], []), (1, 1, 1, [], [(0, 7.0)])])
+    f.table(ld.TABLES['animations'], [('Slide', slide)])
+    for name, slot in ld.TABLES.items():
+        if name not in ('panes', 'materials', 'pictures', 'animations'):
+            f.table(slot, [])
+    pool = len(f.b)
+    f.string('pool')
+    struct.pack_into('<4sIIIQ', f.b, ld.SECTION_POOL, b'BFSI', pool, len(f.b) - pool, 1, pool)
+    struct.pack_into('<I', f.b, ld.FILE_SIZE, len(f.b))
+    return bytes(f.b)
+
+
+def check_split():
+    lay = ld.Layout('Split', bytearray(split_layout()))
+    pieces = [{'src': [0, 400], 'at': [0, 400], 'f': [1, 1]},       # the left part, moved by out
+              {'src': [390, 410], 'at': [400, 400], 'f': [1, 2]},   # a seam over the gap the next piece's move opens
+              {'src': [400, 1000], 'at': [400, 1000], 'f': [2, 2]}]
+    out = 100.0
+    ed, lines = ld.apply_ops(lay, [{'op': 'split', 'pane': 'P_Bg', 'pieces': pieces}], out)
+    names = [p.name for p in ed.panes]
+    check(names == ['RootPane', 'N_Strip', 'P_Bg', 'P_Bg_1', 'P_Bg_2', 'P_After'], f'split: pane order {names}')
+    by = ed.by_name
+    check(by['P_After'].parent == 0 and by['P_Bg_1'].parent == 1 and by['P_Bg_2'].parent == 1,
+          'split: parents by index')
+    check([ed.panes[j].end for j in range(6)] == [6, 5, 3, 4, 5, 6], f'split: subtree ends {[p.end for p in ed.panes]}')
+    keyed = [lay.pane_names(t.pane) for a in lay.animations for t in a.tracks]
+    keyed_after = [ed.pane_names(t.pane) for a in ed.animations for t in a.tracks]
+    check(keyed == keyed_after == ['P_After', 'N_Strip'], f'split: tracks name {keyed_after}')
+    pics = ed.pictures()
+    geometry = [(round(by[n].x, 3), round(by[n].w, 3)) for n in ('P_Bg', 'P_Bg_1', 'P_Bg_2')]
+    check(geometry == [(300.0, 400.0), (550.0, 100.0), (900.0, 600.0)], f'split: pieces placed at {geometry}')
+    uv = [tuple(round(v, 4) for v in pics[n].material.textures[0].scale[:1] + pics[n].material.textures[0].translate[:1])
+          for n in ('P_Bg', 'P_Bg_1', 'P_Bg_2')]
+    check(uv == [(0.4, -0.3), (0.02, -0.1), (0.6, 0.2)], f'split: uv windows {uv}')
+    check(all(pics[n].material.textures[0].name == 'bg' for n in ('P_Bg', 'P_Bg_1', 'P_Bg_2')), 'split: texture kept')
+    d = ed.data
+    recs = [at for _n, at in ed.tables['pictures']]
+    check(len(set(recs)) == 3 and all(ld.u64(d, r) - r == 0x18 and ld.u64(d, r + 0x48) - r == 0x68 for r in recs),
+          'split: each picture record carries its own lists')
+    check(ld.u32(d, ld.FILE_SIZE) == len(d) and ld.u64(d, ld.SECTION_POOL + 0x10) + ld.u32(d, ld.SECTION_POOL + 8) ==
+          len(d), 'split: file and string pool sizes cover the new records')
+    check(len(lines) == 3, f'split: {len(lines)} lines')
+    # what the split refuses: a pane with children, a rotated or scaled picture, a piece outside the picture
+    for bad, what in (({'op': 'split', 'pane': 'N_Strip', 'pieces': pieces}, 'a group'),
+                      ({'op': 'split', 'pane': 'P_Bg', 'pieces': [{'src': [-50, 400], 'at': [0, 400], 'f': [0, 0]}]},
+                       'a piece outside the picture'),
+                      ({'op': 'split', 'pane': 'P_Bg', 'pieces': []}, 'no pieces')):
+        try:
+            ld.apply_ops(lay, [bad], out)
+            check(False, f'split: {what} accepted')
+        except ld.SpecError:
+            pass
+
+
 def check_textures(tmp):
     data, pic = textured_layout()
     layout = ld.Layout('TextureTest', data)
@@ -398,6 +477,7 @@ def main():
                 pass
         check(isinstance(lp.FULL_WIDTH, set), 'preview module loads')
         check_textures(tmp)
+        check_split()
 
     if FAILS:
         print(f'layout_tools_check: {len(FAILS)} failure(s)')
