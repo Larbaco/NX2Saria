@@ -56,22 +56,34 @@ def _meminfo_available():
     return None
 
 
-def _cgroup_headroom():
-    """Bytes left under the tightest memory limit of this process's cgroup and the cgroups above it (cgroup v2:
-    memory.max less memory.current), or None without such a limit."""
+def cgroup_limits():
+    """Yields (folder, the text of its memory.max, stripped) for this process's cgroup (cgroup v2) and each cgroup
+    above it, nearest first, up to the root; a folder without a readable memory.max is left out, and a system without
+    cgroup v2 yields nothing. '.' and '..' parts of the cgroup path (a cgroup outside this namespace reads as '/..')
+    are skipped, so every folder lies under CGROUP."""
     try:
         line = next(l for l in (PROC / 'self' / 'cgroup').read_text(encoding='ascii', errors='replace').splitlines()
                     if l.startswith('0::'))   # the v2 entry; a v1 system has none
     except (OSError, StopIteration):
-        return None
-    parts = [p for p in line[3:].split('/') if p]
-    headroom = None
+        return
+    parts = [p for p in line[3:].split('/') if p and p not in ('.', '..')]
     for n in range(len(parts), -1, -1):
         folder = CGROUP.joinpath(*parts[:n])
         try:
-            limit = (folder / 'memory.max').read_text(encoding='ascii').strip()
-            if limit == 'max':
-                continue
+            text = (folder / 'memory.max').read_text(encoding='ascii').strip()
+        except OSError:
+            continue
+        yield folder, text
+
+
+def _cgroup_headroom():
+    """Bytes left under the tightest memory limit of this process's cgroup and the cgroups above it (cgroup v2:
+    memory.max less memory.current), or None without such a limit."""
+    headroom = None
+    for folder, limit in cgroup_limits():
+        if limit == 'max':
+            continue
+        try:
             left = max(0, int(limit) - int((folder / 'memory.current').read_text(encoding='ascii')))
         except (OSError, ValueError):
             continue

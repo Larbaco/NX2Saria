@@ -252,5 +252,29 @@ class ChunkCostsTest(unittest.TestCase):
                                  main / 'main_table.c': (700, 0), sdk / 'sdk_0000.c': (800, 0)})
 
 
+class LifterEnvTest(unittest.TestCase):
+    def env(self, argv, env=None):
+        ap = argparse.ArgumentParser()
+        memgate.add_arguments(ap)
+        with mock.patch.object(mg, 'GATE_ARGS', ap.parse_args(argv)), mock.patch.dict(os.environ, env or {}):
+            for name in (memgate.ENV_GATE, memgate.ENV_RESERVE):
+                if not env or name not in env:
+                    os.environ.pop(name, None)
+            return mg.lifter_env()
+
+    def test_the_gate_options_reach_the_lift(self):
+        """gen.py keeps the compiles' reserve and follows --no-mem-gate (recomp/gen.py lift_gate)."""
+        e = self.env(['--mem-reserve', '2.5'])
+        self.assertEqual(e[memgate.ENV_RESERVE], '2.5')
+        self.assertNotIn(memgate.ENV_GATE, e)
+        self.assertEqual(self.env(['--no-mem-gate'])[memgate.ENV_GATE], 'off')
+        e = self.env([], {memgate.ENV_RESERVE: '4'})   # without options the environment passes as it is
+        self.assertEqual(e[memgate.ENV_RESERVE], '4')
+        self.assertNotIn(memgate.ENV_GATE, e)
+        with mock.patch.object(mg, 'GATE_ARGS', None), mock.patch.dict(os.environ):
+            os.environ.pop(memgate.ENV_RESERVE, None)
+            self.assertNotIn(memgate.ENV_RESERVE, mg.lifter_env())
+
+
 if __name__ == '__main__':
     unittest.main()

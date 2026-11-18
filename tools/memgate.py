@@ -322,7 +322,8 @@ def _rss_reader(rss):
 
 
 def total_ram():
-    """Bytes of physical memory in the machine, or None."""
+    """Bytes of memory the build may use: the physical memory, on Linux no more than the cgroup limit it runs
+    under; None when unknown."""
     if WINDOWS:
         status = hostmem._MemStatus()
         status.dwLength = ctypes.sizeof(status)
@@ -333,9 +334,25 @@ def total_ram():
             pass
         return None
     try:
-        return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+        phys = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
     except (OSError, ValueError, AttributeError):
         return None
+    limit = _cgroup_limit()
+    return phys if limit is None else min(phys, limit)
+
+
+def _cgroup_limit():
+    """Linux: the tightest memory.max of this process's cgroup and the cgroups above it (cgroup v2), or None. A build
+    run under such a limit can use no more than it, so the reserve and the rule for unknown free memory go by it."""
+    tightest = None
+    for _, text in hostmem.cgroup_limits():
+        if text == 'max':
+            continue
+        try:
+            tightest = int(text) if tightest is None else min(tightest, int(text))
+        except ValueError:
+            continue
+    return tightest
 
 
 def _commit_left():
@@ -821,6 +838,13 @@ def _env_number(name, kind):
         raise SystemExit(f'{name}={text!r} is not a number') from None
 
 
+def gate_on(args):
+    """False when --no-mem-gate (args, may be None) or the environment (ENV_GATE off, 0, no or false) turns the gate
+    off."""
+    return not getattr(args, 'no_mem_gate', False) and \
+        os.environ.get(ENV_GATE, '').strip().lower() not in ('off', '0', 'no', 'false')
+
+
 def settings(args):
     """The gate's settings from the options, else the environment, else the defaults:
     {'min_jobs', 'reserve' (bytes), 'ceiling' (bytes or None), 'enabled'}."""
@@ -833,8 +857,7 @@ def settings(args):
     min_jobs = getattr(args, 'min_jobs', None)
     if min_jobs is None:
         min_jobs = _env_number(ENV_MIN_JOBS, int)
-    enabled = not getattr(args, 'no_mem_gate', False) and \
-        os.environ.get(ENV_GATE, '').strip().lower() not in ('off', '0', 'no', 'false')
+    enabled = gate_on(args)
     return {'min_jobs': max(1, min_jobs if min_jobs is not None else 1),
             'reserve': default_reserve() if reserve is None else max(0, int(reserve * GIB)),
             'ceiling': None if limit is None or limit <= 0 else int(limit * GIB),

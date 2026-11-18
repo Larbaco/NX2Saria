@@ -114,7 +114,15 @@ of them.
    dispatched by a runtime CPU check stops the build. `python tests\check_isa_test.py` builds the files with such
    functions both ways and checks that they pass.
 
-   `gen.py` sizes its emit pool from the CPU count and the free memory; `--jobs N` sets it, and so does the environment variable `NX2SARIA_LIFT_JOBS=N`, which the installer's lift step honours too (it has no `--jobs`). When a worker runs out of memory, the pool restarts with half the workers (`emit: out of memory with N workers, retrying with M`), down to one; only an out-of-memory error with one worker fails the step.
+   `gen.py` sizes its emit pool from the CPU count and the free memory, keeping the compile gate's reserve free
+   ([build-memory.md](build-memory.md)), and hands a worker its next chunk only while the free memory is at or above that
+   reserve (one chunk is always in progress); the step ends with `emit memory: least free X GiB, dispatch held N
+   times, T s in all (reserve R GiB)`. `--jobs N` sets the pool, and so does the environment variable `NX2SARIA_LIFT_JOBS=N`, which the installer's lift step honours too (it has no `--jobs`). When a worker runs out of memory, the pool restarts with half the workers (`emit: out of memory with N workers, retrying with M`), down to one; only an out-of-memory error with one worker fails the step. The lift follows the gate's settings: `make_game.py`
+   hands `--mem-reserve` and `--no-mem-gate` on to it as `NX2SARIA_BUILD_MEM_RESERVE` and `NX2SARIA_BUILD_MEM_GATE=off`;
+   with the gate off nothing holds a chunk back, and a reserve that is not a number is reported and the default kept.
+   A worker the system ends (killed for memory) takes its chunk with it: after two minutes without a result the pool
+   restarts with half the workers (`emit: an emit worker ended without a result (killed for memory?) with N workers,
+   retrying with M`), and with one worker the step fails with that message instead of waiting for ever.
 
    Lifting takes about 15 s, a clean compile about 200 s on 24 threads; later builds recompile only what changed.
    A compiler cache in front of clang shortens it further: with `SCCACHE` set to an sccache executable, `build_game.py`

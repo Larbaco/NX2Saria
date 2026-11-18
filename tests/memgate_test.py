@@ -876,5 +876,34 @@ class WrapTest(Tmp):
         self.assertGreater(memgate.read_peaks(self.state)[0]['held'], 0.2)
 
 
+class CgroupLimitTest(Tmp):
+    """total_ram() under a cgroup v2 limit: the tightest memory.max on the way up, so the reserve and the rule for
+    unknown free memory go by what the build may use."""
+
+    def fake(self, limits):
+        proc, cg = self.tmp / 'proc', self.tmp / 'cg'
+        (proc / 'self').mkdir(parents=True)
+        (proc / 'self' / 'cgroup').write_text('0::/a/b\n')
+        for rel, value in limits.items():
+            d = cg / rel if rel else cg
+            d.mkdir(parents=True, exist_ok=True)
+            (d / 'memory.max').write_text(value + '\n')
+        return mock.patch.object(memgate.hostmem, 'PROC', proc), mock.patch.object(memgate.hostmem, 'CGROUP', cg)
+
+    @unittest.skipIf(memgate.WINDOWS, 'cgroups are Linux')
+    def test_the_tightest_limit_counts(self):
+        a, b = self.fake({'a': str(8 * GIB), 'a/b': str(6 * GIB)})
+        with a, b, mock.patch.object(memgate.os, 'sysconf', side_effect=lambda k: {'SC_PAGE_SIZE': 4096, 'SC_PHYS_PAGES': (32 * GIB) // 4096}[k]):
+            self.assertEqual(memgate.total_ram(), 6 * GIB)
+            self.assertEqual(memgate.default_reserve(), int(1.5 * GIB))   # 10 % of 6 GiB is less than the minimum
+
+    @unittest.skipIf(memgate.WINDOWS, 'cgroups are Linux')
+    def test_no_limit_is_the_physical_memory(self):
+        a, b = self.fake({'a': 'max', 'a/b': 'max'})
+        with a, b, mock.patch.object(memgate.os, 'sysconf', side_effect=lambda k: {'SC_PAGE_SIZE': 4096, 'SC_PHYS_PAGES': (32 * GIB) // 4096}[k]):
+            self.assertEqual(memgate.total_ram(), 32 * GIB)
+            self.assertEqual(memgate.default_reserve(), int(3.2 * GIB))
+
+
 if __name__ == '__main__':
     unittest.main()

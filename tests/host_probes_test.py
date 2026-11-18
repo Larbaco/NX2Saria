@@ -87,6 +87,18 @@ class AvailableRamTest(Tmp):
         self.limit('user.slice/app.scope', 12 * GIB, 5 * GIB)
         self.assertEqual(hostmem.available_ram(), 7 * GIB)
 
+    def test_dot_dot_parts_stay_under_the_mount(self):
+        """A cgroup outside this namespace reads as '/..': its '..' parts are skipped, never followed above the
+        mount."""
+        self.meminfo(40 * GIB // 1024)
+        self.member_of('/../app.scope')
+        self.limit('app.scope', 12 * GIB, 5 * GIB)
+        (self.tmp / 'memory.max').write_text(f'{GIB}\n')   # beside the mount: must not be read
+        (self.tmp / 'memory.current').write_text('0\n')
+        self.assertEqual([(f.relative_to(self.cgroup).as_posix(), t) for f, t in hostmem.cgroup_limits()],
+                         [('app.scope', str(12 * GIB))])
+        self.assertEqual(hostmem.available_ram(), 7 * GIB)
+
     def test_a_limit_above_mem_available_changes_nothing(self):
         self.meminfo(6 * GIB // 1024)
         self.member_of('/app.scope')
@@ -136,11 +148,13 @@ class AvailableRamTest(Tmp):
 
     @unittest.skipIf(gen is None, 'recomp/gen.py needs numpy')
     def test_the_lift_sizes_its_workers_by_the_limit(self):
-        """A 32-processor machine under an 8 GiB cgroup gets 4 workers (8 GiB x 0.8 / 1.5 GiB), not 32."""
+        """A 32-processor machine under an 8 GiB cgroup gets 4 workers (8 GiB x 0.8 / 1.5 GiB, which leaves more than
+        the 1.5 GiB reserve of an 8 GiB machine), not 32."""
         self.meminfo(80 * GIB // 1024)
         self.member_of('/app.scope')
         self.limit('app.scope', 8 * GIB, 0)
-        with mock.patch.dict(os.environ), mock.patch.object(gen.os, 'cpu_count', return_value=32):
+        with mock.patch.dict(os.environ), mock.patch.object(gen.os, 'cpu_count', return_value=32), \
+                mock.patch.object(gen.memgate, 'total_ram', return_value=8 * GIB):
             os.environ.pop('NX2NAVI_LIFT_JOBS', None)
             os.environ.pop('NX2SARIA_LIFT_JOBS', None)
             jobs, why = gen.pick_jobs(None)

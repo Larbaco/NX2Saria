@@ -28,6 +28,7 @@ import argparse
 import json
 import multiprocessing as mp
 import os
+import queue
 import re
 import sys
 import time
@@ -41,8 +42,8 @@ sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'recomp'))
 
 import flags  # noqa: E402
-import hostmem  # noqa: E402
 import jumptables  # noqa: E402
+import memgate  # noqa: E402
 import patches  # noqa: E402
 import regs  # noqa: E402
 from check_content import GENERATED_MARKER  # noqa: E402
@@ -663,10 +664,39 @@ def remove_stale(moddir, name, nchunks, errors):
 # Peak memory of one emit worker on 1.4.3 is 1.3 GiB (1.5 GiB with margin); the parent holds about 0.7 GiB.
 WORKER_MEM = 1536 << 20
 MEM_SHARE = 0.8  # of the free memory the workers may take, the rest is for the system and other programs
+GATE_POLL = 0.5  # seconds between two looks at the free memory and the pool while waiting (dispatch())
+# Seconds without a result after a worker of the pool was replaced before dispatch() gives up on the tasks it held.
+# A chunk takes seconds to emit; a worker the system killed (for memory) takes its task with it, and the pool never
+# reports that task.
+WORKER_LOST_S = 120.0
 
 
-def pick_jobs(requested):
-    """Worker count and the reason for it: --jobs if given, else the CPU count capped by the free memory."""
+class WorkerLost(RuntimeError):
+    pass
+
+
+def lift_gate():
+    """(enabled, reserve in bytes, why) of the memory gate for the emission: the compile gate's settings
+    (tools/memgate.py settings: NX2SARIA_BUILD_MEM_GATE, NX2SARIA_BUILD_MEM_RESERVE, else its default reserve). A
+    malformed setting does not stop the lift: it is reported and the default reserve applies. Off: reserve 0, why
+    says so."""
+    try:
+        s = memgate.settings(None)
+        enabled, reserve = s['enabled'], s['reserve']
+    except SystemExit as e:
+        print(f'ignoring the memory gate settings ({e}): the lift keeps the default reserve', file=sys.stderr,
+              flush=True)
+        enabled, reserve = memgate.gate_on(None), memgate.default_reserve()
+    if not enabled:
+        return False, 0, f'{memgate.ENV_GATE} off'
+    return True, reserve, ''
+
+
+def pick_jobs(requested, reserve=None):
+    """Worker count and the reason for it: --jobs if given, else the CPU count capped by the free memory. The workers
+    may take MEM_SHARE of the free memory, and no more than leaves reserve free (bytes; None: the compile gate's,
+    lift_gate()); the free memory is the gate's reading (memgate.available), which on Windows also counts the commit
+    left."""
     if requested:
         return requested, '--jobs'
     env, source = setting_env('LIFT_JOBS')
@@ -679,11 +709,123 @@ def pick_jobs(requested):
             pass
         print(f'ignoring {source}={env!r}: not a positive integer', file=sys.stderr, flush=True)
     cpus = os.cpu_count() or 4
-    free = hostmem.available_ram()
+    free = memgate.available()
     if free is None:
         return cpus, f'{cpus} CPUs, free memory unknown'
-    by_mem = max(1, int(free * MEM_SHARE) // WORKER_MEM)
-    return min(cpus, by_mem), f'{cpus} CPUs, {free / 2**30:.1f} GiB free memory allows {by_mem}'
+    if reserve is None:
+        reserve = lift_gate()[1]
+    by_mem = max(1, min(int(free * MEM_SHARE), free - reserve) // WORKER_MEM)
+    return min(cpus, by_mem), (f'{cpus} CPUs, {free / 2**30:.1f} GiB free memory allows {by_mem} with a '
+                               f'{reserve / 2**30:.1f} GiB reserve')
+
+
+class GateStats:
+    """What dispatch() saw of the free memory: the least reading, how many times it held dispatch and for how long."""
+
+    def __init__(self):
+        self.least = None
+        self.held = 0
+        self.held_s = 0.0
+
+    def note(self, avail):
+        if avail is not None and (self.least is None or avail < self.least):
+            self.least = avail
+
+    def line(self, reserve, off=''):
+        least = 'unknown' if self.least is None else f'{self.least / 2**30:.1f} GiB'
+        gate = f'gate off: {off}' if off else f'reserve {reserve / 2**30:.1f} GiB'
+        return (f'emit memory: least free {least}, dispatch held {self.held} times, {self.held_s:.0f} s in all '
+                f'({gate})')
+
+
+def _worker_pids(pool):
+    """The process ids of a multiprocessing pool's workers (empty for a pool that does not show them)."""
+    return frozenset(p.pid for p in getattr(pool, '_pool', None) or ())
+
+
+def dispatch(pool, fn, tasks, jobs, reserve, on_result, stats, available=None, poll=GATE_POLL,
+             clock=time.monotonic, workers=_worker_pids, lost_after=WORKER_LOST_S):
+    """Runs fn on each of tasks in pool, calling on_result with each result as it completes. At most jobs tasks are
+    outstanding, and the next one is submitted only while the free memory (available(); None: unknown) is at least
+    reserve, as the compile gate admits compiles; below it dispatch waits, looking again every poll seconds and at
+    each completion. One task is always outstanding while any is left, so a machine short of memory still progresses.
+    An exception a task raised (a MemoryError among them) is raised here; the tasks still outstanding are then lost
+    with the pool. stats (GateStats) gathers the readings. available defaults to memgate.available.
+
+    The pool replaces a worker that died, but the task it held never completes. So dispatch never waits without
+    looking: once the pool's workers (workers(pool), a set of process ids) changed, no result for lost_after seconds
+    (counted from the change or the last result, whichever is later) raises WorkerLost."""
+    available = available or memgate.available
+    done = queue.Queue()
+    pending = iter(tasks)
+    nxt = next(pending, None)
+    outstanding, holding = 0, False
+    known, replaced, last = workers(pool), False, clock()
+    while nxt is not None or outstanding:
+        hold = False
+        if nxt is not None and outstanding < jobs:
+            avail = available()
+            stats.note(avail)
+            if outstanding == 0 or avail is None or avail >= reserve:
+                pool.apply_async(fn, (nxt,), callback=lambda r: done.put((True, r)),
+                                 error_callback=lambda e: done.put((False, e)))
+                outstanding += 1
+                nxt = next(pending, None)
+                holding = False
+                continue
+            hold = True
+            if not holding:
+                stats.held += 1
+                holding = True
+        t = clock()
+        try:
+            ok, r = done.get(timeout=poll)
+        except queue.Empty:
+            now = workers(pool)
+            if now != known:
+                known, replaced, last = now, True, clock()
+            if replaced and outstanding and clock() - last >= lost_after:
+                raise WorkerLost(f'an emit worker ended without a result (killed for memory?): {outstanding} chunks '
+                                 f'outstanding, none done in {clock() - last:.0f} s')
+            if not hold:
+                stats.note(available())
+            continue
+        finally:
+            if hold:
+                stats.held_s += clock() - t
+        last = clock()
+        outstanding -= 1
+        if not ok:
+            raise r
+        stats.note(available())
+        on_result(r)
+
+
+def emit_all(pending, jobs, why, make_pool, fn, reserve, on_result, stats, **dispatch_kw):
+    """Runs fn on every task of pending (module, number, ...) in make_pool(jobs) through dispatch(). A MemoryError or
+    a worker lost with its chunk (WorkerLost: the system killed it, most likely for memory) restarts the pool with half
+    the workers on the tasks with no result yet, down to one worker, where it is raised. Chunk writes are atomic and
+    idempotent, so a chunk lost with a failed pool is simply emitted again."""
+    done = set()
+
+    def collect(r):
+        done.add((r['module'], r['number']))
+        on_result(r)
+
+    while True:
+        print(f'emitting with {jobs} workers ({why})', file=sys.stderr, flush=True)
+        try:
+            with make_pool(jobs) as pool:
+                dispatch(pool, fn, pending, jobs, reserve, collect, stats, **dispatch_kw)
+            return
+        except (MemoryError, WorkerLost) as e:
+            if jobs == 1:
+                raise
+            smaller, lost = jobs // 2, isinstance(e, WorkerLost)
+            what = 'an emit worker ended without a result (killed for memory?)' if lost else 'out of memory'
+            print(f'emit: {what} with {jobs} workers, retrying with {smaller}', file=sys.stderr, flush=True)
+            jobs, why = smaller, 'after a lost worker' if lost else 'after out of memory'
+            pending = [t for t in pending if (t[0], t[1]) not in done]
 
 
 def setting_env(suffix):
@@ -762,32 +904,32 @@ def main():
     done_at, errors = {}, []
     t_emit = time.perf_counter()
     ctx = mp.get_context('spawn')
-    jobs, why = pick_jobs(args.jobs)
-    pending = [t for _, t in tasks]
+    _, reserve, gate_off = lift_gate()
+    jobs, why = pick_jobs(args.jobs, reserve)
     emitted = 0
-    while True:
-        print(f'emitting with {jobs} workers ({why})', file=sys.stderr, flush=True)
-        try:
-            # Chunk writes are atomic and idempotent, so a chunk lost with a failed pool is simply emitted again.
-            with ctx.Pool(jobs, initializer=_worker_init, initargs=(paths, starts_abs, table, opts, jobs)) as pool:
-                for r in pool.imap_unordered(_emit_chunk, pending, chunksize=1):
-                    results[r['module']].append(r)
-                    if r['error']:
-                        errors.append(r['error'])
-                    done_at[r['module']] = time.perf_counter() - t_emit
-                    emitted += 1
-                    if emitted % 200 == 0 or emitted == len(tasks):
-                        print(f'emitted {emitted}/{len(tasks)} chunks, {time.perf_counter() - t_emit:.0f}s',
-                              file=sys.stderr, flush=True)
-            break
-        except MemoryError:
-            if jobs == 1:
-                raise
-            smaller = jobs // 2
-            print(f'emit: out of memory with {jobs} workers, retrying with {smaller}', file=sys.stderr, flush=True)
-            jobs, why = smaller, 'after out of memory'
-            done = {(r['module'], r['number']) for rs in results.values() for r in rs}
-            pending = [t for t in pending if (t[0], t[1]) not in done]
+    gate = GateStats()
+
+    def collect(r):
+        nonlocal emitted
+        results[r['module']].append(r)
+        if r['error']:
+            errors.append(r['error'])
+        done_at[r['module']] = time.perf_counter() - t_emit
+        emitted += 1
+        if emitted % 200 == 0 or emitted == len(tasks):
+            print(f'emitted {emitted}/{len(tasks)} chunks, {time.perf_counter() - t_emit:.0f}s',
+                  file=sys.stderr, flush=True)
+
+    def pool(n):
+        return ctx.Pool(n, initializer=_worker_init, initargs=(paths, starts_abs, table, opts, n))
+
+    try:
+        emit_all([t for _, t in tasks], jobs, why, pool, _emit_chunk, reserve, collect, gate)
+    except WorkerLost as e:
+        print(f'emit: {e}', file=sys.stderr, flush=True)
+        return 1
+    finally:
+        print(gate.line(reserve, gate_off), file=sys.stderr, flush=True)
 
     for name, d in info.items():
         rs = sorted(results[name], key=lambda r: r['number'])

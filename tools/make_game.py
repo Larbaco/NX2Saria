@@ -573,11 +573,23 @@ def mod_digest(out):
     return h.hexdigest()
 
 
+def lifter_env():
+    """The environment gen.py runs in: this one, plus the memory gate's options build_main was given
+    (--mem-reserve, --no-mem-gate) as the variables gen.py reads, so the lift keeps the reserve the compiles keep."""
+    env = dict(os.environ)
+    args = GATE_ARGS if GATE_ARGS is not None else argparse.Namespace()
+    if getattr(args, 'mem_reserve', None) is not None:
+        env[memgate.ENV_RESERVE] = str(args.mem_reserve)
+    if getattr(args, 'no_mem_gate', False):
+        env[memgate.ENV_GATE] = 'off'
+    return env
+
+
 def run_lifter(out, lift, patches):
     """gen.py with the patch file into lift; its exit code."""
     cmd = py_cmd(KIT / 'recomp' / 'gen.py', '--exefs', out / 'exefs', '--out', lift, '--patches', patches)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8',
-                         errors='replace', bufsize=1)
+                         errors='replace', bufsize=1, env=lifter_env())
     for line in p.stdout:
         line = line.rstrip('\n')
         say(f'  {line}')
