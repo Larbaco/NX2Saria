@@ -4,11 +4,13 @@
 of every collectible, chest and quest, a map with Link on it, and the logic of what can be reached now. It reads the
 game's own save files, and on Windows it follows the running game in another port's memory. This page records what
 it takes to use it with NX2Saria: how it reads the game, what breaks here, what the fork and the tracker change, and
-how it shares one tracker API with Ocarina Atlas ([ocarina-atlas.md](ocarina-atlas.md), branch `atlas-integration`).
+how it shares one tracker API with Ocarina Atlas ([ocarina-atlas.md](ocarina-atlas.md); the API is in `main` since
+0.16.0, [NX2Saria#7](https://github.com/Larbaco/NX2Saria/pull/7)).
 
 Studied: hyrule-tracker `master` at `fbfafe582909e6c23380d15a811605773af03549` (v1.1.1), NX2Saria `0170e49d`
-(0.14.0) with `atlas-integration` at `dbd8d6c4`, game version 1.1.1, main build `e0f3ccfaf50065ae`. The game was not
-built or run for this study.
+(0.14.0) with the Atlas study's branch at `dbd8d6c4`, game version 1.1.1, main build `e0f3ccfaf50065ae`. This branch
+was later rebased onto `main` at `a8117c8a` (0.16.0, the same tracker API as merged); the runs below say which build
+they used.
 
 ## Conclusion
 
@@ -137,7 +139,7 @@ at +0x28).
 
 ## Changes in the fork (this branch)
 
-This branch is `main` (`0170e49d`) with `atlas-integration` (`dbd8d6c4`) merged in, and these changes on top:
+This branch is `main` (`a8117c8a`, 0.16.0, which has the tracker API) with these changes on top:
 
 | Change | Where |
 |---|---|
@@ -187,8 +189,8 @@ activity screenshot, which needs a process id the API does not give (it stays of
 
 Drafts in [hyrule-tracker-prs.md](hyrule-tracker-prs.md). None is open.
 
-1. **Fork:** the game data on the tracker API, ready on this branch. It extends `atlas-integration`, so it goes after
-   that one (or both as one PR).
+1. **Fork:** the game data on the tracker API, ready on this branch, based on `main` (the API it extends is there since
+   0.16.0).
 2. **hyrule-tracker:** NX2Saria as a live source and its saves; the patch above. It waits for the copyright holder's
    decision to contribute it, and nothing was opened or posted in the tracker's repository.
 
@@ -317,7 +319,7 @@ kind and error)`, once per kind and error.
 
 ## For the Ocarina Atlas study
 
-Found here, worth carrying to `atlas-integration`:
+Found here, worth carrying to the Atlas pages (`ocarina-atlas.md`; its pull request is merged):
 
 - Atlas's Gold Skulltula hash `0x04735978` is `PouchData.Item_Token_Gold.StockNum` (the name has the `PouchData.`
   prefix).

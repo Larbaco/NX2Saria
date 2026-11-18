@@ -5,8 +5,8 @@ the copyright holder's decision to contribute it. Background: [hyrule-tracker.md
 
 ## 1. Fork (Larbaco/NX2Saria): the game data on the tracker API
 
-**Branch:** `hyrule-tracker-integration`, from `main` at `0170e49d` with `atlas-integration` (`dbd8d6c4`) merged in.
-**Base:** `main` once `atlas-integration` is merged; until then, `atlas-integration` (this PR extends its server).
+**Branch:** `hyrule-tracker-integration`, rebased onto `main` at `a8117c8a` (0.16.0). **Base:** `main`, which has the
+tracker API this PR extends ([NX2Saria#7](https://github.com/Larbaco/NX2Saria/pull/7)).
 
 **Title:** Answer item trackers the game's progress by the save files' keys, on the tracker API (nx2saria.game_data)
 
@@ -17,8 +17,7 @@ the copyright holder's decision to contribute it. Background: [hyrule-tracker.md
 > reads the same values from another port's memory, by searching gigabytes for the game's tables at a fixed guest
 > offset, on Windows only. NX2Saria's memory is laid out differently (guest = host), so that search finds nothing.
 >
-> This adds one method to the tracker API of `atlas-integration` (the same server, port and settings; no second
-> listener):
+> This adds one method to the tracker API of 0.16.0 (the same server, port and settings; no second listener):
 >
 > - `nx2saria.game_data {kind, hash, filter, if_digest}`: the values of one kind (`Bool`, `Int`, `Enum`, `String64`,
 >   `String64Array`, `Int64`, `Bool64bitKey`), each with its key, sorted by key, as little-endian records in hex
