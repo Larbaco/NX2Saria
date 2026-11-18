@@ -91,18 +91,53 @@ object again.
 
 ## The build log
 
-make_game's compile step prints (build_game prints the same lines after its compile phase):
+make_game's compile step prints these lines (build_game prints the same ones after its compile phase). From the bench
+build of 2026-11-18 at 8 jobs with `NX2SARIA_BUILD_MEM_LIMIT=2`, the second build of the folder:
 
 ```
-compiles at a time: up to 8 (--jobs); the memory gate starts each one when the free memory holds it (...)
-  memory gate: on; up to 8 at once, at least 1; keeps 3.1 GiB free, no ceiling; estimates: ...
-  memory gate: holding <object> (needs ... GiB; ... GiB free, ... GiB promised to the N compiles running, reserve ...)
+compiles at a time: up to 8 (--jobs); the memory gate starts each one when the free memory holds it (keeps 3.1 GiB free, at most 2.0 GiB estimated in all)
+  memory gate: on; up to 8 at once, at least 1; keeps 3.1 GiB free; ceiling 2.0 GiB; estimates: 761 learned from earlier builds, 0 from the size model
+  memory gate: holding main_main_0300.o (needs 0.7 GiB; 20.2 GiB free, 1.8 GiB promised to the 2 compiles running, reserve 3.1 GiB, limit 2.0 GiB)
   ...
-  N compiled, M unchanged since the last build
-  memory gate: N compiles started, at most K at once; H held for memory, T s in all, the longest ...
-  compile memory: peak ... GiB for all compiles together (at ... s), least free memory ... GiB
-  largest compiles: main_0282.o 0.92 GiB 78 s, ...
-  estimates against the measured peaks: median ...x, lowest ...x (<object>)
+  761 compiled, 0 unchanged since the last build
+  memory gate: 761 compiles started, at most 8 at once (cap 8); reserve 3.1 GiB, limit 2.0 GiB
+  memory gate: 380 compiles held for memory, 804.3 s in all; longest 46.4 s (main_main_0300.o)
+  compile memory: peak 1.7 GiB for all compiles together (at 319 s), least free memory 16.3 GiB
+  largest compiles (5 of 761): main_main_0310.o 0.91 GiB 78 s, main_main_0312.o 0.65 GiB 46 s, main_main_0300.o 0.63 GiB 35 s, main_main_table.o 0.57 GiB 5 s, main_main_0266.o 0.52 GiB 28 s
+  estimates against the measured peaks: median 1.15x, lowest 1.10x (main_main_0479.o)
 ```
 
-Hold lines come at most once per 15 s, with a count of the ones left out.
+- `estimates:` says where the estimates came from: learned from earlier builds, the size model, or the 400 MiB (C)
+  and 1 GiB (C++) set for the runtime's files until they are measured.
+- Hold lines come at most once per 15 s, with a count of the ones left out.
+- `estimates against the measured peaks` is the estimate over the measured peak: below 1 means an object took more
+  than its estimate, which the reserve covers.
+
+## Measured on the bench
+
+Linux bench, 16 threads, 31 GiB of RAM, clang 20.1.2, `xbuild/build-branch.sh` with its 8 jobs, one build at a time,
+2026-11-18. Before: main at 88a7ef11; after: this change. The compile figures are each build's compile of every
+object from scratch; the free memory and the compilers' resident memory were sampled once a second outside the build.
+
+| | before | after | after, learned, 2 GiB ceiling |
+|---|---|---|---|
+| lift | 96 s (the PC busy with other work) | 75 s | done before |
+| files compiled | 729 | 761 | 761 |
+| compile | 564 s | 555 s | 881 s |
+| compilers' memory together, peak | 2.9 GiB | 3.3 GiB (gate: 3.3 GiB) | 1.7 GiB (gate) |
+| least free memory while compiling | 17.1 GiB | 17.7 GiB (gate: 17.6 GiB) | 16.3 GiB (gate) |
+| compiles held for memory | (no gate) | 0 | 380, 804 s in all |
+| estimates against peaks | | median 1.17x, lowest 0.46x | median 1.15x, lowest 1.10x |
+
+- At 8 jobs on this PC the gate never had to hold a compile: 8 compiles take about 3 GiB and 17 GiB were free. The
+  compile time is the same. What changes is what happens where memory is short: there the gate starts fewer compiles
+  instead of running the PC out of memory, as the run with a 2 GiB ceiling shows.
+- The first build estimates from the model. Its worst miss was main_0029, a 0.8 MB function without a switch: 399 MiB
+  measured against 161 MiB estimated, well inside the reserve. The second build used the measured peaks, and no
+  estimate fell short.
+- Single big functions compile slower beside others than alone: the 3.9 MB one took 78 s alone and 112 s among 8.
+- The lift used more memory than the compile: the free memory fell to 8.5 GiB while `recomp/gen.py` emitted its
+  chunks (its workers are sized by the free memory when it starts, not gated).
+- Every function the two lifts define is byte for byte the same (`tools/lift_compare.py`: 249,960 in main, 45,907 in
+  sdk, 1,547 in subsdk0), and boot and boot map runs of both builds from the same save reach the same place
+  (Kokiri Forest, Link at -46.09 118.44 15.39).

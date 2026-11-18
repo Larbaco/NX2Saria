@@ -94,6 +94,9 @@ of them.
    .venv\Scripts\python tools\build_game.py --version <ver>
    ```
 
+   `build_game.py` starts each compile when the free memory holds it, by the peak that object took in the last build
+   (`--jobs` is the most at once; `--mem-limit`, `--mem-reserve` and `--min-jobs` limit further):
+   [the build's memory gate](build-memory.md).
    The menu's font comes into `runtime/ui/menu.cpp` with `#embed`; for a compiler without it (before clang 19, which
    a Linux build with the distribution's compiler can meet) the same step writes the font's bytes as
    `runtime/ui/roboto_ttf.h` (git ignores it), which `menu.cpp` then includes.
