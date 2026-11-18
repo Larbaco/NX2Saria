@@ -52,6 +52,8 @@
 
 #include "cfg.h"
 #include "host.h"
+#include "input.h"
+#include "lib_origin.h"
 #include "logq.h"
 #include "prof.h"
 #include "platform/platform.h"
@@ -713,6 +715,22 @@ static void portable_paths(RtConfig *c) {
 
 static int main_run(int argc, char **argv);
 
+#ifdef _WIN32
+#define SDL_LIBRARY "SDL3.dll"
+#else
+#define SDL_LIBRARY "libSDL3.so.0"
+#endif
+
+// The SDL this process loaded and where from, and the form SHA-256 runs in (lib_origin.h).
+static void log_libs(void) {
+    char sdl[PLAT_PATH_MAX * 2], exe[PLAT_PATH_MAX * 2], line[2048];   // rt_log's own line is 2048 bytes
+    int built, loaded = input_sdl_version(&built);
+    if (!plat_library_path(SDL_LIBRARY, sdl, sizeof sdl)) sdl[0] = 0;
+    if (!plat_exe_path(exe, sizeof exe)) exe[0] = 0;
+    lib_origin_line(line, sizeof line, loaded, built, sdl, exe, sha256_ni());
+    rt_log("libs: %s", line);
+}
+
 // A game run never comes back here: it ends in plat_exit (boot.c, gfx_present.c). Every other mode returns its code.
 int main(int argc, char **argv) {
     plat_stack_guarantee();   // a stack overflow on the main thread still gets its crash report (platform.h)
@@ -727,6 +745,7 @@ static int main_run(int argc, char **argv) {
     // The build that wrote the log, at its top: an attached log from another install or version shows at a glance.
     rt_log("version: NX2Saria %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,
            rt_game_version % 10);
+    log_libs();
     // A restart from the settings menu (gfx_present.c gfx_window_closed) starts this process while the one it replaces
     // is still exiting: its log, RomFS and saves are free once it is gone.
     if (plat_restart_wait(30000) < 0) rt_log("restart: the previous process still runs after 30 s; starting anyway");

@@ -479,6 +479,9 @@ uintptr_t plat_exe_base(void);                            // where the executabl
 // The module (executable or library) holding code address addr: its file name without directories into name, its load
 // address into *base. 0 when none.
 int plat_module_of(uintptr_t addr, char *name, size_t cap, uintptr_t *base);
+// The path of the loaded shared library the loader matches to name (libSDL3.so.0, SDL3.dll): its folder absolute and,
+// on Linux, free of symbolic links; 0 when no loaded module answers to that name.
+int plat_library_path(const char *name, char *out, size_t cap);
 #define PLAT_PATH_MAX 1024   // path buffers of the runtime
 #ifdef _WIN32
 #define PLAT_EXE_SUFFIX ".exe"   // of the programs the runtime starts (nx2navi_xlate)

@@ -21,6 +21,14 @@ The setup installs the launcher, which builds the game once and then starts it.
 
 1. Download **`NX2Saria-Linux-<version>-x86_64.AppImage`** from the release.
 2. Make it executable (`chmod +x NX2Saria-Linux-*.AppImage`) and start it.
+3. The build needs a compiler and a few libraries from your distribution. When one is missing, the AppImage says which
+   and the command that installs them. On Ubuntu 24.04, Linux Mint 22 and the other distributions on Ubuntu:
+
+   ```sh
+   sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev
+   ```
+
+   SDL3, which Ubuntu 24.04 does not package, comes with the AppImage.
 
 Started on a desktop, it opens a window to install, update and play.
 

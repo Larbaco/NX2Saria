@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/install.md source-hash=4eb0c98c058cc7c521702cfc6701787550d06318 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/install.md source-hash=f8e8f3a5886a3ae9be266f1f458b4e4fed167173 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · [Русский](../ru/install.md) · **简体中文**
 
@@ -22,6 +22,13 @@
 
 1. 从发布版本中下载 **`NX2Saria-Linux-<version>-x86_64.AppImage`**。
 2. 赋予它可执行权限（`chmod +x NX2Saria-Linux-*.AppImage`），然后运行它。
+3. 构建需要你的发行版提供的编译器和几个库。缺少其中任何一个时，AppImage 会指出缺少的是哪个，并给出安装它们的命令。在 Ubuntu 24.04、Linux Mint 22 以及其他基于 Ubuntu 的发行版上：
+
+   ```sh
+   sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev
+   ```
+
+   Ubuntu 24.04 没有打包 SDL3，AppImage 自带了它。
 
 在桌面环境中启动时，它会打开一个窗口，用于安装、更新和游玩。
 

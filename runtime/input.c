@@ -1343,6 +1343,11 @@ static int blocked(volatile int32_t *flag, volatile uint64_t *closed, const char
     return 0;
 }
 
+int input_sdl_version(int *built) {
+    *built = SDL_VERSION;
+    return SDL_GetVersion();   // safe before SDL_Init
+}
+
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     poll_merged(buttons, lx, ly, rx, ry);
     if (!g_block && !g_menu) menu_cursor_poll(buttons);

@@ -73,6 +73,28 @@ RADV). It takes clang, clang++ and lld from `PATH` and links against the system'
        python python-fonttools python-pillow python-numpy python-lz4 python-zstandard dotnet-sdk
    ```
 
+   On Ubuntu 24.04, Linux Mint 22 and the other distributions on Debian or Ubuntu (`dotnet-sdk-10.0` only for a
+   source checkout, step 2):
+
+   ```sh
+   sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev \
+       python3 python3-venv python3-fonttools python3-pil python3-numpy python3-lz4 python3-zstandard dotnet-sdk-10.0
+   ```
+
+   There `pip install --user` is refused (the system's Python is managed by apt): put zbic in a virtual environment
+   that sees the packages above, `python3 -m venv --system-site-packages ~/.venv-nx2saria` then
+   `~/.venv-nx2saria/bin/pip install zbic`, and run the build with `~/.venv-nx2saria/bin/python`.
+
+   SDL3 is the system's when the compiler finds its headers (`sdl3` on Arch, `SDL3-devel` on Fedora, `libsdl3-dev`
+   where Debian or Ubuntu has it). Ubuntu 24.04 and the distributions on it package no SDL3: there the build takes
+   the SDL 3.4.18 the kit carries (`toolchain/sdl3/`, `tools/sdl3_pin.py`; a source checkout fetches it there on first
+   use and checks its hash), compiles and links the game against it and copies its `libSDL3.so.0` beside `ocarina`.
+   `NX2SARIA_SDL3=kit` or `NX2SARIA_SDL3=system` picks one. That SDL3 links the desktop's X11, Wayland, PulseAudio and
+   ALSA libraries directly; a desktop install of Ubuntu or Mint has them all, and the check before the long steps runs
+   a program linked against it, so a missing one stops the build by name. The build log's `the compiler is`
+   line names the compiler and the SDL3 chosen; the game log's `libs:` line, near its top, the SDL it loaded and from
+   where.
+
    Python 3.10 or later (with 3.14 the RomFS step uses its own `compression.zstd`, else the `zstandard` package; the
    button prompts need `fonttools` and `pillow` when the kit carries button art), then `zbic`, which the kit only calls
    (GPL-2.0): `pip install --user zbic`, or in a virtual environment with the packages above.
@@ -85,7 +107,8 @@ RADV). It takes clang, clang++ and lld from `PATH` and links against the system'
    otherwise fetches the pinned ones there once and checks their hash. The loader's library still comes from the
    system (`vulkan-icd-loader`, `libvulkan-dev`, `vulkan-loader-devel`).
    The compiler is the system's too. The releases are built with clang 23; an older one works as far as it compiles
-   the runtime (one without `#embed`, before clang 19, takes the menu's font from a header the kit carries). Before
+   the runtime (one without `#embed`, before clang 19, takes the menu's font from a header the kit carries; Ubuntu
+   24.04's clang 18 does). Before
    its long steps the build checks every runtime source with that compiler and links against the libraries, so a
    compiler, a header or a library it cannot use stops it in the first seconds, with the compiler's own words, and
    not after the RomFS image.
@@ -157,8 +180,9 @@ frames needed to reach the display's refresh rate (`framegen = dlss` and `fg_mul
 `ngxfg: DLSS Frame Generation available` when NGX found the library.
 
 `tools/make_appimage.py` packs this kit into one `NX2Saria-Linux-<version>-x86_64.AppImage` with its own Python and the
-pinned Vulkan headers, for players without a source checkout: it checks for the packages above (their Vulkan headers
-are not needed), installs zbic with pip on its first run, picks
+pinned Vulkan headers and SDL3, for players without a source checkout: before a build it checks for clang, clang++,
+lld and the headers of the packages above, asking the compiler (the Vulkan headers and SDL3 come with it; `--check`
+needs none of them, and `--make-game` leaves the check to `make_game.py`), installs zbic with pip on its first run, picks
 `--jobs` from the memory, builds into `~/Games/Ocarina` (or the folder given after the dump) and writes `play.sh`
 beside the game.
 

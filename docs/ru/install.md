@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/install.md source-hash=4eb0c98c058cc7c521702cfc6701787550d06318 reviewed=no -->
+<!-- translation: lang=ru source=docs/install.md source-hash=f8e8f3a5886a3ae9be266f1f458b4e4fed167173 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · **Русский** · [简体中文](../zh-Hans/install.md)
 
@@ -26,6 +26,15 @@ AppImage для Linux. Ни один из них не содержит данн�
 
 1. Скачайте **`NX2Saria-Linux-<version>-x86_64.AppImage`** из выпуска.
 2. Сделайте его исполняемым (`chmod +x NX2Saria-Linux-*.AppImage`) и запустите.
+3. Для сборки нужны компилятор и несколько библиотек из вашего дистрибутива. Если чего-то не хватает, AppImage
+   называет, чего именно, и команду для установки. В Ubuntu 24.04, Linux Mint 22 и других дистрибутивах на основе
+   Ubuntu:
+
+   ```sh
+   sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev
+   ```
+
+   SDL3, которого нет в пакетах Ubuntu 24.04, поставляется вместе с AppImage.
 
 При запуске на рабочем столе он открывает окно для установки, обновления и игры.
 

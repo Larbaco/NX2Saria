@@ -2731,9 +2731,9 @@ class MakeGameTest(Tmp):
             self.assertLess(cmd.index('kit/vulkan'), cmd.index('/usr/include'))
 
     def test_early_check_tries_the_runtime_before_the_long_steps(self):
-        """The check of a Linux build runs the compile step's own command with -fsyntax-only on each source and links
-        an empty program against the game's libraries. When files fail it stops with every one of them named (the
-        compile step named three of four), and a missing header is told from an old one."""
+        """The check of a Linux build runs the compile step's own command with -fsyntax-only on each source, then links
+        a program against the game's libraries as the game is linked and runs it. When files fail it stops with every
+        one of them named (the compile step named three of four), and a missing header is told from an old one."""
         srcs = [self.tmp / n for n in ('good.c', 'bad1.c', 'bad2.c', 'bad3.c', 'bad4.cpp')]
         for s in srcs:
             s.write_text('int x;\n')
@@ -2753,6 +2753,8 @@ class MakeGameTest(Tmp):
             with mock.patch.multiple(self.mg, toolchain=lambda msys: (Path('clang'), Path('clang++'), {}, Path('vma')),
                                      clang_version=lambda clang, env: 'clang version 18.1.3',
                                      vulkan_headers=lambda clang, env: ['-I', 'kit/vulkan'],
+                                     sdl3_choice=lambda clang, env: self.mg.Sdl3('system', '3.4.18', [], '-lSDL3',
+                                                                                 'its headers are found'),
                                      runtime_headers=lambda rt: None, EVENTS=False), \
                     mock.patch.object(self.mg.subprocess, 'run', compiler(errors)), \
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
@@ -2777,12 +2779,14 @@ class MakeGameTest(Tmp):
         self.assertEqual(len(ran), 5)   # no link is tried once sources failed
         stopped, text = check({'bad1.c': "bad1.c:1:10: fatal error: 'SDL3/SDL.h' file not found"}, srcs[:2])
         self.assertIn('These headers are missing: SDL3/SDL.h', text)
-        # every source passes: the empty program is linked against the game's libraries
+        # every source passes: a program is linked against the game's libraries, with the game's runpath, and run
         stopped, text = check({}, srcs[:1])
         self.assertIsNone(stopped)
-        link = ran[-1]
+        link, probe = ran[-2], ran[-1]
         self.assertNotIn('-fsyntax-only', link)
         self.assertEqual(link[-len(self.mg.LINK_LIBS):], self.mg.LINK_LIBS)
+        self.assertIn('-Wl,-rpath,$ORIGIN', link)
+        self.assertEqual(probe, [link[link.index('-o') + 1]])
 
     def test_pinned_vulkan_headers(self):
         """tools/vulkan_pin.py keeps the C headers and the licence note of the pinned archive and nothing else, takes

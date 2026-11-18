@@ -61,7 +61,7 @@ instrumented game instead: it adds its counts to <out>/pgo/*.profraw every minut
 
 On Linux the same steps make <out>/ocarina with the clang, clang++ and lld on PATH and the system's libraries
 (Vulkan, SDL3, Opus, libvpx, dav1d, zstd; libstdc++ static, rpath $ORIGIN), as tools/build_game.py's Linux
-build does: the runtime's *_sdl.* and platform/linux.c take the place of its *_win.*, platform/win32.c and
+build does, except that SDL3 is the build kit's where the system has none (sdl3_choice): the runtime's *_sdl.* and platform/linux.c take the place of its *_win.*, platform/win32.c and
 nx2saria.rc, and --msys is not used. VMA_INCLUDE can name the directory holding vk_mem_alloc.h; otherwise the
 system header or the pinned download is used. README-BuildKit.md, "Linux", lists the packages.
 
@@ -92,6 +92,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import NamedTuple
 
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT / 'tools'))
@@ -1180,22 +1181,25 @@ def runtime_headers(rt):
         build_shaders.build(rt, stale)
 
 
-def preflight(msys, jobs, sources=None):
+def preflight(msys, jobs, sources=None, work=None):
     """Linux, before the long steps of a build whose compile step will run: this machine's compiler, headers and
     libraries are tried on the runtime itself. Every runtime source that needs no header of this install is checked
-    with the compile step's own command (clang -fsyntax-only), and an empty program is linked against the libraries
-    the game links. The build takes the compiler, the linker and the libraries from the system (only the Vulkan
-    headers and VMA come with the kit), and a distribution's older compiler, older headers or a missing development
-    package stopped the compile step only after the RomFS image and the lift, ten minutes and more into the build.
-    sources: the files to check instead (tests)."""
+    with the compile step's own command (clang -fsyntax-only), and a program that prints SDL's version is linked
+    against the libraries the game links, as the game is, and run. The build takes the compiler, the linker and the
+    libraries from the system (the Vulkan headers, VMA and, where the system has none, SDL3 come with the kit), and a
+    distribution's older compiler, older headers or a missing development package stopped the compile step only after
+    the RomFS image and the lift, ten minutes and more into the build. work: the folder the program is built and run
+    in (the build cache, as a temporary folder may not let programs run), a temporary one when None; sources: the
+    files to check instead (tests)."""
     clang, clangxx, env, vma = toolchain(msys)
     version = clang_version(clang, env)
-    say(f'check: the compiler is {version}')
+    sdl = sdl3_choice(clang, env)
+    say(f'check: {sdl3_line(clang, version, sdl)}')
     rt = KIT / 'runtime'
     runtime_headers(rt)
     inc = ['-I', str(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma)]
     vulkan = vulkan_headers(clang, env)
-    cmd_for = runtime_cmd(clang, clangxx, inc, first=vulkan)
+    cmd_for = runtime_cmd(clang, clangxx, inc, first=vulkan + (sdl.include if sdl else []))
     if sources is None:
         tainted = per_install_names()
         sources = [p for p, _ in runtime_sources() if not per_install(p, tainted)]
@@ -1218,18 +1222,45 @@ def preflight(msys, jobs, sources=None):
               f'The compiler ({version}) or a library\'s headers are older than the runtime needs: the releases are '
               f'built with clang 23, and the Vulkan headers come ' +
               (f'from {vulkan[1]}' if vulkan else 'from the system') + '. The errors above name what is missing.'))
-    with tempfile.TemporaryDirectory(prefix='nx2navi-check-') as tmp:
-        probe = Path(tmp) / 'probe.c'
-        probe.write_text('int main(void) { return 0; }\n', encoding='ascii')
-        ld = (['-fuse-ld=lld'] if shutil.which('ld.lld') else []) + ['-no-pie']
-        p = subprocess.run([str(clangxx), *ld, '-o', str(Path(tmp) / 'probe'), '-x', 'c', str(probe), '-x', 'none',
-                            *LINK_LIBS], capture_output=True, text=True, env=env, errors='replace')
-    if p.returncode:
-        print(p.stderr[-2000:], file=sys.stderr)
-        fail('the libraries the game links are not all there (the linker\'s lines above name the missing ones): '
-             'install the development packages README-BuildKit.md lists under "Linux". '
-             'On Fedora the static C++ library is its own package, libstdc++-static.')
-    say(f'check: {len(sources)} runtime files and the libraries pass, {time.time() - t0:.0f} s')
+    # A program linked as the game is, against the game's libraries, is run: it shows that SDL3 and the libraries it
+    # needs load here (lld links even when a library a linked one needs is missing), and its version is the one loaded.
+    if work:
+        Path(work).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='nx2navi-check-', dir=work) as tmp:
+        probe, exe = Path(tmp) / 'probe.c', Path(tmp) / 'probe'
+        probe.write_text(SDL3_PROBE, encoding='ascii')
+        ld = (['-fuse-ld=lld'] if shutil.which('ld.lld') else []) + ['-no-pie', '-Wl,-rpath,$ORIGIN']
+        p = subprocess.run([str(clangxx), *ld, *(sdl.include if sdl else []), '-o', str(exe), '-x', 'c', str(probe),
+                            '-x', 'none', *link_libs(sdl)], capture_output=True, text=True, env=env, errors='replace')
+        if p.returncode:
+            print(p.stderr[-2000:], file=sys.stderr)
+            fail('the libraries the game links are not all there (the linker\'s lines above name the missing ones): '
+                 'install the development packages README-BuildKit.md lists under "Linux". '
+                 'On Fedora the static C++ library is its own package, libstdc++-static.' +
+                 (' The compiler finds SDL3\'s headers, but the linker no libSDL3: install SDL3\'s development '
+                  'package, or build with the kit\'s SDL3: NX2SARIA_SDL3=kit'
+                  if sdl and sdl.source == 'system' and 'SDL3' in p.stderr else ''))
+        if sdl and sdl.source == 'kit':
+            shutil.copy2(sdl.lib, Path(tmp) / SDL3_SO)   # where the game finds it: beside the program
+        try:
+            r = subprocess.run([str(exe)], capture_output=True, text=True, env=env, errors='replace', timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            r = subprocess.CompletedProcess([str(exe)], -1, '', error_text(e))
+    if r.returncode:
+        print(r.stderr[-2000:], file=sys.stderr)
+        lib = missing_library(r.stderr)
+        package = SDL3_NEEDS.get(lib) if sdl and sdl.source == 'kit' else None
+        ended = f'it was ended by signal {-r.returncode}' if r.returncode < 0 else f'exit code {r.returncode}'
+        fail(f'a program linked against the game\'s libraries does not start here' +
+             (f': {lib} is missing' if lib else
+              f' ({ended}' + ('; its lines above say why)' if r.stderr.strip() else ')')) +
+             (f'. The kit\'s SDL3 needs it; on Ubuntu 24.04 and Linux Mint 22 the package {package} holds it '
+              f'(sudo apt install {package})' if package else
+              '. Install the package that holds it, or build with the kit\'s SDL3: NX2SARIA_SDL3=kit'
+              if lib == SDL3_SO else '. Install the package that holds it' if lib else ''))
+    loaded = r.stdout.strip()
+    say(f'check: {len(sources)} runtime files and the libraries pass' +
+        (f', and SDL3 {loaded} loads' if sdl and loaded else '') + f', {time.time() - t0:.0f} s')
 
 
 def steps_to_run(state, identity, out, until=None):
@@ -1873,6 +1904,161 @@ def vulkan_headers(clang, env):
     return ['-I', str(folder)] if folder else []
 
 
+# ---- SDL3 on Linux: the system's when the compiler finds its headers, else the build kit's (tools/sdl3_pin.py)
+
+SDL3_SO = 'libSDL3.so.0'
+SDL3_PLACED = 'sdl3-beside.txt'   # in the build cache: the SHA-256 of the kit's libSDL3.so.0 this build put beside the game
+# The libraries the kit's SDL3 is linked against (tools/sdl3_pin.py), with the Ubuntu 24.04 and Linux Mint 22 package
+# that holds each: named when the check's program does not start for want of one.
+SDL3_NEEDS = {'libX11.so.6': 'libx11-6', 'libXext.so.6': 'libxext6', 'libXcursor.so.1': 'libxcursor1',
+              'libXi.so.6': 'libxi6', 'libXfixes.so.3': 'libxfixes3', 'libXrandr.so.2': 'libxrandr2',
+              'libXss.so.1': 'libxss1', 'libXtst.so.6': 'libxtst6', 'libxkbcommon.so.0': 'libxkbcommon0',
+              'libwayland-client.so.0': 'libwayland-client0', 'libwayland-cursor.so.0': 'libwayland-cursor0',
+              'libwayland-egl.so.1': 'libwayland-egl1', 'libdecor-0.so.0': 'libdecor-0-0', 'libpulse.so.0': 'libpulse0',
+              'libasound.so.2': 'libasound2t64', 'libfribidi.so.0': 'libfribidi0'}
+
+
+# preflight's program: SDL's version as the library that loads says it
+SDL3_PROBE = ('#include <stdio.h>\n#include <SDL3/SDL.h>\nint main(void) {\n    int v = SDL_GetVersion();\n'
+              '    printf("%d.%d.%d\\n", SDL_VERSIONNUM_MAJOR(v), SDL_VERSIONNUM_MINOR(v), SDL_VERSIONNUM_MICRO(v));\n'
+              '    return 0;\n}\n')
+
+
+class Sdl3(NamedTuple):
+    source: str     # 'system' or 'kit'
+    version: str    # as the SDL_version.h in use says, '?' when it says no version
+    include: list   # for the runtime's sources, ahead of the system's folders: [] or ['-I', <kit>/toolchain/sdl3/include]
+    lib: str        # what the link names for SDL3: -lSDL3, or the kit's libSDL3.so.0 by its path
+    why: str        # why this one, for the build's log
+
+
+def sdl3_version(clang, env, inc=()):
+    """SDL's version from the SDL3/SDL_version.h the compiler finds with inc ahead of its own folders (and CPATH), ''
+    when it finds none."""
+    try:
+        p = subprocess.run([str(clang), *inc, '-E', '-dM', '-x', 'c', '-'], input='#include <SDL3/SDL_version.h>\n',
+                           capture_output=True, text=True, env=env, errors='replace')
+    except OSError:
+        return ''
+    if p.returncode:
+        return ''
+    parts = [re.search(rf'^#define SDL_{k}_VERSION (\d+)', p.stdout, re.M) for k in ('MAJOR', 'MINOR', 'MICRO')]
+    return '.'.join(m.group(1) for m in parts) if all(parts) else '?'
+
+
+def kit_sdl3():
+    """The folder of the build kit's SDL3 (tools/sdl3_pin.py): the kit's toolchain/sdl3, fetched there the first time
+    where the kit's folder can be written (a source checkout; an AppImage's is read-only and carries it); the build
+    stops with the reason when there is none."""
+    try:
+        import sdl3_pin
+    except ImportError:
+        fail('this kit carries no SDL3 of its own (tools/sdl3_pin.py): install SDL3\'s development package')
+    folder = KIT / sdl3_pin.FOLDER
+    if sdl3_pin.have(folder):
+        return folder
+    if not os.access(KIT, os.W_OK):
+        fail(f'this kit carries no SDL3 ({folder}) and its folder is read-only: install SDL3\'s development package, '
+             f'or use a newer build kit')
+    try:
+        return sdl3_pin.resolve(folder)
+    except SystemExit as e:
+        fail(str(e.code))
+    except OSError as e:
+        fail(f'SDL3 cannot be put into {folder}: {error_text(e)}')
+
+
+def sdl3_choice(clang, env):
+    """Linux: the SDL3 the runtime is compiled and the game linked against (Sdl3). NX2SARIA_SDL3 = system or kit
+    decides; unset, the system's when the compiler finds its headers, so that a distribution that packages SDL3 keeps
+    the one it updates and the build commands stay what they were, else the build kit's (tools/sdl3_pin.py: Ubuntu
+    24.04 and the distributions built on it package none). None on Windows, where MSYS2 supplies SDL3."""
+    if WIN:
+        return None
+    want = setting_env('NX2SARIA_SDL3').strip().lower()
+    if want not in ('', 'system', 'kit'):
+        fail(f'NX2SARIA_SDL3 is "{want}": it takes system or kit, or nothing for the system\'s SDL3 when the compiler '
+             f'finds it')
+    system = '' if want == 'kit' else sdl3_version(clang, env)
+    if want == 'system' and not system:
+        fail('NX2SARIA_SDL3=system, but the compiler finds no SDL3/SDL_version.h: install SDL3\'s development package, '
+             'or leave NX2SARIA_SDL3 unset to build with the kit\'s SDL3')
+    if system:
+        return Sdl3('system', system, [], '-lSDL3', 'NX2SARIA_SDL3=system' if want else
+                    'the compiler finds its headers; NX2SARIA_SDL3=kit takes the kit\'s')
+    folder = kit_sdl3()
+    inc = ['-I', str(folder / 'include')]
+    return Sdl3('kit', sdl3_version(clang, env, inc) or '?', inc, str(folder / 'lib' / SDL3_SO),
+                f'{folder}: ' + ('NX2SARIA_SDL3=kit' if want else 'the compiler finds no SDL3 headers of the system\'s'))
+
+
+def link_libs(sdl):
+    """LINK_LIBS with SDL3 as sdl links it (sdl3_choice; None: as LINK_LIBS names it)."""
+    return [sdl.lib if lib == '-lSDL3' else lib for lib in LINK_LIBS] if sdl else LINK_LIBS
+
+
+def link_key_libs(sdl):
+    """link_libs as the link's key names them: the kit's library by its place in the kit and its SHA-256, as an
+    AppImage's kit is mounted in another folder each time it runs; with the system's SDL3 LINK_LIBS itself, the key
+    of before."""
+    if not sdl or sdl.source != 'kit':
+        return link_libs(sdl)
+    lib = Path(sdl.lib)
+    try:
+        where = '<kit>/' + lib.relative_to(KIT).as_posix()
+    except ValueError:
+        where = lib.as_posix()
+    return [f'{where}@{sha256_file(lib)}' if x == sdl.lib else x for x in link_libs(sdl)]
+
+
+def sdl3_tag():
+    """NX2SARIA_SDL3's part of the compile step's key (step_key): set, it builds the game again with that SDL3;
+    unset, '', so the key of every game built so far stays what it is."""
+    want = setting_env('NX2SARIA_SDL3').strip().lower()
+    return f'|sdl3 {want}' if want and not WIN else ''
+
+
+def sdl3_line(clang, version, sdl):
+    """The build log's line of the compiler and SDL3: what a build on a player's PC was made with."""
+    line = f'the compiler is {version} ({clang})'
+    return line + (f'; SDL3 {sdl.version} from the {sdl.source} ({sdl.why})' if sdl else '')
+
+
+def missing_library(stderr):
+    """The library the loader names in a "cannot open shared object file" error, '' when it names none."""
+    m = re.search(r'error while loading shared libraries: ([^:\s]+): cannot open shared object file', stderr)
+    return m.group(1) if m else ''
+
+
+def place_sdl3(out, cache_dir, sdl):
+    """Linux, after the link: the kit's libSDL3.so.0 beside the game when the game is linked against it (the runpath
+    $ORIGIN finds it there ahead of the system's). Linked against the system's, a copy of the kit's an earlier build
+    put there (SDL3_PLACED, or the same bytes as the kit's) is removed, as $ORIGIN would still load it first; one this
+    build did not put there stays. Returns the build log's line."""
+    if not sdl:
+        return ''
+    dst, record = out / SDL3_SO, cache_dir / SDL3_PLACED
+    if sdl.source == 'kit':
+        copy_if_changed(sdl.lib, dst)
+        record.write_text(sha256_file(dst) + '\n', encoding='ascii')
+        return f'SDL3 {sdl.version} from the kit: {SDL3_SO} beside {EXE_NAME}'
+    if not dst.is_file():
+        record.unlink(missing_ok=True)
+        return f'SDL3 {sdl.version} from the system'
+    try:
+        placed = record.read_text(encoding='ascii').strip()
+    except (OSError, ValueError):
+        placed = ''
+    kit_lib = KIT / 'toolchain' / 'sdl3' / 'lib' / SDL3_SO   # a build cache deleted since keeps no record
+    beside = sha256_file(dst)
+    if beside == placed or (kit_lib.is_file() and beside == sha256_file(kit_lib)):
+        dst.unlink()
+        record.unlink(missing_ok=True)
+        return f'SDL3 {sdl.version} from the system: the kit\'s {SDL3_SO} an earlier build put beside {EXE_NAME} is removed'
+    return (f'SDL3 {sdl.version} from the system, but the {SDL3_SO} beside {EXE_NAME}, which this build did not put '
+            f'there, is the one the game loads (the game log\'s libs: line names it)')
+
+
 def xlate_source():
     """The folder of the shader translator to copy beside the game: the kit's bin/, else a source checkout's
     build/xlate/ (tools/build_xlate.py)."""
@@ -1991,6 +2177,10 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     vulkan = vulkan_headers(clang, env)
     if vulkan:
         say(f'  the Vulkan headers come from {vulkan[1]}')
+    sdl = sdl3_choice(clang, env)
+    if sdl:
+        say(f'  {sdl3_line(clang, clang_version(clang, env), sdl)}')
+    first = vulkan + (sdl.include if sdl else [])   # ahead of the system's folders, for the runtime's sources only
     profile = None
     if gen_counts:
         pgo = pgo_gen_flags(out)
@@ -2001,7 +2191,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
         pgo = pgo_use_flags(profile) if profile else []
         say(f'  the lifted code (at -O2) and the runtime are built with the execution profile {profile.name}'
             if profile else f'  {why}')
-    cmd_for = runtime_cmd(clang, clangxx, inc, level, fast, msys, first=vulkan, pgo=pgo)
+    cmd_for = runtime_cmd(clang, clangxx, inc, level, fast, msys, first=first, pgo=pgo)
     # The keys earlier versions gave the same compiles (compile_all alts): 0.6.0's, with the compiler's file time and,
     # with the fast compiler, its id and --sysroot; 0.5.0's and earlier's, with their kit's folder in the paths; and
     # up to 0.7.1 the runtime's without the Vulkan headers' folder ahead of the system's (an object that compiled
@@ -2014,6 +2204,8 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     def alts(src, dst):
         if pgo:   # no earlier version compiled with a profile or counted: nothing of theirs is the same compile
             return [], kits
+        if sdl and sdl.include and not dst.name.startswith(('main_', 'sdk_', 'subsdk0_')):
+            return [], kits   # the runtime against the kit's SDL3 headers: no earlier version compiled it so
         keys = [object_key(plain(src, dst), src, dst, cache, cid_old, sysroot=True)]
         if vulkan:
             keys.append(object_key(no_vulkan(src, dst), src, dst, cache, cid))
@@ -2084,7 +2276,8 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     stamp = [[o.name, o.stat().st_size, o.stat().st_mtime_ns] for o in objs]
     if prebuilt:
         stamp.append([prebuilt[0].name, prebuilt[0].stat().st_size, sha256_file(prebuilt[0])])
-    link_key = sha256_bytes(json.dumps([LINK_LIBS, ld, cid, 'map'] + stamp).encode())
+    libs = link_libs(sdl)
+    link_key = sha256_bytes(json.dumps([link_key_libs(sdl), ld, cid, 'map'] + stamp).encode())
     state_link = cache_dir / 'link.key'
     if exe.is_file() and state_link.is_file() and state_link.read_text(encoding='utf-8') == link_key:
         say(f'  {EXE_NAME} is current, not linked again')
@@ -2093,7 +2286,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
         say('  linking')
         tmp = out / (EXE_NAME + '.new')
         lib_dir = ['-L', str(msys / 'lib')] if WIN else []
-        p = subprocess.run([str(clangxx), *ld, '-o', str(tmp), '@' + str(rsp), *lib, *lib_dir, *LINK_LIBS],
+        p = subprocess.run([str(clangxx), *ld, '-o', str(tmp), '@' + str(rsp), *lib, *lib_dir, *libs],
                            capture_output=True, text=True, env=env, errors='replace')
         if p.returncode:
             print(p.stderr[-4000:], file=sys.stderr)
@@ -2106,6 +2299,9 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
             fail(f'{exe} is in use: close the game and try again')
         write_runtime_map(cache_dir / 'ocarina.map', out / 'nx2navi.map')   # next to the exe, to send with a crash log
         state_link.write_text(link_key, encoding='utf-8')
+    placed = place_sdl3(out, cache_dir, sdl)   # before the shader step, which runs the game
+    if placed:
+        say(f'  {placed}')
     copy_if_changed(gen / 'romfs-index.bin', out / 'romfs-index.bin')
     xlate = xlate_source()
     note_cache_translator(out)   # before the new translator replaces the one the shader cache was made with
@@ -2635,7 +2831,7 @@ def step_key(step, identity, out=None):
         return (f'compile|{lift}|{tree_digest(KIT / "runtime", ("**/*",))}|{sha256_file(Path(__file__))}'
                 f'|{kit_version()}|cpu {cpu_tag()}')
     if step == 'compile':
-        return compile_of(lift) + pgo_tag()
+        return compile_of(lift) + pgo_tag() + sdl3_tag()
     # shaders: the built game without the mods' code (UNAFFECTED) and the translator that prepared them, the one
     # xlate_source finds (the kit's bin/, or a source checkout's build/xlate/)
     return (f'shaders-1|{compile_of(base)}|{sha256_file(KIT / "tools" / "prepare_shaders.py")}'
@@ -2758,7 +2954,7 @@ def build_main():
     # Linux: the compiler, headers and libraries are the system's, so they are tried on the runtime before the long
     # steps of a build that will reach the compile step (the first step whose key is not current makes the rest run)
     if not WIN and any(state['steps'].get(n) != step_key(n, src.identity, out) for n in STEPS[:STEPS.index('compile') + 1]):
-        preflight(msys, a.jobs)
+        preflight(msys, a.jobs, work=cache / 'toolchain-check')
     say(f'compiles at a time: {a.jobs} ({jobs_why})')
     t0 = time.time()
     romfs_job = None

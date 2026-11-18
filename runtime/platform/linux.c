@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <link.h>
 #include <malloc.h>
 #include <linux/fs.h>
 #include <linux/futex.h>
@@ -1856,6 +1857,30 @@ int plat_module_of(uintptr_t addr, char *name, size_t cap, uintptr_t *base) {
     const char *n = strrchr(d.dli_fname, '/');
     *base = (uintptr_t)d.dli_fbase;
     return snprintf(name, cap, "%s", n ? n + 1 : d.dli_fname) < (int)cap;
+}
+
+// The loaded object the loader matches to name, by its soname or its file name (a library preloaded under its full
+// file name still answers for libSDL3.so.0), without loading anything. The loader names it by the path it opened,
+// which may be relative or go through a symbolic link when an LD_LIBRARY_PATH entry is (an empty entry is the current
+// folder): the folder is made absolute and free of links, so that it compares with plat_exe_path's, and the file
+// name is kept as it was opened.
+int plat_library_path(const char *name, char *out, size_t cap) {
+    void *h = dlopen(name, RTLD_NOLOAD | RTLD_LAZY);
+    if (!h) return 0;
+    struct link_map *lm = NULL;
+    char opened[PATH_MAX];
+    int ok = !dlinfo(h, RTLD_DI_LINKMAP, &lm) && lm && lm->l_name && *lm->l_name &&
+             snprintf(opened, sizeof opened, "%s", lm->l_name) < (int)sizeof opened;
+    dlclose(h);
+    if (!ok) return 0;
+    char *slash = strrchr(opened, '/'), dir[PATH_MAX];
+    const char *file = slash ? slash + 1 : opened;
+    if (slash == opened) snprintf(dir, sizeof dir, "/");
+    else if (slash) *slash = 0, snprintf(dir, sizeof dir, "%s", opened);
+    else snprintf(dir, sizeof dir, ".");
+    char real[PATH_MAX];
+    if (!realpath(dir, real)) snprintf(real, sizeof real, "%s", dir);
+    return snprintf(out, cap, "%s%s%s", real, strcmp(real, "/") ? "/" : "", file) < (int)cap;
 }
 
 int plat_exe_path(char *out, size_t cap) {
