@@ -57,53 +57,80 @@
 
 #define MAX_RAW (64u << 20)
 enum { PANE_TABLE = 0x118, ANIM_TABLE = 0x238 };
-enum { PANE_SCALE_X = 0x10, PANE_ROTATE = 0x18, PANE_X = 0x1c, PANE_PARENT = 0x28, PANE_NEEDS = 0x2c };
+enum { PANE_SCALE_X = 0x10, PANE_ROTATE = 0x18, PANE_X = 0x1c, PANE_PARENT = 0x28, PANE_W = 0x2c, PANE_NEEDS = 0x30 };
 enum { ANIM_TRACKS = 0x08, ANIM_CURVES = 0x18, ANIM_COMPONENTS = 0x28, ANIM_CONSTANTS = 0x38, ANIM_CONST_COMPONENTS = 0x48 };
 enum { NO_INDEX = 0xffff, PANE_KIND = 7, COMPONENT_X = 0, MAX_PANES = 128 };
 enum { PROP_SCALE = 0, PROP_TRANSLATE = 1 };
 
 // ---- the plan
-// A pane moved out to a side (-1 left, 1 right) by the HUD's distance, or (side 0) squeezed: its x and its scale x
-// multiplied by the squeeze. x and scale: its translate x and scale x in the game's file.
+// Each operation belongs to one of three groups, and is made only when the shift asks for its group: the HUD's edges
+// (WideHudShift out), the menus filling the picture (menus) and the menus kept in the middle 16:9 (squeeze). Its
+// distance u is the group's: out or menus in grid units, or the squeeze (16:9 over the picture's ratio).
+enum { G_HUD = 1, G_FULL = 2, G_CENTER = 4 };
+
+// What an operation does to its pane, from the game's values (x: its translate x, sx: its scale x, w: its width):
+// - OP_MOVE: x + f * u. Every ancestor has scale x 1 and no rotation, so the move is the same on the grid.
+// - OP_MOVE_IN: the same distance on the grid inside scaled ancestors (none turned): x + f * u over their scale x.
+// - OP_GROW: width + 2 * f * u, as wide on each side of a centred pane (a window's frame keeps its corners, a scissor
+//   clips and a list lays out by its width, where a scale would stretch them).
+// - OP_WIDEN: scale x times 1 + f * u / 1920 (its children with it): a full-width background over the whole picture.
+// - OP_SQUEEZE: x and scale x times u (G_CENTER): into the middle 16:9's corner of a canvas stretched over the picture.
+// - OP_PIN: scale x times 1920 / (1920 + u) and x as far from its side of the grid as the game's at that scale: an
+//   element of a canvas stretched over the picture keeps its own width at the same side.
+enum { OP_MOVE, OP_MOVE_IN, OP_GROW, OP_WIDEN, OP_SQUEEZE, OP_PIN };
 typedef struct {
     const char *pane;
-    float x;
-    int side;
-    float scale;
-} Move;
-// The keys of one animation's curve of a pane's translate x at the minimap's place; at_place of keys in all.
+    int op, group;
+    float f;
+    float x, sx, w;   // the game's values the operation checks (x for the moves, sx for the scales, w for OP_GROW)
+} PaneOp;
+
+// The keys of one animation's curve (or its constant) of a pane's translate x or scale x: those at `value`, `at` of
+// them, become value + f * u (translate) or value times 1 + f * u / 1920 (scale, their slopes with them). `keys`: how
+// many the curve has, 0 for a constant. Up to four values, each of its own group.
+typedef struct {
+    float value, f;
+    int at, group;
+} KeyMap;
+enum { MAX_MAP = 4 };
 typedef struct {
     const char *anim, *pane;
-    float place;
-    int side, at_place, keys;
-} KeyMove;
+    int prop, keys;
+    KeyMap map[MAX_MAP];   // the used ones first, at > 0
+} KeyOp;
+
 typedef struct {
     const char *layout;
-    const Move *moves;
-    int nmoves;
-    const KeyMove *keys;
+    const PaneOp *ops;
+    int nops;
+    const KeyOp *keys;
     int nkeys;
-    int menus;   // 0: the HUD's (WideHudShift out), 1: the menus' (WideHudShift squeeze)
 } Plan;
 
-static const Move player_status[] = {{"N_ScaleL_00", -1920, -1, 1}, {"N_ScaleR_00", 1920, 1, 1},
-                                     {"N_SubItemBaseFishing_00", 1270, 1, 1}, {"N_VRS_00", 1626, 1, 1}};
-static const Move map_menu[] = {{"N_MiniMap_00", 0, 1, 1}, {"N_EventEndIn_01", 0, 1, 1}, {"N_MiniMapCap_00", 1470, 1, 1},
-                                {"N_VRS_00", 1536, 1, 1},   {"Pa_KeySmall_00", 0, 1, 1}};
-static const KeyMove map_menu_keys[] = {{"MapType", "N_MapIcon_00", 1490, 1, 2, 7},
-                                        {"DungeonMiniMapPattern", "N_PatternDungeonMini_01", 1536, 1, 19, 21}};
-static const Move num_display[] = {{"N_NumDisplayFirst_00", 0, 1, 1}, {"N_NumDisplaySecond_00", 0, 1, 1}};
-static const Move loading_fade[] = {{"N_IconIn_00", 1778, 0, 1}};
+static const PaneOp player_status[] = {
+    {"N_ScaleL_00", OP_MOVE, G_HUD, -1, -1920, 1, 0},           {"N_ScaleR_00", OP_MOVE, G_HUD, 1, 1920, 1, 0},
+    {"N_SubItemBaseFishing_00", OP_MOVE, G_HUD, 1, 1270, 1, 0}, {"N_VRS_00", OP_MOVE, G_HUD, 1, 1626, 1, 0}};
+static const PaneOp map_menu[] = {{"N_MiniMap_00", OP_MOVE, G_HUD, 1, 0, 1, 0},
+                                  {"N_EventEndIn_01", OP_MOVE, G_HUD, 1, 0, 1, 0},
+                                  {"N_MiniMapCap_00", OP_MOVE, G_HUD, 1, 1470, 1, 0},
+                                  {"N_VRS_00", OP_MOVE, G_HUD, 1, 1536, 1, 0},
+                                  {"Pa_KeySmall_00", OP_MOVE, G_HUD, 1, 0, 1, 0}};
+static const KeyOp map_menu_keys[] = {
+    {"MapType", "N_MapIcon_00", PROP_TRANSLATE, 7, {{1490, 1, 2, G_HUD}}},
+    {"DungeonMiniMapPattern", "N_PatternDungeonMini_01", PROP_TRANSLATE, 21, {{1536, 1, 19, G_HUD}}}};
+static const PaneOp num_display[] = {{"N_NumDisplayFirst_00", OP_MOVE, G_HUD, 1, 0, 1, 0},
+                                     {"N_NumDisplaySecond_00", OP_MOVE, G_HUD, 1, 0, 1, 0}};
+static const PaneOp loading_fade[] = {{"N_IconIn_00", OP_SQUEEZE, G_CENTER, 0, 1778, 1, 0}};
 #define N(a) (int)(sizeof a / sizeof *a)
 static const Plan plans[] = {
-    {"PlayerStatus_00", player_status, N(player_status), NULL, 0, 0},
-    {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys), 0},
-    {"NumDisplay_00", num_display, N(num_display), NULL, 0, 0},
-    {"LoadingFade_00", loading_fade, N(loading_fade), NULL, 0, 1},
+    {"PlayerStatus_00", player_status, N(player_status), NULL, 0},
+    {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys)},
+    {"NumDisplay_00", num_display, N(num_display), NULL, 0},
+    {"LoadingFade_00", loading_fade, N(loading_fade), NULL, 0},
 };
 enum { NPLANS = sizeof plans / sizeof *plans };
-// The most fields one layout's edit writes: its panes, its keys and each curve's span of values.
-enum { MAX_EDITS = 64 };
+// The most fields one layout's edit writes: its panes, its keys (with their slopes) and each curve's span of values.
+enum { MAX_EDITS = 2048 };
 
 float wide_hud_out(unsigned w, unsigned h) {
     if (!w || !h) return 0;
@@ -111,21 +138,39 @@ float wide_hud_out(unsigned w, unsigned h) {
     return r < wide * 1.01 ? 0 : (float)(1080.0 * r - 1920.0);
 }
 
-// The plan applies to this shift: the HUD's with a distance, the menus' with a squeeze.
-static int applies(const Plan *plan, const WideHudShift *s) {
-    return plan->menus ? s->squeeze > 0 && s->squeeze < 1 : s->out > 0;
+// The groups the shift asks for, and each one's distance.
+static int groups_of(const WideHudShift *s) {
+    return (s->out > 0 ? G_HUD : 0) | (s->menus > 0 ? G_FULL : 0) | (s->squeeze > 0 && s->squeeze < 1 ? G_CENTER : 0);
+}
+static float unit_of(int group, const WideHudShift *s) {
+    return group == G_HUD ? s->out : group == G_FULL ? s->menus : s->squeeze;
+}
+static int key_groups(const KeyOp *k) {
+    int g = 0;
+    for (int i = 0; i < MAX_MAP && k->map[i].at > 0; i++) g |= k->map[i].group;
+    return g;
+}
+static int plan_groups(const Plan *plan) {
+    int g = 0;
+    for (int i = 0; i < plan->nops; i++) g |= plan->ops[i].group;
+    for (int i = 0; i < plan->nkeys; i++) g |= key_groups(&plan->keys[i]);
+    return g;
 }
 
-int wide_hud_counts(WideHudCount *out, int max) {
-    int k = 0;
+int wide_hud_counts_of(int menus, WideHudCount *out, int max) {
+    int want = menus ? G_FULL : G_HUD, k = 0;
     for (int i = 0; i < NPLANS && k < max; i++) {
-        if (plans[i].menus) continue;
-        int keys = 0;
-        for (int j = 0; j < plans[i].nkeys; j++) keys += plans[i].keys[j].at_place;
-        out[k++] = (WideHudCount){plans[i].layout, plans[i].nmoves, keys};
+        int panes = 0, keys = 0;
+        for (int j = 0; j < plans[i].nops; j++) panes += plans[i].ops[j].group == want;
+        for (int j = 0; j < plans[i].nkeys; j++)
+            for (int m = 0; m < MAX_MAP && plans[i].keys[j].map[m].at > 0; m++)
+                if (plans[i].keys[j].map[m].group == want) keys += plans[i].keys[j].map[m].at;
+        if (panes || keys) out[k++] = (WideHudCount){plans[i].layout, panes, keys};
     }
     return k;
 }
+
+int wide_hud_counts(WideHudCount *out, int max) { return wide_hud_counts_of(0, out, max); }
 
 // ---- reading the layout, every offset checked against its size
 static int u32_at(const uint8_t *p, size_t n, uint64_t off, uint32_t *v) {
@@ -202,7 +247,7 @@ static int plain_ancestors(const uint8_t *p, size_t n, const char *layout, const
 // The x tracks of property `prop` (PROP_TRANSLATE, PROP_SCALE) of pane `index` in the layout's animations: the curves'
 // offsets (their animation's name in anim[]) and the constants' value offsets. Returns how many there are, -1 when the
 // animations do not fit the file.
-enum { MAX_TRACKS = 16 };
+enum { MAX_TRACKS = 64 };
 typedef struct {
     const char *anim;
     uint64_t curve;      // 0 for a constant
@@ -305,6 +350,39 @@ static int centred_ancestors(const uint8_t *p, size_t n, const char *layout, con
     return 0;
 }
 
+
+// The product of the scale x of pane rec's ancestors, none of them turned: 1 with *scale, or 0 with why.
+static int ancestors_scale(const uint8_t *p, size_t n, const char *layout, const char *pane, uint64_t rec,
+                           float *scale, char *why, size_t why_n) {
+    uint64_t names, records, r = rec;
+    uint32_t count;
+    float product = 1;
+    if (!table(p, n, PANE_TABLE, &names, &records, &count)) return 0;
+    for (uint32_t step = 0; step <= count; step++) {
+        uint32_t parent;
+        if (!u32_at(p, n, r + PANE_PARENT, &parent)) break;
+        if (parent == 0xffffffffu) {
+            if (fabsf(product) < 1e-3f) {
+                snprintf(why, why_n, "%s %s is inside a pane of scale x 0", layout, pane);
+                return 0;
+            }
+            *scale = product;
+            return 1;
+        }
+        float sx, rot;
+        if (parent >= count || !u64_at(p, n, records + 8 * (uint64_t)parent, &r) || r > n || n - r < PANE_NEEDS ||
+            !f32_at(p, n, r + PANE_SCALE_X, &sx) || !f32_at(p, n, r + PANE_ROTATE, &rot))
+            break;
+        if (!same(rot, 0)) {
+            snprintf(why, why_n, "%s %s is inside a pane turned %g", layout, pane, (double)rot);
+            return 0;
+        }
+        product *= sx;
+    }
+    snprintf(why, why_n, "%s %s has a damaged chain of parents", layout, pane);
+    return 0;
+}
+
 // ---- the edit: every float it writes, found and checked first
 typedef struct {
     uint64_t at;
@@ -328,13 +406,46 @@ static void say(char *report, size_t report_n, const char *fmt, ...) {
     va_end(ap);
 }
 
-// The edits of `plan` on p[0..n): from the game's values to the moved ones (moved = 0), or what reading the moved file
-// back finds (moved = 1: from and to both the moved values). Every field read must hold its from value. Returns the
-// count, -1 with why.
-static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShift *s, int moved, Edit *e,
+// The key operation of the plan for this pane, property and animation that the shift makes (some value of it in a
+// group asked for); NULL when there is none.
+static const KeyOp *key_op(const Plan *plan, int groups, const char *pane, int prop, const char *anim) {
+    for (int i = 0; i < plan->nkeys; i++) {
+        const KeyOp *k = &plan->keys[i];
+        if (k->prop == prop && !strcmp(k->pane, pane) && !strcmp(k->anim, anim) && (key_groups(k) & groups)) return k;
+    }
+    return NULL;
+}
+
+// A pane whose x (or scale x) an operation changes: every animation that keys it must have its keys remapped by the
+// plan too, or it would put back what the file says. 1, or 0 with why.
+static int keyed_covered(const uint8_t *p, size_t n, const Plan *plan, int groups, const char *pane, uint32_t index,
+                         int prop, char *why, size_t why_n) {
+    Track tr[MAX_TRACKS];
+    int keyed = x_tracks(p, n, index, prop, tr, MAX_TRACKS);
+    if (keyed < 0 || keyed > MAX_TRACKS) {
+        snprintf(why, why_n, "%s's animations of %s cannot be read", plan->layout, pane);
+        return 0;
+    }
+    for (int t = 0; t < keyed; t++)
+        if (!key_op(plan, groups, pane, prop, tr[t].anim)) {
+            snprintf(why, why_n, "%s %s has its %s keyed by %s", plan->layout, pane,
+                     prop == PROP_SCALE ? "scale x" : "x", tr[t].anim);
+            return 0;
+        }
+    return 1;
+}
+
+// The new value of a key, or of a scale's slope, under the map entry m at distance u.
+static float key_to(const KeyOp *k, const KeyMap *m, float u, float v) {
+    return k->prop == PROP_SCALE ? v * (1 + m->f * u / 1920) : v + m->f * u;
+}
+
+// The edits of `plan` on p[0..n) for the groups the shift asks for: from the game's values to the new ones (moved = 0),
+// or what reading the edited file back finds (moved = 1: from and to both the new values). Every field read must hold
+// its from value. Returns the count, -1 with why.
+static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShift *s, int groups, int moved, Edit *e,
                   char *report, size_t report_n, char *why, size_t why_n) {
-    float out = s->out, q = s->squeeze;
-    int k = 0;
+    int k = 0, said = 0;
     const char *L = plan->layout;
     uint64_t names, records;
     uint32_t npanes;
@@ -346,103 +457,185 @@ static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShi
         snprintf(why, why_n, "%s has %u panes, more than the %d its animations can name", L, npanes, MAX_PANES);
         return -1;
     }
-    for (int i = 0; i < plan->nmoves; i++) {
-        const Move *m = &plan->moves[i];
+    for (int i = 0; i < plan->nops; i++) {
+        const PaneOp *m = &plan->ops[i];
+        if (!(m->group & groups)) continue;
+        float u = unit_of(m->group, s);
         uint64_t rec;
         int index = table_find(p, n, PANE_TABLE, m->pane, PANE_NEEDS, &rec);
-        int squeeze = !m->side;
-        float x, sx, to = squeeze ? m->x * q : m->x + m->side * out, from = moved ? to : m->x;
-        float sto = m->scale * q, sfrom = moved ? sto : m->scale;
-        Track tr[MAX_TRACKS];
-        if (index < 0 || !f32_at(p, n, rec + PANE_X, &x) || !f32_at(p, n, rec + PANE_SCALE_X, &sx)) {
+        float x, sx, w;
+        if (index < 0 || !f32_at(p, n, rec + PANE_X, &x) || !f32_at(p, n, rec + PANE_SCALE_X, &sx) ||
+            !f32_at(p, n, rec + PANE_W, &w)) {
             snprintf(why, why_n, "%s has no pane %s", L, m->pane);
             return -1;
         }
-        if (!same(x, from)) {
-            snprintf(why, why_n, "%s %s x is %g, not %g", L, m->pane, (double)x, (double)from);
+        int moves_x = m->op != OP_GROW && m->op != OP_WIDEN, scales = m->op == OP_WIDEN || m->op == OP_SQUEEZE ||
+                                                                       m->op == OP_PIN;
+        float ancestors = 1, xto = m->x, sto = m->sx, wto = m->w;
+        if (m->op == OP_MOVE && !plain_ancestors(p, n, L, m->pane, rec, why, why_n)) return -1;
+        if (m->op == OP_MOVE_IN && !ancestors_scale(p, n, L, m->pane, rec, &ancestors, why, why_n)) return -1;
+        if ((m->op == OP_SQUEEZE || m->op == OP_PIN) && !centred_ancestors(p, n, L, m->pane, rec, why, why_n))
+            return -1;
+        switch (m->op) {
+        case OP_MOVE: xto = m->x + m->f * u; break;
+        case OP_MOVE_IN: xto = m->x + m->f * u / ancestors; break;
+        case OP_GROW: wto = m->w + 2 * m->f * u; break;
+        case OP_WIDEN: sto = m->sx * (1 + m->f * u / 1920); break;
+        case OP_SQUEEZE: xto = m->x * u, sto = m->sx * u; break;
+        case OP_PIN: {
+            float q = 1920 / (1920 + u), side = m->x < 0 ? -1920.0f : 1920.0f;
+            xto = side - (side - m->x) * q, sto = m->sx * q;
+            break;
+        }
+        }
+        float xfrom = moved ? xto : m->x, sfrom = moved ? sto : m->sx, wfrom = moved ? wto : m->w;
+        if (moves_x && !same(x, xfrom)) {
+            snprintf(why, why_n, "%s %s x is %g, not %g", L, m->pane, (double)x, (double)xfrom);
             return -1;
         }
-        if (squeeze && !same(sx, sfrom)) {
+        if (scales && !same(sx, sfrom)) {
             snprintf(why, why_n, "%s %s scale x is %g, not %g", L, m->pane, (double)sx, (double)sfrom);
             return -1;
         }
-        // its x (and, squeezed, its scale x) no animation keys: a key would put back what the file says
-        for (int prop = PROP_TRANSLATE; prop >= (squeeze ? PROP_SCALE : PROP_TRANSLATE); prop--) {
-            int keyed = x_tracks(p, n, (uint32_t)index, prop, tr, MAX_TRACKS);
-            if (keyed < 0) {
-                snprintf(why, why_n, "%s's animations are damaged", L);
-                return -1;
-            }
-            if (keyed > 0) {
-                snprintf(why, why_n, "%s %s has its %s keyed by %s", L, m->pane, prop == PROP_SCALE ? "scale x" : "x",
-                         tr[0].anim);
-                return -1;
-            }
+        if (m->op == OP_GROW && !same(w, wfrom)) {
+            snprintf(why, why_n, "%s %s width is %g, not %g", L, m->pane, (double)w, (double)wfrom);
+            return -1;
         }
-        if (!plain_ancestors(p, n, L, m->pane, rec, why, why_n)) return -1;
-        if (squeeze && !centred_ancestors(p, n, L, m->pane, rec, why, why_n)) return -1;
-        k = add(e, k, rec + PANE_X, from, to);
-        say(report, report_n, "%s%s x %g -> %g", i ? ", " : "", m->pane, (double)m->x, (double)to);
-        if (squeeze) {
+        if (moves_x && !keyed_covered(p, n, plan, groups, m->pane, (uint32_t)index, PROP_TRANSLATE, why, why_n))
+            return -1;
+        if (scales && !keyed_covered(p, n, plan, groups, m->pane, (uint32_t)index, PROP_SCALE, why, why_n)) return -1;
+        say(report, report_n, "%s%s", said++ ? ", " : "", m->pane);
+        if (moves_x) {
+            k = add(e, k, rec + PANE_X, xfrom, xto);
+            say(report, report_n, " x %g -> %g", (double)m->x, (double)xto);
+        }
+        if (m->op == OP_GROW) {
+            k = add(e, k, rec + PANE_W, wfrom, wto);
+            say(report, report_n, " width %g -> %g", (double)m->w, (double)wto);
+        }
+        if (scales) {
             k = add(e, k, rec + PANE_SCALE_X, sfrom, sto);
-            say(report, report_n, ", scale x %g -> %g", (double)m->scale, (double)sto);
+            say(report, report_n, "%s scale x %g -> %g", moves_x ? "," : "", (double)m->sx, (double)sto);
         }
     }
     for (int i = 0; i < plan->nkeys; i++) {
-        const KeyMove *km = &plan->keys[i];
+        const KeyOp *km = &plan->keys[i];
+        if (!(key_groups(km) & groups)) continue;
         uint64_t rec;
         int index = table_find(p, n, PANE_TABLE, km->pane, PANE_NEEDS, &rec);
         Track tr[MAX_TRACKS];
-        int nt = index < 0 ? -1 : x_tracks(p, n, (uint32_t)index, PROP_TRANSLATE, tr, MAX_TRACKS), found = 0;
+        int nt = index < 0 ? -1 : x_tracks(p, n, (uint32_t)index, km->prop, tr, MAX_TRACKS), found = 0;
         if (nt < 0 || nt > MAX_TRACKS) {
             snprintf(why, why_n, index < 0 ? "%s has no pane %s" : "%s's animations of %s cannot be read", L, km->pane);
             return -1;
         }
-        if (!plain_ancestors(p, n, L, km->pane, rec, why, why_n)) return -1;
-        float to = km->place + km->side * out, from = moved ? to : km->place;
+        if (km->prop == PROP_TRANSLATE && !plain_ancestors(p, n, L, km->pane, rec, why, why_n)) return -1;
+        const char *what = km->prop == PROP_SCALE ? "scale x" : "x";
         for (int t = 0; t < nt; t++) {
-            if (!tr[t].curve || strcmp(tr[t].anim, km->anim)) {
-                // another animation that puts the icons at the minimap's place would keep them at the old one
-                int holds = track_holds(p, n, &tr[t], from);
-                if (holds < 0) snprintf(why, why_n, "%s's animations of %s cannot be read", L, km->pane);
-                if (holds > 0) snprintf(why, why_n, "%s %s x is also at %g in %s", L, km->pane, (double)from, tr[t].anim);
-                if (holds) return -1;
+            if (strcmp(tr[t].anim, km->anim)) {
+                // another animation that holds a value this one moves, and that the plan leaves, would keep it there
+                if (key_op(plan, groups, km->pane, km->prop, tr[t].anim)) continue;
+                for (int j = 0; j < MAX_MAP && km->map[j].at > 0; j++) {
+                    const KeyMap *m = &km->map[j];
+                    if (!(m->group & groups)) continue;
+                    float from = moved ? key_to(km, m, unit_of(m->group, s), m->value) : m->value;
+                    int holds = track_holds(p, n, &tr[t], from);
+                    if (holds < 0) snprintf(why, why_n, "%s's animations of %s cannot be read", L, km->pane);
+                    if (holds > 0)
+                        snprintf(why, why_n, "%s %s %s is also at %g in %s", L, km->pane, what, (double)from,
+                                 tr[t].anim);
+                    if (holds) return -1;
+                }
                 continue;
             }
-            uint64_t values, data;
+            if (found++) {
+                snprintf(why, why_n, "%s %s %s %s is not one curve of %d keys", L, km->anim, km->pane, what, km->keys);
+                return -1;
+            }
+            if (!tr[t].curve) {   // a constant
+                float v;
+                const KeyMap *hit = NULL;
+                if (km->keys || !f32_at(p, n, tr[t].constant, &v)) {
+                    snprintf(why, why_n, "%s %s %s %s is a constant, not a curve of %d keys", L, km->anim, km->pane,
+                             what, km->keys);
+                    return -1;
+                }
+                for (int j = 0; j < MAX_MAP && km->map[j].at > 0 && !hit; j++) {
+                    const KeyMap *m = &km->map[j];
+                    float from = moved && (m->group & groups) ? key_to(km, m, unit_of(m->group, s), m->value) : m->value;
+                    if (same(v, from)) hit = m;
+                }
+                if (!hit) {
+                    snprintf(why, why_n, "%s %s %s %s is %g, a value the plan does not know", L, km->anim, km->pane,
+                             what, (double)v);
+                    return -1;
+                }
+                if (hit->group & groups) {
+                    float to = key_to(km, hit, unit_of(hit->group, s), hit->value);
+                    k = add(e, k, tr[t].constant, moved ? to : hit->value, to);
+                }
+                continue;
+            }
+            uint64_t values, data, frames;
             uint32_t count, nframes;
-            uint64_t frames;
             float span;
-            if (found++ || !u64_at(p, n, tr[t].curve, &frames) || !u64_at(p, n, tr[t].curve + 8, &values) ||
+            if (!u64_at(p, n, tr[t].curve, &frames) || !u64_at(p, n, tr[t].curve + 8, &values) ||
                 !u32_at(p, n, frames + 16, &nframes) || !f32_at(p, n, values, &span) ||
                 !u64_at(p, n, values + 8, &data) || !u32_at(p, n, values + 16, &count) || data > n ||
                 (n - data) / 4 < count || count != 2 * nframes || (int)nframes != km->keys) {
-                snprintf(why, why_n, "%s %s %s x is not one curve of %d keys", L, km->anim, km->pane, km->keys);
+                snprintf(why, why_n, "%s %s %s %s is not one curve of %d keys", L, km->anim, km->pane, what, km->keys);
                 return -1;
             }
+            int at[MAX_MAP] = {0};
             float v0 = 0, v1 = 0, first = 0, last = 0;
-            int at_place = 0;
             for (uint32_t j = 0; j < nframes; j++) {
-                float v;
+                float v, slope, nv;
                 memcpy(&v, p + data + 8 * (uint64_t)j, 4);
-                float nv = same(v, from) ? to : v;
-                if (same(v, from)) at_place++, k = add(e, k, data + 8 * (uint64_t)j, from, to);
+                memcpy(&slope, p + data + 8 * (uint64_t)j + 4, 4);
+                nv = v;
+                for (int q = 0; q < MAX_MAP && km->map[q].at > 0; q++) {
+                    const KeyMap *m = &km->map[q];
+                    int on = (m->group & groups) != 0;
+                    float u = on ? unit_of(m->group, s) : 0, to = on ? key_to(km, m, u, m->value) : m->value;
+                    if (!same(v, moved ? to : m->value)) continue;
+                    at[q]++;
+                    if (!on) break;
+                    nv = to;
+                    k = add(e, k, data + 8 * (uint64_t)j, v, to);
+                    if (km->prop == PROP_SCALE) {   // a scale's slope scales with its value
+                        float sto = moved ? slope : key_to(km, m, u, slope);
+                        k = add(e, k, data + 8 * (uint64_t)j + 4, slope, sto);
+                    }
+                    break;
+                }
+                // the span is of the game's values when reading the edited file back as when editing it
+                if (moved) v = nv;
                 if (!j) v0 = v, first = nv;
                 v1 = v, last = nv;
             }
-            if (at_place != km->at_place || !same(span, v1 - v0)) {
-                snprintf(why, why_n, "%s %s %s x has %d keys at %g of %d, span %g", L, km->anim, km->pane, at_place,
-                         (double)from, km->keys, (double)span);
+            for (int q = 0; q < MAX_MAP && km->map[q].at > 0; q++)
+                if (at[q] != km->map[q].at) {
+                    snprintf(why, why_n, "%s %s %s %s has %d keys at %g, not %d of %d", L, km->anim, km->pane, what,
+                             at[q], (double)km->map[q].value, km->map[q].at, km->keys);
+                    return -1;
+                }
+            if (!same(span, (moved ? last - first : v1 - v0))) {
+                snprintf(why, why_n, "%s %s %s %s has span %g, not its last value less its first, %g", L, km->anim,
+                         km->pane, what, (double)span, (double)(v1 - v0));
                 return -1;
             }
-            k = add(e, k, values, span, last - first);   // also where it stays, so that both readings match
+            k = add(e, k, values, moved ? last - first : span, last - first);   // also where it stays
         }
         if (!found) {
-            snprintf(why, why_n, "%s %s does not key %s x", L, km->anim, km->pane);
+            snprintf(why, why_n, "%s %s does not key %s %s", L, km->anim, km->pane, what);
             return -1;
         }
-        say(report, report_n, ", %s %s x %d keys %g -> %g", km->anim, km->pane, km->at_place, (double)km->place,
-            (double)to);
+        for (int j = 0; j < MAX_MAP && km->map[j].at > 0; j++) {
+            const KeyMap *m = &km->map[j];
+            if (!(m->group & groups)) continue;
+            say(report, report_n, "%s%s %s %s %d key%s %g -> %g", said++ ? ", " : "", km->anim, km->pane, what, m->at,
+                m->at == 1 ? "" : "s", (double)m->value, (double)key_to(km, m, unit_of(m->group, s), m->value));
+        }
     }
     if (k > MAX_EDITS) {
         snprintf(why, why_n, "%s needs %d edits, more than %d", L, k, MAX_EDITS);
@@ -465,27 +658,33 @@ static const Plan *plan_of(const char *member) {
     return NULL;
 }
 
-int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift *s, char *report, size_t report_n,
-                     char *why, size_t why_n) {
+// wide_hud_lay_out for the groups given (a part of what the shift asks for, see wide_hud_archive).
+static int lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift *s, int groups, char *report,
+                   size_t report_n, char *why, size_t why_n) {
     const Plan *plan = plan_of(member);
     if (report && report_n) report[0] = 0;
-    if (!plan || !applies(plan, s)) return 0;
+    if (!plan || !(plan_groups(plan) & groups)) return 0;
     if (n < 4 || memcmp(p, "BFFH", 4)) {
         snprintf(why, why_n, "%s is not a BFFH layout", member);
         return -1;
     }
-    Edit e[MAX_EDITS], back[MAX_EDITS];
-    int k = gather(p, n, plan, s, 0, e, report, report_n, why, why_n);
+    Edit *e = malloc(2 * MAX_EDITS * sizeof *e), *back = e + MAX_EDITS;
+    uint8_t(*undo)[4] = malloc(MAX_EDITS * sizeof *undo);
+    int result = -1;
+    if (!e || !undo) {
+        snprintf(why, why_n, "out of memory");
+        goto done;
+    }
+    int k = gather(p, n, plan, s, groups, 0, e, report, report_n, why, why_n);
     if (k < 0) {
         char why2[200];
-        // moved already (by an earlier start's file a mod serves, say): nothing to change
-        if (gather(p, n, plan, s, 1, back, NULL, 0, why2, sizeof why2) >= 0) {
+        // edited already (by an earlier start's file a mod serves, say): nothing to change
+        if (gather(p, n, plan, s, groups, 1, back, NULL, 0, why2, sizeof why2) >= 0) {
             if (report && report_n) report[0] = 0;
-            return 0;
+            result = 0;
         }
-        return -1;
+        goto done;
     }
-    uint8_t undo[MAX_EDITS][4];
     int changed = 0;
     for (int i = 0; i < k; i++) {
         memcpy(undo[i], p + e[i].at, 4);
@@ -496,18 +695,26 @@ int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShif
     // Read the layout again as the game will: each field where it was, with its new value. A file whose fields lie
     // on the records that lead to them reads otherwise; it gets its bytes back, last written first.
     char why2[200];
-    int kb = gather(p, n, plan, s, 1, back, NULL, 0, why2, sizeof why2);
+    int kb = gather(p, n, plan, s, groups, 1, back, NULL, 0, why2, sizeof why2);
     int ok = kb == k;
     for (int i = 0; ok && i < k; i++) ok = back[i].at == e[i].at;
     if (!ok) {
         for (int i = k - 1; i >= 0; i--) memcpy(p + e[i].at, undo[i], 4);
         snprintf(why, why_n, "%s reads otherwise after the edit (%s)", member, kb < 0 ? why2 : "another field moved");
-        return -1;
+        goto done;
     }
-    return changed;
+    result = changed;
+done:
+    free(e);
+    free(undo);
+    return result;
 }
 
-// Each layout's copies in the archive (the game's holds each layout four times, the same bytes at four offsets).
+int wide_hud_lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift *s, char *report, size_t report_n,
+                     char *why, size_t why_n) {
+    return lay_out(p, n, member, s, groups_of(s), report, report_n, why, why_n);
+}
+
 enum { MAX_COPIES = 16 };
 typedef struct {
     size_t at[MAX_COPIES], size[MAX_COPIES];
@@ -544,16 +751,45 @@ static int copies_of(const uint8_t *sarc, size_t n, const char *member, Copies *
     return 1;
 }
 
+
+// The log line's name for what a layout's edit did: the HUD's, the menus', or both.
+static const char *edit_name(int groups) {
+    return groups == G_HUD ? "wide hud" : groups & G_HUD ? "wide hud and menus" : groups & G_FULL ? "wide menus"
+                                                                                                    : "widescreen: menus";
+}
+
+// Every copy of one layout, each tried on a copy of its own, for the groups given: 1 when all of them take the edit
+// (report: what a copy that changed moved), 0 with why when one does not, -1 out of memory.
+static int trial(const uint8_t *sarc, const Copies *c, const char *member, const WideHudShift *s, int groups,
+                 char *report, size_t report_n, char *why, size_t why_n) {
+    char got[1200];
+    report[0] = 0;
+    for (int j = 0; j < c->copies; j++) {
+        uint8_t *t = malloc(c->size[j] ? c->size[j] : 1);
+        if (!t) return -1;
+        memcpy(t, sarc + c->at[j], c->size[j]);
+        int r = lay_out(t, c->size[j], member, s, groups, got, sizeof got, why, why_n);
+        free(t);
+        if (r < 0) return 0;
+        if (r > 0) snprintf(report, report_n, "%s", got);
+    }
+    return 1;
+}
+
 int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, size_t why_n) {
     Copies c[NPLANS];
-    char member[64], report[NPLANS][600], trial_report[600];
-    int any = 0;
+    char member[64], report[NPLANS][1200];
+    int want = groups_of(s), groups[NPLANS] = {0}, any = 0;
     for (int i = 0; i < NPLANS; i++) {
-        c[i].copies = 0;   // a plan that does not apply has none
-        if (!applies(&plans[i], s)) continue;
+        c[i].copies = 0;   // a plan the shift does not ask for has none
+        if (!(plan_groups(&plans[i]) & want)) continue;
         any = 1;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
-        if (!copies_of(sarc, n, member, &c[i], why, why_n)) return -1;
+        if (!copies_of(sarc, n, member, &c[i], why, why_n)) {
+            if (plan_groups(&plans[i]) & want & (G_HUD | G_CENTER)) return -1;
+            rt_log("wide menus: %s; %s stays as the game lays it out", why, plans[i].layout);
+            c[i].copies = 0;
+        }
     }
     if (!any) return 0;
     // Layouts that share bytes with another layout cannot be edited alone.
@@ -566,38 +802,48 @@ int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, 
                                  plans[j].layout);
                         return -1;
                     }
-    // Every copy of every layout is tried first, each on a copy of its own: either all of them change or none. The
-    // line a layout gets says what a copy that changed moved.
+    // Every copy of every layout is tried first: either all copies of a layout change or none. The HUD's edges and
+    // the loading icon of the menus in the middle 16:9 are all or nothing over the archive, as both sides of the
+    // HUD belong together. A layout the menus' redesign does not fit (a mod's, say) keeps the game's, alone: the
+    // rest of the redesign and the HUD go ahead, and the line says why.
     for (int i = 0; i < NPLANS; i++) {
+        if (!c[i].copies) continue;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
-        report[i][0] = 0;
-        for (int j = 0; j < c[i].copies; j++) {
-            uint8_t *trial = malloc(c[i].size[j] ? c[i].size[j] : 1);
-            if (!trial) {
+        int g = plan_groups(&plans[i]) & want;
+        int r = trial(sarc, &c[i], member, s, g, report[i], sizeof report[i], why, why_n);
+        if (r < 0) {
+            snprintf(why, why_n, "out of memory");
+            return -1;
+        }
+        if (!r && (g & G_FULL)) {
+            char why_full[240];
+            snprintf(why_full, sizeof why_full, "%s", why);
+            g &= ~G_FULL;
+            r = !g ? 1 : trial(sarc, &c[i], member, s, g, report[i], sizeof report[i], why, why_n);
+            if (r < 0) {
                 snprintf(why, why_n, "out of memory");
                 return -1;
             }
-            memcpy(trial, sarc + c[i].at[j], c[i].size[j]);
-            int r = wide_hud_lay_out(trial, c[i].size[j], member, s, trial_report, sizeof trial_report, why, why_n);
-            free(trial);
-            if (r < 0) return -1;
-            if (r > 0) memcpy(report[i], trial_report, sizeof trial_report);
+            rt_log("wide menus: %s; %s keeps the game's menu layout%s", why_full, plans[i].layout,
+                   g ? " (the HUD's edit of it goes ahead)" : "");
         }
+        if (!r) return -1;
+        groups[i] = g;
     }
     int total = 0;
     for (int i = 0; i < NPLANS; i++) {
         int fields = 0;
+        if (!groups[i]) continue;
         snprintf(member, sizeof member, "%s.buil", plans[i].layout);
         for (int j = 0; j < c[i].copies; j++) {
             // copies that share their bytes are laid out once: the second finds them moved and changes nothing
-            int r = wide_hud_lay_out(sarc + c[i].at[j], c[i].size[j], member, s, NULL, 0, why, why_n);
+            int r = lay_out(sarc + c[i].at[j], c[i].size[j], member, s, groups[i], NULL, 0, why, why_n);
             if (r < 0) return -1;   // not after a trial of the same bytes; kept so that a change here cannot hide one
             fields += r;
         }
         total += fields;
         if (fields)
-            rt_log("%s: %s (%d cop%s, %d fields): %s%s", plans[i].menus ? "widescreen: menus" : "wide hud",
-                   plans[i].layout, c[i].copies,
+            rt_log("%s: %s (%d cop%s, %d fields): %s%s", edit_name(groups[i]), plans[i].layout, c[i].copies,
                    c[i].copies == 1 ? "y" : "ies", fields, report[i],
                    strlen(report[i]) + 1 >= sizeof report[i] ? " ..." : "");
     }
@@ -608,6 +854,8 @@ int wide_hud_archive(uint8_t *sarc, size_t n, const WideHudShift *s, char *why, 
 static void shift_words(const WideHudShift *s, char *out, size_t out_n) {
     out[0] = 0;
     if (s->out > 0) say(out, out_n, "the HUD's edge elements %g units out", (double)s->out);
+    if (s->menus > 0) say(out, out_n, "%sthe menus over the whole picture, %g units wider on each side", out[0] ? ", " : "",
+                          (double)s->menus);
     if (s->squeeze > 0 && s->squeeze < 1)
         say(out, out_n, "%sthe loading icon at %.3f of its width", out[0] ? ", " : "", (double)s->squeeze);
 }

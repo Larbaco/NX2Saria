@@ -826,23 +826,30 @@ static void wide_hud_overlay(void) {
     if (!wide_available()) return;   // no squeeze to place anything against (cfg_support.c: the settings do nothing)
     unsigned w, h;
     int edges = !strcmp(cfg_value("NX2SARIA_WIDE_HUD"), "edges");
-    int menus = !strcmp(cfg_value("NX2SARIA_WIDE_MENUS"), "center");
+    int center = !strcmp(cfg_value("NX2SARIA_WIDE_MENUS"), "center");
     int wide = wide_start_picture(&w, &h);
     float wider = wide ? wide_hud_out(w, h) : 0;   // 0 for a picture of 16:9 or narrower
-    WideHudShift shift = {edges ? wider : 0, menus && wider > 0 ? (float)(16.0 / 9.0) / ((float)w / h) : 1};
-    char what[240] = "";
-    if (shift.out > 0) {
-        WideHudCount c[4];
-        int n = wide_hud_counts(c, 4), at = snprintf(what, sizeof what, "%g layout units out: ", (double)shift.out);
-        for (int i = 0; i < n && at > 0 && at < (int)sizeof what; i++) {
-            at += snprintf(what + at, sizeof what - at, "%s%s %d panes", i ? ", " : "", c[i].layout, c[i].panes);
-            if (c[i].keys && at < (int)sizeof what)
-                at += snprintf(what + at, sizeof what - at, " and %d animation keys", c[i].keys);
+    WideHudShift shift = {edges ? wider : 0, center && wider > 0 ? (float)(16.0 / 9.0) / ((float)w / h) : 1,
+                          !center ? wider : 0};
+    char what[240] = "", menus_what[600] = "";
+    for (int m = 0; m < 2; m++) {   // what the HUD's edges, then the menus' redesign, change in each layout
+        float by = m ? shift.menus : shift.out;
+        char *out = m ? menus_what : what;
+        size_t cap = m ? sizeof menus_what : sizeof what;
+        if (!(by > 0)) continue;
+        WideHudCount c[64];
+        int n = wide_hud_counts_of(m, c, 64), at = snprintf(out, cap, "%g layout units %s: ", (double)by,
+                                                             m ? "wider on each side" : "out");
+        if (m && !n) snprintf(out, cap, "no layout has a redesign yet, the menus stay in the middle 16:9");
+        for (int i = 0; i < n && at > 0 && at < (int)cap; i++) {
+            at += snprintf(out + at, cap - at, "%s%s %d panes", i ? ", " : "", c[i].layout, c[i].panes);
+            if (c[i].keys && at < (int)cap) at += snprintf(out + at, cap - at, " and %d animation keys", c[i].keys);
         }
     }
     rt_log("wide hud: %s, picture %ux%u (%.3f:1, 16:9 is 1.778): %s", edges ? "edges" : "center", w, h,
            (double)w / h, shift.out > 0 ? what : "no pane moves, the HUD stays in the middle 16:9");
-    if (!(shift.out > 0) && !(shift.squeeze < 1)) return;
+    if (shift.menus > 0) rt_log("wide menus: full, picture %ux%u: %s", w, h, menus_what);
+    if (!(shift.out > 0) && !(shift.squeeze < 1) && !(shift.menus > 0)) return;
     static const char keeps[] = "the HUD and the loading icon stay where the game lays them out";
     Overlay *base, *dic_base;
     size_t n, dn, out_n = 0;
@@ -851,10 +858,11 @@ static void wide_hud_overlay(void) {
     int made = in && dic ? wide_hud_build(in, n, dic, dn, &shift, &z, &out_n) : -1;
     free(in);
     free(dic);
-    const char *what_made = shift.out > 0 && shift.squeeze < 1 ? "the HUD at the picture's edges, the loading icon in "
-                                                                  "the middle 16:9"
-                          : shift.out > 0 ? "the HUD at the picture's edges"
-                                          : "the loading icon in the middle 16:9";
+    char what_made[160] = "";
+    if (shift.out > 0) snprintf(what_made, sizeof what_made, "the HUD at the picture's edges");
+    if (shift.menus > 0 || shift.squeeze < 1)
+        snprintf(what_made + strlen(what_made), sizeof what_made - strlen(what_made), "%s%s", what_made[0] ? ", " : "",
+                 shift.menus > 0 ? "the menus over the whole picture" : "the loading icon in the middle 16:9");
     if (made > 0) serve_generated(WIDE_HUD_ARCHIVE, base, z, out_n, "wide-hud", what_made, keeps);
 }
 

@@ -20,9 +20,9 @@
 #include "wide_hud.h"
 
 // A shift of the HUD alone (out units), of the loading icon alone (squeeze q), or both.
-#define HUD(o) (&(WideHudShift){(o), 1.0f})
-#define MENUS(q) (&(WideHudShift){0, (q)})
-#define BOTH(o, q) (&(WideHudShift){(o), (q)})
+#define HUD(o) (&(WideHudShift){(o), 1.0f, 0})
+#define MENUS(q) (&(WideHudShift){0, (q), 0})
+#define BOTH(o, q) (&(WideHudShift){(o), (q), 0})
 
 static int fails;
 #define CHECK(c, ...)                                                                                                  \
@@ -119,7 +119,7 @@ typedef struct {
 } LayoutDef;
 
 // Where make_layout put things in the last file it made: each pane's record, and each curve's values block.
-static uint64_t pane_at[256], values_at[16][32];
+static uint64_t pane_at[256], values_at[16][72];
 
 static int pane_index(const LayoutDef *L, const char *name) {
     for (int i = 0; i < L->npanes; i++)
@@ -315,7 +315,7 @@ static void set_range(uint8_t *s, int c, size_t at, size_t size) {
 // Each layout's file as make_layout makes it, kept for the archives below.
 static uint8_t *made[NLAYOUTS];
 static size_t made_n[NLAYOUTS];
-static uint64_t made_pane_at[NLAYOUTS][256], made_values_at[NLAYOUTS][16][32];
+static uint64_t made_pane_at[NLAYOUTS][256], made_values_at[NLAYOUTS][16][72];
 
 static void make_all(void) {
     for (int i = 0; i < NLAYOUTS; i++) {
@@ -535,8 +535,8 @@ static const AnimDef two_curves[] = {{"MapType", map_type_twice, 2, NULL, 0},
 static const CurveDef map_type_six[] = {{"N_MapIcon_00", 1, 0, 6, {0, 0, 0, 1490, 1490, 0}}};
 static const AnimDef six_keys[] = {{"MapType", map_type_six, 1, NULL, 0},
                                    {"DungeonMiniMapPattern", map_dungeon, 2, NULL, 0}};
-static CurveDef many_curves[17];
-static const AnimDef many_tracks[] = {{"MapType", many_curves, 17, NULL, 0}};
+static CurveDef many_curves[65];
+static const AnimDef many_tracks[] = {{"MapType", many_curves, 65, NULL, 0}};
 
 static void refused_layout(const LayoutDef *L, const char *what, const char *expect) {
     char why[240] = "";
@@ -595,7 +595,7 @@ static void check_refusals(void) {
     refused_layout(&M, "two curves of one pane's x in an animation", "MapType N_MapIcon_00 x is not one curve of 7 keys");
     M.anims = six_keys, M.nanims = 2;
     refused_layout(&M, "a curve of another length", "MapType N_MapIcon_00 x is not one curve of 7 keys");
-    for (int i = 0; i < 17; i++) many_curves[i] = (CurveDef){"N_MapIcon_00", 1, 0, 1, {0}};
+    for (int i = 0; i < 65; i++) many_curves[i] = (CurveDef){"N_MapIcon_00", 1, 0, 1, {0}};
     M.anims = many_tracks, M.nanims = 1;
     refused_layout(&M, "more tracks of a pane's x than the edit reads", "animations of N_MapIcon_00 cannot be read");
     // more panes than a track's index can name

@@ -17,9 +17,11 @@ float wide_hud_out(unsigned w, unsigned h);
 
 // What the edit does. out: the HUD's edge elements move out by that many units (wide_hud_out; 0 none,
 // NX2SARIA_WIDE_HUD = center). squeeze: 16:9 over the picture's ratio, by which the loading screen's icon is narrowed
-// and brought in so that it sits in the middle 16:9's corner at its own width (1 none, NX2SARIA_WIDE_MENUS = full).
+// and brought in so that it sits in the middle 16:9's corner at its own width (1 none; NX2SARIA_WIDE_MENUS = center).
+// menus: the menus' layouts redesigned to fill a picture that many units wider on each side (wide_hud_out; 0 none;
+// NX2SARIA_WIDE_MENUS = full).
 typedef struct {
-    float out, squeeze;
+    float out, squeeze, menus;
 } WideHudShift;
 
 // The edits of edges mode, one per layout: what the start-up line counts (romfs.c wide_hud_overlay).
@@ -29,6 +31,8 @@ typedef struct {
 } WideHudCount;
 // Fills out[0..max) and returns the number of layouts edges mode edits.
 int wide_hud_counts(WideHudCount *out, int max);
+// The same for the HUD's edges (menus 0) or for the menus' redesign (menus 1: panes changed in any way, keys moved).
+int wide_hud_counts_of(int menus, WideHudCount *out, int max);
 
 // One layout file p[0..n) (a BFFH member named `member`, "PlayerStatus_00.buil" and so on) with the shift's edit, in
 // place: its edge elements moved out by s->out units, or (LoadingFade_00.buil) its icon squeezed by s->squeeze. Every
