@@ -118,6 +118,49 @@ is showing.
 There is no separate clock, rupee or key HUD in this version: rupees and item counts show through the
 `NumDisplay_00` pop-up and keys through `Pa_KeySmall_00`, which both move with the item slot and the minimap.
 
+## `wide_menus = full`
+
+The menus' layouts are laid out for the picture's width: panes moved out by the menus' distance `u` (the same
+`1080 * w / h - 1920` as the HUD's, 640 at 21:9) or grown by `2 * u`, with the animation keys that place them
+(`runtime/wide_hud.c`, the operations of group `G_FULL`, each with its reason). The pause menu's pages lie `2u`
+further apart, a whole picture's width each, and their columns move out towards the picture's sides.
+
+### The pause menu's backdrop
+
+The pause menu (`PlusMenu_00`) draws its pages on one painted picture, `P_MenuBg_00`: 9200 units wide at x 4280 (from
+-320 to 8880) under `N_MenuChange_00`, the pane the page animations slide. The slots of the pages' grids are painted
+into it, and the redesign moves the columns above them apart by different distances (the equipment's grid by `u`, the
+item grid by `3u`), so a stretched picture would leave its slots under the wrong columns. `wide_hud.c` cuts it into
+pieces instead, each moving with its column, and draws a plain stretch of the picture (x 1880 to 2010, where nothing
+is painted) over each gap that opens between them:
+
+| Pane | Shows (the picture's x) | From | To | Under |
+|---|---|---|---|---|
+| `P_MenuBg_00` | 1880 to 2010 | -320 | -320 + u | the seam left of the collection grid |
+| `P_MenuBg_00_1` | -320 to 3380 | -320 + u | 3380 + u | the collection grid, the scroll ornament, the equipment's left column |
+| `P_MenuBg_00_2` | 1880 to 2010 | 3380 + u | 3380 + 2u | a seam |
+| `P_MenuBg_00_3` | 3380 to 4980 | 3380 + 2u | 4980 + 2u | the portrait's oval in the middle of the equipment page |
+| `P_MenuBg_00_4` | 1880 to 2010 | 4980 + 2u | 4980 + 3u | a seam |
+| `P_MenuBg_00_5` | 4980 to 8880 | 4980 + 3u | 8880 + 3u | the equipment's right grid, the scroll ornament, the item grid |
+| `P_MenuBg_00_6` | 1880 to 2010 | 8880 + 3u | 8880 + 4u | a seam up to the item page's information panel |
+
+The first piece is the pane itself; the six others are new panes inserted right after it, each with a picture and a
+material of the same name whose texture map shows its part of the picture (its UV scale and translate x). How the file
+changes for that is in "The layout format (BFFH)" below. `tools/layout_dump.py` `split_picture`, from which the
+previews were made, is the reference: the runtime's split matches it byte for byte.
+
+Each of the four copies of `PlusMenu_00.buil` grows by 4,583 bytes (30,285 to 34,868), at any `u`, so the archive is
+laid out again around them (`runtime/sarc.c` `sarc_rebuild`): its header, entries and names as they were, each member
+at its old start's alignment, each copy in a range of its own, as the game turns each copy's offsets into pointers in
+place. The archive grows from 9,927,489 to 9,945,921 bytes. The game sizes the buffer it reads the archive into from
+the resource size table (`System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs`), whose entry
+for `UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc` is 9,931,664, only 4,175 bytes over the game's
+archive. `romfs.c` `restbl_room` raises that entry by the growth, rounded up to 32 bytes (9,950,112), in the table the
+game would read (the game's, or the one merged with the mods' tables, whose higher entries stay), and serves it from
+`<profile>/wide-hud/`, with or without mods. When it cannot, the archive is made again without the split, and
+`PlusMenu_00` keeps the game's menu layout: its pages never move without their backdrop. A `PlusMenu_00` the split
+does not fit (a mod's) keeps the game's menu layout too, alone, and the line says why.
+
 ## `wide_menus = center`
 
 With `full` (the default) the menus fill the screen: their layouts are laid out over the whole picture, and the
@@ -202,6 +245,24 @@ With the defaults, or at 16:9, the start still says what is in effect:
 With a pad layout by label (`pad_layout = xbox`, `playstation` or `auto`) the action prompt's edit of the same archive
 comes first, and the overlay line says `replaces the file another change made`.
 
+With `wide_menus = full` (the default) at 21:9, 2560 x 1080, one line per layout of the redesign (the PlusMenu_00 line
+says how its backdrop was cut), the summary with the panes added and the archive's sizes, and the resource size
+table's entry raised for it:
+
+    wide menus: full, picture 2560x1080: 640 layout units wider on each side: MapMenu_00 11 panes, LoadingFade_00 1 panes, MenuOverlay_00 8 panes, PlusMenu_00 16 panes and 32 animation keys, ...
+    wide menus: MapMenu_00 (4 copies, 44 fields): P_MapBase_00 width 3928 -> 5208, ...
+    wide menus: PlusMenu_00 (4 copies, 340 fields, P_MenuBg_00 in 7 pieces, 24 new panes): Pa_Equip_00 x 4280 -> 5560, Pa_Item_00 x 8560 -> 11120, ...
+    ...
+    wide hud: the layout archive edited (the menus over the whole picture, 640 units wider on each side), 836 fields and 24 new panes, the archive 9927489 -> 9945921 bytes (27 ms)
+    RomFS overlay: <profile>/wide-hud/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs (... bytes, a larger file's resource size) replaces the original
+    RomFS: resource size table: UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc raised 9931664 -> 9950112 for the file's 9927489 -> 9945921 bytes
+    RomFS overlay: <profile>/wide-hud/Common.Product.100.Nin_Ounce_NVN2.blarc.zs (... bytes, the menus over the whole picture) replaces the original
+
+With mods the table is the merged one: `replaces the file another change made`. When the entry cannot be raised:
+
+    wide hud: <why>; UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs is made again without the edits that make it larger
+    wide menus: the layout archive may not grow for P_MenuBg_00's pieces; PlusMenu_00 keeps the game's menu layout
+
 A layout archive that is not the game's (a mod's), or a field that differs, gives one line, and the archive is served
 as it is:
 
@@ -215,10 +276,11 @@ the menu when it is applied.
 What the edit relies on, found in the 1.1.1 archive (157 layouts, each four times) and checked on every pane and every
 animation track of it:
 
-- A layout file starts with `BFFH`. Its header has a group of 0x20 bytes per table: the offset of the list of name
-  offsets, that of the list of record offsets, that of the names' hashes, then the count. Panes at 0x118,
-  materials at 0x138, pictures at 0x158, texts at 0x178, alignment panes at 0x198, parts at 0x1b8, captures at 0x1d8,
-  animations at 0x238. The canvas size is at 0x2f8 (3840.0 and 2160.0). Offsets count from the file's start.
+- A layout file starts with `BFFH`, its size at +0x08. Its header has a group of 0x20 bytes per table: the offset of
+  the list of name offsets, that of the list of record offsets, that of the names' hashes (CityHash64 of each name,
+  which the game's lookup by name compares), then the count. Panes at 0x118, materials at 0x138, pictures at 0x158,
+  texts at 0x178, alignment panes at 0x198, parts at 0x1b8, captures at 0x1d8, animations at 0x238. The canvas size is
+  at 0x2f8 (3840.0 and 2160.0). Offsets count from the file's start.
 - A pane record has 0x44 bytes, parents before children: scale x and y at +0x10 and +0x14, rotation at +0x18,
   translate x and y at +0x1c and +0x20 (in the parent's space), the parent's index at +0x28 (-1 for the root), width
   and height at +0x2c and +0x30, the end of its subtree at +0x34, flags at +0x38 (bits 7-10 the kind of pane, bits
@@ -235,6 +297,24 @@ animation track of it:
   of the floats at +0x08 and their count at +0x10, as (value, slope) pairs. A change of the first or last key changes
   that span as well; all 3,832 curves of the archive keep it.
 
+What the backdrop's split adds to that (`wide_hud.c` `split_layout`; a study of the game's loader found each point):
+
+- The game turns each offset into a pointer in place as it loads a layout, by walking the records from the header's
+  tables, wherever in the file they lie, once per record it reaches. New records can go past the old end of the file,
+  as long as the file's size and the string pool section (the second of the two 0x28-byte `BFSI` section headers at
+  0xa8, at 0xd0: its start at +0x04 and +0x10, its size at +0x08), which reached the end, cover them. A record that
+  holds offsets is never shared: each new pane gets its own copy.
+- A picture pane has its material's index at +0x3c and its picture record's at +0x42 (u16). The picture record holds
+  its material's index at +0x10 (u16), no window (+0x08 0), and offsets of its colour and corner lists inside its own
+  0x88 bytes (+0x00, +0x20, +0x48, +0x50, +0x58, +0x60). The material lists its texture maps (+0x00, count +0x08); with
+  one map the list lies at +0x40, right after the record, and the map at +0x48: no texture names (+0x00 0), UV scale
+  at +0x10, translate at +0x18, rotation at +0x20.
+- The panes' order is the game's index of each pane, so the new panes go right after the split pane and every index
+  past it moves: a pane's parent (+0x28) and subtree end (+0x34), the pane a part's record (+0x40) and a capture's
+  (+0x04) belong to, and the 7-bit index of each animation track's target code (each code once, whatever it targets).
+  New pictures and materials go at the end of their tables, with the u32 array at 0x300 (count 0x308, stride 0x30c, 4),
+  one entry per material, grown with them. The names, records and hashes of a table keep one order.
+
 ## Checks
 
 `tests/wide_hud_check.py` builds `tests/wide_hud_check.c` against `runtime/wide_hud.c` on layouts and archives it makes
@@ -248,6 +328,18 @@ and the compressed archive. With `--romfs <folder with romfs.bin and index.json>
 2560x1080 and 3416x1440 (21:9), 5120x1440 (32:9) and the windows 3440x1440, 2880x1200 and 3440x1080, checks that only
 the 132 expected words change, at the offsets the 1.1.1 files have, then with the loading icon too (140), and again
 after the action prompt's edit of the same archive.
+
+The backdrop's split is checked on a `PlusMenu_00` with the game's records for it (its picture, material, parts,
+captures, hashes, per-material array and sections): the pane order, parents, subtree ends, track codes, parts' and
+captures' panes, each piece's place, width and UV window, the grown tables, the file's and the pool's sizes, a second
+split finding nothing to do, refusals that make nothing (a turned or scaled picture, one with a child or another
+origin, two texture maps, a window, records not laid out as the game's, another material, a per-material array of
+another length, a pool short of the end, shared records, no hashes, a pane already named like a piece), every prefix;
+then in an archive of four copies: each copy in a range of its own at its old alignment, the other members as they
+were, the grown frame, a refused copy or an archive that may not grow keeping the game's menu layout, and the
+resource size table's entry raised. With `--romfs` the split of the game's `PlusMenu_00` at `u` 640 and 1920 is
+compared byte for byte with `tools/layout_dump.py` `split_picture`, every copy in the served archive at 21:9, 32:9 and
+3440x1440 is checked, and the game's table entry is raised for the 21:9 archive.
 
 What a run has to show, by shape (screenshots at each of 21:9, 32:9, a 3440x1440 window and 16:10):
 
