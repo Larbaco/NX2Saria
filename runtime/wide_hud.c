@@ -60,7 +60,9 @@ enum { PANE_TABLE = 0x118, ANIM_TABLE = 0x238 };
 enum { PANE_SCALE_X = 0x10, PANE_ROTATE = 0x18, PANE_X = 0x1c, PANE_PARENT = 0x28, PANE_W = 0x2c, PANE_NEEDS = 0x30 };
 enum { ANIM_TRACKS = 0x08, ANIM_CURVES = 0x18, ANIM_COMPONENTS = 0x28, ANIM_CONSTANTS = 0x38, ANIM_CONST_COMPONENTS = 0x48 };
 enum { NO_INDEX = 0xffff, PANE_KIND = 7, COMPONENT_X = 0, MAX_PANES = 128 };
-enum { PROP_SCALE = 0, PROP_TRANSLATE = 1 };
+// A pane property as a track names it: byte 3 of its code, in the group bit 22 selects (1 for these two); PROP_SIZE,
+// the pane's width and height, is byte 3 = 2 with bit 22 clear (its x component is the width).
+enum { PROP_SCALE = 0, PROP_TRANSLATE = 1, PROP_SIZE = 0x102 };
 
 // ---- the plan
 // Each operation belongs to one of three groups, and is made only when the shift asks for its group: the HUD's edges
@@ -452,7 +454,7 @@ static int plain_ancestors(const uint8_t *p, size_t n, const char *layout, const
     return 0;
 }
 
-// The x tracks of property `prop` (PROP_TRANSLATE, PROP_SCALE) of pane `index` in the layout's animations: the curves'
+// The x tracks of property `prop` (PROP_TRANSLATE, PROP_SCALE, PROP_SIZE) of pane `index` in the layout's animations: the curves'
 // offsets (their animation's name in anim[]) and the constants' value offsets. Returns how many there are, -1 when the
 // animations do not fit the file.
 enum { MAX_TRACKS = 64 };
@@ -491,7 +493,7 @@ static int x_tracks(const uint8_t *p, size_t n, uint32_t index, int prop, Track 
             uint64_t v = 0;
             for (int i = 5; i >= 0; i--) v = v << 8 | code[i];
             uint32_t kind = (v >> 8) & 7, pane = ((v >> 11) & 0xf) | (((v >> 16) & 7) << 4);
-            if (kind != PANE_KIND || pane != index || !((v >> 22) & 1) || code[3] != prop) continue;
+            if (kind != PANE_KIND || pane != index || ((v >> 22) & 1) != !(prop >> 8) || code[3] != (prop & 0xff)) continue;
             unsigned first = head[0] | head[1] << 8, cfirst = head[2] | head[3] << 8, nc = head[4], nk = head[5];
             for (unsigned k = first; first != NO_INDEX && k < first + nc; k++) {
                 uint64_t c;
@@ -637,7 +639,7 @@ static int keyed_covered(const uint8_t *p, size_t n, const Plan *plan, int group
     for (int t = 0; t < keyed; t++)
         if (!key_op(plan, groups, pane, prop, tr[t].anim)) {
             snprintf(why, why_n, "%s %s has its %s keyed by %s", plan->layout, pane,
-                     prop == PROP_SCALE ? "scale x" : "x", tr[t].anim);
+                     prop == PROP_SCALE ? "scale x" : prop == PROP_SIZE ? "width" : "x", tr[t].anim);
             return 0;
         }
     return 1;
@@ -712,6 +714,8 @@ static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShi
         if (moves_x && !keyed_covered(p, n, plan, groups, m->pane, (uint32_t)index, PROP_TRANSLATE, why, why_n))
             return -1;
         if (scales && !keyed_covered(p, n, plan, groups, m->pane, (uint32_t)index, PROP_SCALE, why, why_n)) return -1;
+        if (m->op == OP_GROW && !keyed_covered(p, n, plan, groups, m->pane, (uint32_t)index, PROP_SIZE, why, why_n))
+            return -1;
         say(report, report_n, "%s%s", said++ ? ", " : "", m->pane);
         if (moves_x) {
             k = add(e, k, rec + PANE_X, xfrom, xto);
