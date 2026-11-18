@@ -1,6 +1,6 @@
 A draft patch for hyrule-tracker (https://github.com/jv-prado/hyrule-tracker), against master at
-fbfafe582909e6c23380d15a811605773af03549; docs/hyrule-tracker-prs.md describes it. Apply it in that repository with
-`git apply`, which skips this text.
+1fb277716a6c7278b26814bb72729b24223be46a (v1.4.2; first written against v1.1.1); docs/hyrule-tracker-prs.md
+describes it. Apply it in that repository with `git apply`, which skips this text.
 
 The lines this patch adds are this repository's, drafted for contribution to hyrule-tracker under its MIT license. Its
 context lines (those starting with a space, and the removed ones) are hyrule-tracker's own, quoted under its license:
@@ -23,13 +23,13 @@ context lines (those starting with a space, and the removed ones) are hyrule-tra
   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 diff --git a/README.md b/README.md
-index f28bf8d..3666fb4 100644
+index fb055d0..93a2553 100644
 --- a/README.md
 +++ b/README.md
-@@ -77,8 +77,9 @@ Turn on **Show in-game overlay** in Settings. It can show counters, remaining ob
+@@ -89,8 +89,9 @@ Turn on **Show in-game overlay** in Settings. It can show counters, remaining ob
  ## 🎮 Compatibility
  
- - 🖥️ Desktop app for **Windows x64**, using the save format of the **Nintendo Switch 2 remake**.
+ - 🖥️ Desktop app for **Windows x64** and **Linux x86_64** (experimental), using the save format of the **Nintendo Switch 2 remake**.
 -- 🔎 Search recognizes installations and saves from **Triforce / NX2navi**, **Hookshot**, **Longshot**, **ReLink**, **Ocarina Reborn**, **Fritchii** and **Lichii**.
 +- 🔎 Search recognizes installations and saves from **Triforce / NX2navi**, **NX2Saria**, **Hookshot**, **Longshot**, **ReLink**, **Ocarina Reborn**, **Fritchii** and **Lichii**.
  - ⚡ Live reading depends on the game version and the memory layout of the port or emulator. See the [live mode documentation](docs/live-memory.md).
@@ -324,10 +324,10 @@ index 0000000..b25172a
 +  }
 +}
 diff --git a/src/gamedata/saves.ts b/src/gamedata/saves.ts
-index 586eade..c2ac92a 100644
+index 0110ad4..0c59514 100644
 --- a/src/gamedata/saves.ts
 +++ b/src/gamedata/saves.ts
-@@ -30,7 +30,9 @@ export function resolveUserFolders(start: string): string[] {
+@@ -34,7 +34,9 @@ export function resolveUserFolders(start: string): string[] {
    if (!fs.existsSync(start)) return [];
    if (isUserFolder(start)) return [start];
    if (/^slot_\d+$/i.test(path.basename(start)) && isUserFolder(path.dirname(start))) return [path.dirname(start)];
@@ -337,64 +337,57 @@ index 586eade..c2ac92a 100644
 +    path.join(start, 'game', 'profile', 'save')];
    const out: string[] = [];
    for (const t of tries) {
-     for (const n of readdir(t)) {
-@@ -46,6 +48,10 @@ function readdir(dir: string): string[] {
-   try { return fs.readdirSync(dir); } catch { return []; }
- }
- 
-+function isFile(p: string): boolean {
-+  try { return fs.statSync(p).isFile(); } catch { return false; }
-+}
-+
- /** Ocarina of Time's title id: emulators keep its saves in a folder named after it. */
- export const OOT_TITLE_ID = '0400486024DEC000';
- 
-@@ -77,12 +83,17 @@ function emulatorDataDirs(appData = process.env.APPDATA ?? path.join(os.homedir(
+     if (t !== start && isUserFolder(t)) out.push(t);
+@@ -82,16 +84,22 @@ function emulatorDataDirs(appData = baseDirs().roaming): string[] {
  
  export const NATIVE_EXES = ['Triforce.exe', 'hookshot.exe', 'Longshot.exe', 'nx2navi.exe', 'relink-game.exe',
    'ocarina-reborn-game.exe', 'ocarina-reborn.exe', 'OcarinaReborn.exe'];
 -const GAME_NAMES = /zelda|ocarina|hookshot|longshot|triforce|nx2navi|relink|fritchii|lichii|eden|orchid|eglantine|pokedinner/i;
--const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, 'ReLink.exe'].map(n => n.toLowerCase()));
 +/**
-+ * NX2Saria's game (ocarina.exe from its launcher, nx2saria.exe from a source build; no .exe on Linux). It answers
-+ * through its tracker API (nx2saria.ts), so it is not in NATIVE_EXES: its memory is not laid out as theirs.
++ * NX2Saria's game (ocarina from its launcher, nx2saria from a source build; .exe on Windows). It answers through its
++ * tracker API (nx2saria.ts), so it is not in NATIVE_EXES: its memory is not laid out as theirs.
 + */
-+export const NX2SARIA_EXES = process.platform === 'win32' ? ['ocarina.exe', 'nx2saria.exe'] : ['ocarina', 'nx2saria'];
++export const NX2SARIA_EXES = ['ocarina.exe', 'nx2saria.exe'];
 +const GAME_NAMES = /zelda|ocarina|hookshot|longshot|triforce|nx2navi|nx2saria|relink|fritchii|lichii|eden|orchid|eglantine|pokedinner/i;
-+const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, ...NX2SARIA_EXES, 'ReLink.exe'].map(n => n.toLowerCase()));
+ /** A program's name without ".exe" (or a Linux build's ".AppImage" / ".x86_64"), lowercase. */
+ export const programName = (file: string) => file.toLowerCase().replace(/\.(exe|appimage|x86_64)$/, '');
+-const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, 'ReLink.exe'].map(programName));
++const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, ...NX2SARIA_EXES, 'ReLink.exe'].map(programName));
++const NX2SARIA_PROGRAMS = new Set(NX2SARIA_EXES.map(programName));
+ /** A file that runs the game: the Windows exe, or a Linux build of the same name. */
+ export const isGameFile = (file: string) => GAME_FILES.has(programName(file));
  const installations: Record<string, string> = {
    fritchii: 'Fritchii', lichii: 'Lichii', eden: 'Eden', orchid: 'Orchid', eglantine: 'Eglantine',
    pokedinner: 'PokeDinner', triforce: 'Triforce', longshot: 'Longshot', hookshot: 'Hookshot',
 -  nx2navi: 'NX2navi', 'ocarina reborn': 'Ocarina Reborn', 'ocarina-reborn': 'Ocarina Reborn',
 +  nx2navi: 'NX2navi', nx2saria: 'NX2Saria', 'ocarina reborn': 'Ocarina Reborn', 'ocarina-reborn': 'Ocarina Reborn',
-   ocarinareborn: 'Ocarina Reborn', relink: 'ReLink', 'relink-game': 'ReLink',
+   ocarinareborn: 'Ocarina Reborn', 'ocarina-reborn-game': 'Ocarina Reborn', relink: 'ReLink', 'relink-game': 'ReLink',
  };
  export function installationLabel(saveDir: string): string | undefined {
-@@ -93,6 +104,10 @@ export function installationLabel(saveDir: string): string | undefined {
-     if (name) return name;
-     if (/^(save|user|nand|[0-9a-f]{16,32})$/i.test(path.basename(dir))) continue;
-     const game = readdir(dir).find(name => GAME_FILES.has(name.toLowerCase()));
-+    if (game && NX2SARIA_EXES.includes(game.toLowerCase())) {
-+      if (isFile(path.join(dir, game))) return 'NX2Saria';
-+      continue; // a folder of that name
-+    }
-     if (game) return installations[path.basename(game, '.exe').toLowerCase().replace(/\.exe$/, '')];
+@@ -107,7 +115,8 @@ export function installationLabel(saveDir: string): string | undefined {
+       if (!isGameFile(file)) return false;
+       try { return fs.statSync(path.join(dir, file)).isFile(); } catch { return false; }
+     });
+-    if (game) return installations[programName(game)];
++    // NX2Saria's "ocarina" is named by its file only: a folder called Ocarina is no install of it.
++    if (game) return NX2SARIA_PROGRAMS.has(programName(game)) ? 'NX2Saria' : installations[programName(game)];
    }
  }
-@@ -118,7 +133,7 @@ function baseDirs() {
- /** Install folders the ports and emulators use by default, or that launcher config points to. Cheap: no directory walk. */
- export function knownGameFolders(): string[] {
-   const { roaming, local, storage } = baseDirs();
+ const SEARCH_GROUPS = /^(apps?|programs?|games?|jogos|emulators?|emuladores|downloads|desktop|documents|gamesbuilds?|builds?|ports?|steamapps|common|quiverlauncher)$/i;
+@@ -167,7 +176,7 @@ function otherBases(home: string): Bases[] {
+ }
+ 
+ function foldersIn({ roaming, local, storage, prefix }: Bases): string[] {
 -  const native = ['Hookshot', 'Longshot', 'Triforce', 'NX2navi', 'Ocarina Reborn', 'OcarinaReborn', 'ReLink'];
 +  const native = ['Hookshot', 'Longshot', 'Triforce', 'NX2navi', 'NX2Saria', 'Ocarina Reborn', 'OcarinaReborn', 'ReLink'];
    return [...emulatorDataDirs(roaming), ...emulatorDataDirs(local),
      ...storage.flatMap(base => native.map(name => path.join(base, name))),
-     ...configPaths(local, 'Ocarina Reborn/Config/settings.json', ['game_dir']),
+     ...configPaths(local, 'Ocarina Reborn/Config/settings.json', ['game_dir'], prefix),
 diff --git a/src/main/live.ts b/src/main/live.ts
-index 21f1686..6a35d29 100644
+index e788e4d..9fb3a31 100644
 --- a/src/main/live.ts
 +++ b/src/main/live.ts
-@@ -1,9 +1,11 @@
+@@ -1,11 +1,13 @@
  // Live source: attaches (read-only) to a running game (Hookshot, Longshot, NX2navi or the
  // Fritchii emulator), keeps the progress tables located, and reports when tracked values
 -// change. Falls back to nothing (the save files) whenever the game isn't running or isn't
@@ -403,11 +396,13 @@ index 21f1686..6a35d29 100644
  // in the same playthrough.
  import type { GameDataFile } from '../gamedata/parser.js';
  import { locate, readTables, buildLive, fingerprint, matchesReference, sweepRanges, LiveTables, Agreement } from '../gamedata/live.js';
+ import { MemoryAccessDenied, findProcesses, initMemoryAccess, openProcess, type GameProcess } from './procmem.js';
+ import { ptraceScope } from './procmem-linux.js';
 +import { ApiSession } from '../gamedata/nx2saria.js';
- import { ProcessMemory, findProcesses, initMemoryAccess } from './procmem.js';
  import { NATIVE_EXES, EMULATOR_EXES } from '../gamedata/saves.js';
  import type { LiveInfo } from '../shared/types.js';
-@@ -58,12 +60,19 @@ export class LiveSource {
+ import { PlayerReader, type LivePlayer } from '../gamedata/player.js';
+@@ -59,12 +61,19 @@ export class LiveSource {
    private inFlight?: Promise<void>;
    private playerReader?: PlayerReader;
    private playerNow?: LivePlayer & { atMs: number };
@@ -423,12 +418,12 @@ index 21f1686..6a35d29 100644
  
    async start() {
 -    if (!(await initMemoryAccess())) return this.set({ status: 'unavailable', detail: 'Reading game memory is not available on this system.' });
-+    // Without memory access (Linux), NX2Saria's tracker API is still read.
++    // Without memory access (koffi missing on Windows), NX2Saria's tracker API is still read.
 +    this.memoryAccess = await initMemoryAccess();
      this.set({ status: 'no-game' });
      this.timer = setInterval(() => void this.tick(), TICK_MS);
      void this.tick();
-@@ -85,7 +94,7 @@ export class LiveSource {
+@@ -86,7 +95,7 @@ export class LiveSource {
    }
  
    /** Link's latest live position, while a game is attached and it could be read. */
@@ -472,9 +467,9 @@ index 21f1686..6a35d29 100644
 +      if (api) { this.api = api; this.apiMisses = 0; return this.apiStep(); }
 +      if (!this.memoryAccess) return this.set({ status: 'unavailable', detail: 'Reading game memory is not available on this system.' });
        if (!game) return this.set({ status: 'no-game' });
-       this.mem = new ProcessMemory(game.pid);
-       this.emulator = !!game.emulator;
-@@ -151,7 +168,32 @@ export class LiveSource {
+       try {
+         this.mem = openProcess(game.pid);
+@@ -159,7 +176,32 @@ export class LiveSource {
      const print = fingerprint(this.tables!, raw, this.watchInts);
      // Nothing tracked changed: skip rebuilding (most ticks).
      if (print === this.lastPrint && this.info.status === 'live') return;
@@ -508,7 +503,7 @@ index 21f1686..6a35d29 100644
      if (!matchesReference(live.agreement)) {
        this.snapshot = undefined;
        this.lastPrint = undefined;
-@@ -168,7 +210,10 @@ export class LiveSource {
+@@ -176,7 +218,10 @@ export class LiveSource {
  
    private readPlayer() {
      const p = this.playerReader?.read();

@@ -46,6 +46,10 @@ they used.
   reading switches itself off outside Windows.
 - **Project.** MIT, one author, created and released (v1.0.0 to v1.1.1) on 2026-11-17, 4 commits, 9 stars. Its
   README already lists "Triforce / NX2navi" among the installs it searches.
+- **Since then.** By 2026-11-18 it reached v1.4.2 (`1fb2777`): Linux as an experimental platform, its live mode reading
+  other ports through `/proc` there (with the kernel's `ptrace` permission), the save search in Wine/Proton prefixes
+  and Flatpak folders, a second screen for phones and tablets. None of that reaches NX2Saria's memory (the same
+  guest-offset assumptions), and nothing in it names NX2Saria. The patch was ported to v1.4.2 (below).
 
 ### How it gets the game's data
 
@@ -156,8 +160,8 @@ with the rest. Not done: a row for the API in the settings menu and the launcher
 
 ## Changes in the tracker
 
-A new live source ([hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against `fbfafe5`, five files, about 520 lines
-added):
+A new live source ([hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against `1fb2777` (v1.4.2; first written
+against v1.1.1, `fbfafe5`), five files, about 515 lines added):
 
 1. `src/gamedata/nx2saria.ts` (new): the API client (newline-delimited JSON, one request at a time, timeouts), the
    decoding of each kind into the values its save parser gives, `overlay` (the reference save with the live values,
@@ -179,7 +183,10 @@ added):
    on the port).
 5. README: NX2Saria and how to turn on its API.
 
-Checked: `tsc --noEmit` passes and `vitest` passes (108 tests, 11 skipped as before). End to end, the patched
+Checked: on v1.4.2 `tsc --noEmit` passes and `vitest` passes (186 tests, 11 skipped as without the patch; 108 on
+v1.1.1). In v1.4.2 the install search already names a game only by a file (not a folder) and without its `.exe` on
+Linux, so NX2Saria's `ocarina` and `nx2saria` join that list, and its label comes from the file alone. End to end, the
+patched
 `ApiSession` read the fork's server code (the check's build of `runtime/tracker_api.c` with its stand-in memory) and
 built the expected live data: values over the save, the place within the area, the keys and their classes, the same
 fingerprint on a second read. Not tested: `live.ts`'s own changes (they need Electron's main process), and the
@@ -375,7 +382,26 @@ which the runtime then takes for its log instead of writing `logs/`).
   run lasted about a minute, under the 10-minute summary, and ended by SIGTERM, so no summary line came.
 - **After:** the game ended, `nx2saria.ini` and `test.ini` unchanged.
 
-Not covered by this run: Windows, the tracker app itself (its window, its overlay, `live.ts`), collecting something
+### On 0.16.0 (2026-11-18)
+
+After the rebase onto `main` (`a8117c8a`, 0.16.0): the bench script's build of `6ae02f1c` (0.5 min: only the runtime
+compiled again, the lifted code unchanged), `--probe-cfg` failing only on the read-only file test. The same kind of
+run, the game's stderr on a pipe so it wrote `logs/nx2saria.log`, and the readiness check on one connection:
+
+- `status` answers `port_version` `0.16.0` and lists `nx2saria.game_data`; the log's start line names it, and every
+  kind's first answer is logged once (`Bool answered: 11292 values, 90336 bytes, in 4.88 ms`, … `Bool64bitKey
+  answered: 396 values`); 19 `tracker api:` lines in all, three clients, 0 refused.
+- Against the save that loaded (`slot_05`, played on by other sessions since the first run: 52 tokens, 396 placed
+  objects set): Bool, Int and Enum none missing and none different, 396 of 396 placed objects.
+- hyrule-tracker's `ApiSession`: live against that save with all 10,212 Bools, 1,144 Ints, 101 Enums, 30 String64s
+  and 396 placed objects agreeing, a whole read in 10 to 65 ms.
+- The heading: equal to the way Link moves at every step he moves (280.5, 13.4, 225.9, 178.6, 138.3); while he turned
+  on the spot (00:57:21 to :27, his position unchanged) the rotation followed him (360.0, 42.7, 141.7, 143.0) and the
+  direction of movement stayed at its last value (29.4, 30.7). The rotation is his facing.
+- The game ended; `nx2saria.ini` and `test.ini` unchanged. The run's output and log are in
+  `/mnt/windows/Jogos/oot/xbuild/out-hyrule-tracker-integration/` (outside `/tmp`, which a restart empties).
+
+Not covered by these runs: Windows, the tracker app itself (its window, its overlay, `live.ts`), collecting something
 while it watches (checklist step 4), Atlas and the tracker at once, and a session of more than ten minutes.
 
 ## Checklist for the first run

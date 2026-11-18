@@ -15,7 +15,8 @@ tracker API this PR extends ([NX2Saria#7](https://github.com/Larbaco/NX2Saria/pu
 > An item tracker such as hyrule-tracker reads the game's progress from the save files: values known by the
 > MurmurHash3 of their names, and a sorted set of 64-bit keys for the placed objects. To follow the running game it
 > reads the same values from another port's memory, by searching gigabytes for the game's tables at a fixed guest
-> offset, on Windows only. NX2Saria's memory is laid out differently (guest = host), so that search finds nothing.
+> offset (on Linux through `/proc`, with `ptrace` rights). NX2Saria's memory is laid out differently (guest = host),
+> so that search finds nothing.
 >
 > This adds one method to the tracker API of 0.16.0 (the same server, port and settings; no second listener):
 >
@@ -56,9 +57,9 @@ a save.
 
 ## 2. hyrule-tracker (jv-prado/hyrule-tracker): NX2Saria as a live source
 
-**Patch:** [hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against hyrule-tracker `master` at `fbfafe5` (v1.1.1;
-applies cleanly; its header carries the tracker's MIT notice for the lines it quotes). Five files, about 520 lines
-added, 280 of them the module and 165 its test.
+**Patch:** [hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against hyrule-tracker `master` at `1fb2777` (v1.4.2;
+applies cleanly; first written against v1.1.1; its header carries the tracker's MIT notice for the lines it quotes).
+Five files, about 515 lines added, 280 of them the module and 165 its test.
 
 **Title:** Read NX2Saria live through its tracker API, and find its saves
 
@@ -95,22 +96,23 @@ added, 280 of them the module and 165 its test.
 >
 > For the other ports and emulators live mode reads as before; what they see change is a connection attempt to
 > `127.0.0.1:6545` every 3 s while no game is attached, made beside the process search. Tested with
-> `npm run typecheck` and `npm test` (108 passed, 11 skipped as before), end to end against NX2Saria's server code
-> over a stand-in for the game's memory, and `ApiSession` against the running game on Linux: live against the loaded
-> save (10,211 of its 10,212 Bools, every Int, Enum and placed object agreeing), a whole read in 6 to 25 ms.
+> `npm run typecheck` and `npm test` (186 passed, 11 skipped as before), end to end against NX2Saria's server code
+> over a stand-in for the game's memory, and `ApiSession` against the running game on Linux, twice: live against the
+> loaded save (the second time, on NX2Saria 0.16.0: all 10,212 Bools and every Int, Enum and placed object agreeing),
+> a whole read in 10 to 65 ms.
 > `live.ts`'s own changes are not covered by a test (they run in Electron's main process), and the app itself was not
 > started (Windows).
 >
 > The heading: NX2Saria gives Link's rotation as a 3x3 matrix; `yawFromRotation` takes its third column as his
-> forward axis, which NX2Saria's bench run confirmed (the heading equals the way he moves at every step).
+> forward axis, which NX2Saria's bench runs confirmed: it equals the way he moves at every step he moves, and it keeps
+> following him when he turns on the spot, where the direction of movement stays at its last value.
 
 **What the tracker gains:** live tracking on Linux, and on Windows without reading another process's memory; no table
 search (the first read is immediate); the place within an area and the placed objects as for the other ports.
 
 **Not proposed:** following NX2Saria's save folder when it starts (`followGame` needs the game's exe path, which the
 API does not give; the install search finds the folder, or the player picks it). The activity screenshot for NX2Saria
-(`captureGame` needs the game's process id, which the API does not give). A Linux build of the tracker's release (its
-`dist` script builds Windows only; `npm start` runs it from the source on Linux).
+(`captureGame` needs the game's process id, which the API does not give).
 
 **License:** the patch's new lines would be contributed under the tracker's MIT license. The patch quotes some of
 the tracker's lines as diff context; they stay MIT and the tracker's.
