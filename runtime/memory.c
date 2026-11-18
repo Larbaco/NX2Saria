@@ -20,6 +20,7 @@
 #define PAGE 0x1000ull
 #define GiB (1ull << 30)
 #define LOW_SEARCH_FROM 0x100000000ull
+#define HIGH_SEARCH_FROM 0x1000000000ull   // 64 GiB: where the stack and heap block goes with the tracker API on
 #define LOW_SIZE (14 * GiB)        // stack + heap block: room for a Switch 2 heap (HEAP_CAP)
 #define STACK_OFF 0x10000000ull
 #define STACK_SIZE 0x10000000ull
@@ -1480,8 +1481,18 @@ void mem_init(void) {
     if (!reserve_at(RT_KERNEL_BASE, RT_KERNEL_SIZE, 0)) reexec_or_fail("the kernel region");
     if (!reserve_at(RT_HOSTFN_BASE, RT_HOSTFN_SIZE, 0)) reexec_or_fail("the host-function window");
 
-    // Stack and heap block, then the alias region above it, both searched below the module window.
+    // nx2saria.ini is read here, once the fixed windows are claimed and before the first setting: the stack and heap
+    // block below depends on NX2SARIA_TRACKER_API, the pool size on NX2SARIA_APP_POOL and on the resolution settings
+    // (resolution.c decides them once, on this first call).
+    cfg_init();
+
+    // Stack and heap block, then the alias region above it, both searched below the module window. With the tracker
+    // API on (tracker_api.c), the block is searched from 64 GiB first: a map tracker takes a heap pointer below that
+    // for none (docs/tracker-api.md). The game takes its heap wherever the kernel gives it one, as on the console.
     uint64_t low = 0, alias = 0;
+    if (tracker_api_on())
+        for (uint64_t at = HIGH_SEARCH_FROM; at + LOW_SIZE <= mods_lo && !low; at += GiB)
+            if (reserve_at(at, LOW_SIZE, 1)) low = at;
     for (uint64_t at = LOW_SEARCH_FROM; at + LOW_SIZE <= mods_lo && !low; at += GiB)
         if (reserve_at(at, LOW_SIZE, 1)) low = at;
     if (!low) reexec_or_fail("a 14 GiB stack and heap block below 2^39");
@@ -1492,9 +1503,6 @@ void mem_init(void) {
     plat_mem_fault_hook(thaw_fault);   // before the crash handler
     alias_pages = calloc(ALIAS_PAGES, 1);
     if (!alias_pages) rt_fatal("memory: cannot allocate the alias page map");
-    // nx2navi.ini is read here, once the address space is claimed and before the first setting: the pool size below
-    // depends on NX2SARIA_APP_POOL and on the resolution settings (resolution.c decides them once, on this first call).
-    cfg_init();
     if (cfg_bool("NX2SARIA_WB_PROBE")) {   // a diagnosis: off, no access fault reaches probe_fault and nothing is probed
         plat_mem_access_hook(access_fault);
         __atomic_store_n(&prb_on, 1, __ATOMIC_RELEASE);

@@ -1,0 +1,267 @@
+Draft: a patch for Ocarina Atlas (https://github.com/antonioalvromero/Ocarina-Atlas), against its main at
+005c711800d795bb887a5972d3aaeac6a621e69b. Not applied anywhere, no PR opened. Its context lines are Atlas's code
+(GNU AGPL-3.0, Atlas's authors); its new lines are meant to be contributed to Atlas under the AGPL-3.0.
+Description: docs/ocarina-atlas-prs.md. Apply in an Atlas checkout with: git apply ocarina-atlas-pr.patch
+
+diff --git a/README.md b/README.md
+index ac87a26..0d6e247 100644
+--- a/README.md
++++ b/README.md
+@@ -32,6 +32,7 @@ Run the live tracker on Windows without installing Node.js or editing code:
+ 
+ 3. **Live Sync Setup (Longshot / Project ReLink / Triforce / Lichii / Fritchii / CheezyEmu)**
+    - **Longshot, Project ReLink & Triforce (Native PC Recomp — Zero Config):** Simply launch `longshot.exe` / `hookshot.exe`, `relink-game.exe` / `ReLink.exe`, or `Triforce.exe` and load a save. `OcarinaAtlas.exe` automatically attaches a read-only `LongshotRpcBridge` on `:6545` whenever an emulator is not using the port—no switches or game modifications needed.
++   - **NX2Saria (Native PC Port):** Set `tracker_api = 1` under `[tracker]` in `nx2saria.ini` (or `NX2SARIA_TRACKER_API=1`), start the game and load a save. NX2Saria answers the same read-only debug protocol on `127.0.0.1:6545` itself (localhost only), so no bridge or emulator setting is involved; its log (`logs/nx2saria.log`) shows a `tracker api:` line when the map connects. The save-only fallback reads `<game folder>/profile` (detected from the running `ocarina` / `nx2saria` process, or set `NX2SARIA_SAVE_DIR`).
+    - **Lichii / Fritchii / CheezyEmu (1-Click Setup):** In the main control card, click **1-Click Setup Sync** (shown as **Configured ↻** once active so you can re-apply anytime).
+      - This creates or updates `nx2_switches.txt` in your detected emulator profile folder(s) (`%APPDATA%\fritchii\nx2_switches.txt`, `%APPDATA%\lichii\nx2_switches.txt`, and/or `%APPDATA%\cheezyemu\nx2_switches.txt`) with `EDEN_NX2_DEBUG_SERVER=127.0.0.1:6545` while preserving your existing switches.
+      - **If Lichii, Fritchii, or CheezyEmu is already running, close and restart it completely** so it loads the debug server on startup.
+@@ -118,6 +119,7 @@ Run the live tracker on Windows without installing Node.js or editing code:
+ | `LONGSHOT_SAVE_DIR` | Auto-detected from running Longshot (`~/Games/Longshot/user`, `E:\Longshot\Game\user`, etc.) | Optional override pointing to a Longshot/Hookshot `user` or `save` folder. |
+ | `RELINK_SAVE_DIR` | Auto-detected (`~/Games/ProjectReLink/...`, `~/Games/ReLink/...`) | Optional override pointing to a Project ReLink `user` or `save` folder. |
+ | `TRIFORCE_SAVE_DIR` | Auto-detected (`~/Games/Triforce/user`, etc.) | Optional override pointing to a Triforce `user` or `save` folder. |
++| `NX2SARIA_SAVE_DIR` | Auto-detected from a running `ocarina` / `nx2saria` (its `profile` folder) | Optional override pointing to an NX2Saria `profile` or `profile/save` folder. |
+ 
+ </details>
+ 
+diff --git a/launcher/OcarinaAtlas.cs b/launcher/OcarinaAtlas.cs
+index 2b5178a..0efa810 100644
+--- a/launcher/OcarinaAtlas.cs
++++ b/launcher/OcarinaAtlas.cs
+@@ -6547,6 +6547,12 @@ namespace OcarinaAtlasLauncher
+                 {
+                     psi.EnvironmentVariables["LONGSHOT_SAVE_DIR"] = longshotSaveDir;
+                 }
++                string nx2sariaProfileDir = ResolveNx2SariaProfileDir();
++                if (!string.IsNullOrEmpty(nx2sariaProfileDir) &&
++                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NX2SARIA_SAVE_DIR")))
++                {
++                    psi.EnvironmentVariables["NX2SARIA_SAVE_DIR"] = nx2sariaProfileDir;
++                }
+ 
+                 Process proc = new Process();
+                 proc.StartInfo = psi;
+@@ -6945,6 +6951,43 @@ namespace OcarinaAtlasLauncher
+             TriggerPollNow();
+         }
+ 
++        // NX2Saria (native PC port) serves the debug protocol on 127.0.0.1:6545 itself with tracker_api = 1, so it needs no
++        // bridge. Its saves are in <game folder>\profile\save\<account>\slot_XX, the game folder being the one of
++        // ocarina.exe (launcher installs) or nx2saria.exe (developer builds).
++        private static string ResolveNx2SariaProfileDir()
++        {
++            foreach (string name in new string[] { "ocarina", "nx2saria" })
++            {
++                Process[] procs;
++                try
++                {
++                    procs = Process.GetProcessesByName(name);
++                }
++                catch
++                {
++                    continue;
++                }
++                foreach (Process proc in procs)
++                {
++                    try
++                    {
++                        if (proc.MainModule == null || string.IsNullOrEmpty(proc.MainModule.FileName)) continue;
++                        string profile = Path.Combine(Path.GetDirectoryName(proc.MainModule.FileName), "profile");
++                        if (Directory.Exists(Path.Combine(profile, "save"))) return profile;
++                    }
++                    catch
++                    {
++                        // Ignore module path inspection failure.
++                    }
++                    finally
++                    {
++                        proc.Dispose();
++                    }
++                }
++            }
++            return null;
++        }
++
+         private string ResolveLongshotSaveDir()
+         {
+             string bridgeDir = null;
+diff --git a/launcher/linux/ocarina-atlas-cli.mjs b/launcher/linux/ocarina-atlas-cli.mjs
+index 47ca238..39fe211 100644
+--- a/launcher/linux/ocarina-atlas-cli.mjs
++++ b/launcher/linux/ocarina-atlas-cli.mjs
+@@ -20,6 +20,9 @@ const RECOMP_PROCESS_NAMES = new Set([
+   'relink',
+   'triforce',
+ ])
++// NX2Saria (native PC port): with tracker_api = 1 it serves the debug protocol on 127.0.0.1:6545 itself, so it needs
++// no bridge; only its save folder is looked up here
++const NX2SARIA_PROCESS_NAMES = new Set(['ocarina', 'nx2saria'])
+ 
+ const VIRTUAL_ADAPTER_PATTERN =
+   /(?:vethernet|hyper-v|wsl|virtualbox|vbox|vmware|docker|veth|utun|wintun|tailscale|zerotier|wireguard|nordlynx|radmin|hamachi|openvpn|bluetooth|loopback|npcap|isatap|teredo|\btap(?:[\s_-]?\d+|\b)|\btun(?:[\s_-]?\d+|\b))/i
+@@ -330,6 +333,36 @@ function scanRunningRecompProcess() {
+   return null
+ }
+ 
++// The profile folder of a running NX2Saria (its saves are in profile/save/<account>/slot_XX): NX2SARIA_PROFILE_DIR in the
++// game's environment (relative to its executable's folder), else the profile folder beside its executable.
++function detectNx2SariaProfileDir() {
++  if (process.platform !== 'linux' || !fs.existsSync('/proc')) return null
++  let entries
++  try {
++    entries = fs.readdirSync('/proc', { withFileTypes: true })
++  } catch {
++    return null
++  }
++  for (const entry of entries) {
++    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
++    try {
++      const comm = fs.readFileSync(`/proc/${entry.name}/comm`, 'utf8').trim().toLowerCase()
++      if (!NX2SARIA_PROCESS_NAMES.has(comm)) continue
++      const exeDir = path.dirname(fs.readlinkSync(`/proc/${entry.name}/exe`))
++      let profile = path.join(exeDir, 'profile')
++      for (const kv of fs.readFileSync(`/proc/${entry.name}/environ`, 'utf8').split('\0')) {
++        if (kv.startsWith('NX2SARIA_PROFILE_DIR=') && kv.length > 'NX2SARIA_PROFILE_DIR='.length) {
++          profile = path.resolve(exeDir, kv.slice('NX2SARIA_PROFILE_DIR='.length))
++        }
++      }
++      if (fs.existsSync(path.join(profile, 'save'))) return profile
++    } catch {
++      // Ignore exited/inaccessible process
++    }
++  }
++  return null
++}
++
+ function detectRecompSaveDir(runningTarget) {
+   if (runningTarget?.saveDir && fs.existsSync(runningTarget.saveDir)) {
+     return runningTarget.saveDir
+@@ -449,6 +482,7 @@ async function main() {
+ 
+   const runningTarget = scanRunningRecompProcess()
+   const detectedSaveDir = process.env.LONGSHOT_SAVE_DIR?.trim() || detectRecompSaveDir(runningTarget)
++  const nx2sariaSaveDir = process.env.NX2SARIA_SAVE_DIR?.trim() || detectNx2SariaProfileDir()
+ 
+   let bridgeChild = null
+   let shuttingDown = false
+@@ -528,6 +562,9 @@ async function main() {
+   if (detectedSaveDir && !serverEnv.LONGSHOT_SAVE_DIR) {
+     serverEnv.LONGSHOT_SAVE_DIR = detectedSaveDir
+   }
++  if (nx2sariaSaveDir && !serverEnv.NX2SARIA_SAVE_DIR) {
++    serverEnv.NX2SARIA_SAVE_DIR = nx2sariaSaveDir
++  }
+ 
+   const serverChild = spawn(
+     process.execPath,
+diff --git a/src/components/LichiiStatusPanel.tsx b/src/components/LichiiStatusPanel.tsx
+index 83cd156..4cef73e 100644
+--- a/src/components/LichiiStatusPanel.tsx
++++ b/src/components/LichiiStatusPanel.tsx
+@@ -55,6 +55,7 @@ function getEmulatorDisplayName(emulator?: LichiiTelemetryState['emulator']): st
+   if (emulator === 'longshot') return 'Longshot'
+   if (emulator === 'relink') return 'Project ReLink'
+   if (emulator === 'triforce') return 'Triforce'
++  if (emulator === 'nx2saria') return 'NX2Saria'
+   return 'Lichii'
+ }
+ 
+diff --git a/src/lib/lichii-server.ts b/src/lib/lichii-server.ts
+index fe99340..e30d91e 100644
+--- a/src/lib/lichii-server.ts
++++ b/src/lib/lichii-server.ts
+@@ -52,7 +52,8 @@ function getDefaultRecompSaveDirs(): string[] {
+ 
+ /**
+  * Returns candidate emulator save root directories in priority order:
+- * explicit LICHII_SAVE_DIR / FRITCHII_SAVE_DIR / CHEEZYEMU_SAVE_DIR / LONGSHOT_SAVE_DIR / RELINK_SAVE_DIR / TRIFORCE_SAVE_DIR overrides first,
++ * explicit LICHII_SAVE_DIR / FRITCHII_SAVE_DIR / CHEEZYEMU_SAVE_DIR / LONGSHOT_SAVE_DIR / RELINK_SAVE_DIR / TRIFORCE_SAVE_DIR /
++ * NX2SARIA_SAVE_DIR overrides first (NX2Saria: its `profile` folder, holding save/<account>/slot_XX),
+  * then default %APPDATA%\{fritchii,lichii,eden,cheezyemu}\nand\user\save\0000000000000000,
+  * Linux $XDG_DATA_HOME/{fritchii,lichii,eden,cheezyemu}/nand/user/save/0000000000000000 (or ~/.local/share),
+  * and Longshot/Hookshot/ProjectReLink/Triforce user paths.
+@@ -76,6 +77,7 @@ export function getCandidateSaveDirs(env: NodeJS.ProcessEnv = process.env): stri
+     env.LONGSHOT_SAVE_DIR,
+     env.RELINK_SAVE_DIR,
+     env.TRIFORCE_SAVE_DIR,
++    env.NX2SARIA_SAVE_DIR,
+   ]) {
+     const explicit = explicitRaw?.trim()
+     if (explicit) {
+@@ -1422,7 +1424,15 @@ function collectSlotsInCandidateRoot(rootDir: string): string[] {
+ 
+ /** Detects which emulator owns a save slot path based on its path segments. */
+ export function detectEmulatorFromPath(dirPath: string): EmulatorKind | undefined {
+-  const segments = path.resolve(dirPath).toLowerCase().split(path.sep)
++  const resolved = path.resolve(dirPath)
++  const nx2sariaRoot = process.env.NX2SARIA_SAVE_DIR?.trim()
++  if (nx2sariaRoot) {
++    // NX2Saria keeps its saves in the game folder, whose name says nothing: the folder it was given decides
++    const root = path.resolve(nx2sariaRoot).toLowerCase()
++    const dir = resolved.toLowerCase()
++    if (dir === root || dir.startsWith(root + path.sep)) return 'nx2saria'
++  }
++  const segments = resolved.toLowerCase().split(path.sep)
+   for (const emu of DEFAULT_EMULATOR_SAVE_ROOTS) {
+     if (segments.includes(emu)) return emu
+   }
+@@ -2105,7 +2115,15 @@ const MAIN_BASE_RESCAN_THROTTLE_MS = 1500
+ const MAIN_SUB6_BSS_OFFSET = 0x04e6c7a8n
+ const MAIN_SUB24_BSS_OFFSET = 0x04e6c938n
+ const MAIN_GDM_BSS_OFFSET = 0x04e90ce8n
+-const MIN_GUEST_HEAP_PTR = 0x1000000000n // Longshot uses HOS_HEAP_BASE=0x1000000000; Lichii/Fritchii/Eden use 0x2000000000+
++const DEFAULT_MIN_GUEST_HEAP_PTR = 0x1000000000n // Longshot uses HOS_HEAP_BASE=0x1000000000; Lichii/Fritchii/Eden use 0x2000000000+
++// NX2Saria maps guest addresses 1:1 onto its own process. With its tracker API on it places the heap from 64 GiB,
++// as above; a build that does not leaves it from 4 GiB, so pointers there count while NX2Saria answers.
++const NX2SARIA_MIN_GUEST_HEAP_PTR = 0x100000000n
++let MIN_GUEST_HEAP_PTR = DEFAULT_MIN_GUEST_HEAP_PTR
++
++function updateMinGuestHeapPtr(status: Record<string, unknown> | null): void {
++  MIN_GUEST_HEAP_PTR = status?.emulator === 'nx2saria' ? NX2SARIA_MIN_GUEST_HEAP_PTR : DEFAULT_MIN_GUEST_HEAP_PTR
++}
+ 
+ const LEGACY_SUB36_VT1 = 0x84fce818n
+ const LEGACY_SUB36_VT2 = 0x84311f8cn
+@@ -3708,6 +3726,7 @@ function resetLiveSessionCaches() {
+ 
+ function handleRpcDisconnect() {
+   cachedStatusRes = null
++  updateMinGuestHeapPtr(null)
+   lastStatusCheckTime = 0
+   cachedTelemetryState = null
+   cachedTelemetryStateTime = 0
+@@ -3771,6 +3790,7 @@ async function computeLichiiTelemetryState(): Promise<LichiiTelemetryState> {
+     const freshStatus = await callLichiiRpc('status', { fps_window_ms: 0 }, 700)
+     lastStatusCheckTime = Date.now()
+     cachedStatusRes = freshStatus
++    updateMinGuestHeapPtr(freshStatus)
+   }
+ 
+   let tcpConnected = cachedStatusRes !== null && lichiiRpc.isConnected()
+@@ -3796,6 +3816,7 @@ async function computeLichiiTelemetryState(): Promise<LichiiTelemetryState> {
+     const freshStatus = await callLichiiRpc('status', { fps_window_ms: 0 }, 700)
+     lastStatusCheckTime = Date.now()
+     cachedStatusRes = freshStatus
++    updateMinGuestHeapPtr(freshStatus)
+     tcpConnected = freshStatus !== null && lichiiRpc.isConnected()
+     emulatorRunning = tcpConnected && Boolean(freshStatus?.powered_on)
+     titleId = typeof freshStatus?.program_id === 'string' ? freshStatus.program_id : undefined
+@@ -3966,7 +3987,8 @@ async function computeLichiiTelemetryState(): Promise<LichiiTelemetryState> {
+     cachedStatusRes?.emulator === 'cheezyemu' ||
+     cachedStatusRes?.emulator === 'fritchii' ||
+     cachedStatusRes?.emulator === 'lichii' ||
+-    cachedStatusRes?.emulator === 'eden'
++    cachedStatusRes?.emulator === 'eden' ||
++    cachedStatusRes?.emulator === 'nx2saria'
+       ? cachedStatusRes.emulator
+       : undefined
+   const emulator =
+diff --git a/src/lib/lichii-types.ts b/src/lib/lichii-types.ts
+index 0b1a050..3a2634f 100644
+--- a/src/lib/lichii-types.ts
++++ b/src/lib/lichii-types.ts
+@@ -1,4 +1,4 @@
+-export type EmulatorKind = 'lichii' | 'fritchii' | 'eden' | 'cheezyemu' | 'longshot' | 'relink' | 'triforce'
++export type EmulatorKind = 'lichii' | 'fritchii' | 'eden' | 'cheezyemu' | 'longshot' | 'relink' | 'triforce' | 'nx2saria'
+ 
+ export type LichiiTelemetryState = {
+   connected: boolean

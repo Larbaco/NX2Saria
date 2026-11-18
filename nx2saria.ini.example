@@ -943,6 +943,16 @@
 # The key of the application's uploaded art asset (Rich Presence > Art Assets) shown as the status's large image.
 # discord_image =
 
+[tracker]
+# A map tracker running on this PC (one that follows Link and the collectibles live) may read the game's memory,
+# read-only, through 127.0.0.1:<tracker_api_port>, with the debug protocol trackers speak to a console emulator. 1 = on;
+# read at start. Only programs of this PC reach the port, nothing can be written, and the log says when a tracker
+# connects and what it asked. With it on, the game's heap is placed at 64 GiB, where trackers look for it.
+# docs/tracker-api.md describes the protocol.
+# tracker_api = 0
+# The port (1024 to 65535; read at start). 6545 is the one trackers try first.
+# tracker_api_port = 6545
+
 [audio]
 # none mixes without opening an audio device.
 # audio = default

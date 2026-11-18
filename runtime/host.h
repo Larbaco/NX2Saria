@@ -512,6 +512,8 @@ int probe_dpi(void);                                       // dpi_probe_win.c (W
 int list_monitors(void);                                   // --list-monitors: gfx_window_win.c, gfx_window_sdl.c
 int probe_mods(void);                                      // mods_probe.c
 void discord_init(void);                                   // discord_rpc.c: the Rich Presence thread, game runs only
+void tracker_api_init(void);                               // tracker_api.c: the start line, and the listener when it is on
+int tracker_api_on(void);                                  // tracker_api.c: NX2SARIA_TRACKER_API is on (mem_init reads it)
 int probe_discord(void);                                   // discord_rpc.c
 int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_services(void), probe_fs(void);
 int probe_gfx_abi(void);                                   // gfx_abi_probe.c

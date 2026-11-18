@@ -20,6 +20,7 @@ const char *cfg_get(const char *name) { (void)name; return NULL; }
 const char *cfg_value(const char *name) { (void)name; return "0"; }
 int cfg_bool(const char *name) { return !strcmp(name, "NX2NAVI_HEAP_LAZY"); }
 void cfg_init(void) {}
+int tracker_api_on(void) { return 0; }   // mem_init asks where the stack and heap block goes
 int cfg_setenv(const char *name, const char *value) { (void)name, (void)value; return 0; }
 int rt_knob(const char *name, const char *def) { (void)name; return strcmp(def, "0") != 0; }
 int ldr_count(void) { return 0; }

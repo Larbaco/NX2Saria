@@ -332,6 +332,12 @@ int plat_crash_filter_reassert(char *who, size_t n);
 const char *plat_crash_context_get(void);   // the calling thread's note, for the crash report (NULL: none)
 int plat_mem_read(uint64_t addr, void *out, size_t n);    // copies n bytes, 0 instead of faulting on unmapped memory
 int plat_mem_readable(uint64_t addr, uint64_t n);         // every page of [addr, addr + n) can be read; no fault
+// Which pages of [addr, addr + n) hold memory now (256 pages at most, 1 MiB from addr's page): vec[i] is 1 when the
+// i-th page from addr's page is resident, else 0. A committed page that was never written reads zero without being
+// resident, and reading it would allocate it (a page of the shared memory file on Linux, a physical page on Windows);
+// a scan of untouched memory skips such pages. Windows answers from this process's working set, so a page trimmed from
+// it counts as not resident. 1 on success, 0 when the system cannot say (a page of the range is not mapped).
+int plat_mem_resident(uint64_t addr, uint64_t n, uint8_t *vec);
 void *plat_aligned_alloc(size_t size, size_t align);      // free with plat_aligned_free; NULL on failure
 void plat_aligned_free(void *p);
 
@@ -637,6 +643,27 @@ uint16_t plat_addr_port(const PlatAddr *a);
 int plat_addr_eq(const PlatAddr *a, const PlatAddr *b);
 // "1.2.3.4:5" or "[::1]:5" ("%scope" after a link-local address) into out; its length, 0 when it does not fit cap.
 int plat_addr_str(const PlatAddr *a, char *out, size_t cap);
+
+// ---- TCP on the loopback address: a listener that only programs of this machine can reach (the tracker API,
+// tracker_api.c), and the connections it accepts. The listener is bound to 127.0.0.1 and to no other address, so
+// nothing on the network reaches it. Accepted connections send each write at once (TCP_NODELAY): a request and
+// its answer are small, and a held answer would wait for the peer's delayed acknowledgement. On Windows the first
+// call starts Winsock. A port with connections of an earlier run still closing (TIME_WAIT) can be bound again at once.
+typedef struct PlatTcp PlatTcp;
+// A listener on 127.0.0.1:port. NULL when the port is taken or sockets are unavailable; *err (may be NULL) gets the OS
+// error number (errno, or WSAGetLastError on Windows) for the log.
+PlatTcp *plat_tcp_listen_loopback(uint16_t port, int *err);
+// The next connection on the listener, waiting at most ms for one. NULL when none came in time or the peer gave up
+// before it was taken (*err 0), or when the listener cannot take one (*err the OS error, such as no descriptor left:
+// the caller waits before it asks again). *peer and err may be NULL.
+PlatTcp *plat_tcp_accept(PlatTcp *listener, uint32_t ms, PlatAddr *peer, int *err);
+// Up to cap bytes, waiting at most ms for the first of them: bytes read, 0 none in time, -1 the peer closed the
+// connection or it broke.
+int plat_tcp_recv(PlatTcp *c, void *buf, size_t cap, uint32_t ms);
+// All n bytes, waiting at most ms in all for the peer to take them: 1 sent, 0 the connection broke or the peer did not
+// read in time (the caller then closes it). A closed peer is an error, never a signal.
+int plat_tcp_send(PlatTcp *c, const void *buf, size_t n, uint32_t ms);
+void plat_tcp_close(PlatTcp *c);   // a listener or a connection; NULL does nothing
 
 // ---- restart: this program again, in a new process that starts once this one is gone
 // Starts this executable again with the same command line, environment and working folder, and no handle of this

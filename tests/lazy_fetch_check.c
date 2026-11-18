@@ -27,6 +27,7 @@ int cfg_bool(const char *name) {
     return 0;
 }
 void cfg_init(void) {}
+int tracker_api_on(void) { return 0; }   // mem_init asks where the stack and heap block goes
 int cfg_setenv(const char *name, const char *value) { (void)name, (void)value; return 0; }
 int rt_knob(const char *name, const char *def) { (void)name; return strcmp(def, "0") != 0; }
 int ldr_count(void) { return 0; }

@@ -12,6 +12,7 @@
 #include <linux/userfaultfd.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
@@ -1665,6 +1666,15 @@ int plat_mem_read(uint64_t addr, void *out, size_t n) {
     return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == (ssize_t)n;
 }
 
+int plat_mem_resident(uint64_t addr, uint64_t n, uint8_t *vec) {
+    uint64_t lo = addr & ~(uint64_t)(PG - 1), hi = (addr + n + PG - 1) & ~(uint64_t)(PG - 1);
+    unsigned char v[256];
+    size_t pages = (size_t)((hi - lo) / PG);
+    if (!n || pages > sizeof v || mincore((void *)(uintptr_t)lo, (size_t)(hi - lo), v) != 0) return 0;
+    for (size_t i = 0; i < pages; i++) vec[i] = v[i] & 1;
+    return 1;
+}
+
 int plat_mem_readable(uint64_t addr, uint64_t n) {
     uint8_t b;
     uint64_t end = addr + (n ? n : 1);
@@ -2860,6 +2870,98 @@ void plat_udp_close(PlatUdp *u) {
     if (!u) return;
     close(u->fd);
     free(u);
+}
+
+// ---- TCP on the loopback address (platform.h)
+struct PlatTcp { int fd; };
+
+static PlatTcp *tcp_wrap(int fd) {
+    PlatTcp *t = malloc(sizeof *t);
+    if (!t) {
+        close(fd);
+        return NULL;
+    }
+    t->fd = fd;
+    return t;
+}
+
+PlatTcp *plat_tcp_listen_loopback(uint16_t port, int *err) {
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        if (err) *err = errno;
+        return NULL;
+    }
+    // a restart within a minute finds the last run's closed connections still in TIME_WAIT on this port; Linux lets
+    // the new listener bind beside them, and still refuses a second listener on the port
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(port)};
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(fd, (struct sockaddr *)&a, sizeof a) != 0 || listen(fd, 4) != 0) {
+        if (err) *err = errno;
+        close(fd);
+        return NULL;
+    }
+    if (err) *err = 0;
+    return tcp_wrap(fd);
+}
+
+PlatTcp *plat_tcp_accept(PlatTcp *listener, uint32_t ms, PlatAddr *peer, int *err) {
+    if (err) *err = 0;
+    if (!listener) return NULL;
+    struct pollfd pf = {.fd = listener->fd, .events = POLLIN};
+    int r = poll(&pf, 1, ms > (uint32_t)INT32_MAX ? INT32_MAX : (int)ms);
+    if (r < 0 && errno != EINTR && err) *err = errno;
+    if (r <= 0) return NULL;
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof ss;
+    int fd = accept4(listener->fd, (struct sockaddr *)&ss, &len, SOCK_CLOEXEC);
+    if (fd < 0) {   // the peer gave up between the poll and the accept, or EINTR: the caller asks again
+        if (err && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && errno != ECONNABORTED && errno != EPROTO)
+            *err = errno;   // no descriptor or buffer left: the listener stays readable, so the caller waits
+        return NULL;
+    }
+    int on = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
+    if (peer) addr_from_sockaddr(peer, &ss);
+    return tcp_wrap(fd);
+}
+
+int plat_tcp_recv(PlatTcp *c, void *buf, size_t cap, uint32_t ms) {
+    if (!c) return -1;
+    struct pollfd pf = {.fd = c->fd, .events = POLLIN};
+    int r = poll(&pf, 1, ms > (uint32_t)INT32_MAX ? INT32_MAX : (int)ms);
+    if (r < 0) return errno == EINTR ? 0 : -1;
+    if (r == 0) return 0;
+    ssize_t k = recv(c->fd, buf, cap > (size_t)INT32_MAX ? INT32_MAX : cap, MSG_DONTWAIT);
+    if (k < 0) return errno == EAGAIN || errno == EINTR ? 0 : -1;
+    return k > 0 ? (int)k : -1;   // 0 bytes: the peer closed its end
+}
+
+int plat_tcp_send(PlatTcp *c, const void *buf, size_t n, uint32_t ms) {
+    if (!c) return 0;
+    const uint8_t *at = buf;
+    uint64_t deadline = plat_now_ms() + ms;
+    while (n) {
+        ssize_t put = send(c->fd, at, n, MSG_NOSIGNAL | MSG_DONTWAIT);   // a closed peer is an error, not a SIGPIPE
+        if (put > 0) {
+            at += put, n -= (size_t)put;
+            continue;
+        }
+        if (put < 0 && errno == EINTR) continue;
+        if (put == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) return 0;
+        uint64_t now = plat_now_ms();   // the peer's buffer is full: wait for room until the deadline
+        if (now >= deadline) return 0;
+        struct pollfd pf = {.fd = c->fd, .events = POLLOUT};
+        if (poll(&pf, 1, (int)(deadline - now)) < 0 && errno != EINTR) return 0;
+    }
+    return 1;
+}
+
+void plat_tcp_close(PlatTcp *c) {
+    if (!c) return;
+    close(c->fd);
+    free(c);
 }
 
 

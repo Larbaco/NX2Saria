@@ -809,6 +809,7 @@ static int main_run(int argc, char **argv) {
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
         vk_driver_cache_env();   // before the threads below and rt_boot's, any of which may load the Vulkan driver
         discord_init();   // the Rich Presence thread (discord_rpc.c); it reads the settings file itself and idles while off
+        tracker_api_init();   // a map tracker's read-only view of the game's memory (tracker_api.c); logs whether it is on
         rt_boot();
         return 0;
     }

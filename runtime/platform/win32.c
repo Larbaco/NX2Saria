@@ -1344,6 +1344,17 @@ int plat_mem_read(uint64_t addr, void *out, size_t n) {
     return ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)addr, out, n, &got) && got == n;
 }
 
+int plat_mem_resident(uint64_t addr, uint64_t n, uint8_t *vec) {
+    uint64_t lo = addr & ~0xfffull, hi = (addr + n + 0xfff) & ~0xfffull;
+    PSAPI_WORKING_SET_EX_INFORMATION info[256];
+    size_t pages = (size_t)((hi - lo) >> 12);
+    if (!n || pages > sizeof info / sizeof *info) return 0;
+    for (size_t i = 0; i < pages; i++) info[i].VirtualAddress = (void *)(uintptr_t)(lo + ((uint64_t)i << 12));
+    if (!QueryWorkingSetEx(GetCurrentProcess(), info, (DWORD)(pages * sizeof *info))) return 0;
+    for (size_t i = 0; i < pages; i++) vec[i] = (uint8_t)info[i].VirtualAttributes.Valid;
+    return 1;
+}
+
 int plat_mem_readable(uint64_t addr, uint64_t n) {
     for (uint64_t a = addr, end = addr + n; a < end || a == addr;) {
         MEMORY_BASIC_INFORMATION mbi;
@@ -2843,6 +2854,111 @@ void plat_udp_close(PlatUdp *u) {
     if (!u) return;
     closesocket(u->s);
     free(u);
+}
+
+// ---- TCP on the loopback address (platform.h)
+struct PlatTcp { SOCKET s; };
+
+static PlatTcp *tcp_wrap(SOCKET s) {
+    PlatTcp *t = malloc(sizeof *t);
+    if (!t) {
+        closesocket(s);
+        return NULL;
+    }
+    t->s = s;
+    return t;
+}
+
+static int tcp_wait(SOCKET s, short events, uint32_t ms) {   // 1 ready, 0 none in time, -1 the socket broke
+    WSAPOLLFD pf = {.fd = s, .events = events};
+    int r = WSAPoll(&pf, 1, ms > (uint32_t)INT_MAX ? INT_MAX : (int)ms);
+    if (r == SOCKET_ERROR) return WSAGetLastError() == WSAEINTR ? 0 : -1;
+    return r > 0;
+}
+
+PlatTcp *plat_tcp_listen_loopback(uint16_t port, int *err) {
+    if (!net_ready()) {
+        if (err) *err = WSANOTINITIALISED;
+        return NULL;
+    }
+    SOCKET s = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (s == INVALID_SOCKET) {
+        if (err) *err = WSAGetLastError();
+        return NULL;
+    }
+    // no SO_EXCLUSIVEADDRUSE: with it a restarted game could not bind the port while the last run's connections are in
+    // TIME_WAIT (up to two minutes), and the default bind already refuses a second plain listener on the port
+    u_long nonblocking = 1;
+    SOCKADDR_IN a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (ioctlsocket(s, FIONBIO, &nonblocking) != 0 || bind(s, (SOCKADDR *)&a, sizeof a) != 0 || listen(s, 4) != 0) {
+        if (err) *err = WSAGetLastError();
+        closesocket(s);
+        return NULL;
+    }
+    if (err) *err = 0;
+    return tcp_wrap(s);
+}
+
+PlatTcp *plat_tcp_accept(PlatTcp *listener, uint32_t ms, PlatAddr *peer, int *err) {
+    if (err) *err = 0;
+    if (!listener) return NULL;
+    int r = tcp_wait(listener->s, POLLRDNORM, ms);
+    if (r < 0 && err) *err = WSAGetLastError();
+    if (r <= 0) return NULL;
+    SOCKADDR_STORAGE ss;
+    int len = (int)sizeof ss;
+    SOCKET s = accept(listener->s, (SOCKADDR *)&ss, &len);   // inherits the listener's non-blocking mode
+    if (s == INVALID_SOCKET) {   // the peer gave up between the poll and the accept: the caller asks again
+        int e = WSAGetLastError();
+        if (err && e != WSAEWOULDBLOCK && e != WSAEINTR && e != WSAECONNRESET) *err = e;   // no buffer or socket left
+        return NULL;
+    }
+    SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0);   // no child process gets the connection
+    BOOL on = TRUE;
+    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&on, sizeof on);
+    if (peer) addr_from_sockaddr(peer, &ss);
+    return tcp_wrap(s);
+}
+
+int plat_tcp_recv(PlatTcp *c, void *buf, size_t cap, uint32_t ms) {
+    if (!c) return -1;
+    int r = tcp_wait(c->s, POLLRDNORM, ms);
+    if (r <= 0) return r;
+    int k = recv(c->s, (char *)buf, cap > (size_t)INT_MAX ? INT_MAX : (int)cap, 0);
+    if (k == SOCKET_ERROR) {
+        int e = WSAGetLastError();
+        return e == WSAEWOULDBLOCK || e == WSAEINTR ? 0 : -1;
+    }
+    return k > 0 ? k : -1;   // 0 bytes: the peer closed its end
+}
+
+int plat_tcp_send(PlatTcp *c, const void *buf, size_t n, uint32_t ms) {
+    if (!c) return 0;
+    const char *at = buf;
+    uint64_t deadline = plat_now_ms() + ms;
+    while (n) {
+        int put = send(c->s, at, n > (size_t)INT_MAX ? INT_MAX : (int)n, 0);
+        if (put > 0) {
+            at += put, n -= (size_t)put;
+            continue;
+        }
+        int e = put == SOCKET_ERROR ? WSAGetLastError() : 0;
+        if (e == WSAEINTR) continue;
+        if (e != WSAEWOULDBLOCK) return 0;
+        uint64_t now = plat_now_ms();   // the peer's buffer is full: wait for room until the deadline
+        if (now >= deadline || tcp_wait(c->s, POLLWRNORM, (uint32_t)(deadline - now)) < 0) return 0;
+    }
+    return 1;
+}
+
+void plat_tcp_close(PlatTcp *c) {
+    if (!c) return;
+    closesocket(c->s);
+    free(c);
 }
 
 
