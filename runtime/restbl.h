@@ -31,3 +31,7 @@ uint32_t restbl_estimate(const char *key, uint64_t size);
 // times the type's factor, never lowered. scaled: the sizes are compressed ones (a mesh codec .mc file), whose entry
 // grows in proportion.
 uint32_t restbl_grow(const char *key, uint32_t entry, uint64_t old, uint64_t new_size, int scaled);
+// The entry of key raised for a file whose decompressed size grows from `was` to `now`: restbl_grow on the entry the
+// table has (a mod's merged entry above the game's stays above it), restbl_estimate when it has none. 1 with *from (0
+// when the table had no entry) and *to; 0 when the key's type has no entries (streamed sound and video).
+int restbl_fit(Restbl *t, const char *key, uint64_t was, uint64_t now, uint32_t *from, uint32_t *to);
