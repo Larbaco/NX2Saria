@@ -1,11 +1,12 @@
 // SHA-256 (FIPS 180-4). The block function has two forms: one on the x86 SHA extensions (SHA-NI: Intel since Ice Lake
 // and Goldmont, AMD since Zen), which hashes the RomFS image at about the speed of a disk read, and portable C for CPUs
-// without them. sha256_selftest in the probes compares both against the FIPS test vectors.
+// without them. tests/sha256_paths_check.py checks both against the FIPS 180-4 vectors and against each other.
 #include "sha256.h"
 
 #include <string.h>
 
 #if defined(__x86_64__)
+#include <cpuid.h>
 #include <immintrin.h>
 #endif
 
@@ -75,11 +76,38 @@ __attribute__((target("sha,sse4.1"))) static void blocks_ni(uint32_t h[8], const
 }
 #endif
 
+// blocks_ni runs where CPUID reports the SHA extensions (leaf 7, subleaf 0, EBX bit 29), SSE4.1 (leaf 1, ECX bit 19)
+// and SSSE3 (leaf 1, ECX bit 9: the byte shuffle and the byte align). CPUID is read directly rather than through
+// __builtin_cpu_supports("sha"): clang before 19 rejects that feature name and stops the compile (Ubuntu 24.04's
+// clang 18). -1 until the first hash asks; tests/sha256_paths_check.c sets it to run one form or the other.
+static int g_ni = -1;
+
+#if defined(__x86_64__)
+static int cpu_has_sha_ni(void) {
+    unsigned a, b, c, d;
+    if (!__get_cpuid(1, &a, &b, &c, &d) || (c & (bit_SSSE3 | bit_SSE4_1)) != (bit_SSSE3 | bit_SSE4_1)) return 0;
+    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;   // a CPU without leaf 7 has no SHA either
+    return (b & bit_SHA) != 0;
+}
+#endif
+
+int sha256_ni(void) {
+#if defined(__x86_64__)
+    int ni = __atomic_load_n(&g_ni, __ATOMIC_RELAXED);
+    if (ni < 0) {   // threads that race here all store the same answer
+        ni = cpu_has_sha_ni();
+        __atomic_store_n(&g_ni, ni, __ATOMIC_RELAXED);
+    }
+    return ni;
+#else
+    (void)g_ni;   // the portable C form is the only one off x86-64
+    return 0;
+#endif
+}
+
 static void blocks(uint32_t h[8], const uint8_t *p, size_t n) {
 #if defined(__x86_64__)
-    static int ni = -1;
-    if (ni < 0) ni = __builtin_cpu_supports("sha") && __builtin_cpu_supports("sse4.1");
-    if (ni) return blocks_ni(h, p, n);
+    if (sha256_ni()) return blocks_ni(h, p, n);
 #endif
     blocks_c(h, p, n);
 }

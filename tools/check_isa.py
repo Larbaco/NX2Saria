@@ -36,7 +36,7 @@ WIDE = re.compile(r'%[yz]mm\d|%k[0-7]\b')
 
 # Function -> the runtime check that keeps it off CPUs without the instructions.
 DISPATCHED = {
-    'blocks_ni': 'runtime/sha256.c sha256_blocks: __builtin_cpu_supports("sha") && __builtin_cpu_supports("sse4.1")',
+    'blocks_ni': 'runtime/sha256.c sha256_ni: CPUID leaf 7 EBX bit 29 (SHA) and leaf 1 ECX bit 19 (SSE4.1)',
     'kern_ap_stub_ymm': 'runtime/kernel.c ap_init: cpu_keeps_ymm() (CPUID AVX and OSXSAVE, XCR0 bits 1 and 2)',
 }
 
