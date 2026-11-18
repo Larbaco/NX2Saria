@@ -754,7 +754,7 @@ def add_arguments(parser):
     g.add_argument('--min-jobs', type=int, metavar='N', default=None,
                    help=f'compiles that may always run, whatever the free memory; default 1 (or {ENV_MIN_JOBS})')
     g.add_argument('--no-mem-gate', action='store_true',
-                   help=f'start compiles by the job count alone (or {ENV_GATE}=off)')
+                   help=f'start compiles by the job count alone: nothing then limits them by memory (or {ENV_GATE}=off)')
 
 
 def _env_number(name, kind):

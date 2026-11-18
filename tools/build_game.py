@@ -39,9 +39,20 @@ objects Ninja just rebuilt (new mtime). A mismatch deletes the object, Ninja rec
 summary line. A fork checks the hardlinked generated objects against build/<version>/obj/objects.sha256 (read-only; a
 bad shared object stops the fork and asks for a main build run, which recompiles it and breaks the shared inode).
 
-Compile jobs share a memory budget (MEM_BUDGET, default the smaller of 50 GiB and 80% of RAM) at JOB_MEM per job, so a
-big machine does not run out of memory on the largest chunks. Each phase reports its wall time and the peak memory
-of its processes (Windows job object accounting: committed private bytes).
+Memory. Ninja runs up to --jobs compiles at once (default one per processor), and each compile goes through the memory
+gate (tools/memgate.py wrap): it starts only when the free memory, less what the running compiles may still take and
+less a reserve, holds that compile's estimated peak. The estimates live in <out>/memgate/estimates.json: each object's
+peak measured in earlier builds, else a size model from the lift manifest's chunk_info, else 400 MiB (C) or 1 GiB (C++)
+for a runtime source. Before Ninja, build_game.py writes the gate's settings and every object's need into
+<out>/memgate; after the compile phase it reads the peaks the wrappers recorded, learns them and prints a summary (held
+compiles, the largest peaks, the peak of all compiles together, the least free memory, how close the estimates came).
+--no-mem-gate (or NX2SARIA_BUILD_MEM_GATE=off) starts compiles by the job count alone, and then nothing limits the
+compiles by memory; the wrappers still measure. Each build folder has its own gate, so two builds running at once see
+each other only through the free memory. The wrapper's command names this Python and tools/memgate.py (relative to the
+root where they lie below it): a build with another Python, and the first build after this change, compile every
+object again. Under SCCACHE the compiles run in sccache's server, out of the wrapper's reach, so build.ninja leaves
+the wrapper out and the gate is off. Each phase also reports its wall time and the peak memory of its processes
+(Windows job object accounting: committed private bytes).
 
 --ninja PATH names the Ninja to run; without MSYS2 the bin/ninja.exe of the release folder (tools/make_release.py) is used.
 --toolchain DIR builds with an llvm-mingw tree (DIR/bin/clang.exe) instead of MSYS2 UCRT64 clang. Ninja still comes
@@ -56,6 +67,7 @@ game hashes and version in) and links them with that library. The library holds 
 Standard library only.
 """
 import argparse
+import collections
 import ctypes
 import ctypes.wintypes as wt   # the job-object structures below; importing it works on every OS
 import hashlib
@@ -63,8 +75,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -72,6 +86,8 @@ from pathlib import Path
 import check_isa
 import romfs_index
 import build_shaders
+import hostmem
+import memgate
 from check_content import GENERATED_MARKER
 
 WIN = os.name == 'nt'
@@ -239,10 +255,6 @@ DEPS = None            # the deps directory of an llvm-mingw build
 DISPLAY_VERSIONS = {'v0': '1.0.0', 'v110': '1.1.0', 'v112': '1.1.2', 'v121': '1.2.1', 'v143': '1.4.3'}
 
 GiB = 1 << 30
-# Peak commit of one compile, 1.2.1 at -O1 (2026-10-20): 120-180 MiB per ~3 MiB chunk, 568 MiB for main_table.c
-# (295k-entry tables). 768 MiB leaves headroom for the largest file.
-JOB_MEM = 768 << 20
-MEM_BUDGET = 50 * GiB  # total for all compile jobs
 
 
 def below_root(p):
@@ -409,6 +421,55 @@ def port_version():
     return path.read_text(encoding='utf-8').strip() if path.is_file() else 'unknown'
 
 
+MEMGATE = Path(__file__).resolve().parent / 'memgate.py'
+GATE_DIR = 'memgate'                # <out>/memgate: the gate's state folder (memgate.prepare_state) and estimates.json
+ESTIMATES = 'estimates.json'
+DEFAULT_NEED_C = 400 << 20          # a runtime source's need until its peak has been measured once
+DEFAULT_NEED_CXX = 1 << 30
+CXX_SUFFIXES = {'.cpp'}
+LARGEST_SHOWN = 5
+NINJA_GRACE = 5.0                   # seconds Ninja gets to stop its compiles after Ctrl+C before it is killed
+
+
+def sccache():
+    """Whether a compiler cache fronts clang (SCCACHE). Its server runs the compiles, out of the wrapper's process tree,
+    so the gate can neither measure nor pace them: build.ninja then leaves the wrapper out."""
+    return bool(os.environ.get('SCCACHE'))
+
+
+def interpreter():
+    """This Python for a Ninja command: relative to the root when it lies below it (the usual .venv), else absolute.
+    Not resolved: a venv's python is a link whose own path selects the venv."""
+    exe = Path(os.path.abspath(sys.executable))
+    for root in (ROOT, MAIN_ROOT):
+        if exe.is_relative_to(root):
+            return cmd_arg(exe.relative_to(root).as_posix())
+    return cmd_arg(exe.as_posix())
+
+
+def gate_command(out):
+    """The memory gate's wrapper ahead of a compile command in build.ninja: this Python running tools/memgate.py wrap
+    with the state folder <out>/memgate and the object ($out) as the name its need is filed under; '' under SCCACHE.
+    It holds nothing that changes between runs, and its paths are relative to the root where they can be; another
+    Python still changes it, and with it every compile command."""
+    if sccache():
+        return ''
+    return f'{interpreter()} {cmd_path(MEMGATE)} wrap --state {cmd_path(out / GATE_DIR)} --name $out -- '
+
+
+def runtime_compiles(out, skip=(), runtime_lib=None, make_lib=False):
+    """[(source, object)] of the runtime files the build compiles (see ninja_file): every runtime source but skip;
+    make_lib: without INSTALL_SIDE; runtime_lib: only INSTALL_SIDE; modules.c except for make_lib."""
+    sources = runtime_sources(skip)
+    if make_lib:
+        sources = [p for p in sources if p.name not in INSTALL_SIDE]
+    elif runtime_lib:
+        sources = [p for p in sources if p.name in INSTALL_SIDE] + [out / 'modules.c']
+    else:
+        sources += [out / 'modules.c']
+    return [(src, runtime_object(out, src)) for src in sources]
+
+
 def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=None, make_lib=False):
     """build.ninja text, and the object lists per module. With prebuilt the generated objects already exist in
     out/obj and are link inputs without a compile edge. runtime_lib: a prebuilt library replaces the runtime objects
@@ -424,6 +485,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
     # A compiler cache (sccache) may front clang: every lift rewrites the generated chunks with the same contents, so
     # the cached objects save the compile step on the next build.
     cache = f'{cmd_arg(os.environ["SCCACHE"])} ' if os.environ.get('SCCACHE') else ''
+    gate = gate_command(out)
     lines = [
         '# Written by tools/build_game.py; do not edit.',
         'ninja_required_version = 1.10',
@@ -438,13 +500,13 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         f'  depth = {pool_depth}',
         '',
         'rule cc_gen',
-        '  command = $cc $genflags -MD -MF $out.d -c $in -o $out',
+        f'  command = {gate}$cc $genflags -MD -MF $out.d -c $in -o $out',
         '  deps = gcc',
         '  depfile = $out.d',
         '  description = CC $in',
         '',
         'rule cc_rt',
-        '  command = $cc $rtflags -MD -MF $out.d -c $in -o $out',
+        f'  command = {gate}$cc $rtflags -MD -MF $out.d -c $in -o $out',
         '  deps = gcc',
         '  depfile = $out.d',
         '  description = CC $in',
@@ -472,15 +534,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
                 lines.append('  pool = gen')
             objs[mod].append(o)
     rt = []
-    sources = runtime_sources(skip)
-    if make_lib:
-        sources = [p for p in sources if p.name not in INSTALL_SIDE]
-    elif runtime_lib:
-        sources = [p for p in sources if p.name in INSTALL_SIDE] + [out / 'modules.c']
-    else:
-        sources += [out / 'modules.c']
-    for src in sources:
-        o = runtime_object(out, src)
+    for src, o in runtime_compiles(out, skip, runtime_lib, make_lib):
         if src.suffix == '.rc':   # windres writes no depfile: the files nx2saria.rc embeds are listed by hand
             lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "nx2saria.manifest")} '
                          f'{ninja_path(RUNTIME / "nx2saria.ico")}')
@@ -680,6 +734,177 @@ def verify_objects(out, objs, borrowed, main_out, pairs, base, env):
     print(f'objects verified: {verified}, recompiled after a hash mismatch: {recompiled} ({time.monotonic() - t0:.1f} s)')
 
 
+# ---- The memory gate: what each compile needs, before Ninja; what it took, after
+
+def chunk_costs(gen, mod):
+    """{file name: (cost, switch_fn)} of one module's generated C, from its manifest's chunk_info (recomp/gen.py):
+    "cost" (the bytes of ordinary C the compile is worth) and "switch_fn" (the bytes of the largest function with a
+    jump-table branch, which drives the compiler's peak) when given, else "bytes" and 0. Files it does not list are
+    absent (the caller takes their size)."""
+    try:
+        data = json.loads((gen / mod / 'manifest.json').read_text(encoding='utf-8'))
+        entries = (data.get('chunk_info') or []) if isinstance(data, dict) else []
+    except (OSError, ValueError):
+        entries = []
+    out = {}
+    for e in entries:
+        if not isinstance(e, dict) or not isinstance(e.get('file'), str):
+            continue
+        cost, switch_fn = e.get('cost'), e.get('switch_fn', 0)
+        if not isinstance(cost, int) or cost <= 0:
+            cost, switch_fn = e.get('bytes'), 0
+        if isinstance(cost, int) and cost > 0:
+            out[Path(e['file']).name] = (cost, switch_fn if isinstance(switch_fn, int) and switch_fn > 0 else 0)
+    return out
+
+
+class Compile(collections.namedtuple('Compile', 'src src_bytes cost switch_fn default')):
+    """One compile through the gate: its source, the source's size, its cost and switch_fn (the size model's inputs; 0
+    for a runtime source) and the need to take until it has been measured (None: the size model's)."""
+
+
+def gate_compiles(gen, out, mods, prebuilt, runtime):
+    """{object name as the wrapper sees $out: Compile} of every compile build.ninja runs through the gate. mods: the
+    generated C per module (compiled unless prebuilt); runtime: runtime_compiles() (the .rc goes to windres, not the
+    gate)."""
+    todo = {}
+    if not prebuilt:
+        for mod, files in mods.items():
+            costs = chunk_costs(gen, mod)
+            for f in files:
+                size = f.stat().st_size
+                cost, switch_fn = costs.get(f.name, (size, 0))
+                todo[flag_path(out / 'obj' / mod / (f.stem + '.o'))] = Compile(f, size, cost, switch_fn, None)
+    for src, o in runtime:
+        if src.suffix == '.rc':
+            continue
+        size = src.stat().st_size if src.is_file() else 0
+        default = DEFAULT_NEED_CXX if src.suffix in CXX_SUFFIXES else DEFAULT_NEED_C
+        todo[flag_path(o)] = Compile(src, size, 0, 0, default)
+    return todo
+
+
+def gate_needs(estimates, todo):
+    """({name: bytes} for needs.json, Counter of how each need was estimated)."""
+    needs, hows = {}, collections.Counter()
+    for name, c in todo.items():
+        need, how = estimates.need(name, c.src_bytes, c.cost, c.switch_fn, default=c.default)
+        needs[name] = need
+        hows[how] += 1
+    return needs, hows
+
+
+def gate_off_why(args):
+    """Why the gate is off ('--no-mem-gate' or the environment variable's setting), '' when it is on."""
+    if getattr(args, 'no_mem_gate', False):
+        return '--no-mem-gate'
+    value = os.environ.get(memgate.ENV_GATE, '').strip()
+    return f'{memgate.ENV_GATE}={value}' if value.lower() in ('off', '0', 'no', 'false') else ''
+
+
+def gate_start_line(settings, jobs, hows, off):
+    """The line before Ninja on the memory gate."""
+    if sccache():
+        return (f'memory gate: off: the compiles run in sccache\'s server (SCCACHE), out of its reach; up to {jobs} '
+                'compiles at once')
+    if not settings['enabled']:
+        return f'memory gate: off ({off}); up to {jobs} compiles at once'
+    ceiling = 'no ceiling' if settings['ceiling'] is None else f'ceiling {memgate.gib(settings["ceiling"])} GiB'
+    line = (f'memory gate: on; up to {jobs} compiles at once, at least {min(jobs, settings["min_jobs"])}; keeps '
+            f'{memgate.gib(settings["reserve"])} GiB free; {ceiling}; estimates: {hows["learned"]} learned from '
+            f'earlier builds, {hows["model"]} from the size model')
+    if hows['default']:
+        line += (f', {hows["default"]} set at {DEFAULT_NEED_C >> 20} MiB (C) or {DEFAULT_NEED_CXX >> 30} GiB (C++) '
+                 'until measured')
+    return line
+
+
+def learn_peaks(estimates, todo, peaks):
+    """Record in estimates the peak of each successful compile in peaks (memgate.read_peaks lines) whose object is in
+    todo. [(name, peak, seconds)] of those."""
+    measured = []
+    for p in peaks:
+        name, c = p.get('name'), todo.get(p.get('name'))
+        peak, seconds = p.get('peak'), p.get('seconds')
+        if c is None or p.get('rc') != 0 or not isinstance(peak, int) or peak <= 0 or \
+                not isinstance(seconds, (int, float)):
+            continue
+        estimates.record(name, peak, seconds, c.src_bytes, c.cost, c.switch_fn)
+        measured.append((name, peak, seconds))
+    return measured
+
+
+def gate_summary_lines(peaks, measured, estimates, sampler, enabled):
+    """The compile phase's closing lines on memory, from the wrappers' peaks.jsonl lines (peaks), the compiles
+    recorded from them (measured: learn_peaks), the estimates and the TreeSampler that watched the phase."""
+    failed = sum(1 for p in peaks if p.get('rc') != 0)
+    lines = [f'memory gate: {len(peaks)} compiles ran' + (f', {failed} failed' if failed else '')]
+    if enabled:
+        held = [p for p in peaks if isinstance(p.get('held'), (int, float)) and p['held'] > 0]
+        if held:
+            longest = max(held, key=lambda p: p['held'])
+            lines.append(f'memory gate: {len(held)} compiles held for memory, '
+                         f'{sum(p["held"] for p in held):.1f} s in all; longest {longest["held"]:.1f} s '
+                         f'({longest.get("name")})')
+        else:
+            lines.append('memory gate: no compile was held for memory')
+    parts = []
+    if sampler is not None and sampler.peak_at is not None:
+        parts.append(f'peak {memgate.gib(sampler.peak)} GiB for Ninja and all compiles together '
+                     f'(at {sampler.peak_at:.0f} s)')
+    if sampler is not None and sampler.lowest_avail is not None:
+        parts.append(f'least free memory {memgate.gib(sampler.lowest_avail)} GiB')
+    if parts:
+        lines.append('compile memory: ' + ', '.join(parts))
+    top = sorted(measured, key=lambda m: m[1], reverse=True)[:LARGEST_SHOWN]
+    if top:
+        lines.append('largest compiles: ' + ', '.join(f'{name} {peak / GiB:.2f} GiB {seconds:.0f} s'
+                                                      for name, peak, seconds in top))
+    st = estimates.stats()
+    if st['measured'] and st['median'] and st['worst']:
+        # stats() gives peak / estimate; the line says estimate / peak, so the lowest is the worst under-estimate
+        lines.append(f'estimates against the measured peaks: median {1 / st["median"]:.2f}x, lowest '
+                     f'{1 / st["worst"]:.2f}x ({st["worst_name"]})')
+    return lines
+
+
+class TreeSampler:
+    """Every poll seconds between start(pid) and stop(): the most memory resident in the process tree under pid
+    (Ninja, the gate's wrappers and the compilers) and the least free memory, for the compile phase's summary."""
+
+    def __init__(self, rss=memgate.rss_now, avail=hostmem.available_ram, poll=memgate.POLL,
+                 clock=time.monotonic):
+        self._rss, self._avail, self.poll, self._clock = rss, avail, poll, clock
+        self.peak, self.peak_at, self.lowest_avail = 0, None, None
+        self._stop = threading.Event()
+        self._thread = None
+        self._t0 = None
+
+    def start(self, pid):
+        self._t0 = self._clock()
+        self._thread = threading.Thread(target=self._run, args=(pid,), name='build-sampler', daemon=True)
+        self._thread.start()
+
+    def sample(self, pid):
+        try:
+            rss, avail = self._rss(pid), self._avail()
+        except Exception:   # a reading that fails only loses one sample
+            return
+        if rss > self.peak:
+            self.peak, self.peak_at = rss, self._clock() - self._t0
+        if avail is not None and (self.lowest_avail is None or avail < self.lowest_avail):
+            self.lowest_avail = avail
+
+    def _run(self, pid):
+        while not self._stop.wait(self.poll):
+            self.sample(pid)
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+
+
 # ---- Windows job object: peak memory of a process tree
 class IoCounters(ctypes.Structure):
     _fields_ = [(n, ctypes.c_ulonglong) for n in ('r_ops', 'w_ops', 'o_ops', 'r_bytes', 'w_bytes', 'o_bytes')]
@@ -703,12 +928,28 @@ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 CREATE_SUSPENDED = 0x4
 
 
-def run_measured(cmd, env):
+def run_measured(cmd, env, on_start=None):
     """Run cmd in its own job object. Returns (exit code, seconds, peak bytes of one process, peak bytes of all).
-    Off Windows: the largest resident set of one child process, and 0 for all of them (no job accounting)."""
+    Off Windows: the largest resident set of one child process, and 0 for all of them (no job accounting).
+    on_start(pid) is called once the process runs."""
     if not WIN:
         t0 = time.monotonic()
-        code = subprocess.call(cmd, cwd=ROOT, env=env)
+        proc = subprocess.Popen(cmd, cwd=ROOT, env=env)
+        try:
+            if on_start is not None:
+                on_start(proc.pid)
+            code = proc.wait()
+        except BaseException as e:
+            # Ctrl+C reached Ninja too (same process group); anything else asks it to stop the same way. Ninja then
+            # ends its compiles; it is killed if it has not stopped within NINJA_GRACE.
+            if not isinstance(e, KeyboardInterrupt):
+                proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(NINJA_GRACE)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                proc.kill()
+                proc.wait()
+            raise
         peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024   # KiB on Linux
         return code, time.monotonic() - t0, peak, 0
     k32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -732,6 +973,8 @@ def run_measured(cmd, env):
         print(f'build_game: cannot track memory (error {ctypes.get_last_error()})', file=sys.stderr)
     ntdll.NtResumeProcess(int(proc._handle))
     try:
+        if on_start is not None:
+            on_start(proc.pid)
         code = proc.wait()
     except KeyboardInterrupt:
         k32.CloseHandle(job)
@@ -741,19 +984,6 @@ def run_measured(cmd, env):
                                   ctypes.sizeof(info), None)
     k32.CloseHandle(job)
     return code, dt, info.PeakProcessMemoryUsed, info.PeakJobMemoryUsed
-
-
-def total_ram():
-    if not WIN:
-        return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
-
-    class MemStatus(ctypes.Structure):
-        _fields_ = [('dwLength', wt.DWORD), ('dwMemoryLoad', wt.DWORD)] + \
-                   [(n, ctypes.c_ulonglong) for n in ('total', 'avail', 'tpf', 'apf', 'tv', 'av', 'aev')]
-    s = MemStatus()
-    s.dwLength = ctypes.sizeof(s)
-    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s))
-    return s.total
 
 
 def pe_sections(path):
@@ -817,7 +1047,8 @@ def main():
     ap.add_argument('--gen', type=Path, help='generated C directory (default generated/<version>)')
     ap.add_argument('--out', type=Path, help='build directory (default build/<version>)')
     ap.add_argument('--modules', help='comma-separated subset of the layout modules (default all)')
-    ap.add_argument('--jobs', type=int, help='parallel compiles (default: by memory budget and CPU count)')
+    ap.add_argument('--jobs', type=int, help='most compiles at once (default: one per processor); the memory gate '
+                                             'starts each one when the free memory holds it')
     ap.add_argument('--compile-only', action='store_true', help='compile, do not link')
     ap.add_argument('--runtime', type=Path, help='runtime source directory (default runtime)')
     ap.add_argument('--full-build', action='store_true',
@@ -854,6 +1085,7 @@ def main():
                          '.profdata (tools/pgo.py merge)')
     ap.add_argument('--expected', type=Path,
                     help='expected hashes (default tools/data/expected-<display version>.json)')
+    memgate.add_arguments(ap)
     args = ap.parse_args()
     set_cpu(args.cpu)
 
@@ -923,9 +1155,7 @@ def main():
     # --make-runtime-lib builds runtime/ only, so it never reads the generated chunks
     mods = {} if args.make_runtime_lib else {m: chunk_files(gen, m) for m in linked}
 
-    cpus = os.cpu_count() or 1
-    budget = min(MEM_BUDGET, int(total_ram() * 0.8))
-    jobs = args.jobs or max(1, min(cpus, budget // JOB_MEM))
+    jobs = max(1, args.jobs or os.cpu_count() or 1)
     missing = [n for n in names if n not in hashes]
     if missing:
         sys.exit(f'{expected}: no exefs_sha256 for {missing}')
@@ -972,6 +1202,16 @@ def main():
     text, objs, exe = ninja_file(gen, out, mods, jobs, skip, pairs is not None, runtime_lib,
                                  args.make_runtime_lib)
     write_if_changed(out / 'build.ninja', text)
+    gate_dir = out / GATE_DIR
+    gate_settings = memgate.settings(args)
+    estimates = memgate.Estimates.load(gate_dir / ESTIMATES)
+    todo = gate_compiles(gen, out, mods, pairs is not None, runtime_compiles(out, skip, runtime_lib,
+                                                                             args.make_runtime_lib))
+    gated = not sccache()
+    hows = collections.Counter()
+    if gated:
+        needs, hows = gate_needs(estimates, todo)
+        memgate.prepare_state(gate_dir, jobs, gate_settings, needs)
 
     env = dict(os.environ)
     if WIN or TOOLCHAIN_BIN:
@@ -979,9 +1219,21 @@ def main():
     base = [str(NINJA), '-f', str(out / 'build.ninja'), '-j', str(jobs)]
     nfiles = sum(len(v) for v in mods.values())
     print(f'build_game: {nfiles} generated files in {len(linked)} modules ({", ".join(linked)}), {jobs} jobs', flush=True)
+    print(gate_start_line(gate_settings, jobs, hows, gate_off_why(args)), flush=True)
 
-    code, dt, peak_one, peak_all = run_measured(base + ['objects'], env)
+    sampler = TreeSampler()
+    try:
+        code, dt, peak_one, peak_all = run_measured(base + ['objects'], env, on_start=sampler.start)
+    finally:
+        sampler.stop()
     print(f'compile: {dt:.1f} s, peak {mib(peak_one)} per process' + (f', {mib(peak_all)} all processes' if WIN else ''))
+    peaks = memgate.read_peaks(gate_dir) if gated else []
+    measured = learn_peaks(estimates, todo, peaks)
+    if measured:
+        estimates.save()
+    if peaks:
+        for line in gate_summary_lines(peaks, measured, estimates, sampler, gate_settings['enabled']):
+            print(line)
     if code:
         sys.exit(code)
     for mod, files in objs.items():
