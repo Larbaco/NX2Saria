@@ -26,8 +26,10 @@ tracker API this PR extends ([NX2Saria#7](https://github.com/Larbaco/NX2Saria/pu
 >   polling tracker get `unchanged` instead of the records. A kind is answered whole or refused, never with made-up
 >   values: -32002 when asking again may answer (no save loaded yet, the game changed the kind during the copy, a
 >   value it cannot read now), -32003 when it will not (another game version, an entry without the kind's vtable).
-> - `status.methods` lists the methods; `nx2saria.state` gains `player.rotation` (the port's own reader,
->   `dbg_player_rot`) and `game_data` (the manager is there).
+> - `status.methods` lists the methods and `status.save_dir` names the folder of the save the game loads and writes
+>   (`fs_host.c fs_save_dir`, escaped as JSON), so a tracker follows this game's saves and not another install's;
+>   `nx2saria.state` gains `player.rotation` (the port's own reader, `dbg_player_rot`) and `game_data` (the game data
+>   is there).
 > - `DBG_GAME_DATA_SLOT` in `runtime/debug_tools.h`, shared by the debug menu and the API.
 > - Nothing runs on the game's threads, and every copy goes through `guest_copy` (the game's own regions only). A
 >   request copies one kind, one request at a time: for `Bool`, the most, about 265 KiB of entries and 175 KiB of
@@ -59,7 +61,7 @@ a save.
 
 **Patch:** [hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against hyrule-tracker `master` at `1fb2777` (v1.4.2;
 applies cleanly; first written against v1.1.1; its header carries the tracker's MIT notice for the lines it quotes).
-Five files, about 515 lines added, 280 of them the module and 165 its test.
+Six files, about 545 lines added, 290 of them the module and 170 its test.
 
 **Title:** Read NX2Saria live through its tracker API, and find its saves
 
@@ -84,8 +86,12 @@ Five files, about 515 lines added, 280 of them the module and 165 its test.
 >    `nx2saria.game_data`, it reads through it (`apiStep`). Bool, Int, Enum and the placed objects are required; the
 >    area, the place within it and the Int64s are left out when the game refuses them. A refusal for a moment (a save
 >    being written or loaded) keeps the live state up to 3 s; "not on this build" (-32003) or another `format` says so.
->    Without memory access (Linux) the status stays "unavailable" until NX2Saria answers. The decision after a read
->    (`publish`) and the player update (`setPlayer`) are shared with the memory path.
+>    Without memory access the status stays "unavailable" until NX2Saria answers. The decision after a read
+>    (`publish`) and the player update (`setPlayer`) are shared with the memory path. The session hands the save
+>    folder NX2Saria names (`status.save_dir`) to `onGame`.
+> 6. `src/main/controller.ts`: `followGame` switches to the folder a game names as it does to one found from an exe
+>    (not when a slot is pinned or a folder was picked by hand), so the tracker follows NX2Saria's saves rather than
+>    the newest of any install (an emulator's, in a test on a PC with both).
 > 3. `src/gamedata/saves.ts`: NX2Saria's game files (`ocarina.exe`, `nx2saria.exe`; without `.exe` off Windows, and
 >    only files) in the install search and its label, `<game>/profile/save` and the launcher's `<install>/game/profile/save` in
 >    `resolveUserFolders`, `NX2Saria` among the default install folders.
@@ -110,9 +116,8 @@ Five files, about 515 lines added, 280 of them the module and 165 its test.
 **What the tracker gains:** live tracking on Linux, and on Windows without reading another process's memory; no table
 search (the first read is immediate); the place within an area and the placed objects as for the other ports.
 
-**Not proposed:** following NX2Saria's save folder when it starts (`followGame` needs the game's exe path, which the
-API does not give; the install search finds the folder, or the player picks it). The activity screenshot for NX2Saria
-(`captureGame` needs the game's process id, which the API does not give).
+**Not proposed:** the activity screenshot for NX2Saria (`captureGame` needs the game's process id, which the API does
+not give).
 
 **License:** the patch's new lines would be contributed under the tracker's MIT license. The patch quotes some of
 the tracker's lines as diff context; they stay MIT and the tracker's.

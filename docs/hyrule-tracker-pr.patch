@@ -39,10 +39,10 @@ index fb055d0..93a2553 100644
  
 diff --git a/src/gamedata/nx2saria.ts b/src/gamedata/nx2saria.ts
 new file mode 100644
-index 0000000..b25172a
+index 0000000..a19f43d
 --- /dev/null
 +++ b/src/gamedata/nx2saria.ts
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,289 @@
 +// NX2Saria (a native PC port of the game, Windows and Linux) answers the running game's progress itself, read-only
 +// and to this PC only, through its tracker API on 127.0.0.1:6545 (`tracker_api = 1` in its nx2saria.ini): the
 +// values of the game data by the same Murmur3 keys the save files use (nx2saria.game_data), and Link's place
@@ -134,7 +134,11 @@ index 0000000..b25172a
 +  }
 +}
 +
-+export interface ApiStatus { powered_on: boolean; emulator: string; game_version: string; api_version: number; methods?: string[] }
++export interface ApiStatus {
++  powered_on: boolean; emulator: string; game_version: string; api_version: number; methods?: string[];
++  /** The folder of the save the game loads and writes (<profile>/save/<account>, with its slot_*), when it says. */
++  save_dir?: string | null;
++}
 +export interface ApiState {
 +  area: string | null;
 +  player: { x: number; y: number; z: number; rotation: number[] | null } | null;
@@ -256,7 +260,12 @@ index 0000000..b25172a
 +  private keys?: { digest: string; set: Set<bigint> };
 +  private resettable?: Set<bigint>;
 +
-+  private constructor(private client: Nx2SariaClient) {}
++  /** Where the running game keeps the save it loads and writes, as it said when the session opened. */
++  readonly saveDir?: string;
++
++  private constructor(private client: Nx2SariaClient, status: ApiStatus) {
++    this.saveDir = typeof status.save_dir === 'string' && status.save_dir ? status.save_dir : undefined;
++  }
 +
 +  /** The API when NX2Saria answers on the port, else undefined. */
 +  static async open(port = NX2SARIA_PORT): Promise<ApiSession | undefined> {
@@ -264,7 +273,7 @@ index 0000000..b25172a
 +    try {
 +      client = await Nx2SariaClient.connect(port);
 +      const st = await client.call<ApiStatus>('status', {}, 700);
-+      if (isNx2Saria(st)) return new ApiSession(client);
++      if (isNx2Saria(st)) return new ApiSession(client, st);
 +    } catch { /* nothing there, or not NX2Saria */ }
 +    client?.close();
 +    return undefined;
@@ -383,8 +392,48 @@ index 0110ad4..0c59514 100644
    return [...emulatorDataDirs(roaming), ...emulatorDataDirs(local),
      ...storage.flatMap(base => native.map(name => path.join(base, name))),
      ...configPaths(local, 'Ocarina Reborn/Config/settings.json', ['game_dir'], prefix),
+diff --git a/src/main/controller.ts b/src/main/controller.ts
+index 999b600..569f3ab 100644
+--- a/src/main/controller.ts
++++ b/src/main/controller.ts
+@@ -3,7 +3,7 @@
+ import fs from 'node:fs';
+ import path from 'node:path';
+ import { parseGameData, GameDataFile, GameDataError } from '../gamedata/parser.js';
+-import { candidateGameFoldersAsync, detectInFolders, installationLabel, latestSaveFoldersByProgram, latestUserFolder, resolvePickedFolder, resolveUserFolders, listSlots, mostRecentSlot, readSaveStable, userFolderForExe, SlotInfo } from '../gamedata/saves.js';
++import { candidateGameFoldersAsync, detectInFolders, installationLabel, isUserFolder, latestSaveFoldersByProgram, latestUserFolder, resolvePickedFolder, resolveUserFolders, listSlots, mostRecentSlot, readSaveStable, userFolderForExe, SlotInfo } from '../gamedata/saves.js';
+ import { loadNames } from '../gamedata/names.js';
+ import { Tracker, ChecklistFile, MappingFile, DescriptionsFile, applyDescriptions } from '../core/tracker.js';
+ import { regionsForArea } from '../core/areas.js';
+@@ -278,7 +278,7 @@ export class Controller {
+         s.live.hints = [...new Set([h, ...prev])].slice(0, 4);
+         s.live.hint = h;
+       }),
+-      onGame: (exe, appData) => this.followGame(exe, appData),
++      onGame: (exe, appData, saveDir) => this.followGame(exe, appData, saveDir),
+       onChange: () => void this.refresh(true),
+       onPlayer: () => this.emitPlayer(),
+       onStatus: () => {
+@@ -353,12 +353,13 @@ export class Controller {
+    * When a game starts, follow its saves: Hookshot, Longshot, NX2navi, ReLink and Fritchii each keep their
+    * own. Not while a slot is pinned (that's a choice of save), and only if it has saves.
+    */
+-  private async followGame(exe: string | undefined, appData?: string) {
++  private async followGame(exe: string | undefined, appData?: string, saveDir?: string) {
+     // A folder picked by hand is a choice too (like a pinned slot).
+-    if (!exe || this.settings.data.pinnedSlot || (this.settings.data.manualSaveDir && this.userDir)) return;
+-    const dir = userFolderForExe(exe, appData);
++    if ((!exe && !saveDir) || this.settings.data.pinnedSlot || (this.settings.data.manualSaveDir && this.userDir)) return;
++    // NX2Saria says which save folder it uses; the other games' folders are found from their exe.
++    const dir = saveDir && isUserFolder(saveDir) ? saveDir : exe ? userFolderForExe(exe, appData) : null;
+     if (!dir || path.resolve(dir).toLowerCase() === path.resolve(this.userDir ?? '').toLowerCase()) return;
+-    const game = path.dirname(exe).replace(/[\\/]bin$/i, '');
++    const game = exe ? path.dirname(exe).replace(/[\\/]bin$/i, '') : 'NX2Saria';
+     this.log.write({ kind: 'source', status: 'switched', detail: `Following the running game: ${game}` });
+     this.toast("Switched to the saves of the game that's running ({game}).", 8000, { game });
+     await this.useFolder(dir);
 diff --git a/src/main/live.ts b/src/main/live.ts
-index e788e4d..9fb3a31 100644
+index e788e4d..8021e56 100644
 --- a/src/main/live.ts
 +++ b/src/main/live.ts
 @@ -1,11 +1,13 @@
@@ -402,7 +451,21 @@ index e788e4d..9fb3a31 100644
  import { NATIVE_EXES, EMULATOR_EXES } from '../gamedata/saves.js';
  import type { LiveInfo } from '../shared/types.js';
  import { PlayerReader, type LivePlayer } from '../gamedata/player.js';
-@@ -59,12 +61,19 @@ export class LiveSource {
+@@ -35,8 +37,11 @@ export interface LiveOptions {
+   /** Table addresses found before (hex), newest first. */
+   hints: string[];
+   onHint(hex: string): void;
+-  /** A game was attached to: the full path of its exe if the system gave it, and its %APPDATA% when it runs in a Wine/Proton prefix. */
+-  onGame?(exe: string | undefined, appData?: string): Promise<void>;
++  /**
++   * A game was attached to: the full path of its exe if the system gave it, and its %APPDATA% when it runs in a
++   * Wine/Proton prefix; or, for a game that says it (NX2Saria), the folder of the save it uses.
++   */
++  onGame?(exe: string | undefined, appData?: string, saveDir?: string): Promise<void>;
+   onChange(): void;
+   onStatus(): void;
+   /** Link moved (or changed scene). Read it with player(). */
+@@ -59,12 +64,19 @@ export class LiveSource {
    private inFlight?: Promise<void>;
    private playerReader?: PlayerReader;
    private playerNow?: LivePlayer & { atMs: number };
@@ -423,7 +486,7 @@ index e788e4d..9fb3a31 100644
      this.set({ status: 'no-game' });
      this.timer = setInterval(() => void this.tick(), TICK_MS);
      void this.tick();
-@@ -86,7 +95,7 @@ export class LiveSource {
+@@ -86,7 +98,7 @@ export class LiveSource {
    }
  
    /** Link's latest live position, while a game is attached and it could be read. */
@@ -432,7 +495,7 @@ index e788e4d..9fb3a31 100644
  
    /** Live data, only while it matches the reference save. */
    current() { return this.info.status === 'live' ? this.snapshot : undefined; }
-@@ -108,6 +117,8 @@ export class LiveSource {
+@@ -108,6 +120,8 @@ export class LiveSource {
    private detach() {
      this.mem?.close();
      this.mem = undefined;
@@ -441,7 +504,7 @@ index e788e4d..9fb3a31 100644
      this.tables = undefined;
      this.snapshot = undefined;
      this.lastPrint = undefined;
-@@ -119,6 +130,7 @@ export class LiveSource {
+@@ -119,6 +133,7 @@ export class LiveSource {
  
    private tick() {
      this.inFlight ??= this.step().catch(e => {
@@ -449,7 +512,7 @@ index e788e4d..9fb3a31 100644
        console.error('live', e);
        this.detach();
        this.set({ status: 'no-game', detail: String((e as Error).message ?? e) });
-@@ -129,12 +141,17 @@ export class LiveSource {
+@@ -129,12 +144,23 @@ export class LiveSource {
    }
  
    private async step() {
@@ -464,12 +527,18 @@ index e788e4d..9fb3a31 100644
 +      // NX2Saria answers for itself and needs no memory reading: asked beside the process search, preferred.
 +      const [api, game] = await Promise.all([ApiSession.open(), this.memoryAccess ? findGame() : undefined]);
 +      if (!this.timer) { api?.close(); return; }
-+      if (api) { this.api = api; this.apiMisses = 0; return this.apiStep(); }
++      if (api) {
++        this.api = api;
++        this.apiMisses = 0;
++        await this.opts.onGame?.(undefined, undefined, api.saveDir); // follow its saves, not another install's
++        if (!this.timer || this.api !== api) return;
++        return this.apiStep();
++      }
 +      if (!this.memoryAccess) return this.set({ status: 'unavailable', detail: 'Reading game memory is not available on this system.' });
        if (!game) return this.set({ status: 'no-game' });
        try {
          this.mem = openProcess(game.pid);
-@@ -159,7 +176,32 @@ export class LiveSource {
+@@ -159,7 +185,32 @@ export class LiveSource {
      const print = fingerprint(this.tables!, raw, this.watchInts);
      // Nothing tracked changed: skip rebuilding (most ticks).
      if (print === this.lastPrint && this.info.status === 'live') return;
@@ -503,7 +572,7 @@ index e788e4d..9fb3a31 100644
      if (!matchesReference(live.agreement)) {
        this.snapshot = undefined;
        this.lastPrint = undefined;
-@@ -176,7 +218,10 @@ export class LiveSource {
+@@ -176,7 +227,10 @@ export class LiveSource {
  
    private readPlayer() {
      const p = this.playerReader?.read();
@@ -517,10 +586,10 @@ index e788e4d..9fb3a31 100644
        Math.abs(prev.pos.y - p.pos.y) > 0.05 || Math.abs(prev.pos.z - p.pos.z) > 0.05 || Math.abs(prev.pos.yaw - p.pos.yaw) > 2;
 diff --git a/test/nx2saria.test.ts b/test/nx2saria.test.ts
 new file mode 100644
-index 0000000..9531bef
+index 0000000..2eb37da
 --- /dev/null
 +++ b/test/nx2saria.test.ts
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,168 @@
 +import { describe, it, expect, afterEach } from 'vitest';
 +import net from 'node:net';
 +import { decodeRecords, decodeKeys, overlay, yawFromRotation, ApiSession, isNx2Saria, type GameDataAnswer } from '../src/gamedata/nx2saria';
@@ -610,7 +679,8 @@ index 0000000..9531bef
 +          let result: unknown, error: unknown;
 +          if (req.method === 'status') {
 +            result = { powered_on: true, emulator: 'nx2saria', game_version: '1.1.1', api_version: 1,
-+              methods: ['status', 'read_memory', 'search_memory', 'nx2saria.state', 'nx2saria.game_data'] };
++              methods: ['status', 'read_memory', 'search_memory', 'nx2saria.state', 'nx2saria.game_data'],
++              save_dir: 'C:\\Jogos\\oot\\profile/save/0123' };
 +          } else if (req.method === 'nx2saria.state') {
 +            result = { area: 'HyruleField_Child', player: { x: 1.234, y: 2, z: 3, rotation: [0, 0, 1, 0, 1, 0, -1, 0, 0] }, game_data: gameData };
 +          } else if (!gameData) {
@@ -639,6 +709,7 @@ index 0000000..9531bef
 +    const { port, asked } = await serve(true);
 +    const api = await ApiSession.open(port);
 +    expect(api).toBeDefined();
++    expect(api!.saveDir).toBe('C:\\Jogos\\oot\\profile/save/0123'); // the save folder the game says it uses
 +    const p = await api!.player();
 +    expect(p).toEqual({ pos: { x: 1.23, y: 2, z: 3, yaw: 90 }, scene: 'HyruleField_Child' });
 +    const first = await api!.read(ref(), new Set([0x04735978]));

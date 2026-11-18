@@ -94,7 +94,7 @@ It reads no small-key counts, current health or magic, or entrances.
 
 | Part of the tracker | NX2Saria today | With this branch (`tracker_api = 1`) and the tracker PR |
 |---|---|---|
-| Save files | Read without warnings; found when `<game>\profile` is picked by hand | Also found by its search (`ocarina.exe`, `<game>\profile\save`, `%LOCALAPPDATA%\Programs\NX2Saria\game`) |
+| Save files | Read without warnings; found when `<game>\profile` is picked by hand | Also found by its search (`ocarina.exe`, `<game>\profile\save`, `%LOCALAPPDATA%\Programs\NX2Saria\game`); while the game runs, followed in the folder it names (`status.save_dir`), not another install's |
 | Save label | None | "NX2Saria" |
 | Live: finding the game | Process names not known; not on Linux | `127.0.0.1:6545` answers `status` as `nx2saria` with `nx2saria.game_data` |
 | Live: tables | Searched at `0x1000_0000_0000 + guest`, in mapped memory, vtables below 4 GiB: none of it matches | `nx2saria.game_data`, each kind whole, no search |
@@ -148,7 +148,7 @@ This branch is `main` (`a8117c8a`, 0.16.0, which has the tracker API) with these
 | Change | Where |
 |---|---|
 | `nx2saria.game_data {kind, hash, filter, if_digest}`: the values of one kind with their keys, sorted, in hex, with `format`, `presents` and an FNV-1a `digest`; one request at a time; a kind answered whole or refused (-32002 to ask again, -32003 not on this build, only after its section read the same twice) | `runtime/tracker_api.c` (`gd_kinds`, `gd_records`, `gd_keys`, `gd_unsupported`, `do_game_data`) |
-| `status.methods`; `nx2saria.state.player.rotation` and `nx2saria.state.game_data` | `runtime/tracker_api.c` (`do_status`, `do_state`) |
+| `status.methods` and `status.save_dir` (the folder of the save the game loads and writes, escaped as JSON); `nx2saria.state.player.rotation` and `nx2saria.state.game_data` | `runtime/tracker_api.c` (`do_status`, `out_json_string`, `do_state`), `runtime/fs_host.c` / `fs.h` (`fs_save_dir`) |
 | The manager's slot shared by the debug menu and the API | `runtime/debug_tools.h` (`DBG_GAME_DATA_SLOT`), `runtime/debug_tools.c` |
 | The answer's room freed after an answer over 1 MiB | `runtime/tracker_api.c` `client_main` |
 | The check: a stand-in manager at the game's address, empty first and then loaded as the game loads it, every kind, keys (by hash at two indices), digests, filters, refused parameters, and the stand-in's ways to spoil a read: text pointers into the host's memory, 65 texts, a hash twice, two pairs for one entry, placed objects out of order, an entry still being made, a wrong vtable in the middle | `tests/tracker_api_check.c`, `tests/tracker_api_check.py` |
@@ -161,7 +161,7 @@ with the rest. Not done: a row for the API in the settings menu and the launcher
 ## Changes in the tracker
 
 A new live source ([hyrule-tracker-pr.patch](hyrule-tracker-pr.patch), against `1fb2777` (v1.4.2; first written
-against v1.1.1, `fbfafe5`), five files, about 515 lines added):
+against v1.1.1, `fbfafe5`), six files, about 545 lines added):
 
 1. `src/gamedata/nx2saria.ts` (new): the API client (newline-delimited JSON, one request at a time, timeouts), the
    decoding of each kind into the values its save parser gives, `overlay` (the reference save with the live values,
@@ -174,7 +174,10 @@ against v1.1.1, `fbfafe5`), five files, about 515 lines added):
    live mode still says it cannot read memory, and goes live when NX2Saria answers. A refusal for a moment (a save
    being written or loaded) keeps the live state up to 3 s; -32003 or another `format` says the API does not read this
    game version. A stop during a request changes nothing after it. The decision after a read and the player update are
-   shared with the memory path.
+   shared with the memory path. When the session opens it hands the save folder the game names (`status.save_dir`) to
+   the controller (`onGame`), whose `followGame` switches to it as it does to another port's folder found from its exe
+   (not when a slot is pinned or a folder was picked by hand): before that, the tracker followed the newest save of
+   any install it knew, an emulator's in one test.
 3. `src/gamedata/saves.ts`: NX2Saria's game files (`ocarina.exe`, `nx2saria.exe`; without `.exe` off Windows, files
    only) and label, `<game>\profile\save` and the launcher's `<install>\game\profile\save`, `NX2Saria` among the
    default install folders.
@@ -182,6 +185,7 @@ against v1.1.1, `fbfafe5`), five files, about 515 lines added):
    the classes asked once, the wait before a save, optional kinds refused, -32003, another format, another program
    on the port).
 5. README: NX2Saria and how to turn on its API.
+6. `src/main/controller.ts`: `followGame` takes the folder a game names, besides the exe.
 
 Checked: on v1.4.2 `tsc --noEmit` passes and `vitest` passes (186 tests, 11 skipped as without the patch; 108 on
 v1.1.1). In v1.4.2 the install search already names a game only by a file (not a folder) and without its `.exe` on
@@ -400,6 +404,13 @@ run, the game's stderr on a pipe so it wrote `logs/nx2saria.log`, and the readin
   direction of movement stayed at its last value (29.4, 30.7). The rotation is his facing.
 - The game ended; `nx2saria.ini` and `test.ini` unchanged. The run's output and log are in
   `/mnt/windows/Jogos/oot/xbuild/out-hyrule-tracker-integration/` (outside `/tmp`, which a restart empties).
+
+A third run (01:13, the build of `b4d77aa3` with `status.save_dir`): `status` answered
+`save_dir` `/mnt/windows/Jogos/oot/profile/save/11d5af24c6de7dbccf5cc9a0c0f9bfd4` and the log's first status line
+`… saves in /mnt/windows/Jogos/oot/profile/save/11d5af24c6de7dbccf5cc9a0c0f9bfd4`; the patched `ApiSession` read it,
+`isUserFolder` accepts it (so `followGame` switches to it), and against that folder's newest slot the tracker was live
+with all 10,212 Bools agreeing. The app itself, with an emulator's saves also on the PC, picked the emulator's before
+this (the user's test); with it, the toast "Switched to the saves of the game that's running (NX2Saria)" is expected.
 
 Not covered by these runs: Windows, the tracker app itself (its window, its overlay, `live.ts`), collecting something
 while it watches (checklist step 4), Atlas and the tracker at once, and a session of more than ten minutes.
