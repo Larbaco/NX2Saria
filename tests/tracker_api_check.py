@@ -3,7 +3,9 @@ at the game's addresses) and talk to it as a map tracker does: newline-delimited
 answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are
 stand-ins written to the test's build folder.
 
-Checks the answers a tracker relies on (status, read_memory, search_memory, the port's own nx2saria.state), what is
+Checks the answers a tracker relies on (status, read_memory, search_memory, the port's own nx2saria.state and
+nx2saria.game_data, over a stand-in game-data manager: every kind, keys, digests, and each way of the stand-in's to
+spoil a read, refused instead of answered with made-up values), what is
 refused (bad parameters, memory the game cannot read, the host's own memory beside the game's, unknown and writing
 methods), what closes a connection (a first byte that is not '{', such as a web page's HTTP request or TLS handshake,
 JSON that is not one object, numbers JSON does not spell that way, an overlong id, a line of 4096 bytes, a request
@@ -110,6 +112,9 @@ def run_checks(port):
     check(st['emulator'] == 'nx2saria', f'status emulator: {st}')
     check(st['build_id'].startswith('e0f3ccfaf50065ae'), f'status build_id: {st}')
     check(st['game_version'] == '1.1.1' and st['api_version'] == 1 and st['read_only'] is True, f'status: {st}')
+    check(st['methods'] == ['status', 'read_memory', 'search_memory', 'nx2saria.state', 'nx2saria.game_data'],
+          f'status methods: {st}')
+    check(st['save_dir'] == 'C:\\Users\\Jo\u00e3o "x"\\profile\\save\\0123', f'status save_dir, escaped as JSON: {st}')
 
     # main by its MOD0 header, as a tracker finds it: a range below the module window first (no hit), then all regions
     pattern = '4d4f44305467030124fb0f016c342501'
@@ -173,8 +178,9 @@ def run_checks(port):
         check(ans.get('error', {}).get('code') == -32602, f'a search with {why} is refused: {ans}')
 
     state = c.call('nx2saria.state')['result']
-    check(state['area'] == 'HyruleField_Adult' and state['player'] == {'x': 12.5, 'y': -3.25, 'z': 100.0},
-          f'nx2saria.state: {state}')
+    check(state['area'] == 'HyruleField_Adult' and state['player'] == {'x': 12.5, 'y': -3.25, 'z': 100.0,
+          'rotation': [0, 0, 1, 0, 1, 0, -1, 0, 0]}, f'nx2saria.state: {state}')
+    check(state['game_data'] is False, f'nx2saria.state: no game data before the title screen: {state}')
     check(state['main'] == hex(MAIN) and state['heap'] == {'base': hex(HEAP), 'size': hex(0x1000000)},
           f'nx2saria.state places: {state}')
 
@@ -262,6 +268,141 @@ def run_checks(port):
     again.close()
 
 
+def records(res, size):
+    """A game_data answer's records as (hash, the record's bytes after the hash)."""
+    raw = bytes.fromhex(res['records'])
+    check(len(raw) == res['count'] * size, f'{res["kind"]}: {res["count"]} records of {size} bytes: {len(raw)}')
+    return [(int.from_bytes(raw[i:i + 4], 'little'), raw[i + 4:i + size]) for i in range(0, len(raw), size)]
+
+
+def lines_until(srv, lines, word):
+    for line in srv.stdout:
+        lines.append(line)
+        if line.strip() == word:
+            return True
+    return False
+
+
+def fnv1a(data):
+    h = 0xcbf29ce484222325
+    for b in data:
+        h = ((h ^ b) * 0x100000001b3) & 0xffffffffffffffff
+    return f'{h:016x}'
+
+
+def spoil(srv, lines, word, answer):
+    srv.stdin.write(word + '\n')
+    srv.stdin.flush()
+    check(lines_until(srv, lines, answer), f'the stand-in game data: {word}')
+
+
+def refused(c, params, code, words, why):
+    ans = c.call('nx2saria.game_data', params)
+    err = ans.get('error', {})
+    check(err.get('code') == code and words in err.get('message', ''), f'{why}: {ans}')
+    return ans
+
+
+def run_game_data_checks(port, srv, lines):
+    """nx2saria.game_data: refused before the game data is there, then each kind as a tracker reads it, then each way
+    the game data can fail to read, refused instead of answered."""
+    c = Client(port)
+    refused(c, {'kind': 'Bool'}, -32002, 'not loaded its game data yet', 'game_data before the game makes it waits')
+    spoil(srv, lines, 'EMPTY', 'EMPTIED')
+    check(c.call('nx2saria.state')['result']['game_data'] is False, 'nx2saria.state: no game data before a save loads')
+    for kind in ('Bool', 'Bool64bitKey'):
+        refused(c, {'kind': kind}, -32002, 'not loaded its game data yet', f'{kind} before a save loads waits')
+    spoil(srv, lines, 'LOAD', 'LOADED')
+    check(c.call('nx2saria.state')['result']['game_data'] is True, 'nx2saria.state: the game data is there')
+
+    b = c.call('nx2saria.game_data', {'kind': 'Bool'})['result']
+    check(b['kind'] == 'Bool' and b['format'] == 1 and b['count'] == 3 and b['record_size'] == 8 and
+          b['presents'] == 1234, f'Bool: {b}')
+    check(b['digest'] == fnv1a(bytes.fromhex(b['records'])), f'Bool: the digest is FNV-1a of the records: {b}')
+    got = [(h, int.from_bytes(v, 'little')) for h, v in records(b, 8)]
+    check(got == [(0x5, 1), (0x11111111, 1), (0x22222222, 0)], f'Bool values (0 or 1), sorted by hash: {got}')
+    same = c.call('nx2saria.game_data', {'kind': 'Bool', 'if_digest': b['digest']})['result']
+    check(same.get('unchanged') is True and 'records' not in same and same['digest'] == b['digest'],
+          f'Bool with its digest: unchanged: {same}')
+    other = c.call('nx2saria.game_data', {'kind': 'Bool', 'if_digest': '0' * 16})['result']
+    check(other.get('records') == b['records'], f'Bool with another digest: the records again: {other}')
+
+    i = c.call('nx2saria.game_data', {'kind': 'Int'})['result']
+    got = [(h, int.from_bytes(v, 'little', signed=True)) for h, v in records(i, 8)]
+    check(got == [(0x04735978, 57), (0xfbe01da1, -1)], f'Int values: {got}')
+    one = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': '0x04735978'})['result']
+    check([(h, int.from_bytes(v, 'little')) for h, v in records(one, 8)] == [(0x04735978, 57)], f'Int by hash: {one}')
+    two = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': '0xfbe01da1'})['result']
+    check([(h, int.from_bytes(v, 'little', signed=True)) for h, v in records(two, 8)] == [(0xfbe01da1, -1)],
+          f'Int by the hash of its second entry: {two}')
+    none = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': 0x12345678})['result']
+    check(none['count'] == 0 and none['records'] == '' and none['digest'] == fnv1a(b''),
+          f'Int by a hash the game does not have: {none}')
+    none = c.call('nx2saria.game_data', {'kind': 'Int', 'hash': 0x12345678, 'if_digest': none['digest']})['result']
+    check(none.get('unchanged') is True, f'an empty answer with its digest: unchanged: {none}')
+
+    e = c.call('nx2saria.game_data', {'kind': 'Enum'})['result']
+    check([(h, int.from_bytes(v, 'little')) for h, v in records(e, 8)] == [(0x33333333, 0x4c0a63f4)], f'Enum: {e}')
+    t = c.call('nx2saria.game_data', {'kind': 'String64'})['result']
+    got = records(t, 68)
+    check(t['record_size'] == 68 and got == [(0x1d6189da, b'HyruleField_Adult'.ljust(64, b'\0'))], f'String64: {got}')
+    t1 = c.call('nx2saria.game_data', {'kind': 'String64', 'hash': 0x1d6189da})['result']
+    check(t1['records'] == t['records'], f'String64 by hash: {t1}')
+    a = c.call('nx2saria.game_data', {'kind': 'String64Array'})['result']
+    raw = bytes.fromhex(a['records'])
+    texts = [raw[8 + k * 64:8 + (k + 1) * 64].split(b'\0')[0] for k in range(int.from_bytes(raw[4:8], 'little'))]
+    check(a['record_size'] == 0 and a['count'] == 1 and int.from_bytes(raw[:4], 'little') == 0xc458f1eb and
+          texts == [b'HyruleField', b'LakeHylia'] and len(raw) == 8 + 2 * 64, f'String64Array: {texts} {a}')
+    l64 = c.call('nx2saria.game_data', {'kind': 'Int64'})['result']
+    check([(h, int.from_bytes(v, 'little')) for h, v in records(l64, 12)] == [(0xd457ee3a, 0x100000002)],
+          f'Int64: {l64}')
+    l1 = c.call('nx2saria.game_data', {'kind': 'Int64', 'hash': 0xd457ee3a})['result']
+    check(l1['records'] == l64['records'], f'Int64 by hash: {l1}')
+    k = c.call('nx2saria.game_data', {'kind': 'Bool64bitKey'})['result']
+    raw = bytes.fromhex(k['records'])
+    keys = [int.from_bytes(raw[j:j + 8], 'little') for j in range(0, len(raw), 16)]
+    check(k['count'] == 2 and keys == [0x10, 0x8000000000000001], f'Bool64bitKey, the set ones: {keys} {k}')
+    k = c.call('nx2saria.game_data', {'kind': 'Bool64bitKey', 'filter': 'all'})['result']
+    raw = bytes.fromhex(k['records'])
+    entries = [(int.from_bytes(raw[j:j + 8], 'little'), int.from_bytes(raw[j + 8:j + 12], 'little'), raw[j + 12])
+               for j in range(0, len(raw), 16)]
+    check(entries == [(0x10, 0x18, 1), (0x3f93661d8e17c1d0, 0x58, 0), (0x8000000000000001, 0x118, 1),
+                      (0xfedcba9876543210, 0x18, 0)], f'Bool64bitKey, all: {entries}')
+    check(all(raw[j + o] == 0 for j in range(0, len(raw), 16) for o in (13, 14, 15)),
+          f'Bool64bitKey: only the key, the class and the set bit: {raw.hex()}')
+
+    for params, why in [({}, 'no kind'), ({'kind': 'Float'}, 'a kind it does not answer'),
+                        ({'kind': 'bool'}, 'a kind spelled otherwise'), ({'kind': 'Int', 'hash': 0}, 'hash 0'),
+                        ({'kind': 'Int', 'hash': '0x100000000'}, 'a hash over 32 bits'),
+                        ({'kind': 'Int', 'hash': 'abc'}, 'a hash that does not parse'),
+                        ({'kind': 'Bool64bitKey', 'hash': 5}, 'a hash for the placed objects'),
+                        ({'kind': 'Bool', 'filter': 'set'}, 'a filter for Bool'),
+                        ({'kind': 'Bool64bitKey', 'filter': 'some'}, 'an unknown filter'),
+                        ({'kind': 'Bool', 'if_digest': 5}, 'a digest that is not a string')]:
+        ans = c.call('nx2saria.game_data', params)
+        check(ans.get('error', {}).get('code') == -32602, f'game_data with {why} is refused: {ans}')
+
+    # The ways the game data can fail to read: refused, never answered with made-up values, nothing of the host read
+    spoil(srv, lines, 'POINT', 'POINTED')
+    for kind in ('String64', 'String64Array'):
+        ans = refused(c, {'kind': kind}, -32002, 'cannot be read now', f'{kind} pointing outside the game is refused')
+        check('5345435245542d4b4559' not in json.dumps(ans), f'{kind}: the host\'s memory is not read: {ans}')
+    spoil(srv, lines, 'MANY', 'MANIED')
+    refused(c, {'kind': 'String64Array'}, -32002, 'more than 64 texts', 'a String64Array value of 65 texts')
+    spoil(srv, lines, 'DUPHASH', 'DUPHASHED')
+    refused(c, {'kind': 'Int'}, -32002, 'table changed while it was read', 'an Int table with one hash twice')
+    spoil(srv, lines, 'DUP', 'DUPPED')
+    refused(c, {'kind': 'Int'}, -32002, 'table changed while it was read', 'an Int table with two pairs for one entry')
+    spoil(srv, lines, 'UNSORT', 'UNSORTED')
+    refused(c, {'kind': 'Bool64bitKey'}, -32002, 'not sorted', 'placed objects out of order')
+    spoil(srv, lines, 'ZERO', 'ZEROED')
+    refused(c, {'kind': 'Enum'}, -32002, 'still being made', 'an Enum entry without its vtable yet')
+    spoil(srv, lines, 'BREAK', 'BROKEN')
+    for _ in range(3):
+        refused(c, {'kind': 'Bool'}, -32003, 'not laid out', 'a Bool entry with another vtable is not answered')
+    check('result' in c.call('nx2saria.game_data', {'kind': 'Int64'}), 'the other kinds still answer')
+    c.close()
+
 def check_log(log):
     want = [
         'tracker api: on, read-only, listening on 127.0.0.1:',
@@ -269,7 +410,7 @@ def check_log(log):
         'tracker api: client 1 (127.0.0.1:',
         ') asks: its first request is status (1 open)',
         'tracker api: a program connected and left without a request',
-        'tracker api: first status answered: powered_on 1, game 1.1.1, build e0f3ccfaf50065ae',
+        'tracker api: first status answered: powered_on 1, game 1.1.1, build e0f3ccfaf50065ae, saves in C:\\Users\\Jo',
         'tracker api: first search_memory answered: a 16-byte pattern in all regions, 0 hits',
         'tracker api: first search_memory that found its pattern: a 16-byte pattern in all regions, 1 hit, the first at 0x7003c4705c',
         f'tracker api: searches read {SEARCH_MIB_PER_MIN} MiB in the last minute',
@@ -278,6 +419,19 @@ def check_log(log):
         'tracker api: read_memory refused: 8 bytes at 0x1000 are not memory the game can read now',
         'tracker api: first nx2saria.state answered: area HyruleField_Adult, Link at (12.50, -3.25, 100.00)',
         'tracker api: write_memory refused: unknown method',
+        'nx2saria.state, nx2saria.game_data; API version 1',
+        'tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, for Bool',
+        'tracker api: first nx2saria.game_data of Bool answered: 3 values, 24 bytes, in ',
+        'tracker api: first nx2saria.game_data of Int answered: 2 values, 16 bytes',
+        'tracker api: first nx2saria.game_data of String64Array answered: 1 value, 136 bytes',
+        'tracker api: first nx2saria.game_data of Bool64bitKey answered: 2 values, 32 bytes',
+        'tracker api: nx2saria.game_data refused: nx2saria.game_data takes kind (Bool',
+        "tracker api: nx2saria.game_data Bool could not be answered: this kind's entries are not laid out as version "
+        '1.1.1 lays them out (error -32003; the first such answer for this kind and error)',
+        'tracker api: nx2saria.game_data Enum could not be answered: this kind\'s entries are still being made',
+        'tracker api: nx2saria.game_data Bool64bitKey could not be answered: the placed objects\' flags are not sorted',
+        'tracker api: nx2saria.game_data String64 could not be answered: a text of this kind cannot be read now',
+        'tracker api: nx2saria.game_data Int could not be answered: this kind\'s table changed while it was read',
         '49 requests (status 6, read_memory 22, search_memory 15, nx2saria.state 1, other 5), 28 refused',
         '1 request (status 1), 0 refused',
         'sent something that is not a JSON request ("POST / HTTP/1.1',
@@ -288,6 +442,10 @@ def check_log(log):
     for w in want:
         check(w in log, f'the log has "{w}"')
     check(log.count('first status answered') == 1, 'the first status line is logged once')
+    check(log.count('nx2saria.game_data Bool could not be answered') == 1, 'a kind\'s refusals log one line')
+    check('refused: Bool:' not in log and log.count('asked before the game loaded') == 1,
+          'game data refusals are logged once, by their own line')
+    check('first nx2saria.game_data of Bool answered: 3 values, 24 bytes' in log, 'the first Bool answer is logged')
     check(not any(line.startswith('INJECTED') for line in log.splitlines()), 'a request cannot start a log line')
     before = after = None
     for line in log.splitlines():
@@ -336,6 +494,7 @@ def main():
     if port is not None:
         try:
             run_checks(port)
+            run_game_data_checks(port, srv, lines)
         finally:
             time.sleep(0.5)   # the client threads log their closing lines
             srv.stdin.close()

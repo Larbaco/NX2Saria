@@ -12,12 +12,17 @@ What it checks, in order:
    chain (runtime/debug_tools.c player), which have to agree; the scene's file name from the player object.
 5. The game-data manager by the tracker's slot, the same object as the port's own (debug_tools.c gmd), and the Gold
    Skulltula token count from its Int flags.
---watch N then repeats the position and scene once a second for N seconds and reports the answer times.
+6. nx2saria.game_data, as an item tracker reads it: each kind's values by their names' hashes, and with --save the
+   values compared with the newest progress.sav under that folder (save in the game first: right after a save, every
+   Bool, Enum and placed object agrees, and of the Ints only the counters that run on, such as play time, differ).
+--watch N then repeats the position and scene once a second for N seconds and reports the answer times; while Link
+moves it prints his heading from the port's rotation (nx2saria.state) beside the direction he moves in by the
+tracker's chain, so the axis a tracker takes for his heading can be checked.
 
 The offsets are facts of game version 1.1.1's main (build e0f3ccfa); docs/ocarina-atlas.md lists where each comes
 from.
 
-Usage: python tools/tracker_api_client.py [--host 127.0.0.1] [--port 6545] [--watch SECONDS]
+Usage: python tools/tracker_api_client.py [--host 127.0.0.1] [--port 6545] [--watch SECONDS] [--save FOLDER]
 """
 import argparse
 import json
@@ -26,6 +31,7 @@ import socket
 import struct
 import sys
 import time
+from pathlib import Path
 
 MOD0_PATTERN = '4d4f44305467030124fb0f016c342501'   # "MOD0" and its three offsets in 1.1.1's main
 MOD0_OFFSET = 0x3c4705c
@@ -91,8 +97,9 @@ def floats(b):
     return struct.unpack('<3f', b) if b and len(b) >= 12 else None
 
 
-def tracker_player(api, main):
-    """The tracker's chain: [main+slot]+0x10 the player object, its 37th part at +0x1c x, y, z."""
+def tracker_player(api, main, direction=False):
+    """The tracker's chain: [main+slot]+0x10 the player object, its 37th part at +0x1c x, y, z (and at +0x28 and
+    +0x30 the direction Link moves in on the ground, with direction=True)."""
     for slot in PLAYER_SLOTS:
         single = api.u64(main + slot)
         obj = api.u64(single + 0x10) if single >= HEAP_POINTER_FLOOR else 0
@@ -104,8 +111,11 @@ def tracker_player(api, main):
         sub36, sub7 = api.u64(parts + 36 * 8), api.u64(parts + 7 * 8)
         pos = floats(api.read(sub36 + 0x1c, 12)) if sub36 else None
         scene = text(api.read(sub7 + 0x34, 0x80)) if sub7 else ''
+        if direction:
+            d = api.read(sub36 + 0x28, 12) if sub36 else None
+            return pos, scene, slot, (struct.unpack('<3f', d)[0::2] if d else None)
         return pos, scene, slot
-    return None, '', None
+    return (None, '', None, None) if direction else (None, '', None)
 
 
 def port_player(api, main):
@@ -142,11 +152,113 @@ def int_flag(api, section, h):
     return None
 
 
+GAME_DATA_KINDS = {'Bool': 8, 'Int': 8, 'Enum': 8, 'String64': 68, 'String64Array': 0, 'Int64': 12, 'Bool64bitKey': 16}
+SAVE_KINDS = {0: 'Bool', 2: 'Int', 6: 'Enum'}   # the save's inline kinds this check compares; 32 is Bool64bitKey
+
+
+def save_values(folder):
+    """The newest progress.sav under folder (or folder itself, a file): {kind: {hash: value}} for the inline kinds,
+    the set placed-object keys, and the file. The save container: magic 0x01020304, the data's start (u32) at +8, and
+    from +0x28 8-byte {u32 hash, u32 value} records grouped by kind; a record of hash 0 starts a kind (its value is the
+    kind's number; the first kind, Bool, has none). The placed-object keys (kind 32) are an offset to sorted u64 keys
+    that run to the file's end (0: none)."""
+    p = Path(folder)
+    files = [p] if p.is_file() else sorted(p.rglob('progress.sav'), key=lambda f: f.stat().st_mtime)
+    if not files:
+        return None, None, None
+    b = files[-1].read_bytes()
+    if len(b) < 0x28 or struct.unpack_from('<I', b, 0)[0] != 0x01020304:
+        return None, None, files[-1]
+    start, kind, out, keys = struct.unpack_from('<I', b, 8)[0], 0, {k: {} for k in SAVE_KINDS.values()}, set()
+    for o in range(0x28, min(start, len(b)) - 7, 8):
+        h, v = struct.unpack_from('<II', b, o)
+        if h == 0:
+            kind = v
+        elif kind in SAVE_KINDS:
+            out[SAVE_KINDS[kind]][h] = struct.unpack('<i', struct.pack('<I', v))[0] if kind == 2 else v
+        elif kind == 32 and v:
+            keys = {k for k in struct.unpack_from(f'<{(len(b) - v) // 8}Q', b, v) if k}
+    return out, keys, files[-1]
+
+
+def live_values(res):
+    """An nx2saria.game_data answer of an inline kind as {hash: value}."""
+    raw = bytes.fromhex(res.get('records', ''))
+    fmt = '<i' if res['kind'] == 'Int' else '<I'
+    return {struct.unpack_from('<I', raw, o)[0]: struct.unpack_from(fmt, raw, o + 4)[0] for o in range(0, len(raw), 8)}
+
+
+MANAGER_VTABLES = (0x4c1f120, 0x4c1f140)   # main+: the manager's own and its Bool section's (read in main, not yet live)
+
+
+def check_game_data(api, save, main):
+    good = True
+    answers = {}
+    mgr = api.u64(api.u64(main + PORT_GAME_DATA_SLOT))
+    words = (api.u64(mgr), api.u64(mgr + 8)) if mgr else (0, 0)
+    shown = ', '.join(f'main+{w - main:#x}' if main <= w < main + 0x10000000 else f'{w:#x}' for w in words)
+    say(words == tuple(main + v for v in MANAGER_VTABLES), f'the manager at {mgr:#x} starts with {shown} '
+        '(main+0x4c1f120, main+0x4c1f140 expected; to pin once a run shows it)')
+    for kind, size in GAME_DATA_KINDS.items():
+        t0 = time.perf_counter()
+        res, err = api.call('nx2saria.game_data', kind=kind)
+        ms = (time.perf_counter() - t0) * 1000
+        if not res:
+            good &= say(False, f'{kind}: {err}')
+            continue
+        answers[kind] = res
+        n = len(res.get('records', '')) // 2
+        good &= say(res['record_size'] == size and (not size or n == res['count'] * size),
+                    f'{kind}: {res["count"]} values, {n} bytes, {ms:.1f} ms')
+    if 'Bool' in answers:
+        res, _ = api.call('nx2saria.game_data', kind='Bool', if_digest=answers['Bool']['digest'])
+        say(bool(res) and res.get('unchanged') is True, 'Bool asked again with its digest: unchanged '
+            '(not when a flag changed in between)')
+    if 'String64' in answers:
+        raw = bytes.fromhex(answers['String64']['records'])
+        stage = {struct.unpack_from('<I', raw, o)[0]: text(raw[o + 4:o + 68]) for o in range(0, len(raw), 68)}
+        good &= say(0x1d6189da in stage, f'Sequence_CurrentBanc (0x1d6189da): {stage.get(0x1d6189da)!r}')
+    if 'String64Array' in answers:
+        raw = bytes.fromhex(answers['String64Array']['records'])
+        o, lists = 0, {}
+        while o + 8 <= len(raw):
+            h, n = struct.unpack_from('<II', raw, o)
+            lists[h] = [text(raw[o + 8 + i * 64:o + 8 + (i + 1) * 64]) for i in range(n)]
+            o += 8 + n * 64
+        say(0xc458f1eb in lists, f'the place within the area (0xc458f1eb): {lists.get(0xc458f1eb)}')
+    if not save:
+        say(True, 'no --save: the values are not compared with a save')
+        return good
+    saved, keys, path = save_values(save)
+    if saved is None:
+        return say(False, f'no readable progress.sav under {save} ({path})') and good
+    print(f'  compared with {path} (written {time.strftime("%H:%M:%S", time.localtime(path.stat().st_mtime))})')
+    for kind in SAVE_KINDS.values():
+        if kind not in answers:
+            continue
+        live = live_values(answers[kind])
+        common = [h for h in saved[kind] if h in live]
+        differ = [h for h in common if live[h] != saved[kind][h]]
+        missing = len(saved[kind]) - len(common)
+        ok = missing == 0 and (kind == 'Int' or len(differ) <= len(common) // 100)
+        good &= say(ok, f'{kind}: {len(saved[kind])} in the save, {missing} not answered, {len(differ)} differ'
+                    + (': ' + ', '.join(f'{h:#010x} save {saved[kind][h]} live {live[h]}' for h in differ[:5])
+                       if differ else ''))
+    if 'Bool64bitKey' in answers:
+        raw = bytes.fromhex(answers['Bool64bitKey']['records'])
+        live_keys = {struct.unpack_from('<Q', raw, o)[0] for o in range(0, len(raw), 16)}
+        lost = keys - live_keys
+        good &= say(not lost, f'placed objects: {len(keys)} set in the save, {len(live_keys)} live, '
+                    f'{len(lost)} of the save\'s not set live')
+    return good
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=6545)
     ap.add_argument('--watch', type=float, default=0, help='seconds to follow Link once a second')
+    ap.add_argument('--save', help='a folder holding the game\'s saves (or a progress.sav) to compare the game data with')
     a = ap.parse_args()
     try:
         api = Api(a.host, a.port)
@@ -210,13 +322,23 @@ def main():
                     f'Gold Skulltula tokens: {tokens[1]} (tag {tokens[0]:#x})'
                     if tokens else 'Gold Skulltula tokens: not found')
 
+    print('6. the game data by hash (nx2saria.game_data)')
+    if not state.get('game_data') and not api.call('nx2saria.state')[0].get('game_data'):
+        say(True, 'no game data yet: load a save and run again')
+    else:
+        good &= check_game_data(api, a.save, main)
+
     if a.watch > 0:
-        print(f'6. following Link for {a.watch:.0f} s')
+        print(f'7. following Link for {a.watch:.0f} s (heading: from his rotation | the way he moves)')
         api.times.clear()
         end = time.time() + a.watch
         while time.time() < end:
-            pos, scene, _ = tracker_player(api, main)
-            print(f'  {time.strftime("%H:%M:%S")}  {scene or "-"}  {pos}')
+            pos, scene, _, d = tracker_player(api, main, direction=True)
+            st, _ = api.call('nx2saria.state')
+            m = ((st or {}).get('player') or {}).get('rotation')
+            rot = f'{(math.degrees(math.atan2(m[2], -m[8])) + 360) % 360:5.1f}' if m and math.hypot(m[2], m[8]) > 0.01 else '  -  '
+            move = f'{(math.degrees(math.atan2(d[0], -d[1])) + 360) % 360:5.1f}' if d and math.hypot(*d) > 0.01 else '  -  '
+            print(f'  {time.strftime("%H:%M:%S")}  {scene or "-"}  {pos}  heading {rot} | {move}')
             time.sleep(1)
         t = sorted(api.times)
         if t:

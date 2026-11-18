@@ -11,6 +11,10 @@ void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
 void dbg_freecam_host(Cpu *c);         // the free camera's patch site (recomp/patches-v111.txt, set freecam)
 #endif
 
+// main's slot (1.1.1) that holds where the game-data manager's pointer is: the manager is **[main+this]. The debug
+// menu reads its flags (debug_tools.c gmd), the tracker API its values (tracker_api.c nx2saria.game_data).
+#define DBG_GAME_DATA_SLOT 0x4c7e180ull
+
 #ifdef __cplusplus
 extern "C" {
 #endif

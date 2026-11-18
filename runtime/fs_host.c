@@ -926,6 +926,10 @@ static void storage_init(void *param) {
     return;
 }
 
+// The committed save's folder, with its slot_00..05 (a tracker reads the save files there: tracker_api.c status);
+// "" until the save storage is made, at the game's first storage use. save_root does not change after that.
+const char *fs_save_dir(void) { return plat_cas32(&storage_ready, 0, 0) ? save_root : ""; }
+
 static void ready(void) {
     static PlatOnce once = PLAT_ONCE_INIT;
     plat_once(&once, storage_init, NULL);

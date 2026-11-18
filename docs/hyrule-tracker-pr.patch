@@ -1,0 +1,760 @@
+A draft patch for hyrule-tracker (https://github.com/jv-prado/hyrule-tracker), against master at
+1fb277716a6c7278b26814bb72729b24223be46a (v1.4.2; first written against v1.1.1); docs/hyrule-tracker-prs.md
+describes it. Apply it in that repository with `git apply`, which skips this text.
+
+The lines this patch adds are this repository's, drafted for contribution to hyrule-tracker under its MIT license. Its
+context lines (those starting with a space, and the removed ones) are hyrule-tracker's own, quoted under its license:
+
+  MIT License
+
+  Copyright (c) 2026 João Victor Prado
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+  documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+  rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+  Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+  WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+  COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+diff --git a/README.md b/README.md
+index fb055d0..93a2553 100644
+--- a/README.md
++++ b/README.md
+@@ -89,8 +89,9 @@ Turn on **Show in-game overlay** in Settings. It can show counters, remaining ob
+ ## 🎮 Compatibility
+ 
+ - 🖥️ Desktop app for **Windows x64** and **Linux x86_64** (experimental), using the save format of the **Nintendo Switch 2 remake**.
+-- 🔎 Search recognizes installations and saves from **Triforce / NX2navi**, **Hookshot**, **Longshot**, **ReLink**, **Ocarina Reborn**, **Fritchii** and **Lichii**.
++- 🔎 Search recognizes installations and saves from **Triforce / NX2navi**, **NX2Saria**, **Hookshot**, **Longshot**, **ReLink**, **Ocarina Reborn**, **Fritchii** and **Lichii**.
+ - ⚡ Live reading depends on the game version and the memory layout of the port or emulator. See the [live mode documentation](docs/live-memory.md).
++- ⚡ **NX2Saria** answers live reading itself, on Windows and Linux: turn on its tracker API (`tracker_api = 1` under `[tracker]` in `nx2saria.ini`) and the tracker reads the running game through `127.0.0.1:6545`, read-only, without reading the game's memory. Its saves are found in `<game folder>/profile/save`.
+ - 🗂️ Saves from other environments can be selected manually if they expose the same format.
+ - ❌ Nintendo 64, Ocarina of Time 3D and original-game port saves use different formats and are **not** supported.
+ 
+diff --git a/src/gamedata/nx2saria.ts b/src/gamedata/nx2saria.ts
+new file mode 100644
+index 0000000..a19f43d
+--- /dev/null
++++ b/src/gamedata/nx2saria.ts
+@@ -0,0 +1,289 @@
++// NX2Saria (a native PC port of the game, Windows and Linux) answers the running game's progress itself, read-only
++// and to this PC only, through its tracker API on 127.0.0.1:6545 (`tracker_api = 1` in its nx2saria.ini): the
++// values of the game data by the same Murmur3 keys the save files use (nx2saria.game_data), and Link's place
++// (nx2saria.state). No process memory is read, so it works on Linux too and needs no table search. Protocol:
++// newline-delimited JSON, one request at a time; NX2Saria's docs/tracker-api.md describes it. No Electron imports.
++import net from 'node:net';
++import type { GameDataFile, Entry, Value } from './parser.js';
++import { LOCATION_KEY, type Agreement } from './live.js';
++import type { LivePlayer } from './player.js';
++
++export const NX2SARIA_PORT = 6545;
++/** The kinds read every tick, as the save files name them. Bool64bitKey (the placed objects) is read apart. */
++export const API_KINDS = ['Bool', 'Int', 'Enum', 'String64', 'String64Array', 'Int64'] as const;
++export type ApiKind = (typeof API_KINDS)[number];
++/** Kinds live tracking does without when the game does not answer them (the area, the place in it, the day counter). */
++const OPTIONAL = new Set<string>(['String64', 'String64Array', 'Int64']);
++
++export class ApiError extends Error {
++  constructor(message: string, readonly code?: number) { super(message); }
++}
++
++/** One connection to the API: one request in flight, each answer matched by its id. */
++export class Nx2SariaClient {
++  private buf = '';
++  private nextId = 1;
++  private waiting?: { id: number; resolve(v: unknown): void; reject(e: Error): void; timer: NodeJS.Timeout };
++  private closed = false;
++
++  private constructor(private sock: net.Socket) {
++    sock.setEncoding('utf8');
++    sock.on('data', d => this.onData(String(d)));
++    sock.on('close', () => this.fail(new ApiError('The game closed the connection.')));
++    sock.on('error', e => this.fail(e));
++  }
++
++  static connect(port = NX2SARIA_PORT, timeoutMs = 700): Promise<Nx2SariaClient> {
++    return new Promise((resolve, reject) => {
++      const sock = net.createConnection({ host: '127.0.0.1', port });
++      const timer = setTimeout(() => { sock.destroy(); reject(new ApiError('No answer from the tracker API.')); }, timeoutMs);
++      sock.once('connect', () => { clearTimeout(timer); sock.setNoDelay(true); resolve(new Nx2SariaClient(sock)); });
++      sock.once('error', e => { clearTimeout(timer); sock.destroy(); reject(e); });
++    });
++  }
++
++  get alive() { return !this.closed; }
++
++  call<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = 1500): Promise<T> {
++    if (this.closed) return Promise.reject(new ApiError('The connection is closed.'));
++    if (this.waiting) return Promise.reject(new ApiError('A request is already waiting for its answer.'));
++    const id = this.nextId++;
++    return new Promise<T>((resolve, reject) => {
++      const timer = setTimeout(() => {
++        this.waiting = undefined;
++        this.close();
++        reject(new ApiError(`${method}: no answer in ${timeoutMs} ms`));
++      }, timeoutMs);
++      this.waiting = { id, resolve: v => resolve(v as T), reject, timer };
++      this.sock.write(JSON.stringify({ id, method, params }) + '\n');
++    });
++  }
++
++  close() {
++    this.sock.destroy();
++    this.fail(new ApiError('The connection is closed.'));
++  }
++
++  private fail(e: Error) {
++    this.closed = true;
++    const w = this.waiting;
++    this.waiting = undefined;
++    if (w) { clearTimeout(w.timer); w.reject(e); }
++  }
++
++  private onData(d: string) {
++    this.buf += d;
++    if (this.buf.length > 16 << 20) return this.close(); // no answer is that long
++    for (let nl = this.buf.indexOf('\n'); nl >= 0; nl = this.buf.indexOf('\n')) {
++      const line = this.buf.slice(0, nl);
++      this.buf = this.buf.slice(nl + 1);
++      const w = this.waiting;
++      let ans: { id?: unknown; result?: unknown; error?: { code?: number; message?: string } };
++      try { ans = JSON.parse(line); } catch { return this.close(); }
++      if (!w || ans.id !== w.id) continue;
++      this.waiting = undefined;
++      clearTimeout(w.timer);
++      if (ans.error) w.reject(new ApiError(ans.error.message ?? 'error', ans.error.code));
++      else w.resolve(ans.result);
++    }
++  }
++}
++
++export interface ApiStatus {
++  powered_on: boolean; emulator: string; game_version: string; api_version: number; methods?: string[];
++  /** The folder of the save the game loads and writes (<profile>/save/<account>, with its slot_*), when it says. */
++  save_dir?: string | null;
++}
++export interface ApiState {
++  area: string | null;
++  player: { x: number; y: number; z: number; rotation: number[] | null } | null;
++  game_data?: boolean;
++}
++export interface GameDataAnswer { kind: string; format?: number; count: number; record_size: number; digest: string; records?: string; unchanged?: boolean }
++/** The records' layout this module reads (nx2saria.game_data's `format`). */
++export const GAME_DATA_FORMAT = 1;
++/** -32002: nothing to answer yet (no save loaded, or the game changed it meanwhile); -32003: not on this game build. */
++const NOT_NOW = -32002, UNSUPPORTED = -32003;
++/** Why a read gave no data: the game data is not there now, or not readable by this tracker on this game build. */
++export type NoRead = { none: 'wait' | 'unsupported' };
++function refusal(e: unknown): NoRead | undefined {
++  if (!(e instanceof ApiError)) return undefined;
++  return e.code === NOT_NOW ? { none: 'wait' } : e.code === UNSUPPORTED ? { none: 'unsupported' } : undefined;
++}
++
++/** The game answering is NX2Saria with the game-data method. */
++export function isNx2Saria(s: ApiStatus | undefined): boolean {
++  return !!s && s.emulator === 'nx2saria' && s.api_version >= 1 && !!s.methods?.includes('nx2saria.game_data');
++}
++
++function text(b: Buffer): string {
++  const z = b.indexOf(0);
++  return b.subarray(0, z < 0 ? b.length : z).toString('utf8');
++}
++
++/** A kind's records as {hash → value}, the values as parser.ts gives them for a save. */
++export function decodeRecords(a: GameDataAnswer): Map<number, Value> {
++  const out = new Map<number, Value>();
++  const b = Buffer.from(a.records ?? '', 'hex');
++  if (a.kind === 'String64Array') {
++    for (let o = 0; o + 8 <= b.length;) {
++      const h = b.readUInt32LE(o), n = b.readUInt32LE(o + 4);
++      const list: string[] = [];
++      for (let i = 0; i < n && o + 8 + (i + 1) * 64 <= b.length; i++) list.push(text(b.subarray(o + 8 + i * 64, o + 8 + (i + 1) * 64)));
++      out.set(h, list);
++      o += 8 + n * 64;
++    }
++    return out;
++  }
++  const size = a.record_size;
++  if (!size) return out;
++  for (let o = 0; o + size <= b.length; o += size) {
++    const h = b.readUInt32LE(o);
++    switch (a.kind) {
++      case 'Bool': out.set(h, b.readUInt32LE(o + 4) !== 0); break;
++      case 'Int': out.set(h, b.readInt32LE(o + 4)); break;
++      case 'Int64': out.set(h, b.readBigInt64LE(o + 4)); break;
++      case 'String64': out.set(h, text(b.subarray(o + 4, o + 68))); break;
++      default: out.set(h, b.readUInt32LE(o + 4)); // Enum: the hash of the value's name
++    }
++  }
++  return out;
++}
++
++/** The placed objects' 16-byte records: u64 key, u32 class at +8 (bit 0x40: respawns), set byte at +12. */
++export function decodeKeys(a: GameDataAnswer): { set: Set<bigint>; resettable: Set<bigint> } {
++  const b = Buffer.from(a.records ?? '', 'hex');
++  const set = new Set<bigint>(), resettable = new Set<bigint>();
++  for (let o = 0; o + 16 <= b.length; o += 16) {
++    const k = b.readBigUInt64LE(o);
++    if (b[o + 12] & 1) set.add(k);
++    if (b[o + 8] & 0x40) resettable.add(k);
++  }
++  return { set, resettable };
++}
++
++/**
++ * Link's heading in degrees from his rotation (a 3x3 matrix by rows): his forward axis (the matrix's third column)
++ * on the ground, measured as player.ts measures the direction he moves in. Checked against the way he moves in
++ * NX2Saria 0.14.0 (its tools/tracker_api_client.py --watch prints both).
++ */
++export function yawFromRotation(m: number[] | null | undefined): number | null {
++  if (!m || m.length !== 9) return null;
++  const fx = m[2], fz = m[8];
++  if (!Number.isFinite(fx) || !Number.isFinite(fz) || Math.hypot(fx, fz) < 0.01) return null;
++  return Number((((Math.atan2(fx, -fz) * 180) / Math.PI + 360) % 360).toFixed(1));
++}
++
++/** The reference save with the live values laid over it, as buildLive (live.ts) makes it from memory. */
++export function overlay(ref: GameDataFile, kinds: Map<string, Map<number, Value>>, keys: Set<bigint>, resettable: Set<bigint>) {
++  const entries = new Map(ref.entries);
++  const agreement: Agreement[] = [];
++  for (const kind of ['Bool', 'Int', 'Enum', 'String64', 'Int64'] as const) {
++    const values = kinds.get(kind);
++    if (!values) continue;
++    const a: Agreement = { type: kind, checked: 0, agree: 0, refTrue: 0, liveTrueOfRefTrue: 0 };
++    for (const [h, v] of values) {
++      const prev = ref.entries.get(h);
++      if (!prev || prev.type !== kind) continue;
++      a.checked++;
++      if (v === prev.value) a.agree++;
++      if (v !== prev.value) entries.set(h, { ...prev, value: v });
++    }
++    // Every flag set in the save counts, the ones the game did not answer too (matchesReference).
++    if (kind === 'Bool')
++      for (const e of ref.entries.values())
++        if (e.type === 'Bool' && e.value === true) { a.refTrue!++; if (values.get(e.hash) === true) a.liveTrueOfRefTrue!++; }
++    agreement.push(a);
++  }
++  const lists = kinds.get('String64Array');
++  for (const [h, v] of lists ?? []) {
++    const prev = ref.entries.get(h);
++    if (h === LOCATION_KEY || prev?.type === 'String64Array')
++      entries.set(h, { hash: h, type: 'String64Array', recordOffset: prev?.recordOffset ?? 0, value: v } as Entry);
++  }
++  const lost = [...ref.bool64].filter(k => !keys.has(k) && !resettable.has(k)).length;
++  agreement.push({ type: 'Bool64bitKey', checked: ref.bool64.size, agree: ref.bool64.size - lost });
++  return { data: { ...ref, entries, bool64: new Set(keys), warnings: [] } as GameDataFile, agreement, resettable };
++}
++
++/**
++ * A connection to NX2Saria while it runs: the values of each kind, asked again with their last digest so an unchanged
++ * kind costs one short answer, and the placed objects' classes once (they do not change).
++ */
++export class ApiSession {
++  private last = new Map<string, { digest: string; values: Map<number, Value> }>();
++  private keys?: { digest: string; set: Set<bigint> };
++  private resettable?: Set<bigint>;
++
++  /** Where the running game keeps the save it loads and writes, as it said when the session opened. */
++  readonly saveDir?: string;
++
++  private constructor(private client: Nx2SariaClient, status: ApiStatus) {
++    this.saveDir = typeof status.save_dir === 'string' && status.save_dir ? status.save_dir : undefined;
++  }
++
++  /** The API when NX2Saria answers on the port, else undefined. */
++  static async open(port = NX2SARIA_PORT): Promise<ApiSession | undefined> {
++    let client: Nx2SariaClient | undefined;
++    try {
++      client = await Nx2SariaClient.connect(port);
++      const st = await client.call<ApiStatus>('status', {}, 700);
++      if (isNx2Saria(st)) return new ApiSession(client, st);
++    } catch { /* nothing there, or not NX2Saria */ }
++    client?.close();
++    return undefined;
++  }
++
++  get alive() { return this.client.alive; }
++  close() { this.client.close(); }
++
++  /** Link's place, or undefined while there is no player. */
++  async player(): Promise<LivePlayer | undefined> {
++    const s = await this.client.call<ApiState>('nx2saria.state', {}, 700);
++    if (!s.player) return undefined;
++    const p = s.player;
++    return { pos: { x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)), z: Number(p.z.toFixed(2)), yaw: yawFromRotation(p.rotation) ?? 0 }, scene: s.area };
++  }
++
++  /**
++   * The live data over `ref`, and a fingerprint of what the tracker follows (as live.ts fingerprint: every Bool,
++   * Enum, text and placed object, and the Ints in watchInts); or why there is none. An optional kind the game does
++   * not answer is left out (the save's values stay), as the memory path does without the area.
++   */
++  async read(ref: GameDataFile, watchInts: Set<number>) {
++    const kinds = new Map<string, Map<number, Value>>();
++    const print: string[] = [];
++    for (const kind of API_KINDS) {
++      const was = this.last.get(kind);
++      let a: GameDataAnswer;
++      try {
++        a = await this.client.call<GameDataAnswer>('nx2saria.game_data', was ? { kind, if_digest: was.digest } : { kind });
++      } catch (e) {
++        const no = refusal(e);
++        if (!no) throw e;
++        if (OPTIONAL.has(kind)) { this.last.delete(kind); print.push('-'); continue; }
++        return no;
++      }
++      if (a.format !== GAME_DATA_FORMAT) return { none: 'unsupported' } as NoRead; // laid out otherwise than decodeRecords reads
++      const values = a.unchanged && was ? was.values : decodeRecords(a);
++      this.last.set(kind, { digest: a.digest, values });
++      kinds.set(kind, values);
++      if (kind === 'Int' || kind === 'Int64') {
++        for (const h of watchInts) if (values.has(h)) print.push(`${h}:${values.get(h)}`);
++      } else {
++        print.push(a.digest);
++      }
++    }
++    try {
++      this.resettable ??= decodeKeys(await this.client.call<GameDataAnswer>('nx2saria.game_data', { kind: 'Bool64bitKey', filter: 'all' }, 3000)).resettable;
++      const k = await this.client.call<GameDataAnswer>('nx2saria.game_data', this.keys ? { kind: 'Bool64bitKey', if_digest: this.keys.digest } : { kind: 'Bool64bitKey' });
++      if (!k.unchanged || !this.keys) this.keys = { digest: k.digest, set: decodeKeys(k).set };
++    } catch (e) {
++      const no = refusal(e);
++      if (!no) throw e;
++      return no;
++    }
++    print.push(this.keys.digest);
++    return { ...overlay(ref, kinds, this.keys.set, this.resettable), print: print.join('|') };
++  }
++}
+diff --git a/src/gamedata/saves.ts b/src/gamedata/saves.ts
+index 0110ad4..0c59514 100644
+--- a/src/gamedata/saves.ts
++++ b/src/gamedata/saves.ts
+@@ -34,7 +34,9 @@ export function resolveUserFolders(start: string): string[] {
+   if (!fs.existsSync(start)) return [];
+   if (isUserFolder(start)) return [start];
+   if (/^slot_\d+$/i.test(path.basename(start)) && isUserFolder(path.dirname(start))) return [path.dirname(start)];
+-  const tries = [start, path.join(start, 'save'), path.join(start, 'user', 'save')];
++  // NX2Saria keeps its saves in <game>\profile\save (the launcher's game folder is <install>\game).
++  const tries = [start, path.join(start, 'save'), path.join(start, 'user', 'save'), path.join(start, 'profile', 'save'),
++    path.join(start, 'game', 'profile', 'save')];
+   const out: string[] = [];
+   for (const t of tries) {
+     if (t !== start && isUserFolder(t)) out.push(t);
+@@ -82,16 +84,22 @@ function emulatorDataDirs(appData = baseDirs().roaming): string[] {
+ 
+ export const NATIVE_EXES = ['Triforce.exe', 'hookshot.exe', 'Longshot.exe', 'nx2navi.exe', 'relink-game.exe',
+   'ocarina-reborn-game.exe', 'ocarina-reborn.exe', 'OcarinaReborn.exe'];
+-const GAME_NAMES = /zelda|ocarina|hookshot|longshot|triforce|nx2navi|relink|fritchii|lichii|eden|orchid|eglantine|pokedinner/i;
++/**
++ * NX2Saria's game (ocarina from its launcher, nx2saria from a source build; .exe on Windows). It answers through its
++ * tracker API (nx2saria.ts), so it is not in NATIVE_EXES: its memory is not laid out as theirs.
++ */
++export const NX2SARIA_EXES = ['ocarina.exe', 'nx2saria.exe'];
++const GAME_NAMES = /zelda|ocarina|hookshot|longshot|triforce|nx2navi|nx2saria|relink|fritchii|lichii|eden|orchid|eglantine|pokedinner/i;
+ /** A program's name without ".exe" (or a Linux build's ".AppImage" / ".x86_64"), lowercase. */
+ export const programName = (file: string) => file.toLowerCase().replace(/\.(exe|appimage|x86_64)$/, '');
+-const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, 'ReLink.exe'].map(programName));
++const GAME_FILES = new Set([...NATIVE_EXES, ...EMULATOR_EXES, ...NX2SARIA_EXES, 'ReLink.exe'].map(programName));
++const NX2SARIA_PROGRAMS = new Set(NX2SARIA_EXES.map(programName));
+ /** A file that runs the game: the Windows exe, or a Linux build of the same name. */
+ export const isGameFile = (file: string) => GAME_FILES.has(programName(file));
+ const installations: Record<string, string> = {
+   fritchii: 'Fritchii', lichii: 'Lichii', eden: 'Eden', orchid: 'Orchid', eglantine: 'Eglantine',
+   pokedinner: 'PokeDinner', triforce: 'Triforce', longshot: 'Longshot', hookshot: 'Hookshot',
+-  nx2navi: 'NX2navi', 'ocarina reborn': 'Ocarina Reborn', 'ocarina-reborn': 'Ocarina Reborn',
++  nx2navi: 'NX2navi', nx2saria: 'NX2Saria', 'ocarina reborn': 'Ocarina Reborn', 'ocarina-reborn': 'Ocarina Reborn',
+   ocarinareborn: 'Ocarina Reborn', 'ocarina-reborn-game': 'Ocarina Reborn', relink: 'ReLink', 'relink-game': 'ReLink',
+ };
+ export function installationLabel(saveDir: string): string | undefined {
+@@ -107,7 +115,8 @@ export function installationLabel(saveDir: string): string | undefined {
+       if (!isGameFile(file)) return false;
+       try { return fs.statSync(path.join(dir, file)).isFile(); } catch { return false; }
+     });
+-    if (game) return installations[programName(game)];
++    // NX2Saria's "ocarina" is named by its file only: a folder called Ocarina is no install of it.
++    if (game) return NX2SARIA_PROGRAMS.has(programName(game)) ? 'NX2Saria' : installations[programName(game)];
+   }
+ }
+ const SEARCH_GROUPS = /^(apps?|programs?|games?|jogos|emulators?|emuladores|downloads|desktop|documents|gamesbuilds?|builds?|ports?|steamapps|common|quiverlauncher)$/i;
+@@ -167,7 +176,7 @@ function otherBases(home: string): Bases[] {
+ }
+ 
+ function foldersIn({ roaming, local, storage, prefix }: Bases): string[] {
+-  const native = ['Hookshot', 'Longshot', 'Triforce', 'NX2navi', 'Ocarina Reborn', 'OcarinaReborn', 'ReLink'];
++  const native = ['Hookshot', 'Longshot', 'Triforce', 'NX2navi', 'NX2Saria', 'Ocarina Reborn', 'OcarinaReborn', 'ReLink'];
+   return [...emulatorDataDirs(roaming), ...emulatorDataDirs(local),
+     ...storage.flatMap(base => native.map(name => path.join(base, name))),
+     ...configPaths(local, 'Ocarina Reborn/Config/settings.json', ['game_dir'], prefix),
+diff --git a/src/main/controller.ts b/src/main/controller.ts
+index 999b600..569f3ab 100644
+--- a/src/main/controller.ts
++++ b/src/main/controller.ts
+@@ -3,7 +3,7 @@
+ import fs from 'node:fs';
+ import path from 'node:path';
+ import { parseGameData, GameDataFile, GameDataError } from '../gamedata/parser.js';
+-import { candidateGameFoldersAsync, detectInFolders, installationLabel, latestSaveFoldersByProgram, latestUserFolder, resolvePickedFolder, resolveUserFolders, listSlots, mostRecentSlot, readSaveStable, userFolderForExe, SlotInfo } from '../gamedata/saves.js';
++import { candidateGameFoldersAsync, detectInFolders, installationLabel, isUserFolder, latestSaveFoldersByProgram, latestUserFolder, resolvePickedFolder, resolveUserFolders, listSlots, mostRecentSlot, readSaveStable, userFolderForExe, SlotInfo } from '../gamedata/saves.js';
+ import { loadNames } from '../gamedata/names.js';
+ import { Tracker, ChecklistFile, MappingFile, DescriptionsFile, applyDescriptions } from '../core/tracker.js';
+ import { regionsForArea } from '../core/areas.js';
+@@ -278,7 +278,7 @@ export class Controller {
+         s.live.hints = [...new Set([h, ...prev])].slice(0, 4);
+         s.live.hint = h;
+       }),
+-      onGame: (exe, appData) => this.followGame(exe, appData),
++      onGame: (exe, appData, saveDir) => this.followGame(exe, appData, saveDir),
+       onChange: () => void this.refresh(true),
+       onPlayer: () => this.emitPlayer(),
+       onStatus: () => {
+@@ -353,12 +353,13 @@ export class Controller {
+    * When a game starts, follow its saves: Hookshot, Longshot, NX2navi, ReLink and Fritchii each keep their
+    * own. Not while a slot is pinned (that's a choice of save), and only if it has saves.
+    */
+-  private async followGame(exe: string | undefined, appData?: string) {
++  private async followGame(exe: string | undefined, appData?: string, saveDir?: string) {
+     // A folder picked by hand is a choice too (like a pinned slot).
+-    if (!exe || this.settings.data.pinnedSlot || (this.settings.data.manualSaveDir && this.userDir)) return;
+-    const dir = userFolderForExe(exe, appData);
++    if ((!exe && !saveDir) || this.settings.data.pinnedSlot || (this.settings.data.manualSaveDir && this.userDir)) return;
++    // NX2Saria says which save folder it uses; the other games' folders are found from their exe.
++    const dir = saveDir && isUserFolder(saveDir) ? saveDir : exe ? userFolderForExe(exe, appData) : null;
+     if (!dir || path.resolve(dir).toLowerCase() === path.resolve(this.userDir ?? '').toLowerCase()) return;
+-    const game = path.dirname(exe).replace(/[\\/]bin$/i, '');
++    const game = exe ? path.dirname(exe).replace(/[\\/]bin$/i, '') : 'NX2Saria';
+     this.log.write({ kind: 'source', status: 'switched', detail: `Following the running game: ${game}` });
+     this.toast("Switched to the saves of the game that's running ({game}).", 8000, { game });
+     await this.useFolder(dir);
+diff --git a/src/main/live.ts b/src/main/live.ts
+index e788e4d..8021e56 100644
+--- a/src/main/live.ts
++++ b/src/main/live.ts
+@@ -1,11 +1,13 @@
+ // Live source: attaches (read-only) to a running game (Hookshot, Longshot, NX2navi or the
+ // Fritchii emulator), keeps the progress tables located, and reports when tracked values
+-// change. Falls back to nothing (the save files) whenever the game isn't running or isn't
++// change. NX2Saria answers through its tracker API instead (gamedata/nx2saria.ts), on any
++// system. Falls back to nothing (the save files) whenever the game isn't running or isn't
+ // in the same playthrough.
+ import type { GameDataFile } from '../gamedata/parser.js';
+ import { locate, readTables, buildLive, fingerprint, matchesReference, sweepRanges, LiveTables, Agreement } from '../gamedata/live.js';
+ import { MemoryAccessDenied, findProcesses, initMemoryAccess, openProcess, type GameProcess } from './procmem.js';
+ import { ptraceScope } from './procmem-linux.js';
++import { ApiSession } from '../gamedata/nx2saria.js';
+ import { NATIVE_EXES, EMULATOR_EXES } from '../gamedata/saves.js';
+ import type { LiveInfo } from '../shared/types.js';
+ import { PlayerReader, type LivePlayer } from '../gamedata/player.js';
+@@ -35,8 +37,11 @@ export interface LiveOptions {
+   /** Table addresses found before (hex), newest first. */
+   hints: string[];
+   onHint(hex: string): void;
+-  /** A game was attached to: the full path of its exe if the system gave it, and its %APPDATA% when it runs in a Wine/Proton prefix. */
+-  onGame?(exe: string | undefined, appData?: string): Promise<void>;
++  /**
++   * A game was attached to: the full path of its exe if the system gave it, and its %APPDATA% when it runs in a
++   * Wine/Proton prefix; or, for a game that says it (NX2Saria), the folder of the save it uses.
++   */
++  onGame?(exe: string | undefined, appData?: string, saveDir?: string): Promise<void>;
+   onChange(): void;
+   onStatus(): void;
+   /** Link moved (or changed scene). Read it with player(). */
+@@ -59,12 +64,19 @@ export class LiveSource {
+   private inFlight?: Promise<void>;
+   private playerReader?: PlayerReader;
+   private playerNow?: LivePlayer & { atMs: number };
++  /** NX2Saria's tracker API, while it answers (instead of reading a process). */
++  private api?: ApiSession;
++  /** Reading another process's memory works on this system (Windows). */
++  private memoryAccess = false;
++  /** Ticks in a row the API gave no data while live: a few are a save being written or loaded. */
++  private apiMisses = 0;
+   watchInts = new Set<number>();
+ 
+   constructor(private opts: LiveOptions) {}
+ 
+   async start() {
+-    if (!(await initMemoryAccess())) return this.set({ status: 'unavailable', detail: 'Reading game memory is not available on this system.' });
++    // Without memory access (koffi missing on Windows), NX2Saria's tracker API is still read.
++    this.memoryAccess = await initMemoryAccess();
+     this.set({ status: 'no-game' });
+     this.timer = setInterval(() => void this.tick(), TICK_MS);
+     void this.tick();
+@@ -86,7 +98,7 @@ export class LiveSource {
+   }
+ 
+   /** Link's latest live position, while a game is attached and it could be read. */
+-  player() { return this.mem ? this.playerNow : undefined; }
++  player() { return this.mem || this.api ? this.playerNow : undefined; }
+ 
+   /** Live data, only while it matches the reference save. */
+   current() { return this.info.status === 'live' ? this.snapshot : undefined; }
+@@ -108,6 +120,8 @@ export class LiveSource {
+   private detach() {
+     this.mem?.close();
+     this.mem = undefined;
++    this.api?.close();
++    this.api = undefined;
+     this.tables = undefined;
+     this.snapshot = undefined;
+     this.lastPrint = undefined;
+@@ -119,6 +133,7 @@ export class LiveSource {
+ 
+   private tick() {
+     this.inFlight ??= this.step().catch(e => {
++      if (!this.timer) return; // stopped while a request was out
+       console.error('live', e);
+       this.detach();
+       this.set({ status: 'no-game', detail: String((e as Error).message ?? e) });
+@@ -129,12 +144,23 @@ export class LiveSource {
+   }
+ 
+   private async step() {
++    if (this.api && !this.api.alive) { this.detach(); this.set({ status: 'no-game' }); }
++    if (this.api) return this.apiStep();
+     if (this.mem && !this.mem.alive()) { this.detach(); this.set({ status: 'no-game' }); }
+     if (!this.mem) {
+       if (Date.now() - this.lastFind < FIND_EVERY_MS) return;
+       this.lastFind = Date.now();
+-      const game = await findGame();
+-      if (!this.timer) return;
++      // NX2Saria answers for itself and needs no memory reading: asked beside the process search, preferred.
++      const [api, game] = await Promise.all([ApiSession.open(), this.memoryAccess ? findGame() : undefined]);
++      if (!this.timer) { api?.close(); return; }
++      if (api) {
++        this.api = api;
++        this.apiMisses = 0;
++        await this.opts.onGame?.(undefined, undefined, api.saveDir); // follow its saves, not another install's
++        if (!this.timer || this.api !== api) return;
++        return this.apiStep();
++      }
++      if (!this.memoryAccess) return this.set({ status: 'unavailable', detail: 'Reading game memory is not available on this system.' });
+       if (!game) return this.set({ status: 'no-game' });
+       try {
+         this.mem = openProcess(game.pid);
+@@ -159,7 +185,32 @@ export class LiveSource {
+     const print = fingerprint(this.tables!, raw, this.watchInts);
+     // Nothing tracked changed: skip rebuilding (most ticks).
+     if (print === this.lastPrint && this.info.status === 'live') return;
+-    const live = buildLive(this.tables!, raw, this.ref);
++    this.publish(print, buildLive(this.tables!, raw, this.ref));
++  }
++
++  /** NX2Saria: Link's place and the game data, from its tracker API. A failed call drops the connection. */
++  private async apiStep() {
++    const api = this.api!;
++    const p = await api.player();
++    if (!this.timer || this.api !== api) return;
++    if (p) this.setPlayer(p);
++    if (!this.ref) return this.set({ status: 'searching', detail: 'Waiting for a save to compare with.' });
++    const live = await api.read(this.ref, this.watchInts);
++    if (!this.timer || this.api !== api) return;
++    if ('none' in live) {
++      if (live.none === 'unsupported')
++        return this.set({ status: 'waiting', detail: "NX2Saria's tracker API doesn't read this game version's progress." });
++      // A save being written or loaded refuses for a moment: stay live a few ticks before saying so.
++      if (this.info.status === 'live' && ++this.apiMisses <= 6) return;
++      return this.set({ status: 'waiting', detail: "Couldn't find the progress tables yet. Load your file in the game." });
++    }
++    this.apiMisses = 0;
++    if (live.print === this.lastPrint && this.info.status === 'live') return;
++    this.publish(live.print, live);
++  }
++
++  /** Use a fresh read when it is the same playthrough as the reference save. */
++  private publish(print: string, live: { data: GameDataFile; agreement: Agreement[]; resettable: Set<bigint> }) {
+     if (!matchesReference(live.agreement)) {
+       this.snapshot = undefined;
+       this.lastPrint = undefined;
+@@ -176,7 +227,10 @@ export class LiveSource {
+ 
+   private readPlayer() {
+     const p = this.playerReader?.read();
+-    if (!p) return;
++    if (p) this.setPlayer(p);
++  }
++
++  private setPlayer(p: LivePlayer) {
+     const prev = this.playerNow;
+     const moved = !prev || prev.scene !== p.scene || Math.abs(prev.pos.x - p.pos.x) > 0.05 ||
+       Math.abs(prev.pos.y - p.pos.y) > 0.05 || Math.abs(prev.pos.z - p.pos.z) > 0.05 || Math.abs(prev.pos.yaw - p.pos.yaw) > 2;
+diff --git a/test/nx2saria.test.ts b/test/nx2saria.test.ts
+new file mode 100644
+index 0000000..2eb37da
+--- /dev/null
++++ b/test/nx2saria.test.ts
+@@ -0,0 +1,168 @@
++import { describe, it, expect, afterEach } from 'vitest';
++import net from 'node:net';
++import { decodeRecords, decodeKeys, overlay, yawFromRotation, ApiSession, isNx2Saria, type GameDataAnswer } from '../src/gamedata/nx2saria';
++import { matchesReference, LOCATION_KEY, STAGE_KEY } from '../src/gamedata/live';
++import type { GameDataFile, Entry } from '../src/gamedata/parser';
++
++// Answers as NX2Saria's tracker API gives them (its docs/tracker-api.md). All values made up.
++const rec = (h: number, v: number, signed = false) => {
++  const b = Buffer.alloc(8);
++  b.writeUInt32LE(h, 0);
++  if (signed) b.writeInt32LE(v, 4); else b.writeUInt32LE(v, 4);
++  return b;
++};
++const text64 = (s: string) => { const b = Buffer.alloc(64); b.write(s, 'latin1'); return b; };
++const u32 = (v: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
++const key = (k: bigint, cls: number, set: number) => { const b = Buffer.alloc(16); b.writeBigUInt64LE(k); b[8] = cls; b[12] = set; return b; };
++const answer = (kind: string, size: number, parts: Buffer[], digest = 'd-' + kind): GameDataAnswer =>
++  ({ kind, format: 1, count: parts.length, record_size: size, digest, records: Buffer.concat(parts).toString('hex') });
++
++function ref(): GameDataFile {
++  const entries = new Map<number, Entry>();
++  const add = (hash: number, type: Entry['type'], value: Entry['value']) => entries.set(hash, { hash, type, value, recordOffset: 0 });
++  for (let i = 1; i <= 20; i++) add(i, 'Bool', i <= 10);
++  add(0x04735978, 'Int', 3);
++  add(0x33333333, 'Enum', 0x11);
++  add(STAGE_KEY, 'String64', 'LostWood_Child');
++  return { version: 0x002d80eb, dataStart: 0x28, size: 0, entries, bool64: new Set([0x10n, 0x20n]), warnings: [] };
++}
++
++describe('NX2Saria tracker API: decoding', () => {
++  it('reads every kind as the save parser gives it', () => {
++    expect([...decodeRecords(answer('Bool', 8, [rec(5, 1), rec(6, 0)]))]).toEqual([[5, true], [6, false]]);
++    expect([...decodeRecords(answer('Int', 8, [rec(7, -1, true)]))]).toEqual([[7, -1]]);
++    expect([...decodeRecords(answer('Enum', 8, [rec(8, 0x4c0a63f4)]))]).toEqual([[8, 0x4c0a63f4]]);
++    expect([...decodeRecords(answer('String64', 68, [Buffer.concat([u32(STAGE_KEY), text64('HyruleField_Adult')])]))])
++      .toEqual([[STAGE_KEY, 'HyruleField_Adult']]);
++    const i64 = Buffer.alloc(12); i64.writeUInt32LE(9); i64.writeBigInt64LE(0x100000002n, 4);
++    expect([...decodeRecords(answer('Int64', 12, [i64]))]).toEqual([[9, 0x100000002n]]);
++    const list = Buffer.concat([u32(LOCATION_KEY), u32(2), text64('HyruleField'), text64('LakeHylia')]);
++    expect([...decodeRecords({ kind: 'String64Array', count: 1, record_size: 0, digest: 'x', records: list.toString('hex') })])
++      .toEqual([[LOCATION_KEY, ['HyruleField', 'LakeHylia']]]);
++    const k = decodeKeys(answer('Bool64bitKey', 16, [key(0x10n, 0x18, 1), key(0x30n, 0x58, 0)]));
++    expect([...k.set]).toEqual([0x10n]);
++    expect([...k.resettable]).toEqual([0x30n]);
++  });
++
++  it('turns the rotation into the heading player.ts uses', () => {
++    expect(yawFromRotation([0, 0, 1, 0, 1, 0, -1, 0, 0])).toBe(90);
++    expect(yawFromRotation([1, 0, 0, 0, 1, 0, 0, 0, 1])).toBe(180);
++    expect(yawFromRotation(null)).toBeNull();
++  });
++
++  it('lays live values over the reference save', () => {
++    const kinds = new Map([
++      ['Bool', decodeRecords(answer('Bool', 8, Array.from({ length: 20 }, (_, i) => rec(i + 1, i < 11 ? 1 : 0))))],
++      ['Int', decodeRecords(answer('Int', 8, [rec(0x04735978, 4)]))],
++      ['String64Array', decodeRecords({ kind: 'String64Array', count: 1, record_size: 0, digest: 'x',
++        records: Buffer.concat([u32(LOCATION_KEY), u32(1), text64('LakeHylia')]).toString('hex') })],
++    ]);
++    const live = overlay(ref(), kinds, new Set([0x10n, 0x20n, 0x40n]), new Set());
++    expect(live.data.entries.get(11)?.value).toBe(true);
++    expect(live.data.entries.get(0x04735978)?.value).toBe(4);
++    expect(live.data.entries.get(LOCATION_KEY)?.value).toEqual(['LakeHylia']);
++    expect(live.data.bool64.has(0x40n)).toBe(true);
++    expect(matchesReference(live.agreement)).toBe(true);
++    // At the title screen or in another file, most of the save's flags are not set.
++    const other = overlay(ref(), new Map([['Bool', new Map([[1, true]])]]), new Set(), new Set());
++    expect(matchesReference(other.agreement)).toBe(false);
++  });
++});
++
++describe('NX2Saria tracker API: a session', () => {
++  let server: net.Server | undefined;
++  afterEach(() => { server?.close(); server = undefined; });
++
++  // A stand-in for the game: answers one JSON line per request, as NX2Saria does.
++  async function serve(gameData: boolean, refuse: Record<string, number> = {}, format = 1) {
++    const asked: { method: string; params: Record<string, unknown> }[] = [];
++    server = net.createServer(sock => {
++      let buf = '';
++      sock.on('data', d => {
++        buf += d;
++        for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
++          const req = JSON.parse(buf.slice(0, nl));
++          buf = buf.slice(nl + 1);
++          asked.push({ method: req.method, params: req.params ?? {} });
++          let result: unknown, error: unknown;
++          if (req.method === 'status') {
++            result = { powered_on: true, emulator: 'nx2saria', game_version: '1.1.1', api_version: 1,
++              methods: ['status', 'read_memory', 'search_memory', 'nx2saria.state', 'nx2saria.game_data'],
++              save_dir: 'C:\\Jogos\\oot\\profile/save/0123' };
++          } else if (req.method === 'nx2saria.state') {
++            result = { area: 'HyruleField_Child', player: { x: 1.234, y: 2, z: 3, rotation: [0, 0, 1, 0, 1, 0, -1, 0, 0] }, game_data: gameData };
++          } else if (!gameData) {
++            error = { code: -32002, message: 'Bool: the game has not loaded its game data yet' };
++          } else if (refuse[req.params.kind]) {
++            error = { code: refuse[req.params.kind], message: `${req.params.kind}: refused` };
++          } else {
++            const p = req.params;
++            const a: GameDataAnswer =
++              p.kind === 'Bool' ? answer('Bool', 8, Array.from({ length: 20 }, (_, i) => rec(i + 1, i < 10 ? 1 : 0))) :
++              p.kind === 'Int' ? answer('Int', 8, [rec(0x04735978, 3)]) :
++              p.kind === 'Bool64bitKey' ? answer('Bool64bitKey', 16, [key(0x10n, 0x18, 1), key(0x20n, 0x18, 1)]) :
++              answer(p.kind, p.kind === 'String64' ? 68 : p.kind === 'Int64' ? 12 : p.kind === 'String64Array' ? 0 : 8, []);
++            a.format = format;
++            result = p.if_digest === a.digest ? { ...a, records: undefined, unchanged: true } : a;
++          }
++          sock.write(JSON.stringify(error ? { id: req.id, error } : { id: req.id, result }) + '\n');
++        }
++      });
++    });
++    await new Promise<void>(r => server!.listen(0, '127.0.0.1', r));
++    return { port: (server!.address() as net.AddressInfo).port, asked };
++  }
++
++  it('finds NX2Saria and reads the game through it', async () => {
++    const { port, asked } = await serve(true);
++    const api = await ApiSession.open(port);
++    expect(api).toBeDefined();
++    expect(api!.saveDir).toBe('C:\\Jogos\\oot\\profile/save/0123'); // the save folder the game says it uses
++    const p = await api!.player();
++    expect(p).toEqual({ pos: { x: 1.23, y: 2, z: 3, yaw: 90 }, scene: 'HyruleField_Child' });
++    const first = await api!.read(ref(), new Set([0x04735978]));
++    expect('agreement' in first && matchesReference(first.agreement)).toBe(true);
++    const again = await api!.read(ref(), new Set([0x04735978]));
++    expect('print' in again && 'print' in first && again.print === first.print).toBe(true);
++    // The second read asks each kind with its digest, and the placed objects' classes only once.
++    const bools = asked.filter(a => a.params.kind === 'Bool');
++    expect(bools.map(a => a.params.if_digest)).toEqual([undefined, 'd-Bool']);
++    expect(asked.filter(a => a.params.filter === 'all')).toHaveLength(1);
++    api!.close();
++  });
++
++  it('waits while the game has no game data', async () => {
++    const { port } = await serve(false);
++    const api = await ApiSession.open(port);
++    expect(await api!.read(ref(), new Set())).toEqual({ none: 'wait' });
++    api!.close();
++  });
++
++  it('does without the area kinds the game does not answer, never without the flags', async () => {
++    let { port } = await serve(true, { String64Array: -32003, String64: -32002, Int64: -32003 });
++    let api = await ApiSession.open(port);
++    const live = await api!.read(ref(), new Set());
++    expect('agreement' in live && matchesReference(live.agreement)).toBe(true);
++    expect('data' in live && live.data.entries.get(STAGE_KEY)?.value).toBe('LostWood_Child'); // the save's
++    api!.close();
++    server!.close();
++    ({ port } = await serve(true, { Bool: -32003 }));
++    api = await ApiSession.open(port);
++    expect(await api!.read(ref(), new Set())).toEqual({ none: 'unsupported' });
++    api!.close();
++  });
++
++  it('reads no records of another format', async () => {
++    const { port } = await serve(true, {}, 2);
++    const api = await ApiSession.open(port);
++    expect(await api!.read(ref(), new Set())).toEqual({ none: 'unsupported' });
++    api!.close();
++  });
++
++  it('is not taken for another program on the port', async () => {
++    expect(isNx2Saria({ powered_on: true, emulator: 'lichii', game_version: '1.1.1', api_version: 1 })).toBe(false);
++    server = net.createServer(sock => sock.end('HTTP/1.1 400 Bad Request\r\n\r\n'));
++    await new Promise<void>(r => server!.listen(0, '127.0.0.1', r));
++    expect(await ApiSession.open((server.address() as net.AddressInfo).port)).toBeUndefined();
++  });
++});
