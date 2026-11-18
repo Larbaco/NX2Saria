@@ -86,7 +86,6 @@ from pathlib import Path
 import check_isa
 import romfs_index
 import build_shaders
-import hostmem
 import memgate
 from check_content import GENERATED_MARKER
 
@@ -872,7 +871,7 @@ class TreeSampler:
     """Every poll seconds between start(pid) and stop(): the most memory resident in the process tree under pid
     (Ninja, the gate's wrappers and the compilers) and the least free memory, for the compile phase's summary."""
 
-    def __init__(self, rss=memgate.rss_now, avail=hostmem.available_ram, poll=memgate.POLL,
+    def __init__(self, rss=memgate.rss_now, avail=memgate.available, poll=memgate.POLL,
                  clock=time.monotonic):
         self._rss, self._avail, self.poll, self._clock = rss, avail, poll, clock
         self.peak, self.peak_at, self.lowest_avail = 0, None, None

@@ -45,6 +45,7 @@ MODEL_BASE = 120 * MIB
 MODEL_PER_BYTE = 50 * MIB / 1_000_000          # 50 MiB per million bytes of C
 MODEL_PER_SWITCH_BYTE = 150 * MIB / 1_000_000  # 150 MiB per million bytes of the largest function with a switch
 LEARN_TOLERANCE = 0.20          # a recorded peak still applies while the source size is within 20 % of the recorded
+SWITCH_SMALL = 100_000          # ...and its switch_fn too, unless both the recorded and the new one are below this
 SCALE_MIN_SAMPLES = 8           # recorded objects with a cost needed before the model's scale is learned
 SCALE_RANGE = (0.5, 3.0)        # the learned scale is kept within this, so a few odd objects cannot run away with it
 
@@ -337,6 +338,30 @@ def total_ram():
         return None
 
 
+def _commit_left():
+    """Windows: bytes the system can still commit (ullAvailPageFile of GlobalMemoryStatusEx: RAM and page file
+    together, less what is committed), or None. A compile that cannot commit fails however much RAM is free."""
+    status = hostmem._MemStatus()
+    status.dwLength = ctypes.sizeof(status)
+    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return status.apf
+    return None
+
+
+def available():
+    """The free memory the gate goes by: hostmem.available_ram(), and on Windows no more than the commit left
+    (_commit_left), which runs out first on a PC with a small page file. None when neither can be read."""
+    avail = hostmem.available_ram()
+    if WINDOWS:
+        try:
+            left = _commit_left()
+        except (OSError, AttributeError, ValueError):
+            left = None
+        if left is not None:
+            avail = left if avail is None else min(avail, left)
+    return avail
+
+
 def default_reserve(total=None):
     """The memory kept free while compiles run: RESERVE_MIN, or RESERVE_SHARE of the total RAM when that is more."""
     if total is None:
@@ -415,6 +440,10 @@ def _median(values):
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
+def _close(new, recorded):
+    return abs(new - recorded) <= LEARN_TOLERANCE * recorded
+
+
 class Estimates:
     """Per-object peaks of earlier builds, kept as JSON:
     {"version": 1, "objects": {name: {"peak": bytes, "seconds": float, "src_bytes": int, "cost": int,
@@ -468,11 +497,16 @@ class Estimates:
                 except OSError:
                     pass
 
-    def record(self, name, peak, seconds, src_bytes, cost, switch_fn=0):
-        """Keep a successful compile's peak (callers record only those)."""
+    def record(self, name, peak, seconds, src_bytes, cost, switch_fn=0, keep_higher=False):
+        """Keep a successful compile's peak (callers record only those). keep_higher: the compile ran while the free
+        memory was below the gate's reserve (Lease.pressed), where the system swaps or compresses pages and the
+        measured peak can come out low; a higher peak recorded before for the same object then stays."""
         if not peak or peak <= 0:
             return
         with self._lock:
+            old = self.objects.get(name)
+            if keep_higher and old is not None and old['peak'] > peak:
+                peak = old['peak']
             self.objects[name] = {'peak': int(peak), 'seconds': float(seconds), 'src_bytes': int(src_bytes),
                                   'cost': int(cost), 'switch_fn': int(switch_fn)}
             self._scale = None
@@ -494,11 +528,13 @@ class Estimates:
 
     def need(self, name, src_bytes, cost, switch_fn=0, default=None):
         """(bytes, how) for a compile. 'learned': the recorded peak, while the source size is close to the recorded
-        one. Otherwise 'default' when the caller gives one (sources the size model does not describe), else 'model'.
+        one and so is its switch_fn (each within LEARN_TOLERANCE, or both switch_fn below SWITCH_SMALL): after the lift
+        groups its functions anew, a chunk of the same name and size can hold other code. Otherwise 'default' when the caller gives one (sources the size model does not describe), else 'model'.
         cost is not used here; it is the caller's order of compiles and is kept with the record."""
         with self._lock:
             e = self.objects.get(name)
-            if e is not None and abs(src_bytes - e['src_bytes']) <= LEARN_TOLERANCE * e['src_bytes']:
+            if e is not None and _close(src_bytes, e['src_bytes']) and \
+                    ((switch_fn < SWITCH_SMALL and e['switch_fn'] < SWITCH_SMALL) or _close(switch_fn, e['switch_fn'])):
                 est, how = max(FLOOR, int(e['peak'] * MARGIN)), 'learned'
             elif default is not None:
                 est, how = int(default), 'default'
@@ -562,6 +598,12 @@ class Lease:
         self.order = 0            # 1 for the first compile the gate admitted, 2 for the next...
         self.held = 0.0           # seconds the gate held it for memory
         self.sampled_peak = 0     # the highest resident memory the gate's sampler saw it use
+        self.lowest_avail = None  # the least free memory the gate saw while it ran (at its admission and sampling)
+
+    @property
+    def pressed(self):
+        """Whether the free memory fell below the gate's reserve while it ran: its measured peak may be low then."""
+        return self.lowest_avail is not None and self.lowest_avail < self.gate.reserve
 
     def started(self, popen_or_pid):
         pid = getattr(popen_or_pid, 'pid', popen_or_pid)
@@ -580,7 +622,7 @@ class Gate:
     passes the one before it, so a large compile held for memory is not starved by small ones. When the free memory
     falls below the reserve the gate only stops starting compiles; it never ends running ones."""
 
-    def __init__(self, max_jobs, min_jobs=1, reserve=None, ceiling=None, avail=hostmem.available_ram, rss=rss_now,
+    def __init__(self, max_jobs, min_jobs=1, reserve=None, ceiling=None, avail=available, rss=rss_now,
                  clock=time.monotonic, poll=POLL, log=print, enabled=True, total=None):
         self.max_jobs = max(1, int(max_jobs))
         self.min_jobs = min(self.max_jobs, max(1, int(min_jobs)))
@@ -597,6 +639,7 @@ class Gate:
         self._sampler = None
         self._stop = threading.Event()
         self._last_log = None
+        self._last_avail = None   # the free memory the last admission decision read
         self._suppressed = 0
         self.started_count = 0
         self.most_at_once = 0
@@ -613,8 +656,9 @@ class Gate:
         rss = _rss_reader(self._rss)
         return [(lease.need, None if lease.pid is None else rss(lease.pid)) for lease in self._running]
 
-    def acquire(self, name, need):
-        """Block until a compile of this need may start; the Lease to hand back to release()."""
+    def acquire(self, name, need, cancel=None):
+        """Block until a compile of this need may start; the Lease to hand back to release(). cancel: called while
+        the compile waits; once it returns true the wait ends and acquire returns None (nothing to release)."""
         with self._cond:
             if self._sampler is None:
                 self._sampler = threading.Thread(target=self._sample, name='memgate-sampler', daemon=True)
@@ -625,6 +669,8 @@ class Gate:
             held_since = None
             try:
                 while True:
+                    if cancel is not None and cancel():
+                        return None
                     if self._queue[0] == ticket:
                         if self._decide(name, need, held_since is not None):
                             break
@@ -635,6 +681,7 @@ class Gate:
                 self._queue.remove(ticket)
                 self._cond.notify_all()
             lease = Lease(self, name, need)
+            lease.lowest_avail = self._last_avail
             if held_since is not None:
                 lease.held = self._clock() - held_since
                 self.held_total += lease.held
@@ -647,6 +694,7 @@ class Gate:
             return lease
 
     def _decide(self, name, need, already_held):
+        self._last_avail = None
         running = len(self._running)
         if not self.enabled:
             return running < self.max_jobs
@@ -656,6 +704,7 @@ class Gate:
             return False
         state = self._state()
         avail = self._avail()
+        self._last_avail = avail
         if admit(state, need, avail, self.reserve, self.ceiling, running, self.min_jobs, self.max_jobs, self.total):
             return True
         if not already_held:
@@ -686,8 +735,9 @@ class Gate:
         running compiles together, for the summary."""
         while not self._stop.wait(self.poll):
             with self._cond:
-                leases = [lease for lease in self._running if lease.pid is not None]
-                busy = bool(self._running)
+                running = list(self._running)
+                leases = [lease for lease in running if lease.pid is not None]
+                busy = bool(running)
             if not busy:
                 continue
             try:
@@ -700,6 +750,10 @@ class Gate:
             with self._cond:
                 for lease, s in sizes:
                     lease.sampled_peak = max(lease.sampled_peak, s)
+                if avail is not None:
+                    for lease in running:
+                        if lease.lowest_avail is None or avail < lease.lowest_avail:
+                            lease.lowest_avail = avail
                 if avail is not None and (self.lowest_avail is None or avail < self.lowest_avail):
                     self.lowest_avail = avail
                 if total > self.peak_rss:
@@ -931,7 +985,7 @@ def _load_ledger(state):
     return led, dropped
 
 
-def wrap(state, name, cmd, avail=hostmem.available_ram, rss=rss_now, poll=POLL, total=None):
+def wrap(state, name, cmd, avail=available, rss=rss_now, poll=POLL, total=None):
     """Wait for the gate, run the compile, record its peak; the compile's exit code.
 
     Wrappers wait in the order they arrived: each takes a number in the ledger's waiting list, and only the live

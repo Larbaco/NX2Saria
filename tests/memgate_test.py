@@ -302,6 +302,36 @@ class GateTest(unittest.TestCase):
             self.assertEqual(len(g._running), 1)
         self.assertEqual(g._running, [])
 
+    def test_cancel_ends_a_hold(self):
+        """A compile held for memory leaves the gate at once when its cancel turns true: acquire returns None, the
+        waiters behind it move up, and nothing is left to release."""
+        g = self.gate(0)
+        a = g.acquire('a', GIB)
+        cancelled = threading.Event()
+        done = []
+        t = threading.Thread(target=lambda: done.append(g.acquire('b', GIB, cancel=cancelled.is_set)), daemon=True)
+        t.start()
+        self.assertTrue(wait_until(lambda: g.summary()['holds'] == 1))
+        cancelled.set()
+        t.join(5)
+        self.assertEqual(done, [None])
+        self.assertEqual(g.summary()['started'], 1)
+        self.assertEqual(list(g._queue), [])
+        g.release(a)
+        self.assertIsNone(g.acquire('c', GIB, cancel=lambda: True))   # cancelled before it is even its turn
+
+    def test_a_lease_knows_the_least_free_memory_while_it_ran(self):
+        g = self.gate(8 * GIB, reserve=2 * GIB, min_jobs=1)
+        first = g.acquire('a', GIB)            # admitted by min_jobs
+        second = g.acquire('b', GIB)           # admitted on 8 GiB free
+        self.assertEqual(second.lowest_avail, 8 * GIB)
+        self.assertFalse(second.pressed)
+        self.f.free = GIB                      # below the 2 GiB reserve while both run
+        self.assertTrue(wait_until(lambda: first.lowest_avail == GIB and second.lowest_avail == GIB))
+        self.assertTrue(first.pressed and second.pressed)
+        g.release(first)
+        g.release(second)
+
 
 class EstimatesTest(Tmp):
     def test_learned_within_twenty_percent(self):
@@ -311,6 +341,29 @@ class EstimatesTest(Tmp):
         self.assertEqual(e.need('a.o', 800, 500)[1], 'learned')
         self.assertEqual(e.need('a.o', 1201, 500)[1], 'model')
         self.assertEqual(e.need('b.o', 1000, 500)[1], 'model')
+
+    def test_learned_only_while_the_switch_is_alike(self):
+        """After a re-chunk, a chunk of the same name and size can hold another switch: its switch_fn must be within
+        20 % too, unless both are small."""
+        e = memgate.Estimates()
+        e.record('a.o', 100 * MIB, 3.0, 1000, 500, switch_fn=500_000)
+        self.assertEqual(e.need('a.o', 1000, 500, switch_fn=590_000)[1], 'learned')
+        self.assertEqual(e.need('a.o', 1000, 500, switch_fn=650_000)[1], 'model')
+        self.assertEqual(e.need('a.o', 1000, 500, switch_fn=0)[1], 'model')
+        e.record('b.o', 100 * MIB, 3.0, 1000, 500, switch_fn=20_000)
+        self.assertEqual(e.need('b.o', 1000, 500, switch_fn=90_000)[1], 'learned')   # both below SWITCH_SMALL
+        self.assertEqual(e.need('b.o', 1000, 500, switch_fn=0)[1], 'learned')
+        self.assertEqual(e.need('b.o', 1000, 500, switch_fn=200_000)[1], 'model')
+
+    def test_a_peak_under_memory_pressure_does_not_lower_the_record(self):
+        e = memgate.Estimates()
+        e.record('a.o', 500 * MIB, 3.0, 1000, 500)
+        e.record('a.o', 300 * MIB, 4.0, 1000, 500, keep_higher=True)    # measured while the memory was short
+        self.assertEqual((e.objects['a.o']['peak'], e.objects['a.o']['seconds']), (500 * MIB, 4.0))
+        e.record('a.o', 700 * MIB, 3.0, 1000, 500, keep_higher=True)
+        self.assertEqual(e.objects['a.o']['peak'], 700 * MIB)
+        e.record('a.o', 300 * MIB, 3.0, 1000, 500)                      # without pressure the new peak is taken
+        self.assertEqual(e.objects['a.o']['peak'], 300 * MIB)
 
     def test_a_tiny_peak_meets_the_floor(self):
         e = memgate.Estimates()
@@ -534,6 +587,30 @@ class RunTest(unittest.TestCase):
 
 
 @LINUX
+class AvailableTest(unittest.TestCase):
+    def test_windows_counts_the_commit_left(self):
+        """On Windows the free memory is no more than what can still be committed (a small page file runs out first)."""
+        with mock.patch.object(memgate, 'WINDOWS', True), \
+                mock.patch.object(memgate.hostmem, 'available_ram', return_value=10 * GIB):
+            with mock.patch.object(memgate, '_commit_left', return_value=3 * GIB):
+                self.assertEqual(memgate.available(), 3 * GIB)
+            with mock.patch.object(memgate, '_commit_left', return_value=30 * GIB):
+                self.assertEqual(memgate.available(), 10 * GIB)
+            with mock.patch.object(memgate, '_commit_left', side_effect=OSError):
+                self.assertEqual(memgate.available(), 10 * GIB)
+        with mock.patch.object(memgate, 'WINDOWS', True), \
+                mock.patch.object(memgate.hostmem, 'available_ram', return_value=None), \
+                mock.patch.object(memgate, '_commit_left', return_value=3 * GIB):
+            self.assertEqual(memgate.available(), 3 * GIB)
+
+    def test_elsewhere_it_is_hostmem_s(self):
+        with mock.patch.object(memgate, 'WINDOWS', False), \
+                mock.patch.object(memgate.hostmem, 'available_ram', return_value=7 * GIB), \
+                mock.patch.object(memgate, '_commit_left', side_effect=AssertionError('not on Linux')):
+            self.assertEqual(memgate.available(), 7 * GIB)
+        self.assertIs(memgate.Gate(1).__dict__['_avail'], memgate.available)
+
+
 class RssNowTest(unittest.TestCase):
     def test_a_process_and_its_descendants(self):
         child = f'{ALLOC}import sys; sys.stdout.write("ready\\n"); sys.stdout.flush(); sys.stdin.read()'
