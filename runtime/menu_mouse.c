@@ -49,7 +49,7 @@
 #define UI_SYSTEM_VT 0x4c73ce0ull       // its vtable
 #define MAIN_SIZE 0x4ea0000ull          // main's image, up to the patch page
 
-enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, FM_GUARD = 0x1f, FM_PLAYERS = 0x22,
+enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, FM_PLAYERS = 0x22,
        FM_CONTROL = 0x28 };
 enum { CTL_FOCUSED = 0x78, CTL_RESERVED = 0x80, CTL_FLAGS = 0xb4 };
 enum { ENT_BUTTON = 0x18, ENT_SCREEN = 0x20 };
@@ -204,10 +204,10 @@ static void entries_of(uint64_t s, Entries *out) {
     }
 }
 // The focus to entry e of screen s: the writes of the game's focus setter with its flag 0 (a slide, as the d-pad moves).
-// Not while the game's method would refuse: its guard (+0x1f bit 5) with the focused button busy (+0x40 bit 5).
+// (The method's busy guard, its +0x1f bit 5 with the focused button's +0x40 bit 5, is not taken: it held on the save
+// files' list the whole time the list waited for input, and the d-pad's moves there do not go through it.)
 static int reserve_focus(const Ui *u, uint64_t s, uint64_t e, uint64_t focused) {
-    uint64_t fb = rd64(focused + ENT_BUTTON);
-    if ((rd8(u->focus + FM_GUARD) & 0x20) && ok_at(fb, BTN_FLAGS + 4) && (rd32(fb + BTN_FLAGS) & 0x20)) return 0;
+    (void)focused;
     memcpy((void *)(uintptr_t)(u->ctl + CTL_RESERVED), &e, 8);
     __atomic_fetch_and((uint32_t *)(uintptr_t)(u->ctl + CTL_FLAGS), ~8u, __ATOMIC_SEQ_CST);
     if (rd64(s + SCR_REQ_ENTRY) != e) {
@@ -235,15 +235,14 @@ static int enabled(void) {
 }
 
 // ---- the log: one line per menu the mouse was used in, when the focus leaves it (at most LOG_MENUS a session)
-typedef struct { unsigned hover, refused, click_a, click_miss, click_b, wheel, hits, misses; } Stats;
+typedef struct { unsigned hover, click_a, click_miss, click_b, wheel, hits, misses; } Stats;
 #define LOG_MENUS 48
 static void stats_flush(const char *name, Stats *st) {
     static int lines;
-    if (!st->hover && !st->refused && !st->click_a && !st->click_miss && !st->click_b && !st->wheel) return;
+    if (!st->hover && !st->click_a && !st->click_miss && !st->click_b && !st->wheel) return;
     if (lines++ < LOG_MENUS)
-        rt_log("menu_mouse: %s: focus moved %u (refused by the game's guard %u), left clicks %u (A %u, on no button "
-               "%u), right clicks (B) %u, wheel notches %u; hit test %u on a button, %u off", name, st->hover,
-               st->refused, st->click_a + st->click_miss, st->click_a, st->click_miss, st->click_b, st->wheel,
+        rt_log("menu_mouse: %s: focus moved %u, left clicks %u (A %u, on no button %u), right clicks (B) %u, wheel "
+               "notches %u; hit test %u on a button, %u off", name, st->hover, st->click_a + st->click_miss, st->click_a, st->click_miss, st->click_b, st->wheel,
                st->hits, st->misses);
     memset(st, 0, sizeof *st);
 }
@@ -389,12 +388,11 @@ void menu_mouse_screen_host(Cpu *c) {
     if (e == focused) asked = 0;
     else if (click_l || e != asked || now - asked_ms > 150) {
         int ok = reserve_focus(&u, s, e, focused);
-        if (ok) st.hover += e != asked, asked = e, asked_ms = now;
-        else st.refused++;
+        st.hover += e != asked, asked = e, asked_ms = now;
         if (verbose_log(40))
             rt_log("menu_mouse: pointer (%.0f, %.0f): entry %d of %d (%.0f..%.0f, %.0f..%.0f) %s, the focus on %#llx",
                    (double)x, (double)y, i, ent.n, (double)ent.box[i].x0, (double)ent.box[i].x1, (double)ent.box[i].y0,
-                   (double)ent.box[i].y1, ok ? "reserved" : "refused", (unsigned long long)focused);
+                   (double)ent.box[i].y1, ok ? "reserved" : "not reserved", (unsigned long long)focused);
     }
     if (click_l) {
         if (e == focused) plat_add32(&pending[P_A], 1), st.click_a++;

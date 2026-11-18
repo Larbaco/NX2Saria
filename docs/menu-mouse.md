@@ -78,8 +78,8 @@ a text entry is open, the host function does nothing: the overlay has the mouse.
 - `menu_mouse: the screens' site runs (thread N); interface system found`: the first time the site runs.
 - `menu_mouse: screen <name>: K of N entries take the focus, squeeze S`: each menu screen the focus goes to (the
   first 24; all of them with `NX2SARIA_MENU_CURSOR_LOG=1`).
-- `menu_mouse: <name>: focus moved H (refused by the game's guard R), left clicks C (A a, on no button m), right clicks (B) b, wheel notches w; hit
-  test h on a button, o off`: when the focus leaves a menu the mouse was used in (at most 48 a session); "refused" counts the moves the game's busy guard would refuse.
+- `menu_mouse: <name>: focus moved H, left clicks C (A a, on no button m), right clicks (B) b, wheel notches w; hit
+  test h on a button, o off`: when the focus leaves a menu the mouse was used in (at most 48 a session).
 
 ## Testing
 
