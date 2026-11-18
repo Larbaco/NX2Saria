@@ -113,7 +113,7 @@ void input_motion_start(void);
 // NX2SARIA_MOTION is not "0" (a live setting: read again when cfg_version changes). Off: the sensor reads at rest.
 int input_motion_enabled(void);
 // SDL sensor values (accelerometer m/s^2, gyro rad/s, SDL gamepad axes) to the Switch controller frame motion_feed
-// takes (acceleration in G as gravity reads, rotation rad/s). The mapping is documented in input_win.c.
+// takes (acceleration in G as gravity reads, rotation rad/s). The mapping is documented in input.c.
 void input_motion_axes(const float sdl_acc[3], const float sdl_gyro[3], double acc_g[3], double gyro[3]);
 
 // motion_fusion.c: nn::hid::SixAxisSensorState and the sensor fusion that produces it.
@@ -124,8 +124,31 @@ typedef struct {
 } MotionState;
 _Static_assert(sizeof(MotionState) == 0x60, "SixAxisSensorState ABI");
 typedef struct MotionFusion MotionFusion;
-MotionFusion *motion_new(void);
-MotionFusion *motion_global(void);   // the gamepad's, fed by input_win.c
+MotionFusion *motion_new(void);      // with MOTION_OPTIONS_DEFAULT and no sensor source named yet
+MotionFusion *motion_global(void);   // the gamepad's, fed by input.c's motion thread
 void motion_feed(MotionFusion *m, const double acc_g[3], const double gyro_rad_s[3], uint64_t now_ns);
 int motion_read(MotionFusion *m, MotionState *out, int max, uint64_t now_ns);   // newest first; 0 = none in 200 ms
-void motion_restart(MotionFusion *m);   // angle and direction start over at the next sample
+void motion_restart(MotionFusion *m);   // angle and direction start over at the next sample; the learned bias stays
+
+// The gyro's handling in motion_fusion.c, set from the gyro_* settings by input.c (live). The bias is the rate a still
+// controller reads; it is learned while the controller lies still and taken off every sample (calibrate). Rates under
+// the dead zone (revolutions a second, on the length of the rate after the bias) count as none, the console's
+// zero-drift levels. The rate the game gets, and the angle and direction built from it, are split into the part about
+// the world's up (the turn, X: left and right) and the rest (the tilt, Y: up and down), each multiplied by its factor;
+// a negative factor is that axis inverted. 1 and 1 give the sensor's own rate.
+typedef struct {
+    int calibrate;         // gyro_calibration: learn the bias while still
+    double deadzone_rps;   // gyro_deadzone: 0, MOTION_DEADZONE_LOW, _STANDARD or _HIGH
+    double turn, tilt;     // gyro_turn_sens / gyro_tilt_sens as factors, negative when gyro_turn_invert / gyro_tilt_invert
+} MotionOptions;
+#define MOTION_DEADZONE_LOW 0.002        // revolutions a second: the console's tight zero-drift mode
+#define MOTION_DEADZONE_STANDARD 0.007   // its standard mode
+#define MOTION_DEADZONE_HIGH 0.01        // its loose mode
+#define MOTION_KP 0.5                    // the filter's pull toward the measured gravity, 1/s
+#define MOTION_KI 0.1                    // its integral term, 1/s^2: the gyro bias the gravity can see
+#define MOTION_OPTIONS_DEFAULT ((MotionOptions){1, MOTION_DEADZONE_LOW, 1.0, 1.0})
+void motion_set_options(MotionFusion *m, const MotionOptions *o);
+// The controller whose sensors feed m from now on (id: nonzero and unique per connection, e.g. SDL's joystick id; name
+// for the log). A different one restarts the orientation and its rest statistics; the bias learned for each of the
+// last few controllers is kept and comes back when that one feeds again, a new one starts with none learned.
+void motion_source(MotionFusion *m, uint64_t id, const char *name);
