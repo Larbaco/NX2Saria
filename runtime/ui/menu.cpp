@@ -2038,6 +2038,8 @@ static void tab_controls(float scale) {
         opt_choice("NX2SARIA_MOUSE_MODE", UI_MENU_MOUSE_MODE, mouse_mode, 2, UI_MENU_MOUSE_MODE_DESC);
     }
     opt_slider("NX2SARIA_MOUSE_SENS", UI_MENU_MOUSE_SENS, 0.05f, 10, UI_MENU_MOUSE_SENS_DESC, 0.05f, "%.2f");
+    // The mouse in the game's own menus (menu_cursor.c on 1.4.3, menu_mouse.c on 1.1.1; live; hidden elsewhere)
+    opt_toggle("NX2SARIA_MENU_CURSOR", UI_MENU_MENU_CURSOR, UI_MENU_MENU_CURSOR_DESC);
     static const UiTextId layout[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX,
                                       UI_MENU_PAD_LAYOUT_PLAYSTATION};
     opt_choice("NX2SARIA_PAD_LAYOUT", UI_MENU_PAD_LAYOUT, layout, 4, UI_MENU_PAD_LAYOUT_DESC, pad_layout_note());

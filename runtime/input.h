@@ -44,6 +44,11 @@ int menu_cursor_pointer(void);
 // MOUSER and WHEEL lines. pointer: fractions of the window, 0..1 from its top left; 0 when the window is not in front,
 // the pointer is outside it or the camera has it captured; 2 when the script placed it. mouse_down: the left (0) or
 // right (1) button held. wheel_take: notches since the last call, up positive. Any thread.
+// menu_mouse.c: the same for 1.1.1's menus (poll: the A, B, up and down the mouse asked for; pointer: as above)
+void menu_mouse_poll(uint64_t *buttons);
+int menu_mouse_pointer(void);
+// The game gets no input now: a text entry or the in-game menu (the overlay) is open, or one just closed
+int input_game_input_blocked(void);
 int input_menu_pointer(float *nx, float *ny);
 int input_menu_mouse_down(int right);
 int32_t input_menu_wheel_take(void);
