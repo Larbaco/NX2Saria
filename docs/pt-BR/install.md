@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/install.md source-hash=4eb0c98c058cc7c521702cfc6701787550d06318 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=f8e8f3a5886a3ae9be266f1f458b4e4fed167173 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
@@ -22,6 +22,15 @@ O instalador instala o launcher, que compila o jogo uma vez e depois o inicia.
 
 1. Baixe a **`NX2Saria-Linux-<version>-x86_64.AppImage`** da versão.
 2. Torne-a executável (`chmod +x NX2Saria-Linux-*.AppImage`) e execute-a.
+3. A compilação precisa de um compilador e de algumas bibliotecas da sua distribuição. Quando falta alguma, a AppImage
+   diz qual é e o comando que as instala. No Ubuntu 24.04, no Linux Mint 22 e nas outras distribuições baseadas no
+   Ubuntu:
+
+   ```sh
+   sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev
+   ```
+
+   O SDL3, que o Ubuntu 24.04 não empacota, vem com a AppImage.
 
 Iniciada em um ambiente de desktop, ela abre uma janela para instalar, atualizar e jogar.
 
