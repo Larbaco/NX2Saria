@@ -8,7 +8,8 @@ none):
 - a program that does not start for want of a library the kit's SDL3 needs names it and the package that holds it;
 - the kit's libSDL3.so.0 goes beside the game, and goes away again when the game is linked against the system's, but
   a libSDL3.so.0 this build did not put there stays, with a line that says so;
-- the build log's line names the compiler, its version and where SDL3 came from.
+- the build log's line names the compiler, its version and where SDL3 came from;
+- every Linux kit carries tools/sdl3_pin.py.
 No network, no game files.
 
 Run: python tests/make_game_sdl3_test.py
@@ -300,6 +301,18 @@ class Sdl3VersionTest(unittest.TestCase):
             p = subprocess.run([shutil.which('clang'), '-fsyntax-only', '-Wall', '-Werror', '-I', str(inc), '-x', 'c',
                                 '-'], input=mg.SDL3_PROBE, capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
+
+
+class KitsCarrySdl3PinTest(unittest.TestCase):
+    def test_every_linux_kit_carries_sdl3_pin(self):
+        """make_game.py kit_sdl3 imports sdl3_pin inside a try, so a kit without it fails only on a Linux system
+        without SDL3, asking for a package Ubuntu 24.04 does not have: the zip kit lists it, and the AppImage's kit
+        copies all of tools/ (make_appimage.py) and carries the files besides."""
+        import make_appimage
+        import make_kit
+        self.assertIn('sdl3_pin.py', make_kit.TOOLS)
+        self.assertNotIn('sdl3_pin.py', make_appimage.TOOLS_SKIP)
+        self.assertTrue((ROOT / 'tools' / 'sdl3_pin.py').is_file())
 
 
 if __name__ == '__main__':
