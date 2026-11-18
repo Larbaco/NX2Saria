@@ -951,6 +951,45 @@ static void game_archive(char **argv) {
         free(got);
         free(z);
     }
+    // the menus over the whole picture with the HUD's edges (21:9, 32:9 and a 3440x1440 window): every layout of the
+    // redesign takes its edit (no "keeps the game's" line), nothing outside them changes, and a second pass on the
+    // edited archive finds nothing to do
+    static const char *const redesign[] = {
+        "PlayerStatus_00.buil", "MapMenu_00.buil", "NumDisplay_00.buil", "LoadingFade_00.buil", "MenuOverlay_00.buil",
+        "PlusMenu_00.buil", "PaCollectMenu_00.buil", "PaEquipmentMenu_00.buil", "PaItemMenu_00.buil",
+        "PaSystemMenu_00.buil", "ImportantMenu_01.buil", "ChallengeMenu_01.buil", "ShortCut_01.buil",
+        "PaShortCutSlideList_00.buil", "SystemOverlay_00.buil", "SystemOption_00.buil", "SystemActionGuide_00.buil",
+        "GameOver_00.buil", "MessageLog_01.buil", "StaffRollEnd_00.buil"};
+    static const struct { unsigned w, h; } wide[] = {{2560, 1080}, {5120, 1440}, {3440, 1440}};
+    for (size_t s = 0; s < sizeof wide / sizeof *wide; s++) {
+        float out = wide_hud_out(wide[s].w, wide[s].h);
+        WideHudShift full = {out, 1, out};
+        void *z = NULL;
+        size_t zn = 0, on = 0, outside = 0;
+        nlog = 0;
+        int made_z = wide_hud_build(a, an, d, dn, &full, &z, &zn);
+        uint8_t *got = made_z == 1 ? unpack(z, zn, dics, pn, &on) : NULL;
+        CHECK(got && on == rn, "game %ux%u with the menus full: build %d (%s)", wide[s].w, wide[s].h, made_z,
+              last_log());
+        int kept = 0, menus = 0;
+        for (int i = 0; i < nlog && i < LOG_LINES; i++) {
+            kept += strstr(log_lines[i], "keeps the game's") != NULL || strstr(log_lines[i], "stays as the game") != NULL;
+            menus += !strncmp(log_lines[i], "wide menus: ", 12) || !strncmp(log_lines[i], "wide hud and menus: ", 20);
+            if (s == 0) printf("game %ux%u with the menus full: %s\n", wide[s].w, wide[s].h, log_lines[i]);
+        }
+        CHECK(!kept && menus == 18, "game %ux%u with the menus full: %d layouts keep the game's, %d edited", wide[s].w,
+              wide[s].h, kept, menus);
+        if (got && on == rn) {
+            size_t changed = words_changed(raw, got, rn, redesign, sizeof redesign / sizeof *redesign, &outside);
+            CHECK(changed > 4 * 33 && !outside, "game %ux%u with the menus full: %zu words changed, %zu outside",
+                  wide[s].w, wide[s].h, changed, outside);
+            char why[240] = "";
+            CHECK(wide_hud_archive(got, on, &full, why, sizeof why) == 0,
+                  "game %ux%u with the menus full: a second pass changes something", wide[s].w, wide[s].h);
+        }
+        free(got);
+        free(z);
+    }
     // after the action prompt's edit of the same archive (romfs.c serves it first): both edits, nothing else
     void *ap = NULL, *z = NULL;
     size_t apn = 0, zn = 0, on = 0, outside = 0;

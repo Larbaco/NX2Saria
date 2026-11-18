@@ -87,7 +87,9 @@ typedef struct {
 
 // The keys of one animation's curve (or its constant) of a pane's translate x or scale x: those at `value`, `at` of
 // them, become value + f * u (translate) or value times 1 + f * u / 1920 (scale, their slopes with them). `keys`: how
-// many the curve has, 0 for a constant. Up to four values, each of its own group.
+// many the curve has, 0 for a constant. Up to four values, each of its own group. slope_f: a translate curve whose
+// values all grow by one factor (a strip of pages laid out wider apart) has every key's slope times
+// 1 + slope_f * u / 1920 too, in the group of its first value, so that its motion keeps its shape.
 typedef struct {
     float value, f;
     int at, group;
@@ -97,6 +99,7 @@ typedef struct {
     const char *anim, *pane;
     int prop, keys;
     KeyMap map[MAX_MAP];   // the used ones first, at > 0
+    float slope_f;
 } KeyOp;
 
 typedef struct {
@@ -114,19 +117,224 @@ static const PaneOp map_menu[] = {{"N_MiniMap_00", OP_MOVE, G_HUD, 1, 0, 1, 0},
                                   {"N_EventEndIn_01", OP_MOVE, G_HUD, 1, 0, 1, 0},
                                   {"N_MiniMapCap_00", OP_MOVE, G_HUD, 1, 1470, 1, 0},
                                   {"N_VRS_00", OP_MOVE, G_HUD, 1, 1536, 1, 0},
-                                  {"Pa_KeySmall_00", OP_MOVE, G_HUD, 1, 0, 1, 0}};
+                                  {"Pa_KeySmall_00", OP_MOVE, G_HUD, 1, 0, 1, 0},
+                                  // the pause menu's map and the world map over the whole picture (none of the minimap's)
+    {"P_MapBase_00", OP_GROW, G_FULL, 1, 0, 1, 3928},
+    {"P_NotOpen_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"BG_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"N_FloorTab_00", OP_MOVE, G_FULL, -1, -1740, 1, 0},
+    {"T_MapTitle_00", OP_MOVE, G_FULL, -1, -1702, 1, 0},
+    {"N_ItemIcon_00", OP_MOVE, G_FULL, 1, 1666, 1, 0},
+    {"P_PicField_00", OP_MOVE, G_FULL, 1, 1600, 1, 0},
+    {"Pa_Guide_01", OP_MOVE, G_FULL, 1, 1796, 1, 0},
+    {"P_Vignette_L_00", OP_MOVE, G_FULL, -1, -2040, 1, 0},
+    {"P_Vignette_R_00", OP_MOVE, G_FULL, 1, 2040, 1, 0},
+    {"P_Overlay_00", OP_GROW, G_FULL, 1, 0, 1, 3840},};
 static const KeyOp map_menu_keys[] = {
-    {"MapType", "N_MapIcon_00", PROP_TRANSLATE, 7, {{1490, 1, 2, G_HUD}}},
-    {"DungeonMiniMapPattern", "N_PatternDungeonMini_01", PROP_TRANSLATE, 21, {{1536, 1, 19, G_HUD}}}};
+    {"MapType", "N_MapIcon_00", PROP_TRANSLATE, 7, {{1490, 1, 2, G_HUD}}, 0},
+    {"DungeonMiniMapPattern", "N_PatternDungeonMini_01", PROP_TRANSLATE, 21, {{1536, 1, 19, G_HUD}}, 0}};
 static const PaneOp num_display[] = {{"N_NumDisplayFirst_00", OP_MOVE, G_HUD, 1, 0, 1, 0},
                                      {"N_NumDisplaySecond_00", OP_MOVE, G_HUD, 1, 0, 1, 0}};
-static const PaneOp loading_fade[] = {{"N_IconIn_00", OP_SQUEEZE, G_CENTER, 0, 1778, 1, 0}};
+static const PaneOp loading_fade[] = {{"N_IconIn_00", OP_SQUEEZE, G_CENTER, 0, 1778, 1, 0},
+    {"N_IconIn_00", OP_PIN, G_FULL, 0, 1778, 1, 0},};
+// The menus over the whole picture (G_FULL): docs/wide-hud.md "wide_menus = full" gives each screen's reasons.
+static const PaneOp menu_overlay_full[] = {
+    {"P_MenuHeader_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"Pa_HeartGauge_00", OP_MOVE, G_FULL, -1, -1352, 1, 0},
+    {"Pa_MpGauge_00", OP_MOVE, G_FULL, -1, -1580, 1, 0},
+    {"A_Rupee_00", OP_MOVE, G_FULL, 1, 1652, 1, 0},
+    {"P_ReplaceIcon_00", OP_MOVE, G_FULL, 1, 1792, 1, 0},
+    {"W_GuideBg_00", OP_MOVE, G_FULL, 1, 2110, 1, 0},
+    {"W_GuideBg_01", OP_MOVE, G_FULL, 1, 2110, 1, 0},
+    {"A_FirstGuide_00", OP_MOVE, G_FULL, 1, 340, 1, 0},
+};
+static const PaneOp plus_menu_full[] = {
+    {"Pa_Equip_00", OP_MOVE, G_FULL, 2, 4280, 1, 0},
+    {"Pa_Item_00", OP_MOVE, G_FULL, 4, 8560, 1, 0},
+    {"Pa_System_00", OP_MOVE, G_FULL, 6, 12840, 1, 0},
+    {"N_Pos_00", OP_MOVE, G_FULL, 2, 4195, 1, 0},
+    {"N_Pos_01", OP_MOVE, G_FULL, 4, 8560, 1, 0},
+    {"P_InfoBg_00", OP_MOVE, G_FULL, -0.5, -1079, 1, 0},
+    {"P_InfoBg_00", OP_GROW, G_FULL, 0.5, 0, 1, 1682},
+    {"P_InfoBg_01", OP_MOVE, G_FULL, 2, 4186, 1, 0},
+    {"P_InfoBg_02", OP_MOVE, G_FULL, 4.5, 9660, 1, 0},
+    {"P_InfoBg_02", OP_GROW, G_FULL, 0.5, 0, 1, 1742},
+    {"P_InfoBg_03", OP_MOVE, G_FULL, 5, 10681, 1, 0},
+    {"P_MenuBg_00", OP_MOVE, G_FULL, 2, 4280, 1, 0},
+    {"P_MenuBg_00", OP_GROW, G_FULL, 2, 0, 1, 9200},
+    {"P_MenuBgAmiibo_00", OP_MOVE, G_FULL, 1, 2932, 1, 0},
+    {"P_MenuBgArrow_00", OP_MOVE, G_FULL, 3, 7876, 1, 0},
+    {"P_SystemBg_00", OP_MOVE, G_FULL, 5, 11512, 1, 0},
+    {"P_HeaderSh_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Black_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Equipment3DFade_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+};
+static const KeyOp plus_menu_full_keys[] = {
+    {"CollectToEquip", "N_MenuChange_00", PROP_TRANSLATE, 3, {{-3020, -1.411215, 1, G_FULL}, {-4280, -2, 1, G_FULL}}, 0.8971968},
+    {"CollectToEquip", "N_MenuChange_01", PROP_TRANSLATE, 3, {{-3020, -1.411215, 1, G_FULL}, {-4280, -2, 1, G_FULL}}, 0.8971968},
+    {"EquipToItem", "N_MenuChange_00", PROP_TRANSLATE, 3, {{-4280, -2, 1, G_FULL}, {-7300, -3.411215, 1, G_FULL}, {-8560, -4, 1, G_FULL}}, 0.8971968},
+    {"EquipToItem", "N_MenuChange_01", PROP_TRANSLATE, 3, {{-4280, -2, 1, G_FULL}, {-7300, -3.411215, 1, G_FULL}, {-8560, -4, 1, G_FULL}}, 0.8971968},
+    {"ItemToSystem", "N_MenuChange_00", PROP_TRANSLATE, 3, {{-8560, -4, 1, G_FULL}, {-11580, -5.411215, 1, G_FULL}, {-12840, -6, 1, G_FULL}}, 0.8971968},
+    {"ItemToSystem", "N_MenuChange_01", PROP_TRANSLATE, 3, {{-8560, -4, 1, G_FULL}, {-11580, -5.411215, 1, G_FULL}, {-12840, -6, 1, G_FULL}}, 0.8971968},
+    {"SystemToItem", "N_MenuChange_00", PROP_TRANSLATE, 3, {{-12840, -6, 1, G_FULL}, {-9820, -4.588785, 1, G_FULL}, {-8560, -4, 1, G_FULL}}, 0.8971968},
+    {"SystemToItem", "N_MenuChange_01", PROP_TRANSLATE, 3, {{-12840, -6, 1, G_FULL}, {-9820, -4.588785, 1, G_FULL}, {-8560, -4, 1, G_FULL}}, 0.8971968},
+    {"ItemToEquip", "N_MenuChange_00", PROP_TRANSLATE, 3, {{-8560, -4, 1, G_FULL}, {-5540, -2.588785, 1, G_FULL}, {-4280, -2, 1, G_FULL}}, 0.8971968},
+    {"ItemToEquip", "N_MenuChange_01", PROP_TRANSLATE, 3, {{-8560, -4, 1, G_FULL}, {-5540, -2.588785, 1, G_FULL}, {-4280, -2, 1, G_FULL}}, 0.8971968},
+    {"EquipToCollect", "N_MenuChange_00", PROP_TRANSLATE, 3, {{-4280, -2, 1, G_FULL}, {-1260, -0.588785, 1, G_FULL}}, 0.8971968},
+    {"EquipToCollect", "N_MenuChange_01", PROP_TRANSLATE, 3, {{-4280, -2, 1, G_FULL}, {-1260, -0.588785, 1, G_FULL}}, 0.8971968},
+};
+static const PaneOp pa_collect_menu_full[] = {
+    {"N_ItemAll_00", OP_MOVE, G_FULL, 1, 0, 1, 0},
+    {"N_Arrow_00", OP_MOVE, G_FULL, 1, 1850, 1, 0},
+};
+static const KeyOp pa_collect_menu_full_keys[] = {
+    {"Loop", "N_Arrow_00", PROP_TRANSLATE, 3, {{1850, 1, 2, G_FULL}, {1858, 1, 1, G_FULL}}, 0},
+};
+static const PaneOp pa_equipment_menu_full[] = {
+    {"Pa_Epuipment_00", OP_MOVE, G_FULL, 1, -42, 1, 0},
+    {"Pa_Epuipment_01", OP_MOVE, G_FULL, 1, -402, 1, 0},
+    {"Pa_Epuipment_02", OP_MOVE, G_FULL, 1, -762, 1, 0},
+    {"Pa_Epuipment_03", OP_MOVE, G_FULL, 1, -38, 1, 0},
+    {"Pa_Epuipment_04", OP_MOVE, G_FULL, 1, -400, 1, 0},
+    {"Pa_Epuipment_05", OP_MOVE, G_FULL, 1, -760, 1, 0},
+    {"Pa_Epuipment_06", OP_MOVE, G_FULL, 1, -40, 1, 0},
+    {"Pa_Epuipment_07", OP_MOVE, G_FULL, 1, -400, 1, 0},
+    {"Pa_Epuipment_08", OP_MOVE, G_FULL, 1, -762, 1, 0},
+    {"Pa_HeadEquip_00", OP_MOVE, G_FULL, -1, -3026, 1, 0},
+    {"Pa_HeadEquip_01", OP_MOVE, G_FULL, -1, -2806, 1, 0},
+    {"Pa_HeadEquip_02", OP_MOVE, G_FULL, -1, -3248, 1, 0},
+    {"Pa_HeadEquip_03", OP_MOVE, G_FULL, -1, -3030, 1, 0},
+    {"Pa_FootEquip_00", OP_MOVE, G_FULL, -1, -3248, 1, 0},
+    {"Pa_FootEquip_01", OP_MOVE, G_FULL, -1, -2810, 1, 0},
+    {"P_AmiiboIcon_00", OP_MOVE, G_FULL, -1, -1358, 1, 0},
+    {"N_Arrow_00", OP_MOVE, G_FULL, -1, -1850, 1, 0},
+    {"N_Arrow_01", OP_MOVE, G_FULL, 1, 1850, 1, 0},
+};
+static const KeyOp pa_equipment_menu_full_keys[] = {
+    {"Loop", "N_Arrow_00", PROP_TRANSLATE, 3, {{-1850, -1, 2, G_FULL}, {-1858, -1, 1, G_FULL}}, 0},
+    {"Loop", "N_Arrow_01", PROP_TRANSLATE, 3, {{1850, 1, 2, G_FULL}, {1858, 1, 1, G_FULL}}, 0},
+};
+static const PaneOp pa_item_menu_full[] = {
+    {"N_ItemAll_00", OP_MOVE, G_FULL, -1, 0, 1, 0},
+    {"N_Arrow_00", OP_MOVE, G_FULL, -1, -1850, 1, 0},
+};
+static const KeyOp pa_item_menu_full_keys[] = {
+    {"Loop", "N_Arrow_00", PROP_TRANSLATE, 3, {{-1850, -1, 2, G_FULL}, {-1858, -1, 1, G_FULL}}, 0},
+};
+static const PaneOp pa_system_menu_full[] = {
+    {"N_Element_00", OP_MOVE, G_FULL, -1, -1330, 1, 0},
+    {"Pa_Button_00", OP_MOVE, G_FULL, -1, -1330, 1, 0},
+    {"Pa_Button_01", OP_MOVE, G_FULL, -1, -1330, 1, 0},
+    {"Pa_Button_02", OP_MOVE, G_FULL, -1, -1330, 1, 0},
+    {"Pa_Button_03", OP_MOVE, G_FULL, -1, -1330, 1, 0},
+    {"Pa_Button_04", OP_MOVE, G_FULL, -1, -1330, 1, 0},
+    {"Pa_SystemController_00", OP_MOVE, G_FULL, 1, 540, 1, 0},
+};
+static const PaneOp important_menu1_full[] = {
+    {"W_Window_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"P_NotOpen_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"P_Overlay_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+};
+static const PaneOp challenge_menu1_full[] = {
+    {"P_TapestryMask_00", OP_MOVE, G_FULL, 1, 2040, 1, 0},
+    {"P_TapestryMask_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"P_TapestryMask_01", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_ChangeFade_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"C_CaptureD_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_MaskD_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"C_CaptureU_01", OP_MOVE, G_FULL, -1, -1920, 1, 0},
+    {"C_CaptureD_01", OP_MOVE, G_FULL, -1, -1920, 1, 0},
+    {"P_MaskU_01", OP_MOVE, G_FULL, -1, -1920, 1, 0},
+    {"P_MaskD_01", OP_MOVE, G_FULL, -1, -1920, 1, 0},
+    {"Pa_IndexSlideList_00", OP_MOVE, G_FULL, -1, -1334, 1, 0},
+    {"Pa_Info_00", OP_MOVE, G_FULL, -1, -658, 1, 0},
+    {"W_Vignette_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"W_Vignette_01", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"P_NotOpen_00", OP_GROW, G_FULL, 1, 0, 1, 4080},
+    {"P_Overlay_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+};
+static const PaneOp short_cut1_full[] = {
+    {"P_Bg_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"C_CaptureL_00", OP_MOVE, G_FULL, -1, -1776, 1, 0},
+    {"P_MaskL_00", OP_MOVE, G_FULL, -1, -1776, 1, 0},
+    {"C_CaptureR_00", OP_MOVE, G_FULL, 1, 1776, 1, 0},
+    {"P_MaskR_00", OP_MOVE, G_FULL, 1, 1776, 1, 0},
+    {"Pa_Guide_02", OP_MOVE, G_FULL, 1, 1795, 1, 0},
+    {"Pa_SlideListB_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+};
+static const PaneOp pa_short_cut_slide_list_full[] = {
+    {"S_ScissorHT_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"N_SlideList_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+};
+static const PaneOp system_overlay_full[] = {
+    {"P_UpSh_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_BottomSh_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_SystemHeader_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"W_GuideBg_00", OP_MOVE, G_FULL, 1, 2110, 1, 0},
+    {"W_GuideBg_01", OP_MOVE, G_FULL, 1, 2174.18, 1, 0},
+    {"A_FirstGuide_00", OP_MOVE, G_FULL, 1, 340, 1, 0},
+};
+static const PaneOp system_option_full[] = {
+    {"N_List_00", OP_MOVE, G_FULL, -1, -730, 1, 0},
+    {"N_Caption_00", OP_MOVE, G_FULL, 1, 1134, 1, 0},
+};
+static const PaneOp system_action_guide_full[] = {
+    {"S_List_00", OP_MOVE, G_FULL, -1, -1060, 1, 0},
+    {"N_Tips_00", OP_MOVE, G_FULL, 1, 800, 1, 0},
+};
+static const KeyOp system_action_guide_full_keys[] = {
+    {"Pattern", "S_List_00", PROP_TRANSLATE, 2, {{-1060, -1, 2, G_FULL}}, 1.81132032},
+};
+static const PaneOp game_over_full[] = {
+    {"C_CaptureBG_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_CaptureBG_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_BlackBG_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"C_CaptureBlur_00", OP_GROW, G_FULL, 1, 0, 1, 3140},
+    {"C_CaptureBlur_01", OP_GROW, G_FULL, 1, 0, 1, 3140},
+    {"P_CaptureBlur_00", OP_GROW, G_FULL, 1, 0, 1, 3140},
+    {"P_CaptureBlur_01", OP_GROW, G_FULL, 1, 0, 1, 3140},
+    {"P_CaptureBlur_Effect_00", OP_GROW, G_FULL, 1, 0, 1, 3140},
+    {"P_CaptureBlur_Effect_01", OP_GROW, G_FULL, 1, 0, 1, 3140},
+};
+static const PaneOp message_log1_full[] = {
+    {"C_Capture_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Capture_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Noise_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"N_Scroll_00", OP_MOVE, G_FULL, -1, -1872, 1, 0},
+    {"A_GuideAll_00", OP_MOVE, G_FULL, 1, 1840, 1, 0},
+};
+static const PaneOp staff_roll_end_full[] = {
+    {"C_Capture_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"C_Capture_01", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Capture_01", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Fade_00", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Fade_01", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"P_Capture_02", OP_GROW, G_FULL, 1, 0, 1, 3840},
+    {"W_GuideBg_00", OP_MOVE, G_FULL, 1, 2110, 1, 0},
+    {"Pa_Guide_00", OP_MOVE, G_FULL, 1, 1795, 1, 0},
+};
 #define N(a) (int)(sizeof a / sizeof *a)
 static const Plan plans[] = {
     {"PlayerStatus_00", player_status, N(player_status), NULL, 0},
     {"MapMenu_00", map_menu, N(map_menu), map_menu_keys, N(map_menu_keys)},
     {"NumDisplay_00", num_display, N(num_display), NULL, 0},
     {"LoadingFade_00", loading_fade, N(loading_fade), NULL, 0},
+    {"MenuOverlay_00", menu_overlay_full, N(menu_overlay_full), NULL, 0},
+    {"PlusMenu_00", plus_menu_full, N(plus_menu_full), plus_menu_full_keys, N(plus_menu_full_keys)},
+    {"PaCollectMenu_00", pa_collect_menu_full, N(pa_collect_menu_full), pa_collect_menu_full_keys, N(pa_collect_menu_full_keys)},
+    {"PaEquipmentMenu_00", pa_equipment_menu_full, N(pa_equipment_menu_full), pa_equipment_menu_full_keys, N(pa_equipment_menu_full_keys)},
+    {"PaItemMenu_00", pa_item_menu_full, N(pa_item_menu_full), pa_item_menu_full_keys, N(pa_item_menu_full_keys)},
+    {"PaSystemMenu_00", pa_system_menu_full, N(pa_system_menu_full), NULL, 0},
+    {"ImportantMenu_01", important_menu1_full, N(important_menu1_full), NULL, 0},
+    {"ChallengeMenu_01", challenge_menu1_full, N(challenge_menu1_full), NULL, 0},
+    {"ShortCut_01", short_cut1_full, N(short_cut1_full), NULL, 0},
+    {"PaShortCutSlideList_00", pa_short_cut_slide_list_full, N(pa_short_cut_slide_list_full), NULL, 0},
+    {"SystemOverlay_00", system_overlay_full, N(system_overlay_full), NULL, 0},
+    {"SystemOption_00", system_option_full, N(system_option_full), NULL, 0},
+    {"SystemActionGuide_00", system_action_guide_full, N(system_action_guide_full), system_action_guide_full_keys, N(system_action_guide_full_keys)},
+    {"GameOver_00", game_over_full, N(game_over_full), NULL, 0},
+    {"MessageLog_01", message_log1_full, N(message_log1_full), NULL, 0},
+    {"StaffRollEnd_00", staff_roll_end_full, N(staff_roll_end_full), NULL, 0},
 };
 enum { NPLANS = sizeof plans / sizeof *plans };
 // The most fields one layout's edit writes: its panes, its keys (with their slopes) and each curve's span of values.
@@ -607,6 +815,10 @@ static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShi
                         k = add(e, k, data + 8 * (uint64_t)j + 4, slope, sto);
                     }
                     break;
+                }
+                if (km->prop == PROP_TRANSLATE && km->slope_f != 0 && (km->map[0].group & groups)) {
+                    float sto = moved ? slope : slope * (1 + km->slope_f * unit_of(km->map[0].group, s) / 1920);
+                    k = add(e, k, data + 8 * (uint64_t)j + 4, slope, sto);
                 }
                 // the span is of the game's values when reading the edited file back as when editing it
                 if (moved) v = nv;
