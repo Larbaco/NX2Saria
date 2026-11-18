@@ -89,8 +89,8 @@ the renderer.
 
 **Packages:** the [Releases page](https://github.com/Larbaco/NX2Saria/releases) has, from 0.12.1, a Windows setup
 (`NX2Saria-Setup-<version>.exe`) and a Linux AppImage (`NX2Saria-Linux-<version>-x86_64.AppImage`). Both build the
-game on your PC from your own dump; the notes of each release say how to install or update. To build from source
-instead, use the guides below.
+game on your PC from your own dump; [the install guide](docs/install.md) says how to install or update. To build
+from source instead, use the guides below.
 
 NX2Saria is the fork's name. Its settings file is `nx2saria.ini`, its environment variables start with `NX2SARIA_`,
 and its release files start with `NX2Saria-`. Settings, saves and profiles from NX2navi keep working;
@@ -139,6 +139,7 @@ scene, hardware and driver. Inclusion of a community fix does not establish comp
 - Some integrated AMD GPUs can fail at the title screen because of host memory heap limits.
 - Visual bugs and crashes remain, including a rare crash in the game's particle code.
 - Long Linux sessions and Steam Deck hardware validation remain open in the platform documentation.
+- [Known issues](docs/known-issues.md) lists the open problems of the current release and what avoids them.
 
 Report bugs on the [issue tracker](https://github.com/Larbaco/NX2Saria/issues) and follow
 [CONTRIBUTING.md](CONTRIBUTING.md): include the fork commit or package version, game update, OS, GPU and driver,
