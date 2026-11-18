@@ -1,5 +1,5 @@
 <!-- languages -->
-**English** · [Português (Brasil)](pt-BR/controls.md) · [Русский](ru/controls.md)
+**English** · [Português (Brasil)](pt-BR/controls.md) · [Русский](ru/controls.md) · [简体中文](zh-Hans/controls.md)
 <!-- /languages -->
 
 # Controls

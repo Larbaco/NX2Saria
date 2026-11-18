@@ -13,7 +13,7 @@
 </p>
 
 <!-- languages -->
-<p align="center"><a href="README.md">English</a> · <strong>Português (Brasil)</strong> · <a href="README.ru.md">Русский</a></p>
+<p align="center"><a href="README.md">English</a> · <strong>Português (Brasil)</strong> · <a href="README.ru.md">Русский</a> · <a href="README.zh-Hans.md">简体中文</a></p>
 
 > Tradução da [versão em inglês](README.md). Se as duas divergirem, vale a versão em inglês.
 >

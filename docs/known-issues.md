@@ -1,5 +1,5 @@
 <!-- languages -->
-**English** · [Português (Brasil)](pt-BR/known-issues.md) · [Русский](ru/known-issues.md)
+**English** · [Português (Brasil)](pt-BR/known-issues.md) · [Русский](ru/known-issues.md) · [简体中文](zh-Hans/known-issues.md)
 <!-- /languages -->
 
 # Known issues

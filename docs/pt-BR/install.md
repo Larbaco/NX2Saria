@@ -1,6 +1,6 @@
 <!-- translation: lang=pt-BR source=docs/install.md source-hash=4eb0c98c058cc7c521702cfc6701787550d06318 reviewed=no -->
 <!-- languages -->
-[English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md)
+[English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
 > Tradução da [versão em inglês](../install.md). Se as duas divergirem, vale a versão em inglês.
 >

@@ -12,7 +12,7 @@
 </p>
 
 <!-- languages -->
-<p align="center"><strong>English</strong> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.ru.md">Русский</a></p>
+<p align="center"><strong>English</strong> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.ru.md">Русский</a> · <a href="README.zh-Hans.md">简体中文</a></p>
 <!-- /languages -->
 
 <p align="center">

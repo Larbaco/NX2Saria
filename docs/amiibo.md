@@ -1,5 +1,5 @@
 <!-- languages -->
-**English** · [Português (Brasil)](pt-BR/amiibo.md) · [Русский](ru/amiibo.md)
+**English** · [Português (Brasil)](pt-BR/amiibo.md) · [Русский](ru/amiibo.md) · [简体中文](zh-Hans/amiibo.md)
 <!-- /languages -->
 
 # Amiibo

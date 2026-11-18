@@ -1,6 +1,6 @@
 <!-- translation: lang=ru source=docs/known-issues.md source-hash=0e32a41d235ecd1edeefe4df4adc0854784d11c6 reviewed=no -->
 <!-- languages -->
-[English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · **Русский**
+[English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · **Русский** · [简体中文](../zh-Hans/known-issues.md)
 
 > Перевод [английской версии](../known-issues.md). Если они расходятся, действует английская версия.
 >
