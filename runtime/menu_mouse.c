@@ -291,7 +291,12 @@ void menu_mouse_screen_host(Cpu *c) {
     Ui u;
     uint64_t focused = 0, fs = 0;
     if (!ui_now(&u)) { input_menu_wheel_take(); return; }
-    if (!(fs = focus_screen(&u, &focused))) { why_none(&u, g_why); input_menu_wheel_take(); return; }
+    if (!(fs = focus_screen(&u, &focused))) {   // no menu has the focus: the last one's line now
+        why_none(&u, g_why);
+        input_menu_wheel_take();
+        if (last_screen) stats_flush(last_name, &st), last_screen = 0;
+        return;
+    }
     if (fs != s) return;   // another screen's update: the focused one's comes in this frame too
     uint64_t now = plat_now_ms();
     char name[48];
@@ -414,6 +419,8 @@ void menu_mouse_poll(uint64_t *buttons) {
     uint64_t active = __atomic_load_n(&g_active_ms, __ATOMIC_ACQUIRE), now = plat_now_ms();
     // No menu for the mouse for 200 ms (gameplay, a movie, the overlay): the pointer goes, the camera takes the mouse
     if (menu_mouse_pointer() && (int64_t)(now - active) > 200) {
+        static int lines;
+        if (lines++ < 8) rt_log("menu_mouse: no menu for 200 ms: the pointer hidden, the mouse back to the camera");
         set_pointer(0);
         for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
     }

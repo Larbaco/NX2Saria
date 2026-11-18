@@ -79,7 +79,12 @@ a text entry is open, the host function does nothing: the overlay has the mouse.
 - `menu_mouse: screen <name>: K of N entries take the focus, squeeze S`: each menu screen the focus goes to (the
   first 24; all of them with `NX2SARIA_MENU_CURSOR_LOG=1`).
 - `menu_mouse: <name>: focus moved H, left clicks C (A a, on no button m), right clicks (B) b, wheel notches w; hit
-  test h on a button, o off`: when the focus leaves a menu the mouse was used in (at most 48 a session).
+  test h on a button, o off`: when the focus leaves a menu the mouse was used in, for another screen or for none
+  (at most 48 a session).
+- `menu_mouse: no menu for 200 ms: the pointer hidden, the mouse back to the camera`: the menus closed while the
+  pointer showed (the first 8 times).
+- `menu_mouse: no menu for the mouse: <reason> (...)`: why no screen is for the mouse, each time the reason or the
+  objects change (12 lines; 60 with `NX2SARIA_MENU_CURSOR_LOG=1`). In play it says `no focused entry`.
 
 ## Testing
 
