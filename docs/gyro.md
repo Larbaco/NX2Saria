@@ -52,7 +52,7 @@ in [Controls](controls.md#gyro).
   hand never is, so aiming is not touched. The known limit: a perfectly smooth, slow turn (a few degrees a second)
   with the controller resting on something is indistinguishable from rest and can be taken for a bias; the next real
   rest replaces it (step 1).
-- **Dead zone low (0.002 rev/s, 0.72°/s), not the console's standard.** With the bias taken off, what is left of a
+- **Dead zone low (0.002 rev/s, 0.72°/s), the level the game asks for.** Ocarina of Time calls `SetGyroscopeZeroDriftMode` with the tight mode at boot (the log's `hid: the game sets the gyroscope zero-drift mode tight (2)`), which is this level. With the bias taken off, what is left of a
   still controller is sensor noise of about 0.1°/s, which the low level zeroes. Standard (2.5°/s) would also swallow
   slow aiming corrections, which matter when a target is far. Standard and high are there for a controller whose
   noise is larger. Before this change there was no dead zone: the default zeroes only rates that are a drift.
@@ -68,7 +68,7 @@ is subtracted and rates under 0.72°/s are zeroed.
 At start and when the settings change (32 lines at most):
 
     motion: settings: calibration on, dead zone low (0.002 rev/s, 0.72 deg/s), turn 100%, tilt 100%; filter kp 0.50 ki 0.10
-    hid: the game sets the gyroscope zero-drift mode standard (1) on handle 0x20003; the gyro dead zone setting decides instead (gyro_deadzone = low)
+    hid: the game sets the gyroscope zero-drift mode tight (2) on handle 0x20003; the gyro dead zone setting decides instead (gyro_deadzone = low)
 
 When a controller with sensors is taken (the Joy-Con fallback names the half):
 
@@ -103,7 +103,9 @@ non-finite samples, the aggregate line, and `ov_probe.c` `probe_feedback`'s quar
 A test run of the game can give the virtual test gamepad a gyro: `NX2SARIA_TEST_PAD=0,0,0,0
 NX2SARIA_TEST_PAD_GYRO=0.6,-0.3,0.2` (deg/s, SDL's axes) makes it lie face up with that bias, 4 s still then 2 s
 "held", repeating, so the log shows `input: test gamepad gyro: ...`, the sensors line, `bias learned` after each
-still phase and the aggregate.
+still phase and the aggregate. A headless 150 s run of 1.1.1 this way learned +0.60/-0.20/-0.30 deg/s (the bias on
+the Switch axes) after each of its rests, and its aggregate read `drift while still 0.71 deg/s raw -> 0.01 deg/s
+reported, turn drift -18.0 deg/min raw -> -0.1 reported`.
 
 ## Trying it with a controller
 
