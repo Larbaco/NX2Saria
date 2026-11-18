@@ -371,7 +371,12 @@ int wide_hud_counts_of(int menus, WideHudCount *out, int max) {
     int want = menus ? G_FULL : G_HUD, k = 0;
     for (int i = 0; i < NPLANS && k < max; i++) {
         int panes = 0, keys = 0;
-        for (int j = 0; j < plans[i].nops; j++) panes += plans[i].ops[j].group == want;
+        for (int j = 0; j < plans[i].nops; j++) {   // distinct panes: a pane moved and grown counts once
+            int seen = 0;
+            for (int q = 0; q < j && !seen; q++)
+                seen = plans[i].ops[q].group == want && !strcmp(plans[i].ops[q].pane, plans[i].ops[j].pane);
+            panes += plans[i].ops[j].group == want && !seen;
+        }
         for (int j = 0; j < plans[i].nkeys; j++)
             for (int m = 0; m < MAX_MAP && plans[i].keys[j].map[m].at > 0; m++)
                 if (plans[i].keys[j].map[m].group == want) keys += plans[i].keys[j].map[m].at;
@@ -502,7 +507,7 @@ static int x_tracks(const uint8_t *p, size_t n, uint32_t index, int prop, Track 
                     return -1;
                 if (p[comps + k] != COMPONENT_X) continue;
                 if (found < max) out[found] = (Track){name, c, 0};
-                found++;
+                if (++found > max) return found;   // more than the caller reads: it refuses the layout
             }
             for (unsigned k = cfirst; cfirst != NO_INDEX && k < cfirst + nk; k++) {
                 if (k >= nconsts || k >= nccomps || ccomps > n || n - ccomps <= k || consts > n ||
@@ -510,7 +515,7 @@ static int x_tracks(const uint8_t *p, size_t n, uint32_t index, int prop, Track 
                     return -1;
                 if (p[ccomps + k] != COMPONENT_X) continue;
                 if (found < max) out[found] = (Track){name, 0, consts + 4 * (uint64_t)k};
-                found++;
+                if (++found > max) return found;
             }
         }
     }
@@ -684,7 +689,8 @@ static int gather(const uint8_t *p, size_t n, const Plan *plan, const WideHudShi
         float ancestors = 1, xto = m->x, sto = m->sx, wto = m->w;
         if (m->op == OP_MOVE && !plain_ancestors(p, n, L, m->pane, rec, why, why_n)) return -1;
         if (m->op == OP_MOVE_IN && !ancestors_scale(p, n, L, m->pane, rec, &ancestors, why, why_n)) return -1;
-        if ((m->op == OP_SQUEEZE || m->op == OP_PIN) && !centred_ancestors(p, n, L, m->pane, rec, why, why_n))
+        if ((m->op == OP_SQUEEZE || m->op == OP_PIN) && (!plain_ancestors(p, n, L, m->pane, rec, why, why_n) ||
+                                                         !centred_ancestors(p, n, L, m->pane, rec, why, why_n)))
             return -1;
         switch (m->op) {
         case OP_MOVE: xto = m->x + m->f * u; break;
@@ -884,13 +890,14 @@ static int lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift 
         snprintf(why, why_n, "%s is not a BFFH layout", member);
         return -1;
     }
-    Edit *e = malloc(2 * MAX_EDITS * sizeof *e), *back = e + MAX_EDITS;
+    Edit *e = malloc(2 * MAX_EDITS * sizeof *e), *back = NULL;
     uint8_t(*undo)[4] = malloc(MAX_EDITS * sizeof *undo);
     int result = -1;
     if (!e || !undo) {
         snprintf(why, why_n, "out of memory");
         goto done;
     }
+    back = e + MAX_EDITS;
     int k = gather(p, n, plan, s, groups, 0, e, report, report_n, why, why_n);
     if (k < 0) {
         char why2[200];
@@ -904,7 +911,7 @@ static int lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift 
     int changed = 0;
     for (int i = 0; i < k; i++) {
         memcpy(undo[i], p + e[i].at, 4);
-        if (same(e[i].from, e[i].to)) continue;
+        if (!memcmp(undo[i], &e[i].to, 4)) continue;   // a slope's change can be smaller than same() sees
         memcpy(p + e[i].at, &e[i].to, 4);
         changed++;
     }
@@ -913,7 +920,7 @@ static int lay_out(uint8_t *p, size_t n, const char *member, const WideHudShift 
     char why2[200];
     int kb = gather(p, n, plan, s, groups, 1, back, NULL, 0, why2, sizeof why2);
     int ok = kb == k;
-    for (int i = 0; ok && i < k; i++) ok = back[i].at == e[i].at;
+    for (int i = 0; ok && i < k; i++) ok = back[i].at == e[i].at && !memcmp(&back[i].to, &e[i].to, 4);
     if (!ok) {
         for (int i = k - 1; i >= 0; i--) memcpy(p + e[i].at, undo[i], 4);
         snprintf(why, why_n, "%s reads otherwise after the edit (%s)", member, kb < 0 ? why2 : "another field moved");
