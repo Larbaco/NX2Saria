@@ -1,7 +1,10 @@
 # Pull request drafts for Ocarina Atlas support
 
-Two drafts. Neither is open: the fork's is ready on the branch `atlas-integration`; Atlas's waits for the copyright
-holder's decision to contribute it under the AGPL-3.0. Background: [ocarina-atlas.md](ocarina-atlas.md).
+The two pull requests as drafted. Both were opened on 2026-11-17: the fork's as
+[NX2Saria#7](https://github.com/Larbaco/NX2Saria/pull/7), Atlas's as
+[Ocarina-Atlas#40](https://github.com/antonioalvromero/Ocarina-Atlas/pull/40), merged the same day and in Atlas v2.3.0
+and later. The texts below are the drafts; the pull requests carry the final ones. Background:
+[ocarina-atlas.md](ocarina-atlas.md).
 
 ## 1. Fork (Larbaco/NX2Saria): the tracker API
 

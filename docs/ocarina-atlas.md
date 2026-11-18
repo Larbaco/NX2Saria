@@ -26,9 +26,13 @@ game version 1.1.1, main build `e0f3ccfaf50065ae`.
 - Atlas then needs no change to track live. A small optional Atlas PR (drafted below) shows "NX2Saria" instead of
   "Lichii" as the source, finds NX2Saria's save folder for its save-only mode, and accepts NX2Saria heap pointers
   from 4 GiB, so that a build without the heap move works too.
-- Not proven yet: nothing ran against the game (the game was not to be built). The protocol, the server and the
-  answers Atlas parses are tested against a stand-in guest memory (`tests/tracker_api_check.py`); the checklist at the
-  end proves the rest with one run of the game.
+- Tried with the game on the Linux bench (2026-11-17): an 11-minute session, about 49,800 frames, with Atlas live.
+  Atlas found main's header in 25 ms and made 24,497 requests in ten minutes (551 `status`, 23,863 `read_memory`, 83
+  `search_memory`), none refused; on the title screen the 8 GiB-a-minute search ceiling was reached once and the game
+  went on. Windows has not been tried yet. The protocol and the server are also tested against a stand-in guest memory
+  (`tests/tracker_api_check.py`).
+- The Atlas PR was merged upstream ([Ocarina-Atlas#40](https://github.com/antonioalvromero/Ocarina-Atlas/pull/40)) and
+  is in Atlas v2.3.0 and later, which label the source "NX2Saria".
 
 ## What Atlas is
 
@@ -121,8 +125,9 @@ and making the setting live (the heap is placed at start, so it stays restart-on
 
 ## Changes in Atlas
 
-None are required. The optional PR ([ocarina-atlas-prs.md](ocarina-atlas-prs.md), patch
-[ocarina-atlas-pr.patch](ocarina-atlas-pr.patch)):
+None are required. The optional PR was merged as
+[Ocarina-Atlas#40](https://github.com/antonioalvromero/Ocarina-Atlas/pull/40) (in Atlas v2.3.0 and later; draft in
+[ocarina-atlas-prs.md](ocarina-atlas-prs.md), first patch [ocarina-atlas-pr.patch](ocarina-atlas-pr.patch)):
 
 1. `nx2saria` as a source kind with its label "NX2Saria" (`lichii-types.ts`, `LichiiStatusPanel.tsx`,
    `lichii-server.ts`).
@@ -261,7 +266,8 @@ optional Atlas PR). Every line is listed in [tracker-api.md](tracker-api.md#the-
 
 ## Checklist for the first run
 
-When the game may be built and run again:
+The Linux bench session of 2026-11-17 covered steps 3 and 6 on Linux (with Atlas's PR, so the label was "NX2Saria")
+and the search ceiling of step 4. Windows, and the other steps on both systems, are still to run.
 
 1. `python tests/tracker_api_check.py` on Windows as well (MSYS2 clang), and `python tests/lazy_fetch_check.py` and
    `python tests/heap_lazy_copy_check.py` there (they build `memory.c`, which now asks `tracker_api_on`).
