@@ -99,7 +99,7 @@ static const char *const known[] = {
     "MERGE_CPU", "MERGE_CPU_CHECK", "MERGE_CPU_MIN", "WB_DIFF",
     "TEXUP_LOG_MS", "DYN_RES", "DYN_RES_TARGET", "DYN_RES_STEP", "TEXTURE_DETAIL", "VRAM_USE",   // vram_use: the removed Video memory use row, read by nothing
     "RECORDER_CORE", "RECORDER_PRIO", "READABLE_FAST", "REPLAY_TIME", "LOCK_TIME", "POOL_CREATE_BUDGET", "POOL_CREATE_MS", "POOL_FINI_IDLE", "POOL_LOAD_BACKLOG", "POOL_LOAD_MS",
-    "VMA_BLOCK_MB", "SYNC_WAKE_ALL", "LOG_ASYNC", "DEVICE_LOST_AT", "STAGING_FAIL_AT", "VRAM_BALLAST_MB",
+    "VMA_BLOCK_MB", "SYNC_WAKE_ALL", "LOG_ASYNC", "LOG_SHORT_PATHS", "DEVICE_LOST_AT", "STAGING_FAIL_AT", "VRAM_BALLAST_MB",
     "GEN_SEED",
     "COPY_RETIRE",
     "MEM_BUDGET_TEST_VRAM_MB", "MEM_BUDGET_TEST_RAM_MB",
@@ -129,6 +129,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"MESH_EMU_MB", "performance"}, {"MESH_EMU_TASKS", "performance"}, {"MESH_EMU_BATCH", "performance"}, {"VEC_INDEX_FIX", "performance"},
     {"GUEST_OPT", "performance"}, {"PASS_TIMES", "diagnostics"}, {"DUMP_KEY", "diagnostics"},
     {"FLOOR_PROBE", "diagnostics"}, {"FLOOR_SCAN", "diagnostics"}, {"FLOOR_WATCH", "diagnostics"},
+    {"LOG_SHORT_PATHS", "diagnostics"},
     {"FPS_LIMIT", "frame rate"}, {"FPS60", "frame rate"}, {"RTSS", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
     {"HORSE_JUMP_FIX", "frame rate"}, {"GOHMA_TURN_FIX", "frame rate"}, {"FROZEN_ZORA_FIX", "frame rate"},
@@ -338,6 +339,8 @@ static const CfgMeta metas[] = {
     {"FLOOR_SCAN", "0", NULL, RESTART},
     // floor_watch.c: hardware watchpoints on the floor the scan finds, at 60 fps and at 120 or more (0 off, 1 on)
     {"FLOOR_WATCH", "0", "0|1", RESTART},
+    // log_privacy.c: the account's folders and name written short in the log, the bug capture and the crash report
+    {"LOG_SHORT_PATHS", "1", "0|1", RESTART},
     {"LANG", "", "ja|en-US|fr|de|it|es|zh-CN|ko|nl|pt|ru|zh-TW|en-GB|fr-CA|es-419|zh-Hans|zh-Hant|pt-BR|pl", RESTART},
     {"OPERATION_MODE", "docked", "docked|handheld", LIVE},
     {"TEXT_SPEED", "normal", "normal|fast|instant", LIVE},   // text_speed.c: the message window's typing

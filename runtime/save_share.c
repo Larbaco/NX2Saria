@@ -17,6 +17,7 @@
 #include "folder_pick.h"
 #include "fs.h"
 #include "host.h"
+#include "log_privacy.h"
 #include "platform/platform.h"
 #include "save_share.h"
 #include "save_zip.h"
@@ -126,7 +127,11 @@ static void add_settings_file(Export *e, const char *name, const char *path) {
     uint8_t *data = plat_file_read(path, &n);
     size_t sn = 0;
     char *scrubbed = data ? cfg_ini_scrub((const char *)data, (size_t)n, &sn) : NULL;
-    if (scrubbed) sz_writer_add(&e->w, name, scrubbed, sn);
+    size_t pn = 0;   // and a folder in the account's home written short (log_privacy.c), as in the log beside it
+    char *shown = scrubbed ? log_privacy_dup(scrubbed, sn, &pn) : NULL;
+    if (shown) sz_writer_add(&e->w, name, shown, pn);
+    else if (scrubbed) sz_writer_add(&e->w, name, scrubbed, sn);
+    free(shown);
     free(scrubbed);
     free(data);
 }

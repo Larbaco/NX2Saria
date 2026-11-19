@@ -1297,6 +1297,13 @@
 # line is written at once by the thread that logs it, as before. Either way a "log: ... writes of the log took over
 # 2 ms" line counts the slow writes and says whose time they took.
 # log_async = 1
+# 1 (default): the log, the bug capture (F8) and the crash report write the folders of your Windows or Linux account
+# short, so a log you attach to a public issue does not show your account's name: C:\Users\<name>\AppData\Local\...
+# becomes %LOCALAPPDATA%\..., C:\Users\<name>\... %USERPROFILE%\..., /home/<name>/... ~/..., and the name alone inside
+# a path %USERNAME% (Linux: $USER), and the computer's name %COMPUTERNAME%. The rest of each path stays. A line at the start says so, and one at the end counts
+# the lines written short. 0: paths are written in full. The launcher follows NX2SARIA_LOG_SHORT_PATHS=0 in its
+# environment.
+# log_short_paths = 1
 # 1: the frame-time summary also splits the replay by op kind (draw, bind, transfer), which says where a stalled frame
 # went. The clock reads cost a fraction of a millisecond a frame, so it is off by default.
 # replay_time = 0
