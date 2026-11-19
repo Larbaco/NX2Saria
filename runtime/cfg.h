@@ -131,8 +131,8 @@ const char *cfg_preset_name(int tier);
 int cfg_preset_in_use(void);
 // The tier this PC gets (preset_pick.h preset_pick) and, in *why when not NULL, why in a few English words.
 int cfg_preset_recommended(const char **why);
-// 1 when a key the preset in use controls is set by the player to a value other than the one the preset gives it (the
-// device profile's or the row's default where the tier sets none): the menu shows the preset as custom.
+// 1 when a key the preset in use sets is set by the player to another value than it reads unset (cfg_preset_differs):
+// the menu shows the preset as custom. A key the tier leaves alone never counts.
 int cfg_preset_custom(void);
 // The value tier gives key (prefix and case ignored) on this PC; NULL when the tier leaves it alone.
 const char *cfg_preset_value(int tier, const char *key);
@@ -157,12 +157,14 @@ void cfg_preset_use_from(int tier, const char *const *from_values);
 // row's default (cfg_default for a tier out of range); NULL for a key without a row. The menu's draft shows a staged
 // preset's values and default marks through it.
 const char *cfg_default_tier(const char *key, int tier);
-// 1 when value, set by the player for key, differs from what tier gives key (cfg_default_tier): the key makes that
-// tier custom. 0 for NULL or "".
+// 1 when tier sets key and value, set by the player for key, differs from what key reads unset with tier in use
+// (cfg_default_tier): the key makes that tier custom, and choosing tier in the menu hands it back. 0 for NULL or "",
+// and for a key tier leaves alone.
 int cfg_preset_differs(int tier, const char *key, const char *value);
 // The one-time notice of the recommended preset (ui/menu.cpp preset_notice_tick): 1 while the player has not set the
 // preset key, the recommended tier is not high, is in use, and the state file does not record a notice of that tier
 // yet; 0 in a tool mode and a replay. cfg_preset_notice_done records it (noticed = <tier> in preset-state.txt; never
-// nx2saria.ini) and logs "preset: notice shown: recommended <tier> in use".
+// nx2saria.ini) and logs "preset: notice shown: recommended <tier> in use"; the file is written by a thread of its own,
+// so the present thread that shows the notice does not wait for the disk.
 int cfg_preset_notice_due(void);
 void cfg_preset_notice_done(void);

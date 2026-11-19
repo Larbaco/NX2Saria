@@ -8,22 +8,27 @@
 // tiers set the keys of PRESET_ROWS below. A preset never turns frame generation on, lowers the frame-rate limit only on
 // integrated GPUs and handhelds, and asks for DLSS or FSR 4 only below High, on the cards that run them.
 //
-// The tier: a handheld, an integrated GPU or a GPU without mesh shaders (which the game's renderer then emulates) get
-// Low; any other card goes by its video memory, then the PC's memory and processor count cap it. Without anything
-// known about the GPU, the game as shipped (High). Video memory is compared as the size the card is sold with: an 8 GB
-// card reports 7.8 to 8.0 GiB of device-local memory, so it is rounded to the nearest GiB first (preset_gib). RAM goes
-// by thresholds below the sold sizes (PRESET_RAM_*_MIB).
+// The tier: a handheld, an integrated GPU, a software renderer on the CPU or a GPU without mesh shaders (which the
+// game's renderer then emulates) get Low; any other card goes by its video memory, up to High, then the PC's memory
+// and processor count cap it. Without anything known about the GPU, the game as shipped (High). Ultra is never
+// recommended: it only adds to the game as shipped, and on a large monitor it multiplies the pixels drawn (a 16 GB card
+// on a 3840x2160 monitor would go from the 1920x1080 scene to a 3840x2160 one, about four times as many), so it stays
+// the player's choice. Video memory is compared as the size the card is sold with: an 8 GB card reports 7.8 to 8.0 GiB
+// of device-local memory, so it is rounded to the nearest GiB first (preset_gib). RAM goes by thresholds below the sold
+// sizes (PRESET_RAM_*_MIB).
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 enum { PRESET_LOW, PRESET_MEDIUM, PRESET_HIGH, PRESET_ULTRA, PRESET_TIERS };
 static const char *const preset_tier_names[PRESET_TIERS] = {"low", "medium", "high", "ultra"};
 
-enum { PRESET_GPU_OTHER, PRESET_GPU_INTEGRATED, PRESET_GPU_DISCRETE };
+// PRESET_GPU_CPU: a Vulkan device that renders on the processor (llvmpipe); OTHER: a virtual GPU or one of no known type
+enum { PRESET_GPU_OTHER, PRESET_GPU_INTEGRATED, PRESET_GPU_DISCRETE, PRESET_GPU_CPU };
 
 // What the tier is chosen from. have_gpu 0: nothing is known of the GPU (no Vulkan 1.3 device, or the probe could not
 // run and no earlier result was kept); the GPU fields are then 0. Any number 0 means unknown.
@@ -41,14 +46,13 @@ typedef struct {
     char handheld[32];                 // the handheld's name (preset_handheld), "" for none
 } PresetHw;
 
-// Tier boundaries, in GiB as sold (preset_gib): video memory under LOW gives Low, under MEDIUM Medium, from ULTRA on
-// Ultra, High between. RAM caps go by the MiB the system reports, below the sizes PCs are sold with, because a PC
+// Tier boundaries, in GiB as sold (preset_gib): video memory under LOW gives Low, under MEDIUM Medium, from MEDIUM
+// on High. RAM caps go by the MiB the system reports, below the sizes PCs are sold with, because a PC
 // with integrated graphics hands part of its RAM to them: under RAM_LOW_MIB (an 8 GB PC) caps at Low, under
 // RAM_MEDIUM_MIB (a 12 GB one) at Medium, and a 16 GB PC that reports 14 GiB or more is not capped. Up to CPU_MEDIUM
 // logical processors cap at Medium.
 #define PRESET_VRAM_LOW_GIB 6
 #define PRESET_VRAM_MEDIUM_GIB 8
-#define PRESET_VRAM_ULTRA_GIB 16
 #define PRESET_RAM_LOW_MIB 10240
 #define PRESET_RAM_MEDIUM_MIB 14336
 #define PRESET_CPU_MEDIUM_THREADS 4
@@ -119,13 +123,15 @@ static inline int preset_pick(const PresetHw *hw, char *why, size_t cap) {
     } else if (hw->gpu_type == PRESET_GPU_INTEGRATED) {
         snprintf(why, cap, "an integrated GPU");
         return PRESET_LOW;
+    } else if (hw->gpu_type == PRESET_GPU_CPU) {
+        snprintf(why, cap, "a software renderer on the processor");
+        return PRESET_LOW;
     } else if (!hw->mesh) {
         snprintf(why, cap, "the GPU has no mesh shaders, which the game's renderer then emulates");
         return PRESET_LOW;
     } else {
         unsigned gib = preset_gib(hw->vram_mib);
-        tier = gib < PRESET_VRAM_LOW_GIB ? PRESET_LOW : gib < PRESET_VRAM_MEDIUM_GIB ? PRESET_MEDIUM
-             : gib < PRESET_VRAM_ULTRA_GIB ? PRESET_HIGH : PRESET_ULTRA;
+        tier = gib < PRESET_VRAM_LOW_GIB ? PRESET_LOW : gib < PRESET_VRAM_MEDIUM_GIB ? PRESET_MEDIUM : PRESET_HIGH;
         snprintf(buf, sizeof buf, "%u GiB of video memory", gib);
     }
     size_t n = strlen(buf);
@@ -150,21 +156,22 @@ static inline int preset_pick(const PresetHw *hw, char *why, size_t cap) {
 // The rows keep to what costs GPU time measurably in this game version (docs/presets.md, Measurements): the scene's
 // share, the picture's height and the filter that enlarges the scene. Anisotropic filtering, texture detail, foliage,
 // anti-aliasing and the soft-shadow settings cost no time a desktop card shows, so High's and Medium's stay as
-// shipped; Low lowers the ones that ease an integrated GPU's memory bandwidth. shadow_res has no effect on 1.1.1
-// (cfg_supported) and is in no tier.
+// shipped. Low lowers anisotropic filtering and foliage only on an integrated GPU or a handheld, whose memory bandwidth
+// they may still ease; a card of its own that falls to Low (no mesh shaders, little video memory) keeps them, and no
+// tier sets texture detail: its auto already picks smaller textures by the budget the driver grants. shadow_res has no
+// effect on 1.1.1 (cfg_supported) and is in no tier.
 enum {
     PRESET_ANY,        // every PC
     PRESET_SMALL,      // an integrated GPU or a handheld
     PRESET_IGPU_DESK,  // an integrated GPU that is no handheld (a laptop or a desktop's processor graphics)
     PRESET_HANDHELD,   // a handheld
-    PRESET_ROOMY,      // a card with memory of its own and 8 GiB or more of it
     PRESET_DLSS,       // a card that runs DLSS (preset_gpu_caps)
     PRESET_FSR4,       // a card that runs FSR 4 and not DLSS
 };
 typedef struct { uint8_t tier, when; const char *key, *value; } PresetRow;
 
 static const PresetRow PRESET_ROWS[] = {
-    // ---- Ultra: more than the game as shipped, for cards with 16 GiB of video memory or more
+    // ---- Ultra: more than the game as shipped; only the player chooses it (preset_pick never recommends it)
     {PRESET_ULTRA, PRESET_ANY, "SCENE_SHARE", "1"},       // the 3D scene at the picture's full size (shipped: 0.75)
     {PRESET_ULTRA, PRESET_ANY, "GAME_RES", "window"},     // the picture and HUD at the window's height (shipped: 1440)
     {PRESET_ULTRA, PRESET_ANY, "SHADOW_PCF", "1"},        // shadow edges filtered over several samples
@@ -183,9 +190,8 @@ static const PresetRow PRESET_ROWS[] = {
     {PRESET_LOW, PRESET_ANY, "SCENE_SHARE", "0.5"},       // the 3D scene at half the picture
     {PRESET_LOW, PRESET_SMALL, "SCENE_SHARE", "0.4"},     // and less on an integrated GPU or a handheld
     {PRESET_LOW, PRESET_ANY, "GAME_RES", "1080"},         // the picture and HUD 1080 lines high
-    {PRESET_LOW, PRESET_ANY, "ANISO", "4"},               // 4x anisotropic filtering
-    {PRESET_LOW, PRESET_ROOMY, "TEXTURE_DETAIL", "reduced"},   // smaller textures; with less memory auto picks itself
-    {PRESET_LOW, PRESET_ANY, "FOLIAGE", "reduced"},       // fewer grass and bush draws
+    {PRESET_LOW, PRESET_SMALL, "ANISO", "4"},             // 4x anisotropic filtering on an integrated GPU or a handheld
+    {PRESET_LOW, PRESET_SMALL, "FOLIAGE", "reduced"},     // fewer grass and bush draws there
     {PRESET_LOW, PRESET_ANY, "STANDIN_FILTER", "bilinear"},   // the scene enlarged with the plain filter (shipped: easu)
     {PRESET_LOW, PRESET_IGPU_DESK, "FPS_LIMIT", "30"},    // 30 fps, which an integrated GPU holds
     {PRESET_LOW, PRESET_HANDHELD, "FPS_LIMIT", "40"},     // 40 fps, which divides a handheld's 40, 80 and 120 Hz
@@ -206,7 +212,6 @@ static inline int preset_applies(int when, const PresetHw *hw) {
     case PRESET_SMALL: return igpu || hand;
     case PRESET_IGPU_DESK: return igpu && !hand;
     case PRESET_HANDHELD: return hand;
-    case PRESET_ROOMY: return hw->have_gpu && !igpu && !hand && preset_gib(hw->vram_mib) >= PRESET_VRAM_MEDIUM_GIB;
     case PRESET_DLSS: return hw->dlss;
     case PRESET_FSR4: return hw->fsr4 && !hw->dlss;
     }
@@ -222,23 +227,44 @@ static inline const char *preset_value(int tier, const PresetHw *hw, const char 
     return v;
 }
 
-// The hardware as one line: vendor:device:driver:video MiB:logical processors:RAM GiB:handheld, the IDs in hex and
-// the handheld's name with '-' for blanks ("none" for none). The state file (cfg.c) keeps it.
+// The hardware as one line: vendor:device:driver:video GiB:logical processors:RAM GiB:handheld, the IDs in hex, both
+// sizes rounded to the GiB as sold (preset_gib) and the handheld's name with '-' for blanks ("none" for none). The
+// state file (cfg.c) keeps it. Video memory in whole GiB, as resizable BAR (Smart Access Memory) turned on or off or a
+// driver update moves the heap the card reports by a few hundred MiB on the same card.
 static inline void preset_fingerprint(const PresetHw *hw, char *out, size_t cap) {
     char hand[32];
     snprintf(hand, sizeof hand, "%s", hw->handheld[0] ? hw->handheld : "none");
     for (char *p = hand; *p; p++)
         if (*p == ' ' || *p == ':') *p = '-';
-    snprintf(out, cap, "%04x:%04x:%x:%u:%d:%u:%s", hw->vendor, hw->device, hw->driver, hw->vram_mib, hw->threads,
-             preset_gib(hw->ram_mib), hand);
+    snprintf(out, cap, "%04x:%04x:%x:%u:%d:%u:%s", hw->vendor, hw->device, hw->driver, preset_gib(hw->vram_mib),
+             hw->threads, preset_gib(hw->ram_mib), hand);
+}
+
+// The video memory field of a fingerprint in GiB. A state file written before the fingerprint rounded it holds MiB
+// there; a number above 64 is taken as MiB and rounded as preset_gib rounds.
+static inline unsigned preset_fp_vram_gib(const char *field, size_t n) {
+    char num[16];
+    if (!n || n >= sizeof num) return 0xffffffffu;
+    memcpy(num, field, n);
+    num[n] = 0;
+    char *end;
+    unsigned long v = strtoul(num, &end, 10);
+    if (*end) return 0xffffffffu;   // not a number: equal only to itself (compared as text below)
+    return v > 64 ? preset_gib((uint32_t)v) : (unsigned)v;
 }
 
 // Whether two fingerprints name the same hardware: every field but the driver version, which a driver update
-// changes on the same card.
+// changes on the same card; the video memory by its GiB (preset_fp_vram_gib), so a fingerprint of the older form in MiB
+// still matches.
 static inline int preset_same_hardware(const char *a, const char *b) {
     for (int field = 0;; field++) {
         size_t na = strcspn(a, ":"), nb = strcspn(b, ":");
-        if (field != 2 && (na != nb || strncmp(a, b, na))) return 0;
+        if (field == 3) {
+            unsigned ga = preset_fp_vram_gib(a, na), gb = preset_fp_vram_gib(b, nb);
+            if (ga != gb || (ga == 0xffffffffu && (na != nb || strncmp(a, b, na)))) return 0;
+        } else if (field != 2 && (na != nb || strncmp(a, b, na))) {
+            return 0;
+        }
         if (!a[na] || !b[nb]) return !a[na] && !b[nb];
         a += na + 1, b += nb + 1;
     }

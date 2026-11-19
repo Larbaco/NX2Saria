@@ -3,8 +3,8 @@
 // Design. The preset is decided inside cfg_start, before any restart-only setting is read and long before the game
 // makes its Vulkan device, so the GPU is read by a probe of its own: a Vulkan instance without surface extensions,
 // which lists the devices, picks the one vk_device.c pick_device would pick (NX2SARIA_GPU_INDEX or NX2SARIA_GPU_NAME,
-// else a discrete GPU before an integrated one before any other; Vulkan 1.3 and the extensions the game needs; of one
-// GPU listed by two drivers, the newer driver's listing), reads its name, IDs, driver version, type, largest
+// else a discrete GPU before an integrated one before any other, a software renderer on the processor among the
+// others; Vulkan 1.3 and the extensions the game needs; of one GPU listed by two drivers, the newer driver's listing), reads its name, IDs, driver version, type, largest
 // device-local heap and mesh shader support, and is destroyed again. The window's present support cannot be asked
 // without a window, so a GPU the game later refuses for that is the one case the probe and the game disagree on;
 // vk_device.c says so in the log (hw_detect_device_check).
@@ -13,8 +13,9 @@
 // (vk_device.c vk_driver_cache_env, which a driver reads when it loads). It does not run where something else must
 // make the first Vulkan call: DLSS Frame Generation on Windows (framegen = dlss: Streamline's interposer, vk_dlssg.c
 // vk_dlssg_early) and a RenderDoc capture (rdoc); nor in the tool modes (--selftest, --prepare-shaders and the others,
-// cfg_start's game 0), which have no use for an early driver load. cfg.c then goes by the last probe's result, which
-// it keeps in its state file. cfg_start runs once memory.c mem_init has claimed the whole guest address space, so the
+// cfg_start's game 0), which have no use for an early driver load; nor with preset_probe = 0, nor after a start whose
+// probe never returned (cfg.c preset_init: the state file's probing mark). cfg.c then goes by the last probe's result,
+// which it keeps in its state file. cfg_start runs once memory.c mem_init has claimed the whole guest address space, so the
 // drivers' libraries and allocations land outside it, as they do for the game's own device later. The probe's time, the drivers' first load included, goes to the log each start.
 //
 // The rest: logical processors (plat_cpu_count), physical cores (plat_cpu_cores), installed memory (plat_mem_info),
@@ -88,7 +89,7 @@ retry:
         vkGetPhysicalDeviceProperties(pd[i], &p);
         if (want >= 0 && (int)i != want) continue;
         if (name && *name && !preset_has(p.deviceName, name)) continue;
-        if (p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU || p.apiVersion < VK_API_VERSION_1_3) continue;
+        if (p.apiVersion < VK_API_VERSION_1_3) continue;   // a CPU device counts, ranked with the others (as pick_device)
         int mesh = 0;
         if (!usable_exts(pd[i], &mesh)) continue;
         int score = (int)i == want ? 100 : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3
@@ -109,7 +110,8 @@ retry:
         snprintf(hw->gpu_name, sizeof hw->gpu_name, "%s", bp.deviceName);
         hw->vendor = bp.vendorID, hw->device = bp.deviceID, hw->driver = bp.driverVersion;
         hw->gpu_type = bp.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? PRESET_GPU_DISCRETE
-                     : bp.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? PRESET_GPU_INTEGRATED : PRESET_GPU_OTHER;
+                     : bp.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? PRESET_GPU_INTEGRATED
+                     : bp.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU ? PRESET_GPU_CPU : PRESET_GPU_OTHER;
         VkPhysicalDeviceMemoryProperties mp;
         vkGetPhysicalDeviceMemoryProperties(pd[best], &mp);
         VkDeviceSize largest = 0;
@@ -170,8 +172,8 @@ static const char *handheld(void) {
     return preset_handheld(vendor, product, family, board_vendor, board);
 }
 
-void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char *note, size_t note_cap,
-               double *probe_ms) {
+void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), char *skipped, size_t skipped_cap,
+               char *note, size_t note_cap, double *probe_ms) {
     memset(hw, 0, sizeof *hw);
     skipped[0] = note[0] = 0;
     *probe_ms = 0;
@@ -183,7 +185,7 @@ void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char 
     hw->ram_mib = total > 0 ? (uint32_t)total : 0;
     const char *hand = handheld();
     if (hand) snprintf(hw->handheld, sizeof hw->handheld, "%s", hand);
-    if (!probe) snprintf(skipped, skipped_cap, "a tool mode, not the game itself");
+    if (no_probe && *no_probe) snprintf(skipped, skipped_cap, "%s", no_probe);
 #ifdef _WIN32
     if (!skipped[0] && vk_dlssg_wanted())
         snprintf(skipped, skipped_cap, "DLSS Frame Generation (framegen = dlss) makes the process's first Vulkan call");
@@ -193,6 +195,7 @@ void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char 
     if (skipped[0]) return;
     uint64_t t0 = plat_now_ns();
     vk_driver_cache_env();   // before the drivers first load: they read these variables then
+    if (before_probe) before_probe();
     probe_gpu(hw, note, note_cap);
     *probe_ms = (double)(plat_now_ns() - t0) / 1e6;
 #ifdef _WIN32

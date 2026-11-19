@@ -785,7 +785,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_PRESET] = "Quality preset",
     [UI_MENU_PRESET_DESC] = "Sets the graphics options at once. Recommended is the preset this PC gets from its graphics card, "
         "memory and processor. High is the game as shipped; Low and Medium draw less, for slower PCs and handhelds; "
-        "Ultra draws more, for graphics cards with 16 GB of memory or more. Options you change by hand afterwards "
+        "Ultra draws more, and more on a larger monitor; it is never recommended, only chosen. Options you change by hand afterwards "
         "stay as you set them, and the preset then shows as custom.",
     [UI_MENU_PRESET_RECOMMENDED] = "Recommended (%s)",
     [UI_MENU_PRESET_LOW] = "Low",
@@ -1471,8 +1471,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PRESET] = "Пресет качества",
     [UI_MENU_PRESET_DESC] = "Задаёт все настройки графики сразу. «Рекомендуемый» — пресет, который этот ПК получает по своей "
         "видеокарте, памяти и процессору. «Высокий» — игра в том виде, в каком она вышла; «Низкий» и «Средний» "
-        "рисуют меньше, для слабых ПК и портативных устройств; «Ультра» рисует больше, для видеокарт с 16 ГБ памяти и "
-        "больше. Настройки, которые вы потом измените вручную, остаются как вы их задали, и пресет отмечается как "
+        "рисуют меньше, для слабых ПК и портативных устройств; «Ультра» рисует больше, и тем больше, чем крупнее "
+        "монитор; он никогда не рекомендуется, только выбирается. Настройки, которые вы потом измените вручную, остаются как вы их задали, и пресет отмечается как "
         "изменённый.",
     [UI_MENU_PRESET_RECOMMENDED] = "Рекомендуемый (%s)",
     [UI_MENU_PRESET_LOW] = "Низкий",
@@ -2206,7 +2206,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PRESET] = "Preset de qualidade",
     [UI_MENU_PRESET_DESC] = "Ajusta as opções gráficas de uma vez. Recomendado é o preset que este PC recebe pela placa de vídeo, "
         "memória e processador. Alto é o jogo como foi lançado; Baixo e Médio desenham menos, para PCs mais fracos e "
-        "portáteis; Ultra desenha mais, para placas de vídeo com 16 GB de memória ou mais. As opções que você mudar "
+        "portáteis; Ultra desenha mais, e mais ainda num monitor maior; nunca é recomendado, só escolhido. As opções que você mudar "
         "à mão depois ficam como você deixou, e o preset passa a aparecer como personalizado.",
     [UI_MENU_PRESET_RECOMMENDED] = "Recomendado (%s)",
     [UI_MENU_PRESET_LOW] = "Baixo",
@@ -2976,7 +2976,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EXEFS_ON] = "正在使用的代码补丁：%d 个文件。",
     [UI_MENU_MODS_REPLACES_BUILTIN] = "正在使用的代码补丁：%d 个文件。它们取代本移植自带的补丁 %s，此模组开启时该补丁保持关闭。",
     [UI_MENU_PRESET] = "画质预设",
-    [UI_MENU_PRESET_DESC] = "一次性设置各项图形选项。“推荐”是本机根据显卡、内存和处理器得到的预设。“高”即游戏发售时的原样；“低”和“中”绘制更少，适合较慢的电脑和掌机；“极高”绘制更多，适合 16 GB 及以上显存的显卡。之后手动更改的选项会保持你的设置，预设随即显示为自定义。",
+    [UI_MENU_PRESET_DESC] = "一次性设置各项图形选项。“推荐”是本机根据显卡、内存和处理器得到的预设。“高”即游戏发售时的原样；“低”和“中”绘制更少，适合较慢的电脑和掌机；“极高”绘制更多，显示器越大越多；它从不被推荐，只能手动选择。之后手动更改的选项会保持你的设置，预设随即显示为自定义。",
     [UI_MENU_PRESET_RECOMMENDED] = "推荐（%s）",
     [UI_MENU_PRESET_LOW] = "低",
     [UI_MENU_PRESET_MEDIUM] = "中",

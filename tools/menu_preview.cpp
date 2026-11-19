@@ -104,6 +104,7 @@ const char *const *cfg_preset_keys(int *n) {
 int cfg_preset_hw_changed(void) { return 0; }
 void cfg_preset_use_from(int, const char *const *) {}
 void cfg_preset_chosen(void) {}
+int cfg_preset_differs(int, const char *, const char *) { return 0; }   // sets nothing: nothing differs
 int vk_dlaa_needs_restart(void) { return 0; }
 int vk_hdr_restart_for(const char *) { return 0; }
 int vk_dlssg_wanted(void) { return 0; }

@@ -9,6 +9,7 @@
 //                   the actions after it (use=<tier>, chosen, set=<KEY>=<value>, save, ini=<text>,
 //                   reload, notice, handoff=<tier>); prints every line cfg.c logs ("log: ...") and what the
 //                   readers get ("got: ...")
+// The stand-ins for what cfg.c links against are in preset_check_stubs.h.
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,115 +21,7 @@
 #include "hw_detect.h"
 #include "platform/platform.h"
 
-// ---- stand-ins
-void rt_log(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    printf("log: ");
-    vprintf(fmt, ap);
-    printf("\n");
-    va_end(ap);
-}
-void rt_fatal(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    printf("FATAL: ");
-    vprintf(fmt, ap);
-    printf("\n");
-    va_end(ap);
-    exit(3);
-}
-const char *bugcap_replay_dir(void) { return NULL; }
-int cfg_supported(const char *key) { (void)key; return 1; }
-void perf_size(PerfSizes *s, const char *name, uint64_t count, uint64_t limit, uint64_t bytes) {
-    (void)s, (void)name, (void)count, (void)limit, (void)bytes;
-}
-static char exe_path[1024];
-int plat_exe_path(char *out, size_t n) {
-    if (!exe_path[0] || strlen(exe_path) >= n) return 0;
-    strcpy(out, exe_path);
-    return 1;
-}
-int plat_fs_rename(const char *from, const char *to, int durable) {
-    (void)from, (void)to, (void)durable;
-    return PLAT_FS_ERROR;
-}
-int plat_file_exists(const char *p) {
-    FILE *f = fopen(p, "rb");
-    if (f) fclose(f);
-    return f != NULL;
-}
-uint8_t *plat_file_read(const char *path, uint64_t *size) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *d = malloc((size_t)n + 1);
-    if (fread(d, 1, (size_t)n, f) != (size_t)n) n = 0;
-    d[n] = 0;
-    fclose(f);
-    *size = (uint64_t)n;
-    return d;
-}
-int64_t plat_file_size(const char *p) { (void)p; return -1; }
-int plat_file_write_atomic(const char *p, const void *d, size_t n) {
-    printf("write: %s\n", p);
-    FILE *f = fopen(p, "wb");
-    if (!f) return 0;
-    int ok = fwrite(d, 1, n, f) == n;
-    return fclose(f) == 0 && ok;
-}
-void plat_mutex_lock(PlatMutex *m) { (void)m; }
-void plat_mutex_unlock(PlatMutex *m) { (void)m; }
-int plat_setenv(const char *n, const char *v) { (void)n, (void)v; return 1; }
-
-// hw_detect.c: the hardware NX2SARIA_TEST_HW describes, "field=value" between commas: name, vendor, device, driver,
-// type (discrete, integrated, other), vram (MiB), mesh, cores, threads, ram (MiB), hand (a handheld's name), skip (the
-// probe does not run: the GPU fields stay empty for cfg.c to fill from the state file), win (FSR 4 counts). Without
-// a name, no GPU. probe 0 (a tool mode) skips the probe as the real one does.
-void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char *note, size_t note_cap,
-               double *probe_ms) {
-    memset(hw, 0, sizeof *hw);
-    skipped[0] = note[0] = 0;
-    *probe_ms = 1.5;
-    const char *spec = getenv("NX2SARIA_TEST_HW");
-    char buf[1024];
-    snprintf(buf, sizeof buf, "%s", spec ? spec : "");
-    int win = 0;
-    for (char *f = strtok(buf, ","); f; f = strtok(NULL, ",")) {
-        char *eq = strchr(f, '=');
-        if (!eq) continue;
-        *eq = 0;
-        const char *v = eq + 1;
-        if (!strcmp(f, "name")) hw->have_gpu = 1, snprintf(hw->gpu_name, sizeof hw->gpu_name, "%s", v);
-        else if (!strcmp(f, "vendor")) hw->vendor = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(f, "device")) hw->device = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(f, "driver")) hw->driver = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(f, "type"))
-            hw->gpu_type = !strcmp(v, "discrete") ? PRESET_GPU_DISCRETE : !strcmp(v, "integrated") ? PRESET_GPU_INTEGRATED
-                                                                                           : PRESET_GPU_OTHER;
-        else if (!strcmp(f, "vram")) hw->vram_mib = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(f, "mesh")) hw->mesh = atoi(v);
-        else if (!strcmp(f, "cores")) hw->cores = atoi(v);
-        else if (!strcmp(f, "threads")) hw->threads = atoi(v);
-        else if (!strcmp(f, "ram")) hw->ram_mib = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(f, "hand")) snprintf(hw->handheld, sizeof hw->handheld, "%s", v);
-        else if (!strcmp(f, "skip")) snprintf(skipped, skipped_cap, "%s", v);
-        else if (!strcmp(f, "win")) win = atoi(v);
-    }
-    if (!probe) snprintf(skipped, skipped_cap, "a tool mode, not the game itself");
-    if (skipped[0]) {   // what the real hw_detect leaves for cfg.c: no GPU fields
-        PresetHw keep = *hw;
-        memset(hw, 0, sizeof *hw);
-        hw->cores = keep.cores, hw->threads = keep.threads, hw->ram_mib = keep.ram_mib;
-        memcpy(hw->handheld, keep.handheld, sizeof hw->handheld);
-        *probe_ms = 0;
-        return;
-    }
-    if (!hw->have_gpu) snprintf(note, note_cap, "no Vulkan device");
-    preset_gpu_caps(hw, win);
-}
+#include "preset_check_stubs.h"
 
 // ---- pure: preset_pick.h
 static int fails;
@@ -179,7 +72,7 @@ static void handheld_is(const char *what, const char *v, const char *p, const ch
 static void pure(void) {
     // ---- the tier
     tier_is("bench PC: RX 6700 10 GB, 16 threads, 32 GB", gpu("AMD Radeon RX 6700 (RADV NAVI22)", AMD, D, 10224, 1, 8, 16, 31900, NULL, 0), PRESET_HIGH);
-    tier_is("RTX 4090 24 GB", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 64000, NULL, 1), PRESET_ULTRA);
+    tier_is("RTX 4090 24 GB: high, ultra by choice only", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 64000, NULL, 1), PRESET_HIGH);
     tier_is("RTX 3060 12 GB", gpu("NVIDIA GeForce RTX 3060", NV, D, 12288, 1, 6, 12, 32000, NULL, 1), PRESET_HIGH);
     tier_is("GTX 1650 4 GB", gpu("NVIDIA GeForce GTX 1650", NV, D, 4096, 1, 6, 12, 16000, NULL, 1), PRESET_LOW);
     tier_is("RTX 4060 8 GB (8,188 MiB)", gpu("NVIDIA GeForce RTX 4060", NV, D, 8188, 1, 8, 16, 32000, NULL, 1), PRESET_HIGH);
@@ -192,7 +85,10 @@ static void pure(void) {
     tier_is("RTX 3070 with 8 GB of RAM", gpu("NVIDIA GeForce RTX 3070", NV, D, 8192, 1, 6, 12, 7800, NULL, 1), PRESET_LOW);
     tier_is("4 threads and an RX 6800 16 GB", gpu("AMD Radeon RX 6800", AMD, D, 16368, 1, 4, 4, 32000, NULL, 1), PRESET_MEDIUM);
     tier_is("RTX 4090 with 12 GB of RAM", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 11900, NULL, 1), PRESET_MEDIUM);
-    tier_is("RTX 4090 with 16 GB of RAM (15.6 GiB)", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 15980, NULL, 1), PRESET_ULTRA);
+    tier_is("RTX 4090 with 16 GB of RAM (15.6 GiB)", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 15980, NULL, 1), PRESET_HIGH);
+    tier_is("RX 7900 XTX 24 GB", gpu("AMD Radeon RX 7900 XTX", AMD, D, 24560, 1, 16, 32, 64000, NULL, 1), PRESET_HIGH);
+    tier_is("llvmpipe: a software renderer", gpu("llvmpipe (LLVM 19.1.7, 256 bits)", 0x10005, PRESET_GPU_CPU, 31900, 1, 8, 16, 31900, NULL, 0), PRESET_LOW);
+    tier_is("GTX 1080 Ti 11 GB, no mesh shaders", gpu("NVIDIA GeForce GTX 1080 Ti", NV, D, 11264, 0, 8, 16, 32000, NULL, 1), PRESET_LOW);
     // the three PCs docs/presets.md names: the bench, the owner's laptop (its log: 6017 MiB, RAM 16087 MiB) and a
     // player's RX 6650 XT with a Ryzen 5 4650G, whose integrated graphics keep part of the 16 GB
     tier_is("the bench: RX 6700 10 GB, 16 threads, 31 GiB", gpu("AMD Radeon RX 6700 (RADV NAVI22)", 0x1002, D, 10224, 1, 8, 16, 31932, NULL, 0), PRESET_HIGH);
@@ -200,6 +96,20 @@ static void pure(void) {
     tier_is("RX 6650 XT 8 GB, Ryzen 5 4650G, 16 GB (15.3 GiB)", gpu("AMD Radeon RX 6650 XT", 0x1002, D, 8176, 1, 6, 12, 15667, NULL, 0), PRESET_HIGH);
     tier_is("no data", gpu(NULL, 0, 0, 0, 0, 0, 0, 0, NULL, 0), PRESET_HIGH);
     tier_is("no GPU data, a handheld", gpu(NULL, 0, 0, 0, 0, 4, 8, 14800, "Steam Deck", 0), PRESET_LOW);
+    // ultra is never recommended: any type, mesh shaders or not, up to 96 GiB of video memory, any RAM and processors
+    int ultra = 0, tried = 0;
+    static const int types[] = {PRESET_GPU_OTHER, PRESET_GPU_INTEGRATED, PRESET_GPU_DISCRETE, PRESET_GPU_CPU};
+    for (int ty = 0; ty < 4; ty++)
+        for (uint32_t vram = 0; vram <= 96 * 1024; vram += 512)
+            for (int mesh = 0; mesh < 2; mesh++)
+                for (uint32_t ram = 0; ram <= 256 * 1024; ram += 16 * 1024)
+                    for (int threads = 0; threads <= 64; threads += 16) {
+                        PresetHw hw = gpu("NVIDIA GeForce RTX 5090", NV, types[ty], vram, mesh, threads / 2, threads, ram,
+                                          NULL, 1);
+                        char why[192];
+                        ultra += preset_pick(&hw, why, sizeof why) == PRESET_ULTRA, tried++;
+                    }
+    check(!ultra, "no hardware is recommended ultra (%d of %d made-up PCs)", ultra, tried);
 
     // ---- what the GPU runs
     PresetHw h = gpu("NVIDIA GeForce RTX 4060", NV, D, 8188, 1, 8, 16, 32000, NULL, 0);
@@ -292,18 +202,42 @@ static void pure(void) {
     check(!preset_value(PRESET_ULTRA, &rtx, "DLAA") && !preset_value(PRESET_HIGH, &rtx, "DLAA"),
           "ultra and high leave DLSS alone on RTX");
     PresetHw small_card = gpu("NVIDIA GeForce GTX 1650", NV, D, 4096, 1, 6, 12, 16000, NULL, 1);
-    check(!preset_value(PRESET_LOW, &small_card, "TEXTURE_DETAIL") && !preset_value(PRESET_LOW, &ig, "TEXTURE_DETAIL") &&
-              (v = preset_value(PRESET_LOW, &rtx, "TEXTURE_DETAIL")) && !strcmp(v, "reduced"),
-          "texture_detail = reduced on low only for a card with 8 GiB or more of its own (auto below)");
+    PresetHw no_mesh = gpu("NVIDIA GeForce GTX 1080 Ti", NV, D, 11264, 0, 8, 16, 32000, NULL, 1);
+    PresetHw rx580 = gpu("AMD Radeon RX 580 Series", AMD, D, 8192, 0, 6, 12, 16000, NULL, 1);
+    int tex = 0;
+    for (size_t r = 0; r < PRESET_ROW_COUNT; r++) tex += !strcmp(PRESET_ROWS[r].key, "TEXTURE_DETAIL");
+    check(!tex, "no tier sets texture_detail: its auto picks smaller textures by the driver's budget (%d rows)", tex);
+    check(!preset_value(PRESET_LOW, &no_mesh, "ANISO") && !preset_value(PRESET_LOW, &no_mesh, "FOLIAGE") &&
+              !preset_value(PRESET_LOW, &rx580, "ANISO") && !preset_value(PRESET_LOW, &rx580, "FOLIAGE") &&
+              !preset_value(PRESET_LOW, &small_card, "ANISO") && !preset_value(PRESET_LOW, &rtx, "FOLIAGE"),
+          "low on a card of its own (GTX 1080 Ti, RX 580 8 GB, GTX 1650, RTX 4060) keeps filtering and foliage");
+    check((v = preset_value(PRESET_LOW, &ig, "ANISO")) && !strcmp(v, "4") && (v = preset_value(PRESET_LOW, &deck, "ANISO")) &&
+              !strcmp(v, "4") && (v = preset_value(PRESET_LOW, &ig, "FOLIAGE")) && !strcmp(v, "reduced") &&
+              (v = preset_value(PRESET_LOW, &deck, "FOLIAGE")) && !strcmp(v, "reduced"),
+          "low on an integrated GPU or a handheld: aniso 4, foliage reduced");
+    check((v = preset_value(PRESET_LOW, &no_mesh, "SCENE_SHARE")) && !strcmp(v, "0.5") &&
+              (v = preset_value(PRESET_LOW, &no_mesh, "STANDIN_FILTER")) && !strcmp(v, "bilinear"),
+          "low on a card without mesh shaders: the smaller scene and the plain filter");
 
     // ---- fingerprints
     char a[160], b[160];
     PresetHw x = rtx;
     preset_fingerprint(&x, a, sizeof a);
-    check(!strcmp(a, "10de:1234:100:8188:16:31:none"), "fingerprint %s", a);
+    check(!strcmp(a, "10de:1234:100:8:16:31:none"), "fingerprint %s (video memory in GiB)", a);
     x.driver = 0x200;
     preset_fingerprint(&x, b, sizeof b);
     check(preset_same_hardware(a, b), "a new driver is the same hardware");
+    x.vram_mib = 8188 - 256;
+    preset_fingerprint(&x, b, sizeof b);
+    check(preset_same_hardware(a, b), "the heap 256 MiB smaller (resizable BAR, a driver update) is the same: %s", b);
+    x.vram_mib = 8188 + 256;
+    preset_fingerprint(&x, b, sizeof b);
+    check(preset_same_hardware(a, b), "and 256 MiB larger: %s", b);
+    check(preset_same_hardware(a, "10de:1234:100:8188:16:31:none") && preset_same_hardware("10de:1234:100:7932:16:31:none", a),
+          "a fingerprint of the older form, video memory in MiB, matches its GiB");
+    check(!preset_same_hardware(a, "10de:1234:100:12288:16:31:none"), "an older one of another size does not");
+    check(preset_same_hardware("1002:163f:1:1024:8:14:Steam-Deck", "1002:163f:1:1:8:14:Steam-Deck"),
+          "the Steam Deck's 1024 MiB in the older form is its 1 GiB");
     x.vram_mib = 12288;
     preset_fingerprint(&x, b, sizeof b);
     check(!preset_same_hardware(a, b), "another card is not");
@@ -362,13 +296,14 @@ static void report(void) {
     printf("got: notice_due %d\n", cfg_preset_notice_due());
     int n;
     const char *const *keys = cfg_preset_keys(&n);
-    // the keys a preset chosen in the menu hands back (runtime/ui/menu.cpp lists them in its box): the preset's keys
-    // on this hardware that the player sets
+    // the keys choosing the tier in use in the menu hands back (runtime/ui/option_rows.cpp opt_preset_handback, outside
+    // a draft): the keys it sets that the player sets to another value, the environment's aside
     printf("got: handback");
     for (int i = 0, first = 1; i < n; i++) {
         char name[80];
         snprintf(name, sizeof name, "NX2SARIA_%s", keys[i]);
-        if (cfg_is_set(name)) printf("%s%s", first ? " " : ",", keys[i]), first = 0;
+        if (cfg_is_set(name) && !cfg_from_env(name) && cfg_preset_differs(cfg_preset_in_use(), name, cfg_get(name)))
+            printf("%s%s", first ? " " : ",", keys[i]), first = 0;
     }
     printf("\n");
     for (int i = 0; i < n; i++) {
@@ -385,10 +320,15 @@ static void report(void) {
         char what[64];
         snprintf(what, sizeof what, "value %s SCENE_SHARE", cfg_preset_name(t));
         got(what, cfg_preset_value(t, "scene_share"));
-        snprintf(what, sizeof what, "tier_default %s ANISO", cfg_preset_name(t));
-        got(what, cfg_default_tier("NX2SARIA_ANISO", t));
-        snprintf(what, sizeof what, "differs %s ANISO", cfg_preset_name(t));
-        printf("got: %s %d\n", what, cfg_preset_differs(t, "NX2SARIA_ANISO", cfg_get("NX2SARIA_ANISO")));
+        static const char *const tier_keys[] = {"SCENE_SHARE", "STANDIN_FILTER", "SHADOW_PCF"};
+        for (int k = 0; k < 3; k++) {
+            char name[64];
+            snprintf(name, sizeof name, "NX2SARIA_%s", tier_keys[k]);
+            snprintf(what, sizeof what, "tier_default %s %s", cfg_preset_name(t), tier_keys[k]);
+            got(what, cfg_default_tier(name, t));
+        }
+        snprintf(what, sizeof what, "differs %s SCENE_SHARE", cfg_preset_name(t));
+        printf("got: %s %d\n", what, cfg_preset_differs(t, "NX2SARIA_SCENE_SHARE", cfg_get("NX2SARIA_SCENE_SHARE")));
     }
 }
 

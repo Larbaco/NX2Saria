@@ -104,6 +104,7 @@ static const char *const known[] = {
     "GEN_SEED",
     "COPY_RETIRE",
     "PRESET",   // the quality preset (cfg.c "quality presets", preset_pick.h)
+    "PRESET_PROBE",   // the quality preset's hardware probe at start (hw_detect.c); no menu row
     "MEM_BUDGET_TEST_VRAM_MB", "MEM_BUDGET_TEST_RAM_MB",
     "TEX_COMPACT", "TEX_COMPACT_MIN_MB", "TEX_COMPACT_FRAME_MB",   // texture compaction (vk_texture.c); no menu row
     "STANDIN_FILTER",   // the filter of the scene upscaler's stand-in (vk_tonemap.c); no menu row
@@ -156,7 +157,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"UPSCALER_IDLE_WAIT", "display"},
     {"FRAMEGEN", "display"}, {"FRAMEGEN_MULTIPLIER", "display"}, {"FG_MULT", "display"}, {"SKIN_MOTION", "display"},
     {"LOW_LATENCY", "display"}, {"REFLEX_LIMIT", "display"},
-    {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"}, {"PRESET", "display"},
+    {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"}, {"PRESET", "display"}, {"PRESET_PROBE", "display"},
     {"DISCORD_RPC", "discord"}, {"DISCORD_APP_ID", "discord"}, {"DISCORD_IMAGE", "discord"},
     {"TRACKER_API", "tracker"}, {"TRACKER_API_PORT", "tracker"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
@@ -242,6 +243,8 @@ static const CfgMeta metas[] = {
     // the quality preset (cfg.c "quality presets"): recommended is the tier preset_pick.h chooses for this PC at each
     // start; the restart-only keys of a tier the menu switches to apply at the next start (cfg_pending)
     {"PRESET", "recommended", "recommended|low|medium|high|ultra", LIVE},
+    // 0: no Vulkan probe at start for the preset; the state file's last GPU, else nothing known (cfg.c preset_init)
+    {"PRESET_PROBE", "1", "0|1", RESTART},
     // vk_lowlat.c level_now: the driver's low latency without frame generation (0 off, 1 on, 2 on with boost)
     {"LOW_LATENCY", "0", "0|1|2", LIVE},
     {"MONITOR", "auto", NULL, RESTART},   // auto|primary|<1-based index>|<part of a monitor name> (gfx_window_win.c, gfx_window_sdl.c chosen_monitor)
@@ -909,6 +912,10 @@ int cfg_load(const char *path) {
 static const struct { const char *key, *value; } DECK[] = {
     {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"OUTPUT_RES", "1280x800"}, {"RENDER_SCALE", "game"},
     {"VK_PRESENT", "fifo"}, {"FPS_LIMIT", "40"}, {"CORES", "4"}, {"ASTC_BC", "1"}, {"SPIN_HANDOFF_US", "30"},
+#ifdef CFG_TEST_DECK_ROW
+    // tests/preset_check.py only: a row of its own, for a key a tier also sets with another value
+    CFG_TEST_DECK_ROW,
+#endif
 };
 static int profile = -1;   // 0 none, 1 Steam Deck
 
@@ -1872,7 +1879,11 @@ int cfg_reload_file(CfgReloadResult *r) {
 //   chosen_on  the fingerprint when the player last chose a tier; absent while none is recorded
 //   noticed    the recommended tier the one-time notice last named (cfg_preset_notice_due); absent before any
 //   gpu_*      the last probe that found a GPU (name, vendor, device, driver, type, vram_mib, mesh): a start that cannot
-//              probe (hw_detect.c) goes by them
+//              probe (hw_detect.c) goes by them; a GPU missing any of them is none
+//   probing    1 from right before the probe's first Vulkan call until it returns (preset_probe_begin). A start that
+//              finds it skips the probe and goes by the GPU above: the probe runs before the crash report and the log
+//              file are set up (main.c main_run), so a driver that crashes or hangs in it would otherwise stop every
+//              start. It stays until the line is deleted by hand (or the file), and every start says so in its log.
 // It is written through a temporary file and a rename (plat_file_write_atomic), only when its text changes, and only by
 // the game itself: not by a tool mode (cfg_start's game 0) and not in a run that replays a bug capture.
 #define PRESET_KEYS_MAX 32
@@ -1880,18 +1891,20 @@ static PlatMutex preset_lock = PLAT_MUTEX_INIT;   // the state file and the fiel
 static struct {
     char path[1024];          // the state file; "" when the executable's folder is unknown
     char text[2048];          // the state file's text as read or last written
+    char logged[2048];        // the text as read or last written with a log line (state_write's quiet writes aside)
     char chosen_on[160];      // "" while none is recorded
     char noticed[16];         // the tier the one-time notice named, "" before any
-    char fp[160];             // this start's fingerprint
+    char fp[160];             // this start's fingerprint; until the probe returns, the state file's hardware line
     char why[192];            // why the recommended tier
     PresetHw gpu;             // the state file's last probe (have_gpu 0 without one)
     int rec;                  // the recommended tier
     int write;                // the state file may be written: the game itself, not a replay
+    int probing;              // the state file's probing mark (above): found at start, or the probe runs now
     int hw_changed;           // atomic: the player's tier gave way to the recommended one (above)
     int n_keys, keys_done;    // keys_done atomic
-    // every key some tier sets on this PC's hardware, in the table's order: the keys the menu hands back to a preset
-    // and counts for Custom. A key only another kind of PC gets from a tier (fps_limit, set on integrated GPUs and
-    // handhelds alone) stays the player's own here.
+    // every key some tier sets on this PC's hardware, in the table's order: the keys among which the menu hands back
+    // to a preset, and Custom counts, those the tier in question sets (cfg_preset_differs). A key only another kind of
+    // PC gets from a tier (fps_limit, set on integrated GPUs and handhelds alone) stays the player's own here.
     const char *keys[PRESET_KEYS_MAX];
 } PS = {.rec = PRESET_HIGH};
 
@@ -1921,7 +1934,17 @@ static int preset_parse(const char *v) {
 }
 
 static const char *gpu_type_name(int type) {
-    return type == PRESET_GPU_DISCRETE ? "discrete" : type == PRESET_GPU_INTEGRATED ? "integrated" : "other";
+    return type == PRESET_GPU_DISCRETE ? "discrete" : type == PRESET_GPU_INTEGRATED ? "integrated"
+         : type == PRESET_GPU_CPU ? "cpu" : "other";
+}
+
+// A whole number of the state file (decimal or 0x hex) into *out; 0 when v is not one.
+static int state_number(const char *v, uint32_t *out) {
+    char *end;
+    unsigned long n = strtoul(v, &end, 0);
+    if (!*v || *end || n > 0xffffffffu) return 0;
+    *out = (uint32_t)n;
+    return 1;
 }
 
 static void state_path_init(void) {
@@ -1933,42 +1956,57 @@ static void state_path_init(void) {
     snprintf(PS.path, sizeof PS.path, "%.*spreset-state.txt", (int)(cut + 1 - path), path);
 }
 
+// Reads the whole file, line by line to its end: a blank line or a stray NUL byte ends only its own line. A kept GPU
+// needs every one of its seven lines with a value of its kind, else none is kept: a GPU with fields left at 0 would
+// give a tier of its own (no mesh shaders: Low).
 static void state_read(void) {
     if (!PS.path[0]) return;
     uint64_t size = 0;
     char *data = (char *)plat_file_read(PS.path, &size);
     if (!data) return;
     snprintf(PS.text, sizeof PS.text, "%s", data);
+    memcpy(PS.logged, PS.text, sizeof PS.logged);
     PresetHw *g = &PS.gpu;
-    for (char *line = data, *next; line && *line; line = next) {
-        next = strchr(line, '\n');
+    enum { G_NAME = 1, G_VENDOR = 2, G_DEVICE = 4, G_DRIVER = 8, G_TYPE = 16, G_VRAM = 32, G_MESH = 64, G_ALL = 127 };
+    unsigned have = 0;
+    for (char *line = data, *end = data + size, *next; line < end; line = next) {
+        next = memchr(line, '\n', (size_t)(end - line));
         if (next) *next++ = 0;
+        else next = end;
         char *eq = strchr(line, '=');
         if (*line == '#' || !eq) continue;
         *eq = 0;
         char *k = trim(line), *v = trim(eq + 1);
+        uint32_t n;
         if (!strcmp(k, "chosen_on")) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", v);
         else if (!strcmp(k, "noticed")) snprintf(PS.noticed, sizeof PS.noticed, "%s", v);
-        else if (!strcmp(k, "gpu_name")) g->have_gpu = 1, snprintf(g->gpu_name, sizeof g->gpu_name, "%s", v);
-        else if (!strcmp(k, "gpu_vendor")) g->vendor = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(k, "gpu_device")) g->device = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(k, "gpu_driver")) g->driver = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(k, "gpu_vram_mib")) g->vram_mib = (uint32_t)strtoul(v, NULL, 0);
-        else if (!strcmp(k, "gpu_mesh")) g->mesh = atoi(v) != 0;
-        else if (!strcmp(k, "gpu_type"))
-            g->gpu_type = !strcmp(v, "discrete") ? PRESET_GPU_DISCRETE : !strcmp(v, "integrated") ? PRESET_GPU_INTEGRATED
-                                                                                            : PRESET_GPU_OTHER;
+        else if (!strcmp(k, "hardware")) snprintf(PS.fp, sizeof PS.fp, "%s", v);
+        else if (!strcmp(k, "probing")) PS.probing = atoi(v) != 0;
+        else if (!strcmp(k, "gpu_name") && *v) have |= G_NAME, snprintf(g->gpu_name, sizeof g->gpu_name, "%s", v);
+        else if (!strcmp(k, "gpu_vendor") && state_number(v, &n) && n) have |= G_VENDOR, g->vendor = n;
+        else if (!strcmp(k, "gpu_device") && state_number(v, &n)) have |= G_DEVICE, g->device = n;
+        else if (!strcmp(k, "gpu_driver") && state_number(v, &n)) have |= G_DRIVER, g->driver = n;
+        else if (!strcmp(k, "gpu_vram_mib") && state_number(v, &n)) have |= G_VRAM, g->vram_mib = n;
+        else if (!strcmp(k, "gpu_mesh") && (!strcmp(v, "0") || !strcmp(v, "1"))) have |= G_MESH, g->mesh = v[0] == '1';
+        else if (!strcmp(k, "gpu_type")) {
+            int t = !strcmp(v, "discrete") ? PRESET_GPU_DISCRETE : !strcmp(v, "integrated") ? PRESET_GPU_INTEGRATED
+                  : !strcmp(v, "cpu") ? PRESET_GPU_CPU : !strcmp(v, "other") ? PRESET_GPU_OTHER : -1;
+            if (t >= 0) have |= G_TYPE, g->gpu_type = t;
+        }
     }
     free(data);
-    if (!g->gpu_name[0] || !g->vendor) memset(g, 0, sizeof *g);   // a GPU without its name or vendor: none kept
+    if (have == G_ALL) g->have_gpu = 1;
+    else memset(g, 0, sizeof *g);   // a GPU without all of its lines: none kept
 }
 
-// preset_lock held, or cfg_start.
-static void state_write(void) {
+// preset_lock held, or cfg_start. quiet: no "wrote" line (the probing mark and its removal, which leave the file as it
+// was when nothing else changed); a failed write is logged either way.
+static void state_write(int quiet) {
     if (!PS.path[0] || !PS.write) return;
     char t[sizeof PS.text];
     int n = snprintf(t, sizeof t, "# NX2Saria: what the quality presets last saw of this PC. The game writes this file; "
-                                  "the settings are in nx2saria.ini.\nhardware = %s\n", PS.fp);
+                                  "the settings are in nx2saria.ini.\n");
+    if (PS.fp[0] && n < (int)sizeof t) n += snprintf(t + n, sizeof t - (size_t)n, "hardware = %s\n", PS.fp);
     if (PS.chosen_on[0] && n < (int)sizeof t) n += snprintf(t + n, sizeof t - (size_t)n, "chosen_on = %s\n", PS.chosen_on);
     if (PS.noticed[0] && n < (int)sizeof t) n += snprintf(t + n, sizeof t - (size_t)n, "noticed = %s\n", PS.noticed);
     const PresetHw *g = &PS.gpu;
@@ -1977,22 +2015,39 @@ static void state_write(void) {
                       "gpu_name = %s\ngpu_vendor = 0x%04x\ngpu_device = 0x%04x\ngpu_driver = 0x%x\ngpu_type = %s\n"
                       "gpu_vram_mib = %u\ngpu_mesh = %d\n",
                       g->gpu_name, g->vendor, g->device, g->driver, gpu_type_name(g->gpu_type), g->vram_mib, g->mesh);
+    if (PS.probing && n < (int)sizeof t) n += snprintf(t + n, sizeof t - (size_t)n, "probing = 1\n");
     if (n >= (int)sizeof t || !strcmp(t, PS.text)) return;
     if (plat_file_write_atomic(PS.path, t, (size_t)n)) {
         memcpy(PS.text, t, (size_t)n + 1);
+        if (quiet || !strcmp(t, PS.logged)) return;
+        memcpy(PS.logged, t, (size_t)n + 1);
         rt_log("preset: wrote %s", PS.path);
     } else {
         rt_log("preset: cannot write %s", PS.path);
     }
 }
 
-// The key's value from the device profile or the table, as cfg_default gives it without the preset.
-static const char *base_default(const char *key) {
-    if (profile_of())
-        for (size_t i = 0; i < sizeof DECK / sizeof *DECK; i++)
-            if (!strcasecmp(DECK[i].key, key)) return DECK[i].value;
-    const CfgMeta *m = cfg_meta(key);
-    return m ? m->def : NULL;
+// The state file written on a thread of its own, for a caller on the present thread (the one-time notice, a Ctrl+F5
+// that changes the preset line), which should not wait for the disk. Written inline when no thread starts.
+static void state_write_main(void *arg) {
+    (void)arg;
+    plat_mutex_lock(&preset_lock);
+    state_write(0);
+    plat_mutex_unlock(&preset_lock);
+}
+
+static void state_write_later(void) {
+    if (!plat_thread_spawn(state_write_main, NULL, "preset state", 256u << 10)) state_write_main(NULL);
+}
+
+// hw_detect.c hw_detect, right before the probe's first Vulkan call: one log line (before log_open it waits in main.c's
+// early buffer and is on stderr at once), and the probing mark in the state file, which the end of preset_init takes
+// out again once the probe has returned.
+static void preset_probe_begin(void) {
+    rt_log("preset: probing the GPU (a Vulkan instance; preset_probe = 0 turns it off)");
+    if (!PS.write) return;
+    PS.probing = 1;
+    state_write(1);
 }
 
 static const char *deck_value(const char *key) {
@@ -2044,7 +2099,14 @@ static void preset_init(int game) {
     preset_keys_init();
     state_path_init();
     state_read();
-    hw_detect(&hw, game, skipped, sizeof skipped, note, sizeof note, &ms);
+    const char *probe_set = cfg_get_now(PREFIX "PRESET_PROBE");
+    const char *no_probe = !game ? "a tool mode, not the game itself"
+                         : probe_set && !strcmp(probe_set, "0") ? "preset_probe = 0"
+                         : PS.probing ? "the last start's probe did not finish (preset-state.txt says probing = 1); "
+                                        "delete that line to probe again"
+                         : NULL;
+    hw_detect(&hw, no_probe, preset_probe_begin, skipped, sizeof skipped, note, sizeof note, &ms);
+    if (!skipped[0]) PS.probing = 0;   // the probe returned: the end's state_write takes the mark out
     int cached = 0;
     if (hw.have_gpu) {
         PS.gpu = hw;   // the state file keeps its GPU fields
@@ -2097,29 +2159,38 @@ static void preset_init(int game) {
         tier = PRESET_HIGH, want = -1;
         snprintf(source, sizeof source, "a bug capture's replay: its settings.ini holds the capture's preset values");
     } else if (want >= 0) {
-        if (PS.chosen_on[0] && hw.have_gpu && !preset_same_hardware(PS.chosen_on, PS.fp)) {
+        // A tier the environment sets is used as it is: the new-hardware rule is for the settings file's line, which
+        // the player chose on some PC; the environment's is set for this run, and is no choice recorded here.
+        const int env = cfg_env(name) != NULL;
+        if (!env && PS.chosen_on[0] && hw.have_gpu && !preset_same_hardware(PS.chosen_on, PS.fp)) {
             __atomic_store_n(&PS.hw_changed, 1, __ATOMIC_RELEASE);
             snprintf(source, sizeof source, "recommended: the hardware changed since %s was chosen", preset_tier_names[want]);
         } else {
             tier = want;
-            snprintf(source, sizeof source, "%s", cfg_env(name) ? "environment" : "settings file");
-            if (!PS.chosen_on[0] && hw.have_gpu) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", PS.fp);
+            snprintf(source, sizeof source, "%s", env ? "environment" : "settings file");
+            if (!env && !PS.chosen_on[0] && hw.have_gpu) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", PS.fp);
         }
     }
     __atomic_store_n(&preset_tier, tier, __ATOMIC_RELEASE);
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);   // the lookup memo forgets what it read without the layer
     rt_log("preset: in use %s (%s)", preset_tier_names[tier], source);
     if (PS.hw_changed)
-        rt_log("preset: %s was chosen on %s, and this PC is %s (vendor:device:driver:video MiB:threads:RAM GiB:handheld); "
+        rt_log("preset: %s was chosen on %s, and this PC is %s (vendor:device:driver:video GiB:threads:RAM GiB:handheld); "
                "choosing a preset in the settings menu keeps it again", preset_tier_names[want], PS.chosen_on, PS.fp);
     else if (want >= 0 && want != PS.rec)
         rt_log("preset: %s chosen; the recommended for this PC is %s", preset_tier_names[want], preset_tier_names[PS.rec]);
     preset_log_keys(tier);
-    state_write();
+    if (PS.probing)
+        rt_log("preset: the probe of an earlier start did not finish (a driver that crashed or hung in it): no probe "
+               "until the line 'probing = 1' is deleted from %s", PS.path[0] ? PS.path : "preset-state.txt");
+    state_write(0);
 }
 
 // cfg_reload_file: the file's preset line changed (Ctrl+F5) from before, the tier the line named before the reload
 // (preset_parse): the layer follows it. The line as it was, not the tier at start: the menu may have switched since.
+// An edited line is the player's choice on this PC, as one made in the menu: a tier chosen on other hardware no longer
+// gives way (cfg_preset_hw_changed), and a tier is recorded as chosen here (written on a thread of its own: Ctrl+F5
+// runs on the present thread).
 static void preset_follow(int before) {
     if (__atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE) < 0 || bugcap_replay_dir()) return;
     int want = preset_parse(raw_get(PREFIX "PRESET"));
@@ -2127,6 +2198,12 @@ static void preset_follow(int before) {
     if (before == -2) before = -1;
     if (want == before) return;
     rt_log("preset: the settings file now says %s", want >= 0 ? preset_tier_names[want] : "recommended");
+    plat_mutex_lock(&preset_lock);
+    __atomic_store_n(&PS.hw_changed, 0, __ATOMIC_RELEASE);
+    const int record = want >= 0 && preset_hw.have_gpu && strcmp(PS.chosen_on, PS.fp);
+    if (record) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", PS.fp);
+    plat_mutex_unlock(&preset_lock);
+    if (record) state_write_later();
     cfg_preset_use(want >= 0 ? want : PS.rec);
 }
 
@@ -2161,10 +2238,7 @@ int cfg_preset_custom(void) {
     for (int k = 0; k < PS.n_keys; k++) {
         char name[80];
         snprintf(name, sizeof name, PREFIX "%s", PS.keys[k]);
-        const char *set = raw_get(name);
-        if (!set || !*set) continue;
-        const char *want = preset_value(t, &preset_hw, PS.keys[k]);
-        if (!same_value(switch_word(name, set), want ? want : base_default(PS.keys[k]))) return 1;
+        if (cfg_preset_differs(t, name, raw_get(name))) return 1;
     }
     return 0;
 }
@@ -2182,7 +2256,7 @@ const char *cfg_default_tier(const char *key, int tier) {
 }
 
 int cfg_preset_differs(int tier, const char *key, const char *value) {
-    if (!value || !*value) return 0;
+    if (!value || !*value || !cfg_preset_value(tier, key)) return 0;
     char k[64], name[80];
     snprintf(k, sizeof k, "%s", key);
     snprintf(name, sizeof name, PREFIX "%s", norm_key(k));
@@ -2204,8 +2278,8 @@ void cfg_preset_notice_done(void) {
     plat_mutex_lock(&preset_lock);
     snprintf(PS.noticed, sizeof PS.noticed, "%s", preset_tier_names[PS.rec]);
     rt_log("preset: notice shown: recommended %s in use", preset_tier_names[PS.rec]);
-    state_write();
     plat_mutex_unlock(&preset_lock);
+    state_write_later();   // called on the present thread (ui/menu.cpp preset_notice_tick)
 }
 
 void cfg_preset_chosen(void) {
@@ -2216,7 +2290,7 @@ void cfg_preset_chosen(void) {
     // a player who chose a preset in the menu has seen it: the one-time notice (cfg_preset_notice_due) has nothing left
     // to tell, also when the choice was Recommended, which leaves the settings file without a preset line
     if (PS.rec >= 0 && PS.rec < PRESET_TIERS) snprintf(PS.noticed, sizeof PS.noticed, "%s", preset_tier_names[PS.rec]);
-    state_write();
+    state_write(0);
     plat_mutex_unlock(&preset_lock);
 }
 

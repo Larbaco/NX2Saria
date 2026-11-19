@@ -7,12 +7,14 @@
 
 // Fills *hw from this PC: the GPU the game would use (a Vulkan probe of its own, see hw_detect.c), the processor's
 // cores and logical processors, the installed memory and the handheld the firmware names. Called once, by cfg.c
-// cfg_start once the settings are read and the guest address space is claimed. probe 0 (a tool mode) leaves the
-// Vulkan drivers alone. When the probe does not run, *skipped gets why (else ""), and the GPU fields stay empty for
-// the caller to fill from the last probe's result; *note gets why a probe that ran found no GPU (else ""); *probe_ms
-// the probe's time, the drivers' first load included.
-void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char *note, size_t note_cap,
-               double *probe_ms);
+// cfg_start once the settings are read and the guest address space is claimed. no_probe: why the caller leaves the
+// Vulkan drivers alone (a tool mode, preset_probe = 0, a probe of an earlier start that did not finish), NULL or ""
+// to probe. before_probe (may be NULL) runs right before the probe's first Vulkan call, only when the probe runs (cfg.c
+// marks the state file with it). When the probe does not run, *skipped gets why (else ""), and the GPU fields stay
+// empty for the caller to fill from the last probe's result; *note gets why a probe that ran found no GPU (else "");
+// *probe_ms the probe's time, the drivers' first load included.
+void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), char *skipped, size_t skipped_cap,
+               char *note, size_t note_cap, double *probe_ms);
 
 // The hardware the preset in use was chosen for (cfg.c: the probe's, or the last probe's from the state file).
 // NULL before cfg_start. Never changes after it.

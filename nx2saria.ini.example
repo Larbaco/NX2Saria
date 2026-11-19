@@ -610,13 +610,20 @@
 # (starting points, not measured yet). Read at start.
 # device_profile = auto
 # Quality preset: recommended (the default: the tier the start picks for this PC from its GPU, video memory, RAM,
-# processor count and handheld make), low, medium, high or ultra. High is the game as shipped and sets nothing; the
-# others set the scene's share, the game resolution, the filter that enlarges the scene, anisotropic filtering,
-# texture detail, foliage and shadow filtering, and below High DLSS or FSR 4 where the card runs them. A key this file sets wins over the preset (the menu then says
-# Custom). The log says what was detected, what was recommended and why, and each value the preset set ("preset:").
+# processor count and handheld make, at most high), low, medium, high or ultra (never recommended, only chosen). High
+# is the game as shipped and sets nothing; the others set the scene's share, the game resolution, the filter that
+# enlarges the scene and shadow filtering, Low on an integrated GPU or a handheld also anisotropic filtering, foliage
+# and the frame-rate limit, and below High DLSS or FSR 4 where the card runs them. A key this file sets wins over the
+# preset (the menu then says Custom when the preset sets that key to another value). The log says what was detected,
+# what was recommended and why, and each value the preset set ("preset:").
 # The menu's Quality preset row writes this line; the restart-only keys of a preset take effect at the next start.
 # docs/presets.md has the tables.
 # preset = recommended
+# The preset's hardware probe at start (a Vulkan instance of its own, before the log file opens): 0 turns it off, and
+# the start then goes by the GPU the last probe saw (preset-state.txt), else knows none and recommends high. A start
+# whose probe never returned (a driver that crashed in it) leaves "probing = 1" in preset-state.txt, and later starts
+# skip the probe until that line is deleted. Read at start.
+# preset_probe = 1
 # Presentation mode: mailbox (default), fifo (vsync) or immediate. The menu's VSync switch sets mailbox when on and
 # immediate when off. A driver without mailbox (some AMD and Intel drivers) gets relaxed FIFO instead, which waits for
 # the display but shows a late frame at once, and where that is missing too, immediate: no vsync, so the picture can

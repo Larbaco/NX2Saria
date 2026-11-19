@@ -623,6 +623,16 @@ const char *opt_default(const char *key) { return default_of(norm_key(key)); }
 
 int opt_preset_tier(void) { return staged_tier(); }
 
+int opt_preset_handback(int tier, char (*names)[64], int max) {
+    int nk = 0, n = 0;
+    const char *const *keys = cfg_preset_keys(&nk);
+    for (int i = 0; i < nk && n < max; i++) {
+        snprintf(names[n], sizeof names[n], "NX2SARIA_%s", keys[i]);
+        if (opt_is_set(names[n]) && !cfg_from_env(names[n]) && cfg_preset_differs(tier, names[n], opt_get(names[n]))) n++;
+    }
+    return n;
+}
+
 bool opt_is_set(const char *key) {
     const std::string k = norm_key(key);
     if (Change *c = find_change(k)) return !c->new_val.empty();
@@ -728,8 +738,8 @@ bool opt_draft_item(int i, OptDraftItem *out) {
             const CfgMeta *m = cfg_meta(c.key.c_str());
             if (c.staged) out->restart |= m && !m->live && cfg_pending_for(c.key.c_str(), eff_of(c.key, c.new_val).c_str());
             out->restart |= live_needs_restart(c);
-            // a preset choice also changes the restart-only keys the player leaves to it (GAME_RES, TEXTURE_DETAIL,
-            // FOLIAGE, SHADOW_PCF): its line waits for a restart when one of them, as the staged tier gives it, differs
+            // a preset choice also changes the restart-only keys the player leaves to it (GAME_RES, FOLIAGE,
+            // SHADOW_PCF): its line waits for a restart when one of them, as the staged tier gives it, differs
             // from the start's value
             if (c.key == "NX2SARIA_PRESET") {
                 int nk = 0;
@@ -993,13 +1003,13 @@ bool opt_choice_list(const char *key, UiTextId label, const char *const *values,
 }
 
 int opt_choice_index(const char *key, UiTextId label, const char *const *names, int n, int cur, int def, UiTextId desc,
-                     const char *note) {
-    RowView v = {cur >= 0 && cur < n ? names[cur] : "", cur == def, true, note, value_width(names, n), cur == 0,
-                 cur == n - 1};
+                     const char *note, bool again) {
+    RowView v = {cur >= 0 && cur < n ? names[cur] : "", cur == def, true, note, value_width(names, n),
+                 cur == 0 && !again, cur == n - 1 && !again};
     int step = row(key, label, desc, v);
     if (!step || n <= 0) return -1;
     int nv = cur < 0 ? (step < 0 ? n - 1 : 0) : step == 2 ? (cur + 1) % n : cur + step < 0 ? 0 : cur + step >= n ? n - 1 : cur + step;
-    if (nv == cur) return -1;
+    if (nv == cur && !again) return -1;
     menu_sound_play(MENU_SOUND_CURSOR);
     g_ctx = {true, norm_key(key), v.value, names[nv], label};
     return nv;

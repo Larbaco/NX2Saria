@@ -9,7 +9,7 @@ set the keys of the table `PRESET_ROWS` in the same header.
 Code: `runtime/preset_pick.h` (the tiers, the rule and the table; header only, so the tests check it without a device),
 `runtime/hw_detect.c` (the probe), `runtime/cfg.c` "quality presets" (the layer, the start's choice, the state file,
 the calls the settings menu makes), `runtime/ui/menu.cpp` `row_preset`, `preset_confirm`, `row_scene_res` and
-`preset_notice_tick` (the menu), `runtime/ui/option_rows.cpp` (the draft and its Apply), `runtime/bugcap.c`
+`preset_notice_tick` (the menu), `runtime/ui/option_rows.cpp` (the draft, `opt_preset_handback` and Apply), `runtime/bugcap.c`
 `preset_lines` (bug captures). The player's side is in [Controls, "Quality presets"](controls.md#quality-presets).
 
 ## A layer of defaults
@@ -26,10 +26,12 @@ Why a layer, and not values written into `nx2saria.ini`:
 - **A value set by hand always wins.** The layer sits under it, and the start's log names every key the tier sets
   whose value comes from somewhere else (`preset_log_keys`). The menu's "default" mark follows the layer: resetting a
   key in the menu returns it to the preset's value.
-- **Custom.** When the player sets a key the tiers control to another value than the one the preset in use gives it
-  (or, for a key that tier leaves alone, the device profile's or the table's), the preset counts as custom
-  (`cfg_preset_custom`): the menu row shows *… (custom)* with the note *set by hand: …*, and the performance
-  overlay's preset line says the same. A hand-set value equal to the preset's does not count.
+- **Custom.** When the player sets a key the preset in use sets to another value than the one it reads unset (the
+  preset's, or the device profile's where the profile sets that key too), the preset counts as custom
+  (`cfg_preset_custom`, `cfg_preset_differs`): the menu row shows *… (custom)* with the note *set by hand: …*, and the
+  performance overlay's preset line says the same. A hand-set value equal to the preset's does not count, nor does a
+  key the tier leaves alone (any key on High). These are the keys a choice of that tier hands back
+  ([The settings menu](#the-settings-menu)).
 - **The file stays the player's.** Nothing in the detection writes `nx2saria.ini`: the `preset` line is written only
   when the player applies a choice in the settings menu (or edits the file). What the detection itself has to remember
   goes to its own file, `preset-state.txt` ([below](#the-state-file)).
@@ -51,11 +53,10 @@ High column is the table's default, the game as shipped:
 |---|---|---|---|---|
 | `scene_share` | 0.5; 0.4 on an integrated GPU or a handheld | 0.67 | 0.75 | 1 |
 | `game_res` (the picture's height) | 1080 | 1080 | 1440 | `window` |
-| `aniso` | 4 | — | 16 | — |
+| `aniso` | 4 on an integrated GPU or a handheld; else — | — | 16 | — |
 | `standin_filter` (what enlarges the scene) | `bilinear` | — | `easu` | — |
 | `shadow_pcf` | — | — | 0 | 1 |
-| `foliage` | `reduced` | — | `full` | — |
-| `texture_detail` | `reduced` on a GPU with 8 GiB or more of its own memory; else — | — | `auto` | — |
+| `foliage` | `reduced` on an integrated GPU or a handheld; else — | — | `full` | — |
 | `fps_limit` | 30 on an integrated GPU that is no handheld; 40 on a handheld; else — | — | 60 | — |
 | DLSS (an NVIDIA RTX card) | `dlaa = 1`, `taa = dlss`, `dlss = performance` | `dlaa = 1`, `taa = dlss`, `dlss = quality` | off | — |
 | FSR 4 (a Radeon RX 90x0 card on Windows, no DLSS) | `dlaa = 1`, `taa = fsr3`, `fsr4 = 1`, `dlss = performance` | the same with `dlss = quality` | off | — |
@@ -82,15 +83,19 @@ Decisions:
   FSR 3.1. DLSS comes up only at a start, so a tier that turns it on in a run that started without it gives the plain
   share until the next start, as the Upscaling row does.
 - **Ultra only adds**: the scene at the picture's full size, the picture at the window's height, filtered shadow
-  edges. It is recommended only from 16 GiB of video memory, where the larger render targets and the texture
-  heap they grow fit.
+  edges. **It is never recommended**, only chosen: the picture follows the window, so its cost grows with the
+  monitor, not with the card. A 16 GB card on a 3840x2160 monitor would go from High's 1920x1080 scene to a 3840x2160
+  one, about four times the pixels, and the video memory says nothing about that. The most the recommendation gives is
+  High, the game as shipped.
 - **Only what costs GPU time measurably here.** On the bench ([Measurements](#measurements)) the scene's share, the
   picture's height and the stand-in's filter moved the GPU time; anisotropic filtering, texture detail, foliage,
-  anti-aliasing and the soft-shadow settings stayed within the noise. So Medium keeps the shipped filtering, and Low
-  lowers it only where an integrated GPU's memory bandwidth may still gain. `shadow_res` has no effect on 1.1.1 (the
+  anti-aliasing and the soft-shadow settings stayed within the noise. So Medium keeps the shipped filtering and
+  foliage, and Low lowers them only on an integrated GPU or a handheld, whose memory bandwidth may still gain. A card
+  of its own that falls to Low for lacking mesh shaders or video memory (a GTX 1080 Ti, an RX 580 8 GB, a GTX 1650)
+  keeps 16x filtering and full foliage, which cost it nothing measurable. `shadow_res` has no effect on 1.1.1 (the
   start logs `cfg: SHADOW_RES has no effect on this game version`) and is in no tier.
-- **`texture_detail` is set only where `auto` would keep full textures.** On a GPU with less memory of its own, `auto`
-  already picks smaller textures by the budget the driver grants, which knows more than the tier does.
+- **No tier sets `texture_detail`.** It cost nothing measurable on the bench, and its `auto` already picks smaller
+  textures by the budget the driver grants, which knows more than a tier does.
 
 ## Which tier this PC gets
 
@@ -101,11 +106,13 @@ Decisions:
 | A handheld (Steam Deck, ROG Ally / Ally X, Legion Go, MSI Claw) | Low | `a handheld PC (<name>)` |
 | Nothing known of the GPU (no usable Vulkan 1.3 device, or no probe and no earlier result kept) | High, then the caps below | `nothing is known of the GPU: the game as shipped` |
 | An integrated GPU | Low | `an integrated GPU` |
+| A software renderer on the processor (a Vulkan device of the CPU type, such as llvmpipe) | Low | `a software renderer on the processor` |
 | A GPU without mesh shaders (the renderer then emulates them, `mesh_emulation`) | Low | `the GPU has no mesh shaders, which the game's renderer then emulates` |
 | Video memory under 6 GiB | Low | `<n> GiB of video memory` |
 | 6 or 7 GiB | Medium | as above |
-| 8 to 15 GiB | High | as above |
-| 16 GiB or more | Ultra | as above |
+| 8 GiB or more | High | as above |
+
+Ultra is never recommended ([above](#what-each-tier-sets)).
 
 Then the caps, which only lower the tier: RAM under 10240 MiB (an 8 GB PC) gives at most Low
 (`; <n> GiB of RAM: at most low`), under 14336 MiB (a 12 GB PC) at most Medium (`; <n> GiB of RAM: at most medium`),
@@ -115,8 +122,7 @@ Video memory is compared as the size the card is sold with: an 8 GB card reports
 memory, so it is rounded to the nearest GiB first (`preset_gib`). RAM goes by thresholds below the sold sizes instead,
 because a PC with integrated graphics hands part of its RAM to them: a 16 GB PC with a Ryzen APU may report 15.3 GiB,
 and still is no 12 GB PC. The thresholds are macros at the top of the header (`PRESET_VRAM_LOW_GIB`,
-`PRESET_VRAM_MEDIUM_GIB`, `PRESET_VRAM_ULTRA_GIB`, `PRESET_RAM_LOW_MIB`, `PRESET_RAM_MEDIUM_MIB`,
-`PRESET_CPU_MEDIUM_THREADS`).
+`PRESET_VRAM_MEDIUM_GIB`, `PRESET_RAM_LOW_MIB`, `PRESET_RAM_MEDIUM_MIB`, `PRESET_CPU_MEDIUM_THREADS`).
 
 Examples, `tests/preset_check.py` checks each:
 
@@ -125,10 +131,11 @@ Examples, `tests/preset_check.py` checks each:
 | The Linux bench: AMD Radeon RX 6700 10 GB, 16 threads, 31 GiB of RAM | High | `10 GiB of video memory` |
 | The owner's laptop (Windows): NVIDIA GeForce RTX 3050 6GB Laptop GPU (6017 MiB), 16087 MiB of RAM | Medium, with DLSS quality | `6 GiB of video memory`; its own `dlaa`, `dlss` and `taa` lines keep their values |
 | A player's PC: AMD Radeon RX 6650 XT 8 GB, Ryzen 5 4650G (6 cores, 12 threads), 16 GB of RAM | High | `8 GiB of video memory`; 15.3 GiB of RAM is no cap |
-| NVIDIA GeForce RTX 4090 24 GB, 32 threads, 64 GB | Ultra | `24 GiB of video memory` |
+| NVIDIA GeForce RTX 4090 24 GB, 32 threads, 64 GB | High; Ultra available by choice | `24 GiB of video memory` |
 | NVIDIA GeForce RTX 4060 8 GB with 12 GB of RAM | Medium, with DLSS quality | `8 GiB of video memory; 12 GiB of RAM: at most medium` |
 | NVIDIA GeForce GTX 1650 4 GB | Low | `4 GiB of video memory` |
 | NVIDIA GeForce GTX 1060 6 GB | Low | `the GPU has no mesh shaders, which the game's renderer then emulates` |
+| NVIDIA GeForce GTX 1080 Ti 11 GB | Low, keeping 16x filtering and full foliage | as above |
 | Steam Deck | Low (the device profile's 40 fps) | `a handheld PC (Steam Deck)` |
 | ASUS ROG Ally (Radeon 780M) | Low | `a handheld PC (ROG Ally)` |
 | A laptop with Intel Iris Xe | Low | `an integrated GPU` |
@@ -152,23 +159,29 @@ The recommended tier is decided anew at every start. What the start does with it
 | `preset` in the environment or `nx2saria.ini` | This start |
 |---|---|
 | absent or `recommended` | the recommended tier: a first start and a start on new hardware get theirs |
+| a tier, in the environment (`NX2SARIA_PRESET`) | that tier, on any hardware: the new-hardware rule below is for the settings file's line, and nothing is recorded as chosen |
 | a tier, chosen on this hardware | that tier; when it is not the recommended one the log and the menu name the recommended one, as a suggestion only |
 | a tier, chosen on other hardware | the recommended tier, until the player chooses a preset in the menu again |
 | a tier, with no record of where it was chosen (written by hand, or the state file deleted) | that tier, and this PC is recorded as the one it was chosen on |
 | anything else | the recommended tier, and the log names the value |
 | any, in a run that replays a bug capture | High ([Bug captures](#bug-captures)) |
 
-"Other hardware" compares fingerprints (`preset_fingerprint`): `vendor:device:driver:video MiB:threads:RAM GiB:handheld`,
-the IDs in hex. Every field but the driver version counts (`preset_same_hardware`), so a driver update is not new
-hardware, while another card, more RAM or another processor is. A tier chosen while nothing was known of the GPU is
-recorded at the first start that knows it.
+"Other hardware" compares fingerprints (`preset_fingerprint`): `vendor:device:driver:video GiB:threads:RAM GiB:handheld`,
+the IDs in hex, both sizes rounded to the GiB as sold (`preset_gib`). Every field but the driver version counts
+(`preset_same_hardware`), so a driver update is not new hardware, while another card, more RAM or another processor
+is. Video memory counts in whole GiB because resizable BAR (Smart Access Memory) turned on or off, or a driver update,
+moves the heap the card reports by a few hundred MiB. A fingerprint of the earlier form, video memory in MiB (a number
+above 64 there), is compared by its GiB, so a state file from before still matches its PC. A tier chosen while nothing
+was known of the GPU is recorded at the first start that knows it.
 
 While a chosen tier gives way to the recommended one, `cfg_preset_hw_changed` tells the menu, and every start says so
 in the log until the player chooses again. The player's `preset` line stays as it was: the hardware change does not
-rewrite the file. Choosing in the menu (the same tier included) and applying records this PC (`cfg_preset_chosen`).
+rewrite the file. Choosing in the menu (the same tier or Recommended included) and applying records this PC
+(`cfg_preset_chosen`).
 
 Ctrl+F5 follows the file: a changed `preset` line switches the layer at once (`preset_follow`), with the restart-only
-keys waiting for a restart as any other change does.
+keys waiting for a restart as any other change does. An edited line is the player's choice on this PC, as one made in
+the menu: it ends the new-hardware state, and a tier is recorded as chosen here.
 
 ## Rendering the 3D scene below the picture's size
 
@@ -239,10 +252,22 @@ and before `start_values` snapshots the restart-only keys, since a preset's are 
 first Vulkan call, so it puts the drivers' cache variables in the environment first (`vk_driver_cache_env`). Its time,
 the drivers' first load included, goes to the log at every start (`probe <ms> ms`).
 
-**When it does not.** In a tool mode (any command line but the game's own options, `runtime/main.c` `game_run`), on
-Windows with `framegen = dlss` (Streamline's interposer must make the first Vulkan call) and with a RenderDoc capture
-set up (`rdoc`). The start then goes by the last probe's GPU, which the state file keeps; without one, nothing is known
-of the GPU.
+**When it does not.** In a tool mode (any command line but the game's own options, `runtime/main.c` `game_run`); with
+`preset_probe = 0` (`NX2SARIA_PRESET_PROBE`, read at start, no menu row); after a start whose probe never returned
+(below); on Windows with `framegen = dlss` (Streamline's interposer must make the first Vulkan call) and with a
+RenderDoc capture set up (`rdoc`). The start then goes by the last probe's GPU, which the state file keeps; without
+one, nothing is known of the GPU, which gives High, the game as shipped.
+
+**A probe that never returns.** The probe runs inside `mem_init`, the first thing `runtime/main.c` `main_run` does:
+before the crash report is set up (`plat_crash_hook`) and before the log file opens (`log_open`). A driver that
+crashes or hangs while the probe makes its instance would end such a start with no report and no log file, and the
+next start would do the same. So right before its first Vulkan call the probe logs
+`preset: probing the GPU (a Vulkan instance; preset_probe = 0 turns it off)` and the game writes `probing = 1` into
+the state file (`runtime/cfg.c` `preset_probe_begin`, through the same temporary file and rename); once the probe has
+returned, the start writes the file without it. A start that finds the line skips the probe and goes by the last
+result, and the line stays, so every later start does the same and says so in its log, until the player deletes the
+line (or the file) to try the probe again. Lines logged before `log_open` wait in a buffer that `log_open` writes to
+the file, and reach stderr at once, so the line before the probe is on stderr even when the start ends inside it.
 
 **The game's device afterwards.** `pick_device` compares the device the game chose with the probe's and logs the
 result (`hw_detect_device_check`). The window's present support cannot be asked without a window, so a GPU the game
@@ -259,12 +284,13 @@ tool mode, not in a run that replays a bug capture. Lines `key = value`:
 | `hardware` | this start's fingerprint |
 | `chosen_on` | the fingerprint when the player last chose a preset; absent while none is recorded |
 | `noticed` | the recommended tier the one-time notice last named ([The settings menu](#the-settings-menu)); absent before any |
-| `gpu_name`, `gpu_vendor`, `gpu_device`, `gpu_driver`, `gpu_type`, `gpu_vram_mib`, `gpu_mesh` | the last probe that found a GPU, for a start that cannot probe |
+| `gpu_name`, `gpu_vendor`, `gpu_device`, `gpu_driver`, `gpu_type`, `gpu_vram_mib`, `gpu_mesh` | the last probe that found a GPU, for a start that cannot probe; a GPU missing any of these lines, or with a value of the wrong kind, counts as none |
+| `probing` | `1` while a probe runs; a start that finds it does not probe ([above](#the-hardware-probe)); absent otherwise |
 
 ```
 # NX2Saria: what the quality presets last saw of this PC. The game writes this file; the settings are in nx2saria.ini.
-hardware = 1002:73df:1:10224:16:31:none
-chosen_on = 1002:73df:1:10224:16:31:none
+hardware = 1002:73df:1:10:16:31:none
+chosen_on = 1002:73df:1:10:16:31:none
 gpu_name = AMD Radeon RX 6700 (RADV NAVI22)
 gpu_vendor = 0x1002
 gpu_device = 0x73df
@@ -275,7 +301,9 @@ gpu_mesh = 1
 ```
 
 Deleting it is safe: the next start probes again, a tier in `nx2saria.ini` is then taken as chosen on this PC, and a
-notice that is due shows again. A file that cannot be read as these lines counts as none.
+notice that is due shows again. The file is read to its end (blank lines included); a line that cannot be read as
+these is skipped. Every start that probes writes the file twice, with the `probing` line and without it; when nothing
+else changed, it ends as it was, and the log says `preset: wrote` only for a change.
 
 ## The settings menu
 
@@ -285,25 +313,32 @@ The *Quality preset* row is the first of *Settings > Screen > Picture* (`row_pre
 when custom, or *Recommended for this PC: …* when a chosen tier is not the recommended one.
 
 - **Choosing is part of the draft** ([Applying changes in the menu](controls.md#applying-changes-in-the-menu)). The
-  row stages `preset` (`""` for Recommended) and hands back to the preset every key it sets that the player set by
-  hand, staged as unset, so the whole tier applies. The other rows show the staged tier's values at once
-  (`cfg_default_tier`), but the layer itself switches only at Apply (`is_staged`).
+  row stages `preset` (`""` for Recommended) and hands back to the preset every key the chosen tier sets that the
+  player set by hand to another value than the tier gives it (`opt_preset_handback`, `cfg_preset_differs`), staged as
+  unset, so the whole tier applies. A key the chosen tier leaves alone, or one set to the tier's own value, stays the
+  player's line. The other rows show the staged tier's values at once (`cfg_default_tier`; the *Resolution* row's
+  "default" mark too, `opt_default`), but the layer itself switches only at Apply (`is_staged`).
 - **Keys set by hand ask first.** When there are such keys, a box (`preset_confirm`) says *These settings were changed
   by hand. The preset sets them to its own values:* and lists `<row>: <value now> -> <the tier's value>`; *Use the
   preset* stages the choice, *Cancel* (the default, Esc or B) stages nothing. Keys the environment sets are never
   handed back.
+- **Recommended on new hardware.** While a tier chosen on other hardware gives way, the row shows *Recommended (…)*,
+  which is in use, and choosing it is still a change: left on it (or a click on its left arrow) stages Recommended,
+  and the draft's line says `<the file's tier> -> Recommended (…)` (`opt_choice_index`'s `again`). Apply then removes
+  the `preset` line and records this PC (`cfg_preset_chosen`), as for any other choice.
 - **Apply** (`option_rows.cpp` `opt_draft_apply`) writes the draft: `preset = <tier>` in `nx2saria.ini` (no line for
   Recommended), the handed-back keys' lines removed. It then switches the layer (`cfg_preset_use_from`, which logs each
   value that changes from what the player saw before the draft) and records this PC as the one the preset was chosen
-  on (`cfg_preset_chosen`). The restart-only keys a tier sets (`game_res`, `shadow_pcf`,
-  `texture_detail`, `foliage`) wait for a restart: the Apply box marks the preset line *after restart* when one of them
+  on (`cfg_preset_chosen`). The restart-only keys a tier sets (`game_res`, `shadow_pcf`, `foliage`) wait for a
+  restart: the Apply box marks the preset line *after restart* when one of them
   changes, and the restart box follows as for any other.
 - **The one-time notice** (`preset_notice_tick`): a player who never set `preset`, on a PC whose recommended tier is
   not High, sees *Quality preset Recommended (…) is in use for this PC (Settings > Screen). For the game as before, choose High
   there.* once, for 8 seconds, at the first
-  frame the game runs with the menu closed and no other notice up. The state file's `noticed` keeps it shown; it comes
-  again only when the recommended tier changes (new hardware). Choosing a preset in the menu, Recommended included,
-  counts as having seen it. Never in a tool mode or a replay.
+  frame the game runs with the menu closed and no other notice up. The state file's `noticed` keeps it shown (written
+  by a thread of its own, `state_write_later`, so the present thread does not wait for the disk); it comes again only
+  when the recommended tier changes (new hardware). Choosing a preset in the menu, Recommended included, counts as
+  having seen it. Never in a tool mode or a replay.
 - *Scene resolution* ([above](#rendering-the-3d-scene-below-the-pictures-size)).
 - The full performance overlay names the preset in use, with *(custom)* when it is.
 
@@ -324,7 +359,8 @@ All in `logs/nx2saria.log`, at the start unless said otherwise (formats from `ru
 and `runtime/ui/`):
 
 ```
-preset: hardware: GPU "<name>" (vendor 0x<id> device 0x<id>, <discrete|integrated|other>, <n> MiB video memory, mesh shaders <yes|no>, DLSS <yes|no>, FSR 4 <yes|no>); CPU <n> cores / <n> threads; RAM <x.x> GiB; handheld <name|none>; probe <ms> ms
+preset: probing the GPU (a Vulkan instance; preset_probe = 0 turns it off)
+preset: hardware: GPU "<name>" (vendor 0x<id> device 0x<id>, <discrete|integrated|cpu|other>, <n> MiB video memory, mesh shaders <yes|no>, DLSS <yes|no>, FSR 4 <yes|no>); CPU <n> cores / <n> threads; RAM <x.x> GiB; handheld <name|none>; probe <ms> ms
 preset: recommended <tier>: <reason>
 preset: in use <tier> (<source>)
 preset:   <KEY> = <value> (<where it comes from>)
@@ -334,13 +370,17 @@ preset: wrote <folder>/preset-state.txt
 - The hardware line without a GPU: `GPU none (<why>)`, the why one of `no Vulkan 1.3 instance (<code>)`,
   `no Vulkan device`, `no device with Vulkan 1.3 and the extensions the game needs` or
   `not probed, and no earlier probe kept`. Without a probe its end is `probe skipped: <why>` (`a tool mode, not the
-  game itself`, `DLSS Frame Generation (framegen = dlss) makes the process's first Vulkan call`,
-  `a RenderDoc capture (rdoc) is set up`), with `; the GPU as the last probe saw it` when the state file had one.
-- `<source>`: `recommended`, `environment`, `settings file`,
+  game itself`, `preset_probe = 0`, `the last start's probe did not finish (preset-state.txt says probing = 1);
+  delete that line to probe again`, `DLSS Frame Generation (framegen = dlss) makes the process's first Vulkan call`,
+  `a RenderDoc capture (rdoc) is set up`), with `; the GPU as the last probe saw it` when the state file had one. The
+  probing line comes only when the probe runs.
+- While the state file holds the probing mark, after the per-key lines: `preset: the probe of an earlier start did not
+  finish (a driver that crashed or hung in it): no probe until the line 'probing = 1' is deleted from <path>`.
+- `<source>`: `recommended`, `environment` (also on new hardware), `settings file`,
   `recommended: the hardware changed since <tier> was chosen`, or
   `a bug capture's replay: its settings.ini holds the capture's preset values`.
 - After it, one of: `preset: <tier> chosen; the recommended for this PC is <tier>`;
-  `preset: <tier> was chosen on <fingerprint>, and this PC is <fingerprint> (vendor:device:driver:video MiB:threads:RAM GiB:handheld); choosing a preset in the settings menu keeps it again`.
+  `preset: <tier> was chosen on <fingerprint>, and this PC is <fingerprint> (vendor:device:driver:video GiB:threads:RAM GiB:handheld); choosing a preset in the settings menu keeps it again`.
   Before it, for a value that is no tier: `preset: '<value>' is no preset: recommended`.
 - One line per key the tier sets: `(preset)`; `(settings file, the same as the preset)` or
   `(environment, the same as the preset)`; `(settings file; the preset's <value> stays unused)` or
@@ -365,19 +405,29 @@ preset: wrote <folder>/preset-state.txt
 ## Tests
 
 `python tests/preset_check.py` builds `tests/preset_check.c` with `runtime/cfg.c` and stand-ins for what `cfg.c` links
-against (the probe's among them: the made-up hardware comes in `NX2SARIA_TEST_HW`), and checks with no GPU and no game
-files:
+against (`tests/preset_check_stubs.h`; the probe's among them: the made-up hardware comes in `NX2SARIA_TEST_HW`, and
+`crash=1` ends the process inside the probe), and checks with no GPU and no game files:
 
-- `pure`: the tier each made-up PC gets (the bench PC is High), the handheld names of both firmware sources, and what
-  each tier sets: High nothing, no tier frame generation, DLSS and FSR 4 only below High and only on the cards that
-  run them, a frame-rate limit only on an integrated GPU or a handheld and never above 60;
+- `pure`: the tier each made-up PC gets (the bench PC is High, an RTX 4090 too, and no PC of a wide sweep Ultra), the
+  handheld names of both firmware sources, and what each tier sets: High nothing, no tier frame generation, DLSS and
+  FSR 4 only below High and only on the cards that run them, a frame-rate limit only on an integrated GPU or a
+  handheld and never above 60, filtering and foliage lowered only there, no `texture_detail`; fingerprints (a heap
+  256 MiB off, the older form in MiB);
 - `values`: every value of the table, read by `cfg.c` as a settings-file line and as a Ctrl+F5 reload: none outside
   its setting's choices;
-- `run`: `cfg_init` and `cfg_start` with a settings file and a state file: the layer's order, the log lines (the
-  hardware line against a pattern), the state file (written only when it changes, never `nx2saria.ini`), a tier chosen
-  on other hardware, a driver update, a start that cannot probe, a tool mode, a state file of garbage, the menu's calls
-  (`cfg_preset_use`, `cfg_preset_use_from`, `cfg_preset_chosen`, `cfg_preset_custom`, `cfg_default_tier`,
-  `cfg_preset_differs`), the one-time notice and a reload of the `preset` line.
+- `run`: `cfg_init` and `cfg_start` with a settings file and a state file: the layer's order (an ordinary setting in
+  the environment over the preset; the device profile over a tier for one key, through a profile row the test build
+  alone has, `CFG_TEST_DECK_ROW`; `cfg_default` on the Deck: profile, then tier, then table), the log lines (the
+  hardware line against a pattern), the state file (written only when it changes, never `nx2saria.ini`; blank lines;
+  a GPU missing a line), a tier chosen on other hardware, a tier in the environment on other hardware, a driver update
+  and a smaller heap, a start that cannot probe, `preset_probe = 0`, a probe that crashes and the starts after it, a
+  tool mode, a state file of garbage, the menu's calls (`cfg_preset_use`, `cfg_preset_use_from`,
+  `cfg_preset_chosen`, `cfg_preset_custom`, `cfg_default_tier`, `cfg_preset_differs`), the one-time notice and a
+  reload of the `preset` line, also on new hardware;
+- `tests/preset_draft_check.cpp`, built with `runtime/ui/option_rows.cpp`, `runtime/ui_text.c`, `cfg.c` and Dear ImGui
+  (nothing is drawn): the draft while a tier is staged (`opt_value`, `opt_get`, `opt_default`, `opt_is_set`), the
+  handback of each tier (`opt_preset_handback`; the owner's laptop below), Apply and Discard, the Deck's profile under
+  a staged tier, and Recommended chosen on new hardware.
 
 It is listed with the other checks in [building.md](building.md#checks). The menu's rows can be looked at with
 `tools/menu_preview.py` (same page).
@@ -465,7 +515,8 @@ each step, about a minute of play each:
 3. Choose *High* to compare with the game as shipped.
 
 In step 1 the laptop's own `dlaa`, `dlss` and `taa` lines win (its `taa = fsr3` runs FSR 3.1, not the tier's DLSS).
-The box before the choice in step 2 lists exactly those three: *Use the preset* hands them back, so each step runs the
-tier's own values (DLSS quality on Medium, DLSS performance on Low); the log's `menu: draft` lines keep the old values
-to set back by hand. The `frametime` lines of each step give the numbers to recalibrate the tiers with on a machine
+Its `dlaa = 1` and `dlss = quality` equal Medium's own values, so the box before choosing Medium in step 2 lists only
+*Upscaling (taa)*: `fsr3 -> dlss`; before Low it lists `taa` and `dlss` (`quality -> performance`). *Use the preset*
+hands those back, so each step runs the tier's own values (DLSS quality on Medium, DLSS performance on Low), and the
+`dlaa` line stays the player's; the log's `menu: draft` lines keep the old values to set back by hand. The `frametime` lines of each step give the numbers to recalibrate the tiers with on a machine
 whose GPU is the limit.

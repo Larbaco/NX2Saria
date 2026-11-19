@@ -1150,31 +1150,21 @@ static void row_scene_res(void) {
 
 // ---- the quality preset (cfg.h cfg_preset_*, preset_pick.h). The row's choices: Recommended (the tier this PC gets,
 // named), then the four tiers; the value the draft stages, else the player's, else Recommended, and Recommended while
-// a tier chosen on other hardware gives way to it (cfg_preset_hw_changed). Choosing stages the preset key and hands
-// back to the preset every key it sets that the player set by hand (staged ""), so the whole tier applies; when there
-// are such keys a box lists them first (preset_confirm) and Cancel stages nothing. Apply switches the layer
-// (option_rows.cpp opt_draft_apply). A tier with keys set by hand to other values than its own shows as custom.
+// a tier chosen on other hardware gives way to it (cfg_preset_hw_changed): choosing Recommended is then a change of its
+// own (opt_choice_index's again: left on it), which Apply records as the player's choice (cfg_preset_chosen). Choosing
+// stages the preset key and hands back to the preset every key the chosen tier sets that the player set by hand to
+// another value (opt_preset_handback; staged ""), so the whole tier applies; when there are such keys a box lists them
+// first (preset_confirm) and Cancel stages nothing. Apply switches the layer (option_rows.cpp opt_draft_apply). A tier
+// with keys it sets set by hand to other values shows as custom.
 static const char *preset_tier_text(int tier) {
     return menu_text((UiTextId)(UI_MENU_PRESET_LOW + (tier < 0 ? 2 : tier > 3 ? 3 : tier)));
-}
-
-// The keys a choice hands back to the preset: those of cfg_preset_keys the player sets (the draft's view), not the
-// ones the environment fixes. Fills names (NX2SARIA_ + key) and returns how many.
-static int preset_handed(char (*names)[64], int max) {
-    int nk = 0, n = 0;
-    const char *const *keys = cfg_preset_keys(&nk);
-    for (int i = 0; i < nk && n < max; i++) {
-        snprintf(names[n], sizeof names[n], "NX2SARIA_%s", keys[i]);
-        if (opt_is_set(names[n]) && !cfg_from_env(names[n])) n++;
-    }
-    return n;
 }
 
 // The name a preset key goes by in the box: its row's, with the key after it where one row writes several.
 static void preset_key_label(const char *name, char *out, size_t size) {
     static const struct { const char *key; UiTextId label; } rows[] = {
         {"SCENE_SHARE", UI_MENU_SCENE_RES}, {"GAME_RES", UI_MENU_GAME_RES},
-        {"ANISO", UI_MENU_ANISO}, {"TEXTURE_DETAIL", UI_MENU_TEX_DETAIL}, {"FPS_LIMIT", UI_MENU_FPS_LIMIT},
+        {"ANISO", UI_MENU_ANISO}, {"FPS_LIMIT", UI_MENU_FPS_LIMIT},
         {"DLAA", UI_MENU_UPSCALING}, {"TAA", UI_MENU_UPSCALING}, {"DLSS", UI_MENU_UPSCALING}, {"FSR4", UI_MENU_UPSCALING}};
     const char *key = name + sizeof "NX2SARIA_" - 1;
     char low[48];
@@ -1201,7 +1191,7 @@ static struct {
 static void preset_stage(int choice) {
     opt_apply("NX2SARIA_PRESET", choice ? cfg_preset_name(choice - 1) : "");
     char names[32][64];
-    const int n = preset_handed(names, 32);
+    const int n = opt_preset_handback(choice ? choice - 1 : cfg_preset_recommended(nullptr), names, 32);
     for (int i = 0; i < n; i++) opt_apply(names[i], "");
     rt_log("menu: preset: %s chosen in the draft; %d key(s) set by hand handed back to it",
            choice ? cfg_preset_name(choice - 1) : "recommended", n);
@@ -1214,9 +1204,10 @@ static void row_preset(void) {
     const char *names[5] = {rec_name, preset_tier_text(0), preset_tier_text(1), preset_tier_text(2), preset_tier_text(3)};
     const bool staged = opt_preset_tier() >= 0, moved = !staged && cfg_preset_hw_changed();
     const char *v = opt_get("NX2SARIA_PRESET");
-    int cur = 0;
-    for (int t = 0; v && !moved && t < 4; t++)
-        if (!strcasecmp(v, cfg_preset_name(t))) cur = t + 1;
+    int cur = 0, file = 0;   // file: the entry the player's preset line names
+    for (int t = 0; v && t < 4; t++)
+        if (!strcasecmp(v, cfg_preset_name(t))) file = t + 1;
+    if (!moved) cur = file;
     const int tier = cur ? cur - 1 : rec;
     // custom: keys the player sets to other values than the shown tier gives them
     int nk = 0, differ = 0;
@@ -1235,13 +1226,17 @@ static void row_preset(void) {
         snprintf(custom, sizeof custom, menu_text(UI_MENU_PRESET_CUSTOM), names[cur]);
         names[cur] = custom;
     }
-    const int nv = opt_choice_index("NX2SARIA_PRESET", UI_MENU_PRESET, names, 5, cur, 0, UI_MENU_PRESET_DESC, shown_note);
+    const int nv = opt_choice_index("NX2SARIA_PRESET", UI_MENU_PRESET, names, 5, cur, 0, UI_MENU_PRESET_DESC, shown_note,
+                                    moved);
     if (nv < 0 || nv > 4) return;
+    // Recommended chosen on new hardware: the draft's line starts from the settings file's tier, which gives way now
+    const char *from = moved && nv == 0 && file ? names[file] : names[cur];
+    if (from != names[cur]) opt_context("NX2SARIA_PRESET", UI_MENU_PRESET, from, names[nv]);
+    const int want = nv ? nv - 1 : rec;
     char handed[32][64];
-    const int n = preset_handed(handed, 32);
+    const int n = opt_preset_handback(want, handed, 32);
     if (!n) return preset_stage(nv);
     // keys set by hand: the box lists them with the value each takes, and stages the choice on its yes
-    const int want = nv ? nv - 1 : rec;
     g_preset.lines.clear();
     for (int i = 0; i < n; i++) {
         char label[96], line[256];
@@ -1250,7 +1245,7 @@ static void row_preset(void) {
         snprintf(line, sizeof line, "%s: %s -> %s", label, opt_value(handed[i]), to && *to ? to : "-");   // the font has no arrow glyphs
         g_preset.lines.push_back(line);
     }
-    g_preset.ask = true, g_preset.choice = nv, g_preset.from = names[cur], g_preset.to = names[nv];
+    g_preset.ask = true, g_preset.choice = nv, g_preset.from = from, g_preset.to = names[nv];
 }
 
 // Anti-aliasing (vk_aa.c NX2SARIA_AA): the game's own SMAA (the default), off, FXAA or SMAA in its place, or TAA, which is
@@ -1563,7 +1558,13 @@ static void row_resolution(void) {
     for (int i = 0; i < N; i++)
         if (atoi(res) == heights[i]) cur = i;
     if (!strcmp(res, "window")) cur = N;
-    int nv = opt_choice_index("NX2SARIA_GAME_RES", UI_MENU_GAME_RES, pn, N + 1, cur, 1, UI_MENU_GAME_RES_DESC);
+    // the "default" mark: what the key reads unset, the quality preset's height (a staged tier's included) or the 1440
+    const char *dres = opt_default("NX2SARIA_GAME_RES");
+    int def = -1;
+    for (int i = 0; dres && i < N; i++)
+        if (atoi(dres) == heights[i]) def = i;
+    if (dres && !strcmp(dres, "window")) def = N;
+    int nv = opt_choice_index("NX2SARIA_GAME_RES", UI_MENU_GAME_RES, pn, N + 1, cur, def, UI_MENU_GAME_RES_DESC);
     if (nv < 0 || nv > N) return;
     if (nv == N) {
         opt_apply("NX2SARIA_GAME_RES", "window");

@@ -81,10 +81,15 @@ int plat_file_write_atomic(const char *p, const void *d, size_t n) { (void)p, (v
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 int plat_setenv(const char *n, const char *v) { (void)n, (void)v; return 1; }
+int plat_thread_spawn(PlatThreadFn fn, void *arg, const char *name, size_t stack) {
+    (void)name, (void)stack;
+    fn(arg);
+    return 1;
+}
 // hw_detect.c: nothing known of the hardware, so the recommended preset is high, which sets nothing
-void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char *note, size_t note_cap,
-               double *probe_ms) {
-    (void)probe;
+void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), char *skipped, size_t skipped_cap,
+               char *note, size_t note_cap, double *probe_ms) {
+    (void)no_probe, (void)before_probe;
     memset(hw, 0, sizeof *hw);
     snprintf(skipped, skipped_cap, "a test");
     note[0] = 0, (void)note_cap;
