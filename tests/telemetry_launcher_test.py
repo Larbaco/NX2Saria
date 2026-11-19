@@ -393,8 +393,10 @@ class WindowTest(Base):
         quiet = mock.patch.object(app.App, 'find_dumps', lambda a: None)   # no search of this PC's folders
         quiet.start()
         self.addCleanup(quiet.stop)
-        with mock.patch.dict(os.environ, {telemetry.URL_ENV: self.server.url}):
-            self.app = app.App(self.root, self.ctx, args)
+        url = mock.patch.dict(os.environ, {telemetry.URL_ENV: self.server.url})   # a server for the whole test
+        url.start()
+        self.addCleanup(url.stop)
+        self.app = app.App(self.root, self.ctx, args)
         self.root.update()
 
     def close_window(self):

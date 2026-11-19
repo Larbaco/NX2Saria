@@ -52,6 +52,12 @@ def server_url():
     return (os.environ.get(URL_ENV) or TELEMETRY_URL).strip().rstrip('/')
 
 
+def enabled():
+    """Whether this launcher has a server to send to. Without one the window shows nothing of session reports or
+    comments: no question, no Session Reports screen, so no build without a server asks what it cannot do."""
+    return bool(server_url())
+
+
 def os_family():
     return 'windows' if os.name == 'nt' else 'linux'
 
