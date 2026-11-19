@@ -168,3 +168,8 @@ int cfg_preset_differs(int tier, const char *key, const char *value);
 // so the present thread that shows the notice does not wait for the disk.
 int cfg_preset_notice_due(void);
 void cfg_preset_notice_done(void);
+// hw_detect.c hw_detect_device_check, once the game has chosen its own Vulkan device: its instance made and the devices
+// listed, as far as the probe goes, so the drivers load. A probing mark the state file kept from an earlier start
+// (cfg.c preset_init) is taken out, and the next start probes again. Logs "preset: the game's Vulkan device is chosen:
+// ..." when it does; nothing without the mark.
+void cfg_preset_device_started(void);

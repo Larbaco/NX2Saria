@@ -241,7 +241,8 @@ static inline void preset_fingerprint(const PresetHw *hw, char *out, size_t cap)
 }
 
 // The video memory field of a fingerprint in GiB. A state file written before the fingerprint rounded it holds MiB
-// there; a number above 64 is taken as MiB and rounded as preset_gib rounds.
+// there; a number of 256 or more is taken as MiB and rounded as preset_gib rounds (no card that runs the game has
+// less than 256 MiB, and none has 256 GiB).
 static inline unsigned preset_fp_vram_gib(const char *field, size_t n) {
     char num[16];
     if (!n || n >= sizeof num) return 0xffffffffu;
@@ -250,7 +251,7 @@ static inline unsigned preset_fp_vram_gib(const char *field, size_t n) {
     char *end;
     unsigned long v = strtoul(num, &end, 10);
     if (*end) return 0xffffffffu;   // not a number: equal only to itself (compared as text below)
-    return v > 64 ? preset_gib((uint32_t)v) : (unsigned)v;
+    return v >= 256 ? preset_gib((uint32_t)v) : (unsigned)v;
 }
 
 // Whether two fingerprints name the same hardware: every field but the driver version, which a driver update

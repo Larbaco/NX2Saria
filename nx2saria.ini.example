@@ -621,8 +621,8 @@
 # preset = recommended
 # The preset's hardware probe at start (a Vulkan instance of its own, before the log file opens): 0 turns it off, and
 # the start then goes by the GPU the last probe saw (preset-state.txt), else knows none and recommends high. A start
-# whose probe never returned (a driver that crashed in it) leaves "probing = 1" in preset-state.txt, and later starts
-# skip the probe until that line is deleted. Read at start.
+# whose probe never returned (a driver that crashed in it) leaves "probing = 1" in preset-state.txt; the next start
+# skips the probe, and takes the line out once the game's own Vulkan device is chosen. Read at start.
 # preset_probe = 1
 # Presentation mode: mailbox (default), fifo (vsync) or immediate. The menu's VSync switch sets mailbox when on and
 # immediate when off. A driver without mailbox (some AMD and Intel drivers) gets relaxed FIFO instead, which waits for

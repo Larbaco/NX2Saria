@@ -238,6 +238,9 @@ static void pure(void) {
     check(!preset_same_hardware(a, "10de:1234:100:12288:16:31:none"), "an older one of another size does not");
     check(preset_same_hardware("1002:163f:1:1024:8:14:Steam-Deck", "1002:163f:1:1:8:14:Steam-Deck"),
           "the Steam Deck's 1024 MiB in the older form is its 1 GiB");
+    check(!preset_same_hardware("10de:2bb1:1:96:64:255:none", "10de:2bb1:1:80:64:255:none")
+              && preset_same_hardware("10de:2bb1:1:97887:64:255:none", "10de:2bb1:1:96:64:255:none"),
+          "cards above 64 GiB keep their size in GiB (96 is not 80) and match their older form in MiB");
     x.vram_mib = 12288;
     preset_fingerprint(&x, b, sizeof b);
     check(!preset_same_hardware(a, b), "another card is not");
@@ -394,6 +397,8 @@ int main(int argc, char **argv) {
             } else if (!strcmp(argv[i], "reload")) {
                 CfgReloadResult r;
                 cfg_reload_file(&r);
+            } else if (!strcmp(argv[i], "device")) {   // the game has chosen its Vulkan device (hw_detect_device_check)
+                cfg_preset_device_started();
             }
             printf("--- after %s\n", argv[i]);
             report();

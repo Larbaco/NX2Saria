@@ -171,7 +171,7 @@ the IDs in hex, both sizes rounded to the GiB as sold (`preset_gib`). Every fiel
 (`preset_same_hardware`), so a driver update is not new hardware, while another card, more RAM or another processor
 is. Video memory counts in whole GiB because resizable BAR (Smart Access Memory) turned on or off, or a driver update,
 moves the heap the card reports by a few hundred MiB. A fingerprint of the earlier form, video memory in MiB (a number
-above 64 there), is compared by its GiB, so a state file from before still matches its PC. A tier chosen while nothing
+256 or more there), is compared by its GiB, so a state file from before still matches its PC. A tier chosen while nothing
 was known of the GPU is recorded at the first start that knows it.
 
 While a chosen tier gives way to the recommended one, `cfg_preset_hw_changed` tells the menu, and every start says so
@@ -265,8 +265,12 @@ next start would do the same. So right before its first Vulkan call the probe lo
 `preset: probing the GPU (a Vulkan instance; preset_probe = 0 turns it off)` and the game writes `probing = 1` into
 the state file (`runtime/cfg.c` `preset_probe_begin`, through the same temporary file and rename); once the probe has
 returned, the start writes the file without it. A start that finds the line skips the probe and goes by the last
-result, and the line stays, so every later start does the same and says so in its log, until the player deletes the
-line (or the file) to try the probe again. Lines logged before `log_open` wait in a buffer that `log_open` writes to
+result, and says so in its log. The line goes once that start's game has chosen its own Vulkan device
+(`runtime/cfg.c` `cfg_preset_device_started`, called by `hw_detect_device_check`): it has then made an instance and
+listed the devices, as far as the probe goes, so the drivers load, and the next start probes again. A driver that
+crashes again in the game's own start leaves the line, and every later start goes without the probe until the player
+deletes the line (or the file). The same holds when the write that takes the line out fails (an antivirus holding the
+file): one start goes by the last result, and its own device takes the line out. Lines logged before `log_open` wait in a buffer that `log_open` writes to
 the file, and reach stderr at once, so the line before the probe is on stderr even when the start ends inside it.
 
 **The game's device afterwards.** `pick_device` compares the device the game chose with the probe's and logs the
@@ -285,7 +289,7 @@ tool mode, not in a run that replays a bug capture. Lines `key = value`:
 | `chosen_on` | the fingerprint when the player last chose a preset; absent while none is recorded |
 | `noticed` | the recommended tier the one-time notice last named ([The settings menu](#the-settings-menu)); absent before any |
 | `gpu_name`, `gpu_vendor`, `gpu_device`, `gpu_driver`, `gpu_type`, `gpu_vram_mib`, `gpu_mesh` | the last probe that found a GPU, for a start that cannot probe; a GPU missing any of these lines, or with a value of the wrong kind, counts as none |
-| `probing` | `1` while a probe runs; a start that finds it does not probe ([above](#the-hardware-probe)); absent otherwise |
+| `probing` | `1` while a probe runs; a start that finds it does not probe, and takes it out once the game's Vulkan device is chosen ([above](#the-hardware-probe)); absent otherwise |
 
 ```
 # NX2Saria: what the quality presets last saw of this PC. The game writes this file; the settings are in nx2saria.ini.
@@ -375,7 +379,10 @@ preset: wrote <folder>/preset-state.txt
   `a RenderDoc capture (rdoc) is set up`), with `; the GPU as the last probe saw it` when the state file had one. The
   probing line comes only when the probe runs.
 - While the state file holds the probing mark, after the per-key lines: `preset: the probe of an earlier start did not
-  finish (a driver that crashed or hung in it): no probe until the line 'probing = 1' is deleted from <path>`.
+  finish (a driver that crashed or hung in it, or a write that failed): no probe this start; the mark goes once the
+  game's Vulkan device is chosen, or delete the line 'probing = 1' from <path>`; then, when the game has chosen its
+  device: `preset: the game's Vulkan device is chosen: the probing mark of an earlier start is taken out of <path>, and
+  the next start probes again`.
 - `<source>`: `recommended`, `environment` (also on new hardware), `settings file`,
   `recommended: the hardware changed since <tier> was chosen`, or
   `a bug capture's replay: its settings.ini holds the capture's preset values`.

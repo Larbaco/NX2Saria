@@ -288,9 +288,19 @@ def main():
     rc, out, f = run(GTX1650, folder=f)
     check(rc == 0 and "probe skipped: the last start's probe did not finish (preset-state.txt says probing = 1); "
           "delete that line to probe again; the GPU as the last probe saw it" in out and 'probing the GPU' not in out
-          and get(out, 'in_use') == 'low' and "no probe until the line 'probing = 1' is deleted from" in out
+          and get(out, 'in_use') == 'low' and "no probe this start; the mark goes once the game's Vulkan device is chosen, or delete the line 'probing = 1' from" in out
           and 'probing = 1' in state_of(f), 'the next start skips the probe, says how to retry, keeps the mark',
           out + state_of(f))
+    rc, out, f = run(GTX1650, actions=['device'], folder=f)
+    check(rc == 0 and 'probing the GPU' not in out and 'probing' not in state_of(f) and out.count('write: ') == 1
+          and "log: preset: the game's Vulkan device is chosen: the probing mark of an earlier start is taken out of"
+          in out and 'gpu_name = NVIDIA GeForce GTX 1650' in state_of(f),
+          "the game's own device takes the mark out (one write), the GPU kept", out + state_of(f))
+    rc, out, f = run(GTX1650, actions=['device'], folder=f)
+    check(rc == 0 and 'probing the GPU' in out and 'Vulkan device is chosen' not in out and 'probing' not in state_of(f),
+          'the start after it probes again, and its device has no mark to take out', out + state_of(f))
+    rc, out, f = run(GTX1650 + ',crash=1', folder=f)
+    check(rc == 9 and 'probing = 1' in state_of(f), 'the probe crashes again: the mark is back', out + state_of(f))
     (f / 'preset-state.txt').write_text(state_of(f).replace('probing = 1\n', ''), encoding='utf-8')
     rc, out, f = run(GTX1650, folder=f)
     check(rc == 0 and 'probing the GPU' in out and 'probe 1.5 ms' in out and 'probing' not in state_of(f),

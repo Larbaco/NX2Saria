@@ -206,6 +206,7 @@ void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), c
 }
 
 void hw_detect_device_check(uint32_t vendor, uint32_t device, uint32_t driver, const char *name) {
+    cfg_preset_device_started();   // the drivers load: a probing mark of an earlier start can go
     const PresetHw *hw = cfg_preset_hw();
     if (!hw || !hw->have_gpu) {
         rt_log("preset: the Vulkan device is \"%s\"; the preset had no GPU to go by", name);

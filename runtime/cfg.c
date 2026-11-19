@@ -1883,7 +1883,8 @@ int cfg_reload_file(CfgReloadResult *r) {
 //   probing    1 from right before the probe's first Vulkan call until it returns (preset_probe_begin). A start that
 //              finds it skips the probe and goes by the GPU above: the probe runs before the crash report and the log
 //              file are set up (main.c main_run), so a driver that crashes or hangs in it would otherwise stop every
-//              start. It stays until the line is deleted by hand (or the file), and every start says so in its log.
+//              start. It stays until the game has chosen its own Vulkan device (cfg_preset_device_started), which
+//              shows the drivers load, or the line is deleted by hand; every start that finds it says so in its log.
 // It is written through a temporary file and a rename (plat_file_write_atomic), only when its text changes, and only by
 // the game itself: not by a tool mode (cfg_start's game 0) and not in a run that replays a bug capture.
 #define PRESET_KEYS_MAX 32
@@ -2181,8 +2182,9 @@ static void preset_init(int game) {
         rt_log("preset: %s chosen; the recommended for this PC is %s", preset_tier_names[want], preset_tier_names[PS.rec]);
     preset_log_keys(tier);
     if (PS.probing)
-        rt_log("preset: the probe of an earlier start did not finish (a driver that crashed or hung in it): no probe "
-               "until the line 'probing = 1' is deleted from %s", PS.path[0] ? PS.path : "preset-state.txt");
+        rt_log("preset: the probe of an earlier start did not finish (a driver that crashed or hung in it, or a write "
+               "that failed): no probe this start; the mark goes once the game's Vulkan device is chosen, or delete the "
+               "line 'probing = 1' from %s", PS.path[0] ? PS.path : "preset-state.txt");
     state_write(0);
 }
 
@@ -2280,6 +2282,17 @@ void cfg_preset_notice_done(void) {
     rt_log("preset: notice shown: recommended %s in use", preset_tier_names[PS.rec]);
     plat_mutex_unlock(&preset_lock);
     state_write_later();   // called on the present thread (ui/menu.cpp preset_notice_tick)
+}
+
+void cfg_preset_device_started(void) {
+    plat_mutex_lock(&preset_lock);
+    const int clear = PS.probing && PS.write;
+    if (clear) PS.probing = 0;
+    plat_mutex_unlock(&preset_lock);
+    if (!clear) return;
+    rt_log("preset: the game's Vulkan device is chosen: the probing mark of an earlier start is taken out of %s, and the "
+           "next start probes again", PS.path);
+    state_write_later();   // called where the game picks its device (vk_device.c); the disk is not waited for
 }
 
 void cfg_preset_chosen(void) {
