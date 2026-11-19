@@ -34,11 +34,23 @@ static int wine = -1;
 
 void session_summary_start(void) {
     start_ns = plat_now_ns();
+    // Beside the log file; a run whose log goes to a redirected stderr (tools/run_game.py, a script) has none, and its
+    // summary goes to logs/ beside the executable, where the launcher looks (main.c log_open makes the same folder).
     const char *log = rt_log_path();
-    if (log && strlen(log) < sizeof path - sizeof FILE_NAME) {
+    char exe[PLAT_PATH_MAX * 3];
+    int beside_exe = 0;
+    if (!log && plat_exe_path(exe, sizeof exe) && strlen(exe) < sizeof path - sizeof FILE_NAME - 8)
+        log = exe, beside_exe = 1;
+    if (log && strlen(log) < sizeof path - sizeof FILE_NAME - 8) {
         snprintf(path, sizeof path, "%s", log);
         char *s = strrchr(path, '\\'), *f = strrchr(path, '/');
         if (f > s) s = f;
+        if (s && beside_exe) {
+            snprintf(s, sizeof path - (size_t)(s - path), "/logs");
+            plat_file_mkdir_p(path);
+            s += 5;   // the end of ".../logs": its separator before the file's name
+            *s = '/';
+        }
         if (s) snprintf(s + 1, sizeof path - (size_t)(s + 1 - path), "%s", FILE_NAME);
         else path[0] = 0;
     }
@@ -66,7 +78,7 @@ void session_summary_start(void) {
         rt_log("telemetry: a session summary goes to logs/%s at the end; the game sends nothing (the launcher sends it "
                "only when the player said yes)", FILE_NAME);
     else
-        rt_log("telemetry: no session summary this run: it writes no log file");
+        rt_log("telemetry: no session summary this run: no folder for it");
 }
 
 // A setting's value as the summary writes it (session_summary.h ss_setting); NULL for a key without a row in cfg.c,
@@ -139,7 +151,7 @@ static void write_summary(const char *end, const char *fatal_line) {
         s.fatal = f ? f : "";
     }
     if (!path[0]) {
-        rt_log("telemetry: session summary not written: this run writes no log file");
+        rt_log("telemetry: session summary not written: no folder for it");
         return;
     }
     int n = ss_format(&s, json, sizeof json);
