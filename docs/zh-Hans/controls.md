@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=fd067c49a6d643d83b64e1e6ac60179ae5173d7e reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=141a24538b667915f871fbbf518daaabba09ea67 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -43,13 +43,13 @@ A、B、X 和 Y 显示的是*按键布局*所按下的按键：使用 `nintendo`
 
 游戏在启动时读取一次字体和界面纹理，因此更改要在重启后才会显示（该行会这样提示；菜单的“重启”按钮会重启游戏）。在此标签页中重新映射的按键或键盘按键会保留旧的提示，直到重新生成这些文件夹。
 
-按键提示位于 exe 旁边的覆盖文件夹中：`romfs-patches-xbox`、`romfs-patches-xbox-label`、`romfs-patches-playstation`、`romfs-patches-playstation-label`、`romfs-patches-steamdeck` 和 `romfs-patches-steamdeck-label`（按位置和按标注）以及 `romfs-patches-pc`，`runtime/romfs.c` 会加载它们来代替游戏的文件。`tools/pad_prompts.py` 在玩家的机器上，根据玩家自己的 RomFS 和一个按键图片文件夹绘制它们，仓库中不包含这些图片。使用 `--prompt-art` 制作的启动器发布版本或构建套件会带有这些图片（`prompt-art`，`tools/prompt_art.py`），`tools/make_game.py` 会在最后一步绘制所有文件夹，并在图片、工具或 `bind_` 行发生变化时再次绘制（因此重新绑定按键后重新构建，键盘提示就会更新）。手动生成：
+按键提示位于 exe 旁边的覆盖文件夹中：`romfs-patches-xbox`、`romfs-patches-xbox-label`、`romfs-patches-playstation`、`romfs-patches-playstation-label`、`romfs-patches-steamdeck` 和 `romfs-patches-steamdeck-label`（按位置和按标注）以及 `romfs-patches-pc`，`runtime/romfs.c` 会加载它们来代替游戏的文件。`tools/pad_prompts.py` 在玩家的机器上，根据玩家自己的 RomFS 和一个按键图片文件夹绘制它们。这些图片位于仓库的 `prompt-art` 文件夹中：来自一个 CC0 图包，其 `SOURCE.md` 写明了图包名称和来源。每个启动器发布版本、AppImage 和构建套件都带有这些图片（`tools/prompt_art.py`），`tools/make_game.py` 会在最后一步绘制所有文件夹，并在图片、工具或 `bind_` 行发生变化时再次绘制（因此重新绑定按键后重新构建，键盘提示就会更新）。手动生成：
 
 ```
-python tools\pad_prompts.py --art <art pack>\Source --game <install folder>
+python tools\pad_prompts.py --art prompt-art --game <install folder>
 ```
 
-`--style xbox|playstation|steamdeck|pc` 只生成一种样式；`steamdeck` 显示 Deck 自己的标注（A B X Y 位于 Xbox 手柄上相同的位置，L1 R1 L2 R2 和 L3 R3，Menu 和 View），并由 Xbox 和 PlayStation 的图片绘制而成，因为图片中没有 Deck 样式；键盘按键来自 `<install folder>\nx2saria.ini`（`--binds` 可指定另一个文件）。图片文件夹包含 `XGamepad/Default`、`XGamepad/Light`、`P5Gamepad/Default`、`P5Gamepad/Light`、`Keyboard_Mouse/Dark` 和 `Keyboard_Mouse/White`，文件名见工具中的 `STYLES` 和 `KEY_ART`；没有图片的键盘按键会写在 `Keyboard_Mouse/Blanks` 上。没有这些文件夹时，该行会显示*缺少按键提示文件*，并保留 Switch 的提示；当 RomFS 模组替换了其中某个相同的文件时也是如此（*已关闭：RomFS 模组替换了它们的文件*）。日志中会有一行 `RomFS overlay: ... button prompts`，说明正在使用的文件夹。该工具需要 fontTools、Pillow 和 zstandard（`tools/requirements-py314.txt`）。
+`--style xbox|playstation|steamdeck|pc` 只生成一种样式；`steamdeck` 显示 Deck 自己的标注（A B X Y 位于 Xbox 手柄上相同的位置，L1 R1 L2 R2 和 L3 R3，Menu 和 View），并由 Xbox 和 PlayStation 的图片绘制而成，因为图片中没有 Deck 样式；键盘按键来自 `<install folder>\nx2saria.ini`（`--binds` 可指定另一个文件）。图片文件夹包含 `XGamepad/Default`、`XGamepad/Light`、`P5Gamepad/Default`、`P5Gamepad/Light`、`Keyboard_Mouse/Dark` 和 `Keyboard_Mouse/White`，文件名见工具中的 `STYLES` 和 `KEY_ART`；没有图片的键盘按键会写在 `Keyboard_Mouse/Blanks` 上。没有这些文件夹时，该行会显示*缺少按键提示文件：请在启动器中更新或重新构建游戏*（Windows 启动器中的 Rebuild the Game，Linux AppImage 中的 Update），并保留 Switch 的提示；当 RomFS 模组替换了其中某个相同的文件时也是如此（*已关闭：RomFS 模组替换了它们的文件*）。日志在启动时会有一行 `button prompts:`，说明构建从哪里绘制了按键提示，或为什么没有绘制（游戏文件夹中的 `button-prompts.txt`），另有一行 `RomFS overlay: ... button prompts`，说明正在使用的文件夹。该工具需要 fontTools、Pillow 和 zstandard（`tools/requirements-py314.txt`）。
 
 各动作是游戏自己的，名称与游戏的 *Basic Controls* 画面（Plus 菜单，System）一致：
 

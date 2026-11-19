@@ -23,17 +23,19 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
               GPU driver build done once into the driver's own cache, so play stops for them far less often
               (`ocarina.exe --prepare-shaders`); variants met in play with another bind state are still translated
               then, and the driver cache is per executable and is lost when the driver clears it
-  7. prompts  only with button art in the kit (<kit>/prompt-art, tools/make_launcher.py and make_kit.py
-              --prompt-art): tools/pad_prompts.py draws the Xbox, PlayStation, Steam Deck and keyboard and mouse button prompts
-              from it into <out>/romfs-patches-* (the Controls menu's Button prompts loads them), the keys as the
-              bind_ lines of <out>/nx2saria.ini (or an existing nx2navi.ini) give them. Its key names everything it reads (the RomFS, the art, the
-              tools, those lines), so it runs again only when one of them changed or a folder is gone, and running
-              it makes no other step run again. A failure here leaves the game and its shaders complete.
+  7. prompts  only with button art in the kit (<kit>/prompt-art, which tools/make_launcher.py and make_kit.py
+              copy from the repository's prompt-art): tools/pad_prompts.py draws the Xbox, PlayStation, Steam Deck
+              and keyboard and mouse button prompts from it into <out>/romfs-patches-* (the Controls menu's Button
+              prompts loads them), the keys as the bind_ lines of <out>/nx2saria.ini (or an existing nx2navi.ini)
+              give them. Its key names everything it reads (the RomFS, the art, the tools, those lines), so it runs
+              again only when one of them changed or a folder is gone, and running it makes no other step run
+              again. A failure here leaves the game and its shaders complete. Without art the step is skipped and
+              the game shows its own prompts. Either way <out>/button-prompts.txt says where the prompts came from
+              (the art's prompt-art/SOURCE.md) or why there are none, and the game's log repeats it.
   8. scan     tools/romfs_check.py decompresses every file of the game data once, writes <out>/romfs-check.json and
               makes stand-ins for damaged textures in <out>/mods. Its key names the game files and the check's
               version (SCAN_TOOL, changed by hand: an edit of the tool alone does not run it again), and it
               is last: nothing of it runs while the game does.
-              Without art the step is skipped and the game shows its own prompts, as before
 
 The exefs and romfs steps depend only on the game files; lift and compile depend on this kit's code too. A newer kit
 therefore lifts and compiles again but keeps the unpacked game files, and --rebuild needs no game files at all. The
@@ -2646,6 +2648,32 @@ def prompt_art_dir():
     return art if art.is_dir() else None
 
 
+# The game folder's record of where its button prompts came from, or why there are none: one line, which the build log
+# shows and the game's log repeats when the Controls menu's Button prompts asks for prompts (runtime/romfs.c
+# prompts_record).
+PROMPTS_RECORD = 'button-prompts.txt'
+
+
+def record_prompts(out, line):
+    """Writes PROMPTS_RECORD in the game folder and says it in the build log."""
+    say(f'prompts: {line}')
+    try:
+        (out / PROMPTS_RECORD).write_text(line + '\n', encoding='utf-8', newline='\n')
+    except OSError as e:
+        say(f'prompts: could not write {out / PROMPTS_RECORD} ({error_text(e)})')
+
+
+def prompts_drawn():
+    """PROMPTS_RECORD's line for prompts drawn from the kit's art."""
+    return f'drawn from {prompt_art.source_of(prompt_art_dir())}'
+
+
+def prompts_none():
+    """PROMPTS_RECORD's line for a kit without button art."""
+    return (f'not drawn: this version carries no button art ({KIT / prompt_art.FOLDER} is missing), so the game keeps '
+            'its own prompts')
+
+
 def bind_lines(out):
     """The bind_ lines of the game folder's settings file, comments cut off: the keys the keyboard and mouse prompts
     show (tools/pad_prompts.py pc_keys reads the same lines)."""
@@ -2684,8 +2712,10 @@ def step_prompts(out):
         rc = proc.wait()
         proc.stdout.close()
     if rc:
+        record_prompts(out, 'not drawn: drawing them failed (the build log says why)')
         fail('drawing the button prompts failed (the lines above say why); the game still runs. Run the build again '
              'to retry this step')
+    record_prompts(out, prompts_drawn())
 
 
 AWAKE = None   # keep_awake's systemd-inhibit process on Linux; dropping it would close the pipe and end the hold
@@ -2997,9 +3027,12 @@ def build_main():
         for name in STEPS:
             if name == 'prompts' and not prompt_art_dir():
                 say('prompts: none to draw, the kit has no button art')
+                record_prompts(out, prompts_none())
                 emit('step', step=name, state='skip')
             elif state['steps'].get(name) == step_key(name, src.identity, out) and not lift_gone(name):
                 say(f'{name}: done before')
+                if name == 'prompts':   # the art is the one they were drawn from: its key holds the pictures
+                    record_prompts(out, prompts_drawn())
                 emit('step', step=name, state='skip')
             else:
                 # a step that runs makes every step after it run too: their keys hash its output, not its key (but

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=fd067c49a6d643d83b64e1e6ac60179ae5173d7e reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=141a24538b667915f871fbbf518daaabba09ea67 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -83,13 +83,14 @@ Os ícones ficam em pastas de overlay ao lado do exe, `romfs-patches-xbox`, `rom
 `romfs-patches-playstation`, `romfs-patches-playstation-label`, `romfs-patches-steamdeck` e
 `romfs-patches-steamdeck-label` (pela posição e pelo rótulo) e `romfs-patches-pc`, que `runtime/romfs.c` carrega no
 lugar dos arquivos do jogo. `tools/pad_prompts.py` as desenha na máquina do jogador a partir da RomFS do próprio jogador
-e de uma pasta de arte de botões, que o repositório não contém. Uma versão do launcher ou um kit de compilação feito com
-`--prompt-art` traz essa arte (`prompt-art`, `tools/prompt_art.py`), e `tools/make_game.py` desenha todas as pastas na
+e de uma pasta de arte de botões. A arte é a pasta `prompt-art` do repositório: imagens de um pacote CC0, que o
+`SOURCE.md` dela nomeia, com a origem. Toda versão do launcher, AppImage e kit de compilação a traz
+(`tools/prompt_art.py`), e `tools/make_game.py` desenha todas as pastas na
 última etapa, e de novo sempre que a arte, as ferramentas ou as linhas `bind_` mudam (então compilar de novo depois de
 remapear teclas atualiza os ícones de teclado). À mão:
 
 ```
-python tools\pad_prompts.py --art <art pack>\Source --game <install folder>
+python tools\pad_prompts.py --art prompt-art --game <install folder>
 ```
 
 `--style xbox|playstation|steamdeck|pc` cria um só estilo; `steamdeck` mostra os rótulos do próprio Deck (A B X Y onde um
@@ -97,9 +98,12 @@ controle Xbox os tem, L1 R1 L2 R2 e L3 R3, Menu e View) e é desenhado a partir 
 a arte não tem estilo de Deck; as teclas vêm de `<install folder>\nx2saria.ini` (`--binds` indica outro). A pasta de arte
 contém `XGamepad/Default`, `XGamepad/Light`, `P5Gamepad/Default`, `P5Gamepad/Light`, `Keyboard_Mouse/Dark` e
 `Keyboard_Mouse/White` com os nomes de arquivo de `STYLES` e `KEY_ART` na ferramenta; uma tecla de que ela não tem imagem
-é escrita sobre `Keyboard_Mouse/Blanks`. Sem as pastas, a linha diz *faltam os arquivos dos ícones* e os ícones do Switch
+é escrita sobre `Keyboard_Mouse/Blanks`. Sem as pastas, a linha diz *faltam os arquivos dos ícones: atualize o jogo ou
+monte-o de novo no launcher* (Rebuild the Game no launcher do Windows, Update no AppImage do Linux) e os ícones do Switch
 continuam; o mesmo acontece quando um mod de RomFS substitui um desses arquivos (*desligados: um mod de RomFS substitui
-os arquivos deles*). O log tem uma linha `RomFS overlay: ... button prompts` para a pasta em uso. A ferramenta precisa de
+os arquivos deles*). O log tem uma linha `button prompts:` no início, que diz de onde o build desenhou os ícones ou por
+que não desenhou nenhum (o `button-prompts.txt` da pasta do jogo), e uma linha `RomFS overlay: ... button prompts` para a
+pasta em uso. A ferramenta precisa de
 fontTools, Pillow e zstandard (`tools/requirements-py314.txt`).
 
 As ações são as do próprio jogo, como a tela *Basic Controls* dele (menu Plus, System) as nomeia:

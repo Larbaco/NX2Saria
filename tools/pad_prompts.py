@@ -9,7 +9,8 @@ art on the player's machine.
 folder of a button prompt art pack, which holds XGamepad/Default, XGamepad/Light, P5Gamepad/Default, P5Gamepad/Light,
 Keyboard_Mouse/Dark and Keyboard_Mouse/White (128x128 PNGs: a dark button or key with a white label, or a light one
 with a dark or coloured label), or a release's prompt-art folder, which holds the same files (tools/make_game.py runs
-this tool on it). The art is read where it lies and never enters the repository.
+this tool on it): by default the repository's prompt-art folder (tools/prompt_art.py REPO_ART, CC0 pictures whose
+SOURCE.md says where they came from). The art is read where it lies.
 --game is the folder of the port's exe and romfs-index.bin. The RomFS is read from its romfs folder (index.json and
 romfs.bin, as the setup writes them); --romfs names another, which may also be a folder of extracted files. Each pad
 style and layout becomes the overlay folder <game>/romfs-patches-<style> (layout position) or

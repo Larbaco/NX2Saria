@@ -106,6 +106,11 @@ int input_prompts_pick(const char *prompts, const char *pad_layout);
 // follow no pad: romfs-patches-pc whatever the layout (romfs.c overlay_init serves romfs-patches-pc-<w>x<h> under that
 // name at a game resolution of another shape).
 const char *input_prompts_folder(int prompts, const char *pad_layout);
+// The record the build leaves in the game folder dir of where its button prompts came from, or why there are none
+// (button-prompts.txt, tools/make_game.py record_prompts): its first line, without the line end, into out (n bytes,
+// cut short to fit). 0, with out empty, when the folder has no record (a build older than the record, or a game
+// folder made by hand) or its first line is empty.
+int input_prompts_record(const char *dir, char *out, size_t n);
 // down[pad] != 0 for the gamepad inputs held. Returns the Switch button bits (0..15) the layout's pad table presses.
 uint64_t input_map_pad_buttons(const uint8_t down[PAD_COUNT], int layout);
 

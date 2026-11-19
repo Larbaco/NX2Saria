@@ -2,7 +2,7 @@
 
     python tools/make_launcher.py --xlate build/xlate [--ffx amd_fidelityfx_vk.dll] [--dlss nvngx_dlss.dll | --no-dlss]
                                   [--ffx4 FOLDER]
-                                  [--prompt-art FOLDER [FOLDER ...]] [--out build/launcher-release]
+                                  [--prompt-art FOLDER [FOLDER ...] | --no-prompt-art] [--out build/launcher-release]
                                   [--pgo build/pgo/pgo-v111.profdata] [--feed owner/name]
                                   [--notes notes.md] [--publish]
 
@@ -32,8 +32,9 @@ The release folder (--out) holds:
                                   data/pgo-v111.profdata and .json with --pgo (the execution profile make_game.py
                                   compiles the lifted code and the runtime with, the prebuilt runtime included, and
                                   its record: tools/pgo.py merge),
-                                  prompt-art/ with --prompt-art (the button art make_game.py draws the Xbox,
-                                  PlayStation, Steam Deck and keyboard and mouse prompts from, tools/prompt_art.py art_files),
+                                  prompt-art/ (the button art make_game.py draws the Xbox, PlayStation, Steam Deck
+                                  and keyboard and mouse prompts from, tools/prompt_art.py art_files, with its
+                                  SOURCE.md),
                                   toolchain.lock.json (the MSYS2 packages of today, pinned), feed.json, VERSION, the
                                   licence files
     NX2Saria-Setup-<version>.exe   launcher/native/setup.c with the folder above appended as a zip: the one file
@@ -42,9 +43,10 @@ The release folder (--out) holds:
     NX2Saria-runtime-<id>.zip      python/ alone: downloaded only when a release changes the Python
     NX2Saria-update.json           the manifest the launcher reads (launcher/feed.py)
 
---prompt-art names the button art: folders that hold XGamepad, P5Gamepad and Keyboard_Mouse, or those three folders
-themselves. Only the pictures tools/pad_prompts.py reads are copied; the art stays out of the repository. Without it
-the release has no prompt-art folder and builds the game with the game's own prompts only.
+The button art is the repository's prompt-art folder (CC0 pictures; its SOURCE.md says where they came from), or the
+folders --prompt-art names: folders that hold XGamepad, P5Gamepad and Keyboard_Mouse, or those three folders
+themselves. Only the pictures tools/pad_prompts.py reads are copied. With --no-prompt-art the release has no
+prompt-art folder: the game keeps its own prompts and the Controls menu says the other prompts' files are missing.
 
 --pgo names the execution profile of a play session (docs/building.md, "Profile-guided build"). It is derived from
 the game's code and stays out of the repository; its record must name this checkout's recomp/, or the release stops
@@ -253,7 +255,9 @@ def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, d
         streamline_pin.place(dlssg[0], dlssg[1], app / 'bin' / 'dlssg')
     if art:   # make_game.py draws the button prompts from it (its prompts step)
         n, size = prompt_art.copy_art(art, app / prompt_art.FOLDER)
-        say(f'button art: {n} pictures, {size / 1e6:.1f} MB')
+        say(f'button art: {n} pictures, {size / 1e6:.1f} MB, {prompt_art.source_of(app / prompt_art.FOLDER)}')
+    else:
+        say('button art: none (--no-prompt-art): the game will keep its own prompts')
     if pipelines:   # prepare_shaders.py reads it there (BUNDLED_PIPELINES)
         (app / 'tools' / 'data').mkdir(parents=True, exist_ok=True)
         shutil.copy2(pipelines, app / 'tools' / 'data' / 'pipeline_list.bin')
@@ -399,7 +403,10 @@ def main():
                     help=f'the Streamline {streamline_pin.VERSION} SDK folder whose bin/x64 gives the Streamline and '
                          'nvngx_dlssg.dll files, instead of downloading the SDK release with --dlssg')
     ap.add_argument('--prompt-art', type=Path, nargs='+', metavar='FOLDER',
-                    help='the button art: folders holding XGamepad, P5Gamepad and Keyboard_Mouse, or those folders')
+                    help='the button art: folders holding XGamepad, P5Gamepad and Keyboard_Mouse, or those folders '
+                         '(default: the repository\'s prompt-art)')
+    ap.add_argument('--no-prompt-art', action='store_true',
+                    help='carry no button art (the game keeps its own prompts; the build says so in its log)')
     ap.add_argument('--pipeline-list', type=Path, metavar='FILE',
                     help='the shared pipeline list to carry (tools/pipeline_list.py merge writes it; it is derived from game data and stays out of the repository)')
     ap.add_argument('--pgo', type=Path, metavar='FILE',
@@ -421,6 +428,7 @@ def main():
     ver, build = version()
     if a.version:
         ver, build = a.version, a.version + build[len(ver):]
+    a.prompt_art = prompt_art.release_art(a.prompt_art, a.no_prompt_art)
     if a.prompt_art:
         prompt_art.art_files(a.prompt_art)   # the art is all there before anything is downloaded or built
     if a.pgo:

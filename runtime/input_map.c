@@ -305,6 +305,23 @@ int input_prompts_pick(const char *prompts, const char *pad_layout) {
     return pad_layout && !strcasecmp(pad_layout, "xbox_prompts") ? PROMPTS_XBOX : PROMPTS_NINTENDO;
 }
 
+int input_prompts_record(const char *dir, char *out, size_t n) {
+    if (!n) return 0;
+    out[0] = 0;
+    char path[2100];
+    if (!dir || snprintf(path, sizeof path, "%s/button-prompts.txt", dir) >= (int)sizeof path) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    size_t len = 0;
+    int c;
+    // the first line; a longer one is cut short, as the log line it goes into is
+    while ((c = fgetc(f)) != EOF && c != '\n' && c != '\r')
+        if (len + 1 < n) out[len++] = (char)c;
+    fclose(f);
+    out[len] = 0;
+    return len > 0;
+}
+
 const char *input_prompts_folder(int prompts, const char *pad_layout) {
     if (prompts == PROMPTS_PC) return "romfs-patches-pc";
     if (prompts != PROMPTS_XBOX && prompts != PROMPTS_PLAYSTATION && prompts != PROMPTS_STEAMDECK) return NULL;

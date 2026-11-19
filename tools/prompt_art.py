@@ -4,8 +4,11 @@ player's PC (tools/make_launcher.py and tools/make_kit.py --prompt-art, tools/ma
 Standard library only, so the release tools need no imaging packages.
 
 The art is 128x128 PNGs in the folders of button prompt art packs: XGamepad/Default and /Light, P5Gamepad/Default and
-/Light, Keyboard_Mouse/Dark, /White and /Blanks. It never enters the repository: a release copies it from the folders
---prompt-art names into its prompt-art folder, which make_game.py passes to pad_prompts.py as --art.
+/Light, Keyboard_Mouse/Dark, /White and /Blanks. The repository holds the pictures it needs in its prompt-art folder
+(REPO_ART), from a pack whose licence is CC0 1.0: SOURCE.md there names the pack, its version, where it came from and its
+licence, and SHA256SUMS lists every picture (tools/check_content.py refuses a picture that is not in it, or differs).
+A release copies the art from REPO_ART, or from the folders --prompt-art names, into its prompt-art folder, which
+make_game.py passes to pad_prompts.py as --art.
 """
 import shutil
 import sys
@@ -13,8 +16,14 @@ from pathlib import Path
 
 # The art folders, each named as in the art packs; --art holds all three.
 ART_SETS = ('XGamepad', 'P5Gamepad', 'Keyboard_Mouse')
-# The folder of a release that holds the art (app/<version>/prompt-art, the build kit's prompt-art).
+# The folder of a release that holds the art (app/<version>/prompt-art, the build kit's prompt-art), and of the
+# repository.
 FOLDER = 'prompt-art'
+# The art in the repository, which a release carries unless another is named.
+REPO_ART = Path(__file__).resolve().parents[1] / FOLDER
+# The file beside the art that says where it came from, and its line that the build and the game log.
+SOURCE = 'SOURCE.md'
+SOURCE_LINE = 'Source: '
 
 
 def _sticks(folder, stick, press, rotate):
@@ -146,11 +155,37 @@ def art_files(folders):
     return files
 
 
+def release_art(folders, none):
+    """The art a release takes: the folders --prompt-art named, else REPO_ART; None with --no-prompt-art (none)."""
+    if none:
+        if folders:
+            sys.exit('--prompt-art and --no-prompt-art name opposite things')
+        return None
+    return folders or [REPO_ART]
+
+
+def source_of(art):
+    """The SOURCE_LINE of art's SOURCE file without its label (the pack, its version and licence), or a phrase that
+    says the folder has none."""
+    try:
+        text = (Path(art) / SOURCE).read_text(encoding='utf-8')
+    except OSError:
+        return f'{art} (it has no {SOURCE} saying where the pictures came from)'
+    for line in text.splitlines():
+        if line.startswith(SOURCE_LINE):
+            return line[len(SOURCE_LINE):].strip()
+    return f'{art} (its {SOURCE} has no "{SOURCE_LINE.strip()}" line)'
+
+
 def copy_art(folders, dest):
-    """Copies art_files(folders) into dest (a release's prompt-art folder, emptied first); returns (files, bytes)."""
+    """Copies art_files(folders) into dest (a release's prompt-art folder, emptied first), with the SOURCE file of the
+    first folder that has one; returns (files, bytes)."""
     files = art_files(folders)
     shutil.rmtree(dest, ignore_errors=True)
     for rel, src in files.items():
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest / rel)
+    source = next((Path(f) / SOURCE for f in folders if (Path(f) / SOURCE).is_file()), None)
+    if source:
+        shutil.copy2(source, dest / SOURCE)
     return len(files), sum(p.stat().st_size for p in files.values())

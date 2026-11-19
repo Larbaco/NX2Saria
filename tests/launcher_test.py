@@ -1454,6 +1454,67 @@ class PromptArtTest(Tmp):
             pa.art_files([pads, keys])
         self.assertIn('T_X_Share-1.png', str(e.exception.code))
 
+    def test_the_repository_carries_its_art(self):
+        """The repository's prompt-art holds every picture pad_prompts.py reads and nothing else but SOURCE.md and
+        SHA256SUMS, each picture as SHA256SUMS lists it, and SOURCE.md names the pack, its licence as its page states
+        it, the download's SHA-256 and an archived copy of the page. A release takes this art unless told otherwise,
+        with SOURCE.md, whose Source line is what the build records (issue #15: releases without art)."""
+        import prompt_art as pa
+        files = pa.art_files([pa.REPO_ART])
+        sums = dict(reversed(ln.split('  ', 1))
+                    for ln in (pa.REPO_ART / 'SHA256SUMS').read_text(encoding='utf-8').splitlines())
+        self.assertEqual(set(files), set(sums))
+        on_disk = {p.relative_to(pa.REPO_ART).as_posix() for p in pa.REPO_ART.rglob('*') if p.is_file()}
+        self.assertEqual(on_disk, set(sums) | {pa.SOURCE, 'SHA256SUMS'})
+        for rel, path in files.items():
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), sums[rel], rel)
+        self.assertEqual(pa.source_of(pa.REPO_ART), 'JulioCacko, FREE Input Prompts Pack 1.4 (CC0 1.0)')
+        source = (pa.REPO_ART / pa.SOURCE).read_text(encoding='utf-8')
+        for must in ('CC0 1.0 Universal. Free to use in any project, commercial or non-commercial. No attribution '
+                     'required (but appreciated!).', 'Creative Commons Zero v1.0 Universal',
+                     'f6c75921b9d6ab2cb2b5249f547c7b7ba19e22da9f4f3b45693cf0912f25ded0',
+                     'https://juliocacko.itch.io/free-input-prompts', 'https://web.archive.org/web/'):
+            self.assertIn(must, source)
+        # the art a release takes: the repository's, or the folders named, or none with --no-prompt-art
+        other = [self.tmp / 'pack']
+        self.assertEqual(pa.release_art(None, False), [pa.REPO_ART])
+        self.assertEqual(pa.release_art(other, False), other)
+        self.assertIsNone(pa.release_art(None, True))
+        with self.assertRaises(SystemExit):
+            pa.release_art(other, True)
+        dest = self.tmp / 'release' / pa.FOLDER
+        n, size = pa.copy_art([pa.REPO_ART], dest)
+        self.assertEqual((n, (dest / pa.SOURCE).read_text(encoding='utf-8')), (len(sums), source))
+        self.assertEqual(pa.source_of(dest), pa.source_of(pa.REPO_ART))
+        # art without a SOURCE.md, or without its Source line, says so
+        self.make_art()
+        pack = self.tmp / 'pack' / 'Source'
+        self.assertIn('has no SOURCE.md', pa.source_of(pack))
+        (pack / pa.SOURCE).write_text('# some art\n', encoding='utf-8')
+        self.assertIn('has no "Source:" line', pa.source_of(pack))
+
+    def test_check_content_holds_the_art_to_its_list(self):
+        """tools/check_content.py lets a picture of prompt-art in only as SHA256SUMS lists it: one not listed, or
+        changed, is refused; SOURCE.md, SHA256SUMS and pictures elsewhere are not its business."""
+        import check_content as cc
+        sums = {'XGamepad/Default/T_X_A_White.png': hashlib.sha256(b'picture').hexdigest()}
+        self.assertIsNone(cc.art_problem(Path('prompt-art/XGamepad/Default/T_X_A_White.png'), b'picture', sums))
+        self.assertIn('not listed', cc.art_problem(Path('prompt-art/XGamepad/Default/T_X_B_White.png'), b'picture', sums))
+        self.assertIn('not listed', cc.art_problem(Path('prompt-art/new.png'), b'picture', sums))
+        self.assertIn('differs', cc.art_problem(Path('prompt-art/XGamepad/Default/T_X_A_White.png'), b'changed', sums))
+        for path in ('prompt-art/SOURCE.md', 'prompt-art/SHA256SUMS', 'docs/images/nx2saria-banner.png'):
+            self.assertIsNone(cc.art_problem(Path(path), b'anything', sums), path)
+        # the repository's own list: every picture of prompt-art is in it, as it is
+        here = os.getcwd()
+        os.chdir(ROOT)
+        try:
+            listed = cc.art_sums(False)
+        finally:
+            os.chdir(here)
+        self.assertEqual(len(listed), 281)
+        for rel in listed:
+            self.assertIsNone(cc.art_problem(Path('prompt-art') / rel, (ROOT / 'prompt-art' / rel).read_bytes(), listed))
+
     def test_release_carries_what_the_prompts_need(self):
         """The release's Python has every package tools/pad_prompts.py imports, and the launcher release and the build
         kit carry every tool it imports."""
@@ -1645,6 +1706,8 @@ import prompt_art
 a = sys.argv[1:]
 art, game = Path(a[a.index('--art') + 1]), Path(a[a.index('--game') + 1])
 assert (art / 'XGamepad').is_dir(), art
+if (art / 'fail').exists():
+    sys.exit('the art says to fail')
 with open(game / 'prompt-runs.txt', 'a') as f:
     f.write('run\n')
 for name in prompt_art.OVERLAYS:
@@ -2158,6 +2221,8 @@ class MakeGameTest(Tmp):
         art = kit / 'prompt-art' / 'XGamepad' / 'Default'
         art.mkdir(parents=True)
         (art / 'T_X_A_White.png').write_bytes(b'picture one')
+        (kit / 'prompt-art' / 'SOURCE.md').write_text('# Test art\n\nSource: Test pack 2 (CC0 1.0)\n')
+        record = self.out / self.mg.PROMPTS_RECORD
         ran = []
 
         def fake(name):
@@ -2196,7 +2261,11 @@ class MakeGameTest(Tmp):
             details = [e['detail'] for e in ev if e['ev'] == 'progress']
             self.assertEqual(details[-1], f'Drew {sets} of {sets} sets of button prompts')
             self.assertIn('prompts', json.loads((self.out / 'build-cache' / 'state.json').read_text())['steps'])
+            # the game folder's record of where the prompts came from (the game's log repeats it)
+            self.assertEqual(record.read_text(), 'drawn from Test pack 2 (CC0 1.0)\n')
+            record.unlink()
             self.assertEqual(build(), ([], [{'ev': 'step', 'step': 'prompts', 'state': 'skip'}], 1))
+            self.assertEqual(record.read_text(), 'drawn from Test pack 2 (CC0 1.0)\n')   # written again when skipped
             # a setting that is no key binding changes nothing; a binding draws the prompts again, and only them
             (self.out / 'nx2navi.ini').write_text('vsync = on\n')
             self.assertEqual(build()[2], 1)
@@ -2215,10 +2284,20 @@ class MakeGameTest(Tmp):
             (self.out / 'build-cache' / 'state.json').write_text(json.dumps(st))
             others, ev, runs = build()
             self.assertEqual((others, states(ev), runs), (['compile', 'lift'], ['skip'], 4))
-            # a kit without art: skipped, the folders an earlier build drew stay
+            # the tool failing: the build fails and the record says why there are no new prompts
+            (kit / 'prompt-art' / 'fail').write_bytes(b'')
+            (art / 'T_X_Y_White.png').write_bytes(b'picture three')
+            with self.assertRaises(SystemExit):
+                build()
+            self.assertEqual(record.read_text(), 'not drawn: drawing them failed (the build log says why)\n')
+            (kit / 'prompt-art' / 'fail').unlink()
+            self.assertEqual(build()[2], 5)
+            self.assertEqual(record.read_text(), 'drawn from Test pack 2 (CC0 1.0)\n')
+            # a kit without art: skipped, the folders an earlier build drew stay, and the record says there is no art
             shutil.rmtree(kit / 'prompt-art')
-            self.assertEqual(build(), ([], [{'ev': 'step', 'step': 'prompts', 'state': 'skip'}], 4))
+            self.assertEqual(build(), ([], [{'ev': 'step', 'step': 'prompts', 'state': 'skip'}], 5))
             self.assertTrue((self.out / 'romfs-patches-xbox' / 'manifest.tsv').is_file())
+            self.assertTrue(record.read_text().startswith('not drawn: this version carries no button art ('))
 
     def test_an_update_keeps_the_settings_file(self):
         """The rebuild an update ends with (make_game.py --rebuild under a newer kit: the lift, the compile, the
@@ -3615,9 +3694,11 @@ class FileCheckTest(Tmp):
 # PROMPT_TOOLS a new value (every install then draws its prompts again) and record both here; if it cannot, record
 # only the new digests. The NX2Saria filename fallback changes no rendering for the same effective bindings;
 # step_key already includes those bindings, so this rename records the digest without forcing all prompts to redraw.
+# prompt_art.py's REPO_ART, release_art, source_of and the SOURCE.md copy (issue #15) choose and record the art; the
+# pictures it names, which the step's key holds, are the same, so the prompts drawn from them are too.
 PROMPT_LOGIC = ('ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249',
                 {'pad_prompts.py': '9692b7632e4570df0814149a3d70f729645835f74eab1a9b34b6d963d81efca0',
-                 'prompt_art.py': '87edacabcddb4952f5862373815d7d46a05c67f350e0734025ae4d2f83b12038',
+                 'prompt_art.py': '07f536b3d6f79199010f5c7bcf0ee1d3281ec56fd7f7a6def9cf1282a824eb30',
                  'button_icons.py': '3804e371a030965bc9eb4226f333b611651f25efaa67ee523b404edc3257818a'})
 
 

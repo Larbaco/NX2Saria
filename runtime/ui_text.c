@@ -329,16 +329,17 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                              "Y with L1, R1, L2, R2, Menu, View), and A, B, X and Y as the "
                              "button the layout above presses (with Nintendo (A right) the right button does A, so the "
                              "prompts for A show B, or circle). Keyboard and mouse: the key each button has (E, Ctrl, "
-                             "Space, left click...), WASD for moving and the mouse for the camera. The prompt files "
-                             "are made from button art with tools/pad_prompts.py, the keys as nx2saria.ini binds them "
-                             "when it runs. The game reads its prompts at start, so they change after a restart. They "
-                             "are part of the game's files, so a button you remap in Controls keeps its old prompt on "
-                             "screen until the files are made again.",
+                             "Space, left click...), WASD for moving and the mouse for the camera. The launcher draws "
+                             "the prompt files when it builds the game, the keys as nx2saria.ini binds them then; when "
+                             "they are missing, update the game, or rebuild it (Rebuild the Game in the Windows "
+                             "launcher, Update in the Linux AppImage). The game reads its prompts at start, so they "
+                             "change after a restart. They are part of the game's files, so a button you remap in "
+                             "Controls keeps its old prompt on screen until the game is rebuilt.",
     [UI_MENU_PROMPTS_NINTENDO] = "Nintendo", [UI_MENU_PROMPTS_XBOX] = "Xbox",
     [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation", [UI_MENU_PROMPTS_STEAMDECK] = "Steam Deck",
     [UI_MENU_PROMPTS_PC] = "Keyboard and mouse",
-    [UI_MENU_PROMPTS_MISSING] = "prompt files missing: tools/pad_prompts.py makes them",
-    [UI_MENU_PROMPTS_FAILED] = "prompt files damaged: make them again with tools/pad_prompts.py",
+    [UI_MENU_PROMPTS_MISSING] = "prompt files missing: update the game, or rebuild it in the launcher",
+    [UI_MENU_PROMPTS_FAILED] = "prompt files damaged: rebuild the game in the launcher",
     [UI_MENU_PROMPTS_RESTART] = "prompts change after restart",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "off at a game resolution not 16:9",
     [UI_MENU_PROMPTS_OFF_MODS] = "off: a RomFS mod replaces their files",
@@ -1061,15 +1062,16 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                              "кнопкой, которую нажимает раскладка выше (в Nintendo (A справа) A делает правая кнопка, "
                              "и подсказки A показывают B или круг). Клавиатура и мышь: клавиша каждой кнопки (E, Ctrl, "
                              "пробел, левый клик...), WASD для движения и мышь для камеры. Файлы подсказок создаются "
-                             "из картинок кнопок программой tools/pad_prompts.py, клавиши берутся из nx2saria.ini на "
-                             "момент её запуска. Игра читает подсказки при запуске, так что они меняются после "
+                             "лаунчером при сборке игры, клавиши берутся из nx2saria.ini на этот момент; если файлов "
+                             "нет, обновите игру или пересоберите её (Rebuild the Game в лаунчере Windows, Update в "
+                             "AppImage для Linux). Игра читает подсказки при запуске, так что они меняются после "
                              "перезапуска. Подсказки записаны в файлах игры, поэтому у кнопки, переназначенной на "
-                             "вкладке управления, на экране остаётся прежняя подсказка, пока файлы не созданы заново.",
+                             "вкладке управления, на экране остаётся прежняя подсказка, пока игра не пересобрана.",
     [UI_MENU_PROMPTS_NINTENDO] = "Nintendo", [UI_MENU_PROMPTS_XBOX] = "Xbox",
     [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation", [UI_MENU_PROMPTS_STEAMDECK] = "Steam Deck",
     [UI_MENU_PROMPTS_PC] = "Клавиатура и мышь",
-    [UI_MENU_PROMPTS_MISSING] = "нет файлов подсказок: их создаёт tools/pad_prompts.py",
-    [UI_MENU_PROMPTS_FAILED] = "файлы подсказок повреждены: создайте их снова tools/pad_prompts.py",
+    [UI_MENU_PROMPTS_MISSING] = "нет файлов подсказок: обновите игру или пересоберите её в лаунчере",
+    [UI_MENU_PROMPTS_FAILED] = "файлы подсказок повреждены: пересоберите игру в лаунчере",
     [UI_MENU_PROMPTS_RESTART] = "подсказки сменятся после перезапуска",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "выкл. при разрешении игры не 16:9",
     [UI_MENU_PROMPTS_OFF_MODS] = "выкл.: мод RomFS заменяет их файлы",
@@ -1906,12 +1908,13 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                              "RB, LT, RT, Menu, Exibir; L1, R1, L2, R2, Options, Create), e A, B, X e Y aparecem como "
                              "o botão que o layout acima aperta (com Nintendo (A à direita) o botão da direita faz A, "
                              "então os ícones de A mostram B, ou círculo). Teclado e mouse: a tecla de cada botão (E, "
-                             "Ctrl, Espaço, clique esquerdo...), WASD para andar e o mouse para a câmera. Os arquivos "
-                             "dos ícones são feitos a partir de imagens de botões com tools/pad_prompts.py, com as "
-                             "teclas como o nx2saria.ini as define quando ele roda. O jogo lê os ícones ao iniciar, "
+                             "Ctrl, Espaço, clique esquerdo...), WASD para andar e o mouse para a câmera. O launcher "
+                             "desenha os arquivos dos ícones quando monta o jogo, com as teclas como o nx2saria.ini as "
+                             "define nessa hora; se eles faltarem, atualize o jogo ou monte-o de novo (Rebuild the Game "
+                             "no launcher do Windows, Update no AppImage do Linux). O jogo lê os ícones ao iniciar, "
                              "então eles mudam depois de reiniciar. Eles fazem parte dos arquivos do jogo, então um "
-                             "botão remapeado em Controles continua com o ícone antigo na tela até os arquivos serem "
-                             "feitos de novo.",
+                             "botão remapeado em Controles continua com o ícone antigo na tela até o jogo ser montado "
+                             "de novo.",
     [UI_MENU_PROMPTS_NINTENDO] = "Nintendo",
     [UI_MENU_PROMPTS_XBOX] = "Xbox",
     [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
@@ -1922,8 +1925,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_MOUSE_DIRECT] = "Direta",
     [UI_MENU_MENU_CURSOR] = "Mouse nos menus do jogo",
     [UI_MENU_MENU_CURSOR_DESC] = "Nos menus do próprio jogo (título, inventário, lojas, escolhas de diálogo) o ponteiro aparece: o item sob ele fica selecionado, o clique esquerdo confirma e o direito volta. Só depois de usar o mouse ou uma tecla por último, então com um controle os menus ficam como antes (jogo 1.4.3).",
-    [UI_MENU_PROMPTS_MISSING] = "faltam os arquivos dos ícones: tools/pad_prompts.py os cria",
-    [UI_MENU_PROMPTS_FAILED] = "arquivos dos ícones danificados: crie de novo com tools/pad_prompts.py",
+    [UI_MENU_PROMPTS_MISSING] = "faltam os arquivos dos ícones: atualize o jogo ou monte-o de novo no launcher",
+    [UI_MENU_PROMPTS_FAILED] = "arquivos dos ícones danificados: monte o jogo de novo no launcher",
     [UI_MENU_PROMPTS_RESTART] = "os ícones mudam após reiniciar",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "desligados numa resolução de jogo que não é 16:9",
     [UI_MENU_PROMPTS_OFF_MODS] = "desligados: um mod de RomFS substitui os arquivos deles",
@@ -2681,9 +2684,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                              "Xbox 和 PlayStation：该手柄的按键（LB、RB、LT、RT、Menu、View；L1、R1、L2、R2、Options、Create），"
                              "A、B、X、Y 显示为上方布局所按下的按键（使用 Nintendo（A 在右）时由右侧按键执行 A，因此 A 的提示显示 B 或圆圈）。"
                              "键盘和鼠标：每个按键对应的键（E、Ctrl、空格、左键……），WASD 移动，鼠标控制镜头。"
-                             "提示文件由 tools/pad_prompts.py 根据按键图片生成，键位以生成时 nx2saria.ini 中的设置为准。"
+                             "提示文件由启动器在构建游戏时生成，键位以当时 nx2saria.ini 中的设置为准；"
+                             "如果缺少提示文件，请更新游戏或重新构建（Windows 启动器中的 Rebuild the Game，Linux AppImage 中的 Update）。"
                              "游戏在启动时读取按键提示，因此重启后才会改变。"
-                             "提示属于游戏文件，在“操作”中重新映射的按键在重新生成文件之前仍显示原来的提示。",
+                             "提示属于游戏文件，在“操作”中重新映射的按键在重新构建游戏之前仍显示原来的提示。",
     [UI_MENU_PROMPTS_NINTENDO] = "Nintendo",
     [UI_MENU_PROMPTS_XBOX] = "Xbox",
     [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
@@ -2694,8 +2698,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_MOUSE_DIRECT] = "直接",
     [UI_MENU_MENU_CURSOR] = "在游戏菜单中使用鼠标",
     [UI_MENU_MENU_CURSOR_DESC] = "在游戏自身的菜单中（标题、背包、商店、对话选项）显示指针：指针下的项目被选中，左键确认，右键返回。仅在最后使用的是鼠标或键盘时生效，因此使用手柄时菜单保持不变（游戏 1.4.3）。",
-    [UI_MENU_PROMPTS_MISSING] = "缺少按键提示文件：请用 tools/pad_prompts.py 生成",
-    [UI_MENU_PROMPTS_FAILED] = "按键提示文件已损坏：请用 tools/pad_prompts.py 重新生成",
+    [UI_MENU_PROMPTS_MISSING] = "缺少按键提示文件：请在启动器中更新或重新构建游戏",
+    [UI_MENU_PROMPTS_FAILED] = "按键提示文件已损坏：请在启动器中重新构建游戏",
     [UI_MENU_PROMPTS_RESTART] = "按键提示重启后生效",
     [UI_MENU_PROMPTS_OFF_SHAPE] = "游戏分辨率不是 16:9 时关闭",
     [UI_MENU_PROMPTS_OFF_MODS] = "已关闭：RomFS 模组替换了它们的文件",
