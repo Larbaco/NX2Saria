@@ -172,7 +172,7 @@ static void run_main(void) {
     heaps(0, 0, 1 << 20);
     uint64_t got = call_cpu(CPU_RET_C8, 0, 0x4198, &model);
     assert(got == root.w[5] + 0x100 && root.given == 1 && mid.calls == 1 && model.calls == 0);
-    assert(strstr(last_log, "model buffer (main+0x43690c)") && strstr(last_log, "16792 bytes"));
+    assert(strstr(last_log, "heap retry: model buffer at main+0x43690c, 16792 bytes"));
     assert(strstr(last_log, "\"Model/Npc_Test.bfres\" (64 KB) refused it;") && strstr(last_log, "\"RootHeap\""));
     assert(strstr(last_log, "2 levels up") && !strstr(last_log, "test:"));
 
@@ -209,11 +209,11 @@ static void run_main(void) {
     // no heap has room: a fatal error naming the heap, in place of the write to guest address 0x8
     heaps(0, 0, 0);
     assert(fatal_of(no_room_cpu));
-    assert(strstr(fatal_msg, "no heap had room for the model buffer (main+0x43690c) of 16384 bytes"));
+    assert(strstr(fatal_msg, "no heap had room for the model buffer at main+0x43690c, 16384 bytes"));
     assert(strstr(fatal_msg, "2 other heaps tried") && strstr(fatal_msg, "guest address 0x8"));
     default_heap = &other;
     make(&other, "DefaultHeap", 0x900000000ull, 0x1000000ull, NULL, 0);
-    assert(fatal_of(no_room_gpu) && strstr(fatal_msg, "GPU memory") && strstr(fatal_msg, "no memory pool"));
+    assert(fatal_of(no_room_gpu) && strstr(fatal_msg, "GPU memory at main+0x436f18") && strstr(fatal_msg, "no memory pool"));
     assert(gpu_req[1] == (uintptr_t)&model);   // put back before the fatal error too
     default_heap = &root;
 
@@ -234,7 +234,7 @@ static void run_main(void) {
     heaps(0, 1 << 30, 0);
     for (int i = 0; i < 200; i++) assert(call_cpu(CPU_RET_C8, 0, 0x10, &model));
     assert(retry_lines == 32);   // 4 retries before, 28 of these
-    assert(strstr(last_log, "model buffer (main+0x43690c): 192 blocks"));   // the 64th, 128th and 192nd of the site
+    assert(strstr(last_log, "model buffer at main+0x43690c: 192 blocks"));   // the 64th, 128th and 192nd of the site
 
     heap_retry_exit_log();
     assert(strstr(last_log, "heap retry: this session (the set on at the end) 202 model buffers") && strstr(last_log, "and 2 GPU memories"));

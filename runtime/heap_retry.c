@@ -62,8 +62,8 @@ enum { MAX_CLIMB = 8, LOG_BUDGET = 32, LOG_EVERY = 64 };
 #define HOST_GPU 0xec0
 
 enum { SITE_C8, SITE_A8, SITE_GPU, NSITES };
-static const char *const site_names[NSITES] = {"model buffer (main+0x43690c)", "model buffer (main+0x436da0)",
-                                               "GPU memory"};
+static const char *const site_names[NSITES] = {"model buffer", "model buffer", "GPU memory"};
+static const char *const site_places[NSITES] = {"main+0x43690c", "main+0x436da0", "main+0x436f18 and main+0x437094"};
 
 static int set_index = -1;      // the set heap_retry in this build, -1 when it has none
 static int shipped;             // NX2SARIA_HEAP_RETRY_TEST_SHIPPED
@@ -134,7 +134,8 @@ static void note_moved(int site, uint64_t at, uint64_t heap, uint64_t from, uint
                (unsigned long long)bytes, was, test ? " (test: NX2SARIA_HEAP_RETRY_TEST_FAIL)" : "", got, up,
                up == 1 ? "" : "s", n, b >> 10);
     } else if (n % LOG_EVERY == 0) {
-        rt_log("heap retry: %s: %ld blocks, %ld KB from other heaps so far", site_names[site], n, b >> 10);
+        rt_log("heap retry: %s at %s: %ld blocks, %ld KB from other heaps so far", site_names[site], site_places[site],
+               n, b >> 10);
     }
 }
 
@@ -151,12 +152,13 @@ static void note_kept(int site, uint64_t at, uint64_t heap, uint64_t bytes) {
 
 static void count_refusal(int test) { atomic_fetch_add(test ? &test_n : &full_n, 1); }
 
-__attribute__((noreturn)) static void give_up(int site, uint64_t heap, uint64_t bytes, int up, const char *then) {
+__attribute__((noreturn)) static void give_up(int site, uint64_t at, uint64_t heap, uint64_t bytes, int up,
+                                               const char *then) {
     char was[160];
     describe(heap, was, sizeof was);
-    rt_fatal("heap retry: no heap had room for the %s of %llu bytes: heap %s and %d other heap%s tried refused it, "
-             "so the game cannot go on (%s)", site_names[site], (unsigned long long)bytes, was, up, up == 1 ? "" : "s",
-             then);
+    rt_fatal("heap retry: no heap had room for the %s at main+%#llx, %llu bytes: heap %s and %d other heap%s tried "
+             "refused it, so the game cannot go on (%s)", site_names[site], (unsigned long long)at,
+             (unsigned long long)bytes, was, up, up == 1 ? "" : "s", then);
 }
 
 // The page's +0xed0, right after the tryAlloc at main+0x43690c or main+0x436da0: x0 its result, which the function
@@ -185,7 +187,7 @@ static void heap_retry_cpu(Cpu *c) {
         got = rt_call(c, ld64(ld64(h) + VT_TRY_ALLOC), 3, h, bytes, (uint64_t)8);
     }
     if (!got)
-        give_up(site, heap, bytes, up, "the material block's buffer would be null, and the game would write to guest "
+        give_up(site, call, heap, bytes, up, "the material block's buffer would be null, and the game would write to guest "
                                        "address 0x8 a moment later");
     c->x[0] = got;
     note_moved(site, call, heap, h, bytes, up, test);
@@ -226,7 +228,7 @@ static void heap_retry_gpu(Cpu *c) {
     }
     *slot = heap;
     if (!(r & 1))
-        give_up(SITE_GPU, heap, bytes, up, "the material block would have no memory pool, and the game would write "
+        give_up(SITE_GPU, at - 4, heap, bytes, up, "the material block would have no memory pool, and the game would write "
                                            "through a null pointer");
     c->x[0] = r;
     note_moved(SITE_GPU, at - 4, heap, h, bytes, up, test);
