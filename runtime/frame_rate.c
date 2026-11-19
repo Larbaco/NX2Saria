@@ -776,8 +776,8 @@ static int sound_gate_take(SoundGate *g, uint32_t phase, float step) {
     return g->run;
 }
 
-// The step the job's phase 0 loads (1 when the time manager is not there: the gate then lets the phase run).
-static float sound_job_step(void) {
+// The time manager's step (1 before the time manager is there).
+static float game_frame_step(void) {
     uint64_t slot = read_ptr(MOD_MAIN_BASE + 0x4c7e890), mgr = slot ? read_ptr(slot) : 0;
     float step = 1.0f;
     if (mgr && !read_guest(mgr + 0x10, &step, 4)) step = 1.0f;
@@ -787,7 +787,7 @@ static float sound_job_step(void) {
 // NX2SARIA_TRACE=perf: every 10 s, how often phase 0 ran of the times it was asked.
 void frame_rate_sound_gate_host(Cpu *c) {
     uint32_t phase = (uint32_t)c->x[2];
-    float step = phase == 0 ? sound_job_step() : 1.0f;
+    float step = phase == 0 ? game_frame_step() : 1.0f;
     uint64_t asked = 0, ran = 0, t = 0;
     plat_mutex_lock(&whole_lock);   // the phases may come from different threads
     int run = sound_gate_take(&sound_gate, phase, step);
@@ -820,6 +820,29 @@ float frame_step_frames(void) {
     float f;
     memcpy(&f, &bits, 4);
     return f > 0 ? f : 1.0f;
+}
+
+// The jump state machine compares s10 (its update step) against s9 (1.0). If the update is shorter than
+// a 60 Hz frame but covers the time manager's whole step, use that step as the threshold. The slow-motion
+// path still sees 1.0, and the normal path writes s9 again before reading it.
+void frame_rate_horse_jump_host(Cpu *c) {
+    if (frame_step_frames() >= 1.0f) return;
+    uint32_t bits = (uint32_t)c->v[10];
+    float jump_step;
+    memcpy(&jump_step, &bits, sizeof jump_step);
+    if (!(jump_step > 0.0f && jump_step < 1.0f)) return;
+
+    float frame = game_frame_step();
+    if (!(frame > 0.0f && frame < 1.0f && jump_step >= frame)) return;
+    uint32_t threshold;
+    memcpy(&threshold, &frame, sizeof threshold);
+    c->v[9] = threshold;
+
+    static _Atomic unsigned logged;
+    if (atomic_load_explicit(&logged, memory_order_relaxed) < 4) {
+        unsigned n = atomic_fetch_add_explicit(&logged, 1, memory_order_relaxed);
+        if (n < 4) rt_log("frame rate: horse jump blend #%u: step %.6f, threshold 1 -> %.6f", n + 1, jump_step, frame);
+    }
 }
 
 static void ocarina_step_write(double dt) {

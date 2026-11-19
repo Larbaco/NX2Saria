@@ -23,7 +23,8 @@ FDIV = 0x1e201900   # fdiv s0, s8, s0
 HOST_SITES = [('ostep', 0x3cdfc0, 0x1e380008, [], 0xf60), ('ostep', 0x475f8, 0x1e380009, [], 0xf50),
               ('owater', 0x3876014, FDIV, [FDIV], 0xf20), ('owater', 0x38827f8, FDIV, [FDIV], 0xf20),
               ('owater', 0x632cfc, FDIV, [FDIV], 0xf20),
-              ('osound', 0x41531c, 0x910083fd, [0x910083fd], 0xf10), ('osound', 0x415334, 0xbd401100, [0xbd401100], 0xf00)]
+              ('osound', 0x41531c, 0x910083fd, [0x910083fd], 0xf10), ('osound', 0x415334, 0xbd401100, [0xbd401100], 0xf00),
+              ('ohorse', 0x2c3ae18, 0x1e2e1009, [0x1e2e1009], 0xea0)]
 
 
 def compiler():
@@ -161,13 +162,34 @@ def staff_functions():
     return 'void staff_ostaff(Cpu *c) {\n' + '\n'.join(body) + '\n}\n'
 
 
+def lift_ops(lift, offset, words):
+    """C for contiguous non-branch guest instructions in a fixture."""
+    body = []
+    for i, word in enumerate(words):
+        insn = lift.lift(word, 0x7000000000 + offset + i * 4)
+        assert insn.kind == 'op', (hex(offset + i * 4), hex(word), insn.kind)
+        body.append('    ' + insn.code + '\n')
+    return ''.join(body)
+
+
+def horse_function():
+    lift = Lifter(0, simd='c')
+    return ('void frame_rate_horse_jump_host(Cpu *c);\n'
+            'int horse_compare(Cpu *c, int enabled) {\n'
+            + lift_ops(lift, 0x2c3ae18, [0x1e2e1009])
+            + '    if (enabled) frame_rate_horse_jump_host(c);\n'
+            + lift_ops(lift, 0x2c3ae1c, [0x1e292140])
+            + '    return COND_PL(c);\n}\n')
+
+
 def main():
     work = ROOT / 'build' / 'test' / 'frame_step'
     work.mkdir(parents=True, exist_ok=True)
     (work / 'layout.h').write_text(LAYOUT)
     exe = work / ('frame_step_check.exe' if os.name == 'nt' else 'frame_step_check')
     solver = work / 'solver_sites.c'
-    solver.write_text(solver_functions() + '\n' + follow_functions() + '\n' + staff_functions())
+    solver.write_text(solver_functions() + '\n' + follow_functions() + '\n' + staff_functions() +
+                      '\n' + horse_function())
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')

@@ -450,3 +450,8 @@ site fov        main 4c52f8 bd413e60 bd413e60 95276eee   # ldr s0, [x19, #0x13c]
 # Watch the menu background even at 16:9, including when the lens is enabled after the screens are set up.
 set fov_menu    NX2SARIA_FOV_PATCH        1
 site fov_menu   main 774068 f9400268 f9400268 951cb3a2   # same call as wide_bars
+
+# The horse jump (main+0x2c39eb0) chooses its blend path after comparing the update with one 60 Hz frame.
+# Keep the normal blend threshold in sync with the short frame (frame_rate.c frame_rate_horse_jump_host).
+set ohorse      NX2SARIA_HORSE_JUMP_FIX     1
+site ohorse     main 2c3ae18 1e2e1009 1e2e1009 94899822   # fmov s9, #1.0; bl page+0xea0

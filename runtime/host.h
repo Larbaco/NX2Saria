@@ -475,6 +475,7 @@ void frame_rate_day_host(Cpu *c);                         // the time of day's s
 void frame_rate_water_host(Cpu *c);                       // the water's ripple steps a frame (set ostep, page +0xf50)
 void frame_rate_sim_host(Cpu *c);                         // water and floor surfaces' fixed steps (set owater, page +0xf20)
 void frame_rate_sound_gate_host(Cpu *c);                  // the sound job at whole steps (set osound, page +0xf10)
+void frame_rate_horse_jump_host(Cpu *c);                  // the horse's jump blend (set ohorse, page +0xea0)
 void frame_rate_sound_step_host(Cpu *c);                  // the step the sound job hands on (set osound, page +0xf00)
 float frame_step_frames(void);                            // the 60 Hz frames the game steps per update (set ostep), else 1
 void frame_step_flight(float *page, float *game, uint64_t *presents);   // flight.c: the step at a host present
