@@ -24,8 +24,8 @@ The captures are in the game folder under `logs\captures`, one folder each, name
 | `capture.txt` | Written last: a folder that has it is complete. `key = value` lines under `[sections]`, see below |
 | `frame.png` | The frame on screen as the window got it, the overlay included, without the capture's own note (an HDR picture converted to sRGB) |
 | `frames.tsv` | The last 600 presents before the press and the 30 after: frame, interval and replay time in ms |
-| `log-tail.txt` | The last 256 KB of the run's log |
-| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg_private.h`) |
+| `log-tail.txt` | The last 256 KB of the run's log, with the account's folders written short like the log ([log-privacy.md](log-privacy.md)) |
+| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg_private.h`); a folder in the account's home written short |
 | `NX2Saria-save-<time>.zip` | The save the game would load next, as *Menu > Export save* writes it |
 | `flags.tsv`, `texts.tsv` | The game's on/off flags and its 64-character texts, by the hash of their names |
 | `flight/` | With `flight = 1`: the flight recorder's dump of the same moment (`tools/flight_view.py` reads it) |

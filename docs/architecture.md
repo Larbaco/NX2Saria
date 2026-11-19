@@ -50,7 +50,8 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
   a quarter of a second, or half a queue, into one write, so the log is up to that much behind the game. A thread's
   lines reach the log in the order it logged them: a line waits for the queue's lock, and one that finds the queue
   full is written after everything queued before it. A fatal error, the crash report and the end of the process write
-  the queue out first (`rt_log_sync`). `NX2SARIA_LOG_ASYNC=0` writes each line where it is logged.
+  the queue out first (`rt_log_sync`). `NX2SARIA_LOG_ASYNC=0` writes each line where it is logged. Every line has
+  the account's folders written short first (`runtime/log_privacy.c`, [log-privacy.md](log-privacy.md)).
 - OS calls the host makes go through `runtime/platform/` (`platform.h`, `win32.c`).
 
 #### Threads and cores
