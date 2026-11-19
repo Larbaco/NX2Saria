@@ -12,8 +12,9 @@ are, in one language.
 | `README.md` | `README.<lang>.md`, beside it |
 | `docs/<name>.md` | `docs/<lang>/<name>.md` |
 
-Translated now: `README.md`, `docs/install.md`, `docs/known-issues.md`, `docs/controls.md` and `docs/amiibo.md`.
-English paths never move for a translation: release notes, update manifests and code comments link to them.
+Translated now: `README.md`, `docs/install.md`, `docs/known-issues.md`, `docs/controls.md`, `docs/amiibo.md` and
+`docs/telemetry.md`. English paths never move for a translation: release notes, update manifests and code comments link
+to them.
 
 ## A translation's first lines
 
