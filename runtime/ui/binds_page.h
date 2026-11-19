@@ -5,6 +5,7 @@
 // cell and pressing the new one, and the reset of them all. binds_after_page, after opt_end: the window that waits for
 // the press.
 void binds_rows(float scale);
+int binds_action_row_count(void);
 void binds_after_page(void);
 // A cell waits for a press (or its press is still reaching the menu): B, Esc, L / R and the tab keys stay on the page.
 bool binds_modal(void);

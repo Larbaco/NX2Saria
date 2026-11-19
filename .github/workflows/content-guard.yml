@@ -22,4 +22,5 @@ jobs:
       - run: python tools/check_content.py
       - run: python tests/cfg_rows_check.py
       - run: python tests/release_files_test.py
+      - run: python tests/bind_labels_test.py
       - run: python tools/docs_i18n.py check

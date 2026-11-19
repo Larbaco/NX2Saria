@@ -21,6 +21,7 @@ void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 static_assert(UI_BIND_SHAKE - UI_BIND_A == ACTION_COUNT - 1 && B_SHAKE == ACTION_COUNT - 1, "UI_BIND_* follow the actions");
 static_assert(UI_BIND_DESC_DOWN - UI_BIND_DESC_A == B_DOWN, "UI_BIND_DESC_* follow the actions");
+static_assert(UI_BIND_ACTION_DOWN - UI_BIND_ACTION_A == B_DOWN, "UI_BIND_ACTION_* follow the game buttons");
 static_assert(UI_KEY_PAGEDOWN - UI_KEY_SPACE == KEY_PAGEDOWN - KEY_SPACE, "UI_KEY_* follow the key ids");
 static_assert(UI_PAD_RPADDLE2 - UI_PAD_SOUTH == PAD_RPADDLE2 - PAD_SOUTH && PAD_RPADDLE2 == PAD_COUNT - 1,
               "UI_PAD_* follow the pad ids");
@@ -34,6 +35,12 @@ static const int kButtons[] = {B_A, B_B, B_X, B_Y, B_L, B_R, B_ZL, B_ZR, B_STICK
                                B_UP, B_DOWN, B_LEFT, B_RIGHT};
 static const int kMove[] = {B_SL_UP, B_SL_DOWN, B_SL_LEFT, B_SL_RIGHT};
 static const int kCamera[] = {B_SR_UP, B_SR_DOWN, B_SR_LEFT, B_SR_RIGHT};
+enum {
+    BIND_ACTION_ROWS = sizeof kButtons / sizeof *kButtons + sizeof kMove / sizeof *kMove + sizeof kCamera / sizeof *kCamera
+};
+static_assert(BIND_ACTION_ROWS == 24, "update the bind action-label count when rows change");
+
+int binds_action_row_count(void) { return BIND_ACTION_ROWS; }
 
 static struct {
     int action = -1, cell;   // the cell waiting for a press (0, 1 keys, 2 the controller); action -1 none
@@ -50,6 +57,12 @@ static UiTextId action_desc(int a) {
     if (a <= B_DOWN) return (UiTextId)(UI_BIND_DESC_A + a);   // Ocarina gives each D-pad direction its own action
     if (a == B_SHAKE) return UI_BIND_DESC_SHAKE;
     return a <= B_SL_DOWN ? UI_BIND_DESC_MOVE : UI_BIND_DESC_CAMERA;
+}
+
+static UiTextId action_hint(int a) {
+    if (a <= B_DOWN) return (UiTextId)(UI_BIND_ACTION_A + a);
+    if (a <= B_SL_DOWN) return UI_BIND_ACTION_MOVE;
+    return UI_BIND_ACTION_CAMERA;
 }
 
 static void utf8(uint32_t c, char *out, size_t n) {
@@ -175,7 +188,7 @@ static void row_action(int a, const InputMap &m, int layout) {
     char key[32];
     snprintf(key, sizeof key, "BIND_%s", input_action_name(a));
     const char *note = g_note_action == a && plat_now_ns() < g_note_until ? g_note : nullptr;
-    int r = opt_bind_row(key, action_label(a), action_desc(a), cells, enabled, note);
+    int r = opt_bind_row(key, action_label(a), menu_text(action_hint(a)), action_desc(a), cells, enabled, note);
     if (g_cap.action >= 0 || r < 0) return;
     if (r < 3) {
         g_cap.action = a;

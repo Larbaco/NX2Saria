@@ -1059,8 +1059,8 @@ void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2) {
     ImGui::Dummy(ImVec2(w, fs * 1.2f));
 }
 
-int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *const cells[3], const bool enabled[3],
-                 const char *note) {
+int opt_bind_row(const char *key, const char *label, const char *action, UiTextId desc, const char *const cells[3],
+                 const bool enabled[3], const char *note) {
     ImGui::PushID(key);
     const float margin = row_margin();   // room for the cursor, as the option rows leave
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + margin);
@@ -1069,7 +1069,12 @@ int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *
     bind_columns(p.x, w, cx, &cw);
     ImDrawList *dl = ImGui::GetWindowDrawList();
     float pad = 6 * g_scale;
-    fit_text(dl, p.x + 16 * g_scale, cx[0] - fs * 0.3f, p.y, h, IM_COL32(240, 236, 224, 255), label, false);
+    char full_label[256];
+    snprintf(full_label, sizeof full_label, "%s (%s)", label, action ? action : "—");
+    const float label_x = p.x + 16 * g_scale, label_right = cx[0] - fs * 0.3f;
+    const float label_room = fmaxf(label_right - label_x, 1.0f);
+    const bool inline_action = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0, full_label).x <= label_room;
+    fit_text(dl, label_x, label_right, p.y, h, IM_COL32(240, 236, 224, 255), inline_action ? full_label : label, false);
     int result = -1;
     bool row_foc = false, row_hov = false;
     for (int c = 0; c < 3; c++) {
@@ -1110,9 +1115,15 @@ int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *
     }
     char k[64];
     snprintf(k, sizeof k, "NX2SARIA_%s", key);
-    if (row_foc) desc_set(g_focus, menu_text(desc), k, NULL, NULL);
-    if (row_hov) desc_set(g_hover, menu_text(desc), k, NULL, NULL);
-    if (!g_first.text[0]) desc_set(g_first, menu_text(desc), k, NULL, NULL);
+    char help[UI_DESC_BYTES];
+    const char *description = menu_text(desc);
+    if (!inline_action && action && *action) {
+        snprintf(help, sizeof help, "%s\n\n%s", description, action);
+        description = help;
+    }
+    if (row_foc) desc_set(g_focus, description, k, NULL, NULL);
+    if (row_hov) desc_set(g_hover, description, k, NULL, NULL);
+    if (!g_first.text[0]) desc_set(g_first, description, k, NULL, NULL);
     if (note && (row_foc || row_hov)) {   // e.g. what moved here, after the description
         Desc &d = row_hov ? g_hover : g_focus;
         size_t n = strlen(d.text);
