@@ -107,11 +107,13 @@ O build inicia cada compilação quando a memória livre comporta, então não p
 
 **Encontrou um bug?** Abra uma issue no [rastreador de issues](https://github.com/Larbaco/NX2Saria/issues) e anexe `logs\nx2saria.log` (`logs/nx2saria.log` no Linux) da pasta do jogo. Diga qual versão ou commit, sistema operacional, GPU e driver você usa e como reproduzir o problema; o [CONTRIBUTING.md](CONTRIBUTING.md) (em inglês) tem a lista completa. Confira se os anexos não têm caminhos privados e nunca envie arquivos do jogo nem chaves.
 
+O launcher também pode enviar um relatório curto de como cada sessão rodou, e comentários, sem conta no GitHub: só quando você escolhe. [Relatórios de sessão e comentários](docs/pt-BR/telemetry.md) lista todos os campos.
+
 ## Documentação
 
 | Tema | Guias |
 |---|---|
-| Jogar | [Instalar e atualizar](docs/pt-BR/install.md) · [Controles](docs/pt-BR/controls.md) · [Configurações](nx2saria.ini.example) (em inglês) · [Amiibo](docs/pt-BR/amiibo.md) · [Problemas conhecidos](docs/pt-BR/known-issues.md) |
+| Jogar | [Instalar e atualizar](docs/pt-BR/install.md) · [Controles](docs/pt-BR/controls.md) · [Configurações](nx2saria.ini.example) (em inglês) · [Amiibo](docs/pt-BR/amiibo.md) · [Problemas conhecidos](docs/pt-BR/known-issues.md) · [Relatórios de sessão](docs/pt-BR/telemetry.md) |
 | Trackers | [API de tracker](docs/tracker-api.md) (em inglês) · [Ocarina Atlas](docs/ocarina-atlas.md) (em inglês) · [hyrule-tracker](docs/hyrule-tracker.md) (em inglês) |
 | Versões | [Notas de versão](docs/releases/) (em inglês) · [Changelogs](docs/changelog/) (em inglês) |
 | Compilação | [Build kit](docs/README-BuildKit.md) (em inglês) · [A partir do código-fonte](docs/building.md) (em inglês) · [Launcher](docs/launcher.md) (em inglês) |

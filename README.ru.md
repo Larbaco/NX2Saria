@@ -160,11 +160,15 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 которые вы используете, и как воспроизвести ошибку; полный список есть в [CONTRIBUTING.md](CONTRIBUTING.md) (на
 английском). Проверьте вложения на личные пути и никогда не загружайте файлы игры или ключи.
 
+Лаунчер также может отправлять короткий отчёт о том, как прошёл каждый сеанс, и комментарии без учётной записи
+GitHub: только когда вы так решите. В [отчётах о сеансах и комментариях](docs/ru/telemetry.md) перечислено каждое
+поле.
+
 ## Документация
 
 | Тема | Руководства |
 |---|---|
-| Игра | [Установка и обновление](docs/ru/install.md) · [Управление](docs/ru/controls.md) · [Настройки](nx2saria.ini.example) (на английском) · [Amiibo](docs/ru/amiibo.md) · [Известные проблемы](docs/ru/known-issues.md) |
+| Игра | [Установка и обновление](docs/ru/install.md) · [Управление](docs/ru/controls.md) · [Настройки](nx2saria.ini.example) (на английском) · [Amiibo](docs/ru/amiibo.md) · [Известные проблемы](docs/ru/known-issues.md) · [Отчёты о сеансах](docs/ru/telemetry.md) |
 | Трекеры | [API трекеров](docs/tracker-api.md) (на английском) · [Ocarina Atlas](docs/ocarina-atlas.md) (на английском) · [hyrule-tracker](docs/hyrule-tracker.md) (на английском) |
 | Выпуски | [Примечания к выпускам](docs/releases/) (на английском) · [Списки изменений](docs/changelog/) (на английском) |
 | Сборка | [Набор для сборки](docs/README-BuildKit.md) (на английском) · [Из исходного кода](docs/building.md) (на английском) · [Лаунчер](docs/launcher.md) (на английском) |

@@ -1,3 +1,7 @@
+<!-- languages -->
+**English** · [Português (Brasil)](pt-BR/telemetry.md) · [Русский](ru/telemetry.md) · [简体中文](zh-Hans/telemetry.md)
+<!-- /languages -->
+
 # Session reports and comments
 
 The launcher can send two things to the project's own server, and only when you say so:
