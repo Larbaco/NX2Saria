@@ -17,6 +17,9 @@ The repository's additions are all rights reserved (`LICENSE-ADDITIONS`). It nev
 
 - Copy only MIT, BSD, ISC, zlib or Apache-2.0 code, keep its header, and add a row to `THIRD_PARTY_NOTICES.md`.
 - GPL code is never copied: write our own.
+- Art goes in only with a clearly free licence (CC0 or equivalent), with a `SOURCE.md` and a `SHA256SUMS` beside it
+  (`prompt-art/`, CONTRIBUTING.md "Art from other projects"); `tools/check_content.py` refuses a picture there that the
+  list does not hold.
 - `tools/vendor/` stays byte-identical to its source; Windows changes go in `tools/extract.py`.
 
 ## Code

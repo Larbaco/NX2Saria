@@ -1,4 +1,4 @@
-"""Refuse files that look like game content, keys, generated game code or compiled shaders.
+"""Refuse files that look like game content, keys, generated game code or compiled shaders, and art that is not listed.
 
 Runs in CI on every push and pull request, and locally as the pre-commit hook
 (.githooks/pre-commit). With no arguments it checks every tracked file; with
@@ -8,6 +8,7 @@ Standard library only, so it runs before any environment is set up.
 """
 
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
@@ -116,12 +117,49 @@ def execution_profile(path: Path) -> bool:
     return path.suffix.lower() in (".profdata", ".profraw")
 
 
+# The button art in the repository: pictures from a pack with a clear free licence (CC0), which SOURCE.md names. Every
+# other file of the folder is a picture listed in SHA256SUMS with its SHA-256, so a picture of unknown origin, or one
+# changed by hand, is refused.
+ART_FOLDER = "prompt-art"
+ART_RECORDS = ("SOURCE.md", "SHA256SUMS")
+
+
+def art_sums(staged: bool) -> dict[str, str]:
+    """ART_FOLDER's SHA256SUMS (the staged one for --staged): picture path inside the folder -> SHA-256."""
+    path = Path(ART_FOLDER) / "SHA256SUMS"
+    data = staged_bytes(path) if staged else (path.read_bytes() if path.is_file() else None)
+    sums = {}
+    for line in (data or b"").decode("utf-8", errors="replace").splitlines():
+        digest, _, name = line.partition("  ")
+        if name:
+            sums[name] = digest.lower()
+    return sums
+
+
+def art_problem(path: Path, data: bytes | None, sums: dict[str, str]) -> str | None:
+    """Why a file of ART_FOLDER may not be committed, or None: it is SOURCE.md or SHA256SUMS, or a picture listed in
+    SHA256SUMS with its SHA-256."""
+    parts = path.as_posix().split("/")
+    if parts[0] != ART_FOLDER or len(parts) < 2 or path.as_posix() in (f"{ART_FOLDER}/{n}" for n in ART_RECORDS):
+        return None
+    rel = "/".join(parts[1:])
+    if rel not in sums:
+        return (f"art not listed in {ART_FOLDER}/SHA256SUMS: only pictures of a pack with a clear free licence, named "
+                f"in {ART_FOLDER}/SOURCE.md and listed there, go in")
+    if data is None:
+        data = path.read_bytes() if path.is_file() else b""
+    if hashlib.sha256(data).hexdigest() != sums[rel]:
+        return f"differs from its SHA-256 in {ART_FOLDER}/SHA256SUMS: the pictures go in unmodified"
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--staged", action="store_true", help="check staged files only")
     args = parser.parse_args()
 
     failed = False
+    sums = art_sums(args.staged)
     for path in list_files(args.staged):
         # --staged checks what the commit takes: a marker staged and then removed from the working copy alone
         # passed when the file on disk was read
@@ -133,11 +171,15 @@ def main() -> int:
             problems.append("recorded from a game folder (shaders, answers, pipeline keys or a pipeline list)")
         if execution_profile(path):
             problems.append("execution profile of the game's code: it stays in build/ (tools/pgo.py)")
+        art = art_problem(path, data, sums)
+        if art:
+            problems.append(art)
         for problem in problems:
             print(f"{path}: {problem}")
             failed = True
     if failed:
-        print("\nGame content, keys, generated game code and compiled shaders never go into the repository.")
+        print("\nGame content, keys, generated game code and compiled shaders never go into the repository, nor art")
+        print("without a clear free licence.")
         print("See CONTRIBUTING.md.")
         return 1
     return 0
