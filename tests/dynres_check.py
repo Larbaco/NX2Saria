@@ -7,8 +7,17 @@ and checks that
   - a limit changed while it runs moves the target on the next frame, with one log line, also when the menu changed
     it (or dyn_res_target) and dynres_read took the new target first; a refresh rate wandering under 1 % after the
     start line logs nothing, and after dyn_res off and on a move back to the earlier run's last target is logged;
-  - each step is held for dyn_res_step 60ths of a second of the clock at 60 and 240 fps (45: 0.75 s; 90: 1.5 s), down
-    while the GPU is over the target and back up once it is under three quarters of it.
+  - each step is held for dyn_res_step 60ths of a second of the clock at 60 and 240 fps (90: 1.5 s), never less than
+    1 s (60, 45 and 8 all hold 1 s), down while the GPU is over the target and back up once it is under three quarters
+    of it, the first step up no sooner than 3 s after a step down;
+  - without an upscaler (widescreen.c wide_dynres_base gives a share) it steps the scene share: from the share in
+    effect down by 0.87 a step to the floor, the lower of that share and dyn_res_min, and back up when the GPU is
+    light; never above the share, never below the floor, and not at all when the share is at or under dyn_res_min
+    (0.4 against 0.5), with one line that says so; a changed scene_share or dyn_res_min starts again at the share;
+  - a GPU time at the edge of the target (alternating just over and under 108 %, or landing at the target after a
+    step down) does not swing between steps, and where one step changes the GPU time by more than the gap between the
+    thresholds (a step up lands over 108 % again) the wait before a step up doubles each time, so ten minutes hold
+    a bounded number of steps, on both paths.
 
 No game files, no GPU. Usage: python tests/dynres_check.py [--cc <clang>]
 """
@@ -32,7 +41,9 @@ HARNESS = r'''
 static unsigned ver = 1;
 static const char *dlss = "quality", *dyn = "1";
 static double set_target_ms;   // NX2SARIA_DYN_RES_TARGET as cfg_double reads it (0: the default)
-static int set_step = 45;      // NX2SARIA_DYN_RES_STEP
+static int set_step = 60;      // NX2SARIA_DYN_RES_STEP
+static double set_min = 0.5;   // NX2SARIA_DYN_RES_MIN
+static double wbase = -1;      // widescreen.c wide_dynres_base: -1 an upscaler runs, else the scene share in effect
 static double game_hz = 60;
 static uint64_t busy = 1, now_ns = 1000000000ull;
 static int timing, logs;
@@ -42,7 +53,10 @@ static const char *cfg_value(const char *k) {
     return !strcmp(k, "NX2SARIA_DLSS") ? dlss : !strcmp(k, "NX2SARIA_DYN_RES") ? dyn : "0";
 }
 static int cfg_bool(const char *k) { return strcmp(cfg_value(k), "0") != 0; }
-static double cfg_double(const char *k) { return !strcmp(k, "NX2SARIA_DYN_RES_TARGET") ? set_target_ms : 0; }
+static double cfg_double(const char *k) {
+    return !strcmp(k, "NX2SARIA_DYN_RES_TARGET") ? set_target_ms : !strcmp(k, "NX2SARIA_DYN_RES_MIN") ? set_min : 0;
+}
+static double wide_dynres_base(void) { return wbase; }
 static int cfg_int(const char *k) { return !strcmp(k, "NX2SARIA_DYN_RES_STEP") ? set_step : 0; }
 static double frame_step_game_hz(void) { return game_hz; }
 static uint64_t vk_gpu_busy_all(void) { return busy; }
@@ -79,6 +93,49 @@ static int frames_to_change(double hz, double gpu_ms, int limit) {
     for (int k = 1; k <= limit; k++)
         if (frame(hz, gpu_ms) != from) return k;
     return -1;
+}
+
+// The scene share in use on the plain path: dynamic resolution's step, else the share it steps from.
+static double share_now(void) {
+    double d = dynres_share();
+    return d > 0 ? d : wbase;
+}
+
+// Seconds of frames at hz with the GPU time model(frame index) in ms: how many times the step changed. The lowest and
+// highest share seen go to *lo and *hi on the plain path, the fewest frames a step was held to *held.
+static int run(double hz, double secs, double (*model)(int), double *lo, double *hi, int *held) {
+    int n = (int)(secs * hz), from = D.level, switches = 0, since = 0;
+    if (lo) *lo = share_now(), *hi = share_now();
+    if (held) *held = 1 << 30;
+    for (int k = 0; k < n; k++) {
+        since++;
+        if (frame(hz, model(k)) != from) {
+            switches++, from = D.level;
+            if (held && switches > 1 && since < *held) *held = since;
+            since = 0;
+        }
+        if (lo) {
+            double s = share_now();
+            if (s < *lo) *lo = s;
+            if (s > *hi) *hi = s;
+        }
+    }
+    return switches;
+}
+
+// GPU models against a 60 fps target (16.67 ms). The plain path's time follows the scene's pixels.
+static double T60 = 1000.0 / 60, load;
+static double heavy(int k) { (void)k; return T60 * 2; }
+static double light(int k) { (void)k; return T60 * 0.3; }
+static double pixels(int k) { (void)k; double r = share_now() / wbase; return T60 * load * r * r; }
+// just over and just under 108 %% of the target, frame by frame, at the share stepped from
+static double edge(int k) { double r = share_now() / wbase; return T60 * (k & 1 ? 1.09 : 1.07) * r * r; }
+// a step costs more than the gap between the thresholds: 1.1 of the target at the top, 0.6 of that a step lower
+static double steep(int k) { (void)k; return T60 * 1.1 * pow(0.6, D.level - D.base); }
+
+static void plain_start(double base, double min) {
+    wbase = base, set_min = min, game_hz = 60, set_step = 60;
+    restart();
 }
 
 int main(void) {
@@ -142,9 +199,9 @@ int main(void) {
     frame(144, 1);
     CHECK(logs == before + 1 && strstr(last_log, "6.94"), "back to the earlier run's last target: %%d lines (%%s)",
           logs - before, last_log);
-    // Each step is held for a time, whatever the frame rate.
-    static const struct { double hz; int step; double hold_s; } holds[] = {{60, 45, 0.75}, {240, 45, 0.75},
-                                                                           {240, 90, 1.5}, {144, 8, 8 / 60.0}};
+    // Each step is held for a time, whatever the frame rate, and never less than 1 s.
+    static const struct { double hz; int step; double hold_s; } holds[] = {{60, 60, 1.0}, {240, 45, 1.0},
+                                                                           {240, 90, 1.5}, {144, 8, 1.0}};
     for (int i = 0; i < 4; i++) {
         double hz = holds[i].hz;
         game_hz = hz, set_step = holds[i].step;
@@ -167,7 +224,134 @@ int main(void) {
         n = frames_to_change(hz, target * 0.9, want * 3);
         CHECK(n < 0, "%%.0f fps: a GPU between three quarters of the target and 8 %%%% over it moved the step", hz);
     }
-    set_step = 45;
+    set_step = 60;
+    // The mode path: the first step up waits 3 s after a step down, however light the GPU.
+    game_hz = 60;
+    restart();
+    frames_to_change(60, T60 * 2, 100000);
+    int n = frames_to_change(60, T60 * 0.3, 100000);
+    CHECK(D.level == 0 && n >= 180, "the mode path: up %%d frames after a step down, want 180 (3 s) or more", n);
+
+    // ---- The plain path: no upscaler runs, widescreen.c gives the scene share in effect.
+    dlss = "dlaa";   // any DLSS setting: it is not read on this path
+    plain_start(0.75, 0.5);
+    static const double want75[] = {0.75, 0.6525, 0.567675, 0.5};
+    CHECK(D.on && D.plain && D.low == 3, "0.75 down to 0.5: on %%d, plain %%d, %%d steps", D.on, D.plain, D.low);
+    for (int i = 0; i < 4 && i <= D.low; i++)
+        CHECK(NEAR(D.share[i], want75[i]), "step %%d is %%.4f, want %%.4f", i, D.share[i], want75[i]);
+    CHECK(strstr(last_log, "dynamic resolution on (the scene share, no upscaler runs)")
+          && strstr(last_log, "scene share 0.75 down to 0.50") && strstr(last_log, "1.00 s apart"), "start line: %%s",
+          last_log);
+    CHECK(timing && dynres_override() == NULL && dynres_share() == 0, "at the start: the share in effect");
+    double lo, hi;
+    int held;
+    int sw = run(60, 20, heavy, &lo, &hi, &held);
+    CHECK(sw == 3 && NEAR(lo, 0.5) && NEAR(hi, 0.75) && NEAR(dynres_share(), 0.5) && held >= 59,
+          "heavy: %%d steps, %%.3f..%%.3f, now %%.3f, held %%d frames", sw, lo, hi, dynres_share(), held);
+    CHECK(strstr(last_log, "scene share 0.57 -> 0.50"), "the step line: %%s", last_log);
+    sw = run(60, 30, light, &lo, &hi, &held);
+    CHECK(sw == 3 && NEAR(lo, 0.5) && NEAR(hi, 0.75) && dynres_share() == 0 && held >= 59,
+          "light: %%d steps, %%.3f..%%.3f, now %%.3f, held %%d frames", sw, lo, hi, dynres_share(), held);
+    CHECK(strstr(last_log, "scene share 0.65 -> 0.75"), "the step line up: %%s", last_log);
+    // The first step up comes 3 s after the last step down, however light the GPU.
+    frames_to_change(60, T60 * 2, 100000);
+    n = frames_to_change(60, T60 * 0.3, 100000);
+    CHECK(n >= 180 && dynres_share() == 0, "up %%d frames after a step down, want 180 (3 s) or more", n);
+    // dyn_res_step 8 still holds each step 1 s, and 90 says its longer hold.
+    set_step = 90, ver++;
+    frame(60, T60);
+    CHECK(strstr(last_log, "steps at least 1.50 s apart"), "dyn_res_step 90: %%s", last_log);
+    set_step = 8, ver++;
+    frame(60, T60);
+    CHECK(strstr(last_log, "steps at least 1.00 s apart"), "dyn_res_step 8: %%s", last_log);
+    sw = run(60, 10, heavy, NULL, NULL, &held);
+    CHECK(sw == 3 && held >= 59, "dyn_res_step 8: %%d steps, held %%d frames", sw, held);
+    set_step = 60, ver++;
+
+    // The floor is the lower of the share and dyn_res_min.
+    plain_start(1.0, 0.33);
+    CHECK(D.on && D.low == 8 && NEAR(D.share[D.low], 0.33), "1 down to 0.33: %%d steps to %%.3f", D.low,
+          D.share[D.low]);
+    for (int i = 1; i <= D.low; i++)
+        CHECK(D.share[i] < D.share[i - 1] && D.share[i] >= 0.33 && (i == D.low || NEAR(D.share[i], D.share[i - 1] * 0.87)),
+              "step %%d: %%.4f after %%.4f", i, D.share[i], D.share[i - 1]);
+    sw = run(60, 30, heavy, &lo, &hi, NULL);
+    CHECK(sw == 8 && NEAR(lo, 0.33) && NEAR(hi, 1.0), "1 down to 0.33 under load: %%d steps, %%.3f..%%.3f", sw, lo, hi);
+    plain_start(0.67, 0.6);
+    CHECK(D.on && D.low == 1 && NEAR(D.share[1], 0.6), "0.67 down to 0.6: %%d steps to %%.3f", D.low, D.share[D.low]);
+    // A share at or under dyn_res_min (the Low preset's 0.4 on an integrated GPU, against 0.5): no room, one line.
+    plain_start(0.4, 0.5);
+    CHECK(!D.on && !timing && strstr(last_log, "has no room: the scene share 0.40 is at or under dyn_res_min 0.50"),
+          "0.4 against 0.5: on %%d (%%s)", D.on, last_log);
+    before = logs;
+    sw = run(60, 10, heavy, &lo, &hi, NULL);
+    ver++, frame(60, T60), ver++, frame(60, T60);
+    CHECK(sw == 0 && NEAR(lo, 0.4) && NEAR(hi, 0.4) && dynres_share() == 0 && logs == before,
+          "0.4 against 0.5 under load: %%d steps, %%.3f..%%.3f, %%d more lines", sw, lo, hi, logs - before);
+    plain_start(0.5, 0.5);
+    CHECK(!D.on && strstr(last_log, "has no room"), "0.5 against 0.5: on %%d (%%s)", D.on, last_log);
+    plain_start(0, 0.5);
+    CHECK(!D.on && strstr(last_log, "no scene share to step"), "a share of 0: on %%d (%%s)", D.on, last_log);
+
+    // A changed scene_share or dyn_res_min starts again at the share in effect.
+    plain_start(0.75, 0.5);
+    run(60, 5, heavy, NULL, NULL, NULL);
+    CHECK(D.level >= 2, "heavy for 5 s: step %%d", D.level);
+    wbase = 0.67, ver++;
+    frame(60, T60 * 2);
+    CHECK(D.on && D.level == 0 && NEAR(D.share[0], 0.67) && dynres_share() == 0
+          && strstr(last_log, "scene share 0.67 down to 0.50"), "scene_share 0.67: step %%d (%%s)", D.level, last_log);
+    run(60, 3, heavy, NULL, NULL, NULL);
+    CHECK(D.level >= 1, "heavy again: step %%d", D.level);
+    set_min = 0.4, ver++;
+    frame(60, T60 * 2);
+    CHECK(D.level == 0 && strstr(last_log, "scene share 0.67 down to 0.40"), "dyn_res_min 0.4: step %%d (%%s)",
+          D.level, last_log);
+    run(60, 3, heavy, NULL, NULL, NULL);
+    wbase = 0.75;   // the share in effect moved without a settings change seen first (the heap's limit, the path)
+    frame(60, T60 * 2);
+    CHECK(D.level == 0 && strstr(last_log, "scene share 0.75 down to 0.40"), "a moved share: step %%d (%%s)", D.level,
+          last_log);
+    // An upscaler that runs takes the mode path, which the share leaves alone.
+    wbase = -1, dlss = "quality", ver++;
+    frame(60, T60);
+    CHECK(D.on && !D.plain && dynres_share() == 0 && strstr(last_log, "the upscaler's mode"), "an upscaler: %%s",
+          last_log);
+    run(60, 5, heavy, NULL, NULL, NULL);
+    CHECK(dynres_share() == 0 && dynres_override() && !strcmp(dynres_override(), "performance"),
+          "an upscaler under load: share %%.3f, mode %%s", dynres_share(), dynres_override());
+    dlss = "dlaa", ver++;
+    frame(60, T60);
+    CHECK(!D.on && dynres_override() == NULL && strstr(last_log, "needs a DLSS upscaling mode"), "DLAA: %%s", last_log);
+    dlss = "quality";
+
+    // A GPU time at the edge of the target does not swing between steps.
+    plain_start(0.75, 0.5);
+    sw = run(60, 600, edge, &lo, &hi, NULL);
+    CHECK(sw <= 1 && lo >= 0.65, "just over and under 108 %%%% for 10 min: %%d steps, down to %%.3f", sw, lo);
+    plain_start(0.75, 0.5);
+    load = 1.32;   // a step down lands at the target
+    sw = run(60, 600, pixels, &lo, &hi, NULL);
+    CHECK(sw == 1 && NEAR(lo, 0.6525), "at the target after a step down, 10 min: %%d steps, down to %%.3f", sw, lo);
+    plain_start(0.75, 0.5);
+    load = 0.9;   // between the thresholds
+    sw = run(60, 600, pixels, NULL, NULL, NULL);
+    CHECK(sw == 0, "between the thresholds, 10 min: %%d steps", sw);
+    // One step changes the GPU time by more than the gap: down at 1.1, up at 0.66, over again after the step up.
+    // Without the growing wait that is a pair of steps every 4 s, 300 in ten minutes.
+    plain_start(0.75, 0.5);
+    sw = run(60, 600, steep, NULL, NULL, &held);
+    CHECK(sw <= 40 && sw >= 2 && D.up_wait_ns == 48000000000ull, "steep, plain path, 10 min: %%d steps, wait %%.0f s",
+          sw, D.up_wait_ns / 1e9);
+    CHECK(run(60, 120, steep, NULL, NULL, NULL) <= 6, "steep, plain path: the last two minutes keep few steps");
+    wbase = -1, dlss = "quality", game_hz = 60;
+    restart();
+    sw = run(60, 600, steep, NULL, NULL, NULL);
+    CHECK(!D.plain && sw <= 40 && sw >= 2, "steep, mode path, 10 min: %%d steps", sw);
+    // A step up that holds 5 s brings the wait back to 3 s.
+    run(60, 120, light, NULL, NULL, NULL);
+    CHECK(D.level == D.base && D.up_wait_ns == 3000000000ull, "light after steep: step %%d, wait %%.0f s", D.level,
+          D.up_wait_ns / 1e9);
     printf(fails ? "dynres: %%d failures\n" : "dynres: ok\n", fails);
     return fails != 0;
 }

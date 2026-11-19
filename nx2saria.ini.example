@@ -192,13 +192,20 @@
 # frame's commands begin with a wait for that signal (0 to 100; 0: the frame is set aside at once and drawn at its
 # present, as before).
 # gate_wait_ms = 10
-# Dynamic resolution, 0 or 1, applied at once: with a DLSS upscaling mode, the scene resolution follows the GPU time
-# per frame toward dyn_res_target milliseconds (1 to 100; 0 is the time of a frame the game draws under fps_limit,
-# 1000 / the limit, and 16.7 with fps_limit = unlimited), one DLSS step at a time, each held for dyn_res_step 60ths of
-# a second (8 to 600; 45 is 0.75 s at any frame rate), from the DLSS mode set down to performance. Default: off.
+# Dynamic resolution, 0 or 1, applied at once: the 3D scene's resolution follows the GPU time per frame toward
+# dyn_res_target milliseconds (1 to 100; 0 is the time of a frame the game draws under fps_limit, 1000 / the limit, and
+# 16.7 with fps_limit = unlimited), one step at a time; the HUD and the text keep the picture's size. While DLSS or FSR
+# runs it steps the upscaler's mode, from the DLSS mode set (an upscaling one) down to performance. Without them it
+# steps scene_share, from the share in effect (the one set, the quality preset's, or 0.75) down to dyn_res_min, each
+# step 0.87 of the one above on each axis; a scene_share at or under dyn_res_min leaves it no room. Each step is held
+# for dyn_res_step 60ths of a second (8 to 600; no step comes sooner than 1 s, so values under 60 hold 1 s), and a
+# step up waits at least 3 s after a step down, longer when a step up keeps being undone. The quality presets never
+# turn it on. Default: off.
 # dyn_res = 0
 # dyn_res_target = 0
 # dyn_res_step = 45
+# The lowest scene share dynamic resolution takes without DLSS or FSR, 0.33 to 1. Default: 0.5.
+# dyn_res_min = 0.5
 # Processors. On a processor whose dies have L3 caches of different sizes (AMD's two-die X3D processors, with 3D
 # V-Cache on one die) the game runs on the die with the larger cache when that die has 8 cores or more: 1 = on,
 # 0 = Windows places the threads.
@@ -710,7 +717,8 @@
 # to the game's dynamic resolution, down to a third of the picture under load. A larger scene needs more of the
 # memory the game keeps for its render targets, which is set aside at the start: 1 takes 238 MiB more than 0.75 at
 # 2560x1440, 533 MiB more at 3840x2160 and 712 MiB more at 5120x2160, as dlss = dlaa does. Changes while the game runs
-# take effect at once up to the share the game started with, a larger one at the next start.
+# take effect at once up to the share the game started with, a larger one at the next start. With dyn_res = 1 the
+# scene goes below this share under load, down to dyn_res_min, and back to it when the GPU has room.
 # scene_share = 0.75
 # Picture shape when the window's shape differs from the game resolution's (a 16:9 picture in a 21:9 fullscreen
 # window): fit, the default, keeps the shape, with black bars at the sides or above and below, so a 16:9 game in a wider

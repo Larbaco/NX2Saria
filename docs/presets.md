@@ -95,6 +95,9 @@ Decisions:
   of its own that falls to Low for lacking mesh shaders or video memory (a GTX 1080 Ti, an RX 580 8 GB, a GTX 1650)
   keeps 16x filtering and full foliage, which cost it nothing measurable. `shadow_res` has no effect on 1.1.1 (the
   start logs `cfg: SHADOW_RES has no effect on this game version`) and is in no tier.
+- **No tier turns dynamic resolution on** (`dyn_res`). It changes the picture's sharpness from moment to moment,
+  which is the player's choice to make; a tier's `scene_share` is the share it steps down from when the player turns
+  it on ([below](#dynamic-resolution)).
 - **No tier sets `texture_detail`.** It cost nothing measurable on the bench, and its `auto` already picks smaller
   textures by the budget the driver grants, which knows more than a tier does.
 
@@ -195,7 +198,8 @@ profile still sets them, so on the Deck it is the Low preset that lowers the sce
   whatever the scene's size. Read at start.
 - **`scene_share`**, the 3D scene's share of the picture's height while neither DLSS nor FSR runs (`plain_share`):
   0.75 shipped, 1 the picture's full size (the Upscaling row's *Native (100%)*), 0 the game's own dynamic resolution
-  (down to a third of the picture under load). Live.
+  (down to a third of the picture under load). Live. With `dyn_res = 1` the scene goes below it under load
+  ([Dynamic resolution](#dynamic-resolution)).
 - **DLSS, FSR 3.1 or FSR 4** (`dlaa = 1`): the mode's ratio replaces `scene_share` (DLAA 1, quality 2/3, balanced
   0.58, performance 1/2, ultra performance 1/3; `mode_share`), and the upscaler enlarges the scene to the picture.
 
@@ -232,6 +236,42 @@ The menu's *Scene resolution* row (`row_scene_res`, below *Upscaling*) sets `sce
 (*(game)*) and 100 % (*(native)*); the entry for "unset" is named after where its share comes from, *(game)* or
 *(preset)*, and takes the place of the fixed share it equals. A share set by hand that is none of these is shown as it
 is. The row is shown only while neither DLSS nor FSR is chosen, since their mode decides the scene's size then.
+
+### Dynamic resolution
+
+`dyn_res = 1` (off by default, in `nx2saria.ini` only; no tier turns it on) lets the scene's size follow the GPU's time
+per frame toward `dyn_res_target` (the frame limit's frame time unless set), one step at a time (`runtime/dynres.c`).
+The HUD and the text stay at the picture's size; only the scene changes. What it steps depends on what enlarges the
+scene:
+
+- **DLSS or FSR 3.1 running** (`upscaler_runs`): the upscaler's mode, from the `dlss` mode set down to performance.
+  It needs an upscaling mode; with DLAA or FSR at native size it does nothing and the log says so.
+- **Neither** (the stand-in's `easu` or `bilinear`): `scene_share` itself, from the share in effect (the one set, the
+  tier's, or 0.75; within the heap the start made) down to a floor, each step 0.87 of the one above on each axis, about
+  three quarters of the pixels (0.75, 0.65, 0.57, 0.50 with the defaults). The floor is the lower of that share and
+  `dyn_res_min` (0.33 to 1, default 0.5): it never goes above the share the player or the tier chose, nor below the
+  floor. A share at or under `dyn_res_min` leaves it no room: Low's 0.4 on an integrated GPU against the default 0.5
+  stays at 0.4, and the log says so once. A changed `scene_share` or `dyn_res_min` starts again at the new share.
+  `scene_share = 0` (the game's own dynamic resolution) has nothing to step.
+
+The steps hold still on purpose, with times fixed in the code: a step down when the GPU's average is 8 % over the
+target, a step up when it is under 75 % of it (a step up takes about 1 / 0.757 more pixels, so it lands near 99 % of
+the target, under the 8 % that would send it down again), at least 1 s between two steps whatever `dyn_res_step` says
+(60ths of a second, default 60), and at least 3 s from a step down to a step up. Where one step moves the GPU time by
+more than the gap between the two thresholds, a step up that a step down undoes within 5 s doubles that wait, up to
+48 s, so the scene does not swing between two sizes every few seconds; a step up that holds 5 s brings it back to 3 s.
+
+Its log lines, at the start, at a step, every 600 frames and when it has no room:
+
+```
+resolution: dynamic resolution on (the scene share, no upscaler runs): target 16.7 ms (the frame limit's), steps at least 1.00 s apart and 3 s from a step down to a step up, scene share 0.75 down to 0.50
+resolution: dynamic resolution: GPU 19.40 ms a frame against 16.67 ms: scene share 0.75 -> 0.65
+resolution: dynamic resolution: GPU 15.10 ms a frame, scene share 0.65, target 16.67 ms
+resolution: dynamic resolution has no room: the scene share 0.40 is at or under dyn_res_min 0.50, the lowest it may go; the scene stays at 0.40
+```
+
+The step lines stop after 200 in a run (one line says so), the summaries after 12, and the scene's own
+`widescreen: scene ...` line follows the first 40 steps.
 
 ## The hardware probe
 
