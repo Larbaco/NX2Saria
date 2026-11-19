@@ -728,8 +728,9 @@ bool opt_draft_item(int i, OptDraftItem *out) {
             const CfgMeta *m = cfg_meta(c.key.c_str());
             if (c.staged) out->restart |= m && !m->live && cfg_pending_for(c.key.c_str(), eff_of(c.key, c.new_val).c_str());
             out->restart |= live_needs_restart(c);
-            // a preset choice also changes the restart-only keys the player leaves to it (GAME_RES, SHADOW_RES): its
-            // line waits for a restart when one of them, as the staged tier gives it, differs from the start's value
+            // a preset choice also changes the restart-only keys the player leaves to it (GAME_RES, TEXTURE_DETAIL,
+            // FOLIAGE, SHADOW_PCF): its line waits for a restart when one of them, as the staged tier gives it, differs
+            // from the start's value
             if (c.key == "NX2SARIA_PRESET") {
                 int nk = 0;
                 const char *const *keys = cfg_preset_keys(&nk);

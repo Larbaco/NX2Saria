@@ -1173,7 +1173,7 @@ static int preset_handed(char (*names)[64], int max) {
 // The name a preset key goes by in the box: its row's, with the key after it where one row writes several.
 static void preset_key_label(const char *name, char *out, size_t size) {
     static const struct { const char *key; UiTextId label; } rows[] = {
-        {"SCENE_SHARE", UI_MENU_SCENE_RES}, {"GAME_RES", UI_MENU_GAME_RES}, {"SHADOW_RES", UI_MENU_SHADOW_RES},
+        {"SCENE_SHARE", UI_MENU_SCENE_RES}, {"GAME_RES", UI_MENU_GAME_RES},
         {"ANISO", UI_MENU_ANISO}, {"TEXTURE_DETAIL", UI_MENU_TEX_DETAIL}, {"FPS_LIMIT", UI_MENU_FPS_LIMIT},
         {"DLAA", UI_MENU_UPSCALING}, {"TAA", UI_MENU_UPSCALING}, {"DLSS", UI_MENU_UPSCALING}, {"FSR4", UI_MENU_UPSCALING}};
     const char *key = name + sizeof "NX2SARIA_" - 1;
@@ -2613,11 +2613,14 @@ static void notice_draw(float scale) {
         return;
     }
     ImDrawList *dl = ImGui::GetForegroundDrawList();
-    ImVec2 sz = ImGui::CalcTextSize(g_notice);
     float padx = 14 * scale, pady = 9 * scale;
+    // wrapped within 90 % of the window: a long notice (the quality preset's, a translation) stays on screen on a
+    // narrow one such as a handheld's 1280 pixels
+    const float wrap = fmaxf(ImGui::GetIO().DisplaySize.x * 0.9f - padx * 2, 64 * scale);
+    ImVec2 sz = ImGui::CalcTextSize(g_notice, nullptr, false, wrap);
     ImVec2 p((ImGui::GetIO().DisplaySize.x - sz.x) / 2 - padx, 12 * scale);
     skin_panel(dl, p, ImVec2(p.x + sz.x + padx * 2, p.y + sz.y + pady * 2), scale * 0.6f, 0.9f);
-    dl->AddText(ImVec2(p.x + padx, p.y + pady), SKIN_TEXT, g_notice);
+    dl->AddText(nullptr, 0.0f, ImVec2(p.x + padx, p.y + pady), SKIN_TEXT, g_notice, nullptr, wrap);
 }
 
 // The device the game renders on, for perfmon's GPU counters (by LUID), NVML (by name) and ADL (by PCI bus, else
