@@ -17,6 +17,7 @@
 //
 // The page's layout is described at the top of recomp/patches-v111.txt.
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -355,6 +356,36 @@ static int32_t save_extra(unsigned ow, unsigned oh) {
 static unsigned start_w, start_h;
 static int start_wide, started;
 
+static float balloon_ui_scale = 1.0f;
+
+static void wide_balloon_init(float scale) {
+    int set = rt_patch_set("wide_balloon");
+    if (set < 0) return;
+    // mods_exefs_switch has already disabled the set if a mod owns its site.
+    if (!rt_patch_enabled(set)) {
+        rt_log("balloon: off, patch disabled or replaced by an ExeFS mod (UI horizontal scale %.4f)", scale);
+        return;
+    }
+    balloon_ui_scale = scale;
+    rt_patch_switch(set, scale != 1.0f);
+    rt_log("balloon: %s, UI horizontal scale %.4f", scale == 1.0f ? "off" : "on", scale);
+}
+
+// The balloon's anchor (main+0x20c2c8) is in the game's layout units. The canvas applies the horizontal scale
+// from wide_init when it draws. Undo that scale for the anchor so the balloon follows its speaker's screen position.
+void wide_balloon_host(Cpu *c) {
+    uint32_t bits = (uint32_t)c->v[0];
+    float x;
+    memcpy(&x, &bits, sizeof x);
+    float corrected = x / balloon_ui_scale;
+    if (!isfinite(corrected) || corrected == x) return;
+    memcpy(&bits, &corrected, sizeof bits);
+    c->v[0] = bits;
+    static atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (!atomic_flag_test_and_set_explicit(&logged, memory_order_relaxed))
+        rt_log("balloon: anchor x %.2f -> %.2f (UI horizontal scale %.4f)", x, corrected, balloon_ui_scale);
+}
+
 void wide_init(void) {
     int so = rt_patch_set("wide_out"), ss = rt_patch_set("wide_scene"), sa = rt_patch_set("wide_aspect"),
         sh = rt_patch_set("wide_hud"), sm = rt_patch_set("wide_movie"), sv = rt_patch_set("wide_save");
@@ -381,11 +412,13 @@ void wide_init(void) {
         if (wide_available())
             rt_log("widescreen: menus %s: the picture is the game's own 2560x1440, nothing to keep in it", menus);
         start_w = GAME_W, start_h = GAME_H, start_wide = 0, started = 1;
+        wide_balloon_init(1.0f);
         return;
     }
     if (so < 0 || ss < 0 || sa < 0 || sh < 0 || sm < 0) {
         rt_log("widescreen: the generated C has no widescreen patch sets (gen.py --patches recomp/patches-v111.txt); "
                "the game's own 2560x1440 picture");
+        wide_balloon_init(1.0f);
         return;
     }
     // The scene 3/4 of both sides, its width in whole multiples of 8 pixels and its height even.
@@ -419,6 +452,7 @@ void wide_init(void) {
     rt_patch_switch(sa, 1);
     rt_patch_switch(sh, 1);
     rt_patch_switch(sm, 1);
+    wide_balloon_init(squeeze);
     if (extra > 0) rt_patch_switch(sv, 1);
     // A picture of 16:9 at another height has no sides (within 1%, as wide_hud.c wide_hud_out decides)
     int wider = ratio > match * (1 + tolerance);

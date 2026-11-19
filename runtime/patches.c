@@ -50,9 +50,10 @@ __attribute__((constructor)) static void day_register(void) {
     rt_register_host(RT_PATCH_PAGE + 0xe90, animation_loop_host);
     rt_register_host(RT_PATCH_PAGE + 0xe70, battle_music_flags_host);
     rt_register_host(RT_PATCH_PAGE + 0xe60, voice_language_host);
+    rt_register_host(RT_PATCH_PAGE + 0xe50, wide_balloon_host);
 }
-// The G14 voice callback uses +0xe60 (voice_language.c). The screens' setup site of the set wide_bars (patches-v111.txt)
-// calls the page's +0xef0: wide_bars.c watches the
+// The G14 callbacks use +0xe60 (voice_language.c) and +0xe50 (widescreen.c). The screens' setup site of the set
+// wide_bars (patches-v111.txt) calls the page's +0xef0: wide_bars.c watches the
 // menus' background screens and the loading fade it hands over, for the black bars of NX2SARIA_WIDE_MENUS = center.
 __attribute__((constructor)) static void wide_bars_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xef0, wide_bars_screen_host);

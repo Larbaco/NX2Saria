@@ -479,3 +479,7 @@ site obgm       main 3353a4c 39626348 39626348 946d3509
 set voice_language NX2SARIA_VOICE_LANGUAGE_FIX 1
 site voice_language main a7ca98 940001ca 951090f2 # bl main+0xa7d1c0 -> bl page+0xe60
 
+# Undo the 2D canvas squeeze for speech-balloon anchors (widescreen.c wide_balloon_host).
+set wide_balloon NX2SARIA_BALLOON_ANCHOR_FIX 1
+site wide_balloon main 20c2c8 1e210841 1e210841 953252e2 # fmul s1, s2, s1 -> bl page+0xe50
+

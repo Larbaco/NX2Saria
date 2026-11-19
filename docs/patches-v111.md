@@ -36,3 +36,9 @@ The voice resource manager can miss a saved language choice when the game starts
 
 The startup `patches:` line lists `voice_language on` or `voice_language off`. A refresh logs `voice language: refresh` with the old and new option values, up to eight times per session.
 
+## Speech-balloon anchors
+
+When the wide HUD squeezes the interface into the middle 16:9, this patch applies the inverse horizontal scale to each speech-balloon anchor so it remains over its speaker. Set `balloon_anchor_fix=0` and restart to disable it.
+
+The startup `patches:` line lists `wide_balloon on` or `wide_balloon off`. It logs the UI horizontal scale at startup and the first adjusted anchor's x coordinate before and after.
+

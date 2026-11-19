@@ -482,6 +482,7 @@ void animation_loop_host(Cpu *c);                         // a single-frame anim
 void battle_music_gate(int run);                          // phase 0's decision, under the sound gate lock
 void battle_music_flags_host(Cpu *c);                     // restore held battle music flags (set obgm, page +0xe70)
 void voice_language_host(Cpu *c);                          // refresh saved voice-language changes (set voice_language, page +0xe60)
+void wide_balloon_host(Cpu *c);                            // keep speech-balloon anchors with their speakers (set wide_balloon, page +0xe50)
 void frame_rate_sound_step_host(Cpu *c);                  // the step the sound job hands on (set osound, page +0xf00)
 float frame_step_frames(void);                            // the 60 Hz frames the game steps per update (set ostep), else 1
 void frame_step_flight(float *page, float *game, uint64_t *presents);   // flight.c: the step at a host present

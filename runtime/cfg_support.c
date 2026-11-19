@@ -30,6 +30,7 @@ int cfg_supported(const char *key) {
     if (!strcasecmp(name, "FROZEN_ZORA_FIX")) return has("ozora");
     if (!strcasecmp(name, "BATTLE_MUSIC_FIX")) return has("obgm");
     if (!strcasecmp(name, "VOICE_LANGUAGE_FIX")) return has("voice_language");
+    if (!strcasecmp(name, "BALLOON_ANCHOR_FIX")) return has("wide_balloon");
     // menu_cursor.c enabled() on 1.4.3, menu_mouse.c (its screens' site, set menu_mouse) on 1.1.1
     if (!strcasecmp(name, "MENU_CURSOR")) return RT_V143 || has("menu_mouse");
     // the squeeze of the UI into the middle 16:9 (set wide_hud) is what both place their elements against
