@@ -8623,6 +8623,7 @@ static void lb_warm_worker(void *arg) {
     for (;;) {
         size_t i = (size_t)plat_inc64(&LB.next) - 1;
         if (i >= LB.n) return;
+        pw_mark(slot, i + 1, 0);   // from the hand-out on, so prep_stalled never takes a worker loading one for idle
         int owned = 0, skip = skip_listed(LB.e[i].iid);
         const GfxShader *sh = skip ? NULL : gfx_shader_load_private(LB.e[i].iid, &owned);
         int st = sh ? gfx_shader_stage(sh) : -1;
@@ -8655,7 +8656,7 @@ static void lb_warm_worker(void *arg) {
             if (P.gpl) lb_library(sh, st == GFX_STAGE_VS, 0);
             else lb_skip_lib();
         }
-        if (sh) pw_mark(slot, 0, 0);
+        pw_mark(slot, 0, 0);
         if (sh) journal_mark(slot, NULL);
         if (owned) gfx_shader_release_private(sh);
         plat_mutex_lock(&LB.stat);
@@ -8697,7 +8698,8 @@ static void prep_stalled(double stall_ms, int k, const char *jp) {
         plat_mutex_unlock(&LB.stat);
         return;
     }
-    uint64_t d = LB.done;
+    // built: the variants that ended, less those that build nothing (skip list, no shader, no library, large left out)
+    uint64_t d = LB.done, built = d - LB.skipped - LB.noshader - LB.nolib - LB.big_unused;
     for (int s = 0; s < k && s < JR_SLOTS; s++) {
         if (!PW.at[s]) continue;
         const GfxWarmEnt *e = &LB.e[PW.at[s] - 1];
@@ -8718,7 +8720,7 @@ static void prep_stalled(double stall_ms, int k, const char *jp) {
     printf("prepare-shaders: progress build %llu %zu\n", (unsigned long long)d, LB.n);
     printf("prepare-shaders: %llu of %zu variants built into the driver cache on %d threads in %.0f ms; %d still "
            "building after %.0f s each are left to the game, which goes on with them in the background "
-           "(NX2SARIA_PREPARE_STALL_S)\n", (unsigned long long)d, LB.n, k, now - LB.t0, stuck, stall_ms / 1000);
+           "(NX2SARIA_PREPARE_STALL_S)\n", (unsigned long long)built, LB.n, k, now - LB.t0, stuck, stall_ms / 1000);
     fflush(stdout);
     rt_log("vk_pipeline: the preparation stopped waiting for %d builds the driver had held for %.0f s or more; %s", stuck,
            stall_ms / 1000, lib ? "the game's library warm goes on from the first of them" : "all compute shaders, which the boot builds");
