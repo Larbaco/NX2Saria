@@ -3417,32 +3417,51 @@ static void idle_release(void) {
 static int fg_runs(void) { return vk_dlssg_active() || vk_fg_active() || vk_ngxfg_on() || vk_fsr3fg_on(); }
 
 // One line at the first present and one at each change: whether frame generation runs, and where its inputs come from.
-// With none running, the line says why: the setting is off, or the frame generation it names does not run here (each
-// says why in its own lines), or AMD's is set and its swapchain is not made yet. It said only "no inputs are made"
-// before, the same on a card where the one set cannot run as with the setting off.
-static int fg_off_why(void) {
+// With none running, the line says why. It said only "no inputs are made" before, the same on a card where the one set
+// cannot run as with the setting off. The key fg_state_line compares: 0 the setting is off; with dlss, 1 the card in
+// use has no DLSS Frame Generation (vk_dlssg_why: another vendor's, or Streamline found no adapter with it, as on an
+// RTX 30) and AMD FSR 3.1's runs here, 2 the same where FSR 3.1's does not, 3 Streamline gave another reason (*sl_why),
+// 4 it has not started, for a reason its own lines give (the files, the device, NGX on Linux); with fsr3, 5 it does
+// not run here, 6 its swapchain is not made yet.
+static int fg_off_why(const char **sl_why) {
     const char *fg = cfg_value("NX2SARIA_FRAMEGEN");
-    // DLSS's not running (an RTX 30 or older, as the menu's row says): AMD FSR 3.1's is suggested where it runs
-    if (!strcmp(fg, "dlss")) return vk_fsr3fg_build() ? (vk_fsr3fg_available() ? 4 : 1) : (vk_ffx_framegen_available() ? 4 : 1);
-    if (!strcmp(fg, "fsr3")) return (vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available()) ? 3 : 2;
+    *sl_why = NULL;
+    if (!strcmp(fg, "dlss")) {
+        if (vk_dlssg_why(sl_why))
+            return (vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available()) ? 1 : 2;
+        return *sl_why ? 3 : 4;
+    }
+    if (!strcmp(fg, "fsr3")) return (vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available()) ? 6 : 5;
     return 0;
 }
 
 static void fg_state_line(int on, int fgo) {
     static int last = -1;
+    const char *sl_why = NULL;
     const int st = !fg_runs() ? 0 : fgo ? 2 : on && !D.failed ? 1 : 3;
-    const int key = st ? st : 8 + fg_off_why();
+    const int key = st ? st : 8 + fg_off_why(&sl_why);
     if (key == last) return;
     last = key;
     if (st == 0) {
-        static const char *why[] = {
-            "the setting is off",
-            "it is set to NVIDIA DLSS Frame Generation, which does not run here (the dlssg: and ngxfg: lines say why)",
-            "it is set to AMD FSR 3.1, which does not run here (the fg: and fsr3fg: lines say why)",
-            "it is set to AMD FSR 3.1, which has not started yet",
-            "it is set to NVIDIA DLSS Frame Generation, which does not run here: it needs an RTX 40 or newer (the dlssg: and "
-            "ngxfg: lines say why); AMD FSR 3.1's runs on this card: framegen = fsr3, or Frame generation: AMD FSR 3.1 in the menu"};
-        rt_log("dlaa: frame generation does not run: no inputs are made for it (%s)", why[key - 8]);
+        static const char *pre = "dlaa: frame generation does not run: no inputs are made for it (",
+                          *dlss = "it is set to NVIDIA DLSS Frame Generation",
+                          *none = "this GPU has none (RTX 40 or newer)";
+        switch (key - 8) {
+        case 0: rt_log("%sthe setting is off)", pre); break;
+        case 1:
+            rt_log("%s%s, and %s; framegen = fsr3 works here, or Frame generation: AMD FSR 3.1 in the menu)", pre, dlss,
+                   none);
+            break;
+        case 2: rt_log("%s%s, and %s)", pre, dlss, none); break;
+        case 3:
+            rt_log("%s%s, which Streamline says does not run here: %s; the dlssg: lines say more)", pre, dlss, sl_why);
+            break;
+        case 4: rt_log("%s%s, which has not started; the dlssg: and ngxfg: lines say why)", pre, dlss); break;
+        case 5:
+            rt_log("%sit is set to AMD FSR 3.1, which does not run here; the fg: and fsr3fg: lines say why)", pre);
+            break;
+        default: rt_log("%sit is set to AMD FSR 3.1, which has not started yet)", pre);
+        }
     }
     else if (st == 1) rt_log("dlaa: frame generation runs with its inputs from the upscaler (%s)", use_fsr() ? "FSR" : "DLSS");
     else if (st == 2)

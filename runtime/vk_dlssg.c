@@ -57,6 +57,9 @@ static struct {
     PFN_nx2sl_device_proc gdpa;
     PFN_nx2sl_available available;
     PFN_nx2sl_log_unavailable log_unavailable;
+    PFN_nx2sl_support support;   // NULL with an older DLL: the reason DLSS-G is unavailable is not known here
+    int no_gpu;                  // the card in use has no DLSS-G: another vendor's, or Streamline's check says so
+    const char *sl_why;          // else Streamline's support result, when it gave one (vk_dlssg_why)
     PFN_nx2sl_frame frame;
     PFN_nx2sl_present_marker marker;
     PFN_nx2sl_sleep sleep;
@@ -155,6 +158,7 @@ int vk_dlssg_early(void) {
     S.gdpa = (PFN_nx2sl_device_proc)(void *)GetProcAddress(m, "nx2sl_device_proc");
     S.available = (PFN_nx2sl_available)(void *)GetProcAddress(m, "nx2sl_available");
     S.log_unavailable = (PFN_nx2sl_log_unavailable)(void *)GetProcAddress(m, "nx2sl_log_unavailable");
+    S.support = (PFN_nx2sl_support)(void *)GetProcAddress(m, "nx2sl_support");   // optional
     S.frame = (PFN_nx2sl_frame)(void *)GetProcAddress(m, "nx2sl_frame");
     S.marker = (PFN_nx2sl_present_marker)(void *)GetProcAddress(m, "nx2sl_present_marker");
     S.sleep = (PFN_nx2sl_sleep)(void *)GetProcAddress(m, "nx2sl_sleep");
@@ -232,6 +236,7 @@ VkResult vk_dlssg_create_device(VkInstance inst, VkPhysicalDevice pd, const VkDe
     int how, refused;
     VkResult r = (VkResult)dlssg_device_create(d.f != NULL, p.vendorID, create_interposed, create_loader, &d, &how, &refused);
     if (how == DLSSG_DEV_NOT_NVIDIA) {
+        S.no_gpu = 1;
         give_up("the graphics card in use is not an NVIDIA card (the Graphics card setting, gpu_index)");
     } else if (how == DLSSG_DEV_REFUSED) {
         char why[96];
@@ -246,6 +251,10 @@ void vk_dlssg_device_ready(VkPhysicalDevice physical, VkDevice dev) {
     if (!S.available()) {
         S.fail = DLSSG_UNAVAILABLE;
         if (S.log_unavailable) S.log_unavailable(physical);
+        const char *name = NULL;
+        int v = S.support ? S.support(&name) : -1;
+        if (v == 0) S.no_gpu = 1;
+        else if (v == 2) S.sl_why = name;
         return;
     }
     PFN_vkGetDeviceProcAddr g = S.gdpa();
@@ -264,6 +273,11 @@ int vk_dlssg_active(void) { return S.active; }
 int vk_dlssg_status(void) {
     if (S.active) return DLSSG_RUNS;
     return vk_dlssg_wanted() ? S.fail : DLSSG_NOT_WANTED;
+}
+
+int vk_dlssg_why(const char **sl_why) {
+    if (sl_why) *sl_why = S.no_gpu ? NULL : S.sl_why;
+    return S.no_gpu;
 }
 
 int vk_dlssg_multiplier_of(const char *value, int max, const char **why) {

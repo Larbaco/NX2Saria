@@ -55,8 +55,13 @@ and the settings menu's frames were given the wrong reason.
    (below).
 4. **`dlaa: frame generation does not run: no inputs are made for it` gave no reason** **[R]**. It now names it:
    - the setting is off;
-   - NVIDIA DLSS Frame Generation is set and does not run here. It needs an RTX 40 or newer, as the menu's row says,
-     and the line suggests `framegen = fsr3` where AMD FSR 3.1's runs (an RTX 30 included);
+   - NVIDIA DLSS Frame Generation is set and this GPU has none (RTX 40 or newer). The runtime knows this from
+     Streamline's support check (`eErrorNoSupportedAdapterFound` or `eErrorAdapterNotSupported`, as on an RTX 30) or
+     from a card of another vendor, and the line suggests `framegen = fsr3` where AMD FSR 3.1's runs
+     (`vk_dlssg.c` `vk_dlssg_why`, through `nx2sl_support` in `nx2navi_dlssg.dll`);
+   - NVIDIA DLSS Frame Generation is set and Streamline gives another reason, which the line names;
+   - NVIDIA DLSS Frame Generation is set and has not started. Its own `dlssg:` and `ngxfg:` lines say why: its files,
+     the device, or NGX on Linux. An `nx2navi_dlssg.dll` older than `nx2sl_support` gives this line too;
    - AMD FSR 3.1 is set and does not run here;
    - AMD FSR 3.1 is set and its swapchain is not made yet.
 

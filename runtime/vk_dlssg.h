@@ -55,3 +55,7 @@ int vk_dlssg_multiplier(void);
 // loaded but DLSS-G or a required plugin function was unavailable).
 enum { DLSSG_NOT_WANTED, DLSSG_RUNS, DLSSG_NO_FILES, DLSSG_UNAVAILABLE };
 int vk_dlssg_status(void);
+// Why DLSS-G is unavailable, where known: 1 when the card in use has none (another vendor's card, or Streamline's
+// support check found no adapter with it: an RTX 30 or older); else 0, with Streamline's result for another reason in
+// *sl_why when it gave one (NULL when it did not, or with an nx2navi_dlssg.dll older than nx2sl_support).
+int vk_dlssg_why(const char **sl_why);
