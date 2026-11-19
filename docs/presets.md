@@ -51,17 +51,17 @@ High column is the table's default, the game as shipped:
 
 | Setting | Low | Medium | High (shipped) | Ultra |
 |---|---|---|---|---|
-| `scene_share` | 0.5; 0.4 on an integrated GPU or a handheld | 0.67 | 0.75 | 1 |
+| `scene_share` | 0.5; 0.4 on an integrated GPU, a software renderer or a handheld | 0.67 | 0.75 | 1 |
 | `game_res` (the picture's height) | 1080 | 1080 | 1440 | `window` |
-| `aniso` | 4 on an integrated GPU or a handheld; else — | — | 16 | — |
+| `aniso` | 4 on an integrated GPU, a software renderer or a handheld; else — | — | 16 | — |
 | `standin_filter` (what enlarges the scene) | `bilinear` | — | `easu` | — |
 | `shadow_pcf` | — | — | 0 | 1 |
-| `foliage` | `reduced` on an integrated GPU or a handheld; else — | — | `full` | — |
-| `fps_limit` | 30 on an integrated GPU that is no handheld; 40 on a handheld; else — | — | 60 | — |
+| `foliage` | `reduced` on an integrated GPU, a software renderer or a handheld; else — | — | `full` | — |
+| `fps_limit` | 30 on an integrated GPU that is no handheld or a software renderer; 40 on a handheld; else — | — | 60 | — |
 | DLSS (an NVIDIA RTX card) | `dlaa = 1`, `taa = dlss`, `dlss = performance` | `dlaa = 1`, `taa = dlss`, `dlss = quality` | off | — |
 | FSR 4 (a Radeon RX 90x0 card on Windows, no DLSS) | `dlaa = 1`, `taa = fsr3`, `fsr4 = 1`, `dlss = performance` | the same with `dlss = quality` | off | — |
 
-The 3D scene's height at 16:9 that follows: Low 540 lines (432 on an integrated GPU or a handheld), Medium about 720,
+The 3D scene's height at 16:9 that follows: Low 540 lines (432 on an integrated GPU, a software renderer or a handheld), Medium about 720,
 High 1080 (the game's 1920x1080 scene in its 2560x1440 picture), Ultra the window's height, at least 1440. With DLSS or
 FSR 4 the mode's share replaces `scene_share`: Medium's quality mode renders 2/3 of the 1080-line picture, Low's
 performance mode 1/2.
@@ -72,8 +72,8 @@ Decisions:
   that equals it cannot make a PC worse than before the presets.
 - **No tier turns frame generation on.** It adds latency and needs a base frame rate that the lower tiers exist to
   reach; it stays the player's choice. No row may name `framegen` (the tests refuse one).
-- **The frame-rate limit is lowered only on integrated GPUs and handhelds**, and never above 60. An integrated GPU holds
-  30 more steadily than an uneven 40 to 60; 40 divides a handheld's 40, 80 and 120 Hz modes. A discrete card keeps 60.
+- **The frame-rate limit is lowered only on integrated GPUs, software renderers and handhelds**, and never above 60. An
+  integrated GPU holds 30 more steadily than an uneven 40 to 60; 40 divides a handheld's 40, 80 and 120 Hz modes. A discrete card keeps 60.
   On the Steam Deck the device profile's 40 is the value in effect (the log says `(device profile)`).
 - **DLSS or FSR 4 only below High, and only on the cards that run them** (`preset_gpu_caps`): DLSS on an NVIDIA card
   whose name says RTX; FSR 4 on an AMD Radeon RX 90x0 card (RDNA 4) on Windows, where its library runs. AMD's library
@@ -90,7 +90,8 @@ Decisions:
 - **Only what costs GPU time measurably here.** On the bench ([Measurements](#measurements)) the scene's share, the
   picture's height and the stand-in's filter moved the GPU time; anisotropic filtering, texture detail, foliage,
   anti-aliasing and the soft-shadow settings stayed within the noise. So Medium keeps the shipped filtering and
-  foliage, and Low lowers them only on an integrated GPU or a handheld, whose memory bandwidth may still gain. A card
+  foliage, and Low lowers them only on an integrated GPU, a software renderer or a handheld, whose memory bandwidth
+  may still gain. A card
   of its own that falls to Low for lacking mesh shaders or video memory (a GTX 1080 Ti, an RX 580 8 GB, a GTX 1650)
   keeps 16x filtering and full foliage, which cost it nothing measurable. `shadow_res` has no effect on 1.1.1 (the
   start logs `cfg: SHADOW_RES has no effect on this game version`) and is in no tier.
@@ -106,7 +107,7 @@ Decisions:
 | A handheld (Steam Deck, ROG Ally / Ally X, Legion Go, MSI Claw) | Low | `a handheld PC (<name>)` |
 | Nothing known of the GPU (no usable Vulkan 1.3 device, or no probe and no earlier result kept) | High, then the caps below | `nothing is known of the GPU: the game as shipped` |
 | An integrated GPU | Low | `an integrated GPU` |
-| A software renderer on the processor (a Vulkan device of the CPU type, such as llvmpipe) | Low | `a software renderer on the processor` |
+| A software renderer on the processor (a Vulkan device of the CPU type, such as llvmpipe), with an integrated GPU's values (scene 0.4, `aniso` 4, `foliage` reduced, 30 fps) | Low | `a software renderer on the processor` |
 | A GPU without mesh shaders (the renderer then emulates them, `mesh_emulation`) | Low | `the GPU has no mesh shaders, which the game's renderer then emulates` |
 | Video memory under 6 GiB | Low | `<n> GiB of video memory` |
 | 6 or 7 GiB | Medium | as above |

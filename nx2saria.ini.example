@@ -612,7 +612,7 @@
 # Quality preset: recommended (the default: the tier the start picks for this PC from its GPU, video memory, RAM,
 # processor count and handheld make, at most high), low, medium, high or ultra (never recommended, only chosen). High
 # is the game as shipped and sets nothing; the others set the scene's share, the game resolution, the filter that
-# enlarges the scene and shadow filtering, Low on an integrated GPU or a handheld also anisotropic filtering, foliage
+# enlarges the scene and shadow filtering, Low on an integrated GPU, a software renderer or a handheld also anisotropic filtering, foliage
 # and the frame-rate limit, and below High DLSS or FSR 4 where the card runs them. A key this file sets wins over the
 # preset (the menu then says Custom when the preset sets that key to another value). The log says what was detected,
 # what was recommended and why, and each value the preset set ("preset:").

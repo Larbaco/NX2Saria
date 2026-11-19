@@ -6,7 +6,7 @@
 // the hardware once (hw_detect.c hw_detect), asks preset_pick for the tier this PC should get and puts the tier in
 // use in that layer before any restart-only setting is read. "High" is the game as shipped and sets nothing; the other
 // tiers set the keys of PRESET_ROWS below. A preset never turns frame generation on, lowers the frame-rate limit only on
-// integrated GPUs and handhelds, and asks for DLSS or FSR 4 only below High, on the cards that run them.
+// integrated GPUs, software renderers and handhelds, and asks for DLSS or FSR 4 only below High, on the cards that run them.
 //
 // The tier: a handheld, an integrated GPU, a software renderer on the CPU or a GPU without mesh shaders (which the
 // game's renderer then emulates) get Low; any other card goes by its video memory, up to High, then the PC's memory
@@ -156,14 +156,14 @@ static inline int preset_pick(const PresetHw *hw, char *why, size_t cap) {
 // The rows keep to what costs GPU time measurably in this game version (docs/presets.md, Measurements): the scene's
 // share, the picture's height and the filter that enlarges the scene. Anisotropic filtering, texture detail, foliage,
 // anti-aliasing and the soft-shadow settings cost no time a desktop card shows, so High's and Medium's stay as
-// shipped. Low lowers anisotropic filtering and foliage only on an integrated GPU or a handheld, whose memory bandwidth
-// they may still ease; a card of its own that falls to Low (no mesh shaders, little video memory) keeps them, and no
+// shipped. Low lowers anisotropic filtering and foliage only on an integrated GPU, a software renderer or a handheld, whose
+// memory bandwidth they may still ease; a card of its own that falls to Low (no mesh shaders, little video memory) keeps them, and no
 // tier sets texture detail: its auto already picks smaller textures by the budget the driver grants. shadow_res has no
 // effect on 1.1.1 (cfg_supported) and is in no tier.
 enum {
     PRESET_ANY,        // every PC
-    PRESET_SMALL,      // an integrated GPU or a handheld
-    PRESET_IGPU_DESK,  // an integrated GPU that is no handheld (a laptop or a desktop's processor graphics)
+    PRESET_SMALL,      // an integrated GPU, a software renderer on the processor (llvmpipe) or a handheld
+    PRESET_IGPU_DESK,  // one of those that is no handheld (a laptop or a desktop's processor graphics, llvmpipe)
     PRESET_HANDHELD,   // a handheld
     PRESET_DLSS,       // a card that runs DLSS (preset_gpu_caps)
     PRESET_FSR4,       // a card that runs FSR 4 and not DLSS
@@ -188,12 +188,12 @@ static const PresetRow PRESET_ROWS[] = {
     {PRESET_MEDIUM, PRESET_FSR4, "DLSS", "quality"},      // ... in its quality mode
     // ---- Low
     {PRESET_LOW, PRESET_ANY, "SCENE_SHARE", "0.5"},       // the 3D scene at half the picture
-    {PRESET_LOW, PRESET_SMALL, "SCENE_SHARE", "0.4"},     // and less on an integrated GPU or a handheld
+    {PRESET_LOW, PRESET_SMALL, "SCENE_SHARE", "0.4"},     // and less on the small ones (PRESET_SMALL)
     {PRESET_LOW, PRESET_ANY, "GAME_RES", "1080"},         // the picture and HUD 1080 lines high
-    {PRESET_LOW, PRESET_SMALL, "ANISO", "4"},             // 4x anisotropic filtering on an integrated GPU or a handheld
+    {PRESET_LOW, PRESET_SMALL, "ANISO", "4"},             // 4x anisotropic filtering on the small ones
     {PRESET_LOW, PRESET_SMALL, "FOLIAGE", "reduced"},     // fewer grass and bush draws there
     {PRESET_LOW, PRESET_ANY, "STANDIN_FILTER", "bilinear"},   // the scene enlarged with the plain filter (shipped: easu)
-    {PRESET_LOW, PRESET_IGPU_DESK, "FPS_LIMIT", "30"},    // 30 fps, which an integrated GPU holds
+    {PRESET_LOW, PRESET_IGPU_DESK, "FPS_LIMIT", "30"},    // 30 fps, which an integrated GPU holds steadier
     {PRESET_LOW, PRESET_HANDHELD, "FPS_LIMIT", "40"},     // 40 fps, which divides a handheld's 40, 80 and 120 Hz
     {PRESET_LOW, PRESET_DLSS, "DLAA", "1"},               // the scene through DLSS ...
     {PRESET_LOW, PRESET_DLSS, "TAA", "dlss"},
@@ -206,7 +206,9 @@ static const PresetRow PRESET_ROWS[] = {
 #define PRESET_ROW_COUNT (sizeof PRESET_ROWS / sizeof *PRESET_ROWS)
 
 static inline int preset_applies(int when, const PresetHw *hw) {
-    int igpu = hw->have_gpu && hw->gpu_type == PRESET_GPU_INTEGRATED, hand = hw->handheld[0] != 0;
+    // a software renderer is the weakest case of all, so it gets an integrated GPU's values
+    int igpu = hw->have_gpu && (hw->gpu_type == PRESET_GPU_INTEGRATED || hw->gpu_type == PRESET_GPU_CPU);
+    int hand = hw->handheld[0] != 0;
     switch (when) {
     case PRESET_ANY: return 1;
     case PRESET_SMALL: return igpu || hand;

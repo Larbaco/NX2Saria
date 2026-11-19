@@ -150,13 +150,14 @@ static void pure(void) {
         {"AMD Radeon RX 9070 XT", AMD, D, 16304, NULL, 0}, {"AMD Radeon RX 6700", AMD, D, 10224, NULL, 1},
         {"AMD Radeon 780M Graphics", AMD, I, 8192, NULL, 1}, {"AMD Radeon 780M Graphics", AMD, I, 8192, "ROG Ally", 1},
         {"AMD Custom GPU 0405", AMD, I, 1024, "Steam Deck", 0}, {"Intel(R) Arc(TM) Graphics", INTEL, I, 16000, "MSI Claw", 1},
-        {"Microsoft Basic Render Driver", 0x1414, PRESET_GPU_OTHER, 0, NULL, 1}, {NULL, 0, 0, 0, NULL, 1},
+        {"Microsoft Basic Render Driver", 0x1414, PRESET_GPU_OTHER, 0, NULL, 1}, {"llvmpipe", 0x10005, PRESET_GPU_CPU, 31900, NULL, 0},
+        {NULL, 0, 0, 0, NULL, 1},
     };
     int bad_high = 0, bad_up = 0, bad_fps = 0, bad_fg = 0, bad_fsr4 = 0, bad_dlss = 0, bad_ultra = 0;
     for (size_t k = 0; k < sizeof kinds / sizeof *kinds; k++) {
         PresetHw hw = gpu(kinds[k].name, kinds[k].vendor, kinds[k].type, kinds[k].vram, 1, 8, 16, 32000, kinds[k].hand,
                           kinds[k].win);
-        int small = (hw.have_gpu && hw.gpu_type == I) || hw.handheld[0];
+        int small = (hw.have_gpu && (hw.gpu_type == I || hw.gpu_type == PRESET_GPU_CPU)) || hw.handheld[0];
         for (int t = 0; t < PRESET_TIERS; t++)
             for (size_t r = 0; r < PRESET_ROW_COUNT; r++) {
                 const char *key = PRESET_ROWS[r].key, *v = preset_value(t, &hw, key);
@@ -179,7 +180,7 @@ static void pure(void) {
     check(!bad_dlss, "TAA = dlss only on an RTX card (%d values)", bad_dlss);
     check(!bad_fsr4, "FSR 4 only on RDNA 4 on Windows (%d values)", bad_fsr4);
     check(!bad_ultra, "ultra never forces an upscaler (%d values)", bad_ultra);
-    check(!bad_fps, "fps_limit only on an integrated GPU or a handheld, 30..60 (%d values)", bad_fps);
+    check(!bad_fps, "fps_limit only on an integrated GPU, a software renderer or a handheld, 30..60 (%d values)", bad_fps);
     PresetHw ig = gpu("Intel(R) Iris(R) Xe Graphics", INTEL, I, 8034, 1, 4, 8, 16000, NULL, 1);
     PresetHw deck = gpu("AMD Custom GPU 0405", AMD, I, 1024, 1, 4, 8, 14800, "Steam Deck", 0);
     PresetHw rtx = gpu("NVIDIA GeForce RTX 4060", NV, D, 8188, 1, 8, 16, 32000, NULL, 1);
@@ -215,6 +216,13 @@ static void pure(void) {
               !strcmp(v, "4") && (v = preset_value(PRESET_LOW, &ig, "FOLIAGE")) && !strcmp(v, "reduced") &&
               (v = preset_value(PRESET_LOW, &deck, "FOLIAGE")) && !strcmp(v, "reduced"),
           "low on an integrated GPU or a handheld: aniso 4, foliage reduced");
+    PresetHw sw = gpu("llvmpipe (LLVM 19.1.7, 256 bits)", 0x10005, PRESET_GPU_CPU, 31900, 1, 8, 16, 31900, NULL, 0);
+    check((v = preset_value(PRESET_LOW, &sw, "SCENE_SHARE")) && !strcmp(v, "0.4") &&
+              (v = preset_value(PRESET_LOW, &sw, "ANISO")) && !strcmp(v, "4") &&
+              (v = preset_value(PRESET_LOW, &sw, "FOLIAGE")) && !strcmp(v, "reduced") &&
+              (v = preset_value(PRESET_LOW, &sw, "FPS_LIMIT")) && !strcmp(v, "30") &&
+              !preset_value(PRESET_MEDIUM, &sw, "FPS_LIMIT"),
+          "low on a software renderer (llvmpipe): an integrated GPU's values, scene 0.4, aniso 4, foliage reduced, 30 fps");
     check((v = preset_value(PRESET_LOW, &no_mesh, "SCENE_SHARE")) && !strcmp(v, "0.5") &&
               (v = preset_value(PRESET_LOW, &no_mesh, "STANDIN_FILTER")) && !strcmp(v, "bilinear"),
           "low on a card without mesh shaders: the smaller scene and the plain filter");
