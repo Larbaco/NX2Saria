@@ -105,6 +105,7 @@ sys.path.insert(0, str(KIT / 'tools'))
 import nup  # noqa: E402
 import memgate  # noqa: E402
 import mod_files  # noqa: E402
+import private_paths  # noqa: E402
 import prompt_art  # noqa: E402
 from check_content import GENERATED_MARKER  # noqa: E402
 
@@ -2888,7 +2889,9 @@ def record_prompts(out, line):
     """Writes PROMPTS_RECORD in the game folder and says it in the build log."""
     say(f'prompts: {line}')
     try:
-        (out / PROMPTS_RECORD).write_text(line + '\n', encoding='utf-8', newline='\n')
+        # the kit's folder is in the account's folder on most installs: written short (private_paths.py), as the
+        # game's log repeats this line
+        (out / PROMPTS_RECORD).write_text(private_paths.shorten(line) + '\n', encoding='utf-8', newline='\n')
     except OSError as e:
         say(f'prompts: could not write {out / PROMPTS_RECORD} ({error_text(e)})')
 

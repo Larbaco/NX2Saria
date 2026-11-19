@@ -39,7 +39,7 @@ from pathlib import Path
 from tkinter import filedialog
 
 from .. import NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
-from ..context import Context
+from ..context import Context, shorten
 from ..paths import long_path_problem
 from . import art, picture, sound
 
@@ -2321,7 +2321,8 @@ class App:
                   f'Job: {j.kind}, step: {j.current().label}', f'Error: {j.error}', '', 'Last lines:']
         report += j.last_lines(60)
         self.root.clipboard_clear()
-        self.root.clipboard_append('\n'.join(report))
+        # the account's folders short (tools/private_paths.py): a report is pasted into public issues
+        self.root.clipboard_append(shorten('\n'.join(report)))
         self.message = 'Report copied.'
         self.render()
 

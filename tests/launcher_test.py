@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
 
 from launcher import build, feed, gameini, gamefiles, jobs, locks, net, saves, settings, toolchain, updater, versions, winsys  # noqa: E402
-from launcher.context import Context  # noqa: E402
+from launcher.context import Context, shorten  # noqa: E402
 from launcher.paths import Layout  # noqa: E402
 
 try:
@@ -569,7 +569,7 @@ class ToolchainTest(Tmp):
         self.assertIn('-m pip install -r', msg)
         self.assertIn('requirements-launcher.txt', msg)
         self.assertEqual(ctx.zstd_missing, msg)
-        self.assertTrue(any(msg in line for line in ctx.log_tail()))
+        self.assertTrue(any(shorten(msg) in line for line in ctx.log_tail()))   # the Python's path written short
 
     def test_resolve_and_install(self):
         repo = self.tmp / 'repo'
@@ -1551,11 +1551,12 @@ class PromptArtTest(Tmp):
             self.assertLessEqual(local | {'pad_prompts.py'}, set(tools))
 
     def test_launcher_release_carries_what_make_game_imports(self):
-        """Every tool make_game.py imports is in the launcher release, unless the import sits in a try that catches
+        """Every tool make_game.py imports is in the launcher release and the build kit, unless the import sits in a try that catches
         ImportError (build_shaders: a source checkout's step the release's prebuilt headers do not need) or only runs
         on Linux (build_game, whose kit carries it). An import that is neither stopped every player's update at its
         compile step."""
         import ast
+        import make_kit
         import make_launcher
         tree = ast.parse((ROOT / 'tools' / 'make_game.py').read_text(encoding='utf-8'))
         guarded = set()
@@ -1573,6 +1574,7 @@ class PromptArtTest(Tmp):
                 if (ROOT / 'tools' / f'{root}.py').is_file() and id(node) not in guarded and root != 'build_game':
                     needed.add(f'{root}.py')
         self.assertLessEqual(needed, set(make_launcher.TOOLS))
+        self.assertLessEqual(needed, set(make_kit.TOOLS))
 
 
 # ---------------------------------------------------------------- make_game.py
