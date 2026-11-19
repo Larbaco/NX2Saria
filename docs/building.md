@@ -728,8 +728,9 @@ A change to the start's memory warning (`runtime/mem_need.h`, `runtime/memory.c`
 as short. With the executable it also runs `--probe-memneed` (it prints the machine's commit and the answer and
 starts nothing) with `mem_need_mb` at 0, at 1 and at a value no machine has, and reads the warning line of the last.
 A change to the launcher's pre-play commit warning (`launcher/commit.py`) passes `python tests\mem_commit_launcher_test.py`
-(the threshold, message, logged figures and player's choice) and `python tests\mem_commit_message_check.py` (the
-Windows allocation errors that include page-file advice). Both run without game files or Windows.
+(the page-file mode, threshold, message, logged figures, warning setting and default Yes choice) and
+`python tests\mem_commit_message_check.py` (the Windows allocation errors that include page-file advice). Both run
+without game files or Windows.
 A change to when a start does the whole warm on the boot screen (`runtime/boot_warm.h`, `runtime/vk_pipeline.c`
 `bf_decide`) passes `python tests\boot_warm_check.py`, which builds the header alone: the warm after a driver change,
 its continuation by a later start, the end of the tries, no second warm once one is done, and what a marker left by

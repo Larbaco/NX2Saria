@@ -234,12 +234,52 @@ def system_commit_info():
     return info.CommitTotal * page_mib, info.CommitLimit * page_mib, info.PhysicalTotal * page_mib
 
 
+def page_file_is_system_managed():
+    """True for a system-managed page file, False for fixed-size or disabled, None when Windows cannot say."""
+    if os.name != 'nt':
+        return None
+    try:
+        import winreg
+        access = winreg.KEY_READ | getattr(winreg, 'KEY_WOW64_64KEY', 0)
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r'SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management',
+                            0, access) as key:
+            values, kind = winreg.QueryValueEx(key, 'PagingFiles')
+    except (ImportError, OSError):
+        return None
+    if kind != winreg.REG_MULTI_SZ:
+        return None
+    return page_files_system_managed(values)
+
+
+def page_files_system_managed(values):
+    """Classify PagingFiles entries like runtime/platform/win32.c; None means malformed or unknown."""
+    if not values:   # the value exists and Windows has no page files configured
+        return False
+    managed = True
+    for entry in values:
+        if not isinstance(entry, str):
+            return None
+        fields = entry.rsplit(None, 2)
+        if not fields or not fields[0] or len(fields) == 2:
+            return None
+        path = fields[0]
+        try:
+            initial, maximum = (int(fields[1]), int(fields[2])) if len(fields) == 3 else (0, 0)
+        except ValueError:
+            return None
+        own = path.startswith('?') or (initial == 0 and maximum == 0)
+        if not own:
+            managed = False
+    return managed
+
+
 def confirm_play(text, root=None):
     """Yes plays anyway. No cancels. Steam calls without a parent window."""
     box = ctypes.WinDLL('user32', use_last_error=True).MessageBoxW
     box.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
     box.restype = ctypes.c_int
-    flags = 0x4 | 0x30 | 0x100 | 0x10000   # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND
+    flags = 0x4 | 0x30 | 0x10000   # MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND; Yes is the default button
     result = box(_hwnd(root) if root is not None else None, text, 'NX2Saria', flags)
     if not result:
         raise ctypes.WinError(ctypes.get_last_error())

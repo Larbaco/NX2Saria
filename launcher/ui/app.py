@@ -1033,8 +1033,11 @@ class App:
 
     def toggle(self, label, key, desc):
         def on(v):
-            self.settings[key] = bool(v)
-            self.settings.save()
+            if key == 'warn_low_commit':
+                commit.set_warning_enabled(self.settings, v, self.ctx.log)
+            else:
+                self.settings[key] = bool(v)
+                self.settings.save()
             if key == 'desktop_shortcut':
                 winsys.desktop_shortcut(self.layout, bool(v))
         return Row('toggle', label, on=on, get=lambda: bool(self.settings.get(key)), desc=(desc,))
@@ -2040,7 +2043,7 @@ class App:
             return
         if waiting:
             self.ctx.log(f'play: without the code of {", ".join(waiting)}, whose build did not finish')
-        if not commit.confirm_play_memory(gd, self.ctx.log, self.root):
+        if not commit.confirm_play_memory(gd, self.ctx.log, self.root, self.ctx.settings):
             return
         started = time.time()
         try:
@@ -2160,6 +2163,9 @@ class App:
                         'background either way.'),
             self.toggle('Hide Launcher While Playing', 'hide_while_playing',
                         'Hide this window while the game runs; it comes back when you quit the game.'),
+            self.toggle('Warn About Low Commit', 'warn_low_commit',
+                        'Before Play, warn when Windows has too little commit left and the page file is disabled or '
+                        'fixed-size. Turn this off to stop these prompts; the game still logs the memory figures.'),
             self.toggle('Keep Build Cache', 'keep_cache',
                         'Keep the translated code and compiled files (about 1.5 GB) in the game folder, so an update '
                         'compiles only what changed. Off: they are deleted after each build.'),
@@ -2905,7 +2911,7 @@ def play_only(ctx):
     if waiting:   # the window builds the mods' code in, then starts the game (App.start with --play)
         ctx.log(f'play from Steam: the game is built again first for the code of {", ".join(waiting)}')
         return None
-    if not commit.confirm_play_memory(gd, ctx.log):
+    if not commit.confirm_play_memory(gd, ctx.log, settings=ctx.settings):
         return 0
     started = time.time()
     try:

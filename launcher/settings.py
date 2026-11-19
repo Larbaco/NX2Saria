@@ -11,6 +11,7 @@ DEFAULTS = {
     'auto_install': True,         # install a downloaded update by itself whenever the game is not running
     'channel': 'stable',          # 'stable' or 'preview' (GitHub pre-releases)
     'hide_while_playing': True,   # hide the window while the game runs, show it again when it exits
+    'warn_low_commit': True,      # warn before Play only with a disabled or fixed-size Windows page file
     'keep_cache': True,           # keep build-cache/ (the lift and objects) so an update recompiles only changes
     'desktop_shortcut': True,
     'save_export_dir': '',        # where Saves > Export Save writes its zip; empty: the Downloads folder

@@ -35,7 +35,9 @@ def commit_warning(remaining, need):
         return ''
     return (f'Windows has {int(remaining)} MiB of committed memory left (RAM plus page file). '
             f'The game typically needs about {need:g} MiB while you play.\n\n'
-            f'{winsys.WINDOWS_LOW_COMMIT_ADVICE}\n\nPlay anyway?')
+            f'{winsys.WINDOWS_LOW_COMMIT_ADVICE}\n'
+            "Don't warn me again: turn off Warn About Low Commit in launcher Settings, or set mem_need_mb = 0 "
+            'in nx2saria.ini.\n\nPlay anyway?')
 
 
 def fatal_summary(fatal):
@@ -49,7 +51,14 @@ def fatal_summary(fatal):
     return ''
 
 
-def confirm_play_memory(game_dir, log, root=None):
+def set_warning_enabled(settings, enabled, log):
+    """Persist the launcher's warning choice and leave its value in launcher.log."""
+    settings['warn_low_commit'] = bool(enabled)
+    settings.save()
+    log(f'launcher setting: warn_low_commit = {int(bool(enabled))}')
+
+
+def confirm_play_memory(game_dir, log, root=None, settings=None):
     """Sample Windows commit just before launch. An unavailable check or dialog still allows Play."""
     try:
         info = winsys.system_commit_info()
@@ -62,10 +71,28 @@ def confirm_play_memory(game_dir, log, root=None):
     remaining = max(0, limit - used)
     need = game_commit_need(game_dir)
     warning = commit_warning(remaining, need)
-    status = 'disabled' if need <= 0 else 'warning' if warning else 'enough'
+    try:
+        page_file_managed = winsys.page_file_is_system_managed()
+    except (AttributeError, OSError) as e:
+        page_file_managed = None
+        log(f'play memory: page-file mode unavailable ({e})')
+    warning_enabled = settings is None or settings.get('warn_low_commit', True)
+    should_warn = warning and page_file_managed is False and warning_enabled
+    if need <= 0:
+        status = 'disabled by mem_need_mb'
+    elif page_file_managed is True:
+        status = 'system-managed page file; log only'
+    elif page_file_managed is None:
+        status = 'page-file mode unknown; log only'
+    elif not warning_enabled:
+        status = 'disabled in launcher Settings'
+    else:
+        status = 'warning' if warning else 'enough'
     log(f'play memory: commit {used:.1f} of {limit:.1f} MiB used, {remaining:.1f} MiB left, '
-        f'{ram:.1f} MiB RAM, game estimate {need:g} MiB ({status})')
-    if not warning:
+        f'{ram:.1f} MiB RAM, game estimate {need:g} MiB, page file '
+        f'{"system-managed" if page_file_managed is True else "fixed or off" if page_file_managed is False else "unknown"} '
+        f'({status})')
+    if not should_warn:
         return True
     try:
         play = winsys.confirm_play(warning, root)
