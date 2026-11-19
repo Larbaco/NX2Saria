@@ -4,6 +4,12 @@ import re
 _NUM = re.compile(r'^\s*v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?\s*$')
 
 
+def _pre_key(pre):
+    """A pre-release's order as semver 2.0.0 gives it: dot-separated identifiers compared one by one, numbers as
+    numbers (rc.9 before rc.10) and before text, and a shorter list before a longer one it starts."""
+    return tuple((0, int(p), '') if p.isdigit() else (1, 0, p) for p in pre.split('.'))
+
+
 def parse(text):
     """(numbers, pre-release) for comparing; a pre-release sorts before its release. ValueError when malformed."""
     m = _NUM.match(text or '')
@@ -12,7 +18,7 @@ def parse(text):
     nums = tuple(int(x) for x in m.group(1).split('.'))
     nums = nums + (0,) * (4 - len(nums)) if len(nums) < 4 else nums
     pre = m.group(2)
-    return nums, (1,) if pre is None else (0, pre)
+    return nums, (1,) if pre is None else (0, _pre_key(pre))
 
 
 def newer(a, b):
