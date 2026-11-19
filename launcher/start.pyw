@@ -63,8 +63,21 @@ def quiet_exit(root, argv, age):
     return bool(rollback_target(root)) and '--play' not in argv and age < STUB_WAITS
 
 
+def short_paths(text):
+    """text with the account's folders written short (tools/private_paths.py), or as it is when that cannot load: the
+    failure being reported may be the one that keeps it from loading."""
+    try:
+        sys.path.insert(0, os.path.join(APP, 'tools'))
+        import private_paths
+        return private_paths.shorten(text)
+    except Exception:
+        return text
+
+
 def crash(text, box=True):
-    """The failure into data/logs/crash.log and, with box, into a message box that waits for the player."""
+    """The failure into data/logs/crash.log and, with box, into a message box that waits for the player. The account's
+    folders are written short in both (tools/private_paths.py): crash.log is attached to public issues."""
+    text = short_paths(text)
     try:
         logs = os.path.join(launcher_root(), 'data', 'logs')
         os.makedirs(logs, exist_ok=True)

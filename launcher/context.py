@@ -1,11 +1,16 @@
 """What every part of the launcher shares: the folder layout, the settings and the log (data/logs/launcher.log,
 the run before it in launcher.1.log)."""
 import os
+import sys
 import threading
 import time
+from pathlib import Path
 
 from .paths import Layout
 from .settings import Settings
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+from private_paths import describe, shorten  # noqa: E402
 
 LOG_LIMIT = 4 << 20
 
@@ -28,7 +33,7 @@ class Context:
         except OSError:
             self._file = None
         self.log(f'--- NX2Saria launcher {self.version} ({"checkout" if self.layout.dev else "release"}) in '
-                 f'{self.layout.root}')
+                 f'{self.layout.root}; {describe()}')
         from .toolchain import zstd_missing
         self.zstd_missing = zstd_missing(self.layout)
         if self.zstd_missing:
@@ -40,7 +45,9 @@ class Context:
     def log(self, line):
         """One line (or several) into launcher.log. A log that cannot be written (a full disk, a file closed under
         it) loses the line and nothing else: the callers log from the build's reader thread and from the window's
-        timers, where an exception would stop the build's output from being read or the timer from running."""
+        timers, where an exception would stop the build's output from being read or the timer from running. The
+        account's folders are written short (tools/private_paths.py): players attach this log to public issues."""
+        line = shorten(str(line))
         stamp = time.strftime('%H:%M:%S')
         with self._lock:
             if self._file:

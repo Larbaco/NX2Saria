@@ -10,6 +10,7 @@ import time
 import traceback
 
 from . import build, feed, gamefiles, locks, net, paths, toolchain, updater, versions, winsys
+from .context import shorten
 
 RECHECK = 3600   # seconds between update checks while the launcher stays open, hidden during play included
 
@@ -230,6 +231,7 @@ class Job:
             self.rev += 1
 
     def log(self, line):
+        line = shorten(str(line))   # the job screen and Copy Report show these lines: the account's folders short
         with self._lock:
             self.lines.append(line)
         self.ctx.log(line)   # outside the lock: it waits for the disk

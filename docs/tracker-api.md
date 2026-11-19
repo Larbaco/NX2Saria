@@ -104,7 +104,7 @@ The game and the API. Trackers call it about once a second.
 | `port_version`, `api_version` | This port's version, and this API's (below). |
 | `read_only` | Always `true`. |
 | `methods` | The methods this server answers. `nx2saria.game_data` is listed where the game data is known (version 1.1.1). |
-| `save_dir` | The folder of the save this game loads and writes (`<profile>/save/<account>`, with `slot_00` to `slot_05`), as a JSON string (UTF-8, its backslashes escaped), or `null` before the game made its save storage. A tracker that reads the save files follows this one rather than another install's. |
+| `save_dir` | The folder of the save this game loads and writes (`<profile>/save/<account>`, with `slot_00` to `slot_05`), as a JSON string (UTF-8, its backslashes escaped), or `null` before the game made its save storage. A tracker that reads the save files follows this one rather than another install's. It is the real path: the log writes the account's folders short ([log-privacy.md](log-privacy.md)), this answer does not. |
 
 `fps_window_ms` and any other parameter are ignored.
 

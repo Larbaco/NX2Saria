@@ -54,6 +54,7 @@
 #include "host.h"
 #include "input.h"
 #include "lib_origin.h"
+#include "log_privacy.h"
 #include "logq.h"
 #include "prof.h"
 #include "platform/platform.h"
@@ -145,6 +146,8 @@ void rt_log_sync(void) {
 // plat_exit's first step in a game run (plat_exit_hook): the process ends here, so its last lines reach the file.
 static void log_sync_ending(void) {
     rt_log_ending();
+    if (log_privacy_on())   // how often log_privacy.c acted (the start's "log: personal folders" line said it is on)
+        rt_log("log: %llu lines and values had a personal folder written short this run", log_privacy_count());
     rt_log_sync();
 }
 
@@ -164,7 +167,7 @@ void rt_log_focus_lost(void) {
     plat_exit_note_modules();
 }
 
-void rt_log_raw(const char *p, size_t n) {
+static void log_put(const char *p, size_t n) {
     if (__atomic_load_n(&g_log_state, __ATOMIC_ACQUIRE) == LOG_EARLY) {
         fwrite(p, 1, n, stderr);
         size_t at = __atomic_fetch_add(&g_log_early_n, n, __ATOMIC_RELAXED);
@@ -172,6 +175,22 @@ void rt_log_raw(const char *p, size_t n) {
         return;
     }
     logq_write(p, n);
+}
+
+// Every line of the log comes through here, and a personal folder in it is written short first (log_privacy.c), so the
+// file, stderr, the queue the exit note reads and the crash report all have the short form. A line without one, nearly
+// all of them, goes on as it is. One with one is copied on the stack; a piece larger than the copy (a debug string of
+// the game's, svc.c) goes on in parts.
+void rt_log_raw(const char *p, size_t n) {
+    if (log_privacy_find(p, n) == n) {
+        log_put(p, n);
+        return;
+    }
+    char out[2560];
+    for (size_t at = 0; at < n;) {
+        size_t o = log_privacy_rewrite(p, n, &at, out, sizeof out);
+        if (o) log_put(out, o);
+    }
 }
 
 void rt_vlogf(const char *fmt, va_list ap) {
@@ -741,7 +760,9 @@ int main(int argc, char **argv) {
 }
 
 static int main_run(int argc, char **argv) {
+    log_privacy_init();   // the personal folders to write short in the log, from the environment, before its first line
     mem_init();   // first: claim the guest address space before anything else can land there; reads the settings file
+    log_privacy_start();   // the switch (log_short_paths) and the line that says how paths are written
     // The build that wrote the log, at its top: an attached log from another install or version shows at a glance.
     rt_log("version: NX2Saria %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,
            rt_game_version % 10);

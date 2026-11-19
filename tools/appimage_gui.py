@@ -26,7 +26,11 @@ import shutil
 import subprocess
 import threading
 import tkinter as tk
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # AppRun starts this with python -I: no script folder on the path
+from private_paths import shorten  # noqa: E402
 
 def _brand_dir(root):
     current, legacy = root / 'nx2saria', root / 'nx2navi'
@@ -429,6 +433,7 @@ class App:
 
     def line(self, text):
         if not text.startswith('@@'):
+            text = shorten(text)   # build.log is attached to issues: the account's folders short (private_paths.py)
             self.log.append(text)
             del self.log[:-5000]
             if text.startswith('Missing:'):

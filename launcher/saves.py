@@ -36,6 +36,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
+from .context import shorten
+
 
 def _rmtree(path):
     """Delete a folder, read-only files in it too (shutil.rmtree stops at them on Windows); what still fails stays."""
@@ -486,12 +488,20 @@ def scrub_settings(data):
     return b'\n'.join(out)
 
 
+def short_paths(data):
+    """The bytes of a log or settings file with the account's folders written short (tools/private_paths.py); bytes
+    that are not UTF-8 pass through as they are."""
+    return shorten(data.decode('utf-8', 'surrogateescape')).encode('utf-8', 'surrogateescape')
+
+
 def _add_report_file(z, f, archive_name):
-    """Add a report file under its current archive name; scrub settings from either INI filename."""
+    """Add a report file under its current archive name; scrub settings from either INI filename. Both have the
+    account's folders written short: a log from a game run with log_short_paths = 0, or from a version before it, has
+    them in full, and a report goes to people the player does not know."""
     if f.name.lower() in ('nx2navi.ini', 'nx2saria.ini'):
-        z.writestr(REPORT_DIR + archive_name, scrub_settings(f.read_bytes()))
+        z.writestr(REPORT_DIR + archive_name, short_paths(scrub_settings(f.read_bytes())))
     else:
-        z.write(f, REPORT_DIR + archive_name)
+        z.writestr(REPORT_DIR + archive_name, short_paths(f.read_bytes()))
 
 
 def _report_files(game):

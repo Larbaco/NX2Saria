@@ -42,6 +42,7 @@
 #include "host.h"
 #include "input.h"
 #include "input_map.h"
+#include "log_privacy.h"
 #include "perfmon.h"
 #include "platform/platform.h"
 #include "save_share.h"
@@ -243,7 +244,9 @@ static void write_log_tail(void) {
             const char *line = memchr(buf, '\n', (size_t)got);
             if (line) p = line + 1;
         }
-        fprintf(f, "# the last %lld of %lld bytes of %s\n", (long long)(got - (p - buf)), (long long)size, path);
+        char shown[PLAT_PATH_MAX];   // the log's own path, with the personal folder short like the lines below it
+        fprintf(f, "# the last %lld of %lld bytes of %s\n", (long long)(got - (p - buf)), (long long)size,
+                log_privacy_str(path, shown, sizeof shown));
         fwrite(p, 1, (size_t)(got - (p - buf)), f);
         fclose(f);
     }
@@ -275,6 +278,8 @@ static void setting_cb(const char *key, const char *value, int from_env, void *c
     snprintf(var, sizeof var, "NX2SARIA_%s", key);
     if (!from_env && cfg_from_env(var)) return;   // the file's line of a key the environment sets too: that one counts
     int private = cfg_private_key(key);
+    char shown[1024];   // a folder in the account's home written short (log_privacy.c), as in the log
+    value = log_privacy_str(value, shown, sizeof shown);
     if (s->ini && !private && *value && !run_key(key)) fprintf(s->ini, "%s = %s\n", lower, value);
     if (!s->txt || !*value) return;
     const char *def = cfg_default(key);
