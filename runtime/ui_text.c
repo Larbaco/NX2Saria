@@ -817,6 +817,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
         "resolution you chose. With DLSS or FSR this does not apply: the upscaling mode steps down to Performance "
         "instead. Changes take effect at once.",
     [UI_MENU_DYN_RES_MIN_OFF] = "only with Dynamic resolution on",
+    [UI_MENU_DYN_RES_NO_ROOM] = "nothing to lower: Scene resolution is at or under the minimum",
+    [UI_MENU_DYN_RES_NATIVE] = "nothing to lower at DLAA or Native AA",
 };
 
 static const char *const text_ru[UI_TEXT_COUNT] = {
@@ -1515,6 +1517,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
         "Выше выбранного «Разрешения сцены» оно не поднимается. С DLSS или FSR не действует: вместо этого режим "
         "апскейлера опускается до «Производительность». Изменения применяются сразу.",
     [UI_MENU_DYN_RES_MIN_OFF] = "только с включённым динамическим разрешением",
+    [UI_MENU_DYN_RES_NO_ROOM] = "нечего снижать: разрешение сцены уже на минимуме или ниже",
+    [UI_MENU_DYN_RES_NATIVE] = "нечего снижать при DLAA или Native AA",
 };
 
 static const char *const text_pt_br[UI_TEXT_COUNT] = {
@@ -2260,6 +2264,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
         "passa da Resolução da cena escolhida. Com DLSS ou FSR isto não vale: o modo do upscaler desce até Desempenho "
         "no lugar. As mudanças valem na hora.",
     [UI_MENU_DYN_RES_MIN_OFF] = "só com a Resolução dinâmica ligada",
+    [UI_MENU_DYN_RES_NO_ROOM] = "nada a baixar: a Resolução da cena já está no mínimo ou abaixo",
+    [UI_MENU_DYN_RES_NATIVE] = "nada a baixar com DLAA ou Native AA",
 };
 
 // Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
@@ -3032,6 +3038,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DYN_RES_MIN] = "最低场景分辨率",
     [UI_MENU_DYN_RES_MIN_DESC] = "动态分辨率可把 3D 场景降到的最低分辨率，以占画面的比例计。较低时在较慢的电脑上帧率更稳定，但吃力的场面会更模糊。不会高于所选的场景分辨率。使用 DLSS 或 FSR 时此项不生效：改为把超分辨率模式降到“性能”。更改立即生效。",
     [UI_MENU_DYN_RES_MIN_OFF] = "仅在开启动态分辨率时可用",
+    [UI_MENU_DYN_RES_NO_ROOM] = "无可降低：场景分辨率已等于或低于最低值",
+    [UI_MENU_DYN_RES_NATIVE] = "在 DLAA 或 Native AA 下无可降低",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

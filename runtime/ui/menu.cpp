@@ -1164,8 +1164,24 @@ static void row_scene_res(void) {
 // A minimum set by hand that is none of them shows as it is.
 static void row_dyn_res(void) {
     if (!wide_scene_settable()) return;
-    opt_toggle("NX2SARIA_DYN_RES", UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC);
-    if (upscaler_sizes_scene()) return;
+    // A note under the name while it is on with nothing to lower (dynres.c logs the same): DLSS or FSR at native size,
+    // which has no lower mode to step to, or a scene resolution at or under the minimum, which leaves no room.
+    const bool upscaled = upscaler_sizes_scene();
+    const char *note = nullptr;
+    if (opt_bool("NX2SARIA_DYN_RES")) {
+        static const char *const modes[] = {"quality", "balanced", "performance", "ultra_performance"};
+        const char *mode = opt_value("NX2SARIA_DLSS");
+        bool steps = false;
+        for (const char *m : modes) steps |= mode && !strcmp(mode, m);
+        const char *d = opt_default("NX2SARIA_SCENE_SHARE");
+        const double share = opt_is_set("NX2SARIA_SCENE_SHARE") ? atof(opt_value("NX2SARIA_SCENE_SHARE"))
+                           : d && *d ? atof(d) : 0.75;
+        if (upscaled && !steps) note = menu_text(UI_MENU_DYN_RES_NATIVE);
+        else if (!upscaled && share > 0 && share <= atof(opt_value("NX2SARIA_DYN_RES_MIN")) + 0.001)
+            note = menu_text(UI_MENU_DYN_RES_NO_ROOM);
+    }
+    opt_toggle("NX2SARIA_DYN_RES", UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC, false, note);
+    if (upscaled) return;
     enum { N = sizeof scene_shares / sizeof *scene_shares };
     static char text[N][16];
     const char *names[N];

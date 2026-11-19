@@ -248,7 +248,7 @@ hidden while DLSS or FSR runs, where it does nothing. Both are live. `dyn_res_ta
 `nx2saria.ini` only.
 
 The target is `dyn_res_target` milliseconds when that is set (1 to 100), exactly. Unset (0) it is 90 % of the frame
-time of the rate the game draws at under the limit, of 16.7 ms while that rate is unknown or unlimited: 15.0 ms at
+time of the rate the game draws at under the limit, or 16.7 ms while that rate is unknown or unlimited: 15.0 ms at
 60 fps, 22.5 ms at 40, 30.0 ms at 30. A step down comes at 108 % of the target (below), so with the 10 % margin the
 scene shrinks at 97 % of the frame time, before frames are lost, and grows back under 67.5 % of it.
 

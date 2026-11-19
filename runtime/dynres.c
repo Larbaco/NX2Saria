@@ -34,7 +34,7 @@
 //     between the same two sizes every four seconds. A step up held 5 s brings the wait back to 3 s.
 // The target is NX2SARIA_DYN_RES_TARGET milliseconds when that is set (1 to 100), exactly. Unset (0) it is 90 % of the
 // frame time of the limit the game draws at (frame_rate.c frame_step_game_hz: 1000 / the limit, the monitor's rate for
-// display, the drawn frames with frame generation), of 16.7 ms, a 60 Hz frame, while that rate is unknown or
+// display, the drawn frames with frame generation), or 16.7 ms, a 60 Hz frame, while that rate is unknown or
 // unlimited: 15.0 ms at 60 fps, 22.5 ms at 40, 30.0 ms at 30. The 10 % margin (DYN_MARGIN) moves the thresholds below
 // the frame time: a step down comes at 108 % of the target, 97 % of the frame time, before frames are lost, and a step
 // up under 75 % of it, 67.5 % of the frame time. A fixed 16.7 ms target let the GPU take up to 18 ms a frame at full
