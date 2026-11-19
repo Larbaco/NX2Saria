@@ -41,7 +41,7 @@ int main(void) {
     assert(plat_mem_reserve(a, n, 1));
     if (!plat_mem_dmabuf_ok(&limit, &any, &why)) { printf("SKIP: guest memory is not a memfd's here: %s\n", why); return 77; }
     assert(any == a);
-    assert(plat_mem_commit(a, 16 * MiB));
+    assert(plat_mem_commit(a, 16 * MiB, NULL));
     memset((void *)(uintptr_t)a, 0x11, 16 * MiB);
     for (uint64_t k = 16; k == 16;)   // read and reset until a call has fewer than it could take
         if ((k = plat_mem_written(a, n, pages, 16, 1)) == UINT64_MAX) { puts("SKIP: asynchronous write watch unavailable"); return 77; }
@@ -66,20 +66,20 @@ int main(void) {
 
     // a decommit inside the dma-buf: zero in place, the same pages for both
     assert(plat_mem_decommit(a + 4096, 4096));
-    assert(plat_mem_commit(a + 4096, 4096));
+    assert(plat_mem_commit(a + 4096, 4096, NULL));
     assert(((volatile uint8_t *)(uintptr_t)a)[4096 + 5] == 0 && d[4096 + 5] == 0);
     ((volatile uint8_t *)(uintptr_t)a)[4096 + 6] = 0x44;
     assert(d[4096 + 6] == 0x44);
 
     // a decommit that straddles the dma-buf's end: zero both sides when committed again
     assert(plat_mem_decommit(a + 8 * MiB - 4096, 2 * 4096));
-    assert(plat_mem_commit(a + 8 * MiB - 4096, 2 * 4096));
+    assert(plat_mem_commit(a + 8 * MiB - 4096, 2 * 4096, NULL));
     assert(((volatile uint8_t *)(uintptr_t)(a + 8 * MiB - 1))[0] == 0 && d[8 * MiB - 1] == 0);
     assert(((volatile uint8_t *)(uintptr_t)(a + 8 * MiB))[0] == 0);
 
     // a decommit outside any dma-buf: the pages leave the memfd and read zero
     assert(plat_mem_decommit(a + 12 * MiB, MiB));
-    assert(plat_mem_commit(a + 12 * MiB, MiB));
+    assert(plat_mem_commit(a + 12 * MiB, MiB, NULL));
     assert(((volatile uint8_t *)(uintptr_t)(a + 12 * MiB))[77] == 0);
 
     // a dma-buf over pages nothing committed yet allocates them; when it is gone they go back, the committed ones stay
@@ -93,7 +93,7 @@ int main(void) {
     printf("memfd: %.1f MiB, %.1f MiB with an 8 MiB dma-buf over uncommitted pages, %.1f MiB after it\n", before / 1048576.0,
            pinned / 1048576.0, after / 1048576.0);
     assert(pinned >= before + 8 * MiB && after == before);
-    assert(plat_mem_commit(a + 32 * MiB, 4096));
+    assert(plat_mem_commit(a + 32 * MiB, 4096, NULL));
     assert(((volatile uint8_t *)(uintptr_t)(a + 32 * MiB))[9] == 0);
 
     munmap((void *)d, 8 * MiB);

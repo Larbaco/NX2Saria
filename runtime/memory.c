@@ -64,6 +64,21 @@ static uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1)
 
 static int reserve_at(uint64_t at, uint64_t size, int watch) { return plat_mem_reserve(at, size, watch); }
 
+static void commit_failed(uint64_t a, uint64_t n, const char *what, uint32_t error) __attribute__((noreturn));
+static void commit_failed(uint64_t a, uint64_t n, const char *what, uint32_t error) {
+    char reason[320];
+    double proc, used, limit;
+    plat_mem_commit_error(error, reason, sizeof reason);
+    plat_commit_info(&proc, &used, &limit);
+    rt_fatal("memory: commit %s %#llx+%#llx failed (%llu bytes, %s, commit %.0f of %.0f MB in use)", what,
+             (unsigned long long)a, (unsigned long long)n, (unsigned long long)n, reason, used, limit);
+}
+
+void mem_commit_checked(uint64_t addr, size_t size, const char *what) {
+    uint32_t error = 0;
+    if (!plat_mem_commit(addr, size, &error)) commit_failed(addr, size, what, error);
+}
+
 // ---- frozen regions
 // A 2 MiB region of the watched reservations that nothing wrote for a while can be made read-only (mem_freeze), so the
 // back end's write-watch queries skip it: no page of a frozen region changes before a thaw. The first write faults and
@@ -1144,9 +1159,8 @@ static uint64_t heap_lazy_commit_locked(uint64_t a, uint64_t n) {
     for (uint64_t x = lo, y; x < hi; x = y) {
         if (plat_mem_state(x, hi, &y) != PLAT_MEM_RESERVED) continue;
         if (!thawed) thaw_range_locked(lo, hi - lo, 3), thawed = 1;
-        if (!plat_mem_commit(x, y - x))
-            rt_fatal("memory: committing the heap's pages %#llx+%#llx on first use failed: the system's commit is "
-                     "used up", (unsigned long long)x, (unsigned long long)(y - x));
+        uint32_t error;
+        if (!plat_mem_commit(x, y - x, &error)) commit_failed(x, y - x, "heap pages on first use", error);
         got += y - x;
     }
     heap_lazy_bytes += got;
@@ -1435,9 +1449,10 @@ static void commit(uint64_t a, uint64_t n, const char *what) {
     plat_mutex_lock(&frz_lock);
     thaw_wait_locked(a, n);
     thaw_range_locked(a, n, 3);
-    int ok = !n || plat_mem_commit(a, n);
+    uint32_t error = 0;
+    int ok = !n || plat_mem_commit(a, n, &error);
     plat_mutex_unlock(&frz_lock);
-    if (!ok) rt_fatal("memory: commit %s %#llx+%#llx failed", what, (unsigned long long)a, (unsigned long long)n);
+    if (!ok) commit_failed(a, n, what, error);
 }
 
 static void decommit(uint64_t a, uint64_t n, const char *what) {
@@ -1525,6 +1540,7 @@ void mem_init(void) {
         .pool = pool ? strtoull(pool, NULL, 0) : DEFAULT_POOL + res_heap_extra_bytes(),   // resolution.c
     };
     if (!L.pool) rt_fatal("memory: NX2SARIA_APP_POOL is 0");
+    rt_log("mem: commit failure diagnostics enabled (host error, byte count and commit used/limit)");
 #ifdef _WIN32
     if (cfg_bool("NX2SARIA_HEAP_LAZY")) {   // set before the game's first SetHeapSize
         plat_mem_access_hook(access_fault);

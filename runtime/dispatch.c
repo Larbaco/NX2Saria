@@ -113,8 +113,7 @@ static void fatal_end(int code, const char *fmt, va_list ap) {
     rt_log_raw("FATAL: ", 7);
     rt_vlogf(fmt, ap);
     rt_log_raw("\n", 1);
-    // A failed allocation (malloc, realloc, VirtualAlloc) means the commit limit was reached: this line tells a leak of
-    // ours (process private bytes near the limit) from a machine short of page file.
+    // When an allocation fails, these numbers help distinguish high commit in this process from system-wide pressure.
     double proc, used, limit;
     plat_commit_info(&proc, &used, &limit);
     rt_log("fatal: memory commit: this process %.0f MB, the system %.0f of %.0f MB", proc, used, limit);

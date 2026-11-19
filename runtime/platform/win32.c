@@ -24,6 +24,7 @@
 
 #include "platform.h"
 #include "../cfg.h"
+#include "commit_error.h"
 
 _Static_assert(sizeof(PlatMutex) == sizeof(SRWLOCK), "PlatMutex holds an SRWLOCK");
 _Static_assert(sizeof(PlatCond) == sizeof(CONDITION_VARIABLE), "PlatCond holds a CONDITION_VARIABLE");
@@ -1023,8 +1024,38 @@ int plat_mem_reserve(uint64_t addr, uint64_t n, int watch) {
 
 void *plat_mem_alloc(size_t n) { return VirtualAlloc(NULL, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
 
-int plat_mem_commit(uint64_t addr, size_t n) {
-    return VirtualAlloc((void *)(uintptr_t)addr, n, MEM_COMMIT, PAGE_READWRITE) != NULL;
+int plat_mem_commit(uint64_t addr, size_t n, uint32_t *error) {
+    if (VirtualAlloc((void *)(uintptr_t)addr, n, MEM_COMMIT, PAGE_READWRITE)) return 1;
+    DWORD code = GetLastError();
+    if (error) *error = code;
+    return 0;
+}
+
+void plat_mem_commit_error(uint32_t error, char *out, size_t cap) {
+    const char *name;
+    const char *advice = plat_commit_win_memory_advice(error);
+    char message[128];
+    switch (error) {
+    case ERROR_COMMITMENT_LIMIT: name = "ERROR_COMMITMENT_LIMIT"; break;
+    case ERROR_NOT_ENOUGH_MEMORY: name = "ERROR_NOT_ENOUGH_MEMORY"; break;
+    case ERROR_NO_SYSTEM_RESOURCES: name = "ERROR_NO_SYSTEM_RESOURCES"; break;
+    case ERROR_OUTOFMEMORY: name = "ERROR_OUTOFMEMORY"; break;
+    case ERROR_INVALID_ADDRESS: name = "ERROR_INVALID_ADDRESS"; break;
+    case ERROR_INVALID_PARAMETER: name = "ERROR_INVALID_PARAMETER"; break;
+    case ERROR_ACCESS_DENIED: name = "ERROR_ACCESS_DENIED"; break;
+    default:
+        if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                           NULL, error, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), message, sizeof message, NULL)) {
+            message[strcspn(message, "\r\n")] = 0;
+            name = message;
+        } else {
+            name = "unknown Win32 error";
+        }
+    }
+    if (advice)
+        snprintf(out, cap, "Win32 %u (%s): %s", error, name, advice);
+    else
+        snprintf(out, cap, "Win32 %u (%s)", error, name);
 }
 
 // Decommitted pages come back zeroed when committed again.

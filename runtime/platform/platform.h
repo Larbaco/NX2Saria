@@ -264,7 +264,9 @@ int plat_mem_reserve(uint64_t addr, uint64_t n, int watch);
 // n bytes of read-write memory anywhere, zero, backed only as pages are first written (plat_mem_protect may seal them);
 // NULL on failure. Kept until exit.
 void *plat_mem_alloc(size_t n);
-int plat_mem_commit(uint64_t addr, size_t n);             // read-write pages inside a reserved range; 1 on success
+// Read-write pages inside a reserved range. Returns 1 on success. On failure, writes the native error if requested.
+int plat_mem_commit(uint64_t addr, size_t n, uint32_t *error);
+void plat_mem_commit_error(uint32_t error, char *out, size_t cap);   // native error kind, number and name for the log
 int plat_mem_decommit(uint64_t addr, uint64_t n);          // contents dropped: committed again, the pages read zero
 int plat_mem_protect(uint64_t addr, uint64_t n, int prot); // committed pages only; 1 on success
 // The page at addr: PLAT_PROT_* when committed, else PLAT_MEM_RESERVED or PLAT_MEM_FREE (not reserved by us). *end

@@ -1427,14 +1427,27 @@ void *plat_mem_alloc(size_t n) {
     return p == MAP_FAILED ? NULL : p;
 }
 
-int plat_mem_commit(uint64_t addr, size_t n) {
+int plat_mem_commit(uint64_t addr, size_t n, uint32_t *error) {
     // In a shared reservation under vm_lock: plat_mem_dmabuf_done punches out the pages it finds not committed.
     int locked = gm_nres > 0 && gm_find(addr, n) >= 0;
     if (locked) plat_mutex_lock(&vm_lock);
     int ok = !mprotect((void *)(uintptr_t)addr, n, PROT_READ | PROT_WRITE);
     if (ok) ps_set(addr, n, PS_RW);
+    else if (error) *error = (uint32_t)errno;
     if (locked) plat_mutex_unlock(&vm_lock);
     return ok;
+}
+
+void plat_mem_commit_error(uint32_t error, char *out, size_t cap) {
+    const char *name;
+    char message[96];
+    switch (error) {
+    case ENOMEM: name = "ENOMEM"; break;
+    case EACCES: name = "EACCES"; break;
+    case EINVAL: name = "EINVAL"; break;
+    default: name = strerror_r((int)error, message, sizeof message); break;
+    }
+    snprintf(out, cap, "Linux could not commit the requested memory: errno %u (%s)", error, name);
 }
 
 int plat_mem_decommit(uint64_t addr, uint64_t n) {
