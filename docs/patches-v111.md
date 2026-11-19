@@ -29,3 +29,10 @@ The startup `patches:` line lists `ozora on` or `ozora off`. The patch logs `fra
 With `sound_steps=1`, the sound job still runs at whole 60 Hz steps. The patch holds the battle music's four change bits across skipped updates. The next sound update receives them through the original flag reads, and they expire after that update. Set `battle_music_fix=0` and restart to disable it.
 
 The startup `patches:` line lists `obgm on` or `obgm off`. A restored bit logs `frame rate: battle music change` with the flag byte before and after, up to eight times per session.
+
+## Voice language after restart
+
+The voice resource manager can miss a saved language choice when the game starts. This patch compares the option it reads with the last valid value and requests the game's normal voice refresh when it changed without a write notification. Set `voice_language_fix=0` and restart to disable it.
+
+The startup `patches:` line lists `voice_language on` or `voice_language off`. A refresh logs `voice language: refresh` with the old and new option values, up to eight times per session.
+

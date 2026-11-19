@@ -474,3 +474,8 @@ site obgm       main 3353680 39626348 39626348 946d35fc   # ldrb w8, [x26, #0x89
 site obgm       main 33537c0 39626348 39626348 946d35ac
 site obgm       main 3353950 39626348 39626348 946d3548
 site obgm       main 3353a4c 39626348 39626348 946d3509
+
+# Recheck the saved voice-language option when the resource manager updates (voice_language.c).
+set voice_language NX2SARIA_VOICE_LANGUAGE_FIX 1
+site voice_language main a7ca98 940001ca 951090f2 # bl main+0xa7d1c0 -> bl page+0xe60
+
