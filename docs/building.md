@@ -940,6 +940,13 @@ A change to which frames FSR 3.1 frame generation is told are camera cuts (`runt
 frame id gets its own frame's cut, that an id never noted or no longer held counts as a cut, and that a slot rewritten
 on another thread never answers an old id with a newer frame's value. No GPU, no game files.
 
+A change to how frame generation's log line sorts the game's frames (`runtime/vk_fg_stats.h`, used by `runtime/vk_fg.cpp`,
+`runtime/vk_fg4.cpp` and `runtime/vk_fsr3fg.c`) passes `python tests\fg_stats_check.py`, which builds the header alone
+and checks the order of the reasons (the menu first, then a frame without a scene, then why a gameplay frame was not
+generated), a line every 600 gameplay frames or 3600 of any kind, the presents over the period's time, the cap on
+lines with the run's totals kept, and that a session of 4600 title frames, gameplay and the menu reads as 100% of its
+gameplay generated. No GPU, no game files. What the line means and how to check a run: [frame-generation.md](frame-generation.md).
+
 A change to who holds the frame limit with DLSS Frame Generation (`runtime/dlssg_pace.h`, `runtime/vk_dlssg.c`
 `vk_dlssg_pace`) passes `python tests\dlssg_pace_check.py`, which builds the header alone and checks that Reflex holds
 the limit only once Streamline took exactly that limit, that the game's own pacer keeps it during a movie, before the

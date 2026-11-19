@@ -174,6 +174,11 @@ extern "C" NX2SL_API int nx2sl_available(void) {
     return g_available;
 }
 
+// The support check's verdict, for nx2sl_support: -1 not asked (or no query), 0 no adapter here has DLSS-G, 1 it is
+// supported, 2 another reason (its name in g_support_name).
+static int g_support = -1;
+static const char *g_support_name = nullptr;
+
 extern "C" NX2SL_API void nx2sl_log_unavailable(VkPhysicalDevice physical) {
     auto supported = proc<PFun_slIsFeatureSupported>("slIsFeatureSupported");
     if (!supported) return say("dlssg: Streamline has no adapter support query");
@@ -181,6 +186,15 @@ extern "C" NX2SL_API void nx2sl_log_unavailable(VkPhysicalDevice physical) {
     adapter.vkPhysicalDevice = physical;
     sl::Result r = supported(sl::kFeatureDLSS_G, adapter);
     say("dlssg: Streamline's support check for frame generation: %s (%d)", sl::getResultAsStr(r), (int)r);
+    g_support_name = sl::getResultAsStr(r);
+    g_support = r == sl::Result::eErrorNoSupportedAdapterFound || r == sl::Result::eErrorAdapterNotSupported ? 0
+                : r == sl::Result::eOk                                                                     ? 1
+                                                                                                           : 2;
+}
+
+extern "C" NX2SL_API int nx2sl_support(const char **name) {
+    if (name) *name = g_support_name;
+    return g_support;
 }
 
 // Streamline sets Reflex's mode and frame limit on the swapchain it was told of last (VK_NV_low_latency2, the sleep

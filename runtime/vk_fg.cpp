@@ -33,6 +33,8 @@ extern "C" {
 #include "vk_ffx.h"
 #include "vk_fg.h"
 #include "vk_fg_reset.h"
+#include "vk_fg_stats.h"
+#include "vk_fg_time.h"
 #include "ui/menu.h"
 }
 
@@ -49,10 +51,11 @@ struct {
     ffxQueryDescSwapchainReplacementFunctionsVK fn = {};
     uint64_t frame = 0;
     int failed = 0;
-    uint64_t generated = 0, paused = 0, no_inputs = 0, hudless = 0, no_hudless = 0;
+    uint64_t generated = 0;   // generation callbacks: frames AMD's swapchain generated
+    FgStats st;               // each frame by the game's state (vk_fg_stats.h), for the periodic line
+    int timed, gen_timed;     // GPU time measured (vk_fg_time.h), and the generation's with it
     int on = 0;   // the last configured frame had generation on (vk_fg_generating)
     FgrRing cuts;   // each frame id's camera cut, for the generation callback (vk_fg_reset.h)
-    uint64_t cut_frames = 0;   // frames handed to the callback as cuts
     int prepared = 0;          // the last frame was prepared (generation on with its inputs)
     uint64_t vram = 0;         // the frame generation context's video memory as the library reported it, 0 not told
 } F;
@@ -65,10 +68,14 @@ VkResult submit_game(uint32_t n, const VkSubmitInfo *si, VkFence fence) {
 }
 
 ffxReturnCode_t generate(ffxDispatchDescFrameGeneration *d, void *user) {
-    F.generated++;
+    __atomic_add_fetch(&F.generated, 1, __ATOMIC_RELAXED);
     // the swapchain's own reset (a frame id that did not follow the last) stays; a cut vk_fg_frame noted is added
     if (fgr_cut(&F.cuts, d->frameID)) d->reset = true;
-    return vk_ffx_dispatch((ffxContext *)user, &d->header);
+    VkCommandBuffer cb = (VkCommandBuffer)d->commandList;
+    int t = cb && fgt_generate_begin(cb, d->frameID);   // its GPU time, with the preparation's (vk_fg_time.h)
+    ffxReturnCode_t r = vk_ffx_dispatch((ffxContext *)user, &d->header);
+    if (t) fgt_generate_end(cb, d->frameID);
+    return r;
 }
 
 FfxApiResource image(const VkFfxImage *i) {
@@ -237,7 +244,11 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     VkFfxImage depth, mv;
     float jx = 0, jy = 0;
     int reset = 0;
-    int have = vk_dlaa_fg_inputs(&depth, &mv, &jx, &jy, &reset);
+    // The menu first: its frames were counted as frames without depth and motion before, since the inputs were taken
+    // first (the menu stops the game's frames). They are not taken while it is open; the first frame after it is a cut.
+    const int menu = menu_is_open();
+    const int got = !menu && vk_dlaa_fg_inputs(&depth, &mv, &jx, &jy, &reset);   // the inputs reached this present
+    int have = got;
     // The context's largest render size covers the depth and motion vectors it is given. They have the scene's size
     // (with an upscaler or without), which DLAA and the widescreen pictures make larger than the window, and a context made for the window's size alone
     // wrote past its own resources: a crash in amd_fidelityfx_vk.dll, device faults, striped frames. The scene is never
@@ -248,6 +259,7 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     VkExtent2D max_render = {ext.width > pw ? ext.width : pw, ext.height > ph ? ext.height : ph};
     if (F.fg && (F.fg_ext.width != ext.width || F.fg_ext.height != ext.height || F.fg_fmt != fmt)) {
         vk_queue_lock(), vkDeviceWaitIdle(c->device), vk_queue_unlock();   // a new window size: the context is made for its display size
+        fgt_idle();   // the GPU is idle: frames whose generation never ran are let go
         vk_ffx_destroy(&F.fg);
         F.fg = nullptr;
     }
@@ -280,8 +292,13 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
         F.vram = vk_ffx_query(&F.fg, &mq.header) == FFX_API_RETURN_OK ? mem.totalUsageInBytes : 0;
         rt_log("fg: frame generation context for %ux%u%s, render size up to %ux%u", ext.width, ext.height,
                hdr_format(fmt) ? " (HDR)" : "", max_render.width, max_render.height);
+        F.timed = fgt_init(F.pfam, &F.gen_timed);
+        rt_log("fg: path: AMD's FSR 3.1 library (amd_fidelityfx_vk.dll), 2x (one generated frame a rendered frame), "
+               "inputs %s; a line every %d gameplay frames", vk_dlaa_fg_only() ? "without an upscaler (the scene's own depth "
+               "and motion vectors)" : "from the upscaler", FGS_PERIOD);
     }
-    if (have && (depth.width > F.fg_max.width || depth.height > F.fg_max.height)) {
+    int fits = !have || (depth.width <= F.fg_max.width && depth.height <= F.fg_max.height);
+    if (!fits) {
         static int told;
         if (!told++)
             rt_log("fg: a %ux%u scene is larger than the context's %ux%u: those frames are not generated", depth.width,
@@ -290,26 +307,24 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     }
     // Only with the picture without the HUD: generated from the presented picture alone, the HUD would be warped along
     // with the scene behind it and trail when the camera turns. A frame without that picture is shown as it is.
-    int on = have && hudless && !menu_is_open();
+    int on = have && hudless && !menu;
     __atomic_store_n(&F.on, on, __ATOMIC_RELAXED);
-    if (!have) F.no_inputs++;
-    else if (!hudless) F.no_hudless++;
-    else if (!on) F.paused++;
     F.frame++;
     // A cut: DLSS started a new history, or without an upscaler the same cases did (vk_dlaa_fg_inputs), or the frame before was not prepared (generation off for
     // the menu, no inputs), so the frame between the two would be made from a stale depth and motion
-    fgr_note(&F.cuts, F.frame, reset || !F.prepared);
-    if ((reset || !F.prepared) && on) F.cut_frames++;
+    int cut = reset || !F.prepared;
+    fgr_note(&F.cuts, F.frame, cut);
     F.prepared = on;
-    // Every 600 frames, whether this one generates or not: what kept frames from being generated, and how many frames
-    // AMD's swapchain presented (generated ones included). Logged only from a generating frame, as before, a run whose
-    // frames never generated (the menu open at the swapchain's second frame, no inputs, no HUD-less picture) said nothing.
-    if (F.frame == 120 || F.frame % 600 == 0)
-        rt_log("fg: %llu frames, %llu generated (%llu with the HUD kept out), %llu presents by the swapchain; not generated: "
-               "%llu menu open, %llu without depth and motion, %llu without the HUD-less picture; %llu after a camera cut",
-               (unsigned long long)F.frame, (unsigned long long)F.generated, (unsigned long long)F.hudless,
-               (unsigned long long)vk_fg_presents(sc), (unsigned long long)F.paused, (unsigned long long)F.no_inputs,
-               (unsigned long long)F.no_hudless, (unsigned long long)F.cut_frames);
+    // Each frame by the game's state (vk_fg_stats.h): the menu first, then a frame without a scene (the title, a movie,
+    // a load), then why a gameplay frame was not generated. The line every 600 gameplay frames gives that period's
+    // counts, the swapchain's presents over its time (the overlay's frame rate) and the GPU time a generated frame took.
+    uint64_t presents = vk_fg_presents(sc), t_now = plat_now_ns();
+    fgs_count(&F.st, fgs_classify(menu, vk_dlaa_fg_scene(), got, fits, hudless != VK_NULL_HANDLE, cut), presents, t_now);
+    double ms[16];
+    for (int i = 0, n = fgt_poll(F.frame, ms, 16); i < n; i++) fgs_gpu(&F.st, ms[i]);
+    char line[1024];
+    if (fgs_line(&F.st, "fg", presents, t_now, line, sizeof line) == 1)
+        rt_log("%s; %llu frames generated by the swapchain", line, (unsigned long long)__atomic_load_n(&F.generated, __ATOMIC_RELAXED));
     ffxConfigureDescFrameGeneration cfg = {};
     cfg.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
     cfg.swapChain = (void *)sc;
@@ -324,7 +339,6 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     if (on) {
         VkFfxImage h = {hudless, fmt, ext.width, ext.height, 1};
         cfg.HUDLessColor = image(&h);
-        F.hudless++;
     }
     cfg.frameID = F.frame;
     ffxReturnCode_t r = vk_ffx_configure(&F.fg, &cfg.header);
@@ -351,7 +365,9 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     p.viewSpaceToMetersFactor = cam.meters > 0 ? cam.meters : 1.0f;
     p.depth = image(&depth);
     p.motionVectors = image(&mv);
+    int t = fgt_prepare_begin(cb, F.frame);
     r = vk_ffx_dispatch(&F.fg, &p.header);
+    if (t) fgt_prepare_end(cb, F.frame);
     if (r != FFX_API_RETURN_OK) return fail("frame generation preparation", r);
 }
 
@@ -362,6 +378,8 @@ extern "C" void vk_fg_release(void) {
     vk_fg4_release();
     if (F.fg) vk_ffx_destroy(&F.fg), F.fg = nullptr;
     if (F.sc) vk_ffx_destroy(&F.sc), F.sc = nullptr;
+    fgt_release();   // AMD's contexts are gone and the device idle: nothing records into its timestamps
+    F.st.started = 0;   // the next swapchain counts its presents from 0: the period starts again, the run's totals stay
     __atomic_store_n(&F.on, 0, __ATOMIC_RELAXED);
     F.prepared = 0;
 }

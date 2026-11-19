@@ -43,6 +43,7 @@ static const char *const known[] = {
     "OCARINA_TIMING",
     "FSR3_PROBE_PAN", "FSR3_PROBE_PPM",   // the FSR 3.1 probe (fsr3_probe.c)
     "FSR3FG_PROBE_PPM", "FSR3FG_PASS_TIMES", "FSR3FG_DUMP", "FSR3FG_DUMP_EVERY", "FSR3FG_TEST_FAIL",   // the FSR 3.1 frame generation probe (fsr3fg_probe.c), vk_fsr3fg.c
+    "FG_GPU_TIME", "DLAA_TEST_DEFERRED",   // frame generation's GPU time (vk_fg_time.c); the deferred-shape test (vk_dlaa.c vk_dlaa_pass)
     "AA", "AA_LOG", "AB", "AMIIBO_DAILY_LIMIT", "AMIIBO_DIR", "AMIIBO_KEYS", "AMIIBO_POPUP", "AMIIBO_WRITEBACK", "ANISO", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_CATCHUP", "AUDIO_CHANNELS", "AUDIO_DEVICE", "AUDIO_GAME_PRIO", "AUDIO_OFF", "AUDIO_PREFILL_MS", "AUDIO_RAMP", "AUDIO_STATS",
     "AUDIO_STRICT",
     "BARRIER_GAME", "MESH_AHEAD", "MESH_FALLBACK", "MESH_FALLBACK_MB", "MESH_FALLBACK_WORKERS", "MESH_FALLBACK_HOLD", "PROBE_MESHFB_DIR",

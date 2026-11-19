@@ -1718,9 +1718,12 @@ static int ng_record(VkCommandBuffer cb, VkImage dst, VkImageLayout *last, VkPip
                  VK_ACCESS_2_MEMORY_READ_BIT);
     *last = VK_IMAGE_LAYOUT_GENERAL, *stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, *write = 0;
     int made = 0;
-    if (!gen || menu_is_open()) {
+    if (ng.src == NG_FSR3) vk_fsr3fg_presents(__atomic_load_n(&ng.presents, __ATOMIC_RELAXED));
+    const int menu = menu_is_open();
+    if (!gen || menu) {
         vk_ngxfg_reset();   // generation pauses while the menu is open
         vk_fsr3fg_reset();
+        if (ng.src == NG_FSR3) vk_fsr3fg_paused(menu);
     } else if (ng.src == NG_FSR3) {
         VkNgxImage bb = {ng.bb.img, ng.bb.view, ng.fmt, ng.w, ng.h};
         VkNgxImage hl = {hudless, g_hl_view, g_hl_fmt, g_hl_w, g_hl_h};

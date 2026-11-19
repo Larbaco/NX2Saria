@@ -62,6 +62,8 @@ extern "C" {
 #include "vk_dlaa.h"
 #include "vk_ffx.h"
 #include "vk_fg.h"
+#include "vk_fg_stats.h"
+#include "vk_fg_time.h"
 #include "ui/menu.h"
 }
 
@@ -88,7 +90,10 @@ struct {
     ffxOverrideVersion fg_pin = {};
     uint64_t frame = 0;
     int failed = 0;
-    uint64_t generated = 0, paused = 0, no_inputs = 0, hudless = 0, no_hudless = 0;
+    uint64_t generated = 0;   // generation callbacks
+    FgStats st;               // each frame by the game's state (vk_fg_stats.h), for the periodic line
+    int prepared = 0;         // the last frame was prepared (a frame after one that was not starts a history)
+    int timed = 0, gen_timed = 0;   // GPU time measured (vk_fg_time.h)
     int on = 0;   // the last configured frame had generation on (vk_fg4_generating)
     uint64_t vram = 0;   // the frame generation context's video memory as the library reported it
 } F;
@@ -107,8 +112,12 @@ VkResult submit_game(uint32_t n, const VkSubmitInfo *si, VkFence fence) {
 }
 
 ffxReturnCode_t generate(ffxDispatchDescFrameGeneration *d, void *user) {
-    F.generated++;
-    return vk_ffx4_api_dispatch((ffxContext *)user, &d->header);
+    __atomic_add_fetch(&F.generated, 1, __ATOMIC_RELAXED);
+    VkCommandBuffer cb = (VkCommandBuffer)d->commandList;
+    int t = cb && fgt_generate_begin(cb, d->frameID);   // its GPU time, with the preparation's (vk_fg_time.h)
+    ffxReturnCode_t r = vk_ffx4_api_dispatch((ffxContext *)user, &d->header);
+    if (t) fgt_generate_end(cb, d->frameID);
+    return r;
 }
 
 FfxApiResource image(const VkFfxImage *i) {
@@ -300,7 +309,9 @@ extern "C" void vk_fg4_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt
     VkFfxImage depth, mv;
     float jx = 0, jy = 0;
     int reset = 0;
-    int have = vk_dlaa_fg_inputs(&depth, &mv, &jx, &jy, &reset);
+    const int menu = menu_is_open();   // first, and the inputs are not taken while it is open (vk_fg.cpp vk_fg_frame)
+    const int got = !menu && vk_dlaa_fg_inputs(&depth, &mv, &jx, &jy, &reset);   // the inputs reached this present
+    int have = got;
     // The context's largest render size covers the depth and motion vectors it is given: the picture's size, which
     // the scene never exceeds (vk_fg.cpp vk_fg_frame has the history of this rule).
     unsigned pw, ph;
@@ -308,6 +319,7 @@ extern "C" void vk_fg4_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt
     VkExtent2D max_render = {ext.width > pw ? ext.width : pw, ext.height > ph ? ext.height : ph};
     if (F.fg && (F.fg_ext.width != ext.width || F.fg_ext.height != ext.height || F.fg_fmt != fmt)) {
         vk_queue_lock(), vkDeviceWaitIdle(c->device), vk_queue_unlock();   // a new window size: the context is made for its display size
+        fgt_idle();   // the GPU is idle: frames whose generation never ran are let go
         vk_ffx4_api_destroy(&F.fg);
         F.fg = nullptr;
     }
@@ -350,8 +362,13 @@ extern "C" void vk_fg4_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt
         rt_log("fg4: AMD FSR frame generation %s for %ux%u%s, render size up to %ux%u, made in %.0f ms, %.0f MiB of video memory",
                provider(&F.fg), ext.width, ext.height, hdr_format(fmt) ? " (HDR)" : "", max_render.width, max_render.height,
                (double)(plat_now_ns() - t0) / 1e6, (double)mem.totalUsageInBytes / 1048576.0);
+        F.timed = fgt_init(F.pfam, &F.gen_timed);
+        rt_log("fg4: path: AMD's FSR SDK 2.4 (amd_fidelityfx_loader_vk.dll, frame generation %s), 2x, inputs %s; a line "
+               "every %d gameplay frames", provider(&F.fg), vk_dlaa_fg_only() ? "without an upscaler" : "from the upscaler (FSR 4)",
+               FGS_PERIOD);
     }
-    if (have && (depth.width > F.fg_max.width || depth.height > F.fg_max.height)) {
+    int fits = !have || (depth.width <= F.fg_max.width && depth.height <= F.fg_max.height);
+    if (!fits) {
         static int told;
         if (!told++)
             rt_log("fg4: a %ux%u scene is larger than the context's %ux%u: those frames are not generated", depth.width,
@@ -360,12 +377,19 @@ extern "C" void vk_fg4_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt
     }
     // Only with the picture without the HUD: generated from the presented picture alone, the HUD would be warped along
     // with the scene behind it and trail when the camera turns. A frame without that picture is shown as it is.
-    int on = have && hudless && !menu_is_open();
+    int on = have && hudless && !menu;
     __atomic_store_n(&F.on, on, __ATOMIC_RELAXED);
-    if (!have) F.no_inputs++;
-    else if (!hudless) F.no_hudless++;
-    else if (!on) F.paused++;
     F.frame++;
+    int cut = reset || !F.prepared;
+    F.prepared = on;
+    // each frame by the game's state, and the periodic line (vk_fg.cpp vk_fg_frame)
+    uint64_t presents = vk_fg4_presents(sc), t_now = plat_now_ns();
+    fgs_count(&F.st, fgs_classify(menu, vk_dlaa_fg_scene(), got, fits, hudless != VK_NULL_HANDLE, cut), presents, t_now);
+    double ms[16];
+    for (int i = 0, n = fgt_poll(F.frame, ms, 16); i < n; i++) fgs_gpu(&F.st, ms[i]);
+    char line[1024];
+    if (fgs_line(&F.st, "fg4", presents, t_now, line, sizeof line) == 1)
+        rt_log("%s; %llu frames generated by the swapchain", line, (unsigned long long)__atomic_load_n(&F.generated, __ATOMIC_RELAXED));
     ffxConfigureDescFrameGeneration cfg = {};
     cfg.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
     cfg.swapChain = (void *)sc;
@@ -380,7 +404,6 @@ extern "C" void vk_fg4_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt
     if (on) {
         VkFfxImage h = {hudless, fmt, ext.width, ext.height, 1};
         cfg.HUDLessColor = image(&h);
-        F.hudless++;
     }
     cfg.frameID = F.frame;
     ffxReturnCode_t r = vk_ffx4_api_configure(&F.fg, &cfg.header);
@@ -417,17 +440,16 @@ extern "C" void vk_fg4_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt
     } else {
         p.cameraUp[1] = 1.0f, p.cameraRight[0] = 1.0f, p.cameraForward[2] = -1.0f;
     }
+    int t = fgt_prepare_begin(cb, F.frame);
     r = vk_ffx4_api_dispatch(&F.fg, &p.header);
+    if (t) fgt_prepare_end(cb, F.frame);
     if (r != FFX_API_RETURN_OK) return fail("frame generation preparation", r);
-    if (F.frame == 2 || F.frame % 3600 == 0)
-        rt_log("fg4: %llu frames presented, %llu generated (%llu with the HUD kept out); paused %llu (menu), %llu without depth "
-               "and motion, %llu without the HUD-less picture", (unsigned long long)F.frame, (unsigned long long)F.generated,
-               (unsigned long long)F.hudless, (unsigned long long)F.paused, (unsigned long long)F.no_inputs,
-               (unsigned long long)F.no_hudless);
 }
 
 extern "C" void vk_fg4_release(void) {
     __atomic_store_n(&F.on, 0, __ATOMIC_RELAXED);
+    F.prepared = 0;
+    F.st.started = 0;   // the next swapchain counts its presents from 0 (vk_fg.cpp vk_fg_release)
     if (!F.sc && !F.fg) return;
     if (F.sc) wait_presents();
     if (F.fg) vk_ffx4_api_destroy(&F.fg), F.fg = nullptr;
