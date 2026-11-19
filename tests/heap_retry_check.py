@@ -58,7 +58,7 @@ def check_sites():
     names = [s[0] for s in table.sets]
     assert names.count('heap_retry') == 1, names
     key = names.index('heap_retry')
-    assert table.sets[key] == ('heap_retry', 'NX2NAVI_HEAP_RETRY', 1), table.sets[key]
+    assert table.sets[key] == ('heap_retry', 'NX2SARIA_HEAP_RETRY', 1), table.sets[key]
     mine = sorted(off for off, alts in table.sites['main'].items() if any(k == key for k, _, _ in alts))
     assert mine == sorted(SITES), [hex(o) for o in mine]
     lifter = Lifter(0, simd='c')

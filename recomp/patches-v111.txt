@@ -492,7 +492,7 @@ site wide_balloon main 20c2c8 1e210841 1e210841 953252e2 # fmul s1, s2, s1 -> bl
 # saved one, and every caller-saved register was already given up to the blr just before, so the call clobbers nothing
 # live. The other two call the page's +0xec0 in place of main+0x502050, which calls the game's and tries a failure
 # again with the heap's parents and the default heap. No word reads or writes the flags.
-set heap_retry NX2NAVI_HEAP_RETRY 1
+set heap_retry NX2SARIA_HEAP_RETRY 1
 site heap_retry main 436910 a90d577f a90d577f 9529a970   # stp xzr, x21, [x27, #0xd0] -> the same; bl page+0xed0
 site heap_retry main 436db4 a90b5b7f a90b5b7f 9529a847   # stp xzr, x22, [x27, #0xb0] -> the same; bl page+0xed0
 site heap_retry main 436f18 94032c4e 9529a7ea            # bl main+0x502050 -> bl page+0xec0
