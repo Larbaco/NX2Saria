@@ -63,6 +63,9 @@ __attribute__((weak)) void fs_save_crash_wait(void) {}   // fs_host.c; builds wi
 // none.
 __attribute__((weak)) void perf_summary_flush_try(void) {}
 
+// The session summary at a fatal error (session_summary.c); builds without it (the unit checks) write none.
+__attribute__((weak)) void session_summary_fatal(int code, const char *line) { (void)code, (void)line; }
+
 // HD rumble's neutral value before a failed run ends (input.c input_rumble_hd_stop); builds without input.c (the unit
 // checks) have no controller.
 __attribute__((weak)) void input_rumble_hd_stop(void) {}
@@ -110,6 +113,13 @@ static void fatal_end(int code, const char *fmt, va_list ap) {
     if (!rt_ending_enter(code)) plat_terminate(code);   // a fatal error inside this thread's own report: no second one
     rt_log_ending();   // the report reaches the log file past its cap (main.c log_sink)
     rt_log_sync();   // main.c: the lines queued for the log thread, then these, written here
+    // The line's text once more for the session summary below: rt_vlogf uses up ap, so a copy of it. Static: only the
+    // thread rt_ending_enter let through gets here.
+    static char line[1024];
+    va_list aq;
+    va_copy(aq, ap);
+    vsnprintf(line, sizeof line, fmt, aq);
+    va_end(aq);
     rt_log_raw("FATAL: ", 7);
     rt_vlogf(fmt, ap);
     rt_log_raw("\n", 1);
@@ -129,6 +139,8 @@ static void fatal_end(int code, const char *fmt, va_list ap) {
     // "frametime: at a fatal error" and the stutter map, the session's last period: after what a kill of the process
     // must not lose, as in the orderly end (gfx_present.c rt_exit_steps); ft_stop waits up to 50 ms
     perf_summary_flush_try();
+    // logs/session-summary.json for the launcher, from the session's numbers the line above closed; static buffers only
+    session_summary_fatal(code, line);
     fflush(stdout);
     fflush(stderr);
     // Not _Exit: in the C runtime it is ExitProcess, which stops the other threads wherever they are and then runs every

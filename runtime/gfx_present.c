@@ -37,6 +37,7 @@
 #include "vk_dlssg.h"
 #include "vk_lowlat.h"
 #include "heap_retry.h"
+#include "session_summary.h"
 
 #define FRAMES 2
 #define MAX_IMAGES 16
@@ -154,6 +155,7 @@ void rt_exit_steps(unsigned what) {
     // in place, the next start took it for one and every later start skipped the prebuild (vk_pipeline.c pm_skipped).
     vk_pipeline_prewarm_marker_clear();
     prof_write();   // "frametime: exit" and the stutter map; plat_exit runs no atexit handlers
+    session_summary_exit();   // logs/session-summary.json, from the session's frame times prof_write closed
     vk_mem_exit_log();   // the memory report's ranking of the session
     heap_retry_exit_log();   // the model heaps' retries of the session
     logq_flush();   // the lines so far on the disk before the slow part; the queue stays on
