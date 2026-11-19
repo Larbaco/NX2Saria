@@ -48,6 +48,7 @@ static unsigned pad_layout_seen;
 static volatile int32_t pad_layout_shown = -1;   // pad_layout for the menu (any thread), -1 without a gamepad
 static SDL_JoystickID sensor_pad;    // the gamepad whose sensors the motion thread set up, 0 none
 static int sensor_ok;                // ... and it has both sensors, enabled
+static SDL_SensorType sensor_gyro = SDL_SENSOR_GYRO, sensor_acc = SDL_SENSOR_ACCEL;   // ... the pair read (sensors_ready)
 static int motion_thread;            // 0 not started, 1 running, -1 off (NX2SARIA_MOTION=0, no SDL)
 
 // SDL buttons of the gamepad inputs (input_map.h PAD_*), by position; PAD_ZL and PAD_ZR are the triggers (axes).
@@ -806,6 +807,21 @@ static uint8_t pad_rest[MAX_PADS];   // per open gamepad, bit a: axis a has been
 static int npads;
 static int pad_pressed_logged;       // the primary's first press was logged (once per primary)
 
+// The gyro and accelerometer pairs a gamepad may have, in the order they are taken: the gamepad's own, then a Joy-Con
+// half's. SDL gives a combined Joy-Con pair the right Joy-Con's sensors as the plain pair already; the right and left
+// pairs are for drivers that list only those.
+static const struct { SDL_SensorType gyro, acc; const char *which; } sensor_pairs[] = {
+    {SDL_SENSOR_GYRO, SDL_SENSOR_ACCEL, ""},
+    {SDL_SENSOR_GYRO_R, SDL_SENSOR_ACCEL_R, ", the right Joy-Con's"},
+    {SDL_SENSOR_GYRO_L, SDL_SENSOR_ACCEL_L, ", the left Joy-Con's"},
+};
+enum { SENSOR_PAIRS = sizeof sensor_pairs / sizeof sensor_pairs[0] };
+
+// Under lock and sdl_lock: 1 when gamepad p has pair i of sensor_pairs.
+static int sensor_pair_has(SDL_Gamepad *p, int i) {
+    return SDL_GamepadHasSensor(p, sensor_pairs[i].gyro) && SDL_GamepadHasSensor(p, sensor_pairs[i].acc);
+}
+
 // Under lock: makes p the gamepad the game reads, with its labels, rumble and layout; logs it.
 static void pad_primary(SDL_Gamepad *p, const char *why) {
     hd_pad_leave(1);
@@ -826,7 +842,8 @@ static void pad_primary(SDL_Gamepad *p, const char *why) {
                                                                                       : PAD_LABEL_NONE);
     }
     pad_layout = -1;
-    int motion = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL);
+    int motion = 0;
+    for (int i = 0; i < SENSOR_PAIRS && !motion; i++) motion = sensor_pair_has(pad, i);
     rt_log("input: gamepad \"%s\" %s (%s, %s, east button %s)", SDL_GetGamepadName(pad), why,
            pad_rumble ? "rumble" : "no rumble", motion ? "gyro and accelerometer" : "no motion sensors",
            pad_east_a ? "labelled A" : "not labelled A");
@@ -1003,8 +1020,39 @@ static void binds_refresh(void) {
 // deflection go through the same mapping and dead zone as a real pad. NX2SARIA_TEST_PAD_AT=<ms>: attached that long after
 // input starts instead, like a controller switched on in play, and its south button pressed for half a second one
 // second later (the log then shows the hot-plug and the press arriving: scan_pads, pad_physical).
+// NX2SARIA_TEST_PAD_GYRO=<x>,<y>,<z> (test runs, with NX2SARIA_TEST_PAD): the test gamepad also has a gyro and an
+// accelerometer. It lies face up and its gyro reads that bias (deg/s, SDL gamepad axes) plus a little noise, in a
+// repeating script of TEST_STILL_NS still and then TEST_HELD_NS "held" (much more noise on both sensors), so the log
+// shows the gyro bias learned while still and learned again after each held phase (motion_fusion.c).
 static SDL_Joystick *test_joy;     // kept open: a virtual joystick's axes and buttons are set through an open handle
 static uint64_t test_attach_ns, test_press_ns;   // NX2SARIA_TEST_PAD_AT: when to attach, when to press (0: done)
+#define TEST_STILL_NS 4000000000ull
+#define TEST_HELD_NS 2000000000ull
+static int test_gyro;              // test only: the test gamepad has the sensors of NX2SARIA_TEST_PAD_GYRO
+static float test_gyro_bias[3];    // ... its gyro's bias, rad/s
+static uint64_t test_gyro_t0;      // ... when its script began
+static uint32_t test_gyro_rng = 1; // ... the noise's generator (a fixed seed: every run reads the same samples)
+
+// Test only: a uniform number in [-1, 1) from a small linear congruential generator.
+static float test_noise(void) {
+    test_gyro_rng = test_gyro_rng * 1664525u + 1013904223u;
+    return (float)(test_gyro_rng >> 8) / (float)(1u << 23) - 1.0f;
+}
+
+// Test only, under lock and sdl_lock: one gyro and accelerometer sample of the script for the test gamepad. SDL
+// applies it at the next SDL_UpdateGamepads (up_main); test_pad_tick and motion_main both send, so a sample comes at
+// least every 4 ms while the motion thread runs with a gamepad open and its sdl_enter succeeds (not while SDL finds
+// devices again).
+static void test_pad_gyro_send(void) {
+    if (!test_joy || !test_gyro) return;
+    uint64_t now = plat_now_ns();
+    int held = (now - test_gyro_t0) % (TEST_STILL_NS + TEST_HELD_NS) >= TEST_STILL_NS;
+    float gn = (held ? 3.0f : 0.05f) * SDL_PI_F / 180, an = held ? 0.05f * SDL_STANDARD_GRAVITY : 0;
+    float g[3], a[3] = {0, SDL_STANDARD_GRAVITY, 0};   // lying face up: the push against gravity is +y
+    for (int i = 0; i < 3; i++) g[i] = test_gyro_bias[i] + gn * test_noise(), a[i] += an * test_noise();
+    SDL_SendJoystickVirtualSensorData(test_joy, SDL_SENSOR_GYRO, now, g, 3);
+    SDL_SendJoystickVirtualSensorData(test_joy, SDL_SENSOR_ACCEL, now, a, 3);
+}
 
 static void test_pad_make(void) {
     const char *e = cfg_get("NX2SARIA_TEST_PAD");
@@ -1020,11 +1068,26 @@ static void test_pad_make(void) {
     d.naxes = SDL_GAMEPAD_AXIS_COUNT;
     d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
     d.name = "NX2Saria test gamepad";
+    // test only: NX2SARIA_TEST_PAD_GYRO adds a gyro and an accelerometer (test_pad_gyro_send)
+    static const SDL_VirtualJoystickSensorDesc sensors[2] = {{SDL_SENSOR_GYRO, 200}, {SDL_SENSOR_ACCEL, 200}};
+    const char *ge = cfg_get("NX2SARIA_TEST_PAD_GYRO");
+    float bias[3];
+    if (ge && *ge && sscanf(ge, "%f,%f,%f", &bias[0], &bias[1], &bias[2]) != 3) {
+        rt_log("input: NX2SARIA_TEST_PAD_GYRO=%s is not <x>,<y>,<z>; the test gamepad has no gyro", ge);
+        ge = NULL;
+    }
+    if (ge && *ge) d.nsensors = 2, d.sensors = sensors;
     SDL_JoystickID id = SDL_AttachVirtualJoystick(&d);
     test_joy = id ? SDL_OpenJoystick(id) : NULL;
     if (!test_joy) {
         rt_log("input: test gamepad not attached (%s)", SDL_GetError());
         return;
+    }
+    if (d.nsensors) {
+        test_gyro = 1, test_gyro_t0 = plat_now_ns();
+        for (int i = 0; i < 3; i++) test_gyro_bias[i] = bias[i] * SDL_PI_F / 180;
+        rt_log("input: test gamepad gyro: bias %+.2f/%+.2f/%+.2f deg/s (SDL axes), still %.0f s then held %.0f s, repeating",
+               bias[0], bias[1], bias[2], TEST_STILL_NS / 1e9, TEST_HELD_NS / 1e9);
     }
     static const SDL_GamepadAxis axes[4] = {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX,
                                             SDL_GAMEPAD_AXIS_RIGHTY};
@@ -1042,8 +1105,10 @@ static void test_pad_attach(void) {
     test_pad_make();
 }
 
-// Under lock, every poll: the delayed attach and the press of NX2SARIA_TEST_PAD_AT.
+// Under lock and sdl_lock, every poll: the delayed attach and the press of NX2SARIA_TEST_PAD_AT, and the test gyro's
+// sample.
 static void test_pad_tick(void) {
+    test_pad_gyro_send();
     uint64_t now = plat_now_ns();
     if (test_attach_ns && now >= test_attach_ns) {
         test_attach_ns = 0;
@@ -1537,21 +1602,37 @@ void input_motion_axes(const float a[3], const float g[3], double acc[3], double
     gyro[2] = g[1];
 }
 
-// Under lock: (re)enable the sensors when the open gamepad changed; 1 if it has both and they are on.
+// The controller whose sensors motion_main hands to the fusion next (motion_source), set by sensors_ready under lock
+// and taken by motion_main under lock; the call itself is made after the lock is let go.
+static int source_pending;
+static SDL_JoystickID source_id;
+static char source_name[128];
+
+// Under lock and sdl_lock: (re)enable the sensors when the open gamepad changed; 1 if it has a gyro and an
+// accelerometer (sensor_pairs, the first pair it has that turns on) and they are on.
 static int sensors_ready(void) {
     SDL_JoystickID id = SDL_GetGamepadID(pad);
     if (id == sensor_pad) return sensor_ok;
     sensor_pad = id;
     // Nothing drains the SDL event queue: no event per sample (the data still updates, SDL_SendJoystickSensor)
     SDL_SetEventEnabled(SDL_EVENT_GAMEPAD_SENSOR_UPDATE, false);
-    sensor_ok =SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) &&
-                SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true) &&
-                SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
-    if (sensor_ok) rt_log("input: motion sensors on (gyro %.0f Hz, accelerometer %.0f Hz)",
-                          (double)SDL_GetGamepadSensorDataRate(pad, SDL_SENSOR_GYRO),
-                          (double)SDL_GetGamepadSensorDataRate(pad, SDL_SENSOR_ACCEL));
-    else rt_log("input: \"%s\" has no gyro and accelerometer: the six-axis sensor reads a controller at rest",
-                SDL_GetGamepadName(pad));
+    sensor_ok = 0;
+    int i = 0;
+    for (; i < SENSOR_PAIRS && !sensor_ok; i++) {
+        if (!sensor_pair_has(pad, i) || !SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].gyro, true)) continue;
+        sensor_ok = SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].acc, true);
+        if (!sensor_ok) SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].gyro, false);   // half a pair is of no use
+    }
+    const char *name = SDL_GetGamepadName(pad);
+    if (!name) name = "?";
+    if (sensor_ok) {
+        sensor_gyro = sensor_pairs[i - 1].gyro, sensor_acc = sensor_pairs[i - 1].acc;
+        rt_log("input: motion sensors on \"%s\"%s (gyro %.0f Hz, accelerometer %.0f Hz)", name, sensor_pairs[i - 1].which,
+               (double)SDL_GetGamepadSensorDataRate(pad, sensor_gyro), (double)SDL_GetGamepadSensorDataRate(pad, sensor_acc));
+        source_pending = 1, source_id = id;
+        snprintf(source_name, sizeof source_name, "%s", name);
+    } else
+        rt_log("input: \"%s\" has no gyro and accelerometer: the six-axis sensor reads a controller at rest", name);
     return sensor_ok;
 }
 
@@ -1566,23 +1647,70 @@ int input_motion_enabled(void) {
     return on;
 }
 
+// Motion thread only: the gyro settings (gyro_calibration, gyro_deadzone, gyro_turn_sens, gyro_tilt_sens,
+// gyro_turn_invert, gyro_tilt_invert; live) into the fusion's options (motion_set_options). Read again when
+// cfg_version changes; the options in force are logged the first time and at each change (32 lines at most).
+static void motion_options_refresh(void) {
+    static unsigned seen;
+    static int have, logged;
+    static MotionOptions cur;
+    unsigned v = cfg_version();
+    if (have && v == seen) return;
+    seen = v;
+    static const struct { const char *name; double rps; } zones[] = {
+        {"off", 0}, {"low", MOTION_DEADZONE_LOW}, {"standard", MOTION_DEADZONE_STANDARD}, {"high", MOTION_DEADZONE_HIGH}};
+    const char *dz = cfg_value("NX2SARIA_GYRO_DEADZONE");
+    int z = 1;   // anything else: low, the default
+    for (int i = 0; i < 4; i++)
+        if (dz && !strcmp(dz, zones[i].name)) z = i;
+    double turn = cfg_double("NX2SARIA_GYRO_TURN_SENS"), tilt = cfg_double("NX2SARIA_GYRO_TILT_SENS");
+    turn = (turn < 10 ? 10 : turn > 400 ? 400 : turn) / 100;
+    tilt = (tilt < 10 ? 10 : tilt > 400 ? 400 : tilt) / 100;
+    MotionOptions o = {cfg_bool("NX2SARIA_GYRO_CALIBRATION"), zones[z].rps,
+                       cfg_bool("NX2SARIA_GYRO_TURN_INVERT") ? -turn : turn, cfg_bool("NX2SARIA_GYRO_TILT_INVERT") ? -tilt : tilt};
+    if (have && o.calibrate == cur.calibrate && o.deadzone_rps == cur.deadzone_rps && o.turn == cur.turn && o.tilt == cur.tilt)
+        return;
+    have = 1, cur = o;
+    motion_set_options(motion_global(), &o);
+    if (logged++ >= 32) return;
+    char zone[64];
+    if (o.deadzone_rps > 0) snprintf(zone, sizeof zone, "%s (%.3f rev/s, %.2f deg/s)", zones[z].name, o.deadzone_rps, o.deadzone_rps * 360);
+    else snprintf(zone, sizeof zone, "off");
+    rt_log("motion: settings: calibration %s, dead zone %s, turn %.0f%%%s, tilt %.0f%%%s; filter kp %.2f ki %.2f",
+           o.calibrate ? "on" : "off", zone, fabs(o.turn) * 100, o.turn < 0 ? " inverted" : "", fabs(o.tilt) * 100,
+           o.tilt < 0 ? " inverted" : "", MOTION_KP, MOTION_KI);
+}
+
 // 250 Hz: the gamepads update (reports read, rumble expiry) and the newest gyro and accelerometer sample goes into the
 // fusion. Without a gamepad with sensors, or with motion off (NX2SARIA_MOTION=0, live), nothing is fed and the six-axis
-// sensor reads at rest.
+// sensor reads at rest. The fusion's own lock is never taken under `lock` (motion_source, motion_set_options,
+// motion_restart and motion_feed are called after it is let go), so the two never nest.
 static void motion_main(void *arg) {
     (void)arg;
+    int was_on = -1;
     for (;;) {
         plat_wait_ns(4000000);
+        motion_options_refresh();
         float a[3], g[3];
-        int have = 0;
+        int have = 0, source = 0;
+        SDL_JoystickID sid = 0;
+        char sname[sizeof source_name];
         plat_mutex_lock(&lock);
         if (pad && sdl_enter()) {   // no sample while SDL finds devices again
+            test_pad_gyro_send();   // test only (NX2SARIA_TEST_PAD_GYRO): a sample every round, not only at the game's polls
             have = SDL_GamepadConnected(pad) && sensors_ready() &&
-                   SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, a, 3) && SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, g, 3);
+                   SDL_GetGamepadSensorData(pad, sensor_acc, a, 3) && SDL_GetGamepadSensorData(pad, sensor_gyro, g, 3);
             sdl_leave();
         }
+        if (source_pending) source = 1, source_pending = 0, sid = source_id, memcpy(sname, source_name, sizeof sname);
         plat_mutex_unlock(&lock);
-        if (!have || !input_motion_enabled()) continue;
+        if (source) motion_source(motion_global(), (uint64_t)sid, sname);
+        int on = input_motion_enabled();
+        // Motion turned back on: the orientation and angle from before it went off describe a controller that has
+        // moved since without being followed, so they start over at the next sample (the learned bias stays).
+        if (on && !was_on) motion_restart(motion_global());
+        was_on = on;
+        if (!have || !on) continue;
         double acc[3], gyro[3];
         input_motion_axes(a, g, acc, gyro);
         motion_feed(motion_global(), acc, gyro, kern_now_ns());

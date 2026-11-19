@@ -2027,6 +2027,28 @@ static void post_confirm(float scale) {
     ImGui::EndPopup();
 }
 
+// The Controls tab's Gyro group: motion on or off, then how input.c motion_options_refresh treats the gyro (all live).
+// Motion is staged, so the rows below read it from the draft and are greyed out while it is off there.
+static void rows_gyro(void) {
+    opt_toggle("NX2SARIA_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
+    const bool motion = opt_bool("NX2SARIA_MOTION");
+    if (!motion) opt_disable_next(UI_MENU_GYRO_NEEDS_MOTION);
+    opt_toggle("NX2SARIA_GYRO_CALIBRATION", UI_MENU_GYRO_CALIBRATION, UI_MENU_GYRO_CALIBRATION_DESC);
+    // the names follow the values in their cfg.c order (off, low, standard, high)
+    static const UiTextId deadzone[] = {UI_MENU_GYRO_DEADZONE_OFF, UI_MENU_GYRO_DEADZONE_LOW,
+                                        UI_MENU_GYRO_DEADZONE_STANDARD, UI_MENU_GYRO_DEADZONE_HIGH};
+    if (!motion) opt_disable_next(UI_MENU_GYRO_NEEDS_MOTION);
+    opt_choice("NX2SARIA_GYRO_DEADZONE", UI_MENU_GYRO_DEADZONE, deadzone, 4, UI_MENU_GYRO_DEADZONE_DESC);
+    if (!motion) opt_disable_next(UI_MENU_GYRO_NEEDS_MOTION);
+    opt_slider("NX2SARIA_GYRO_TURN_SENS", UI_MENU_GYRO_TURN_SENS, 10, 400, UI_MENU_GYRO_TURN_SENS_DESC, 5, "%.0f %%");
+    if (!motion) opt_disable_next(UI_MENU_GYRO_NEEDS_MOTION);
+    opt_toggle("NX2SARIA_GYRO_TURN_INVERT", UI_MENU_GYRO_TURN_INVERT, UI_MENU_GYRO_TURN_INVERT_DESC);
+    if (!motion) opt_disable_next(UI_MENU_GYRO_NEEDS_MOTION);
+    opt_slider("NX2SARIA_GYRO_TILT_SENS", UI_MENU_GYRO_TILT_SENS, 10, 400, UI_MENU_GYRO_TILT_SENS_DESC, 5, "%.0f %%");
+    if (!motion) opt_disable_next(UI_MENU_GYRO_NEEDS_MOTION);
+    opt_toggle("NX2SARIA_GYRO_TILT_INVERT", UI_MENU_GYRO_TILT_INVERT, UI_MENU_GYRO_TILT_INVERT_DESC);
+}
+
 static void tab_controls(float scale) {
     opt_begin("##controls", scale);
     // The mouse camera first, where a player on keyboard and mouse looks for it; both rows are live. How the mouse
@@ -2049,7 +2071,6 @@ static void tab_controls(float scale) {
                                        UI_MENU_PROMPTS_STEAMDECK, UI_MENU_PROMPTS_PC};
     bool restart;
     opt_choice("NX2SARIA_PROMPTS", UI_MENU_PROMPTS, prompts, 5, UI_MENU_PROMPTS_DESC, prompts_note(&restart));
-    opt_toggle("NX2SARIA_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
     // The sprint button (sprint.c), where the game version has the patch set sprint; both rows are live. The names
     // follow the values in their cfg.c order.
     if (sprint_available()) {
@@ -2065,6 +2086,8 @@ static void tab_controls(float scale) {
     // Pro Controller or Joy-Con, input.c hd_probe); with any other the row is greyed out and says what it needs.
     if (!input_rumble_hd_available()) opt_disable_next(UI_MENU_RUMBLE_HD_NEEDS);
     opt_toggle("NX2SARIA_RUMBLE_HD", UI_MENU_RUMBLE_HD, UI_MENU_RUMBLE_HD_DESC);
+    opt_group(UI_MENU_GROUP_GYRO);
+    rows_gyro();
     opt_group(UI_MENU_GROUP_STICKS);
     double now[2];
     bool pad = input_pad_stick_percent(now) != 0;
