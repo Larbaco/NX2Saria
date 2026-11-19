@@ -1024,10 +1024,24 @@ bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId 
 
 // Text centred (left-aligned when centred is false) in [x0, x1] on a row from y to y + h, at the font size or smaller so
 // a long name ("Нажатие правого стика", "Стрелка вправо") fits; under 65 % it is clipped instead.
-static void fit_text(ImDrawList *dl, float x0, float x1, float y, float h, ImU32 col, const char *t, bool centred) {
+static void fit_text(ImDrawList *dl, float x0, float x1, float y, float h, ImU32 col, const char *t, bool centred,
+                     bool ellipsis = false) {
     ImFont *font = ImGui::GetFont();
     float fs = ImGui::GetFontSize(), room = x1 - x0, tw = font->CalcTextSizeA(fs, FLT_MAX, 0, t).x;
-    if (tw > room) {
+    char shortened[256];
+    if (ellipsis && tw > room && strlen(t) < sizeof shortened - 4) {
+        size_t n = strlen(t);
+        for (;;) {
+            while (n && (static_cast<unsigned char>(t[n]) & 0xC0) == 0x80) n--;
+            memcpy(shortened, t, n);
+            memcpy(shortened + n, "…", sizeof "…");
+            if (font->CalcTextSizeA(fs, FLT_MAX, 0, shortened).x <= room || !n) break;
+            n--;
+            while (n && (static_cast<unsigned char>(t[n]) & 0xC0) == 0x80) n--;
+        }
+        t = shortened;
+        tw = font->CalcTextSizeA(fs, FLT_MAX, 0, t).x;
+    } else if (tw > room) {
         fs = fmaxf(fs * room / tw, fs * 0.65f);
         tw = font->CalcTextSizeA(fs, FLT_MAX, 0, t).x;
     }
@@ -1059,8 +1073,8 @@ void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2) {
     ImGui::Dummy(ImVec2(w, fs * 1.2f));
 }
 
-int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *const cells[3], const bool enabled[3],
-                 const char *note) {
+int opt_bind_row(const char *key, const char *label, const char *action, UiTextId desc, const char *const cells[3],
+                 const bool enabled[3], const char *note) {
     ImGui::PushID(key);
     const float margin = row_margin();   // room for the cursor, as the option rows leave
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + margin);
@@ -1069,7 +1083,12 @@ int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *
     bind_columns(p.x, w, cx, &cw);
     ImDrawList *dl = ImGui::GetWindowDrawList();
     float pad = 6 * g_scale;
-    fit_text(dl, p.x + 16 * g_scale, cx[0] - fs * 0.3f, p.y, h, IM_COL32(240, 236, 224, 255), label, false);
+    const float label_x = p.x + 16 * g_scale, label_right = cx[0] - fs * 0.3f;
+    const bool has_action = action && action[0] && strcmp(action, "—");
+    const float name_h = fs * 0.98f;
+    fit_text(dl, label_x, label_right, p.y + fs * 0.08f, name_h, IM_COL32(240, 236, 224, 255), label, false);
+    if (has_action)
+        fit_text(dl, label_x, label_right, p.y + fs * 1.02f, h - fs * 1.05f, kGrey, action, false, true);
     int result = -1;
     bool row_foc = false, row_hov = false;
     for (int c = 0; c < 3; c++) {
@@ -1110,9 +1129,10 @@ int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *
     }
     char k[64];
     snprintf(k, sizeof k, "NX2SARIA_%s", key);
-    if (row_foc) desc_set(g_focus, menu_text(desc), k, NULL, NULL);
-    if (row_hov) desc_set(g_hover, menu_text(desc), k, NULL, NULL);
-    if (!g_first.text[0]) desc_set(g_first, menu_text(desc), k, NULL, NULL);
+    const char *description = menu_text(desc);
+    if (row_foc) desc_set(g_focus, description, k, NULL, NULL);
+    if (row_hov) desc_set(g_hover, description, k, NULL, NULL);
+    if (!g_first.text[0]) desc_set(g_first, description, k, NULL, NULL);
     if (note && (row_foc || row_hov)) {   // e.g. what moved here, after the description
         Desc &d = row_hov ? g_hover : g_focus;
         size_t n = strlen(d.text);

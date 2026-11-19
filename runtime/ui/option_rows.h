@@ -95,8 +95,8 @@ bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId 
 // (NULL none) follows the description. Returns the cell A / Enter / a click activated (0..2), 10 + the cell Delete,
 // Backspace or X cleared, or -1. opt_focus_key("<key>#<cell>") puts the cursor on a cell.
 void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2);
-int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *const cells[3], const bool enabled[3],
-                 const char *note = nullptr);
+int opt_bind_row(const char *key, const char *label, const char *action, UiTextId desc, const char *const cells[3],
+                 const bool enabled[3], const char *note = nullptr);
 
 // ---- the draft. Changes made in the menu are not saved as they are made: they wait in a draft until the player applies
 // them (menu.cpp asks when the menu is about to close).

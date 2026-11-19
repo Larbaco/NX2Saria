@@ -592,7 +592,7 @@ extern "C" void menu_vk_release(void) {
 // optional) at that presented frame; changes live settings with no input, menu open or not. nx2navi.ini is written only by
 // the pseudo-key SAVE=1 (cfg_save, as a row change does; a failed write shows the menu's save note). FOCUS=<key> (the
 // NX2SARIA_ prefix optional) puts the cursor on that setting's row and scrolls it into view when the row is next drawn
-// (opt_focus_key), so a page's shot shows a row below the first screenful; it does not switch tabs.
+// (opt_focus_key); for a bind cell, use BIND_<action>#<cell> with cell 0..2. FOCUS does not switch tabs.
 // Ocarina of Time: the options this port has
 enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_COUNT };
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16, TEST_OPENS = 8 };
@@ -658,7 +658,10 @@ static void test_apply_sets(uint64_t frame) {
             rt_log("menu: test hook: cfg_save %s", cfg_save() ? "wrote" : "failed");
         } else if (!strcmp(t.key, "NX2SARIA_FOCUS")) {
             char row[80];
-            snprintf(row, sizeof row, "%s%s", strncmp(t.value, "NX2SARIA_", strlen("NX2SARIA_")) ? "NX2SARIA_" : "", t.value);
+            snprintf(row, sizeof row, "%s%s", !strncmp(t.value, "BIND_", 5) || !strncmp(t.value, "NX2SARIA_", 9)
+                                                    ? ""
+                                                    : "NX2SARIA_",
+                     t.value);
             opt_focus_key(row);
         } else {
             cfg_set(t.key, t.value);
@@ -2685,6 +2688,11 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
 // only the frames the menu laid out did, closing it with a field active (F1, Minus and Plus) left SDL's text input on,
 // and on Windows the input method attached to the game window, until the menu opened again.
 extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
+    static bool bind_labels_logged;
+    if (!bind_labels_logged) {
+        rt_log("menu: bind action labels on (%d rows; default B/X; Swap Jump Controls not read)", binds_action_row_count());
+        bind_labels_logged = true;
+    }
     int r = overlay_frame(frame, t, shot);
     menu_text_input_follow(g_ctx_ok && g_open.load(std::memory_order_relaxed) && ImGui::GetIO().WantTextInput);
     return r;
