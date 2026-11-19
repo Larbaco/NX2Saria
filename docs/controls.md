@@ -119,6 +119,20 @@ Changes made in the settings menu are a draft until they are applied; nothing is
 - A save made by anything else while the draft is open (F10 with the menu closed, F11, a cheat) does not write a previewed value: the entry is held out of every save until Apply (`cfg_hold`, `cfg_revert` in `runtime/cfg.c`).
 - Every step is in `logs/nx2saria.log`, so a run can be checked afterwards: `menu: draft +` and `menu: draft -` when a key enters or leaves the draft (preview or staged), `menu: box` for each box opened and the answer given (button, Esc or B, the countdown running out, F11), `menu: draft applied` / `discarded` with each value, `menu: display kept` / `reverted`, `cfg: wrote <path>: <keys>` for every save and `cfg: save leaves out <key>` for a held preview, and `cfg: reload: not run` when Ctrl+F5 waits for the menu.
 
+## Quality presets
+
+*Settings > Screen > Picture* starts with *Quality preset*, which sets the graphics options together: *Recommended (…)*, *Low*, *Medium*, *High* or *Ultra*.
+
+- *High* is the game as shipped. *Low* and *Medium* draw less, for slower PCs and handhelds: a smaller 3D scene in a 1080-line picture and less texture filtering; *Low* also has smaller shadows, fewer grass draws and, on an integrated GPU or a handheld, a 30 or 40 fps limit. On an NVIDIA RTX card they use DLSS, on a Radeon RX 9000 card on Windows FSR 4. *Ultra* draws more, for graphics cards with 16 GB of memory or more. No preset turns frame generation on.
+- *Recommended* is chosen again at every start from the graphics card, the memory and the processor. On a PC that gets *High*, nothing changes. When yours gets *Low* or *Medium* and you never chose a preset, a notice says so once.
+- A preset you choose stays as long as the PC does; when it is not the recommended one, the row says *Recommended for this PC: …*. After a new graphics card, processor or more memory (a driver update does not count), the game uses *Recommended* until you choose again, and the row says *New hardware: the recommended preset is in use*.
+- An option you change by hand keeps your value, and the preset shows as *… (custom)*. Choosing a preset while options are changed by hand first lists them: *Use the preset* gives them the preset's values, *Cancel* keeps everything as it was.
+- The choice is part of the draft ([above](#applying-changes-in-the-menu)): *Apply* writes `preset = <tier>` to `nx2saria.ini` (no line for *Recommended*). The resolution, shadows, textures and grass a preset changes take effect after a restart.
+- *Scene resolution*, below *Upscaling* while neither DLSS nor FSR is on, sets the size the 3D scene is drawn at, from 33 % of the picture to 100 % (native). Lower is faster and softer, for slow PCs and handhelds; the HUD and menus stay sharp. It takes effect at once; a size above the one the game started with comes after a restart. In this version `render_scale` and `output_res` change nothing: this row and the preset are what lower the scene.
+- `logs/nx2saria.log` says what was chosen and why, near its top: `preset: hardware: ...` (what the game found), `preset: recommended <tier>: <reason>`, `preset: in use <tier> (<source>)` and one `preset:   <KEY> = <value> (...)` line per option the preset sets, saying whether the preset, your settings file or the device profile gave it. Attach the log to a report about the picture or the frame rate.
+
+How the presets are chosen and what each one sets: [Quality presets](presets.md).
+
 ## Reloading `nx2saria.ini`
 
 Ctrl+F5 reads `nx2saria.ini` again while the game runs, so a line edited in a text editor takes effect without a restart or a trip through the menu. A plain F5 is not the reload: it stays a key that can be bound (Ctrl+F5 would also press an F5 binding, since the game reads the keyboard state; unbind F5 in the *Controls* tab if that gets in the way). The window code (Win32 and SDL alike) sees the Ctrl state with the key press, so the hotkey needs no change to the key bindings.

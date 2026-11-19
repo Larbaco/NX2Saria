@@ -609,6 +609,14 @@
 # fps_limit = 40, cores = 4 (the game's six cores share the Deck's four), astc_bc = 1 and spin_handoff_us = 30
 # (starting points, not measured yet). Read at start.
 # device_profile = auto
+# Quality preset: recommended (the default: the tier the start picks for this PC from its GPU, video memory, RAM,
+# processor count and handheld make), low, medium, high or ultra. High is the game as shipped and sets nothing; the
+# others set the scene's share, the game resolution, shadows, anisotropic filtering, texture detail and foliage, and
+# below High DLSS or FSR 4 where the card runs them. A key this file sets wins over the preset (the menu then says
+# Custom). The log says what was detected, what was recommended and why, and each value the preset set ("preset:").
+# The menu's Quality preset row writes this line; the restart-only keys of a preset take effect at the next start.
+# docs/presets.md has the tables.
+# preset = recommended
 # Presentation mode: mailbox (default), fifo (vsync) or immediate. The menu's VSync switch sets mailbox when on and
 # immediate when off. A driver without mailbox (some AMD and Intel drivers) gets relaxed FIFO instead, which waits for
 # the display but shows a late frame at once, and where that is missing too, immediate: no vsync, so the picture can
