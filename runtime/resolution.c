@@ -438,7 +438,7 @@ void res_fov_live(void) {
     else memcpy((uint8_t *)rt_patch_page() + 60, &k, sizeof k);
     rt_patch_switch(set, pct != 100);
     rt_log("fov: %s, %d%%%s", pct == 100 ? "off" : "on", pct,
-           RT_V111 && pct != 100 ? " (excludes cutscenes, pause/map, first-person aiming and other non-gameplay cameras)" : "");
+           RT_V111 && pct != 100 ? " (excludes non-player cameras, pause/map/system menus, active events and first-person aiming)" : "");
 }
 
 void res_wanted(unsigned out[2]) {
