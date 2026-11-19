@@ -1031,7 +1031,10 @@ int cfg_setenv(const char *name, const char *value) {
 
 int cfg_from_env(const char *name) { return cfg_env(name) != NULL; }
 
-void cfg_set(const char *name, const char *value) {
+// cfg_set and cfg_set_test: one change under one hold of set_lock, so a save on another thread (the one at exit) never
+// sees a test value before it is marked as the test's. test 0: the value is the player's, and saved; test 1: the
+// test's (cfg_set_test), unless the entry already holds that value as the player's unsaved change, which stays theirs.
+static void set_value(const char *name, const char *value, int test) {
     if ((strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) || !value) return;
     char key[64];
     snprintf(key, sizeof key, "%s", !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN);
@@ -1040,15 +1043,17 @@ void cfg_set(const char *name, const char *value) {
     int i = 0, n = n_entries;
     while (i < n && strcmp(entries[i].key, key)) i++;
     if (i < n) {
-        if (!entries[i].value || strcmp(entries[i].value, value)) {
+        const int changed = !entries[i].value || strcmp(entries[i].value, value);
+        if (changed) {
             if (entries[i].value) kept_n++, kept_bytes += strlen(entries[i].value) + 1;   // cfg_sizes
             __atomic_store_n(&entries[i].value, strdup(value), __ATOMIC_RELEASE);   // the old string stays for readers
-            entries[i].dirty = 1;
         }
+        if (test && !changed && entries[i].dirty && !entries[i].test) test = 0;   // the player's unsaved change
+        if (changed) entries[i].dirty = 1;
         entries[i].removed = 0;   // a value set after cfg_reset replaces the line instead of deleting it
-        entries[i].test = 0;      // set by anything but a test hook: the value is the player's, and saved
+        entries[i].test = test;
     } else if (n < CFG_MAX_KEYS) {
-        entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0, 0};
+        entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0, test};
         __atomic_store_n(&n_entries, n + 1, __ATOMIC_RELEASE);
     } else {
         full_set(key, "is not kept");
@@ -1056,6 +1061,8 @@ void cfg_set(const char *name, const char *value) {
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     plat_mutex_unlock(&set_lock);
 }
+
+void cfg_set(const char *name, const char *value) { set_value(name, value, 0); }
 
 int cfg_reset(const char *const *keys, int n) {
     int done = 0;
@@ -1079,9 +1086,11 @@ int cfg_reset(const char *const *keys, int n) {
             __atomic_store_n(&entries[i].value, NULL, __ATOMIC_RELEASE);   // the old string stays for readers
             entries[i].dirty = 0;
             entries[i].removed = 1;   // cfg_save_to deletes the key's lines
+            entries[i].test = 0;      // the removal is the player's, and saved
             done++;
         } else {
             entries[i].removed = 1;
+            entries[i].test = 0;
         }
     }
     if (done) __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
@@ -1111,7 +1120,7 @@ int cfg_state(const char *name, const char **value) {
     *value = NULL;
     if (i >= 0) {
         *value = entries[i].value;
-        state = (entries[i].dirty ? CFG_DIRTY : 0) | (entries[i].removed ? CFG_REMOVED : 0);
+        state = (entries[i].dirty ? CFG_DIRTY : 0) | (entries[i].removed ? CFG_REMOVED : 0) | (entries[i].test ? CFG_TEST : 0);
     }
     plat_mutex_unlock(&set_lock);
     return state;
@@ -1131,15 +1140,7 @@ void cfg_hold(const char *name, int on) {
     plat_mutex_unlock(&set_lock);
 }
 
-void cfg_set_test(const char *name, const char *value) {
-    cfg_set(name, value);
-    char key[64];
-    entry_key(name, key, sizeof key);
-    plat_mutex_lock(&set_lock);
-    int i = find_entry(key);
-    if (i >= 0) entries[i].test = 1;
-    plat_mutex_unlock(&set_lock);
-}
+void cfg_set_test(const char *name, const char *value) { set_value(name, value, 1); }
 
 int cfg_test_keep(void) {
     int n = 0;
@@ -1159,6 +1160,7 @@ void cfg_revert(const char *name, const char *orig_value, int orig_state) {
         __atomic_store_n(&entries[i].value, (char *)orig_value, __ATOMIC_RELEASE);   // the strings are never freed
         entries[i].dirty = (orig_state & CFG_DIRTY) != 0;
         entries[i].removed = (orig_state & CFG_REMOVED) != 0;
+        entries[i].test = (orig_state & CFG_TEST) != 0;   // a test value put back stays the test's
         entries[i].held = 0;
         __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     }

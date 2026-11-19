@@ -124,6 +124,23 @@ int main(int argc, char **argv) {
         printf("--- save 4: SAVE=1\n");
         printf("got: kept %d\n", cfg_test_keep());
         cfg_save_to(ini);
+        // the menu's draft over a test value: a preview (cfg_set) and its revert put the test's value back as the test's
+        printf("--- save 5: a preview of a test value, reverted\n");
+        cfg_set_test("NX2SARIA_VOLUME", "50");
+        const char *was;
+        const int state = cfg_state("NX2SARIA_VOLUME", &was);
+        cfg_set("NX2SARIA_VOLUME", "70");
+        cfg_revert("NX2SARIA_VOLUME", was, state);
+        printf("got: volume %s\n", cfg_get("NX2SARIA_VOLUME"));
+        cfg_save_to(ini);
+        printf("--- save 6: the menu resets the test's key\n");
+        static const char *const vol[] = {"VOLUME"};
+        cfg_reset(vol, 1);
+        cfg_save_to(ini);
+        printf("--- save 7: a test value equal to the player's unsaved change\n");
+        cfg_set("NX2SARIA_VSYNC", "0");
+        cfg_set_test("NX2SARIA_VSYNC", "0");
+        cfg_save_to(ini);
         return 0;
     }
     if (!strcmp(argv[1], "read")) {

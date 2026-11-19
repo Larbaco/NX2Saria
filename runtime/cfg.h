@@ -40,11 +40,11 @@ unsigned cfg_version(void);
 int cfg_setenv(const char *name, const char *value);
 // The menu's draft (ui/option_rows.cpp): a live setting is previewed with cfg_set, and Discard puts it back. cfg_state
 // reads what cfg_revert needs of name before the first change: the stored value (NULL when none; the pointer stays valid)
-// and the CFG_* flags of its entry (unsaved change, line to remove at the next save). cfg_hold(name, 1) keeps the entry
+// and the CFG_* flags of its entry (unsaved change, line to remove at the next save, a test hook's value). cfg_hold(name, 1) keeps the entry
 // out of every cfg_save / cfg_save_to until cfg_hold(name, 0) (Apply), so an F10 / F11 / window-close save made while the
 // draft is open does not write a previewed value. cfg_revert restores the value and flags cfg_state gave, releases the
 // hold and bumps cfg_version. Any thread.
-enum { CFG_DIRTY = 1, CFG_REMOVED = 2 };
+enum { CFG_DIRTY = 1, CFG_REMOVED = 2, CFG_TEST = 4 };   // CFG_TEST: a test hook's value (cfg_set_test)
 int cfg_state(const char *name, const char **value);
 void cfg_hold(const char *name, int on);
 void cfg_revert(const char *name, const char *orig_value, int orig_state);

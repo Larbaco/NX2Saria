@@ -216,10 +216,9 @@ def main():
 
     # a test hook's values stay out of the settings file until SAVE=1 (cfg_set_test, cfg_test_keep)
     rc, out = run(exe, env, 'testset', '[display]\nfullscreen = 0\n', work)
-    seg = dict(zip(['start', '1', '2', '3', '4'], out.split('--- save ')))
+    seg = dict(zip(['start', '1', '2', '3', '4', '5', '6', '7'], out.split('--- save ')))
     writes = {k: [l for l in v.splitlines() if l.startswith('write: ')] for k, v in seg.items()}
     text = {k: v[v.find('write: '):] if 'write: ' in v else '' for k, v in seg.items()}
-    not_saved = [l for l in out.splitlines() if 'menu test values not saved' in l]
     check(rc == 0 and 'got: dyn_res 1, menu_lang pt-BR' in seg.get('start', ''),
           'test values are read like any other setting', out)
     check(rc == 0 and not writes.get('1') and
@@ -232,7 +231,15 @@ def main():
           'log: cfg: menu test values not saved: 1 key(s): MENU_LANG' in seg.get('3', ''),
           "the player's cfg_set of a test key makes it the player's, and it is saved", out)
     check(rc == 0 and 'got: kept 1' in seg.get('4', '') and 'menu_lang = pt-BR' in text.get('4', '') and
-          len(not_saved) == 2, 'SAVE=1 (cfg_test_keep) lets the next save write the test values', out)
+          sum('menu test values not saved' in seg.get(k, '') for k in '1234') == 2,
+          'SAVE=1 (cfg_test_keep) lets the next save write the test values', out)
+    check(rc == 0 and 'got: volume 50' in seg.get('5', '') and not writes.get('5') and
+          'menu test values not saved: 1 key(s): VOLUME' in seg.get('5', ''),
+          "a menu preview of a test value, reverted, leaves it the test's: not saved", out)
+    check(rc == 0 and len(writes.get('6', [])) == 1 and 'VOLUME (removed)' in seg.get('6', ''),
+          "the menu's reset of a test key is the player's, and saved", out)
+    check(rc == 0 and 'vsync = 0' in text.get('7', ''),
+          "a test value equal to the player's unsaved change leaves that change the player's", out)
 
     # The new environment spelling wins deterministically; the legacy spelling still supplies a value when it is alone.
     rc, out = run(exe, env, 'read', READ, work,
