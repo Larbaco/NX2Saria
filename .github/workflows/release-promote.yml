@@ -1,0 +1,61 @@
+# Makes a pre-release of a version without a suffix the stable (Latest) release, once the owner has tried it: the
+# release page loses its pre-release line and the release is marked stable and Latest. No file of the release is
+# uploaded, changed or removed: the manifests keep the notes of the tag's commit, which never had a pre-release line
+# (tools/release_files.py tag refuses one), and every file keeps its attestation (docs/releases/README.md).
+name: Release promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Pre-release to make the stable release (v0.19.0)'
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash   # -eo pipefail
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write   # edits the release's text and its stable/Latest flags
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+          sparse-checkout: |
+            docs/releases
+            tools/release_files.py
+            VERSION
+          sparse-checkout-cone-mode: false
+      - name: Promote
+        run: |
+          python3 tools/release_files.py tag --tag "$TAG"
+          case "$TAG" in *-*) echo "::error::$TAG is a release candidate: candidates stay pre-releases"; exit 1;; esac
+          read -r draft pre < <(gh release view "$TAG" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+          if [ "$draft" != false ] || [ "$pre" != true ]; then
+            echo "::error::$TAG is not a published pre-release (draft $draft, pre-release $pre)"
+            exit 1
+          fi
+          before=$(gh release view "$TAG" --json assets --jq '[.assets[] | "\(.name) \(.size)"] | sort | join(",")')
+          python3 tools/release_files.py body --tag "$TAG" --notes "docs/releases/$TAG.md" --state stable \
+            --repo "$GH_REPO" > "$RUNNER_TEMP/body.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/body.md" --prerelease=false --latest
+          after=$(gh release view "$TAG" --json assets --jq '[.assets[] | "\(.name) \(.size)"] | sort | join(",")')
+          test "$before" = "$after"
+          gh release view "$TAG" --json url,isPrerelease --jq '"\(.url): pre-release \(.isPrerelease)"'
+          gh api "repos/$GH_REPO/releases/latest" --jq '"Latest: \(.tag_name)"'

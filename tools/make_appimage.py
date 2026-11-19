@@ -218,6 +218,9 @@ def main():
     ap.add_argument('--python', type=Path, required=True,
                     help='a relocatable CPython 3.14 folder (python-build-standalone, ~/.local/share/uv/python/cpython-3.14*)')
     ap.add_argument('--appimagetool', type=Path, required=True, help='appimagetool-x86_64.AppImage')
+    ap.add_argument('--runtime-file', type=Path,
+                    help="the AppImage runtime (type2-runtime's runtime-x86_64) to pass to appimagetool, instead of "
+                         'the one appimagetool downloads by itself (the release workflow pins it)')
     ap.add_argument('--dlss', type=Path, help="NVIDIA's libnvidia-ngx-dlss.so.<version> from disk instead of "
                                                "downloading it from NVIDIA's DLSS SDK repository")
     ap.add_argument('--no-dlss', action='store_true', help='leave NVIDIA DLSS out of the AppImage')
@@ -303,7 +306,8 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     target = a.out / f'NX2Saria-Linux-{version}-x86_64.AppImage'
     env = dict(os.environ, ARCH='x86_64')
-    subprocess.run([a.appimagetool, '--no-appstream', app, target], check=True, env=env)
+    runtime = ['--runtime-file', a.runtime_file] if a.runtime_file else []
+    subprocess.run([a.appimagetool, '--no-appstream', *runtime, app, target], check=True, env=env)
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     print(f'{target} ({target.stat().st_size / 1e6:.0f} MB)')
 

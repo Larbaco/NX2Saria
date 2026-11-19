@@ -1,0 +1,196 @@
+# A release, made by GitHub Actions alone: no file of it passes through anyone's PC (docs/releases/README.md).
+# Pushing a tag vX.Y.Z or vX.Y.Z-rc.N builds the Windows files (windows-release.yml) and the AppImage
+# (linux-appimage.yml) from the tag's commit, checks them, writes SHA256SUMS.txt, attests the provenance of every file
+# (actions/attest-build-provenance: players check it with `gh attestation verify`, docs/install.md "Verify your
+# download") and publishes the release as a pre-release, with those files uploaded by this run. The manifests carry
+# the notes of the tag's commit and are never changed after: the pre-release line lives in the release page's text
+# only, and making the release stable is release-promote.yml, which uploads nothing.
+# Started by hand on the tag itself (`gh workflow run release.yml --ref vX.Y.Z`), it makes that release again after a
+# failed run: a draft the failed run left is replaced. A published release is never changed: the run stops unless the
+# release already holds exactly these files, and a fix goes out as the next version. Started on the tag, the run's
+# commit and ref are the tag's, so the attestations name the tag and its commit whichever way the run began.
+# Each job has only the access it needs; only `publish` can write to the repository, and no cache is read or written.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:   # on the tag: "Use workflow from" the tag, or gh workflow run release.yml --ref <tag>
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash   # -eo pipefail
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # The tag names VERSION's version, its notes exist (without a pre-release line for a version without a suffix),
+    # and its commit is on main: a tag on a commit outside main publishes nothing.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::started on $GITHUB_REF: start the release workflow on the tag (gh workflow run release.yml --ref vX.Y.Z)"
+            exit 1
+          fi
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          test "$sha" = "$GITHUB_SHA" && test "$(git rev-parse HEAD)" = "$sha"
+          python3 tools/release_files.py tag --tag "$TAG"
+          git fetch -q origin refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
+            echo "::error::the commit of $TAG ($sha) is not on main: a release is made only from main"
+            exit 1
+          fi
+          echo "tag $TAG: commit $sha, on main"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows-release.yml
+    with:
+      tag: ${{ needs.check.outputs.tag }}
+      ref: ${{ needs.check.outputs.sha }}
+
+  linux:
+    needs: check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-appimage.yml
+    with:
+      tag: ${{ needs.check.outputs.tag }}
+      ref: ${{ needs.check.outputs.sha }}
+
+  attest:
+    # The built files are exactly the release's, the manifests carry the tag's notes and every file's real size and
+    # sha256; then SHA256SUMS.txt and one provenance attestation over all seven files.
+    needs: [check, windows, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write       # the attestation's signing certificate (Sigstore, through GitHub's OIDC token)
+      attestations: write   # stores the attestation with the repository
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            docs/releases
+            tools/release_files.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-release-${{ needs.check.outputs.tag }}
+          path: ${{ runner.temp }}/dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-appimage-${{ needs.check.outputs.tag }}
+          path: ${{ runner.temp }}/dist
+      - name: Check the files, write SHA256SUMS.txt
+        run: |
+          python3 tools/release_files.py files --tag "$TAG" --notes "docs/releases/$TAG.md" --dir "$RUNNER_TEMP/dist"
+          cat "$RUNNER_TEMP/dist/SHA256SUMS.txt"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-sums-${{ needs.check.outputs.tag }}
+          retention-days: 14
+          if-no-files-found: error
+          path: ${{ runner.temp }}/dist/SHA256SUMS.txt
+
+  publish:
+    # The attested files, checked against SHA256SUMS.txt once more, go up to a draft; the draft is published as a
+    # pre-release only once all of them are there, so no player sees a release with a file missing.
+    needs: [check, attest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write   # creates the release and uploads its files
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      SHA: ${{ needs.check.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            docs/releases
+            tools/release_files.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: '*-${{ needs.check.outputs.tag }}'
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist
+      - name: Publish
+        run: |
+          dist="$RUNNER_TEMP/dist"
+          (cd "$dist" && sha256sum -c SHA256SUMS.txt)
+          mapfile -t files < <(cd "$dist" && awk '{print $2}' SHA256SUMS.txt)
+          files+=(SHA256SUMS.txt)
+          test "${#files[@]}" = 7
+          paths=("${files[@]/#/$dist/}")
+          # the tag still names the commit that was built
+          now=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -1 | cut -f1)
+          if [ "$now" != "$SHA" ]; then
+            echo "::error::$TAG now names $now, not the commit built ($SHA)"
+            exit 1
+          fi
+          python3 tools/release_files.py body --tag "$TAG" --notes "docs/releases/$TAG.md" --state prerelease \
+            --repo "$GH_REPO" > "$RUNNER_TEMP/body.md"
+          # every release of the tag, drafts too (the API lists drafts to a token that can write): "<id> <draft>"
+          releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')
+          published=$(awk '$2 == "false" {print $1}' <<< "$releases")
+          if [ -n "$published" ]; then
+            # a published release is never changed: done if it holds exactly these files, else the next version
+            have=$(gh api "repos/$GH_REPO/releases/$published" --jq '.assets[] | "\(.digest // "none") \(.name)"' |
+                   LC_ALL=C sort)
+            want=$(cd "$dist" && for f in "${files[@]}"; do echo "sha256:$(sha256sum "$f" | cut -d' ' -f1) $f"; done |
+                   LC_ALL=C sort)
+            if [ "$have" = "$want" ]; then
+              echo "$TAG is published already, with exactly these files"
+              exit 0
+            fi
+            echo "::error::$TAG is published already, with other files. A published release is not changed: the fix goes out as the next version (docs/releases/README.md)"
+            exit 1
+          fi
+          for id in $(awk '$2 == "true" {print $1}' <<< "$releases"); do
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"   # a failed run's draft; the tag stays
+            echo "deleted the draft release $id of $TAG"
+          done
+          # gh makes the release a draft while the files upload and publishes it once all of them are there
+          gh release create "$TAG" --verify-tag --prerelease --latest=false \
+            --title "NX2Saria ${TAG#v}" --notes-file "$RUNNER_TEMP/body.md" "${paths[@]}"
+          gh release view "$TAG" --json url,isDraft,isPrerelease,assets \
+            --jq '"\(.url): draft \(.isDraft), pre-release \(.isPrerelease), \(.assets | length) files"'

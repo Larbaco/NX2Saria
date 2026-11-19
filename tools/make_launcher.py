@@ -423,6 +423,11 @@ def main():
     ap.add_argument('--publish', action='store_true', help='upload as GitHub release v<version> with gh')
     ap.add_argument('--draft', action='store_true', help='with --publish: as a draft')
     a = ap.parse_args()
+    if a.publish and a.feed.lower() == DEFAULT_FEED.lower():
+        # NX2Saria's own releases are built, attested and uploaded by GitHub Actions only (docs/releases/README.md
+        # "How a release is made"), so that players can check no file of them passed through anyone's PC
+        sys.exit(f'--publish uploads from this PC: {DEFAULT_FEED} releases are made by .github/workflows/release.yml '
+                 'when a tag is pushed. --publish is for a feed of your own (--feed owner/name)')
     if sys.version_info < (3, 14):
         sys.exit('Python 3.14 or later is needed (compression.zstd for the MSYS2 packages)')
     ver, build = version()
