@@ -124,9 +124,17 @@ def states(app):
 
     def rc2_release():
         source = Path(__file__).resolve().parents[2] / 'docs' / 'releases' / 'v0.19.0-rc.2.md'
-        return feed.Release({'format': 1, 'version': '0.19.0-rc.2', 'app': {'name': 'test.zip', 'size': 1,
-                                                                            'sha256': '0'}},
-                            source.read_text(encoding='utf-8'))
+        # Keep the fixture newer than the installed launcher without editing its VERSION file.
+        notes = source.read_text(encoding='utf-8') if source.is_file() else (
+            '- The Controls tab says what each button does in the game, under its name.\n'
+            '- The labels follow the game’s button in all four menu languages.\n'
+            '- Also has all of 0.19.0-rc.1: menu tabs by mouse, field of view, a crash fix, personal folders out of logs.\n'
+            '\nYour saves, mods and settings stay where they are when you update.\n'
+            '\nPre-release: a release candidate for the Preview channel. Not tried on Windows yet.\n'
+            '\n[Install or update](https://github.com/Larbaco/NX2Saria/blob/main/docs/install.md) ·\n')
+        return feed.Release({'format': 1, 'version': ahead_of(ctx.version), 'app': {'name': 'test.zip', 'size': 1,
+                                                                                  'sha256': '0'}},
+                            notes)
 
     def update_ready():
         app.release = rc2_release()
@@ -135,7 +143,7 @@ def states(app):
     def whats_new_before():
         update_ready()
         row = next(r for r in app.rows if r.label == 'Updates')
-        row.desc = lambda: {'title': 'Version 0.19.0-rc.2 Is Ready', 'divider': True,
+        row.desc = lambda: {'title': f'Version {ahead_of(ctx.version)} Is Ready', 'divider': True,
                             'subtitle': "What's New", 'bullets': [
                                 'The Controls tab says what each button does in the game, under its name: "A: Actions / dash", "X: Jump", and so on.',
                                 'The labels follow the game’s button, in all four menu languages: swapping keys or buttons does not move them.',
@@ -146,7 +154,7 @@ def states(app):
         app.render()
 
     def whats_new_end():
-        if app.notes_canvas and app.notes_scrollbar:
+        if getattr(app, 'notes_canvas', None) and getattr(app, 'notes_scrollbar', None):
             app.notes_canvas.yview_moveto(1.0)
 
     def updating():

@@ -104,7 +104,9 @@ Build Cache, Update Channel, the folders, Open Logs Folder, Uninstall, Back); un
 A screen with more rows than the window holds draws them closer together (`fit_rows`).
 
 Controls: the mouse (hover moves the cursor, a click selects); the keyboard (arrows, Enter or Space, Esc, F5 checks
-for updates); an XInput gamepad (d-pad or left stick, A, B, Y) while the window is in front.
+for updates); an XInput gamepad (d-pad or left stick, A, B, Y) while the window is in front. When What's New notes
+need scrolling, use the mouse wheel or drag the scrollbar, Page Up/Page Down, or the right stick vertically; the left
+stick keeps moving the row cursor.
 
 `python -m launcher --selftest --shots DIR` draws every screen with made-up states and saves a PNG of each.
 

@@ -380,6 +380,7 @@ class App:
         self.notes_canvas = None
         self.notes_scrollbar = None
         self.notes_logged = set()
+        self.notes_pad_next = 0.0
         self.check_error = ''
         self.checked_at = 0.0
         self.check_started = 0.0
@@ -721,6 +722,11 @@ class App:
                 {'up': lambda: self.move(-1), 'down': lambda: self.move(1), 'left': lambda: self.side(-1),
                  'right': lambda: self.side(1), 'a': self.activate, 'b': self.back,
                  'y': lambda: self.check_now(force=True)}.get(b, lambda: None)()
+            now = time.monotonic()
+            if (self.notes_canvas and self.notes_scrollbar and self.gamepad.scroll
+                    and now >= self.notes_pad_next):
+                self.notes_canvas.yview_scroll(self.gamepad.scroll, 'units')
+                self.notes_pad_next = now + 0.09
         except Exception as e:
             self.ctx.log(f'gamepad: {e}')
             self.gamepad.dll = None
@@ -2830,15 +2836,41 @@ class App:
                 y = c.bbox(tid)[3] + X(8)
             elif kind == 'notes':
                 (notes,) = args
-                available = X(H - 36) - y - pady
+                footer_space = 0
+                if d.get('log'):
+                    footer_space += self.f['mono'].metrics('linespace') * min(len(d['log']), 6) + X(34)
+                if d.get('note'):
+                    words, lines, current = d['note'].split(), 0, ''
+                    for word in words:
+                        candidate = f'{current} {word}'.strip()
+                        if current and self.f['small'].measure(candidate) > inner:
+                            lines += 1
+                            current = word
+                        else:
+                            current = candidate
+                    footer_space += (lines + bool(current)) * self.f['small'].metrics('linespace') + X(8)
+                available = X(H - 36) - y - pady - footer_space
                 viewport_h = max(X(72), available)
                 bullet_x = X(16)
                 note_w = inner - bullet_x - X(7)
-                line_h = self.f['value'].metrics('linespace') + X(8)
+                line_h = self.f['value'].metrics('linespace')
                 wrapped = []
                 for note in notes:
                     words, lines, current = note.split(), [], ''
                     for word in words:
+                        if self.f['value'].measure(word) > note_w:
+                            if current:
+                                lines.append(current)
+                                current = ''
+                            chunk = ''
+                            for char in word:
+                                if chunk and self.f['value'].measure(chunk + char) > note_w:
+                                    lines.append(chunk)
+                                    chunk = char
+                                else:
+                                    chunk += char
+                            current = chunk
+                            continue
                         candidate = f'{current} {word}'.strip()
                         if current and self.f['value'].measure(candidate) > note_w:
                             lines.append(current)
@@ -2897,7 +2929,8 @@ class App:
                                   tags=('dyn', 'desc'))
                     ty += lh
                 y += h + X(14)
-        height = min(y - top0 + pady - X(4), X(H - 36) - top0) if self.notes_canvas and self.notes_scrollbar else y - top0 + pady - X(4)
+        height = (min(y - top0 + pady - X(4), X(H - 36) - top0)
+                  if self.notes_canvas and self.notes_scrollbar else y - top0 + pady - X(4))
         top = X(236) if height < X(200) else X(112)
         top = min(top, X(H - 30) - height) if top + height > X(H - 30) else top
         dy = top - top0
