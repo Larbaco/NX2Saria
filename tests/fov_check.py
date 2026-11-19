@@ -17,15 +17,11 @@ def main():
     assert 'atomic_flag_test_and_set_explicit(&fov_hook_logged' in source
     assert '!memcmp(name, "PlayerCamera", 12)' in source
     assert '!memcmp(name, "EventCamera", 11)' in source
-    assert 'FOV_MESSAGE_LOG' in source
-    assert 'fov_skip_once(FOV_MESSAGE_LOG, "message log owns the view")' in source
-    assert 'fov: message-log flag clear (camera zero flags %#x)' in source
-    assert 'atomic_flag_test_and_set_explicit(&fov_message_log_clear_logged' in source
-    assert 'message-log flag remained set in 64 gameplay lens samples' in source
-    assert '== 63)' in source
-    assert 'fov: camera zero unreadable, message-log check skipped' in source
-    assert 'camera_zero_readable = camera_zero && rd(camera_zero + 0x88, &camera_flags, sizeof camera_flags);' in source
-    assert source.index('rt_log("fov: camera zero unreadable, message-log check skipped")') < source.index('float angle = orig * res_fov_factor();')
+    assert 'Camera zero\'s bit 0 at +0x88 stayed set in gameplay' in source
+    assert 'FOV_MESSAGE_LOG' not in source
+    resolution = (ROOT / 'runtime/resolution.c').read_text()
+    assert 'excludes non-player cameras, pause/map/system menus, active events and first-person aiming' in resolution
+    assert 'message log' not in resolution.lower()
     for reason in (
         'camera actor pointer is null', 'camera name is unreadable', 'camera is EventCamera',
         'not PlayerCamera', 'pause, map or system menu is open', 'event manager is unavailable',
