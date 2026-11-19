@@ -159,6 +159,15 @@ changed on this path but the counting.
   frame shape stays)`.
 - 3.2 to 3.7 ms of GPU a generated frame (one period 4.3).
 
+0.18.7 on the same PC with `framegen = dlss` in the settings file from the start (step 6 below) **[M]**:
+`dlssg: Streamline's support check for frame generation: Result::eErrorNoSupportedAdapterFound (6)`, then
+`dlaa: frame generation does not run: ... this GPU has none (RTX 40 or newer); framegen = fsr3 works here, ...`.
+Streamline wrote 6 warnings and 1 error at that start, which all come from the GPU having no DLSS-G. They are now
+held until the support check (`runtime/dlssg/nx2_sl.cpp` `release_held`), and with that verdict one line sums them up:
+`dlssg: Streamline's 6 warnings and 1 error at its start come from this GPU having no DLSS-G (no DLSS-G minimum spec
+from NGX, DLSS-G disabled on this hardware, plugin sl.dlss_g not loaded, 3 hooks not supported, DLSS-G context
+missing)`. A message it does not know is still written as it came, and any other verdict writes them all.
+
 The 0.18.3 logs of the same PC confirm what the old line showed: its 3562 frames before the first scene (logo,
 movie, title) were counted as frames without depth and motion.
 

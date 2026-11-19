@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <atomic>
+#include <mutex>
 
 #include <sl.h>
 #include <sl_consts.h>
@@ -61,10 +62,80 @@ void say(const char *fmt, ...) {
     g_log(s);
 }
 
+// Streamline's warnings and errors from its start until the verdict on DLSS-G (nx2sl_available, nx2sl_log_unavailable)
+// are held. On a GPU without DLSS-G it writes the same seven at each start (DLSS-G disabled on this hardware, its
+// plugin ignored, hooks not supported, its context missing), and the support check's "no supported adapter" explains
+// them: one line sums them up then (release_held). Any other verdict writes them as they came, in order, and so does
+// the shutdown when no verdict came. A message past the room for them is written at once.
+struct Held {
+    bool error;
+    char msg[400];
+};
+Held g_held[32];
+int g_nheld;
+bool g_holding;
+std::mutex g_held_lock;
+
 void sl_log(sl::LogType type, const char *msg) {
     if (type == sl::LogType::eInfo) return;   // only warnings and errors reach the game's log
+    {
+        std::lock_guard<std::mutex> l(g_held_lock);
+        if (g_holding && g_nheld < 32) {
+            Held &h = g_held[g_nheld++];
+            h.error = type == sl::LogType::eError;
+            snprintf(h.msg, sizeof h.msg, "%s", msg);
+            return;
+        }
+    }
     static int n;
     if (n++ < 200) say("dlssg: streamline %s: %s", type == sl::LogType::eError ? "error" : "warning", msg);
+}
+
+// Writes the held messages and stops holding. no_adapter: the support check found no adapter with DLSS-G, and the
+// messages that come from that are counted in one line; any other is still written as it came.
+void release_held(bool no_adapter) {
+    static Held held[32];
+    int nh;
+    {
+        std::lock_guard<std::mutex> l(g_held_lock);
+        if (!g_holding) return;
+        g_holding = false, nh = g_nheld, g_nheld = 0;
+        memcpy(held, g_held, sizeof(Held) * nh);
+    }
+    static const struct {
+        const char *key, *what;
+    } known[] = {
+        {"min spec requirements", "no DLSS-G minimum spec from NGX"},
+        {"Disabling DLSS-G since it is not supported", "DLSS-G disabled on this hardware"},
+        {"Ignoring plugin 'sl.dlss_g'", "plugin sl.dlss_g not loaded"},
+        {"is NOT supported", "hooks not supported"},
+        {"'kFeatureDLSS_G' context is missing", "DLSS-G context missing"},
+    };
+    const int nk = (int)(sizeof known / sizeof known[0]);
+    int count[sizeof known / sizeof known[0]] = {}, warnings = 0, errors = 0;
+    for (int i = 0; i < nh; i++) {
+        int k = -1;
+        for (int j = 0; no_adapter && k < 0 && j < nk; j++)
+            if (strstr(held[i].msg, known[j].key)) k = j;
+        if (k < 0) {
+            say("dlssg: streamline %s: %s", held[i].error ? "error" : "warning", held[i].msg);
+            continue;
+        }
+        count[k]++;
+        if (held[i].error) errors++;
+        else warnings++;
+    }
+    if (!warnings && !errors) return;
+    char what[256] = "";
+    size_t at = 0;
+    for (int j = 0; j < nk && at < sizeof what; j++) {
+        if (!count[j]) continue;
+        const char *sep = at ? ", " : "";
+        at += (size_t)(count[j] > 1 ? snprintf(what + at, sizeof what - at, "%s%d %s", sep, count[j], known[j].what)
+                                    : snprintf(what + at, sizeof what - at, "%s%s", sep, known[j].what));
+    }
+    say("dlssg: Streamline's %d warning%s and %d error%s at its start come from this GPU having no DLSS-G (%s)",
+        warnings, warnings == 1 ? "" : "s", errors, errors == 1 ? "" : "s", what);
 }
 
 template <class T> T *proc(const char *name) { return reinterpret_cast<T *>(GetProcAddress(g_mod, name)); }
@@ -140,8 +211,13 @@ extern "C" NX2SL_API int nx2sl_init(const wchar_t *dir, Nx2SlLog log) {
     p.applicationId = 231313132;   // the id NVIDIA's samples use for builds without an issued one (as vk_dlaa.c's NGX)
     p.engine = sl::EngineType::eCustom;
     p.renderAPI = sl::RenderAPI::eVulkan;
+    {
+        std::lock_guard<std::mutex> l(g_held_lock);
+        g_holding = true;
+    }
     sl::Result r = p_init(p, sl::kSDKVersion);
-    if (r != sl::Result::eOk) return say("dlssg: slInit failed (%d): DLSS Frame Generation off", (int)r), 0;
+    if (r != sl::Result::eOk)
+        return release_held(false), say("dlssg: slInit failed (%d): DLSS Frame Generation off", (int)r), 0;
     say("dlssg: Streamline up");
     return 1;
 }
@@ -171,6 +247,7 @@ extern "C" NX2SL_API int nx2sl_available(void) {
                           loaded, p_dlssg_options != nullptr, p_marker != nullptr);
     else if (g_max.load()) say("dlssg: DLSS Frame Generation available, up to %ux", g_max.load() + 1);
     else say("dlssg: DLSS Frame Generation available (its most frames per rendered frame not reported yet)");
+    if (g_available) release_held(false);   // unavailable: nx2sl_log_unavailable has the verdict
     return g_available;
 }
 
@@ -181,7 +258,7 @@ static const char *g_support_name = nullptr;
 
 extern "C" NX2SL_API void nx2sl_log_unavailable(VkPhysicalDevice physical) {
     auto supported = proc<PFun_slIsFeatureSupported>("slIsFeatureSupported");
-    if (!supported) return say("dlssg: Streamline has no adapter support query");
+    if (!supported) return release_held(false), say("dlssg: Streamline has no adapter support query");
     sl::AdapterInfo adapter{};
     adapter.vkPhysicalDevice = physical;
     sl::Result r = supported(sl::kFeatureDLSS_G, adapter);
@@ -190,6 +267,7 @@ extern "C" NX2SL_API void nx2sl_log_unavailable(VkPhysicalDevice physical) {
     g_support = r == sl::Result::eErrorNoSupportedAdapterFound || r == sl::Result::eErrorAdapterNotSupported ? 0
                 : r == sl::Result::eOk                                                                     ? 1
                                                                                                            : 2;
+    release_held(g_support == 0);
 }
 
 extern "C" NX2SL_API int nx2sl_support(const char **name) {
@@ -345,5 +423,6 @@ extern "C" NX2SL_API uint32_t nx2sl_frames_max(void) { return g_available == 1 ?
 extern "C" NX2SL_API uint64_t nx2sl_shown(void) { return g_shown; }
 
 extern "C" NX2SL_API void nx2sl_shutdown(void) {
+    release_held(false);
     if (p_shutdown && g_available >= 0) p_shutdown();
 }
