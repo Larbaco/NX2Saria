@@ -1,0 +1,8 @@
+# Installed packages and wrangler's local state (local D1 files, build output)
+node_modules/
+.wrangler/
+# Local secrets for `wrangler dev` (ADMIN_TOKEN)
+.dev.vars
+.dev.vars.*
+# The deploy copy of wrangler.toml with the real D1 database id (deploy.sh writes it)
+wrangler.deploy.toml
