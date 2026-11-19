@@ -104,9 +104,7 @@ def check_obj(prefix, schema, obj, raw):
         if k not in obj:
             continue
         if isinstance(kind, dict):
-            # a nested object may be null as a whole only where the summary says so (frametime with no frames)
-            if obj[k] is None and k == 'frametime':
-                continue
+            # never a null group: the server refuses one (telemetry/src/validate.ts); its leaves are null instead
             bad += check_obj(path, kind, obj[k], raw)
         else:
             bad += check_leaf(path, kind, obj[k], raw)
@@ -127,7 +125,7 @@ def expect(name, s):
             bad.append(f'full: display {s["display"]}')
     elif name == 'all_null':
         leaves = [v for k, o in s.items() if isinstance(o, dict) for v in o.values()] + [s['ram_mb'], s['fatal']]
-        if s['session']['end'] != 'crash' or sum(v is not None for v in leaves) != 1 or s['frametime'] is not None:
+        if s['session']['end'] != 'crash' or sum(v is not None for v in leaves) != 1 or not all(v is None for v in s['frametime'].values()):
             bad.append(f'all_null: something besides session.end is set: {s}')
     elif name == 'hostile':
         if s['os']['name'] != 'Ubuntu "24.04" \\ LTS':
@@ -147,7 +145,7 @@ def expect(name, s):
         if s['frametime']['fps_mean'] != 2000 or s['frametime']['fps_low_1pct'] is not None or s['frametime']['worst_ms'] != 600000:
             bad.append(f'hostile: frametime {s["frametime"]}')
     elif name == 'device_lost':
-        if s['session']['end'] != 'device_lost' or s['frametime'] is not None or not s['fatal'].startswith('vk: the GPU'):
+        if s['session']['end'] != 'device_lost' or not all(v is None for v in s['frametime'].values()) or not s['fatal'].startswith('vk: the GPU'):
             bad.append(f'device_lost: {s["session"]}, {s["frametime"]}, {s["fatal"]!r}')
     return bad
 

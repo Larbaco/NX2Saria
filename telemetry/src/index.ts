@@ -16,6 +16,7 @@ import {
 } from "./validate";
 import {
   areReleases,
+  claimReleasesRefresh,
   deleteInstall,
   insertFeedback,
   insertSession,
@@ -39,8 +40,20 @@ async function readPost(request: Request, env: Env, cap: number): Promise<string
   return readCappedBody(request, cap);
 }
 
+// Both versions must be published releases. A release made since the hourly refresh is not in the table yet: the
+// first report naming an unknown version refreshes it at once (at most every RELEASES_REFRESH_GAP_S), so the reports
+// of a release's first hour are not refused.
 async function checkVersions(env: Env, versions: string[]): Promise<void> {
-  if (!(await areReleases(env.DB, versions))) throw new HttpError(400, "unknown version");
+  if (await areReleases(env.DB, versions)) return;
+  if (await claimReleasesRefresh(env.DB, nowSeconds())) {
+    try {
+      await refreshReleases(env.DB, env.RELEASES_REPO);
+    } catch (e) {
+      console.error("releases refresh failed", e instanceof Error ? e.message : String(e));
+    }
+    if (await areReleases(env.DB, versions)) return;
+  }
+  throw new HttpError(400, "unknown version");
 }
 
 async function postSession(request: Request, env: Env): Promise<Response> {

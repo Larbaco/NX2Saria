@@ -163,6 +163,14 @@ const char *log_privacy_str(const char *s, char *out, size_t cap) {
     return out;
 }
 
+const char *log_privacy_str_always(const char *s, char *out, size_t cap) {
+    size_t n = s ? strlen(s) : 0;
+    if (!n || !cap || !g_ready || priv_find(&T, s, n) == n) return s;
+    size_t at = 0, o = log_privacy_rewrite(s, n, &at, out, cap - 1);
+    out[o] = 0;
+    return out;
+}
+
 char *log_privacy_dup(const char *p, size_t n, size_t *out_n) {
     if (!n || log_privacy_find(p, n) == n) return NULL;
     size_t cap = n + n / 4 + 64, o = 0;

@@ -144,6 +144,22 @@ export async function areReleases(db: D1Database, versions: readonly string[]): 
   return (row?.n ?? 0) === unique.length;
 }
 
+// Seconds between two on-demand releases refreshes (a report naming a version the table does not hold yet).
+export const RELEASES_REFRESH_GAP_S = 300;
+
+// Takes the on-demand refresh's turn: true for the one caller that may call the GitHub API now, false while the last
+// refresh is less than RELEASES_REFRESH_GAP_S old. One conditional upsert, so concurrent requests cannot both win.
+export async function claimReleasesRefresh(db: D1Database, now: number): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT INTO meta (key, value) VALUES ('releases_refresh', ?1)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE meta.value <= ?2`,
+    )
+    .bind(now, now - RELEASES_REFRESH_GAP_S)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 export type RateKind = "session" | "feedback";
 
 export const RATE_LIMITS: Record<RateKind, { perMinute: number; perDay: number }> = {

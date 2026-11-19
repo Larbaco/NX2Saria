@@ -79,7 +79,7 @@ static const char *setting(const char *key, char *out, size_t cap) {
     return ss_setting(cfg_value(name), m->values, out, cap);
 }
 
-static const char *priv(const char *s, char *out, size_t cap) { return s && *s ? log_privacy_str(s, out, cap) : NULL; }
+static const char *priv(const char *s, char *out, size_t cap) { return s && *s ? log_privacy_str_always(s, out, cap) : NULL; }
 
 static void write_summary(const char *end, const char *fatal_line) {
     if (!__atomic_load_n(&armed, __ATOMIC_ACQUIRE) || plat_xchg32(&written, 1)) return;

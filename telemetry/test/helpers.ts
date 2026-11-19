@@ -93,6 +93,8 @@ export async function resetDb(): Promise<void> {
     env.DB.prepare("DELETE FROM feedback"),
     env.DB.prepare("DELETE FROM rate"),
     env.DB.prepare("DELETE FROM releases"),
+    // the on-demand releases refresh stays off (a refresh "just now" far in the future); test/cron.test.ts clears it
+    env.DB.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('releases_refresh', 4000000000)"),
     env.DB.prepare("INSERT INTO releases (version, published_at) VALUES (?, ?), (?, ?)").bind(
       RELEASE,
       "2026-11-18T12:00:00Z",
