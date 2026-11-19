@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=c68aa705240b333abc792fc7d1285e532ba5594a reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=010bed4ffee016afa3cb613e7143093f9025bbe0 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -74,7 +74,7 @@ python tools\pad_prompts.py --art prompt-art --game <install folder>
 | Plus | Start | Tab | 菜单：道具、装备、收集、系统 |
 | Minus | Back | M | 地图 |
 
-游戏的 *Swap Jump Controls* 选项会交换 B 和 X（B 跳跃，X 收起）；绑定仍然对应 Switch 按键，因此这时 Space 变为收起，Left Ctrl 变为跳跃。Left Shift 是 A，所以按住它会冲刺；E 按一次 A，用于交谈和打开。Esc 在游戏中没有绑定；它会打开设置菜单并释放鼠标光标（见“鼠标视角”）。Z 和 X 在相邻的按键上重复 ZL 和 ZR。鼠标滚轮没有绑定。绑定是 `runtime/input_map.c` 中 `input_map` 的各张表：键盘按键（与平台无关的按键 ID）以及每种布局一张手柄表（按位置的手柄输入）；`runtime/input_win.c` 负责转换 Win32 虚拟键和 SDL 按键。
+游戏的 *Swap Jump Controls* 选项会交换 B 和 X（B 跳跃，X 收起）；绑定仍然对应 Switch 按键，因此这时 Space 变为收起，Left Ctrl 变为跳跃。Left Shift 是 A，所以按住它会冲刺；E 按一次 A，用于交谈和打开。Esc 在游戏中没有绑定；它会打开设置菜单并释放鼠标光标（见“鼠标视角”）。Z 和 X 在相邻的按键上重复 ZL 和 ZR。鼠标滚轮在游戏过程中没有绑定；在游戏自身的菜单中它用于滚动（见“在游戏菜单中使用鼠标”）。绑定是 `runtime/input_map.c` 中 `input_map` 的各张表：键盘按键（与平台无关的按键 ID）以及每种布局一张手柄表（按位置的手柄输入）；`runtime/input_win.c` 负责转换 Win32 虚拟键和 SDL 按键。
 
 ## 窗口快捷键
 
@@ -153,6 +153,12 @@ bind_Y = pad:north, key:mouse_l
 
 键盘按键会让摇杆倾斜到底，因此只用键盘时 Link 总是在跑。`NX2SARIA_WALK_KEY`（`walk_key`，操作标签页*摇杆*下的*步行键*行）指定一个按键，按住它时，键盘按键给出的摇杆值（移动键和镜头键）会缩放为满值的 `NX2SARIA_WALK_SCALE`（`walk_scale`，*步行幅度*行；0.2 到 0.9，默认 0.51），于是 Link 会走路。该值是 `bind_` 行中的一个按键名称，或者 `none`（默认：关闭）。该行提供 Shift、Alt、Ctrl、Tab 和 Caps Lock，并写出所选按键同时会按下的按键：使用默认绑定时，Shift 是 A，Ctrl 是 B，Tab 是 Plus，而 Alt 和 Caps Lock 是空闲的。手柄的摇杆和鼠标视角不会被缩放。默认值略高于一半，因为一个按键满值的一半比方向位所需的 50% 少一点。两个设置都会在游戏运行时立即生效。
 
+## 在游戏菜单中使用鼠标
+
+在游戏 1.1.1 中，鼠标可以在游戏自身的菜单中使用：标题画面及其存档、暂停菜单及其各页、Options 以及存档对话框。当某个菜单拥有焦点，并且最后使用的是鼠标或键盘按键时，光标会从鼠标视角中释放出来，显示在拥有焦点的按钮上。把鼠标移到某个按钮上会选中它，就像十字键那样（带有游戏的高亮和音效）；在按钮上单击左键相当于在它上面按 A，在任意位置单击右键相当于 B，滚轮每滚动一格相当于十字键的上或下，因此列表移动一行。拿起手柄会隐藏光标，菜单就和在主机上一样；菜单关闭时，镜头会重新接管鼠标。设置菜单（F1 或 Esc）打开时优先获得鼠标。在超宽画面上，指针会跟随 `wide_menus` 和 `wide_hud` 放置菜单的位置。
+
+`NX2SARIA_MENU_CURSOR`（`menu_cursor`，操作标签页上的*在游戏菜单中使用鼠标*行，立即生效；默认 1）设为 0 时关闭此功能。`NX2SARIA_MENU_CURSOR_LOG=1` 会记录焦点进入的每个菜单画面。日志在启动时有 `menu_mouse: on for 1.1.1 ...`，为最先打开的几个菜单各有一行 `menu_mouse: screen <name>: ...`，并为每个使用过鼠标的菜单写一行，包含焦点移动、点击、滚轮格数和命中测试次数。工作原理：[menu-mouse.md](../menu-mouse.md)（英文）。
+
 ## Switch 手柄的 HD 振动
 
 游戏为线性马达生成振动：每一侧有一个低频段和一个高频段，每个频段都有一个频率和一个振幅。在大多数手柄上，这会被简化为两个马达的强度。在 `nx2saria.ini` 中设置 `rumble_hd = 1`（`NX2SARIA_RUMBLE_HD`，操作标签页中的 *HD 振动（Switch）* 行，实时生效，默认关闭）后，Switch 手柄会通过手柄自己的振动报告，按游戏生成的原样得到这些值（`runtime/rumble_hd.c`，`runtime/input.c` 中的 "HD rumble"）：
@@ -210,6 +216,9 @@ PS 按键不使用。操作标签页像对待其他手柄一样绑定和重新�
 ```
 <frame> <button> [hold_frames]            # A B X Y L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN LCLICK RCLICK; hold defaults to 4
 <frame> LSTICK|RSTICK <x> <y> [hold_frames]   # -32767..32767, up is +y
+<frame> POINTER <x> <y>                    # the pointer for the game's menus at x, y of the window (0..1 from top left)
+<frame> MOUSEL|MOUSER [hold_frames]        # the left or right mouse button, for the game's menus only
+<frame> WHEEL <notches>                    # the mouse wheel for the game's menus, up positive
 ```
 
 `<frame>` 计算自第一帧以来游戏时间中 60 Hz 的刻数（在 60 fps 时即呈现的帧数）。每个事件记录一次（`input: script frame N tick T: A`）。

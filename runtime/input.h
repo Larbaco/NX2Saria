@@ -40,6 +40,18 @@ void input_direct_mouse_sample(int enabled, int32_t *dx, int32_t *dy);
 // menu has the pointer, so the mouse camera's capture is released
 void menu_cursor_poll(uint64_t *buttons);
 int menu_cursor_pointer(void);
+// menu_mouse.c: the same for 1.1.1's menus (poll: the A, B, up and down the mouse asked for; pointer: as above)
+void menu_mouse_poll(uint64_t *buttons);
+int menu_mouse_pointer(void);
+// The game gets no input now: a text entry or the in-game menu (the overlay) is open, or one just closed
+int input_game_input_blocked(void);
+// The mouse for the game's own menus (menu_mouse.c), from the window or from NX2SARIA_INPUT_SCRIPT's POINTER, MOUSEL,
+// MOUSER and WHEEL lines. pointer: fractions of the window, 0..1 from its top left; 0 when the window is not in front,
+// the pointer is outside it or the camera has it captured; 2 when the script placed it. mouse_presses: the left (0) or
+// right (1) button's presses so far. wheel_take: notches since the last call, up positive. Any thread.
+int input_menu_pointer(float *nx, float *ny);
+uint32_t input_menu_mouse_presses(int right);   // presses so far, counted at the event: a click shorter than a frame counts
+int32_t input_menu_wheel_take(void);
 // The same for host UI (the text entry): never blocked. input_block(1) while a text entry is open: input_poll then
 // reports nothing; input_block(0) when it closes: nothing until all buttons and stick directions are released.
 void input_poll_ui(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);

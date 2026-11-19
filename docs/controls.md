@@ -86,7 +86,7 @@ The actions are the game's own, as its *Basic Controls* screen (Plus menu, Syste
 | Plus | Start | Tab | menu: items, equipment, collection, system |
 | Minus | Back | M | map |
 
-The game's *Swap Jump Controls* option trades B and X (jump on B, put away on X); the bindings stay on the Switch buttons, so Space then puts away and Left Ctrl jumps. Left Shift is A, so holding it dashes; E presses A once for talking and opening. Esc is unbound in the game; it opens the settings menu and releases the mouse cursor (see Mouse camera). Z and X duplicate ZL and ZR on neighbouring keys. The mouse wheel is unbound. The bindings are the tables of `input_map` in `runtime/input_map.c`: the keys (platform-neutral key ids) and one gamepad table per layout (gamepad inputs by position); `runtime/input_win.c` translates Win32 virtual keys and SDL buttons.
+The game's *Swap Jump Controls* option trades B and X (jump on B, put away on X); the bindings stay on the Switch buttons, so Space then puts away and Left Ctrl jumps. Left Shift is A, so holding it dashes; E presses A once for talking and opening. Esc is unbound in the game; it opens the settings menu and releases the mouse cursor (see Mouse camera). Z and X duplicate ZL and ZR on neighbouring keys. The mouse wheel is unbound in play; in the game's own menus it scrolls (see Mouse in the game's menus). The bindings are the tables of `input_map` in `runtime/input_map.c`: the keys (platform-neutral key ids) and one gamepad table per layout (gamepad inputs by position); `runtime/input_win.c` translates Win32 virtual keys and SDL buttons.
 
 ## Window keys
 
@@ -165,6 +165,12 @@ The stick direction bits (`StickLLeft` to `StickRDown`) are derived from the sti
 
 Keys tilt a stick all the way, so on the keyboard alone Link always runs. `NX2SARIA_WALK_KEY` (`walk_key`, the *Walk key* row under *Analog sticks* on the Controls tab) names a key that, while held, scales the stick values the keys give (movement and camera keys) to `NX2SARIA_WALK_SCALE` of full (`walk_scale`, the *Walk scale* row; 0.2 to 0.9, default 0.51), so Link walks. The value is a key name of the `bind_` lines, or `none` (the default: off). The row offers Shift, Alt, Ctrl, Tab and Caps Lock and names the button a chosen key also presses: with the default bindings Shift is A, Ctrl is B and Tab is Plus, while Alt and Caps Lock are free. The gamepad's sticks and the mouse camera are not scaled. The default is just above half because half of a key's full value falls one short of the 50% the direction bits need. Both settings apply at once while the game runs.
 
+## Mouse in the game's menus
+
+On game 1.1.1 the mouse works in the game's own menus: the title and its save files, the pause menu and its pages, Options and the save dialogs. While a menu has the focus and the mouse or a key was used last, the cursor is released from the mouse camera and shown on the button that has the focus. Moving the mouse onto a button selects it, as the D-pad would (the game's highlight and sound); a left click on a button is A on it, a right click anywhere is B, and each notch of the wheel is the D-pad's up or down, so a list moves a row. Picking up the gamepad hides the cursor and leaves the menus as on the console; the camera takes the mouse back when the menu closes. The settings menu (F1 or Esc) has the mouse first while it is open. The pointer follows the menus where `wide_menus` and `wide_hud` put them on an ultrawide picture.
+
+`NX2SARIA_MENU_CURSOR` (`menu_cursor`, the *Mouse in the game's menus* row on the Controls tab, live; default 1) turns it off with 0. `NX2SARIA_MENU_CURSOR_LOG=1` logs every menu screen the focus goes to. The log has `menu_mouse: on for 1.1.1 ...` at start, a `menu_mouse: screen <name>: ...` line for the first menus opened, and a line per menu the mouse was used in, with the focus moves, clicks, wheel notches and hit-test counts. How it works: [menu-mouse.md](menu-mouse.md).
+
 ## HD rumble on Switch controllers
 
 The game makes its vibration for linear actuators: per side a low and a high band, each with a frequency and an amplitude. On most gamepads that is reduced to two motor strengths. With `rumble_hd = 1` in `nx2saria.ini` (`NX2SARIA_RUMBLE_HD`, the *HD vibration (Switch)* row on the Controls tab, live, off by default) a Switch controller gets the values as the game makes them, in the controller's own rumble report (`runtime/rumble_hd.c`, `runtime/input.c` "HD rumble"):
@@ -222,6 +228,9 @@ The PS button is not used. The Controls tab binds and remaps its buttons like an
 ```
 <frame> <button> [hold_frames]            # A B X Y L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN LCLICK RCLICK; hold defaults to 4
 <frame> LSTICK|RSTICK <x> <y> [hold_frames]   # -32767..32767, up is +y
+<frame> POINTER <x> <y>                    # the pointer for the game's menus at x, y of the window (0..1 from top left)
+<frame> MOUSEL|MOUSER [hold_frames]        # the left or right mouse button, for the game's menus only
+<frame> WHEEL <notches>                    # the mouse wheel for the game's menus, up positive
 ```
 
 `<frame>` counts 60 Hz ticks of game time since the first frame (presented frames at 60 fps). Each event logs once (`input: script frame N tick T: A`).
