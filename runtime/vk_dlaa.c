@@ -3422,13 +3422,22 @@ static int fg_runs(void) { return vk_dlssg_active() || vk_fg_active() || vk_ngxf
 // use has no DLSS Frame Generation (vk_dlssg_why: another vendor's, or Streamline found no adapter with it, as on an
 // RTX 30) and AMD FSR 3.1's runs here, 2 the same where FSR 3.1's does not, 3 Streamline gave another reason (*sl_why),
 // 4 it has not started, for a reason its own lines give (the files, the device, NGX on Linux); with fsr3, 5 it does
-// not run here, 6 its swapchain is not made yet.
+// not run here, 6 its swapchain is not made yet. dlss set in the menu while the game runs starts only at the next
+// start: Streamline is set up with the device (vk_dlssg_wanted reads the setting once) and NGX's frame generation needs
+// DLSS upscaling on at the start (vk_ngxfg_wanted), so neither has lines of its own yet. Then 7 this card cannot run it
+// even then (vk_dlssg_gpu_may) and AMD FSR 3.1's runs here, 8 the same where FSR 3.1's does not, 9 the card may run it.
 static int fg_off_why(const char **sl_why) {
     const char *fg = cfg_value("NX2SARIA_FRAMEGEN");
     *sl_why = NULL;
     if (!strcmp(fg, "dlss")) {
-        if (vk_dlssg_why(sl_why))
-            return (vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available()) ? 1 : 2;
+        const int fsr = vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available();
+#ifdef _WIN32
+        const int later = !vk_dlssg_wanted();
+#else
+        const int later = !vk_ngxfg_wanted();
+#endif
+        if (later) return vk_dlssg_gpu_may() ? 9 : fsr ? 7 : 8;
+        if (vk_dlssg_why(sl_why)) return fsr ? 1 : 2;
         return *sl_why ? 3 : 4;
     }
     if (!strcmp(fg, "fsr3")) return (vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available()) ? 6 : 5;
@@ -3445,7 +3454,12 @@ static void fg_state_line(int on, int fgo) {
     if (st == 0) {
         static const char *pre = "dlaa: frame generation does not run: no inputs are made for it (",
                           *dlss = "it is set to NVIDIA DLSS Frame Generation",
-                          *none = "this GPU has none (RTX 40 or newer)";
+                          *none = "this GPU has none (RTX 40 or newer)",
+#ifdef _WIN32
+                          *next = "";
+#else
+                          *next = ", with DLSS upscaling on when it starts";
+#endif
         switch (key - 8) {
         case 0: rt_log("%sthe setting is off)", pre); break;
         case 1:
@@ -3460,6 +3474,12 @@ static void fg_state_line(int on, int fgo) {
         case 5:
             rt_log("%sit is set to AMD FSR 3.1, which does not run here; the fg: and fsr3fg: lines say why)", pre);
             break;
+        case 7:
+        case 8:
+            rt_log("%s%s, and %s, in this run or the next%s)", pre, dlss, none,
+                   key - 8 == 7 ? "; framegen = fsr3 works here, or Frame generation: AMD FSR 3.1 in the menu" : "");
+            break;
+        case 9: rt_log("%s%s, which starts only at the next start of the game%s)", pre, dlss, next); break;
         default: rt_log("%sit is set to AMD FSR 3.1, which has not started yet)", pre);
         }
     }
