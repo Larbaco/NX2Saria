@@ -19,8 +19,6 @@ release notes say so. The [README](../README.md#status-and-known-issues) has the
 ## Frame generation
 
 - **On Linux it is 2x and SDR only.** With HDR on, the menu row says it is off, and why.
-- **AMD FSR 3.1 frame generation on Windows adds few frames**: most of the game's frames lack the depth and motion it
-  needs there, so only a small share of them get a generated frame.
 - **Fast camera turns close to a wall smear at the edges** in generated frames, and so does Navi's glow. This is usual
   for frame generation when the game renders around 40 fps. A higher rendered frame rate makes it smaller.
 

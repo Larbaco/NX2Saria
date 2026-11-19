@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=5eeac606a78a314239e9902de22d9ec16fec574a reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=5b52101cc11de1c3674ed69be2d6cc364aead15d reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · [Русский](../ru/known-issues.md) · **简体中文**
 
@@ -18,7 +18,6 @@
 ## 帧生成
 
 - **在 Linux 上仅支持 2x 和 SDR**。开启 HDR 时，菜单中的该行会显示它已关闭以及原因。
-- **Windows 上的 AMD FSR 3.1 帧生成增加的帧很少**：游戏的大部分帧缺少它在 Windows 上所需的深度和运动信息，因此只有一小部分帧会得到一个生成帧。
 - **贴近墙壁快速转动镜头时，生成帧的边缘会出现拖影**，Navi 的光晕也是如此。当游戏渲染在 40 fps 左右时，这是帧生成的常见现象。更高的渲染帧率会让它变小。
 
 ## 操作
