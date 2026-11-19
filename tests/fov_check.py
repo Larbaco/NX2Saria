@@ -11,6 +11,21 @@ from patches import load  # noqa: E402
 
 
 def main():
+    source = (ROOT / 'runtime/debug_tools.c').read_text()
+    assert 'atomic_fetch_or_explicit(&fov_diagnostics, reason' in source
+    assert 'if (!(old & reason)) rt_log("fov: left lens alone: %s", text);' in source
+    for reason in (
+        'camera actor pointer is null', 'camera name is unreadable', 'camera is EventCamera',
+        'camera is not PlayerCamera', 'pause, map or system menu is open', 'event manager is unavailable',
+        'active event pointer is unreadable', 'an event is active', 'player camera component is unavailable',
+        'player camera flags are unreadable', 'first-person aiming flag is set', 'camera manager is unavailable',
+        'camera count is unreadable', 'camera manager has no cameras', 'camera or view pointer is unavailable',
+        'active view does not belong to camera zero', 'camera flags are unreadable',
+        'camera zero is marked as a menu camera', 'scaled lens angle is outside (0, pi)',
+        'configured scale leaves the angle unchanged',
+    ):
+        assert f'fov_skip_once(' in source and reason in source
+
     size = 0x4ea0000
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', FIRST_BASE, size)])
     site = 0x4c52f8

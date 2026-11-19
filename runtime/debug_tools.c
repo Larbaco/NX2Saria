@@ -1004,36 +1004,73 @@ static int scene_camera(uint64_t actor) {
     return !memcmp(name, "PlayerCamera", 13) ? 1 : !memcmp(name, "EventCamera", 12) ? 2 : 0;
 }
 
+enum {
+    FOV_HOOK_REACHED = 1u << 0, FOV_NO_ACTOR = 1u << 1, FOV_NO_CAMERA_NAME = 1u << 2,
+    FOV_EVENT_CAMERA = 1u << 3, FOV_OTHER_CAMERA = 1u << 4, FOV_MENU = 1u << 5,
+    FOV_NO_EVENT_MANAGER = 1u << 6, FOV_EVENT_UNREADABLE = 1u << 7, FOV_ACTIVE_EVENT = 1u << 8,
+    FOV_NO_PLAYER = 1u << 9, FOV_PLAYER_FLAGS_UNREADABLE = 1u << 10, FOV_AIMING = 1u << 11,
+    FOV_NO_CAMERA_MANAGER = 1u << 12, FOV_CAMERA_COUNT_UNREADABLE = 1u << 13, FOV_NO_CAMERAS = 1u << 14,
+    FOV_NO_CAMERA_VIEW = 1u << 15, FOV_VIEW_MISMATCH = 1u << 16, FOV_CAMERA_FLAGS_UNREADABLE = 1u << 17,
+    FOV_MENU_CAMERA = 1u << 18, FOV_BAD_ANGLE = 1u << 19, FOV_UNCHANGED_ANGLE = 1u << 20
+};
+static atomic_uint fov_diagnostics;
+static void fov_skip_once(unsigned reason, const char *text) {
+    unsigned old = atomic_fetch_or_explicit(&fov_diagnostics, reason, memory_order_relaxed);
+    if (!(old & reason)) rt_log("fov: left lens alone: %s", text);
+}
+
 // After the original s0 load at main+0x4c52f8, before the game stores the lens angle and derives the frustum.
 void dbg_fov_host(Cpu *c) {
-    uint64_t state = c->x[19], actor = rd_ptr(state + 0x10);
-    if (scene_camera(actor) != 1 || wide_menu_open()) return;
+    uint64_t state = c->x[19], actor = state ? rd_ptr(state + 0x10) : 0;
+    fov_skip_once(FOV_HOOK_REACHED, "gameplay lens hook reached; checking camera guards");
+    if (!actor) { fov_skip_once(FOV_NO_ACTOR, "camera actor pointer is null"); return; }
+    uint64_t name_ptr = rd_ptr(actor + 0x20);
+    char name[16] = "";
+    if (!name_ptr || !rd(name_ptr, name, 13)) {
+        fov_skip_once(FOV_NO_CAMERA_NAME, "camera name is unreadable");
+        return;
+    }
+    if (memcmp(name, "PlayerCamera", 13)) {
+        if (!memcmp(name, "EventCamera", 12)) fov_skip_once(FOV_EVENT_CAMERA, "camera is EventCamera");
+        else fov_skip_once(FOV_OTHER_CAMERA, "camera is not PlayerCamera");
+        return;
+    }
+    if (wide_menu_open()) { fov_skip_once(FOV_MENU, "pause, map or system menu is open"); return; }
     // The event manager's active event at +0x68 is the one read by main+0xbcc100.
     uint64_t slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e090), event = 0;
     uint64_t mgr = slot ? rd_ptr(slot) : 0;
-    if (!mgr || !rd(mgr + 0x68, &event, sizeof event) || event) return;
+    if (!mgr) { fov_skip_once(FOV_NO_EVENT_MANAGER, "event manager is unavailable"); return; }
+    if (!rd(mgr + 0x68, &event, sizeof event)) { fov_skip_once(FOV_EVENT_UNREADABLE, "active event pointer is unreadable"); return; }
+    if (event) { fov_skip_once(FOV_ACTIVE_EVENT, "an event is active"); return; }
     // The aiming action's initializer (main+0x27a2510) gets the PlayerCamera work at component +0x5b8.
     // Its enter and exit methods (main+0x279f9a0 and main+0x27a1230) toggle bit 8 of work +0x7d8.
     uint64_t components = rd_ptr(actor + 0x270);
     uint64_t player = components ? rd_ptr(components + 0x360) : 0;
     uint32_t flags;
-    if (!player || !rd(player + 0xd90, &flags, sizeof flags) || (flags & 0x100)) return;
+    if (!player) { fov_skip_once(FOV_NO_PLAYER, "player camera component is unavailable"); return; }
+    if (!rd(player + 0xd90, &flags, sizeof flags)) { fov_skip_once(FOV_PLAYER_FLAGS_UNREADABLE, "player camera flags are unreadable"); return; }
+    if (flags & 0x100) { fov_skip_once(FOV_AIMING, "first-person aiming flag is set"); return; }
     // Use camera zero, the view used by the actor-to-screen projection at main+0x20c1e0. The menu path at
     // main+0x2d684c sets bit 0 of that camera's +0x88 through main+0x11745c0 while the message log owns the view.
     slot = rd_ptr(MOD_MAIN_BASE + 0x4c86bc0);
     mgr = slot ? rd_ptr(slot) : 0;
     uint32_t count;
-    if (!mgr || !rd(mgr + 0x20, &count, sizeof count) || !count) return;
+    if (!mgr) { fov_skip_once(FOV_NO_CAMERA_MANAGER, "camera manager is unavailable"); return; }
+    if (!rd(mgr + 0x20, &count, sizeof count)) { fov_skip_once(FOV_CAMERA_COUNT_UNREADABLE, "camera count is unreadable"); return; }
+    if (!count) { fov_skip_once(FOV_NO_CAMERAS, "camera manager has no cameras"); return; }
     uint64_t list = rd_ptr(mgr + 0x28), camera = list ? rd_ptr(list) : 0;
     uint64_t views = rd_ptr(state + 0x18), view = views ? rd_ptr(views) : 0;
     uint16_t camera_flags;
-    if (!camera || !view || rd_ptr(camera + 0x78) != view ||
-        !rd(camera + 0x88, &camera_flags, sizeof camera_flags) || (camera_flags & 1)) return;
+    if (!camera || !view) { fov_skip_once(FOV_NO_CAMERA_VIEW, "camera or view pointer is unavailable"); return; }
+    if (rd_ptr(camera + 0x78) != view) { fov_skip_once(FOV_VIEW_MISMATCH, "active view does not belong to camera zero"); return; }
+    if (!rd(camera + 0x88, &camera_flags, sizeof camera_flags)) { fov_skip_once(FOV_CAMERA_FLAGS_UNREADABLE, "camera flags are unreadable"); return; }
+    if (camera_flags & 1) { fov_skip_once(FOV_MENU_CAMERA, "camera zero is marked as a menu camera"); return; }
     uint32_t bits = (uint32_t)c->v[0];
     float orig;
     memcpy(&orig, &bits, sizeof orig);
     float angle = orig * res_fov_factor();
-    if (!(angle > 0.0f && angle < 3.14159265f) || angle == orig) return;
+    if (!(angle > 0.0f && angle < 3.14159265f)) { fov_skip_once(FOV_BAD_ANGLE, "scaled lens angle is outside (0, pi)"); return; }
+    if (angle == orig) { fov_skip_once(FOV_UNCHANGED_ANGLE, "configured scale leaves the angle unchanged"); return; }
     set_s(c, 0, angle);
     static atomic_flag logged = ATOMIC_FLAG_INIT;
     if (!atomic_flag_test_and_set_explicit(&logged, memory_order_relaxed))
