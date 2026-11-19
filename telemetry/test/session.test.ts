@@ -259,3 +259,24 @@ describe("kill switch", () => {
     expect(await count("sessions")).toBe(0);
   });
 });
+
+describe("per-IP limit", () => {
+  it("answers 429 past 20 requests a minute from one address, whatever the install ids, and stores nothing then", async () => {
+    const ip = "203.0.113.7";
+    for (let i = 0; i < 20; i++) {
+      expect((await postJson("/v1/session", sessionBody(), { ip })).status).toBe(201);
+    }
+    const id = newInstallId();
+    const limited = await postJson("/v1/session", sessionBody(id), { ip });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate limited" });
+    expect(await count("sessions", "install_id = ?", id)).toBe(0);
+    // DELETE counts against the same address; another address is not affected
+    const del = new Request(`${BASE}/v1/install/${newInstallId()}`, { method: "DELETE", headers: { "CF-Connecting-IP": ip } });
+    expect((await call(del)).status).toBe(429);
+    expect((await postJson("/v1/session", sessionBody(), { ip: "203.0.113.8" })).status).toBe(201);
+    // the address is not written anywhere
+    const rows = await env.DB.prepare("SELECT * FROM sessions").all();
+    expect(JSON.stringify(rows.results)).not.toContain("203.0.113");
+  });
+});

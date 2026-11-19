@@ -5,9 +5,11 @@ player delete everything sent from their installation, and shows the results on 
 What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 
 - No analytics service of anyone else, no R2, no runtime dependencies: `src/` is all the code that runs.
-- The Worker never reads the client's IP or any request header other than `Content-Type`, `Content-Length` and, on
-  the admin routes, `Authorization`. The only trace of where a request came from is Cloudflare's two-letter
-  country (`XX` when unknown).
+- The Worker reads no request header other than `Content-Type`, `Content-Length`, `CF-Connecting-IP` and, on the
+  admin routes, `Authorization`. The client's IP address (`CF-Connecting-IP`) is used only as the key of
+  Cloudflare's in-memory rate limiter on the public routes (`IP_LIMITER` in `wrangler.toml`, 20 requests a minute);
+  it is never written to D1 or logged. The only trace kept of where a request came from is Cloudflare's two-letter
+  country (`XX` when unknown). Cloudflare itself, which runs the Worker, handles each connection as for any site.
 - Sessions and comments are deleted after 180 days by a daily cron.
 
 ## Files
@@ -43,8 +45,9 @@ Errors are JSON `{"error": "..."}`:
   `GAME_VERSIONS`, a malformed install id, a body that is not JSON or not UTF-8.
 - `413`: body over the limit (checked on `Content-Length` and again on the bytes read). `415`: `Content-Type` is not
   `application/json`.
-- `429`: more than 6 sessions or 2 comments in a minute, or 60 sessions or 10 comments in a UTC day, from one install
-  id. Refused requests do not count.
+- `429`: more than 20 POST or DELETE requests in a minute from one IP address (counted in memory, never stored), or
+  more than 6 sessions or 2 comments in a minute, or 60 sessions or 10 comments in a UTC day, from one install id.
+  Requests refused by the install-id limit do not count against it.
 - `410 {"error":"closed"}`: every POST while `TELEMETRY_OPEN` is not `"1"`. `DELETE` keeps working.
 - `401` (with `WWW-Authenticate: Basic`) on the admin routes without the right password; `503` when `ADMIN_TOKEN` is
   not set, so the panel is never open by mistake.
