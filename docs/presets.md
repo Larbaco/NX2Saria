@@ -550,6 +550,27 @@ The Recommended run with nothing set (32.3 fps, 20.0 GPU ms) logged `preset: rec
 picture of Low in kokiri shows the HUD as sharp as at High: it is drawn at the 1920x1080 picture, the window's own
 size, and only the 960x540 scene is softer.
 
+### Dynamic resolution (kokiri, target 8 ms)
+
+One run each, `dyn_res_target = 8` so that the controller steps on this machine (its GPU never gets near a 16.7 ms
+target while the CPU holds it near 32 fps). The steps all went down, each held, and none came back up while the time
+stayed over the target:
+
+| Configuration | Steps the log shows | GPU ms | Avg fps |
+|---|---|---|---|
+| High, `dyn_res` off | — (scene 1920x1080 of 2560x1440) | 18.1 | 30.8 |
+| High, `dyn_res = 1` | 0.75 -> 0.65 -> 0.57 -> 0.50 (scene 1280x720) | 17.0 | 32.7 |
+| Medium, `dyn_res` off | — (scene 1286x724 of 1920x1080) | 18.0 | 32.5 |
+| Medium, `dyn_res = 1` | 0.67 -> 0.58 -> 0.50 (scene 960x540) | 17.7 | 32.8 |
+| Low, `dyn_res = 1` | none: `has no room: the scene share 0.50 is at or under dyn_res_min 0.50` | 17.1 | 30.0 |
+| Low, `dyn_res = 1`, `dyn_res_min = 0.33` | 0.50 -> 0.43 -> 0.38 -> 0.33 (scene 634x356) | 15.4 | 33.3 |
+| FSR 3.1 quality, `dyn_res` off | — (scene 1707x960 of 2560x1440) | 23.4 | 26.5 |
+| FSR 3.1 quality, `dyn_res = 1` | quality -> balanced -> performance (scene 1280x720) | 21.4 | 27.9 |
+
+The scene's share moves this game's GPU time less than its pixels: the picture-sized passes after the scene and the
+CPU-bound pace stay as they are, so a quarter of the pixels gives about 1 to 2 ms here. Each GPU ms is a run's
+average, the time at the larger steps before the first step down included.
+
 ### On a GPU-bound PC (the owner's test)
 
 On the owner's laptop (NVIDIA GeForce RTX 3050 6GB Laptop GPU, Windows; recommended Medium), in the same place for
