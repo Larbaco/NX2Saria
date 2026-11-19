@@ -13,10 +13,15 @@ from patches import load  # noqa: E402
 def main():
     source = (ROOT / 'runtime/debug_tools.c').read_text()
     assert 'atomic_fetch_or_explicit(&fov_diagnostics, reason' in source
-    assert 'if (!(old & reason)) rt_log("fov: left lens alone: %s", text);' in source
+    assert 'if (fov_first(reason)) rt_log("fov: left lens alone: %s", text);' in source
     assert 'atomic_flag_test_and_set_explicit(&fov_hook_logged' in source
     assert '!memcmp(name, "PlayerCamera", 12)' in source
     assert '!memcmp(name, "EventCamera", 11)' in source
+    assert 'FOV_MESSAGE_LOG' in source
+    assert 'fov_skip_once(FOV_MESSAGE_LOG, "message log owns the view")' in source
+    assert 'fov: camera zero unreadable, message-log check skipped' in source
+    assert 'camera_zero_readable = camera_zero && rd(camera_zero + 0x88, &camera_flags, sizeof camera_flags);' in source
+    assert source.index('rt_log("fov: camera zero unreadable, message-log check skipped")') < source.index('float angle = orig * res_fov_factor();')
     for reason in (
         'camera actor pointer is null', 'camera name is unreadable', 'camera is EventCamera',
         'not PlayerCamera', 'pause, map or system menu is open', 'event manager is unavailable',

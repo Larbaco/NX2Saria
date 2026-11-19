@@ -1009,13 +1009,17 @@ enum {
     FOV_EVENT_CAMERA = 1u << 3, FOV_OTHER_CAMERA = 1u << 4, FOV_MENU = 1u << 5,
     FOV_NO_EVENT_MANAGER = 1u << 6, FOV_EVENT_UNREADABLE = 1u << 7, FOV_ACTIVE_EVENT = 1u << 8,
     FOV_NO_PLAYER = 1u << 9, FOV_PLAYER_FLAGS_UNREADABLE = 1u << 10, FOV_AIMING = 1u << 11,
-    FOV_BAD_ANGLE = 1u << 12, FOV_UNCHANGED_ANGLE = 1u << 13
+    FOV_MESSAGE_LOG = 1u << 12, FOV_CAMERA_ZERO_UNREADABLE = 1u << 13,
+    FOV_BAD_ANGLE = 1u << 14, FOV_UNCHANGED_ANGLE = 1u << 15
 };
 static atomic_uint fov_diagnostics;
 static atomic_flag fov_hook_logged = ATOMIC_FLAG_INIT;
-static void fov_skip_once(unsigned reason, const char *text) {
+static int fov_first(unsigned reason) {
     unsigned old = atomic_fetch_or_explicit(&fov_diagnostics, reason, memory_order_relaxed);
-    if (!(old & reason)) rt_log("fov: left lens alone: %s", text);
+    return !(old & reason);
+}
+static void fov_skip_once(unsigned reason, const char *text) {
+    if (fov_first(reason)) rt_log("fov: left lens alone: %s", text);
 }
 
 // After the original s0 load at main+0x4c52f8, before the game stores the lens angle and derives the frustum.
@@ -1060,6 +1064,25 @@ void dbg_fov_host(Cpu *c) {
     if (!player) { fov_skip_once(FOV_NO_PLAYER, "player camera component is unavailable"); return; }
     if (!rd(player + 0xd90, &flags, sizeof flags)) { fov_skip_once(FOV_PLAYER_FLAGS_UNREADABLE, "player camera flags are unreadable"); return; }
     if (flags & 0x100) { fov_skip_once(FOV_AIMING, "first-person aiming flag is set"); return; }
+    // The game's message-log path (main+0x2d684c -> main+0x11745c0) marks camera zero while it owns the view.
+    slot = rd_ptr(MOD_MAIN_BASE + 0x4c86bc0);
+    uint64_t camera_mgr = slot ? rd_ptr(slot) : 0;
+    uint32_t camera_count = 0;
+    uint64_t camera_list = 0, camera_zero = 0;
+    uint16_t camera_flags = 0;
+    int camera_zero_readable = camera_mgr && rd(camera_mgr + 0x20, &camera_count, sizeof camera_count) && camera_count;
+    if (camera_zero_readable) {
+        camera_list = rd_ptr(camera_mgr + 0x28);
+        camera_zero = camera_list ? rd_ptr(camera_list) : 0;
+        camera_zero_readable = camera_zero && rd(camera_zero + 0x88, &camera_flags, sizeof camera_flags);
+    }
+    if (!camera_zero_readable) {
+        if (fov_first(FOV_CAMERA_ZERO_UNREADABLE))
+            rt_log("fov: camera zero unreadable, message-log check skipped");
+    } else if (camera_flags & 1) {
+        fov_skip_once(FOV_MESSAGE_LOG, "message log owns the view");
+        return;
+    }
     uint32_t bits = (uint32_t)c->v[0];
     float orig;
     memcpy(&orig, &bits, sizeof orig);
