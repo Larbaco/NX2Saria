@@ -274,6 +274,23 @@ def states(app):
         s['game_dir'] = was_game
         app.show('home', 0)
 
+    def consent():   # the question asked once; nothing is sent from the selftest (no answer is given)
+        app.consent_asked, app.consent_return = True, 'home'
+        app.show('consent')
+
+    def sent_view():
+        app.open_sent('consent')
+
+    def reports():
+        app.reports_message = ''
+        app.show('reports', 0)
+
+    def comment():
+        app.comment_draft = ('The water temple stutters when the water level changes, on the second floor. '
+                             'It started with the last update.')
+        app.comment_log, app.comment_message = True, ''
+        app.show('comment', 1)
+
     return [('1-first-run', first_run), ('2-installing', installing), ('3-home', home),
             ('4a-whats-new-before', whats_new_before), ('4-update-ready', update_ready),
             ('4b-whats-new-end', whats_new_end), ('5-updating', updating), ('6-settings', settings),
@@ -281,7 +298,8 @@ def states(app):
             ('10-shaders', shaders), ('11-update-staged', update_staged), ('12-export-save', export_save),
             ('13-customize', customize), ('14-color-scheme', color_scheme), ('15-custom-picker', custom_picker),
             ('16-first-scheme', restore_scheme), ('17-mods', mods_screen), ('18-mod-order', mod_order),
-            ('19-home-again', restore_game)]
+            ('19-home-again', restore_game), ('20-consent', consent), ('21-sent-view', sent_view),
+            ('22-reports', reports), ('23-comment', comment)]
 
 
 def run(app, shots):

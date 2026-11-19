@@ -15,6 +15,12 @@ flat cells and the orange choices are canvas items. Screens:
     job         the steps of an install, update or rebuild, with their progress, and Cancel; after a failure Try Again
                 and Copy Report
     settings    the launcher's choices, the folders, the logs and Uninstall
+    reports     session reports and comments (launcher/telemetry.py): Session Reports, See What Is Sent, Send a
+                Comment, Delete My Data
+    consent     the question asked once, the first time a session report waits: Send, Don't Send, See What Is Sent
+    sent_view   the exact JSON a session report sends, in a read-only text box in the description's place
+    comment     Send a Comment: a text box for the comment, Attach the Last Log Lines, Send and Cancel
+    delete_data Delete My Data's confirmation
     uninstall   what to remove, then Uninstall or Cancel
 
 Mouse, keyboard (arrows, Enter or Space, Esc, F5) and an XInput gamepad (d-pad or stick, A, B, Y) all move the cursor.
@@ -38,7 +44,9 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog
 
-from .. import NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
+from .. import (NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, telemetry, versions,
+               winsys)
+from ..build import FATAL_TAIL, game_log_path, last_fatal  # noqa: F401 (FATAL_TAIL: tests)
 from ..context import Context, shorten
 from ..paths import long_path_problem
 from . import art, picture, sound
@@ -56,7 +64,8 @@ P = art.PALETTE                 # the colour scheme in use: art.set_theme change
 FRAME_MS = 15                   # between two steps of the animations; they move by the time that really passed
 SPARKS = 22                     # the dust drifting over the backdrop
 DEPTH = {'first_run': 0, 'home': 0, 'job': 1, 'saves': 1, 'settings': 1, 'customize': 1, 'uninstall': 2,
-         'color': 2, 'mods': 1, 'mod_order': 2}
+         'color': 2, 'mods': 1, 'mod_order': 2, 'reports': 2, 'consent': 1, 'sent_view': 3, 'comment': 3,
+         'delete_data': 3}
 MODS_PAGE = 7     # mods on a page of the Mods screen, beside its other rows
 ORDER_PAGE = 10   # ... of the Load Order screen
 # the Custom scheme's picker (draw_picker), logical pixels: its box (x, top, width, height), the colour square and
@@ -69,6 +78,13 @@ CUSTOM_DESC = {'background': 'The color behind the menus.', 'panel': 'The color 
                'buttons': 'The color of the buttons.'}
 DIMS = (0, 20, 40, 60, 80)      # Background Dimming, in percent
 SOUND_LEVELS = (('off', 'Off'), ('low', 'Low'), ('medium', 'Medium'), ('high', 'High'))
+REPORT_VALUES = {'': 'Not Asked Yet', 'on': 'On', 'off': 'Off'}   # the settings' telemetry, as Session Reports shows it
+# the text boxes of See What Is Sent and Send a Comment, in the description box's place (PICKER_BOX): the JSON's box
+# and the comment's (x0, y0, x1, y1), logical pixels
+SENT_BOX = (632, 200, 932, 520)
+COMMENT_BOX = (640, 158, 924, 312)
+COMMENT_WARNING = ('Your text is sent as you write it: leave out your e-mail or name if you do not want them sent. '
+                   'The log lines have your folders written short.')
 
 
 class Row:
@@ -149,37 +165,7 @@ def exit_code_text(code):
     return f'{shown} ({meaning})' if meaning else shown
 
 
-FATAL_TAIL = 256 << 10   # bytes of the game's log last_fatal reads from its end
 FATAL_SHOWN = 240        # characters of a FATAL line the home screen shows; the launcher's log has all of it
-
-
-def game_log_path(game_dir):
-    """Use the new log path, or read an existing legacy log until the new path is present."""
-    logs = Path(game_dir) / 'logs'
-    current, legacy = logs / 'nx2saria.log', logs / 'nx2navi.log'
-    return current if current.is_file() or not legacy.is_file() else legacy
-
-
-def last_fatal(game_dir):
-    """The last FATAL line of the game's latest run, without its "FATAL: ", or ''. The game writes one before it
-    exits with 70 (runtime/dispatch.c rt_fatal), 71 (runtime/main.c crash_handler) or 72 (runtime/vk_device.c
-    vk_device_lost_check) into logs/nx2saria.log (older installations may still have logs/nx2navi.log). A line this
-    launcher added for an earlier run's end (note_exit_in_log) ends the search: what stands before it is not this
-    run's."""
-    if not game_dir:
-        return ''
-    try:
-        with open(game_log_path(game_dir), 'rb') as f:
-            f.seek(max(0, f.seek(0, 2) - FATAL_TAIL))
-            lines = f.read().decode('utf-8', 'replace').splitlines()
-    except OSError:
-        return ''
-    for line in reversed(lines):
-        if line.startswith('[launcher] the game ended'):
-            return ''
-        if line.startswith('FATAL: '):
-            return line[len('FATAL: '):].strip()
-    return ''
 
 
 # The lines the game writes when it ends on its own: the window's close (runtime/gfx_present.c gfx_window_closed), the
@@ -406,6 +392,22 @@ class App:
         self.dump_search = None
         self.uninstall_game = False
         self.game_run = None   # the Play being followed (GameRun), until watch_game sees its end
+        # session reports and comments (launcher/telemetry.py): the requests run on threads (tasks, polled by tick)
+        self.reporter = telemetry.Reporter(self.settings, ctx.version, ctx.log)
+        self.tasks = telemetry.Tasks()
+        self.consent_asked = False      # the consent screen was shown in this run: it is not shown again until the next
+        self.consent_return = 'home'    # where the consent screen goes back to
+        self.sent_return = 'home'       # ... and See What Is Sent
+        self.sent_text = ''             # the text See What Is Sent shows: the bytes a report sends
+        self.sent_example = False       # ... made from an example, as the game has written no summary yet
+        self.session_sending = False    # a session report is on its way
+        self.reports_message = ''       # what the last change on the reports screen did (Delete My Data)
+        self.comment_draft = ''         # the comment as typed so far
+        self.comment_log = False        # Attach the Last Log Lines
+        self.comment_message = ''       # the last Send's result
+        self.comment_busy = False
+        self.overlay = None             # the text box of See What Is Sent or Send a Comment
+        self.typing = False             # the comment's box has the keyboard
         self.cursor_frames, self.cursor_k = [], 0
         self.last_second = 0
         self.gamepad = winsys.Gamepad()
@@ -442,6 +444,8 @@ class App:
         self.draw_static()
         self.bind_input()
         self.start()
+        if getattr(args, 'screen', None):
+            self.open_screen(args.screen)
         self.root.after(80, self.animate)
         self.root.after(150, self.tick)
         self.root.after(50, self.poll_gamepad)
@@ -736,6 +740,11 @@ class App:
         return [i for i, r in enumerate(self.rows) if r.focusable]
 
     def move(self, d):
+        if self.screen == 'sent_view' and self.overlay:   # up and down scroll the JSON; Back is the only row
+            self.overlay.yview_scroll(d * 3, 'units')
+            return
+        if self.typing:
+            self.leave_comment_box()
         idx = self.focusables()
         if not idx:
             return
@@ -787,9 +796,23 @@ class App:
         return next((i for i, r in enumerate(self.rows_home()) if r.label == label), None)
 
     def back(self):
-        if self.screen in ('settings', 'uninstall', 'saves', 'customize', 'job', 'color', 'mods', 'mod_order'):
+        if self.screen == 'comment' and self.typing:   # B or Esc first leaves the comment's box
+            self.leave_comment_box()
+            return
+        if self.screen in ('settings', 'uninstall', 'saves', 'customize', 'job', 'color', 'mods', 'mod_order',
+                           'reports', 'consent', 'sent_view', 'comment', 'delete_data'):
             self.sounds.play('back')
-        if self.screen == 'color':
+        if self.screen == 'consent':   # no answer: asked again at the next opening of the launcher
+            self.show(self.consent_return, self.return_focus(self.consent_return))
+        elif self.screen == 'sent_view':
+            self.show(self.sent_return, self.return_focus(self.sent_return, 'See What Is Sent'))
+        elif self.screen == 'reports':
+            self.show('settings', self.row_index(self.rows_settings(), 'Session Reports'))
+        elif self.screen == 'comment':
+            self.show('reports', self.row_index(self.rows_reports(), 'Send a Comment'))
+        elif self.screen == 'delete_data':
+            self.show('reports', self.row_index(self.rows_reports(), 'Delete My Data'))
+        elif self.screen == 'color':
             self.pick_done()
         elif self.screen == 'settings':
             self.show('home', self.home_row('Settings'))
@@ -951,12 +974,25 @@ class App:
                 return
             if self.settings.get('auto_check'):
                 self.check_now()
+            if not a.selftest:   # a summary left by a run this launcher did not watch (Steam, a shortcut, a crash)
+                self.after_game_reports(startup=True)
         else:
             if left and not self.message:
                 self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Begin '
                                 'Installation goes on from the steps that were done.')
             self.show('first_run')
             self.find_dumps()
+
+    def open_screen(self, name):
+        """--screen: one of the session reports' screens at once, for looking at it or taking its picture
+        (docs/launcher.md). Nothing is sent by opening one."""
+        if name == 'sent':
+            self.open_sent('home')
+        elif name == 'consent':
+            self.consent_asked, self.consent_return = True, 'home'
+            self.show('consent')
+        elif name in ('reports', 'comment', 'delete_data'):
+            self.show(name)
 
     def after_update_notice(self):
         if self.args.rolled_back:
@@ -969,12 +1005,15 @@ class App:
             deeper = DEPTH.get(screen, 1) >= DEPTH.get(self.screen, 0)
             self.slide = float(self.X(44) if deeper else -self.X(44))
         self.close_hex()
+        self.close_overlay()
         self.screen = screen
         self.rows = getattr(self, 'rows_' + screen)()
         idx = self.focusables()
         self.focus = focus if focus is not None and focus in idx else (idx[0] if idx else 0)
         if screen == 'job' and focus is None:
             self.focus = self.job_focus()
+        if screen in ('sent_view', 'comment'):
+            self.open_overlay()
         self.render()
 
     # ---- first run
@@ -1468,13 +1507,7 @@ class App:
         """The colour picker in the description box's place: the slot's name, the colour square of the picked hue
         with a ring on the picked colour, the hue bar, and the colour itself with its hex code."""
         c, X, s, p = self.canvas, self.X, self.s, self.pick
-        bx, by, bw, bh = PICKER_BOX
-        key = ('desc', X(bw), X(bh) // 4)
-        if key not in self.sprites:
-            img, pad = art.desc_box(X(bw), X(bh), s, self.see_through())
-            self.sprites[key] = (art.photo(self.root, img), pad)
-        pic, pad = self.sprites[key]
-        c.create_image(X(bx) - pad, X(by) - pad, anchor='nw', image=pic, tags='dyn')
+        bx, by, bw, bh = self.side_box()
         self.text(X(bx + 26), X(by + 34), CUSTOM_LABELS[p['slot']], self.f['heading'], P['text_bright'])
         sx0, sy0, sx1, sy1 = SQUARE
         sw, sh = X(sx1) - X(sx0), X(sy1) - X(sy0)
@@ -2089,11 +2122,16 @@ class App:
         if run:
             end = run.end()
             self.ctx.log(end.log)
+            # a hard crash writes no session summary: one is made from its FATAL line, before the note below ends
+            # the log's run (telemetry.synthesize_crash)
+            telemetry.synthesize_crash(run.game_dir, self.ctx.log)
             if end.note:
                 note_exit_in_log(run.game_dir, end.note)
             if end.message:
                 self.message = end.message
         if self.install_staged('the game exited'):
+            return
+        if self.after_game_reports() is True:
             return
         self.show('home', self.focus)
 
@@ -2188,6 +2226,10 @@ class App:
                         'compiles only what changed. Off: they are deleted after each build.'),
             self.channel_row(),
             *([self.discord_row(gd)] if gd and Path(gd).is_dir() else []),
+            Row('value', 'Session Reports', REPORT_VALUES.get(self.settings.get('telemetry'), 'Off'), 'arrow',
+                on=lambda: self.show('reports'),
+                desc=('Reports of how the game ran on this PC, sent after you play when you allow it; comments to '
+                      'the project; deleting what was sent.',)),
             Row('divider'),
             Row('value', 'Game Folder', gd or 'Not chosen', on=lambda: gd and self.open(gd),
                 desc=('Open the game folder: saves in profile, settings in nx2saria.ini (or an existing nx2navi.ini), '
@@ -2204,6 +2246,329 @@ class App:
                       'game goes too.',)),
             Row('action', 'Back', on=lambda: self.show('home'), height=40, desc=('Back to the main menu.',)),
         ]
+
+    # ---- session reports and comments (launcher/telemetry.py, docs/telemetry.md)
+
+    @staticmethod
+    def row_index(rows, label):
+        return next((i for i, r in enumerate(rows) if r.label == label), None)
+
+    def return_focus(self, screen, label=None):
+        """The row to come back to on screen: label's, else home's Play or the reports screen's first row."""
+        if screen == 'home':
+            return 0
+        rows = getattr(self, 'rows_' + screen)()
+        return self.row_index(rows, label) if label else None
+
+    def after_game_reports(self, startup=False):
+        """After the game ended (watch_game) or when the launcher opens (start): with session reports on, the
+        pending summary goes in the background; not asked yet, the consent screen opens, once in a run. True when
+        it opened."""
+        gd = self.settings.get('game_dir')
+        if not gd:
+            return False
+        if startup:
+            telemetry.synthesize_crash(gd, self.ctx.log)
+        if telemetry.pending_summary(gd) is None:
+            return False
+        answer = self.settings.get('telemetry')
+        if answer == 'on':
+            self.send_pending()
+        elif answer == '' and not self.consent_asked:
+            self.consent_asked = True
+            self.consent_return = 'home'
+            self.show('consent')
+            return True
+        return False
+
+    def send_pending(self):
+        """The pending session report, sent on a thread (Reporter.prepare_session refuses it unless reports are
+        on)."""
+        gd = self.settings.get('game_dir')
+        if self.session_sending or not gd:
+            return
+        req = self.reporter.prepare_session(gd)
+        if isinstance(req, telemetry.Result):
+            return
+        self.session_sending = True
+
+        def done(answer):
+            self.session_sending = False
+            self.reporter.finish_session(gd, req, answer)
+        self.tasks.start(lambda: self.reporter.post(req), done)
+
+    def consent_desc(self, first):
+        return {'title': 'Help Improve NX2Saria',
+                'text': [first, 'May NX2Saria send a short report of how the game ran on this PC after you play? '
+                                'It shows what to fix first.'],
+                'subtitle': 'What is sent',
+                'bullets': ['Versions, system, processor, graphics card and memory',
+                            'The main graphics options, play time and frame rate',
+                            'The error line, if the game stopped on one'],
+                'note': 'Never sent: files, saves, names, folders or your IP address; the server keeps only the '
+                        'country. Kept 180 days; Settings > Session Reports deletes it any time.'}
+
+    def rows_consent(self):
+        return [
+            Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('consent'),
+                desc=self.consent_desc('See the exact text of the report before you choose.')),
+            Row('divider'),
+            Row('action', 'Send', on=lambda: self.consent_choice(True), height=44,
+                desc=self.consent_desc('Send a report after each session. You can turn it off in Settings.')),
+            Row('action', "Don't Send", on=lambda: self.consent_choice(False), height=44,
+                desc=self.consent_desc('Send nothing. You can turn reports on in Settings.')),
+        ]
+
+    def consent_choice(self, on):
+        """Send or Don't Send on the consent screen. Don't Send also sets the waiting summary aside: it is never
+        offered again."""
+        self.reporter.set_consent(on)
+        self.consent_asked = True
+        gd = self.settings.get('game_dir')
+        if on:
+            self.send_pending()
+        elif gd:
+            telemetry.mark_sent(gd)
+        back = self.consent_return
+        self.show(back, self.return_focus(back, 'Session Reports'))
+
+    def open_sent(self, came_from):
+        """See What Is Sent: the bytes the pending report would send (telemetry.body of telemetry.payload), or an
+        example's when the game has written none."""
+        summary = telemetry.pending_summary(self.settings.get('game_dir'))
+        self.sent_example = summary is None
+        data = telemetry.payload(summary or telemetry.example_summary(), self.settings, self.ctx.version)
+        self.sent_text = telemetry.body(data).decode('utf-8')
+        self.sent_return = came_from
+        self.show('sent_view')
+
+    def rows_sent_view(self):
+        return [Row('action', 'Back', on=self.back, height=40)]
+
+    def rows_reports(self):
+        def flip():
+            if self.settings.get('telemetry') == '':   # the first answer is given with the whole explanation
+                self.consent_return = 'reports'
+                self.show('consent')
+                return
+            self.reporter.set_consent(self.settings.get('telemetry') != 'on')
+            self.reports_message = ''
+            if self.settings.get('telemetry') == 'on':
+                self.send_pending()
+        closed = self.reporter.closed()
+        return [
+            Row('enum', 'Session Reports', options=tuple(REPORT_VALUES.values()),
+                get=lambda: REPORT_VALUES.get(self.settings.get('telemetry'), 'Off'), left=flip, right=flip,
+                desc=('On: after you play, a short report of how the game ran on this PC goes to the project: '
+                      'versions, system, processor, graphics card, memory, the main graphics options, play time, '
+                      'frame rate and the error line if there was one.',
+                      'No files, saves, names, folders or IP address. Kept 180 days.',
+                      'The server no longer takes reports from this version.' if closed else '')),
+            Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('reports'),
+                desc=('The exact text of a report: the one of your last session when it waits to be sent, '
+                      'else an example.',)),
+            Row('value', 'Send a Comment', '', 'arrow', on=lambda: self.show('comment'),
+                desc=('Write to the project: a problem, an idea. It goes when you select Send, also with session '
+                      'reports off.',)),
+            Row('divider'),
+            Row('value', 'Delete My Data', '', 'salmon', on=lambda: self.show('delete_data'),
+                desc=('Delete every report and comment this installation sent from the server, and start a new '
+                      'random id. Works with reports on or off.',)),
+            Row('action', 'Back', on=self.back, height=40, desc=('Back to Settings.',)),
+        ]
+
+    def rows_delete_data(self):
+        return [
+            Row('pair', actions=[('Delete My Data', self.delete_data), ('Cancel', self.back)],
+                desc={'title': 'Delete My Data',
+                      'text': ['The server deletes every report and comment sent with this installation\'s id, '
+                               'then the launcher makes a new id.',
+                               'The server gives the same answer whether it held anything or not.']}),
+        ]
+
+    def delete_data(self):
+        req = self.reporter.prepare_delete()
+        if isinstance(req, telemetry.Result):
+            self.reports_message = ('Nothing was sent from this installation.' if req.ok else
+                                    f'Could not delete: {req.reason}.')
+            self.show('reports', self.row_index(self.rows_reports(), 'Delete My Data'))
+            return
+
+        def done(answer):
+            got = self.reporter.finish_delete(req, answer)
+            self.reports_message = ('Your data was deleted from the server. New reports go with a new id.' if got.ok
+                                    else f'Could not delete: {got.reason}.')
+            if self.screen == 'reports':
+                self.show('reports', self.focus)
+        self.reports_message = 'Deleting…'
+        self.tasks.start(lambda: self.reporter.post(req), done)
+        self.show('reports', self.row_index(self.rows_reports(), 'Delete My Data'))
+
+    def rows_comment(self):
+        n = len(self.comment_draft)
+
+        def attach(v):
+            self.comment_log = bool(v)
+        return [
+            Row('value', 'Your Comment', f'{n} / {telemetry.TEXT_LIMIT}' if n else 'Select to Write', 'arrow',
+                on=self.focus_comment_box,
+                desc=('Select this row to type into the box (a keyboard is needed); Esc or B leaves it.',)),
+            Row('toggle', 'Attach the Last Log Lines', on=attach, get=lambda: self.comment_log,
+                desc=(f'Adds the last {telemetry.TAIL_LINES} lines of the game\'s log (at most 24 KB), which help '
+                      'with a problem.',)),
+            Row('divider'),
+            Row('pair', actions=[('Send', self.send_comment), ('Cancel', self.back)],
+                desc=('Send sends your text now, with the summary of your last session when there is one.',)),
+        ]
+
+    def send_comment(self):
+        """Send on the comment screen. Pressing it is the player's consent for this comment: it goes also with
+        session reports off (telemetry.Reporter.prepare_feedback)."""
+        if self.comment_busy:
+            return
+        self.save_comment_draft()
+        req = self.reporter.prepare_feedback(self.comment_draft, self.comment_log, self.settings.get('game_dir'))
+        if isinstance(req, telemetry.Result):
+            self.comment_message = f'Could not send: {req.reason}.'
+            self.render()
+            return
+        self.comment_busy = True
+        self.comment_message = 'Sending…'
+
+        def done(answer):
+            self.comment_busy = False
+            got = self.reporter.finish_feedback(req, answer)
+            if got.ok:
+                self.comment_message = 'Sent. Thank you.'
+                self.comment_draft = ''
+                if self.overlay and self.screen == 'comment':
+                    self.overlay.delete('1.0', 'end')
+            else:
+                self.comment_message = f'Could not send: {got.reason}.'
+            if self.screen == 'comment':
+                self.show('comment', self.focus)
+        self.tasks.start(lambda: self.reporter.post(req), done)
+        self.render()
+
+    # the text boxes: one Tk Text over the description box's place
+
+    def open_overlay(self):
+        """The text box of sent_view (read-only, the JSON) or comment (the comment being written)."""
+        X = self.X
+        x0, y0, x1, y1 = SENT_BOX if self.screen == 'sent_view' else COMMENT_BOX
+        sent = self.screen == 'sent_view'
+        t = tk.Text(self.canvas, font=self.f['mono'] if sent else self.f['value'], bg=P['value'],
+                    fg=P['log_text'] if sent else P['value_text'], insertbackground=P['value_text'],
+                    selectbackground=P['orange'], selectforeground=P['on_text'], relief='flat',
+                    wrap='char' if sent else 'word', highlightthickness=1, highlightcolor=P['orange'],
+                    highlightbackground=P['value_border'], padx=X(8), pady=X(6), undo=not sent)
+        if sent:
+            t.insert('1.0', self.sent_text)
+            t.configure(state='disabled')
+        else:
+            t.insert('1.0', self.comment_draft)
+            t.edit_modified(False)
+            # the window's own keys (arrows, Enter, Space, Esc) are not the box's: without the window's tag in its
+            # bindings they reach only the box while it has the keyboard
+            t.bindtags((str(t), 'Text', 'all'))
+            t.bind('<Escape>', lambda ev: (self.leave_comment_box(), 'break')[1])
+            t.bind('<<Modified>>', self.comment_changed)
+            t.bind('<FocusIn>', lambda ev: self.set_typing(True))
+            t.bind('<FocusOut>', lambda ev: self.set_typing(False))
+        self.overlay = t
+        self.canvas.create_window(X(x0), X(y0), anchor='nw', window=t, width=X(x1 - x0), height=X(y1 - y0),
+                                  tags='overlay')
+
+    def close_overlay(self):
+        if self.overlay:
+            if self.screen == 'comment':
+                self.save_comment_draft()
+            t, self.overlay = self.overlay, None
+            self.typing = False
+            self.canvas.delete('overlay')
+            t.destroy()
+
+    def save_comment_draft(self):
+        if self.overlay and self.screen == 'comment':
+            self.comment_draft = self.overlay.get('1.0', 'end-1c')[:telemetry.TEXT_LIMIT]
+
+    def comment_changed(self, ev=None):
+        """Each change of the comment: cut to TEXT_LIMIT characters, the count on its row and under the box."""
+        t = self.overlay
+        if not t or not t.edit_modified():
+            return
+        if len(t.get('1.0', 'end-1c')) > telemetry.TEXT_LIMIT:
+            t.delete(f'1.0+{telemetry.TEXT_LIMIT}c', 'end')
+        t.edit_modified(False)
+        self.save_comment_draft()
+        self.rows[0].value = (f'{len(self.comment_draft)} / {telemetry.TEXT_LIMIT}' if self.comment_draft
+                              else 'Select to Write')
+        self.render()
+
+    def focus_comment_box(self):
+        if self.overlay and self.screen == 'comment':
+            self.overlay.focus_set()
+            self.set_typing(True)
+
+    def leave_comment_box(self):
+        self.set_typing(False)
+        try:
+            self.root.focus_force()
+        except tk.TclError:
+            pass
+
+    def set_typing(self, on):
+        if self.typing != on:
+            self.typing = on
+            if on:
+                self.focus = 0   # the cursor on Your Comment while the box has the keyboard
+            if self.screen == 'comment':
+                self.render()
+
+    def side_box(self):
+        """The description box's frame in its place (PICKER_BOX), for the screens that put a text box in it."""
+        c, X = self.canvas, self.X
+        bx, by, bw, bh = PICKER_BOX
+        key = ('desc', X(bw), X(bh) // 4)
+        if key not in self.sprites:
+            img, pad = art.desc_box(X(bw), X(bh), self.s, self.see_through())
+            self.sprites[key] = (art.photo(self.root, img), pad)
+        pic, pad = self.sprites[key]
+        c.create_image(X(bx) - pad, X(by) - pad, anchor='nw', image=pic, tags='dyn')
+        return bx, by, bw, bh
+
+    def draw_sent(self):
+        X = self.X
+        bx, by, bw, bh = self.side_box()
+        self.text(X(bx + 26), X(by + 34), 'Example of What Is Sent' if self.sent_example else 'What Is Sent',
+                  self.f['heading'], P['text_bright'])
+        line = ('No report from the game yet: yours has these fields, with your values.'
+                if self.sent_example else 'The report of your last session, exactly as it is sent.')
+        self.text(X(bx + 26), X(by + 56), line, self.f['small'], P['muted'], anchor='nw', width=X(bw - 52))
+        self.text(X(bx + 26), X(SENT_BOX[3] + 6), 'Up and down scroll; B or Esc goes back.', self.f['small'],
+                  P['muted'], anchor='nw', width=X(bw - 52))
+
+    def draw_comment(self):
+        c, X = self.canvas, self.X
+        bx, by, bw, bh = self.side_box()
+        self.text(X(bx + 26), X(by + 20), 'Send a Comment', self.f['heading'], P['text_bright'], anchor='nw')
+        n = len(self.comment_draft)
+        c.create_text(X(COMMENT_BOX[2]), X(COMMENT_BOX[3] + 6), text=f'{n} / {telemetry.TEXT_LIMIT}', anchor='ne',
+                      font=self.f['small'], fill=P['salmon'] if n >= telemetry.TEXT_LIMIT else P['muted'],
+                      tags='dyn')
+        y = X(COMMENT_BOX[3] + 30)
+        parts = [(COMMENT_WARNING, self.f['small'], P['desc_text'])]
+        if self.comment_message:
+            parts.append((self.comment_message, self.f['desc'],
+                          P['gold'] if self.comment_message.startswith(('Sent', 'Sending')) else P['salmon']))
+        r = self.focused()
+        hint = r.desc[0] if r and isinstance(r.desc, tuple) and r.desc else ''
+        if hint:
+            parts.append((hint, self.f['small'], P['muted']))
+        for text, font, fill in parts:
+            tid = c.create_text(X(bx + 26), y, text=text, font=font, fill=fill, anchor='nw', width=X(bw - 52),
+                                tags='dyn')
+            y = c.bbox(tid)[3] + X(10)
 
     # ---- uninstall
 
@@ -2419,6 +2784,7 @@ class App:
             if self.check and self.check.result is not None and not getattr(self.check, 'seen', False):
                 self.check.seen = True
                 self.check_done()
+            self.tasks.poll()
             ev = self.bg.poll(self.release, busy=bool(self.job and self.job.result is None))
             if ev:
                 self.background_event(ev)
@@ -2536,6 +2902,10 @@ class App:
         self.draw_cursor()
         if self.screen == 'color' and self.pick:
             self.draw_picker()
+        elif self.screen == 'sent_view':
+            self.draw_sent()
+        elif self.screen == 'comment':
+            self.draw_comment()
         else:
             self.draw_desc()
         self.slide_applied = int(self.slide)
@@ -2768,6 +3138,9 @@ class App:
         elif self.message and self.screen in ('first_run', 'settings', 'uninstall'):
             d = dict(d)
             d['text'] = [self.message] + list(d.get('text', []))
+        if self.reports_message and self.screen == 'reports':
+            d = dict(d) if isinstance(d, dict) else {'text': list(d)}
+            d['text'] = [self.reports_message] + list(d.get('text', []))
         c, X = self.canvas, self.X
         dx, dw = DESC
         x0 = X(dx)
@@ -2955,6 +3328,8 @@ def parse_args(argv):
     ap.add_argument('--root', help='the launcher folder (tests)')
     ap.add_argument('--selftest', action='store_true', help='draw every screen and close')
     ap.add_argument('--shots', help='with --selftest: save a PNG of each screen into this folder')
+    ap.add_argument('--screen', choices=('consent', 'sent', 'comment', 'reports', 'delete_data'),
+                    help='open this screen of the session reports at once (looking at it, screenshots)')
     ap.add_argument('--play', action='store_true',
                     help='start the game without the window and wait for it (the Steam shortcut, launcher/steam.py)')
     a, _unknown = ap.parse_known_args(argv)
@@ -3033,6 +3408,7 @@ def play_only(ctx):
     # since the box waits for OK and Steam may end this process meanwhile.
     end = run.end()
     ctx.log(f'play from Steam: {end.log}')
+    telemetry.synthesize_crash(gd, ctx.log)   # before the note ends the log's run; the window sends it when it opens
     if end.note:
         note_exit_in_log(gd, end.note)
     if end.alarm:

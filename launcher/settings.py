@@ -29,6 +29,11 @@ DEFAULTS = {
     'last_check': 0.0,
     'last_seen': '',              # the newest version the player was told about
     'rolled_back': '',            # the last version that failed to start; it is never downloaded or installed by itself
+    # session reports (launcher/telemetry.py, docs/telemetry.md): '' not asked yet, 'on' or 'off'; nothing is sent
+    # unless 'on'
+    'telemetry': '',
+    'telemetry_id': '',           # the install's random id (uuid4) the reports and comments go with; made when needed
+    'telemetry_closed': '',       # the launcher version the server told it takes no more reports (HTTP 410)
 }
 
 
@@ -61,7 +66,7 @@ class Settings(dict):
     def reset(self):
         """Default Settings: the choices go back to their defaults; the game folder, dump and history stay."""
         keep = {k: self[k] for k in ('game_dir', 'dump', 'last_check', 'last_seen', 'feed_repo', 'github_token',
-                                     'rolled_back')}
+                                     'rolled_back', 'telemetry', 'telemetry_id', 'telemetry_closed')}
         self.clear()
         self.update(DEFAULTS)
         self.update(keep)
