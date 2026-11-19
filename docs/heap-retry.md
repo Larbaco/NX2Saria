@@ -87,6 +87,24 @@ that never go back.
   stand-in heaps (`docs/building.md`).
 - On the bench: a run with `boot_map` and `NX2SARIA_HEAP_RETRY_TEST_FAIL` loads a save and forces the refusals.
 
+## Runs
+
+Linux bench (RX 6700, RADV), commit `e0fa4219`, no window and no sound, `boot_map = KokiriForest_Child` from slot 5 of
+a fixed save, 30 s of game time each **[C]**:
+
+| Run | Switches | What the log shows |
+|---|---|---|
+| retry | `NX2SARIA_HEAP_RETRY_TEST_FAIL=3,2` | Five refusals while the area loaded: three CPU buffers (4408, 288 and 35640 bytes) and two GPU memories (256 and 44 bytes), from `"Model/SystemModel.SceneMaterial.bfres"` (36 KB) and `"Model/Terrain.TeraTerrain.bfres"` (177 KB). Each was given by their parent `"NinVirtualAddressHeap"` (2870268 KB), one level up. Link arrived, the run reached its 30 s and ended normally. The end line counts 3 model buffers and 2 GPU memories, 5 refusals by the test switch. No log line the normal run lacks. |
+| shipped | `NX2SARIA_HEAP_RETRY_TEST_FAIL=1`, `NX2SARIA_HEAP_RETRY_TEST_SHIPPED=1` | The first CPU buffer refused and left null, as shipped: `FATAL: access violation (0xb) ... writing address 0x8 in lifted function f_700042cb30 = main+0x42cb30`, before Link arrived. This is the crash the set prevents. |
+| normal | none | No refusal. Link arrived, the end line counts 0 of everything. |
+
+The first try of the retry run found a bug of its own: `mem_readable` answers 0 for the game thread's stack, so the
+function's stack slot read as no heap and the retry ended in its fatal error. The stack slot and the request are now
+read as the game reads them (`heap_retry.c` `own64`).
+
+**[I]** In these runs a model's heap hangs directly under `NinVirtualAddressHeap`, of about 2.7 GiB, so a block the
+model's heap has no room for finds room one level up.
+
 ## Risks
 
 - **[I]** The parents now give memory to this thread. The game's own allocations from those heaps come from other
