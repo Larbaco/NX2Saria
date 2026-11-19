@@ -1229,7 +1229,10 @@ def main():
     peaks = memgate.read_peaks(gate_dir) if gated else []
     measured = learn_peaks(estimates, todo, peaks)
     if measured:
-        estimates.save()
+        try:   # the estimates only help the next build: a file that cannot be written must not stop this one
+            estimates.save()
+        except OSError as e:
+            print(f'memory gate: the compile estimates were not saved ({e}); the next build estimates from the sizes')
     if peaks:
         for line in gate_summary_lines(peaks, measured, estimates, sampler, gate_settings['enabled']):
             print(line)

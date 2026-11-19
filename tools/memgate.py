@@ -490,9 +490,9 @@ class Estimates:
                         objects[str(name)] = {'peak': int(e['peak']), 'seconds': float(e['seconds']),
                                               'src_bytes': int(e['src_bytes']), 'cost': int(e['cost']),
                                               'switch_fn': int(e.get('switch_fn', 0))}
-                    except (KeyError, TypeError, ValueError):
+                    except (KeyError, TypeError, ValueError, OverflowError):   # 1e400 as a peak: int() overflows
                         continue
-        except (OSError, ValueError, UnicodeDecodeError):
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):   # deeply nested JSON from a damaged file
             pass
         return cls(path, objects)
 
