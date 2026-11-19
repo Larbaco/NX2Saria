@@ -62,6 +62,12 @@ and the settings menu's frames were given the wrong reason.
    - NVIDIA DLSS Frame Generation is set and Streamline gives another reason, which the line names;
    - NVIDIA DLSS Frame Generation is set and has not started. Its own `dlssg:` and `ngxfg:` lines say why: its files,
      the device, or NGX on Linux. An `nx2navi_dlssg.dll` older than `nx2sl_support` gives this line too;
+   - NVIDIA DLSS Frame Generation is set in the menu while the game runs. It starts only at the next start (on Linux,
+     with DLSS upscaling on when the game starts), so neither Streamline nor NGX has lines of their own yet. Where the
+     card cannot run it even then, another vendor's or an NVIDIA GPU older than the RTX 40 series (PCI device ID below
+     0x2600, `vk_dlssg.c` `vk_dlssg_gpu_may`), the line says so and suggests `framegen = fsr3`. In the 0.18.7 log
+     of an RTX 3050 Laptop, a switch from `fsr3` to `dlss` in the menu wrote the line for a DLSS Frame Generation that
+     had not started, which sent the reader to `dlssg:` lines that did not exist;
    - AMD FSR 3.1 is set and does not run here;
    - AMD FSR 3.1 is set and its swapchain is not made yet.
 
@@ -144,9 +150,26 @@ changed on this path but the counting.
 - AMD's library took 4.1 to 5.3 ms of GPU a generated frame (its preparation and its generation), against 0.96 to
   1.14 ms for the runtime's passes on the bench's GPU.
 
+0.18.7 on the same PC, frame generation without an upscaler (`dlaa = 0`) with the scene smaller than the picture
+(`game_res = 1080`: scene 1440x810, picture 1920x1080, context 1920x1080), steps 4 and 5 below **[M]**:
+
+- 11 periods of 600 gameplay frames, each with 591 to 600 generated: 6583 of 6600 in all (99.7%). No frame lacked
+  the picture without the HUD, the case the deferred shape broke.
+- `dlaa: a 3-target pass with a 720x405 depth is not a G-buffer: a 1440x810 light target was armed before (Ocarina's
+  frame shape stays)`.
+- 3.2 to 3.7 ms of GPU a generated frame (one period 4.3).
+
+0.18.7 on the same PC with `framegen = dlss` in the settings file from the start (step 6 below) **[M]**:
+`dlssg: Streamline's support check for frame generation: Result::eErrorNoSupportedAdapterFound (6)`, then
+`dlaa: frame generation does not run: ... this GPU has none (RTX 40 or newer); framegen = fsr3 works here, ...`.
+Streamline wrote 6 warnings and 1 error at that start, which all come from the GPU having no DLSS-G. They are now
+held until the support check (`runtime/dlssg/nx2_sl.cpp` `release_held`), and with that verdict one line sums them up:
+`dlssg: Streamline's 6 warnings and 1 error at its start come from this GPU having no DLSS-G (no DLSS-G minimum spec
+from NGX, DLSS-G disabled on this hardware, plugin sl.dlss_g not loaded, 3 hooks not supported, DLSS-G context
+missing)`. A message it does not know is still written as it came, and any other verdict writes them all.
+
 The 0.18.3 logs of the same PC confirm what the old line showed: its 3562 frames before the first scene (logo,
-movie, title) were counted as frames without depth and motion. Frame generation without an upscaler and the scene
-smaller than the picture (steps 4 and 5 below) are not checked on Windows yet.
+movie, title) were counted as frames without depth and motion.
 
 ## Checking on Windows
 

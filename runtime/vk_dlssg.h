@@ -59,3 +59,8 @@ int vk_dlssg_status(void);
 // support check found no adapter with it: an RTX 30 or older); else 0, with Streamline's result for another reason in
 // *sl_why when it gave one (NULL when it did not, or with an nx2navi_dlssg.dll older than nx2sl_support).
 int vk_dlssg_why(const char **sl_why);
+// Whether the card in use can run DLSS Frame Generation at all, known before Streamline or NGX looks: 0 when it
+// cannot (another vendor's card, or an NVIDIA GPU older than the RTX 40 series), 1 when it may (Streamline's or NGX's
+// own check decides). For framegen = dlss set while the game runs, which starts only at the next start (vk_dlaa.c
+// fg_off_why).
+int vk_dlssg_gpu_may(void);

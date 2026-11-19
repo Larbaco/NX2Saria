@@ -280,6 +280,13 @@ int vk_dlssg_why(const char **sl_why) {
     return S.no_gpu;
 }
 
+// NVIDIA numbers its PCI device IDs by architecture: Ada (the RTX 40 series, the first with DLSS Frame Generation)
+// starts at 0x2600, and every earlier one is below it (the RTX 3050 Laptop is 0x25ac); Blackwell is above.
+int vk_dlssg_gpu_may(void) {
+    const VkCtx *c = vk_ctx();
+    return !c || (c->props.vendorID == 0x10de && c->props.deviceID >= 0x2600);   // not known yet: it may
+}
+
 int vk_dlssg_multiplier_of(const char *value, int max, const char **why) {
     const char *w = NULL;
     long n = 2;
