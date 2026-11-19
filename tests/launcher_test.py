@@ -273,6 +273,16 @@ class VersionTest(unittest.TestCase):
         self.assertTrue(versions.newer('0.4', '0.3.99'))
         self.assertFalse(versions.newer('0.3.10+abc', '0.3.10'))
         self.assertTrue(versions.newer('1.0.0', '1.0.0-rc1'))
+        # release candidates (docs/releases/README.md "Version numbers"): numbers compare as numbers
+        self.assertTrue(versions.newer('0.19.0-rc.10', '0.19.0-rc.9'))
+        self.assertTrue(versions.newer('0.19.0-rc.2', '0.19.0-rc.1'))
+        self.assertTrue(versions.newer('0.19.0', '0.19.0-rc.12'))
+        self.assertTrue(versions.newer('0.19.0-rc.1', '0.18.7'))
+        self.assertTrue(versions.newer('0.19.1-rc.1', '0.19.0'))
+        self.assertTrue(versions.newer('0.19.0-rc.1.1', '0.19.0-rc.1'))
+        self.assertTrue(versions.newer('0.19.0-rc', '0.19.0-1'))
+        self.assertFalse(versions.newer('0.19.0-rc.1+abc', '0.19.0-rc.1'))
+        self.assertEqual(versions.display('0.19.0-rc.1+abc1234'), '0.19.0-rc.1')
         self.assertEqual(versions.display('0.3.11+abc1234'), '0.3.11')
         with self.assertRaises(ValueError):
             versions.parse('banana')
