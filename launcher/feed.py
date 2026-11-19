@@ -164,20 +164,32 @@ def latest(feed, channel='stable', token='', version='dev'):
     raise FeedError(f'unknown feed type {feed.get("type")!r}')
 
 
-def plain_notes(text, limit=12):
+def plain_notes(text, limit=None):
     """Release notes as short lines for the window: markdown bullets and headings without their marks."""
+    import re
+
     out = []
     for line in (text or '').splitlines():
         s = line.strip()
         if not s or s.startswith(('<!--', '```', '---')):
             continue
+        links_only = re.sub(r'\[[^]]+\]\(https?://[^)]+\)', '', s)
+        links_only = re.sub(r'https?://\S+', '', links_only)
+        if not re.sub(r'[·|\s]', '', links_only):
+            continue
         s = s.lstrip('#').strip()
         for mark in ('- ', '* ', '+ '):
             if s.startswith(mark):
                 s = s[2:]
-        s = s.replace('**', '').replace('`', '')
+        s = re.sub(r'\[([^]]+)\]\(https?://[^)]+\)', r'\1', s)
+        s = re.sub(r'\[([^]]+)\]\((?!https?://)[^)]+\)', r'\1', s)
+        s = s.replace('**', '').replace('__', '')
+        s = re.sub(r'(?<!\w)[*_]|[*_](?!\w)', '', s).replace('`', '')
+        s = re.sub(r'https?://\S+', '', s).strip()
+        if not s or not re.search(r'[\w\u0080-\uffff]', s):
+            continue
         if s:
             out.append(s)
-        if len(out) >= limit:
+        if limit is not None and len(out) >= limit:
             break
     return out

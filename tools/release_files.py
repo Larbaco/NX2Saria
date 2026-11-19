@@ -86,6 +86,12 @@ def check_tag(tag, root):
         raise Problem(f'{notes.relative_to(root).as_posix()}:{lines[0]}: a pre-release line in the notes of {ver}, '
                       'which has no -rc suffix: the update manifest keeps these notes after the release is made '
                       'stable. The release page says it is a pre-release by itself (docs/releases/README.md)')
+    visible = [line.strip() for line in text(notes).splitlines() if line.strip()]
+    for line in visible[:6]:
+        residue = re.sub(r'\[[^]]+\]\(https?://[^)]+\)', '', line)
+        residue = re.sub(r'https?://\S+', '', residue)
+        if not re.sub(r'[·|\s]', '', residue):
+            raise Problem(f'{notes.relative_to(root).as_posix()}: links must come after the first six non-empty lines')
     return [f'tag {tag}: version {ver}, {"a release candidate" if rc else "no suffix"}, '
             f'notes {notes.relative_to(root).as_posix()} ({len(text(notes).split())} words)']
 

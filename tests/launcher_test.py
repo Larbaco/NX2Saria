@@ -988,6 +988,29 @@ def manifest_for(z, ver):
 
 
 class FeedTest(Tmp):
+    def test_whats_new_notes_are_plain_and_cover_the_four_release_fixtures(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        for version in ('v0.18.6', 'v0.18.7', 'v0.19.0-rc.1', 'v0.19.0-rc.2'):
+            notes = feed.plain_notes((root / 'docs' / 'releases' / f'{version}.md').read_text(encoding='utf-8'))
+            self.assertTrue(notes, version)
+            self.assertTrue(all('http' not in line.lower() and '[' not in line and ']' not in line for line in notes), version)
+        self.assertEqual(feed.plain_notes('[Install](https://example.test) · |\n- **Bold** and *italic*'),
+                         ['Bold and italic'])
+
+    def test_release_tag_rejects_a_links_line_in_the_first_six_nonempty_lines(self):
+        import release_files
+        root = self.tmp
+        (root / 'VERSION').write_text('0.19.0-rc.2\n')
+        notes = root / 'docs' / 'releases'
+        notes.mkdir(parents=True)
+        path = notes / 'v0.19.0-rc.2.md'
+        path.write_text('One\nTwo\nThree\nFour\nFive\n[Install](https://example.test) ·\n')
+        with self.assertRaisesRegex(release_files.Problem, 'first six non-empty lines'):
+            release_files.check_tag('v0.19.0-rc.2', root)
+        path.write_text('One\nTwo\nThree\nFour\nFive\nSix\n[Install](https://example.test) ·\n')
+        self.assertTrue(release_files.check_tag('v0.19.0-rc.2', root))
+
     def test_asset_needs_a_plain_name_size_and_sha256(self):
         good = {'name': 'a.zip', 'size': 10, 'sha256': '0' * 64}
         r = feed.Release({'format': 1, 'version': '1.0.0', 'app': good}, assets={'a.zip': 'https://x/a.zip'})
@@ -5959,7 +5982,7 @@ class WindowTest(Tmp):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],
                            cwd=ROOT, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('19 screens drawn', r.stdout)
+        self.assertIn('21 screens drawn', r.stdout)
 
 
 # ---------------------------------------------------------------- mods

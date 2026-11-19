@@ -556,6 +556,7 @@ class Gamepad:
     def __init__(self):
         self.dll = None
         self.held = set()
+        self.scroll = 0
         if os.name == 'nt':
             for name in ('xinput1_4', 'xinput1_3', 'xinput9_1_0'):
                 try:
@@ -565,6 +566,7 @@ class Gamepad:
                     continue
 
     def poll(self, active=True):
+        self.scroll = 0
         if not self.dll:
             return set()
         st = _XInputState()
@@ -573,6 +575,10 @@ class Gamepad:
             try:
                 if self.dll.XInputGetState(pad, ctypes.byref(st)) == 0:
                     g = st.Gamepad
+                    if active and g.sThumbRY > 16000:
+                        self.scroll = -1
+                    elif active and g.sThumbRY < -16000:
+                        self.scroll = 1
                     down = {name for bit, name in BUTTONS.items() if g.wButtons & bit}
                     if g.sThumbLY > 16000:
                         down.add('up')

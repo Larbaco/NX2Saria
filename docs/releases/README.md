@@ -18,6 +18,9 @@ it into the update manifest, which the launcher's *What's New* shows. Since 0.15
    do not work on the release page): [install guide](../install.md), [known issues](../known-issues.md) and the
    release's changelog file.
 
+   Keep that links line after the first six non-empty lines. `tools/release_files.py tag` checks this because
+   launchers 0.18.x and 0.19.0-rc.x display only six lines and do not strip Markdown links.
+
 Install steps and the known issues that carry from release to release are not repeated in the notes: they live in
 `docs/install.md` and `docs/known-issues.md`. Update `docs/known-issues.md` in the release commit when a problem is
 found or fixed. Its translations (`docs/<lang>/known-issues.md`) are brought up to date in the same commit where
