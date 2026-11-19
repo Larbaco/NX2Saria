@@ -118,13 +118,13 @@ static void cursor_update(HWND h) {
         if (!cur_captured) { InterlockedExchange(&mouse_dx, 0); InterlockedExchange(&mouse_dy, 0); }
         if (!InterlockedExchange(&cur_captured, 1)) {
             static volatile LONG lines;   // (the first changes: a run's log shows the camera got its mouse, or gave it up)
-            if (InterlockedIncrement(&lines) <= 12) rt_log("input: the mouse captured for the camera (confined and hidden)");
+            if (InterlockedIncrement(&lines) <= 40) rt_log("input: the mouse captured for the camera (confined and hidden)");
         }
     } else {
         if (cur_captured) ClipCursor(NULL);
         if (InterlockedExchange(&cur_captured, 0)) {
             static volatile LONG lines;
-            if (InterlockedIncrement(&lines) <= 12) rt_log("input: the mouse released (the cursor shows)");
+            if (InterlockedIncrement(&lines) <= 40) rt_log("input: the mouse released (the cursor shows)");
         }
     }
     ReleaseSRWLockExclusive(&cur_lock);

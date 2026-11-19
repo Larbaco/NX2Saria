@@ -163,7 +163,7 @@ static void cursor_apply(void) {
             plat_xchg32(&captured, want);
             if (!want) pointer_read();
             static int lines;   // (the first changes: a run's log shows the camera got its mouse, or gave it up)
-            if (lines++ < 12) rt_log("input: the mouse %s", want ? "captured for the camera (relative mode)" : "released (the cursor shows)");
+            if (lines++ < 40) rt_log("input: the mouse %s", want ? "captured for the camera (relative mode)" : "released (the cursor shows)");
         }
     }
     // A warp asked for (ikb_pointer_set) once the capture is off; SDL ignores or limits one on some systems (Wayland)
