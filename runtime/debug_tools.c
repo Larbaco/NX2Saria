@@ -1014,6 +1014,7 @@ enum {
 };
 static atomic_uint fov_diagnostics;
 static atomic_flag fov_hook_logged = ATOMIC_FLAG_INIT;
+static atomic_flag fov_message_log_clear_logged = ATOMIC_FLAG_INIT;
 static int fov_first(unsigned reason) {
     unsigned old = atomic_fetch_or_explicit(&fov_diagnostics, reason, memory_order_relaxed);
     return !(old & reason);
@@ -1082,6 +1083,8 @@ void dbg_fov_host(Cpu *c) {
     } else if (camera_flags & 1) {
         fov_skip_once(FOV_MESSAGE_LOG, "message log owns the view");
         return;
+    } else if (!atomic_flag_test_and_set_explicit(&fov_message_log_clear_logged, memory_order_relaxed)) {
+        rt_log("fov: message-log flag clear (camera zero flags %#x)", camera_flags);
     }
     uint32_t bits = (uint32_t)c->v[0];
     float orig;
