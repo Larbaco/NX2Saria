@@ -1,7 +1,8 @@
 // The arithmetic of the mouse in Ocarina of Time 1.1.1's menus (runtime/menu_mouse_geom.h): a button's box from its
 // pane's fields as the game's focus frame takes them, the pointer in the layout's units on a 16:9 picture and on
 // ultrawide ones (the UI squeezed into the middle 16:9, with panes NX2SARIA_WIDE_MENUS = full moved out by u units), the
-// way back to the picture, and the box a point falls in. No game files. tests/menu_mouse_check.py builds and runs this.
+// way back to the picture, the box a point falls in, which presses are clicks and the presses queued for the game. No
+// game files. tests/menu_mouse_check.py builds and runs this.
 #include <math.h>
 #include <stdio.h>
 #include "menu_mouse_geom.h"
@@ -80,6 +81,35 @@ int main(void) {
     // movement: a pixel of a 4K picture is movement, less is not
     CHECK(!mm_moved(0.5f, 0.5f, 0.5f, 0.5f) && !mm_moved(0.5f + 0.0001f, 0.5f, 0.5f, 0.5f), "still");
     CHECK(mm_moved(0.5f + 0.0003f, 0.5f, 0.5f, 0.5f) && mm_moved(0.5f, 0.5f, -1, -1), "moved; the first look moves");
+
+    // clicks: a press counts once; a press given while no menu takes the mouse (synced there) is no click of the next
+    MmClicks c = {{0, 0}};
+    int cl, cr;
+    mm_clicks_take(&c, 1, 0, &cl, &cr);
+    CHECK(cl && !cr, "a left press is a click");
+    mm_clicks_take(&c, 1, 0, &cl, &cr);
+    CHECK(!cl && !cr, "the same press is not a click again");
+    mm_clicks_take(&c, 3, 1, &cl, &cr);
+    CHECK(cl && cr, "two quick left presses between looks are one click, a right press another");
+    mm_clicks_sync(&c, 4, 1);   // between menus: a quick second click lands on the fade, where no menu takes the mouse
+    mm_clicks_take(&c, 4, 1, &cl, &cr);
+    CHECK(!cl && !cr, "a click given between two menus is not a click of the next menu");
+
+    // the queue: A and B wait one at most, the wheel three; a turn the other way drops the rest; a drop empties it
+    volatile int32_t q[MM_PRESSES] = {0};
+    for (int i = 0; i < 4; i++) mm_queue(q, MM_B, 1);   // four quick right clicks on the pause menu
+    CHECK(mm_queue_take(q) == MM_B && mm_queue_take(q) == -1, "four quick right clicks are one B, none left for the play");
+    mm_queue(q, MM_A, 1), mm_queue(q, MM_A, 1);
+    CHECK(mm_queue_take(q) == MM_A && mm_queue_take(q) == -1, "two quick left clicks are one A");
+    mm_queue(q, MM_DOWN, 5);
+    CHECK(q[MM_DOWN] == 3, "the wheel queues three at most (%d)", (int)q[MM_DOWN]);
+    mm_queue(q, MM_UP, 1);
+    CHECK(q[MM_DOWN] == 0 && q[MM_UP] == 1, "a turn the other way drops the rest");
+    mm_queue(q, MM_B, 1), mm_queue(q, MM_A, 1), mm_queue(q, MM_UP, 2);
+    mm_queue_drop(q);   // the menu goes (a B closed it)
+    CHECK(mm_queue_take(q) == -1, "nothing queued reaches the play after the menu goes");
+    mm_queue(q, MM_UP, 1), mm_queue(q, MM_A, 1);
+    CHECK(mm_queue_take(q) == MM_A && mm_queue_take(q) == MM_UP && mm_queue_take(q) == -1, "A goes before the wheel");
 
     if (fails) { printf("menu mouse: %d failed\n", fails); return 1; }
     printf("menu mouse: ok\n");

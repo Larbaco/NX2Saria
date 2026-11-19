@@ -36,7 +36,11 @@ the focus manager (+0x60), then player 1's control (+0x28), then the focused ent
 A, B and the wheel's up and down are pad presses. The interface thread counts them, and the pad read
 (`menu_mouse_poll`, from `input.c` `input_poll`) adds them one at a time, each held 60 ms and then released for 60 ms,
 so the game sees one press edge whatever its frame rate. A click on a button that does not have the focus yet reserves
-the focus first and presses A once the control has it (given up after 300 ms).
+the focus first and presses A once the control has it (given up after 300 ms). A and B wait one at most and the
+wheel's three, and everything queued is dropped when its menu goes, so quick clicks on a menu that closes never reach
+the play (where B is the sword). Clicks are counted as the window gets them; wherever no menu takes the mouse they are
+taken as seen, so a click given between two menus is not a click of the next one. The pad is read on more than one
+thread (a cheat reads it on the render thread): one thread at a time takes presses, the others add the one held.
 
 ## Hit test
 

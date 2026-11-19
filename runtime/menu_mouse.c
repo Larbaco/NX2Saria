@@ -216,9 +216,8 @@ static void reserve_focus(const Ui *u, uint64_t s, uint64_t e) {
 }
 
 // ---- the pad presses the pad read adds (menu_mouse_poll): counts the interface thread raises, the pad read spends
-enum { P_A, P_B, P_UP, P_DOWN, P_COUNT };
-static const int press_bit[P_COUNT] = {B_A, B_B, B_UP, B_DOWN};
-static volatile int32_t pending[P_COUNT];
+static const int press_bit[MM_PRESSES] = {B_A, B_B, B_UP, B_DOWN};   // (menu_mouse_geom.h MM_A..MM_DOWN)
+static volatile int32_t pending[MM_PRESSES];
 static volatile int32_t g_pointer;           // a menu has the pointer: input_cursor_allowed releases the capture
 static volatile uint64_t g_active_ms;        // the last interface update that found a menu for the mouse, or a focus
                                              // on a screen that opens or closes (between two menus)
@@ -226,11 +225,8 @@ static uint64_t g_menu_ms;                   // interface thread: the last updat
 static volatile uint64_t g_hidden_ms;        // when the pad read last hid the pointer
 #define IDLE_MS 350                          // no menu that long: the pointer goes back to the camera
 
-// The wheel's queued up and down presses go when their menu does: in play the d-pad is the ocarina, Navi, the boots
-static void drop_wheel_presses(void) {
-    plat_xchg32(&pending[P_UP], 0);
-    plat_xchg32(&pending[P_DOWN], 0);
-}
+// Everything queued goes when its menu does: in play B is the sword and the d-pad the ocarina, Navi and the boots
+static void drop_presses(void) { mm_queue_drop(pending); }
 
 int menu_mouse_pointer(void) { return __atomic_load_n(&g_pointer, __ATOMIC_RELAXED); }
 
@@ -275,6 +271,12 @@ static void set_pointer(int on) {
     if (plat_xchg32(&g_pointer, on) != on) ikb_cursor_update();
 }
 
+// No menu takes the mouse now: wheel notches and button presses so far are taken as seen, not kept for the next menu
+static void no_menu_input(MmClicks *c) {
+    input_menu_wheel_take();
+    mm_clicks_sync(c, input_menu_mouse_presses(0), input_menu_mouse_presses(1));
+}
+
 // Every interface screen's update, before the focus manager's controls take a reserved focus: x19 (and x0) the
 // screen. Changes no register.
 void menu_mouse_screen_host(Cpu *c) {
@@ -283,8 +285,8 @@ void menu_mouse_screen_host(Cpu *c) {
     static char last_name[48];
     static Stats st;
     static float last_px = -1, last_py = -1;
-    static int shown;
-    static uint32_t seen_l, seen_r;   // the button presses already taken
+    static int shown, resync;   // resync: the pointer was just warped, its next position read is the start, no move
+    static MmClicks clicks;     // the button presses already taken
     static uint64_t pend_entry, pend_until, asked, asked_ms;
     static Entries ent;
     uint64_t s = c->x[19];
@@ -303,23 +305,23 @@ void menu_mouse_screen_host(Cpu *c) {
             if (lines++ < 8) rt_log("menu_mouse: %s: the settings overlay or a text entry is open: the mouse is its until it closes", last_name);
             blocked_logged = 1;
         }
-        input_menu_wheel_take();
+        no_menu_input(&clicks);
         return;
     }
     blocked_logged = 0;
-    if (!enabled()) { input_menu_wheel_take(); return; }   // (no notches kept for later)
+    if (!enabled()) { no_menu_input(&clicks); return; }   // (no notches or clicks kept for later)
     Ui u;
     uint64_t focused = 0, fs = 0;
-    if (!ui_now(&u)) { input_menu_wheel_take(); return; }
+    if (!ui_now(&u)) { no_menu_input(&clicks); return; }
     if (!(fs = focus_screen(&u, &focused))) {   // no menu has the focus: the last one's line now
         // (a focus still on a screen that opens or closes keeps the pointer for up to 1.5 s: one menu giving way to
         // the next)
         uint64_t t = plat_now_ms();
         if (game_object(rd64(u.ctl + CTL_FOCUSED), ENT_SCREEN + 8) && t - g_menu_ms < 1500)
             __atomic_store_n(&g_active_ms, t, __ATOMIC_RELEASE);
-        drop_wheel_presses();
+        drop_presses();
         why_none(&u, g_why);
-        input_menu_wheel_take();
+        no_menu_input(&clicks);
         if (last_screen) stats_flush(last_name, &st), last_screen = 0;
         return;
     }
@@ -340,7 +342,7 @@ void menu_mouse_screen_host(Cpu *c) {
                    proj ? "" : " (no projection read: 16:9 taken)");
         snprintf(last_name, sizeof last_name, "%s", name);
         last_screen = s, pend_until = 0, asked = 0;
-        drop_wheel_presses();
+        drop_presses();
     }
     // A menu for the mouse: some entry takes the focus, the focused one among them (a screen of the play, whose focus
     // sits on nothing shown, never takes the pointer from the camera)
@@ -351,8 +353,8 @@ void menu_mouse_screen_host(Cpu *c) {
         char why[96];
         snprintf(why, sizeof why, "the focused entry is not among the %d of %d that take the focus", ent.n, ent.listed);
         why_none(&u, why);
-        input_menu_wheel_take();
-        drop_wheel_presses();
+        no_menu_input(&clicks);
+        drop_presses();
         return;
     }
     __atomic_store_n(&g_active_ms, now, __ATOMIC_RELEASE);
@@ -367,10 +369,9 @@ void menu_mouse_screen_host(Cpu *c) {
             static int lines;
             if (lines++ < 8) rt_log("menu_mouse: %s: the gamepad was used last: the pointer hidden", last_name);
         }
-        seen_l = input_menu_mouse_presses(0), seen_r = input_menu_mouse_presses(1);
         last_px = last_py = -1, pend_until = 0;
-        for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
-        input_menu_wheel_take();
+        drop_presses();
+        no_menu_input(&clicks);
         return;
     }
     if (!shown) {   // the pointer comes: on the focused button, so nothing moves until the mouse does
@@ -388,9 +389,9 @@ void menu_mouse_screen_host(Cpu *c) {
             float fx, fy;
             mm_to_picture((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, ux, uy, &fx, &fy);
             ikb_pointer_set(r[0] + fx * r[2], r[1] + fy * r[3]);
-            last_px = fx, last_py = fy;
+            resync = 1;   // (the warp may not happen, Wayland's: where the pointer is gets read before any move counts)
         } else last_px = px, last_py = py;
-        seen_l = input_menu_mouse_presses(0), seen_r = input_menu_mouse_presses(1);   // presses before it are no clicks
+        mm_clicks_sync(&clicks, input_menu_mouse_presses(0), input_menu_mouse_presses(1));   // earlier presses: no clicks
         return;
     }
     // Clicks are presses counted at the window's event, so one shorter than a frame is not lost at a low frame rate;
@@ -398,26 +399,25 @@ void menu_mouse_screen_host(Cpu *c) {
     uint32_t pl = input_menu_mouse_presses(0), pr = input_menu_mouse_presses(1);
     static int was_fg = 1;
     int fg = ikb_foreground() || pos == 2;
-    if (fg && !was_fg) seen_l = pl, seen_r = pr;   // the click that brought the window back is not a menu click
+    if (fg && !was_fg) mm_clicks_sync(&clicks, pl, pr);   // the click that brought the window back is not a menu click
     was_fg = fg;
-    int click_l = pl != seen_l, click_r = pr != seen_r;
-    seen_l = pl, seen_r = pr;
-    if (click_r) plat_add32(&pending[P_B], 1), st.click_b++;
+    int click_l, click_r;
+    mm_clicks_take(&clicks, pl, pr, &click_l, &click_r);
+    if (click_r) mm_queue(pending, MM_B, 1), st.click_b++;
     int32_t wheel = input_menu_wheel_take();
-    if (wheel) {   // a notch is the d-pad's up or down: a list moves a row, as the pad moves it; at most 3 queued
-        int k = wheel < 0 ? -wheel : wheel, d = wheel > 0 ? P_UP : P_DOWN;
-        plat_xchg32(&pending[d == P_UP ? P_DOWN : P_UP], 0);   // a turn the other way drops what is left
-        int32_t q = pending[d] + k;
-        plat_xchg32(&pending[d], q > 3 ? 3 : q);
+    if (wheel) {   // a notch is the d-pad's up or down: a list moves a row, as the pad moves it
+        int k = wheel < 0 ? -wheel : wheel;
+        mm_queue(pending, wheel > 0 ? MM_UP : MM_DOWN, k);
         st.wheel += (unsigned)k;
     }
     if (pend_until) {   // a click on another button: A once the focus is there, the reservation renewed till then
-        if (focused == pend_entry) plat_add32(&pending[P_A], 1), pend_until = 0, st.click_a++;
+        if (focused == pend_entry) mm_queue(pending, MM_A, 1), pend_until = 0, st.click_a++;
         else if (now > pend_until) pend_until = 0;
         else reserve_focus(&u, s, pend_entry);
         return;
     }
     if (!pos) return;
+    if (resync) last_px = px, last_py = py, resync = 0;   // the first position read after a warp: the start
     int moved = mm_moved(px, py, last_px, last_py);
     if (!moved && !click_l) return;
     if (moved) last_px = px, last_py = py;
@@ -443,7 +443,7 @@ void menu_mouse_screen_host(Cpu *c) {
                    (double)ent.box[i].y1, (unsigned long long)focused);
     }
     if (click_l) {
-        if (e == focused) plat_add32(&pending[P_A], 1), st.click_a++;
+        if (e == focused) mm_queue(pending, MM_A, 1), st.click_a++;
         else pend_entry = e, pend_until = now + 300;
     }
 }
@@ -451,31 +451,38 @@ void menu_mouse_screen_host(Cpu *c) {
 // Once per pad read: the presses the interface thread asked for, one at a time, each held 60 ms and then 60 ms let go
 void menu_mouse_poll(uint64_t *buttons) {
     static int logged;
-    static uint64_t hold_until, gap_until, hold_bit;
-    if (!logged && RT_V111) {
-        logged = 1;
+    // The press being given: its bit and the times it is held to and let go until. The pad is read on more than one
+    // thread (a cheat's frame reads it on the render thread): one at a time takes presses, the others add the one held.
+    static volatile uint64_t hold_bit, hold_until, gap_until;
+    static volatile int32_t busy;
+    if (!__atomic_exchange_n(&logged, 1, __ATOMIC_RELAXED) && RT_V111) {
         int set = rt_patch_set("menu_mouse");
         rt_log("menu_mouse: %s (NX2SARIA_MENU_CURSOR %s; set menu_mouse %s, the screens' site main+0x2d13b0)",
                enabled() ? "on for 1.1.1" : "off", cfg_value("NX2SARIA_MENU_CURSOR"),
                set < 0 ? "missing from this build" : rt_patch_enabled(set) ? "on" : "off");
     }
     uint64_t active = __atomic_load_n(&g_active_ms, __ATOMIC_ACQUIRE), now = plat_now_ms();
+    if (plat_xchg32(&busy, 1)) {   // another thread is taking presses: the one held, if any
+        if (now < __atomic_load_n(&hold_until, __ATOMIC_ACQUIRE)) *buttons |= __atomic_load_n(&hold_bit, __ATOMIC_RELAXED);
+        return;
+    }
     // No menu for the mouse for IDLE_MS (gameplay, a movie, the overlay): the pointer goes, the camera takes the mouse
     if (menu_mouse_pointer() && (int64_t)(now - active) > IDLE_MS) {
         static int lines;
         if (lines++ < 8) rt_log("menu_mouse: no menu for %d ms: the pointer hidden, the mouse back to the camera", IDLE_MS);
         __atomic_store_n(&g_hidden_ms, now, __ATOMIC_RELAXED);
         set_pointer(0);
-        for (int i = 0; i < P_COUNT; i++) plat_xchg32(&pending[i], 0);
+        drop_presses();
     }
-    if (now < hold_until) { *buttons |= hold_bit; return; }
-    if (now < gap_until) return;
-    for (int i = 0; i < P_COUNT; i++) {
-        int32_t n = pending[i];
-        if (n > 0 && plat_cas32(&pending[i], n - 1, n) == n) {
-            hold_bit = 1ull << press_bit[i], hold_until = now + 60, gap_until = now + 120;
-            *buttons |= hold_bit;
-            return;
+    if (now < hold_until) *buttons |= hold_bit;
+    else if (now >= gap_until) {
+        int k = mm_queue_take(pending);
+        if (k >= 0) {
+            __atomic_store_n(&hold_bit, 1ull << press_bit[k], __ATOMIC_RELAXED);
+            __atomic_store_n(&gap_until, now + 120, __ATOMIC_RELAXED);
+            __atomic_store_n(&hold_until, now + 60, __ATOMIC_RELEASE);
+            *buttons |= 1ull << press_bit[k];
         }
     }
+    plat_xchg32(&busy, 0);
 }
