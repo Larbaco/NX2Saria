@@ -65,15 +65,17 @@ them). The page shown is the one whose layout holds the focused entry's button: 
 button's root pane through the panes that hold them (+0x108) to a layout named `PaCollectMenu_00`,
 `PaEquipmentMenu_00`, `PaItemMenu_00` or `PaSystemMenu_00` (`pause_page_of`). A click on another page's name queues
 L or R, one at a time and each once the page has landed for 250 ms, until that page shows (given up after 4 s). A
-click on a sign is one L or R, and the wheel over the row is L (up) or R (down). The log has
+click on a sign is one L or R, and the wheel over the row is L (up) or R (down). A walk stops for a click on the page
+already shown, a right click, the wheel, or the page moving the other way (the player's own L or R). The log has
 `menu_mouse: pause menu tab <page> clicked (page <now>)` and `... reached` or `... given up at`, and the per-menu line
 counts the clicks on the tab row apart from those on no button.
 
 ## Narrow boxes
 
 Some slots take a narrow box on one side of their picture (the pause menu's bombchu slot: 100 units at the right of a
-260-wide slot), and rows leave gaps between slots. When the pointer is in no box, the nearest box within 80 layout
-units (40 pixels on a 1080-line picture) takes it (`mm_pick_near`).
+260-wide slot), and rows leave gaps between slots. On the pause menu, when the pointer is in no box, the nearest box
+within 80 layout units (40 pixels on a 1080-line picture) takes it (`mm_pick_near`). Elsewhere it does not: on a
+prompt's Yes and No a click just outside a button stays outside it.
 
 ## Ultrawide pictures
 

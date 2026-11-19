@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=5b52101cc11de1c3674ed69be2d6cc364aead15d reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=458760f66429595dfdce5f6532ade5a58d7adca5 reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · [Русский](../ru/known-issues.md) · **简体中文**
 
@@ -19,10 +19,6 @@
 
 - **在 Linux 上仅支持 2x 和 SDR**。开启 HDR 时，菜单中的该行会显示它已关闭以及原因。
 - **贴近墙壁快速转动镜头时，生成帧的边缘会出现拖影**，Navi 的光晕也是如此。当游戏渲染在 40 fps 左右时，这是帧生成的常见现象。更高的渲染帧率会让它变小。
-
-## 操作
-
-- **游戏菜单中的鼠标还不能点击暂停菜单顶部的标签栏**（切换页面）。标签请用 L 和 R 或对应的按键；菜单的其他部分可以用鼠标。
 
 ## 着色器和管线
 

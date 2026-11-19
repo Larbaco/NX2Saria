@@ -215,8 +215,8 @@ static int button_takes_focus(uint64_t btn) {
     return ok_at(btn, BTN_BOX + 8) && (rd32(btn + BTN_FLAGS) & 0x10) && pane_shown(rd64(btn + BTN_ROOT));
 }
 // The screen's entries that can take the focus, with their boxes
-#define NEAR_UNITS 80.0f   // a pointer this near a box (layout units; 40 pixels at 1080) is on it (mm_pick_near)
-static int dump_boxes;   // NX2SARIA_MENU_CURSOR_LOG=1: the next entries_of logs every box
+#define NEAR_UNITS 80.0f   // on the pause menu, a pointer this near a box (layout units; 40 pixels at 1080) is on it
+static int dump_boxes;   // the next entries_of logs every box (a menu screen's first, NX2SARIA_MENU_CURSOR_LOG=1)
 static void entries_of(uint64_t s, Entries *out) {
     out->n = out->listed = 0;
     uint64_t head = s + SCR_HEAD;
@@ -381,7 +381,9 @@ void menu_mouse_screen_host(Cpu *c) {
                    proj ? "" : " (no projection read: 16:9 taken)");
         snprintf(last_name, sizeof last_name, "%s", name);
         pause = !strcmp(name, "PlusMenu_00"), page = -1, tab_goal = -1;
-        dump_boxes = verbose_log(1000);
+        static int dumps;   // (each box of the first 6 menu screens opened, with NX2SARIA_MENU_CURSOR_LOG=1)
+        const char *lg = cfg_get("NX2SARIA_MENU_CURSOR_LOG");
+        dump_boxes = lg && !strcmp(lg, "1") && dumps++ < 6;
         last_screen = s, pend_until = 0, asked = 0;
         drop_presses();
     }
@@ -445,12 +447,20 @@ void menu_mouse_screen_host(Cpu *c) {
     int click_l, click_r;
     mm_clicks_take(&clicks, pl, pr, &click_l, &click_r);
     if (click_r) mm_queue(pending, MM_B, 1), st.click_b++;
+    // (a walk to a clicked tab stops for any other wish of the player: a right click, the wheel)
+    int32_t wheel = input_menu_wheel_take();
+    if ((click_r || wheel) && tab_goal >= 0) tab_log("left for the player's input at", tab_goal, page), tab_goal = -1;
     float tx = 0, ty = 0;   // the pointer in layout units, for the pause menu's tab row
     if (pos) mm_to_layout(px, py, ux, uy, &tx, &ty);
     int on_tabs = pause && pos && mm_tab_at(tx, ty) >= 0;
     if (pause) {   // the page now, and a clicked tab's page reached an L or R at a time, each once the last has landed
         int cur = pause_page_of(focused);
-        if (cur != page) page = cur, page_ms = now;
+        if (cur != page) {
+            // (the page went the other way than the walk: the player's own L or R, keys or pad; the walk stops)
+            if (mm_tab_away(page, cur, tab_goal))
+                tab_log("left for the player's L or R at", tab_goal, cur), tab_goal = -1;
+            page = cur, page_ms = now;
+        }
         if (tab_goal >= 0) {
             int step = mm_tab_step(page, tab_goal);
             if (page == tab_goal || now - tab_ms > 4000) {
@@ -461,7 +471,6 @@ void menu_mouse_screen_host(Cpu *c) {
             }
         }
     }
-    int32_t wheel = input_menu_wheel_take();
     if (wheel && on_tabs) {   // over the pause menu's tab row a notch turns the page: up the one before (L), down the next
         mm_queue(pending, wheel > 0 ? MM_L : MM_R, 1);
         st.wheel += (unsigned)(wheel < 0 ? -wheel : wheel);
@@ -486,13 +495,16 @@ void menu_mouse_screen_host(Cpu *c) {
     float x, y;
     mm_to_layout(px, py, ux, uy, &x, &y);
     int i = mm_pick(ent.box, ent.n, x, y);
-    if (i < 0 && !on_tabs) i = mm_pick_near(ent.box, ent.n, x, y, NEAR_UNITS);
+    // (the nearest box only on the pause menu, whose pages have the narrow slots: on a prompt's Yes and No a click just
+    // outside a button stays outside it)
+    if (i < 0 && pause && !on_tabs) i = mm_pick_near(ent.box, ent.n, x, y, NEAR_UNITS);
     if (i < 0 && click_l && on_tabs) {   // the pause menu's tab row: L or R for a sign, else steps to the page clicked
         int tab = mm_tab_at(x, y);
         st.tabs++;
         if (tab == MM_TAB_L || tab == MM_TAB_R) mm_queue(pending, tab == MM_TAB_L ? MM_L : MM_R, 1), tab_goal = -1;
-        else if (page < 0) tab_log("clicked, the page now not known for", tab, page);
+        else if (page < 0) tab_log("clicked, the page now not known for", tab, page), tab_goal = -1;
         else if (tab != page) tab_goal = tab, tab_ms = now, step_ms = 0, tab_log("clicked", tab, page);
+        else tab_goal = -1;   // (the page shown: nothing to walk to, a walk under way stops)
         return;
     }
     if (i < 0) {

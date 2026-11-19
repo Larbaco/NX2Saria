@@ -151,6 +151,10 @@ static inline int mm_pause_page(const char *name) {
     }
     return -1;
 }
+// The page went from was to now the other way than a walk to goal goes: the player's own L or R, which stops the walk
+static inline int mm_tab_away(int was, int now, int goal) {
+    return was >= 0 && now >= 0 && goal >= 0 && now != was && (now < was) != (goal < was);
+}
 // The press that brings page cur one nearer to page goal: MM_L, MM_R, or -1 when it is there (or either is unknown).
 // The pages do not wrap past the ends.
 static inline int mm_tab_step(int cur, int goal) {

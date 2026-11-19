@@ -138,6 +138,10 @@ int main(void) {
           "page names");
     CHECK(mm_tab_step(3, 0) == MM_L && mm_tab_step(0, 2) == MM_R && mm_tab_step(1, 1) == -1 && mm_tab_step(-1, 2) == -1,
           "the step toward the clicked page");
+    // a walk to a clicked tab stops when the page goes the other way (the player's own L or R), not on its own steps
+    CHECK(mm_tab_away(2, 3, 0) && mm_tab_away(1, 0, 3), "the page went the other way: the walk stops");
+    CHECK(!mm_tab_away(2, 1, 0) && !mm_tab_away(0, 1, 3) && !mm_tab_away(2, 2, 0) && !mm_tab_away(-1, 1, 3) &&
+          !mm_tab_away(2, 3, -1), "the walk's own steps, no change, an unknown page or no walk");
     // L and R wait one at most, like A and B, and go with their menu
     mm_queue(q, MM_R, 1), mm_queue(q, MM_R, 1);
     CHECK(mm_queue_take(q) == MM_R && mm_queue_take(q) == -1, "two quick R are one");
