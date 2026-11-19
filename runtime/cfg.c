@@ -27,7 +27,7 @@
 #define NEW_PREFIX_LEN (sizeof NEW_PREFIX - 1)
 #define CFG_MAX_KEYS 512
 
-typedef struct { char *key, *value; int dirty, removed, held; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it
+typedef struct { char *key, *value; int dirty, removed, held, test; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it; test: set by a test hook (cfg_set_test), cfg_save skips it too
 
 static CfgEntry entries[CFG_MAX_KEYS];
 static int n_entries;
@@ -699,7 +699,7 @@ static void add(char *key, char *value, int line) {
         return;
     }
     entry_line[n_entries] = line;
-    entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 0, 0, 0};
+    entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 0, 0, 0, 0};
 }
 
 // ---- values outside their rows' sets, logged at load (the values are read as they are written, a comment after a
@@ -808,7 +808,7 @@ static void migrate(void) {
     layout->value = strdup("nintendo");
     layout->dirty = 1;
     if (!prompts && n_entries < CFG_MAX_KEYS)
-        entry_line[n_entries] = 0, entries[n_entries++] = (CfgEntry){strdup("PROMPTS"), strdup("xbox"), 1, 0, 0};
+        entry_line[n_entries] = 0, entries[n_entries++] = (CfgEntry){strdup("PROMPTS"), strdup("xbox"), 1, 0, 0, 0};
     else if (!prompts)
         full_set("PROMPTS", "= xbox is not kept");
     rt_log("cfg: settings file pad_layout = xbox_prompts is read as pad_layout = nintendo and prompts = %s",
@@ -1046,8 +1046,9 @@ void cfg_set(const char *name, const char *value) {
             entries[i].dirty = 1;
         }
         entries[i].removed = 0;   // a value set after cfg_reset replaces the line instead of deleting it
+        entries[i].test = 0;      // set by anything but a test hook: the value is the player's, and saved
     } else if (n < CFG_MAX_KEYS) {
-        entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0};
+        entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0, 0};
         __atomic_store_n(&n_entries, n + 1, __ATOMIC_RELEASE);
     } else {
         full_set(key, "is not kept");
@@ -1072,7 +1073,7 @@ int cfg_reset(const char *const *keys, int n) {
                 full_set(name, "keeps its line in the file");
                 continue;
             }
-            entries[i] = (CfgEntry){strdup(name), NULL, 0, 1, 0};
+            entries[i] = (CfgEntry){strdup(name), NULL, 0, 1, 0, 0};
             __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
         } else if (entries[i].value) {
             __atomic_store_n(&entries[i].value, NULL, __ATOMIC_RELEASE);   // the old string stays for readers
@@ -1123,11 +1124,30 @@ void cfg_hold(const char *name, int on) {
     int i = find_entry(key);
     if (i < 0 && on && n_entries < CFG_MAX_KEYS) {   // a key not set yet: an empty entry the following cfg_set fills
         i = n_entries;
-        entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0};
+        entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0, 0};
         __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
     }
     if (i >= 0) entries[i].held = on != 0;
     plat_mutex_unlock(&set_lock);
+}
+
+void cfg_set_test(const char *name, const char *value) {
+    cfg_set(name, value);
+    char key[64];
+    entry_key(name, key, sizeof key);
+    plat_mutex_lock(&set_lock);
+    int i = find_entry(key);
+    if (i >= 0) entries[i].test = 1;
+    plat_mutex_unlock(&set_lock);
+}
+
+int cfg_test_keep(void) {
+    int n = 0;
+    plat_mutex_lock(&set_lock);
+    for (int i = 0; i < n_entries; i++)
+        if (entries[i].test) entries[i].test = 0, n++;
+    plat_mutex_unlock(&set_lock);
+    return n;
 }
 
 void cfg_revert(const char *name, const char *orig_value, int orig_state) {
@@ -1412,16 +1432,29 @@ static void put_entry(Out *o, const CfgEntry *e, const char *eol) {
 
 // A held entry (cfg_hold: a value the menu previews and the player has not applied) is invisible to a save: its flags are
 // parked here for the length of cfg_save_to and put back after it, so a save made by anything else (F10, F11, closing the
-// window) never writes it.
+// window) never writes it. So is a test hook's value (cfg_set_test): a test run's settings stay out of the file, the save
+// at exit included, and the log says how many were left out, again only when that number changes.
 static void park_held(unsigned char *parked, int n) {
+    static int test_logged;
+    char names[256];
+    int tests = 0, len = 0;
+    names[0] = 0;
     for (int i = 0; i < n; i++) {
         parked[i] = 0;
-        if (!entries[i].held) continue;
-        if (entries[i].dirty || entries[i].removed)
+        if (!entries[i].held && !entries[i].test) continue;
+        if (entries[i].held && (entries[i].dirty || entries[i].removed))
             rt_log("cfg: save leaves out %s: the settings menu previews it and it is not applied yet", entries[i].key);
+        else if (entries[i].dirty || entries[i].removed) {
+            if (len < (int)sizeof names - 40)
+                len += snprintf(names + len, sizeof names - (size_t)len, "%s%s", tests ? ", " : "", entries[i].key);
+            tests++;
+        }
         parked[i] = (unsigned char)(1 | (entries[i].dirty ? 2 : 0) | (entries[i].removed ? 4 : 0));
         entries[i].dirty = entries[i].removed = 0;
     }
+    if (tests && tests != test_logged)
+        rt_log("cfg: menu test values not saved: %d key(s): %s%s", tests, names, len >= (int)sizeof names - 40 ? ", ..." : "");
+    test_logged = tests;
 }
 
 static void unpark_held(const unsigned char *parked, int n) {
@@ -1771,7 +1804,7 @@ static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const c
             return;
         }
         entry_line[n_entries] = line;
-        entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0};
+        entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0, 0};
         __atomic_store_n(&n_entries, n_entries + 1, __ATOMIC_RELEASE);
     }
     if (!cfg_supported(key)) {   // stored, so memory and file agree, but nothing reads it on this build

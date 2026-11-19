@@ -589,8 +589,9 @@ extern "C" void menu_vk_release(void) {
 // closes.
 // NX2SARIA_MENU_TEST_CLICK=<key>:<part>[,...]: mouse clicks on the rows of the page shown (ui/option_rows.cpp click_test).
 // NX2SARIA_MENU_TEST_SET=<frame>:<key>=<value>[,<key>=<value>...][;<frame>:...]: cfg_set of each key (NX2SARIA_ prefix
-// optional) at that presented frame; changes live settings with no input, menu open or not. nx2navi.ini is written only by
-// the pseudo-key SAVE=1 (cfg_save, as a row change does; a failed write shows the menu's save note). FOCUS=<key> (the
+// optional) at that presented frame; changes live settings with no input, menu open or not. The values are the test's
+// (cfg_set_test): no save writes them, the save at exit included, and nx2saria.ini takes them only from the pseudo-key
+// SAVE=1 (cfg_test_keep, then cfg_save, as a row change does; a failed write shows the menu's save note). FOCUS=<key> (the
 // NX2SARIA_ prefix optional) puts the cursor on that setting's row and scrolls it into view when the row is next drawn
 // (opt_focus_key); for a bind cell, use BIND_<action>#<cell> with cell 0..2. FOCUS does not switch tabs.
 // Ocarina of Time: the options this port has
@@ -655,7 +656,8 @@ static void test_apply_sets(uint64_t frame) {
         const TestSet &t = g_test.sets[g_test.next_set];
         rt_log("menu: test hook: frame %llu: %s=%s", (unsigned long long)frame, t.key, t.value);
         if (!strcmp(t.key, "NX2SARIA_SAVE")) {
-            rt_log("menu: test hook: cfg_save %s", cfg_save() ? "wrote" : "failed");
+            const int kept = cfg_test_keep();
+            rt_log("menu: test hook: cfg_save of %d test value(s) %s", kept, cfg_save() ? "wrote" : "failed");
         } else if (!strcmp(t.key, "NX2SARIA_FOCUS")) {
             char row[80];
             snprintf(row, sizeof row, "%s%s", !strncmp(t.value, "BIND_", 5) || !strncmp(t.value, "NX2SARIA_", 9)
@@ -664,7 +666,7 @@ static void test_apply_sets(uint64_t frame) {
                      t.value);
             opt_focus_key(row);
         } else {
-            cfg_set(t.key, t.value);
+            cfg_set_test(t.key, t.value);
         }
     }
 }

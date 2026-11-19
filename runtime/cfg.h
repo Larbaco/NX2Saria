@@ -48,6 +48,12 @@ enum { CFG_DIRTY = 1, CFG_REMOVED = 2 };
 int cfg_state(const char *name, const char **value);
 void cfg_hold(const char *name, int on);
 void cfg_revert(const char *name, const char *orig_value, int orig_state);
+// A test hook's settings (ui/menu.cpp NX2SARIA_MENU_TEST_SET): cfg_set_test sets name as cfg_set does, and marks the
+// value as the test's, which no cfg_save / cfg_save_to writes, the save at exit included ("cfg: menu test values not
+// saved: <n> key(s): ..." in the log), until a cfg_set of the same key makes it the player's. cfg_test_keep makes every
+// test value a plain one, which the next save writes (the hook's SAVE=1), and returns how many it released. Any thread.
+void cfg_set_test(const char *name, const char *value);
+int cfg_test_keep(void);
 // 1 when the environment sets name: cfg_set cannot change what cfg_get returns (the menu greys the setting out).
 int cfg_from_env(const char *name);
 // 1 when the player set name (the environment or settings file), 0 when cfg_get gives a device profile's default or NULL.
