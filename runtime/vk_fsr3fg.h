@@ -43,6 +43,11 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
 // without them generates nothing and the next one starts a new history.
 int vk_fsr3fg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage *hudless, const VkNgxImage *out,
                        const int rect[4]);
+// For the periodic line both FSR 3.1 paths write (vk_fg_stats.h): the presenter's presents so far, given before each
+// frame, and a frame the presenter does not generate from (menu: the settings menu is open; else the game gave no
+// picture for it), counted as vk_fsr3fg_evaluate counts the others. The present path, g_pl held.
+void vk_fsr3fg_presents(uint64_t n);
+void vk_fsr3fg_paused(int menu);
 // Frame generation went off (the menu): its images go once the GPU is idle; the pipelines stay. g_pl held.
 void vk_fsr3fg_idle(void);
 void vk_fsr3fg_release(void);   // before the device goes away (the GPU idle): everything, and init runs again after

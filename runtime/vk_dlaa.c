@@ -569,6 +569,7 @@ static struct {
     int fg_cam_ok;
     float fg_jx, fg_jy;
     int fg_fresh, fg_reset;      // fresh: not handed out yet (vk_dlaa_fg_inputs)
+    int scene_last;              // the last frame that ended drew a scene (vk_dlaa_fg_scene)
     uint64_t presents;           // vk_dlaa_frame calls so far
     uint64_t fg_at, hl_at;       // presents when the inputs and the HUD-less picture were made (fg_current)
     // the picture without the HUD for frame generation (vk_dlaa_fg_hudless): DLSS's output encoded to sRGB as the game's
@@ -637,6 +638,11 @@ int vk_dlaa_pose_depth(uint64_t frame, uint32_t w, uint32_t h, VkDescriptorImage
     memcpy(history, last->pose_history, sizeof last->pose_history);
     return 1;
 }
+
+// Whether the frame that ended last drew a scene: a light target armed, or draws into a scene-size D32F depth. A frame
+// without one (the title, a movie, a load, the file menu, a fade) has nothing for frame generation, and its log line
+// counts it apart from the gameplay frames (vk_fg_stats.h). Read on the present thread a frame late at most.
+int vk_dlaa_fg_scene(void) { return __atomic_load_n(&D.scene_last, __ATOMIC_RELAXED); }
 
 int vk_dlaa_fg_camera(VkDlaaCamera *c) {
     if (!D.fg_cam_ok) return 0;
@@ -3113,6 +3119,19 @@ void vk_dlaa_pass(VkExec *ex) {
         return;
     }
     static int deferred;   // a scene-size G-buffer was seen: the deferred shape
+    static uint32_t gb_w, gb_h;     // the depth of the pass that set it
+    static uint32_t lit_w, lit_h;   // the last light target armed in Ocarina's shape that grew a side, in any frame
+    static int heals, test = -1;
+    // NX2SARIA_DLAA_TEST_DEFERRED (test): the run starts in the deferred shape, as if a 320x180 G-buffer was seen: 1 and
+    // Ocarina's light target takes it back as above, 2 and it stays, as before that (the shape set for good)
+    if (test < 0) {
+        const char *t = cfg_get("NX2SARIA_DLAA_TEST_DEFERRED");
+        test = t && (*t == '1' || *t == '2') ? *t - '0' : 0;
+        if (test)
+            deferred = 1, gb_w = 320, gb_h = 180,
+            rt_log("dlaa: NX2SARIA_DLAA_TEST_DEFERRED=%d: starting in the deferred shape (a 320x180 G-buffer), %s", test,
+                   test == 1 ? "which Ocarina's light target takes back" : "kept for the run as before");
+    }
     unsigned o[2], s[2];
     res_sizes(o, s);
     // Ocarina's builds carry no scene or output patch sets, so res_sizes reports placeholders there: the sizes come
@@ -3124,10 +3143,25 @@ void vk_dlaa_pass(VkExec *ex) {
     // A pass of that shape smaller than the light target already armed is not one: Ocarina draws a half-size effect
     // into three targets with a half-size D32F depth after its scene, and taking that for a G-buffer switched every
     // later frame to the deferred shape, where DLSS's and FSR 3.1's smaller modes never found their output pass.
-    if (ex->pass_ncolor >= 3 && scene && !(D.armed && (z->width < D.color.width || z->height < D.color.height))) {
-        if (!deferred)
+    // The same pass in a frame not armed yet (a load, the first frame of an area) took the guard below past it: in the
+    // 0.12.1 Windows logs a 720x405 pass under a 1440x810 scene and a 960x405 one under 1920x810 set the deferred shape
+    // before the first scene was armed, and with it no frame without that effect was armed again, nor given its
+    // picture without the HUD in a picture larger than the scene: frame generation saw "no picture without the HUD" on
+    // every frame. A pass smaller than a light target armed in an earlier frame is not a G-buffer either, and a light
+    // target larger than the G-buffer that set the shape takes it back (below).
+    if (ex->pass_ncolor >= 3 && scene && lit_w && (z->width < lit_w || z->height < lit_h) && !deferred) {
+        static int told;
+        if (!told++)
+            rt_log("dlaa: a %d-target pass with a %ux%u depth is not a G-buffer: a %ux%u light target was armed before "
+                   "(Ocarina's frame shape stays)", ex->pass_ncolor, z->width, z->height, lit_w, lit_h);
+    }
+    if (ex->pass_ncolor >= 3 && scene && !(D.armed && (z->width < D.color.width || z->height < D.color.height)) &&
+        !(lit_w && (z->width < lit_w || z->height < lit_h))) {
+        if (!deferred) {
             rt_log("dlaa: a G-buffer pass (%d colour targets, depth %ux%u, target 0 format %d): the deferred frame shape",
                    ex->pass_ncolor, z->width, z->height, c->image ? (int)c->format : 0);
+            gb_w = z->width, gb_h = z->height;
+        }
         D.gbuf = 1, D.armed = 0, deferred = 1;
         // target 0 is the object-class buffer (RGBA8, the scene size): the characters' bias mask reads its green. A
         // smaller pass of the same shape (640x360, seen while loading) does not replace the scene's in the same frame.
@@ -3140,11 +3174,21 @@ void vk_dlaa_pass(VkExec *ex) {
     // A smaller pair never takes over an armed one: the camera rune draws a half-size RGBA16F target with a half-size
     // D32F depth after the lighting (852x480 under a 1704x960 scene), and DLSS ran on that and wrote its picture into
     // the scene's own light target, which left every object black.
+    // Ocarina's light target, larger than the G-buffer that set the deferred shape: that pass was the half-size effect,
+    // and the frame is Ocarina's shape again.
+    if (deferred && test != 2 && ex->pass_ncolor == 1 && c->image && scene_color(c->format) && scene && c->width == z->width &&
+        c->height == z->height && (c->width > gb_w || c->height > gb_h) && c->samples <= 1 && !c->is3d) {
+        if (!heals++)
+            rt_log("dlaa: the %ux%u pass taken for a G-buffer is smaller than the scene's %ux%u light target: Ocarina's frame "
+                   "shape again", gb_w, gb_h, c->width, c->height);
+        deferred = 0, D.gbuf = 0, gb_w = gb_h = 0;
+    }
     if ((D.gbuf || !deferred) && ex->pass_ncolor == 1 && c->image && scene_color(c->format) && scene &&
         c->width == z->width && c->height == z->height &&
         (!D.armed || (c->width >= D.color.width && c->height >= D.color.height)) && c->samples <= 1 && !c->is3d) {
         int first = !D.armed;
         D.color = *c, D.depth = *z, D.armed = 1;
+        if (!deferred && (c->width > lit_w || c->height > lit_h)) lit_w = c->width, lit_h = c->height;
         static int told;
         if (first && !told++)
             rt_log("dlaa: first scene armed: light target %ux%u format %d, depth %ux%u", c->width, c->height, (int)c->format,
@@ -3373,12 +3417,33 @@ static void idle_release(void) {
 static int fg_runs(void) { return vk_dlssg_active() || vk_fg_active() || vk_ngxfg_on() || vk_fsr3fg_on(); }
 
 // One line at the first present and one at each change: whether frame generation runs, and where its inputs come from.
+// With none running, the line says why: the setting is off, or the frame generation it names does not run here (each
+// says why in its own lines), or AMD's is set and its swapchain is not made yet. It said only "no inputs are made"
+// before, the same on a card where the one set cannot run as with the setting off.
+static int fg_off_why(void) {
+    const char *fg = cfg_value("NX2SARIA_FRAMEGEN");
+    // DLSS's not running (an RTX 30 or older, as the menu's row says): AMD FSR 3.1's is suggested where it runs
+    if (!strcmp(fg, "dlss")) return vk_fsr3fg_build() ? (vk_fsr3fg_available() ? 4 : 1) : (vk_ffx_framegen_available() ? 4 : 1);
+    if (!strcmp(fg, "fsr3")) return (vk_fsr3fg_build() ? vk_fsr3fg_available() : vk_ffx_framegen_available()) ? 3 : 2;
+    return 0;
+}
+
 static void fg_state_line(int on, int fgo) {
     static int last = -1;
     const int st = !fg_runs() ? 0 : fgo ? 2 : on && !D.failed ? 1 : 3;
-    if (st == last) return;
-    last = st;
-    if (st == 0) rt_log("dlaa: frame generation does not run: no inputs are made for it");
+    const int key = st ? st : 8 + fg_off_why();
+    if (key == last) return;
+    last = key;
+    if (st == 0) {
+        static const char *why[] = {
+            "the setting is off",
+            "it is set to NVIDIA DLSS Frame Generation, which does not run here (the dlssg: and ngxfg: lines say why)",
+            "it is set to AMD FSR 3.1, which does not run here (the fg: and fsr3fg: lines say why)",
+            "it is set to AMD FSR 3.1, which has not started yet",
+            "it is set to NVIDIA DLSS Frame Generation, which does not run here: it needs an RTX 40 or newer (the dlssg: and "
+            "ngxfg: lines say why); AMD FSR 3.1's runs on this card: framegen = fsr3, or Frame generation: AMD FSR 3.1 in the menu"};
+        rt_log("dlaa: frame generation does not run: no inputs are made for it (%s)", why[key - 8]);
+    }
     else if (st == 1) rt_log("dlaa: frame generation runs with its inputs from the upscaler (%s)", use_fsr() ? "FSR" : "DLSS");
     else if (st == 2)
         rt_log("dlaa: frame generation runs without an upscaler: the scene's depth, motion vectors and camera, no "
@@ -3507,6 +3572,8 @@ void vk_dlaa_frame(void) {
         return;
     }
     idle_release();
+    // after a failure nothing is armed or counted any more (inputs_on): those frames are gameplay without inputs
+    __atomic_store_n(&D.scene_last, D.armed || D.done || F.zdraws || D.failed ? 1 : 0, __ATOMIC_RELAXED);
     if (!inputs_on()) return;
     if (D.share_off) D.share_off--;
     if (!D.done && D.armed) D.share_off = 120;   // vk_dlaa_pass: the output pass without the mode's share for a while

@@ -49,6 +49,9 @@ int vk_dlaa_fg_views(VkImageView *depth, VkImageView *mv);
 // upscaler's picture or, without an upscaler, from the game's own scaled picture; 1 once per evaluation.
 extern int vk_dlaa_hudless_wanted;
 int vk_dlaa_fg_hudless(VkImage *img, VkImageView *view, uint32_t *w, uint32_t *h, VkFormat *fmt);
+// The frame that ended last drew a scene (a light target armed, or draws into a scene-size depth): 0 on the title, a
+// movie, a load or a fade, which frame generation's log counts apart from gameplay (vk_fg_stats.h). Any thread.
+int vk_dlaa_fg_scene(void);
 int vk_dlaa_fg_camera(VkDlaaCamera *c);     // ... and its temporal upscaler is AMD FSR 3.1 (NX2SARIA_TAA = fsr3) instead of DLSS
 int vk_dlaa_ffx_camera(VkFfxCamera *c);     // the same camera as FSR takes it (vk_ffx.h); 0 without one that frame
 // vk_device.c: NGX's instance and device extensions join the lists (room for max names); vk_dlaa_init after the

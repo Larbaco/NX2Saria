@@ -38,6 +38,7 @@
 #include "host.h"
 #include "platform/platform.h"
 #include "vk_fg.h"
+#include "vk_fg_stats.h"
 #include "vk_fsr3fg.h"
 #include "vk_rec.h"
 
@@ -803,6 +804,22 @@ int vk_fsr3fg_pass_ms(int i, const char **name, double *ms, uint64_t *count) {
     return 1;
 }
 
+// Each frame by the game's state for the periodic line (vk_fg_stats.h), the one the Windows paths write too: counted on
+// the present path (gfx_present.c ng_record) as vk_fsr3fg_evaluate and vk_fsr3fg_paused see the frames.
+static FgStats S;
+static uint64_t S_presents;   // the presenter's presents so far (vk_fsr3fg_presents)
+
+static void stats_frame(FgsOutcome o) {
+    uint64_t now = plat_now_ns();
+    fgs_count(&S, o, S_presents, now);
+    char line[1024];
+    if (fgs_line(&S, "fsr3fg", S_presents, now, line, sizeof line) == 1) rt_log("%s", line);
+}
+
+void vk_fsr3fg_presents(uint64_t n) { S_presents = n; }
+
+void vk_fsr3fg_paused(int menu) { stats_frame(menu ? FGS_MENU : FGS_NO_SCENE); }
+
 // The timestamps of the call RING calls ago in this slot, if the GPU wrote them: the averages of the stats.
 static void ts_collect(uint32_t slot) {
     if (!G.ts_on || !G.ts_written[slot]) return;
@@ -814,6 +831,7 @@ static void ts_collect(uint32_t slot) {
     double of = (double)(t[2] - t[0]) * G.ts_period_ns / 1e6, fi = (double)(t[4] - t[2]) * G.ts_period_ns / 1e6;
     if (of > 1000 || fi > 1000) return;   // a wrapped counter
     G.gpu_of_sum += of, G.gpu_fi_sum += fi, G.st.gpu_samples++;
+    fgs_gpu(&S, of + fi);
 }
 
 int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage *hudless, const VkNgxImage *out,
@@ -1050,9 +1068,15 @@ int vk_fsr3fg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImag
     if (!vk_dlaa_fg_inputs(&in.depth, &in.mv, &in.jx, &in.jy, &in.reset) || !vk_dlaa_fg_views(&dv, &mvv)) {
         G.st.no_inputs++;
         G.want_reset = 1;   // the next frame has no valid frame before it
+        stats_frame(fgs_classify(0, vk_dlaa_fg_scene(), 0, 1, 1, 0));
         return 0;
     }
     in.depth.view = dv, in.mv.view = mvv;
     if (!vk_dlaa_ffx_camera(&in.cam)) memset(&in.cam, 0, sizeof in.cam);
-    return vk_fsr3fg_record(cb, bb, hudless, out, rect, &in);
+    const uint64_t cuts = G.st.cuts;
+    int made = vk_fsr3fg_record(cb, bb, hudless, out, rect, &in);
+    // these passes generate without the picture without the HUD too (bb stands in, counted in vk_fsr3fg_stats): a frame
+    // that made none started a history, or failed as logged (counted as one without its inputs)
+    stats_frame(made ? FGS_GENERATED : G.st.cuts != cuts ? FGS_CUT : FGS_NO_INPUTS);
+    return made;
 }
