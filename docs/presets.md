@@ -51,8 +51,8 @@ High column is the table's default, the game as shipped:
 |---|---|---|---|---|
 | `scene_share` | 0.5; 0.4 on an integrated GPU or a handheld | 0.67 | 0.75 | 1 |
 | `game_res` (the picture's height) | 1080 | 1080 | 1440 | `window` |
-| `aniso` | 4 | 8 | 16 | — |
-| `shadow_res` | 512 | — | `game` | 2048 |
+| `aniso` | 4 | — | 16 | — |
+| `standin_filter` (what enlarges the scene) | `bilinear` | — | `easu` | — |
 | `shadow_pcf` | — | — | 0 | 1 |
 | `foliage` | `reduced` | — | `full` | — |
 | `texture_detail` | `reduced` on a GPU with 8 GiB or more of its own memory; else — | — | `auto` | — |
@@ -81,9 +81,14 @@ Decisions:
   `scene_share`, enlarged by the stand-in ([below](#rendering-the-3d-scene-below-the-pictures-size)). No tier sets
   FSR 3.1. DLSS comes up only at a start, so a tier that turns it on in a run that started without it gives the plain
   share until the next start, as the Upscaling row does.
-- **Ultra only adds**: the scene at the picture's full size, the picture at the window's height, larger and filtered
-  shadow maps. It is recommended only from 16 GiB of video memory, where the larger render targets and the texture
+- **Ultra only adds**: the scene at the picture's full size, the picture at the window's height, filtered shadow
+  edges. It is recommended only from 16 GiB of video memory, where the larger render targets and the texture
   heap they grow fit.
+- **Only what costs GPU time measurably here.** On the bench ([Measurements](#measurements)) the scene's share, the
+  picture's height and the stand-in's filter moved the GPU time; anisotropic filtering, texture detail, foliage,
+  anti-aliasing and the soft-shadow settings stayed within the noise. So Medium keeps the shipped filtering, and Low
+  lowers it only where an integrated GPU's memory bandwidth may still gain. `shadow_res` has no effect on 1.1.1 (the
+  start logs `cfg: SHADOW_RES has no effect on this game version`) and is in no tier.
 - **`texture_detail` is set only where `auto` would keep full textures.** On a GPU with less memory of its own, `auto`
   already picks smaller textures by the budget the driver grants, which knows more than the tier does.
 
@@ -268,7 +273,7 @@ when custom, or *Recommended for this PC: …* when a chosen tier is not the rec
 - **Apply** (`option_rows.cpp` `opt_draft_apply`) writes the draft: `preset = <tier>` in `nx2saria.ini` (no line for
   Recommended), the handed-back keys' lines removed. It then switches the layer (`cfg_preset_use_from`, which logs each
   value that changes from what the player saw before the draft) and records this PC as the one the preset was chosen
-  on (`cfg_preset_chosen`). The restart-only keys a tier sets (`game_res`, `shadow_res`, `shadow_pcf`,
+  on (`cfg_preset_chosen`). The restart-only keys a tier sets (`game_res`, `shadow_pcf`,
   `texture_detail`, `foliage`) wait for a restart: the Apply box marks the preset line *after restart* when one of them
   changes, and the restart box follows as for any other.
 - **The one-time notice** (`preset_notice_tick`): a player who never set `preset`, on a PC whose recommended tier is

@@ -198,7 +198,7 @@ def main():
 
     # ---- RAM caps: an RTX 4060 with 12 GB is medium, through DLSS quality
     rc, out, f = run(RTX4060_LOWRAM, ini='')
-    check(get(out, 'in_use') == 'medium' and get(out, 'get DLSS') == 'quality' and get(out, 'get ANISO') == '8',
+    check(get(out, 'in_use') == 'medium' and get(out, 'get DLSS') == 'quality' and get(out, 'get GAME_RES') == '1080',
           '12 GB of RAM: medium, DLSS quality on RTX', out)
 
     # ---- the Steam Deck: low below the device profile
@@ -260,7 +260,7 @@ def main():
 
     # ---- the menu's Apply of a preset choice: defaults of a tier, keys that differ, and the log from the old values
     rc, out, f = run(RX6700, ini='[display]\naniso = 2\n', actions=('handoff=low',))
-    check(get(out, 'tier_default low ANISO') == '4' and get(out, 'tier_default medium ANISO') == '8'
+    check(get(out, 'tier_default low ANISO') == '4' and get(out, 'tier_default medium ANISO') == '16'
           and get(out, 'differs low ANISO') == '1' and get(out, 'differs high ANISO') == '1'
           and get(out, 'differs low ANISO', 1) == '0',
           'cfg_default_tier and cfg_preset_differs', out)

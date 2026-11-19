@@ -145,6 +145,11 @@ static inline int preset_pick(const PresetHw *hw, char *why, size_t cap) {
 
 // ---- what each tier sets. One row per key and hardware; for one key, a later row that applies replaces an earlier
 // one. Recalibrate from bench numbers here; tests/preset_check.c checks every value against its setting's choices.
+// The rows keep to what costs GPU time measurably in this game version (docs/presets.md, Measurements): the scene's
+// share, the picture's height and the filter that enlarges the scene. Anisotropic filtering, texture detail, foliage,
+// anti-aliasing and the soft-shadow settings cost no time a desktop card shows, so High's and Medium's stay as
+// shipped; Low lowers the ones that ease an integrated GPU's memory bandwidth. shadow_res has no effect on 1.1.1
+// (cfg_supported) and is in no tier.
 enum {
     PRESET_ANY,        // every PC
     PRESET_SMALL,      // an integrated GPU or a handheld
@@ -160,13 +165,11 @@ static const PresetRow PRESET_ROWS[] = {
     // ---- Ultra: more than the game as shipped, for cards with 16 GiB of video memory or more
     {PRESET_ULTRA, PRESET_ANY, "SCENE_SHARE", "1"},       // the 3D scene at the picture's full size (shipped: 0.75)
     {PRESET_ULTRA, PRESET_ANY, "GAME_RES", "window"},     // the picture and HUD at the window's height (shipped: 1440)
-    {PRESET_ULTRA, PRESET_ANY, "SHADOW_RES", "2048"},     // shadow maps of 2048 (shipped: the game's own size)
     {PRESET_ULTRA, PRESET_ANY, "SHADOW_PCF", "1"},        // shadow edges filtered over several samples
     // ---- High: the game as shipped. No rows.
     // ---- Medium
     {PRESET_MEDIUM, PRESET_ANY, "SCENE_SHARE", "0.67"},   // the 3D scene at two thirds of the picture
     {PRESET_MEDIUM, PRESET_ANY, "GAME_RES", "1080"},      // the picture and HUD 1080 lines high
-    {PRESET_MEDIUM, PRESET_ANY, "ANISO", "8"},            // 8x anisotropic filtering (shipped: 16x)
     {PRESET_MEDIUM, PRESET_DLSS, "DLAA", "1"},            // the scene through DLSS ...
     {PRESET_MEDIUM, PRESET_DLSS, "TAA", "dlss"},
     {PRESET_MEDIUM, PRESET_DLSS, "DLSS", "quality"},      // ... in its quality mode
@@ -181,7 +184,7 @@ static const PresetRow PRESET_ROWS[] = {
     {PRESET_LOW, PRESET_ANY, "ANISO", "4"},               // 4x anisotropic filtering
     {PRESET_LOW, PRESET_ROOMY, "TEXTURE_DETAIL", "reduced"},   // smaller textures; with less memory auto picks itself
     {PRESET_LOW, PRESET_ANY, "FOLIAGE", "reduced"},       // fewer grass and bush draws
-    {PRESET_LOW, PRESET_ANY, "SHADOW_RES", "512"},        // shadow maps of 512
+    {PRESET_LOW, PRESET_ANY, "STANDIN_FILTER", "bilinear"},   // the scene enlarged with the plain filter (shipped: easu)
     {PRESET_LOW, PRESET_IGPU_DESK, "FPS_LIMIT", "30"},    // 30 fps, which an integrated GPU holds
     {PRESET_LOW, PRESET_HANDHELD, "FPS_LIMIT", "40"},     // 40 fps, which divides a handheld's 40, 80 and 120 Hz
     {PRESET_LOW, PRESET_DLSS, "DLAA", "1"},               // the scene through DLSS ...

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=0351ce17652b56701676e08c6de5f83f22253b96 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=f89373668b34dc7c19a4de2b82532295b629fc0e reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -229,8 +229,8 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
 (…)*, *Baixo*, *Médio*, *Alto* ou *Ultra*.
 
 - *Alto* é o jogo como foi lançado. *Baixo* e *Médio* desenham menos, para PCs mais lentos e portáteis: uma cena 3D
-  menor em uma imagem de 1080 linhas e menos filtragem de texturas; *Baixo* também tem sombras menores, menos grama
-  desenhada e, em uma GPU integrada ou em um portátil, um limite de 30 ou 40 fps. Em uma placa NVIDIA RTX eles usam
+  menor em uma imagem de 1080 linhas; *Baixo* também tem menos filtragem de texturas, um filtro mais simples para
+  ampliar a cena, menos grama desenhada e, em uma GPU integrada ou em um portátil, um limite de 30 ou 40 fps. Em uma placa NVIDIA RTX eles usam
   DLSS, em uma placa Radeon RX 9000 no Windows, FSR 4. *Ultra* desenha mais, para placas de vídeo com 16 GB de memória
   ou mais. Nenhum preset liga a geração de quadros.
 - *Recomendado* é escolhido de novo a cada inicialização, pela placa de vídeo, pela memória e pelo processador. Em um PC
