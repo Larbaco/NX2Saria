@@ -1009,9 +1009,7 @@ enum {
     FOV_EVENT_CAMERA = 1u << 3, FOV_OTHER_CAMERA = 1u << 4, FOV_MENU = 1u << 5,
     FOV_NO_EVENT_MANAGER = 1u << 6, FOV_EVENT_UNREADABLE = 1u << 7, FOV_ACTIVE_EVENT = 1u << 8,
     FOV_NO_PLAYER = 1u << 9, FOV_PLAYER_FLAGS_UNREADABLE = 1u << 10, FOV_AIMING = 1u << 11,
-    FOV_NO_CAMERA_MANAGER = 1u << 12, FOV_CAMERA_COUNT_UNREADABLE = 1u << 13, FOV_NO_CAMERAS = 1u << 14,
-    FOV_NO_CAMERA_VIEW = 1u << 15, FOV_VIEW_MISMATCH = 1u << 16, FOV_CAMERA_FLAGS_UNREADABLE = 1u << 17,
-    FOV_MENU_CAMERA = 1u << 18, FOV_BAD_ANGLE = 1u << 19, FOV_UNCHANGED_ANGLE = 1u << 20
+    FOV_BAD_ANGLE = 1u << 12, FOV_UNCHANGED_ANGLE = 1u << 13
 };
 static atomic_uint fov_diagnostics;
 static atomic_flag fov_hook_logged = ATOMIC_FLAG_INIT;
@@ -1062,34 +1060,6 @@ void dbg_fov_host(Cpu *c) {
     if (!player) { fov_skip_once(FOV_NO_PLAYER, "player camera component is unavailable"); return; }
     if (!rd(player + 0xd90, &flags, sizeof flags)) { fov_skip_once(FOV_PLAYER_FLAGS_UNREADABLE, "player camera flags are unreadable"); return; }
     if (flags & 0x100) { fov_skip_once(FOV_AIMING, "first-person aiming flag is set"); return; }
-    // Use camera zero, the view used by the actor-to-screen projection at main+0x20c1e0. The menu path at
-    // main+0x2d684c sets bit 0 of that camera's +0x88 through main+0x11745c0 while the message log owns the view.
-    slot = rd_ptr(MOD_MAIN_BASE + 0x4c86bc0);
-    mgr = slot ? rd_ptr(slot) : 0;
-    uint32_t count;
-    if (!mgr) { fov_skip_once(FOV_NO_CAMERA_MANAGER, "camera manager is unavailable"); return; }
-    if (!rd(mgr + 0x20, &count, sizeof count)) { fov_skip_once(FOV_CAMERA_COUNT_UNREADABLE, "camera count is unreadable"); return; }
-    if (!count) { fov_skip_once(FOV_NO_CAMERAS, "camera manager has no cameras"); return; }
-    uint64_t list = rd_ptr(mgr + 0x28), camera = 0;
-    uint64_t views = rd_ptr(state + 0x18), view = views ? rd_ptr(views) : 0;
-    if (!list || !view) { fov_skip_once(FOV_NO_CAMERA_VIEW, "camera list or active view pointer is unavailable"); return; }
-    // The manager's first camera can be an interface or event camera; match the view the current update actually uses.
-    for (uint32_t i = 0; i < count && i < 128; i++) {
-        uint64_t candidate = rd_ptr(list + (uint64_t)i * 8);
-        if (candidate && rd_ptr(candidate + 0x78) == view) { camera = candidate; break; }
-    }
-    if (!camera) {
-        char reason[96];
-        uint64_t first = rd_ptr(list);
-        uint64_t first_view = first ? rd_ptr(first + 0x78) : 0;
-        snprintf(reason, sizeof reason, "no camera among %u entries owns active view %#llx (first view %#llx)",
-                 count, (unsigned long long)view, (unsigned long long)first_view);
-        fov_skip_once(FOV_VIEW_MISMATCH, reason);
-        return;
-    }
-    uint16_t camera_flags;
-    if (!rd(camera + 0x88, &camera_flags, sizeof camera_flags)) { fov_skip_once(FOV_CAMERA_FLAGS_UNREADABLE, "active camera flags are unreadable"); return; }
-    if (camera_flags & 1) { fov_skip_once(FOV_MENU_CAMERA, "camera zero is marked as a menu camera"); return; }
     uint32_t bits = (uint32_t)c->v[0];
     float orig;
     memcpy(&orig, &bits, sizeof orig);
