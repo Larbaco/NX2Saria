@@ -24,7 +24,8 @@ HOST_SITES = [('ostep', 0x3cdfc0, 0x1e380008, [], 0xf60), ('ostep', 0x475f8, 0x1
               ('owater', 0x3876014, FDIV, [FDIV], 0xf20), ('owater', 0x38827f8, FDIV, [FDIV], 0xf20),
               ('owater', 0x632cfc, FDIV, [FDIV], 0xf20),
               ('osound', 0x41531c, 0x910083fd, [0x910083fd], 0xf10), ('osound', 0x415334, 0xbd401100, [0xbd401100], 0xf00),
-              ('ohorse', 0x2c3ae18, 0x1e2e1009, [0x1e2e1009], 0xea0)]
+              ('ohorse', 0x2c3ae18, 0x1e2e1009, [0x1e2e1009], 0xea0),
+              ('ogohma', 0x261eb1c, 0x1e280800, [0x1e280800], 0xe80)]
 
 
 def compiler():
@@ -182,6 +183,16 @@ def horse_function():
             + '    return COND_PL(c);\n}\n')
 
 
+def gohma_function():
+    lift = Lifter(0, simd='c')
+    return ('void frame_rate_gohma_turn_host(Cpu *c);\n'
+            'void gohma_clamp(Cpu *c, int enabled) {\n'
+            + lift_ops(lift, 0x261eb18, [0x1e210801, 0x1e280800])
+            + '    if (enabled) frame_rate_gohma_turn_host(c);\n'
+            + lift_ops(lift, 0x261eb28, [0x1e202040, 0x1e22cc00, 0x1e212040, 0x1e204c20])
+            + '}\n')
+
+
 def main():
     work = ROOT / 'build' / 'test' / 'frame_step'
     work.mkdir(parents=True, exist_ok=True)
@@ -189,7 +200,7 @@ def main():
     exe = work / ('frame_step_check.exe' if os.name == 'nt' else 'frame_step_check')
     solver = work / 'solver_sites.c'
     solver.write_text(solver_functions() + '\n' + follow_functions() + '\n' + staff_functions() +
-                      '\n' + horse_function())
+                      '\n' + horse_function() + '\n' + gohma_function())
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')

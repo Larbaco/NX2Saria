@@ -229,6 +229,40 @@ static void check_horse_jump(void) {
     atomic_store(ostep_page, saved);
 }
 
+void gohma_clamp(Cpu *c, int enabled);
+
+static void check_gohma_turn(void) {
+    uint32_t saved = atomic_load(ostep_page);
+    static const struct {
+        float render_step, steering_step, turn, rate, vanilla, patched;
+    } cases[] = {
+        {0.5f, 0.5f, 0.25f, 1.0f, 0.125f, 0.5f},
+        {0.5f, 0.5f, -0.25f, -1.0f, -0.125f, -0.5f},
+        {0.5f, 0.5f, 0.25f, 0.25f, 0.125f, 0.25f},
+        {0.5f, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f},
+        {1.0f, 0.5f, 0.25f, 1.0f, 0.125f, 0.125f},
+        {1.0f, 1.0f, 0.25f, 1.0f, 0.25f, 0.25f},
+        {2.0f, 2.0f, 0.25f, 1.0f, 0.5f, 0.5f},
+    };
+    for (unsigned i = 0; i < sizeof cases / sizeof *cases; i++) {
+        atomic_store(ostep_page, scalar_bits(cases[i].render_step));
+        for (int on = 0; on <= 1; on++) {
+            Cpu c = {0};
+            c.v[0] = scalar_bits(fabsf(cases[i].turn));
+            c.v[1] = scalar_bits(-cases[i].steering_step);
+            c.v[2] = scalar_bits(cases[i].rate);
+            c.v[8] = scalar_bits(cases[i].steering_step);
+            c.v[10] = scalar_bits(-9.0f);   // the already restored caller value is unrelated to the turn
+            gohma_clamp(&c, on);
+            CHECK(c.v[0] == scalar_bits(on ? cases[i].patched : cases[i].vanilla),
+                  "Gohma steering case %u, patch %d did not clamp the rate", i, on);
+            CHECK(c.v[8] == scalar_bits(cases[i].steering_step) && c.v[10] == scalar_bits(-9.0f),
+                  "Gohma steering case %u changed the simulation step or caller register", i);
+        }
+    }
+    atomic_store(ostep_page, saved);
+}
+
 int main(int argc, char **argv) {
     int mean = argc > 1 && !strcmp(argv[1], "mean");
     if (mean) steady = "0";
@@ -256,6 +290,7 @@ int main(int argc, char **argv) {
     }
 
     check_horse_jump();
+    check_gohma_turn();
 
     // A 60 fps limit with a late frame and the short one after it every 37 frames: one frame exactly, every frame.
     set_limit("60");

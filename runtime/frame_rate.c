@@ -845,6 +845,35 @@ void frame_rate_horse_jump_host(Cpu *c) {
     }
 }
 
+// The steering update's final clamp stores a turn rate. Its upper bound s0 is the magnitude of the turn
+// applied this update multiplied by the step in s8. Undo that extra multiplication and convert the turn
+// back into a rate. The guest has already restored the caller's s10 before computing the bounds.
+void frame_rate_gohma_turn_host(Cpu *c) {
+    if (frame_step_frames() >= 1.0f) return;
+    uint32_t bits = (uint32_t)c->v[8];
+    float step;
+    memcpy(&step, &bits, sizeof step);
+    if (!(step > 0.0f && step < 1.0f)) return;
+
+    float old_bound;
+    bits = (uint32_t)c->v[0];
+    memcpy(&old_bound, &bits, sizeof old_bound);
+    float turn = old_bound / step;
+    float rate = turn / step;
+    if (!(rate > 0.0f && isfinite(rate))) return;
+    memcpy(&bits, &rate, sizeof bits);
+    c->v[0] = bits;
+    c->v[1] = bits | 0x80000000u;
+
+    static _Atomic unsigned logged;
+    if (atomic_load_explicit(&logged, memory_order_relaxed) < 4) {
+        unsigned n = atomic_fetch_add_explicit(&logged, 1, memory_order_relaxed);
+        if (n < 4)
+            rt_log("frame rate: Gohma steering clamp #%u: step %.6f, turn magnitude %.6f, rate limit %.6f -> %.6f",
+                   n + 1, step, turn, old_bound, rate);
+    }
+}
+
 static void ocarina_step_write(double dt) {
     static int on = -1;
     if (on < 0) {
