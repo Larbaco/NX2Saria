@@ -73,6 +73,10 @@ static _Atomic long full_n, test_n, kept_n;   // refusals by a full heap, by the
 static _Atomic int told;        // retry lines logged
 
 static uint64_t ld64(uint64_t a) { return a && mem_readable(a, 8) ? *(const uint64_t *)(uintptr_t)a : 0; }
+// A word the game's own code reads at the site or right after it: the function's stack slot and its request (main+0x436918
+// and main+0x43691c load both again; main+0x502050 loads the request's +0 and +8). They are read as they are, without
+// mem_readable, which answered 0 for the game thread's stack in a bench run (the stack the game hands CreateThread).
+static uint64_t own64(uint64_t a) { return *(const uint64_t *)(uintptr_t)a; }
 
 // 1 while the test switch still refuses this kind (0 the CPU buffers, 1 the GPU memory); the count stops at 0
 static int test_refuse(int gpu) {
@@ -176,7 +180,7 @@ static void heap_retry_cpu(Cpu *c) {
         test = 1;   // the block stays in the model's heap, as allocated
     }
     const uint64_t bytes = c->x[site == SITE_C8 ? 21 : 22], call = site == SITE_C8 ? CPU_CALL_C8 : CPU_CALL_A8;
-    const uint64_t heap = ld64(ld64(c->sp + REQUEST_SLOT) + 8);
+    const uint64_t req = own64(c->sp + REQUEST_SLOT), heap = req ? own64(req + 8) : 0;
     count_refusal(test);
     c->x[0] = 0;
     if (shipped) {
@@ -201,7 +205,7 @@ static void heap_retry_cpu(Cpu *c) {
 static void heap_retry_gpu(Cpu *c) {
     const uint64_t block = c->x[0], req = c->x[1], one = c->x[2], at = c->x[30] - MOD_MAIN_BASE;
     const uint64_t fn = MOD_MAIN_BASE + GPU_ALLOC;
-    const uint64_t heap = ld64(req + 8), bytes = ld64(req) * one;
+    const uint64_t heap = req ? own64(req + 8) : 0, bytes = req ? own64(req) * one : 0;
     int test = 0;
     uint64_t r = 0;
     if (heap && bytes && test_refuse(1)) test = 1;

@@ -27,7 +27,9 @@ static int have_set = 1, set_on = 1;
 int rt_patch_set(const char *name) { return have_set && !strcmp(name, "heap_retry") ? 5 : -1; }
 int rt_patch_enabled(int set) { return set == 5 && set_on; }
 void rt_patch_switch(int set, int on) { assert(set == 5); set_on = on != 0; }
-int mem_readable(uint64_t a, uint64_t n) { (void)n; return a > UNMAPPED; }
+// mem_readable: the stand-in stack frame and requests read as unreadable, as the game thread's stack did in a bench run
+static int on_stack(uint64_t a);
+int mem_readable(uint64_t a, uint64_t n) { (void)n; return a > UNMAPPED && !on_stack(a); }
 static const char *env_fail, *env_shipped;
 const char *cfg_get(const char *name) {
     if (!strcmp(name, "NX2SARIA_HEAP_RETRY_TEST_FAIL")) return env_fail;
@@ -118,6 +120,11 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
 
 // ---- the sites
 static uint64_t frame[0x60], request[4];   // main+0x4366e0's stack (its x1 at +0x38) and that x1 (+8 the heap)
+static uint64_t gpu_req[6];   // +0 count, +8 heap, +0x20 what it is for
+static int inside(uint64_t a, const void *p, size_t n) { return a >= (uintptr_t)p && a < (uintptr_t)p + n; }
+static int on_stack(uint64_t a) {
+    return inside(a, frame, sizeof frame) || inside(a, request, sizeof request) || inside(a, gpu_req, sizeof gpu_req);
+}
 static Cpu cpu_site(uint64_t ret, uint64_t x0, uint64_t size, Heap *heap) {
     Cpu c;
     memset(&c, 0x5a, sizeof c);
@@ -136,7 +143,6 @@ static uint64_t call_cpu(uint64_t ret, uint64_t x0, uint64_t size, Heap *heap) {
     assert(c.sp == before.sp);
     return c.x[0];
 }
-static uint64_t gpu_req[6];   // +0 count, +8 heap, +0x20 what it is for
 static uint64_t call_gpu(uint64_t ret, uint64_t count, Heap *heap) {
     Cpu c;
     memset(&c, 0x5a, sizeof c);
