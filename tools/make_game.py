@@ -44,8 +44,11 @@ The list goes to disk every 25 objects while the compile runs, so a compile that
 A kit with lib/libnx2navirt.a built by --make-runtime-lib for the same runtime/ and the same compiler links the
 runtime from it and compiles only the runtime files that include headers written per install. The new ocarina.exe
 replaces the old one only once it links (with lld when the toolchain has it), so a failed build leaves the last good
-one in place. Compiles run on every logical processor, or on as many as the free memory allows (default_jobs; --jobs
-sets the number), the largest files first. The lifted code is built for this
+one in place. Up to one compile per logical processor runs at a time (--jobs sets the most), the longest first; the
+memory gate (tools/memgate.py) starts each one only when the free memory, less what the running compiles may still
+take and a reserve for the rest of the PC, holds its estimated peak. The estimates are the peaks measured in earlier
+builds (build-cache/obj/compile-memory.json, written as the compiles end), or a model of the source's size before
+that; --mem-limit, --mem-reserve, --min-jobs and --no-mem-gate set the gate. The lifted code is built for this
 PC's x86-64 level (cpu_level), with MSYS2 CLANG64's clang when it sits beside the UCRT64 folder and reports the same
 version (fast_clang: the same objects, about a fifth faster).
 
@@ -77,6 +80,7 @@ by a JSON object (launcher/build.py reads them): {"ev": "step", "step": ..., "st
 ...} and {"ev": "end", ...}.
 """
 import argparse
+import collections
 import concurrent.futures
 import errno
 import hashlib
@@ -97,6 +101,7 @@ from typing import NamedTuple
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT / 'tools'))
 import nup  # noqa: E402
+import memgate  # noqa: E402
 import mod_files  # noqa: E402
 import prompt_art  # noqa: E402
 from check_content import GENERATED_MARKER  # noqa: E402
@@ -179,6 +184,7 @@ RUN_SCRIPT = ('import os, runpy, sys; s = sys.argv[1]; sys.argv = sys.argv[1:]; 
               'sys.path.insert(0, os.path.dirname(os.path.abspath(s))); runpy.run_path(s, run_name="__main__")')
 
 EVENTS = False
+GATE_ARGS = None              # build_main's options, read by the memory gate of the compiles (gate_settings)
 OUT_LOCK = threading.Lock()   # the RomFS step prints from its own thread (main)
 
 
@@ -567,11 +573,23 @@ def mod_digest(out):
     return h.hexdigest()
 
 
+def lifter_env():
+    """The environment gen.py runs in: this one, plus the memory gate's options build_main was given
+    (--mem-reserve, --no-mem-gate) as the variables gen.py reads, so the lift keeps the reserve the compiles keep."""
+    env = dict(os.environ)
+    args = GATE_ARGS if GATE_ARGS is not None else argparse.Namespace()
+    if getattr(args, 'mem_reserve', None) is not None:
+        env[memgate.ENV_RESERVE] = str(args.mem_reserve)
+    if getattr(args, 'no_mem_gate', False):
+        env[memgate.ENV_GATE] = 'off'
+    return env
+
+
 def run_lifter(out, lift, patches):
     """gen.py with the patch file into lift; its exit code."""
     cmd = py_cmd(KIT / 'recomp' / 'gen.py', '--exefs', out / 'exefs', '--out', lift, '--patches', patches)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8',
-                         errors='replace', bufsize=1)
+                         errors='replace', bufsize=1, env=lifter_env())
     for line in p.stdout:
         line = line.rstrip('\n')
         say(f'  {line}')
@@ -1033,30 +1051,41 @@ def earlier_kits():
     return sorted(kits)
 
 
-# Peak memory of one compile (tools/build_game.py JOB_MEM: 120 to 180 MiB for a chunk of lifted code, 568 MiB for the
-# largest file), and the share of the free memory the compiles may take in all; the rest stays with the system, the
-# RomFS step beside them and whatever else the player runs.
-JOB_MEM = 768 << 20
-JOB_MEM_SHARE = 0.8
-
-
-def default_jobs(cpus=None, free=None):
-    """(compiles at a time, why) without --jobs: one per logical processor, but no more than JOB_MEM_SHARE of the
-    free memory holds at JOB_MEM each, and at least one. One per processor alone took no account of memory: on a
-    PC with many threads and little free memory the compiles filled it, the largest files first as they start
-    together. cpus, free: the processor count and the free bytes instead of this machine's (tests); without a
-    reading of the free memory (tools/hostmem.py) the processor count alone decides, as before."""
+def default_jobs(cpus=None):
+    """(most compiles at a time, why) without --jobs: one per logical processor. The memory gate (tools/memgate.py)
+    decides when each of them starts, by the free memory and each compile's estimated peak. cpus: the processor count
+    instead of this machine's (tests)."""
     cpus = cpus or os.cpu_count() or 4
-    if free is None:
-        try:
-            import hostmem
-            free = hostmem.available_ram()
-        except (ImportError, OSError, AttributeError):
-            free = None
-    if free is None:
-        return cpus, f'{cpus} processors, free memory unknown'
-    by_mem = max(1, int(free * JOB_MEM_SHARE) // JOB_MEM)
-    return min(cpus, by_mem), f'{cpus} processors, {free / 2 ** 30:.1f} GiB of free memory allow {by_mem}'
+    return cpus, f'{cpus} processors'
+
+
+def gate_settings():
+    """memgate.settings() of build_main's options (none for a caller that gave none: the environment and the defaults
+    decide), with why the gate is off when it is: '--no-mem-gate' or the environment variable's setting."""
+    args = GATE_ARGS if GATE_ARGS is not None else argparse.Namespace()
+    s = memgate.settings(args)
+    off = ''
+    if not s['enabled']:
+        off = '--no-mem-gate' if getattr(args, 'no_mem_gate', False) else \
+            f'{memgate.ENV_GATE}={os.environ.get(memgate.ENV_GATE, "").strip()}'
+    return s, off
+
+
+def make_gate(jobs):
+    """The memory gate of one step's compiles, at most `jobs` at a time; its lines go through say(), indented as the
+    step's other lines are."""
+    return memgate.from_args(GATE_ARGS if GATE_ARGS is not None else argparse.Namespace(), jobs,
+                             log=lambda line: say(f'  {line}'))
+
+
+def jobs_line(jobs, why):
+    """build_main's line on how many compiles run at a time."""
+    s, off = gate_settings()
+    if off:
+        return f'compiles at a time: up to {jobs} ({why}) (memory gate off: {off})'
+    limit = 'no ceiling' if s['ceiling'] is None else f'at most {memgate.gib(s["ceiling"])} GiB estimated in all'
+    return (f'compiles at a time: up to {jobs} ({why}); the memory gate starts each one when the free memory holds it '
+            f'(keeps {memgate.gib(s["reserve"])} GiB free, {limit})')
 
 
 SOURCE_WAIT, SOURCE_PAUSE = 60, 2   # seconds source_size waits for a drive in all, and between two tries
@@ -1091,18 +1120,50 @@ def source_size(src):
 # cache of a whole game is some megabytes, and writing it after every object would take longer than the compiles.
 CACHE_SAVE_EVERY, CACHE_SAVE_PAUSE = 25, 2.0
 
+# The memory a compile of a source outside the lift (the runtime, the generated modules.c) is taken to need until a
+# build has measured it: the size model describes lifted C only. The runtime's C++ (the renderer, imgui) takes the most.
+DEFAULT_NEED_C = 400 << 20
+DEFAULT_NEED_CXX = 1 << 30
+CXX_SUFFIXES = ('.cpp', '.cc', '.cxx')
 
-def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt='', stop=None, alts=None):
+
+def compile_order(jobs, estimates):
+    """jobs: [(index, name, cost, need's how)]. The indexes in the order the compiles start: the longest first, as
+    compile time grows with size and a long one that started last would run on alone after the others finished. An
+    object an earlier build measured is placed by its recorded seconds; the others by their cost, turned into seconds
+    at the median rate (seconds per cost byte) of the measured ones among these, or by cost alone when none was."""
+    seconds = {i: estimates.objects[name]['seconds'] for i, name, _, how in jobs if how == 'learned'}
+    rates = sorted(seconds[i] / cost for i, _, cost, _ in jobs if i in seconds and cost > 0)
+    rate = rates[len(rates) // 2] if rates else None
+
+    def key(job):
+        i, _, cost, _ = job
+        if rate is None:
+            return cost
+        return seconds[i] if i in seconds else cost * rate
+    return [job[0] for job in sorted(jobs, key=key, reverse=True)]
+
+
+def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt='', stop=None, alts=None, *, gate=None,
+                estimates=None, costs=None, plan=None, measured=None):
     """Compile each (source, object) whose object is not current in cache. cmd_for(src, dst) -> argv without the
     dependency-file options; salt identifies the compiler. Returns (compiled, reused, failures) with failures as
-    (src, stderr tail). The cache's roots stand for their paths in the flags too. The largest sources start first:
-    compile time grows with size, and a big file that started last would run on alone after the others finished.
-    stop() true makes the compiles not yet started end at once, unrecorded (a step beside this one failed).
+    (src, stderr tail). The cache's roots stand for their paths in the flags too. The longest compiles start first
+    (compile_order). stop() true makes the compiles not yet started end at once, unrecorded (a step beside this one
+    failed).
     alts(src, dst) -> (keys, kits): the keys earlier versions gave the same compile, and the folders of their kits; an
     object recorded under one of them is taken over (ObjectCache.adopt) instead of compiled again.
     Each object is recorded when its compile ends, whichever started first, and the cache goes to disk every
     CACHE_SAVE_EVERY objects: a compile that is cut short (Cancel ends the process, a crash, a power cut) keeps the
-    objects finished until then, where it used to keep none and the next run compiled the whole game again."""
+    objects finished until then, where it used to keep none and the next run compiled the whole game again.
+    gate: the memory gate (memgate.Gate) that starts each compile, in the order above; without one, `jobs` compiles
+    run at a time whatever the memory. estimates (memgate.Estimates): each compile's need, and where the measured
+    peaks and times of the successful ones are recorded; saved with the object cache. costs: {source: (cost bytes,
+    switch_fn bytes)} of the lifted chunks (chunk_costs); a source not in it costs its size and needs DEFAULT_NEED_C
+    or DEFAULT_NEED_CXX until measured. plan(hows): called once before the first compile with a Counter of how the
+    needs of the compiles to run were estimated ('learned', 'model', 'default'). measured: a list that receives
+    (object name, peak bytes, seconds) of each compile that succeeded. Without gate and estimates the compiles run
+    through subprocess.run, unmeasured, as before the gate."""
     todo, keys = [], {}
     adopted = 0
     for src, dst in srcs:
@@ -1116,45 +1177,109 @@ def compile_all(srcs, cmd_for, cache, jobs, env, progress=None, salt='', stop=No
     reused = len(srcs) - len(todo)
     if adopted:
         say(f'  {adopted} objects an earlier version compiled are kept: the same compile of the same sources')
-    todo.sort(key=lambda job: source_size(job[0]), reverse=True)
 
-    def cc(job):
+    measure = gate is not None or estimates is not None
+    est = estimates if estimates is not None else memgate.Estimates()
+    own_gate = gate is None
+    if own_gate:
+        gate = memgate.Gate(max(1, jobs), enabled=False, log=say)
+    costs = costs or {}
+    info = {}   # dst -> (src bytes, cost to record, switch_fn, need)
+    planned = []
+    for i, (src, dst) in enumerate(todo):
+        size = source_size(src)
+        lifted = Path(src) in costs
+        cost, switch_fn = costs[Path(src)] if lifted else (size, 0)
+        default = None if lifted else DEFAULT_NEED_CXX if Path(src).suffix in CXX_SUFFIXES else DEFAULT_NEED_C
+        need, how = est.need(dst.name, size, cost if lifted else 0, switch_fn, default=default)
+        # Estimates.record keeps a cost above 0 for lifted chunks only: those alone feed the size model's scale
+        info[dst] = (size, cost if lifted else 0, switch_fn, need)
+        planned.append((i, dst.name, cost, how))
+    todo = [todo[i] for i in compile_order(planned, est)]
+    if plan:
+        plan(collections.Counter(how for *_, how in planned))
+
+    # The gate serves its waiters in the order they ask; the pool's threads would ask in whichever order they got to
+    # run, so each job waits for its turn to ask, and the start order is the order above.
+    turn = [0]
+    turn_cv = threading.Condition()
+
+    def cc(index, job):
         src, dst = job
         dep = dst.with_suffix('.d')
-        if stop and stop():
-            return src, dst, dep, None, ''
-        cmd = cmd_for(src, dst)
-        cmd[1:1] = ['-MMD', '-MF', str(dep)]
-        p = subprocess.run(cmd, capture_output=True, text=True, env=env, errors='replace')
-        return src, dst, dep, p.returncode, p.stderr[-1500:]
+        with turn_cv:
+            while turn[0] != index:
+                turn_cv.wait()
+        try:
+            if stop and stop():
+                return src, dst, dep, None, '', None, False
+            # a compile held for memory ends at once when the step beside fails (acquire then returns None)
+            lease = gate.acquire(dst.name, info[dst][3], cancel=stop)
+            if lease is None:
+                return src, dst, dep, None, '', None, False
+        finally:
+            with turn_cv:
+                turn[0] += 1
+                turn_cv.notify_all()
+        try:
+            if stop and stop():
+                return src, dst, dep, None, '', None, False
+            cmd = cmd_for(src, dst)
+            cmd[1:1] = ['-MMD', '-MF', str(dep)]
+            if measure:
+                r = memgate.run(cmd, env=env, on_start=lease.started)
+                return src, dst, dep, r.returncode, r.stderr_tail, r, lease.pressed
+            p = subprocess.run(cmd, capture_output=True, text=True, env=env, errors='replace')
+            return src, dst, dep, p.returncode, p.stderr[-1500:], None, False
+        finally:
+            gate.release(lease)
+
+    def save_estimates():
+        if estimates is not None and estimates.path is not None:
+            estimates.save()
 
     done, bad = reused, []
     unsaved, saved_at = 0, time.monotonic()
     if progress:
         progress(done, len(srcs))
-    with concurrent.futures.ThreadPoolExecutor(max(1, jobs)) as ex:
-        # submitted largest first, taken as they end: in submission order every result would wait for the largest
-        # file's, and nothing would be recorded during the minutes that one compiles
-        for result in concurrent.futures.as_completed([ex.submit(cc, job) for job in todo]):
-            src, dst, dep, rc, err = result.result()
-            done += 1
-            if rc is None:   # not started (stop)
-                continue
-            if rc:
-                bad.append((src, err))
-                cache.forget(dst)
-            else:
-                cache.record(dst, keys[dst], dep, src)
-                unsaved += 1
-            if unsaved >= CACHE_SAVE_EVERY and time.monotonic() - saved_at >= CACHE_SAVE_PAUSE:
-                try:
-                    cache.save()
-                except OSError:   # the save at the end still reports a disk that cannot be written
-                    pass
-                unsaved, saved_at = 0, time.monotonic()
-            if progress:
-                progress(done, len(srcs))
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max(1, jobs)) as ex:
+            # submitted in start order, taken as they end: in submission order every result would wait for the
+            # largest file's, and nothing would be recorded during the minutes that one compiles
+            for result in concurrent.futures.as_completed([ex.submit(cc, i, job) for i, job in enumerate(todo)]):
+                src, dst, dep, rc, err, run, pressed = result.result()
+                done += 1
+                if rc is None:   # not started (stop)
+                    continue
+                if rc:
+                    bad.append((src, err))
+                    cache.forget(dst)
+                else:
+                    cache.record(dst, keys[dst], dep, src)
+                    if run is not None:
+                        size, cost, switch_fn, _ = info[dst]
+                        # under memory pressure the measured peak can be low: a higher one recorded before stays
+                        est.record(dst.name, run.peak_bytes, run.seconds, size, cost, switch_fn, keep_higher=pressed)
+                        if measured is not None:
+                            measured.append((dst.name, run.peak_bytes, run.seconds))
+                    unsaved += 1
+                if unsaved >= CACHE_SAVE_EVERY and time.monotonic() - saved_at >= CACHE_SAVE_PAUSE:
+                    try:
+                        cache.save()
+                        save_estimates()
+                    except OSError:   # the save at the end still reports a disk that cannot be written
+                        pass
+                    unsaved, saved_at = 0, time.monotonic()
+                if progress:
+                    progress(done, len(srcs))
+    finally:
+        if own_gate:
+            gate.close()
     cache.save()
+    try:
+        save_estimates()
+    except OSError:   # the estimates only order and admit the next build's compiles: losing them fails nothing
+        pass
     return len(todo), reused, bad
 
 
@@ -1204,14 +1329,24 @@ def preflight(msys, jobs, sources=None, work=None):
         tainted = per_install_names()
         sources = [p for p, _ in runtime_sources() if not per_install(p, tainted)]
 
+    # The checks go through the memory gate as the compiles do: `jobs` is the processor count, and a check of the
+    # runtime's C++ takes hundreds of MiB. Without code generation a check needs about half a compile's memory.
+    gate = make_gate(jobs)
+
     def check(src):
         cmd = [c for c in cmd_for(src, Path('unused.o')) if c not in ('-c', '-o', 'unused.o')]
-        p = subprocess.run([cmd[0], '-fsyntax-only', *cmd[1:]], capture_output=True, text=True, env=env, errors='replace')
+        need = (DEFAULT_NEED_CXX if Path(src).suffix in CXX_SUFFIXES else DEFAULT_NEED_C) // 2
+        with gate.acquire(Path(src).name, need):
+            p = subprocess.run([cmd[0], '-fsyntax-only', *cmd[1:]], capture_output=True, text=True, env=env,
+                               errors='replace')
         return src, p.returncode, p.stderr[-1500:]
 
     t0 = time.time()
-    with concurrent.futures.ThreadPoolExecutor(max(1, jobs)) as ex:
-        bad = [(src, err) for src, rc, err in ex.map(check, sources) if rc]
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max(1, jobs)) as ex:
+            bad = [(src, err) for src, rc, err in ex.map(check, sources) if rc]
+    finally:
+        gate.close()
     if bad:
         report_failures(bad)
         lacking = sorted(set(re.findall(r"fatal error: '([^']+)' file not found", ''.join(e for _, e in bad))))
@@ -1738,11 +1873,17 @@ def make_runtime_lib(dest, msys, jobs, obj=None):
     profile, why = pgo_profile(clang, env, obj / 'pgo-trial')
     say(f'  the runtime is compiled with the execution profile {profile.name}' if profile else f'  {why}')
     t0 = time.time()
-    compiled, reused, bad = compile_all(srcs, runtime_cmd(clang, clangxx, inc, first=vulkan_headers(clang, env),
-                                                          pgo=pgo_use_flags(profile) if profile else ()),
-                                        cache, jobs, env,
-                                        lambda d, t: (d % 20 == 0 or d == t) and say(f'  {d} of {t}'),
-                                        salt=pgo_salt(compiler_id(clang, env), profile))
+    gate = make_gate(jobs)   # the CI's runtime build is gated too, with the defaults; no estimates are kept here
+    try:
+        compiled, reused, bad = compile_all(srcs, runtime_cmd(clang, clangxx, inc, first=vulkan_headers(clang, env),
+                                                              pgo=pgo_use_flags(profile) if profile else ()),
+                                            cache, jobs, env,
+                                            lambda d, t: (d % 20 == 0 or d == t) and say(f'  {d} of {t}'),
+                                            salt=pgo_salt(compiler_id(clang, env), profile), gate=gate)
+    finally:
+        gate.close()
+    for line in gate.summary_lines():
+        say(f'  {line}')
     if bad:
         report_failures(bad)
         fail(f'{len(bad)} runtime files did not compile')
@@ -2129,6 +2270,76 @@ def write_runtime_map(full, dst):
         pass
 
 
+COMPILE_MEMORY = 'compile-memory.json'   # build-cache/obj: each object's peak memory and seconds (memgate.Estimates)
+LARGEST_SHOWN = 5
+
+
+def chunk_costs(lift):
+    """{source: (cost bytes, switch_fn bytes)} of every lifted C file under lift/<module>/. A chunk's entry in its
+    module's manifest.json (recomp/gen.py, chunk_info) gives "cost" (the bytes of ordinary C its compile time is worth)
+    and "switch_fn" (the bytes of its largest function with a jump-table branch, which drives the compiler's peak
+    memory); a manifest from before those has only "bytes", which stands for the cost (switch_fn 0). A file the
+    manifest does not list (the function table, <module>_table.c) costs its size."""
+    costs = {}
+    for mod in ('main', 'sdk', 'subsdk0'):
+        try:
+            manifest = json.loads((lift / mod / 'manifest.json').read_text(encoding='utf-8'))
+            entries = manifest.get('chunk_info') or []
+        except (OSError, ValueError, AttributeError):
+            entries = []
+        info = {e['file']: e for e in entries if isinstance(e, dict) and isinstance(e.get('file'), str)}
+        for p in sorted((lift / mod).glob('*.c')):
+            e = info.get(p.name, {})
+            cost, switch_fn = e.get('cost'), e.get('switch_fn', 0)
+            if not isinstance(cost, int) or cost <= 0:
+                cost, switch_fn = e.get('bytes'), 0
+            if not isinstance(cost, int) or cost <= 0:
+                cost, switch_fn = source_size(p), 0
+            costs[p] = (cost, switch_fn if isinstance(switch_fn, int) and switch_fn > 0 else 0)
+    return costs
+
+
+def gate_start_line(gate, hows):
+    """The compile step's line on the memory gate, before the first compile; hows: Counter of how the needs of the
+    compiles to run were estimated."""
+    if not gate.enabled:
+        return f'memory gate: off; up to {gate.max_jobs} at once'
+    ceiling = 'no ceiling' if gate.ceiling is None else f'ceiling {memgate.gib(gate.ceiling)} GiB'
+    line = (f'memory gate: on; up to {gate.max_jobs} at once, at least {gate.min_jobs}; keeps '
+            f'{memgate.gib(gate.reserve)} GiB free; {ceiling}; estimates: {hows["learned"]} learned from earlier '
+            f'builds, {hows["model"]} from the size model')
+    if hows['default']:
+        line += f', {hows["default"]} set at {DEFAULT_NEED_C >> 20} MiB (C) or {DEFAULT_NEED_CXX >> 30} GiB (C++) ' \
+                'until measured'
+    return line
+
+
+def compile_memory_lines(gate, estimates, measured):
+    """The compile step's closing lines on memory: the gate's summary, the peak of all compiles together and the
+    least free memory, the largest compiles, and how close the estimates came to the measured peaks."""
+    lines = gate.summary_lines()
+    s = gate.summary()
+    if s['enabled']:
+        lines = lines[:2]   # its peak and least-free lines are said once, below
+    parts = []
+    if s['peak_rss_at'] is not None:
+        parts.append(f'peak {memgate.gib(s["peak_rss"])} GiB for all compiles together (at {s["peak_rss_at"]:.0f} s)')
+    if s['lowest_avail'] is not None:
+        parts.append(f'least free memory {memgate.gib(s["lowest_avail"])} GiB')
+    if parts:
+        lines.append('compile memory: ' + ', '.join(parts))
+    top = sorted(measured, key=lambda m: m[1], reverse=True)[:LARGEST_SHOWN]
+    if top:
+        lines.append(f'largest compiles ({len(top)} of {len(measured)}): ' + ', '.join(f'{name} {peak / memgate.GIB:.2f} GiB {seconds:.0f} s'
+                                                      for name, peak, seconds in top))
+    st = estimates.stats()
+    if st['measured'] and st['median'] and st['worst']:
+        # stats() gives peak / estimate; the line says estimate / peak, so the lowest is the worst under-estimate
+        lines.append(f'estimates against the measured peaks: median {1 / st["median"]:.2f}x, lowest '
+                     f'{1 / st["worst"]:.2f}x ({st["worst_name"]})')
+    return lines
+
+
 def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     """romfs_job: the RomFS step still running beside this one (a first build). Everything that does not include
     romfs_config.h compiles meanwhile; the RomFS index and the few files that include it follow once it is done.
@@ -2225,8 +2436,18 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
         if done % 50 == 0 or done == total:
             say(f'  compiled {done} of {total}, {now - t0:.0f} s')
 
-    say(f'  {len(srcs)} files on {jobs} threads')
+    say(f'  {len(srcs)} files, up to {jobs} compiles at once')
     cache = ObjectCache(obj / 'objects.json', {'<kit>': KIT})
+    estimates = memgate.Estimates.load(obj / COMPILE_MEMORY)
+    costs = chunk_costs(lift)
+    gate = make_gate(jobs)
+    measured = []
+    announced = []
+
+    def plan(hows):   # once, before the first compile of either call below
+        if sum(hows.values()) and not announced:
+            announced.append(True)
+            say(f'  {gate_start_line(gate, hows)}')
     late = []
     if romfs_job:   # the lifted chunks include only cpu.h and simd.h: only the runtime and generated files are read
         tainted = per_install_names(('romfs_config.h',))
@@ -2234,18 +2455,27 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
         say(f'  {len(late)} files wait for the RomFS index: {", ".join(s.name for s, _ in late)}')
     early = [j for j in srcs if j not in late]
     salt = pgo_salt(cid, profile)
-    compiled, reused, bad = compile_all(early, cmd_for, cache, jobs, env, lambda d, t: progress(d, len(srcs)),
-                                        salt=salt, stop=romfs_job.failed if romfs_job else None, alts=alts)
-    if romfs_job:
-        if romfs_job.thread.is_alive():
-            say('  waiting for the RomFS image')
-        romfs_job.join()   # raises the RomFS step's failure; a failed compile still keeps the finished image
-        if not bad:
-            romfs_index(out, gen)
-            c2, r2, bad = compile_all(late, cmd_for, cache, jobs, env,
-                                      lambda d, t: progress(len(early) + d, len(srcs)), salt=salt, alts=alts)
-            compiled, reused = compiled + c2, reused + r2
+    gated = dict(gate=gate, estimates=estimates, costs=costs, measured=measured)
+    try:
+        compiled, reused, bad = compile_all(early, cmd_for, cache, jobs, env, lambda d, t: progress(d, len(srcs)),
+                                            salt=salt, stop=romfs_job.failed if romfs_job else None, alts=alts,
+                                            plan=plan, **gated)
+        if romfs_job:
+            if romfs_job.thread.is_alive():
+                say('  waiting for the RomFS image')
+            romfs_job.join()   # raises the RomFS step's failure; a failed compile still keeps the finished image
+            if not bad:
+                romfs_index(out, gen)
+                c2, r2, bad = compile_all(late, cmd_for, cache, jobs, env,
+                                          lambda d, t: progress(len(early) + d, len(srcs)), salt=salt, alts=alts,
+                                          plan=plan, **gated)
+                compiled, reused = compiled + c2, reused + r2
+    finally:
+        gate.close()
     say(f'  {compiled} compiled, {reused} unchanged since the last build')
+    if compiled:
+        for line in compile_memory_lines(gate, estimates, measured):
+            say(f'  {line}')
     if bad:
         report_failures(bad)
         fail(f'{len(bad)} files did not compile')
@@ -2860,7 +3090,7 @@ def main():
 
 
 def build_main():
-    global EVENTS, PGO_MODE
+    global EVENTS, PGO_MODE, GATE_ARGS
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--nup', help='the game as one .nup file')
     ap.add_argument('--exefs', help='the game\'s exefs folder (with --romfs, instead of --nup)')
@@ -2875,7 +3105,8 @@ def build_main():
     ap.add_argument('--msys', default=r'C:\msys64\ucrt64',
                     help='MSYS2 UCRT64 folder (default C:\\msys64\\ucrt64; Windows only: Linux takes clang and lld from PATH)')
     ap.add_argument('--jobs', type=int,
-                    help='parallel compiles (default: one per processor, fewer when the free memory is short)')
+                    help='most compiles at once (default: one per processor); the memory gate starts each one when '
+                         'the free memory holds it')
     ap.add_argument('--events', action='store_true', help='machine-readable progress lines on stdout ("@@" + JSON)')
     ap.add_argument('--make-runtime-lib', metavar='DIR', help='build the prebuilt runtime library of a release into DIR')
     ap.add_argument('--obj', help='with --make-runtime-lib: the folder for its objects')
@@ -2884,9 +3115,11 @@ def build_main():
                          '(for tools/pgo.py merge); off: build without the execution profile of the kit. Default: the '
                          'environment variable NX2SARIA_PGO (NX2NAVI_PGO remains an alias), else build with the profile of the kit when it fits')
     ap.add_argument('--until', choices=STEPS, help=argparse.SUPPRESS)   # tests: stop after this step
+    memgate.add_arguments(ap)
     a = ap.parse_args()
     EVENTS = a.events
     PGO_MODE = a.pgo or ''
+    GATE_ARGS = a
     jobs_why = '--jobs'
     if not a.jobs or a.jobs < 1:
         a.jobs, jobs_why = default_jobs()
@@ -2955,7 +3188,7 @@ def build_main():
     # steps of a build that will reach the compile step (the first step whose key is not current makes the rest run)
     if not WIN and any(state['steps'].get(n) != step_key(n, src.identity, out) for n in STEPS[:STEPS.index('compile') + 1]):
         preflight(msys, a.jobs, work=cache / 'toolchain-check')
-    say(f'compiles at a time: {a.jobs} ({jobs_why})')
+    say(jobs_line(a.jobs, jobs_why))
     t0 = time.time()
     romfs_job = None
     runs = {'exefs': lambda: step_exefs(src, out), 'romfs': lambda: step_romfs(src, out, min(a.jobs, 8)),

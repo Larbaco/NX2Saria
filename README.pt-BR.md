@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=README.md source-hash=3c5819d3be54bedd4441713d93231e32ef2a94fc reviewed=no -->
+<!-- translation: lang=pt-BR source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -87,9 +87,12 @@ Toda [versão](https://github.com/Larbaco/NX2Saria/releases) tem `NX2Saria-Setup
 [Compilar a partir do código-fonte](docs/building.md) (em inglês) prepara as ferramentas e um checkout; [o guia do build kit](docs/README-BuildKit.md) (em inglês) compila a partir de um kit preparado. No Linux, depois de instalar [os pacotes](docs/README-BuildKit.md#linux) (em inglês):
 
 ```sh
-python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"   # adicione --jobs 4 com 16 GB
+python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/Ocarina"
 "$HOME/Games/Ocarina/ocarina"
 ```
+
+O build inicia cada compilação quando a memória livre comporta, então não precisa de nenhuma opção num PC com pouca RAM;
+`--jobs` e `--mem-limit` só o limitam ainda mais ([o controle de memória do build](docs/build-memory.md), em inglês).
 
 ## Status e problemas conhecidos
 

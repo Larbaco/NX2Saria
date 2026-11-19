@@ -125,9 +125,9 @@ RADV). It takes clang, clang++ and lld from `PATH` and links against the system'
    ~/Games/Ocarina/ocarina
    ```
 
-With 16 GB of RAM, add `--jobs 4`: the compiles run beside the 26 GB RomFS image, and one clang per logical
-processor can fill memory and swap until the kernel stops processes of the desktop session (about 10 minutes on a
-12-thread Ryzen with 4 jobs). Do not play or prepare shaders while it builds.
+The build starts each compile only when the free memory holds it, beside the 26 GB RomFS image, so a PC with 16 GB
+needs no option; `--jobs` and `--mem-limit` only limit it further ([the build's memory gate](build-memory.md)). Do not
+play or prepare shaders while it builds.
 
 The profile, logs and settings are in the `--out` folder as on Windows.
 
@@ -182,8 +182,8 @@ frames needed to reach the display's refresh rate (`framegen = dlss` and `fg_mul
 `tools/make_appimage.py` packs this kit into one `NX2Saria-Linux-<version>-x86_64.AppImage` with its own Python and the
 pinned Vulkan headers and SDL3, for players without a source checkout: before a build it checks for clang, clang++,
 lld and the headers of the packages above, asking the compiler (the Vulkan headers and SDL3 come with it; `--check`
-needs none of them, and `--make-game` leaves the check to `make_game.py`), installs zbic with pip on its first run, picks
-`--jobs` from the memory, builds into `~/Games/Ocarina` (or the folder given after the dump) and writes `play.sh`
+needs none of them, and `--make-game` leaves the check to `make_game.py`), installs zbic with pip on its first run, lets the
+memory gate decide how many compiles run, builds into `~/Games/Ocarina` (or the folder given after the dump) and writes `play.sh`
 beside the game.
 
 ## Playing

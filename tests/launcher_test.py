@@ -2378,28 +2378,12 @@ class MakeGameTest(Tmp):
         self.assertTrue(seen, 'nothing was saved before the largest file finished')
         self.assertEqual(len(json.loads((obj / 'objects.json').read_text())), 30)
 
-    def test_the_default_job_count_follows_the_free_memory(self):
-        """Without --jobs: one compile per processor, capped at 80 % of the free memory over 768 MiB a compile, and
-        never fewer than one."""
-        gib = 1 << 30
-        jobs = self.mg.default_jobs
-        self.assertEqual(jobs(24, 64 * gib)[0], 24)          # memory to spare: every processor
-        self.assertEqual(jobs(16, 8 * gib)[0], 8)            # 6.4 GiB at 768 MiB each
-        self.assertEqual(jobs(32, 16 * gib)[0], 17)
-        self.assertEqual(jobs(4, 15 * gib)[0], 4)
-        self.assertEqual(jobs(8, 512 << 20)[0], 1)           # too little for one: still one
-        self.assertEqual(jobs(8, 0)[0], 1)
-        self.assertIn('8.0 GiB of free memory allow 8', jobs(16, 8 * gib)[1])
-        import build_game
-        self.assertEqual(self.mg.JOB_MEM, build_game.JOB_MEM)   # one measured figure, kept in both scripts
-        # this machine's figures when none are given; without a reading of the memory, the processors alone
-        import hostmem
-        with mock.patch.object(self.mg.os, 'cpu_count', return_value=12), \
-                mock.patch.object(hostmem, 'available_ram', return_value=3 * gib):
-            self.assertEqual(self.mg.default_jobs()[0], 3)
-        with mock.patch.object(self.mg.os, 'cpu_count', return_value=12), \
-                mock.patch.object(hostmem, 'available_ram', return_value=None):
-            self.assertEqual(self.mg.default_jobs(), (12, '12 processors, free memory unknown'))
+    def test_the_default_job_count_follows_the_processors(self):
+        """Without --jobs: at most one compile per processor; the memory gate, not the job count, keeps the compiles
+        within the free memory."""
+        self.assertEqual(self.mg.default_jobs(24), (24, '24 processors'))
+        with mock.patch.object(self.mg.os, 'cpu_count', return_value=12):
+            self.assertEqual(self.mg.default_jobs(), (12, '12 processors'))
 
     def test_the_build_uses_the_default_job_count(self):
         """main() without --jobs takes default_jobs and says so; --jobs is taken as given."""
@@ -2411,9 +2395,9 @@ class MakeGameTest(Tmp):
             self.mg.fail('stop here')
         with mock.patch.object(self.mg, 'default_jobs', lambda: (3, 'stubbed')):
             code, text = self.main_rebuild(lambda out, cache: None, compile_)
-            self.assertIn('compiles at a time: 3 (stubbed)', text)
+            self.assertIn('compiles at a time: up to 3 (stubbed)', text)
             code, text = self.main_rebuild(lambda out, cache: None, compile_, '--jobs', '5')
-            self.assertIn('compiles at a time: 5 (--jobs)', text)
+            self.assertIn('compiles at a time: up to 5 (--jobs)', text)
         self.assertEqual(seen, [3, 5])
 
     def test_runtime_split(self):
