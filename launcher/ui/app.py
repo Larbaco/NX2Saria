@@ -1072,7 +1072,10 @@ class App:
 
     def open_screen(self, name):
         """--screen: one of the session reports' screens at once, for looking at it or taking its picture
-        (docs/launcher.md). Nothing is sent by opening one."""
+        (docs/launcher.md). Nothing is sent by opening one. Without a server (telemetry.enabled) none opens."""
+        if not telemetry.enabled():
+            self.ctx.log(f'--screen {name}: no telemetry server is set (NX2SARIA_TELEMETRY_URL); the screen is hidden')
+            return
         if name == 'sent':
             self.open_sent('home')
         elif name == 'consent':
@@ -2266,7 +2269,8 @@ class App:
             self.ctx.log(end.log)
             # a hard crash writes no session summary: one is made from its FATAL line, before the note below ends
             # the log's run (telemetry.synthesize_crash)
-            telemetry.synthesize_crash(run.game_dir, self.ctx.log)
+            if telemetry.enabled():
+                telemetry.synthesize_crash(run.game_dir, self.ctx.log)
             if end.note:
                 note_exit_in_log(run.game_dir, end.note)
             if end.message:
@@ -2383,10 +2387,10 @@ class App:
             *udmabuf_row,
             self.channel_row(),
             *([self.discord_row(gd)] if gd and Path(gd).is_dir() else []),
-            Row('value', 'Session Reports', REPORT_VALUES.get(self.settings.get('telemetry'), 'Off'), 'arrow',
-                on=lambda: self.show('reports'),
-                desc=('Reports of how the game ran on this PC, sent after you play when you allow it; comments to '
-                      'the project; deleting what was sent.',)),
+            *([Row('value', 'Session Reports', REPORT_VALUES.get(self.settings.get('telemetry'), 'Off'), 'arrow',
+                   on=lambda: self.show('reports'),
+                   desc=('Reports of how the game ran on this PC, sent after you play when you allow it; comments '
+                         'to the project; deleting what was sent.',))] if telemetry.enabled() else []),
             Row('divider'),
             Row('value', 'Game Folder', gd or 'Not chosen', on=lambda: gd and self.open(gd),
                 desc=('Open the game folder: saves in profile, settings in nx2saria.ini (or an existing nx2navi.ini), '
@@ -2476,7 +2480,7 @@ class App:
         pending summary goes in the background; not asked yet, the consent screen opens, once in a run. True when
         it opened."""
         gd = self.settings.get('game_dir')
-        if not gd:
+        if not gd or not telemetry.enabled():   # no server: no question, nothing made or sent
             return False
         if startup:
             telemetry.synthesize_crash(gd, self.ctx.log)
@@ -2516,8 +2520,9 @@ class App:
                 'bullets': ['Versions, system, processor, graphics card and memory',
                             'The main graphics options, play time and frame rate',
                             'The error line, if the game stopped on one'],
-                'note': 'Never sent: files, saves, names, folders or your IP address; the server keeps only the '
-                        'country. Kept 180 days; Settings > Session Reports deletes it any time.'}
+                'note': 'No files, saves, account or folder names. Your IP address is not kept: the server uses it '
+                        'only to limit abuse and keeps only the country. Kept 180 days; Settings > Session Reports '
+                        'deletes it any time.'}
 
     def rows_consent(self):
         return [
@@ -2574,7 +2579,8 @@ class App:
                 desc=('On: after you play, a short report of how the game ran on this PC goes to the project: '
                       'versions, system, processor, graphics card, memory, the main graphics options, play time, '
                       'frame rate and the error line if there was one.',
-                      'No files, saves, names, folders or IP address. Kept 180 days.',
+                      'No files, saves, account or folder names. Your IP address is not kept, only the country. '
+                      'Kept 180 days.',
                       'The server no longer takes reports from this version.' if closed else '')),
             Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('reports'),
                 desc=('The exact text of a report: the one of your last session when it waits to be sent, '
@@ -3673,7 +3679,8 @@ def play_only(ctx):
     # since the box waits for OK and Steam may end this process meanwhile.
     end = run.end()
     ctx.log(f'play from Steam: {end.log}')
-    telemetry.synthesize_crash(gd, ctx.log)   # before the note ends the log's run; the window sends it when it opens
+    if telemetry.enabled():
+        telemetry.synthesize_crash(gd, ctx.log)   # before the note ends the log's run; the window sends it when it opens
     if end.note:
         note_exit_in_log(gd, end.note)
     if end.alarm:

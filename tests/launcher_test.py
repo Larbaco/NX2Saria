@@ -7170,6 +7170,67 @@ class WindowTest(Tmp):
         self.assertIn('26 screens drawn', r.stdout)
 
 
+class TelemetryHiddenTest(Tmp):
+    """With no telemetry server (launcher/telemetry.py TELEMETRY_URL empty, no NX2SARIA_TELEMETRY_URL) the window
+    shows nothing of session reports: no question after a game, no Session Reports row, no --screen of them. The
+    environment override turns all of it on."""
+
+    def make_app(self, url):
+        try:
+            import tkinter as tk
+            from launcher.ui import app
+        except ImportError as e:
+            self.skipTest(f'no window toolkit: {e}')
+        from launcher import telemetry
+        env = {k: v for k, v in os.environ.items() if k != telemetry.URL_ENV}
+        if url:
+            env[telemetry.URL_ENV] = url
+        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        tele = mock.patch.object(telemetry, 'TELEMETRY_URL', '')
+        tele.start()
+        self.addCleanup(tele.stop)
+        game = self.tmp / 'game'
+        (game / 'logs').mkdir(parents=True)
+        (game / 'logs' / telemetry.SUMMARY).write_text(json.dumps(telemetry.example_summary()), encoding='utf-8')
+        ctx = Context(self.layout)
+        self.addCleanup(lambda: ctx._file and ctx._file.close())
+        ctx.settings['game_dir'], ctx.settings['sounds'] = str(game), 'off'
+        try:
+            root = tk.Tk(className='NX2Saria')
+        except tk.TclError as e:
+            self.skipTest(f'no display: {e}')
+
+        def close():
+            for after in root.tk.call('after', 'info'):
+                root.after_cancel(after)
+            root.destroy()
+        self.addCleanup(close)
+        quiet = mock.patch.object(app.App, 'find_dumps', lambda a: None)
+        quiet.start()
+        self.addCleanup(quiet.stop)
+        a = app.App(root, ctx, app.parse_args(['--root', str(self.layout.root), '--selftest']))
+        root.update()
+        return a, ctx
+
+    def test_no_server_no_reports_in_the_window(self):
+        a, ctx = self.make_app('')
+        self.assertNotIn('Session Reports', [r.label for r in a.rows_settings()])
+        self.assertFalse(a.after_game_reports())          # a summary waits and nothing was asked: still no question
+        self.assertNotEqual(a.screen, 'consent')
+        a.open_screen('consent')
+        self.assertNotEqual(a.screen, 'consent')
+        self.assertEqual(ctx.settings['telemetry'], '')
+        self.assertFalse(ctx.settings['telemetry_id'])
+
+    def test_the_override_turns_them_on(self):
+        a, ctx = self.make_app('http://127.0.0.1:9')
+        self.assertIn('Session Reports', [r.label for r in a.rows_settings()])
+        self.assertTrue(a.after_game_reports())
+        self.assertEqual(a.screen, 'consent')
+
+
 # ---------------------------------------------------------------- mods
 
 class ModsTest(Tmp):
