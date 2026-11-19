@@ -436,7 +436,21 @@ visibly softer and nothing breaks.
 
 ### The tiers
 
-PRESET_TIERS_TABLE
+Each tier forced with `NX2SARIA_PRESET` on a build of this branch, an empty `nx2saria.ini`, 2 runs per row; the
+scene and picture sizes are the ones the log reports (`widescreen: scene ...`). GPU ms against High in brackets.
+
+| Tier | Scene / picture (log) | kokiri: avg fps, 1% low, GPU ms | field: avg fps, 1% low, GPU ms |
+|---|---|---|---|
+| Ultra | 2560x1440 / 2560x1440 (100 %), picture kept at 1440 in the 1080p window | 30.1, 16.7, 21.9 (+1.8) | 29.9, 17.4, 22.5 (+1.4) |
+| High = Recommended here (the game as shipped) | 1920x1080 / 2560x1440 (75 %) | 31.3, 16.1, 20.1 | 30.9, 16.5, 21.1 |
+| Medium | 1286x724 / 1920x1080 (67 %) | 32.2, 18.2, 18.8 (-1.3) | 33.5, 18.1, 19.1 (-2.0) |
+| Low | 960x540 / 1920x1080 (50 %), bilinear | 34.0, 15.8, 17.3 (-2.8) | 34.0, 21.0, 18.3 (-2.8) |
+| Low with `scene_share = 0.4` (as on an integrated GPU or handheld) | 768x432 / 1920x1080 (40 %), bilinear | 35.5, 20.6, 16.8 (-3.3) | — |
+
+The Recommended run with nothing set (32.3 fps, 20.0 GPU ms) logged `preset: recommended high: 10 GiB of video memory`,
+`probe 28.7 ms` and `preset: the Vulkan device matches the probe`, and every run left `nx2saria.ini` as it was. A
+picture of Low in kokiri shows the HUD as sharp as at High: it is drawn at the 1920x1080 picture, the window's own
+size, and only the 960x540 scene is softer.
 
 ### On a GPU-bound PC (the owner's test)
 
