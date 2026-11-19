@@ -467,3 +467,10 @@ set ozora       NX2SARIA_FROZEN_ZORA_FIX   1
 site ozora      main 2afe04 1e210902 952fc423   # fmul s2, s8, s1 -> bl page+0xe90
 site ozora      main 2b01d0 1e200901 952fc330   # fmul s1, s8, s0 -> bl page+0xe90
 site ozora      main 924e50 bd0002c0 9515f010   # str s0, [x22] -> bl page+0xe90
+
+# Restore the battle-music change bits held by the sound gate at each original read (battle_music.c).
+set obgm        NX2SARIA_BATTLE_MUSIC_FIX  1
+site obgm       main 3353680 39626348 39626348 946d35fc   # ldrb w8, [x26, #0x898]; bl page+0xe70
+site obgm       main 33537c0 39626348 39626348 946d35ac
+site obgm       main 3353950 39626348 39626348 946d3548
+site obgm       main 3353a4c 39626348 39626348 946d3509

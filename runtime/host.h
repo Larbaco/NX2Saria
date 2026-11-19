@@ -479,6 +479,8 @@ void frame_rate_horse_jump_host(Cpu *c);                  // the horse's jump bl
 void frame_rate_gohma_turn_host(Cpu *c);                  // Gohma's turn-rate bounds (set ogohma, page +0xe80)
 uint32_t frame_rate_animation_frames(uint64_t entry, float step);   // whole clock frames for a single-pose loop
 void animation_loop_host(Cpu *c);                         // a single-frame animation loop (set ozora, page +0xe90)
+void battle_music_gate(int run);                          // phase 0's decision, under the sound gate lock
+void battle_music_flags_host(Cpu *c);                     // restore held battle music flags (set obgm, page +0xe70)
 void frame_rate_sound_step_host(Cpu *c);                  // the step the sound job hands on (set osound, page +0xf00)
 float frame_step_frames(void);                            // the 60 Hz frames the game steps per update (set ostep), else 1
 void frame_step_flight(float *page, float *game, uint64_t *presents);   // flight.c: the step at a host present

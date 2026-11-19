@@ -796,6 +796,7 @@ void frame_rate_sound_gate_host(Cpu *c) {
     uint64_t asked = 0, ran = 0, t = 0;
     plat_mutex_lock(&whole_lock);   // the phases may come from different threads
     int run = sound_gate_take(&sound_gate, phase, step);
+    if (phase == 0) battle_music_gate(run);
     if (phase == 0 && (rt_trace & RT_TRACE_PERF)) {
         static uint64_t t0, n, r;
         uint64_t now = plat_now_ns();

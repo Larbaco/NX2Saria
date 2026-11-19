@@ -39,7 +39,7 @@ static int save_ok = 1;                         // the last cfg_save_to wrote (o
 // Every name the runtime reads (and the patch sets in generated/), without the prefix. A file key outside this list is
 // logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line.
 static const char *const known[] = {
-    "HORSE_JUMP_FIX", "GOHMA_TURN_FIX", "FROZEN_ZORA_FIX",
+    "HORSE_JUMP_FIX", "GOHMA_TURN_FIX", "FROZEN_ZORA_FIX", "BATTLE_MUSIC_FIX",
     "CORES", "TM_DISPATCH", "NVN2_CS_TABLE", "SKIP_SHADERS", "MOVIE_DEBAND", "MOVIE_FPS", "MOVIE_SKIP", "MOVIE_OVERLAY", "MOVIES", "NPLN", "NVN2_PROGRAMS", "NVN_TRAP", "OCARINA_REALTIME", "ONESHOT_BUDGET", "ONESHOT_WAIT_MS", "OCARINA_STEP", "PHYSICS_STEPS", "PHYSICS_STEPS_FULL", "PICKUP_COUNT", "SONG_STAFF", "WATER_STEPS", "SOUND_STEPS", "FLOOR_PROBE", "FLOOR_SCAN", "FLOOR_WATCH", "FLOOR_CARRY", "MOVIE_PTS", "STEP_STEADY", "VI_HZ", "VI_VRR", "TIME_DUMP", "SHADER_DUMP", "SHOT_AFTER", "SHOT_DIR", "SHOT_EVERY",   // Switch 2 port: movie skip (romfs.c), NVN2 proc traps (nvn_procs.c)
     "OCARINA_TIMING",
     "FSR3_PROBE_PAN", "FSR3_PROBE_PPM",   // the FSR 3.1 probe (fsr3_probe.c)
@@ -315,6 +315,7 @@ static const CfgMeta metas[] = {
     {"HORSE_JUMP_FIX", "1", "0|1", RESTART},
     {"GOHMA_TURN_FIX", "1", "0|1", RESTART},
     {"FROZEN_ZORA_FIX", "1", "0|1", RESTART},
+    {"BATTLE_MUSIC_FIX", "1", "0|1", RESTART},
     // the set owater of patches-v111.txt (frame_rate.c frame_rate_sim_host): water and floor surfaces' fixed steps
     {"WATER_STEPS", "1", "0|1", RESTART},
     // the set osound of patches-v111.txt (frame_rate.c frame_rate_sound_gate_host): the sound job at 60 Hz above 60 fps

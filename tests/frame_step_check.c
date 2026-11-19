@@ -27,6 +27,7 @@ void rt_patch_disable(int set) { (void)set; }
 void rt_patch_switch(int set, int on) { (void)set, (void)on; }
 void *rt_patch_page(void) { return page; }
 void rt_log(const char *fmt, ...) { (void)fmt; }
+void battle_music_gate(int run) { (void)run; }   // the flag latch has its own test (battle_music_check.py)
 double gfx_window_refresh_hz(void) { return 144; }
 static int movie;   // a movie plays (frame_rate.c movie_cap_hz)
 int ov_movie_live(void) { return movie; }

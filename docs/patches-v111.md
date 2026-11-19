@@ -23,3 +23,9 @@ The startup `patches:` line lists `ogohma on` or `ogohma off`. An adjusted updat
 A looping animation with the range `[0, 1]` holds a single pose. On a shorter update its clock now keeps the fractional step until it has a whole one, and its pose pass resolves to the first frame of the verified loop. Set `frozen_zora_fix=0` and restart to disable it.
 
 The startup `patches:` line lists `ozora on` or `ozora off`. The patch logs `frame rate: single-frame loop clock` and `frame rate: single-frame loop pose` with the step or phase before and after the adjustment, up to four times each per session.
+
+## Battle music at high frame rates
+
+With `sound_steps=1`, the sound job still runs at whole 60 Hz steps. The patch holds the battle music's four change bits across skipped updates. The next sound update receives them through the original flag reads, and they expire after that update. Set `battle_music_fix=0` and restart to disable it.
+
+The startup `patches:` line lists `obgm on` or `obgm off`. A restored bit logs `frame rate: battle music change` with the flag byte before and after, up to eight times per session.
