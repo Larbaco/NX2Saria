@@ -86,6 +86,8 @@ uint32_t input_key_char(int key) {
 // ---- mouse camera: raw motion accumulated by the window thread, one stick sample per presented frame
 static volatile LONG mouse_dx, mouse_dy;   // raw counts since the last frame sample
 static volatile LONG mouse_travel;          // raw counts moved in total, captured or not (ikb_mouse_travel)
+static volatile LONG presses[2];           // left and right button presses so far (ikb_mouse_presses)
+static volatile LONG wheel_delta;          // WM_MOUSEWHEEL deltas not taken yet (WHEEL_DELTA a notch, up positive)
 static volatile LONG cur_captured;         // cursor hidden and confined to the client area
 static volatile LONG cur_active;           // WM_ACTIVATEAPP: the window's application is active
 // Bits: CUR_REL, Esc or activation by a click on the title bar or border: until a client click; CUR_ESC, set with CUR_REL
@@ -114,10 +116,16 @@ static void cursor_update(HWND h) {
         RECT clip = {tl.x, tl.y, tl.x + r.right, tl.y + r.bottom};
         ClipCursor(&clip);
         if (!cur_captured) { InterlockedExchange(&mouse_dx, 0); InterlockedExchange(&mouse_dy, 0); }
-        InterlockedExchange(&cur_captured, 1);
+        if (!InterlockedExchange(&cur_captured, 1)) {
+            static volatile LONG lines;   // (the first changes: a run's log shows the camera got its mouse, or gave it up)
+            if (InterlockedIncrement(&lines) <= 40) rt_log("input: the mouse captured for the camera (confined and hidden)");
+        }
     } else {
         if (cur_captured) ClipCursor(NULL);
-        InterlockedExchange(&cur_captured, 0);
+        if (InterlockedExchange(&cur_captured, 0)) {
+            static volatile LONG lines;
+            if (InterlockedIncrement(&lines) <= 40) rt_log("input: the mouse released (the cursor shows)");
+        }
     }
     ReleaseSRWLockExclusive(&cur_lock);
 }
@@ -154,6 +162,9 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
     case WM_SETCURSOR:
         if (cur_captured && LOWORD(l) == HTCLIENT) { SetCursor(NULL); *res = TRUE; return 1; }
         break;
+    case WM_MOUSEWHEEL:   // counted for the game's menus (ikb_wheel_take); the menu's own handler still sees it
+        InterlockedAdd(&wheel_delta, GET_WHEEL_DELTA_WPARAM(w));
+        break;
     case WM_SYSCOMMAND:   // Alt pressed alone would enter the window menu loop, which stalls the game: Alt is a game key
         if ((w & 0xFFF0) == SC_KEYMENU && l == 0) { *res = 0; return 1; }
         break;
@@ -161,6 +172,7 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
         if (w == VK_ESCAPE && !(cur_rel & CUR_REL)) { cur_rel_update(rel_esc); cursor_update(h); }
         break;
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:   // client area only; poll_merged drops the click
+        if (m != WM_MBUTTONDOWN) InterlockedIncrement(&presses[m == WM_RBUTTONDOWN]);
         if (cur_rel & CUR_REL) { cur_rel_update(rel_clear); cursor_update(h); }
         break;
     case WM_MOUSEACTIVATE:   // sent before WM_ACTIVATEAPP: a title bar or border click must not capture
@@ -232,6 +244,14 @@ void ikb_pointer_set(float nx, float ny) {
 }
 
 uint32_t ikb_mouse_travel(void) { return (uint32_t)mouse_travel; }
+uint32_t ikb_mouse_presses(int right) { return (uint32_t)presses[right != 0]; }
+
+// Whole notches since the last call; a smooth wheel's part of a notch stays for the next
+int32_t ikb_wheel_take(void) {
+    LONG o, n;
+    do { o = wheel_delta; n = o % WHEEL_DELTA; } while (InterlockedCompareExchange(&wheel_delta, n, o) != o);
+    return (int32_t)((o - n) / WHEEL_DELTA);
+}
 
 void ikb_mouse_take(int32_t *dx, int32_t *dy) {
     *dx = InterlockedExchange(&mouse_dx, 0);

@@ -819,6 +819,10 @@ A change to the mouse camera's stick deflection (`runtime/input_map.c` `input_mo
 deflection at each camera speed: a slow movement is divided by the factor, a fast flick reaches full tilt. No game
 files.
 
+A change to the arithmetic of the mouse in the game's menus (`runtime/menu_mouse_geom.h`: a button's box, the pointer in
+the layout's units on 16:9 and ultrawide pictures, which presses are clicks and the presses queued for the game)
+passes `python tests\menu_mouse_check.py`. No game files.
+
 A change to how a gamepad's axes are read (`runtime/input.c` `pad_axis`: an axis counts once it has been seen at rest)
 passes `python tests\pad_rest_check.py`, which builds that function with stand-ins for SDL. No game files.
 

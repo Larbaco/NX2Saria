@@ -63,6 +63,10 @@ static const SDL_GamepadButton pad_sdl[PAD_COUNT] = {
 };
 
 // NX2SARIA_INPUT_SCRIPT=<file>: lines "<frame> <button> [hold]" or "<frame> LSTICK|RSTICK <x> <y> [hold]", ORed into the real input.
+// The game menus' mouse (menu_mouse.c) has its own lines: "<frame> POINTER <x> <y>" places the pointer at those
+// fractions of the window (0..1 from its top left; it stays there until the next POINTER), "<frame> MOUSEL|MOUSER
+// [hold]" holds the left or right mouse button for it, "<frame> WHEEL <notches>" turns the wheel (up positive). They
+// reach only that module (input_menu_pointer, input_menu_mouse_presses, input_menu_wheel_take), never the key bindings.
 // <frame> and its hold are 60 Hz ticks of game time since the first present (frame_step_ticks: presents at 60 fps), so
 // the title menus get the presses at the same game time at any frame limit. A line "@<ms> ..." is timed instead: <ms>
 // and its hold are milliseconds of the world clock (frame_step_world_us, game time since the loaded save's first
@@ -71,7 +75,8 @@ static const SDL_GamepadButton pad_sdl[PAD_COUNT] = {
 // when it starts, as the load ends at another tick in each run. "<frame> MARK <name>" presses nothing: with
 // NX2SARIA_TRACE=perf it ends the running segment of frame times and starts one called <name> (perf.c perf_segment).
 // at, hold: ticks, or microseconds of the world clock when timed.
-typedef struct { uint64_t at, hold; int bit, stick, timed, mark; int32_t x, y; int logged; char text[48]; } ScriptEv;
+typedef struct { uint64_t at, hold; int bit, stick, timed, mark, mouse; int32_t x, y; float fx, fy; int logged; char text[48]; } ScriptEv;
+enum { SM_POINTER = 1, SM_LEFT, SM_RIGHT, SM_WHEEL };   // ScriptEv.mouse: a line for the menus' mouse
 static const struct { const char *name; int bit; } script_buttons[] = {
     {"A", B_A}, {"B", B_B}, {"X", B_X}, {"Y", B_Y}, {"LCLICK", B_STICK_L}, {"RCLICK", B_STICK_R}, {"L", B_L}, {"R", B_R},
     {"ZL", B_ZL}, {"ZR", B_ZR}, {"PLUS", B_PLUS}, {"MINUS", B_MINUS}, {"LEFT", B_LEFT}, {"UP", B_UP}, {"RIGHT", B_RIGHT}, {"DOWN", B_DOWN},
@@ -80,6 +85,11 @@ static ScriptEv *script_ev;
 static int script_n, script_state;   // 0 not loaded, 1 loaded
 static int script_mixed;             // the script has timed lines: its untimed ones end where the world clock starts
 static int32_t script_mouse[2];      // one-shot raw counts, consumed by the camera hook; under lock
+// The menus' mouse from the script: the pointer (float bits of x, y; script_ptr_on once placed) and wheel notches not
+// taken yet. Written under lock, read by any thread.
+static volatile uint32_t script_ptr[2];
+static volatile int32_t script_ptr_on, script_wheel;
+static volatile uint32_t script_presses[2];   // MOUSEL / MOUSER lines started so far
 
 static void script_load(void) {
     script_state = 1;
@@ -109,6 +119,21 @@ static void script_load(void) {
             while (len && (s[len - 1] == ' ' || s[len - 1] == '\t')) len--;
             e.mark = 1, e.hold = 1;
             snprintf(e.text, sizeof e.text, "%.*s", (int)len, s);
+        } else if (!strcmp(name, "POINTER") || !strcmp(name, "WHEEL")) {
+            int p = name[0] == 'P';
+            double x, y = 0;
+            int n = sscanf(line + off, "%lf %lf", &x, &y);
+            if (n < (p ? 2 : 1) || (p ? !(x >= 0 && x <= 1 && y >= 0 && y <= 1) : !(x >= -100 && x <= 100))) {
+                rt_log("input: script line %d: %s", ln, p ? "POINTER needs x y, fractions 0..1 of the window" : "WHEEL needs notches, -100..100");
+                continue;
+            }
+            e.mouse = p ? SM_POINTER : SM_WHEEL, e.hold = 1, e.fx = (float)x, e.fy = (float)y, e.x = (int32_t)x;
+            if (p) snprintf(e.text, sizeof e.text, "POINTER %.3f %.3f", x, y);
+            else snprintf(e.text, sizeof e.text, "WHEEL %d", e.x);
+        } else if (!strcmp(name, "MOUSEL") || !strcmp(name, "MOUSER")) {
+            e.mouse = name[5] == 'L' ? SM_LEFT : SM_RIGHT;
+            if (sscanf(line + off, "%lf", &c) == 1 && c > 0) e.hold = (uint64_t)(c * unit + 0.5);
+            snprintf(e.text, sizeof e.text, "%s", name);
         } else if (!strcmp(name, "MOUSE") || !strcmp(name, "LSTICK") || !strcmp(name, "RSTICK")) {
             int n = sscanf(line + off, "%ld %ld %lf", &a, &b, &c);
             if (n < 2) { rt_log("input: script line %d: %s needs x y [hold]", ln, name); continue; }
@@ -144,14 +169,27 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
         ScriptEv *e = &script_ev[i];
         if (e->timed ? w < 0 : script_mixed && w >= 0) continue;
         uint64_t now = e->timed ? (uint64_t)w : tick;
-        if (now < e->at || (now >= e->at + e->hold && (e->logged || !e->timed))) continue;
-        if ((e->stick == 3 || e->mark) && e->logged) continue;
+        // A one-shot line (a mark, mouse counts, the pointer placed, the wheel) fires late too: a poll may skip its tick
+        int once = e->mark || e->stick == 3 || e->mouse == SM_POINTER || e->mouse == SM_WHEEL;
+        if (now < e->at || (now >= e->at + e->hold && (e->logged || (!e->timed && !once)))) continue;
+        if (once && e->logged) continue;
         if (!e->logged) {
             e->logged = 1;
+            if (e->mouse == SM_LEFT || e->mouse == SM_RIGHT)
+                __atomic_add_fetch(&script_presses[e->mouse == SM_RIGHT], 1, __ATOMIC_RELAXED);
             if (e->timed) rt_log("input: script frame %llu at %.1f ms: %s", (unsigned long long)fr, w / 1000.0, e->text);
             else rt_log("input: script frame %llu tick %llu: %s", (unsigned long long)fr, (unsigned long long)tick, e->text);
         }
         if (e->mark) perf_segment(e->text);
+        else if (e->mouse == SM_POINTER) {
+            uint32_t u[2];
+            memcpy(&u[0], &e->fx, 4), memcpy(&u[1], &e->fy, 4);
+            __atomic_store_n(&script_ptr[0], u[0], __ATOMIC_RELAXED);
+            __atomic_store_n(&script_ptr[1], u[1], __ATOMIC_RELAXED);
+            plat_xchg32(&script_ptr_on, 1);
+            __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // as the mouse moved: keyboard and mouse used last
+        } else if (e->mouse == SM_WHEEL) plat_add32(&script_wheel, e->x), __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
+        else if (e->mouse) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // a button held, as the mouse's
         else if (e->stick == 3) {
             int64_t x = (int64_t)script_mouse[0] + e->x, y = (int64_t)script_mouse[1] + e->y;
             script_mouse[0] = (int32_t)(x < INT32_MIN ? INT32_MIN : x > INT32_MAX ? INT32_MAX : x);
@@ -160,6 +198,21 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
         else *b |= 1ull << e->bit;
     }
 }
+
+int input_menu_pointer(float *nx, float *ny) {
+    if (__atomic_load_n(&script_ptr_on, __ATOMIC_ACQUIRE)) {
+        uint32_t u[2] = {__atomic_load_n(&script_ptr[0], __ATOMIC_RELAXED), __atomic_load_n(&script_ptr[1], __ATOMIC_RELAXED)};
+        memcpy(nx, &u[0], 4), memcpy(ny, &u[1], 4);
+        return 2;
+    }
+    return ikb_pointer(nx, ny);
+}
+
+uint32_t input_menu_mouse_presses(int right) {
+    return __atomic_load_n(&script_presses[right != 0], __ATOMIC_RELAXED) + ikb_mouse_presses(right);
+}
+
+int32_t input_menu_wheel_take(void) { return plat_xchg32(&script_wheel, 0) + ikb_wheel_take(); }
 
 // NX2SARIA_INPUT_RECORD=<file>: writes the merged input as NX2SARIA_INPUT_SCRIPT lines, one per button press and per stick
 // segment, so a played session replays as a script. A stick segment ends when an axis moves by more than REC_STICK_STEP.
@@ -1227,10 +1280,12 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
         if (ikb_foreground()) {
             uint8_t down[KEY_COUNT] = {0};
             // Mouse buttons count only while the cursor is captured, and a button already held when the capture began
-            // (the click that refocused the window) is ignored until it is released.
+            // (the click that refocused the window) is ignored until it is released. Not while a game menu has the
+            // pointer (menu_cursor.c, menu_mouse.c): its clicks are A and B there, also in the moment before the
+            // window thread has released the capture.
             static int was_captured;
             static uint8_t mouse_ignore[KEY_COUNT];
-            int cap = ikb_captured();
+            int cap = ikb_captured() && !menu_cursor_pointer() && !menu_mouse_pointer();
             // A scan is one key state system call per key (about 95). The game reads several pads in a row: reads
             // within a millisecond of a scan get its answers again.
             static uint8_t raw[KEY_COUNT];
@@ -1307,7 +1362,8 @@ static volatile uint64_t g_block_closed, g_menu_closed;
 
 int input_cursor_allowed(void) {
     const char *in = cfg_get("NX2SARIA_INPUT");
-    return g_block != 1 && g_menu != 1 && mouse_sens_get() > 0 && !(in && !strcmp(in, "none")) && !menu_cursor_pointer();
+    return g_block != 1 && g_menu != 1 && mouse_sens_get() > 0 && !(in && !strcmp(in, "none")) && !menu_cursor_pointer() &&
+           !menu_mouse_pointer();
 }
 
 void input_block(int on) {
@@ -1343,6 +1399,8 @@ static int blocked(volatile int32_t *flag, volatile uint64_t *closed, const char
     return 0;
 }
 
+int input_game_input_blocked(void) { return g_block != 0 || g_menu != 0; }
+
 int input_sdl_version(int *built) {
     *built = SDL_VERSION;
     return SDL_GetVersion();   // safe before SDL_Init
@@ -1350,7 +1408,7 @@ int input_sdl_version(int *built) {
 
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     poll_merged(buttons, lx, ly, rx, ry);
-    if (!g_block && !g_menu) menu_cursor_poll(buttons);
+    if (!g_block && !g_menu) menu_cursor_poll(buttons), menu_mouse_poll(buttons);
     const int32_t axes[4] = {*lx, *ly, *rx, *ry};
     int text = blocked(&g_block, &g_block_closed, "text entry", *buttons, axes),
         menu = blocked(&g_menu, &g_menu_closed, "menu", *buttons, axes);

@@ -48,6 +48,11 @@ __attribute__((constructor)) static void day_register(void) {
 __attribute__((constructor)) static void wide_bars_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xef0, wide_bars_screen_host);
 }
+// Every interface screen's update site of the set menu_mouse (patches-v111.txt) calls the page's +0xee0: menu_mouse.c,
+// the mouse in the game's own menus.
+__attribute__((constructor)) static void menu_mouse_register(void) {
+    if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xee0, menu_mouse_screen_host);
+}
 #endif
 
 #if RT_PATCH_COUNT

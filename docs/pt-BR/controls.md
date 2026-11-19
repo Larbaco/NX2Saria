@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=141a24538b667915f871fbbf518daaabba09ea67 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=abb8bb4f47fd0efe8c3e8ae105bd049116cf7195 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -132,10 +132,10 @@ As ações são as do próprio jogo, como a tela *Basic Controls* dele (menu Plu
 A opção *Swap Jump Controls* do jogo troca B e X (pular no B, guardar no X); as atribuições continuam nos botões do
 Switch, então o Space passa a guardar e o Left Ctrl a pular. O Left Shift é o A, então segurá-lo faz o Link correr; o E
 pressiona o A uma vez para falar e abrir. O Esc não tem atribuição no jogo; ele abre o menu de configurações e libera o
-cursor do mouse (veja Câmera com o mouse). Z e X repetem ZL e ZR em teclas vizinhas. A roda do mouse não tem atribuição.
-As atribuições são as tabelas de `input_map` em `runtime/input_map.c`: as teclas (ids de tecla independentes de
-plataforma) e uma tabela de controle por layout (entradas do controle pela posição); `runtime/input_win.c` traduz as
-teclas virtuais do Win32 e os botões do SDL.
+cursor do mouse (veja Câmera com o mouse). Z e X repetem ZL e ZR em teclas vizinhas. A roda do mouse não tem atribuição
+no jogo em si; nos menus do próprio jogo ela rola (veja Mouse nos menus do jogo). As atribuições são as tabelas de
+`input_map` em `runtime/input_map.c`: as teclas (ids de tecla independentes de plataforma) e uma tabela de controle por
+layout (entradas do controle pela posição); `runtime/input_win.c` traduz as teclas virtuais do Win32 e os botões do SDL.
 
 ## Teclas da janela
 
@@ -362,6 +362,23 @@ analógicos do controle e a câmera com o mouse não são escalados. O padrão f
 valor máximo de uma tecla fica uma unidade abaixo dos 50% de que os bits de direção precisam. As duas configurações
 valem na hora com o jogo rodando.
 
+## Mouse nos menus do jogo
+
+No jogo 1.1.1 o mouse funciona nos menus do próprio jogo: o título e os seus arquivos de save, o menu de pausa e as suas
+páginas, Options e os diálogos de salvar. Enquanto um menu tem o foco e o mouse ou uma tecla foi o último a ser usado, o
+cursor é liberado da câmera com o mouse e aparece sobre o botão que tem o foco. Passar o mouse sobre um botão o
+seleciona, como o D-pad faria (com o destaque e o som do jogo); um clique esquerdo em um botão é o A nele, um clique
+direito em qualquer lugar é o B, e cada passo da roda é o D-pad para cima ou para baixo, então uma lista anda uma linha.
+Pegar o controle esconde o cursor e deixa os menus como no console; a câmera volta a ficar com o mouse quando o menu
+fecha. O menu de configurações (F1 ou Esc) fica com o mouse primeiro enquanto está aberto. O ponteiro acompanha os menus
+onde `wide_menus` e `wide_hud` os colocam em uma imagem ultrawide.
+
+`NX2SARIA_MENU_CURSOR` (`menu_cursor`, a linha *Mouse nos menus do jogo* na aba Controles, aplicada na hora; padrão 1) o
+desliga com 0. `NX2SARIA_MENU_CURSOR_LOG=1` registra no log cada tela de menu para a qual o foco vai. O log tem
+`menu_mouse: on for 1.1.1 ...` no início, uma linha `menu_mouse: screen <name>: ...` para os primeiros menus abertos e
+uma linha por menu em que o mouse foi usado, com os movimentos do foco, os cliques, os passos da roda e as contagens de
+testes de acerto. Como funciona: [menu-mouse.md](../menu-mouse.md) (em inglês).
+
 ## Vibração HD nos controles do Switch
 
 O jogo gera a vibração para atuadores lineares: por lado, uma banda baixa e uma alta, cada uma com uma frequência e uma
@@ -462,6 +479,9 @@ relatório, não é reconhecido pelo leitor e passa pelo SDL ou pelo XInput, com
 ```
 <frame> <button> [hold_frames]            # A B X Y L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN LCLICK RCLICK; hold defaults to 4
 <frame> LSTICK|RSTICK <x> <y> [hold_frames]   # -32767..32767, up is +y
+<frame> POINTER <x> <y>                    # the pointer for the game's menus at x, y of the window (0..1 from top left)
+<frame> MOUSEL|MOUSER [hold_frames]        # the left or right mouse button, for the game's menus only
+<frame> WHEEL <notches>                    # the mouse wheel for the game's menus, up positive
 ```
 
 `<frame>` conta ticks de 60 Hz de tempo de jogo desde o primeiro quadro (quadros apresentados a 60 fps). Cada evento é

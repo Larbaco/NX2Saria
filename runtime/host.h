@@ -425,6 +425,7 @@ int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init w
 void wide_bars_init(double margin);                         // wide_init: NX2SARIA_WIDE_MENUS = center on a picture
                                                            // wider than 16:9, margin its share on each side
 void wide_bars_screen_host(Cpu *c);                        // the set wide_bars' site (patch page +0xef0, patches.c)
+void menu_mouse_screen_host(Cpu *c);                       // the set menu_mouse's site (patch page +0xee0, patches.c)
 double wide_menu_sides(void);                              // gfx_present.c, each present: the share of the width to black
                                                            // out on each side (a menu, loading screen or movie), 0 none
 int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set
