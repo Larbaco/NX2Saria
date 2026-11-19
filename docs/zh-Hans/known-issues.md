@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=458760f66429595dfdce5f6532ade5a58d7adca5 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=4679f2a7b22fdeb015100f0d6f0303e6eab365f1 reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · [Русский](../ru/known-issues.md) · **简体中文**
 
@@ -23,6 +23,7 @@
 ## 着色器和管线
 
 - **安装、更新或驱动程序更新后的首次启动，以及首次进入某个区域时，可能会出现停顿**，因为此时正在构建着色器和管线。之后的启动会从缓存中读取它们。
+- **在 NVIDIA 上，更新或首次启动会重新构建着色器**（更新长时间停留在“Built ... shaders for your graphics card”，或每次启动都像安装后一样出现停顿），原因是驱动程序的着色器缓存已满：驱动程序会丢弃较旧的着色器来腾出空间，游戏只好重新构建它们。在 NVIDIA 控制面板的“管理 3D 设置”中，将**着色器缓存大小**设为 10 GB 或“无限制”。
 - **被强制结束**而不是正常关闭的游戏，在缓存更新后可能没有写入管线缓存。下次运行时会写入它。
 
 ## 地图追踪器

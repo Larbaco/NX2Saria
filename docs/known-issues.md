@@ -26,6 +26,10 @@ release notes say so. The [README](../README.md#status-and-known-issues) has the
 
 - **The first start after an install, an update or a driver update, and the first visit to an area, can pause** while
   shaders and pipelines are built. Later starts read them from the caches.
+- **On NVIDIA, an update or the first start keeps building the shaders again** (the update stays on "Built ... shaders
+  for your graphics card" for many minutes, or every start pauses as after an install) when the driver's shader cache
+  is full: the driver then drops older shaders to make room, and the game builds them again. In the NVIDIA Control
+  Panel, under Manage 3D settings, set **Shader Cache Size** to 10 GB or Unlimited.
 - **A game ended by force** rather than closed may leave the pipeline cache unwritten after the cache was renewed. The
   next run writes it instead.
 
