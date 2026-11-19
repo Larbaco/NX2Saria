@@ -16,6 +16,7 @@
 #include "perf_bound.h"
 #include "perfmon.h"
 #include "prof.h"
+#include "session_summary.h"
 #include "stutter_map.h"
 #include "platform/platform.h"
 
@@ -509,6 +510,11 @@ static struct {
     int nworst;
 } ft;
 static uint64_t summary_t0;   // start of the current period (0: not started)
+// The whole session's numbers, the same as ft's but never reset (perf_session_stats, for session_summary.c).
+static struct {
+    uint64_t frames, sum, max, over25, over100;
+    uint32_t hist[FT_BINS];
+} ses;
 
 // The exit's summary (perf_summary_flush) runs on the exiting thread while the present thread may still add frames to
 // `ft` and write its own reports (ft_frame, session_report), with no lock between them: the exit lines came out torn,
@@ -815,6 +821,15 @@ void perf_summary_flush_try(void) {
     summary_t0 = 0;
 }
 
+int perf_session_stats(PerfSession *out) {
+    memset(out, 0, sizeof *out);
+    if (!ses.frames || !ses.sum) return 0;
+    out->frames = ses.frames, out->over25 = ses.over25, out->over100 = ses.over100;
+    ss_frametime(ses.hist, FT_BINS, 250000ull, ses.frames, ses.sum, ses.max, &out->fps_mean, &out->fps_low_1pct,
+                 &out->worst_ms);
+    return 1;
+}
+
 // Returns the replay time since the previous present. add 0: the exit's summary is written (ft_stop), so the frame
 // is not added to it.
 static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
@@ -837,6 +852,10 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
     ft.sum += d;
     uint64_t b = d / 250000ull;
     ft.hist[b < FT_BINS ? b : FT_BINS - 1]++;
+    ses.frames++, ses.sum += d, ses.hist[b < FT_BINS ? b : FT_BINS - 1]++;
+    if (d > ses.max) ses.max = d;
+    if (d > 25000000ull) ses.over25++;
+    if (d > 100000000ull) ses.over100++;
     if (d > 25000000ull) ft.over25++;
     if (d > 50000000ull) ft.over50++;
     if (d > 100000000ull) ft.over100++;

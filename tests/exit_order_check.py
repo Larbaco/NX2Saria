@@ -50,7 +50,8 @@ def calls_in_order(body, names):
 
 
 STEPS = ['fs_save_wait', 'rtss_limit_restore', 'input_rumble_hd_stop', 'cfg_save', 'vk_pipeline_prewarm_marker_clear',
-         'prof_write', 'vk_mem_exit_log', 'heap_retry_exit_log', 'logq_flush', 'vk_pipeline_save_exit', 'fs_save_flush']
+         'prof_write', 'session_summary_exit', 'vk_mem_exit_log', 'heap_retry_exit_log', 'logq_flush',
+         'vk_pipeline_save_exit', 'fs_save_flush']
 
 HARNESS = r'''
 #include <windows.h>
@@ -63,7 +64,7 @@ enum { RT_EXIT_SETTINGS = 1 };
 static char seen[1024];
 #define STEP(name) static void name(void) { strcat(seen, #name " "); }
 STEP(fs_save_wait) STEP(rtss_limit_restore) STEP(input_rumble_hd_stop) STEP(vk_pipeline_prewarm_marker_clear)
-STEP(prof_write) STEP(vk_mem_exit_log) STEP(heap_retry_exit_log) STEP(logq_flush) STEP(vk_pipeline_save_exit) STEP(fs_save_flush)
+STEP(prof_write) STEP(session_summary_exit) STEP(vk_mem_exit_log) STEP(heap_retry_exit_log) STEP(logq_flush) STEP(vk_pipeline_save_exit) STEP(fs_save_flush)
 static int cfg_save(void) { strcat(seen, "cfg_save "); return 1; }
 static int ending;
 static void rt_log_ending(void) { ending++; }

@@ -19,6 +19,7 @@
 #include "cfg.h"
 #include "gfx.h"
 #include "host.h"
+#include "session_summary.h"
 #include "vk.h"
 #include "vk_gpa.h"
 
@@ -29,6 +30,16 @@ static const char *gpl_off;          // why gpl is off, for the boot report; NUL
 static char summary[832];           // vk_caps_summary: written once, in vk_caps_init, before any other thread reads it
 
 const char *vk_caps_summary(void) { return summary; }
+
+// The card for the session summary (session_summary.h vk_caps_gpu): stored once in vk_caps_init, published by gpu_known.
+static SsGpu gpu;
+static volatile int32_t gpu_known;
+
+int vk_caps_gpu(SsGpu *out) {
+    if (!__atomic_load_n(&gpu_known, __ATOMIC_ACQUIRE)) return 0;
+    *out = gpu;
+    return 1;
+}
 
 static uint32_t env_u32(const char *name, uint32_t def) {
     const char *e = cfg_get(name);
@@ -157,6 +168,13 @@ void vk_caps_init(VkCtx *c) {
     driver_version(dv, sizeof dv, c->props.vendorID, c->props.driverVersion);
     snprintf(summary, sizeof summary, "%s, driver %s \"%s\" version %s", c->props.deviceName, drv.driverName,
              drv.driverInfo, dv);
+    snprintf(gpu.name, sizeof gpu.name, "%s", c->props.deviceName);
+    snprintf(gpu.driver, sizeof gpu.driver, "%s %s", drv.driverName, dv);
+    gpu.vendor = c->props.vendorID, gpu.device = c->props.deviceID;
+    for (uint32_t h = 0; h < c->mem_props.memoryHeapCount; h++)   // the largest device-local heap: the card's own memory
+        if (c->mem_props.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT && c->mem_props.memoryHeaps[h].size >> 20 > gpu.vram_mb)
+            gpu.vram_mb = c->mem_props.memoryHeaps[h].size >> 20;
+    __atomic_store_n(&gpu_known, 1, __ATOMIC_RELEASE);
     uint32_t v = c->props.apiVersion;
     VkPhysicalDevice p = c->phys;
     rt_log("vk caps: %s, vendor %#06x device %#06x, driver %s \"%s\" (id %d, version %s, raw %#x), api %u.%u.%u",
