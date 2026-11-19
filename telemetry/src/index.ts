@@ -1,8 +1,9 @@
 // NX2Saria's telemetry Worker: receives opt-in session reports and player comments from the launcher, deletes an
 // installation's data on request, and serves the admin panel. Routes are listed in README.md.
 //
-// The Worker reads no request header except Content-Type, Content-Length and (admin routes only) Authorization, and
-// stores no IP: the only thing it keeps about where a request came from is Cloudflare's two-letter country.
+// The Worker reads no request header except Content-Type, Content-Length, CF-Connecting-IP (the public routes, as the
+// key of the in-memory rate limiter only) and (admin routes only) Authorization. It stores no IP: the only thing it
+// keeps about where a request came from is Cloudflare's two-letter country.
 
 import type { Env } from "./env";
 import { HttpError, countryOf, error, isJsonContentType, json, methodNotAllowed, readCappedBody } from "./http";
@@ -90,9 +91,21 @@ async function postFeedback(request: Request, env: Env): Promise<Response> {
   return json(201, { ok: true });
 }
 
+// The per-IP limit of the public routes: the address is the key of Cloudflare's in-memory counter for this request and
+// is not kept, logged or written anywhere. A request without the header (never on Cloudflare) shares one key.
+async function ipLimited(request: Request, env: Env): Promise<boolean> {
+  const ip = request.headers.get("CF-Connecting-IP") ?? "none";
+  const { success } = await env.IP_LIMITER.limit({ key: ip });
+  return !success;
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
   const method = request.method;
+  const isPublicWrite =
+    (method === "POST" && (pathname === "/v1/session" || pathname === "/v1/feedback")) ||
+    (method === "DELETE" && pathname.startsWith("/v1/install/"));
+  if (isPublicWrite && (await ipLimited(request, env))) return error(429, "rate limited");
 
   if (pathname === "/v1/session") {
     return method === "POST" ? postSession(request, env) : methodNotAllowed("POST");

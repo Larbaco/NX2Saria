@@ -62,19 +62,33 @@ export function testEnv(overrides: Partial<Env> = {}): Env {
   return { ...(env as unknown as Env), ...overrides };
 }
 
+// A made-up client address per request unless the test gives one, so the per-IP limit never joins unrelated tests.
+let ipCounter = 0;
+export function newIp(): string {
+  ipCounter++;
+  return `198.51.${(ipCounter >> 8) & 255}.${ipCounter & 255}`;
+}
+
 export async function call(request: Request, overrides: Partial<Env> = {}): Promise<Response> {
+  if (!request.headers.has("CF-Connecting-IP")) {
+    request = new Request(request, { headers: new Headers(request.headers) });
+    request.headers.set("CF-Connecting-IP", newIp());
+  }
   return worker.fetch(request, testEnv(overrides));
 }
 
 export function postJson(
   path: string,
   body: unknown,
-  options: { country?: string; contentType?: string; raw?: string; overrides?: Partial<Env> } = {},
+  options: { country?: string; contentType?: string; raw?: string; overrides?: Partial<Env>; ip?: string } = {},
 ): Promise<Response> {
   const text = options.raw ?? JSON.stringify(body);
   const request = new Request(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": options.contentType ?? "application/json" },
+    headers: {
+      "Content-Type": options.contentType ?? "application/json",
+      ...(options.ip === undefined ? {} : { "CF-Connecting-IP": options.ip }),
+    },
     body: text,
     cf: options.country === undefined ? undefined : ({ country: options.country } as unknown as IncomingRequestCfProperties),
   });
