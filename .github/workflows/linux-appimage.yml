@@ -54,6 +54,8 @@ jobs:
           dotnet-version: '10.0.x'
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
+          version: '0.13.9'
+          checksum: a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5   # uv-x86_64-unknown-linux-gnu.tar.gz
           enable-cache: false
       - name: Shader compilers
         # make_appimage.py compiles the runtime's own shaders (tools/build_shaders.py: glslc, spirv-as, spirv-val)
@@ -75,7 +77,9 @@ jobs:
           echo "$VULKAN_SDK_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
           tar -xf "$RUNNER_TEMP/$f" -C "$sdk"
           bin=$(dirname "$(find "$sdk" -type f -name glslc -path '*/bin/*' | head -1)")
-          test -x "$bin/glslc" && test -x "$bin/spirv-as" && test -x "$bin/spirv-val"
+          for t in glslc spirv-as spirv-val; do
+            [ -x "$bin/$t" ] || { echo "::error::the Vulkan SDK has no $t"; exit 1; }
+          done
           echo "$bin" >> "$GITHUB_PATH"
           if ! "$bin/spirv-as" --version >/dev/null 2>&1; then   # the SDK's tools may link its own shared libraries
             echo "LD_LIBRARY_PATH=$(cd "$bin/../lib" && pwd)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
@@ -84,13 +88,14 @@ jobs:
       - name: Shader translator and VMA
         run: |
           uv venv -q --python 3.12 .venv
-          uv pip install -q --python .venv/bin/python pillow
+          uv pip install -q --python .venv/bin/python --require-hashes -r tools/ci_requirements_linux.txt
           .venv/bin/python tools/build_xlate.py
           .venv/bin/python -c 'import sys; sys.path.insert(0, "tools"); import build_game; print("VMA:", build_game.vma_include())'
       - name: AppImage
         run: |
-          uv python install -q 3.14
-          py=$(find "$(uv python dir)" -maxdepth 1 -type d -name 'cpython-3.14.*-linux-x86_64-gnu' | sort -V | tail -1)
+          uv python install -q 3.14.9   # as the Windows release's runtime (tools/make_launcher.py PY_VERSION)
+          py=$(find "$(uv python dir)" -maxdepth 1 -type d -name 'cpython-3.14.9-linux-x86_64-gnu' | head -1)
+          [ -x "$py/bin/python3" ] || { echo "::error::uv installed no CPython 3.14.9"; exit 1; }
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/runtime-x86_64" "$RUNTIME_URL"
           (cd "$RUNNER_TEMP" && sha256sum -c - <<EOF

@@ -10,8 +10,11 @@ Standard library only: it runs with the runner's own Python, before anything is 
         manifests are the same, name this version, carry exactly these notes, and give each file's real size and
         sha256. Writes dist/SHA256SUMS.txt over all of them.
     python tools/release_files.py body  --tag T --notes docs/releases/T.md --state prerelease|stable [--repo o/n]
-        The text of the GitHub release page: the notes, a pre-release line on top while it is one, and the line that
-        tells players how to verify their download. It is page text only; no file of the release changes with it.
+        The text of the GitHub release page: the notes, a pre-release line on top while it is one (unless the notes of
+        a release candidate have their own), and the line that tells players how to verify their download. It is page
+        text only; no file of the release changes with it.
+    python tools/release_files.py promote --tag T [--stable TAG ...]
+        T may become the stable release: it has no suffix, and no stable release among the tags given is as new.
 
 Each command prints what it found, one line per finding, and exits 1 on a problem.
 """
@@ -46,6 +49,26 @@ def version_of(tag):
     if not m:
         raise Problem(f'{tag!r} is not a release tag (vX.Y.Z or vX.Y.Z-rc.N)')
     return tag[1:], bool(m.group(4))
+
+
+def version_key(tag):
+    """The order of release tags as semver orders their versions: v0.19.0-rc.1 < v0.19.0-rc.10 < v0.19.0."""
+    m = TAG.fullmatch(tag)
+    if not m:
+        raise Problem(f'{tag!r} is not a release tag (vX.Y.Z or vX.Y.Z-rc.N)')
+    base = tuple(int(m.group(i)) for i in (1, 2, 3))
+    return base + ((0, int(m.group(5))) if m.group(4) else (1, 0))
+
+
+def check_promote(tag, stable):
+    """[finding] when tag may be made the stable release beside the stable releases' tags; raises Problem otherwise.
+    Tags that are not release tags (none so far) are left out."""
+    if version_of(tag)[1]:
+        raise Problem(f'{tag} is a release candidate: candidates stay pre-releases')
+    newest = max((t for t in stable if TAG.fullmatch(t)), key=version_key, default='')
+    if newest and version_key(newest) >= version_key(tag):
+        raise Problem(f'{newest} is a stable release already, not older than {tag}')
+    return [f'{tag} may become the stable release (the newest stable one now: {newest or "none"})']
 
 
 def check_tag(tag, root):
@@ -131,7 +154,8 @@ def check_files(tag, notes, folder):
 def body(tag, notes, state, repo=DEFAULT_REPO):
     ver, rc = version_of(tag)
     head = ''
-    if state == 'prerelease':
+    own = any(PRERELEASE_LINE.match(line) for line in text(notes).splitlines())
+    if state == 'prerelease' and not (rc and own):
         head = ('**Pre-release:** a release candidate, offered only to launchers on the Preview channel.\n\n' if rc else
                 f'**Pre-release:** {ver} becomes the stable release once it has been tried on Windows. Until then '
                 'only launchers on the Preview channel offer it.\n\n')
@@ -155,12 +179,17 @@ def main(argv=None):
     b.add_argument('--notes', required=True)
     b.add_argument('--state', choices=('prerelease', 'stable'), required=True)
     b.add_argument('--repo', default=DEFAULT_REPO)
+    pr = sub.add_parser('promote')
+    pr.add_argument('--tag', required=True)
+    pr.add_argument('--stable', nargs='*', default=[], help='the tags of the stable releases there are')
     a = ap.parse_args(argv)
     try:
         if a.cmd == 'tag':
             out = check_tag(a.tag, a.root)
         elif a.cmd == 'files':
             out = check_files(a.tag, a.notes, a.dir)
+        elif a.cmd == 'promote':
+            out = check_promote(a.tag, a.stable)
         else:
             sys.stdout.write(body(a.tag, a.notes, a.state, a.repo))
             return 0

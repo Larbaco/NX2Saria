@@ -52,7 +52,8 @@ the folder you downloaded to:
 
 ```sh
 gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
-  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0
+  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0 \
+  --deny-self-hosted-runners
 ```
 
 (On Windows, in PowerShell, write it on one line without the `\`.)

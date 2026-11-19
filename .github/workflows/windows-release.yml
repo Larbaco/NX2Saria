@@ -19,6 +19,10 @@ on:
         description: "Commit to build (the tag's commit, as the release workflow resolved it)"
         type: string
         required: true
+      notes_ref:
+        description: 'Empty: the notes are docs/releases/<tag>.md of the commit built, which must exist'
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       tag:
@@ -44,7 +48,10 @@ jobs:
       TAG: ${{ inputs.tag }}
       # empty when the release workflow calls: the notes are then the tag's own docs/releases/<tag>.md
       NOTES_REF: ${{ inputs.notes_ref }}
-      PY: uv run --no-project --python 3.14 --with numpy python
+      # Python 3.14.9 as the release's own runtime (tools/make_launcher.py PY_VERSION), numpy by version only: uv run
+      # does not check a requirement's hash (docs/releases/README.md lists what is pinned how)
+      PY: uv run --no-project --python 3.14.9 --with numpy==2.5.5 python
+      REPO: ${{ github.repository }}
       # make_launcher runs the release's own tools/make_game.py for the prebuilt runtime; a __pycache__ it left in the
       # release's tools/ would be refused by the release's content check (check_content's .pyc folds its marker)
       PYTHONDONTWRITEBYTECODE: '1'
@@ -58,6 +65,8 @@ jobs:
           dotnet-version: '10.0.x'
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
+          version: '0.13.9'
+          checksum: edd61f7f5728a56cc62455386661860bdfc7bab65872f39b0c25bdcc1d8e1beb   # uv-x86_64-pc-windows-msvc.zip
           enable-cache: false
       - name: Tools on PATH
         # NativeAOT finds MSVC through vswhere (docs/building.md). The runtime's own shaders are compiled with MSYS2
@@ -65,7 +74,7 @@ jobs:
         # runner's MSYS2 installs from its packages
         run: |
           echo 'C:\Program Files (x86)\Microsoft Visual Studio\Installer' >> "$GITHUB_PATH"
-          uv python install -q 3.14
+          uv python install -q 3.14.9
           /c/msys64/usr/bin/pacman.exe -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-tools
           /c/msys64/ucrt64/bin/glslc.exe --version | head -1
       - name: Notes
@@ -119,7 +128,7 @@ jobs:
         run: |
           $PY tools/make_launcher.py --xlate build/xlate --ffx "$RUNNER_TEMP/amd/ffx3/amd_fidelityfx_vk.dll" \
             --ffx4 "$RUNNER_TEMP/amd/ffx4" --dlssg build/dlssg/nx2navi_dlssg.dll --streamline toolchain/streamline-sdk \
-            --feed "${{ github.repository }}" --notes "$RUNNER_TEMP/notes.md"
+            --feed "$REPO" --notes "$RUNNER_TEMP/notes.md"
           cd build/launcher-release
           ls -la
           sha256sum NX2Saria-Setup-*.exe NX2Saria-app-*.zip NX2Saria-runtime-*.zip NX2Saria-update.json NX2navi-update.json

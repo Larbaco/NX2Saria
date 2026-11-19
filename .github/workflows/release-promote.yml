@@ -2,6 +2,8 @@
 # release page loses its pre-release line and the release is marked stable and Latest. No file of the release is
 # uploaded, changed or removed: the manifests keep the notes of the tag's commit, which never had a pre-release line
 # (tools/release_files.py tag refuses one), and every file keeps its attestation (docs/releases/README.md).
+# It promotes only a release that release.yml made: published by GitHub Actions, its SHA256SUMS.txt attested by
+# release.yml for that tag, and every file the one SHA256SUMS.txt lists. Started from main only.
 name: Release promote
 
 on:
@@ -24,15 +26,21 @@ concurrency:
 
 jobs:
   promote:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write   # edits the release's text and its stable/Latest flags
+      contents: write       # edits the release's text and its stable/Latest flags
+      attestations: read    # gh attestation verify
     env:
       TAG: ${{ inputs.tag }}
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: Tag
+        # before the tag is used anywhere else, the checkout's ref among them
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+            { echo "::error::$TAG is not a release tag without a suffix (vX.Y.Z): only those become stable"; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: refs/tags/${{ inputs.tag }}
@@ -42,20 +50,52 @@ jobs:
             tools/release_files.py
             VERSION
           sparse-checkout-cone-mode: false
-      - name: Promote
+      - name: Check the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 tools/release_files.py tag --tag "$TAG"
-          case "$TAG" in *-*) echo "::error::$TAG is a release candidate: candidates stay pre-releases"; exit 1;; esac
-          read -r draft pre < <(gh release view "$TAG" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
-          if [ "$draft" != false ] || [ "$pre" != true ]; then
-            echo "::error::$TAG is not a published pre-release (draft $draft, pre-release $pre)"
+          gh release view "$TAG" --json isDraft,isPrerelease,author \
+            --jq '"\(.isDraft) \(.isPrerelease) \(.author.login)"' > "$RUNNER_TEMP/state"
+          read -r draft pre author < "$RUNNER_TEMP/state"
+          [ "$draft" = false ] || { echo "::error::$TAG is a draft"; exit 1; }
+          [ "$pre" = true ] || { echo "::error::$TAG is not a pre-release"; exit 1; }
+          [ "$author" = "github-actions[bot]" ] ||
+            { echo "::error::$TAG was published by $author, not by GitHub Actions (release.yml)"; exit 1; }
+          # an assignment, so that a failed request stops the step (a process substitution would not)
+          stable=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
+          # shellcheck disable=SC2086 # one tag per word
+          python3 tools/release_files.py promote --tag "$TAG" --stable $stable
+          # SHA256SUMS.txt is the one release.yml attested for this tag, and every file of the release is one it lists
+          mkdir "$RUNNER_TEMP/sums"
+          gh release download "$TAG" -p SHA256SUMS.txt -D "$RUNNER_TEMP/sums"
+          sha=$(git rev-parse HEAD)
+          gh attestation verify "$RUNNER_TEMP/sums/SHA256SUMS.txt" --repo "$GH_REPO" \
+            --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "refs/tags/$TAG" \
+            --source-digest "$sha" --deny-self-hosted-runners > /dev/null
+          echo "SHA256SUMS.txt: attestation verified"
+          (awk '{print "sha256:" $1 " " $2}' "$RUNNER_TEMP/sums/SHA256SUMS.txt"
+           echo "sha256:$(sha256sum "$RUNNER_TEMP/sums/SHA256SUMS.txt" | cut -d' ' -f1) SHA256SUMS.txt") |
+            LC_ALL=C sort > "$RUNNER_TEMP/want"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.digest // "none") \(.name)"' |
+            LC_ALL=C sort > "$RUNNER_TEMP/before"
+          if ! cmp -s "$RUNNER_TEMP/want" "$RUNNER_TEMP/before"; then
+            echo "::error::the files of $TAG are not exactly the ones its SHA256SUMS.txt lists"
+            diff "$RUNNER_TEMP/want" "$RUNNER_TEMP/before" || true
             exit 1
           fi
-          before=$(gh release view "$TAG" --json assets --jq '[.assets[] | "\(.name) \(.size)"] | sort | join(",")')
+          echo "$(wc -l < "$RUNNER_TEMP/before") files, each as SHA256SUMS.txt lists it"
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           python3 tools/release_files.py body --tag "$TAG" --notes "docs/releases/$TAG.md" --state stable \
             --repo "$GH_REPO" > "$RUNNER_TEMP/body.md"
           gh release edit "$TAG" --notes-file "$RUNNER_TEMP/body.md" --prerelease=false --latest
-          after=$(gh release view "$TAG" --json assets --jq '[.assets[] | "\(.name) \(.size)"] | sort | join(",")')
-          test "$before" = "$after"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.digest // "none") \(.name)"' |
+            LC_ALL=C sort > "$RUNNER_TEMP/after"
+          cmp -s "$RUNNER_TEMP/before" "$RUNNER_TEMP/after" ||
+            { echo "::error::the files of $TAG changed during the promotion"; exit 1; }
           gh release view "$TAG" --json url,isPrerelease --jq '"\(.url): pre-release \(.isPrerelease)"'
           gh api "repos/$GH_REPO/releases/latest" --jq '"Latest: \(.tag_name)"'

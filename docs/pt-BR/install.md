@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/install.md source-hash=73bfc93e1db732215a8df95adc35019764b38782 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=334d61975b4a2ef953e2804aa904c2b820652c18 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
@@ -49,7 +49,8 @@ A partir do NX2Saria 0.19.0-rc.1, todos os arquivos de uma versão são compilad
 
 ```sh
 gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
-  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0
+  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0 \
+  --deny-self-hosted-runners
 ```
 
 (No Windows, no PowerShell, escreva tudo numa linha só, sem a `\`.)

@@ -152,6 +152,23 @@ class Main(unittest.TestCase):
             self.assertEqual(rf.main(['tag', '--tag', 'v0.19.1', '--root', str(root)]), 1)
 
 
+class Promote(unittest.TestCase):
+    def test_order(self):
+        tags = ['v0.18.9', 'v0.19.0-rc.1', 'v0.19.0-rc.2', 'v0.19.0-rc.10', 'v0.19.0', 'v0.19.1-rc.1', 'v1.0.0']
+        self.assertEqual(sorted(reversed(tags), key=rf.version_key), tags)
+
+    def test_promote(self):
+        rf.check_promote('v0.19.0', ['v0.18.6', 'v0.9.2', 'v0.10.0'])
+        rf.check_promote('v0.19.0', [])
+        rf.check_promote('v0.19.0', ['v0.18.6', 'nightly'])
+        for tag, stable, why in (('v0.19.0-rc.1', ['v0.18.6'], 'release candidate'),
+                                 ('v0.19.0', ['v0.18.6', 'v0.19.0'], 'not older'),
+                                 ('v0.19.0', ['v0.19.1', 'v0.18.6'], 'not older'),
+                                 ('v0.19', ['v0.18.6'], 'not a release tag')):
+            with self.subTest(tag=tag, stable=stable), self.assertRaisesRegex(rf.Problem, why):
+                rf.check_promote(tag, stable)
+
+
 class Body(unittest.TestCase):
     def test_states(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -160,9 +177,13 @@ class Body(unittest.TestCase):
             rc = rf.body('v0.19.0-rc.1', notes, 'prerelease')
             pre = rf.body('v0.19.0', notes, 'prerelease')
             stable = rf.body('v0.19.0', notes, 'stable')
+            notes.write_text('Pre-release: a test build.\n' + NOTES, encoding='utf-8')
+            rc_own = rf.body('v0.19.0-rc.1', notes, 'prerelease')
         self.assertTrue(rc.startswith('**Pre-release:** a release candidate'))
         self.assertTrue(pre.startswith('**Pre-release:** 0.19.0 becomes the stable release'))
         self.assertTrue(stable.startswith(NOTES.splitlines()[0]))
+        self.assertEqual(rc_own.count('Pre-release'), 1)   # the notes' own line only, no second one on top
+        self.assertTrue(rc_own.startswith('Pre-release: a test build.'))
         for b in (rc, pre, stable):
             self.assertIn(NOTES.rstrip(), b)
             self.assertIn('https://github.com/Larbaco/NX2Saria/blob/main/docs/install.md#verify-your-download', b)
