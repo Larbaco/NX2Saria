@@ -650,6 +650,11 @@ static uint32_t whole_take(WholeSlot *slot, int n, uint64_t at, float amount) {
 
 static uint32_t whole_frames(uint64_t at, float amount) { return whole_take(whole_slot, WHOLE_SLOTS, at, amount); }
 
+uint32_t frame_rate_animation_frames(uint64_t entry, float step) {
+    static WholeSlot loops[64];
+    return whole_take(loops, sizeof loops / sizeof *loops, entry, step);
+}
+
 // The time of day (main+0x3cdf70, patches-v111.txt): s0 holds twice the step, the game seconds of this frame; w8 gets
 // the whole ones, the counter being the seconds of the day at +0x3c of the object in x19.
 // NX2SARIA_TRACE=perf: every 10 s, the game seconds the day was given beside those the cut alone would have given.

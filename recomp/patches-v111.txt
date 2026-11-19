@@ -460,3 +460,10 @@ site ohorse     main 2c3ae18 1e2e1009 1e2e1009 94899822   # fmov s9, #1.0; bl pa
 # Convert the short-frame angle back to a rate for those bounds (frame_rate.c frame_rate_gohma_turn_host).
 set ogohma      NX2SARIA_GOHMA_TURN_FIX     1
 site ogohma     main 261eb1c 1e280800 1e280800 94a208d9   # fmul s0, s0, s8; bl page+0xe80
+
+# The animation update and pose pass (main+0x2afca0 and main+0x924aa0) advance loops with shorter steps.
+# Keep the fractional clock steps and sample a single-frame loop at its one pose (animation_loop.c).
+set ozora       NX2SARIA_FROZEN_ZORA_FIX   1
+site ozora      main 2afe04 1e210902 952fc423   # fmul s2, s8, s1 -> bl page+0xe90
+site ozora      main 2b01d0 1e200901 952fc330   # fmul s1, s8, s0 -> bl page+0xe90
+site ozora      main 924e50 bd0002c0 9515f010   # str s0, [x22] -> bl page+0xe90

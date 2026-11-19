@@ -17,3 +17,9 @@ The startup `patches:` line lists `ohorse on` or `ohorse off`. A changed jump lo
 Gohma's steering update uses bounds based on the turn it applied this frame. Because that turn is already scaled by the frame step, a second multiplication by the step can choke the turn rate as Gohma approaches the point on the ceiling. The patch converts the applied turn back to a rate before using it as a bound. Set `gohma_turn_fix=0` and restart to disable it.
 
 The startup `patches:` line lists `ogohma on` or `ogohma off`. An adjusted update logs `frame rate: Gohma steering clamp` with the step, turn and rate bounds, up to four times per session.
+
+## Frozen Zoras at high frame rates
+
+A looping animation with the range `[0, 1]` holds a single pose. On a shorter update its clock now keeps the fractional step until it has a whole one, and its pose pass resolves to the first frame of the verified loop. Set `frozen_zora_fix=0` and restart to disable it.
+
+The startup `patches:` line lists `ozora on` or `ozora off`. The patch logs `frame rate: single-frame loop clock` and `frame rate: single-frame loop pose` with the step or phase before and after the adjustment, up to four times each per session.
