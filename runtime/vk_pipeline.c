@@ -8598,10 +8598,15 @@ static void bf_wait(void) {
 
 // What each preparation worker hands the driver now (under LB.stat): the variant's index + 1 (0: none), since when, and
 // its SPIR-V length. lb_warm_prepared reads it to stop waiting for builds that do not end (prep_stalled).
+#define PW_OUT 32
 static struct {
     size_t at[JR_SLOTS];
     double t0[JR_SLOTS];
     uint64_t words[JR_SLOTS];
+    // the first PW_OUT large compute shaders the preparation left out (lb_big_left_out), named in its last lines
+    uint8_t out_iid[PW_OUT][32];
+    uint64_t out_words[PW_OUT];
+    int n_out;
 } PW;
 
 static void pw_mark(int slot, size_t at, uint64_t words) {
@@ -8632,6 +8637,8 @@ static void lb_warm_worker(void *arg) {
         } else if (st == GFX_STAGE_CS && lb_big_left_out(gfx_shader_words(sh), cu_keep(LB.e[i].iid))) {
             plat_mutex_lock(&LB.stat);   // as the boot leaves it (lb_big_left_out): its first dispatch builds it
             LB.big_unused++;
+            if (PW.n_out < PW_OUT)
+                memcpy(PW.out_iid[PW.n_out], LB.e[i].iid, 32), PW.out_words[PW.n_out++] = gfx_shader_words(sh);
             plat_mutex_unlock(&LB.stat);
         } else if (st == GFX_STAGE_CS) {
             Bindings B = {0};
@@ -8844,6 +8851,13 @@ static void lb_warm_prepared(const char *dir, int sample) {
         printf("prepare-shaders: %llu large compute shaders left out (never dispatched): over %llu SPIR-V words, as the "
                "game's boot leaves them (NX2SARIA_LIB_PREBUILD_BIG, compute-used.bin); one builds at its first "
                "dispatch\n", big, (unsigned long long)LB.big_words);
+    for (int j = 0; j < PW.n_out; j++) {
+        char hex[65];
+        for (int b = 0; b < 32; b++) snprintf(hex + 2 * b, 3, "%02x", PW.out_iid[j][b]);
+        printf("prepare-shaders: left out %s (%llu SPIR-V words)\n", hex, (unsigned long long)PW.out_words[j]);
+    }
+    if (big > (unsigned long long)PW.n_out) printf("prepare-shaders: and %llu more left out\n", big - PW.n_out);
+    PW.n_out = 0;
     fflush(stdout);
     free(LB.e), LB.e = NULL, LB.n = 0, LB.next = 0, LB.done = 0, LB.skipped = 0, LB.big_unused = 0;
 }
