@@ -2071,6 +2071,11 @@ static void preset_init(int game) {
            hw.ram_mib / 1024.0, hw.handheld[0] ? hw.handheld : "none", tail);
     PS.rec = preset_pick(&hw, PS.why, sizeof PS.why);
     rt_log("preset: recommended %s: %s", preset_tier_names[PS.rec], PS.why);
+    // The Steam Deck's GPU runs at the clock its power management picks; asking the amdgpu driver for its stable peak
+    // clock through the render node would raise the frame rate there, at more power. Nothing here does that yet: it
+    // waits for someone with a Deck to measure it, and this line marks where it would go.
+    if (!strcmp(hw.handheld, "Steam Deck"))
+        rt_log("preset: Steam Deck: the GPU clock is left to the system's power management (no peak clock request)");
     preset_fingerprint(&hw, PS.fp, sizeof PS.fp);
 
     char name[] = PREFIX "PRESET";

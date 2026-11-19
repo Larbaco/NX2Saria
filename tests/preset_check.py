@@ -204,7 +204,8 @@ def main():
     # ---- the Steam Deck: low below the device profile
     rc, out, f = run(DECK, ini='', extra={'SteamDeck': '1'})
     check(get(out, 'in_use') == 'low' and get(out, 'get FPS_LIMIT') == '40' and get(out, 'get SCENE_SHARE') == '0.4'
-          and 'log: preset:   FPS_LIMIT = 40 (device profile)' in out, 'Steam Deck: low under the device profile', out)
+          and 'log: preset:   FPS_LIMIT = 40 (device profile)' in out
+          and 'log: preset: Steam Deck: the GPU clock is left to the system' in out, 'Steam Deck: low under the device profile', out)
 
     # ---- a value that is no tier, and a reload of the preset line
     rc, out, f = run(RX6700, ini='preset = epic\n')

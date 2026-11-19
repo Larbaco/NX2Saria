@@ -325,6 +325,9 @@ preset: wrote <folder>/preset-state.txt
   `(device profile; the preset's <value> stays unused)`. A tier that sets nothing (High) logs
   `preset: high sets nothing: the game as shipped` instead.
 - `preset: cannot write <path>` when the state file cannot be written.
+- On a Steam Deck, after the recommendation: `preset: Steam Deck: the GPU clock is left to the system's power management
+  (no peak clock request)`. That is where asking the amdgpu driver for its stable peak clock would go (it raises the
+  Deck's frame rate at more power); it waits until it can be measured on a Deck.
 - When the game's Vulkan device is chosen: `preset: the Vulkan device matches the probe` (with
   `; its driver is 0x<v>, the probe's result was from 0x<v>` when the state file's result is older), or
   `preset: the Vulkan device differs from the probe: the game uses "<name>" (...), the preset was chosen for "<name>" (...)`,
