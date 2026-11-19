@@ -87,10 +87,10 @@ static inline void mm_clicks_take(MmClicks *c, uint32_t left, uint32_t right, in
 // ---- the pad presses queued for the game (the interface thread adds, the pad read takes, one at a time). A and B
 // wait one at most: several quick clicks are one, so a B that closes a menu has no second B behind it to reach the
 // play (where B is the sword). The wheel's up and down wait three at most, and a turn the other way drops the rest.
-// Everything queued is dropped when its menu goes.
-enum { MM_A, MM_B, MM_UP, MM_DOWN, MM_PRESSES };
+// L and R (the pause menu's pages) wait one at most, like A and B. Everything queued is dropped when its menu goes.
+enum { MM_A, MM_B, MM_UP, MM_DOWN, MM_L, MM_R, MM_PRESSES };
 static inline void mm_queue(volatile int32_t *q, int kind, int n) {
-    if (kind == MM_A || kind == MM_B) {
+    if (kind == MM_A || kind == MM_B || kind == MM_L || kind == MM_R) {
         __atomic_store_n(&q[kind], 1, __ATOMIC_SEQ_CST);
         return;
     }
@@ -101,7 +101,7 @@ static inline void mm_queue(volatile int32_t *q, int kind, int n) {
 static inline void mm_queue_drop(volatile int32_t *q) {
     for (int i = 0; i < MM_PRESSES; i++) __atomic_store_n(&q[i], 0, __ATOMIC_SEQ_CST);
 }
-// The next press to give the game (A, B, up, down in that order), -1 none; safe against a drop on another thread
+// The next press to give the game (A, B, up, down, L, R in that order), -1 none; safe against a drop on another thread
 static inline int mm_queue_take(volatile int32_t *q) {
     for (int i = 0; i < MM_PRESSES; i++) {
         int32_t n = __atomic_load_n(&q[i], __ATOMIC_SEQ_CST);
@@ -109,4 +109,34 @@ static inline int mm_queue_take(volatile int32_t *q) {
             if (__atomic_compare_exchange_n(&q[i], &n, n - 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) return i;
     }
     return -1;
+}
+
+// ---- the pause menu's tab row (PlusMenu_00): the pages' names Collection, Equipment, Items and System (Menu) and the L
+// and R signs across its top are no buttons of the screen's list, so the hit test finds none there. The game turns its
+// pages with L and R, one page a press. Their places in layout units (origin at the centre, y up), measured from the
+// menu as drawn: the names centred at x -693, -232, 229 and 688, the signs at -989 and 989, the row from y 880 to 1080.
+// The wide menus' edits do not move them. The boxes meet halfway between the centres.
+enum { MM_TAB_L = 4, MM_TAB_R = 5 };
+// The tab under (x, y): the page 0..3, MM_TAB_L or MM_TAB_R for a sign, -1 off the row
+static inline int mm_tab_at(float x, float y) {
+    if (!(y >= 880.0f && y <= 1080.0f) || !(x >= -1100.0f && x <= 1100.0f)) return -1;
+    if (x < -918.0f) return MM_TAB_L;
+    if (x > 918.0f) return MM_TAB_R;
+    return x < -462.0f ? 0 : x < -1.5f ? 1 : x < 458.0f ? 2 : 3;
+}
+// The page a pause menu page's layout name stands for (0 Collection, 1 Equipment, 2 Items, 3 System), -1 another
+static inline int mm_pause_page(const char *name) {
+    static const char *const pages[4] = {"PaCollectMenu_00", "PaEquipmentMenu_00", "PaItemMenu_00", "PaSystemMenu_00"};
+    for (int i = 0; i < 4; i++) {
+        const char *a = name, *b = pages[i];
+        while (*a && *a == *b) a++, b++;
+        if (!*a && !*b) return i;
+    }
+    return -1;
+}
+// The press that brings page cur one nearer to page goal: MM_L, MM_R, or -1 when it is there (or either is unknown).
+// The pages do not wrap past the ends.
+static inline int mm_tab_step(int cur, int goal) {
+    if (cur < 0 || goal < 0 || cur == goal) return -1;
+    return goal < cur ? MM_L : MM_R;
 }

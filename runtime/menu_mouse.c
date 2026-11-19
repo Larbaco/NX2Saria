@@ -177,6 +177,35 @@ static void screen_name(uint64_t s, char *out, size_t n) {
         if (*q < 0x20 || *q > 0x7e) { *q = 0; break; }
     if (!out[0]) snprintf(out, n, "?");
 }
+// A tab click of the pause menu and its outcome (the first 40 lines a session)
+static void tab_log(const char *what, int tab, int page) {
+    static const char *const names[] = {"Collection", "Equipment", "Items", "System"};
+    static int lines;
+    if (lines++ < 40)
+        rt_log("menu_mouse: pause menu tab %s %s (page %s)", names[tab & 3], what, page >= 0 ? names[page & 3] : "unknown");
+}
+
+// The pause menu's page the focused entry is on (0 Collection .. 3 System, menu_mouse_geom.h mm_pause_page), -1 none
+// found: the layout that holds the entry's button, or the layout holding that one (a slot is a part inside its page),
+// up to the page's own layout, whose name is the page's (PaItemMenu_00, ...)
+static int pause_page_of(uint64_t entry) {
+    uint64_t btn = rd64(entry + ENT_BUTTON), pane = ok_at(btn, BTN_ROOT + 8) ? rd64(btn + BTN_ROOT) : 0;
+    for (int depth = 0; depth < 8 && ok_at(pane, PANE_STRIDE); depth++) {
+        uint64_t lyt = rd64(pane + PANE_LAYOUT);
+        if (!ok_at(lyt, LYT_TREE + 8)) return -1;
+        uint64_t r = rd64(lyt + 0xf8), nm = ok_at(r, 0x20) ? rd64(r + 0x18) : 0;
+        char name[32];
+        if (ok_at(nm, sizeof name)) {
+            memcpy(name, (const void *)(uintptr_t)nm, sizeof name - 1);
+            name[sizeof name - 1] = 0;
+            int page = mm_pause_page(name);
+            if (page >= 0) return page;
+        }
+        pane = rd64(lyt + LYT_HOST);   // the pane that holds this layout, in the layout above
+    }
+    return -1;
+}
+
 // The layout units from the picture's centre to its edge, from the screen's projection (squeezed on ultrawide)
 static int screen_units(uint64_t s, float *ux, float *uy) { return mm_units(rdf(s + SCR_PROJ), rdf(s + SCR_PROJ + 0x14), ux, uy); }
 
@@ -216,7 +245,7 @@ static void reserve_focus(const Ui *u, uint64_t s, uint64_t e) {
 }
 
 // ---- the pad presses the pad read adds (menu_mouse_poll): counts the interface thread raises, the pad read spends
-static const int press_bit[MM_PRESSES] = {B_A, B_B, B_UP, B_DOWN};   // (menu_mouse_geom.h MM_A..MM_DOWN)
+static const int press_bit[MM_PRESSES] = {B_A, B_B, B_UP, B_DOWN, B_L, B_R};   // (menu_mouse_geom.h MM_A..MM_R)
 static volatile int32_t pending[MM_PRESSES];
 static volatile int32_t g_pointer;           // a menu has the pointer: input_cursor_allowed releases the capture
 static volatile uint64_t g_active_ms;        // the last interface update that found a menu for the mouse, or a focus
@@ -239,14 +268,15 @@ static int enabled(void) {
 }
 
 // ---- the log: one line per menu the mouse was used in, when the focus leaves it (at most LOG_MENUS a session)
-typedef struct { unsigned hover, click_a, click_miss, click_b, wheel, hits, misses; } Stats;
+typedef struct { unsigned hover, click_a, click_miss, click_b, wheel, hits, misses, tabs; } Stats;
 #define LOG_MENUS 48
 static void stats_flush(const char *name, Stats *st) {
     static int lines;
-    if (!st->hover && !st->click_a && !st->click_miss && !st->click_b && !st->wheel) return;
+    if (!st->hover && !st->click_a && !st->click_miss && !st->click_b && !st->wheel && !st->tabs) return;
     if (lines++ < LOG_MENUS)
-        rt_log("menu_mouse: %s: focus moved %u, left clicks %u (A %u, on no button %u), right clicks (B) %u, wheel "
-               "notches %u; hit test %u on a button, %u off", name, st->hover, st->click_a + st->click_miss, st->click_a, st->click_miss, st->click_b, st->wheel,
+        rt_log("menu_mouse: %s: focus moved %u, left clicks %u (A %u, on no button %u, on the tab row %u), right clicks "
+               "(B) %u, wheel notches %u; hit test %u on a button, %u off", name, st->hover,
+               st->click_a + st->click_miss + st->tabs, st->click_a, st->click_miss, st->tabs, st->click_b, st->wheel,
                st->hits, st->misses);
     memset(st, 0, sizeof *st);
 }
@@ -286,6 +316,10 @@ void menu_mouse_screen_host(Cpu *c) {
     static Stats st;
     static float last_px = -1, last_py = -1;
     static int shown, resync;   // resync: the pointer was just warped, its next position read is the start, no move
+    // The pause menu (PlusMenu_00): its page now, and a tab clicked (the page to reach, when asked, when the page last
+    // changed, when the last L or R went)
+    static int pause, page = -1, tab_goal = -1;
+    static uint64_t tab_ms, page_ms, step_ms;
     static MmClicks clicks;     // the button presses already taken
     static uint64_t pend_entry, pend_until, asked, asked_ms;
     static Entries ent;
@@ -341,6 +375,7 @@ void menu_mouse_screen_host(Cpu *c) {
                    "picture%s", name, ent.n, ent.listed, 2 * (double)ux, 2 * (double)uy,
                    proj ? "" : " (no projection read: 16:9 taken)");
         snprintf(last_name, sizeof last_name, "%s", name);
+        pause = !strcmp(name, "PlusMenu_00"), page = -1, tab_goal = -1;
         last_screen = s, pend_until = 0, asked = 0;
         drop_presses();
     }
@@ -404,7 +439,28 @@ void menu_mouse_screen_host(Cpu *c) {
     int click_l, click_r;
     mm_clicks_take(&clicks, pl, pr, &click_l, &click_r);
     if (click_r) mm_queue(pending, MM_B, 1), st.click_b++;
+    float tx = 0, ty = 0;   // the pointer in layout units, for the pause menu's tab row
+    if (pos) mm_to_layout(px, py, ux, uy, &tx, &ty);
+    int on_tabs = pause && pos && mm_tab_at(tx, ty) >= 0;
+    if (pause) {   // the page now, and a clicked tab's page reached an L or R at a time, each once the last has landed
+        int cur = pause_page_of(focused);
+        if (cur != page) page = cur, page_ms = now;
+        if (tab_goal >= 0) {
+            int step = mm_tab_step(page, tab_goal);
+            if (page == tab_goal || now - tab_ms > 4000) {
+                tab_log(page == tab_goal ? "reached" : "given up at", tab_goal, page);
+                tab_goal = -1;
+            } else if (step >= 0 && now - page_ms > 250 && now - step_ms > 400 && !pending[MM_L] && !pending[MM_R]) {
+                mm_queue(pending, step, 1), step_ms = now;
+            }
+        }
+    }
     int32_t wheel = input_menu_wheel_take();
+    if (wheel && on_tabs) {   // over the pause menu's tab row a notch turns the page: up the one before (L), down the next
+        mm_queue(pending, wheel > 0 ? MM_L : MM_R, 1);
+        st.wheel += (unsigned)(wheel < 0 ? -wheel : wheel);
+        wheel = 0;
+    }
     if (wheel) {   // a notch is the d-pad's up or down: a list moves a row, as the pad moves it
         int k = wheel < 0 ? -wheel : wheel;
         mm_queue(pending, wheel > 0 ? MM_UP : MM_DOWN, k);
@@ -424,6 +480,14 @@ void menu_mouse_screen_host(Cpu *c) {
     float x, y;
     mm_to_layout(px, py, ux, uy, &x, &y);
     int i = mm_pick(ent.box, ent.n, x, y);
+    if (i < 0 && click_l && on_tabs) {   // the pause menu's tab row: L or R for a sign, else steps to the page clicked
+        int tab = mm_tab_at(x, y);
+        st.tabs++;
+        if (tab == MM_TAB_L || tab == MM_TAB_R) mm_queue(pending, tab == MM_TAB_L ? MM_L : MM_R, 1), tab_goal = -1;
+        else if (page < 0) tab_log("clicked, the page now not known for", tab, page);
+        else if (tab != page) tab_goal = tab, tab_ms = now, step_ms = 0, tab_log("clicked", tab, page);
+        return;
+    }
     if (i < 0) {
         if (verbose_log(40)) rt_log("menu_mouse: pointer (%.0f, %.0f): on none of %d entries", (double)x, (double)y, ent.n);
         st.misses++;
