@@ -151,6 +151,8 @@ stick keeps moving the row cursor.
 `python -m launcher --selftest --shots DIR` draws every screen with made-up states and saves a PNG of each.
 `python -m launcher --screen consent` (or `sent`, `comment`, `reports`, `delete_data`) opens that screen of the session
 reports at once; `NX2SARIA_TELEMETRY_URL=http://127.0.0.1:8787` points the reports and comments at a local server.
+With no server address (`launcher/telemetry.py` `TELEMETRY_URL` empty and no `NX2SARIA_TELEMETRY_URL`), the window
+shows none of the session reports' screens, rows or question, and `--screen` opens none of them.
 
 Run from a checkout, the launcher and the build use the Python that started it, which needs the packages of
 `tools/requirements-launcher.txt`. At startup the launcher checks that this Python can read zstd files
