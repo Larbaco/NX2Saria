@@ -426,6 +426,7 @@ int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init w
 void wide_bars_init(double margin);                         // wide_init: NX2SARIA_WIDE_MENUS = center on a picture
                                                            // wider than 16:9, margin its share on each side
 void wide_bars_screen_host(Cpu *c);                        // the set wide_bars' site (patch page +0xef0, patches.c)
+int wide_menu_open(void);                                  // the game's pause/map or system menu background is active
 void menu_mouse_screen_host(Cpu *c);                       // the set menu_mouse's site (patch page +0xee0, patches.c)
 double wide_menu_sides(void);                              // gfx_present.c, each present: the share of the width to black
                                                            // out on each side (a menu, loading screen or movie), 0 none
@@ -451,6 +452,7 @@ int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 
 int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
 void res_wanted(unsigned out[2]);                          // the output size NX2SARIA_OUTPUT_RES asks for
 void res_fov_live(void);                                   // NX2SARIA_FOV to the camera (set fov); on a settings change
+float res_fov_factor(void);                                // the 1.1.1 camera callback's multiplier
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
                                                            // page committed; logs the sets
@@ -474,6 +476,14 @@ void frame_rate_day_host(Cpu *c);                         // the time of day's s
 void frame_rate_water_host(Cpu *c);                       // the water's ripple steps a frame (set ostep, page +0xf50)
 void frame_rate_sim_host(Cpu *c);                         // water and floor surfaces' fixed steps (set owater, page +0xf20)
 void frame_rate_sound_gate_host(Cpu *c);                  // the sound job at whole steps (set osound, page +0xf10)
+void frame_rate_horse_jump_host(Cpu *c);                  // the horse's jump blend (set ohorse, page +0xea0)
+void frame_rate_gohma_turn_host(Cpu *c);                  // Gohma's turn-rate bounds (set ogohma, page +0xe80)
+uint32_t frame_rate_animation_frames(uint64_t entry, float step);   // whole clock frames for a single-pose loop
+void animation_loop_host(Cpu *c);                         // a single-frame animation loop (set ozora, page +0xe90)
+void battle_music_gate(int run);                          // phase 0's decision, under the sound gate lock
+void battle_music_flags_host(Cpu *c);                     // restore held battle music flags (set obgm, page +0xe70)
+void voice_language_host(Cpu *c);                          // refresh saved voice-language changes (set voice_language, page +0xe60)
+void wide_balloon_host(Cpu *c);                            // keep speech-balloon anchors with their speakers (set wide_balloon, page +0xe50)
 void frame_rate_sound_step_host(Cpu *c);                  // the step the sound job hands on (set osound, page +0xf00)
 float frame_step_frames(void);                            // the 60 Hz frames the game steps per update (set ostep), else 1
 void frame_step_flight(float *page, float *game, uint64_t *presents);   // flight.c: the step at a host present

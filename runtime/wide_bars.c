@@ -78,15 +78,16 @@ static void screen_log(const char *fmt, ...) {
 void wide_bars_screen_host(Cpu *c) {
     uint64_t s = c->x[19];
     int kind = kind_of(s);
-    if (!kind) return;
+    if (!kind || (!bars_on && kind != KIND_MENU)) return;
     for (int i = 0; i < BARS_SCREENS; i++)
         if (__atomic_load_n(&screens[i], __ATOMIC_RELAXED) == s) return;   // set up again: already watched
     for (int i = 0; i < BARS_SCREENS; i++) {
         uint64_t old = __atomic_load_n(&screens[i], __ATOMIC_RELAXED);
         if (old && kind_of(old)) continue;   // a live screen (one destroyed since is taken over here)
         if (__atomic_compare_exchange_n(&screens[i], &old, s, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
-            screen_log("watching the %s screen at %#llx (state %s)", kind_names[kind], (unsigned long long)s,
-                       state_name(ld8(s + SCREEN_STATE)));
+            if (bars_on)
+                screen_log("watching the %s screen at %#llx (state %s)", kind_names[kind], (unsigned long long)s,
+                           state_name(ld8(s + SCREEN_STATE)));
             return;
         }
     }
@@ -95,6 +96,15 @@ void wide_bars_screen_host(Cpu *c) {
         rt_log("widescreen: menus: more than %d menu background and loading fade screens; the %s screen at %#llx is "
                "not watched, and its menu may show the picture's sides", BARS_SCREENS, kind_names[kind],
                (unsigned long long)s);
+}
+
+int wide_menu_open(void) {
+    for (int i = 0; i < BARS_SCREENS; i++) {
+        uint64_t s = __atomic_load_n(&screens[i], __ATOMIC_ACQUIRE);
+        int state = kind_of(s) == KIND_MENU ? ld8(s + SCREEN_STATE) : -1;
+        if (state >= 1 && state <= 3) return 1;
+    }
+    return 0;
 }
 
 // wide_init: the setting is center and the picture is wider than 16:9 by margin of its width on each side.

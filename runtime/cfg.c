@@ -39,6 +39,8 @@ static int save_ok = 1;                         // the last cfg_save_to wrote (o
 // Every name the runtime reads (and the patch sets in generated/), without the prefix. A file key outside this list is
 // logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line.
 static const char *const known[] = {
+    "HORSE_JUMP_FIX", "GOHMA_TURN_FIX", "FROZEN_ZORA_FIX", "BATTLE_MUSIC_FIX", "VOICE_LANGUAGE_FIX",
+    "BALLOON_ANCHOR_FIX",
     "CORES", "TM_DISPATCH", "NVN2_CS_TABLE", "SKIP_SHADERS", "MOVIE_DEBAND", "MOVIE_FPS", "MOVIE_SKIP", "MOVIE_OVERLAY", "MOVIES", "NPLN", "NVN2_PROGRAMS", "NVN_TRAP", "OCARINA_REALTIME", "ONESHOT_BUDGET", "ONESHOT_WAIT_MS", "OCARINA_STEP", "PHYSICS_STEPS", "PHYSICS_STEPS_FULL", "PICKUP_COUNT", "SONG_STAFF", "WATER_STEPS", "SOUND_STEPS", "FLOOR_PROBE", "FLOOR_SCAN", "FLOOR_WATCH", "FLOOR_CARRY", "MOVIE_PTS", "STEP_STEADY", "VI_HZ", "VI_VRR", "TIME_DUMP", "SHADER_DUMP", "SHOT_AFTER", "SHOT_DIR", "SHOT_EVERY",   // Switch 2 port: movie skip (romfs.c), NVN2 proc traps (nvn_procs.c)
     "OCARINA_TIMING",
     "FSR3_PROBE_PAN", "FSR3_PROBE_PPM",   // the FSR 3.1 probe (fsr3_probe.c)
@@ -129,11 +131,13 @@ static const struct { const char *key, *section; } sections[] = {
     {"FLOOR_PROBE", "diagnostics"}, {"FLOOR_SCAN", "diagnostics"}, {"FLOOR_WATCH", "diagnostics"},
     {"FPS_LIMIT", "frame rate"}, {"FPS60", "frame rate"}, {"RTSS", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
+    {"HORSE_JUMP_FIX", "frame rate"}, {"GOHMA_TURN_FIX", "frame rate"}, {"FROZEN_ZORA_FIX", "frame rate"},
+    {"BATTLE_MUSIC_FIX", "frame rate"},
     {"PHYSICS_STEPS", "frame rate"}, {"PICKUP_COUNT", "frame rate"}, {"WATER_STEPS", "frame rate"},
     {"SOUND_STEPS", "frame rate"}, {"SONG_STAFF", "frame rate"}, {"FLOOR_CARRY", "frame rate"}, {"OCARINA_TIMING", "frame rate"},
     {"MOVIE_PTS", "frame rate"}, {"STEP_STEADY", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
-    {"GPU_INDEX", "display"}, {"MONITOR", "display"}, {"OUTPUT_RES", "display"}, {"GAME_ASPECT", "display"}, {"GAME_RES", "display"}, {"WIDE_HUD", "display"}, {"WIDE_MENUS", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
+    {"GPU_INDEX", "display"}, {"MONITOR", "display"}, {"OUTPUT_RES", "display"}, {"GAME_ASPECT", "display"}, {"GAME_RES", "display"}, {"WIDE_HUD", "display"}, {"WIDE_MENUS", "display"}, {"BALLOON_ANCHOR_FIX", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
     {"SHARPNESS", "display"}, {"STANDIN_FILTER", "display"}, {"SCENE_SHARE", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"ANISO", "display"},
     {"TEXTURE_DETAIL", "display"},
     {"COLOR_PRESET", "display"},
@@ -156,7 +160,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"SHADOW_PCF", "display"},
     {"AMIIBO_DAILY_LIMIT", "amiibo"}, {"AMIIBO_DIR", "amiibo"}, {"AMIIBO_KEYS", "amiibo"}, {"AMIIBO_POPUP", "amiibo"}, {"AMIIBO_WRITEBACK", "amiibo"},
     {"MODS_DIR", "mods"}, {"MODS_ORDER", "mods"}, {"MODS_DISABLED", "mods"}, {"MODS_REBUILD", "mods"},
-    {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"}, {"TEXT_SPEED", "language"},
+    {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"}, {"VOICE_LANGUAGE_FIX", "language"}, {"TEXT_SPEED", "language"},
     {"VOLUME", "audio"}, {"AUDIO_CHANNELS", "audio"}, {"AUDIO_DEVICE", "audio"}, {"MICROPHONE", "audio"}, {"MENU_SOUND_VOLUME", "audio"},
     {"AUDIO_RAMP", "audio"}, {"AUDIO_CATCHUP", "audio"},
     {"AUDIO_STRICT", "audio"},
@@ -311,6 +315,12 @@ static const CfgMeta metas[] = {
     {"REALTIME", "1", "0|1", RESTART}, {"CLOTH_REALTIME", "1", "0|1", RESTART},
     {"MODS_REBUILD", "auto", "auto|off", RESTART},
     {"HIGHFPS_FIX", "1", "0|1", RESTART},
+    {"HORSE_JUMP_FIX", "1", "0|1", RESTART},
+    {"GOHMA_TURN_FIX", "1", "0|1", RESTART},
+    {"FROZEN_ZORA_FIX", "1", "0|1", RESTART},
+    {"BATTLE_MUSIC_FIX", "1", "0|1", RESTART},
+    {"VOICE_LANGUAGE_FIX", "1", "0|1", RESTART},
+    {"BALLOON_ANCHOR_FIX", "1", "0|1", RESTART},
     // the set owater of patches-v111.txt (frame_rate.c frame_rate_sim_host): water and floor surfaces' fixed steps
     {"WATER_STEPS", "1", "0|1", RESTART},
     // the set osound of patches-v111.txt (frame_rate.c frame_rate_sound_gate_host): the sound job at 60 Hz above 60 fps

@@ -32,6 +32,9 @@ uint8_t rt_patch_on[RT_PATCH_COUNT > 0 ? RT_PATCH_COUNT : 1];   // read by the g
 #ifdef RT_PATCH_PAGE
 #include "debug_tools.h"
 __attribute__((constructor)) static void freecam_register(void) { rt_register_host(RT_PATCH_PAGE + 0xf70, dbg_freecam_host); }
+__attribute__((constructor)) static void fov_register(void) {
+    if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xeb0, dbg_fov_host);
+}
 // The time of day's site of the set ostep (patches-v111.txt) calls the page's +0xf60, the water renderer's site its
 // +0xf50, the surfaces' fixed-step sites of the set owater its +0xf20, and the sound job's two sites of the set osound
 // its +0xf10 and +0xf00 (frame_rate.c).
@@ -42,8 +45,15 @@ __attribute__((constructor)) static void day_register(void) {
     rt_register_host(RT_PATCH_PAGE + 0xf20, frame_rate_sim_host);
     rt_register_host(RT_PATCH_PAGE + 0xf10, frame_rate_sound_gate_host);
     rt_register_host(RT_PATCH_PAGE + 0xf00, frame_rate_sound_step_host);
+    rt_register_host(RT_PATCH_PAGE + 0xea0, frame_rate_horse_jump_host);
+    rt_register_host(RT_PATCH_PAGE + 0xe80, frame_rate_gohma_turn_host);
+    rt_register_host(RT_PATCH_PAGE + 0xe90, animation_loop_host);
+    rt_register_host(RT_PATCH_PAGE + 0xe70, battle_music_flags_host);
+    rt_register_host(RT_PATCH_PAGE + 0xe60, voice_language_host);
+    rt_register_host(RT_PATCH_PAGE + 0xe50, wide_balloon_host);
 }
-// The screens' setup site of the set wide_bars (patches-v111.txt) calls the page's +0xef0: wide_bars.c watches the
+// The G14 callbacks use +0xe60 (voice_language.c) and +0xe50 (widescreen.c). The screens' setup site of the set
+// wide_bars (patches-v111.txt) calls the page's +0xef0: wide_bars.c watches the
 // menus' background screens and the loading fade it hands over, for the black bars of NX2SARIA_WIDE_MENUS = center.
 __attribute__((constructor)) static void wide_bars_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xef0, wide_bars_screen_host);
@@ -68,7 +78,7 @@ void rt_patches_init(void) {
 #if RT_PATCH_COUNT
     mem_commit_checked(RT_PATCH_PAGE, 0x1000, "patch page");
     page = (void *)(uintptr_t)RT_PATCH_PAGE;
-    char list[512];
+    char list[1024];
     size_t n = 0;
     list[0] = 0;
     for (int i = 0; i < RT_PATCH_COUNT; i++) {

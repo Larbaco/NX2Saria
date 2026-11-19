@@ -25,6 +25,12 @@ int cfg_supported(const char *key) {
     if (!strcasecmp(name, "CLOTH_REALTIME")) return has("cloth");    // the set's switch (patches.c)
     // the switch of three sets (recomp/patches-v*.txt): bounce, fade and cursor
     if (!strcasecmp(name, "HIGHFPS_FIX")) return has("bounce") || has("fade") || has("cursor");
+    if (!strcasecmp(name, "HORSE_JUMP_FIX")) return has("ohorse");
+    if (!strcasecmp(name, "GOHMA_TURN_FIX")) return has("ogohma");
+    if (!strcasecmp(name, "FROZEN_ZORA_FIX")) return has("ozora");
+    if (!strcasecmp(name, "BATTLE_MUSIC_FIX")) return has("obgm");
+    if (!strcasecmp(name, "VOICE_LANGUAGE_FIX")) return has("voice_language");
+    if (!strcasecmp(name, "BALLOON_ANCHOR_FIX")) return has("wide_balloon");
     // menu_cursor.c enabled() on 1.4.3, menu_mouse.c (its screens' site, set menu_mouse) on 1.1.1
     if (!strcasecmp(name, "MENU_CURSOR")) return RT_V143 || has("menu_mouse");
     // the squeeze of the UI into the middle 16:9 (set wide_hud) is what both place their elements against

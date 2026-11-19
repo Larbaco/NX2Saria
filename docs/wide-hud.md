@@ -198,9 +198,10 @@ patch set `wide_bars` (`recomp/patches-v111.txt`): the screens' setup (main+0x77
 up the canvas the set `wide_hud` keeps or squeezes) gets a call of the patch page's +0xef0 right after its canvas setup
 (main+0x774064), with the screen in x19, where `wide_bars.c` `wide_bars_screen_host` keeps the screens of those two
 vtables. The setup runs once when the game makes a screen, which lives on from there; a screen the game destroys gets
-another vtable, which the present notices and frees its entry for. The set is switched on only with `center` on a
-picture wider than 16:9, so `full` runs the game's setup as it is and costs nothing. `tests/wide_bars_check.py`
-checks the site as the generator lifts it and plays the present against stand-in screens.
+another vtable, which the present notices and frees its entry for. `wide_bars` switches on with `center` on a
+picture wider than 16:9. The [field-of-view patch](patches-v111.md#gameplay-field-of-view) shares this setup hook to
+check the pause and map screens at any aspect ratio. `tests/wide_bars_check.py` checks the site as the generator
+lifts it and plays the present against stand-in screens.
 
 Whether the game drew a 3D scene was the signal before, and does not tell a menu from play: under the pause menu the
 game keeps drawing 3D into a full-size light target with the scene depth (the selected item's model on the items page,

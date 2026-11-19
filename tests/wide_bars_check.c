@@ -108,9 +108,14 @@ int main(int argc, char **argv) {
     make(&other, 0x4b4dfc0ull, 2);
 
     // before wide_init: nothing to black out, whatever is up
+    setup((uintptr_t)&menu);
+    setup((uintptr_t)&loading);
+    assert(watched() == 1 && !wide_menu_open());
     menu.b[0x1a6] = 2;
+    assert(wide_menu_open());
     expect(0, NULL);
     menu.b[0x1a6] = 0;
+    assert(!wide_menu_open());
 
     wide_bars_init(MARGIN);
     assert(set_on);

@@ -451,7 +451,8 @@ std::string norm_key(const char *key) {
 // or walk key swaps what the buttons do under the player's hands, and motion starts or stops a device. Every key the
 // table marks as read at start is staged too.
 bool is_staged(const std::string &key) {
-    static const char *const forced[] = {"FPS_LIMIT", "VK_PRESENT", "HDR", "PAD_LAYOUT", "WALK_KEY", "MOTION", "FULLSCREEN", "WINDOW_SIZE"};
+    static const char *const forced[] = {"FPS_LIMIT", "VK_PRESENT", "HDR", "PAD_LAYOUT", "WALK_KEY", "MOTION",
+                                        "FULLSCREEN", "WINDOW_SIZE", "FOV"};
     const CfgMeta *m = cfg_meta(key.c_str());
     if (!m) return false;   // a key without a row (the bindings) is a live one
     if (!m->live) return true;

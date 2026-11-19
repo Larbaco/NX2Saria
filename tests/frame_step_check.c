@@ -27,6 +27,7 @@ void rt_patch_disable(int set) { (void)set; }
 void rt_patch_switch(int set, int on) { (void)set, (void)on; }
 void *rt_patch_page(void) { return page; }
 void rt_log(const char *fmt, ...) { (void)fmt; }
+void battle_music_gate(int run) { (void)run; }   // the flag latch has its own test (battle_music_check.py)
 double gfx_window_refresh_hz(void) { return 144; }
 static int movie;   // a movie plays (frame_rate.c movie_cap_hz)
 int ov_movie_live(void) { return movie; }
@@ -47,7 +48,7 @@ static int rtss_holds;              // RivaTuner Statistics Server holds the gam
 static uint64_t kern_ns, hosted;    // kern_now_ns, and its time at the newest host present (0: none yet)
 int rtss_limit_active(void) { return rtss_holds; }
 uint64_t gfx_window_hosted_ns(void) { return hosted; }
-// The time manager the sound job's gate reads its step from (frame_rate.c sound_job_step), while the sound checks run:
+// The time manager the patch hosts read their step from (frame_rate.c game_frame_step):
 // [main+0x4c7e890] holds the slot, the slot the manager, the manager +0x10 the step. Nothing else reads.
 static int fake_manager;
 static float fake_step = 1.0f;
@@ -190,6 +191,79 @@ static int staff_gate(int signal) {
     return (int)c.x[0];
 }
 
+static uint32_t scalar_bits(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return bits;
+}
+
+int horse_compare(Cpu *c, int enabled);
+
+static void check_horse_jump(void) {
+    uint32_t saved = atomic_load(ostep_page);
+    fake_manager = 1;
+    static const struct {
+        float render_step, manager_step, jump_step;
+        int vanilla, patched;
+    } cases[] = {
+        {0.5f, 0.5f, 0.5f, 0, 1},    // a normal jump at 120 fps
+        {0.5f, 0.5f, 0.25f, 0, 0},   // an update slowed within a short frame
+        {0.5f, 0.5f, 0.75f, 0, 1},   // a jump allowed to advance more quickly
+        {1.0f, 0.5f, 0.5f, 0, 0},    // slow motion at the nominal display rate
+        {1.0f, 1.0f, 1.0f, 1, 1},    // a normal jump at 60 fps
+        {0.5f, 1.0f, 0.5f, 0, 0},    // the time manager uses a whole step
+        {0.5f, NAN, 0.5f, 0, 0},     // the time manager's step is unusable
+    };
+    for (unsigned i = 0; i < sizeof cases / sizeof *cases; i++) {
+        atomic_store(ostep_page, scalar_bits(cases[i].render_step));
+        fake_step = cases[i].manager_step;
+        Cpu c = {0};
+        c.v[10] = scalar_bits(cases[i].jump_step);
+        CHECK(horse_compare(&c, 0) == cases[i].vanilla, "horse jump case %u, original b.pl", i);
+        CHECK(horse_compare(&c, 1) == cases[i].patched, "horse jump case %u, patched b.pl", i);
+        CHECK(c.v[10] == scalar_bits(cases[i].jump_step), "horse jump case %u changed the animation step", i);
+        if (!cases[i].patched)
+            CHECK(c.v[9] == scalar_bits(1.0f), "horse jump case %u changed the slow-motion threshold", i);
+    }
+    fake_manager = 0;
+    fake_step = 1.0f;
+    atomic_store(ostep_page, saved);
+}
+
+void gohma_clamp(Cpu *c, int enabled);
+
+static void check_gohma_turn(void) {
+    uint32_t saved = atomic_load(ostep_page);
+    static const struct {
+        float render_step, steering_step, turn, rate, vanilla, patched;
+    } cases[] = {
+        {0.5f, 0.5f, 0.25f, 1.0f, 0.125f, 0.5f},
+        {0.5f, 0.5f, -0.25f, -1.0f, -0.125f, -0.5f},
+        {0.5f, 0.5f, 0.25f, 0.25f, 0.125f, 0.25f},
+        {0.5f, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f},
+        {1.0f, 0.5f, 0.25f, 1.0f, 0.125f, 0.125f},
+        {1.0f, 1.0f, 0.25f, 1.0f, 0.25f, 0.25f},
+        {2.0f, 2.0f, 0.25f, 1.0f, 0.5f, 0.5f},
+    };
+    for (unsigned i = 0; i < sizeof cases / sizeof *cases; i++) {
+        atomic_store(ostep_page, scalar_bits(cases[i].render_step));
+        for (int on = 0; on <= 1; on++) {
+            Cpu c = {0};
+            c.v[0] = scalar_bits(fabsf(cases[i].turn));
+            c.v[1] = scalar_bits(-cases[i].steering_step);
+            c.v[2] = scalar_bits(cases[i].rate);
+            c.v[8] = scalar_bits(cases[i].steering_step);
+            c.v[10] = scalar_bits(-9.0f);   // the already restored caller value is unrelated to the turn
+            gohma_clamp(&c, on);
+            CHECK(c.v[0] == scalar_bits(on ? cases[i].patched : cases[i].vanilla),
+                  "Gohma steering case %u, patch %d did not clamp the rate", i, on);
+            CHECK(c.v[8] == scalar_bits(cases[i].steering_step) && c.v[10] == scalar_bits(-9.0f),
+                  "Gohma steering case %u changed the simulation step or caller register", i);
+        }
+    }
+    atomic_store(ostep_page, saved);
+}
+
 int main(int argc, char **argv) {
     int mean = argc > 1 && !strcmp(argv[1], "mean");
     if (mean) steady = "0";
@@ -215,6 +289,9 @@ int main(int argc, char **argv) {
         printf("frame_step_check (mean): %s\n", fails ? "FAILED" : "ok");
         return fails != 0;
     }
+
+    check_horse_jump();
+    check_gohma_turn();
 
     // A 60 fps limit with a late frame and the short one after it every 37 frames: one frame exactly, every frame.
     set_limit("60");

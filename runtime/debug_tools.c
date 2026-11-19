@@ -33,6 +33,7 @@
 // itself draws from it.
 #include <ctype.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -996,18 +997,54 @@ static void set_s(Cpu *c, int r, float v) {
 // direct are the scene's, and the free camera stands in for both; the camera of the interface's 3D models and the
 // one the sound follows stay the game's. A camera's state (x19) has its actor at +0x10, the actor its name at +0x20.
 // 1 the camera that follows Link, 2 the events' camera, 0 another.
-static int scene_camera(uint64_t state) {
+static int scene_camera(uint64_t actor) {
     char name[16] = "";
-    uint64_t actor = rd_ptr(state + 0x10), np = actor ? rd_ptr(actor + 0x20) : 0;
+    uint64_t np = actor ? rd_ptr(actor + 0x20) : 0;
     if (!np || !rd(np, name, 13)) return 0;
     return !memcmp(name, "PlayerCamera", 13) ? 1 : !memcmp(name, "EventCamera", 12) ? 2 : 0;
+}
+
+// After the original s0 load at main+0x4c52f8, before the game stores the lens angle and derives the frustum.
+void dbg_fov_host(Cpu *c) {
+    uint64_t state = c->x[19], actor = rd_ptr(state + 0x10);
+    if (scene_camera(actor) != 1 || wide_menu_open()) return;
+    // The event manager's active event at +0x68 is the one read by main+0xbcc100.
+    uint64_t slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e090), event = 0;
+    uint64_t mgr = slot ? rd_ptr(slot) : 0;
+    if (!mgr || !rd(mgr + 0x68, &event, sizeof event) || event) return;
+    // The aiming action's initializer (main+0x27a2510) gets the PlayerCamera work at component +0x5b8.
+    // Its enter and exit methods (main+0x279f9a0 and main+0x27a1230) toggle bit 8 of work +0x7d8.
+    uint64_t components = rd_ptr(actor + 0x270);
+    uint64_t player = components ? rd_ptr(components + 0x360) : 0;
+    uint32_t flags;
+    if (!player || !rd(player + 0xd90, &flags, sizeof flags) || (flags & 0x100)) return;
+    // Use camera zero, the view used by the actor-to-screen projection at main+0x20c1e0. The menu path at
+    // main+0x2d684c sets bit 0 of that camera's +0x88 through main+0x11745c0 while the message log owns the view.
+    slot = rd_ptr(MOD_MAIN_BASE + 0x4c86bc0);
+    mgr = slot ? rd_ptr(slot) : 0;
+    uint32_t count;
+    if (!mgr || !rd(mgr + 0x20, &count, sizeof count) || !count) return;
+    uint64_t list = rd_ptr(mgr + 0x28), camera = list ? rd_ptr(list) : 0;
+    uint64_t views = rd_ptr(state + 0x18), view = views ? rd_ptr(views) : 0;
+    uint16_t camera_flags;
+    if (!camera || !view || rd_ptr(camera + 0x78) != view ||
+        !rd(camera + 0x88, &camera_flags, sizeof camera_flags) || (camera_flags & 1)) return;
+    uint32_t bits = (uint32_t)c->v[0];
+    float orig;
+    memcpy(&orig, &bits, sizeof orig);
+    float angle = orig * res_fov_factor();
+    if (!(angle > 0.0f && angle < 3.14159265f) || angle == orig) return;
+    set_s(c, 0, angle);
+    static atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (!atomic_flag_test_and_set_explicit(&logged, memory_order_relaxed))
+        rt_log("fov: gameplay lens adjusted, %.2f -> %.2f deg", orig * 57.29578f, angle * 57.29578f);
 }
 
 // The patch site's host function, on the patch page at +0xf70. patches.c registers it: that file is compiled with
 // the game version's patches.h, which has the page's address.
 void dbg_freecam_host(Cpu *c) {
     fc.updates++;
-    int scene = scene_camera(c->x[19]);
+    int scene = scene_camera(rd_ptr(c->x[19] + 0x10));
     if (scene) {   // what the game chose, for a bug capture (dbg_camera_seen)
         static const int up_reg[3] = {7, 16, 6};
         plat_mutex_lock(&cam_lock);
