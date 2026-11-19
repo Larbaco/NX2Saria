@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=0e32a41d235ecd1edeefe4df4adc0854784d11c6 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=5eeac606a78a314239e9902de22d9ec16fec574a reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -20,6 +20,11 @@ Problemas que conhecemos na versão atual e o que os evita. Quando um deles é c
 - **No Linux, ela é só 2x e SDR.** Com o HDR ligado, a linha do menu diz que ela está desligada, e por quê.
 - **A geração de quadros do AMD FSR 3.1 no Windows acrescenta poucos quadros**: a maioria dos quadros do jogo não tem a profundidade e o movimento de que ela precisa ali, então só uma pequena parte deles recebe um quadro gerado.
 - **Giros rápidos da câmera perto de uma parede ficam borrados nas bordas** dos quadros gerados, e o brilho da Navi também. Isso é comum na geração de quadros quando o jogo renderiza por volta de 40 fps. Uma taxa de quadros renderizada mais alta diminui o efeito.
+
+## Controles
+
+- **O mouse nos menus do jogo não alcança a fileira de abas no topo** do menu de pausa (a troca entre as páginas).
+  Use L e R, ou as teclas ligadas a eles, para as abas; o resto do menu aceita o mouse.
 
 ## Shaders e pipelines
 
