@@ -215,6 +215,8 @@ static int button_takes_focus(uint64_t btn) {
     return ok_at(btn, BTN_BOX + 8) && (rd32(btn + BTN_FLAGS) & 0x10) && pane_shown(rd64(btn + BTN_ROOT));
 }
 // The screen's entries that can take the focus, with their boxes
+#define NEAR_UNITS 80.0f   // a pointer this near a box (layout units; 40 pixels at 1080) is on it (mm_pick_near)
+static int dump_boxes;   // NX2SARIA_MENU_CURSOR_LOG=1: the next entries_of logs every box
 static void entries_of(uint64_t s, Entries *out) {
     out->n = out->listed = 0;
     uint64_t head = s + SCR_HEAD;
@@ -229,8 +231,11 @@ static void entries_of(uint64_t s, Entries *out) {
         uint64_t btn = rd64(e + ENT_BUTTON);
         MmBox b;
         if (!button_takes_focus(btn) || !pane_box(rd64(btn + BTN_BOX), &b) || out->n >= MAX_ENTRIES) continue;
+        if (dump_boxes)   // (NX2SARIA_MENU_CURSOR_LOG=1: each box of a menu as it opens)
+            rt_log("menu_mouse: box %d: %.0f..%.0f, %.0f..%.0f", out->n, (double)b.x0, (double)b.x1, (double)b.y0, (double)b.y1);
         out->entry[out->n] = e, out->box[out->n] = b, out->n++;
     }
+    dump_boxes = 0;
 }
 // The focus to entry e of screen s: the writes of the game's focus setter with its flag 0 (a slide, as the d-pad moves).
 // (The method's busy guard, its +0x1f bit 5 with the focused button's +0x40 bit 5, is not taken: it held on the save
@@ -376,6 +381,7 @@ void menu_mouse_screen_host(Cpu *c) {
                    proj ? "" : " (no projection read: 16:9 taken)");
         snprintf(last_name, sizeof last_name, "%s", name);
         pause = !strcmp(name, "PlusMenu_00"), page = -1, tab_goal = -1;
+        dump_boxes = verbose_log(1000);
         last_screen = s, pend_until = 0, asked = 0;
         drop_presses();
     }
@@ -480,6 +486,7 @@ void menu_mouse_screen_host(Cpu *c) {
     float x, y;
     mm_to_layout(px, py, ux, uy, &x, &y);
     int i = mm_pick(ent.box, ent.n, x, y);
+    if (i < 0 && !on_tabs) i = mm_pick_near(ent.box, ent.n, x, y, NEAR_UNITS);
     if (i < 0 && click_l && on_tabs) {   // the pause menu's tab row: L or R for a sign, else steps to the page clicked
         int tab = mm_tab_at(x, y);
         st.tabs++;

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=010bed4ffee016afa3cb613e7143093f9025bbe0 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=ca3152f1295f22bcaebceef84c879c12a9a2472a reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -368,7 +368,7 @@ No jogo 1.1.1 o mouse funciona nos menus do próprio jogo: o título e os seus a
 páginas, Options e os diálogos de salvar. Enquanto um menu tem o foco e o mouse ou uma tecla foi o último a ser usado, o
 cursor é liberado da câmera com o mouse e aparece sobre o botão que tem o foco. Passar o mouse sobre um botão o
 seleciona, como o D-pad faria (com o destaque e o som do jogo); um clique esquerdo em um botão é o A nele, um clique
-direito em qualquer lugar é o B, e cada passo da roda é o D-pad para cima ou para baixo, então uma lista anda uma linha.
+direito em qualquer lugar é o B, e cada passo da roda é o D-pad para cima ou para baixo, então uma lista anda uma linha. No menu de pausa, um clique no nome de uma página no alto vai para essa página, e a roda sobre os nomes troca de página.
 Pegar o controle esconde o cursor e deixa os menus como no console; a câmera volta a ficar com o mouse quando o menu
 fecha. O menu de configurações (F1 ou Esc) fica com o mouse primeiro enquanto está aberto. O ponteiro acompanha os menus
 onde `wide_menus` e `wide_hud` os colocam em uma imagem ultrawide.

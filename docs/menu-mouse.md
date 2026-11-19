@@ -56,6 +56,25 @@ The box is the pane the game's focus frame takes (button +0x60): its size, the s
 matrix, and its base position (`runtime/menu_mouse_geom.h` `mm_pane_box`). It is in the layout's units: 3840 x 2160,
 origin at the centre, y up. Where boxes overlap, the smallest wins.
 
+## The pause menu's tabs
+
+The tab row across the top of the pause menu (`PlusMenu_00`: Collection, Equipment, Items, System, and the L and R
+signs) holds no buttons of the screen's list, and the game turns its pages with L and R only. Its places are fixed in
+layout units (`menu_mouse_geom.h` `mm_tab_at`, measured from the menu as drawn; the wide menus' edits do not move
+them). The page shown is the one whose layout holds the focused entry's button: the layouts are walked up from the
+button's root pane through the panes that hold them (+0x108) to a layout named `PaCollectMenu_00`,
+`PaEquipmentMenu_00`, `PaItemMenu_00` or `PaSystemMenu_00` (`pause_page_of`). A click on another page's name queues
+L or R, one at a time and each once the page has landed for 250 ms, until that page shows (given up after 4 s). A
+click on a sign is one L or R, and the wheel over the row is L (up) or R (down). The log has
+`menu_mouse: pause menu tab <page> clicked (page <now>)` and `... reached` or `... given up at`, and the per-menu line
+counts the clicks on the tab row apart from those on no button.
+
+## Narrow boxes
+
+Some slots take a narrow box on one side of their picture (the pause menu's bombchu slot: 100 units at the right of a
+260-wide slot), and rows leave gaps between slots. When the pointer is in no box, the nearest box within 80 layout
+units (40 pixels on a 1080-line picture) takes it (`mm_pick_near`).
+
 ## Ultrawide pictures
 
 On a picture wider than 16:9 the runtime squeezes the first row of the interface's projection (set `wide_hud`), so a
@@ -107,5 +126,5 @@ the device used last, so a gamepad press (`NX2SARIA_TEST_PAD_AT`) can take the p
 - The game also has a touch path in its menus: `main+0x377b260` turns the interface pad's pointer into a hit test,
   and the game reads `nn::hid` mouse states at `main+0x3b28780`. It is not used. Whether that mouse reaches the
   interface pad's pointer is unknown, and touch gives no hover.
-- Key Items' stones, the map's floors and the world map are not the framework's buttons, and the pause menu's tab
-  bar has no entries. Hover and clicks do nothing there; L, R, the keys and the wheel still work.
+- Key Items' stones, the map's floors and the world map are not the framework's buttons. Hover and clicks do nothing
+  there; L, R, the keys and the wheel still work.

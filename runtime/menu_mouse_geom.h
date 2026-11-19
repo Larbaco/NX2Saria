@@ -69,6 +69,23 @@ static inline int mm_pick(const MmBox *box, int n, float x, float y) {
     return best;
 }
 
+// When the pointer is in no box: the box nearest to it, if its edge is within margin units, else -1. Some of the
+// game's slots take a narrow box on one side of their picture (the pause menu's bombchu slot: 100 units wide at the
+// right of a 260-wide slot), and rows leave gaps between their slots, so a click on the middle of a picture or just
+// beside it would find no button.
+static inline int mm_pick_near(const MmBox *box, int n, float x, float y, float margin) {
+    int best = -1;
+    float bd = 0;
+    for (int i = 0; i < n; i++) {
+        const MmBox *b = &box[i];
+        float dx = x < b->x0 ? b->x0 - x : x > b->x1 ? x - b->x1 : 0;
+        float dy = y < b->y0 ? b->y0 - y : y > b->y1 ? y - b->y1 : 0;
+        float d = dx > dy ? dx : dy;
+        if (d <= margin && (best < 0 || d < bd)) best = i, bd = d;
+    }
+    return best;
+}
+
 // The pointer has moved since the last look by more than a pixel of a 4K picture
 static inline int mm_moved(float px, float py, float lx, float ly) {
     return fabsf(px - lx) > 0.00025f || fabsf(py - ly) > 0.0005f;

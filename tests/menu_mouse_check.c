@@ -111,6 +111,15 @@ int main(void) {
     mm_queue(q, MM_UP, 1), mm_queue(q, MM_A, 1);
     CHECK(mm_queue_take(q) == MM_A && mm_queue_take(q) == MM_UP && mm_queue_take(q) == -1, "A goes before the wheel");
 
+    // the nearest box when the pointer is in none: the bombchu slot's narrow box (-1196..-1096, -413..-193 as the 16:9
+    // pause menu has it) beside the bomb slot's, a click on the middle of the bombchu's picture (-1225, -300)
+    MmBox slots[] = {{-1698, -413, -1458, -193}, {-1196, -413, -1096, -193}, {-1372, 397, -1152, 677}};
+    CHECK(mm_pick(slots, 3, -1225, -300) == -1 && mm_pick_near(slots, 3, -1225, -300, 80) == 1,
+          "the middle of the bombchu's picture is its slot");
+    CHECK(mm_pick_near(slots, 3, -1330, -300, 80) == -1, "the gap halfway between two slots far apart is none");
+    CHECK(mm_pick_near(slots, 3, -1440, -300, 80) == 0, "just beside the bomb slot is the bomb slot");
+    CHECK(mm_pick_near(slots, 3, 0, 0, 80) == -1 && mm_pick_near(slots, 0, 0, 0, 80) == -1, "far from all, or none");
+
     // the pause menu's tab row: the four pages' names and the L and R signs; off the row nothing
     CHECK(mm_tab_at(-693, 997) == 0 && mm_tab_at(-232, 997) == 1 && mm_tab_at(229, 997) == 2 && mm_tab_at(688, 997) == 3,
           "the four tabs at their centres");
