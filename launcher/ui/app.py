@@ -377,6 +377,9 @@ class App:
         self.job_return = 'home'
         self.check = None
         self.release = None
+        self.notes_canvas = None
+        self.notes_scrollbar = None
+        self.notes_logged = set()
         self.check_error = ''
         self.checked_at = 0.0
         self.check_started = 0.0
@@ -696,6 +699,7 @@ class App:
                         ('<Left>', lambda e: self.side(-1)), ('<Right>', lambda e: self.side(1)),
                         ('<Return>', lambda e: self.activate()), ('<KP_Enter>', lambda e: self.activate()),
                         ('<space>', lambda e: self.activate()), ('<Escape>', lambda e: self.back()),
+                        ('<Prior>', lambda e: self.scroll_notes(-1)), ('<Next>', lambda e: self.scroll_notes(1)),
                         ('<F5>', lambda e: self.check_now(force=True))):
             r.bind(key, fn)
         self.canvas.bind('<Motion>', self.on_motion)
@@ -705,6 +709,11 @@ class App:
         self.canvas.bind('<Leave>', lambda e: self.set_tb_hover(None))
         r.bind('<Alt-F4>', lambda e: self.on_close())
         r.protocol('WM_DELETE_WINDOW', self.on_close)
+
+    def scroll_notes(self, direction):
+        if self.notes_canvas and self.notes_scrollbar:
+            self.notes_canvas.yview_scroll(direction * 5, 'units')
+            return 'break'
 
     def poll_gamepad(self):
         try:
@@ -1943,16 +1952,17 @@ class App:
     def update_desc(self):
         r = self.release
         nv, mine = versions.display(r.version), versions.display(self.layout.version)
-        notes = feed.plain_notes(r.notes, 6)
+        notes = feed.plain_notes(r.notes)
         return {'title': f'Version {nv} Is Ready',
                 'text': [f'You have {mine}. Updating downloads the new version and rebuilds the game. {UPDATE_TAKES} '
                          f'Your saves and settings stay as they are.'],
-                'divider': bool(notes), 'subtitle': "What's New" if notes else '', 'bullets': notes}
+                'divider': bool(notes), 'subtitle': "What's New" if notes else '', 'bullets': notes,
+                'notes_version': r.version}
 
     def staged_desc(self, m):
         """The Updates row of a release downloaded in the background (BackgroundUpdate.ready)."""
         nv, mine = m['version'], versions.display(self.layout.version)
-        notes = feed.plain_notes(m.get('notes', ''), 4)
+        notes = feed.plain_notes(m.get('notes', ''))
         if self.settings.get('auto_install'):
             text = (f'You have {mine}. Version {nv} is downloaded and installs when you are not playing: after you '
                     'quit the game, or when NX2Saria next opens. Select this row to install it now.')
@@ -1960,6 +1970,7 @@ class App:
             text = f'You have {mine}. Version {nv} is downloaded. Select this row to install it.'
         return {'title': f'Version {nv} Is Ready', 'text': [text],
                 'divider': bool(notes), 'subtitle': "What's New" if notes else '', 'bullets': notes,
+                'notes_version': m['version'],
                 'note': f'Installing restarts the launcher and rebuilds the game. {UPDATE_TAKES} Your saves and '
                         'settings stay as they are.'}
 
@@ -2731,6 +2742,12 @@ class App:
         return self.sprites[key]
 
     def draw_desc(self):
+        if self.notes_canvas:
+            self.notes_canvas.destroy()
+            self.notes_canvas = None
+        if self.notes_scrollbar:
+            self.notes_scrollbar.destroy()
+            self.notes_scrollbar = None
         r = self.focused()
         d = r.desc if r else None
         if callable(d):
@@ -2768,8 +2785,8 @@ class App:
             add('filigree')
         if d.get('subtitle'):
             add('text', d['subtitle'], self.f['sub'], P['gold'], X(8))
-        for b in d.get('bullets', []):
-            add('bullet', b)
+        if d.get('bullets'):
+            add('notes', d['bullets'])
         if d.get('log'):
             add('log', d['log'])
         if d.get('note'):
@@ -2811,6 +2828,61 @@ class App:
                 tid = c.create_text(x0 + padx + X(16), y, text=text, font=self.f['value'], fill=P['desc_text'],
                                     anchor='nw', width=inner - X(16), tags=('dyn', 'desc'))
                 y = c.bbox(tid)[3] + X(8)
+            elif kind == 'notes':
+                (notes,) = args
+                available = X(H - 36) - y - pady
+                viewport_h = max(X(72), available)
+                bullet_x = X(16)
+                note_w = inner - bullet_x - X(7)
+                line_h = self.f['value'].metrics('linespace') + X(8)
+                wrapped = []
+                for note in notes:
+                    words, lines, current = note.split(), [], ''
+                    for word in words:
+                        candidate = f'{current} {word}'.strip()
+                        if current and self.f['value'].measure(candidate) > note_w:
+                            lines.append(current)
+                            current = word
+                        else:
+                            current = candidate
+                    if current:
+                        lines.append(current)
+                    wrapped.append(lines or [''])
+                total_h = sum(len(lines) * line_h + X(8) for lines in wrapped)
+                needs_scroll = total_h > viewport_h
+                sb_w = X(7) if needs_scroll else 0
+                view_w = inner - sb_w
+                child = tk.Canvas(self.root, width=view_w, height=viewport_h, highlightthickness=0, bd=0,
+                                  background=P['panel'], yscrollincrement=max(1, line_h), takefocus=False)
+                cy = 0
+                for lines in wrapped:
+                    child.create_rectangle(X(1), cy + X(8), X(6), cy + X(13), fill=P['bullet'], outline='')
+                    for line in lines:
+                        child.create_text(bullet_x, cy, text=line, font=self.f['value'], fill=P['desc_text'], anchor='nw')
+                        cy += line_h
+                    cy += X(8)
+                child.configure(scrollregion=(0, 0, view_w, max(viewport_h, cy)))
+                self.notes_canvas = child
+                c.create_window(x0 + padx, y, anchor='nw', window=child, width=view_w, height=viewport_h,
+                                tags=('dyn', 'desc'))
+                if needs_scroll:
+                    sb = tk.Scrollbar(self.root, orient='vertical', command=child.yview, width=sb_w,
+                                      troughcolor=P['value'], background=P['gold'], activebackground=P['text_bright'],
+                                      highlightthickness=0, bd=0)
+                    child.configure(yscrollcommand=sb.set)
+                    self.notes_scrollbar = sb
+                    c.create_window(x0 + padx + view_w, y, anchor='nw', window=sb, width=sb_w,
+                                    height=viewport_h, tags=('dyn', 'desc'))
+                    child.bind('<MouseWheel>', lambda e: (child.yview_scroll(-int(e.delta / 120), 'units'), 'break')[1])
+                    child.bind('<Button-4>', lambda e: (child.yview_scroll(-1, 'units'), 'break')[1])
+                    child.bind('<Button-5>', lambda e: (child.yview_scroll(1, 'units'), 'break')[1])
+                    child.bind('<Prior>', lambda e: (child.yview_scroll(-5, 'units'), 'break')[1])
+                    child.bind('<Next>', lambda e: (child.yview_scroll(5, 'units'), 'break')[1])
+                    version = d.get('notes_version', '')
+                    if version and version not in self.notes_logged:
+                        self.notes_logged.add(version)
+                        self.ctx.log(f"what's new: notes for {version} exceed the panel; scrolling enabled")
+                y += viewport_h
             elif kind == 'log':
                 (lines,) = args
                 lh = self.f['mono'].metrics('linespace')
@@ -2825,7 +2897,7 @@ class App:
                                   tags=('dyn', 'desc'))
                     ty += lh
                 y += h + X(14)
-        height = y - top0 + pady - X(4)
+        height = min(y - top0 + pady - X(4), X(H - 36) - top0) if self.notes_canvas and self.notes_scrollbar else y - top0 + pady - X(4)
         top = X(236) if height < X(200) else X(112)
         top = min(top, X(H - 30) - height) if top + height > X(H - 30) else top
         dy = top - top0

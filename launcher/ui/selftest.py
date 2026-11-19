@@ -122,9 +122,32 @@ def states(app):
         app.release, app.checked_at, app.check, app.check_error, app.message = None, time.time() - 5, None, '', ''
         app.show('home', 0)
 
+    def rc2_release():
+        source = Path(__file__).resolve().parents[2] / 'docs' / 'releases' / 'v0.19.0-rc.2.md'
+        return feed.Release({'format': 1, 'version': '0.19.0-rc.2', 'app': {'name': 'test.zip', 'size': 1,
+                                                                            'sha256': '0'}},
+                            source.read_text(encoding='utf-8'))
+
     def update_ready():
-        app.release = fake_release(ahead_of(ctx.version))
+        app.release = rc2_release()
         app.show('home', 1)
+
+    def whats_new_before():
+        update_ready()
+        row = next(r for r in app.rows if r.label == 'Updates')
+        row.desc = lambda: {'title': 'Version 0.19.0-rc.2 Is Ready', 'divider': True,
+                            'subtitle': "What's New", 'bullets': [
+                                'The Controls tab says what each button does in the game, under its name: "A: Actions / dash", "X: Jump", and so on.',
+                                'The labels follow the game’s button, in all four menu languages: swapping keys or buttons does not move them.',
+                                'Also has all of 0.19.0-rc.1: menu tabs by mouse, field of view on 1.1.1, a crash fix, personal folders out of logs.',
+                                'Your saves, mods and settings stay where they are when you update.',
+                                'Pre-release: a release candidate for the Preview channel. Not tried on Windows yet: tab clicks, field of view, labels.',
+                                '[Install or update](https://github.com/Larbaco/NX2Saria/blob/main/docs/install.md) ·']}
+        app.render()
+
+    def whats_new_end():
+        if app.notes_canvas and app.notes_scrollbar:
+            app.notes_canvas.yview_moveto(1.0)
 
     def updating():
         j = jobs.UpdateDownloadJob(ctx, fake_release(ahead_of(ctx.version)))
@@ -184,7 +207,7 @@ def states(app):
         app.show('saves', 0)
 
     def update_staged():   # a release downloaded in the background, waiting for the game to be closed
-        rel = fake_release(ahead_of(ctx.version))
+        rel = rc2_release()
         staged = {'version': rel.version, 'runtime': '', 'prerelease': False, 'notes': rel.notes}
         app.bg.ready = lambda release=None: staged
         app.release, app.message = rel, ''
@@ -244,7 +267,8 @@ def states(app):
         app.show('home', 0)
 
     return [('1-first-run', first_run), ('2-installing', installing), ('3-home', home),
-            ('4-update-ready', update_ready), ('5-updating', updating), ('6-settings', settings),
+            ('4a-whats-new-before', whats_new_before), ('4-update-ready', update_ready),
+            ('4b-whats-new-end', whats_new_end), ('5-updating', updating), ('6-settings', settings),
             ('7-build-failed', failed), ('8-uninstall', uninstall), ('9-import-saves', import_saves),
             ('10-shaders', shaders), ('11-update-staged', update_staged), ('12-export-save', export_save),
             ('13-customize', customize), ('14-color-scheme', color_scheme), ('15-custom-picker', custom_picker),
