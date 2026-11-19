@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/install.md source-hash=f8e8f3a5886a3ae9be266f1f458b4e4fed167173 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=73bfc93e1db732215a8df95adc35019764b38782 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
@@ -40,6 +40,28 @@ Iniciada em um ambiente de desktop, ela abre uma janela para instalar, atualizar
 - **Um launcher instalado a partir do projeto original NX2navi** mantém a fonte de atualizações com que foi instalado. Defina `"feed_repo": "Larbaco/NX2Saria"` no `data/launcher.json` dele uma vez, e a partir daí ele passa a oferecer as versões do NX2Saria.
 - **A pasta do jogo, os saves, os perfis, os mods e o `nx2saria.ini` ficam onde estão** quando você atualiza.
 - **Os pré-lançamentos** chegam apenas aos launchers cuja configuração *Update Channel* está em *Preview*. Em *Stable*, o padrão, o launcher espera até que uma versão seja marcada como estável.
+
+## Verificar o download
+
+A partir do NX2Saria 0.19.0-rc.1, todos os arquivos de uma versão são compilados e enviados pelo GitHub Actions, sem que nenhum arquivo passe pelo PC de ninguém. Cada arquivo tem um **atestado de proveniência**: um registro assinado pelo GitHub que diz qual repositório, qual workflow e qual commit o compilou. Se um arquivo tivesse sido alterado depois da compilação, o atestado não bateria com ele.
+
+**Confira o atestado** com o [GitHub CLI](https://cli.github.com/) (`gh`, com login em qualquer conta do GitHub), na pasta onde você baixou:
+
+```sh
+gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
+  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0
+```
+
+(No Windows, no PowerShell, escreva tudo numa linha só, sem a `\`.)
+
+Troque `NX2Saria-Setup-0.19.0.exe` pelo nome do arquivo que você baixou, e a versão em `refs/tags/v0.19.0` pela dele: funciona do mesmo jeito para a AppImage, os zips do app e do runtime, `NX2Saria-update.json`, `NX2navi-update.json` e `SHA256SUMS.txt`. Para um arquivo bom, ele mostra `✓ Verification succeeded!` e o workflow que o compilou. Qualquer outra resposta quer dizer que o arquivo não é o que o GitHub Actions compilou para essa versão: não o execute, e avise a gente numa issue.
+
+**Confira os checksums.** O `SHA256SUMS.txt` da versão lista o SHA-256 de todos os outros arquivos. Ele mostra que o download chegou inteiro; junto com o atestado do próprio `SHA256SUMS.txt`, mostra também de onde veio cada arquivo.
+
+- Linux: `sha256sum -c --ignore-missing SHA256SUMS.txt` mostra `OK` para cada arquivo que você baixou.
+- Windows (PowerShell): `Get-FileHash NX2Saria-Setup-0.19.0.exe` mostra o SHA-256; ele tem que ser o da linha desse arquivo no `SHA256SUMS.txt` (maiúsculas e minúsculas não importam).
+
+O launcher faz sozinho a segunda conferência em cada atualização: ele baixa o `NX2Saria-update.json` da versão e só instala um arquivo quando o tamanho e o SHA-256 são os que esse manifesto informa. As versões anteriores à 0.19.0-rc.1 foram enviadas à mão e não têm atestado.
 
 ## Algo errado?
 
