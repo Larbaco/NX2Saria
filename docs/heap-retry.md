@@ -45,8 +45,17 @@ version 1.1.1 only; on by default.
   back.
 - A parent is used only when the child's memory lies inside the parent's memory. With any other layout the climb stops
   instead of calling through a wrong pointer.
-- When no heap has room, the game ends with a fatal error that says which allocation it was and which heap refused it.
-  Without the set it would crash writing to guest address `0x8`.
+- When no heap has room, the game ends with a fatal error that says which allocation it was, its size and which heap
+  refused it, and tells the player what to do: start again and load the save, and report it with the log and the save
+  if it stops at the same place. The heaps are the game's own memory, of a fixed size, so the message says that
+  closing other programs or lowering graphics settings does not help. Without the set the game would crash writing to
+  guest address `0x8`.
+- The set runs only on the code it was written for. The generator stops on a site whose word differs from the
+  executable's, as for every set. At the start, `heap_retry.c` `heap_retry_start` also compares the four words in the
+  loaded image with 1.1.1's, and on a difference it switches the set off and logs which word differs; the game then
+  runs its own code there. A mod whose ExeFS patch writes one of these sites switches the set off too
+  (`tools/exefs_patches.py`, `runtime/mods.c`: "mods: ... replaces the port's patch set heap_retry; it stays off").
+  The start line comes after both, so it says whether the set really runs.
 - Why these places: the `blr` to `tryAlloc` cannot be patched (a patch site cannot be a `br`, `blr` or `ret`), so the
   site is the word after it. The `blr` has already made every caller-saved register and the flags free, so the call
   to the host function changes nothing the function still needs.

@@ -4,8 +4,8 @@
 // gives, the registers the functions leave, the request's heap put back, a heap whose parent does not hold it, the
 // fatal error when no heap has room, the test switches, the log lines and their budget, and the start and end lines.
 // Built by tests/heap_retry_check.py, which writes the stand-in layout.h and patches.h. Modes: "main", "test" (the
-// test refusals), "shipped" (the refusals left as shipped), "off" (the set switched off) and "no-set" (a build without
-// the set).
+// test refusals), "shipped" (the refusals left as shipped), "off" (the set switched off), "mismatch" (a main whose word
+// at a site is not 1.1.1's) and "no-set" (a build without the set).
 #include <assert.h>
 #include <setjmp.h>
 #include <stdarg.h>
@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint64_t test_main_base = 0x7000000000ull;   // layout.h's MOD_MAIN_BASE: only compared and added, never read
+uint64_t test_main_base;   // layout.h's MOD_MAIN_BASE: a buffer standing in for main's image up to the sites
 const int rt_game_version = 111;
 
 #include "heap_retry.c"
@@ -26,6 +26,7 @@ const int rt_game_version = 111;
 static int have_set = 1, set_on = 1;
 int rt_patch_set(const char *name) { return have_set && !strcmp(name, "heap_retry") ? 5 : -1; }
 int rt_patch_enabled(int set) { return set == 5 && set_on; }
+void rt_patch_switch(int set, int on) { assert(set == 5); set_on = on != 0; }
 int mem_readable(uint64_t a, uint64_t n) { (void)n; return a > UNMAPPED; }
 static const char *env_fail, *env_shipped;
 const char *cfg_get(const char *name) {
@@ -211,6 +212,7 @@ static void run_main(void) {
     assert(fatal_of(no_room_cpu));
     assert(strstr(fatal_msg, "no heap had room for the model buffer at main+0x43690c, 16384 bytes"));
     assert(strstr(fatal_msg, "2 other heaps tried") && strstr(fatal_msg, "guest address 0x8"));
+    assert(strstr(fatal_msg, "ran out of its own memory") && strstr(fatal_msg, "Start the game again"));
     default_heap = &other;
     make(&other, "DefaultHeap", 0x900000000ull, 0x1000000ull, NULL, 0);
     assert(fatal_of(no_room_gpu) && strstr(fatal_msg, "GPU memory at main+0x436f18") && strstr(fatal_msg, "no memory pool"));
@@ -276,8 +278,19 @@ static void run_shipped(void) {
     puts("heap_retry_check: shipped: a refused allocation goes on null, as the shipped game does");
 }
 
+// main's image with 1.1.1's words at the four sites (heap_retry_start compares them)
+static void image(void) {
+    static const uint32_t words[][2] = {{0x436910, 0xa90d577f}, {0x436db4, 0xa90b5b7f}, {0x436f18, 0x94032c4e},
+                                        {0x437094, 0x94032bef}};
+    uint8_t *m = calloc(1, 0x438000);
+    assert(m);
+    for (int i = 0; i < 4; i++) memcpy(m + words[i][0], &words[i][1], 4);
+    test_main_base = (uintptr_t)m;
+}
+
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "main";
+    image();
     if (!strcmp(mode, "no-set")) have_set = 0;
     if (!strcmp(mode, "off")) set_on = 0;
     heap_retry_register();
@@ -288,6 +301,13 @@ int main(int argc, char **argv) {
         heap_retry_start();
         assert(log_lines == 1 && strstr(last_log, "heap retry: off (NX2SARIA_HEAP_RETRY=0)"));
         puts("heap_retry_check: off: the start line says so");
+    } else if (!strcmp(mode, "mismatch")) {
+        uint32_t other = 0xd503201f;   // a nop where 1.1.1 has the call of main+0x502050
+        memcpy((void *)(uintptr_t)(test_main_base + 0x437094), &other, 4);
+        heap_retry_start();
+        assert(!set_on && log_lines == 2 && strstr(logs[0], "main+0x437094 holds d503201f where 1.1.1 has 94032bef"));
+        assert(strstr(logs[1], "heap retry: off"));
+        puts("heap_retry_check: mismatch: a main that differs at a site keeps the set off, with a line");
     } else if (!strcmp(mode, "no-set")) {
         heap_retry_start();
         heap_retry_exit_log();

@@ -3,8 +3,8 @@
 The set's four sites, lifted by recomp/lifter.py as the generator lifts them: main+0x436910 and main+0x436db4 keep
 their stp and then call the patch page's +0xed0; main+0x436f18 and main+0x437094 call the page's +0xec0 in place of
 main+0x502050. No other set calls those slots, and only heap_retry.c registers them. Then tests/heap_retry_check.c
-builds heap_retry.c with the rest of the runtime stubbed and calls its host functions over stand-in heaps, in five
-modes (main, test, shipped, off, no-set). No game files: the module layout and patch page are stand-ins written to the
+builds heap_retry.c with the rest of the runtime stubbed and calls its host functions over stand-in heaps, in six
+modes (main, test, shipped, off, mismatch, no-set). No game files: the module layout and patch page are stand-ins written to the
 test's build folder.
 
 Usage: heap_retry_check.py
@@ -122,7 +122,7 @@ def main():
                            '-fno-strict-aliasing', '-I', str(work), '-I', str(ROOT / 'runtime'),
                            str(ROOT / 'tests' / 'heap_retry_check.c'), '-o', str(exe)], env=env)
     rc = 0
-    for mode in ('main', 'test', 'shipped', 'off', 'no-set'):
+    for mode in ('main', 'test', 'shipped', 'off', 'mismatch', 'no-set'):
         rc = subprocess.run([str(exe), mode], env=env).returncode or rc
     return rc
 

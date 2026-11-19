@@ -156,9 +156,12 @@ __attribute__((noreturn)) static void give_up(int site, uint64_t at, uint64_t he
                                                const char *then) {
     char was[160];
     describe(heap, was, sizeof was);
-    rt_fatal("heap retry: no heap had room for the %s at main+%#llx, %llu bytes: heap %s and %d other heap%s tried "
-             "refused it, so the game cannot go on (%s)", site_names[site], (unsigned long long)at,
-             (unsigned long long)bytes, was, up, up == 1 ? "" : "s", then);
+    rt_fatal("heap retry: the game ran out of its own memory while loading a model: no heap had room for the %s at "
+             "main+%#llx, %llu bytes (heap %s and %d other heap%s tried), so the game cannot go on (%s). This memory is "
+             "the game's own, of a fixed size: closing other programs or lowering graphics settings does not change "
+             "it. Start the game again and load the save; if it stops at the same place again, report it with "
+             "logs/nx2saria.log and the save", site_names[site], (unsigned long long)at, (unsigned long long)bytes,
+             was, up, up == 1 ? "" : "s", then);
 }
 
 // The page's +0xed0, right after the tryAlloc at main+0x43690c or main+0x436da0: x0 its result, which the function
@@ -234,11 +237,27 @@ static void heap_retry_gpu(Cpu *c) {
     note_moved(SITE_GPU, at - 4, heap, h, bytes, up, test);
 }
 
+// The four sites' words as 1.1.1's main has them (recomp/patches-v111.txt). The generator checked them in the
+// executable it lifted; the image loaded now is checked too, so a main that differs keeps the game's own code.
+static const struct { uint32_t off, word; } site_words[] = {
+    {0x436910, 0xa90d577f}, {0x436db4, 0xa90b5b7f}, {0x436f18, 0x94032c4e}, {0x437094, 0x94032bef},
+};
+
 void heap_retry_start(void) {
     set_index = rt_patch_set("heap_retry");
     if (set_index < 0) {
         rt_log("heap retry: not in this game version (the patch set heap_retry is 1.1.1's)");
         return;
+    }
+    for (size_t i = 0; i < sizeof site_words / sizeof *site_words; i++) {
+        uint64_t a = MOD_MAIN_BASE + site_words[i].off;
+        if (!mem_readable(a, 4)) continue;   // (code the runtime keeps unmapped: the generator's check stands)
+        uint32_t w = *(const uint32_t *)(uintptr_t)a;
+        if (w != site_words[i].word && rt_patch_enabled(set_index)) {
+            rt_patch_switch(set_index, 0);
+            rt_log("heap retry: main+%#x holds %08x where 1.1.1 has %08x: the set heap_retry stays off and the game "
+                   "runs its own code there", (unsigned)site_words[i].off, w, (unsigned)site_words[i].word);
+        }
     }
     const char *f = cfg_get("NX2SARIA_HEAP_RETRY_TEST_FAIL"), *comma = f ? strchr(f, ',') : NULL;
     long cpu = f && *f ? atol(f) : 0, gpu = comma ? atol(comma + 1) : 0;
