@@ -483,3 +483,17 @@ site voice_language main a7ca98 940001ca 951090f2 # bl main+0xa7d1c0 -> bl page+
 set wide_balloon NX2SARIA_BALLOON_ANCHOR_FIX 1
 site wide_balloon main 20c2c8 1e210841 1e210841 953252e2 # fmul s1, s2, s1 -> bl page+0xe50
 
+# Model heaps that run full (runtime/heap_retry.c). The "OptimizeChangeBank" thread's material block rebuild
+# (main+0x4366e0) takes two CPU buffers from its model's heap with the heap's tryAlloc (blr at main+0x43690c and
+# main+0x436da0) and GPU memory through main+0x502050 (main+0x436f18, main+0x437094), and checks none of them: a full
+# heap gave a null buffer base, and a few frames after a save was loaded the game wrote to guest address 0x8. The first
+# two sites keep their store of the size (stp) and then call the page's +0xed0, which tries a null x0 again in the
+# heap's parents; the function's own store of x0 at the next word then keeps that block. x30 is the function's own
+# saved one, and every caller-saved register was already given up to the blr just before, so the call clobbers nothing
+# live. The other two call the page's +0xec0 in place of main+0x502050, which calls the game's and tries a failure
+# again with the heap's parents and the default heap. No word reads or writes the flags.
+set heap_retry NX2SARIA_HEAP_RETRY 1
+site heap_retry main 436910 a90d577f a90d577f 9529a970   # stp xzr, x21, [x27, #0xd0] -> the same; bl page+0xed0
+site heap_retry main 436db4 a90b5b7f a90b5b7f 9529a847   # stp xzr, x22, [x27, #0xb0] -> the same; bl page+0xed0
+site heap_retry main 436f18 94032c4e 9529a7ea            # bl main+0x502050 -> bl page+0xec0
+site heap_retry main 437094 94032bef 9529a78b            # bl main+0x502050 -> bl page+0xec0

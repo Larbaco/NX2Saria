@@ -556,6 +556,13 @@ and end a sprint, ZL, the button kept from the game only during play (the bottom
 Link the player does not control, and the set switched off with the button off but never over a start that kept it
 off. No game files.
 
+A change to the model heaps' retry (`runtime/heap_retry.c`, the set `heap_retry` of `recomp/patches-v111.txt`) passes
+`python tests\heap_retry_check.py`. It lifts the set's four sites as the generator does (two keep their store and call
+the patch page's +0xed0, two call its +0xec0 in place of the game's GPU memory allocation) and builds `heap_retry.c`
+with the rest of the runtime stubbed, over a chain of stand-in heaps: the block a parent gives, the registers and the
+request left as they were, a parent whose memory does not hold its child's, the fatal error when no heap has room, the
+test switches and the log lines. No game files.
+
 A change to the text speed (`runtime/text_speed.c`, the set `text_speed` of `recomp/patches-v111.txt`, its call in
 `runtime/ov_input.c` `npad_states`) passes `python tests\text_speed_check.py`, which lifts the set's replacement words
 with `recomp/lifter.py` and runs them with `text_speed.c` against a stand-in message window and typewriter: the page
