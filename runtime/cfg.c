@@ -1889,7 +1889,10 @@ static struct {
     int write;                // the state file may be written: the game itself, not a replay
     int hw_changed;           // atomic: the player's tier gave way to the recommended one (above)
     int n_keys, keys_done;    // keys_done atomic
-    const char *keys[PRESET_KEYS_MAX];   // every key some tier sets on some hardware, in the table's order
+    // every key some tier sets on this PC's hardware, in the table's order: the keys the menu hands back to a preset
+    // and counts for Custom. A key only another kind of PC gets from a tier (fps_limit, set on integrated GPUs and
+    // handhelds alone) stays the player's own here.
+    const char *keys[PRESET_KEYS_MAX];
 } PS = {.rec = PRESET_HIGH};
 
 static void preset_keys_init(void) {
@@ -1897,6 +1900,7 @@ static void preset_keys_init(void) {
     plat_mutex_lock(&preset_lock);
     if (!PS.keys_done) {
         for (size_t i = 0; i < PRESET_ROW_COUNT; i++) {
+            if (!preset_applies(PRESET_ROWS[i].when, &preset_hw)) continue;   // no tier sets it on this PC
             int have = 0;
             for (int k = 0; k < PS.n_keys && !have; k++) have = !strcmp(PS.keys[k], PRESET_ROWS[i].key);
             if (have) continue;
@@ -2057,6 +2061,9 @@ static void preset_init(int game) {
         cached = 1;
     }
     preset_hw = hw;
+    __atomic_store_n(&PS.keys_done, 0, __ATOMIC_RELEASE);   // the key list again, for this hardware
+    PS.n_keys = 0;
+    preset_keys_init();
     char gpu[512], tail[256];
     if (hw.have_gpu)
         snprintf(gpu, sizeof gpu, "GPU \"%s\" (vendor 0x%04x device 0x%04x, %s, %u MiB video memory, mesh shaders %s, "

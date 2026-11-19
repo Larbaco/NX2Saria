@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=f89373668b34dc7c19a4de2b82532295b629fc0e reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=895226a9fe3f3804633498c73b66e374a6c54991 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -235,7 +235,8 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
   ou mais. Nenhum preset liga a geração de quadros.
 - *Recomendado* é escolhido de novo a cada inicialização, pela placa de vídeo, pela memória e pelo processador. Em um PC
   que recebe *Alto*, nada muda. Quando o seu recebe *Baixo* ou *Médio* e você nunca escolheu um preset, um aviso diz
-  isso uma vez.
+  isso uma vez. Para jogar como antes, escolha *Alto* na linha *Preset de qualidade* (ou escreva `preset = high` no
+  `nx2saria.ini`).
 - Um preset que você escolhe vale enquanto o PC for o mesmo; quando ele não é o recomendado, a linha diz *Recomendado
   para este PC: …*. Depois de uma placa de vídeo nova, outro processador ou mais memória (uma atualização de driver
   não conta), o jogo usa *Recomendado* até você escolher de novo, e a linha diz *Hardware novo: o preset recomendado

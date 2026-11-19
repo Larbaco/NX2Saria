@@ -2564,7 +2564,7 @@ static void perf_cycle_once(void) {
 // countdown, the boxes after Apply) a reload would pull settings from under them: it is refused with a notice instead.
 static std::atomic<int> g_cfg_reload;
 static uint64_t g_notice_until_ns;
-static char g_notice[320];
+static char g_notice[512];
 
 extern "C" void menu_cfg_reload(void) { g_cfg_reload.store(1); }
 
@@ -2585,6 +2585,7 @@ static void preset_notice_tick(bool busy) {
     snprintf(name, sizeof name, "%s", preset_tier_text(cfg_preset_recommended(nullptr)));
     snprintf(text, sizeof text, menu_text(UI_MENU_PRESET_NOTICE), name);
     notice(text);
+    g_notice_until_ns = plat_now_ns() + 8000000000ull;   // longer than other notices: it says how to go back as well
     cfg_preset_notice_done();
 }
 

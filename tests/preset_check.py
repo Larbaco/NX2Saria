@@ -37,6 +37,12 @@ RTX4090 = ('name=NVIDIA GeForce RTX 4090,vendor=0x10de,device=0x2684,driver=0x20
            'cores=16,threads=32,ram=64000')
 RTX4060_LOWRAM = ('name=NVIDIA GeForce RTX 4060,vendor=0x10de,device=0x2882,driver=0x200,type=discrete,vram=8188,'
                   'mesh=1,cores=6,threads=12,ram=11900')
+OWNER = ('name=NVIDIA GeForce RTX 3050 6GB Laptop GPU,vendor=0x10de,device=0x25ac,driver=0x88848000,type=discrete,'
+         'vram=6017,mesh=1,cores=8,threads=16,ram=16087')
+OWNER_INI = ('[display]\nfullscreen = 1\nperf_overlay = fps\nupscaler = bilinear\ndlaa = 1\ndlss = quality\n'
+             'framegen = fsr3\ntaa = fsr3\nsharpness = 100\n[frame rate]\nfps_limit = unlimited\n')
+FATAL70 = ('name=AMD Radeon RX 6650 XT,vendor=0x1002,device=0x73ef,driver=0x1,type=discrete,vram=8176,mesh=1,cores=6,'
+           'threads=12,ram=15667')
 DECK = ('name=AMD Custom GPU 0405 (RADV VANGOGH),vendor=0x1002,device=0x163f,driver=0x1,type=integrated,vram=1024,'
         'mesh=1,cores=4,threads=8,ram=14800,hand=Steam Deck')
 RX6700_STATE = ('# a state file of an earlier start\nhardware = 1002:73df:1:10224:16:31:none\n'
@@ -141,13 +147,13 @@ def main():
     # ---- a GTX 1650: low; a key of the settings file wins over the preset and makes it custom
     rc, out, f = run(GTX1650, ini='[display]\naniso = 16\n')
     check(get(out, 'in_use') == 'low' and get(out, 'get SCENE_SHARE') == '0.5' and get(out, 'get GAME_RES') == '1080'
-          and get(out, 'get FOLIAGE') == 'reduced' and get(out, 'get FPS_LIMIT') == '(unset)',
+          and get(out, 'get FOLIAGE') == 'reduced' and get(out, 'get FPS_LIMIT') is None,  # no tier's key on this card
           'GTX 1650: low, its values in effect', out)
     check(get(out, 'get ANISO') == '16' and get(out, 'default ANISO') == '4' and get(out, 'custom') == '1',
           "the settings file's aniso wins; the preset's is the default; the preset is custom", out)
     check('log: preset:   ANISO = 16 (settings file; the preset\'s 4 stays unused)' in out
           and 'log: preset:   SCENE_SHARE = 0.5 (preset)' in out, 'the per-key lines', out)
-    check(get(out, 'get TEXTURE_DETAIL') == '(unset)', 'a 4 GiB card keeps texture_detail = auto on low', out)
+    check(get(out, 'get TEXTURE_DETAIL') is None, 'a 4 GiB card keeps texture_detail = auto on low: no tier sets it', out)
 
     # ---- the menu's switch: values and their log lines, restart-only ones pending, the version bumped
     rc, out, f = run(GTX1650, ini='', actions=('use=high', 'use=low'))
@@ -197,6 +203,19 @@ def main():
     check(bool(HARDWARE_LINE.search(out)), 'the hardware line without a GPU', out)
 
     # ---- RAM caps: an RTX 4060 with 12 GB is medium, through DLSS quality
+    # ---- the owner's laptop and settings file: its own lines keep their values, and a preset chosen in the menu hands
+    # back exactly the ones a tier sets on this card (fps_limit, framegen and upscaler are no preset's here)
+    rc, out, f = run(OWNER, ini=OWNER_INI)
+    check(get(out, 'recommended') == 'medium (6 GiB of video memory)' and get(out, 'in_use') == 'medium'
+          and get(out, 'get DLAA') == '1' and get(out, 'get DLSS') == 'quality' and get(out, 'get TAA') == 'fsr3'
+          and get(out, 'get GAME_RES') == '1080' and get(out, 'custom') == '1' and get(out, 'handback') == 'DLAA,TAA,DLSS'
+          and 'log: preset:   TAA = fsr3 (settings file; the preset\'s dlss stays unused)' in out
+          and get(out, 'get FPS_LIMIT') is None and not f.joinpath('nx2saria.ini').read_text().count('preset'),
+          "the owner's laptop: medium, its settings file's dlaa, dlss and taa win and are the ones handed back", out)
+    rc, out, f = run(FATAL70, ini='')
+    check(get(out, 'recommended') == 'high (8 GiB of video memory)' and get(out, 'in_use') == 'high',
+          'RX 6650 XT, Ryzen 5 4650G, 16 GB: high', out)
+
     rc, out, f = run(RTX4060_LOWRAM, ini='')
     check(get(out, 'in_use') == 'medium' and get(out, 'get DLSS') == 'quality' and get(out, 'get GAME_RES') == '1080',
           '12 GB of RAM: medium, DLSS quality on RTX', out)

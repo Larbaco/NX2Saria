@@ -10,9 +10,9 @@
 //
 // The tier: a handheld, an integrated GPU or a GPU without mesh shaders (which the game's renderer then emulates) get
 // Low; any other card goes by its video memory, then the PC's memory and processor count cap it. Without anything
-// known about the GPU, the game as shipped (High). Sizes are compared as the sizes the parts are sold with: an 8 GB
-// card reports 7.8 to 8.0 GiB of device-local memory and a 16 GB PC 15.6 to 15.9 GiB of RAM, so each is rounded to
-// the nearest GiB first (preset_gib).
+// known about the GPU, the game as shipped (High). Video memory is compared as the size the card is sold with: an 8 GB
+// card reports 7.8 to 8.0 GiB of device-local memory, so it is rounded to the nearest GiB first (preset_gib). RAM goes
+// by thresholds below the sold sizes (PRESET_RAM_*_MIB).
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -42,13 +42,15 @@ typedef struct {
 } PresetHw;
 
 // Tier boundaries, in GiB as sold (preset_gib): video memory under LOW gives Low, under MEDIUM Medium, from ULTRA on
-// Ultra, High between. RAM under RAM_LOW caps at Low, under RAM_MEDIUM at Medium; up to CPU_MEDIUM logical processors
-// cap at Medium.
+// Ultra, High between. RAM caps go by the MiB the system reports, below the sizes PCs are sold with, because a PC
+// with integrated graphics hands part of its RAM to them: under RAM_LOW_MIB (an 8 GB PC) caps at Low, under
+// RAM_MEDIUM_MIB (a 12 GB one) at Medium, and a 16 GB PC that reports 14 GiB or more is not capped. Up to CPU_MEDIUM
+// logical processors cap at Medium.
 #define PRESET_VRAM_LOW_GIB 6
 #define PRESET_VRAM_MEDIUM_GIB 8
 #define PRESET_VRAM_ULTRA_GIB 16
-#define PRESET_RAM_LOW_GIB 12
-#define PRESET_RAM_MEDIUM_GIB 16
+#define PRESET_RAM_LOW_MIB 10240
+#define PRESET_RAM_MEDIUM_MIB 14336
 #define PRESET_CPU_MEDIUM_THREADS 4
 
 #define PRESET_VENDOR_NVIDIA 0x10de
@@ -128,10 +130,10 @@ static inline int preset_pick(const PresetHw *hw, char *why, size_t cap) {
     }
     size_t n = strlen(buf);
     unsigned ram = preset_gib(hw->ram_mib);
-    if (hw->ram_mib && ram < PRESET_RAM_LOW_GIB && tier > PRESET_LOW) {
+    if (hw->ram_mib && hw->ram_mib < PRESET_RAM_LOW_MIB && tier > PRESET_LOW) {
         tier = PRESET_LOW;
         n += (size_t)snprintf(buf + n, sizeof buf - n, "; %u GiB of RAM: at most low", ram);
-    } else if (hw->ram_mib && ram < PRESET_RAM_MEDIUM_GIB && tier > PRESET_MEDIUM) {
+    } else if (hw->ram_mib && hw->ram_mib < PRESET_RAM_MEDIUM_MIB && tier > PRESET_MEDIUM) {
         tier = PRESET_MEDIUM;
         n += (size_t)snprintf(buf + n, sizeof buf - n, "; %u GiB of RAM: at most medium", ram);
     }

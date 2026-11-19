@@ -193,6 +193,11 @@ static void pure(void) {
     tier_is("4 threads and an RX 6800 16 GB", gpu("AMD Radeon RX 6800", AMD, D, 16368, 1, 4, 4, 32000, NULL, 1), PRESET_MEDIUM);
     tier_is("RTX 4090 with 12 GB of RAM", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 11900, NULL, 1), PRESET_MEDIUM);
     tier_is("RTX 4090 with 16 GB of RAM (15.6 GiB)", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 15980, NULL, 1), PRESET_ULTRA);
+    // the three PCs docs/presets.md names: the bench, the owner's laptop (its log: 6017 MiB, RAM 16087 MiB) and a
+    // player's RX 6650 XT with a Ryzen 5 4650G, whose integrated graphics keep part of the 16 GB
+    tier_is("the bench: RX 6700 10 GB, 16 threads, 31 GiB", gpu("AMD Radeon RX 6700 (RADV NAVI22)", 0x1002, D, 10224, 1, 8, 16, 31932, NULL, 0), PRESET_HIGH);
+    tier_is("the owner's RTX 3050 6GB Laptop GPU, 16 GB", gpu("NVIDIA GeForce RTX 3050 6GB Laptop GPU", NV, D, 6017, 1, 8, 16, 16087, NULL, 1), PRESET_MEDIUM);
+    tier_is("RX 6650 XT 8 GB, Ryzen 5 4650G, 16 GB (15.3 GiB)", gpu("AMD Radeon RX 6650 XT", 0x1002, D, 8176, 1, 6, 12, 15667, NULL, 0), PRESET_HIGH);
     tier_is("no data", gpu(NULL, 0, 0, 0, 0, 0, 0, 0, NULL, 0), PRESET_HIGH);
     tier_is("no GPU data, a handheld", gpu(NULL, 0, 0, 0, 0, 4, 8, 14800, "Steam Deck", 0), PRESET_LOW);
 
@@ -357,6 +362,15 @@ static void report(void) {
     printf("got: notice_due %d\n", cfg_preset_notice_due());
     int n;
     const char *const *keys = cfg_preset_keys(&n);
+    // the keys a preset chosen in the menu hands back (runtime/ui/menu.cpp lists them in its box): the preset's keys
+    // on this hardware that the player sets
+    printf("got: handback");
+    for (int i = 0, first = 1; i < n; i++) {
+        char name[80];
+        snprintf(name, sizeof name, "NX2SARIA_%s", keys[i]);
+        if (cfg_is_set(name)) printf("%s%s", first ? " " : ",", keys[i]), first = 0;
+    }
+    printf("\n");
     for (int i = 0; i < n; i++) {
         char name[80], what[96];
         snprintf(name, sizeof name, "NX2SARIA_%s", keys[i]);

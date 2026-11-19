@@ -107,14 +107,36 @@ Decisions:
 | 8 to 15 GiB | High | as above |
 | 16 GiB or more | Ultra | as above |
 
-Then the caps, which only lower the tier: RAM under 12 GiB gives at most Low (`; <n> GiB of RAM: at most low`), under
-16 GiB at most Medium (`; <n> GiB of RAM: at most medium`), and 4 logical processors or fewer at most Medium
-(`; <n> logical processors: at most medium`).
+Then the caps, which only lower the tier: RAM under 10240 MiB (an 8 GB PC) gives at most Low
+(`; <n> GiB of RAM: at most low`), under 14336 MiB (a 12 GB PC) at most Medium (`; <n> GiB of RAM: at most medium`),
+and 4 logical processors or fewer at most Medium (`; <n> logical processors: at most medium`).
 
-Sizes are compared as the sizes the parts are sold with: an 8 GB card reports 7.8 to 8.0 GiB of device-local memory and
-a 16 GB PC 15.6 to 15.9 GiB of RAM, so each is rounded to the nearest GiB first (`preset_gib`). The thresholds are
-macros at the top of the header (`PRESET_VRAM_LOW_GIB`, `PRESET_VRAM_MEDIUM_GIB`, `PRESET_VRAM_ULTRA_GIB`,
-`PRESET_RAM_LOW_GIB`, `PRESET_RAM_MEDIUM_GIB`, `PRESET_CPU_MEDIUM_THREADS`).
+Video memory is compared as the size the card is sold with: an 8 GB card reports 7.8 to 8.0 GiB of device-local
+memory, so it is rounded to the nearest GiB first (`preset_gib`). RAM goes by thresholds below the sold sizes instead,
+because a PC with integrated graphics hands part of its RAM to them: a 16 GB PC with a Ryzen APU may report 15.3 GiB,
+and still is no 12 GB PC. The thresholds are macros at the top of the header (`PRESET_VRAM_LOW_GIB`,
+`PRESET_VRAM_MEDIUM_GIB`, `PRESET_VRAM_ULTRA_GIB`, `PRESET_RAM_LOW_MIB`, `PRESET_RAM_MEDIUM_MIB`,
+`PRESET_CPU_MEDIUM_THREADS`).
+
+Examples, `tests/preset_check.py` checks each:
+
+| PC | Tier | Why (the log's reason) |
+|---|---|---|
+| The Linux bench: AMD Radeon RX 6700 10 GB, 16 threads, 31 GiB of RAM | High | `10 GiB of video memory` |
+| The owner's laptop (Windows): NVIDIA GeForce RTX 3050 6GB Laptop GPU (6017 MiB), 16087 MiB of RAM | Medium, with DLSS quality | `6 GiB of video memory`; its own `dlaa`, `dlss` and `taa` lines keep their values |
+| A player's PC: AMD Radeon RX 6650 XT 8 GB, Ryzen 5 4650G (6 cores, 12 threads), 16 GB of RAM | High | `8 GiB of video memory`; 15.3 GiB of RAM is no cap |
+| NVIDIA GeForce RTX 4090 24 GB, 32 threads, 64 GB | Ultra | `24 GiB of video memory` |
+| NVIDIA GeForce RTX 4060 8 GB with 12 GB of RAM | Medium, with DLSS quality | `8 GiB of video memory; 12 GiB of RAM: at most medium` |
+| NVIDIA GeForce GTX 1650 4 GB | Low | `4 GiB of video memory` |
+| NVIDIA GeForce GTX 1060 6 GB | Low | `the GPU has no mesh shaders, which the game's renderer then emulates` |
+| Steam Deck | Low (the device profile's 40 fps) | `a handheld PC (Steam Deck)` |
+| ASUS ROG Ally (Radeon 780M) | Low | `a handheld PC (ROG Ally)` |
+| A laptop with Intel Iris Xe | Low | `an integrated GPU` |
+| Nothing known of the GPU (no Vulkan 1.3 device, or no probe and no state file) | High | `nothing is known of the GPU: the game as shipped` |
+
+`game_res = window` (Ultra) is never below High's 1440 lines: `widescreen.c` `picture_height` takes the window's
+height with the game's 1440 as its floor, so on a 1080p monitor Ultra keeps the 1440-line picture and only draws the
+scene at its full size.
 
 The handheld comes from the firmware's strings (`preset_handheld`): Linux's `/sys/class/dmi/id` (`sys_vendor`,
 `product_name`, `product_family`, `board_vendor`, `board_name`) or Windows' copy of them in the registry
@@ -277,7 +299,8 @@ when custom, or *Recommended for this PC: …* when a chosen tier is not the rec
   `texture_detail`, `foliage`) wait for a restart: the Apply box marks the preset line *after restart* when one of them
   changes, and the restart box follows as for any other.
 - **The one-time notice** (`preset_notice_tick`): a player who never set `preset`, on a PC whose recommended tier is
-  not High, sees *Quality preset Recommended (…) is in use for this PC (Settings > Screen)* once, at the first
+  not High, sees *Quality preset Recommended (…) is in use for this PC (Settings > Screen). For the game as before, choose High
+  there.* once, for 8 seconds, at the first
   frame the game runs with the menu closed and no other notice up. The state file's `noticed` keeps it shown; it comes
   again only when the recommended tier changes (new hardware). Choosing a preset in the menu, Recommended included,
   counts as having seen it. Never in a tool mode or a replay.
