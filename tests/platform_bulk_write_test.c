@@ -13,7 +13,7 @@ int main(void) {
     const uint64_t a = 0x6000000000ull, n = 4 * 4096;
     uint64_t pages[4];
     assert(plat_mem_reserve(a, n, 1));
-    assert(plat_mem_commit(a, n));
+    assert(plat_mem_commit(a, n, NULL));
     memset((void *)(uintptr_t)a, 0, n);
     uint64_t count = plat_mem_written(a, n, pages, 4, 1);
     if (count == UINT64_MAX) { puts("SKIP: asynchronous write watch unavailable"); return 77; }

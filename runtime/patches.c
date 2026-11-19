@@ -66,8 +66,7 @@ static void *page;
 
 void rt_patches_init(void) {
 #if RT_PATCH_COUNT
-    if (!plat_mem_commit(RT_PATCH_PAGE, 0x1000))
-        rt_fatal("patches: cannot commit the patch page at %#llx", RT_PATCH_PAGE);
+    mem_commit_checked(RT_PATCH_PAGE, 0x1000, "patch page");
     page = (void *)(uintptr_t)RT_PATCH_PAGE;
     char list[512];
     size_t n = 0;

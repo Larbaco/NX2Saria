@@ -201,7 +201,11 @@ beside the game.
   system settings, Performance Settings, Advanced, Virtual memory: untick the automatic management, Custom size with
   an initial size of 32768 MB or more, Set, then restart). Windows counts the game's video memory
   against RAM plus page file, and a page file Windows sizes itself grows too slowly for Hyrule Field: the game then
-  lets textures go and the ground can flash white or black. The log says `system commit low` when this happens.
+  lets textures go and the ground can flash white or black. The log says `system commit low` when this happens. Before
+  Play, the launcher warns when Windows' remaining commit is below what the game typically needs; it still lets you
+  continue. If a memory commit fails, the fatal line names the Windows error and reports the requested range, size and
+  system commit used and limit. Close memory-heavy programs, enable or enlarge the page file as above, and restart
+  Windows.
 - **Screen** in the menu has Texture filtering (anisotropic, up to 16x, at once), Texture detail (Reduced and Low
   leave out the largest versions of the big surface textures so that the game fits the video memory of 6 and 8 GB
   cards; Automatic picks by the card), Upscaling (DLSS on NVIDIA RTX cards,

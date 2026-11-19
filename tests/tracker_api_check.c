@@ -175,11 +175,12 @@ static uint64_t resident_heap_pages(void) {
 }
 
 int main(void) {
-    if (!plat_mem_reserve(MOD_MAIN_BASE, MAIN_SIZE, 0) || !plat_mem_commit(MOD_MAIN_BASE, MAIN_COMMIT) ||
-        !plat_mem_reserve(HEAP_BASE, HEAP_SIZE, 0) || !plat_mem_commit(HEAP_BASE, HOLE_AT) ||
-        !plat_mem_commit(HEAP_BASE + HOLE_AT + HOLE_SIZE, HEAP_SIZE - HOLE_AT - HOLE_SIZE) ||
+    if (!plat_mem_reserve(MOD_MAIN_BASE, MAIN_SIZE, 0) || !plat_mem_commit(MOD_MAIN_BASE, MAIN_COMMIT, NULL) ||
+        !plat_mem_reserve(HEAP_BASE, HEAP_SIZE, 0) || !plat_mem_commit(HEAP_BASE, HOLE_AT, NULL) ||
+        !plat_mem_commit(HEAP_BASE + HOLE_AT + HOLE_SIZE, HEAP_SIZE - HOLE_AT - HOLE_SIZE, NULL) ||
         !plat_mem_protect(HEAP_BASE + DARK_AT, 0x1000, PLAT_PROT_NONE) || !plat_mem_reserve(HOST_AT, 0x10000, 0) ||
-        !plat_mem_commit(HOST_AT, 0x10000) || !plat_mem_commit(MOD_MAIN_BASE + (DBG_GAME_DATA_SLOT & ~0xfffull), 0x1000)) {
+        !plat_mem_commit(HOST_AT, 0x10000, NULL) ||
+        !plat_mem_commit(MOD_MAIN_BASE + (DBG_GAME_DATA_SLOT & ~0xfffull), 0x1000, NULL)) {
         printf("FAIL: cannot set up the guest memory at the game's addresses\n");
         return 1;
     }

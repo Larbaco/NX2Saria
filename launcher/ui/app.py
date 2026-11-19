@@ -38,7 +38,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog
 
-from .. import NAME, build, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
+from .. import NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
 from ..context import Context
 from ..paths import long_path_problem
 from . import art, picture, sound
@@ -244,6 +244,7 @@ GameEnd = collections.namedtuple('GameEnd', 'log message note alarm')
 
 
 def shown_fatal(fatal):
+    fatal = commit.fatal_summary(fatal) or fatal
     return fatal if len(fatal) <= FATAL_SHOWN else fatal[:FATAL_SHOWN].rstrip() + '…'
 
 
@@ -2039,6 +2040,8 @@ class App:
             return
         if waiting:
             self.ctx.log(f'play: without the code of {", ".join(waiting)}, whose build did not finish')
+        if not commit.confirm_play_memory(gd, self.ctx.log, self.root):
+            return
         started = time.time()
         try:
             self.game_run = GameRun(winsys.start_game(exe), gd, started)
@@ -2902,6 +2905,8 @@ def play_only(ctx):
     if waiting:   # the window builds the mods' code in, then starts the game (App.start with --play)
         ctx.log(f'play from Steam: the game is built again first for the code of {", ".join(waiting)}')
         return None
+    if not commit.confirm_play_memory(gd, ctx.log):
+        return 0
     started = time.time()
     try:
         run = GameRun(winsys.start_game(exe), gd, started)

@@ -11,6 +11,11 @@ CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 UNINSTALL_KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\NX2Saria'
+WINDOWS_LOW_COMMIT_ADVICE = (
+    'Close memory-heavy programs and turn on or enlarge the Windows page file. '
+    'For a PC with 16 GB of RAM, use a fixed 32 GB page file (32768 MB). '
+    'Restart Windows after changing the page file.'
+)
 
 
 def dpi_aware():
@@ -201,6 +206,44 @@ def known_folder(name):
             ole32.CoTaskMemFree(out)
     except (AttributeError, OSError):
         return None
+
+
+class _PerformanceInformation(ctypes.Structure):
+    _fields_ = [('cb', ctypes.c_uint32), ('CommitTotal', ctypes.c_size_t), ('CommitLimit', ctypes.c_size_t),
+                ('CommitPeak', ctypes.c_size_t), ('PhysicalTotal', ctypes.c_size_t),
+                ('PhysicalAvailable', ctypes.c_size_t), ('SystemCache', ctypes.c_size_t),
+                ('KernelTotal', ctypes.c_size_t), ('KernelPaged', ctypes.c_size_t),
+                ('KernelNonpaged', ctypes.c_size_t), ('PageSize', ctypes.c_size_t),
+                ('HandleCount', ctypes.c_uint32), ('ProcessCount', ctypes.c_uint32),
+                ('ThreadCount', ctypes.c_uint32)]
+
+
+def system_commit_info():
+    """System-wide commit used, current limit and physical RAM in MiB. None off Windows."""
+    if os.name != 'nt':
+        return None
+    query = ctypes.WinDLL('psapi', use_last_error=True).GetPerformanceInfo
+    query.argtypes = [ctypes.POINTER(_PerformanceInformation), ctypes.c_uint32]
+    query.restype = ctypes.c_int
+    info = _PerformanceInformation(cb=ctypes.sizeof(_PerformanceInformation))
+    if not query(ctypes.byref(info), info.cb):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not info.PageSize or not info.CommitLimit:
+        raise OSError('GetPerformanceInfo returned an unknown commit limit')
+    page_mib = info.PageSize / (1 << 20)
+    return info.CommitTotal * page_mib, info.CommitLimit * page_mib, info.PhysicalTotal * page_mib
+
+
+def confirm_play(text, root=None):
+    """Yes plays anyway. No cancels. Steam calls without a parent window."""
+    box = ctypes.WinDLL('user32', use_last_error=True).MessageBoxW
+    box.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    box.restype = ctypes.c_int
+    flags = 0x4 | 0x30 | 0x100 | 0x10000   # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND
+    result = box(_hwnd(root) if root is not None else None, text, 'NX2Saria', flags)
+    if not result:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return result != 7   # IDNO
 
 
 def start_game(exe):
