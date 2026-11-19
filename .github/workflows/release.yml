@@ -212,7 +212,7 @@ jobs:
           # every release of the tag, drafts too (the API lists drafts to a token that can write): "<id> <draft>"
           releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
             --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')
-          if awk '$2 == "false"' <<< "$releases" | grep -q .; then
+          if grep -q ' false$' <<< "$releases"; then
             # published while this run built (check found none): a published release is not changed
             echo "::error::$TAG is published already: a published release is not changed, and a fix goes out as the next version"
             exit 1
