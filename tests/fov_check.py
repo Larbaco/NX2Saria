@@ -23,7 +23,7 @@ def main():
         'active event pointer is unreadable', 'an event is active', 'player camera component is unavailable',
         'player camera flags are unreadable', 'first-person aiming flag is set', 'camera manager is unavailable',
         'camera count is unreadable', 'camera manager has no cameras', 'camera or view pointer is unavailable',
-        'active view does not belong to camera zero', 'camera flags are unreadable',
+        'active view %#llx differs from camera zero view %#llx', 'camera flags are unreadable',
         'camera zero is marked as a menu camera', 'scaled lens angle is outside (0, pi)',
         'configured scale leaves the angle unchanged',
     ):

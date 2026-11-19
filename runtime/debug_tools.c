@@ -1048,7 +1048,12 @@ void dbg_fov_host(Cpu *c) {
     uint64_t mgr = slot ? rd_ptr(slot) : 0;
     if (!mgr) { fov_skip_once(FOV_NO_EVENT_MANAGER, "event manager is unavailable"); return; }
     if (!rd(mgr + 0x68, &event, sizeof event)) { fov_skip_once(FOV_EVENT_UNREADABLE, "active event pointer is unreadable"); return; }
-    if (event) { fov_skip_once(FOV_ACTIVE_EVENT, "an event is active"); return; }
+    if (event) {
+        char reason[80];
+        snprintf(reason, sizeof reason, "an event is active (%#llx)", (unsigned long long)event);
+        fov_skip_once(FOV_ACTIVE_EVENT, reason);
+        return;
+    }
     // The aiming action's initializer (main+0x27a2510) gets the PlayerCamera work at component +0x5b8.
     // Its enter and exit methods (main+0x279f9a0 and main+0x27a1230) toggle bit 8 of work +0x7d8.
     uint64_t components = rd_ptr(actor + 0x270);
@@ -1069,7 +1074,14 @@ void dbg_fov_host(Cpu *c) {
     uint64_t views = rd_ptr(state + 0x18), view = views ? rd_ptr(views) : 0;
     uint16_t camera_flags;
     if (!camera || !view) { fov_skip_once(FOV_NO_CAMERA_VIEW, "camera or view pointer is unavailable"); return; }
-    if (rd_ptr(camera + 0x78) != view) { fov_skip_once(FOV_VIEW_MISMATCH, "active view does not belong to camera zero"); return; }
+    uint64_t camera_view = rd_ptr(camera + 0x78);
+    if (camera_view != view) {
+        char reason[96];
+        snprintf(reason, sizeof reason, "active view %#llx differs from camera zero view %#llx",
+                 (unsigned long long)view, (unsigned long long)camera_view);
+        fov_skip_once(FOV_VIEW_MISMATCH, reason);
+        return;
+    }
     if (!rd(camera + 0x88, &camera_flags, sizeof camera_flags)) { fov_skip_once(FOV_CAMERA_FLAGS_UNREADABLE, "camera flags are unreadable"); return; }
     if (camera_flags & 1) { fov_skip_once(FOV_MENU_CAMERA, "camera zero is marked as a menu camera"); return; }
     uint32_t bits = (uint32_t)c->v[0];
