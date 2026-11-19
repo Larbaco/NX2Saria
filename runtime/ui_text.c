@@ -1499,6 +1499,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PRESET_NOTICE] = "Для этого ПК используется пресет качества «Рекомендуемый (%s)» (Настройки > Экран). Чтобы вернуть игру как раньше, выберите там «Высокий».",
     [UI_MENU_PRESET_CONFIRM] = "Эти настройки изменены вручную. Пресет задаст им свои значения:",
     [UI_MENU_PRESET_CONFIRM_YES] = "Применить пресет",
+    [UI_MENU_GAME_RES] = "Разрешение",
+    [UI_MENU_GAME_RES_NATIVE] = "Родное",
+    [UI_MENU_GAME_RES_DESC] = "Размер картинки игры; вне полноэкранного режима его принимает и окно. Чем выше, тем "
+                              "чётче, но тем больше нагрузка на видеокарту.",
     [UI_MENU_SCENE_RES] = "Разрешение сцены",
     [UI_MENU_SCENE_RES_DESC] = "Размер, в котором рисуется 3D-сцена, как доля картинки. Меньшее значение рисует сцену меньше и "
         "растягивает её до картинки: быстрее, для слабых ПК и портативных устройств, но мягче. Интерфейс и меню "
@@ -2246,6 +2250,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PRESET_NOTICE] = "O preset de qualidade Recomendado (%s) está em uso neste PC (Configurações > Tela). Para o jogo como antes, escolha Alto ali.",
     [UI_MENU_PRESET_CONFIRM] = "Estas opções foram mudadas à mão. O preset vai trocá-las pelos valores dele:",
     [UI_MENU_PRESET_CONFIRM_YES] = "Usar o preset",
+    [UI_MENU_GAME_RES] = "Resolução",
+    [UI_MENU_GAME_RES_NATIVE] = "Nativa",
+    [UI_MENU_GAME_RES_DESC] = "Tamanho da imagem do jogo; fora da tela cheia, a janela também fica com ele. Maior é mais "
+                              "nítido, mas exige mais da placa de vídeo.",
     [UI_MENU_SCENE_RES] = "Resolução da cena",
     [UI_MENU_SCENE_RES_DESC] = "Tamanho em que a cena 3D é desenhada, como parte da imagem. Menor desenha a cena menor e a amplia até "
         "a imagem: mais rápido, para PCs fracos e portáteis, mas menos nítido. O HUD e os menus continuam nítidos, na "
@@ -3028,6 +3036,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_PRESET_NOTICE] = "本机正在使用画质预设“推荐（%s）”（设置 > 显示）。如需恢复之前的游戏画面，请在那里选择“高”。",
     [UI_MENU_PRESET_CONFIRM] = "以下设置曾被手动更改。预设会把它们改为预设的值：",
     [UI_MENU_PRESET_CONFIRM_YES] = "使用预设",
+    [UI_MENU_GAME_RES] = "分辨率",
+    [UI_MENU_GAME_RES_NATIVE] = "原生",
+    [UI_MENU_GAME_RES_DESC] = "游戏画面的尺寸；非全屏时窗口也采用该尺寸。越高越清晰，但对显卡的负担也越大。",
     [UI_MENU_SCENE_RES] = "场景分辨率",
     [UI_MENU_SCENE_RES_DESC] = "3D 场景的绘制尺寸，以占画面的比例计。较低时场景绘制得更小，再放大到画面：更快，适合较慢的电脑和掌机，但更模糊。HUD 和菜单保持清晰，使用完整分辨率。100% 即原生。更改立即生效。",
     [UI_MENU_SCENE_RES_GAME] = "%s（游戏）",
