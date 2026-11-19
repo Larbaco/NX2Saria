@@ -24,6 +24,11 @@ release notes say so. The [README](../README.md#status-and-known-issues) has the
 - **Fast camera turns close to a wall smear at the edges** in generated frames, and so does Navi's glow. This is usual
   for frame generation when the game renders around 40 fps. A higher rendered frame rate makes it smaller.
 
+## Controls
+
+- **The mouse in the game's menus does not reach the tab row at the top** of the pause menu (choosing between its
+  pages). Use L and R, or the keyboard keys bound to them, for the tabs; the rest of the menu takes the mouse.
+
 ## Shaders and pipelines
 
 - **The first start after an install, an update or a driver update, and the first visit to an area, can pause** while
