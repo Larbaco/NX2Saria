@@ -237,7 +237,7 @@ static void run_main(void) {
     assert(strstr(last_log, "model buffer (main+0x43690c): 192 blocks"));   // the 64th, 128th and 192nd of the site
 
     heap_retry_exit_log();
-    assert(strstr(last_log, "heap retry: this session 202 model buffers") && strstr(last_log, "and 2 GPU memories"));
+    assert(strstr(last_log, "heap retry: this session (the set on at the end) 202 model buffers") && strstr(last_log, "and 2 GPU memories"));
     assert(strstr(last_log, "209 refusals by a full heap, 0 by the test switch, 0 left as shipped"));
     puts("heap_retry_check: main: parents give the blocks, the registers and the request are kept, no room ends in a "
          "fatal error, the log keeps its budget");
@@ -259,7 +259,7 @@ static void run_test(void) {
     gpu_calls = 0;
     assert(call_gpu(GPU_RET_A, 0x100, &model) == 1 && gpu_calls == 1 && model.given == 1);
     heap_retry_exit_log();
-    assert(strstr(last_log, "1 model buffers") && strstr(last_log, "0 refusals by a full heap, 2 by the test switch"));
+    assert(strstr(last_log, "at the end) 1 model buffers") && strstr(last_log, "0 refusals by a full heap, 2 by the test switch"));
     puts("heap_retry_check: test: NX2SARIA_HEAP_RETRY_TEST_FAIL refuses the first allocations and the retry runs");
 }
 
@@ -272,7 +272,7 @@ static void run_shipped(void) {
     assert(strstr(last_log, "not tried again (NX2SARIA_HEAP_RETRY_TEST_SHIPPED=1)"));
     assert(call_gpu(GPU_RET_B, 0x100, &model) == 0 && mid.calls == 0);
     heap_retry_exit_log();
-    assert(strstr(last_log, "0 model buffers") && strstr(last_log, "2 left as shipped"));
+    assert(strstr(last_log, "at the end) 0 model buffers") && strstr(last_log, "2 left as shipped"));
     puts("heap_retry_check: shipped: a refused allocation goes on null, as the shipped game does");
 }
 

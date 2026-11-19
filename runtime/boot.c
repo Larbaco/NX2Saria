@@ -25,6 +25,7 @@
 #include "mods.h"
 #include "nvn_api.h"
 #include "platform/platform.h"
+#include "heap_retry.h"
 #include "ui/menu.h"
 #include "vk.h"
 #include "platform/platform.h"
@@ -411,6 +412,7 @@ void rt_boot(void) {
     ldr_load(rt_config()->exefs);
     rt_patches_init();
     mods_exefs_switch();   // after the patch sets' settings: an enabled mod's ExeFS patches on
+    heap_retry_start();   // after a mod that replaces the set heap_retry turned it off
     frame_step_init();
     res_init();
     wide_init();   // Ocarina's widescreen sets (recomp/patches-v111.txt)

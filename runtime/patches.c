@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "heap_retry.h"
 #include "host.h"
 
 #if __has_include("patches.h")
@@ -92,7 +91,6 @@ void rt_patches_init(void) {
         if (n >= sizeof list) n = sizeof list - 1;
     }
     rt_log("patches: %s (page %#llx)", list, RT_PATCH_PAGE);
-    heap_retry_start();
 #endif
 }
 

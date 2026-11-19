@@ -62,6 +62,9 @@ def check_sites():
     mine = sorted(off for off, alts in table.sites['main'].items() if any(k == key for k, _, _ in alts))
     assert mine == sorted(SITES), [hex(o) for o in mine]
     lifter = Lifter(0, simd='c')
+    # the page's place, checked against another set's call of it: wide_bars calls its +0xef0 from main+0x774068
+    bars = table.sites['main'][0x774068][0][1][-1]
+    assert lifter.lift(bars, MAIN + 0x774068).target == MAIN + PAGE + 0xef0, 'the patch page is not at main+0x4ea0000'
     for off, (original, want) in SITES.items():
         alts = table.sites['main'][off]
         assert len(alts) == 1, f'another set patches main+{off:#x} too'
@@ -93,7 +96,7 @@ def check_sites():
                     f'set {table.sets[k][0]} at {off:#x} calls a slot of heap_retry'
     for slot in (HOST_CPU, HOST_GPU):
         users = sorted(p.name for p in (ROOT / 'runtime').glob('*.c')
-                       if re.search(r'RT_PATCH_PAGE\s*\+\s*0x%x\b' % slot, p.read_text(encoding='utf-8', errors='replace')))
+                       if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (slot, slot), p.read_text(encoding='utf-8', errors='replace'), re.I))
         assert users == [], (hex(slot), users)   # heap_retry.c names them through HOST_CPU and HOST_GPU
     text = (ROOT / 'runtime' / 'heap_retry.c').read_text(encoding='utf-8')
     assert '#define HOST_CPU 0x%x' % HOST_CPU in text and '#define HOST_GPU 0x%x' % HOST_GPU in text

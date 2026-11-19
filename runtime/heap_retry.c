@@ -74,7 +74,13 @@ static _Atomic int told;        // retry lines logged
 
 static uint64_t ld64(uint64_t a) { return a && mem_readable(a, 8) ? *(const uint64_t *)(uintptr_t)a : 0; }
 
-static int test_refuse(int gpu) { return atomic_fetch_sub(&test_left[gpu], 1) > 0; }
+// 1 while the test switch still refuses this kind (0 the CPU buffers, 1 the GPU memory); the count stops at 0
+static int test_refuse(int gpu) {
+    long n = atomic_load(&test_left[gpu]);
+    while (n > 0)
+        if (atomic_compare_exchange_weak(&test_left[gpu], &n, n - 1)) return 1;
+    return 0;
+}
 
 // A heap the climb may call: readable, with a tryAlloc in its vtable
 static int heap_usable(uint64_t h) { return h && mem_readable(h, HEAP_PARENT + 8) && ld64(ld64(h) + VT_TRY_ALLOC); }
@@ -251,8 +257,9 @@ void heap_retry_start(void) {
 
 void heap_retry_exit_log(void) {
     if (set_index < 0) return;
-    rt_log("heap retry: this session %ld model buffers (%ld KB) and %ld GPU memories (%ld KB) taken from other heaps; "
+    rt_log("heap retry: this session (the set %s at the end) %ld model buffers (%ld KB) and %ld GPU memories (%ld KB) taken from other heaps; "
            "%ld refusals by a full heap, %ld by the test switch, %ld left as shipped",
+           rt_patch_enabled(set_index) ? "on" : "off",
            atomic_load(&moved_n[SITE_C8]) + atomic_load(&moved_n[SITE_A8]),
            (atomic_load(&moved_bytes[SITE_C8]) + atomic_load(&moved_bytes[SITE_A8])) >> 10,
            atomic_load(&moved_n[SITE_GPU]), atomic_load(&moved_bytes[SITE_GPU]) >> 10, atomic_load(&full_n),
