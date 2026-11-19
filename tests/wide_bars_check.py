@@ -50,19 +50,21 @@ def check_site():
     mine = [(off, alts) for off, alts in table.sites['main'].items() if any(k == key for k, _, _ in alts)]
     assert [off for off, _ in mine] == [SITE], [hex(off) for off, _ in mine]
     alts = table.sites['main'][SITE]
-    assert len(alts) == 1, 'another set patches the screen setup too'
+    observer = names.index('fov_menu')
+    assert [index for index, _, _ in alts] == [key, observer], alts
     _, words, original = alts[0]
+    assert alts[1][1:] == (words, original), alts
     assert original == ORIGINAL, hex(original)
     assert len(words) == 2 and not isinstance(words[0], tuple) and not isinstance(words[1], tuple), words
     lifter = Lifter(0, simd='c')
     first, call = lifter.lift(words[0], MAIN + SITE), lifter.lift(words[1], MAIN + SITE)
     assert words[0] == ORIGINAL and first.kind == 'op' and 'c->x[8]' in first.code and 'c->x[19]' in first.code, first.code
     assert call.kind == 'bl' and call.target == MAIN + PAGE + HOST, (call.kind, call.target and hex(call.target))
-    # no other site of any set calls the slot, and only patches.c registers it
+    # FOV watches the same screen setup even when the bars are disabled.
     for off, alts in table.sites['main'].items():
         for k, repl, _ in alts:
             for w in repl:
-                if isinstance(w, tuple) or (k == key and off == SITE):
+                if isinstance(w, tuple) or (k in (key, observer) and off == SITE):
                     continue
                 insn = lifter.lift(w, MAIN + off)
                 assert not (insn.kind == 'bl' and insn.target == MAIN + PAGE + HOST), \
@@ -71,7 +73,7 @@ def check_site():
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*0x%x\b' % HOST, p.read_text(encoding='utf-8', errors='replace')))
     assert users == ['patches.c'], users
     print(f'wide_bars_check: the site at main+{SITE:#x} keeps ldr x8, [x19] and calls the page\'s +{HOST:#x}; '
-          f'no other set or host function uses that slot', flush=True)
+          'the FOV observer shares the call at the same site', flush=True)
 
 
 def main():

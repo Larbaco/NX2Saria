@@ -32,6 +32,9 @@ uint8_t rt_patch_on[RT_PATCH_COUNT > 0 ? RT_PATCH_COUNT : 1];   // read by the g
 #ifdef RT_PATCH_PAGE
 #include "debug_tools.h"
 __attribute__((constructor)) static void freecam_register(void) { rt_register_host(RT_PATCH_PAGE + 0xf70, dbg_freecam_host); }
+__attribute__((constructor)) static void fov_register(void) {
+    if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xeb0, dbg_fov_host);
+}
 // The time of day's site of the set ostep (patches-v111.txt) calls the page's +0xf60, the water renderer's site its
 // +0xf50, the surfaces' fixed-step sites of the set owater its +0xf20, and the sound job's two sites of the set osound
 // its +0xf10 and +0xf00 (frame_rate.c).
@@ -69,7 +72,7 @@ void rt_patches_init(void) {
     if (!plat_mem_commit(RT_PATCH_PAGE, 0x1000))
         rt_fatal("patches: cannot commit the patch page at %#llx", RT_PATCH_PAGE);
     page = (void *)(uintptr_t)RT_PATCH_PAGE;
-    char list[512];
+    char list[1024];
     size_t n = 0;
     list[0] = 0;
     for (int i = 0; i < RT_PATCH_COUNT; i++) {

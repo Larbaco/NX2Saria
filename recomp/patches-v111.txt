@@ -441,3 +441,12 @@ site orecord main 3296da4 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 
 # prologue; the host function changes no register (x8 is read by the cbnz after the site).
 set menu_mouse NX2SARIA_MENU_MOUSE_PATCH 1
 site menu_mouse main 2d13b0 aa0003f3 aa0003f3 952f3ecc   # mov x19, x0 -> mov x19, x0; bl page+0xee0
+
+# Read the vertical lens as usual, then adjust it on the gameplay camera (debug_tools.c dbg_fov_host).
+# The camera update (main+0x4c48c0) saves x30. The angle and half-angle are still consumed by the original code.
+set fov         NX2SARIA_FOV_PATCH        1
+site fov        main 4c52f8 bd413e60 bd413e60 95276eee   # ldr s0, [x19, #0x13c]; bl page+0xeb0
+
+# Watch the menu background even at 16:9, including when the lens is enabled after the screens are set up.
+set fov_menu    NX2SARIA_FOV_PATCH        1
+site fov_menu   main 774068 f9400268 f9400268 951cb3a2   # same call as wide_bars

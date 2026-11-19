@@ -1435,6 +1435,7 @@ static void tab_screen(float scale) {
     if (wide_available()) opt_choice("NX2SARIA_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
     if (wide_available()) row_wide_placement();
     if (wide_available()) row_resolution();
+    opt_slider("NX2SARIA_FOV", UI_MENU_FOV, 70, 140, UI_MENU_FOV_DESC, 5, "%.0f %%");
     row_upscaling();
     row_aa();
     row_framegen();

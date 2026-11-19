@@ -9,6 +9,7 @@ void dbg_tick(Cpu *c);                 // the game's thread, at its pad read (ov
 // ... and the pad's state before the game gets it: the free camera takes the sticks and four buttons while it flies
 void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
 void dbg_freecam_host(Cpu *c);         // the free camera's patch site (recomp/patches-v111.txt, set freecam)
+void dbg_fov_host(Cpu *c);             // the gameplay lens's patch site (recomp/patches-v111.txt, set fov)
 #endif
 
 // main's slot (1.1.1) that holds where the game-data manager's pointer is: the manager is **[main+this]. The debug

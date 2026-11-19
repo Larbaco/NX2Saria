@@ -30,6 +30,7 @@
 #include <dirent.h>
 #endif
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -326,6 +327,7 @@ static void res_shadow_range(void) {
 }
 
 void res_init(void) {
+    res_fov_live();
     res_shadow_range();
     if (!res_adjustable()) {
         rt_log("resolution: the game's own (this build has no output and scene patch sets; output_res and render_scale "
@@ -405,26 +407,38 @@ int res_wants_wide_overlay(const unsigned out[2]) {
 }
 
 // Field of view (NX2SARIA_FOV, percent of the game's own, 70..140, live): the camera's vertical view angle times the
-// factor on page +60 (recomp/patches-v143.txt, set fov). The horizontal angle follows through the aspect ratio. 100
-// switches the set off, so the camera code is the game's own. Runs on a settings change (gfx_present.c
-// window_settings_live), the first time at the first present.
+// factor. The 1.1.1 callback reads it here and 1.4.3 reads it from page +60.
+// The horizontal angle follows through the aspect ratio. 100 switches the set off.
 #define FOV_MIN 70
 #define FOV_MAX 140
+static _Atomic float fov_factor = 1.0f;
+
+float res_fov_factor(void) { return atomic_load_explicit(&fov_factor, memory_order_relaxed); }
+
 void res_fov_live(void) {
-    static int set = -2, shown = 100;
+    static int set = -2, shown = -1;
     if (set == -2) set = rt_patch_set("fov");
     int pct = cfg_int("NX2SARIA_FOV");
     pct = pct < FOV_MIN ? FOV_MIN : pct > FOV_MAX ? FOV_MAX : pct;
     if (pct == shown) return;
     shown = pct;
     if (set < 0) {
-        rt_log("resolution: this game version has no field-of-view patch; NX2SARIA_FOV=%d does nothing", pct);
+        if (pct != 100) rt_log("fov: unsupported, requested %d%%", pct);
+        return;
+    }
+    static int allowed = -1;
+    if (allowed < 0) allowed = !RT_V111 || (rt_patch_enabled(set) && rt_patch_enabled(rt_patch_set("fov_menu")));
+    if (!allowed) {
+        rt_patch_switch(set, 0);
+        rt_log("fov: off, requested %d%%, patch disabled or replaced by an ExeFS mod", pct);
         return;
     }
     float k = pct / 100.0f;
-    memcpy((uint8_t *)rt_patch_page() + 60, &k, sizeof k);   // before the switch: a site that sees it on reads k
+    if (RT_V111) atomic_store_explicit(&fov_factor, k, memory_order_relaxed);
+    else memcpy((uint8_t *)rt_patch_page() + 60, &k, sizeof k);
     rt_patch_switch(set, pct != 100);
-    rt_log("resolution: field of view %d%% of the game's", pct);
+    rt_log("fov: %s, %d%%%s", pct == 100 ? "off" : "on", pct,
+           RT_V111 && pct != 100 ? " (excludes cutscenes, pause/map, first-person aiming and other non-gameplay cameras)" : "");
 }
 
 void res_wanted(unsigned out[2]) {

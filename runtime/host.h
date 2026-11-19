@@ -425,6 +425,7 @@ int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init w
 void wide_bars_init(double margin);                         // wide_init: NX2SARIA_WIDE_MENUS = center on a picture
                                                            // wider than 16:9, margin its share on each side
 void wide_bars_screen_host(Cpu *c);                        // the set wide_bars' site (patch page +0xef0, patches.c)
+int wide_menu_open(void);                                  // the game's pause/map or system menu background is active
 void menu_mouse_screen_host(Cpu *c);                       // the set menu_mouse's site (patch page +0xee0, patches.c)
 double wide_menu_sides(void);                              // gfx_present.c, each present: the share of the width to black
                                                            // out on each side (a menu, loading screen or movie), 0 none
@@ -450,6 +451,7 @@ int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 
 int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
 void res_wanted(unsigned out[2]);                          // the output size NX2SARIA_OUTPUT_RES asks for
 void res_fov_live(void);                                   // NX2SARIA_FOV to the camera (set fov); on a settings change
+float res_fov_factor(void);                                // the 1.1.1 camera callback's multiplier
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
                                                            // page committed; logs the sets
