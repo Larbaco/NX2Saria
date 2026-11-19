@@ -14,9 +14,12 @@ def main():
     source = (ROOT / 'runtime/debug_tools.c').read_text()
     assert 'atomic_fetch_or_explicit(&fov_diagnostics, reason' in source
     assert 'if (!(old & reason)) rt_log("fov: left lens alone: %s", text);' in source
+    assert 'atomic_flag_test_and_set_explicit(&fov_hook_logged' in source
+    assert '!memcmp(name, "PlayerCamera", 12)' in source
+    assert '!memcmp(name, "EventCamera", 11)' in source
     for reason in (
         'camera actor pointer is null', 'camera name is unreadable', 'camera is EventCamera',
-        'camera is not PlayerCamera', 'pause, map or system menu is open', 'event manager is unavailable',
+        'not PlayerCamera', 'pause, map or system menu is open', 'event manager is unavailable',
         'active event pointer is unreadable', 'an event is active', 'player camera component is unavailable',
         'player camera flags are unreadable', 'first-person aiming flag is set', 'camera manager is unavailable',
         'camera count is unreadable', 'camera manager has no cameras', 'camera or view pointer is unavailable',

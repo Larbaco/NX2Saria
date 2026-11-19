@@ -1001,11 +1001,11 @@ static int scene_camera(uint64_t actor) {
     char name[16] = "";
     uint64_t np = actor ? rd_ptr(actor + 0x20) : 0;
     if (!np || !rd(np, name, 13)) return 0;
-    return !memcmp(name, "PlayerCamera", 13) ? 1 : !memcmp(name, "EventCamera", 12) ? 2 : 0;
+    return !memcmp(name, "PlayerCamera", 12) ? 1 : !memcmp(name, "EventCamera", 11) ? 2 : 0;
 }
 
 enum {
-    FOV_HOOK_REACHED = 1u << 0, FOV_NO_ACTOR = 1u << 1, FOV_NO_CAMERA_NAME = 1u << 2,
+    FOV_NO_ACTOR = 1u << 1, FOV_NO_CAMERA_NAME = 1u << 2,
     FOV_EVENT_CAMERA = 1u << 3, FOV_OTHER_CAMERA = 1u << 4, FOV_MENU = 1u << 5,
     FOV_NO_EVENT_MANAGER = 1u << 6, FOV_EVENT_UNREADABLE = 1u << 7, FOV_ACTIVE_EVENT = 1u << 8,
     FOV_NO_PLAYER = 1u << 9, FOV_PLAYER_FLAGS_UNREADABLE = 1u << 10, FOV_AIMING = 1u << 11,
@@ -1014,6 +1014,7 @@ enum {
     FOV_MENU_CAMERA = 1u << 18, FOV_BAD_ANGLE = 1u << 19, FOV_UNCHANGED_ANGLE = 1u << 20
 };
 static atomic_uint fov_diagnostics;
+static atomic_flag fov_hook_logged = ATOMIC_FLAG_INIT;
 static void fov_skip_once(unsigned reason, const char *text) {
     unsigned old = atomic_fetch_or_explicit(&fov_diagnostics, reason, memory_order_relaxed);
     if (!(old & reason)) rt_log("fov: left lens alone: %s", text);
@@ -1022,7 +1023,8 @@ static void fov_skip_once(unsigned reason, const char *text) {
 // After the original s0 load at main+0x4c52f8, before the game stores the lens angle and derives the frustum.
 void dbg_fov_host(Cpu *c) {
     uint64_t state = c->x[19], actor = state ? rd_ptr(state + 0x10) : 0;
-    fov_skip_once(FOV_HOOK_REACHED, "gameplay lens hook reached; checking camera guards");
+    if (!atomic_flag_test_and_set_explicit(&fov_hook_logged, memory_order_relaxed))
+        rt_log("fov: gameplay lens hook reached");
     if (!actor) { fov_skip_once(FOV_NO_ACTOR, "camera actor pointer is null"); return; }
     uint64_t name_ptr = rd_ptr(actor + 0x20);
     char name[16] = "";
@@ -1030,9 +1032,14 @@ void dbg_fov_host(Cpu *c) {
         fov_skip_once(FOV_NO_CAMERA_NAME, "camera name is unreadable");
         return;
     }
-    if (memcmp(name, "PlayerCamera", 13)) {
-        if (!memcmp(name, "EventCamera", 12)) fov_skip_once(FOV_EVENT_CAMERA, "camera is EventCamera");
-        else fov_skip_once(FOV_OTHER_CAMERA, "camera is not PlayerCamera");
+    if (memcmp(name, "PlayerCamera", 12)) {
+        if (!memcmp(name, "EventCamera", 11)) fov_skip_once(FOV_EVENT_CAMERA, "camera is EventCamera");
+        else {
+            char reason[80];
+            snprintf(reason, sizeof reason, "camera name is %.12s (byte 12: 0x%02x), not PlayerCamera",
+                     name, (unsigned char)name[12]);
+            fov_skip_once(FOV_OTHER_CAMERA, reason);
+        }
         return;
     }
     if (wide_menu_open()) { fov_skip_once(FOV_MENU, "pause, map or system menu is open"); return; }
