@@ -110,9 +110,11 @@ static double fit_share(void) {
     return heap_unserved ? PLAIN_SHARE : heap_share();
 }
 
-// The share of the picture the upscaler's mode renders (NX2SARIA_DLSS; NVIDIA's ratios).
+// The share of the picture the upscaler's mode renders (NX2SARIA_DLSS; NVIDIA's ratios), or the step dynamic
+// resolution takes in its place (dynres.c dynres_override), so that its step changes the scene the game draws.
 static double mode_share(void) {
-    const char *m = cfg_value("NX2SARIA_DLSS");
+    const char *m = dynres_override();
+    if (!m) m = cfg_value("NX2SARIA_DLSS");
     return !strcmp(m, "quality") ? 2.0 / 3 : !strcmp(m, "balanced") ? 0.58 : !strcmp(m, "performance") ? 0.5
          : !strcmp(m, "ultra_performance") ? 1.0 / 3 : 1.0;
 }
@@ -248,10 +250,12 @@ void wide_present(void) {
     static unsigned seen = ~0u;
     if (set == -2) set = rt_patch_set("res_fixed");
     if (set < 0) return;
+    static const char *dyn_seen;
     unsigned v = cfg_version();
+    const char *dyn = dynres_override();   // dynamic resolution's step moves the share without a setting changing
     int at = ++presents == RES_FIXED_AFTER, due = presents >= RES_FIXED_AFTER;
-    if (v == seen && !at) return;
-    seen = v;
+    if (v == seen && dyn == dyn_seen && !at) return;
+    seen = v, dyn_seen = dyn;
     double s = scene_share();
     float page_s = (float)(s * scale_k);
     if (s > 0) memcpy((uint8_t *)rt_patch_page() + 240, &page_s, 4);
