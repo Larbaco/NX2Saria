@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=1c97be1099c8e5cad1b5851f801e9da7dcc803b1 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=abb8bb4f47fd0efe8c3e8ae105bd049116cf7195 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
