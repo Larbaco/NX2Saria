@@ -402,16 +402,56 @@ The numbers are meant to move with measurements:
 
 ## Measurements
 
-> **Placeholder: not measured yet.** The table is filled from the bench later. Bench machine: AMD Radeon RX 6700
-> (10 GB), 16 logical processors, 32 GB of RAM, Linux (RADV); it is recommended High. Each row is a `tools/bench.py`
-> run of the same scenes in the same mode; the numbers are the summary's.
+Bench machine: AMD Radeon RX 6700 (10 GB, RADV, Mesa 25.2.8), an Intel engineering-sample CPU with 16 logical
+processors, 32 GB of RAM, Linux; it is recommended High. `tools/bench.py run ... --boot-map --runs 2`, the scenes
+`kokiri` and `field` of `tools/bench/scenes.toml`, a 1920x1080 offscreen window, frame limit off. GPU ms is the GPU's
+busy time per frame from the timestamp queries (the bench's `gpu_ms`); between two runs of one configuration it varies
+by up to about 1 ms and the average frame rate by up to about 1.5 fps.
 
-| Config | Scene / picture (16:9) | Avg fps | 1% low | p99 ms | GPU-bound % |
-|---|---|---|---|---|---|
-| High (the game as shipped) | 1080 / 1440 | — | — | — | — |
-| Medium | ~720 / 1080 | — | — | — | — |
-| Low | 540 / 1080 | — | — | — | — |
-| Low with `scene_share = 0.4` (as on an integrated GPU) | 432 / 1080 | — | — | — | — |
-| Ultra | window / window | — | — | — | — |
-| High with *Scene resolution* 50 % | 720 / 1440 | — | — | — | — |
-| High with *Scene resolution* 100 % (native) | 1440 / 1440 | — | — | — | — |
+**This machine is CPU-bound** (about 32 fps; the runtime's verdict was `cpu` in every 60-frame window), so the frame
+rate hardly moves and the GPU time is what tells the settings apart. The gains below are a floor: on a PC whose GPU is
+the limit, the same GPU time saved is frame rate gained. A run on a GPU-bound PC (below) calibrates them.
+
+### What each setting costs (kokiri, the game as shipped = 20.2 ms of GPU time, 31.7 fps)
+
+| Setting | GPU ms against shipped | Avg fps | Scene / picture (log) |
+|---|---|---|---|
+| `scene_share = 1` | +2.2 | 29.3 | 2560x1440 / 2560x1440 |
+| `scene_share = 0.67` | -0.5 | 32.0 | 1715x965 / 2560x1440 |
+| `scene_share = 0.5` | -0.9 | 32.0 | 1280x720 / 2560x1440 |
+| `scene_share = 0.4` | -2.3 | 34.8 | 1024x576 / 2560x1440 |
+| `scene_share = 0.33` | -2.2 | 34.7 | 845x475 / 2560x1440 |
+| `game_res = 1080` | -1.6 | 34.3 | 1440x810 / 1920x1080 |
+| `game_res = 1080`, `scene_share = 0.5` | -2.2 | 34.6 | 960x540 / 1920x1080 |
+| `game_res = 2160` | +2.6 | 29.8 | 2880x1620 / 3840x2160 |
+| `standin_filter = bilinear`, `scene_share = 0.5` | -1.9 (-1.0 against easu at 0.5) | 34.3 | 1280x720 / 2560x1440 |
+| FSR 3.1 quality (`dlaa = 1`, `taa = fsr3`) | +2.9 | 28.1 | 1707x960 / 2560x1440 |
+| FSR 3.1 performance | +1.5 | 29.5 | 1280x720 / 2560x1440 |
+| `shadow_res` 512 or 2048, `shadow_pcf`, `pcss`, `contact_shadows`, `aniso = 4`, `texture_detail` full or low, `foliage = reduced`, `aa` fxaa or off | within the noise | 32.0 to 33.0 | as shipped |
+
+`shadow_res` logs `cfg: SHADOW_RES has no effect on this game version`. FSR 3.1 costs more than the plain path even
+with the smaller scene, which is why no tier uses it on cards without DLSS or FSR 4. Pictures at `scene_share` 0.33,
+0.5 and shipped show the HUD equally sharp in all three (it is drawn at the 2560x1440 picture); at 0.33 the scene is
+visibly softer and nothing breaks.
+
+### The tiers
+
+PRESET_TIERS_TABLE
+
+### On a GPU-bound PC (the owner's test)
+
+On the owner's laptop (NVIDIA GeForce RTX 3050 6GB Laptop GPU, Windows; recommended Medium), in the same place for
+each step, about a minute of play each:
+
+1. Start with nothing changed in the Quality preset row (*Recommended (Medium)*): the log's `preset: hardware:`,
+   `preset: recommended medium: 6 GiB of video memory` and `preset: in use medium (recommended)`, and the
+   `frametime: 60 s: ...` lines.
+2. Choose *Medium*, then *Low* (Apply, restart for the restart-only lines): the same `frametime: 60 s` lines for each,
+   and the `preset: medium -> low: ...` lines.
+3. Choose *High* to compare with the game as shipped.
+
+In step 1 the laptop's own `dlaa`, `dlss` and `taa` lines win (its `taa = fsr3` runs FSR 3.1, not the tier's DLSS).
+The box before the choice in step 2 lists exactly those three: *Use the preset* hands them back, so each step runs the
+tier's own values (DLSS quality on Medium, DLSS performance on Low); the log's `menu: draft` lines keep the old values
+to set back by hand. The `frametime` lines of each step give the numbers to recalibrate the tiers with on a machine
+whose GPU is the limit.
