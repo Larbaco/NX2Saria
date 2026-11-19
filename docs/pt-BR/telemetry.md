@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=5abb523c49ad787125d969e5e4d0bbdd012459c7 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=82a4431ceead957afd05ea207638b20c092c22f7 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -14,6 +14,8 @@ O launcher pode enviar duas coisas para o servidor do próprio projeto, e só qu
 - **Comentários:** o texto que você escreve em *Send a Comment*, enviado quando você aperta *Send*.
 
 Nada é enviado antes de você escolher. Na primeira vez que você volta do jogo, o launcher pergunta uma vez, com *Send* e *Don't Send*, e *See What Is Sent* mostra o texto exato que seria enviado. Você pode mudar a resposta a qualquer momento em **Settings → Session Reports**, que mostra *Not Asked Yet* até você responder.
+
+Um launcher compilado sem endereço de servidor não mostra nada disso: nem a pergunta, nem a tela Session Reports, nem *Send a Comment*.
 
 O servidor é um pequeno programa deste projeto no Cloudflare Workers com um banco de dados Cloudflare D1. Todo o código-fonte dele está no repositório: [`telemetry/`](../../telemetry/) (em inglês). Nenhum serviço de análise de terceiros é usado.
 
@@ -50,25 +52,30 @@ O servidor acrescenta o **país** de onde o relatório veio, em duas letras (`BR
 
 - O seu texto, com até 4000 caracteres, **exatamente como você o escreveu**. Não inclua o seu e-mail, nome nem nada mais que você não queira enviar.
 - O relatório da sua última sessão, como acima, quando houver um, a menos que **Session Reports** esteja em *Off*.
-- Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com as suas pastas escritas de forma abreviada.
+- Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com a sua pasta pessoal, o nome da conta e o nome do computador escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta nessas linhas, como o local onde o jogo está instalado, ficam como estão.
 - O mesmo `install_id`, `launcher_version`, país e hora.
 
 Enviar um comentário não exige que os relatórios de sessão estejam ligados: apertar *Send* é a escolha.
 
-## O que nunca é enviado
+## O que não é enviado ou não é guardado
 
-- O seu endereço IP não é guardado. O servidor lê o país que o Cloudflare informa e nada mais sobre a conexão.
+- **O seu endereço IP não é guardado.** Toda conexão com um servidor o carrega, então o servidor o vê: ele o usa naquele momento, na memória, para limitar abusos (no máximo 20 requisições por minuto de um mesmo endereço) e como a origem do país, e nunca o grava. O Cloudflare, que roda o servidor, trata a conexão como faz com qualquer site.
 - Nenhum arquivo: nenhum save, nenhum arquivo de configurações, nenhum log inteiro, nenhum arquivo do jogo, nenhuma chave.
-- Nenhum nome de conta, nome de computador, nome de pasta, e-mail ou número de série de hardware. Um relatório com um campo que o formato não tem é recusado.
+- Um relatório de sessão não contém nome de conta, nome de computador, nome de pasta, e-mail nem número de série de hardware: o servidor recusa um relatório com um campo que o formato não tem. Um comentário contém o que você escreve e, quando você as anexa, linhas do log como descrito acima.
 
 ## Por quanto tempo fica guardado
 
-Relatórios e comentários são apagados 180 dias depois de chegarem. Só o mantenedor do projeto pode lê-los, por uma página protegida por uma chave secreta: contagens por versão, placa de vídeo, sistema e opções, taxas de quadros, os erros mais comuns e os comentários.
+Relatórios e comentários são apagados por uma limpeza diária quando completam 180 dias. Só o mantenedor do projeto pode lê-los, por uma página protegida por uma chave secreta: contagens por versão, placa de vídeo, sistema e opções, taxas de quadros, os erros mais comuns e os comentários.
 
 ## Apagar os seus dados
 
-**Settings → Session Reports → Delete My Data** apaga do servidor todos os relatórios e comentários enviados com o seu `install_id` e depois cria um novo `install_id`. Funciona com os relatórios de sessão ligados ou desligados. O servidor dá a mesma resposta quer tivesse algo guardado, quer não.
+**Settings → Session Reports → Delete My Data** apaga do servidor todos os relatórios e comentários enviados com o seu `install_id` e depois cria um novo `install_id`. Funciona com os relatórios de sessão ligados ou desligados. O servidor dá a mesma resposta quer tivesse algo guardado, quer não. O serviço de banco de dados mantém o seu próprio histórico de restauração por um tempo limitado (até 30 dias no Cloudflare); as linhas apagadas saem dele à medida que esse histórico envelhece.
 
 ## Desligar
 
 Coloque **Settings → Session Reports** em *Off*. Se um dia o projeto parar de coletar, o servidor responde isso e o launcher para de enviar até a próxima versão dele.
+
+## Limitações conhecidas
+
+- Reiniciar o jogo pelo menu de configurações dele inicia um novo processo, que remove o relatório do primeiro antes que o launcher possa enviá-lo: só o relatório do último processo é enviado.
+- Escrever um comentário exige um teclado (ou um teclado na tela, como o da Steam); as outras telas funcionam com um controle.

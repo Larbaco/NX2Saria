@@ -14,6 +14,9 @@ Nothing is sent before you choose. The first time you come back from the game, t
 *Don't Send*, and *See What Is Sent* shows the exact text that would go. You can change the answer at any time in
 **Settings → Session Reports**, which says *Not Asked Yet* until you answer.
 
+A launcher built without a server address shows none of this: no question, no Session Reports screen and no
+*Send a Comment*.
+
 The server is a small program of this project on Cloudflare Workers with a Cloudflare D1 database. Its whole source is
 in the repository: [`telemetry/`](../telemetry/). No analytics service of anyone else is used.
 
@@ -57,32 +60,44 @@ request, and the time it arrived.
 - Your text, up to 4000 characters, **exactly as you wrote it**. Leave out your e-mail, name or anything else you do
   not want to send.
 - The report of your last session, as above, when there is one, unless **Session Reports** is *Off*.
-- If you tick *Attach the Last Log Lines*: the last 200 lines of `logs/nx2saria.log`, at most 24 KB, with your folders
-  written short.
+- If you tick *Attach the Last Log Lines*: the last 200 lines of `logs/nx2saria.log`, at most 24 KB, with your home
+  folder, account name and computer name written short as in the log ([log privacy](log-privacy.md)). Other folder
+  names in those lines, such as where the game is installed, stay as they are.
 - The same `install_id`, `launcher_version`, country and time.
 
 Sending a comment does not need session reports to be on: pressing *Send* is the choice.
 
-## What is never sent
+## What is not sent or not kept
 
-- Your IP address is not stored. The server reads the country Cloudflare gives and nothing else about the connection.
+- **Your IP address is not kept.** Every connection to a server carries it, so the server sees it: it uses it at that
+  moment, in memory, to limit abuse (at most 20 requests a minute from one address) and as the source of the country,
+  and never writes it down. Cloudflare, which runs the server, handles the connection as it does for any website.
 - No files: no saves, no settings file, no whole log, no game files, no keys.
-- No account name, computer name, folder name, e-mail or hardware serial number. A report with a field the format
-  does not have is refused.
+- A session report holds no account name, computer name, folder name, e-mail or hardware serial number: the server
+  refuses a report with a field the format does not have. A comment holds what you write and, when you attach them,
+  log lines as described above.
 
 ## How long it is kept
 
-Reports and comments are deleted 180 days after they arrive. Only the project's maintainer can read them, through a
-page protected by a secret key: counts by version, graphics card, system and options, frame rates, the most common
+Reports and comments are deleted by a daily cleanup once they are 180 days old. Only the project's maintainer can read
+them, through a page protected by a secret key: counts by version, graphics card, system and options, frame rates, the most common
 errors and the comments.
 
 ## Deleting your data
 
-**Settings → Session Reports → Delete My Data** deletes every report and comment sent with your `install_id` from the server, then makes
-a new `install_id`. It works whether session reports are on or off. The server gives the same answer whether it held
-anything or not.
+**Settings → Session Reports → Delete My Data** deletes every report and comment sent with your `install_id` from the
+server, then makes a new `install_id`. It works whether session reports are on or off. The server gives the same
+answer whether it held anything or not. The database service keeps its own restore history for a limited time (up to
+30 days at Cloudflare); deleted rows leave it as that history ages.
 
 ## Turning it off
 
 Set **Settings → Session Reports** to *Off*. If the project ever stops collecting, the server answers so and the
 launcher stops sending until its next version.
+
+## Known limits
+
+- Restarting the game from its settings menu starts a new process, which removes the report of the first one before
+  the launcher can send it: only the last process's report is sent.
+- Writing a comment needs a keyboard (or an on-screen keyboard, such as Steam's); the rest of the screens work with a
+  controller.
