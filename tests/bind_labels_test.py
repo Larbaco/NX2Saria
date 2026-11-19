@@ -2,7 +2,6 @@
 """Check the bind action catalog in all menu languages and its narrow-row fallback."""
 
 import re
-import unicodedata
 from pathlib import Path
 
 
@@ -68,30 +67,23 @@ require('ellipsis && tw > room' in ROWS and 'memcpy(shortened + n, "…"' in ROW
         'ImVec4 clip(x0, y, x1, y + h)' in ROWS,
         "the action line is not ellipsized and clipped to the label column")
 
-# At 1280x720 menu_scale is 720/1080. The 1400*scale menu width yields about a 155 px
-# label lane after the 58% rows pane, 34% bind column and row insets. Match the 0.72x subtitle
-# size with the checked-in font; clip/truncate at that lane to catch any translated overflow.
-def subtitle_width(text):
-    # The actual font differs by script; use a conservative em-width estimate here. Runtime fit_text applies
-    # ImFont::CalcTextSizeA to the same 0.72x line and clips the result to the measured column.
-    return sum(14 if unicodedata.east_asian_width(ch) in "FW" else 8 for ch in text)
-
-
+# Captured menu images show that this column fits about 16 Latin/Cyrillic characters and 7 full-width
+# Chinese characters at 1280x720. The previous L labels visibly ellipsized at these limits, so this
+# deliberately checks the complete text against the capture-calibrated budgets, not fit_text's clipping.
+lane_char_budget = {"en": 16, "pt-BR": 17, "ru": 14, "zh-Hans": 7}
 for lang, array in expected_languages.items():
     start = TEXT.index(f"static const char *const {array}[UI_TEXT_COUNT]")
     end = TEXT.index("\n};", start)
     block = TEXT[start:end]
-    labels = [
-        re.search(rf"\[{name}\]\s*=\s*\"([^\"]*)\"", block).group(1)
-        for name in names
-    ]
-    for label in labels:
-        prefix = label
-        width = subtitle_width(prefix)
-        while width > 155 and prefix:
-            prefix = prefix[:-1]
-            width = subtitle_width(prefix + "…")
-        require(width <= 155, f"{lang} action label exceeds the 1280x720 label lane")
+    for name in names:
+        label = re.search(rf"\[{name}\]\s*=\s*\"([^\"]*)\"", block).group(1)
+        require("…" not in label, f"{name} needs ellipses at 1280x720 in {lang}: {label}")
+        require(len(label) <= lane_char_budget[lang],
+                f"{name} exceeds the capture-calibrated {lane_char_budget[lang]}-character lane in {lang}: {label}")
+
+require(len("Quick item / prev. page") > lane_char_budget["en"] and
+        len("Seleção rápida / pág. ant.") > lane_char_budget["pt-BR"],
+        "the capture-calibrated budgets no longer reject the labels that visibly clipped")
 
 require('Jump when Swap Jump Controls is on in the game\'s Options.' in TEXT,
         "English B/X help lost the RomFS option name and location")
@@ -106,4 +98,4 @@ require("binds_action_row_count())" in MENU and "default B/X; Swap Jump Controls
 require('!strncmp(t.value, "BIND_", 5)' in MENU and "BIND_<action>#<cell>" in MENU,
         "the headless menu hook cannot focus a bind cell for a row capture")
 
-print("bind labels: 24 rows, 18 translated labels fit the 1280x720 lane, B/X help in 4 languages: ok")
+print("bind labels: 24 rows, all 18 labels pass capture-calibrated 1280x720 limits in 4 languages: ok")
