@@ -7400,16 +7400,12 @@ static long cu_parse(const uint8_t *f, uint64_t size, CuHeader *h) {
     return (long)((size - sizeof *h) / sizeof(CuRec));
 }
 
-// Reads the record and marks what the boot keeps. Caller holds P.lock (ensure_init), after keys_open.
-static void cu_open(void) {
-    if (!A.on || !K.path[0]) return;
+// Reads the record at CU.path and marks what the boot keeps (cu_open, cu_open_prep).
+static void cu_read(void) {
     const char *e = cfg_value("NX2SARIA_COMPUTE_KEEP");
     plat_mutex_lock(&CU.lock);
     int count = cfg_int("NX2SARIA_COMPUTE_KEEP");   // a value that is neither "all" nor a number reads as the default
     CU.keep_n = !strcmp(e, "all") ? -1 : count < 0 ? 0 : count;
-    snprintf(CU.path, sizeof CU.path, "%s", K.path);
-    char *cut = plat_last_sep(CU.path);
-    snprintf(cut ? cut + 1 : CU.path, sizeof CU.path - (size_t)(cut ? cut + 1 - CU.path : 0), "compute-used.bin");
     uint64_t size = 0;
     uint8_t *f = plat_file_read(CU.path, &size);
     CuHeader h;
@@ -7441,6 +7437,26 @@ static void cu_open(void) {
            "dispatched most recently (NX2SARIA_COMPUTE_KEEP %s)", CU.path, CU.n,
            CU.keep_n < 0 ? "every recorded compute shader, among them the " : "the ", CU.kept, e);
     plat_mutex_unlock(&CU.lock);
+}
+
+// The boot's record: compute-used.bin next to pipeline-keys.bin. Caller holds P.lock (ensure_init), after keys_open.
+static void cu_open(void) {
+    if (!A.on || !K.path[0]) return;
+    snprintf(CU.path, sizeof CU.path, "%s", K.path);
+    char *cut = plat_last_sep(CU.path);
+    snprintf(cut ? cut + 1 : CU.path, sizeof CU.path - (size_t)(cut ? cut + 1 - CU.path : 0), "compute-used.bin");
+    cu_read();
+}
+
+// The preparation modes open no key file (their ensure_init runs without A.on), so cu_open leaves the record closed
+// and cu_keep keeps every shader. They read the same record from the game folder dir, for lb_big_left_out to answer
+// as at the boot, and never write it (quiet): they dispatch nothing. A folder without the record (a first
+// install) keeps none, as a boot without it does.
+static void cu_open_prep(const char *dir) {
+    if (CU.opened) return;
+    CU.quiet = 1;
+    snprintf(CU.path, sizeof CU.path, "%s/compute-used.bin", dir);
+    cu_read();
 }
 
 // 1 when the boot keeps the pipeline of the compute shader with this input id.
@@ -7880,6 +7896,23 @@ static void bg_start(void) {
                "dispatch", BG.n);
 }
 
+// LB.big_words from NX2SARIA_LIB_PREBUILD_BIG (SPIR-V words; LB_BIG_WORDS when unset, 0 no limit): the boot
+// (lb_start) and the preparation (lb_warm_prepared) read it here, so both draw the line at the same size.
+static void lb_big_words_init(void) {
+    const char *be = cfg_get("NX2SARIA_LIB_PREBUILD_BIG");
+    LB.big_words = be && *be ? strtoull(be, NULL, 10) : LB_BIG_WORDS;
+}
+
+// The one rule for which compute shaders are built ahead, for the boot (lb_compute) and the preparation
+// (lb_warm_worker) alike: one over LB.big_words only when keep says the boot keeps its pipeline (cu_keep: among the
+// NX2SARIA_COMPUTE_KEEP shaders runs dispatched most recently, compute-used.bin). Its first dispatch builds any other
+// (vk_pipeline_compute). The preparation once built them all into the driver's cache: on an RTX 3050 Laptop with
+// NVIDIA 546.18 the last three of 42,142 variants of a warm after an update took 2.5, 16 and 74 min, an hour and a half of
+// a two-hour update, with the PC's 16 GB of RAM nearly full, for pipelines the game never asks for.
+static int lb_big_left_out(uint64_t words, int keep) {
+    return LB.big_words && words > LB.big_words && !keep;
+}
+
 // keep 0: the pipeline is built for the pipeline cache only and destroyed at once, unless a dispatch came to wait for
 // it meanwhile; a shader over LB.big_words is then not built at all (comment at compute-used.bin). cs may be a copy
 // the caller releases afterwards when keep is 0: nothing here holds on to it then.
@@ -7890,7 +7923,7 @@ static void lb_compute(const GfxShader *cs, const uint8_t iid[32], int keep, int
     const char *why = NULL;
     uint64_t words = gfx_shader_words(cs);
     int big = LB.big_words && words > LB.big_words;   // only from the caches (LB_BIG_WORDS)
-    if (big && !keep) {   // no run dispatched it: a pipeline of it would hold about 100 MiB of device memory unused
+    if (lb_big_left_out(words, keep)) {   // no run dispatched it: a pipeline of it would hold about 100 MiB of device memory unused
         plat_mutex_lock(&LB.stat);
         LB.big_unused++;
         plat_mutex_unlock(&LB.stat);
@@ -8413,13 +8446,12 @@ static void lw_stop(void) {
 static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
     const char *e = cfg_value("NX2SARIA_LIB_PREBUILD"), *ke = cfg_get("NX2SARIA_LIB_PREBUILD_KEEP");
     const char *te = cfg_get("NX2SARIA_LIB_PREBUILD_THREADS");   // no fixed default: 2 when unset (1 under 4 CPUs)
-    const char *be = cfg_get("NX2SARIA_LIB_PREBUILD_BIG");       // SPIR-V words; LB_BIG_WORDS when unset, 0 no limit
     if (!A.on || !cfg_bool("NX2SARIA_LIB_PREBUILD")) return;
     mesh_pre_start();             // the recorded mesh pipelines' libraries
     lb_state(pr_hist, fs_hist);   // the libraries' state, also for lw_start
     if (BF.on) BF.lw = 1;         // after the compute pipelines, with the start waiting (bf_wait)
     else lw_start();
-    LB.big_words = be && *be ? strtoull(be, NULL, 10) : LB_BIG_WORDS;
+    lb_big_words_init();
     char dir[PLAT_PATH_MAX * 2];
     if (cache_dir(dir, sizeof dir)) skip_init(dir);
     GfxWarmEnt *all = NULL;
@@ -8564,6 +8596,21 @@ static void bf_wait(void) {
     vk_pipeline_prewarm_detach();   // nothing waits from here on: later builders are the background's
 }
 
+// What each preparation worker hands the driver now (under LB.stat): the variant's index + 1 (0: none), since when, and
+// its SPIR-V length. lb_warm_prepared reads it to stop waiting for builds that do not end (prep_stalled).
+static struct {
+    size_t at[JR_SLOTS];
+    double t0[JR_SLOTS];
+    uint64_t words[JR_SLOTS];
+} PW;
+
+static void pw_mark(int slot, size_t at, uint64_t words) {
+    if (slot < 0 || slot >= JR_SLOTS) return;
+    plat_mutex_lock(&LB.stat);
+    PW.at[slot] = at, PW.t0[slot] = now_ms(), PW.words[slot] = words;
+    plat_mutex_unlock(&LB.stat);
+}
+
 // Preparation: one prepared variant at a time into the driver's disk cache (private shader copy, nothing kept). arg is
 // the worker's journal slot.
 static void lb_warm_worker(void *arg) {
@@ -8575,11 +8622,16 @@ static void lb_warm_worker(void *arg) {
         const GfxShader *sh = skip ? NULL : gfx_shader_load_private(LB.e[i].iid, &owned);
         int st = sh ? gfx_shader_stage(sh) : -1;
         if (sh) journal_mark(slot, &LB.e[i]);   // from here to its clearing below, a crash names this variant
+        if (sh) pw_mark(slot, i + 1, gfx_shader_words(sh));
         if (skip) {
             skip_count();
         } else if (!sh) {
             plat_mutex_lock(&LB.stat);
             LB.noshader++;
+            plat_mutex_unlock(&LB.stat);
+        } else if (st == GFX_STAGE_CS && lb_big_left_out(gfx_shader_words(sh), cu_keep(LB.e[i].iid))) {
+            plat_mutex_lock(&LB.stat);   // as the boot leaves it (lb_big_left_out): its first dispatch builds it
+            LB.big_unused++;
             plat_mutex_unlock(&LB.stat);
         } else if (st == GFX_STAGE_CS) {
             Bindings B = {0};
@@ -8596,6 +8648,7 @@ static void lb_warm_worker(void *arg) {
             if (P.gpl) lb_library(sh, st == GFX_STAGE_VS, 0);
             else lb_skip_lib();
         }
+        if (sh) pw_mark(slot, 0, 0);
         if (sh) journal_mark(slot, NULL);
         if (owned) gfx_shader_release_private(sh);
         plat_mutex_lock(&LB.stat);
@@ -8603,6 +8656,66 @@ static void lb_warm_worker(void *arg) {
         plat_mutex_unlock(&LB.stat);
         if (d % 4000 == 0) lb_report("preparation progress");
     }
+}
+
+// The preparation's wait for its workers, every 2 s: once every variant has been handed out, and every build still
+// running has been in the driver's hands for stall_ms or more (NX2SARIA_PREPARE_STALL_S), the wait is given up. A
+// Vulkan create cannot be cancelled, and on NVIDIA 546.18 a few compute shaders took 16 and 74 min each after the other
+// 42,139 variants were done in 28 min, while the launcher's update showed "built 42141 of 42142". So:
+// - each build still running is named with its time (the variant's input id, as shader-prepare-skip.txt names one);
+// - shader-warm.txt says where the game goes on (lw_check): "warming" from the first unfinished variant when one is a
+//   vertex or fragment library, so a later start builds the rest on idle threads beside play (the variants already
+//   built come back from the driver's cache in a few ms); "done" when all are compute shaders, which every boot builds
+//   ahead anyway (lb_compute);
+// - the journal goes first, so the next start does not take the builds it names for a driver crash (skip_init);
+// - the process ends with code 0 (plat_exit): the step did its work, and make_game.py says the rest goes on in the
+//   game. What the driver finished is in its disk cache already; the pipeline cache was saved before the libraries
+//   (seed_pipelines). k: the workers; jp: the journal's path.
+static void prep_stalled(double stall_ms, int k, const char *jp) {
+    if (__atomic_load_n(&LB.next, __ATOMIC_RELAXED) < (int64_t)LB.n) return;   // variants still to hand out
+    double now = now_ms();
+    int busy = 0, stuck = 0, lib = 0;
+    size_t first = 0;
+    plat_mutex_lock(&LB.stat);
+    for (int s = 0; s < k && s < JR_SLOTS; s++) {
+        if (!PW.at[s]) continue;
+        busy++;
+        if (now - PW.t0[s] < stall_ms) continue;
+        stuck++;
+        size_t at = PW.at[s] - 1;
+        if (!first || at + 1 < first) first = at + 1;
+        lib |= LB.e[at].stage == GFX_STAGE_VS || LB.e[at].stage == GFX_STAGE_FS;
+    }
+    if (!busy || stuck < busy) {
+        plat_mutex_unlock(&LB.stat);
+        return;
+    }
+    uint64_t d = LB.done;
+    for (int s = 0; s < k && s < JR_SLOTS; s++) {
+        if (!PW.at[s]) continue;
+        const GfxWarmEnt *e = &LB.e[PW.at[s] - 1];
+        char hex[65];
+        for (int b = 0; b < 32; b++) snprintf(hex + 2 * b, 3, "%02x", e->iid[b]);
+        printf("prepare-shaders: variant %s (%s, %llu SPIR-V words) still building after %.0f s\n", hex,
+               stage_name(e->stage), (unsigned long long)PW.words[s], (now - PW.t0[s]) / 1000);
+    }
+    plat_mutex_unlock(&LB.stat);
+    plat_mutex_lock(&SK.jlock);   // a worker that returns now marks nothing more (journal_mark)
+    if (SK.journal) plat_file_close(SK.journal), SK.journal = NULL;
+    plat_mutex_unlock(&SK.jlock);
+    plat_file_delete(jp);
+    if (P.gpl && !LB.nolib) {
+        if (lib) lw_stamp_at("warming", 0, first - 1);
+        else lw_stamp("done", 0);
+    }
+    printf("prepare-shaders: progress build %llu %zu\n", (unsigned long long)d, LB.n);
+    printf("prepare-shaders: %llu of %zu variants built into the driver cache on %d threads in %.0f ms; %d still "
+           "building after %.0f s each are left to the game, which goes on with them in the background "
+           "(NX2SARIA_PREPARE_STALL_S)\n", (unsigned long long)d, LB.n, k, now - LB.t0, stuck, stall_ms / 1000);
+    fflush(stdout);
+    rt_log("vk_pipeline: the preparation stopped waiting for %d builds the driver had held for %.0f s or more; %s", stuck,
+           stall_ms / 1000, lib ? "the game's library warm goes on from the first of them" : "all compute shaders, which the boot builds");
+    plat_exit(0);
 }
 
 // --warm-shaders, before the whole list: LW_SAMPLE prepared fragment libraries spread over it, built into the driver's
@@ -8644,6 +8757,8 @@ static void lb_warm_prepared(const char *dir, int sample) {
     free(f);
     if (!LB.e) return;
     skip_init(dir);
+    lb_big_words_init();   // the boot's line for large compute shaders, and its record of the dispatched ones
+    cu_open_prep(dir);
     char jp[PLAT_PATH_MAX * 2 + 48];
     snprintf(jp, sizeof jp, "%s/shader-prepare-journal.bin", dir);
     SK.journal = plat_fs_create(jp, NULL);   // skip_init removed a leftover one
@@ -8697,6 +8812,7 @@ static void lb_warm_prepared(const char *dir, int sample) {
     if (!k) lb_warm_worker((void *)(intptr_t)0);
     // every 2 s a count on stdout for tools/make_game.py (step_shaders), as gfx_shader.c prepare_files prints for the
     // translation: a driver building for a long time still shows the step moving
+    double stall_ms = cfg_int("NX2SARIA_PREPARE_STALL_S") * 1000.0;
     for (int i = 0; i < k; i++)
         while (!plat_thread_join_ns(t[i], 2000000000u)) {
             plat_mutex_lock(&LB.stat);
@@ -8704,6 +8820,7 @@ static void lb_warm_prepared(const char *dir, int sample) {
             plat_mutex_unlock(&LB.stat);
             printf("prepare-shaders: progress build %llu %zu\n", (unsigned long long)d, n);
             fflush(stdout);
+            if (stall_ms > 0) prep_stalled(stall_ms, k, jp);   // does not return when it gives up the wait
         }
     printf("prepare-shaders: progress build %zu %zu\n", n, n);
     fflush(stdout);
@@ -8711,8 +8828,8 @@ static void lb_warm_prepared(const char *dir, int sample) {
     lb_report("preparation done");
     if (P.gpl && !LB.nolib) lw_stamp("done", 0);   // the whole list is in the driver's cache (see shader-warm.txt above)
     // with gpl off only compute variants are built: say so, rather than count the skipped ones as built
-    unsigned long long skipped = LB.skipped;
-    size_t tried = n - (size_t)skipped;
+    unsigned long long skipped = LB.skipped, big = LB.big_unused;
+    size_t tried = n - (size_t)skipped - (size_t)big;
     if (LB.nolib)
         printf("prepare-shaders: %zu variants on %d threads in %.0f ms, %llu vertex/fragment variants skipped (graphics "
                "pipeline library off, they build at their first draw)\n", tried, k, now_ms() - LB.t0,
@@ -8723,7 +8840,12 @@ static void lb_warm_prepared(const char *dir, int sample) {
     if (skipped)   // installer/steps.py Prepare reads this line
         printf("prepare-shaders: %llu variants skipped: the graphics driver crashed while building them in an earlier "
                "run (shader-prepare-skip.txt); they build at their first draw\n", skipped);
-    free(LB.e), LB.e = NULL, LB.n = 0, LB.next = 0, LB.done = 0, LB.skipped = 0;
+    if (big)
+        printf("prepare-shaders: %llu large compute shaders left out (never dispatched): over %llu SPIR-V words, as the "
+               "game's boot leaves them (NX2SARIA_LIB_PREBUILD_BIG, compute-used.bin); one builds at its first "
+               "dispatch\n", big, (unsigned long long)LB.big_words);
+    fflush(stdout);
+    free(LB.e), LB.e = NULL, LB.n = 0, LB.next = 0, LB.done = 0, LB.skipped = 0, LB.big_unused = 0;
 }
 
 // ---- the shared pipeline list (tools/pipeline_list.py; seed-pipeline-keys.bin next to the game)
