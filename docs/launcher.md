@@ -122,8 +122,8 @@ python/                  python.org's embeddable Python 3.14.9 with tkinter, num
                          and truststore
 app/current.txt          the version the stub starts; app/previous.txt the one before it
 app/<version>/           launcher/, runtime/, recomp/, tools/, bin/nx2navi_xlate.exe, VERSION,
-                         toolchain.lock.json (the pinned build tools), feed.json (where updates come from), and in a
-                         release made with --prompt-art, prompt-art/ (the button art the prompts are drawn from);
+                         toolchain.lock.json (the pinned build tools), feed.json (where updates come from),
+                         prompt-art/ (the button art the prompts are drawn from, with its SOURCE.md);
                          in one made with --pgo, data/pgo-v111.profdata and .json (the execution profile the game's
                          code is compiled with, and its record); a
                          release staged in the background also holds staged.json and the Python it brings,
@@ -189,15 +189,17 @@ the compiler, the linker and `tar` would not take it.
    follows the game's own counts, printed every 2 s: the translation fills the first half, the build into the
    driver's cache the second. An update every 10 s keeps the step's text current while nothing is printed, and after
    3 minutes without a count moving it says so, and that the step is still running.
-4. **Draw the Button Prompts**, only when the version holds button art (`app/<version>/prompt-art`, a release made
-   with `--prompt-art`; `build.has_prompt_art`): make_game.py's last step runs `tools/pad_prompts.py` on that art
+4. **Draw the Button Prompts**, only when the version holds button art (`app/<version>/prompt-art`, which every
+   release carries unless made with `--no-prompt-art`; `build.has_prompt_art`): make_game.py's last step runs `tools/pad_prompts.py` on that art
    and writes the Xbox, PlayStation, Steam Deck and keyboard and mouse prompts into `romfs-patches-*` beside the game (about
    30 s), which the game's Controls > Button prompts loads. The keyboard and mouse prompts show the keys of
    `nx2saria.ini`'s `bind_` lines, so Rebuild the Game after rebinding keys draws them again; the step's key names
    all it reads (the RomFS, the art, those lines) and the version of the tools (`make_game.py` `PROMPT_TOOLS`, changed
    by hand when a change to them changes what they write: an edit of a script alone does not draw the prompts
    again), so it runs again only when one changed or a folder is gone, and runs no other step again. Without art
-   the row is not shown and the game keeps its own prompts.
+   the row is not shown and the game keeps its own prompts. Either way the build writes `button-prompts.txt` in the
+   game folder, one line saying where the prompts came from (the art's `SOURCE.md`) or why there are none; the build
+   log shows it and the game's log repeats it at start (`button prompts: ...`).
 5. **Check the Game Files**: make_game.py's last step runs `tools/romfs_check.py`, once for each copy of the game data
    (about 4 minutes on players' PCs up to 0.7.1, in worker threads, never while the game runs; its key holds the
    check's version, `SCAN_TOOL`, in the same way). It decompresses every file, writes
@@ -534,14 +536,18 @@ stays playable and Rebuild the Game, or Begin Installation, goes on from the ste
    ([building.md](building.md), "Profile-guided build"). The profile is derived from the game's code and never goes
    into the repository.
 
-   `--prompt-art FOLDER ...` puts the button art in the release (`app/<version>/prompt-art`): folders that hold
+   The release carries the repository's button art, `prompt-art/` (`app/<version>/prompt-art`): pictures of a CC0
+   pack, whose `SOURCE.md` says where they came from and goes into the release with them, and whose `SHA256SUMS`
+   `tools/check_content.py` holds them to. `--prompt-art FOLDER ...` takes other art instead: folders that hold
    `XGamepad`, `P5Gamepad` and `Keyboard_Mouse` (the Source folders of button prompt art packs), or those three
    folders themselves; a set named itself wins over one found inside a folder named, and the same set twice is
    refused. Only the pictures `tools/pad_prompts.py` reads are copied (`tools/prompt_art.py`
    `art_files`: the pad pictures it names and every key of `Keyboard_Mouse/Dark` and `/White`, about 280 PNGs and
-   1 MB), and it stops first naming any that are missing. The art goes into the release only, never into the
-   repository (`.gitignore` has `/prompt-art/`). Without it the release has no art and the build draws no prompts.
-   `tools/make_kit.py` takes the same option for the build kit.
+   1 MB), and it stops first naming any that are missing. `--no-prompt-art` leaves the art out: the build then draws
+   no prompts and the game's Controls menu says the other prompts' files are missing. `tools/make_kit.py` and
+   `tools/make_appimage.py` take the same options for the build kit and the AppImage. The Windows release workflow
+   (`.github/workflows/windows-release.yml`) fails when the app zip lacks a picture `prompt-art/SHA256SUMS` lists, and
+   the AppImage workflow when the AppImage has no `prompt-art`.
 
    On Linux it cross-compiles the two programs with clang, lld and llvm-windres against the same MSYS2 packages and
    unpacks Tcl/Tk with msiextract (msitools). It writes into `build/launcher-release`: `NX2Saria-Setup-<version>.exe`

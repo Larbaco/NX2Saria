@@ -3,7 +3,7 @@
     python tools/make_kit.py --xlate <dir with nx2navi_xlate.exe and .id> [--ffx amd_fidelityfx_vk.dll]
                              [--ffx4 FOLDER]
                              [--dlss nvngx_dlss.dll | --no-dlss] [--dlssg nx2navi_dlssg.dll [--streamline SDK]]
-                             [--prompt-art FOLDER [FOLDER ...]] [--out build/kit] [--zip]
+                             [--prompt-art FOLDER [FOLDER ...] | --no-prompt-art] [--out build/kit] [--zip]
 
 The kit holds this repository's runtime/ with its shaders compiled (tools/build_shaders.py builds the SPIR-V headers
 here, so a player's PC needs no shader compiler; their sources go along), recomp/, the build tools, the shader
@@ -12,15 +12,16 @@ NVIDIA's DLSS library with its notice (tools/dlss_pin.py: downloaded from NVIDIA
 or --dlss; not with --no-dlss), DLSS Frame Generation in bin/dlssg/ with --dlssg (nx2navi_dlssg.dll from
 tools/build_dlssg.py beside NVIDIA Streamline's runtime, tools/streamline_pin.py: downloaded from NVIDIA's Streamline
 SDK release and checked, or --streamline), AMD's FSR 3.1 library with --ffx, its two FSR 4 libraries with --ffx4, the
-button art with --prompt-art, and README-BuildKit.md; no game code, data or anything generated from the game.
+button art, and README-BuildKit.md; no game code, data or anything generated from the game.
 check_content runs over the folder before it is zipped. The --xlate folder must hold a translator built from this
 checkout's sources (tools/build_xlate.py check_built), and the --dlssg DLL must export every function
 runtime/dlssg/nx2_sl.h declares (tools/build_dlssg.py check); the script stops first if not.
 
---prompt-art names folders that hold XGamepad, P5Gamepad and Keyboard_Mouse, or those three folders themselves: the
-pictures tools/pad_prompts.py reads go into the kit's prompt-art folder (tools/prompt_art.py art_files), and
-make_game.py draws the Xbox, PlayStation, Steam Deck and keyboard and mouse prompts from them. Without it the kit builds the game
-with the game's own prompts only.
+The button art is the repository's prompt-art folder, or the folders --prompt-art names (folders that hold XGamepad,
+P5Gamepad and Keyboard_Mouse, or those three folders themselves): the pictures tools/pad_prompts.py reads go into the
+kit's prompt-art folder with its SOURCE.md (tools/prompt_art.py art_files), and make_game.py draws the Xbox,
+PlayStation, Steam Deck and keyboard and mouse prompts from them. With --no-prompt-art the kit builds the game with the
+game's own prompts only.
 """
 import argparse
 import shutil
@@ -68,7 +69,10 @@ def main():
     ap.add_argument('--streamline', type=Path, metavar='SDK',
                     help='the Streamline SDK folder instead of downloading the SDK release with --dlssg')
     ap.add_argument('--prompt-art', type=Path, nargs='+', metavar='FOLDER',
-                    help='the button art: folders holding XGamepad, P5Gamepad and Keyboard_Mouse, or those folders')
+                    help='the button art: folders holding XGamepad, P5Gamepad and Keyboard_Mouse, or those folders '
+                         '(default: the repository\'s prompt-art)')
+    ap.add_argument('--no-prompt-art', action='store_true',
+                    help='carry no button art (the game keeps its own prompts; the build says so in its log)')
     ap.add_argument('--pipeline-list', type=Path, metavar='FILE',
                     help='the shared pipeline list to carry (tools/pipeline_list.py merge writes it; it is derived from game data and stays out of the repository)')
     ap.add_argument('--out', type=Path, default=ROOT / 'build' / 'kit')
@@ -88,6 +92,7 @@ def main():
         sys.exit(reason)
     if a.dlssg:   # a DLL older than runtime/dlssg/nx2_sl.h would leave features out at run time without an error
         build_dlssg.check(a.dlssg)
+    a.prompt_art = prompt_art.release_art(a.prompt_art, a.no_prompt_art)
     if a.prompt_art:
         prompt_art.art_files(a.prompt_art)   # the art is all there before anything is downloaded
     dlss = None if a.no_dlss else dlss_pin.resolve(a.dlss, ROOT / 'build' / 'dl')
@@ -122,7 +127,7 @@ def main():
         streamline_pin.place(a.dlssg, sdk, kit / 'bin' / 'dlssg')
     if a.prompt_art:   # make_game.py draws the button prompts from it (its prompts step)
         n, size = prompt_art.copy_art(a.prompt_art, kit / prompt_art.FOLDER)
-        print(f'button art: {n} pictures, {size / 1e6:.1f} MB')
+        print(f'button art: {n} pictures, {size / 1e6:.1f} MB, {prompt_art.source_of(kit / prompt_art.FOLDER)}')
     if a.pipeline_list:   # prepare_shaders.py reads it there (BUNDLED_PIPELINES)
         import pipeline_list
         if pipeline_list.unpack(a.pipeline_list.read_bytes()) is None:

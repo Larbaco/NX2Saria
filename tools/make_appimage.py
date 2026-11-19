@@ -15,10 +15,10 @@ NVIDIA's driver, AppRun's get_dlss), the pinned Vulkan Memory Allocator header, 
 distributions package), the pinned SDL3 (toolchain/sdl3, tools/sdl3_pin.py: its headers and libSDL3.so.0, for the
 distributions that package no SDL3, Ubuntu 24.04 and Linux Mint 22 among them; tools/make_game.py sdl3_choice takes the
 system's where the compiler finds it), and a relocatable CPython 3.14 (python-build-standalone, as `uv python install
-3.14` puts in ~/.local/share/uv/python) with numpy, lz4, zstandard, fonttools and pillow, and with --prompt-art the
-button art make_game.py's prompts step draws from (as make_kit.py --prompt-art: the pictures tools/prompt_art.py
-art_files names, into the kit's prompt-art folder; without it that step is skipped and the game keeps the Switch
-prompts). zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with pip
+3.14` puts in ~/.local/share/uv/python) with numpy, lz4, zstandard, fonttools and pillow, and the button art
+make_game.py's prompts step draws from (as make_kit.py takes it: the repository's prompt-art folder or the folders
+--prompt-art names, the pictures tools/prompt_art.py art_files names with its SOURCE.md, into the kit's prompt-art
+folder; with --no-prompt-art that step is skipped and the game keeps the Switch prompts). zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with pip
 into ~/.local/share/nx2saria/pydeps the first time it runs. An existing ~/.local/share/nx2navi/pydeps is reused in
 place.
 
@@ -224,7 +224,10 @@ def main():
     ap.add_argument('--out', type=Path, default=ROOT / 'dist', help='where the AppImage goes (default dist/)')
     ap.add_argument('--prompt-art', type=Path, nargs='+', metavar='FOLDER',
                     help='folders holding XGamepad, P5Gamepad and Keyboard_Mouse (or those folders): the button art, as '
-                         'make_kit.py --prompt-art takes it (a release zip\'s prompt-art folder does too)')
+                         'make_kit.py --prompt-art takes it (a release zip\'s prompt-art folder does too; default: '
+                         'the repository\'s prompt-art)')
+    ap.add_argument('--no-prompt-art', action='store_true',
+                    help='carry no button art (the game keeps its own prompts; the build says so in its log)')
     a = ap.parse_args()
 
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
@@ -234,6 +237,10 @@ def main():
         if not need.exists():
             sys.exit(f'{need} is missing (tools/build_xlate.py builds the translator; tools/build_game.py fetches VMA)')
     sys.path.insert(0, str(ROOT / 'tools'))
+    import prompt_art
+    a.prompt_art = prompt_art.release_art(a.prompt_art, a.no_prompt_art)
+    if a.prompt_art:
+        prompt_art.art_files(a.prompt_art)   # the art is all there before anything is built
     import build_xlate
     reason = build_xlate.check_built(xlate, 'nx2navi_xlate')   # the translator of this checkout's sources, or none
     if reason:
@@ -270,9 +277,8 @@ def main():
     shutil.copytree(vulkan_pin.resolve(ROOT / vulkan_pin.FOLDER), kit / vulkan_pin.FOLDER)
     carry_sdl3(kit)
     if a.prompt_art:
-        import prompt_art
         n, size = prompt_art.copy_art(a.prompt_art, kit / prompt_art.FOLDER)
-        print(f'button art: {n} files, {size / 1e6:.1f} MB')
+        print(f'button art: {n} files, {size / 1e6:.1f} MB, {prompt_art.source_of(kit / prompt_art.FOLDER)}')
 
     py = app / 'usr' / 'python'
     shutil.copytree(a.python, py, symlinks=True)

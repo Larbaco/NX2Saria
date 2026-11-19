@@ -99,6 +99,25 @@ jobs:
           ls -la
           sha256sum NX2Saria-Setup-*.exe NX2Saria-app-*.zip NX2Saria-runtime-*.zip NX2Saria-update.json NX2navi-update.json \
             | tee SHA256SUMS-windows.txt
+      - name: Button art in the release
+        # The launcher's build draws the Xbox, PlayStation, Steam Deck and keyboard prompts from app/<version>/prompt-art
+        # (tools/make_game.py, its prompts step); a release without it leaves the Controls menu saying their files are
+        # missing (issue #15). Every picture prompt-art/SHA256SUMS lists, with that SHA-256, and SOURCE.md.
+        run: |
+          $PY - build/launcher-release/NX2Saria-app-*.zip <<'EOF'
+          import hashlib, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          names = set(z.namelist())
+          want = dict(reversed(line.split('  ', 1)) for line in open('prompt-art/SHA256SUMS', encoding='utf-8').read().splitlines())
+          bad = [rel for rel, digest in want.items()
+                 if f'prompt-art/{rel}' not in names or hashlib.sha256(z.read(f'prompt-art/{rel}')).hexdigest() != digest]
+          if 'prompt-art/SOURCE.md' not in names:
+              bad.append('SOURCE.md')
+          if bad:
+              print(f'::error::{sys.argv[1]}: {len(bad)} of the button art files missing or different: {bad[:5]}')
+              sys.exit(1)
+          print(f'{sys.argv[1]}: button art complete ({len(want)} pictures and SOURCE.md)')
+          EOF
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release-${{ inputs.tag }}

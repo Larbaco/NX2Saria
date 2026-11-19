@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/controls.md source-hash=fd067c49a6d643d83b64e1e6ac60179ae5173d7e reviewed=no -->
+<!-- translation: lang=ru source=docs/controls.md source-hash=141a24538b667915f871fbbf518daaabba09ea67 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · **Русский** · [简体中文](../zh-Hans/controls.md)
 
@@ -81,13 +81,14 @@ X или квадрат; при `xbox`, `playstation` и `automatic` (по по�
 `romfs-patches-playstation`, `romfs-patches-playstation-label`, `romfs-patches-steamdeck` и
 `romfs-patches-steamdeck-label` (по положению и по подписи) и `romfs-patches-pc`, которые `runtime/romfs.c` загружает
 вместо файлов игры. `tools/pad_prompts.py` рисует их на компьютере игрока из собственного RomFS игрока и папки с
-изображениями кнопок, которой нет в репозитории. Выпуск лаунчера или набор для сборки, сделанный с `--prompt-art`,
-содержит эти изображения (`prompt-art`, `tools/prompt_art.py`), и `tools/make_game.py` рисует все папки на своём
+изображениями кнопок. Эти изображения лежат в папке `prompt-art` репозитория: картинки из набора под CC0, который
+назван вместе с источником в её `SOURCE.md`. Их содержит каждый выпуск лаунчера, AppImage и набор для сборки
+(`tools/prompt_art.py`), и `tools/make_game.py` рисует все папки на своём
 последнем шаге, а также снова всякий раз, когда меняются изображения, инструменты или строки `bind_` (поэтому пересборка
 после переназначения клавиш обновляет подсказки клавиатуры). Вручную:
 
 ```
-python tools\pad_prompts.py --art <art pack>\Source --game <install folder>
+python tools\pad_prompts.py --art prompt-art --game <install folder>
 ```
 
 `--style xbox|playstation|steamdeck|pc` создаёт один стиль; `steamdeck` показывает собственные подписи Deck (A B X Y
@@ -95,9 +96,12 @@ python tools\pad_prompts.py --art <art pack>\Source --game <install folder>
 стиля Deck в наборе изображений нет; клавиши берутся из `<install folder>\nx2saria.ini` (`--binds` указывает другой
 файл). Папка изображений содержит `XGamepad/Default`, `XGamepad/Light`, `P5Gamepad/Default`, `P5Gamepad/Light`,
 `Keyboard_Mouse/Dark` и `Keyboard_Mouse/White` с именами файлов из `STYLES` и `KEY_ART` в инструменте; клавиша, для
-которой нет картинки, пишется на `Keyboard_Mouse/Blanks`. Без папок строка показывает *нет файлов подсказок*, и остаются
-подсказки Switch; так же происходит, когда мод RomFS заменяет один из тех же файлов (*выкл.: мод RomFS заменяет их
-файлы*). В журнале есть строка `RomFS overlay: ... button prompts` для используемой папки. Инструменту нужны fontTools,
+которой нет картинки, пишется на `Keyboard_Mouse/Blanks`. Без папок строка показывает *нет файлов подсказок: обновите игру или
+пересоберите её в лаунчере* (Rebuild the Game в лаунчере Windows, Update в AppImage для Linux), и остаются подсказки
+Switch; так же происходит, когда мод RomFS заменяет один из тех же файлов (*выкл.: мод RomFS заменяет их
+файлы*). В журнале есть строка `button prompts:` при запуске, которая говорит, из чего сборка нарисовала подсказки или
+почему не нарисовала ни одной (`button-prompts.txt` в папке игры), и строка `RomFS overlay: ... button prompts` для
+используемой папки. Инструменту нужны fontTools,
 Pillow и zstandard (`tools/requirements-py314.txt`).
 
 Действия — это собственные действия игры, как их называет её экран *Basic Controls* (меню Plus, System):

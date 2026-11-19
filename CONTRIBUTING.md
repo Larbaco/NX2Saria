@@ -25,6 +25,15 @@ Code may be copied only from projects under MIT, BSD, ISC, zlib or Apache-2.0. E
 
 GPL code is never copied, and none goes into the game binary. Unicorn (GPL) is fine as a separate test tool.
 
+## Art from other projects
+
+Art goes into the repository only when its licence is clearly free (CC0 or an equivalent public-domain dedication) and
+its origin is recorded. Its folder holds a `SOURCE.md` (author, pack and version, the page it came from with an archived
+copy, the licence as that page states it, the date it was checked, the download's SHA-256) and a `SHA256SUMS` of every
+picture, which go in unmodified. `tools/check_content.py` refuses a picture of `prompt-art/` (the button prompt art)
+that is not listed or differs from its SHA-256. Art of unknown or restricted licence stays out of the repository and
+of the releases.
+
 ## Reporting bugs
 
 Open an issue at https://github.com/Larbaco/NX2Saria/issues; its forms ask for the details below. Include the port version and game update from the title line of the settings menu (F1), your GPU and driver, the log (`logs\nx2saria.log` in the game folder; after a crash, copy it before you start the game again), and the steps to reproduce. Screenshots are fine; recordings of long gameplay are not needed.

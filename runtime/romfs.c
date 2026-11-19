@@ -1053,6 +1053,15 @@ static void overlay_init(void) {
                   : patches && !wide                      ? ROMFS_PROMPTS_PATCHES
                   : !romfs_prompts_ready(prompts_wanted)  ? (shaped ? ROMFS_PROMPTS_SHAPE : ROMFS_PROMPTS_MISSING)
                                                           : ROMFS_PROMPTS_OK;
+    // Where the build drew the Xbox, PlayStation, Steam Deck and keyboard prompts from, or why it drew none (its
+    // record in the game folder), whatever the prompts asked for: a report's log then says which prompts the
+    // Controls menu can offer.
+    char record[512];
+    if (input_prompts_record(index_dir, record, sizeof record))
+        rt_log("button prompts: %s (button-prompts.txt)", record);
+    else
+        rt_log("button prompts: the game folder has no button-prompts.txt (a build before NX2Saria recorded where "
+               "its prompts come from, or a game folder made by hand)");
     restbl_find();
     size_t first = noverlay;
     if (prompts_wanted && prompts_off == ROMFS_PROMPTS_OK) {
@@ -1073,7 +1082,8 @@ static void overlay_init(void) {
                                                                   "(tools/make_romfs_patches.py --prompts pc --aspect)"
                                                              : "the game resolution takes its own UI layout")
                : prompts_off == ROMFS_PROMPTS_PATCHES ? "NX2SARIA_ROMFS_PATCHES is set"
-                                                      : "their folder has no manifest.tsv (tools/pad_prompts.py writes it)");
+                                                      : "their folder has no manifest.tsv (the build draws it when its "
+                                                        "version carries button art: see the button prompts line)");
     }
     size_t prompts_end = noverlay;
     char plain[2100];   // romfs-patches, when it has a manifest
