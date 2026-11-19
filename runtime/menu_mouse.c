@@ -252,6 +252,9 @@ static void reserve_focus(const Ui *u, uint64_t s, uint64_t e) {
 // ---- the pad presses the pad read adds (menu_mouse_poll): counts the interface thread raises, the pad read spends
 static const int press_bit[MM_PRESSES] = {B_A, B_B, B_UP, B_DOWN, B_L, B_R};   // (menu_mouse_geom.h MM_A..MM_R)
 static volatile int32_t pending[MM_PRESSES];
+// A walk to a clicked pause-menu tab is under way (the interface thread sets it); the pad read sets g_walk_player when
+// the player's own pad or keys press L, R, the d-pad or the left stick meanwhile, and the walk stops
+static volatile int32_t g_walk, g_walk_player;
 static volatile int32_t g_pointer;           // a menu has the pointer: input_cursor_allowed releases the capture
 static volatile uint64_t g_active_ms;        // the last interface update that found a menu for the mouse, or a focus
                                              // on a screen that opens or closes (between two menus)
@@ -450,6 +453,8 @@ void menu_mouse_screen_host(Cpu *c) {
     // (a walk to a clicked tab stops for any other wish of the player: a right click, the wheel)
     int32_t wheel = input_menu_wheel_take();
     if ((click_r || wheel) && tab_goal >= 0) tab_log("left for the player's input at", tab_goal, page), tab_goal = -1;
+    if (plat_xchg32(&g_walk_player, 0) && tab_goal >= 0)
+        tab_log("left for the player's d-pad, stick, L or R at", tab_goal, page), tab_goal = -1;
     float tx = 0, ty = 0;   // the pointer in layout units, for the pause menu's tab row
     if (pos) mm_to_layout(px, py, ux, uy, &tx, &ty);
     int on_tabs = pause && pos && mm_tab_at(tx, ty) >= 0;
@@ -471,6 +476,7 @@ void menu_mouse_screen_host(Cpu *c) {
             }
         }
     }
+    plat_xchg32(&g_walk, tab_goal >= 0);
     if (wheel && on_tabs) {   // over the pause menu's tab row a notch turns the page: up the one before (L), down the next
         mm_queue(pending, wheel > 0 ? MM_L : MM_R, 1);
         st.wheel += (unsigned)(wheel < 0 ? -wheel : wheel);
@@ -505,6 +511,7 @@ void menu_mouse_screen_host(Cpu *c) {
         else if (page < 0) tab_log("clicked, the page now not known for", tab, page), tab_goal = -1;
         else if (tab != page) tab_goal = tab, tab_ms = now, step_ms = 0, tab_log("clicked", tab, page);
         else tab_goal = -1;   // (the page shown: nothing to walk to, a walk under way stops)
+        plat_xchg32(&g_walk, tab_goal >= 0), plat_xchg32(&g_walk_player, 0);
         return;
     }
     if (i < 0) {
@@ -549,6 +556,9 @@ void menu_mouse_poll(uint64_t *buttons) {
         if (now < __atomic_load_n(&hold_until, __ATOMIC_ACQUIRE)) *buttons |= __atomic_load_n(&hold_bit, __ATOMIC_RELAXED);
         return;
     }
+    const uint64_t walk_keys = 1ull << B_L | 1ull << B_R | 1ull << B_LEFT | 1ull << B_UP | 1ull << B_RIGHT |
+                               1ull << B_DOWN | 1ull << B_SL_LEFT | 1ull << B_SL_UP | 1ull << B_SL_RIGHT | 1ull << B_SL_DOWN;
+    if (__atomic_load_n(&g_walk, __ATOMIC_RELAXED) && (*buttons & walk_keys)) plat_xchg32(&g_walk_player, 1);
     // No menu for the mouse for IDLE_MS (gameplay, a movie, the overlay): the pointer goes, the camera takes the mouse
     if (menu_mouse_pointer() && (int64_t)(now - active) > IDLE_MS) {
         static int lines;

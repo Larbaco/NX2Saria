@@ -66,7 +66,8 @@ button's root pane through the panes that hold them (+0x108) to a layout named `
 `PaEquipmentMenu_00`, `PaItemMenu_00` or `PaSystemMenu_00` (`pause_page_of`). A click on another page's name queues
 L or R, one at a time and each once the page has landed for 250 ms, until that page shows (given up after 4 s). A
 click on a sign is one L or R, and the wheel over the row is L (up) or R (down). A walk stops for a click on the page
-already shown, a right click, the wheel, or the page moving the other way (the player's own L or R). The log has
+already shown, a right click, the wheel, the page moving the other way, or the player's own d-pad, left stick, L or R
+(seen by the pad read before it adds the walk's presses). The log has
 `menu_mouse: pause menu tab <page> clicked (page <now>)` and `... reached` or `... given up at`, and the per-menu line
 counts the clicks on the tab row apart from those on no button.
 
