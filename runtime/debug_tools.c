@@ -1010,9 +1010,10 @@ enum {
     FOV_NO_EVENT_MANAGER = 1u << 6, FOV_EVENT_UNREADABLE = 1u << 7, FOV_ACTIVE_EVENT = 1u << 8,
     FOV_NO_PLAYER = 1u << 9, FOV_PLAYER_FLAGS_UNREADABLE = 1u << 10, FOV_AIMING = 1u << 11,
     FOV_MESSAGE_LOG = 1u << 12, FOV_CAMERA_ZERO_UNREADABLE = 1u << 13,
-    FOV_BAD_ANGLE = 1u << 14, FOV_UNCHANGED_ANGLE = 1u << 15
+    FOV_MESSAGE_LOG_STAYS_SET = 1u << 14, FOV_BAD_ANGLE = 1u << 15, FOV_UNCHANGED_ANGLE = 1u << 16
 };
 static atomic_uint fov_diagnostics;
+static atomic_uint fov_message_log_set_samples;
 static atomic_flag fov_hook_logged = ATOMIC_FLAG_INIT;
 static atomic_flag fov_message_log_clear_logged = ATOMIC_FLAG_INIT;
 static int fov_first(unsigned reason) {
@@ -1082,6 +1083,8 @@ void dbg_fov_host(Cpu *c) {
             rt_log("fov: camera zero unreadable, message-log check skipped");
     } else if (camera_flags & 1) {
         fov_skip_once(FOV_MESSAGE_LOG, "message log owns the view");
+        if (atomic_fetch_add_explicit(&fov_message_log_set_samples, 1, memory_order_relaxed) == 63)
+            fov_skip_once(FOV_MESSAGE_LOG_STAYS_SET, "message-log flag remained set in 64 gameplay lens samples");
         return;
     } else if (!atomic_flag_test_and_set_explicit(&fov_message_log_clear_logged, memory_order_relaxed)) {
         rt_log("fov: message-log flag clear (camera zero flags %#x)", camera_flags);

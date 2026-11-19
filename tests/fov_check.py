@@ -21,6 +21,8 @@ def main():
     assert 'fov_skip_once(FOV_MESSAGE_LOG, "message log owns the view")' in source
     assert 'fov: message-log flag clear (camera zero flags %#x)' in source
     assert 'atomic_flag_test_and_set_explicit(&fov_message_log_clear_logged' in source
+    assert 'message-log flag remained set in 64 gameplay lens samples' in source
+    assert '== 63)' in source
     assert 'fov: camera zero unreadable, message-log check skipped' in source
     assert 'camera_zero_readable = camera_zero && rd(camera_zero + 0x88, &camera_flags, sizeof camera_flags);' in source
     assert source.index('rt_log("fov: camera zero unreadable, message-log check skipped")') < source.index('float angle = orig * res_fov_factor();')
