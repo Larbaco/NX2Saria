@@ -1094,6 +1094,15 @@ static void row_upscaling(void) {
     if (e.kind < DLSS && !strcmp(opt_value("NX2SARIA_AA"), "taa")) opt_apply("NX2SARIA_AA", "game");
 }
 
+// The shares the Scene resolution row and Dynamic resolution's minimum list.
+static const char *const scene_shares[] = {"0.33", "0.4", "0.5", "0.58", "0.67", "0.75", "1"};
+
+// DLSS or FSR sizes the scene through its mode (upscaling_name's condition, over the draft's values): a scene share set
+// in the menu does nothing then.
+static bool upscaler_sizes_scene(void) {
+    return opt_bool("NX2SARIA_DLAA") && (strcmp(opt_value("NX2SARIA_TAA"), "fsr3") || vk_ffx_available());
+}
+
 // Scene resolution (NX2SARIA_SCENE_SHARE, widescreen.c plain_share): the 3D scene's share of the picture while neither
 // DLSS nor FSR runs (their modes size the scene then; the condition is upscaling_name's, over the draft's values),
 // where the share can be set (wide_scene_settable). The HUD and menus are drawn at the picture's size (GAME_RES), so a
@@ -1101,10 +1110,9 @@ static void row_upscaling(void) {
 // that entry is named so and takes the place of the fixed share it equals. 100 % is the Upscaling row's Native. Live,
 // with the Upscaling row's note on the render-target heap (scene_note).
 static void row_scene_res(void) {
-    if (!wide_scene_settable()) return;
-    if (opt_bool("NX2SARIA_DLAA") && (strcmp(opt_value("NX2SARIA_TAA"), "fsr3") || vk_ffx_available())) return;
-    static const char *const fixed[] = {"0.33", "0.4", "0.5", "0.58", "0.67", "0.75", "1"};
-    enum { N = sizeof fixed / sizeof *fixed };
+    if (!wide_scene_settable() || upscaler_sizes_scene()) return;
+    const char *const *fixed = scene_shares;
+    enum { N = sizeof scene_shares / sizeof *scene_shares };
     const CfgMeta *m = cfg_meta("NX2SARIA_SCENE_SHARE");
     const char *d = opt_default("NX2SARIA_SCENE_SHARE");
     const double dv = d && *d ? atof(d) : 0.75, game = m ? atof(m->def) : 0.75;
@@ -1146,6 +1154,30 @@ static void row_scene_res(void) {
     int nv = opt_choice_index("NX2SARIA_SCENE_SHARE", UI_MENU_SCENE_RES, names, n, cur, def, UI_MENU_SCENE_RES_DESC,
                               scene_note());
     if (nv >= 0 && nv < n) opt_apply("NX2SARIA_SCENE_SHARE", values[nv]);
+}
+
+// Dynamic resolution (NX2SARIA_DYN_RES, dynres.c), live: the scene's size follows the GPU's time per frame, through the
+// upscaler's mode while DLSS or FSR runs and through the scene share without one, so the row is shown either way where
+// the scene's size can be set (wide_scene_settable: the upscaler's modes size the scene through the same patch set).
+// Its minimum (NX2SARIA_DYN_RES_MIN, live) is the floor of the scene share only: shown where row_scene_res is, with
+// its shares as percentages, and greyed while dynamic resolution is off (the draft's value), so it reads as part of it.
+// A minimum set by hand that is none of them shows as it is.
+static void row_dyn_res(void) {
+    if (!wide_scene_settable()) return;
+    opt_toggle("NX2SARIA_DYN_RES", UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC);
+    if (upscaler_sizes_scene()) return;
+    enum { N = sizeof scene_shares / sizeof *scene_shares };
+    static char text[N][16];
+    const char *names[N];
+    const double now = atof(opt_value("NX2SARIA_DYN_RES_MIN"));
+    int cur = -1;
+    for (int i = 0; i < N; i++) {
+        snprintf(text[i], sizeof text[i], "%.0f %%", atof(scene_shares[i]) * 100);
+        names[i] = text[i];
+        if (fabs(atof(scene_shares[i]) - now) < 0.001) cur = i;
+    }
+    if (!opt_bool("NX2SARIA_DYN_RES")) opt_disable_next(UI_MENU_DYN_RES_MIN_OFF);
+    opt_choice_list("NX2SARIA_DYN_RES_MIN", UI_MENU_DYN_RES_MIN, scene_shares, names, N, UI_MENU_DYN_RES_MIN_DESC, cur);
 }
 
 // ---- the quality preset (cfg.h cfg_preset_*, preset_pick.h). The row's choices: Recommended (the tier this PC gets,
@@ -1620,6 +1652,7 @@ static void tab_screen(float scale) {
     opt_slider("NX2SARIA_FOV", UI_MENU_FOV, 70, 140, UI_MENU_FOV_DESC, 5, "%.0f %%");
     row_upscaling();
     row_scene_res();
+    row_dyn_res();
     row_aa();
     row_framegen();
     row_hdr();

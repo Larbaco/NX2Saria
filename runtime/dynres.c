@@ -32,11 +32,13 @@
 //   - a step up that a step down undoes within DYN_UP_PROVEN_NS (5 s) doubles that wait, up to DYN_UP_WAIT_MAX_NS
 //     (48 s): where one step's cost is larger than the gap between the two thresholds, the steps would otherwise swing
 //     between the same two sizes every four seconds. A step up held 5 s brings the wait back to 3 s.
-// The target is NX2SARIA_DYN_RES_TARGET milliseconds when that is set (1 to 100), else the frame time of the limit the
-// game draws at (frame_rate.c frame_step_game_hz: 1000 / the limit, the monitor's rate for display, the drawn frames
-// with frame generation), and 16.7 ms, a 60 Hz frame, while that rate is unknown or unlimited. A fixed 16.7 ms target
-// let the GPU take up to 18 ms a frame at full size under a 120 or 144 fps limit, and a hold of 45 presented frames
-// lasted 0.19 s at 240 fps.
+// The target is NX2SARIA_DYN_RES_TARGET milliseconds when that is set (1 to 100), exactly. Unset (0) it is 90 % of the
+// frame time of the limit the game draws at (frame_rate.c frame_step_game_hz: 1000 / the limit, the monitor's rate for
+// display, the drawn frames with frame generation), of 16.7 ms, a 60 Hz frame, while that rate is unknown or
+// unlimited: 15.0 ms at 60 fps, 22.5 ms at 40, 30.0 ms at 30. The 10 % margin (DYN_MARGIN) moves the thresholds below
+// the frame time: a step down comes at 108 % of the target, 97 % of the frame time, before frames are lost, and a step
+// up under 75 % of it, 67.5 % of the frame time. A fixed 16.7 ms target let the GPU take up to 18 ms a frame at full
+// size under a 120 or 144 fps limit, and a hold of 45 presented frames lasted 0.19 s at 240 fps.
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -49,7 +51,8 @@
 #include "platform/platform.h"
 
 #define DYN_LEVELS 4
-#define DYN_TARGET_MS 16.7   // the target while the game's rate is unknown or unlimited: a 60 Hz frame
+#define DYN_TARGET_MS 16.7   // the frame time while the game's rate is unknown or unlimited: a 60 Hz frame
+#define DYN_MARGIN 0.9       // the automatic target's share of the frame time: 10 % under it
 static const char *const DYN_MODE[DYN_LEVELS] = {"quality", "balanced", "performance", "ultra_performance"};
 
 #define DYN_SHARES 12          // the most scene-share steps: 1 down to 0.33 takes 9
@@ -139,11 +142,21 @@ static void state_log(const char *line) {
     if (said < DYN_STATE_LINES) said++, rt_log("%s", line);
 }
 
-// The target in ns: the setting's, else the frame time of the rate the game draws at under the limit.
+// The target in ns: the setting's, else DYN_MARGIN of the frame time of the rate the game draws at under the limit.
 static double target_now_ns(void) {
     if (D.target_ms >= 1) return D.target_ms * 1e6;
     double hz = frame_step_game_hz();
-    return (hz > 0 ? 1000.0 / hz : DYN_TARGET_MS) * 1e6;
+    return (hz > 0 ? 1000.0 / hz : DYN_TARGET_MS) * DYN_MARGIN * 1e6;
+}
+
+// Where the target comes from, for the log: "as set", else the frame time it is DYN_MARGIN of, with digits decimals.
+static const char *target_why(int digits, char *buf, size_t n) {
+    double hz = frame_step_game_hz(), pct = (1 - DYN_MARGIN) * 100;
+    if (D.target_ms >= 1) snprintf(buf, n, "as set");
+    else if (hz > 0) snprintf(buf, n, "the frame limit's %.*f ms less %.0f %%", digits, 1000.0 / hz, pct);
+    else snprintf(buf, n, "a 60 Hz frame's %.*f ms less %.0f %%, the frame limit being unknown or unlimited", digits,
+                  DYN_TARGET_MS, pct);
+    return buf;
 }
 
 // The settings, again whenever one changed (the menu switches them live) or the share in effect or the path moved.
@@ -163,7 +176,7 @@ static void dynres_read(void) {
     if (hold < DYN_HOLD_MIN_NS) hold = DYN_HOLD_MIN_NS;
     int on = D.want && (plain ? floor_at > 0 : base >= 0);
     int moved = plain != D.plain || (plain ? from != D.from || min != D.min : strcmp(m, D.base_mode) != 0);
-    char line[320], a[48], b[48];
+    char line[320], a[48], b[48], why[96];
     if (D.on && !on) {   // a run that goes on with other settings logs its new start line below instead
         snprintf(line, sizeof line, "resolution: dynamic resolution off: %s as set", step_name(D.base, a, sizeof a));
         state_log(line);
@@ -186,7 +199,7 @@ static void dynres_read(void) {
                  "resolution: dynamic resolution on (%s): target %.1f ms (%s), steps at least %.2f s apart and %.0f s "
                  "from a step down to a step up, %s down to %s",
                  plain ? "the scene share, no upscaler runs" : "the upscaler's mode", D.target_ns / 1e6,
-                 D.target_ms >= 1 ? "as set" : "the frame limit's", hold / 1e9, DYN_UP_WAIT_NS / 1e9,
+                 target_why(1, why, sizeof why), hold / 1e9, DYN_UP_WAIT_NS / 1e9,
                  step_name(D.base, a, sizeof a), step_value(D.low, b, sizeof b));
         state_log(line);
         D.why[0] = 0;
@@ -235,9 +248,10 @@ void dynres_frame(void) {
     if (fabs(D.target_ns - D.logged_ns) > D.logged_ns * 0.01) {
         static int said;
         if (said < 20) {
+            char why[96];
             said++, D.logged_ns = D.target_ns;
             rt_log("resolution: dynamic resolution: target %.2f ms (%s)", D.target_ns / 1e6,
-                   D.target_ms >= 1 ? "as set" : "the frame limit's");
+                   target_why(2, why, sizeof why));
         }
     }
     uint64_t now = vk_gpu_busy_all(), d = now - D.last_busy;

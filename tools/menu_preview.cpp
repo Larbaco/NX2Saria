@@ -8,6 +8,8 @@
 //
 // tools/menu_preview.py builds and runs it:
 //   menu_preview <font.ttf> <scene: menu | overlay | boot> <width> <height> <out.rgba> [art folder]
+// Settings come from NX2SARIA_ environment variables over the few set here (menu_preview.py --lang and --set write
+// them), and MENU_PREVIEW_FOCUS names the row that takes the cursor (--focus).
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -42,6 +44,7 @@ static const CfgMeta kMeta[] = {
     {"UPSCALER", "bilinear", "bilinear|fsr", 0},         {"SHARPNESS", "50", "0..100", 1},
     {"ASPECT", "fit", "fit|stretch", 1}, {"MENU_LANG", "", NULL, 1},
     {"PRESET", "recommended", "recommended|low|medium|high|ultra", 1}, {"SCENE_SHARE", "0.75", "0..1", 1},
+    {"DYN_RES", "0", "0|1", 1},          {"DYN_RES_MIN", "0.5", "0.33..1", 1},
 };
 static const struct { const char *key, *value; } kSet[] = {{"VK_PRESENT", "mailbox"}, {"PERF_OVERLAY", "full"}};
 
@@ -56,7 +59,10 @@ const CfgMeta *cfg_meta(const char *key) {
     return NULL;
 }
 const CfgMeta *cfg_meta_at(int i) { return i >= 0 && i < (int)(sizeof kMeta / sizeof *kMeta) ? &kMeta[i] : NULL; }
-const char *cfg_get(const char *name) {
+const char *cfg_get(const char *name) {   // the environment first, as the game reads it
+    char env[96];
+    snprintf(env, sizeof env, "NX2SARIA_%s", strip(name));
+    if (const char *v = getenv(env)) return v;
     for (auto &s : kSet)
         if (!strcasecmp(s.key, strip(name))) return s.value;
     return NULL;
@@ -184,7 +190,7 @@ static void triforce(ImDrawList *dl, float x, float y, float h, ImU32 col) {
     dl->AddTriangleFilled(mr, r, mb, col);
 }
 
-static void scene_menu(float w, float h, float scale, ImFont *title, bool first) {
+static void scene_menu(float w, float h, float scale, ImFont *title, int frame) {
     backdrop(w, h);
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(10, 6, 2, 150));
     float ww = fminf(w * 0.88f, 1400 * scale), wh = fminf(h * 0.86f, 820 * scale);
@@ -236,7 +242,11 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
             if (!shown) continue;
             ImGui::Spacing();
             opt_reserve_bottom(bottom);
-            if (first) opt_focus_first();
+            // the first row takes the cursor as the menu opens; a row named by MENU_PREVIEW_FOCUS takes it a frame
+            // later, as a key does in the game, once ImGui has given the new window its first item
+            const char *focus = getenv("MENU_PREVIEW_FOCUS");
+            if (frame == 0) opt_focus_first();
+            if (frame == 1 && focus && *focus) opt_focus_key(focus);
             // the Screen tab's first rows, as menu.cpp tab_screen shows them
             opt_begin("##screen", scale);
             opt_toggle("NX2NAVI_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
@@ -264,6 +274,12 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
             snprintf(native, sizeof native, menu_text(UI_MENU_SCENE_RES_NATIVE), "100 %");
             const char *shares[] = {"33 %", "40 %", "50 %", "58 %", "67 %", game, native};
             opt_choice_index("NX2NAVI_SCENE_SHARE", UI_MENU_SCENE_RES, shares, 7, 5, 5, UI_MENU_SCENE_RES_DESC);
+            // the Dynamic resolution rows as menu.cpp row_dyn_res shows them without an upscaler
+            opt_toggle("NX2SARIA_DYN_RES", UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC);
+            static const char *const mins[] = {"0.33", "0.4", "0.5", "0.58", "0.67", "0.75", "1"};
+            static const char *const min_names[] = {"33 %", "40 %", "50 %", "58 %", "67 %", "75 %", "100 %"};
+            if (!cfg_bool("NX2SARIA_DYN_RES")) opt_disable_next(UI_MENU_DYN_RES_MIN_OFF);
+            opt_choice_list("NX2SARIA_DYN_RES_MIN", UI_MENU_DYN_RES_MIN, mins, min_names, 7, UI_MENU_DYN_RES_MIN_DESC);
             static const UiTextId wide[] = {UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW, UI_MENU_GAME_ASPECT_21_9,
                                             UI_MENU_GAME_ASPECT_32_9};
             opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
@@ -473,7 +489,7 @@ int main(int argc, char **argv) {
     ImGui::SetCurrentFont(io.Fonts->Fonts[0]);
     for (int frame = 0; frame < 4; frame++) {   // a few frames: sizes settle and the first row takes the cursor
         ImGui::NewFrame();
-        if (!strcmp(scene, "menu")) scene_menu((float)w, (float)h, scale, title, frame == 0);
+        if (!strcmp(scene, "menu")) scene_menu((float)w, (float)h, scale, title, frame);
         else if (!strcmp(scene, "boot")) scene_boot((float)w, (float)h, scale, title);
         else scene_overlay((float)w, (float)h, scale);
         ImGui::Render();

@@ -239,10 +239,20 @@ is. The row is shown only while neither DLSS nor FSR is chosen, since their mode
 
 ### Dynamic resolution
 
-`dyn_res = 1` (off by default, in `nx2saria.ini` only; no tier turns it on) lets the scene's size follow the GPU's time
-per frame toward `dyn_res_target` (the frame limit's frame time unless set), one step at a time (`runtime/dynres.c`).
-The HUD and the text stay at the picture's size; only the scene changes. What it steps depends on what enlarges the
-scene:
+`dyn_res = 1` (off by default; no tier turns it on) lets the scene's size follow the GPU's time per frame toward a
+target, one step at a time (`runtime/dynres.c`). The HUD and the text stay at the picture's size; only the scene
+changes. The menu has it in *Settings > Screen > Picture*, below *Scene resolution* (`runtime/ui/menu.cpp`
+`row_dyn_res`): *Dynamic resolution* (on / off), shown with and without an upscaler, and *Minimum scene resolution*
+(`dyn_res_min`, the Scene resolution row's shares from 33 % to 100 %), greyed out while *Dynamic resolution* is off and
+hidden while DLSS or FSR runs, where it does nothing. Both are live. `dyn_res_target` and `dyn_res_step` stay in
+`nx2saria.ini` only.
+
+The target is `dyn_res_target` milliseconds when that is set (1 to 100), exactly. Unset (0) it is 90 % of the frame
+time of the rate the game draws at under the limit, of 16.7 ms while that rate is unknown or unlimited: 15.0 ms at
+60 fps, 22.5 ms at 40, 30.0 ms at 30. A step down comes at 108 % of the target (below), so with the 10 % margin the
+scene shrinks at 97 % of the frame time, before frames are lost, and grows back under 67.5 % of it.
+
+What it steps depends on what enlarges the scene:
 
 - **DLSS or FSR 3.1 running** (`upscaler_runs`): the upscaler's mode, from the `dlss` mode set down to performance.
   It needs an upscaling mode; with DLAA or FSR at native size it does nothing and the log says so.
@@ -261,12 +271,13 @@ the target, under the 8 % that would send it down again), at least 1 s between t
 more than the gap between the two thresholds, a step up that a step down undoes within 5 s doubles that wait, up to
 48 s, so the scene does not swing between two sizes every few seconds; a step up that holds 5 s brings it back to 3 s.
 
-Its log lines, at the start, at a step, every 600 frames and when it has no room:
+Its log lines, at the start, at a step, every 600 frames, when the limit moves the target and when it has no room:
 
 ```
-resolution: dynamic resolution on (the scene share, no upscaler runs): target 16.7 ms (the frame limit's), steps at least 1.00 s apart and 3 s from a step down to a step up, scene share 0.75 down to 0.50
-resolution: dynamic resolution: GPU 19.40 ms a frame against 16.67 ms: scene share 0.75 -> 0.65
-resolution: dynamic resolution: GPU 15.10 ms a frame, scene share 0.65, target 16.67 ms
+resolution: dynamic resolution on (the scene share, no upscaler runs): target 15.0 ms (the frame limit's 16.7 ms less 10 %), steps at least 1.00 s apart and 3 s from a step down to a step up, scene share 0.75 down to 0.50
+resolution: dynamic resolution: GPU 17.40 ms a frame against 15.00 ms: scene share 0.75 -> 0.65
+resolution: dynamic resolution: GPU 13.10 ms a frame, scene share 0.65, target 15.00 ms
+resolution: dynamic resolution: target 7.50 ms (the frame limit's 8.33 ms less 10 %)
 resolution: dynamic resolution has no room: the scene share 0.40 is at or under dyn_res_min 0.50, the lowest it may go; the scene stays at 0.40
 ```
 

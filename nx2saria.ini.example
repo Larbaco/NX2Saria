@@ -192,9 +192,11 @@
 # frame's commands begin with a wait for that signal (0 to 100; 0: the frame is set aside at once and drawn at its
 # present, as before).
 # gate_wait_ms = 10
-# Dynamic resolution, 0 or 1, applied at once: the 3D scene's resolution follows the GPU time per frame toward
-# dyn_res_target milliseconds (1 to 100; 0 is the time of a frame the game draws under fps_limit, 1000 / the limit, and
-# 16.7 with fps_limit = unlimited), one step at a time; the HUD and the text keep the picture's size. While DLSS or FSR
+# Dynamic resolution, 0 or 1, applied at once (the menu's Dynamic resolution row): the 3D scene's resolution follows
+# the GPU time per frame toward dyn_res_target milliseconds, one step at a time; the HUD and the text keep the
+# picture's size. dyn_res_target 1 to 100 is that target exactly; 0 is 90 % of the time of a frame the game draws under
+# fps_limit (1000 / the limit; 16.7 ms with fps_limit = unlimited): 15 ms at 60 fps. A step down comes at 108 % of the
+# target, so with that margin the scene shrinks at 97 % of the frame time, before frames are lost. While DLSS or FSR
 # runs it steps the upscaler's mode, from the DLSS mode set (an upscaling one) down to performance. Without them it
 # steps scene_share, from the share in effect (the one set, the quality preset's, or 0.75) down to dyn_res_min, each
 # step 0.87 of the one above on each axis; a scene_share at or under dyn_res_min leaves it no room. Each step is held
@@ -204,7 +206,8 @@
 # dyn_res = 0
 # dyn_res_target = 0
 # dyn_res_step = 45
-# The lowest scene share dynamic resolution takes without DLSS or FSR, 0.33 to 1. Default: 0.5.
+# The lowest scene share dynamic resolution takes without DLSS or FSR, 0.33 to 1 (the menu's Minimum scene resolution
+# row). Default: 0.5.
 # dyn_res_min = 0.5
 # Processors. On a processor whose dies have L3 caches of different sizes (AMD's two-die X3D processors, with 3D
 # V-Cache on one die) the game runs on the die with the larger cache when that die has 8 cores or more: 1 = on,

@@ -2,8 +2,10 @@
 the settings, the GPU's busy time, the clock and the game's rate under the limit (frame_rate.c frame_step_game_hz),
 and checks that
 
-  - the default target is the frame time of the game's rate (1000 / the limit: 60, 144 and 240 fps), 16.7 ms while
-    that rate is unknown or unlimited, and a target that is set wins at any rate;
+  - the default target is 90 % of the frame time of the game's rate (1000 / the limit: 30, 40, 60, 144 and 240 fps;
+    15.0 ms at 60, 22.5 ms at 40), of 16.7 ms while that rate is unknown or unlimited, and the start line names the
+    frame time and the margin; a GPU at 98 % of a 60 fps frame steps down, at 96 % it holds; a target that is set wins
+    at any rate, exactly, without the margin;
   - a limit changed while it runs moves the target on the next frame, with one log line, also when the menu changed
     it (or dyn_res_target) and dynres_read took the new target first; a refresh rate wandering under 1 % after the
     start line logs nothing, and after dyn_res off and on a move back to the earlier run's last target is logged;
@@ -123,8 +125,9 @@ static int run(double hz, double secs, double (*model)(int), double *lo, double 
     return switches;
 }
 
-// GPU models against a 60 fps target (16.67 ms). The plain path's time follows the scene's pixels.
-static double T60 = 1000.0 / 60, load;
+// GPU models against the 60 fps target (15 ms: 90 %% of the 16.67 ms frame). The plain path's time follows the scene's
+// pixels.
+static double T60 = 900.0 / 60, load;
 static double heavy(int k) { (void)k; return T60 * 2; }
 static double light(int k) { (void)k; return T60 * 0.3; }
 static double pixels(int k) { (void)k; double r = share_now() / wbase; return T60 * load * r * r; }
@@ -139,24 +142,42 @@ static void plain_start(double base, double min) {
 }
 
 int main(void) {
-    // The default target follows the game's rate.
-    static const double rates[] = {60, 144, 240, 0};
-    for (int i = 0; i < 4; i++) {
-        game_hz = rates[i];
+    // The default target follows the game's rate, 10 %% under its frame time.
+    static const struct { double hz; const char *line; } rates[] = {
+        {60, "target 15.0 ms (the frame limit's 16.7 ms less 10 %%)"},
+        {40, "target 22.5 ms (the frame limit's 25.0 ms less 10 %%)"},
+        {30, "target 30.0 ms (the frame limit's 33.3 ms less 10 %%)"},
+        {144, "(the frame limit's 6.9 ms less 10 %%)"},
+        {240, "(the frame limit's 4.2 ms less 10 %%)"},
+        {0, "target 15.0 ms (a 60 Hz frame's 16.7 ms less 10 %%, the frame limit being unknown or unlimited)"}};
+    for (int i = 0; i < 6; i++) {
+        game_hz = rates[i].hz;
         restart();
-        double want = rates[i] > 0 ? 1e9 / rates[i] : 16.7e6;
-        CHECK(NEAR(D.target_ns, want), "at %%.0f fps the target is %%.3f ms, want %%.3f", rates[i], D.target_ns / 1e6,
-              want / 1e6);
-        CHECK(strstr(last_log, "dynamic resolution on") && strstr(last_log, "the frame limit's"), "start line: %%s",
+        double want = 0.9 * (rates[i].hz > 0 ? 1e9 / rates[i].hz : 16.7e6);
+        CHECK(NEAR(D.target_ns, want), "at %%.0f fps the target is %%.3f ms, want %%.3f", rates[i].hz,
+              D.target_ns / 1e6, want / 1e6);
+        CHECK(strstr(last_log, "dynamic resolution on") && strstr(last_log, rates[i].line), "start line: %%s",
               last_log);
     }
     CHECK(timing, "GPU timestamps asked for while it runs");
-    // A target that is set wins.
+    // The margin: at 60 fps a GPU at 96 %% of the frame time holds (under 108 %% of 15 ms, 16.2 ms), at 98 %% it steps
+    // down before frames are lost.
+    game_hz = 60;
+    restart();
+    int n = frames_to_change(60, 1000.0 / 60 * 0.96, 600);
+    CHECK(n < 0 && D.level == 0, "96 %%%% of a 60 fps frame moved the step to %%d", D.level);
+    n = frames_to_change(60, 1000.0 / 60 * 0.98, 600);
+    CHECK(n > 0 && D.level == 1, "98 %%%% of a 60 fps frame: step %%d after %%d frames", D.level, n);
+    // A target that is set wins, exactly: no margin.
     set_target_ms = 10, game_hz = 240;
     restart();
     frame(240, 1);
-    CHECK(NEAR(D.target_ns, 10e6) && strstr(last_log, "as set"), "a set target: %%.3f ms (%%s)", D.target_ns / 1e6,
-          last_log);
+    CHECK(NEAR(D.target_ns, 10e6) && strstr(last_log, "target 10.0 ms (as set)") && !strstr(last_log, "less"),
+          "a set target: %%.3f ms (%%s)", D.target_ns / 1e6, last_log);
+    set_target_ms = 15, game_hz = 60;
+    restart();
+    CHECK(NEAR(D.target_ns, 15e6) && strstr(last_log, "target 15.0 ms (as set)"), "a set 15 ms at 60 fps: %%.3f ms "
+          "(%%s)", D.target_ns / 1e6, last_log);
     set_target_ms = 0;
     // A limit changed while it runs: the next frame's target, one line.
     game_hz = 60;
@@ -164,7 +185,8 @@ int main(void) {
     int before = logs;
     game_hz = 144;
     frame(144, 1);
-    CHECK(NEAR(D.target_ns, 1e9 / 144) && logs == before + 1 && strstr(last_log, "6.94"), "live limit: %%.3f ms, %%d "
+    CHECK(NEAR(D.target_ns, 0.9e9 / 144) && logs == before + 1
+          && strstr(last_log, "target 6.25 ms (the frame limit's 6.94 ms less 10 %%)"), "live limit: %%.3f ms, %%d "
           "lines (%%s)", D.target_ns / 1e6, logs - before, last_log);
     before = logs;
     for (int k = 0; k < 100; k++) frame(144, 1);
@@ -173,7 +195,8 @@ int main(void) {
     before = logs;
     game_hz = 120, ver++;
     frame(120, 1);
-    CHECK(NEAR(D.target_ns, 1e9 / 120) && logs == before + 1 && strstr(last_log, "8.33 ms (the frame limit's)"),
+    CHECK(NEAR(D.target_ns, 0.9e9 / 120) && logs == before + 1
+          && strstr(last_log, "7.50 ms (the frame limit's 8.33 ms less 10 %%)"),
           "the menu's limit: %%.3f ms, %%d lines (%%s)", D.target_ns / 1e6, logs - before, last_log);
     before = logs;
     set_target_ms = 20, ver++;
@@ -197,7 +220,7 @@ int main(void) {
     before = logs;
     game_hz = 144;
     frame(144, 1);
-    CHECK(logs == before + 1 && strstr(last_log, "6.94"), "back to the earlier run's last target: %%d lines (%%s)",
+    CHECK(logs == before + 1 && strstr(last_log, "6.25"), "back to the earlier run's last target: %%d lines (%%s)",
           logs - before, last_log);
     // Each step is held for a time, whatever the frame rate, and never less than 1 s.
     static const struct { double hz; int step; double hold_s; } holds[] = {{60, 60, 1.0}, {240, 45, 1.0},
@@ -206,7 +229,7 @@ int main(void) {
         double hz = holds[i].hz;
         game_hz = hz, set_step = holds[i].step;
         restart();
-        double target = 1000 / hz;
+        double target = 900 / hz;   // 90 %% of the frame time
         int want = (int)ceil(holds[i].hold_s * hz);
         int n = frames_to_change(hz, target * 2, 100000);
         CHECK(D.level == 1 && n >= want - 1 && n <= want + 1, "%%.0f fps, step %%d: down after %%d frames, want %%d",
@@ -229,7 +252,7 @@ int main(void) {
     game_hz = 60;
     restart();
     frames_to_change(60, T60 * 2, 100000);
-    int n = frames_to_change(60, T60 * 0.3, 100000);
+    n = frames_to_change(60, T60 * 0.3, 100000);
     CHECK(D.level == 0 && n >= 180, "the mode path: up %%d frames after a step down, want 180 (3 s) or more", n);
 
     // ---- The plain path: no upscaler runs, widescreen.c gives the scene share in effect.

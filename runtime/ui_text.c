@@ -806,6 +806,17 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SCENE_RES_GAME] = "%s (game)",
     [UI_MENU_SCENE_RES_NATIVE] = "%s (native)",
     [UI_MENU_SCENE_RES_PRESET] = "%s (preset)",
+    [UI_MENU_DYN_RES] = "Dynamic resolution",
+    [UI_MENU_DYN_RES_DESC] = "Lowers the 3D scene's resolution while the graphics card cannot keep up with the Frame "
+        "rate limit, and raises it again when it can: a little sharpness in heavy scenes for a steadier frame rate. "
+        "The HUD and menus stay sharp. With DLSS or FSR it steps the upscaling mode down, as far as Performance; "
+        "without them it lowers the scene resolution, as far as the minimum below. Changes take effect at once.",
+    [UI_MENU_DYN_RES_MIN] = "Minimum scene resolution",
+    [UI_MENU_DYN_RES_MIN_DESC] = "The lowest Dynamic resolution takes the 3D scene to, as a share of the picture. "
+        "Lower keeps the frame rate steadier on a slow PC, but heavy scenes look softer. It never goes above the Scene "
+        "resolution you chose. With DLSS or FSR this does not apply: the upscaling mode steps down to Performance "
+        "instead. Changes take effect at once.",
+    [UI_MENU_DYN_RES_MIN_OFF] = "only with Dynamic resolution on",
 };
 
 static const char *const text_ru[UI_TEXT_COUNT] = {
@@ -1493,6 +1504,17 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SCENE_RES_GAME] = "%s (игра)",
     [UI_MENU_SCENE_RES_NATIVE] = "%s (родное)",
     [UI_MENU_SCENE_RES_PRESET] = "%s (пресет)",
+    [UI_MENU_DYN_RES] = "Динамическое разрешение",
+    [UI_MENU_DYN_RES_DESC] = "Снижает разрешение 3D-сцены, пока видеокарта не успевает за ограничением частоты кадров, "
+        "и снова повышает его, когда успевает: немного чёткости в тяжёлых сценах ради более ровной частоты кадров. "
+        "Интерфейс и меню остаются чёткими. С DLSS или FSR понижает режим апскейлера, не ниже «Производительность»; "
+        "без них снижает разрешение сцены, не ниже минимума из строки ниже. Изменения применяются сразу.",
+    [UI_MENU_DYN_RES_MIN] = "Мин. разрешение сцены",
+    [UI_MENU_DYN_RES_MIN_DESC] = "Самое низкое разрешение, до которого динамическое разрешение опускает 3D-сцену, как "
+        "доля картинки. Меньшее значение держит частоту кадров ровнее на слабом ПК, но тяжёлые сцены выглядят мягче. "
+        "Выше выбранного «Разрешения сцены» оно не поднимается. С DLSS или FSR не действует: вместо этого режим "
+        "апскейлера опускается до «Производительность». Изменения применяются сразу.",
+    [UI_MENU_DYN_RES_MIN_OFF] = "только с включённым динамическим разрешением",
 };
 
 static const char *const text_pt_br[UI_TEXT_COUNT] = {
@@ -2227,6 +2249,17 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SCENE_RES_GAME] = "%s (jogo)",
     [UI_MENU_SCENE_RES_NATIVE] = "%s (nativo)",
     [UI_MENU_SCENE_RES_PRESET] = "%s (preset)",
+    [UI_MENU_DYN_RES] = "Resolução dinâmica",
+    [UI_MENU_DYN_RES_DESC] = "Baixa a resolução da cena 3D enquanto a placa de vídeo não acompanha o Limite de quadros "
+        "e volta a subi-la quando ela dá conta: um pouco de nitidez nas cenas pesadas por uma taxa de quadros mais "
+        "estável. O HUD e os menus continuam nítidos. Com DLSS ou FSR, desce o modo do upscaler até Desempenho; sem "
+        "eles, baixa a resolução da cena até o mínimo abaixo. As mudanças valem na hora.",
+    [UI_MENU_DYN_RES_MIN] = "Resolução mínima da cena",
+    [UI_MENU_DYN_RES_MIN_DESC] = "O menor tamanho a que a Resolução dinâmica leva a cena 3D, como parte da imagem. "
+        "Menor mantém a taxa de quadros mais estável num PC fraco, mas as cenas pesadas ficam menos nítidas. Nunca "
+        "passa da Resolução da cena escolhida. Com DLSS ou FSR isto não vale: o modo do upscaler desce até Desempenho "
+        "no lugar. As mudanças valem na hora.",
+    [UI_MENU_DYN_RES_MIN_OFF] = "só com a Resolução dinâmica ligada",
 };
 
 // Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
@@ -2994,6 +3027,11 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SCENE_RES_GAME] = "%s（游戏）",
     [UI_MENU_SCENE_RES_NATIVE] = "%s（原生）",
     [UI_MENU_SCENE_RES_PRESET] = "%s（预设）",
+    [UI_MENU_DYN_RES] = "动态分辨率",
+    [UI_MENU_DYN_RES_DESC] = "显卡跟不上帧率上限时降低 3D 场景的分辨率，跟得上时再升回：在吃力的场面牺牲一点清晰度，换取更稳定的帧率。HUD 和菜单保持清晰。使用 DLSS 或 FSR 时逐级降低超分辨率模式，最低到“性能”；不使用时降低场景分辨率，最低到下方的最低值。更改立即生效。",
+    [UI_MENU_DYN_RES_MIN] = "最低场景分辨率",
+    [UI_MENU_DYN_RES_MIN_DESC] = "动态分辨率可把 3D 场景降到的最低分辨率，以占画面的比例计。较低时在较慢的电脑上帧率更稳定，但吃力的场面会更模糊。不会高于所选的场景分辨率。使用 DLSS 或 FSR 时此项不生效：改为把超分辨率模式降到“性能”。更改立即生效。",
+    [UI_MENU_DYN_RES_MIN_OFF] = "仅在开启动态分辨率时可用",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

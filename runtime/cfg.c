@@ -413,9 +413,10 @@ static const CfgMeta metas[] = {
     {"TAIL_EARLY", "1", "0|1", RESTART},
     {"REPLAY_SMALL", "0", "0..63", RESTART},   // vk_exec.c group_start
     {"FREE_CORES", "0", "0|1", RESTART}, {"TIMER_1MS", "1", "0|1", RESTART},
-    // dynamic resolution (dynres.c): the scene follows the GPU time toward DYN_RES_TARGET milliseconds (under 1: the
-    // frame limit's frame time), holding each step DYN_RES_STEP 60 Hz frames of the clock (1 s at least, whatever is
-    // set); without DLSS or FSR it steps the scene share down to DYN_RES_MIN at the lowest
+    // dynamic resolution (dynres.c): the scene follows the GPU time toward DYN_RES_TARGET milliseconds (under 1: 90 %
+    // of the frame limit's frame time), holding each step DYN_RES_STEP 60 Hz frames of the clock (1 s at least,
+    // whatever is set); without DLSS or FSR it steps the scene share down to DYN_RES_MIN at the lowest. DYN_RES and
+    // DYN_RES_MIN have menu rows (ui/menu.cpp row_dyn_res)
     {"DYN_RES", "0", "0|1", LIVE}, {"DYN_RES_TARGET", "0", "0..100", LIVE}, {"DYN_RES_STEP", "45", "8..600", LIVE},
     {"DYN_RES_MIN", "0.5", "0.33..1", LIVE},
     // the recording thread: a core of its own (auto: with 12 or more logical processors) and the highest priority
