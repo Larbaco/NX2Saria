@@ -1,0 +1,4 @@
+# The Python packages the Linux AppImage workflow (.github/workflows/linux-appimage.yml) installs into its Python 3.12
+# venv, each by version and the SHA-256 of its wheel (uv pip install --require-hashes): Pillow draws the AppImage's
+# icon (tools/make_appimage.py).
+pillow==13.0.0 --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca

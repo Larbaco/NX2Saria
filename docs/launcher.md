@@ -554,9 +554,12 @@ stays playable and Rebuild the Game, or Begin Installation, goes on from the ste
    (the setup program with the launcher folder appended as a zip), `NX2Saria-app-<version>.zip` (with the prebuilt
    runtime),
    `NX2Saria-runtime-<id>.zip` and `NX2Saria-update.json`. `check_content` runs over the folder first.
-3. Upload those four files and the identical compatibility manifest `NX2navi-update.json` to GitHub release
-   `v<version>` of the feed repository, by hand or with `--publish`
-   (`gh release create`; add `--draft` to look before it goes out). Launchers see it at their next start.
+3. NX2Saria's own releases are not made this way: pushing a tag `v<version>` makes GitHub Actions build these files
+   and the AppImage, attest them and publish the release (`.github/workflows/release.yml`,
+   [releases/README.md](releases/README.md) "How a release is made"), and nobody uploads a file by hand. For a feed of
+   your own, upload those four files and the identical compatibility manifest `NX2navi-update.json` to GitHub release
+   `v<version>` of that repository, by hand or with `--publish` (`gh release create`; add `--draft` to look before it
+   goes out). Launchers see it at their next start.
 
 The release resolves the MSYS2 packages of the day into `toolchain.lock.json` (`--lock` reuses an older lock). The
 repository keeps old package files, so a release keeps building with the compiler it was tested with.

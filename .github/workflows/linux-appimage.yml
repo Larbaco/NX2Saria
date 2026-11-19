@@ -1,43 +1,68 @@
-# The Linux AppImage of each release (tools/make_appimage.py), built on a Linux runner and attached to the release
-# itself: the release is assembled on Windows (tools/make_release.py), and the AppImage needs Linux (the translator's
-# NativeAOT build for linux-x64, appimagetool). It holds the build kit only, no game files, as the setup does.
+# The Linux AppImage of a tag (tools/make_appimage.py), built on a Linux runner and kept as this run's artifact. The
+# AppImage needs Linux (the translator's NativeAOT build for linux-x64, appimagetool). It holds the build kit only, no
+# game files, as the setup does. This workflow publishes nothing and has no write access: the release workflow
+# (.github/workflows/release.yml) calls it, checks, attests and publishes its file. Started by hand it is a test build
+# of a tag or a branch, kept as an artifact for 14 days.
+# appimagetool and the AppImage runtime are pinned releases checked against their SHA-256. No cache is read or written.
 name: Linux AppImage
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (v0.19.0-rc.1)'
+        type: string
+        required: true
+      ref:
+        description: "Commit to build (the tag's commit, as the release workflow resolved it)"
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build the AppImage for (it replaces one already attached)'
+        description: 'Release tag whose sources are built, or a branch to try a build of'
         required: true
 
 permissions:
-  contents: write   # gh release upload
-
-concurrency:
-  group: linux-appimage-${{ github.event.release.tag_name || inputs.tag }}
+  contents: read
 
 jobs:
   appimage:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash   # -eo pipefail
     env:
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
-      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      # appimagetool 1.9.1 and type2-runtime 20251108 (the releases of AppImage/appimagetool and AppImage/type2-runtime)
+      APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+      RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+      RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+      VULKAN_SDK_VERSION: 1.4.363.1
+      VULKAN_SDK_SHA256: b7867d8ca658563813af666f34b93db87f1b1c7d9d69d97e924c210c7ba33eb8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
-      - uses: actions/setup-dotnet@v4
+          ref: ${{ inputs.ref || inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '10.0.x'
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: '0.13.9'
+          checksum: a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5   # uv-x86_64-unknown-linux-gnu.tar.gz
+          enable-cache: false
       - name: Shader compilers
         # make_appimage.py compiles the runtime's own shaders (tools/build_shaders.py: glslc, spirv-as, spirv-val)
         # On 2026-11-11 the runners could not resolve Ubuntu's archive hosts (azure.archive.ubuntu.com, then
         # archive.ubuntu.com) and apt failed every fetch for hours. When they do not resolve, the three tools come from
-        # LunarG's Vulkan SDK for Linux instead, which holds all of them.
+        # LunarG's Vulkan SDK for Linux instead, which holds all of them: version 1.4.363.1, checked against the SHA-256
+        # LunarG publishes for it (vulkan.lunarg.com/sdk/files.json).
         run: |
           if getent hosts azure.archive.ubuntu.com >/dev/null || getent hosts archive.ubuntu.com >/dev/null; then
             sudo apt-get update && sudo apt-get install -y glslc spirv-tools && exit 0
@@ -47,12 +72,14 @@ jobs:
           fi
           sdk="$RUNNER_TEMP/vulkan-sdk"
           mkdir -p "$sdk"
-          for f in vulkan-sdk.tar.xz vulkan-sdk.tar.gz; do
-            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://sdk.lunarg.com/sdk/download/latest/linux/$f" &&
-              tar -xf "$RUNNER_TEMP/$f" -C "$sdk" && break
-          done
+          f=vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/$f"
+          echo "$VULKAN_SDK_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xf "$RUNNER_TEMP/$f" -C "$sdk"
           bin=$(dirname "$(find "$sdk" -type f -name glslc -path '*/bin/*' | head -1)")
-          test -x "$bin/glslc" && test -x "$bin/spirv-as" && test -x "$bin/spirv-val"
+          for t in glslc spirv-as spirv-val; do
+            [ -x "$bin/$t" ] || { echo "::error::the Vulkan SDK has no $t"; exit 1; }
+          done
           echo "$bin" >> "$GITHUB_PATH"
           if ! "$bin/spirv-as" --version >/dev/null 2>&1; then   # the SDK's tools may link its own shared libraries
             echo "LD_LIBRARY_PATH=$(cd "$bin/../lib" && pwd)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
@@ -61,25 +88,31 @@ jobs:
       - name: Shader translator and VMA
         run: |
           uv venv -q --python 3.12 .venv
-          uv pip install -q --python .venv/bin/python pillow
+          uv pip install -q --python .venv/bin/python --require-hashes -r tools/ci_requirements_linux.txt
           .venv/bin/python tools/build_xlate.py
           .venv/bin/python -c 'import sys; sys.path.insert(0, "tools"); import build_game; print("VMA:", build_game.vma_include())'
       - name: AppImage
         run: |
-          uv python install -q 3.14
-          py=$(find "$(uv python dir)" -maxdepth 1 -type d -name 'cpython-3.14.*-linux-x86_64-gnu' | sort -V | tail -1)
-          curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          uv python install -q 3.14.9   # as the Windows release's runtime (tools/make_launcher.py PY_VERSION)
+          py=$(find "$(uv python dir)" -maxdepth 1 -type d -name 'cpython-3.14.9-linux-x86_64-gnu' | head -1)
+          [ -x "$py/bin/python3" ] || { echo "::error::uv installed no CPython 3.14.9"; exit 1; }
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/runtime-x86_64" "$RUNTIME_URL"
+          (cd "$RUNNER_TEMP" && sha256sum -c - <<EOF
+          $APPIMAGETOOL_SHA256  appimagetool
+          $RUNTIME_SHA256  runtime-x86_64
+          EOF
+          )
           chmod +x "$RUNNER_TEMP/appimagetool"
           # the button art is the checkout's prompt-art (make_appimage.py's default): an AppImage without it would build
           # games whose Controls menu says the Xbox, PlayStation, Steam Deck and keyboard prompts' files are missing
           APPIMAGE_EXTRACT_AND_RUN=1 .venv/bin/python tools/make_appimage.py --python "$py" \
-            --appimagetool "$RUNNER_TEMP/appimagetool" --out dist
+            --appimagetool "$RUNNER_TEMP/appimagetool" --runtime-file "$RUNNER_TEMP/runtime-x86_64" --out dist
           test -f build/appimage/NX2Saria.AppDir/usr/kit/prompt-art/SOURCE.md ||
             { echo "::error::the AppImage carries no button art (prompt-art)"; exit 1; }
           appimage=$(ls dist/NX2Saria-Linux-*-x86_64.AppImage)
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --help | head -3
-          (cd dist && sha256sum NX2Saria-Linux-*-x86_64.AppImage > SHA256SUMS-linux.txt && cat SHA256SUMS-linux.txt)
+          sha256sum "$appimage"
       - name: Checks with the runner's clang
         # The runner is Ubuntu 24.04, whose default clang (18) and missing SDL3 stopped the AppImage on players' PCs
         # (issue #11): runtime/sha256.c's two forms, the game log's libs line, the pinned SDL3 and the choice of it,
@@ -94,5 +127,12 @@ jobs:
             .venv/bin/python "tests/$t.py" || { echo "::error::tests/$t.py failed"; rc=1; }
           done
           exit $rc
-      - name: Attach to the release
-        run: gh release upload "$TAG" --clobber dist/NX2Saria-Linux-*-x86_64.AppImage dist/SHA256SUMS-linux.txt
+      - id: artifact
+        # an artifact name has no "/": a test build of a branch such as fix/x keeps linux-appimage-fix-x
+        run: echo "name=linux-appimage-${TAG//\//-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          retention-days: 14
+          if-no-files-found: error
+          path: dist/NX2Saria-Linux-*-x86_64.AppImage

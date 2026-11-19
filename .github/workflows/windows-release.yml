@@ -1,11 +1,28 @@
 # The Windows release files of a tag (tools/make_launcher.py), built on a Windows runner and kept as this run's
 # artifact. The shader translator is a NativeAOT exe, which only Windows can build, and nx2navi_dlssg.dll needs MSVC
-# (tools/build_dlssg.py). Nothing is published: the files are tried by hand first and attached to the release after.
+# (tools/build_dlssg.py). This workflow publishes nothing and has no write access: the release workflow
+# (.github/workflows/release.yml) calls it, checks, attests and publishes its files. Started by hand it is a test
+# build of a tag or a branch, kept as an artifact for 14 days.
 # AMD's signed FSR libraries come from AMD's FidelityFX SDK repository at the tags the runtime was written against,
 # checked against their SHA-256; NVIDIA's DLSS and Streamline files are downloaded and checked by the pins in tools/.
+# No cache is read or written: a release is built from the tag's sources and the pinned downloads alone.
 name: Windows release files
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (v0.19.0-rc.1)'
+        type: string
+        required: true
+      ref:
+        description: "Commit to build (the tag's commit, as the release workflow resolved it)"
+        type: string
+        required: true
+      notes_ref:
+        description: 'Empty: the notes are docs/releases/<tag>.md of the commit built, which must exist'
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       tag:
@@ -22,41 +39,58 @@ jobs:
   windows:
     runs-on: windows-2022
     timeout-minutes: 150
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
     env:
       TAG: ${{ inputs.tag }}
-      PY: uv run --no-project --python 3.14 --with numpy python
+      # empty when the release workflow calls: the notes are then the tag's own docs/releases/<tag>.md
+      NOTES_REF: ${{ inputs.notes_ref }}
+      # Python 3.14.9 as the release's own runtime (tools/make_launcher.py PY_VERSION), numpy by version only: uv run
+      # does not check a requirement's hash (docs/releases/README.md lists what is pinned how)
+      PY: uv run --no-project --python 3.14.9 --with numpy==2.5.5 python
+      REPO: ${{ github.repository }}
       # make_launcher runs the release's own tools/make_game.py for the prebuilt runtime; a __pycache__ it left in the
       # release's tools/ would be refused by the release's content check (check_content's .pyc folds its marker)
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag }}
-      - uses: actions/setup-dotnet@v4
+          ref: ${{ inputs.ref || inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '10.0.x'
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: '0.13.9'
+          checksum: edd61f7f5728a56cc62455386661860bdfc7bab65872f39b0c25bdcc1d8e1beb   # uv-x86_64-pc-windows-msvc.zip
+          enable-cache: false
       - name: Tools on PATH
         # NativeAOT finds MSVC through vswhere (docs/building.md). The runtime's own shaders are compiled with MSYS2
         # UCRT64's glslc, spirv-as and spirv-val (tools/build_shaders.py looks in C:\msys64\ucrt64\bin), which the
         # runner's MSYS2 installs from its packages
         run: |
           echo 'C:\Program Files (x86)\Microsoft Visual Studio\Installer' >> "$GITHUB_PATH"
-          uv python install -q 3.14
+          uv python install -q 3.14.9
           /c/msys64/usr/bin/pacman.exe -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-tools
           /c/msys64/ucrt64/bin/glslc.exe --version | head -1
       - name: Notes
-        # docs/releases/<tag>.md from notes_ref; for a branch, or a tag without notes there, those of the checkout's
-        # VERSION (none when it has no notes file either)
+        # Called by the release workflow: docs/releases/<tag>.md of the tag's commit, which must exist (the manifest
+        # keeps these notes for good). Started by hand: docs/releases/<tag>.md from notes_ref; for a branch, or a tag
+        # without notes there, those of the checkout's VERSION (none when it has no notes file either)
         run: |
-          git fetch -q --depth 1 origin "${{ inputs.notes_ref }}"
-          if ! git show "FETCH_HEAD:docs/releases/$TAG.md" > "$RUNNER_TEMP/notes.md" 2>/dev/null; then
-            notes="docs/releases/v$(tr -d '\r\n' < VERSION).md"
-            if [ -f "$notes" ]; then cp "$notes" "$RUNNER_TEMP/notes.md"; else : > "$RUNNER_TEMP/notes.md"; fi
-            echo "no docs/releases/$TAG.md on ${{ inputs.notes_ref }}: the notes of $notes"
+          if [ -z "$NOTES_REF" ]; then
+            cp "docs/releases/$TAG.md" "$RUNNER_TEMP/notes.md"
+          else
+            git fetch -q --depth 1 origin "$NOTES_REF"
+            if ! git show "FETCH_HEAD:docs/releases/$TAG.md" > "$RUNNER_TEMP/notes.md" 2>/dev/null; then
+              notes="docs/releases/v$(tr -d '\r\n' < VERSION).md"
+              if [ -f "$notes" ]; then cp "$notes" "$RUNNER_TEMP/notes.md"; else : > "$RUNNER_TEMP/notes.md"; fi
+              echo "no docs/releases/$TAG.md on $NOTES_REF: the notes of $notes"
+            fi
           fi
           head -3 "$RUNNER_TEMP/notes.md"
       - name: AMD FSR 3.1 and FSR 4 libraries
@@ -83,7 +117,8 @@ jobs:
         # for tools/build_dlssg.py, and the same folder as make_launcher's --streamline, which checks its DLLs
         run: |
           $PY tools/vulkan_pin.py --dest toolchain/vulkan-headers
-          read -r url sha < <($PY -c 'import sys; sys.path.insert(0, "tools"); import streamline_pin as s; print(s.URL, s.SHA256)' | tail -1 | tr -d '\r')
+          pin=$($PY -c 'import sys; sys.path.insert(0, "tools"); import streamline_pin as s; print(s.URL, s.SHA256)')
+          read -r url sha <<< "$(tail -1 <<< "$pin" | tr -d '\r')"
           curl -fsSL --retry 3 -o toolchain/streamline-sdk.zip "$url"
           echo "$sha  toolchain/streamline-sdk.zip" | sha256sum -c -
           $PY -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' toolchain/streamline-sdk.zip toolchain/streamline-sdk
@@ -94,11 +129,10 @@ jobs:
         run: |
           $PY tools/make_launcher.py --xlate build/xlate --ffx "$RUNNER_TEMP/amd/ffx3/amd_fidelityfx_vk.dll" \
             --ffx4 "$RUNNER_TEMP/amd/ffx4" --dlssg build/dlssg/nx2navi_dlssg.dll --streamline toolchain/streamline-sdk \
-            --feed "${{ github.repository }}" --notes "$RUNNER_TEMP/notes.md"
+            --feed "$REPO" --notes "$RUNNER_TEMP/notes.md"
           cd build/launcher-release
           ls -la
-          sha256sum NX2Saria-Setup-*.exe NX2Saria-app-*.zip NX2Saria-runtime-*.zip NX2Saria-update.json NX2navi-update.json \
-            | tee SHA256SUMS-windows.txt
+          sha256sum NX2Saria-Setup-*.exe NX2Saria-app-*.zip NX2Saria-runtime-*.zip NX2Saria-update.json NX2navi-update.json
       - name: Button art in the release
         # The launcher's build draws the Xbox, PlayStation, Steam Deck and keyboard prompts from app/<version>/prompt-art
         # (tools/make_game.py, its prompts step); a release without it leaves the Controls menu saying their files are
@@ -118,9 +152,12 @@ jobs:
               sys.exit(1)
           print(f'{sys.argv[1]}: button art complete ({len(want)} pictures and SOURCE.md)')
           EOF
-      - uses: actions/upload-artifact@v4
+      - id: artifact
+        # an artifact name has no "/": a test build of a branch such as fix/x keeps windows-release-fix-x
+        run: echo "name=windows-release-${TAG//\//-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: windows-release-${{ inputs.tag }}
+          name: ${{ steps.artifact.outputs.name }}
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -129,4 +166,3 @@ jobs:
             build/launcher-release/NX2Saria-runtime-*.zip
             build/launcher-release/NX2Saria-update.json
             build/launcher-release/NX2navi-update.json
-            build/launcher-release/SHA256SUMS-windows.txt

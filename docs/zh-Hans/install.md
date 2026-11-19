@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/install.md source-hash=f8e8f3a5886a3ae9be266f1f458b4e4fed167173 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/install.md source-hash=334d61975b4a2ef953e2804aa904c2b820652c18 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · [Русский](../ru/install.md) · **简体中文**
 
@@ -38,6 +38,29 @@
 - **从原始 NX2navi 项目安装的启动器**会保留安装时使用的更新来源。在它的 `data/launcher.json` 中设置一次 `"feed_repo": "Larbaco/NX2Saria"`，此后它就会提供 NX2Saria 的发布版本。
 - 更新时，**你的游戏文件夹、存档、配置档案、模组和 `nx2saria.ini` 都会留在原处**。
 - **预发布版本**只会推送给 *Update Channel* 设置为 *Preview* 的启动器。在默认的 *Stable* 下，启动器会等到某个版本被标记为稳定版。
+
+## 验证下载
+
+从 NX2Saria 0.19.0-rc.1 起，每个发布版本的所有文件都由 GitHub Actions 编译并上传，没有任何文件经过任何人的电脑。每个文件都有一份**来源证明**（provenance attestation）：一份由 GitHub 签名的记录，说明是哪个仓库、哪个 workflow、哪个提交编译了它。如果文件在编译后被改动过，它的证明就对不上。
+
+**检查来源证明**：使用 [GitHub CLI](https://cli.github.com/)（`gh`，登录任意 GitHub 账号即可），在你下载文件的文件夹中运行：
+
+```sh
+gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
+  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0 \
+  --deny-self-hosted-runners
+```
+
+（在 Windows 的 PowerShell 中，请写成一行，并去掉 `\`。）
+
+把 `NX2Saria-Setup-0.19.0.exe` 换成你下载的文件名，并把 `refs/tags/v0.19.0` 中的版本换成它的版本：AppImage、app 和 runtime 的 zip、`NX2Saria-update.json`、`NX2navi-update.json` 和 `SHA256SUMS.txt` 都用同样的方法检查。文件没有问题时，它会显示 `✓ Verification succeeded!` 以及编译它的 workflow。其他任何结果都表示这个文件不是 GitHub Actions 为该版本编译的那个：不要运行它，并在 issue 中告诉我们。
+
+**检查校验和。** 发布页上的 `SHA256SUMS.txt` 列出了其他所有文件的 SHA-256。它说明下载完整无误；再加上 `SHA256SUMS.txt` 本身的来源证明，它也说明了每个文件的来源。
+
+- Linux：`sha256sum -c --ignore-missing SHA256SUMS.txt` 会为你下载的每个文件显示 `OK`。
+- Windows（PowerShell）：`Get-FileHash NX2Saria-Setup-0.19.0.exe` 会显示 SHA-256；它必须与 `SHA256SUMS.txt` 中该文件那一行的值相同（不区分大小写）。
+
+每次更新时，启动器都会自行做第二种检查：它从发布版本下载 `NX2Saria-update.json`，只有当文件的大小和 SHA-256 与该清单中的一致时才会安装。0.19.0-rc.1 之前的版本是手动上传的，没有来源证明。
 
 ## 出了问题？
 

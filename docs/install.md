@@ -41,6 +41,40 @@ Started on a desktop, it opens a window to install, update and play.
 - **Pre-releases** reach only the launchers whose *Update Channel* setting is *Preview*. On *Stable*, the default, the
   launcher waits until a release is marked stable.
 
+## Verify your download
+
+From NX2Saria 0.19.0-rc.1 on, every file of a release is built and uploaded by GitHub Actions, with no file passing
+through anyone's PC. Each file has a **provenance attestation**: a record signed by GitHub that says which repository,
+workflow and commit built it. If a file had been changed after the build, its attestation would not match it.
+
+**Check the attestation** with the [GitHub CLI](https://cli.github.com/) (`gh`, signed in to any GitHub account), in
+the folder you downloaded to:
+
+```sh
+gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
+  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0 \
+  --deny-self-hosted-runners
+```
+
+(On Windows, in PowerShell, write it on one line without the `\`.)
+
+Put the name of the file you downloaded in place of `NX2Saria-Setup-0.19.0.exe`, and its version in
+`refs/tags/v0.19.0`: it works the same for the AppImage, the app and runtime zips, `NX2Saria-update.json`,
+`NX2navi-update.json` and `SHA256SUMS.txt`. For a good file it prints `✓ Verification succeeded!` and the workflow
+that built it. Any other answer means the file is not the one GitHub Actions built for that version: do not run it,
+and tell us in an issue.
+
+**Check the checksums.** `SHA256SUMS.txt` on the release lists the SHA-256 of every other file. It shows the download
+arrived whole; together with the attestation of `SHA256SUMS.txt` itself, it also shows where every file came from.
+
+- Linux: `sha256sum -c --ignore-missing SHA256SUMS.txt` prints `OK` for each file you downloaded.
+- Windows (PowerShell): `Get-FileHash NX2Saria-Setup-0.19.0.exe` prints the SHA-256; it must be the one on that
+  file's line of `SHA256SUMS.txt` (the case of the letters does not matter).
+
+The launcher checks each update by itself the second way: it downloads `NX2Saria-update.json` from the release and
+installs a file only when its size and SHA-256 are the ones that manifest gives. Releases older than 0.19.0-rc.1 were
+uploaded by hand and have no attestation.
+
 ## Something wrong?
 
 [Known issues](known-issues.md) lists the problems we know of and what avoids them. For anything else, open an issue

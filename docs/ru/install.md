@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/install.md source-hash=f8e8f3a5886a3ae9be266f1f458b4e4fed167173 reviewed=no -->
+<!-- translation: lang=ru source=docs/install.md source-hash=334d61975b4a2ef953e2804aa904c2b820652c18 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · **Русский** · [简体中文](../zh-Hans/install.md)
 
@@ -47,6 +47,40 @@ AppImage для Linux. Ни один из них не содержит данн�
 - **Папка игры, сохранения, профили, моды и `nx2saria.ini` остаются на месте**, когда вы обновляетесь.
 - **Предварительные выпуски** получают только лаунчеры, у которых настройка *Update Channel* равна *Preview*. На
   *Stable*, значении по умолчанию, лаунчер ждёт, пока выпуск не будет отмечен как стабильный.
+
+## Проверка загрузки
+
+Начиная с NX2Saria 0.19.0-rc.1, все файлы выпуска собирает и загружает GitHub Actions, и ни один файл не проходит
+через чей-либо ПК. У каждого файла есть **аттестация происхождения** (provenance attestation): подписанная GitHub
+запись о том, какой репозиторий, какой workflow и какой коммит его собрали. Если бы файл изменили после сборки,
+аттестация бы ему не соответствовала.
+
+**Проверьте аттестацию** с помощью [GitHub CLI](https://cli.github.com/) (`gh`, с входом в любую учётную запись
+GitHub) в папке, куда вы скачали файл:
+
+```sh
+gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
+  --signer-workflow Larbaco/NX2Saria/.github/workflows/release.yml --source-ref refs/tags/v0.19.0 \
+  --deny-self-hosted-runners
+```
+
+(В Windows, в PowerShell, напишите всё в одну строку без `\`.)
+
+Подставьте вместо `NX2Saria-Setup-0.19.0.exe` имя скачанного файла, а в `refs/tags/v0.19.0` — его версию: так же
+проверяются AppImage, zip-архивы app и runtime, `NX2Saria-update.json`, `NX2navi-update.json` и `SHA256SUMS.txt`. Для
+правильного файла команда выводит `✓ Verification succeeded!` и workflow, который его собрал. Любой другой ответ
+означает, что это не тот файл, который GitHub Actions собрал для этой версии: не запускайте его и сообщите нам в issue.
+
+**Проверьте контрольные суммы.** `SHA256SUMS.txt` в выпуске перечисляет SHA-256 всех остальных файлов. Он показывает,
+что загрузка дошла целиком; вместе с аттестацией самого `SHA256SUMS.txt` он показывает и то, откуда взят каждый файл.
+
+- Linux: `sha256sum -c --ignore-missing SHA256SUMS.txt` выводит `OK` для каждого скачанного файла.
+- Windows (PowerShell): `Get-FileHash NX2Saria-Setup-0.19.0.exe` выводит SHA-256; он должен совпадать с указанным в
+  строке этого файла в `SHA256SUMS.txt` (регистр букв не важен).
+
+Лаунчер сам выполняет вторую проверку при каждом обновлении: он скачивает `NX2Saria-update.json` из выпуска и
+устанавливает файл, только если его размер и SHA-256 совпадают с указанными в этом манифесте. Выпуски старше
+0.19.0-rc.1 загружались вручную, и аттестации у них нет.
 
 ## Что-то не так?
 
