@@ -372,6 +372,15 @@ typedef enum {
     UI_MENU_FRAMEGEN_DESC_ANY, UI_MENU_FRAMEGEN_DESC_NGX, UI_MENU_FRAMEGEN_NOTE_NGX,
     // the Screen tab's Fix overwritten textures row (ui/menu.cpp tab_screen, NX2SARIA_TEX_CLOBBER) and its subtitle
     UI_MENU_TEX_CLOBBER, UI_MENU_TEX_CLOBBER_DESC, UI_MENU_TEX_CLOBBER_NOTE,
+    // the quality preset (ui/menu.cpp row_preset, cfg.h cfg_preset_*): the row, its choices (RECOMMENDED: "%s" the tier
+    // this PC gets; CUSTOM: "%s" a choice's name), its notes (CUSTOM_NOTE: "%d" keys set by hand; REC_NOTE: "%s" a
+    // tier), the one-time notice ("%s" a tier) and the box that lists the keys a choice hands back to the preset
+    UI_MENU_PRESET, UI_MENU_PRESET_DESC, UI_MENU_PRESET_RECOMMENDED, UI_MENU_PRESET_LOW, UI_MENU_PRESET_MEDIUM,
+    UI_MENU_PRESET_HIGH, UI_MENU_PRESET_ULTRA, UI_MENU_PRESET_CUSTOM, UI_MENU_PRESET_CUSTOM_NOTE, UI_MENU_PRESET_REC_NOTE,
+    UI_MENU_PRESET_HW_NOTE, UI_MENU_PRESET_NOTICE, UI_MENU_PRESET_CONFIRM, UI_MENU_PRESET_CONFIRM_YES,
+    // the Scene resolution row (ui/menu.cpp row_scene_res, NX2SARIA_SCENE_SHARE): "%s" a share ("75 %") marked as the
+    // game's own, the native size or the preset's
+    UI_MENU_SCENE_RES, UI_MENU_SCENE_RES_DESC, UI_MENU_SCENE_RES_GAME, UI_MENU_SCENE_RES_NATIVE, UI_MENU_SCENE_RES_PRESET,
     UI_TEXT_COUNT
 } UiTextId;
 

@@ -7,7 +7,7 @@
 //   run <dir> ...   cfg_init and cfg_start with the settings file and state file in <dir> and the hardware in
 //                   NX2SARIA_TEST_HW (a tool mode's start with NX2SARIA_TEST_TOOL set); then
 //                   the actions after it (use=<tier>, chosen, set=<KEY>=<value>, save, ini=<text>,
-//                   reload); prints every line cfg.c logs ("log: ...") and what the
+//                   reload, notice, handoff=<tier>); prints every line cfg.c logs ("log: ...") and what the
 //                   readers get ("got: ...")
 #include <stdarg.h>
 #include <stdint.h>
@@ -354,6 +354,7 @@ static void report(void) {
     printf("got: recommended %s (%s)\n", cfg_preset_name(rec), why);
     printf("got: hw_changed %d\n", cfg_preset_hw_changed());
     printf("got: custom %d\n", cfg_preset_custom());
+    printf("got: notice_due %d\n", cfg_preset_notice_due());
     int n;
     const char *const *keys = cfg_preset_keys(&n);
     for (int i = 0; i < n; i++) {
@@ -370,6 +371,10 @@ static void report(void) {
         char what[64];
         snprintf(what, sizeof what, "value %s SCENE_SHARE", cfg_preset_name(t));
         got(what, cfg_preset_value(t, "scene_share"));
+        snprintf(what, sizeof what, "tier_default %s ANISO", cfg_preset_name(t));
+        got(what, cfg_default_tier("NX2SARIA_ANISO", t));
+        snprintf(what, sizeof what, "differs %s ANISO", cfg_preset_name(t));
+        printf("got: %s %d\n", what, cfg_preset_differs(t, "NX2SARIA_ANISO", cfg_get("NX2SARIA_ANISO")));
     }
 }
 
@@ -411,6 +416,27 @@ int main(int argc, char **argv) {
                 snprintf(ini, sizeof ini, "%s/nx2saria.ini", argv[2]);
                 FILE *f = fopen(ini, "w");
                 if (f) fprintf(f, "%s\n", argv[i] + 4), fclose(f);
+            } else if (!strcmp(argv[i], "notice")) {   // the menu shows the notice when it is due
+                if (cfg_preset_notice_due()) cfg_preset_notice_done();
+            } else if (!strncmp(argv[i], "handoff=", 8)) {
+                // the menu's Apply of a preset choice: the values before, the keys set by hand reset, the switch
+                int t = -1, n;
+                for (int k = 0; k < PRESET_TIERS; k++)
+                    if (!strcmp(argv[i] + 8, cfg_preset_name(k))) t = k;
+                const char *const *keys = cfg_preset_keys(&n);
+                static char before[32][64];
+                const char *from[32];
+                for (int k = 0; k < n && k < 32; k++) {
+                    char name[80];
+                    snprintf(name, sizeof name, "NX2SARIA_%s", keys[k]);
+                    snprintf(before[k], sizeof before[k], "%s", cfg_value(name));
+                    from[k] = before[k];
+                    if (cfg_is_set(name)) {
+                        const char *one = name;
+                        cfg_reset(&one, 1);
+                    }
+                }
+                cfg_preset_use_from(t, from);
             } else if (!strcmp(argv[i], "reload")) {
                 CfgReloadResult r;
                 cfg_reload_file(&r);

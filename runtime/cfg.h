@@ -148,3 +148,21 @@ void cfg_preset_chosen(void);
 // cfg_version and logs each setting whose value changes ("preset: <old> -> <new>: <KEY> <before> -> <after>"). Keys
 // the player set keep their values: the menu resets those it means to hand to the preset.
 void cfg_preset_use(int tier);
+// cfg_preset_use for the menu's Apply, which resets the keys it hands to the preset before the switch: from_values
+// (NULL: the values in effect now) holds the value each key of cfg_preset_keys had before the draft's writes, in that
+// order (an entry NULL: its value now), so the log's before -> after lines start from what the player saw. With
+// from_values the lines are logged also when tier is the one in use.
+void cfg_preset_use_from(int tier, const char *const *from_values);
+// What key reads while the player has not set it if tier were in use: the device profile's value, else tier's, else the
+// row's default (cfg_default for a tier out of range); NULL for a key without a row. The menu's draft shows a staged
+// preset's values and default marks through it.
+const char *cfg_default_tier(const char *key, int tier);
+// 1 when value, set by the player for key, differs from what tier gives key (cfg_default_tier): the key makes that
+// tier custom. 0 for NULL or "".
+int cfg_preset_differs(int tier, const char *key, const char *value);
+// The one-time notice of the recommended preset (ui/menu.cpp preset_notice_tick): 1 while the player has not set the
+// preset key, the recommended tier is not high, is in use, and the state file does not record a notice of that tier
+// yet; 0 in a tool mode and a replay. cfg_preset_notice_done records it (noticed = <tier> in preset-state.txt; never
+// nx2saria.ini) and logs "preset: notice shown: recommended <tier> in use".
+int cfg_preset_notice_due(void);
+void cfg_preset_notice_done(void);

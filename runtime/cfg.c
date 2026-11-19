@@ -1870,6 +1870,7 @@ int cfg_reload_file(CfgReloadResult *r) {
 // never settings; nothing here writes nx2saria.ini. Lines "key = value":
 //   hardware   this start's fingerprint (preset_pick.h preset_fingerprint)
 //   chosen_on  the fingerprint when the player last chose a tier; absent while none is recorded
+//   noticed    the recommended tier the one-time notice last named (cfg_preset_notice_due); absent before any
 //   gpu_*      the last probe that found a GPU (name, vendor, device, driver, type, vram_mib, mesh): a start that cannot
 //              probe (hw_detect.c) goes by them
 // It is written through a temporary file and a rename (plat_file_write_atomic), only when its text changes, and only by
@@ -1880,6 +1881,7 @@ static struct {
     char path[1024];          // the state file; "" when the executable's folder is unknown
     char text[2048];          // the state file's text as read or last written
     char chosen_on[160];      // "" while none is recorded
+    char noticed[16];         // the tier the one-time notice named, "" before any
     char fp[160];             // this start's fingerprint
     char why[192];            // why the recommended tier
     PresetHw gpu;             // the state file's last probe (have_gpu 0 without one)
@@ -1942,6 +1944,7 @@ static void state_read(void) {
         *eq = 0;
         char *k = trim(line), *v = trim(eq + 1);
         if (!strcmp(k, "chosen_on")) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", v);
+        else if (!strcmp(k, "noticed")) snprintf(PS.noticed, sizeof PS.noticed, "%s", v);
         else if (!strcmp(k, "gpu_name")) g->have_gpu = 1, snprintf(g->gpu_name, sizeof g->gpu_name, "%s", v);
         else if (!strcmp(k, "gpu_vendor")) g->vendor = (uint32_t)strtoul(v, NULL, 0);
         else if (!strcmp(k, "gpu_device")) g->device = (uint32_t)strtoul(v, NULL, 0);
@@ -1963,6 +1966,7 @@ static void state_write(void) {
     int n = snprintf(t, sizeof t, "# NX2Saria: what the quality presets last saw of this PC. The game writes this file; "
                                   "the settings are in nx2saria.ini.\nhardware = %s\n", PS.fp);
     if (PS.chosen_on[0] && n < (int)sizeof t) n += snprintf(t + n, sizeof t - (size_t)n, "chosen_on = %s\n", PS.chosen_on);
+    if (PS.noticed[0] && n < (int)sizeof t) n += snprintf(t + n, sizeof t - (size_t)n, "noticed = %s\n", PS.noticed);
     const PresetHw *g = &PS.gpu;
     if (g->have_gpu && n < (int)sizeof t)
         n += snprintf(t + n, sizeof t - (size_t)n,
@@ -2153,21 +2157,65 @@ int cfg_preset_custom(void) {
     return 0;
 }
 
+const char *cfg_default_tier(const char *key, int tier) {
+    if (tier < 0 || tier >= PRESET_TIERS) return cfg_default(key);
+    char k[64];
+    snprintf(k, sizeof k, "%s", key);
+    const char *name = norm_key(k), *deck = deck_value(name);
+    if (deck) return deck;
+    const char *pv = preset_value(tier, &preset_hw, name);
+    if (pv) return pv;
+    const CfgMeta *m = cfg_meta(key);
+    return m ? m->def : NULL;
+}
+
+int cfg_preset_differs(int tier, const char *key, const char *value) {
+    if (!value || !*value) return 0;
+    char k[64], name[80];
+    snprintf(k, sizeof k, "%s", key);
+    snprintf(name, sizeof name, PREFIX "%s", norm_key(k));
+    return !same_value(switch_word(name, value), cfg_default_tier(key, tier));
+}
+
+int cfg_preset_notice_due(void) {
+    int t = __atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE);
+    if (t < 0 || !PS.write || PS.rec == PRESET_HIGH || t != PS.rec) return 0;
+    const char *set = raw_get(PREFIX "PRESET");
+    if (set && *set) return 0;   // the player chose, recommended included: nothing to tell
+    plat_mutex_lock(&preset_lock);
+    int due = strcmp(PS.noticed, preset_tier_names[PS.rec]) != 0;
+    plat_mutex_unlock(&preset_lock);
+    return due;
+}
+
+void cfg_preset_notice_done(void) {
+    plat_mutex_lock(&preset_lock);
+    snprintf(PS.noticed, sizeof PS.noticed, "%s", preset_tier_names[PS.rec]);
+    rt_log("preset: notice shown: recommended %s in use", preset_tier_names[PS.rec]);
+    state_write();
+    plat_mutex_unlock(&preset_lock);
+}
+
 void cfg_preset_chosen(void) {
     plat_mutex_lock(&preset_lock);
     if (preset_hw.have_gpu) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", PS.fp);
     else PS.chosen_on[0] = 0;   // nothing to compare a later start with: recorded at the first start that knows its GPU
     __atomic_store_n(&PS.hw_changed, 0, __ATOMIC_RELEASE);
+    // a player who chose a preset in the menu has seen it: the one-time notice (cfg_preset_notice_due) has nothing left
+    // to tell, also when the choice was Recommended, which leaves the settings file without a preset line
+    if (PS.rec >= 0 && PS.rec < PRESET_TIERS) snprintf(PS.noticed, sizeof PS.noticed, "%s", preset_tier_names[PS.rec]);
     state_write();
     plat_mutex_unlock(&preset_lock);
 }
 
-void cfg_preset_use(int tier) {
+void cfg_preset_use(int tier) { cfg_preset_use_from(tier, NULL); }
+
+void cfg_preset_use_from(int tier, const char *const *from_values) {
     if (tier < 0 || tier >= PRESET_TIERS) return;
     preset_keys_init();
     plat_mutex_lock(&preset_lock);
     int old = __atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE);
-    if (old == tier) {
+    if (old == tier && !from_values) {
         plat_mutex_unlock(&preset_lock);
         return;
     }
@@ -2175,7 +2223,7 @@ void cfg_preset_use(int tier) {
     char name[80];
     for (int k = 0; k < PS.n_keys; k++) {
         snprintf(name, sizeof name, PREFIX "%s", PS.keys[k]);
-        before[k] = cfg_value(name);
+        before[k] = from_values && from_values[k] ? from_values[k] : cfg_value(name);
     }
     __atomic_store_n(&preset_tier, tier, __ATOMIC_RELEASE);
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
@@ -2184,7 +2232,7 @@ void cfg_preset_use(int tier) {
     for (int k = 0; k < PS.n_keys; k++) {
         snprintf(name, sizeof name, PREFIX "%s", PS.keys[k]);
         const char *after = cfg_value(name);
-        if (strcmp(before[k], after))
+        if (!same_value(before[k], after))
             rt_log("preset: %s -> %s: %s %s -> %s", from, preset_tier_names[tier], PS.keys[k], before[k], after), changed++;
     }
     if (!changed) rt_log("preset: %s -> %s: no setting changes", from, preset_tier_names[tier]);

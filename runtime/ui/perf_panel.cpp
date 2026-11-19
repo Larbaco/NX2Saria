@@ -165,15 +165,17 @@ void waits(const PerfStats &s) {
 }
 
 void picture(const PerfPanel *p) {
-    static const UiTextId labels[11] = {UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE, UI_MENU_UPSCALING, UI_MENU_AA,
+    static const UiTextId labels[12] = {UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE, UI_MENU_UPSCALING, UI_MENU_AA,
                                         UI_MENU_OV_LIMIT, UI_MENU_PRESENT_VSYNC, UI_MENU_GAME_ASPECT, UI_MENU_GAME_RES, UI_MENU_HDR,
-                                        UI_MENU_FRAMEGEN};
+                                        UI_MENU_FRAMEGEN, UI_MENU_PRESET};
+    // the order of the lines: the preset first among the settings, as the Graphics group starts with it
+    static const int order[12] = {0, 1, 2, 11, 3, 4, 5, 6, 7, 8, 9, 10};
     if (!ImGui::BeginTable("##perfp", 2, ImGuiTableFlags_SizingFixedFit)) return;
     float vw = 0;
     for (const auto &v : p->picture) vw = fmaxf(vw, ImGui::CalcTextSize(v).x);
     ImGui::TableSetupColumn("##p0", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("##p1", ImGuiTableColumnFlags_WidthFixed, vw);
-    for (int i = 0; i < 11; i++) {
+    for (int i : order) {
         if ((i == 2 && !p->scene_known) || !p->picture[i][0]) continue;
         label(labels[i]);
         ImGui::TableNextColumn();

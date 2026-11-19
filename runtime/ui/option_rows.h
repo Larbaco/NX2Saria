@@ -62,6 +62,9 @@ bool opt_choice_list(const char *key, UiTextId label, const char *const *values,
 int opt_choice_index(const char *key, UiTextId label, const char *const *names, int n, int cur, int def, UiTextId desc,
                      const char *note = nullptr);
 void opt_apply(const char *key, const char *value);   // what a row writes: "" unsets the key; joins the draft below
+// The row the opt_apply calls that follow belong to, as opt_choice_index sets it, for a choice made later (in a box
+// opened by the row): key the row's setting, from and to its shown values.
+void opt_context(const char *key, UiTextId label, const char *from, const char *to);
 // A row that runs an action: true on A or a click. id: unique on the page and not a setting ("##copy_info"); value:
 // shown on the right ("" none).
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value = "");
@@ -109,6 +112,13 @@ int opt_bind_row(const char *key, const char *label, UiTextId desc, const char *
 // Rows read their setting through opt_value & co. so a staged change shows; anything else reads cfg_value.
 const char *opt_value(const char *key);   // the draft's value of a staged key, else cfg_value
 const char *opt_get(const char *key);     // as opt_value, else cfg_get (NULL for a key not set)
+// The quality preset in the draft (menu.cpp row_preset): while the preset key is staged, a key the player leaves unset
+// (or the draft hands back to the preset with "") reads the staged tier's value (cfg_default_tier) in opt_value,
+// opt_get and the rows' "default" marks, and Apply switches the layer to it after the draft's writes
+// (cfg_preset_use_from, cfg_preset_chosen). Discard leaves the layer alone.
+int opt_preset_tier(void);                // the tier the draft stages, -1 while it stages none
+const char *opt_default(const char *key); // what key reads unset: the staged tier's default, else cfg_default
+bool opt_is_set(const char *key);         // the player sets key, as the draft has it (a staged "" is unset)
 // cfg_pending_count over the values the rows show: the restart-only settings whose draft or setting differs from the
 // value the game started with (the Restart button applies the draft first, so its count takes the draft in).
 int opt_pending_count(void);

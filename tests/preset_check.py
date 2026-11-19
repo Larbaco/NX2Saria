@@ -11,7 +11,9 @@
   (written only when its text changes, never nx2saria.ini), a tier chosen on other hardware giving way to the
   recommended one until the player chooses again, a probe that cannot run going by the last one, a tool mode's start
   (no probe, no state file written), a state file of garbage, and the menu's calls (cfg_preset_use,
-  cfg_preset_chosen, cfg_preset_custom) and a reload of the preset line, also after a switch in the menu.
+  cfg_preset_chosen, cfg_preset_custom, cfg_preset_use_from, cfg_default_tier, cfg_preset_differs) and a reload of
+  the preset line, also after a switch in the menu; the one-time notice (cfg_preset_notice_due, the state file's
+  noticed line).
 
 No GPU, no game files.
 
@@ -236,6 +238,35 @@ def main():
     rc, out, f = run('skip=a test,cores=6,threads=12,ram=32000', ini='', state='gpu_name = Some GPU\ngpu_mesh = 0\n')
     check(rc == 0 and 'GPU none (not probed, and no earlier probe kept)' in out and get(out, 'in_use') == 'high',
           'a kept GPU without its vendor is none', out)
+
+    # ---- the one-time notice: due while the player never chose and this PC gets another tier than high; once
+    rc, out, f = run(GTX1650, ini='')
+    check(get(out, 'notice_due') == '1', 'a PC that gets low: the notice is due', out)
+    rc, out, f = run(GTX1650, folder=f, actions=('notice', 'notice'))
+    check('log: preset: notice shown: recommended low in use' in out and out.count('notice shown') == 1
+          and get(out, 'notice_due', 1) == '0' and 'noticed = low' in state_of(f)
+          and not re.search(r'^write: .*nx2saria\.ini$', out, re.M),
+          'shown once: noticed in the state file, nx2saria.ini not written', out + state_of(f))
+    rc, out, f = run(GTX1650, folder=f)
+    check(get(out, 'notice_due') == '0' and 'noticed = low' in state_of(f), 'not again at the next start', out)
+    rc, out, f = run(RTX4060_LOWRAM, folder=f)
+    check(get(out, 'notice_due') == '1', 'due again when the recommended tier changes (medium)', out)
+    rc, out, f = run(RX6700, ini='')
+    check(get(out, 'notice_due') == '0', 'not for a PC that gets high, the game as shipped', out)
+    rc, out, f = run(GTX1650, ini='preset = recommended\n')
+    check(get(out, 'notice_due') == '0', 'not once the player set the preset, recommended included', out)
+    rc, out, f = run(GTX1650, ini='', extra={'NX2SARIA_TEST_TOOL': '1'}, actions=('notice',))
+    check(get(out, 'notice_due') == '0' and 'notice shown' not in out, 'not in a tool mode', out)
+
+    # ---- the menu's Apply of a preset choice: defaults of a tier, keys that differ, and the log from the old values
+    rc, out, f = run(RX6700, ini='[display]\naniso = 2\n', actions=('handoff=low',))
+    check(get(out, 'tier_default low ANISO') == '4' and get(out, 'tier_default medium ANISO') == '8'
+          and get(out, 'differs low ANISO') == '1' and get(out, 'differs high ANISO') == '1'
+          and get(out, 'differs low ANISO', 1) == '0',
+          'cfg_default_tier and cfg_preset_differs', out)
+    check('log: preset: high -> low: ANISO 2 -> 4' in out and get(out, 'in_use', 1) == 'low'
+          and get(out, 'get ANISO', 1) == '4' and get(out, 'custom', 1) == '0',
+          'cfg_preset_use_from logs from the values before the reset', out)
 
     print(f'preset_check: {"FAILED" if bad else "passed"}')
     return 1 if bad else 0

@@ -943,10 +943,35 @@ static const char *fsr4_label(void) {
 
 // Native (the Upscaling row): the scene drawn at the picture's own size, which the upscaler's stand-in then only
 // decodes 1:1 (vk_tonemap.c), with no DLSS or FSR. It is scene_share = 1 (widescreen.c plain_share) with dlaa = 0; a
-// scene_share of 1 or more set by hand in nx2navi.ini reads the same.
-static bool share_native(void) {
-    const char *s = cfg_get("NX2SARIA_SCENE_SHARE");
+// scene_share of 1 or more set by hand in nx2navi.ini, or given by the quality preset (Ultra), reads the same. draft:
+// as the menu's draft has it (a staged preset's value), else as the game runs now.
+static bool share_native(bool draft = true) {
+    const char *s = draft ? opt_get("NX2SARIA_SCENE_SHARE") : cfg_get("NX2SARIA_SCENE_SHARE");
     return s && *s && atof(s) >= 1;
+}
+
+// What leaving Native writes: the key unset, unless what unset reads is itself the whole picture (the preset's Ultra
+// gives 1): then the table's share, set by hand, so the choice is not undone by the preset under it.
+static const char *share_off(void) {
+    const char *d = opt_default("NX2SARIA_SCENE_SHARE");
+    const CfgMeta *m = cfg_meta("NX2SARIA_SCENE_SHARE");
+    return d && atof(d) >= 1 && m ? m->def : "";
+}
+
+// The Scene resolution and Upscaling rows' note on the scene's share (widescreen.c wide_scene_restart, heap_share):
+// a scene larger than the render-target heap the start made waits for a restart; at the heap's limit for this picture
+// it stays smaller, and the note says how large it is. NULL for none.
+static const char *scene_note(void) {
+    static char in_use[64];
+    const double share = wide_scene_settable() ? wide_scene_share() : 0;
+    if (share > 0 && wide_scene_restart()) return menu_text(UI_MENU_AFTER_RESTART);
+    if (share > 0 && wide_scene_wanted() > share + 0.001) {
+        char pct[16];
+        snprintf(pct, sizeof pct, "%.0f %%", share * 100);
+        snprintf(in_use, sizeof in_use, menu_text(UI_MENU_PRESENT_IN_USE), pct);
+        return in_use;
+    }
+    return nullptr;
 }
 
 // The Upscaling row's name of what is set now, for the performance overlay.
@@ -956,7 +981,7 @@ static void upscaling_name(char *out, size_t size) {
     static const UiTextId fsr3[] = {UI_MENU_FSR3_NATIVE, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED, UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
     // FSR 3.1 set where it cannot load runs nothing (vk_dlaa.c vk_dlaa_fsr3): the game scales the picture as the rest says
     if (!cfg_bool("NX2SARIA_DLAA") || (!strcmp(cfg_value("NX2SARIA_TAA"), "fsr3") && !vk_ffx_available())) {
-        if (share_native() && wide_scene_settable()) snprintf(out, size, "%s", menu_text(UI_MENU_UPSCALING_NATIVE));
+        if (share_native(false) && wide_scene_settable()) snprintf(out, size, "%s", menu_text(UI_MENU_UPSCALING_NATIVE));
         else if (strcmp(cfg_value("NX2SARIA_UPSCALER"), "fsr")) snprintf(out, size, "%s", menu_text(UI_MENU_UPSCALER_BILINEAR));
         else snprintf(out, size, menu_text(UI_MENU_OV_FMT_FSR), cfg_int("NX2SARIA_SHARPNESS"));
         return;
@@ -1041,16 +1066,9 @@ static void row_upscaling(void) {
     // for a restart; at the heap's limit for this picture it stays smaller, and the note says how large it is
     // (widescreen.c wide_scene_restart, heap_share)
     const char *note = nullptr;
-    static char in_use[64];
-    const double share = wide_scene_settable() ? wide_scene_share() : 0;
     if (!fsr && now.kind == FSR3) note = menu_text(UI_MENU_FSR3_OFF);
-    else if (upscaling_restart() || (share > 0 && wide_scene_restart())) note = menu_text(UI_MENU_AFTER_RESTART);
-    else if (share > 0 && wide_scene_wanted() > share + 0.001) {
-        char pct[16];
-        snprintf(pct, sizeof pct, "%.0f %%", share * 100);
-        snprintf(in_use, sizeof in_use, menu_text(UI_MENU_PRESENT_IN_USE), pct);
-        note = in_use;
-    }
+    else if (upscaling_restart()) note = menu_text(UI_MENU_AFTER_RESTART);
+    else note = scene_note();
     int nv = opt_choice_index("NX2SARIA_UPSCALER", UI_MENU_UPSCALING, names, n, cur, 1,
                               !fsr ? UI_MENU_UPSCALING_DESC_NO_FSR : dlss ? UI_MENU_UPSCALING_DESC : UI_MENU_UPSCALING_DESC_FSR,
                               note);
@@ -1058,10 +1076,13 @@ static void row_upscaling(void) {
     const Entry e = list[nv];
     opt_apply("NX2SARIA_UPSCALER", e.kind == FSR1 ? "fsr" : "bilinear");
     opt_apply("NX2SARIA_DLAA", e.kind >= DLSS ? "1" : "0");
-    // Native is scene_share = 1. Leaving it unsets the key (the game's own share, widescreen.c PLAIN_SHARE); a share of
-    // the whole picture set by hand beside DLSS or FSR stays while one of their modes is chosen
+    // Native is scene_share = 1. Leaving it for bilinear or FSR 1 unsets the key (the game's own share, widescreen.c
+    // PLAIN_SHARE), or sets the game's share where unset reads as the whole picture (share_off: the preset's Ultra);
+    // leaving it for DLSS or FSR unsets it, as their own modes size the scene; a share of the whole picture set by hand
+    // beside DLSS or FSR stays while one of their modes is chosen
     if (e.kind == NATIVE) opt_apply("NX2SARIA_SCENE_SHARE", "1");
-    else if (share_native() && (e.kind < DLSS || now.kind == NATIVE)) opt_apply("NX2SARIA_SCENE_SHARE", "");
+    else if (share_native() && e.kind < DLSS) opt_apply("NX2SARIA_SCENE_SHARE", share_off());
+    else if (share_native() && now.kind == NATIVE) opt_apply("NX2SARIA_SCENE_SHARE", "");
     if (e.kind >= DLSS) opt_apply("NX2SARIA_DLSS", modes[e.mode]);
     if (e.kind >= DLSS) opt_apply("NX2SARIA_TAA", e.kind >= FSR3 ? "fsr3" : "dlss");
     if (e.kind >= FSR3) opt_apply("NX2SARIA_FSR4", e.kind == FSR4 ? "1" : "0");
@@ -1070,7 +1091,166 @@ static void row_upscaling(void) {
     if (e.kind == FSR4) vk_ffx4_retry();
     // The Anti-aliasing row keeps its choice, which runs along with DLSS's or FSR's TAA (vk_aa.c vk_aa_mode); its TAA
     // went with the temporal mode, so leaving that leaves the game's SMAA
-    if (e.kind < DLSS && !strcmp(cfg_value("NX2SARIA_AA"), "taa")) opt_apply("NX2SARIA_AA", "game");
+    if (e.kind < DLSS && !strcmp(opt_value("NX2SARIA_AA"), "taa")) opt_apply("NX2SARIA_AA", "game");
+}
+
+// Scene resolution (NX2SARIA_SCENE_SHARE, widescreen.c plain_share): the 3D scene's share of the picture while neither
+// DLSS nor FSR runs (their modes size the scene then; the condition is upscaling_name's, over the draft's values),
+// where the share can be set (wide_scene_settable). The HUD and menus are drawn at the picture's size (GAME_RES), so a
+// smaller scene leaves them sharp. Unset reads as the quality preset's share, else the game's own (the table's 0.75):
+// that entry is named so and takes the place of the fixed share it equals. 100 % is the Upscaling row's Native. Live,
+// with the Upscaling row's note on the render-target heap (scene_note).
+static void row_scene_res(void) {
+    if (!wide_scene_settable()) return;
+    if (opt_bool("NX2SARIA_DLAA") && (strcmp(opt_value("NX2SARIA_TAA"), "fsr3") || vk_ffx_available())) return;
+    static const char *const fixed[] = {"0.33", "0.4", "0.5", "0.58", "0.67", "0.75", "1"};
+    enum { N = sizeof fixed / sizeof *fixed };
+    const CfgMeta *m = cfg_meta("NX2SARIA_SCENE_SHARE");
+    const char *d = opt_default("NX2SARIA_SCENE_SHARE");
+    const double dv = d && *d ? atof(d) : 0.75, game = m ? atof(m->def) : 0.75;
+    static char text[N + 2][48], other[32];
+    const char *values[N + 2], *names[N + 2];
+    int n = 0, def = -1;
+    auto pct = [](double v, char *out, size_t size) { snprintf(out, size, "%.0f %%", v * 100); };
+    for (int i = 0; i <= N; i++) {
+        const double v = i < N ? atof(fixed[i]) : 2;
+        if (def < 0 && dv <= v + 0.001) {   // the unset entry, where its share falls
+            char p[16];
+            pct(dv, p, sizeof p);
+            snprintf(text[n], sizeof text[n], menu_text(fabs(dv - game) < 0.001 ? UI_MENU_SCENE_RES_GAME : UI_MENU_SCENE_RES_PRESET), p);
+            values[n] = "", names[n] = text[n], def = n++;
+            if (i < N && fabs(dv - v) < 0.001) continue;   // the fixed share it equals
+        }
+        if (i == N) break;
+        pct(v, text[n], sizeof text[n]);
+        if (v >= 1) snprintf(text[n], sizeof text[n], menu_text(UI_MENU_SCENE_RES_NATIVE), "100 %");
+        else if (fabs(v - game) < 0.001) {   // the game's own share, set by hand beside a preset's
+            char p[16];
+            pct(v, p, sizeof p);
+            snprintf(text[n], sizeof text[n], menu_text(UI_MENU_SCENE_RES_GAME), p);
+        }
+        values[n] = fixed[i], names[n] = text[n], n++;
+    }
+    int cur = def;
+    if (opt_is_set("NX2SARIA_SCENE_SHARE")) {
+        const double v = atof(opt_value("NX2SARIA_SCENE_SHARE"));
+        cur = -1;
+        for (int i = 0; i < n; i++)
+            if (fabs((values[i][0] ? atof(values[i]) : dv) - v) < 0.001) cur = i;
+        if (cur < 0) {   // a share set by hand that is none of these: shown after them, as it is
+            snprintf(other, sizeof other, "%s", opt_value("NX2SARIA_SCENE_SHARE"));
+            pct(v, text[n], sizeof text[n]);
+            values[n] = other, names[n] = text[n], cur = n++;
+        }
+    }
+    int nv = opt_choice_index("NX2SARIA_SCENE_SHARE", UI_MENU_SCENE_RES, names, n, cur, def, UI_MENU_SCENE_RES_DESC,
+                              scene_note());
+    if (nv >= 0 && nv < n) opt_apply("NX2SARIA_SCENE_SHARE", values[nv]);
+}
+
+// ---- the quality preset (cfg.h cfg_preset_*, preset_pick.h). The row's choices: Recommended (the tier this PC gets,
+// named), then the four tiers; the value the draft stages, else the player's, else Recommended, and Recommended while
+// a tier chosen on other hardware gives way to it (cfg_preset_hw_changed). Choosing stages the preset key and hands
+// back to the preset every key it sets that the player set by hand (staged ""), so the whole tier applies; when there
+// are such keys a box lists them first (preset_confirm) and Cancel stages nothing. Apply switches the layer
+// (option_rows.cpp opt_draft_apply). A tier with keys set by hand to other values than its own shows as custom.
+static const char *preset_tier_text(int tier) {
+    return menu_text((UiTextId)(UI_MENU_PRESET_LOW + (tier < 0 ? 2 : tier > 3 ? 3 : tier)));
+}
+
+// The keys a choice hands back to the preset: those of cfg_preset_keys the player sets (the draft's view), not the
+// ones the environment fixes. Fills names (NX2SARIA_ + key) and returns how many.
+static int preset_handed(char (*names)[64], int max) {
+    int nk = 0, n = 0;
+    const char *const *keys = cfg_preset_keys(&nk);
+    for (int i = 0; i < nk && n < max; i++) {
+        snprintf(names[n], sizeof names[n], "NX2SARIA_%s", keys[i]);
+        if (opt_is_set(names[n]) && !cfg_from_env(names[n])) n++;
+    }
+    return n;
+}
+
+// The name a preset key goes by in the box: its row's, with the key after it where one row writes several.
+static void preset_key_label(const char *name, char *out, size_t size) {
+    static const struct { const char *key; UiTextId label; } rows[] = {
+        {"SCENE_SHARE", UI_MENU_SCENE_RES}, {"GAME_RES", UI_MENU_GAME_RES}, {"SHADOW_RES", UI_MENU_SHADOW_RES},
+        {"ANISO", UI_MENU_ANISO}, {"TEXTURE_DETAIL", UI_MENU_TEX_DETAIL}, {"FPS_LIMIT", UI_MENU_FPS_LIMIT},
+        {"DLAA", UI_MENU_UPSCALING}, {"TAA", UI_MENU_UPSCALING}, {"DLSS", UI_MENU_UPSCALING}, {"FSR4", UI_MENU_UPSCALING}};
+    const char *key = name + sizeof "NX2SARIA_" - 1;
+    char low[48];
+    snprintf(low, sizeof low, "%s", key);
+    for (char *c = low; *c; c++) *c = (char)tolower((unsigned char)*c);
+    for (const auto &r : rows)
+        if (!strcmp(r.key, key)) {
+            if (r.label == UI_MENU_UPSCALING) snprintf(out, size, "%s (%s)", menu_text(r.label), low);
+            else snprintf(out, size, "%s", menu_text(r.label));
+            return;
+        }
+    snprintf(out, size, "%s", low);
+}
+
+static struct {
+    bool ask;                 // layout_menu opens the box at its next frame
+    int choice;               // 0 Recommended, 1.. the tiers
+    std::string from, to;     // the row's shown values, for the draft's line
+    std::vector<std::string> lines;
+} g_preset;
+
+// Stages choice: the preset key, then "" for each key handed back (after the preset key, so the draft reads them
+// against the staged tier).
+static void preset_stage(int choice) {
+    opt_apply("NX2SARIA_PRESET", choice ? cfg_preset_name(choice - 1) : "");
+    char names[32][64];
+    const int n = preset_handed(names, 32);
+    for (int i = 0; i < n; i++) opt_apply(names[i], "");
+    rt_log("menu: preset: %s chosen in the draft; %d key(s) set by hand handed back to it",
+           choice ? cfg_preset_name(choice - 1) : "recommended", n);
+}
+
+static void row_preset(void) {
+    const int rec = cfg_preset_recommended(nullptr);
+    static char rec_name[96], custom[96];
+    snprintf(rec_name, sizeof rec_name, menu_text(UI_MENU_PRESET_RECOMMENDED), preset_tier_text(rec));
+    const char *names[5] = {rec_name, preset_tier_text(0), preset_tier_text(1), preset_tier_text(2), preset_tier_text(3)};
+    const bool staged = opt_preset_tier() >= 0, moved = !staged && cfg_preset_hw_changed();
+    const char *v = opt_get("NX2SARIA_PRESET");
+    int cur = 0;
+    for (int t = 0; v && !moved && t < 4; t++)
+        if (!strcasecmp(v, cfg_preset_name(t))) cur = t + 1;
+    const int tier = cur ? cur - 1 : rec;
+    // custom: keys the player sets to other values than the shown tier gives them
+    int nk = 0, differ = 0;
+    const char *const *keys = cfg_preset_keys(&nk);
+    for (int i = 0; i < nk; i++) {
+        char name[64];
+        snprintf(name, sizeof name, "NX2SARIA_%s", keys[i]);
+        if (opt_is_set(name)) differ += cfg_preset_differs(tier, name, opt_get(name)) != 0;
+    }
+    static char note[128];
+    const char *shown_note = nullptr;
+    if (moved) shown_note = menu_text(UI_MENU_PRESET_HW_NOTE);
+    else if (differ) snprintf(note, sizeof note, menu_text(UI_MENU_PRESET_CUSTOM_NOTE), differ), shown_note = note;
+    else if (cur && tier != rec) snprintf(note, sizeof note, menu_text(UI_MENU_PRESET_REC_NOTE), preset_tier_text(rec)), shown_note = note;
+    if (differ) {
+        snprintf(custom, sizeof custom, menu_text(UI_MENU_PRESET_CUSTOM), names[cur]);
+        names[cur] = custom;
+    }
+    const int nv = opt_choice_index("NX2SARIA_PRESET", UI_MENU_PRESET, names, 5, cur, 0, UI_MENU_PRESET_DESC, shown_note);
+    if (nv < 0 || nv > 4) return;
+    char handed[32][64];
+    const int n = preset_handed(handed, 32);
+    if (!n) return preset_stage(nv);
+    // keys set by hand: the box lists them with the value each takes, and stages the choice on its yes
+    const int want = nv ? nv - 1 : rec;
+    g_preset.lines.clear();
+    for (int i = 0; i < n; i++) {
+        char label[96], line[256];
+        preset_key_label(handed[i], label, sizeof label);
+        const char *to = cfg_default_tier(handed[i], want);
+        snprintf(line, sizeof line, "%s: %s -> %s", label, opt_value(handed[i]), to && *to ? to : "-");   // the font has no arrow glyphs
+        g_preset.lines.push_back(line);
+    }
+    g_preset.ask = true, g_preset.choice = nv, g_preset.from = names[cur], g_preset.to = names[nv];
 }
 
 // Anti-aliasing (vk_aa.c NX2SARIA_AA): the game's own SMAA (the default), off, FXAA or SMAA in its place, or TAA, which is
@@ -1084,7 +1264,7 @@ static void row_aa(void) {
     enum { GAME, OFF, FXAA, SMAA, TAA };
     static const char *const values[] = {"game", "off", "fxaa", "smaa", "taa"};
     const bool dlss = dlss_offered(), fsr = vk_ffx_available(), fsr4 = fsr && vk_ffx4_available();
-    const bool temporal = cfg_bool("NX2SARIA_DLAA"), fsr_set = !strcmp(cfg_value("NX2SARIA_TAA"), "fsr3");
+    const bool temporal = opt_bool("NX2SARIA_DLAA"), fsr_set = !strcmp(opt_value("NX2SARIA_TAA"), "fsr3");
     const char *names[5] = {menu_text(UI_MENU_AA_GAME), menu_text(UI_MENU_FRAMEGEN_OFF), menu_text(UI_MENU_AA_FXAA),
                             menu_text(UI_MENU_AA_SMAA), nullptr};
     int n = 4;
@@ -1098,7 +1278,7 @@ static void row_aa(void) {
     }
     int cur = GAME;
     for (int i = 0; i < 4; i++)
-        if (!strcmp(cfg_value("NX2SARIA_AA"), values[i])) cur = i;
+        if (!strcmp(opt_value("NX2SARIA_AA"), values[i])) cur = i;
     // FSR 3.1 set where it cannot load runs nothing (the Upscaling row says so): no TAA joins the choice then
     const char *note = temporal && (!fsr_set || fsr) ? menu_text(UI_MENU_AA_WITH_TAA) : nullptr;
     int nv = opt_choice_index("NX2SARIA_AA", UI_MENU_AA, names, n, cur, GAME, UI_MENU_AA_DESC, note);
@@ -1424,6 +1604,7 @@ static void tab_screen(float scale) {
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
     opt_choice("NX2SARIA_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
+    row_preset();
     opt_toggle("NX2SARIA_TEX_CLOBBER", UI_MENU_TEX_CLOBBER, UI_MENU_TEX_CLOBBER_DESC, false,
                menu_text(UI_MENU_TEX_CLOBBER_NOTE));
     // The game resolution needs the output and scene patch sets (resolution.c res_adjustable): Ocarina's build has
@@ -1437,6 +1618,7 @@ static void tab_screen(float scale) {
     if (wide_available()) row_resolution();
     opt_slider("NX2SARIA_FOV", UI_MENU_FOV, 70, 140, UI_MENU_FOV_DESC, 5, "%.0f %%");
     row_upscaling();
+    row_scene_res();
     row_aa();
     row_framegen();
     row_hdr();
@@ -1916,6 +2098,51 @@ static void apply_confirm(float scale) {
     ImGui::EndPopup();
 }
 
+// The box row_preset asks for: the keys set by hand and the values the preset gives them; Cancel (the default, Esc / B)
+// stages nothing, the yes stages the choice (preset_stage). Same look as apply_confirm.
+static void preset_confirm(float scale) {
+    if (g_preset.ask) {
+        g_preset.ask = false;
+        ImGui::OpenPopup("##preset");
+        rt_log("menu: box \"choose this preset?\" opened: %d key(s) set by hand", (int)g_preset.lines.size());
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 0);
+    const bool open = ImGui::BeginPopupModal("##preset", nullptr,
+                                             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar();
+    if (!open) return;
+    g_modal = true;
+    const ImVec2 box = ImGui::GetWindowPos(), box_size = ImGui::GetWindowSize();
+    skin_panel(ImGui::GetWindowDrawList(), box, ImVec2(box.x + box_size.x, box.y + box_size.y), scale);
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const float list_w = fminf(640 * scale, ImGui::GetMainViewport()->Size.x * 0.7f);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + list_w);
+    ImGui::TextUnformatted(menu_text(UI_MENU_PRESET_CONFIRM));
+    ImGui::Spacing();
+    for (const std::string &l : g_preset.lines) ImGui::TextUnformatted(l.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    const char *yes = menu_text(UI_MENU_PRESET_CONFIRM_YES), *no = menu_text(UI_MENU_RESET_NO);
+    const float bw = fmaxf(ImGui::CalcTextSize(yes).x, ImGui::CalcTextSize(no).x) + st.FramePadding.x * 4;
+    bool close = skin_widget_button(no, ImVec2(bw, 0), scale);
+    if (ImGui::IsWindowAppearing()) ImGui::SetItemDefaultFocus();
+    ImGui::SameLine(0, st.ItemSpacing.x + skin_cursor_reach(scale));
+    const bool use = skin_widget_button(yes, ImVec2(bw, 0), scale);
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+        close = true, menu_sound_play(MENU_SOUND_CANCEL);
+    if (use) {
+        rt_log("menu: box \"choose this preset?\": yes");
+        opt_context("NX2SARIA_PRESET", UI_MENU_PRESET, g_preset.from.c_str(), g_preset.to.c_str());
+        preset_stage(g_preset.choice);
+        menu_sound_play(MENU_SOUND_CURSOR);
+    } else if (close) {
+        rt_log("menu: box \"choose this preset?\": Cancel (nothing staged)");
+    }
+    if (use || close) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 // The boxes post_next queues. Keep: Keep / Revert, Revert has the cursor first, Esc and B revert, and so does the
 // timeout (plat_now_ns, counted from the Apply). F11 in the meantime is the player taking control: the box closes and
 // what is on screen stays (opt_display_external). Restart: Restart now / Later, Later has the cursor first, Esc and B
@@ -2292,6 +2519,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     if (skin_widget_button(quit, ImVec2(bw, 0), scale)) g_confirm_quit = true, ImGui::OpenPopup("##confirm");
     restart_confirm(scale);
     apply_confirm(scale);   // after restart_confirm, which clears g_modal
+    preset_confirm(scale);
     post_confirm(scale);    // the boxes that follow an Apply
     menu_sounds_frame();
     bool was_modal = g_modal || binds_modal() || ImGui::GetIO().WantTextInput;
@@ -2336,13 +2564,28 @@ static void perf_cycle_once(void) {
 // countdown, the boxes after Apply) a reload would pull settings from under them: it is refused with a notice instead.
 static std::atomic<int> g_cfg_reload;
 static uint64_t g_notice_until_ns;
-static char g_notice[160];
+static char g_notice[320];
 
 extern "C" void menu_cfg_reload(void) { g_cfg_reload.store(1); }
 
 static void notice(const char *text) {
     snprintf(g_notice, sizeof g_notice, "%s", text);
     g_notice_until_ns = plat_now_ns() + 3000000000ull;
+}
+
+// The one-time notice of the quality preset (cfg_preset_notice_due): a player who never chose a preset and whose PC
+// gets another tier than the game as shipped is told once, at the first frame the game runs with no other notice up,
+// which preset is in use and where it is set. The state file keeps it shown (cfg_preset_notice_done).
+static void preset_notice_tick(bool busy) {
+    static bool done;
+    if (done || busy || g_notice_until_ns) return;
+    done = true;
+    if (!cfg_preset_notice_due()) return;
+    char name[96], text[sizeof g_notice];
+    snprintf(name, sizeof name, "%s", preset_tier_text(cfg_preset_recommended(nullptr)));
+    snprintf(text, sizeof text, menu_text(UI_MENU_PRESET_NOTICE), name);
+    notice(text);
+    cfg_preset_notice_done();
 }
 
 static void cfg_reload_tick(void) {
@@ -2476,6 +2719,12 @@ static void perf_picture(const MenuTarget *t, PerfPanel *p) {
     if (!strcmp(fg, "dlss") && vk_dlssg_active())   // its multiplier as set, clamped to what this GPU allows
         snprintf(v[10], sizeof v[10], "NVIDIA DLSS %dx",
                  vk_dlssg_multiplier_of(cfg_value("NX2SARIA_FRAMEGEN_MULTIPLIER"), vk_dlssg_multiplier_max(nullptr), nullptr));
+    // the quality preset in use, custom while keys it sets are set by hand to other values
+    v[11][0] = 0;
+    if (cfg_preset_in_use() >= 0) {
+        snprintf(v[11], sizeof v[11], "%s", preset_tier_text(cfg_preset_in_use()));
+        if (cfg_preset_custom()) snprintf(v[11], sizeof v[11], menu_text(UI_MENU_PRESET_CUSTOM), preset_tier_text(cfg_preset_in_use()));
+    }
     // The 3D scene's size is known only where resolution.c sets it (the builds with its patch sets); Ocarina sizes its
     // own scene dynamically and res_sizes would report a fixed 1600x900, so the line is left out
     p->scene_known = res_adjustable() != 0;
@@ -2555,6 +2804,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     char cap_name[64];
     const bool capture_shows = bugcap_note(&cap_number, &cap_ok, cap_name) != 0;   // the note after F8
     if (g_booting.load(std::memory_order_relaxed)) g_booting.store(0, std::memory_order_release);   // the game runs
+    preset_notice_tick(capture_shows || g_open.load(std::memory_order_relaxed));
     bool open = g_open.load(std::memory_order_relaxed);
     // the frame the menu is first laid out after opening: also when its g_reset went to an earlier frame of the overlay
     // alone (the menu opened between the two loads), the pad's buttons held now must not count as presses
