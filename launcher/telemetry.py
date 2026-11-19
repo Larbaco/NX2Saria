@@ -119,9 +119,10 @@ def pending_summary(game_dir):
     return _read_summary(_logs(game_dir) / SUMMARY)
 
 
-def last_summary(game_dir):
-    """The last session's summary for a comment: the pending one, else the one sent or declined last."""
-    if not game_dir:
+def last_summary(game_dir, settings=None):
+    """The last session's summary for a comment: the pending one, else the one sent or declined last. None when the
+    player turned session reports off (settings' telemetry "off"): a comment never carries a report they said no to."""
+    if not game_dir or (settings is not None and settings.get('telemetry') == 'off'):
         return None
     return pending_summary(game_dir) or _read_summary(_logs(game_dir) / SENT)
 
@@ -228,17 +229,28 @@ def log_tail(game_dir, lines=TAIL_LINES, limit=TAIL_LIMIT):
 
 # ---------------------------------------------------------------- what is sent
 
-def install_id(settings):
-    """The install's random id (uuid4), made and saved the first time it is needed."""
-    if not settings.get('telemetry_id'):
-        settings['telemetry_id'] = str(uuid.uuid4())
-        settings.save()
+_unsaved_id = None   # the id "See What Is Sent" showed before any was saved; the first send saves this same one
+
+
+def install_id(settings, save=True):
+    """The install's random id (uuid4). save: made and saved the first time something is sent. Without save (See What
+    Is Sent before the player chose), an id is made for this launcher run only and nothing is written; a send later in
+    the run saves that same id, so what was shown is what goes."""
+    global _unsaved_id
+    if settings.get('telemetry_id'):
+        return settings['telemetry_id']
+    _unsaved_id = _unsaved_id or str(uuid.uuid4())
+    if not save:
+        return _unsaved_id
+    settings['telemetry_id'], _unsaved_id = _unsaved_id, None
+    settings.save()
     return settings['telemetry_id']
 
 
-def payload(summary, settings, launcher_version):
-    """The session report exactly as it is sent: what "See What Is Sent" shows and send_session posts."""
-    return {'install_id': install_id(settings), 'launcher_version': versions.display(launcher_version),
+def payload(summary, settings, launcher_version, save=True):
+    """The session report exactly as it is sent: what "See What Is Sent" shows (save False: no id written yet) and
+    send_session posts."""
+    return {'install_id': install_id(settings, save), 'launcher_version': versions.display(launcher_version),
             'summary': summary}
 
 
@@ -384,7 +396,7 @@ class Reporter:
             return Result(False, 'no server is set up')
         tail = log_tail(game_dir) if attach_log and game_dir else None
         data = {'install_id': install_id(self.settings), 'launcher_version': self.version, 'text': text,
-                'summary': last_summary(game_dir), 'log_tail': tail}
+                'summary': last_summary(game_dir, self.settings), 'log_tail': tail}
         raw = body(data)
         while len(raw) > FEEDBACK_LIMIT and data['log_tail']:   # escaped characters can make the log lines grow
             lines = data['log_tail'].splitlines()

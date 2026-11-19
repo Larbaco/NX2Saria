@@ -2548,7 +2548,8 @@ class App:
         example's when the game has written none."""
         summary = telemetry.pending_summary(self.settings.get('game_dir'))
         self.sent_example = summary is None
-        data = telemetry.payload(summary or telemetry.example_summary(), self.settings, self.ctx.version)
+        data = telemetry.payload(summary or telemetry.example_summary(), self.settings, self.ctx.version,
+                                 save=False)
         self.sent_text = telemetry.body(data).decode('utf-8')
         self.sent_return = came_from
         self.show('sent_view')
@@ -2629,7 +2630,8 @@ class App:
                       'with a problem.',)),
             Row('divider'),
             Row('pair', actions=[('Send', self.send_comment), ('Cancel', self.back)],
-                desc=('Send sends your text now, with the summary of your last session when there is one.',)),
+                desc=('Send sends your text now, with the report of your last session when there is one (See What Is '
+                      'Sent), unless Session Reports is Off.',)),
         ]
 
     def send_comment(self):

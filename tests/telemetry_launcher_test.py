@@ -241,9 +241,9 @@ class ServerAnswerTest(Base):
         self.assertEqual(self.settings['telemetry_id'], new)
 
     def test_a_comment_needs_no_session_consent(self):
-        """Pressing Send on a comment is its own consent: it goes with reports off, with the last summary and the
-        log lines asked for."""
-        self.settings['telemetry'] = 'off'
+        """Pressing Send on a comment is its own consent: it goes before the question was answered, with the last
+        summary and the log lines asked for."""
+        self.settings['telemetry'] = ''
         s = summary()
         self.write_summary(s)
         (self.game / 'logs' / 'nx2saria.log').write_text(
@@ -266,6 +266,19 @@ class ServerAnswerTest(Base):
         self.assertFalse(self.reporter().send_feedback(' \n ', False, self.game).ok)   # nothing written
         self.assertFalse(self.reporter().send_feedback('x' * 4001, False, self.game).ok)
         self.assertEqual(len(self.server.hits), 2)
+        # reports turned Off: the comment still goes, never with the report the player said no to
+        self.settings['telemetry'] = 'off'
+        got = self.reporter().send_feedback('Reports are off', False, self.game)
+        self.assertTrue(got.ok)
+        self.assertIsNone(json.loads(self.server.hits[2][3])['summary'])
+
+    def test_see_what_is_sent_writes_no_id(self):
+        """See What Is Sent before any choice shows an id without saving it; the first send saves that same id."""
+        self.assertFalse(self.settings.get('telemetry_id'))
+        shown = telemetry.payload(summary(), self.settings, VERSION, save=False)['install_id']
+        self.assertFalse(self.settings.get('telemetry_id'))
+        self.assertEqual(telemetry.install_id(self.settings), shown)
+        self.assertEqual(self.settings['telemetry_id'], shown)
 
 
 class CrashSummaryTest(Base):

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=857daa0daf9df5bc7f7c144a454ebf824e4bb822 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=5abb523c49ad787125d969e5e4d0bbdd012459c7 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -49,7 +49,7 @@ O servidor acrescenta o **país** de onde o relatório veio, em duas letras (`BR
 ## O que um comentário contém
 
 - O seu texto, com até 4000 caracteres, **exatamente como você o escreveu**. Não inclua o seu e-mail, nome nem nada mais que você não queira enviar.
-- O relatório da sua última sessão, como acima, quando houver um.
+- O relatório da sua última sessão, como acima, quando houver um, a menos que **Session Reports** esteja em *Off*.
 - Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com as suas pastas escritas de forma abreviada.
 - O mesmo `install_id`, `launcher_version`, país e hora.
 

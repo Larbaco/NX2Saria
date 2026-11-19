@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=857daa0daf9df5bc7f7c144a454ebf824e4bb822 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=5abb523c49ad787125d969e5e4d0bbdd012459c7 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · [Русский](../ru/telemetry.md) · **简体中文**
 
@@ -49,7 +49,7 @@
 ## 评论包含什么
 
 - 你的文字，最多 4000 个字符，**与你写的完全一样**。不要写入你的电子邮件、姓名或其他任何你不想发送的内容。
-- 你上一次会话的报告（如上所述），如果有的话。
+- 你上一次会话的报告（如上所述），如果有的话；**Session Reports** 设为 *Off* 时不附带。
 - 如果你勾选 *Attach the Last Log Lines*：`logs/nx2saria.log` 的最后 200 行，最多 24 KB，其中你的文件夹以简写形式写出。
 - 同样的 `install_id`、`launcher_version`、国家和时间。
 

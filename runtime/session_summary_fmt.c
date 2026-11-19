@@ -215,8 +215,9 @@ int ss_format(const SessionSummary *s, char *out, size_t cap) {
         put(&b, ", \"over_100ms\": ");
         put_int(&b, s->over_100ms, 0);
         put(&b, "}");
-    } else {
-        put(&b, "null");
+    } else {   // no frame counted: an object of nulls, as every other group; the server takes no null group
+        put(&b, "{\"fps_mean\": null, \"fps_low_1pct\": null, \"worst_ms\": null, \"over_25ms\": null, "
+                "\"over_100ms\": null}");
     }
     put(&b, ",\n  \"startup\": {\"shader_prewarm_ms\": ");
     put_int(&b, s->shader_prewarm_ms, 0);

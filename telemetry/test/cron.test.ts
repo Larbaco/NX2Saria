@@ -99,4 +99,23 @@ describe("releases refresh", () => {
     expect(() => releasesFromListing({ message: "Not Found" })).toThrow();
     expect(releasesFromListing([])).toEqual([]);
   });
+
+  it("refreshes at once, once per period, when a report names a version the table lacks", async () => {
+    await env.DB.prepare("DELETE FROM meta").run();
+    const listing = [{ tag_name: "v0.20.0", draft: false, published_at: "2026-12-01T10:00:00Z" }];
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify(listing), { headers: { "Content-Type": "application/json" } }));
+    const body = sessionBody();
+    body.launcher_version = "0.20.0";
+    body.summary.version = "0.20.0";
+    expect((await postJson("/v1/session", body)).status).toBe(201);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // a version GitHub does not list either: refused, and no second call inside the period
+    const bogus = sessionBody();
+    bogus.launcher_version = "9.9.9";
+    expect((await postJson("/v1/session", bogus)).status).toBe(400);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
 });

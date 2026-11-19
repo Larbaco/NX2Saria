@@ -56,7 +56,7 @@ request, and the time it arrived.
 
 - Your text, up to 4000 characters, **exactly as you wrote it**. Leave out your e-mail, name or anything else you do
   not want to send.
-- The report of your last session, as above, when there is one.
+- The report of your last session, as above, when there is one, unless **Session Reports** is *Off*.
 - If you tick *Attach the Last Log Lines*: the last 200 lines of `logs/nx2saria.log`, at most 24 KB, with your folders
   written short.
 - The same `install_id`, `launcher_version`, country and time.

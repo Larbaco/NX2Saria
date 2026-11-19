@@ -86,3 +86,10 @@ CREATE TABLE releases (
   version TEXT PRIMARY KEY,
   published_at TEXT
 ) WITHOUT ROWID;
+
+-- Small values the Worker keeps between requests: releases_refresh is the Unix second of the last on-demand releases
+-- refresh (src/db.ts claimReleasesRefresh), so a version newer than the table makes at most one GitHub call per period.
+CREATE TABLE meta (
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);

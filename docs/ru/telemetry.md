@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/telemetry.md source-hash=857daa0daf9df5bc7f7c144a454ebf824e4bb822 reviewed=no -->
+<!-- translation: lang=ru source=docs/telemetry.md source-hash=5abb523c49ad787125d969e5e4d0bbdd012459c7 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · **Русский** · [简体中文](../zh-Hans/telemetry.md)
 
@@ -62,7 +62,8 @@
 
 - Ваш текст, до 4000 символов, **ровно в том виде, в каком вы его написали**. Не пишите свой e-mail, имя или что-либо
   ещё, что вы не хотите отправлять.
-- Отчёт о вашем последнем сеансе, как описано выше, если он есть.
+- Отчёт о вашем последнем сеансе, как описано выше, если он есть, кроме случая, когда **Session Reports** стоит
+  в положении *Off*.
 - Если вы отметите *Attach the Last Log Lines*: последние 200 строк `logs/nx2saria.log`, не больше 24 КБ, с
   сокращённо записанными папками.
 - Те же `install_id`, `launcher_version`, страна и время.
