@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=5b52101cc11de1c3674ed69be2d6cc364aead15d reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=458760f66429595dfdce5f6532ade5a58d7adca5 reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -19,11 +19,6 @@ Problemas que conhecemos na versão atual e o que os evita. Quando um deles é c
 
 - **No Linux, ela é só 2x e SDR.** Com o HDR ligado, a linha do menu diz que ela está desligada, e por quê.
 - **Giros rápidos da câmera perto de uma parede ficam borrados nas bordas** dos quadros gerados, e o brilho da Navi também. Isso é comum na geração de quadros quando o jogo renderiza por volta de 40 fps. Uma taxa de quadros renderizada mais alta diminui o efeito.
-
-## Controles
-
-- **O mouse nos menus do jogo não alcança a fileira de abas no topo** do menu de pausa (a troca entre as páginas).
-  Use L e R, ou as teclas ligadas a eles, para as abas; o resto do menu aceita o mouse.
 
 ## Shaders e pipelines
 
