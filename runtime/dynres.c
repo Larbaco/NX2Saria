@@ -26,7 +26,7 @@
 // target goes to about 99 % of it at the step above, under the 108 % that would send it down again.
 //
 // A size that changes every few frames is worse to look at than a steady one, so steps are held, by the clock:
-//   - each step for NX2SARIA_DYN_RES_STEP 60ths of a second (default 60), never less than DYN_HOLD_MIN_NS, 1 s;
+//   - each step for NX2SARIA_DYN_RES_STEP 60ths of a second (default 45), never less than DYN_HOLD_MIN_NS, 1 s;
 //   - after a step down, no step up for DYN_UP_WAIT_NS, 3 s, so a GPU time at the edge of the target does not climb
 //     back the moment it dips;
 //   - a step up that a step down undoes within DYN_UP_PROVEN_NS (5 s) doubles that wait, up to DYN_UP_WAIT_MAX_NS
@@ -90,6 +90,18 @@ static struct {
     char why[320];        // the last line that said why it does not act, so each reason is said once
 } D = {.cfg_seen = ~0u, .from = -2};
 
+// The scene share in use, for widescreen.c scene_share, which runs on the game's thread in its present while
+// dynres_frame runs on the submitting or presenting thread: one value, the double's bits, stored whole after a step or
+// a (re)start, so a reader never sees a share half-way through a restart. 0 while not stepping the scene share.
+static uint64_t share_bits;
+
+static void share_publish(void) {
+    double s = D.on && D.plain && D.level != D.base ? D.share[D.level] : 0;
+    uint64_t bits;
+    memcpy(&bits, &s, sizeof bits);
+    __atomic_store_n(&share_bits, bits, __ATOMIC_RELEASE);
+}
+
 static int mode_index(const char *m) {
     for (int i = 0; i < DYN_LEVELS; i++)
         if (m && !strcmp(m, DYN_MODE[i])) return i;
@@ -142,7 +154,7 @@ static void dynres_read(void) {
     double from = wide_dynres_base(), min = cfg_double("NX2SARIA_DYN_RES_MIN");
     min = min < DYN_MIN_LO ? DYN_MIN_LO : min > DYN_MIN_HI ? DYN_MIN_HI : min;
     int plain = from >= 0, base = plain ? 0 : mode_index(m);
-    double steps[DYN_SHARES];
+    double steps[DYN_SHARES] = {0};
     int floor_at = plain && from > 0 ? share_steps(from, min, steps) : 0;
     D.target_ms = cfg_double("NX2SARIA_DYN_RES_TARGET");
     D.target_ns = target_now_ns();
@@ -198,12 +210,18 @@ static void dynres_read(void) {
         D.why[0] = 0;
     }
     D.on = on;
+    share_publish();
     perf_gpu_timing_want(on);
 }
 
 const char *dynres_override(void) { return D.on && !D.plain && D.level != D.base ? DYN_MODE[D.level] : NULL; }
 
-double dynres_share(void) { return D.on && D.plain && D.level != D.base ? D.share[D.level] : 0; }
+double dynres_share(void) {
+    uint64_t bits = __atomic_load_n(&share_bits, __ATOMIC_ACQUIRE);
+    double s;
+    memcpy(&s, &bits, sizeof s);
+    return s;
+}
 
 // Once per presented frame, before vk_dlaa.c reads the mode.
 void dynres_frame(void) {
@@ -262,4 +280,5 @@ void dynres_frame(void) {
     }
     steps++;
     D.level = to, D.held_from = t;
+    share_publish();
 }

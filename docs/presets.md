@@ -257,7 +257,7 @@ scene:
 The steps hold still on purpose, with times fixed in the code: a step down when the GPU's average is 8 % over the
 target, a step up when it is under 75 % of it (a step up takes about 1 / 0.757 more pixels, so it lands near 99 % of
 the target, under the 8 % that would send it down again), at least 1 s between two steps whatever `dyn_res_step` says
-(60ths of a second, default 60), and at least 3 s from a step down to a step up. Where one step moves the GPU time by
+(60ths of a second, default 45), and at least 3 s from a step down to a step up. Where one step moves the GPU time by
 more than the gap between the two thresholds, a step up that a step down undoes within 5 s doubles that wait, up to
 48 s, so the scene does not swing between two sizes every few seconds; a step up that holds 5 s brings it back to 3 s.
 

@@ -170,6 +170,7 @@ double wide_dynres_base(void) {
     if (set == -2) set = rt_patch_set("res_fixed");
     if (upscaler_runs()) return -1;
     double s = plain_share(), fit = fit_share();
+    if (s != s) s = 0;   // a scene_share that is not a number: nothing to step
     return set < 0 || s <= 0 ? 0 : s > fit ? fit : s;
 }
 
