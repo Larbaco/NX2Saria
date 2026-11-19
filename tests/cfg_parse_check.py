@@ -15,6 +15,10 @@ for what it links with. What the readers get and what the log says about the val
 - a full settings table (cfg.c CFG_MAX_KEYS): one line at load naming the first key not read, one at the first menu
   change not kept;
 - a number read of a key without a row whose set value does not parse gives 0 (cfg.c default_number), not a crash.
+- a test hook's values (cfg.c cfg_set_test, ui/menu.cpp NX2SARIA_MENU_TEST_SET) are read like any other but no save
+  writes them, the one at exit included, with one log line each time their count changes; a player's change beside
+  them is written alone, a player's cfg_set of a test key makes it the player's, and cfg_test_keep (the hook's SAVE=1)
+  lets the next save write the rest.
 
 No game files.
 
@@ -209,6 +213,33 @@ def main():
               f'low end: {what}: {want}, the removal said {said} time(s)', out)
     rc, out = run(exe, env, 'norow', CLEAN, work, {'NX2NAVI_NO_ROW_CHECK': 'abc'})
     check(rc == 0 and 'got: cfg_int 0 cfg_double 0' in out, 'cfg_int of a set, unparsable key without a row: 0', out)
+
+    # a test hook's values stay out of the settings file until SAVE=1 (cfg_set_test, cfg_test_keep)
+    rc, out = run(exe, env, 'testset', '[display]\nfullscreen = 0\n', work)
+    seg = dict(zip(['start', '1', '2', '3', '4', '5', '6', '7'], out.split('--- save ')))
+    writes = {k: [l for l in v.splitlines() if l.startswith('write: ')] for k, v in seg.items()}
+    text = {k: v[v.find('write: '):] if 'write: ' in v else '' for k, v in seg.items()}
+    check(rc == 0 and 'got: dyn_res 1, menu_lang pt-BR' in seg.get('start', ''),
+          'test values are read like any other setting', out)
+    check(rc == 0 and not writes.get('1') and
+          'log: cfg: menu test values not saved: 2 key(s): DYN_RES, MENU_LANG' in seg.get('1', ''),
+          'a save with only test values writes nothing, and says what it left out', out)
+    check(rc == 0 and len(writes.get('2', [])) == 1 and 'fullscreen = 1' in text['2'] and 'dyn_res' not in text['2']
+          and 'menu_lang' not in text['2'] and 'not saved' not in seg['2'],
+          "a player's change beside them is written alone, and the same count is not logged again", out)
+    check(rc == 0 and 'dyn_res = 1' in text.get('3', '') and 'menu_lang' not in text.get('3', '') and
+          'log: cfg: menu test values not saved: 1 key(s): MENU_LANG' in seg.get('3', ''),
+          "the player's cfg_set of a test key makes it the player's, and it is saved", out)
+    check(rc == 0 and 'got: kept 1' in seg.get('4', '') and 'menu_lang = pt-BR' in text.get('4', '') and
+          sum('menu test values not saved' in seg.get(k, '') for k in '1234') == 2,
+          'SAVE=1 (cfg_test_keep) lets the next save write the test values', out)
+    check(rc == 0 and 'got: volume 50' in seg.get('5', '') and not writes.get('5') and
+          'menu test values not saved: 1 key(s): VOLUME' in seg.get('5', ''),
+          "a menu preview of a test value, reverted, leaves it the test's: not saved", out)
+    check(rc == 0 and len(writes.get('6', [])) == 1 and 'VOLUME (removed)' in seg.get('6', ''),
+          "the menu's reset of a test key is the player's, and saved", out)
+    check(rc == 0 and 'vsync = 0' in text.get('7', ''),
+          "a test value equal to the player's unsaved change leaves that change the player's", out)
 
     # The new environment spelling wins deterministically; the legacy spelling still supplies a value when it is alone.
     rc, out = run(exe, env, 'read', READ, work,

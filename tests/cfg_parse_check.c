@@ -8,6 +8,8 @@
 //   lowend   cfg_load on the file and cfg_init; then what cfg_bool gives for the switch of the low-end GPU mode,
 //            which is gone (cfg.c lowend_set), what two of the mode's keys read and the default of one of them
 //   norow    cfg_int and cfg_double of a key without a row whose value (the environment's) does not parse
+//   testset  a test hook's values (cfg_set_test, ui/menu.cpp NX2SARIA_MENU_TEST_SET) through four saves: test values
+//            only, a player's change beside them, the player's cfg_set of a test key, and cfg_test_keep (SAVE=1)
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -76,7 +78,12 @@ uint8_t *plat_file_read(const char *path, uint64_t *size) {
     return d;
 }
 int64_t plat_file_size(const char *p) { (void)p; return -1; }
-int plat_file_write_atomic(const char *p, const void *d, size_t n) { (void)p, (void)d, (void)n; return 1; }
+// prints what a save would write ("write: <file's text>"), so a case sees which keys reached the file; writes nothing
+int plat_file_write_atomic(const char *p, const void *d, size_t n) {
+    (void)p;
+    printf("write: %.*s\n", (int)n, (const char *)d);
+    return 1;
+}
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 int plat_setenv(const char *n, const char *v) { (void)n, (void)v; return 1; }
@@ -99,6 +106,41 @@ int main(int argc, char **argv) {
         cfg_set("NX2NAVI_VK_PRESENT", "fifo");
         cfg_set("NX2NAVI_FULLSCREEN", "1");
         printf("got: vk_present %s\n", cfg_get("NX2NAVI_VK_PRESENT") ? cfg_get("NX2NAVI_VK_PRESENT") : "(unset)");
+        return 0;
+    }
+    if (!strcmp(argv[1], "testset")) {
+        if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
+        cfg_set_test("NX2SARIA_DYN_RES", "1");
+        cfg_set_test("NX2SARIA_MENU_LANG", "pt-BR");
+        printf("got: dyn_res %s, menu_lang %s\n", cfg_get("NX2SARIA_DYN_RES"), cfg_get("NX2SARIA_MENU_LANG"));
+        printf("--- save 1: test values only\n");
+        cfg_save_to(ini);
+        printf("--- save 2: and the player's fullscreen\n");
+        cfg_set("NX2SARIA_FULLSCREEN", "1");
+        cfg_save_to(ini);
+        printf("--- save 3: the player sets dyn_res too\n");
+        cfg_set("NX2SARIA_DYN_RES", "1");
+        cfg_save_to(ini);
+        printf("--- save 4: SAVE=1\n");
+        printf("got: kept %d\n", cfg_test_keep());
+        cfg_save_to(ini);
+        // the menu's draft over a test value: a preview (cfg_set) and its revert put the test's value back as the test's
+        printf("--- save 5: a preview of a test value, reverted\n");
+        cfg_set_test("NX2SARIA_VOLUME", "50");
+        const char *was;
+        const int state = cfg_state("NX2SARIA_VOLUME", &was);
+        cfg_set("NX2SARIA_VOLUME", "70");
+        cfg_revert("NX2SARIA_VOLUME", was, state);
+        printf("got: volume %s\n", cfg_get("NX2SARIA_VOLUME"));
+        cfg_save_to(ini);
+        printf("--- save 6: the menu resets the test's key\n");
+        static const char *const vol[] = {"VOLUME"};
+        cfg_reset(vol, 1);
+        cfg_save_to(ini);
+        printf("--- save 7: a test value equal to the player's unsaved change\n");
+        cfg_set("NX2SARIA_VSYNC", "0");
+        cfg_set_test("NX2SARIA_VSYNC", "0");
+        cfg_save_to(ini);
         return 0;
     }
     if (!strcmp(argv[1], "read")) {

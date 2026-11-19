@@ -27,7 +27,7 @@
 #define NEW_PREFIX_LEN (sizeof NEW_PREFIX - 1)
 #define CFG_MAX_KEYS 512
 
-typedef struct { char *key, *value; int dirty, removed, held; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it
+typedef struct { char *key, *value; int dirty, removed, held, test; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it; test: set by a test hook (cfg_set_test), cfg_save skips it too
 
 static CfgEntry entries[CFG_MAX_KEYS];
 static int n_entries;
@@ -699,7 +699,7 @@ static void add(char *key, char *value, int line) {
         return;
     }
     entry_line[n_entries] = line;
-    entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 0, 0, 0};
+    entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 0, 0, 0, 0};
 }
 
 // ---- values outside their rows' sets, logged at load (the values are read as they are written, a comment after a
@@ -808,7 +808,7 @@ static void migrate(void) {
     layout->value = strdup("nintendo");
     layout->dirty = 1;
     if (!prompts && n_entries < CFG_MAX_KEYS)
-        entry_line[n_entries] = 0, entries[n_entries++] = (CfgEntry){strdup("PROMPTS"), strdup("xbox"), 1, 0, 0};
+        entry_line[n_entries] = 0, entries[n_entries++] = (CfgEntry){strdup("PROMPTS"), strdup("xbox"), 1, 0, 0, 0};
     else if (!prompts)
         full_set("PROMPTS", "= xbox is not kept");
     rt_log("cfg: settings file pad_layout = xbox_prompts is read as pad_layout = nintendo and prompts = %s",
@@ -1031,7 +1031,10 @@ int cfg_setenv(const char *name, const char *value) {
 
 int cfg_from_env(const char *name) { return cfg_env(name) != NULL; }
 
-void cfg_set(const char *name, const char *value) {
+// cfg_set and cfg_set_test: one change under one hold of set_lock, so a save on another thread (the one at exit) never
+// sees a test value before it is marked as the test's. test 0: the value is the player's, and saved; test 1: the
+// test's (cfg_set_test), unless the entry already holds that value as the player's unsaved change, which stays theirs.
+static void set_value(const char *name, const char *value, int test) {
     if ((strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) || !value) return;
     char key[64];
     snprintf(key, sizeof key, "%s", !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN);
@@ -1040,14 +1043,17 @@ void cfg_set(const char *name, const char *value) {
     int i = 0, n = n_entries;
     while (i < n && strcmp(entries[i].key, key)) i++;
     if (i < n) {
-        if (!entries[i].value || strcmp(entries[i].value, value)) {
+        const int changed = !entries[i].value || strcmp(entries[i].value, value);
+        if (changed) {
             if (entries[i].value) kept_n++, kept_bytes += strlen(entries[i].value) + 1;   // cfg_sizes
             __atomic_store_n(&entries[i].value, strdup(value), __ATOMIC_RELEASE);   // the old string stays for readers
-            entries[i].dirty = 1;
         }
+        if (test && !changed && entries[i].dirty && !entries[i].test) test = 0;   // the player's unsaved change
+        if (changed) entries[i].dirty = 1;
         entries[i].removed = 0;   // a value set after cfg_reset replaces the line instead of deleting it
+        entries[i].test = test;
     } else if (n < CFG_MAX_KEYS) {
-        entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0};
+        entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0, test};
         __atomic_store_n(&n_entries, n + 1, __ATOMIC_RELEASE);
     } else {
         full_set(key, "is not kept");
@@ -1055,6 +1061,8 @@ void cfg_set(const char *name, const char *value) {
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     plat_mutex_unlock(&set_lock);
 }
+
+void cfg_set(const char *name, const char *value) { set_value(name, value, 0); }
 
 int cfg_reset(const char *const *keys, int n) {
     int done = 0;
@@ -1072,15 +1080,17 @@ int cfg_reset(const char *const *keys, int n) {
                 full_set(name, "keeps its line in the file");
                 continue;
             }
-            entries[i] = (CfgEntry){strdup(name), NULL, 0, 1, 0};
+            entries[i] = (CfgEntry){strdup(name), NULL, 0, 1, 0, 0};
             __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
         } else if (entries[i].value) {
             __atomic_store_n(&entries[i].value, NULL, __ATOMIC_RELEASE);   // the old string stays for readers
             entries[i].dirty = 0;
             entries[i].removed = 1;   // cfg_save_to deletes the key's lines
+            entries[i].test = 0;      // the removal is the player's, and saved
             done++;
         } else {
             entries[i].removed = 1;
+            entries[i].test = 0;
         }
     }
     if (done) __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
@@ -1110,7 +1120,7 @@ int cfg_state(const char *name, const char **value) {
     *value = NULL;
     if (i >= 0) {
         *value = entries[i].value;
-        state = (entries[i].dirty ? CFG_DIRTY : 0) | (entries[i].removed ? CFG_REMOVED : 0);
+        state = (entries[i].dirty ? CFG_DIRTY : 0) | (entries[i].removed ? CFG_REMOVED : 0) | (entries[i].test ? CFG_TEST : 0);
     }
     plat_mutex_unlock(&set_lock);
     return state;
@@ -1123,11 +1133,22 @@ void cfg_hold(const char *name, int on) {
     int i = find_entry(key);
     if (i < 0 && on && n_entries < CFG_MAX_KEYS) {   // a key not set yet: an empty entry the following cfg_set fills
         i = n_entries;
-        entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0};
+        entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0, 0};
         __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
     }
     if (i >= 0) entries[i].held = on != 0;
     plat_mutex_unlock(&set_lock);
+}
+
+void cfg_set_test(const char *name, const char *value) { set_value(name, value, 1); }
+
+int cfg_test_keep(void) {
+    int n = 0;
+    plat_mutex_lock(&set_lock);
+    for (int i = 0; i < n_entries; i++)
+        if (entries[i].test) entries[i].test = 0, n++;
+    plat_mutex_unlock(&set_lock);
+    return n;
 }
 
 void cfg_revert(const char *name, const char *orig_value, int orig_state) {
@@ -1139,6 +1160,7 @@ void cfg_revert(const char *name, const char *orig_value, int orig_state) {
         __atomic_store_n(&entries[i].value, (char *)orig_value, __ATOMIC_RELEASE);   // the strings are never freed
         entries[i].dirty = (orig_state & CFG_DIRTY) != 0;
         entries[i].removed = (orig_state & CFG_REMOVED) != 0;
+        entries[i].test = (orig_state & CFG_TEST) != 0;   // a test value put back stays the test's
         entries[i].held = 0;
         __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     }
@@ -1412,16 +1434,29 @@ static void put_entry(Out *o, const CfgEntry *e, const char *eol) {
 
 // A held entry (cfg_hold: a value the menu previews and the player has not applied) is invisible to a save: its flags are
 // parked here for the length of cfg_save_to and put back after it, so a save made by anything else (F10, F11, closing the
-// window) never writes it.
+// window) never writes it. So is a test hook's value (cfg_set_test): a test run's settings stay out of the file, the save
+// at exit included, and the log says how many were left out, again only when that number changes.
 static void park_held(unsigned char *parked, int n) {
+    static int test_logged;
+    char names[256];
+    int tests = 0, len = 0;
+    names[0] = 0;
     for (int i = 0; i < n; i++) {
         parked[i] = 0;
-        if (!entries[i].held) continue;
-        if (entries[i].dirty || entries[i].removed)
+        if (!entries[i].held && !entries[i].test) continue;
+        if (entries[i].held && (entries[i].dirty || entries[i].removed))
             rt_log("cfg: save leaves out %s: the settings menu previews it and it is not applied yet", entries[i].key);
+        else if (entries[i].dirty || entries[i].removed) {
+            if (len < (int)sizeof names - 40)
+                len += snprintf(names + len, sizeof names - (size_t)len, "%s%s", tests ? ", " : "", entries[i].key);
+            tests++;
+        }
         parked[i] = (unsigned char)(1 | (entries[i].dirty ? 2 : 0) | (entries[i].removed ? 4 : 0));
         entries[i].dirty = entries[i].removed = 0;
     }
+    if (tests && tests != test_logged)
+        rt_log("cfg: menu test values not saved: %d key(s): %s%s", tests, names, len >= (int)sizeof names - 40 ? ", ..." : "");
+    test_logged = tests;
 }
 
 static void unpark_held(const unsigned char *parked, int n) {
@@ -1771,7 +1806,7 @@ static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const c
             return;
         }
         entry_line[n_entries] = line;
-        entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0};
+        entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0, 0};
         __atomic_store_n(&n_entries, n_entries + 1, __ATOMIC_RELEASE);
     }
     if (!cfg_supported(key)) {   // stored, so memory and file agree, but nothing reads it on this build
