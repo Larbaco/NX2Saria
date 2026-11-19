@@ -20,10 +20,10 @@ def main():
     for reason in (
         'camera actor pointer is null', 'camera name is unreadable', 'camera is EventCamera',
         'not PlayerCamera', 'pause, map or system menu is open', 'event manager is unavailable',
-        'active event pointer is unreadable', 'an event is active', 'player camera component is unavailable',
+        'active event pointer is unreadable', 'an event is active (%#llx)', 'player camera component is unavailable',
         'player camera flags are unreadable', 'first-person aiming flag is set', 'camera manager is unavailable',
-        'camera count is unreadable', 'camera manager has no cameras', 'camera or view pointer is unavailable',
-        'active view %#llx differs from camera zero view %#llx', 'camera flags are unreadable',
+        'camera count is unreadable', 'camera manager has no cameras', 'camera list or active view pointer is unavailable',
+        'no camera among %u entries owns active view %#llx (first view %#llx)', 'active camera flags are unreadable',
         'camera zero is marked as a menu camera', 'scaled lens angle is outside (0, pi)',
         'configured scale leaves the angle unchanged',
     ):

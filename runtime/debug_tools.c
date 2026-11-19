@@ -1070,19 +1070,25 @@ void dbg_fov_host(Cpu *c) {
     if (!mgr) { fov_skip_once(FOV_NO_CAMERA_MANAGER, "camera manager is unavailable"); return; }
     if (!rd(mgr + 0x20, &count, sizeof count)) { fov_skip_once(FOV_CAMERA_COUNT_UNREADABLE, "camera count is unreadable"); return; }
     if (!count) { fov_skip_once(FOV_NO_CAMERAS, "camera manager has no cameras"); return; }
-    uint64_t list = rd_ptr(mgr + 0x28), camera = list ? rd_ptr(list) : 0;
+    uint64_t list = rd_ptr(mgr + 0x28), camera = 0;
     uint64_t views = rd_ptr(state + 0x18), view = views ? rd_ptr(views) : 0;
-    uint16_t camera_flags;
-    if (!camera || !view) { fov_skip_once(FOV_NO_CAMERA_VIEW, "camera or view pointer is unavailable"); return; }
-    uint64_t camera_view = rd_ptr(camera + 0x78);
-    if (camera_view != view) {
+    if (!list || !view) { fov_skip_once(FOV_NO_CAMERA_VIEW, "camera list or active view pointer is unavailable"); return; }
+    // The manager's first camera can be an interface or event camera; match the view the current update actually uses.
+    for (uint32_t i = 0; i < count && i < 128; i++) {
+        uint64_t candidate = rd_ptr(list + (uint64_t)i * 8);
+        if (candidate && rd_ptr(candidate + 0x78) == view) { camera = candidate; break; }
+    }
+    if (!camera) {
         char reason[96];
-        snprintf(reason, sizeof reason, "active view %#llx differs from camera zero view %#llx",
-                 (unsigned long long)view, (unsigned long long)camera_view);
+        uint64_t first = rd_ptr(list);
+        uint64_t first_view = first ? rd_ptr(first + 0x78) : 0;
+        snprintf(reason, sizeof reason, "no camera among %u entries owns active view %#llx (first view %#llx)",
+                 count, (unsigned long long)view, (unsigned long long)first_view);
         fov_skip_once(FOV_VIEW_MISMATCH, reason);
         return;
     }
-    if (!rd(camera + 0x88, &camera_flags, sizeof camera_flags)) { fov_skip_once(FOV_CAMERA_FLAGS_UNREADABLE, "camera flags are unreadable"); return; }
+    uint16_t camera_flags;
+    if (!rd(camera + 0x88, &camera_flags, sizeof camera_flags)) { fov_skip_once(FOV_CAMERA_FLAGS_UNREADABLE, "active camera flags are unreadable"); return; }
     if (camera_flags & 1) { fov_skip_once(FOV_MENU_CAMERA, "camera zero is marked as a menu camera"); return; }
     uint32_t bits = (uint32_t)c->v[0];
     float orig;
