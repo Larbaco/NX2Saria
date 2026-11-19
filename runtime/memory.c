@@ -1485,7 +1485,7 @@ static void reexec_or_fail(const char *what) {
     plat_reexec();
 }
 
-void mem_init(void) {
+void mem_init(int game) {
     if (L.pool) return;
     // Fixed window: modules, kernel region, host-function addresses.
     mods_lo = MOD_MAIN_BASE;
@@ -1514,6 +1514,11 @@ void mem_init(void) {
     for (uint64_t at = align_up(low + LOW_SIZE, ALIAS_ALIGN); at + ALIAS_SIZE <= mods_lo && !alias; at += ALIAS_ALIGN)
         if (reserve_at(at, ALIAS_SIZE, 1)) alias = at;
     if (!alias) reexec_or_fail("a 64 GiB alias region below 2^39");
+    // The rest of the settings' start, now that the guest's whole address space is claimed: the quality preset's probe
+    // (hw_detect.c) loads the Vulkan drivers, whose libraries, heaps and reservations would otherwise be free to land
+    // where the block and the region above go. Before the pool size below, which goes by the resolution settings a
+    // preset sets (resolution.c decides them once, on that first call).
+    cfg_start(game);
 
     plat_mem_fault_hook(thaw_fault);   // before the crash handler
     alias_pages = calloc(ALIAS_PAGES, 1);

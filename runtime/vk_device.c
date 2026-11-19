@@ -11,6 +11,7 @@
 
 #include "cfg.h"
 #include "host.h"
+#include "hw_detect.h"
 #include "mem_budget.h"
 #include "vk.h"
 #include "platform/platform.h"
@@ -160,9 +161,11 @@ static void mesa_submit_thread(void) {
 // A driver may read these variables when it loads, and a thread can load the Vulkan driver before create_instance:
 // widescreen.c's wide_init asks for the monitor's size (fullscreen with a monitor chosen and the picture at the
 // window's size), and SDL's load of the Vulkan library there lists the instance extensions, which loads the drivers,
-// while the prewarm thread may be in create_instance; setenv beside other threads' getenv is not safe either. main
-// therefore calls this for a game run before any thread of the game starts; create_instance calls it for the other
-// modes. Both calls happen before other threads exist or under vk_init's lock, so the flag needs no atomics.
+// while the prewarm thread may be in create_instance; setenv beside other threads' getenv is not safe either. The
+// quality preset's probe (hw_detect.c hw_detect, from cfg_start inside mem_init) therefore calls this first in a game
+// run, main calls it again for a game run whose probe did not run, before any thread of the game starts, and
+// create_instance calls it for the other modes. Every call happens before other threads exist or under vk_init's lock,
+// so the flag needs no atomics.
 void vk_driver_cache_env(void) {
     static int done;
     if (done) return;
@@ -338,6 +341,7 @@ retry:
         }
     free(qp);
     rt_log("vk: using gpu %d: %s", best, g_vk.props.deviceName);
+    hw_detect_device_check(g_vk.props.vendorID, g_vk.props.deviceID, g_vk.props.driverVersion, g_vk.props.deviceName);
     vk_caps_driver(g_vk.phys);   // before vk_mem_class_log, which chooses the pools' storage by driver
     {   // and by whether the device imports dma-bufs (vk_memory.c "dma-buf imports")
         uint32_t ne = 0;

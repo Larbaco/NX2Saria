@@ -9,8 +9,8 @@
 //   frame.png       the presented frame as the window got it, overlay included, without this capture's own note
 //   frames.tsv      the last RING presents before the press and the POST after it: frame, interval, replay time
 //   log-tail.txt    the end of this run's log
-//   settings.ini    every setting with a value, as nx2navi.ini lines, without the private ones (cfg_private.h): what a
-//                   replay runs with
+//   settings.ini    every setting with a value, as nx2navi.ini lines, without the private ones (cfg_private.h), and
+//                   the values the quality preset gave the others (preset_lines): what a replay runs with
 //   NX2Saria-save-*.zip   the save the game would load next (save_share.c), which a replay starts from
 //   flags.tsv, texts.tsv   the game's on/off flags and its 64-character texts, by the hash of their names
 //   flight/         the flight recorder's dump of the same moment, when flight = 1 (flight.c)
@@ -289,6 +289,27 @@ static void setting_cb(const char *key, const char *value, int from_env, void *c
     s->differ++;
 }
 
+// The quality preset (cfg.c "quality presets"): its name in capture.txt, and in settings.ini the value of each key it
+// can set that the player did not, where that differs from the table's default. A replay runs on high, which sets
+// nothing (cfg.c preset_init): its PC's own preset would otherwise give these keys values of another PC.
+static void preset_lines(FILE *ini) {
+    int in_use = cfg_preset_in_use(), n;
+    const char *const *keys = cfg_preset_keys(&n);
+    fprintf(ini, "# The values the quality preset (%s) gave the keys above leave unset, for a replay, which uses none:\n",
+            cfg_preset_name(in_use));
+    for (int k = 0; k < n; k++) {
+        char var[96], lower[80];
+        snprintf(var, sizeof var, "NX2SARIA_%s", keys[k]);
+        const CfgMeta *m = cfg_meta(keys[k]);
+        if (!m || cfg_is_set(var)) continue;
+        const char *v = cfg_value(var);
+        if (!*v || !strcmp(v, m->def)) continue;
+        snprintf(lower, sizeof lower, "%s", keys[k]);
+        for (char *p = lower; *p; p++) *p = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
+        fprintf(ini, "%s = %s\n", lower, v);
+    }
+}
+
 static void text_cb(uint32_t hash, const char *text, void *ctx) {
     static const char *const names[] = {"Sequence_CurrentBanc", "Sequence_ReservedNextBanc", "Sequence_ReservedNextStartPosName",
                                         "Sequence_ReservedBootEventName", "Sequence_ReservedEventStarterName"};
@@ -477,13 +498,17 @@ static void writer(void *arg) {
             put(&t, "%s = %s\n", line, colon + 2);
         }
 
+        const char *why;
+        int rec = cfg_preset_recommended(&why);
+        put(&t, "quality_preset = %s (recommended %s: %s)\n", cfg_preset_name(cfg_preset_in_use()), cfg_preset_name(rec), why);
+
         put(&t, "\n[settings that differ from the defaults]\n");
         Settings s = {open_in("settings.ini", "w"), &t, 0};
         if (s.ini)
             fprintf(s.ini, "# The settings bug capture %d ran with, as settings-file lines: every setting that had a value, from the\n"
                            "# file, the menu or the environment, without the private ones. NX2SARIA_CAPTURE_REPLAY reads it.\n", job.number);
         cfg_each_active(setting_cb, &s);
-        if (s.ini) fclose(s.ini);
+        if (s.ini) preset_lines(s.ini), fclose(s.ini);
         if (!s.differ) put(&t, "# none\n");
         fclose(f);
     }

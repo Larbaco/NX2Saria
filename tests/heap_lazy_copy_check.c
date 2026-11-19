@@ -20,6 +20,7 @@ const char *cfg_get(const char *name) { (void)name; return NULL; }
 const char *cfg_value(const char *name) { (void)name; return "0"; }
 int cfg_bool(const char *name) { return !strcmp(name, "NX2NAVI_HEAP_LAZY"); }
 void cfg_init(void) {}
+void cfg_start(int game) { (void)game; }
 int tracker_api_on(void) { return 0; }   // mem_init asks where the stack and heap block goes
 int cfg_setenv(const char *name, const char *value) { (void)name, (void)value; return 0; }
 int rt_knob(const char *name, const char *def) { (void)name; return strcmp(def, "0") != 0; }
@@ -71,7 +72,7 @@ static int all(const uint8_t *p, uint64_t n, uint8_t v) {
 
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
-    mem_init();
+    mem_init(0);
     uint64_t heap = 0, size = 64ull << 20, y;
     CHECK(mem_set_heap_size(size, &heap) == R_OK && heap, "SetHeapSize failed");
     CHECK(heap_lazy, "the lazy heap is off");

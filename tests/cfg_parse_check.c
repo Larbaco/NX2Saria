@@ -16,6 +16,7 @@
 
 #include "cfg.h"
 #include "host.h"
+#include "hw_detect.h"
 #include "platform/platform.h"
 
 void rt_log(const char *fmt, ...) {
@@ -80,6 +81,15 @@ int plat_file_write_atomic(const char *p, const void *d, size_t n) { (void)p, (v
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 int plat_setenv(const char *n, const char *v) { (void)n, (void)v; return 1; }
+// hw_detect.c: nothing known of the hardware, so the recommended preset is high, which sets nothing
+void hw_detect(PresetHw *hw, int probe, char *skipped, size_t skipped_cap, char *note, size_t note_cap,
+               double *probe_ms) {
+    (void)probe;
+    memset(hw, 0, sizeof *hw);
+    snprintf(skipped, skipped_cap, "a test");
+    note[0] = 0, (void)note_cap;
+    *probe_ms = 0;
+}
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -90,6 +100,7 @@ int main(int argc, char **argv) {
         printf("got: pace_smooth '%s'\n", cfg_get("NX2NAVI_PACE_SMOOTH") ? cfg_get("NX2NAVI_PACE_SMOOTH") : "(unset)");
         printf("--- environment\n");
         cfg_init();   // finds no settings file next to the stand-in exe; checks the environment's values
+        cfg_start(0);
         return 0;
     }
     if (!strcmp(argv[1], "full")) {
@@ -105,6 +116,7 @@ int main(int argc, char **argv) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         printf("--- environment\n");
         cfg_init();
+        cfg_start(0);
         static const char *const keys[] = {"PACE_SMOOTH", "FULLSCREEN", "FPS_LIMIT", "VK_PRESENT", "ASPECT", "RTSS",
                                            "HDR_LIVE", "CLOTH_REALTIME", "WINDOW_SIZE", "DLSS_PRESET", "MODS_DIR",
                                            "DYN_RES", "SHADOW_PCF"};
@@ -122,6 +134,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "lowend")) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         cfg_init();
+        cfg_start(0);
         const char *mesh = cfg_get("NX2NAVI_MESH_EMULATION"), *res = cfg_get("NX2NAVI_VRAM_RESERVE_MB");
         printf("got: bool %d mesh_emulation '%s' vram_reserve_mb '%s' default '%s'\n", cfg_bool("NX2NAVI_LOW_END_GPU"),
                mesh ? mesh : "(unset)", res ? res : "(unset)", cfg_default("NX2NAVI_VRAM_RESERVE_MB"));
@@ -134,6 +147,7 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(argv[1], "nearby")) {
         cfg_init();
+        cfg_start(0);
         const char *v = cfg_get("NX2SARIA_SHARPNESS");
         printf("nearby: sharpness '%s'\n", v ? v : "(unset)");
         return 0;

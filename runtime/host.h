@@ -230,8 +230,9 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...);         // host -> guest, sec
 typedef struct { uint64_t base, size; } RtRange;
 typedef struct { RtRange aslr, stack, heap, alias, kernel, hostfn; uint64_t pool; } RtGuestLayout;
 typedef struct { uint64_t base, size; uint32_t state, attr, perm, ipc, device, pad; } RtMemoryInfo;   // Horizon layout
-void mem_init(void);                                       // reserve every region; on a collision re-run the process
-                                                           // (up to 20 times, NX2SARIA_REEXEC), then fatal
+void mem_init(int game);                                   // reserve every region; on a collision re-run the process
+                                                           // (up to 20 times, NX2SARIA_REEXEC), then fatal; reads the
+                                                           // settings (game: cfg.h cfg_start)
 const RtGuestLayout *mem_layout(void);
 void mem_commit_checked(uint64_t addr, size_t size, const char *what); // commit or log native error, range and commit
 int mem_start_note(int probe);                             // a game's start: a warning line when the free commit is
