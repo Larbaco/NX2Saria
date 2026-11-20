@@ -337,6 +337,9 @@ static uint32_t block_inner(RtThread *t, int kind, int64_t ns) {
 // command handle the other just recorded, and CallCommands finds no recording at start (#212); 1.4.3 corrupts a heap
 // in main+0x82e00 or hangs at the title menu. The start log and every crash report say so (kern_free_cores_note).
 static RtThread *g_core_owner[NCORE], *g_core_wait;
+// G protects the list; this atomic hint is updated under G after each insertion or removal. Readers outside G only
+// test whether the list might be nonempty and take G before inspecting it; a missed waiter is seen on a later pass.
+static int g_core_waiting;
 static int g_cores_on = -1, g_held_max;
 static int g_active_cores = NCORE;   // NX2SARIA_CORES (core_allowed)
 
@@ -790,6 +793,7 @@ static void core_grant(int c) {
     }
     if (!b) return;
     *bp = b->cnext;
+    __atomic_store_n(&g_core_waiting, g_core_wait != NULL, __ATOMIC_RELEASE);
     b->cnext = NULL;
     b->cur_core = c;
     g_core_owner[c] = b;
@@ -899,6 +903,7 @@ static void core_take(RtThread *t) {
     t->cseq = ++g_wseq;
     t->cnext = g_core_wait;
     g_core_wait = t;
+    __atomic_store_n(&g_core_waiting, 1, __ATOMIC_RELEASE);
     t->target = NULL;
     if (g_diag > 0) {
         t->dg_since = kern_now_ns();
@@ -1101,7 +1106,7 @@ void rt_spin_gate(Cpu *c, uint64_t head) {
     }
     sw_last = now;
     if (!g_spin_on || t->cur_core < 0 || now - sw_t0 < g_spin_handoff_ns ||
-        !__atomic_load_n(&g_core_wait, __ATOMIC_RELAXED))   // a racy look: a waiter missed now is seen at the next pass
+        !__atomic_load_n(&g_core_waiting, __ATOMIC_ACQUIRE))   // a waiter missed now is seen at the next pass
         return;
     t->sp_ho++;
     int away = kern_core_away();
@@ -1746,9 +1751,9 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         }
         // Yield: hand the core to a waiting thread of equal or better priority. Most yields find nobody waiting for a
         // core: those take neither G nor the priority scan over every blocked thread (prio_of), which the game's yield
-        // loops paid thousands of times a second. The look is as racy as rt_spin_gate's: a thread that queues for a
-        // core right after it is found by the next yield, and kicks the owner itself in core_take meanwhile.
-        if (!__atomic_load_n(&g_core_wait, __ATOMIC_RELAXED)) {
+        // loops paid thousands of times a second. Like rt_spin_gate, a thread that queues after this check is found by
+        // the next yield, and kicks the owner itself in core_take meanwhile.
+        if (!__atomic_load_n(&g_core_waiting, __ATOMIC_ACQUIRE)) {
             plat_yield();
             return 1;
         }
