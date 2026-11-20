@@ -1,0 +1,38 @@
+# Opt-in session reports and player comments of NX2Saria (README.md in this folder).
+# This file holds no secret and no account id. ADMIN_TOKEN is a secret (`wrangler secret put ADMIN_TOKEN`, or
+# .dev.vars locally). deploy.sh copies this file to wrangler.deploy.toml (git-ignored) with the real database_id.
+name = "nx2saria-telemetry"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+workers_dev = true
+preview_urls = false
+
+[vars]
+# "1" accepts reports and comments; any other value answers 410 {"error":"closed"} to every POST.
+TELEMETRY_OPEN = "1"
+# Comma list of the game versions a session summary may name.
+GAME_VERSIONS = "1.1.1"
+# GitHub repository whose published releases are the accepted launcher and game-build versions.
+RELEASES_REPO = "Larbaco/NX2Saria"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nx2saria-telemetry"
+# Placeholder for local runs and tests; deploy.sh puts the real id in wrangler.deploy.toml.
+database_id = "00000000-0000-4000-8000-000000000000"
+migrations_dir = "migrations"
+
+# Requests per minute from one IP address to the public routes (POST and DELETE), counted by Cloudflare's rate
+# limiter in memory: the address is the counter's key at that moment and is never written anywhere. The per-install
+# limits in D1 (src/db.ts RATE_LIMITS) still apply on top. namespace_id is any number unique within the account.
+[[ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "2101"
+simple = { limit = 20, period = 60 }
+
+[triggers]
+# Minute 17 of every hour: refresh the releases table. 03:43 UTC every day: delete rows older than 180 days.
+crons = ["17 * * * *", "43 3 * * *"]
+
+[observability]
+enabled = false

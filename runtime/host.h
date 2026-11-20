@@ -118,6 +118,14 @@ void perf_cpu_start(void);   // the process's logical processors (NX2SARIA_CACHE
 int perf_cpu_on_cache_die(void);   // 1 while the process runs on the die with the largest L3 cache alone (perf.c cpu_placement)
 void perf_summary_flush(void);                  // prints the frame-time summary of the running period (exit); the 60 s lines come from perf_present
 void perf_summary_flush_try(void);              // the same at a fatal error, the stutter map only if its lock is free
+// The whole session's frame times (perf.c ft_frame keeps a histogram beside the 60 s period's), for the session summary
+// (session_summary.c): 0 before the first counted frame. Read after the frame-time summary's ft_stop (perf_summary_flush,
+// perf_summary_flush_try), when the present thread adds no more frames. No lock, no allocation.
+typedef struct {
+    uint64_t frames, over25, over100;
+    double fps_mean, fps_low_1pct, worst_ms;
+} PerfSession;
+int perf_session_stats(PerfSession *out);
 void perf_focus_lost(void);                     // the window lost the focus: the session's reports at the next present, in play
 void gfx_exit_log(void);                        // back end's lines for the exit summary (weak no-op in prof_win.c)
 // gfx_present.c (gfx_wsys.h): the end of a closed window. It does not return, but for its own thread coming back

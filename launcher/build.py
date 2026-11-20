@@ -6,6 +6,7 @@ import signal
 import stat
 import subprocess
 import threading
+from pathlib import Path
 
 # Runs make_game.py with pydeps/ (zbic) and the script's folder first on sys.path; the embeddable Python's ._pth
 # file leaves both off.
@@ -229,3 +230,36 @@ def installed(game_dir):
     if built_version(game_dir):
         return True
     return os.path.isfile(os.path.join(str(game_dir), 'ocarina.exe')) and can_rebuild(game_dir)
+
+
+# The game's log as the window (launcher/ui/app.py) and the session reports (launcher/telemetry.py) read it.
+FATAL_TAIL = 256 << 10   # bytes of the game's log last_fatal reads from its end
+
+
+def game_log_path(game_dir):
+    """Use the new log path, or read an existing legacy log until the new path is present."""
+    logs = Path(game_dir) / 'logs'
+    current, legacy = logs / 'nx2saria.log', logs / 'nx2navi.log'
+    return current if current.is_file() or not legacy.is_file() else legacy
+
+
+def last_fatal(game_dir):
+    """The last FATAL line of the game's latest run, without its "FATAL: ", or ''. The game writes one before it
+    exits with 70 (runtime/dispatch.c rt_fatal), 71 (runtime/main.c crash_handler) or 72 (runtime/vk_device.c
+    vk_device_lost_check) into logs/nx2saria.log (older installations may still have logs/nx2navi.log). A line this
+    launcher added for an earlier run's end (note_exit_in_log) ends the search: what stands before it is not this
+    run's."""
+    if not game_dir:
+        return ''
+    try:
+        with open(game_log_path(game_dir), 'rb') as f:
+            f.seek(max(0, f.seek(0, 2) - FATAL_TAIL))
+            lines = f.read().decode('utf-8', 'replace').splitlines()
+    except OSError:
+        return ''
+    for line in reversed(lines):
+        if line.startswith('[launcher] the game ended'):
+            return ''
+        if line.startswith('FATAL: '):
+            return line[len('FATAL: '):].strip()
+    return ''

@@ -51,6 +51,7 @@
 #include "nvn_hmap.h"
 #include "platform/platform.h"
 #include "prp_file.h"
+#include "session_summary.h"
 #include "spirv_water.h"
 #include "stutter_map.h"
 #include "tex.h"
@@ -6173,6 +6174,16 @@ static void pm_set(void);
 // while prewarm_run waits for its builders; in phases 3 and 4 (bf_wait) the compute pipelines and the prepared variants.
 static int32_t pw_phase;
 static int64_t pw_pipe_done, pw_pipe_total;
+// The boot prewarm's pipelines built and its pipeline stage's time, once it ended (vk_pipeline_boot_stats); -1 before.
+static int64_t pw_boot_built = -1, pw_boot_ms = -1;
+
+int vk_pipeline_boot_stats(int64_t *built, int64_t *ms) {
+    int64_t t = __atomic_load_n(&pw_boot_ms, __ATOMIC_ACQUIRE);
+    if (t < 0) return 0;
+    *built = __atomic_load_n(&pw_boot_built, __ATOMIC_RELAXED);
+    *ms = t;
+    return 1;
+}
 
 void vk_pipeline_prewarm_progress(VkPrewarmProgress *p) {
     p->phase = __atomic_load_n(&pw_phase, __ATOMIC_ACQUIRE);
@@ -6545,6 +6556,8 @@ static void prewarm_run(void) {
            "failed, %u already built, %u dropped (shader neither cached nor stored); shaders %.0f ms, pipelines %.0f "
            "ms on %d threads, total %.0f ms", n, K.path, K.built, later, K.failed, known, dropped, t1 - t0,
            now_ms() - t1, nt, now_ms() - t0);
+    __atomic_store_n(&pw_boot_built, (int64_t)K.built, __ATOMIC_RELAXED);
+    __atomic_store_n(&pw_boot_ms, (int64_t)(now_ms() - t1), __ATOMIC_RELEASE);
     free(K.file);
     K.file = NULL;
     plat_mutex_unlock(&P.lock);

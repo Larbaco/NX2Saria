@@ -112,21 +112,23 @@ class _Redirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-def _open(url, h, timeout, ctx=None):
+def _open(url, h, timeout, ctx=None, data=None, method=None):
     handlers = [_Redirect()] + ([urllib.request.HTTPSHandler(context=ctx)] if ctx is not None else [])
-    return urllib.request.build_opener(*handlers).open(urllib.request.Request(url, headers=h), timeout=timeout)
+    return urllib.request.build_opener(*handlers).open(urllib.request.Request(url, data=data, headers=h, method=method),
+                                                       timeout=timeout)
 
 
-def request(url, headers=None, timeout=30, version='dev'):
-    """The open response to a GET of url. An https URL is tried with each certificate check in turn, first the one
-    that accepted the host last, until one accepts the server; CertificateError when none does. Plain http is
-    refused but for this PC's own address."""
+def request(url, headers=None, timeout=30, version='dev', data=None, method=None):
+    """The open response to a GET of url (or method, with data as its body: the session reports' POST and DELETE,
+    launcher/telemetry.py). An https URL is tried with each certificate check in turn, first the one that accepted
+    the host last, until one accepts the server; CertificateError when none does. Plain http is refused but for this
+    PC's own address."""
     h = {'User-Agent': user_agent(version)}
     h.update(headers or {})
     if urllib.parse.urlsplit(url).scheme.lower() != 'https':
         if not _plain_ok(url):
             raise DownloadError(f'{url}: not an https address')
-        return _open(url, h, timeout)
+        return _open(url, h, timeout, data=data, method=method)
     host = urllib.parse.urlsplit(url).hostname or ''
     checks = _checks()
     first = min(_ACCEPTED.get(host, 0), len(checks) - 1)
@@ -134,7 +136,7 @@ def request(url, headers=None, timeout=30, version='dev'):
     for i in [first] + [i for i in range(len(checks)) if i != first]:
         name, ctx = checks[i]
         try:
-            r = _open(url, h, timeout, ctx)
+            r = _open(url, h, timeout, ctx, data, method)
         except urllib.error.URLError as e:
             if not isinstance(e.reason, ssl.SSLCertVerificationError):
                 raise

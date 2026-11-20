@@ -20,6 +20,9 @@ size_t log_privacy_rewrite(const char *p, size_t n, size_t *at, char *out, size_
 // A whole string short into out (cap bytes), for one value in a file the game writes for people (the bug capture);
 // returns out, or s itself when it has nothing to shorten or the switch is off. Cut at cap - 1 bytes.
 const char *log_privacy_str(const char *s, char *out, size_t cap);
+// The same with the switch off too, for text that leaves the PC (session_summary.c: the session summary the launcher
+// may send): log_short_paths = 0 is for one's own logs, never for what goes to a server.
+const char *log_privacy_str_always(const char *s, char *out, size_t cap);
 // A malloc'd copy of p (n bytes) with each folder short, *out_n its length; NULL when it has nothing to shorten, the
 // switch is off or memory runs out (the caller keeps p). Not for the crash report: it allocates.
 char *log_privacy_dup(const char *p, size_t n, size_t *out_n);

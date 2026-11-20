@@ -145,11 +145,14 @@ driver.
 driver you use and how to reproduce it; [CONTRIBUTING.md](CONTRIBUTING.md) has the full list. Check attachments for
 private paths, and never upload game files or keys.
 
+The launcher can also send a short report of how each session ran, and comments, without a GitHub account: only
+when you choose to. [Session reports and comments](docs/telemetry.md) lists every field.
+
 ## Documentation
 
 | Topic | Guides |
 |---|---|
-| Playing | [Install and update](docs/install.md) · [Controls](docs/controls.md) · [Settings](nx2saria.ini.example) · [Amiibo](docs/amiibo.md) · [Known issues](docs/known-issues.md) |
+| Playing | [Install and update](docs/install.md) · [Controls](docs/controls.md) · [Settings](nx2saria.ini.example) · [Amiibo](docs/amiibo.md) · [Known issues](docs/known-issues.md) · [Session reports](docs/telemetry.md) |
 | Trackers | [Tracker API](docs/tracker-api.md) · [Ocarina Atlas](docs/ocarina-atlas.md) · [hyrule-tracker](docs/hyrule-tracker.md) |
 | Releases | [Release notes](docs/releases/) · [Changelogs](docs/changelog/) |
 | Building | [Build kit](docs/README-BuildKit.md) · [From source](docs/building.md) · [Launcher](docs/launcher.md) · [Installer](docs/installer.md) |
