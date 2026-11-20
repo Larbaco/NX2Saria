@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-KIT_DIRS = ('recomp', 'runtime')
+KIT_DIRS = ('launcher', 'recomp', 'runtime')
 KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')   # the translator ships built (bin/); its sources stay out
 PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0', 'pillow==12.3.0')
@@ -48,7 +48,7 @@ APPRUN = r'''#!/bin/bash
 HERE="$(dirname "$(readlink -f "$0")")"
 PY="$HERE/usr/python/bin/python3"
 KIT="$HERE/usr/kit"
-DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+if [[ "${XDG_DATA_HOME:-}" = /* ]]; then DATA_HOME="$XDG_DATA_HOME"; else DATA_HOME="$HOME/.local/share"; fi
 DATA="$DATA_HOME/nx2saria"
 if [ ! -d "$DATA/pydeps" ] && [ -d "$DATA_HOME/nx2navi/pydeps" ]; then DATA="$DATA_HOME/nx2navi"; fi
 PYDEPS="$DATA/pydeps"
@@ -68,8 +68,12 @@ everything the build writes comes from your dump, so keep it to yourself.
 EOF
 }
 
-# No arguments on a desktop (a double-click): the window (tools/appimage_gui.py), which runs this file with --events.
+# No arguments on a desktop (a double-click): install/repair the launcher under XDG data and run that installed copy.
 if [ $# -eq 0 ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    if [ -f "$KIT/launcher/start.pyw" ]; then
+        exec "$PY" -I "$KIT/tools/appimage_install.py" "$HERE"
+    fi
+    # AppImages made before the full launcher was included keep their original installer window.
     exec "$PY" -I "$KIT/tools/appimage_gui.py" --apprun "$HERE/AppRun" --icon "$HERE/nx2saria.png"
 fi
 case "$1" in ""|-h|--help) usage; exit 0 ;; esac
@@ -285,6 +289,8 @@ def main():
 
     py = app / 'usr' / 'python'
     shutil.copytree(a.python, py, symlinks=True)
+    from linux_runtime import runtime_id
+    (py / 'runtime-id.txt').write_text(runtime_id(py / 'bin' / 'python3', PACKAGES) + '\n', encoding='utf-8')
     for marker in py.glob('lib/python3*/EXTERNALLY-MANAGED'):   # uv marks its Pythons; this copy is the AppImage's own
         marker.unlink()
     subprocess.run([py / 'bin' / 'python3', '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',

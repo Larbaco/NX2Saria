@@ -1,10 +1,83 @@
 """Linux services used by the launcher's compatibility facade (launcher/winsys.py)."""
 import ctypes
 import ctypes.util
+import fcntl
+import importlib.util
 import os
 import shutil
 import subprocess
 from pathlib import Path
+
+
+def make_game_toolchain_args(layout):
+    """Linux uses its system compiler and libraries; make_game.py discovers them directly."""
+    return []
+
+
+def ensure_toolchain(layout, cancel=None, log=None, version=''):
+    """Validate Linux build prerequisites and install the launcher-owned zbic package."""
+    missing = toolchain_missing()
+    if missing:
+        if log:
+            log('toolchain: Linux check missing ' + missing.splitlines()[0].split(': ', 1)[1].rstrip('.'))
+        from ..toolchain import ToolchainError
+        raise ToolchainError(missing)
+    if log:
+        log('toolchain: Linux system requirements ok')
+    from .. import toolchain
+    toolchain.ensure_zbic(layout, cancel=cancel, log=log, version=version)
+
+
+def refresh_installed_wrapper(root, app):
+    """Refresh the installed wrapper from this app version, so future starts use its rollback behavior."""
+    root, app = Path(root), Path(app)
+    if not (root / 'nx2saria-launcher').is_file():
+        return
+    script = app / 'tools' / 'appimage_install.py'
+    if not script.is_file():
+        return
+    try:
+        spec = importlib.util.spec_from_file_location('_nx2saria_appimage_install', script)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module._write_wrapper(root)
+    except (ImportError, OSError, AttributeError, ValueError):
+        pass
+
+
+def game_running(game_dir):
+    """Check the runtime's profile lock first, then /proc for Linux builds from before profile locking."""
+    folder = Path(game_dir)
+    lock = folder / 'profile' / 'instance.lock'
+    try:
+        with lock.open('rb') as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+    exe = folder / 'ocarina'
+    if not exe.is_file():
+        return False
+    try:
+        expected = exe.resolve()
+        for proc in Path('/proc').iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                actual = Path(os.readlink(proc / 'exe').removesuffix(' (deleted)'))
+                if actual == expected:
+                    return True
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+    except OSError:
+        return False
+    return False
 
 
 def _sdl_library():

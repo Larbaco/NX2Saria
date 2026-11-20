@@ -14,6 +14,7 @@ The feed (app/<version>/feed.json, or the player's override in settings) is eith
 """
 import json
 import re
+import sys
 import time
 import urllib.parse
 from pathlib import Path
@@ -22,6 +23,7 @@ from . import net, versions
 
 MANIFEST = 'NX2Saria-update.json'
 LEGACY_MANIFEST = 'NX2navi-update.json'
+LINUX_MANIFEST = 'NX2Saria-update-linux.json'
 DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2Saria'}   # this fork's releases (Larbaco/NX2navi redirects here)
 GITHUB_API = 'https://api.github.com'
 
@@ -104,7 +106,12 @@ def retry_text(headers, now=None):
             f'(in {minutes} minute{"" if minutes == 1 else "s"})')
 
 
-def _github(feed, channel, token, version):
+def _manifest_names(platform=None):
+    platform = sys.platform if platform is None else platform
+    return (LINUX_MANIFEST,) if platform.startswith('linux') else (MANIFEST, LEGACY_MANIFEST)
+
+
+def _github(feed, channel, token, version, platform=None):
     api = feed.get('api', GITHUB_API).rstrip('/')
     headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
     if token:
@@ -124,7 +131,7 @@ def _github(feed, channel, token, version):
         if r.get('draft') or (r.get('prerelease') and channel != 'preview'):
             continue
         assets = {a['name']: a for a in r.get('assets', [])}
-        manifest_name = next((n for n in (MANIFEST, LEGACY_MANIFEST) if n in assets), None)
+        manifest_name = next((n for n in _manifest_names(platform) if n in assets), None)
         if manifest_name is None:
             continue
         if token:   # a private repository's files come through the API with the token
@@ -142,8 +149,13 @@ def _github(feed, channel, token, version):
     return None
 
 
-def _url(feed, version):
+def _url(feed, version, platform=None):
     url = feed['url']
+    if ((platform or sys.platform).startswith('linux')
+            and Path(urllib.parse.urlparse(url).path).name in (MANIFEST, LEGACY_MANIFEST)):
+        parts = urllib.parse.urlsplit(url)
+        url = urllib.parse.urlunsplit((parts.scheme, parts.netloc,
+                                       str(Path(parts.path).with_name(LINUX_MANIFEST)), parts.query, parts.fragment))
     try:
         m = _check_manifest(net.get_json(url, version=version), url)
     except FeedError:
@@ -155,12 +167,12 @@ def _url(feed, version):
     return Release(m, assets=assets)
 
 
-def latest(feed, channel='stable', token='', version='dev'):
+def latest(feed, channel='stable', token='', version='dev', platform=None):
     """The newest release the feed offers on the channel, or None when it has none."""
     if feed.get('type') == 'url':
-        return _url(feed, version)
+        return _url(feed, version, platform)
     if feed.get('type') == 'github':
-        return _github(feed, channel, token, version)
+        return _github(feed, channel, token, version, platform)
     raise FeedError(f'unknown feed type {feed.get("type")!r}')
 
 

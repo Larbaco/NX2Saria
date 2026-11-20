@@ -1045,12 +1045,49 @@ class FeedTest(Tmp):
         self.publish([self.release(srv, 'v0.4.0-rc1', '0.4.0-rc1', pre=True),
                       self.release(srv, 'v0.3.12', '0.3.12', manifest=False), self.release(srv, 'v0.3.11', '0.3.11')])
         f = {'type': 'github', 'repo': 'o/r', 'api': srv.url.rstrip('/')}
-        self.assertEqual(feed.latest(f, 'stable').version, '0.3.11')    # 0.3.12 lacks a manifest
-        self.assertEqual(feed.latest(f, 'preview').version, '0.4.0-rc1')
-        r = feed.latest(f, 'stable', token='secret')
+        self.assertEqual(feed.latest(f, 'stable', platform='win32').version, '0.3.11')    # 0.3.12 lacks a manifest
+        self.assertEqual(feed.latest(f, 'preview', platform='win32').version, '0.4.0-rc1')
+        r = feed.latest(f, 'stable', token='secret', platform='win32')
         self.assertEqual(r.headers.get('Authorization'), 'Bearer secret')
         self.assertTrue(any(h.get('Authorization') == 'Bearer secret' for _, h in srv.hits))
         self.assertEqual(feed.plain_notes('## Head\n- **One**\n* `Two`\n<!-- x -->'), ['Head', 'One', 'Two'])
+
+    def test_windows_feed_ignores_linux_assets_in_ten_asset_release(self):
+        srv = self.serve_github()
+        win_zip = make_app_zip(self.tmp, '0.3.11')
+        win_runtime = 'NX2Saria-runtime-py3.14.9-1.zip'
+        win_setup = 'NX2Saria-Setup-0.3.11.exe'
+        win_manifest_data = manifest_for(win_zip, '0.3.11')
+        win_manifest_data.update(runtime={'id': 'py3.14.9-1', 'name': win_runtime, 'size': 3,
+                                           'sha256': '0' * 64},
+                                  setup={'name': win_setup, 'size': 3, 'sha256': '1' * 64})
+        win_manifest = self.tmp / 'windows.json'
+        win_manifest.write_text(json.dumps(win_manifest_data))
+        legacy_manifest = self.tmp / 'legacy.json'
+        legacy_manifest_data = dict(win_manifest_data, version='0.3.10')
+        legacy_manifest.write_text(json.dumps(legacy_manifest_data))
+        linux_manifest = self.tmp / feed.LINUX_MANIFEST
+        linux_manifest.write_text(json.dumps({'format': 1, 'version': '9.9.9', 'app': {}}))
+        names = [win_zip.name, win_runtime, win_setup,
+                 feed.MANIFEST, feed.LEGACY_MANIFEST, feed.LINUX_MANIFEST,
+                 'NX2Saria-app-linux-x86_64-0.3.11.zip', 'NX2Saria-runtime-linux-x86_64-py3.14.9-1.zip',
+                 'NX2Saria-Linux-0.3.11-x86_64.AppImage', 'SHA256SUMS.txt']
+        assets = [{'name': n, 'browser_download_url': srv.url + n, 'url': srv.url + n} for n in names]
+        self.routes['/' + feed.MANIFEST] = (200, {'Content-Type': 'application/json'}, win_manifest.read_bytes())
+        self.routes['/' + feed.LEGACY_MANIFEST] = (200, {'Content-Type': 'application/json'}, legacy_manifest.read_bytes())
+        self.routes['/' + feed.LINUX_MANIFEST] = (200, {'Content-Type': 'application/json'}, linux_manifest.read_bytes())
+        self.routes['/' + win_zip.name] = (200, {'Content-Type': 'application/zip'}, win_zip.read_bytes())
+        self.publish([{'tag_name': 'v0.3.11', 'prerelease': False, 'draft': False, 'assets': assets}])
+        rel = feed._github({'repo': 'o/r', 'api': srv.url.rstrip('/')}, 'stable', '', 'dev', platform='win32')
+        self.assertEqual(rel.manifest['version'], '0.3.11')
+        self.assertEqual(rel.asset('app')[0], srv.url + win_zip.name)
+        self.assertEqual(rel.manifest['setup']['name'], win_setup)
+        self.assertEqual(rel.asset('runtime')[0], srv.url + win_runtime)
+        self.assertEqual([path for path, _ in srv.hits if path in ('/' + feed.MANIFEST,
+                                                                   '/' + feed.LEGACY_MANIFEST)],
+                         ['/' + feed.MANIFEST])
+        linux_rel = feed._github({'repo': 'o/r', 'api': srv.url.rstrip('/')}, 'stable', '', 'dev', platform='linux')
+        self.assertEqual(linux_rel.manifest['version'], '9.9.9')
 
     def test_a_refused_check_says_when_to_try_again(self):
         """GitHub's answer to a request over the hourly allowance carries the time the allowance is whole again:
@@ -1061,7 +1098,7 @@ class FeedTest(Tmp):
             403, {'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': str(reset)}, b'{"message": "rate limit"}')
         f = {'type': 'github', 'repo': 'o/r', 'api': srv.url.rstrip('/')}
         with self.assertRaises(feed.FeedError) as c:
-            feed.latest(f, 'stable')
+            feed.latest(f, 'stable', platform='win32')
         at = time.strftime('%H:%M', time.localtime(reset))
         self.assertRegex(str(c.exception), rf'^GitHub refused the request \(rate limit\); try again after {at} '
                                            r'\(in 2[45] minutes\)$')
@@ -1111,10 +1148,10 @@ class FeedTest(Tmp):
 
     def test_url_feed_and_update(self):
         z = make_app_zip(self.tmp, '0.9.0')
-        (self.tmp / feed.MANIFEST).write_text(json.dumps(manifest_for(z, '0.9.0')))
+        (self.tmp / feed.LINUX_MANIFEST).write_text(json.dumps(manifest_for(z, '0.9.0')))
         srv = Server(self.tmp)
         self.addCleanup(srv.close)
-        rel = feed.latest({'type': 'url', 'url': srv.url + feed.MANIFEST})
+        rel = feed.latest({'type': 'url', 'url': srv.url + feed.MANIFEST}, platform='linux')
         self.assertEqual(rel.version, '0.9.0')
         self.layout.apps.mkdir(parents=True)
         (self.layout.apps / 'current.txt').write_text('0.8.0\n')
@@ -1132,6 +1169,15 @@ class FeedTest(Tmp):
         self.assertTrue(updater.rollback(self.layout))
         self.assertEqual(updater.current(self.layout), '0.8.0')
         self.assertFalse(updater.rollback(self.layout))                  # nothing further back
+
+    def test_windows_url_feed_and_update(self):
+        z = make_app_zip(self.tmp, '0.9.0')
+        (self.tmp / feed.MANIFEST).write_text(json.dumps(manifest_for(z, '0.9.0')))
+        srv = Server(self.tmp)
+        self.addCleanup(srv.close)
+        rel = feed.latest({'type': 'url', 'url': srv.url + feed.MANIFEST}, platform='win32')
+        self.assertEqual(rel.version, '0.9.0')
+        self.assertEqual(rel.manifest['app']['name'], z.name)
 
     def test_unsafe_or_wrong_archives(self):
         z = make_app_zip(self.tmp, '1.0.0', extra={'../evil.txt': 'x'})

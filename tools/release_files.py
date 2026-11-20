@@ -6,9 +6,9 @@ Standard library only: it runs with the runner's own Python, before anything is 
         version without a suffix have no pre-release line: the manifest carries those notes for good, and the
         version is stable once promoted (docs/releases/README.md).
     python tools/release_files.py files --tag T --notes docs/releases/T.md --dir dist
-        dist holds exactly the files of the release (setup, app zip, runtime zip, both manifests, AppImage), both
-        manifests are the same, name this version, carry exactly these notes, and give each file's real size and
-        sha256. Writes dist/SHA256SUMS.txt over all of them.
+        dist holds exactly nine payload/manifest files, then writes SHA256SUMS.txt for ten published files total.
+        Windows manifests remain identical; each platform manifest names its own files, version, notes, real sizes
+        and sha256.
     python tools/release_files.py body  --tag T --notes docs/releases/T.md --state prerelease|stable [--repo o/n]
         The text of the GitHub release page: the notes, a pre-release line on top while it is one (unless the notes of
         a release candidate have their own), and the line that tells players how to verify their download. It is page
@@ -31,6 +31,7 @@ TAG = re.compile(r'v(\d+)\.(\d+)\.(\d+)(-rc\.([1-9]\d*))?')
 # is not one.
 PRERELEASE_LINE = re.compile(r'^[\W_]*pre[-\s\u2010\u2011]?release', re.IGNORECASE)
 MANIFESTS = ('NX2Saria-update.json', 'NX2navi-update.json')
+LINUX_MANIFEST = 'NX2Saria-update-linux.json'
 SUMS = 'SHA256SUMS.txt'
 DEFAULT_REPO = 'Larbaco/NX2Saria'
 
@@ -140,7 +141,41 @@ def check_files(tag, notes, folder):
     if not re.fullmatch(r'NX2Saria-runtime-[A-Za-z0-9._-]+\.zip', runtime):
         raise Problem(f'{MANIFESTS[0]} names its runtime file {runtime!r}')
     appimage = f'NX2Saria-Linux-{ver}-x86_64.AppImage'
-    names = sorted([*want, *MANIFESTS, appimage])
+    if not (folder / LINUX_MANIFEST).is_file():
+        raise Problem(f'{LINUX_MANIFEST} is missing')
+    linux_raw = (folder / LINUX_MANIFEST).read_bytes()
+    try:
+        lm = json.loads(linux_raw)
+    except ValueError as e:
+        raise Problem(f'{LINUX_MANIFEST} is not JSON: {e}') from e
+    if not isinstance(lm, dict) or lm.get('format') != 1 or lm.get('version') != ver:
+        raise Problem(f'{LINUX_MANIFEST} is not an update manifest of format 1 for {ver}')
+    if 'setup' in lm:
+        raise Problem(f'{LINUX_MANIFEST} must name the AppImage instead of a setup file')
+    if (lm.get('notes') or '').replace('\r\n', '\n') != text(notes):
+        raise Problem(f'the notes in {LINUX_MANIFEST} are not {notes} of the tag\'s commit')
+    linux_want = {}
+    for key in ('app', 'runtime', 'appimage'):
+        e = lm.get(key)
+        if not isinstance(e, dict) or not isinstance(e.get('name'), str) or Path(e['name']).name != e['name']:
+            raise Problem(f'{LINUX_MANIFEST} gives no plain file name for its {key} file')
+        if e['name'] in linux_want:
+            raise Problem(f'{LINUX_MANIFEST} names {e["name"]} for two files')
+        linux_want[e['name']] = (key, e.get('size'), e.get('sha256'))
+    expected_linux = {f'NX2Saria-app-linux-x86_64-{ver}.zip': 'app',
+                      f'NX2Saria-Linux-{ver}-x86_64.AppImage': 'appimage'}
+    for name, key in expected_linux.items():
+        if linux_want.get(name, (None,))[0] != key:
+            raise Problem(f'{LINUX_MANIFEST} does not name {name} as its {key} file')
+    runtime_linux = next((n for n, w in linux_want.items() if w[0] == 'runtime'), '')
+    if not re.fullmatch(r'NX2Saria-runtime-linux-x86_64-[A-Za-z0-9._-]+\.zip', runtime_linux):
+        raise Problem(f'{LINUX_MANIFEST} names its runtime file {runtime_linux!r}')
+    runtime_entry = lm['runtime']
+    runtime_ident = runtime_entry.get('id')
+    if (not isinstance(runtime_ident, str) or not re.fullmatch(r'[A-Za-z0-9._-]+', runtime_ident)
+            or runtime_linux != f'NX2Saria-runtime-linux-x86_64-{runtime_ident}.zip'):
+        raise Problem(f'{LINUX_MANIFEST} runtime id does not match {runtime_linux!r}')
+    names = sorted([*want, *MANIFESTS, LINUX_MANIFEST, *linux_want])
     present = sorted(p.name for p in folder.iterdir() if p.is_file() and p.name != SUMS)
     if present != names:
         extra, missing = sorted(set(present) - set(names)), sorted(set(names) - set(present))
@@ -150,6 +185,13 @@ def check_files(tag, notes, folder):
         p = folder / name
         if p.stat().st_size != size or sha256(p) != digest:
             raise Problem(f'{name}: its size or sha256 is not what {MANIFESTS[0]} says')
+        out.append(f'{name}: {size} bytes, sha256 as the manifest says ({key})')
+    for name, (key, size, digest) in sorted(linux_want.items()):
+        p = folder / name
+        if (not isinstance(size, int) or isinstance(size, bool) or size <= 0 or p.stat().st_size != size
+                or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', digest)
+                or sha256(p) != digest):
+            raise Problem(f'{name}: its size or sha256 is not what {LINUX_MANIFEST} says')
         out.append(f'{name}: {size} bytes, sha256 as the manifest says ({key})')
     lines = [f'{sha256(folder / n)}  {n}\n' for n in names]
     (folder / SUMS).write_text(''.join(lines), encoding='utf-8', newline='\n')

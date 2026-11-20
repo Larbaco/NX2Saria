@@ -148,6 +148,10 @@ class Layout:
         """The console python.exe beside the launcher's pythonw.exe (no window: the build starts it with
         CREATE_NO_WINDOW), or this interpreter in a checkout."""
         exe = Path(sys.executable)
+        if os.name != 'nt' and not self.dev:
+            bundled = self.python / 'bin' / 'python3'
+            if bundled.is_file():
+                return str(bundled)
         if exe.name.lower() == 'pythonw.exe' and (exe.parent / 'python.exe').is_file():
             return str(exe.parent / 'python.exe')
         return str(exe)

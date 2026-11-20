@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/install.md source-hash=334d61975b4a2ef953e2804aa904c2b820652c18 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=7e5d731ab27311901fb6c5cb81ee1a472ac1c0cb reviewed=no -->
 <!-- languages -->
 [English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
@@ -32,7 +32,11 @@ O instalador instala o launcher, que compila o jogo uma vez e depois o inicia.
 
    O SDL3, que o Ubuntu 24.04 não empacota, vem com a AppImage.
 
-Iniciada em um ambiente de desktop, ela abre uma janela para instalar, atualizar e jogar.
+Na primeira execução, a AppImage instala o launcher e o runtime Python em `~/.local/share/nx2saria` e abre o launcher
+instalado. A entrada no menu de aplicativos aponta para essa cópia instalada, então você pode mover ou apagar a
+AppImage depois. Guarde-a se quiser reparar ou reinstalar o launcher. Se você usava a janela da AppImage antiga, o
+launcher novo adota o dump e a pasta do jogo registrados em `~/.config/nx2saria/appimage.json` (também no caminho
+antigo `nx2navi`), sem mover nenhuma das pastas.
 
 ## Atualizações
 
@@ -55,14 +59,14 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 
 (No Windows, no PowerShell, escreva tudo numa linha só, sem a `\`.)
 
-Troque `NX2Saria-Setup-0.19.0.exe` pelo nome do arquivo que você baixou, e a versão em `refs/tags/v0.19.0` pela dele: funciona do mesmo jeito para a AppImage, os zips do app e do runtime, `NX2Saria-update.json`, `NX2navi-update.json` e `SHA256SUMS.txt`. Para um arquivo bom, ele mostra `✓ Verification succeeded!` e o workflow que o compilou. Qualquer outra resposta quer dizer que o arquivo não é o que o GitHub Actions compilou para essa versão: não o execute, e avise a gente numa issue.
+Troque `NX2Saria-Setup-0.19.0.exe` pelo nome do arquivo que você baixou, e a versão em `refs/tags/v0.19.0` pela dele: funciona do mesmo jeito para a AppImage, os zips do app e do runtime de Windows e Linux, os três manifestos de atualização e `SHA256SUMS.txt`. Para um arquivo bom, ele mostra `✓ Verification succeeded!` e o workflow que o compilou. Qualquer outra resposta quer dizer que o arquivo não é o que o GitHub Actions compilou para essa versão: não o execute, e avise a gente numa issue.
 
 **Confira os checksums.** O `SHA256SUMS.txt` da versão lista o SHA-256 de todos os outros arquivos. Ele mostra que o download chegou inteiro; junto com o atestado do próprio `SHA256SUMS.txt`, mostra também de onde veio cada arquivo.
 
 - Linux: `sha256sum -c --ignore-missing SHA256SUMS.txt` mostra `OK` para cada arquivo que você baixou.
 - Windows (PowerShell): `Get-FileHash NX2Saria-Setup-0.19.0.exe` mostra o SHA-256; ele tem que ser o da linha desse arquivo no `SHA256SUMS.txt` (maiúsculas e minúsculas não importam).
 
-O launcher faz sozinho a segunda conferência em cada atualização: ele baixa o `NX2Saria-update.json` da versão e só instala um arquivo quando o tamanho e o SHA-256 são os que esse manifesto informa. As versões anteriores à 0.19.0-rc.1 foram enviadas à mão e não têm atestado.
+O launcher faz sozinho a segunda conferência em cada atualização: no Windows ele baixa `NX2Saria-update.json`; no Linux, `NX2Saria-update-linux.json`. Cada plataforma lê apenas seu próprio manifesto e só instala um app ou runtime quando o tamanho e o SHA-256 conferem. As versões anteriores à 0.19.0-rc.1 foram enviadas à mão e não têm atestado.
 
 ## Algo errado?
 

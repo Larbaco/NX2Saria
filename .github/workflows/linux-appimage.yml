@@ -112,6 +112,13 @@ jobs:
             { echo "::error::the AppImage carries no button art (prompt-art)"; exit 1; }
           appimage=$(ls dist/NX2Saria-Linux-*-x86_64.AppImage)
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --help | head -3
+          notes=()
+          [ ! -f "docs/releases/$TAG.md" ] || notes=(--notes "docs/releases/$TAG.md")
+          version=$(tr -d '\r\n' < VERSION)
+          .venv/bin/python tools/package_launcher_linux.py \
+            --python build/appimage/NX2Saria.AppDir/usr/python --version "$version" \
+            --kit build/appimage/NX2Saria.AppDir/usr/kit "${notes[@]}" \
+            --appimage "$appimage" --out dist
           sha256sum "$appimage"
       - name: Checks with the runner's clang
         # The runner is Ubuntu 24.04, whose default clang (18) and missing SDL3 stopped the AppImage on players' PCs
@@ -135,4 +142,8 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           retention-days: 14
           if-no-files-found: error
-          path: dist/NX2Saria-Linux-*-x86_64.AppImage
+          path: |
+            dist/NX2Saria-Linux-*-x86_64.AppImage
+            dist/NX2Saria-app-linux-x86_64-*.zip
+            dist/NX2Saria-runtime-linux-x86_64-*.zip
+            dist/NX2Saria-update-linux.json

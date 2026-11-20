@@ -216,16 +216,24 @@ the compiler, the linker and `tar` would not take it.
 
 ## Updating
 
-A release carries `NX2Saria-update.json` (version, notes, and the size and sha256 of each file), plus an identical
-`NX2navi-update.json` for existing launchers. Both name the same NX2Saria payloads. Current launchers prefer the
-current manifest and also accept the legacy one. The feed
+Windows releases carry `NX2Saria-update.json` (version, notes, and the size and sha256 of each file), plus an identical
+`NX2navi-update.json` for existing Windows launchers. Both name the same Windows payloads. Linux releases carry a
+separate `NX2Saria-update-linux.json`, which names the Linux app, runtime and AppImage. Each launcher chooses the
+manifest for its own platform and ignores the other platform's files. The feed
 (`app/<version>/feed.json`) names a GitHub repository: the launcher reads its newest release (or pre-release, on the
 Preview channel) that has the manifest. A private repository answers only with a token (`github_token` in
 `data/launcher.json`); players need a public one. `feed_repo` in `data/launcher.json` points one launcher at another
-repository for testing; `{"type": "url", "url": ".../NX2Saria-update.json"}` in feed.json reads one manifest
-directly. Every address is https (plain http only to this PC), a redirect to http is refused, and the token is not
+repository for testing; a `{"type": "url", "url": "..."}` feed reads one manifest directly (Linux maps either
+standard manifest URL to `NX2Saria-update-linux.json`). Every address is https (plain http only to this PC), a redirect to http is refused, and the token is not
 sent on when a redirect leaves the host it was meant for (`launcher/net.py`). A manifest that does not give a file's
 size and sha256 is refused.
+
+On Linux, the AppImage installs or repairs the launcher under `~/.local/share/nx2saria`; the Applications menu entry
+uses a small installed launcher script that reads `app/current.txt`, so it remains valid after an update and after the
+AppImage is moved or removed. Earlier AppImage users keep their game folder and dump in place: the first install adopts
+the paths from `~/.config/nx2saria/appimage.json`, with `nx2navi` as a legacy name. Linux updates download the app zip
+and the runtime zip separately. The runtime is staged only when its manifest id changes. Once the game has closed,
+the launcher switches both staged folders and replaces itself with the new Python process (`os.execv`).
 
 GitHub allows an address 60 such requests an hour. The Updates row and F5 therefore start no check within a minute
 of the last one (`FORCED_CHECK_PAUSE`), and a check GitHub refuses says when the allowance is whole again, from the

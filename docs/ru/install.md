@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/install.md source-hash=334d61975b4a2ef953e2804aa904c2b820652c18 reviewed=no -->
+<!-- translation: lang=ru source=docs/install.md source-hash=7e5d731ab27311901fb6c5cb81ee1a472ac1c0cb reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · **Русский** · [简体中文](../zh-Hans/install.md)
 
@@ -36,7 +36,11 @@ AppImage для Linux. Ни один из них не содержит данн�
 
    SDL3, которого нет в пакетах Ubuntu 24.04, поставляется вместе с AppImage.
 
-При запуске на рабочем столе он открывает окно для установки, обновления и игры.
+При первом запуске AppImage устанавливает лаунчер и среду Python в `~/.local/share/nx2saria`, а затем открывает
+установленный лаунчер. Запись в меню приложений указывает на установленную копию, поэтому после этого AppImage можно
+переместить или удалить. Сохраните его, если понадобится восстановить или переустановить лаунчер. Если вы пользовались
+прежним окном AppImage, новый лаунчер подхватит дамп и папку игры из `~/.config/nx2saria/appimage.json` (а также из
+старого пути `nx2navi`), не перемещая эти папки.
 
 ## Обновление
 
@@ -67,7 +71,7 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 (В Windows, в PowerShell, напишите всё в одну строку без `\`.)
 
 Подставьте вместо `NX2Saria-Setup-0.19.0.exe` имя скачанного файла, а в `refs/tags/v0.19.0` — его версию: так же
-проверяются AppImage, zip-архивы app и runtime, `NX2Saria-update.json`, `NX2navi-update.json` и `SHA256SUMS.txt`. Для
+проверяются AppImage, zip-архивы app и runtime для Windows и Linux, все три манифеста обновления и `SHA256SUMS.txt`. Для
 правильного файла команда выводит `✓ Verification succeeded!` и workflow, который его собрал. Любой другой ответ
 означает, что это не тот файл, который GitHub Actions собрал для этой версии: не запускайте его и сообщите нам в issue.
 
@@ -78,9 +82,10 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 - Windows (PowerShell): `Get-FileHash NX2Saria-Setup-0.19.0.exe` выводит SHA-256; он должен совпадать с указанным в
   строке этого файла в `SHA256SUMS.txt` (регистр букв не важен).
 
-Лаунчер сам выполняет вторую проверку при каждом обновлении: он скачивает `NX2Saria-update.json` из выпуска и
-устанавливает файл, только если его размер и SHA-256 совпадают с указанными в этом манифесте. Выпуски старше
-0.19.0-rc.1 загружались вручную, и аттестации у них нет.
+При каждом обновлении лаунчер сам выполняет вторую проверку: Windows скачивает `NX2Saria-update.json`, а Linux —
+`NX2Saria-update-linux.json`. Каждая платформа читает только свой манифест и устанавливает app или runtime, только
+если размер и SHA-256 совпадают с указанными в манифесте. Выпуски старше 0.19.0-rc.1 загружались вручную, и
+аттестации у них нет.
 
 ## Что-то не так?
 

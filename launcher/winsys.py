@@ -400,10 +400,25 @@ def start_detached(cmd, cwd=None):
 def restart(layout, args=()):
     """Start the launcher again through its stub (which swaps in a staged Python and starts app/current.txt's
     version). False in a checkout, which has no stub."""
+    if os.name != 'nt':
+        if layout.dev:
+            return False
+        exe = layout.root / 'nx2saria-launcher'
+        if not exe.is_file():
+            return False
+        os.chdir(layout.root)
+        os.execv(str(exe), [str(exe), *args])
     if not layout.stub.is_file():
         return False
     start_detached([str(layout.stub), *args], cwd=str(layout.root))
     return True
+
+
+def make_game_toolchain_args(layout):
+    if os.name != 'nt':
+        from .platform.linux import make_game_toolchain_args as linux_args
+        return linux_args(layout)
+    return ['--msys', str(layout.msys)]
 
 
 def stub_run(layout, args, timeout=30):

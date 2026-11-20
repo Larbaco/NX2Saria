@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/install.md source-hash=334d61975b4a2ef953e2804aa904c2b820652c18 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/install.md source-hash=7e5d731ab27311901fb6c5cb81ee1a472ac1c0cb reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · [Русский](../ru/install.md) · **简体中文**
 
@@ -30,7 +30,7 @@
 
    Ubuntu 24.04 没有打包 SDL3，AppImage 自带了它。
 
-在桌面环境中启动时，它会打开一个窗口，用于安装、更新和游玩。
+首次启动时，AppImage 会将启动器和 Python 运行时安装到 `~/.local/share/nx2saria`，然后打开已安装的启动器。应用菜单中的入口指向这份已安装副本，因此之后可以移动或删除 AppImage。若要修复或重新安装启动器，请保留 AppImage。如果你使用过旧版 AppImage 窗口，新启动器会读取 `~/.config/nx2saria/appimage.json`（以及旧的 `nx2navi` 路径）中记录的转储和游戏文件夹，并原样采用，不会移动这些文件夹。
 
 ## 更新
 
@@ -53,14 +53,14 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 
 （在 Windows 的 PowerShell 中，请写成一行，并去掉 `\`。）
 
-把 `NX2Saria-Setup-0.19.0.exe` 换成你下载的文件名，并把 `refs/tags/v0.19.0` 中的版本换成它的版本：AppImage、app 和 runtime 的 zip、`NX2Saria-update.json`、`NX2navi-update.json` 和 `SHA256SUMS.txt` 都用同样的方法检查。文件没有问题时，它会显示 `✓ Verification succeeded!` 以及编译它的 workflow。其他任何结果都表示这个文件不是 GitHub Actions 为该版本编译的那个：不要运行它，并在 issue 中告诉我们。
+把 `NX2Saria-Setup-0.19.0.exe` 换成你下载的文件名，并把 `refs/tags/v0.19.0` 中的版本换成它的版本：AppImage、Windows 和 Linux 的 app 与 runtime 压缩包、三个更新清单以及 `SHA256SUMS.txt` 都用同样的方法检查。文件没有问题时，它会显示 `✓ Verification succeeded!` 以及编译它的 workflow。其他任何结果都表示这个文件不是 GitHub Actions 为该版本编译的那个：不要运行它，并在 issue 中告诉我们。
 
 **检查校验和。** 发布页上的 `SHA256SUMS.txt` 列出了其他所有文件的 SHA-256。它说明下载完整无误；再加上 `SHA256SUMS.txt` 本身的来源证明，它也说明了每个文件的来源。
 
 - Linux：`sha256sum -c --ignore-missing SHA256SUMS.txt` 会为你下载的每个文件显示 `OK`。
 - Windows（PowerShell）：`Get-FileHash NX2Saria-Setup-0.19.0.exe` 会显示 SHA-256；它必须与 `SHA256SUMS.txt` 中该文件那一行的值相同（不区分大小写）。
 
-每次更新时，启动器都会自行做第二种检查：它从发布版本下载 `NX2Saria-update.json`，只有当文件的大小和 SHA-256 与该清单中的一致时才会安装。0.19.0-rc.1 之前的版本是手动上传的，没有来源证明。
+每次更新时，启动器都会自行做第二种检查：Windows 会下载 `NX2Saria-update.json`，Linux 会下载 `NX2Saria-update-linux.json`。每个平台只读取自己的清单，并且只有当 app 或 runtime 文件的大小和 SHA-256 与清单一致时才会安装。0.19.0-rc.1 之前的版本是手动上传的，没有来源证明。
 
 ## 出了问题？
 

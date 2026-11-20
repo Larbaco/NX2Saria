@@ -38,10 +38,20 @@ def release(tmp, ver, notes=NOTES, runtime='NX2Saria-runtime-py3.14.9-1.zip'):
         (d / name).write_bytes(data)
         entries[key] = {'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
     entries['runtime']['id'] = 'py3.14.9-1'
-    (d / f'NX2Saria-Linux-{ver}-x86_64.AppImage').write_bytes(b'appimage')
+    linux_entries = {}
+    for key, name in (('app', f'NX2Saria-app-linux-x86_64-{ver}.zip'),
+                      ('runtime', 'NX2Saria-runtime-linux-x86_64-py3.14.9-1.zip'),
+                      ('appimage', f'NX2Saria-Linux-{ver}-x86_64.AppImage')):
+        data = f'linux {key} of {ver}'.encode()
+        (d / name).write_bytes(data)
+        linux_entries[key] = {'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+    linux_entries['runtime']['id'] = 'py3.14.9-1'
     m = {'format': 1, 'version': ver, 'build': f'{ver}+abc1234', 'notes': notes, **entries, 'toolchain': 'x'}
     for name in rf.MANIFESTS:
         (d / name).write_text(json.dumps(m, indent=1), encoding='utf-8')
+    lm = {'format': 1, 'version': ver, 'build': f'{ver}+abc1234', 'notes': notes,
+          **linux_entries, 'toolchain': 'linux-x86_64'}
+    (d / rf.LINUX_MANIFEST).write_text(json.dumps(lm, indent=1), encoding='utf-8')
     return d
 
 
@@ -86,9 +96,9 @@ class Files(unittest.TestCase):
     def test_good_release_gets_its_sums(self):
         d = release(self.tmp.name, '0.19.0-rc.1')
         out = rf.check_files('v0.19.0-rc.1', self.notes, d)
-        self.assertEqual(out[-1], 'SHA256SUMS.txt: 6 files')
+        self.assertEqual(out[-1], 'SHA256SUMS.txt: 9 files')
         sums = (d / rf.SUMS).read_text(encoding='utf-8').splitlines()
-        self.assertEqual(len(sums), 6)
+        self.assertEqual(len(sums), 9)
         for line in sums:
             digest, name = line.split('  ')
             self.assertEqual(digest, hashlib.sha256((d / name).read_bytes()).hexdigest())
@@ -130,6 +140,12 @@ class Files(unittest.TestCase):
 
     def test_no_appimage(self):
         self.refused('missing', lambda d: (d / 'NX2Saria-Linux-0.19.0-x86_64.AppImage').unlink())
+
+    def test_linux_manifest_missing(self):
+        self.refused('missing', lambda d: (d / rf.LINUX_MANIFEST).unlink())
+
+    def test_linux_files_must_match_manifest(self):
+        self.refused('sha256', lambda d: (d / 'NX2Saria-app-linux-x86_64-0.19.0.zip').write_bytes(b'changed'))
 
     def test_same_name_twice(self):
         self.refused('two files', lambda d: self.manifest(d, lambda m: m['runtime'].update(name=m['app']['name'])))

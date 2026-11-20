@@ -1,7 +1,7 @@
 # A release, made by GitHub Actions alone: no file of it passes through anyone's PC (docs/releases/README.md).
-# Pushing a tag vX.Y.Z or vX.Y.Z-rc.N builds the Windows files (windows-release.yml) and the AppImage
-# (linux-appimage.yml) from the tag's commit, checks them, writes SHA256SUMS.txt, attests the provenance of every file
-# (actions/attest-build-provenance: players check it with `gh attestation verify`, docs/install.md "Verify your
+# Pushing a tag vX.Y.Z or vX.Y.Z-rc.N builds the Windows files (windows-release.yml) and the Linux AppImage, launcher
+# app and Python runtime (linux-appimage.yml) from the tag's commit, checks them, writes SHA256SUMS.txt and attests
+# every file (actions/attest-build-provenance: players check it with `gh attestation verify`, docs/install.md "Verify your
 # download") and publishes the release as a pre-release, with those files uploaded by this run. The manifests carry
 # the notes of the tag's commit and are never changed after: the pre-release line lives in the release page's text
 # only, and making the release stable is release-promote.yml, which uploads nothing.
@@ -105,7 +105,7 @@ jobs:
 
   attest:
     # The built files are exactly the release's, the manifests carry the tag's notes and every file's real size and
-    # sha256; then SHA256SUMS.txt and one provenance attestation over all seven files.
+    # sha256; then SHA256SUMS.txt and a provenance attestation over all ten published files.
     needs: [check, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -186,7 +186,7 @@ jobs:
           dist="$RUNNER_TEMP/dist"
           (cd "$dist" && sha256sum -c SHA256SUMS.txt)
           n=$(ls "$dist" | wc -l)
-          [ "$n" = 7 ] || { echo "::error::$n files to publish, not 7"; ls -la "$dist"; exit 1; }
+          [ "$n" = 10 ] || { echo "::error::$n files to publish, not 10"; ls -la "$dist"; exit 1; }
           # the tag still names the commit that was built
           now=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | tail -1 | cut -f1)
           [ "$now" = "$SHA" ] || { echo "::error::$TAG now names $now, not the commit built ($SHA)"; exit 1; }

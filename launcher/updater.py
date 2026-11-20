@@ -5,10 +5,10 @@ update never leaves a half-written release in use:
 
 1. The app archive goes to data/downloads, is checked against the manifest's size and sha256 and unpacks into
    app/<version>.part, which is renamed to app/<version> once it is complete and holds the expected VERSION.
-2. A new Python (the manifest's runtime id differs from python/runtime-id.txt) unpacks into python.next; the stub
-   swaps it in at its next start, while no Python runs.
-3. app/previous.txt gets the running version and app/current.txt the new one; the launcher starts the stub again,
-   which runs the new version. The stub goes back to previous.txt when the new version fails to start.
+2. A new Python (the manifest's runtime id differs from python/runtime-id.txt) unpacks into python.next on Windows;
+   Linux stages it beside the app and switches it while keeping python.old for recovery.
+3. app/previous.txt gets the running version and app/current.txt the new one. Windows starts the native stub again;
+   Linux starts the installed wrapper, which restores previous.txt and python.old if startup exits with code 86.
 4. The new version rebuilds the game (launcher/jobs.py), then prune() removes every version but these two.
 
 The launcher also stages a release in the background while it runs, the game included (stage()), and installs it
@@ -59,6 +59,11 @@ def runtime_id(layout):
     return read_text(layout.python / 'runtime-id.txt')
 
 
+def _linux_runtime(layout):
+    """Installed Linux runtimes have the relocatable python-build-standalone bin/python3 entry point."""
+    return os.name != 'nt' and (layout.python / 'bin' / 'python3').is_file()
+
+
 def safe_extract(zip_path, dest):
     """Unpack a zip into dest, refusing absolute names and names that climb out of it, and, before anything is
     written, a zip whose files do not fit the disk (net.space_problem)."""
@@ -77,6 +82,13 @@ def safe_extract(zip_path, dest):
         if full:
             raise UpdateError(full)
         z.extractall(dest)
+        if os.name != 'nt':
+            for info in z.infolist():
+                mode = (info.external_attr >> 16) & 0o777
+                if mode:
+                    target = dest / info.filename
+                    if target.exists() and not target.is_dir():
+                        target.chmod(mode)
 
 
 def _fetch(release, key, layout, progress, cancel, version, log=None):
@@ -130,7 +142,8 @@ def stage_runtime(layout, release, progress=None, cancel=None, version='dev', de
     shutil.rmtree(part, ignore_errors=True)
     part.mkdir()
     safe_extract(zip_path, part)
-    if not (part / 'python.exe').is_file() or read_text(part / 'runtime-id.txt') != release.manifest['runtime']['id']:
+    runtime_ok = ((part / 'bin' / 'python3').is_file() if _linux_runtime(layout) else (part / 'python.exe').is_file())
+    if not runtime_ok or read_text(part / 'runtime-id.txt') != release.manifest['runtime']['id']:
         shutil.rmtree(part, ignore_errors=True)
         raise UpdateError(f'{zip_path.name} is not the runtime {release.manifest["runtime"]["id"]}')
     os.replace(part, nxt)
@@ -206,7 +219,7 @@ def staged(layout, channel='stable', skip=''):
     return best
 
 
-def install_staged(layout, ver):
+def install_staged(layout, ver, log=None):
     """Make a release stage() finished the one the stub starts at its next start: its Python goes to python.next for
     the stub to swap in, current.txt names it (previous.txt the running version), and staged.json goes, so a version
     the stub rolls back from is not installed again by itself."""
@@ -216,6 +229,27 @@ def install_staged(layout, ver):
     py = layout.apps / ver / STAGED_PYTHON
     nxt = layout.root / 'python.next'
     moved = bool(m.get('runtime')) and m['runtime'] != runtime_id(layout)
+    if moved and _linux_runtime(layout):
+        live = layout.python
+        old = layout.root / 'python.old'
+        if live.exists():
+            # A running launcher has already made it through App.start(), which removes stale python.old backups.
+            # A leftover here can only be from an earlier failed start, so replace it with this live runtime.
+            shutil.rmtree(old, ignore_errors=True)
+            os.replace(live, old)
+        try:
+            os.replace(py, live)
+            switch_to(layout, ver)
+        except BaseException:
+            if live.exists():
+                shutil.rmtree(live, ignore_errors=True)
+            if old.exists():
+                os.replace(old, live)
+            raise
+        if log:
+            log(f'Linux runtime switched to {runtime_id(layout)}; previous runtime kept until startup succeeds')
+        (layout.apps / ver / STAGED).unlink(missing_ok=True)
+        return
     if moved:
         shutil.rmtree(nxt, ignore_errors=True)
         os.replace(py, nxt)
@@ -258,8 +292,7 @@ def prune(layout):
         for d in layout.apps.iterdir():
             if d.is_dir() and d.name not in keep and not _waiting(layout, d.name, now):
                 shutil.rmtree(d, ignore_errors=True)
-    for d in layout.root.glob('python.old*'):
-        shutil.rmtree(d, ignore_errors=True)
+    # python.old is the rollback runtime until the launcher wrapper confirms the new version started.
     if layout.downloads.is_dir():
         for f in layout.downloads.iterdir():
             if f.suffix in ('.part', '.zip', net.PART_OF):
