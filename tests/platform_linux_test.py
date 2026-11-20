@@ -1,5 +1,6 @@
 """Fast checks for Linux platform services; no display, game data or build tools required."""
 import ctypes
+import json
 import os
 import signal
 import subprocess
@@ -12,9 +13,77 @@ from unittest import mock
 
 from launcher.platform import linux
 from launcher import winsys
+from launcher import build
+from launcher import updater
+from launcher.paths import Layout
 
 
 class LinuxPlatformTest(unittest.TestCase):
+    def test_linux_build_args_use_system_toolchain_without_msys(self):
+        class Layout:
+            msys = Path('/not-used/msys')
+        with mock.patch.object(build.os, 'name', 'posix'):
+            args = build.install_args(Layout(), '/tmp/dump.nup', '/tmp/game')
+        self.assertNotIn('--msys', args)
+
+    def test_appimage_installer_adopts_existing_game_folder(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = base / 'bundle'
+            kit = bundle / 'usr' / 'kit'
+            py = bundle / 'usr' / 'python' / 'bin'
+            (kit / 'launcher').mkdir(parents=True)
+            (kit / 'launcher' / 'start.pyw').write_text('')
+            (kit / 'VERSION').write_text('0.19.0\n')
+            py.mkdir(parents=True)
+            (py / 'python3').write_text('python')
+            (bundle / 'nx2saria.png').write_bytes(b'icon')
+            config = base / 'config' / 'nx2navi'
+            config.mkdir(parents=True)
+            old_game = base / 'existing game'
+            dump = base / 'game dump.nup'
+            (config / 'appimage.json').write_text(json.dumps({'nup': str(dump), 'out': str(old_game)}))
+            env = {'XDG_DATA_HOME': str(base / 'share'), 'XDG_CONFIG_HOME': str(base / 'config')}
+            with mock.patch.dict(os.environ, env, clear=False):
+                root, exe, entry = appimage_install.install(bundle)
+                settings = json.loads((root / 'data' / 'launcher.json').read_text())
+                desktop = (base / 'share' / 'applications' / 'nx2saria.desktop').read_text()
+            self.assertEqual(settings['game_dir'], str(old_game))
+            self.assertEqual(settings['dump'], str(dump))
+            self.assertEqual(entry, root / 'app' / '0.19.0' / 'launcher' / 'start.pyw')
+            wrapper = root / 'nx2saria-launcher'
+            self.assertIn(f'Exec="{wrapper}"', desktop)
+            self.assertTrue(os.access(wrapper, os.X_OK))
+            self.assertIn('app/current.txt', wrapper.read_text())
+            self.assertNotIn(str(bundle), desktop)
+
+    def test_linux_runtime_and_app_switch_together(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = root / 'app' / '0.1.0'
+            new = root / 'app' / '0.2.0'
+            for app in (old, new):
+                (app / 'launcher').mkdir(parents=True)
+                (app / 'launcher' / 'start.pyw').write_text('')
+                (app / 'VERSION').write_text(app.name + '\n')
+            (root / 'app' / 'current.txt').write_text('0.1.0\n')
+            python = root / 'python'
+            (python / 'bin').mkdir(parents=True)
+            (python / 'bin' / 'python3').write_bytes(b'old interpreter')
+            (python / 'runtime-id.txt').write_text('runtime-old\n')
+            staged = new / updater.STAGED_PYTHON
+            (staged / 'bin').mkdir(parents=True)
+            (staged / 'bin' / 'python3').write_bytes(b'new interpreter')
+            (staged / 'runtime-id.txt').write_text('runtime-new\n')
+            (new / updater.STAGED).write_text(json.dumps({'version': '0.2.0', 'runtime': 'runtime-new'}))
+            layout = Layout(root=root, app=old)
+            updater.install_staged(layout, '0.2.0')
+            self.assertEqual(updater.current(layout), '0.2.0')
+            self.assertEqual(updater.runtime_id(layout), 'runtime-new')
+            self.assertEqual((python / 'bin' / 'python3').read_bytes(), b'new interpreter')
+            self.assertFalse((new / updater.STAGED).exists())
     def test_missing_sdl_disables_gamepad(self):
         with mock.patch.object(linux, '_sdl_library', return_value=(None, 'none (not found)')):
             pad = linux.Gamepad()

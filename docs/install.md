@@ -30,7 +30,11 @@ The setup installs the launcher, which builds the game once and then starts it.
 
    SDL3, which Ubuntu 24.04 does not package, comes with the AppImage.
 
-Started on a desktop, it opens a window to install, update and play.
+On first start, the AppImage installs the launcher and its Python runtime in `~/.local/share/nx2saria`, then opens the
+installed launcher. The Applications menu entry points to that installed copy, so you can move or delete the AppImage
+afterward. Keep it if you want to repair or reinstall the launcher. If you used the earlier AppImage window, the new
+launcher adopts the dump and game folder recorded in `~/.config/nx2saria/appimage.json` (also the older `nx2navi`
+location) without moving either folder.
 
 ## Updating
 
@@ -59,8 +63,8 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 (On Windows, in PowerShell, write it on one line without the `\`.)
 
 Put the name of the file you downloaded in place of `NX2Saria-Setup-0.19.0.exe`, and its version in
-`refs/tags/v0.19.0`: it works the same for the AppImage, the app and runtime zips, `NX2Saria-update.json`,
-`NX2navi-update.json` and `SHA256SUMS.txt`. For a good file it prints `✓ Verification succeeded!` and the workflow
+`refs/tags/v0.19.0`: it works the same for the AppImage, the Windows and Linux app and runtime zips, all three update
+manifests, and `SHA256SUMS.txt`. For a good file it prints `✓ Verification succeeded!` and the workflow
 that built it. Any other answer means the file is not the one GitHub Actions built for that version: do not run it,
 and tell us in an issue.
 
@@ -71,9 +75,9 @@ arrived whole; together with the attestation of `SHA256SUMS.txt` itself, it also
 - Windows (PowerShell): `Get-FileHash NX2Saria-Setup-0.19.0.exe` prints the SHA-256; it must be the one on that
   file's line of `SHA256SUMS.txt` (the case of the letters does not matter).
 
-The launcher checks each update by itself the second way: it downloads `NX2Saria-update.json` from the release and
-installs a file only when its size and SHA-256 are the ones that manifest gives. Releases older than 0.19.0-rc.1 were
-uploaded by hand and have no attestation.
+The launcher checks each update by itself the second way: Windows downloads `NX2Saria-update.json`; Linux downloads
+`NX2Saria-update-linux.json`. Each platform reads only its own manifest and installs an app or runtime file only when
+its size and SHA-256 match. Releases older than 0.19.0-rc.1 were uploaded by hand and have no attestation.
 
 ## Something wrong?
 

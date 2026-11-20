@@ -95,6 +95,10 @@ def crash(text, box=True):
 
 
 def run():
+    # The script folder is sys.path[0]. It contains the platform adapter package, whose name would shadow Python's
+    # standard-library platform module for third-party packages on Linux (for example zstandard on Python 3.12).
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != script_dir]
     sys.path.insert(0, APP)
     try:
         from launcher.ui.app import main

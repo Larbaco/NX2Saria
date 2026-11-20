@@ -59,6 +59,11 @@ def runtime_id(layout):
     return read_text(layout.python / 'runtime-id.txt')
 
 
+def _linux_runtime(layout):
+    """Installed Linux runtimes have the relocatable python-build-standalone bin/python3 entry point."""
+    return os.name != 'nt' and (layout.python / 'bin' / 'python3').is_file()
+
+
 def safe_extract(zip_path, dest):
     """Unpack a zip into dest, refusing absolute names and names that climb out of it, and, before anything is
     written, a zip whose files do not fit the disk (net.space_problem)."""
@@ -77,6 +82,13 @@ def safe_extract(zip_path, dest):
         if full:
             raise UpdateError(full)
         z.extractall(dest)
+        if os.name != 'nt':
+            for info in z.infolist():
+                mode = (info.external_attr >> 16) & 0o777
+                if mode:
+                    target = dest / info.filename
+                    if target.exists() and not target.is_dir():
+                        target.chmod(mode)
 
 
 def _fetch(release, key, layout, progress, cancel, version, log=None):
@@ -130,7 +142,8 @@ def stage_runtime(layout, release, progress=None, cancel=None, version='dev', de
     shutil.rmtree(part, ignore_errors=True)
     part.mkdir()
     safe_extract(zip_path, part)
-    if not (part / 'python.exe').is_file() or read_text(part / 'runtime-id.txt') != release.manifest['runtime']['id']:
+    runtime_ok = ((part / 'bin' / 'python3').is_file() if _linux_runtime(layout) else (part / 'python.exe').is_file())
+    if not runtime_ok or read_text(part / 'runtime-id.txt') != release.manifest['runtime']['id']:
         shutil.rmtree(part, ignore_errors=True)
         raise UpdateError(f'{zip_path.name} is not the runtime {release.manifest["runtime"]["id"]}')
     os.replace(part, nxt)
@@ -216,6 +229,24 @@ def install_staged(layout, ver):
     py = layout.apps / ver / STAGED_PYTHON
     nxt = layout.root / 'python.next'
     moved = bool(m.get('runtime')) and m['runtime'] != runtime_id(layout)
+    if moved and _linux_runtime(layout):
+        live = layout.python
+        old = layout.root / 'python.old'
+        shutil.rmtree(old, ignore_errors=True)
+        if live.exists():
+            os.replace(live, old)
+        try:
+            os.replace(py, live)
+            switch_to(layout, ver)
+        except BaseException:
+            if live.exists():
+                shutil.rmtree(live, ignore_errors=True)
+            if old.exists():
+                os.replace(old, live)
+            raise
+        shutil.rmtree(old, ignore_errors=True)
+        (layout.apps / ver / STAGED).unlink(missing_ok=True)
+        return
     if moved:
         shutil.rmtree(nxt, ignore_errors=True)
         os.replace(py, nxt)

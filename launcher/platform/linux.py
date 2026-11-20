@@ -7,6 +7,11 @@ import subprocess
 from pathlib import Path
 
 
+def make_game_toolchain_args(layout):
+    """Linux uses its system compiler and libraries; make_game.py discovers them directly."""
+    return []
+
+
 def _sdl_library():
     """Load the kit's SDL3 first, then the system copy; return a short source label for the log."""
     bundled = next((root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0'

@@ -7,6 +7,8 @@ import stat
 import subprocess
 import threading
 
+from . import winsys
+
 # Runs make_game.py with pydeps/ (zbic) and the script's folder first on sys.path; the embeddable Python's ._pth
 # file leaves both off.
 RUN = ('import os, runpy, sys; p = sys.argv[1]; s = sys.argv[2]; sys.argv = sys.argv[2:]; '
@@ -38,13 +40,14 @@ def install_args(layout, dump, game_dir):
         src = ['--exefs', os.path.join(dump, 'exefs'), '--romfs', os.path.join(dump, 'romfs')]
     else:
         src = ['--nup', dump]
-    return [*src, '--out', str(game_dir), '--msys', str(layout.msys)]
+    return [*src, '--out', str(game_dir), *winsys.make_game_toolchain_args(layout)]
 
 
 def rebuild_args(layout, game_dir, retune=False):
     """retune: Rebuild the Game, which compiles the game's code for this processor's level; an update keeps the level
     its objects were compiled for, so that it compiles only what changed (tools/make_game.py lifted_level)."""
-    return ['--rebuild', *(['--retune'] if retune else []), '--out', str(game_dir), '--msys', str(layout.msys)]
+    return ['--rebuild', *(['--retune'] if retune else []), '--out', str(game_dir),
+            *winsys.make_game_toolchain_args(layout)]
 
 
 def check_args(dump):
