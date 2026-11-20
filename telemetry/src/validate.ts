@@ -68,7 +68,7 @@ const SUMMARY_SPEC = obj({
     driver: str(64),
     vram_mb: int(MAX_MEMORY_MB),
   }),
-  display: obj({ output: token(), render_scale: token(), fullscreen: bool(), game_aspect: token() }),
+  display: obj({ output: token(), render_scale: token(), fullscreen: bool(), game_aspect: token(), picture: token() }),
   settings: obj({
     preset: token(),
     upscaler: token(),
@@ -107,7 +107,13 @@ export interface Summary {
   cpu: { name: string | null; threads: number | null };
   ram_mb: number | null;
   gpu: { name: string | null; vendor: string | null; device: string | null; driver: string | null; vram_mb: number | null };
-  display: { output: string | null; render_scale: string | null; fullscreen: boolean | null; game_aspect: string | null };
+  display: {
+    output: string | null;
+    render_scale: string | null;
+    fullscreen: boolean | null;
+    game_aspect: string | null;
+    picture: string | null;
+  };
   settings: {
     preset: string | null;
     upscaler: string | null;

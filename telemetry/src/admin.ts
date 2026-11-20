@@ -285,7 +285,7 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
   const sessions = head?.sessions ?? 0;
   const abnormalPct = sessions === 0 ? 0 : ((head?.abnormal ?? 0) * 100) / sessions;
 
-  const [byGpu, byOs, byPreset, byUpscaler, byFramegen, byCountry] = await Promise.all([
+  const [byGpu, byOs, byPreset, byAspect, byUpscaler, byFramegen, byCountry] = await Promise.all([
     (async () => {
       const rows = await all<{ name: string | null; vendor: string | null; n: number }>(
         db,
@@ -305,6 +305,7 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
       return rows.map((r): Cell[] => [r.family, r.name, r.wine === null ? null : r.wine ? "yes" : "no", r.n]);
     })(),
     countBy(db, f, "settings_preset", 20),
+    countBy(db, f, "display_game_aspect", 20),
     countBy(db, f, "settings_upscaler", 20),
     countBy(db, f, "settings_framegen", 20),
     countBy(db, f, "country", 50),
@@ -382,6 +383,7 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
 <div class="scroll">${table("By GPU (top 20)", ["gpu", "vendor", "sessions"], byGpu, 2)}</div>
 <div class="scroll">${table("By OS", ["family", "name", "wine", "sessions"], byOs, 3)}</div>
 <div class="scroll">${table("By preset", ["preset", "sessions"], byPreset)}</div>
+<div class="scroll">${table("By aspect ratio", ["game_aspect", "sessions"], byAspect)}</div>
 <div class="scroll">${table("By upscaler", ["upscaler", "sessions"], byUpscaler)}</div>
 <div class="scroll">${table("By frame generation", ["framegen", "sessions"], byFramegen)}</div>
 <div class="scroll">${table("By country", ["country", "sessions"], byCountry)}</div>

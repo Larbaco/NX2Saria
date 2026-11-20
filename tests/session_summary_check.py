@@ -37,7 +37,8 @@ SCHEMA = {
     'cpu': {'name': ('text', 64), 'threads': ('int', 1024)},
     'ram_mb': ('int', 4194304),
     'gpu': {'name': ('text', 64), 'vendor': 'hex', 'device': 'hex', 'driver': ('text', 64), 'vram_mb': ('int', 4194304)},
-    'display': {'output': 'token', 'render_scale': 'token', 'fullscreen': 'bool', 'game_aspect': 'token'},
+    'display': {'output': 'token', 'render_scale': 'token', 'fullscreen': 'bool', 'game_aspect': 'token',
+                'picture': 'token'},
     'settings': {'preset': 'token', 'upscaler': 'token', 'taa': 'token', 'dlss': 'token', 'framegen': 'token',
                  'fps_limit': ('int', None), 'vk_present': 'token'},
     'session': {'duration_s': ('int', 30 * 24 * 3600), 'frames': ('int', None), 'end': 'end'},
@@ -119,9 +120,10 @@ def expect(name, s):
         bad += [f'full: {k} = {s[k]!r}' for k, v in want.items() if s[k] != v]
         if s['frametime'] != {'fps_mean': 59.9, 'fps_low_1pct': 52.1, 'worst_ms': 88.4, 'over_25ms': 14, 'over_100ms': 0}:
             bad.append(f'full: frametime {s["frametime"]}')
-        if s['gpu']['vendor'] != '0x10de' or s['gpu']['device'] != '0x2786' or s['settings']['preset'] is not None:
+        if s['gpu']['vendor'] != '0x10de' or s['gpu']['device'] != '0x2786' or s['settings']['preset'] != 'high':
             bad.append(f'full: gpu {s["gpu"]}, preset {s["settings"]["preset"]!r}')
-        if s['display'] != {'output': '2560x1440', 'render_scale': 'game', 'fullscreen': True, 'game_aspect': '16:9'}:
+        if s['display'] != {'output': '2560x1440', 'render_scale': 'game', 'fullscreen': True, 'game_aspect': '16:10',
+                            'picture': '2304x1440'}:
             bad.append(f'full: display {s["display"]}')
     elif name == 'all_null':
         leaves = [v for k, o in s.items() if isinstance(o, dict) for v in o.values()] + [s['ram_mb'], s['fatal']]

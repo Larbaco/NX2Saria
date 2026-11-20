@@ -23,7 +23,8 @@ typedef struct {
     int64_t gpu_vendor, gpu_device, vram_mb;   // vendor/device above 0xffff are written as null
     // Tokens: the display's and the settings' values. A value with a character outside [A-Za-z0-9_.:x+-] or longer than
     // 32 is written as "other"; ss_setting maps a value outside the setting's own list to "other" before.
-    const char *output, *render_scale, *game_aspect;
+    // picture: the size of the picture the game draws, "2560x1440" or a widescreen one (widescreen.c), as "WxH".
+    const char *output, *render_scale, *game_aspect, *picture;
     int fullscreen;                    // 1, 0, or -1 for null
     const char *preset, *upscaler, *taa, *dlss, *framegen, *vk_present;
     int64_t fps_limit;
@@ -70,6 +71,9 @@ int vk_caps_gpu(SsGpu *out);   // 1 once vk_caps_init ran; reads values stored t
 int gfx_shader_prewarm_stats(int64_t *ms, int64_t *translated);
 // The boot's pipeline prewarm (vk_pipeline.c): pipelines it built and the time of its pipeline stage. 1 once it ended.
 int vk_pipeline_boot_stats(int64_t *built, int64_t *ms);
+// The picture widescreen.c wide_init set up: 1 and its size once wide_init has decided, 0 before (no computing: the
+// fatal end may call it on any thread).
+int wide_picture_known(unsigned *w, unsigned *h);
 
 // ---- the game's side (session_summary.c)
 // main.c main_run, a game run only, after the log is open: notes the start, the OS, CPU and RAM, and removes a summary

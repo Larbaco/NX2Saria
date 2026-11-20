@@ -26,6 +26,7 @@
 #include "gfx_wsys.h"
 #include "host.h"
 #include "layout.h"
+#include "session_summary.h"
 #include "ui/menu.h"
 #include "vk_dlaa.h"
 #include "widescreen_math.h"
@@ -414,7 +415,8 @@ void wide_init(void) {
     if (!picture_size(&ow, &oh, 0) || heap_unserved) {   // the game's own sizes (or the shipped heap): every set stays off
         if (wide_available())
             rt_log("widescreen: menus %s: the picture is the game's own 2560x1440, nothing to keep in it", menus);
-        start_w = GAME_W, start_h = GAME_H, start_wide = 0, started = 1;
+        start_w = GAME_W, start_h = GAME_H, start_wide = 0;
+        __atomic_store_n(&started, 1, __ATOMIC_RELEASE);   // after its size: wide_picture_known reads it from any thread
         wide_balloon_init(1.0f);
         return;
     }
@@ -468,7 +470,8 @@ void wide_init(void) {
     rt_patch_switch(sm, 1);
     wide_balloon_init(x_squeeze);
     if (save[1] || save[3]) rt_patch_switch(sv, 1);
-    start_w = ow, start_h = oh, start_wide = 1, started = 1;
+    start_w = ow, start_h = oh, start_wide = 1;
+    __atomic_store_n(&started, 1, __ATOMIC_RELEASE);
     if (taller)
         rt_log("widescreen: tall picture: full-height fades, backgrounds and movies; ordinary UI stays in the middle 16:9");
     else if (wider)
@@ -512,6 +515,12 @@ int wide_start_picture(unsigned *w, unsigned *h) {
     }
     *w = kw, *h = kh;
     return kept;
+}
+
+int wide_picture_known(unsigned *w, unsigned *h) {
+    if (!__atomic_load_n(&started, __ATOMIC_ACQUIRE)) return 0;
+    *w = start_w, *h = start_h;
+    return 1;
 }
 
 // The picture the game draws: the widescreen one wide_init set up, else the game's own 2560x1440. DLSS's largest mode

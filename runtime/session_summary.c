@@ -22,6 +22,8 @@
 __attribute__((weak)) int vk_caps_gpu(SsGpu *out) { (void)out; return 0; }
 __attribute__((weak)) int gfx_shader_prewarm_stats(int64_t *ms, int64_t *translated) { (void)ms, (void)translated; return 0; }
 __attribute__((weak)) int vk_pipeline_boot_stats(int64_t *built, int64_t *ms) { (void)built, (void)ms; return 0; }
+// Builds without the widescreen sets' code (the tools) have no picture of their own.
+__attribute__((weak)) int wide_picture_known(unsigned *w, unsigned *h) { (void)w, (void)h; return 0; }
 
 #define FILE_NAME "session-summary.json"
 
@@ -73,6 +75,9 @@ void session_summary_start(void) {
     float used, total, proc;
     plat_mem_info(&used, &total, &proc);
     ram_mb = total > 0 ? (int64_t)total : -1;
+    // cfg_preset_custom's first call makes its key list under a lock: made here, on the main thread, the fatal end's
+    // call takes none (cfg_start chose the tier before this, memory.c mem_init).
+    (void)cfg_preset_custom();
     __atomic_store_n(&armed, 1, __ATOMIC_RELEASE);
     if (path[0])
         rt_log("telemetry: a session summary goes to logs/%s at the end; the game sends nothing (the launcher sends it "
@@ -96,7 +101,7 @@ static const char *priv(const char *s, char *out, size_t cap) { return s && *s ?
 static void write_summary(const char *end, const char *fatal_line) {
     if (!__atomic_load_n(&armed, __ATOMIC_ACQUIRE) || plat_xchg32(&written, 1)) return;
     static char json[8192], fatal[1024], os_p[256], cpu_p[256], gpu_p[256], drv_p[288];
-    static char out_v[40], scale_v[40], aspect_v[40], preset_v[40], up_v[40], taa_v[40], dlss_v[40], fg_v[40],
+    static char out_v[40], scale_v[40], aspect_v[40], picture_v[40], up_v[40], taa_v[40], dlss_v[40], fg_v[40],
         fps_v[40], present_v[40];
     static SsGpu gpu;
     SessionSummary s = {
@@ -122,7 +127,15 @@ static void write_summary(const char *end, const char *fatal_line) {
     s.render_scale = setting("RENDER_SCALE", scale_v, sizeof scale_v);
     s.fullscreen = cfg_meta("FULLSCREEN") ? cfg_bool("NX2SARIA_FULLSCREEN") : -1;
     s.game_aspect = setting("GAME_ASPECT", aspect_v, sizeof aspect_v);
-    s.preset = setting("PRESET", preset_v, sizeof preset_v);   // no such row yet: null
+    unsigned pw, ph;
+    if (wide_picture_known(&pw, &ph)) {
+        snprintf(picture_v, sizeof picture_v, "%ux%u", pw, ph);
+        s.picture = picture_v;
+    }
+    // The quality preset in use (cfg.c "quality presets"): the tier's name, the one "recommended" stands for included,
+    // or "custom" when the player changed a setting the tier sets, as the menu shows it; null before cfg_start chose one.
+    int tier = cfg_preset_in_use();
+    if (tier >= 0) s.preset = cfg_preset_custom() ? "custom" : cfg_preset_name(tier);
     s.upscaler = setting("UPSCALER", up_v, sizeof up_v);
     s.taa = setting("TAA", taa_v, sizeof taa_v);
     s.dlss = setting("DLSS", dlss_v, sizeof dlss_v);

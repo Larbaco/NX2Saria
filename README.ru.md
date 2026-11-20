@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
+<!-- translation: lang=ru source=README.md source-hash=bc7db755a245ca71c7ee004466aceb0b1c9f53be reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=82a4431ceead957afd05ea207638b20c092c22f7 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=8591ed12455f02a6ea746c22c0412a34e2522815 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -32,8 +32,8 @@ O jogo o grava em `logs/session-summary.json` na pasta do jogo quando termina, p
 | `cpu.name`, `cpu.threads` | O nome do modelo do processador e o número de threads dele | `AMD Ryzen 5 5600 6-Core Processor`, `12` |
 | `ram_mb` | A memória do PC, em MB | `16384` |
 | `gpu.name`, `gpu.vendor`, `gpu.device`, `gpu.driver`, `gpu.vram_mb` | O modelo da placa de vídeo e os ids PCI dela, o nome e a versão do driver, a memória de vídeo | `NVIDIA GeForce RTX 3060`, `0x10de`, `0x2504`, `NVIDIA 581.57`, `12288` |
-| `display.output`, `display.render_scale`, `display.fullscreen`, `display.game_aspect` | A resolução de saída, a escala de renderização, tela cheia ou janela, a proporção da tela | `1920x1080`, `game`, `true`, `16:9` |
-| `settings.preset`, `settings.upscaler`, `settings.taa`, `settings.dlss`, `settings.framegen`, `settings.fps_limit`, `settings.vk_present` | As principais opções gráficas. Um valor que não seja uma das escolhas da própria opção é enviado como `other` | `null`, `fsr`, `dlss`, `dlaa`, `off`, `60`, `fifo` |
+| `display.output`, `display.render_scale`, `display.fullscreen`, `display.game_aspect`, `display.picture` | A resolução de saída, a escala de renderização, tela cheia ou janela, a opção de proporção da tela e o tamanho da imagem que o jogo desenhou | `1920x1080`, `game`, `true`, `16:10`, `2304x1440` |
+| `settings.preset`, `settings.upscaler`, `settings.taa`, `settings.dlss`, `settings.framegen`, `settings.fps_limit`, `settings.vk_present` | A predefinição de qualidade em uso (`low`, `medium`, `high`, `ultra`, ou `custom` quando você mudou uma das opções dela) e as principais opções gráficas. Um valor que não seja uma das escolhas da própria opção é enviado como `other` | `high`, `fsr`, `dlss`, `dlaa`, `off`, `60`, `fifo` |
 | `session.duration_s`, `session.frames`, `session.end` | Quanto tempo o jogo rodou, quantos quadros mostrou, como terminou: `normal`, `fatal`, `device_lost` ou `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | A taxa de quadros média da sessão inteira, o 1% low dela, o quadro mais lento e quantos quadros levaram mais de 25 ms e mais de 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | O tempo gasto preparando shaders e pipelines no início, quando houve algum | `5400`, `120`, `900`, `3100` |
