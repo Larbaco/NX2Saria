@@ -20,7 +20,9 @@ The setup installs the launcher, which builds the game once and then starts it.
 ## Linux
 
 1. Download **`NX2Saria-Linux-<version>-x86_64.AppImage`** from the release.
-2. Make it executable (`chmod +x NX2Saria-Linux-*.AppImage`) and start it.
+2. Make it executable and start it. In a terminal: `chmod +x NX2Saria-Linux-*.AppImage`. In the file manager:
+   right-click it, then **Properties > Permissions > Allow executing file as program**. Until then, a double-click
+   may hand the file to another program (an archive manager or an AppImage manager) instead of starting it.
 3. The build needs a compiler and a few libraries from your distribution. When one is missing, the AppImage says which
    and the command that installs them. On Ubuntu 24.04, Linux Mint 22 and the other distributions on Ubuntu:
 

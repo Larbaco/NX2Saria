@@ -45,9 +45,14 @@ def _nup_module(layout):
 # ---------------------------------------------------------------- finding a dump
 
 def candidate_dirs(extra=()):
+    """The folders the dump is looked for in: extra first, then Downloads, Desktop and Documents (the desktop's own,
+    translated or moved, and the English names), then the home folder."""
+    from . import winsys
     home = Path.home()
     dirs = [Path(d) for d in extra if d]
-    dirs += [home / 'Downloads', home / 'Desktop', home / 'Documents', home]
+    for name, english in (('downloads', 'Downloads'), ('desktop', 'Desktop'), ('documents', 'Documents')):
+        dirs += [d for d in (winsys.known_folder(name), home / english) if d]
+    dirs.append(home)
     if os.name == 'nt':
         import string
         dirs += [Path(f'{c}:\\') for c in string.ascii_uppercase[2:] if os.path.isdir(f'{c}:\\')]
@@ -69,23 +74,65 @@ def is_game_nup(layout, path):
     return any(p['title_id'] in (TITLE_ID, TITLE_ID | 0x800) for p in n.packages)
 
 
-def find_dumps(layout, extra=(), depth=1):
-    """.nup files with the game in the usual places (the setup's folder first), newest first."""
-    found = []
+# The other drives' search (find_dumps drives): two folder levels below each drive's root (D:\Games\NX2Saria,
+# /mnt/data/Games/Switch), at most FOLDERS_PER_LEVEL folders of each, for at most DRIVES_SECONDS in all. On a 1 TB
+# NTFS partition two levels were 502 folders, listed in 0.3 s; three levels were 3373 folders and 1.2 s.
+DRIVES_DEPTH = 2
+DRIVES_SECONDS = 5.0
+FOLDERS_PER_LEVEL = 200
+
+
+def find_dumps(layout, extra=(), depth=1, drives=(), report=None):
+    """.nup files with the game in the usual places (the setup's folder first), then in the folders drives names (the
+    mounted disks, launcher/platform/linux.py mounted_drives) DRIVES_DEPTH levels deep, newest first. report, a dict,
+    gets 'folders' (how many were looked in) and 'stopped' (True when the drives' search ran out of time)."""
+    import time
+    found, folders, stopped = [], 0, False
+
+    def look(pd, deadline=None):
+        """The game's .nup files in pd into found; its first FOLDERS_PER_LEVEL folders, from the same listing. A
+        folder with tens of thousands of entries is read one entry at a time, so the deadline holds inside it."""
+        nonlocal folders, stopped
+        folders += 1
+        subs = []
+        try:
+            with os.scandir(pd) as it:
+                for e in it:
+                    if deadline is not None and time.monotonic() > deadline:
+                        stopped = True
+                        break
+                    if e.name.startswith(('.', '$')):
+                        continue
+                    try:
+                        if e.name.lower().endswith('.nup') and e.is_file() and is_game_nup(layout, Path(e.path)):
+                            found.append(Path(e.path))
+                        elif len(subs) < FOLDERS_PER_LEVEL and e.is_dir():
+                            subs.append(Path(e.path))
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        return subs
+
     for d in candidate_dirs(extra):
-        pattern_dirs = [d]
-        if depth > 0:
-            try:
-                pattern_dirs += [s for s in d.iterdir() if s.is_dir() and not s.name.startswith(('.', '$'))][:200]
-            except OSError:
-                pass
-        for pd in pattern_dirs:
-            try:
-                for f in pd.glob('*.nup'):
-                    if f.is_file() and is_game_nup(layout, f):
-                        found.append(f)
-            except OSError:
-                continue
+        subs = look(d)
+        for sub in (subs if depth > 0 else []):
+            look(sub)
+    deadline = time.monotonic() + DRIVES_SECONDS
+    for drive in drives:
+        level = [Path(drive)]
+        for n in range(DRIVES_DEPTH + 1):
+            nxt = []
+            for pd in level:
+                if stopped or time.monotonic() > deadline:
+                    stopped = True
+                    break
+                subs = look(pd, deadline)
+                if n < DRIVES_DEPTH:
+                    nxt += subs
+            level = nxt
+    if report is not None:
+        report.update(folders=folders, stopped=stopped)
     uniq = {os.path.normcase(str(f)): f for f in found}
     return sorted(uniq.values(), key=lambda f: f.stat().st_mtime, reverse=True)
 

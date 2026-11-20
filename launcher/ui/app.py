@@ -31,12 +31,12 @@ import math
 import os
 import random
 import shutil
+import signal
 import sys
 import time
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
-from tkinter import filedialog
 
 from .. import NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
 from ..context import Context, shorten
@@ -54,6 +54,10 @@ GAP = 12
 DESC = (614, 336)               # x, width
 P = art.PALETTE                 # the colour scheme in use: art.set_theme changes it in place
 FRAME_MS = 15                   # between two steps of the animations; they move by the time that really passed
+# On X11, Tk blends every picture with transparency in software and reads the screen back to do it, so each step
+# costs far more than on Windows: the animations step half as often there and look the same.
+if os.name != 'nt':
+    FRAME_MS = 33
 SPARKS = 22                     # the dust drifting over the backdrop
 DEPTH = {'first_run': 0, 'home': 0, 'job': 1, 'saves': 1, 'settings': 1, 'customize': 1, 'uninstall': 2,
          'color': 2, 'mods': 1, 'mod_order': 2, 'udmabuf': 2}
@@ -89,16 +93,32 @@ class Row:
         return self.kind != 'divider'
 
 
+_measured = {}
+
+
+def measure(font, text):
+    """font.measure(text), remembered: the same labels are measured at every redraw (fit_font, fit and the rows'
+    values), and on Linux each measure is a round trip to the X server's fonts that took 1 to 2 ms. A Font's name is
+    never reused, so a font made again (reload_fonts) is measured again."""
+    key = (font.name, text)
+    w = _measured.get(key)
+    if w is None:
+        if len(_measured) > 20000:
+            _measured.clear()
+        w = _measured[key] = font.measure(text)
+    return w
+
+
 def fit(font, text, width):
     """text shortened in the middle with an ellipsis so it fits width pixels."""
-    if font.measure(text) <= width:
+    if measure(font, text) <= width:
         return text
     lo, hi = 1, len(text)
     while lo < hi:
         mid = (lo + hi + 1) // 2
         keep = mid // 2
         cand = text[:keep] + '…' + text[len(text) - (mid - keep):]
-        if font.measure(cand) <= width:
+        if measure(font, cand) <= width:
             lo = mid
         else:
             hi = mid - 1
@@ -366,6 +386,8 @@ def drive_of(path):
 class App:
     def __init__(self, root, ctx, args):
         self.root, self.ctx, self.args = root, ctx, args
+        self.opened = time.monotonic()
+        self.closed = ''   # why the window was closed, once on_close has run
         self.layout, self.settings = ctx.layout, ctx.settings
         self.s = self.compute_scale()
         self.sprites = {}
@@ -430,6 +452,9 @@ class App:
         self.sparks = []
         self.sprig_xy = None
         self.halo = []
+        self.sprig_at = self.halo_k = None   # where step_backdrop last put the sprig, the halo's frame
+        self.lit = None       # the row drawn as the focused one (render, refocus)
+        self.moving = False   # animate is stepping (Animations on, the window shown and in front)
 
         root.title(NAME)
         root.resizable(False, False)
@@ -526,14 +551,14 @@ class App:
 
     def fit_font(self, font, text, width, smallest=0.72):
         """font, or the same face a few pixels smaller so text fits width (down to smallest of its size)."""
-        if font.measure(text) <= width:
+        if measure(font, text) <= width:
             return font
         family, px, weight = self.fspec[id(font)]
         for size in range(px - 1, max(7, int(px * smallest)) - 1, -1):
             key = (family, size, weight)
             if key not in self.fcache:
                 self.fcache[key] = tkfont.Font(root=self.root, family=family, size=-size, weight=weight)
-            if self.fcache[key].measure(text) <= width:
+            if measure(self.fcache[key], text) <= width:
                 return self.fcache[key]
         return self.fcache[(family, max(7, int(px * smallest)), weight)]
 
@@ -625,7 +650,7 @@ class App:
         size = max(1, self.X(bh - 8))
         emblem = self.sprite(('sprig', size), lambda: art.sprig_icon(size))
         ew = emblem.width()
-        title_w = self.f['band'].measure(NAME)
+        title_w = measure(self.f['band'], NAME)
         gap = self.X(12)
         x = self.X(W / 2) - (ew + gap + title_w) // 2
         # A soft green halo behind the sprig pulses while the animations run.
@@ -635,6 +660,7 @@ class App:
         self.halo = self.sprites[('halo', size)]
         c.create_image(x + ew // 2, self.X(bh / 2), image=self.halo[0], tags=('static', 'halo'))
         self.sprig_xy = (x, self.X(bh / 2))
+        self.sprig_at = self.halo_k = None   # drawn again at its place and first frame: step_backdrop starts over
         c.create_image(x, self.X(bh / 2), anchor='w', image=emblem, tags=('static', 'sprig'))
         tx = x + ew + gap
         c.create_text(tx + 1, self.X(bh / 2) + self.X(2), text=NAME, anchor='w', font=self.f['band'],
@@ -741,8 +767,8 @@ class App:
         if not idx:
             return
         pos = idx.index(self.focus) if self.focus in idx else 0
-        self.focus = idx[max(0, min(len(idx) - 1, pos + d))]
-        self.render()
+        old, self.focus = self.focus, idx[max(0, min(len(idx) - 1, pos + d))]
+        self.refocus(old)
 
     def focused(self):
         return self.rows[self.focus] if 0 <= self.focus < len(self.rows) else None
@@ -837,11 +863,11 @@ class App:
         self.set_tb_hover(self.title_button_at(e.x, e.y))
         i = self.hit(e.x, e.y)
         if i is not None and i != self.focus:
-            self.focus = i
+            old, self.focus = self.focus, i
             r = self.rows[i]
             if r.kind == 'pair':
                 r.pick = 0 if e.x < (r.rect[0] + r.rect[2]) / 2 else 1
-            self.render()
+            self.refocus(old)
         elif i is not None and self.rows[i].kind == 'pair':
             r = self.rows[i]
             pick = 0 if e.x < (r.rect[0] + r.rect[2]) / 2 else 1
@@ -902,7 +928,17 @@ class App:
             self.pick_drag = None
             self.pick_changed(final=True)
 
-    def on_close(self):
+    def on_close(self, why='closed by the player'):
+        """Close the window: the × of the title band or of the system's frame, Alt+F4, or a signal that ends the
+        process (main, errors.on_end_signals). The line it logs tells a closed window from one that died, whose log
+        ends without it."""
+        if self.closed:
+            return
+        self.closed = why
+        busy = (f'; {self.job.task or self.job.title or type(self.job).__name__} cancelled'
+                if self.job and self.job.result is None else '')
+        self.ctx.log(f'window {why} on the {self.screen or "first"} screen after '
+                     f'{time.monotonic() - self.opened:.0f} s{busy}')
         if self.job and self.job.result is None:
             self.job.cancel()
         if self.bg.staging():   # what it downloaded is resumed, and its unfinished folder replaced, next time
@@ -961,6 +997,7 @@ class App:
                 self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Begin '
                                 'Installation goes on from the steps that were done.')
             self.show('first_run')
+            self.log_first_run()
             self.find_dumps()
 
     def after_update_notice(self):
@@ -984,14 +1021,37 @@ class App:
 
     # ---- first run
 
+    def log_first_run(self):
+        """The first-run screen's folder and dump into launcher.log: the line that tells, in a log that ends here,
+        that the window was up and what it offered."""
+        gd = self.game_dir()
+        chosen = 'chosen' if self.settings.get('game_dir') else 'default'
+        dump = self.settings.get('dump')
+        self.ctx.log(f'first run: install folder {gd} ({chosen}), {free_gb(gd) + partial_image_gb(gd):.0f} GB free '
+                     f'there; dump {dump or "not chosen yet"}')
+
     def find_dumps(self):
         import threading
         extra = [self.args.source] if self.args.source else []
         extra.append(str(self.layout.root.parent))
 
+        drives = []
+        if sys.platform.startswith('linux'):
+            from ..platform.linux import mounted_drives
+            drives = mounted_drives()
+
         def work():
+            t0 = time.monotonic()
             try:
-                found = gamefiles.find_dumps(self.layout, extra)
+                report = {}
+                found = gamefiles.find_dumps(self.layout, extra, drives=drives, report=report)
+                where = ', '.join(str(d) for d in gamefiles.candidate_dirs(extra)) + ' and their folders'
+                if drives:
+                    where += (f'; the drives {", ".join(str(d) for d in drives)}, {gamefiles.DRIVES_DEPTH} levels deep'
+                              + (f', stopped after {gamefiles.DRIVES_SECONDS:.0f} s' if report.get('stopped') else ''))
+                said = f'{len(found)} found, newest {found[0]}' if found else 'none found'
+                self.ctx.log(f'dump search: {said} ({report.get("folders", 0)} folders in '
+                             f'{time.monotonic() - t0:.1f} s; looked in {where})')
             except Exception as e:
                 self.ctx.log(f'dump search: {e}')
                 found = []
@@ -1019,12 +1079,15 @@ class App:
             dump_desc = (f'Your dump: {Path(dump).name}, in {where}. Select this row to choose another .nup file.',)
         elif self.dumps is None:
             dump_value, dump_style, check = 'Looking for your dump…', 'dim', False
-            dump_desc = ('Looking for your dump of Ocarina of Time in Downloads, Desktop, Documents and the folder '
-                         'the setup ran from.',)
+            dump_desc = ('Looking for your dump of Ocarina of Time in Downloads, Desktop, Documents, '
+                         + ('the drives mounted under /mnt and /media ' if sys.platform.startswith('linux') else '')
+                         + 'and the folder the setup ran from.',)
         else:
             dump_value, dump_style, check = 'Choose your .nup file', 'salmon', False
             dump_desc = ('Choose your own dump of Ocarina of Time with the 1.1.1 update, as one .nup file. None was '
-                         'found in Downloads, Desktop or Documents.',)
+                         'found in Downloads, Desktop or Documents'
+                         + (', nor on the drives mounted under /mnt and /media' if sys.platform.startswith('linux')
+                            else '') + '.',)
         gd = self.game_dir()
         need = 34
         free = free_gb(gd) + partial_image_gb(gd)   # Begin Installation removes the partial image (begin_install)
@@ -1105,8 +1168,8 @@ class App:
 
     def choose_dump(self):
         start = str(Path(self.settings.get('dump')).parent) if self.settings.get('dump') else str(Path.home())
-        path = filedialog.askopenfilename(parent=self.root, title='Choose your Ocarina of Time dump',
-                                          initialdir=start, filetypes=[('Game dump', '*.nup'), ('All files', '*.*')])
+        path = winsys.pick(self.root, 'file', 'Choose your Ocarina of Time dump', start,
+                           [('Game dump', '*.nup'), ('All files', '*.*')], self.ctx.log)
         if not path:
             return
         if not gamefiles.is_game_nup(self.layout, path):
@@ -1120,8 +1183,8 @@ class App:
         self.show(self.screen, self.focus)
 
     def choose_folder(self):
-        path = filedialog.askdirectory(parent=self.root, title='Choose the folder for the game',
-                                       initialdir=str(Path(self.game_dir()).parent))
+        path = winsys.pick(self.root, 'folder', 'Choose the folder for the game', str(Path(self.game_dir()).parent),
+                           log=self.ctx.log)
         if not path:
             return
         p = Path(path)
@@ -1564,8 +1627,8 @@ class App:
         start = str(Path(start).parent) if start and Path(start).parent.is_dir() else \
             str(winsys.known_folder('pictures') or Path.home())
         pattern = ' '.join('*' + t for t in picture.TYPES)
-        path = filedialog.askopenfilename(parent=self.root, title='Choose a background picture', initialdir=start,
-                                          filetypes=[('Pictures', pattern), ('All files', '*.*')])
+        path = winsys.pick(self.root, 'file', 'Choose a background picture', start,
+                           [('Pictures', pattern), ('All files', '*.*')], self.ctx.log)
         if not path:
             return
         try:
@@ -1667,8 +1730,8 @@ class App:
         ]
 
     def choose_export_dir(self):
-        d = filedialog.askdirectory(parent=self.root, title='Choose where Export Save writes its zip',
-                                    initialdir=str(self.export_dir()), mustexist=True)
+        d = winsys.pick(self.root, 'folder', 'Choose where Export Save writes its zip', str(self.export_dir()),
+                        log=self.ctx.log, mustexist=True)
         if d:
             self.settings['save_export_dir'] = str(Path(d))
             self.settings.save()
@@ -1709,14 +1772,13 @@ class App:
             try:
                 src = None
                 if folder:
-                    src = filedialog.askdirectory(parent=self.root, title='Choose the folder with the save',
-                                                  initialdir=str(saves.ensure_saves_dir(gd)), mustexist=True)
+                    src = winsys.pick(self.root, 'folder', 'Choose the folder with the save',
+                                      str(saves.ensure_saves_dir(gd)), log=self.ctx.log, mustexist=True)
                     if not src:
                         return
                 elif saves.waiting(gd)[0] is None:
-                    src = filedialog.askopenfilename(parent=self.root, title='Choose the save to import',
-                                                     initialdir=str(self.export_dir()),
-                                                     filetypes=[('NX2Saria save', '*.zip'), ('All files', '*.*')])
+                    src = winsys.pick(self.root, 'file', 'Choose the save to import', str(self.export_dir()),
+                                      [('NX2Saria save', '*.zip'), ('All files', '*.*')], self.ctx.log)
                     if not src:
                         return
                 r = saves.import_save(gd, src, log=self.ctx.log)
@@ -1886,12 +1948,11 @@ class App:
             self.mods_message = 'Install the game first.'
         else:
             if folder:
-                src = filedialog.askdirectory(parent=self.root, title='Choose the folder of the mod',
-                                              initialdir=str(Path.home() / 'Downloads'), mustexist=True)
+                src = winsys.pick(self.root, 'folder', 'Choose the folder of the mod', str(Path.home() / 'Downloads'),
+                                  log=self.ctx.log, mustexist=True)
             else:
-                src = filedialog.askopenfilename(parent=self.root, title='Choose the mod',
-                                                 initialdir=str(Path.home() / 'Downloads'),
-                                                 filetypes=[('Mod', '*.zip *.7z *.rar'), ('All files', '*.*')])
+                src = winsys.pick(self.root, 'file', 'Choose the mod', str(Path.home() / 'Downloads'),
+                                  [('Mod', '*.zip *.7z *.rar'), ('All files', '*.*')], self.ctx.log)
             if not src:
                 return
             try:
@@ -2092,6 +2153,10 @@ class App:
         self.game_run = None
         self.root.deiconify()
         self.root.lift()
+        try:   # the pad and the animations follow the keyboard focus (winsys.in_front)
+            self.root.focus_force()
+        except tk.TclError:
+            pass
         if run:
             end = run.end()
             self.ctx.log(end.log)
@@ -2541,6 +2606,7 @@ class App:
             dt = min(0.1, max(0.0, now - self.anim_last))
             self.anim_last = now
             moving = self.animated() and self.root.state() == 'normal' and winsys.in_front(self.root)
+            self.moving = moving
             if moving:
                 self.anim_t += dt
                 self.step_slide(dt)
@@ -2576,21 +2642,34 @@ class App:
             c.coords('cursor', round(x) + self.slide_applied, round(y))
 
     def step_backdrop(self, dt):
+        """The sparks, the sprig and its halo, each touched only when it lands on another pixel or picture: they
+        drift less than a pixel a step, and Tk draws an item again whenever it is moved or changed, also to where it
+        was. On X11 that drawing blends each picture with what is under it in software, and the sparks moved at every
+        step took two thirds of the window's processor time."""
         c, t = self.canvas, self.anim_t
         for sp in self.sparks:   # up, swaying, and back in at the bottom once under the title band
             sp['y'] -= sp['vy'] * dt
             if sp['y'] < BAND[2] - 8:
                 sp['y'] = H + 8
-            c.coords(sp['id'], self.X(sp['x'] + math.sin(t * sp['rate'] + sp['phase']) * sp['sway']), self.X(sp['y']))
+            at = (self.X(sp['x'] + math.sin(t * sp['rate'] + sp['phase']) * sp['sway']), self.X(sp['y']))
+            if at != sp.get('at'):
+                sp['at'] = at
+                c.coords(sp['id'], *at)
             k = int((math.sin(t * sp['rate'] * 2.3 + sp['phase'] * 3) + 1) * 1.49)   # 0, 1 or 2: its twinkle
             if k != sp['shown']:
                 sp['shown'] = k
                 c.itemconfigure(sp['id'], image=sp['pics'][k])
         if self.sprig_xy:   # the sprig rises and sinks two pixels every 2.4 s while its halo pulses
             x, y = self.sprig_xy
-            c.coords('sprig', x, y + round(math.sin(t * 2.6) * self.X(2)))
+            at = (x, y + round(math.sin(t * 2.6) * self.X(2)))
+            if at != getattr(self, 'sprig_at', None):
+                self.sprig_at = at
+                c.coords('sprig', *at)
             if self.halo:
-                c.itemconfigure('halo', image=self.halo[int(t / 2.4 * len(self.halo)) % len(self.halo)])
+                k = int(t / 2.4 * len(self.halo)) % len(self.halo)
+                if k != getattr(self, 'halo_k', None):
+                    self.halo_k = k
+                    c.itemconfigure('halo', image=self.halo[k])
 
     # ---------------------------------------------------------------- drawing
 
@@ -2604,9 +2683,10 @@ class App:
                 self.focus = self.job_focus()
         x0, x1, y = ROWS
         heights, self.row_gap = self.fit_rows(y, H - 46 if self.screen == 'job' else H - 12)
-        for r, h in zip(self.rows, heights):
-            self.draw_row(r, self.X(x0), self.X(y), self.X(x1), self.X(y + h))
+        for i, (r, h) in enumerate(zip(self.rows, heights)):
+            self.draw_row_tagged(i, self.X(x0), self.X(y), self.X(x1), self.X(y + h))
             y += h + self.row_gap
+        self.lit = self.focus
         self.draw_status()
         self.draw_cursor()
         if self.screen == 'color' and self.pick:
@@ -2616,6 +2696,38 @@ class App:
         self.slide_applied = int(self.slide)
         if self.slide_applied:   # drawn in place, then put where the slide has got to (step_slide)
             c.move('dyn', self.slide_applied, 0)
+
+    def draw_row_tagged(self, i, x0, y0, x1, y1):
+        """Row i drawn with its items tagged row<i>, so refocus can draw it again alone."""
+        c = self.canvas
+        last = max(c.find_all() or (0,))
+        self.draw_row(self.rows[i], x0, y0, x1, y1)
+        for item in c.find_all():
+            if item > last:
+                c.addtag_withtag(f'row{i}', item)
+
+    def refocus(self, old):
+        """The focus went from row old to self.focus on the same screen: only those two rows, the cursor and the
+        description are drawn again. The whole screen was drawn again for each row the mouse crossed, about 55 ms
+        on Linux, where Tk blends each picture with what is under it in software, so the cursor lagged behind the
+        mouse. The whole screen still when it slides in, on a job's screen (its rows change as it runs) and with the
+        colour picker open."""
+        c, rows = self.canvas, self.rows
+        # the row drawn lit may not be old: a click or a cancelled chooser moves the focus without drawing it
+        again = sorted({i for i in (self.lit, old, self.focus) if i is not None})
+        if (self.slide_applied or self.screen == 'job' or (self.screen == 'color' and self.pick)
+                or not all(0 <= i < len(rows) and rows[i].rect for i in again)):
+            self.render()
+            return
+        for i in again:
+            c.delete(f'row{i}')
+        c.delete('cursor')
+        c.delete('desc')
+        for i in again:
+            self.draw_row_tagged(i, *rows[i].rect)
+        self.lit = self.focus
+        self.draw_cursor()
+        self.draw_desc()
 
     def fit_rows(self, top, bottom):
         """The height of each row and the gap between rows (logical pixels) that end the rows above bottom. A screen
@@ -2744,7 +2856,7 @@ class App:
             self.orange(ix0, iy0, ix1, iy1)
             cw, ch = X(9), X(12)
             vfont = self.fit_font(vfont, r.value, (ix1 - ix0) - X(30) - cw, 0.8)
-            label_w = vfont.measure(r.value)
+            label_w = measure(vfont, r.value)
             total = label_w + X(10) + cw
             sx = cx - total // 2
             self.canvas.create_text(sx, cy, text=r.value, font=vfont, fill=P['on_text'], anchor='w', tags='dyn')
@@ -2754,7 +2866,7 @@ class App:
             cw, ch = X(9), X(12)
             img = self.sprite(('chev', cw, ch, False, 'dim'), lambda: art.chevron(cw, ch, P['chevron_dim']))
             c.create_image(x1 - X(16), cy, anchor='e', image=img, tags='dyn')
-            tw = vfont.measure(r.value.upper())
+            tw = measure(vfont, r.value.upper())
             sw = X(26)
             sx = (vx0 + x1 - X(16) - cw - X(10)) // 2 - (sw + X(10) + tw) // 2
             c.create_rectangle(sx, cy - X(9), sx + sw, cy + X(9), fill=r.value, outline=P['value_border'], tags='dyn')
@@ -2775,7 +2887,7 @@ class App:
             avail = (x1 - vx0) - X(20) - (X(21) if r.check else 0)
             vfont = self.fit_font(vfont, r.value, avail, 0.8)
             label = fit(vfont, r.value, avail)
-            tw = vfont.measure(label)
+            tw = measure(vfont, label)
             sx = cx - (tw + (X(21) if r.check else 0)) // 2
             if r.check:
                 size = X(14)
@@ -2809,7 +2921,8 @@ class App:
         # The cursor is drawn where it has got to and animate takes it on to the row (step_cursor); on a new screen,
         # while one slides in and with Animations off it stands on the row at once.
         target = (float(x0 - mg), float(y0 - mg))
-        glide = self.animated() and self.cur_xy and self.cur_screen == self.screen and not self.slide
+        # not while animate stands still (another window in front): the cursor would stay behind on the old row
+        glide = self.moving and self.cur_xy and self.cur_screen == self.screen and not self.slide
         self.cur_xy = self.cur_xy if glide else target
         self.cur_target, self.cur_screen = target, self.screen
         self.canvas.create_image(round(self.cur_xy[0]), round(self.cur_xy[1]), anchor='nw',
@@ -2918,7 +3031,7 @@ class App:
                     words, lines, current = d['note'].split(), 0, ''
                     for word in words:
                         candidate = f'{current} {word}'.strip()
-                        if current and self.f['small'].measure(candidate) > inner:
+                        if current and measure(self.f['small'], candidate) > inner:
                             lines += 1
                             current = word
                         else:
@@ -2933,13 +3046,13 @@ class App:
                 for note in notes:
                     words, lines, current = note.split(), [], ''
                     for word in words:
-                        if self.f['value'].measure(word) > note_w:
+                        if measure(self.f['value'], word) > note_w:
                             if current:
                                 lines.append(current)
                                 current = ''
                             chunk = ''
                             for char in word:
-                                if chunk and self.f['value'].measure(chunk + char) > note_w:
+                                if chunk and measure(self.f['value'], chunk + char) > note_w:
                                     lines.append(chunk)
                                     chunk = char
                                 else:
@@ -2947,7 +3060,7 @@ class App:
                             current = chunk
                             continue
                         candidate = f'{current} {word}'.strip()
-                        if current and self.f['value'].measure(candidate) > note_w:
+                        if current and measure(self.f['value'], candidate) > note_w:
                             lines.append(current)
                             current = word
                         else:
@@ -3017,7 +3130,7 @@ class App:
             img, pad = art.desc_box(w, hb, self.s, self.see_through())
             self.sprites[key] = (art.photo(self.root, img), pad)
         pic, pad = self.sprites[key]
-        bid = c.create_image(x0 - pad, top - pad, anchor='nw', image=pic, tags='dyn')
+        bid = c.create_image(x0 - pad, top - pad, anchor='nw', image=pic, tags=('dyn', 'desc'))
         c.tag_lower(bid, 'desc')
 
 
@@ -3136,14 +3249,32 @@ def main(argv=None):
             tell(f'NX2Saria is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
                  'when you quit the game.')
             return 0
+    from .. import errors
+    errors.install(ctx)   # the window's errors; finish() below
+    code = 0
     try:
         root = tk.Tk(className='NX2Saria')
+        root.report_callback_exception = errors.window_hook(ctx)
         app = App(root, ctx, a)
+
+        def end_signal(name):
+            # Python runs this between two steps of whatever the window was doing (a redraw, a timer): closing here
+            # would destroy the canvas under that code. The window closes from the event loop instead.
+            nonlocal code
+            code = 128 + getattr(signal, name)
+            try:
+                root.after(0, lambda: app.on_close(f'ended by {name}'))
+            except tk.TclError:   # the window is already gone
+                pass
+        errors.on_end_signals(end_signal)
         if a.selftest:
             from .selftest import run
             root.after(300, lambda: run(app, a.shots))
         root.mainloop()
+        if not app.closed:   # Uninstall, or the selftest, ends the window without on_close
+            ctx.log(f'window ended on the {app.screen} screen after {time.monotonic() - app.opened:.0f} s')
     finally:
+        errors.finish(ctx)
         if lock:
             lock.release()
-    return 0
+    return code

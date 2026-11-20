@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/install.md source-hash=7e5d731ab27311901fb6c5cb81ee1a472ac1c0cb reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=3a878eece169ce485cc51ff4f547b1522813d5c9 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
@@ -21,7 +21,10 @@ O instalador instala o launcher, que compila o jogo uma vez e depois o inicia.
 ## Linux
 
 1. Baixe a **`NX2Saria-Linux-<version>-x86_64.AppImage`** da versão.
-2. Torne-a executável (`chmod +x NX2Saria-Linux-*.AppImage`) e execute-a.
+2. Torne-a executável e execute-a. No terminal: `chmod +x NX2Saria-Linux-*.AppImage`. No gerenciador de arquivos:
+   clique nela com o botão direito e marque **Propriedades > Permissões > Permitir execução do arquivo como um
+   programa**. Antes disso, um duplo clique pode entregar o arquivo a outro programa (um gerenciador de arquivos
+   compactados ou de AppImages) em vez de executá-lo.
 3. A compilação precisa de um compilador e de algumas bibliotecas da sua distribuição. Quando falta alguma, a AppImage
    diz qual é e o comando que as instala. No Ubuntu 24.04, no Linux Mint 22 e nas outras distribuições baseadas no
    Ubuntu:
