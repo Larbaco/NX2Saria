@@ -60,7 +60,7 @@ The exact schema of `summary` is in [docs/telemetry.md](../docs/telemetry.md) an
 
 Open `https://<worker>/v1/admin` in a browser; any user name, the password is `ADMIN_TOKEN`. It shows the number of
 sessions, distinct installs and comments, the share of sessions that did not end normally; counts by version, GPU,
-OS, preset, upscaler, frame generation and country; median `fps_mean`, median `fps_low_1pct` and p95 `worst_ms` by
+OS, preset, aspect ratio, upscaler, frame generation and country; median `fps_mean`, median `fps_low_1pct` and p95 `worst_ms` by
 version and by GPU; the most common fatal lines with numbers and addresses replaced by `#`; and the 50 newest
 comments with links to their logs. The statistics read at most the newest 50 000 sessions of the period.
 

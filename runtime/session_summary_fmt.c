@@ -182,6 +182,8 @@ int ss_format(const SessionSummary *s, char *out, size_t cap) {
     put_bool(&b, s->fullscreen);
     put(&b, ", \"game_aspect\": ");
     put_token(&b, s->game_aspect);
+    put(&b, ", \"picture\": ");
+    put_token(&b, s->picture);
     put(&b, "},\n  \"settings\": {\"preset\": ");
     put_token(&b, s->preset);
     put(&b, ", \"upscaler\": ");

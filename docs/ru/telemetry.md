@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/telemetry.md source-hash=82a4431ceead957afd05ea207638b20c092c22f7 reviewed=no -->
+<!-- translation: lang=ru source=docs/telemetry.md source-hash=8591ed12455f02a6ea746c22c0412a34e2522815 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · **Русский** · [简体中文](../zh-Hans/telemetry.md)
 
@@ -40,8 +40,8 @@
 | `cpu.name`, `cpu.threads` | Название модели процессора и число его потоков | `AMD Ryzen 5 5600 6-Core Processor`, `12` |
 | `ram_mb` | Память ПК в МБ | `16384` |
 | `gpu.name`, `gpu.vendor`, `gpu.device`, `gpu.driver`, `gpu.vram_mb` | Модель видеокарты и её PCI-идентификаторы, название и версия драйвера, её видеопамять | `NVIDIA GeForce RTX 3060`, `0x10de`, `0x2504`, `NVIDIA 581.57`, `12288` |
-| `display.output`, `display.render_scale`, `display.fullscreen`, `display.game_aspect` | Выходное разрешение, масштаб рендеринга, полноэкранный режим или окно, соотношение сторон | `1920x1080`, `game`, `true`, `16:9` |
-| `settings.preset`, `settings.upscaler`, `settings.taa`, `settings.dlss`, `settings.framegen`, `settings.fps_limit`, `settings.vk_present` | Основные графические настройки. Значение, которое не входит в собственные варианты настройки, отправляется как `other` | `null`, `fsr`, `dlss`, `dlaa`, `off`, `60`, `fifo` |
+| `display.output`, `display.render_scale`, `display.fullscreen`, `display.game_aspect`, `display.picture` | Выходное разрешение, масштаб рендеринга, полноэкранный режим или окно, настройка соотношения сторон и размер изображения, которое рисовала игра | `1920x1080`, `game`, `true`, `16:10`, `2304x1440` |
+| `settings.preset`, `settings.upscaler`, `settings.taa`, `settings.dlss`, `settings.framegen`, `settings.fps_limit`, `settings.vk_present` | Используемый пресет качества (`low`, `medium`, `high`, `ultra` или `custom`, если вы изменили одну из его настроек) и основные графические настройки. Значение, которое не входит в собственные варианты настройки, отправляется как `other` | `high`, `fsr`, `dlss`, `dlaa`, `off`, `60`, `fifo` |
 | `session.duration_s`, `session.frames`, `session.end` | Сколько времени работала игра, сколько кадров она показала, как завершилась: `normal`, `fatal`, `device_lost` или `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | Средняя частота кадров за весь сеанс, её 1% low, самый медленный кадр и сколько кадров заняли больше 25 мс и больше 100 мс | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | Время, потраченное на подготовку шейдеров и конвейеров при запуске, если оно было | `5400`, `120`, `900`, `3100` |

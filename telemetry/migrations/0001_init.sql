@@ -26,6 +26,7 @@ CREATE TABLE sessions (
   display_render_scale TEXT,
   display_fullscreen INTEGER,
   display_game_aspect TEXT,
+  display_picture TEXT,
   settings_preset TEXT,
   settings_upscaler TEXT,
   settings_taa TEXT,

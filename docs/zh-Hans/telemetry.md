@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=82a4431ceead957afd05ea207638b20c092c22f7 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=8591ed12455f02a6ea746c22c0412a34e2522815 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · [Русский](../ru/telemetry.md) · **简体中文**
 
@@ -32,8 +32,8 @@
 | `cpu.name`、`cpu.threads` | 处理器的型号名称及其线程数 | `AMD Ryzen 5 5600 6-Core Processor`、`12` |
 | `ram_mb` | 电脑的内存，以 MB 为单位 | `16384` |
 | `gpu.name`、`gpu.vendor`、`gpu.device`、`gpu.driver`、`gpu.vram_mb` | 显卡的型号及其 PCI ID，驱动程序的名称和版本，显卡的显存 | `NVIDIA GeForce RTX 3060`、`0x10de`、`0x2504`、`NVIDIA 581.57`、`12288` |
-| `display.output`、`display.render_scale`、`display.fullscreen`、`display.game_aspect` | 输出分辨率、渲染比例、全屏还是窗口、画面比例 | `1920x1080`、`game`、`true`、`16:9` |
-| `settings.preset`、`settings.upscaler`、`settings.taa`、`settings.dlss`、`settings.framegen`、`settings.fps_limit`、`settings.vk_present` | 主要的图形选项。不属于该选项自身可选值的值会以 `other` 发送 | `null`、`fsr`、`dlss`、`dlaa`、`off`、`60`、`fifo` |
+| `display.output`、`display.render_scale`、`display.fullscreen`、`display.game_aspect`、`display.picture` | 输出分辨率、渲染比例、全屏还是窗口、画面比例设置，以及游戏绘制的画面尺寸 | `1920x1080`、`game`、`true`、`16:10`、`2304x1440` |
+| `settings.preset`、`settings.upscaler`、`settings.taa`、`settings.dlss`、`settings.framegen`、`settings.fps_limit`、`settings.vk_present` | 正在使用的画质预设（`low`、`medium`、`high`、`ultra`，若你改过它的某项设置则为 `custom`）以及主要的图形选项。不属于该选项自身可选值的值会以 `other` 发送 | `high`、`fsr`、`dlss`、`dlaa`、`off`、`60`、`fifo` |
 | `session.duration_s`、`session.frames`、`session.end` | 游戏运行了多长时间，显示了多少帧，以何种方式结束：`normal`、`fatal`、`device_lost` 或 `crash` | `1834`、`109800`、`normal` |
 | `frametime.fps_mean`、`frametime.fps_low_1pct`、`frametime.worst_ms`、`frametime.over_25ms`、`frametime.over_100ms` | 整个会话的平均帧率、其 1% low、最慢的一帧，以及有多少帧耗时超过 25 ms 和超过 100 ms | `59.9`、`52.1`、`88.4`、`14`、`0` |
 | `startup.shader_prewarm_ms`、`startup.shaders_translated`、`startup.pipelines_built`、`startup.pipeline_build_ms` | 启动时准备着色器和管线所花的时间（如果有的话） | `5400`、`120`、`900`、`3100` |

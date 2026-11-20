@@ -71,6 +71,8 @@ describe("panel", () => {
     expect(html).toContain('<b id="abnormal">25.0%</b>');
     expect(html).toContain("AMD Radeon RX 6600");
     expect(html).toContain("0x1002");
+    expect(html).toMatch(/By aspect ratio<\/caption>[\s\S]*?<td>16:10<\/td>/);
+    expect(html).toMatch(/By preset<\/caption>[\s\S]*?<td>high<\/td>/);
     expect(html).toMatch(/<td>BR<\/td><td class="n">2<\/td>/);
     // Median fps_mean of version RELEASE over 59.9, 30.5 and 59.9 (the crash has none).
     expect(html).toMatch(new RegExp(`<td>${RELEASE.replace(/\./g, "\\.")}</td><td class="n">4</td><td class="n">59\\.9</td>`));
