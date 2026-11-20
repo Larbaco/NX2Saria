@@ -409,6 +409,7 @@ class App:
         self.cursor_frames, self.cursor_k = [], 0
         self.last_second = 0
         self.gamepad = winsys.Gamepad()
+        self.ctx.log(f'gamepad: {self.gamepad.description}')
         self.tb_hover = None
         self.drag = None
         self.ico = None
@@ -2236,7 +2237,7 @@ class App:
         self.job, self.job_return, self.job_back = job, return_to, back or return_to
         self.job_rev = -1
         self.message = ''
-        winsys.keep_awake(True)
+        winsys.keep_awake(True, self.ctx.log)
         job.start()
         self.show('job')
 
@@ -2354,7 +2355,7 @@ class App:
 
     def job_finished(self):
         j = self.job
-        winsys.keep_awake(False)
+        winsys.keep_awake(False, self.ctx.log)
         self.ctx.log(f'job {j.kind}: {j.result} {j.error}')
         if j.result in ('ok', 'failed'):
             self.sounds.play('select' if j.result == 'ok' else 'back')
