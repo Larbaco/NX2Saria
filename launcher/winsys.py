@@ -421,10 +421,10 @@ def desktop_shortcut(layout, enable):
     return stub_run(layout, ['--desktop-shortcut', 'on' if enable else 'off'])
 
 
-def keep_awake(on):
+def keep_awake(on, log=None):
     if os.name != 'nt':
         from .platform.linux import keep_awake as linux_keep_awake
-        return linux_keep_awake(on)
+        return linux_keep_awake(on, log)
     try:
         ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
         ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
@@ -565,6 +565,7 @@ class _WindowsGamepad:
                     break
                 except (AttributeError, OSError):
                     continue
+        self.description = 'XInput' if self.dll else 'none (XInput unavailable)'
 
     def poll(self, active=True):
         self.scroll = 0
@@ -609,6 +610,10 @@ class Gamepad:
     @property
     def scroll(self):
         return self.backend.scroll
+
+    @property
+    def description(self):
+        return self.backend.description
 
     def poll(self, active=True):
         return self.backend.poll(active)

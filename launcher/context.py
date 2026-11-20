@@ -33,7 +33,7 @@ class Context:
         except OSError:
             self._file = None
         self.log(f'--- NX2Saria launcher {self.version} ({"checkout" if self.layout.dev else "release"}) in '
-                 f'{self.layout.root}; {describe()}')
+                 f'{self.layout.root}; platform {sys.platform}; {describe()}')
         from .toolchain import zstd_missing
         self.zstd_missing = zstd_missing(self.layout)
         if self.zstd_missing:

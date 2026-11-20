@@ -285,7 +285,7 @@ class Job:
 
     def cancel(self):
         self.cancel_flag.set()
-        winsys.keep_awake(False)
+        winsys.keep_awake(False, self.log)
         if self.proc:
             self.proc.cancel()
         self._touch()
@@ -402,7 +402,9 @@ class Job:
             from .platform.linux import toolchain_missing
             missing = toolchain_missing()
             if missing:
+                self.log('toolchain: Linux check missing ' + missing.splitlines()[0].split(': ', 1)[1].rstrip('.'))
                 raise toolchain.ToolchainError(missing)
+            self.log('toolchain: Linux system requirements ok')
             toolchain.ensure_zbic(layout, cancel=self.cancelled, log=self.log, version=self.ctx.version)
             self.skip(sid, 'System tools ready')
             return

@@ -8,18 +8,20 @@ from pathlib import Path
 
 
 def _sdl_library():
-    """Load the kit's SDL3 first, then the system copy; a missing library disables gamepad support only."""
-    root = Path(__file__).resolve().parents[2]
-    bundled = root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0'
-    candidates = [str(bundled), ctypes.util.find_library('SDL3'), 'libSDL3.so.0']
-    for candidate in candidates:
+    """Load the kit's SDL3 first, then the system copy; return a short source label for the log."""
+    bundled = next((root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0'
+                    for root in Path(__file__).resolve().parents
+                    if (root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0').is_file()), None)
+    system = ctypes.util.find_library('SDL3') or 'libSDL3.so.0'
+    candidates = ([(str(bundled), 'SDL3 from the kit')] if bundled else []) + [(system, 'SDL3 from system')]
+    for candidate, source in candidates:
         if not candidate:
             continue
         try:
-            return ctypes.CDLL(candidate)
+            return ctypes.CDLL(candidate), source
         except OSError:
             pass
-    return None
+    return None, 'none (SDL3 library not found)'
 
 
 class Gamepad:
@@ -29,7 +31,7 @@ class Gamepad:
     INIT_GAMEPAD = 0x00002000
 
     def __init__(self):
-        self.dll = _sdl_library()
+        self.dll, self.description = _sdl_library()
         self.pad = None
         self.held = set()
         self.scroll = 0
@@ -52,9 +54,15 @@ class Gamepad:
             self.dll.SDL_free.restype = None
             self.dll.SDL_CloseGamepad.argtypes = [ctypes.c_void_p]
             self.dll.SDL_CloseGamepad.restype = None
-            self.dll.SDL_InitSubSystem(self.INIT_GAMEPAD)
+            self.dll.SDL_GamepadConnected.argtypes = [ctypes.c_void_p]
+            self.dll.SDL_GamepadConnected.restype = ctypes.c_bool
+            if not self.dll.SDL_InitSubSystem(self.INIT_GAMEPAD):
+                self.description = 'none (SDL3 gamepad initialization failed)'
+                self.dll = None
+                return
             self._open_first()
         except (AttributeError, OSError):
+            self.description = 'none (SDL3 gamepad API unavailable)'
             self.dll = None
             self.pad = None
 
@@ -73,6 +81,9 @@ class Gamepad:
             return set()
         try:
             self.dll.SDL_PumpEvents()
+            if self.pad and not self.dll.SDL_GamepadConnected(self.pad):
+                self.dll.SDL_CloseGamepad(self.pad)
+                self.pad = None
             self._open_first()
             down = set()
             if self.pad:
@@ -109,33 +120,50 @@ class Gamepad:
 _inhibitor = None
 
 
-def keep_awake(on):
+def keep_awake(on, log=None):
     """Hold a systemd sleep inhibitor for the duration of a foreground build job."""
     global _inhibitor
     if not on:
-        if _inhibitor and _inhibitor.poll() is None:
-            _inhibitor.terminate()
+        held = _inhibitor is not None
+        if held:
             try:
-                _inhibitor.wait(timeout=2)
+                if _inhibitor.poll() is None:
+                    _inhibitor.stdin.close()
+                    _inhibitor.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 _inhibitor.kill()
                 _inhibitor.wait()
+            except (AttributeError, OSError, ValueError):
+                pass
         _inhibitor = None
+        if held and log:
+            log('keep awake: systemd-inhibit released')
         return
     if _inhibitor and _inhibitor.poll() is None:
         return
+    if _inhibitor:
+        _inhibitor = None
     inhibitor = shutil.which('systemd-inhibit')
-    sleeper = shutil.which('sleep')
-    if not inhibitor or not sleeper:
+    if not inhibitor:
+        if log:
+            log('keep awake: systemd-inhibit unavailable')
         return
     try:
         _inhibitor = subprocess.Popen(
             [inhibitor, '--what=idle:sleep', '--who=NX2Saria', '--why=Building the game',
-             '--mode=block', sleeper, 'infinity'],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True, close_fds=True)
+             '--mode=block', 'cat'],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        if _inhibitor.poll() is None:
+            if log:
+                log('keep awake: systemd-inhibit held')
+        else:
+            _inhibitor = None
+            if log:
+                log('keep awake: systemd-inhibit unavailable')
     except OSError:
         _inhibitor = None
+        if log:
+            log('keep awake: systemd-inhibit unavailable')
 
 
 def toolchain_missing(which=shutil.which, run=subprocess.run):
