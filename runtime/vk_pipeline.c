@@ -8707,8 +8707,10 @@ static void prep_stalled(double stall_ms, int k, const char *jp) {
         const GfxWarmEnt *e = &LB.e[PW.at[s] - 1];
         char hex[65];
         for (int b = 0; b < 32; b++) snprintf(hex + 2 * b, 3, "%02x", e->iid[b]);
-        printf("prepare-shaders: variant %s (%s, %llu SPIR-V words) still building after %.0f s\n", hex,
-               stage_name(e->stage), (unsigned long long)PW.words[s], (now - PW.t0[s]) / 1000);
+        char size[48] = "";   // no length while its shader is still being read
+        if (PW.words[s]) snprintf(size, sizeof size, ", %llu SPIR-V words", (unsigned long long)PW.words[s]);
+        printf("prepare-shaders: variant %s (%s%s) still building after %.0f s\n", hex, stage_name(e->stage), size,
+               (now - PW.t0[s]) / 1000);
     }
     plat_mutex_unlock(&LB.stat);
     plat_mutex_lock(&SK.jlock);   // a worker that returns now marks nothing more (journal_mark)
