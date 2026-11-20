@@ -441,6 +441,19 @@ def main():
           and 'taa' not in ini_after and 'dlss =' not in ini_after and 'dlaa = 1' in ini_after
           and 'log: menu: draft: quality preset low in use' in out,
           'Apply: the tier in use, its line written, the handed-back lines removed, dlaa kept', out + ini_after)
+    # Low, Ultra, Low again: Ultra hands back the game_res = 1080 the player set, and Low gives it 1080 again. Apply
+    # removes the line but neither counts nor lists it as a change, nor says it waits for a restart.
+    rc, out, f = draft(OWNER, OWNER_INI + '[display]\ngame_res = 1080\n',
+                       actions=('stage=low', 'stage=ultra', 'stage=low', 'apply'))
+    ini_after = (f / 'nx2saria.ini').read_text(encoding='utf-8')
+    check(rc == 0 and "log: menu: draft + GAME_RES: '1080' -> 'window'" in out
+          and 'log: menu: draft applied: 3 change(s) (for a restart); 1 key(s) handed back to the preset at the value '
+              'they had' in out
+          and "log: menu: draft   GAME_RES: stays '1080', no change (its line leaves the settings file: the preset "
+              "sets it)\n" in out
+          and "GAME_RES: '1080' -> '1080'" not in out and 'game_res' not in ini_after
+          and get(out, 'value GAME_RES', 4) == '1080' and get(out, 'in_use', 4) == 'low',
+          'a key handed back at the value it had: removed from the file, not listed as a change', out + ini_after)
     rc, out, f = draft(GTX1650, '[display]\nscene_share = 0.9\n', actions=('stage=high', 'discard'))
     check(get(out, 'handback high') == '' and get(out, 'value SCENE_SHARE', 1) == '0.9'
           and get(out, 'default SCENE_SHARE', 1) == '0.75' and get(out, 'default GAME_RES', 1) == '1440'
