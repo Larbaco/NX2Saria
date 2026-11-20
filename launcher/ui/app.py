@@ -54,6 +54,10 @@ GAP = 12
 DESC = (614, 336)               # x, width
 P = art.PALETTE                 # the colour scheme in use: art.set_theme changes it in place
 FRAME_MS = 15                   # between two steps of the animations; they move by the time that really passed
+# On X11, Tk blends every picture with transparency in software and reads the screen back to do it, so each step
+# costs far more than on Windows: the animations step half as often there and look the same.
+if os.name != 'nt':
+    FRAME_MS = 33
 SPARKS = 22                     # the dust drifting over the backdrop
 DEPTH = {'first_run': 0, 'home': 0, 'job': 1, 'saves': 1, 'settings': 1, 'customize': 1, 'uninstall': 2,
          'color': 2, 'mods': 1, 'mod_order': 2, 'udmabuf': 2}
@@ -89,16 +93,32 @@ class Row:
         return self.kind != 'divider'
 
 
+_measured = {}
+
+
+def measure(font, text):
+    """font.measure(text), remembered: the same labels are measured at every redraw (fit_font, fit and the rows'
+    values), and on Linux each measure is a round trip to the X server's fonts that took 1 to 2 ms. A Font's name is
+    never reused, so a font made again (reload_fonts) is measured again."""
+    key = (font.name, text)
+    w = _measured.get(key)
+    if w is None:
+        if len(_measured) > 20000:
+            _measured.clear()
+        w = _measured[key] = font.measure(text)
+    return w
+
+
 def fit(font, text, width):
     """text shortened in the middle with an ellipsis so it fits width pixels."""
-    if font.measure(text) <= width:
+    if measure(font, text) <= width:
         return text
     lo, hi = 1, len(text)
     while lo < hi:
         mid = (lo + hi + 1) // 2
         keep = mid // 2
         cand = text[:keep] + '…' + text[len(text) - (mid - keep):]
-        if font.measure(cand) <= width:
+        if measure(font, cand) <= width:
             lo = mid
         else:
             hi = mid - 1
@@ -528,14 +548,14 @@ class App:
 
     def fit_font(self, font, text, width, smallest=0.72):
         """font, or the same face a few pixels smaller so text fits width (down to smallest of its size)."""
-        if font.measure(text) <= width:
+        if measure(font, text) <= width:
             return font
         family, px, weight = self.fspec[id(font)]
         for size in range(px - 1, max(7, int(px * smallest)) - 1, -1):
             key = (family, size, weight)
             if key not in self.fcache:
                 self.fcache[key] = tkfont.Font(root=self.root, family=family, size=-size, weight=weight)
-            if self.fcache[key].measure(text) <= width:
+            if measure(self.fcache[key], text) <= width:
                 return self.fcache[key]
         return self.fcache[(family, max(7, int(px * smallest)), weight)]
 
@@ -627,7 +647,7 @@ class App:
         size = max(1, self.X(bh - 8))
         emblem = self.sprite(('sprig', size), lambda: art.sprig_icon(size))
         ew = emblem.width()
-        title_w = self.f['band'].measure(NAME)
+        title_w = measure(self.f['band'], NAME)
         gap = self.X(12)
         x = self.X(W / 2) - (ew + gap + title_w) // 2
         # A soft green halo behind the sprig pulses while the animations run.
@@ -743,8 +763,8 @@ class App:
         if not idx:
             return
         pos = idx.index(self.focus) if self.focus in idx else 0
-        self.focus = idx[max(0, min(len(idx) - 1, pos + d))]
-        self.render()
+        old, self.focus = self.focus, idx[max(0, min(len(idx) - 1, pos + d))]
+        self.refocus(old)
 
     def focused(self):
         return self.rows[self.focus] if 0 <= self.focus < len(self.rows) else None
@@ -839,11 +859,11 @@ class App:
         self.set_tb_hover(self.title_button_at(e.x, e.y))
         i = self.hit(e.x, e.y)
         if i is not None and i != self.focus:
-            self.focus = i
+            old, self.focus = self.focus, i
             r = self.rows[i]
             if r.kind == 'pair':
                 r.pick = 0 if e.x < (r.rect[0] + r.rect[2]) / 2 else 1
-            self.render()
+            self.refocus(old)
         elif i is not None and self.rows[i].kind == 'pair':
             r = self.rows[i]
             pick = 0 if e.x < (r.rect[0] + r.rect[2]) / 2 else 1
@@ -2613,21 +2633,34 @@ class App:
             c.coords('cursor', round(x) + self.slide_applied, round(y))
 
     def step_backdrop(self, dt):
+        """The sparks, the sprig and its halo, each touched only when it lands on another pixel or picture: they
+        drift less than a pixel a step, and Tk draws an item again whenever it is moved or changed, also to where it
+        was. On X11 that drawing blends each picture with what is under it in software, and the sparks moved at every
+        step took two thirds of the window's processor time."""
         c, t = self.canvas, self.anim_t
         for sp in self.sparks:   # up, swaying, and back in at the bottom once under the title band
             sp['y'] -= sp['vy'] * dt
             if sp['y'] < BAND[2] - 8:
                 sp['y'] = H + 8
-            c.coords(sp['id'], self.X(sp['x'] + math.sin(t * sp['rate'] + sp['phase']) * sp['sway']), self.X(sp['y']))
+            at = (self.X(sp['x'] + math.sin(t * sp['rate'] + sp['phase']) * sp['sway']), self.X(sp['y']))
+            if at != sp.get('at'):
+                sp['at'] = at
+                c.coords(sp['id'], *at)
             k = int((math.sin(t * sp['rate'] * 2.3 + sp['phase'] * 3) + 1) * 1.49)   # 0, 1 or 2: its twinkle
             if k != sp['shown']:
                 sp['shown'] = k
                 c.itemconfigure(sp['id'], image=sp['pics'][k])
         if self.sprig_xy:   # the sprig rises and sinks two pixels every 2.4 s while its halo pulses
             x, y = self.sprig_xy
-            c.coords('sprig', x, y + round(math.sin(t * 2.6) * self.X(2)))
+            at = (x, y + round(math.sin(t * 2.6) * self.X(2)))
+            if at != getattr(self, 'sprig_at', None):
+                self.sprig_at = at
+                c.coords('sprig', *at)
             if self.halo:
-                c.itemconfigure('halo', image=self.halo[int(t / 2.4 * len(self.halo)) % len(self.halo)])
+                k = int(t / 2.4 * len(self.halo)) % len(self.halo)
+                if k != getattr(self, 'halo_k', None):
+                    self.halo_k = k
+                    c.itemconfigure('halo', image=self.halo[k])
 
     # ---------------------------------------------------------------- drawing
 
@@ -2641,8 +2674,8 @@ class App:
                 self.focus = self.job_focus()
         x0, x1, y = ROWS
         heights, self.row_gap = self.fit_rows(y, H - 46 if self.screen == 'job' else H - 12)
-        for r, h in zip(self.rows, heights):
-            self.draw_row(r, self.X(x0), self.X(y), self.X(x1), self.X(y + h))
+        for i, (r, h) in enumerate(zip(self.rows, heights)):
+            self.draw_row_tagged(i, self.X(x0), self.X(y), self.X(x1), self.X(y + h))
             y += h + self.row_gap
         self.draw_status()
         self.draw_cursor()
@@ -2653,6 +2686,35 @@ class App:
         self.slide_applied = int(self.slide)
         if self.slide_applied:   # drawn in place, then put where the slide has got to (step_slide)
             c.move('dyn', self.slide_applied, 0)
+
+    def draw_row_tagged(self, i, x0, y0, x1, y1):
+        """Row i drawn with its items tagged row<i>, so refocus can draw it again alone."""
+        c = self.canvas
+        last = max(c.find_all() or (0,))
+        self.draw_row(self.rows[i], x0, y0, x1, y1)
+        for item in c.find_all():
+            if item > last:
+                c.addtag_withtag(f'row{i}', item)
+
+    def refocus(self, old):
+        """The focus went from row old to self.focus on the same screen: only those two rows, the cursor and the
+        description are drawn again. The whole screen was drawn again for each row the mouse crossed, about 55 ms
+        on Linux, where Tk blends each picture with what is under it in software, so the cursor lagged behind the
+        mouse. The whole screen still when it slides in, on a job's screen (its rows change as it runs) and with the
+        colour picker open."""
+        c, rows = self.canvas, self.rows
+        if (old == self.focus or self.slide_applied or self.screen == 'job' or (self.screen == 'color' and self.pick)
+                or not all(0 <= i < len(rows) and rows[i].rect for i in (old, self.focus))):
+            self.render()
+            return
+        for i in (old, self.focus):
+            c.delete(f'row{i}')
+        c.delete('cursor')
+        c.delete('desc')
+        for i in (old, self.focus):
+            self.draw_row_tagged(i, *rows[i].rect)
+        self.draw_cursor()
+        self.draw_desc()
 
     def fit_rows(self, top, bottom):
         """The height of each row and the gap between rows (logical pixels) that end the rows above bottom. A screen
@@ -2781,7 +2843,7 @@ class App:
             self.orange(ix0, iy0, ix1, iy1)
             cw, ch = X(9), X(12)
             vfont = self.fit_font(vfont, r.value, (ix1 - ix0) - X(30) - cw, 0.8)
-            label_w = vfont.measure(r.value)
+            label_w = measure(vfont, r.value)
             total = label_w + X(10) + cw
             sx = cx - total // 2
             self.canvas.create_text(sx, cy, text=r.value, font=vfont, fill=P['on_text'], anchor='w', tags='dyn')
@@ -2791,7 +2853,7 @@ class App:
             cw, ch = X(9), X(12)
             img = self.sprite(('chev', cw, ch, False, 'dim'), lambda: art.chevron(cw, ch, P['chevron_dim']))
             c.create_image(x1 - X(16), cy, anchor='e', image=img, tags='dyn')
-            tw = vfont.measure(r.value.upper())
+            tw = measure(vfont, r.value.upper())
             sw = X(26)
             sx = (vx0 + x1 - X(16) - cw - X(10)) // 2 - (sw + X(10) + tw) // 2
             c.create_rectangle(sx, cy - X(9), sx + sw, cy + X(9), fill=r.value, outline=P['value_border'], tags='dyn')
@@ -2812,7 +2874,7 @@ class App:
             avail = (x1 - vx0) - X(20) - (X(21) if r.check else 0)
             vfont = self.fit_font(vfont, r.value, avail, 0.8)
             label = fit(vfont, r.value, avail)
-            tw = vfont.measure(label)
+            tw = measure(vfont, label)
             sx = cx - (tw + (X(21) if r.check else 0)) // 2
             if r.check:
                 size = X(14)
@@ -2955,7 +3017,7 @@ class App:
                     words, lines, current = d['note'].split(), 0, ''
                     for word in words:
                         candidate = f'{current} {word}'.strip()
-                        if current and self.f['small'].measure(candidate) > inner:
+                        if current and measure(self.f['small'], candidate) > inner:
                             lines += 1
                             current = word
                         else:
@@ -2970,13 +3032,13 @@ class App:
                 for note in notes:
                     words, lines, current = note.split(), [], ''
                     for word in words:
-                        if self.f['value'].measure(word) > note_w:
+                        if measure(self.f['value'], word) > note_w:
                             if current:
                                 lines.append(current)
                                 current = ''
                             chunk = ''
                             for char in word:
-                                if chunk and self.f['value'].measure(chunk + char) > note_w:
+                                if chunk and measure(self.f['value'], chunk + char) > note_w:
                                     lines.append(chunk)
                                     chunk = char
                                 else:
@@ -2984,7 +3046,7 @@ class App:
                             current = chunk
                             continue
                         candidate = f'{current} {word}'.strip()
-                        if current and self.f['value'].measure(candidate) > note_w:
+                        if current and measure(self.f['value'], candidate) > note_w:
                             lines.append(current)
                             current = word
                         else:
@@ -3054,7 +3116,7 @@ class App:
             img, pad = art.desc_box(w, hb, self.s, self.see_through())
             self.sprites[key] = (art.photo(self.root, img), pad)
         pic, pad = self.sprites[key]
-        bid = c.create_image(x0 - pad, top - pad, anchor='nw', image=pic, tags='dyn')
+        bid = c.create_image(x0 - pad, top - pad, anchor='nw', image=pic, tags=('dyn', 'desc'))
         c.tag_lower(bid, 'desc')
 
 

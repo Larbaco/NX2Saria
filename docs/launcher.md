@@ -68,7 +68,21 @@ Customize Launcher (on the home screen) makes the look the player's own:
 - Animations (on by default): the cursor glides from row to row, a new screen slides into place, sparks drift up
   over the backdrop and the leaf sprig bobs in the title band with a pulsing halo (`App.animate`). They move by the time that
   passed, stand still while the window is hidden or minimised or another window is in front (the game, when Hide
-  Launcher While Playing is off), and Off stops them all.
+  Launcher While Playing is off), and Off stops them all. Whether another window is in front is Windows' foreground
+  window there, and elsewhere whether Tk's window has the keyboard focus (`winsys.in_front`). The same check keeps the
+  pad's presses from the launcher while the game is in front.
+
+  On X11, Tk blends every picture that has transparency with what is under it in software. Drawing therefore costs
+  far more on Linux than on Windows, and the window keeps it down three ways:
+  - the animations step every 33 ms on Linux and every 15 ms on Windows (`FRAME_MS`);
+  - a spark, the sprig or the halo is touched only when it lands on another pixel or picture (`step_backdrop`);
+  - a focus change from the mouse or the keys draws again only the two rows, the cursor and the description
+    (`App.refocus`). The whole screen is still drawn when a screen slides in, on a job's screen and with the colour
+    picker open.
+
+  Text widths are measured once per font and text (`measure`). Under Xvfb with the AppImage's Tk, a row change under
+  the mouse went from 55 ms to 6 ms. The idle window with Animations on went from a quarter of a core plus 11% in the
+  X server to a tenth plus 4%.
 - Sounds (Low by default; Off, Medium or High): two of the game's own interface sounds, the decide and cancel sounds
   of its menus, when a row is chosen or a choice changes and when the player goes back. The launcher decodes them
   from the player's built game or dump into `data/cache/sounds` (`gamefiles.extract_sounds`:

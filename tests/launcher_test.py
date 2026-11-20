@@ -6247,6 +6247,54 @@ class LauncherLogTest(Tmp):
         self.assertRegex(text, r'window ended by SIGTERM on the first_run screen after \d+ s\n$')
 
 
+@unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt', 'needs a display (xvfb-run on Linux)')
+class RefocusTest(Tmp):
+    """A focus change by the mouse or the keys draws only the two rows, the cursor and the description again
+    (App.refocus): what it leaves on the canvas is what drawing the whole screen leaves."""
+
+    def window(self):
+        import tkinter as tk
+        from launcher.ui import app
+        ctx = Context(self.layout)
+        self.addCleanup(ctx._file.close)
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        with mock.patch('launcher.platform.linux.mounted_drives', lambda *a, **k: []):
+            a = app.App(root, ctx, app.parse_args(['--root', str(self.layout.root)]))
+        root.update()
+        return a
+
+    def items(self, a):
+        c = a.canvas
+        out = []
+        for i in c.find_withtag('dyn'):
+            opts = {k: c.itemcget(i, k) for k in ('image', 'text', 'fill') if k in c.itemconfigure(i)}
+            out.append((c.type(i), tuple(round(v) for v in c.coords(i)), tuple(sorted(opts.items())),
+                        tuple(sorted(t for t in c.gettags(i) if not t.startswith('row') and t != 'current'))))
+        return sorted(out)
+
+    def test_refocus_draws_what_render_draws(self):
+        a = self.window()
+        a.settings['animations'] = False   # the cursor stands on its row at once
+        for screen in ('customize', 'first_run'):
+            a.show(screen)
+            rows = a.focusables()
+            self.assertGreater(len(rows), 3)
+            for old, new in zip(rows, rows[1:] + rows[:1]):
+                a.focus = old
+                a.render()
+                a.focus = new
+                a.refocus(old)
+                partial = self.items(a)
+                a.render()
+                self.assertEqual(partial, self.items(a), (screen, old, new))
+        n = len(a.canvas.find_all())
+        for k in range(20):   # nothing piles up
+            old, a.focus = a.focus, rows[k % len(rows)]
+            a.refocus(old)
+        self.assertEqual(len(a.canvas.find_all()), n)
+
+
 class WindowTest(Tmp):
     def test_selftest(self):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],

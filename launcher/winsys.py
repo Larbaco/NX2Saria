@@ -576,9 +576,14 @@ def in_front(root):
     """Whether the window the user is typing into belongs to this process. XInput reads the pad whichever window is in
     front, so without this check the launcher, left open behind the game, took the presses meant for the game: A
     activated its focused row (it started the game five times in five minutes and tried a rebuild), the stick moved
-    its focus and Y checked for updates. True where it cannot tell."""
+    its focus and Y checked for updates. Elsewhere Tk knows whether one of its windows has the keyboard focus, which
+    the window manager gives the window in front (SDL3 reads the pad there whichever window is in front too). True
+    where it cannot tell."""
     if os.name != 'nt':
-        return True
+        try:
+            return root.focus_displayof() is not None
+        except Exception:   # tk.TclError, or a stand-in window without Tk
+            return True
     try:
         user32 = ctypes.windll.user32
         user32.GetForegroundWindow.restype = ctypes.c_void_p
