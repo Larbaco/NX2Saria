@@ -550,6 +550,13 @@ void erase_change(size_t i) {
     g_draft_n.store((int)g_changes.size());
 }
 
+// A change that leaves the key at the value it had. A key set back to "" (unset) stays in the draft so when a tier
+// staged after it gives the value it had, as does one a preset choice handed back (record's "handed"): game_res = 1080
+// in the file, Ultra chosen (it hands GAME_RES back for its "window"), then Low, whose 1080 is the value the key had.
+// Apply still writes it, so a line the player had leaves the settings file and a later tier sets the key, but it is no
+// change: Apply does not count it or list it as one, and it adds no restart (opt_draft_item).
+bool no_effect(const Change &c) { return eff_of(c.key, c.new_val) == c.orig_eff; }
+
 // A value as the log shows it: quoted, or (default) for an unset key.
 std::string shown(const std::string &v) { return v.empty() ? "(default)" : "'" + v + "'"; }
 
@@ -734,7 +741,7 @@ bool opt_draft_item(int i, OptDraftItem *out) {
         out->restart = false;
         out->display = group_timed(g.id);
         for (const Change &c : g_changes) {
-            if (c.gid != g.id) continue;
+            if (c.gid != g.id || no_effect(c)) continue;
             const CfgMeta *m = cfg_meta(c.key.c_str());
             if (c.staged) out->restart |= m && !m->live && cfg_pending_for(c.key.c_str(), eff_of(c.key, c.new_val).c_str());
             out->restart |= live_needs_restart(c);
@@ -812,7 +819,13 @@ std::vector<Pending> g_display;
 
 bool opt_draft_apply(bool timed) {
     g_display.clear();
-    rt_log("menu: draft applied: %d change(s)%s", (int)g_changes.size(), timed ? "" : " (for a restart)");
+    int same = 0;
+    for (const Change &c : g_changes) same += no_effect(c);
+    if (same)
+        rt_log("menu: draft applied: %d change(s)%s; %d key(s) handed back to the preset at the value they had",
+               (int)g_changes.size() - same, timed ? "" : " (for a restart)", same);
+    else
+        rt_log("menu: draft applied: %d change(s)%s", (int)g_changes.size(), timed ? "" : " (for a restart)");
     // A preset choice (menu.cpp row_preset): its layer switches after the draft's writes, and its log lines start from
     // the values the keys had before the draft (a key handed back to the preset was reset, a preview one already)
     const int tier = staged_tier();
@@ -828,6 +841,15 @@ bool opt_draft_apply(bool timed) {
     }
     for (const Change &c : g_changes) {
         const bool held = c.staged && timed && group_timed(c.gid);
+        if (no_effect(c)) {
+            const std::string v = eff_of(c.key, c.new_val);
+            rt_log("menu: draft   %s: stays %s, no change%s%s", c.key.c_str() + KEY_PREFIX, shown(c.orig_eff).c_str(),
+                   c.orig_set && c.new_val.empty() ? " (its line leaves the settings file: the preset sets it)" : "",
+                   cfg_pending_for(c.key.c_str(), v.c_str()) ? "; an earlier change still waits for a restart" : "");
+            if (c.staged) write_key(c.key, c.new_val);
+            else cfg_hold(c.key.c_str(), 0);
+            continue;
+        }
         rt_log("menu: draft   %s: %s -> %s%s%s", c.key.c_str() + KEY_PREFIX, shown(c.orig_eff).c_str(),
                shown(eff_of(c.key, c.new_val)).c_str(),
                !held ? ", saved" : is_timed(c) ? ", in effect now, saved only after Keep"

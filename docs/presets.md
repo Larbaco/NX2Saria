@@ -387,7 +387,10 @@ when custom, or *Recommended for this PC: …* when a chosen tier is not the rec
   value that changes from what the player saw before the draft) and records this PC as the one the preset was chosen
   on (`cfg_preset_chosen`). The restart-only keys a tier sets (`game_res`, `shadow_pcf`, `foliage`) wait for a
   restart: the Apply box marks the preset line *after restart* when one of them
-  changes, and the restart box follows as for any other.
+  changes, and the restart box follows as for any other. A key handed back at the value it already had (`game_res =
+  1080` set by hand, Ultra chosen, which hands it back, then Low, whose value is 1080 again) still loses its line, but
+  it is no change: Apply does not count it, lists it as `menu: draft   <KEY>: stays '<value>', no change (its line
+  leaves the settings file: the preset sets it)`, and adds no restart for it (`option_rows.cpp` `no_effect`).
 - **The one-time notice** (`preset_notice_tick`): a player who never set `preset`, on a PC whose recommended tier is
   not High, sees *Quality preset Recommended (…) is in use for this PC (Settings > Screen). For the game as before, choose High
   there.* once, for 8 seconds, at the first
@@ -459,7 +462,8 @@ preset: wrote <folder>/preset-state.txt
   `preset: notice shown: recommended <tier> in use` for the one-time notice.
 - The menu: `menu: preset: <tier> chosen in the draft; <n> key(s) set by hand handed back to it`,
   `menu: box "choose this preset?" opened: <n> key(s) set by hand` with `: yes` or `: Cancel (nothing staged)`, and at
-  Apply `menu: draft: quality preset <tier> in use`.
+  Apply `menu: draft applied: <n> change(s)`, followed by `; <m> key(s) handed back to the preset at the value they
+  had` when there are such keys, and `menu: draft: quality preset <tier> in use`.
 
 ## Tests
 
