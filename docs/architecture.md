@@ -45,6 +45,8 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
 - Settings and menu: every key with its default is in one table (`cfg.c`), read from `nx2saria.ini` and `NX2SARIA_*`
   variables (the older `nx2navi.ini` and `NX2NAVI_*` names are still read) and written back when the player applies the in-game menu's changes (a draft; `docs/controls.md`). The menu and the performance overlay are Dear ImGui,
   drawn into the swapchain image (`runtime/ui/`); their text is in `ui_text.c`.
+- Quality presets: a layer of defaults under the player's settings and the Steam Deck profile, chosen for the PC by a
+  Vulkan probe at start (`preset_pick.h`, `hw_detect.c`, `cfg.c`); High sets nothing. [presets.md](presets.md).
 - Log: in a game run the lines go through a queue to a thread that writes them (`runtime/logq.c`), so a stalled
   write to the log file or the console does not hold the thread that logged. The log thread gathers the lines of
   a quarter of a second, or half a queue, into one write, so the log is up to that much behind the game. A thread's

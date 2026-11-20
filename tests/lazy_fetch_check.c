@@ -27,6 +27,7 @@ int cfg_bool(const char *name) {
     return 0;
 }
 void cfg_init(void) {}
+void cfg_start(int game) { (void)game; }
 int tracker_api_on(void) { return 0; }   // mem_init asks where the stack and heap block goes
 int cfg_setenv(const char *name, const char *value) { (void)name, (void)value; return 0; }
 int rt_knob(const char *name, const char *def) { (void)name; return strcmp(def, "0") != 0; }
@@ -162,7 +163,7 @@ static void thawer(void *arg) { mem_thaw((uint64_t)(uintptr_t)arg, 0x1000); }
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     const char *what = argc > 1 ? argv[1] : "";
-    mem_init();
+    mem_init(0);
     if (mem_set_heap_size(256ull << 20, &heap) != R_OK || !heap) return printf("SetHeapSize failed\n"), 2;
     if (!mem_lazy_enable(fake_fetch, fake_clean)) return printf("the lazy write-back is off\n"), 2;
     memset((void *)(uintptr_t)heap, 0x11, 256ull << 20);

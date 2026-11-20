@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=ca3152f1295f22bcaebceef84c879c12a9a2472a reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=e772509093132509302e7571271d7a6efebe3ade reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -222,6 +222,42 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
   aberta e a resposta dada (botão, Esc ou B, o fim da contagem, F11), `menu: draft applied` / `discarded` com cada valor,
   `menu: display kept` / `reverted`, `cfg: wrote <path>: <keys>` para cada salvamento e `cfg: save leaves out <key>` para
   uma prévia retida, e `cfg: reload: not run` quando o Ctrl+F5 espera pelo menu.
+
+## Presets de qualidade
+
+*Configurações > Tela > Imagem* começa com *Preset de qualidade*, que ajusta as opções gráficas juntas: *Recomendado
+(…)*, *Baixo*, *Médio*, *Alto* ou *Ultra*.
+
+- *Alto* é o jogo como foi lançado. *Baixo* e *Médio* desenham menos, para PCs mais lentos e portáteis: uma cena 3D
+  menor em uma imagem de 1080 linhas; *Baixo* também tem um filtro mais simples para ampliar a cena e, só em uma GPU
+  integrada ou em um portátil, menos filtragem de texturas, menos grama desenhada e um limite de 30 ou 40 fps. Em uma
+  placa NVIDIA RTX eles usam DLSS, em uma placa Radeon RX 9000 no Windows, FSR 4. *Ultra* desenha mais, e mais ainda
+  num monitor maior; nunca é recomendado, só escolhido. Nenhum preset liga a geração de quadros.
+- *Recomendado* é escolhido de novo a cada inicialização, pela placa de vídeo, pela memória e pelo processador. Em um PC
+  que recebe *Alto*, nada muda. Quando o seu recebe *Baixo* ou *Médio* e você nunca escolheu um preset, um aviso diz
+  isso uma vez. Para jogar como antes, escolha *Alto* na linha *Preset de qualidade* (ou escreva `preset = high` no
+  `nx2saria.ini`).
+- Um preset que você escolhe vale enquanto o PC for o mesmo; quando ele não é o recomendado, a linha diz *Recomendado
+  para este PC: …*. Depois de uma placa de vídeo nova, outro processador ou mais memória (uma atualização de driver
+  não conta), o jogo usa *Recomendado* até você escolher de novo, e a linha diz *Hardware novo: o preset recomendado
+  está em uso*. Escolher *Recomendado* ali (para a esquerda sobre ele) e aplicar o mantém, como escolher qualquer
+  outro preset.
+- Uma opção que você muda à mão mantém o seu valor, e o preset aparece como *… (personalizado)*. Escolher um preset
+  quando opções que ele ajusta foram mudadas à mão para outros valores primeiro lista essas opções: *Usar o preset* dá a elas os valores do preset, *Cancelar*
+  deixa tudo como estava.
+- A escolha faz parte do rascunho ([acima](#aplicar-mudanças-no-menu)): *Aplicar* grava `preset = <tier>` no
+  `nx2saria.ini` (nenhuma linha para *Recomendado*). A resolução, as sombras e a grama que um preset muda só valem
+  depois de reiniciar.
+- *Resolução da cena*, abaixo de *Upscaling* enquanto nem DLSS nem FSR estão ligados, define o tamanho em que a cena 3D é
+  desenhada, de 33 % da imagem até 100 % (nativo). Menor é mais rápido e mais suave, para PCs lentos e portáteis; o HUD
+  e os menus continuam nítidos. Vale na hora; um tamanho acima daquele com que o jogo começou só vem depois de
+  reiniciar. Nesta versão `render_scale` e `output_res` não mudam nada: são esta linha e o preset que diminuem a cena.
+- O `logs/nx2saria.log` diz o que foi escolhido e por quê, perto do começo: `preset: hardware: ...` (o que o jogo
+  encontrou), `preset: recommended <tier>: <reason>`, `preset: in use <tier> (<source>)` e uma linha
+  `preset:   <KEY> = <value> (...)` para cada opção que o preset define, dizendo se o valor veio do preset, do seu
+  arquivo de configurações ou do perfil do dispositivo. Anexe o log a um relato sobre a imagem ou a taxa de quadros.
+
+Como os presets são escolhidos e o que cada um define: [Quality presets](../presets.md) (em inglês).
 
 ## Recarregar o `nx2saria.ini`
 

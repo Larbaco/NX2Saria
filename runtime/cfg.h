@@ -7,12 +7,19 @@
 const char *cfg_env(const char *name);
 
 // getenv for a setting: the environment variable when set, else the settings-file key (the name without either prefix, any
-// case), else the device profile's default (cfg.c: the Steam Deck), else NULL. Same string semantics as getenv; the pointer stays valid for the process (a value cfg_set replaces
-// is kept). A name without either prefix goes to getenv unchanged. Safe from any thread once cfg_init has returned.
+// case), else the device profile's default (cfg.c: the Steam Deck), else the quality preset's (cfg_preset_*), else NULL. Same string semantics as getenv; the pointer stays valid for the process (a value cfg_set replaces
+// is kept). A name without either prefix goes to getenv unchanged. Safe from any thread once cfg_start has returned.
 const char *cfg_get(const char *name);
 
-// Reads the selected settings file once, from mem_init after the address space is claimed and before any setting is read. Logs the file, its key count, unknown keys and environment overrides. Keeps the restart-only settings' values (cfg_pending).
+// Reads the selected settings file once, from mem_init after the fixed windows are claimed and before any setting is
+// read. Logs the file, its key count, unknown keys and environment overrides. cfg_start follows it.
 void cfg_init(void);
+// The rest of the settings' start, from mem_init once the whole guest address space is claimed (the quality preset's
+// probe loads the Vulkan drivers, whose libraries and allocations must not land in the stack and heap block or the
+// alias region): the quality preset in use (cfg.c "quality presets") and then the restart-only settings' values
+// (cfg_pending). game: 1 for the game itself (main.c: no tool mode), which probes the GPU (hw_detect.c) and keeps the
+// state file preset-state.txt; 0 for a tool mode, which goes by the state file's last probe and writes nothing.
+void cfg_start(int game);
 
 // Replaces the loaded keys with those of the file at path (tests). 1 when the file was read, 0 when missing.
 // Not thread-safe: nothing else may call cfg_get meanwhile.
@@ -97,10 +104,11 @@ void cfg_log_unsupported(void);
 const CfgMeta *cfg_meta(const char *key);
 // The i-th row (0-based, table order); NULL past the last.
 const CfgMeta *cfg_meta_at(int i);
-// What key reads when the player has not set it: the device profile's value (the Steam Deck's), else the row's default;
+// What key reads when the player has not set it: the device profile's value (the Steam Deck's), else the quality preset's
+// in use, else the row's default;
 // NULL for a key without a row. The menu's "default" mark follows it.
 const char *cfg_default(const char *key);
-// A restart-only setting (live 0) whose value differs from the one cfg_init read at start, which the running game still
+// A restart-only setting (live 0) whose value differs from the one cfg_start kept at start, which the running game still
 // uses: 1 while a restart would change it, 0 otherwise and for a live key or one without a row (the menu's "after
 // restart" note). cfg_pending_count: how many restart-only settings differ.
 int cfg_pending(const char *key);
@@ -117,3 +125,57 @@ const char *cfg_value(const char *name);
 int cfg_int(const char *name);
 double cfg_double(const char *name);
 int cfg_bool(const char *name);
+
+// ---- quality presets (cfg.c "quality presets", the tiers and their values in preset_pick.h). A tier is 0 low, 1 medium,
+// 2 high (the game as shipped: sets nothing), 3 ultra. Its values are defaults: a key the player sets wins, then the
+// device profile, then the preset in use, then the row's default. The preset key holds the player's choice
+// (recommended, low, medium, high or ultra); cfg_start resolves it once per start. All of these: any thread once
+// cfg_start has returned.
+// "low", "medium", "high", "ultra"; "recommended" for any other number.
+const char *cfg_preset_name(int tier);
+// The tier whose values are in effect now; -1 before cfg_start.
+int cfg_preset_in_use(void);
+// The tier this PC gets (preset_pick.h preset_pick) and, in *why when not NULL, why in a few English words.
+int cfg_preset_recommended(const char **why);
+// 1 when a key the preset in use sets is set by the player to another value than it reads unset (cfg_preset_differs):
+// the menu shows the preset as custom. A key the tier leaves alone never counts.
+int cfg_preset_custom(void);
+// The value tier gives key (prefix and case ignored) on this PC; NULL when the tier leaves it alone.
+const char *cfg_preset_value(int tier, const char *key);
+// Every key some tier sets on some hardware (upper case, no prefix), *n of them; the array lives for the process.
+const char *const *cfg_preset_keys(int *n);
+// 1 when the player's tier was chosen on other hardware and this run uses the recommended tier instead; it stays so
+// at every start until the player picks a tier again (cfg_preset_chosen).
+int cfg_preset_hw_changed(void);
+// The player picked a tier in the menu: records this PC as the one it was chosen on (the state file preset-state.txt
+// beside the game; never nx2saria.ini) and clears cfg_preset_hw_changed. The menu writes the preset key itself.
+void cfg_preset_chosen(void);
+// Puts tier's values in effect now (the menu's switch; the restart-only ones wait for a restart, cfg_pending), bumps
+// cfg_version and logs each setting whose value changes ("preset: <old> -> <new>: <KEY> <before> -> <after>"). Keys
+// the player set keep their values: the menu resets those it means to hand to the preset.
+void cfg_preset_use(int tier);
+// cfg_preset_use for the menu's Apply, which resets the keys it hands to the preset before the switch: from_values
+// (NULL: the values in effect now) holds the value each key of cfg_preset_keys had before the draft's writes, in that
+// order (an entry NULL: its value now), so the log's before -> after lines start from what the player saw. With
+// from_values the lines are logged also when tier is the one in use.
+void cfg_preset_use_from(int tier, const char *const *from_values);
+// What key reads while the player has not set it if tier were in use: the device profile's value, else tier's, else the
+// row's default (cfg_default for a tier out of range); NULL for a key without a row. The menu's draft shows a staged
+// preset's values and default marks through it.
+const char *cfg_default_tier(const char *key, int tier);
+// 1 when tier sets key and value, set by the player for key, differs from what key reads unset with tier in use
+// (cfg_default_tier): the key makes that tier custom, and choosing tier in the menu hands it back. 0 for NULL or "",
+// and for a key tier leaves alone.
+int cfg_preset_differs(int tier, const char *key, const char *value);
+// The one-time notice of the recommended preset (ui/menu.cpp preset_notice_tick): 1 while the player has not set the
+// preset key, the recommended tier is not high, is in use, and the state file does not record a notice of that tier
+// yet; 0 in a tool mode and a replay. cfg_preset_notice_done records it (noticed = <tier> in preset-state.txt; never
+// nx2saria.ini) and logs "preset: notice shown: recommended <tier> in use"; the file is written by a thread of its own,
+// so the present thread that shows the notice does not wait for the disk.
+int cfg_preset_notice_due(void);
+void cfg_preset_notice_done(void);
+// hw_detect.c hw_detect_device_check, once the game has chosen its own Vulkan device: its instance made and the devices
+// listed, as far as the probe goes, so the drivers load. A probing mark the state file kept from an earlier start
+// (cfg.c preset_init) is taken out, and the next start probes again. Logs "preset: the game's Vulkan device is chosen:
+// ..." when it does; nothing without the mark.
+void cfg_preset_device_started(void);

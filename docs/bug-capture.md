@@ -25,7 +25,7 @@ The captures are in the game folder under `logs\captures`, one folder each, name
 | `frame.png` | The frame on screen as the window got it, the overlay included, without the capture's own note (an HDR picture converted to sRGB) |
 | `frames.tsv` | The last 600 presents before the press and the 30 after: frame, interval and replay time in ms |
 | `log-tail.txt` | The last 256 KB of the run's log, with the account's folders written short like the log ([log-privacy.md](log-privacy.md)) |
-| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg_private.h`); a folder in the account's home written short |
+| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg_private.h`); a folder in the account's home written short; then, after a comment line, the values the quality preset gave the keys it sets that the player left unset ([presets.md](presets.md#bug-captures)) |
 | `NX2Saria-save-<time>.zip` | The save the game would load next, as *Menu > Export save* writes it |
 | `flags.tsv`, `texts.tsv` | The game's on/off flags and its 64-character texts, by the hash of their names |
 | `flight/` | With `flight = 1`: the flight recorder's dump of the same moment (`tools/flight_view.py` reads it) |
@@ -48,7 +48,7 @@ The captures are in the game folder under `logs\captures`, one folder each, name
 - `[timing]`: over the presents before the press: the average frame rate, the median, 95th and 99th percentile and
   the longest frame time, how many frames took over 33 and 50 ms, the last 30 intervals before and the first after,
   and the performance overlay's numbers when it was on.
-- `[system]`: OS, CPU, RAM, GPU, driver.
+- `[system]`: OS, CPU, RAM, GPU, driver, and `quality_preset = <in use> (recommended <tier>: <reason>)`.
 - `[settings that differ from the defaults]`: the settings whose value is not the default; a private one shows only
   that it is set.
 
@@ -85,6 +85,9 @@ What the game does in such a run (`NX2SARIA_CAPTURE_REPLAY`, environment only):
 
 - The capture's `settings.ini` stands in for `nx2saria.ini`, which is neither read nor written; the environment still
   wins over it. The log's first lines say so and list the settings.
+- The quality preset is High, which sets nothing, whatever the replaying PC would get: the capture's `settings.ini`
+  already holds the values the capturing PC's preset gave (`preset: in use high (a bug capture's replay: ...)`), and
+  `preset-state.txt` is not written ([presets.md](presets.md#bug-captures)).
 - Until Link appears the pad presses A (four reads in every hundred).
 - Three seconds later the game changes area as its own doors do (`dbg_warp`), to the start position of the capture's
   area that is nearest to the captured place; when the save already starts within 60 m of it, there is no teleport.

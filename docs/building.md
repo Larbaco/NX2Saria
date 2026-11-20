@@ -1027,6 +1027,15 @@ load and one for the menu. The launcher's reader (`launcher/gameini.py`) has the
 `tests\launcher_test.py` `PlayerIniTest`, and `tools/make_game.py`'s own reads of `shader_carry` and `guest_opt`
 (`shader_carry`, `guest_opt_ini`) theirs in `MakeGameTest`. No game files.
 
+A change to the quality presets (`runtime/preset_pick.h`, `runtime/hw_detect.c`, the "quality presets" part of
+`runtime/cfg.c`) passes `python tests\preset_check.py`, which builds `cfg.c` with stand-ins for what it links with and
+made-up hardware in place of the probe: the tier each PC gets and what each tier sets (High nothing, no frame
+generation, DLSS and FSR 4 only below High and only where they run, a frame-rate limit only on integrated GPUs and
+handhelds), every value of `PRESET_ROWS` read as a settings-file line and as a reload, and the start with a settings
+file and a state file: the layer's order, the log lines, `preset-state.txt` (never `nx2saria.ini`), a tier chosen on
+other hardware, a driver update, a start that cannot probe, a tool mode, the settings menu's calls and the one-time
+notice ([presets.md](presets.md#tests)). No GPU, no game files.
+
 The lifter (`recomp/`) and the CPU headers (`runtime/cpu.h`, `runtime/simd.h`) are checked against Unicorn. Every lifter
 change passes these, all run with `.venv`:
 

@@ -789,6 +789,30 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EXEFS_ON] = "Code patches in use: %d files.",
     [UI_MENU_MODS_REPLACES_BUILTIN] = "Code patches in use: %d files. They replace the port's own patch %s, which "
                                       "stays off while this mod is on.",
+    [UI_MENU_PRESET] = "Quality preset",
+    [UI_MENU_PRESET_DESC] = "Sets the graphics options at once. Recommended is the preset this PC gets from its graphics card, "
+        "memory and processor. High is the game as shipped; Low and Medium draw less, for slower PCs and handhelds; "
+        "Ultra draws more, and more on a larger monitor; it is never recommended, only chosen. Options you change by hand afterwards "
+        "stay as you set them, and the preset then shows as custom.",
+    [UI_MENU_PRESET_RECOMMENDED] = "Recommended (%s)",
+    [UI_MENU_PRESET_LOW] = "Low",
+    [UI_MENU_PRESET_MEDIUM] = "Medium",
+    [UI_MENU_PRESET_HIGH] = "High",
+    [UI_MENU_PRESET_ULTRA] = "Ultra",
+    [UI_MENU_PRESET_CUSTOM] = "%s (custom)",
+    [UI_MENU_PRESET_CUSTOM_NOTE] = "set by hand: %d",
+    [UI_MENU_PRESET_REC_NOTE] = "Recommended for this PC: %s",
+    [UI_MENU_PRESET_HW_NOTE] = "New hardware: the recommended preset is in use",
+    [UI_MENU_PRESET_NOTICE] = "Quality preset Recommended (%s) is in use for this PC (Settings > Screen). For the game as before, choose High there.",
+    [UI_MENU_PRESET_CONFIRM] = "These settings were changed by hand. The preset sets them to its own values:",
+    [UI_MENU_PRESET_CONFIRM_YES] = "Use the preset",
+    [UI_MENU_SCENE_RES] = "Scene resolution",
+    [UI_MENU_SCENE_RES_DESC] = "Size the 3D scene is drawn at, as a share of the picture. Lower draws the scene smaller and enlarges "
+        "it to the picture: faster, for slow PCs and handhelds, but softer. The HUD and menus stay sharp, at the "
+        "full resolution. 100 % is Native. Changes take effect at once.",
+    [UI_MENU_SCENE_RES_GAME] = "%s (game)",
+    [UI_MENU_SCENE_RES_NATIVE] = "%s (native)",
+    [UI_MENU_SCENE_RES_PRESET] = "%s (preset)",
 };
 
 static const char *const text_ru[UI_TEXT_COUNT] = {
@@ -1458,6 +1482,31 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EXEFS_ON] = "Патчи кода в работе: файлов: %d.",
     [UI_MENU_MODS_REPLACES_BUILTIN] = "Патчи кода в работе: файлов: %d. Они заменяют собственный патч порта %s, "
                                       "который выключен, пока этот мод включён.",
+    [UI_MENU_PRESET] = "Пресет качества",
+    [UI_MENU_PRESET_DESC] = "Задаёт все настройки графики сразу. «Рекомендуемый» — пресет, который этот ПК получает по своей "
+        "видеокарте, памяти и процессору. «Высокий» — игра в том виде, в каком она вышла; «Низкий» и «Средний» "
+        "рисуют меньше, для слабых ПК и портативных устройств; «Ультра» рисует больше, и тем больше, чем крупнее "
+        "монитор; он никогда не рекомендуется, только выбирается. Настройки, которые вы потом измените вручную, остаются как вы их задали, и пресет отмечается как "
+        "изменённый.",
+    [UI_MENU_PRESET_RECOMMENDED] = "Рекомендуемый (%s)",
+    [UI_MENU_PRESET_LOW] = "Низкий",
+    [UI_MENU_PRESET_MEDIUM] = "Средний",
+    [UI_MENU_PRESET_HIGH] = "Высокий",
+    [UI_MENU_PRESET_ULTRA] = "Ультра",
+    [UI_MENU_PRESET_CUSTOM] = "%s (изменён)",
+    [UI_MENU_PRESET_CUSTOM_NOTE] = "изменено вручную: %d",
+    [UI_MENU_PRESET_REC_NOTE] = "Рекомендуется для этого ПК: %s",
+    [UI_MENU_PRESET_HW_NOTE] = "Новое оборудование: используется рекомендуемый пресет",
+    [UI_MENU_PRESET_NOTICE] = "Для этого ПК используется пресет качества «Рекомендуемый (%s)» (Настройки > Экран). Чтобы вернуть игру как раньше, выберите там «Высокий».",
+    [UI_MENU_PRESET_CONFIRM] = "Эти настройки изменены вручную. Пресет задаст им свои значения:",
+    [UI_MENU_PRESET_CONFIRM_YES] = "Применить пресет",
+    [UI_MENU_SCENE_RES] = "Разрешение сцены",
+    [UI_MENU_SCENE_RES_DESC] = "Размер, в котором рисуется 3D-сцена, как доля картинки. Меньшее значение рисует сцену меньше и "
+        "растягивает её до картинки: быстрее, для слабых ПК и портативных устройств, но мягче. Интерфейс и меню "
+        "остаются чёткими, в полном разрешении. 100 % — родное. Изменения применяются сразу.",
+    [UI_MENU_SCENE_RES_GAME] = "%s (игра)",
+    [UI_MENU_SCENE_RES_NATIVE] = "%s (родное)",
+    [UI_MENU_SCENE_RES_PRESET] = "%s (пресет)",
 };
 
 static const char *const text_pt_br[UI_TEXT_COUNT] = {
@@ -2175,6 +2224,30 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EXEFS_ON] = "Patches de código em uso: %d arquivos.",
     [UI_MENU_MODS_REPLACES_BUILTIN] = "Patches de código em uso: %d arquivos. Eles substituem o patch do próprio port "
                                       "%s, que fica desligado enquanto este mod está ligado.",
+    [UI_MENU_PRESET] = "Preset de qualidade",
+    [UI_MENU_PRESET_DESC] = "Ajusta as opções gráficas de uma vez. Recomendado é o preset que este PC recebe pela placa de vídeo, "
+        "memória e processador. Alto é o jogo como foi lançado; Baixo e Médio desenham menos, para PCs mais fracos e "
+        "portáteis; Ultra desenha mais, e mais ainda num monitor maior; nunca é recomendado, só escolhido. As opções que você mudar "
+        "à mão depois ficam como você deixou, e o preset passa a aparecer como personalizado.",
+    [UI_MENU_PRESET_RECOMMENDED] = "Recomendado (%s)",
+    [UI_MENU_PRESET_LOW] = "Baixo",
+    [UI_MENU_PRESET_MEDIUM] = "Médio",
+    [UI_MENU_PRESET_HIGH] = "Alto",
+    [UI_MENU_PRESET_ULTRA] = "Ultra",
+    [UI_MENU_PRESET_CUSTOM] = "%s (personalizado)",
+    [UI_MENU_PRESET_CUSTOM_NOTE] = "mudadas à mão: %d",
+    [UI_MENU_PRESET_REC_NOTE] = "Recomendado para este PC: %s",
+    [UI_MENU_PRESET_HW_NOTE] = "Hardware novo: o preset recomendado está em uso",
+    [UI_MENU_PRESET_NOTICE] = "O preset de qualidade Recomendado (%s) está em uso neste PC (Configurações > Tela). Para o jogo como antes, escolha Alto ali.",
+    [UI_MENU_PRESET_CONFIRM] = "Estas opções foram mudadas à mão. O preset vai trocá-las pelos valores dele:",
+    [UI_MENU_PRESET_CONFIRM_YES] = "Usar o preset",
+    [UI_MENU_SCENE_RES] = "Resolução da cena",
+    [UI_MENU_SCENE_RES_DESC] = "Tamanho em que a cena 3D é desenhada, como parte da imagem. Menor desenha a cena menor e a amplia até "
+        "a imagem: mais rápido, para PCs fracos e portáteis, mas menos nítido. O HUD e os menus continuam nítidos, na "
+        "resolução cheia. 100 % é Nativo. As mudanças valem na hora.",
+    [UI_MENU_SCENE_RES_GAME] = "%s (jogo)",
+    [UI_MENU_SCENE_RES_NATIVE] = "%s (nativo)",
+    [UI_MENU_SCENE_RES_PRESET] = "%s (preset)",
 };
 
 // Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
@@ -2930,6 +3003,25 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EXEFS_OTHER] = "它的代码补丁（exefs）是为其他游戏版本制作的。",
     [UI_MENU_MODS_EXEFS_ON] = "正在使用的代码补丁：%d 个文件。",
     [UI_MENU_MODS_REPLACES_BUILTIN] = "正在使用的代码补丁：%d 个文件。它们取代本移植自带的补丁 %s，此模组开启时该补丁保持关闭。",
+    [UI_MENU_PRESET] = "画质预设",
+    [UI_MENU_PRESET_DESC] = "一次性设置各项图形选项。“推荐”是本机根据显卡、内存和处理器得到的预设。“高”即游戏发售时的原样；“低”和“中”绘制更少，适合较慢的电脑和掌机；“极高”绘制更多，显示器越大越多；它从不被推荐，只能手动选择。之后手动更改的选项会保持你的设置，预设随即显示为自定义。",
+    [UI_MENU_PRESET_RECOMMENDED] = "推荐（%s）",
+    [UI_MENU_PRESET_LOW] = "低",
+    [UI_MENU_PRESET_MEDIUM] = "中",
+    [UI_MENU_PRESET_HIGH] = "高",
+    [UI_MENU_PRESET_ULTRA] = "极高",
+    [UI_MENU_PRESET_CUSTOM] = "%s（自定义）",
+    [UI_MENU_PRESET_CUSTOM_NOTE] = "手动更改：%d 项",
+    [UI_MENU_PRESET_REC_NOTE] = "本机推荐：%s",
+    [UI_MENU_PRESET_HW_NOTE] = "硬件已更换：正在使用推荐预设",
+    [UI_MENU_PRESET_NOTICE] = "本机正在使用画质预设“推荐（%s）”（设置 > 显示）。如需恢复之前的游戏画面，请在那里选择“高”。",
+    [UI_MENU_PRESET_CONFIRM] = "以下设置曾被手动更改。预设会把它们改为预设的值：",
+    [UI_MENU_PRESET_CONFIRM_YES] = "使用预设",
+    [UI_MENU_SCENE_RES] = "场景分辨率",
+    [UI_MENU_SCENE_RES_DESC] = "3D 场景的绘制尺寸，以占画面的比例计。较低时场景绘制得更小，再放大到画面：更快，适合较慢的电脑和掌机，但更模糊。HUD 和菜单保持清晰，使用完整分辨率。100% 即原生。更改立即生效。",
+    [UI_MENU_SCENE_RES_GAME] = "%s（游戏）",
+    [UI_MENU_SCENE_RES_NATIVE] = "%s（原生）",
+    [UI_MENU_SCENE_RES_PRESET] = "%s（预设）",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

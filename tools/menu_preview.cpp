@@ -41,6 +41,7 @@ static const CfgMeta kMeta[] = {
     {"WIDE_HUD", "center", "center|edges", 0},           {"WIDE_MENUS", "full", "full|center", 0},
     {"UPSCALER", "bilinear", "bilinear|fsr", 0},         {"SHARPNESS", "50", "0..100", 1},
     {"ASPECT", "fit", "fit|stretch", 1}, {"MENU_LANG", "", NULL, 1},
+    {"PRESET", "recommended", "recommended|low|medium|high|ultra", 1}, {"SCENE_SHARE", "0.75", "0..1", 1},
 };
 static const struct { const char *key, *value; } kSet[] = {{"VK_PRESENT", "mailbox"}, {"PERF_OVERLAY", "full"}};
 
@@ -84,6 +85,26 @@ int cfg_state(const char *, const char **value) { *value = NULL; return 0; }
 void cfg_hold(const char *, int) {}
 void cfg_revert(const char *, const char *, int) {}
 int cfg_last_save_ok(void) { return 1; }
+int cfg_is_set(const char *name) { return cfg_get(name) != NULL; }
+// the quality presets: this PC gets medium, which sets nothing here
+const char *cfg_default_tier(const char *key, int) { return cfg_default(key); }
+const char *cfg_preset_name(int tier) {
+    static const char *const names[] = {"low", "medium", "high", "ultra"};
+    return tier >= 0 && tier < 4 ? names[tier] : "recommended";
+}
+int cfg_preset_recommended(const char **why) {
+    if (why) *why = "";
+    return 1;
+}
+const char *const *cfg_preset_keys(int *n) {
+    static const char *const keys[] = {"SCENE_SHARE"};
+    *n = 1;
+    return keys;
+}
+int cfg_preset_hw_changed(void) { return 0; }
+void cfg_preset_use_from(int, const char *const *) {}
+void cfg_preset_chosen(void) {}
+int cfg_preset_differs(int, const char *, const char *) { return 0; }   // sets nothing: nothing differs
 int vk_dlaa_needs_restart(void) { return 0; }
 int vk_hdr_restart_for(const char *) { return 0; }
 int vk_dlssg_wanted(void) { return 0; }
@@ -229,6 +250,20 @@ static void scene_menu(float w, float h, float scale, ImFont *title, bool first)
             static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
             opt_choice("NX2NAVI_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
             opt_group(UI_MENU_GRAPHICS);
+            // the Quality preset row as menu.cpp row_preset shows a tier with keys set by hand (custom)
+            char rec[96], custom[96], note[96];
+            snprintf(rec, sizeof rec, menu_text(UI_MENU_PRESET_RECOMMENDED), menu_text(UI_MENU_PRESET_MEDIUM));
+            snprintf(custom, sizeof custom, menu_text(UI_MENU_PRESET_CUSTOM), menu_text(UI_MENU_PRESET_LOW));
+            snprintf(note, sizeof note, menu_text(UI_MENU_PRESET_CUSTOM_NOTE), 2);
+            const char *presets[] = {rec, custom, menu_text(UI_MENU_PRESET_MEDIUM), menu_text(UI_MENU_PRESET_HIGH),
+                                     menu_text(UI_MENU_PRESET_ULTRA)};
+            opt_choice_index("NX2NAVI_PRESET", UI_MENU_PRESET, presets, 5, 1, 0, UI_MENU_PRESET_DESC, note);
+            // the Scene resolution row as menu.cpp row_scene_res shows the game's own share
+            char game[48], native[48];
+            snprintf(game, sizeof game, menu_text(UI_MENU_SCENE_RES_GAME), "75 %");
+            snprintf(native, sizeof native, menu_text(UI_MENU_SCENE_RES_NATIVE), "100 %");
+            const char *shares[] = {"33 %", "40 %", "50 %", "58 %", "67 %", game, native};
+            opt_choice_index("NX2NAVI_SCENE_SHARE", UI_MENU_SCENE_RES, shares, 7, 5, 5, UI_MENU_SCENE_RES_DESC);
             static const UiTextId wide[] = {UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW, UI_MENU_GAME_ASPECT_21_9,
                                             UI_MENU_GAME_ASPECT_32_9};
             opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
@@ -284,6 +319,7 @@ static void scene_overlay(float w, float h, float scale) {
     snprintf(p.picture[7], 64, "1440p");
     snprintf(p.picture[8], 64, "%s", menu_text(UI_MENU_HDR_TONEMAPPED));
     snprintf(p.picture[9], 64, "%s", menu_text(UI_MENU_FRAMEGEN_OFF));
+    snprintf(p.picture[11], 64, menu_text(UI_MENU_PRESET_CUSTOM), menu_text(UI_MENU_PRESET_MEDIUM));
     p.scene_known = false, p.fg_fps = 60, p.under_menu = false;
     perf_panel_draw(&p, w, scale);
 }

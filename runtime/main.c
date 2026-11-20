@@ -759,9 +759,25 @@ int main(int argc, char **argv) {
     return mode_rc;
 }
 
+// 1 when the command line names the game itself: no mode, and every argument an option the game takes with its value
+// (--seconds and --shot run the game). mem_init needs it before the parse below, for the settings' start (cfg.h
+// cfg_start: only the game probes the GPU and writes the preset's state file); a command line the parse refuses counts
+// as a tool mode.
+static int game_run(int argc, char **argv) {
+    static const char *const with_value[] = {"--exefs", "--romfs", "--profile", "--audio-device", "--monitor",
+                                             "--seconds", "--shot"};
+    for (int i = 1; i < argc; i += 2) {   // an option and its value
+        int option = 0;
+        for (size_t k = 0; k < sizeof with_value / sizeof *with_value && !option; k++) option = !strcmp(argv[i], with_value[k]);
+        if (!option) return 0;
+    }
+    return 1;
+}
+
 static int main_run(int argc, char **argv) {
     log_privacy_init();   // the personal folders to write short in the log, from the environment, before its first line
-    mem_init();   // first: claim the guest address space before anything else can land there; reads the settings file
+    // first: claim the guest address space before anything else can land there; reads the settings file
+    mem_init(game_run(argc, argv));
     log_privacy_start();   // the switch (log_short_paths) and the line that says how paths are written
     // The build that wrote the log, at its top: an attached log from another install or version shows at a glance.
     rt_log("version: NX2Saria %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,

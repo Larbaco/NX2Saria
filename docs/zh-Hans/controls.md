@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=ca3152f1295f22bcaebceef84c879c12a9a2472a reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=e772509093132509302e7571271d7a6efebe3ade reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -106,6 +106,20 @@ Minus+Plus 组合键永远不会传给游戏。在菜单中，方向键、十字
 - 改回初始值的更改会离开草稿。在此期间被其他东西改变的设置（*全屏*上的 F11）也会离开草稿，并保留外部的值。由环境变量固定的设置显示为灰色，永远不会进入草稿。
 - 草稿打开期间由其他任何操作触发的保存（菜单关闭时的 F10、F11、金手指）不会写入预览中的值：该项在 Apply 之前不参与任何保存（`runtime/cfg.c` 中的 `cfg_hold`、`cfg_revert`）。
 - 每一步都会记录在 `logs/nx2saria.log` 中，因此事后可以检查一次运行：某个设置进入或离开草稿时（预览或待定）记录 `menu: draft +` 和 `menu: draft -`，每个打开的对话框及给出的回答（按钮、Esc 或 B、倒计时结束、F11）记录 `menu: box`，`menu: draft applied` / `discarded` 附带每个值，`menu: display kept` / `reverted`，每次保存记录 `cfg: wrote <path>: <keys>`，被保留的预览记录 `cfg: save leaves out <key>`，Ctrl+F5 等待菜单时记录 `cfg: reload: not run`。
+
+## 画质预设
+
+*设置 > 显示 > 画面* 的第一行是 *画质预设*，它一次性设置各项图形选项：*推荐（…）*、*低*、*中*、*高* 或 *极高*。
+
+- *高* 即游戏发售时的原样。*低* 和 *中* 绘制更少，适合较慢的电脑和掌机：更小的 3D 场景和 1080 行高的画面；*低* 还会用更简单的滤镜放大场景，并且仅在集成显卡或掌机上减少纹理过滤、绘制更少的草，并把帧率限制为 30 或 40 fps。在 NVIDIA RTX 显卡上它们使用 DLSS，在 Windows 上的 Radeon RX 9000 显卡上使用 FSR 4。*极高* 绘制更多，显示器越大绘制越多；它从不被推荐，只能手动选择。任何预设都不会开启帧生成。
+- *推荐* 会在每次启动时根据显卡、内存和处理器重新选择。在得到 *高* 的电脑上，什么都不会改变。如果你的电脑得到 *低* 或 *中*，而你从未选择过预设，会有一条通知告诉你一次。如需像以前一样游戏，请在 *画质预设* 一行选择 *高*（或在 `nx2saria.ini` 中写入 `preset = high`）。
+- 你选择的预设只要电脑不变就会保留；当它不是推荐的预设时，该行会显示 *本机推荐：…*。更换显卡、处理器或增加内存后（驱动程序更新不算），游戏会使用 *推荐*，直到你再次选择，该行会显示 *硬件已更换：正在使用推荐预设*。在那里选择 *推荐*（在其上按左）并应用即可保留它，与选择其他任何预设一样。
+- 你手动更改的选项会保留你的值，预设随即显示为 *…（自定义）*。当预设所设置的选项被手动改成其他值时，选择该预设会先列出这些选项：*使用预设* 会把它们改为预设的值，*取消* 则保持原样。
+- 选择属于草稿（[见上文](#在菜单中应用更改)）：*Apply* 会把 `preset = <tier>` 写入 `nx2saria.ini`（选择 *推荐* 时不写这一行）。预设更改的分辨率、阴影和草会在重启后生效。
+- *场景分辨率* 位于 *Upscaling* 下方，在 DLSS 和 FSR 都未开启时显示，用于设置 3D 场景的绘制尺寸，从画面的 33 % 到 100 %（原生）。越低越快、越模糊，适合较慢的电脑和掌机；HUD 和菜单保持清晰。更改立即生效；比游戏启动时更大的尺寸要在重启后才生效。在这个版本中，`render_scale` 和 `output_res` 不起作用：降低场景尺寸靠的是这一行和预设。
+- `logs/nx2saria.log` 的开头会说明选择了什么以及原因：`preset: hardware: ...`（游戏找到的硬件）、`preset: recommended <tier>: <reason>`、`preset: in use <tier> (<source>)`，以及预设设置的每个选项各一行 `preset:   <KEY> = <value> (...)`，说明该值来自预设、你的设置文件还是设备配置。报告画面或帧率问题时请附上日志。
+
+预设如何选择以及每个预设设置了什么：[Quality presets](../presets.md)（英文）。
 
 ## 重新加载 `nx2saria.ini`
 

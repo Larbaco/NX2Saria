@@ -426,6 +426,7 @@ struct Change {
     const char *orig_val;  // cfg_state's, for cfg_revert
     int orig_state;
     bool staged;
+    bool orig_set;         // the player had set the key (cfg_is_set) before the first change
 };
 
 std::vector<Group> g_groups;
@@ -448,11 +449,12 @@ std::string norm_key(const char *key) {
 // Keys that are live in the table but stay in the draft until Apply: the window, the present mode, HDR and the frame
 // limit change the whole picture or the pacing at once (HDR makes the swapchain again in another format; step 4 puts a
 // "keep these?" timer on all but the frame limit), a pad layout
-// or walk key swaps what the buttons do under the player's hands, and motion starts or stops a device. Every key the
+// or walk key swaps what the buttons do under the player's hands, and motion starts or stops a device. The quality
+// preset switches its layer of defaults only at Apply (opt_draft_apply, cfg_preset_use_from). Every key the
 // table marks as read at start is staged too.
 bool is_staged(const std::string &key) {
     static const char *const forced[] = {"FPS_LIMIT", "VK_PRESENT", "HDR", "PAD_LAYOUT", "WALK_KEY", "MOTION",
-                                        "FULLSCREEN", "WINDOW_SIZE", "FOV"};
+                                        "FULLSCREEN", "WINDOW_SIZE", "FOV", "PRESET"};
     const CfgMeta *m = cfg_meta(key.c_str());
     if (!m) return false;   // a key without a row (the bindings) is a live one
     if (!m->live) return true;
@@ -461,23 +463,62 @@ bool is_staged(const std::string &key) {
     return false;
 }
 
-// The applied value of key, and what a value written for it comes to once "" (unset) is its default.
+// The applied value of key, and what a value written for it comes to once "" (unset) is its default. The quality
+// preset chosen on other hardware (cfg_preset_hw_changed) reads as a value of its own, as the recommended tier is in
+// use in its place: choosing the same tier again, or Recommended, is a change that Apply makes (cfg_preset_chosen).
 std::string eff_now(const std::string &key) {
+    if (key == "NX2SARIA_PRESET" && cfg_preset_hw_changed()) return std::string(cfg_value(key.c_str())) + " (other hardware)";
     if (cfg_meta(key.c_str())) return cfg_value(key.c_str());
     const char *v = cfg_get(key.c_str());
     return v ? v : "";
-}
-
-std::string eff_of(const std::string &key, const std::string &value) {
-    if (!value.empty()) return value;
-    const char *d = cfg_default(key.c_str());
-    return d ? d : "";
 }
 
 Change *find_change(const std::string &key) {
     for (Change &c : g_changes)
         if (c.key == key) return &c;
     return nullptr;
+}
+
+// The tier of a value of the preset key: "" and recommended are the tier this PC gets.
+int preset_tier_of(const std::string &v) {
+    std::string low = v;
+    for (char &ch : low) ch = (char)tolower((unsigned char)ch);
+    for (int t = 0; t < 4; t++)
+        if (low == cfg_preset_name(t)) return t;
+    return cfg_preset_recommended(nullptr);
+}
+
+// The tier the draft stages for the preset key, -1 while it stages none.
+int staged_tier(void) {
+    Change *c = find_change("NX2SARIA_PRESET");
+    return c ? preset_tier_of(c->new_val) : -1;
+}
+
+bool is_preset_key(const std::string &key) {
+    int n = 0;
+    const char *const *keys = cfg_preset_keys(&n);
+    for (int i = 0; i < n; i++)
+        if (!strcmp(keys[i], key.c_str() + KEY_PREFIX)) return true;
+    return false;
+}
+
+// What "" (unset) comes to: the default of the tier the draft stages, else cfg_default (the tier in use).
+const char *default_of(const std::string &key) {
+    const int t = staged_tier();
+    return t >= 0 ? cfg_default_tier(key.c_str(), t) : cfg_default(key.c_str());
+}
+
+std::string eff_of(const std::string &key, const std::string &value) {
+    if (!value.empty()) return value;
+    const char *d = default_of(key);
+    return d ? d : "";
+}
+
+// What a preview key written as value is in effect now: the tier in use gives "", whatever tier the draft stages.
+std::string eff_written(const std::string &key, const std::string &value) {
+    if (!value.empty()) return value;
+    const char *d = cfg_default(key.c_str());
+    return d ? d : "";
 }
 
 Group *find_group(const std::string &id) {
@@ -525,6 +566,7 @@ void record(const std::string &key, const char *value, const std::string &gid, b
         n.staged = is_staged(key);
         n.orig_eff = eff_now(key);
         n.orig_state = cfg_state(key.c_str(), &n.orig_val);
+        n.orig_set = cfg_is_set(key.c_str()) != 0;
         if (!n.staged) cfg_hold(key.c_str(), 1);
         g_changes.push_back(n);
         c = &g_changes.back();
@@ -538,7 +580,10 @@ void record(const std::string &key, const char *value, const std::string &gid, b
     }
     c->new_val = value;
     if (!c->staged) write_key(key, c->new_val);
-    if (eff_of(key, c->new_val) == c->orig_eff) {   // back where it began
+    // A key the player set that a preset choice hands back to the preset (menu.cpp row_preset) stays in the draft though
+    // the preset gives it the same value: its line leaves the settings file, so a later tier sets it again.
+    const bool handed = c->new_val.empty() && c->orig_set && is_preset_key(key) && staged_tier() >= 0;
+    if (!handed && eff_of(key, c->new_val) == c->orig_eff) {   // back where it began
         rt_log("menu: draft - %s: back to %s", key.c_str() + KEY_PREFIX, shown(c->orig_eff).c_str());
         if (!c->staged) cfg_revert(key.c_str(), c->orig_val, c->orig_state);
         erase_change((size_t)(c - g_changes.data()));
@@ -549,17 +594,49 @@ void record(const std::string &key, const char *value, const std::string &gid, b
 }  // namespace
 
 const char *opt_value(const char *key) {
-    if (Change *c = find_change(norm_key(key)); c && c->staged) {
+    const std::string k = norm_key(key);
+    Change *c = find_change(k);
+    if (c && c->staged) {
         if (!c->new_val.empty()) return c->new_val.c_str();
-        const char *d = cfg_default(key);
+        const char *d = default_of(k);
         return d ? d : "";
     }
+    // a staged preset: a key the player leaves unset (a preview reset included) shows the staged tier's value
+    if (staged_tier() >= 0 && !(c ? !c->new_val.empty() : cfg_is_set(k.c_str())))
+        if (const char *d = default_of(k)) return d;
     return cfg_value(key);
 }
 
 const char *opt_get(const char *key) {
-    if (Change *c = find_change(norm_key(key)); c && c->staged) return c->new_val.empty() ? nullptr : c->new_val.c_str();
+    const std::string k = norm_key(key);
+    Change *c = find_change(k);
+    if (c && c->staged) return c->new_val.empty() ? nullptr : c->new_val.c_str();
+    // a staged preset whose tier changes the key's default: that default, as cfg_get gives a layer's value
+    if (const int t = staged_tier(); t >= 0 && !(c ? !c->new_val.empty() : cfg_is_set(k.c_str()))) {
+        const char *now = cfg_default(k.c_str()), *want = cfg_default_tier(k.c_str(), t);
+        if (want && (!now || strcmp(now, want))) return want;
+    }
     return cfg_get(key);
+}
+
+const char *opt_default(const char *key) { return default_of(norm_key(key)); }
+
+int opt_preset_tier(void) { return staged_tier(); }
+
+int opt_preset_handback(int tier, char (*names)[64], int max) {
+    int nk = 0, n = 0;
+    const char *const *keys = cfg_preset_keys(&nk);
+    for (int i = 0; i < nk && n < max; i++) {
+        snprintf(names[n], sizeof names[n], "NX2SARIA_%s", keys[i]);
+        if (opt_is_set(names[n]) && !cfg_from_env(names[n]) && cfg_preset_differs(tier, names[n], opt_get(names[n]))) n++;
+    }
+    return n;
+}
+
+bool opt_is_set(const char *key) {
+    const std::string k = norm_key(key);
+    if (Change *c = find_change(k)) return !c->new_val.empty();
+    return cfg_is_set(k.c_str()) != 0;
 }
 
 int opt_int(const char *key) {
@@ -661,6 +738,18 @@ bool opt_draft_item(int i, OptDraftItem *out) {
             const CfgMeta *m = cfg_meta(c.key.c_str());
             if (c.staged) out->restart |= m && !m->live && cfg_pending_for(c.key.c_str(), eff_of(c.key, c.new_val).c_str());
             out->restart |= live_needs_restart(c);
+            // a preset choice also changes the restart-only keys the player leaves to it (GAME_RES, FOLIAGE,
+            // SHADOW_PCF): its line waits for a restart when one of them, as the staged tier gives it, differs
+            // from the start's value
+            if (c.key == "NX2SARIA_PRESET") {
+                int nk = 0;
+                const char *const *keys = cfg_preset_keys(&nk);
+                for (int k = 0; k < nk && !out->restart; k++) {
+                    const std::string name = std::string("NX2SARIA_") + keys[k];
+                    const CfgMeta *m = cfg_meta(name.c_str());
+                    out->restart |= m && !m->live && cfg_pending_for(name.c_str(), opt_value(name.c_str()));
+                }
+            }
         }
         return true;
     }
@@ -674,7 +763,7 @@ void opt_draft_sync(void) {
     g_sync_ver = cfg_version();
     for (size_t i = g_changes.size(); i-- > 0;) {
         const Change &c = g_changes[i];
-        if (eff_now(c.key) == (c.staged ? c.orig_eff : eff_of(c.key, c.new_val))) continue;
+        if (eff_now(c.key) == (c.staged ? c.orig_eff : eff_written(c.key, c.new_val))) continue;
         rt_log("menu: draft - %s: changed outside the menu (F10, F11, a cheat) to %s, which stays", c.key.c_str() + KEY_PREFIX,
                shown(eff_now(c.key)).c_str());
         if (!c.staged) cfg_hold(c.key.c_str(), 0);
@@ -724,6 +813,19 @@ std::vector<Pending> g_display;
 bool opt_draft_apply(bool timed) {
     g_display.clear();
     rt_log("menu: draft applied: %d change(s)%s", (int)g_changes.size(), timed ? "" : " (for a restart)");
+    // A preset choice (menu.cpp row_preset): its layer switches after the draft's writes, and its log lines start from
+    // the values the keys had before the draft (a key handed back to the preset was reset, a preview one already)
+    const int tier = staged_tier();
+    int n_keys = 0;
+    const char *const *keys = cfg_preset_keys(&n_keys);
+    std::vector<std::string> before((size_t)n_keys);
+    std::vector<const char *> before_p((size_t)n_keys);
+    for (int k = 0; tier >= 0 && k < n_keys; k++) {
+        const std::string name = std::string("NX2SARIA_") + keys[k];
+        const Change *c = find_change(name);
+        before[(size_t)k] = c ? c->orig_eff : eff_now(name);
+        before_p[(size_t)k] = before[(size_t)k].c_str();
+    }
     for (const Change &c : g_changes) {
         const bool held = c.staged && timed && group_timed(c.gid);
         rt_log("menu: draft   %s: %s -> %s%s%s", c.key.c_str() + KEY_PREFIX, shown(c.orig_eff).c_str(),
@@ -745,6 +847,11 @@ bool opt_draft_apply(bool timed) {
     g_groups.clear();
     g_ctx.valid = false;
     g_draft_n.store(0);
+    if (tier >= 0) {
+        rt_log("menu: draft: quality preset %s in use", cfg_preset_name(tier));
+        cfg_preset_use_from(tier, before_p.data());
+        cfg_preset_chosen();
+    }
     opt_save_now();   // the held display keys stay out of it
     rt_log("menu: draft: settings file %s%s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)",
            g_display.empty() ? "" : "; display settings wait for Keep or Revert");
@@ -802,7 +909,7 @@ static float on_off_width(void) {
 }
 
 bool opt_toggle(const char *key, UiTextId label, UiTextId desc, bool inverted, const char *subtitle) {
-    const char *d = cfg_default(key);
+    const char *d = opt_default(key);
     bool set = opt_bool(key), def = d && *d && strcmp(d, "0") != 0;
     bool on = set != inverted;   // what the row shows
     RowView v = {menu_text(on ? UI_MENU_ON : UI_MENU_OFF), set == def, true, NULL, on_off_width()};
@@ -815,7 +922,7 @@ bool opt_toggle(const char *key, UiTextId label, UiTextId desc, bool inverted, c
 bool opt_toggle_value(const char *key, UiTextId label, UiTextId desc, const char *on_value, const char *off_value, const char *note) {
     // the default as the player's profile has it (cfg_default: the Steam Deck's fifo), which is also what "on" writes
     // when it is an on value, so turning the switch off and on again puts the profile's own value back
-    const char *d = cfg_default(key);
+    const char *d = opt_default(key);
     bool on = strcmp(opt_value(key), off_value) != 0, def = d && strcmp(d, off_value) != 0;
     RowView v = {menu_text(on ? UI_MENU_ON : UI_MENU_OFF), on == def, true, note, on_off_width()};
     if (!row(key, label, desc, v)) return false;   // any step flips it
@@ -875,7 +982,7 @@ void opt_text(UiTextId text, bool warn) { column_text(menu_text(text), warn ? &k
 
 bool opt_choice_list(const char *key, UiTextId label, const char *const *values, const char *const *names, int n,
                      UiTextId desc, int cur, const char *note) {
-    const char *d = cfg_default(key);
+    const char *d = opt_default(key);
     const char *now = opt_value(key);
     if (cur < 0)
         for (int i = 0; i < n; i++)
@@ -896,16 +1003,20 @@ bool opt_choice_list(const char *key, UiTextId label, const char *const *values,
 }
 
 int opt_choice_index(const char *key, UiTextId label, const char *const *names, int n, int cur, int def, UiTextId desc,
-                     const char *note) {
-    RowView v = {cur >= 0 && cur < n ? names[cur] : "", cur == def, true, note, value_width(names, n), cur == 0,
-                 cur == n - 1};
+                     const char *note, bool again) {
+    RowView v = {cur >= 0 && cur < n ? names[cur] : "", cur == def, true, note, value_width(names, n),
+                 cur == 0 && !again, cur == n - 1 && !again};
     int step = row(key, label, desc, v);
     if (!step || n <= 0) return -1;
     int nv = cur < 0 ? (step < 0 ? n - 1 : 0) : step == 2 ? (cur + 1) % n : cur + step < 0 ? 0 : cur + step >= n ? n - 1 : cur + step;
-    if (nv == cur) return -1;
+    if (nv == cur && !again) return -1;
     menu_sound_play(MENU_SOUND_CURSOR);
     g_ctx = {true, norm_key(key), v.value, names[nv], label};
     return nv;
+}
+
+void opt_context(const char *key, UiTextId label, const char *from, const char *to) {
+    g_ctx = {true, norm_key(key), from, to, label};
 }
 
 void opt_apply(const char *key, const char *value) {   // as apply, without its sound: a row writing several keys
@@ -937,10 +1048,10 @@ bool opt_slider(const char *key, UiTextId label, float lo, float hi, UiTextId de
                 const char *note, const char *fallback) {
     const char *set = opt_get(key);
     const char *src = fallback && !(set && *set) ? fallback : key;   // unset: show the value in effect, the fallback's
-    const char *d = cfg_default(src);
+    const char *d = opt_default(src);
     // A key without a default of its own (the per-stick dead zones) defaults to its fallback: the "default" mark
     // follows the fallback's default, not 0, even once the key is set.
-    if (fallback && !(d && *d)) d = cfg_default(fallback);
+    if (fallback && !(d && *d)) d = opt_default(fallback);
     double v = opt_double(src), def = d && *d ? strtod(d, NULL) : lo;
     char shown[48], ends[2][48];
     snprintf(shown, sizeof shown, fmt, v);
@@ -985,7 +1096,7 @@ bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId 
         if (*end || end == v) return fallback;
         return n < lo ? lo : n > hi ? hi : (int)n;
     };
-    const char *d = cfg_default(key);
+    const char *d = opt_default(key);
     int def = pos_of(d, lo), pos = pos_of(cur ? cur : opt_value(key), def);
     char shown[48], ends[48];
     if (pos > hi) snprintf(shown, sizeof shown, "%s", stop_names[pos - hi - 1]);

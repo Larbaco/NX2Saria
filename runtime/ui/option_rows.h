@@ -58,10 +58,15 @@ bool opt_choice_list(const char *key, UiTextId label, const char *const *values,
                      UiTextId desc, int cur = -1, const char *note = nullptr);
 // A choice whose value is spread over several settings: the caller gives the index in effect and the default's and
 // writes the settings itself (opt_apply) when this returns the new index; -1 while unchanged. key: the setting the row
-// stands for (its restart mark and the environment check).
+// stands for (its restart mark and the environment check). again: the value shown at cur is in effect without being
+// the setting's own (the quality preset's Recommended while a tier chosen on other hardware gives way to it), so
+// choosing it is a change: a step past either end (left on the first value, right on the last) returns cur.
 int opt_choice_index(const char *key, UiTextId label, const char *const *names, int n, int cur, int def, UiTextId desc,
-                     const char *note = nullptr);
+                     const char *note = nullptr, bool again = false);
 void opt_apply(const char *key, const char *value);   // what a row writes: "" unsets the key; joins the draft below
+// The row the opt_apply calls that follow belong to, as opt_choice_index sets it, for a choice made later (in a box
+// opened by the row): key the row's setting, from and to its shown values.
+void opt_context(const char *key, UiTextId label, const char *from, const char *to);
 // A row that runs an action: true on A or a click. id: unique on the page and not a setting ("##copy_info"); value:
 // shown on the right ("" none).
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value = "");
@@ -109,6 +114,17 @@ int opt_bind_row(const char *key, const char *label, const char *action, UiTextI
 // Rows read their setting through opt_value & co. so a staged change shows; anything else reads cfg_value.
 const char *opt_value(const char *key);   // the draft's value of a staged key, else cfg_value
 const char *opt_get(const char *key);     // as opt_value, else cfg_get (NULL for a key not set)
+// The quality preset in the draft (menu.cpp row_preset): while the preset key is staged, a key the player leaves unset
+// (or the draft hands back to the preset with "") reads the staged tier's value (cfg_default_tier) in opt_value,
+// opt_get and the rows' "default" marks, and Apply switches the layer to it after the draft's writes
+// (cfg_preset_use_from, cfg_preset_chosen). Discard leaves the layer alone.
+int opt_preset_tier(void);                // the tier the draft stages, -1 while it stages none
+const char *opt_default(const char *key); // what key reads unset: the staged tier's default, else cfg_default
+bool opt_is_set(const char *key);         // the player sets key, as the draft has it (a staged "" is unset)
+// The keys choosing tier in the menu hands back to the preset (menu.cpp row_preset): of cfg_preset_keys, those tier
+// sets that the player sets, as the draft has them, to another value than the key reads unset with tier in use
+// (cfg_preset_differs); not the ones the environment fixes. Fills names (NX2SARIA_ + key) and returns how many.
+int opt_preset_handback(int tier, char (*names)[64], int max);
 // cfg_pending_count over the values the rows show: the restart-only settings whose draft or setting differs from the
 // value the game started with (the Restart button applies the draft first, so its count takes the draft in).
 int opt_pending_count(void);
