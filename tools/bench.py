@@ -278,6 +278,36 @@ def game_version(log_text):
     return m[1] if m else ''
 
 
+def recorded_build_commit(game):
+    """The last successful build-branch record for this output, or None when it cannot identify the build.
+
+    A later failed or malformed record is not evidence that the executable still represents an earlier success.
+    This is the build script's record, not a hash of the executable itself.
+    """
+    game = Path(game)
+    try:
+        lines = (game / 'build-commits.txt').read_text(encoding='utf-8').splitlines()
+        if not lines or not (game / 'ocarina').is_file():
+            return None
+        fields = lines[-1].split()
+        if len(fields) != 4:
+            return None
+        commit, name, stamp, result = fields
+        if (not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', commit) or not commit.strip('0') or
+                name != game.name or result != 'rc=0'):
+            return None
+        built = datetime.datetime.fromisoformat(stamp)
+        if built.tzinfo is None:
+            return None
+        # build-branch writes its record in whole seconds. A newer executable could have been replaced by an
+        # interrupted or outside build; one second allows the record's timestamp precision, not proof of identity.
+        if (game / 'ocarina').stat().st_mtime > built.timestamp() + 1:
+            return None
+        return commit
+    except (OSError, UnicodeError, ValueError, OverflowError):
+        return None
+
+
 # ---- the commands
 
 def cmd_run(a):
@@ -287,7 +317,8 @@ def cmd_run(a):
     out = (Path(a.out) if a.out else ROOT / 'build' / 'bench' / f'{stamp}-{a.label}').resolve()
     out.mkdir(parents=True, exist_ok=True)
     scenes = load_scenes(a.scenes, a.only)
-    meta = {'label': a.label, 'game': str(game), 'started': stamp, 'head': git('rev-parse', 'HEAD'),
+    meta = {'label': a.label, 'game': str(game), 'started': stamp, 'build_commit': recorded_build_commit(game),
+            'head': git('rev-parse', 'HEAD'),
             'origin_main': git('rev-parse', 'origin/main'), 'machine': machine(), 'set': a.set,
             'runs': a.runs, 'scenes': [s['name'] for s in scenes], 'shot': a.shot, 'boot_map': a.boot_map}
     for name in ('nx2saria.ini', 'nx2navi.ini'):   # the settings file the game reads (nx2navi.ini before NX2Saria)
@@ -377,7 +408,9 @@ def summarize(out):
             w.writerow({k: (round(v, 2) if isinstance(v, float) else v) for k, v in r.items()})
     md = [f'# Benchmark {meta.get("label", "")} ({meta.get("started", "")})', '',
           f'- Game: {meta.get("game", "")}, NX2Saria {version or "?"}',
-          f'- Commit: HEAD {meta.get("head", "")[:10]}, origin/main {meta.get("origin_main", "")[:10]}',
+          f'- Build commit: {(meta.get("build_commit") or "unknown")[:10]} (build-commits.txt record)',
+          f'- Checkout: HEAD {meta.get("head", "")[:10] or "unknown"}, '
+          f'origin/main {meta.get("origin_main", "")[:10] or "unknown"}',
           f'- Machine: {meta.get("machine", {})}',
           # results from before the 'shot' key always ran with --shot
           '- Mode: ' + ('--shot (pipelines built on the render thread; not comparable with play mode)'
