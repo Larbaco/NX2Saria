@@ -421,16 +421,15 @@ void res_heapdef_served(void);                             // romfs.c serves the
 int res_heapdef_ok(void);                                  // 1 once it does; 0 after fs_init: the game has the shipped heaps
 void wide_init(void);
 void wide_present(void);                                    // each present: DLSS's render scale (res_fixed)                                      // after rt_patches_init: widescreen.c, NX2SARIA_GAME_ASPECT
+void wide_lens_host(Cpu *c);                               // the lens-load site shared by wide_aspect and fov, patch page +0xe40
 int wide_available(void);                                  // the generated C has the widescreen sets
 void wide_picture(unsigned *w, unsigned *h);               // the picture the game draws (its scene is never larger)
 int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init will set it, asked before it (romfs.c); 0 16:9
-void wide_bars_init(double margin);                         // wide_init: NX2SARIA_WIDE_MENUS = center on a picture
-                                                           // wider than 16:9, margin its share on each side
+void wide_bars_init(double x_margin, double y_margin);       // wide_init: center UI letterbox margins on either axis
 void wide_bars_screen_host(Cpu *c);                        // the set wide_bars' site (patch page +0xef0, patches.c)
 int wide_menu_open(void);                                  // the game's pause/map or system menu background is active
 void menu_mouse_screen_host(Cpu *c);                       // the set menu_mouse's site (patch page +0xee0, patches.c)
-double wide_menu_sides(void);                              // gfx_present.c, each present: the share of the width to black
-                                                           // out on each side (a menu, loading screen or movie), 0 none
+void wide_menu_bars(double *x, double *y);                 // gfx_present.c, each present: margins outside the middle 16:9
 int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set
 double wide_scene_share(void);                             // the scene's share of the picture now (0: the game's own)
 double wide_scene_wanted(void);                            // ... what the settings ask for, before the heap's limit

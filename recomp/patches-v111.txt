@@ -3,9 +3,9 @@
 # sets: +96 the game image size and +104 the scene size as {w, h} in one 64-bit word, +112 the 16:9 ratio a camera is
 # matched against, +116 the ratio that replaces it and +120 the tolerance of the match, as floats; +144 the bit
 # patterns of the UI's full-screen orthographic projection (m00 = 2 / 3840, m11 = 2 / 2160), +160..+175 and +208..+223
-# the four screen vtables that keep it, +176 the UI's horizontal squeeze (16:9 over the picture's ratio) in four lanes, +192 the
-# movie's margin on each side as a share of the width, +224 what the viewport of the save's picture gets added to its x
-# and +228 to its width, as 32-bit integers.
+# the four screen vtables that keep it, +176 the UI's horizontal squeeze in four lanes, +128 the vertical squeeze in four
+# lanes, +192/+196 the movie's horizontal/vertical margins, and +224..+239 the save viewport's x/width and y/height
+# additions as 32-bit integers.
 #
 # The matrix-update, UI and movie sites: Copyright (c) 2026 Ivan0xFF (MIT; see THIRD_PARTY_NOTICES.md). Each is
 # written without branches or flags, as the generator's patch sites need. The set names differ from the other patch
@@ -263,6 +263,7 @@ site res_fixed main 806420 52a7f009 @page:x9 b940f129   # mov w9, #0x3f800000 ->
 # pattern of the 16/9 constant, and the tolerance is 0.01); other ratios stay the camera's. fabd + fcmge + bit
 # write no flags, so the alternatives agree. s1..s4 and x9 are free there: nothing reads them before the call at
 # main+0x4c534c.
+site wide_aspect main 4c52f8 bd413e60 bd413e60 95276ed2   # ldr s0, [x19, #0x13c]; bl page+0xe40 (FOV first, then Vert+ on every 16:9 lens)
 site wide_aspect main 4c5334 bd414260 bd414260 @page:x9 2d4e0921 bd407923 7ea1d404 7e24e464 2ea41c40   # ldr s0, [x19, #0x140]; ldp s1, s2, [x9, #112]; ldr s3, [x9, #120]; fabd s4, s0, s1; fcmge s4, s3, s4; bit v0, v2, v4
 
 # The same replacement where sead's perspective projection builds its matrix (doUpdateMatrix, main+0x3485cc0) and in
@@ -284,11 +285,11 @@ site wide_aspect main 33b82c 2d558440 2d558440 @page:x9 2d4e1123 bd407922 7ea3d4
 # and in the middle 16:9 alone it would leave the picture showing at the sides. Without branches: the two projection
 # words are compared in vector lanes, the screen's vtable is read from the canvas' screen only when they match (else from
 # the canvas itself, a readable address) and compared with the four on the page, and bit selects the scaled row. x16, x17 and v16..v19 are free (a leaf; v16..v19 are written next).
-site wide_hud main 774368 ad401041 ad401041 @page:x16 fd404a10 6e040431 6e0c2491 0ea0fa31 2eb08e31 2eb1ae31 0e040631 9e660231 d106e010 8a110210 8a310011 aa110210 fd400210 @page:x17 3dc02a32 3dc03633 4e080610 6ef28e12 6ef38e13 4eb31e52 6e124253 0eb31e52 0e721e31 4e040631 3dc02e33 6e33dc33 6eb11e61   # 2D canvas: ldp q1, q4, [x2]
+site wide_hud main 774368 ad401041 ad401041 @page:x16 fd404a10 6e040431 6e0c2491 0ea0fa31 2eb08e31 2eb1ae31 4e040631 9e660231 d106e010 8a110210 8a310011 aa110210 fd400210 @page:x17 3dc02a32 3dc03633 4e080610 6ef28e12 6ef38e13 4eb31e52 6e124253 0eb31e52 0e721e31 4e040631 3dc02213 6e33dc93 6eb11e64 3dc02e33 6e33dc33 6eb11e61   # 2D canvas: the ordinary UI keeps its middle-16:9 height; full-picture backgrounds and fades keep the whole height
 
 # Pre-rendered movies: the movie layer's draw (main+0x3b5c71c) builds a viewport over the whole picture (sead viewport
 # at x29 - 40: min x +8, max x +16); it moves in by the page's margin on each side, the middle 16:9 of the picture.
-site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:x17 bd40c233 1e330a52 1e322a10 1e323a31 bd000a10 bd001211 a941a269   # movie layer viewport: ldp x9, x8, [x19, #0x18]
+site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:x17 bd40c233 1e330a52 1e322a10 1e323a31 bd000a10 bd001211 bd400e10 bd401611 1e303a32 bd40c633 1e330a52 1e322a10 1e323a31 bd000e10 bd001611 a941a269   # movie viewport: crop its center on x or y to the middle 16:9
 
 # The save's picture: the viewport helper (main+0x2846e0) makes whole pixels of a viewport object on its target and
 # hands x, y, width and height in w1..w4 to nvnCommandBufferSetScissor (main+0x284804) and then to
@@ -304,7 +305,7 @@ site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:
 # x16 are free: the call takes x0..x4, and the helper reads none of them after it. The set is on only for a picture
 # wider than 16:9.
 set wide_save NX2NAVI_PATCH_WIDE_SAVE 0
-site wide_save main 284824 f9400108 f9400108 @page:x16 295c2e0a 51087c69 5104c88c 2a0c0129 2a010129 2a020129 5ac01129 53057d29 1b0a0521 1b0b0d23   # ldr x8, [x8]; ldp w10, w11, [x16, #224]; sub w9, w3, #543; sub w12, w4, #306; orr w9, w9, w12; orr w9, w9, w1; orr w9, w9, w2; clz w9, w9; lsr w9, w9, #5; madd w1, w9, w10, w1; madd w3, w9, w11, w3
+site wide_save main 284824 f9400108 f9400108 @page:x16 295c2e0a 295d3e0e 51087c69 5104c88c 2a0c0129 2a010129 2a020129 5ac01129 53057d29 1b0a0521 1b0b0d23 1b0e0922 1b0f1124   # ldr x8, [x8]; x/w and y/h viewport additions; apply only to the 543x306 save target
 
 # The menus' black bars (NX2SARIA_WIDE_MENUS = center, runtime/wide_bars.c): each interface screen's setup
 # (main+0x773b90, vtable +0x80, the same function that sets up the canvas the set wide_hud keeps or squeezes) sets up

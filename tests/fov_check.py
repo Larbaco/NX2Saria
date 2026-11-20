@@ -36,13 +36,19 @@ def main():
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', FIRST_BASE, size)])
     site = 0x4c52f8
     original = 0xbd413e60
-    [(index, words, expected)] = table.sites['main'][site]
+    alts = table.sites['main'][site]
+    index, words, expected = next(alt for alt in alts if table.sets[alt[0]][0] == 'fov')
     assert table.sets[index] == ('fov', 'NX2SARIA_FOV_PATCH', 1)
     assert expected == original and words[0] == original
     pc = FIRST_BASE + site
     lifter = Lifter(FIRST_BASE, simd='c')
     call = lifter.lift(words[1], pc)
     assert call.kind == 'bl' and call.target == table.page + 0xeb0
+    wide_index, wide_words, wide_expected = next(alt for alt in alts if table.sets[alt[0]][0] == 'wide_aspect')
+    assert table.sets[wide_index] == ('wide_aspect', 'NX2NAVI_PATCH_WIDE_ASPECT', 0)
+    assert wide_expected == original and wide_words[0] == original
+    wide_call = lifter.lift(wide_words[1], pc)
+    assert wide_call.kind == 'bl' and wide_call.target == table.page + 0xe40
 
     class Camera:
         name = 'main'
@@ -60,7 +66,7 @@ def main():
     displacement = lifter.lift(original, pc).code
     assert displacement in on and displacement in off
     assert 'rt_dispatch(c)' in on and 'rt_dispatch(c)' not in off
-    print('fov_check: both branches preserve the lens load, with a callback only when enabled')
+    print('fov_check: FOV and Vert+ share the lens site; both callbacks keep the load and target their page slots')
 
 
 if __name__ == '__main__':

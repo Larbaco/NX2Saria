@@ -344,6 +344,16 @@ compared byte for byte with `tools/layout_dump.py` `split_picture`, every copy i
 
 What a run has to show, by shape (screenshots at each of 21:9, 32:9, a 3440x1440 window and 16:10):
 
+For 16:10 and 3:2, Phase A keeps the 16:9 UI projection at the center by compressing its vertical scale to
+`aspect / (16/9)`. Gameplay therefore has clear space above and below the HUD. The four full-picture canvases (item-wheel
+and pause/system backgrounds, event fade, loading fade) keep their full height, so a fade darkens the scene above and
+below the UI band and the pause background redraws its blurred capture across the whole picture. Tall pictures do not
+clear those margins to black while these screens are active. Movies use the full height; the save thumbnail still crops
+to the centered 16:9. The camera first applies the configurable gameplay FOV, then opens the vertical angle by
+`2 atan(tan(v/2) * (16/9) / aspect)` for each lens using the game's 16:9 projection. This keeps the horizontal view
+unchanged while showing more above and below. These taller modes do not use the installer's `tall_edits`: its 1.1.1
+RomFS layout archives have not been validated for those edits.
+
 - the hearts and magic at the top left corner, the item slot and sub-items at the top right, the minimap with its
   frame, floor label, icons and key tab at the bottom right, in the field and in a dungeon;
 - the pause menu's map in its usual place, with its icons on it, and the minimap back in the corner after closing it;

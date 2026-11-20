@@ -68,12 +68,15 @@ static int watched(void) {
 }
 
 #define MARGIN 0.125
-#define expect(want, log_has) expect_at(__LINE__, want, log_has)
-static void expect_at(int line, double want, const char *log_has) {
+#define TOP_MARGIN 0.05
+#define expect(want, log_has) expect_at(__LINE__, want, 0, log_has)
+static void expect_at(int line, double want_x, double want_y, const char *log_has) {
     int lines = log_lines;
-    double got = wide_menu_sides();
-    if (got != want) {
-        fprintf(stderr, "wide_bars_check: line %d: sides %g, expected %g (last log: %s)\n", line, got, want, last_log);
+    double got_x, got_y;
+    wide_menu_bars(&got_x, &got_y);
+    if (got_x != want_x || got_y != want_y) {
+        fprintf(stderr, "wide_bars_check: line %d: margins %g/%g, expected %g/%g (last log: %s)\n", line, got_x,
+                got_y, want_x, want_y, last_log);
         exit(1);
     }
     if (log_has && (log_lines == lines || !strstr(last_log, log_has))) {
@@ -86,7 +89,7 @@ static int run_no_set(void) {
     have_set = 0;
     Screen menu;
     make(&menu, MENU_BG, 0);
-    wide_bars_init(MARGIN);
+    wide_bars_init(MARGIN, 0);
     assert(!set_on && strstr(last_log, "no set wide_bars"));
     expect(0, NULL);
     movie = 1;
@@ -104,7 +107,7 @@ int main(int argc, char **argv) {
     make(&menu, MENU_BG, 0);
     make(&system_bg, MENU_BG, 0);
     make(&loading, LOADING_FADE, 0);
-    make(&event, EVENT_FADE, 2);
+    make(&event, EVENT_FADE, 0);
     make(&other, 0x4b4dfc0ull, 2);
 
     // before wide_init: nothing to black out, whatever is up
@@ -117,7 +120,7 @@ int main(int argc, char **argv) {
     menu.b[0x1a6] = 0;
     assert(!wide_menu_open());
 
-    wide_bars_init(MARGIN);
+    wide_bars_init(MARGIN, 0);
     assert(set_on);
 
     // the screens the game sets up: the two menu backgrounds and the loading fade are watched, the others not
@@ -128,10 +131,10 @@ int main(int argc, char **argv) {
     setup((uintptr_t)&other);
     setup(0);
     setup(UNMAPPED);
-    assert(watched() == 3);
+    assert(watched() == 4);
     setup((uintptr_t)&menu);   // set up again: still once
-    assert(watched() == 3);
-    assert(strstr(last_log, "watching the loading fade"));
+    assert(watched() == 4);
+    assert(strstr(last_log, "watching the event fade"));
 
     expect(0, NULL);   // play: every watched screen closed
     expect(0, NULL);
@@ -154,19 +157,21 @@ int main(int argc, char **argv) {
     system_bg.b[0x1a6] = 0;
     expect(0, "shown again");
 
-    // the loading fade: only while it is open, not while it fades in or out
+    // The wide loading fade only needs side bars while fully open.
     loading.b[0x1a6] = 1;
     expect(0, NULL);
     loading.b[0x1a6] = 2;
     expect(MARGIN, "a loading screen is up");
     loading.b[0x1a6] = 3;
-    expect(0, "the loading fade closed");
+    expect(0, NULL);
     loading.b[0x1a6] = 0;
     expect(0, NULL);
 
-    // the event fade and other screens never black the sides
+    // An event fade also keeps its margins black; other screens do not.
     event.b[0x1a6] = 1;
     other.b[0x1a6] = 2;
+    expect(MARGIN, "event fade is active");
+    event.b[0x1a6] = 0;
     expect(0, NULL);
 
     // a movie, also under a menu; the sides come back once both are gone
@@ -183,11 +188,11 @@ int main(int argc, char **argv) {
     menu.b[0x1a6] = 2;
     set_vt(&menu, SCREEN_BASE);
     expect(0, "is gone");
-    assert(watched() == 2);
+    assert(watched() == 3);
     // another menu background set up at the same address is watched again
     make(&menu, MENU_BG, 1);
     setup((uintptr_t)&menu);
-    assert(watched() == 3);
+    assert(watched() == 4);
     expect(MARGIN, "pause or system menu");
     menu.b[0x1a6] = 0;
     expect(0, "shown again");
@@ -214,12 +219,30 @@ int main(int argc, char **argv) {
     late.b[0x1a6] = 0;
     expect(0, "shown again");
 
+    // A tall picture watches fades and movies without clearing their full-height image margins.
+    wide_bars_init(0, 0);
+    late.b[0x1a6] = 1;
+    expect_at(__LINE__, 0, 0, "no margins cleared");
+    late.b[0x1a6] = 3;
+    expect_at(__LINE__, 0, 0, NULL);
+    late.b[0x1a6] = 0;
+    expect(0, "full-height screens: ended");
+    event.b[0x1a6] = 2;
+    expect_at(__LINE__, 0, 0, "no margins cleared");
+    event.b[0x1a6] = 0;
+    expect(0, NULL);
+    movie = 1;
+    expect_at(__LINE__, 0, 0, "no margins cleared");
+    movie = 0;
+    expect(0, NULL);
+
     // the lines about the sides stop after BARS_TOLD
+    wide_bars_init(MARGIN, 0);
     for (int i = 0; i < BARS_TOLD; i++) {
         system_bg.b[0x1a6] = 2;
-        wide_menu_sides();
+        wide_menu_bars(&(double){0}, &(double){0});
         system_bg.b[0x1a6] = 0;
-        wide_menu_sides();
+        wide_menu_bars(&(double){0}, &(double){0});
     }
     int lines = log_lines;
     system_bg.b[0x1a6] = 2;
@@ -228,7 +251,7 @@ int main(int argc, char **argv) {
     expect(0, NULL);
     assert(log_lines == lines);
 
-    puts("wide_bars_check: black sides under the pause and system menus (opening to closed), the open loading fade "
-         "and movies, never for other screens; destroyed screens dropped, a full table logged once, registers kept");
+    puts("wide_bars_check: side and top/bottom margins follow centered screens, fades and movies; destroyed screens "
+         "dropped, a full table logged once, registers kept");
     return 0;
 }

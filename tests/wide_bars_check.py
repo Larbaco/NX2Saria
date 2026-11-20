@@ -88,8 +88,9 @@ def main():
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
                            '-I', str(work), '-I', str(ROOT / 'runtime'),
                            str(ROOT / 'tests' / 'wide_bars_check.c'), '-o', str(exe)], env=env)
-    rc = subprocess.run([str(exe)], env=env).returncode
-    return subprocess.run([str(exe), 'no-set'], env=env).returncode or rc
+    subprocess.check_call([str(exe)], env=env)
+    subprocess.check_call([str(exe), 'no-set'], env=env)
+    return 0
 
 
 if __name__ == '__main__':
