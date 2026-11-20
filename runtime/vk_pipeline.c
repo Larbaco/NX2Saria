@@ -8607,6 +8607,7 @@ static struct {
     uint8_t out_iid[PW_OUT][32];
     uint64_t out_words[PW_OUT];
     int n_out;
+    int test_ms;   // NX2SARIA_PREPARE_STALL_TEST_MS: the last variant waits this long first, a stalled build for tests
 } PW;
 
 static void pw_mark(int slot, size_t at, uint64_t words) {
@@ -8624,6 +8625,7 @@ static void lb_warm_worker(void *arg) {
         size_t i = (size_t)plat_inc64(&LB.next) - 1;
         if (i >= LB.n) return;
         pw_mark(slot, i + 1, 0);   // from the hand-out on, so prep_stalled never takes a worker loading one for idle
+        if (PW.test_ms > 0 && i + 1 == LB.n) plat_sleep_ms((uint32_t)PW.test_ms);
         int owned = 0, skip = skip_listed(LB.e[i].iid);
         const GfxShader *sh = skip ? NULL : gfx_shader_load_private(LB.e[i].iid, &owned);
         int st = sh ? gfx_shader_stage(sh) : -1;
@@ -8768,6 +8770,7 @@ static void lb_warm_prepared(const char *dir, int sample) {
     skip_init(dir);
     lb_big_words_init();   // the boot's line for large compute shaders, and its record of the dispatched ones
     cu_open_prep(dir);
+    PW.test_ms = cfg_int("NX2SARIA_PREPARE_STALL_TEST_MS");
     char jp[PLAT_PATH_MAX * 2 + 48];
     snprintf(jp, sizeof jp, "%s/shader-prepare-journal.bin", dir);
     SK.journal = plat_fs_create(jp, NULL);   // skip_init removed a leftover one
