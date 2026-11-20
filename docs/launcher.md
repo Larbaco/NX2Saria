@@ -98,14 +98,18 @@ Customize Launcher (on the home screen) makes the look the player's own:
   from there without the launcher's window (`launcher/steam.py`). The icon is the original leaf sprig. Its other
   pictures are made from the player's game when the row is chosen (`launcher/gameart.py`): the title screen's logo,
   and a frame of the first title movie (the moonlit field) as the background, the cover and the wide tile, the movie
-  decoded with `dav1d.exe` on Windows or system `dav1d` on Linux, and the logo with the runtime's own ASTC decoder
-  built with clang. They go into each account's `config/grid`, the shortcut into its `shortcuts.vdf` (other shortcuts
-  round-trip byte for byte, ours updated when it is there; a shortcut under the former game name is renamed in place;
+  decoded with `dav1d.exe` on Windows or system `dav1d`/`ffmpeg` on Linux, and the logo with the runtime's own ASTC
+  decoder built with clang. If neither Linux decoder is installed, the shortcut is still created with its leaf icon,
+  and the missing artwork is logged. They go into each account's `config/grid`, the shortcut into its `shortcuts.vdf`
+  (other shortcuts round-trip byte for byte, ours updated when it is there; a shortcut under the former game name is
+  renamed in place;
   Windows keeps `shortcuts.vdf.nx2navi-backup`, Linux keeps `shortcuts.vdf.nx2saria-bak` before each change).
   Steam reads that file only when it starts and writes it back when it closes. Windows asks Steam to close and starts
   it again; Linux refuses to write while Steam is open and asks the player to close it. Linux checks native and
-  Flatpak Steam data roots and updates every account found. It keeps `shortcuts.vdf.nx2saria-bak` before an atomic
-  write. Its shortcut runs the installed `nx2saria-launcher` wrapper with `--play`; Windows runs the launcher's
+  Flatpak Steam data roots and updates every native account. The default Steam Flatpak permissions do not grant
+  `org.freedesktop.Flatpak` access to the host or filesystem access to the launcher in the home directory, so Flatpak
+  accounts are logged and skipped. Its shortcut runs the installed
+  `nx2saria-launcher` wrapper with `--play`; Windows runs the launcher's
   `pythonw.exe` on `data/steam_play.pyw`, which
   starts the launcher of `app/current.txt` with `--play`: the game starts as Play starts it, and the process waits
   for it, so Steam counts the game as running while it is. Its end goes into the logs as Play's does, and a fatal
