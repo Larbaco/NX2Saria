@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=458760f66429595dfdce5f6532ade5a58d7adca5 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=4679f2a7b22fdeb015100f0d6f0303e6eab365f1 reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -23,6 +23,7 @@ Problemas que conhecemos na versão atual e o que os evita. Quando um deles é c
 ## Shaders e pipelines
 
 - **A primeira inicialização depois de uma instalação, de uma atualização ou de uma atualização de driver, e a primeira visita a uma área, podem ter pausas** enquanto shaders e pipelines são compilados. As inicializações seguintes os leem dos caches.
+- **No NVIDIA, uma atualização ou a primeira inicialização volta a compilar os shaders** (a atualização fica muitos minutos em "Built ... shaders for your graphics card", ou toda inicialização tem pausas como depois de uma instalação) quando o cache de shaders do driver está cheio: o driver descarta shaders antigos para abrir espaço, e o jogo os compila de novo. No Painel de Controle da NVIDIA, em Gerenciar as configurações 3D, defina **Tamanho do cache do sombreador** como 10 GB ou Ilimitado.
 - **Um jogo encerrado à força**, em vez de fechado, pode deixar o cache de pipelines sem ser gravado depois que o cache foi renovado. Nesse caso, a execução seguinte o grava.
 
 ## Trackers de mapa

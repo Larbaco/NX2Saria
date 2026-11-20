@@ -2562,6 +2562,12 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
 # ---------------------------------------------------------------- main
 
 SHADER_PROGRESS = re.compile(r'^prepare-shaders: progress (translate|build) (\d+) (\d+)\s*$')
+# The line nx2saria.exe prints when it stopped waiting for builds the graphics driver held too long
+# (runtime/vk_pipeline.c prep_stalled, NX2SARIA_PREPARE_STALL_S): it then ends with code 0, and the game goes on with
+# those variants in the background. shader_run keeps how many there were in SHADERS_LEFT.
+SHADERS_LEFT_LINE = re.compile(r'^prepare-shaders: \d+ of \d+ variants built into the driver cache .*; (\d+) still building '
+                               r'after \d+ s each are left to the game')
+SHADERS_LEFT = {'n': 0}
 SHADER_STALL_S = 180   # no count moved for this long: the launcher says so (the step still runs)
 SHADER_BEAT_S = 10     # a progress event at least this often while the step runs
 
@@ -2727,10 +2733,14 @@ def shader_run(cmd, cwd=None, build_only=False):
     beat = threading.Thread(target=heartbeat, daemon=True)
     beat.start()
     last_log = 0.0
+    SHADERS_LEFT['n'] = 0
     try:
         for line in proc.stdout:
             m = SHADER_PROGRESS.match(line)
             if not m:
+                left = SHADERS_LEFT_LINE.match(line)
+                if left:
+                    SHADERS_LEFT['n'] = int(left.group(1))
                 say(line.rstrip('\n'))
                 continue
             phase, done, total = m.group(1), int(m.group(2)), int(m.group(3))
@@ -2785,8 +2795,16 @@ def warm_driver_cache(out):
         rc = str(e)
     if rc:
         say(f'  that did not finish ({rc}); the game does it in the background while it runs')
+    elif SHADERS_LEFT['n']:
+        say(f"  driver's cache warm in {time.monotonic() - t0:.0f} s, but for {left_text(SHADERS_LEFT['n'])}")
     else:
         say(f"  driver's cache warm in {time.monotonic() - t0:.0f} s")
+
+
+def left_text(n):
+    """What the build log says of the variants a preparation left to the game (SHADERS_LEFT_LINE)."""
+    return (f"{n} shader{'s' if n != 1 else ''} the graphics driver was still building: the rest continues in the game, "
+            'in the background')
 
 
 def step_shaders(out, update=False):
@@ -2829,6 +2847,8 @@ def step_shaders(out, update=False):
         warm_driver_cache(out)
         return
     rc = shader_run(cmd)
+    if not rc and SHADERS_LEFT['n']:
+        say(f"  shaders prepared, but for {left_text(SHADERS_LEFT['n'])}")
     if rc:
         fail('preparing the shaders failed (the lines above say why); the game still runs, compiling shaders as it '
              'meets them. Run the build again to retry this step')

@@ -2038,6 +2038,38 @@ class MakeGameTest(Tmp):
         events = [json.loads(ln[2:]) for ln in buf.getvalue().splitlines() if ln.startswith('@@')]
         self.assertEqual([e['fraction'] for e in events if e['detail'].startswith('Built')], [0.0, 0.25, 1.0])
 
+    def test_a_warm_that_leaves_stalled_builds_to_the_game_succeeds(self):
+        """nx2saria.exe stops waiting for builds the driver holds past NX2SARIA_PREPARE_STALL_S (vk_pipeline.c
+        prep_stalled), says so and ends with code 0: the build log says the rest continues in the game, not that the
+        step failed, and a later run that leaves nothing says the plain line again."""
+        self.out.mkdir()
+        (self.out / 'shader-prepared.bin').write_bytes(b'x')
+        exe = self.out / self.mg.EXE_NAME
+        exe.write_bytes(b'MZ')
+        stalled = self.tmp / 'stalled.py'
+        stalled.write_text(
+            'print("prepare-shaders: progress build 99 100", flush=True)\n'
+            'print("prepare-shaders: variant ' + 'ab' * 32 + ' (compute, 900000 SPIR-V words) still building after '
+            '301 s", flush=True)\n'
+            'print("prepare-shaders: 99 of 100 variants built into the driver cache on 12 threads in 400000 ms; 1 still '
+            'building after 300 s each are left to the game, which goes on with them in the background '
+            '(NX2SARIA_PREPARE_STALL_S)", flush=True)\n')
+        done = self.tmp / 'done.py'
+        done.write_text('print("prepare-shaders: progress build 100 100", flush=True)\n')
+        real = self.mg.subprocess.Popen
+        for script, want, unwanted in ((stalled, 'the rest continues in the game, in the background', 'did not finish'),
+                                       (done, "driver's cache warm in", 'the rest continues')):
+            def popen(cmd, script=script, **kw):
+                return real([sys.executable, str(script)], **kw)
+            buf = io.StringIO()
+            with mock.patch.object(self.mg.subprocess, 'Popen', popen), contextlib.redirect_stdout(buf):
+                self.mg.warm_driver_cache(self.out)
+            text = buf.getvalue()
+            self.assertIn(want, text)
+            self.assertNotIn(unwanted, text)
+        self.assertTrue(self.mg.left_text(1).startswith('1 shader the graphics driver was still building'))
+        self.assertTrue(self.mg.left_text(3).startswith('3 shaders the graphics driver was still building'))
+
     def test_shaders_step_packs_the_cache(self):
         """After the preparation the shaders step folds the loose files of the shader cache into shader-cache.pack
         (tools/pack_shader_cache.py), as the installer did; a kit without the tool leaves the cache as it is."""

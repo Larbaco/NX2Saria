@@ -320,6 +320,16 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
    driver update or an update that changed what they are built with. Its bar
    follows that count from 0 to 100 %, and the Updates row says an update takes from a few minutes to half an hour
    or more (`launcher/ui/app.py` `UPDATE_TAKES`).
+   This build and the full preparation at an install leave out the compute shaders over the size at which the game's
+   boot builds one only after a run has dispatched it (`runtime/vk_pipeline.c` `lb_big_left_out`, the same rule and the
+   same `compute-used.bin` for both): they cost minutes each and gigabytes of memory on NVIDIA's compiler for pipelines
+   the game does not ask for, and the line `N large compute shaders left out (never dispatched)` counts them. Once
+   every other variant is built, builds the driver has held for `NX2SARIA_PREPARE_STALL_S` seconds (300; 0 waits for
+   all) are not waited for: the game names them with their time, writes where the game goes on into `shader-warm.txt`,
+   and ends with code 0, and the step says the rest continues in the game, in the background (`prep_stalled`;
+   `tools/make_game.py` `SHADERS_LEFT_LINE`; `NX2SARIA_PREPARE_STALL_TEST_MS` holds the last variant that long
+   before its build, for tests). One update on an RTX 3050 Laptop GPU with NVIDIA 546.18 built 42,139
+   variants in 28 min and then waited 93 min for the last three.
 8. **Draw the Button Prompts**, with button art in the new version: only when the art, the prompt tools or the key
    bindings changed, or a prompt folder is missing (a first version with art draws them all).
 9. Every version but the current and the previous one is deleted, except a staged release newer than the current
