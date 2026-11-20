@@ -85,7 +85,7 @@ static unsigned picture_height(void) {
 // picks. The share is written to +240 at every change of the setting (the menu switches the mode live); the set goes on
 // RES_FIXED_AFTER presents after the first, once the controller has filled the fields the fixed path keeps. Without
 // DLSS or FSR the share is NX2SARIA_SCENE_SHARE's (plain_share): the game's own most unless set, all of the picture
-// for the menu's Native.
+// for the menu's Native, or dynamic resolution's step below it (dynres.c dynres_share).
 #define RES_FIXED_AFTER 120
 // The share follows the upscaler that runs, not the setting: DLSS starts only after a restart and only where NGX came up
 // (vk_dlaa_available), and FSR 3.1 only where its library loads (vk_dlaa_fsr3), so a mode picked in the menu, or one
@@ -113,9 +113,11 @@ static double fit_share(void) {
     return heap_unserved ? PLAIN_SHARE : heap_share();
 }
 
-// The share of the picture the upscaler's mode renders (NX2SARIA_DLSS; NVIDIA's ratios).
+// The share of the picture the upscaler's mode renders (NX2SARIA_DLSS; NVIDIA's ratios), or the step dynamic
+// resolution takes in its place (dynres.c dynres_override), so that its step changes the scene the game draws.
 static double mode_share(void) {
-    const char *m = cfg_value("NX2SARIA_DLSS");
+    const char *m = dynres_override();
+    if (!m) m = cfg_value("NX2SARIA_DLSS");
     return !strcmp(m, "quality") ? 2.0 / 3 : !strcmp(m, "balanced") ? 0.58 : !strcmp(m, "performance") ? 0.5
          : !strcmp(m, "ultra_performance") ? 1.0 / 3 : 1.0;
 }
@@ -153,9 +155,26 @@ static double plain_share(void) {
     return s > 1 ? 1 : s;
 }
 
+// Without an upscaler, dynamic resolution's step (dynres.c dynres_share) in place of plain_share while it is below it:
+// it steps down from the share wide_dynres_base gives it and never above the setting, also in the frame between a
+// changed scene_share and its new start.
 static double scene_share(void) {
-    double s = dlss_share(), plain = plain_share();
+    double s = dlss_share(), plain = plain_share(), dyn = s > 0 ? 0 : dynres_share();
+    if (dyn > 0 && dyn < plain) plain = dyn;
     return s > 0 ? s : plain > fit_share() ? fit_share() : plain;   // NX2SARIA_SCENE_SHARE above the heap the game has
+}
+
+// dynres.c: the share dynamic resolution steps down from while no upscaler runs, the scene's share as the settings
+// give it (plain_share within the heap the start made, fit_share); -1 while DLSS or FSR 3.1 runs (upscaler_runs: it
+// steps the upscaler's mode then); 0 where there is no share to step: no res_fixed set in the generated C, or a
+// scene_share of 0 (the game's own dynamic resolution).
+double wide_dynres_base(void) {
+    static int set = -2;
+    if (set == -2) set = rt_patch_set("res_fixed");
+    if (upscaler_runs()) return -1;
+    double s = plain_share(), fit = fit_share();
+    if (s != s) s = 0;   // a scene_share that is not a number: nothing to step
+    return set < 0 || s <= 0 ? 0 : s > fit ? fit : s;
 }
 
 // The share the settings ask for, before the heap's limit: the upscaler's mode while one runs, else plain_share.
@@ -218,8 +237,10 @@ static double scale_k = 1.0;
 // One line for the scene in effect: its size, the picture's and how the scene reaches the picture's size. Written when
 // the fixed share first takes over from the game's dynamic resolution and again when the share or the way it is scaled
 // changes (a setting changed in the menu), not at every settings change. The scene's size is the share of the
-// picture's as the game sizes it (a 50% scene of 5120x2160 is 2560x1080).
-static void scene_log(double s, int first) {
+// picture's as the game sizes it (a 50% scene of 5120x2160 is 2560x1080). dyn: dynamic resolution's step moved the
+// share (dynres.c, which logs the step too): the first 40 such lines of a run show the scene following it, and later
+// ones are left out, since the steps go on for as long as the game runs.
+static void scene_log(double s, int first, int dyn) {
     static double last_s = -1;
     static int last_how = -1;
     // 1 DLSS, 2 FSR, 3 not scaled (the stand-in decodes 1:1), 4 the stand-in's edge-adaptive filter, 5 its linear one
@@ -227,6 +248,8 @@ static void scene_log(double s, int first) {
             : !strcmp(cfg_value("NX2SARIA_STANDIN_FILTER"), "easu") ? 4 : 5;
     if (!first && how == last_how && fabs(s - last_s) < 0.001) return;
     last_s = s, last_how = how;
+    static int dyn_lines;
+    if (dyn && !first && dyn_lines++ >= 40) return;
     static const char *const hows[] = {
         "", "DLSS scales it to the picture", "AMD FSR scales it to the picture",
         "native: no upscaling, the upscaler's stand-in only decodes it 1:1",
@@ -236,9 +259,10 @@ static void scene_log(double s, int first) {
     wide_picture(&pw, &ph);
     rt_log("widescreen: scene %ux%u, picture %ux%u (%.0f%% of it): %s%s", (unsigned)lround(pw * s),
            (unsigned)lround(ph * s), pw, ph, s * 100, hows[how], first ? " (the game's dynamic resolution off)" : "");
-    // The menu's Native, or another share, larger than the heap the start made: say why the scene is smaller
+    // The menu's Native, or another share, larger than the heap the start made: say why the scene is smaller. Against
+    // the heap's share, not s, which dynamic resolution's step may hold below the setting.
     double want = wanted_share();
-    if (how >= 3 && want > s + 0.001)
+    if (how >= 3 && want > fit_share() + 0.001)
         rt_log("widescreen: scene_share asks for %.0f%% of the picture; the game's render-target heap %s", want * 100,
                heap_unserved ? "is the shipped one (the start's log says why the grown one was not served)"
                : wide_scene_restart() ? "was sized at the start for less: the next start gives it"
@@ -251,10 +275,17 @@ void wide_present(void) {
     static unsigned seen = ~0u;
     if (set == -2) set = rt_patch_set("res_fixed");
     if (set < 0) return;
+    static const char *dyn_seen;
+    static double dyn_share_seen;
     unsigned v = cfg_version();
+    // dynamic resolution's step moves the share without a setting changing: the upscaler's mode, or the scene share
+    // without one
+    const char *dyn = dynres_override();
+    double dyn_share = dynres_share();
     int at = ++presents == RES_FIXED_AFTER, due = presents >= RES_FIXED_AFTER;
-    if (v == seen && !at) return;
-    seen = v;
+    int dyn_only = v == seen && !at;
+    if (dyn_only && dyn == dyn_seen && dyn_share == dyn_share_seen) return;
+    seen = v, dyn_seen = dyn, dyn_share_seen = dyn_share;
     double s = scene_share();
     float page_s = (float)(s * scale_k);
     if (s > 0) memcpy((uint8_t *)rt_patch_page() + 240, &page_s, 4);
@@ -267,7 +298,7 @@ void wide_present(void) {
     // dynamic resolution) gave way to a fixed one
     if (!due) return;
     if (!on) rt_patch_switch(set, 1);
-    scene_log(s, !on);
+    scene_log(s, !on, dyn_only);
 }
 
 int wide_scene_settable(void) { return rt_patch_set("res_fixed") >= 0; }

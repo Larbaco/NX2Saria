@@ -434,6 +434,7 @@ int wide_scene_settable(void);                             // the generated C ha
 double wide_scene_share(void);                             // the scene's share of the picture now (0: the game's own)
 double wide_scene_wanted(void);                            // ... what the settings ask for, before the heap's limit
 int wide_scene_restart(void);                              // a restart gives the larger scene the settings ask for
+double wide_dynres_base(void);                             // dynres.c: the scene share to step from, -1 an upscaler runs
 uint64_t wide_heap_extra_kib(void);                        // the texture heap's growth for the widescreen picture
 // The most res_heap_extra_kib may be (memory.c): with more the application pool passes the heap region and the
 // game's own SetHeapSize is refused. A whole number of 2 MiB.
@@ -443,6 +444,7 @@ float res_dlss_lod_bias(void);                             // NX2SARIA_DLSS upsc
 int res_dlss_mode(const char *mode);                       // NX2SARIA_DLSS changed while running: new scene size
 void dynres_frame(void);                                   // dynamic resolution: one presented frame (vk_backend.c)
 const char *dynres_override(void);                         // the DLSS mode dynamic resolution uses now, NULL: the setting's
+double dynres_share(void);                                 // the scene share it uses now without an upscaler, 0: the setting's
 void res_fn_hit(uint64_t addr, uint64_t x0);               // main.c fnprof_hit: catches the renderer at start
 void res_present(Cpu *c);                                  // nvnQueuePresentTexture: applies a pending scene size
 void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene sizes in effect (the game's own

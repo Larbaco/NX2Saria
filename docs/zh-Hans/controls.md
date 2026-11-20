@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=e772509093132509302e7571271d7a6efebe3ade reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=bc2e6bc555f243905a9646008864a32236fe95d5 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -117,6 +117,7 @@ Minus+Plus 组合键永远不会传给游戏。在菜单中，方向键、十字
 - 你手动更改的选项会保留你的值，预设随即显示为 *…（自定义）*。当预设所设置的选项被手动改成其他值时，选择该预设会先列出这些选项：*使用预设* 会把它们改为预设的值，*取消* 则保持原样。
 - 选择属于草稿（[见上文](#在菜单中应用更改)）：*Apply* 会把 `preset = <tier>` 写入 `nx2saria.ini`（选择 *推荐* 时不写这一行）。预设更改的分辨率、阴影和草会在重启后生效。
 - *场景分辨率* 位于 *Upscaling* 下方，在 DLSS 和 FSR 都未开启时显示，用于设置 3D 场景的绘制尺寸，从画面的 33 % 到 100 %（原生）。越低越快、越模糊，适合较慢的电脑和掌机；HUD 和菜单保持清晰。更改立即生效；比游戏启动时更大的尺寸要在重启后才生效。在这个版本中，`render_scale` 和 `output_res` 不起作用：降低场景尺寸靠的是这一行和预设。
+- *动态分辨率* 位于 *场景分辨率* 下方，在显卡跟不上 *帧率上限* 时降低 3D 场景的尺寸，跟得上时再升回：在吃力的场面牺牲一点清晰度，换取更稳定的帧率，HUD 和菜单保持清晰。它以低于帧率上限每帧时间 10 % 为目标（60 fps 时为 15 ms），因此场景会在掉帧之前缩小。使用 DLSS 或 FSR 时，它逐级降低超分辨率模式，最低到 *性能*（在 DLAA 或 Native AA 下没有可降的档位）；不使用时，它把场景从你选择的 *场景分辨率* 降到 *最低场景分辨率*（33 % 到 100 %，默认 50 %）。*动态分辨率* 关闭时这一行显示为灰色，开启 DLSS 或 FSR 时这一行隐藏。两者都立即生效，任何预设都不会开启它。详见 [Quality presets](../presets.md#dynamic-resolution)（英文）。
 - `logs/nx2saria.log` 的开头会说明选择了什么以及原因：`preset: hardware: ...`（游戏找到的硬件）、`preset: recommended <tier>: <reason>`、`preset: in use <tier> (<source>)`，以及预设设置的每个选项各一行 `preset:   <KEY> = <value> (...)`，说明该值来自预设、你的设置文件还是设备配置。报告画面或帧率问题时请附上日志。
 
 预设如何选择以及每个预设设置了什么：[Quality presets](../presets.md)（英文）。

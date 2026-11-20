@@ -387,6 +387,10 @@ typedef enum {
     // the Scene resolution row (ui/menu.cpp row_scene_res, NX2SARIA_SCENE_SHARE): "%s" a share ("75 %") marked as the
     // game's own, the native size or the preset's
     UI_MENU_SCENE_RES, UI_MENU_SCENE_RES_DESC, UI_MENU_SCENE_RES_GAME, UI_MENU_SCENE_RES_NATIVE, UI_MENU_SCENE_RES_PRESET,
+    // the Dynamic resolution rows (ui/menu.cpp row_dyn_res, NX2SARIA_DYN_RES and NX2SARIA_DYN_RES_MIN): MIN_OFF is the
+    // note of the minimum's row while dynamic resolution is off
+    UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC, UI_MENU_DYN_RES_MIN, UI_MENU_DYN_RES_MIN_DESC, UI_MENU_DYN_RES_MIN_OFF,
+    UI_MENU_DYN_RES_NO_ROOM, UI_MENU_DYN_RES_NATIVE,
     UI_TEXT_COUNT
 } UiTextId;
 

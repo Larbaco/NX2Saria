@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=e772509093132509302e7571271d7a6efebe3ade reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=bc2e6bc555f243905a9646008864a32236fe95d5 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -252,6 +252,14 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
   desenhada, de 33 % da imagem até 100 % (nativo). Menor é mais rápido e mais suave, para PCs lentos e portáteis; o HUD
   e os menus continuam nítidos. Vale na hora; um tamanho acima daquele com que o jogo começou só vem depois de
   reiniciar. Nesta versão `render_scale` e `output_res` não mudam nada: são esta linha e o preset que diminuem a cena.
+- *Resolução dinâmica*, abaixo de *Resolução da cena*, baixa o tamanho da cena 3D enquanto a placa de vídeo não
+  acompanha o *Limite de quadros* e volta a subi-lo quando ela dá conta: um pouco de nitidez nas cenas pesadas por uma
+  taxa de quadros mais estável, com o HUD e os menus nítidos. Ela mira 10 % abaixo do tempo de quadro do limite (15 ms
+  a 60 fps), então a cena diminui antes de se perderem quadros. Com DLSS ou FSR, desce o modo do upscaler até
+  *Desempenho* (em DLAA ou Native AA não há o que descer); sem eles, baixa a cena da *Resolução da cena* escolhida até a
+  *Resolução mínima da cena* (de 33 % a 100 %, padrão 50 %). Essa linha fica cinza enquanto a *Resolução dinâmica*
+  está desligada e some enquanto DLSS ou FSR está ligado. As duas valem na hora, e nenhum preset liga a resolução
+  dinâmica. Mais em [Quality presets](../presets.md#dynamic-resolution) (em inglês).
 - O `logs/nx2saria.log` diz o que foi escolhido e por quê, perto do começo: `preset: hardware: ...` (o que o jogo
   encontrou), `preset: recommended <tier>: <reason>`, `preset: in use <tier> (<source>)` e uma linha
   `preset:   <KEY> = <value> (...)` para cada opção que o preset define, dizendo se o valor veio do preset, do seu
