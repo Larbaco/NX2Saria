@@ -17,6 +17,7 @@ an imaging package.
 import ctypes
 import hashlib
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -108,20 +109,32 @@ def astc_library(layout):
     if not src.is_file():
         raise ArtError(f'{src} is missing')
     tag = hashlib.sha256(src.read_bytes() + (layout.app / 'runtime' / 'tex.h').read_bytes()).hexdigest()[:12]
-    dll = layout.cache / f'astc-{tag}.dll'
-    if not dll.is_file():
-        clang = layout.msys / 'bin' / 'clang.exe'
-        if not clang.is_file():
+    import sys
+    if sys.platform.startswith('linux'):
+        library = layout.cache / f'astc-{tag}.so'
+        compiler = shutil.which('clang')
+        command = [compiler, '-shared', '-fPIC', '-O2', '-w', str(src), '-o',
+                   str(library.with_name(library.name + '.tmp'))]
+        env = os.environ.copy()
+    else:
+        library = layout.cache / f'astc-{tag}.dll'
+        compiler = layout.msys / 'bin' / 'clang.exe'
+        if not compiler.is_file():
             raise ArtError('the build tools are not installed (Rebuild the Game installs them)')
         env = dict(os.environ, PATH=str(layout.msys / 'bin') + os.pathsep + os.environ.get('PATH', ''))
-        tmp = dll.with_name(dll.name + '.tmp')
-        r = subprocess.run([str(clang), '-shared', '-O2', '-static', '-w', '-I', str(layout.app / 'runtime'),
-                            '-I', str(layout.msys / 'include' / 'vma'), str(src), '-o', str(tmp)],
-                           capture_output=True, text=True, env=env, creationflags=NO_WINDOW)
+        command = [str(compiler), '-shared', '-O2', '-static', '-w', '-I', str(layout.app / 'runtime'),
+                   '-I', str(layout.msys / 'include' / 'vma'), str(src), '-o',
+                   str(library.with_name(library.name + '.tmp'))]
+    if not compiler:
+        raise ArtError('clang is not installed (the system build tools include it)')
+    if not library.is_file():
+        layout.cache.mkdir(parents=True, exist_ok=True)
+        tmp = library.with_name(library.name + '.tmp')
+        r = subprocess.run(command, capture_output=True, text=True, env=env, creationflags=NO_WINDOW)
         if r.returncode or not tmp.is_file():
             raise ArtError(f'the texture decoder did not build: {(r.stderr or r.stdout).strip()[-300:]}')
-        os.replace(tmp, dll)
-    lib = ctypes.CDLL(str(dll))
+        os.replace(tmp, library)
+    lib = ctypes.CDLL(str(library))
     lib.astc_decode_ldr.restype = None
     lib.astc_decode_ldr.argtypes = [ctypes.c_char_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                                     ctypes.c_uint32, ctypes.c_bool, ctypes.c_void_p]
@@ -199,9 +212,13 @@ def webm_frames(b):
 
 def movie_frame(layout, data, at_s, work):
     """The picture of the movie `data` at at_s seconds as an HxWx3 uint8 array, decoded by the toolchain's dav1d."""
-    dav1d = layout.msys / 'bin' / 'dav1d.exe'
-    if not dav1d.is_file():
-        raise ArtError('the build tools are not installed (Rebuild the Game installs them)')
+    import sys
+    dav1d = shutil.which('dav1d') if sys.platform.startswith('linux') else layout.msys / 'bin' / 'dav1d.exe'
+    if not dav1d or (not sys.platform.startswith('linux') and not dav1d.is_file()):
+        message = 'dav1d is not installed (the system build tools include it)' if sys.platform.startswith('linux') else \
+            'the build tools are not installed (Rebuild the Game installs them)'
+        raise ArtError(message)
+    dav1d = Path(dav1d)
     frames, w, h = webm_frames(data)
     upto = [f for f in frames if f[0] <= at_s * 1000] or frames[:1]
     k0 = max((i for i, f in enumerate(upto) if f[1]), default=0)

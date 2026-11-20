@@ -18,7 +18,8 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
   a source checkout's build/xlate/), the prompts step with a stand-in prompt tool, the object cache of the compile
   step with the system's C compiler, and its windres call under folders with spaces (a script in windres's place)
 - jobs: an install driven by a fake make_game.py, with and without the prompts row
-- Add to Steam: the binary shortcuts file read and written back unchanged, a shortcut added and updated in place
+- Add to Steam: the binary shortcuts file read and written back unchanged, a shortcut added and updated in place,
+  Linux native and Flatpak roots, safe backups and refusal while Steam is open
 - the look: the colour schemes with the Custom one, its colour square and a typed hex code, the background picture's
   fitting below the title band and kept copy, the sound effects (low by default,
   only the game's own select and back sounds, decoded from a made-up .bwav)
@@ -5456,10 +5457,104 @@ class SteamTest(Tmp):
             (root / 'userdata' / a / 'config').mkdir(parents=True)
         (root / 'config').mkdir()
         (root / 'config' / 'loginusers.vdf').write_text('"users"\n{\n\t"76561199006576151"\n\t{\n\t}\n}\n')
-        self.assertEqual(steam.accounts(root), [root / 'userdata' / '1046310423' / 'config'])
+        expected = sorted([root / 'userdata' / '1046310423' / 'config', root / 'userdata' / '22' / 'config']) \
+            if sys.platform.startswith('linux') else [root / 'userdata' / '1046310423' / 'config']
+        self.assertEqual(steam.accounts(root), expected)
         (root / 'config' / 'loginusers.vdf').unlink()
         self.assertEqual(steam.accounts(root), sorted([root / 'userdata' / '1046310423' / 'config',
                                                        root / 'userdata' / '22' / 'config']))
+
+    def test_example_shortcuts_vdf_round_trips_byte_for_byte(self):
+        from launcher import steam
+        example = (ROOT / 'tests' / 'data' / 'steam' / 'shortcuts-example.vdf').read_bytes()
+        self.assertEqual(steam.vdf_dump(steam.vdf_load(example)), example)
+        original_entry = steam.vdf_load(example)[0][2][0][2]
+        changed, _ = steam.add_shortcut(example, '"/home/ana/.local/share/nx2saria/nx2saria-launcher"',
+                                        '"/home/ana/.local/share/nx2saria"', '--play', '')
+        other = steam.vdf_load(changed)[0][2][0][2]
+        self.assertEqual(steam.vdf_dump([[steam.T_MAP, '0', original_entry]]),
+                         steam.vdf_dump([[steam.T_MAP, '0', other]]))
+
+
+class LinuxSteamTest(Tmp):
+    """Linux Steam shortcut edits in an isolated HOME, including all native and Flatpak accounts."""
+
+    def setUp(self):
+        super().setUp()
+        if not sys.platform.startswith('linux'):
+            self.skipTest('Linux Steam paths and process checks')
+        self.home = self.tmp / 'home'
+        self.home.mkdir()
+
+    def roots_with_accounts(self):
+        from launcher import steam
+        roots = (self.home / '.steam' / 'steam', self.home / '.local' / 'share' / 'Steam',
+                 self.home / '.var' / 'app' / 'com.valvesoftware.Steam' / '.local' / 'share' / 'Steam')
+        for index, root in enumerate(roots, 410100):
+            (root / 'userdata' / str(index) / 'config').mkdir(parents=True)
+        return roots
+
+    def test_finds_native_and_flatpak_and_every_account(self):
+        from launcher import steam
+        roots = self.roots_with_accounts()
+        self.assertEqual(steam.steam_roots(self.home), list(roots))
+        self.assertEqual([cfg.parent.name for root in roots for cfg in steam.accounts(root)],
+                         ['410100', '410101', '410102'])
+
+    def test_refuses_open_steam_and_writes_backup_then_updates_in_place_when_closed(self):
+        import numpy as np
+        from launcher import gameart, steam
+        roots = self.roots_with_accounts()
+        configs = [root / 'userdata' / str(410100 + i) / 'config' for i, root in enumerate(roots)]
+        example = (ROOT / 'tests' / 'data' / 'steam' / 'shortcuts-example.vdf').read_bytes()
+        (configs[0] / 'shortcuts.vdf').write_bytes(example)
+        wrapper = self.layout.root / 'nx2saria-launcher'
+        wrapper.write_text('#!/bin/sh\n')
+        game_dir = self.tmp / 'game'
+        game_dir.mkdir()
+        (game_dir / 'ocarina').write_text('fake game')
+        expected_sid = steam.appid(f'"{wrapper}"', steam.NAME)
+        pixels = np.zeros((1, 1, 4), dtype=np.uint8)
+        logs = []
+        with mock.patch('pathlib.Path.home', return_value=self.home), \
+                mock.patch('launcher.steam.steam_running', return_value=True):
+            with self.assertRaisesRegex(steam.SteamError, 'Steam is open'):
+                steam.add(self.layout, game_dir, log=logs.append)
+        self.assertEqual([line.rsplit(': ', 1)[-1] for line in logs], ['Steam is open'] * 3)
+        self.assertFalse(any((cfg / 'shortcuts.vdf').exists() for cfg in configs[1:]))
+        self.assertFalse(any((cfg / 'shortcuts.vdf.nx2saria-bak').exists() for cfg in configs))
+
+        logs.clear()
+        fake_art = {'portrait': pixels, 'wide': pixels, 'hero': pixels, 'logo': pixels}
+        with mock.patch('pathlib.Path.home', return_value=self.home), \
+                mock.patch('launcher.steam.steam_running', return_value=False), \
+                mock.patch.object(gameart, 'make', return_value=fake_art):
+            self.assertEqual(steam.add(self.layout, game_dir, log=logs.append), 'Added to Steam.')
+            first = [(cfg / 'shortcuts.vdf').read_bytes() for cfg in configs]
+            self.assertEqual(steam.add(self.layout, game_dir, log=logs.append), 'Updated in Steam.')
+        self.assertEqual([line.rsplit(': ', 1)[-1] for line in logs[:3]],
+                         [f'created shortcut {expected_sid}'] * 3)
+        self.assertEqual([line.rsplit(': ', 1)[-1].split()[0] for line in logs[3:]], ['updated'] * 3)
+        for index, cfg in enumerate(configs):
+            vdf = cfg / 'shortcuts.vdf'
+            self.assertEqual((cfg / 'shortcuts.vdf.nx2saria-bak').read_bytes(), first[index])
+            entries = steam.vdf_load(vdf.read_bytes())[0][2]
+            self.assertEqual(len(entries), 2 if index == 0 else 1)
+            ours_entry = next(entry[2] for entry in entries if steam.has_shortcut(
+                steam.vdf_dump([[steam.T_MAP, 'shortcuts', [entry]]])))
+            ours = {key: value for _typ, key, value in ours_entry}
+            self.assertEqual(ours['Exe'], f'"{wrapper}"')
+            self.assertEqual(ours['StartDir'], f'"{self.layout.root}"')
+            self.assertEqual(ours['LaunchOptions'], '--play')
+            self.assertTrue((cfg / 'grid' / f'{expected_sid}_icon.png').is_file())
+
+    def test_no_steam_logs_a_short_diagnostic(self):
+        from launcher import steam
+        logs = []
+        with mock.patch('pathlib.Path.home', return_value=self.home):
+            with self.assertRaisesRegex(steam.SteamError, 'Steam was not found'):
+                steam.add(self.layout, self.tmp, log=logs.append)
+        self.assertEqual(logs, ['steam: no Steam installation'])
 
 
 class WhilePlayingTest(Tmp):
