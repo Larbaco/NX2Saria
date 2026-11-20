@@ -382,7 +382,7 @@ static int adopt(const uint64_t *handles, int n) {
         memcpy(U.reg, t->reg, (size_t)t->nreg * sizeof *U.reg);
         U.nreg = t->nreg;
         for (int i = 0; i < U.nreg; i++)   // a GPU write in flight: the mirror holds those bytes, not guest memory
-            if (wr_hits(U.reg[i].lo, U.reg[i].hi)) U.reg[i].dropped = 1, U.inflight++;
+            if (wr_hits(U.reg[i].lo, U.reg[i].hi)) __atomic_store_n(&U.reg[i].dropped, 1, __ATOMIC_RELAXED), U.inflight++;
         U.arena = t->arena, t->arena = NULL;
         U.on = 1;
         U.owners = t->owners, t->owners = NULL;
@@ -472,7 +472,8 @@ int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferI
     if (i >= U.nreg || addr < U.reg[i].lo || addr >= U.reg[i].hi) i = first_above(addr);
     if (i >= U.nreg) return 0;
     const Reg *r = &U.reg[i];
-    if ((r->dropped && r->dropped <= vk_exec_epoch(0)) || addr < r->lo || addr + n > r->hi) return 0;
+    uint64_t dropped = __atomic_load_n(&r->dropped, __ATOMIC_RELAXED);
+    if ((dropped && dropped <= vk_exec_epoch(0)) || addr < r->lo || addr + n > r->hi) return 0;
     uint64_t off = r->off + (addr - r->lo);
     if (off % align) return 0;
     *out = (VkDescriptorBufferInfo){U.arena->buf, off, n};
@@ -494,11 +495,14 @@ void vk_usnap_drop(uint64_t addr, uint64_t n) {
     if (U.nwr == U.cwr) U.wr = grow(U.wr, &U.cwr, sizeof *U.wr);
     U.wr[U.nwr++] = (Wrote){addr, addr + n, U.fence, ep};
     if (U.on)
-        for (int i = first_above(addr); i < U.nreg && U.reg[i].lo < addr + n; i++)
-            if (!U.reg[i].dropped || ep < U.reg[i].dropped) {
-                if (!U.reg[i].dropped) U.drops++;
-                U.reg[i].dropped = ep, __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
+        for (int i = first_above(addr); i < U.nreg && U.reg[i].lo < addr + n; i++) {
+            uint64_t dropped = __atomic_load_n(&U.reg[i].dropped, __ATOMIC_RELAXED);
+            if (!dropped || ep < dropped) {
+                if (!dropped) U.drops++;
+                __atomic_store_n(&U.reg[i].dropped, ep, __ATOMIC_RELAXED);
+                __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
             }
+        }
     if (lk) plat_mutex_unlock(&drop_lock);
 }
 
@@ -534,10 +538,15 @@ int vk_usnap_read(uint64_t addr, uint64_t n, void *dst) {
 
 int vk_usnap_why(uint64_t addr, uint64_t n) {
     if (!U.on) return VK_USNAP_NO_SNAPSHOT;
+    int lk = vk_exec_shared();
+    if (lk) plat_mutex_lock(&drop_lock);
     int i = first_above(addr);
-    if (i < U.nreg && addr >= U.reg[i].lo && addr + n <= U.reg[i].hi)
-        return U.reg[i].dropped ? VK_USNAP_DROPPED : VK_USNAP_FOUND;
-    if (wr_overlaps(addr, addr + n)) return VK_USNAP_IN_FLIGHT;
+    int found = i < U.nreg && addr >= U.reg[i].lo && addr + n <= U.reg[i].hi;
+    int dropped = found && __atomic_load_n(&U.reg[i].dropped, __ATOMIC_RELAXED);
+    int overlaps = !found && wr_overlaps(addr, addr + n);
+    if (lk) plat_mutex_unlock(&drop_lock);
+    if (found) return dropped ? VK_USNAP_DROPPED : VK_USNAP_FOUND;
+    if (overlaps) return VK_USNAP_IN_FLIGHT;
     if (!cpu_written(addr, n)) return VK_USNAP_NOT_CPU;
     return VK_USNAP_NOT_BOUND;
 }
