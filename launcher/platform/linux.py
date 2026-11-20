@@ -1,6 +1,7 @@
 """Linux services used by the launcher's compatibility facade (launcher/winsys.py)."""
 import ctypes
 import ctypes.util
+import fcntl
 import os
 import shutil
 import subprocess
@@ -10,6 +11,40 @@ from pathlib import Path
 def make_game_toolchain_args(layout):
     """Linux uses its system compiler and libraries; make_game.py discovers them directly."""
     return []
+
+
+def game_running(game_dir):
+    """Check the runtime's profile lock first, then /proc for Linux builds from before profile locking."""
+    folder = Path(game_dir)
+    lock = folder / 'profile' / 'instance.lock'
+    try:
+        with lock.open('rb') as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+    exe = folder / 'ocarina'
+    if not exe.is_file():
+        return False
+    try:
+        expected = exe.resolve()
+        for proc in Path('/proc').iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                actual = Path(os.readlink(proc / 'exe').removesuffix(' (deleted)'))
+                if actual == expected:
+                    return True
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+    except OSError:
+        return False
+    return False
 
 
 def _sdl_library():

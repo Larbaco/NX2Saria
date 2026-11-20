@@ -26,6 +26,16 @@ class LinuxPlatformTest(unittest.TestCase):
             args = build.install_args(Layout(), '/tmp/dump.nup', '/tmp/game')
         self.assertNotIn('--msys', args)
 
+    def test_linux_game_running_checks_profile_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / 'profile' / 'instance.lock'
+            lock_path.parent.mkdir()
+            lock_path.touch()
+            with lock_path.open('a+b') as owner:
+                linux.fcntl.flock(owner, linux.fcntl.LOCK_EX | linux.fcntl.LOCK_NB)
+                self.assertTrue(linux.game_running(tmp))
+            self.assertFalse(linux.game_running(tmp))
+
     def test_appimage_installer_adopts_existing_game_folder(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
         import appimage_install

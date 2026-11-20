@@ -159,8 +159,11 @@ def game_running(game_dir, exe='ocarina.exe', log=None):
     Folder Access) is no running game either: taken for one, it kept Play saying "already running" and a rebuild
     failing with "the game is running" for an exe that nothing ran. log, when given, gets a line for that case, which
     a build's failure to replace the exe (tools/make_game.py) then has beside it."""
+    if os.name != 'nt':
+        from .platform.linux import game_running as linux_game_running
+        return linux_game_running(game_dir)
     path = os.path.join(str(game_dir), exe)
-    if os.name != 'nt' or not os.path.isfile(path):
+    if not os.path.isfile(path):
         return False
     for attempt in range(2):
         err = _write_open_error(path)
