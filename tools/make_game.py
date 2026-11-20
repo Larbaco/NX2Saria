@@ -1829,7 +1829,7 @@ def guest_opt_ini(out):
         os.environ['NX2SARIA_GUEST_OPT'] = found
 
 
-def runtime_cmd(clang, clangxx, inc, level=0, fast=None, msys=None, first=(), pgo=()):
+def runtime_cmd(clang, clangxx, inc, level=0, fast=None, msys=None, first=(), pgo=(), tsan=False):
     """fast: fast_clang's compiler for the lifted code, with msys as its sysroot. first: include flags that go
     ahead of inc for the runtime's sources only (vulkan_headers); the lifted code includes none of those headers,
     and its command, which is part of its objects' keys, stays as it was. NX2SARIA_GUEST_OPT (an environment variable,
@@ -1850,7 +1850,9 @@ def runtime_cmd(clang, clangxx, inc, level=0, fast=None, msys=None, first=(), pg
         # -fdeclspec: third_party/ffx_api/ffx_api.h declares its entry points __declspec(dllexport) unconditionally
         declspec = ['-fdeclspec'] if cpp and not WIN else []
         return [*cc, '-c', '-std=gnu++17' if cpp else '-std=gnu11', guest_opt if guest else '-O2',
-                *march, '-fno-strict-aliasing', '-w', *declspec, *pgo, *([] if guest else first), *inc, '-o', str(dst),
+                *march, '-fno-strict-aliasing', '-w', *declspec, *pgo,
+                *(['-fsanitize=thread', '-g', '-fno-omit-frame-pointer'] if tsan and not guest else []),
+                *([] if guest else first), *inc, '-o', str(dst),
                 str(src)]
     return cmd_for
 
@@ -1918,6 +1920,14 @@ def prebuilt_runtime(clang, env):
         say('  the prebuilt runtime does not match this kit or compiler: compiling runtime/')
         return None
     return lib, set(m.get('objects', []))
+
+
+def select_prebuilt_runtime(clang, env, gen_counts, tsan):
+    return None if gen_counts or tsan else prebuilt_runtime(clang, env)
+
+
+def allow_legacy_object(tsan, dst):
+    return not tsan or dst.name.startswith(('main_', 'sdk_', 'subsdk0_'))
 
 
 def romfs_index(out, gen):
@@ -2363,7 +2373,8 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     ld = ['-fuse-ld=lld'] if ((msys / 'bin' / 'ld.lld.exe').is_file() if WIN else shutil.which('ld.lld')) else []
     if gen_counts:
         pgo_gen_check(clangxx, env, cache_dir / 'pgo-trial', msys, ld)
-    prebuilt = None if gen_counts else prebuilt_runtime(clang, env)
+    tsan = os.environ.get('NX2SARIA_BENCH_TSAN') == '1'
+    prebuilt = select_prebuilt_runtime(clang, env, gen_counts, tsan)
     runtime = [(p, obj / name) for p, name in runtime_sources()]
     if prebuilt:
         runtime = [(p, o) for p, o in runtime if o.name not in prebuilt[1]]
@@ -2405,7 +2416,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
         pgo = pgo_use_flags(profile) if profile else []
         say(f'  the lifted code (at -O2) and the runtime are built with the execution profile {profile.name}'
             if profile else f'  {why}')
-    cmd_for = runtime_cmd(clang, clangxx, inc, level, fast, msys, first=first, pgo=pgo)
+    cmd_for = runtime_cmd(clang, clangxx, inc, level, fast, msys, first=first, pgo=pgo, tsan=tsan)
     # The keys earlier versions gave the same compiles (compile_all alts): 0.6.0's, with the compiler's file time and,
     # with the fast compiler, its id and --sysroot; 0.5.0's and earlier's, with their kit's folder in the paths; and
     # up to 0.7.1 the runtime's without the Vulkan headers' folder ahead of the system's (an object that compiled
@@ -2416,6 +2427,8 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     kits = earlier_kits()
 
     def alts(src, dst):
+        if not allow_legacy_object(tsan, dst):
+            return [], kits
         if pgo:   # no earlier version compiled with a profile or counted: nothing of theirs is the same compile
             return [], kits
         if sdl and sdl.include and not dst.name.startswith(('main_', 'sdk_', 'subsdk0_')):
@@ -2502,6 +2515,8 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
         ld = ld + ['-no-pie', '-Wl,-z,noexecstack', '-Wl,-rpath,$ORIGIN']
     if gen_counts:   # the link takes in the profile runtime, which writes the counts
         ld.append('-fprofile-generate')
+    if tsan:
+        ld.append('-fsanitize=thread')
     # the link map feeds tools/prof_report.py (symbols for an NX2SARIA_PROFILE sampling profile); both linkers write one.
     # -Xlinker passes the path as one argument; -Wl, would cut it at every comma of the game folder's path (issue #470)
     ld += ['-Xlinker', '--Map=' + (cache_dir / 'ocarina.map').as_posix()]
@@ -3114,7 +3129,7 @@ def step_key(step, identity, out=None):
         return (f'compile|{lift}|{tree_digest(KIT / "runtime", ("**/*",))}|{sha256_file(Path(__file__))}'
                 f'|{kit_version()}|cpu {cpu_tag()}')
     if step == 'compile':
-        return compile_of(lift) + pgo_tag() + sdl3_tag()
+        return compile_of(lift) + pgo_tag() + sdl3_tag() + ('|bench-tsan' if os.environ.get('NX2SARIA_BENCH_TSAN') == '1' else '')
     # shaders: the built game without the mods' code (UNAFFECTED) and the translator that prepared them, the one
     # xlate_source finds (the kit's bin/, or a source checkout's build/xlate/)
     return (f'shaders-1|{compile_of(base)}|{sha256_file(KIT / "tools" / "prepare_shaders.py")}'
@@ -3126,6 +3141,20 @@ def out_path(arg):
     its server and share instead (a UNC path), which is a second connection to the same share, and some servers drop
     that one under the compilers' load while the mapped drive stays up."""
     return Path(os.path.abspath(arg)) if WIN else Path(arg).resolve()
+
+
+def prepare_tsan_output(out, bench_tsan):
+    """Keep instrumented and normal builds in distinct output folders."""
+    if bench_tsan and out.name != 'g25-tsan':
+        raise ValueError('the bench ThreadSanitizer build requires a separate g25-tsan output folder')
+    marker = out / '.bench-tsan'
+    if not bench_tsan and marker.exists():
+        raise ValueError('this output belongs to the bench ThreadSanitizer build')
+    if bench_tsan:
+        if (out / EXE_NAME).exists() and not marker.exists():
+            raise ValueError('the output already contains an ordinary build')
+        out.mkdir(parents=True, exist_ok=True)
+        marker.touch()
 
 
 def main():
@@ -3170,6 +3199,8 @@ def build_main():
     ap.add_argument('--until', choices=STEPS, help=argparse.SUPPRESS)   # tests: stop after this step
     memgate.add_arguments(ap)
     a = ap.parse_args()
+    if os.environ.get('NX2SARIA_BENCH_TSAN') == '1' and (WIN or a.make_runtime_lib):
+        ap.error('the bench ThreadSanitizer build is Linux-only and cannot make a prebuilt runtime')
     EVENTS = a.events
     PGO_MODE = a.pgo or ''
     GATE_ARGS = a
@@ -3199,6 +3230,11 @@ def build_main():
         return
     if not out:
         ap.error('--out is needed to build')
+    bench_tsan = os.environ.get('NX2SARIA_BENCH_TSAN') == '1'
+    try:
+        prepare_tsan_output(out, bench_tsan)
+    except ValueError as e:
+        ap.error(str(e))
     msys = Path(a.msys)
     if WIN:
         for need in ('bin/clang.exe', 'bin/clang++.exe', 'bin/SDL3.dll', 'lib/libSDL3.dll.a', 'include/vma'):

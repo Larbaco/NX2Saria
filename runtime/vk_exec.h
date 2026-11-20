@@ -237,10 +237,10 @@ typedef struct {
     uint64_t bind_buf_ns;                // of bind_ns, the uniform and storage buffer descriptors' resolution
     uint64_t bind_sig_ns;                // of bind_ns, the per-draw binding signature
     uint64_t bind_push_ns;               // of bind_ns, the set packing, pushes and binds after the binding loop
-    uint64_t bind_reused, bind_resolved; // descriptors taken from the per-binding reuse (PB) and resolved again
     uint64_t dyn_calls, dyn_left;        // dynamic state calls recorded, and left out as unchanged (B.dyn)
 } VkExecFrame;
 extern VkExecFrame vk_exec_frame;
+void vk_exec_bind_count(int reused);   // per-chunk or per-submission descriptor reuse count
 void vk_exec_frame_written(const tex_t *t);                    // vk_texture_gpu_written: t rendered or copied into
 uint64_t vk_exec_recording_fence(void);                        // fence of the submission this thread records, else 0
 void vk_exec_frame_log(const tex_t *presented, uint64_t frame);

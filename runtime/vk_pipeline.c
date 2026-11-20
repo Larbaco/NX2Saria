@@ -6097,6 +6097,18 @@ VkPipeline vk_pipeline_graphics_async(const VkPipeState *s, const VkPipeInfo **i
     return graphics(s, info, A.on, pending, wait_ms);
 }
 
+int vk_pipeline_graphics_key_matches(const VkPipeState *s, const VkPipeInfo *info) {
+    if (!s->vs || !info) return -1;
+    GKey k;
+    gkey_fill(s, &k);
+    uint64_t h = key_hash(&k, sizeof k);
+    plat_mutex_lock(&P.lock);
+    const Pipe *p = pipe_find(&k, sizeof k, h);
+    int matches = p ? &p->info == info : -1;
+    plat_mutex_unlock(&P.lock);
+    return matches;
+}
+
 double vk_pipeline_building_ms(const VkPipeState *s) {
     if (!s->vs || !P.ready) return 0;
     GKey k;

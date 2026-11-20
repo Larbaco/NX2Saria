@@ -774,11 +774,33 @@ static int game_run(int argc, char **argv) {
     return 1;
 }
 
+#if defined(__linux__) && defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+static volatile int tsan_probe_value;
+static void tsan_probe_writer(void *arg) { (void)arg; tsan_probe_value = 1; }
+static void tsan_probe(void) {
+    const char *on = getenv("NX2SARIA_TSAN_PROBE");
+    rt_log("tsan: deliberate race probe %s", on && !strcmp(on, "1") ? "on" : "off");
+    if (!on || strcmp(on, "1")) return;
+    PlatThread *a = plat_thread_new(tsan_probe_writer, NULL, "tsan-probe-a");
+    PlatThread *b = plat_thread_new(tsan_probe_writer, NULL, "tsan-probe-b");
+    if (a) plat_thread_join(a);
+    if (b) plat_thread_join(b);
+    if (!a || !b) rt_fatal("tsan: could not start both probe threads");
+}
+#define TSAN_PROBE() tsan_probe()
+#endif
+#endif
+#ifndef TSAN_PROBE
+#define TSAN_PROBE() ((void)0)
+#endif
+
 static int main_run(int argc, char **argv) {
     log_privacy_init();   // the personal folders to write short in the log, from the environment, before its first line
     // first: claim the guest address space before anything else can land there; reads the settings file
     mem_init(game_run(argc, argv));
     log_privacy_start();   // the switch (log_short_paths) and the line that says how paths are written
+    TSAN_PROBE();
     // The build that wrote the log, at its top: an attached log from another install or version shows at a glance.
     rt_log("version: NX2Saria %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,
            rt_game_version % 10);

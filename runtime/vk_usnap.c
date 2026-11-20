@@ -261,13 +261,16 @@ static void summary(void) {
     double s = U.subs ? (double)U.subs : 1.0;
     char clears[512];   // among the GPU writes: the small buffer clears and the counter records they covered
     vk_exec_clear_stats(clears, sizeof clears);
+    uint64_t hits = __atomic_exchange_n(&U.hits, 0, __ATOMIC_RELAXED);
     rt_log("vk_usnap: %llu submissions with a snapshot, %llu without; per submission %.0f ranges, %.1f KiB copied in "
            "%.3f ms, %.0f uniform bindings from the copy, %.1f dropped by GPU writes, %.1f left out (GPU writes in "
            "flight), %.1f refused (not an imported pool); %s",
            (unsigned long long)U.subs, (unsigned long long)U.off_subs, U.regions / s, U.bytes / s / 1024.0,
-           U.copy_ns / s / 1e6, U.hits / s, U.drops / s, U.inflight / s, U.refused / s, clears);
-    U.subs = U.off_subs = U.regions = U.bytes = U.copy_ns = U.hits = U.drops = U.inflight = U.refused = 0;
+           U.copy_ns / s / 1e6, hits / s, U.drops / s, U.inflight / s, U.refused / s, clears);
+    U.subs = U.off_subs = U.regions = U.bytes = U.copy_ns = U.drops = U.inflight = U.refused = 0;
 }
+
+void vk_usnap_hits_add(uint64_t n) { __atomic_add_fetch(&U.hits, n, __ATOMIC_RELAXED); }
 
 // copy_regions's work, sliced for the replay workers (vk_exec_par): regions of the game's memory into the arena, then
 // the host copy into the device copy in COPY_SLICE pieces.
@@ -382,7 +385,7 @@ static int adopt(const uint64_t *handles, int n) {
         memcpy(U.reg, t->reg, (size_t)t->nreg * sizeof *U.reg);
         U.nreg = t->nreg;
         for (int i = 0; i < U.nreg; i++)   // a GPU write in flight: the mirror holds those bytes, not guest memory
-            if (wr_hits(U.reg[i].lo, U.reg[i].hi)) U.reg[i].dropped = 1, U.inflight++;
+            if (wr_hits(U.reg[i].lo, U.reg[i].hi)) __atomic_store_n(&U.reg[i].dropped, 1, __ATOMIC_RELAXED), U.inflight++;
         U.arena = t->arena, t->arena = NULL;
         U.on = 1;
         U.owners = t->owners, t->owners = NULL;
@@ -395,7 +398,8 @@ static int adopt(const uint64_t *handles, int n) {
 void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     if (!U.mode) U.mode = rt_knob("UBO_SNAPSHOT", "1") + 1;   // stored +1: 0 is "not read yet"
     free(U.owners), U.owners = NULL;
-    U.on = 0, U.fence = fence, U.gen++;
+    U.on = 0, U.fence = fence;
+    __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
     summary();
     if (!RT_KNOB_ON(U.mode - 1)) {
         U.off_subs++;
@@ -447,7 +451,8 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
 void vk_usnap_end(uint64_t fence) {
     if (U.arena) vk_completion_add(fence, arena_done, U.arena), U.arena = NULL;
     free(U.owners), U.owners = NULL;
-    U.on = 0, U.gen++;
+    U.on = 0;
+    __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
 }
 
 // First region whose end is above a.
@@ -470,11 +475,12 @@ int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferI
     if (i >= U.nreg || addr < U.reg[i].lo || addr >= U.reg[i].hi) i = first_above(addr);
     if (i >= U.nreg) return 0;
     const Reg *r = &U.reg[i];
-    if ((r->dropped && r->dropped <= vk_exec_epoch(0)) || addr < r->lo || addr + n > r->hi) return 0;
+    uint64_t dropped = __atomic_load_n(&r->dropped, __ATOMIC_RELAXED);
+    if ((dropped && dropped <= vk_exec_epoch(0)) || addr < r->lo || addr + n > r->hi) return 0;
     uint64_t off = r->off + (addr - r->lo);
     if (off % align) return 0;
     *out = (VkDescriptorBufferInfo){U.arena->buf, off, n};
-    U.hits++;
+    vk_exec_usnap_hit();
     hint = i;
     return 1;
 }
@@ -492,15 +498,18 @@ void vk_usnap_drop(uint64_t addr, uint64_t n) {
     if (U.nwr == U.cwr) U.wr = grow(U.wr, &U.cwr, sizeof *U.wr);
     U.wr[U.nwr++] = (Wrote){addr, addr + n, U.fence, ep};
     if (U.on)
-        for (int i = first_above(addr); i < U.nreg && U.reg[i].lo < addr + n; i++)
-            if (!U.reg[i].dropped || ep < U.reg[i].dropped) {
-                if (!U.reg[i].dropped) U.drops++;
-                U.reg[i].dropped = ep, __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELAXED);
+        for (int i = first_above(addr); i < U.nreg && U.reg[i].lo < addr + n; i++) {
+            uint64_t dropped = __atomic_load_n(&U.reg[i].dropped, __ATOMIC_RELAXED);
+            if (!dropped || ep < dropped) {
+                if (!dropped) U.drops++;
+                __atomic_store_n(&U.reg[i].dropped, ep, __ATOMIC_RELAXED);
+                __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
             }
+        }
     if (lk) plat_mutex_unlock(&drop_lock);
 }
 
-uint64_t vk_usnap_gen(void) { return U.gen; }
+uint64_t vk_usnap_gen(void) { return __atomic_load_n(&U.gen, __ATOMIC_ACQUIRE); }
 
 // A GPU write of a submission not known to be complete touches [lo, hi). A linear scan: vk_usnap_drop appends after
 // wr_prune sorted the list, so wr_hits's binary search does not hold here; only called on rare paths.
@@ -532,10 +541,15 @@ int vk_usnap_read(uint64_t addr, uint64_t n, void *dst) {
 
 int vk_usnap_why(uint64_t addr, uint64_t n) {
     if (!U.on) return VK_USNAP_NO_SNAPSHOT;
+    int lk = vk_exec_shared();
+    if (lk) plat_mutex_lock(&drop_lock);
     int i = first_above(addr);
-    if (i < U.nreg && addr >= U.reg[i].lo && addr + n <= U.reg[i].hi)
-        return U.reg[i].dropped ? VK_USNAP_DROPPED : VK_USNAP_FOUND;
-    if (wr_overlaps(addr, addr + n)) return VK_USNAP_IN_FLIGHT;
+    int found = i < U.nreg && addr >= U.reg[i].lo && addr + n <= U.reg[i].hi;
+    int dropped = found && __atomic_load_n(&U.reg[i].dropped, __ATOMIC_RELAXED);
+    int overlaps = !found && wr_overlaps(addr, addr + n);
+    if (lk) plat_mutex_unlock(&drop_lock);
+    if (found) return dropped ? VK_USNAP_DROPPED : VK_USNAP_FOUND;
+    if (overlaps) return VK_USNAP_IN_FLIGHT;
     if (!cpu_written(addr, n)) return VK_USNAP_NOT_CPU;
     return VK_USNAP_NOT_BOUND;
 }

@@ -66,6 +66,7 @@ typedef struct {
     Group *g;                           // its group
     VkCommandBuffer cb;
     int recorded;
+    uint64_t bind_reused, bind_resolved, usnap_hits;
     volatile int32_t done;
 } Chunk;
 struct Group {
@@ -92,6 +93,36 @@ static struct {
 } Q;
 static PlatMutex done_lock = PLAT_MUTEX_INIT;   // Q.done moves on (groups_done_advance)
 static _Thread_local Chunk *rw_chunk;   // the chunk the calling thread records, NULL outside one
+// A chunk is written only by the thread recording it. The submitting thread's other work is local until the
+// submission ends. Publishing whole batches avoids contention per draw; a concurrent present can report a completed
+// batch in a later frame instead of the frame in which the worker counted it.
+static _Thread_local struct { uint64_t reused, resolved, hits; } replay_counts;
+static uint64_t bind_reused_total, bind_resolved_total;
+
+void vk_exec_bind_count(int reused) {
+    if (rw_chunk) {
+        if (reused) rw_chunk->bind_reused++;
+        else rw_chunk->bind_resolved++;
+    } else if (x_cur) {
+        if (reused) replay_counts.reused++;
+        else replay_counts.resolved++;
+    } else {
+        __atomic_add_fetch(reused ? &bind_reused_total : &bind_resolved_total, 1, __ATOMIC_RELAXED);
+    }
+}
+
+void vk_exec_usnap_hit(void) {
+    if (rw_chunk) rw_chunk->usnap_hits++;
+    else if (x_cur) replay_counts.hits++;
+    else vk_usnap_hits_add(1);   // a probe or an out-of-replay diagnostic has no submission to flush
+}
+
+static void replay_counts_flush(void) {
+    if (replay_counts.reused) __atomic_add_fetch(&bind_reused_total, replay_counts.reused, __ATOMIC_RELAXED);
+    if (replay_counts.resolved) __atomic_add_fetch(&bind_resolved_total, replay_counts.resolved, __ATOMIC_RELAXED);
+    if (replay_counts.hits) vk_usnap_hits_add(replay_counts.hits);
+    memset(&replay_counts, 0, sizeof replay_counts);
+}
 // The submitting thread records on past groups whose chunks may not all be done yet (NX2SARIA_REPLAY_PIPE).
 static _Thread_local int rw_behind;
 // Why it waited for them (RW.pw_*): room for the next group, an op chunks never record, a pass's hooks, an effect that
@@ -202,6 +233,8 @@ void vk_exec_frame_log(const tex_t *p, uint64_t frame) {
     runs_frame(frame);
     if (!(rt_trace & RT_TRACE_GFX)) return;
     VkExecFrame *f = &vk_exec_frame;
+    uint64_t bind_reused = __atomic_exchange_n(&bind_reused_total, 0, __ATOMIC_RELAXED);
+    uint64_t bind_resolved = __atomic_exchange_n(&bind_resolved_total, 0, __ATOMIC_RELAXED);
     uint64_t ew, eu, el, ed;
     vk_exec_event_stats(&ew, &eu, &el, &ed);
     int hit = 0;
@@ -227,8 +260,8 @@ void vk_exec_frame_log(const tex_t *p, uint64_t frame) {
            (unsigned long long)f->fb_layouts, (unsigned long long)f->fb_war_barriers, (unsigned long long)f->ub_updates,
            (unsigned long long)f->ub_pass_breaks, (unsigned long long)f->bind_calls,
            (double)(f->bind_ns) / 1e6, (double)(f->bind_tex_ns) / 1e6, (double)(f->bind_buf_ns) / 1e6,
-           (double)(f->bind_sig_ns) / 1e6, (double)(f->bind_push_ns) / 1e6, (unsigned long long)f->bind_reused,
-           (unsigned long long)f->bind_resolved, (unsigned long long)f->dyn_calls, (unsigned long long)f->dyn_left,
+           (double)(f->bind_sig_ns) / 1e6, (double)(f->bind_push_ns) / 1e6, (unsigned long long)bind_reused,
+           (unsigned long long)bind_resolved, (unsigned long long)f->dyn_calls, (unsigned long long)f->dyn_left,
            (unsigned long long)ew, (unsigned long long)eu, (unsigned long long)el,
            el ? (double)ed / (double)el : 0.0, list);
     memset(f, 0, sizeof *f);
@@ -952,6 +985,7 @@ void vk_exec_inline_end(int reopen) {
 }
 
 void vk_exec_probe_inline(VkCommandBuffer cb, uint64_t fence) {
+    if (!cb && x_cur) replay_counts_flush();
     X.cb = cb, X.fence = fence;
     x_cur = cb != VK_NULL_HANDLE ? &X : NULL;
 }
@@ -2300,6 +2334,7 @@ static Chunk *chunk_open(Group *g, const VkExec *ex, const op_hdr *h, int idx) {
     memcpy(&c->ex, ex, sizeof *ex);
     c->h = h, c->nops = 0, c->cond0 = g->ncond, c->ncond = 0, c->idx = idx, c->g = g, c->oq = vk_exec_xfer_chunk_state();
     c->nslots = 0, c->brk = 0;
+    c->bind_reused = c->bind_resolved = c->usnap_hits = 0;
     return c;
 }
 
@@ -2409,7 +2444,14 @@ static void group_put(VkExec *ex, Group *g) {
     vk_exec_xfer_group_merge((int)(g - GQ), g->n);
     VkCommandBuffer cbs[GROUP_CHUNKS];
     int rec = 0;
-    for (int i = 0; i < g->n; i++) cbs[i] = g->c[i].cb, rec += g->c[i].recorded;
+    uint64_t reused = 0, resolved = 0, hits = 0;
+    for (int i = 0; i < g->n; i++) {
+        cbs[i] = g->c[i].cb, rec += g->c[i].recorded;
+        reused += g->c[i].bind_reused, resolved += g->c[i].bind_resolved, hits += g->c[i].usnap_hits;
+    }
+    if (reused) __atomic_add_fetch(&bind_reused_total, reused, __ATOMIC_RELAXED);
+    if (resolved) __atomic_add_fetch(&bind_resolved_total, resolved, __ATOMIC_RELAXED);
+    if (hits) vk_usnap_hits_add(hits);
     vk_sync_append_fill(g->at, cbs, g->n);
     if (ex->barrier_at == ex->recorded) ex->barrier_at += rec;   // nothing since the chunks' closing barrier
     ex->recorded += rec;
@@ -2785,6 +2827,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     group_drain(ex, PW_END);
     vk_exec_pass_end(ex);
     if (RR.on > 0) runs_break(RB_SUBMIT);
+    replay_counts_flush();
     x_cur = NULL;
     vk_exec_event_sync(0);
     if (ex->recorded) vk_exec_barrier(ex), vk_exec_pool_marks(ex);   // later submissions see this one's writes

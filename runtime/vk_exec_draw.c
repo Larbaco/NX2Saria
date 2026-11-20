@@ -32,6 +32,7 @@
 #include "vk_gpa.h"
 #include "mesh_fb.h"
 #include "mesh_fb_hold.h"
+#include "mesh_pipeline_check.h"
 #include "vk_mesh_fb.h"
 #include "vk_scratch_lru.h"
 #include "vk_index_rewrite.h"
@@ -3641,7 +3642,7 @@ static int pb_take(const VkExec *ex, const VkPipeBinding *b, uint32_t j, uint32_
         const PbCount *c = &cx->pb_e->cnt[j];
         *o = cx->pb_e->d[j];
         if (c->has) count_use(cx, c->cls, c->use, c->n);
-        vk_exec_frame.bind_reused++;
+        vk_exec_bind_count(1);
         return 1;
     }
     cx->pb_cnt_cur = (PbCount){0};
@@ -3653,7 +3654,7 @@ static int pb_take(const VkExec *ex, const VkPipeBinding *b, uint32_t j, uint32_
 static void pb_keep(DrawCtx *cx, uint32_t j, const VkDescSlot *o) {
     cx->pb_cap = NULL;
     if (!cx->pb_e || j >= PB_DESC) return;
-    vk_exec_frame.bind_resolved++;
+    vk_exec_bind_count(0);
     if (!cx->pb_key_ok) {
         cx->pb_e->ok[j] = 0;
         return;
@@ -4480,7 +4481,6 @@ static void prog_lead(const prog_t *p, int mesh) {
                (unsigned long long)PLD.n[m][4], (unsigned long long)PLD.n[m][5]);
 }
 
-static const VkPipeInfo *PD_info;   // the pipeline of the last draw prepare_draw_ex prepared
 // mesh: a mesh draw (op_draw_mesh): the program's mesh and task stages stand in for the vertex stage, and nothing
 // vertex-related (vertex buffers, motion vector bookkeeping of vertex shaders) is bound or noted. 2: a mesh draw of
 // the mesh fallback (mfb_draw): the vertex stage is DrawCtx.mfb_cur_vs, in an ordinary pipeline without vertex input.
@@ -4541,7 +4541,10 @@ static int mfb_hold_role(const VkExec *ex, const VkPipeState *s) {
     return ex->depth.image && s->ds.dt && s->ds.dw ? 2 : 0;
 }
 
-static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int mesh) {
+typedef struct { const VkPipeInfo *info; VkPipeState requested; } MeshPrepared;
+
+static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int mesh, MeshPrepared *result) {
+    if (result) result->info = NULL;
     DrawCtx *const cx = ex->dc;
     int fb = mesh == 2;   // from here on mesh says what the draw is, and !fb that its pipeline is a mesh pipeline
     mesh = mesh != 0;
@@ -4626,6 +4629,8 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     s.depth_minus_w = (uint8_t)(nvn_depth_minus_w() != 0);
     s.y_flip = 1;
     s.prim_restart = (uint8_t)(restart != 0);
+    VkPipeState requested;
+    if (result) requested = s;   // the mesh caller checks the state that selected its cache entry
     const VkPipeInfo *info = NULL;
     int pending;
     // A draw of at most 6 vertices over half the render area or more (a full-screen triangle or quad, a tile) waits for
@@ -4797,12 +4802,17 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     vk_exec_oq_draw(ex);
     DRS.issued[mesh]++;
     draw_stats_tick();
-    PD_info = info;
+    if (result) result->info = info, result->requested = requested;
     return 1;
 }
 
+static void mesh_prepared_check(const MeshPrepared *result) {
+    int match = vk_pipeline_graphics_key_matches(&result->requested, result->info);
+    mesh_pipeline_check_report(match);
+}
+
 static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
-    return prepare_draw_ex(ex, prim, count, restart, 0);
+    return prepare_draw_ex(ex, prim, count, restart, 0, NULL);
 }
 
 // ---- looking ahead (vk_exec.c vk_exec_ahead): the binds and draws of ops the replay has not reached, applied to sx, a
@@ -6162,7 +6172,7 @@ static void mfb_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, uint64_t 
     cx->c0_binst = 0;
     cx->mfb_cur_vs = vs;
     int prim = c->mi.ipp == 1 ? NVN_DRAW_PRIMITIVE_POINTS : c->mi.ipp == 2 ? NVN_DRAW_PRIMITIVE_LINES : NVN_DRAW_PRIMITIVE_TRIANGLES;
-    if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 2)) return;
+    if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 2, NULL)) return;
     vk_exec_frame.draws++;
     if (ex->mark && ind) ex->mark->mesh_ind++;   // the pass's mesh draws (vk_crumbs.c describe_mark)
     else if (ex->mark) ex->mark->mesh++;
@@ -6212,7 +6222,7 @@ static void op_draw_mesh(VkExec *ex, const p_draw_mesh *d) {
     }
     if (!fn) return warn_once(W_MESH, "mesh draws need VK_EXT_mesh_shader (mesh_emulation = 1 emulates them): skipped");
     ex->dc->c0_binst = 0;
-    if (!prepare_draw_ex(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, 1)) return;
+    if (!prepare_draw_ex(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, 1, NULL)) return;
     if (d->first) warn_once(W_MESH, "a mesh draw from workgroup %u: drawn from workgroup 0", d->first);
     vk_exec_frame.draws++;
     if (ex->mark) ex->mark->mesh++;   // the pass's mesh draws, for a lost device's report (vk_crumbs.c describe_mark)
@@ -6422,7 +6432,7 @@ static void op_draw_mesh_ind(VkExec *ex, const p_draw_mesh_ind *d) {
     }
     VkDeviceSize at;
     if (!mesh_ring_entry(ex, ex->cb, d, &ip, &at)) return warn_once(W_MESH, "the indirect mesh ring could not be created: skipped");
-    if (!prepare_draw_ex(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, 1)) return;
+    if (!prepare_draw_ex(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, 1, NULL)) return;
     vk_exec_frame.draws++;
     if (ex->mark) ex->mark->mesh_ind++;   // the pass's mesh draws, for a lost device's report (vk_crumbs.c describe_mark)
     static uint32_t n_logged;
@@ -6640,8 +6650,10 @@ static int mesh_emu_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, const
     if (!me_arena()) return 0;
     ex->dc->c0_binst = 0;
     int prim = mesh_emu_draw_prim(ex);
-    if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 1)) return 0;
-    const VkPipeInfo *info = PD_info;
+    MeshPrepared prepared;
+    if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 1, &prepared)) return 0;
+    mesh_prepared_check(&prepared);
+    const VkPipeInfo *info = prepared.info;
     const GfxShader *ms = ex->dc->B.st.vs, *ts = ex->dc->B.st.ts;
     VkPipeline mp = VK_NULL_HANDLE, tp = VK_NULL_HANDLE;
     MeshEmuInfo mi;
@@ -6677,7 +6689,10 @@ static int mesh_emu_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, const
     VkCommandBuffer pre = VK_NULL_HANDLE;
     if (batch && ex->in_pass) {
         if (ex->pre_pass != ex->pass_serial && vk_exec_split_now(ex)) {
-            if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 1) || PD_info != info) {   // the pass again, in the new part
+            MeshPrepared again;
+            if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 1, &again)) { ME.skipped++; return 0; }
+            mesh_prepared_check(&again);
+            if (again.info != info) {   // the pass again, in the new part
                 ME.skipped++;
                 return 0;
             }
@@ -6761,7 +6776,10 @@ static int mesh_emu_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, const
         // the draw: prepared again (the pass reopens, every binding is recorded again)
         vk_exec_draw_new_cb();
         ex->dirty = VK_EXEC_DIRTY_ALL;
-        if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 1) || PD_info != info) {
+        MeshPrepared again;
+        if (!prepare_draw_ex(ex, prim, 0x7fffffff, 0, 1, &again)) { ME.skipped++; return 0; }
+        mesh_prepared_check(&again);
+        if (again.info != info) {
             ME.skipped++;
             return 0;
         }

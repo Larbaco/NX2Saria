@@ -922,7 +922,9 @@ static void ocarina_step_write(double dt) {
 static void time_dump(void) {
     static int done;
     const char *e = cfg_get("NX2SARIA_TIME_DUMP");
-    if (done || !e || strcmp(e, "1") || !rt_guest_start_ns || kern_now_ns() - rt_guest_start_ns < 30000000000ull) return;
+    if (done || !e || strcmp(e, "1")) return;
+    uint64_t guest_start = __atomic_load_n(&rt_guest_start_ns, __ATOMIC_ACQUIRE);
+    if (!guest_start || kern_now_ns() - guest_start < 30000000000ull) return;
     done = 1;
     uint64_t slot = read_ptr(MOD_MAIN_BASE + 0x4c7e890), mgr = slot ? read_ptr(slot) : 0;
     uint32_t w[160];
@@ -1001,8 +1003,9 @@ static void world_clock(double dt, double step) {
     if (w < 0) {
         float p[3];
         if (!player_pos(p) || fabsf(p[0]) + fabsf(p[2]) < 1.0f) return;   // a few guest reads, until the load ends
+        uint64_t guest_start = __atomic_load_n(&rt_guest_start_ns, __ATOMIC_ACQUIRE);
         rt_log("frame step: world clock starts at present %llu, %.2f s after the guest started (the player at %.1f %.1f %.1f)",
-               (unsigned long long)presents, rt_guest_start_ns ? (kern_now_ns() - rt_guest_start_ns) / 1e9 : 0.0, p[0],
+               (unsigned long long)presents, guest_start ? (kern_now_ns() - guest_start) / 1e9 : 0.0, p[0],
                p[1], p[2]);
         atomic_store_explicit(&world_us, 0, memory_order_relaxed);
         return;
