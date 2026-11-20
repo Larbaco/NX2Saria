@@ -285,6 +285,7 @@ class Job:
 
     def cancel(self):
         self.cancel_flag.set()
+        winsys.keep_awake(False)
         if self.proc:
             self.proc.cancel()
         self._touch()
@@ -397,6 +398,14 @@ class Job:
         missing = toolchain.zstd_missing(layout)
         if missing:
             raise toolchain.ToolchainError(missing)
+        if os.name != 'nt':
+            from .platform.linux import toolchain_missing
+            missing = toolchain_missing()
+            if missing:
+                raise toolchain.ToolchainError(missing)
+            toolchain.ensure_zbic(layout, cancel=self.cancelled, log=self.log, version=self.ctx.version)
+            self.skip(sid, 'System tools ready')
+            return
         lock = toolchain.load_lock(layout, self.ctx.version)
         if toolchain.is_current(layout, lock):
             have_tools = True

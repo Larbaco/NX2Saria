@@ -423,7 +423,8 @@ def desktop_shortcut(layout, enable):
 
 def keep_awake(on):
     if os.name != 'nt':
-        return
+        from .platform.linux import keep_awake as linux_keep_awake
+        return linux_keep_awake(on)
     try:
         ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
         ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
@@ -548,7 +549,7 @@ def in_front(root):
         return True
 
 
-class Gamepad:
+class _WindowsGamepad:
     """Polls the first XInput pad; poll() returns the buttons pressed since the last call (edges), the left stick
     counted as the d-pad. poll(False) still reads the pad but returns nothing: a button held while another window was
     in front does not count as pressed when this one comes back."""
@@ -594,6 +595,23 @@ class Gamepad:
         pressed = down - self.held if active else set()
         self.held = down
         return pressed
+
+
+class Gamepad:
+    """Stable gamepad facade: XInput on Windows and SDL3 GameController on Linux."""
+    def __init__(self):
+        if os.name != 'nt':
+            from .platform.linux import Gamepad as LinuxGamepad
+            self.backend = LinuxGamepad()
+        else:
+            self.backend = _WindowsGamepad()
+
+    @property
+    def scroll(self):
+        return self.backend.scroll
+
+    def poll(self, active=True):
+        return self.backend.poll(active)
 
 
 def is_windows():
