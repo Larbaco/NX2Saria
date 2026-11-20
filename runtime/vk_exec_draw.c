@@ -32,6 +32,7 @@
 #include "vk_gpa.h"
 #include "mesh_fb.h"
 #include "mesh_fb_hold.h"
+#include "mesh_pipeline_check.h"
 #include "vk_mesh_fb.h"
 #include "vk_scratch_lru.h"
 #include "vk_index_rewrite.h"
@@ -4806,10 +4807,8 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
 }
 
 static void mesh_prepared_check(const MeshPrepared *result) {
-    static uint32_t logged;
     int match = vk_pipeline_graphics_key_matches(&result->requested, result->info);
-    if (match <= 0 && __atomic_fetch_add(&logged, 1, __ATOMIC_RELAXED) < 8)
-        rt_log("vk_exec: mesh emulation pipeline key check: %s", match ? "entry not found" : "pipeline differs from draw");
+    mesh_pipeline_check_report(match);
 }
 
 static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
