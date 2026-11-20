@@ -19,12 +19,20 @@ def main():
     # duplicates it across lanes, and only then may the Y row use the vertical squeeze factor.
     projection_mask = words.index(0x4e040631)
     full_screen_exclusion = words.index(0x0e721e31)
-    vertical_scale = words.index(0x3dc02213)
+    vertical_scale = words.index(0x3dc02233)
     vertical_multiply = words.index(0x6e33dc93)
     vertical_select = words.index(0x6eb11e64)
     horizontal_scale = words.index(0x3dc02e33)
     assert projection_mask < full_screen_exclusion < vertical_scale < vertical_multiply < vertical_select < horizontal_scale
-    assert words[vertical_scale:vertical_select + 1] == [0x3dc02213, 0x6e33dc93, 0x6eb11e64]
+    assert words[vertical_scale:vertical_select + 1] == [0x3dc02233, 0x6e33dc93, 0x6eb11e64]
+
+    # After `ldr d16, [x16]` (0xfd400210) x16 holds the canvas or its screen, no longer the patch page: every 128-bit
+    # load of a page value from there on reads through x17, which the site sets to the page again. Reading the vertical
+    # squeeze through x16 (0.20.0-rc.1) took a word of the screen object and hid the whole HUD.
+    repurposed = words.index(0xfd400210)
+    for w in words[repurposed + 1:]:
+        if isinstance(w, int) and w & 0xffc00000 == 0x3dc00000:   # LDR (immediate, unsigned offset), 128-bit
+            assert (w >> 5) & 31 == 17, f'{w:08x} reads the page through x{(w >> 5) & 31}, not x17'
 
     # 16:9 and wider ratios supply 1.0 in page +128, so the extra Y path leaves those screens unchanged.
     source = (ROOT / 'runtime/widescreen.c').read_text()
