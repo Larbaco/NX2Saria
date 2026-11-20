@@ -517,8 +517,9 @@ processors, 32 GB of RAM, Linux; it is recommended High. `tools/bench.py run ...
 busy time per frame from the timestamp queries (the bench's `gpu_ms`); between two runs of one configuration it varies
 by up to about 1 ms and the average frame rate by up to about 1.5 fps.
 
-**This machine is CPU-bound** (about 32 fps; the runtime's verdict was `cpu` in every 60-frame window), so the frame
-rate hardly moves and the GPU time is what tells the settings apart. The gains below are a floor: on a PC whose GPU is
+**This machine is not GPU-bound** (about 32 fps; the runtime's verdict was `cpu` in every 60-frame window, from
+before the `serial` verdict: the GPU and the CPU take turns there, [performance.md](performance.md) "Win bound"),
+so the frame rate hardly moves and the GPU time is what tells the settings apart. The gains below are a floor: on a PC whose GPU is
 the limit, the same GPU time saved is frame rate gained. A run on a GPU-bound PC (below) calibrates them.
 
 ### What each setting costs (kokiri, the game as shipped = 20.2 ms of GPU time, 31.7 fps)

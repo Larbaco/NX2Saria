@@ -22,7 +22,8 @@ A frame is
   stall  when pipeline builds, shader translation and texture uploads took at least a quarter of it,
   pace   when the frame limiter held it for at least 15% of it (should not happen: the runs are uncapped),
   cpu    otherwise: the game thread and the replay of its draws set the pace.
-The 60-frame window lines add the GPU's own busy time (timestamps) and the runtime's own bound verdict.
+The 60-frame window lines add the GPU's own busy time (timestamps) and the runtime's own bound verdict
+(runtime/perf_bound.h: pace, gpu, serial or cpu), which summary.md gives as "Win bound".
 
 1% low is the frame rate of the mean of the slowest 1% of frames; p99 is the 99th percentile frame time. The run's
 CSV (one row per frame), the game's log and summary.md / summary.csv go to the out folder, with the commit, the
