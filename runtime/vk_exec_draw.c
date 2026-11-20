@@ -3641,7 +3641,7 @@ static int pb_take(const VkExec *ex, const VkPipeBinding *b, uint32_t j, uint32_
         const PbCount *c = &cx->pb_e->cnt[j];
         *o = cx->pb_e->d[j];
         if (c->has) count_use(cx, c->cls, c->use, c->n);
-        vk_exec_frame.bind_reused++;
+        vk_exec_bind_count(1);
         return 1;
     }
     cx->pb_cnt_cur = (PbCount){0};
@@ -3653,7 +3653,7 @@ static int pb_take(const VkExec *ex, const VkPipeBinding *b, uint32_t j, uint32_
 static void pb_keep(DrawCtx *cx, uint32_t j, const VkDescSlot *o) {
     cx->pb_cap = NULL;
     if (!cx->pb_e || j >= PB_DESC) return;
-    vk_exec_frame.bind_resolved++;
+    vk_exec_bind_count(0);
     if (!cx->pb_key_ok) {
         cx->pb_e->ok[j] = 0;
         return;

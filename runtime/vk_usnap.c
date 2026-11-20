@@ -261,13 +261,16 @@ static void summary(void) {
     double s = U.subs ? (double)U.subs : 1.0;
     char clears[512];   // among the GPU writes: the small buffer clears and the counter records they covered
     vk_exec_clear_stats(clears, sizeof clears);
+    uint64_t hits = __atomic_exchange_n(&U.hits, 0, __ATOMIC_RELAXED);
     rt_log("vk_usnap: %llu submissions with a snapshot, %llu without; per submission %.0f ranges, %.1f KiB copied in "
            "%.3f ms, %.0f uniform bindings from the copy, %.1f dropped by GPU writes, %.1f left out (GPU writes in "
            "flight), %.1f refused (not an imported pool); %s",
            (unsigned long long)U.subs, (unsigned long long)U.off_subs, U.regions / s, U.bytes / s / 1024.0,
-           U.copy_ns / s / 1e6, U.hits / s, U.drops / s, U.inflight / s, U.refused / s, clears);
-    U.subs = U.off_subs = U.regions = U.bytes = U.copy_ns = U.hits = U.drops = U.inflight = U.refused = 0;
+           U.copy_ns / s / 1e6, hits / s, U.drops / s, U.inflight / s, U.refused / s, clears);
+    U.subs = U.off_subs = U.regions = U.bytes = U.copy_ns = U.drops = U.inflight = U.refused = 0;
 }
+
+void vk_usnap_hits_add(uint64_t n) { __atomic_add_fetch(&U.hits, n, __ATOMIC_RELAXED); }
 
 // copy_regions's work, sliced for the replay workers (vk_exec_par): regions of the game's memory into the arena, then
 // the host copy into the device copy in COPY_SLICE pieces.
@@ -477,7 +480,7 @@ int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferI
     uint64_t off = r->off + (addr - r->lo);
     if (off % align) return 0;
     *out = (VkDescriptorBufferInfo){U.arena->buf, off, n};
-    U.hits++;
+    vk_exec_usnap_hit();
     hint = i;
     return 1;
 }
