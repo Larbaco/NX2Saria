@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/install.md source-hash=7e5d731ab27311901fb6c5cb81ee1a472ac1c0cb reviewed=no -->
+<!-- translation: lang=ru source=docs/install.md source-hash=3a878eece169ce485cc51ff4f547b1522813d5c9 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · **Русский** · [简体中文](../zh-Hans/install.md)
 
@@ -25,7 +25,10 @@ AppImage для Linux. Ни один из них не содержит данн�
 ## Linux
 
 1. Скачайте **`NX2Saria-Linux-<version>-x86_64.AppImage`** из выпуска.
-2. Сделайте его исполняемым (`chmod +x NX2Saria-Linux-*.AppImage`) и запустите.
+2. Сделайте его исполняемым и запустите. В терминале: `chmod +x NX2Saria-Linux-*.AppImage`. В файловом менеджере:
+   щёлкните по нему правой кнопкой, затем **Свойства > Права > Разрешить выполнение файла как программы**. До
+   этого двойной щелчок может открыть файл в другой программе (менеджере архивов или менеджере AppImage), а не
+   запустить его.
 3. Для сборки нужны компилятор и несколько библиотек из вашего дистрибутива. Если чего-то не хватает, AppImage
    называет, чего именно, и команду для установки. В Ubuntu 24.04, Linux Mint 22 и других дистрибутивах на основе
    Ubuntu:

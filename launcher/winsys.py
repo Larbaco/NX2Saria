@@ -176,12 +176,17 @@ def reveal(path):
 
 KNOWN_FOLDERS = {'downloads': '{374DE290-123F-4565-9164-39C4925E467B}',
                  'desktop': '{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}',
+                 'documents': '{FDD39AD0-238F-46AF-ADB4-6C85480369C7}',
                  'pictures': '{33E28130-4E1E-4676-835A-98395C3BC3BB}'}
 
 
 def known_folder(name):
-    """Windows: the folder the shell keeps for name ('downloads', 'desktop', 'pictures'), also when the player moved it to another
-    drive; None elsewhere or when the shell names none."""
+    """The folder the desktop keeps for name ('downloads', 'desktop', 'documents', 'pictures'): on Windows the shell's,
+    also when the player moved it to another drive; on Linux the one user-dirs.dirs names, translated on a desktop set
+    up in another language (launcher/platform/linux.py user_dir). None when there is none."""
+    if sys.platform.startswith('linux'):
+        from .platform.linux import user_dir
+        return user_dir(name)
     if os.name != 'nt' or name not in KNOWN_FOLDERS:
         return None
     try:
@@ -206,6 +211,31 @@ def known_folder(name):
             ole32.CoTaskMemFree(out)
     except (AttributeError, OSError):
         return None
+
+
+def pick(root, kind, title, initialdir, filetypes=(), log=None, mustexist=False):
+    """A file (kind 'file') or folder ('folder') the player chooses, or '' when they cancel. On Linux the desktop's
+    chooser (zenity or kdialog, launcher/platform/linux.py pick_path), which has the desktop's places and bookmarks
+    and reaches the drives under /mnt and /media; Tk's own, a bare list of folders, only where neither is installed.
+    Windows: Tk's, which is the system's. mustexist: Tk's folder chooser takes only a folder that exists (the desktop's
+    always do). One line into the log: which chooser, and what it gave."""
+    from tkinter import filedialog
+    tool, path = None, ''
+    patterns = [(label, '*' if pattern in ('*', '*.*') else pattern) for label, pattern in filetypes]
+    if sys.platform.startswith('linux'):
+        from .platform.linux import pick_path
+        tool, path = pick_path(kind, title, initialdir, patterns)
+    if tool is None:
+        tool = 'the system\'s' if os.name == 'nt' else 'Tk\'s (no zenity or kdialog)'
+        if kind == 'folder':
+            path = filedialog.askdirectory(parent=root, title=title, initialdir=initialdir, mustexist=mustexist)
+        else:
+            path = filedialog.askopenfilename(parent=root, title=title, initialdir=initialdir,
+                                              filetypes=list(filetypes) or [('All files', '*.*')])
+    path = str(path or '')
+    if log:
+        log(f'file chooser ({tool}): {title}: ' + (path if path else 'cancelled'))
+    return path
 
 
 class _PerformanceInformation(ctypes.Structure):

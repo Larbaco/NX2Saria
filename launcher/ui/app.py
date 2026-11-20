@@ -31,12 +31,12 @@ import math
 import os
 import random
 import shutil
+import signal
 import sys
 import time
 import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
-from tkinter import filedialog
 
 from .. import NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
 from ..context import Context, shorten
@@ -366,6 +366,8 @@ def drive_of(path):
 class App:
     def __init__(self, root, ctx, args):
         self.root, self.ctx, self.args = root, ctx, args
+        self.opened = time.monotonic()
+        self.closed = ''   # why the window was closed, once on_close has run
         self.layout, self.settings = ctx.layout, ctx.settings
         self.s = self.compute_scale()
         self.sprites = {}
@@ -902,7 +904,17 @@ class App:
             self.pick_drag = None
             self.pick_changed(final=True)
 
-    def on_close(self):
+    def on_close(self, why='closed by the player'):
+        """Close the window: the × of the title band or of the system's frame, Alt+F4, or a signal that ends the
+        process (main, errors.on_end_signals). The line it logs tells a closed window from one that died, whose log
+        ends without it."""
+        if self.closed:
+            return
+        self.closed = why
+        busy = (f'; {self.job.task or self.job.title or type(self.job).__name__} cancelled'
+                if self.job and self.job.result is None else '')
+        self.ctx.log(f'window {why} on the {self.screen or "first"} screen after '
+                     f'{time.monotonic() - self.opened:.0f} s{busy}')
         if self.job and self.job.result is None:
             self.job.cancel()
         if self.bg.staging():   # what it downloaded is resumed, and its unfinished folder replaced, next time
@@ -961,6 +973,7 @@ class App:
                 self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Begin '
                                 'Installation goes on from the steps that were done.')
             self.show('first_run')
+            self.log_first_run()
             self.find_dumps()
 
     def after_update_notice(self):
@@ -984,14 +997,37 @@ class App:
 
     # ---- first run
 
+    def log_first_run(self):
+        """The first-run screen's folder and dump into launcher.log: the line that tells, in a log that ends here,
+        that the window was up and what it offered."""
+        gd = self.game_dir()
+        chosen = 'chosen' if self.settings.get('game_dir') else 'default'
+        dump = self.settings.get('dump')
+        self.ctx.log(f'first run: install folder {gd} ({chosen}), {free_gb(gd) + partial_image_gb(gd):.0f} GB free '
+                     f'there; dump {dump or "not chosen yet"}')
+
     def find_dumps(self):
         import threading
         extra = [self.args.source] if self.args.source else []
         extra.append(str(self.layout.root.parent))
 
+        drives = []
+        if sys.platform.startswith('linux'):
+            from ..platform.linux import mounted_drives
+            drives = mounted_drives()
+
         def work():
+            t0 = time.monotonic()
             try:
-                found = gamefiles.find_dumps(self.layout, extra)
+                report = {}
+                found = gamefiles.find_dumps(self.layout, extra, drives=drives, report=report)
+                where = ', '.join(str(d) for d in gamefiles.candidate_dirs(extra)) + ' and their folders'
+                if drives:
+                    where += (f'; the drives {", ".join(str(d) for d in drives)}, {gamefiles.DRIVES_DEPTH} levels deep'
+                              + (f', stopped after {gamefiles.DRIVES_SECONDS:.0f} s' if report.get('stopped') else ''))
+                said = f'{len(found)} found, newest {found[0]}' if found else 'none found'
+                self.ctx.log(f'dump search: {said} ({report.get("folders", 0)} folders in '
+                             f'{time.monotonic() - t0:.1f} s; looked in {where})')
             except Exception as e:
                 self.ctx.log(f'dump search: {e}')
                 found = []
@@ -1019,12 +1055,15 @@ class App:
             dump_desc = (f'Your dump: {Path(dump).name}, in {where}. Select this row to choose another .nup file.',)
         elif self.dumps is None:
             dump_value, dump_style, check = 'Looking for your dump…', 'dim', False
-            dump_desc = ('Looking for your dump of Ocarina of Time in Downloads, Desktop, Documents and the folder '
-                         'the setup ran from.',)
+            dump_desc = ('Looking for your dump of Ocarina of Time in Downloads, Desktop, Documents, '
+                         + ('the drives mounted under /mnt and /media ' if sys.platform.startswith('linux') else '')
+                         + 'and the folder the setup ran from.',)
         else:
             dump_value, dump_style, check = 'Choose your .nup file', 'salmon', False
             dump_desc = ('Choose your own dump of Ocarina of Time with the 1.1.1 update, as one .nup file. None was '
-                         'found in Downloads, Desktop or Documents.',)
+                         'found in Downloads, Desktop or Documents'
+                         + (', nor on the drives mounted under /mnt and /media' if sys.platform.startswith('linux')
+                            else '') + '.',)
         gd = self.game_dir()
         need = 34
         free = free_gb(gd) + partial_image_gb(gd)   # Begin Installation removes the partial image (begin_install)
@@ -1105,8 +1144,8 @@ class App:
 
     def choose_dump(self):
         start = str(Path(self.settings.get('dump')).parent) if self.settings.get('dump') else str(Path.home())
-        path = filedialog.askopenfilename(parent=self.root, title='Choose your Ocarina of Time dump',
-                                          initialdir=start, filetypes=[('Game dump', '*.nup'), ('All files', '*.*')])
+        path = winsys.pick(self.root, 'file', 'Choose your Ocarina of Time dump', start,
+                           [('Game dump', '*.nup'), ('All files', '*.*')], self.ctx.log)
         if not path:
             return
         if not gamefiles.is_game_nup(self.layout, path):
@@ -1120,8 +1159,8 @@ class App:
         self.show(self.screen, self.focus)
 
     def choose_folder(self):
-        path = filedialog.askdirectory(parent=self.root, title='Choose the folder for the game',
-                                       initialdir=str(Path(self.game_dir()).parent))
+        path = winsys.pick(self.root, 'folder', 'Choose the folder for the game', str(Path(self.game_dir()).parent),
+                           log=self.ctx.log)
         if not path:
             return
         p = Path(path)
@@ -1564,8 +1603,8 @@ class App:
         start = str(Path(start).parent) if start and Path(start).parent.is_dir() else \
             str(winsys.known_folder('pictures') or Path.home())
         pattern = ' '.join('*' + t for t in picture.TYPES)
-        path = filedialog.askopenfilename(parent=self.root, title='Choose a background picture', initialdir=start,
-                                          filetypes=[('Pictures', pattern), ('All files', '*.*')])
+        path = winsys.pick(self.root, 'file', 'Choose a background picture', start,
+                           [('Pictures', pattern), ('All files', '*.*')], self.ctx.log)
         if not path:
             return
         try:
@@ -1667,8 +1706,8 @@ class App:
         ]
 
     def choose_export_dir(self):
-        d = filedialog.askdirectory(parent=self.root, title='Choose where Export Save writes its zip',
-                                    initialdir=str(self.export_dir()), mustexist=True)
+        d = winsys.pick(self.root, 'folder', 'Choose where Export Save writes its zip', str(self.export_dir()),
+                        log=self.ctx.log, mustexist=True)
         if d:
             self.settings['save_export_dir'] = str(Path(d))
             self.settings.save()
@@ -1709,14 +1748,13 @@ class App:
             try:
                 src = None
                 if folder:
-                    src = filedialog.askdirectory(parent=self.root, title='Choose the folder with the save',
-                                                  initialdir=str(saves.ensure_saves_dir(gd)), mustexist=True)
+                    src = winsys.pick(self.root, 'folder', 'Choose the folder with the save',
+                                      str(saves.ensure_saves_dir(gd)), log=self.ctx.log, mustexist=True)
                     if not src:
                         return
                 elif saves.waiting(gd)[0] is None:
-                    src = filedialog.askopenfilename(parent=self.root, title='Choose the save to import',
-                                                     initialdir=str(self.export_dir()),
-                                                     filetypes=[('NX2Saria save', '*.zip'), ('All files', '*.*')])
+                    src = winsys.pick(self.root, 'file', 'Choose the save to import', str(self.export_dir()),
+                                      [('NX2Saria save', '*.zip'), ('All files', '*.*')], self.ctx.log)
                     if not src:
                         return
                 r = saves.import_save(gd, src, log=self.ctx.log)
@@ -1886,12 +1924,11 @@ class App:
             self.mods_message = 'Install the game first.'
         else:
             if folder:
-                src = filedialog.askdirectory(parent=self.root, title='Choose the folder of the mod',
-                                              initialdir=str(Path.home() / 'Downloads'), mustexist=True)
+                src = winsys.pick(self.root, 'folder', 'Choose the folder of the mod', str(Path.home() / 'Downloads'),
+                                  log=self.ctx.log, mustexist=True)
             else:
-                src = filedialog.askopenfilename(parent=self.root, title='Choose the mod',
-                                                 initialdir=str(Path.home() / 'Downloads'),
-                                                 filetypes=[('Mod', '*.zip *.7z *.rar'), ('All files', '*.*')])
+                src = winsys.pick(self.root, 'file', 'Choose the mod', str(Path.home() / 'Downloads'),
+                                  [('Mod', '*.zip *.7z *.rar'), ('All files', '*.*')], self.ctx.log)
             if not src:
                 return
             try:
@@ -3136,14 +3173,32 @@ def main(argv=None):
             tell(f'NX2Saria is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
                  'when you quit the game.')
             return 0
+    from .. import errors
+    errors.install(ctx)   # the window's errors; finish() below
+    code = 0
     try:
         root = tk.Tk(className='NX2Saria')
+        root.report_callback_exception = errors.window_hook(ctx)
         app = App(root, ctx, a)
+
+        def end_signal(name):
+            # Python runs this between two steps of whatever the window was doing (a redraw, a timer): closing here
+            # would destroy the canvas under that code. The window closes from the event loop instead.
+            nonlocal code
+            code = 128 + getattr(signal, name)
+            try:
+                root.after(0, lambda: app.on_close(f'ended by {name}'))
+            except tk.TclError:   # the window is already gone
+                pass
+        errors.on_end_signals(end_signal)
         if a.selftest:
             from .selftest import run
             root.after(300, lambda: run(app, a.shots))
         root.mainloop()
+        if not app.closed:   # Uninstall, or the selftest, ends the window without on_close
+            ctx.log(f'window ended on the {app.screen} screen after {time.monotonic() - app.opened:.0f} s')
     finally:
+        errors.finish(ctx)
         if lock:
             lock.release()
-    return 0
+    return code

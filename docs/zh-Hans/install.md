@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/install.md source-hash=7e5d731ab27311901fb6c5cb81ee1a472ac1c0cb reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/install.md source-hash=3a878eece169ce485cc51ff4f547b1522813d5c9 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · [Русский](../ru/install.md) · **简体中文**
 
@@ -21,7 +21,9 @@
 ## Linux
 
 1. 从发布版本中下载 **`NX2Saria-Linux-<version>-x86_64.AppImage`**。
-2. 赋予它可执行权限（`chmod +x NX2Saria-Linux-*.AppImage`），然后运行它。
+2. 赋予它可执行权限，然后运行它。在终端中：`chmod +x NX2Saria-Linux-*.AppImage`。在文件管理器中：右键单击它，
+   然后选择 **属性 > 权限 > 允许作为程序执行文件**。在此之前，双击可能会把文件交给其他程序（压缩包管理器或 AppImage
+   管理器）打开，而不是运行它。
 3. 构建需要你的发行版提供的编译器和几个库。缺少其中任何一个时，AppImage 会指出缺少的是哪个，并给出安装它们的命令。在 Ubuntu 24.04、Linux Mint 22 以及其他基于 Ubuntu 的发行版上：
 
    ```sh

@@ -31,11 +31,26 @@ DEFAULTS = {
     'rolled_back': '',            # the last version that failed to start; it is never downloaded or installed by itself
 }
 
+# Keys whose changes save() does not log: bookkeeping of the update check rather than a choice of the player.
+UNLOGGED = ('last_check', 'last_seen')
+# Keys whose values save() never writes into the log, only whether they are set: players attach the log to public issues.
+SECRET = ('github_token',)
+
+
+def _shown(key, value):
+    """A setting's value as save() writes it into the log."""
+    if key in SECRET:
+        return 'set' if value else 'empty'
+    if isinstance(value, bool):
+        return 'on' if value else 'off'
+    return str(value) if value != '' else "''"
+
 
 class Settings(dict):
-    def __init__(self, path):
+    def __init__(self, path, log=None):
         super().__init__(DEFAULTS)
         self.path = Path(path)
+        self.log = log   # save() writes a line here for each setting that changed since the last save
         self.unreadable = False   # the file is there but is no JSON; a copy of it is kept as launcher.json.bad
         try:
             # utf-8-sig: the docs ask players to edit the file by hand, and an editor may save it with a BOM
@@ -51,12 +66,23 @@ class Settings(dict):
                 shutil.copyfile(self.path, self.path.with_name(self.path.name + '.bad'))
             except OSError:
                 pass
+        self.saved = dict(self)   # what launcher.json holds, as far as this process knows
+
+    def changes(self):
+        """'setting: <key> <before> -> <after>' for each setting that differs from the last save (or from what was read
+        at the start), in the order of DEFAULTS."""
+        return [f'setting: {k} {_shown(k, self.saved.get(k))} -> {_shown(k, self.get(k))}'
+                for k in DEFAULTS if k not in UNLOGGED and self.get(k) != self.saved.get(k)]
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + '.tmp')
         tmp.write_text(json.dumps(dict(self), indent=1), encoding='utf-8')
         os.replace(tmp, self.path)
+        lines, self.saved = self.changes(), dict(self)
+        if self.log:
+            for line in lines:
+                self.log(line)
 
     def reset(self):
         """Default Settings: the choices go back to their defaults; the game folder, dump and history stay."""

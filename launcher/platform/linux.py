@@ -158,6 +158,135 @@ def udmabuf_change_available(which=shutil.which, os_release='/etc/os-release'):
     return not steamos and bool(which('pkexec'))
 
 
+def os_name(os_release='/etc/os-release'):
+    """The distribution as /etc/os-release names it (PRETTY_NAME, else NAME and VERSION_ID), or 'Linux'."""
+    fields = {}
+    try:
+        for line in Path(os_release).read_text(encoding='utf-8', errors='replace').splitlines():
+            key, sep, value = line.partition('=')
+            if sep:
+                fields[key.strip()] = value.strip().strip('"\'')
+    except OSError:
+        pass
+    return (fields.get('PRETTY_NAME') or ' '.join(v for v in (fields.get('NAME'), fields.get('VERSION_ID')) if v)
+            or 'Linux')
+
+
+def session_text(env=None):
+    """The graphical session for the launcher's start line: its type (x11, wayland, tty) and desktop, from the
+    variables the display manager sets, or from which display variable is there when it sets none."""
+    env = os.environ if env is None else env
+    kind = env.get('XDG_SESSION_TYPE') or ('wayland' if env.get('WAYLAND_DISPLAY') else
+                                           'x11' if env.get('DISPLAY') else 'unknown')
+    desktop = env.get('XDG_CURRENT_DESKTOP') or env.get('DESKTOP_SESSION') or 'unknown'
+    return f'{kind} session, desktop {desktop}'
+
+
+# the names launcher/winsys.py known_folder takes, and the keys of user-dirs.dirs for them
+USER_DIRS = {'downloads': 'XDG_DOWNLOAD_DIR', 'desktop': 'XDG_DESKTOP_DIR', 'documents': 'XDG_DOCUMENTS_DIR',
+             'pictures': 'XDG_PICTURES_DIR'}
+
+
+def user_dir(name, env=None, home=None):
+    """The folder the desktop keeps for name ('downloads', 'desktop', 'documents', 'pictures'), as
+    $XDG_CONFIG_HOME/user-dirs.dirs names it: translated ("Área de Trabalho", "Documentos") on a desktop set up in
+    another language. None when the file names none, or names the home folder itself (the desktop's way of turning
+    one off)."""
+    env = os.environ if env is None else env
+    home = Path(home or Path.home())
+    key = USER_DIRS.get(name)
+    config = env.get('XDG_CONFIG_HOME', '')
+    config = Path(config) if config.startswith('/') else home / '.config'
+    if not key:
+        return None
+    try:
+        lines = (config / 'user-dirs.dirs').read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        k, sep, value = line.strip().partition('=')
+        if not sep or k.strip() != key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        if value.startswith('$HOME'):
+            path = Path(str(home) + value[len('$HOME'):])
+        elif value.startswith('/'):
+            path = Path(value)
+        else:
+            return None
+        return None if path.resolve() == home.resolve() else path
+    return None
+
+
+# Filesystems of local disks, whose mount points the dump search looks through. Not network ones (a slow or
+# unreachable server would hold the search), not autofs placeholders (listing one mounts the disk behind it), and
+# not the system's own (proc, tmpfs, overlay and the like).
+LOCAL_FILESYSTEMS = {'ext2', 'ext3', 'ext4', 'btrfs', 'xfs', 'f2fs', 'jfs', 'reiserfs', 'zfs', 'bcachefs', 'ntfs',
+                     'ntfs3', 'fuseblk', 'exfat', 'vfat', 'msdos', 'hfsplus', 'udf'}
+
+
+def _unescape_mount(path):
+    """A mount point as /proc/self/mounts writes it, with its octal escapes (\\040 for a space) undone."""
+    import re
+    return re.sub(r'\\([0-7]{3})', lambda m: chr(int(m.group(1), 8)), path)
+
+
+def mounted_drives(mounts='/proc/self/mounts', user=None):
+    """The local disks mounted under /mnt, /media/<user> and /run/media, where a player's other drives are (an NTFS
+    partition shared with Windows, a second disk; SteamOS mounts the SD card at /run/media/mmcblk0p1 or
+    /run/media/<user>/<label>), in the order mounted. Only filesystems mounted now: nothing here mounts a disk."""
+    user = user or os.environ.get('USER') or os.environ.get('LOGNAME') or ''
+    bases = ['/mnt/', '/run/media/'] + ([f'/media/{user}/'] if user else [])
+    out = []
+    try:
+        lines = Path(mounts).read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 3 or fields[2] not in LOCAL_FILESYSTEMS:
+            continue
+        target = _unescape_mount(fields[1])
+        if any(target.startswith(b) and len(target) > len(b) for b in bases) and Path(target) not in out:
+            out.append(Path(target))
+    return out
+
+
+def pick_path(kind, title, start, patterns=(), which=shutil.which, run=subprocess.run, env=None):
+    """The desktop's own chooser for a file (kind 'file') or a folder ('folder'): kdialog on KDE, else zenity, else
+    kdialog. (tool, path) with path '' when the player cancelled; (None, '') when neither is installed or both failed,
+    and the caller falls back to Tk's chooser. patterns: (label, '*.ext') pairs for a file."""
+    env = os.environ if env is None else env
+    start = str(start or Path.home())
+    order = ['kdialog', 'zenity'] if 'KDE' in env.get('XDG_CURRENT_DESKTOP', '').upper() else ['zenity', 'kdialog']
+    for tool in order:
+        if not which(tool):
+            continue
+        if tool == 'zenity':
+            cmd = ['zenity', '--file-selection', '--title', title, '--filename', start.rstrip('/') + '/']
+            if kind == 'folder':
+                cmd.append('--directory')
+            cmd += [f'--file-filter={label} | {pattern}' for label, pattern in patterns]
+        else:
+            if kind == 'folder':
+                cmd = ['kdialog', '--title', title, '--getexistingdirectory', start]
+            else:
+                cmd = ['kdialog', '--title', title, '--getopenfilename', start,
+                       '\n'.join(f'{pattern}|{label}' for label, pattern in patterns)]
+        try:
+            r = run(cmd, capture_output=True)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0:   # the path as the file system has it, also when it is not UTF-8
+            out = r.stdout if isinstance(r.stdout, str) else os.fsdecode(r.stdout)
+            return tool, out.strip('\n')
+        if r.returncode == 1:   # both say 1 when the player cancelled
+            return tool, ''
+    return None, ''
+
+
 def _sdl_library():
     """Load the kit's SDL3 first, then the system copy; return a short source label for the log."""
     bundled = next((root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0'

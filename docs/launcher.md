@@ -159,6 +159,69 @@ job therefore refuse a game folder whose own path is longer than 130 characters,
 (`paths.long_path_problem`). Longer paths are not supported: the launcher does not use Windows' long path form, and
 the compiler, the linker and `tar` would not take it.
 
+## The launcher's log
+
+`data/logs/launcher.log` must show what the window did, and how it ended, even when the player never reached Begin
+Installation. Otherwise a log that ends after the start lines reads the same for a window the player closed and one
+that died.
+
+- **Start** (`launcher/context.py`): the version, how the launcher was installed (`install_kind`), the folder and
+  the system (`system_text`). The install kind is one of:
+  - a checkout;
+  - on Windows, the setup's install (`NX2Saria.exe` beside `app/`) or a release folder;
+  - on Linux, the AppImage's install (the `nx2saria-launcher` script beside `app/`), started by the AppImage (which
+    sets `APPIMAGE`) or by its menu entry.
+
+  The system is the Windows version, or on Linux the distribution from `/etc/os-release` with the session type and
+  desktop (`XDG_SESSION_TYPE`, `XDG_CURRENT_DESKTOP`). Example:
+  `--- NX2Saria launcher 0.21.0 (AppImage install, started from its menu entry or script) in ~/.local/share/nx2saria;
+  platform linux; Linux Mint 22, x11 session, desktop X-Cinnamon; ...`
+- **First run** (`App.log_first_run`, `App.find_dumps`): the folder the game would go to, whether it is the default,
+  the free space there, and the dump, if one is chosen. Then the dump search's result: how many dumps it found, how
+  many folders it looked in, how long it took and where it looked.
+- **Settings**: each saved change is logged as `setting: <key> <before> -> <after>` (`Settings.save`), whichever row
+  made it. The update check's bookkeeping (`last_check`, `last_seen`) is left out. The GitHub token is logged only as
+  `set` or `empty`.
+- **File choosers** (`winsys.pick`): one line per chooser, saying which chooser opened and what it gave, or
+  `cancelled`.
+- **The end**: `window closed by the player on the <screen> screen after N s` (`App.on_close`: the × of the band or
+  of the system's frame, or Alt+F4). On Linux, SIGTERM and SIGHUP (a logout, or the terminal that started it being
+  closed) write `window ended by SIGTERM ...`, close the window from the event loop and exit with 128 + the signal's
+  number. Uninstall and the selftest write `window ended on ...`.
+- **Errors after the window is up** (`launcher/errors.py`). Python reports these only on stderr, which pythonw.exe
+  does not have and which on Linux is the terminal or the session's error file. The launcher records them itself:
+  - an exception in a window callback (`report_callback_exception`) or a background thread (`threading.excepthook`)
+    writes one `error in the window: ...` or `error in the background (<thread>): ...` line, and its traceback goes to
+    `data/logs/crash.log`;
+  - a fault in native code (Tk, SDL3 through ctypes) writes the Python stacks to `crash.log` through `faulthandler`.
+    This is off Windows only. On Windows `faulthandler` also reports exceptions that are raised and then handled,
+    such as the COM and RPC exceptions of the shell's file chooser and its extensions, so `crash.log` would read like
+    a crash after every chosen file. The file `faulthandler` keeps open is removed at the window's end if nothing
+    was written to it.
+
+  Errors before the window opens still go to `crash.log` from `start.pyw`.
+
+### Finding the dump on Linux
+
+Beyond the usual folders, the search covers:
+- the Downloads, Desktop and Documents folders the desktop names in `~/.config/user-dirs.dirs`, which are translated
+  on a desktop in another language (`winsys.known_folder`, `launcher/platform/linux.py` `user_dir`);
+- the disks mounted under `/mnt`, `/media/<user>` and `/run/media` (`mounted_drives`), which includes SteamOS's SD
+  card.
+
+Only local filesystems that are mounted now are searched, read from `/proc/self/mounts`. An autofs placeholder is left
+out, because listing it would mount the disk behind it, and so is a network share, because a slow server would hold
+up the search. Each drive is searched two folder levels deep (`/mnt/dados/Jogos/Switch/*.nup`), at most 200 folders
+per level and 5 s for all drives (`gamefiles.DRIVES_*`). The limit is checked between the entries of a folder, so
+a folder with tens of thousands of files cannot hold the search past it. On a 1 TB NTFS partition, two levels were 502 folders in
+0.3 s and three levels were 3373 folders in 1.2 s, both with the disk cache warm. A dump deeper than that is chosen
+with the Game Dump row.
+
+The choosers for a file or folder are the desktop's own on Linux: zenity, or kdialog first on KDE
+(`launcher/platform/linux.py` `pick_path`). Tk's chooser is only a fallback when neither is installed, because it
+has none of the desktop's places or bookmarks. The launcher waits for the chooser to close; until then its window
+does not redraw. On Windows, Tk's chooser is the system's own.
+
 ## Installing
 
 `jobs.InstallJob`, one row per step:

@@ -507,6 +507,35 @@ class SettingsTest(Tmp):
         self.assertEqual(self.layout.settings.with_name('launcher.json.bad').read_text(encoding='utf-8'), typo)
 
 
+class SettingChangesTest(Tmp):
+    def test_each_changed_setting_is_logged_once(self):
+        """Every saved change of a setting leaves 'setting: <key> <before> -> <after>' in launcher.log, whichever row
+        made it: a log that showed only the start of a window that ran a minute and a half said nothing of what the
+        player did in it. The update check's bookkeeping is not logged, and the GitHub token only as set or empty."""
+        lines = []
+        s = settings.Settings(self.layout.settings, log=lines.append)
+        s['channel'], s['auto_check'], s['last_check'], s['github_token'] = 'preview', False, 123.0, 'ghp_secret'
+        s.save()
+        self.assertEqual(lines, ['setting: auto_check on -> off', 'setting: channel stable -> preview',
+                                 'setting: github_token empty -> set'])
+        s.save()   # nothing changed since
+        self.assertEqual(len(lines), 3)
+        s['dump'] = '/home/ana/Downloads/game.nup'
+        s.save()
+        self.assertEqual(lines[3:], ["setting: dump '' -> /home/ana/Downloads/game.nup"])
+        t = settings.Settings(self.layout.settings, log=lines.append)   # the next start compares with the file
+        t['channel'] = 'stable'
+        t.save()
+        self.assertEqual(lines[4:], ['setting: channel preview -> stable'])
+
+    def test_the_context_logs_the_changes(self):
+        ctx = Context(self.layout)
+        self.addCleanup(ctx._file.close)
+        ctx.settings['sounds'] = 'off'
+        ctx.settings.save()
+        self.assertIn('setting: sounds low -> off', ''.join(ctx.log_tail()))
+
+
 class UninstallTest(Tmp):
     def tree(self, root, rels):
         for rel in rels:
@@ -6054,6 +6083,168 @@ class UnfinishedUpdateTest(Tmp):
         made_up_game(game)   # a finished build of an earlier version
         rows = {r.label: r for r in App.rows_home(a) if r.label}
         self.assertEqual(rows['Rebuild the Game'].value, 'Built with 0.6.1')
+
+
+class LauncherLogTest(Tmp):
+    """What launcher.log says about the window beyond its start (launcher/errors.py, launcher/context.py, App.on_close,
+    App.log_first_run): a player's log that ends after the start line must tell a closed window from one that died."""
+
+    def ctx(self):
+        ctx = Context(self.layout)
+        self.addCleanup(ctx._file.close)
+        return ctx
+
+    def log(self, ctx):
+        return ''.join(ctx.log_tail(200))
+
+    def test_the_start_line_says_how_it_was_installed_and_on_what(self):
+        from launcher import context
+        ctx = self.ctx()
+        self.assertIn(f'--- NX2Saria launcher {ctx.version} (', self.log(ctx))
+        self.assertEqual(context.install_kind(Layout(root=self.tmp / 'r', app=ROOT)), 'checkout')
+        if os.name == 'nt':
+            return
+        app = self.tmp / 'root' / 'app' / '0.21.0'
+        app.mkdir(parents=True)
+        (app.parent / 'current.txt').write_text('0.21.0\n')
+        layout = Layout(app=app)
+        self.assertEqual(layout.root, self.tmp / 'root')
+        self.assertEqual(context.install_kind(layout, {}), 'release folder')
+        (layout.root / 'nx2saria-launcher').write_text('#!/bin/sh\n')
+        self.assertEqual(context.install_kind(layout, {'APPIMAGE': '/home/ana/NX2Saria.AppImage'}),
+                         'AppImage install, started by the AppImage')
+        self.assertEqual(context.install_kind(layout, {}), 'AppImage install, started from its menu entry or script')
+        if sys.platform.startswith('linux'):
+            release = self.tmp / 'os-release'
+            release.write_text('NAME="Linux Mint"\nVERSION_ID="22"\nPRETTY_NAME="Linux Mint 22"\n')
+            env = {'XDG_SESSION_TYPE': 'x11', 'XDG_CURRENT_DESKTOP': 'X-Cinnamon', 'DISPLAY': ':0'}
+            self.assertEqual(context.system_text(env, release), 'Linux Mint 22, x11 session, desktop X-Cinnamon')
+            self.assertIn('platform linux; ', self.log(ctx))
+
+    def test_an_error_in_a_window_callback_is_logged(self):
+        """Tk reports an exception in a callback (a click, a key, a timer) only on stderr, which is nowhere under
+        pythonw.exe: report_callback_exception writes a line into launcher.log and the traceback into crash.log."""
+        from launcher import errors
+        ctx = self.ctx()
+        try:
+            {}['no such row']
+        except KeyError:
+            errors.window_hook(ctx)(*sys.exc_info())
+        line = [ln for ln in ctx.log_tail() if 'error in the window' in ln]
+        self.assertEqual(len(line), 1)
+        self.assertIn("KeyError: 'no such row' (in test_an_error_in_a_window_callback_is_logged, launcher_test.py:",
+                      line[0])
+        crash = (self.layout.logs / 'crash.log').read_text(encoding='utf-8')
+        self.assertIn('in the window:', crash)
+        self.assertIn('Traceback (most recent call last)', crash)
+
+    def test_errors_in_threads_and_fatal_faults_are_kept(self):
+        import faulthandler
+        from launcher import errors
+        hook = threading.excepthook
+        self.addCleanup(setattr, threading, 'excepthook', hook)
+        ctx = self.ctx()
+        self.addCleanup(errors.finish, ctx)
+        self.assertEqual(errors.install(ctx), os.name != 'nt')   # Windows: no faulthandler (launcher/errors.py)
+        self.assertTrue(faulthandler.is_enabled())
+
+        def fail():
+            raise RuntimeError('the dump search failed')
+        t = threading.Thread(target=fail, name='dumps')
+        t.start()
+        t.join()
+        self.assertIn('error in the background (dumps): RuntimeError: the dump search failed', self.log(ctx))
+        if os.name == 'nt':
+            return
+        # a fault in native code: faulthandler writes the stacks into crash.log. Not shown with a real fault, which
+        # leaves a core dump in the system's crash records that reads like a launcher crash.
+        self.assertEqual(Path(errors._fault_file.name), self.layout.logs / 'crash.log')
+        faulthandler.dump_traceback(errors._fault_file)
+        errors._fault_file.flush()
+        self.assertIn('test_errors_in_threads_and_fatal_faults_are_kept',
+                      (self.layout.logs / 'crash.log').read_text(encoding='utf-8'))
+
+    def test_an_empty_crash_log_is_not_left_behind(self):
+        """faulthandler keeps crash.log open; a window that ended without a fault removes the empty file, which a
+        player would otherwise attach as if it said why something failed."""
+        from launcher import errors
+        ctx = self.ctx()
+        crash = self.layout.logs / 'crash.log'
+        errors.install(ctx)
+        errors.finish(ctx)
+        self.assertFalse(crash.exists())
+        crash.write_text('Fatal Python error: Segmentation fault\n')
+        errors.install(ctx)
+        errors.finish(ctx)
+        self.assertTrue(crash.exists())   # one with something in it stays
+
+    @unittest.skipUnless(hasattr(__import__('signal'), 'SIGHUP'), 'SIGHUP is POSIX only')
+    def test_the_end_signals_reach_a_handler(self):
+        import signal
+        from launcher import errors
+        for name in errors.END_SIGNALS:
+            self.addCleanup(signal.signal, getattr(signal, name), signal.getsignal(getattr(signal, name)))
+        got = []
+        self.assertEqual(errors.on_end_signals(got.append), ['SIGTERM', 'SIGHUP'])
+        os.kill(os.getpid(), signal.SIGHUP)
+        os.kill(os.getpid(), signal.SIGTERM)
+        self.assertEqual(got, ['SIGHUP', 'SIGTERM'])
+
+    def test_closing_the_window_is_logged_once(self):
+        App, a = mock_app(self, self.tmp / 'game')
+        a.screen, a.opened, a.closed, a.job = 'first_run', time.monotonic() - 69, '', None
+        App.on_close(a)
+        App.on_close(a)   # a signal while the window is closing
+        lines = [ln for ln in a.ctx.log_tail() if ' window ' in ln]
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], r'window closed by the player on the first_run screen after 69 s$')
+        a.root.destroy.assert_called_once()
+        a.job = mock.Mock(result=None, task='installing the game', title='')
+        a.closed = ''
+        App.on_close(a, 'ended by SIGTERM')
+        self.assertIn('window ended by SIGTERM on the first_run screen', self.log(a.ctx))
+        self.assertIn('; installing the game cancelled', self.log(a.ctx))
+        a.job.cancel.assert_called_once()
+
+    def test_the_first_run_screen_logs_its_folder_and_dump(self):
+        from launcher.ui import app
+        App, a = mock_app(self, '')
+        a.settings['game_dir'] = ''
+        a.game_dir.return_value = str(self.tmp / 'nx2saria' / 'game')
+        with mock.patch.object(app, 'free_gb', lambda p: 54.4):
+            App.log_first_run(a)
+        self.assertIn(f'first run: install folder {self.tmp / "nx2saria" / "game"} (default), 54 GB free there; dump '
+                      'not chosen yet', self.log(a.ctx))
+
+    @unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt', 'needs a display (xvfb-run on Linux)')
+    def test_a_first_run_window_ended_by_a_signal(self):
+        """The whole window on a first run with no dump around: the lines a player's log should show, ending with
+        the reason the window went."""
+        import signal
+        if not hasattr(signal, 'SIGTERM') or os.name == 'nt':
+            self.skipTest('signals that end a process are POSIX only')
+        home, root = self.tmp / 'home', self.tmp / 'w'
+        (home / 'Downloads').mkdir(parents=True)
+        env = {k: v for k, v in os.environ.items() if k in ('DISPLAY', 'XAUTHORITY', 'PATH', 'LANG')}
+        env.update(HOME=str(home))
+        # the drives this machine has mounted are left out: a dump on one would be found and decoded
+        start = ('import sys\nimport launcher.platform.linux as linux\nlinux.mounted_drives = lambda *a, **k: []\n'
+                 'from launcher.ui.app import main\nsys.exit(main(sys.argv[1:]))\n')
+        p = subprocess.Popen([sys.executable, '-c', start, '--root', str(root)], cwd=ROOT, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        log = root / 'data' / 'logs' / 'launcher.log'
+        deadline = time.time() + 60
+        while time.time() < deadline and 'dump search:' not in (log.read_text() if log.is_file() else ''):
+            time.sleep(0.2)
+        p.send_signal(signal.SIGTERM)
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 128 + signal.SIGTERM, err)
+        text = log.read_text()
+        self.assertIn('first run: install folder ', text)
+        self.assertIn('; dump not chosen yet', text)
+        self.assertIn('dump search: none found (', text)
+        self.assertNotIn('error in the window', text)
+        self.assertRegex(text, r'window ended by SIGTERM on the first_run screen after \d+ s\n$')
 
 
 class WindowTest(Tmp):
