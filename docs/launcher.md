@@ -106,7 +106,8 @@ Customize Launcher (on the home screen) makes the look the player's own:
   Windows keeps `shortcuts.vdf.nx2navi-backup`, Linux keeps `shortcuts.vdf.nx2saria-bak` before each change).
   Steam reads that file only when it starts and writes it back when it closes. Windows asks Steam to close and starts
   it again; Linux refuses to write while Steam is open and asks the player to close it. Linux checks native and
-  Flatpak Steam data roots and updates every native account. The default Steam Flatpak permissions do not grant
+  Flatpak Steam data roots and updates every native account. SteamOS uses native Steam at `~/.local/share/Steam`, so
+  the shortcut is offered normally on Steam Deck. On desktop distros, the default Steam Flatpak permissions do not grant
   `org.freedesktop.Flatpak` access to the host or filesystem access to the launcher in the home directory, so Flatpak
   accounts are logged and skipped. Its shortcut runs the installed
   `nx2saria-launcher` wrapper with `--play`; Windows runs the launcher's
