@@ -580,6 +580,8 @@ def in_front(root):
     the window manager gives the window in front (SDL3 reads the pad there whichever window is in front too). True
     where it cannot tell."""
     if os.name != 'nt':
+        if os.environ.get('GAMESCOPE_WAYLAND_DISPLAY') or os.environ.get('SteamDeck'):
+            return True   # Steam's Game Mode shows one window at a time, and the pad is the only input there
         try:
             return root.focus_displayof() is not None
         except Exception:   # tk.TclError, or a stand-in window without Tk

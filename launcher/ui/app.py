@@ -452,6 +452,9 @@ class App:
         self.sparks = []
         self.sprig_xy = None
         self.halo = []
+        self.sprig_at = self.halo_k = None   # where step_backdrop last put the sprig, the halo's frame
+        self.lit = None       # the row drawn as the focused one (render, refocus)
+        self.moving = False   # animate is stepping (Animations on, the window shown and in front)
 
         root.title(NAME)
         root.resizable(False, False)
@@ -657,6 +660,7 @@ class App:
         self.halo = self.sprites[('halo', size)]
         c.create_image(x + ew // 2, self.X(bh / 2), image=self.halo[0], tags=('static', 'halo'))
         self.sprig_xy = (x, self.X(bh / 2))
+        self.sprig_at = self.halo_k = None   # drawn again at its place and first frame: step_backdrop starts over
         c.create_image(x, self.X(bh / 2), anchor='w', image=emblem, tags=('static', 'sprig'))
         tx = x + ew + gap
         c.create_text(tx + 1, self.X(bh / 2) + self.X(2), text=NAME, anchor='w', font=self.f['band'],
@@ -2149,6 +2153,10 @@ class App:
         self.game_run = None
         self.root.deiconify()
         self.root.lift()
+        try:   # the pad and the animations follow the keyboard focus (winsys.in_front)
+            self.root.focus_force()
+        except tk.TclError:
+            pass
         if run:
             end = run.end()
             self.ctx.log(end.log)
@@ -2598,6 +2606,7 @@ class App:
             dt = min(0.1, max(0.0, now - self.anim_last))
             self.anim_last = now
             moving = self.animated() and self.root.state() == 'normal' and winsys.in_front(self.root)
+            self.moving = moving
             if moving:
                 self.anim_t += dt
                 self.step_slide(dt)
@@ -2677,6 +2686,7 @@ class App:
         for i, (r, h) in enumerate(zip(self.rows, heights)):
             self.draw_row_tagged(i, self.X(x0), self.X(y), self.X(x1), self.X(y + h))
             y += h + self.row_gap
+        self.lit = self.focus
         self.draw_status()
         self.draw_cursor()
         if self.screen == 'color' and self.pick:
@@ -2703,16 +2713,19 @@ class App:
         mouse. The whole screen still when it slides in, on a job's screen (its rows change as it runs) and with the
         colour picker open."""
         c, rows = self.canvas, self.rows
-        if (old == self.focus or self.slide_applied or self.screen == 'job' or (self.screen == 'color' and self.pick)
-                or not all(0 <= i < len(rows) and rows[i].rect for i in (old, self.focus))):
+        # the row drawn lit may not be old: a click or a cancelled chooser moves the focus without drawing it
+        again = sorted({i for i in (self.lit, old, self.focus) if i is not None})
+        if (self.slide_applied or self.screen == 'job' or (self.screen == 'color' and self.pick)
+                or not all(0 <= i < len(rows) and rows[i].rect for i in again)):
             self.render()
             return
-        for i in (old, self.focus):
+        for i in again:
             c.delete(f'row{i}')
         c.delete('cursor')
         c.delete('desc')
-        for i in (old, self.focus):
+        for i in again:
             self.draw_row_tagged(i, *rows[i].rect)
+        self.lit = self.focus
         self.draw_cursor()
         self.draw_desc()
 
@@ -2908,7 +2921,8 @@ class App:
         # The cursor is drawn where it has got to and animate takes it on to the row (step_cursor); on a new screen,
         # while one slides in and with Animations off it stands on the row at once.
         target = (float(x0 - mg), float(y0 - mg))
-        glide = self.animated() and self.cur_xy and self.cur_screen == self.screen and not self.slide
+        # not while animate stands still (another window in front): the cursor would stay behind on the old row
+        glide = self.moving and self.cur_xy and self.cur_screen == self.screen and not self.slide
         self.cur_xy = self.cur_xy if glide else target
         self.cur_target, self.cur_screen = target, self.screen
         self.canvas.create_image(round(self.cur_xy[0]), round(self.cur_xy[1]), anchor='nw',

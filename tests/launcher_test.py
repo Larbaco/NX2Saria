@@ -2392,8 +2392,11 @@ class MakeGameTest(Tmp):
 
         sys.path.insert(0, str(self.layout.pydeps))   # the fake zbic
         self.addCleanup(sys.path.remove, str(self.layout.pydeps))
+        # the compile step is a stand-in, so is the check of this machine's compiler before it (Linux: preflight
+        # builds the runtime's headers into the kit, which this one does not have)
         with mock.patch.multiple(self.mg, KIT=kit, PROMPT_PACKAGES={}, EVENTS=False, step_romfs=fake('romfs'),
-                                 step_lift=fake('lift'), step_compile=fake('compile'), step_scan=fake('scan'), step_shaders=fake('shaders')):
+                                 step_lift=fake('lift'), step_compile=fake('compile'), step_scan=fake('scan'), step_shaders=fake('shaders'),
+                                 preflight=lambda *a, **k: None):
             others, ev, runs = build()
             self.assertEqual((others, runs), (['compile', 'lift', 'romfs', 'scan', 'shaders'], 1))
             self.assertEqual(states(ev), ['start', 'done'])
@@ -2485,7 +2488,8 @@ class MakeGameTest(Tmp):
         self.addCleanup(sys.path.remove, str(self.layout.pydeps))
         ini = self.out / 'nx2navi.ini'
         with mock.patch.multiple(self.mg, KIT=kit, PROMPT_PACKAGES={}, EVENTS=False, step_lift=fake('lift'),
-                                 step_compile=fake('compile'), step_scan=fake('scan')):
+                                 step_compile=fake('compile'), step_scan=fake('scan'),
+                                 preflight=lambda *a, **k: None):   # a stand-in compile: no compiler check (Linux)
             self.assertEqual(build('--nup', str(self.nup)),
                              ['check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'prompts', 'scan'])
             self.assertFalse(ini.exists())                   # the build makes no settings file: the game's menu does
@@ -6276,10 +6280,10 @@ class RefocusTest(Tmp):
     def test_refocus_draws_what_render_draws(self):
         a = self.window()
         a.settings['animations'] = False   # the cursor stands on its row at once
-        for screen in ('customize', 'first_run'):
+        for screen in ('customize', 'first_run', 'settings', 'uninstall'):
             a.show(screen)
             rows = a.focusables()
-            self.assertGreater(len(rows), 3)
+            self.assertGreater(len(rows), 1, screen)
             for old, new in zip(rows, rows[1:] + rows[:1]):
                 a.focus = old
                 a.render()
@@ -6288,11 +6292,22 @@ class RefocusTest(Tmp):
                 partial = self.items(a)
                 a.render()
                 self.assertEqual(partial, self.items(a), (screen, old, new))
-        n = len(a.canvas.find_all())
-        for k in range(20):   # nothing piles up
+            # a click on a row whose action draws nothing (Open Logs Folder), or a cancelled chooser, moves the focus
+            # without drawing it: the next move must not leave the row drawn lit before it lit too
+            a.focus = rows[0]
+            a.render()
+            a.focus = rows[1]   # moved, not drawn
+            old, a.focus = a.focus, rows[2 % len(rows)]
+            a.refocus(old)
+            partial = self.items(a)
+            a.render()
+            self.assertEqual(partial, self.items(a), (screen, 'focus moved without drawing'))
+        for k in range(20):   # nothing piles up: as many items as a whole drawing of the same focus leaves
             old, a.focus = a.focus, rows[k % len(rows)]
             a.refocus(old)
-        self.assertEqual(len(a.canvas.find_all()), n)
+        n = len(a.canvas.find_all())
+        a.render()
+        self.assertEqual(n, len(a.canvas.find_all()))
 
 
 class WindowTest(Tmp):
