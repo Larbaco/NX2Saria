@@ -1092,6 +1092,8 @@ VkPipeline vk_pipeline_graphics(const VkPipeState *s, const VkPipeInfo **info);
 // wait_ms > 0 waits up to that long for a pending pipeline first. Pipelines built in a run are recorded to
 // pipeline-keys.bin next to the pipeline cache and prebuilt at the next boot (NX2SARIA_PIPE_PREBUILD=0: not).
 VkPipeline vk_pipeline_graphics_async(const VkPipeState *s, const VkPipeInfo **info, int *pending, uint32_t wait_ms);
+// Compare the requested graphics key with the entry that owns info: -1 when no entry is present, else 0 or 1.
+int vk_pipeline_graphics_key_matches(const VkPipeState *s, const VkPipeInfo *info);
 // How long the pipeline of s has been building since a draw first missed it, in milliseconds; 0 when it is unknown,
 // usable, or no draw has missed it.
 double vk_pipeline_building_ms(const VkPipeState *s);
