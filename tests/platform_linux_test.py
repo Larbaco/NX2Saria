@@ -81,7 +81,10 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertIn(f'Exec="{wrapper}"', desktop)
             self.assertTrue(os.access(wrapper, os.X_OK))
             self.assertIn('app/current.txt', wrapper.read_text())
+            self.assertFalse(wrapper.with_name(wrapper.name + '.new').exists())
             self.assertNotIn(str(bundle), desktop)
+            log = (root / 'data' / 'logs' / 'launcher.log').read_text().splitlines()
+            self.assertRegex(log[0], r'^\d\d:\d\d:\d\d AppImage installed launcher 0\.19\.0 in ')
 
     def test_appimage_installer_script_runs_as_subprocess(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,12 +173,63 @@ class LinuxPlatformTest(unittest.TestCase):
             old_exe.chmod(0o755)
             (root / 'python.old' / 'runtime-id.txt').write_text('old\n')
             appimage_install._write_wrapper(root)
-            result = subprocess.run([str(root / 'nx2saria-launcher')], capture_output=True, text=True, timeout=10)
+            args_file = Path(tmp) / 'rolled-back-args'
+            fake_python = ('#!/bin/sh\ncase "$2" in *0.2.0*) exit 86;; '
+                           '*) printf "%s\\n" "$@" > "$ROLLED_BACK_ARGS"; exit 0;; esac\n')
+            (root / 'python' / 'bin' / 'python3').write_text(fake_python)
+            old_exe.write_text(fake_python)
+            with mock.patch.dict(os.environ, {'ROLLED_BACK_ARGS': str(args_file)}):
+                result = subprocess.run([str(root / 'nx2saria-launcher')], capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(args_file.read_text().splitlines(),
+                             ['-I', str(root / 'app' / '0.1.0' / 'launcher' / 'start.pyw'),
+                              '--rolled-back', '0.2.0'])
             self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.1.0')
             self.assertEqual((root / 'python' / 'runtime-id.txt').read_text().strip(), 'old')
             self.assertFalse((root / 'python.old').exists())
             self.assertFalse((root / 'app' / 'previous.txt').exists())
+            log = (root / 'data' / 'logs' / 'launcher.log').read_text().splitlines()
+            self.assertRegex(log[0], r'^\d\d:\d\d:\d\d wrapper: 0\.2\.0 exited 86; back to 0\.1\.0$')
+
+    def test_wrapper_keeps_previous_on_clean_exit_and_skips_same_version_rollback(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        for exit_code in (0, 86):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                entry = root / 'app' / '0.2.0' / 'launcher' / 'start.pyw'
+                entry.parent.mkdir(parents=True)
+                entry.write_text('')
+                (root / 'app' / 'current.txt').write_text('0.2.0\n')
+                (root / 'app' / 'previous.txt').write_text('0.2.0\n')
+                python = root / 'python' / 'bin' / 'python3'
+                python.parent.mkdir(parents=True)
+                python.write_text(f'#!/bin/sh\nexit {exit_code}\n')
+                python.chmod(0o755)
+                appimage_install._write_wrapper(root)
+                result = subprocess.run([str(root / 'nx2saria-launcher')], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, exit_code)
+                self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.2.0')
+                self.assertEqual((root / 'app' / 'previous.txt').read_text().strip(), '0.2.0')
+                self.assertFalse((root / 'data' / 'logs' / 'launcher.log').exists())
+
+    def test_running_new_app_can_refresh_the_installed_wrapper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'share' / 'nx2saria'
+            app = root / 'app' / '0.2.0'
+            tools = app / 'tools'
+            tools.mkdir(parents=True)
+            (tools / 'appimage_install.py').write_text(
+                'def _write_wrapper(root):\n'
+                '    (root / "nx2saria-launcher.new").write_text("new")\n'
+                '    (root / "nx2saria-launcher.new").replace(root / "nx2saria-launcher")\n')
+            root.mkdir(parents=True, exist_ok=True)
+            wrapper = root / 'nx2saria-launcher'
+            wrapper.write_text('old')
+            linux.refresh_installed_wrapper(root, app)
+            self.assertEqual(wrapper.read_text(), 'new')
+            self.assertFalse(wrapper.with_name(wrapper.name + '.new').exists())
 
     def test_old_appimage_does_not_replace_a_newer_installation(self):
         import sys as py_sys
@@ -194,6 +248,9 @@ class LinuxPlatformTest(unittest.TestCase):
             py = root / 'python' / 'bin'
             py.mkdir(parents=True)
             (py / 'python3').write_text('new python')
+            wrapper = root / 'nx2saria-launcher'
+            wrapper.write_text('new wrapper')
+            wrapper.chmod(0o755)
             (root / 'nx2saria.png').write_bytes(b'icon')
             with mock.patch.dict(os.environ, {'XDG_DATA_HOME': str(base / 'share')}), \
                  mock.patch.object(appimage_install.shutil, 'which', return_value=None):
@@ -201,6 +258,7 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertEqual(chosen, entry)
             self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.20.0-rc.2')
             self.assertEqual((py / 'python3').read_text(), 'new python')
+            self.assertEqual(wrapper.read_text(), 'new wrapper')
             self.assertEqual((root / 'app' / '0.19.0' / 'VERSION').exists(), False)
 
     def test_linux_runtime_id_tracks_python_version_and_pins(self):
@@ -230,6 +288,8 @@ class LinuxPlatformTest(unittest.TestCase):
             (python / 'bin').mkdir(parents=True)
             (python / 'bin' / 'python3').write_bytes(b'old interpreter')
             (python / 'runtime-id.txt').write_text('runtime-old\n')
+            (root / 'python.old').mkdir()
+            (root / 'python.old' / 'stale.marker').write_text('stale')
             staged = new / updater.STAGED_PYTHON
             (staged / 'bin').mkdir(parents=True)
             (staged / 'bin' / 'python3').write_bytes(b'new interpreter')
@@ -242,6 +302,7 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertEqual((python / 'bin' / 'python3').read_bytes(), b'new interpreter')
             self.assertFalse((new / updater.STAGED).exists())
             self.assertTrue((root / 'python.old' / 'runtime-id.txt').is_file())
+            self.assertFalse((root / 'python.old' / 'stale.marker').exists())
     def test_missing_sdl_disables_gamepad(self):
         with mock.patch.object(linux, '_sdl_library', return_value=(None, 'none (not found)')):
             pad = linux.Gamepad()

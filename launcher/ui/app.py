@@ -923,8 +923,9 @@ class App:
             self.ctx.log(f'the launcher was stopped during {left["task"]} (started '
                          f'{time.strftime("%Y-%m-%d %H:%M", time.localtime(left.get("started") or 0))}, game folder '
                          f'{left.get("game_dir") or "none"})')
-        for old in self.layout.root.glob('python.old*'):   # the Python an update replaced (launcher/native/nx2saria.c)
-            shutil.rmtree(old, ignore_errors=True)
+        for pattern in ('python.old*', 'python.failed*'):
+            for old in self.layout.root.glob(pattern):   # the Python an update replaced (launcher/native/nx2saria.c)
+                shutil.rmtree(old, ignore_errors=True)
         if gd or self.settings.get('dump'):
             self.fonts_from_game(gd, self.settings.get('dump'))
         if a.uninstall:

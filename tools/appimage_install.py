@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -37,7 +38,7 @@ def _log(root, message):
                 message = shorten(message)
             except Exception:
                 pass
-            stream.write(message[:400] + '\n')
+            stream.write(f'{time.strftime("%H:%M:%S")} {message[:380]}\n')
     except OSError:
         pass
 
@@ -86,7 +87,6 @@ def _install(bundle, root):
     old_python = root / 'python.old'
     data_home = _xdg('XDG_DATA_HOME', Path.home() / '.local' / 'share')
     apps = data_home / 'applications'
-    _write_wrapper(root)
     # An older AppImage can repair the desktop entry, but cannot replace a newer working installation.
     try:
         current_version = (root / 'app' / 'current.txt').read_text(encoding='utf-8').strip()
@@ -107,6 +107,7 @@ def _install(bundle, root):
         elif shutil.which('zenity'):
             subprocess.run(['zenity', '--warning', '--title=NX2Saria', f'--text={message}'])
         return root, root / 'python' / 'bin' / 'python3', entry
+    _write_wrapper(root)
     if not target.exists() and backup.exists():
         os.replace(backup, target)
     if not live_python.exists() and old_python.exists():
@@ -194,7 +195,8 @@ def _install(bundle, root):
 
 def _write_wrapper(root):
     wrapper = root / 'nx2saria-launcher'
-    wrapper.write_text('#!/bin/sh\n'
+    staged = wrapper.with_name(wrapper.name + '.new')
+    staged.write_text('#!/bin/sh\n'
                        'ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1\n'
                        'unset PYTHONPATH PYTHONHOME\n'
                        'VERSION=$(cat "$ROOT/app/current.txt") || exit 1\n'
@@ -202,17 +204,20 @@ def _write_wrapper(root):
                        'status=$?\n'
                        'if [ "$status" -eq 86 ]; then\n'
                        '  PREVIOUS=$(cat "$ROOT/app/previous.txt" 2>/dev/null)\n'
-                       '  if [ -n "$PREVIOUS" ] && [ -f "$ROOT/app/$PREVIOUS/launcher/start.pyw" ]; then\n'
-                       '    printf "%s\\n" "$PREVIOUS" > "$ROOT/app/current.txt.tmp" && mv "$ROOT/app/current.txt.tmp" "$ROOT/app/current.txt"\n'
-                       '    rm -f "$ROOT/app/previous.txt"\n'
-                       '    if [ -d "$ROOT/python.old" ]; then rm -rf "$ROOT/python.failed"; mv "$ROOT/python" "$ROOT/python.failed" && mv "$ROOT/python.old" "$ROOT/python"; fi\n'
-                       '    "$ROOT/python/bin/python3" -I "$ROOT/app/$PREVIOUS/launcher/start.pyw" "$@"\n'
-                       '    status=$?\n'
+                       '  if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$VERSION" ] && [ -f "$ROOT/app/$PREVIOUS/launcher/start.pyw" ]; then\n'
+                       '    mkdir -p "$ROOT/data/logs"\n'
+                       '    printf "%s wrapper: %s exited 86; back to %s\\n" "$(date +%H:%M:%S)" "$VERSION" "$PREVIOUS" >> "$ROOT/data/logs/launcher.log"\n'
+                       '    if printf "%s\\n" "$PREVIOUS" > "$ROOT/app/current.txt.tmp" && mv "$ROOT/app/current.txt.tmp" "$ROOT/app/current.txt"; then\n'
+                       '      rm -f "$ROOT/app/previous.txt"\n'
+                       '      if [ -d "$ROOT/python.old" ]; then rm -rf "$ROOT/python.failed"; mv "$ROOT/python" "$ROOT/python.failed" && mv "$ROOT/python.old" "$ROOT/python"; fi\n'
+                       '      "$ROOT/python/bin/python3" -I "$ROOT/app/$PREVIOUS/launcher/start.pyw" "$@" --rolled-back "$VERSION"\n'
+                       '      status=$?\n'
+                       '    fi\n'
                        '  fi\n'
                        'fi\n'
-                       'if [ "$status" -eq 0 ]; then rm -f "$ROOT/app/previous.txt"; rm -rf "$ROOT/python.old" "$ROOT/python.failed"; fi\n'
                        'exit "$status"\n', encoding='utf-8')
-    wrapper.chmod(0o755)
+    staged.chmod(0o755)
+    os.replace(staged, wrapper)
 
 
 def _write_desktop(root, apps):

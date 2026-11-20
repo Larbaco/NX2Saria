@@ -2,6 +2,7 @@
 import ctypes
 import ctypes.util
 import fcntl
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -19,12 +20,30 @@ def ensure_toolchain(layout, cancel=None, log=None, version=''):
     if missing:
         if log:
             log('toolchain: Linux check missing ' + missing.splitlines()[0].split(': ', 1)[1].rstrip('.'))
-        from ..toolchain import ToolchainError, ensure_zbic
+        from ..toolchain import ToolchainError
         raise ToolchainError(missing)
     if log:
         log('toolchain: Linux system requirements ok')
     from .. import toolchain
     toolchain.ensure_zbic(layout, cancel=cancel, log=log, version=version)
+
+
+def refresh_installed_wrapper(root, app):
+    """Refresh the installed wrapper from this app version, so future starts use its rollback behavior."""
+    root, app = Path(root), Path(app)
+    if not (root / 'nx2saria-launcher').is_file():
+        return
+    script = app / 'tools' / 'appimage_install.py'
+    if not script.is_file():
+        return
+    try:
+        spec = importlib.util.spec_from_file_location('_nx2saria_appimage_install', script)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module._write_wrapper(root)
+    except (ImportError, OSError, AttributeError, ValueError):
+        pass
 
 
 def game_running(game_dir):

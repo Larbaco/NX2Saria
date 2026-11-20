@@ -233,8 +233,9 @@ def install_staged(layout, ver, log=None):
         live = layout.python
         old = layout.root / 'python.old'
         if live.exists():
-            if old.exists():
-                raise UpdateError('python.old still holds the previous runtime; launch the installed launcher to finish recovery')
+            # A running launcher has already made it through App.start(), which removes stale python.old backups.
+            # A leftover here can only be from an earlier failed start, so replace it with this live runtime.
+            shutil.rmtree(old, ignore_errors=True)
             os.replace(live, old)
         try:
             os.replace(py, live)
