@@ -575,11 +575,16 @@ class UpdateDownloadJob(Job):
         layout = self.ctx.layout
         self.begin('download')
         prog = lambda d, t: self.progress('download', d / max(t, 1), f'{d / 1e6:.1f} of {t / 1e6:.1f} MB')  # noqa: E731
-        folder = updater.stage_app(layout, self.release, progress=prog, cancel=self.cancelled,
+        linux_runtime = updater._linux_runtime(layout)
+        if linux_runtime:
+            folder = updater.stage(layout, self.release, progress=prog, cancel=self.cancelled,
                                    version=self.ctx.version, log=self.log)
-        if updater.runtime_needed(layout, self.release):
-            updater.stage_runtime(layout, self.release, progress=prog, cancel=self.cancelled,
-                                  version=self.ctx.version, log=self.log)
+        else:
+            folder = updater.stage_app(layout, self.release, progress=prog, cancel=self.cancelled,
+                                       version=self.ctx.version, log=self.log)
+            if updater.runtime_needed(layout, self.release):
+                updater.stage_runtime(layout, self.release, progress=prog, cancel=self.cancelled,
+                                      version=self.ctx.version, log=self.log)
         self.finish('download')
         self.begin('verify')
         if not (folder / 'launcher' / 'start.pyw').is_file():
@@ -588,7 +593,10 @@ class UpdateDownloadJob(Job):
         if layout.dev:   # a checkout runs from the repository: nothing to switch to
             self.after = 'staged'
             return
-        updater.switch_to(layout, self.ver)
+        if linux_runtime:
+            updater.install_staged(layout, self.ver, log=self.log)
+        else:
+            updater.switch_to(layout, self.ver)
         self.after = 'restart'
 
 
