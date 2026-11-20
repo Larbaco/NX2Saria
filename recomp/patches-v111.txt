@@ -285,7 +285,7 @@ site wide_aspect main 33b82c 2d558440 2d558440 @page:x9 2d4e1123 bd407922 7ea3d4
 # and in the middle 16:9 alone it would leave the picture showing at the sides. Without branches: the two projection
 # words are compared in vector lanes, the screen's vtable is read from the canvas' screen only when they match (else from
 # the canvas itself, a readable address) and compared with the four on the page, and bit selects the scaled row. x16, x17 and v16..v19 are free (a leaf; v16..v19 are written next).
-site wide_hud main 774368 ad401041 ad401041 @page:x16 fd404a10 6e040431 6e0c2491 0ea0fa31 2eb08e31 2eb1ae31 4e040631 9e660231 d106e010 8a110210 8a310011 aa110210 fd400210 @page:x17 3dc02a32 3dc03633 4e080610 6ef28e12 6ef38e13 4eb31e52 6e124253 0eb31e52 0e721e31 4e040631 3dc02213 6e33dc93 6eb11e64 3dc02e33 6e33dc33 6eb11e61   # 2D canvas: the ordinary UI keeps its middle-16:9 height; full-picture backgrounds and fades keep the whole height
+site wide_hud main 774368 ad401041 ad401041 @page:x16 fd404a10 6e040431 6e0c2491 0ea0fa31 2eb08e31 2eb1ae31 4e040631 9e660231 d106e010 8a110210 8a310011 aa110210 fd400210 @page:x17 3dc02a32 3dc03633 4e080610 6ef28e12 6ef38e13 4eb31e52 6e124253 0eb31e52 0e721e31 4e040631 3dc02233 6e33dc93 6eb11e64 3dc02e33 6e33dc33 6eb11e61   # 2D canvas: the ordinary UI keeps its middle-16:9 height; full-picture backgrounds and fades keep the whole height
 
 # Pre-rendered movies: the movie layer's draw (main+0x3b5c71c) builds a viewport over the whole picture (sead viewport
 # at x29 - 40: min x +8, max x +16); it moves in by the page's margin on each side, the middle 16:9 of the picture.
