@@ -35,6 +35,9 @@ __attribute__((constructor)) static void freecam_register(void) { rt_register_ho
 __attribute__((constructor)) static void fov_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xeb0, dbg_fov_host);
 }
+__attribute__((constructor)) static void wide_lens_register(void) {
+    if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xe40, wide_lens_host);
+}
 // The time of day's site of the set ostep (patches-v111.txt) calls the page's +0xf60, the water renderer's site its
 // +0xf50, the surfaces' fixed-step sites of the set owater its +0xf20, and the sound job's two sites of the set osound
 // its +0xf10 and +0xf00 (frame_rate.c).

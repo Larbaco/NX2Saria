@@ -48,6 +48,7 @@
 #include "host.h"
 #include "layout.h"
 #include "platform/platform.h"
+#include "widescreen_math.h"
 
 int dbg_supported(void) { return RT_V111; }
 
@@ -1074,6 +1075,34 @@ void dbg_fov_host(Cpu *c) {
     static atomic_flag logged = ATOMIC_FLAG_INIT;
     if (!atomic_flag_test_and_set_explicit(&logged, memory_order_relaxed))
         rt_log("fov: gameplay lens adjusted, %.2f -> %.2f deg", orig * 57.29578f, angle * 57.29578f);
+}
+
+// The wide_aspect set shares the lens-load site with the configurable gameplay FOV. Apply that setting first, then
+// open the vertical angle for any 16:9 camera when the chosen picture is narrower, including cutscenes and events.
+void wide_lens_host(Cpu *c) {
+    int fov = rt_patch_set("fov");
+    if (rt_patch_enabled(fov)) dbg_fov_host(c);
+    unsigned w, h;
+    wide_picture(&w, &h);
+    double aspect = h ? (double)w / h : WIDE_BASE_ASPECT;
+    if (aspect >= WIDE_BASE_ASPECT) return;
+    float camera_aspect;
+    uint64_t camera = c->x[19];
+    if (!rd(camera + 0x140, &camera_aspect, sizeof camera_aspect) ||
+        fabs((double)camera_aspect - WIDE_BASE_ASPECT) > 0.01)
+        return;
+    uint32_t bits = (uint32_t)c->v[0];
+    float before;
+    memcpy(&before, &bits, sizeof before);
+    double adjusted = wide_vertical_fov(before, aspect);
+    if (!isfinite(adjusted) || adjusted <= 0 || adjusted >= 3.14159265 || adjusted == before) return;
+    float after = (float)adjusted;
+    memcpy(&bits, &after, sizeof bits);
+    c->v[0] = bits;
+    static atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (!atomic_flag_test_and_set_explicit(&logged, memory_order_relaxed))
+        rt_log("widescreen: Vert+ camera lens at %.4f aspect: %.2f -> %.2f deg (the FOV setting is applied first)",
+               aspect, before * 57.29578f, after * 57.29578f);
 }
 
 // The patch site's host function, on the patch page at +0xf70. patches.c registers it: that file is compiled with

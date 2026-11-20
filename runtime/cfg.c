@@ -267,7 +267,7 @@ static const CfgMeta metas[] = {
     // vk_skin_motion.inc skin_enabled: motion vectors of their own for every skinned character, not the player alone
     {"SKIN_MOTION", "1", "0|1", RESTART},
     {"AA", "game", "game|off|fxaa|smaa|taa", LIVE},   // vk_aa.c: what runs in place of the game's SMAA
-    {"GAME_ASPECT", "16:9", "16:9|window|21:9|32:9", RESTART},   // widescreen.c
+    {"GAME_ASPECT", "16:9", "16:9|window|16:10|3:2|21:9|32:9", RESTART},   // widescreen.c
     {"GAME_RES", "1440", "1080|1440|1800|2160|2880|window", RESTART},   // widescreen.c: the picture's height
     // romfs.c wide_hud_overlay, wide_hud.c: the HUD's corner elements at the edges of a picture wider than 16:9 (edges)
     // or in the corners of its middle 16:9 (center, the game's layout); the layouts are read once at start
@@ -894,15 +894,14 @@ int cfg_load(const char *path) {
 // (default: the Steam Deck when the firmware says so), desktop (none) or deck.
 //
 // The Steam Deck (LCD Jupiter, OLED Galileo; 1280x800, 16:10, 4 Zen 2 cores, RDNA 2 with 8 CUs sharing 16 GB): the game
-// at the screen's 1280x800 with its own 5/6 scene (the aspect patch gives the camera its 16:10, resolution.c, and the
-// romfs-patches-1280x800 overlay the HUD's);
+// uses the monitor's 16:10 shape; Ocarina chooses its picture with GAME_ASPECT/GAME_RES, not OUTPUT_RES;
 // fullscreen and vsync, as gamescope composes Game Mode; 40 fps, which divides 40 Hz (and 120 Hz on the OLED); the
 // game's six virtual cores folded onto four, one per physical core (kernel.c cores_enabled); ASTC textures stored as
 // BC3, as the automatic choice gives with 16 GB shared between the CPU and the GPU; and a spinning guest thread handed
 // off after 30 us instead of 50 (kernel.c), with four cores to share.
 // Starting points to replace with measured ones (docs/tester-guide.md, Steam Deck).
 static const struct { const char *key, *value; } DECK[] = {
-    {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"OUTPUT_RES", "1280x800"}, {"RENDER_SCALE", "game"},
+    {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"GAME_ASPECT", "window"}, {"RENDER_SCALE", "game"},
     {"VK_PRESENT", "fifo"}, {"FPS_LIMIT", "40"}, {"CORES", "4"}, {"ASTC_BC", "1"}, {"SPIN_HANDOFF_US", "30"},
 };
 static int profile = -1;   // 0 none, 1 Steam Deck

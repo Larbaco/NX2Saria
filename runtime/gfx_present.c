@@ -1968,14 +1968,25 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     VkImageLayout last = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     VkPipelineStageFlags2 last_stage = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     VkAccessFlags2 last_write = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    // The menus in the middle 16:9 (wide_bars.c wide_menu_sides): while a pause or system menu, a loading screen or a
-    // movie is up, the picture's sides outside its middle 16:9 are cleared to black where the picture went, after the
-    // picture itself went there whole as on any other frame (a smaller crop would change the size of the colour, HDR and
-    // FSR passes' images, and each change waits for the device). The HUD-less picture for frame generation and the
-    // menu's pointer (g_pic) keep the whole one.
-    double sides = src && dst_view ? wide_menu_sides() : 0;
-    int side_w = (int)lround(to[2] * sides);
+    // Centered UI and wide movies/fades use the middle 16:9. Clear the outside margins after composition, leaving the
+    // HUD-less frame-generation source and menu pointer (g_pic) at the whole picture's coordinates. Tall screens fill
+    // height.
+    double x_margin = 0, y_margin = 0;
+    if (src && dst_view) wide_menu_bars(&x_margin, &y_margin);
+    int side_w = (int)lround(to[2] * x_margin), top_h = (int)lround(to[3] * y_margin);
+    VkClearRect bar_rects[4];
+    uint32_t bar_count = 0;
     if (side_w > 0 && 2 * side_w < to[2]) {
+        bar_rects[bar_count++] = (VkClearRect){{{to[0], to[1]}, {(uint32_t)side_w, (uint32_t)to[3]}}, 0, 1};
+        bar_rects[bar_count++] = (VkClearRect){{{to[0] + to[2] - side_w, to[1]}, {(uint32_t)side_w, (uint32_t)to[3]}}, 0, 1};
+    }
+    if (top_h > 0 && 2 * top_h < to[3]) {
+        uint32_t x = (uint32_t)to[0] + (uint32_t)side_w;
+        uint32_t width = (uint32_t)to[2] - 2 * (uint32_t)side_w;
+        bar_rects[bar_count++] = (VkClearRect){{{x, to[1]}, {width, (uint32_t)top_h}}, 0, 1};
+        bar_rects[bar_count++] = (VkClearRect){{{x, to[1] + to[3] - top_h}, {width, (uint32_t)top_h}}, 0, 1};
+    }
+    if (bar_count) {
         sync_barrier(cb, dst, last, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, last_stage, last_write,
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
@@ -1986,10 +1997,8 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
                               .colorAttachmentCount = 1, .pColorAttachments = &ca};
         VkClearAttachment black = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .colorAttachment = 0,
                                    .clearValue = {.color = {.float32 = {0, 0, 0, 1}}}};
-        VkClearRect bars[2] = {{{{to[0], to[1]}, {(uint32_t)side_w, (uint32_t)to[3]}}, 0, 1},
-                               {{{to[0] + to[2] - side_w, to[1]}, {(uint32_t)side_w, (uint32_t)to[3]}}, 0, 1}};
         vkCmdBeginRendering(cb, &ri);
-        vkCmdClearAttachments(cb, 1, &black, 2, bars);
+        vkCmdClearAttachments(cb, 1, &black, bar_count, bar_rects);
         vkCmdEndRendering(cb);
         last = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         last_stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;

@@ -1,6 +1,5 @@
-// The menus with black bars (NX2SARIA_WIDE_MENUS = center, Ocarina of Time 1.1.1): the present clears the picture's
-// sides outside its middle 16:9 to black while a pause or system menu, a loading screen or a movie is up, and never in
-// play (gfx_present.c present_image asks wide_menu_sides at each present).
+// Centered 16:9 screens: while a pause or system menu, an event/loading fade or a movie is active, the present clears
+// margins outside the middle 16:9 when the picture is wider. Tall pictures keep their full-height backgrounds and fades.
 //
 // The signal is the game's own state of the screens behind those menus. Every interface screen of the game is an
 // object whose byte +0x1a6 says where it is in its life: 0 closed, 1 opening (main+0x2d62e0 sets it when the screen is
@@ -9,21 +8,21 @@
 // widescreen keep list names (widescreen.c wide_init):
 // - main+0x4be4fb0, the background of the pause and system menus (MenuBG_00, SystemBG_00): a capture of the picture
 //   the menu opens over, redrawn under it. Its screen is on (states 1 to 3) for as long as such a menu is up: the sides
-//   go black when the menu starts to open and come back once it has closed. The game keeps drawing 3D under the pause
+//   go black on a wide picture when the menu starts to open and return once it has closed. The game keeps drawing 3D
+//   under the pause
 //   menu (the item's model on the items page, Link on the equipment page), so whether a 3D scene is drawn does not
 //   tell a menu from play; this does.
-// - main+0x4be7b30, the loading fade (LoadingFade_00), which covers the whole picture while an area loads: only while
-//   it is open (state 2). Then the fade covers the sides anyway; opening and closing are the fade itself, during which
-//   black sides would show before the rest of the picture is dark.
-// A movie (ov_movie2.c ov_movie_live) blacks the sides by itself: the movie sits in the middle 16:9 (set wide_movie).
+// - main+0x4be7b30, the loading fade (LoadingFade_00), and main+0x4be61c8, the event fade: their canvases cover the
+//   whole picture. Wide pictures keep their side margins black while their contents are centered; tall pictures keep
+//   their full height so the fades cover the extra scene above and below the UI band.
+// A movie (ov_movie2.c ov_movie_live) is cropped to the middle 16:9 on wide pictures and fills a tall picture by set wide_movie.
 //
 // The screens' addresses come from the patch set wide_bars (recomp/patches-v111.txt): right after the screen's setup
 // (main+0x773b90, vtable +0x80) has set up its 2D canvas, its site calls the patch page's +0xef0 with the screen in x19
 // (wide_bars_screen_host, registered by patches.c). The setup runs when the game makes a screen, which lives on from
 // there, so the table below is short and a screen set up again is found in it. A screen the game has destroyed no
 // longer holds a watched vtable (a destructor writes its base class's, or the memory is reused or unmapped): the
-// present notices and frees its entry. The set is switched on only with center on a picture wider than 16:9
-// (wide_bars_init), so the default, full, runs the game's setup as it is and nothing here.
+// present notices and frees its entry. The set is switched on only for a non-16:9 picture (wide_bars_init).
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -31,18 +30,19 @@
 #include "host.h"
 #include "layout.h"
 
-#define VT_MENU_BG 0x4be4fb0ull       // main offsets of the two watched vtables
+#define VT_MENU_BG 0x4be4fb0ull
 #define VT_LOADING_FADE 0x4be7b30ull
+#define VT_EVENT_FADE 0x4be61c8ull
 #define SCREEN_STATE 0x1a6            // the screen's state byte (above)
 #define BARS_SCREENS 16               // screens watched at once (the game makes a few of each)
 #define BARS_TOLD 24                  // lines a run about the sides (black, shown again)
 #define SCREENS_TOLD 48               // lines a run about the watched screens (found, state changes, gone)
 
-enum { KIND_NONE, KIND_MENU, KIND_LOADING };
-enum { WHY_NONE, WHY_MOVIE, WHY_MENU, WHY_LOADING };
+enum { KIND_NONE, KIND_MENU, KIND_LOADING, KIND_EVENT_FADE };
+enum { WHY_NONE, WHY_MOVIE, WHY_MENU, WHY_LOADING, WHY_EVENT_FADE };
 
-static int bars_on;              // wide_bars_init: center on a picture wider than 16:9, with the set on
-static double bars_margin;       // the share of the picture's width on each side of its middle 16:9
+static int bars_on;              // wide_bars_init: center on a non-16:9 picture, with the set on
+static double bars_x_margin, bars_y_margin;  // shares of the picture outside its middle 16:9
 static uint64_t screens[BARS_SCREENS];         // watched screens' guest addresses, 0 free
 
 static uint64_t ld64(uint64_t a) { return a && mem_readable(a, 8) ? *(const volatile uint64_t *)(uintptr_t)a : 0; }
@@ -52,11 +52,12 @@ static int kind_of(uint64_t screen) {
     uint64_t vt = ld64(screen);
     return vt == MOD_MAIN_BASE + VT_MENU_BG        ? KIND_MENU
            : vt == MOD_MAIN_BASE + VT_LOADING_FADE ? KIND_LOADING
-                                                   : KIND_NONE;
+           : vt == MOD_MAIN_BASE + VT_EVENT_FADE ? KIND_EVENT_FADE
+                                                 : KIND_NONE;
 }
 
 static const char *const kind_names[] = {"", "pause or system menu background (MenuBG_00, SystemBG_00)",
-                                         "loading fade (LoadingFade_00)"};
+                                         "loading fade (LoadingFade_00)", "event fade"};
 static const char *const state_names[] = {"closed", "opening", "open", "closing"};
 static const char *state_name(int s) { return s >= 0 && s < 4 ? state_names[s] : "unknown"; }
 
@@ -107,27 +108,28 @@ int wide_menu_open(void) {
     return 0;
 }
 
-// wide_init: the setting is center and the picture is wider than 16:9 by margin of its width on each side.
-void wide_bars_init(double margin) {
+// wide_init: center the screens, with margins on the axis that differs from 16:9.
+void wide_bars_init(double x_margin, double y_margin) {
     int set = rt_patch_set("wide_bars");
-    bars_margin = margin;
+    bars_x_margin = x_margin, bars_y_margin = y_margin;
     if (set < 0) {
-        rt_log("widescreen: menus center: the generated C has no set wide_bars (gen.py --patches "
-               "recomp/patches-v111.txt): the picture's sides go black only while a movie plays");
+        rt_log("widescreen: centered screens: the generated C has no set wide_bars (gen.py --patches "
+               "recomp/patches-v111.txt): only a movie can black its margins");
     } else {
         rt_patch_switch(set, 1);
     }
     bars_on = 1;
 }
 
-// Each present, from the present's thread: the share of the picture's width to black out on each side, 0 for none.
-double wide_menu_sides(void) {
-    if (!bars_on) return 0;
+// Each present, from the present's thread: the x/y shares outside the middle 16:9, 0 when no centered screen is active.
+void wide_menu_bars(double *x, double *y) {
+    *x = *y = 0;
+    if (!bars_on) return;
     static uint64_t presents, since;
     static uint64_t seen_screen[BARS_SCREENS];
     static int seen_state[BARS_SCREENS], was, told;
     uint64_t n = ++presents;
-    int menu = 0, loading = 0;
+    int menu = 0, loading = 0, event_fade = 0;
     for (int i = 0; i < BARS_SCREENS; i++) {
         uint64_t s = __atomic_load_n(&screens[i], __ATOMIC_ACQUIRE);
         int kind = s ? kind_of(s) : KIND_NONE, st = kind ? ld8(s + SCREEN_STATE) : -1;
@@ -145,26 +147,36 @@ double wide_menu_sides(void) {
             seen_state[i] = st;
         }
         if (kind == KIND_MENU && st >= 1 && st <= 3) menu = 1;
-        if (kind == KIND_LOADING && st == 2) loading = 1;
+        int loading_active = st == 2 || (st >= 1 && st <= 3 &&
+                                           (bars_y_margin > 0 || (bars_x_margin == 0 && bars_y_margin == 0)));
+        if (kind == KIND_LOADING && loading_active) loading = 1;
+        if (kind == KIND_EVENT_FADE && st >= 1 && st <= 3) event_fade = 1;
     }
-    int why = ov_movie_live() ? WHY_MOVIE : menu ? WHY_MENU : loading ? WHY_LOADING : WHY_NONE;
+    int why = ov_movie_live() ? WHY_MOVIE : menu ? WHY_MENU : event_fade ? WHY_EVENT_FADE : loading ? WHY_LOADING : WHY_NONE;
     if ((why != WHY_NONE) != (was != WHY_NONE)) {
         if (told < BARS_TOLD) {
             told++;
             static const char *const up[] = {"", "a movie plays", "a pause or system menu is up (its background on)",
-                                             "a loading screen is up (the loading fade open)"};
+                                             "a loading screen is up (the loading fade open)", "an event fade is active"};
             static const char *const down[] = {"", "the movie ended", "the menu's background screen closed",
-                                               "the loading fade closed"};
-            if (why)
-                rt_log("widescreen: menus: the picture's sides black from present %llu: %s", (unsigned long long)n,
+                                               "the loading fade closed", "the event fade ended"};
+            int margins = bars_x_margin > 0 || bars_y_margin > 0;
+            if (why && margins)
+                rt_log("widescreen: centered screens: picture margins black from present %llu: %s", (unsigned long long)n,
                        up[why]);
-            else
-                rt_log("widescreen: menus: the picture's sides shown again at present %llu, after %llu presents black: "
+            else if (why)
+                rt_log("widescreen: full-height screens: active from present %llu; no margins cleared: %s",
+                       (unsigned long long)n, up[why]);
+            else if (margins)
+                rt_log("widescreen: centered screens: picture margins shown again at present %llu, after %llu presents black: "
                        "%s", (unsigned long long)n, (unsigned long long)(n - since), down[was]);
-            if (told == BARS_TOLD) rt_log("widescreen: menus: further changes of the sides are not logged");
+            else
+                rt_log("widescreen: full-height screens: ended at present %llu after %llu presents: %s",
+                       (unsigned long long)n, (unsigned long long)(n - since), down[was]);
+            if (told == BARS_TOLD) rt_log("widescreen: centered screens: further margin changes are not logged");
         }
         since = n;
     }
     was = why;
-    return why ? bars_margin : 0;
+    if (why) *x = bars_x_margin, *y = bars_y_margin;
 }

@@ -83,9 +83,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                               "and FSR sharpens it by the strength below.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
     [UI_MENU_UPSCALING_NATIVE] = "Native (100%)",
-    [UI_MENU_GAME_ASPECT] = "Widescreen",
-    [UI_MENU_GAME_ASPECT_DESC] = "Widens the view. A shape wider than 16:9 shows two more rows below, for the HUD and the menus.",
+    [UI_MENU_GAME_ASPECT] = "Game aspect",
+    [UI_MENU_GAME_ASPECT_DESC] = "Matches the picture to a taller or wider shape. Taller shapes keep 16:9's horizontal view and show more above and below; the HUD stays centered.",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9 (the game's)", [UI_MENU_GAME_ASPECT_WINDOW] = "Window shape",
+    [UI_MENU_GAME_ASPECT_16_10] = "16:10", [UI_MENU_GAME_ASPECT_3_2] = "3:2",
     [UI_MENU_GAME_ASPECT_21_9] = "21:9", [UI_MENU_GAME_ASPECT_32_9] = "32:9",
     [UI_MENU_WIDE_HUD] = "HUD position",
     [UI_MENU_WIDE_HUD_DESC] = "Where the HUD sits on a picture wider than 16:9. Middle 16:9 keeps the game's layout; Screen edges puts the hearts and magic top left, the item slot top right, and the minimap, keys and rupee count on the right edge.",
@@ -862,9 +863,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                       "в игру FSR 3.1 не может работать на этой видеокарте или с этим драйвером "
                                       "(причина — в строке fsr3 в журнале).",
 #endif
-    [UI_MENU_GAME_ASPECT] = "Широкий экран",
-    [UI_MENU_GAME_ASPECT_DESC] = "Расширяет обзор. При формате шире 16:9 ниже появляются ещё две строки: для интерфейса и для меню.",
+    [UI_MENU_GAME_ASPECT] = "Формат игры",
+    [UI_MENU_GAME_ASPECT_DESC] = "Подгоняет изображение под более высокий или широкий формат. В высоком формате сохраняется горизонтальный обзор 16:9 и видно больше сверху и снизу; интерфейс остаётся по центру.",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9 (как в игре)", [UI_MENU_GAME_ASPECT_WINDOW] = "По окну",
+    [UI_MENU_GAME_ASPECT_16_10] = "16:10", [UI_MENU_GAME_ASPECT_3_2] = "3:2",
     [UI_MENU_GAME_ASPECT_21_9] = "21:9", [UI_MENU_GAME_ASPECT_32_9] = "32:9",
     [UI_MENU_WIDE_HUD] = "Положение интерфейса",
     [UI_MENU_WIDE_HUD_DESC] = "Где находится интерфейс на изображении шире 16:9. «Центр 16:9» сохраняет раскладку игры; «Края экрана» ставит сердца и магию в левый верхний угол, предмет — в правый верхний, а мини-карту, ключи и рупии — к правому краю.",
@@ -1570,9 +1572,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                       "GPU. O AMD FSR 3.1 não é oferecido aqui: o FSR 3.1 próprio do jogo não roda "
                                       "nesta GPU ou neste driver (veja o motivo na linha fsr3 do log).",
 #endif
-    [UI_MENU_GAME_ASPECT] = "Tela larga",
-    [UI_MENU_GAME_ASPECT_DESC] = "Amplia a visão. Num formato mais largo que 16:9, aparecem mais duas linhas abaixo, para o HUD e os menus.",
+    [UI_MENU_GAME_ASPECT] = "Formato do jogo",
+    [UI_MENU_GAME_ASPECT_DESC] = "Ajusta a imagem a um formato mais alto ou mais largo. Formatos altos mantêm a visão horizontal de 16:9 e mostram mais acima e abaixo; o HUD fica centralizado.",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9 (o do jogo)", [UI_MENU_GAME_ASPECT_WINDOW] = "Formato da janela",
+    [UI_MENU_GAME_ASPECT_16_10] = "16:10", [UI_MENU_GAME_ASPECT_3_2] = "3:2",
     [UI_MENU_GAME_ASPECT_21_9] = "21:9", [UI_MENU_GAME_ASPECT_32_9] = "32:9",
     [UI_MENU_WIDE_HUD] = "Posição do HUD",
     [UI_MENU_WIDE_HUD_DESC] = "Onde o HUD fica numa imagem mais larga que 16:9. 16:9 central mantém o layout do jogo; Bordas da tela põe os corações e a magia no canto superior esquerdo, o item no superior direito, e o minimapa, as chaves e as rupias na borda direita.",
@@ -2283,9 +2286,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                                       "最清晰，GPU 负担也最大。此处不提供 AMD FSR 3.1：游戏自带的 FSR 3.1 "
                                       "无法在此 GPU 或驱动上运行（原因见日志中的 fsr3 一行）。",
 #endif
-    [UI_MENU_GAME_ASPECT] = "宽屏",
-    [UI_MENU_GAME_ASPECT_DESC] = "扩大视野。选择宽于 16:9 的比例后，下方会多出两行，用于设置 HUD 和菜单。",
+    [UI_MENU_GAME_ASPECT] = "游戏画面比例",
+    [UI_MENU_GAME_ASPECT_DESC] = "让游戏画面适配更高或更宽的比例。较高比例保留 16:9 的水平视野，并显示更多上方和下方区域；HUD 保持居中。",
     [UI_MENU_GAME_ASPECT_16_9] = "16:9（游戏原生）", [UI_MENU_GAME_ASPECT_WINDOW] = "窗口比例",
+    [UI_MENU_GAME_ASPECT_16_10] = "16:10", [UI_MENU_GAME_ASPECT_3_2] = "3:2",
     [UI_MENU_GAME_ASPECT_21_9] = "21:9", [UI_MENU_GAME_ASPECT_32_9] = "32:9",
     [UI_MENU_WIDE_HUD] = "HUD 位置",
     [UI_MENU_WIDE_HUD_DESC] = "画面宽于 16:9 时 HUD 的位置。“居中 16:9”保持游戏原有布局；“屏幕边缘”将心和魔力放在左上角，道具栏放在右上角，小地图、钥匙和卢比数放在右侧边缘。",
