@@ -74,7 +74,7 @@ struct RtThread {
     RtThread *next;            // wait list
     RtThread *all;             // every thread
     // virtual core
-    int cur_core;              // core held while running guest code, -1 while blocked
+    int cur_core;              // atomic: core held while running guest code, -1 while blocked
     uint64_t cseq;
     RtThread *cnext;
     uint8_t *tlr, *tls;
@@ -114,6 +114,11 @@ struct RtThread {
     struct DgRel { uint64_t kick, host_end, pc, lr; int host, pre, prio; uint32_t h; } dg_rel;   // as a waiter: the
                                                                                                  // owner that released
 };
+
+// G serializes core ownership and the queue. The waiter may also poll cur_core outside G: every access is atomic,
+// core_grant publishes the assignment with release and that poll uses acquire; G protects the other ownership fields.
+static int core_current(const RtThread *t) { return __atomic_load_n(&t->cur_core, __ATOMIC_RELAXED); }
+static int core_current_unlocked(const RtThread *t) { return __atomic_load_n(&t->cur_core, __ATOMIC_ACQUIRE); }
 
 static PlatMutex G = PLAT_MUTEX_INIT;
 static struct { int type; void *obj; } g_h[MAX_H];
@@ -523,7 +528,7 @@ enum { AP_NONE, AP_RETRY, AP_SENT };
 // between plat_intr_stop and plat_intr_resume, during which nothing here takes a lock).
 static int ap_try(RtThread *w) {
     RtThread *o = w->target;
-    if (!o || o->cur_core < 0 || !o->preempt) return AP_NONE;
+    if (!o || core_current(o) < 0 || !o->preempt) return AP_NONE;
     if (!o->hthr || o->ap_pending) return AP_RETRY;
     volatile uint16_t *tl = ap_tlr(o);
     if (__atomic_load_n(&o->host_depth, __ATOMIC_RELAXED) > 0) {
@@ -688,7 +693,7 @@ static void dg_done(RtThread *t) {
 // its guest lr. Holding G; the owner is resumed before anything that could take a lock it holds.
 static void dg_sample(RtThread *t) {
     RtThread *o = t->target;
-    if (!o || o->cur_core < 0 || !o->hthr || g_dg_samples >= DG_SAMPLES) return;
+    if (!o || core_current(o) < 0 || !o->hthr || g_dg_samples >= DG_SAMPLES) return;
     uint64_t rip, rsp;
     if (!plat_intr_stop(o->hthr, &rip, &rsp)) return;
     int depth = __atomic_load_n(&o->host_depth, __ATOMIC_RELAXED);
@@ -795,7 +800,7 @@ static void core_grant(int c) {
     *bp = b->cnext;
     __atomic_store_n(&g_core_waiting, g_core_wait != NULL, __ATOMIC_RELEASE);
     b->cnext = NULL;
-    b->cur_core = c;
+    __atomic_store_n(&b->cur_core, c, __ATOMIC_RELEASE);
     g_core_owner[c] = b;
     core_count();
     if (g_diag > 0) b->dg_rel = g_dg_rel;
@@ -804,8 +809,8 @@ static void core_grant(int c) {
 }
 
 static void core_put(RtThread *t) {
-    if (t->cur_core < 0) return;
-    int c = t->cur_core;
+    int c = core_current(t);
+    if (c < 0) return;
     if (t->preempt && t->pre_since) {   // sched trace: time from the preempt request to this release
         uint64_t d = kern_now_ns() - t->pre_since;
         g_pre_n++;
@@ -820,7 +825,7 @@ static void core_put(RtThread *t) {
         t->dg_kick = t->dg_host_end = t->dg_pc = t->dg_lr = 0;
         t->dg_host_kick = 0;
     }
-    t->cur_core = -1;
+    __atomic_store_n(&t->cur_core, -1, __ATOMIC_RELAXED);
     t->preempt = 0;
     g_core_owner[c] = NULL;
     // Waiters that were to interrupt t (core_kick) forget it: t owns no core now, and once it exits and its handle
@@ -882,7 +887,7 @@ static void core_kick(void) {
 }
 
 static void core_take(RtThread *t) {
-    if (t->cur_core >= 0) return;
+    if (core_current(t) >= 0) return;
     if (!cores_enabled()) {
         acct(t, S_RUN);
         return;
@@ -893,7 +898,7 @@ static void core_take(RtThread *t) {
     for (int i = 0; c < 0 && i < NCORE; i++)
         if (core_allowed(t, i) && !g_core_owner[i]) c = i;
     if (c >= 0) {
-        t->cur_core = c;
+        __atomic_store_n(&t->cur_core, c, __ATOMIC_RELAXED);
         g_core_owner[c] = t;
         core_count();
         acct(t, S_RUN);
@@ -911,22 +916,22 @@ static void core_take(RtThread *t) {
     }
     core_kick();
     if (g_diag > 0) t->dg_cls = dg_class0(t);
-    if (g_ap_int && t->target && t->cur_core < 0) {   // most waits end within microseconds: spin before interrupting
+    if (g_ap_int && t->target && core_current(t) < 0) {   // most waits end within microseconds: spin before interrupting
         uint64_t end = kern_now_ns() + AP_FIRST_NS;
         unlock();
-        while (__atomic_load_n(&t->cur_core, __ATOMIC_RELAXED) < 0 && kern_now_ns() < end) plat_pause();
+        while (__atomic_load_n(&t->cur_core, __ATOMIC_ACQUIRE) < 0 && kern_now_ns() < end) plat_pause();
         lock();
-        if (t->cur_core >= 0) g_ap_spin_ok++;
+        if (core_current(t) >= 0) g_ap_spin_ok++;
     }
     int sampled = 0;
-    while (t->cur_core < 0) {
+    while (core_current(t) < 0) {
         uint32_t ms = 0;   // 0: until signalled
         if (g_ap_int && ap_try(t) != AP_NONE) ms = 1;   // the owner keeps its core: again in a millisecond
         int sample = g_diag > 0 && !sampled && (t->dg_cls == DG_GAME || t->dg_cls == DG_HOST);
         if (sample && !ms) ms = 2;
         if (ms) plat_cond_wait_ms(&t->cv, &G, ms);
         else plat_cond_wait(&t->cv, &G);
-        if (sample && t->cur_core < 0 && kern_now_ns() - t->dg_since >= 2000000) {
+        if (sample && core_current(t) < 0 && kern_now_ns() - t->dg_since >= 2000000) {
             sampled = 1;
             dg_sample(t);
         }
@@ -1050,7 +1055,7 @@ void kern_wait_report(void) {
 
 int kern_core_away(void) {
     RtThread *t = tcur;
-    if (!t || t->cur_core < 0) return 0;
+    if (!t || core_current_unlocked(t) < 0) return 0;
     lock();
     core_put(t);
     acct(t, S_HOST);
@@ -1105,7 +1110,7 @@ void rt_spin_gate(Cpu *c, uint64_t head) {
         sw_t0 = now;
     }
     sw_last = now;
-    if (!g_spin_on || t->cur_core < 0 || now - sw_t0 < g_spin_handoff_ns ||
+    if (!g_spin_on || core_current_unlocked(t) < 0 || now - sw_t0 < g_spin_handoff_ns ||
         !__atomic_load_n(&g_core_waiting, __ATOMIC_ACQUIRE))   // a waiter missed now is seen at the next pass
         return;
     t->sp_ho++;
@@ -1125,7 +1130,8 @@ void kern_checkpoint(void) {
         t->dg_pc = t->cur->pc;
         t->dg_lr = t->cur->x[30];
     }
-    int better = t->cur_core >= 0 && core_better_waiter(t, t->cur_core);
+    int core = core_current(t);
+    int better = core >= 0 && core_better_waiter(t, core);
     if (better && ap_disabled(t)) {   // preemption disabled: the switch comes at SVC 0x36
         ap_tlr(t)[1] = 1;
         t->preempt = 0;
@@ -1150,7 +1156,8 @@ void kern_ap_yield(void) {
     RtThread *t = tcur;
     lock();
     t->ap_pending = 0;
-    if (t->preempt && t->cur_core >= 0 && !ap_disabled(t) && core_better_waiter(t, t->cur_core)) {
+    int core = core_current(t);
+    if (t->preempt && core >= 0 && !ap_disabled(t) && core_better_waiter(t, core)) {
         if (g_diag > 0) {
             t->dg_pc = t->cur->pc;
             t->dg_lr = t->cur->x[30];
@@ -1165,7 +1172,8 @@ void kern_ap_yield(void) {
 // SVC 0x36 SynchronizePreemptionState: a preemption deferred by disable_count happens here.
 static void ap_sync(RtThread *t) {
     lock();
-    if (g_ap > 0 && t->cur_core >= 0 && core_better_waiter(t, t->cur_core)) {
+    int core = core_current(t);
+    if (g_ap > 0 && core >= 0 && core_better_waiter(t, core)) {
         core_put(t);
         core_take(t);
     }
@@ -1432,7 +1440,7 @@ static RtThread *thr_new(int prio, int core, uint64_t mask) {
     t->prio = prio;
     t->core = core;
     t->mask = mask;
-    t->cur_core = -1;
+    __atomic_store_n(&t->cur_core, -1, __ATOMIC_RELAXED);
     // TLR (0x200) and the "current thread object" the SDK reads through TLR+0x1F8, in one guest-visible block.
     t->tlr = mem_kernel_alloc(TLR_SIZE + THREAD_OBJ_SIZE, TLR_SIZE);
     *(uint64_t *)(t->tlr + 0x1F8) = (uint64_t)(uintptr_t)(t->tlr + TLR_SIZE);
@@ -1758,9 +1766,9 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
             return 1;
         }
         lock();
-        int give = 0, tp = -1;
+        int give = 0, tp = -1, core = core_current(t);
         for (RtThread *w = g_core_wait; w && !give; w = w->cnext)
-            if (t->cur_core >= 0 && core_allowed(w, t->cur_core)) {
+            if (core >= 0 && core_allowed(w, core)) {
                 if (tp < 0) tp = prio_of(t);   // only once a waiter may run on this core
                 give = prio_of(w) <= tp;
             }
@@ -1821,7 +1829,8 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
             if (core >= 0) t->core = core;
             else if (core == -1) t->core = MAIN_CORE;
             if (mask) t->mask = mask;
-            if (t == tcur && t->cur_core >= 0 && !core_allowed(t, t->cur_core)) {   // move off a forbidden core
+            int current_core = core_current(t);
+            if (t == tcur && current_core >= 0 && !core_allowed(t, current_core)) {   // move off a forbidden core
                 core_put(t);
                 core_take(t);
             }
@@ -1832,7 +1841,8 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
     }
     case 0x10: {   // GetCurrentProcessorNumber: the core seen on the virtual core held (core_seen)
         RtThread *t = cur(imm);
-        x[0] = (uint64_t)(uint32_t)(t->cur_core >= 0 ? core_seen(t, t->cur_core) : t->core);
+        int core = core_current(t);
+        x[0] = (uint64_t)(uint32_t)(core >= 0 ? core_seen(t, core) : t->core);
         return 1;
     }
     case 0x36: {   // SynchronizePreemptionState: the SDK's spin locks call it after clearing TLR+0x100 (disable_count)
