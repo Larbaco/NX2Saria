@@ -40,12 +40,12 @@ def release(tmp, ver, notes=NOTES, runtime='NX2Saria-runtime-py3.14.9-1.zip'):
     entries['runtime']['id'] = 'py3.14.9-1'
     linux_entries = {}
     for key, name in (('app', f'NX2Saria-app-linux-x86_64-{ver}.zip'),
-                      ('runtime', 'NX2Saria-runtime-linux-x86_64-py3.14.9-1.zip'),
+                      ('runtime', 'NX2Saria-runtime-linux-x86_64-py3.14.9-16aa56671d40.zip'),
                       ('appimage', f'NX2Saria-Linux-{ver}-x86_64.AppImage')):
         data = f'linux {key} of {ver}'.encode()
         (d / name).write_bytes(data)
         linux_entries[key] = {'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
-    linux_entries['runtime']['id'] = 'py3.14.9-1'
+    linux_entries['runtime']['id'] = 'linux-x86_64-py3.14.9-16aa56671d40'
     m = {'format': 1, 'version': ver, 'build': f'{ver}+abc1234', 'notes': notes, **entries, 'toolchain': 'x'}
     for name in rf.MANIFESTS:
         (d / name).write_text(json.dumps(m, indent=1), encoding='utf-8')
@@ -146,6 +146,24 @@ class Files(unittest.TestCase):
 
     def test_linux_files_must_match_manifest(self):
         self.refused('sha256', lambda d: (d / 'NX2Saria-app-linux-x86_64-0.19.0.zip').write_bytes(b'changed'))
+
+    def test_linux_runtime_asset_strips_architecture_prefix_from_id(self):
+        d = release(self.tmp.name, '0.19.0')
+        rf.check_files('v0.19.0', self.notes, d)
+        manifest = json.loads((d / rf.LINUX_MANIFEST).read_text(encoding='utf-8'))
+        self.assertEqual(manifest['runtime']['id'], 'linux-x86_64-py3.14.9-16aa56671d40')
+        self.assertEqual(manifest['runtime']['name'],
+                         'NX2Saria-runtime-linux-x86_64-py3.14.9-16aa56671d40.zip')
+
+    def test_linux_runtime_asset_rejects_repeated_architecture_prefix(self):
+        def duplicate_architecture(d):
+            manifest = json.loads((d / rf.LINUX_MANIFEST).read_text(encoding='utf-8'))
+            old = manifest['runtime']['name']
+            new = 'NX2Saria-runtime-linux-x86_64-linux-x86_64-py3.14.9-16aa56671d40.zip'
+            (d / old).rename(d / new)
+            manifest['runtime']['name'] = new
+            (d / rf.LINUX_MANIFEST).write_text(json.dumps(manifest), encoding='utf-8')
+        self.refused('runtime id does not match', duplicate_architecture)
 
     def test_same_name_twice(self):
         self.refused('two files', lambda d: self.manifest(d, lambda m: m['runtime'].update(name=m['app']['name'])))

@@ -61,7 +61,11 @@ def main():
                 z.write(src, name)
         add_tree(z, a.kit / 'bin', 'bin')
         z.writestr('feed.json', json.dumps({'type': 'github', 'repo': 'Larbaco/NX2Saria'}, indent=1) + '\n')
-    runtime = a.out / f'NX2Saria-runtime-linux-x86_64-{runtime_id}.zip'
+    runtime_prefix = 'linux-x86_64-'
+    if not runtime_id.startswith(runtime_prefix):
+        raise SystemExit(f'Linux runtime id has no {runtime_prefix!r} prefix: {runtime_id!r}')
+    runtime_suffix = runtime_id.removeprefix(runtime_prefix)
+    runtime = a.out / f'NX2Saria-runtime-linux-x86_64-{runtime_suffix}.zip'
     with zipfile.ZipFile(runtime, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for p in a.python.rglob('*'):
             if (p.is_file() and '__pycache__' not in p.parts

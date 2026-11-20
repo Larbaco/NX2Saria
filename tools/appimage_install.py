@@ -56,6 +56,15 @@ def install(bundle):
     bundle = Path(bundle).resolve()
     data_home = _xdg('XDG_DATA_HOME', Path.home() / '.local' / 'share')
     root = data_home / 'nx2saria'
+    app = bundle / 'usr' / 'kit'
+    py = bundle / 'usr' / 'python'
+    version = (app / 'VERSION').read_text(encoding='utf-8').strip()
+    identity = _appimage_identity()
+    if identity and _already_installed(root, app, py, version, identity):
+        entry = root / 'app' / version / 'launcher' / 'start.pyw'
+        pyexe = root / 'python' / 'bin' / 'python3'
+        _log(root, f'AppImage: {version} already installed')
+        return root, pyexe, entry
     lock_path = root / 'data' / 'launcher.lock'
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock = lock_path.open('a+')
@@ -64,7 +73,9 @@ def install(bundle):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as e:
         lock.close()
-        raise RuntimeError('Close the NX2Saria launcher before repairing it with the AppImage, then try again.') from e
+        message = 'Close the NX2Saria launcher before repairing it with the AppImage, then try again.'
+        _log(root, f'AppImage install refused: {message}')
+        raise RuntimeError(message) from e
     try:
         return _install(bundle, root)
     finally:
@@ -156,6 +167,7 @@ def _install(bundle, root):
         raise
     shutil.rmtree(backup, ignore_errors=True)
     shutil.rmtree(old_python, ignore_errors=True)
+    (root / 'app' / 'previous.txt').unlink(missing_ok=True)
     cfg = _config()
     launcher_settings = root / 'data' / 'launcher.json'
     try:
@@ -182,11 +194,12 @@ def _install(bundle, root):
         shutil.copytree(legacy_data, new_deps)
     icon = root / 'nx2saria.png'
     bundled_icon = bundle / 'nx2saria.png'
-    if bundled_icon.is_file():
-        shutil.copy2(bundled_icon, icon)
     pyexe = root / 'python' / 'bin' / 'python3'
     entry = target / 'launcher' / 'start.pyw'
     _write_desktop(root, apps)
+    if bundled_icon.is_file():
+        _replace_if_different(icon, bundled_icon.read_bytes(), 0o644)
+    _write_install_manifest(root, app, py, version, _appimage_identity())
     _log(root, f'AppImage installed launcher {version} in {root}')
     if cfg:
         _log(root, 'Adopted existing AppImage settings for dump and game folder')
@@ -200,15 +213,16 @@ def _write_wrapper(root):
                        'ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1\n'
                        'unset PYTHONPATH PYTHONHOME\n'
                        'VERSION=$(cat "$ROOT/app/current.txt") || exit 1\n'
+                       'started=$(date +%s%N)\n'
                        '"$ROOT/python/bin/python3" -I "$ROOT/app/$VERSION/launcher/start.pyw" "$@"\n'
                        'status=$?\n'
-                       'if [ "$status" -eq 86 ]; then\n'
+                       'elapsed=$(( $(date +%s%N) - started ))\n'
+                       'if [ "$status" -ne 0 ] && [ "$elapsed" -le 6000000000 ]; then\n'
                        '  PREVIOUS=$(cat "$ROOT/app/previous.txt" 2>/dev/null)\n'
                        '  if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$VERSION" ] && [ -f "$ROOT/app/$PREVIOUS/launcher/start.pyw" ]; then\n'
                        '    mkdir -p "$ROOT/data/logs"\n'
-                       '    printf "%s wrapper: %s exited 86; back to %s\\n" "$(date +%H:%M:%S)" "$VERSION" "$PREVIOUS" >> "$ROOT/data/logs/launcher.log"\n'
+                       '    printf "%s wrapper: %s exited %s; back to %s\\n" "$(date +%H:%M:%S)" "$VERSION" "$status" "$PREVIOUS" >> "$ROOT/data/logs/launcher.log"\n'
                        '    if printf "%s\\n" "$PREVIOUS" > "$ROOT/app/current.txt.tmp" && mv "$ROOT/app/current.txt.tmp" "$ROOT/app/current.txt"; then\n'
-                       '      rm -f "$ROOT/app/previous.txt"\n'
                        '      if [ -d "$ROOT/python.old" ]; then rm -rf "$ROOT/python.failed"; mv "$ROOT/python" "$ROOT/python.failed" && mv "$ROOT/python.old" "$ROOT/python"; fi\n'
                        '      "$ROOT/python/bin/python3" -I "$ROOT/app/$PREVIOUS/launcher/start.pyw" "$@" --rolled-back "$VERSION"\n'
                        '      status=$?\n'
@@ -229,15 +243,96 @@ def _write_desktop(root, apps):
     desktop = ('[Desktop Entry]\nType=Application\nName=NX2Saria\n'
                f'Icon={icon}\n'
                f'Exec={exec_quote(wrapper)}\nTerminal=false\nCategories=Game;\n')
-    (apps / 'nx2saria.desktop').write_text(desktop, encoding='utf-8')
+    _replace_if_different(apps / 'nx2saria.desktop', desktop.encode('utf-8'), 0o644)
+
+
+def _replace_if_different(path, content, mode=0o644):
+    path = Path(path)
+    try:
+        if path.read_bytes() == content:
+            return False
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(path.name + '.new')
+    staged.write_bytes(content)
+    staged.chmod(mode)
+    os.replace(staged, path)
+    return True
+
+
+def _appimage_identity():
+    source = os.environ.get('APPIMAGE', '')
+    if not source:
+        return None
+    try:
+        path = Path(source).resolve(strict=True)
+        info = path.stat()
+        if not path.is_file():
+            return None
+        return {'path': str(path), 'device': info.st_dev, 'inode': info.st_ino,
+                'size': info.st_size, 'mtime_ns': info.st_mtime_ns}
+    except OSError:
+        return None
+
+
+def _inventory(root, names=None):
+    root = Path(root)
+    files = []
+    paths = [root / name for name in names] if names is not None else [root]
+    for path in paths:
+        if path.is_file():
+            if path.suffix not in ('.pyc', '.pyo') and '__pycache__' not in path.parts:
+                files.append([path.relative_to(root).as_posix(), path.stat().st_size])
+        elif path.is_dir():
+            files.extend([child.relative_to(root).as_posix(), child.stat().st_size]
+                         for child in path.rglob('*') if child.is_file()
+                         and '__pycache__' not in child.relative_to(root).parts
+                         and child.suffix not in ('.pyc', '.pyo'))
+    return sorted(files)
+
+
+def _install_manifest(root):
+    try:
+        value = json.loads((Path(root) / 'data' / 'appimage-install.json').read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _write_install_manifest(root, app, py, version, identity):
+    value = {'version': version, 'appimage': identity,
+             'app': _inventory(app, ('launcher', 'recomp', 'runtime', 'tools', 'bin', 'prompt-art', 'toolchain',
+                                     'VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md',
+                                     'nx2saria.ini.example')),
+             'python': _inventory(py)}
+    _replace_if_different(Path(root) / 'data' / 'appimage-install.json',
+                          (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8'))
+
+
+def _already_installed(root, app, py, version, identity):
+    manifest = _install_manifest(root)
+    if not manifest or manifest.get('version') != version or manifest.get('appimage') != identity:
+        return False
+    target = Path(root) / 'app' / version
+    live_python = Path(root) / 'python'
+    if not (target / 'launcher' / 'start.pyw').is_file() or not (live_python / 'bin' / 'python3').is_file():
+        return False
+    app_names = ('launcher', 'recomp', 'runtime', 'tools', 'bin', 'prompt-art', 'toolchain',
+                 'VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
+    return (manifest.get('app') == _inventory(app, app_names) == _inventory(target, app_names)
+            and manifest.get('python') == _inventory(py) == _inventory(live_python))
 
 
 def main():
-    bundle = Path(sys.argv[1])
+    data_home = _xdg('XDG_DATA_HOME', Path.home() / '.local' / 'share')
+    root = data_home / 'nx2saria'
     try:
+        bundle = Path(sys.argv[1])
         root, py, entry = install(bundle)
-    except RuntimeError as e:
+    except Exception as e:
         message = str(e)
+        _log(root, f'AppImage installer failed: {type(e).__name__}: {message}')
         if shutil.which('kdialog'):
             subprocess.run(['kdialog', '--error', message, '--title', 'NX2Saria'])
         elif shutil.which('zenity'):
@@ -245,7 +340,13 @@ def main():
         else:
             print(message, file=sys.stderr)
         return 1
-    os.execv(str(py), [str(py), '-I', str(entry)])
+    source = Path(os.environ.get('APPIMAGE', bundle)).resolve().parent
+    try:
+        os.execv(str(py), [str(py), '-I', str(entry), '--from', str(source)])
+    except OSError as e:
+        _log(root, f'AppImage launcher start failed: {type(e).__name__}: {e}')
+        print(f'Could not start the installed NX2Saria launcher: {e}', file=sys.stderr)
+        return 1
 
 
 if __name__ == '__main__':

@@ -78,6 +78,8 @@ def game_running(game_dir):
     except OSError:
         return False
     return False
+
+
 UDMABUF_MINIMUM_MB = 1024
 
 

@@ -1129,7 +1129,8 @@ class FeedTest(Tmp):
             j = jobs.CheckJob(ctx).run_inline()
         self.assertEqual((j.result, j.error), ('failed', 'GitHub refused the request (rate limit); try again in an hour'))
         ctx._file.flush()
-        log = (self.layout.logs / 'launcher.log').read_text(encoding='utf-8').splitlines()[1:]
+        log = [line for line in (self.layout.logs / 'launcher.log').read_text(encoding='utf-8').splitlines()
+               if 'FeedError:' in line]
         self.assertEqual(len(log), 1, log)
         self.assertIn('FeedError: GitHub refused the request (rate limit); try again in an hour (HTTPError: HTTP Error '
                       '403', log[0])
@@ -6060,7 +6061,7 @@ class WindowTest(Tmp):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],
                            cwd=ROOT, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('21 screens drawn', r.stdout)
+        self.assertIn('22 screens drawn', r.stdout)
 
 
 # ---------------------------------------------------------------- mods

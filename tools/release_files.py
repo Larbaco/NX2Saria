@@ -172,8 +172,10 @@ def check_files(tag, notes, folder):
         raise Problem(f'{LINUX_MANIFEST} names its runtime file {runtime_linux!r}')
     runtime_entry = lm['runtime']
     runtime_ident = runtime_entry.get('id')
+    runtime_prefix = 'linux-x86_64-'
     if (not isinstance(runtime_ident, str) or not re.fullmatch(r'[A-Za-z0-9._-]+', runtime_ident)
-            or runtime_linux != f'NX2Saria-runtime-linux-x86_64-{runtime_ident}.zip'):
+            or not runtime_ident.startswith(runtime_prefix)
+            or runtime_linux != f'NX2Saria-runtime-linux-x86_64-{runtime_ident.removeprefix(runtime_prefix)}.zip'):
         raise Problem(f'{LINUX_MANIFEST} runtime id does not match {runtime_linux!r}')
     names = sorted([*want, *MANIFESTS, LINUX_MANIFEST, *linux_want])
     present = sorted(p.name for p in folder.iterdir() if p.is_file() and p.name != SUMS)

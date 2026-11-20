@@ -1,12 +1,15 @@
 """Fast checks for Linux platform services; no display, game data or build tools required."""
 import ctypes
+import hashlib
 import json
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -14,8 +17,11 @@ from unittest import mock
 from launcher.platform import linux
 from launcher import winsys
 from launcher import build
+from launcher import feed
+from launcher import jobs
 from launcher import updater
 from launcher.paths import Layout
+from launcher.context import Context
 
 
 class LinuxPlatformTest(unittest.TestCase):
@@ -98,6 +104,63 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((base / 'data' / 'nx2saria' / 'app' / 'current.txt').is_file())
 
+    def test_appimage_main_passes_source_folder_to_launcher(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = self._installer_bundle(base)
+            image = base / 'NX2Saria.AppImage'
+            image.write_bytes(b'appimage')
+            captured = []
+            env = {'APPIMAGE': str(image), 'XDG_DATA_HOME': str(base / 'share')}
+            with mock.patch.dict(os.environ, env), \
+                 mock.patch.object(appimage_install.sys, 'argv', ['appimage_install.py', str(bundle)]), \
+                 mock.patch.object(appimage_install.os, 'execv', side_effect=lambda *args: captured.append(args)):
+                self.assertIsNone(appimage_install.main())
+            self.assertEqual(captured[0][1][-2:], ['--from', str(base)])
+
+    def test_same_appimage_install_is_idempotent_and_does_not_touch_shortcuts(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = self._installer_bundle(base)
+            image = base / 'NX2Saria.AppImage'
+            image.write_bytes(b'appimage')
+            env = {'APPIMAGE': str(image), 'XDG_DATA_HOME': str(base / 'share'),
+                   'XDG_CONFIG_HOME': str(base / 'config')}
+            root = base / 'share' / 'nx2saria'
+            desktop = base / 'share' / 'applications' / 'nx2saria.desktop'
+            icon = root / 'nx2saria.png'
+            with mock.patch.dict(os.environ, env):
+                appimage_install.install(bundle)
+                app_dir = root / 'app' / '0.19.0'
+                app_pycache = app_dir / 'launcher' / '__pycache__'
+                app_pycache.mkdir()
+                (app_pycache / 'x.cpython-314.pyc').write_bytes(b'compiled launcher bytecode')
+                python_pycache = root / 'python' / 'lib' / 'python3.14' / 'site-packages' / '__pycache__'
+                python_pycache.mkdir(parents=True)
+                (python_pycache / 'x.cpython-314.pyc').write_bytes(b'compiled runtime bytecode')
+                app_dir_mtime = app_dir.stat().st_mtime_ns
+                app_cache_mtime = app_pycache.stat().st_mtime_ns
+                python_dir_mtime = (root / 'python').stat().st_mtime_ns
+                python_cache_mtime = python_pycache.stat().st_mtime_ns
+                desktop_mtime = desktop.stat().st_mtime_ns
+                icon_mtime = icon.stat().st_mtime_ns
+                time.sleep(0.01)
+                appimage_install.install(bundle)
+            self.assertEqual((root / 'app' / '0.19.0').stat().st_mtime_ns, app_dir_mtime)
+            self.assertEqual(app_pycache.stat().st_mtime_ns, app_cache_mtime)
+            self.assertEqual((root / 'python').stat().st_mtime_ns, python_dir_mtime)
+            self.assertEqual(python_pycache.stat().st_mtime_ns, python_cache_mtime)
+            self.assertEqual(desktop.stat().st_mtime_ns, desktop_mtime)
+            self.assertEqual(icon.stat().st_mtime_ns, icon_mtime)
+            log = (root / 'data' / 'logs' / 'launcher.log').read_text().splitlines()
+            self.assertTrue(any('AppImage: 0.19.0 already installed' in line for line in log))
+
     def test_appimage_install_rollback_preserves_live_data_at_each_rename(self):
         import sys as py_sys
         py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
@@ -131,6 +194,20 @@ class LinuxPlatformTest(unittest.TestCase):
                         appimage_install._install(bundle, root)
                 self.assertEqual((old_app / 'working.marker').read_text(), 'old app')
                 self.assertEqual((old_python / 'python3').read_text(), 'old python')
+
+    def test_successful_appimage_install_clears_stale_previous_version(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = self._installer_bundle(base)
+            root = base / 'share' / 'nx2saria'
+            (root / 'app').mkdir(parents=True)
+            (root / 'app' / 'previous.txt').write_text('0.18.0\n')
+            with mock.patch.dict(os.environ, {'XDG_DATA_HOME': str(base / 'share')}):
+                appimage_install._install(bundle, root)
+            self.assertFalse((root / 'app' / 'previous.txt').exists())
 
     def test_relative_xdg_paths_are_ignored_and_corrupt_settings_are_preserved(self):
         import sys as py_sys
@@ -187,9 +264,46 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.1.0')
             self.assertEqual((root / 'python' / 'runtime-id.txt').read_text().strip(), 'old')
             self.assertFalse((root / 'python.old').exists())
-            self.assertFalse((root / 'app' / 'previous.txt').exists())
             log = (root / 'data' / 'logs' / 'launcher.log').read_text().splitlines()
             self.assertRegex(log[0], r'^\d\d:\d\d:\d\d wrapper: 0\.2\.0 exited 86; back to 0\.1\.0$')
+            self.assertEqual((root / 'app' / 'previous.txt').read_text().strip(), '0.1.0')
+
+    def test_wrapper_rolls_back_quick_nonzero_exits(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        for failure in ('126', '127', 'signal'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / 'share' / 'nx2saria'
+                for version in ('0.1.0', '0.2.0'):
+                    entry = root / 'app' / version / 'launcher' / 'start.pyw'
+                    entry.parent.mkdir(parents=True)
+                    entry.write_text('')
+                (root / 'app' / 'current.txt').write_text('0.2.0\n')
+                (root / 'app' / 'previous.txt').write_text('0.1.0\n')
+                python = root / 'python' / 'bin' / 'python3'
+                python.parent.mkdir(parents=True)
+                args_file = Path(tmp) / 'args.txt'
+                code = ('#!/bin/sh\n'
+                        'case "$2" in *0.2.0*)\n'
+                        f'  {"kill -TERM $$" if failure == "signal" else f"exit {failure}"};;\n'
+                        '  *) printf "%s\\n" "$@" > "$ARGS_FILE"; exit 0;;\n'
+                        'esac\n')
+                python.write_text(code)
+                python.chmod(0o755)
+                appimage_install._write_wrapper(root)
+                with mock.patch.dict(os.environ, {'ARGS_FILE': str(args_file)}):
+                    result = subprocess.run([str(root / 'nx2saria-launcher')], capture_output=True,
+                                            text=True, timeout=10)
+                expected = 143 if failure == 'signal' else int(failure)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(args_file.read_text().splitlines(),
+                                 ['-I', str(root / 'app' / '0.1.0' / 'launcher' / 'start.pyw'),
+                                  '--rolled-back', '0.2.0'])
+                self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.1.0')
+                log = (root / 'data' / 'logs' / 'launcher.log').read_text()
+                self.assertIn(f'wrapper: 0.2.0 exited {expected}; back to 0.1.0', log)
+                self.assertEqual((root / 'app' / 'previous.txt').read_text().strip(), '0.1.0')
 
     def test_wrapper_keeps_previous_on_clean_exit_and_skips_same_version_rollback(self):
         import sys as py_sys
@@ -303,6 +417,101 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertFalse((new / updater.STAGED).exists())
             self.assertTrue((root / 'python.old' / 'runtime-id.txt').is_file())
             self.assertFalse((root / 'python.old' / 'stale.marker').exists())
+
+    def test_runtime_change_switches_on_updates_job_and_cli_update(self):
+        from types import SimpleNamespace
+        from launcher import cli
+
+        for path in ('updates', 'cli'):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                old = root / 'app' / '0.20.0'
+                (old / 'launcher').mkdir(parents=True)
+                (old / 'launcher' / 'start.pyw').write_text('')
+                (old / 'VERSION').write_text('0.20.0\n')
+                (root / 'app' / 'current.txt').write_text('0.20.0\n')
+                python = root / 'python'
+                (python / 'bin').mkdir(parents=True)
+                (python / 'bin' / 'python3').write_text('old interpreter')
+                (python / 'runtime-id.txt').write_text('linux-x86_64-py3.14.8-old\n')
+                layout = Layout(root=root, app=old)
+                ctx = Context(layout, echo=False)
+                self.addCleanup(lambda context=ctx: context._file.close())
+                release = SimpleNamespace(version='0.21.0-rc.1', manifest={'runtime': {
+                    'id': 'linux-x86_64-py3.14.9-new'}})
+
+                def stage(_layout, _release, **_kwargs):
+                    folder = root / 'app' / '0.21.0-rc.1'
+                    (folder / 'launcher').mkdir(parents=True)
+                    (folder / 'launcher' / 'start.pyw').write_text('')
+                    (folder / 'VERSION').write_text('0.21.0-rc.1\n')
+                    staged_python = folder / updater.STAGED_PYTHON
+                    (staged_python / 'bin').mkdir(parents=True)
+                    (staged_python / 'bin' / 'python3').write_text('new interpreter')
+                    (staged_python / 'runtime-id.txt').write_text('linux-x86_64-py3.14.9-new\n')
+                    (folder / updater.STAGED).write_text(json.dumps({
+                        'version': '0.21.0-rc.1', 'runtime': 'linux-x86_64-py3.14.9-new'}))
+                    return folder
+
+                with mock.patch.object(updater, 'stage', side_effect=stage):
+                    if path == 'updates':
+                        job = jobs.UpdateDownloadJob(ctx, release)
+                        job.run_inline()
+                        self.assertEqual(job.result, 'ok', job.error)
+                    else:
+                        check = SimpleNamespace(result='ok', release=release, error='')
+                        class Held:
+                            released = False
+                            def release(self):
+                                self.released = True
+                        held = Held()
+                        arg = SimpleNamespace(cmd='update')
+                        with mock.patch.object(cli.jobs, 'CheckJob', return_value=SimpleNamespace(
+                                run_inline=lambda: check)), \
+                             mock.patch.object(cli, 'follow', side_effect=lambda job: (job.run_inline(), 0)[1]), \
+                             mock.patch.object(cli.subprocess, 'call', return_value=0) as finish, \
+                             mock.patch.object(build, 'game_running', return_value=False):
+                            self.assertEqual(cli.run(arg, ctx, held), 0)
+                        self.assertTrue(held.released)
+                        self.assertTrue(finish.called)
+                self.assertEqual(updater.current(layout), '0.21.0-rc.1')
+                self.assertEqual(updater.runtime_id(layout), 'linux-x86_64-py3.14.9-new')
+                self.assertEqual((python / 'bin' / 'python3').read_text(), 'new interpreter')
+
+    def test_linux_runtime_asset_name_from_manifest_is_used_by_updater(self):
+        runtime_id = 'linux-x86_64-py3.14.9-16aa56671d40'
+        name = 'NX2Saria-runtime-linux-x86_64-py3.14.9-16aa56671d40.zip'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / name
+            with zipfile.ZipFile(archive, 'w') as zf:
+                zf.writestr('bin/python3', 'new python')
+                zf.writestr('runtime-id.txt', runtime_id + '\n')
+            data = archive.read_bytes()
+            manifest = {'version': '0.21.0-rc.1', 'runtime': {
+                'id': runtime_id, 'name': name, 'size': len(data),
+                'sha256': hashlib.sha256(data).hexdigest()}}
+            release = feed.Release(manifest, assets={name: 'https://example.invalid/' + name})
+            current = root / 'app' / '0.20.0'
+            (current / 'launcher').mkdir(parents=True)
+            (current / 'launcher' / 'start.pyw').write_text('')
+            (root / 'app' / 'current.txt').write_text('0.20.0\n')
+            python = root / 'python' / 'bin'
+            python.mkdir(parents=True)
+            (python / 'python3').write_text('old python')
+            (root / 'python' / 'runtime-id.txt').write_text('linux-x86_64-py3.14.8-old\n')
+            layout = Layout(root=root, app=current).ensure()
+            downloads = []
+
+            def download(url, destination, **_kwargs):
+                downloads.append((url, Path(destination).name))
+                shutil.copyfile(archive, destination)
+
+            with mock.patch.object(updater.net, 'download', side_effect=download):
+                self.assertTrue(updater.stage_runtime(layout, release, version='0.20.0'))
+            self.assertEqual(downloads, [('https://example.invalid/' + name, name)])
+            self.assertEqual(updater.runtime_id(layout), 'linux-x86_64-py3.14.8-old')
+            self.assertEqual(updater.read_text(root / 'python.next' / 'runtime-id.txt'), runtime_id)
     def test_missing_sdl_disables_gamepad(self):
         with mock.patch.object(linux, '_sdl_library', return_value=(None, 'none (not found)')):
             pad = linux.Gamepad()
@@ -552,7 +761,7 @@ class LinuxPlatformTest(unittest.TestCase):
                         if stat[stat.rfind(')') + 2] == 'Z':
                             exited = True
                             break
-                    except FileNotFoundError:
+                    except (FileNotFoundError, ProcessLookupError):
                         exited = True
                         break
                     time.sleep(0.05)
