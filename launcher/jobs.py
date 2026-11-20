@@ -399,13 +399,8 @@ class Job:
         if missing:
             raise toolchain.ToolchainError(missing)
         if os.name != 'nt':
-            from .platform.linux import toolchain_missing
-            missing = toolchain_missing()
-            if missing:
-                self.log('toolchain: Linux check missing ' + missing.splitlines()[0].split(': ', 1)[1].rstrip('.'))
-                raise toolchain.ToolchainError(missing)
-            self.log('toolchain: Linux system requirements ok')
-            toolchain.ensure_zbic(layout, cancel=self.cancelled, log=self.log, version=self.ctx.version)
+            from .platform.linux import ensure_toolchain
+            ensure_toolchain(layout, cancel=self.cancelled, log=self.log, version=self.ctx.version)
             self.skip(sid, 'System tools ready')
             return
         lock = toolchain.load_lock(layout, self.ctx.version)
@@ -749,7 +744,7 @@ class BackgroundUpdate:
             return ''
         old = versions.display(self.ctx.layout.version)
         try:
-            updater.install_staged(self.ctx.layout, ver)
+            updater.install_staged(self.ctx.layout, ver, log=self.ctx.log)
         except (OSError, updater.UpdateError) as e:
             self.error = str(e)
             self.waiting = False

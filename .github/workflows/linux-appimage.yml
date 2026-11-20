@@ -112,9 +112,12 @@ jobs:
             { echo "::error::the AppImage carries no button art (prompt-art)"; exit 1; }
           appimage=$(ls dist/NX2Saria-Linux-*-x86_64.AppImage)
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --help | head -3
+          notes=()
+          [ ! -f "docs/releases/$TAG.md" ] || notes=(--notes "docs/releases/$TAG.md")
+          version=$(tr -d '\r\n' < VERSION)
           .venv/bin/python tools/package_launcher_linux.py \
-            --python build/appimage/NX2Saria.AppDir/usr/python --version "$TAG" \
-            --kit build/appimage/NX2Saria.AppDir/usr/kit --notes "docs/releases/$TAG.md" \
+            --python build/appimage/NX2Saria.AppDir/usr/python --version "$version" \
+            --kit build/appimage/NX2Saria.AppDir/usr/kit "${notes[@]}" \
             --appimage "$appimage" --out dist
           sha256sum "$appimage"
       - name: Checks with the runner's clang

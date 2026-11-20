@@ -19,6 +19,20 @@ from launcher.paths import Layout
 
 
 class LinuxPlatformTest(unittest.TestCase):
+    def _installer_bundle(self, base):
+        bundle = base / 'bundle'
+        kit = bundle / 'usr' / 'kit'
+        py = bundle / 'usr' / 'python' / 'bin'
+        (kit / 'launcher').mkdir(parents=True)
+        (kit / 'launcher' / 'start.pyw').write_text('')
+        (kit / 'VERSION').write_text('0.19.0\n')
+        py.mkdir(parents=True)
+        exe = py / 'python3'
+        exe.write_text('#!/bin/sh\nexit 0\n')
+        exe.chmod(0o755)
+        (bundle / 'nx2saria.png').write_bytes(b'icon')
+        return bundle
+
     def test_linux_build_args_use_system_toolchain_without_msys(self):
         class Layout:
             msys = Path('/not-used/msys')
@@ -69,6 +83,139 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertIn('app/current.txt', wrapper.read_text())
             self.assertNotIn(str(bundle), desktop)
 
+    def test_appimage_installer_script_runs_as_subprocess(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = self._installer_bundle(base)
+            env = dict(os.environ, HOME=str(base / 'home'), XDG_DATA_HOME=str(base / 'data'),
+                       XDG_CONFIG_HOME=str(base / 'config'))
+            result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'tools' /
+                                                           'appimage_install.py'), str(bundle)],
+                                    env=env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((base / 'data' / 'nx2saria' / 'app' / 'current.txt').is_file())
+
+    def test_appimage_install_rollback_preserves_live_data_at_each_rename(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        for fail_at in (1, 2, 3, 4, 5):
+            with self.subTest(rename=fail_at), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                bundle = self._installer_bundle(base)
+                root = base / 'share' / 'nx2saria'
+                old_app = root / 'app' / '0.19.0'
+                old_app.mkdir(parents=True)
+                (old_app / 'working.marker').write_text('old app')
+                (root / 'app' / 'current.txt').write_text('0.19.0\n')
+                old_python = root / 'python' / 'bin'
+                old_python.mkdir(parents=True)
+                (old_python / 'python3').write_text('old python')
+                original_replace = appimage_install.os.replace
+                calls = 0
+
+                def fail_one(src, dst):
+                    nonlocal calls
+                    calls += 1
+                    if calls == fail_at:
+                        raise OSError(f'rename {fail_at} failed')
+                    return original_replace(src, dst)
+
+                with mock.patch.dict(os.environ, {'XDG_DATA_HOME': str(base / 'share'),
+                                                  'XDG_CONFIG_HOME': str(base / 'config')}), \
+                     mock.patch.object(appimage_install.os, 'replace', side_effect=fail_one):
+                    with self.assertRaisesRegex(OSError, f'rename {fail_at} failed'):
+                        appimage_install._install(bundle, root)
+                self.assertEqual((old_app / 'working.marker').read_text(), 'old app')
+                self.assertEqual((old_python / 'python3').read_text(), 'old python')
+
+    def test_relative_xdg_paths_are_ignored_and_corrupt_settings_are_preserved(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = self._installer_bundle(base)
+            home = base / 'home'
+            root = home / '.local' / 'share' / 'nx2saria'
+            (root / 'data').mkdir(parents=True)
+            settings = root / 'data' / 'launcher.json'
+            settings.write_text('{broken')
+            with mock.patch.dict(os.environ, {'HOME': str(home), 'XDG_DATA_HOME': 'relative-data',
+                                              'XDG_CONFIG_HOME': 'relative-config'}, clear=False):
+                appimage_install._install(bundle, root)
+            self.assertTrue((root / 'data' / 'launcher.json.bad').is_file())
+            loaded = json.loads(settings.read_text())
+            self.assertEqual(loaded['game_dir'], '')
+
+    def test_appimage_rollback_wrapper_restores_previous_app_and_runtime(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'share' / 'nx2saria'
+            for version in ('0.1.0', '0.2.0'):
+                entry = root / 'app' / version / 'launcher' / 'start.pyw'
+                entry.parent.mkdir(parents=True)
+                entry.write_text('')
+            (root / 'app' / 'current.txt').write_text('0.2.0\n')
+            (root / 'app' / 'previous.txt').write_text('0.1.0\n')
+            (root / 'python' / 'bin').mkdir(parents=True)
+            (root / 'python' / 'bin' / 'python3').write_text('#!/bin/sh\ncase "$*" in *0.2.0*) exit 86;; *) exit 0;; esac\n')
+            (root / 'python' / 'bin' / 'python3').chmod(0o755)
+            (root / 'python' / 'runtime-id.txt').write_text('new\n')
+            (root / 'python.old' / 'bin').mkdir(parents=True)
+            old_exe = root / 'python.old' / 'bin' / 'python3'
+            old_exe.write_text('#!/bin/sh\nexit 0\n')
+            old_exe.chmod(0o755)
+            (root / 'python.old' / 'runtime-id.txt').write_text('old\n')
+            appimage_install._write_wrapper(root)
+            result = subprocess.run([str(root / 'nx2saria-launcher')], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.1.0')
+            self.assertEqual((root / 'python' / 'runtime-id.txt').read_text().strip(), 'old')
+            self.assertFalse((root / 'python.old').exists())
+            self.assertFalse((root / 'app' / 'previous.txt').exists())
+
+    def test_old_appimage_does_not_replace_a_newer_installation(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        import appimage_install
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = self._installer_bundle(base)
+            root = base / 'share' / 'nx2saria'
+            current = root / 'app' / '0.20.0-rc.2'
+            entry = current / 'launcher' / 'start.pyw'
+            entry.parent.mkdir(parents=True)
+            entry.write_text('')
+            (current / 'VERSION').write_text('0.20.0-rc.2\n')
+            (root / 'app' / 'current.txt').write_text('0.20.0-rc.2\n')
+            py = root / 'python' / 'bin'
+            py.mkdir(parents=True)
+            (py / 'python3').write_text('new python')
+            (root / 'nx2saria.png').write_bytes(b'icon')
+            with mock.patch.dict(os.environ, {'XDG_DATA_HOME': str(base / 'share')}), \
+                 mock.patch.object(appimage_install.shutil, 'which', return_value=None):
+                _, _, chosen = appimage_install._install(bundle, root)
+            self.assertEqual(chosen, entry)
+            self.assertEqual((root / 'app' / 'current.txt').read_text().strip(), '0.20.0-rc.2')
+            self.assertEqual((py / 'python3').read_text(), 'new python')
+            self.assertEqual((root / 'app' / '0.19.0' / 'VERSION').exists(), False)
+
+    def test_linux_runtime_id_tracks_python_version_and_pins(self):
+        import sys as py_sys
+        py_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+        from linux_runtime import runtime_id
+        with tempfile.TemporaryDirectory() as tmp:
+            python = Path(tmp) / 'python3'
+            python.write_text('#!/bin/sh\nprintf "3.14.9\\n"\n')
+            python.chmod(0o755)
+            first = runtime_id(python, ('numpy==2.0', 'lz4==4.0'))
+            second = runtime_id(python, ('numpy==2.1', 'lz4==4.0'))
+            self.assertIn('py3.14.9-', first)
+            self.assertNotEqual(first, second)
+
     def test_linux_runtime_and_app_switch_together(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -94,6 +241,7 @@ class LinuxPlatformTest(unittest.TestCase):
             self.assertEqual(updater.runtime_id(layout), 'runtime-new')
             self.assertEqual((python / 'bin' / 'python3').read_bytes(), b'new interpreter')
             self.assertFalse((new / updater.STAGED).exists())
+            self.assertTrue((root / 'python.old' / 'runtime-id.txt').is_file())
     def test_missing_sdl_disables_gamepad(self):
         with mock.patch.object(linux, '_sdl_library', return_value=(None, 'none (not found)')):
             pad = linux.Gamepad()

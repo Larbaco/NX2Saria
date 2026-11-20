@@ -1151,7 +1151,7 @@ class FeedTest(Tmp):
         (self.tmp / feed.LINUX_MANIFEST).write_text(json.dumps(manifest_for(z, '0.9.0')))
         srv = Server(self.tmp)
         self.addCleanup(srv.close)
-        rel = feed.latest({'type': 'url', 'url': srv.url + feed.MANIFEST})
+        rel = feed.latest({'type': 'url', 'url': srv.url + feed.MANIFEST}, platform='linux')
         self.assertEqual(rel.version, '0.9.0')
         self.layout.apps.mkdir(parents=True)
         (self.layout.apps / 'current.txt').write_text('0.8.0\n')
@@ -1169,6 +1169,15 @@ class FeedTest(Tmp):
         self.assertTrue(updater.rollback(self.layout))
         self.assertEqual(updater.current(self.layout), '0.8.0')
         self.assertFalse(updater.rollback(self.layout))                  # nothing further back
+
+    def test_windows_url_feed_and_update(self):
+        z = make_app_zip(self.tmp, '0.9.0')
+        (self.tmp / feed.MANIFEST).write_text(json.dumps(manifest_for(z, '0.9.0')))
+        srv = Server(self.tmp)
+        self.addCleanup(srv.close)
+        rel = feed.latest({'type': 'url', 'url': srv.url + feed.MANIFEST}, platform='win32')
+        self.assertEqual(rel.version, '0.9.0')
+        self.assertEqual(rel.manifest['app']['name'], z.name)
 
     def test_unsafe_or_wrong_archives(self):
         z = make_app_zip(self.tmp, '1.0.0', extra={'../evil.txt': 'x'})

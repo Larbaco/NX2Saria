@@ -32,14 +32,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # AppRun starts this with python -I: no script folder on the path
 from private_paths import shorten  # noqa: E402
 
+def _xdg(name, fallback):
+    value = os.environ.get(name, '')
+    path = Path(value) if value else Path(fallback)
+    return path if path.is_absolute() else Path(fallback)
+
+
 def _brand_dir(root):
     current, legacy = root / 'nx2saria', root / 'nx2navi'
     return current if current.exists() or not legacy.exists() else legacy
 
 
-CONFIG = _brand_dir(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'appimage.json'
-CACHE = _brand_dir(Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache'))
-APPS = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 'share') / 'applications'
+CONFIG = _brand_dir(_xdg('XDG_CONFIG_HOME', Path.home() / '.config')) / 'appimage.json'
+CACHE = _brand_dir(_xdg('XDG_CACHE_HOME', Path.home() / '.cache'))
+APPS = _xdg('XDG_DATA_HOME', Path.home() / '.local' / 'share') / 'applications'
 DEFAULT_OUT = Path.home() / 'Games' / 'Ocarina'
 
 # make_game.py's steps (STEPS, plus check) and AppRun's own around them, in the order they run

@@ -3,6 +3,8 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -39,7 +41,12 @@ def main():
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     ver = a.version.removeprefix('v')
-    runtime_id = 'linux-x86_64-py3.14.9-1'
+    sys.path.insert(0, str(ROOT / 'tools'))
+    from make_appimage import PACKAGES
+    from linux_runtime import runtime_id as get_runtime_id
+    runtime_id = get_runtime_id(a.python / 'bin' / 'python3', PACKAGES)
+    build_sha = subprocess.run(['git', 'rev-parse', '--short=12', 'HEAD'], cwd=ROOT,
+                               check=True, capture_output=True, text=True).stdout.strip()
     app = a.out / f'NX2Saria-app-linux-x86_64-{ver}.zip'
     with zipfile.ZipFile(app, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for name in APP_DIRS:
@@ -52,9 +59,7 @@ def main():
             src = ROOT / name
             if src.is_file():
                 z.write(src, name)
-        for p in a.kit.joinpath('bin').glob('*'):
-            if p.is_file():
-                z.write(p, f'bin/{p.name}')
+        add_tree(z, a.kit / 'bin', 'bin')
         z.writestr('feed.json', json.dumps({'type': 'github', 'repo': 'Larbaco/NX2Saria'}, indent=1) + '\n')
     runtime = a.out / f'NX2Saria-runtime-linux-x86_64-{runtime_id}.zip'
     with zipfile.ZipFile(runtime, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
@@ -69,7 +74,7 @@ def main():
         files[key] = {'name': path.name, 'size': path.stat().st_size, 'sha256': digest(path)}
     files['runtime']['id'] = runtime_id
     notes = a.notes.read_text(encoding='utf-8').replace('\r\n', '\n') if a.notes else ''
-    manifest = {'format': 1, 'version': ver, 'build': f'{ver}+linux', 'notes': notes,
+    manifest = {'format': 1, 'version': ver, 'build': f'{ver}+{build_sha}', 'notes': notes,
                 **files, 'toolchain': 'linux-x86_64'}
     (a.out / 'NX2Saria-update-linux.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
 

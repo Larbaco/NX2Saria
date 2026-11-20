@@ -48,7 +48,7 @@ APPRUN = r'''#!/bin/bash
 HERE="$(dirname "$(readlink -f "$0")")"
 PY="$HERE/usr/python/bin/python3"
 KIT="$HERE/usr/kit"
-DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+if [[ "${XDG_DATA_HOME:-}" = /* ]]; then DATA_HOME="$XDG_DATA_HOME"; else DATA_HOME="$HOME/.local/share"; fi
 DATA="$DATA_HOME/nx2saria"
 if [ ! -d "$DATA/pydeps" ] && [ -d "$DATA_HOME/nx2navi/pydeps" ]; then DATA="$DATA_HOME/nx2navi"; fi
 PYDEPS="$DATA/pydeps"
@@ -289,7 +289,8 @@ def main():
 
     py = app / 'usr' / 'python'
     shutil.copytree(a.python, py, symlinks=True)
-    (py / 'runtime-id.txt').write_text('linux-x86_64-py3.14.9-1\n', encoding='utf-8')
+    from linux_runtime import runtime_id
+    (py / 'runtime-id.txt').write_text(runtime_id(py / 'bin' / 'python3', PACKAGES) + '\n', encoding='utf-8')
     for marker in py.glob('lib/python3*/EXTERNALLY-MANAGED'):   # uv marks its Pythons; this copy is the AppImage's own
         marker.unlink()
     subprocess.run([py / 'bin' / 'python3', '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',

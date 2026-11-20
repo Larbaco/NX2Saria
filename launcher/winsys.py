@@ -403,13 +403,11 @@ def restart(layout, args=()):
     if os.name != 'nt':
         if layout.dev:
             return False
-        from .updater import current
-        entry = layout.apps / current(layout) / 'launcher' / 'start.pyw'
-        exe = layout.python / 'bin' / 'python3'
-        if not entry.is_file() or not exe.is_file():
+        exe = layout.root / 'nx2saria-launcher'
+        if not exe.is_file():
             return False
         os.chdir(layout.root)
-        os.execv(str(exe), [str(exe), str(entry), *args])
+        os.execv(str(exe), [str(exe), *args])
     if not layout.stub.is_file():
         return False
     start_detached([str(layout.stub), *args], cwd=str(layout.root))

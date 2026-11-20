@@ -13,6 +13,20 @@ def make_game_toolchain_args(layout):
     return []
 
 
+def ensure_toolchain(layout, cancel=None, log=None, version=''):
+    """Validate Linux build prerequisites and install the launcher-owned zbic package."""
+    missing = toolchain_missing()
+    if missing:
+        if log:
+            log('toolchain: Linux check missing ' + missing.splitlines()[0].split(': ', 1)[1].rstrip('.'))
+        from ..toolchain import ToolchainError, ensure_zbic
+        raise ToolchainError(missing)
+    if log:
+        log('toolchain: Linux system requirements ok')
+    from .. import toolchain
+    toolchain.ensure_zbic(layout, cancel=cancel, log=log, version=version)
+
+
 def game_running(game_dir):
     """Check the runtime's profile lock first, then /proc for Linux builds from before profile locking."""
     folder = Path(game_dir)

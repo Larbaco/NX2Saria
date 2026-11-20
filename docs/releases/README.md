@@ -48,9 +48,9 @@ that (`docs/install.md` "Verify your download"). Nobody uploads, replaces or edi
      tag's commit) and `linux-appimage.yml` (the AppImage), built from that commit with read access only and no cache.
    - `attest`: the files are exactly the release's, the manifests give their real sizes and SHA-256 and carry the
      tag's notes; it writes `SHA256SUMS.txt` and a provenance attestation (`actions/attest-build-provenance`) over
-     all seven files. Only this job can sign attestations.
+     all ten files. Only this job can sign attestations.
    - `publish`: the only job that can write to the repository. It checks the files against `SHA256SUMS.txt`, runs the
-     players' `gh attestation verify` on each of the seven (with the tag's commit and GitHub's own runners besides),
+     players' `gh attestation verify` on each of the ten (with the tag's commit and GitHub's own runners besides),
      uploads them to a draft and publishes the draft as a **pre-release**, whether or not the tag has a suffix. The
      release page is the notes with a pre-release line on top (unless a release candidate's notes have their own)
      and a line that links to "Verify your download" at the end (`tools/release_files.py body`).
