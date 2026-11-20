@@ -173,7 +173,11 @@ def states(app):
         app.show('settings', 0)
 
     def udmabuf():
+        previous = ctx.udmabuf
+        ctx.udmabuf = {'accessible': False, 'limit_mb': 64, 'needs_fix': True, 'offered': True,
+                       'reason': '', 'steamos': False}
         app.show('udmabuf', 0)
+        ctx.udmabuf = previous
 
     def failed():
         j = jobs.InstallJob(ctx, s['dump'], s['game_dir'])

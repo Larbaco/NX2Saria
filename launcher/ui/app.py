@@ -2184,8 +2184,8 @@ class App:
                                    on=lambda: self.show('udmabuf'),
                                    desc=('Allow the game to use Linux udmabuf for faster guest memory copies. '
                                          'The change needs administrator approval.',))]
-            elif (self.ctx.udmabuf is not None and linux.udmabuf_fix_installed()
-                  and linux.udmabuf_change_available()):
+            elif (self.ctx.udmabuf is not None and not self.ctx.udmabuf['needs_fix']
+                  and linux.udmabuf_fix_installed() and linux.udmabuf_change_available()):
                 udmabuf_row = [Row('value', 'Remove udmabuf Fix', 'Administrator Approval', 'arrow',
                                    on=lambda: self.show('udmabuf'),
                                    desc=('Remove the udev rule and boot-time memory limit installed for udmabuf.',))]
@@ -2230,8 +2230,14 @@ class App:
         if not sys.platform.startswith('linux'):
             return [Row('action', 'Back', on=lambda: self.show('settings'), height=40)]
         from ..platform import linux
-        remove = linux.udmabuf_fix_installed()
-        action = 'remove' if remove else 'apply'
+        status = self.ctx.udmabuf
+        if status is None or (status['needs_fix'] and not status['offered']):
+            return [Row('value', 'udmabuf setup is unavailable', 'No system changes can be made.', 'dim'),
+                    Row('action', 'Back', on=lambda: self.show('settings'), height=40)]
+        action = 'apply' if status['needs_fix'] else 'remove'
+        remove = action == 'remove' and linux.udmabuf_fix_installed()
+        if action == 'remove' and not remove:
+            return [Row('action', 'Back', on=lambda: self.show('settings'), height=40)]
         title = 'Remove the udmabuf Fix' if remove else 'Apply the udmabuf Fix'
         detail = ('This removes the udev permission rule and boot-time 1024 MB setting.' if remove else
                   'This installs a udev permission rule and sets udmabuf size_limit_mb to 1024 MB now and at boot.')
@@ -2248,12 +2254,25 @@ class App:
         self.ctx.log(f'udmabuf: offer accepted; action={action}')
         script = Path(linux.__file__).with_name('udmabuf_fix.sh')
         ok, detail = linux.run_udmabuf_fix(script, action)
-        if not ok and detail.startswith('authorization refused'):
-            self.ctx.log('udmabuf: offer refused; PolicyKit authorization cancelled')
+        if not ok and detail == 'authorization cancelled':
+            self.ctx.log('udmabuf: offer refused; PolicyKit dialog dismissed')
+        self.ctx.udmabuf = linux.udmabuf_status()
+        self.ctx.log(linux.udmabuf_after_log_line(action, self.ctx.udmabuf))
         self.ctx.log(f'udmabuf: fix {"succeeded" if ok else "failed"}: {detail}')
-        self.message = ('The udmabuf setting was updated. Log out and back in if device access does not change.'
-                        if ok and action == 'apply' else 'The udmabuf fix was removed.' if ok else
-                        f'Could not change udmabuf: {detail}.')
+        if not ok:
+            self.message = f'Could not change udmabuf: {detail}.'
+        elif action == 'remove':
+            self.message = 'The udmabuf fix was removed.'
+        elif self.ctx.udmabuf is None:
+            self.message = 'The fix ran, but the udmabuf module is no longer present.'
+        elif not self.ctx.udmabuf['accessible']:
+            self.message = ('The fix ran, but device access is still blocked. Log out and back in, then check the '
+                            'launcher log for the updated access and size limit.')
+        elif self.ctx.udmabuf['limit_mb'] < linux.UDMABUF_MINIMUM_MB:
+            self.message = ('The fix ran, but the udmabuf limit is still below 1024 MB. Check the launcher log for '
+                            'the reported limit.')
+        else:
+            self.message = 'udmabuf is accessible with a 1024 MB limit. Start a new game to use it.'
         self.show('settings')
 
     def udmabuf_refused(self, action):

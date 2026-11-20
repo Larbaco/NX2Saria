@@ -455,14 +455,66 @@ class LinuxPlatformTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout='complete', stderr='')
 
         script = Path(linux.__file__).with_name('udmabuf_fix.sh')
+        source = script.read_text(encoding='utf-8')
+        self.assertIn('KERNEL=="udmabuf", SUBSYSTEM=="misc", TAG+="uaccess"', source)
+        self.assertIn('size_limit_mb - - - - 1024', source)
+        self.assertIn('apply)', source)
+        self.assertIn('remove)', source)
         ok, detail = linux.run_udmabuf_fix(script, 'apply', run=run)
         self.assertTrue(ok)
         self.assertEqual(detail, 'complete')
-        self.assertEqual(calls[0][0], ['pkexec', str(script), 'apply'])
+        self.assertEqual(calls[0][0][:4], ['pkexec', '/bin/sh', '-c', source])
+        self.assertEqual(calls[0][0][4:], ['udmabuf_fix', 'apply'])
         self.assertEqual(calls[0][1]['timeout'], 60)
-        self.assertTrue(os.access(script, os.X_OK))
         syntax = subprocess.run(['sh', '-n', str(script)], capture_output=True, text=True)
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_udmabuf_policykit_cancel_and_script_errors_are_distinct(self):
+        script = Path(linux.__file__).with_name('udmabuf_fix.sh')
+
+        def exit_with(code, stderr=''):
+            return lambda command, **kwargs: subprocess.CompletedProcess(command, code, stdout='', stderr=stderr)
+
+        self.assertEqual(linux.run_udmabuf_fix(script, 'apply', run=exit_with(126)),
+                         (False, 'authorization cancelled'))
+        self.assertEqual(linux.run_udmabuf_fix(script, 'apply', run=exit_with(127, 'pkexec: error')),
+                         (False, 'pkexec: error'))
+
+    def test_udmabuf_after_action_log_records_measured_state(self):
+        self.assertEqual(linux.udmabuf_after_log_line('apply',
+                         {'accessible': True, 'limit_mb': 1024}),
+                         'udmabuf: after apply: accessible=yes; size_limit_mb=1024')
+        self.assertIn('accessible=no; size_limit_mb=unknown',
+                      linux.udmabuf_after_log_line('remove', None))
+
+    def test_udmabuf_screen_applies_fix_when_state_needs_it_even_if_files_exist(self):
+        from types import SimpleNamespace
+        from launcher.ui.app import App
+        app = object.__new__(App)
+        app.ctx = SimpleNamespace(udmabuf={'accessible': True, 'limit_mb': 64, 'needs_fix': True,
+                                           'offered': True, 'reason': '', 'steamos': False})
+        with mock.patch.object(linux, 'udmabuf_fix_installed', return_value=True), \
+                mock.patch.object(app, 'apply_udmabuf') as apply:
+            rows = app.rows_udmabuf()
+            rows[2].actions[0][1]()
+        apply.assert_called_once_with('apply')
+
+    def test_udmabuf_success_refreshes_status_and_prompts_for_session_restart(self):
+        from types import SimpleNamespace
+        from launcher.ui.app import App
+        app = object.__new__(App)
+        lines = []
+        app.ctx = SimpleNamespace(log=lines.append, udmabuf=None)
+        app.show = lambda screen: None
+        after = {'accessible': False, 'limit_mb': 1024, 'needs_fix': True, 'offered': True,
+                 'reason': '', 'steamos': False}
+        with mock.patch.object(linux, 'run_udmabuf_fix', return_value=(True, 'completed')) as run, \
+                mock.patch.object(linux, 'udmabuf_status', return_value=after):
+            app.apply_udmabuf('apply')
+        run.assert_called_once()
+        self.assertIs(app.ctx.udmabuf, after)
+        self.assertIn('udmabuf: after apply: accessible=no; size_limit_mb=1024', lines)
+        self.assertIn('Log out and back in', app.message)
 
     def test_udmabuf_startup_state_is_logged_once(self):
         from launcher.context import Context

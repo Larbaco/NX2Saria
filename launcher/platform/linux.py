@@ -106,19 +106,29 @@ def udmabuf_status(device='/dev/udmabuf', parameter='/sys/module/udmabuf/paramet
 
 
 def run_udmabuf_fix(script, action, run=subprocess.run):
-    """Ask PolicyKit to run the single packaged script after the player confirms the requested action."""
+    """Ask PolicyKit to run the confirmed packaged script's contents through the system shell."""
     if action not in ('apply', 'remove'):
         raise ValueError('unknown udmabuf action')
     try:
-        result = run(['pkexec', str(script), action], capture_output=True, text=True, timeout=60)
+        content = Path(script).read_text(encoding='utf-8')
+        result = run(['pkexec', '/bin/sh', '-c', content, 'udmabuf_fix', action],
+                     capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as error:
         return False, str(error)[:240]
     if result.returncode:
-        if result.returncode in (126, 127):
-            return False, 'authorization refused or cancelled'
+        if result.returncode == 126:
+            return False, 'authorization cancelled'
         detail = (result.stderr or result.stdout or f'exit status {result.returncode}').strip()
         return False, detail[:240]
     return True, (result.stdout or 'completed').strip()[:240]
+
+
+def udmabuf_after_log_line(action, status):
+    """Describe the device state immediately after an approved fix action."""
+    if status is None:
+        return f'udmabuf: after {action}: accessible=no; size_limit_mb=unknown (module absent)'
+    accessible = 'yes' if status['accessible'] else 'no'
+    return f"udmabuf: after {action}: accessible={accessible}; size_limit_mb={status['limit_mb']}"[:240]
 
 
 def udmabuf_log_line(status):
