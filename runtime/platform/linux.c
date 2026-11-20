@@ -685,7 +685,8 @@ static int nice_of(int prio) {
 
 static int may_renice(int nice) {
     static int lowest = 100;   // the lowest nice value this process may set; 100 until probed
-    if (lowest == 100) {
+    int limit = __atomic_load_n(&lowest, __ATOMIC_RELAXED);
+    if (limit == 100) {
         struct rlimit r;
         int l = !getrlimit(RLIMIT_NICE, &r) && r.rlim_cur != RLIM_INFINITY ? 20 - (int)r.rlim_cur : -20;
         // CAP_SYS_NICE shows as being allowed to set a nice value below the limit's
@@ -697,8 +698,9 @@ static int may_renice(int nice) {
             l = -20;
         }
         __atomic_store_n(&lowest, l, __ATOMIC_RELAXED);
+        limit = __atomic_load_n(&lowest, __ATOMIC_RELAXED);
     }
-    return lowest <= 0 && nice >= lowest;
+    return limit <= 0 && nice >= limit;
 }
 
 static void renice(pid_t tid, int prio) {
