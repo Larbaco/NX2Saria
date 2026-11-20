@@ -327,7 +327,8 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
    every other variant is built, builds the driver has held for `NX2SARIA_PREPARE_STALL_S` seconds (300; 0 waits for
    all) are not waited for: the game names them with their time, writes where the game goes on into `shader-warm.txt`,
    and ends with code 0, and the step says the rest continues in the game, in the background (`prep_stalled`;
-   `tools/make_game.py` `SHADERS_LEFT_LINE`). One update on an RTX 3050 Laptop GPU with NVIDIA 546.18 built 42,139
+   `tools/make_game.py` `SHADERS_LEFT_LINE`; `NX2SARIA_PREPARE_STALL_TEST_MS` holds the last variant that long
+   before its build, for tests). One update on an RTX 3050 Laptop GPU with NVIDIA 546.18 built 42,139
    variants in 28 min and then waited 93 min for the last three.
 8. **Draw the Button Prompts**, with button art in the new version: only when the art, the prompt tools or the key
    bindings changed, or a prompt folder is missing (a first version with art draws them all).
