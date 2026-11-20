@@ -64,7 +64,7 @@ static void hw_read(HwBeat *b) {
     b->now_ns = plat_now_ns();
     b->frames = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
     vk_sync_progress(&b->issued, &b->done);
-    b->judge_present = __atomic_load_n(&rt_guest_start_ns, __ATOMIC_RELAXED) && gfx_window_in_front() &&
+    b->judge_present = __atomic_load_n(&rt_guest_start_ns, __ATOMIC_ACQUIRE) && gfx_window_in_front() &&
                        !rt_exit_started();
 }
 
