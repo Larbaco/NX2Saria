@@ -12,6 +12,7 @@
 #include "host.h"
 #include "nvn_api.h"
 #include "perf_census.h"
+#include "perf_bound.h"
 #include "perfmon.h"
 #include "prof.h"
 #include "stutter_map.h"
@@ -935,9 +936,8 @@ static void census_check(uint64_t frame, uint64_t prv, const PerfGpu *g) {
 }
 
 // The second line of the 60-frame window: GPU busy time (timestamps), the time threads waited for GPU fences, VRAM and
-// process memory, and which side holds the frame back. pace: the frame waited for pacing (vsync, the frame limiter) at
-// least 15% of the window; gpu: the GPU was busy for 80% of the frame interval or more (without timestamps: threads
-// waited for fences for half the interval or more); cpu otherwise.
+// process memory, and which side holds the frame back (perf_bound.h perf_bound: pace, gpu, serial or cpu, and why
+// serial is apart). The first window logs the rule once.
 // With calibrated timestamps a third line splits the GPU's idle time between timed parts: the part was submitted only
 // after the previous one had ended (the GPU waited for the CPU's replay or the game), or it was already queued (untimed
 // work such as uploads and presents ran there, or a wait held it).
@@ -957,9 +957,15 @@ static void perf_gpu_line(uint64_t frame, double interval_ms, double pace_share,
     uint64_t res, prv;
     plat_process_memory(&res, &prv);
     double ws = res / 1048576.0, priv = prv / 1048576.0;
-    const char *bound = pace_share >= 0.15 ? "pace"
-                      : g.have_gpu ? (gpu_ms >= 0.8 * interval_ms ? "gpu" : "cpu")
-                      : (rw + ow >= 0.5 * interval_ms ? "gpu" : "cpu");
+    PerfBoundIn bi = {.interval_ms = interval_ms, .pace_share = pace_share, .have_gpu = g.have_gpu, .gpu_ms = gpu_ms,
+                      .have_idle = g.have_gpu && g.have_idle, .starved_ms = g.starved_ns / 1e6 / n, .wait_ms = rw + ow};
+    const char *bound = perf_bound(&bi);
+    static int rule_told;
+    if (!rule_told++)
+        rt_log("perf: bound verdicts of the window lines: pace at %.0f%% of the window in pacing; gpu at %.0f%% of the "
+               "interval busy on the GPU; serial when the GPU waited %.0f%% of it for the next submission and threads "
+               "waited %.0f%% of it for GPU fences (they took turns); cpu otherwise",
+               PERF_PACE_SHARE * 100, PERF_GPU_BUSY_SHARE * 100, PERF_STARVED_SHARE * 100, PERF_SERIAL_WAIT_SHARE * 100);
     rt_log("perf: frame %llu: %s; fence wait per frame: render thread %.2f ms, other threads %.2f ms; %s; ram working set "
            "%.0f MiB, private %.0f MiB; bound: %s",
            (unsigned long long)frame, gs, rw, ow, vs, ws, priv, bound);

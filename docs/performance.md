@@ -63,6 +63,12 @@ How to measure the frame rate of a scene the same way twice, and how to read the
 - **GPU ms**: the GPU's busy time per frame from its own timestamps, averaged over 60 frames. A GPU-bound frame has
   GPU ms close to its frame time; a CPU-bound one well under it.
 - **Replay ms**: the CPU time of replaying the game's draws as Vulkan commands, per frame.
+- **Win bound**: the runtime's own verdict on its 60-frame windows (`perf: frame N: ... bound: X`,
+  `runtime/perf_bound.h`), the one most windows had. `pace`: pacing took 15% of the window or more; `gpu`: the GPU
+  was busy 80% of the frame or more; `serial`: the GPU and the CPU took turns, the GPU idle waiting for the next
+  submission for a fifth of the frame or more while threads waited for GPU fences for a quarter of it or more
+  (the frame is near the sum of the two, so a cheaper GPU frame and a cheaper replay both shorten it); `cpu`
+  otherwise. Before 0.20 there was no `serial`, and such windows read `cpu`.
 
 The numbers come from `NX2SARIA_TRACE=perf` with `NX2SARIA_PERF_SLOW_MS=1`, which logs a line per frame
 (`runtime/perf.c` `perf_present`). `tests/bench_check.py` checks the parser against the runtime's format strings.
