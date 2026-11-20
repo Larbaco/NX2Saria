@@ -1922,6 +1922,14 @@ def prebuilt_runtime(clang, env):
     return lib, set(m.get('objects', []))
 
 
+def select_prebuilt_runtime(clang, env, gen_counts, tsan):
+    return None if gen_counts or tsan else prebuilt_runtime(clang, env)
+
+
+def allow_legacy_object(tsan, dst):
+    return not tsan or dst.name.startswith(('main_', 'sdk_', 'subsdk0_'))
+
+
 def romfs_index(out, gen):
     if subprocess.run(py_cmd(KIT / 'tools' / 'romfs_index.py', '--romfs', out / 'romfs', '--out', gen)).returncode:
         fail('the RomFS index could not be written')
@@ -2366,7 +2374,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     if gen_counts:
         pgo_gen_check(clangxx, env, cache_dir / 'pgo-trial', msys, ld)
     tsan = os.environ.get('NX2SARIA_BENCH_TSAN') == '1'
-    prebuilt = None if gen_counts or tsan else prebuilt_runtime(clang, env)
+    prebuilt = select_prebuilt_runtime(clang, env, gen_counts, tsan)
     runtime = [(p, obj / name) for p, name in runtime_sources()]
     if prebuilt:
         runtime = [(p, o) for p, o in runtime if o.name not in prebuilt[1]]
@@ -2419,7 +2427,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     kits = earlier_kits()
 
     def alts(src, dst):
-        if tsan and not dst.name.startswith(('main_', 'sdk_', 'subsdk0_')):
+        if not allow_legacy_object(tsan, dst):
             return [], kits
         if pgo:   # no earlier version compiled with a profile or counted: nothing of theirs is the same compile
             return [], kits
@@ -3135,6 +3143,20 @@ def out_path(arg):
     return Path(os.path.abspath(arg)) if WIN else Path(arg).resolve()
 
 
+def prepare_tsan_output(out, bench_tsan):
+    """Keep instrumented and normal builds in distinct output folders."""
+    if bench_tsan and out.name != 'g25-tsan':
+        raise ValueError('the bench ThreadSanitizer build requires a separate g25-tsan output folder')
+    marker = out / '.bench-tsan'
+    if not bench_tsan and marker.exists():
+        raise ValueError('this output belongs to the bench ThreadSanitizer build')
+    if bench_tsan:
+        if (out / EXE_NAME).exists() and not marker.exists():
+            raise ValueError('the output already contains an ordinary build')
+        out.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+
+
 def main():
     """The build (build_main), with every error it does not report itself reported as fail reports one: the launcher
     shows the message of the error event (launcher/build.py Run), and an exception that only printed its traceback
@@ -3209,15 +3231,10 @@ def build_main():
     if not out:
         ap.error('--out is needed to build')
     bench_tsan = os.environ.get('NX2SARIA_BENCH_TSAN') == '1'
-    if bench_tsan and out.name != 'g25-tsan':
-        ap.error('the bench ThreadSanitizer build requires a separate g25-tsan output folder')
-    if not bench_tsan and (out / '.bench-tsan').exists():
-        ap.error('this output belongs to the bench ThreadSanitizer build')
-    if bench_tsan:
-        if (out / EXE_NAME).exists() and not (out / '.bench-tsan').exists():
-            ap.error('the output already contains an ordinary build')
-        out.mkdir(parents=True, exist_ok=True)
-        (out / '.bench-tsan').touch()
+    try:
+        prepare_tsan_output(out, bench_tsan)
+    except ValueError as e:
+        ap.error(str(e))
     msys = Path(a.msys)
     if WIN:
         for need in ('bin/clang.exe', 'bin/clang++.exe', 'bin/SDL3.dll', 'lib/libSDL3.dll.a', 'include/vma'):
