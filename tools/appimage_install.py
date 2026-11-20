@@ -282,10 +282,13 @@ def _inventory(root, names=None):
     paths = [root / name for name in names] if names is not None else [root]
     for path in paths:
         if path.is_file():
-            files.append([path.relative_to(root).as_posix(), path.stat().st_size])
+            if path.suffix not in ('.pyc', '.pyo') and '__pycache__' not in path.parts:
+                files.append([path.relative_to(root).as_posix(), path.stat().st_size])
         elif path.is_dir():
             files.extend([child.relative_to(root).as_posix(), child.stat().st_size]
-                         for child in path.rglob('*') if child.is_file())
+                         for child in path.rglob('*') if child.is_file()
+                         and '__pycache__' not in child.relative_to(root).parts
+                         and child.suffix not in ('.pyc', '.pyo'))
     return sorted(files)
 
 

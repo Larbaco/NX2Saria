@@ -137,12 +137,25 @@ class LinuxPlatformTest(unittest.TestCase):
             icon = root / 'nx2saria.png'
             with mock.patch.dict(os.environ, env):
                 appimage_install.install(bundle)
-                app_dir_mtime = (root / 'app' / '0.19.0').stat().st_mtime_ns
+                app_dir = root / 'app' / '0.19.0'
+                app_pycache = app_dir / 'launcher' / '__pycache__'
+                app_pycache.mkdir()
+                (app_pycache / 'x.cpython-314.pyc').write_bytes(b'compiled launcher bytecode')
+                python_pycache = root / 'python' / 'lib' / 'python3.14' / 'site-packages' / '__pycache__'
+                python_pycache.mkdir(parents=True)
+                (python_pycache / 'x.cpython-314.pyc').write_bytes(b'compiled runtime bytecode')
+                app_dir_mtime = app_dir.stat().st_mtime_ns
+                app_cache_mtime = app_pycache.stat().st_mtime_ns
+                python_dir_mtime = (root / 'python').stat().st_mtime_ns
+                python_cache_mtime = python_pycache.stat().st_mtime_ns
                 desktop_mtime = desktop.stat().st_mtime_ns
                 icon_mtime = icon.stat().st_mtime_ns
                 time.sleep(0.01)
                 appimage_install.install(bundle)
             self.assertEqual((root / 'app' / '0.19.0').stat().st_mtime_ns, app_dir_mtime)
+            self.assertEqual(app_pycache.stat().st_mtime_ns, app_cache_mtime)
+            self.assertEqual((root / 'python').stat().st_mtime_ns, python_dir_mtime)
+            self.assertEqual(python_pycache.stat().st_mtime_ns, python_cache_mtime)
             self.assertEqual(desktop.stat().st_mtime_ns, desktop_mtime)
             self.assertEqual(icon.stat().st_mtime_ns, icon_mtime)
             log = (root / 'data' / 'logs' / 'launcher.log').read_text().splitlines()
