@@ -395,7 +395,8 @@ static int adopt(const uint64_t *handles, int n) {
 void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     if (!U.mode) U.mode = rt_knob("UBO_SNAPSHOT", "1") + 1;   // stored +1: 0 is "not read yet"
     free(U.owners), U.owners = NULL;
-    U.on = 0, U.fence = fence, U.gen++;
+    U.on = 0, U.fence = fence;
+    __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
     summary();
     if (!RT_KNOB_ON(U.mode - 1)) {
         U.off_subs++;
@@ -447,7 +448,8 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
 void vk_usnap_end(uint64_t fence) {
     if (U.arena) vk_completion_add(fence, arena_done, U.arena), U.arena = NULL;
     free(U.owners), U.owners = NULL;
-    U.on = 0, U.gen++;
+    U.on = 0;
+    __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
 }
 
 // First region whose end is above a.
@@ -495,12 +497,12 @@ void vk_usnap_drop(uint64_t addr, uint64_t n) {
         for (int i = first_above(addr); i < U.nreg && U.reg[i].lo < addr + n; i++)
             if (!U.reg[i].dropped || ep < U.reg[i].dropped) {
                 if (!U.reg[i].dropped) U.drops++;
-                U.reg[i].dropped = ep, __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELAXED);
+                U.reg[i].dropped = ep, __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
             }
     if (lk) plat_mutex_unlock(&drop_lock);
 }
 
-uint64_t vk_usnap_gen(void) { return U.gen; }
+uint64_t vk_usnap_gen(void) { return __atomic_load_n(&U.gen, __ATOMIC_ACQUIRE); }
 
 // A GPU write of a submission not known to be complete touches [lo, hi). A linear scan: vk_usnap_drop appends after
 // wr_prune sorted the list, so wr_hits's binary search does not hold here; only called on rare paths.
