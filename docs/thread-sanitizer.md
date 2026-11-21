@@ -88,6 +88,13 @@ the live bytes, which hold its result when the GPU runs them.
 - A mirror is evicted only when no submission synced it for `MIRROR_IDLE` submissions, so the unlocked fast path of
   `vk_mem_use` (which needs the current submission's sync) never takes a victim, and the slow path runs under the
   `use_lock` that `mirror_create`'s eviction holds while chunks record.
+- `vk_mem_use`'s unlocked fast path reads a mirror's state and buffer while another replay worker's `mirror_create`
+  sets them under `use_lock`. TSan reports it; it is benign, because the buffer is made before the state says
+  `MS_ON` and the GPU runs the mirror's first copy (queued in the same `use_lock` hold, its prologue built after
+  `group_drain`) before any chunk's draw that binds it. Making the state atomic cost about 2% in Kokiri Forest on the
+  bench (PR #49), so the report is suppressed instead (`tools/tsan.supp`, `race_top:vk_mem_use`, which matches only a
+  race whose access is in `vk_mem_use` itself). The submission numbers on the fast path (`acc_sub`, `vd_use_sub`) are
+  relaxed atomics, which compile to the same instructions as plain accesses.
 - `tests/vkmem_lifetime_check.c` shows both: the protocol holds, and taking out the used mark gives a use after free,
   taking out the idle rule and the lock gives uses without a buffer.
 - Eviction itself is not reached in the game on the bench. With the budget taken as 1200 and 768 MiB
