@@ -209,6 +209,17 @@ that died.
   `set` or `empty`.
 - **File choosers** (`winsys.pick`): one line per chooser, saying which chooser opened and what it gave, or
   `cancelled`.
+- **Play** (`App.play`, `App.watch_game`): `play: <game>` when the game starts, then the line of its end, such as
+  `the game ended with code 0` or `the game ended with code -11 (ended by SIGSEGV)` (on Linux a negative code is the
+  signal that ended it). A Play that does not start writes `play: not started: <why> (<the game file looked for>)`:
+  the game is not built, it already runs, the memory warning was declined, or it could not be started. The game file
+  is `ocarina.exe` on Windows and `ocarina` on Linux (`launcher/platform game_executable`), for Play, the Steam
+  shortcut, the build's checks and Add to Steam alike. On Linux the game starts in its own session, and the launcher
+  makes itself a child subreaper (`prctl(PR_SET_CHILD_SUBREAPER)`): the copy the game's Restart spawns becomes the
+  launcher's child once the old process ends, so the launcher follows it (`platform/linux.py game_copy`, by
+  `/proc/<pid>/exe`) and reads the code it ends with. When the run is over the launcher waits for a copy that ended
+  before it looked (`ended_copies`) and turns the subreaper off again (`winsys.game_finished`), so the processes a
+  build leaves behind are not adopted.
 - **The end**: `window closed by the player on the <screen> screen after N s` (`App.on_close`: the × of the band or
   of the system's frame, or Alt+F4). On Linux, SIGTERM and SIGHUP (a logout, or the terminal that started it being
   closed) write `window ended by SIGTERM ...`, close the window from the event loop and exit with 128 + the signal's
@@ -716,7 +727,9 @@ back to), a cut RomFS image and the free space, the object cache written while t
 cut, a RomFS step that does not repeat the lift, the update's duration text and the warm-up's bar, a damaged dump
 named by its file and an unexpected error by its message, the file check's result in its row and on home, the
 game's FATAL line after exit codes 70, 71 and 72, the copy the game's own Restart starts followed for its exit code
-and its FATAL line, an end with code 0 noted in the game's log when it has no line of the
+and its FATAL line, Play on Linux with a stand-in game (its own session, a `play: not started` line for each Play that
+does not start, a compiled stand-in whose Restart's copy is adopted and read for its code, and the whole window under
+`xvfb-run` hiding while it runs), an end with code 0 noted in the game's log when it has no line of the
 game's own end, the job count by free memory and the build's priority class, a line
 handler that raises and a log that cannot be written, one forced update check a minute and GitHub's reset time, a
 game folder with characters outside the Basic Multilingual Plane (its `modules.c` compiled when a C compiler is

@@ -6,8 +6,10 @@ import signal
 import stat
 import subprocess
 import threading
+from pathlib import Path
 
 from . import winsys
+from .platform import game_executable
 
 # Runs make_game.py with pydeps/ (zbic) and the script's folder first on sys.path; the embeddable Python's ._pth
 # file leaves both off.
@@ -151,7 +153,7 @@ def _write_open_error(path):
     return 0
 
 
-def game_running(game_dir, exe='ocarina.exe', log=None):
+def game_running(game_dir, exe=None, log=None):
     """True when the built game runs from game_dir: Windows refuses to open a running exe for writing, with a sharing
     violation. A read-only exe (a copy restored from a backup or read-only media) is refused too, with access denied,
     though nothing runs it: its read-only attribute is cleared and the open tried again, as the next build replaces
@@ -159,10 +161,16 @@ def game_running(game_dir, exe='ocarina.exe', log=None):
     Folder Access) is no running game either: taken for one, it kept Play saying "already running" and a rebuild
     failing with "the game is running" for an exe that nothing ran. log, when given, gets a line for that case, which
     a build's failure to replace the exe (tools/make_game.py) then has beside it."""
+    if exe is None:
+        path = game_executable(game_dir)
+    else:
+        path = Path(exe)
+        if not path.is_absolute():
+            path = Path(game_dir) / path
     if os.name != 'nt':
         from .platform.linux import game_running as linux_game_running
-        return linux_game_running(game_dir)
-    path = os.path.join(str(game_dir), exe)
+        return linux_game_running(game_dir, exe=path)
+    path = os.fspath(path)
     if not os.path.isfile(path):
         return False
     for attempt in range(2):
@@ -195,7 +203,7 @@ def build_state(game_dir):
 def built_version(game_dir):
     """The kit version that last built the game folder ('' when none finished)."""
     st = build_state(game_dir)
-    if 'compile' in st.get('steps', {}) and os.path.isfile(os.path.join(str(game_dir), 'ocarina.exe')):
+    if 'compile' in st.get('steps', {}) and game_executable(game_dir).is_file():
         return st.get('kit', '')
     return ''
 
@@ -234,4 +242,4 @@ def installed(game_dir):
         return False
     if built_version(game_dir):
         return True
-    return os.path.isfile(os.path.join(str(game_dir), 'ocarina.exe')) and can_rebuild(game_dir)
+    return game_executable(game_dir).is_file() and can_rebuild(game_dir)

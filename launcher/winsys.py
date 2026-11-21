@@ -321,8 +321,16 @@ def start_game(exe):
     launcher has no console, so without CREATE_NO_WINDOW Windows opened an empty console window beside the game,
     titled with the exe's path. With it the game still has a console (hidden), which its restarts inherit."""
     exe = Path(exe)
-    flags = {'creationflags': CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' \
-        else {'start_new_session': True}
+    if os.name == 'nt':
+        flags = {'creationflags': CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP}
+    else:
+        if sys.platform.startswith('linux'):   # the Restart's copy becomes ours to wait for (platform/linux.py)
+            from .platform.linux import child_subreaper
+            try:
+                child_subreaper(True)
+            except (AttributeError, OSError):
+                pass
+        flags = {'start_new_session': True}
     return subprocess.Popen([str(exe)], cwd=str(exe.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, close_fds=True, **flags)
 
@@ -374,6 +382,20 @@ class GameCopy:
         return self.returncode
 
 
+def game_finished(exe, skip=None):
+    """The run of the game is over (GameRun.running): on Linux the launcher stops adopting orphans and waits for the
+    copies of the game it adopted that ended before it looked (platform/linux.py child_subreaper, ended_copies), whose
+    exit codes it returns, the latest last. Nothing to do elsewhere: []."""
+    if not sys.platform.startswith('linux'):
+        return []
+    from .platform import linux
+    try:
+        linux.child_subreaper(False)
+    except (AttributeError, OSError):
+        pass
+    return linux.ended_copies(exe, skip=skip)
+
+
 def game_copy(exe, skip=None):
     """Windows: the running process whose image is the file exe, other than the process id skip, as a GameCopy; None
     when there is none or it cannot be opened. The game's own Restart (runtime/gfx_present.c gfx_window_closed) starts
@@ -381,6 +403,9 @@ def game_copy(exe, skip=None):
     copy is how the launcher learns the code the game really ended with. The image is compared as a file, not as a
     name, so the game of another install is not taken for this one."""
     if os.name != 'nt':
+        if sys.platform.startswith('linux'):
+            from .platform.linux import game_copy as linux_game_copy
+            return linux_game_copy(exe, skip=skip)
         return None
     try:
         k = _kernel32()
