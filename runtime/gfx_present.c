@@ -567,7 +567,12 @@ static int create_swapchain(void) {
     uint32_t nf = 0;
     VkSurfaceFormatKHR *fmts = surface_formats(c->phys, g_surface, &nf);
     if (!fmts) return plat_xchg32(&g_dirty, 1), 0;
-    rt_log("gfx: queried all %u surface formats", nf);
+    static uint32_t logged_nf;   // once per change of the list's size, not at each rebuild (a resize, a mode change)
+    if (nf != logged_nf) {
+        logged_nf = nf;
+        rt_log("gfx: the surface offers %u format and colour space pairs, all considered%s", nf,
+               nf > 64 ? " (more than the 64 read before 0.21.1)" : "");
+    }
     // UNORM: the blit writes the bytes the game wrote (no sRGB encode). NX2SARIA_HDR: HDR10 when the surface offers it.
     VkSurfaceFormatKHR sf = fmts[0];
     g_sc_hdr_wanted = vk_hdr_wanted();
