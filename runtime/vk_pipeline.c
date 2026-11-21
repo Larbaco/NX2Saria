@@ -9047,6 +9047,17 @@ static int seed_pipelines(const char *dir) {
     return 0;
 }
 
+// The first line a preparation mode prints once it has its device: the card it builds the graphics driver's cache for, and
+// by what the settings chose it (vk_device.c pick_device, which the game takes its card with too; gpu_choice.h
+// gpuc_prepare_line). The launcher's log keeps every line of the step, and the device lines the choice also logs are among
+// sixty others there, so a report of a slow update, or of one that built for the wrong card, is answered from this one.
+static void prep_card_line(const char *mode) {
+    const char *text = vk_card_prepare_text();
+    if (!text || !*text) return;
+    printf("%s: card: %s\n", mode, text);
+    fflush(stdout);
+}
+
 // nx2saria.exe --prepare-pipelines: the list's pipelines alone, for a folder whose shaders are prepared already.
 int vk_pipeline_prepare_pipelines(void) {
     prep_mode = 1;   // builds into pipeline-cache.bin alone (cache_load)
@@ -9054,6 +9065,7 @@ int vk_pipeline_prepare_pipelines(void) {
         fprintf(stderr, "prepare-pipelines: no Vulkan device\n");
         return 1;
     }
+    prep_card_line("prepare-pipelines");
     char dir[PLAT_PATH_MAX * 2];
     if (!cache_dir(dir, sizeof dir)) return 1;
     char path[PLAT_PATH_MAX * 2 + 48];
@@ -9074,6 +9086,7 @@ int vk_pipeline_prepare_shaders(void) {
         fprintf(stderr, "prepare-shaders: no Vulkan device\n");
         return 1;
     }
+    prep_card_line("prepare-shaders");
     char dir[PLAT_PATH_MAX * 2];
     if (!cache_dir(dir, sizeof dir)) return 1;
     int cpus = (int)plat_cpu_usable();
@@ -9097,6 +9110,7 @@ int vk_pipeline_warm_shaders(void) {
         fprintf(stderr, "warm-shaders: no Vulkan device\n");
         return 1;
     }
+    prep_card_line("prepare-shaders");   // the lines the update's step reads all begin so, whichever of the two modes prints them
     char dir[PLAT_PATH_MAX * 2];
     if (!cache_dir(dir, sizeof dir)) return 1;
     char prp[PLAT_PATH_MAX * 2 + 32];

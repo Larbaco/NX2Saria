@@ -2,8 +2,9 @@
 //
 // Design. The preset is decided inside cfg_start, before any restart-only setting is read and long before the game
 // makes its Vulkan device, so the GPU is read by a probe of its own: a Vulkan instance without surface extensions,
-// which lists the devices, picks the one vk_device.c pick_device would pick (NX2SARIA_GPU_INDEX or NX2SARIA_GPU_NAME,
-// else a discrete GPU before an integrated one before any other, a software renderer on the processor among the
+// which lists the devices, picks the one vk_device.c pick_device would pick (NX2SARIA_GPU_INDEX or NX2SARIA_GPU_NAME, a
+// gpu_index alone that lists a card that is not a discrete one counting as unset while a discrete one is usable
+// (gpu_choice.h), else a discrete GPU before an integrated one before any other, a software renderer on the processor among the
 // others; Vulkan 1.3 and the extensions the game needs; of one GPU listed by two drivers, the newer driver's listing), reads its name, IDs, driver version, type, largest
 // device-local heap and mesh shader support, and is destroyed again. The window's present support cannot be asked
 // without a window, so a GPU the game later refuses for that is the one case the probe and the game disagree on;
@@ -64,6 +65,21 @@ static int usable_exts(VkPhysicalDevice pd, int *mesh) {
     return ok;
 }
 
+// 1 when pd has a queue family that does graphics and compute: the part of vk_device.c find_gfx_family that needs no
+// window (whether that family presents cannot be asked here, as the design note above says).
+static int has_graphics_queue(VkPhysicalDevice pd) {
+    uint32_t n = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &n, NULL);
+    VkQueueFamilyProperties *q = calloc(n ? n : 1, sizeof *q);
+    if (!q) return 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &n, q);
+    int ok = 0;
+    for (uint32_t i = 0; i < n && !ok; i++)
+        ok = (q[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && (q[i].queueFlags & VK_QUEUE_COMPUTE_BIT);
+    free(q);
+    return ok;
+}
+
 static void probe_gpu(PresetHw *hw, char *note, size_t note_cap) {
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "NX2Saria",
                              .pEngineName = "NX2Saria", .apiVersion = VK_API_VERSION_1_3};
@@ -84,8 +100,10 @@ static void probe_gpu(PresetHw *hw, char *note, size_t note_cap) {
     const char *name = cfg_get("NX2SARIA_GPU_NAME");
     int best = -1, best_score = -1, best_mesh = 0;
     VkPhysicalDeviceProperties bp = {0};
-    // A gpu_index that lists a card without gpu_name's name is dropped and the name decides, as in pick_device
-    // (gpu_choice.h): the preset has to be chosen for the card the game will use
+    // A gpu_index that lists a card without gpu_name's name is dropped and the name decides, and a gpu_index alone that
+    // lists a card that is not a discrete one gives way to a discrete card the game can use, as in pick_device
+    // (gpu_choice.h gpuc_resolve): the preset has to be chosen for the card the game will use
+    const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX");
     GpucCard *cards = calloc(n ? n : 1, sizeof *cards);
     VkPhysicalDeviceProperties *props = calloc(n ? n : 1, sizeof *props);
     if (pd && cards && props) {
@@ -94,8 +112,17 @@ static void probe_gpu(PresetHw *hw, char *note, size_t note_cap) {
             cards[i].name = props[i].deviceName;
             cards[i].type = (int)props[i].deviceType;
         }
-        int dropped;
-        want = gpuc_index(cards, (int)n, want, name, &dropped);
+        // Which discrete cards the game can use is asked only then, by the game's own tests but the one that needs a window
+        // (present support): a discrete card that cannot present is the case where the position gives way here and stands
+        // in the game, and hw_detect_device_check logs that the device differs from the probe.
+        if (gpuc_legacy_applies(cards, (int)n, want, name, from_env))
+            for (uint32_t i = 0; i < n; i++) {
+                int mesh;
+                cards[i].usable = cards[i].type == GPUC_DISCRETE && props[i].apiVersion >= VK_API_VERSION_1_3 &&
+                                  usable_exts(pd[i], &mesh) && has_graphics_queue(pd[i]);
+            }
+        int dropped, give_way;
+        want = gpuc_resolve(cards, (int)n, want, name, from_env, &dropped, &give_way);
     }
     free(cards), free(props);
 retry:
@@ -106,7 +133,7 @@ retry:
         if (name && *name && !preset_has(p.deviceName, name)) continue;
         if (p.apiVersion < VK_API_VERSION_1_3) continue;   // a CPU device counts, ranked with the others (as pick_device)
         int mesh = 0;
-        if (!usable_exts(pd[i], &mesh)) continue;
+        if (!usable_exts(pd[i], &mesh) || !has_graphics_queue(pd[i])) continue;   // as pick_device, but for the present test
         int score = (int)i == want ? 100 : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3
                   : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
         // of one GPU listed by two drivers, the newer driver's listing (as pick_device)

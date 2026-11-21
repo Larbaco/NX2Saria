@@ -299,7 +299,12 @@ does not redraw. On Windows, Tk's chooser is the system's own.
    cache is kept per executable and is lost when the driver clears it. Its bar
    follows the game's own counts, printed every 2 s: the translation fills the first half, the build into the
    driver's cache the second. An update every 10 s keeps the step's text current while nothing is printed, and after
-   3 minutes without a count moving it says so, and that the step is still running.
+   3 minutes without a count moving it says so, and that the step is still running. The game's first line of the
+   step names the graphics card its driver cache is built for and what chose it (`prepare-shaders: card: building for
+   gpu 0 "..." (discrete card), chosen by auto`: the card the game takes from the same settings, `gpu_index` and
+   `gpu_name`, [building.md](building.md) "Checks"), and `launcher.log` keeps it, so a log read after an update says
+   whether the driver cache was built for the card the game runs on. The work is the driver's compiler on the
+   processor: the graphics card itself stays nearly idle, so a task manager's graphics load says nothing of which card.
 4. **Draw the Button Prompts**, only when the version holds button art (`app/<version>/prompt-art`, which every
    release carries unless made with `--no-prompt-art`; `build.has_prompt_art`): make_game.py's last step runs `tools/pad_prompts.py` on that art
    and writes the Xbox, PlayStation, Steam Deck and keyboard and mouse prompts into `romfs-patches-*` beside the game (about

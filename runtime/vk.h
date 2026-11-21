@@ -113,6 +113,8 @@ int vk_caps_gpl(const VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT *f,
 void vk_caps_init(VkCtx *c);                          // after it: pretend limits, fallbacks, the boot report
 
 VkCtx *vk_ctx(void);                        // NULL until vk_init() succeeded
+const char *vk_card_prepare_text(void);     // the card the device is on and how it was chosen (gpu_choice.h gpuc_prepare_line), for the preparation modes' line; "" before vk_init
+int vk_card_usable(VkPhysicalDevice pd);    // 1 when the game can run on pd (the menu's Graphics card row asks it of the discrete cards); needs vk_init
 int vk_init(void);                          // idempotent; 1 on success, 0 on failure (reason logged with rt_log)
 void vk_shutdown(void);
 int vk_selftest(void);                      // 0 on success

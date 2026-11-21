@@ -1,5 +1,6 @@
 """Build and run tests/gpu_choice_check.c: runtime/gpu_choice.h, which graphics card gpu_index and gpu_name pick when
-the cards are listed in another order than when the settings were written, and the log lines about the choice.
+the cards are listed in another order than when the settings were written (a gpu_index alone that lists a card that is not a
+discrete one gives way to Auto), and the log lines about the choice, the shader preparation's among them.
 
 Needs a C compiler only: no Vulkan headers, no GPU and no game files. The header is built as C++ too, as the menu
 (runtime/ui/menu.cpp) includes it.
@@ -37,8 +38,12 @@ def main():
                            str(ROOT / 'tests' / 'gpu_choice_check.c'), '-o', str(exe)], env=env)
     # the menu is C++: the header alone must compile there too
     cxx = work / 'gpu_choice_cxx.cpp'
-    cxx.write_text('#include "gpu_choice.h"\nint main() { GpucCard c = {"x", GPUC_DISCRETE, 1}; int d;'
-                   ' return gpuc_index(&c, 1, 0, "x", &d) + gpuc_shown(&c, 1, -1, "x"); }\n', encoding='utf-8')
+    cxx.write_text('#include "gpu_choice.h"\nint main() { GpucCard c = {"x", GPUC_DISCRETE, 1}; int d, a; char l[256];'
+                   ' gpuc_prepare_line(&c, 1, 0, GPUC_BY_AUTO, -1, "x", l, sizeof l);'
+                   ' gpuc_legacy_line(&c, 0, 0, l, sizeof l);'
+                   ' return gpuc_index(&c, 1, 0, "x", &d) + gpuc_shown(&c, 1, -1, "x", 0) +'
+                   ' gpuc_resolve(&c, 1, 0, "x", 0, &d, &a) + gpuc_legacy_applies(&c, 1, 0, "x", 0); }\n',
+                   encoding='utf-8')
     subprocess.check_call([cc, '-x', 'c++', '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror', '-I',
                            str(ROOT / 'runtime'), str(cxx), '-o', str(work / 'gpu_choice_cxx')], env=env)
     return subprocess.run([str(exe)], env=env).returncode
