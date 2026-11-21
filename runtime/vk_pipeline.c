@@ -46,6 +46,7 @@
 #include "mesh_emu_spirv.h"
 #include "gfx.h"
 #include "host.h"
+#include "log_stall.h"
 #include "boot_warm.h"
 #include "mem_need.h"
 #include "nvn_hmap.h"
@@ -9335,6 +9336,7 @@ void vk_pipeline_stats(VkPipeStats *s) {
 }
 
 static PlatMutex save_lock = PLAT_MUTEX_INIT;   // one cache save at a time; shutdown takes it to destroy the cache
+#define SAVE_SLOW_MS 1000   // a save's copy or write this long or longer is logged with the time it ended
 
 // Copies a pipeline cache's data into its file, with cache_rw held exclusively for the copy only (not the file write):
 // P.play into pipeline-cache-play.bin when there is a play cache, else P.cache into pipeline-cache.bin; and P.cache
@@ -9397,7 +9399,9 @@ static int cache_save_one(int which, uint32_t wait_ms, int exiting) {
     if (sized && !same) room = size, data = plat_file_swap_begin(path, room, &swap);
     // With the size just asked for, under the lock that keeps builds out, the second call returns everything. Should a
     // driver return VK_INCOMPLETE all the same, the file is not replaced.
+    uint64_t copy_t0 = plat_now_ms();
     int got = data && vkGetPipelineCacheData(P.device, cache, &size, data) == VK_SUCCESS && size <= room;
+    uint64_t copy_ms = plat_now_ms() - copy_t0;
     plat_mutex_unlock(&cache_rw);
     // The held-back builds go on before the log line and the file write: one of them may hold a lock those wait for.
     if (exiting) __atomic_store_n(&cache_saving_at_exit, 0, __ATOMIC_RELEASE);
@@ -9411,10 +9415,20 @@ static int cache_save_one(int which, uint32_t wait_ms, int exiting) {
             rt_log("vk_pipeline: cannot write %s (%.1f MB)", path, size / 1048576.0);
             failed = 1;
         } else {
-            uint64_t loaded = which ? P.play_loaded : P.cache_loaded;
+            uint64_t loaded = which ? P.play_loaded : P.cache_loaded, write_ms = plat_now_ms() - t0;
+            // A save that took SAVE_SLOW_MS or more, in the copy of the driver's data or in the file's write, says when
+            // it ended, to line it up with the system's journal: a session of 2026-11-21 had one of 5.2 s among stalls
+            // of 1 to 3 s, and the line could not say which came first.
+            char slow[120] = "";
+            if (write_ms >= SAVE_SLOW_MS || copy_ms >= SAVE_SLOW_MS) {
+                char at[16];
+                log_stamp(at, sizeof at, 0);
+                snprintf(slow, sizeof slow, "; slow: the driver's data was copied in %llu ms, the save ended at %s",
+                         (unsigned long long)copy_ms, at);
+            }
             rt_log("vk_pipeline: %s saved: %.1f MB (%+.1f MB since the boot) written in %llu ms; %llu saves before it were "
-                   "skipped with the data unchanged", path, size / 1048576.0, ((double)size - (double)loaded) / 1048576.0,
-                   (unsigned long long)(plat_now_ms() - t0), (unsigned long long)skipped[which]);
+                   "skipped with the data unchanged%s", path, size / 1048576.0, ((double)size - (double)loaded) / 1048576.0,
+                   (unsigned long long)write_ms, (unsigned long long)skipped[which], slow);
             P.saved[which] = size, skipped[which] = 0;
             if (!which && P.fold) {   // the play file's content is in pipeline-cache.bin now
                 P.fold = 0;

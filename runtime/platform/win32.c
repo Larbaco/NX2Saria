@@ -2401,6 +2401,18 @@ void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb) {
         *proc_mb = (double)(pmc.PrivateUsage >> 20);
 }
 
+// Windows has no stall counters: the physical memory available and the system's commit against its limit.
+void plat_pressure(PlatPressure *p) {
+    plat_pressure_clear(p);
+    MEMORYSTATUSEX ms = {.dwLength = sizeof ms};
+    if (GlobalMemoryStatusEx(&ms)) {
+        p->total_mb = (double)(ms.ullTotalPhys >> 20);
+        p->avail_mb = (double)(ms.ullAvailPhys >> 20);
+        p->commit_limit_mb = (double)(ms.ullTotalPageFile >> 20);
+        p->commit_used_mb = (double)((ms.ullTotalPageFile - ms.ullAvailPageFile) >> 20);
+    }
+}
+
 int plat_commit_enforced(void) { return 1; }
 
 // The numbers name the one limit there is, the system's commit.

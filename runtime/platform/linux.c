@@ -45,6 +45,7 @@
 #include <SDL3/SDL_clipboard.h>
 
 #include "platform.h"
+#include "proc_pressure.h"
 
 // The write-watch ABI of Linux 6.7 (uapi linux/fs.h and linux/userfaultfd.h), for headers older than it: the release
 // builds against the Steam Runtime's 5.10 headers and runs on newer kernels. The kernel refuses what it lacks at run time.
@@ -2346,6 +2347,41 @@ void plat_mem_info(float *used_mb, float *total_mb, float *proc_mb) {
     unsigned long long size, resident;
     if (f && fscanf(f, "%llu %llu", &size, &resident) == 2) *proc_mb = (float)(resident * (uint64_t)sysconf(_SC_PAGESIZE) >> 20);
     if (f) fclose(f);
+}
+
+// A small /proc file read whole into buf (NUL-terminated) through the descriptor calls alone: nothing here allocates, so
+// plat_pressure may be asked in a fatal error's report. 0 when it cannot be read (a kernel without PSI refuses the read
+// of /proc/pressure/*).
+static int proc_text(const char *path, char *buf, size_t cap) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    ssize_t n;
+    do n = read(fd, buf, cap - 1);
+    while (n < 0 && errno == EINTR);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = 0;
+    return 1;
+}
+
+void plat_pressure(PlatPressure *p) {
+    plat_pressure_clear(p);
+    char text[4096];
+    uint64_t kb;
+    if (proc_text("/proc/meminfo", text, sizeof text)) {
+        if (meminfo_kb(text, "MemTotal:", &kb)) p->total_mb = (double)kb / 1024.0;
+        if (meminfo_kb(text, "MemAvailable:", &kb)) p->avail_mb = (double)kb / 1024.0;
+        if (meminfo_kb(text, "SwapTotal:", &kb)) p->swap_total_mb = (double)kb / 1024.0;
+        if (meminfo_kb(text, "SwapFree:", &kb)) p->swap_free_mb = (double)kb / 1024.0;
+    }
+    if (proc_text("/proc/pressure/memory", text, sizeof text)) {
+        psi_line(text, "some", &p->mem_some10, &p->mem_some_us);
+        psi_line(text, "full", &p->mem_full10, &p->mem_full_us);
+    }
+    if (proc_text("/proc/pressure/io", text, sizeof text)) {
+        psi_line(text, "some", &p->io_some10, &p->io_some_us);
+        psi_line(text, "full", &p->io_full10, &p->io_full_us);
+    }
 }
 
 void plat_process_memory(uint64_t *resident, uint64_t *private_bytes) {

@@ -14,6 +14,7 @@
 #include "cfg.h"
 #include "host.h"
 #include "layout.h"
+#include "log_stall.h"
 #include "mem_need.h"
 #include "platform/platform.h"
 
@@ -1819,9 +1820,19 @@ out:
     __atomic_store_n(&map_gen, map_gen + 1, __ATOMIC_RELEASE);
     plat_mutex_unlock(&lock);
     perf_mark_end(PERF_M_GMEM, t0, n);
-    if (r) rt_log("%sMapPhysicalMemory %#llx+%#llx failed %#x (alias %#llx used, heap %#llx)", unmap ? "Un" : "",
-                  (unsigned long long)a, (unsigned long long)n, r, (unsigned long long)alias_bytes,
-                  (unsigned long long)heap_size);
+    if (r) {
+        // The SDK asks for physical memory the pool cannot give and goes on without it, over and over: a session wrote 132
+        // lines of the same refusal. The first of each kind (map, unmap) has its line, and so has a refusal with another
+        // result than the one logged last; the others are counted, and the frame-time summary's "events" line says how
+        // many (log_stall.c).
+        static uint32_t told[2];
+        int due = log_event(unmap ? LS_UNMAP_PHYS_FAILED : LS_MAP_PHYS_FAILED);
+        int other = __atomic_exchange_n(&told[unmap != 0], r, __ATOMIC_RELAXED) != r;
+        if (due || other)
+            rt_log("%sMapPhysicalMemory %#llx+%#llx failed %#x (alias %#llx used, heap %#llx)%s", unmap ? "Un" : "",
+                   (unsigned long long)a, (unsigned long long)n, r, (unsigned long long)alias_bytes,
+                   (unsigned long long)heap_size, due ? "; the later ones are counted in the frametime events line" : "");
+    }
     return r;
 }
 

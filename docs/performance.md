@@ -73,6 +73,52 @@ How to measure the frame rate of a scene the same way twice, and how to read the
 The numbers come from `NX2SARIA_TRACE=perf` with `NX2SARIA_PERF_SLOW_MS=1`, which logs a line per frame
 (`runtime/perf.c` `perf_present`). `tests/bench_check.py` checks the parser against the runtime's format strings.
 
+## Tracing a stall in the log
+
+A stall of a second or more, a freeze or a lost GPU is matched against the system's journal (`journalctl`, `dmesg`) by
+time. The log's own lines have no time: the only dated one is the focus line when the window gains or loses it
+(`gfx: window gained the focus at 2026-11-21 14:40:29 local time`). So the lines that mark an event carry the local time of
+day, `hh:mm:ss` in the system's zone, which is the journal's clock (the date is the focus line's; `runtime/log_stall.c`):
+
+- `frametime:   worst frame 7379: 3668.4 ms at 14:46:31; ...`: the time the frame was presented, which ends the stall. Each
+  60 s window lists its five worst frames.
+- `fsr3fg: presenter acquire failed (2) at 14:46:31` (`ngxfg:` with DLSS frame generation): a swapchain image the
+  presenter could not get; the result is Vulkan's (2 is `VK_TIMEOUT`, after a wait of 1 s).
+  `fsr3fg: watchdog: no frame for 1.5 s, at 14:46:33; ...`: the presenter had no frame to show for 1.5 s. The first 5
+  failed acquires and the first 3 watchdog firings of a run have a line; the next paragraph has the count of all.
+- `vk_pipeline: <file> saved: ...; slow: the driver's data was copied in 12 ms, the save ended at 14:46:31`: the end of
+  a pipeline cache save whose copy of the driver's data or write of the file took 1 s or more. A faster save has no such part.
+- `vk: device lost at 14:59:55 local time (seen at: ...)`, written when the first thread saw the loss, before the report
+  of what the GPU was doing; and `fatal: at 14:59:55 local time`, after the `FATAL:` line of a fatal error, of a lost
+  device and of a crash report. The `FATAL:` line itself is as it was: the launcher reads it.
+
+Two lines end each frame-time window: every 60 s, at the end of the run, at a fatal error, and when the window loses the
+focus in play.
+
+```
+frametime:   events: presenter acquire failed 2 (7 in all, only the first 5 logged), MapPhysicalMemory failed 12 (132 in all, only the first logged)
+frametime:   system at 14:46:31: PSI memory avg10 some 3.2% full 1.1% (stalled in the last 60 s: some 52 ms, full 0 ms); PSI io avg10 some 12.0% full 8.5% (stalled in the last 60 s: some 1840 ms, full 1210 ms); MemAvailable 20345 of 31932 MB; SwapFree 1802 of 2048 MB
+```
+
+- **events** counts what the log's own lines would hide, each with its count in the window and in the run, and says
+  how many of them have a line. It is written when the window had one: the presenter's failed acquires and watchdog
+  firings (the lines stop after 5 and 3), and the refusals of `MapPhysicalMemory` and `UnmapPhysicalMemory` (a session had
+  132, with one line each; now the first of each kind has its line, and so has a refusal with another result than the
+  last one logged). At the end of the run and at a fatal error the line reads `frametime:   events in the whole run: ...`,
+  with the totals of the run, also when the run ended before its first frame.
+- **system** is how the machine fared, to tell a stall in the game from one the machine put on it. On Linux it reads
+  the kernel's pressure stall information, `/proc/pressure/memory` and `/proc/pressure/io` (kernel 4.20 or newer
+  with PSI on; `PSI not available` otherwise): `some` is the share of the last 10 s in which at least one task waited on
+  the resource, `full` the share in which every task did (`avg10`), and the `stalled` times are how much waiting the
+  kernel counted over the time since the last line, so a stall of 2 s inside the minute shows even when the 10 s
+  average has long gone back to 0. `MemAvailable` and `SwapFree` are `/proc/meminfo`'s. On Windows, which has no such
+  counters, the line gives the physical memory available and the system's commit against its limit. The first line of a
+  run counts from the first frame. It costs a few reads of small files a minute and holds no lock the game takes.
+
+To line a stall up with the machine: take the time of the worst frame (or of the watchdog), and ask the journal for the
+seconds around it, `journalctl --since 14:46:25 --until 14:46:40`, and the kernel's, `journalctl -k`; the `system`
+line of the same minute says whether memory or the disk was waited on.
+
 ## Background builds in play
 
 Pipelines built ahead of their first use rest while the frame shown has `bg_build_play_draws` draws or more, 600 by

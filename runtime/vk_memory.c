@@ -432,18 +432,41 @@ static void span_gc(uint64_t frame, int all) {
     } while (ng == 64);
 }
 
-static void span_log(uint64_t frame) {
+// The spans' report: at frames 600 and 1800 (every 60 frames with NX2SARIA_TRACE=perf), and at the end of the run
+// (vk_mem_exit_log), so a session that went on for an hour also says what happened to its spans after the start: the
+// counts "since the last line" run from the line at frame 1800 to the end. when names the moment ("at frame 600", "at
+// exit (frame 41022)"). wait_ms: how long to wait for span_lock, 0 for as long as it takes. A span's creation holds the
+// lock while it makes the dma-buf and imports it (2.7 s at the longest in a session), so the end of the run, whose
+// seconds are few (gfx_present.c rt_exit_steps), waits 0.2 s and writes a line that says so when the lock stays held.
+static void span_report(const char *when, uint32_t wait_ms) {
     if (!dmabuf_on) return;
-    plat_mutex_lock(&span_lock);
+    if (!wait_ms) {
+        plat_mutex_lock(&span_lock);
+    } else {
+        uint64_t until = plat_now_ms() + wait_ms;
+        while (!plat_mutex_trylock(&span_lock)) {
+            if (plat_now_ms() >= until) {
+                rt_log("mem: dma-buf spans %s: not written, a span is being made and its lock is held", when);
+                return;
+            }
+            plat_sleep_ms(5);
+        }
+    }
     int64_t refs = 0;
     for (int i = 0; i < nspans; i++) refs += spans[i]->refs;
-    rt_log("mem: dma-buf spans at frame %llu: %d live, %.0f MiB, %lld pools in them; since the last line %llu made "
+    rt_log("mem: dma-buf spans %s: %d live, %.0f MiB, %lld pools in them; since the last line %llu made "
            "(%.0f MiB, %.1f ms, the longest %.1f ms), %llu freed (%.0f MiB), %llu refused, %llu pools left out",
-           (unsigned long long)frame, nspans, sp_live_bytes / 1048576.0, (long long)refs, (unsigned long long)sp_made,
+           when, nspans, sp_live_bytes / 1048576.0, (long long)refs, (unsigned long long)sp_made,
            sp_made_bytes / 1048576.0, qpc_ms(sp_ns), qpc_ms(sp_max_ns), (unsigned long long)sp_freed,
            sp_freed_bytes / 1048576.0, (unsigned long long)sp_fail, (unsigned long long)sp_fallback);
     sp_made = sp_made_bytes = sp_ns = sp_max_ns = sp_freed = sp_freed_bytes = sp_fail = sp_fallback = 0;
     plat_mutex_unlock(&span_lock);
+}
+
+static void span_log(uint64_t frame) {
+    char when[48];
+    snprintf(when, sizeof when, "at frame %llu", (unsigned long long)frame);
+    span_report(when, 0);
 }
 
 // A pool's buffer bound into a span's memory; 0 when no span can be made for it.
@@ -6367,6 +6390,9 @@ void vk_mem_exit_log(void) {
     plat_mutex_lock(&grow_lock);
     if (gbook.play) rank_log_locked("at exit, after", plat_now_ns());
     plat_mutex_unlock(&grow_lock);
+    char when[48];   // the dma-buf spans of the run's end, which the lines at frames 600 and 1800 leave out
+    snprintf(when, sizeof when, "at exit (frame %llu)", (unsigned long long)__atomic_load_n(&span_frame, __ATOMIC_RELAXED));
+    span_report(when, 200);
 }
 
 // The same ranking at a moment of the caller's (perf.c session_report, when the window loses the focus).

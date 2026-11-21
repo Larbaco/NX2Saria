@@ -55,6 +55,7 @@
 #include "input.h"
 #include "lib_origin.h"
 #include "log_privacy.h"
+#include "log_stall.h"
 #include "logq.h"
 #include "prof.h"
 #include "platform/platform.h"
@@ -259,6 +260,8 @@ static void log_open(int game) {
         plat_exit_note_setup(g_log_file, logq_peek);
         plat_exit_note_modules();
     }
+    char zone[16];   // the first use of the time zone reads a file: a fatal error's report must not be the first (log_stall.c)
+    log_stamp(zone, sizeof zone, 0);
     // A game run writes its log from the log thread (logq.c), whether the lines go to a log file or to stderr alone.
     const char *e = cfg_get("NX2SARIA_LOG_ASYNC");
     if (!game || (e && !strcmp(e, "0"))) return;
@@ -460,6 +463,9 @@ static void crash_handler(const PlatCrash *x) {
     } else {
         rt_logf("  not on a guest thread\n");
     }
+    char at[16];   // after the report's body: the zone is read at the start (log_open), so this does not wait for a lock or a file
+    log_stamp(at, sizeof at, 0);
+    rt_log("fatal: at %s local time", at);
     rt_fatal_notes();   // the card, its driver and the memory settings in effect (vk_device.c fatal_note)
     kern_free_cores_note();
     fs_save_crash_wait();   // a save the game already reported as done finishes first (bounded; fs_host.c)

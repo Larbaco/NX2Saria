@@ -25,6 +25,7 @@
 #include "gfx_guard.h"
 #include "gfx_wsys.h"
 #include "input.h"
+#include "log_stall.h"
 #include "logq.h"
 #include "nvn_api.h"
 #include "ov.h"
@@ -96,9 +97,10 @@ static int g_started;
 void gfx_window_mark_dirty(void) { plat_xchg32(&g_dirty, 1); }
 
 // The window gained or lost the focus: the game hears it as nn::oe's focus state and a notification message. The line
-// carries the local wall time, the only one in the log: when a GPU hang takes the whole system down, the log ends
-// without an error, and this time set against the driver's entry in the Windows event log (nvlddmkm 153, Display 4101)
-// tells whether an alt-tab or an overlay came before the hang or followed it.
+// carries the local wall time with its date, the first in the log: when a GPU hang takes the whole system down, the log
+// ends without an error, and this time set against the driver's entry in the Windows event log (nvlddmkm 153, Display
+// 4101) tells whether an alt-tab or an overlay came before the hang or followed it. The lines that mark a stall carry the
+// time of day alone (log_stall.c log_stamp); the date is this line's.
 void gfx_window_focus_changed(int in) {
     plat_xchg32(&g_focused, in);
     oe_set_focus(in);                          // pinned to 1 by NX2SARIA_ASSUME_FOCUS inside
@@ -1422,8 +1424,12 @@ static int ng_show(VkImage img, int set, int slot, uint64_t n) {
     uint32_t j = 0;
     VkResult r = ng_acquire(ng.job.sc, 1000000000ull, ng.acq[set][slot], &j);
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
-        static int told;
-        if (told++ < 5) rt_log("%s: presenter acquire failed (%d)", ng_name(ng.src), (int)r);
+        // the first few have a line with the time; the frame-time summary counts them all (log_stall.c)
+        if (log_event(LS_ACQUIRE_FAILED)) {
+            char at[16];
+            log_stamp(at, sizeof at, 0);
+            rt_log("%s: presenter acquire failed (%d) at %s", ng_name(ng.src), (int)r, at);
+        }
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT) plat_xchg32(&g_dirty, 1);
         return 0;
     }
@@ -1518,11 +1524,13 @@ static void ng_thread(void *arg) {
                 uint64_t rv = 0, cv = 0;
                 vkGetSemaphoreCounterValue(vk_ctx()->device, ng.rendered, &rv);
                 vkGetSemaphoreCounterValue(vk_ctx()->device, ng.copied, &cv);
-                static int told;
-                if (told++ < 3)
-                    rt_log("%s: watchdog: no frame for 1.5 s; frames handed %llu, copied signal submitted %llu; GPU rendered %llu copied %llu",
-                           ng_name(ng.src), (unsigned long long)ng.n, (unsigned long long)ng.signaled,
+                if (log_event(LS_FG_WATCHDOG)) {   // the first few have a line; the frame-time summary counts them all
+                    char at[16];
+                    log_stamp(at, sizeof at, 0);
+                    rt_log("%s: watchdog: no frame for 1.5 s, at %s; frames handed %llu, copied signal submitted %llu; GPU rendered %llu copied %llu",
+                           ng_name(ng.src), at, (unsigned long long)ng.n, (unsigned long long)ng.signaled,
                            (unsigned long long)rv, (unsigned long long)cv);
+                }
             }
         }
         ng.pending = 0, ng.busy = 1;
