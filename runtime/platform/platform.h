@@ -573,6 +573,25 @@ int plat_commit_counts_vram(void);
 // Whether Windows sizes every page file by itself (System managed size): 1; 0 when a page file has its sizes set; -1
 // when unknown, there is none, or not Windows.
 int plat_page_file_managed(void);
+// The machine's memory and I/O pressure, for the log's one-line account of a minute (log_stall.c). A number the system
+// does not give is -1 (the totals 0). Linux: the kernel's pressure stall information (/proc/pressure/memory and io,
+// kernel 4.20 with CONFIG_PSI; "some": the share of the last 10 s at least one task waited on the resource, "full":
+// all of them did; the totals count microseconds of waiting since the boot), MemAvailable and SwapFree. Windows has
+// no stall counters: the physical memory available and the system's commit against its limit. A few small reads that
+// allocate nothing, so a fatal error's report may ask too.
+typedef struct {
+    double mem_some10, mem_full10, io_some10, io_full10;           // percent
+    uint64_t mem_some_us, mem_full_us, io_some_us, io_full_us;     // microseconds since the boot
+    double avail_mb, total_mb;                                     // physical memory available and installed, MB
+    double swap_free_mb, swap_total_mb;                            // Linux only, MB
+    double commit_used_mb, commit_limit_mb;                        // Windows only, MB
+} PlatPressure;
+void plat_pressure(PlatPressure *p);
+static inline void plat_pressure_clear(PlatPressure *p) {   // every figure unknown (written without designators: C++ files include this header)
+    p->mem_some10 = p->mem_full10 = p->io_some10 = p->io_full10 = -1;
+    p->mem_some_us = p->mem_full_us = p->io_some_us = p->io_full_us = 0;
+    p->avail_mb = p->total_mb = p->swap_free_mb = p->swap_total_mb = p->commit_used_mb = p->commit_limit_mb = -1;
+}
 // This process's memory in bytes: resident (the working set) and private (Windows: committed private bytes; Linux: the
 // resident anonymous pages). 0 when unknown.
 void plat_process_memory(uint64_t *resident, uint64_t *private_bytes);

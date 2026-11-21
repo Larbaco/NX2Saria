@@ -12,6 +12,7 @@
 // is also fixed at init; they are looked up only after the flat table misses.
 #include "dispatch.h"
 #include "host.h"
+#include "log_stall.h"
 #include "prof.h"
 #include "platform/platform.h"
 
@@ -113,6 +114,9 @@ static void fatal_end(int code, const char *fmt, va_list ap) {
     rt_log_raw("FATAL: ", 7);
     rt_vlogf(fmt, ap);
     rt_log_raw("\n", 1);
+    char at[16];   // the FATAL line itself stays as the launcher reads it; the time goes on a line of its own
+    log_stamp(at, sizeof at, 0);
+    rt_log("fatal: at %s local time", at);
     // When an allocation fails, these numbers help distinguish high commit in this process from system-wide pressure.
     double proc, used, limit;
     plat_commit_info(&proc, &used, &limit);

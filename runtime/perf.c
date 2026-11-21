@@ -10,6 +10,7 @@
 #include "flight.h"
 #include "gfx.h"
 #include "host.h"
+#include "log_stall.h"
 #include "nvn_api.h"
 #include "perf_census.h"
 #include "perf_bound.h"
@@ -460,6 +461,7 @@ static void seg_frame(uint64_t frame, uint64_t now, uint64_t d, const MarkSums *
 #define FT_PERIOD_NS 60000000000ull
 typedef struct {
     uint64_t frame, ns, wait[PERF_N], replay;
+    uint64_t at;   // when its present came (kern_now_ns): log_stamp turns it into the local time the line carries
     uint64_t op_ns[PERF_RP_N], op_n[PERF_RP_N], max_ns, hold_ns;   // NX2SARIA_REPLAY_TIME: the frame's replay ops
     uint64_t replay_cpu;   // the replaying thread's CPU time in the frame's replay
     uint32_t max_op;
@@ -650,6 +652,17 @@ void perf_replay_op_at(int cat, uint32_t op, uint64_t ns) {
     if ((int64_t)ns > fr_max_ns) fr_max_ns = (int64_t)ns, fr_max_op = op;
 }
 
+// The events of the whole run (log_stall.c), once: the orderly end writes them, and a fatal error or a second call during
+// that end (the pipeline save takes seconds) finds them written. A run that ends before its first present has no
+// frame-time period to carry them, so the ends write them on their own then: refusals of the physical memory map are
+// counted from the start of the boot, and a boot that ends in a fatal error would have the first line of each and no count.
+static volatile int32_t events_whole_done;
+static void events_whole_once(void) {
+    char note[900];
+    if (plat_xchg32(&events_whole_done, 1)) return;
+    if (log_events_text(note, sizeof note, 1)) rt_log("frametime:   events in the whole run: %s", note);
+}
+
 static void ft_report(uint64_t now, const char *tag) {
     if (ft.frames && ft.sum) {
         uint64_t cut = (ft.frames + 99) / 100, acc = 0, low = 0;   // the slowest 1% of frames
@@ -714,13 +727,22 @@ static void ft_report(uint64_t now, const char *tag) {
                          (unsigned long long)w->op_n[PERF_RP_DRAW], w->op_ns[PERF_RP_BIND] / 1e6,
                          (unsigned long long)w->op_n[PERF_RP_BIND], w->op_ns[PERF_RP_XFER] / 1e6,
                          (unsigned long long)w->op_n[PERF_RP_XFER], nvn_op_name(w->max_op), w->max_ns / 1e6, w->hold_ns / 1e6);
-            rt_log("frametime:   worst frame %llu: %.1f ms; shader translation %.1f, pipeline build %.1f, texture upload %.1f (astc %.1f), replay %.1f (on the CPU %.1f), fence/present wait %.1f, pacing %.1f, hand-off %.1f%s",
-                   (unsigned long long)w->frame, w->ns / 1e6, w->wait[PERF_XLATE] / 1e6, w->wait[PERF_PIPE] / 1e6,
+            char at[16];
+            log_stamp(at, sizeof at, w->at);
+            rt_log("frametime:   worst frame %llu: %.1f ms at %s; shader translation %.1f, pipeline build %.1f, texture upload %.1f (astc %.1f), replay %.1f (on the CPU %.1f), fence/present wait %.1f, pacing %.1f, hand-off %.1f%s",
+                   (unsigned long long)w->frame, w->ns / 1e6, at, w->wait[PERF_XLATE] / 1e6, w->wait[PERF_PIPE] / 1e6,
                    w->wait[PERF_TEX] / 1e6, w->wait[PERF_ASTC] / 1e6, w->replay / 1e6, w->replay_cpu / 1e6,
                    (w->wait[PERF_FENCE] + w->wait[PERF_DRAIN]) / 1e6, w->wait[PERF_PACE] / 1e6,
                    w->wait[PERF_HANDOFF] / 1e6, ops);
         }
     }
+    // Beside the window, whatever the frames did: the events whose own lines are limited or left out, counted (the
+    // whole run's at the end), and the machine's memory and I/O pressure, so a stall that has a cause outside the game
+    // shows in the minute it happened in (log_stall.c).
+    char note[900];
+    if (!strcmp(tag, "exit") || !strcmp(tag, "at a fatal error")) events_whole_once();
+    else if (log_events_text(note, sizeof note, 0)) rt_log("frametime:   events: %s", note);
+    if (log_pressure_text(note, sizeof note)) rt_log("frametime:   %s", note);
     memset(&ft, 0, sizeof ft);
     memset(rp_ns, 0, sizeof rp_ns);
     memset(rp_n, 0, sizeof rp_n);
@@ -772,6 +794,8 @@ void perf_summary_flush(void) {   // at exit (prof_write)
         ft_report(kern_now_ns(), "exit");
         stutter_report("exit");
         gfx_exit_log();
+    } else {
+        events_whole_once();   // an end before the first present (summary_t0 is also 0 after a first end: written once)
     }
     summary_t0 = 0;
 }
@@ -785,6 +809,8 @@ void perf_summary_flush_try(void) {
     if (summary_t0) {
         ft_report(kern_now_ns(), "at a fatal error");
         if (!stutter_report_as("at a fatal error", 1)) rt_log("stutter map: its lock is held; not written at the fatal error");
+    } else {
+        events_whole_once();   // an end before the first present (summary_t0 is also 0 after a first end: written once)
     }
     summary_t0 = 0;
 }
@@ -804,6 +830,7 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
     if (!summary_t0) {   // the first present starts the period; there is no interval yet
         summary_t0 = now;
         ft.t0 = now;
+        log_pressure_baseline();   // the first minute's system line counts its stalls from here
         return (uint64_t)rep;
     }
     ft.frames++;
@@ -856,6 +883,7 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
         while (i > 0 && ft.worst[i - 1].ns < d) ft.worst[i] = ft.worst[i - 1], i--;
         ft.worst[i].frame = frame;
         ft.worst[i].ns = d;
+        ft.worst[i].at = now;
         memcpy(ft.worst[i].wait, frame_ns, sizeof frame_ns);
         ft.worst[i].replay = (uint64_t)rep;
         memcpy(ft.worst[i].op_ns, f_ns, sizeof f_ns), memcpy(ft.worst[i].op_n, f_n, sizeof f_n);
