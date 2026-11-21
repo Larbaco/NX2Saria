@@ -18,6 +18,8 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
   a source checkout's build/xlate/), the prompts step with a stand-in prompt tool, the object cache of the compile
   step with the system's C compiler, and its windres call under folders with spaces (a script in windres's place)
 - jobs: an install driven by a fake make_game.py, with and without the prompts row
+- Play on Linux: the game started in its own session from its folder, its Restart's copy adopted and followed, a line
+  in launcher.log for every Play that does not start, and the window hidden while a fake game runs (xvfb-run)
 - Add to Steam: the binary shortcuts file read and written back unchanged, a shortcut added and updated in place,
   Linux native and Flatpak roots, sandbox fallback, safe backups, process detection and refusal while Steam is open
 - the look: the colour schemes with the Custom one, its colour square and a typed hex code, the background picture's
@@ -53,6 +55,11 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from launcher import build, feed, gameini, gamefiles, jobs, locks, net, saves, settings, toolchain, updater, versions, winsys  # noqa: E402
 from launcher.context import Context, shorten  # noqa: E402
 from launcher.paths import Layout  # noqa: E402
+from launcher.platform import game_executable  # noqa: E402
+
+# The built game's file name on this system (ocarina.exe on Windows, ocarina elsewhere) and where its log is said to be.
+GAME_EXE = game_executable('.').name
+GAME_LOG = 'logs\\nx2saria.log' if os.name == 'nt' else 'logs/nx2saria.log'
 
 try:
     from compression import zstd as ZSTD
@@ -1239,7 +1246,7 @@ class BackgroundUpdateTest(Tmp):
         self.game = str(self.tmp / 'game')
         self.running = False   # what build.game_running answers: a copy of the game the launcher did not start
         saved = build.game_running
-        build.game_running = lambda game_dir, exe='ocarina.exe', log=None: self.running
+        build.game_running = lambda game_dir, exe=None, log=None: self.running
         self.addCleanup(setattr, build, 'game_running', saved)
         self.restarts = []
 
@@ -1782,7 +1789,7 @@ def made_up_game(out, steps=('exefs', 'romfs', 'lift', 'compile', 'shaders'), ex
     (out / 'romfs' / 'romfs.bin').write_bytes(bytes(16))
     (out / 'romfs' / 'index.json').write_text('{}')
     if exe:
-        (out / 'ocarina.exe').write_bytes(b'MZ')
+        (out / GAME_EXE).write_bytes(b'MZ')
     ident = 'nup X 1 1'
     keys = {s: f'{s}-1|{ident}' if s in ('exefs', 'romfs') else f'old-{s}' for s in steps}
     (out / 'build-cache' / 'state.json').write_text(json.dumps(
@@ -3609,7 +3616,7 @@ class MakeGameTest(Tmp):
         self.assertEqual(build.built_version(self.out), '')   # no finished build on record
         self.assertTrue(build.can_rebuild(self.out))
         self.assertTrue(build.installed(self.out))
-        (self.out / 'ocarina.exe').unlink()                  # a first install that stopped there has nothing to play
+        (self.out / GAME_EXE).unlink()                       # a first install that stopped there has nothing to play
         self.assertFalse(build.installed(self.out))
         self.assertFalse(build.installed(''))
         self.assertFalse(build.installed(None))
@@ -5637,7 +5644,7 @@ class WhilePlayingTest(Tmp):
         with mock.patch('launcher.ui.app.saves.game_running', return_value=True), \
                 mock.patch('launcher.ui.app.winsys.game_copy', return_value=None) as copy:
             App.watch_game(a)                                          # but the restarted game runs from the same exe
-        copy.assert_called_once_with(self.tmp / 'ocarina.exe', skip=11)
+        copy.assert_called_once_with(self.tmp / GAME_EXE, skip=11)
         a.root.deiconify.assert_not_called()
         a.root.after.assert_called_once()
         with mock.patch('launcher.ui.app.saves.game_running', return_value=False):
@@ -5812,7 +5819,7 @@ class WhilePlayingTest(Tmp):
         fatal = 'vk: the GPU device was lost (seen at: q). The run ends here'
         a, log = self.ended(72, f'[host] x\nFATAL: {fatal}\n[host] fatal: memory commit: this process 9000 MB\n')
         self.assertEqual(a.message, f'The game ended with a fatal error (code 72): {fatal}. Its log is '
-                                    'logs\\nx2saria.log (older builds: nx2navi.log).')
+                                    f'{GAME_LOG} (older builds: nx2navi.log).')
         a.ctx.log.assert_called_once_with(f'the game ended with code 72; its log says: FATAL: {fatal}')
         self.assertIn('[launcher] the game ended with code 72 (the graphics device was lost',
                       log.read_text(encoding='utf-8'))
@@ -5830,7 +5837,7 @@ class WhilePlayingTest(Tmp):
             self.skipTest(f'no window toolkit: {e}')
         a, log = self.ended(0, '[host] x\nFATAL: vk: the GPU device was lost (seen at: x)\n')
         self.assertEqual(a.message, "A copy started by the game's Restart ended with a fatal error: vk: the GPU device "
-                                    'was lost (seen at: x). Its log is logs\\nx2saria.log (older builds: nx2navi.log).')
+                                    f'was lost (seen at: x). Its log is {GAME_LOG} (older builds: nx2navi.log).')
         a.ctx.log.assert_called_once_with('the game ended after restarting itself; its log says: FATAL: vk: the GPU '
                                           'device was lost (seen at: x)')
         self.assertNotIn('[launcher]', log.read_text(encoding='utf-8'))
@@ -5859,7 +5866,7 @@ class WhilePlayingTest(Tmp):
         the launcher folder's lock held by another process when lock_held; (the context, the stand-in for tell, the
         log). self.start_game is the stand-in for winsys.start_game."""
         from launcher.ui import app
-        (self.tmp / 'ocarina.exe').write_bytes(b'MZ')
+        (self.tmp / GAME_EXE).write_bytes(b'MZ')
         log = self.tmp / 'logs' / 'nx2navi.log'
         log.parent.mkdir(exist_ok=True)
         log.write_text(log_text, encoding='utf-8')
@@ -5920,13 +5927,13 @@ class WhilePlayingTest(Tmp):
         self.assertEqual(len(told), 1)
         text, game_log, calls = told[0]
         self.assertEqual(text, 'The game ended with a fatal error (code 70): fs: another copy of the game is running. '
-                               'Its log is logs\\nx2saria.log (older builds: nx2navi.log).')
+                               f'Its log is {GAME_LOG} (older builds: nx2navi.log).')
         self.assertIn('[launcher] the game ended with code 70', game_log)
         self.assertIn(mock.call('play from Steam: the game ended with code 70; its log says: FATAL: fs: another copy '
                                 'of the game is running'), calls)
         _, told, _ = self.play_from_steam(0xC0000005, '[host] x\n')
         self.assertEqual([t[0] for t in told], ['The game ended with code 0xC0000005 (access violation). Its log is '
-                                                'logs\\nx2saria.log (older builds: nx2navi.log).'])
+                                                f'{GAME_LOG} (older builds: nx2navi.log).'])
         ctx, told, log = self.play_from_steam(0, '[host] x\n[host] gfx: window closed; exiting\n')
         self.assertEqual(told, [])
         ctx.log.assert_called_with('play from Steam: the game ended with code 0')
@@ -5945,7 +5952,7 @@ class WhilePlayingTest(Tmp):
         a, log = self.ended(70, f'[host] log: x\nFATAL: an earlier one\n[host] more\nFATAL: {fatal}\n'
                                 '[host] fatal: memory commit: this process 9000 MB, the system 30000 of 32000 MB\n')
         self.assertEqual(a.message, f'The game ended with a fatal error (code 70): {fatal}. Its log is '
-                                    'logs\\nx2saria.log (older builds: nx2navi.log).')
+                                    f'{GAME_LOG} (older builds: nx2navi.log).')
         a.ctx.log.assert_called_once_with(f'the game ended with code 70; its log says: FATAL: {fatal}')
         self.assertIn('[launcher] the game ended with code 70', log.read_text(encoding='utf-8'))
         # the crash report's exit code, and a line longer than the home screen shows
@@ -5961,7 +5968,7 @@ class WhilePlayingTest(Tmp):
         # any other exit code reads no FATAL line; no log at all is no error
         a, log = self.ended(0xC0000005, f'FATAL: {fatal}\n')
         self.assertEqual(a.message, 'The game ended with code 0xC0000005 (access violation). Its log is '
-                                    'logs\\nx2saria.log (older builds: nx2navi.log).')
+                                    f'{GAME_LOG} (older builds: nx2navi.log).')
         log.unlink()
         self.assertEqual(app.last_fatal(self.tmp), '')
         self.assertEqual(app.last_fatal(''), '')
@@ -6032,6 +6039,292 @@ def mock_app(test, game):
     a.check_error = a.message = ''
     a.checked_at = 0
     return App, a
+
+
+def fake_linux_game(folder, seconds=2, code=0):
+    """A shell script in the place of the built game (folder/ocarina): it notes the folder it runs in and its session,
+    sleeps seconds and exits with code."""
+    folder.mkdir(parents=True, exist_ok=True)
+    exe = folder / 'ocarina'
+    exe.write_text(f'#!/bin/sh\necho "$PWD $(cut -d" " -f6 /proc/$$/stat)" > started.txt\nsleep {seconds}\nexit {code}\n',
+                   encoding='utf-8')
+    exe.chmod(0o755)
+    return exe
+
+
+# The game's Restart on Linux (runtime/platform/linux.c plat_restart): the first run spawns the same file again as its
+# child and exits with 0 0.3 s later; the copy runs FAKE_COPY_MS milliseconds (3000 by default) and exits with
+# FAKE_COPY_CODE (3 by default).
+RESTARTING_GAME_C = r'''#include <spawn.h>
+#include <stdlib.h>
+#include <unistd.h>
+extern char **environ;
+int main(void) {
+    if (!getenv("FAKE_GAME_RESTARTED")) {
+        char exe[4096];
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        if (n <= 0) return 9;
+        exe[n] = 0;
+        setenv("FAKE_GAME_RESTARTED", "1", 1);
+        pid_t pid;
+        char *args[] = {exe, NULL};
+        if (posix_spawn(&pid, exe, NULL, NULL, args, environ)) return 9;
+        usleep(300000);
+        return 0;
+    }
+    const char *ms = getenv("FAKE_COPY_MS"), *code = getenv("FAKE_COPY_CODE");
+    usleep((useconds_t)(ms ? atoi(ms) : 3000) * 1000);
+    return code ? atoi(code) : 3;
+}
+'''
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'the Linux game and its processes')
+class LinuxPlayTest(Tmp):
+    """Play on Linux: the game is the folder's ocarina (launcher/platform game_executable), started in its own
+    session, followed until it ends, its Restart's copy too, with a line in launcher.log for each outcome."""
+
+    def log(self, a):
+        return ''.join(a.ctx.log_tail(200))
+
+    def play(self, a, deadline=30):
+        """App.play, then App.watch_game once every 0.1 s (the window's after() is a stand-in) until the run ended."""
+        from launcher.ui.app import App
+        App.play(a)
+        end = time.time() + deadline
+        while a.game_run is not None and time.time() < end:
+            time.sleep(0.1)
+            App.watch_game(a)
+        self.assertIsNone(a.game_run, 'the game run did not end')
+
+    def test_play_starts_the_linux_game_and_logs_its_end(self):
+        game = self.tmp / 'game'
+        exe = fake_linux_game(game)
+        App, a = mock_app(self, game)
+        a.game_run = None
+        a.mods_before_play.return_value = []
+        a.settings['hide_while_playing'] = True
+        real, started = subprocess.Popen, []
+
+        def popen_and_keep(*args, **kw):
+            started.append(real(*args, **kw))
+            return started[-1]
+        with mock.patch('launcher.winsys.subprocess.Popen', side_effect=popen_and_keep) as popen:
+            self.play(a)
+        popen.assert_called_once()
+        args, kw = popen.call_args
+        self.assertEqual(args[0], [str(exe)])
+        self.assertEqual(kw['cwd'], str(game))
+        self.assertTrue(kw['start_new_session'])
+        self.assertNotIn('creationflags', kw)
+        self.assertIsNone(winsys.system_commit_info())        # Windows' commit check has nothing to sample here
+        where, sid = (game / 'started.txt').read_text().split()
+        self.assertEqual(Path(where), game)
+        self.assertEqual(int(sid), started[0].pid)           # its own session (start_new_session)
+        a.root.withdraw.assert_called_once()                 # Hide Launcher While Playing
+        a.root.deiconify.assert_called_once()
+        text = self.log(a)
+        self.assertIn(f'play: {exe}\n', text)
+        self.assertIn('the game ended with code 0\n', text)   # no game log to tell more from
+        self.assertNotIn('play: not started', text)
+        self.assertNotIn('play memory:', text)
+        self.assertEqual(a.message, '')
+
+    def test_the_game_runs_in_its_own_session(self):
+        game = self.tmp / 'game'
+        exe = fake_linux_game(game, seconds=1)
+        self.addCleanup(winsys.game_finished, exe)           # start_game made this process a subreaper
+        proc = winsys.start_game(exe)
+        self.assertEqual(proc.wait(30), 0)
+        where, sid = (game / 'started.txt').read_text().split()
+        self.assertEqual(int(sid), proc.pid)                 # start_new_session: its own session and process group
+        self.assertNotEqual(int(sid), os.getsid(0))
+
+    def test_every_play_that_does_not_start_says_why(self):
+        game = self.tmp / 'game'
+        App, a = mock_app(self, game)
+        a.game_run = None
+        App.play(a)                                          # nothing built
+        self.assertIn(f'play: not started: the game is not built ({game / "ocarina"})\n', self.log(a))
+        self.assertEqual(a.message, 'The game is not built yet.')
+        a.settings['game_dir'] = ''
+        App.play(a)
+        self.assertIn('play: not started: the game is not built (no game folder is selected)\n', self.log(a))
+        exe = fake_linux_game(game)
+        a.settings['game_dir'] = str(game)
+        with mock.patch('launcher.ui.app.saves.game_running', return_value=True):
+            App.play(a)
+        self.assertIn(f'play: not started: the game is already running ({exe})\n', self.log(a))
+        a.mods_before_play.return_value = []
+        with mock.patch('launcher.ui.app.commit.confirm_play_memory', return_value=False):
+            App.play(a)
+        self.assertIn(f'play: not started: the memory warning was declined ({exe})\n', self.log(a))
+        with mock.patch('launcher.ui.app.winsys.start_game', side_effect=PermissionError(13, 'Permission denied')):
+            App.play(a)
+        self.assertIn(f'play: not started: could not start the game: [Errno 13] Permission denied ({exe})\n',
+                      self.log(a))
+        self.assertIsNone(a.game_run)
+
+    def restarting_play(self, **env):
+        """Play of the compiled stand-in for the game's Restart (RESTARTING_GAME_C) with these FAKE_COPY_* settings;
+        the stand-in window."""
+        cc = shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')
+        if not cc:
+            self.skipTest('needs a C compiler')
+        game = self.tmp / 'game'
+        game.mkdir()
+        src = self.tmp / 'restarting.c'
+        src.write_text(RESTARTING_GAME_C, encoding='utf-8')
+        exe = game / 'ocarina'
+        subprocess.run([cc, '-O1', '-o', str(exe), str(src)], check=True, capture_output=True, timeout=120)
+        App, a = mock_app(self, game)
+        a.game_run = None
+        a.mods_before_play.return_value = []
+        keep = {k: v for k, v in os.environ.items() if not k.startswith('FAKE_')}
+        with mock.patch.dict(os.environ, {**keep, **env}, clear=True):
+            self.play(a)
+        self.assertIn(f'play: {exe}\n', self.log(a))
+        import ctypes
+        flag = ctypes.c_int(-1)
+        ctypes.CDLL(None).prctl(37, ctypes.byref(flag), 0, 0, 0)   # PR_GET_CHILD_SUBREAPER
+        self.assertEqual(flag.value, 0)                            # off again once the run ended
+        a.root.deiconify.assert_called_once()
+        return a
+
+    def test_the_restarted_copy_is_adopted_and_its_code_read(self):
+        """The game's Restart spawns its copy as its own child and exits with 0: the launcher, a child subreaper since
+        it started the game, becomes the copy's parent, finds it by its file (/proc/<pid>/exe) and reads the code it
+        ends with."""
+        a = self.restarting_play()
+        self.assertIn('the game ended with code 3 after restarting itself\n', self.log(a))
+        from launcher.ui.app import LOG_WHERE
+        self.assertEqual(a.message, f'The game ended with code 3. {LOG_WHERE}')
+
+    def test_a_copy_that_ended_before_it_was_looked_for_gives_its_code(self):
+        """A copy that ends before the launcher's next look (once a second) is never seen running: it is a zombie the
+        launcher adopted, waited for when the run is over (winsys.game_finished), and its code is the end's."""
+        a = self.restarting_play(FAKE_COPY_MS='0', FAKE_COPY_CODE='70')
+        self.assertRegex(self.log(a), r'the game ended with code 70 \(a fatal error[^\n]*\) after restarting itself\n')
+
+    def test_only_ended_copies_of_the_game_are_waited_for(self):
+        from launcher.platform import linux
+        root = self.tmp / 'proc'
+        stats = {'10': '10 (ocarina) Z 500 ', '11': '11 (ocarina) Z 501 ', '12': '12 (ocarina) S 500 ',
+                 '13': '13 (sh) Z 500 ', '14': '14 (ocarina) Z 500 ', 'self': ''}
+        for pid, head in stats.items():
+            (root / pid).mkdir(parents=True)
+            start = {'10': '900', '14': '800'}.get(pid, '1')
+            (root / pid / 'stat').write_text(head + ' '.join(['0'] * 17 + [start, '0']) if head else '')
+        waited = []
+
+        def wait(pid):
+            waited.append(pid)
+            return pid, (pid - 10) << 8   # exit codes 0 and 4
+        self.assertEqual(linux.ended_copies('/games/x/ocarina', proc_root=root, me=500, wait=wait), [4, 0])
+        self.assertEqual(sorted(waited), [10, 14])             # this process's zombies named ocarina only
+        waited.clear()
+        self.assertEqual(linux.ended_copies('/games/x/ocarina', skip=10, proc_root=root, me=500, wait=wait), [4])
+
+    def test_a_copy_is_found_by_its_exe_file(self):
+        from launcher.platform import linux
+        game = self.tmp / 'game'
+        exe = fake_linux_game(game)
+        procs = {'1': '/usr/bin/other', '2': str(exe), '3': str(exe) + ' (deleted)', 'self': '', 'x': ''}
+        root = self.tmp / 'proc'
+        for pid in procs:
+            (root / pid).mkdir(parents=True)
+
+        def readlink(path):
+            if not Path(path).parent.is_dir():
+                raise FileNotFoundError(path)
+            return procs[Path(path).parent.name]
+        self.assertEqual(linux.game_copy(exe, skip=3, proc_root=root, readlink=readlink).pid, 2)
+        self.assertEqual(linux.game_copy(exe, skip=2, proc_root=root, readlink=readlink).pid, 3)   # replaced on disk
+        self.assertIsNone(linux.game_copy(game / 'other', proc_root=root, readlink=readlink))
+        # not this process's child: ended once its process id no longer runs the game (gone, or used again)
+        copy = linux.GameCopy(2, exe.resolve(), proc_root=root, readlink=readlink)
+        with mock.patch('os.waitpid', side_effect=ChildProcessError):
+            self.assertIsNone(copy.poll())
+            self.assertFalse(copy.ended)
+            procs['2'] = '/usr/bin/other'
+            self.assertIsNone(copy.poll())
+            self.assertTrue(copy.ended)
+        copy = linux.GameCopy(3, exe.resolve(), proc_root=root, readlink=readlink)
+        with mock.patch('os.waitpid', side_effect=ChildProcessError):
+            (root / '3').rmdir()
+            self.assertIsNone(copy.poll())
+            self.assertTrue(copy.ended)
+
+    def test_an_end_by_a_signal_names_it(self):
+        """subprocess gives -N for a process signal N ended: the line names the signal, and only a crash's signal is
+        worth a box where no window shows the end (play_only)."""
+        try:
+            from launcher.ui import app
+        except ImportError as e:
+            self.skipTest(f'no window toolkit: {e}')
+        end = app.game_end(str(self.tmp), -11)
+        self.assertEqual(end.log, 'the game ended with code -11 (ended by SIGSEGV)')
+        self.assertEqual(end.message, f'The game ended with code -11 (ended by SIGSEGV). {app.LOG_WHERE}')
+        self.assertTrue(end.alarm)
+        end = app.game_end(str(self.tmp), -15, restarted=True)
+        self.assertEqual(end.log, 'the game ended with code -15 (ended by SIGTERM) after restarting itself')
+        self.assertFalse(end.alarm)
+
+    @unittest.skipUnless(os.environ.get('DISPLAY'), 'needs a display (xvfb-run on Linux)')
+    def test_the_window_plays_the_game_and_comes_back(self):
+        """The whole window: Play on home starts the fake game with the window hidden (Hide Launcher While Playing),
+        the window comes back when it ends, and launcher.log has the start and the end."""
+        import signal
+        home, root = self.tmp / 'home', self.tmp / 'w'
+        home.mkdir()
+        game = self.tmp / 'game'
+        exe = fake_linux_game(game)
+        (game / 'build-cache').mkdir()
+        (game / 'build-cache' / 'state.json').write_text(json.dumps({'kit': '0.21.0', 'steps': {'compile': {}}}))
+        (root / 'data').mkdir(parents=True)
+        (root / 'data' / 'launcher.json').write_text(json.dumps(
+            {'game_dir': str(game), 'auto_check': False, 'auto_update': False, 'hide_while_playing': True}))
+        env = {k: v for k, v in os.environ.items() if k in ('DISPLAY', 'XAUTHORITY', 'PATH', 'LANG')}
+        env.update(HOME=str(home), XDG_DATA_HOME=str(home / 'data'), XDG_CONFIG_HOME=str(home / 'config'),
+                   XDG_CACHE_HOME=str(home / 'cache'), XDG_STATE_HOME=str(home / 'state'))
+        start = (
+            'import sys\nimport launcher.platform.linux as linux\nlinux.mounted_drives = lambda *a, **k: []\n'
+            'from launcher.ui import app\n'
+            'start, watch = app.App.start, app.App.watch_game\n'
+            'def started(self):\n'
+            '    start(self)\n'
+            '    def press():\n'
+            '        self.ctx.log(f"test: screen {self.screen}")\n'
+            '        self.focus = next(i for i, r in enumerate(self.rows) if r.label == "Play")\n'
+            '        self.activate()\n'
+            '        self.root.after(500, lambda: self.ctx.log(f"test: window {self.root.state()} while playing"))\n'
+            '    self.root.after(1500, press)\n'
+            'def watched(self):\n'
+            '    watch(self)\n'
+            '    if self.game_run is None:\n'
+            '        self.root.update_idletasks()\n'
+            '        self.ctx.log(f"test: window {self.root.state()} after the game")\n'
+            'app.App.start, app.App.watch_game = started, watched\n'
+            'sys.exit(app.main(sys.argv[1:]))\n')
+        p = subprocess.Popen([sys.executable, '-c', start, '--root', str(root)], cwd=ROOT, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        log = root / 'data' / 'logs' / 'launcher.log'
+        deadline = time.time() + 60
+        while time.time() < deadline and 'after the game' not in (log.read_text() if log.is_file() else ''):
+            if p.poll() is not None:
+                break
+            time.sleep(0.2)
+        p.send_signal(signal.SIGTERM)
+        out, err = p.communicate(timeout=30)
+        text = log.read_text()
+        self.assertIn('test: screen home\n', text, err)
+        self.assertIn(f'play: {exe}\n', text)
+        self.assertIn('test: window withdrawn while playing\n', text)
+        self.assertIn('the game ended with code 0\n', text)
+        self.assertIn('test: window normal after the game\n', text)
+        self.assertNotIn('play: not started', text)
+        self.assertNotIn('error in the window', text)
+        self.assertEqual(Path((game / 'started.txt').read_text().split()[0]), game)
 
 
 class BeginInstallTest(Tmp):
@@ -6225,7 +6518,7 @@ class UnfinishedUpdateTest(Tmp):
         App.start(a)
         a.show.assert_called_once_with('home')
         a.find_dumps.assert_not_called()
-        (game / 'ocarina.exe').unlink()   # nothing to play: an install that never finished asks for the dump
+        (game / GAME_EXE).unlink()   # nothing to play: an install that never finished asks for the dump
         App, a = self.app(game)
         App.start(a)
         a.show.assert_called_once_with('first_run')

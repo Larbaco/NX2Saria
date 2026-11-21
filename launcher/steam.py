@@ -26,6 +26,8 @@ import time
 import zlib
 from pathlib import Path
 
+from .platform import game_executable as platform_game_executable
+
 NAME = 'The Legend of Zelda: Ocarina of Time (NX2Saria)'
 LEGACY_NAMES = ('The Legend of Zelda Ocarina of Time',)
 PLAY_SCRIPT = 'steam_play.pyw'
@@ -378,7 +380,7 @@ def add(layout, game_dir, dump='', log=print, restart=True):
     cfgs = accounts(folder)
     if not cfgs:
         raise SteamError('Steam has no account on this PC yet: sign in to Steam once, then try again.')
-    game = Path(game_dir) / 'ocarina.exe'
+    game = platform_game_executable(game_dir)
     if not game.is_file():
         raise SteamError('The game is not built yet.')
     artwork_error = ''
@@ -431,13 +433,8 @@ def add(layout, game_dir, dump='', log=print, restart=True):
     return 'Added. It shows up the next time you open Steam.'
 
 
-def linux_game_executable(game_dir):
-    return Path(game_dir) / 'ocarina'
-
-
 def game_executable(game_dir):
-    import sys
-    return linux_game_executable(game_dir) if sys.platform.startswith('linux') else Path(game_dir) / 'ocarina.exe'
+    return platform_game_executable(game_dir)
 
 
 def _add_linux(layout, game_dir, dump, log):
@@ -468,7 +465,7 @@ def _add_linux(layout, game_dir, dump, log):
         for number, _root, _cfg in cfgs:
             log(f'steam: account {number}: launcher wrapper not found')
         raise SteamError('Install NX2Saria with the AppImage before adding it to Steam.')
-    game = linux_game_executable(game_dir)
+    game = game_executable(game_dir)
     if not game.is_file():
         for number, _root, _cfg in cfgs:
             log(f'steam: account {number}: game not built')

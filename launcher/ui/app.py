@@ -41,6 +41,7 @@ from pathlib import Path
 from .. import NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, versions, winsys
 from ..context import Context, shorten
 from ..paths import long_path_problem
+from ..platform import game_executable
 from . import art, picture, sound
 
 W, H = 1000, 640
@@ -161,8 +162,21 @@ EXIT_CODES = {
 FATAL_CODES = (70, 71, 72)   # the codes that follow a FATAL line of the game's own (EXIT_CODES' comment)
 
 
+# The signals that end the game at someone's request on Linux (a kill, the session's end, Ctrl+C in a terminal), as
+# Task Manager's End task does with code 1 on Windows: no message box for them where no window shows the end.
+# SIGKILL is left out: it is also how the kernel ends a process when memory runs out. Windows has no SIGHUP.
+ASKED_SIGNALS = tuple(getattr(signal, name) for name in ('SIGTERM', 'SIGINT', 'SIGHUP') if hasattr(signal, name))
+
+
 def exit_code_text(code):
-    """The exit code as the game's log and Windows show it: hex for a Windows status, with its meaning when known."""
+    """The exit code as the game's log and Windows show it: hex for a Windows status, with its meaning when known.
+    Elsewhere a negative code is subprocess's for a process a signal ended, shown with the signal's name."""
+    if code < 0 and os.name != 'nt':
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = f'signal {-code}'
+        return f'{code} (ended by {name})'
     code &= 0xFFFFFFFF
     meaning = EXIT_CODES.get(code)
     shown = f'0x{code:08X}' if code >= 0x80000000 else str(code)
@@ -259,7 +273,8 @@ def log_is_new(game_dir, started):
         return False
 
 
-LOG_WHERE = 'Its log is logs\\nx2saria.log (older builds: nx2navi.log).'
+LOG_WHERE = ('Its log is logs\\nx2saria.log (older builds: nx2navi.log).' if os.name == 'nt'
+             else 'Its log is logs/nx2saria.log (older builds: nx2navi.log).')
 GameEnd = collections.namedtuple('GameEnd', 'log message note alarm')
 
 
@@ -277,6 +292,10 @@ def game_end(game_dir, code, started=None, restarted=False):
     that could not be followed (GameRun). started is time.time() before the game was started, restarted whether it
     restarted itself on the way."""
     how = ' after restarting itself' if restarted else ''
+    if code not in (0, None) and code < 0 and os.name != 'nt':   # Linux: a signal ended the game's last process
+        text = exit_code_text(code)
+        return GameEnd(f'the game ended with code {text}{how}', f'The game ended with code {text}. {LOG_WHERE}', text,
+                       -code not in ASKED_SIGNALS)
     if code not in (0, None):
         code &= 0xFFFFFFFF
         text = exit_code_text(code)
@@ -316,12 +335,17 @@ class GameRun:
     """A Play of the game, followed through the copies its own Restart starts. The Restart (runtime/gfx_present.c
     gfx_window_closed) starts the exe again (runtime/platform/win32.c plat_restart) and ends the process before it
     with code 0, so the code the game really ended with is its last copy's: once the process followed has ended with
-    0 while the exe still runs, the copy is looked for (winsys.game_copy) and followed from then on. proc is the
-    process followed, None once a copy could not be found (it ended before the next look, or the system did not show
-    it); the end's code is then not known. started is time.time() before the start (game_end's log_is_new)."""
+    0 while the exe still runs, the copy is looked for (winsys.game_copy) and followed from then on. On Linux the
+    Restart (runtime/platform/linux.c plat_restart) spawns the copy as a child of the old process; winsys.start_game
+    makes the launcher a child subreaper, so the copy becomes the launcher's child once the old process has ended and
+    its code can be waited for. proc is the process followed, None while a copy could not be found (it ended before
+    the next look, or the system did not show it): it is looked for again each second while the game still runs, and
+    the end's code is not known if none is found. started is time.time() before the start (game_end's
+    log_is_new)."""
 
     def __init__(self, proc, game_dir, started):
         self.proc, self.game_dir, self.started, self.restarted = proc, game_dir, started, False
+        self.last_pid = None
 
     def alive(self):
         """Whether the process followed runs; nothing else is looked at. A winsys.GameCopy whose exit code could not
@@ -334,11 +358,26 @@ class GameRun:
         if self.alive():
             return True
         if not (self.game_dir and saves.game_running(self.game_dir)):
+            self.finished()
             return False
         if self.proc is not None and self.proc.returncode == 0:
             self.restarted = True
-            self.proc = winsys.game_copy(Path(self.game_dir) / 'ocarina.exe', skip=self.proc.pid)
+            self.last_pid = self.proc.pid
+            self.proc = winsys.game_copy(game_executable(self.game_dir), skip=self.last_pid)
+        elif self.restarted and self.proc is None:
+            self.proc = winsys.game_copy(game_executable(self.game_dir), skip=self.last_pid)
         return True
+
+    def finished(self):
+        """The run is over: a copy the Restart started that ended before running() looked for it is the run's last
+        process, and its code is the end's (winsys.game_finished)."""
+        if not self.game_dir:
+            return
+        codes = winsys.game_finished(game_executable(self.game_dir),
+                                     skip=None if self.proc is None else self.proc.pid)
+        if codes and (self.proc is None or self.proc.returncode == 0):
+            self.restarted = True
+            self.proc = collections.namedtuple('EndedCopy', 'pid returncode ended')(None, codes[-1], True)
 
     def end(self):
         """game_end for this run, once running() said False."""
@@ -1606,7 +1645,7 @@ class App:
             self.sounds.play('back')
             self.show('customize', self.focus)
             return
-        if not gd or not steam.game_executable(gd).is_file():
+        if not gd or not game_executable(gd).is_file():
             self.steam_message = 'The game is not built yet.'
             self.sounds.play('back')
             self.show('customize', self.focus)
@@ -2119,14 +2158,22 @@ class App:
     def play(self, built=False):
         """built: the build for the mods' code (ModsRebuildJob) just ended, so the game starts without asking again."""
         gd = self.settings.get('game_dir')
-        exe = Path(gd) / 'ocarina.exe'
-        if not exe.is_file():
+        exe = game_executable(gd) if gd else None
+        searched = str(exe) if exe else 'no game folder is selected'
+
+        def not_started(reason):
+            self.ctx.log(f'play: not started: {reason[:160]} ({searched})')
+
+        if not exe or not exe.is_file():
+            not_started('the game is not built')
             self.message = 'The game is not built yet.'
             self.render()
             return
         if self.game_run and self.game_run.alive():
+            not_started('this launcher is already watching a game')
             return
         if saves.game_running(gd):   # a copy this launcher did not start (another launcher, a shortcut, a test run)
+            not_started('the game is already running')
             self.message = 'The game is already running.'
             self.render()
             return
@@ -2144,11 +2191,13 @@ class App:
         if waiting:
             self.ctx.log(f'play: without the code of {", ".join(waiting)}, whose build did not finish')
         if not commit.confirm_play_memory(gd, self.ctx.log, self.root, self.ctx.settings):
+            not_started('the memory warning was declined')
             return
         started = time.time()
         try:
             self.game_run = GameRun(winsys.start_game(exe), gd, started)
         except OSError as e:
+            not_started(f'could not start the game: {(str(e).splitlines() or [type(e).__name__])[0]}')
             self.message = f'The game could not start: {e}'
             self.render()
             return
@@ -3193,7 +3242,7 @@ def play_only(ctx):
     Play starts it, and this process waits until it and the copies its own Restart starts have ended, so Steam shows
     the game as running all that time. None when there is no built game: the launcher's window opens instead."""
     gd = ctx.settings.get('game_dir')
-    exe = Path(gd) / 'ocarina.exe' if gd else None
+    exe = game_executable(gd) if gd else None
     if not exe or not exe.is_file():
         return None
     # The window or a command may run a job in the game folder meanwhile (a rebuild, an update's install, the mods'

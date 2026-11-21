@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import game_executable
+
 
 def make_game_toolchain_args(layout):
     """Linux uses its system compiler and libraries; make_game.py discovers them directly."""
@@ -46,7 +48,7 @@ def refresh_installed_wrapper(root, app):
         pass
 
 
-def game_running(game_dir):
+def game_running(game_dir, exe=None):
     """Check the runtime's profile lock first, then /proc for Linux builds from before profile locking."""
     folder = Path(game_dir)
     lock = folder / 'profile' / 'instance.lock'
@@ -61,7 +63,7 @@ def game_running(game_dir):
         pass
     except OSError:
         pass
-    exe = folder / 'ocarina'
+    exe = Path(exe or game_executable(folder))
     if not exe.is_file():
         return False
     try:
@@ -78,6 +80,97 @@ def game_running(game_dir):
     except OSError:
         return False
     return False
+
+
+def child_subreaper(on, prctl=None):
+    """Turn PR_SET_CHILD_SUBREAPER on or off for the launcher's process. On while the game runs (winsys.start_game):
+    the copy the game's Restart spawns (runtime/platform/linux.c plat_restart) is the old process's child, and once
+    that one ends it becomes the launcher's, whose wait gives its exit code. Off again when the run ended
+    (winsys.game_finished), so that the processes a build leaves behind are not adopted and kept as zombies."""
+    if prctl is None:
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+    if prctl(36, 1 if on else 0, 0, 0, 0):   # PR_SET_CHILD_SUBREAPER
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return True
+
+
+def _runs(proc, expected, readlink=os.readlink):
+    """Whether the process folder proc (/proc/<pid>) runs the file expected; False once it has ended or is a zombie,
+    whose exe link cannot be read."""
+    try:
+        return Path(readlink(proc / 'exe').removesuffix(' (deleted)')) == expected
+    except OSError:
+        return False
+
+
+class GameCopy:
+    """A copy of the game this launcher did not start itself (game_copy), with poll(), returncode and pid as
+    subprocess.Popen has them; ended is True once it has ended, also when its code could not be read. A copy that is
+    the launcher's child (adopted, child_subreaper) is waited for, which gives its code; another is taken as ended
+    once its /proc folder no longer runs the game's file, so a process id used again is not taken for the game."""
+
+    def __init__(self, pid, exe, proc_root='/proc', readlink=os.readlink):
+        self.pid, self.exe, self.proc_root, self.readlink = int(pid), Path(exe), Path(proc_root), readlink
+        self.returncode, self.ended = None, False
+
+    def poll(self):
+        if self.ended:
+            return self.returncode
+        try:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+        except ChildProcessError:
+            if not _runs(self.proc_root / str(self.pid), self.exe, self.readlink):
+                self.ended = True
+            return self.returncode
+        if pid:
+            self.returncode = os.waitstatus_to_exitcode(status)
+            self.ended = True
+        return self.returncode
+
+
+def game_copy(exe, skip=None, proc_root='/proc', readlink=os.readlink):
+    """A live process running the file exe other than the process id skip, as a GameCopy; None when there is none.
+    The file is compared by its resolved path, so the game of another install is not taken for this one."""
+    expected = Path(exe).resolve()
+    try:
+        for proc in Path(proc_root).iterdir():
+            if proc.name.isdigit() and int(proc.name) != skip and _runs(proc, expected, readlink):
+                return GameCopy(proc.name, expected, proc_root, readlink)
+    except OSError:
+        pass
+    return None
+
+
+def ended_copies(exe, skip=None, proc_root='/proc', me=None, wait=None):
+    """Waits for the launcher's children that ended as zombies named as the file exe (the stat line's comm, which
+    the kernel cuts to 15 characters), other than the process id skip: a copy of the Restart that ended before the
+    launcher looked for it (App.watch_game looks once a second). Returns their exit codes, the latest started last."""
+    me = os.getpid() if me is None else me
+    wait = wait or (lambda pid: os.waitpid(pid, os.WNOHANG))
+    name, found = Path(exe).name[:15], []
+    try:
+        procs = list(Path(proc_root).iterdir())
+    except OSError:
+        return []
+    for proc in procs:
+        if not proc.name.isdigit() or int(proc.name) == skip:
+            continue
+        try:
+            text = (proc / 'stat').read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        comm, _, rest = text.partition('(')[2].rpartition(')')
+        fields = rest.split()
+        if comm != name or len(fields) < 20 or fields[0] != 'Z' or fields[1] != str(me):
+            continue
+        try:
+            pid, status = wait(int(proc.name))
+        except ChildProcessError:
+            continue
+        if pid:
+            found.append((int(fields[19]), os.waitstatus_to_exitcode(status)))   # field 22: the start time
+    return [code for _start, code in sorted(found)]
 
 
 UDMABUF_MINIMUM_MB = 1024
