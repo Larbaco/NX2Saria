@@ -142,7 +142,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"SOUND_STEPS", "frame rate"}, {"SONG_STAFF", "frame rate"}, {"FLOOR_CARRY", "frame rate"}, {"OCARINA_TIMING", "frame rate"},
     {"MOVIE_PTS", "frame rate"}, {"STEP_STEADY", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
-    {"GPU_INDEX", "display"}, {"MONITOR", "display"}, {"OUTPUT_RES", "display"}, {"GAME_ASPECT", "display"}, {"GAME_RES", "display"}, {"WIDE_HUD", "display"}, {"WIDE_MENUS", "display"}, {"BALLOON_ANCHOR_FIX", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
+    {"GPU_INDEX", "display"}, {"GPU_NAME", "display"}, {"MONITOR", "display"}, {"OUTPUT_RES", "display"}, {"GAME_ASPECT", "display"}, {"GAME_RES", "display"}, {"WIDE_HUD", "display"}, {"WIDE_MENUS", "display"}, {"BALLOON_ANCHOR_FIX", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
     {"SHARPNESS", "display"}, {"STANDIN_FILTER", "display"}, {"SCENE_SHARE", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"ANISO", "display"},
     {"TEXTURE_DETAIL", "display"},
     {"COLOR_PRESET", "display"},
@@ -240,6 +240,7 @@ static const CfgMeta metas[] = {
     // Screen
     {"FULLSCREEN", "0", "0|1", LIVE}, {"WINDOW_SIZE", "1920x1080", NULL, LIVE},
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
+    {"GPU_NAME", "", NULL, RESTART},   // gpu_choice.h: the Graphics card row writes the card's name beside its position
     // the quality preset (cfg.c "quality presets"): recommended is the tier preset_pick.h chooses for this PC at each
     // start; the restart-only keys of a tier the menu switches to apply at the next start (cfg_pending)
     {"PRESET", "recommended", "recommended|low|medium|high|ultra", LIVE},

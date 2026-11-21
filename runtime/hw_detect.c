@@ -29,6 +29,7 @@
 #include <vulkan/vulkan.h>
 
 #include "cfg.h"
+#include "gpu_choice.h"
 #include "host.h"
 #include "hw_detect.h"
 #include "platform/platform.h"
@@ -83,6 +84,20 @@ static void probe_gpu(PresetHw *hw, char *note, size_t note_cap) {
     const char *name = cfg_get("NX2SARIA_GPU_NAME");
     int best = -1, best_score = -1, best_mesh = 0;
     VkPhysicalDeviceProperties bp = {0};
+    // A gpu_index that lists a card without gpu_name's name is dropped and the name decides, as in pick_device
+    // (gpu_choice.h): the preset has to be chosen for the card the game will use
+    GpucCard *cards = calloc(n ? n : 1, sizeof *cards);
+    VkPhysicalDeviceProperties *props = calloc(n ? n : 1, sizeof *props);
+    if (pd && cards && props) {
+        for (uint32_t i = 0; i < n; i++) {
+            vkGetPhysicalDeviceProperties(pd[i], &props[i]);
+            cards[i].name = props[i].deviceName;
+            cards[i].type = (int)props[i].deviceType;
+        }
+        int dropped;
+        want = gpuc_index(cards, (int)n, want, name, &dropped);
+    }
+    free(cards), free(props);
 retry:
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;

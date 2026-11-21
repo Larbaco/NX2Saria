@@ -665,6 +665,14 @@ A change to what the library warm logs when the driver's cache of stage librarie
 `runtime/vk_pipeline.c` `lw_main`) passes `python tests\warm_hint_check.py`, which builds the header alone and checks
 the added text by GPU vendor and by why the cache was cold. No game files.
 
+A change to which GPU the settings choose (`runtime/gpu_choice.h`, `runtime/vk_device.c` `pick_device`,
+`runtime/hw_detect.c` `probe_gpu`, `runtime/ui/menu.cpp` `row_gpu`) passes `python tests\gpu_choice_check.py`, which builds
+the header alone, as C and as C++: a `gpu_index` written for another order of the GPUs (an RTX 3050 and Intel UHD Graphics
+in the two orders one laptop listed them in), what `gpu_name` does to it, the card the menu's row shows, and the exact text
+of the lines the log gets (the card choice at each start, the dropped index, the warning for a GPU that is not a
+discrete one chosen by `gpu_index` alone, the note a fatal error's report carries). No Vulkan headers, no GPU, no game files. With a loader that lists two devices, the same header can be
+run over the real list: `MESA_VK_DEVICE_SELECT=<vendor>:<device>` puts one device first on Linux.
+
 A change to how a run ends when the GPU device is lost (`runtime/vk_device.c` `vk_device_lost_check`, the checks of
 `vk_lost` in the replay, upload and present paths, `runtime/vk_sync.c` `completion_main`) passes
 `python tests\device_lost_check.py <game exe>`, which runs the executable's `--probe-devlost`: with the device marked
