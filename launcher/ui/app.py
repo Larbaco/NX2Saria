@@ -420,6 +420,7 @@ class App:
         self.mods_page = 0       # the page of the Mods and Load Order screens
         self.mods_failed = []    # the mods whose code a build before Play could not take in: Play no longer waits
         self.steam_busy = False   # Add to Steam is making the pictures or writing Steam's files
+        self.steam_flatpak_logged = False
         self.pick = None   # the colour picker: {'slot', 'h', 's', 'v'} (HSV in 0..1) of the colour being picked
         self.pick_drag = None   # 'square' or 'bar' while the mouse drags on the picker
         self.hex_entry = None   # the box the hex code is typed into
@@ -1358,7 +1359,7 @@ class App:
                 desc=('The game\'s select and back sounds. Low by default.',)),
             Row('divider'),
         ]
-        if os.name == 'nt':
+        if os.name == 'nt' or sys.platform.startswith('linux'):
             rows += [self.steam_row(), Row('divider')]
         rows += [
             Row('action', 'Back', on=lambda: self.show('home', self.home_row('Customize Launcher')), height=40,
@@ -1568,8 +1569,21 @@ class App:
     def steam_row(self):
         """Add to Steam: the game in the Steam library, started from there without the launcher (launcher/steam.py)."""
         found = steam.find_steam()
-        desc = ('Adds Ocarina of Time (NX2Saria) to Steam with the leaf icon and artwork from your game.',
-                'Steam restarts while it is added.')
+        if sys.platform.startswith('linux') and found and steam.is_flatpak_root(found[0]) and \
+                not steam.native_steam_roots():
+            if not self.steam_flatpak_logged:
+                accounts = steam.flatpak_accounts()
+                if accounts:
+                    for number, _cfg in accounts:
+                        self.ctx.log(f'steam: account {number}: skipped Flatpak Steam; default sandbox has no host access')
+                else:
+                    self.ctx.log('steam: Flatpak shortcut skipped; default sandbox has no host access')
+                self.steam_flatpak_logged = True
+            return Row('value', 'Add to Steam', 'Flatpak not supported', 'dim',
+                       desc=('The default Steam Flatpak sandbox cannot run the installed launcher. Use native Steam.',))
+        behavior = 'Close Steam before adding it; it will not be restarted automatically.' \
+            if sys.platform.startswith('linux') else 'Steam restarts while it is added.'
+        desc = ('Adds Ocarina of Time (NX2Saria) to Steam with the leaf icon and artwork from your game.', behavior)
         if self.steam_message:
             desc = (self.steam_message,) + desc
         if self.steam_busy:
@@ -1577,7 +1591,8 @@ class App:
         elif not found:
             value, style = 'Steam not found', 'dim'
         else:
-            value, style = ('Added' if steam.added(found[0]) else ''), 'arrow'
+            present = steam.added() if sys.platform.startswith('linux') else steam.added(found[0])
+            value, style = ('Added' if present else ''), 'arrow'
         return Row('value', 'Add to Steam', value, style, on=self.add_to_steam, desc=desc)
 
     def add_to_steam(self):
@@ -1587,10 +1602,11 @@ class App:
         gd = self.settings.get('game_dir')
         if not steam.find_steam():
             self.steam_message = 'Steam is not installed on this PC.'
+            self.ctx.log('steam: no Steam installation')
             self.sounds.play('back')
             self.show('customize', self.focus)
             return
-        if not gd or not (Path(gd) / 'ocarina.exe').is_file():
+        if not gd or not steam.game_executable(gd).is_file():
             self.steam_message = 'The game is not built yet.'
             self.sounds.play('back')
             self.show('customize', self.focus)

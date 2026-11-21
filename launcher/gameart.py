@@ -17,6 +17,7 @@ an imaging package.
 import ctypes
 import hashlib
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -108,20 +109,38 @@ def astc_library(layout):
     if not src.is_file():
         raise ArtError(f'{src} is missing')
     tag = hashlib.sha256(src.read_bytes() + (layout.app / 'runtime' / 'tex.h').read_bytes()).hexdigest()[:12]
-    dll = layout.cache / f'astc-{tag}.dll'
-    if not dll.is_file():
-        clang = layout.msys / 'bin' / 'clang.exe'
-        if not clang.is_file():
+    import sys
+    if sys.platform.startswith('linux'):
+        library = layout.cache / f'astc-{tag}.so'
+        compiler = shutil.which('clang')
+        vma_candidates = ([Path(os.environ['VMA_INCLUDE'])] if os.environ.get('VMA_INCLUDE') else []) + [
+            layout.toolchain / 'vma', layout.app / 'toolchain' / 'vma',
+            layout.app / 'runtime' / 'deps' / 'include' / 'vma', Path('/usr/include')]
+        vma = next((folder for folder in vma_candidates if (folder / 'vk_mem_alloc.h').is_file()), None)
+        if vma is None:
+            raise ArtError('the Vulkan Memory Allocator header is missing (the Linux build tools include it)')
+        command = [compiler, '-shared', '-fPIC', '-O2', '-w', '-I', str(src.parent), '-I', str(vma), str(src), '-o',
+                   str(library.with_name(library.name + '.tmp'))]
+        env = os.environ.copy()
+    else:
+        library = layout.cache / f'astc-{tag}.dll'
+        compiler = layout.msys / 'bin' / 'clang.exe'
+        if not compiler.is_file():
             raise ArtError('the build tools are not installed (Rebuild the Game installs them)')
         env = dict(os.environ, PATH=str(layout.msys / 'bin') + os.pathsep + os.environ.get('PATH', ''))
-        tmp = dll.with_name(dll.name + '.tmp')
-        r = subprocess.run([str(clang), '-shared', '-O2', '-static', '-w', '-I', str(layout.app / 'runtime'),
-                            '-I', str(layout.msys / 'include' / 'vma'), str(src), '-o', str(tmp)],
-                           capture_output=True, text=True, env=env, creationflags=NO_WINDOW)
+        command = [str(compiler), '-shared', '-O2', '-static', '-w', '-I', str(layout.app / 'runtime'),
+                   '-I', str(layout.msys / 'include' / 'vma'), str(src), '-o',
+                   str(library.with_name(library.name + '.tmp'))]
+    if not compiler:
+        raise ArtError('clang is not installed (the system build tools include it)')
+    if not library.is_file():
+        layout.cache.mkdir(parents=True, exist_ok=True)
+        tmp = library.with_name(library.name + '.tmp')
+        r = subprocess.run(command, capture_output=True, text=True, env=env, creationflags=NO_WINDOW)
         if r.returncode or not tmp.is_file():
             raise ArtError(f'the texture decoder did not build: {(r.stderr or r.stdout).strip()[-300:]}')
-        os.replace(tmp, dll)
-    lib = ctypes.CDLL(str(dll))
+        os.replace(tmp, library)
+    lib = ctypes.CDLL(str(library))
     lib.astc_decode_ldr.restype = None
     lib.astc_decode_ldr.argtypes = [ctypes.c_char_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                                     ctypes.c_uint32, ctypes.c_bool, ctypes.c_void_p]
@@ -198,10 +217,15 @@ def webm_frames(b):
 
 
 def movie_frame(layout, data, at_s, work):
-    """The picture of the movie `data` at at_s seconds as an HxWx3 uint8 array, decoded by the toolchain's dav1d."""
-    dav1d = layout.msys / 'bin' / 'dav1d.exe'
-    if not dav1d.is_file():
-        raise ArtError('the build tools are not installed (Rebuild the Game installs them)')
+    """The picture of movie data at at_s seconds, decoded by dav1d or ffmpeg on Linux."""
+    import sys
+    linux = sys.platform.startswith('linux')
+    dav1d = shutil.which('dav1d') if linux else layout.msys / 'bin' / 'dav1d.exe'
+    ffmpeg = shutil.which('ffmpeg') if linux and not dav1d else None
+    if (not dav1d and not ffmpeg) or (not linux and not dav1d.is_file()):
+        message = 'neither dav1d nor ffmpeg is installed for Steam artwork' if linux else \
+            'the build tools are not installed (Rebuild the Game installs them)'
+        raise ArtError(message)
     frames, w, h = webm_frames(data)
     upto = [f for f in frames if f[0] <= at_s * 1000] or frames[:1]
     k0 = max((i for i, f in enumerate(upto) if f[1]), default=0)
@@ -211,8 +235,15 @@ def movie_frame(layout, data, at_s, work):
         f.write(b'DKIF' + struct.pack('<HH4sHHIIII', 0, 32, b'AV01', w, h, 1000, 1, len(sel), 0))
         for t, _key, d in sel:
             f.write(struct.pack('<IQ', len(d), max(t, 0)) + d)
-    r = subprocess.run([str(dav1d), '-q', '-i', str(ivf), '-o', str(y4m)], capture_output=True, text=True,
-                       cwd=str(dav1d.parent), creationflags=NO_WINDOW)
+    if dav1d:
+        decoder = Path(dav1d)
+        command, cwd = [str(decoder), '-q', '-i', str(ivf), '-o', str(y4m)], str(decoder.parent)
+    else:
+        decoder = Path(ffmpeg)
+        command = [str(decoder), '-v', 'error', '-i', str(ivf), '-vsync', '0', '-pix_fmt', 'yuv420p',
+                   '-f', 'yuv4mpegpipe', str(y4m)]
+        cwd = str(decoder.parent)
+    r = subprocess.run(command, capture_output=True, text=True, cwd=cwd, creationflags=NO_WINDOW)
     if r.returncode or not y4m.is_file():
         raise ArtError(f'the title movie did not decode: {(r.stderr or r.stdout).strip()[-300:]}')
     b = y4m.read_bytes()

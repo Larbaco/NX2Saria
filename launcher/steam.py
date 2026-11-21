@@ -1,5 +1,5 @@
 """Add to Steam (Customize Launcher): the game as a non-Steam shortcut in the player's Steam library, with the
-NX2Saria leaf icon and the game's title screen and logo as its pictures (launcher/gameart.py). Windows only.
+NX2Saria leaf icon and the game's title screen and logo as its pictures (launcher/gameart.py).
 
 Steam keeps the shortcuts of each account in <Steam>/userdata/<account id>/config/shortcuts.vdf, a binary key-value
 file: a map is 0x00 name 0x00 ... 0x08, a string 0x01 name 0x00 value 0x00, a 32-bit integer 0x02 name 0x00 value
@@ -11,7 +11,7 @@ background, <id>_logo.png the logo, and the icon file the shortcut names. The id
 Steam writes them, with the top bit set.
 
 Steam reads the file when it starts and writes it back when it closes, so a running Steam would neither see the new
-shortcut nor keep it: Steam is asked to close (steam.exe -shutdown), the files are written, and Steam starts again.
+shortcut nor keep it. Windows asks Steam to close and starts it again; Linux asks the player to close Steam first.
 
 The shortcut starts the launcher's pythonw.exe on data/steam_play.pyw, which starts this launcher with --play: the game
 runs from its own folder with its console hidden, and the Python process waits for it, so Steam shows the game as
@@ -78,6 +78,13 @@ def vdf_load(b):
                 v, at = walk(at, False)
             elif t == T_STR:
                 v, at = cstr(at)
+            elif t == T_WSTR:
+                end = at
+                while end + 1 < len(b) and b[end:end + 2] != b'\0\0':
+                    end += 2
+                if end + 1 >= len(b):
+                    raise ValueError('unterminated wide string')
+                v, at = b[at:end + 2], end + 2
             elif t in (T_INT, T_FLOAT, T_PTR, T_COLOR):
                 v, at = b[at:at + 4], at + 4
             elif t == T_U64:
@@ -186,7 +193,13 @@ def has_shortcut(vdf_bytes, name=NAME):
 # ---------------------------------------------------------------- Steam on this PC
 
 def find_steam():
-    """(Steam's folder, steam.exe) from the registry, else the usual folder; None when Steam is not installed."""
+    """(Steam's folder, executable) or None. Linux checks the native and Flatpak data roots."""
+    import sys
+    if sys.platform.startswith('linux'):
+        roots = steam_roots()
+        native = [root for root in roots if not is_flatpak_root(root)]
+        selected = native or roots
+        return (selected[0], None) if selected else None
     if os.name != 'nt':
         return None
     folder = exe = None
@@ -212,6 +225,40 @@ def find_steam():
     return folder, exe
 
 
+def steam_roots(home=None):
+    """Existing Linux Steam data roots, including native and Flatpak installs."""
+    home = Path(home) if home is not None else Path.home()
+    candidates = (home / '.steam' / 'steam', home / '.local' / 'share' / 'Steam',
+                  home / '.var' / 'app' / 'com.valvesoftware.Steam' / '.local' / 'share' / 'Steam')
+    roots, seen = [], set()
+    for root in candidates:
+        try:
+            if not root.is_dir():
+                continue
+            resolved = root.resolve()
+        except OSError:
+            continue
+        if resolved not in seen:
+            roots.append(resolved)
+            seen.add(resolved)
+    return roots
+
+
+def is_flatpak_root(root):
+    """Whether a Linux Steam root is inside the Steam Flatpak's private data directory."""
+    parts = Path(root).parts
+    return any(parts[i:i + 3] == ('.var', 'app', 'com.valvesoftware.Steam') for i in range(len(parts) - 2))
+
+
+def native_steam_roots(home=None):
+    return [root for root in steam_roots(home) if not is_flatpak_root(root)]
+
+
+def flatpak_accounts(home=None):
+    return [(number, cfg) for number, cfg in enumerate(
+        (cfg for root in steam_roots(home) if is_flatpak_root(root) for cfg in accounts(root)), 1)]
+
+
 def accounts(folder):
     """The config folders of the accounts that signed in to Steam on this PC (config/loginusers.vdf), else of every
     account folder under userdata."""
@@ -219,6 +266,9 @@ def accounts(folder):
     if not ud.is_dir():
         return []
     dirs = {p.name: p / 'config' for p in ud.iterdir() if p.is_dir() and p.name.isdigit() and p.name != '0'}
+    import sys
+    if sys.platform.startswith('linux'):
+        return sorted((cfg for cfg in dirs.values() if cfg.is_dir()), key=lambda p: p.parent.name)
     signed = []
     try:
         text = (Path(folder) / 'config' / 'loginusers.vdf').read_text(encoding='utf-8', errors='replace')
@@ -232,6 +282,17 @@ def accounts(folder):
 
 def added(folder=None):
     """True when an account of this PC has our shortcut."""
+    import sys
+    if sys.platform.startswith('linux'):
+        roots = [Path(folder)] if folder else native_steam_roots()
+        for root in roots:
+            for cfg in accounts(root):
+                try:
+                    if has_shortcut((cfg / 'shortcuts.vdf').read_bytes()):
+                        return True
+                except OSError:
+                    pass
+        return False
     found = (folder, None) if folder else find_steam()
     if not found:
         return False
@@ -244,7 +305,34 @@ def added(folder=None):
     return False
 
 
-def steam_running():
+def steam_running(proc_root='/proc'):
+    """Find the native launcher script, Steam executable, web helper, or Flatpak client in procfs."""
+    import sys
+    if sys.platform.startswith('linux'):
+        try:
+            procs = Path(proc_root).iterdir()
+        except OSError:
+            return False
+        for proc in procs:
+            if not proc.name.isdigit():
+                continue
+            try:
+                comm = (proc / 'comm').read_text(encoding='utf-8').strip().lower()
+                if comm in ('steam', 'steam.sh', 'steamwebhelper'):
+                    return True
+            except OSError:
+                comm = ''
+            if comm not in ('bash', 'sh', 'dash'):
+                continue
+            try:
+                arguments = (proc / 'cmdline').read_bytes().split(b'\0')
+                executables = {Path(argument.decode('utf-8', 'replace')).name.lower()
+                               for argument in arguments if argument}
+                if executables.intersection(('steam', 'steam.sh', 'steamwebhelper')):
+                    return True
+            except OSError:
+                pass
+        return False
     if os.name != 'nt':
         return False
     try:
@@ -278,6 +366,9 @@ def add(layout, game_dir, dump='', log=print, restart=True):
     """Add the game to Steam (or update its old NX2navi shortcut): the pictures from the player's game, the sprig
     icon, the shortcut in every account's shortcuts.vdf, Steam closed first and started again. Returns the sentence
     the launcher shows."""
+    import sys
+    if sys.platform.startswith('linux'):
+        return _add_linux(layout, game_dir, dump, log)
     from . import gameart
     from .ui import art
     found = find_steam()
@@ -290,10 +381,12 @@ def add(layout, game_dir, dump='', log=print, restart=True):
     game = Path(game_dir) / 'ocarina.exe'
     if not game.is_file():
         raise SteamError('The game is not built yet.')
+    artwork_error = ''
     try:
         pics = gameart.make(layout, game_dir, dump)
     except gameart.ArtError as e:
-        raise SteamError(f'The pictures could not be made: {e}.') from None
+        pics = None
+        artwork_error = str(e).splitlines()[0][:120]
     script = layout.data / PLAY_SCRIPT
     write_atomic(script, PLAY_TEXT.encode('utf-8'))
     python = Path(layout.python) / 'pythonw.exe'
@@ -336,3 +429,88 @@ def add(layout, game_dir, dump='', log=print, restart=True):
     if was_running and restart:
         return 'Added to Steam.'
     return 'Added. It shows up the next time you open Steam.'
+
+
+def linux_game_executable(game_dir):
+    return Path(game_dir) / 'ocarina'
+
+
+def game_executable(game_dir):
+    import sys
+    return linux_game_executable(game_dir) if sys.platform.startswith('linux') else Path(game_dir) / 'ocarina.exe'
+
+
+def _add_linux(layout, game_dir, dump, log):
+    """Write one Linux non-Steam shortcut per account, with Steam closed and a backup before each atomic update."""
+    from . import gameart
+    from .ui import art
+    roots = steam_roots()
+    if not roots:
+        log('steam: no Steam installation')
+        raise SteamError('Steam was not found. Install Steam, then try again.')
+    all_cfgs = [(root, cfg) for root in roots for cfg in accounts(root)]
+    flatpak_cfgs = [(number, cfg) for number, (root, cfg) in enumerate(all_cfgs, 1) if is_flatpak_root(root)]
+    cfgs = [(number, root, cfg) for number, (root, cfg) in enumerate(all_cfgs, 1)
+            if not is_flatpak_root(root)]
+    for number, _cfg in flatpak_cfgs:
+        log(f'steam: account {number}: skipped Flatpak Steam; default sandbox has no host access')
+    if not cfgs and flatpak_cfgs:
+        raise SteamError('The Steam Flatpak sandbox cannot run the installed NX2Saria launcher; use native Steam.')
+    if not cfgs:
+        log('steam: no Steam accounts found')
+        raise SteamError('Steam has no account on this PC yet: sign in to Steam once, then try again.')
+    if steam_running():
+        for number, _root, _cfg in cfgs:
+            log(f'steam: account {number}: Steam is open')
+        raise SteamError('Steam is open. Close Steam fully, then select Add to Steam again.')
+    wrapper = Path(layout.root) / 'nx2saria-launcher'
+    if not wrapper.is_file():
+        for number, _root, _cfg in cfgs:
+            log(f'steam: account {number}: launcher wrapper not found')
+        raise SteamError('Install NX2Saria with the AppImage before adding it to Steam.')
+    game = linux_game_executable(game_dir)
+    if not game.is_file():
+        for number, _root, _cfg in cfgs:
+            log(f'steam: account {number}: game not built')
+        raise SteamError('The game is not built yet.')
+    artwork_error = ''
+    try:
+        pics = gameart.make(layout, game_dir, dump)
+    except gameart.ArtError as e:
+        pics = None
+        artwork_error = str(e).splitlines()[0][:120]
+
+    exe, start, options = f'"{wrapper}"', f'"{Path(layout.root)}"', '--play'
+    updated_any = False
+    for index, (number, _root, cfg) in enumerate(cfgs):
+        if steam_running():
+            for pending_number, _pending_root, _pending_cfg in cfgs[index:]:
+                log(f'steam: account {pending_number}: Steam is open')
+            raise SteamError('Steam is open. Close Steam fully, then select Add to Steam again.')
+        vdf = cfg / 'shortcuts.vdf'
+        try:
+            old = vdf.read_bytes()
+            vdf_existed = True
+        except FileNotFoundError:
+            old = b''
+            vdf_existed = False
+        existed = has_shortcut(old)
+        _, sid = add_shortcut(old, exe, start, options, '')
+        grid = cfg / 'grid'
+        grid.mkdir(parents=True, exist_ok=True)
+        icon = grid / f'{sid}_icon.png'
+        images = [(icon.name, art.sprig_icon(128))]
+        if pics:
+            images.extend(((f'{sid}p.png', pics['portrait']), (f'{sid}.png', pics['wide']),
+                           (f'{sid}_hero.png', pics['hero']), (f'{sid}_logo.png', pics['logo'])))
+        for filename, pixels in images:
+            write_atomic(grid / filename, art.png_bytes(pixels))
+        new, got = add_shortcut(old, exe, start, options, str(icon))
+        if vdf_existed:
+            write_atomic(vdf.with_name(vdf.name + '.nx2saria-bak'), old)
+        write_atomic(vdf, new)
+        result = 'updated' if existed else 'created'
+        detail = f'; artwork unavailable: {artwork_error}' if artwork_error else ''
+        log(f'steam: account {number}: {result} shortcut {got}{detail}'[:240])
+        updated_any |= existed
+    return 'Updated in Steam.' if updated_any else 'Added to Steam.'
