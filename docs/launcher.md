@@ -305,6 +305,11 @@ does not redraw. On Windows, Tk's chooser is the system's own.
    `gpu_name`, [building.md](building.md) "Checks"), and `launcher.log` keeps it, so a log read after an update says
    whether the driver cache was built for the card the game runs on. The work is the driver's compiler on the
    processor: the graphics card itself stays nearly idle, so a task manager's graphics load says nothing of which card.
+   The step also says how much each graphics driver's cache folder holds when it begins and when it ends (`graphics
+   driver caches before the step: %LOCALAPPDATA%\NVIDIA\GLCache 2.62 GB in 41,203 files`; on Linux the `nvidia-cache` and
+   `mesa-cache` beside the game; on both the folder `__GL_SHADER_DISK_CACHE_PATH` names): an update that builds everything
+   again finds out there whether the files were gone from the disk or were there and no longer matched (`make_game.py`
+   `say_driver_caches`).
 4. **Draw the Button Prompts**, only when the version holds button art (`app/<version>/prompt-art`, which every
    release carries unless made with `--no-prompt-art`; `build.has_prompt_art`): make_game.py's last step runs `tools/pad_prompts.py` on that art
    and writes the Xbox, PlayStation, Steam Deck and keyboard and mouse prompts into `romfs-patches-*` beside the game (about
