@@ -10,6 +10,7 @@
 #endif
 
 #include "cfg.h"
+#include "gpu_choice.h"
 #include "host.h"
 #include "hw_detect.h"
 #include "mem_budget.h"
@@ -250,9 +251,29 @@ static int name_has(const char *s, const char *sub) {
     return 0;
 }
 
+// 1 when the game can run on pd: Vulkan 1.3, the required extensions and a graphics+present queue family (the tests
+// pick_device makes of each card it considers).
+static int card_usable(VkPhysicalDevice pd) {
+    VkPhysicalDeviceProperties p;
+    vkGetPhysicalDeviceProperties(pd, &p);
+    if (p.apiVersion < VK_API_VERSION_1_3 || missing_required(pd)) return 0;
+    uint32_t nq = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &nq, NULL);
+    VkQueueFamilyProperties *qp = calloc(nq ? nq : 1, sizeof *qp);
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &nq, qp);
+    uint32_t fam = find_gfx_family(pd, qp, nq);
+    free(qp);
+    return fam != UINT32_MAX;
+}
+
+// The fatal error's note on how the card was chosen (gpu_choice.h gpuc_choice_line), empty when it was not or the choice
+// gives no cause to say so. Written once, by pick_device, before the game runs.
+static char g_gpu_choice_note[200];
+
 // First discrete GPU with Vulkan 1.3, the required extensions and a graphics+present queue (of one GPU listed by two
 // drivers, the newer driver's listing); NX2SARIA_GPU_INDEX (index) or NX2SARIA_GPU_NAME (case-insensitive part of the
-// name) overrides.
+// name) overrides. The order the cards are listed in changes (gpu_choice.h): with both set, a gpu_index that lists a card
+// without the name is dropped and the name decides.
 static int pick_device(void) {
     uint32_t n = 0;
     vk_dlssg_enumerate(g_vk.instance, &n, NULL);
@@ -264,13 +285,32 @@ static int pick_device(void) {
     const char *name = cfg_get("NX2SARIA_GPU_NAME");
     int best = -1, best_score = -1, listed = 0;
     uint32_t best_driver = 0;   // the driver version of the best one so far
+    // The cards in the order the loader lists them now: the list for the log, and the names that tell whether a gpu_index
+    // still lists the card it was written for
+    GpucCard *cards = calloc(n, sizeof *cards);
+    VkPhysicalDeviceProperties *props = calloc(n, sizeof *props);
+    for (uint32_t i = 0; i < n; i++) {
+        vkGetPhysicalDeviceProperties(pd[i], &props[i]);
+        const VkPhysicalDeviceProperties *p = &props[i];
+        rt_log("vk: gpu %u: %s (type %d, api %u.%u.%u)", i, p->deviceName, (int)p->deviceType,
+               VK_API_VERSION_MAJOR(p->apiVersion), VK_API_VERSION_MINOR(p->apiVersion), VK_API_VERSION_PATCH(p->apiVersion));
+        cards[i].name = p->deviceName;
+        cards[i].type = (int)p->deviceType;
+    }
+    char line[800];
+    {
+        const int asked = want;
+        int dropped;
+        want = gpuc_index(cards, (int)n, want, name, &dropped);
+        if (dropped) {
+            gpuc_dropped_line(cards, (int)n, asked, name, line, sizeof line);
+            rt_log("%s", line);
+        }
+    }
 retry:
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(pd[i], &p);
-        if (!listed)
-            rt_log("vk: gpu %u: %s (type %d, api %u.%u.%u)", i, p.deviceName, (int)p.deviceType,
-                   VK_API_VERSION_MAJOR(p.apiVersion), VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion));
         if (want >= 0 && (int)i != want) continue;
         if (name && *name && !name_has(p.deviceName, name)) continue;
         // A chosen card of another vendor while DLSS Frame Generation is on: the interposer cannot make its device
@@ -317,12 +357,22 @@ retry:
     }
     if (best < 0) {
         rt_log("vk: no device with Vulkan 1.3 and the required extensions (see above)");
-        free(pd);
+        free(pd), free(cards), free(props);
         return 0;
+    }
+    // A card the settings chose that is not a discrete one, while a discrete one the game can use is listed: the game
+    // may be on the wrong card (gpu_choice.h). The line follows "using gpu" below, the short form goes to a fatal
+    // error's report.
+    int alt = -1;
+    g_gpu_choice_note[0] = 0;
+    if (cards[best].type != GPUC_DISCRETE && (want >= 0 || (name && *name))) {
+        for (uint32_t i = 0; i < n; i++) cards[i].usable = cards[i].type == GPUC_DISCRETE && card_usable(pd[i]);
+        alt = gpuc_choice_line(cards, (int)n, best, want, name, line, sizeof line, g_gpu_choice_note,
+                               sizeof g_gpu_choice_note);
     }
     g_vk.phys = pd[best];
     g_vk.device_index = best;
-    free(pd);
+    free(pd), free(cards), free(props);
     vkGetPhysicalDeviceProperties(g_vk.phys, &g_vk.props);
     vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &g_vk.mem_props);
     uint32_t nq = 0;
@@ -341,6 +391,7 @@ retry:
         }
     free(qp);
     rt_log("vk: using gpu %d: %s", best, g_vk.props.deviceName);
+    if (alt >= 0) rt_log("%s", line);
     hw_detect_device_check(g_vk.props.vendorID, g_vk.props.deviceID, g_vk.props.driverVersion, g_vk.props.deviceName);
     vk_caps_driver(g_vk.phys);   // before vk_mem_class_log, which chooses the pools' storage by driver
     {   // and by whether the device imports dma-bufs (vk_memory.c "dma-buf imports")
@@ -445,8 +496,8 @@ static const char *g_mesh_path = "not decided yet";
 static void fatal_note(void) {
     char mem[512];
     vk_mem_fatal_note(mem, sizeof mem);
-    rt_log("fatal: gpu %s; %s; texture detail %s; mesh draws %s", vk_caps_summary(), mem, vk_texture_detail_name(),
-           g_mesh_path);
+    rt_log("fatal: gpu %s; %s; texture detail %s; mesh draws %s%s%s", vk_caps_summary(), mem, vk_texture_detail_name(),
+           g_mesh_path, g_gpu_choice_note[0] ? "; " : "", g_gpu_choice_note);
 }
 
 // NX2SARIA_TRACE=perf: every device memory allocation VMA makes, timed as the "device memory allocations" work mark

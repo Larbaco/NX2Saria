@@ -291,9 +291,10 @@ settings a preset sets), long before the game makes its Vulkan device. So `runti
 probe of its own:
 
 - a Vulkan 1.3 instance without surface extensions, which lists the devices and picks the one `runtime/vk_device.c`
-  `pick_device` would pick: `gpu_index` or `gpu_name`, else a discrete GPU before an integrated one before any other,
-  among those with Vulkan 1.3 and the extensions the game needs; of one GPU listed by two drivers, the newer driver's
-  listing. It reads the GPU's name, IDs, driver version, type, largest device-local heap and mesh shader support (mesh
+  `pick_device` would pick: `gpu_index` or `gpu_name` (with both set, a `gpu_index` that lists a GPU without that name
+  is dropped and the name decides: `runtime/gpu_choice.h`), else a discrete GPU before an integrated one before any
+  other, among those with Vulkan 1.3 and the extensions the game needs; of one GPU listed by two drivers, the newer
+  driver's listing. It reads the GPU's name, IDs, driver version, type, largest device-local heap and mesh shader support (mesh
   and task shaders both), and is destroyed again;
 - the processor's logical processors and physical cores, the installed memory (`runtime/platform/`), and the handheld.
 

@@ -41,6 +41,7 @@ static int g_font_bad;
 #include "ui/debug_menu.h"
 #include "ui/option_rows.h"
 #include "ui/perf_panel.h"
+#include "gpu_choice.h"   // plain C and C++: no extern "C" for it
 
 extern "C" {
 #include "amiibo.h"
@@ -793,17 +794,25 @@ static void row_shadow_range(void) {
     opt_choice_list("NX2SARIA_SHADOW_RANGE", UI_MENU_SHADOW_RANGE, vals, names, 4, UI_MENU_SHADOW_RANGE_DESC);
 }
 
+// The Graphics card row. The loader lists the cards in an order that changes (gpu_choice.h), so the card chosen is kept
+// by its name beside its position: gpu_index and gpu_name. The row shows the card the draft's two settings pick, the one
+// with the name wherever it is listed now, as the game picks it (vk_device.c pick_device).
 static void row_gpu(void) {
-    const char *vals[MAX_GPUS + 1], *names[MAX_GPUS + 1];
-    char idx[MAX_GPUS][4];
-    vals[0] = "";
+    const char *names[MAX_GPUS + 1];
+    GpucCard cards[MAX_GPUS];
     names[0] = menu_text(UI_MENU_GPU_AUTO);
     for (int i = 0; i < g_gpu_n; i++) {
-        snprintf(idx[i], sizeof idx[i], "%d", i);
-        vals[i + 1] = idx[i];
         names[i + 1] = g_gpu_names[i];
+        cards[i].name = g_gpu_names[i], cards[i].type = GPUC_OTHER, cards[i].usable = 0;
     }
-    opt_choice_list("NX2SARIA_GPU_INDEX", UI_MENU_GPU, vals, names, g_gpu_n + 1, UI_MENU_GPU_DESC);
+    const char *at = opt_value("NX2SARIA_GPU_INDEX");
+    const int cur = gpuc_shown(cards, g_gpu_n, *at ? atoi(at) : -1, opt_value("NX2SARIA_GPU_NAME")) + 1;   // 0: Auto
+    const int nv = opt_choice_index("NX2SARIA_GPU_INDEX", UI_MENU_GPU, names, g_gpu_n + 1, cur, 0, UI_MENU_GPU_DESC);
+    if (nv < 0 || nv > g_gpu_n) return;
+    char pos[8];
+    snprintf(pos, sizeof pos, "%d", nv - 1);
+    opt_apply("NX2SARIA_GPU_INDEX", nv ? pos : "");
+    opt_apply("NX2SARIA_GPU_NAME", nv ? g_gpu_names[nv - 1] : "");
 }
 
 // The regions of the Mals/<region>.Product.<n>.sarc.zs files in the RomFS index ("USen", "EUpl"), listed once; 0 when
