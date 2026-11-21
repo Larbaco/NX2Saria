@@ -666,10 +666,13 @@
 # display on one card or the power source, and an index then names another GPU: the one that was meant stays out and
 # the game runs on the processor's graphics, which share the system's memory and can lose the device at the first
 # save load. So the menu's Graphics card row writes the name beside the index, and when both are set and the index
-# lists a GPU without that name, the name decides (the log says so). An index set alone goes by its position: the log
-# warns when it picks a GPU that is not a discrete one while a discrete one is listed. Leaving both unset takes the
-# discrete GPU, whatever the order; a name keeps one GPU by name. The log's "vk: card choice:" line says what the two
-# hold at each start.
+# lists a GPU without that name, the name decides (the log says so). An index set alone, as every settings file from
+# before that row kept the name has it, counts as unset when it lists a GPU that is not a discrete one while a discrete
+# one the game can use is listed: the game, and the shader preparation of an update, take the discrete GPU, and the
+# log says so. To run on the processor's graphics on purpose, set its name (or choose it in the menu). An index in the
+# environment (NX2SARIA_GPU_INDEX) goes by its position, and the log warns when it picks a GPU that is not a discrete
+# one while a discrete one is listed. Leaving both unset takes the discrete GPU, whatever the order; a name keeps one
+# GPU by name. The log's "vk: card choice:" line says what the two hold at each start.
 # gpu_index = 0
 # gpu_name = NVIDIA
 # Game resolution: the size the game draws its picture and interface in (1280x720 to 7680x4320). Above 1920x1080 the
