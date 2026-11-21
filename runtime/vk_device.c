@@ -13,6 +13,7 @@
 #include "gpu_choice.h"
 #include "host.h"
 #include "hw_detect.h"
+#include "log_stall.h"
 #include "mem_budget.h"
 #include "vk.h"
 #include "platform/platform.h"
@@ -980,6 +981,9 @@ void vk_device_lost_check(VkResult r, const char *where) {
     if (r != VK_ERROR_DEVICE_LOST) return;
     if (plat_xchg32(&vk_lost, 1)) lost_wait_exit(NULL);   // another thread is ending the run: this one stops here
     plat_thread_spawn(lost_wait_exit, (void *)1, "vk lost exit", 0);
+    char at[16];   // when the loss was seen, before the report that follows takes its time
+    log_stamp(at, sizeof at, 0);
+    rt_log("vk: device lost at %s local time (seen at: %s)", at, where);
     device_fault_report();
     rt_fatal_code(RT_LOST_EXIT, "vk: the GPU device was lost (seen at: %s). The run ends here; the lines above name what "
                                 "the GPU was doing", where);

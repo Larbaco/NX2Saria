@@ -402,7 +402,10 @@ puts every imported memory object into every submission (about 0.6 us each), and
 pools share their imports: guest addresses are cut into spans of 64 MiB (`NX2SARIA_DMABUF_MB`), and a pool is a buffer
 bound into its span's memory at its offset. A new span is cut back at the spans already there, so spans overlap only
 where a pool itself lies across an older span's edge: amdgpu counts every span's pages in its GTT use, an overlap twice.
-A span pins all of its pages, those the game never touched included, until some frames after its last pool is gone. It
+A span pins all of its pages, those the game never touched included, until some frames after its last pool is gone. The
+log reports the spans at frames 600 and 1800 and at the end of the run (`mem: dma-buf spans at exit (frame N): ...`): how
+many are live, their size and the pools in them, and since the line before how many were made, in what time (the longest
+took 2.7 s in a session), freed and refused. It
 takes `/dev/udmabuf` readable and writable by the player (recent systemd gives it to the logged-in user with its
 `uaccess` tag; elsewhere it is often `root` and group `kvm` only), udmabuf's `size_limit_mb`
 (`/sys/module/udmabuf/parameters/size_limit_mb`) at 1024 or more, since the largest pools need about 300 MiB in one
@@ -613,6 +616,20 @@ first uses `plat_file_write_cached` or `plat_file_write_atomic`, which do the sa
 helper passes `python tests\part_file_check.py`, which builds it with the platform layer: nothing stands under the
 name while a file is written, an older file stays until the new one is complete and after a write that was given up,
 and a writer killed in the middle leaves the older file whole and the half as `.part`. No game files.
+
+A change to what the log keeps for tracing a stall (`runtime/log_stall.c`, `runtime/platform/proc_pressure.h`, the lines
+that use them: docs/performance.md, "Tracing a stall in the log") passes `python tests\log_stall_check.py`. It builds
+them with stand-ins for the platform's clocks, time zone and pressure readings and checks that: the local time of a
+moment is right in the zone's hours, across midnight, in a zone with a half-hour offset, for a moment some seconds ago
+and for a zone the platform cannot name; an event has its own line up to its limit (5 failed acquires, 3 watchdog
+firings, the first refusal of the physical memory map) and every one is counted, from eight threads at once; the events
+line gives the count of the window and of the run, only what is new, and the run's totals without moving the window on;
+the PSI and `/proc/meminfo` readers take the files of kernels with and without `full` lines, a total over 32 bits and a
+locale whose decimal mark is a comma, and refuse a line that is cut; the system line is right on Linux with and without
+PSI and on Windows, its stall times are differences of the totals (and never negative), and a busy sampling lock is not
+waited for. Statically it checks that each place that writes one of those lines goes through them: the worst frame, the
+presenter's acquires and watchdog, the physical memory map, a slow cache save, the fatal, crash and lost-device
+reports, and the dma-buf spans at the end of the run. No game files, no GPU.
 
 A change to the log queue (`runtime/logq.c`) passes `python tests\logq_check.py`, which builds it with the platform
 layer and a destination of its own: 160,000 lines from eight threads arrive whole and in each thread's order, a line

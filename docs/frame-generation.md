@@ -112,6 +112,20 @@ fg: 600 gameplay frames: 600 generated (100.0%), 0 history starts, 0 without dep
 The runtime's passes (every build but Windows) write the same line with `fsr3fg:`, beside the presenter's own
 `fsr3fg: presenter: ...` and `fsr3fg: N frames recorded, ...` lines.
 
+The presenter of those passes, and the one DLSS Frame Generation uses on Linux (`ngxfg:` in place of `fsr3fg:`), also
+writes the two lines of a picture that did not come out in time, each with the local time it was seen at:
+
+```
+fsr3fg: presenter acquire failed (2) at 14:46:31
+fsr3fg: watchdog: no frame for 1.5 s, at 14:46:33; frames handed 7328, copied signal submitted 7328; GPU rendered 7328 copied 7328
+```
+
+The first is a swapchain image the presenter could not acquire (2 is Vulkan's `VK_TIMEOUT`, after a wait of 1 s); the second
+says the presenter had no frame to show for 1.5 s and where the GPU stood: the frames handed to the presenter and the
+copies' signal that was submitted, against the values the GPU reached. The first 5 acquires and the first 3 firings of
+a run have a line; the `frametime:   events` line of each 60 s window counts all of them (docs/performance.md,
+"Tracing a stall in the log").
+
 ## On the Linux bench
 
 Runs of `tools/run_game.py` with the runtime's passes: Hyrule Field from a save, the camera panning and Link running,
