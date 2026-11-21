@@ -112,6 +112,7 @@ static const char *const known[] = {
     "AUDIO_DUMP", "DEFER_STAMP", "DEPTH_TWIN", "DLAA_ZFIT", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "EVENT_ORDER",
     "GATHER_BIAS", "PIN_SWEEP", "REC_CHECK", "REC_DELAY_US", "REG_ORDER", "SHADOW", "ZERO_LOCALS",
     "HEAP_RETRY", "HEAP_RETRY_TEST_FAIL", "HEAP_RETRY_TEST_SHIPPED",   // heap_retry.c: the set heap_retry and its test switches
+    "CHANGEBANK_HOLD", "CHANGEBANK_HOLD_MS",   // changebank_hold.c: the set changebank_hold and its hold
     // hang_watch.c: the hang watch's seconds
     "HANG_WATCH_S",
     // retired: the settings of the co-op of versions up to 0.9.2; read by nothing, listed so that a file which still

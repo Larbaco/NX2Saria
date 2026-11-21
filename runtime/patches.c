@@ -66,7 +66,8 @@ __attribute__((constructor)) static void wide_bars_register(void) {
 __attribute__((constructor)) static void menu_mouse_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xee0, menu_mouse_screen_host);
 }
-// The set heap_retry's sites call the page's +0xed0 and +0xec0, which heap_retry.c registers.
+// The set heap_retry's sites call the page's +0xed0 and +0xec0, which heap_retry.c registers; the set changebank_hold's
+// site calls its +0xe30, which changebank_hold.c registers.
 #endif
 
 #if RT_PATCH_COUNT
