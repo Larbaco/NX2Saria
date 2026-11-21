@@ -267,14 +267,37 @@ static int card_usable(VkPhysicalDevice pd) {
     return fam != UINT32_MAX;
 }
 
+// gpu_choice.h has no Vulkan header: its GPUC_* kinds are VkPhysicalDeviceType's values, which pick_device, the preset's probe
+// (hw_detect.c) and the menu's row (ui/menu.cpp) copy into GpucCard.type unchanged
+_Static_assert(GPUC_OTHER == VK_PHYSICAL_DEVICE_TYPE_OTHER && GPUC_INTEGRATED == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU &&
+                   GPUC_DISCRETE == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && GPUC_VIRTUAL == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU &&
+                   GPUC_CPU == VK_PHYSICAL_DEVICE_TYPE_CPU,
+               "gpu_choice.h GPUC_* are VkPhysicalDeviceType's values");
+
 // The fatal error's note on how the card was chosen (gpu_choice.h gpuc_choice_line), empty when it was not or the choice
 // gives no cause to say so. Written once, by pick_device, before the game runs.
 static char g_gpu_choice_note[200];
 
+// The card the device was made on and how it was chosen (gpu_choice.h gpuc_prepare_line), for the lines the preparation
+// modes print (vk_pipeline.c): the preparation builds the driver's cache of this card, and the launcher's log is where a
+// player's report of a slow update is read. Written once, by pick_device, before anything reads it.
+static char g_prepare_text[1024];
+
+const char *vk_card_prepare_text(void) { return g_prepare_text; }
+
+int vk_card_usable(VkPhysicalDevice pd) { return card_usable(pd); }
+
+// Which of the discrete cards the game can use (gpu_choice.h GpucCard.usable), before the choice that needs it.
+static void cards_usable(const VkPhysicalDevice *pd, GpucCard *cards, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) cards[i].usable = cards[i].type == GPUC_DISCRETE && card_usable(pd[i]);
+}
+
 // First discrete GPU with Vulkan 1.3, the required extensions and a graphics+present queue (of one GPU listed by two
 // drivers, the newer driver's listing); NX2SARIA_GPU_INDEX (index) or NX2SARIA_GPU_NAME (case-insensitive part of the
 // name) overrides. The order the cards are listed in changes (gpu_choice.h): with both set, a gpu_index that lists a card
-// without the name is dropped and the name decides.
+// without the name is dropped and the name decides; a gpu_index alone that lists a card that is not a discrete one while
+// a discrete one the game can use is listed counts as Auto. The shader preparation modes get their device here too, from
+// the same settings, so they build the cache of the card the game takes.
 static int pick_device(void) {
     uint32_t n = 0;
     vk_dlssg_enumerate(g_vk.instance, &n, NULL);
@@ -299,15 +322,26 @@ static int pick_device(void) {
         cards[i].type = (int)p->deviceType;
     }
     char line[800];
+    const int asked = want;   // gpu_index as the settings give it: the lines below name it
+    const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX");   // set for this run, on purpose (gpu_choice.h)
+    int how = name && *name ? GPUC_BY_NAME : want >= 0 ? GPUC_BY_POSITION : GPUC_BY_AUTO;
+    int usable_known = 0;
     {
-        const int asked = want;
-        gpuc_setting_line(cards, (int)n, want, name, line, sizeof line);   // what the settings hold, agreeing or not
+        // A position alone that lists a card that is not a discrete one gives way to a discrete card the game can use
+        // (gpu_choice.h gpuc_legacy_alt), so which of them the game can use is asked here, and only then
+        if (gpuc_legacy_applies(cards, (int)n, want, name, from_env)) cards_usable(pd, cards, n), usable_known = 1;
+        gpuc_setting_line(cards, (int)n, want, name, from_env, line, sizeof line);   // what the settings hold
         rt_log("%s", line);
-        int dropped;
-        want = gpuc_index(cards, (int)n, want, name, &dropped);
+        int dropped, give_way;
+        want = gpuc_resolve(cards, (int)n, want, name, from_env, &dropped, &give_way);
         if (dropped) {
             gpuc_dropped_line(cards, (int)n, asked, name, line, sizeof line);
             rt_log("%s", line);
+        }
+        if (give_way >= 0) {
+            gpuc_legacy_line(cards, asked, give_way, line, sizeof line);
+            rt_log("%s", line);
+            how = GPUC_BY_LEGACY;
         }
     }
 retry:
@@ -355,7 +389,7 @@ retry:
     if (best < 0 && (want >= 0 || (name && *name))) {
         if (want >= 0) rt_log("vk: NX2SARIA_GPU_INDEX=%d is not usable (see above): the best usable gpu instead", want);
         else rt_log("vk: no usable gpu matches NX2SARIA_GPU_NAME=%s (see above): the best usable gpu instead", name);
-        want = -1, name = NULL, listed = 1;
+        want = -1, name = NULL, listed = 1, how = GPUC_BY_FALLBACK;
         goto retry;
     }
     if (best < 0) {
@@ -368,11 +402,11 @@ retry:
     // error's report.
     int alt = -1;
     g_gpu_choice_note[0] = 0;
-    if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name)) {   // a gpu_index alone (gpuc_choice_line)
-        for (uint32_t i = 0; i < n; i++) cards[i].usable = cards[i].type == GPUC_DISCRETE && card_usable(pd[i]);
+    if (cards[best].type != GPUC_DISCRETE && !usable_known) cards_usable(pd, cards, n), usable_known = 1;
+    if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name))   // a gpu_index alone (gpuc_choice_line)
         alt = gpuc_choice_line(cards, (int)n, best, want, name, line, sizeof line, g_gpu_choice_note,
                                sizeof g_gpu_choice_note);
-    }
+    gpuc_prepare_line(cards, (int)n, best, how, asked, name, g_prepare_text, sizeof g_prepare_text);
     g_vk.phys = pd[best];
     g_vk.device_index = best;
     free(pd), free(cards), free(props);

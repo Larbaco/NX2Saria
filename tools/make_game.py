@@ -2822,7 +2822,113 @@ def left_text(n):
             'in the background')
 
 
+# The folders the graphics drivers keep their own shader caches in. The prepared shaders live only there (the game
+# builds them into the driver's cache and keeps no copy of what the driver makes of them), and a driver that no longer
+# has them makes the next update build every one again: the sample the warm takes (runtime/vk_pipeline.c prep_sample_warm) says
+# that they are gone, and the size of these folders says whether the files were gone from the disk or were there and
+# did not match. On Windows, under %LOCALAPPDATA%: each folder of NVIDIA's, AMD's and Intel's with "cache" in its name
+# (NVIDIA's GLCache and DXCache, AMD's VkCache, DxCache and GLCache, Intel's ShaderCache) and Windows' own D3DSCache.
+# On Linux, the nvidia-cache and mesa-cache folders the game makes beside its executable (runtime/vk_device.c
+# nvidia_cache_beside_exe and mesa_cache_beside_exe). On both, the folder __GL_SHADER_DISK_CACHE_PATH names, which is
+# the NVIDIA driver's own when it honours the variable (the game sets it on Linux; on Windows a player can set it to
+# see whether the driver takes it).
+DRIVER_CACHE_VENDORS = ('NVIDIA', 'AMD', 'Intel')
+DRIVER_CACHE_SCAN_S = 20   # counting all the folders of one line stops after this long, and the line says so
+DRIVER_CACHE_ENV = '__GL_SHADER_DISK_CACHE_PATH'
+
+
+def driver_cache_folders(out, windows=WIN, local_appdata=None):
+    """[(label, folder)] of the driver shader cache folders that exist, in a fixed order, each once: a folder that is
+    a link to another listed one is left out, and so is one that cannot be read. windows and local_appdata: the
+    platform and its LOCALAPPDATA, for the tests."""
+    found = []
+    if windows:
+        base = os.environ.get('LOCALAPPDATA') if local_appdata is None else local_appdata
+        if base:
+            root = Path(base)
+            for vendor in DRIVER_CACHE_VENDORS:
+                try:
+                    entries = list(os.scandir(root / vendor))
+                except OSError:
+                    continue
+                names = sorted(e.name for e in entries if e.is_dir() and 'cache' in e.name.lower())
+                found += [(f'%LOCALAPPDATA%\\{vendor}\\{name}', root / vendor / name) for name in names]
+            if (root / 'D3DSCache').is_dir():
+                found.append(('%LOCALAPPDATA%\\D3DSCache', root / 'D3DSCache'))
+    else:
+        found += [(name, Path(out) / name) for name in ('nvidia-cache', 'mesa-cache') if (Path(out) / name).is_dir()]
+    custom = os.environ.get(DRIVER_CACHE_ENV)
+    if custom and Path(custom).is_dir():
+        found.append((DRIVER_CACHE_ENV, Path(custom)))
+    seen, once = set(), []
+    for label, folder in found:
+        try:
+            key = os.path.normcase(os.path.realpath(folder))
+        except OSError:
+            key = str(folder)
+        if key not in seen:
+            seen.add(key)
+            once.append((label, folder))
+    return once
+
+
+def folder_size(folder, budget_s=DRIVER_CACHE_SCAN_S):
+    """(bytes, files, why): what lies under folder, counted for budget_s seconds at most; links inside it are counted,
+    not followed. why says what the count missed: '' nothing (a folder that is not there is 0, 0, ''), 'the count
+    stopped' when the time ran out, 'some of it could not be read' when the system refused a folder or a file."""
+    total = files = 0
+    why = ''
+    pending = [str(folder)]
+    t0 = time.monotonic()
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            pending.append(e.path)
+                        else:
+                            total += e.stat(follow_symlinks=False).st_size
+                            files += 1
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        why = 'some of it could not be read'
+        except FileNotFoundError:
+            continue
+        except OSError:
+            why = 'some of it could not be read'
+        if pending and time.monotonic() - t0 > budget_s:
+            return total, files, 'the count stopped'
+    return total, files, why
+
+
+def say_driver_caches(out, when):
+    """One line with the size of each driver cache folder (driver_cache_folders), for the log; nothing when there is
+    none. The folders share DRIVER_CACHE_SCAN_S seconds. It never stops the step."""
+    try:
+        deadline = time.monotonic() + DRIVER_CACHE_SCAN_S
+        parts = []
+        for label, folder in driver_cache_folders(out):
+            size, files, why = folder_size(folder, max(0.0, deadline - time.monotonic()))
+            parts.append(f'{label} {size / 2**30:.2f} GB in {files:,} files' + (f' ({why})' if why else ''))
+        if parts:
+            say(f'  graphics driver caches {when}: ' + '; '.join(parts))
+    except Exception as e:  # noqa: BLE001 - a report must never stop the step
+        say(f'  graphics driver caches {when}: not counted ({e})')
+
+
 def step_shaders(out, update=False):
+    """The shaders step (shaders_work), with the size of the graphics drivers' cache folders said before it and after
+    it (say_driver_caches), so that a log tells whether the prepared shaders were still on disk when it began."""
+    say_driver_caches(out, 'before the step')
+    try:
+        shaders_work(out, update)
+    finally:
+        say_driver_caches(out, 'after the step')
+
+
+def shaders_work(out, update=False):
     """Every shader of the game files into the game's shader cache and the driver's own cache, before the first start
     (shader_run reports its progress).
     update: after a kit update the shaders prepared before stay in use and the game translates them again in the

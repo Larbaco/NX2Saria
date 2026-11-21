@@ -668,9 +668,12 @@ the added text by GPU vendor and by why the cache was cold. No game files.
 A change to which GPU the settings choose (`runtime/gpu_choice.h`, `runtime/vk_device.c` `pick_device`,
 `runtime/hw_detect.c` `probe_gpu`, `runtime/ui/menu.cpp` `row_gpu`) passes `python tests\gpu_choice_check.py`, which builds
 the header alone, as C and as C++: a `gpu_index` written for another order of the GPUs (an RTX 3050 and Intel UHD Graphics
-in the two orders one laptop listed them in), what `gpu_name` does to it, the card the menu's row shows, and the exact text
-of the lines the log gets (the card choice at each start, the dropped index, the warning for a GPU that is not a
-discrete one chosen by `gpu_index` alone, the note a fatal error's report carries). No Vulkan headers, no GPU, no game files. With a loader that lists two devices, the same header can be
+in the two orders one laptop listed them in), what `gpu_name` does to it, a `gpu_index` alone that lists a GPU that is not
+a discrete one while a discrete one is usable (it counts as Auto, unless the environment sets it), the card the menu's row
+shows, and the exact text of the lines the log gets (the card choice at each start, the dropped index, the position that
+gave way to Auto, the warning for an environment `gpu_index` that puts the game on a GPU that is not a discrete one, the
+note a fatal error's report carries, and the `prepare-shaders: card:` line the preparation modes print, which the
+launcher's log keeps; `prepare-pipelines: card:` in that mode). No Vulkan headers, no GPU, no game files. With a loader that lists two devices, the same header can be
 run over the real list: `MESA_VK_DEVICE_SELECT=<vendor>:<device>` puts one device first on Linux.
 
 A change to how a run ends when the GPU device is lost (`runtime/vk_device.c` `vk_device_lost_check`, the checks of

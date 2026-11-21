@@ -95,6 +95,7 @@ int vk_fg4_failed(void);                // ... it failed in this run, FSR 3.1's 
 int vk_fg4_active(void);                // ... its swapchain is in place
 const char *vk_fg4_name(void);          // ... the version the library runs here ("3.1.6", "4.0.2")
 int vk_texture_detail_auto(void);       // vk_texture.c: the texture detail auto picks on this card, 0 full to 2 low
+int vk_card_usable(VkPhysicalDevice pd);   // vk_device.c: the game can run on this card (the Graphics card row's discrete ones)
 int vk_exec_replay_workers_auto(const char **why);   // vk_exec.c: replay_workers = auto's count on this PC
 double frame_step_limit_hz(void);
 int frame_limit_adjustable(void);
@@ -675,6 +676,9 @@ static void test_apply_sets(uint64_t frame) {
 // ---- the lists the Screen and Game tabs build
 enum { MAX_GPUS = 8 };
 static char g_gpu_names[MAX_GPUS][VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+static VkPhysicalDevice g_gpu_pd[MAX_GPUS];
+static int g_gpu_type[MAX_GPUS];     // each device's type (VkPhysicalDeviceType)
+static int g_gpu_usable[MAX_GPUS];   // a discrete one the game can use: 1 or 0, -1 while not asked (row_gpu asks when it needs to)
 static int g_gpu_n = -1;   // -1: not listed yet
 
 // The Vulkan devices in vkEnumeratePhysicalDevices order, which NX2SARIA_GPU_INDEX counts in (vk_device.c pick_device).
@@ -687,6 +691,9 @@ static void list_gpus(VkInstance inst) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(pd[i], &p);
         snprintf(g_gpu_names[i], sizeof g_gpu_names[i], "%s", p.deviceName);
+        g_gpu_pd[i] = pd[i];
+        g_gpu_type[i] = (int)p.deviceType;
+        g_gpu_usable[i] = -1;
     }
     g_gpu_n = (int)n;
 }
@@ -796,17 +803,28 @@ static void row_shadow_range(void) {
 
 // The Graphics card row. The loader lists the cards in an order that changes (gpu_choice.h), so the card chosen is kept
 // by its name beside its position: gpu_index and gpu_name. The row shows the card the draft's two settings pick, the one
-// with the name wherever it is listed now, as the game picks it (vk_device.c pick_device).
+// with the name wherever it is listed now, as the game picks it (vk_device.c pick_device): Auto for a gpu_index alone
+// that lists a card that is not a discrete one while a discrete one is usable, which the game takes as Auto.
 static void row_gpu(void) {
     const char *names[MAX_GPUS + 1];
     GpucCard cards[MAX_GPUS];
     names[0] = menu_text(UI_MENU_GPU_AUTO);
     for (int i = 0; i < g_gpu_n; i++) {
         names[i + 1] = g_gpu_names[i];
-        cards[i].name = g_gpu_names[i], cards[i].type = GPUC_OTHER, cards[i].usable = 0;
+        cards[i].name = g_gpu_names[i], cards[i].type = g_gpu_type[i], cards[i].usable = 0;
     }
     const char *at = opt_value("NX2SARIA_GPU_INDEX");
-    const int cur = gpuc_shown(cards, g_gpu_n, *at ? atoi(at) : -1, opt_value("NX2SARIA_GPU_NAME")) + 1;   // 0: Auto
+    const int want = *at ? atoi(at) : -1, from_env = cfg_from_env("NX2SARIA_GPU_INDEX") != 0;
+    const char *name = opt_value("NX2SARIA_GPU_NAME");
+    // Which discrete cards the game can use matters only to a gpu_index alone that lists a card that is not a discrete one
+    // (gpu_choice.h gpuc_legacy_alt), so it is asked then, once for each card, and not at every other draw of the row.
+    if (gpuc_legacy_applies(cards, g_gpu_n, want, name, from_env))
+        for (int i = 0; i < g_gpu_n; i++) {
+            if (cards[i].type != GPUC_DISCRETE) continue;
+            if (g_gpu_usable[i] < 0) g_gpu_usable[i] = vk_card_usable(g_gpu_pd[i]);
+            cards[i].usable = g_gpu_usable[i];
+        }
+    const int cur = gpuc_shown(cards, g_gpu_n, want, name, from_env) + 1;   // 0: Auto
     const int nv = opt_choice_index("NX2SARIA_GPU_INDEX", UI_MENU_GPU, names, g_gpu_n + 1, cur, 0, UI_MENU_GPU_DESC);
     if (nv < 0 || nv > g_gpu_n) return;
     char pos[8];

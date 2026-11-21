@@ -2019,6 +2019,12 @@ class MakeGameTest(Tmp):
         probe = mock.patch.object(make_game, 'probe_toolchain', lambda msys, work: None)
         probe.start()
         self.addCleanup(probe.stop)
+        # the shaders step counts the graphics drivers' cache folders (say_driver_caches): none here, so that a PC's real
+        # caches are not scanned twice by every step of these tests (test_the_driver_cache_folders... use the real function)
+        self.real_driver_cache_folders = make_game.driver_cache_folders
+        folders = mock.patch.object(make_game, 'driver_cache_folders', lambda out, **kw: [])
+        folders.start()
+        self.addCleanup(folders.stop)
 
     def run_mg(self, *args):
         events, lines = [], []
@@ -2306,6 +2312,180 @@ class MakeGameTest(Tmp):
             self.assertNotIn(unwanted, text)
         self.assertTrue(self.mg.left_text(1).startswith('1 shader the graphics driver was still building'))
         self.assertTrue(self.mg.left_text(3).startswith('3 shaders the graphics driver was still building'))
+
+    def test_the_driver_cache_folders_are_found_and_counted(self):
+        """The graphics drivers' cache folders the shaders step reports (make_game.py driver_cache_folders): on Windows
+        every folder with "cache" in its name under the vendor's folder in LOCALAPPDATA, and Windows' own; on Linux the
+        two the game makes beside its executable; on both the folder __GL_SHADER_DISK_CACHE_PATH names; each once. A
+        count says what it missed: the time ran out, or the system refused something."""
+        folders = self.real_driver_cache_folders
+        local = self.tmp / 'local'
+        gl = local / 'NVIDIA' / 'GLCache'
+        (gl / 'ab').mkdir(parents=True)
+        (gl / 'ab' / 'x.bin').write_bytes(b'x' * 1000)
+        (gl / 'y.toc').write_bytes(b'y' * 24)
+        (local / 'NVIDIA' / 'NvBackend').mkdir()     # no "cache" in its name
+        (local / 'NVIDIA' / 'OtherCache').write_bytes(b'a file, not a folder')
+        (local / 'NVIDIA' / 'DXCache').mkdir()
+        (local / 'AMD' / 'VkCache').mkdir(parents=True)
+        (local / 'Intel' / 'Other').mkdir(parents=True)
+        (local / 'D3DSCache').mkdir()
+        (local / 'Unrelated' / 'Cache').mkdir(parents=True)
+        self.out.mkdir()
+        with mock.patch.dict(os.environ):
+            os.environ.pop(self.mg.DRIVER_CACHE_ENV, None)
+            win = folders(self.out, windows=True, local_appdata=str(local))
+            self.assertEqual([label for label, _ in win],
+                             ['%LOCALAPPDATA%\\NVIDIA\\DXCache', '%LOCALAPPDATA%\\NVIDIA\\GLCache',
+                              '%LOCALAPPDATA%\\AMD\\VkCache', '%LOCALAPPDATA%\\D3DSCache'])
+            self.assertEqual(folders(self.out, windows=True, local_appdata=str(self.tmp / 'none')), [])
+            self.assertEqual(folders(self.out, windows=True, local_appdata=''), [])
+            self.assertEqual(folders(self.out, windows=False), [])
+            (self.out / 'mesa-cache').mkdir()
+            (self.out / 'nvidia-cache').mkdir()
+            self.assertEqual([label for label, _ in folders(self.out, windows=False)], ['nvidia-cache', 'mesa-cache'])
+            # the folder the NVIDIA driver is told to use comes last, and only when it is there
+            custom = self.tmp / 'nvcache'
+            os.environ[self.mg.DRIVER_CACHE_ENV] = str(custom)
+            self.assertNotIn(self.mg.DRIVER_CACHE_ENV, [label for label, _ in folders(self.out, windows=False)])
+            custom.mkdir()
+            self.assertEqual([label for label, _ in folders(self.out, windows=False)],
+                             ['nvidia-cache', 'mesa-cache', self.mg.DRIVER_CACHE_ENV])
+            self.assertEqual(folders(self.out, windows=True, local_appdata=str(local))[-1][0], self.mg.DRIVER_CACHE_ENV)
+            # a folder that is a link to one already listed is listed once
+            os.environ.pop(self.mg.DRIVER_CACHE_ENV)
+            try:
+                (local / 'Intel' / 'ShaderCache').symlink_to(gl, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                pass   # no links here (Windows without the privilege)
+            else:
+                self.assertEqual(len(folders(self.out, windows=True, local_appdata=str(local))), len(win))
+        size = self.mg.folder_size
+        self.assertEqual(size(gl), (1024, 2, ''))
+        self.assertEqual(size(local / 'D3DSCache'), (0, 0, ''))
+        self.assertEqual(size(self.tmp / 'missing'), (0, 0, ''))
+        self.assertEqual(size(gl, budget_s=-1), (24, 1, 'the count stopped'))   # out of time after the first folder
+        # a count with nothing left to count is complete, whatever the time: only a folder still to read is cut off
+        flat = local / 'AMD' / 'VkCache'
+        (flat / 'only.bin').write_bytes(b'z' * 7)
+        self.assertEqual(size(flat, budget_s=-1), (7, 1, ''))
+        # a folder the system refuses is not an empty one, and neither is a file it refuses
+        with mock.patch.object(self.mg.os, 'scandir', side_effect=PermissionError('denied')):
+            self.assertEqual(size(gl), (0, 0, 'some of it could not be read'))
+
+        class Refused:   # a directory entry whose size the system will not give
+            path = 'refused'
+
+            def is_dir(self, follow_symlinks=True):
+                return False
+
+            def stat(self, follow_symlinks=True):
+                raise PermissionError('denied')
+
+        class Listing:
+            def __enter__(self):
+                return iter([Refused()])
+
+            def __exit__(self, *exc):
+                return False
+
+        with mock.patch.object(self.mg.os, 'scandir', lambda path: Listing()):
+            self.assertEqual(size(gl), (0, 0, 'some of it could not be read'))
+        with mock.patch.object(self.mg.os, 'scandir', side_effect=FileNotFoundError('gone')):
+            self.assertEqual(size(gl), (0, 0, ''))
+        # a link inside the folder is not followed, so a loop ends
+        try:
+            (gl / 'loop').symlink_to(gl, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            total, files, why = size(gl, budget_s=5)
+            self.assertEqual((files, why), (3, ''))   # the link is one more file, of the size of the link itself
+            self.assertGreater(total, 1024)
+
+    def test_the_shaders_step_says_what_the_driver_caches_held_before_and_after(self):
+        """The shaders step says the size of the driver cache folders when it begins and when it ends, with the step's own
+        lines between, also when it fails, so that a log tells whether the prepared shaders were still on disk when an
+        update began; a count that raises is said and the step goes on."""
+        kit = self.tmp / 'kit'
+        (kit / 'tools').mkdir(parents=True)
+        (kit / 'tools' / 'prepare_shaders.py').write_text(
+            'print("the step runs here", flush=True)\nprint("prepare-shaders: progress build 1 1", flush=True)\n')
+        cache = self.tmp / 'drivercache'
+        cache.mkdir()
+        self.out.mkdir()
+        self.addCleanup(setattr, self.mg, 'KIT', self.mg.KIT)
+        self.mg.KIT = kit
+        sizes = iter([(2 ** 30, 41203, ''), (3 * 2 ** 30, 41203, '')])   # what the folder holds at the first count and at the second
+        other = self.tmp / 'other'
+        other.mkdir()
+
+        def folders(out):
+            return [('%LOCALAPPDATA%\\NVIDIA\\GLCache', cache), ('%LOCALAPPDATA%\\AMD\\VkCache', other)]
+
+        def size(folder, budget_s=0):
+            if folder == other:
+                return 0, 0, 'the count stopped'
+            return next(sizes)
+
+        buf = io.StringIO()
+        with mock.patch.object(self.mg, 'driver_cache_folders', folders), \
+                mock.patch.object(self.mg, 'folder_size', size), contextlib.redirect_stdout(buf):
+            self.mg.step_shaders(self.out)
+        lines = buf.getvalue().splitlines()
+        before = [i for i, ln in enumerate(lines) if ln.startswith('  graphics driver caches before the step: ')]
+        after = [i for i, ln in enumerate(lines) if ln.startswith('  graphics driver caches after the step: ')]
+        marker = lines.index('the step runs here')
+        self.assertEqual((len(before), len(after)), (1, 1))
+        self.assertLess(before[0], marker)    # counted before the step runs, and again once it has ended
+        self.assertLess(marker, after[0])
+        self.assertEqual(lines[before[0]], '  graphics driver caches before the step: %LOCALAPPDATA%\\NVIDIA\\GLCache '
+                                           '1.00 GB in 41,203 files; %LOCALAPPDATA%\\AMD\\VkCache 0.00 GB in 0 files '
+                                           '(the count stopped)')
+        self.assertTrue(lines[after[0]].startswith('  graphics driver caches after the step: %LOCALAPPDATA%\\NVIDIA\\GLCache '
+                                                   '3.00 GB in 41,203 files; '))
+        # a step that fails still says what the caches hold afterwards, and the failure is not hidden
+        sizes = iter([(5, 1, ''), (6, 1, '')])
+        buf = io.StringIO()
+        with mock.patch.object(self.mg, 'driver_cache_folders', lambda out: [('c', cache)]), \
+                mock.patch.object(self.mg, 'folder_size', size), \
+                mock.patch.object(self.mg, 'shaders_work', side_effect=SystemExit(1)), \
+                contextlib.redirect_stdout(buf), self.assertRaises(SystemExit):
+            self.mg.step_shaders(self.out)
+        self.assertEqual(buf.getvalue().count('graphics driver caches'), 2)
+        # a count that raises, whatever it raises, is said, and does not stop the step
+        for error in (OSError('access denied'), RuntimeError('odd')):
+            buf = io.StringIO()
+
+            def broken(out, error=error):
+                raise error
+
+            with mock.patch.object(self.mg, 'driver_cache_folders', broken), contextlib.redirect_stdout(buf):
+                self.mg.step_shaders(self.out)
+            self.assertIn(f'graphics driver caches before the step: not counted ({error})', buf.getvalue())
+            self.assertIn(f'graphics driver caches after the step: not counted ({error})', buf.getvalue())
+        # no folders, no lines
+        buf = io.StringIO()
+        with mock.patch.object(self.mg, 'driver_cache_folders', lambda out: []), contextlib.redirect_stdout(buf):
+            self.mg.step_shaders(self.out)
+        self.assertNotIn('graphics driver caches', buf.getvalue())
+        # the folders of one line share the time: each is given what is left of it, none when it is spent
+        given = []
+
+        def size_given(folder, budget_s=0):
+            given.append(budget_s)
+            return 0, 0, ''
+
+        clock = iter([100.0, 110.0, 135.0])   # the line begins, the first folder is asked 10 s in, the second 35 s in
+        with mock.patch.object(self.mg, 'driver_cache_folders', folders), mock.patch.object(self.mg, 'folder_size', size_given), \
+                mock.patch.object(self.mg.time, 'monotonic', lambda: next(clock)), contextlib.redirect_stdout(io.StringIO()):
+            self.mg.say_driver_caches(self.out, 'x')
+        self.assertEqual(given, [self.mg.DRIVER_CACHE_SCAN_S - 10.0, 0.0])
+        # the step hands on whether it is an update
+        for update in (False, True):
+            with mock.patch.object(self.mg, 'shaders_work') as work, contextlib.redirect_stdout(io.StringIO()):
+                self.mg.step_shaders(self.out, update)
+            work.assert_called_once_with(self.out, update)
 
     def test_shaders_step_packs_the_cache(self):
         """After the preparation the shaders step folds the loose files of the shader cache into shader-cache.pack
