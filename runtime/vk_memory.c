@@ -78,7 +78,9 @@ typedef struct PoolRec {
     int nvmaps, cvmaps;
     VkBuffer mbuf;                     // MS_ON: device-local copy of [import_lo, import_hi), same offsets as buf
     VmaAllocation malloc_;
-    uint32_t acc_sub;                  // replay: the last submission that synced the mirror (mirror_sync)
+    // replay: the last submission that synced the mirror (mirror_sync). Relaxed atomic (acc_of, acc_set): the replay
+    // workers read it on vk_mem_use's unlocked fast path while another one's mirror_sync sets it under use_lock.
+    uint32_t acc_sub;
     uint32_t pm_frame;                 // replay: the frame (pframe) of pm_cur
     uint8_t pm_cur, pm_prev;           // replay: the places in their frame (vk_sub_in_frame, 7 the rest) of the submissions
                                        // that synced it, in frame pm_frame and in the one before (NX2SARIA_PRESNAP_PLACE)
@@ -90,7 +92,9 @@ typedef struct PoolRec {
     uint8_t refused_why;               // replay: the MR_* reason of its refusal, for the counts when it is asked again
     uint8_t asked_room;                // replay: its refusal already asked the textures for room (once until it gets one)
     uint8_t twin;                      // MS_ON: the table's writes reach guest memory too (twin_wanted); 0: the mirror only
-    uint32_t vd_wrote_sub, vd_use_sub; // verify mode: the last submission that bound it written / used its mirror
+    // verify mode: the last submission that bound it written / used its mirror. vd_use_sub is a relaxed atomic: every
+    // replay worker that uses the mirror stores the same value.
+    uint32_t vd_wrote_sub, vd_use_sub;
     uint64_t vd_wrote_n;               // verify mode: written bindings of it so far
     struct WbSpan { uint64_t lo, hi, fence; } *cws;   // replay: the byte ranges of its merges the CPU stores
     int ncws, ccws;                                   // (NX2SARIA_MERGE_CPU) and their values, until done
@@ -127,6 +131,10 @@ typedef struct PoolRec {
     uint64_t st_pages, st_flush, st_wb, st_merge;   // bytes: written pages and flush ranges copied up, GPU writes back
     uint32_t st_syncs;                              // syncs
 } PoolRec;
+
+static inline uint32_t acc_of(const PoolRec *r) { return __atomic_load_n(&r->acc_sub, __ATOMIC_RELAXED); }
+static inline void acc_set(PoolRec *r, uint32_t v) { __atomic_store_n(&r->acc_sub, v, __ATOMIC_RELAXED); }
+static inline void used_by(PoolRec *r, uint32_t sub) { __atomic_store_n(&r->vd_use_sub, sub, __ATOMIC_RELAXED); }
 
 static void mirror_forget(PoolRec *r);   // pool_lock exclusive: off the mirrored list
 static void cpu_span_add(PoolRec *r, uint64_t lo, uint64_t hi, uint64_t fence);   // NX2SARIA_MERGE_CPU
@@ -2829,12 +2837,12 @@ static uint64_t mirror_evict(uint64_t need, uint32_t min_idle, const char *why) 
     plat_mutex_lock(&pool_lock);
     for (int i = 0; i < nm; i++) {   // the MAXV least recently synced candidates, oldest first
         PoolRec *r = mlist[i];
-        uint32_t age = msub - r->acc_sub;
+        uint32_t age = msub - acc_of(r);
         if (age < min_idle || r->wb_sub == msub || msub - r->wb_sub < 2) continue;
         if (!r->twin && r->gpa_rec) continue;   // the table's writes are in the mirror alone
         if (r->wb_kept) continue;               // so are the bytes wb_skip kept from guest memory
         int at = nv;
-        while (at > 0 && msub - v[at - 1]->acc_sub < age) at--;
+        while (at > 0 && msub - acc_of(v[at - 1]) < age) at--;
         if (at == MAXV) continue;
         if (nv < MAXV) nv++;
         memmove(v + at + 1, v + at, sizeof *v * (size_t)(nv - 1 - at));
@@ -2880,10 +2888,10 @@ static uint64_t mirror_evict(uint64_t need, uint32_t min_idle, const char *why) 
         int on = 0;
         for (int i = 0; i < nm && !on; i++) on = mlist[i] == r;
         if (!on || r->mbuf != (VkBuffer)(uintptr_t)rel[k][2]) continue;   // finalized meanwhile: its mirror is fini's
-        idle_for[n] = msub - r->acc_sub;
+        idle_for[n] = msub - acc_of(r);
         mem_lazy_release((const uint64_t (*)[3])&rel[k], 1);   // all of it at 0 or past nr, else what was armed since
         mirror_forget(r);   // off the list, mirror_gen bumped: no buffer use gets the mirror from here on
-        r->mstate = MS_NONE, r->acc_sub = 0, r->retry_sub = 0;
+        r->mstate = MS_NONE, acc_set(r, 0), r->retry_sub = 0;
         dead[n] = r->mbuf, dead_a[n] = r->malloc_;
         r->mbuf = VK_NULL_HANDLE, r->malloc_ = NULL;
         plat_mutex_lock(&flush_lock);   // flushes not copied yet: the next mirror starts from a whole copy
@@ -3096,7 +3104,7 @@ static void mirror_create(PoolRec *r) {
     // when it finds MS_ON there, and destroy_rec frees the record without looking at the list: a finalize between the
     // insertion and a later MS_ON left a freed record on mlist, and with NX2SARIA_GPA_LATE=0 a table record that named
     // the destroyed buffer. acc_sub before mstate: vk_mem_use's unlocked fast path reads mstate, then acc_sub.
-    r->acc_sub = msub;
+    acc_set(r, msub);
     r->mstate = MS_ON;
     r->asked_room = 0;
     r->twin = (uint8_t)twin;
@@ -3193,7 +3201,7 @@ static void pool_dead_drain(VkCtx *c, int by) {
 // Replay thread, the first access of this submission: queues the copies of the pages written since the last sync.
 static void mirror_sync(PoolRec *r) {
     uint64_t t0 = qpc();
-    r->acc_sub = msub;
+    acc_set(r, msub);
     pm_note(r);
     uint64_t lo = r->import_lo, hi = r->import_hi;
     uint64_t r0 = lo >> SNAP_SHIFT, r1 = (hi - 1) >> SNAP_SHIFT;
@@ -3328,7 +3336,7 @@ void vk_mem_shadow_sync(uint64_t fence) {
         // date, and the prologue records them ahead of the part, after the write-backs of the submissions before it.
         // No mirror is made for a reader of the table.
         for (int i = 0; table && i < nstab; i++)
-            if (stab[i]->mstate == MS_ON && stab[i]->acc_sub != msub) mirror_sync(stab[i]);
+            if (stab[i]->mstate == MS_ON && acc_of(stab[i]) != msub) mirror_sync(stab[i]);
         if (table) s_tab_ticks += qpc() - t1, s_tab_syncs++;
     }
     s_ticks += qpc() - t0;
@@ -3343,8 +3351,8 @@ static PlatMutex use_lock = PLAT_MUTEX_INIT;
 static void mem_use_locked(VkMemSpan *sp);
 void vk_mem_use(VkMemSpan *sp) {
     PoolRec *r = sp->pool;
-    if (r->mstate == MS_ON && r->acc_sub == msub) {
-        r->vd_use_sub = msub;
+    if (r->mstate == MS_ON && acc_of(r) == msub) {
+        used_by(r, msub);
         sp->buffer = r->mbuf;
         return;
     }
@@ -3372,8 +3380,8 @@ static void mem_use_locked(VkMemSpan *sp) {
         vk_mem_note_live();
         return;
     }
-    if (r->acc_sub != msub) mirror_sync(r);
-    r->vd_use_sub = msub;
+    if (acc_of(r) != msub) mirror_sync(r);
+    used_by(r, msub);
     sp->buffer = r->mbuf;
 }
 
@@ -3384,10 +3392,10 @@ void vk_mem_pick(VkMemSpan *sp) {
         vk_mem_note_live();
         return;
     }
-    if (r->acc_sub != msub) {
+    if (acc_of(r) != msub) {
         int lk = vk_exec_shared();
         if (lk) plat_mutex_lock(&use_lock);
-        if (r->acc_sub != msub) mirror_sync(r);
+        if (acc_of(r) != msub) mirror_sync(r);
         if (lk) plat_mutex_unlock(&use_lock);
     }
     sp->buffer = r->mbuf;
@@ -4712,7 +4720,7 @@ void vk_mem_mirror_begin(void) {
     pplace = pl;
     for (int i = 0; i < nm; i++) {
         const PoolRec *r = mlist[i];
-        if (pp ? !(pm_last(r) >> pl & 1) : r->acc_sub != prev) continue;
+        if (pp ? !(pm_last(r) >> pl & 1) : acc_of(r) != prev) continue;
         uint64_t a = r->import_lo >> SNAP_SHIFT, b = (r->import_hi - 1) >> SNAP_SHIFT;
         if (have && a <= run1 + 1 + (uint64_t)mirror_gap) {
             if (b > run1) run1 = b;
@@ -4975,7 +4983,8 @@ static void verify_cb(void *arg) {   // completion thread
                 for (int b = 0; b < 16; b++) snprintf(mh + 3 * b, 4, "%02x ", m[b]), snprintf(gh + 3 * b, 4, "%02x ", g[b]);
                 rt_log("mem: verify mismatch detail: written binds %llu, last %u; used %u; written back %u; gpa record %u; "
                        "page cpu stamp %llu (synced to %llu, now %llu); mirror %s| guest %s",
-                       (unsigned long long)r->vd_wrote_n, r->vd_wrote_sub, r->vd_use_sub, wb, r->gpa_rec,
+                       (unsigned long long)r->vd_wrote_n, r->vd_wrote_sub, __atomic_load_n(&r->vd_use_sub, __ATOMIC_RELAXED),
+                       wb, r->gpa_rec,
                        (unsigned long long)(gs ? __atomic_load_n(gs, __ATOMIC_RELAXED) : 0),
                        (unsigned long long)s->mgen, (unsigned long long)__atomic_load_n(&gen_now, __ATOMIC_RELAXED),
                        mh, gh);
@@ -5338,7 +5347,7 @@ static void pool_census_log(uint64_t frame) {
         else nn++, nb += n;
         if (r->mstate != MS_ON) continue;
         mn++, mb += n;
-        if (sub - r->acc_sub >= MIRROR_IDLE) in++, ib += n;
+        if (sub - acc_of(r) >= MIRROR_IDLE) in++, ib += n;
     }
     plat_mutex_unlock_shared(&pool_lock);
     const double M = 1048576.0;

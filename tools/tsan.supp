@@ -1,1 +1,10 @@
 # Add only investigated benign reports or false positives, with the reason for each suppression.
+
+# A mirror's state (PoolRec.mstate) and buffer, read on vk_mem_use's unlocked fast path while another replay worker's
+# mirror_create sets them under use_lock (vk_memory.c). Benign: the buffer is made before MS_ON is stored, the mirror's
+# first copy is queued by the same use_lock hold, and the part's prologue that holds it is built after group_drain, so
+# the GPU runs the copy before any chunk's draw that binds the mirror. Atomic accesses there cost about 2% in Kokiri
+# Forest on the bench, so they were taken out (https://github.com/Larbaco/NX2Saria/pull/49#issuecomment-7049824103,
+# https://github.com/Larbaco/NX2Saria/pull/49#issuecomment-7064849565). race_top: only reports whose racing access is
+# in vk_mem_use itself, not those that merely pass through it.
+race_top:vk_mem_use
