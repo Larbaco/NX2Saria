@@ -66,6 +66,18 @@ def static_checks():
           'ft.worst[i].at = now' in frame and 'log_pressure_baseline(' in frame)
     check('perf.c: a fatal error\'s summary goes through ft_report, so it has the events and the system line',
           'ft_report(kern_now_ns(), "at a fatal error")' in function(perf, 'void perf_summary_flush_try(void)'))
+    once = function(perf, 'static void events_whole_once(void)')
+    check('perf.c: the events of the whole run are written once (a fatal error during the exit, or a second end, finds them written)',
+          'plat_xchg32(&events_whole_done, 1)' in once and 'log_events_text(note, sizeof note, 1)' in once
+          and once.index('plat_xchg32(') < once.index('log_events_text('))
+    for name, sig in (('an exit', 'void perf_summary_flush(void)'), ('a fatal error', 'void perf_summary_flush_try(void)')):
+        body = function(perf, sig)
+        tail = body[body.index('} else {'):] if '} else {' in body else ''
+        check(f'perf.c: an end before the first present still writes the events of the run, at {name} (in the else of summary_t0)',
+              'if (summary_t0) {' in body and 'events_whole_once()' in tail)
+    check('perf.c ft_report takes the whole run through events_whole_once at the exit and at a fatal error, not through the window',
+          'events_whole_once()' in report and 'log_events_text(note, sizeof note, 0)' in report
+          and 'log_events_text(note, sizeof note, whole)' not in report)
 
     present = source('gfx_present.c')
     show = function(present, 'static int ng_show(')

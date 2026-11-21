@@ -105,7 +105,7 @@ frametime:   system at 14:46:31: PSI memory avg10 some 3.2% full 1.1% (stalled i
   firings (the lines stop after 5 and 3), and the refusals of `MapPhysicalMemory` and `UnmapPhysicalMemory` (a session had
   132, with one line each; now the first of each kind has its line, and so has a refusal with another result than the
   last one logged). At the end of the run and at a fatal error the line reads `frametime:   events in the whole run: ...`,
-  with the totals of the run.
+  with the totals of the run, also when the run ended before its first frame.
 - **system** is how the machine fared, to tell a stall in the game from one the machine put on it. On Linux it reads
   the kernel's pressure stall information, `/proc/pressure/memory` and `/proc/pressure/io` (kernel 4.20 or newer
   with PSI on; `PSI not available` otherwise): `some` is the share of the last 10 s in which at least one task waited on

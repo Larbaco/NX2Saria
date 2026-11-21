@@ -652,6 +652,17 @@ void perf_replay_op_at(int cat, uint32_t op, uint64_t ns) {
     if ((int64_t)ns > fr_max_ns) fr_max_ns = (int64_t)ns, fr_max_op = op;
 }
 
+// The events of the whole run (log_stall.c), once: the orderly end writes them, and a fatal error or a second call during
+// that end (the pipeline save takes seconds) finds them written. A run that ends before its first present has no
+// frame-time period to carry them, so the ends write them on their own then: refusals of the physical memory map are
+// counted from the start of the boot, and a boot that ends in a fatal error would have the first line of each and no count.
+static volatile int32_t events_whole_done;
+static void events_whole_once(void) {
+    char note[900];
+    if (plat_xchg32(&events_whole_done, 1)) return;
+    if (log_events_text(note, sizeof note, 1)) rt_log("frametime:   events in the whole run: %s", note);
+}
+
 static void ft_report(uint64_t now, const char *tag) {
     if (ft.frames && ft.sum) {
         uint64_t cut = (ft.frames + 99) / 100, acc = 0, low = 0;   // the slowest 1% of frames
@@ -729,8 +740,8 @@ static void ft_report(uint64_t now, const char *tag) {
     // whole run's at the end), and the machine's memory and I/O pressure, so a stall that has a cause outside the game
     // shows in the minute it happened in (log_stall.c).
     char note[900];
-    int whole = !strcmp(tag, "exit") || !strcmp(tag, "at a fatal error");
-    if (log_events_text(note, sizeof note, whole)) rt_log("frametime:   events%s: %s", whole ? " in the whole run" : "", note);
+    if (!strcmp(tag, "exit") || !strcmp(tag, "at a fatal error")) events_whole_once();
+    else if (log_events_text(note, sizeof note, 0)) rt_log("frametime:   events: %s", note);
     if (log_pressure_text(note, sizeof note)) rt_log("frametime:   %s", note);
     memset(&ft, 0, sizeof ft);
     memset(rp_ns, 0, sizeof rp_ns);
@@ -783,6 +794,8 @@ void perf_summary_flush(void) {   // at exit (prof_write)
         ft_report(kern_now_ns(), "exit");
         stutter_report("exit");
         gfx_exit_log();
+    } else {
+        events_whole_once();   // an end before the first present (summary_t0 is also 0 after a first end: written once)
     }
     summary_t0 = 0;
 }
@@ -796,6 +809,8 @@ void perf_summary_flush_try(void) {
     if (summary_t0) {
         ft_report(kern_now_ns(), "at a fatal error");
         if (!stutter_report_as("at a fatal error", 1)) rt_log("stutter map: its lock is held; not written at the fatal error");
+    } else {
+        events_whole_once();   // an end before the first present (summary_t0 is also 0 after a first end: written once)
     }
     summary_t0 = 0;
 }
