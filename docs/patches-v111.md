@@ -48,3 +48,10 @@ The startup `patches:` line lists `wide_balloon on` or `wide_balloon off`. It lo
 Where two maps' load radii overlap, such as the Market's square, walking and turning around made the game's pick of the neighbouring map to preload flip between them, and each flip cancelled the map that was loading and started the other. The patch holds the map being preloaded until the game's pick has left it for 2 seconds. Set `changebank_hold=0` and restart to disable it; `changebank_hold_ms` sets the time (`0` gives the game's pick at every update and only counts it). See `docs/changebank-hold.md`.
 
 Look for `changebank hold: on, 2000 ms` at startup. A held pick that went back logs `changebank hold: kept <map> preloading while the game chose <other> for N ms`, up to eight times per session, and a minute line counts the game's flips and the held picks.
+
+## The camera's clearance on wide pictures
+
+The camera keeps a sphere clear of walls, sized from its near plane and the picture's ratio. On a picture wider than 16:9 the sphere grew with the ratio (1.26 times its 16:9 size at 21:9, about 1.8 times at 32:9), so the camera could stay behind at the mouth of a crawl passage instead of following Link in. The patch sizes the sphere from 16:9 when the camera hands it the picture's own ratio; the picture and everything else keep the wide ratio. Set `camera_clearance_fix=0` and restart to disable it.
+
+The startup `patches:` line lists `camera_clearance on` or `camera_clearance off`, and `camera clearance: on` follows. The first ratio each of the two places loads is logged once (`camera clearance: the first ratio at main+0x71a844 is 2.37037 (the picture's 2.37037, 16:9 1.77778): the picture's ratio, made 16:9 for the clearance`), and at the end of a session a line per place counts the loads of 16:9, of the picture's ratio and of other ratios.
+
