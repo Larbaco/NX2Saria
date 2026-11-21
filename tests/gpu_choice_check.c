@@ -87,16 +87,14 @@ int main(void) {
           "a discrete card chosen is no warning");
     // Auto picks the best card: no choice, no warning, whatever it picked.
     CHECK(gpuc_choice_line(day2, 3, 1, -1, NULL, line, sizeof line, note, sizeof note) == -1 && !line[0], "Auto: no warning");
-    // A name alone: named, without the sentence about positions.
-    alt = gpuc_choice_line(day2, 3, 1, -1, "Intel", line, sizeof line, note, sizeof note);
-    CHECK(alt == 0, "a name alone: gpu 0, got %d", alt);
-    CHECK(!strcmp(line, "vk: warning: gpu 1 \"" INTEL "\" (integrated GPU) was chosen by gpu_name = Intel, while gpu 0 \""
-                        NVIDIA "\" is a discrete card; Auto, in the menu's Graphics card row, takes the discrete card"),
-          "name warning: %s", line);
-    CHECK(!strcmp(note, "card chosen by gpu_name = Intel (integrated GPU) while gpu 0 is a discrete card"), "name note: %s", note);
-    // Both settings: both are named.
-    gpuc_choice_line(day1, 3, 2, 2, INTEL, line, sizeof line, NULL, 0);
-    CHECK(strstr(line, "was chosen by gpu_index = 2 and gpu_name = " INTEL ", while gpu 1 \"" NVIDIA "\""), "both: %s", line);
+    // A gpu_name, alone or beside the position the menu wrote with it, is the player's own choice of the card: no
+    // warning at each start, nor the advice to set the gpu_name that is already set.
+    CHECK(gpuc_choice_line(day2, 3, 1, -1, "Intel", line, sizeof line, note, sizeof note) == -1 && !line[0] && !note[0],
+          "a name alone: no warning, got %s", line);
+    CHECK(gpuc_choice_line(day1, 3, 2, 2, INTEL, line, sizeof line, note, sizeof note) == -1 && !line[0] && !note[0],
+          "the Intel graphics chosen in the menu (both settings): no warning, got %s", line);
+    CHECK(gpuc_choice_line(day2, 3, 1, 1, "", line, sizeof line, note, sizeof note) == 0 && line[0],
+          "an empty name is no name: the position alone warns");
     // No usable discrete card: the player's choice is the only card that runs the game.
     {
         GpucCard broken[] = {{INTEL, GPUC_INTEGRATED, 1}, {NVIDIA, GPUC_DISCRETE, 0}};
@@ -121,6 +119,30 @@ int main(void) {
         GpucCard one[] = {{INTEL, GPUC_INTEGRATED, 1}};
         CHECK(gpuc_choice_line(one, 1, 0, 0, NULL, line, sizeof line, note, sizeof note) == -1 && !line[0], "one card: no warning");
     }
+    // The card choice line at each start: what the settings hold, agreeing or not.
+    gpuc_setting_line(day2, 3, -1, NULL, line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: auto (gpu_index and gpu_name unset): a discrete card first"), "auto: %s", line);
+    gpuc_setting_line(day2, 3, -1, "", line, sizeof line);
+    CHECK(!strncmp(line, "vk: card choice: auto", 21), "an empty name is auto: %s", line);
+    gpuc_setting_line(day2, 3, 1, NULL, line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: gpu_index = 1 alone, which lists \"" INTEL "\" (gpu_name unset: the position "
+                        "decides)"), "index alone: %s", line);
+    gpuc_setting_line(day2, 3, 7, NULL, line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: gpu_index = 7 alone, which lists no card (3 are listed)"), "index past: %s", line);
+    gpuc_setting_line(day2, 3, -1, "nvidia", line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: gpu_name = \"nvidia\" alone (gpu_index unset), which gpu 0 \"" NVIDIA "\" has"),
+          "name alone: %s", line);
+    gpuc_setting_line(day2, 3, -1, "Radeon", line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: gpu_name = \"Radeon\" alone (gpu_index unset), which no card listed has"),
+          "name no card has: %s", line);
+    gpuc_setting_line(day1, 3, 1, NVIDIA, line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: gpu_index = 1, gpu_name = \"" NVIDIA "\" (both agree)"), "both agree: %s", line);
+    gpuc_setting_line(day2, 3, 1, NVIDIA, line, sizeof line);
+    CHECK(!strcmp(line, "vk: card choice: gpu_index = 1, gpu_name = \"" NVIDIA "\" (they disagree: the name decides)"),
+          "both disagree: %s", line);
+    gpuc_setting_line(day2, 3, 7, NVIDIA, line, sizeof line);
+    CHECK(strstr(line, "(they disagree: the name decides)") != NULL, "a position past the list disagrees: %s", line);
+
     // A line longer than the buffer is cut, not overrun.
     {
         char tiny[40];

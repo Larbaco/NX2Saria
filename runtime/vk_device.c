@@ -300,6 +300,8 @@ static int pick_device(void) {
     char line[800];
     {
         const int asked = want;
+        gpuc_setting_line(cards, (int)n, want, name, line, sizeof line);   // what the settings hold, agreeing or not
+        rt_log("%s", line);
         int dropped;
         want = gpuc_index(cards, (int)n, want, name, &dropped);
         if (dropped) {
@@ -360,12 +362,12 @@ retry:
         free(pd), free(cards), free(props);
         return 0;
     }
-    // A card the settings chose that is not a discrete one, while a discrete one the game can use is listed: the game
-    // may be on the wrong card (gpu_choice.h). The line follows "using gpu" below, the short form goes to a fatal
+    // A card a gpu_index alone chose that is not a discrete one, while a discrete one the game can use is listed: the
+    // game may be on the wrong card (gpu_choice.h). The line follows "using gpu" below, the short form goes to a fatal
     // error's report.
     int alt = -1;
     g_gpu_choice_note[0] = 0;
-    if (cards[best].type != GPUC_DISCRETE && (want >= 0 || (name && *name))) {
+    if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name)) {   // a gpu_index alone (gpuc_choice_line)
         for (uint32_t i = 0; i < n; i++) cards[i].usable = cards[i].type == GPUC_DISCRETE && card_usable(pd[i]);
         alt = gpuc_choice_line(cards, (int)n, best, want, name, line, sizeof line, g_gpu_choice_note,
                                sizeof g_gpu_choice_note);

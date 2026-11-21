@@ -668,7 +668,8 @@
 # save load. So the menu's Graphics card row writes the name beside the index, and when both are set and the index
 # lists a GPU without that name, the name decides (the log says so). An index set alone goes by its position: the log
 # warns when it picks a GPU that is not a discrete one while a discrete one is listed. Leaving both unset takes the
-# discrete GPU, whatever the order; a name keeps one GPU by name.
+# discrete GPU, whatever the order; a name keeps one GPU by name. The log's "vk: card choice:" line says what the two
+# hold at each start.
 # gpu_index = 0
 # gpu_name = NVIDIA
 # Game resolution: the size the game draws its picture and interface in (1280x720 to 7680x4320). Above 1920x1080 the

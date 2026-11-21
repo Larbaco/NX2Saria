@@ -14,6 +14,8 @@
 // a card that does not have that name in its own, the name decides (gpuc_index). A gpu_index written alone, by an older
 // version or by hand, still goes by its position; the log then says so when it puts the game on a card that is not a
 // discrete one while a discrete one the game can use is listed (gpuc_choice_line).
+// A card picked through gpu_name is the player's own choice and gets no such warning. At each start the log also says
+// what the two settings hold, agreeing or not (gpuc_setting_line).
 #pragma once
 #include <ctype.h>
 #include <stddef.h>
@@ -78,12 +80,38 @@ static inline const char *gpuc_kind(int type) {
     }
 }
 
-// The settings that chose, as the log names them: "gpu_index = 1", "gpu_name = NVIDIA" or both.
-static inline void gpuc_by(char *out, size_t cap, int want, const char *name) {
-    int has_name = name && *name;
-    if (want >= 0 && has_name) snprintf(out, cap, "gpu_index = %d and gpu_name = %s", want, name);
-    else if (want >= 0) snprintf(out, cap, "gpu_index = %d", want);
-    else snprintf(out, cap, "gpu_name = %s", has_name ? name : "");
+// The line at each start that says what the two settings hold over the cards listed now, agreeing or not, with want and
+// name as the settings file gives them (-1 and NULL or empty: unset).
+static inline void gpuc_setting_line(const GpucCard *c, int n, int want, const char *name, char *line, size_t cap) {
+    int named = name && *name;
+    if (want < 0 && !named) {
+        snprintf(line, cap, "vk: card choice: auto (gpu_index and gpu_name unset): a discrete card first");
+        return;
+    }
+    if (!named) {
+        if (want < n)
+            snprintf(line, cap, "vk: card choice: gpu_index = %d alone, which lists \"%s\" (gpu_name unset: the position "
+                     "decides)", want, c[want].name);
+        else
+            snprintf(line, cap, "vk: card choice: gpu_index = %d alone, which lists no card (%d are listed)", want, n);
+        return;
+    }
+    int has = -1;
+    for (int i = 0; i < n && has < 0; i++)
+        if (gpuc_has(c[i].name, name)) has = i;
+    if (want < 0) {
+        if (has >= 0)
+            snprintf(line, cap, "vk: card choice: gpu_name = \"%s\" alone (gpu_index unset), which gpu %d \"%s\" has",
+                     name, has, c[has].name);
+        else
+            snprintf(line, cap, "vk: card choice: gpu_name = \"%s\" alone (gpu_index unset), which no card listed has",
+                     name);
+        return;
+    }
+    int dropped;
+    gpuc_index(c, n, want, name, &dropped);
+    snprintf(line, cap, "vk: card choice: gpu_index = %d, gpu_name = \"%s\" (%s)", want, name,
+             dropped ? "they disagree: the name decides" : "both agree");
 }
 
 // The line for a gpu_index that gpuc_index dropped, with the want it was given: what it listed, and that the name decides.
@@ -96,37 +124,29 @@ static inline void gpuc_dropped_line(const GpucCard *c, int n, int want, const c
         snprintf(line, cap, "vk: gpu_index = %d lists no card (%d are listed): gpu_name = %s decides", want, n, name);
 }
 
-// The settings chose card picked (want, name: what the pick went by, -1 and NULL for Auto), and it is not a discrete card
-// while one the game can use is listed: the first such card is returned, line gets the warning for the log and note (NULL:
-// none wanted) the short form for a fatal error's report. Returns -1 and empties both when there is nothing to say: Auto,
-// a discrete card picked, or no discrete card to use. A position says little over the cards' order changing from one start
-// to the next, so a gpu_index is told so; a name alone is the player's own and is only named.
+// The card the settings picked (want, name: what the pick went by after gpuc_index, -1 and NULL for Auto) is not a
+// discrete card while one the game can use is listed, and it was chosen by a gpu_index alone: the first such card is
+// returned, line gets the warning for the log and note (NULL: none wanted) the short form for a fatal error's report. A
+// position says little over the cards' order changing from one start to the next. A gpu_name, which the menu writes
+// beside the position, is the player's own choice of that card, so it gets no warning at each start. Returns -1 and
+// empties both when there is nothing to say: Auto, a gpu_name set, a discrete card picked, or no discrete card to use.
 static inline int gpuc_choice_line(const GpucCard *c, int n, int picked, int want, const char *name, char *line, size_t cap,
                                    char *note, size_t note_cap) {
     line[0] = 0;
     if (note) note[0] = 0;
-    int named = name && *name;
-    if ((want < 0 && !named) || picked < 0 || picked >= n || c[picked].type == GPUC_DISCRETE) return -1;
+    if (want < 0 || (name && *name) || picked < 0 || picked >= n || c[picked].type == GPUC_DISCRETE) return -1;
     int alt = -1;
     for (int i = 0; i < n && alt < 0; i++)
         if (i != picked && c[i].type == GPUC_DISCRETE && c[i].usable) alt = i;
     if (alt < 0) return -1;
-    char by[320];
-    gpuc_by(by, sizeof by, want, name);
-    if (want >= 0)
-        snprintf(line, cap,
-                 "vk: warning: gpu %d \"%s\" (%s) was chosen by %s, while gpu %d \"%s\" is a discrete card. The order the "
-                 "cards are listed in can change from one start to the next (the system's graphics settings for the game, "
-                 "a display on one card, the power source), and gpu_index then names another card. Auto, in the menu's "
-                 "Graphics card row, takes the discrete card; gpu_name = %s keeps it by its name",
-                 picked, c[picked].name, gpuc_kind(c[picked].type), by, alt, c[alt].name, c[alt].name);
-    else
-        snprintf(line, cap,
-                 "vk: warning: gpu %d \"%s\" (%s) was chosen by %s, while gpu %d \"%s\" is a discrete card; Auto, in the "
-                 "menu's Graphics card row, takes the discrete card",
-                 picked, c[picked].name, gpuc_kind(c[picked].type), by, alt, c[alt].name);
+    snprintf(line, cap,
+             "vk: warning: gpu %d \"%s\" (%s) was chosen by gpu_index = %d, while gpu %d \"%s\" is a discrete card. The "
+             "order the cards are listed in can change from one start to the next (the system's graphics settings for the "
+             "game, a display on one card, the power source), and gpu_index then names another card. Auto, in the menu's "
+             "Graphics card row, takes the discrete card; gpu_name = %s keeps it by its name",
+             picked, c[picked].name, gpuc_kind(c[picked].type), want, alt, c[alt].name, c[alt].name);
     if (note)
-        snprintf(note, note_cap, "card chosen by %s (%s) while gpu %d is a discrete card", by, gpuc_kind(c[picked].type),
-                 alt);
+        snprintf(note, note_cap, "card chosen by gpu_index = %d (%s) while gpu %d is a discrete card", want,
+                 gpuc_kind(c[picked].type), alt);
     return alt;
 }
