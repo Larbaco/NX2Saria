@@ -77,6 +77,7 @@ typedef struct {
     int64_t ns;
     volatile uint32_t res, thread;
     volatile int idx, done, wakes;
+    volatile int hold;          // 1: the thread does not end after its wait until the test sets it to 0
 } Wait;
 
 static void waiter(Cpu *c) {
@@ -92,6 +93,7 @@ static void waiter(Cpu *c) {
         }
     } while (w->loop > 0 && !w->res);
     __atomic_store_n(&w->done, 1, __ATOMIC_SEQ_CST);
+    while (__atomic_load_n(&w->hold, __ATOMIC_SEQ_CST)) plat_wait_ns(100000);
     kern_svc(c, 0x0A);
     rt_fatal("ExitThread returned");
 }
@@ -125,6 +127,15 @@ static int in_sync(uint32_t thread, int ms) {
     return 0;
 }
 
+// The thread has ended: kernel.c thread_finish marks it exited and wakes its waiters in one hold of the kernel lock.
+static int ended(uint32_t thread, int ms) {
+    for (int i = 0; i < ms * 10; i++) {
+        if (kern_thread_state(thread) == KERN_THREAD_EXITED) return 1;
+        plat_wait_ns(100000);
+    }
+    return 0;
+}
+
 static void counts(uint64_t *woken, uint64_t *spared, uint64_t *blocks) {
     lock();
     *woken = g_sync_woken, *spared = g_sync_spared, *blocks = g_sync_blocks;
@@ -145,11 +156,16 @@ int main(int argc, char **argv) {
     uint64_t wk, sp, bl;
 
     // 1. A waits on a, B on b, C on b and c. A signal of a wakes A; B and C stay in their waits.
-    Wait A = {.hs = {ra}, .n = 1, .ns = -1}, B = {.hs = {rb}, .n = 1, .ns = -1}, C = {.hs = {rb, rc}, .n = 2, .ns = -1};
+    Wait A = {.hs = {ra}, .n = 1, .ns = -1, .hold = 1}, B = {.hs = {rb}, .n = 1, .ns = -1}, C = {.hs = {rb, rc}, .n = 2, .ns = -1};
     spawn(&A), spawn(&B), spawn(&C);
     CHECK(in_sync(A.thread, 2000) && in_sync(B.thread, 2000) && in_sync(C.thread, 2000), "the waiters did not block");
     kern_event_signal(ea);
     CHECK(until(&A.done, 1, 2000) && A.res == 0 && A.idx == 0, "A: result %#x index %d", A.res, A.idx);
+    // A's thread ends only once B and C are back in their waits (with NX2NAVI_SYNC_WAKE_ALL the signal woke them too),
+    // so that its end finds them there; the counts below are taken after it ended and they blocked again
+    settle((Wait *[]){&B, &C}, 2);
+    __atomic_store_n(&A.hold, 0, __ATOMIC_SEQ_CST);
+    CHECK(ended(A.thread, 2000), "A's thread did not end");
     settle((Wait *[]){&B, &C}, 2);
     CHECK(!B.done && !C.done, "a signal of another event ended a wait");
     // Two wakes pass B and C by: the signal of a, and the end of A's thread.
