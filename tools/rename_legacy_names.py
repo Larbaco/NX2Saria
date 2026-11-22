@@ -7,6 +7,7 @@ mechanical and can be run again: on a branch made before the rename, or after a 
 
 It rewrites the files git tracks under runtime/, launcher/, installer/, tools/, recomp/ and tests/, and leaves alone:
 - tools/vendor/ (kept byte-identical to its source) and runtime/third_party/;
+- tests/legacy_names_check.py, whose planted lines spell the older names on purpose;
 - tools/xlate/: its files make the shader translator's identity (tools/build_xlate.py identity), which keys every
   player's shader cache, so a change there would make every player translate and prepare their shaders again;
 - a line that also holds an NX2SARIA_ name, or that says the NX2NAVI_ one is the older, legacy, alias or earlier
@@ -28,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DIRS = ('runtime', 'launcher', 'installer', 'tools', 'recomp', 'tests')
 SKIP_DIRS = ('tools/vendor/', 'tools/xlate/', 'runtime/third_party/')
-SELF = 'tools/rename_legacy_names.py'
+SELF = ('tools/rename_legacy_names.py', 'tests/legacy_names_check.py')   # this script, and its check's planted names
 
 OLD, NEW = 'NX2NAVI_', 'NX2SARIA_'
 NAME = re.compile(r'NX2NAVI_(?![\'"`\s*]|$)')
@@ -50,7 +51,7 @@ KEEP = (
 def files():
     out = subprocess.run(['git', '-C', str(ROOT), 'ls-files', '-z', '--', *DIRS], capture_output=True, check=True)
     for rel in out.stdout.decode('utf-8').split('\0'):
-        if rel and rel != SELF and not rel.startswith(SKIP_DIRS):
+        if rel and rel not in SELF and not rel.startswith(SKIP_DIRS):
             yield rel
 
 
