@@ -512,3 +512,14 @@ site heap_retry main 437094 94032bef 9529a78b            # bl main+0x502050 -> b
 # update's own, saved in its prologue and read again only in its epilogue.
 set changebank_hold NX2SARIA_CHANGEBANK_HOLD 1
 site changebank_hold main 3299d28 9100054a 9100054a 94701c42   # add x10, x10, #1 -> the same; bl page+0xe30
+
+# The camera's clearance on pictures that are not 16:9 (runtime/camera_clearance.c). The camera's collision step
+# (main+0x71a4a0) sizes the sphere it keeps clear of walls from its near plane, sqrt(w * w + h * h) with
+# h = tan(fov / 2) * near and w = h * ratio, the ratio loaded from its object's +0x51c at main+0x71a844 (s10) and, on
+# its second path, main+0x71b624 (s14). A wide picture's ratio there makes the sphere too big for a crawl passage. The
+# sites keep the load and then call the page's +0xe00, which makes the picture's ratio 16:9 for the sum when the
+# picture is not 16:9 and leaves any other value. No word reads the flags before the call each site is followed by
+# (main+0x71a878, main+0x71b64c); x30 is the function's own, saved in its prologue.
+set camera_clearance NX2SARIA_CAMERA_CLEARANCE_FIX 1
+site camera_clearance main 71a844 bd451e6a bd451e6a 951e196f   # ldr s10, [x19, #0x51c] -> the same; bl page+0xe00
+site camera_clearance main 71b624 bd451e6e bd451e6e 951e15f7   # ldr s14, [x19, #0x51c] -> the same; bl page+0xe00

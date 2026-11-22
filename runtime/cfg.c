@@ -114,6 +114,8 @@ static const char *const known[] = {
     "GATHER_BIAS", "PIN_SWEEP", "REC_CHECK", "REC_DELAY_US", "REG_ORDER", "SHADOW", "ZERO_LOCALS",
     "HEAP_RETRY", "HEAP_RETRY_TEST_FAIL", "HEAP_RETRY_TEST_SHIPPED",   // heap_retry.c: the set heap_retry and its test switches
     "CHANGEBANK_HOLD", "CHANGEBANK_HOLD_MS",   // changebank_hold.c: the set changebank_hold and its hold
+    "CAMERA_CLEARANCE_FIX",   // camera_clearance.c: the set camera_clearance
+    "POS_TRACE",   // debug_tools.c: Link's position each frame to a file, for movement checks; no menu row
     // hang_watch.c: the hang watch's seconds
     "HANG_WATCH_S",
     // retired: the settings of the co-op of versions up to 0.9.2; read by nothing, listed so that a file which still

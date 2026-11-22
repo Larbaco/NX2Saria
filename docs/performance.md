@@ -31,6 +31,15 @@ How to measure the frame rate of a scene the same way twice, and how to read the
 - **Where the replay's CPU time goes** (a developer switch): `NX2SARIA_REPLAY_PHASES=1` times the replay's ops, a
   draw's phases and the parts of each submission's recording, apart for the submitting thread and the replay workers,
   in lines every 600 frames. `docs/replay-cpu.md` has a profile made with it and what it says.
+- **Link's position** (a developer switch): `NX2SARIA_POS_TRACE=<file>` writes Link's position at every pad read of the
+  game (about two a frame), one line each: `<tick> <ms> <x> <y> <z>`, the milliseconds of the host clock from the first
+  line (`runtime/debug_tools.c` `pos_trace`, game 1.1.1 only). The log says `debug: Link's position each tick to
+  <file>` when it is on, and nothing when it is off. It reads the actor's copy of the position, which moves with Link
+  on the ground (x and z, and y up a step) but does not rise in a jump: a jump's length shows, its height does not.
+  With an input script it measures moves at different frame rates. This bench does not reach much over 60 fps, and
+  the debug tools' game speed (`@1:speed 0.5` as a `NX2SARIA_DBG_TEST` step) halves the step the game and its physics
+  take each frame: at a 60 fps limit that is a 120 fps frame's step. It is not a 120 fps frame for anything that
+  follows the wall clock.
 - **Rounds**: `--runs 3` (the default) plays every scene once per round, three rounds, so a drift over time (heat,
   background work) reaches every scene alike. The summary gives the spread between runs.
 - **Results** in `build/bench/<date>-<label>/`: per run the game's log and a CSV of every measured frame;

@@ -1536,10 +1536,31 @@ static void test_script(uint64_t tick) {
 }
 
 // The game's thread, at its pad read.
+// NX2SARIA_POS_TRACE=<file>: Link's position at every tick of the game's update, one line each ("<tick> <ms> <x> <y>
+// <z>", the milliseconds of the host clock from the first line), for movement checks at different frame rates
+// (a jump's height and length, a climb). A developer switch; nothing else changes.
+static void pos_trace(uint64_t tick) {
+    static FILE *f;
+    static int state;
+    static uint64_t t0;
+    if (!state) {
+        const char *e = cfg_get("NX2SARIA_POS_TRACE");
+        state = e && *e && (f = fopen(e, "w")) ? 1 : -1;
+        if (state > 0) rt_log("debug: Link's position each tick to %s (NX2SARIA_POS_TRACE)", e);
+    }
+    float xyz[3];
+    if (state < 0 || !dbg_player_pos(xyz)) return;
+    uint64_t now = plat_now_ns();
+    if (!t0) t0 = now;
+    fprintf(f, "%llu %.3f %.4f %.4f %.4f\n", (unsigned long long)tick, (now - t0) / 1e6, xyz[0], xyz[1], xyz[2]);
+    if (!(tick % 60)) fflush(f);
+}
+
 void dbg_tick(Cpu *c) {
     static uint64_t tick;
     if (!dbg_supported() || (!tick && !player())) return;
     tick++;
+    pos_trace(tick);
     test_script(tick);
     fly_tick();
     bugcap_replay_tick(tick);   // a replay of a bug capture: the teleport, the walk and the camera (bugcap.c)
