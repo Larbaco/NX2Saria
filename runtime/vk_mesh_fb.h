@@ -28,7 +28,10 @@ void vk_meshfb_part_done(void);
 void vk_meshfb_part_reset(void);
 int vk_meshfb_part_first(void);           // no part taken since the last reset
 void vk_meshfb_one_by_one(void);          // a draw goes one by one: after parts were taken, the next batched cuts
-void vk_exec_mfb_batch_start(int fallback_default);   // reads and logs NX2SARIA_MESH_FALLBACK_BATCH (vk_exec_draw.c)
+// reads and logs NX2SARIA_MESH_FALLBACK_BATCH (vk_exec_draw.c): fallback, whether mesh programs go through the fallback
+// on this device; fallback_default, whether it is the device's default (mesh_path_fallback_default)
+// path_name: how mesh programs are drawn here, for the line of a device where the batch is inactive
+void vk_exec_mfb_batch_start(int fallback, int fallback_default, const char *path_name);
 void vk_exec_mfb_batch_exit_log(void);   // gfx_present.c rt_exit_steps: the batch's totals, with it on
 int vk_meshfb_closed(void);               // a draw went one by one since the parts began: the next batched cuts
 void vk_meshfb_full_barrier(VkCommandBuffer cb);   // a full memory barrier in a command buffer that is not the part's

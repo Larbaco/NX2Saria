@@ -841,12 +841,12 @@ static int create_device(void) {
         else if (path == MESH_PATH_FALLBACK) {
             rt_log("vk: mesh fallback: task and mesh programs run as compute passes and are drawn from their buffers (%s)",
                    why);
-            // says NX2SARIA_MESH_FALLBACK_BATCH's value (vk_exec_draw.c); vk_ctx() is not ready yet here, so the
-            // device's default goes as an argument
-            vk_exec_mfb_batch_start(g_vk.mesh_fallback_default);
         }
         else if (path == MESH_PATH_NONE)
             rt_log("vk: mesh shaders: not supported and mesh_fallback = 0 (task/mesh draws are skipped)");
+        // says NX2SARIA_MESH_FALLBACK_BATCH's value and whether it is active here (vk_exec_draw.c); vk_ctx() is not
+        // ready yet, so the path and the device's default go as arguments
+        vk_exec_mfb_batch_start(g_vk.mesh_fallback, g_vk.mesh_fallback_default, g_mesh_path);
         mesh_pipeline_check_start(path == MESH_PATH_EMULATION);
     }
     if (g_vk.has_maximal_reconvergence && !c->mrc.shaderMaximalReconvergence) g_vk.has_maximal_reconvergence = 0;

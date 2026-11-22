@@ -6200,33 +6200,44 @@ void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts) {   // mesh_fb_prob
 }
 // The switch, read once: at the device's start with the mesh fallback (vk_device.c, vk_exec_mfb_batch_start), so the
 // log says its value even in a session that draws nothing through the fallback.
-// auto (the default): on where the fallback is the device's default (vk_mesh_path.h mesh_path_fallback_default: AMD's
-// Windows driver for RDNA 1 and 2, Intel, a device without mesh shaders), where the GPU sets the frame rate and the
-// batch takes the pass breaks and barriers off it; off where mesh_fallback = 1 forces the fallback on a device that draws
-// mesh programs natively. On the Linux bench (RX 6700, RADV, the CPU sets the frame rate, the fallback forced) the batch
-// came out even within the noise: Hyrule Field 41.9 -> 41.2 fps, Kokiri Forest 45.8 -> 47.3 (medians of six pairs,
-// 2026-11-22), the GPU's time per frame 0.1 to 0.6 ms less.
-// The device's default comes from vk_exec_mfb_batch_start (vk_device.c, before vk_ctx() is ready); a first call from a
-// draw without it (the probe, which turns the fallback on itself) asks vk_ctx(). auto, on and off are read as the
-// settings file reads a switch's words: off, false, no and 0 are 0.
-static int mfb_dflt = -1;
+// NX2SARIA_MESH_FALLBACK_BATCH: 1 (the default), 0 (off, false, no: every draw one by one), or auto (on where the
+// fallback is the device's default: vk_mesh_path.h mesh_path_fallback_default, AMD's Windows driver for RDNA 1 and 2,
+// Intel, a device without mesh shaders; off where mesh_fallback = 1 forces it on a device that draws them natively).
+// On by default: on the Linux bench (RX 6700, RADV, the CPU sets the frame rate, the fallback forced), two A/Bs of six
+// interleaved pairs each gave Hyrule Field +1.9 and +3.3 fps, Kokiri Forest +0.3 and +1.6 (medians of the pairs'
+// differences), the GPU's time per frame 0.4 to 1.4 ms less (2026-11-22), and the pictures as main draws them.
+// The device's path and default come from vk_exec_mfb_batch_start (vk_device.c, before vk_ctx() is ready); a first call
+// from a draw without them (the probe, which turns the fallback on itself) asks vk_ctx(). The words are read as the
+// settings file reads a switch's: off, false, no and 0 are 0.
+static int mfb_dflt = -1, mfb_path = -1;
+static const char *mfb_path_name;
 static int mfb_batch_on(void) {
     static int on = -1;
     if (on < 0) {
-        const char *v = cfg_value("NX2SARIA_MESH_FALLBACK_BATCH");
+        const char *raw = cfg_get("NX2SARIA_MESH_FALLBACK_BATCH");
+        int set = raw && *raw;
+        const char *v = set ? raw : "1";
         int dflt = mfb_dflt >= 0 ? mfb_dflt : vk_ctx() && vk_ctx()->mesh_fallback_default;
-        int autov = !v || !*v || !strcasecmp(v, "auto");
+        int path = mfb_path >= 0 ? mfb_path : !vk_ctx() || vk_ctx()->mesh_fallback;
+        int autov = !strcasecmp(v, "auto");
         on = autov ? dflt
                    : !(!strcmp(v, "0") || !strcasecmp(v, "off") || !strcasecmp(v, "false") || !strcasecmp(v, "no"));
-        rt_log("vk: mesh fallback: the stages of a pass's draws %s (NX2SARIA_MESH_FALLBACK_BATCH=%s%s)",
-               on ? "run before the pass, in a command buffer of their own" : "break the pass, draw by draw",
-               autov ? "auto" : v, autov ? (dflt ? ": the fallback is this device's default" : ": the fallback is not this "
-                                                   "device's default") : "");
+        char why[96];
+        if (!set) snprintf(why, sizeof why, "the default");
+        else if (autov) snprintf(why, sizeof why, "NX2SARIA_MESH_FALLBACK_BATCH=auto: the fallback is %sthis device's default",
+                                 dflt ? "" : "not ");
+        else snprintf(why, sizeof why, "NX2SARIA_MESH_FALLBACK_BATCH=%s", v);
+        if (!path)
+            rt_log("vk: mesh fallback batch: %s (%s), inactive on this device: its mesh programs are not drawn through the "
+                   "fallback (%s)", on ? "on" : "off", why, mfb_path_name ? mfb_path_name : "native");
+        else
+            rt_log("vk: mesh fallback batch: %s (%s): the stages of a pass's draws %s", on ? "on" : "off", why,
+                   on ? "run before the pass, in a command buffer of their own" : "break the pass, draw by draw");
     }
     return on;
 }
-void vk_exec_mfb_batch_start(int fallback_default) {
-    mfb_dflt = fallback_default != 0;
+void vk_exec_mfb_batch_start(int fallback, int fallback_default, const char *path_name) {
+    mfb_path = fallback != 0, mfb_dflt = fallback_default != 0, mfb_path_name = path_name;
     (void)mfb_batch_on();
 }
 // Every 30 s while the fallback draws with batching on, and at exit: the draws batched and those one by one, by reason

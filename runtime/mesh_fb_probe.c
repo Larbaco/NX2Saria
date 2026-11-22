@@ -430,7 +430,7 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     // With NX2SARIA_MESH_FALLBACK_BATCH=1 the pictures above were drawn through mfb_draw's batch and its way back (the
     // pictures are the same as the mesh pipeline's and as one by one, checked above): the draws batched, those one by
     // one for want of history (a task program's first draws), and the cuts at each pass and after a draw one by one.
-    if (rt_knob("MESH_FALLBACK_BATCH", "0")) {
+    if (rt_knob("MESH_FALLBACK_BATCH", "1")) {
         // More draws of programs with history, so that task draws are batched too. A batched draw's stages use compute
         // pipelines of their own, built in the background: the draws before they are ready are skipped, as above, and
         // once the picture is whole it stays whole.
