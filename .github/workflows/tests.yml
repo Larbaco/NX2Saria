@@ -44,11 +44,16 @@ jobs:
             uv pip install -q --python "$py" --require-hashes -r tools/ci_requirements_tests.txt
           done
       - name: Tools
-        # glslc, glslangValidator and spirv-tools for the shader checks and tools/build_shaders.py; lld and the libraries
-        # the launcher's build tests check for and link (README-BuildKit.md, Linux); xvfb-run for the window tests
+        # glslc, glslangValidator and spirv-tools for the shader checks and tools/build_shaders.py; lld, the libraries
+        # the launcher's build tests check for and link (README-BuildKit.md, Linux) and the desktop libraries the kit's
+        # SDL3 loads (tools/make_game.py SDL3_NEEDS), as its build check runs a program linked against them; xvfb-run for
+        # the window tests. When apt fails, the tests that need these tools are skipped (launcher_test.py for want of
+        # ld.lld).
         run: |
           sudo apt-get update && sudo apt-get install -y glslc glslang-tools spirv-tools lld xvfb \
-            libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev ||
+            libopus-dev libvpx-dev libdav1d-dev libzstd-dev libvulkan-dev \
+            libx11-6 libxext6 libxcursor1 libxi6 libxfixes3 libxrandr2 libxss1 libxtst6 libxkbcommon0 \
+            libwayland-client0 libwayland-cursor0 libwayland-egl1 libdecor-0-0 libpulse0 libasound2t64 libfribidi0 ||
             echo "::warning::apt failed: the tests that need its tools are skipped"
           clang --version | head -1
       - name: Headers
