@@ -175,7 +175,9 @@ static inline int mfb_hist_note(MfbHist *h, uint32_t want_slots, uint32_t want_t
     h->seen++;
     h->calm = jump ? 0 : h->calm + 1;
     if (batched && (want_slots > cap_slots || want_tasks > cap_tasks)) {
-        h->excluded = 1, h->shorts++, h->calm = 0;
+        // the draws of the program already in flight come back short together: one exclusion counts once
+        if (!h->excluded) h->shorts++;
+        h->excluded = 1, h->calm = 0;
         return MFB_NOTE_SHORT;
     }
     if (h->excluded && h->shorts < MFB_MAX_SHORTS && h->calm >= MFB_READMIT) {

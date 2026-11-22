@@ -156,6 +156,10 @@ int main(void) {
     for (unsigned k = 0; k < MFB_READMIT + 1 && !back; k++) back = mfb_hist_note(&hr, 450, 0, 5000, 0, 0) == MFB_NOTE_READMIT;
     CHECK(back && !hr.excluded && mfb_batch_need(1, 0, 0, 0, 0, &hr, FS, FT, &slots, &tasks) == MFB_BATCHED && slots >= 2000,
           "not taken back after %u calm records, or its part (%u) does not hold what it asked for", MFB_READMIT, slots);
+    // the draws already in flight come back short together: one exclusion counts once
+    MfbHist hm = {.slots = 40, .seen = 50, .calm = MFB_MIN_CALM};
+    for (int k = 0; k < 5; k++) mfb_hist_note(&hm, 500, 0, 160, 0, 1);
+    CHECK(hm.shorts == 1 && hm.excluded, "five short draws of one episode counted as %u exclusions", hm.shorts);
     for (unsigned s = 1; s < MFB_MAX_SHORTS; s++) {
         mfb_hist_note(&hr, 100000, 0, 2000, 0, 1);
         for (unsigned k = 0; k < MFB_READMIT + 1; k++) mfb_hist_note(&hr, 100, 0, 200000, 0, 0);

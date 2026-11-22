@@ -28,13 +28,13 @@ void vk_meshfb_part_done(void);
 void vk_meshfb_part_reset(void);
 int vk_meshfb_part_first(void);           // no part taken since the last reset
 void vk_meshfb_one_by_one(void);          // a draw goes one by one: after parts were taken, the next batched cuts
-void vk_exec_mfb_batch_start(void);      // reads and logs NX2SARIA_MESH_FALLBACK_BATCH (vk_exec_draw.c)
+void vk_exec_mfb_batch_start(int fallback_default);   // reads and logs NX2SARIA_MESH_FALLBACK_BATCH (vk_exec_draw.c)
 void vk_exec_mfb_batch_exit_log(void);   // gfx_present.c rt_exit_steps: the batch's totals, with it on
 int vk_meshfb_closed(void);               // a draw went one by one since the parts began: the next batched cuts
 void vk_meshfb_full_barrier(VkCommandBuffer cb);   // a full memory barrier in a command buffer that is not the part's
 void vk_meshfb_pre_end(VkCommandBuffer cb);        // vk_sync.c pre_end: the barrier the parts' draws need, and the reset
-uint64_t vk_meshfb_batch_short(void);
-uint64_t vk_meshfb_batch_readmits(void);  // programs taken back into batches after a draw short of its part     // batched draws that asked for more than their part held, so far
+uint64_t vk_meshfb_batch_short(void);     // batched draws that asked for more than their part held, so far
+uint64_t vk_meshfb_batch_readmits(void);  // programs taken back into batches after a draw short of its part
 uint64_t vk_meshfb_list_bytes(void);       // the list buffer's bytes
 void vk_meshfb_caps(uint64_t *task, uint64_t *mesh);   // the task and mesh buffers' bytes
 uint64_t vk_meshfb_batch_peak(uint64_t *cap);   // the most of the mesh buffer (*cap bytes) one pre-pass's parts took

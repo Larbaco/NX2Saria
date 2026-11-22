@@ -6206,12 +6206,18 @@ void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts) {   // mesh_fb_prob
 // mesh programs natively. On the Linux bench (RX 6700, RADV, the CPU sets the frame rate, the fallback forced) the batch
 // came out even within the noise: Hyrule Field 41.9 -> 41.2 fps, Kokiri Forest 45.8 -> 47.3 (medians of six pairs,
 // 2026-11-22), the GPU's time per frame 0.1 to 0.6 ms less.
+// The device's default comes from vk_exec_mfb_batch_start (vk_device.c, before vk_ctx() is ready); a first call from a
+// draw without it (the probe, which turns the fallback on itself) asks vk_ctx(). auto, on and off are read as the
+// settings file reads a switch's words: off, false, no and 0 are 0.
+static int mfb_dflt = -1;
 static int mfb_batch_on(void) {
     static int on = -1;
     if (on < 0) {
         const char *v = cfg_value("NX2SARIA_MESH_FALLBACK_BATCH");
-        int dflt = vk_ctx() && vk_ctx()->mesh_fallback_default, autov = !v || !*v || !strcmp(v, "auto");
-        on = autov ? dflt : strcmp(v, "0") != 0;
+        int dflt = mfb_dflt >= 0 ? mfb_dflt : vk_ctx() && vk_ctx()->mesh_fallback_default;
+        int autov = !v || !*v || !strcasecmp(v, "auto");
+        on = autov ? dflt
+                   : !(!strcmp(v, "0") || !strcasecmp(v, "off") || !strcasecmp(v, "false") || !strcasecmp(v, "no"));
         rt_log("vk: mesh fallback: the stages of a pass's draws %s (NX2SARIA_MESH_FALLBACK_BATCH=%s%s)",
                on ? "run before the pass, in a command buffer of their own" : "break the pass, draw by draw",
                autov ? "auto" : v, autov ? (dflt ? ": the fallback is this device's default" : ": the fallback is not this "
@@ -6219,7 +6225,10 @@ static int mfb_batch_on(void) {
     }
     return on;
 }
-void vk_exec_mfb_batch_start(void) { (void)mfb_batch_on(); }
+void vk_exec_mfb_batch_start(int fallback_default) {
+    mfb_dflt = fallback_default != 0;
+    (void)mfb_batch_on();
+}
 // Every 30 s while the fallback draws with batching on, and at exit: the draws batched and those one by one, by reason
 // (the way back). Nothing with the switch at 0: every draw is one by one then, as the start line says.
 static void mfb_batch_log(void) {

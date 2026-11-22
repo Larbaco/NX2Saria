@@ -829,7 +829,8 @@ static int create_device(void) {
         const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
         int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID, mf, me, &why);
         g_vk.mesh_fallback = path == MESH_PATH_FALLBACK;
-        g_vk.mesh_fallback_default = mesh_path_fallback_default(path, mf);
+        g_vk.mesh_fallback_default = mesh_path_fallback_default(path, g_vk.has_mesh_shader, vk_caps.amd_sc,
+                                                                g_vk.props.vendorID, me);
         g_vk.mesh_emulation = path == MESH_PATH_EMULATION;
         g_mesh_path = path == MESH_PATH_EMULATION ? "emulated (mesh_emulation)"
                     : path == MESH_PATH_FALLBACK ? (g_vk.has_mesh_shader ? "through the mesh fallback on a device with mesh "
@@ -840,7 +841,9 @@ static int create_device(void) {
         else if (path == MESH_PATH_FALLBACK) {
             rt_log("vk: mesh fallback: task and mesh programs run as compute passes and are drawn from their buffers (%s)",
                    why);
-            vk_exec_mfb_batch_start();   // says NX2SARIA_MESH_FALLBACK_BATCH's value (vk_exec_draw.c)
+            // says NX2SARIA_MESH_FALLBACK_BATCH's value (vk_exec_draw.c); vk_ctx() is not ready yet here, so the
+            // device's default goes as an argument
+            vk_exec_mfb_batch_start(g_vk.mesh_fallback_default);
         }
         else if (path == MESH_PATH_NONE)
             rt_log("vk: mesh shaders: not supported and mesh_fallback = 0 (task/mesh draws are skipped)");

@@ -84,20 +84,23 @@ int main(void) {
     mesh_path_decide(1, 0, NV, "auto", "0", &why);
     CHECK(why && !strcmp(why, "VK_EXT_mesh_shader"), "an RTX card's reason: %s", why ? why : "(none)");
 
-    // mesh_fallback_batch = auto batches where the fallback is the device's default, not where mesh_fallback = 1 forces it
+    // mesh_fallback_batch = auto batches where the fallback is the device's default (mesh_fallback = auto would choose it)
     int p;
     p = mesh_path_decide(1, 1, 0x1002, "auto", "0", NULL);
-    CHECK(mesh_path_fallback_default(p, "auto"), "AMD's RDNA 1/2 driver with mesh_fallback = auto: not the default fallback");
+    CHECK(mesh_path_fallback_default(p, 1, 1, 0x1002, "0"), "AMD's RDNA 1/2 driver, mesh_fallback = auto: not the default");
+    p = mesh_path_decide(1, 1, 0x1002, "1", "0", NULL);
+    CHECK(mesh_path_fallback_default(p, 1, 1, 0x1002, "0"), "AMD's RDNA 1/2 driver, mesh_fallback = 1: not the default");
     p = mesh_path_decide(1, 0, MESH_VENDOR_INTEL, "auto", "0", NULL);
-    CHECK(mesh_path_fallback_default(p, "auto"), "Intel with mesh_fallback = auto: not the default fallback");
+    CHECK(mesh_path_fallback_default(p, 1, 0, MESH_VENDOR_INTEL, "0"), "Intel, mesh_fallback = auto: not the default");
     p = mesh_path_decide(0, 0, 0x1002, "auto", "0", NULL);
-    CHECK(mesh_path_fallback_default(p, "auto"), "no mesh shaders, mesh_fallback = auto: not the default fallback");
+    CHECK(mesh_path_fallback_default(p, 0, 0, 0x1002, "0"), "no mesh shaders, mesh_fallback = auto: not the default");
     p = mesh_path_decide(1, 0, 0x1002, "1", "0", NULL);
-    CHECK(p == MESH_PATH_FALLBACK && !mesh_path_fallback_default(p, "1"), "mesh_fallback = 1 forced counts as the default");
+    CHECK(p == MESH_PATH_FALLBACK && !mesh_path_fallback_default(p, 1, 0, 0x1002, "0"),
+          "RADV with mesh shaders, mesh_fallback = 1 forced: counted as the default");
     p = mesh_path_decide(1, 0, 0x1002, "auto", "0", NULL);
-    CHECK(!mesh_path_fallback_default(p, "auto"), "RADV with mesh shaders (native): counted as the default fallback");
+    CHECK(!mesh_path_fallback_default(p, 1, 0, 0x1002, "0"), "RADV with mesh shaders (native): counted as the default");
     p = mesh_path_decide(1, 1, 0x1002, "0", "0", NULL);
-    CHECK(!mesh_path_fallback_default(p, "0"), "mesh_fallback = 0 counted as the default fallback");
+    CHECK(!mesh_path_fallback_default(p, 1, 1, 0x1002, "0"), "mesh_fallback = 0: counted as the default fallback");
     printf("mesh_path_check: %s\n", fails ? "FAILED" : "passed");
     return fails ? 1 : 0;
 }
