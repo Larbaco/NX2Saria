@@ -435,6 +435,7 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
         // pipelines of their own, built in the background: the draws before they are ready are skipped, as above, and
         // once the picture is whole it stays whole.
         int whole = -1, k;
+        c->mesh_fallback = 1;
         for (k = 0; k < 500 && (whole < 0 || k < whole + 20); k++) {
             if (k && whole < 0) plat_sleep_ms(10);
             if (draw_picture(b, &pool, &color, again, 2, bpx)) return 1;
@@ -443,6 +444,7 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
             CHECK(whole < 0 || !dk, "batched draw %d of a task program and a mesh program, after the picture was whole at "
                   "%d: %d texels differ", k, whole, dk);
         }
+        c->mesh_fallback = was;
         CHECK(whole >= 0, "with batching on the picture never became whole in %d submissions", k);
         uint64_t why[MFB_REASONS], cuts[3];
         vk_exec_mfb_batch_counts(why, cuts);
@@ -454,6 +456,8 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
                (unsigned long long)cuts[2]);
         CHECK(why[MFB_BATCHED] > 0 && why[MFB_ONE_HISTORY] > 0 && cuts[0] > 0,
               "with batching on, no draw was batched, none went one by one for want of history, or no pass was cut");
+        CHECK(why[MFB_BATCHED] >= 20, "with batching on only %llu draws were batched: the task program's draws, with "
+              "history now, were not", (unsigned long long)why[MFB_BATCHED]);
         CHECK(!why[MFB_ONE_PRE], "%llu draws found no pre-pass command buffer", (unsigned long long)why[MFB_ONE_PRE]);
     }
     b->texture_release(&color);
