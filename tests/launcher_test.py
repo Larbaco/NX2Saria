@@ -268,6 +268,18 @@ def fake_fast_repo(folder, clang_version='1.0-1'):
     (folder / 'clang64.db').write_bytes(tar_bytes(entries))
 
 
+def catches(pid, sig):
+    """Whether the process pid has a handler of its own for the signal sig (Linux: /proc/<pid>/status SigCgt); None
+    where the system does not say."""
+    try:
+        for line in Path(f'/proc/{pid}/status').read_text().splitlines():
+            if line.startswith('SigCgt:'):
+                return bool(int(line.split()[1], 16) >> (sig - 1) & 1)
+    except OSError:
+        pass
+    return None
+
+
 class Tmp(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='nx2navi-test-'))
@@ -7035,9 +7047,18 @@ class LauncherLogTest(Tmp):
         p = subprocess.Popen([sys.executable, '-c', start, '--root', str(root)], cwd=ROOT, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         log = root / 'data' / 'logs' / 'launcher.log'
-        deadline = time.time() + 60
-        while time.time() < deadline and 'dump search:' not in (log.read_text() if log.is_file() else ''):
-            time.sleep(0.2)
+        # Wait for the two things the signal needs, not for a time: the dump search's line, which a thread the window
+        # starts writes, and the window's handler for SIGTERM, which main() puts in after making the window
+        # (errors.on_end_signals). A search that ends first used to get the signal to the process before the handler,
+        # and Python's default ended it (-15) on a busy machine. The time limit only ends a start that hangs.
+        deadline = time.monotonic() + 180
+        ready = False
+        while not ready and time.monotonic() < deadline and p.poll() is None:
+            logged = 'dump search:' in (log.read_text() if log.is_file() else '')
+            ready = logged and catches(p.pid, signal.SIGTERM) is not False
+            if not ready:
+                time.sleep(0.05)
+        self.assertTrue(ready, f'the window did not get to its dump search with a SIGTERM handler (exit {p.poll()})')
         p.send_signal(signal.SIGTERM)
         out, err = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 128 + signal.SIGTERM, err)
