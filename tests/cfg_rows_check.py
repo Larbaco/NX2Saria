@@ -358,6 +358,21 @@ void fake(void) {
     case('a name read through a cfg_get wrapper', r'ENV_NOT_KNOWN is read', extra=extra)
     case('a patch set\'s name not in known[]', r'PATCH_SET_NOT_KNOWN is read',
          patch_text=patches + '\nset some_patch NX2SARIA_PATCH_SET_NOT_KNOWN 1\n')
+    # G42: a key the game reads with cfg_bool (or another typed read: they all take cfg_value's row default) that is
+    # in known[] but has no metas[] row. The game ends at start with "FATAL: cfg: ... has no row in the settings table"
+    # whenever neither the environment nor the settings file sets the key.
+    typed = {'runtime/fake_typed.c': '''
+void fake_typed(void) {
+    int a = cfg_bool("NX2SARIA_G42_BOOL");
+    a += (int)cfg_double("NX2SARIA_G42_DOUBLE");
+    a += cfg_value("NX2SARIA_G42_VALUE")[0];
+    (void)a;
+}
+'''}
+    known_g42 = add_line(TABLES['known[]'][0], '"G42_BOOL", "G42_DOUBLE", "G42_VALUE",')
+    for fn, key in (('cfg_bool', 'G42_BOOL'), ('cfg_double', 'G42_DOUBLE'), ('cfg_value', 'G42_VALUE')):
+        case(f'a known key read with {fn} without a metas[] row (G42)',
+             r'%s\("NX2SARIA_%s"\) has no metas\[\] row' % (fn, key), known_g42, extra=typed)
     print(f'cfg_rows_check self-test: {"FAILED" if bad else "ok"}')
     return 1 if bad else 0
 
