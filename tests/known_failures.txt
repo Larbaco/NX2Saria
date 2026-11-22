@@ -6,5 +6,4 @@
 mouse_direct_check: its stand-in cfg_get answers only NX2NAVI_MOUSE_MODE; runtime/mouse_direct.c direct_mode asks for NX2SARIA_MOUSE_MODE and strcmp gets NULL (SIGSEGV)
 
 # Linux only.
-gen_width_check [linux]: runtime/simd.h:251 narrows a long to an int (-Wshorten-64-to-32); long is 32 bits on Windows
 rebrand_compat_test [linux]: the update feed looks for NX2Saria-update-linux.json on Linux, the test offers the Windows manifest names; its PGO case also needs SDL3's headers
