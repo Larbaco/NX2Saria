@@ -47,6 +47,11 @@ void *mem_kernel_alloc(uint64_t size, uint64_t align) {
     return p;
 }
 void mem_kernel_free(void *p, uint64_t size) { (void)size; plat_aligned_free(p); }
+// runtime/memory.c mem_commit_checked: kernel.c commits the main thread's stack with it, which these tests never start
+void mem_commit_checked(uint64_t addr, size_t size, const char *what) {
+    uint32_t error = 0;
+    if (!plat_mem_commit(addr, size, &error)) { printf("FAIL: commit of %s\n", what); exit(1); }
+}
 void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_logf(const char *fmt, ...) { (void)fmt; }
 void rt_log_raw(const char *p, size_t n) { (void)p, (void)n; }

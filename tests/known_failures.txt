@@ -2,21 +2,6 @@
 # system only. A known failure still runs and is counted apart; it does not fail the run. The line goes in the change
 # that makes the test pass (the runner reports a known failure that passed).
 #
-# The Linux platform layer (runtime/platform/linux.c) now calls cfg_env, SDL3's clipboard (SDL_SetClipboardText,
-# SDL_GetClipboardText, SDL_free) and, for some, mem_commit_checked; these tests build it without them and do not link.
-frame_owed_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-hang_watch_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-ipc_session_check [linux]: builds linux.c without cfg_env, mem_commit_checked and SDL3's clipboard calls: undefined references at link
-logq_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-part_file_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-present_held_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-spv_store_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-submit_clone_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-sync_wake_check [linux]: builds linux.c without cfg_env, mem_commit_checked and SDL3's clipboard calls: undefined references at link
-system_event_check [linux]: builds linux.c without cfg_env, mem_commit_checked and SDL3's clipboard calls: undefined references at link
-tex_copy_mt_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-thread_end_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
-
 # Stand-ins that fell behind the runtime (seen on Linux; not run on Windows for this list).
 audio_mixer_check: its stand-in settings end the run with "unexpected setting NX2SARIA_AUDIO_RAMP"
 audio_params_check: its stand-in settings end the run with "unexpected setting NX2SARIA_AUDIO_RAMP"

@@ -1,4 +1,4 @@
-# needs: clang, linux:sdl3
+# needs: clang
 """Build and run tests/spv_store_check.c: runtime/spv_store.h, which keeps a shader's SPIR-V zstd-compressed while
 nobody reads it (runtime/gfx_shader.c "SPIR-V at rest"). The check walks one store through pin, pack, decode and idle
 again, and runs reader threads against a packer that compresses every store as soon as it is free: no reader may see
@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from platform_stand_ins import stand_ins
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -37,6 +39,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
+    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
