@@ -6,7 +6,7 @@ and checks that
   - copies of the array in plain memory are found and rewritten, also one across two 16 MiB pieces and one across two
     64 KiB steps of a piece that holds armed memory;
   - no read touches an armed range (a GPU-written buffer the CPU has not read), and a copy inside one is left as it is;
-  - the first search that leaves armed memory out logs it once, and with every range armed (NX2NAVI_WB_PROBE) the search
+  - the first search that leaves armed memory out logs it once, and with every range armed (NX2SARIA_WB_PROBE) the search
     reads nothing.
 
 No game files. Usage: python tests/camera_search_check.py [--cc <clang>]

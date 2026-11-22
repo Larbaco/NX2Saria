@@ -483,7 +483,7 @@ static void restore_kept_out(void) {
     CHECK(!rtss_limit_active(), "the game's limiter paces");
 }
 
-// NX2NAVI_RTSS=0 with a limit set in RTSS's Global profile: the worker only reads, never loads the hooks library, and
+// NX2SARIA_RTSS=0 with a limit set in RTSS's Global profile: the worker only reads, never loads the hooks library, and
 // tells of the two limiters until the player clears that limit.
 static void kept_two(void) {
     global.limit = 50;
@@ -494,7 +494,7 @@ static void kept_two(void) {
     CHECK(spawned, "a kept-out first want starts the worker");
     CHECK(!loads && !saves && !deletes, "kept out, the hooks library is never loaded and no profile written");
     CHECK(rtss_limit_state() == 4 && !rtss_limit_active(), "the menu says two limiters; the game's limiter paces");
-    CHECK(logged("kept out: NX2NAVI_RTSS=0"), "the kept-out line names the setting");
+    CHECK(logged("kept out: NX2SARIA_RTSS=0"), "the kept-out line names the setting");
     CHECK(logged("two limiters: RivaTuner Statistics Server's own setting for the game (Profiles\\Global: limit 50/1, "
                  "frame time limit 0/0, scanline sync 0/0) limits it beside the game's limiter"),
           "the two-limiter line names the file and the values");
@@ -1089,7 +1089,7 @@ static void crash_recorded(void) {
 // run, then the next run's own limit, and back again at its close. variant 1: the player had a profile with 30/1;
 // variant 2: the player set 75 in RTSS between the two runs; variant 3: the next start has frame generation on, which
 // keeps RTSS out, and still puts the profile back (the hooks library loaded for that alone) with no write of its own;
-// variant 4: the next start has NX2NAVI_RTSS=0, which keeps the thread read-only: the log says what the file holds,
+// variant 4: the next start has NX2SARIA_RTSS=0, which keeps the thread read-only: the log says what the file holds,
 // and the profile and the line stay for a start with RTSS let in; variant 5: the run is killed inside the save of its
 // second limit, after the line took 144 and before the profile did: the next start finds the 60 before it and removes
 // the profile.
@@ -1133,7 +1133,7 @@ static void kill_next(void) {
             CHECK(!own.exists && !*state(), "the profile and the line gone:\n%s", state());
         } else {
             CHECK(!loads && logged("rtss-profile.txt holds the game's limit of 60/1 for RivaTuner Statistics Server's "
-                                   "profile ocarina.exe from a run that did not close; NX2NAVI_RTSS=0 leaves the "
+                                   "profile ocarina.exe from a run that did not close; NX2SARIA_RTSS=0 leaves the "
                                    "profile as it is"),
                   "read only: logged");
             CHECK(own.exists && own.limit == 60 && state_has("\nrtss1 0 0 1 60 1 60 1 ocarina.exe\n"), "left:\n%s",

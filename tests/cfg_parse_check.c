@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
     ini = argv[2];
     if (!strcmp(argv[1], "load")) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
-        printf("got: pace_smooth '%s'\n", cfg_get("NX2NAVI_PACE_SMOOTH") ? cfg_get("NX2NAVI_PACE_SMOOTH") : "(unset)");
+        printf("got: pace_smooth '%s'\n", cfg_get("NX2SARIA_PACE_SMOOTH") ? cfg_get("NX2SARIA_PACE_SMOOTH") : "(unset)");
         printf("--- environment\n");
         cfg_init();   // finds no settings file next to the stand-in exe; checks the environment's values
         cfg_start(0);
@@ -119,11 +119,11 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(argv[1], "full")) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
-        const char *ll = cfg_get("NX2NAVI_LOW_LATENCY");
+        const char *ll = cfg_get("NX2SARIA_LOW_LATENCY");
         printf("got: low_latency %s\n", ll ? ll : "(unset)");
-        cfg_set("NX2NAVI_VK_PRESENT", "fifo");
-        cfg_set("NX2NAVI_FULLSCREEN", "1");
-        printf("got: vk_present %s\n", cfg_get("NX2NAVI_VK_PRESENT") ? cfg_get("NX2NAVI_VK_PRESENT") : "(unset)");
+        cfg_set("NX2SARIA_VK_PRESENT", "fifo");
+        cfg_set("NX2SARIA_FULLSCREEN", "1");
+        printf("got: vk_present %s\n", cfg_get("NX2SARIA_VK_PRESENT") ? cfg_get("NX2SARIA_VK_PRESENT") : "(unset)");
         return 0;
     }
     if (!strcmp(argv[1], "testset")) {
@@ -171,7 +171,7 @@ int main(int argc, char **argv) {
                                            "DYN_RES", "SHADOW_PCF"};
         for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) {
             char name[64];
-            snprintf(name, sizeof name, "NX2NAVI_%s", keys[i]);
+            snprintf(name, sizeof name, "NX2SARIA_%s", keys[i]);
             const char *v = cfg_get(name);
             printf("got: %s '%s'", keys[i], v ? v : "(unset)");
             const CfgMeta *m = cfg_meta(name);
@@ -184,14 +184,14 @@ int main(int argc, char **argv) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         cfg_init();
         cfg_start(0);
-        const char *mesh = cfg_get("NX2NAVI_MESH_EMULATION"), *res = cfg_get("NX2NAVI_VRAM_RESERVE_MB");
-        printf("got: bool %d mesh_emulation '%s' vram_reserve_mb '%s' default '%s'\n", cfg_bool("NX2NAVI_LOW_END_GPU"),
-               mesh ? mesh : "(unset)", res ? res : "(unset)", cfg_default("NX2NAVI_VRAM_RESERVE_MB"));
+        const char *mesh = cfg_get("NX2SARIA_MESH_EMULATION"), *res = cfg_get("NX2SARIA_VRAM_RESERVE_MB");
+        printf("got: bool %d mesh_emulation '%s' vram_reserve_mb '%s' default '%s'\n", cfg_bool("NX2SARIA_LOW_END_GPU"),
+               mesh ? mesh : "(unset)", res ? res : "(unset)", cfg_default("NX2SARIA_VRAM_RESERVE_MB"));
         return 0;
     }
     if (!strcmp(argv[1], "norow")) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
-        printf("got: cfg_int %d cfg_double %g\n", cfg_int("NX2NAVI_NO_ROW_CHECK"), cfg_double("NX2NAVI_NO_ROW_CHECK"));
+        printf("got: cfg_int %d cfg_double %g\n", cfg_int("NX2SARIA_NO_ROW_CHECK"), cfg_double("NX2SARIA_NO_ROW_CHECK"));
         return 0;
     }
     if (!strcmp(argv[1], "older")) {   // the file loaded twice, as a reload reads it again; then cfg_init

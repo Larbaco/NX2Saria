@@ -2,7 +2,7 @@
 """Build and run tests/audio_params_check.c: runtime/hle/audren.c and runtime/audio/audio_mixer.c with the rest of the runtime
 stubbed and the real effect DSPs (runtime/audio/audio_effects.c, runtime/audio/audio_reverb.c) linked. It sends RequestUpdates the
 renderer cannot use: refused ones must answer 0x5299 and change nothing, records, effects and sinks are left out of
-updates that are otherwise applied, each kind is logged once, and with NX2NAVI_AUDIO_STRICT=1 such a value ends the
+updates that are otherwise applied, each kind is logged once, and with NX2SARIA_AUDIO_STRICT=1 such a value ends the
 process (two runs of their own, which must exit 2 with "FATAL: audio:"). No game files and no audio device.
 
 Windows: python tests\\audio_params_check.py [--toolchain C:/msys64/ucrt64] [-v]

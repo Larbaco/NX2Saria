@@ -3,8 +3,8 @@
 // GPU copy and the wait for it) and then writes a marker over the first 64 bytes of each copy, opening the page for
 // it, as the GPU's copy writes past the pages' protection; the back end's clean test may wait too. Built and run by
 // tests/lazy_fetch_check.py, one scenario per process (the argument), so an access violation passed to the crash
-// handler shows as the exit code. CHECK_CHUNK in the environment sets NX2NAVI_WB_LAZY_CHUNK=1, CHECK_LOCKED
-// NX2NAVI_WB_LAZY_UNLOCKED=0. Prints each failed check and exits 1 on any.
+// handler shows as the exit code. CHECK_CHUNK in the environment sets NX2SARIA_WB_LAZY_CHUNK=1, CHECK_LOCKED
+// NX2SARIA_WB_LAZY_UNLOCKED=0. Prints each failed check and exits 1 on any.
 #include "memory.c"
 
 #include <stdarg.h>
@@ -21,9 +21,9 @@ const int rt_layout_count = 1;
 const char *cfg_get(const char *name) { (void)name; return NULL; }
 const char *cfg_value(const char *name) { (void)name; return "0"; }
 int cfg_bool(const char *name) {
-    if (!strcmp(name, "NX2NAVI_WB_LAZY")) return 1;
-    if (!strcmp(name, "NX2NAVI_WB_LAZY_CHUNK")) return getenv("CHECK_CHUNK") != NULL;
-    if (!strcmp(name, "NX2NAVI_WB_LAZY_UNLOCKED")) return getenv("CHECK_LOCKED") == NULL;
+    if (!strcmp(name, "NX2SARIA_WB_LAZY")) return 1;
+    if (!strcmp(name, "NX2SARIA_WB_LAZY_CHUNK")) return getenv("CHECK_CHUNK") != NULL;
+    if (!strcmp(name, "NX2SARIA_WB_LAZY_UNLOCKED")) return getenv("CHECK_LOCKED") == NULL;
     return 0;
 }
 void cfg_init(void) {}
@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
         Touch a, b;
         void *ta = touch(&a, s + 0x10, 0);
         wait_fetch();
-        if (lz_unlocked) plat_mutex_lock(&frz_lock);   // with NX2NAVI_WB_LAZY_UNLOCKED=0 the fetch holds it
+        if (lz_unlocked) plat_mutex_lock(&frz_lock);   // with NX2SARIA_WB_LAZY_UNLOCKED=0 the fetch holds it
         void *tb = touch(&b, s + 0x10, 0);
         for (int i = 0; i < 100 && !(a.done && b.done); i++) plat_wait_ns(10000000);
         int both = a.done && b.done;
@@ -323,7 +323,7 @@ int main(int argc, char **argv) {
     } else if (!strcmp(what, "thaw_unlocked")) {
         // A thaw (a file read into a buffer) of a range armed with stale bytes fetches them before it takes frz_lock
         // (memory.c lazy_release_regions): a freeze of another region meanwhile does not wait for the copy. With
-        // NX2NAVI_WB_LAZY_UNLOCKED=0 the thaw fetches under the lock, and the freeze waits.
+        // NX2SARIA_WB_LAZY_UNLOCKED=0 the thaw fetches under the lock, and the freeze waits.
         uint64_t s = heap + 124 * M, frz_at = heap + 16 * M;
         CHECK(arm_buf(s, K64, 1) == K64 && stale(s, K64, 1) == 1, "arm");
         void *th = plat_thread_new(thawer, (void *)(uintptr_t)(s + 0x1000), "thawer");
@@ -358,7 +358,7 @@ int main(int argc, char **argv) {
     } else if (!strcmp(what, "release")) {
         // A release of one buffer's ranges (a mirror eviction): one fetch of its two armed stale segments, and it
         // returns after the fetch another thread runs of its third; the other buffer's range stays armed. With
-        // NX2NAVI_WB_LAZY_UNLOCKED=0 each segment is fetched on its own, as in 0.10.1.
+        // NX2SARIA_WB_LAZY_UNLOCKED=0 each segment is fetched on its own, as in 0.10.1.
         uint64_t base = heap + 64 * M;
         uint64_t x1 = base, x2 = base + M, x3 = base + 3 * M, y = base + 2 * M;
         CHECK(arm_buf(x1, K64, 1) == K64 && arm_buf(x2, K64, 1) == K64 && arm_buf(x3, K64, 1) == K64, "arms of X");
@@ -437,7 +437,7 @@ int main(int argc, char **argv) {
         CHECK(fetch_calls == 0 && !armed(s, K64) && page_rw(s) && !lzr[s >> FRZ_SHIFT] && lz_foreign == 1,
               "%d fetches, armed %d, read-write %d", fetch_calls, armed(s, K64), page_rw(s));
     } else if (!strcmp(what, "chunk")) {
-        // NX2NAVI_WB_LAZY_CHUNK=1: lz_lock is free during a piece's fetch; the rest of the range stays armed
+        // NX2SARIA_WB_LAZY_CHUNK=1: lz_lock is free during a piece's fetch; the rest of the range stays armed
         uint64_t s = heap + 72 * M, other = heap + 76 * M;
         CHECK(arm_buf(s, M, 1) == M && stale(s, M, 1) == 1, "arm");
         Touch a;
@@ -454,7 +454,7 @@ int main(int argc, char **argv) {
         plat_thread_join(ta);
         CHECK(armed(s + M / 2, 0x1000) && !armed(s, 0x1000) && page_rw(s), "the piece and the rest");
     } else if (!strcmp(what, "locked")) {
-        // NX2NAVI_WB_LAZY_UNLOCKED=0: the fetch holds frz_lock as before
+        // NX2SARIA_WB_LAZY_UNLOCKED=0: the fetch holds frz_lock as before
         uint64_t s = heap + 8 * M, frz_at = heap + 16 * M;
         CHECK(arm_buf(s, K64, 1) == K64 && stale(s, K64, 1) == 1, "arm");
         Touch a;

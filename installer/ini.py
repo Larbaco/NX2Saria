@@ -10,7 +10,7 @@ import os
 import re
 from pathlib import Path
 
-# runtime/hle/ov_system.c: the codes NX2NAVI_LANG offers. Each language appears once, under the code the game accepts.
+# runtime/hle/ov_system.c: the codes NX2SARIA_LANG offers. Each language appears once, under the code the game accepts.
 LANGUAGES = ('ja', 'en-US', 'en-GB', 'fr', 'fr-CA', 'de', 'it', 'es', 'es-419', 'nl', 'pt', 'pt-BR', 'ru', 'ko',
              'zh-Hans', 'zh-Hant')
 # Older installer builds wrote these two codes; they are read as the canonical ones and rewritten on the next install.

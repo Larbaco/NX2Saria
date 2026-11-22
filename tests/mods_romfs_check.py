@@ -47,7 +47,7 @@ def put(root, mod, rel, data, part='romfs', times=64):
 
 def run(exe, mods, order, disabled=''):
     """--probe-fs with a profile of its own beside mods (the merged resource size table is written there)."""
-    env = dict(os.environ, NX2NAVI_MODS_DIR=str(mods), NX2NAVI_MODS_ORDER=order, NX2NAVI_MODS_DISABLED=disabled)
+    env = dict(os.environ, NX2SARIA_MODS_DIR=str(mods), NX2SARIA_MODS_ORDER=order, NX2SARIA_MODS_DISABLED=disabled)
     profile = Path(mods).parent / 'profile'
     r = subprocess.run([str(exe), '--profile', str(profile), '--probe-fs'], env=env, capture_output=True, timeout=600)
     log = (r.stdout + r.stderr).decode('utf-8', 'replace')

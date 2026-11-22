@@ -128,7 +128,7 @@ def main():
 
     # values that do not: one line each, with the line number; a comment after a value of a row with a set: cut, and
     # one line
-    rc, out = run(exe, env, 'load', BAD, work, {'NX2NAVI_SHARPNESS': '500', 'NX2NAVI_VK_PRESENT': 'fifo'})
+    rc, out = run(exe, env, 'load', BAD, work, {'NX2SARIA_SHARPNESS': '500', 'NX2SARIA_VK_PRESENT': 'fifo'})
     want = [
         "line 2: pace_smooth = '0', and '; off' after it is a comment",
         "line 4: sharpness = '250' is not a number in 0..100",
@@ -140,7 +140,7 @@ def main():
         "line 11: aspect = '', and '; stretch some day' after it is a comment",
         "line 12: dlss_preset = 'k ; quoted' is none of the menu's choices default|k|j; a ';' or '#' after the value "
         "is part of it",
-        "the environment's NX2NAVI_SHARPNESS = '500' is not a number in 0..100",
+        "the environment's NX2SARIA_SHARPNESS = '500' is not a number in 0..100",
     ]
     for w in want:
         check(rc == 0 and w in out, f'logged: {w}', out if w not in out else '')
@@ -148,11 +148,11 @@ def main():
     check(len(cfg_lines) == 9, f'one line each for the nine lines, none for "fullscreen = false" ({len(cfg_lines)})',
           out)
     check(not any(' line 2: ' in l and 'is not 0' in l for l in cfg_lines), 'a cut value is checked as cut', out)
-    check('NX2NAVI_VK_PRESENT' not in out, 'an environment value that fits is not logged', out)
+    check('NX2SARIA_VK_PRESENT' not in out, 'an environment value that fits is not logged', out)
     check("got: pace_smooth '0'" in out, 'the value is read without its comment', out)
 
     # what the readers get: switches written as words, cut comments, free text kept whole, the environment as written
-    rc, out = run(exe, env, 'read', READ, work, {'NX2NAVI_DYN_RES': 'TRUE', 'NX2NAVI_SHADOW_PCF': '0 ; env note'})
+    rc, out = run(exe, env, 'read', READ, work, {'NX2SARIA_DYN_RES': 'TRUE', 'NX2SARIA_SHADOW_PCF': '0 ; env note'})
     got = {l.split()[1]: l.split(' ', 2)[2] for l in out.splitlines() if l.startswith('got: ')}
     want = {'PACE_SMOOTH': "'0' bool 0 int 0", 'FULLSCREEN': "'0' bool 0 int 0", 'RTSS': "'0' bool 0 int 0",
             'HDR_LIVE': "'1' bool 1 int 1", 'CLOTH_REALTIME': "'1' bool 1 int 1", 'FPS_LIMIT': "'144'",
@@ -164,9 +164,9 @@ def main():
     cut = [l for l in out.splitlines() if 'after it is a comment' in l]
     check(len(cut) == 4 and any("line 7: vk_present = 'fifo', and '; tear-free'" in l for l in cut),
           f'four cut lines, a tab before the comment too ({len(cut)})', out)
-    check(not any(w in out for w in ('fullscreen =', 'rtss =', 'hdr_live =', 'pace_smooth =', 'NX2NAVI_DYN_RES =')),
+    check(not any(w in out for w in ('fullscreen =', 'rtss =', 'hdr_live =', 'pace_smooth =', 'NX2SARIA_DYN_RES =')),
           'no line about switches written as words', out)
-    check("the environment's NX2NAVI_SHADOW_PCF = '0 ; env note' is not 0, 1, on, off, true, false, yes or no; a ';' "
+    check("the environment's NX2SARIA_SHADOW_PCF = '0 ; env note' is not 0, 1, on, off, true, false, yes or no; a ';' "
           "or '#' after the value is part of it" in out, "the environment's comment stays in its value", out)
 
     # at most 16 lines, then a count
@@ -203,17 +203,17 @@ def main():
             ('low_end_gpu = 0 ; note\n', None, f'bool 0 {unset}', 0),
             ('low_end_gpu = yes\n', None, f'bool 1 {unset}', 1),
             ('low_end_gpu = 1\n', None, f'bool 1 {unset}', 1),
-            ('; nothing\n', {'NX2NAVI_LOW_END_GPU': 'FALSE'}, f'bool 0 {unset}', 0),
-            ('; nothing\n', {'NX2NAVI_LOW_END_GPU': '0 ; x'}, f'bool 1 {unset}', 1),
+            ('; nothing\n', {'NX2SARIA_LOW_END_GPU': 'FALSE'}, f'bool 0 {unset}', 0),
+            ('; nothing\n', {'NX2SARIA_LOW_END_GPU': '0 ; x'}, f'bool 1 {unset}', 1),
             ('mesh_emulation = 1\nvram_reserve_mb = 512\n', None,
              "bool 0 mesh_emulation '1' vram_reserve_mb '512' default '0'", 0),
             ('low_end_gpu = 1\nmesh_emulation = 1\n', None,
              "bool 1 mesh_emulation '1' vram_reserve_mb '(unset)' default '0'", 1)):
         rc, out = run(exe, env, 'lowend', text, work, extra)
-        what = text.strip().replace('\n', ', ') if extra is None else f"the environment's {extra['NX2NAVI_LOW_END_GPU']!r}"
+        what = text.strip().replace('\n', ', ') if extra is None else f"the environment's {extra['NX2SARIA_LOW_END_GPU']!r}"
         check(rc == 0 and f'got: {want}' in out and out.count(gone) == said,
               f'low end: {what}: {want}, the removal said {said} time(s)', out)
-    rc, out = run(exe, env, 'norow', CLEAN, work, {'NX2NAVI_NO_ROW_CHECK': 'abc'})
+    rc, out = run(exe, env, 'norow', CLEAN, work, {'NX2SARIA_NO_ROW_CHECK': 'abc'})
     check(rc == 0 and 'got: cfg_int 0 cfg_double 0' in out, 'cfg_int of a set, unparsable key without a row: 0', out)
 
     # a test hook's values stay out of the settings file until SAVE=1 (cfg_set_test, cfg_test_keep)

@@ -1,4 +1,4 @@
-// runtime/memory.c mem_copy_readable with the lazy heap (NX2NAVI_HEAP_LAZY=1): a heap page nothing touched yet is
+// runtime/memory.c mem_copy_readable with the lazy heap (NX2SARIA_HEAP_LAZY=1): a heap page nothing touched yet is
 // still reserved, and the copy holds frz_lock, which the fault on such a page (heap_lazy_fault) waits for on the same
 // thread. Built and run by tests/heap_lazy_copy_check.py with the Windows platform layer and the real fault handler;
 // the rest of the runtime is stubbed. Prints each failed check and exits 1 on any, 4 when a copy never returns.
@@ -18,7 +18,7 @@ const RtLayoutEntry rt_layout[] = {{"main", MOD_MAIN_BASE, MOD_MAIN_SIZE}};
 const int rt_layout_count = 1;
 const char *cfg_get(const char *name) { (void)name; return NULL; }
 const char *cfg_value(const char *name) { (void)name; return "0"; }
-int cfg_bool(const char *name) { return !strcmp(name, "NX2NAVI_HEAP_LAZY"); }
+int cfg_bool(const char *name) { return !strcmp(name, "NX2SARIA_HEAP_LAZY"); }
 void cfg_init(void) {}
 void cfg_start(int game) { (void)game; }
 int tracker_api_on(void) { return 0; }   // mem_init asks where the stack and heap block goes

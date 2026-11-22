@@ -11,7 +11,7 @@ patch: runtime/patches/cheats.c runs it in its cheat VM.
 The cheat files are <mod>/cheats/<build id>.txt in each folder of --mods (or the Atmosphere places of that folder,
 as runtime/patches/mods.c finds them; the name's case does not matter), the build id the first 8 bytes of main's. Every mod's
 file is built, switched on or off: the runtime decides which run. --out gets the --patches file followed by one set
-per convertible cheat (`cheat_<hash>`, switch NX2NAVI_CHEAT_<HASH>, default off) and its sites. --status gets one line
+per convertible cheat (`cheat_<hash>`, switch NX2SARIA_CHEAT_<HASH>, default off) and its sites. --status gets one line
 per cheat, mods by name, cheats in file order, tab separated:
 
   <name hash> <content hash> <kind> <buttons> <note>
@@ -349,7 +349,7 @@ def main():
         if c.sites:
             name = f'cheat_{c.key.lower()}'
             label = c.name.encode('ascii', 'replace').decode()   # recomp/patches.py reads the file as ASCII
-            sets.append(f'set {name} NX2NAVI_CHEAT_{c.key} {1 if c.kind == "master" else 0}   # {label}')
+            sets.append(f'set {name} NX2SARIA_CHEAT_{c.key} {1 if c.kind == "master" else 0}   # {label}')
             for a, repl in sorted(c.sites.items()):
                 sites.append(f'site {name} main {a:x} {m.word(a):08x} {" ".join(f"{w:08x}" for w in repl)}')
         content = fnv(' '.join(f'{w:08X}' for w in c.words).encode())

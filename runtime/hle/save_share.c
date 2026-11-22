@@ -24,7 +24,7 @@
 
 #define FORMAT "nx2navi-save"
 #define FORMAT_VERSION 1
-#define TITLE_ID "0400486024dec000"   // the game's title id (fs_host.c NX2NAVI_APPLICATION_ID)
+#define TITLE_ID "0400486024dec000"   // the game's title id (fs_host.c NX2SARIA_APPLICATION_ID)
 #define GAME "The Legend of Zelda: Ocarina of Time"
 #define MAX_FILES 4000
 #define MAX_BYTES (256ull << 20)

@@ -364,7 +364,7 @@ class GameIniTest(Tmp):
         # the byte order mark, the line ends and a line that is not UTF-8 stay as they were
         ini = self.tmp / 'nx2saria.ini'
         ini.write_bytes(b'\xef\xbb\xbf[display]\r\nfullscreen = 1\r\n# caf\xe9\r\n# discord_rpc = 1\r\n[discord]\r\n'
-                        b'NX2NAVI_DISCORD_RPC = "1"\r\ndiscord_app_id = 42')
+                        b'NX2SARIA_DISCORD_RPC = "1"\r\ndiscord_app_id = 42')
         self.assertEqual(gameini.get(self.tmp, 'DISCORD_RPC'), '1')   # quotes, prefix and case as the game reads them
         gameini.put(self.tmp, 'discord', 'discord_rpc', '0')
         self.assertEqual(ini.read_bytes(), b'\xef\xbb\xbf[display]\r\nfullscreen = 1\r\n# caf\xe9\r\n# discord_rpc = 1\r\n'
@@ -3477,11 +3477,11 @@ class MakeGameTest(Tmp):
         self.assertFalse(self.mg.shader_carry(out))   # prepared, but the cache names no translator
         (out / 'shader-cache' / 'identities.txt').write_text('# translators\n' + 'ab' * 32 + '\n')
         self.assertTrue(self.mg.shader_carry(out))
-        (out / 'nx2navi.ini').write_text('[performance]\nNX2NAVI_SHADER_CARRY = "0"\n')
+        (out / 'nx2navi.ini').write_text('[performance]\nNX2SARIA_SHADER_CARRY = "0"\n')
         self.assertFalse(self.mg.shader_carry(out))
 
     def test_shader_carry_reads_the_switch_as_the_game(self):
-        """shader_carry reads NX2NAVI_SHADER_CARRY as runtime/cfg/cfg.c does: 0, off, false and no in any case are off, a
+        """shader_carry reads NX2SARIA_SHADER_CARRY as runtime/cfg/cfg.c does: 0, off, false and no in any case are off, a
         comment after a blank is cut unless the value is in double quotes, the file's last line with a value wins and
         the environment wins over the file. A line the game reads as off and this as on would skip a preparation the
         game does not make up for."""
@@ -3490,7 +3490,7 @@ class MakeGameTest(Tmp):
         (out / 'shader-prepared.bin').write_bytes(b'x')
         (out / 'shader-cache' / 'identities.txt').write_text('# translators\n' + 'ab' * 32 + '\n')
         ini = out / 'nx2navi.ini'
-        env = {k: v for k, v in os.environ.items() if k.upper() != 'NX2NAVI_SHADER_CARRY'}
+        env = {k: v for k, v in os.environ.items() if k.upper() != 'NX2SARIA_SHADER_CARRY'}
         with mock.patch.dict(os.environ, env, clear=True):
             for text, carry in (('shader_carry = off\n', False), ('shader_carry = FALSE\n', False),
                                 ('shader_carry = no\n', False), ('shader_carry = 0 ; note\n', False),
@@ -3502,10 +3502,10 @@ class MakeGameTest(Tmp):
                 ini.write_text(text)
                 self.assertEqual(self.mg.shader_carry(out), carry, text)
             ini.write_text('shader_carry = 0\n')
-            with mock.patch.dict(os.environ, {'NX2NAVI_SHADER_CARRY': '1'}):
+            with mock.patch.dict(os.environ, {'NX2SARIA_SHADER_CARRY': '1'}):
                 self.assertTrue(self.mg.shader_carry(out))   # the environment wins over the file
             ini.write_text('shader_carry = 1\n')
-            with mock.patch.dict(os.environ, {'NX2NAVI_SHADER_CARRY': 'Off'}):
+            with mock.patch.dict(os.environ, {'NX2SARIA_SHADER_CARRY': 'Off'}):
                 self.assertFalse(self.mg.shader_carry(out))
 
     def test_guest_opt_from_the_ini_counts_without_the_low_end_mode(self):
@@ -3523,11 +3523,11 @@ class MakeGameTest(Tmp):
         (out / 'nx2navi.ini').write_text('low_end_gpu = 1\n')
         with mock.patch.dict(os.environ, env, clear=True):
             self.mg.guest_opt_ini(out)
-            self.assertIsNone(os.environ.get('NX2NAVI_GUEST_OPT'))   # no guest_opt line: nothing is set
+            self.assertIsNone(os.environ.get('NX2SARIA_GUEST_OPT'))   # no guest_opt line: nothing is set
         (out / 'nx2navi.ini').write_text('guest_opt = 2\n')
-        with mock.patch.dict(os.environ, dict(env, NX2NAVI_GUEST_OPT='1'), clear=True):
+        with mock.patch.dict(os.environ, dict(env, NX2SARIA_GUEST_OPT='1'), clear=True):
             self.mg.guest_opt_ini(out)
-            self.assertEqual(os.environ.get('NX2NAVI_GUEST_OPT'), '1')   # the environment wins over the file
+            self.assertEqual(os.environ.get('NX2SARIA_GUEST_OPT'), '1')   # the environment wins over the file
 
     def test_cache_from_before_carrying_names_its_translator(self):
         """Before a new translator goes beside the game, a shader cache with no identities.txt gets one naming the
@@ -6832,7 +6832,7 @@ class StartScriptTest(Tmp):
         script = self.release('0.7.2', broken=True)
         self.release('0.7.1')
         (root / 'app' / 'previous.txt').write_text('0.7.1\n')
-        env = dict(os.environ, NX2NAVI_LAUNCHER_ROOT=str(root))
+        env = dict(os.environ, NX2SARIA_LAUNCHER_ROOT=str(root))
         try:   # a message box would wait for a click: the timeout is the test that there is none
             r = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired:
@@ -6844,7 +6844,7 @@ class StartScriptTest(Tmp):
     def test_a_version_that_starts_returns_its_code(self):
         root = self.tmp / 'root'
         script = self.release('0.7.2')
-        r = subprocess.run([sys.executable, str(script)], env=dict(os.environ, NX2NAVI_LAUNCHER_ROOT=str(root)),
+        r = subprocess.run([sys.executable, str(script)], env=dict(os.environ, NX2SARIA_LAUNCHER_ROOT=str(root)),
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse((root / 'data' / 'logs' / 'crash.log').exists())

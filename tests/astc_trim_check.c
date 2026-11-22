@@ -35,7 +35,7 @@ uint32_t plat_thread_id(void) { return (uint32_t)GetCurrentThreadId(); }
 // ---- the rest of the runtime vk_astc.c names on this path
 static uint64_t fake_now;
 uint64_t kern_now_ns(void) { return __atomic_load_n(&fake_now, __ATOMIC_ACQUIRE); }
-int cfg_bool(const char *k) { (void)k; return 1; }   // NX2NAVI_ASTC_SCRATCH_KEEP=1, the default
+int cfg_bool(const char *k) { (void)k; return 1; }   // NX2SARIA_ASTC_SCRATCH_KEEP=1, the default
 int rt_knob(const char *k, const char *def) { (void)k; return atoi(def); }
 void rt_log(const char *fmt, ...) { (void)fmt; }
 void vk_texstat_time(int kind, uint64_t t0) { (void)kind, (void)t0; }

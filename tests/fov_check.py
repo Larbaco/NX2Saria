@@ -46,7 +46,7 @@ def main():
     call = lifter.lift(words[1], pc)
     assert call.kind == 'bl' and call.target == table.page + 0xeb0
     wide_index, wide_words, wide_expected = next(alt for alt in alts if table.sets[alt[0]][0] == 'wide_aspect')
-    assert table.sets[wide_index] == ('wide_aspect', 'NX2NAVI_PATCH_WIDE_ASPECT', 0)
+    assert table.sets[wide_index] == ('wide_aspect', 'NX2SARIA_PATCH_WIDE_ASPECT', 0)
     assert wide_expected == original and wide_words[0] == original
     wide_call = lifter.lift(wide_words[1], pc)
     assert wide_call.kind == 'bl' and wide_call.target == table.page + 0xe40

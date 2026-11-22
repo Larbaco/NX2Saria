@@ -6,7 +6,7 @@ It fails when:
   (the --probe-ffx-cache path), or anywhere in vk_ffx4.cpp or vk_fsr3.c: each such wait stalls the replaying thread with the queue
   lock held;
 - vk_upscaler_device_idle is called outside vk_upscaler_settle and vk_upscaler_gpu_wait (the rollback switch
-  NX2NAVI_UPSCALER_IDLE_WAIT=1, a full list, a refused creation's failed wait);
+  NX2SARIA_UPSCALER_IDLE_WAIT=1, a full list, a refused creation's failed wait);
 - one of the places that let something go (vk_dlaa.c free_size, free_snap, stale_sizes, release_kept, hudless_from,
   pb_images, retire_idle and evaluate, vk_ffx.cpp and vk_ffx4.cpp context_for, vk_fsr3.c ctx_for) does not call
   vk_upscaler_let_go, which
@@ -25,7 +25,7 @@ It fails when:
   vk_ffx_release, vk_ffx4.cpp vk_ffx4_release, vk_fsr3.c vk_fsr3_release) and a full list's fallback (vk_dlaa.c
   dead_put, the library files' retire_up, vk_fsr3.c retire_ctx), or there before vk_upscaler_settle's wait for the
   device;
-- NX2NAVI_UPSCALER_IDLE_WAIT has no sections[] entry in cfg.c or no line in nx2saria.ini.example (its known[] name and
+- NX2SARIA_UPSCALER_IDLE_WAIT has no sections[] entry in cfg.c or no line in nx2saria.ini.example (its known[] name and
   its metas[] row, and a // that would hide them, are tests/cfg_rows_check.py's);
 - perf.c's mark_name has another count of names than host.h has PERF_M_* kinds: a kind without a name prints a null
   string on a slow frame's line;

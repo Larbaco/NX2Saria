@@ -1,5 +1,5 @@
 """Build and run tests/heap_lazy_copy_check.c: runtime/memory.c mem_copy_readable with the lazy heap
-(NX2NAVI_HEAP_LAZY=1), where a heap page nothing touched yet is still reserved. The copy holds frz_lock, which the
+(NX2SARIA_HEAP_LAZY=1), where a heap page nothing touched yet is still reserved. The copy holds frz_lock, which the
 fault on such a page waits for; the check needs every copy to return, untouched pages to read zero and stay reserved,
 and pages past the heap's end to be left out.
 

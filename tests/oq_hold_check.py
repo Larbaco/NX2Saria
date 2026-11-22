@@ -1,6 +1,6 @@
 # needs: clang
 """Build and run tests/oq_hold_check.c: runtime/vk/vk_oq_hold.h, the count a samples-passed report writes when the full
-occlusion query ring left some of its draws uncounted (vk_exec_xfer.c oq_report_count, NX2NAVI_OQ_HOLD): the larger of
+occlusion query ring left some of its draws uncounted (vk_exec_xfer.c oq_report_count, NX2SARIA_OQ_HOLD): the larger of
 what was counted and the record's last complete count.
 
 No GPU, no game files, any Python.

@@ -22,7 +22,7 @@ def main():
         print(__doc__)
         return 2
     env = dict(os.environ)
-    env['NX2NAVI_VK_VALIDATION'] = '1'
+    env['NX2SARIA_VK_VALIDATION'] = '1'
     r = subprocess.run([sys.argv[1], '--probe-fsr3'], env=env, capture_output=True, text=True, errors='replace')
     lines = [ln for ln in r.stdout.splitlines() if ln.startswith('probe-fsr3:')]
     print('\n'.join(lines))
