@@ -431,11 +431,19 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     // pictures are the same as the mesh pipeline's and as one by one, checked above): the draws batched, those one by
     // one for want of history (a task program's first draws), and the cuts at each pass and after a draw one by one.
     if (rt_knob("MESH_FALLBACK_BATCH", "0")) {
-        for (int k = 0; k < 20; k++) {   // more draws of programs with history, so that task draws are batched too
+        // More draws of programs with history, so that task draws are batched too. A batched draw's stages use compute
+        // pipelines of their own, built in the background: the draws before they are ready are skipped, as above, and
+        // once the picture is whole it stays whole.
+        int whole = -1, k;
+        for (k = 0; k < 500 && (whole < 0 || k < whole + 20); k++) {
+            if (k && whole < 0) plat_sleep_ms(10);
             if (draw_picture(b, &pool, &color, again, 2, bpx)) return 1;
             int wk, dk = differing(bpx, px[1][5], &wk);
-            CHECK(!dk, "batched draw %d of a task program and a mesh program: %d texels differ", k, dk);
+            if (!dk && whole < 0) whole = k;
+            CHECK(whole < 0 || !dk, "batched draw %d of a task program and a mesh program, after the picture was whole at "
+                  "%d: %d texels differ", k, whole, dk);
         }
+        CHECK(whole >= 0, "with batching on the picture never became whole in %d submissions", k);
         uint64_t why[MFB_REASONS], cuts[3];
         vk_exec_mfb_batch_counts(why, cuts);
         printf("probe-meshfb: batch: %llu draws batched, %llu one by one for want of history, %llu stage textures, %llu "
