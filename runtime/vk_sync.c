@@ -1903,6 +1903,13 @@ void vk_sync_shutdown(void) {
             free(WP[w].slots);
             memset(&WP[w], 0, sizeof WP[w]);
         }
+        // the pre-pass command buffers' pool (vk_sync_pre: the mesh emulation's and the mesh fallback's batches); it
+        // stayed past the device's end, a leak each time the device was made again (the probes, a device made anew)
+        if (c && pre_pool) vkDestroyCommandPool(c->device, pre_pool, NULL);
+        pre_pool = VK_NULL_HANDLE;
+        free(pre_slots);
+        pre_slots = NULL;
+        npre = 0, pre_pair = -1, pre_cb = VK_NULL_HANDLE, nchain = 0;
         if (c && exec_tl) vkDestroySemaphore(c->device, exec_tl, NULL);
         exec_tl = VK_NULL_HANDLE;
         perf_gpu_stats = NULL;
