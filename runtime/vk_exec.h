@@ -282,6 +282,22 @@ void vk_c0_fill(uint8_t bank[VK_C0_BYTES], int stage, const p_bind_buf ssbo[16],
 // vk_exec_draw.c: OP_DRAW, OP_DRAW_IDX, OP_DISPATCH, OP_BIND_* (program, state, vattr, vstream, vbuf, ubo, ssbo, tex,
 // samp, img), OP_UPDATE_UB, OP_DRAW_IDX_IND, OP_DISPATCH_IND. payload: nvn_op_payload of the record.
 void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload);
+// NX2SARIA_REPLAY_PHASES (vk_exec_draw.c): a replay worker marks its thread (rw_main), and each frame's end in replay
+// order reports every 600 frames (vk_exec_frame_end).
+void vk_exec_phase_worker(void);
+void vk_exec_phases_frame(uint64_t frame);
+int vk_exec_phases_on(void);
+void vk_exec_phase_op(uint32_t op, uint64_t ns);    // vk_exec.c op_one: an op of the stream, by its code
+void vk_exec_phase_record(uint64_t ns);             // vk_exec.c vk_exec_record: one call's time on its thread
+// vk_exec.c vk_exec_record's parts: before the walk (pins, events, the mirror's and uniform snapshot's begin), the walk
+// (ops, front passes, groups), the groups' drain to the closing barrier, the mirror's and snapshot's end, the rest
+enum { SEG_PROLOGUE, SEG_WALK, SEG_DRAIN, SEG_MIRROR_END, SEG_TAIL,
+       // of the prologue: the pins' sweep, the event sync, the mirror's begin, the uniform snapshot's begin
+       SEG_PINS, SEG_EVSYNC, SEG_MIRROR_BEGIN, SEG_USNAP_BEGIN,
+       // of the walk, group_start: the peek ahead, the barrier and group begin, the front pass's loop, the hand-out
+       // (slots, the part, the queue, the wakes), the submitting thread's own chunks
+       SEG_PEEK, SEG_GBEGIN, SEG_FRONT, SEG_HANDOUT, SEG_OWN, SEG_N };
+void vk_exec_phase_seg(int seg, uint64_t ns);
 // The aspect a sampled view of img reads (vk_exec_draw.c get_view): stencil for a view in STENCIL depth-stencil mode.
 VkImageAspectFlags vk_exec_view_aspect(const VkTexImage *img, const view_t *v, int hv);
 VkImageView vk_exec_target_view(const VkTexImage *img, VkFormat format, VkImageViewType type, uint32_t aspect,

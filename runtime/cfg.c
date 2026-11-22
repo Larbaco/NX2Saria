@@ -99,7 +99,7 @@ static const char *const known[] = {
     "BIND_REUSE", "DYN_DELTA", "STG_ARENA", "SUBMIT_BATCH", "SUBMIT_THREAD", "ASTC_GPU_DESWIZZLE", "ASTC_SCRATCH_KEEP", "ASTC_ARENA", "ASTC_BC1",
     "MERGE_CPU", "MERGE_CPU_CHECK", "MERGE_CPU_MIN", "WB_DIFF",
     "TEXUP_LOG_MS", "DYN_RES", "DYN_RES_TARGET", "DYN_RES_STEP", "DYN_RES_MIN", "TEXTURE_DETAIL", "VRAM_USE",   // vram_use: the removed Video memory use row, read by nothing
-    "RECORDER_CORE", "RECORDER_PRIO", "READABLE_FAST", "REPLAY_TIME", "LOCK_TIME", "POOL_CREATE_BUDGET", "POOL_CREATE_MS", "POOL_FINI_IDLE", "POOL_LOAD_BACKLOG", "POOL_LOAD_MS",
+    "RECORDER_CORE", "RECORDER_PRIO", "READABLE_FAST", "REPLAY_TIME", "REPLAY_PHASES", "LOCK_TIME", "POOL_CREATE_BUDGET", "POOL_CREATE_MS", "POOL_FINI_IDLE", "POOL_LOAD_BACKLOG", "POOL_LOAD_MS",
     "VMA_BLOCK_MB", "SYNC_WAKE_ALL", "LOG_ASYNC", "LOG_SHORT_PATHS", "DEVICE_LOST_AT", "STAGING_FAIL_AT", "VRAM_BALLAST_MB",
     "GEN_SEED",
     "COPY_RETIRE",
@@ -209,7 +209,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"DRAW_CRUMBS", "diagnostics"}, {"TRACE", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"PASS_CRUMBS", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"}, {"STUTTER_MAP", "diagnostics"}, {"PAR_JOBS", "performance"}, {"PIPE_RELEASE", "performance"},
     {"FLIGHT_FLASH", "diagnostics"}, {"FLIGHT_FLASH_DIFF", "diagnostics"}, {"FLIGHT_FLASH_CELLS", "diagnostics"},
     {"WB_FENCE_LIMIT", "diagnostics"}, {"WB_MERGE", "diagnostics"}, {"WB_EXACT", "diagnostics"}, {"MEM_CENSUS", "diagnostics"}, {"WB_NO_REUP", "diagnostics"}, {"WB_PROBE", "diagnostics"}, {"WB_SPLIT", "performance"}, {"SHADOW_BULK_WRITE", "performance"}, {"WB_LAZY", "performance"}, {"HEAP_LAZY", "performance"}, {"BARRIER_GAME", "performance"}, {"MESH_AHEAD", "performance"}, {"MESH_FALLBACK", "performance"}, {"MESH_FALLBACK_MB", "performance"}, {"MESH_FALLBACK_WORKERS", "performance"}, {"MESH_FALLBACK_HOLD", "performance"}, {"WB_LAZY_TOUCH", "diagnostics"}, {"WB_LAZY_UNLOCKED", "diagnostics"}, {"WB_LAZY_CHUNK", "performance"}, {"FLUSH_UPLOAD", "diagnostics"}, {"GPA_TWIN_MAX_KB", "diagnostics"}, {"MIRROR_CAPTURE_KB", "diagnostics"}, {"WB_SKIP_MB", "diagnostics"},
-    {"SVC_SLOW_MS", "diagnostics"}, {"REPLAY_TIME", "diagnostics"}, {"LOCK_TIME", "diagnostics"},
+    {"SVC_SLOW_MS", "diagnostics"}, {"REPLAY_TIME", "diagnostics"}, {"REPLAY_PHASES", "diagnostics"}, {"LOCK_TIME", "diagnostics"},
     {"SHADOW_TABLE_STORES", "diagnostics"}, {"SHADOW_CHECK", "diagnostics"}, {"PREPARE_PIPELINES", "performance"},
     {"WB_MERGE_MAX", "diagnostics"}, {"MV_SURVEY", "diagnostics"}, {"TEXUP_LOG_MS", "diagnostics"},
     {"WAIT_WATCH_S", "diagnostics"},
@@ -424,7 +424,7 @@ static const CfgMeta metas[] = {
     {"DYN_RES_MIN", "0.5", "0.33..1", LIVE},
     // the recording thread: a core of its own (auto: with 12 or more logical processors) and the highest priority
     // (vk_exec.c rec_claim)
-    {"RECORDER_CORE", "0", "auto|0|1", RESTART}, {"RECORDER_PRIO", "1", "0|1", RESTART}, {"READABLE_FAST", "1", "0|1|ab", RESTART}, {"REPLAY_TIME", "0", "0|1", RESTART}, {"LOCK_TIME", "0", "0|1", RESTART}, {"POOL_CREATE_BUDGET", "16", "1..4096", RESTART}, {"POOL_CREATE_MS", "6", "0..100", RESTART}, {"POOL_FINI_IDLE", "0", "0|1", RESTART}, {"FREEZE_BUDGET_US", "1000", "0..100000", RESTART}, {"POOL_LOAD_BACKLOG", "512", "0..65536", RESTART},
+    {"RECORDER_CORE", "0", "auto|0|1", RESTART}, {"RECORDER_PRIO", "1", "0|1", RESTART}, {"READABLE_FAST", "1", "0|1|ab", RESTART}, {"REPLAY_TIME", "0", "0|1", RESTART}, {"REPLAY_PHASES", "0", "0|1", RESTART}, {"LOCK_TIME", "0", "0|1", RESTART}, {"POOL_CREATE_BUDGET", "16", "1..4096", RESTART}, {"POOL_CREATE_MS", "6", "0..100", RESTART}, {"POOL_FINI_IDLE", "0", "0|1", RESTART}, {"FREEZE_BUDGET_US", "1000", "0..100000", RESTART}, {"POOL_LOAD_BACKLOG", "512", "0..65536", RESTART},
     // vk_memory.c freeze_pass: the backoff's quiet time and the hold around area loads
     {"FREEZE_QUIET_MS", "5000", "0..60000", RESTART}, {"FREEZE_LOAD_HOLD_MS", "3000", "0..30000", RESTART}, {"POOL_LOAD_MS", "50", "1..1000", RESTART},
     // held submissions handed to the queue together (vk_sync.c, submit batching)

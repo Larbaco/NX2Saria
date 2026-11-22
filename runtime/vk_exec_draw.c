@@ -3545,7 +3545,13 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
 
 // The binding profile in the NX2SARIA_TRACE=gfx frame line reads the clock around every descriptor; without the trace
 // those reads would cost more than some of what they time, so they read 0.
-static inline uint64_t bt_now(void) { return rt_trace & RT_TRACE_GFX ? plat_now_ns() : 0; }
+// The phases NX2SARIA_REPLAY_PHASES times (vk_exec_op_draw below); the binding's four are inside PH_BIND.
+enum { PH_ENTRY, PH_SHADER, PH_PIPE, PH_STATE, PH_HOOKS, PH_BIND, PH_BIND_TEX, PH_BIND_BUF, PH_BIND_SIG, PH_BIND_PUSH,
+       PH_VBUF, PH_REST, PH_N };
+static inline void ph_mark(int p);
+static inline void ph_add(int p, uint64_t ns);
+static _Thread_local uint64_t ph_t;
+static inline uint64_t bt_now(void) { return rt_trace & RT_TRACE_GFX || ph_t ? plat_now_ns() : 0; }
 
 // ---- per-binding descriptor reuse
 // A graphics draw whose inputs differ from the previous draw's in one binding (the whole-draw skip, bind_sig, misses it)
@@ -3726,7 +3732,8 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
     if (skip) {
         uint64_t sig_t0 = bt_now();
         same = bind_sig(ex, info);
-        vk_exec_frame.bind_sig_ns += (uint64_t)(bt_now() - sig_t0);
+        uint64_t sig_dt = bt_now() - sig_t0;
+        vk_exec_frame.bind_sig_ns += sig_dt, ph_add(PH_BIND_SIG, sig_dt);
         if (same && was_valid && skip == 1) {
             for (int i = 0; i < cx->RS.ncnt; i++) vk_mem_count(cx->RS.cnt[i].cls, cx->RS.cnt[i].use, cx->RS.cnt[i].bytes);
             BS.bind_skip++;
@@ -3785,7 +3792,10 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
                 o[k].buffer = ubo_info(ex, st, r->slot + (int)k);
                 pb_keep(cx, nd + k, &o[k]);
             }
-            vk_exec_frame.bind_buf_ns += (uint64_t)(bt_now() - bt);
+            {
+                uint64_t buf_dt = bt_now() - bt;
+                vk_exec_frame.bind_buf_ns += buf_dt, ph_add(PH_BIND_BUF, buf_dt);
+            }
         } else if (b->kind == GFX_RES_SSBO) {
             uint64_t bt = bt_now();
             for (uint32_t k = 0; k < cnt; k++) {
@@ -3793,7 +3803,10 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
                 o[k].buffer = ssbo_info(ex, st, r, r->flags & 1);
                 pb_keep(cx, nd + k, &o[k]);
             }
-            vk_exec_frame.bind_buf_ns += (uint64_t)(bt_now() - bt);
+            {
+                uint64_t buf_dt = bt_now() - bt;
+                vk_exec_frame.bind_buf_ns += buf_dt, ph_add(PH_BIND_BUF, buf_dt);
+            }
         } else if (b->kind == GFX_RES_TEX || b->kind == GFX_RES_IMG) {
             int img = b->kind == GFX_RES_IMG;
             if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || b->type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {
@@ -3836,7 +3849,10 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
                                               .separate = (uint8_t)r->separate, .valid = 1, .image = ti,
                                               .out = o[k].image};
                     }
-                    vk_exec_frame.bind_tex_ns += (uint64_t)(bt_now() - tt);
+                    {
+                uint64_t tex_dt = bt_now() - tt;
+                vk_exec_frame.bind_tex_ns += tex_dt, ph_add(PH_BIND_TEX, tex_dt);
+            }
                     o[k].w[2] = (uint32_t)o[k].image.imageLayout;   // zero the tail padding
                     pb_keep(cx, nd + k, &o[k]);
                 }
@@ -3950,7 +3966,10 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
         }
         cx->B.res_valid = valid;
     }
-    vk_exec_frame.bind_push_ns += (uint64_t)(bt_now() - push_t0);
+    {
+        uint64_t push_dt = bt_now() - push_t0;
+        vk_exec_frame.bind_push_ns += push_dt, ph_add(PH_BIND_PUSH, push_dt);
+    }
     ex->recorded++;
 }
 
@@ -4565,6 +4584,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     if (!ex->prog) return draw_skipped(ex, mesh, SK_NO_PROGRAM);
     if (prog_lead_on()) prog_lead(ex->prog, mesh);
     if (n_skip_prog && skip_prog_wanted(ex->prog->serial)) return draw_skipped(ex, mesh, SK_PROG_FILTER);   // -1 until read
+    ph_mark(PH_ENTRY);
     int has_vs, has_fs, vs_wait = 0, fs_wait = 0, memo = mesh ? 0 : shader_memo_on();
     int has_ts = 0, ts_wait = 0, vst = mesh ? NVN_STAGE_MESH : NVN_STAGE_VS;
     const GfxShader *vs, *fs, *ts = NULL;
@@ -4619,6 +4639,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     if (!vs || (has_fs && !fs) || (has_ts && !ts)) return draw_skipped(ex, mesh, SK_SHADER_FAILED);
     if (shader_skipped(vs) || shader_skipped(fs)) return draw_skipped(ex, mesh, SK_SHADER_FILTER);
     if (vk_dlaa_skip_draw(ex, fs)) return draw_skipped(ex, mesh, SK_DLAA);   // the game's FXAA off, or its scaling replaced by DLSS (vk_dlaa.c)
+    ph_mark(PH_SHADER);
     uint32_t fbl = feedback_prepare(ex, fs);
     VkPipeState s = ex->pipe;
     s.vs = vs, s.fs = fs, s.ts = ts;
@@ -4757,6 +4778,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     if (pending) return draw_skipped(ex, mesh, SK_PIPE_PENDING);   // a background worker is building it: skipped until it is ready
     if (!p || !info) return draw_skipped(ex, mesh, SK_PIPE_FAILED);
     if (info->pool && !pool_on()) return draw_skipped(ex, mesh, SK_POOL_OFF);
+    ph_mark(PH_PIPE);
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
     if (!cx->B.st_valid || memcmp(&cx->B.st, &s, sizeof s)) {
         // Only the dynamic states whose values changed (vk_pipeline_set_dynamic_delta); NX2SARIA_DYN_DELTA=0 records
@@ -4778,6 +4800,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
             vk_draw_mark(ex->cb, ex->mark, vs, fs, (uint32_t)(vk_exec_frame.draws - ex->mark_draws0));
     }
     vk_pipeline_line_width(ex->cb, &s, ex->line_width);   // a draw of lines: the game's width; else nothing
+    ph_mark(PH_STATE);
     if (!mesh) {
         vk_dlaa_draw(ex);
         vk_mvsurvey_draw(ex);
@@ -4786,12 +4809,14 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     vk_dlaa_jitter_check(ex);   // a draw with another jitter than the viewport recorded last records it again
     record_fixed(ex);
     repeat_stats(ex, info);
+    ph_mark(PH_HOOKS);
     {   // the replay's binding path is the CPU cost the frame profile needs to separate from recording
         uint64_t bt = bt_now();
         bind_resources(ex, info);
         vk_exec_frame.bind_ns += (uint64_t)(bt_now() - bt);
         vk_exec_frame.bind_calls++;
     }
+    ph_mark(PH_BIND);
     if (vk_texture_deferred()) return 0;   // a chunk's lookup waits for its turn: the op is replayed again
     if (fbl & ex->fb_dirty) feedback_barrier(ex);
     feedback_written(ex, &s, fbl);
@@ -4803,6 +4828,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     DRS.issued[mesh]++;
     draw_stats_tick();
     if (result) result->info = info, result->requested = requested;
+    ph_mark(PH_VBUF);
     return 1;
 }
 
@@ -7708,14 +7734,143 @@ static int op_is_draw(uint32_t op) {
     }
 }
 
+// NX2SARIA_REPLAY_PHASES=1 (default 0, off; a developer switch): where the replay's time per op goes, apart for the
+// submitting thread and the replay workers (whose chunks run beside it), by the op's kind and, inside a draw, by the
+// phase of prepare_draw_ex: entry (the pass and the scissor), shader lookup, pipeline lookup, its bind and dynamic state,
+// the per-draw hooks (DLAA, motion vectors, jitter, fixed state, repeat stats), the resource binding (of it the texture
+// and buffer descriptors, the binding signature and the set packing and pushes, which bind_resources times itself),
+// the vertex buffers and what follows, and the rest of the op (the index buffer, the vkCmdDraw call, a skipped draw).
+// One line per thread kind every PH_EVERY frames (vk_exec_phases_frame). The clock reads cost about a tenth of a
+// microsecond each, a dozen a draw, which the totals include.
+enum { PK_DRAW, PK_MESH, PK_DISPATCH, PK_UB, PK_OTHER, PK_N };
+#define PH_EVERY 600
+static int ph_on = -1;
+static _Thread_local int ph_worker;      // vk_exec_phase_worker: this thread is a replay worker
+// (ph_t, declared above bt_now: the last mark of the draw op being timed, 0 outside one)
+static uint64_t ph_ns[2][PH_N], ph_ops[2][PK_N], ph_op_ns[2][PK_N];   // __atomic
+
+void vk_exec_phase_worker(void) { ph_worker = 1; }
+
+static uint64_t ph_code_ns[2][OP_COUNT_], ph_code_n[2][OP_COUNT_], ph_rec_ns[2], ph_rec_n[2];   // __atomic
+int vk_exec_phases_on(void) {
+    if (ph_on < 0) {
+        int on = cfg_bool("NX2SARIA_REPLAY_PHASES");
+        if (on) rt_log("vk_exec: replay phases timed (NX2SARIA_REPLAY_PHASES=1): a line for the submitting thread and "
+                       "one for the replay workers every %d frames", PH_EVERY);
+        ph_on = on;
+    }
+    return ph_on;
+}
+void vk_exec_phase_op(uint32_t op, uint64_t ns) {
+    if (op >= OP_COUNT_) return;
+    __atomic_fetch_add(&ph_code_ns[ph_worker][op], ns, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&ph_code_n[ph_worker][op], 1, __ATOMIC_RELAXED);
+}
+static uint64_t ph_seg_ns[SEG_N];   // __atomic; the submitting thread's alone (vk_exec_record runs there)
+void vk_exec_phase_seg(int seg, uint64_t ns) {
+    if (seg >= 0 && seg < SEG_N) __atomic_fetch_add(&ph_seg_ns[seg], ns, __ATOMIC_RELAXED);
+}
+void vk_exec_phase_record(uint64_t ns) {
+    __atomic_fetch_add(&ph_rec_ns[ph_worker], ns, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&ph_rec_n[ph_worker], 1, __ATOMIC_RELAXED);
+}
+
+static inline void ph_mark(int p) {
+    if (!ph_t) return;
+    uint64_t n = plat_now_ns();
+    __atomic_fetch_add(&ph_ns[ph_worker][p], n - ph_t, __ATOMIC_RELAXED);
+    ph_t = n;
+}
+static inline void ph_add(int p, uint64_t ns) {
+    if (ph_t) __atomic_fetch_add(&ph_ns[ph_worker][p], ns, __ATOMIC_RELAXED);
+}
+
+static int op_kind(uint32_t op) {
+    switch (op) {
+    case OP_DRAW: case OP_DRAW_IDX: case OP_DRAW_IDX_IND: return PK_DRAW;
+    case OP_DRAW_MESH: case OP_DRAW_MESH_IND: return PK_MESH;
+    case OP_DISPATCH: case OP_DISPATCH_IND: return PK_DISPATCH;
+    case OP_UPDATE_UB: return PK_UB;
+    default: return PK_OTHER;
+    }
+}
+
 void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     if (!ex->dc) ex->dc = dc;
     static int on = -1;
     if (on < 0) on = cfg_bool("NX2SARIA_REPLAY_TIME");
-    if (!on) { op_draw_impl(ex, op, payload); return; }
+    if (ph_on < 0) vk_exec_phases_on();
+    if (!on && !ph_on) { op_draw_impl(ex, op, payload); return; }
     uint64_t t0 = plat_now_ns();
+    const int k = ph_on ? op_kind(op) : PK_OTHER;
+    if (ph_on && k != PK_OTHER) ph_t = t0;   // draws, dispatches and uniform updates mark their phases
     op_draw_impl(ex, op, payload);
-    perf_replay_op_at(op_is_draw(op) ? PERF_RP_DRAW : PERF_RP_BIND, op, plat_now_ns() - t0);
+    uint64_t t1 = plat_now_ns();
+    if (ph_on) {
+        if (ph_t && (k == PK_DRAW || k == PK_MESH)) ph_mark(PH_REST);
+        ph_t = 0;
+        __atomic_fetch_add(&ph_ops[ph_worker][k], 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&ph_op_ns[ph_worker][k], t1 - t0, __ATOMIC_RELAXED);
+    }
+    if (on) perf_replay_op_at(op_is_draw(op) ? PERF_RP_DRAW : PERF_RP_BIND, op, t1 - t0);
+}
+
+// After each frame's end in replay order (vk_exec.c vk_exec_frame_end): every PH_EVERY frames, the phases' lines.
+void vk_exec_phases_frame(uint64_t frame) {
+    static uint64_t frames;
+    if (ph_on <= 0 || ++frames % PH_EVERY) return;
+    static const char *const who[2] = {"the submitting thread", "the replay workers"};
+    for (int w = 0; w < 2; w++) {
+        uint64_t ns[PH_N], n[PK_N], t[PK_N];
+        for (int i = 0; i < PH_N; i++) ns[i] = __atomic_exchange_n(&ph_ns[w][i], 0, __ATOMIC_RELAXED);
+        for (int i = 0; i < PK_N; i++)
+            n[i] = __atomic_exchange_n(&ph_ops[w][i], 0, __ATOMIC_RELAXED),
+            t[i] = __atomic_exchange_n(&ph_op_ns[w][i], 0, __ATOMIC_RELAXED);
+        const double d = (double)(n[PK_DRAW] + n[PK_MESH] ? n[PK_DRAW] + n[PK_MESH] : 1), per = 1e6 * PH_EVERY;
+#define US(i) ((double)ns[i] / d / 1e3)
+#define OPS(i) (double)n[i] / PH_EVERY, n[i] ? (double)t[i] / (double)n[i] / 1e3 : 0.0, (double)t[i] / per
+        rt_log("vk_exec: frame %llu: replay phases on %s, per frame over %d frames: draws %.0f (%.2f us each, %.2f ms), "
+               "mesh draws %.0f (%.2f us, %.2f ms), dispatches %.0f (%.2f us, %.2f ms), uniform updates %.0f (%.2f us, "
+               "%.2f ms), other ops %.0f (%.2f us, %.2f ms); a draw's phases in us: entry %.2f, shader %.2f, pipeline "
+               "%.2f, its state %.2f, hooks %.2f, binding %.2f (textures %.2f, buffers %.2f, signature %.2f, sets and "
+               "pushes %.2f), buffers and after %.2f, the rest %.2f", (unsigned long long)frame, who[w], PH_EVERY,
+               OPS(PK_DRAW), OPS(PK_MESH), OPS(PK_DISPATCH), OPS(PK_UB), OPS(PK_OTHER), US(PH_ENTRY), US(PH_SHADER),
+               US(PH_PIPE), US(PH_STATE), US(PH_HOOKS), US(PH_BIND), US(PH_BIND_TEX), US(PH_BIND_BUF), US(PH_BIND_SIG),
+               US(PH_BIND_PUSH), US(PH_VBUF), US(PH_REST));
+#undef US
+#undef OPS
+        // by op code: the eight with the most time, and the walk's calls of vk_exec_record against the ops' sum
+        uint64_t cn[OP_COUNT_], cnn[OP_COUNT_], sum = 0;
+        for (int i = 0; i < OP_COUNT_; i++)
+            cn[i] = __atomic_exchange_n(&ph_code_ns[w][i], 0, __ATOMIC_RELAXED),
+            cnn[i] = __atomic_exchange_n(&ph_code_n[w][i], 0, __ATOMIC_RELAXED), sum += cn[i];
+        uint64_t rec = __atomic_exchange_n(&ph_rec_ns[w], 0, __ATOMIC_RELAXED),
+                 recn = __atomic_exchange_n(&ph_rec_n[w], 0, __ATOMIC_RELAXED);
+        char line[1024];
+        int o = 0;
+        for (int k = 0; k < 8; k++) {
+            int best = -1;
+            for (int i = 0; i < OP_COUNT_; i++)
+                if (cn[i] && (best < 0 || cn[i] > cn[best])) best = i;
+            if (best < 0) break;
+            o += snprintf(line + o, sizeof line - (size_t)o, "%s%s %.0f x %.2f us = %.2f ms", k ? ", " : "",
+                          nvn_op_name((uint32_t)best), (double)cnn[best] / PH_EVERY,
+                          (double)cn[best] / (double)cnn[best] / 1e3, (double)cn[best] / 1e6 / PH_EVERY);
+            cn[best] = 0;
+            if (o >= (int)sizeof line - 80) break;
+        }
+        double sg[SEG_N];
+        for (int i = 0; i < SEG_N; i++)
+            sg[i] = w ? 0 : (double)__atomic_exchange_n(&ph_seg_ns[i], 0, __ATOMIC_RELAXED) / 1e6 / PH_EVERY;
+        rt_log("vk_exec: frame %llu: replay ops on %s by code, per frame: all ops %.2f ms; vk_exec_record %.2f ms in %.1f "
+               "calls (before the walk %.2f: pins %.2f, event sync %.2f, mirror begin %.2f, uniform snapshot %.2f; the "
+               "walk %.2f, of it in groups: peek %.2f, barrier and begin %.2f, front pass %.2f, hand-out %.2f, own chunks "
+               "%.2f; the groups' drain to the last barrier %.2f, the mirror's and uniform snapshot's end %.2f, the rest "
+               "%.2f); the most: %s", (unsigned long long)frame, who[w], (double)sum / 1e6 / PH_EVERY,
+               (double)rec / 1e6 / PH_EVERY, (double)recn / PH_EVERY, sg[SEG_PROLOGUE], sg[SEG_PINS], sg[SEG_EVSYNC],
+               sg[SEG_MIRROR_BEGIN], sg[SEG_USNAP_BEGIN], sg[SEG_WALK], sg[SEG_PEEK], sg[SEG_GBEGIN], sg[SEG_FRONT],
+               sg[SEG_HANDOUT], sg[SEG_OWN], sg[SEG_DRAIN], sg[SEG_MIRROR_END], sg[SEG_TAIL], o ? line : "none");
+    }
 }
 
 // NX2SARIA_TRACE=perf "mem: sizes" (perf.c): the image view cache (under the texture lock), the spare descriptor pools

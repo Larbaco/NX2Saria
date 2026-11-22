@@ -28,6 +28,9 @@ How to measure the frame rate of a scene the same way twice, and how to read the
   on a fast build and a slow one. A build without this (0.10.1 and older) runs every `@` step at once.
 - **Pictures along the way**: `--set NX2SARIA_SHOTS=w15-53:5 --set NX2SARIA_SHOTS_DIR=<dir>/shots-{tag}` saves a small
   picture every 5 s of the flight, to check where it went. Leave it off for numbers: each picture costs a readback.
+- **Where the replay's CPU time goes** (a developer switch): `NX2SARIA_REPLAY_PHASES=1` times the replay's ops, a
+  draw's phases and the parts of each submission's recording, apart for the submitting thread and the replay workers,
+  in lines every 600 frames. `docs/replay-cpu.md` has a profile made with it and what it says.
 - **Rounds**: `--runs 3` (the default) plays every scene once per round, three rounds, so a drift over time (heat,
   background work) reaches every scene alike. The summary gives the spread between runs.
 - **Results** in `build/bench/<date>-<label>/`: per run the game's log and a CSV of every measured frame;
