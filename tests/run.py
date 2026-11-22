@@ -132,8 +132,7 @@ def builds(source, *flags):
 
 
 SDL3_PROBE = '#include <SDL3/SDL.h>\nint main(void) { return SDL_GetVersion() == 0; }\n'
-VULKAN_PROBE = ('#include <vulkan/vulkan.h>\n#if VK_HEADER_VERSION_COMPLETE < VK_MAKE_API_VERSION(0, 1, 4, 0)\n'
-                '#error old\n#endif\nint main(void) { return 0; }\n')
+VULKAN_PROBE = '#include <vulkan/vulkan.h>\n#ifndef VK_API_VERSION_1_4\n#error 1.3\n#endif\nint main(void) { return 0; }\n'
 
 
 def has_vma():
