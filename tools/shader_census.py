@@ -79,7 +79,7 @@ def sarc(data):
 
 
 NVN2_STAGES = {0: 'vs', 1: 'ps', 5: 'cs', 6: 'ts', 7: 'ms'}   # the stage number in bits 16+ of control +0x54
-NVN2_CONTROL = 0xe0   # the part of an NVN2 control section the runtime keeps (runtime/gfx_shader.c, "NVN2")
+NVN2_CONTROL = 0xe0   # the part of an NVN2 control section the runtime keeps (runtime/gfx/gfx_shader.c, "NVN2")
 NVN2_SLOTS = range(8, 96, 8)   # program slots that may point at a stage record: fragment +40, task +64, mesh +72 seen
 
 

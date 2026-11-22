@@ -1,4 +1,4 @@
-// tests/present_held_check.py builds this: runtime/vk_present_held.h, the present that waits for held work, with one
+// tests/present_held_check.py builds this: runtime/pacing/vk_present_held.h, the present that waits for held work, with one
 // presenting thread and three submitting threads. Every frame must reach the present callback exactly once and in
 // frame order, never two callbacks at once, and a submitting thread must never wait for the lock. "old" runs the
 // unlocked check-then-clear of 0.10.1 through the same harness and only prints what it sees, to show that the harness

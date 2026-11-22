@@ -4,7 +4,7 @@
 
 ROMFS is an extracted RomFS folder. Without --match it only lists; with it the matching textures become PNGs under
 --out, and --sheet also writes contact sheets of them (numbered; sheet.txt says which number is which). Reads files the
-way runtime/menu_assets.c does, and decodes ASTC with the runtime's own decoder (runtime/tex_astc.c, built into --out).
+way runtime/ui/menu_assets.c does, and decodes ASTC with the runtime's own decoder (runtime/gfx/tex_astc.c, built into --out).
 Everything written is game data and stays under build/. Needs Python 3.14 (compression.zstd) and numpy.
 """
 import argparse
@@ -86,7 +86,7 @@ def bntx_textures(b):
 
 
 def deswizzle(t, b, row, rows):
-    """The first level as tightly packed rows, in the Switch 2 GOB layout (runtime/tex_deswizzle.c tex_bl_copy)."""
+    """The first level as tightly packed rows, in the Switch 2 GOB layout (runtime/gfx/tex_deswizzle.c tex_bl_copy)."""
     th = t['th']
     gobs, unit, block = (row + 63) // 64, 8 << th, 512 << th
     need = gobs * ((rows + unit - 1) // unit) * block
@@ -104,7 +104,7 @@ def deswizzle(t, b, row, rows):
 
 
 def bc4(lin, wb, hb, w, h):
-    """White with the mask as alpha (runtime/menu_assets.c bc4_decode)."""
+    """White with the mask as alpha (runtime/ui/menu_assets.c bc4_decode)."""
     blocks = lin.reshape(hb, wb, 8).astype(np.uint32)
     a, b = blocks[..., 0], blocks[..., 1]
     pal = np.zeros((hb, wb, 8), dtype=np.uint32)
@@ -131,11 +131,13 @@ def bc4(lin, wb, hb, w, h):
 def astc_library(out):
     """The runtime's ASTC decoder as a library, built once into out."""
     dll = out / 'astc.dll'
-    src = ROOT / 'runtime' / 'tex_astc.c'
+    src = ROOT / 'runtime' / 'gfx' / 'tex_astc.c'
     if not dll.is_file() or dll.stat().st_mtime < src.stat().st_mtime:
         cc = shutil.which('clang') or r'C:\msys64\ucrt64\bin\clang.exe'
         vma = Path(cc).resolve().parents[1] / 'include' / 'vma'   # tex.h reaches the Vulkan allocator's header
-        if subprocess.run([cc, '-shared', '-O2', '-static', '-w', '-I', str(ROOT / 'runtime'), '-I', str(vma), str(src), '-o',
+        import build_game   # the runtime's include folders: tex.h includes headers from several
+        inc = [a for d in build_game.runtime_include_dirs() for a in ('-I', str(d))]
+        if subprocess.run([cc, '-shared', '-O2', '-static', '-w', *inc, '-I', str(vma), str(src), '-o',
                            str(dll)]).returncode:
             sys.exit('tex_astc.c did not compile')
     lib = ctypes.CDLL(str(dll))

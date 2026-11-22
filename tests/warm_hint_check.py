@@ -1,5 +1,5 @@
 # needs: clang, py:capstone, py:unicorn
-"""Build and run tests/warm_hint_check.c: runtime/vk_warm_hint.h, what the library warm's log adds when the driver's
+"""Build and run tests/warm_hint_check.c: runtime/vk/vk_warm_hint.h, what the library warm's log adds when the driver's
 cache of stage libraries is cold, by GPU vendor and by why it is cold.
 
 Usage: warm_hint_check.py
@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
 from common import MSYS_BIN, compiler  # noqa: E402
+import runtime_include  # noqa: E402
 
 
 def main():
@@ -22,7 +23,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     # both platforms' text is checked through lw_cold_hint's windows argument; LW_ON_WINDOWS on the one built for
-    subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'warm_hint_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

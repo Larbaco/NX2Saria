@@ -1,5 +1,5 @@
-// runtime/vk_save_retry.h: when the autosave thread saves the pipeline caches and when it tries again after a save
-// that did not happen (runtime/vk_pipeline.c autosave_once). Built and run by tests/save_retry_check.py; prints each
+// runtime/vk/vk_save_retry.h: when the autosave thread saves the pipeline caches and when it tries again after a save
+// that did not happen (runtime/vk/vk_pipeline.c autosave_once). Built and run by tests/save_retry_check.py; prints each
 // failed check and exits 1 on any.
 #include <stdio.h>
 

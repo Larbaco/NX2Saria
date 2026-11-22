@@ -12,10 +12,10 @@ Lifted code cannot be byte-patched when the game runs, so a patch is applied whe
 the generator), each <replacement> an instruction word (hex) or `@page:x<n>`, which is `adrp x<n>, <patch page>`
 encoded for the site's address. The patch page is the first 4 KiB page after main's image (layout.py leaves the rest
 of the 2 MiB-aligned module slot free); the runtime commits it and owns its contents. Words in use, by byte offset:
-+0..15 the frame-rate step (runtime/frame_rate.c), +16..55 the output, swapchain and scene sizes
-(runtime/resolution.c res_init), +56..59 the camera's aspect ratio (runtime/resolution.c res_init, set aspect), +60..63
-the field-of-view factor (runtime/resolution.c res_fov_live, set fov), +92..95 the sun shadow map size
-(runtime/resolution.c shadow_init, set shadow), +776..779 the ocarina staff's last note signal (set ostaff, written
++0..15 the frame-rate step (runtime/pacing/frame_rate.c), +16..55 the output, swapchain and scene sizes
+(runtime/gfx/resolution.c res_init), +56..59 the camera's aspect ratio (runtime/gfx/resolution.c res_init, set aspect), +60..63
+the field-of-view factor (runtime/gfx/resolution.c res_fov_live, set fov), +92..95 the sun shadow map size
+(runtime/gfx/resolution.c shadow_init, set shadow), +776..779 the ocarina staff's last note signal (set ostaff, written
 by the game's code). A new set takes words outside these.
 
 The replacement words are lifted at the site's address in place of the original instruction, and the generated C reads
@@ -29,7 +29,7 @@ writes patches.h (set names, switches, the page address) next to layout.h for th
 A `spin` line names a spin wait found by tools/spin_waits.py: a loop with head <head> that only another thread can end,
 and the direct branches back to it (module offsets). Each back-edge (checked: a b, b.cond, cbz / cbnz or tbz / tbnz to
 <head>) is lifted as `rt_spin_gate(c, <head>); goto <head>`, which keeps every register and only adds time
-(runtime/kernel.c kern_spin_gate).
+(runtime/hle/kernel.c kern_spin_gate).
 """
 from pathlib import Path
 

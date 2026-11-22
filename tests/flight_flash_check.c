@@ -1,4 +1,4 @@
-// runtime/flight_flash.h: the flight recorder's flash trigger, which frames count as a one-frame flash. Pictures of the
+// runtime/diag/flight_flash.h: the flight recorder's flash trigger, which frames count as a one-frame flash. Pictures of the
 // thumbnails' size are drawn here, turned into cell means (flash_cells) and judged three at a time (flash_test), or
 // handed in frame by frame as the present thread does (flash_note). Built and run by tests/flight_flash_check.py;
 // prints each failed check and exits 1 on any. With the argument "time" it also prints what one flash_cells and one

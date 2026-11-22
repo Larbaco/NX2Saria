@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 # What both harnesses stand in for the rest of the runtime with.
@@ -388,7 +389,7 @@ def main():
         link = [] if os.name == 'nt' else ['-lm']
         for harness in (HARNESS, OOT_HARNESS):
             source.write_text(harness)
-            subprocess.run([args.cc, '-O2', '-Wall', '-Wextra', '-I', str(folder), '-I', str(ROOT/'runtime'),
+            subprocess.run([args.cc, '-O2', '-Wall', '-Wextra', '-I', str(folder), *runtime_include.flags(),
                             str(source), *link, '-o', str(exe)], check=True)
             subprocess.run([str(exe)], check=True)
         if args.deps:
@@ -396,7 +397,7 @@ def main():
             script = folder / 'input.txt'
             script.write_text('10 MOUSE 123 -45\n20 MOUSE 1000 0\n@100 MOUSE -100 50\n')
             subprocess.run([args.cc, '-O2', '-flto', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', *(['-fuse-ld=lld', '-Wl,--exclude-all-symbols'] if os.name == 'nt' else []),
-                            '-I', str(ROOT/'runtime'), '-I', str(args.deps), '-I', str(args.deps/'vma'),
+                            *runtime_include.flags(), '-I', str(args.deps), '-I', str(args.deps/'vma'),
                             str(source), *link, '-o', str(exe)], check=True)
             subprocess.run([str(exe), str(script)], check=True)
 

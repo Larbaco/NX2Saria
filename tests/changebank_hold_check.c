@@ -1,4 +1,4 @@
-// The neighbouring map's hold (runtime/changebank_hold.c and changebank_hold.h) without the game: the rule over
+// The neighbouring map's hold (runtime/patches/changebank_hold.c and changebank_hold.h) without the game: the rule over
 // stand-in units, then the host function called as the lifted site calls it, over a stand-in manager laid out as
 // 1.1.1's constructor (main+0xd12c00) lays it out. Checked: the first choice, a flip and its way back, a choice taken
 // after the hold, two units of one map, a direct request, a gap in the updates, a held unit let go, a hold of 0, a

@@ -1,4 +1,4 @@
-// runtime/vk_tex_compact.h: from a table of what lies in the allocator's blocks, how much of them could go back to
+// runtime/vk/vk_tex_compact.h: from a table of what lies in the allocator's blocks, how much of them could go back to
 // the driver and which blocks a compaction empties. Built and run by tests/tex_compact_check.py; prints each failed
 // check and exits 1 on any.
 #include <stdio.h>

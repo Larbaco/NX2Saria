@@ -10,7 +10,7 @@ A tracker that reads the save files instead (the game's progress as values known
 the same server for the same values in the running game, `nx2saria.game_data`, and needs neither memory addresses nor
 the game's layout. [hyrule-tracker.md](hyrule-tracker.md) covers one such tracker.
 
-The API is off by default. The code is `runtime/tracker_api.c`; the listener is `plat_tcp_listen_loopback` in
+The API is off by default. The code is `runtime/diag/tracker_api.c`; the listener is `plat_tcp_listen_loopback` in
 `runtime/platform/`.
 
 ## Turning it on
@@ -251,7 +251,7 @@ Client lines stop after 20 a session and summaries after 36; the line that reach
 
 ## Checking it
 
-- `python tests/tracker_api_check.py` builds `runtime/tracker_api.c` with the platform layer and a guest memory of its
+- `python tests/tracker_api_check.py` builds `runtime/diag/tracker_api.c` with the platform layer and a guest memory of its
   own at the game's addresses (no game files, no game build) and talks to it as a tracker does.
 - `python tools/tracker_api_client.py [--port 6545] [--watch 30] [--save <game>/profile/save]`, with the game
   running and the API on, asks the game what a tracker asks and says whether each step works: the status, the heap's

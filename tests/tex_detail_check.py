@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/tex_detail_check.c: runtime/vk_tex_detail.h, the level texture_detail = auto picks for a video
+"""Build and run tests/tex_detail_check.c: runtime/vk/vk_tex_detail.h, the level texture_detail = auto picks for a video
 memory budget, on a card with memory of its own and on an integrated GPU (vk_texture.c vk_texture_detail_auto).
 
 No GPU, no game files, any Python.
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -32,7 +33,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'tex_detail_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

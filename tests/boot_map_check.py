@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/boot_map_check.c: runtime/boot_map_core.h, the bytes a boot map changes in what the game reads
+"""Build and run tests/boot_map_check.c: runtime/patches/boot_map_core.h, the bytes a boot map changes in what the game reads
 (the title's and the slot's sequence graphs, the save), on made-up files, and the values of its settings.
 
 No GPU, no game files, any Python.
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -32,7 +33,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'boot_map_check.c'), '-lm', '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

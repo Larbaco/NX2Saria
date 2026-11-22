@@ -1,7 +1,7 @@
 # needs: clang
-"""Build and run tests/gen_wrap_check.c: runtime/vk_memory.c's page write generations across 2^32, 2^40 and 2^63.
+"""Build and run tests/gen_wrap_check.c: runtime/vk/vk_memory.c's page write generations across 2^32, 2^40 and 2^63.
 
-From runtime/vk_memory.c it takes, verbatim, into build/test/gen_wrap/gen_section.inc:
+From runtime/vk/vk_memory.c it takes, verbatim, into build/test/gen_wrap/gen_section.inc:
 - the declarations of PoolRec's mgen and sgen (the generations a VRAM mirror and a shadow copy hold), so the stand-in
   PoolRec has their real width;
 - the section from the "page write generations" banner to the "dirty census" banner;
@@ -70,24 +70,24 @@ def extract(src):
     """gen_section.inc's text, or None and the reason."""
     a, b = src.find(BEGIN), src.find(END)
     if a < 0 or b < a:
-        return None, 'the section banners are not in runtime/vk_memory.c'
+        return None, 'the section banners are not in runtime/vk/vk_memory.c'
     s0 = src.find('typedef struct PoolRec {')
     s1 = src.find('} PoolRec;', s0)
     if s0 < 0 or s1 < 0:
-        return None, 'PoolRec is not in runtime/vk_memory.c'
+        return None, 'PoolRec is not in runtime/vk/vk_memory.c'
     fields = []
     for name in ('mgen', 'sgen'):
         m = re.search(r'^\s*(u?int\d+_t)\s+' + name + r';', src[s0:s1], re.M)
         if not m:
             return None, f'PoolRec.{name} is not declared as an integer of fixed width'
         fields.append(f'{m.group(1)} {name};')
-    out = ['// Extracted from runtime/vk_memory.c by tests/gen_wrap_check.py.\n',
+    out = ['// Extracted from runtime/vk/vk_memory.c by tests/gen_wrap_check.py.\n',
            'typedef struct PoolRec { int kind; void *buf; uint64_t import_lo, import_hi; ' + ' '.join(fields) +
            ' } PoolRec;\n', src[a:b]]
     for start in READERS:
         d = definition(src, start)
         if not d:
-            return None, f'{start.split()[-1]}...) is not in runtime/vk_memory.c'
+            return None, f'{start.split()[-1]}...) is not in runtime/vk/vk_memory.c'
         out.append(d)
     return '\n'.join(out), None
 
@@ -96,7 +96,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cc', help='the C compiler (default: $CC, MSYS2 UCRT64 clang, clang on PATH)')
     args = ap.parse_args()
-    inc, why = extract((ROOT / 'runtime' / 'vk_memory.c').read_text(encoding='utf-8-sig'))
+    inc, why = extract((ROOT / 'runtime' / 'vk' / 'vk_memory.c').read_text(encoding='utf-8-sig'))
     if not inc:
         print(f'gen_wrap_check: FAIL: {why}')
         return 1

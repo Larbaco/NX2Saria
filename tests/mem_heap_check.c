@@ -1,4 +1,4 @@
-// runtime/vk_mem_heap.h: when the memory report asks for the C runtime heap's summary, which holds every allocation of
+// runtime/vk/vk_mem_heap.h: when the memory report asks for the C runtime heap's summary, which holds every allocation of
 // the game while it runs. Never in play, unless NX2NAVI_MEM_CENSUS asks for it. Built and run by
 // tests/mem_heap_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>

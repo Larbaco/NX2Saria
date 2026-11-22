@@ -141,7 +141,7 @@ def free_gb(path):
 # FATAL line of its own: an error it cannot go on from, most often an allocation that failed because the memory ran
 # out (runtime/dispatch.c rt_fatal), or a failed re-run of itself (runtime/platform/win32.c plat_reexec). Its crash
 # report exits with 71 after writing its FATAL lines (runtime/main.c crash_handler). A lost graphics device ends it
-# with 72 (runtime/dispatch.h RT_LOST_EXIT, runtime/vk_device.c vk_device_lost_check), after a FATAL line too, unless
+# with 72 (runtime/dispatch.h RT_LOST_EXIT, runtime/vk/vk_device.c vk_device_lost_check), after a FATAL line too, unless
 # the report before that line hangs: then its watchdog (vk_device.c lost_wait_exit) ends the run with 72 and no FATAL
 # line, so 72's text stands without one. The others come from Windows when something ends the process before or
 # around that report.
@@ -196,7 +196,7 @@ def game_log_path(game_dir):
 
 def last_fatal(game_dir):
     """The last FATAL line of the game's latest run, without its "FATAL: ", or ''. The game writes one before it
-    exits with 70 (runtime/dispatch.c rt_fatal), 71 (runtime/main.c crash_handler) or 72 (runtime/vk_device.c
+    exits with 70 (runtime/dispatch.c rt_fatal), 71 (runtime/main.c crash_handler) or 72 (runtime/vk/vk_device.c
     vk_device_lost_check) into logs/nx2saria.log (older installations may still have logs/nx2navi.log). A line this
     launcher added for an earlier run's end (note_exit_in_log) ends the search: what stands before it is not this
     run's."""
@@ -216,8 +216,8 @@ def last_fatal(game_dir):
     return ''
 
 
-# The lines the game writes when it ends on its own: the window's close (runtime/gfx_present.c gfx_window_closed), the
-# game's own exit (runtime/svc.c, ExitProcess), a timed run's end (runtime/boot.c), a fatal error and the crash report's
+# The lines the game writes when it ends on its own: the window's close (runtime/gfx/gfx_present.c gfx_window_closed), the
+# game's own exit (runtime/hle/svc.c, ExitProcess), a timed run's end (runtime/boot.c), a fatal error and the crash report's
 # line for a fault on the way out (runtime/main.c).
 OWN_EXIT_LINES = ('gfx: window closed', 'guest ExitProcess', 'boot: frames', 'FATAL: ', 'exit: ')
 # The line a log stops with once it reached its size cap (runtime/main.c log_sink, LOG_CAP): the rest of that run,
@@ -315,7 +315,7 @@ def game_end(game_dir, code, started=None, restarted=False):
                        code in FATAL_CODES or code >= 0x80000000)
     # No process of the game writes a FATAL line and exits with 0 (runtime/dispatch.c fatal_end, runtime/main.c
     # crash_handler). After code 0, or a code not known, a FATAL line in a log written since the start is a copy's that
-    # the game's own Restart started (runtime/gfx_present.c gfx_window_closed): one that ended before the launcher saw
+    # the game's own Restart started (runtime/gfx/gfx_present.c gfx_window_closed): one that ended before the launcher saw
     # it run, or one it could not follow. That copy's log holds the line already: no note.
     fatal = last_fatal(game_dir) if log_is_new(game_dir, started) else ''
     if fatal:
@@ -337,7 +337,7 @@ def game_end(game_dir, code, started=None, restarted=False):
 
 
 class GameRun:
-    """A Play of the game, followed through the copies its own Restart starts. The Restart (runtime/gfx_present.c
+    """A Play of the game, followed through the copies its own Restart starts. The Restart (runtime/gfx/gfx_present.c
     gfx_window_closed) starts the exe again (runtime/platform/win32.c plat_restart) and ends the process before it
     with code 0, so the code the game really ended with is its last copy's: once the process followed has ended with
     0 while the exe still runs, the copy is looked for (winsys.game_copy) and followed from then on. On Linux the

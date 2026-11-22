@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/evo_peek_check.c: runtime/vk_evo_peek.h, the copy of each event-ordered queue's first held wait
+"""Build and run tests/evo_peek_check.c: runtime/vk/vk_evo_peek.h, the copy of each event-ordered queue's first held wait
 that vk_exec.c vk_exec_held_ready reads without the submission lock, and the decision it makes from that copy. One
 writer republishes while three readers copy: no copy may mix two publishes, and no reader waits for the writer.
 
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -34,7 +35,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     extra = [] if os.name == 'nt' else ['-pthread']
-    subprocess.check_call([compiler(), '-std=gnu11', '-O2', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O2', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'evo_peek_check.c'), '-o', str(exe), *extra], env=env)
     try:
         return subprocess.run([str(exe)], env=env, timeout=120).returncode

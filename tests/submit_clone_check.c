@@ -1,4 +1,4 @@
-// tests/submit_clone_check.py builds this: runtime/nvn_submit_guard.h, a synchronous submission's deferred binds when
+// tests/submit_clone_check.py builds this: runtime/nvn/nvn_submit_guard.h, a synchronous submission's deferred binds when
 // another guest thread may be replaying the same recording copy. Four threads submit two hand-built copies while a
 // "game" thread rewrites the handle arrays their deferred binds read; a quarter of the calls give their copy twice. A
 // replay must see its copy's handles unchanged from its resolve to its end, the in-flight count must be back to 0,

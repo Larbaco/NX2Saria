@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import runtime_include
 
 root = Path(__file__).resolve().parents[1]
 ap = argparse.ArgumentParser(description=__doc__)
@@ -29,6 +30,6 @@ exe = out / ('audio-input-check.exe' if os.name == 'nt' else 'audio-input-check'
 # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
 subprocess.run([cc, '-std=gnu11', '-O2', '-fno-strict-aliasing', '-Wall', '-Wextra', '-Werror',
                 '-Wno-bitwise-instead-of-logical',
-                '-I', str(root / 'runtime'), str(root / 'tests' / 'audio_input_check.c'),
+                *runtime_include.flags(root / 'runtime'), str(root / 'tests' / 'audio_input_check.c'),
                 '-o', str(exe), *flags], env=env, check=True)
 subprocess.run([str(exe)], env=env, timeout=15, check=True)

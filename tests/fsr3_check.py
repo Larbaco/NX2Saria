@@ -1,10 +1,10 @@
 # needs: exe, gpu
 # args: {exe}
-"""Run the game executable's --probe-fsr3 with Vulkan's validation on (runtime/fsr3_probe.c: FSR 3.1 upscaling with
-the runtime's own passes, runtime/vk_fsr3.c, on a synthetic panning scene, without a window or the game).
+"""Run the game executable's --probe-fsr3 with Vulkan's validation on (runtime/vk/fsr3_probe.c: FSR 3.1 upscaling with
+the runtime's own passes, runtime/vk/vk_fsr3.c, on a synthetic panning scene, without a window or the game).
 
 The probe checks the passes' output against a supersampled reference and against bilinear, the jitter and motion
-vector conventions runtime/vk_dlaa.c hands over (reversing either does worse), two render sizes on one output size
+vector conventions runtime/vk/vk_dlaa.c hands over (reversing either does worse), two render sizes on one output size
 served by one context, and that the passes raise no validation error; then it times one upscale at the docked sizes.
 This test passes when the probe does, and prints its lines.
 

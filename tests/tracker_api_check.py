@@ -1,5 +1,5 @@
 # needs: clang
-"""Build tests/tracker_api_check.c (runtime/tracker_api.c over the real platform layer, with a guest memory of its own
+"""Build tests/tracker_api_check.c (runtime/diag/tracker_api.c over the real platform layer, with a guest memory of its own
 at the game's addresses) and talk to it as a map tracker does: newline-delimited JSON requests, one at a time, each
 answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are
 stand-ins written to the test's build folder.
@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -42,7 +43,7 @@ MOD0 = MAIN + 0x3c4705c
 HEAP = 0x1030000000
 HOST = 0x2000000000   # the host's own memory in tests/tracker_api_check.c
 PIECE = 1 << 20
-SEARCH_MIB_PER_MIN = 512   # the searches' minute in this build (runtime/tracker_api.c SEARCH_BYTES_PER_MIN)
+SEARCH_MIB_PER_MIN = 512   # the searches' minute in this build (runtime/diag/tracker_api.c SEARCH_BYTES_PER_MIN)
 
 fails = 0
 
@@ -488,7 +489,7 @@ def main():
                            '-Wno-sign-compare', '-Wno-missing-field-initializers', '-Wno-bitwise-instead-of-logical',
                            '-fno-strict-aliasing',
                            '-march=x86-64-v3', f'-DSEARCH_BYTES_PER_MIN=({SEARCH_MIB_PER_MIN}ull<<20)', '-DCLIENT_LOGS=100',
-                           '-I', str(rt), '-I', str(work), str(ROOT / 'tests' / 'tracker_api_check.c'),
+                           *runtime_include.flags(rt), '-I', str(work), str(ROOT / 'tests' / 'tracker_api_check.c'),
                            *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     env['NX2SARIA_TRACKER_API'] = '1'
     env['NX2SARIA_TRACKER_API_PORT'] = str(40000 + os.getpid() % 20000)

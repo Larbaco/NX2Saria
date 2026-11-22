@@ -1,4 +1,4 @@
-// The camera's clearance on pictures that are not 16:9 (runtime/camera_clearance.c) without the game: the host called
+// The camera's clearance on pictures that are not 16:9 (runtime/patches/camera_clearance.c) without the game: the host called
 // as the two lifted sites call it, with the page's ratios set as widescreen.c sets them. Checked: a wide picture's
 // ratio made 16:9 in the load's own register, other values and 16:9 pictures left alone, a call from elsewhere, the
 // start lines and the session lines. Built by tests/camera_clearance_check.py, which writes the stand-in layout.h and

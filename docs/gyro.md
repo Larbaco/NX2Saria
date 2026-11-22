@@ -7,11 +7,11 @@ in [Controls](controls.md#gyro).
 ## The path
 
 - The game calls `GetSixAxisSensorHandles` and `StartSixAxisSensor` at boot and reads 16 states every frame
-  (`runtime/ov_input.c` `six_fill`). Each state holds the acceleration in G, the angular velocity in revolutions a
+  (`runtime/hle/ov_input.c` `six_fill`). Each state holds the acceleration in G, the angular velocity in revolutions a
   second, the angle (the angular velocity summed) and the direction (the controller's axes in a frame whose z is up).
-- `runtime/input.c` `motion_main` runs every 4 ms once the game started the sensor. It reads the newest gyro and
+- `runtime/input/input.c` `motion_main` runs every 4 ms once the game started the sensor. It reads the newest gyro and
   accelerometer sample of the gamepad the game reads, turns it into the Switch controller's axes
-  (`input_motion_axes`) and feeds it to `runtime/motion_fusion.c` `motion_feed`. A gamepad needs both sensors:
+  (`input_motion_axes`) and feeds it to `runtime/input/motion_fusion.c` `motion_feed`. A gamepad needs both sensors:
   SDL's plain pair, or a Joy-Con half's (`sensor_pairs`). SDL 3.4 gives a combined Joy-Con pair the right Joy-Con's
   sensors as the plain pair, so a pair aims with the right Joy-Con.
 - `motion_options_refresh` reads the `gyro_*` settings whenever the settings change (`cfg_version`) and hands them to

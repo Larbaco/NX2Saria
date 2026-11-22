@@ -1,9 +1,9 @@
 # needs: exe, gpu
 # args: {exe}
 """Run the game executable's --probe-meshfb twice: with the mesh fallback's batch off and on
-(NX2SARIA_MESH_FALLBACK_BATCH, runtime/vk_exec_draw.c mfb_draw, runtime/mfb_batch.h).
+(NX2SARIA_MESH_FALLBACK_BATCH, runtime/vk/vk_exec_draw.c mfb_draw, runtime/gfx/mfb_batch.h).
 
-The probe (runtime/mesh_fb_probe.c) draws mesh programs of the runtime's own through the replay, with and without a
+The probe (runtime/gfx/mesh_fb_probe.c) draws mesh programs of the runtime's own through the replay, with and without a
 task stage, with direct and GPU-written counts, one and two in one pass. It compares each picture of the fallback with
 the mesh pipeline's (where the device has mesh shaders), and checks that a draw past the mesh buffer and a task draw
 past the task buffer are drawn whole up to what fits and are counted.

@@ -3,9 +3,10 @@
 from pathlib import Path
 import subprocess
 import sys
+import runtime_include
 
 root = Path(__file__).resolve().parents[1]
-source = (root / 'runtime/vk_pipeline.c').read_text()
+source = (root / 'runtime/vk/vk_pipeline.c').read_text()
 start = source.index('typedef struct {\n    uint8_t code[32];\n    VkPipelineLayout layout;')
 end = source.index('// The layout of a compute shader in *B;', start)
 production = source[start:end]
@@ -111,6 +112,6 @@ c = out / 'check.c'
 c.write_text(harness)
 clang = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('C:/msys64/ucrt64/bin/clang.exe')
 exe = out / 'check.exe'
-subprocess.run([str(clang), '-std=gnu11', '-O1', '-I', str(root / 'runtime'), str(c),
+subprocess.run([str(clang), '-std=gnu11', '-O1', *runtime_include.flags(root / 'runtime'), str(c),
                 str(root / 'runtime/sha256.c'), '-o', str(exe)], check=True)
 subprocess.run([str(exe)], check=True)

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=bc2e6bc555f243905a9646008864a32236fe95d5 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=c4c212c525c783d6d394d41d611b99a005bc36c4 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -8,8 +8,8 @@
 <!-- /languages -->
 # Controles
 
-A entrada vem de controles SDL3, do teclado e do mouse, combinados em um único controle de Switch (`runtime/input.c`,
-`runtime/input_win.c`). Todo controle conectado fica aberto e o jogo lê o último que foi pressionado; um controle ligado
+A entrada vem de controles SDL3, do teclado e do mouse, combinados em um único controle de Switch (`runtime/input/input.c`,
+`runtime/input/input_win.c`). Todo controle conectado fica aberto e o jogo lê o último que foi pressionado; um controle ligado
 durante o jogo é encontrado em até um segundo. Os botões são combinados com OR; cada analógico usa a fonte com a maior
 inclinação. Teclas e botões do mouse só contam enquanto a janela do jogo está em primeiro plano. `NX2SARIA_INPUT=none`
 desativa os dois (execuções automatizadas). As configurações `NX2SARIA_*` também podem ser definidas no `nx2saria.ini`
@@ -49,7 +49,7 @@ O jogo lê o losango uma vez na inicialização, antes de um controle ser aberto
   motivos recebe o losango movido por cima das mudanças dele.
 
 O log diz o que aconteceu em uma linha que começa com `action prompt:`. Como o layout é alterado:
-`runtime/action_prompt.c` (`DoCommand_00` em `UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs`, servido
+`runtime/patches/action_prompt.c` (`DoCommand_00` em `UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs`, servido
 a partir de `<profile>/action-prompt/`).
 
 ## Ícones de botões
@@ -81,7 +81,7 @@ pastas serem criadas de novo.
 
 Os ícones ficam em pastas de overlay ao lado do exe, `romfs-patches-xbox`, `romfs-patches-xbox-label`,
 `romfs-patches-playstation`, `romfs-patches-playstation-label`, `romfs-patches-steamdeck` e
-`romfs-patches-steamdeck-label` (pela posição e pelo rótulo) e `romfs-patches-pc`, que `runtime/romfs.c` carrega no
+`romfs-patches-steamdeck-label` (pela posição e pelo rótulo) e `romfs-patches-pc`, que `runtime/hle/romfs.c` carrega no
 lugar dos arquivos do jogo. `tools/pad_prompts.py` as desenha na máquina do jogador a partir da RomFS do próprio jogador
 e de uma pasta de arte de botões. A arte é a pasta `prompt-art` do repositório: imagens de um pacote CC0, que o
 `SOURCE.md` dela nomeia, com a origem. Toda versão do launcher, AppImage e kit de compilação a traz
@@ -134,8 +134,8 @@ Switch, então o Space passa a guardar e o Left Ctrl a pular. O Left Shift é o 
 pressiona o A uma vez para falar e abrir. O Esc não tem atribuição no jogo; ele abre o menu de configurações e libera o
 cursor do mouse (veja Câmera com o mouse). Z e X repetem ZL e ZR em teclas vizinhas. A roda do mouse não tem atribuição
 no jogo em si; nos menus do próprio jogo ela rola (veja Mouse nos menus do jogo). As atribuições são as tabelas de
-`input_map` em `runtime/input_map.c`: as teclas (ids de tecla independentes de plataforma) e uma tabela de controle por
-layout (entradas do controle pela posição); `runtime/input_win.c` traduz as teclas virtuais do Win32 e os botões do SDL.
+`input_map` em `runtime/input/input_map.c`: as teclas (ids de tecla independentes de plataforma) e uma tabela de controle por
+layout (entradas do controle pela posição); `runtime/input/input_win.c` traduz as teclas virtuais do Win32 e os botões do SDL.
 
 ## Teclas da janela
 
@@ -216,7 +216,7 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
   em cinza e nunca entram nele.
 - Um salvamento feito por qualquer outra coisa enquanto o rascunho está aberto (F10 com o menu fechado, F11, um cheat)
   não grava um valor em prévia: a entrada fica fora de todo salvamento até o Aplicar (`cfg_hold`, `cfg_revert` em
-  `runtime/cfg.c`).
+  `runtime/cfg/cfg.c`).
 - Cada passo fica registrado em `logs/nx2saria.log`, para que uma execução possa ser conferida depois: `menu: draft +` e
   `menu: draft -` quando uma chave entra no rascunho ou sai dele (em prévia ou pendente), `menu: box` para cada caixa
   aberta e a resposta dada (botão, Esc ou B, o fim da contagem, F11), `menu: draft applied` / `discarded` com cada valor,
@@ -280,7 +280,7 @@ pressionamento da tecla, então o atalho não precisa de nenhuma mudança nas at
   foi recusado. Configurações que o menu marca como *após reiniciar* mudam na memória e aparecem no log com
   `(takes effect after restart)`.
 - Um novo valor é lido como na inicialização (um comentário depois do valor é cortado, e `on`, `off`, `true`, `false`,
-  `yes` e `no` valem para uma opção de ligar/desligar) e verificado antes (`value_ok` em `runtime/cfg.c`): com a
+  `yes` e `no` valem para uma opção de ligar/desligar) e verificado antes (`value_ok` em `runtime/cfg/cfg.c`): com a
   verificação que o log de inicialização usa para valores fora das opções das configurações (ligar/desligar, um
   intervalo, uma lista de nomes; uma lista com um número é a dos presets do menu e não é verificada), e com uma regra
   própria onde a configuração aceita mais do que essa tabela lista ou para o jogo com um valor ruim (`fps_limit`,
@@ -336,7 +336,7 @@ substitui o botão próprio do layout para aquele botão do Switch. As direçõe
 analógicos do controle e a câmera com o mouse sempre funcionam. Botões sem linha mantêm a tabela acima. Os nomes não
 diferenciam maiúsculas de minúsculas. Uma entrada inválida registra uma linha `input: bind ...` no log e é ignorada; uma
 linha sem nenhuma entrada válida não muda nada. As variáveis de ambiente `NX2SARIA_BIND_<button>` funcionam como
-qualquer outra configuração. Uma linha alterada vale na hora (`runtime/input.c` monta as tabelas de novo na próxima
+qualquer outra configuração. Uma linha alterada vale na hora (`runtime/input/input.c` monta as tabelas de novo na próxima
 leitura dos controles).
 
 Um controle que informa os botões frontais trocados (A/B e X/Y, como alguns modelos GuliKit fazem) se corrige com:
@@ -362,7 +362,7 @@ o fator aplicado. A inclinação do mouse concorre com o controle e as setas pel
 `NX2SARIA_MOUSE_MODE` (`mouse_mode`, a linha *Câmera com o mouse* na aba Controles, aplicada na hora) escolhe essa
 inclinação do analógico direito (`stick`) ou mouselook (`direct`, o padrão). Em `direct`, a atualização da entrada da
 câmera (`main+0x37c300`) pega ela mesma as contagens brutas, depois da zona morta, do limite e da curva de resposta do
-analógico do jogo (`recomp/patches-v111.txt`, conjunto `mouse_direct`; `runtime/mouse_direct.c` `camera_input_oot`). A
+analógico do jogo (`recomp/patches-v111.txt`, conjunto `mouse_direct`; `runtime/input/mouse_direct.c` `camera_input_oot`). A
 câmera gira o quanto o mouse se moveu, igual nos dois eixos: cerca de 0,08 grau por contagem com `NX2SARIA_MOUSE_SENS` 1,
 em qualquer taxa de quadros e com qualquer `NX2SARIA_STICK_SENS`, sem zona morta e sem velocidade máxima. A
 sensibilidade de câmera do próprio jogo (nas Options dele) escala o mouse como escala o analógico. O analógico direito de
@@ -429,13 +429,13 @@ O jogo gera a vibração para atuadores lineares: por lado, uma banda baixa e um
 amplitude. Na maioria dos controles isso é reduzido a duas intensidades de motor. Com `rumble_hd = 1` no `nx2saria.ini`
 (`NX2SARIA_RUMBLE_HD`, a linha *Vibração HD (Switch)* na aba Controles, aplicada na hora, desligada por padrão) um
 controle do Switch recebe os valores como o jogo os gera, no relatório de vibração do próprio controle
-(`runtime/rumble_hd.c`, `runtime/input.c` "HD rumble"):
+(`runtime/input/rumble_hd.c`, `runtime/input/input.c` "HD rumble"):
 
 | Controle que o jogo lê | Para onde vão os relatórios | Conexão |
 |---|---|---|
 | Switch Pro Controller (`057e:2009`) | pelo SDL (`SDL_SendGamepadEffect`) | USB e Bluetooth |
 | Um Joy-Con | pelo SDL; o valor do lado mais forte, já que ele tem um só atuador | Bluetooth, ou o grip de carregamento USB |
-| Um Joy-Con esquerdo e um direito como um só controle | direto para os dispositivos HID dos dois Joy-Con (`runtime/input_hd_pair.c`), já que o SDL não aceita dados de vibração para o controle combinado | Bluetooth |
+| Um Joy-Con esquerdo e um direito como um só controle | direto para os dispositivos HID dos dois Joy-Con (`runtime/input/input_hd_pair.c`), já que o SDL não aceita dados de vibração para o controle combinado | Bluetooth |
 | Qualquer outro, incluindo os controles do Switch 2 | os motores, como com `rumble_hd = 0` | |
 
 O log diz qual é o caso quando o jogo passa a usar um controle:
@@ -461,7 +461,7 @@ um botão que faz o Link correr sem precisar rolar antes: `l3` (o clique do anal
 esconder a caixa de texto em uma conversa), `b` (o botão B do jogo, o botão frontal de baixo no layout Nintendo), ou
 `off` (o padrão). `NX2SARIA_SPRINT_MODE` (`sprint_mode`, a linha *Sprint mode*) é `toggle` (o padrão: um toque começa a
 corrida, o próximo a encerra) ou `hold` (o Link corre enquanto o botão está segurado). O Link corre enquanto as flags de
-entrada dele contêm a entrada de dash; o conjunto `sprint` de `recomp/patches-v111.txt` chama `runtime/sprint.c` depois
+entrada dele contêm a entrada de dash; o conjunto `sprint` de `recomp/patches-v111.txt` chama `runtime/patches/sprint.c` depois
 da atualização de movimento do Link e da atualização de postura que vem em seguida, que carregam essas flags, e as
 funções do host acrescentam a entrada de dash enquanto a corrida está ligada, então a própria corrida do jogo roda, com
 a velocidade, a animação e a câmera dela. Uma corrida alternada continua através de pulos, deslizes, rolamentos e
@@ -483,8 +483,8 @@ pontos) mantém o conjunto de patches desligado e esconde as linhas.
 O jogo lê o giroscópio e o acelerômetro do controle como o sensor de seis eixos do Switch e mira com eles o estilingue,
 o arco, o hookshot e o bumerangue. Qualquer controle que o SDL apresente com giroscópio e acelerômetro funciona: um
 Switch Pro Controller, um par de Joy-Con (os sensores do Joy-Con direito), um DualSense ou um DualShock 4. O grupo
-*Giroscópio* na aba Controles reúne as configurações, todas aplicadas na hora (`runtime/input.c`
-`motion_options_refresh`, `runtime/motion_fusion.c`):
+*Giroscópio* na aba Controles reúne as configurações, todas aplicadas na hora (`runtime/input/input.c`
+`motion_options_refresh`, `runtime/input/motion_fusion.c`):
 
 | Configuração | Linha | Valores |
 |---|---|---|
@@ -513,7 +513,7 @@ encontrar. Com vários controles virtuais e reais conectados, o jogo segue o que
 ## Controles de PlayStation 3
 
 Com `ds3 = 1` no `nx2saria.ini` (desligado por padrão), um DualShock 3 no Windows é lido diretamente
-(`runtime/input_ds3_win.c`) quando nenhum driver o apresenta ao SDL ou ao XInput como controle. Conecte-o por USB, ou
+(`runtime/input/input_ds3_win.c`) quando nenhum driver o apresenta ao SDL ou ao XInput como controle. Conecte-o por USB, ou
 pareie-o com um driver Bluetooth que o exponha como dispositivo HID com o próprio nome, "PLAYSTATION(R)3 Controller"; o
 log então mostra `input: DualShock 3 opened`, a primeira luz de jogador do controle acende e
 `input: DualShock 3 is reporting` vem em seguida. O leitor envia ao controle o comando que o faz começar a enviar
@@ -580,5 +580,5 @@ ligado durante o jogo.
 
 `NX2SARIA_RDOC=<frame>[,...]` (`runtime/rdoc_win.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) carrega o RenderDoc antes
 de `vkCreateInstance`. O RenderDoc esconde `VK_EXT_external_memory_host`, que o back end exige para importar o pool do
-guest (`runtime/vk_memory.c`), então a criação do dispositivo falha sob ele. Uma captura precisa antes de um fallback de
+guest (`runtime/vk/vk_memory.c`), então a criação do dispositivo falha sob ele. Uma captura precisa antes de um fallback de
 pool baseado em cópia.

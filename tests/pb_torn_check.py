@@ -1,5 +1,5 @@
 # needs: clang, vulkan
-"""Check how pipeline-binaries.bin keeps its whole records (runtime/vk_pipeline.c pb_index and pb_keep,
+"""Check how pipeline-binaries.bin keeps its whole records (runtime/vk/vk_pipeline.c pb_index and pb_keep,
 NX2NAVI_PIPE_BINARIES=1). pb_init keeps the whole records of a file that ends inside one (the process ended during an
 append, or a disk filled) or holds a malformed one, and cuts the file back to them; the walk must say where the last
 whole record ends, and pb_keep must cut the file there. The check cuts the file's record layout and pb_hash, pb_find,
@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -215,7 +216,7 @@ def cut(source, start, end):
 
 
 def main():
-    src = (ROOT / 'runtime' / 'vk_pipeline.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8')
     production = cut(src, '#define PB_MAX_BIN 8', '// Opens pipeline-binaries.bin')
     work = ROOT / 'build' / 'test' / 'pb_torn'
     work.mkdir(parents=True, exist_ok=True)
@@ -226,7 +227,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-Wno-unused-variable',
-                           '-march=x86-64-v3', '-I', str(ROOT / 'runtime'), str(c), '-o', str(exe)], env=env)
+                           '-march=x86-64-v3', *runtime_include.flags(), str(c), '-o', str(exe)], env=env)
     return subprocess.run([str(exe), str(work / 'pipeline-binaries.bin')], env=env, timeout=60).returncode
 
 

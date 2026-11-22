@@ -2,24 +2,24 @@
 
 A quality preset is a set of graphics defaults chosen for the PC the game runs on. The setting `preset`
 (`NX2SARIA_PRESET`) is `recommended` (the default), `low`, `medium`, `high` or `ultra`. At every start a hardware probe
-reads the GPU, the processor, the memory and the handheld the firmware names, and `runtime/preset_pick.h`
+reads the GPU, the processor, the memory and the handheld the firmware names, and `runtime/cfg/preset_pick.h`
 `preset_pick` turns them into the recommended tier. **High is the game as shipped and sets nothing.** The other tiers
 set the keys of the table `PRESET_ROWS` in the same header.
 
-Code: `runtime/preset_pick.h` (the tiers, the rule and the table; header only, so the tests check it without a device),
-`runtime/hw_detect.c` (the probe), `runtime/cfg.c` "quality presets" (the layer, the start's choice, the state file,
+Code: `runtime/cfg/preset_pick.h` (the tiers, the rule and the table; header only, so the tests check it without a device),
+`runtime/cfg/hw_detect.c` (the probe), `runtime/cfg/cfg.c` "quality presets" (the layer, the start's choice, the state file,
 the calls the settings menu makes), `runtime/ui/menu.cpp` `row_preset`, `preset_confirm`, `row_scene_res` and
-`preset_notice_tick` (the menu), `runtime/ui/option_rows.cpp` (the draft, `opt_preset_handback` and Apply), `runtime/bugcap.c`
+`preset_notice_tick` (the menu), `runtime/ui/option_rows.cpp` (the draft, `opt_preset_handback` and Apply), `runtime/diag/bugcap.c`
 `preset_lines` (bug captures). The player's side is in [Controls, "Quality presets"](controls.md#quality-presets).
 
 ## A layer of defaults
 
-A setting's value comes from the first of these that has one (`runtime/cfg.c` `cfg_get_now`, `cfg_default`):
+A setting's value comes from the first of these that has one (`runtime/cfg/cfg.c` `cfg_get_now`, `cfg_default`):
 
 1. what the player sets: the environment (`NX2SARIA_*`), then `nx2saria.ini`, which the menu writes;
-2. the device profile (`device_profile`, the Steam Deck's defaults: `runtime/cfg.c` `DECK`);
+2. the device profile (`device_profile`, the Steam Deck's defaults: `runtime/cfg/cfg.c` `DECK`);
 3. the preset in use;
-4. the settings table's default (`runtime/cfg.c` `metas`).
+4. the settings table's default (`runtime/cfg/cfg.c` `metas`).
 
 Why a layer, and not values written into `nx2saria.ini`:
 
@@ -158,7 +158,7 @@ The bench PC (RX 6700 with 10 GB, 16 logical processors, 32 GB) is High: the gam
 
 ## Recommended and chosen tiers
 
-The recommended tier is decided anew at every start. What the start does with it (`runtime/cfg.c` `preset_init`):
+The recommended tier is decided anew at every start. What the start does with it (`runtime/cfg/cfg.c` `preset_init`):
 
 | `preset` in the environment or `nx2saria.ini` | This start |
 |---|---|
@@ -191,7 +191,7 @@ the menu: it ends the new-hardware state, and a tier is recorded as chosen here.
 
 In this game version (1.1.1), `render_scale` and `output_res` have no effect (`nx2saria.ini.example`); the Steam Deck
 profile still sets them, so on the Deck it is the Low preset that lowers the scene. The sizes come from three settings
-(`runtime/widescreen.c`):
+(`runtime/patches/widescreen.c`):
 
 - **`game_res`**, the picture's height (1080, 1440 the game's own, 1800, 2160, 2880 or `window`, which is never below
   1440; with `game_aspect`, its shape). The HUD, the menus and the text are drawn at this size, so they stay sharp
@@ -210,10 +210,10 @@ The chain, from the scene to the window:
          --(present scaler: upscaler = fsr | bilinear)--> window
 ```
 
-1. **The stand-in** for the game's own upscaler (`standin_filter`, `runtime/vk_tonemap.c`) enlarges a scene smaller than
+1. **The stand-in** for the game's own upscaler (`standin_filter`, `runtime/vk/vk_tonemap.c`) enlarges a scene smaller than
    the picture to the picture's size: `easu` (the default) with an edge-adaptive filter, `bilinear` with the plain one.
    With DLSS or FSR running it does nothing; at `scene_share = 1` it only decodes the scene, texel for texel.
-2. **The present scaler** (`upscaler = fsr` with `sharpness`, or `bilinear`; `runtime/vk_fsr.c`) fits the picture to the
+2. **The present scaler** (`upscaler = fsr` with `sharpness`, or `bilinear`; `runtime/vk/vk_fsr.c`) fits the picture to the
    window when their sizes differ.
 
 So a 1080-line picture at `scene_share = 0.5` in a 1440-line window draws a 540-line scene, enlarges it to 1080 lines
@@ -240,7 +240,7 @@ is. The row is shown only while neither DLSS nor FSR is chosen, since their mode
 ### Dynamic resolution
 
 `dyn_res = 1` (off by default; no tier turns it on) lets the scene's size follow the GPU's time per frame toward a
-target, one step at a time (`runtime/dynres.c`). The HUD and the text stay at the picture's size; only the scene
+target, one step at a time (`runtime/pacing/dynres.c`). The HUD and the text stay at the picture's size; only the scene
 changes. The menu has it in *Settings > Screen > Picture*, below *Scene resolution* (`runtime/ui/menu.cpp`
 `row_dyn_res`): *Dynamic resolution* (on / off), shown with and without an upscaler, and *Minimum scene resolution*
 (`dyn_res_min`, the Scene resolution row's shares from 33 % to 100 %), greyed out while *Dynamic resolution* is off and
@@ -287,19 +287,19 @@ The step lines stop after 200 in a run (one line says so), the summaries after 1
 ## The hardware probe
 
 The preset has to be known before any restart-only setting is read (the application pool's size goes by the resolution
-settings a preset sets), long before the game makes its Vulkan device. So `runtime/hw_detect.c` `hw_detect` runs a
+settings a preset sets), long before the game makes its Vulkan device. So `runtime/cfg/hw_detect.c` `hw_detect` runs a
 probe of its own:
 
-- a Vulkan 1.3 instance without surface extensions, which lists the devices and picks the one `runtime/vk_device.c`
+- a Vulkan 1.3 instance without surface extensions, which lists the devices and picks the one `runtime/vk/vk_device.c`
   `pick_device` would pick: `gpu_index` or `gpu_name` (with both set, a `gpu_index` that lists a GPU without that name
   is dropped and the name decides; a `gpu_index` alone that lists a GPU that is not a discrete one counts as unset while a
-  discrete one the game can use is listed, unless the environment sets it: `runtime/gpu_choice.h`), else a discrete GPU
+  discrete one the game can use is listed, unless the environment sets it: `runtime/vk/gpu_choice.h`), else a discrete GPU
   before an integrated one before any other, among those with Vulkan 1.3 and the extensions the game needs; of one GPU listed by two drivers, the newer
   driver's listing. It reads the GPU's name, IDs, driver version, type, largest device-local heap and mesh shader support (mesh
   and task shaders both), and is destroyed again;
 - the processor's logical processors and physical cores, the installed memory (`runtime/platform/`), and the handheld.
 
-**When it runs.** `runtime/cfg.c` `cfg_start`, called from `runtime/memory.c` `mem_init` once the fixed reservations
+**When it runs.** `runtime/cfg/cfg.c` `cfg_start`, called from `runtime/memory.c` `mem_init` once the fixed reservations
 are made (the fixed window, the stack and heap block, the alias region), so the drivers' libraries and allocations
 land outside the guest's address space, as the game's own device's do later; before the application pool is sized,
 and before `start_values` snapshots the restart-only keys, since a preset's are among them. The probe is the process's
@@ -317,10 +317,10 @@ before the crash report is set up (`plat_crash_hook`) and before the log file op
 crashes or hangs while the probe makes its instance would end such a start with no report and no log file, and the
 next start would do the same. So right before its first Vulkan call the probe logs
 `preset: probing the GPU (a Vulkan instance; preset_probe = 0 turns it off)` and the game writes `probing = 1` into
-the state file (`runtime/cfg.c` `preset_probe_begin`, through the same temporary file and rename); once the probe has
+the state file (`runtime/cfg/cfg.c` `preset_probe_begin`, through the same temporary file and rename); once the probe has
 returned, the start writes the file without it. A start that finds the line skips the probe and goes by the last
 result, and says so in its log. The line goes once that start's game has chosen its own Vulkan device
-(`runtime/cfg.c` `cfg_preset_device_started`, called by `hw_detect_device_check`): it has then made an instance and
+(`runtime/cfg/cfg.c` `cfg_preset_device_started`, called by `hw_detect_device_check`): it has then made an instance and
 listed the devices, as far as the probe goes, so the drivers load, and the next start probes again. A driver that
 crashes again in the game's own start leaves the line, and every later start goes without the probe until the player
 deletes the line (or the file). The same holds when the write that takes the line out fails (an antivirus holding the
@@ -416,7 +416,7 @@ A capture ([bug-capture.md](bug-capture.md)) carries the preset twice:
 
 ## The log
 
-All in `logs/nx2saria.log`, at the start unless said otherwise (formats from `runtime/cfg.c`, `runtime/hw_detect.c`
+All in `logs/nx2saria.log`, at the start unless said otherwise (formats from `runtime/cfg/cfg.c`, `runtime/cfg/hw_detect.c`
 and `runtime/ui/`):
 
 ```
@@ -469,7 +469,7 @@ preset: wrote <folder>/preset-state.txt
 
 ## Tests
 
-`python tests/preset_check.py` builds `tests/preset_check.c` with `runtime/cfg.c` and stand-ins for what `cfg.c` links
+`python tests/preset_check.py` builds `tests/preset_check.c` with `runtime/cfg/cfg.c` and stand-ins for what `cfg.c` links
 against (`tests/preset_check_stubs.h`; the probe's among them: the made-up hardware comes in `NX2SARIA_TEST_HW`, and
 `crash=1` ends the process inside the probe), and checks with no GPU and no game files:
 
@@ -489,7 +489,7 @@ against (`tests/preset_check_stubs.h`; the probe's among them: the made-up hardw
   tool mode, a state file of garbage, the menu's calls (`cfg_preset_use`, `cfg_preset_use_from`,
   `cfg_preset_chosen`, `cfg_preset_custom`, `cfg_default_tier`, `cfg_preset_differs`), the one-time notice and a
   reload of the `preset` line, also on new hardware;
-- `tests/preset_draft_check.cpp`, built with `runtime/ui/option_rows.cpp`, `runtime/ui_text.c`, `cfg.c` and Dear ImGui
+- `tests/preset_draft_check.cpp`, built with `runtime/ui/option_rows.cpp`, `runtime/ui/ui_text.c`, `cfg.c` and Dear ImGui
   (nothing is drawn): the draft while a tier is staged (`opt_value`, `opt_get`, `opt_default`, `opt_is_set`), the
   handback of each tier (`opt_preset_handback`; the owner's laptop below), Apply and Discard, the Deck's profile under
   a staged tier, and Recommended chosen on new hardware.

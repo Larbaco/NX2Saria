@@ -1,4 +1,4 @@
-// runtime/wide_hud.c's second archive: the title screen's UI/Layout2Archive/Title.Product.* with TitleMenuBG_00's backdrop
+// runtime/patches/wide_hud.c's second archive: the title screen's UI/Layout2Archive/Title.Product.* with TitleMenuBG_00's backdrop
 // over the whole picture (wide_menus = full). The layouts and archives here are made by the test from the format as
 // wide_hud.c's header comment describes it, with the panes and widths the game's 1.1.1 TitleMenuBG_00 holds, so the
 // reader is checked against a writer of its own. Given romfs.bin and the offsets and sizes of the Title archive and of

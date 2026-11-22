@@ -1,4 +1,4 @@
-// runtime/frame_rate.c: the step Ocarina is given (ocarina_step), driven through frame_step_cap_ns and
+// runtime/pacing/frame_rate.c: the step Ocarina is given (ocarina_step), driven through frame_step_cap_ns and
 // frame_step_present with made-up display times and the rest of the runtime stubbed. Built and run by
 // tests/frame_step_check.py; prints each failed check and exits 1 on any. With the argument "mean" it runs with
 // NX2SARIA_STEP_STEADY=0 and checks the mean of the last five intervals.

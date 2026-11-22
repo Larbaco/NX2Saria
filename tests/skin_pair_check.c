@@ -1,4 +1,4 @@
-// runtime/skin_pair.h: which draw of last frame a skinned draw continues, for the motion vectors of skinned
+// runtime/vk/skin_pair.h: which draw of last frame a skinned draw continues, for the motion vectors of skinned
 // characters. Built and run by tests/skin_pair_check.py; prints each failed check and exits 1 on any.
 #include <math.h>
 #include <stdio.h>

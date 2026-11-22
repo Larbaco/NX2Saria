@@ -32,6 +32,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
 from tools.check_content import GENERATED_MARKER  # noqa: E402
+import runtime_include
 
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 BASE = 0x7000000000
@@ -148,7 +149,7 @@ def build(cc, work):
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.run([cc, '-shared', '-O2', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
+    subprocess.run([cc, '-shared', '-O2', '-fno-strict-aliasing', *runtime_include.flags(),
                     *([] if os.name == 'nt' else ['-fPIC']), str(source), '-o', str(library)], check=True, env=env)
     if os.name == 'nt' and MSYS_BIN.exists() and hasattr(os, 'add_dll_directory'):
         os.add_dll_directory(str(MSYS_BIN))

@@ -1,6 +1,6 @@
 # needs: clang, py:numpy, py:lz4
 """Check the camera's clearance on pictures that are not 16:9: the patch set camera_clearance
-(recomp/patches-v111.txt) and runtime/camera_clearance.c.
+(recomp/patches-v111.txt) and runtime/patches/camera_clearance.c.
 
 The set's two sites, lifted by recomp/lifter.py as the generator lifts them: main+0x71a844 and main+0x71b624 keep their
 load of the camera's ratio and then call the patch page's +0xe00. The generator's own check of a patched site (gen.py
@@ -24,6 +24,7 @@ from heap_retry_check import LAYOUT, MAIN, MSYS_BIN, PAGE, PATCHES, compiler  # 
 from gen import Emitter  # noqa: E402
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
+import runtime_include
 
 SLOT = 0xe00
 SITES = {0x71a844: (0xbd451e6a, 10), 0x71b624: (0xbd451e6e, 14)}   # ldr s10 / s14, [x19, #0x51c]
@@ -65,11 +66,11 @@ def check_sites():
                 insn = lifter.lift(w, MAIN + off)
                 assert not (insn.kind == 'bl' and insn.target == MAIN + PAGE + SLOT), \
                     f'set {table.sets[k][0]} at {off:#x} calls camera_clearance\'s slot'
-    users = sorted(p.name for p in (ROOT / 'runtime').glob('*.c')
+    users = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c')
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (SLOT, SLOT),
                                 p.read_text(encoding='utf-8', errors='replace'), re.I))
     assert users == [], users   # camera_clearance.c names it through HOST_SLOT
-    assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'camera_clearance.c').read_text(encoding='utf-8')
+    assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'patches' / 'camera_clearance.c').read_text(encoding='utf-8')
     print('camera_clearance_check: main+0x71a844 and main+0x71b624 keep their load and call the page\'s +0xe00, the '
           'generator takes the sites; no other set or host function uses that slot', flush=True)
 
@@ -85,7 +86,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-Wno-bitwise-instead-of-logical',
-                           '-fno-strict-aliasing', '-I', str(work), '-I', str(ROOT / 'runtime'),
+                           '-fno-strict-aliasing', '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests' / 'camera_clearance_check.c'), '-o', str(exe), '-lm'], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

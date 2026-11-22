@@ -1,5 +1,5 @@
 """tools/perf_summary.py reads the present side of a log: lines made with the runtime's format strings (copied below;
-keep them in step with runtime/perf.c perf_present and runtime/vk_backend.c present_main and present_window) give the
+keep them in step with runtime/diag/perf.c perf_present and runtime/vk/vk_backend.c present_main and present_window) give the
 present percentiles, the present thread's window averages and the render thread's hand-off share, and the lines of
 older logs (no hand-off share, no present call or hand-off on the `present:` lines) still parse.
 
@@ -20,13 +20,13 @@ def c_fmt(fmt, *args):
     return fmt.replace('%llu', '%d').replace('%lld', '%d').replace('%u', '%d') % args
 
 
-# runtime/vk_backend.c present_main's TRACE=present line and present_window's line, as the C source has them
+# runtime/vk/vk_backend.c present_main's TRACE=present line and present_window's line, as the C source has them
 PRESENT_OLD = 'present: frame %llu interval %.3f ms, game %.3f ms, waited %.3f ms, %.3f ms past target'
 PRESENT_TAIL = '; present call %.3f ms, hand-off %.3f ms'
 WINDOW = ('perf: present thread frame %llu: %llu presents; blit and submit avg %.2f ms, paced wait avg %.2f ms, present '
           'call avg %.2f ms max %.2f ms, past target avg %.2f ms; the presenting thread waited to hand over avg %.2f ms '
           'max %.2f ms')
-# runtime/perf.c perf_present's window line, its head to the shares (the rest is filled in below)
+# runtime/diag/perf.c perf_present's window line, its head to the shares (the rest is filled in below)
 PERF_HEAD = ('perf: frame %llu: interval avg %.2f ms max %.2f ms (%.1f fps); render thread blocked: pacing %.0f%% fence '
              '%.0f%% drain %.0f%% handoff %.0f%% pipeline build %.0f%% shader xlate %.0f%% texture %.0f%% (astc %.0f%%)')
 PERF_TAIL = ('; pipelines built in background 0, draws skipped pending 0, waited 0, waiting for a shader 0, one-shot waited '
@@ -40,10 +40,10 @@ def source_has():
     def joined(path):
         text = path.read_text(encoding='utf-8')
         return re.sub(r'"\s*\n\s*"', '', text)   # adjacent literals on following lines become one
-    be, perf = joined(ROOT / 'runtime' / 'vk_backend.c'), joined(ROOT / 'runtime' / 'perf.c')
+    be, perf = joined(ROOT / 'runtime' / 'vk' / 'vk_backend.c'), joined(ROOT / 'runtime' / 'diag' / 'perf.c')
     for piece in (PRESENT_OLD + PRESENT_TAIL, WINDOW):
-        assert piece in be, f'runtime/vk_backend.c no longer has: {piece}'
-    assert PERF_HEAD in perf, f'runtime/perf.c no longer has: {PERF_HEAD}'
+        assert piece in be, f'runtime/vk/vk_backend.c no longer has: {piece}'
+    assert PERF_HEAD in perf, f'runtime/diag/perf.c no longer has: {PERF_HEAD}'
 
 
 def run(lines, lo=0):

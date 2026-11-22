@@ -18,7 +18,7 @@ the same way. --wall ends a run whose script never reaches the world clock; NX2N
 wall time.
 
 --boot-map <area>[:<start position>] starts the game in that area from the save without the title screen or the file
-menu (runtime/boot_map.c, docs/boot-to-map.md), with --boot-map-slot, --boot-map-age and --boot-map-time beside it. Its
+menu (runtime/patches/boot_map.c, docs/boot-to-map.md), with --boot-map-slot, --boot-map-age and --boot-map-time beside it. Its
 input script defaults to tools/input/boot_map.txt, which presses nothing. The run fails (exit code 3) when the log has
 no "boot map: arrived in" line for the area asked for; the boot map's lines are printed at the end.
 
@@ -212,7 +212,7 @@ def profile_copy(dest, src, save=None, slot=None, skip=()):
 
 def boot_map_report(log, asked, rc):
     """Prints the boot map's lines of the run's log; 3 in place of a clean exit when Link did not arrive in the area
-    asked for (runtime/boot_map.c boot_map_tick writes the line)."""
+    asked for (runtime/patches/boot_map.c boot_map_tick writes the line)."""
     area = asked.split(':', 1)[0]
     text = log.read_text(encoding='utf-8', errors='replace')
     lines = [l.split('] ', 1)[-1] for l in text.splitlines() if 'boot map: ' in l]

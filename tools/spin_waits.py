@@ -5,11 +5,11 @@
 Usage: spin_waits.py --exefs build/extracted/v143/exefs --patches recomp/patches-v143.txt [--modules main,subsdk0,sdk]
 
 A guest loop that polls memory until another thread changes it fills only its own core on the Switch, where a better
-thread pinned there preempts it. Here it holds one of the three virtual cores (runtime/kernel.c) and a host core, and
+thread pinned there preempts it. Here it holds one of the three virtual cores (runtime/hle/kernel.c) and a host core, and
 when the poll takes and releases a lock on every pass, two pollers hand the lock's cache line between their cores so
 that the thread whose item it is rarely wins its exclusive store (a job queue
 polled this way gave CPU frames of 30-210 ms every 1-10 s). The generator sends the back-edges of such loops through
-rt_spin_gate (runtime/kernel.c kern_spin_gate), which slows the poll down and hands the virtual core to a waiting
+rt_spin_gate (runtime/hle/kernel.c kern_spin_gate), which slows the poll down and hands the virtual core to a waiting
 thread once the loop has polled for a while.
 
 A loop counts only when it provably cannot leave by itself. From its head T every path back to T (the region R,

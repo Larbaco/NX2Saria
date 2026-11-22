@@ -1,5 +1,5 @@
 # needs: clang
-"""A gamepad axis counts only once it has been seen at rest (runtime/input.c pad_axis): builds pad_axis, cut from
+"""A gamepad axis counts only once it has been seen at rest (runtime/input/input.c pad_axis): builds pad_axis, cut from
 input.c by its text, with stand-ins for the SDL calls it makes, and checks that
 
   - an axis held from the start (a trigger mapped onto a stick, a virtual pad that reports a held axis) reads 0, and
@@ -77,7 +77,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'input.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'input' / 'input.c').read_text(encoding='utf-8')
     body = cut(src, 'enum { AXIS_REST', '\nstatic void stick(')
     with tempfile.TemporaryDirectory(prefix='nx2navi-pad-rest-') as tmp:
         c = Path(tmp) / 'check.c'

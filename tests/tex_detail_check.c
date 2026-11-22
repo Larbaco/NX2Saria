@@ -1,4 +1,4 @@
-// runtime/vk_tex_detail.h: the level texture_detail = auto picks (vk_texture.c vk_texture_detail_auto), for the cards and
+// runtime/vk/vk_tex_detail.h: the level texture_detail = auto picks (vk_texture.c vk_texture_detail_auto), for the cards and
 // budgets players reported. Built and run by tests/tex_detail_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 

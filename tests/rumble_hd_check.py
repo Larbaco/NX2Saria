@@ -1,5 +1,5 @@
 # needs: clang
-"""HD rumble for controllers with linear actuators (runtime/rumble_hd.c): builds it with tests/rumble_hd_check.c and
+"""HD rumble for controllers with linear actuators (runtime/input/rumble_hd.c): builds it with tests/rumble_hd_check.c and
 checks
 
   - known values: the neutral value, full amplitude, single bands, an odd amplitude step;
@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -105,8 +106,8 @@ def main():
     work = ROOT / 'build' / 'test' / 'rumble_hd'
     work.mkdir(parents=True, exist_ok=True)
     exe = work / ('rumble_hd_check.exe' if win else 'rumble_hd_check')
-    subprocess.check_call([cc, '-O1', '-Wall', '-Wextra', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
-                           str(ROOT / 'tests' / 'rumble_hd_check.c'), str(ROOT / 'runtime' / 'rumble_hd.c'),
+    subprocess.check_call([cc, '-O1', '-Wall', '-Wextra', '-fno-strict-aliasing', *runtime_include.flags(),
+                           str(ROOT / 'tests' / 'rumble_hd_check.c'), str(ROOT / 'runtime' / 'input' / 'rumble_hd.c'),
                            '-o', str(exe)] + ([] if win else ['-lm']), env=env)
     rc = subprocess.run([str(exe)], env=env).returncode
     out = subprocess.run([str(exe), '--sweep'], env=env, capture_output=True, text=True, check=True).stdout.splitlines()

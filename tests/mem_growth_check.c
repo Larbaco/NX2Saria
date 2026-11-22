@@ -1,4 +1,4 @@
-// runtime/mem_growth.h: the memory report's growth bookkeeping. Built and run by tests/mem_growth_check.py; prints each
+// runtime/diag/mem_growth.h: the memory report's growth bookkeeping. Built and run by tests/mem_growth_check.py; prints each
 // failed check and exits 1 on any failure.
 //
 // The checks feed the book reports as vk_memory.c growth_log does, once a period: a boot and a title screen before the

@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/dlssg_pace_check.c: runtime/dlssg_pace.h, whether Reflex or the game's own pacer holds the frame
+"""Build and run tests/dlssg_pace_check.c: runtime/pacing/dlssg_pace.h, whether Reflex or the game's own pacer holds the frame
 limit with DLSS Frame Generation (vk_dlssg.c vk_dlssg_pace), and its checks of the frames Reflex held.
 
 Needs a C compiler only: no Vulkan headers, no GPU and no game files.
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -37,7 +38,7 @@ def main():
     # chance
     ub = 'undefined,unsigned-integer-overflow'
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', f'-fsanitize={ub}',
-                           f'-fsanitize-trap={ub}', '-I', str(ROOT / 'runtime'),
+                           f'-fsanitize-trap={ub}', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'dlssg_pace_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

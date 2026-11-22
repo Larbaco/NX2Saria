@@ -15,13 +15,13 @@ SOURCE.md says where they came from). The art is read where it lies.
 romfs.bin, as the setup writes them); --romfs names another, which may also be a folder of extracted files. Each pad
 style and layout becomes the overlay folder <game>/romfs-patches-<style> (layout position) or
 <game>/romfs-patches-<style>-label (layout label), and the keyboard and mouse <game>/romfs-patches-pc, each with a
-manifest.tsv: runtime/romfs.c overlay_init loads it in place of the game's files when nx2saria.ini (or a legacy nx2navi.ini) has prompts = xbox,
-playstation, steamdeck or pc (runtime/input_map.c input_prompts_folder). Without --style or --layout, every style or
+manifest.tsv: runtime/hle/romfs.c overlay_init loads it in place of the game's files when nx2saria.ini (or a legacy nx2navi.ini) has prompts = xbox,
+playstation, steamdeck or pc (runtime/input/input_map.c input_prompts_folder). Without --style or --layout, every style or
 layout. The Steam Deck style has no art of its own: its buttons are named as an Xbox pad's face buttons and a
 PlayStation pad's shoulders and stick clicks, so it is drawn from those two pads' pictures (prompt_art.py STYLES).
 --out writes a single style and layout elsewhere.
 
-The two pad layouts follow pad_layout (runtime/input_map.c). position, for pad_layout = nintendo: a pad is played by
+The two pad layouts follow pad_layout (runtime/input/input_map.c). position, for pad_layout = nintendo: a pad is played by
 position, so Switch A is the right face button, labelled B on an Xbox pad and circle on a PlayStation pad; the prompts
 for A show that button (A as B or circle, B as A or cross, X as Y or triangle, Y as X or square). label, for
 pad_layout = xbox, playstation and auto: Switch A is the bottom face button, so A shows A or cross, B shows B or
@@ -100,12 +100,12 @@ def pad_pictures(style, layout):
 
 
 # ---- keyboard and mouse (prompts = pc): every button shows the first key its bindings give it. The defaults are
-# runtime/input_map.c DEFAULT_KEYS; --binds takes the bind_ lines of a settings file over them. The right stick is the
+# runtime/input/input_map.c DEFAULT_KEYS; --binds takes the bind_ lines of a settings file over them. The right stick is the
 # camera, which the mouse turns, so its prompts show the mouse moving (its arrow keys, a second source, do not show).
 PC_KEYS = {'A': 'e', 'B': 'lctrl', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',
            'PLUS': 'tab', 'MINUS': 'm', 'LEFT': '1', 'UP': '2', 'RIGHT': '3', 'DOWN': '4', 'LCLICK': 'v', 'RCLICK': 'c',
            'LSTICK_UP': 'w', 'LSTICK_LEFT': 'a', 'LSTICK_DOWN': 's', 'LSTICK_RIGHT': 'd'}
-# The art's name of each key (settings-file key names, runtime/input_map.c key_names); letters, digits and F keys are their
+# The art's name of each key (settings-file key names, runtime/input/input_map.c key_names); letters, digits and F keys are their
 # own. The art spells Ctrl as Crtl.
 KEY_ART = {'space': 'Space', 'tab': 'Tab', 'lshift': 'Shift', 'rshift': 'Shift', 'lctrl': 'Crtl', 'rctrl': 'Crtl',
            'lalt': 'Alt', 'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right', 'enter': 'Enter',
@@ -550,7 +550,7 @@ def draw_font(otf, glyph, traced, lit_dpad):
     return button_icons.redraw_font(otf, drawn)
 
 
-# ---- BNTX textures: block-linear in the Switch 2 GOB layout (runtime/tex_deswizzle.c, nvn_bl_offset)
+# ---- BNTX textures: block-linear in the Switch 2 GOB layout (runtime/gfx/tex_deswizzle.c, nvn_bl_offset)
 def bntx_textures(data):
     """name -> (format, width, height, block height (log2 GOBs), level offset, level size) of every one-level 2D
     texture of a BNTX."""
@@ -571,7 +571,7 @@ def bntx_textures(data):
 
 
 def level_tiles(th, rows):
-    """The block height of a level rows block-rows high (runtime/nvn_tex.c adj_tile): halved while it is too tall."""
+    """The block height of a level rows block-rows high (runtime/nvn/nvn_tex.c adj_tile): halved while it is too tall."""
     x = 8 << (th - 1) if th else 0
     while th and x >= rows:
         th -= 1
@@ -792,7 +792,7 @@ NOTE_BOXES = {'disc': (13, 13, 80, 80), 'shoulder': (8, 15, 84, 76)}
 # ---- the overlay folder
 def write_overlay(out, outputs, originals):
     """outputs: RomFS path -> new file bytes; originals: RomFS path -> the original's bytes. Writes each file under out
-    and the manifest runtime/romfs.c overlay_load checks: path, size, SHA-256, the original's SHA-256."""
+    and the manifest runtime/hle/romfs.c overlay_load checks: path, size, SHA-256, the original's SHA-256."""
     lines = []
     for path, data in outputs.items():
         target = out / path

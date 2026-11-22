@@ -1,4 +1,4 @@
-// runtime/action_prompt.c: the action prompt's diamond of face buttons laid out by label. The layout file here is made
+// runtime/patches/action_prompt.c: the action prompt's diamond of face buttons laid out by label. The layout file here is made
 // by the test from the format as action_prompt.c's header comment describes it, with the values the game's 1.1.1
 // DoCommand_00.buil holds (A right, B bottom, X top, Y left), so the reader is checked against a writer of its own;
 // the archives and zstd dictionaries are made here too. No game files. Given romfs.bin and the offsets and sizes of

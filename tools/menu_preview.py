@@ -24,8 +24,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RT = ROOT / 'runtime'
+sys.path.insert(0, str(ROOT / 'tools'))
+from build_game import runtime_include_dirs  # noqa: E402
+RUNTIME_INC = runtime_include_dirs(RT)   # runtime/ and its folders by subsystem: the sources include headers by name
 SOURCES = [ROOT / 'tools' / 'menu_preview.cpp', RT / 'ui' / 'option_rows.cpp', RT / 'ui' / 'menu_skin.cpp',
-           RT / 'ui' / 'perf_panel.cpp', RT / 'ui_text.c'] + sorted((RT / 'third_party' / 'imgui').glob('imgui*.cpp'))
+           RT / 'ui' / 'perf_panel.cpp', RT / 'ui' / 'ui_text.c'] + sorted((RT / 'third_party' / 'imgui').glob('imgui*.cpp'))
 FONTS = ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/arial.ttf']
 
 
@@ -50,8 +53,8 @@ def build(out):
         if not obj.is_file() or obj.stat().st_mtime < max(src.stat().st_mtime, (RT / 'ui' / 'menu_skin.h').stat().st_mtime,
                                                           (RT / 'ui' / 'menu_art.h').stat().st_mtime):
             lang = ['-x', 'c', '-std=gnu11'] if src.suffix == '.c' else ['-x', 'c++', '-std=gnu++17']
-            cmd = [cxx, *lang, '-c', '-O2', '-w', '-I', str(RT), '-I', str(RT / 'third_party' / 'imgui'), str(src), '-o',
-                   str(obj)]
+            cmd = [cxx, *lang, '-c', '-O2', '-w', *(a for d in RUNTIME_INC for a in ('-I', str(d))),
+                   '-I', str(RT / 'third_party' / 'imgui'), str(src), '-o', str(obj)]
             if subprocess.run(cmd).returncode:
                 sys.exit(f'{src.name} did not compile')
         objs.append(str(obj))

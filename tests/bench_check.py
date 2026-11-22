@@ -1,4 +1,4 @@
-"""tools/bench.py reads the lines runtime/perf.c writes: lines made with the runtime's format strings (checked below to
+"""tools/bench.py reads the lines runtime/diag/perf.c writes: lines made with the runtime's format strings (checked below to
 still be in perf.c) parse into frames, segments and windows, and the summary's numbers (1% low, p99, CPU- or GPU-bound
 shares, the run spread, MangoHud's matching stretch) come out as worked by hand. No game files.
 
@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 import bench  # noqa: E402
 
-PERF_C = Path(__file__).resolve().parent.parent / 'runtime' / 'perf.c'
+PERF_C = Path(__file__).resolve().parent.parent / 'runtime' / 'diag' / 'perf.c'
 
 SLOW = ('perf: slow frame %d: %.1f ms; blocked pipeline %.1f xlate %.1f texture %.1f astc %.1f fence %.1f pacing %.1f '
         'drain %.1f handoff 0.0; replay %.1f')
@@ -44,7 +44,7 @@ def main():
                   "\"segment: '%s' frames %llu-%llu, world %s to %s s: %llu frames in %.1f s, mean %.2f ms (%.1f fps), "
                   "1%% low %.1f \"", '"gpu avg %.2f ms (%llu parts timed, %llu not; copies into VRAM mirrors %.2f ms)"',
                   '"%.0f MiB, private %.0f MiB; bound: %s"'):
-        check(piece in src, f'runtime/perf.c still holds {piece}')
+        check(piece in src, f'runtime/diag/perf.c still holds {piece}')
 
     # 200 frames in the measured segment (frames 101-300): 196 cpu frames of 20 ms, 2 gpu frames of 40 ms (fence 30),
     # 2 stall frames of 60 ms (pipeline 30); frames before and after the segment do not count

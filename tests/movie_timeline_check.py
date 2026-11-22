@@ -21,6 +21,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter
 from patches import load
 from tools.check_content import GENERATED_MARKER
+import runtime_include
 
 
 def main():
@@ -53,7 +54,7 @@ def main():
     source = work / 'harness.c'
     library = work / ('harness.dll' if os.name == 'nt' else 'harness.so')
     source.write_text(code)
-    subprocess.run([args.cc, '-shared', '-O2', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
+    subprocess.run([args.cc, '-shared', '-O2', '-fno-strict-aliasing', *runtime_include.flags(),
                     *([] if os.name == 'nt' else ['-fPIC']), str(source), '-o', str(library)], check=True)
     dll = ctypes.CDLL(str(library))
 

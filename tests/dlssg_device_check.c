@@ -1,4 +1,4 @@
-// runtime/vk_dlssg_device.h: which card counts as usable while DLSS Frame Generation's interposer is in use, and how
+// runtime/vk/vk_dlssg_device.h: which card counts as usable while DLSS Frame Generation's interposer is in use, and how
 // the device is made when the interposer cannot make it (vk_device.c pick_device, vk_dlssg.c vk_dlssg_create_device).
 // The interposer and the loader are stand-ins that answer as the real ones did in a player's log. Built and run by
 // tests/dlssg_device_check.py; prints each failed check and exits 1 on any.

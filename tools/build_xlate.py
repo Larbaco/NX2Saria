@@ -6,7 +6,7 @@ tools and vswhere.exe (docs/building.md). Run with .venv. On Linux it builds bui
 NativeAOT links with the system's clang (no MSVC); NativeAOT builds for the OS it runs on only.
 
 Next to the exe it writes nx2navi_xlate.id: the translator identity, a sha256 over everything the build reads (this script,
-Program.cs, the csproj, the patches, the vendor tree). runtime/gfx_shader.c puts it into every shader cache key, so a
+Program.cs, the csproj, the patches, the vendor tree). runtime/gfx/gfx_shader.c puts it into every shader cache key, so a
 translator change re-keys the cache without a hand-made KEY_VERSION bump. Only a build writes it: the packaging scripts
 (make_launcher.py, make_release.py, make_appimage.py, make_kit.py) take a translator whose .id names this checkout's
 sources for one built from them (check_built), so no option writes an .id beside an exe it did not build.

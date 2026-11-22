@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/scratch_lru_check.c: runtime/vk_scratch_lru.h, which entry of the upscaler stand-in's scratch
+"""Build and run tests/scratch_lru_check.c: runtime/vk/vk_scratch_lru.h, which entry of the upscaler stand-in's scratch
 image cache serves a new size (vk_exec_draw.c fallback_scratch): a free one, else the one used longest ago.
 
 No GPU, no game files, any Python.
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -32,7 +33,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'scratch_lru_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

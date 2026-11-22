@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/ipc_session_check.c: runtime/ipc.c with runtime/kernel.c linked, checking that a CloseHandle racing
+"""Build and run tests/ipc_session_check.c: runtime/hle/ipc.c with runtime/hle/kernel.c linked, checking that a CloseHandle racing
 a request leaves the session (and its close callback) to the request's end, that a closed transfer memory handle is not
 read, and that a domain frees closed objects and gives their ids out again, answers a closed id with a bad handle, never
 closes its own id, and is kept while an object with its own handle lives; with the platform layer linked and the rest of
@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from platform_stand_ins import stand_ins
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -49,8 +50,8 @@ def main():
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), '-I', str(work),
-                           str(ROOT / 'tests' / 'ipc_session_check.c'), str(rt / 'kernel.c'), *map(str, plat),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), '-I', str(work),
+                           str(ROOT / 'tests' / 'ipc_session_check.c'), str(rt / 'hle' / 'kernel.c'), *map(str, plat),
                            '-o', str(exe), '-lm', *libs],
                           env=env)
     return subprocess.run([str(exe)], env=env, timeout=300).returncode

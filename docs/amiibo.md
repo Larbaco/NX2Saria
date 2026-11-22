@@ -5,7 +5,7 @@
 # Amiibo
 
 The port has no NFC reader of its own: it puts an amiibo dump file on an emulated reader when the game asks for an
-amiibo. Every `nn::nfp` call the game makes is answered by the runtime (`runtime/ov_system.c`, `runtime/amiibo.c`).
+amiibo. Every `nn::nfp` call the game makes is answered by the runtime (`runtime/hle/ov_system.c`, `runtime/hle/amiibo.c`).
 You need your own dump of your own figure: a 540-byte NTAG215 image as `.bin` or `.nfc`.
 
 ## Picking an amiibo

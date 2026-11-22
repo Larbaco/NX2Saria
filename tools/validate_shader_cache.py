@@ -1,7 +1,7 @@
 """Check the translated shaders an install's shader cache holds, offline: every <key>.spv with its <key>.res.json, from
 <cache>/shader-cache.pack and from the loose files (a loose file stands for its packed copy, as the game reads them).
 
-The game checks little of a cached shader when it loads one (runtime/gfx_shader.c disk_load_from: the reflection is one
+The game checks little of a cached shader when it loads one (runtime/gfx/gfx_shader.c disk_load_from: the reflection is one
 JSON object that names its stage, the SPIR-V has its magic and whole instructions) and hands the module to the driver
 as it is. A module the driver then compiles wrongly, or crashes on, shows as a missing draw or a crash in play, far
 from its cause. This tool puts the question to the whole cache at once:
@@ -11,7 +11,7 @@ from its cause. This tool puts the question to the whole cache at once:
      translations), unless --no-val is given or spirv-val is not found.
 
 The modules are the translator's output; the pipeline code rewrites a copy of each before the driver sees it
-(runtime/vk_pipeline.c make_module), and that copy is not what is checked here. tools/shader_census.py --translate
+(runtime/vk/vk_pipeline.c make_module), and that copy is not what is checked here. tools/shader_census.py --translate
 validates translations made now from the game files; this validates what a folder already holds, which is also what
 earlier translators wrote and what an interrupted write left.
 

@@ -106,7 +106,7 @@ It reads no small-key counts, current health or magic, or entrances.
 ## Data and where it is in the fork
 
 Version 1.1.1; `main+X` is guest (and host) address `0x7000000000 + X`. The game data lives in one manager,
-`**[main+0x4c7e180]` (`runtime/debug_tools.c` `gmd`; the object at `*(main+0x4e842a8)`), a 0xd38-byte singleton the
+`**[main+0x4c7e180]` (`runtime/diag/debug_tools.c` `gmd`; the object at `*(main+0x4e842a8)`), a 0xd38-byte singleton the
 game fills at start, before its first frame, with its game data list's defaults, and sets from a save when one loads. For each kind it holds a section of 0x60 bytes at `manager + number × 0x60`: entries'
 count (u32) at +0x10, the entries at +0x18, a `{u32 hash, u32 index}` table at +0x20, probed from `hash % size` on, its
 size (u32) at +0x2c. The kinds are numbered as in the save files. Everything in the table was read in the game's own
@@ -147,10 +147,10 @@ This branch is `main` (`a8117c8a`, 0.16.0, which has the tracker API) with these
 
 | Change | Where |
 |---|---|
-| `nx2saria.game_data {kind, hash, filter, if_digest}`: the values of one kind with their keys, sorted, in hex, with `format`, `presents` and an FNV-1a `digest`; one request at a time; a kind answered whole or refused (-32002 to ask again, -32003 not on this build, only after its section read the same twice) | `runtime/tracker_api.c` (`gd_kinds`, `gd_records`, `gd_keys`, `gd_unsupported`, `do_game_data`) |
-| `status.methods` and `status.save_dir` (the folder of the save the game loads and writes, escaped as JSON); `nx2saria.state.player.rotation` and `nx2saria.state.game_data` | `runtime/tracker_api.c` (`do_status`, `out_json_string`, `do_state`), `runtime/fs_host.c` / `fs.h` (`fs_save_dir`) |
-| The manager's slot shared by the debug menu and the API | `runtime/debug_tools.h` (`DBG_GAME_DATA_SLOT`), `runtime/debug_tools.c` |
-| The answer's room freed after an answer over 1 MiB | `runtime/tracker_api.c` `client_main` |
+| `nx2saria.game_data {kind, hash, filter, if_digest}`: the values of one kind with their keys, sorted, in hex, with `format`, `presents` and an FNV-1a `digest`; one request at a time; a kind answered whole or refused (-32002 to ask again, -32003 not on this build, only after its section read the same twice) | `runtime/diag/tracker_api.c` (`gd_kinds`, `gd_records`, `gd_keys`, `gd_unsupported`, `do_game_data`) |
+| `status.methods` and `status.save_dir` (the folder of the save the game loads and writes, escaped as JSON); `nx2saria.state.player.rotation` and `nx2saria.state.game_data` | `runtime/diag/tracker_api.c` (`do_status`, `out_json_string`, `do_state`), `runtime/hle/fs_host.c` / `fs.h` (`fs_save_dir`) |
+| The manager's slot shared by the debug menu and the API | `runtime/diag/debug_tools.h` (`DBG_GAME_DATA_SLOT`), `runtime/diag/debug_tools.c` |
+| The answer's room freed after an answer over 1 MiB | `runtime/diag/tracker_api.c` `client_main` |
 | The check: a stand-in manager at the game's address, empty first and then loaded as the game loads it, every kind, keys (by hash at two indices), digests, filters, refused parameters, and the stand-in's ways to spoil a read: text pointers into the host's memory, 65 texts, a hash twice, two pairs for one entry, placed objects out of order, an entry still being made, a wrong vtable in the middle | `tests/tracker_api_check.c`, `tests/tracker_api_check.py` |
 | The bench client: every kind, compared with the newest save (`--save`), the manager's vtables, and Link's heading from his rotation beside the way he moves (`--watch`) | `tools/tracker_api_client.py` |
 | The protocol, this page, the PR drafts and the tracker patch | `docs/tracker-api.md`, `docs/hyrule-tracker.md`, `docs/hyrule-tracker-prs.md`, `docs/hyrule-tracker-pr.patch` |
@@ -191,7 +191,7 @@ Checked: on v1.4.2 `tsc --noEmit` passes and `vitest` passes (186 tests, 11 skip
 v1.1.1). In v1.4.2 the install search already names a game only by a file (not a folder) and without its `.exe` on
 Linux, so NX2Saria's `ocarina` and `nx2saria` join that list, and its label comes from the file alone. End to end, the
 patched
-`ApiSession` read the fork's server code (the check's build of `runtime/tracker_api.c` with its stand-in memory) and
+`ApiSession` read the fork's server code (the check's build of `runtime/diag/tracker_api.c` with its stand-in memory) and
 built the expected live data: values over the save, the place within the area, the keys and their classes, the same
 fingerprint on a second read. Not tested: `live.ts`'s own changes (they need Electron's main process), and the
 activity screenshot, which needs a process id the API does not give (it stays off for NX2Saria).
@@ -209,7 +209,7 @@ Both opened on 2026-11-18 (drafts in [hyrule-tracker-prs.md](hyrule-tracker-prs.
 ## The API: one for both trackers
 
 **A mod or a runtime module?** A runtime module, for the reason [ocarina-atlas.md](ocarina-atlas.md) gives: a mod in
-the port's mod folder brings files, ExeFS patches and cheats, but no code of its own (`runtime/mods.h`
+the port's mod folder brings files, ExeFS patches and cheats, but no code of its own (`runtime/patches/mods.h`
 `MOD_PLUGIN` turns off code modules), and a patch to the game's instructions cannot open a socket.
 
 **One server.** Atlas's study added the tracker API: TCP on `127.0.0.1:6545`, newline-delimited JSON, read-only, off by

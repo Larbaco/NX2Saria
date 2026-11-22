@@ -1,4 +1,4 @@
-// The arithmetic of the mouse in Ocarina of Time 1.1.1's menus (runtime/menu_mouse_geom.h): a button's box from its
+// The arithmetic of the mouse in Ocarina of Time 1.1.1's menus (runtime/ui/menu_mouse_geom.h): a button's box from its
 // pane's fields as the game's focus frame takes them, the pointer in the layout's units on a 16:9 picture and on
 // ultrawide ones (the UI squeezed into the middle 16:9, with panes NX2SARIA_WIDE_MENUS = full moved out by u units), the
 // way back to the picture, the box a point falls in, which presses are clicks and the presses queued for the game. No

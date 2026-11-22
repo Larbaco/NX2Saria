@@ -1,4 +1,4 @@
-// The model heaps' retry (runtime/heap_retry.c) against stand-in heaps: the set heap_retry's two host functions called
+// The model heaps' retry (runtime/patches/heap_retry.c) against stand-in heaps: the set heap_retry's two host functions called
 // as the lifted sites call them, with a chain of heaps (a model's full heap, its parents, the root) whose tryAlloc and
 // the game's GPU memory allocation are stand-ins that give memory while a heap has room. Checked: the block a parent
 // gives, the registers the functions leave, the request's heap put back, a heap whose parent does not hold it, the

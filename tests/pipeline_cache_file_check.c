@@ -1,4 +1,4 @@
-// runtime/vk_cache_file.h: the read of pipeline-cache.bin (runtime/vk_pipeline.c cache_load) with 64-bit sizes. Makes a
+// runtime/vk/vk_cache_file.h: the read of pipeline-cache.bin (runtime/vk/vk_pipeline.c cache_load) with 64-bit sizes. Makes a
 // sparse file just over 2 GB in the folder given as argv[1], with a marker at its start and at its end, and checks that
 // it is measured and read whole, that a size limit refuses it by its real size without reading it, and the small cases.
 // Built and run by tests/pipeline_cache_file_check.py; prints each failed check and exits 1 on any.

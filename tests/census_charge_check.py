@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/census_charge_check.c: runtime/perf_census.h, which charges the part of a frame that an
+"""Build and run tests/census_charge_check.c: runtime/diag/perf_census.h, which charges the part of a frame that an
 address-space walk of NX2NAVI_MEM_CENSUS overlapped to the frame's census part (perf.c ft_frame): from the replay part
 first, then from the unattributed part, never more than the overlap and never past the frame.
 
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -33,7 +34,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'census_charge_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

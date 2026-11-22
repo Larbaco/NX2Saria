@@ -1,4 +1,4 @@
-"""Build the RomFS index the runtime binary-searches (runtime/romfs.c) and its romfs_config.h.
+"""Build the RomFS index the runtime binary-searches (runtime/hle/romfs.c) and its romfs_config.h.
 
 Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
 

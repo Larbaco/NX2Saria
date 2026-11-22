@@ -1,5 +1,5 @@
-// runtime/gpu_choice.h: which card gpu_index and gpu_name pick when the cards are listed in another order than when the
-// settings were written, and the log lines about a choice (runtime/vk_device.c pick_device, hw_detect.c probe_gpu,
+// runtime/vk/gpu_choice.h: which card gpu_index and gpu_name pick when the cards are listed in another order than when the
+// settings were written, and the log lines about a choice (runtime/vk/vk_device.c pick_device, hw_detect.c probe_gpu,
 // ui/menu.cpp row_gpu). Built and run by tests/gpu_choice_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>

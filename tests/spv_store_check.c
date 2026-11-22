@@ -1,4 +1,4 @@
-// runtime/spv_store.h: a shader's SPIR-V kept zstd-compressed while unused (gfx_shader.c "SPIR-V at rest"). Built and
+// runtime/gfx/spv_store.h: a shader's SPIR-V kept zstd-compressed while unused (gfx_shader.c "SPIR-V at rest"). Built and
 // run by tests/spv_store_check.py against the platform layer and libzstd.
 //
 // The single-thread checks walk one store through its states: plain, pinned, packed (the frame made, checked and the

@@ -1,4 +1,4 @@
-// runtime/perf_bound.h: which side holds the frame back in the 60-frame window line (runtime/perf.c perf_gpu_line).
+// runtime/diag/perf_bound.h: which side holds the frame back in the 60-frame window line (runtime/diag/perf.c perf_gpu_line).
 // Built and run by tests/perf_bound_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>

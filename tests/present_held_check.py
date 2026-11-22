@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/present_held_check.c: runtime/vk_present_held.h, the present that waits for held work
+"""Build and run tests/present_held_check.c: runtime/pacing/vk_present_held.h, the present that waits for held work
 (vk_backend.c "a present that waits for held work"). One presenting thread and three submitting threads over 200,000
 frames: every frame reaches the present exactly once and in order, never two at once, and each reason a held present
 goes out occurs. Step by step: a held present stays while work is held, goes out after the work, at the next present
@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from platform_stand_ins import stand_ins
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -46,7 +47,7 @@ def main():
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), str(ROOT / 'tests' / 'present_held_check.c'),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), str(ROOT / 'tests' / 'present_held_check.c'),
                            *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     try:
         rc = subprocess.run([str(exe)], env=env, timeout=300).returncode

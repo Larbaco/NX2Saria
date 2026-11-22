@@ -1,5 +1,5 @@
 # needs: clang, spirv-as, spirv-val
-"""The water corrections the runtime makes in memory (runtime/spirv_water.c) against the same steps of
+"""The water corrections the runtime makes in memory (runtime/gfx/spirv_water.c) against the same steps of
 tools/projective_recipe.py, on two made-up modules: a vertex stage that writes a position and a location 0 output, and
 a fragment stage that reads a location 0 input without perspective. Each side's result must be the same words, and
 valid SPIR-V. A module of another shape must be refused. Needs spirv-as and spirv-val (MSYS2 UCRT64 spirv-tools).
@@ -13,6 +13,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'tools'))
 import projective_recipe as recipe  # noqa: E402
+import runtime_include  # noqa: E402
 
 VERTEX = '''
                OpCapability Shader
@@ -113,8 +114,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     (out / 'check.c').write_text(HARNESS)
     exe = out / 'check.exe'
-    subprocess.run([a.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(root / 'runtime'),
-                    str(out / 'check.c'), str(root / 'runtime/spirv_water.c'), '-o', str(exe)], check=True)
+    subprocess.run([a.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', *runtime_include.flags(root / 'runtime'),
+                    str(out / 'check.c'), str(root / 'runtime/gfx/spirv_water.c'), '-o', str(exe)], check=True)
     for name, text, edit in (('vertex', VERTEX, recipe.vertex), ('fragment', FRAGMENT, recipe.fragment)):
         src, mine = out / f'{name}.spv', out / f'{name}-runtime.spv'
         (out / f'{name}.spvasm').write_text(text)

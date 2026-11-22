@@ -1,13 +1,13 @@
 """ExeFS patches of the mods folder to code patch sets: IPS, IPS32 and IPSwitch (.pchtxt) files for the game's main.
 
 Lifted code cannot be byte-patched when the game runs, so a patch file's writes into main's code become `site` lines
-(recomp/patches.py), one patch set per file, which the runtime switches on while its mod is on (runtime/mods.c). The
+(recomp/patches.py), one patch set per file, which the runtime switches on while its mod is on (runtime/patches/mods.c). The
 writes go through the same rules as the mods' code cheats (tools/cheats.py convert): an instruction replaced in place,
 a branch into a code cave the file writes into main's zero padding inlined at the branch.
 
   python tools/exefs_patches.py --exefs <dir> --mods <mods folder> --patches <patch file> --out <patch file> --status <file>
 
-The files are <mod>/exefs/*.ips and *.pchtxt (or the Atmosphere places of the exefs folder, as runtime/mods.c finds
+The files are <mod>/exefs/*.ips and *.pchtxt (or the Atmosphere places of the exefs folder, as runtime/patches/mods.c finds
 them) and <mod>/atmosphere/exefs_patches/<name>/*.ips. A file is for main when its build id matches main's: an IPS
 file's name, a pchtxt file's @nsobid line (trailing zeros may be left out). Offsets are as emulators read them: IPS
 offsets count the NSO header (0x100 bytes) before main's image; a pchtxt offset adds its `@flag offset_shift` first.

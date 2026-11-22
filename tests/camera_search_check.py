@@ -1,5 +1,5 @@
 # needs: clang
-"""The camera-speed search leaves lazily armed memory alone (runtime/camera_speed.c rewrite): builds factor and rewrite,
+"""The camera-speed search leaves lazily armed memory alone (runtime/input/camera_speed.c rewrite): builds factor and rewrite,
 cut from camera_speed.c by their text, over a 40 MiB stand-in for the guest's heap with stand-ins for the memory calls,
 and checks that
 
@@ -100,7 +100,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'camera_speed.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'input' / 'camera_speed.c').read_text(encoding='utf-8')
     body = cut(src, '#define COPIES 16', '\n// The copies of the last search, still holding the array at factor k')
     with tempfile.TemporaryDirectory(prefix='nx2navi-camera-search-') as tmp:
         c = Path(tmp) / 'check.c'

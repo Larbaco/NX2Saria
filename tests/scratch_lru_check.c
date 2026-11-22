@@ -1,4 +1,4 @@
-// runtime/vk_scratch_lru.h: which entry of the stand-in's scratch image cache serves a request (vk_exec_draw.c
+// runtime/vk/vk_scratch_lru.h: which entry of the stand-in's scratch image cache serves a request (vk_exec_draw.c
 // fallback_scratch). Built and run by tests/scratch_lru_check.py; prints each failed check and exits 1 on any.
 // The old cache kept its first eight sizes and refused the ninth: the sizes below are those a run walks through when
 // the window and the DLSS mode change a few times.

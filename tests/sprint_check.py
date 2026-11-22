@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/sprint_check.c: the sprint button (runtime/sprint.c) against a stand-in Link, with the rest of
+"""Build and run tests/sprint_check.c: the sprint button (runtime/patches/sprint.c) against a stand-in Link, with the rest of
 the runtime stubbed. No game files: the module layout and patch page the runtime includes are stand-ins written to the
 test's build folder.
 
@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -45,7 +46,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-I', str(work), '-I', str(ROOT / 'runtime'),
+                           '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests' / 'sprint_check.c'), '-o', str(exe)], env=env)
     rc = subprocess.run([str(exe)], env=env).returncode
     return subprocess.run([str(exe), 'kept-off'], env=env).returncode or rc

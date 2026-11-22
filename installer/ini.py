@@ -1,7 +1,7 @@
-"""nx2saria.ini: set the game language and keep everything else (keys and syntax as runtime/cfg.c reads them).
+"""nx2saria.ini: set the game language and keep everything else (keys and syntax as runtime/cfg/cfg.c reads them).
 
 A new file starts from nx2saria.ini.example, whose lines are all commented defaults. The language goes into `lang`
-(a Switch language code, runtime/ov_system.c): an active `lang = ...` line is rewritten in place, else the commented
+(a Switch language code, runtime/hle/ov_system.c): an active `lang = ...` line is rewritten in place, else the commented
 `# lang = ...` line of the example is activated, else the line is added to [language] (created at the end if
 missing). Other lines, comments and line order stay as they are, byte for byte: the file's byte order mark, its line
 ends and a last line without one are kept, so a player's own lines come through an install or an update unchanged.
@@ -10,12 +10,12 @@ import os
 import re
 from pathlib import Path
 
-# runtime/ov_system.c: the codes NX2NAVI_LANG offers. Each language appears once, under the code the game accepts.
+# runtime/hle/ov_system.c: the codes NX2NAVI_LANG offers. Each language appears once, under the code the game accepts.
 LANGUAGES = ('ja', 'en-US', 'en-GB', 'fr', 'fr-CA', 'de', 'it', 'es', 'es-419', 'nl', 'pt', 'pt-BR', 'ru', 'ko',
              'zh-Hans', 'zh-Hant')
 # Older installer builds wrote these two codes; they are read as the canonical ones and rewritten on the next install.
 ALIASES = {'zh-CN': 'zh-Hans', 'zh-TW': 'zh-Hant'}
-# Their text falls back to the Switch shared fonts (runtime/ov_system.c), which the fonts step extracts from the
+# Their text falls back to the Switch shared fonts (runtime/hle/ov_system.c), which the fonts step extracts from the
 # firmware folder when the player gives one.
 NEED_SHARED_FONTS = ('ko', 'zh-Hans', 'zh-Hant')
 
@@ -81,7 +81,7 @@ def get_language(text):
 def read(path):
     """The file's text with its byte order mark and its own line ends. Bytes that are not UTF-8 come back as they are
     (surrogate escapes), so a line in another encoding survives a rewrite. A file saved as UTF-16 (an editor's
-    "Unicode", which the game reads too: runtime/cfg.c utf16_text) is decoded as that and written back as UTF-8, as
+    "Unicode", which the game reads too: runtime/cfg/cfg.c utf16_text) is decoded as that and written back as UTF-8, as
     the game's own menu writes it."""
     raw = Path(path).read_bytes()
     if raw[:2] in (b'\xff\xfe', b'\xfe\xff'):

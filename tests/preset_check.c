@@ -1,5 +1,5 @@
-// The quality presets: runtime/preset_pick.h (the tier made-up hardware gets, the handheld names, what each tier sets)
-// and runtime/cfg.c's preset layer (cfg_start's choice, the state file, the menu's calls), with stand-ins for what cfg.c
+// The quality presets: runtime/cfg/preset_pick.h (the tier made-up hardware gets, the handheld names, what each tier sets)
+// and runtime/cfg/cfg.c's preset layer (cfg_start's choice, the state file, the menu's calls), with stand-ins for what cfg.c
 // links against. Built and run by tests/preset_check.py.
 //   pure            preset_pick.h alone: prints "ok:" or "FAIL:" per check
 //   values <dir>    every value any tier gives any key on any hardware, read by cfg.c as the settings file's and as a

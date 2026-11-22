@@ -2,11 +2,11 @@
 layer linked. The process ends with its own code and its FATAL line, and without the libraries' detach calls that
 ExitProcess makes (a driver's detach that faulted there turned the end into a crash report with another code). Also
 checks statically that no runtime file outside the platform layer ends the process with _Exit, and that the fatal
-error's end and the lost device's (runtime/vk_device.c lost_wait_exit) end with plat_terminate. No game files, no GPU.
+error's end and the lost device's (runtime/vk/vk_device.c lost_wait_exit) end with plat_terminate. No game files, no GPU.
 
 A fatal error stops HD rumble on a thread of its own and waits for it 300 ms at most (runtime/dispatch.c
 rt_rumble_stop_bounded), so a stop that hangs on SDL's lock does not hold the end. RivaTuner's profile is left to the
-next start (runtime/rtss_limit.c rtss_limit_crash), which on RTSS's own thread ("rtss"), whose lock that thread may
+next start (runtime/pacing/rtss_limit.c rtss_limit_crash), which on RTSS's own thread ("rtss"), whose lock that thread may
 hold, makes no call into RTSS's library and takes no lock.
 
 Two failures at once end once: two threads that fault, a fault while a fatal error is reported and a fatal error
@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 RT = ROOT / 'runtime'
@@ -65,7 +66,7 @@ def static_checks():
                   '(ExitProcess: every library\'s detach runs); use plat_terminate or plat_exit')
             bad += 1
     for file, sig in (('dispatch.c', 'static void fatal_end(int code, const char *fmt, va_list ap) {'),
-                      ('vk_device.c', 'static void lost_wait_exit(void *arg)')):
+                      ('vk/vk_device.c', 'static void lost_wait_exit(void *arg)')):
         body = re.sub(r'//[^\n]*', '', function((RT / file).read_text(encoding='utf-8'), sig))
         if 'plat_terminate(' not in body:
             print(f'FAIL: runtime/{file} {sig.split("(")[0].split()[-1]} does not end with plat_terminate')
@@ -81,7 +82,7 @@ def static_checks():
           flush=True)
     bad += not ok
     # the fatal error's summary leaves out what the failure may have left half made, and only tries the map's lock
-    flush = re.sub(r'//[^\n]*', '', function((RT / 'perf.c').read_text(encoding='utf-8'), 'void perf_summary_flush_try(void)'))
+    flush = re.sub(r'//[^\n]*', '', function((RT / 'diag' / 'perf.c').read_text(encoding='utf-8'), 'void perf_summary_flush_try(void)'))
     ok = ('stutter_report_as(' in flush and 'stutter_report(' not in flush and 'gfx_exit_log' not in flush
           and 'seg_close' not in flush)
     print(f'static: perf.c perf_summary_flush_try tries the stutter map\'s lock and leaves the back end out: '
@@ -147,7 +148,7 @@ def main():
     plat = [RT / 'platform' / 'win32.c', RT / 'platform' / 'common.c']
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(RT), '-I', str(work), str(ROOT / 'tests' / 'fatal_exit_check.c'),
+                           '-march=x86-64-v3', *runtime_include.flags(RT), '-I', str(work), str(ROOT / 'tests' / 'fatal_exit_check.c'),
                            str(RT / 'dispatch.c'), *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     for mode, code, want, unwanted in CASES:
         t0 = time.monotonic()

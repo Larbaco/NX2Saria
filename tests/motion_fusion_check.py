@@ -1,12 +1,12 @@
 # needs: clang
-"""Build and run tests/motion_fusion_check.c: runtime/motion_fusion.c on made-up sensor samples. A controller lying
+"""Build and run tests/motion_fusion_check.c: runtime/input/motion_fusion.c on made-up sensor samples. A controller lying
 still has its gyro bias learned within 1.5 s of being still, after which it reports no rate and its angle stops, with
 one log line per still period; with calibration off the bias goes through, and each dead zone level zeroes a rate
 just under it and passes one just over it unchanged. Known rotations give their angle and direction; a hand-held
 controller (tremor and a slow pan) is never still and learns nothing; a new bias is learned after a move; each
 controller's bias comes back when it feeds again; the turn and tilt factors scale the rate, the angle and the
 direction, and 1 and 1 are the unscaled path bit for bit; the filter's integral term takes up a bias the gravity can
-see; the aggregate line comes after 60 s with the right numbers; and runtime/ov_probe.c probe_feedback's quarter turn
+see; the aggregate line comes after 60 s with the right numbers; and runtime/hle/ov_probe.c probe_feedback's quarter turn
 and restart hold. Also checks statically that motion_fusion.c logs nothing while it holds the instance's lock. No game
 files, no GPU.
 
@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -53,7 +54,7 @@ def function(source, signature):
 
 def static_checks():
     """motion_fusion.c: no log call between taking the lock and the last unlock in the functions that log."""
-    src = re.sub(r'//[^\n]*', '', (ROOT / 'runtime' / 'motion_fusion.c').read_text(encoding='utf-8'))
+    src = re.sub(r'//[^\n]*', '', (ROOT / 'runtime' / 'input' / 'motion_fusion.c').read_text(encoding='utf-8'))
     bad = 0
     for sig in ('void motion_feed(', 'void motion_source('):
         body = function(src, sig)
@@ -84,7 +85,7 @@ def main():
         else ['-lpthread']
     # the platform files are the runtime's, built as the runtime builds them; the strict warnings are for
     # motion_fusion.c and the driver
-    common = [compiler(), '-O1', '-g', '-fno-strict-aliasing', '-I', str(rt), '-I', str(work), *stub]
+    common = [compiler(), '-O1', '-g', '-fno-strict-aliasing', *runtime_include.flags(rt), '-I', str(work), *stub]
     objs = []
     for src in plat:
         obj = work / (src.stem + '.o')

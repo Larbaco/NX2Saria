@@ -1,4 +1,4 @@
-"""Static check of runtime/cfg.c's settings tables against what the runtime reads. Standard library only, so the
+"""Static check of runtime/cfg/cfg.c's settings tables against what the runtime reads. Standard library only, so the
 content guard workflow runs it beside tools/check_content.py.
 
 It fails on:
@@ -16,7 +16,7 @@ It fails on:
   cfg_get or a "NX2NAVI_%s" of it, and the `set <name> NX2NAVI_<KEY>` lines of recomp/patches-v111.txt. Such a key set
   in nx2navi.ini logs "unknown key" and is listed as unknown in the menu.
 
-Names read only with getenv, plat_setenv or cfg_setenv are environment-only and not checked. runtime/cfg_probe.c asks
+Names read only with getenv, plat_setenv or cfg_setenv are environment-only and not checked. runtime/cfg/cfg_probe.c asks
 for an unknown key on purpose and is left out, as are third_party/ and the generated *_spv.h headers.
 
 Usage: python tests/cfg_rows_check.py [repo]          one line per problem with file:line; exit 1 if any
@@ -121,7 +121,7 @@ def tables(cfg, problems):
     for name, (decl, row) in TABLES.items():
         i = cfg.find(decl)
         if i < 0:
-            problems.append(f'runtime/cfg.c: no {name} table ("{decl}")')
+            problems.append(f'runtime/cfg/cfg.c: no {name} table ("{decl}")')
             out[name] = []
             continue
         j = cfg.index('{', i + len(decl) - 1)
@@ -143,10 +143,10 @@ def tables(cfg, problems):
                 continue
             code, comment = split_comment(line)
             if '/*' in code:
-                problems.append(f'runtime/cfg.c:{line0 + n}: a /* comment in {name}, which this check does not read')
+                problems.append(f'runtime/cfg/cfg.c:{line0 + n}: a /* comment in {name}, which this check does not read')
             hidden = re.findall(row, comment)
             if hidden:
-                problems.append(f'runtime/cfg.c:{line0 + n}: {name} rows after // are not compiled: {", ".join(hidden)}')
+                problems.append(f'runtime/cfg/cfg.c:{line0 + n}: {name} rows after // are not compiled: {", ".join(hidden)}')
             if branch and branch[-1] > 0:
                 continue   # a later branch repeats the first one's keys
             for k in re.findall(row, code):
@@ -196,22 +196,22 @@ def call_args(src, open_at):
 
 
 def check(cfg_text, sources, patches):
-    """The problems, one line each. sources: {path as reported: text}; cfg_text is also among them as runtime/cfg.c."""
+    """The problems, one line each. sources: {path as reported: text}; cfg_text is also among them as runtime/cfg/cfg.c."""
     problems = []
     tabs = tables(cfg_text, problems)
     known = [k for k, _ in tabs['known[]']]
     known_s = set(known)
     metas_s = {k for k, _ in tabs['metas[]']}
     for k in sorted({k for k in known if known.count(k) > 1}):
-        problems.append(f'runtime/cfg.c: known[] lists {k} twice')
+        problems.append(f'runtime/cfg/cfg.c: known[] lists {k} twice')
     seen = {}
     for k, n in tabs['metas[]']:
         if k in seen:
-            problems.append(f'runtime/cfg.c:{n}: metas[] has a second row for {k} (the first at line {seen[k]})')
+            problems.append(f'runtime/cfg/cfg.c:{n}: metas[] has a second row for {k} (the first at line {seen[k]})')
         seen.setdefault(k, n)
     for k, n in tabs['metas[]']:
         if k not in known_s:
-            problems.append(f'runtime/cfg.c:{n}: metas[] row {k} is not in known[]')
+            problems.append(f'runtime/cfg/cfg.c:{n}: metas[] row {k} is not in known[]')
 
     stripped = {p: strip_comments(t) for p, t in sources.items()}
     # one level of wrappers: a const char * parameter passed on to a value read, or to cfg_get / "NX2NAVI_%s"
@@ -235,7 +235,7 @@ def check(cfg_text, sources, patches):
 
     value_sites, name_sites = [], []   # (key, file, position, how)
     for p, s in stripped.items():
-        start = s.index('static int is_known') if p.endswith('runtime/cfg.c') and 'static int is_known' in s else 0
+        start = s.index('static int is_known') if p.endswith('runtime/cfg/cfg.c') and 'static int is_known' in s else 0
         for m in re.finditer(r'\b(%s)\s*\(\s*' % '|'.join(VALUE_FNS) + LIT, s):
             if m.start() >= start:
                 value_sites.append((m.group(2), p, m.start(), m.group(1)))
@@ -287,7 +287,7 @@ def read_repo(repo):
                    and not p.name.endswith('_spv.h') and p.name != 'cfg_probe.c')
     sources = {p.relative_to(repo).as_posix(): p.read_text(encoding='utf-8-sig', errors='replace') for p in files}
     patches = repo / 'recomp' / 'patches-v111.txt'
-    return sources['runtime/cfg.c'], sources, patches.read_text(encoding='utf-8') if patches.exists() else ''
+    return sources['runtime/cfg/cfg.c'], sources, patches.read_text(encoding='utf-8') if patches.exists() else ''
 
 
 def self_test(repo):
@@ -301,9 +301,9 @@ def self_test(repo):
     def case(what, want, cfg_text=None, extra=None, patch_text=None):
         nonlocal bad
         src = dict(sources)
-        src['runtime/cfg.c'] = cfg_text if cfg_text is not None else cfg
+        src['runtime/cfg/cfg.c'] = cfg_text if cfg_text is not None else cfg
         src.update(extra or {})
-        got, *_ = check(src['runtime/cfg.c'], src, patch_text if patch_text is not None else patches)
+        got, *_ = check(src['runtime/cfg/cfg.c'], src, patch_text if patch_text is not None else patches)
         new = [p for p in got if p not in base]
         ok = any(re.search(want, p) for p in new)
         print(f'self-test: {what}: {"caught" if ok else "MISSED"}')

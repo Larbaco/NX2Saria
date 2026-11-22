@@ -2,8 +2,8 @@
 
 A bug capture records where and how the game was when a player saw something wrong, so that the bug can be looked for
 again at that place instead of somewhere else. The player presses **F8**; a test run then starts from what the press
-wrote. Code: `runtime/bugcap.c`, `tools/capture_run.py`. Ocarina of Time 1.1.1 (the place and the camera come from the
-debug tools, `runtime/debug_tools.c`); on other game versions a capture still has the picture, the timing, the
+wrote. Code: `runtime/diag/bugcap.c`, `tools/capture_run.py`. Ocarina of Time 1.1.1 (the place and the camera come from the
+debug tools, `runtime/diag/debug_tools.c`); on other game versions a capture still has the picture, the timing, the
 settings and the save.
 
 ## For the player
@@ -25,7 +25,7 @@ The captures are in the game folder under `logs\captures`, one folder each, name
 | `frame.png` | The frame on screen as the window got it, the overlay included, without the capture's own note (an HDR picture converted to sRGB) |
 | `frames.tsv` | The last 600 presents before the press and the 30 after: frame, interval and replay time in ms |
 | `log-tail.txt` | The last 256 KB of the run's log, with the account's folders written short like the log ([log-privacy.md](log-privacy.md)) |
-| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg_private.h`); a folder in the account's home written short; then, after a comment line, the values the quality preset gave the keys it sets that the player left unset ([presets.md](presets.md#bug-captures)) |
+| `settings.ini` | Every setting that had a value (from `nx2saria.ini`, the menu or the environment) as `nx2saria.ini` lines, without the private ones (`runtime/cfg/cfg_private.h`); a folder in the account's home written short; then, after a comment line, the values the quality preset gave the keys it sets that the player left unset ([presets.md](presets.md#bug-captures)) |
 | `NX2Saria-save-<time>.zip` | The save the game would load next, as *Menu > Export save* writes it |
 | `flags.tsv`, `texts.tsv` | The game's on/off flags and its 64-character texts, by the hash of their names |
 | `flight/` | With `flight = 1`: the flight recorder's dump of the same moment (`tools/flight_view.py` reads it) |
@@ -128,6 +128,6 @@ Environment or `nx2saria.ini`, for runs without a keyboard:
 
 ## The flight recorder
 
-`flight = 1` keeps a ring of the last frames with a small picture each (`runtime/flight.c`). Its dump on F8 now
+`flight = 1` keeps a ring of the last frames with a small picture each (`runtime/diag/flight.c`). Its dump on F8 now
 belongs to the capture: it goes to the capture's `flight` folder. Its other dumps (a frame over `flight_spike_ms`,
 `NX2SARIA_FLIGHT_AT`, `NX2SARIA_FLIGHT_EVERY`) go to the `flight` folder beside the game folder as before.

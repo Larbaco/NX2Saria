@@ -1,4 +1,4 @@
-// Stand-ins for what runtime/cfg.c links against, for the quality preset tests: tests/preset_check.c (C) and
+// Stand-ins for what runtime/cfg/cfg.c links against, for the quality preset tests: tests/preset_check.c (C) and
 // tests/preset_draft_check.cpp (C++, with runtime/ui/option_rows.cpp). Defines them: include it in one file of a
 // program, after cfg.h, hw_detect.h and platform/platform.h.
 //

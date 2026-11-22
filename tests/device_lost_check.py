@@ -1,7 +1,7 @@
 # needs: exe, gpu
 # args: {exe}
 """Run the game executable's --probe-devlost and check how a run ends when the GPU device is lost
-(runtime/vk_device.c vk_device_lost_check, runtime/vk_sync.c vk_sync_probe_devlost).
+(runtime/vk/vk_device.c vk_device_lost_check, runtime/vk/vk_sync.c vk_sync_probe_devlost).
 
 The probe needs a Vulkan device and opens no window. It does not lose the device: it marks it lost, and then has four
 threads report a loss at the same moment. Checked here:

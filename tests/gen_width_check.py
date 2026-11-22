@@ -1,6 +1,6 @@
 # needs: clang, file:runtime/wb_merge_spv.h
-"""No 64-to-32-bit narrowing in the files that hold page write generations: runtime/vk_memory.c, runtime/vk_texture.c
-and runtime/tex_probe.c, compiled with the build's flags plus -Wshorten-64-to-32, -Wformat and
+"""No 64-to-32-bit narrowing in the files that hold page write generations: runtime/vk/vk_memory.c, runtime/vk/vk_texture.c
+and runtime/gfx/tex_probe.c, compiled with the build's flags plus -Wshorten-64-to-32, -Wformat and
 -Wincompatible-pointer-types as errors (clang -fsyntax-only). The generations are 64 bits (vk_memory.c "page write
 generations"); one local, field or format left at 32 bits would bring the wrap of 2^32 back without a word, and the
 normal build sees a narrowing only as a silent conversion. The baseline is zero such diagnostics in the whole of the
@@ -21,8 +21,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_game   # noqa: E402  (RT_FLAGS, the compiler and the include folders of the build)
+import runtime_include  # noqa: E402
 
-FILES = ['vk_memory.c', 'vk_texture.c', 'tex_probe.c']
+FILES = ['vk/vk_memory.c', 'vk/vk_texture.c', 'gfx/tex_probe.c']
 STRICT = ['-Werror=shorten-64-to-32', '-Werror=format', '-Werror=incompatible-pointer-types']
 # the diagnostics this check is about, by the flag clang names at the end of the line
 WATCHED = re.compile(r'^(?P<where>[^\n]*?:\d+:\d+): (?:error|warning): (?P<what>[^\n]*?)'
@@ -49,7 +50,7 @@ def main():
     cc = args.cc or os.environ.get('CC') or str(build_game.CLANG)
     build_game.set_cpu('v3')   # adds -DRT_CPU_LEVEL=3, as the build does
     flags = [f for f in build_game.RT_FLAGS if f != '-g']
-    inc = ['-I', str(ROOT / 'runtime'), '-I', str(build_game.vma_include())]
+    inc = [*runtime_include.flags(), '-I', str(build_game.vma_include())]
     vk = build_game.vulkan_include(cc)
     if vk:
         inc = ['-I', str(vk)] + inc

@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/mfb_batch_check.c: runtime/mfb_batch.h, the rule of the mesh fallback's batch (vk_exec_draw.c
+"""Build and run tests/mfb_batch_check.c: runtime/gfx/mfb_batch.h, the rule of the mesh fallback's batch (vk_exec_draw.c
 mfb_draw, NX2SARIA_MESH_FALLBACK_BATCH): which draws are batched and which go one by one (the way back), the parts of the
 buffers they take, and a program's history.
 
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -33,7 +34,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'mfb_batch_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

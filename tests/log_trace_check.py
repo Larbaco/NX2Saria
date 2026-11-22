@@ -6,7 +6,7 @@ gate, a vkCreateSampler that fails on request), and run through a session's even
 to build/test/log_trace/nx2saria-sample.log, and each line a player's log is read by must be there with the numbers
 the events give:
 
-- runtime/vk_pipeline.c cache_stamp_check over the starts of an update (no stamp, the same translator, another one the
+- runtime/vk/vk_pipeline.c cache_stamp_check over the starts of an update (no stamp, the same translator, another one the
   carry serves, another one it does not while a file is held open and then free, the starts after) and a preparation
   under yet another translator: "vk: pipeline cache stamp <id> none|matches|differs: <action>, <MB>", the files
   deleted or kept as the line says, and the line's note that the run's exit writes pipeline-cache.bin on exactly the
@@ -14,9 +14,9 @@ the events give:
 - the play gate ("the play gate" to vk_pipeline_probe_buildgate): the start's line, then frames shown while builders
   rest, and "vk: background builds paused in play: N frames, M builds deferred" with those counts; with the setting
   at 0 the start's "off" line and no other;
-- runtime/gfx_present.c swapchain_unusable failing 20 times: "gfx: vkGetSwapchainImagesKHR failed (5), N times: ..."
+- runtime/gfx/gfx_present.c swapchain_unusable failing 20 times: "gfx: vkGetSwapchainImagesKHR failed (5), N times: ..."
   for N = 1 to 8 and 16 only;
-- runtime/vk_texture.c make_sampler: a failed vkCreateSampler that the plain retry makes, and one it does not, each
+- runtime/vk/vk_texture.c make_sampler: a failed vkCreateSampler that the plain retry makes, and one it does not, each
   "gfx: vkCreateSampler failed (-1), N times: ..." with what stood in.
 
 No game files, no GPU (Vulkan headers only). Usage: log_trace_check.py [--cc <clang>]
@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
@@ -300,12 +301,12 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     log = work / 'nx2saria-sample.log'
-    inc = ['-I', str(ROOT / 'runtime')]
+    inc = [*runtime_include.flags()]
     vk = ROOT / 'toolchain' / 'vulkan-headers' / 'include'   # build_game.py's pinned headers, when fetched
     if vk.is_dir():
         inc = ['-I', str(vk)] + inc
 
-    pipe, present, tex = source('vk_pipeline.c'), source('gfx_present.c'), source('vk_texture.c')
+    pipe, present, tex = source('vk/vk_pipeline.c'), source('gfx/gfx_present.c'), source('vk/vk_texture.c')
     fails = 0
     out = {}
     progs = {

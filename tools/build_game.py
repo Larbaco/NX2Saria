@@ -15,18 +15,18 @@ first (rpath $ORIGIN). docs/building.md lists the packages.
     .venv\\Scripts\\python tools\\build_game.py --toolchain toolchain/llvm-mingw-<version>/llvm-mingw-<version>-ucrt-x86_64 \\
         --out build/v121-llvmmingw                                    # llvm-mingw instead of MSYS2 UCRT64
 
-Every runtime/*.c is compiled. build/<version>/modules.c carries the layout, the linked function tables, the
+Every runtime source is compiled. build/<version>/modules.c carries the layout, the linked function tables, the
 expected SHA-256 of each ExeFS file (tools/data/expected-<display version>.json) and the default game paths
 (--exefs, --romfs, --profile), which nx2saria.exe uses unless its own command line names others. --exefs and --romfs
 default to extracted/<version> in the work folder: the [work] dir of config.local.toml, where tools/extract.py writes
 them, else build/. tools/romfs_index.py writes build/<version>/romfs-index.bin and romfs_config.h from the RomFS
-directory's index.json (runtime/romfs.c reads the index next to nx2saria.exe). Without that index.json the build stops:
+directory's index.json (runtime/hle/romfs.c reads the index next to nx2saria.exe). Without that index.json the build stops:
 the exe would stop at start. --no-romfs builds it anyway.
 
 Private builds reuse the main build's objects. When --out differs from build/<version>, the main build's generated
 objects are up to date (checked with a dry run of its build.ninja) and every header they include from runtime/ is
 byte-identical in --runtime (the list comes from the main build's Ninja deps log), build_game.py hardlinks those
-objects into <out>/obj and compiles only runtime/*.c. A hardlink is a snapshot: clang and Ninja replace an object by
+objects into <out>/obj and compiles only the runtime. A hardlink is a snapshot: clang and Ninja replace an object by
 renaming a new file over it, so a later main rebuild leaves the linked copies alone. Otherwise (a header differs, a
 main object is missing or stale, another --gen) it compiles everything and prints one line saying why. --full-build
 skips the check.
@@ -239,7 +239,9 @@ DEFAULT_DEPS = ROOT / 'toolchain' / 'deps-mingw'
 # the patches.h of the player's game version (its patch page is the page after that version's main; ov_zstd.c's host
 # functions sit on it, and patches.c registers the debug menu's free camera there). mouse_direct.c, sprint.c and heap_retry.c also
 # register host callbacks relative to that version's patch page.
-INSTALL_SIDE = {'romfs.c', 'patches.c', 'ov_zstd.c', 'mouse_direct.c', 'sprint.c', 'heap_retry.c'}
+# Paths below runtime/.
+INSTALL_SIDE = {'hle/romfs.c', 'patches/patches.c', 'hle/ov_zstd.c', 'input/mouse_direct.c', 'patches/sprint.c',
+                'patches/heap_retry.c'}
 LIB_NAME = 'libnx2navirt.a'
 AR = UCRT / 'llvm-ar.exe' if WIN else on_path('llvm-ar')
 WINDRES = UCRT / 'windres.exe'   # runtime/nx2saria.rc: the manifest of nx2saria.exe
@@ -322,7 +324,7 @@ def write_if_changed(path, text):
 
 
 def copy_romfs_patches(version, out):
-    """nx2saria.exe loads romfs-patches beside romfs-index.bin (runtime/romfs.c overlay_init). tools/make_romfs_patches.py
+    """nx2saria.exe loads romfs-patches beside romfs-index.bin (runtime/hle/romfs.c overlay_init). tools/make_romfs_patches.py
     writes them into build/<version> only, so a build in another directory ran without the 60 fps overlay (the quick
     menus' captured background turned black). Copies them when their manifest differs; romfs-patches-xbox,
     romfs-patches-xbox-label and romfs-patches-pc (the same with Xbox or keyboard and mouse button prompts,
@@ -354,6 +356,11 @@ def c_string(s):
 
 
 RUNTIME = ROOT / 'runtime'   # --runtime: a copy of runtime/ lets a task build without touching the shared tree
+# The runtime's folders by subsystem (docs/architecture.md, "Runtime folders"): their sources compile as the top level's
+# do, and each is on the include path of the runtime's sources, which include one another's headers by name. The lifted
+# C includes only headers at the top of runtime/, so its command (genflags) does not name them. tools/make_game.py has
+# the same list (tests/runtime_dirs_check.py).
+RUNTIME_DIRS = ('audio', 'cfg', 'diag', 'gfx', 'hle', 'input', 'nvn', 'pacing', 'patches', 'ui', 'vk')
 
 
 def other_os(name):
@@ -366,11 +373,23 @@ def other_os(name):
 
 
 def runtime_sources(skip=()):
-    """Every runtime/*.c, *.cpp, platform/*.c, *.rc, the in-game menu (ui/*.cpp) and Dear ImGui of this OS except the
-    names in skip, so a task adds a file without editing this script."""
-    pats = ('*.c', '*.cpp', 'platform/*.c', '*.rc', 'ui/*.cpp', 'third_party/imgui/*.cpp',
-            'third_party/imgui/backends/*.cpp')
+    """Every runtime/*.c, *.cpp, platform/*.c, *.rc, the *.c and *.cpp of each RUNTIME_DIRS folder and Dear ImGui of
+    this OS except the names in skip, so a task adds a file without editing this script."""
+    pats = ('*.c', '*.cpp', 'platform/*.c', '*.rc', *(f'{d}/*.{x}' for d in RUNTIME_DIRS for x in ('c', 'cpp')),
+            'third_party/imgui/*.cpp', 'third_party/imgui/backends/*.cpp')
     return sorted(p for pat in pats for p in RUNTIME.glob(pat) if p.name not in skip and not other_os(p.name))
+
+
+def runtime_include_dirs(rt=None):
+    """The include folders of the runtime's sources: runtime/ and each RUNTIME_DIRS folder of rt (default RUNTIME)."""
+    rt = Path(rt) if rt else RUNTIME
+    return [rt] + [rt / d for d in RUNTIME_DIRS]
+
+
+def install_side(p):
+    """Whether the runtime source p is compiled per install (INSTALL_SIDE)."""
+    p = Path(p)
+    return p.is_relative_to(RUNTIME) and p.relative_to(RUNTIME).as_posix() in INSTALL_SIDE
 
 
 def runtime_object(out, src):
@@ -461,9 +480,9 @@ def runtime_compiles(out, skip=(), runtime_lib=None, make_lib=False):
     make_lib: without INSTALL_SIDE; runtime_lib: only INSTALL_SIDE; modules.c except for make_lib."""
     sources = runtime_sources(skip)
     if make_lib:
-        sources = [p for p in sources if p.name not in INSTALL_SIDE]
+        sources = [p for p in sources if not install_side(p)]
     elif runtime_lib:
-        sources = [p for p in sources if p.name in INSTALL_SIDE] + [out / 'modules.c']
+        sources = [p for p in sources if install_side(p)] + [out / 'modules.c']
     else:
         sources += [out / 'modules.c']
     return [(src, runtime_object(out, src)) for src in sources]
@@ -476,7 +495,8 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
     inc = f'-I {cmd_path(RUNTIME)} -I {cmd_path(gen)}'
     vma = f'{cmd_path(DEPS / "include")} -I {cmd_path(DEPS / "include" / "vma")}' if DEPS else cmd_path(vma_include())
     imgui = cmd_path(RUNTIME / 'third_party' / 'imgui')
-    rt_inc = f'{inc} -I {cmd_path(out)} -I {vma} -I {imgui}'   # romfs_config.h, vk_mem_alloc.h (+ deps headers), imgui.h
+    dirs = ' '.join(f'-I {cmd_path(d)}' for d in runtime_include_dirs()[1:])
+    rt_inc = f'{inc} {dirs} -I {cmd_path(out)} -I {vma} -I {imgui}'   # romfs_config.h, vk_mem_alloc.h (+ deps headers), imgui.h
     vulkan = None if DEPS else vulkan_include()   # deps carries the Vulkan headers itself
     if vulkan:   # first, so that no other folder on the path answers for <vulkan/vulkan.h> (VMA's may be /usr/include)
         rt_inc = f'-I {cmd_path(vulkan)} {rt_inc}'
@@ -1053,7 +1073,7 @@ def main():
     ap.add_argument('--full-build', action='store_true',
                     help="compile the generated C even where build/<version>'s objects could be reused")
     ap.add_argument('--skip-runtime', default='',
-                    help='comma-separated runtime/*.c names to leave out (the link needs another definition of what they '
+                    help='comma-separated runtime source file names (cfg.c, not cfg/cfg.c) to leave out (the link needs another definition of what they '
                          'define)')
     ap.add_argument('--exefs', type=Path,
                     help="nx2saria.exe's default ExeFS directory (default <work dir>/extracted/<version>/exefs, the work "
@@ -1194,7 +1214,7 @@ def main():
     if runtime_lib and not runtime_lib.is_file():
         sys.exit(f'{runtime_lib} not found: build it with --make-runtime-lib')
     # The library leaves INSTALL_SIDE out, so a release that ships without one of them links with undefined symbols.
-    missing = sorted(n for n in INSTALL_SIDE - skip if not (RUNTIME / n).is_file())
+    missing = sorted(n for n in INSTALL_SIDE if Path(n).name not in skip and not (RUNTIME / n).is_file())
     if runtime_lib and missing:
         sys.exit(f'build_game: {", ".join(missing)} missing from {flag_path(RUNTIME)}: the release must ship every '
                  f'INSTALL_SIDE source beside {runtime_lib.name}')

@@ -1,4 +1,4 @@
-// runtime/fs_host.c, save_share.c and save_zip.c without the game, driven by tests/save_share_check.py. Each run of
+// runtime/hle/fs_host.c, save_share.c and save_zip.c without the game, driven by tests/save_share_check.py. Each run of
 // this program is one start of the game on the profile folder it is given: the first storage use runs storage_init,
 // which makes a waiting import the save (fs_host.c import_pending). The rest of the runtime is stubbed below: only what
 // the save paths call does anything.
@@ -67,7 +67,7 @@ int romfs_owns(const char *path) { (void)path; return 0; }
 int mem_probing(void) { return 0; }   // write_file asks before each write: no probe, no lazy heap here
 void mem_kernel_access(uint64_t a, uint64_t n) { (void)a, (void)n; }
 void fs_trace(const char *what, const char *path) { (void)what, (void)path; }
-// no boot map is pending (runtime/boot_map.c): a save file is read as it is
+// no boot map is pending (runtime/patches/boot_map.c): a save file is read as it is
 int boot_map_save_open(const char *path, PlatFile *f) { (void)path, (void)f; return 0; }
 void boot_map_save_read(uint64_t offset, void *buf, uint64_t n) { (void)offset, (void)buf, (void)n; }
 // log_short_paths off (runtime/log_privacy.c): the text is shown as it is

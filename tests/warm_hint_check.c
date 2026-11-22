@@ -1,5 +1,5 @@
-// runtime/vk_warm_hint.h: what the library warm's log adds when the driver's cache of stage libraries is cold
-// (runtime/vk_pipeline.c lw_main), by GPU vendor, by platform and by why it is cold. Built and run by
+// runtime/vk/vk_warm_hint.h: what the library warm's log adds when the driver's cache of stage libraries is cold
+// (runtime/vk/vk_pipeline.c lw_main), by GPU vendor, by platform and by why it is cold. Built and run by
 // tests/warm_hint_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>

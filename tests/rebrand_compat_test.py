@@ -20,6 +20,7 @@ from launcher import feed, paths, saves, steam, winsys
 import make_launcher
 import capture_run
 import platform_stand_ins
+import runtime_include
 
 
 class RebrandCompatibilityTest(unittest.TestCase):
@@ -86,7 +87,7 @@ int main(void) {
         with tempfile.TemporaryDirectory() as tmp:
             src, exe = Path(tmp) / 'scrub.c', Path(tmp) / 'scrub'
             src.write_text(source)
-            subprocess.run([cc, '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'runtime'), str(src),
+            subprocess.run([cc, '-Wall', '-Wextra', '-Werror', *runtime_include.flags(), str(src),
                             '-o', str(exe)], check=True, capture_output=True)
             subprocess.run([str(exe)], check=True)
 
@@ -173,7 +174,7 @@ int main(void) {
         with tempfile.TemporaryDirectory() as tmp:
             sdl = platform_stand_ins.include(tmp)
             for macro in ('NX2SARIA_PGO_GEN', 'NX2NAVI_PGO_GEN'):
-                result = subprocess.run([cc, '-E', '-P', '-D' + macro, '-I', str(ROOT / 'runtime'), *sdl,
+                result = subprocess.run([cc, '-E', '-P', '-D' + macro, *runtime_include.flags(), *sdl,
                                          '-I', str(ROOT / 'runtime/platform'), str(ROOT / 'runtime/platform/linux.c')],
                                         check=True, capture_output=True, text=True)
                 self.assertIn('__llvm_profile_dump', result.stdout, macro)

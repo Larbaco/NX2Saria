@@ -1,4 +1,4 @@
-// runtime/nvidia_cache.h: what the game puts into the environment for NVIDIA's shader disk cache (runtime/vk_device.c
+// runtime/vk/nvidia_cache.h: what the game puts into the environment for NVIDIA's shader disk cache (runtime/vk/vk_device.c
 // nvidia_cache_beside_exe), how it counts the folder (vk_pipeline.c lw_say_cache_folder) and the lines the logs say about
 // both. Built and run by tests/nvidia_cache_check.py; prints each failed check and exits 1 on any.
 #include <stdint.h>

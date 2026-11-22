@@ -38,7 +38,7 @@ decoder is a fallback and the reference.
 
 ## Measurements
 
-**ASTC, C against Rust crates.** `runtime/tex_astc.c` (clang -O2) against the two crates.io decoders behind a C ABI
+**ASTC, C against Rust crates.** `runtime/gfx/tex_astc.c` (clang -O2) against the two crates.io decoders behind a C ABI
 staticlib (opt-level 3, LTO, `panic = "abort"`), the same 2048x2048 images of random valid blocks, one thread, best of 5:
 
 | Block | C (ours) | astc-decode 0.3.1 | texture2ddecoder 0.1.2 |

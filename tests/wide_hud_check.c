@@ -1,4 +1,4 @@
-// runtime/wide_hud.c: the HUD's edge elements moved out to the sides of a picture wider than 16:9, and the menus laid
+// runtime/patches/wide_hud.c: the HUD's edge elements moved out to the sides of a picture wider than 16:9, and the menus laid
 // out over the whole picture (check_menus). The layout files here are made by the test from the format as wide_hud.c's
 // header comment describes it, with the panes, values and animation curves the game's 1.1.1 PlayerStatus_00,
 // MapMenu_00, NumDisplay_00, LoadingFade_00, PlusMenu_00, MenuOverlay_00, PaShortCutSlideList_00 and PaItemMenu_00

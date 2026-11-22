@@ -1,4 +1,4 @@
-// runtime/kernel.c: which WaitSynchronization waits a signalled event or an ended thread wakes (wake_sync_waiters),
+// runtime/hle/kernel.c: which WaitSynchronization waits a signalled event or an ended thread wakes (wake_sync_waiters),
 // on guest threads whose entries are host functions, with the rest of the runtime stubbed. Built and run by
 // tests/sync_wake_check.py; prints each failed check and exits 1 on any. With the argument "all" it runs with
 // NX2NAVI_SYNC_WAKE_ALL=1 and checks that every wait is woken and blocks again.

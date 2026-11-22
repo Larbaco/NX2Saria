@@ -1,4 +1,4 @@
-// runtime/vk_cache_stamp.h: the translator stamp of the pipeline cache files (runtime/vk_pipeline.c
+// runtime/vk/vk_cache_stamp.h: the translator stamp of the pipeline cache files (runtime/vk/vk_pipeline.c
 // cache_stamp_check). Built and run by tests/cache_stamp_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>

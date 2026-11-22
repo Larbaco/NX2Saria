@@ -1,6 +1,6 @@
 # The mouse in the game's menus (1.1.1)
 
-`runtime/menu_mouse.c` lets the mouse drive Ocarina of Time 1.1.1's own menus: hover moves the focus, left click is A,
+`runtime/ui/menu_mouse.c` lets the mouse drive Ocarina of Time 1.1.1's own menus: hover moves the focus, left click is A,
 right click is B, the wheel is the D-pad's up and down. Players' side: [controls.md](controls.md#mouse-in-the-games-menus).
 This page records how it works and why it was built this way.
 
@@ -15,7 +15,7 @@ This page records how it works and why it was built this way.
   focus manager's method `main+0x3774f70`, which writes four fields: the control's reserved entry (+0x80), the
   control's "no slide" bit (+0xb4 bit 3), the screen's requested entry (+0x188) and its request bit (+0x1ae bit 2). The
   controls' update (`main+0x768990`) takes that reservation in the same frame and makes the move (the old button's
-  unfocus, the new one's highlight, the cursor's slide and sound). This is how `runtime/menu_cursor.c` drives 1.4.3's
+  unfocus, the new one's highlight, the cursor's slide and sound). This is how `runtime/ui/menu_cursor.c` drives 1.4.3's
   menus.
 
 We use the second. No game code is called, so nothing in the game runs in an order it never ran in. The writes are the
@@ -53,7 +53,7 @@ can take the focus as the game's entry test (`main+0x769d70`) decides:
 - every ancestor of the root pane is shown, and an ancestor whose alpha its children inherit is not transparent.
 
 The box is the pane the game's focus frame takes (button +0x60): its size, the scales and translation of its global
-matrix, and its base position (`runtime/menu_mouse_geom.h` `mm_pane_box`). It is in the layout's units: 3840 x 2160,
+matrix, and its base position (`runtime/ui/menu_mouse_geom.h` `mm_pane_box`). It is in the layout's units: 3840 x 2160,
 origin at the centre, y up. Where boxes overlap, the smallest wins.
 
 ## The pause menu's tabs

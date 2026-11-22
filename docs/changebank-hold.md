@@ -5,7 +5,7 @@ place and heading. Where two maps' load radii overlap, such as the Market's squa
 the pick flip between them. Each flip cancels the map that was loading and starts the other one from the beginning,
 so the game's loader threads keep loading maps it then throws away.
 
-The patch set `changebank_hold` (`recomp/patches-v111.txt`, `runtime/changebank_hold.c`) holds the map being preloaded
+The patch set `changebank_hold` (`recomp/patches-v111.txt`, `runtime/patches/changebank_hold.c`) holds the map being preloaded
 until the game's pick has left it for 2 seconds. Game version 1.1.1 only; on by default.
 
 **[C]** marks what was read in the game's code (build `e0f3ccfa`) or seen in a run. **[I]** marks what is inferred.
@@ -50,7 +50,7 @@ was read again in this build.
     callee-saved register such as `x21`, which holds the pick, stays in the function's local and would lose a write.
   - `x30` is the update's own: it is saved in the prologue and read again only in the epilogue.
   - Nothing else changes.
-- The rule (`runtime/changebank_hold.h`, `cb_step`) holds the unit being preloaded and hands the game its own pick:
+- The rule (`runtime/patches/changebank_hold.h`, `cb_step`) holds the unit being preloaded and hands the game its own pick:
   - at the first pick;
   - for a direct request;
   - when the pick names the held map, through the same unit or another unit of the same map, so no load is cancelled;

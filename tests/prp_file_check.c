@@ -1,4 +1,4 @@
-// runtime/prp_file.h: the layout of shader-prepared.bin. Checks the parse of a version 1 list, of a version 2 list and
+// runtime/gfx/prp_file.h: the layout of shader-prepared.bin. Checks the parse of a version 1 list, of a version 2 list and
 // of damaged ones, then writes a version 2 list into the folder given as argv[1] for tests/prp_file_check.py, which
 // reads its head with tools/make_game.py prepared_from. Prints each failed check and exits 1 on any.
 #include <stdio.h>

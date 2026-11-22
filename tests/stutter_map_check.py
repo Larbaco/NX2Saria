@@ -1,4 +1,4 @@
-"""tools/stutter_map.py reads the lines runtime/stutter_map.c writes: lines made with the runtime's format strings
+"""tools/stutter_map.py reads the lines runtime/diag/stutter_map.c writes: lines made with the runtime's format strings
 (copied below; keep them in step with stutter_map_init's neighbours stutter_frame and stutter_report) parse into the
 areas, causes and pipelines they hold.
 
@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 import stutter_map  # noqa: E402
 
-C_SOURCE = Path(__file__).resolve().parent.parent / 'runtime' / 'stutter_map.c'
+C_SOURCE = Path(__file__).resolve().parent.parent / 'runtime' / 'diag' / 'stutter_map.c'
 
 
 def c_fmt(fmt, *args):
@@ -31,7 +31,7 @@ def main():
                   '"stutter: frame %llu at %.1f s, %.1f ms (frames about %.1f ms) in %s%s:%s; an episode of %d frames to frame "',
                   'stutter map:   %s %s/%s first met in %s: %llu draws met it missing, %llu its shader, %.1f ms on the ',
                   '"replay thread; usable after %.0f ms at most (%llu times); %s%s"'):
-        assert piece in src, f'runtime/stutter_map.c no longer has: {piece}'
+        assert piece in src, f'runtime/diag/stutter_map.c no longer has: {piece}'
     lines = [
         '[host] ' + c_fmt('stutter: frame %llu at %.1f s, %.1f ms (frames about %.1f ms) in %s%s:', 1200, 75.2, 31.5, 7.1,
                           'Kakariko Village', '') + ' pipeline 24.0 replay 3.1 (charged to pipeline); draws that met a '

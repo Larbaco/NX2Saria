@@ -34,7 +34,7 @@ tracker API this PR extends ([NX2Saria#7](https://github.com/Larbaco/NX2Saria/pu
 >   (`fs_host.c fs_save_dir`, escaped as JSON), so a tracker follows this game's saves and not another install's;
 >   `nx2saria.state` gains `player.rotation` (the port's own reader, `dbg_player_rot`) and `game_data` (the game data
 >   is there).
-> - `DBG_GAME_DATA_SLOT` in `runtime/debug_tools.h`, shared by the debug menu and the API.
+> - `DBG_GAME_DATA_SLOT` in `runtime/diag/debug_tools.h`, shared by the debug menu and the API.
 > - Nothing runs on the game's threads, and every copy goes through `guest_copy` (the game's own regions only). A
 >   request copies one kind, one request at a time: for `Bool`, the most, about 265 KiB of entries and 175 KiB of
 >   table. Entries per kind and the answer's size are capped; an answer's room over 1 MiB is not kept.

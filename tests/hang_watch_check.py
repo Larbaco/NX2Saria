@@ -1,9 +1,9 @@
 # needs: clang
-"""Build and run tests/hang_watch_check.c: runtime/hang_watch.c's decisions on made-up readings. No report while the
+"""Build and run tests/hang_watch_check.c: runtime/diag/hang_watch.c's decisions on made-up readings. No report while the
 frames and the GPU move, while the window is not in front or minimized, or while the process ends; one report for a
 stall of the frames with the window in front, another after progress and a new stall, one for GPU submissions not
 done whatever the focus, none for an idle GPU, at most three a run. A report writes the log out with logq_flush and
-never with logq_sync, which would turn the log thread off. Also checks statically that runtime/kernel.c logs the guest
+never with logq_sync, which would turn the log thread off. Also checks statically that runtime/hle/kernel.c logs the guest
 threads' waits (kern_wait_report, wait_watch) only after it released the kernel lock: a log call can wait for room in
 the log queue, and a stalled log thread would then hold every guest thread. No game files, no GPU.
 
@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from platform_stand_ins import stand_ins
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -48,7 +49,7 @@ def function(source, signature):
 
 def static_checks():
     """kernel.c: no log call while G is held in the wait report's walk and its two callers."""
-    kernel = re.sub(r'//[^\n]*', '', (ROOT / 'runtime' / 'kernel.c').read_text(encoding='utf-8'))
+    kernel = re.sub(r'//[^\n]*', '', (ROOT / 'runtime' / 'hle' / 'kernel.c').read_text(encoding='utf-8'))
     bad = 0
     walk = function(kernel, 'static int wait_pass(')
     ok = 'rt_log' not in walk
@@ -80,7 +81,7 @@ def main():
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), '-I', str(work), str(ROOT / 'tests' / 'hang_watch_check.c'),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), '-I', str(work), str(ROOT / 'tests' / 'hang_watch_check.c'),
                            *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     rc = subprocess.run([str(exe)], env=env, timeout=120).returncode
     if bad:

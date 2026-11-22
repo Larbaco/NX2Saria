@@ -36,7 +36,7 @@ def main():
             assert (w >> 5) & 31 == 17, f'{w:08x} reads the page through x{(w >> 5) & 31}, not x17'
 
     # 16:9 and wider ratios supply 1.0 in page +128, so the extra Y path leaves those screens unchanged.
-    source = (ROOT / 'runtime/widescreen.c').read_text()
+    source = (ROOT / 'runtime/patches/widescreen.c').read_text()
     assert 'memcpy(page + 128, vertical4, 16);' in source
     assert 'float y_squeeze = (float)wide_ui_vertical_scale(ratio);' in source
     assert 'float movie_margin_y = taller ? 0.0f : margin_y;' in source

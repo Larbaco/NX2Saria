@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/action_prompt_check.c: runtime/action_prompt.c, the action prompt's diamond of face buttons laid
+"""Build and run tests/action_prompt_check.c: runtime/patches/action_prompt.c, the action prompt's diamond of face buttons laid
 out by label, on a layout file and archives the test makes itself. No game files.
 
 With --romfs, also on the game's own archive: the folder holds romfs.bin and its index.json, and the program reads the
@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -58,9 +59,9 @@ def main():
     rt = ROOT / 'runtime'
     # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror',
-                           '-Wno-bitwise-instead-of-logical', *sanitize, '-I', str(rt),
-                           str(ROOT / 'tests' / 'action_prompt_check.c'), str(rt / 'action_prompt.c'),
-                           str(rt / 'sarc.c'), '-o', str(exe), '-lzstd', '-lm'], env=env)
+                           '-Wno-bitwise-instead-of-logical', *sanitize, *runtime_include.flags(rt),
+                           str(ROOT / 'tests' / 'action_prompt_check.c'), str(rt / 'patches' / 'action_prompt.c'),
+                           str(rt / 'hle' / 'sarc.c'), '-o', str(exe), '-lzstd', '-lm'], env=env)
     run = [str(exe)] + (game_args(args.romfs) if args.romfs else [])
     return subprocess.run(run, env=env, timeout=300).returncode
 

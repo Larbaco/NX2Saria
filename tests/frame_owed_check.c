@@ -1,4 +1,4 @@
-// tests/frame_owed_check.py builds this: runtime/vk_frame_owed.h, a frame's bookkeeping in replay order, with one
+// tests/frame_owed_check.py builds this: runtime/vk/vk_frame_owed.h, a frame's bookkeeping in replay order, with one
 // presenting thread, three replaying threads that hold the lock for their replays, a few of them for HOLD_MS, and a
 // present thread that takes each presented frame from the presenting thread (one in waiting at most, as vk_backend.c
 // present_image hands it over), blits it and then submits under the lock (vk_backend.c present_main). Every

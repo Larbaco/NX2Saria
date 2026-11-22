@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/tex_release_check.c: runtime/vk_tex_release.h, which says how long a released texture is kept,
+"""Build and run tests/tex_release_check.c: runtime/vk/vk_tex_release.h, which says how long a released texture is kept,
 how much the released ones may hold past the size bound, and how many seconds ago a present was. The check also runs
 simulated sessions shaped by the take-back figures of two players' logs against the old and new defaults.
 
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -33,7 +34,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'tex_release_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

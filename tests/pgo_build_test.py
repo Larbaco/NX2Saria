@@ -105,7 +105,7 @@ class PgoBuildTest(unittest.TestCase):
         """(the lifted code's command, a runtime file's) with the flags pgo, without the compiler and the paths."""
         cmd_for = mg.runtime_cmd(self.clang, self.clangxx, self.inc, level=3, pgo=pgo)
         guest = cmd_for(self.tmp / 'main_0001.c', self.tmp / 'main_main_0001.o')
-        runtime = cmd_for(self.kit / 'runtime' / 'perf.c', self.tmp / 'rt_perf.o')
+        runtime = cmd_for(self.kit / 'runtime' / 'diag' / 'perf.c', self.tmp / 'rt_perf.o')
         return guest[1:-5], runtime[1:-5]   # up to -I <runtime> -o <object> <source>
 
     PLAIN = (['-c', '-std=gnu11', '-O1', '-march=x86-64-v3', '-fno-strict-aliasing', '-w'],

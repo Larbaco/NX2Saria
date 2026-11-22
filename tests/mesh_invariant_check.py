@@ -1,5 +1,5 @@
 # needs: clang, glslangValidator, spirv-val, spirv-as
-"""Mesh positions made Invariant (runtime/vk_pipeline.c spirv_mesh_invariant): builds the function, cut from
+"""Mesh positions made Invariant (runtime/vk/vk_pipeline.c spirv_mesh_invariant): builds the function, cut from
 vk_pipeline.c by its text, and runs it on modules made here:
 
   - a mesh shader whose position is a member of the per-vertex block (glslang's gl_MeshVerticesEXT);
@@ -146,7 +146,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'vk_pipeline.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8')
     body = src[src.index('// Ocarina draws a fog sheet twice'):src.index('// Maxwell computes in IEEE 754')]
     fails = 0
     with tempfile.TemporaryDirectory(prefix='nx2saria-mesh-inv-') as tmp:

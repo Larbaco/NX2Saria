@@ -1,4 +1,4 @@
-// runtime/mesh_fb_hold.h: the table behind the mesh fallback's depth hold (vk_exec_draw.c): a list whose colour draw
+// runtime/gfx/mesh_fb_hold.h: the table behind the mesh fallback's depth hold (vk_exec_draw.c): a list whose colour draw
 // was skipped for its pipeline holds its depth-only draw for a few presents, and no longer. Built and run by
 // tests/mesh_fb_hold_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>

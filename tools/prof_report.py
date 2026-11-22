@@ -1,4 +1,4 @@
-"""Report for a NX2NAVI_PROFILE sampling profile (runtime/prof_win.c): top functions and the guest/runtime/outside split.
+"""Report for a NX2NAVI_PROFILE sampling profile (runtime/diag/prof_win.c): top functions and the guest/runtime/outside split.
 
 usage: prof_report.py <profile> <nx2navi.map | nm -n output> [--top 40] [--chains 30]
 

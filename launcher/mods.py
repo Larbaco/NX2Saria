@@ -1,8 +1,8 @@
 """The game's mods folder, for the launcher's Mods screen and Play.
 
 The game reads <game>/mods (mods_dir in nx2saria.ini names another folder; an existing nx2navi.ini remains supported): one
-folder per mod, each part of it where tools/mod_files.py says (runtime/mods.c). The load order and the switches are
-the game's own settings, mods_order and mods_disabled in nx2saria.ini (or its existing nx2navi.ini), which this module writes as runtime/cfg.c does:
+folder per mod, each part of it where tools/mod_files.py says (runtime/patches/mods.c). The load order and the switches are
+the game's own settings, mods_order and mods_disabled in nx2saria.ini (or its existing nx2navi.ini), which this module writes as runtime/cfg/cfg.c does:
 the top mod wins a file two mods replace, and a mod nobody switched off is on.
 
 A mod as players download it often does not sit that way, so prepare() puts the mods folder in order before the game
@@ -39,7 +39,7 @@ import mod_files  # noqa: E402
 
 ARCHIVES = ('.zip', '.7z', '.rar')
 LOOSE_PARTS = ('romfs', 'romfslite', 'exefs', 'cheats')   # a mod's parts that are no mod when straight in mods/
-# what a folder holds at its top when a mod starts there (runtime/mods.c find_root's places)
+# what a folder holds at its top when a mod starts there (runtime/patches/mods.c find_root's places)
 MOD_TOP = {'romfs', 'romfslite', 'exefs', 'cheats', 'atmosphere', 'contents', mod_files.TITLE.lower()}
 UNWRAP_DEPTH = 4
 UNNAMED = 'Unnamed mod'
@@ -78,7 +78,7 @@ def _names(game_dir, key):
 
 
 def _quoted(v):
-    """A value as runtime/cfg.c put_value writes it: quoted when the blanks at its ends or the quotes around it would
+    """A value as runtime/cfg/cfg.c put_value writes it: quoted when the blanks at its ends or the quotes around it would
     be lost."""
     if v and (v[0] in ' \t' or v[-1] in ' \t' or (len(v) >= 2 and v[0] == v[-1] == '"')):
         return f'"{v}"'
@@ -86,7 +86,7 @@ def _quoted(v):
 
 
 def order(names, wanted):
-    """names in the game's order (runtime/mods.c by_order): the ones wanted names first, in its order, then the rest by
+    """names in the game's order (runtime/patches/mods.c by_order): the ones wanted names first, in its order, then the rest by
     name (byte order of their UTF-8, as strcmp)."""
     pos = {n: i for i, n in reversed(list(enumerate(wanted)))}
     return sorted(names, key=lambda n: (0, pos[n], b'') if n in pos else (1, 0, n.encode('utf-8', 'surrogateescape')))
@@ -136,7 +136,7 @@ class Mod:
 
     @property
     def problem(self):
-        """Why the game leaves this mod off whatever its switch says (runtime/mods.c scan_cb), '' when it does not."""
+        """Why the game leaves this mod off whatever its switch says (runtime/patches/mods.c scan_cb), '' when it does not."""
         if '|' in self.name:
             return 'Its folder name holds "|", which the load order list uses: rename the folder.'
         if self.code_module:
@@ -170,7 +170,7 @@ def _main_id(game_dir):
 
 
 def _same_build(hex_id, main_id):
-    """hex_id (trailing zeros may be left out) names main's build id; True when main's is unknown (runtime/mods.c)."""
+    """hex_id (trailing zeros may be left out) names main's build id; True when main's is unknown (runtime/patches/mods.c)."""
     if not main_id:
         return True
     h = hex_id.lower()

@@ -1,7 +1,7 @@
-/* What the audio renderer does with values the game sends that it cannot use (runtime/audren.c update_check,
-   request_update, audio_bad; runtime/audio_mixer.c splitters_walk, audio_mixer_routing_check,
+/* What the audio renderer does with values the game sends that it cannot use (runtime/hle/audren.c update_check,
+   request_update, audio_bad; runtime/audio/audio_mixer.c splitters_walk, audio_mixer_routing_check,
    audio_mixer_mix_layout_check, audio_mixer_update_effects and the render-pass effects), with the rest of the runtime
-   stubbed and the real effect DSPs (runtime/audio_effects.c, runtime/audio_reverb.c) linked. No game data and no audio
+   stubbed and the real effect DSPs (runtime/audio/audio_effects.c, runtime/audio/audio_reverb.c) linked. No game data and no audio
    device: NX2NAVI_AUDIO=none mixes without one.
 
    Every RequestUpdate goes through renderer_handler with a hand-built input. A refused update must answer 0x5299 (the
@@ -12,8 +12,8 @@
 
    audio_params_check [-v]                              every check below (-v prints the log lines)
    audio_params_check strict-effect | strict-update     NX2NAVI_AUDIO_STRICT=1: must end with "FATAL: audio:" */
-#include "../runtime/audren.c"
-#include "../runtime/audio_mixer.c"
+#include "../runtime/hle/audren.c"
+#include "../runtime/audio/audio_mixer.c"
 
 #include <stdarg.h>
 
@@ -81,7 +81,7 @@ void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) {
     (void)out, (void)frames, (void)channels, (void)rate;
 }
 /* a setting's key without its prefix: the runtime asks for NX2SARIA_<KEY>, and NX2NAVI_<KEY> is the older name
-   runtime/cfg.c still answers to */
+   runtime/cfg/cfg.c still answers to */
 static const char *setting(const char *name) {
     if (!strncmp(name, "NX2SARIA_", 9)) return name + 9;
     if (!strncmp(name, "NX2NAVI_", 8)) return name + 8;

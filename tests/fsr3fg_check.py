@@ -1,7 +1,7 @@
 # needs: exe, gpu
 # args: {exe}
-"""Run the game executable's --probe-fsr3fg with Vulkan's validation on (runtime/fsr3fg_probe.c: FSR 3.1 frame
-generation with the runtime's own passes, runtime/vk_fsr3fg.c, on a synthetic scene, without a window or the game).
+"""Run the game executable's --probe-fsr3fg with Vulkan's validation on (runtime/vk/fsr3fg_probe.c: FSR 3.1 frame
+generation with the runtime's own passes, runtime/vk/vk_fsr3fg.c, on a synthetic scene, without a window or the game).
 
 The probe checks that the generated frame puts a moving square halfway between the two frames it is made from, keeps
 the HUD drawn over the picture as it is, leaves the black bars around the picture black, shows nothing at the first

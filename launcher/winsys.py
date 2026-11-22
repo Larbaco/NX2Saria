@@ -398,7 +398,7 @@ def game_finished(exe, skip=None):
 
 def game_copy(exe, skip=None):
     """Windows: the running process whose image is the file exe, other than the process id skip, as a GameCopy; None
-    when there is none or it cannot be opened. The game's own Restart (runtime/gfx_present.c gfx_window_closed) starts
+    when there is none or it cannot be opened. The game's own Restart (runtime/gfx/gfx_present.c gfx_window_closed) starts
     the exe again (runtime/platform/win32.c plat_restart) and ends the process before it with code 0: following the
     copy is how the launcher learns the code the game really ended with. The image is compared as a file, not as a
     name, so the game of another install is not taken for this one."""

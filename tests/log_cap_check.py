@@ -2,7 +2,7 @@
 """The log file's cap and the end of the run (runtime/main.c log_sink): past the cap ordinary lines are dropped, with
 one line that says so; once the process is ending (rt_log_ending, which a fatal error and the crash report call before
 rt_log_sync) its lines are still written, after one line that says the end follows, up to a reserve of their own,
-however much was dropped before. rt_log_sync alone (a bug capture in play, runtime/bugcap.c write_log_tail) does not
+however much was dropped before. rt_log_sync alone (a bug capture in play, runtime/diag/bugcap.c write_log_tail) does not
 open the reserve. Builds log_sink with a small cap and reserve against stand-ins for the file and stderr, and checks
 statically that every end that syncs the log marks it as ending first. No game files.
 
@@ -121,7 +121,7 @@ def static_checks():
     ends = [('main.c', 'static void crash_handler(const PlatCrash *x)'),
             ('main.c', 'static void log_sync_ending(void)'),
             ('dispatch.c', 'static void fatal_end(int code, const char *fmt, va_list ap) {'),
-            ('vk_device.c', 'static void lost_wait_exit(void *arg)')]
+            ('vk/vk_device.c', 'static void lost_wait_exit(void *arg)')]
     for file, sig in ends:
         text = (rt / file).read_text(encoding='utf-8')
         if sig not in text:

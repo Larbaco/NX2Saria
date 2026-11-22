@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/frame_owed_check.c: runtime/vk_frame_owed.h, a frame's bookkeeping at its present in replay order
+"""Build and run tests/frame_owed_check.c: runtime/vk/vk_frame_owed.h, a frame's bookkeeping at its present in replay order
 (vk_backend.c "a frame's bookkeeping in replay order", vk_sync.c submit). One presenting thread, three replaying
 threads that hold the lock for their replays, a few of them for 40 ms, and a present thread that takes each frame
 from the presenting thread, blits it and submits, over 20,000 frames: every frame's bookkeeping runs once and in frame
@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from platform_stand_ins import stand_ins
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -49,7 +50,7 @@ def main():
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), str(ROOT / 'tests' / 'frame_owed_check.c'),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), str(ROOT / 'tests' / 'frame_owed_check.c'),
                            *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     try:
         return subprocess.run([str(exe)], env=env, timeout=300).returncode

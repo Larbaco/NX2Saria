@@ -1,8 +1,8 @@
-// The mouse camera in stick mode (runtime/input_map.c input_mouse_stick): raw counts to a right-stick deflection with
+// The mouse camera in stick mode (runtime/input/input_map.c input_mouse_stick): raw counts to a right-stick deflection with
 // the camera speed taken out of it. The game multiplies the right stick's turn rates by the camera speed, so the
 // deflection is divided by it, and the division comes before the limit to full tilt: a slow movement turns as far as
 // at camera speed 1, and a fast flick reaches full tilt, which the game turns into its top speed with the factor in
-// it. No game files. tests/mouse_stick_check.py builds and runs this with runtime/input_map.c.
+// it. No game files. tests/mouse_stick_check.py builds and runs this with runtime/input/input_map.c.
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>

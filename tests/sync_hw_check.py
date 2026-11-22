@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/sync_hw_check.c: runtime/vk_sync_hw.h, the newest value each of the replay's timelines may
+"""Build and run tests/sync_hw_check.c: runtime/vk/vk_sync_hw.h, the newest value each of the replay's timelines may
 reach and the test that takes a value read above it as a lost device (vk_sync.c "a lost device in the timelines'
 values").
 
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -34,7 +35,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     extra = [] if os.name == 'nt' else ['-pthread']
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'sync_hw_check.c'), '-o', str(exe), *extra], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

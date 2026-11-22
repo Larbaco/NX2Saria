@@ -1,4 +1,4 @@
-// runtime/vk_gpa.c: the device address table against a model of what a shader reads through it, with the allocator,
+// runtime/vk/vk_gpa.c: the device address table against a model of what a shader reads through it, with the allocator,
 // the device and the completion queue replaced by the stand-ins below. Built and run by tests/gpa_check.py; prints each
 // failed check and exits 1 on any.
 #include <stdarg.h>

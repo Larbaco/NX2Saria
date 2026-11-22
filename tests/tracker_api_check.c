@@ -1,4 +1,4 @@
-// runtime/tracker_api.c served over the real platform layer, with a guest memory of the test's own at the game's own
+// runtime/diag/tracker_api.c served over the real platform layer, with a guest memory of the test's own at the game's own
 // addresses: main's window at 0x7000000000 with a MOD0 header where 1.1.1's main has it, and a heap at 0x1030000000
 // (the stack and heap block of a run with the tracker API on) with a hole the lazy heap never committed, a page nobody
 // may read, and pages never written. Beside them, at 0x2000000000, memory of the host's own holding a secret: the

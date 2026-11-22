@@ -15,7 +15,7 @@ How to measure the frame rate of a scene the same way twice, and how to read the
   The scenes teleport Link, so the save only has to be in the right age (child or adult) for them.
 - **A run**: the game starts through `tools/run_game.py` on a copy of the profile, presses A until the save loads,
   teleports to the scene's area and flies the debug tools' free camera along a fixed path there
-  (`runtime/debug_tools.c` `test_script`, game 1.1.1 only). The frame limit is off (`NX2SARIA_FPS_LIMIT=unlimited`);
+  (`runtime/diag/debug_tools.c` `test_script`, game 1.1.1 only). The frame limit is off (`NX2SARIA_FPS_LIMIT=unlimited`);
   every other setting is the game folder's `nx2saria.ini`, copied into the results. `--set KEY=VALUE` adds a setting
   (`{tag}` in the value becomes the run's scene and number).
 - **Why the free camera**: the game draws, culls and loads detail for the view the free camera gives it, and nothing
@@ -33,7 +33,7 @@ How to measure the frame rate of a scene the same way twice, and how to read the
   in lines every 600 frames. `docs/replay-cpu.md` has a profile made with it and what it says.
 - **Link's position** (a developer switch): `NX2SARIA_POS_TRACE=<file>` writes Link's position at every pad read of the
   game (about two a frame), one line each: `<tick> <ms> <x> <y> <z>`, the milliseconds of the host clock from the first
-  line (`runtime/debug_tools.c` `pos_trace`, game 1.1.1 only). The log says `debug: Link's position each tick to
+  line (`runtime/diag/debug_tools.c` `pos_trace`, game 1.1.1 only). The log says `debug: Link's position each tick to
   <file>` when it is on, and nothing when it is off. It reads the actor's copy of the position, which moves with Link
   on the ground (x and z, and y up a step) but does not rise in a jump: a jump's length shows, its height does not.
   With an input script it measures moves at different frame rates. This bench does not reach much over 60 fps, and
@@ -76,14 +76,14 @@ How to measure the frame rate of a scene the same way twice, and how to read the
   GPU ms close to its frame time; a CPU-bound one well under it.
 - **Replay ms**: the CPU time of replaying the game's draws as Vulkan commands, per frame.
 - **Win bound**: the runtime's own verdict on its 60-frame windows (`perf: frame N: ... bound: X`,
-  `runtime/perf_bound.h`), the one most windows had. `pace`: pacing took 15% of the window or more; `gpu`: the GPU
+  `runtime/diag/perf_bound.h`), the one most windows had. `pace`: pacing took 15% of the window or more; `gpu`: the GPU
   was busy 80% of the frame or more; `serial`: the GPU and the CPU took turns, the GPU idle waiting for the next
   submission for a fifth of the frame or more while threads waited for GPU fences for a quarter of it or more
   (the frame is near the sum of the two, so a cheaper GPU frame and a cheaper replay both shorten it); `cpu`
   otherwise. Before 0.20 there was no `serial`, and such windows read `cpu`.
 
 The numbers come from `NX2SARIA_TRACE=perf` with `NX2SARIA_PERF_SLOW_MS=1`, which logs a line per frame
-(`runtime/perf.c` `perf_present`). `tests/bench_check.py` checks the parser against the runtime's format strings.
+(`runtime/diag/perf.c` `perf_present`). `tests/bench_check.py` checks the parser against the runtime's format strings.
 
 ## Tracing a stall in the log
 
@@ -135,7 +135,7 @@ line of the same minute says whether memory or the disk was waited on.
 
 Pipelines built ahead of their first use rest while the frame shown has `bg_build_play_draws` draws or more, 600 by
 default, and go on in light frames: the title, menus, the pause and map screens, an area load, a frame not shown for
-half a second (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c` `play_rest`). Those are the pool's background queue
+half a second (`runtime/vk/vk_play_gate.h`, `runtime/vk/vk_pipeline.c` `play_rest`). Those are the pool's background queue
 (the boot's records left to the background, and the optimised build that replaces a fast link), when stage libraries
 are on, and the library warm. A pipeline a draw waits for is always built; the stage library prebuild and the large
 compute builds do not rest. The start logs `vk: background builds rest in play: while the frame shown has

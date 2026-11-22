@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/amiibo.md source-hash=210d257ef6ba95ef84d8ab6018ac025884e0f5ac reviewed=no -->
+<!-- translation: lang=ru source=docs/amiibo.md source-hash=c513805a23f2f766e88e9e4e171070e9d856ec9c reviewed=no -->
 <!-- languages -->
 [English](../amiibo.md) · [Português (Brasil)](../pt-BR/amiibo.md) · **Русский** · [简体中文](../zh-Hans/amiibo.md)
 
@@ -9,8 +9,8 @@
 # Amiibo
 
 У порта нет собственного NFC-считывателя: когда игра просит amiibo, он кладёт файл дампа amiibo на эмулируемый
-считыватель. На каждый вызов `nn::nfp`, который делает игра, отвечает рантайм (`runtime/ov_system.c`,
-`runtime/amiibo.c`). Вам нужен собственный дамп вашей собственной фигурки: 540-байтный образ NTAG215 в виде `.bin` или
+считыватель. На каждый вызов `nn::nfp`, который делает игра, отвечает рантайм (`runtime/hle/ov_system.c`,
+`runtime/hle/amiibo.c`). Вам нужен собственный дамп вашей собственной фигурки: 540-байтный образ NTAG215 в виде `.bin` или
 `.nfc`.
 
 ## Выбор amiibo

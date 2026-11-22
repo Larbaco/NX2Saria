@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run runtime/perf.c's rt_knob (cut out of the file with its warning table) with stand-ins for the settings and
+"""Build and run runtime/diag/perf.c's rt_knob (cut out of the file with its warning table) with stand-ins for the settings and
 the log: 0, 1 and ab read as before and log nothing; false, off and no in any case read as 0 and true, on and yes as 1,
 without a line; any other value, such as "0 ; a note" from the environment (nx2navi.ini's loader cuts that comment) or
 "enabled", reads as 1 and is logged once per switch, however often the switch is read.
@@ -98,9 +98,9 @@ def compiler():
 
 def cut():
     """perf.c from the warning table's #define to the end of rt_knob."""
-    src = (ROOT / 'runtime' / 'perf.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'diag' / 'perf.c').read_text(encoding='utf-8')
     m = re.search(r'#define KNOB_WARNED .*?\nint rt_knob\(const char \*name, const char \*def\) \{\n.*?\n\}\n', src, re.S)
-    assert m, 'runtime/perf.c: the rt_knob block (KNOB_WARNED ... rt_knob) was not found'
+    assert m, 'runtime/diag/perf.c: the rt_knob block (KNOB_WARNED ... rt_knob) was not found'
     return m.group(0)
 
 
@@ -108,7 +108,7 @@ def main():
     work = ROOT / 'build' / 'test' / 'rt_knob'
     work.mkdir(parents=True, exist_ok=True)
     c = work / 'rt_knob_check.c'
-    c.write_text('// Made by tests/rt_knob_check.py from runtime/perf.c.\n' + HARNESS % cut(), encoding='utf-8')
+    c.write_text('// Made by tests/rt_knob_check.py from runtime/diag/perf.c.\n' + HARNESS % cut(), encoding='utf-8')
     exe = work / ('rt_knob_check.exe' if os.name == 'nt' else 'rt_knob_check')
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():

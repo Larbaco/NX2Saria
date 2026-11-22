@@ -2,14 +2,14 @@
 game.
 
 Lifted code cannot be written to while the game runs, so a cheat that writes instructions into main's .text is turned
-into `site` lines (recomp/patches.py) when the game is lifted; the runtime (runtime/cheats.c) switches each cheat's set
+into `site` lines (recomp/patches.py) when the game is lifted; the runtime (runtime/patches/cheats.c) switches each cheat's set
 from the in-game menu. A cheat that only writes data (heap, main's data, pointer chains, button conditions) needs no
-patch: runtime/cheats.c runs it in its cheat VM.
+patch: runtime/patches/cheats.c runs it in its cheat VM.
 
   python tools/cheats.py --exefs <dir> --mods <mods folder> --patches <patch file> --out <patch file> --status <file>
 
 The cheat files are <mod>/cheats/<build id>.txt in each folder of --mods (or the Atmosphere places of that folder,
-as runtime/mods.c finds them; the name's case does not matter), the build id the first 8 bytes of main's. Every mod's
+as runtime/patches/mods.c finds them; the name's case does not matter), the build id the first 8 bytes of main's. Every mod's
 file is built, switched on or off: the runtime decides which run. --out gets the --patches file followed by one set
 per convertible cheat (`cheat_<hash>`, switch NX2NAVI_CHEAT_<HASH>, default off) and its sites. --status gets one line
 per cheat, mods by name, cheats in file order, tab separated:
@@ -129,7 +129,7 @@ VM_TYPES = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xA}
 
 
 def vm_ok(o):
-    """None when runtime/cheats.c runs the opcode, else why not."""
+    """None when runtime/patches/cheats.c runs the opcode, else why not."""
     t, w = o
     if t not in VM_TYPES:
         return f'opcode {w[0]:08X} is not supported'

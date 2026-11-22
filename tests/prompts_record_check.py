@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/prompts_record_check.c with runtime/input_map.c: the game folder's record of where its button
+"""Build and run tests/prompts_record_check.c with runtime/input/input_map.c: the game folder's record of where its button
 prompts came from (button-prompts.txt), which the game's log repeats. No game files.
 
 Usage: python tests/prompts_record_check.py [--cc <clang>]
@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -32,8 +33,8 @@ def main():
         # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
         subprocess.check_call([cc, '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                                '-Wno-bitwise-instead-of-logical', '-fno-strict-aliasing', *sanitize,
-                               '-I', str(ROOT / 'runtime'), str(ROOT / 'tests' / 'prompts_record_check.c'),
-                               str(ROOT / 'runtime' / 'input_map.c'), *([] if win else ['-lm']), '-o', str(exe)],
+                               *runtime_include.flags(), str(ROOT / 'tests' / 'prompts_record_check.c'),
+                               str(ROOT / 'runtime' / 'input' / 'input_map.c'), *([] if win else ['-lm']), '-o', str(exe)],
                               env=env)
         return subprocess.run([str(exe), str(game)], env=env).returncode
 

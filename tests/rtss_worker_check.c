@@ -1,4 +1,4 @@
-// The real runtime/rtss_limit.c against a fake RivaTuner Statistics Server: the Win32 calls it makes go to the fakes
+// The real runtime/pacing/rtss_limit.c against a fake RivaTuner Statistics Server: the Win32 calls it makes go to the fakes
 // below (its folder in the registry, its hooks library with the profile calls, the profile files, the shared memory
 // RTSSSharedMemoryV2), and its worker thread polls when a scenario says so (plat_sleep_ms on that thread waits for the
 // next poll). Each scenario runs in a process of its own, since rtss_limit.c's state lasts the process, with the state

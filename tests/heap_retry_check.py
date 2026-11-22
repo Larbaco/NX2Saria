@@ -1,5 +1,5 @@
 # needs: clang
-"""Check the model heaps' retry: the patch set heap_retry (recomp/patches-v111.txt) and runtime/heap_retry.c.
+"""Check the model heaps' retry: the patch set heap_retry (recomp/patches-v111.txt) and runtime/patches/heap_retry.c.
 
 The set's four sites, lifted by recomp/lifter.py as the generator lifts them: main+0x436910 and main+0x436db4 keep
 their stp and then call the patch page's +0xed0; main+0x436f18 and main+0x437094 call the page's +0xec0 in place of
@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
+import runtime_include
 
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 MAIN, PAGE = 0x7000000000, 0x4ea0000
@@ -96,12 +97,12 @@ def check_sites():
                 assert not (insn.kind == 'bl' and insn.target in (MAIN + PAGE + HOST_CPU, MAIN + PAGE + HOST_GPU)), \
                     f'set {table.sets[k][0]} at {off:#x} calls a slot of heap_retry'
     for slot in (HOST_CPU, HOST_GPU):
-        users = sorted(p.name for p in (ROOT / 'runtime').glob('*.c')
+        users = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c')
                        if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (slot, slot), p.read_text(encoding='utf-8', errors='replace'), re.I))
         assert users == [], (hex(slot), users)   # heap_retry.c names them through HOST_CPU and HOST_GPU
-    text = (ROOT / 'runtime' / 'heap_retry.c').read_text(encoding='utf-8')
+    text = (ROOT / 'runtime' / 'patches' / 'heap_retry.c').read_text(encoding='utf-8')
     assert '#define HOST_CPU 0x%x' % HOST_CPU in text and '#define HOST_GPU 0x%x' % HOST_GPU in text
-    others = sorted(p.name for p in (ROOT / 'runtime').glob('*.c') if p.name != 'heap_retry.c'
+    others = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c') if p.name != 'heap_retry.c'
                     and re.search(r'RT_PATCH_PAGE\s*\+\s*(HOST_CPU|HOST_GPU)\b', p.read_text(encoding='utf-8',
                                                                                            errors='replace')))
     assert others == [], others
@@ -120,7 +121,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-Wno-bitwise-instead-of-logical',
-                           '-fno-strict-aliasing', '-I', str(work), '-I', str(ROOT / 'runtime'),
+                           '-fno-strict-aliasing', '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests' / 'heap_retry_check.c'), '-o', str(exe)], env=env)
     rc = 0
     for mode in ('main', 'test', 'shipped', 'off', 'mismatch', 'no-set'):

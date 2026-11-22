@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/system_event_check.c: the system-event table of runtime/kernel.c (kern_bind_system_event,
+"""Build and run tests/system_event_check.c: the system-event table of runtime/hle/kernel.c (kern_bind_system_event,
 kern_signal_system_event, kern_clear_system_event, kern_unbind_system_event) against destroyed events, reused handle
 numbers, a host thread racing a destroy and bind, a full table holding events in host memory, and host-memory events
 unbound before their memory is freed; with the platform layer linked and the rest of the runtime stubbed. No game files: the module layout the runtime includes is a stand-in written to the test's build folder.
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from platform_stand_ins import stand_ins
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -47,7 +48,7 @@ def main():
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), '-I', str(work),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), '-I', str(work),
                            str(ROOT / 'tests' / 'system_event_check.c'), *map(str, plat), '-o', str(exe), '-lm', *libs],
                           env=env)
     rc = subprocess.run([str(exe)], env=env, timeout=300).returncode

@@ -1,6 +1,6 @@
 """Fold the loose files of a shader cache into <cache>/shader-cache.pack and delete them.
 
-The translator writes four files per shader into the cache (runtime/gfx_shader.c): <key>.spv, <key>.res.json,
+The translator writes four files per shader into the cache (runtime/gfx/gfx_shader.c): <key>.spv, <key>.res.json,
 <name>.use and in/<input id>.in, about 117,000 files after an install, which are slow to copy, back up, scan and sync.
 nx2saria.exe reads the pack first and the loose files after it, and keeps writing new translations as loose files, so
 this tool can run again at any time the game is closed: it merges the existing pack with the loose files (a loose file

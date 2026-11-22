@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/pipeline_cache_file_check.c: runtime/vk_cache_file.h, the read of pipeline-cache.bin with 64-bit
+"""Build and run tests/pipeline_cache_file_check.c: runtime/vk/vk_cache_file.h, the read of pipeline-cache.bin with 64-bit
 sizes. The test makes a sparse file just over 2 GB in build/test/pipeline_cache_file (it takes no disk space, and about
 2 GB of memory for the seconds the read lasts) and removes it.
 
@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -30,7 +31,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'pipeline_cache_file_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe), str(work)], env=env, timeout=600).returncode
 

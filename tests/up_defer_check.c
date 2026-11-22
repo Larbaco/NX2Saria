@@ -1,4 +1,4 @@
-// runtime/vk_up_defer.h: what the upscalers let go of is released only once the GPU timeline has passed its last
+// runtime/vk/vk_up_defer.h: what the upscalers let go of is released only once the GPU timeline has passed its last
 // submission and, for what a present can read, once enough presents went by. Built and run as C and as C++ by
 // tests/up_defer_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>

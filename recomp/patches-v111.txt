@@ -1,5 +1,5 @@
 # Code patches for Ocarina of Time (Switch 2) 1.1.1 main (recomp/patches.py). The sites were found in this build's
-# main; their original words are checked by the generator. runtime/widescreen.c writes the patch page and switches the
+# main; their original words are checked by the generator. runtime/patches/widescreen.c writes the patch page and switches the
 # sets: +96 the game image size and +104 the scene size as {w, h} in one 64-bit word, +112 the 16:9 ratio a camera is
 # matched against, +116 the ratio that replaces it and +120 the tolerance of the match, as floats; +144 the bit
 # patterns of the UI's full-screen orthographic projection (m00 = 2 / 3840, m11 = 2 / 2160), +160..+175 and +208..+223
@@ -9,7 +9,7 @@
 #
 # The matrix-update, UI and movie sites: Copyright (c) 2026 Ivan0xFF (MIT; see THIRD_PARTY_NOTICES.md). Each is
 # written without branches or flags, as the generator's patch sites need. The set names differ from the other patch
-# files' (output, scene, aspect), whose page layout runtime/resolution.c owns.
+# files' (output, scene, aspect), whose page layout runtime/gfx/resolution.c owns.
 
 set wide_out    NX2NAVI_PATCH_WIDE_OUT    0
 set wide_scene  NX2NAVI_PATCH_WIDE_SCENE  0
@@ -29,7 +29,7 @@ set omovie      NX2NAVI_MOVIE_PTS         1
 # as 60 (or 30) over the target refresh rate it keeps, 60. Gameplay steps base (+0x1c0, 1.0) times frames per update,
 # the interface and the frame counter at update +0xd58 step frames per update, so above 60 fps all of it ran fast.
 # The update takes frames per update from the patch page instead: +256, the display interval in 60 Hz frames
-# (runtime/frame_rate.c). x10 is rewritten before it is read again, and the tst's flags feed only the fcsel.
+# (runtime/pacing/frame_rate.c). x10 is rewritten before it is read again, and the tst's flags feed only the fcsel.
 site ostep main 6e6cc0 1e220c21 @page:x10   # fcsel s1, s1, s2, eq -> adrp x10, page
 site ostep main 6e6cc4 1e201828 bd410148    # fdiv s8, s1, s0 -> ldr s8, [x10, #256]
 # The engine's second step: the graphics system's update (main+0x3b4ea90) also divides 60.0 by the same nominal rate
@@ -44,7 +44,7 @@ site ostep main 3b4eaf8 1e201820 bd410120   # fdiv s0, s1, s0 -> ldr s0, [x9, #2
 # the day (+0x3c of its object, carried into the day count by the code after it). With the step above below one frame
 # per update the sum was 1 from 61 to 119 fps (the day at 83% of its pace at 100 fps) and 0 above 120, where the clock
 # stood still and the sun swung back and forth around a frozen hour; at 60 fps a step a little under one frame lost a
-# second too. The cut calls the page's +0xf60 instead (runtime/frame_rate.c frame_rate_day_host): the frame's seconds
+# second too. The cut calls the page's +0xf60 instead (runtime/pacing/frame_rate.c frame_rate_day_host): the frame's seconds
 # with the fraction kept for the next frame, so the day keeps the game's pace at any frame rate. x30 is the function's
 # own saved one, and the call at main+0x3cdfc8 sets it again.
 site ostep main 3cdfc0 1e380008 952b4be8   # fcvtzs w8, s0 -> bl page+0xf60
@@ -53,14 +53,14 @@ site ostep main 3cdfc0 1e380008 952b4be8   # fcvtzs w8, s0 -> bl page+0xf60
 # time manager's (its +0, or one of its group steps at +0x20 + 0x30 * n) and the substeps +0x4c of the water's
 # parameters (object +0x1e8, then +0x150, or the parent those name), and skips the simulation when the product is
 # under 1 (main+0x47618). With the step above under one frame that was every frame above 60 fps: the rings Link and
-# everything else make in water stood still. The cut calls the page's +0xf50 instead (runtime/frame_rate.c
+# everything else make in water stood still. The cut calls the page's +0xf50 instead (runtime/pacing/frame_rate.c
 # frame_rate_water_host): the step goes into a remainder kept for the water object (x21, the function's x0) and w9
 # gets the whole steps in it, so the rings spread at the game's pace at any frame rate, and a step of exactly one
 # frame gives what the game computes. Every path to the cut has the step in s0 (the one that asks the parameters'
 # parent keeps it across its call), and x30 is the function's own saved one.
 site ostep main 475f8 1e380009 95396656   # fcvtzs w9, s0 -> bl page+0xf50
 
-# Physics solver steps, at least a 60 fps frame's (physics_steps = 2, runtime/frame_rate.c frame_step_init switches
+# Physics solver steps, at least a 60 fps frame's (physics_steps = 2, runtime/pacing/frame_rate.c frame_step_init switches
 # this set on and osolver off): the step setup below with the count of osolver, ceil(frames per update * count - 0.25),
 # raised to the count itself, the steps of one 60 Hz frame. Above 60 fps the rounded-up count still gives fewer
 # solver steps an update (2 at 120 to 160 fps, 1 at 240) while their number a second stays near 240; with this set
@@ -89,7 +89,7 @@ site osolverfull main 38afd20 1e380001 1e214800 1e280001
 # solver (main+0x180b0a0) runs its solve and sub-integration loop that many times and skips it at 0 (main+0x180b380):
 # such a frame solves no contact or friction and moves no rigid body, so whatever stands on a moving body is left
 # behind in it. At a 240 fps limit that was the frame after a late one, whose display interval is shorter than the
-# period (runtime/frame_rate.c ocarina_step). The count rounds up instead, ceil(frames per update * count - 0.25): 4 and 8 as before at 60 and 30
+# period (runtime/pacing/frame_rate.c ocarina_step). The count rounds up instead, ceil(frames per update * count - 0.25): 4 and 8 as before at 60 and 30
 # fps, also with a step a few percent off them, never fewer steps a second than at 60 fps, and at least 1 down to a
 # 16th of a frame. s2 is loaded only for this sum, and none of the words reads or writes the flags.
 site osolver main 38aebe4 bd440d02 1e2a1002   # ldr s2, [x8, #0x40c] (0.001) -> fmov s2, #0.25
@@ -112,7 +112,7 @@ site osolver main 38afd20 1e380001 1e280001
 # step is 60 or 30, so that happens only in a slow motion under 0.6 of the game's speed; above 100 fps it happened every
 # update. Link on the Deku Tree's floating platform (B1, Obj_Deku_MoveFloor_A_01) was carried at about a tenth of its
 # speed at 117 and 160 fps, and the platform drifted from under him (at 240 fps not at all, which the tenth alone does
-# not explain). The set compares with the page's +260 instead (runtime/frame_rate.c floor_carry_store, written with
+# not explain). The set compares with the page's +260 instead (runtime/pacing/frame_rate.c floor_carry_store, written with
 # +256): 100 / frames per update under one frame per update, else 100. The inverse step times frames per update is 60
 # over the time scale at any frame rate, so above 60 fps the cut comes where it came at 60 fps, and at 60 fps and below
 # (100 there, and until the first present) the words give what the game computes. At each site mov w8, #100.0 and
@@ -143,7 +143,7 @@ site ofollow main 389ac24 1e270101 bd410501
 # (main+0x3876230, main+0x38829e8, main+0x632f20). Nothing keeps the fraction: at 60 fps every update runs one step, at
 # 30 two, and every update shorter than 1/60 s none, so above 60 fps those surfaces stood still whatever pushed into
 # them, a web under Link among them. After the division each site calls the page's +0xf20
-# (runtime/frame_rate.c frame_rate_sim_host): s0 becomes the whole steps in the quotient plus a remainder kept for the
+# (runtime/pacing/frame_rate.c frame_rate_sim_host): s0 becomes the whole steps in the quotient plus a remainder kept for the
 # object (x19, the function's x0 at all three), as a float, and the game's own cut and clamp follow. So the surfaces
 # run 60 steps a second at any frame rate, and an update of exactly 1/60 s gives what the game computes. The host
 # writes only s0's low lane, which the division wrote; x30 is the function's own, saved by its prologue
@@ -158,7 +158,7 @@ site owater main 632cfc 1e201900 1e201900 9521b889    # the same at the interact
 # +0x10, to the sound system; 1 runs the sound objects' updates; 2 the system's own update, main+0x3798410; any other
 # returns through main+0x4155fc). Above 60 fps the set ostep makes that step a fraction of one, and fed fractions the
 # game has been reported to hold sounds after an area unloads until no voice is free, then go silent
-# (runtime/frame_rate.c, "the sound manager's job at whole steps"). The set
+# (runtime/pacing/frame_rate.c, "the sound manager's job at whole steps"). The set
 # runs the job at 60 Hz then: after the prologue (add x29, sp, #0x20) the page's +0xf10 decides from the phase and the
 # step whether the job runs this frame, and puts phase 3 in w2 when it does not, so cbnz w2 and the phase tests send it
 # to its own epilogue; after phase 0's load of the step (ldr s0, [x8, #0x10]) the page's +0xf00 makes a fraction one
@@ -195,7 +195,7 @@ site ostaff main 3292ed4 36000b80 @page:x9 b943092a b9030920 0a2a0000 36000b80  
 # x8 = layer->controller->player->surface->timestamp in ns. Clamp negative timestamps to zero and convert to
 # the nearest 60 Hz timeline tick (WebM timestamps can be rounded to milliseconds). The original add of one
 # counts the first picture as frame one. x9 is scratch on both paths, and the replacement preserves flags.
-# At the movie cap (runtime/frame_rate.c movie_cap_hz, 60 fps) the two counts are the same while the decoder keeps up.
+# At the movie cap (runtime/pacing/frame_rate.c movie_cap_hz, 60 fps) the two counts are the same while the decoder keeps up.
 # They differ when no new picture is ready for a redraw: the old count went on, so cues kept pace with the soundtrack,
 # which plays on its own; this count waits with the picture and goes on with it, a step of 2 or more when the decoder
 # drops a picture. main+0x3b3ec10 hands the counter out as a float frame (scvtf) through a virtual call, and its
@@ -219,7 +219,7 @@ site opickup main a68300 1e38000c 1e38000c 5ac0118d 53057dad 0b0d018c   # fcvtzs
 # game__component__PlayerCameraParam); then come the reset timer at +0x5e0 (the stick reads zero while it runs), the X/Y
 # inversion (w21 bits 1 and 2) and the idle test (flags +0x530 bit 4: the processed stick under 10%). At 37c45c s1 and
 # s0 hold the processed x and y for the stores at +0x538 and +0x53c: the host callback performs the displaced store of
-# s1 and adds the raw mouse counts to both (runtime/mouse_direct.c camera_input_oot), so the mouse never becomes a stick
+# s1 and adds the raw mouse counts to both (runtime/input/mouse_direct.c camera_input_oot), so the mouse never becomes a stick
 # value and meets no dead zone or curve. At 37c4f0, the displaced ldp d9, d8, [sp, #0x10] before the update's last
 # `str w8, [x20, #0x530]`, w8 holds the flags: a second callback clears the idle bit for an update the mouse moved in
 # (camera_activity_oot). x30 is the function's own saved one at both sites. The callbacks' addresses are page +0xfd0
@@ -244,7 +244,7 @@ site wide_scene main 31f3a04 f2c08708 f9403508  # movk x8, #0x438, lsl #32 -> ld
 # Render scale: the game sizes its 3D scene by a dynamic-resolution controller that follows its GPU-time reports (3/4
 # of the picture here). Bit 0 of an engine config word at +0x94 picks it (main+0x805bd0); the other path takes a fixed
 # scale of 1.0 (main+0x806420). res_fixed always takes the fixed path and reads its scale from +240 (a float, written by
-# runtime/widescreen.c from the DLSS mode). It is switched on only once the controller has run for a while, as its
+# runtime/patches/widescreen.c from the DLSS mode). It is switched on only once the controller has run for a while, as its
 # fields would otherwise stay unset and the scene stay black.
 # The controller returns its scale with a state in bits 32..39. Its caller (main+0x31d3ee0) makes a new scene scale
 # from the returned one only on state 0 ("changed": the bit 3 request of renderer +0xe2c, consumed at main+0x31d40b4);
@@ -298,7 +298,7 @@ site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:
 # save file shows is drawn through it into a target of 543x306 (not a constant of main: the size comes with the game's
 # data, so the site knows the viewport by its numbers), and the whole picture went in: wider than 16:9, it came out
 # squeezed. Where the helper loads SetViewport's address, a viewport of exactly 0, 0, 543, 306 gets the page's +224
-# added to its x and +228 to its width (runtime/widescreen.c wide_init: wider by the picture's ratio over 16:9 and
+# added to its x and +228 to its width (runtime/patches/widescreen.c wide_init: wider by the picture's ratio over 16:9 and
 # centred on the target). The scissor was set before and stays the target's, so the save shows the middle 16:9 of the
 # picture, the part a 16:9 picture holds. Without branches or flags: the differences from those four numbers are or-ed
 # together, clz >> 5 of that is 1 only when there is none, and madd adds the page's two numbers times it. x9..x12 and
@@ -307,10 +307,10 @@ site wide_movie main 3b5c758 a941a269 d100a3b0 bd400a10 bd401211 1e303a32 @page:
 set wide_save NX2NAVI_PATCH_WIDE_SAVE 0
 site wide_save main 284824 f9400108 f9400108 @page:x16 295c2e0a 295d3e0e 51087c69 5104c88c 2a0c0129 2a010129 2a020129 5ac01129 53057d29 1b0a0521 1b0b0d23 1b0e0922 1b0f1124   # ldr x8, [x8]; x/w and y/h viewport additions; apply only to the 543x306 save target
 
-# The menus' black bars (NX2SARIA_WIDE_MENUS = center, runtime/wide_bars.c): each interface screen's setup
+# The menus' black bars (NX2SARIA_WIDE_MENUS = center, runtime/patches/wide_bars.c): each interface screen's setup
 # (main+0x773b90, vtable +0x80, the same function that sets up the canvas the set wide_hud keeps or squeezes) sets up
 # the screen's 2D canvas with the call at main+0x774064, which every path of the function reaches, and then reads the
-# screen's vtable at main+0x774068. There the site calls the page's +0xef0 after the load (runtime/wide_bars.c
+# screen's vtable at main+0x774068. There the site calls the page's +0xef0 after the load (runtime/patches/wide_bars.c
 # wide_bars_screen_host), with the screen in x19: the runtime keeps the menus' background screens and the loading fade
 # it is handed and reads their state byte (+0x1a6) at each present. The function saved its
 # x30 in its prologue and calls through x8 right after, so the call's x30 is overwritten before anything reads it; the
@@ -318,7 +318,7 @@ site wide_save main 284824 f9400108 f9400108 @page:x16 295c2e0a 295d3e0e 51087c6
 set wide_bars NX2NAVI_PATCH_WIDE_BARS 0
 site wide_bars main 774068 f9400268 f9400268 951cb3a2   # ldr x8, [x19] -> ldr x8, [x19]; bl page+0xef0
 
-# The game's zstd decoder (BSD zstd, statically linked into main) through the host's libzstd (runtime/ov_zstd.c): the
+# The game's zstd decoder (BSD zstd, statically linked into main) through the host's libzstd (runtime/hle/ov_zstd.c): the
 # three calls of ZSTD_decompressMultiFrame (main+0xeb380: dctx, dst, capacity, src, size, dict, dict size, ddict) go to
 # the host function on the patch page (+0xff0). main+0xe910c is the file loader's call for a file that fits one read
 # chunk. The loading threads decode most of the data through the game's stream feed (main+0xf5c80: state, src, size,
@@ -331,7 +331,7 @@ site zstd main bf72e0 97d3d028 950aa744   # bl ZSTD_decompressMultiFrame -> page
 site zstd main f50164 97c66c87 94fd43a3   # bl ZSTD_decompressMultiFrame -> page+0xff0
 site zstd main f5c2c  94000015 9536acd5   # bl the stream feed -> page+0xf80
 
-# The debug menu's free camera (runtime/debug_tools.c dbg_freecam_host; switched on by the menu, never by a setting). The
+# The debug menu's free camera (runtime/diag/debug_tools.c dbg_freecam_host; switched on by the menu, never by a setting). The
 # camera update (main+0x4c48c0) chooses the frame's position and target (doubles) and up vector between the camera's
 # own and an override; every path of that choice joins at main+0x4c4e50 with them in d0-d2, d3-d5 and s7, s16, s6,
 # before they are stored into the look-at camera and its matrix is made. That instruction goes to the host function
@@ -359,20 +359,20 @@ site occlusion_off main 11acec8 39400008 2a1f03e8   # the samples-passed query's
 site occlusion_off main 11b82dc 39400008 2a1f03e8   # its update's compare
 site occlusion_off main 11b82f4 39400008 2a1f03e8   # its update's store
 
-# Sprint button (runtime/sprint.c). Link sprints while his input flags (the 64-bit word at *(Link +0x50)) have bit 4,
+# Sprint button (runtime/patches/sprint.c). Link sprints while his input flags (the 64-bit word at *(Link +0x50)) have bit 4,
 # the dash input. Link's movement update (main+0x4aaa80) loads that word at
 # main+0x4ae798 into x10 and tests bit 4 twice from it: at main+0x4ae7a0 to start the sprint (Link +0x2c bit 20, when
 # his state is Walk) and at main+0x4afa90 to keep it. The update of the camera and stance that follows
 # (main+0xc025d0) loads the flags' low byte at main+0xc07f3c into w8 and tests the same bit at main+0xc07f40. Each site
 # keeps its load and calls the page's host function after it (+0xf40, +0xf30; +0xf50 up to +0xff0 are taken, see
-# runtime/patches.c, mouse_direct.c and ov_zstd.c), which ORs bit 4 into x10 or w8 while
+# runtime/patches/patches.c, mouse_direct.c and ov_zstd.c), which ORs bit 4 into x10 or w8 while
 # the sprint button's sprint is on for Link (sprint_link, sprint_stance); x19 is Link at both. x30 is the function's
 # own saved one at both sites: both functions call others before and after, and restore x30 from their frames.
 set sprint NX2NAVI_SPRINT_BUTTON_PATCH 1
 site sprint main 4ae798 f940014a f940014a 9527c9ea   # ldr x10, [x10] -> ldr x10, [x10]; bl page+0xf40
 site sprint main c07f3c 39400108 39400108 950a63fd   # ldrb w8, [x8] -> ldrb w8, [x8]; bl page+0xf30
 
-# Text speed (runtime/text_speed.c). The message window (its update main+0x774b00) shows its text through a typewriter
+# Text speed (runtime/patches/text_speed.c). The message window (its update main+0x774b00) shows its text through a typewriter
 # object at window +0x2b0 (its step main+0xafe140): each frame the step adds speed (+0x4c) times the frame's step (s0)
 # to a reveal position (+0x60) and shows every character whose extent that position passed. The message's tags (group 1,
 # main+0xafdff0) hold the script: type 0 waits a number of frames (+0x58, the reveal stops until it has run out), type 1
@@ -395,7 +395,7 @@ set text_speed NX2NAVI_TEXT_SPEED_PATCH 1
 site text_speed main 774b74 36000074 @page:x9 394d2a6a d100054a 8a0a010a f901012a 39483129 2a140129 36000069   # tbz w20, #0, #0x774b80 -> adrp x9, page; ldrb w10, [x19, #0x34a]; sub x10, x10, #1; and x10, x8, x10; str x10, [x9, #0x200]; ldrb w9, [x9, #0x20c]; orr w9, w9, w20; tbz w9, #0, #0x774b80
 site text_speed main afe1d8 bd404e61 bd404e61 @page:x22 f94102db cb13037b dac0137b d346ff7b 9e220362 bd420ac8 1e280842 1f020421   # ldr s1, [x19, #0x4c]; adrp x22, page; ldr x27, [x22, #0x200]; sub x27, x27, x19; clz x27, x27; lsr x27, x27, #6; scvtf s2, x27; ldr s8, [x22, #0x208]; fmul s2, s2, s8; fmadd s1, s1, s2, s1
 
-# Amiibo daily limit (runtime/amiibo_daily.c). The amiibo manager holds the game's amiibo table (Game/AmiiboSetting/
+# Amiibo daily limit (runtime/patches/amiibo_daily.c). The amiibo manager holds the game's amiibo table (Game/AmiiboSetting/
 # AmiiboSetting.game__ui__AmiiboSetting.bgyml, loaded at start by main+0x326b030 into its +0x290). When a figure is
 # read, main+0x326bbc0 (x19 the manager) goes through the table's drop tables and compares each one's figure type,
 # number, character and series with the figure's (+0x1388..+0x1394). For a table that matches it reads the table's
@@ -432,7 +432,7 @@ site orecord main 3293410 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 
 site orecord main 3296b08 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 2f00e412 1e326a31 bd010911 1e390208
 site orecord main 3296da4 1e390008 @page:x8 bd410910 1e302810 1e25c211 1e313a11 2f00e412 1e326a31 bd010911 1e390208
 
-# The mouse in the game's own menus (runtime/menu_mouse.c, NX2SARIA_MENU_CURSOR): every interface screen's update
+# The mouse in the game's own menus (runtime/ui/menu_mouse.c, NX2SARIA_MENU_CURSOR): every interface screen's update
 # (main+0x2d1380, the screen manager's loop at main+0x3781e00 calls it through the screen's vtable +0x88, one screen
 # after another, after the focus manager has read the pad and before its controls take a reserved focus) copies the
 # screen into x19 at main+0x2d13b0. There the site calls the page's +0xee0 after the copy, with the screen in x0 and
@@ -484,7 +484,7 @@ site voice_language main a7ca98 940001ca 951090f2 # bl main+0xa7d1c0 -> bl page+
 set wide_balloon NX2SARIA_BALLOON_ANCHOR_FIX 1
 site wide_balloon main 20c2c8 1e210841 1e210841 953252e2 # fmul s1, s2, s1 -> bl page+0xe50
 
-# Model heaps that run full (runtime/heap_retry.c). The "OptimizeChangeBank" thread's material block rebuild
+# Model heaps that run full (runtime/patches/heap_retry.c). The "OptimizeChangeBank" thread's material block rebuild
 # (main+0x4366e0) takes two CPU buffers from its model's heap with the heap's tryAlloc (blr at main+0x43690c and
 # main+0x436da0) and GPU memory through main+0x502050 (main+0x436f18, main+0x437094), and checks none of them: a full
 # heap gave a null buffer base, and a few frames after a save was loaded the game wrote to guest address 0x8. The first
@@ -499,7 +499,7 @@ site heap_retry main 436db4 a90b5b7f a90b5b7f 9529a847   # stp xzr, x22, [x27, #
 site heap_retry main 436f18 94032c4e 9529a7ea            # bl main+0x502050 -> bl page+0xec0
 site heap_retry main 437094 94032bef 9529a78b            # bl main+0x502050 -> bl page+0xec0
 
-# The neighbouring map the game preloads, held (runtime/changebank_hold.c). The "OptimizeChangeBank" manager's update
+# The neighbouring map the game preloads, held (runtime/patches/changebank_hold.c). The "OptimizeChangeBank" manager's update
 # (main+0x3299880) chooses one of its units each frame: its loop over the 16 units (main+0x3299c54..0x3299d34, x10 the
 # unit) leaves in w15 the unit whose load radius Link is in that he heads for (else the nearest) and in w17 one asked
 # for directly (-1 each for none), and after it main+0x3299d90..0x3299d9c take w21 = w15 < 0 && w17 >= 0 ? w17 : w15.
@@ -513,7 +513,7 @@ site heap_retry main 437094 94032bef 9529a78b            # bl main+0x502050 -> b
 set changebank_hold NX2SARIA_CHANGEBANK_HOLD 1
 site changebank_hold main 3299d28 9100054a 9100054a 94701c42   # add x10, x10, #1 -> the same; bl page+0xe30
 
-# The camera's clearance on pictures that are not 16:9 (runtime/camera_clearance.c). The camera's collision step
+# The camera's clearance on pictures that are not 16:9 (runtime/patches/camera_clearance.c). The camera's collision step
 # (main+0x71a4a0) sizes the sphere it keeps clear of walls from its near plane, sqrt(w * w + h * h) with
 # h = tan(fov / 2) * near and w = h * ratio, the ratio loaded from its object's +0x51c at main+0x71a844 (s10) and, on
 # its second path, main+0x71b624 (s14). A wide picture's ratio there makes the sphere too big for a crawl passage. The

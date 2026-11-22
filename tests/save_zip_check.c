@@ -1,4 +1,4 @@
-// runtime/save_zip.c on its own, driven by tests/save_zip_check.py:
+// runtime/hle/save_zip.c on its own, driven by tests/save_zip_check.py:
 //   save_zip_check selftest                       the manifest's JSON keys, round trips in memory, damaged input
 //   save_zip_check inflate IN SIZE OUT            raw deflate IN (zlib's) into SIZE bytes at OUT; exit 3 when refused
 //   save_zip_check deflate IN OUT                 raw deflate of IN into OUT, for zlib to read back

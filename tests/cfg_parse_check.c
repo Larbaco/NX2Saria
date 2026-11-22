@@ -1,4 +1,4 @@
-// runtime/cfg.c's reading of the settings file and environment, with stand-ins for what cfg.c links against. Built and
+// runtime/cfg/cfg.c's reading of the settings file and environment, with stand-ins for what cfg.c links against. Built and
 // run by tests/cfg_parse_check.py: `cfg_parse_check <case> <ini>` loads the file the script wrote and prints every line
 // cfg.c logged ("log: ...") and what the case reads back ("got: ...").
 //   load     cfg_load on the file; then cfg_init's check of the environment (the variables the script set)

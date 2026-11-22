@@ -46,13 +46,15 @@ def decoder():
 
 def astc_library(cache):
     """Build the standalone CPU decoder on demand, without building or loading the game."""
-    src = ld.ROOT / 'runtime' / 'tex_astc.c'
+    src = ld.ROOT / 'runtime' / 'gfx' / 'tex_astc.c'
     library = cache / ('astc.dll' if os.name == 'nt' else 'astc.so')
     if not library.is_file() or library.stat().st_mtime < src.stat().st_mtime:
         cc = shutil.which('clang') or shutil.which('cc')
         if not cc:
             raise ld.FormatError('decoding ASTC textures needs clang or a C compiler')
-        includes = [ld.ROOT / 'toolchain' / 'vma', Path(cc).resolve().parents[1] / 'include' / 'vma']
+        import build_game   # the runtime's include folders: tex.h includes headers from several
+        includes = [*build_game.runtime_include_dirs(ld.ROOT / 'runtime'), ld.ROOT / 'toolchain' / 'vma',
+                    Path(cc).resolve().parents[1] / 'include' / 'vma']
         if path := os.environ.get('NX2SARIA_VMA_INCLUDE'):
             includes.insert(0, Path(path))
         with tempfile.TemporaryDirectory(prefix='astc-', dir=cache) as work:

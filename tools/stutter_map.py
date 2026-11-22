@@ -1,4 +1,4 @@
-"""The stutter map of a play session, from its log (runtime/stutter_map.c, NX2SARIA_STUTTER_MAP=1; the old
+"""The stutter map of a play session, from its log (runtime/diag/stutter_map.c, NX2SARIA_STUTTER_MAP=1; the old
 NX2NAVI_STUTTER_MAP spelling still works), and what a game
 folder recorded that a pipeline list lacks.
 

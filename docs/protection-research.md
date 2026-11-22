@@ -40,11 +40,11 @@ Enforcement means finding a copy, proving copying and paying a lawyer. A DMCA ta
 
 ## 3. What can and cannot be relicensed
 
-**Cannot:** every row of `THIRD_PARTY_NOTICES.md`. This covers `tools/vendor/` (unmodified), Ryujinx's shader translator, `tools/xlate/` (its `LICENSE` is MIT, jhaizhou) and files adapted from MacNativeGames, LASRecomp and others. They stay MIT, zlib or BSD with their notices. zlib code (`runtime/nvn_tex.c`) must be marked if altered. Stricter terms can cover only our own additions; anyone can still take the MIT parts from their upstream projects.
+**Cannot:** every row of `THIRD_PARTY_NOTICES.md`. This covers `tools/vendor/` (unmodified), Ryujinx's shader translator, `tools/xlate/` (its `LICENSE` is MIT, jhaizhou) and files adapted from MacNativeGames, LASRecomp and others. They stay MIT, zlib or BSD with their notices. zlib code (`runtime/nvn/nvn_tex.c`) must be marked if altered. Stricter terms can cover only our own additions; anyone can still take the MIT parts from their upstream projects.
 
 **Translator:** pinned MIT Ryujinx code plus patches. Patch lines we wrote (nine of ten commits touching `tools/xlate/patches/` are chrg6's; per-patch authorship is not recorded) can carry our terms. The patched translator still ships under MIT with Ryujinx's notice, and the upstream stays free to everyone.
 
-**Can, if the author agrees or it is chrg6's alone:** new files such as `runtime/widescreen.c` and `recomp/patches-v111.txt`, and the Ocarina port docs.
+**Can, if the author agrees or it is chrg6's alone:** new files such as `runtime/patches/widescreen.c` and `recomp/patches-v111.txt`, and the Ocarina port docs.
 
 **Gap:** the TOTK-Ultrawide row is GPL with no URL or version; keep it data-only and record the source.
 

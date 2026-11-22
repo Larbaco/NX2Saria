@@ -1,4 +1,4 @@
-// The sprint button (runtime/sprint.c) against a stand-in Link: the presses and the button the game gets from each
+// The sprint button (runtime/patches/sprint.c) against a stand-in Link: the presses and the button the game gets from each
 // controller poll (sprint_pad), and the dash input the patch set's two host functions put into Link's flags, frame by
 // frame, for toggle and hold, each button, Link's states and a Link the player does not control. Built by
 // tests/sprint_check.py, which writes the stand-in layout.h and patches.h.

@@ -1,10 +1,10 @@
 # needs: clang
-"""Build and run tests/gfx_guard_check.c: runtime/gfx_guard.h, the checks of the presentation path that must not trust
-what they are given: the game's crop cut to the image without int overflow (runtime/gfx_present.c present_image),
+"""Build and run tests/gfx_guard_check.c: runtime/gfx/gfx_guard.h, the checks of the presentation path that must not trust
+what they are given: the game's crop cut to the image without int overflow (runtime/gfx/gfx_present.c present_image),
 the swapchain image list taken whole or not at all (create_swapchain), and how often a repeating failure is logged.
 Where the compiler has it, the harness is built with the signed overflow sanitizer, so a sum that overflows traps.
 
-Then a scan of runtime/gfx_present.c and runtime/vk_texture.c: no swapchain image query, semaphore, fence, command
+Then a scan of runtime/gfx/gfx_present.c and runtime/vk/vk_texture.c: no swapchain image query, semaphore, fence, command
 pool, command buffer or sampler create there may drop its result (a call that starts a statement), and a failed
 vkCreateSampler may not end the game (rt_fatal right after it). No game files, no GPU.
 
@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
@@ -33,7 +34,7 @@ except ImportError:   # a Python without the differential tests' packages: the s
 
 CHECKED_CALLS = ('vkGetSwapchainImagesKHR', 'vkCreateSemaphore', 'vkCreateFence', 'vkCreateCommandPool',
                  'vkAllocateCommandBuffers', 'vkCreateSampler')
-SCANNED = ('gfx_present.c', 'vk_texture.c')
+SCANNED = ('gfx/gfx_present.c', 'vk/vk_texture.c')
 
 
 def strip_comments(src):
@@ -118,8 +119,8 @@ def self_test():
             '    if (vkCreateSampler(d, &si, NULL, &s) != VK_SUCCESS) s = 0;\n    h("vkCreateFence(");\n'
             '    k(1, vkCreateSemaphore(d, &i, NULL, &s));\n    ok = ok && vkCreateFence(d, &i, NULL, &f) == 0;\n}\n')
     with tempfile.TemporaryDirectory() as t:
-        (Path(t) / 'runtime').mkdir()
         for name in SCANNED:
+            (Path(t) / 'runtime' / name).parent.mkdir(parents=True, exist_ok=True)
             (Path(t) / 'runtime' / name).write_text(bad if name == SCANNED[0] else good)
         found = scan(Path(t))
     want = 6   # the semaphore, the fence, the image query, the pool after a comma, two fatal samplers; the good file nothing
@@ -137,7 +138,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    base = [compiler(), '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'), str(ROOT / 'tests' / 'gfx_guard_check.c'),
+    base = [compiler(), '-O1', '-Wall', '-Werror', *runtime_include.flags(), str(ROOT / 'tests' / 'gfx_guard_check.c'),
             '-o', str(exe)]
     san = ['-fsanitize=signed-integer-overflow', '-fno-sanitize-recover=all']
     if subprocess.run(base + san, env=env, capture_output=True).returncode != 0:
@@ -158,11 +159,11 @@ LOG_LINES = ['"gfx: %s failed \\(%d\\), %u times: %s; the swapchain is made agai
 
 def log_lines():
     """0 when every log line this change leaves is in the runtime's source as its format string."""
-    src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['gfx_present.c', 'vk_texture.c'])
+    src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['gfx/gfx_present.c', 'vk/vk_texture.c'])
     src = re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
     missing = [p for p in LOG_LINES if not re.search(p, src)]
     for p in missing:
-        print('gfx_guard_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['gfx_present.c', 'vk_texture.c'])))
+        print('gfx_guard_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['gfx/gfx_present.c', 'vk/vk_texture.c'])))
     return 1 if missing else 0
 
 

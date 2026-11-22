@@ -1,4 +1,4 @@
-// runtime/vk_memory.c's page write generations across a boundary: the section from its "page write generations" banner
+// runtime/vk/vk_memory.c's page write generations across a boundary: the section from its "page write generations" banner
 // to its "dirty census" banner and the readers of its tables outside it (cpu_wrote_since, shadow_pool_clean,
 // lazy_clean, page_dirty), extracted by tests/gen_wrap_check.py into gen_section.inc, start just below a seed's
 // boundary and run across it. Every compare the texture checks, the snapshot path, the VRAM mirrors' lazy fetch, the

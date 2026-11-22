@@ -1,7 +1,7 @@
 # needs: clang
-"""Build and run the checks of runtime/rtss_limit.c, RivaTuner Statistics Server as the frame limiter.
+"""Build and run the checks of runtime/pacing/rtss_limit.c, RivaTuner Statistics Server as the frame limiter.
 
-tests/rtss_limit_check.c builds runtime/rtss_decide.h alone, the parts that make no system call. tests/rtss_worker_check.c
+tests/rtss_limit_check.c builds runtime/pacing/rtss_decide.h alone, the parts that make no system call. tests/rtss_worker_check.c
 (Windows only, skipped elsewhere) compiles the real rtss_limit.c against a fake RTSS and runs each of its scenarios in a
 process of its own. Checks statically that a crash and a fatal error (runtime/main.c crash_handler, runtime/dispatch.c
 fatal_end) leave RTSS's profile to the next start through rtss_limit_crash, which calls into RTSS's library only
@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -32,7 +33,7 @@ def compiler():
 
 
 def build(src, exe, env):
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / src), '-o', str(exe)], env=env)
 
 
@@ -56,7 +57,7 @@ def static_checks():
         print(f'static: {file} {sig.split("(")[0].split()[-1]} leaves RTSS\'s profile to the next start '
               f'(rtss_limit_crash, no rtss_limit_restore): {"ok" if ok else "FAIL"}')
         bad += not ok
-    crash = function((rt / 'rtss_limit.c').read_text(encoding='utf-8'), 'void rtss_limit_crash(void) {')
+    crash = function((rt / 'pacing' / 'rtss_limit.c').read_text(encoding='utf-8'), 'void rtss_limit_crash(void) {')
     calls = ('load_profile', 'save_profile', 'delete_profile', 'set_property', 'get_property', 'update_profiles',
              'put_back', 'write_limit', 'plat_mutex_lock', 'plat_mutex_trylock')
     gate, restore = crash.find('recorded'), crash.find('rtss_limit_restore(')

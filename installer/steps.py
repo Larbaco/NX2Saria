@@ -18,7 +18,7 @@ it touches, not a full compile.
 
 Install folder build-cache/: cheats.status (tools/cheats.py), exefs.status (tools/exefs_patches.py) and rebuild.txt, the command that starts this setup in
 its rebuild mode on the install folder (installer/gui.py --rebuild), one argument per line; nx2saria.exe runs it at start
-when an enabled mod has code cheats the build lacks (runtime/cheats.c).
+when an enabled mod has code cheats the build lacks (runtime/patches/cheats.c).
 """
 import hashlib
 import http.client
@@ -254,7 +254,7 @@ def size_of(paths):
     return sum(p.stat().st_size for p in paths if p.is_file())
 
 
-# The Switch system shared fonts (runtime/ov_system.c): NX2Saria falls back to them for Chinese, Korean and Traditional
+# The Switch system shared fonts (runtime/hle/ov_system.c): NX2Saria falls back to them for Chinese, Korean and Traditional
 # Chinese text. tools/vendor/macnativegames/extract_shared_fonts.py writes these names.
 SHARED_FONTS = 'shared-fonts'
 SHARED_FONT_FILES = ('0-standard.bfttf', '1-chinese-simplified.bfttf', '2-chinese-simplified-extension.bfttf',
@@ -853,12 +853,12 @@ def exefs_files(ctx):
 
 
 def exefs_status(ctx):
-    """The build's ExeFS patch status file (tools/exefs_patches.py --status), which runtime/mods.c reads."""
+    """The build's ExeFS patch status file (tools/exefs_patches.py --status), which runtime/patches/mods.c reads."""
     return ctx.dest / 'build-cache' / 'exefs.status'
 
 
 def cheats_status(ctx):
-    """The build's cheat status file (tools/cheats.py --status), which runtime/cheats.c reads: in build-cache, not in a
+    """The build's cheat status file (tools/cheats.py --status), which runtime/patches/cheats.c reads: in build-cache, not in a
     mod's own cheats folder, which the player (or a mod manager's merge) may empty."""
     return ctx.dest / 'build-cache' / 'cheats.status'
 
@@ -999,7 +999,7 @@ class Compile(Step):
 # ---- 6. prepare
 
 TRANSLATED = re.compile(r'gfx_shader: prepare: (\d+) of (\d+) pairs')
-# runtime/vk_pipeline.c lb_warm_prepared: variants the driver crashed on in an earlier run (tools/prepare_shaders.py
+# runtime/vk/vk_pipeline.c lb_warm_prepared: variants the driver crashed on in an earlier run (tools/prepare_shaders.py
 # runs the driver step again after such a crash)
 SKIPPED = re.compile(r'prepare-shaders: (\d+) variants skipped: the graphics driver crashed')
 
@@ -1060,7 +1060,7 @@ class Prepare(Step):
         if code:
             raise InstallError('prepare.romfs_patches_failed', code=code, log=str(log))
         # The same overlay with the UI laid out for each game resolution of another shape the settings menu offers
-        # (runtime/romfs.c overlay_init picks the one that matches; the camera's side is the patch set aspect,
+        # (runtime/hle/romfs.c overlay_init picks the one that matches; the camera's side is the patch set aspect,
         # recomp/patches-v<ver>.txt).
         for size in ASPECT_SIZES:
             remove(dest / f'romfs-patches-{size}')
@@ -1070,7 +1070,7 @@ class Prepare(Step):
             if code:
                 raise InstallError('prepare.romfs_patches_failed', code=code, log=str(log))
         # The same with Xbox button icons in the prompts, for prompts = xbox (make_romfs_patches.py --prompts):
-        # romfs-patches-xbox for the Nintendo pad layout, romfs-patches-xbox-label for xbox and auto (runtime/input_map.c
+        # romfs-patches-xbox for the Nintendo pad layout, romfs-patches-xbox-label for xbox and auto (runtime/input/input_map.c
         # input_prompts_folder). Both are written on every install, so the menu choices work without another run of
         # the setup. Optional: when one fails, the game keeps the Switch prompts with that layout and the menu says the
         # files are missing, so the setup warns once and goes on. romfs-patches-pc likewise, with keyboard and mouse
@@ -1125,7 +1125,7 @@ class Prepare(Step):
 
 # ---- 7. NVIDIA DLSS
 
-# NVIDIA's DLSS library, which NGX loads from the folder of nx2saria.exe (runtime/vk_dlaa.c). The setup does not ship it:
+# NVIDIA's DLSS library, which NGX loads from the folder of nx2saria.exe (runtime/vk/vk_dlaa.c). The setup does not ship it:
 # with --dlss it downloads NVIDIA's own copy from the DLSS SDK repository (NVIDIA RTX SDK license) at a pinned tag and
 # checks its hash. The game runs without it; dlaa and the DLSS modes then do nothing.
 DLSS_DLL = 'nvngx_dlss.dll'

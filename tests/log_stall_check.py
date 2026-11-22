@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 RT = ROOT / 'runtime'
@@ -54,7 +55,7 @@ def static_checks():
         print(f'static: {what}: {"ok" if ok else "FAIL"}', flush=True)
         bad += not ok
 
-    perf = source('perf.c')
+    perf = source('diag/perf.c')
     report = function(perf, 'static void ft_report(uint64_t now, const char *tag)')
     worst = report[report.index('worst frame'):]
     check('perf.c ft_report writes the local time on each worst frame', 'log_stamp(' in report[:report.index('worst frame')]
@@ -80,7 +81,7 @@ def static_checks():
           'events_whole_once()' in report and 'log_events_text(note, sizeof note, 0)' in report
           and 'log_events_text(note, sizeof note, whole)' not in report)
 
-    present = source('gfx_present.c')
+    present = source('gfx/gfx_present.c')
     show = function(present, 'static int ng_show(')
     check('gfx_present.c ng_show counts the failed acquires and writes the first few with the time',
           'log_event(LS_ACQUIRE_FAILED)' in show and 'log_stamp(' in show and 'static int told' not in show)
@@ -93,7 +94,7 @@ def static_checks():
     check('memory.c alias_map counts the refusals of the physical memory map, and writes the first of each kind',
           'log_event(unmap ? LS_UNMAP_PHYS_FAILED : LS_MAP_PHYS_FAILED)' in alias and 'if (due || other)' in alias)
 
-    save = function(source('vk_pipeline.c'), 'static int cache_save_one(')
+    save = function(source('vk/vk_pipeline.c'), 'static int cache_save_one(')
     check('vk_pipeline.c cache_save_one says when a slow save ended',
           'SAVE_SLOW_MS' in save and 'log_stamp(' in save and 'copy_ms' in save)
 
@@ -101,13 +102,13 @@ def static_checks():
           'log_stamp(' in function(source('dispatch.c'), 'static void fatal_end(int code, const char *fmt, va_list ap) {'))
     check('main.c crash_handler writes the local time after the FATAL line',
           'log_stamp(' in function(source('main.c'), 'static void crash_handler(const PlatCrash *x)'))
-    lost = function(source('vk_device.c'), 'void vk_device_lost_check(VkResult r, const char *where)')
+    lost = function(source('vk/vk_device.c'), 'void vk_device_lost_check(VkResult r, const char *where)')
     check('vk_device.c vk_device_lost_check writes when the loss was seen, before the report',
           'log_stamp(' in lost and lost.index('log_stamp(') < lost.index('device_fault_report('))
 
-    exit_log = function(source('vk_memory.c'), 'void vk_mem_exit_log(void)')
+    exit_log = function(source('vk/vk_memory.c'), 'void vk_mem_exit_log(void)')
     check('vk_memory.c vk_mem_exit_log writes the dma-buf spans of the end of the run', 'span_report(' in exit_log)
-    spans = source('vk_memory.c')
+    spans = source('vk/vk_memory.c')
     check('vk_memory.c: the spans at frames 600 and 1800 go through the same report',
           'span_report(when, 0)' in function(spans, 'static void span_log(uint64_t frame)'))
 
@@ -125,7 +126,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-pthread', '-I', str(RT),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-pthread', *runtime_include.flags(RT),
                            str(ROOT / 'tests' / 'log_stall_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode or (1 if bad else 0)
 

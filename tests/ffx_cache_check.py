@@ -1,10 +1,10 @@
 # needs: exe, gpu
 # args: {exe}
 """Run the game executable's --probe-ffx-cache twice on pipeline cache files of the test's own
-(runtime/vk_ffx.cpp vk_ffx_probe_cache: one FSR 3.1 upscaling context, without a window or the game).
+(runtime/vk/vk_ffx.cpp vk_ffx_probe_cache: one FSR 3.1 upscaling context, without a window or the game).
 
 FSR 3.1's library creates its pipelines itself and names no pipeline cache; the runtime hands it pipeline creates that
-go through the pipeline caches kept across runs (runtime/vk_pipeline.c vk_pipeline_create_foreign). Checked here:
+go through the pipeline caches kept across runs (runtime/vk/vk_pipeline.c vk_pipeline_create_foreign). Checked here:
 
 - the library's pipelines come through those creates (the first run counts them);
 - a second run, which reads what the first one saved, compiles none of them: each comes from the caches;
