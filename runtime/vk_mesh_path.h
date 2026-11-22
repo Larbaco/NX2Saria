@@ -20,6 +20,15 @@
 // left out of the picture until their compute passes are built, at their first sight in a run. mesh_fallback = 0
 // draws them natively again; 1 takes the fallback on every device.
 //
+// auto takes the fallback on Intel's cards with mesh shaders too (vendor 0x8086, Arc and the integrated GPUs that
+// have them), on every Intel driver. On an Arc B390 (integrated) and an Arc B580 with Intel's Windows driver
+// 32.0.101.9150 the fog over Kokiri Forest's ground showed small holes the grass shows through (issue #13): the fog's
+// fragment programs drop a pixel whose depth is past the depth its own depth pass wrote, and there the two differ.
+// 0.18.2 pinned the task stage to 32 lanes and made the mesh programs' positions invariant; the player saw the holes
+// with both, and they went only with mesh_fallback = 1. Neither change was a fix of a shader compiler's, so what is
+// left is how the native mesh path writes and compares depth on this hardware, which Mesa's Intel driver (ANV) shares:
+// there it is taken as a precaution, with no report from it either way. mesh_fallback = 0 draws them natively again.
+//
 // The mesh emulation is the older of the two ways for a card without mesh shaders, and the low-end GPU mode turned it
 // on up to 0.10.1 (cfg.c lowend_set). On NVIDIA's cards without mesh shaders (GTX 10 and older) it ended the game
 // inside the driver at the first mesh draws of an area: an access violation at nvoglv64.dll+0x10cdffe on a GTX 1050 Ti
@@ -31,11 +40,15 @@
 
 enum { MESH_PATH_NATIVE, MESH_PATH_FALLBACK, MESH_PATH_EMULATION, MESH_PATH_NONE };
 
+#define MESH_VENDOR_NVIDIA 0x10de
+#define MESH_VENDOR_INTEL 0x8086
+
 // has_mesh: the device has VK_EXT_mesh_shader with task and mesh shaders; amd_sc: AMD's Windows driver for RDNA 1 and
-// 2; nvidia: an NVIDIA card; fallback: the mesh_fallback setting ("auto", "0", "1"; anything else reads as auto);
-// emulation: mesh_emulation ("0" off). *why: the reason, for the boot line.
-static inline int mesh_path_decide(int has_mesh, int amd_sc, int nvidia, const char *fallback, const char *emulation,
-                                   const char **why) {
+// 2; vendor: the device's vendorID; fallback: the mesh_fallback setting ("auto", "0", "1"; anything else reads as
+// auto); emulation: mesh_emulation ("0" off). *why: the reason, for the boot line.
+static inline int mesh_path_decide(int has_mesh, int amd_sc, unsigned vendor, const char *fallback,
+                                   const char *emulation, const char **why) {
+    const int nvidia = vendor == MESH_VENDOR_NVIDIA, intel = vendor == MESH_VENDOR_INTEL;
     const char *w;
     int path;
     if (!has_mesh && strcmp(emulation, "0") && !nvidia)
@@ -52,6 +65,9 @@ static inline int mesh_path_decide(int has_mesh, int amd_sc, int nvidia, const c
     else if (amd_sc)
         path = MESH_PATH_FALLBACK, w = "the default on AMD's driver for RDNA 1 and 2, where native mesh pipelines lost "
                                        "the device in play; mesh_fallback = 0 draws them natively";
+    else if (intel)
+        path = MESH_PATH_FALLBACK, w = "the default on Intel's drivers, where native mesh pipelines left holes in the "
+                                       "fog on Arc cards; mesh_fallback = 0 draws them natively";
     else
         path = MESH_PATH_NATIVE, w = "VK_EXT_mesh_shader";
     if (why) *why = w;

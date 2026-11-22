@@ -167,8 +167,10 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   ring of Vulkan `{x, y, z}` records filled on the GPU. The copy cannot be recorded inside a pass, so the first such
   draw of a pass fills the records of the mesh draws that follow it too, and the pass is not cut at each of them
   (`runtime/vk_exec_draw.c` `mesh_ring_entry`).
-- Mesh fallback (`mesh_fallback`: `auto` on a device without the extension and on AMD's Windows driver for RDNA 1 and
-  2, where native mesh pipelines lost the device in play, `1` on any device for testing, `0` never;
+- Mesh fallback (`mesh_fallback`: `auto` on a device without the extension, on AMD's Windows driver for RDNA 1 and
+  2, where native mesh pipelines lost the device in play, and on Intel's cards with mesh shaders, where native mesh
+  pipelines left holes in the fog on Arc (issue #13; every Intel driver, ANV as a precaution), `1` on any device for
+  testing, `0` never;
   `runtime/vk_mesh_path.h`): the task and mesh stages run as compute dispatches and the result is drawn as ordinary
   triangles.
   - The modules come from the translations the shader cache already holds, not from the translator
