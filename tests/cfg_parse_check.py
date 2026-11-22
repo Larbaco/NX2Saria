@@ -256,6 +256,26 @@ def main():
     check(rc == 0 and "got: FULLSCREEN '1' bool 1 int 1" in out,
           'legacy NX2NAVI_ environment spelling remains supported', out)
 
+    # The older NX2NAVI_ names: an environment variable and a settings file key so written still apply, the current
+    # NX2SARIA_ variable wins over the older one, the environment over the file, and the log names each older name once
+    # (cfg.c older_env, older_file_key), however often the file is read.
+    OLDER = '[display]\nNX2NAVI_SHARPNESS = 70\nfps_limit = 90\n'
+    env_line = 'log: cfg: NX2NAVI_FULLSCREEN read under its older name; NX2SARIA_FULLSCREEN is the current one'
+    file_line = 'log: cfg: settings file line 2: NX2NAVI_SHARPNESS read under its older name; sharpness is the current one'
+    rc, out = run(exe, env, 'older', OLDER, work, {'NX2NAVI_FULLSCREEN': '1'})
+    check(rc == 0 and "got: FULLSCREEN '1'" in out and "got: SHARPNESS '70'" in out and "got: FPS_LIMIT '90'" in out,
+          'an NX2NAVI_ environment variable and an NX2NAVI_ settings file key still apply', out)
+    check(rc == 0 and out.count(env_line) == 1 and out.count(file_line) == 1 and out.count('older name') == 2,
+          'the log names each older name once, the file read twice', out)
+    rc, out = run(exe, env, 'older', OLDER, work,
+                  {'NX2SARIA_FULLSCREEN': '0', 'NX2NAVI_FULLSCREEN': '1', 'NX2SARIA_SHARPNESS': '40'})
+    check(rc == 0 and "got: FULLSCREEN '0'" in out and "got: SHARPNESS '40'" in out and
+          'log: cfg: NX2NAVI_FULLSCREEN is not read: NX2SARIA_FULLSCREEN is set too and wins' in out and env_line not in out,
+          'NX2SARIA_ wins over NX2NAVI_ in the environment, the environment over the file, and the log says which', out)
+    rc, out = run(exe, env, 'older', OLDER.replace('NX2NAVI_SHARPNESS', 'sharpness'), work, {'NX2SARIA_FULLSCREEN': '1'})
+    check(rc == 0 and "got: SHARPNESS '70'" in out and 'older name' not in out and 'is not read' not in out,
+          'the current names give no older-name line', out)
+
     # cfg_init (find_ini) chooses the adjacent nx2saria.ini, renames an existing install's nx2navi.ini to it when there is
     # none, keeps reading nx2navi.ini under its old name when the rename is refused, and selects nx2saria.ini for a fresh
     # install without either file.
