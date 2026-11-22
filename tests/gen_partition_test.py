@@ -1,3 +1,4 @@
+# needs: py:numpy, py:lz4
 """recomp/gen.py's chunking on made-up numbers: estimate_costs, partition (own files for costly functions, the chunk
 cost and function count limits, a --limit slice, every function in exactly one chunk), the per-function sizes and
 switch flags chunk_text reports, and remove_stale's chunk names. No game files; run with the .venv (numpy).

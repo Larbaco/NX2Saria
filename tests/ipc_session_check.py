@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/ipc_session_check.c: runtime/ipc.c with runtime/kernel.c linked, checking that a CloseHandle racing
 a request leaves the session (and its close callback) to the request's end, that a closed transfer memory handle is not
 read, and that a domain frees closed objects and gives their ids out again, answers a closed id with a bad handle, never

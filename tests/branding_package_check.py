@@ -1,3 +1,4 @@
+# needs: py:zstandard, py:PIL, py:fontTools, py:tkinter
 """Check names and legacy paths for portable and Linux desktop packaging without building or running the game."""
 import contextlib
 import io

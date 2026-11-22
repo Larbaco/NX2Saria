@@ -1,3 +1,4 @@
+# needs: py:cryptography, py:compression.zstd
 """installer/ bookkeeping with fake steps: fresh install, resume after a failure or cancel, transient steps, update
 with a newer release, nx2navi.ini and the event stream. No game files, no tools; stdlib only.
 

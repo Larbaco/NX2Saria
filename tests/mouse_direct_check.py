@@ -1,3 +1,5 @@
+# needs: clang
+# args: --cc {cc}
 """Check the direct camera hook's register contract and raw-count routing without game data.
 
 Usage: python tests/mouse_direct_check.py --cc <clang.exe>

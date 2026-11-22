@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/cfg_parse_check.c: runtime/cfg.c's reading of the settings file and environment, against stand-ins
 for what it links with. What the readers get and what the log says about the values:
 

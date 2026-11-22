@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/dlssg_device_check.c: runtime/vk_dlssg_device.h, which card counts as usable while DLSS Frame
 Generation's interposer is in use and how the device is made when the interposer cannot make it (vk_device.c
 pick_device, vk_dlssg.c vk_dlssg_create_device), with stand-ins for the interposer and the loader.

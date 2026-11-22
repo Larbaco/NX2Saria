@@ -1,3 +1,4 @@
+# needs: clang
 """Movie conversion keeps its deband planes per decoder and drops a frame it has no memory for
 (runtime/ov_movie2.c planes_for, make_picture): builds the deband, the conversions, run_stripes, planes_for and
 make_picture, cut from ov_movie2.c by their text, with stand-ins for dav1d's picture, the platform calls and a malloc

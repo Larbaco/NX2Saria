@@ -1,3 +1,4 @@
+# needs: clang, py:unicorn, py:numpy
 """Check the set orecord of recomp/patches-v111.txt: the ocarina recorder's clock carries each update's fraction of a
 60 Hz frame on the patch page's +264 instead of cutting it.
 

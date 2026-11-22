@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/dlssg_pace_check.c: runtime/dlssg_pace.h, whether Reflex or the game's own pacer holds the frame
 limit with DLSS Frame Generation (vk_dlssg.c vk_dlssg_pace), and its checks of the frames Reflex held.
 

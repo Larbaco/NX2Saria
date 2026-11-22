@@ -1,3 +1,4 @@
+# needs: py:lz4
 """Check the full-height exceptions in the 1.1.1 wide_hud projection patch."""
 import sys
 from pathlib import Path

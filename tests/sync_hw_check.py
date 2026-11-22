@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/sync_hw_check.c: runtime/vk_sync_hw.h, the newest value each of the replay's timelines may
 reach and the test that takes a value read above it as a lost device (vk_sync.c "a lost device in the timelines'
 values").

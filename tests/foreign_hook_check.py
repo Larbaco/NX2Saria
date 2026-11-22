@@ -1,3 +1,4 @@
+# needs: clang
 """The crash report's test for a module another program put into the game (runtime/main.c foreign_hook): the Vulkan
 layers, hooks and overlays of recorders, overlays and capture tools are named as theirs; the game's own libraries and
 the drivers are not, nor the validation layer the game loads itself (NX2NAVI_VK_VALIDATION). A fault on the thread that

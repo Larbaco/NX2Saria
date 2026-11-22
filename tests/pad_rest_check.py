@@ -1,3 +1,4 @@
+# needs: clang
 """A gamepad axis counts only once it has been seen at rest (runtime/input.c pad_axis): builds pad_axis, cut from
 input.c by its text, with stand-ins for the SDL calls it makes, and checks that
 

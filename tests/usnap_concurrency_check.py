@@ -1,3 +1,4 @@
+# needs: clang, vma
 """Build the real vk_usnap.c concurrency probe on Linux, with optional ThreadSanitizer.
 
 No game files or GPU are needed. The platform lock and replay stream position are test stand-ins, so this checks the actual

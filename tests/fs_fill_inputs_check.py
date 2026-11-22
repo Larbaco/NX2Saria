@@ -1,3 +1,4 @@
+# needs: clang, glslangValidator, spirv-val
 """Fragment inputs that no mesh output feeds (runtime/vk_pipeline.c spirv_mesh_outputs, spirv_fs_fill_inputs): builds
 the two functions, cut from vk_pipeline.c by their text, and runs them on modules glslang makes here:
 

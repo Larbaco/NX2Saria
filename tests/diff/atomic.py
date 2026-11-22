@@ -1,3 +1,4 @@
+# needs: clang, py:capstone, py:unicorn
 """Differential test of exclusives and atomics against Unicorn (max CPU model, which has the ARMv8.1 LSE atomics).
 
 Single steps cannot cover these: a store exclusive only succeeds after a load exclusive, and the A57 model rejects

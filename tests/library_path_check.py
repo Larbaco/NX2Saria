@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/library_path_check.c (Linux): runtime/platform/linux.c plat_library_path, which the game log's
 "libs:" line (runtime/main.c log_libs) names the loaded SDL with, against the system's loader. A library with a soname
 is built beside a program linked as the game is (-no-pie, runpath $ORIGIN), and the line must say "beside the game"

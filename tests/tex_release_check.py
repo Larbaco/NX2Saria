@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/tex_release_check.c: runtime/vk_tex_release.h, which says how long a released texture is kept,
 how much the released ones may hold past the size bound, and how many seconds ago a present was. The check also runs
 simulated sessions shaped by the take-back figures of two players' logs against the old and new defaults.

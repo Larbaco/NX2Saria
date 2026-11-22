@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/log_stall_check.c: runtime/log_stall.c (the local time of the lines that mark an event, the counts
 of the events whose own lines are limited, the memory and I/O pressure line) and runtime/platform/proc_pressure.h (the
 readers of /proc/pressure/* and /proc/meminfo), with the platform's clocks, zone and readings replaced by stand-ins.

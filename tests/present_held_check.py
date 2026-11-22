@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/present_held_check.c: runtime/vk_present_held.h, the present that waits for held work
 (vk_backend.c "a present that waits for held work"). One presenting thread and three submitting threads over 200,000
 frames: every frame reaches the present exactly once and in order, never two at once, and each reason a held present

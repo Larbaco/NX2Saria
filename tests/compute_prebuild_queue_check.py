@@ -1,3 +1,4 @@
+# needs: windows, clang
 """Stress the production recent-first prebuild queue: changing concurrency must not omit or repeat any job."""
 from pathlib import Path
 import subprocess

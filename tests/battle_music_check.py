@@ -1,3 +1,4 @@
+# needs: clang
 """Check the 1.1.1 battle-music patch table and run its gate and flag hooks with a stand-in battle manager."""
 import os
 from pathlib import Path

@@ -1,3 +1,5 @@
+# needs: exe, gpu
+# args: {exe}
 """Run the game executable's --probe-fsr3 with Vulkan's validation on (runtime/fsr3_probe.c: FSR 3.1 upscaling with
 the runtime's own passes, runtime/vk_fsr3.c, on a synthetic panning scene, without a window or the game).
 

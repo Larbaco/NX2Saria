@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/freeze_hold_check.c: runtime/freeze_hold.h, which says when the freezing of idle guest regions
 waits (the backoff after slow freezes and its quiet time, and the hold around area loads).
 

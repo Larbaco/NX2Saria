@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/part_file_check.c: runtime/part_file.h, which the runtime's detached threads write their files
 through (the flight recorder's dump). A file gets its name only when it is complete, so a game that closes under the
 writing thread leaves the older file or none, never one cut short.

@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/index_rewrite_check.c: runtime/vk_index_rewrite.h, the index lists an indexed quad list or line
 loop is drawn with (vk_exec_draw.c op_draw_idx, NX2NAVI_QUAD_INDEX): two triangles per quad from the quad's own
 indices, the loop's first index again at its end.

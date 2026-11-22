@@ -1,3 +1,4 @@
+# needs: xlate, file:../../work/tensor-gt/vectors.json, py:numpy
 """Checks the lowered SM86 tensor instructions against results captured on an NVIDIA GPU, in one command.
 
 tools/xlate/AmpereLowering.cs rewrites the SM86 instructions of the game's neural-network passes as Maxwell code:

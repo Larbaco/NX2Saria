@@ -1,3 +1,5 @@
+# needs: game, exe, py:zstandard
+# args: --exe {exe} --version v121
 """The mods folder served as RomFS overlays (runtime/romfs.c, runtime/mods.c): load order, added files, case, Unicode.
 
     .venv\\Scripts\\python tests\\mods_romfs_check.py --exe build\\v121-<tag>\\nx2saria.exe --version v121

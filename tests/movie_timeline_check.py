@@ -1,3 +1,4 @@
+# needs: clang, py:unicorn
 """Compare both movie timestamp patches with Unicorn and their lifted C.
 
 Requires Unicorn and a C compiler (--cc or CC). No game files or GPU are used.

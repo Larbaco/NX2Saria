@@ -1,3 +1,4 @@
+# needs: py:zstandard
 """tools/romfs_check.py on a small made-up game: damaged files are found, a damaged texture gets a stand-in with its own
 name inside, and a clean copy leaves nothing behind. No game data."""
 import json

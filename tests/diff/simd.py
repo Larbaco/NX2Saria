@@ -1,3 +1,4 @@
+# needs: clang, py:capstone, py:unicorn
 """Differential test of the portable FP/SIMD lowering (lifter simd='c') against Unicorn as a Cortex-A57.
 
 Needs no game files. Enumerates every opcode bit pattern of the FP/SIMD data-processing space (bits 27..25 = 111),

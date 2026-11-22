@@ -1,3 +1,4 @@
+# needs: clang
 """The shake key swings the right stick by the game's updates, not by the clock (runtime/input.c shake_stick): builds
 shake_stick, cut from input.c by its text, with stand-ins for the clock and the present count
 (frame_rate.c frame_step_presents), and checks that

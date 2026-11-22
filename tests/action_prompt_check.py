@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/action_prompt_check.c: runtime/action_prompt.c, the action prompt's diamond of face buttons laid
 out by label, on a layout file and archives the test makes itself. No game files.
 

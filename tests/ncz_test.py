@@ -1,3 +1,4 @@
+# needs: py:cryptography, py:compression.zstd
 """tools/ncz.py and the installer's unpacking of NSZ input (installer/steps.py, Check.unpack) on small made-up files:
 an NCA with an AES-CTR section and a plain one, stored as an NCZ with one zstd stream or as NCZBLOCK blocks.
 

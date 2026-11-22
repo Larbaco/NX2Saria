@@ -1,3 +1,4 @@
+# needs: windows
 """tools/worktree.py against a scratch repo whose "main checkout" holds dummy ignored data. No game files needed.
 
 Proves that marker files in the linked directories and in the linked file survive:

@@ -1,3 +1,4 @@
+# needs: windows, clang
 """Windows: the pipeline cache save at exit holds new builds back, waits for the running ones, and copies the cache only
 while no build runs; the autosave never holds a build back. Builds runtime/vk_pipeline.c's cache_build_enter and
 cache_save_one into a test program against stand-ins for the driver and the file system.

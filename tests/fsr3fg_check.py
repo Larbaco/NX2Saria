@@ -1,3 +1,5 @@
+# needs: exe, gpu
+# args: {exe}
 """Run the game executable's --probe-fsr3fg with Vulkan's validation on (runtime/fsr3fg_probe.c: FSR 3.1 frame
 generation with the runtime's own passes, runtime/vk_fsr3fg.c, on a synthetic scene, without a window or the game).
 

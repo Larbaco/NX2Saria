@@ -1,0 +1,39 @@
+# Tests that fail on main, for tests/run.py: "name: reason", or "name [linux]: reason" for a failure on that operating
+# system only. A known failure still runs and is counted apart; it does not fail the run. The line goes in the change
+# that makes the test pass (the runner reports a known failure that passed).
+#
+# clang 18 (Ubuntu 24.04's, the CI runner's) warns -Wbitwise-instead-of-logical on the FOK macro of runtime/simd_fp.h
+# (line 206, used at line 220), and these tests build with -Werror; clang 20 builds them.
+action_prompt_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+audio_input_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+motion_fusion_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+prompts_record_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+stutter_hitch_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+wide_hud_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+wide_hud_title_check [linux]: clang 18 -Werror: runtime/simd_fp.h FOK uses | on booleans (-Wbitwise-instead-of-logical)
+
+# The Linux platform layer (runtime/platform/linux.c) now calls cfg_env, SDL3's clipboard (SDL_SetClipboardText,
+# SDL_GetClipboardText, SDL_free) and, for some, mem_commit_checked; these tests build it without them and do not link.
+frame_owed_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+hang_watch_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+ipc_session_check [linux]: builds linux.c without cfg_env, mem_commit_checked and SDL3's clipboard calls: undefined references at link
+logq_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+part_file_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+present_held_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+spv_store_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+submit_clone_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+sync_wake_check [linux]: builds linux.c without cfg_env, mem_commit_checked and SDL3's clipboard calls: undefined references at link
+system_event_check [linux]: builds linux.c without cfg_env, mem_commit_checked and SDL3's clipboard calls: undefined references at link
+tex_copy_mt_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+thread_end_check [linux]: builds linux.c without cfg_env and SDL3's clipboard calls: undefined references at link
+
+# Stand-ins that fell behind the runtime (seen on Linux; not run on Windows for this list).
+audio_mixer_check: its stand-in settings end the run with "unexpected setting NX2SARIA_AUDIO_RAMP"
+audio_params_check: its stand-in settings end the run with "unexpected setting NX2SARIA_AUDIO_RAMP"
+save_share_check: fs_host.c and save_share.c now call boot_map_save_open, boot_map_save_read and log_privacy_dup, which the test does not stub: undefined references at link
+mouse_direct_check: its stand-in cfg_get answers only NX2NAVI_MOUSE_MODE; runtime/mouse_direct.c direct_mode asks for NX2SARIA_MOUSE_MODE and strcmp gets NULL (SIGSEGV)
+ocarina_timing_check: check_table wants the set orecord last in recomp/patches-v111.txt; camera_clearance comes after it now
+
+# Linux only.
+gen_width_check [linux]: runtime/simd.h:251 narrows a long to an int (-Wshorten-64-to-32); long is 32 bits on Windows
+rebrand_compat_test [linux]: the update feed looks for NX2Saria-update-linux.json on Linux, the test offers the Windows manifest names; its PGO case also needs SDL3's headers

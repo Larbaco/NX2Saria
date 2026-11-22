@@ -1,3 +1,4 @@
+# needs: clang, py:numpy, py:lz4
 """Check the camera's clearance on pictures that are not 16:9: the patch set camera_clearance
 (recomp/patches-v111.txt) and runtime/camera_clearance.c.
 

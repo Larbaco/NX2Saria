@@ -1,3 +1,4 @@
+# needs: clang
 """Check the 1.1.1 voice language patch's lifted call and callback against stubbed game-data reads."""
 import os
 import shutil

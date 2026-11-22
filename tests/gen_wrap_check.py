@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/gen_wrap_check.c: runtime/vk_memory.c's page write generations across 2^32, 2^40 and 2^63.
 
 From runtime/vk_memory.c it takes, verbatim, into build/test/gen_wrap/gen_section.inc:

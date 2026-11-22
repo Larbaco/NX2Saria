@@ -1,3 +1,5 @@
+# needs: exe, gpu
+# args: {exe}
 """Run the game executable's --probe-devlost and check how a run ends when the GPU device is lost
 (runtime/vk_device.c vk_device_lost_check, runtime/vk_sync.c vk_sync_probe_devlost).
 

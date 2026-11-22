@@ -1,3 +1,4 @@
+# needs: git
 """Check the shader translator guard of the packaging scripts (tools/build_xlate.py source_identity and check_built,
 used by tools/make_launcher.py check_xlate, tools/make_release.py check_translator, tools/make_kit.py and
 tools/make_appimage.py):

@@ -1,3 +1,4 @@
+# needs: game, clang, py:capstone, py:unicorn, py:numpy, py:lz4
 """Differential test of the lifter on the game's own instructions: lifted C against Unicorn, one instruction at a time.
 
 Samples distinct instruction words from the .text of each ExeFS module, one per opcode signature first, lifts each

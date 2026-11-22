@@ -1,3 +1,4 @@
+# needs: clang, glslangValidator, spirv-val, spirv-as
 """Mesh positions made Invariant (runtime/vk_pipeline.c spirv_mesh_invariant): builds the function, cut from
 vk_pipeline.c by its text, and runs it on modules made here:
 

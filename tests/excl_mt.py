@@ -1,3 +1,4 @@
+# needs: clang, py:capstone, py:unicorn
 """Multithreaded test of the exclusive monitor helpers in cpu.h (ldxN/stxN, ldxp128/stxp128).
 
 - A changed value: thread A loads X exclusively, thread B changes X to Y with its own exclusive pair, then A's store

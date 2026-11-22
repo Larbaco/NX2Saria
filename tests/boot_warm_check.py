@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/boot_warm_check.c: runtime/boot_warm.h, whether a start does the whole warm on the boot screen
 after a driver change (the decision alone; no GPU, no game files).
 

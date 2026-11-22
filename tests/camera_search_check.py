@@ -1,3 +1,4 @@
+# needs: clang
 """The camera-speed search leaves lazily armed memory alone (runtime/camera_speed.c rewrite): builds factor and rewrite,
 cut from camera_speed.c by their text, over a 40 MiB stand-in for the guest's heap with stand-ins for the memory calls,
 and checks that

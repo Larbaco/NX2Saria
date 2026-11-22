@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/target_frames_check.c: runtime/vk_target_frames.h, which render passes count as drawn frame
 after frame, so that a draw into them is skipped while its pipeline builds instead of waited for.
 

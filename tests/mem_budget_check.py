@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/mem_budget_check.c: runtime/mem_budget.h, which turns the free share of the video memory and
 of the system memory into a level (roomy, normal, tight, critical) with hysteresis, for the owners of memory that can
 be given back.

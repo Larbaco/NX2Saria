@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/submit_clone_check.c: runtime/nvn_submit_guard.h, a synchronous submission's deferred binds when
 another guest thread may be replaying the same recording copy (nvn_api_cmd.c nvn_submit_prepare, nvn_submit_done).
 Four threads submit two hand-built copies 200,000 times each, a quarter of the calls giving their copy twice, while a

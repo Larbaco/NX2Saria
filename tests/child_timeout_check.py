@@ -1,3 +1,4 @@
+# needs: windows
 """Check how a translator child that stops answering is handled (runtime/platform/win32.c plat_child_read,
 runtime/gfx_shader.c child_exchange_raw and svc_request). The check cuts the child functions out of win32.c and the
 request functions out of gfx_shader.c, builds them with PLAT_CHILD_READ_MS at 300 ms (platform.h lets a build set it)

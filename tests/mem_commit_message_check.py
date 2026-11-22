@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run the pure Win32 commit-message selector; no Windows or game files are needed."""
 import os
 import shutil

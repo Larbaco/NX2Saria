@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/system_event_check.c: the system-event table of runtime/kernel.c (kern_bind_system_event,
 kern_signal_system_event, kern_clear_system_event, kern_unbind_system_event) against destroyed events, reused handle
 numbers, a host thread racing a destroy and bind, a full table holding events in host memory, and host-memory events

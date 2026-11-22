@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/evo_peek_check.c: runtime/vk_evo_peek.h, the copy of each event-ordered queue's first held wait
 that vk_exec.c vk_exec_held_ready reads without the submission lock, and the decision it makes from that copy. One
 writer republishes while three readers copy: no copy may mix two publishes, and no reader waits for the writer.

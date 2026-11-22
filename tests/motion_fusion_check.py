@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/motion_fusion_check.c: runtime/motion_fusion.c on made-up sensor samples. A controller lying
 still has its gyro bias learned within 1.5 s of being still, after which it reports no rate and its angle stops, with
 one log line per still period; with calibration off the bias goes through, and each dead zone level zeroes a rate

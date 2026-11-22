@@ -1,3 +1,4 @@
+# needs: clang
 """Build runtime/frame_rate.c's ocarina log (ocarina_log_init, ocarina_watch, ocarina_end, cut out of the file) with
 stand-ins for the patch sets, the patch page and the log, and play it the page words the sets orecord (+264) and ostaff
 (+776) write: a stretch of ocarina use gives one line after two quiet seconds, with its presents, the presents the

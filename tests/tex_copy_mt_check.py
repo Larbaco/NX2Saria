@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3, vma
 """Build and run tests/tex_copy_mt_check.c with runtime/tex_deswizzle.c, runtime/par_jobs.c and the platform layer: the
 split texture copy (tex_bl_copy_mt) and par_memcpy write the same bytes as the copies they stand for.
 

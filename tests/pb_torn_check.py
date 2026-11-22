@@ -1,3 +1,4 @@
+# needs: clang, vulkan
 """Check how pipeline-binaries.bin keeps its whole records (runtime/vk_pipeline.c pb_index and pb_keep,
 NX2NAVI_PIPE_BINARIES=1). pb_init keeps the whole records of a file that ends inside one (the process ended during an
 append, or a disk filled) or holds a malformed one, and cuts the file back to them; the walk must say where the last

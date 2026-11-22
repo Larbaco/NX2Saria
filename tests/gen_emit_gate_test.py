@@ -1,3 +1,4 @@
+# needs: py:numpy, py:lz4
 """recomp/gen.py's emission under the memory rule of the compile gate: lift_gate follows the gate's settings (off:
 reserve 0; a malformed reserve: the default, with a warning), pick_jobs sizes the pool by the free memory less the
 reserve, and dispatch() submits a chunk only while the free memory stays at or above the reserve, keeps one chunk

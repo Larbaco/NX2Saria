@@ -1,3 +1,4 @@
+# needs: game, py:capstone, py:unicorn, py:numpy, py:lz4
 """Check of recomp/jumptables.py on every `br` in the game's modules against an emulation oracle.
 
 The oracle is an emulated jump-table resolver: find `cmp #N; b.hi/b.hs` before the br (or a `b.ls/b.lo` to the

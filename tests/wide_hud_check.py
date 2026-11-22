@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/wide_hud_check.c: runtime/wide_hud.c, the HUD's edge elements moved out to the sides of a picture
 wider than 16:9 (NX2SARIA_WIDE_HUD = edges), on layout files and archives the test makes itself. No game files.
 

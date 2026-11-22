@@ -1,3 +1,4 @@
+# needs: clang, linux:pkg:sdl3
 """Build and run the input-audio regression checks without game files or recording hardware.
 
 Windows: python tests/audio_input_check.py --toolchain C:/msys64/ucrt64
