@@ -1,7 +1,7 @@
-// The game folder's record of where its button prompts came from (runtime/input_map.c input_prompts_record, which
-// runtime/romfs.c overlay_init logs as "button prompts: ..."; tools/make_game.py record_prompts writes the file): its
+// The game folder's record of where its button prompts came from (runtime/input/input_map.c input_prompts_record, which
+// runtime/hle/romfs.c overlay_init logs as "button prompts: ..."; tools/make_game.py record_prompts writes the file): its
 // first line without the line end, cut short to the buffer, and 0 for a folder without the record or with an empty
-// one. No game files. tests/prompts_record_check.py builds this with runtime/input_map.c and runs it on a temporary
+// one. No game files. tests/prompts_record_check.py builds this with runtime/input/input_map.c and runs it on a temporary
 // folder.
 #include <stdint.h>
 #include <stdio.h>

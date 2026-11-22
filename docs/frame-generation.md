@@ -1,10 +1,10 @@
 # AMD FSR 3.1 frame generation: how many frames get one
 
 This page records how many of the game's frames get a generated frame with `framegen = fsr3`, why the logs read as if
-few did, what was fixed, and how to check a run from its log. Code: `runtime/vk_fg.cpp` and `runtime/vk_fg4.cpp`
-(AMD's libraries, Windows), `runtime/vk_fsr3fg.c` (the runtime's own passes, every other build), `runtime/vk_dlaa.c`
-(the depth, motion vectors and picture without the HUD both take), `runtime/vk_fg_stats.h` (the counting) and
-`runtime/vk_fg_time.c` (the GPU time on Windows).
+few did, what was fixed, and how to check a run from its log. Code: `runtime/vk/vk_fg.cpp` and `runtime/vk/vk_fg4.cpp`
+(AMD's libraries, Windows), `runtime/vk/vk_fsr3fg.c` (the runtime's own passes, every other build), `runtime/vk/vk_dlaa.c`
+(the depth, motion vectors and picture without the HUD both take), `runtime/vk/vk_fg_stats.h` (the counting) and
+`runtime/vk/vk_fg_time.c` (the GPU time on Windows).
 
 **[M]** marks what was measured, in a log of a real session or on the Linux bench. **[R]** marks what was read in the
 code alone. AMD's libraries run on Windows only, so what they do in a run is known from the owner's Windows logs, never

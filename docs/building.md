@@ -155,13 +155,13 @@ of them.
    `warm_driver_cache`: seconds while the libraries are there, minutes when they are not), and the game itself checks
    at every start: it builds a sample of the prepared fragment libraries and, when their median time says the cache
    is cold, builds the whole prepared list into the driver's cache again on idle-priority threads while it runs
-   (`runtime/vk_pipeline.c` `lw_start`, `NX2SARIA_LIB_WARM`; `shader-warm.txt` next to the caches says where that
+   (`runtime/vk/vk_pipeline.c` `lw_start`, `NX2SARIA_LIB_WARM`; `shader-warm.txt` next to the caches says where that
    stands). With the cache cold every pipeline a draw first needs compiles in play: on an RX 7900 XT a library took
    93 ms (vertex) and 242 ms (fragment) on average against 0.3 and 0.6 ms from the cache, and a first walk through a
    village skipped 11,180 draws and made 94 draws wait 5.5 s in all, against 1,605 skipped (1,473 of them in the
    scene's first frames) and 60 ms of waits with the cache warm.
    A frame that still lacks draws when it is presented is not shown: the previous picture stays on screen
-   (`runtime/vk_backend.c` `frame_hold`, `NX2SARIA_FRAME_HOLD_MS`, an allowance of 120 ms that fills again at an eighth
+   (`runtime/vk/vk_backend.c` `frame_hold`, `NX2SARIA_FRAME_HOLD_MS`, an allowance of 120 ms that fills again at an eighth
    of the clock's rate). On a first walk through a village with nothing recorded, 21 of the 23 such frames were held
    back; in a player's session a hit by a boulder had shown one black frame, its lighting pass skipped after 50 ms.
    When the driver's shader compiler crashes on a variant (NVIDIA 615.78.08 on an RTX 5080 does, issue #30),
@@ -176,7 +176,7 @@ of them.
    them, and nothing said who cut it. So the game keeps NVIDIA's cache in `nvidia-cache` beside the exe, as it does on Linux (below):
    `__GL_SHADER_DISK_CACHE_PATH` names that folder, `__GL_SHADER_DISK_CACHE_SIZE` is 8 GiB and
    `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP` is 1, each only if the environment does not already set it, and only when
-   NVIDIA's driver files are installed (`System32\nvapi64.dll`). `runtime/vk_device.c` `nvidia_cache_beside_exe` sets
+   NVIDIA's driver files are installed (`System32\nvapi64.dll`). `runtime/vk/vk_device.c` `nvidia_cache_beside_exe` sets
    them in the process before any driver loads, so the launcher, Steam and a click on the exe all get them, and so do
    `--prepare-shaders` and `--warm-shaders`; `nvidia_cache_dir = 0` in `nx2saria.ini` leaves the driver its own folder.
    A game that restarts itself passes its environment on, so it names the variables it set in
@@ -193,7 +193,7 @@ of them.
    and the shader list's variants and builds each one's stage library or compute pipeline. A whole graphics pipeline
    is built ahead at the start of a game folder that has drawn it before (`pipeline-keys.bin`) or whose release
    listed it (below); a pipeline met for the first time is linked from its stage libraries in 2 to 8 ms, of which its
-   first draw waits 3 (`pipe_link_draw_ms`, from the pipeline's first miss; `runtime/vk_exec_draw.c` `link_budget`),
+   first draw waits 3 (`pipe_link_draw_ms`, from the pipeline's first miss; `runtime/vk/vk_exec_draw.c` `link_budget`),
    except a mesh
    pipeline, which has no libraries and compiles whole (0.2 to 1.1 s, its draws left out of the picture meanwhile),
    and many of them on a first visit add up to hitches. `tools/pipeline_list.py merge` folds the `pipeline-keys.bin`
@@ -202,7 +202,7 @@ of them.
    lacks is translated on the frame that first dispatches it); `prepare_shaders.py` reads it from
    `tools\data\pipeline_list.bin` (`data\pipeline_list.bin` in a release folder, or `--pipeline-list`), adds the
    shader variants it names to the seed and writes its records next to the game as `seed-pipeline-keys.bin`, and
-   `--prepare-shaders` builds every one of them into the pipeline cache and the driver's (`runtime/vk_pipeline.c`
+   `--prepare-shaders` builds every one of them into the pipeline cache and the driver's (`runtime/vk/vk_pipeline.c`
    `seed_pipelines`; `NX2SARIA_PREPARE_PIPELINES=mesh` builds only the mesh pipelines). Every start then counts the
    list as known pipelines beside the folder's own and builds them before play, from those caches (`keys_open_seed`;
    `pipe_seed = 0` in `nx2saria.ini` leaves the list out). `--warm-shaders` builds them again, and
@@ -310,7 +310,7 @@ a clean `recomp/`.
    python tools\make_game.py --rebuild --out <game> --msys <ucrt64>
    ```
 
-6. Compare the two builds with the runtime's own profiler (`runtime/prof.h`, `runtime/prof_win.c`), in the same
+6. Compare the two builds with the runtime's own profiler (`runtime/diag/prof.h`, `runtime/diag/prof_win.c`), in the same
    place from the same save, the camera left alone, with the same settings. In `<game>\nx2saria.ini` (or as
    `NX2SARIA_TRACE`, `NX2SARIA_PROFILE` and `NX2SARIA_PROFILE_FRAMES` in the environment):
 
@@ -386,7 +386,7 @@ NVIDIA's Linux driver compiles into a disk cache of its own. A process adds at m
 (1 GiB by default; at a start the files after the first are deleted while the folder is over that size), and the default
 folder, `~/.cache/nvidia`, is shared with every program. `--prepare-shaders` of game 1.1.1 builds 42,142 variants, about
 1.5 GB: on the default limit about 30,700 of them were stored and the rest compiled again at their first draw in play.
-`runtime/vk_device.c` therefore points `__GL_SHADER_DISK_CACHE_PATH` at `nvidia-cache` beside `ocarina` and the size at
+`runtime/vk/vk_device.c` therefore points `__GL_SHADER_DISK_CACHE_PATH` at `nvidia-cache` beside `ocarina` and the size at
 8 GiB, each unless the environment sets it, as it does `MESA_SHADER_CACHE_DIR` for RADV, and only while NVIDIA's kernel
 driver is loaded (`/proc/driver/nvidia/version`). The driver does not make that folder and caches nothing in a folder it
 cannot write, so the game makes it, and when it cannot make or write it sets neither variable. A game run sets them in
@@ -398,13 +398,13 @@ Memory: on Windows the GPU imports guest memory and `GetWriteWatch` tracks the C
 re-protecting imported memory invalidates the driver's userptr buffer on every submit (about 1.3 ms per 16 MiB on
 amdgpu), and importing pins the pages, which drops their write protection. Where guest memory cannot be imported as
 dma-bufs (below), each CPU-visible pool therefore gets a
-host-visible copy (shadow storage, `runtime/vk_memory.c`): the pages the CPU wrote go in before each submit, and the GPU's
+host-visible copy (shadow storage, `runtime/vk/vk_memory.c`): the pages the CPU wrote go in before each submit, and the GPU's
 writes come back at its fence. Pages both sides write keep a base copy, so each direction moves only its own bytes;
 a VRAM mirror's write-back merge marks the pages it changed, and only those are compared at the fence; a lookup that
 reads guest memory itself (the uniform snapshot, `vk_mem_lookup`) does not queue its pool for the copy-in. In Kokiri
 Forest (1.1.1, RTX 4090) that costs about 1 ms a frame (copy-in 0.5 ms, write-back 0.6 ms), and the copies hold about
 5 GB. The GPU's bytes reach guest memory in the fence's completion callback, later than an import's, so the wait
-after a frame's first submission covers the write-backs there (`runtime/vk_sync.c`, "the executed timeline"): the game
+after a frame's first submission covers the write-backs there (`runtime/vk/vk_sync.c`, "the executed timeline"): the game
 rewrites what those passes wrote without a fence, and a write-back that landed after the rewrite left the GPU adding
 light onto its own last output, the whole scene brighter for a frame. `NX2SARIA_SHADOW=1` turns it on under Windows too. The Steam Deck's RADV has `VK_EXT_external_memory_host` as
 well: the shadow copies are chosen for the measured cost above, not for a missing extension. NVIDIA's own driver on Linux
@@ -414,7 +414,7 @@ copies are only the slower path. In Kokiri Forest on 0.7.1 (RTX 4090, driver 615
 frame, which the wait for the write-backs under shadow storage (`vk_sync_exec_wait`) has since addressed.
 
 On Linux the pools are imports after all where the system allows dma-bufs of guest memory (`runtime/platform/linux.c`,
-"Guest memory as a memfd's"; `runtime/vk_memory.c`, "dma-buf imports"). The watched reservations are then shared
+"Guest memory as a memfd's"; `runtime/vk/vk_memory.c`, "dma-buf imports"). The watched reservations are then shared
 mappings of one memfd, `/dev/udmabuf` makes dma-bufs of page ranges of it, and the device imports those
 (`VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`). A dma-buf pins its pages once and is not tied to the
 process's page tables, so the write watch and the freezes leave the GPU's mapping alone, and nothing is copied. RADV
@@ -440,7 +440,7 @@ copies at 40.3, in Hyrule Field at 55.7 and 42.4; the spans then held 8.0 to 9.6
 of its 15.8 GiB host heap in use, against 5.2 to 5.6 GiB with the copies, which are memory of their own beside guest
 memory.
 
-The device address table (`runtime/vk_gpa.c`) names a pool's shadow copy as it names an import, so shaders follow guest
+The device address table (`runtime/vk/vk_gpa.c`) names a pool's shadow copy as it names an import, so shaders follow guest
 pointers into either. A shader that reads through the table resolves nothing, so the pool it reaches is not queued for
 the copy-in: a guest submission whose record binds the table (`vk_exec_draw.c` `ssbo_info`) brings the shadow of
 every pool in the table up to date with the pages the CPU wrote, once, before the first part recorded after the
@@ -453,7 +453,7 @@ memory's stale bytes back over it in both copies. In the runs measured so far th
 frame's stores, which does no harm. `NX2SARIA_SHADOW_TABLE_STORES=1` keeps the stores instead: the copy-ins then keep a
 hash of each page they write, a page whose shadow no longer matches its hash was stored into, keeps a base copy from
 then on like a page with a noted GPU write, and has its stores written back to guest memory at the fence of every
-submission that uses the table. It is off by default (`runtime/vk_memory.c`, "Pages a shader stores into", says why).
+submission that uses the table. It is off by default (`runtime/vk/vk_memory.c`, "Pages a shader stores into", says why).
 `NX2SARIA_SHADOW_CHECK=1` logs every 60 frames how often a copy-in overwrote such a store and for which pools, how many
 write-backs landed on pages the CPU had written since their copy-in, and what the copy-ins cost and where they went.
 `--probe-vkmem` checks the sync: the shadow of a pool that is never bound must hold `0x13579BDF`, keep it through a
@@ -469,7 +469,7 @@ for dmabuf in 0 1; do for shadow in 0 1; do for memory in import mirror; do
 done; done; done
 ```
 
-The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the compute decoder (`runtime/vk_astc.c`,
+The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the compute decoder (`runtime/vk/vk_astc.c`,
 `NX2SARIA_ASTC`) as on desktop AMD GPUs without it; frame times measured there include it.
 
 ## Checks
@@ -536,14 +536,14 @@ With `--romfs <extracted RomFS folder>` it draws the game's interface textures a
 both decode the game's files, so they run with `.venv-py314\Scripts\python` (`compression.zstd` and numpy). What they
 write is decoded game data: keep it under `build/`.
 
-A change to the shared save (`runtime/save_zip.c`, `runtime/save_share.c`, the save import in `runtime/fs_host.c`)
+A change to the shared save (`runtime/hle/save_zip.c`, `runtime/hle/save_share.c`, the save import in `runtime/hle/fs_host.c`)
 passes `python tests\save_zip_check.py` and `python tests\save_share_check.py`. The first builds `save_zip.c` alone
 and checks its deflate, inflate, zip writer and reader against Python's zlib and zipfile both ways, and that the
 launcher imports a zip it wrote. The second builds `fs_host.c` and `save_share.c` with the rest of the runtime stubbed
 and runs each step as a start of the game on a profile it makes: the export, an import from a zip the launcher
 exported, its backup and swap at the next start, the zips it refuses and Cancel. No game files.
 
-A change to the step Ocarina is given each frame (`runtime/frame_rate.c` `ocarina_step`), or to the whole numbers the
+A change to the step Ocarina is given each frame (`runtime/pacing/frame_rate.c` `ocarina_step`), or to the whole numbers the
 game's counters get out of it (`whole_take`, `frame_rate_day_host`, `frame_rate_water_host`, `frame_rate_sim_host`), passes
 `python tests\frame_step_check.py`, which builds `frame_rate.c` with the rest of the runtime stubbed and feeds it
 display times: a held 60 fps limit gives exactly one frame every frame, a 240 fps limit never less than a quarter
@@ -560,9 +560,9 @@ for all three, rounded up by `osolver` and at least 4 every update by `osolverfu
 game's words and the set's: the page's cut is 100 at 60 and 30 fps, and from 90 to 240 fps the set cuts a floor's
 velocity at the time scales where the game cuts it at 60 fps and nowhere else. No game files.
 
-A change to the six-axis sensor fusion (`runtime/motion_fusion.c`) or the gyro settings passes `python tests\motion_fusion_check.py`, which builds `motion_fusion.c` with stand-ins for the log and feeds it synthetic gyro and accelerometer sequences: still controllers with a bias, the dead zone levels, known rotations, hand tremor, the per-controller bias, the turn and tilt factors and the integral term ([Gyro](gyro.md#checks)). No game files.
+A change to the six-axis sensor fusion (`runtime/input/motion_fusion.c`) or the gyro settings passes `python tests\motion_fusion_check.py`, which builds `motion_fusion.c` with stand-ins for the log and feeds it synthetic gyro and accelerometer sequences: still controllers with a bias, the dead zone levels, known rotations, hand tremor, the per-controller bias, the turn and tilt factors and the integral term ([Gyro](gyro.md#checks)). No game files.
 
-A change to how the frame limit goes to RivaTuner Statistics Server (`runtime/rtss_limit.c`, `runtime/rtss_decide.h`)
+A change to how the frame limit goes to RivaTuner Statistics Server (`runtime/pacing/rtss_limit.c`, `runtime/pacing/rtss_decide.h`)
 passes `python tests\rtss_limit_check.py`. It builds `rtss_decide.h` alone and checks its reader of RTSS's shared
 memory against a fake `RTSSSharedMemoryV2` (a bad header, short entries, an entry past the memory or past the 4096th
 find nothing; the flags and the period where RTSS keeps them) and the worker's decisions poll by poll against a fake
@@ -584,7 +584,7 @@ with frame generation on and with `NX2SARIA_RTSS=0`, and a run killed inside the
 that do not land, a state file that does not read, and a crash on RTSS's own thread with no line in the file. No GPU,
 no RTSS, no game files.
 
-A change to how the mixer applies volumes (`runtime/audio_mixer.c` `accumulate_ramp`, the voice and splitter paths
+A change to how the mixer applies volumes (`runtime/audio/audio_mixer.c` `accumulate_ramp`, the voice and splitter paths
 of `audio_mixer_render`) or to what it owes the device after a stall (`ring_pull`, `audio_mixer_owed`) passes
 `python tests\audio_mixer_check.py`, which builds `audio_mixer.c` with the rest of the runtime stubbed. It mixes
 voices of one constant sample, so a mix buffer shows the gain sample by sample: a
@@ -594,13 +594,13 @@ moved to another mix, a destination that is new or was moved, and the first fram
 new volume at once; `NX2SARIA_AUDIO_RAMP=0` applies every volume at once. It also makes the device's requests by
 hand: the silence of an underrun, up to the prefill's return, is owed in whole render frames, which are rendered and
 not queued; the silence before the first prefill and across a stop is not owed, and more than 3 seconds of it is given
-up. The render thread's own timing (`runtime/audren.c` `render_thread`) is not built by it. No game files and no audio
+up. The render thread's own timing (`runtime/hle/audren.c` `render_thread`) is not built by it. No game files and no audio
 device.
 
-A change to what the audio renderer does with values the game sends (`runtime/audren.c` `update_check`, `request_update`
-and `audio_bad`; `runtime/audio_mixer.c` `splitters_walk`, `audio_mixer_routing_check`, `audio_mixer_mix_layout_check`,
-`audio_mixer_update_effects` and the render-pass effects; `runtime/audio_effects.c` `audio_effect_invalid`;
-`runtime/audio_reverb.c` `audio_reverb_invalid`) passes `python tests\audio_params_check.py`. It builds `audren.c` and
+A change to what the audio renderer does with values the game sends (`runtime/hle/audren.c` `update_check`, `request_update`
+and `audio_bad`; `runtime/audio/audio_mixer.c` `splitters_walk`, `audio_mixer_routing_check`, `audio_mixer_mix_layout_check`,
+`audio_mixer_update_effects` and the render-pass effects; `runtime/audio/audio_effects.c` `audio_effect_invalid`;
+`runtime/audio/audio_reverb.c` `audio_reverb_invalid`) passes `python tests\audio_params_check.py`. It builds `audren.c` and
 `audio_mixer.c` with the rest of the runtime stubbed and the real effect DSPs linked, and sends hand-built
 RequestUpdates through `renderer_handler`. An update whose sections do not match the renderer (sizes, magic words,
 overruns, the output buffer, a mix layout with a negative count or more buffers than the renderer has, a splitter id run
@@ -616,22 +616,22 @@ its values are usable. Each kind is logged once and counted every time; valid ef
 nothing out. With `NX2SARIA_AUDIO_STRICT=1` such a value ends the process, in two runs of their own. No game files and no
 audio device.
 
-A change to the sprint button (`runtime/sprint.c`, the set `sprint` of `recomp/patches-v111.txt`, its call in
-`runtime/ov_input.c` `npad_states`) passes `python tests\sprint_check.py`, which builds `sprint.c` with the rest of the
+A change to the sprint button (`runtime/patches/sprint.c`, the set `sprint` of `recomp/patches-v111.txt`, its call in
+`runtime/hle/ov_input.c` `npad_states`) passes `python tests\sprint_check.py`, which builds `sprint.c` with the rest of the
 runtime stubbed and plays frames against a stand-in Link: toggle and hold on each kind of button, the states that keep
 and end a sprint, ZL, the button kept from the game only during play (the bottom button only while Link moves) and a
 Link the player does not control, and the set switched off with the button off but never over a start that kept it
 off. No game files.
 
-A change to the model heaps' retry (`runtime/heap_retry.c`, the set `heap_retry` of `recomp/patches-v111.txt`) passes
+A change to the model heaps' retry (`runtime/patches/heap_retry.c`, the set `heap_retry` of `recomp/patches-v111.txt`) passes
 `python tests\heap_retry_check.py`. It lifts the set's four sites as the generator does (two keep their store and call
 the patch page's +0xed0, two call its +0xec0 in place of the game's GPU memory allocation) and builds `heap_retry.c`
 with the rest of the runtime stubbed, over a chain of stand-in heaps: the block a parent gives, the registers and the
 request left as they were, a parent whose memory does not hold its child's, the fatal error when no heap has room, the
 test switches and the log lines. No game files.
 
-A change to the text speed (`runtime/text_speed.c`, the set `text_speed` of `recomp/patches-v111.txt`, its call in
-`runtime/ov_input.c` `npad_states`) passes `python tests\text_speed_check.py`, which lifts the set's replacement words
+A change to the text speed (`runtime/patches/text_speed.c`, the set `text_speed` of `recomp/patches-v111.txt`, its call in
+`runtime/hle/ov_input.c` `npad_states`) passes `python tests\text_speed_check.py`, which lifts the set's replacement words
 with `recomp/lifter.py` and runs them with `text_speed.c` against a stand-in message window and typewriter: the page
 words each setting writes and the set it switches, the skip site's decide bit and typewriter word for a message the
 player may skip and one the game keeps from skipping, the speed site's factor for that typewriter and no other, the
@@ -648,14 +648,14 @@ the lifted C over 10,000 random steps and fractions, comparing registers and the
 the sites inside their functions: a regenerate of the game code does, and its check of the original words. No game
 files.
 
-A change to the mouse camera (`runtime/mouse_direct.c`, the mouse path of `runtime/input.c`, the set `mouse_direct` of
+A change to the mouse camera (`runtime/input/mouse_direct.c`, the mouse path of `runtime/input/input.c`, the set `mouse_direct` of
 `recomp/patches-v111.txt` or `patches-v143.txt`) passes `python tests\mouse_direct_check.py --cc <clang> --deps
 <ucrt64>\include`, which builds `mouse_direct.c`, and `input.c` with `--deps`, with the rest of the runtime stubbed and
 calls the camera hooks as their patch sites do, for each game version: the registers a site hands over and gets back,
 the same turn for the same mouse distance at every frame rate and stick camera speed, a single count, the idle bit, the
 pause after a camera reset, the capture and the mode, and scripted mouse counts. No game files.
 
-A change to which waits a signalled event or an ended thread wakes (`runtime/kernel.c` `wake_sync_waiters`, the
+A change to which waits a signalled event or an ended thread wakes (`runtime/hle/kernel.c` `wake_sync_waiters`, the
 `WaitSynchronization` service) passes `python tests\sync_wake_check.py`, which builds `kernel.c` with the platform
 layer and the rest of the runtime stubbed and runs guest threads whose entries are host functions: a signal wakes the
 waits on its event and leaves the others asleep, a wait on several handles reports the right one, a thread's end ends
@@ -673,7 +673,7 @@ events and 5 sections made show as Event +20 and Section +5, the total stays wit
 the figures go back once they are closed, and the kinds past the room given are summed in the last entry. Windows
 only. No game files.
 
-A file a detached thread writes piece by piece (the flight recorder's dump, `runtime/flight.c` `dump_main`) goes
+A file a detached thread writes piece by piece (the flight recorder's dump, `runtime/diag/flight.c` `dump_main`) goes
 through `runtime/part_file.h`: it is written as `<name>.part` and renamed when complete, because the window's close
 ends the process under such a thread and a file cut short there would read as a whole one. A file made in memory
 first uses `plat_file_write_cached` or `plat_file_write_atomic`, which do the same in one call. A change to the
@@ -712,8 +712,8 @@ A change to the button prompts (`tools/make_romfs_patches.py --prompts`, `tools/
 `.venv-py314\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
 files); a change to the settings passes `nx2saria.exe --probe-cfg`.
 
-A change to the action prompt's diamond of face buttons (`runtime/action_prompt.c`) or to the SARC and zstd dictionary
-helpers (`runtime/sarc.c`) passes `python tests\action_prompt_check.py`. It builds them alone, with the
+A change to the action prompt's diamond of face buttons (`runtime/patches/action_prompt.c`) or to the SARC and zstd dictionary
+helpers (`runtime/hle/sarc.c`) passes `python tests\action_prompt_check.py`. It builds them alone, with the
 undefined-behaviour sanitizer, on a layout file, archives and dictionaries it makes from the format `action_prompt.c`'s
 header comment describes, and checks that:
 
@@ -727,14 +727,14 @@ header comment describes, and checks that:
 No game files. `--romfs <folder with romfs.bin and index.json>` also runs it on the game's own archive: four copies laid
 out, 208 fields, the same dictionary and unpacked size, and no byte changed outside the layout's copies.
 
-A change to the HUD at the picture's edges (`runtime/wide_hud.c`, `wide_hud = edges`) or to `runtime/sarc.c` also
+A change to the HUD at the picture's edges (`runtime/patches/wide_hud.c`, `wide_hud = edges`) or to `runtime/hle/sarc.c` also
 passes `python tests\wide_hud_check.py`, built the same way, on the three layouts it edits made from the format its
 header comment describes: the panes and animation keys that move and nothing else, a second run that finds nothing to
 do, refusals that leave the file as it was (each check of `docs/wide-hud.md`), every prefix of each file and the packed
 archive. `--romfs` also runs it on the game's own archive for six shapes of picture, alone and after the action
 prompt's edit: 132 words changed, all of them where the 1.1.1 files have the moved fields.
 
-A change to the menus' black bars (`runtime/wide_bars.c`, `wide_menus = center`) or to the set `wide_bars` in
+A change to the menus' black bars (`runtime/patches/wide_bars.c`, `wide_menus = center`) or to the set `wide_bars` in
 `recomp/patches-v111.txt` passes `python tests\wide_bars_check.py`. It lifts the set's one site as the generator does
 (the screen setup's load kept, then a call of the patch page's +0xef0, a slot no other set or host function uses), then
 builds `wide_bars.c` with the rest of the runtime stubbed and plays presents against stand-in screens: black sides for
@@ -742,12 +742,12 @@ a menu background from opening to closed, an open loading fade and a movie, none
 dropped, a full table logged once, every register kept by the host function, and a start without the set. No game
 files.
 
-A change to what the library warm logs when the driver's cache of stage libraries is cold (`runtime/vk_warm_hint.h`,
-`runtime/vk_pipeline.c` `lw_main`) passes `python tests\warm_hint_check.py`, which builds the header alone and checks
+A change to what the library warm logs when the driver's cache of stage libraries is cold (`runtime/vk/vk_warm_hint.h`,
+`runtime/vk/vk_pipeline.c` `lw_main`) passes `python tests\warm_hint_check.py`, which builds the header alone and checks
 the added text by GPU vendor and by why the cache was cold. No game files.
 
-A change to where NVIDIA's driver keeps its shader cache (`runtime/nvidia_cache.h`, `runtime/vk_device.c`
-`nvidia_cache_beside_exe`, `runtime/vk_pipeline.c` `lw_say_cache_folder`, `platform/win32.c` `plat_setenv`) passes
+A change to where NVIDIA's driver keeps its shader cache (`runtime/vk/nvidia_cache.h`, `runtime/vk/vk_device.c`
+`nvidia_cache_beside_exe`, `runtime/vk/vk_pipeline.c` `lw_say_cache_folder`, `platform/win32.c` `plat_setenv`) passes
 `python tests\nvidia_cache_check.py`, which builds the header alone: the plan for every combination of its seven inputs
 (Linux and Windows, the driver there or not, the setting, what the environment already holds, the folder usable or
 not) and a table of written-out cases, among them that a value the player set is never replaced, that only Windows turns
@@ -758,8 +758,8 @@ the buffer, the entry and depth limits). It also finds in the sources the wiring
 running: the call from `vk_driver_cache_env`, the `System32\nvapi64.dll` test, the mark, the setting's rows in `cfg.c`
 and the folder line before the library warm's sample. No driver, no GPU, no game files.
 
-A change to which GPU the settings choose (`runtime/gpu_choice.h`, `runtime/vk_device.c` `pick_device`,
-`runtime/hw_detect.c` `probe_gpu`, `runtime/ui/menu.cpp` `row_gpu`) passes `python tests\gpu_choice_check.py`, which builds
+A change to which GPU the settings choose (`runtime/vk/gpu_choice.h`, `runtime/vk/vk_device.c` `pick_device`,
+`runtime/cfg/hw_detect.c` `probe_gpu`, `runtime/ui/menu.cpp` `row_gpu`) passes `python tests\gpu_choice_check.py`, which builds
 the header alone, as C and as C++: a `gpu_index` written for another order of the GPUs (an RTX 3050 and Intel UHD Graphics
 in the two orders one laptop listed them in), what `gpu_name` does to it, a `gpu_index` alone that lists a GPU that is not
 a discrete one while a discrete one is usable (it counts as Auto, unless the environment sets it), the card the menu's row
@@ -769,16 +769,16 @@ note a fatal error's report carries, and the `prepare-shaders: card:` line the p
 launcher's log keeps; `prepare-pipelines: card:` in that mode). No Vulkan headers, no GPU, no game files. With a loader that lists two devices, the same header can be
 run over the real list: `MESA_VK_DEVICE_SELECT=<vendor>:<device>` puts one device first on Linux.
 
-A change to how a run ends when the GPU device is lost (`runtime/vk_device.c` `vk_device_lost_check`, the checks of
-`vk_lost` in the replay, upload and present paths, `runtime/vk_sync.c` `completion_main`) passes
+A change to how a run ends when the GPU device is lost (`runtime/vk/vk_device.c` `vk_device_lost_check`, the checks of
+`vk_lost` in the replay, upload and present paths, `runtime/vk/vk_sync.c` `completion_main`) passes
 `python tests\device_lost_check.py <game exe>`, which runs the executable's `--probe-devlost`: with the device marked
 lost no completion callback runs and the submit, upload and wait paths return at once, and four threads that report a
 loss at the same moment end the process with exit code 72, one device report and one FATAL line. It needs a Vulkan
 device and opens no window; the device is not really lost, so what a driver answers after a loss is not covered.
 `device_lost_at = <n>` in `nx2saria.ini` ends a real run the same way at its n-th hand-over to the GPU queue.
 
-A change to the checks of the presentation and sampler paths (`runtime/gfx_guard.h`, `runtime/gfx_present.c`
-`create_swapchain`, `present_image`, `ng_ready`, `gfx_window_start`, `runtime/vk_texture.c` `make_sampler`,
+A change to the checks of the presentation and sampler paths (`runtime/gfx/gfx_guard.h`, `runtime/gfx/gfx_present.c`
+`create_swapchain`, `present_image`, `ng_ready`, `gfx_window_start`, `runtime/vk/vk_texture.c` `make_sampler`,
 `sampler_for`) passes `python tests\gfx_guard_check.py`. It builds the header alone, with the signed overflow
 sanitizer where the compiler has it: the game's crop cut to the image against a 64-bit model over edge and random guest
 values up to `INT_MAX`, a swapchain image list taken whole or not at all (an error, `VK_INCOMPLETE`, fewer images than
@@ -800,7 +800,7 @@ their own and compares them with Unicorn over repeated, skipped and rounded time
 It does not cover the sites as `gen.py` emits them inside their two functions, nor the add and store after them:
 a regenerate of the game code and a compile of the chunk that holds main+0x3b5c7c4 and main+0x3b5c908 does.
 
-A change to the memory gate of the background pipeline builds (`runtime/vk_build_gate.h`, `runtime/vk_pipeline.c`
+A change to the memory gate of the background pipeline builds (`runtime/vk/vk_build_gate.h`, `runtime/vk/vk_pipeline.c`
 `gate_enter`) passes `python tests\build_gate_check.py [<game exe>]`, which builds the header alone and checks what it
 admits and refuses and that builds under way count through their reservations. With the executable it also runs
 `--probe-buildgate` (no device, no window, no build) with the settings in effect, with `build_free_mb = 0` and with a
@@ -809,24 +809,24 @@ value no machine has free. What the builders do when they are refused (`warm_bui
 `vk_pipeline:` lines that name the commit headroom.
 
 The log lines those three changes leave pass `python tests\log_trace_check.py`, which cuts the functions that write
-them from `runtime/vk_pipeline.c` (`cache_stamp_check`, the play gate), `runtime/gfx_present.c` (`swapchain_unusable`)
-and `runtime/vk_texture.c` (`make_sampler`), builds each with stand-ins (real files for the stamp, a clock the harness
+them from `runtime/vk/vk_pipeline.c` (`cache_stamp_check`, the play gate), `runtime/gfx/gfx_present.c` (`swapchain_unusable`)
+and `runtime/vk/vk_texture.c` (`make_sampler`), builds each with stand-ins (real files for the stamp, a clock the harness
 moves, a `vkCreateSampler` that fails on request), runs a session's events through them and checks every line they
 log, with its numbers, in `build/test/log_trace/nx2saria-sample.log`. Vulkan headers only; no game files, no GPU.
 
-A change to the play gate of the background pipeline builds (`runtime/vk_play_gate.h`, `runtime/vk_pipeline.c`
-`play_rest`, `pipe_worker`, `lw_worker`, `runtime/vk_backend.c` `frame_end`) passes
+A change to the play gate of the background pipeline builds (`runtime/vk/vk_play_gate.h`, `runtime/vk/vk_pipeline.c`
+`play_rest`, `pipe_worker`, `lw_worker`, `runtime/vk/vk_backend.c` `frame_end`) passes
 `python tests\play_gate_check.py`, which builds the header alone: the builds rest while the frame shown in play has
 `bg_build_play_draws` draws or more and was shown within half a second, never in a light moment or with the setting at
 0, and the log's counts. What it changes in the frame rate needs a run: `docs/performance.md`, "Background builds in
 play".
 
-A change to when the pipeline caches are saved in play (`runtime/vk_save_retry.h`, `runtime/vk_pipeline.c`
+A change to when the pipeline caches are saved in play (`runtime/vk/vk_save_retry.h`, `runtime/vk/vk_pipeline.c`
 `autosave_once`) passes `python tests\save_retry_check.py`, which builds the header alone: a save for new content, none
 without, and after a save that did not happen a bounded row of tries at the save interval.
 
-A change to how FSR 3.1's pipelines reach the pipeline caches (`runtime/vk_ffx.cpp` `vk_ffx_proc_addr`,
-`runtime/vk_pipeline.c` `vk_pipeline_create_foreign`) passes `python tests\ffx_cache_check.py <game exe>`. It runs
+A change to how FSR 3.1's pipelines reach the pipeline caches (`runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr`,
+`runtime/vk/vk_pipeline.c` `vk_pipeline_create_foreign`) passes `python tests\ffx_cache_check.py <game exe>`. It runs
 `--probe-ffx-cache` (one upscaling context on the device; no window, no game) twice on pipeline cache files of its own
 and once with `ffx_pipe_cache = 0`: the library's pipelines must come through the runtime's creates, the second run
 must compile none of them, and with the setting off none may come through. The executable needs
@@ -842,7 +842,7 @@ A change to the launcher's pre-play commit warning (`launcher/commit.py`) passes
 (the page-file mode, threshold, message, logged figures, warning setting and default Yes choice) and
 `python tests\mem_commit_message_check.py` (the Windows allocation errors that include page-file advice). Both run
 without game files or Windows.
-A change to when a start does the whole warm on the boot screen (`runtime/boot_warm.h`, `runtime/vk_pipeline.c`
+A change to when a start does the whole warm on the boot screen (`runtime/vk/boot_warm.h`, `runtime/vk/vk_pipeline.c`
 `bf_decide`) passes `python tests\boot_warm_check.py`, which builds the header alone: the warm after a driver change,
 its continuation by a later start, the end of the tries, no second warm once one is done, and what a marker left by
 a start that ended in the boot's builds means with and without the crash handler's note. The warm itself shows
@@ -851,12 +851,12 @@ in `--probe-prewarm` on a copy of an install's caches whose `pipeline-cache.bin`
 warm, the compute pipelines on every core and the library warm's answer, and `boot-warm-owed.txt` ends as "done".
 Run under an exe name the driver has not seen, the probe compiles everything, as after a real driver update. What
 the boot screen shows, and the builders' step down when the wait is cut short, need a start of the game.
-A change to how `pipeline-cache.bin` is read (`runtime/vk_cache_file.h`, `runtime/vk_pipeline.c` `cache_load`) passes
+A change to how `pipeline-cache.bin` is read (`runtime/vk/vk_cache_file.h`, `runtime/vk/vk_pipeline.c` `cache_load`) passes
 `python tests\pipeline_cache_file_check.py`, which builds the header alone and reads a sparse file just over 2 GB
 through it: measured and read whole without a size limit, refused by its real size under one. No game files, no GPU;
 about 2 GB of memory for a few seconds.
 
-A change to the translator stamp of the pipeline cache files (`runtime/vk_cache_stamp.h`, `runtime/vk_pipeline.c`
+A change to the translator stamp of the pipeline cache files (`runtime/vk/vk_cache_stamp.h`, `runtime/vk/vk_pipeline.c`
 `cache_stamp_check`) passes `python tests\cache_stamp_check.py`, which builds the header alone: how
 `pipeline-cache.id` is written and read back (cut, empty or foreign text is no stamp), and what a start does with the
 files for a stamp that matches, one of another translator that the carry still serves, one that it does not serve,
@@ -865,36 +865,36 @@ a run that started without it, again after a run that ended before that save). W
 `vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>` line, which the check finds in the source; no
 game files, no GPU.
 
-A change to how `pipeline-binaries.bin` is indexed or cut back (`runtime/vk_pipeline.c` `pb_index`, `pb_keep`,
+A change to how `pipeline-binaries.bin` is indexed or cut back (`runtime/vk/vk_pipeline.c` `pb_index`, `pb_keep`,
 `pb_init`) passes `python tests\pb_torn_check.py`, which cuts the record layout, the index walk and `pb_keep` out of
 `vk_pipeline.c` and walks files of whole records, with a last record cut short at many lengths and with a malformed
 record: the whole records before it are indexed and the walk ends where they end, `pb_keep` cuts the file back to
 there, a second walk reaches the end of what is left, and a record appended after the cut is read back. No game files,
 no GPU.
 
-A change to the layout of `shader-prepared.bin` (`runtime/prp_file.h`, `runtime/gfx_shader.c`
+A change to the layout of `shader-prepared.bin` (`runtime/gfx/prp_file.h`, `runtime/gfx/gfx_shader.c`
 `gfx_shader_prepare_seed`, `tools/make_game.py` `prepared_from`) passes `python tests\prp_file_check.py`, which builds
 the header alone, checks the parse of both versions and has `make_game.py` read the list the C side wrote. No game
 files, no GPU.
 
-A change to which translations of a previous translator are served (`runtime/gfx_shader.c` `carry_usable`,
+A change to which translations of a previous translator are served (`runtime/gfx/gfx_shader.c` `carry_usable`,
 `carry_load`, `carry_find_iid`, `carry_last`) passes `python tests\carry_pool_check.py`, which cuts the carry lookups
 out of `gfx_shader.c` and runs them against stand-in caches: a translation whose texture pool array has the earlier
 length (32768) is freed and the lookup goes on, one with the current length or no pool is served, and once the current
 translator has failed the shader the refused translation serves from the memory cache. No game files, no GPU.
 
 A change to how the translator children are read and restarted (`runtime/platform/win32.c` `plat_child_read`,
-`runtime/gfx_shader.c` `child_exchange_raw`, `svc_request`) passes `python tests\child_timeout_check.py`, which builds
+`runtime/gfx/gfx_shader.c` `child_exchange_raw`, `svc_request`) passes `python tests\child_timeout_check.py`, which builds
 those functions with a 300 ms read timeout and runs `cmd.exe` children through them: one that never answers costs one
 timeout and is not asked again, one that exits is restarted once, one that answers gives its line. Windows only; no
 game files, no GPU.
 
-A change to where the lazy write-back is on by default (`runtime/wb_lazy_choice.h`, `runtime/vk_memory.c`
+A change to where the lazy write-back is on by default (`runtime/wb_lazy_choice.h`, `runtime/vk/vk_memory.c`
 `vk_mem_lazy_decide`) passes `python tests\wb_lazy_check.py`, which builds the header alone and checks the choice and
 its reason by platform, by GPU driver and by what the player set. No game files, no GPU.
 
 A change to the lazy write-back's arms, faults, releases or fetches (`runtime/memory.c` "Lazy write-back" and "Ranges
-in flight", `runtime/vk_memory.c` `lazy_fetch`, `mirror_evict`, `hot_check`) passes `python tests\lazy_fetch_check.py`,
+in flight", `runtime/vk/vk_memory.c` `lazy_fetch`, `mirror_evict`, `hot_check`) passes `python tests\lazy_fetch_check.py`,
 which builds memory.c with the Windows fault handler and a fetch that only waits, and runs each scenario as its own
 process, so an access violation fails it. A thread that reads a range over and over while it is armed and given back
 again never reaches the crash handler, also when the arm's clean test takes 100 ms, and a read of a range being armed
@@ -911,13 +911,13 @@ touches that waited for a range in flight. `vk_memory.c`'s fetch slots, and its 
 `hot_check`: their fetch before `pool_lock` is taken with `wb_lazy_unlocked = 1`, under it with 0, and their order
 against a pool's finalize), have no check without a device. Windows only; no game files, no GPU.
 
-A change to when the freezing of idle guest regions waits (`runtime/freeze_hold.h`, `runtime/vk_memory.c`
+A change to when the freezing of idle guest regions waits (`runtime/freeze_hold.h`, `runtime/vk/vk_memory.c`
 `freeze_pass`) passes `python tests\freeze_hold_check.py`, which builds the header alone: the backoff after a slow
 freeze doubles while slow ones come within the quiet time, fast freezes between them included, stops at its cap and
 starts over after the quiet time (with a quiet time of 0, at the first fast freeze); and an area load holds the passes
 while the texture pool loads and for the hold after it or after the area's load. No GPU, no game files.
 
-A change to what a boot map changes in what the game reads (`runtime/boot_map_core.h`, `runtime/boot_map.c`,
+A change to what a boot map changes in what the game reads (`runtime/patches/boot_map_core.h`, `runtime/patches/boot_map.c`,
 `docs/boot-to-map.md`) passes `python tests\boot_map_check.py`, which builds the header alone on made-up files: the
 title graph's command `Root` moves to the Sequential of a Simultaneous and `TitleToMainWithLoadSave.module`, and a graph
 without exactly that is refused; both `Index` inputs of the slot's graph become the slot, and an input that is already
@@ -931,24 +931,24 @@ A change to what writes `nx2saria.ini` outside the game (`launcher/gameini.py`, 
 the game comes through an update and a rebuild byte for byte. The game's own writer, the settings menu, is checked by
 `--probe-cfg` with the same lines.
 
-A change to the mouse camera's stick deflection (`runtime/input_map.c` `input_mouse_stick`) passes
+A change to the mouse camera's stick deflection (`runtime/input/input_map.c` `input_mouse_stick`) passes
 `python tests\mouse_stick_check.py`, which builds that file with the rest of the runtime stubbed and checks the
 deflection at each camera speed: a slow movement is divided by the factor, a fast flick reaches full tilt. No game
 files.
 
-A change to the arithmetic of the mouse in the game's menus (`runtime/menu_mouse_geom.h`: a button's box, the pointer in
+A change to the arithmetic of the mouse in the game's menus (`runtime/ui/menu_mouse_geom.h`: a button's box, the pointer in
 the layout's units on 16:9 and ultrawide pictures, which presses are clicks and the presses queued for the game)
 passes `python tests\menu_mouse_check.py`. No game files.
 
-A change to how a gamepad's axes are read (`runtime/input.c` `pad_axis`: an axis counts once it has been seen at rest)
+A change to how a gamepad's axes are read (`runtime/input/input.c` `pad_axis`: an axis counts once it has been seen at rest)
 passes `python tests\pad_rest_check.py`, which builds that function with stand-ins for SDL. No game files.
 
-A change to the shake key (`runtime/input.c` `shake_stick`) passes `python tests\shake_key_check.py`, which builds that
+A change to the shake key (`runtime/input/input.c` `shake_stick`) passes `python tests\shake_key_check.py`, which builds that
 function with stand-ins for the clock and the game's present count: each side lasts two of the game's updates from 20
 to 240 fps, also with two reads an update, a press swings for 800 ms, a hold keeps swinging until its release, and a
 swing without presents keeps its side. No game files.
 
-A change to HD rumble's encoding or report schedule (`runtime/rumble_hd.c`: a vibration value as the bytes of a Switch
+A change to HD rumble's encoding or report schedule (`runtime/input/rumble_hd.c`: a vibration value as the bytes of a Switch
 controller's rumble report, and which reports are written when) passes `python tests\rumble_hd_check.py`, which builds
 that file alone: known values and the neutral one, the frequency and amplitude clamps (no amplitude step above the
 actuators' safe maximum), a report's data for two actuators and for one, and a batch of values reduced to the reports
@@ -956,32 +956,32 @@ written (the newest value at once, a held one again every 30 ms, the neutral val
 The script then decodes a sweep of encoded values with formulae of its own. No game files, no SDL, no controller: what
 a controller does with the reports is not covered.
 
-A change to how a mesh pipeline's fragment module gets the inputs no mesh output feeds (`runtime/vk_pipeline.c`
+A change to how a mesh pipeline's fragment module gets the inputs no mesh output feeds (`runtime/vk/vk_pipeline.c`
 `spirv_mesh_outputs`, `spirv_fs_fill_inputs`) passes `python tests\fs_fill_inputs_check.py`, which builds both
 functions and runs them on mesh and fragment shaders it compiles with glslang, then validates the result. No game
 files.
 
-A change to which render passes count as drawn frame after frame (`runtime/vk_target_frames.h`: a draw into one is
+A change to which render passes count as drawn frame after frame (`runtime/vk/vk_target_frames.h`: a draw into one is
 skipped while its pipeline builds, a draw into any other waits) passes `python tests\target_frames_check.py`, which
 builds the header alone and replays an area change after a loading screen from a player's log: the scene, probe and
 half-resolution passes are per-frame again at once, a lookup table, a volume's slices and an icon capture still wait,
 and an image taken over by another texture starts without the history of the one before. No GPU, no game files.
 
 A change to how the holes in the allocator's blocks are counted or to which blocks a texture compaction empties
-(`runtime/vk_tex_compact.h`: `tcp_tally`, `tcp_stats`, `tcp_plan`) passes `python tests\tex_compact_check.py`, which
+(`runtime/vk/vk_tex_compact.h`: `tcp_tally`, `tcp_stats`, `tcp_plan`) passes `python tests\tex_compact_check.py`, which
 builds the header alone: a block with one allocation that stays is never chosen, the block that takes the fewest moved
 bytes goes first, what moves fits the free bytes outside the chosen blocks, a plan under its smallest gain is no plan,
-and 400 random tables keep those rules. The part of `runtime/vk_texture.c` that builds the table and moves the images
+and 400 random tables keep those rules. The part of `runtime/vk/vk_texture.c` that builds the table and moves the images
 (`NX2SARIA_TEX_COMPACT`) is not built by it. No GPU, no game files.
 
-A change to which entry of the upscaler stand-in's scratch images serves a new size (`runtime/vk_scratch_lru.h`,
-`runtime/vk_exec_draw.c` `fallback_scratch`) passes `python tests\scratch_lru_check.py`, which builds the header alone
+A change to which entry of the upscaler stand-in's scratch images serves a new size (`runtime/vk/vk_scratch_lru.h`,
+`runtime/vk/vk_exec_draw.c` `fallback_scratch`) passes `python tests\scratch_lru_check.py`, which builds the header alone
 and checks that a match is a hit, a ninth size takes a free entry or the one used longest ago instead of being
 refused, and two images of one frame never evict each other. No GPU, no game files.
 
-A change to dynamic resolution (`runtime/dynres.c`) passes `python tests\dynres_check.py`, which builds that file with
+A change to dynamic resolution (`runtime/pacing/dynres.c`) passes `python tests\dynres_check.py`, which builds that file with
 stand-ins for the settings, the GPU's busy time, the clock, the game's rate under the limit and the scene share
-`runtime/widescreen.c` `wide_dynres_base` gives it: the default target is the frame time of 60, 144 and 240 fps and
+`runtime/patches/widescreen.c` `wide_dynres_base` gives it: the default target is the frame time of 60, 144 and 240 fps and
 16.7 ms for an unknown or unlimited rate, a target that is set wins, a limit or target changed while it runs (in the
 menu too) moves the target with one log line, a refresh rate wandering under 1 % after the start line logs none, and
 each step is held for `dyn_res_step` 60ths of a second at 60, 144 and 240 fps but never less than 1 s, down while the
@@ -993,32 +993,32 @@ line), and from the new share again when `scene_share` or `dyn_res_min` changes.
 simulated minutes, and a GPU whose time swings past both thresholds at each step (a step costing more than the gap
 between them) takes at most 40 steps there, on the share and on the DLSS mode alike. No GPU, no game files.
 
-A change to the ASTC decoder's scratch trim (`runtime/vk_astc.c` `vk_astc_scratch_trim`, with the upload lock it only
-tries, `runtime/vk_memory.c` `vk_defer_buffer_try`) passes `python tests\astc_trim_check.py`, which builds `vk_astc.c`
+A change to the ASTC decoder's scratch trim (`runtime/vk/vk_astc.c` `vk_astc_scratch_trim`, with the upload lock it only
+tries, `runtime/vk/vk_memory.c` `vk_defer_buffer_try`) passes `python tests\astc_trim_check.py`, which builds `vk_astc.c`
 with the platform layer's recursive lock and the rest of the runtime stubbed: the trim gives way while another thread
 holds the upload lock, goes through once it is free, and never deadlocks with an upload that asks for the scratch
 meanwhile. No GPU, no game files.
 
-A change to the copy of each event-ordered queue's first held wait (`runtime/vk_evo_peek.h`, `runtime/vk_exec.c`
+A change to the copy of each event-ordered queue's first held wait (`runtime/vk/vk_evo_peek.h`, `runtime/vk/vk_exec.c`
 `vk_exec_held_ready`) passes `python tests\evo_peek_check.py`, which builds the header alone: one writer republishes
 while three readers copy, no copy mixes two publishes, and no reader waits for the writer. No GPU, no game files.
 
-A change to the present that waits for held work (`runtime/vk_present_held.h`, `runtime/vk_backend.c` `submit_sync`,
+A change to the present that waits for held work (`runtime/pacing/vk_present_held.h`, `runtime/vk/vk_backend.c` `submit_sync`,
 `vk_be_present`, `ph_out`) passes `python tests\present_held_check.py`, which builds the header with the platform layer:
 one presenting and three submitting threads over 200,000 frames, every frame out once, in order and never two at once,
 each reason a held present goes out seen; step by step what keeps and what puts out a held present; and with the lock
 held elsewhere a submitting thread gives up at once while the presenting thread waits and counts its wait. No GPU, no
 game files.
 
-A change to where a frame's bookkeeping at its present runs (`runtime/vk_frame_owed.h`, `runtime/vk_backend.c`
-`present_image`, `present_frame_closed` and `frame_end`, `runtime/vk_sync.c` `submit`, `vk_sync_try_locked` and
+A change to where a frame's bookkeeping at its present runs (`runtime/vk/vk_frame_owed.h`, `runtime/vk/vk_backend.c`
+`present_image`, `present_frame_closed` and `frame_end`, `runtime/vk/vk_sync.c` `submit`, `vk_sync_try_locked` and
 `vk_sync_locked`) passes `python tests\frame_owed_check.py`, which builds the header with the platform layer: one
 presenting thread, three replaying threads, some replays holding the lock 40 ms, and a present thread that blits each
 frame handed to it, over 20,000 frames; every frame's bookkeeping runs once, in order, never during a replay, before
 any replay that took the lock after its present and before the frame's blit, and no present waits for a replay. No
 GPU, no game files.
 
-A change to a synchronous submission's deferred binds (`runtime/nvn_submit_guard.h`, `runtime/nvn_api_cmd.c`
+A change to a synchronous submission's deferred binds (`runtime/nvn/nvn_submit_guard.h`, `runtime/nvn/nvn_api_cmd.c`
 `nvn_submit_prepare`, `nvn_submit_done`, `resolve_deferred`) passes `python tests\submit_clone_check.py`, which builds the
 header with the platform layer: four threads submit two recording copies, a quarter of the calls giving theirs twice,
 while another rewrites the arrays their deferred binds read, and no replay sees its handles change while the in-place,
@@ -1031,7 +1031,7 @@ A change to how `runtime/memory.c` `mem_copy_readable` reads the lazy heap (`NX2
 every copy returns, a heap page nothing touched yet reads zero and stays reserved, and pages past the heap's end are
 left out. Windows only, no game files.
 
-A change to the page write generations (`runtime/vk_memory.c`, from its "page write generations" banner to its "dirty
+A change to the page write generations (`runtime/vk/vk_memory.c`, from its "page write generations" banner to its "dirty
 census" banner, and the readers of its tables `cpu_wrote_since`, `shadow_pool_clean`, `lazy_clean`, `page_dirty`)
 passes `python tests\gen_wrap_check.py`, which builds those parts of the file alone and runs the generations across
 2^32 (where 32-bit generations wrapped), 2^40 and 2^63: texture checks, the snapshot path and the region check, the
@@ -1039,14 +1039,14 @@ CPU-side tables, and mirror and shadow cleanliness answer as below the boundary,
 reaches 2^32. It also takes the start from `NX2SARIA_GEN_SEED` (`gen_seed`): read as 64 bits, decimal or `0x`, capped
 at 2^62, a value that is no number ignored, each with its log line. No GPU, no game files.
 
-A change to `runtime/vk_memory.c`, `runtime/vk_texture.c` or `runtime/tex_probe.c` passes
+A change to `runtime/vk/vk_memory.c`, `runtime/vk/vk_texture.c` or `runtime/gfx/tex_probe.c` passes
 `python tests\gen_width_check.py`, which compiles the three files with the build's flags and `-Wshorten-64-to-32`,
 `-Wformat` and `-Wincompatible-pointer-types` as errors: the page write generations are 64 bits, and a local, field or
 format left at 32 bits would bring their wrap back without a word. Any narrowing in these files takes an explicit cast.
 It needs the shader headers (`tools/build_shaders.py`); no GPU, no game files.
 
-A change to FSR 3.1 frame generation through the runtime's passes (`runtime/vk_fsr3fg.c`, `runtime/shaders/fsr3fi_*`,
-`fsr3of_*`, `fsr3fg_options.h`, the presenter in `runtime/gfx_present.c`) passes `python tests/fsr3fg_check.py
+A change to FSR 3.1 frame generation through the runtime's passes (`runtime/vk/vk_fsr3fg.c`, `runtime/shaders/fsr3fi_*`,
+`fsr3of_*`, `fsr3fg_options.h`, the presenter in `runtime/gfx/gfx_present.c`) passes `python tests/fsr3fg_check.py
 <game folder>/ocarina` (outside Windows), which runs `--probe-fsr3fg` with Vulkan's validation on: a textured picture
 with a square moving 16 pixels a frame, a HUD bar only in the picture with the HUD and black bars around the picture.
 The generated frame must put the square within 2 pixels of halfway, keep the HUD as drawn (2 of 255) and the bars
@@ -1056,19 +1056,19 @@ generation goes off, with no validation error; the probe then times a generated 
 before, the generated frame and the picture after as PPM images every `NX2SARIA_FSR3FG_DUMP_EVERY` seconds. It needs a
 Vulkan device that runs the passes (it says SKIP otherwise), no game files.
 
-A change to which frames FSR 3.1 frame generation is told are camera cuts (`runtime/vk_fg_reset.h`, `runtime/vk_fg.cpp`
+A change to which frames FSR 3.1 frame generation is told are camera cuts (`runtime/vk/vk_fg_reset.h`, `runtime/vk/vk_fg.cpp`
 `generate` and `vk_fg_frame`) passes `python tests\fg_reset_check.py`, which builds the header alone and checks that each
 frame id gets its own frame's cut, that an id never noted or no longer held counts as a cut, and that a slot rewritten
 on another thread never answers an old id with a newer frame's value. No GPU, no game files.
 
-A change to how frame generation's log line sorts the game's frames (`runtime/vk_fg_stats.h`, used by `runtime/vk_fg.cpp`,
-`runtime/vk_fg4.cpp` and `runtime/vk_fsr3fg.c`) passes `python tests\fg_stats_check.py`, which builds the header alone
+A change to how frame generation's log line sorts the game's frames (`runtime/vk/vk_fg_stats.h`, used by `runtime/vk/vk_fg.cpp`,
+`runtime/vk/vk_fg4.cpp` and `runtime/vk/vk_fsr3fg.c`) passes `python tests\fg_stats_check.py`, which builds the header alone
 and checks the order of the reasons (the menu first, then a frame without a scene, then why a gameplay frame was not
 generated), a line every 600 gameplay frames or 3600 of any kind, the presents over the period's time, the cap on
 lines with the run's totals kept, and that a session of 4600 title frames, gameplay and the menu reads as 100% of its
 gameplay generated. No GPU, no game files. What the line means and how to check a run: [frame-generation.md](frame-generation.md).
 
-A change to who holds the frame limit with DLSS Frame Generation (`runtime/dlssg_pace.h`, `runtime/vk_dlssg.c`
+A change to who holds the frame limit with DLSS Frame Generation (`runtime/pacing/dlssg_pace.h`, `runtime/vk/vk_dlssg.c`
 `vk_dlssg_pace`) passes `python tests\dlssg_pace_check.py`, which builds the header alone and checks that Reflex holds
 the limit only once Streamline took exactly that limit, that the game's own pacer keeps it during a movie, before the
 first host present, after 200 ms without one and with the setting off, that frames coming too soon over a window of 60
@@ -1082,14 +1082,14 @@ DLL, and passes a DLL with every export `nx2_sl.h` declares; that every function
 `tools/make_launcher.py` and `tools/make_kit.py` make that check of their `--dlssg` DLL before they download anything.
 The DLL itself is checked when `tools/build_dlssg.py` builds it, or with `--check <dll>`. No MSVC, no Streamline SDK,
 no game files.
-A change to the list of what the upscalers let go of while the GPU may still use it (`runtime/vk_up_defer.h`) passes
+A change to the list of what the upscalers let go of while the GPU may still use it (`runtime/vk/vk_up_defer.h`) passes
 `python tests\up_defer_check.py`, which builds the header alone, as C and as C++, and checks that an entry goes only
 once the submission that last named it is done and its present gate is passed, that the ready ones go in the order
 they were put and the rest keep theirs, that a full list refuses without overwriting, and that an entry a release puts
 waits for the next take. No GPU, no game files.
 
-A change to where the upscalers free what they let go of (`runtime/vk_dlaa.c` "what the upscalers let go of while the
-GPU may still use it", `runtime/vk_ffx.cpp` and `runtime/vk_ffx4.cpp` `context_for`) passes
+A change to where the upscalers free what they let go of (`runtime/vk/vk_dlaa.c` "what the upscalers let go of while the
+GPU may still use it", `runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_ffx4.cpp` `context_for`) passes
 `python tests\upscaler_idle_check.py`, which reads the sources: `vkDeviceWaitIdle` only in `vk_upscaler_device_idle`
 and the `--probe-ffx-cache` path, that function only behind the rollback switch, a full list and a refused creation,
 every place that lets something go calling `vk_upscaler_let_go`, every creation of a DLSS feature or an FSR context
@@ -1102,31 +1102,31 @@ images, a whole list taken (`upd_take_all`) only at teardown or after `vk_upscal
 `upscaler_idle_wait`'s `sections[]` entry and `nx2saria.ini.example` line, a name in `perf.c` for each perf mark kind,
 and `pb_images` noting the images' last use after it makes them. Any Python, no game files.
 
-A change to which frames the flight recorder takes for a one-frame flash (`runtime/flight_flash.h`, `runtime/flight.c`
+A change to which frames the flight recorder takes for a one-frame flash (`runtime/diag/flight_flash.h`, `runtime/diag/flight.c`
 `flight_cells`) passes `python tests\flight_flash_check.py`, which builds the header alone, draws pictures of the
 thumbnails' size and checks that a patch or a whole frame shown once is a flash, that a camera cut, a fade, a pan and
 shapes crossing the picture at any speed are none, where each of the test's rules decides, and that a frame beside one
 without a thumbnail is not judged. With `time` it prints what the cell means of one thumbnail cost. No GPU, no game
 files.
 
-A change to the present side's log lines (`runtime/vk_backend.c` `present_main` and `present_window`, the window line
-of `runtime/perf.c` `perf_present`) or to how `tools/perf_summary.py` reads them passes
+A change to the present side's log lines (`runtime/vk/vk_backend.c` `present_main` and `present_window`, the window line
+of `runtime/diag/perf.c` `perf_present`) or to how `tools/perf_summary.py` reads them passes
 `python tests\perf_summary_check.py`. It checks that the format strings it copies are still the runtime's, makes lines
 with them and checks the present percentiles, the present thread's averages and the hand-off share the tool prints,
 and that the lines of older logs, without those fields, still parse. Any Python, no game files.
 
 A change to what the frame-time summary charges to an address-space walk of `NX2SARIA_MEM_CENSUS`
-(`runtime/perf_census.h` `census_charge`, `runtime/perf.c` `ft_frame`) passes `python tests\census_charge_check.py`,
+(`runtime/diag/perf_census.h` `census_charge`, `runtime/diag/perf.c` `ft_frame`) passes `python tests\census_charge_check.py`,
 which builds the header alone: a walk before, after or around a frame, one still running, a torn read of the last walk's
 start (taken as no walk), the charge taken from the replay part first, capped by the overlap and the parts, and 100,000
 random frames in which the census part never passes the frame and the parts keep their sum. No GPU, no game files.
 
-A change to how the on/off switches read their value (`runtime/perf.c` `rt_knob`) passes `python tests\rt_knob_check.py`,
+A change to how the on/off switches read their value (`runtime/diag/perf.c` `rt_knob`) passes `python tests\rt_knob_check.py`,
 which cuts the function out of the file with its warning table and builds it with stand-ins for the settings and the
 log: 0, 1 and ab read as before without a line, false, off and no in any case read as 0 and true, on and yes as 1
 without a line, and any other value reads as 1 and is logged once per switch. No game files.
 
-A change to how nx2saria.ini and the environment are read (`runtime/cfg.c` `cfg_load`, `cut_comment`, `switch_word`,
+A change to how nx2saria.ini and the environment are read (`runtime/cfg/cfg.c` `cfg_load`, `cut_comment`, `switch_word`,
 `cfg_bool`, `check_value`) passes `python tests\cfg_parse_check.py`, which builds `cfg.c` with stand-ins for what it
 links with and loads scratch files: a comment after a value of a setting with a set of values is cut and logged once
 with its line, free text, a value in double quotes and the environment keep theirs; switches written as words read as
@@ -1137,8 +1137,8 @@ load and one for the menu. The launcher's reader (`launcher/gameini.py`) has the
 `tests\launcher_test.py` `PlayerIniTest`, and `tools/make_game.py`'s own reads of `shader_carry` and `guest_opt`
 (`shader_carry`, `guest_opt_ini`) theirs in `MakeGameTest`. No game files.
 
-A change to the quality presets (`runtime/preset_pick.h`, `runtime/hw_detect.c`, the "quality presets" part of
-`runtime/cfg.c`) passes `python tests\preset_check.py`, which builds `cfg.c` with stand-ins for what it links with and
+A change to the quality presets (`runtime/cfg/preset_pick.h`, `runtime/cfg/hw_detect.c`, the "quality presets" part of
+`runtime/cfg/cfg.c`) passes `python tests\preset_check.py`, which builds `cfg.c` with stand-ins for what it links with and
 made-up hardware in place of the probe: the tier each PC gets and what each tier sets (High nothing, no frame
 generation, DLSS and FSR 4 only below High and only where they run, a frame-rate limit only on integrated GPUs and
 handhelds), every value of `PRESET_ROWS` read as a settings-file line and as a reload, and the start with a settings
@@ -1156,8 +1156,8 @@ change passes these, all run with `.venv`:
 | `tests\diff\atomic.py` | exclusive load/store sequences and ARMv8.1 atomics | no |
 | `tests\diff\func.py` | whole functions as the generator emits them, loops, jump tables and calls included (calls go to a stub that checks the registers at the call) | yes |
 | `tests\flags_check.py` | the function-local flag helpers of `runtime\cpu.h` against its packed ones | no |
-| `tests\ds3_check.py` | the DualShock 3 report decoding and output report of `runtime\input_ds3.c` | no |
-| `tests\gpa_check.py` | the device address table of `runtime\vk_gpa.c` as a shader reads it: mapping, mirrors and twins, overlapping imports, and blocks given back and taken again while pool addresses climb (no GPU; any Python) | no |
+| `tests\ds3_check.py` | the DualShock 3 report decoding and output report of `runtime\input\input_ds3.c` | no |
+| `tests\gpa_check.py` | the device address table of `runtime\vk\vk_gpa.c` as a shader reads it: mapping, mirrors and twins, overlapping imports, and blocks given back and taken again while pool addresses climb (no GPU; any Python) | no |
 | `tests\excl_mt.py` | the exclusive monitor helpers under contention, a changed value, and the change-and-restore case the compare-and-swap monitor does not see, on several threads | no |
 | `tests\jumptables_check.py` | `recomp/jumptables.py` against a Unicorn oracle; must report 0 disagreements, on 1.4.3 too | yes |
 
@@ -1182,14 +1182,14 @@ exe's own version first, then of the other one.
 `--probe-vkmem` also checks CPU-backed texture uploads and rewrites, GPU-written texture aliases, and memory write watches.
 `--probe-meshfb` (no game files) draws mesh programs of the runtime's own, with and without a task stage and with
 direct and GPU-written workgroup counts, through `VK_EXT_mesh_shader` and through the mesh fallback, and compares the
-pictures; on a device without mesh shaders only the fallback draws. A change to `runtime/mesh_fb.c`,
-`runtime/vk_mesh_fb.c` or the fallback's part of `runtime/vk_exec_draw.c` passes it. With
+pictures; on a device without mesh shaders only the fallback draws. A change to `runtime/gfx/mesh_fb.c`,
+`runtime/vk/vk_mesh_fb.c` or the fallback's part of `runtime/vk/vk_exec_draw.c` passes it. With
 `NX2SARIA_PROBE_MESHFB_DIR=<folder>` it converts the game's own task and mesh translations instead, for `spirv-val`
-(the top of `runtime/mesh_fb_probe.c` says what the folder holds).
-A change to the texture detail (`runtime/vk_texture.c` "texture detail": `detail_skip`, `upload`, `astc_bl_regions`)
+(the top of `runtime/gfx/mesh_fb_probe.c` says what the folder holds).
+A change to the texture detail (`runtime/vk/vk_texture.c` "texture detail": `detail_skip`, `upload`, `astc_bl_regions`)
 passes it three times, with `NX2SARIA_TEXTURE_DETAIL` set to `full`, `reduced` and `low`: each time ASTC textures are
 uploaded and rewritten, and every level and layer of their images must hold the game's level it stands for.
-A change to FSR 3.1's own passes (`runtime/vk_fsr3.c`, `runtime/shaders/fsr3_*.comp`, `runtime/shaders/ffx3/`) passes
+A change to FSR 3.1's own passes (`runtime/vk/vk_fsr3.c`, `runtime/shaders/fsr3_*.comp`, `runtime/shaders/ffx3/`) passes
 `tests/fsr3_check.py`, which runs `--probe-fsr3` with `NX2SARIA_VK_VALIDATION=1`: the passes upscale a synthetic
 panning scene, checked against a supersampled reference, against bilinear and against the jitter and motion vector
 conventions `vk_dlaa.c` hands over, at two render sizes on one output, and one upscale at the docked sizes is timed.
@@ -1199,7 +1199,7 @@ there are none): the pipeline cache load, the shader prewarm, the recorded pipel
 with a `mem: boot stage` log line after each that gives the device memory and the process commit so far. It then asks
 for compute pipelines the boot did not keep, as their first dispatch would, and prints what one costs. The device
 memory after the compute stage should be what it was before the stage, apart from the kept pipelines. A change to what
-the boot builds or keeps (`runtime/vk_pipeline.c`: `prewarm_run`, `lb_compute`, the `compute-used.bin` record) passes it.
+the boot builds or keeps (`runtime/vk/vk_pipeline.c`: `prewarm_run`, `lb_compute`, the `compute-used.bin` record) passes it.
 
 Shaders: `.venv-py314\Scripts\python tools\shader_census.py --version <ver> --translate` extracts every Maxwell shader
 to `build\<ver>\shaders\` and runs it through the translator and `spirv-val`; failure groups go to `failures.txt`.

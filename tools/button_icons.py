@@ -185,7 +185,7 @@ def xbox_icons(g):
 # ---- keyboard and mouse prompts (--prompts pc): every button the keyboard drives, drawn as the key or mouse button
 # bound to it, in the same filled-shape style. Each glyph keeps the advance of the game's own (a wider glyph runs into
 # the text of a right-aligned guide).
-# The keyboard defaults of runtime/input_map.c (input_map_reset; the nx2navi.ini bind_ lines apply on top, pc_binds). The
+# The keyboard defaults of runtime/input/input_map.c (input_map_reset; the nx2navi.ini bind_ lines apply on top, pc_binds). The
 # right stick is the camera, which the mouse drives; SHAKE is the key that shakes it (the mouse never does).
 PC_BINDS = {
     'A': 'e', 'B': 'lshift', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',

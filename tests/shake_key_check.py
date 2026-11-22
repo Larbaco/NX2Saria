@@ -1,5 +1,5 @@
 # needs: clang
-"""The shake key swings the right stick by the game's updates, not by the clock (runtime/input.c shake_stick): builds
+"""The shake key swings the right stick by the game's updates, not by the clock (runtime/input/input.c shake_stick): builds
 shake_stick, cut from input.c by its text, with stand-ins for the clock and the present count
 (frame_rate.c frame_step_presents), and checks that
 
@@ -116,7 +116,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'input.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'input' / 'input.c').read_text(encoding='utf-8')
     body = cut(src, '#define SHAKE_NS', '\n// Under lock and inside sdl_enter')
     with tempfile.TemporaryDirectory(prefix='nx2navi-shake-') as tmp:
         c = Path(tmp) / 'check.c'

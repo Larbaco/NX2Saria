@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Asks a running game for what a map tracker reads through the tracker API (tracker_api = 1, runtime/tracker_api.c),
+"""Asks a running game for what a map tracker reads through the tracker API (tracker_api = 1, runtime/diag/tracker_api.c),
 the way a tracker does, and says whether each step works on this build. Standard library only; it reads, never writes.
 
 What it checks, in order:
@@ -9,7 +9,7 @@ What it checks, in order:
 3. main by its MOD0 header (search_memory), first in the range a tracker tries first, then everywhere, and the header's
    two words a tracker checks.
 4. Link's position by the tracker's chain (a .bss slot of main, the player object, its 37th part) and by the port's own
-   chain (runtime/debug_tools.c player), which have to agree; the scene's file name from the player object.
+   chain (runtime/diag/debug_tools.c player), which have to agree; the scene's file name from the player object.
 5. The game-data manager by the tracker's slot, the same object as the port's own (debug_tools.c gmd), and the Gold
    Skulltula token count from its Int flags.
 6. nx2saria.game_data, as an item tracker reads it: each kind's values by their names' hashes, and with --save the
@@ -42,7 +42,7 @@ PLAYER_OBJECT_VTABLE = 0x4ba27c8
 GAME_DATA_SLOT = 0x4e90ce8
 GAME_DATA_VTABLE = 0x4c58270
 SKULLTULA_TOKENS = 0x04735978   # the Int flag of the token count; its entry's tag is 0x20
-# the port's own (runtime/debug_tools.c)
+# the port's own (runtime/diag/debug_tools.c)
 PORT_PLAYER_MANAGER = 0x4e371d0
 PORT_GAME_DATA_SLOT = 0x4c7e180
 
@@ -119,7 +119,7 @@ def tracker_player(api, main, direction=False):
 
 
 def port_player(api, main):
-    """runtime/debug_tools.c player: [[main+0x4e371d0]+0x480], named "Player", its position at +0x31c."""
+    """runtime/diag/debug_tools.c player: [[main+0x4e371d0]+0x480], named "Player", its position at +0x31c."""
     manager = api.u64(main + PORT_PLAYER_MANAGER)
     actor = api.u64(manager + 0x480) if manager else 0
     name = api.u64(actor + 0x20) if actor else 0

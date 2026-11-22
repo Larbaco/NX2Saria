@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/save_share_check.c: the game's side of a shared save without the game. runtime/fs_host.c,
+"""Build and run tests/save_share_check.c: the game's side of a shared save without the game. runtime/hle/fs_host.c,
 save_share.c and save_zip.c with the rest of the runtime stubbed, each run of the program one start of the game on a
 profile folder made here:
 

@@ -1,6 +1,6 @@
 # needs: windows
 """Check how a translator child that stops answering is handled (runtime/platform/win32.c plat_child_read,
-runtime/gfx_shader.c child_exchange_raw and svc_request). The check cuts the child functions out of win32.c and the
+runtime/gfx/gfx_shader.c child_exchange_raw and svc_request). The check cuts the child functions out of win32.c and the
 request functions out of gfx_shader.c, builds them with PLAT_CHILD_READ_MS at 300 ms (platform.h lets a build set it)
 and runs three children through them:
 
@@ -135,7 +135,7 @@ def main():
         print('child timeout check: Windows only (win32.c); skipped')
         return 0
     win = (ROOT / 'runtime' / 'platform' / 'win32.c').read_text(encoding='utf-8')
-    gfx = (ROOT / 'runtime' / 'gfx_shader.c').read_text(encoding='utf-8')
+    gfx = (ROOT / 'runtime' / 'gfx' / 'gfx_shader.c').read_text(encoding='utf-8')
     parts = [
         HARNESS,
         extract(win, 'struct PlatChild {', ';'),

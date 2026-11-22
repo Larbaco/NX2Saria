@@ -1,4 +1,4 @@
-// runtime/hang_watch.c's decisions on made-up readings, a second apart, with stand-ins for what it reads and calls.
+// runtime/diag/hang_watch.c's decisions on made-up readings, a second apart, with stand-ins for what it reads and calls.
 // Built and run by tests/hang_watch_check.py; prints each failed check and exits 1 on any.
 #include "hang_watch.c"
 

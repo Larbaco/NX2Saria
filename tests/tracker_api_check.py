@@ -1,5 +1,5 @@
 # needs: clang
-"""Build tests/tracker_api_check.c (runtime/tracker_api.c over the real platform layer, with a guest memory of its own
+"""Build tests/tracker_api_check.c (runtime/diag/tracker_api.c over the real platform layer, with a guest memory of its own
 at the game's addresses) and talk to it as a map tracker does: newline-delimited JSON requests, one at a time, each
 answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are
 stand-ins written to the test's build folder.
@@ -42,7 +42,7 @@ MOD0 = MAIN + 0x3c4705c
 HEAP = 0x1030000000
 HOST = 0x2000000000   # the host's own memory in tests/tracker_api_check.c
 PIECE = 1 << 20
-SEARCH_MIB_PER_MIN = 512   # the searches' minute in this build (runtime/tracker_api.c SEARCH_BYTES_PER_MIN)
+SEARCH_MIB_PER_MIN = 512   # the searches' minute in this build (runtime/diag/tracker_api.c SEARCH_BYTES_PER_MIN)
 
 fails = 0
 

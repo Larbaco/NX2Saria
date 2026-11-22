@@ -93,7 +93,7 @@ PINS = {
                       '065076fe13d39ab97eea4740596426d5ae741b5044e48e1c9495d04835c92dbe'),
     'vma': (MSYS2 + 'mingw-w64-ucrt-x86_64-vulkan-memory-allocator-3.4.0-1-any.pkg.tar.zst',
             '44c81162337915afecda3185f66fd98268a54454580b2717080c9dfef57fe781'),
-    'zstd': (MSYS2 + 'mingw-w64-ucrt-x86_64-zstd-1.5.7-2-any.pkg.tar.zst',   # static libzstd.a (runtime/resolution.c)
+    'zstd': (MSYS2 + 'mingw-w64-ucrt-x86_64-zstd-1.5.7-2-any.pkg.tar.zst',   # static libzstd.a (runtime/gfx/resolution.c)
              'dbdb8427280046a2b41697780aa4c52983b708082b0da4755951dc3bea96ca89'),
 }
 # The component MSI inside the python.org installer that carries Tcl/Tk and tkinter (Burn names its payloads a0..a27).

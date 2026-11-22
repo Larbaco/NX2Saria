@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEXT = (ROOT / "runtime/ui_text.c").read_text(encoding="utf-8")
-HEADER = (ROOT / "runtime/ui_text.h").read_text(encoding="utf-8")
+TEXT = (ROOT / "runtime/ui/ui_text.c").read_text(encoding="utf-8")
+HEADER = (ROOT / "runtime/ui/ui_text.h").read_text(encoding="utf-8")
 BIND_PAGE = (ROOT / "runtime/ui/binds_page.cpp").read_text(encoding="utf-8")
 ROWS = (ROOT / "runtime/ui/option_rows.cpp").read_text(encoding="utf-8")
 MENU = (ROOT / "runtime/ui/menu.cpp").read_text(encoding="utf-8")

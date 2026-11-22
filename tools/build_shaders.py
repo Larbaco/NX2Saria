@@ -12,7 +12,7 @@ missing and the stale ones before it compiles the runtime. Three kinds of source
     tools/make_dlaa_mask.py, make_mvobj_fs.py   shaders assembled in Python (ASSEMBLED); they need no other tool
 
 One more kind of header is no shader: a file the runtime embeds (EMBEDDED: the menu's font, the SMAA lookup textures) as
-a list of its bytes, for a compiler without #embed (runtime/ui/menu.cpp, runtime/vk_aa.c include them). It needs no tool.
+a list of its bytes, for a compiler without #embed (runtime/ui/menu.cpp, runtime/vk/vk_aa.c include them). It needs no tool.
 
 A compiled or assembled header records the SHA-256 of its source (with the files a GLSL source includes, from its folder
 or runtime/shaders/ffx3) and is stale when that no longer matches; a Python one is stale when its text is not what its script gives. glslc, spirv-as and spirv-val come from MSYS2 UCRT64 on
@@ -168,7 +168,7 @@ def words_of(src):
             subprocess.run([tool('spirv-as'), '--target-env', target, '-o', str(spv), str(src)], check=True)
         else:
             # "// build_shaders: keep functions" in a source: no optimisation, so its functions stay functions (the HDR
-            # tonemap, which runtime/vk_hdr.c splices into the game's shader by function)
+            # tonemap, which runtime/vk/vk_hdr.c splices into the game's shader by function)
             target = MESH_TARGET if src.suffix in ('.mesh', '.task') else TARGET
             opt = [] if '// build_shaders: keep functions' in src.read_text(encoding='utf-8') else ['-O']
             inc = [f'-I{src.parent / d}' for d in INCLUDE_DIRS if (src.parent / d).is_dir()]

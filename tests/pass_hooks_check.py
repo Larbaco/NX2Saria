@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/pass_hooks_check.c: runtime/vk_pass_hooks.h, which pass begin runs the frame's pass hooks
+"""Build and run tests/pass_hooks_check.c: runtime/vk/vk_pass_hooks.h, which pass begin runs the frame's pass hooks
 (vk_exec.c vk_exec_pass_begin): a parallel group's run once, at its first chunk's first pass, so a pass begun again
 later does not put its own target back as the upscaler's light target.
 

@@ -1,5 +1,5 @@
 # needs: clang
-"""Dynamic resolution's target and step hold (runtime/dynres.c): builds dynres.c, cut by its text, with stand-ins for
+"""Dynamic resolution's target and step hold (runtime/pacing/dynres.c): builds dynres.c, cut by its text, with stand-ins for
 the settings, the GPU's busy time, the clock and the game's rate under the limit (frame_rate.c frame_step_game_hz),
 and checks that
 
@@ -391,7 +391,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'dynres.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'pacing' / 'dynres.c').read_text(encoding='utf-8')
     body = src[src.index('#define DYN_LEVELS'):]
     with tempfile.TemporaryDirectory(prefix='nx2navi-dynres-') as tmp:
         c = Path(tmp) / 'check.c'

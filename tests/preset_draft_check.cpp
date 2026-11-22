@@ -1,5 +1,5 @@
 // The quality preset in the settings menu's draft: runtime/ui/option_rows.cpp (opt_value, opt_get, opt_default,
-// opt_is_set, opt_preset_tier, opt_preset_handback, opt_draft_apply) over runtime/cfg.c with made-up hardware, no
+// opt_is_set, opt_preset_tier, opt_preset_handback, opt_draft_apply) over runtime/cfg/cfg.c with made-up hardware, no
 // window and no GPU. Built and run by tests/preset_check.py, with option_rows.cpp, ui_text.c, cfg.c and Dear ImGui
 // (option_rows.cpp's rows draw with it; nothing here draws). The stand-ins for what cfg.c links against are in
 // preset_check_stubs.h; the menu's skin, sounds and the renderer's restart questions are stand-ins below.

@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/perf_bound_check.c: runtime/perf_bound.h, which side holds the frame back in the
+"""Build and run tests/perf_bound_check.c: runtime/diag/perf_bound.h, which side holds the frame back in the
 60-frame window line of the perf trace (pace, gpu, serial or cpu).
 
 Needs a C compiler only: no Vulkan headers, no GPU and no game files.

@@ -22,7 +22,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     # Compile the actual helper, not a duplicate of its implementation. The rest of the presenter needs a window,
     # a Vulkan device and generated game headers, none of which this API-enumeration regression needs.
-    source = (ROOT / 'runtime' / 'gfx_present.c').read_text()
+    source = (ROOT / 'runtime' / 'gfx' / 'gfx_present.c').read_text()
     start = source.index('static VkSurfaceFormatKHR *surface_formats(')
     end = source.index('\n}\n', start) + 3
     (work / 'surface_formats.inc').write_text(source[start:end])

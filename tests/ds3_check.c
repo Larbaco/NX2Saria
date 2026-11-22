@@ -1,4 +1,4 @@
-// runtime/input_ds3.c: the DualShock 3 input report decoded to inputs by position, and the output report's layout.
+// runtime/input/input_ds3.c: the DualShock 3 input report decoded to inputs by position, and the output report's layout.
 // Built and run by tests/ds3_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>

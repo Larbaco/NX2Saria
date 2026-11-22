@@ -1,4 +1,4 @@
-// runtime/vk_target_frames.h: which passes count as rendered frame after frame, so that a draw into them is skipped
+// runtime/vk/vk_target_frames.h: which passes count as rendered frame after frame, so that a draw into them is skipped
 // while its pipeline builds instead of holding the replay thread. Built and run by tests/target_frames_check.py;
 // prints each failed check and exits 1 on any.
 // The frame numbers of the first block are those of a player's log: an area change after 238 frames of loading

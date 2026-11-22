@@ -139,7 +139,7 @@ esac
 NUP="$1"
 OUT="${2:-$HOME/Games/Ocarina}"
 [ -f "$NUP" ] || { echo "error: $NUP is not a file" >&2; usage; exit 1; }
-# NVIDIA's DLSS for Linux, which the game's DLSS modes need beside it (runtime/resolution.c finds
+# NVIDIA's DLSS for Linux, which the game's DLSS modes need beside it (runtime/gfx/resolution.c finds
 # libnvidia-ngx-dlss.so.<version> there). The build places the kit's when this file carries it; when it does not
 # (made with --no-dlss) and the game folder holds none, the version tools/dlss_pin.py pins is downloaded from
 # NVIDIA's DLSS SDK repository, on machines with NVIDIA's driver only, checked against its SHA-256 and kept
@@ -175,7 +175,7 @@ else
 fi
 
 # play.sh: starts the game from its own folder. It sets no storage mode: the game leaves shadow storage off for
-# NVIDIA's own driver itself (runtime/vk_memory.c mirror_mode), by the driver of the device it runs on.
+# NVIDIA's own driver itself (runtime/vk/vk_memory.c mirror_mode), by the driver of the device it runs on.
 {
     echo '#!/bin/bash'
     echo 'cd "$(dirname "$(readlink -f "$0")")"'
@@ -274,7 +274,7 @@ def main():
     (kit / 'bin').mkdir()
     for f in ('nx2navi_xlate', 'nx2navi_xlate.id'):
         shutil.copy2(xlate / f, kit / 'bin' / f)
-    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk_dlaa.c); make_game.py copies it there
+    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk/vk_dlaa.c); make_game.py copies it there
         dlss_pin.place(dlss, kit / 'bin', linux=True)
     (kit / 'toolchain' / 'vma').mkdir(parents=True)
     shutil.copy2(ROOT / 'toolchain' / 'vma' / 'vk_mem_alloc.h', kit / 'toolchain' / 'vma' / 'vk_mem_alloc.h')

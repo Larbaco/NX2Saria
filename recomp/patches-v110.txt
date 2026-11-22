@@ -49,7 +49,7 @@ site cloth main 9f044c 97fbf1bd @page:x8 bd400104 1e240842 1e240863 97fbf1bd  # 
 # 100; compare +0x28 * +0x38 (30 / time scale) instead, the same value at 30 Hz and independent of the frame rate.
 site bounce main bee7e0 bd402900 bd402900 bd403901 1e210800  # ldr s0, [x8, #0x28]; ldr s1, [x8, #0x38]; fmul s0, s0, s1
 
-# Output size (runtime/resolution.c switches the set on).
+# Output size (runtime/gfx/resolution.c switches the set on).
 # The swapchain size nnMain writes before NvInitializeGraphics comes from page +48 ({w, h} as one 64-bit value), and
 # the output size the renderer lays out its canvas, crop and UI in (main+0xcc3f00, read from the graphics parameters
 # through main+0xcc4160) from page +32; the renderer itself goes to page +40.
@@ -66,7 +66,7 @@ site scene main cea5e8 bd0cc660 2d420520  # str s0, [x19, #0xcc4] -> ldp s0, s1,
 site scene main cea5ec 5e21d921 bd0cc660  # scvtf s1, s9 -> str s0, [x19, #0xcc4]
 
 # Spin waits, from tools/spin_waits.py --exefs build/extracted/v110/exefs --patches recomp/patches-v110.txt: loops that only
-# another thread can end; their back-edges pass rt_spin_gate (runtime/kernel.c), NX2NAVI_SPIN=0 keeps the core.
+# another thread can end; their back-edges pass rt_spin_gate (runtime/hle/kernel.c), NX2NAVI_SPIN=0 keeps the core.
 
 # spin waits found by tools/spin_waits.py on the 1.1.x modules
 # main: 869 spin waits

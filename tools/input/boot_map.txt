@@ -1,2 +1,2 @@
-# A boot map run (NX2SARIA_BOOT_MAP, runtime/boot_map.c): no presses. The game goes from its boot to the area by
+# A boot map run (NX2SARIA_BOOT_MAP, runtime/patches/boot_map.c): no presses. The game goes from its boot to the area by
 # itself, without the title screen or the file menu, so nothing is pressed until the world clock starts.

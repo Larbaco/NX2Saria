@@ -1,6 +1,6 @@
 """The player's game files, as far as the launcher reads them itself: finding a .nup dump, the game's Cetra
-Display font for the window (runtime/menu_assets.c reads the same font for the in-game menu's titles) and the game's
-interface sounds for the window's sound effects (runtime/menu_sound.c plays the same files in the in-game menu).
+Display font for the window (runtime/ui/menu_assets.c reads the same font for the in-game menu's titles) and the game's
+interface sounds for the window's sound effects (runtime/ui/menu_sound.c plays the same files in the in-game menu).
 
 They come from the built game's romfs/ (romfs.bin and index.json, tools/make_game.py) or, before the first
 build, straight from the .nup. They are decoded once into data/cache/fonts and data/cache/sounds, which stay on the

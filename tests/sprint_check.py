@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/sprint_check.c: the sprint button (runtime/sprint.c) against a stand-in Link, with the rest of
+"""Build and run tests/sprint_check.c: the sprint button (runtime/patches/sprint.c) against a stand-in Link, with the rest of
 the runtime stubbed. No game files: the module layout and patch page the runtime includes are stand-ins written to the
 test's build folder.
 

@@ -84,7 +84,7 @@ so the files can trail the game by a commit.
 ## Data and where it is in the fork
 
 Version 1.1.1, main at `0x7000000000`; `main+X` is guest (and host) address `0x7000000000 + X`. The fork's readers are
-in `runtime/debug_tools.c` and `runtime/frame_rate.c`; `tools/tracker_api_client.py` reads each row below through the
+in `runtime/diag/debug_tools.c` and `runtime/pacing/frame_rate.c`; `tools/tracker_api_client.py` reads each row below through the
 API and compares the two chains where there are two.
 
 | Data | How Atlas reads it | Where it is in NX2Saria | The port's own reader |
@@ -112,8 +112,8 @@ The hash `0x04735978` is Atlas's; the name behind it was not confirmed (MurmurHa
 | Change | Where |
 |---|---|
 | A TCP listener bound to `127.0.0.1` only, accepted connections with `TCP_NODELAY`, sends with a deadline, accept errors reported; which pages hold memory now (`mincore`, `QueryWorkingSetEx`) | `runtime/platform/platform.h`, `linux.c`, `win32.c` (`plat_tcp_*`, `plat_mem_resident`) |
-| The tracker API: listener and client threads, the JSON reader, `status`, `read_memory`, `search_memory`, `nx2saria.state`, limits, log lines | `runtime/tracker_api.c` (new), `runtime/host.h`, `runtime/main.c` (`tracker_api_init` beside `discord_init`) |
-| Settings `tracker_api` (0/1) and `tracker_api_port` (6545), restart-only, section `[tracker]` | `runtime/cfg.c` (`known[]`, `sections[]`, `metas[]`), `nx2saria.ini.example` |
+| The tracker API: listener and client threads, the JSON reader, `status`, `read_memory`, `search_memory`, `nx2saria.state`, limits, log lines | `runtime/diag/tracker_api.c` (new), `runtime/host.h`, `runtime/main.c` (`tracker_api_init` beside `discord_init`) |
+| Settings `tracker_api` (0/1) and `tracker_api_port` (6545), restart-only, section `[tracker]` | `runtime/cfg/cfg.c` (`known[]`, `sections[]`, `metas[]`), `nx2saria.ini.example` |
 | The stack and heap block from 64 GiB while the API is on; settings read before that block is placed | `runtime/memory.c` `mem_init` |
 | A check that builds the API with the real platform layer and a stand-in guest memory and talks to it as Atlas does | `tests/tracker_api_check.py`, `tests/tracker_api_check.c` |
 | The `tracker_api_on` stub for the two checks that build `memory.c` | `tests/heap_lazy_copy_check.c`, `tests/lazy_fetch_check.c` |
@@ -143,7 +143,7 @@ Not proposed: teaching the bridges NX2Saria. They would need a guest-to-host off
 
 **A mod or a runtime module?** A runtime module. A mod in the port's mod folder can bring RomFS files, ExeFS patches
 (`.ips` / `.pchtxt`, built into patch sets at the next start) and cheats, but no code of its own: a mod with code
-modules (`exefs/subsdk*`, a replaced main) is turned off, as the port has no module loader (`runtime/mods.h`
+modules (`exefs/subsdk*`, a replaced main) is turned off, as the port has no module loader (`runtime/patches/mods.h`
 `MOD_PLUGIN`). An ExeFS patch changes the game's instructions and cannot open a socket. So the API is part of the
 runtime, compiled in, and off until the player turns it on.
 
@@ -191,7 +191,7 @@ Design points:
 
 State: written, built only in its test harness, not run with the game.
 
-- `tests/tracker_api_check.py` passes on Linux: it builds `runtime/tracker_api.c` with the real
+- `tests/tracker_api_check.py` passes on Linux: it builds `runtime/diag/tracker_api.c` with the real
   `runtime/platform/linux.c`, places a stand-in guest memory at the game's addresses (main's window at `0x7000000000`
   with the `MOD0` header at `+0x3c4705c`, a heap at `0x1030000000` with a never-committed hole and an unreadable page)
   and host memory with a secret between the regions (answered by the stand-in memory map as readable, as
@@ -207,7 +207,7 @@ State: written, built only in its test harness, not run with the game.
   the memory map's taken ranges, heap pages allocated by searches, search answers later than Atlas's timeout, a web
   page holding the client places, JSON and log-line edge cases, a busy loop on accept errors) are fixed and tested
   above.
-- `runtime/platform/win32.c`, `runtime/tracker_api.c` and the two Windows-only checks pass a syntax check with clang
+- `runtime/platform/win32.c`, `runtime/diag/tracker_api.c` and the two Windows-only checks pass a syntax check with clang
   for `x86_64-w64-mingw32` (the only error is the existing one about `SetThreadDescription`, from this machine's
   older MinGW headers). The Windows check itself was not run.
 - `tools/check_platform.py`, `tests/check_platform_test.py`, `tests/cfg_rows_check.py`,

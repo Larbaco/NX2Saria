@@ -1,6 +1,6 @@
 # needs: clang
-"""Build and run tests/spv_store_check.c: runtime/spv_store.h, which keeps a shader's SPIR-V zstd-compressed while
-nobody reads it (runtime/gfx_shader.c "SPIR-V at rest"). The check walks one store through pin, pack, decode and idle
+"""Build and run tests/spv_store_check.c: runtime/gfx/spv_store.h, which keeps a shader's SPIR-V zstd-compressed while
+nobody reads it (runtime/gfx/gfx_shader.c "SPIR-V at rest"). The check walks one store through pin, pack, decode and idle
 again, and runs reader threads against a packer that compresses every store as soon as it is free: no reader may see
 other words than the original, and every pin must be given back. Linked with the platform layer and libzstd.
 

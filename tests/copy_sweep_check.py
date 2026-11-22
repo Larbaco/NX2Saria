@@ -1,5 +1,5 @@
 # needs: clang
-"""The count of recording copies whose control memory the game reused (runtime/nvn_api_cmd.c, NX2NAVI_COPY_RETIRE):
+"""The count of recording copies whose control memory the game reused (runtime/nvn/nvn_api_cmd.c, NX2NAVI_COPY_RETIRE):
 builds ctl_fingerprint, retire_visit, retire_queue and retire_pass, cut from nvn_api_cmd.c by their text, with a stub
 table of live copies and stub guest memory, and checks that
 
@@ -164,7 +164,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'nvn_api_cmd.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'nvn' / 'nvn_api_cmd.c').read_text(encoding='utf-8')
     body = cut(src, '// ---------- recording copies whose control memory the game reused', '\nstatic void retire_main(')
     sweep = cut(src, '\nstatic void retire_main(', '\n}\n')
     lowered = [p for p in ('PLAT_PRIO_IDLE', 'PLAT_PRIO_LOWEST', 'PLAT_PRIO_BELOW_NORMAL') if p in sweep]

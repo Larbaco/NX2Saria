@@ -1,4 +1,4 @@
-// runtime/vk_build_gate.h: the memory gate of the background pipeline builds (runtime/vk_pipeline.c gate_enter). Built
+// runtime/vk/vk_build_gate.h: the memory gate of the background pipeline builds (runtime/vk/vk_pipeline.c gate_enter). Built
 // and run by tests/build_gate_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 

@@ -1,6 +1,6 @@
 """The launcher's sound effects: two of the game's own interface sounds, the ones its menus make for a choice and for
 going back, read from the player's game (launcher/gamefiles.py extract_sounds decodes them into data/cache/sounds, as
-runtime/menu_sound.c plays them in the in-game menu). No sound ships with the launcher and none is made here: until
+runtime/ui/menu_sound.c plays them in the in-game menu). No sound ships with the launcher and none is made here: until
 the player's game has been read, and for a sound it does not hold, the launcher is silent.
 
 They play at Low until the player picks another loudness, or Off, in Customize Launcher (the Sounds row). An effect

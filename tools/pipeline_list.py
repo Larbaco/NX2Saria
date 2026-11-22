@@ -1,12 +1,12 @@
 """The shared pipeline list: graphics pipelines players met, for an install to build before play.
 
-A game folder records every graphics pipeline a run builds in pipeline-keys.bin (runtime/vk_pipeline.c "pipeline
+A game folder records every graphics pipeline a run builds in pipeline-keys.bin (runtime/vk/vk_pipeline.c "pipeline
 keys": the pipeline state with its shaders named by input id) and every shader variant in shader-answers.bin
-(runtime/gfx_shader.c "answers met in play": stage, code hash, input id, translator answers). The next start of that
+(runtime/gfx/gfx_shader.c "answers met in play": stage, code hash, input id, translator answers). The next start of that
 folder builds its recorded pipelines ahead of play; another install, or the same one after its caches were removed,
 meets each of them in play first. A mesh pipeline met that way is compiled then, 0.2 to 1.1 s with its draws left out
 of the picture: all of it where mesh pipelines have no stage libraries, and otherwise the library of its task and
-mesh stages, which is most of it and which only a pipeline record names (runtime/vk_pipeline.c "mesh pipelines' stage
+mesh stages, which is most of it and which only a pipeline record names (runtime/vk/vk_pipeline.c "mesh pipelines' stage
 libraries ahead of their draws").
 
 This tool folds the two files of any number of game folders into one list file; a list file made before can stand
@@ -16,7 +16,7 @@ other answers than the shader list's default one was translated in the middle of
 first dispatched it. tools/prepare_shaders.py reads the
 list beside the shared shader list: the shader variants it names go into the seed, so the preparation translates them,
 and its pipeline records go next to the game as seed-pipeline-keys.bin, which every start of the game counts as
-recorded pipelines beside its own (runtime/vk_pipeline.c keys_open_seed), so a new install builds them before play,
+recorded pipelines beside its own (runtime/vk/vk_pipeline.c keys_open_seed), so a new install builds them before play,
 and which `nx2saria.exe --prepare-shaders` (and
 `--prepare-pipelines` on a folder that is prepared already) builds once into the pipeline cache and the graphics
 driver's own.
@@ -49,7 +49,7 @@ VERSION = 1
 ANS_MAGIC, ANS_REC = b'NX2NSANS', 4 + 32 + 32 + 147 + 1   # gfx_shader.c: stage, code hash, input id, answers, pad
 KEYS_MAGIC = b'NX2NPKEY'
 ID = 32
-STAGE_NAMES = {0: 'vertex', 4: 'fragment', 5: 'compute', 6: 'task', 7: 'mesh'}   # runtime/gfx.h GFX_STAGE_*
+STAGE_NAMES = {0: 'vertex', 4: 'fragment', 5: 'compute', 6: 'task', 7: 'mesh'}   # runtime/gfx/gfx.h GFX_STAGE_*
 STAGE_COMPUTE, STAGE_MESH = 5, 7
 
 

@@ -1,4 +1,4 @@
-// runtime/vk_play_gate.h: when the background pipeline builds rest in play (runtime/vk_pipeline.c play_rest) and what
+// runtime/vk/vk_play_gate.h: when the background pipeline builds rest in play (runtime/vk/vk_pipeline.c play_rest) and what
 // the log's line counts. Built and run by tests/play_gate_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 

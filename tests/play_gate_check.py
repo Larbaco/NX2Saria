@@ -1,6 +1,6 @@
 # needs: clang
-"""Build and run tests/play_gate_check.c: runtime/vk_play_gate.h, the play gate of the background pipeline builds
-(runtime/vk_pipeline.c play_rest): they rest while the frame shown in play has bg_build_play_draws draws or more and
+"""Build and run tests/play_gate_check.c: runtime/vk/vk_play_gate.h, the play gate of the background pipeline builds
+(runtime/vk/vk_pipeline.c play_rest): they rest while the frame shown in play has bg_build_play_draws draws or more and
 was shown within half a second, never in a light moment (an area load, the boot screen's warm, a preparation) or with
 the setting at 0; and what the log's line "background builds paused in play: N frames, M builds deferred" counts.
 

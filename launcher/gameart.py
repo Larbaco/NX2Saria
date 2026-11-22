@@ -5,10 +5,10 @@
     portrait    that frame with the logo over it, 600 x 900 (the library's cover)
     wide        the same at 920 x 430 (the library's wide tile)
 
-The textures come from the interface archive UI/Layout2Archive/Title...bntx.zs as runtime/menu_assets.c reads them:
+The textures come from the interface archive UI/Layout2Archive/Title...bntx.zs as runtime/ui/menu_assets.c reads them:
 a BNTX's BRTI records give format, size, block height and data; the level is block linear in the Switch 2 GOB layout
-(runtime/tex_deswizzle.c tex_bl_copy); BC4 masks become white with the mask as alpha; ASTC 4x4 goes through the
-runtime's own decoder, runtime/tex_astc.c, built here into a library with the toolchain's clang (the launcher builds
+(runtime/gfx/tex_deswizzle.c tex_bl_copy); BC4 masks become white with the mask as alpha; ASTC 4x4 goes through the
+runtime's own decoder, runtime/gfx/tex_astc.c, built here into a library with the toolchain's clang (the launcher builds
 the game with it, so it is on every PC that has a game to add). The movie is WebM with AV1 video: the frames from the
 key frame before TITLE_AT up to it go into an IVF file for the toolchain's dav1d.exe, whose last picture (8-bit 4:2:0,
 limited range BT.709) becomes the background. Every picture is written as PNG with art.png_bytes; nothing here needs
@@ -62,7 +62,7 @@ def bntx_textures(b):
 
 
 def deswizzle(t, b, row, rows):
-    """The first level as tightly packed rows of `row` bytes (runtime/tex_deswizzle.c tex_bl_copy)."""
+    """The first level as tightly packed rows of `row` bytes (runtime/gfx/tex_deswizzle.c tex_bl_copy)."""
     th = t['th']
     gobs, unit, block = (row + 63) // 64, 8 << th, 512 << th
     need = gobs * ((rows + unit - 1) // unit) * block
@@ -79,7 +79,7 @@ def deswizzle(t, b, row, rows):
 
 
 def bc4(lin, wb, hb, w, h):
-    """White with the mask as alpha (runtime/menu_assets.c bc4_decode)."""
+    """White with the mask as alpha (runtime/ui/menu_assets.c bc4_decode)."""
     blocks = lin.reshape(hb, wb, 8).astype(np.uint32)
     a, b = blocks[..., 0], blocks[..., 1]
     pal = np.zeros((hb, wb, 8), dtype=np.uint32)
@@ -104,11 +104,11 @@ def bc4(lin, wb, hb, w, h):
 
 
 def astc_library(layout):
-    """runtime/tex_astc.c of this release as a library in data/cache, built once per source with the toolchain."""
-    src = layout.app / 'runtime' / 'tex_astc.c'
+    """runtime/gfx/tex_astc.c of this release as a library in data/cache, built once per source with the toolchain."""
+    src = layout.app / 'runtime' / 'gfx' / 'tex_astc.c'
     if not src.is_file():
         raise ArtError(f'{src} is missing')
-    tag = hashlib.sha256(src.read_bytes() + (layout.app / 'runtime' / 'tex.h').read_bytes()).hexdigest()[:12]
+    tag = hashlib.sha256(src.read_bytes() + (layout.app / 'runtime' / 'gfx' / 'tex.h').read_bytes()).hexdigest()[:12]
     import sys
     if sys.platform.startswith('linux'):
         library = layout.cache / f'astc-{tag}.so'

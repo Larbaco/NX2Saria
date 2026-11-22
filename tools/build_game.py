@@ -20,7 +20,7 @@ expected SHA-256 of each ExeFS file (tools/data/expected-<display version>.json)
 (--exefs, --romfs, --profile), which nx2saria.exe uses unless its own command line names others. --exefs and --romfs
 default to extracted/<version> in the work folder: the [work] dir of config.local.toml, where tools/extract.py writes
 them, else build/. tools/romfs_index.py writes build/<version>/romfs-index.bin and romfs_config.h from the RomFS
-directory's index.json (runtime/romfs.c reads the index next to nx2saria.exe). Without that index.json the build stops:
+directory's index.json (runtime/hle/romfs.c reads the index next to nx2saria.exe). Without that index.json the build stops:
 the exe would stop at start. --no-romfs builds it anyway.
 
 Private builds reuse the main build's objects. When --out differs from build/<version>, the main build's generated
@@ -322,7 +322,7 @@ def write_if_changed(path, text):
 
 
 def copy_romfs_patches(version, out):
-    """nx2saria.exe loads romfs-patches beside romfs-index.bin (runtime/romfs.c overlay_init). tools/make_romfs_patches.py
+    """nx2saria.exe loads romfs-patches beside romfs-index.bin (runtime/hle/romfs.c overlay_init). tools/make_romfs_patches.py
     writes them into build/<version> only, so a build in another directory ran without the 60 fps overlay (the quick
     menus' captured background turned black). Copies them when their manifest differs; romfs-patches-xbox,
     romfs-patches-xbox-label and romfs-patches-pc (the same with Xbox or keyboard and mouse button prompts,

@@ -12,7 +12,7 @@ from patches import load  # noqa: E402
 
 
 def main():
-    source = (ROOT / 'runtime/debug_tools.c').read_text()
+    source = (ROOT / 'runtime/diag/debug_tools.c').read_text()
     assert 'atomic_fetch_or_explicit(&fov_diagnostics, reason' in source
     assert 'if (fov_first(reason)) rt_log("fov: left lens alone: %s", text);' in source
     assert 'atomic_flag_test_and_set_explicit(&fov_hook_logged' in source
@@ -20,7 +20,7 @@ def main():
     assert '!memcmp(name, "EventCamera", 11)' in source
     assert 'Camera zero\'s bit 0 at +0x88 stayed set in gameplay' in source
     assert 'FOV_MESSAGE_LOG' not in source
-    resolution = (ROOT / 'runtime/resolution.c').read_text()
+    resolution = (ROOT / 'runtime/gfx/resolution.c').read_text()
     assert 'excludes non-player cameras, pause/map/system menus, active events and first-person aiming' in resolution
     assert 'message log' not in resolution.lower()
     for reason in (

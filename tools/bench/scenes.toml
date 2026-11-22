@@ -2,7 +2,7 @@
 #
 # Per scene:
 #   dbg        NX2SARIA_DBG_TEST steps as [when, step]; when "@<ms>" is game time since the save loaded
-#              (runtime/debug_tools.c test_script): warp <area> <start position>, freecam <on> <sticks> <metres a
+#              (runtime/diag/debug_tools.c test_script): warp <area> <start position>, freecam <on> <sticks> <metres a
 #              second>, camavoid <0|1> (keep the free camera a metre above the ground), event <name>
 #   moves      stick lines on the input script, as [seconds after the warm-up, stick, x, y, seconds held]. With the
 #              free camera on, LSTICK y flies it ahead and RSTICK x turns it (2.4 radians a second at full tilt)

@@ -1,4 +1,4 @@
-"""A save file's handle and a CloseFile on another thread (runtime/fs_host.c file_of, file_release, close_file): a
+"""A save file's handle and a CloseFile on another thread (runtime/hle/fs_host.c file_of, file_release, close_file): a
 call under way keeps its host file open, the close happens once when the last call is out, the guest's handle value
 is not handed out again before that, and a call after the close gets FS_R_INVALID_ARGUMENT. A call with no close
 pending takes no exclusive lock, so it ends while another thread holds the lock shared (a Commit's fsync loop). The
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
-source = (ROOT / 'runtime' / 'fs_host.c').read_text(encoding='utf-8')
+source = (ROOT / 'runtime' / 'hle' / 'fs_host.c').read_text(encoding='utf-8')
 
 
 def compiler():

@@ -114,16 +114,16 @@ def main():
     (kit / 'bin').mkdir()
     for n in ('nx2navi_xlate.exe', 'nx2navi_xlate.id'):
         shutil.copy2(a.xlate / n, kit / 'bin' / n)
-    if a.ffx:   # FSR 3.1 loads it from beside the game (runtime/vk_ffx.cpp); its licence is runtime/third_party/ffx_api
+    if a.ffx:   # FSR 3.1 loads it from beside the game (runtime/vk/vk_ffx.cpp); its licence is runtime/third_party/ffx_api
         shutil.copy2(a.ffx, kit / 'bin' / 'amd_fidelityfx_vk.dll')
-    if a.ffx4:   # FSR 4 loads them from beside the game (runtime/vk_ffx4.cpp); their licence is runtime/third_party/ffx_sdk
+    if a.ffx4:   # FSR 4 loads them from beside the game (runtime/vk/vk_ffx4.cpp); their licence is runtime/third_party/ffx_sdk
         for n in ('amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_upscaler_vk.dll'):
             shutil.copy2(a.ffx4 / n, kit / 'bin' / n)
-        if (a.ffx4 / 'amd_fidelityfx_framegeneration_vk.dll').is_file():   # its frame generation (runtime/vk_fg4.cpp)
+        if (a.ffx4 / 'amd_fidelityfx_framegeneration_vk.dll').is_file():   # its frame generation (runtime/vk/vk_fg4.cpp)
             shutil.copy2(a.ffx4 / 'amd_fidelityfx_framegeneration_vk.dll', kit / 'bin' / 'amd_fidelityfx_framegeneration_vk.dll')
-    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk_dlaa.c); make_game.py copies it there
+    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk/vk_dlaa.c); make_game.py copies it there
         dlss_pin.place(dlss, kit / 'bin')
-    if sdk:   # DLSS Frame Generation (runtime/vk_dlssg.c): make_game.py place_dlssg copies it beside the game
+    if sdk:   # DLSS Frame Generation (runtime/vk/vk_dlssg.c): make_game.py place_dlssg copies it beside the game
         streamline_pin.place(a.dlssg, sdk, kit / 'bin' / 'dlssg')
     if a.prompt_art:   # make_game.py draws the button prompts from it (its prompts step)
         n, size = prompt_art.copy_art(a.prompt_art, kit / prompt_art.FOLDER)

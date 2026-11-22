@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/census_charge_check.c: runtime/perf_census.h, which charges the part of a frame that an
+"""Build and run tests/census_charge_check.c: runtime/diag/perf_census.h, which charges the part of a frame that an
 address-space walk of NX2NAVI_MEM_CENSUS overlapped to the frame's census part (perf.c ft_frame): from the replay part
 first, then from the unattributed part, never more than the overlap and never past the frame.
 

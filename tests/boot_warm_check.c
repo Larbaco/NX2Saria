@@ -1,4 +1,4 @@
-// runtime/boot_warm.h: whether a start does the whole warm on the boot screen (runtime/vk_pipeline.c bf_decide).
+// runtime/vk/boot_warm.h: whether a start does the whole warm on the boot screen (runtime/vk/vk_pipeline.c bf_decide).
 // Built and run by tests/boot_warm_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 

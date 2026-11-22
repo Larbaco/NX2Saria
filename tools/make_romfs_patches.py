@@ -1,5 +1,5 @@
 # Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-"""Build the 60 fps RomFS overlay for NX2Saria 1.1.0, 1.2.1 or 1.4.3 (runtime/romfs.c, NX2NAVI_ROMFS_PATCHES).
+"""Build the 60 fps RomFS overlay for NX2Saria 1.1.0, 1.2.1 or 1.4.3 (runtime/hle/romfs.c, NX2NAVI_ROMFS_PATCHES).
 
 UI/LayoutArchive/Common.Product.<110 or 140>.Nin_NX_NVN.blarc.zs: the weapon / shield / material quick menus capture the game
 picture for their background when the panes C_CaptureBG_00, C_CaptureClearBG_00 and P_CaptureClearBG_00 become
@@ -11,11 +11,11 @@ captured at once (the weapon, shield, material and ability wheels were checked a
 --aspect <w>x<h> (a game resolution of another shape than 16:9, such as 3440x1440 or 1280x800) also lays the UI out
 for that shape (tools/ultrawide_layout.py): menus keep their 16:9 proportions in the middle, full-screen backgrounds
 cover the screen and the HUD moves to the screen's corners (wider) or its top and bottom edges (narrower). nx2saria.exe
-loads that overlay from romfs-patches-<w>x<h> when the game resolution is that size (runtime/romfs.c overlay_init);
+loads that overlay from romfs-patches-<w>x<h> when the game resolution is that size (runtime/hle/romfs.c overlay_init);
 the camera's side of it is the patch set aspect (recomp/patches-v121.txt, patches-v143.txt).
 
 --prompts xbox | xbox-label: the same overlay with Xbox button icons in the game's prompts, for prompts = xbox
-(runtime/romfs.c overlay_init loads romfs-patches-xbox or romfs-patches-xbox-label in place of romfs-patches). Drawn
+(runtime/hle/romfs.c overlay_init loads romfs-patches-xbox or romfs-patches-xbox-label in place of romfs-patches). Drawn
 from the game's own files on the player's machine, nothing added (tools/button_icons.py, which needs fontTools):
 - both: L, R, ZL, ZR, Plus, Minus and the d-pad become LB, RB, LT, RT, Menu, View and a cross in the button font
   (scft/External.bfotf, the same font in each Font/Font*.Nin_NX_NVN.bfarc.zs), and L and ZL in the button guide's images

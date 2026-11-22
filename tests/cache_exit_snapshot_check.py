@@ -1,6 +1,6 @@
 # needs: windows, clang
 """Windows: the pipeline cache save at exit holds new builds back, waits for the running ones, and copies the cache only
-while no build runs; the autosave never holds a build back. Builds runtime/vk_pipeline.c's cache_build_enter and
+while no build runs; the autosave never holds a build back. Builds runtime/vk/vk_pipeline.c's cache_build_enter and
 cache_save_one into a test program against stand-ins for the driver and the file system.
 Usage: python tests/cache_exit_snapshot_check.py [path to clang]"""
 from pathlib import Path
@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
-source = (root / 'runtime/vk_pipeline.c').read_text()
+source = (root / 'runtime/vk/vk_pipeline.c').read_text()
 
 
 def function(signature):

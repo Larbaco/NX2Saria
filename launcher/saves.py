@@ -1,8 +1,8 @@
 """Importing a save into the built game, and the saves folder of the game folder.
 
-The game keeps its save in <game>/profile/save/<account>/ (runtime/fs_host.c storage_init). The folder is named after
+The game keeps its save in <game>/profile/save/<account>/ (runtime/hle/fs_host.c storage_init). The folder is named after
 the local account in <game>/profile/account.uid: 16 bytes, two little-endian 64-bit halves, the low one first; the
-name is the high half then the low half, 16 hex digits each (runtime/ov_system.c load_uid). A game that never ran has
+name is the high half then the low half, 16 hex digits each (runtime/hle/ov_system.c load_uid). A game that never ran has
 no account yet; the import makes one as the game would. Saves are committed through <game>/profile/save-tx/, where
 a finished commit (ready-<n>) is newer than save/<account>: an import clears that folder, so the game loads the
 imported save.
@@ -208,7 +208,7 @@ def _ready(tx):
 
 
 def _newest(game, account):
-    """The folder the game would load now, in the order of runtime/fs_host.c save_recover: a finished commit still
+    """The folder the game would load now, in the order of runtime/hle/fs_host.c save_recover: a finished commit still
     waiting in save-tx, else the account folder, else an interrupted commit's new save, else the save it replaced."""
     tx = Path(game) / 'profile' / 'save-tx'
     for d in (_ready(tx), account, tx / 'new', tx / 'old'):
@@ -229,7 +229,7 @@ RUNNING = 'the game is running: quit it first, it keeps its save open while it r
 @contextlib.contextmanager
 def profile_lock(game):
     """The game's own lock on its profile, held while the save is replaced. The game takes
-    <game>/profile/instance.lock when it starts and keeps it until it ends (runtime/fs_host.c fs_host_lock_profile):
+    <game>/profile/instance.lock when it starts and keeps it until it ends (runtime/hle/fs_host.c fs_host_lock_profile):
     on Windows by opening the file without sharing, elsewhere with flock. Taken here the same way, it says for
     certain whether the game runs (SaveError when it does), and a game started while it is held ends at once with
     its "another copy is running" message instead of mounting a save that is half replaced. game_running() alone,
@@ -283,7 +283,7 @@ def profile_lock(game):
 
 def pending_import(game):
     """The save the game's menu took from a shared zip and left in <game>/profile/save-import for its next start
-    (runtime/fs_host.c import_pending), or None."""
+    (runtime/hle/fs_host.c import_pending), or None."""
     p = Path(game) / 'profile' / PENDING
     return p if p.is_dir() else None
 
@@ -419,7 +419,7 @@ def _replace_held(game, src, files, slot, stamp, log):
 #   manifest.json         FORMAT, FORMAT_VERSION, the game's title id and version, the NX2Saria version, the export time
 #   save/...              the save's files as the game keeps them (account.sav, option.sav, slot_00/progress.sav, ...)
 #   bug-report/...        with bug_report: the game's latest log and nx2navi.ini; an import leaves them out
-# The game's own menu writes and reads the same zip (runtime/save_share.c), with the same manifest keys.
+# The game's own menu writes and reads the same zip (runtime/hle/save_share.c), with the same manifest keys.
 
 FORMAT, FORMAT_VERSION = 'nx2navi-save', 1
 MANIFEST, SAVE_DIR, REPORT_DIR = 'manifest.json', 'save/', 'bug-report/'
@@ -460,7 +460,7 @@ def _fresh_file(folder, stem, suffix):
 NO_SAVE = 'the game has no save yet: play until it saves, then export'
 
 
-# Settings whose values stay on the player's PC (runtime/cfg_private.h has the same list): the menu's test hook, and
+# Settings whose values stay on the player's PC (runtime/cfg/cfg_private.h has the same list): the menu's test hook, and
 # what the co-op of versions up to 0.9.2 kept in the settings file, which a player's file may still hold.
 PRIVATE_SETTINGS = ('coop_room', 'coop_server', 'coop_name', 'coop_accept', 'coop_remove', 'menu_test_set')
 PRIVATE_SHOWN = b'(set, not shown)'
@@ -469,7 +469,7 @@ PRIVATE_SHOWN = b'(set, not shown)'
 def scrub_settings(data):
     """The bytes of an nx2navi.ini for a bug report: every private setting that has a value reads
     "key = (set, not shown)"; everything else, comments and line ends included, byte for byte (cfg_ini_scrub in
-    runtime/cfg_private.h does the same for the game's own export)."""
+    runtime/cfg/cfg_private.h does the same for the game's own export)."""
     out = []
     for n, line in enumerate(data.split(b'\n')):
         text = line[:-1] if line.endswith(b'\r') else line
@@ -557,7 +557,7 @@ def export_save(game, dest=None, bug_report=False, version='', log=print):
     stem = time.strftime('NX2Saria-save-%Y-%m-%d_%H-%M-%S') + ('-bug-report' if bug_report else '')
     extras = _report_files(game) if bug_report else []
     for attempt in range(3):
-        # a running game may swap a commit in while its files are read (runtime/fs_host.c swap_in): read again
+        # a running game may swap a commit in while its files are read (runtime/hle/fs_host.c swap_in): read again
         current = _newest(game, account)
         if current is None or not _has_file(current):
             if bug_report:

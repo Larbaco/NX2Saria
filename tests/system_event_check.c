@@ -1,4 +1,4 @@
-// runtime/kernel.c: the system-event table (kern_bind_system_event, kern_signal_system_event, kern_clear_system_event)
+// runtime/hle/kernel.c: the system-event table (kern_bind_system_event, kern_signal_system_event, kern_clear_system_event)
 // with the platform layer linked and the rest of the runtime stubbed. Built and run by tests/system_event_check.py;
 // prints each failed check and exits 1 on any.
 //   (no argument)  a kept handle the guest closed (DestroySystemEvent) is neither signalled nor cleared, also when its

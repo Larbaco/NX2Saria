@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/flight_flash_check.c: runtime/flight_flash.h, which frames the flight recorder takes for a
+"""Build and run tests/flight_flash_check.c: runtime/diag/flight_flash.h, which frames the flight recorder takes for a
 one-frame flash (a flash, a camera cut, steady motion, frames whose neighbours have no thumbnail).
 
 No GPU, no game files, any Python. Built as the runtime is (-O2, x86-64-v3 on x86-64), so the "time" run measures what

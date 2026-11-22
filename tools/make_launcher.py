@@ -242,16 +242,16 @@ def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, d
     (app / 'bin').mkdir()
     for n in ('nx2navi_xlate.exe', 'nx2navi_xlate.id'):   # main checked them first (check_xlate)
         shutil.copy2(xlate / n, app / 'bin' / n)
-    if ffx:   # FSR 3.1 loads it from beside the game (runtime/vk_ffx.cpp); make_game.py copies it there
+    if ffx:   # FSR 3.1 loads it from beside the game (runtime/vk/vk_ffx.cpp); make_game.py copies it there
         shutil.copy2(ffx, app / 'bin' / 'amd_fidelityfx_vk.dll')
-    if ffx4:   # FSR 4 loads them from beside the game (runtime/vk_ffx4.cpp); make_game.py copies them there
+    if ffx4:   # FSR 4 loads them from beside the game (runtime/vk/vk_ffx4.cpp); make_game.py copies them there
         for n in ('amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_upscaler_vk.dll'):
             shutil.copy2(ffx4 / n, app / 'bin' / n)
-        if (ffx4 / 'amd_fidelityfx_framegeneration_vk.dll').is_file():   # its frame generation (runtime/vk_fg4.cpp)
+        if (ffx4 / 'amd_fidelityfx_framegeneration_vk.dll').is_file():   # its frame generation (runtime/vk/vk_fg4.cpp)
             shutil.copy2(ffx4 / 'amd_fidelityfx_framegeneration_vk.dll', app / 'bin' / 'amd_fidelityfx_framegeneration_vk.dll')
-    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk_dlaa.c); make_game.py copies it there
+    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk/vk_dlaa.c); make_game.py copies it there
         dlss_pin.place(dlss, app / 'bin')
-    if dlssg:   # DLSS Frame Generation (runtime/vk_dlssg.c): make_game.py place_dlssg copies it beside the game
+    if dlssg:   # DLSS Frame Generation (runtime/vk/vk_dlssg.c): make_game.py place_dlssg copies it beside the game
         streamline_pin.place(dlssg[0], dlssg[1], app / 'bin' / 'dlssg')
     if art:   # make_game.py draws the button prompts from it (its prompts step)
         n, size = prompt_art.copy_art(art, app / prompt_art.FOLDER)

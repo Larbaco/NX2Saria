@@ -19,7 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "../runtime/vk_memory.c"
+#include "../runtime/vk/vk_memory.c"
 
 // A sanitizer report ends the child with 66, a wrong state with 1.
 const char *__asan_default_options(void) { return "exitcode=66"; }

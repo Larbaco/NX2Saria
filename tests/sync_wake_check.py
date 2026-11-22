@@ -1,6 +1,6 @@
 # needs: clang
 """Build and run tests/sync_wake_check.c: which WaitSynchronization waits a signalled event or an ended thread wakes
-(runtime/kernel.c wake_sync_waiters), with the platform layer linked and the rest of the runtime stubbed. No game files:
+(runtime/hle/kernel.c wake_sync_waiters), with the platform layer linked and the rest of the runtime stubbed. No game files:
 the module layout the runtime includes is a stand-in written to the test's build folder.
 
 Usage: sync_wake_check.py

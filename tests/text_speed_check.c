@@ -1,4 +1,4 @@
-// The text_speed setting (runtime/text_speed.c) and the patch set text_speed's lifted replacement words against a
+// The text_speed setting (runtime/patches/text_speed.c) and the patch set text_speed's lifted replacement words against a
 // stand-in message window and typewriter: what each setting puts on the patch page and how it switches the set; the
 // skip site's typewriter word and decide bit, for a message the window lets the player skip and one it does not; the
 // speed site's scaled speed for the window's typewriter and for any other; and that both sites change nothing else.

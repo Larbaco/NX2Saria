@@ -1,4 +1,4 @@
-// runtime/dlssg_pace.h, who holds the frame limit with DLSS Frame Generation (vk_dlssg.c vk_dlssg_pace), driven with
+// runtime/pacing/dlssg_pace.h, who holds the frame limit with DLSS Frame Generation (vk_dlssg.c vk_dlssg_pace), driven with
 // made-up present times: when Reflex holds it and the pacer keeps only its ceiling, the cases the pacer keeps it
 // (no host present yet or for 200 ms, a movie, the setting off, a limit Streamline has yet to take), and the checks
 // over windows of presents: frames that come too soon give the limit to the pacer for the run, frames the multiplier

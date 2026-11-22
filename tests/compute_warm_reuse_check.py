@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
-source = (root / 'runtime/vk_pipeline.c').read_text()
+source = (root / 'runtime/vk/vk_pipeline.c').read_text()
 start = source.index('typedef struct {\n    uint8_t code[32];\n    VkPipelineLayout layout;')
 end = source.index('// The layout of a compute shader in *B;', start)
 production = source[start:end]

@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../runtime/vk_usnap.c"
+#include "../runtime/vk/vk_usnap.c"
 
 static pthread_mutex_t test_drop_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_barrier_t start;

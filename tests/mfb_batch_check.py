@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/mfb_batch_check.c: runtime/mfb_batch.h, the rule of the mesh fallback's batch (vk_exec_draw.c
+"""Build and run tests/mfb_batch_check.c: runtime/gfx/mfb_batch.h, the rule of the mesh fallback's batch (vk_exec_draw.c
 mfb_draw, NX2SARIA_MESH_FALLBACK_BATCH): which draws are batched and which go one by one (the way back), the parts of the
 buffers they take, and a program's history.
 

@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/mesh_fb_hold_check.c: runtime/mesh_fb_hold.h, the table behind the mesh fallback's depth hold
+"""Build and run tests/mesh_fb_hold_check.c: runtime/gfx/mesh_fb_hold.h, the table behind the mesh fallback's depth hold
 (vk_exec_draw.c): a list whose colour draw waits for its pipeline holds its depth-only draw, and for how long.
 
 No GPU, no game files, any Python.

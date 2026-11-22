@@ -30,7 +30,7 @@ def main():
     (work / 'layout.h').write_text(f'#define MOD_MAIN_BASE {MAIN:#x}ull\n')
     executable = work / ('animation_loop_check.exe' if os.name == 'nt' else 'animation_loop_check')
     subprocess.check_call([compiler(), '-O1', '-fno-strict-aliasing', '-I', str(work), '-I', str(ROOT / 'runtime'),
-                           str(ROOT / 'tests/animation_loop_check.c'), str(ROOT / 'runtime/animation_loop.c'),
+                           str(ROOT / 'tests/animation_loop_check.c'), str(ROOT / 'runtime/patches/animation_loop.c'),
                            '-o', str(executable), '-lm'])
     return subprocess.run([str(executable)]).returncode
 

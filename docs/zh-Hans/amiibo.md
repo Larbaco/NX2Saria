@@ -8,7 +8,7 @@
 <!-- /languages -->
 # amiibo
 
-本移植版没有自己的 NFC 读取器：当游戏请求 amiibo 时，它会把一个 amiibo 转储文件放到模拟的读取器上。游戏发出的每个 `nn::nfp` 调用都由运行时（`runtime/ov_system.c`、`runtime/amiibo.c`）应答。你需要自己的手办的自己的转储：一个 540 字节的 NTAG215 映像，格式为 `.bin` 或 `.nfc`。
+本移植版没有自己的 NFC 读取器：当游戏请求 amiibo 时，它会把一个 amiibo 转储文件放到模拟的读取器上。游戏发出的每个 `nn::nfp` 调用都由运行时（`runtime/hle/ov_system.c`、`runtime/hle/amiibo.c`）应答。你需要自己的手办的自己的转储：一个 540 字节的 NTAG215 映像，格式为 `.bin` 或 `.nfc`。
 
 ## 选择 amiibo
 

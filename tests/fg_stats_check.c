@@ -1,4 +1,4 @@
-// runtime/vk_fg_stats.h: how frame generation's log line sorts the game's frames (gameplay, the menu, no scene) and
+// runtime/vk/vk_fg_stats.h: how frame generation's log line sorts the game's frames (gameplay, the menu, no scene) and
 // when it writes one. Built and run by tests/fg_stats_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>

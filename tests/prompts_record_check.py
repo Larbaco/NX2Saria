@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/prompts_record_check.c with runtime/input_map.c: the game folder's record of where its button
+"""Build and run tests/prompts_record_check.c with runtime/input/input_map.c: the game folder's record of where its button
 prompts came from (button-prompts.txt), which the game's log repeats. No game files.
 
 Usage: python tests/prompts_record_check.py [--cc <clang>]
@@ -33,7 +33,7 @@ def main():
         subprocess.check_call([cc, '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                                '-Wno-bitwise-instead-of-logical', '-fno-strict-aliasing', *sanitize,
                                '-I', str(ROOT / 'runtime'), str(ROOT / 'tests' / 'prompts_record_check.c'),
-                               str(ROOT / 'runtime' / 'input_map.c'), *([] if win else ['-lm']), '-o', str(exe)],
+                               str(ROOT / 'runtime' / 'input' / 'input_map.c'), *([] if win else ['-lm']), '-o', str(exe)],
                               env=env)
         return subprocess.run([str(exe), str(game)], env=env).returncode
 

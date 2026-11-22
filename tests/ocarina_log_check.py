@@ -1,5 +1,5 @@
 # needs: clang
-"""Build runtime/frame_rate.c's ocarina log (ocarina_log_init, ocarina_watch, ocarina_end, cut out of the file) with
+"""Build runtime/pacing/frame_rate.c's ocarina log (ocarina_log_init, ocarina_watch, ocarina_end, cut out of the file) with
 stand-ins for the patch sets, the patch page and the log, and play it the page words the sets orecord (+264) and ostaff
 (+776) write: a stretch of ocarina use gives one line after two quiet seconds, with its presents, the presents the
 recorder clock moved on and the notes the staff moved (rises of its signal), and nothing comes while neither word
@@ -91,9 +91,9 @@ def compiler():
 
 def cut():
     """frame_rate.c from the ocarina log's first #define to the end of ocarina_watch."""
-    src = (ROOT / 'runtime' / 'frame_rate.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'pacing' / 'frame_rate.c').read_text(encoding='utf-8')
     m = re.search(r'#define OCARINA_QUIET_NS .*?\nstatic void ocarina_watch\(uint64_t now_ns\) \{\n.*?\n\}\n', src, re.S)
-    assert m, 'runtime/frame_rate.c: the ocarina log (OCARINA_QUIET_NS ... ocarina_watch) was not found'
+    assert m, 'runtime/pacing/frame_rate.c: the ocarina log (OCARINA_QUIET_NS ... ocarina_watch) was not found'
     return m.group(0)
 
 
@@ -101,7 +101,7 @@ def main():
     work = ROOT / 'build' / 'test' / 'ocarina_log'
     work.mkdir(parents=True, exist_ok=True)
     c = work / 'ocarina_log_check.c'
-    c.write_text('// Made by tests/ocarina_log_check.py from runtime/frame_rate.c.\n' + HARNESS % cut(), encoding='utf-8')
+    c.write_text('// Made by tests/ocarina_log_check.py from runtime/pacing/frame_rate.c.\n' + HARNESS % cut(), encoding='utf-8')
     exe = work / ('ocarina_log_check.exe' if os.name == 'nt' else 'ocarina_log_check')
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():

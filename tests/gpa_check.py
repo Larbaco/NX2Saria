@@ -1,5 +1,5 @@
 # needs: clang, vma
-"""Build and run tests/gpa_check.c: runtime/vk_gpa.c's device address table, with blocks given back and taken again.
+"""Build and run tests/gpa_check.c: runtime/vk/vk_gpa.c's device address table, with blocks given back and taken again.
 
 Needs the Vulkan headers and vk_mem_alloc.h (docs/building.md), no GPU and no game files.
 
@@ -40,7 +40,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
                            '-I', str(vma_include()), str(ROOT / 'tests' / 'gpa_check.c'),
-                           str(ROOT / 'runtime' / 'vk_gpa.c'), '-o', str(exe)], env=env)
+                           str(ROOT / 'runtime' / 'vk' / 'vk_gpa.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 
 

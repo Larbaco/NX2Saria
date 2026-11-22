@@ -1,6 +1,6 @@
 # needs: clang, py:numpy, py:lz4
 """Check the neighbouring map's hold: the patch set changebank_hold (recomp/patches-v111.txt) and
-runtime/changebank_hold.c.
+runtime/patches/changebank_hold.c.
 
 The set's one site, lifted by recomp/lifter.py as the generator lifts it: main+0x3299d28, the loop's add x10, keeps
 the add and then calls the patch page's +0xe30. The generator's own check of a patched site (gen.py
@@ -73,7 +73,7 @@ def check_site():
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (SLOT, SLOT),
                                 p.read_text(encoding='utf-8', errors='replace'), re.I))
     assert users == [], users   # changebank_hold.c names it through HOST_SLOT
-    assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'changebank_hold.c').read_text(encoding='utf-8')
+    assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'patches' / 'changebank_hold.c').read_text(encoding='utf-8')
     print('changebank_hold_check: main+0x3299d28 keeps its add and calls the page\'s +0xe30, the generator takes the site, '
           'x10 and w15 are in the Cpu around the call; no other set or host function uses that slot', flush=True)
 

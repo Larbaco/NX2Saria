@@ -8,7 +8,7 @@
 <!-- /languages -->
 # Amiibo
 
-O port não tem um leitor NFC próprio: ele coloca um arquivo de dump de amiibo em um leitor emulado quando o jogo pede um amiibo. Toda chamada `nn::nfp` que o jogo faz é respondida pelo runtime (`runtime/ov_system.c`, `runtime/amiibo.c`). Você precisa do seu próprio dump da sua própria figura: uma imagem NTAG215 de 540 bytes, como `.bin` ou `.nfc`.
+O port não tem um leitor NFC próprio: ele coloca um arquivo de dump de amiibo em um leitor emulado quando o jogo pede um amiibo. Toda chamada `nn::nfp` que o jogo faz é respondida pelo runtime (`runtime/hle/ov_system.c`, `runtime/hle/amiibo.c`). Você precisa do seu próprio dump da sua própria figura: uma imagem NTAG215 de 540 bytes, como `.bin` ou `.nfc`.
 
 ## Escolher um amiibo
 

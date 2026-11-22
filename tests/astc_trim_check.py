@@ -1,5 +1,5 @@
 # needs: windows
-"""Build and run tests/astc_trim_check.c: runtime/vk_astc.c vk_astc_scratch_trim, which every present runs, against the
+"""Build and run tests/astc_trim_check.c: runtime/vk/vk_astc.c vk_astc_scratch_trim, which every present runs, against the
 upload path's lock order (cmd_lock, then the decoder's lock). The trim gives way while another thread holds the upload
 lock, goes through once it is free, and never deadlocks with an upload that asks for the scratch meanwhile.
 

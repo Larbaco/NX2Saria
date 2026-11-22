@@ -1,4 +1,4 @@
-"""Start a test run from a bug capture (runtime/bugcap.c, docs/bug-capture.md).
+"""Start a test run from a bug capture (runtime/diag/bugcap.c, docs/bug-capture.md).
 
     python tools/capture_run.py <capture folder or number> [--game DIR] [--set KEY=VALUE ...]
 
@@ -84,7 +84,7 @@ def game_running(exe):
 
 def make_profile(profile, game, capture):
     """A profile whose save is the capture's: the game's own profile without its saves, and the capture's save zip
-    as a waiting import (runtime/fs_host.c import_pending), which the game makes the save at its start."""
+    as a waiting import (runtime/hle/fs_host.c import_pending), which the game makes the save at its start."""
     src = game / 'profile'
     profile.mkdir(parents=True)
     if src.is_dir():

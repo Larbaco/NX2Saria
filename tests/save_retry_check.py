@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/save_retry_check.c: runtime/vk_save_retry.h, when the autosave thread saves the pipeline caches
+"""Build and run tests/save_retry_check.c: runtime/vk/vk_save_retry.h, when the autosave thread saves the pipeline caches
 and when it tries again after a save that did not happen (no copy of the data, a file that cannot be written).
 
 Usage: save_retry_check.py

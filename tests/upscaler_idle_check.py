@@ -1,5 +1,5 @@
-"""Static checks of the upscalers' waits for the device (runtime/vk_dlaa.c "what the upscalers let go of while the GPU
-may still use it", runtime/vk_ffx.cpp, runtime/vk_ffx4.cpp, runtime/vk_fsr3.c).
+"""Static checks of the upscalers' waits for the device (runtime/vk/vk_dlaa.c "what the upscalers let go of while the GPU
+may still use it", runtime/vk/vk_ffx.cpp, runtime/vk/vk_ffx4.cpp, runtime/vk/vk_fsr3.c).
 
 It fails when:
 - vkDeviceWaitIdle is called in vk_dlaa.c outside vk_upscaler_device_idle, in vk_ffx.cpp outside vk_ffx_probe_cache
@@ -237,7 +237,7 @@ def main():
                     fails.append(f'{f}:{line}: upd_take_all in {name} before vk_upscaler_settle')
 
     key = 'UPSCALER_IDLE_WAIT'
-    cfg = (rt / 'cfg.c').read_text(encoding='utf-8-sig')
+    cfg = (rt / 'cfg' / 'cfg.c').read_text(encoding='utf-8-sig')
     if not re.search(r'\{\s*"%s"\s*,\s*"display"\s*\}' % key, cfg):
         fails.append(f'cfg.c: {key} has no sections[] entry in "display"')
     ini = (root / 'nx2saria.ini.example').read_text(encoding='utf-8-sig')
@@ -247,7 +247,7 @@ def main():
     host = (rt / 'host.h').read_text(encoding='utf-8')
     m = re.search(r'enum\s*\{\s*(PERF_M_FILE[^}]*)\}', host)
     kinds = [k.strip() for k in m.group(1).split(',') if k.strip() and k.strip() != 'PERF_M_N'] if m else []
-    perf = (rt / 'perf.c').read_text(encoding='utf-8')
+    perf = (rt / 'diag' / 'perf.c').read_text(encoding='utf-8')
     m = re.search(r'mark_name\[PERF_M_N\]\s*=\s*\{(.*?)\};', perf, re.S)
     names = re.findall(r'"[^"]*"', m.group(1)) if m else []
     if not kinds or len(names) != len(kinds):

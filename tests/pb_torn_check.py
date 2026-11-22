@@ -1,5 +1,5 @@
 # needs: clang, vulkan
-"""Check how pipeline-binaries.bin keeps its whole records (runtime/vk_pipeline.c pb_index and pb_keep,
+"""Check how pipeline-binaries.bin keeps its whole records (runtime/vk/vk_pipeline.c pb_index and pb_keep,
 NX2NAVI_PIPE_BINARIES=1). pb_init keeps the whole records of a file that ends inside one (the process ended during an
 append, or a disk filled) or holds a malformed one, and cuts the file back to them; the walk must say where the last
 whole record ends, and pb_keep must cut the file there. The check cuts the file's record layout and pb_hash, pb_find,
@@ -215,7 +215,7 @@ def cut(source, start, end):
 
 
 def main():
-    src = (ROOT / 'runtime' / 'vk_pipeline.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8')
     production = cut(src, '#define PB_MAX_BIN 8', '// Opens pipeline-binaries.bin')
     work = ROOT / 'build' / 'test' / 'pb_torn'
     work.mkdir(parents=True, exist_ok=True)

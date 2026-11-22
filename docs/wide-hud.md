@@ -1,7 +1,7 @@
 # The HUD and the menus on an ultrawide picture (Ocarina of Time 1.1.1)
 
 With `game_aspect` wider than 16:9 the game draws a wider picture and the camera sees more at the sides
-(`runtime/widescreen.c`). Its interface keeps its 16:9 shape in the middle of that picture. Two settings choose
+(`runtime/patches/widescreen.c`). Its interface keeps its 16:9 shape in the middle of that picture. Two settings choose
 where the HUD and the menus go from there. Both are read at start and both do nothing at 16:9.
 
 | Setting (`nx2saria.ini`, `[display]`) | Environment | Values | Default |
@@ -54,7 +54,7 @@ The picture's width is a multiple of 8 (`widescreen.c` `picture_size`), which sh
 | 32:9 | 3840 x 1080, 5120 x 1440, 7680 x 2160 | 3.556 | 1920 | 50.0% | 25.0% |
 
 The edit is made to the shared interface layouts the game reads once at start,
-`UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs` (`runtime/wide_hud.c`). `romfs.c` `wide_hud_overlay`
+`UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs` (`runtime/patches/wide_hud.c`). `romfs.c` `wide_hud_overlay`
 serves that archive with the edit applied, after the action prompt's edit of the same archive
 (`romfs.c` `action_prompt_overlay`), and writes it to `<profile>/wide-hud/`. The archive holds each layout four times,
 byte for byte the same: every copy changes, or none does.
@@ -122,7 +122,7 @@ There is no separate clock, rupee or key HUD in this version: rupees and item co
 
 The menus' layouts are laid out for the picture's width: panes moved out by the menus' distance `u` (the same
 `1080 * w / h - 1920` as the HUD's, 640 at 21:9) or grown by `2 * u`, with the animation keys that place them
-(`runtime/wide_hud.c`, the operations of group `G_FULL`, each with its reason). The pause menu's pages lie `2u`
+(`runtime/patches/wide_hud.c`, the operations of group `G_FULL`, each with its reason). The pause menu's pages lie `2u`
 further apart, a whole picture's width each, and their columns move out towards the picture's sides.
 
 ### The pause menu's backdrop
@@ -150,7 +150,7 @@ changes for that is in "The layout format (BFFH)" below. `tools/layout_dump.py` 
 previews were made, is the reference: the runtime's split matches it byte for byte.
 
 Each of the four copies of `PlusMenu_00.buil` grows by 4,583 bytes (30,285 to 34,868), at any `u`, so the archive is
-laid out again around them (`runtime/sarc.c` `sarc_rebuild`): its header, entries and names as they were, each member
+laid out again around them (`runtime/hle/sarc.c` `sarc_rebuild`): its header, entries and names as they were, each member
 at its old start's alignment, each copy in a range of its own, as the game turns each copy's offsets into pointers in
 place. The archive grows from 9,927,489 to 9,945,921 bytes. The game sizes the buffer it reads the archive into from
 the resource size table (`System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs`), whose entry
@@ -318,7 +318,7 @@ What the backdrop's split adds to that (`wide_hud.c` `split_layout`; a study of 
 
 ## Checks
 
-`tests/wide_hud_check.py` builds `tests/wide_hud_check.c` against `runtime/wide_hud.c` on layouts and archives it makes
+`tests/wide_hud_check.py` builds `tests/wide_hud_check.c` against `runtime/patches/wide_hud.c` on layouts and archives it makes
 from the format above, with the panes, values and curves of the game's four layouts: the moves, the report lines, a
 second pass that finds nothing to do, refusals that leave the file as it was (a pane's x, a scaled or turned parent, a
 broken parent chain, a renamed pane, a pane keyed by a curve or a constant, a curve with another count of keys or

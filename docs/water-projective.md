@@ -54,8 +54,8 @@ The translations of game 1.1.1 are the same under the 0.9.0 translator as under
 
 ## In the runtime, on by default
 
-The runtime makes both corrections itself (`runtime/spirv_water.c`, called from
-`runtime/vk_pipeline.c` `water_projective_pair`): when a pipeline's shaders are one of
+The runtime makes both corrections itself (`runtime/gfx/spirv_water.c`, called from
+`runtime/vk/vk_pipeline.c` `water_projective_pair`): when a pipeline's shaders are one of
 the translations above, it edits their SPIR-V in memory, with the steps of
 `tools/projective_recipe.py` in the same order, and builds the pipeline from the
 result. No file is read or written and nothing derived from the game is shipped.

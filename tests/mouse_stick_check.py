@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/mouse_stick_check.c with runtime/input_map.c: the mouse camera's stick deflection at each camera
+"""Build and run tests/mouse_stick_check.c with runtime/input/input_map.c: the mouse camera's stick deflection at each camera
 speed. No game files.
 
 Usage: python tests/mouse_stick_check.py [--cc <clang>]
@@ -27,7 +27,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='nx2navi-mouse-stick-') as tmp:
         exe = Path(tmp) / ('check.exe' if win else 'check')
         subprocess.check_call([cc, '-O2', '-Wall', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
-                               str(ROOT / 'tests' / 'mouse_stick_check.c'), str(ROOT / 'runtime' / 'input_map.c'),
+                               str(ROOT / 'tests' / 'mouse_stick_check.c'), str(ROOT / 'runtime' / 'input' / 'input_map.c'),
                                *([] if win else ['-lm']), '-o', str(exe)], env=env)
         return subprocess.run([str(exe)], env=env).returncode
 

@@ -7,7 +7,7 @@ the translator answers it was translated for. This tool reads the shaders from t
 (tools/shader_census.py inventory), keeps the list's variants whose shader is in this game version, adds each shader's
 default variant (every texture slot a 2D texture, float vertex inputs and colour outputs: the
 default bind state), and writes them next to the
-build's nx2saria.exe in the record layouts of runtime/gfx_shader.c ("answers met in play"):
+build's nx2saria.exe in the record layouts of runtime/gfx/gfx_shader.c ("answers met in play"):
 
     seed-programs.bin  "NX2NSPRG": stage, length, c1 length, runtime code hash, control section, code, c1
     seed-answers.bin   "NX2NSANS": stage, code hash, input id (zero: the runtime computes it), answers, priority
@@ -15,7 +15,7 @@ build's nx2saria.exe in the record layouts of runtime/gfx_shader.c ("answers met
 Priority (the pad byte): 0 shaders the list's warm rows flag as title/menu (t), 1 other warm rows (S, C, R), 2 the
 rest; a default variant takes its shader's priority and sets DEFAULT_FLAG (bit 7). The runtime reads a flagged
 record's first translation and translates it again with better answers where it reads other ones
-(runtime/gfx_shader_guess.c): integer vertex inputs, and the texture and image types a compute shader's translation
+(runtime/gfx/gfx_shader_guess.c): integer vertex inputs, and the texture and image types a compute shader's translation
 declares, for which a compute default variant goes without texture answers. Then it runs `nx2saria.exe --prepare-shaders`, which translates every record into the build's shader cache, writes
 shader-prepared.bin (one record per variant, in priority order) and builds every variant's stage library or compute
 pipeline once, so the GPU driver's own disk cache holds them (vk_pipeline.c "stage library prebuild"). The seed files
@@ -58,7 +58,7 @@ import pipeline_list  # noqa: E402
 import shader_list  # noqa: E402
 from shader_census import inventory  # noqa: E402
 
-STAGES = {'vs': 0, 'ps': 4, 'cs': 5, 'ts': 6, 'ms': 7}     # runtime/gfx.h GFX_STAGE_*
+STAGES = {'vs': 0, 'ps': 4, 'cs': 5, 'ts': 6, 'ms': 7}     # runtime/gfx/gfx.h GFX_STAGE_*
 TEX = [None, '1d', '1darray', 'buffer', '2d', '2darray', '2dms', '2dmsarray', '3d', 'cube', 'cubearray']
 FMT = [None, 'R8Unorm', 'R8Snorm', 'R8Uint', 'R8Sint', 'R16Float', 'R16Unorm', 'R16Snorm', 'R16Uint', 'R16Sint',
        'R32Float', 'R32Uint', 'R32Sint', 'R8G8Unorm', 'R8G8Snorm', 'R8G8Uint', 'R8G8Sint', 'R16G16Float', 'R16G16Unorm',
@@ -199,9 +199,9 @@ def nvn2(control):
 
 
 def bounds(control, code):
-    """(c1 offset, length) as runtime/gfx_shader.c req_init takes them.
+    """(c1 offset, length) as runtime/gfx/gfx_shader.c req_init takes them.
 
-    NVN2: play hands req_init the code size of runtime/vk_exec_draw.c ctl_stage_len, which reaches the end of the c1
+    NVN2: play hands req_init the code size of runtime/vk/vk_exec_draw.c ctl_stage_len, which reaches the end of the c1
     constants only when there are some (+0x40 below +0x44). With an empty c1 range past the code the length is the code
     size alone; cutting at the range's end (as shader_census does) seeded most of Ocarina's vertex programs under keys
     play never asks for."""

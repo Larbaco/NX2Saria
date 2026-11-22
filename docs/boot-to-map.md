@@ -2,7 +2,7 @@
 
 `boot_map` starts the game straight in a chosen area and start position from the save of a chosen slot. The title screen
 and its file menu never show. It is a test and debugging setting: a run without a window gets to the place it
-tests in one area load, and nothing has to press through menus. Code: `runtime/boot_map.c`. Ocarina of Time 1.1.1 only.
+tests in one area load, and nothing has to press through menus. Code: `runtime/patches/boot_map.c`. Ocarina of Time 1.1.1 only.
 On other game versions the setting is ignored, and the log says so.
 
 This page records how the game goes from its title to play, what the setting changes and why there, how to use it
@@ -281,7 +281,7 @@ data area. No checksum was found **[I]**: the header carries none, and the last 
 game's "latest" slot (`SeqQueryGetLatestSaveIndex`, main+0x33ad5d0) sorts the cards by that date. Nothing stores
 the last slot used.
 
-`runtime/fs_host.c` serves the newest committed save through a working copy (`save-tx/work`) and commits by
+`runtime/hle/fs_host.c` serves the newest committed save through a working copy (`save-tx/work`) and commits by
 renaming. A save import (`save-import`, `tools/capture_run.py`) becomes the save at the next start.
 
 ## What the setting does, and why there

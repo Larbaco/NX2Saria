@@ -1,5 +1,5 @@
 # needs: clang
-"""HD rumble for controllers with linear actuators (runtime/rumble_hd.c): builds it with tests/rumble_hd_check.c and
+"""HD rumble for controllers with linear actuators (runtime/input/rumble_hd.c): builds it with tests/rumble_hd_check.c and
 checks
 
   - known values: the neutral value, full amplitude, single bands, an odd amplitude step;
@@ -106,7 +106,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     exe = work / ('rumble_hd_check.exe' if win else 'rumble_hd_check')
     subprocess.check_call([cc, '-O1', '-Wall', '-Wextra', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
-                           str(ROOT / 'tests' / 'rumble_hd_check.c'), str(ROOT / 'runtime' / 'rumble_hd.c'),
+                           str(ROOT / 'tests' / 'rumble_hd_check.c'), str(ROOT / 'runtime' / 'input' / 'rumble_hd.c'),
                            '-o', str(exe)] + ([] if win else ['-lm']), env=env)
     rc = subprocess.run([str(exe)], env=env).returncode
     out = subprocess.run([str(exe), '--sweep'], env=env, capture_output=True, text=True, check=True).stdout.splitlines()

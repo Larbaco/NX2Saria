@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/tex_detail_check.c: runtime/vk_tex_detail.h, the level texture_detail = auto picks for a video
+"""Build and run tests/tex_detail_check.c: runtime/vk/vk_tex_detail.h, the level texture_detail = auto picks for a video
 memory budget, on a card with memory of its own and on an integrated GPU (vk_texture.c vk_texture_detail_auto).
 
 No GPU, no game files, any Python.

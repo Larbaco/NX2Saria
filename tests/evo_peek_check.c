@@ -1,4 +1,4 @@
-// runtime/vk_evo_peek.h: the copy of each event-ordered queue's first held wait that vk_exec.c vk_exec_held_ready
+// runtime/vk/vk_evo_peek.h: the copy of each event-ordered queue's first held wait that vk_exec.c vk_exec_held_ready
 // reads without the submission lock, and the decision it makes from that copy. Built and run by
 // tests/evo_peek_check.py; prints each failed check and exits 1 on any.
 // One writer republishes changing waits while three readers copy them, as the submitting thread (vk_exec.c evo_resume,

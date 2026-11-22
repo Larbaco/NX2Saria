@@ -8,13 +8,13 @@
 Each run starts the game through tools/run_game.py on a copy of its profile with <backup> as the save (run_game.py says
 which saves it takes). The input script presses A until the save has loaded (untimed lines, which stop applying once
 the world clock starts), then NX2SARIA_DBG_TEST teleports Link to the scene's area and turns the free camera on
-(runtime/debug_tools.c test_script), and timed LSTICK and RSTICK lines fly it through the area: the game draws, culls
+(runtime/diag/debug_tools.c test_script), and timed LSTICK and RSTICK lines fly it through the area: the game draws, culls
 and loads detail for the view it is given, and nothing in its way (walls, water, a villager who wants to talk) stops it
 or changes the path. Two MARK lines in the script open the 'measure' segment after the scene's warm-up and close it at
-its end (runtime/perf.c seg_frame).
+its end (runtime/diag/perf.c seg_frame).
 
 What is measured comes from the game's own log with NX2SARIA_TRACE=perf and NX2SARIA_PERF_SLOW_MS=1, so every present
-gets a "perf: slow frame" line (runtime/perf.c perf_present): its interval and what the render thread waited for.
+gets a "perf: slow frame" line (runtime/diag/perf.c perf_present): its interval and what the render thread waited for.
 A frame is
   gpu    when the render thread waited for the GPU's fence for at least half of it, or when the GPU was busy for 80%
          of it or more (the GPU time per frame of the 60-frame window the frame is in, the runtime's own rule: with
@@ -23,7 +23,7 @@ A frame is
   pace   when the frame limiter held it for at least 15% of it (should not happen: the runs are uncapped),
   cpu    otherwise: the game thread and the replay of its draws set the pace.
 The 60-frame window lines add the GPU's own busy time (timestamps) and the runtime's own bound verdict
-(runtime/perf_bound.h: pace, gpu, serial or cpu), which summary.md gives as "Win bound".
+(runtime/diag/perf_bound.h: pace, gpu, serial or cpu), which summary.md gives as "Win bound".
 
 1% low is the frame rate of the mean of the slowest 1% of frames; p99 is the 99th percentile frame time. The run's
 CSV (one row per frame), the game's log and summary.md / summary.csv go to the out folder, with the commit, the
@@ -34,7 +34,7 @@ is skipped. --shot also saves a PNG of the last frame, for comparing pictures be
 builds every pipeline on the render thread before it draws (runtime/boot.c), so the picture does not depend on build
 timing: a scene's first frames stall far longer than in play, and its numbers are not comparable with a run without it.
 
---boot-map starts each scene with a boot map (runtime/boot_map.c, docs/boot-to-map.md) instead of the title screen and
+--boot-map starts each scene with a boot map (runtime/patches/boot_map.c, docs/boot-to-map.md) instead of the title screen and
 a teleport: the scene's first "warp <area> <start position>" step becomes NX2SARIA_BOOT_MAP=<area>:<start position>,
 the input script presses nothing, and the game loads the area once, from the save, with no title or file menu first.
 The warm-up then counts from the arrival rather than from the save's own area, so its numbers are compared with other
@@ -63,7 +63,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RUN_GAME = ROOT / 'tools' / 'run_game.py'
 SCENES = ROOT / 'tools' / 'bench' / 'scenes.toml'
 
-# ---- the log lines (runtime/perf.c); tests/bench_check.py checks the format strings are still there
+# ---- the log lines (runtime/diag/perf.c); tests/bench_check.py checks the format strings are still there
 SLOW_RE = re.compile(r'perf: slow frame (\d+): ([\d.]+) ms; blocked pipeline ([\d.]+) xlate ([\d.]+) texture ([\d.]+) '
                      r'astc ([\d.]+) fence ([\d.]+) pacing ([\d.]+) drain ([\d.]+)(?: handoff [\d.]+)?; replay ([\d.]+)')
 SEG_START_RE = re.compile(r"segment: '([^']*)' starts at frame (\d+), world ([\d.]+|n/a) s")

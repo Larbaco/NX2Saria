@@ -1,12 +1,12 @@
 # needs: clang
-"""Build and run tests/cache_stamp_check.c: runtime/vk_cache_stamp.h, the translator stamp of the pipeline cache
-files (runtime/vk_pipeline.c cache_stamp_check): how pipeline-cache.id is read and written, and what a start does with
+"""Build and run tests/cache_stamp_check.c: runtime/vk/vk_cache_stamp.h, the translator stamp of the pipeline cache
+files (runtime/vk/vk_pipeline.c cache_stamp_check): how pipeline-cache.id is read and written, and what a start does with
 the files when the stamp names the current translator, another one whose shaders are still carried, another one that
 is not, or none.
 
 What the runtime does with the files (deleting them, writing the stamp) shows in a run's log, in the line
 "vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>"; this check also finds that line in
-runtime/vk_pipeline.c, so a change of its words shows here. The same goes for the header's two rules about
+runtime/vk/vk_pipeline.c, so a change of its words shows here. The same goes for the header's two rules about
 pipeline-cache.bin in play (written at the exit of a run that started without it): the check finds where cache_load
 and cache_save apply them and the line that says so at the start.
 
@@ -75,7 +75,7 @@ USES = [
 
 def uses():
     """0 when cache_load, cache_save and cache_stamp_check apply the header's rules for pipeline-cache.bin in play."""
-    src = (ROOT / 'runtime' / 'vk_pipeline.c').read_text(encoding='utf-8', errors='replace')
+    src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8', errors='replace')
     src = re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
     missing = [p for p in USES if not re.search(p, src)]
     for p in missing:

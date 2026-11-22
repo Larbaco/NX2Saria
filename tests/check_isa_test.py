@@ -1,5 +1,5 @@
 """tools/check_isa.py on the runtime files that hold instructions above x86-64-v2 behind a runtime CPU check
-(runtime/kernel.c kern_ap_stub_ymm, runtime/sha256.c blocks_ni): built as tools/build_game.py --cpu v2 builds the
+(runtime/hle/kernel.c kern_ap_stub_ymm, runtime/sha256.c blocks_ni): built as tools/build_game.py --cpu v2 builds the
 runtime (-march=x86-64-v2) and as players' builds do (no -march), they pass, and a function with such an instruction
 and no entry in DISPATCHED still fails. Needs the MSYS2 UCRT64 clang and an objdump (skipped without them); no game
 files.

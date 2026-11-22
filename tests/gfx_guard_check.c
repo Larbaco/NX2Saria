@@ -1,4 +1,4 @@
-// runtime/gfx_guard.h: the game's crop cut to the image without overflow (gfx_present.c present_image), the check of
+// runtime/gfx/gfx_guard.h: the game's crop cut to the image without overflow (gfx_present.c present_image), the check of
 // a swapchain's image list (gfx_present.c create_swapchain) and how often a repeating failure is logged. Built and run
 // by tests/gfx_guard_check.py (with the signed overflow sanitizer where the compiler has it); prints each failed check
 // and exits 1 on any.

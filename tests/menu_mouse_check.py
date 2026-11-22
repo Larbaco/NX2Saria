@@ -1,6 +1,6 @@
 # needs: clang
 """Build and run tests/menu_mouse_check.c: the arithmetic of the mouse in Ocarina of Time 1.1.1's menus
-(runtime/menu_mouse_geom.h): a button's box from its pane, the pointer in layout units on 16:9 and ultrawide pictures
+(runtime/ui/menu_mouse_geom.h): a button's box from its pane, the pointer in layout units on 16:9 and ultrawide pictures
 (the UI squeezed into the middle 16:9, NX2SARIA_WIDE_MENUS = full or center), and the box under the pointer. No game
 files.
 

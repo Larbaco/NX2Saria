@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/tex_compact_check.c: runtime/vk_tex_compact.h, which from a table of what lies in the
+"""Build and run tests/tex_compact_check.c: runtime/vk/vk_tex_compact.h, which from a table of what lies in the
 allocator's blocks says how much of them is holes and chooses the blocks a texture compaction empties.
 
 No GPU, no game files, any Python.

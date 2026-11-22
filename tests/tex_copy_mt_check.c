@@ -1,4 +1,4 @@
-// tests/tex_copy_mt_check.py builds this with runtime/tex_deswizzle.c, runtime/par_jobs.c and the platform layer:
+// tests/tex_copy_mt_check.py builds this with runtime/gfx/tex_deswizzle.c, runtime/par_jobs.c and the platform layer:
 // tex_bl_copy_mt and par_memcpy write exactly the bytes tex_bl_copy and memcpy do, in both directions, for levels
 // under and over the split size, with partial GOBs, block heights and depths, and slices.
 #include <stdarg.h>

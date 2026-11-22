@@ -17,7 +17,7 @@ Research only, 2026-11-07. No code was changed or built. Question: can Microsoft
 
 **No. ASD needs D3D12.** The SODB records D3D12 create calls and DXIL; the PSDB is looked up by the D3D12 runtime. A Vulkan process never touches either.
 
-Current flow (from the top comments of `runtime/gfx_shader.c` and `runtime/vk_pipeline.c`):
+Current flow (from the top comments of `runtime/gfx/gfx_shader.c` and `runtime/vk/vk_pipeline.c`):
 - An NVN program (control section, code, c1, translator answers) goes to `nx2navi_xlate.exe --serve` children and comes back as SPIR-V plus reflection, cached in memory and under `shader-cache/` (packed into `shader-cache.pack`). The key includes the translator identity, so any translator change invalidates every entry. `in/<input id>.in` files allow retranslation without guest memory.
 - Play records `shader-answers.bin` and `shader-programs.bin`. `pipeline-keys.bin` records every built pipeline, shaders named by input id, independent of the translator.
 - Pipelines use `VK_EXT_graphics_pipeline_library`: stage libraries, a fast link on a miss, an optimised pipeline built on a background thread. `pipeline-cache.bin` is dropped when vendor, device or cache UUID differ.

@@ -1,4 +1,4 @@
-// runtime/vk_tex_release.h: how long a released texture is kept, the bytes the released ones may hold, and the clock
+// runtime/vk/vk_tex_release.h: how long a released texture is kept, the bytes the released ones may hold, and the clock
 // that turns presents into seconds. Built and run by tests/tex_release_check.py; prints each failed check and a table
 // of the simulated sessions, and exits 1 on any failure.
 //

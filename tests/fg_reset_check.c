@@ -1,4 +1,4 @@
-// runtime/vk_fg_reset.h: the camera cut FSR 3.1 frame generation's callback is told of for a frame id. Built and run
+// runtime/vk/vk_fg_reset.h: the camera cut FSR 3.1 frame generation's callback is told of for a frame id. Built and run
 // by tests/fg_reset_check.py; prints each failed check and exits 1 on any.
 #include <pthread.h>
 #include <stdio.h>

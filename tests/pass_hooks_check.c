@@ -1,4 +1,4 @@
-// runtime/vk_pass_hooks.h: which pass begin runs the frame's pass hooks (vk_exec.c vk_exec_pass_begin). A parallel
+// runtime/vk/vk_pass_hooks.h: which pass begin runs the frame's pass hooks (vk_exec.c vk_exec_pass_begin). A parallel
 // group's hooks run once, at its first chunk's first pass: a pass that chunk begins again later must not put its own
 // target back after the hooks of later passes ran. Built and run by tests/pass_hooks_check.py; prints each failed check
 // and exits 1 on any.

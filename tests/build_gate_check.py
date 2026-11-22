@@ -1,8 +1,8 @@
 # needs: clang
-"""Build and run tests/build_gate_check.c: runtime/vk_build_gate.h, the memory gate of the background pipeline builds:
+"""Build and run tests/build_gate_check.c: runtime/vk/vk_build_gate.h, the memory gate of the background pipeline builds:
 what it admits and refuses by the system's commit, and that the builds under way count through their reservations.
 
-With the game executable's path it also runs the executable's --probe-buildgate (runtime/vk_pipeline.c
+With the game executable's path it also runs the executable's --probe-buildgate (runtime/vk/vk_pipeline.c
 vk_pipeline_probe_buildgate: the gate as the builders call it, with this machine's commit; no device, no window, no
 build) three times: with the settings in effect, with build_free_mb = 0, where every build must be admitted, and
 with build_free_mb at a value no machine has free, where every build must be refused.

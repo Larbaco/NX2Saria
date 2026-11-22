@@ -67,7 +67,7 @@ site fade main 95dd24 1e380008 1e380008 5ac0110a 53057d4a 0b0a0108   # the same,
 site fade main 6155e4 1e38000a 1e38000a 5ac0114b 53057d6b 0b0b014a   # fcvtzs w10, s0; clz w11, w10; lsr w11, w11, #5; add w10, w10, w11
 site fade main 615660 1e38000a 1e38000a 5ac0114b 53057d6b 0b0b014a   # the same, second pre-actor fade path
 
-# Output size (runtime/resolution.c switches the set on). The swapchain
+# Output size (runtime/gfx/resolution.c switches the set on). The swapchain
 # size nnMain writes comes from page +48; the display configuration's canvas (+0x10) and active output (+0x508) from
 # page +32, and the configuration goes to page +40. x9 is dead at the publication point.
 site output main bdb578 d280f008 @page:x8   # mov x8, #0x780 -> adrp x8, page (x9 is built in between)
@@ -82,7 +82,7 @@ site scene main 585e54 1e220140 bd0cc660    # scvtf s0, w10 -> str s0, [x19, #0x
 site scene main 585e60 bd0cca60 bd0cca61    # str s0, [x19, #0xcc8] -> str s1, [x19, #0xcc8]
 
 # Camera aspect ratio for a game resolution that is not 16:9
-# (runtime/resolution.c res_init writes the output's width / height to page +56 and
+# (runtime/gfx/resolution.c res_init writes the output's width / height to page +56 and
 # switches the set on). Each site leaves the ratio sead's perspective projection (+0xb0) takes in s0: two camera sites
 # (update and setup) load the camera's copy of DefaultAspect 1.777778, two viewport routines divide width by height.
 # The replacement loads the ratio from the page instead, so a 21:9 output shows more of the world at the sides with
@@ -93,7 +93,7 @@ site aspect main b43460 bd406ac0 f81f0fea @page:x10 bd403940 f84107ea   # ldr s0
 site aspect main 1ff04f4 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s0, s0, s1 (viewport)
 site aspect main 253fbb0 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s0, s0, s1 (viewport)
 
-# Field of view (runtime/resolution.c res_fov_live writes NX2NAVI_FOV / 100 to page +60 and switches the set). The same two
+# Field of view (runtime/gfx/resolution.c res_fov_live writes NX2NAVI_FOV / 100 to page +60 and switches the set). The same two
 # camera routines as the aspect set load the camera's vertical view angle (radians) a few words before the ratio and
 # hand it to sead's perspective projection (+0xa0, then sin / cos / tan of half of it at +0xa4..+0xac). The replacement
 # loads the angle as before and multiplies it by the factor on the page; s8 holds the factor because the next
@@ -103,7 +103,7 @@ site fov    main 628c3c bd413e60 f81f0fea @page:x10 bd413e60 bd403d48 1e280800 f
 site fov    main b4342c bd4066c0 f81f0fea @page:x10 bd4066c0 bd403d48 1e280800 f84107ea   # ldr s0, [x22, #0x64] (camera setup)
 
 # The camera input update, after its stick dead zone, unit-radius clamp and StickExponent. The host callback
-# performs the displaced store and adds raw mouse counts to s9/s10 (runtime/mouse_direct.c camera_input).
+# performs the displaced store and adds raw mouse counts to s9/s10 (runtime/input/mouse_direct.c camera_input).
 # Its address is page +0xfd0; the page is main+0x3adf000 on this verified build.
 set mouse_direct NX2NAVI_MOUSE_DIRECT_PATCH 1
 site mouse_direct main 874cb4 bd042289 94c9acc7
@@ -112,7 +112,7 @@ site mouse_direct main 18e444 f9400408 94e546db
 site mouse_direct main 18f108 bd4047ec 94e543a6
 site mouse_direct main 1d59460 b9004be8 94761acc
 
-# The game's zstd decoder (BSD zstd, statically linked into main) through the host's libzstd (runtime/ov_zstd.c):
+# The game's zstd decoder (BSD zstd, statically linked into main) through the host's libzstd (runtime/hle/ov_zstd.c):
 # every call of ZSTD_decompressMultiFrame (main+0x3a1f0: dctx, dst, capacity, src, size, dict, dict size, ddict) and of
 # its wrapper ZSTD_decompress_usingDDict (main+0x3a1e0, which tail-branches to it) goes to a host function on the patch
 # page (+0xff0 and +0xfe0). The lifted decoder runs its copy loops as chains of small functions; the host decodes the
@@ -129,7 +129,7 @@ site zstd   main bdc910 97d17634 94bc0db4   # bl ZSTD_decompress_usingDDict -> p
 site zstd   main 1852314 979f9fb3 948a3733  # bl ZSTD_decompress_usingDDict -> page+0xfe0
 
 # Spin waits, from tools/spin_waits.py --exefs build/extracted/v143/exefs --patches recomp/patches-v143.txt: loops that only
-# another thread can end; their back-edges pass rt_spin_gate (runtime/kernel.c), NX2NAVI_SPIN=0 keeps the core.
+# another thread can end; their back-edges pass rt_spin_gate (runtime/hle/kernel.c), NX2NAVI_SPIN=0 keeps the core.
 spin main 231dc 231ec   # 5 instructions; loads
 spin main 24780 24790   # 5 instructions; loads
 spin main 5748c 574a0   # 6 instructions; loads
@@ -993,7 +993,7 @@ spin sdk 541e54 541f98   # 32 instructions; loads
 # store at +0xf4, the height (+0x3f8). The page's size goes in just before the rounding.
 site shadow main 683604 11001d6b @page:x11 b9405d6b 11001d6b   # add w11, w11, #7 -> adrp x11, page; ldr w11, [x11, #92]; add w11, w11, #7
 
-# Sun shadow cascade distances (runtime/resolution.c res_shadow_range switches the set on). The depth shadow parameter
+# Sun shadow cascade distances (runtime/gfx/resolution.c res_shadow_range switches the set on). The depth shadow parameter
 # object (main+0x6fa3c0) registers depth_shadow_near_0_1..3 = 20, 40, 80 m and depth_shadow_far_0 = 160 m as
 # immediates, and the field's .bgsdw files do not override them; with the set on they come from page +64..+76.
 site cascade main 6fabb8 52a83408 @page:x8 b9404108   # mov w8, #20.0  -> ldr w8, [page+64]

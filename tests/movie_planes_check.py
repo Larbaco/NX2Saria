@@ -1,6 +1,6 @@
 # needs: clang
 """Movie conversion keeps its deband planes per decoder and drops a frame it has no memory for
-(runtime/ov_movie2.c planes_for, make_picture): builds the deband, the conversions, run_stripes, planes_for and
+(runtime/hle/ov_movie2.c planes_for, make_picture): builds the deband, the conversions, run_stripes, planes_for and
 make_picture, cut from ov_movie2.c by their text, with stand-ins for dav1d's picture, the platform calls and a malloc
 that fails on request, and checks that
 
@@ -196,7 +196,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'ov_movie2.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'hle' / 'ov_movie2.c').read_text(encoding='utf-8')
     body = cut(src, '#define DEBAND_THRESH', '\n// Queues a decoded picture, waiting while the queue is full')
     with tempfile.TemporaryDirectory(prefix='nx2navi-movie-planes-') as tmp:
         c = Path(tmp) / 'check.c'

@@ -1,5 +1,5 @@
 # needs: clang
-"""Check runtime/gfx_shader.c's carry refusal: a previous translator's translation whose texture pool array has the
+"""Check runtime/gfx/gfx_shader.c's carry refusal: a previous translator's translation whose texture pool array has the
 earlier length (32768, vk.h VK_POOL_TEX_CARRIED) is not served while the current translator may translate the shader,
 because its clamp draws every texture numbered from 32768 up with slot 32767. The check cuts pool_short, carry_usable,
 carry_load, carry_find, carry_find_iid and carry_last out of gfx_shader.c, compiles them against stand-ins for the disk
@@ -228,10 +228,10 @@ def define(source, name):
 
 
 def main():
-    src = (ROOT / 'runtime' / 'gfx_shader.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'gfx' / 'gfx_shader.c').read_text(encoding='utf-8')
     # gfx_shader.c does not include vk.h, so it states the earlier length itself: the two must stay equal.
     short = define(src, 'POOL_TEX_SHORT')
-    carried = define((ROOT / 'runtime' / 'vk.h').read_text(encoding='utf-8'), 'VK_POOL_TEX_CARRIED')
+    carried = define((ROOT / 'runtime' / 'vk' / 'vk.h').read_text(encoding='utf-8'), 'VK_POOL_TEX_CARRIED')
     if short != carried:
         print(f'carry pool check: gfx_shader.c POOL_TEX_SHORT is {short}, vk.h VK_POOL_TEX_CARRIED is {carried}')
         return 1

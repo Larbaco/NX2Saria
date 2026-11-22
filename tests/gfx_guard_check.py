@@ -1,10 +1,10 @@
 # needs: clang
-"""Build and run tests/gfx_guard_check.c: runtime/gfx_guard.h, the checks of the presentation path that must not trust
-what they are given: the game's crop cut to the image without int overflow (runtime/gfx_present.c present_image),
+"""Build and run tests/gfx_guard_check.c: runtime/gfx/gfx_guard.h, the checks of the presentation path that must not trust
+what they are given: the game's crop cut to the image without int overflow (runtime/gfx/gfx_present.c present_image),
 the swapchain image list taken whole or not at all (create_swapchain), and how often a repeating failure is logged.
 Where the compiler has it, the harness is built with the signed overflow sanitizer, so a sum that overflows traps.
 
-Then a scan of runtime/gfx_present.c and runtime/vk_texture.c: no swapchain image query, semaphore, fence, command
+Then a scan of runtime/gfx/gfx_present.c and runtime/vk/vk_texture.c: no swapchain image query, semaphore, fence, command
 pool, command buffer or sampler create there may drop its result (a call that starts a statement), and a failed
 vkCreateSampler may not end the game (rt_fatal right after it). No game files, no GPU.
 

@@ -30,7 +30,7 @@ def main():
     check_site()
     work = ROOT / 'build' / 'test' / 'wide_balloon'
     work.mkdir(parents=True, exist_ok=True)
-    source = (ROOT / 'runtime' / 'widescreen.c').read_text()
+    source = (ROOT / 'runtime' / 'patches' / 'widescreen.c').read_text()
     start = source.index('static float balloon_ui_scale')
     end = source.index('void wide_init(', start)
     (work / 'wide_balloon.inc').write_text(source[start:end])

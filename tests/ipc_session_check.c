@@ -1,4 +1,4 @@
-// runtime/ipc.c with runtime/kernel.c linked: what a CloseHandle racing a request does to the session and the
+// runtime/hle/ipc.c with runtime/hle/kernel.c linked: what a CloseHandle racing a request does to the session and the
 // transfer memory the request uses, with the platform layer linked and the rest of the runtime stubbed. Built and run
 // by tests/ipc_session_check.py; prints each failed check and exits 1 on any.
 //   session  a request whose handler blocks while another thread closes the session's only handle: the session's

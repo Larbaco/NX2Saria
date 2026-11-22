@@ -1,4 +1,4 @@
-// runtime/vk_astc.c vk_astc_scratch_trim against the upload path's lock order. Built and run by
+// runtime/vk/vk_astc.c vk_astc_scratch_trim against the upload path's lock order. Built and run by
 // tests/astc_trim_check.py; prints each failed check and exits 1 on any, 2 when two threads stay stuck.
 // The upload path takes the upload lock first (vk_memory.c vk_upload_begin: cmd_lock) and the decoder's lock inside it
 // (vk_astc_record: g_lock shared for the pipelines, then scratch_get: g_lock). The trim runs at every present and holds

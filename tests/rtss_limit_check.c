@@ -1,4 +1,4 @@
-// runtime/rtss_decide.h: the parts of RivaTuner Statistics Server's frame limiting (rtss_limit.c) that make no system
+// runtime/pacing/rtss_decide.h: the parts of RivaTuner Statistics Server's frame limiting (rtss_limit.c) that make no system
 // call: the shared memory's reader against a fake RTSSSharedMemoryV2, the worker's decisions poll by poll against a
 // fake profile and a fake RTSS clock, the pacer's period beside RTSS and the state file's lines. Built and run by
 // tests/rtss_limit_check.py on any system; prints each failed check and exits 1 on any.

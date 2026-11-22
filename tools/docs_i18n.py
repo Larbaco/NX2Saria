@@ -38,7 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Language codes are menu_lang's (runtime/cfg.c); the names are those the menu shows (runtime/ui_text.c LANG_NAMES).
+# Language codes are menu_lang's (runtime/cfg/cfg.c); the names are those the menu shows (runtime/ui/ui_text.c LANG_NAMES).
 LANGS = {
     'en': 'English',
     'pt-BR': 'Português (Brasil)',

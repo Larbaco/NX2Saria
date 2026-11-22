@@ -1,5 +1,5 @@
 # needs: clang
-"""Check the menus' black bars: the patch set wide_bars (recomp/patches-v111.txt) and runtime/wide_bars.c.
+"""Check the menus' black bars: the patch set wide_bars (recomp/patches-v111.txt) and runtime/patches/wide_bars.c.
 
 The set's one site, lifted by recomp/lifter.py as the generator lifts it: the screen setup's load of the vtable at
 main+0x774068, kept, then a call of the patch page's +0xef0, which patches.c registers for wide_bars_screen_host and no

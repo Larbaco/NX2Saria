@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/text_speed_check.c: the text_speed setting (runtime/text_speed.c) and the replacement words of
+"""Build and run tests/text_speed_check.c: the text_speed setting (runtime/patches/text_speed.c) and the replacement words of
 the patch set text_speed (recomp/patches-v111.txt), lifted by recomp/lifter.py as the generator lifts them, against a
 stand-in message window and typewriter. No game files: the lifted words go to the test's build folder.
 

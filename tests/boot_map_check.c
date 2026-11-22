@@ -1,4 +1,4 @@
-// runtime/boot_map_core.h: the byte changes of a boot map, on made-up files. Built and run by tests/boot_map_check.py;
+// runtime/patches/boot_map_core.h: the byte changes of a boot map, on made-up files. Built and run by tests/boot_map_check.py;
 // prints each failed check and exits 1 on any failure.
 //
 // The title's graph gets its command Root moved to the Sequential of a Simultaneous and TitleToMainWithLoadSave.module,

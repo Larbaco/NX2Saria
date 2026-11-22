@@ -1,6 +1,6 @@
 # needs: clang
-"""Build and run tests/save_zip_check.c: runtime/save_zip.c, the zip of a shared save as the game's menu writes and
-reads it (runtime/save_share.c), against Python's zlib and zipfile, which the launcher uses for the same zip
+"""Build and run tests/save_zip_check.c: runtime/hle/save_zip.c, the zip of a shared save as the game's menu writes and
+reads it (runtime/hle/save_share.c), against Python's zlib and zipfile, which the launcher uses for the same zip
 (launcher/saves.py).
 
 - the C program's selftest: the manifest's JSON keys, round trips in memory, damaged and cut input
@@ -75,7 +75,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'runtime'),
-                           str(ROOT / 'tests' / 'save_zip_check.c'), str(ROOT / 'runtime' / 'save_zip.c'), '-o',
+                           str(ROOT / 'tests' / 'save_zip_check.c'), str(ROOT / 'runtime' / 'hle' / 'save_zip.c'), '-o',
                            str(exe)], env=env)
     run = lambda *a: subprocess.run([str(exe), *map(str, a)], env=env, capture_output=True, text=True)   # noqa: E731
     bad = 0

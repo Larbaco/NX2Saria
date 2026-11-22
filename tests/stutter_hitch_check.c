@@ -1,10 +1,10 @@
-// tests/stutter_hitch_check.py builds this: runtime/stutter_map.c's hitch rule on made-up frame times, with the few
+// tests/stutter_hitch_check.py builds this: runtime/diag/stutter_map.c's hitch rule on made-up frame times, with the few
 // runtime functions it calls stubbed. A steady change of pace (the game drawing at 60 fps after 200) counts no hitch;
 // isolated long frames each count one; a frame over SM_HITCH_SURE_NS counts whatever follows it.
 #include <stdarg.h>
 #include <stdio.h>
 
-#include "../runtime/stutter_map.c"
+#include "../runtime/diag/stutter_map.c"
 
 static uint64_t clock_ns;
 int cfg_bool(const char *name) { return !strcmp(name, "NX2SARIA_STUTTER_MAP"); }

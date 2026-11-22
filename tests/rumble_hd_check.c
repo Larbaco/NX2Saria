@@ -1,4 +1,4 @@
-// runtime/rumble_hd.c: a vibration value as the bytes of a linear actuator's rumble report (known values, the clamps,
+// runtime/input/rumble_hd.c: a vibration value as the bytes of a linear actuator's rumble report (known values, the clamps,
 // the neutral value), a report's data from the two sides, and which reports are written when the game sends a batch.
 // Built and run by tests/rumble_hd_check.py; prints each failed check and exits 1 on any. With --sweep it prints
 // values and their bytes, one per line, for the script to decode with formulae of its own.

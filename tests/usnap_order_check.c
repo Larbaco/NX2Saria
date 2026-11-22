@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../runtime/vk_usnap.c"
+#include "../runtime/vk/vk_usnap.c"
 
 static pthread_mutex_t test_lock = PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local uint64_t test_pos;   // the thread's place in the stream: group << 5 | chunk (vk_exec_stream_pos)

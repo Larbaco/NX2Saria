@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/skin_pair_check.c: runtime/skin_pair.h, which decides the draw of last frame a skinned
+"""Build and run tests/skin_pair_check.c: runtime/vk/skin_pair.h, which decides the draw of last frame a skinned
 character's draw continues (the same key twice in a frame, a character that appears, one that leaves, two that change
 places, a palette that changes size).
 

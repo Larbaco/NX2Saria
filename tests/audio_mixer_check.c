@@ -1,9 +1,9 @@
-/* The mixer's volume ramps (runtime/audio_mixer.c accumulate_ramp, audio_mixer_render), what it owes the device
+/* The mixer's volume ramps (runtime/audio/audio_mixer.c accumulate_ramp, audio_mixer_render), what it owes the device
    after a stall (ring_pull, audio_mixer_owed) and the device change events (change_event_of, audio_channels_live),
    with the rest of the runtime stubbed. No game data and no audio device:
    NX2NAVI_AUDIO=none mixes without opening one, and the device's requests are made by hand. Each voice plays a wave
    buffer of one constant sample, so a mix buffer holds the gain the voice went in with, sample by sample. */
-#include "../runtime/audio_mixer.c"
+#include "../runtime/audio/audio_mixer.c"
 
 #include <stdarg.h>
 
@@ -53,7 +53,7 @@ const void *ipc_arg(const IpcRequest *rq, uint32_t off, uint32_t n) { (void)rq, 
 void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) { (void)out, (void)frames, (void)channels, (void)rate; }
 static const char *audio_mode = "none", *channels_setting = "stereo";
 /* a setting's key without its prefix: the runtime asks for NX2SARIA_<KEY>, and NX2NAVI_<KEY> is the older name
-   runtime/cfg.c still answers to */
+   runtime/cfg/cfg.c still answers to */
 static const char *setting(const char *name) {
     if (!strncmp(name, "NX2SARIA_", 9)) return name + 9;
     if (!strncmp(name, "NX2NAVI_", 8)) return name + 8;

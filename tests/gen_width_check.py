@@ -1,6 +1,6 @@
 # needs: clang, file:runtime/wb_merge_spv.h
-"""No 64-to-32-bit narrowing in the files that hold page write generations: runtime/vk_memory.c, runtime/vk_texture.c
-and runtime/tex_probe.c, compiled with the build's flags plus -Wshorten-64-to-32, -Wformat and
+"""No 64-to-32-bit narrowing in the files that hold page write generations: runtime/vk/vk_memory.c, runtime/vk/vk_texture.c
+and runtime/gfx/tex_probe.c, compiled with the build's flags plus -Wshorten-64-to-32, -Wformat and
 -Wincompatible-pointer-types as errors (clang -fsyntax-only). The generations are 64 bits (vk_memory.c "page write
 generations"); one local, field or format left at 32 bits would bring the wrap of 2^32 back without a word, and the
 normal build sees a narrowing only as a silent conversion. The baseline is zero such diagnostics in the whole of the

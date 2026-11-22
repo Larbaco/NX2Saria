@@ -42,7 +42,7 @@ the leaf sprig and the name, which is also the window's title bar (no system tit
 minimise and close sit at its right end, Alt+F4 closes), bronze label cells, dark value cells, orange On/Off choices, a white glowing cursor around the selected
 row, the menu's filigree dividers and a description box for the selected row. All text is in the game's own Cetra
 Display: the launcher decodes it from the player's dump or built game into `data/cache/fonts` (as
-`runtime/menu_assets.c` does for the in-game menu) and uses the system's interface font until then. Every picture is
+`runtime/ui/menu_assets.c` does for the in-game menu) and uses the system's interface font until then. Every picture is
 drawn in code (`launcher/ui/art.py`); no texture, font or sound of the game is in the repository or the release.
 
 Customize Launcher (on the home screen) makes the look the player's own:
@@ -89,7 +89,7 @@ Customize Launcher (on the home screen) makes the look the player's own:
 - Sounds (Low by default; Off, Medium or High): two of the game's own interface sounds, the decide and cancel sounds
   of its menus, when a row is chosen or a choice changes and when the player goes back. The launcher decodes them
   from the player's built game or dump into `data/cache/sounds` (`gamefiles.extract_sounds`:
-  `Sound/Resource/Stream/SE_Sys_Do00.bwav` and `SE_Sys_Cancel00.bwav`, the files `runtime/menu_sound.c` plays in the
+  `Sound/Resource/Stream/SE_Sys_Do00.bwav` and `SE_Sys_Cancel00.bwav`, the files `runtime/ui/menu_sound.c` plays in the
   in-game menu). No sound is in the repository, the release or the setup, and the launcher makes none of its own:
   it is silent until the player's game has been read. Moving the cursor makes no sound. They are played from memory
   (PlaySound on Windows; `pw-play`, `paplay` or `aplay` elsewhere).
@@ -337,7 +337,7 @@ does not redraw. On Windows, Tk's chooser is the system's own.
    `romfs-check.json` beside the game, and for each damaged texture puts a stand-in, another texture of the same kind
    under the damaged one's name, in `mods/Damaged file stand-ins`, so the game can load what needs it. A damaged file
    of any other kind is only reported: only a clean dump restores it. In play the game logs a file it keeps opening
-   and cannot load (runtime/romfs.c `open_note`). The launcher shows what the check found (`jobs.Job.note_scan`):
+   and cannot load (runtime/hle/romfs.c `open_note`). The launcher shows what the check found (`jobs.Job.note_scan`):
    the count in the step's row ("4 Flagged, 3 Stand-Ins"), and after a job in which the check ran a sentence on the
    home screen and in `launcher.log`. The four files the check flags on every copy of the game (`jobs.SCAN_EXPECTED`)
    are told as that, with nothing for the player to do; other files are counted and `romfs-check.json` named.
@@ -448,7 +448,7 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
    them and translates them again with the new translator in the background (`NX2SARIA_SHADER_CARRY`). With
    `shader_carry = 0`, or nothing prepared yet, the step prepares them all as at the install. So it does when the
    list was prepared from another shader seed than the one this kit writes: `shader-prepared.bin` carries the digests
-   of the two seed files and the translator identity (`runtime/prp_file.h`), the step writes the seed first
+   of the two seed files and the translator identity (`runtime/gfx/prp_file.h`), the step writes the seed first
    (`prepare_shaders.py --no-run`, seconds) and compares (`make_game.py` `seed_changed`); a list from before it
    recorded its seed is prepared again once. Another translator alone does not prepare again. The step then asks
    the graphics driver's cache whether it still has the prepared shaders (`make_game.py` `warm_driver_cache`,
@@ -458,7 +458,7 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
    follows that count from 0 to 100 %, and the Updates row says an update takes from a few minutes to half an hour
    or more (`launcher/ui/app.py` `UPDATE_TAKES`).
    This build and the full preparation at an install leave out the compute shaders over the size at which the game's
-   boot builds one only after a run has dispatched it (`runtime/vk_pipeline.c` `lb_big_left_out`, the same rule and the
+   boot builds one only after a run has dispatched it (`runtime/vk/vk_pipeline.c` `lb_big_left_out`, the same rule and the
    same `compute-used.bin` for both): they cost minutes each and gigabytes of memory on NVIDIA's compiler for pipelines
    the game does not ask for, and the line `N large compute shaders left out (never dispatched)` counts them. Once
    every other variant is built, builds the driver has held for `NX2SARIA_PREPARE_STALL_S` seconds (300; 0 waits for
@@ -484,7 +484,7 @@ runs. Keep Build Cache off deletes the lifted C and the objects (about 1.5 GB) a
 
 A bug report from a place in the game the developer has not reached yet is quickest to reproduce with the reporter's
 save. Saves (home, under Game Folder; `launcher/saves.py`) and the Saves rows of the game's settings menu (Game tab;
-`runtime/save_share.c`) write and read the same zip.
+`runtime/hle/save_share.c`) write and read the same zip.
 
 **Export.** Export Save writes `NX2Saria-save-<date>_<time>.zip` into the Downloads folder (Export To chooses another
 folder) and opens the folder with the zip selected, ready to drag into a bug report. With Add Log and Settings on (the
@@ -514,7 +514,7 @@ to `saves/backup <date time>` first. It refuses while the game runs. A zip taken
 `saves/imported <date time>`.
 
 "While the game runs" is the game's own lock: the game holds `profile/instance.lock` from its start to its end
-(`runtime/fs_host.c` `fs_host_lock_profile`), and an import takes the same lock the same way for the time it copies
+(`runtime/hle/fs_host.c` `fs_host_lock_profile`), and an import takes the same lock the same way for the time it copies
 the backup and swaps the save in (`saves.profile_lock`). A running game refuses the import; a game started in the
 middle of one ends at once with its message that the profile is in use, and starts normally after.
 
@@ -523,13 +523,13 @@ at its next save, over files replaced under it, and the save's working copy is m
 Import a save checks the zip as the launcher does and puts its save in `profile/save-import`; the row then reads "at
 next start", and Cancel the import drops it. The next start (the menu's Restart, or quitting and starting again)
 copies the current save to `saves/backup <date time>` and makes the import the save before the game reads it
-(`runtime/fs_host.c` `import_pending`), and the menu says where the old save went. An import in the launcher replaces
+(`runtime/hle/fs_host.c` `import_pending`), and the menu says where the old save went. An import in the launcher replaces
 one still waiting from the menu.
 
 ## Mods
 
 Mods (home, under Saves; `launcher/mods.py`) is where the player puts the mods they download. The game reads the game
-folder's `mods` folder (`runtime/mods.c`; `mods_dir` in nx2saria.ini names another): one folder per mod, holding a
+folder's `mods` folder (`runtime/patches/mods.c`; `mods_dir` in nx2saria.ini names another): one folder per mod, holding a
 `romfs` folder with the game files it replaces, an `exefs` folder with code patches (`.ips`, `.pchtxt`) or a `cheats`
 folder, either at its top or in the Atmosphere layout (`atmosphere/contents/0400486024DEC000/romfs` and the others
 `tools/mod_files.py` lists).

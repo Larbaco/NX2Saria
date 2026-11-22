@@ -67,8 +67,8 @@ after updating can recompile the runtime to apply its new title and icon; saves 
 | `nx2navi` manifest and capture keys | Port-version metadata in save manifests and `capture.txt` | Earlier readers keep understanding the records |
 | `nx2navi-install.json` | Install state (`installer/state.py`) | Existing installs keep their record and can be updated |
 | `shortcuts.vdf.nx2navi-backup` | Backup of Steam's shortcut file (`launcher/steam.py`) | The launcher writes its backup under this name, and earlier backups already carry it |
-| `NX2NSPRP` | Magic of `shader-prepared.bin` (`runtime/prp_file.h`) | File magic: changing it makes existing files unreadable |
-| `NX2NAVIRFS-PROOF-1` | Magic of the RomFS verification proof (`runtime/romfs.c`) | File magic, as above |
+| `NX2NSPRP` | Magic of `shader-prepared.bin` (`runtime/gfx/prp_file.h`) | File magic: changing it makes existing files unreadable |
+| `NX2NAVIRFS-PROOF-1` | Magic of the RomFS verification proof (`runtime/hle/romfs.c`) | File magic, as above |
 | `libnx2navirt.a`, `libnx2navirt-v2.a`, `nx2navi_xlate`, `nx2navi_dlssg.dll` | Build outputs: runtime libraries, shader translator, DLSS-G library | Renaming them changes the build and the runtime's loaders together, so they keep their names for now |
 | `nx2navi.map`, `nx2navi-prof`, `nx2navi_ovr`, `nx2navi_obs` | Diagnostic map, profiler header and ELF host-registration sections | Existing diagnostic readers and linked runtime libraries keep working |
 | `NX2NAVI_PGO_GEN` | Legacy compile-time profiling flag | The runtime accepts either spelling; current builders pass `NX2SARIA_PGO_GEN` |

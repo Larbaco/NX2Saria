@@ -94,7 +94,7 @@ and a few dozen chunks, not a full compile, and the shaders stay prepared.
 `build-cache/rebuild.txt` holds the command that opens the setup window in its rebuild mode on the install folder
 (`installer/gui.py --rebuild <install folder>`, started through `python -c` so the release folder is on `sys.path`
 whatever the working folder), one argument per line. When an enabled mod has code cheats or ExeFS patch files the build
-lacks, `nx2saria.exe` runs it at start and exits (`runtime/cheats.c` `rebuild_if_needed`); the
+lacks, `nx2saria.exe` runs it at start and exits (`runtime/patches/cheats.c` `rebuild_if_needed`); the
 window runs the setup on the folder at once and starts the game again when it succeeds. A failed or cancelled rebuild
 offers to start the game with the code it has; `build-cache/rebuild.skip` then keeps the same files from starting it
 again, until "Rebuild the game now" on the Cheats or Mods tab. `[mods] mods_rebuild = off` turns it off. The rebuild
@@ -165,7 +165,7 @@ nx2saria.ini.example, VERSION  the default ini; the release string (the reposito
 
 Simplified Chinese, Traditional Chinese and Korean text needs the Switch system fonts (`0-standard.bfttf` and the other
 nn::pl shared fonts). The game does not ship them. Without them it exits before its first frame in those languages
-(`rt_fatal` in `runtime/ov_system.c`). Supply them from your own console, in either way:
+(`rt_fatal` in `runtime/hle/ov_system.c`). Supply them from your own console, in either way:
 
 - Give the setup the firmware folder (`--firmware DIR`, or the window's firmware field); the Fonts step extracts them to
   `shared-fonts/` in the install folder.

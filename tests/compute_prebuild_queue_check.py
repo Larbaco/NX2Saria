@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
-source = (root / 'runtime/vk_pipeline.c').read_text()
+source = (root / 'runtime/vk/vk_pipeline.c').read_text()
 start = source.index('static size_t lb_next(int worker)')
 brace = source.index('{', start)
 depth, end = 1, brace + 1

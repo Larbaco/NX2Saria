@@ -1,4 +1,4 @@
-"""NVIDIA Streamline's runtime for DLSS Frame Generation (runtime/vk_dlssg.c): tools/make_launcher.py and
+"""NVIDIA Streamline's runtime for DLSS Frame Generation (runtime/vk/vk_dlssg.c): tools/make_launcher.py and
 tools/make_kit.py put it in the release's or the kit's bin/dlssg/ beside nx2navi_dlssg.dll (tools/build_dlssg.py), and
 tools/make_game.py place_dlssg copies the whole set beside the game.
 

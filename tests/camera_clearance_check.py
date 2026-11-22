@@ -1,6 +1,6 @@
 # needs: clang, py:numpy, py:lz4
 """Check the camera's clearance on pictures that are not 16:9: the patch set camera_clearance
-(recomp/patches-v111.txt) and runtime/camera_clearance.c.
+(recomp/patches-v111.txt) and runtime/patches/camera_clearance.c.
 
 The set's two sites, lifted by recomp/lifter.py as the generator lifts them: main+0x71a844 and main+0x71b624 keep their
 load of the camera's ratio and then call the patch page's +0xe00. The generator's own check of a patched site (gen.py
@@ -69,7 +69,7 @@ def check_sites():
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (SLOT, SLOT),
                                 p.read_text(encoding='utf-8', errors='replace'), re.I))
     assert users == [], users   # camera_clearance.c names it through HOST_SLOT
-    assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'camera_clearance.c').read_text(encoding='utf-8')
+    assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'patches' / 'camera_clearance.c').read_text(encoding='utf-8')
     print('camera_clearance_check: main+0x71a844 and main+0x71b624 keep their load and call the page\'s +0xe00, the '
           'generator takes the sites; no other set or host function uses that slot', flush=True)
 

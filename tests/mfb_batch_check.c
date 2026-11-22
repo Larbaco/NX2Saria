@@ -1,4 +1,4 @@
-// runtime/mfb_batch.h: the rule of the mesh fallback's batch (vk_exec_draw.c mfb_draw): which draws are batched and
+// runtime/gfx/mfb_batch.h: the rule of the mesh fallback's batch (vk_exec_draw.c mfb_draw): which draws are batched and
 // which go one by one (the way back), the parts of the buffers they take, and a program's history. Built and run by
 // tests/mfb_batch_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>

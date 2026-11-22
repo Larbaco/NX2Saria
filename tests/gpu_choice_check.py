@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/gpu_choice_check.c: runtime/gpu_choice.h, which graphics card gpu_index and gpu_name pick when
+"""Build and run tests/gpu_choice_check.c: runtime/vk/gpu_choice.h, which graphics card gpu_index and gpu_name pick when
 the cards are listed in another order than when the settings were written (a gpu_index alone that lists a card that is not a
 discrete one gives way to Auto), and the log lines about the choice, the shader preparation's among them.
 

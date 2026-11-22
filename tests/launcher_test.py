@@ -343,7 +343,7 @@ PLAYER_INI = (
 
 
 class GameIniTest(Tmp):
-    """The game settings the launcher switches (launcher/gameini.py), read as runtime/cfg.c reads nx2navi.ini."""
+    """The game settings the launcher switches (launcher/gameini.py), read as runtime/cfg/cfg.c reads nx2navi.ini."""
 
     def test_new_file_gets_the_section(self):
         gameini.put(self.tmp, 'discord', 'discord_rpc', '1')
@@ -379,7 +379,7 @@ class GameIniTest(Tmp):
         self.assertEqual(ini.read_bytes(), b'[discord]\ndiscord_rpc = 1\ndiscord_app_id = 42\n[display]\nfullscreen = 1')
 
     def test_an_empty_line_leaves_the_earlier_value(self):
-        # runtime/cfg.c: "key =" leaves the setting as it was, so the game keeps 0 here, and a change goes to that line
+        # runtime/cfg/cfg.c: "key =" leaves the setting as it was, so the game keeps 0 here, and a change goes to that line
         ini = self.tmp / 'nx2saria.ini'
         ini.write_bytes(b'discord_rpc = 0\ndiscord_rpc =\n')
         self.assertEqual(gameini.get(self.tmp, 'discord_rpc'), '0')
@@ -410,7 +410,7 @@ class PlayerIniTest(Tmp):
         self.assertEqual(ini.read_bytes(), PLAYER_INI + b'\r\n\r\n[discord]\r\ndiscord_rpc = 1\r\n')
 
     def test_a_comment_after_a_value_as_the_game_reads_it(self):
-        """runtime/cfg.c cut_comment: for a key whose row has a set of values (choices=True), a blank followed by ';'
+        """runtime/cfg/cfg.c cut_comment: for a key whose row has a set of values (choices=True), a blank followed by ';'
         or '#' starts a comment, "key = ; note" has no value, and a value in double quotes keeps its text; free text,
         the mods folder and lists the launcher writes, keeps the whole value. tests/cfg_parse_check.py has the same
         lines for the game."""
@@ -1993,7 +1993,7 @@ print(json.dumps({'status': 'pass', 'folders': []}))
 
 
 def prepared_list(programs, answers, translator, records=1):
-    """A version 2 shader-prepared.bin (runtime/prp_file.h): the head, what it was prepared from, then records."""
+    """A version 2 shader-prepared.bin (runtime/gfx/prp_file.h): the head, what it was prepared from, then records."""
     return b'NX2NSPRP' + struct.pack('<II', 2, 36) + programs + answers + translator + bytes(36 * records)
 
 
@@ -2579,7 +2579,7 @@ class MakeGameTest(Tmp):
 
     def test_prepared_list_says_what_it_was_prepared_from(self):
         """shader-prepared.bin carries the digests of the two seed files and the translator from version 2 on
-        (runtime/prp_file.h); a version 1 list, or a file cut short, says nothing, and no file is None."""
+        (runtime/gfx/prp_file.h); a version 1 list, or a file cut short, says nothing, and no file is None."""
         self.out.mkdir(parents=True, exist_ok=True)
         self.assertIsNone(self.mg.prepared_from(self.out))
         lst = self.out / 'shader-prepared.bin'
@@ -3404,7 +3404,7 @@ class MakeGameTest(Tmp):
             self.assertEqual(build_shaders.stale(rt), [font])
         menu = (ROOT / 'runtime' / 'ui' / 'menu.cpp').read_text(encoding='utf-8')
         self.assertIn('#ifdef __has_embed\n#embed "fonts/Roboto-Medium.ttf"\n#else\n#include "roboto_ttf.h"\n#endif', menu)
-        # the menu font, and the SMAA lookup textures of the anti-aliasing setting (runtime/vk_aa.c)
+        # the menu font, and the SMAA lookup textures of the anti-aliasing setting (runtime/vk/vk_aa.c)
         self.assertEqual(build_shaders.EMBEDDED, {'ui/fonts/Roboto-Medium.ttf': 'ui/roboto_ttf.h',
                                                   'third_party/smaa/AreaTex.bin': 'smaa_area_tex.h',
                                                   'third_party/smaa/SearchTex.bin': 'smaa_search_tex.h'})
@@ -3480,7 +3480,7 @@ class MakeGameTest(Tmp):
         self.assertFalse(self.mg.shader_carry(out))
 
     def test_shader_carry_reads_the_switch_as_the_game(self):
-        """shader_carry reads NX2NAVI_SHADER_CARRY as runtime/cfg.c does: 0, off, false and no in any case are off, a
+        """shader_carry reads NX2NAVI_SHADER_CARRY as runtime/cfg/cfg.c does: 0, off, false and no in any case are off, a
         comment after a blank is cut unless the value is in double quotes, the file's last line with a value wins and
         the environment wins over the file. A line the game reads as off and this as on would skip a preparation the
         game does not make up for."""
@@ -3530,7 +3530,7 @@ class MakeGameTest(Tmp):
 
     def test_cache_from_before_carrying_names_its_translator(self):
         """Before a new translator goes beside the game, a shader cache with no identities.txt gets one naming the
-        translator still there, in the form runtime/gfx_shader.c reads (ids_parse): '#' lines, then 64 hex digits."""
+        translator still there, in the form runtime/gfx/gfx_shader.c reads (ids_parse): '#' lines, then 64 hex digits."""
         out = self.tmp / 'game'
         out.mkdir()
         old = 'B72C60033CE90FC475EF5B4D397555DDA9A52AD0FDF480B8A4E292ED925A6DE7'
@@ -4951,7 +4951,7 @@ class SavesTest(unittest.TestCase):
         self.assertEqual((r['backup'] / 'save.dat').read_bytes(), b'mine')
 
     def test_an_interrupted_commit_is_backed_up(self):
-        # runtime/fs_host.c save_recover: with no account folder and no finished commit, save-tx/new is the save, and
+        # runtime/hle/fs_host.c save_recover: with no account folder and no finished commit, save-tx/new is the save, and
         # without it save-tx/old; the import keeps that only copy
         for half in ('new', 'old'):
             with self.subTest(half=half):
@@ -5388,7 +5388,7 @@ class SaveShareTest(unittest.TestCase):
         self.assertFalse((self.game / 'profile' / 'save-tx' / 'import').exists())
 
     def test_the_zip_of_the_games_menu_imports(self):
-        # runtime/save_share.c writes the same layout with stored and deflated members; Python's reader takes both
+        # runtime/hle/save_share.c writes the same layout with stored and deflated members; Python's reader takes both
         path = self.tmp / 'from-the-game.zip'
         with zipfile.ZipFile(path, 'w') as z:
             z.writestr(saves.MANIFEST, json.dumps({'format': saves.FORMAT, 'format_version': 1, 'exported_by': 'game',
@@ -6154,7 +6154,7 @@ class WhilePlayingTest(Tmp):
                 proc.wait(10)
 
     def test_a_lost_device_shows_the_games_fatal_line(self):
-        """Exit code 72 (runtime/vk_device.c vk_device_lost_check) follows a FATAL line as 70 and 71 do; when its
+        """Exit code 72 (runtime/vk/vk_device.c vk_device_lost_check) follows a FATAL line as 70 and 71 do; when its
         watchdog ended the run before that line, the code's own text says what happened."""
         try:
             from launcher.ui import app
@@ -7272,7 +7272,7 @@ class ModsTest(Tmp):
         self.mods.set_enabled(self.game, 'Alpha', True)
         self.assertEqual(gameini.get(self.game, 'MODS_ORDER'), 'beta| Lead|Alpha')
         self.assertEqual(gameini.get(self.game, 'MODS_DISABLED'), ' Lead')
-        self.assertIn('mods_disabled = " Lead"', (self.game / 'nx2saria.ini').read_text())   # as runtime/cfg.c quotes
+        self.assertIn('mods_disabled = " Lead"', (self.game / 'nx2saria.ini').read_text())   # as runtime/cfg/cfg.c quotes
         found = self.mods.scan(self.game)
         self.assertEqual([(m.name, m.enabled) for m in found], [('beta', True), (' Lead', False), ('Alpha', True)])
         self.assertEqual(self.mods.overlaps(found), {'beta': [('Alpha', 1, True)], 'Alpha': [('beta', 1, False)]})

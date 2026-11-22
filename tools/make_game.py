@@ -551,7 +551,7 @@ def recomp_digest(kit=None):
 
 
 # The mods' code (tools/mod_files.py): the tools that make patch sets of it, the patch file each writes, the status
-# file the runtime reads in build-cache next to the exe (runtime/cheats.c, runtime/mods.c) and what the log calls it
+# file the runtime reads in build-cache next to the exe (runtime/patches/cheats.c, runtime/patches/mods.c) and what the log calls it
 MOD_STAGES = (('cheats.py', 'patches-cheats.txt', 'cheats.status', 'code cheats'),
               ('exefs_patches.py', 'patches-exefs.txt', 'exefs.status', 'ExeFS patches'))
 # build-cache/: {"<mod>/<path>": sha256} of the files the last lift took up, built in or refused (the status files say
@@ -770,9 +770,9 @@ def copy_if_changed(src, dst):
 
 DLSS_DLL, DLSS_NOTICE = 'nvngx_dlss.dll', 'nvngx_dlss-NOTICE.txt'   # tools/dlss_pin.py, in the kit's bin/
 # The Linux library's name ends in the DLSS version (tools/dlss_pin.py): it is found by its prefix, as the runtime
-# finds it beside the game (runtime/resolution.c dlss_dll).
+# finds it beside the game (runtime/gfx/resolution.c dlss_dll).
 DLSS_SO_PREFIX, DLSS_SO_NOTICE = 'libnvidia-ngx-dlss.so.', 'libnvidia-ngx-dlss-NOTICE.txt'
-# DLSS Frame Generation (runtime/vk_dlssg.c) loads these from beside the game: nx2navi_dlssg.dll (runtime/dlssg/,
+# DLSS Frame Generation (runtime/vk/vk_dlssg.c) loads these from beside the game: nx2navi_dlssg.dll (runtime/dlssg/,
 # tools/build_dlssg.py), NVIDIA Streamline's interposer and the plugins it uses, and NGX's frame generation library.
 # A release carries them with their licence texts in bin/dlssg/ (tools/make_launcher.py --dlssg); without the whole set
 # the game leaves DLSS Frame Generation off.
@@ -798,7 +798,7 @@ def dlss_files(folder, linux):
 
 
 def place_dlss(out, linux=False):
-    """NVIDIA's DLSS library from the kit's bin/ beside the game, where NGX loads it (runtime/vk_dlaa.c), with its
+    """NVIDIA's DLSS library from the kit's bin/ beside the game, where NGX loads it (runtime/vk/vk_dlaa.c), with its
     notice. A different library the player put there (another DLSS version) is kept; the one an earlier build placed,
     named by the notice beside it, is replaced. linux: the Linux library, whose name carries the DLSS version, so a
     kit with another version replaces the earlier build's file under its old name. Returns a line for the build's
@@ -1803,14 +1803,14 @@ def pgo_gen_record(out, clang, env):
     (raw / PGO_TRAINING).write_text(json.dumps(record, indent=1) + '\n', encoding='utf-8')
 
 
-# The values a switch (a row of runtime/cfg.c metas[] whose set is 0|1) reads as off, in any case (cfg.c switch_of).
+# The values a switch (a row of runtime/cfg/cfg.c metas[] whose set is 0|1) reads as off, in any case (cfg.c switch_of).
 SWITCH_OFF = ('0', 'off', 'false', 'no')
 
 
 def guest_opt_ini(out):
     """NX2SARIA_GUEST_OPT from nx2saria.ini next to the exe (or an existing legacy nx2navi.ini) when the environment does not set it: the next build of the
     game folder out takes it. The line counts by itself. Up to 0.10.1 it counted only while low_end_gpu was on in the
-    file too; that mode is gone (runtime/cfg.c lowend_set) and its settings are read like any other."""
+    file too; that mode is gone (runtime/cfg/cfg.c lowend_set) and its settings are read like any other."""
     if setting_env('NX2SARIA_GUEST_OPT').strip():
         return
     found = ''
@@ -2555,17 +2555,17 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     note_cache_translator(out)   # before the new translator replaces the one the shader cache was made with
     for name in (XLATE_NAME, 'nx2navi_xlate.id'):
         copy_if_changed(xlate / name, out / name)
-    if (KIT / 'bin' / 'amd_fidelityfx_vk.dll').is_file():   # FSR 3.1 (runtime/vk_ffx.cpp)
+    if (KIT / 'bin' / 'amd_fidelityfx_vk.dll').is_file():   # FSR 3.1 (runtime/vk/vk_ffx.cpp)
         copy_if_changed(KIT / 'bin' / 'amd_fidelityfx_vk.dll', out / 'amd_fidelityfx_vk.dll')
-    if all((KIT / 'bin' / n).is_file() for n in FFX4_DLLS):   # FSR 4 (runtime/vk_ffx4.cpp): both or neither
+    if all((KIT / 'bin' / n).is_file() for n in FFX4_DLLS):   # FSR 4 (runtime/vk/vk_ffx4.cpp): both or neither
         for name in FFX4_DLLS:
             copy_if_changed(KIT / 'bin' / name, out / name)
-        if (KIT / 'bin' / FFX4_FG_DLL).is_file():   # its frame generation (runtime/vk_fg4.cpp)
+        if (KIT / 'bin' / FFX4_FG_DLL).is_file():   # its frame generation (runtime/vk/vk_fg4.cpp)
             copy_if_changed(KIT / 'bin' / FFX4_FG_DLL, out / FFX4_FG_DLL)
-    kept = place_dlss(out, linux=not WIN)   # NVIDIA DLSS (runtime/vk_dlaa.c): this platform's library from the kit
+    kept = place_dlss(out, linux=not WIN)   # NVIDIA DLSS (runtime/vk/vk_dlaa.c): this platform's library from the kit
     if kept:
         say(f'  {kept}')
-    if WIN and place_dlssg(out):   # DLSS Frame Generation (runtime/vk_dlssg.c): Windows DLLs too
+    if WIN and place_dlssg(out):   # DLSS Frame Generation (runtime/vk/vk_dlssg.c): Windows DLLs too
         say('  DLSS Frame Generation: nx2navi_dlssg.dll, Streamline and nvngx_dlssg.dll beside the game')
     beside = copy_dlls(exe, msys / 'bin', out) if WIN else []
     say(f'  {EXE_NAME} {exe.stat().st_size / 1e6:.0f} MB' + (f'; beside it: {", ".join(beside)}' if beside else ''))
@@ -2578,7 +2578,7 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
 
 SHADER_PROGRESS = re.compile(r'^prepare-shaders: progress (translate|build) (\d+) (\d+)\s*$')
 # The line nx2saria.exe prints when it stopped waiting for builds the graphics driver held too long
-# (runtime/vk_pipeline.c prep_stalled, NX2SARIA_PREPARE_STALL_S): it then ends with code 0, and the game goes on with
+# (runtime/vk/vk_pipeline.c prep_stalled, NX2SARIA_PREPARE_STALL_S): it then ends with code 0, and the game goes on with
 # those variants in the background. shader_run keeps how many there were in SHADERS_LEFT.
 SHADERS_LEFT_LINE = re.compile(r'^prepare-shaders: \d+ of \d+ variants built into the driver cache .*; (\d+) still building '
                                r'after \d+ s each are left to the game')
@@ -2589,8 +2589,8 @@ SHADER_BEAT_S = 10     # a progress event at least this often while the step run
 
 def shader_progress(phase, done, total, quiet_s, elapsed_s, build_only=False):
     """The shaders step's progress event fields: the translation fills the first half of the bar, the build into the
-    driver's cache the second (nx2saria.exe prints both counts, runtime/gfx_shader.c prepare_files and
-    runtime/vk_pipeline.c lb_warm_prepared); before either count, reading the game's shaders. quiet_s: seconds since a
+    driver's cache the second (nx2saria.exe prints both counts, runtime/gfx/gfx_shader.c prepare_files and
+    runtime/vk/vk_pipeline.c lb_warm_prepared); before either count, reading the game's shaders. quiet_s: seconds since a
     count last moved, said once it passes SHADER_STALL_S, so a slow step never looks frozen without a word. The
     detail ends without a full stop: the launcher adds one (launcher/ui/app.py).
     build_only: a run that only builds (warm_driver_cache), whose count fills the whole bar: starting at one half,
@@ -2611,7 +2611,7 @@ def shader_progress(phase, done, total, quiet_s, elapsed_s, build_only=False):
     return {'step': 'shaders', 'fraction': fraction, 'detail': detail}
 
 
-# In the game's shader-cache/: the translator identities its translations are of, newest first (runtime/gfx_shader.c,
+# In the game's shader-cache/: the translator identities its translations are of, newest first (runtime/gfx/gfx_shader.c,
 # "Carry"): '#' comment lines, then one identity a line in 64 hex digits, the content of nx2navi_xlate.id.
 SHADER_IDS = 'identities.txt'
 HEX64 = re.compile(r'[0-9a-fA-F]{64}')
@@ -2629,7 +2629,7 @@ def cache_identities(out):
 def note_cache_translator(out):
     """Before a new translator goes beside the game: a shader cache that has no SHADER_IDS yet (made before the game
     carried translations over) gets one naming the translator that made it, the one still beside the game. The game
-    then carries those translations over at this update too (runtime/gfx_shader.c ids_load), and the update need not
+    then carries those translations over at this update too (runtime/gfx/gfx_shader.c ids_load), and the update need not
     prepare them all again (shader_carry). Nothing when there is no cache, the file is there, or the old id is no
     identity."""
     cache, ids = out / 'shader-cache', out / 'shader-cache' / SHADER_IDS
@@ -2648,7 +2648,7 @@ def note_cache_translator(out):
 
 
 def ini_choice(raw):
-    """The value of a setting with a set of values as runtime/cfg.c cfg_load reads it from nx2saria.ini (or an existing nx2navi.ini), raw being the
+    """The value of a setting with a set of values as runtime/cfg/cfg.c cfg_load reads it from nx2saria.ini (or an existing nx2navi.ini), raw being the
     text after '=': unless the whole value is in double quotes, it ends at the first blank followed by ';' or '#'
     (cfg.c cut_comment); a value in double quotes then loses them."""
     v = raw.strip()
@@ -2660,10 +2660,10 @@ def ini_choice(raw):
 
 
 def shader_carry(out):
-    """Whether the game carries the shaders prepared before an update over (runtime/gfx_shader.c, NX2SARIA_SHADER_CARRY,
+    """Whether the game carries the shaders prepared before an update over (runtime/gfx/gfx_shader.c, NX2SARIA_SHADER_CARRY,
     on unless set to 0, off, false or no) and there are some: shader-prepared.bin is written by a finished
     preparation, and the cache must name the translator its translations are of (SHADER_IDS, note_cache_translator),
-    else the game has nothing to carry them over by. The switch is read as the game reads it (runtime/cfg.c): the
+    else the game has nothing to carry them over by. The switch is read as the game reads it (runtime/cfg/cfg.c): the
     environment wins over nx2saria.ini (or an existing nx2navi.ini) and is taken as written; in the file the last line with a value wins, its
     comment cut (ini_choice). Where this read differs from the game's, an update skips a preparation the game will not
     carry over, or prepares what it would."""
@@ -2683,7 +2683,7 @@ def shader_carry(out):
     return (out / 'shader-prepared.bin').is_file() and bool(cache_identities(out))
 
 
-# The head of shader-prepared.bin (runtime/prp_file.h): magic, version, record size, and from version 2 on what the
+# The head of shader-prepared.bin (runtime/gfx/prp_file.h): magic, version, record size, and from version 2 on what the
 # list was prepared from: sha256 of seed-programs.bin, sha256 of seed-answers.bin, the translator identity.
 PREPARED_HEAD = struct.Struct('<8sII')
 SEED_FILES = ('seed-programs.bin', 'seed-answers.bin')
@@ -2797,7 +2797,7 @@ def warm_driver_cache(out):
     this run every pipeline a draw first needed then compiled in play, which skipped that draw for some frames or made
     it wait (on an RX 7900 XT 100 to 340 ms a library against 3 ms from the cache, after dynamic vertex input was
     turned off for that driver). A run that fails is not an error of the build: the game checks the cache at every
-    start and warms it in the background itself (runtime/vk_pipeline.c lw_start)."""
+    start and warms it in the background itself (runtime/vk/vk_pipeline.c lw_start)."""
     exe = out / EXE_NAME
     if not exe.is_file() or not (out / 'shader-prepared.bin').is_file():
         return
@@ -2824,11 +2824,11 @@ def left_text(n):
 
 # The folders the graphics drivers keep their own shader caches in. The prepared shaders live only there (the game
 # builds them into the driver's cache and keeps no copy of what the driver makes of them), and a driver that no longer
-# has them makes the next update build every one again: the sample the warm takes (runtime/vk_pipeline.c prep_sample_warm) says
+# has them makes the next update build every one again: the sample the warm takes (runtime/vk/vk_pipeline.c prep_sample_warm) says
 # that they are gone, and the size of these folders says whether the files were gone from the disk or were there and
 # did not match. On Windows, under %LOCALAPPDATA%: each folder of NVIDIA's, AMD's and Intel's with "cache" in its name
 # (NVIDIA's GLCache and DXCache, AMD's VkCache, DxCache and GLCache, Intel's ShaderCache) and Windows' own D3DSCache.
-# On both systems, the nvidia-cache folder the game makes beside its executable for NVIDIA's driver (runtime/vk_device.c
+# On both systems, the nvidia-cache folder the game makes beside its executable for NVIDIA's driver (runtime/vk/vk_device.c
 # nvidia_cache_beside_exe), first, and on Linux the mesa-cache folder (mesa_cache_beside_exe). On Windows the folder
 # beside the game fills only if the driver honours the variable the game sets, and the driver's own folder if it does
 # not: the two sizes say which. On both, the folder __GL_SHADER_DISK_CACHE_PATH names when a player set it.
@@ -2840,7 +2840,7 @@ DRIVER_CACHE_ENV = '__GL_SHADER_DISK_CACHE_PATH'
 def driver_cache_folders(out, windows=WIN, local_appdata=None):
     """[(label, folder)] of the driver shader cache folders that exist, in a fixed order, each once: a folder that is
     a link to another listed one is left out, and so is one that cannot be read. The game keeps NVIDIA's driver cache in
-    nvidia-cache beside its executable on Windows and Linux alike (runtime/vk_device.c nvidia_cache_beside_exe), and
+    nvidia-cache beside its executable on Windows and Linux alike (runtime/vk/vk_device.c nvidia_cache_beside_exe), and
     that folder comes first. windows and local_appdata: the platform and its LOCALAPPDATA, for the tests."""
     found = []
     if (Path(out) / 'nvidia-cache').is_dir():
@@ -3025,7 +3025,7 @@ def prompt_art_dir():
 
 
 # The game folder's record of where its button prompts came from, or why there are none: one line, which the build log
-# shows and the game's log repeats when the Controls menu's Button prompts asks for prompts (runtime/romfs.c
+# shows and the game's log repeats when the Controls menu's Button prompts asks for prompts (runtime/hle/romfs.c
 # prompts_record).
 PROMPTS_RECORD = 'button-prompts.txt'
 
@@ -3067,7 +3067,7 @@ def bind_lines(out):
 
 def step_prompts(out):
     """The button prompts drawn from the kit's art into the game folder: tools/pad_prompts.py writes one overlay
-    folder per style and layout (prompt_art.OVERLAYS), which runtime/romfs.c loads in place of the game's button font
+    folder per style and layout (prompt_art.OVERLAYS), which runtime/hle/romfs.c loads in place of the game's button font
     and prompt textures when the Controls menu's Button prompts is Xbox, PlayStation, Steam Deck or Keyboard and mouse. Its lines
     go on to the log, each folder written is a progress event."""
     total = len(prompt_art.OVERLAYS)

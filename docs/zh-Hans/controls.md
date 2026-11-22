@@ -8,7 +8,7 @@
 <!-- /languages -->
 # 操作
 
-输入来自 SDL3 手柄、键盘和鼠标，合并为一个 Switch 控制器（`runtime/input.c`、`runtime/input_win.c`）。每个已连接的手柄都保持打开，游戏读取最后按下的那个；游玩中打开的手柄会在一秒内被识别。按键取“或”；每个摇杆取偏移更大的那个来源。只有游戏窗口位于前台时，键盘按键和鼠标按键才会生效。`NX2SARIA_INPUT=none` 会同时禁用两者（用于自动化运行）。`NX2SARIA_*` 设置也可以写在 exe 旁边的 `nx2saria.ini` 中（`input = none`、`motion = 0`、`rumble = 0`）；环境变量优先于该文件。旧的 `NX2NAVI_*` 名称和 `nx2navi.ini` 仍然有效（[名称与兼容性](../branding.md)（英文））。`NX2SARIA_RUMBLE_STRENGTH` 是以百分比表示的振动强度（0 到 300，默认 130；0 等同于 `rumble = 0`）。`NX2SARIA_RUMBLE_CURVE` 是在应用强度之前作用于振幅的指数（0.2 到 1.5，默认 0.6；越低，弱振动越强，1 为线性）。`NX2SARIA_RUMBLE_TRIGGERS=1` 还会驱动 Xbox 手柄的脉冲扳机。`NX2SARIA_DS3=1` 会开启 DualShock 3 的直接读取器（见“PlayStation 3 手柄”）。
+输入来自 SDL3 手柄、键盘和鼠标，合并为一个 Switch 控制器（`runtime/input/input.c`、`runtime/input/input_win.c`）。每个已连接的手柄都保持打开，游戏读取最后按下的那个；游玩中打开的手柄会在一秒内被识别。按键取“或”；每个摇杆取偏移更大的那个来源。只有游戏窗口位于前台时，键盘按键和鼠标按键才会生效。`NX2SARIA_INPUT=none` 会同时禁用两者（用于自动化运行）。`NX2SARIA_*` 设置也可以写在 exe 旁边的 `nx2saria.ini` 中（`input = none`、`motion = 0`、`rumble = 0`）；环境变量优先于该文件。旧的 `NX2NAVI_*` 名称和 `nx2navi.ini` 仍然有效（[名称与兼容性](../branding.md)（英文））。`NX2SARIA_RUMBLE_STRENGTH` 是以百分比表示的振动强度（0 到 300，默认 130；0 等同于 `rumble = 0`）。`NX2SARIA_RUMBLE_CURVE` 是在应用强度之前作用于振幅的指数（0.2 到 1.5，默认 0.6；越低，弱振动越强，1 为线性）。`NX2SARIA_RUMBLE_TRIGGERS=1` 还会驱动 Xbox 手柄的脉冲扳机。`NX2SARIA_DS3=1` 会开启 DualShock 3 的直接读取器（见“PlayStation 3 手柄”）。
 
 `NX2SARIA_PAD_LAYOUT`（`pad_layout`，操作标签页中的*按键布局*行，实时生效）决定哪个正面按键是 Switch 的 A：
 
@@ -27,7 +27,7 @@
 - 布局的更改要在重启后才会显示；在此之前，*按键提示*会显示*按键提示重启后生效*。
 - 修改动作提示的 RomFS 模组会保留它自己的菱形。出于其他原因替换同一个归档的模组，会在其更改之上移动菱形。
 
-日志会在以 `action prompt:` 开头的一行中说明发生了什么。布局的修改方式：`runtime/action_prompt.c`（`UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs` 中的 `DoCommand_00`，从 `<profile>/action-prompt/` 提供）。
+日志会在以 `action prompt:` 开头的一行中说明发生了什么。布局的修改方式：`runtime/patches/action_prompt.c`（`UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs` 中的 `DoCommand_00`，从 `<profile>/action-prompt/` 提供）。
 
 ## 按键提示
 
@@ -43,7 +43,7 @@ A、B、X 和 Y 显示的是*按键布局*所按下的按键：使用 `nintendo`
 
 游戏在启动时读取一次字体和界面纹理，因此更改要在重启后才会显示（该行会这样提示；菜单的“重启”按钮会重启游戏）。在此标签页中重新映射的按键或键盘按键会保留旧的提示，直到重新生成这些文件夹。
 
-按键提示位于 exe 旁边的覆盖文件夹中：`romfs-patches-xbox`、`romfs-patches-xbox-label`、`romfs-patches-playstation`、`romfs-patches-playstation-label`、`romfs-patches-steamdeck` 和 `romfs-patches-steamdeck-label`（按位置和按标注）以及 `romfs-patches-pc`，`runtime/romfs.c` 会加载它们来代替游戏的文件。`tools/pad_prompts.py` 在玩家的机器上，根据玩家自己的 RomFS 和一个按键图片文件夹绘制它们。这些图片位于仓库的 `prompt-art` 文件夹中：来自一个 CC0 图包，其 `SOURCE.md` 写明了图包名称和来源。每个启动器发布版本、AppImage 和构建套件都带有这些图片（`tools/prompt_art.py`），`tools/make_game.py` 会在最后一步绘制所有文件夹，并在图片、工具或 `bind_` 行发生变化时再次绘制（因此重新绑定按键后重新构建，键盘提示就会更新）。手动生成：
+按键提示位于 exe 旁边的覆盖文件夹中：`romfs-patches-xbox`、`romfs-patches-xbox-label`、`romfs-patches-playstation`、`romfs-patches-playstation-label`、`romfs-patches-steamdeck` 和 `romfs-patches-steamdeck-label`（按位置和按标注）以及 `romfs-patches-pc`，`runtime/hle/romfs.c` 会加载它们来代替游戏的文件。`tools/pad_prompts.py` 在玩家的机器上，根据玩家自己的 RomFS 和一个按键图片文件夹绘制它们。这些图片位于仓库的 `prompt-art` 文件夹中：来自一个 CC0 图包，其 `SOURCE.md` 写明了图包名称和来源。每个启动器发布版本、AppImage 和构建套件都带有这些图片（`tools/prompt_art.py`），`tools/make_game.py` 会在最后一步绘制所有文件夹，并在图片、工具或 `bind_` 行发生变化时再次绘制（因此重新绑定按键后重新构建，键盘提示就会更新）。手动生成：
 
 ```
 python tools\pad_prompts.py --art prompt-art --game <install folder>
@@ -74,7 +74,7 @@ python tools\pad_prompts.py --art prompt-art --game <install folder>
 | Plus | Start | Tab | 菜单：道具、装备、收集、系统 |
 | Minus | Back | M | 地图 |
 
-游戏的 *Swap Jump Controls* 选项会交换 B 和 X（B 跳跃，X 收起）；绑定仍然对应 Switch 按键，因此这时 Space 变为收起，Left Ctrl 变为跳跃。Left Shift 是 A，所以按住它会冲刺；E 按一次 A，用于交谈和打开。Esc 在游戏中没有绑定；它会打开设置菜单并释放鼠标光标（见“鼠标视角”）。Z 和 X 在相邻的按键上重复 ZL 和 ZR。鼠标滚轮在游戏过程中没有绑定；在游戏自身的菜单中它用于滚动（见“在游戏菜单中使用鼠标”）。绑定是 `runtime/input_map.c` 中 `input_map` 的各张表：键盘按键（与平台无关的按键 ID）以及每种布局一张手柄表（按位置的手柄输入）；`runtime/input_win.c` 负责转换 Win32 虚拟键和 SDL 按键。
+游戏的 *Swap Jump Controls* 选项会交换 B 和 X（B 跳跃，X 收起）；绑定仍然对应 Switch 按键，因此这时 Space 变为收起，Left Ctrl 变为跳跃。Left Shift 是 A，所以按住它会冲刺；E 按一次 A，用于交谈和打开。Esc 在游戏中没有绑定；它会打开设置菜单并释放鼠标光标（见“鼠标视角”）。Z 和 X 在相邻的按键上重复 ZL 和 ZR。鼠标滚轮在游戏过程中没有绑定；在游戏自身的菜单中它用于滚动（见“在游戏菜单中使用鼠标”）。绑定是 `runtime/input/input_map.c` 中 `input_map` 的各张表：键盘按键（与平台无关的按键 ID）以及每种布局一张手柄表（按位置的手柄输入）；`runtime/input/input_win.c` 负责转换 Win32 虚拟键和 SDL 按键。
 
 ## 窗口快捷键
 
@@ -104,7 +104,7 @@ Minus+Plus 组合键永远不会传给游戏。在菜单中，方向键、十字
 - *Apply* 之后，可能会接连出现另外两个对话框（每个都会在前一个关闭后的下一帧打开）。首先，当*全屏*、窗口大小（*Resolution* 行，或者在没有宽屏设置的游戏版本上为*窗口大小*）、*垂直同步*或 *HDR*（在关闭和色调映射之间切换，这会以另一种格式重新创建交换链）发生变化时，会出现 *Keep these display settings?*：这些实时设置可能让玩家得不到可用的画面。它们会立即生效，只有在 *Keep* 之后才写入 `nx2saria.ini`；草稿的其余部分在 Apply 时保存。*Resolution* 行会随窗口大小一起设置游戏分辨率，两者一同处理：它的游戏分辨率在 *Keep* 时保存，在 *Revert* 时恢复，之后不再出现在下面的重启对话框中（`option_rows.cpp` 中的 `group_timed`）。此时会运行 15 秒的倒计时（`plat_now_ns`）；*Revert*（默认选项，也可按 Esc 或 B）、超时、以任何方式关闭菜单以及退出游戏，都会恢复旧值且不保存，而在此期间进行的保存（F10、金手指、关闭窗口）会跳过这些值（`cfg_hold`）。倒计时期间按 F11 表示玩家接管：对话框关闭，所有已应用的内容（包括 F11 的全屏状态）都会保留并保存。然后，当某个已应用的设置在启动时读取时（GPU、HDR 切换到或离开游戏原生 HDR、在关闭低延迟启动的运行中开启低延迟……），会出现 *Some changes take effect after a restart*：它列出这些设置，并提供 *Restart now*（与“重启”按钮相同的重启）和 *Later*（默认选项，也可按 Esc 或 B），后者会关闭菜单，并把这些值保存到下次启动时使用。
 - *重启*会先应用并保存草稿，因为正是重启让那些只在重启后生效的更改生效；它的对话框会这样说明。*退出游戏*会丢弃草稿（它的对话框会这样说明），关闭窗口也是如此。
 - 改回初始值的更改会离开草稿。在此期间被其他东西改变的设置（*全屏*上的 F11）也会离开草稿，并保留外部的值。由环境变量固定的设置显示为灰色，永远不会进入草稿。
-- 草稿打开期间由其他任何操作触发的保存（菜单关闭时的 F10、F11、金手指）不会写入预览中的值：该项在 Apply 之前不参与任何保存（`runtime/cfg.c` 中的 `cfg_hold`、`cfg_revert`）。
+- 草稿打开期间由其他任何操作触发的保存（菜单关闭时的 F10、F11、金手指）不会写入预览中的值：该项在 Apply 之前不参与任何保存（`runtime/cfg/cfg.c` 中的 `cfg_hold`、`cfg_revert`）。
 - 每一步都会记录在 `logs/nx2saria.log` 中，因此事后可以检查一次运行：某个设置进入或离开草稿时（预览或待定）记录 `menu: draft +` 和 `menu: draft -`，每个打开的对话框及给出的回答（按钮、Esc 或 B、倒计时结束、F11）记录 `menu: box`，`menu: draft applied` / `discarded` 附带每个值，`menu: display kept` / `reverted`，每次保存记录 `cfg: wrote <path>: <keys>`，被保留的预览记录 `cfg: save leaves out <key>`，Ctrl+F5 等待菜单时记录 `cfg: reload: not run`。
 
 ## 画质预设
@@ -127,7 +127,7 @@ Minus+Plus 组合键永远不会传给游戏。在菜单中，方向键、十字
 Ctrl+F5 会在游戏运行时重新读取 `nx2saria.ini`，因此在文本编辑器中修改的一行无需重启或进入菜单即可生效。单独的 F5 不是重新加载：它仍然是一个可以绑定的按键（Ctrl+F5 也会按下绑定到 F5 的操作，因为游戏读取的是键盘状态；如果这造成干扰，请在*操作*标签页中取消 F5 的绑定）。窗口代码（Win32 和 SDL 都一样）会在按键按下时一并看到 Ctrl 的状态，因此这个快捷键不需要改动按键绑定。
 
 - 每个所在行被修改、添加或删除（此时它恢复为默认值）的设置都会取得新值；窗口顶部会显示一条简短的提示 *N changed, M after restart*，如果有值被拒绝，还会附加 *K rejected*。菜单标为*重启后生效*的设置会在内存中更改，并在日志中以 `(takes effect after restart)` 列出。
-- 新值的读取方式与启动时相同（值后面的注释会被去掉，`on`、`off`、`true`、`false`、`yes` 和 `no` 都可用于开关），并会先经过检查（`runtime/cfg.c` 中的 `value_ok`）：对超出设置选项范围的值（开关、范围、名称列表；含有数字的列表是菜单的预设，不做检查），使用启动日志所用的同一种检查；对于取值超出该表所列范围、或遇到错误值会停止游戏的设置，则使用它自己的规则（`fps_limit`、`render_scale`、`window_size`、`output_res`、`app_pool`，以及必须完全匹配的 `lang` 和 `operation_mode`）。不符合的值会被拒绝，保留当前值，日志会写出 `cfg: reload KEY = 'x' rejected: invalid`。启动时，拼错的 `lang` 或 `operation_mode` 会让游戏显示一条消息并停止；重新加载则永远不会。菜单中没有列出的键（绑定、模组列表、金手指）不做检查：它们的读取代码会自行回退到默认值。
+- 新值的读取方式与启动时相同（值后面的注释会被去掉，`on`、`off`、`true`、`false`、`yes` 和 `no` 都可用于开关），并会先经过检查（`runtime/cfg/cfg.c` 中的 `value_ok`）：对超出设置选项范围的值（开关、范围、名称列表；含有数字的列表是菜单的预设，不做检查），使用启动日志所用的同一种检查；对于取值超出该表所列范围、或遇到错误值会停止游戏的设置，则使用它自己的规则（`fps_limit`、`render_scale`、`window_size`、`output_res`、`app_pool`，以及必须完全匹配的 `lang` 和 `operation_mode`）。不符合的值会被拒绝，保留当前值，日志会写出 `cfg: reload KEY = 'x' rejected: invalid`。启动时，拼错的 `lang` 或 `operation_mode` 会让游戏显示一条消息并停止；重新加载则永远不会。菜单中没有列出的键（绑定、模组列表、金手指）不做检查：它们的读取代码会自行回退到默认值。
 - 以下内容不会重新加载，并且每一项都会在 `logs/nx2saria.log` 中写明（`cfg: reload ...`）：由环境变量设置的设置（`NX2SARIA_*`），以及在菜单中更改、但写入文件仍在等待中或被菜单草稿持有的设置。正在运行的游戏版本会忽略的设置会被保存，并记录为 `has no effect on this game version`。
 - 当设置菜单中有你尚未应用的更改（草稿、*Keep these display settings?* 倒计时，或 *Apply* 之后的对话框）时，重新加载不会运行，提示会显示 *Close the settings menu to reload nx2saria.ini*。
 - 重新加载永远不会写入该文件。在重放错误捕获的运行中（`NX2SARIA_CAPTURE_REPLAY`），捕获中的 `settings.ini` 代替 `nx2saria.ini`，此时重新加载不会运行，提示会说无法读取该文件。
@@ -143,7 +143,7 @@ Ctrl+F5 会在游戏运行时重新读取 `nx2saria.ini`，因此在文本编辑
 - `key:default` 和 `pad:default` 保留该部分的默认值（`pad:default` 是每种布局自己的按键）。
 - `none` 让该按键不绑定任何东西。
 
-一行会替换该按键的所有默认绑定，包括手柄和键盘，因此请列出你仍想保留的键盘按键，或使用 `key:default`。手柄名称是物理位置，因此一行在两种布局中含义相同，并会替换该布局为这个 Switch 按键分配的按键。摇杆方向只接受键盘按键：手柄的摇杆和鼠标视角始终有效。没有对应行的按键保持上表的绑定。名称不区分大小写。无效的条目会记录一行 `input: bind ...` 并被跳过；没有任何有效条目的行不会改变任何内容。`NX2SARIA_BIND_<button>` 环境变量与其他任何设置的用法相同。修改的行会立即生效（`runtime/input.c` 会在下一次轮询时重新构建这些表）。
+一行会替换该按键的所有默认绑定，包括手柄和键盘，因此请列出你仍想保留的键盘按键，或使用 `key:default`。手柄名称是物理位置，因此一行在两种布局中含义相同，并会替换该布局为这个 Switch 按键分配的按键。摇杆方向只接受键盘按键：手柄的摇杆和鼠标视角始终有效。没有对应行的按键保持上表的绑定。名称不区分大小写。无效的条目会记录一行 `input: bind ...` 并被跳过；没有任何有效条目的行不会改变任何内容。`NX2SARIA_BIND_<button>` 环境变量与其他任何设置的用法相同。修改的行会立即生效（`runtime/input/input.c` 会在下一次轮询时重新构建这些表）。
 
 报告的正面按键互换了的手柄（A/B 和 X/Y，某些 GuliKit 型号就是这样）可以这样修正：
 
@@ -158,7 +158,7 @@ bind_Y = pad:north, key:mouse_l
 
 鼠标移动（原始输入）会变成右摇杆的偏移。每个呈现的帧会取自上一帧以来移动的计数，除以帧时间，并把偏移设为满偏移的 `counts per second * NX2SARIA_MOUSE_SENS / 3000`，在该帧内保持，因此转动速度不取决于帧率。这不是鼠标直接视角：游戏的摇杆曲线和死区仍然适用，所以非常缓慢的移动没有任何效果，而快速甩动会达到饱和。当镜头速度不为 1 时（`NX2SARIA_STICK_SENS`），偏移会先除以该系数，再限制在最大倾斜以内：给定移动的转动量保持不变，而甩动所能达到的最快转动是游戏的最高速度乘上该系数。鼠标偏移按“偏移更大者优先”的规则与手柄和方向键竞争。
 
-`NX2SARIA_MOUSE_MODE`（`mouse_mode`，操作标签页中的*鼠标视角*行，实时生效）在这种右摇杆偏移（`stick`）和鼠标直接视角（`direct`，默认）之间选择。在 `direct` 下，镜头的输入更新（`main+0x37c300`）会在游戏的摇杆死区、限幅和响应曲线之后，自己取用原始计数（`recomp/patches-v111.txt`，补丁集 `mouse_direct`；`runtime/mouse_direct.c` 的 `camera_input_oot`）。镜头按鼠标移动的距离转动，两个轴相同：在 `NX2SARIA_MOUSE_SENS` 为 1 时每个计数约 0.08 度，与帧率和 `NX2SARIA_STICK_SENS` 无关，没有死区，也没有最高速度。游戏自己的镜头灵敏度（在其 Options 中）会像缩放摇杆一样缩放鼠标。手柄的右摇杆和方向键仍然经过游戏的响应曲线，并与鼠标叠加。当游戏不接受镜头输入时（它关闭了镜头输入，或者镜头重置后的暂停正在进行），鼠标就像上面那样作为右摇杆。`NX2SARIA_MOUSE_DIRECT_PATCH=0` 会关闭该补丁集，此时无论模式如何，鼠标都作为右摇杆。`NX2SARIA_MOUSE_TRACE=1` 会记录每次镜头输入更新（摇杆、取用的计数以及它们增加的量），并且在 `dlaa` 开启时（DLAA、DLSS 或 FSR 3.1，它们会读取游戏的镜头），还会记录每帧镜头的方向，用于测量每个计数的转动量。
+`NX2SARIA_MOUSE_MODE`（`mouse_mode`，操作标签页中的*鼠标视角*行，实时生效）在这种右摇杆偏移（`stick`）和鼠标直接视角（`direct`，默认）之间选择。在 `direct` 下，镜头的输入更新（`main+0x37c300`）会在游戏的摇杆死区、限幅和响应曲线之后，自己取用原始计数（`recomp/patches-v111.txt`，补丁集 `mouse_direct`；`runtime/input/mouse_direct.c` 的 `camera_input_oot`）。镜头按鼠标移动的距离转动，两个轴相同：在 `NX2SARIA_MOUSE_SENS` 为 1 时每个计数约 0.08 度，与帧率和 `NX2SARIA_STICK_SENS` 无关，没有死区，也没有最高速度。游戏自己的镜头灵敏度（在其 Options 中）会像缩放摇杆一样缩放鼠标。手柄的右摇杆和方向键仍然经过游戏的响应曲线，并与鼠标叠加。当游戏不接受镜头输入时（它关闭了镜头输入，或者镜头重置后的暂停正在进行），鼠标就像上面那样作为右摇杆。`NX2SARIA_MOUSE_DIRECT_PATCH=0` 会关闭该补丁集，此时无论模式如何，鼠标都作为右摇杆。`NX2SARIA_MOUSE_TRACE=1` 会记录每次镜头输入更新（摇杆、取用的计数以及它们增加的量），并且在 `dlaa` 开启时（DLAA、DLSS 或 FSR 3.1，它们会读取游戏的镜头），还会记录每帧镜头的方向，用于测量每个计数的转动量。
 
 `NX2SARIA_MOUSE_SENS`（*鼠标视角灵敏度*行，实时生效；0 到 10，默认 1；越高转得越快，0 会关闭鼠标视角和光标捕获，该行最低可调到 0.05）。当窗口是前台窗口时，光标会被隐藏并限制在客户区内。在失去焦点、最小化、F11 改变窗口期间、调整大小或移动窗口的过程中，以及文字输入框打开时，光标会被释放。Esc 可以手动释放它：光标显示出来，鼠标视角和鼠标按键停止工作，窗口可以被移动、最小化或关闭。在客户区内点击鼠标会再次捕获光标；这次点击不会传给游戏。点击标题栏或边框来激活窗口不会捕获光标，因此可以马上拖动或关闭窗口；Alt+Tab 或在客户区内点击会像之前一样捕获光标。`NX2SARIA_INPUT=none` 也会禁用捕获。
 
@@ -176,24 +176,24 @@ bind_Y = pad:north, key:mouse_l
 
 ## Switch 手柄的 HD 振动
 
-游戏为线性马达生成振动：每一侧有一个低频段和一个高频段，每个频段都有一个频率和一个振幅。在大多数手柄上，这会被简化为两个马达的强度。在 `nx2saria.ini` 中设置 `rumble_hd = 1`（`NX2SARIA_RUMBLE_HD`，操作标签页中的 *HD 振动（Switch）* 行，实时生效，默认关闭）后，Switch 手柄会通过手柄自己的振动报告，按游戏生成的原样得到这些值（`runtime/rumble_hd.c`，`runtime/input.c` 中的 "HD rumble"）：
+游戏为线性马达生成振动：每一侧有一个低频段和一个高频段，每个频段都有一个频率和一个振幅。在大多数手柄上，这会被简化为两个马达的强度。在 `nx2saria.ini` 中设置 `rumble_hd = 1`（`NX2SARIA_RUMBLE_HD`，操作标签页中的 *HD 振动（Switch）* 行，实时生效，默认关闭）后，Switch 手柄会通过手柄自己的振动报告，按游戏生成的原样得到这些值（`runtime/input/rumble_hd.c`，`runtime/input/input.c` 中的 "HD rumble"）：
 
 | 游戏读取的手柄 | 报告发往 | 连接方式 |
 |---|---|---|
 | Switch Pro Controller（`057e:2009`） | 通过 SDL（`SDL_SendGamepadEffect`） | USB 和蓝牙 |
 | 单个 Joy-Con | 通过 SDL；取较强一侧的值，因为它只有一个马达 | 蓝牙，或 USB 充电握把 |
-| 组合成一个手柄的左右 Joy-Con | 直接发往两个 Joy-Con 的 HID 设备（`runtime/input_hd_pair.c`），因为 SDL 不接受组合手柄的振动数据 | 蓝牙 |
+| 组合成一个手柄的左右 Joy-Con | 直接发往两个 Joy-Con 的 HID 设备（`runtime/input/input_hd_pair.c`），因为 SDL 不接受组合手柄的振动数据 | 蓝牙 |
 | 其他任何手柄，包括 Switch 2 的手柄 | 马达，与 `rumble_hd = 0` 时相同 | |
 
 在接管某个手柄时，日志会写出是哪种情况：`input: HD rumble available for this gamepad: a Pro Controller, through SDL (rumble_hd = 1)`，或者 `not available` 并附上原因；对于无法接受 HD 振动的手柄，操作标签页中的该行会显示为灰色。在 `rumble_hd = 0` 时不会向手柄写入任何内容，这一行会说明在开启该设置后才会询问其驱动程序。手柄收到的第一份报告会连同其字节一起记录（`input: HD rumble: first report written (left ..., right ...)`）；被手柄或其驱动程序拒绝的报告也会被记录，之后该手柄会重新通过马达振动。频率会被限制在马达能接受的范围内（低频段 41 到 626 Hz，高频段 82 到 1253 Hz），振幅被限制在 0..1，即马达的安全最大值。`rumble_strength` 会缩放振幅（它的默认值 130 就是游戏原本的强度：默认值高于 100 是为了照顾马达，这条路径会除以它），`rumble_curve` 不适用，`rumble = 0` 也会让这条路径静音。报告最多每 15 ms 写入一次（`rumble_hd_ms`，5 到 50：如果蓝牙手柄在开启 HD 振动时卡顿或断开连接，请调高它），且只写最新的值；保持不变的值每 30 ms 重新写入一次，而在游戏停止发送 250 ms、另一个手柄接管、该设置被关闭以及游戏退出时，会发出中性值。HD 振动开启期间，游戏不会为该手柄发出双马达振动调用。直接读取器上的 DualShock 3 无论如何都保留它的马达振动。
 
 ## 冲刺按键
 
-在 1.1.1 上，`NX2SARIA_SPRINT_BUTTON`（`sprint_button`，操作标签页中的 *Sprint button* 行，实时生效）提供一个按键，让 Link 不必先翻滚就能冲刺：`l3`（左摇杆按下，它唯一的其他用途是在对话中隐藏文本框）、`b`（游戏的 B 按键，即 Nintendo 布局下方的正面按键），或 `off`（默认）。`NX2SARIA_SPRINT_MODE`（`sprint_mode`，*Sprint mode* 行）为 `toggle`（默认：按一下开始冲刺，再按一下结束）或 `hold`（按住按键时 Link 冲刺）。当 Link 的输入标志包含冲刺输入时，他就会冲刺；`recomp/patches-v111.txt` 中的补丁集 `sprint` 会在 Link 的移动更新以及随后加载这些标志的姿态更新之后调用 `runtime/sprint.c`，冲刺开启期间，宿主函数会添加冲刺输入，因此运行的是游戏自己的冲刺，带有它的速度、动画和镜头。切换式冲刺会在跳跃、滑行、翻滚和落地中持续，并在 Link 处于其他任何状态时（攻击、使用道具、游泳、攀爬、过场动画）、按住 ZL 时，或者静止站立四个 60 Hz 帧后（如果是在站立时按下、Link 还没移动过，则为九十帧）结束，与帧率无关。在游玩期间（Link 的更新在最近八次控制器轮询内运行过，并且没有对话之类的事件在进行），该按键不会传给游戏，因此不会同时触发它自己的动作；B 的按下只有在 Link 移动时开始才会被拦截，并且一直拦截到松开为止，因此在其他情况下 B 会像平常一样收起武器，游戏也永远不会只收到半次按下。在设置菜单、游戏菜单、对话或过场动画中，每个按键都保持原有作用（L3 隐藏文本框），在那里的按下也不会开始冲刺（B 关闭暂停菜单）。当游戏的 Swap Jump Controls 开启时，B 是跳跃，而 Link 移动时 `b` 冲刺按键会把它拦截下来：这时请使用 `l3`。该补丁集的宿主函数位于补丁页的 +0xf40 和 +0xf30。只有选择了按键时该补丁集才会运行，因此冲刺按键关闭时，它的补丁位置没有任何开销。`NX2SARIA_SPRINT_BUTTON_PATCH=0`（或者一个代码补丁修改了相同位置的模组）会让该补丁集保持关闭，并隐藏这些行。
+在 1.1.1 上，`NX2SARIA_SPRINT_BUTTON`（`sprint_button`，操作标签页中的 *Sprint button* 行，实时生效）提供一个按键，让 Link 不必先翻滚就能冲刺：`l3`（左摇杆按下，它唯一的其他用途是在对话中隐藏文本框）、`b`（游戏的 B 按键，即 Nintendo 布局下方的正面按键），或 `off`（默认）。`NX2SARIA_SPRINT_MODE`（`sprint_mode`，*Sprint mode* 行）为 `toggle`（默认：按一下开始冲刺，再按一下结束）或 `hold`（按住按键时 Link 冲刺）。当 Link 的输入标志包含冲刺输入时，他就会冲刺；`recomp/patches-v111.txt` 中的补丁集 `sprint` 会在 Link 的移动更新以及随后加载这些标志的姿态更新之后调用 `runtime/patches/sprint.c`，冲刺开启期间，宿主函数会添加冲刺输入，因此运行的是游戏自己的冲刺，带有它的速度、动画和镜头。切换式冲刺会在跳跃、滑行、翻滚和落地中持续，并在 Link 处于其他任何状态时（攻击、使用道具、游泳、攀爬、过场动画）、按住 ZL 时，或者静止站立四个 60 Hz 帧后（如果是在站立时按下、Link 还没移动过，则为九十帧）结束，与帧率无关。在游玩期间（Link 的更新在最近八次控制器轮询内运行过，并且没有对话之类的事件在进行），该按键不会传给游戏，因此不会同时触发它自己的动作；B 的按下只有在 Link 移动时开始才会被拦截，并且一直拦截到松开为止，因此在其他情况下 B 会像平常一样收起武器，游戏也永远不会只收到半次按下。在设置菜单、游戏菜单、对话或过场动画中，每个按键都保持原有作用（L3 隐藏文本框），在那里的按下也不会开始冲刺（B 关闭暂停菜单）。当游戏的 Swap Jump Controls 开启时，B 是跳跃，而 Link 移动时 `b` 冲刺按键会把它拦截下来：这时请使用 `l3`。该补丁集的宿主函数位于补丁页的 +0xf40 和 +0xf30。只有选择了按键时该补丁集才会运行，因此冲刺按键关闭时，它的补丁位置没有任何开销。`NX2SARIA_SPRINT_BUTTON_PATCH=0`（或者一个代码补丁修改了相同位置的模组）会让该补丁集保持关闭，并隐藏这些行。
 
 ## 陀螺仪
 
-游戏把手柄的陀螺仪和加速度计当作 Switch 的六轴传感器读取，并用它瞄准弹弓、弓、钩爪和回旋镖。任何 SDL 能识别出陀螺仪和加速度计的手柄都可以：Switch Pro 手柄、一对 Joy-Con（使用右侧 Joy-Con 的传感器）、DualSense 或 DualShock 4。操作标签页中的 *陀螺仪* 分组包含其设置，全部实时生效（`runtime/input.c` `motion_options_refresh`、`runtime/motion_fusion.c`）：
+游戏把手柄的陀螺仪和加速度计当作 Switch 的六轴传感器读取，并用它瞄准弹弓、弓、钩爪和回旋镖。任何 SDL 能识别出陀螺仪和加速度计的手柄都可以：Switch Pro 手柄、一对 Joy-Con（使用右侧 Joy-Con 的传感器）、DualSense 或 DualShock 4。操作标签页中的 *陀螺仪* 分组包含其设置，全部实时生效（`runtime/input/input.c` `motion_options_refresh`、`runtime/input/motion_fusion.c`）：
 
 | 设置 | 行 | 取值 |
 |---|---|---|
@@ -211,7 +211,7 @@ Windows 不会把 Switch 2 Pro Controller 呈现为 SDL 可以打开的手柄（
 
 ## PlayStation 3 手柄
 
-在 `nx2saria.ini` 中设置 `ds3 = 1`（默认关闭）后，当没有驱动程序把 DualShock 3 作为手柄呈现给 SDL 或 XInput 时，Windows 上的 DualShock 3 会被直接读取（`runtime/input_ds3_win.c`）。通过 USB 连接它，或者用一个把它作为带有自己名称 "PLAYSTATION(R)3 Controller" 的 HID 设备暴露出来的蓝牙驱动程序进行配对；日志随后会显示 `input: DualShock 3 opened`，手柄的第一个玩家指示灯亮起，接着出现 `input: DualShock 3 is reporting`。读取器会向手柄发送让它开始报告的命令，因为它自己不会这样做。没有打开的手柄时，它每三秒查找一次，因此之后插入或打开的手柄无需重启即可被识别。
+在 `nx2saria.ini` 中设置 `ds3 = 1`（默认关闭）后，当没有驱动程序把 DualShock 3 作为手柄呈现给 SDL 或 XInput 时，Windows 上的 DualShock 3 会被直接读取（`runtime/input/input_ds3_win.c`）。通过 USB 连接它，或者用一个把它作为带有自己名称 "PLAYSTATION(R)3 Controller" 的 HID 设备暴露出来的蓝牙驱动程序进行配对；日志随后会显示 `input: DualShock 3 opened`，手柄的第一个玩家指示灯亮起，接着出现 `input: DualShock 3 is reporting`。读取器会向手柄发送让它开始报告的命令，因为它自己不会这样做。没有打开的手柄时，它每三秒查找一次，因此之后插入或打开的手柄无需重启即可被识别。
 
 | Switch | DualShock 3（按位置） |
 |---|---|
@@ -246,4 +246,4 @@ PS 按键不使用。操作标签页像对待其他手柄一样绑定和重新�
 
 ## RenderDoc 捕获（受阻）
 
-`NX2SARIA_RDOC=<frame>[,...]`（`runtime/rdoc_win.c`；`NX2SARIA_RDOC_DIR`、`NX2SARIA_RDOC_DLL`）会在 `vkCreateInstance` 之前加载 RenderDoc。RenderDoc 会隐藏 `VK_EXT_external_memory_host`，而后端需要它来导入客户机内存池（`runtime/vk_memory.c`），因此在它之下设备创建会失败。要进行捕获，首先需要一个基于复制的内存池后备方案。
+`NX2SARIA_RDOC=<frame>[,...]`（`runtime/rdoc_win.c`；`NX2SARIA_RDOC_DIR`、`NX2SARIA_RDOC_DLL`）会在 `vkCreateInstance` 之前加载 RenderDoc。RenderDoc 会隐藏 `VK_EXT_external_memory_host`，而后端需要它来导入客户机内存池（`runtime/vk/vk_memory.c`），因此在它之下设备创建会失败。要进行捕获，首先需要一个基于复制的内存池后备方案。

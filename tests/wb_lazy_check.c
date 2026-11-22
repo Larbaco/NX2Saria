@@ -1,5 +1,5 @@
 // runtime/wb_lazy_choice.h: whether the lazy write-back runs, by the player's setting, the platform and the GPU driver
-// (runtime/vk_memory.c vk_mem_lazy_decide). Built and run by tests/wb_lazy_check.py; prints each failed check and
+// (runtime/vk/vk_memory.c vk_mem_lazy_decide). Built and run by tests/wb_lazy_check.py; prints each failed check and
 // exits 1 on any.
 #include <stdio.h>
 #include <string.h>

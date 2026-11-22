@@ -30,7 +30,7 @@ def main():
     (work / 'layout.h').write_text(f'#define MOD_MAIN_BASE {MAIN:#x}ull\n')
     executable = work / ('battle_music_check.exe' if os.name == 'nt' else 'battle_music_check')
     subprocess.check_call([compiler(), '-O1', '-fno-strict-aliasing', '-I', str(work), '-I', str(ROOT / 'runtime'),
-                           str(ROOT / 'tests/battle_music_check.c'), str(ROOT / 'runtime/battle_music.c'),
+                           str(ROOT / 'tests/battle_music_check.c'), str(ROOT / 'runtime/patches/battle_music.c'),
                            '-o', str(executable), '-lm'])
     return subprocess.run([str(executable)]).returncode
 

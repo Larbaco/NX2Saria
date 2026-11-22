@@ -41,7 +41,7 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
   ends the process there instead, for bug reports.
 - Window, keyboard and mouse: Win32 (`gfx_window_win.c`, `input_win.c`). Gamepads and audio output: SDL3 (every
   connected gamepad is open; the game reads the one pressed last, `input.c`). Voice: libopus. Movies: a host VP9
-  decoder over libvpx replaces the SDK's `movie::Decoder` (`runtime/ov_movie.c`).
+  decoder over libvpx replaces the SDK's `movie::Decoder` (`runtime/hle/ov_movie.c`).
 - Settings and menu: every key with its default is in one table (`cfg.c`), read from `nx2saria.ini` and `NX2SARIA_*`
   variables (the older `nx2navi.ini` and `NX2NAVI_*` names are still read) and written back when the player applies the in-game menu's changes (a draft; `docs/controls.md`). The menu and the performance overlay are Dear ImGui,
   drawn into the swapchain image (`runtime/ui/`); their text is in `ui_text.c`.
@@ -60,7 +60,7 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
 
 Every guest thread is a host thread. The game assumes Horizon's scheduler: three application cores, a thread runs
 only on a core in its affinity mask, and a higher-priority thread takes a core from a lower-priority one. The game
-keeps per-core data without locks and relies on that, so the host models it (`runtime/kernel.c`):
+keeps per-core data without locks and relies on that, so the host models it (`runtime/hle/kernel.c`):
 
 - Three virtual cores. A guest thread runs guest code only while it holds a core; the others wait in a
   priority-ordered list.
@@ -137,17 +137,17 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   prepared shader variants built into the driver's own cache when a sample says it lacks them (`vk_pipeline.c`
   `bf_decide`, `bf_wait`). `boot-warm-owed.txt` next to the caches lets a start go on with a warm that an earlier
   one began and did not end, three starts at most, and says when the warm for a GPU and driver is done
-  (`runtime/boot_warm.h`); it waits `NX2SARIA_PREWARM_FULL_S` seconds at most (600), after which the rest is built
+  (`runtime/vk/boot_warm.h`); it waits `NX2SARIA_PREWARM_FULL_S` seconds at most (600), after which the rest is built
   beside the game, and `NX2SARIA_PREWARM_FULL=0` turns it off. A start that dies in the boot's builds leaves a
   marker or a journal; the crash handler's note (`vk_pipeline_crash_note`) tells the next start whether that was
   a crash, which skips the prebuild or the variants, or a start that was closed or stopped, which skips nothing.
   `NX2SARIA_PREWARM_WAIT_MS` caps the whole wait, after which the rest finishes in the background.
 - Translator updates: every cache key names the translator, so a new one has no translations. The cache carries the
-  previous translator's (`NX2SARIA_SHADER_CARRY`, `runtime/gfx_shader.c` "Carry"): `shader-cache/identities.txt` lists
+  previous translator's (`NX2SARIA_SHADER_CARRY`, `runtime/gfx/gfx_shader.c` "Carry"): `shader-cache/identities.txt` lists
   the translators it holds translations of, and a shader the new translator has not translated yet uses the previous
   one's for the whole session, so neither the start nor play waits for a translation the update caused. Except a
   previous translation that indexes the texture pool with the earlier length (32768 entries, the 0.9.2 translator's),
-  which would read slot 32767 for every texture numbered from 32768 up (`runtime/gfx_shader.c` `carry_usable`): such a
+  which would read slot 32767 for every texture numbered from 32768 up (`runtime/gfx/gfx_shader.c` `carry_usable`): such a
   shader is translated again, in the boot prewarm when the boot names it, otherwise at first use (its draws are skipped
   meanwhile; a compute dispatch waits for the translation). A program the current translator fails keeps even such a
   translation (`carry_last`). After the boot prewarm a background pass on its own translator process at idle priority,
@@ -156,25 +156,25 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   refuses keeps its old translation. `--prepare-shaders` still translates everything with the current translator.
 - Shader disk reads in play: a draw's shader that is in the disk cache but not in memory is read on the render thread
   within a budget of 1/8 of the wall time (2 ms at once), and past it by three loader threads while its draws are
-  skipped as for a translation (`runtime/gfx_shader.c` `load_budget`). Opening a loose file is what costs (5.6 ms a
+  skipped as for a translation (`runtime/gfx/gfx_shader.c` `load_budget`). Opening a loose file is what costs (5.6 ms a
   pair the first time on Windows), so an update that carries the shaders over packs the cache once it holds 1,000
   loose translations (`tools/make_game.py` `PACK_LOOSE_MIN`).
 - Texture pool streaming: the bindless pool's refresh before each draw creates at most `pool_create_budget` entries,
   and once a frame's refreshes have taken `pool_create_ms` (6 ms) none more until the next frame; the slots left keep
-  their stand-in, and the frame's later refreshes skip them (`runtime/vk_exec_draw.c` `pool_refill`). An area load
+  their stand-in, and the frame's later refreshes skip them (`runtime/vk/vk_exec_draw.c` `pool_refill`). An area load
   spreads over several frames instead of holding one for 200-400 ms.
 - Mesh and task shaders run as `VK_EXT_mesh_shader`; indirect mesh draws read NVN's `{count, first}` record through a
   ring of Vulkan `{x, y, z}` records filled on the GPU. The copy cannot be recorded inside a pass, so the first such
   draw of a pass fills the records of the mesh draws that follow it too, and the pass is not cut at each of them
-  (`runtime/vk_exec_draw.c` `mesh_ring_entry`).
+  (`runtime/vk/vk_exec_draw.c` `mesh_ring_entry`).
 - Mesh fallback (`mesh_fallback`: `auto` on a device without the extension, on AMD's Windows driver for RDNA 1 and
   2, where native mesh pipelines lost the device in play, and on Intel's cards with mesh shaders, where native mesh
   pipelines left holes in the fog on Arc (issue #13; every Intel driver, ANV as a precaution), `1` on any device for
   testing, `0` never;
-  `runtime/vk_mesh_path.h`): the task and mesh stages run as compute dispatches and the result is drawn as ordinary
+  `runtime/vk/vk_mesh_path.h`): the task and mesh stages run as compute dispatches and the result is drawn as ordinary
   triangles.
   - The modules come from the translations the shader cache already holds, not from the translator
-    (`runtime/mesh_fb.c`): a translated task or mesh module is the program as a compute function over shared memory
+    (`runtime/gfx/mesh_fb.c`): a translated task or mesh module is the program as a compute function over shared memory
     plus an entry function that hands that memory to the mesh pipeline, and the fallback replaces the entry function
     by one that copies the memory into a storage buffer. The translator, its identity and every cache key stay as
     they are, so a device with mesh shaders keeps its shaders and never sees these modules, and a device without
@@ -185,7 +185,7 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
     that lists the mesh workgroups the tasks started, in task order, and writes their number into the record; the
     mesh dispatch, which writes each workgroup's vertex lines and primitive bytes into its slot of the mesh buffer;
     and an instanced indirect draw, one instance per slot, whose generated vertex stage looks the vertex of each
-    primitive corner up in the slot (`runtime/vk_exec_draw.c` `mfb_draw`, `runtime/vk_mesh_fb.c`).
+    primitive corner up in the slot (`runtime/vk/vk_exec_draw.c` `mfb_draw`, `runtime/vk/vk_mesh_fb.c`).
   - Each step reads what the one before wrote, so full barriers stand between them and every such draw ends its pass:
     a village frame's 45 mesh draws are 45 passes cut, 90 to 135 dispatches and about 270 barriers more than with mesh
     shaders. The buffers (`mesh_fallback_mb`, 128 MiB) are reused by every draw, so they hold the largest draw, not
@@ -204,16 +204,16 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   at a new state, an optimised pipeline replacing it from a background thread. A draw whose pipeline is not ready is
   skipped when its pass is one the game renders frame after frame: one of its targets was rendered in the last few
   frames, or in eight frames or more at any time, which keeps the first frame after a loading screen from reading as
-  all new (`runtime/vk_target_frames.h`). A draw into a target rendered for the first time, and a full-screen draw,
-  wait instead, from one pool of 50 ms a presented frame (`pipe_frame_wait_ms`; `runtime/vk_exec_draw.c`
+  all new (`runtime/vk/vk_target_frames.h`). A draw into a target rendered for the first time, and a full-screen draw,
+  wait instead, from one pool of 50 ms a presented frame (`pipe_frame_wait_ms`; `runtime/vk/vk_exec_draw.c`
   `prepare_draw_ex`, `frame_wait`); what is not ready when the pool is spent is skipped and built on a worker, so no
   frame waits for pipelines much longer than that. Three things keep
-  that short on a first visit (`runtime/vk_pipeline.c`): a pipeline whose fragment shader reads a target of its own
+  that short on a first visit (`runtime/vk/vk_pipeline.c`): a pipeline whose fragment shader reads a target of its own
   pass is fast-linked like any other, the feedback loop flags being part of the fragment output library alone
   (`gpl_feedback`); the library workers also link the pipelines of skipped draws, so a burst of new materials is
   linked on several threads while the pool is inside optimised builds (`lib_worker`, `fast_take`); and the first
   draw of a submission that misses has the rest of the submission read ahead, which queues the stage libraries of
-  every pipeline the later draws need before the replay reaches them (`runtime/vk_exec.c` `vk_exec_ahead`,
+  every pipeline the later draws need before the replay reaches them (`runtime/vk/vk_exec.c` `vk_exec_ahead`,
   `vk_pipeline_hint`). Mesh pipelines are linked the same way (`gpl_mesh`, `vk_pipeline.c` `mesh_lib_init`): the task
   and mesh stages make one pre-rasterization library, no vertex input library is linked (a mesh pipeline has no such
   state), and the fragment shader and fragment output libraries are the vertex pipelines' where their keys allow (a
@@ -228,12 +228,12 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   destroyed, and their first dispatch creates them from it. A compute shader of more than half a million SPIR-V words
   is built ahead only when a run has dispatched it: a pipeline of one holds about 100 MiB of device memory whether it
   is used or not, also after it is destroyed, and the list has about twenty of them that the game never dispatches
-  (`runtime/vk_pipeline.c`, "compute pipelines the boot keeps").
+  (`runtime/vk/vk_pipeline.c`, "compute pipelines the boot keeps").
   The pipeline cache is two files beside the game. `pipeline-cache.bin` holds what the preparation built and what
   earlier runs made; what a run compiles goes into `pipeline-cache-play.bin`, so one new pipeline in play writes a
   small file and not hundreds of megabytes. A cache is written only when its data grew. The small file is merged
   into the large one at a start once it reached `pipeline_cache_play_mb`, and by every preparation; the stage
-  libraries the library warm builds in play go to the driver's own cache alone (`runtime/vk_pipeline.c`, "the play
+  libraries the library warm builds in play go to the driver's own cache alone (`runtime/vk/vk_pipeline.c`, "the play
   cache", `cache_save`).
   `pipeline-cache.id` names the translator whose pipelines both files hold. A start that finds another translator
   there, one whose translations the shader carry no longer serves, deletes both files before reading them: a new
@@ -244,7 +244,7 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   the next fold, since in play `pipeline-cache.bin` is written only by a fold: so a run that started without
   `pipeline-cache.bin` writes it once at its exit, and the start after reads those pipelines from the file (a run that
   ends without that save leaves it to the next). A preparation carries nothing, so it deletes the files at once and
-  writes the file itself (`runtime/vk_cache_stamp.h`, `runtime/vk_pipeline.c` `cache_stamp_check`;
+  writes the file itself (`runtime/vk/vk_cache_stamp.h`, `runtime/vk/vk_pipeline.c` `cache_stamp_check`;
   `pipeline_cache_stamp = 0` turns the stamp off). The write at exit does not depend on the stamp: any start in play
   that finds no `pipeline-cache.bin` makes it (`cache_base_at_exit`, `cache_load`, `cache_save`).
 - The game's tensor-core upscaler is replaced by a decode-and-scale pass (`vk_tonemap.c`), which enlarges the scene
@@ -454,8 +454,8 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
 - Translated shaders at rest: the shader memory cache keeps every shader for the whole session, but a shader's SPIR-V
   is read only while modules are made of it. A background thread compresses (zstd, checked by decoding it) the SPIR-V
   of each shader no reader used for `shader_compress_idle_s` seconds (30) and frees the plain copy; a reader pins it
-  and gets it decoded back, about 60 us for a mean module (`runtime/gfx_shader.c` "SPIR-V at rest",
-  `runtime/spv_store.h`). The SPIR-V keeps about a quarter of its size. What the drawing thread compares at pipeline
+  and gets it decoded back, about 60 us for a mean module (`runtime/gfx/gfx_shader.c` "SPIR-V at rest",
+  `runtime/gfx/spv_store.h`). The SPIR-V keeps about a quarter of its size. What the drawing thread compares at pipeline
   misses and draws (the module's hash and its Binding decorations) is kept apart and needs no decode; a compute
   pipeline created at a dispatch and a mesh shader's first pipeline key decode on that thread, which the memory report
   counts. `shader_compress = 0` keeps it plain.

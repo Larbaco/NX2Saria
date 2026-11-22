@@ -1,4 +1,4 @@
-// runtime/perf_census.h: the part of a frame an address-space walk overlapped moves to the frame's census part, from
+// runtime/diag/perf_census.h: the part of a frame an address-space walk overlapped moves to the frame's census part, from
 // its replay part first and then from its unattributed part, never more than the overlap and never past the frame.
 // Built and run by tests/census_charge_check.py; prints each failed check and exits 1 on any failure.
 #include <stdio.h>

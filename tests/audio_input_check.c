@@ -13,9 +13,9 @@ static SDL_AudioDeviceID open_test_device(SDL_AudioDeviceID device, const SDL_Au
     return SDL_OpenAudioDevice(device, spec);
 }
 #define SDL_OpenAudioDevice open_test_device
-#include "../runtime/audio_capture.c"
+#include "../runtime/audio/audio_capture.c"
 #undef SDL_OpenAudioDevice
-#include "../runtime/ov_audio_input.c"
+#include "../runtime/hle/ov_audio_input.c"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>

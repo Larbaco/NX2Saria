@@ -12,7 +12,7 @@ static void rt_log(const char *fmt, ...) {
     va_end(args);
     lines++;
 }
-#include "../runtime/mesh_pipeline_check.h"
+#include "../runtime/gfx/mesh_pipeline_check.h"
 
 int main(void) {
     mesh_pipeline_check_start(1);

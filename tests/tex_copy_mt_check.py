@@ -1,5 +1,5 @@
 # needs: clang, vma
-"""Build and run tests/tex_copy_mt_check.c with runtime/tex_deswizzle.c, runtime/par_jobs.c and the platform layer: the
+"""Build and run tests/tex_copy_mt_check.c with runtime/gfx/tex_deswizzle.c, runtime/par_jobs.c and the platform layer: the
 split texture copy (tex_bl_copy_mt) and par_memcpy write the same bytes as the copies they stand for.
 
 No GPU, no game files, any Python.
@@ -50,7 +50,7 @@ def main():
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
                            '-march=x86-64-v3', '-I', str(rt), '-I', str(vma_include()),
-                           str(ROOT / 'tests' / 'tex_copy_mt_check.c'), str(rt / 'tex_deswizzle.c'), str(rt / 'par_jobs.c'), *map(str, plat), '-o', str(exe), '-lzstd', '-lm',
+                           str(ROOT / 'tests' / 'tex_copy_mt_check.c'), str(rt / 'gfx' / 'tex_deswizzle.c'), str(rt / 'par_jobs.c'), *map(str, plat), '-o', str(exe), '-lzstd', '-lm',
                            *libs], env=env)
     return subprocess.run([str(exe)], env=env, timeout=300).returncode
 

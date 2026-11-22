@@ -1,5 +1,5 @@
 # needs: clang, glslangValidator, spirv-val
-"""Fragment inputs that no mesh output feeds (runtime/vk_pipeline.c spirv_mesh_outputs, spirv_fs_fill_inputs): builds
+"""Fragment inputs that no mesh output feeds (runtime/vk/vk_pipeline.c spirv_mesh_outputs, spirv_fs_fill_inputs): builds
 the two functions, cut from vk_pipeline.c by their text, and runs them on modules glslang makes here:
 
   - a mesh shader that draws points and writes no generic output, and one that draws triangles and writes location 1;
@@ -121,7 +121,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'vk_pipeline.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8')
     body = src[src.index('// The locations a mesh module writes'):src.index('// Two fixes for what the translator declares')]
     fails = 0
     with tempfile.TemporaryDirectory(prefix='nx2navi-fs-fill-') as tmp:

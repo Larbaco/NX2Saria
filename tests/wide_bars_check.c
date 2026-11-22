@@ -1,4 +1,4 @@
-// The menus' black bars (runtime/wide_bars.c) against stand-in interface screens: the screens the set wide_bars' site
+// The menus' black bars (runtime/patches/wide_bars.c) against stand-in interface screens: the screens the set wide_bars' site
 // hands over, the share of the width each present blacks out for each state of the menu backgrounds and the loading
 // fade, a movie, the log lines, a screen destroyed and another set up in its place, a full table, and the registers the
 // host function leaves. Built by tests/wide_bars_check.py, which writes the stand-in layout.h; "no-set" runs a start

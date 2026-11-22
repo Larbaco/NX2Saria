@@ -42,7 +42,7 @@ def check_runtime():
     if os.name == 'nt' and UCRT.is_dir():
         env['PATH'] = str(UCRT) + os.pathsep + env.get('PATH', '')
     subprocess.run([cc, '-O2', '-Wall', '-I', str(work), '-I', str(ROOT / 'runtime'),
-                    str(ROOT / 'tests' / 'voice_language_check.c'), str(ROOT / 'runtime' / 'voice_language.c'),
+                    str(ROOT / 'tests' / 'voice_language_check.c'), str(ROOT / 'runtime' / 'patches' / 'voice_language.c'),
                     '-o', str(exe)], check=True, env=env)
     subprocess.run([str(exe)], check=True, env=env)
 

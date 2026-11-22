@@ -1,5 +1,5 @@
 # needs: clang
-"""Check the model heaps' retry: the patch set heap_retry (recomp/patches-v111.txt) and runtime/heap_retry.c.
+"""Check the model heaps' retry: the patch set heap_retry (recomp/patches-v111.txt) and runtime/patches/heap_retry.c.
 
 The set's four sites, lifted by recomp/lifter.py as the generator lifts them: main+0x436910 and main+0x436db4 keep
 their stp and then call the patch page's +0xed0; main+0x436f18 and main+0x437094 call the page's +0xec0 in place of
@@ -99,7 +99,7 @@ def check_sites():
         users = sorted(p.name for p in (ROOT / 'runtime').glob('*.c')
                        if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (slot, slot), p.read_text(encoding='utf-8', errors='replace'), re.I))
         assert users == [], (hex(slot), users)   # heap_retry.c names them through HOST_CPU and HOST_GPU
-    text = (ROOT / 'runtime' / 'heap_retry.c').read_text(encoding='utf-8')
+    text = (ROOT / 'runtime' / 'patches' / 'heap_retry.c').read_text(encoding='utf-8')
     assert '#define HOST_CPU 0x%x' % HOST_CPU in text and '#define HOST_GPU 0x%x' % HOST_GPU in text
     others = sorted(p.name for p in (ROOT / 'runtime').glob('*.c') if p.name != 'heap_retry.c'
                     and re.search(r'RT_PATCH_PAGE\s*\+\s*(HOST_CPU|HOST_GPU)\b', p.read_text(encoding='utf-8',

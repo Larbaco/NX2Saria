@@ -33,8 +33,8 @@ spec = importlib.util.spec_from_file_location('button_icons', ROOT / 'tools' / '
 icons = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(icons)
 
-# The face button each Switch button is in a pad layout (docs/controls.md, runtime/input_map.c), the label an Xbox pad
-# prints on it, and the layout each overlay is made for (runtime/input_map.c input_prompts_folder).
+# The face button each Switch button is in a pad layout (docs/controls.md, runtime/input/input_map.c), the label an Xbox pad
+# prints on it, and the layout each overlay is made for (runtime/input/input_map.c input_prompts_folder).
 POSITION = {'nintendo': {'A': 'east', 'B': 'south', 'X': 'north', 'Y': 'west'},
             'xbox': {'A': 'south', 'B': 'east', 'X': 'west', 'Y': 'north'}}
 XBOX_LABEL = {'south': 'A', 'east': 'B', 'west': 'X', 'north': 'Y'}

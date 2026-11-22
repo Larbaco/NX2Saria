@@ -64,7 +64,7 @@ site cursor main ec3d9c bd400361 f94002e9 bd400930 1e300800 bd400361   # map pan
 site cursor main 1d48d64 1e2a198c 1e2a198c bd400a90 1e30098c   # fdiv s12, s12, s10, then s12 *= [x20 + 8]: vertical aim
 site cursor main 1d484e4 1e200923 1e200923 bd400a90 1e300863   # fmul s3, s9, s0, then s3 *= [x20 + 8]: vertical gyro aim
 
-# Output size (runtime/resolution.c switches the set on).
+# Output size (runtime/gfx/resolution.c switches the set on).
 # The swapchain size nnMain writes before NvInitializeGraphics comes from page +48 ({w, h} as one 64-bit value), and
 # the output size the renderer lays out its canvas, crop and UI in (main+0xcc3f00, read from the graphics parameters
 # through main+0xcc4160) from page +32; the renderer itself goes to page +40.
@@ -81,7 +81,7 @@ site scene main cc3f70 bd0cc660 2d420520    # str s0, [x19, #0xcc4] -> ldp s0, s
 site scene main cc3f74 5e21d921 bd0cc660    # scvtf s1, s9 -> str s0, [x19, #0xcc4]
 
 # Camera aspect ratio for a game resolution that is not 16:9
-# (runtime/resolution.c res_init writes the output's width / height to page +56 and switches the set on). The same four
+# (runtime/gfx/resolution.c res_init writes the output's width / height to page +56 and switches the set on). The same four
 # sites as patches-v143.txt, with the same original words: two camera sites (update and setup) load the camera's copy of
 # DefaultAspect 1.777778, two viewport routines divide width by height. The replacement loads the ratio from the page
 # instead (Hor+). x10 is kept on the stack, so no register liveness is assumed.
@@ -103,7 +103,7 @@ site pooloff main ad43f0 93407f22 2a1903e2   # sxtw x2, w25 -> mov w2, w25 (SetS
 site pooloff main ad440c 8b39c101 8b394101   # add x1, x8, w25, sxtw -> add x1, x8, w25, uxtw (packaged data source)
 
 # Spin waits, from tools/spin_waits.py --exefs build/extracted/v121/exefs --patches recomp/patches-v121.txt: loops that only
-# another thread can end; their back-edges pass rt_spin_gate (runtime/kernel.c), NX2NAVI_SPIN=0 keeps the core.
+# another thread can end; their back-edges pass rt_spin_gate (runtime/hle/kernel.c), NX2NAVI_SPIN=0 keeps the core.
 spin main ac600 ac620 ac630   # 13 instructions; loads
 spin main ac680 ac6a8 ac6b8   # 15 instructions; loads
 spin main ac6f0 ac718 ac728   # 15 instructions; loads
@@ -969,7 +969,7 @@ spin sdk 23a658 23a6a0   # 19 instructions; loads
 spin sdk 23a7fc 23a918   # 19 instructions; loads
 spin sdk 3d3250 3d3270   # 9 instructions; loads
 
-# Sun shadow map size (runtime/resolution.c shadow_init switches the set on). Each frame the engine sizes its shadow
+# Sun shadow map size (runtime/gfx/resolution.c shadow_init switches the set on). Each frame the engine sizes its shadow
 # cascades (a D16 4-layer array) in main+0xcebdf4: a base size (960 in the field), interpolated down by how close the
 # cover is, rounded up to 8 at main+0xcec22c and stored as the width (+0x3d8 of the cascade set) and, through the packed
 # store at +0xe4, the height (+0x3f8). Near the ground it falls to about 400, which draws foliage shadows blocky, and

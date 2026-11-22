@@ -8,7 +8,7 @@ DEFAULT_MEM_NEED_MB = 24576   # runtime/mem_need.h MEM_NEED_DEFAULT_MB
 
 
 def game_commit_need(game_dir):
-    """The game's estimated commit in play, with the same settings precedence as runtime/cfg.c."""
+    """The game's estimated commit in play, with the same settings precedence as runtime/cfg/cfg.c."""
     value = os.environ.get('NX2SARIA_MEM_NEED_MB', os.environ.get('NX2NAVI_MEM_NEED_MB'))
     if value is None:
         try:

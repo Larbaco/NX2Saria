@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/cfg_parse_check.c: runtime/cfg.c's reading of the settings file and environment, against stand-ins
+"""Build and run tests/cfg_parse_check.c: runtime/cfg/cfg.c's reading of the settings file and environment, against stand-ins
 for what it links with. What the readers get and what the log says about the values:
 
 - a comment after a value (cfg.c cut_comment): cut at a blank followed by ';' or '#' for a key whose row has a set of
@@ -110,7 +110,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-I', str(rt),
-                           str(ROOT / 'tests' / 'cfg_parse_check.c'), str(rt / 'cfg.c'), '-o', str(exe)], env=env)
+                           str(ROOT / 'tests' / 'cfg_parse_check.c'), str(rt / 'cfg' / 'cfg.c'), '-o', str(exe)], env=env)
     bad = 0
 
     def check(ok, what, out=''):

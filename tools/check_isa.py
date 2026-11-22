@@ -2,7 +2,7 @@
 
 The v2 build is for CPUs without AVX, AVX2, FMA, BMI1/2, F16C, LZCNT and MOVBE (a Pentium Gold G6400, an older Core
 i7). The compiler keeps generated code inside that set by -march=x86-64-v2, but inline assembly, target attributes and
-intrinsics pass through: kern_ap_stub (runtime/kernel.c) saved YMM registers with vmovdqa in the v2 library of 0.3.1
+intrinsics pass through: kern_ap_stub (runtime/hle/kernel.c) saved YMM registers with vmovdqa in the v2 library of 0.3.1
 and crashed such a CPU with an illegal instruction the first time a core was interrupted. tools/build_game.py --cpu v2
 runs this over every runtime object before it links or archives them.
 
@@ -37,7 +37,7 @@ WIDE = re.compile(r'%[yz]mm\d|%k[0-7]\b')
 # Function -> the runtime check that keeps it off CPUs without the instructions.
 DISPATCHED = {
     'blocks_ni': 'runtime/sha256.c sha256_ni: CPUID leaf 7 EBX bit 29 (SHA) and leaf 1 ECX bit 19 (SSE4.1)',
-    'kern_ap_stub_ymm': 'runtime/kernel.c ap_init: cpu_keeps_ymm() (CPUID AVX and OSXSAVE, XCR0 bits 1 and 2)',
+    'kern_ap_stub_ymm': 'runtime/hle/kernel.c ap_init: cpu_keeps_ymm() (CPUID AVX and OSXSAVE, XCR0 bits 1 and 2)',
 }
 
 

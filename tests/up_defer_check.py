@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/up_defer_check.c: runtime/vk_up_defer.h, the list of what the upscalers let go of while the GPU
+"""Build and run tests/up_defer_check.c: runtime/vk/vk_up_defer.h, the list of what the upscalers let go of while the GPU
 may still use it (vk_dlaa.c, vk_ffx.cpp, vk_ffx4.cpp). Built as C, and as C++ since the two FSR files include the
 header from C++.
 

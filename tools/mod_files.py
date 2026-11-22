@@ -1,9 +1,9 @@
-"""The player's mods folder as the game reads it (runtime/mods.c): where each mod keeps its parts, and the files of the
+"""The player's mods folder as the game reads it (runtime/patches/mods.c): where each mod keeps its parts, and the files of the
 mods that change the game's code.
 
 One folder per mod (a symbolic link or junction to a folder counts). A part (romfs, romfslite, exefs, cheats) is the
 first of <mod>/<part>, <mod>/atmosphere/contents/<title>/<part>, <mod>/contents/<title>/<part> and
-<mod>/<title>/<part> that is a folder (runtime/mods.c find_root).
+<mod>/<title>/<part> that is a folder (runtime/patches/mods.c find_root).
 
 The files that change the game's code are its Atmosphere cheat file for main's build (<cheats>/<build id>.txt, the
 name in any case) and the ExeFS patch files (.ips, .pchtxt) of its exefs part and of

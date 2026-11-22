@@ -1,6 +1,6 @@
 """The Vulkan headers the runtime is compiled against where the system's are older.
 
-The runtime names structures and constants of Vulkan extensions as they come out (runtime/vk_device.c asks for
+The runtime names structures and constants of Vulkan extensions as they come out (runtime/vk/vk_device.c asks for
 VK_KHR_pipeline_binary, VK_KHR_dynamic_rendering_local_read and VK_KHR_shader_maximal_reconvergence when the driver
 has them), so it needs headers at least as new as the ones it was written against. On Windows MSYS2 supplies them and
 the Linux release (tools/make_release_linux.py) carries them in runtime/deps. A build with the system's own compiler

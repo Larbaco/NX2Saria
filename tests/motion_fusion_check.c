@@ -1,4 +1,4 @@
-// runtime/motion_fusion.c on made-up sensor samples, 4 ms apart, with a stand-in for the log. Built and run by
+// runtime/input/motion_fusion.c on made-up sensor samples, 4 ms apart, with a stand-in for the log. Built and run by
 // tests/motion_fusion_check.py; prints a PASS or FAIL line per case and each failed check, and exits 1 on any.
 #include "motion_fusion.c"
 
@@ -402,7 +402,7 @@ static void case_aggregate(void) {
     end("9 one aggregate line after 60 s: raw drift the bias, reported none");
 }
 
-// 10. the quarter turn and restart runtime/ov_probe.c probe_feedback checks
+// 10. the quarter turn and restart runtime/hle/ov_probe.c probe_feedback checks
 static void case_probe(void) {
     begin("10 probe quarter turn and restart");
     MotionFusion *m = motion_new();

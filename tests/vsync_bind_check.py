@@ -1,5 +1,5 @@
 # needs: clang
-"""The vsync event list reuses the slots of destroyed events (runtime/gfx_present.c gfx_vsync_bind): builds
+"""The vsync event list reuses the slots of destroyed events (runtime/gfx/gfx_present.c gfx_vsync_bind): builds
 gfx_vsync_bind, cut from gfx_present.c by its text, with stand-ins for the lock, the log, the vsync thread start and
 kern_system_event_live, and checks that
 
@@ -83,7 +83,7 @@ def main():
     env = dict(os.environ)
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    src = (ROOT / 'runtime' / 'gfx_present.c').read_text(encoding='utf-8')
+    src = (ROOT / 'runtime' / 'gfx' / 'gfx_present.c').read_text(encoding='utf-8')
     body = cut(src, 'void gfx_vsync_bind(uint64_t system_event) {', '\nvoid gfx_vsync_bind_counter(')
     with tempfile.TemporaryDirectory(prefix='nx2navi-vsync-bind-') as tmp:
         c = Path(tmp) / 'check.c'

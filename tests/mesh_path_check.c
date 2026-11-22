@@ -1,4 +1,4 @@
-// runtime/vk_mesh_path.h: how the game's task and mesh programs are drawn (vk_device.c create_device): natively, through
+// runtime/vk/vk_mesh_path.h: how the game's task and mesh programs are drawn (vk_device.c create_device): natively, through
 // the mesh fallback, the mesh emulation or not at all, for each device kind and setting. Built and run by
 // tests/mesh_path_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>

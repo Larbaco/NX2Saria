@@ -1,5 +1,5 @@
 # needs: clang
-"""Build and run tests/frame_owed_check.c: runtime/vk_frame_owed.h, a frame's bookkeeping at its present in replay order
+"""Build and run tests/frame_owed_check.c: runtime/vk/vk_frame_owed.h, a frame's bookkeeping at its present in replay order
 (vk_backend.c "a frame's bookkeeping in replay order", vk_sync.c submit). One presenting thread, three replaying
 threads that hold the lock for their replays, a few of them for 40 ms, and a present thread that takes each frame
 from the presenting thread, blits it and submits, over 20,000 frames: every frame's bookkeeping runs once and in frame

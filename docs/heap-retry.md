@@ -3,7 +3,7 @@
 Ocarina of Time 1.1.1 can crash a few frames after a save is loaded: the thread that rebuilds a model's materials
 ("OptimizeChangeBank") takes memory from a small heap of that model's own, does not check the result, and writes
 through a null pointer when the heap is full. The patch set `heap_retry` (`recomp/patches-v111.txt`,
-`runtime/heap_retry.c`) catches each of those allocations and takes the memory from the heap's parents instead. Game
+`runtime/patches/heap_retry.c`) catches each of those allocations and takes the memory from the heap's parents instead. Game
 version 1.1.1 only; on by default.
 
 **[C]** marks what was read in the game's code (build `e0f3ccfa`) or seen in a run. **[I]** marks what is inferred.
@@ -54,7 +54,7 @@ version 1.1.1 only; on by default.
   executable's, as for every set. At the start, `heap_retry.c` `heap_retry_start` also compares the four words in the
   loaded image with 1.1.1's, and on a difference it switches the set off and logs which word differs; the game then
   runs its own code there. A mod whose ExeFS patch writes one of these sites switches the set off too
-  (`tools/exefs_patches.py`, `runtime/mods.c`: "mods: ... replaces the port's patch set heap_retry; it stays off").
+  (`tools/exefs_patches.py`, `runtime/patches/mods.c`: "mods: ... replaces the port's patch set heap_retry; it stays off").
   The start line comes after both, so it says whether the set really runs.
 - Why these places: the `blr` to `tryAlloc` cannot be patched (a patch site cannot be a `br`, `blr` or `ret`), so the
   site is the word after it. The `blr` has already made every caller-saved register and the flags free, so the call
