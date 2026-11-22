@@ -2,8 +2,11 @@
 # nor Windows (the tests say what they need in their "# needs:" lines; the runner skips the rest and names why). The
 # known failures of tests/known_failures.txt run and are listed apart; any other failure fails the job. Each test's
 # output is kept as an artifact when the job fails.
-# Python packages come by version and SHA-256 (tools/ci_requirements_tests.txt); VMA and the Vulkan headers are the
-# pinned ones the build fetches (tools/build_game.py vma_include, tools/vulkan_pin.py). No cache is read or written.
+# Python is uv's own build (it has tkinter, which the runner's system Python lacks) with packages by version and SHA-256
+# (tools/ci_requirements_tests.txt); VMA and the Vulkan headers are the pinned ones the build fetches
+# (tools/build_game.py vma_include, tools/vulkan_pin.py), and the runtime's shader headers are built from their sources
+# (tools/build_shaders.py) before the tests, as tests that build the game would otherwise do in the middle of the run.
+# When apt fails, the tests that need its tools are skipped and named instead. No cache is read or written.
 name: Tests
 
 on:
@@ -34,26 +37,35 @@ jobs:
       - name: Python 3.12 and 3.14
         # .venv as the lifter's tests want it; .venv-py314 for the ones that need compression.zstd (the installer's)
         run: |
-          uv python install -q 3.14.9
-          uv venv -q --python 3.12 .venv
-          uv venv -q --python 3.14.9 .venv-py314
+          uv python install -q 3.12 3.14.9
+          uv venv -q --managed-python --python 3.12 .venv
+          uv venv -q --managed-python --python 3.14.9 .venv-py314
           for py in .venv/bin/python .venv-py314/bin/python; do
             uv pip install -q --python "$py" --require-hashes -r tools/ci_requirements_tests.txt
           done
-      - name: Headers and a display
-        # vk_mem_alloc.h and Vulkan headers new enough for the runtime (Ubuntu 24.04's are 1.3); xvfb-run gives the
-        # launcher's and the installer's window tests a display
+      - name: Tools
+        # glslc, glslangValidator and spirv-tools for the shader checks and tools/build_shaders.py, lld for the
+        # launcher's build tests, xvfb-run for the window tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y glslc glslang-tools spirv-tools lld xvfb ||
+            echo "::warning::apt failed: the tests that need its tools are skipped"
+          clang --version | head -1
+      - name: Headers
+        # vk_mem_alloc.h, Vulkan headers new enough for the runtime (Ubuntu 24.04's are 1.3) and the shader headers
         run: |
           .venv/bin/python -c 'import sys; sys.path.insert(0, "tools"); import build_game; print("VMA:", build_game.vma_include())'
           .venv/bin/python tools/vulkan_pin.py
           echo "CPATH=$PWD/toolchain/vulkan-headers/include" >> "$GITHUB_ENV"
-          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
-          clang --version | head -1
+          if command -v glslc >/dev/null; then .venv/bin/python tools/build_shaders.py; fi
       - name: Tests
-        run: xvfb-run -a .venv/bin/python tests/run.py
+        run: |
+          x=(); if command -v xvfb-run >/dev/null; then x=(xvfb-run -a); fi   # without it the window tests are skipped
+          "${x[@]}" .venv/bin/python tests/run.py
       - name: Tests on Python 3.14
         if: ${{ !cancelled() }}
-        run: xvfb-run -a .venv-py314/bin/python tests/run.py --needs py:compression.zstd
+        run: |
+          x=(); if command -v xvfb-run >/dev/null; then x=(xvfb-run -a); fi
+          "${x[@]}" .venv-py314/bin/python tests/run.py --needs py:compression.zstd
       - if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
