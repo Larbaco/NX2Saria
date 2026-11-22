@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -87,7 +88,7 @@ def main():
     plat = [rt / 'platform' / 'win32.c', rt / 'platform' / 'common.c']
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), '-I', str(work),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), '-I', str(work),
                            str(ROOT / 'tests' / 'lazy_fetch_check.c'), *map(str, plat), '-o', str(exe), '-lm',
                            *libs], env=env)
     bad = 0

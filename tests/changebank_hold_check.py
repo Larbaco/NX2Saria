@@ -28,6 +28,7 @@ import regs  # noqa: E402
 from gen import Emitter  # noqa: E402
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
+import runtime_include
 
 SITE, ORIGINAL, SLOT = 0x3299d28, 0x9100054a, 0xe30   # add x10, x10, #1
 
@@ -69,7 +70,7 @@ def check_site():
                 insn = lifter.lift(w, MAIN + off)
                 assert not (insn.kind == 'bl' and insn.target == MAIN + PAGE + SLOT), \
                     f'set {table.sets[k][0]} at {off:#x} calls changebank_hold\'s slot'
-    users = sorted(p.name for p in (ROOT / 'runtime').glob('*.c')
+    users = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c')
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (SLOT, SLOT),
                                 p.read_text(encoding='utf-8', errors='replace'), re.I))
     assert users == [], users   # changebank_hold.c names it through HOST_SLOT
@@ -89,7 +90,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-Wno-bitwise-instead-of-logical', '-fno-strict-aliasing',
-                           '-I', str(work), '-I', str(ROOT / 'runtime'),
+                           '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests' / 'changebank_hold_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

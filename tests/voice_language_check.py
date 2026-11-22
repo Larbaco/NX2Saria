@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'recomp'))
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
+import runtime_include  # noqa: E402
 
 MAIN, PAGE = 0x7000000000, 0x4ea0000
 SITE, WAS_WRITTEN, HOST = 0xa7ca98, 0xa7d1c0, 0xe60
@@ -41,7 +42,7 @@ def check_runtime():
     env = dict(os.environ)
     if os.name == 'nt' and UCRT.is_dir():
         env['PATH'] = str(UCRT) + os.pathsep + env.get('PATH', '')
-    subprocess.run([cc, '-O2', '-Wall', '-I', str(work), '-I', str(ROOT / 'runtime'),
+    subprocess.run([cc, '-O2', '-Wall', '-I', str(work), *runtime_include.flags(),
                     str(ROOT / 'tests' / 'voice_language_check.c'), str(ROOT / 'runtime' / 'patches' / 'voice_language.c'),
                     '-o', str(exe)], check=True, env=env)
     subprocess.run([str(exe)], check=True, env=env)

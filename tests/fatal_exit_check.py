@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 RT = ROOT / 'runtime'
@@ -65,7 +66,7 @@ def static_checks():
                   '(ExitProcess: every library\'s detach runs); use plat_terminate or plat_exit')
             bad += 1
     for file, sig in (('dispatch.c', 'static void fatal_end(int code, const char *fmt, va_list ap) {'),
-                      ('vk_device.c', 'static void lost_wait_exit(void *arg)')):
+                      ('vk/vk_device.c', 'static void lost_wait_exit(void *arg)')):
         body = re.sub(r'//[^\n]*', '', function((RT / file).read_text(encoding='utf-8'), sig))
         if 'plat_terminate(' not in body:
             print(f'FAIL: runtime/{file} {sig.split("(")[0].split()[-1]} does not end with plat_terminate')
@@ -147,7 +148,7 @@ def main():
     plat = [RT / 'platform' / 'win32.c', RT / 'platform' / 'common.c']
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(RT), '-I', str(work), str(ROOT / 'tests' / 'fatal_exit_check.c'),
+                           '-march=x86-64-v3', *runtime_include.flags(RT), '-I', str(work), str(ROOT / 'tests' / 'fatal_exit_check.c'),
                            str(RT / 'dispatch.c'), *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     for mode, code, want, unwanted in CASES:
         t0 = time.monotonic()

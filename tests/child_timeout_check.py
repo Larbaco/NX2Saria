@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -160,7 +161,7 @@ def main():
     if MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-march=x86-64-v3',
-                           '-I', str(ROOT / 'runtime'), str(c), '-o', str(exe)], env=env)
+                           *runtime_include.flags(), str(c), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env, timeout=60).returncode
 
 

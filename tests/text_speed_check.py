@@ -16,6 +16,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
 from tools.check_content import GENERATED_MARKER  # noqa: E402
+import runtime_include
 
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 MAIN = 0x7000000000
@@ -73,7 +74,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-Wno-unused-variable',
-                           '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
+                           '-fno-strict-aliasing', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'text_speed_check.c'), str(sites), '-o', str(exe), '-lm'], env=env)
     rc = subprocess.run([str(exe)], env=env).returncode
     return subprocess.run([str(exe), 'kept-off'], env=env).returncode or rc

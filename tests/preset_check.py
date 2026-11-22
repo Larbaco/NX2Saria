@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -77,7 +78,7 @@ def build_draft(work, env, deck_row):
     cxx = os.environ.get('CXX') or (str(Path(cc).with_name(Path(cc).name.replace('clang', 'clang++')))
                                     if 'clang' in Path(cc).name else shutil.which('clang++') or 'clang++')
     rt = ROOT / 'runtime'
-    inc = ['-I', str(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(ROOT / 'tests')]
+    inc = [*runtime_include.flags(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(ROOT / 'tests')]
     keep = ROOT / 'build' / 'test' / 'preset-imgui'
     keep.mkdir(parents=True, exist_ok=True)
     objs = []
@@ -113,8 +114,7 @@ def main():
     rt = ROOT / 'runtime'
     # a device profile row of the test's own: the Steam Deck's value for a key Low also sets, with another value
     deck_row = '-DCFG_TEST_DECK_ROW={"STANDIN_FILTER", "easu"}'
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', deck_row, '-I',
-                           str(rt), '-I', str(ROOT / 'tests'), str(ROOT / 'tests' / 'preset_check.c'), str(rt / 'cfg' / 'cfg.c'),
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', deck_row, *runtime_include.flags(rt), '-I', str(ROOT / 'tests'), str(ROOT / 'tests' / 'preset_check.c'), str(rt / 'cfg' / 'cfg.c'),
                            '-o', str(exe)], env=env)
     draft_exe = build_draft(work, env, deck_row)
     bad = 0

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,7 +47,7 @@ def main():
     if not (a.spv_include / 'wb_merge_spv.h').is_file():
         ap.error('the shader headers are missing: run tools/build_shaders.py or pass --spv-include')
     a.work.mkdir(parents=True, exist_ok=True)
-    inc = ['-I', str(ROOT / 'runtime'), '-I', str(a.spv_include), '-I', str(a.vma_include)]
+    inc = [*runtime_include.flags(), '-I', str(a.spv_include), '-I', str(a.vma_include)]
     if a.vulkan_include:
         inc += ['-I', str(a.vulkan_include)]
     order = ROOT / 'tests' / 'usnap_order_check.c'

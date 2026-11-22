@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +35,7 @@ def main():
     a.work.mkdir(parents=True, exist_ok=True)
     exe = a.work / ('usnap-concurrency-tsan' if a.tsan else 'usnap-concurrency')
     flags = ['-fsanitize=thread', '-fno-omit-frame-pointer'] if a.tsan else []
-    includes = ['-I', str(ROOT / 'runtime'), '-I', str(a.vma_include)]
+    includes = [*runtime_include.flags(), '-I', str(a.vma_include)]
     if a.vulkan_include:
         includes += ['-I', str(a.vulkan_include)]
     subprocess.run([a.cc, '-std=gnu11', '-O1', '-g', '-pthread', '-ffunction-sections', '-fdata-sections', *flags,

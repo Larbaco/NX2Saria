@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
@@ -300,12 +301,12 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     log = work / 'nx2saria-sample.log'
-    inc = ['-I', str(ROOT / 'runtime')]
+    inc = [*runtime_include.flags()]
     vk = ROOT / 'toolchain' / 'vulkan-headers' / 'include'   # build_game.py's pinned headers, when fetched
     if vk.is_dir():
         inc = ['-I', str(vk)] + inc
 
-    pipe, present, tex = source('vk_pipeline.c'), source('gfx_present.c'), source('vk_texture.c')
+    pipe, present, tex = source('vk/vk_pipeline.c'), source('gfx/gfx_present.c'), source('vk/vk_texture.c')
     fails = 0
     out = {}
     progs = {

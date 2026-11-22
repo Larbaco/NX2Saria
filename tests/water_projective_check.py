@@ -13,6 +13,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'tools'))
 import projective_recipe as recipe  # noqa: E402
+import runtime_include  # noqa: E402
 
 VERTEX = '''
                OpCapability Shader
@@ -113,7 +114,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     (out / 'check.c').write_text(HARNESS)
     exe = out / 'check.exe'
-    subprocess.run([a.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(root / 'runtime'),
+    subprocess.run([a.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', *runtime_include.flags(root / 'runtime'),
                     str(out / 'check.c'), str(root / 'runtime/gfx/spirv_water.c'), '-o', str(exe)], check=True)
     for name, text, edit in (('vertex', VERTEX, recipe.vertex), ('fragment', FRAGMENT, recipe.fragment)):
         src, mine = out / f'{name}.spv', out / f'{name}-runtime.spv'

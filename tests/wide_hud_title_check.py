@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -60,7 +61,7 @@ def main():
     rt = ROOT / 'runtime'
     # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror',
-                           '-Wno-bitwise-instead-of-logical', *sanitize, '-I', str(rt),
+                           '-Wno-bitwise-instead-of-logical', *sanitize, *runtime_include.flags(rt),
                            str(ROOT / 'tests' / 'wide_hud_title_check.c'), str(rt / 'patches' / 'wide_hud.c'), str(rt / 'hle' / 'sarc.c'),
                            '-o', str(exe), '-lzstd', '-lm'], env=env)
     run = [str(exe)] + (game_args(args.romfs) if args.romfs else [])

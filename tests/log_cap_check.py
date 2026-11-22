@@ -121,7 +121,7 @@ def static_checks():
     ends = [('main.c', 'static void crash_handler(const PlatCrash *x)'),
             ('main.c', 'static void log_sync_ending(void)'),
             ('dispatch.c', 'static void fatal_end(int code, const char *fmt, va_list ap) {'),
-            ('vk_device.c', 'static void lost_wait_exit(void *arg)')]
+            ('vk/vk_device.c', 'static void lost_wait_exit(void *arg)')]
     for file, sig in ends:
         text = (rt / file).read_text(encoding='utf-8')
         if sig not in text:

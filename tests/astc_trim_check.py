@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -64,7 +65,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-w', '-fno-strict-aliasing', '-march=x86-64-v3',
-                           '-I', str(rt), '-I', str(work), '-I', vma_include(),
+                           *runtime_include.flags(rt), '-I', str(work), '-I', vma_include(),
                            str(ROOT / 'tests' / 'astc_trim_check.c'), str(rt / 'platform' / 'common.c'), str(stubs),
                            '-o', str(exe), '-lws2_32'], env=env)
     try:

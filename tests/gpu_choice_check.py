@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -35,7 +36,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     cc = compiler()
-    subprocess.check_call([cc, '-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([cc, '-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'gpu_choice_check.c'), '-o', str(exe)], env=env)
     # the menu is C++: the header alone must compile there too
     cxx = work / 'gpu_choice_cxx.cpp'
@@ -45,8 +46,7 @@ def main():
                    ' return gpuc_index(&c, 1, 0, "x", &d) + gpuc_shown(&c, 1, -1, "x", 0) +'
                    ' gpuc_resolve(&c, 1, 0, "x", 0, &d, &a) + gpuc_legacy_applies(&c, 1, 0, "x", 0); }\n',
                    encoding='utf-8')
-    subprocess.check_call([cc, '-x', 'c++', '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror', '-I',
-                           str(ROOT / 'runtime'), str(cxx), '-o', str(work / 'gpu_choice_cxx')], env=env)
+    subprocess.check_call([cc, '-x', 'c++', '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror', *runtime_include.flags(), str(cxx), '-o', str(work / 'gpu_choice_cxx')], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 
 

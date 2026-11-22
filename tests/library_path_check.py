@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 SONAME = 'libprobe.so.0'
@@ -65,12 +66,12 @@ def main():
     shutil.copy2(other / SONAME, full_name)
     rt = ROOT / 'runtime'
     obj = work / 'linux.o'
-    subprocess.check_call([cc, '-std=gnu11', '-O1', '-w', '-ffunction-sections', '-fdata-sections', '-I', str(rt), *inc,
+    subprocess.check_call([cc, '-std=gnu11', '-O1', '-w', '-ffunction-sections', '-fdata-sections', *runtime_include.flags(rt), *inc,
                            '-c', str(rt / 'platform' / 'linux.c'), '-o', str(obj)])
     exe = game / 'library_path_check'
     lld = ['-fuse-ld=lld'] if shutil.which('ld.lld') else []
     subprocess.check_call([cc, '-std=gnu11', '-O1', '-Wall', '-Werror', *lld, '-no-pie', '-Wl,--gc-sections',
-                           '-Wl,-rpath,$ORIGIN', '-I', str(rt), str(ROOT / 'tests' / 'library_path_check.c'),
+                           '-Wl,-rpath,$ORIGIN', *runtime_include.flags(rt), str(ROOT / 'tests' / 'library_path_check.c'),
                            str(rt / 'lib_origin.c'), str(obj), '-L', str(game), f'-l:{SONAME}', '-lm', '-lpthread',
                            '-ldl', '-o', str(exe)])
     link.symlink_to(game, target_is_directory=True)

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS = Path(r'C:\msys64\ucrt64')
@@ -34,7 +35,7 @@ def main():
     exe = work / ('audio_mixer_check.exe' if os.name == 'nt' else 'audio_mixer_check')
     # the default build's target (x86-64-v3: AVX2 and FMA), so the mixing loops are compiled as they ship
     subprocess.check_call([cc, '-std=gnu11', '-O2', '-fno-strict-aliasing', '-march=x86-64-v3', '-Wall',
-                           '-Wno-unused-function', '-I', str(ROOT / 'runtime'),
+                           '-Wno-unused-function', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'audio_mixer_check.c'), '-o', str(exe), *sdl, '-lm'], env=env)
     return subprocess.run([str(exe)], env=env, timeout=60).returncode
 

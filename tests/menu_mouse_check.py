@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -28,7 +29,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     with tempfile.TemporaryDirectory(prefix='nx2saria-menu-mouse-') as tmp:
         exe = Path(tmp) / ('check.exe' if win else 'check')
-        subprocess.check_call([cc, '-O2', '-Wall', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
+        subprocess.check_call([cc, '-O2', '-Wall', '-fno-strict-aliasing', *runtime_include.flags(),
                                str(ROOT / 'tests' / 'menu_mouse_check.c'),
                                *([] if win else ['-lm']), '-o', str(exe)], env=env)
         return subprocess.run([str(exe)], env=env).returncode

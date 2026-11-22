@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
+import runtime_include
 
 MAIN = 0x7000000000
 PAGE = 0x4EA0000
@@ -29,7 +30,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     (work / 'layout.h').write_text(f'#define MOD_MAIN_BASE {MAIN:#x}ull\n')
     executable = work / ('battle_music_check.exe' if os.name == 'nt' else 'battle_music_check')
-    subprocess.check_call([compiler(), '-O1', '-fno-strict-aliasing', '-I', str(work), '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-O1', '-fno-strict-aliasing', '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests/battle_music_check.c'), str(ROOT / 'runtime/patches/battle_music.c'),
                            '-o', str(executable), '-lm'])
     return subprocess.run([str(executable)]).returncode

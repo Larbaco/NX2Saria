@@ -24,6 +24,7 @@ import tempfile
 import zipfile
 import zlib
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -74,7 +75,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'save_zip_check.c'), str(ROOT / 'runtime' / 'hle' / 'save_zip.c'), '-o',
                            str(exe)], env=env)
     run = lambda *a: subprocess.run([str(exe), *map(str, a)], env=env, capture_output=True, text=True)   # noqa: E731

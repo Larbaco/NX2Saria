@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -85,7 +86,7 @@ def main():
         for march in marches:
             name = f'{label}{" " + march[0] if march else ""}'
             exe = work / (f'sha256_paths_{i}{march[0][7:] if march else ""}' + ('.exe' if os.name == 'nt' else ''))
-            p = subprocess.run([cc, '-std=gnu11', '-O2', *march, '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+            p = subprocess.run([cc, '-std=gnu11', '-O2', *march, '-Wall', '-Werror', *runtime_include.flags(),
                                 str(ROOT / 'tests' / 'sha256_paths_check.c'), '-o', str(exe)],
                                capture_output=True, text=True, env=env, errors='replace')
             if p.returncode:

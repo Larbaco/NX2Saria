@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from platform_stand_ins import stand_ins
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -49,7 +50,7 @@ def main():
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-march=x86-64-v3', '-I', str(rt), '-I', str(vma_include()),
+                           '-march=x86-64-v3', *runtime_include.flags(rt), '-I', str(vma_include()),
                            str(ROOT / 'tests' / 'tex_copy_mt_check.c'), str(rt / 'gfx' / 'tex_deswizzle.c'), str(rt / 'par_jobs.c'), *map(str, plat), '-o', str(exe), '-lzstd', '-lm',
                            *libs], env=env)
     return subprocess.run([str(exe)], env=env, timeout=300).returncode

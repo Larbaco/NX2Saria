@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
+import runtime_include
 
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 MAIN, PAGE = 0x7000000000, 0x4ea0000
@@ -70,7 +71,7 @@ def check_site():
                 insn = lifter.lift(w, MAIN + off)
                 assert not (insn.kind == 'bl' and insn.target == MAIN + PAGE + HOST), \
                     f'set {table.sets[k][0]} at {off:#x} calls the page\'s +{HOST:#x} too'
-    users = sorted(p.name for p in (ROOT / 'runtime').glob('*.c')
+    users = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c')
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*0x%x\b' % HOST, p.read_text(encoding='utf-8', errors='replace')))
     assert users == ['patches.c'], users
     print(f'wide_bars_check: the site at main+{SITE:#x} keeps ldr x8, [x19] and calls the page\'s +{HOST:#x}; '
@@ -87,7 +88,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-I', str(work), '-I', str(ROOT / 'runtime'),
+                           '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests' / 'wide_bars_check.c'), '-o', str(exe)], env=env)
     subprocess.check_call([str(exe)], env=env)
     subprocess.check_call([str(exe), 'no-set'], env=env)

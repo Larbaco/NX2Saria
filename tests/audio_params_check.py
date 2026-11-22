@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS = Path(r'C:\msys64\ucrt64')
@@ -38,7 +39,7 @@ def main():
     exe = work / ('audio_params_check.exe' if os.name == 'nt' else 'audio_params_check')
     # three translation units: both effect files have a static gain10; the default build's target (x86-64-v3)
     subprocess.check_call([cc, '-std=gnu11', '-O2', '-fno-strict-aliasing', '-march=x86-64-v3', '-Wall',
-                           '-Wno-unused-function', '-I', str(ROOT / 'runtime'),
+                           '-Wno-unused-function', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'audio_params_check.c'), str(ROOT / 'runtime' / 'audio' / 'audio_effects.c'),
                            str(ROOT / 'runtime' / 'audio' / 'audio_reverb.c'), '-o', str(exe), *sdl, '-lm'], env=env)
     fails = 0

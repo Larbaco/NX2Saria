@@ -21,8 +21,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_game   # noqa: E402  (RT_FLAGS, the compiler and the include folders of the build)
+import runtime_include  # noqa: E402
 
-FILES = ['vk_memory.c', 'vk_texture.c', 'tex_probe.c']
+FILES = ['vk/vk_memory.c', 'vk/vk_texture.c', 'gfx/tex_probe.c']
 STRICT = ['-Werror=shorten-64-to-32', '-Werror=format', '-Werror=incompatible-pointer-types']
 # the diagnostics this check is about, by the flag clang names at the end of the line
 WATCHED = re.compile(r'^(?P<where>[^\n]*?:\d+:\d+): (?:error|warning): (?P<what>[^\n]*?)'
@@ -49,7 +50,7 @@ def main():
     cc = args.cc or os.environ.get('CC') or str(build_game.CLANG)
     build_game.set_cpu('v3')   # adds -DRT_CPU_LEVEL=3, as the build does
     flags = [f for f in build_game.RT_FLAGS if f != '-g']
-    inc = ['-I', str(ROOT / 'runtime'), '-I', str(build_game.vma_include())]
+    inc = [*runtime_include.flags(), '-I', str(build_game.vma_include())]
     vk = build_game.vulkan_include(cc)
     if vk:
         inc = ['-I', str(vk)] + inc

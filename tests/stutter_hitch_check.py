@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -34,7 +35,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror',
-                           '-Wno-bitwise-instead-of-logical', '-I', str(ROOT / 'runtime'),
+                           '-Wno-bitwise-instead-of-logical', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'stutter_hitch_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

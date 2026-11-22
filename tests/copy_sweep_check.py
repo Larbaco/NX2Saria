@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -176,7 +177,7 @@ def main():
         c = Path(tmp) / 'check.c'
         c.write_text(HARNESS % body, encoding='utf-8')
         exe = Path(tmp) / ('check.exe' if win else 'check')
-        subprocess.check_call([cc, '-O2', '-Wall', '-Wno-unused-function', '-I', str(ROOT / 'runtime'), str(c), '-o',
+        subprocess.check_call([cc, '-O2', '-Wall', '-Wno-unused-function', *runtime_include.flags(), str(c), '-o',
                                str(exe)], env=env)
         return subprocess.call([str(exe)])
 

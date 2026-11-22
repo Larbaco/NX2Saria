@@ -16,6 +16,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'recomp')]
 from lifter import Lifter  # noqa: E402
 from patches import load  # noqa: E402
 from tools.check_content import GENERATED_MARKER  # noqa: E402
+import runtime_include
 
 PAGE = 0x4ea0000   # the patch page of 1.1.1, main+0x4ea0000
 # The sites that call frame_rate.c's hosts, as recomp/patches-v111.txt has them: set, module offset, the original word,
@@ -206,7 +207,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-I', str(ROOT / 'runtime'), '-I', str(work),
+                           *runtime_include.flags(), '-I', str(work),
                            str(ROOT / 'tests' / 'frame_step_check.c'), str(solver), '-o', str(exe), '-lm'], env=env)
     rc = subprocess.run([str(exe)], env=env).returncode
     return subprocess.run([str(exe), 'mean'], env=env).returncode or rc or check_sites() + check_follow() + check_staff()

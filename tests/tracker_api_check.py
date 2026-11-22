@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -488,7 +489,7 @@ def main():
                            '-Wno-sign-compare', '-Wno-missing-field-initializers', '-Wno-bitwise-instead-of-logical',
                            '-fno-strict-aliasing',
                            '-march=x86-64-v3', f'-DSEARCH_BYTES_PER_MIN=({SEARCH_MIB_PER_MIN}ull<<20)', '-DCLIENT_LOGS=100',
-                           '-I', str(rt), '-I', str(work), str(ROOT / 'tests' / 'tracker_api_check.c'),
+                           *runtime_include.flags(rt), '-I', str(work), str(ROOT / 'tests' / 'tracker_api_check.c'),
                            *map(str, plat), '-o', str(exe), '-lm', *libs], env=env)
     env['NX2SARIA_TRACKER_API'] = '1'
     env['NX2SARIA_TRACKER_API_PORT'] = str(40000 + os.getpid() % 20000)

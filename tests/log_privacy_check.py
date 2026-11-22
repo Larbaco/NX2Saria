@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -37,7 +38,7 @@ def compiler():
 
 def build(out, *sources):
     exe = out / (sources[0].stem + ('.exe' if os.name == 'nt' else ''))
-    cmd = [compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-I', str(ROOT / 'runtime'),
+    cmd = [compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', *runtime_include.flags(),
            *map(str, sources), '-o', str(exe)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:

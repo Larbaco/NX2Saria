@@ -31,6 +31,7 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 ACCOUNT = '5555666677778888' + '1111222233334444'   # tests/save_share_check.c account_uid, as fs_host.c names it
 
 from launcher import saves  # noqa: E402
+import runtime_include  # noqa: E402
 
 
 def compiler():
@@ -60,8 +61,8 @@ def main():
     plat = ['platform/win32.c', 'platform/common.c'] if os.name == 'nt' else ['platform/linux.c', 'platform/common.c']
     libs = ['-lbcrypt', '-lws2_32', '-lwinmm', '-lpsapi', '-lshell32', '-lole32', '-luser32'] if os.name == 'nt' else \
         ['-lpthread', '-ldl', '-lm']
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-w', '-I', str(rt), str(ROOT / 'tests' /
-                           'save_share_check.c'), *(str(rt / f) for f in ('fs_host.c', 'save_share.c', 'save_zip.c',
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-w', *runtime_include.flags(rt), str(ROOT / 'tests' /
+                           'save_share_check.c'), *(str(rt / f) for f in ('hle/fs_host.c', 'hle/save_share.c', 'hle/save_zip.c',
                                                                            *plat)), *stand_ins(work),
                            '-o', str(exe), *libs], env=env)
     bad = 0

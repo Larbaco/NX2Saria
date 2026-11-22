@@ -58,6 +58,7 @@ from launcher import build, feed, gameini, gamefiles, jobs, locks, net, saves, s
 from launcher.context import Context, shorten  # noqa: E402
 from launcher.paths import Layout  # noqa: E402
 from launcher.platform import game_executable  # noqa: E402
+import runtime_include  # noqa: E402
 
 # The built game's file name on this system (ocarina.exe on Windows, ocarina elsewhere) and where its log is said to be.
 GAME_EXE = game_executable('.').name
@@ -2093,7 +2094,7 @@ class MakeGameTest(Tmp):
             rt = kit / 'runtime'
             srcs = [(rt / 'a.c', obj / 'rt_a.o')]
             cache = self.mg.ObjectCache(obj / 'objects.json', {'<kit>': kit})
-            return self.mg.compile_all(srcs, lambda s_, d: ['cc', '-c', '-I', str(rt), '-o', str(d), str(s_)], cache,
+            return self.mg.compile_all(srcs, lambda s_, d: ['cc', '-c', *runtime_include.flags(rt), '-o', str(d), str(s_)], cache,
                                        1, dict(os.environ), salt='cc')
         self.assertEqual(go(kits[0])[:2], (1, 0))
         self.assertEqual(go(kits[1])[:2], (0, 1))
@@ -3797,7 +3798,7 @@ class MakeGameTest(Tmp):
         if 'clang' in said:   # and the file as the build compiles it, with the runtime's headers
             (gen / 'layout.h').write_text('#define MOD_MAIN_BASE 0x7000000000ull\n'
                                           '#define MOD_MAIN_SIZE 0x1000000ull\n')
-            compiles(gen / 'modules.c', '-I', str(ROOT / 'runtime'), '-I', str(gen))
+            compiles(gen / 'modules.c', *runtime_include.flags(), '-I', str(gen))
 
     def test_the_disk_space_of_every_step_is_checked_first(self):
         """Before its first long step the build adds up what its steps will write into the game folder and stops

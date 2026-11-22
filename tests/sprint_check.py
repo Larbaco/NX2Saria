@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -45,7 +46,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
-                           '-I', str(work), '-I', str(ROOT / 'runtime'),
+                           '-I', str(work), *runtime_include.flags(),
                            str(ROOT / 'tests' / 'sprint_check.c'), '-o', str(exe)], env=env)
     rc = subprocess.run([str(exe)], env=env).returncode
     return subprocess.run([str(exe), 'kept-off'], env=env).returncode or rc

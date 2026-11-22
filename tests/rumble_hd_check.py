@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -105,7 +106,7 @@ def main():
     work = ROOT / 'build' / 'test' / 'rumble_hd'
     work.mkdir(parents=True, exist_ok=True)
     exe = work / ('rumble_hd_check.exe' if win else 'rumble_hd_check')
-    subprocess.check_call([cc, '-O1', '-Wall', '-Wextra', '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([cc, '-O1', '-Wall', '-Wextra', '-fno-strict-aliasing', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'rumble_hd_check.c'), str(ROOT / 'runtime' / 'input' / 'rumble_hd.c'),
                            '-o', str(exe)] + ([] if win else ['-lm']), env=env)
     rc = subprocess.run([str(exe)], env=env).returncode

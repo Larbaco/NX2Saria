@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
 from common import MSYS_BIN, compiler  # noqa: E402
+import runtime_include  # noqa: E402
 
 
 def main():
@@ -21,7 +22,7 @@ def main():
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     for opt in ('-O0', '-O1'):
-        subprocess.check_call([compiler(), opt, '-fno-strict-aliasing', '-I', str(ROOT / 'runtime'),
+        subprocess.check_call([compiler(), opt, '-fno-strict-aliasing', *runtime_include.flags(),
                                str(ROOT / 'tests' / 'flags_check.c'), '-o', str(exe)], env=env)
         print(opt, end=': ', flush=True)
         if subprocess.run([str(exe)], env=env).returncode:

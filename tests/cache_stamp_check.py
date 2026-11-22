@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
@@ -41,7 +42,7 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    subprocess.check_call([compiler(), '-O1', '-Wall', '-Werror', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'cache_stamp_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode | log_lines() | uses()
 
@@ -51,11 +52,11 @@ LOG_LINES = ['"vk: pipeline cache stamp %02x%02x%02x%02x %s: %s%s, %\\.1f MB', '
 
 def log_lines():
     """0 when every log line this change leaves is in the runtime's source as its format string."""
-    src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['vk_pipeline.c'])
+    src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['vk/vk_pipeline.c'])
     src = re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
     missing = [p for p in LOG_LINES if not re.search(p, src)]
     for p in missing:
-        print('cache_stamp_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['vk_pipeline.c'])))
+        print('cache_stamp_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['vk/vk_pipeline.c'])))
     return 1 if missing else 0
 
 

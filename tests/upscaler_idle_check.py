@@ -39,50 +39,50 @@ import sys
 from pathlib import Path
 
 WAIT_ALLOWED = {   # where vkDeviceWaitIdle may be called
-    'vk_dlaa.c': {'vk_upscaler_device_idle'},
-    'vk_ffx.cpp': {'vk_ffx_probe_cache'},
-    'vk_ffx4.cpp': set(),
-    'vk_fsr3.c': set(),
+    'vk/vk_dlaa.c': {'vk_upscaler_device_idle'},
+    'vk/vk_ffx.cpp': {'vk_ffx_probe_cache'},
+    'vk/vk_ffx4.cpp': set(),
+    'vk/vk_fsr3.c': set(),
 }
 IDLE_ALLOWED = {'vk_upscaler_settle', 'vk_upscaler_gpu_wait'}   # vk_dlaa.c: who may call vk_upscaler_device_idle
 LET_GO = {   # functions that let something go and must call vk_upscaler_let_go
-    'vk_dlaa.c': ['free_size', 'free_snap', 'stale_sizes', 'release_kept', 'hudless_from', 'pb_images', 'retire_idle',
+    'vk/vk_dlaa.c': ['free_size', 'free_snap', 'stale_sizes', 'release_kept', 'hudless_from', 'pb_images', 'retire_idle',
                   'evaluate'],
-    'vk_ffx.cpp': ['context_for'],
-    'vk_ffx4.cpp': ['context_for'],
-    'vk_fsr3.c': ['ctx_for'],
+    'vk/vk_ffx.cpp': ['context_for'],
+    'vk/vk_ffx4.cpp': ['context_for'],
+    'vk/vk_fsr3.c': ['ctx_for'],
 }
 REFUSED = {   # functions that create a feature or context and must retry a refusal after vk_upscaler_gpu_wait
-    'vk_dlaa.c': ['evaluate'],
-    'vk_ffx.cpp': ['context_for'],
-    'vk_ffx4.cpp': ['context_for'],
-    'vk_fsr3.c': ['ctx_for'],
+    'vk/vk_dlaa.c': ['evaluate'],
+    'vk/vk_ffx.cpp': ['context_for'],
+    'vk/vk_ffx4.cpp': ['context_for'],
+    'vk/vk_fsr3.c': ['ctx_for'],
 }
 # Callees that free at once, without a wait: each is for an idle device (teardown) or for what no submission named yet
 # (a half-made object).
 FREE_NOW = {
-    'vk_dlaa.c': ['destroy_size', 'destroy_snap', 'hl_destroy', 'pb_destroy', 'feat_release', 'N.release',
+    'vk/vk_dlaa.c': ['destroy_size', 'destroy_snap', 'hl_destroy', 'pb_destroy', 'feat_release', 'N.release',
                   'vkDestroyImageView', 'vmaDestroyImage'],
-    'vk_ffx.cpp': ['A.destroy'],
-    'vk_ffx4.cpp': ['A.destroy'],
-    'vk_fsr3.c': ['free_ctx', 'vkDestroyImageView', 'vmaDestroyImage'],
+    'vk/vk_ffx.cpp': ['A.destroy'],
+    'vk/vk_ffx4.cpp': ['A.destroy'],
+    'vk/vk_fsr3.c': ['free_ctx', 'vkDestroyImageView', 'vmaDestroyImage'],
 }
 NO_FREE_NOW = {   # functions that let go of what the GPU may still use: no FREE_NOW callee anywhere in them
-    'vk_dlaa.c': ['free_size', 'free_snap', 'stale_sizes', 'release_kept', 'retire_idle', 'evaluate', 'retire_size',
+    'vk/vk_dlaa.c': ['free_size', 'free_snap', 'stale_sizes', 'release_kept', 'retire_idle', 'evaluate', 'retire_size',
                   'retire_feat', 'retire_snap', 'retire_hl', 'retire_pb'],
-    'vk_ffx.cpp': ['context_for', 'trim', 'retire_up', 'vk_ffx_trim_idle', 'vk_ffx_release_idle'],
-    'vk_ffx4.cpp': ['context_for', 'vk_ffx4_trim', 'retire_up', 'vk_ffx4_release_idle'],
-    'vk_fsr3.c': ['ctx_for', 'trim', 'retire_ctx', 'vk_fsr3_release_idle', 'vk_fsr3_upscale'],
+    'vk/vk_ffx.cpp': ['context_for', 'trim', 'retire_up', 'vk_ffx_trim_idle', 'vk_ffx_release_idle'],
+    'vk/vk_ffx4.cpp': ['context_for', 'vk_ffx4_trim', 'retire_up', 'vk_ffx4_release_idle'],
+    'vk/vk_fsr3.c': ['ctx_for', 'trim', 'retire_ctx', 'vk_fsr3_release_idle', 'vk_fsr3_upscale'],
 }
 # Functions that let go of the old images and then make new ones: no FREE_NOW callee before their first image2d call;
 # after it, the failure path destroys what of the new images was made, which no submission named.
-NO_FREE_BEFORE_MAKE = {'vk_dlaa.c': ['hudless_from', 'pb_images', 'snap_for']}
+NO_FREE_BEFORE_MAKE = {'vk/vk_dlaa.c': ['hudless_from', 'pb_images', 'snap_for']}
 # Where upd_take_all may be called, and whether vk_upscaler_settle's wait for the device must come before it there.
 TAKE_ALL = {
-    'vk_dlaa.c': {'vk_dlaa_release': False, 'dead_put': True},
-    'vk_ffx.cpp': {'vk_ffx_release': False, 'retire_up': True},
-    'vk_ffx4.cpp': {'vk_ffx4_release': False, 'retire_up': True},
-    'vk_fsr3.c': {'vk_fsr3_release': False, 'retire_ctx': True},
+    'vk/vk_dlaa.c': {'vk_dlaa_release': False, 'dead_put': True},
+    'vk/vk_ffx.cpp': {'vk_ffx_release': False, 'retire_up': True},
+    'vk/vk_ffx4.cpp': {'vk_ffx4_release': False, 'retire_up': True},
+    'vk/vk_fsr3.c': {'vk_fsr3_release': False, 'retire_ctx': True},
 }
 # A function definition: at column 0, a return type, the name, the parameters and the body's brace (the runtime's
 # style); declarations end with ';' before any '{'. Read in code whose string literals are blanked: extern "C" is
@@ -181,10 +181,10 @@ def main():
             if fn not in allowed:
                 fails.append(f'{f}:{line}: vkDeviceWaitIdle in {fn}, allowed only in {sorted(allowed) or "none"}')
         for line, fn in calls(code, funcs, 'vk_upscaler_device_idle'):
-            if f != 'vk_dlaa.c' or fn not in IDLE_ALLOWED:
+            if f != 'vk/vk_dlaa.c' or fn not in IDLE_ALLOWED:
                 fails.append(f'{f}:{line}: vk_upscaler_device_idle in {fn}, allowed only in vk_dlaa.c '
                              f'{sorted(IDLE_ALLOWED)}')
-    nwaits = len(calls(*sources['vk_dlaa.c'], 'vkDeviceWaitIdle'))
+    nwaits = len(calls(*sources['vk/vk_dlaa.c'], 'vkDeviceWaitIdle'))
     if nwaits != 1:
         fails.append(f'vk_dlaa.c: {nwaits} calls of vkDeviceWaitIdle, expected the one in vk_upscaler_device_idle')
     for f, names in LET_GO.items():
@@ -253,7 +253,7 @@ def main():
     if not kinds or len(names) != len(kinds):
         fails.append(f'perf.c: mark_name has {len(names)} names for {len(kinds)} PERF_M kinds in host.h')
 
-    code, funcs = sources['vk_dlaa.c']
+    code, funcs = sources['vk/vk_dlaa.c']
     b = body(code, funcs, 'pb_images')
     if b is None:
         fails.append('vk_dlaa.c: no function pb_images')

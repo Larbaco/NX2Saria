@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -84,7 +85,7 @@ def main():
         else ['-lpthread']
     # the platform files are the runtime's, built as the runtime builds them; the strict warnings are for
     # motion_fusion.c and the driver
-    common = [compiler(), '-O1', '-g', '-fno-strict-aliasing', '-I', str(rt), '-I', str(work), *stub]
+    common = [compiler(), '-O1', '-g', '-fno-strict-aliasing', *runtime_include.flags(rt), '-I', str(work), *stub]
     objs = []
     for src in plat:
         obj = work / (src.stem + '.o')
