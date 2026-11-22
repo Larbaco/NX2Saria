@@ -474,14 +474,47 @@ The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the com
 
 ## Checks
 
+`tests/run.py` runs every test under `tests/` (each `*_check.py` and `*_test.py`, the differential tests of
+`tests/diff/`, `excl_mt.py` and `maxwell_warp_emu_selftest.py`) in parallel and prints one summary: passed, failed,
+skipped with the reason, the known failures, the time. It exits 1 when a test failed or timed out.
+
+```sh
+.venv/bin/python tests/run.py                  # all of them, at most 8 at once (--jobs N)
+.venv/bin/python tests/run.py vk cfg_rows      # the tests whose name holds vk or cfg_rows
+.venv/bin/python tests/run.py --list           # each test, what it needs, and why it would be skipped here
+.venv-py314/bin/python tests/run.py --needs py:compression.zstd   # the installer's tests, on Python 3.14
+.venv/bin/python tests/run.py --exe build/<ver>/nx2saria.exe      # also the tests that run the game's executable
+```
+
+On Windows the interpreters are `.venv\Scripts\python` and `.venv-py314\Scripts\python`. A test's output goes to
+`build/test-runs/<name>.log`; the last lines of each failure come after the summary, all of them with
+`--show-output`.
+
+A test says what it needs in a comment line of its own file, `# needs: windows`, `# needs: clang, py:unicorn`, and the
+runner skips it, with that reason, where it is missing: the operating system, the game's extracted files (`game`) or
+executable (`exe`), the shader translator (`xlate`), a GPU, a display, clang, SDL3's development files, VMA, Vulkan
+headers of 1.4 or later, a Python module, a file. The top of `tests/run.py` lists them. `--with` and `--without`
+take a requirement as present or missing. A test that needs command-line arguments gives them in an `# args:` line.
+A new test needs nothing more than its name: the runner finds it.
+
+`tests/known_failures.txt` lists the tests that fail on main, each with its reason, some on one operating system
+only. They still run and are counted apart; one that passes is reported, and its line goes in the change that fixed it.
+
+The Tests workflow (`.github/workflows/tests.yml`) runs `tests/run.py` on Linux on every push and pull request, with
+the pinned VMA and Vulkan headers and `xvfb-run`; what needs the game, a GPU, SDL3 or Windows is skipped there.
+
 Before a commit:
 
+- `python tests/run.py`, or the tests of what changed (the paragraphs below say which test covers what).
 - `python tools/check_content.py --staged`: nothing game-derived and no compiled shader is staged. CI runs the same check;
   `git config core.hooksPath .githooks` runs it before each local commit.
 - `build\<ver>\nx2saria.exe --selftest`: layout, dispatch table and host-function registry, without game files.
 - `python tools\check_platform.py` after a runtime change outside `runtime/platform/`: no shared file uses Win32 outside
   a branch that only a Windows build compiles (`#ifdef _WIN32`, the `#else` of `#ifndef _WIN32`).
   `python tests\check_platform_test.py` checks the scanner itself on made-up files.
+
+The rest of this section is the reference: which test covers which change, how to run it on its own, and what it
+checks. `tests/run.py` runs all of them; a filter runs one (`tests/run.py sprint`).
 
 A change to the in-game menu's look (`runtime/ui/menu_skin.cpp`, `option_rows.cpp`, `perf_panel.cpp`) can be looked at
 without game files: `python tools/menu_preview.py` builds the menu's own drawing code with the host's clang++ and
