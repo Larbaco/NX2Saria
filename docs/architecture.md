@@ -56,6 +56,32 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
   the account's folders written short first (`runtime/log_privacy.c`, [log-privacy.md](log-privacy.md)).
 - OS calls the host makes go through `runtime/platform/` (`platform.h`, `win32.c`).
 
+#### Runtime folders
+
+`runtime/` holds one folder per subsystem; a probe (`--probe-*`) sits beside the code it tries.
+
+| Folder | What it holds |
+|---|---|
+| top level | the entry point (`main.c`), boot and loader, the guest's core headers (`cpu.h`, `simd.h`, `simd_fp.h`, `dispatch.h`, `host.h`: the lifted C includes them), host functions, guest memory, the log, `cfg.h`, small shared helpers (SHA-256, AES, UTF-16, the job pool), Discord, the Windows resources |
+| `audio/` | mixing, effects, reverb and the microphone |
+| `cfg/` | the settings table (`cfg.c`) and the quality presets (`preset_pick.h`, `hw_detect.c`) |
+| `diag/` | frame timing and the performance overlay's numbers, the profilers, the flight recorder, bug captures, the hang watch, the stutter map, the debug menu's hands in the game, the tracker API |
+| `gfx/` | the graphics layer above Vulkan: `gfx.h`, the present and the window, the shader service, texture decoding, the mesh fallback, the resolution |
+| `hle/` | Horizon OS: kernel, SVCs, IPC, the system overrides (`ov_*`), the file system and RomFS with its archives, nfp and amiibo, audren, the software keyboard, the offline network, the shared save |
+| `input/` | gamepads, keyboard and mouse, motion, HD rumble, direct mouse aiming and the stick's camera speed |
+| `nvn/` | the NVN front end |
+| `pacing/` | the frame limiter (`frame_rate.c`), dynamic resolution, RTSS, low latency, held presents |
+| `patches/` | the patch sets' host side (`patches.c` and one file per set), widescreen, cheats and mods, boot to map |
+| `ui/` | the in-game menu (Dear ImGui), its assets, cursor and sounds, the host's text catalog, the folder dialogs |
+| `vk/` | the Vulkan back end: device, pipelines, replay, memory, textures, upscalers and frame generation |
+| `platform/`, `shaders/`, `third_party/`, `dlssg/` | the OS layer, the runtime's own shaders, vendored code, the DLSS Frame Generation DLL |
+
+The sources include one another's headers by name, so the top level and each subsystem folder are on the include path
+of the runtime's sources (`tools/build_game.py` `RUNTIME_DIRS`, the same list in `tools/make_game.py`;
+`tests/runtime_dirs_check.py` keeps them equal and refuses two headers of one name). The lifted C sees only the top
+level, so its compile command does not change when a folder is added. A new folder goes into both lists.
+`tools/runtime_folders.py` holds the table of the move that made the folders.
+
 #### Threads and cores
 
 Every guest thread is a host thread. The game assumes Horizon's scheduler: three application cores, a thread runs

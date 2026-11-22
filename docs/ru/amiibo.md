@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/amiibo.md source-hash=210d257ef6ba95ef84d8ab6018ac025884e0f5ac reviewed=no -->
+<!-- translation: lang=ru source=docs/amiibo.md source-hash=c513805a23f2f766e88e9e4e171070e9d856ec9c reviewed=no -->
 <!-- languages -->
 [English](../amiibo.md) · [Português (Brasil)](../pt-BR/amiibo.md) · **Русский** · [简体中文](../zh-Hans/amiibo.md)
 
