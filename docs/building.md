@@ -523,9 +523,10 @@ Before a commit:
 - `python tools\check_platform.py` after a runtime change outside `runtime/platform/`: no shared file uses Win32 outside
   a branch that only a Windows build compiles (`#ifdef _WIN32`, the `#else` of `#ifndef _WIN32`).
   `python tests\check_platform_test.py` checks the scanner itself on made-up files.
-- `python tests/runtime_dirs_check.py` after adding a folder or a header to `runtime/`: the build scripts' lists of the
-  runtime's folders agree with the tree and no two headers on the include path share a name
-  ([architecture.md](architecture.md#runtime-folders)). A test that compiles runtime sources passes
+- `python tests/runtime_dirs_check.py` after adding a folder, a source or a header to `runtime/`: the build scripts'
+  lists of the runtime's folders agree with the tree, no two headers on the include path share a name
+  ([architecture.md](architecture.md#runtime-folders)), and on Linux and on Windows both build scripts compile every
+  runtime source once (dlssg/ aside), each INSTALL_SIDE path among them. A test that compiles runtime sources passes
   `runtime_include.flags()` (`tests/runtime_include.py`): runtime/ and each folder, as the build does.
 
 The rest of this section is the reference: which test covers which change, how to run it on its own, and what it
