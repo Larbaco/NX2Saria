@@ -268,18 +268,6 @@ def fake_fast_repo(folder, clang_version='1.0-1'):
     (folder / 'clang64.db').write_bytes(tar_bytes(entries))
 
 
-def catches(pid, sig):
-    """Whether the process pid has a handler of its own for the signal sig (Linux: /proc/<pid>/status SigCgt); None
-    where the system does not say."""
-    try:
-        for line in Path(f'/proc/{pid}/status').read_text().splitlines():
-            if line.startswith('SigCgt:'):
-                return bool(int(line.split()[1], 16) >> (sig - 1) & 1)
-    except OSError:
-        pass
-    return None
-
-
 class Tmp(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='nx2navi-test-'))
@@ -7046,28 +7034,100 @@ class LauncherLogTest(Tmp):
                  'from launcher.ui.app import main\nsys.exit(main(sys.argv[1:]))\n')
         p = subprocess.Popen([sys.executable, '-c', start, '--root', str(root)], cwd=ROOT, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: p.poll() is None and (p.kill(), p.communicate()))
         log = root / 'data' / 'logs' / 'launcher.log'
-        # Wait for the two things the signal needs, not for a time: the dump search's line, which a thread the window
-        # starts writes, and the window's handler for SIGTERM, which main() puts in after making the window
-        # (errors.on_end_signals). A search that ends first used to get the signal to the process before the handler,
-        # and Python's default ended it (-15) on a busy machine. The time limit only ends a start that hangs.
+        # Wait for the two lines the signal needs, not for a time: the window's, which main() writes once the
+        # handler and its wakeup are in (errors.on_end_signals, errors.wake_for_signals), and the dump search's, which
+        # a thread the window starts writes. The time limit only ends a start that hangs.
         deadline = time.monotonic() + 180
-        ready = False
-        while not ready and time.monotonic() < deadline and p.poll() is None:
-            logged = 'dump search:' in (log.read_text() if log.is_file() else '')
-            ready = logged and catches(p.pid, signal.SIGTERM) is not False
-            if not ready:
-                time.sleep(0.05)
-        self.assertTrue(ready, f'the window did not get to its dump search with a SIGTERM handler (exit {p.poll()})')
+        text = ''
+        while p.poll() is None and time.monotonic() < deadline and not (
+                'window: SIGTERM and SIGHUP close it, woken through a socket' in text and 'dump search:' in text):
+            time.sleep(0.05)
+            text = log.read_text() if log.is_file() else ''
+        self.assertIn('dump search:', text, f'the window did not get to its dump search (exit {p.poll()})')
+        self.assertIn('window: SIGTERM and SIGHUP close it, woken through a socket', text)
+        sent = time.monotonic()
         p.send_signal(signal.SIGTERM)
         out, err = p.communicate(timeout=30)
+        took = time.monotonic() - sent
         self.assertEqual(p.returncode, 128 + signal.SIGTERM, err)
+        self.assertLess(took, 10, 'the window took that long to act on SIGTERM')
         text = log.read_text()
         self.assertIn('first run: install folder ', text)
         self.assertIn('; dump not chosen yet', text)
         self.assertIn('dump search: none found (', text)
         self.assertNotIn('error in the window', text)
-        self.assertRegex(text, r'window ended by SIGTERM on the first_run screen after \d+ s\n$')
+        self.assertRegex(text, r'window ended by SIGTERM on the first_run screen after \d+ s, \d+\.\d\d s after the '
+                               r'signal\n$')
+
+    def idle_window_ended(self, use_socket):
+        """A window with nothing to do, as the launcher's is once it stops changing: the seconds from SIGTERM to its
+        end, with the signal's handler and errors.wake_for_signals as main() puts them in."""
+        import signal
+        if not hasattr(signal, 'SIGTERM') or os.name == 'nt':
+            self.skipTest('signals that end a process are POSIX only')
+        start = ('import sys, tkinter as tk\nfrom launcher import errors\nroot = tk.Tk()\nroot.withdraw()\n'
+                 'errors.on_end_signals(lambda name: root.after(0, root.destroy))\n'
+                 f'how, undo = errors.wake_for_signals(root, use_socket={use_socket})\n'
+                 'root.after(0, lambda: print(how, flush=True))\nroot.mainloop()\nundo()\n'
+                 'import signal\nprint("wakeup fd put back" if signal.set_wakeup_fd(-1) == -1 else "", flush=True)\n')
+        p = subprocess.Popen([sys.executable, '-c', start], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True)
+        self.addCleanup(lambda: p.poll() is None and (p.kill(), p.communicate()))
+        how = p.stdout.readline().strip()   # the event loop is running
+        self.assertEqual(how, 'woken through a socket' if use_socket else 'checked every 0.25 s', p.poll())
+        # Idle: its main thread asleep, which for a Tk window is waiting in Tcl for an event (Linux: /proc state S)
+        stat = Path(f'/proc/{p.pid}/task/{p.pid}/stat')
+        deadline = time.monotonic() + 60
+        while stat.exists() and time.monotonic() < deadline and stat.read_text().rsplit(')', 1)[1].split()[0] != 'S':
+            time.sleep(0.01)
+        sent = time.monotonic()
+        p.send_signal(signal.SIGTERM)
+        out, err = p.communicate(timeout=30)
+        took = time.monotonic() - sent
+        self.assertEqual(p.returncode, 0, err)
+        self.assertEqual(out.strip(), 'wakeup fd put back', err)
+        return took
+
+    @unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt', 'needs a display (xvfb-run on Linux)')
+    def test_an_idle_window_acts_on_a_signal_at_once(self):
+        """Python runs a signal's handler only when it runs Python again, and an idle Tk window waits in Tcl: with no
+        other event the window used never to act on SIGTERM. The socket wakes it (POSIX)."""
+        self.assertLess(self.idle_window_ended(True), 5)
+
+    @unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt', 'needs a display (xvfb-run on Linux)')
+    def test_an_idle_window_without_the_socket_checks_for_a_signal(self):
+        """The timer Windows takes, where Tk cannot listen to a socket, tried here: the signal is acted on at its
+        next check, every 0.25 s."""
+        self.assertLess(self.idle_window_ended(False), 5)
+
+    def test_windows_takes_the_timer(self):
+        """Tk on Windows has no createfilehandler: wake_for_signals runs a timer there, and on a Tk without one
+        elsewhere, and leaves the signal module's wakeup alone."""
+        import signal
+        try:
+            import tkinter  # noqa: F401  (wake_for_signals imports it; not while os.name is patched)
+        except ImportError as e:
+            self.skipTest(f'no window toolkit: {e}')
+        from launcher import errors
+        for tk_has_it, name in ((True, 'nt'), (False, 'posix')):
+            root = mock.Mock()
+            if not tk_has_it:
+                root.tk = mock.Mock(spec=[])
+            with mock.patch.object(errors.os, 'name', name), mock.patch.object(signal, 'set_wakeup_fd') as wake:
+                how, undo = errors.wake_for_signals(root)
+            self.assertEqual(how, 'checked every 0.25 s')
+            wake.assert_not_called()
+            if tk_has_it:
+                root.tk.createfilehandler.assert_not_called()
+            self.assertEqual(root.after.call_args.args[0], 250)
+            tick = root.after.call_args.args[1]
+            tick()   # the timer goes on until undo
+            self.assertEqual(root.after.call_count, 2)
+            undo()
+            tick()
+            self.assertEqual(root.after.call_count, 2)
 
 
 @unittest.skipUnless(os.environ.get('DISPLAY') or os.name == 'nt', 'needs a display (xvfb-run on Linux)')

@@ -124,3 +124,60 @@ def on_end_signals(handler):
         except (OSError, ValueError, RuntimeError):   # not the main thread, or not on this system
             pass
     return taken
+
+
+WAKE_TICK_MS = 250   # how often a window that cannot listen to a socket runs Python to see a signal (Windows)
+
+
+def wake_for_signals(root, use_socket=None):
+    """Have the window's event loop act on a signal at once. Python runs a signal's handler only when it next runs
+    Python code, and an idle Tk window waits inside Tcl for its next event: a SIGTERM to a window nobody touches
+    (a logout, a shutdown) waited for that event, and a window that got none never closed. On POSIX the signal now
+    writes a byte to a socket (signal.set_wakeup_fd) that the window listens to (createfilehandler), which wakes the
+    loop and runs the handler. Tk on Windows cannot listen to a socket: there a timer runs Python every WAKE_TICK_MS.
+    use_socket=False takes the timer anywhere (tests). Returns (how, undo): how, for the log, is 'woken through a
+    socket' or 'checked every 0.25 s'; undo() puts back what was there before, after the event loop."""
+    import tkinter
+    if use_socket is None:
+        use_socket = os.name != 'nt'
+    if use_socket and hasattr(root.tk, 'createfilehandler'):
+        import socket
+        r, w = socket.socketpair()
+        r.setblocking(False)
+        w.setblocking(False)
+        try:
+            before = signal.set_wakeup_fd(w.fileno(), warn_on_full_buffer=False)
+        except (ValueError, OSError):   # not the main thread
+            r.close()
+            w.close()
+        else:
+            def drain(fileno, mask):   # the handler itself has run by now: Python ran this callback
+                try:
+                    while r.recv(512):
+                        pass
+                except OSError:   # empty
+                    pass
+            root.tk.createfilehandler(r, tkinter.READABLE, drain)
+
+            def undo():
+                try:
+                    root.tk.deletefilehandler(r)
+                except tkinter.TclError:
+                    pass
+                try:
+                    signal.set_wakeup_fd(before)
+                except (ValueError, OSError):
+                    pass
+                r.close()
+                w.close()
+            return 'woken through a socket', undo
+    stop = []
+
+    def tick():
+        if not stop:
+            try:
+                root.after(WAKE_TICK_MS, tick)
+            except tkinter.TclError:   # the window is gone
+                pass
+    root.after(WAKE_TICK_MS, tick)
+    return f'checked every {WAKE_TICK_MS / 1000:g} s', lambda: stop.append(1)
