@@ -15,9 +15,14 @@ void SDL_free(void *p);
 '''
 
 
-def stand_ins(work):
-    """The compiler arguments that add the stand-ins to a build in the folder work: its include folder and source."""
+def include(work):
+    """The compiler arguments for the stand-in SDL3 header, written under the folder work."""
     inc = Path(work) / 'stand-ins'
     (inc / 'SDL3').mkdir(parents=True, exist_ok=True)
     (inc / 'SDL3' / 'SDL_clipboard.h').write_text(SDL_CLIPBOARD)
-    return ['-I', str(inc), str(HERE / 'platform_stand_ins.c')]
+    return ['-I', str(inc)]
+
+
+def stand_ins(work):
+    """The compiler arguments that add the stand-ins to a build in the folder work: its include folder and source."""
+    return include(work) + [str(HERE / 'platform_stand_ins.c')]
