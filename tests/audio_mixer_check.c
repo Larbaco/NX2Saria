@@ -52,10 +52,19 @@ void ipc_out(IpcResponse *rs, const void *p, uint32_t n) { (void)rs, (void)p, (v
 const void *ipc_arg(const IpcRequest *rq, uint32_t off, uint32_t n) { (void)rq, (void)off, (void)n; exit(2); }
 void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) { (void)out, (void)frames, (void)channels, (void)rate; }
 static const char *audio_mode = "none", *channels_setting = "stereo";
-const char *cfg_get(const char *name) { return !strcmp(name, "NX2NAVI_AUDIO") ? audio_mode : NULL; }
-const char *cfg_value(const char *name) { return !strcmp(name, "NX2NAVI_AUDIO_CHANNELS") ? channels_setting : "default"; }
+/* a setting's key without its prefix: the runtime asks for NX2SARIA_<KEY>, and NX2NAVI_<KEY> is the older name
+   runtime/cfg.c still answers to */
+static const char *setting(const char *name) {
+    if (!strncmp(name, "NX2SARIA_", 9)) return name + 9;
+    if (!strncmp(name, "NX2NAVI_", 8)) return name + 8;
+    return name;
+}
+const char *cfg_get(const char *name) { return !strcmp(setting(name), "AUDIO") ? audio_mode : NULL; }
+const char *cfg_value(const char *name) {
+    return !strcmp(setting(name), "AUDIO_CHANNELS") ? channels_setting : "default";
+}
 int cfg_bool(const char *name) {
-    if (!strcmp(name, "NX2NAVI_AUDIO_RAMP")) return ramp_setting;
+    if (!strcmp(setting(name), "AUDIO_RAMP")) return ramp_setting;
     printf("unexpected setting %s\n", name);
     exit(2);
 }

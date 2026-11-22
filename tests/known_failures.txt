@@ -3,8 +3,6 @@
 # that makes the test pass (the runner reports a known failure that passed).
 #
 # Stand-ins that fell behind the runtime (seen on Linux; not run on Windows for this list).
-audio_mixer_check: its stand-in settings end the run with "unexpected setting NX2SARIA_AUDIO_RAMP"
-audio_params_check: its stand-in settings end the run with "unexpected setting NX2SARIA_AUDIO_RAMP"
 save_share_check: fs_host.c and save_share.c now call boot_map_save_open, boot_map_save_read and log_privacy_dup, which the test does not stub: undefined references at link
 mouse_direct_check: its stand-in cfg_get answers only NX2NAVI_MOUSE_MODE; runtime/mouse_direct.c direct_mode asks for NX2SARIA_MOUSE_MODE and strcmp gets NULL (SIGSEGV)
 ocarina_timing_check: check_table wants the set orecord last in recomp/patches-v111.txt; camera_clearance comes after it now
