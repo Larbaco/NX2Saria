@@ -9,7 +9,8 @@
 
 #include "vk_present_held.h"
 
-#define FRAMES 200000
+#define FRAMES 200000         // at least; the stress goes on until both threads have put held presents out
+#define FRAMES_MOST (20 * FRAMES)
 #define SUBMITTERS 3
 #define PH_MAX 8
 
@@ -86,10 +87,21 @@ static void submitter(void *arg) {
     }
 }
 
+// Held presents went out from a submitting thread (after the work or at PH_MAX) and from the presenting one (at the
+// next present), so the lock was in the way of both. How soon that happens is the scheduler's: the stress runs until it
+// has (FRAMES_MOST at the most), not for a fixed count. PH_MAX alone takes 8 submissions in a row that leave work held,
+// which a machine with few cores schedules rarely: steps() checks it.
+static int both_flushed(void) {
+    return (__atomic_load_n(&S.out[PH_AFTER], __ATOMIC_RELAXED) || __atomic_load_n(&S.out[PH_CAPPED], __ATOMIC_RELAXED))
+           && __atomic_load_n(&S.out[PH_NEXT], __ATOMIC_RELAXED);
+}
+
 static void stress(void) {
     PlatThread *t[SUBMITTERS];
     for (int i = 0; i < SUBMITTERS; i++) t[i] = plat_thread_new(submitter, (void *)(uintptr_t)(i + 1), "submit");
-    for (uint64_t f = 1; f <= FRAMES; f++) {
+    uint64_t frames = 0;
+    for (uint64_t f = 1; f <= FRAMES || (!old_mode && !both_flushed() && f <= FRAMES_MOST); f++) {
+        frames = f;
         uint32_t x = rnd(&rng_state);
         PhJob j = {.frame = f};
         if (old_mode) {
@@ -113,24 +125,24 @@ static void stress(void) {
     for (int i = 0; i < SUBMITTERS; i++) plat_thread_join(t[i]);
     if (old_mode) {
         old_flush(PH_NEXT);
-        printf("present_held_check: old (prints only): %llu presents for %d frames, %llu of them held first; %llu out of "
-               "order or twice, %llu while another one ran\n", (unsigned long long)presents, FRAMES,
+        printf("present_held_check: old (prints only): %llu presents for %llu frames, %llu of them held first; %llu out "
+               "of order or twice, %llu while another one ran\n", (unsigned long long)presents, (unsigned long long)frames,
                (unsigned long long)held_presents, (unsigned long long)dup_or_order, (unsigned long long)overlap);
         return;
     }
     ph_flush_next(&S, present_cb, NULL);
-    printf("present_held_check: new: %llu presents for %d frames, %llu of them held first (waited %llu; out after the "
-           "work %llu, at PH_MAX %llu, at the next present %llu); %llu out of order or twice, %llu while another one "
-           "ran; the presenting thread waited for the lock %llu times\n", (unsigned long long)presents, FRAMES,
+    printf("present_held_check: new: %llu presents for %llu frames, %llu of them held first (waited %llu; out after "
+           "the work %llu, at PH_MAX %llu, at the next present %llu); %llu out of order or twice, %llu while another one "
+           "ran; the presenting thread waited for the lock %llu times\n", (unsigned long long)presents,
+           (unsigned long long)frames,
            (unsigned long long)held_presents, (unsigned long long)S.waited, (unsigned long long)S.out[PH_AFTER],
            (unsigned long long)S.out[PH_CAPPED], (unsigned long long)S.out[PH_NEXT], (unsigned long long)dup_or_order,
            (unsigned long long)overlap, (unsigned long long)S.lock_waits);
-    CHECK(presents == FRAMES, "%llu presents for %d frames", (unsigned long long)presents, FRAMES);
-    CHECK(last_frame == FRAMES, "the last frame out is %llu", (unsigned long long)last_frame);
+    CHECK(presents == frames, "%llu presents for %llu frames", (unsigned long long)presents, (unsigned long long)frames);
+    CHECK(last_frame == frames, "the last frame out is %llu", (unsigned long long)last_frame);
     CHECK(!dup_or_order, "%llu presents out of order or twice", (unsigned long long)dup_or_order);
     CHECK(!overlap, "%llu presents ran while another one did", (unsigned long long)overlap);
-    CHECK(S.out[PH_AFTER] && S.out[PH_CAPPED] && S.out[PH_NEXT], "a reason never occurred (after %llu, PH_MAX %llu, "
-          "next %llu)", (unsigned long long)S.out[PH_AFTER], (unsigned long long)S.out[PH_CAPPED],
+    CHECK(both_flushed(), "a thread never put a held present out (after %llu, PH_MAX %llu, next %llu)", (unsigned long long)S.out[PH_AFTER], (unsigned long long)S.out[PH_CAPPED],
           (unsigned long long)S.out[PH_NEXT]);
 }
 
@@ -170,6 +182,20 @@ static void steps(void) {
     ph_present(&s, &b, hold_no, record_cb, NULL);
     CHECK(nseen == 2 && seen[0] == 1 && seen_why[0] == PH_NEXT && seen[1] == 2 && seen_why[1] == PH_NONE,
           "a present behind a held one puts the earlier one out first");
+    // PH_MAX submissions after it began to wait put a present out though work is still held (why_after, as
+    // vk_backend.c ph_why_after)
+    nseen = 0;
+    __atomic_store_n(&held, 1, __ATOMIC_RELEASE);
+    PhJob c = {.frame = 3, .since = seq};
+    ph_present(&s, &c, hold_yes, record_cb, NULL);
+    seq += PH_MAX - 1;
+    CHECK(!ph_flush_try(&s, why_after, record_cb, NULL) && nseen == 0 && ph_armed(&s),
+          "one submission short of PH_MAX keeps the held present");
+    seq += 1;
+    CHECK(ph_flush_try(&s, why_after, record_cb, NULL) && nseen == 1 && seen[0] == 3 && seen_why[0] == PH_CAPPED &&
+          s.out[PH_CAPPED] == 1, "PH_MAX submissions put the held present out");
+    __atomic_store_n(&held, 0, __ATOMIC_RELEASE);
+    seq = 0;
 }
 
 // ---- the lock held elsewhere: a submitting thread does not wait, the presenting thread waits and is counted
