@@ -38,14 +38,18 @@ present and --without REQ as missing, whatever the machine has.
 `args` gives the test's command line. {exe} is the --exe path, {xlate} the translator, {cc} the C compiler ($CC, else
 MSYS2 UCRT64's clang on Windows, else clang) and {root} the repository's root.
 
-tests/known_failures.txt lists the tests that fail on main today, each with its reason, and optionally only on some
-operating systems:
+tests/known_failures.txt lists the tests that fail on main today, each with its reason, optionally only on some
+operating systems, and the tests that fail only now and then (flaky):
 
     name: reason
     name [linux]: reason
+    name [flaky]: reason
+    name [flaky:case, flaky:other_case]: reason
 
 A known failure still runs. It is counted apart and does not fail the run; one that passes is reported, so its line
-can go (and fails the run with --strict).
+can go (and fails the run with --strict). A flaky test counts as passed when it passes; when it fails it is reported
+as flaky and does not fail the run. With cases named, only a failure of those unittest cases is flaky (the FAIL: and
+ERROR: lines of the test's output); a failure of any other case is a failure.
 
     python tests/run.py [filters...] [--jobs N] [--timeout S] [--list] [--show-output] [--needs REQ]
                         [--with REQ] [--without REQ] [--exe PATH] [--strict]
@@ -86,7 +90,8 @@ EXTRA = ('excl_mt.py', 'maxwell_warp_emu_selftest.py', 'diff/simd.py', 'diff/ato
 
 NEEDS = re.compile(r'^# needs:(.*)$', re.M)
 ARGS = re.compile(r'^# args:(.*)$', re.M)
-KNOWN_LINE = re.compile(r'^(\S+?)(?:\s+\[([a-z, ]+)\])?:\s*(\S.*)$')
+KNOWN_LINE = re.compile(r'^(\S+?)(?:\s+\[([^\]]+)\])?:\s*(\S.*)$')
+FAILED_CASE = re.compile(r'^(?:FAIL|ERROR): (\w+) \(', re.M)   # unittest's line for each case that failed
 SYSTEMS = ('linux', 'windows')
 TAIL_LINES = 30
 
@@ -198,7 +203,8 @@ def missing(reqs, args):
 
 
 def read_known(path):
-    """{name: (reason, systems or None)} from the known-failures file; # comments and blank lines are left out."""
+    """{name: (reason, systems or None, flaky)} from the known-failures file, flaky None for a known failure, () for a
+    flaky test and the case names for flaky cases; # comments and blank lines are left out."""
     known = {}
     if not path.is_file():
         return known
@@ -207,11 +213,25 @@ def read_known(path):
         if not line or line.startswith('#'):
             continue
         m = KNOWN_LINE.match(line)
-        systems = [s.strip() for s in m.group(2).split(',')] if m and m.group(2) else None
-        if not m or (systems and not set(systems) <= set(SYSTEMS)):
-            raise SystemExit(f'{path.name}:{n}: expected "name: reason" or "name [{", ".join(SYSTEMS)}]: reason"')
-        known[m.group(1)] = (m.group(3), systems)
+        tags = [t.strip() for t in m.group(2).split(',')] if m and m.group(2) else []
+        systems = [t for t in tags if t in SYSTEMS] or None
+        flaky = [t for t in tags if t == 'flaky' or t.startswith('flaky:')]
+        cases = tuple(t[len('flaky:'):] for t in flaky if t != 'flaky')
+        bad = not m or len(tags) != len(systems or ()) + len(flaky) or not all(cases) or ('flaky' in flaky and cases)
+        if bad:
+            raise SystemExit(f'{path.name}:{n}: expected "name: reason" or "name [tags]: reason", the tags among '
+                             f'{", ".join(SYSTEMS)}, flaky and flaky:<case>')
+        known[m.group(1)] = (m.group(3), systems, cases if flaky else None)
     return known
+
+
+def flaky_failure(log, cases):
+    """Whether a failed run of a flaky test is the flakiness listed: any failure when no case is named, else one in
+    which every case that failed is named."""
+    if not cases:
+        return True
+    failed = set(FAILED_CASE.findall(log.read_text(encoding='utf-8', errors='replace')))
+    return bool(failed) and failed <= set(cases)
 
 
 class Runner:
@@ -305,7 +325,9 @@ def main():
             print(f'{args.known.name}: {k} is not a test', file=sys.stderr)
             return 2
     system = this_system()
-    known = {k: reason for k, (reason, systems) in known.items() if systems is None or system in systems}
+    here = {k: v for k, v in known.items() if v[1] is None or system in v[1]}
+    known = {k: reason for k, (reason, _, kind) in here.items() if kind is None}
+    flaky = {k: (reason, cases) for k, (reason, _, cases) in here.items() if cases is not None}
 
     plan = [(n, p, *markers(p)) for n, p in tests if not args.filters or any(f in n for f in args.filters)]
     if args.needs:
@@ -321,6 +343,7 @@ def main():
             note += f'  [args: {" ".join(template)}]' if template else ''
             note += f'  skipped: {"; ".join(miss)}' if miss else ''
             note += f'  (known failure: {known[n]})' if n in known else ''
+            note += f'  (flaky: {flaky[n][0]})' if n in flaky else ''
             print(f'{n}{note}')
         return 0
 
@@ -346,6 +369,9 @@ def main():
             n = futures[f]
             state, secs, log = f.result()
             status = ('fixed' if state == 'pass' else 'known') if n in known else state
+            if n in flaky and (state == 'fail' and flaky_failure(log, flaky[n][1]) or
+                               state == 'timeout' and not flaky[n][1]):
+                status = 'flaky'
             results[n] = (status, secs, log)
             print(f'{status.upper():8} {n:{width}} {secs:7.1f}s', flush=True)
     except KeyboardInterrupt:
@@ -377,6 +403,11 @@ def main():
         print(f'  known failures ({len(by["known"])}, {args.known.name}):')
         for n in by['known']:
             print(f'    {n}: {known[n]}')
+    if by.get('flaky'):
+        print(f'  flaky, failed this time ({len(by["flaky"])}, {args.known.name}):')
+        for n in by['flaky']:
+            print(f'    {n}: {flaky[n][0]} ({results[n][2].relative_to(ROOT).as_posix()})')
+            annotate('warning', f'tests/{n}.py failed as flaky: {flaky[n][0]}')
     if by.get('fixed'):
         print(f'  known failures that passed ({len(by["fixed"])}): take their lines out of {args.known.name}')
         for n in by['fixed']:
@@ -389,7 +420,7 @@ def main():
                 annotate('error', f'tests/{n}.py {label}')
     counts = ', '.join(f'{len(by.get(k, []))} {label}' for k, label in
                        (('pass', 'passed'), ('fail', 'failed'), ('timeout', 'timed out'), ('skip', 'skipped'),
-                        ('known', 'known failures'), ('fixed', 'known failures passed')))
+                        ('known', 'known failures'), ('fixed', 'known failures passed'), ('flaky', 'flaky')))
     print(f'  {counts}; {wall:.0f}s')
     bad = by.get('fail') or by.get('timeout') or (args.strict and by.get('fixed'))
     return 1 if bad else 0
