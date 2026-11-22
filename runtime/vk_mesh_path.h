@@ -73,3 +73,9 @@ static inline int mesh_path_decide(int has_mesh, int amd_sc, unsigned vendor, co
     if (why) *why = w;
     return path;
 }
+
+// 1 when path is the fallback as this device's default: mesh_fallback = auto chose it (AMD's Windows driver for RDNA 1
+// and 2, Intel, a device without mesh shaders), not mesh_fallback = 1. NX2SARIA_MESH_FALLBACK_BATCH = auto batches there.
+static inline int mesh_path_fallback_default(int path, const char *fallback) {
+    return path == MESH_PATH_FALLBACK && strcmp(fallback, "1") && strcmp(fallback, "0");
+}

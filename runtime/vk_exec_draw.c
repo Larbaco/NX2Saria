@@ -6176,16 +6176,14 @@ static int mfb_stages(VkExec *ex, MfbCs *c, const VkMemSpan *ind, uint32_t count
     return 1;
 }
 
-// NX2SARIA_MESH_FALLBACK_BATCH (default 0, experimental): the stages of a pass's fallback draws run in the part's pre-pass command
+// NX2SARIA_MESH_FALLBACK_BATCH (auto|0|1, mfb_batch_on): the stages of a pass's fallback draws run in the part's pre-pass command
 // buffer (vk_sync_pre), as the mesh emulation's do (NX2SARIA_MESH_EMU_BATCH), and the pass is not broken for them. One
 // by one, each draw ended the pass, ran its stages with a full barrier between every two and began the pass again:
 // about 33 us of the submitting thread a draw (docs/replay-cpu.md), 1.7 ms a frame in Kokiri Forest and 3.2 ms in Hyrule
 // Field. Which draws are batched and the size of their parts of the buffers: mfb_batch.h. 0: every draw one by one.
-// Off by default: on the Linux bench (RX 6700, RADV, limited by the CPU) it cost frame rate, about 2 fps in Kokiri
-// Forest and Hyrule Field. Each pass with batched draws cuts the part (a new command buffer and pre-pass command buffer,
-// the state bound again), a batched draw keeps its barriers and bindings in the pre-pass command buffer, and in Kokiri
-// Forest a draw one by one closes the batch for about half the draws (2026-11-22). Whether the GPU's side gains on a
-// card the GPU limits (AMD's Windows driver) is for that card to show.
+// Each pass with batched draws cuts the part (a new command buffer and pre-pass command buffer, the state bound again),
+// and a batched draw keeps its barriers and bindings in the pre-pass command buffer: on a CPU-bound PC that costs about
+// what the pass breaks saved (mfb_batch_on has the bench's numbers); the gain is the GPU's, without the pass breaks.
 static struct {
     MfbCount n;                  // the draws, batched or one by one and why, and the cuts (mfb_batch.h mfb_count)
     uint64_t last_ns, lines;
@@ -6202,12 +6200,22 @@ void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts) {   // mesh_fb_prob
 }
 // The switch, read once: at the device's start with the mesh fallback (vk_device.c, vk_exec_mfb_batch_start), so the
 // log says its value even in a session that draws nothing through the fallback.
+// auto (the default): on where the fallback is the device's default (vk_mesh_path.h mesh_path_fallback_default: AMD's
+// Windows driver for RDNA 1 and 2, Intel, a device without mesh shaders), where the GPU sets the frame rate and the
+// batch takes the pass breaks and barriers off it; off where mesh_fallback = 1 forces the fallback on a device that draws
+// mesh programs natively. On the Linux bench (RX 6700, RADV, the CPU sets the frame rate, the fallback forced) the batch
+// came out even within the noise: Hyrule Field 41.9 -> 41.2 fps, Kokiri Forest 45.8 -> 47.3 (medians of six pairs,
+// 2026-11-22), the GPU's time per frame 0.1 to 0.6 ms less.
 static int mfb_batch_on(void) {
     static int on = -1;
     if (on < 0) {
-        on = rt_knob("MESH_FALLBACK_BATCH", "0");
-        rt_log("vk: mesh fallback: the stages of a pass's draws %s (NX2SARIA_MESH_FALLBACK_BATCH=%d)",
-               on ? "run before the pass, in a command buffer of their own (experimental)" : "break the pass, draw by draw", on);
+        const char *v = cfg_value("NX2SARIA_MESH_FALLBACK_BATCH");
+        int dflt = vk_ctx() && vk_ctx()->mesh_fallback_default, autov = !v || !*v || !strcmp(v, "auto");
+        on = autov ? dflt : strcmp(v, "0") != 0;
+        rt_log("vk: mesh fallback: the stages of a pass's draws %s (NX2SARIA_MESH_FALLBACK_BATCH=%s%s)",
+               on ? "run before the pass, in a command buffer of their own" : "break the pass, draw by draw",
+               autov ? "auto" : v, autov ? (dflt ? ": the fallback is this device's default" : ": the fallback is not this "
+                                                   "device's default") : "");
     }
     return on;
 }
@@ -6229,12 +6237,13 @@ static void mfb_batch_line(void) {
     for (int i = 0; i < MFB_REASONS; i++) all += w[i];
     all += MFBB.n.failed;
     rt_log("vk: mesh fallback batch: %llu draws, %llu batched (%.0f%%); cuts: %llu at a pass, %llu for room, %llu for "
-           "nothing; one by one: %llu off, %llu stage writes, %llu stage textures, %llu excluded, %llu no settled history, "
+           "nothing; one by one: %llu off, %llu loading, %llu stage writes, %llu stage textures, %llu excluded, "
+           "%llu no settled history, "
            "%llu no room, %llu no pre-pass; %llu batched whose stages failed; %llu batched draws short of their part (%llu programs taken back since); the parts took at most %.1f of the mesh "
            "buffer's %.0f MB (session totals)",
            (unsigned long long)all, (unsigned long long)w[MFB_BATCHED], all ? 100.0 * (double)w[MFB_BATCHED] / (double)all : 0.0,
            (unsigned long long)MFBB.n.cuts_pass, (unsigned long long)MFBB.n.cuts_room, (unsigned long long)MFBB.n.cuts_lost,
-           (unsigned long long)w[MFB_ONE_OFF], (unsigned long long)w[MFB_ONE_WRITES], (unsigned long long)w[MFB_ONE_TEXTURES],
+           (unsigned long long)w[MFB_ONE_OFF], (unsigned long long)w[MFB_ONE_LOADING], (unsigned long long)w[MFB_ONE_WRITES], (unsigned long long)w[MFB_ONE_TEXTURES],
            (unsigned long long)w[MFB_ONE_EXCLUDED], (unsigned long long)w[MFB_ONE_HISTORY],
            (unsigned long long)w[MFB_ONE_ROOM], (unsigned long long)w[MFB_ONE_PRE], (unsigned long long)MFBB.n.failed,
            (unsigned long long)vk_meshfb_batch_short(), (unsigned long long)vk_meshfb_batch_readmits(),
@@ -6312,6 +6321,7 @@ static void mfb_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, uint64_t 
     // mesh emulation does, mesh_emu_draw): what the part held before, the game's culling and the draws done one by one
     // among them, runs before the pre-pass command buffer, which begins with a full barrier; again when that pass ended
     // since (mfb_need_cut), after a draw one by one wrote over the parts, and when the part does not fit what is left.
+    if (why == MFB_BATCHED && vk_exec_pool_loading()) why = MFB_ONE_LOADING;
     MfbDrawSteps ds = {.ex = ex};
     mfb_part_bytes(b_slots, b_tasks, ts != NULL, c->ti.payload_bytes / 4, slot_words, &ds.tb, &ds.lb, &ds.mb);
     const MfbSteps steps = {mfb_step_cut, mfb_step_pre, mfb_step_take, &ds};

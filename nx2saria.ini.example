@@ -1462,11 +1462,12 @@
 # depth draw is left out too, so the ground shows as it does without the grass. 0: the depth draw is made alone, as
 # before, and the sky's colour can show through the ground in the shape of the grass until the patch is ready.
 # mesh_fallback_hold = 1
-# 1 (experimental): with the mesh fallback, the compute passes of the mesh draws of one render pass run before it, and
-# the render pass is not broken for each draw; a draw whose shaders write memory, or whose size is not known yet,
-# still breaks it. It may help where the graphics card sets the frame rate; where the processor does, it costs some.
-# 0 (default): every mesh draw ends the render pass, runs its compute passes and begins it again.
-# mesh_fallback_batch = 0
+# With the mesh fallback, the compute passes of the mesh draws of one render pass run before it, and the render pass is
+# not broken for each draw; a draw whose shaders write memory or read textures, or whose size is not settled yet, still
+# breaks it. auto (default): on where the fallback is the device's default (AMD's Windows driver for RDNA 1 and 2,
+# Intel, a device without mesh shaders), off where mesh_fallback = 1 forces it. 1: on. 0: every mesh draw ends the
+# render pass, runs its compute passes and begins it again.
+# mesh_fallback_batch = auto
 # Windows, 1 (experimental): the game's heap is committed a 64 KiB run at a time where it is first used, instead of
 # all of it when the game sizes it. Windows counts committed memory against RAM plus the page file whether it is used
 # or not, and in Castle Town after Hyrule Field about 3.4 of the heap's 6.8 GiB had never been used. 0: committed up

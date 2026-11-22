@@ -829,6 +829,7 @@ static int create_device(void) {
         const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
         int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID, mf, me, &why);
         g_vk.mesh_fallback = path == MESH_PATH_FALLBACK;
+        g_vk.mesh_fallback_default = mesh_path_fallback_default(path, mf);
         g_vk.mesh_emulation = path == MESH_PATH_EMULATION;
         g_mesh_path = path == MESH_PATH_EMULATION ? "emulated (mesh_emulation)"
                     : path == MESH_PATH_FALLBACK ? (g_vk.has_mesh_shader ? "through the mesh fallback on a device with mesh "

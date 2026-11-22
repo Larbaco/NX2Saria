@@ -454,7 +454,7 @@ static const CfgMeta metas[] = {
     // vk_exec_draw.c mfb_hold_role: a list's depth-only draw waits for its colour draw's pipeline
     {"MESH_FALLBACK_HOLD", "1", "0|1", RESTART},
     // vk_exec_draw.c mfb_batch_on: a pass's fallback draws run their stages before the pass (mfb_batch.h)
-    {"MESH_FALLBACK_BATCH", "0", "0|1", RESTART},
+    {"MESH_FALLBACK_BATCH", "auto", "auto|0|1", RESTART},
     {"PIPE_AHEAD", "1", "0|1", RESTART},        // vk_exec.c vk_exec_ahead, vk_pipeline.c vk_pipeline_hint
     {"LINE_WIDTH", "1", "0|1", RESTART},        // vk_pipeline.c key_lines
     {"POOL_SHOWN_FIRST", "1", "0|1", RESTART},  // vk_texture.c shown_take

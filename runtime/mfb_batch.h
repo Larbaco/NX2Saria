@@ -56,6 +56,8 @@ enum {
     MFB_ONE_PRE,         // no pre-pass command buffer, or the part could not be cut
     MFB_ONE_TEXTURES,    // a task or mesh stage reads a texture or image (vk_exec_draw.c mfb_draw: its bind may record
                          // an image's first fill or an alias copy, vk_exec_inline_begin, which needs the part's pass)
+    MFB_ONE_LOADING,     // an area's textures are loading (vk_exec_pool_loading): its frames are not shown, and the
+                         // programs' histories have not settled yet (every short part seen on the bench was there)
     MFB_REASONS
 };
 
