@@ -14,14 +14,15 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
-from launcher.platform import linux
-from launcher import winsys
-from launcher import build
-from launcher import feed
-from launcher import jobs
-from launcher import updater
-from launcher.paths import Layout
-from launcher.context import Context
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # launcher/, when run as python tests/platform_linux_test.py
+from launcher.platform import linux  # noqa: E402
+from launcher import winsys  # noqa: E402
+from launcher import build  # noqa: E402
+from launcher import feed  # noqa: E402
+from launcher import jobs  # noqa: E402
+from launcher import updater  # noqa: E402
+from launcher.paths import Layout  # noqa: E402
+from launcher.context import Context  # noqa: E402
 
 
 class LinuxPlatformTest(unittest.TestCase):
