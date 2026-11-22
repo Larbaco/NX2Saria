@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/nvidia_cache_check.c: runtime/nvidia_cache.h, what the game puts into the environment for NVIDIA's
 shader disk cache (a folder beside the exe, a limit of 8 GiB and, on Windows, the cleanup off; the player's own values
 stand), how it counts the folder and the lines the logs say about both.

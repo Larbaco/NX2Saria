@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/thread_end_check.c: what a thread keeps for itself is given back when it ends
 (runtime/platform/win32.c thread_main, platform.h plat_thread_end_hook). 416 threads sleep, read a file and end, half
 joined and half detached; the end hook must run once on each, and on Windows the process's handle count must be what

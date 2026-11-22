@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/frame_step_check.c: the step runtime/frame_rate.c gives Ocarina, with the rest of the runtime
 stubbed. No game files: the module layout the runtime includes is a stand-in written to the test's build folder.
 

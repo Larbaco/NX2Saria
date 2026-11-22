@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/prompts_record_check.c with runtime/input_map.c: the game folder's record of where its button
 prompts came from (button-prompts.txt), which the game's log repeats. No game files.
 

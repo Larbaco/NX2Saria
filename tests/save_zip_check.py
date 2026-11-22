@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/save_zip_check.c: runtime/save_zip.c, the zip of a shared save as the game's menu writes and
 reads it (runtime/save_share.c), against Python's zlib and zipfile, which the launcher uses for the same zip
 (launcher/saves.py).

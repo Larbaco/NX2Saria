@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/fg_stats_check.c: runtime/vk_fg_stats.h, how frame generation's log line sorts the game's frames
 and when it writes one.
 

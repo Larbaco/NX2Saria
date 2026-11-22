@@ -1,3 +1,4 @@
+# needs: clang
 """The settings menu's draft names each setting NX2SARIA_ and its key (runtime/ui/option_rows.cpp norm_key), and every
 comparison of a name with the NX2SARIA_ or NX2NAVI_ prefix uses the prefix's own length.
 

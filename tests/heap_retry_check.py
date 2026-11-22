@@ -1,3 +1,4 @@
+# needs: clang
 """Check the model heaps' retry: the patch set heap_retry (recomp/patches-v111.txt) and runtime/heap_retry.c.
 
 The set's four sites, lifted by recomp/lifter.py as the generator lifts them: main+0x436910 and main+0x436db4 keep

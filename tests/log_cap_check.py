@@ -1,3 +1,4 @@
+# needs: clang
 """The log file's cap and the end of the run (runtime/main.c log_sink): past the cap ordinary lines are dropped, with
 one line that says so; once the process is ending (rt_log_ending, which a fatal error and the crash report call before
 rt_log_sync) its lines are still written, after one line that says the end follows, up to a reserve of their own,

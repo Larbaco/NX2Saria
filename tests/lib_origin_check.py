@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/lib_origin_check.c: runtime/lib_origin.c, the game log's "libs:" line (which SDL the game loaded,
 from beside the game or from the system, and the SHA-256 form). Built as this platform builds it and, off Windows,
 also with -D_WIN32 for the Windows paths. No game files.

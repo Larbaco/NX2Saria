@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/frame_owed_check.c: runtime/vk_frame_owed.h, a frame's bookkeeping at its present in replay order
 (vk_backend.c "a frame's bookkeeping in replay order", vk_sync.c submit). One presenting thread, three replaying
 threads that hold the lock for their replays, a few of them for 40 ms, and a present thread that takes each frame

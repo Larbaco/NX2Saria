@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/fg_reset_check.c: runtime/vk_fg_reset.h, which frames FSR 3.1 frame generation's callback is
 told are camera cuts.
 

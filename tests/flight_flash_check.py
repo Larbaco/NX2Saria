@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/flight_flash_check.c: runtime/flight_flash.h, which frames the flight recorder takes for a
 one-frame flash (a flash, a camera cut, steady motion, frames whose neighbours have no thumbnail).
 

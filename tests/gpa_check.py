@@ -1,3 +1,4 @@
+# needs: clang, vma
 """Build and run tests/gpa_check.c: runtime/vk_gpa.c's device address table, with blocks given back and taken again.
 
 Needs the Vulkan headers and vk_mem_alloc.h (docs/building.md), no GPU and no game files.

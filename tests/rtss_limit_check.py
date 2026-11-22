@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run the checks of runtime/rtss_limit.c, RivaTuner Statistics Server as the frame limiter.
 
 tests/rtss_limit_check.c builds runtime/rtss_decide.h alone, the parts that make no system call. tests/rtss_worker_check.c

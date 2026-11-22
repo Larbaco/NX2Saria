@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/wide_hud_title_check.c: runtime/wide_hud.c's second archive, the title screen's layouts
 (UI/Layout2Archive/Title.Product.*) with TitleMenuBG_00's backdrop over the whole picture (NX2SARIA_WIDE_MENUS = full),
 on layout files and archives the test makes itself. No game files.

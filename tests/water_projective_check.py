@@ -1,3 +1,4 @@
+# needs: clang
 """The water corrections the runtime makes in memory (runtime/spirv_water.c) against the same steps of
 tools/projective_recipe.py, on two made-up modules: a vertex stage that writes a position and a location 0 output, and
 a fragment stage that reads a location 0 input without perspective. Each side's result must be the same words, and

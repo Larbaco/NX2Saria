@@ -1,3 +1,4 @@
+# needs: clang
 """Dynamic resolution's target and step hold (runtime/dynres.c): builds dynres.c, cut by its text, with stand-ins for
 the settings, the GPU's busy time, the clock and the game's rate under the limit (frame_rate.c frame_step_game_hz),
 and checks that

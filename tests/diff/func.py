@@ -1,3 +1,4 @@
+# needs: game, clang, py:capstone, py:unicorn, py:numpy, py:lz4
 """Differential test of whole emitted functions: recomp/gen.py's C for a guest function against Unicorn running the
 same function from its entry until it returns.
 

@@ -1,3 +1,4 @@
+# needs: windows
 """Build and run tests/lazy_fetch_check.c: runtime/memory.c's lazy write-back (memory.c "Lazy write-back", "Ranges in
 flight") with the Windows platform layer and its real fault handler, the rest of the runtime stubbed and the back end's
 fetch a stand-in that only waits. It checks that a fetch holds up nothing but the touches of its range, that those

@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/hang_watch_check.c: runtime/hang_watch.c's decisions on made-up readings. No report while the
 frames and the GPU move, while the window is not in front or minimized, or while the process ends; one report for a
 stall of the frames with the window in front, another after progress and a new stall, one for GPU submissions not

@@ -1,3 +1,4 @@
+# needs: windows, clang
 """Exercise production compute creation with a fake driver: reuse must never suppress a required live pipeline."""
 from pathlib import Path
 import subprocess

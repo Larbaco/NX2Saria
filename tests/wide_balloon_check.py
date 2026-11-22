@@ -1,3 +1,4 @@
+# needs: clang
 """Check the 1.1.1 speech balloon patch and its horizontal anchor on synthetic inputs."""
 import os
 import shutil

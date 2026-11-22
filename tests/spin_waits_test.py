@@ -1,4 +1,5 @@
 # Copyright (c) 2026 seedds (MIT; see THIRD_PARTY_NOTICES.md).
+# needs: py:capstone, py:lz4
 """tools/spin_waits.py on hand-assembled AArch64 loops, without game files.
 
 Run: .venv/Scripts/python tests/spin_waits_test.py

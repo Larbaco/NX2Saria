@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/gfx_guard_check.c: runtime/gfx_guard.h, the checks of the presentation path that must not trust
 what they are given: the game's crop cut to the image without int overflow (runtime/gfx_present.c present_image),
 the swapchain image list taken whole or not at all (create_swapchain), and how often a repeating failure is logged.

@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/preset_check.c: the quality presets (runtime/preset_pick.h, runtime/cfg.c "quality presets").
 
 - the tier made-up hardware gets (the bench PC's RX 6700 with 10 GB, 16 threads and 32 GB is high), the handheld

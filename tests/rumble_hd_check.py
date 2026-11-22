@@ -1,3 +1,4 @@
+# needs: clang
 """HD rumble for controllers with linear actuators (runtime/rumble_hd.c): builds it with tests/rumble_hd_check.c and
 checks
 

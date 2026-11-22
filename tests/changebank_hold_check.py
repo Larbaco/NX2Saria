@@ -1,3 +1,4 @@
+# needs: clang, py:numpy, py:lz4
 """Check the neighbouring map's hold: the patch set changebank_hold (recomp/patches-v111.txt) and
 runtime/changebank_hold.c.
 

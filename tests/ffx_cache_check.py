@@ -1,3 +1,5 @@
+# needs: exe, gpu
+# args: {exe}
 """Run the game executable's --probe-ffx-cache twice on pipeline cache files of the test's own
 (runtime/vk_ffx.cpp vk_ffx_probe_cache: one FSR 3.1 upscaling context, without a window or the game).
 

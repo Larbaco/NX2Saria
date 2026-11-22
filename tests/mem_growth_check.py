@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/mem_growth_check.c: runtime/mem_growth.h, the memory report's growth bookkeeping (which of the
 report's figures grew since the previous report and since play began, and which only ever climbed). The check also
 feeds it a session shaped by the 15-minute log of 2026-11-13.

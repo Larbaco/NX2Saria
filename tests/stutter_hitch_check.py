@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/stutter_hitch_check.c: runtime/stutter_map.c's hitch rule on made-up frame times. A steady
 change of pace is no hitch, isolated long frames are, and frames right after an area load count as the load's.
 

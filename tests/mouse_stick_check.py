@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/mouse_stick_check.c with runtime/input_map.c: the mouse camera's stick deflection at each camera
 speed. No game files.
 

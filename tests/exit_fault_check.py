@@ -1,3 +1,5 @@
+# needs: exe
+# args: {exe}
 """Run the game executable's crash probes and check what a fault does to the way the process ends (runtime/main.c
 crash_handler, mode_done).
 

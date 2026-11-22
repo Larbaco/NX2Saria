@@ -1,3 +1,4 @@
+# needs: clang
 """The vsync event list reuses the slots of destroyed events (runtime/gfx_present.c gfx_vsync_bind): builds
 gfx_vsync_bind, cut from gfx_present.c by its text, with stand-ins for the lock, the log, the vsync thread start and
 kern_system_event_live, and checks that

@@ -1,3 +1,4 @@
+# needs: clang, py:capstone, py:unicorn
 """Build and run tests/flags_check.c: runtime/cpu.h's function-local flag helpers against its packed flag helpers.
 
 Usage: flags_check.py

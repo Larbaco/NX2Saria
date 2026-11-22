@@ -1,3 +1,4 @@
+# needs: clang, linux:pkg:sdl3
 """Build and run tests/audio_params_check.c: runtime/audren.c and runtime/audio_mixer.c with the rest of the runtime
 stubbed and the real effect DSPs (runtime/audio_effects.c, runtime/audio_reverb.c) linked. It sends RequestUpdates the
 renderer cannot use: refused ones must answer 0x5299 and change nothing, records, effects and sinks are left out of

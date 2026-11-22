@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/mem_heap_check.c: runtime/vk_mem_heap.h, when the memory report asks for the C runtime heap's
 summary (vk_memory.c system_log): never in play, where it held every allocation of the game for 54 to 70 ms at the
 first report of a session, unless mem_census asks for it.

@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/scratch_lru_check.c: runtime/vk_scratch_lru.h, which entry of the upscaler stand-in's scratch
 image cache serves a new size (vk_exec_draw.c fallback_scratch): a free one, else the one used longest ago.
 

@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/log_privacy_check.c and tests/log_privacy_env_check.c: the personal folders the game writes short
 in its log, the bug capture and the crash report (runtime/log_privacy.c, runtime/log_privacy_core.h).
 

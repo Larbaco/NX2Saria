@@ -1,3 +1,4 @@
+# needs: clang, linux:pkg:sdl3
 """Build and run tests/audio_mixer_check.c: runtime/audio_mixer.c with the rest of the runtime stubbed. No game files
 and no audio device (the mixer runs as with NX2NAVI_AUDIO=none); SDL3 is only linked.
 

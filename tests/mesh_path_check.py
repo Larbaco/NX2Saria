@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/mesh_path_check.c: runtime/vk_mesh_path.h, how the game's task and mesh programs are drawn
 (vk_device.c create_device): natively, through the mesh fallback, the mesh emulation or not at all, for each device kind
 and setting.

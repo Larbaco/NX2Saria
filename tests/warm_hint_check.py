@@ -1,3 +1,4 @@
+# needs: clang, py:capstone, py:unicorn
 """Build and run tests/warm_hint_check.c: runtime/vk_warm_hint.h, what the library warm's log adds when the driver's
 cache of stage libraries is cold, by GPU vendor and by why it is cold.
 

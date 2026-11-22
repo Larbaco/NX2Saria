@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/build_gate_check.c: runtime/vk_build_gate.h, the memory gate of the background pipeline builds:
 what it admits and refuses by the system's commit, and that the builds under way count through their reservations.
 

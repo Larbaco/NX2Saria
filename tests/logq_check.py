@@ -1,3 +1,4 @@
+# needs: clang, linux:sdl3
 """Build and run tests/logq_check.c: the queue that hands log lines to the log thread (runtime/logq.c), with the
 platform layer linked and a destination of the test's own. No game files: the module layout the runtime includes is a
 stand-in written to the test's build folder.

@@ -1,3 +1,4 @@
+# needs: clang
 """Build tests/tracker_api_check.c (runtime/tracker_api.c over the real platform layer, with a guest memory of its own
 at the game's addresses) and talk to it as a map tracker does: newline-delimited JSON requests, one at a time, each
 answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are

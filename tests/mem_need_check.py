@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/mem_need_check.c: runtime/mem_need.h, whether the machine has the commit the game needs.
 
 With the game executable's path it also runs the executable's --probe-memneed (runtime/memory.c mem_start_note: it

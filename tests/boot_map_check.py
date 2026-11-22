@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/boot_map_check.c: runtime/boot_map_core.h, the bytes a boot map changes in what the game reads
 (the title's and the slot's sequence graphs, the save), on made-up files, and the values of its settings.
 

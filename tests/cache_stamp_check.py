@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/cache_stamp_check.c: runtime/vk_cache_stamp.h, the translator stamp of the pipeline cache
 files (runtime/vk_pipeline.c cache_stamp_check): how pipeline-cache.id is read and written, and what a start does with
 the files when the stamp names the current translator, another one whose shaders are still carried, another one that

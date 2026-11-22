@@ -1,3 +1,4 @@
+# needs: py:fontTools, py:compression.zstd
 """tools/make_romfs_patches.py --prompts and tools/button_icons.py on a RomFS made here, with no game files: each prompt
 names the label of the Xbox button that the pad layout presses, the shoulder buttons, triggers, Plus, Minus and the
 d-pad are drawn as on an Xbox controller, the PC prompts draw every button as its key or mouse button (the defaults or

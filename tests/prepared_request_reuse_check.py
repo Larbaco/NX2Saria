@@ -1,3 +1,5 @@
+# needs: exe, xlate
+# args: {exe} {xlate}
 """Compare preparation request sharing with independent jobs using six synthetic shaders.
 
 Pass the candidate executable, the translator, and --reference-exe for a paired build.

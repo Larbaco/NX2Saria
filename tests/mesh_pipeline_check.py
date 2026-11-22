@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run the mesh pipeline key reporting guard without a GPU or game data."""
 import argparse
 import os

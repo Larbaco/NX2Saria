@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/wb_lazy_check.c: runtime/wb_lazy_choice.h, whether the lazy write-back runs, by the player's
 setting, the platform and the GPU driver.
 

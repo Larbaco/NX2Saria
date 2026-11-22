@@ -1,3 +1,4 @@
+# needs: clang, file:runtime/wb_merge_spv.h
 """No 64-to-32-bit narrowing in the files that hold page write generations: runtime/vk_memory.c, runtime/vk_texture.c
 and runtime/tex_probe.c, compiled with the build's flags plus -Wshorten-64-to-32, -Wformat and
 -Wincompatible-pointer-types as errors (clang -fsyntax-only). The generations are 64 bits (vk_memory.c "page write

@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run tests/prp_file_check.c: runtime/prp_file.h, the layout of shader-prepared.bin with what the list was
 prepared from. The list the C side writes is then read by tools/make_game.py prepared_from, so the game's writer and
 the build's reader cannot drift apart. No game files, no GPU.

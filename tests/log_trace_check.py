@@ -1,3 +1,4 @@
+# needs: clang
 """The log lines of the pipeline cache stamp, the play gate of the background builds and the presentation and sampler
 failures, as the runtime's own code writes them: each function is cut from its source file by its text, built with
 stand-ins for what it calls (real files in a scratch folder for the stamp, a clock the harness moves for the play

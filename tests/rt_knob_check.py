@@ -1,3 +1,4 @@
+# needs: clang
 """Build and run runtime/perf.c's rt_knob (cut out of the file with its warning table) with stand-ins for the settings and
 the log: 0, 1 and ab read as before and log nothing; false, off and no in any case read as 0 and true, on and yes as 1,
 without a line; any other value, such as "0 ; a note" from the environment (nx2navi.ini's loader cuts that comment) or

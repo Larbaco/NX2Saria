@@ -1,3 +1,4 @@
+# needs: py:numpy
 """Self-test of tests/maxwell_warp_emu.py: hand-encoded Maxwell sequences against hand-computed results.
 
 Part 1 runs Maxwell words encoded here from the field layouts of the translator's Decoders/InstDecoders.cs (integer and logic

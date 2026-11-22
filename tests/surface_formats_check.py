@@ -1,3 +1,4 @@
+# needs: clang
 """Check the runtime's surface-format enumeration with mocked Vulkan queries, without game files or a GPU.
 
 Usage: python tests/surface_formats_check.py [--sanitize]
