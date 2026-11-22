@@ -45,10 +45,11 @@ jobs:
           done
       - name: Tools
         # glslc, glslangValidator and spirv-tools for the shader checks and tools/build_shaders.py, lld for the
-        # launcher's build tests, xvfb-run for the window tests
+        # launcher's build tests with the headers its Linux build checks for (opus, vpx, dav1d, zstd), xvfb-run for the
+        # window tests
         run: |
-          sudo apt-get update && sudo apt-get install -y glslc glslang-tools spirv-tools lld xvfb ||
-            echo "::warning::apt failed: the tests that need its tools are skipped"
+          sudo apt-get update && sudo apt-get install -y glslc glslang-tools spirv-tools lld xvfb \
+            libopus-dev libvpx-dev libdav1d-dev libzstd-dev || echo "::warning::apt failed: the tests that need its tools are skipped"
           clang --version | head -1
       - name: Headers
         # vk_mem_alloc.h, Vulkan headers new enough for the runtime (Ubuntu 24.04's are 1.3) and the shader headers
