@@ -1,4 +1,4 @@
-# needs: display, py:cryptography, py:compression.zstd
+# needs: display, py:cryptography, py:compression.zstd, py:tkinter
 """The installer window: event model, form, catalogs, cancel, a self-closing Tk run and one end-to-end run.
 
     .venv-py314\\Scripts\\python tests\\installer_gui_test.py

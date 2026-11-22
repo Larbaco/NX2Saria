@@ -1,3 +1,4 @@
+# needs: py:tkinter
 """Fast checks for Linux platform services; no display, game data or build tools required."""
 import ctypes
 import hashlib

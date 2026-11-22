@@ -1,4 +1,4 @@
-# needs: display, clang, py:numpy, py:lz4, py:zstandard, py:PIL, py:fontTools, py:zbic
+# needs: display, clang, py:numpy, py:lz4, py:zstandard, py:PIL, py:fontTools, py:zbic, linux:clang++, linux:ld.lld, py:tkinter
 """launcher/ and tools/make_game.py's bookkeeping, without game files or Windows.
 
 Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window test needs tkinter, numpy and a display)

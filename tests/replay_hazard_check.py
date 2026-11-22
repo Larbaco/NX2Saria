@@ -1,4 +1,4 @@
-# needs: clang, vma
+# needs: clang, vma, file:runtime/wb_merge_spv.h
 """Build and run the replay hazard probes on the real runtime sources, on Linux, without game files or a GPU.
 
 - tests/usnap_order_check.c (vk_usnap.c): the order of uniform snapshot drops between replay chunks. Barriers force a
