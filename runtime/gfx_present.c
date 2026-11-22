@@ -32,6 +32,7 @@
 #include "platform/platform.h"
 #include "ui/menu.h"
 #include "vk.h"
+#include "vk_mesh_fb.h"
 #include "vk_fg.h"
 #include "vk_fsr3fg.h"
 #include "vk_dlaa.h"
@@ -162,6 +163,7 @@ void rt_exit_steps(unsigned what) {
     heap_retry_exit_log();   // the model heaps' retries of the session
     changebank_hold_exit_log();   // the neighbouring map preloads held
     camera_clearance_exit_log();   // what the camera's clearance loaded
+    vk_exec_mfb_batch_exit_log();   // the mesh fallback batch's totals (vk_exec_draw.c), with it on
     logq_flush();   // the lines so far on the disk before the slow part; the queue stays on
     vk_pipeline_save_exit();
     fs_save_flush();   // last: a Commit started since fs_save_wait finishes, and one after this is refused

@@ -132,6 +132,10 @@ int main(void) {
     CHECK(!mfb_hist_note(&h, 50, 2, 1000, 100, 0) && h.slots == 50 && h.tasks == 2 && h.seen == 1, "the first record");
     CHECK(!mfb_hist_note(&h, 30, 7, 1000, 100, 1) && h.slots == 50 && h.tasks == 7 && h.seen == 2, "the most so far");
     CHECK(!mfb_hist_note(&h, 2000, 0, 1000, 100, 0) && !h.excluded, "a draw one by one short of the buffers excludes");
+    CHECK(h.slots == 1000, "a garbage count one by one raised the history past what the buffers held: %u (1000)", h.slots);
+    MfbHist hg = {0};
+    mfb_hist_note(&hg, 5, 0xfffffff0u, 100, 64, 0);
+    CHECK(hg.tasks == 64, "a garbage task count one by one raised the task history to %u (64)", hg.tasks);
     CHECK(mfb_hist_note(&h, 120, 0, 100, 100, 1) && h.excluded, "a batched draw short of its part does not exclude");
     CHECK(mfb_batch_need(1, 0, 1, 8, 0, &h, FS, FT, &slots, &tasks) == MFB_ONE_EXCLUDED, "excluded, then batched again");
     MfbHist ht = {0};
@@ -187,7 +191,8 @@ int main(void) {
     // a batched draw whose stages failed to record: not batched, and its cut was for nothing
     MfbCount c0 = {0};
     mfb_count(&c0, MFB_BATCHED, MFB_CUT_PASS, 0);
-    CHECK(!c0.why[MFB_BATCHED] && c0.cuts_lost == 1 && !c0.cuts_pass, "a failed batched draw counted as batched");
+    CHECK(!c0.why[MFB_BATCHED] && c0.cuts_lost == 1 && !c0.cuts_pass && c0.failed == 1,
+          "a failed batched draw counted as batched, or not as failed");
     // the task overflow (meshfb_clamp.comp keeps the count asked for): a batched draw short of its task part excludes
     MfbHist tk = {.slots = 10, .tasks = 4, .seen = 9};
     CHECK(mfb_hist_note(&tk, 10, 5000, 100, 32, 1) && tk.excluded && tk.tasks == 5000,

@@ -142,10 +142,15 @@ static inline int mfb_part_take(MfbSpan *used, const MfbSpan *cap, uint64_t alig
 
 // What a record read back says (record_check): the program's history grows, and a batched draw that asked for more
 // than its part held excludes the program from batches. Returns 1 when that draw was short.
+// A draw one by one that asked for more than the whole buffers hold (a garbage count the GPU wrote, meshfb_clamp.comp)
+// raises the history only to what they held: a part from it fits them still (else every later draw of the program would
+// be one by one, or cut for nothing).
 static inline int mfb_hist_note(MfbHist *h, uint32_t want_slots, uint32_t want_tasks, uint32_t cap_slots,
                                 uint32_t cap_tasks, int batched) {
-    if (want_slots > h->slots) h->slots = want_slots;
-    if (want_tasks > h->tasks) h->tasks = want_tasks;
+    uint32_t hs = batched || want_slots <= cap_slots ? want_slots : cap_slots;
+    uint32_t ht = batched || want_tasks <= cap_tasks ? want_tasks : cap_tasks;
+    if (hs > h->slots) h->slots = hs;
+    if (ht > h->tasks) h->tasks = ht;
     h->seen++;
     int shortfall = want_slots > cap_slots || want_tasks > cap_tasks;
     if (batched && shortfall) h->excluded = 1;
@@ -183,7 +188,7 @@ static inline int mfb_batch_steps(int why, int images, int need_cut, const MfbSt
 }
 
 // The counts of the log line (vk_exec_draw.c mfb_batch_line). ok: a batched draw's stages were recorded.
-typedef struct { uint64_t why[MFB_REASONS], cuts_pass, cuts_room, cuts_lost; } MfbCount;
+typedef struct { uint64_t why[MFB_REASONS], cuts_pass, cuts_room, cuts_lost, failed; } MfbCount;
 static inline void mfb_count(MfbCount *n, int why, int cut, int ok) {
     if (why == MFB_BATCHED && ok) {
         n->why[MFB_BATCHED]++;
@@ -191,5 +196,6 @@ static inline void mfb_count(MfbCount *n, int why, int cut, int ok) {
         return;
     }
     if (why != MFB_BATCHED) n->why[why]++;
+    else n->failed++;   // batched, its stages' pipeline failed: the draw was skipped
     n->cuts_lost += cut != MFB_CUT_NONE;
 }

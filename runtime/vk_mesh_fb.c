@@ -175,6 +175,7 @@ void vk_meshfb_pre_end(VkCommandBuffer cb) {
 int vk_meshfb_part_first(void) { return !mfb_parts_taken(&M.used); }
 uint64_t vk_meshfb_batch_short(void) { return M.batch_short; }
 void vk_meshfb_caps(uint64_t *task, uint64_t *mesh) { *task = M.task_bytes, *mesh = M.mesh_bytes; }
+uint64_t vk_meshfb_list_bytes(void) { return M.list_bytes; }
 uint64_t vk_meshfb_batch_peak(uint64_t *cap) { return *cap = M.mesh_bytes, M.peak_mesh; }
 uint64_t vk_meshfb_slot_room(uint32_t slot_words, int has_task) {   // the whole buffers' room, as a one-by-one draw has it
     uint64_t r = M.mesh_bytes / 4 / (slot_words ? slot_words : 1);
@@ -200,6 +201,16 @@ static void record_check(uint32_t i) {
     }
     M.owner[i] = NULL;
     if (batched || (want <= M.cap_slots[i] && tasks <= M.cap_tasks[i])) return;   // batched: its part, logged above
+    if (want <= M.cap_slots[i]) {
+        // only the task count was past the task buffer: a count the GPU wrote, kept by meshfb_clamp.comp before it cut
+        // the dispatch (until 2026-11-22 such a draw was not seen); the mesh workgroups its tasks started all fit
+        uint64_t n = ++M.short_draws;
+        if (n <= 4 || !(n & (n - 1)))
+            rt_log("vk: mesh fallback: a draw's GPU-written count asked for %u task workgroups where the task buffer holds "
+                   "%u: the dispatch ran %u, and the %u mesh workgroups they started fit (%llu draws short of a buffer)",
+                   tasks, M.cap_tasks[i], M.cap_tasks[i], want, (unsigned long long)n);
+        return;
+    }
     uint64_t need = (uint64_t)want * M.slot_words[i] * 4;
     if (need > M.worst_bytes) M.worst_bytes = need;
     uint64_t n = ++M.short_draws;

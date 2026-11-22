@@ -4185,12 +4185,13 @@ static int writers_wait_on(void) {
     return on;
 }
 
-// 1 when the stage writes a storage buffer or stores into an image (GfxShaderRes.flags, gfx.h).
 // 1 when a stage reads a texture or a storage image (mfb_draw, MFB_ONE_TEXTURES)
 static int stage_reads_images(const GfxShader *s) {
     const GfxShaderRes *r;
     return s && (gfx_shader_resources(s, GFX_RES_TEX, &r) > 0 || gfx_shader_resources(s, GFX_RES_IMG, &r) > 0);
 }
+
+// 1 when the stage writes a storage buffer or stores into an image (GfxShaderRes.flags, gfx.h).
 
 static int stage_writes(const GfxShader *s) {
     const GfxShaderRes *r;
@@ -6190,7 +6191,11 @@ static struct {
     uint64_t last_ns, lines;
 } MFBB;
 static void mfb_batch_line(void);
-static void mfb_batch_exit(void) { if (MFBB.lines || MFBB.n.why[MFB_BATCHED]) mfb_batch_line(); }
+static int mfb_batch_on(void);
+// gfx_present.c rt_exit_steps (plat_exit runs no atexit handlers): the session's totals once more, with batching on
+void vk_exec_mfb_batch_exit_log(void) {
+    if (mfb_batch_on() && (MFBB.lines || MFBB.n.why[MFB_BATCHED])) mfb_batch_line();
+}
 void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts) {   // mesh_fb_probe.c: why[MFB_REASONS], cuts[3]
     memcpy(why, MFBB.n.why, sizeof MFBB.n.why);
     cuts[0] = MFBB.n.cuts_pass, cuts[1] = MFBB.n.cuts_room, cuts[2] = MFBB.n.cuts_lost;
@@ -6203,7 +6208,6 @@ static int mfb_batch_on(void) {
         on = rt_knob("MESH_FALLBACK_BATCH", "0");
         rt_log("vk: mesh fallback: the stages of a pass's draws %s (NX2SARIA_MESH_FALLBACK_BATCH=%d)",
                on ? "run before the pass, in a command buffer of their own (experimental)" : "break the pass, draw by draw", on);
-        if (on) atexit(mfb_batch_exit);   // the session's totals once more at exit (the last 30 s, a short session)
     }
     return on;
 }
@@ -6223,15 +6227,17 @@ static void mfb_batch_line(void) {
     const uint64_t *w = MFBB.n.why;
     uint64_t all = 0, cap, peak = vk_meshfb_batch_peak(&cap);
     for (int i = 0; i < MFB_REASONS; i++) all += w[i];
+    all += MFBB.n.failed;
     rt_log("vk: mesh fallback batch: %llu draws, %llu batched (%.0f%%); cuts: %llu at a pass, %llu for room, %llu for "
            "nothing; one by one: %llu off, %llu stage writes, %llu stage textures, %llu excluded, %llu no history, "
-           "%llu no room, %llu no pre-pass; %llu batched draws short of their part; the parts took at most %.1f of the mesh "
+           "%llu no room, %llu no pre-pass; %llu batched whose stages failed; %llu batched draws short of their part; the parts took at most %.1f of the mesh "
            "buffer's %.0f MB (session totals)",
            (unsigned long long)all, (unsigned long long)w[MFB_BATCHED], all ? 100.0 * (double)w[MFB_BATCHED] / (double)all : 0.0,
            (unsigned long long)MFBB.n.cuts_pass, (unsigned long long)MFBB.n.cuts_room, (unsigned long long)MFBB.n.cuts_lost,
            (unsigned long long)w[MFB_ONE_OFF], (unsigned long long)w[MFB_ONE_WRITES], (unsigned long long)w[MFB_ONE_TEXTURES],
            (unsigned long long)w[MFB_ONE_EXCLUDED], (unsigned long long)w[MFB_ONE_HISTORY],
-           (unsigned long long)w[MFB_ONE_ROOM], (unsigned long long)w[MFB_ONE_PRE], (unsigned long long)vk_meshfb_batch_short(),
+           (unsigned long long)w[MFB_ONE_ROOM], (unsigned long long)w[MFB_ONE_PRE], (unsigned long long)MFBB.n.failed,
+           (unsigned long long)vk_meshfb_batch_short(),
            (double)peak / 1048576.0, (double)cap / 1048576.0);
 }
 
@@ -6310,6 +6316,9 @@ static void mfb_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, uint64_t 
     mfb_part_bytes(b_slots, b_tasks, ts != NULL, c->ti.payload_bytes / 4, slot_words, &ds.tb, &ds.lb, &ds.mb);
     const MfbSteps steps = {mfb_step_cut, mfb_step_pre, mfb_step_take, &ds};
     int cut;
+    uint64_t cap_list = vk_meshfb_list_bytes();
+    // a part larger than the whole buffers never fits: one by one without a cut (a cut for it is for nothing)
+    if (why == MFB_BATCHED && (ds.tb > cap_task || ds.lb > cap_list || ds.mb > cap_mesh)) why = MFB_ONE_ROOM;
     why = mfb_batch_steps(why, stage_reads_images(ms) || stage_reads_images(ts),
                           mfb_need_cut(ex->in_pass, ex->pre_pass, ex->pass_serial) || vk_meshfb_closed(), &steps, &cut);
     VkCommandBuffer pre = ds.pre;
