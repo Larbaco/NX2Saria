@@ -28,6 +28,7 @@ void vk_meshfb_part_done(void);
 void vk_meshfb_part_reset(void);
 int vk_meshfb_part_first(void);           // no part taken since the last reset
 void vk_meshfb_one_by_one(void);          // a draw goes one by one: after parts were taken, it closes the batch
+void vk_exec_mfb_batch_start(void);      // reads and logs NX2SARIA_MESH_FALLBACK_BATCH (vk_exec_draw.c)
 int vk_meshfb_closed(void);               // closed until the parts start over (mfb_batch.h MFB_ONE_CLOSED)
 void vk_meshfb_full_barrier(VkCommandBuffer cb);   // a full memory barrier in a command buffer that is not the part's
 void vk_meshfb_pre_end(VkCommandBuffer cb);        // vk_sync.c pre_end: the barrier the parts' draws need, and the reset

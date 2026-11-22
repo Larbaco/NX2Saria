@@ -19,7 +19,13 @@
 // began (it wrote the buffers from their start, over the parts of the batched draws drawn after it: until the pre-pass
 // command buffer ends, every draw goes one by one); its program once asked for more than its part held in a batch
 // (excluded for the session); its program has no history yet where the part would come from it; the part's buffers
-// have no room left for it (mfb_part_take); there is no pre-pass command buffer, or the part could not be cut.
+// have no room left for it (mfb_part_take); there is no pre-pass command buffer, or the part could not be cut; its task
+// or mesh stage reads a texture or image (mfb_draw, MFB_ONE_TEXTURES).
+//
+// Known before batching can be on by default (review of 2026-11-22): a task stage's workgroups past its part are cut by
+// meshfb_clamp.comp before meshfb_scan.comp reads the count, so a task overflow is never seen (no exclusion, nothing in
+// batch_short); an overflow is seen only once its submission finished, and excludes the program for the session; and
+// MFB_ONE_CLOSED loses about half the batching in Kokiri Forest where a cut (as for the next pass) would keep it.
 #pragma once
 
 #include <stdint.h>
@@ -39,6 +45,8 @@ enum {
     MFB_ONE_EXCLUDED,    // the program overflowed its part once
     MFB_ONE_ROOM,        // no room left in the part's buffers
     MFB_ONE_PRE,         // no pre-pass command buffer, or the part could not be cut
+    MFB_ONE_TEXTURES,    // a task or mesh stage reads a texture or image (vk_exec_draw.c mfb_draw: its bind may record
+                         // an image's first fill or an alias copy, vk_exec_inline_begin, which needs the part's pass)
     MFB_REASONS
 };
 

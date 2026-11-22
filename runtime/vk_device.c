@@ -27,6 +27,7 @@
 #include "vk_lowlat.h"
 #include "mesh_pipeline_check.h"
 #include "vk_mesh_path.h"
+#include "vk_mesh_fb.h"
 
 // The loader's vkGetDeviceProcAddr until Streamline is on the device (see vk.h).
 PFN_vkGetDeviceProcAddr vk_dpa = vkGetDeviceProcAddr;
@@ -835,9 +836,11 @@ static int create_device(void) {
                                                                          : "through the mesh fallback (compute passes)")
                     : path == MESH_PATH_NATIVE ? "native (VK_EXT_mesh_shader)" : "skipped (no mesh shaders, mesh_fallback = 0)";
         if (path == MESH_PATH_EMULATION) rt_log("vk: mesh shaders: emulated with compute (mesh_emulation = 1); mesh_fallback is not used");
-        else if (path == MESH_PATH_FALLBACK)
+        else if (path == MESH_PATH_FALLBACK) {
             rt_log("vk: mesh fallback: task and mesh programs run as compute passes and are drawn from their buffers (%s)",
                    why);
+            vk_exec_mfb_batch_start();   // says NX2SARIA_MESH_FALLBACK_BATCH's value (vk_exec_draw.c)
+        }
         else if (path == MESH_PATH_NONE)
             rt_log("vk: mesh shaders: not supported and mesh_fallback = 0 (task/mesh draws are skipped)");
         mesh_pipeline_check_start(path == MESH_PATH_EMULATION);
