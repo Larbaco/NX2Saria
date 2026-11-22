@@ -15,6 +15,7 @@
 #include "hw_detect.h"
 #include "log_stall.h"
 #include "mem_budget.h"
+#include "nvidia_cache.h"
 #include "vk.h"
 #include "platform/platform.h"
 #include "vk_dlaa.h"
@@ -99,41 +100,119 @@ static void mesa_cache_beside_exe(void) {
     if (!plat_getenv("MESA_SHADER_CACHE_MAX_SIZE", size, sizeof size)) plat_setenv("MESA_SHADER_CACHE_MAX_SIZE", MESA_CACHE_SIZE);
 }
 
-#ifdef __linux__
-// NVIDIA's Linux driver keeps the pipelines it compiles in a disk cache of its own, by default in ~/.cache/nvidia,
-// shared with every program. One process adds at most __GL_SHADER_DISK_CACHE_SIZE to it (1 GiB unless set), and a start
-// that finds more than that in several files deletes the later ones. nx2saria.exe --prepare-shaders builds the 42,142
-// variants of game 1.1.1 into it in one process: with the default limit it stored about 30,700 of them and the rest
-// were compiled again by the first start after it. So unless the environment sets them, the cache goes to nvidia-cache
-// beside the exe, which nothing else writes, with a limit of NV_CACHE_BYTES. The driver makes GLCache inside that
-// folder but not the folder, so it is made here; pointed at a folder that is missing or not writable it caches nothing
-// at all, so when that folder cannot be made or written neither variable is set and the driver keeps its own folder
-// and limit. Without NVIDIA's kernel driver (no /proc/driver/nvidia/version, the test the AppImage's build makes for
-// DLSS) the variables do nothing and the folder would stay empty, so nothing is done.
-#define NV_CACHE_BYTES "8589934592"   // 8 GiB
+// NVIDIA's driver keeps the pipelines it compiles in a disk cache of its own, by default one folder shared with every
+// program (Linux ~/.cache/nvidia, Windows %LOCALAPPDATA%\NVIDIA\GLCache). On Linux one process adds at most
+// __GL_SHADER_DISK_CACHE_SIZE to it (1 GiB unless set), and a start that finds more than that in several files deletes
+// the later ones. nx2saria.exe --prepare-shaders builds the 42,142 variants of game 1.1.1 into it in one process: with
+// the default limit it stored about 30,700 of them and the rest were compiled again by the first start after it. On
+// Windows the same preparation stored them all, and a laptop's updates found the cache cold, 17 to 33% of the list
+// still in it, with 1.6 GB in its folder (launcher.log, 2026-11-21): the driver's own folder gives the game no way to
+// know who else opens it or with what limit. So unless the environment sets them, the cache goes to nvidia-cache
+// beside the exe (nvidia_cache.h), which nothing else writes, with a limit of 8 GiB, and on Windows with the cleanup
+// off. The driver makes GLCache inside that folder but not the folder, so it is made here; pointed at a folder that is
+// missing or not writable it caches nothing at all, so when that folder cannot be made or written no variable is set
+// and the driver keeps its own folder and limit. Without NVIDIA's driver (Linux: no /proc/driver/nvidia/version, the
+// test the AppImage's build makes for DLSS; Windows: no nvapi64.dll in System32) the variables do nothing and the
+// folder would stay empty, so nothing is done. nvidia_cache_dir = 0 leaves all of it to the driver. Every call of
+// vk_driver_cache_env happens before a driver can load, in the game, the preparations and the probes alike, so a
+// start from the launcher, from Steam or from the exe itself sets the same.
+#if defined(_WIN32) || defined(__linux__)
+static int nvidia_driver_present(void) {
+#ifdef _WIN32
+    char root[PLAT_PATH_MAX], file[PLAT_PATH_MAX + 32];
+    if (!plat_getenv("SystemRoot", root, sizeof root)) return 0;
+    snprintf(file, sizeof file, "%s\\System32\\nvapi64.dll", root);
+    return plat_fs_kind(file) == PLAT_FS_FILE;
+#else
+    return plat_fs_kind("/proc/driver/nvidia/version") == PLAT_FS_FILE;
+#endif
+}
+
+// 0 when dir takes a new file, else the system's error code. Linux asks the access rights, as it always has; Windows
+// makes and deletes a file named after the process, since a directory's attributes say nothing of the rights on it and
+// the launcher's preparation and a game may start together.
+static int folder_error(const char *dir) {
+#ifdef _WIN32
+    char probe[PLAT_PATH_MAX * 2 + 32];
+    snprintf(probe, sizeof probe, "%s\\.write-test-%u", dir, (unsigned)plat_process_id());   // another start may be here too
+    plat_fs_unlink(probe);   // one an earlier start with this process id left
+    PlatFile *f = plat_fs_create(probe, NULL);
+    if (!f) return plat_fs_os_error() ? plat_fs_os_error() : 1;
+    plat_file_close(f);
+    plat_fs_unlink(probe);
+    return 0;
+#else
+    return access(dir, W_OK | X_OK) ? errno : 0;
+#endif
+}
+
 static void nvidia_cache_beside_exe(void) {
-    if (plat_fs_kind("/proc/driver/nvidia/version") != PLAT_FS_FILE) return;
-    char dir[PLAT_PATH_MAX * 2], size[32];
-    int own_dir = !plat_getenv("__GL_SHADER_DISK_CACHE_PATH", dir, sizeof dir);
-    if (own_dir) {
+    char dir[PLAT_PATH_MAX * 2], size[64], skip[64], mark[16], line[PLAT_PATH_MAX * 2 + 400], why[64] = "";
+    const char *what = "";
+#ifdef _WIN32
+    const int windows = 1;
+#else
+    const int windows = 0;
+#endif
+    // A restart inherits what this game set; those variables are the game's, not the player's (nvidia_cache.h).
+    int ours = plat_getenv(NVC_MARK_VAR, mark, sizeof mark) ? nvc_mark_parse(mark) : 0;
+    NvcIn in = {.windows = windows, .enabled = cfg_bool("NX2SARIA_NVIDIA_CACHE_DIR"), .driver = nvidia_driver_present()};
+    in.path_set = plat_getenv(NVC_PATH_VAR, dir, sizeof dir) != 0 && !(ours & NVC_SET_PATH);
+    in.size_set = plat_getenv(NVC_SIZE_VAR, size, sizeof size) != 0 && !(ours & NVC_SET_SIZE);
+    in.skip_set = plat_getenv(NVC_SKIP_VAR, skip, sizeof skip) != 0 && !(ours & NVC_SET_SKIP);
+    if (nvc_need_folder(&in)) {
         int len = plat_exe_path(dir, sizeof dir - 16);
         char *cut = len ? plat_last_sep(dir) : NULL;
         if (!cut) return;
-        strcpy(cut + 1, "nvidia-cache");
+        strcpy(cut + 1, NVC_FOLDER);
         int made = plat_fs_mkdir(dir), there = made == PLAT_FS_OK || made == PLAT_FS_EXISTS;
-        int err = !there ? plat_fs_os_error() : access(dir, W_OK | X_OK) ? errno : 0;
+        int err = !there ? plat_fs_os_error() : folder_error(dir);
+        what = there ? "is not writable" : "cannot be made";
+        in.folder_ok = !err;
         if (err) {
-            rt_log("vk: NVIDIA's shader disk cache stays in the driver's own folder with its own limit: %s %s (%s)", dir,
-                   there ? "is not writable" : "cannot be made", strerror(err));
-            return;
+#ifdef _WIN32
+            snprintf(why, sizeof why, "Windows error %d", err);
+#else
+            snprintf(why, sizeof why, "%s", strerror(err));
+#endif
         }
-        plat_setenv("__GL_SHADER_DISK_CACHE_PATH", dir);
     }
-    int own_size = !plat_getenv("__GL_SHADER_DISK_CACHE_SIZE", size, sizeof size);
-    if (own_size) plat_setenv("__GL_SHADER_DISK_CACHE_SIZE", NV_CACHE_BYTES);
-    rt_log("vk: NVIDIA's shader disk cache in %s (%s), up to %s bytes (%s)", dir,
-           own_dir ? "beside the exe" : "__GL_SHADER_DISK_CACHE_PATH", own_size ? NV_CACHE_BYTES : size,
-           own_size ? "the game's limit" : "__GL_SHADER_DISK_CACHE_SIZE");
+    NvcPlan plan = nvc_plan(&in);
+    int stale = nvc_stale(&plan, ours);   // set by this game before a restart and not wanted now
+    if (stale & NVC_SET_PATH) plat_setenv(NVC_PATH_VAR, NULL);
+    if (stale & NVC_SET_SIZE) plat_setenv(NVC_SIZE_VAR, NULL);
+    if (stale & NVC_SET_SKIP) plat_setenv(NVC_SKIP_VAR, NULL);
+    if (ours && plan.verdict != NVC_USE) plat_setenv(NVC_MARK_VAR, NULL);
+    if (plan.verdict == NVC_OFF) {
+        nvc_off_line(line, sizeof line);
+        rt_log("%s", line);
+        return;
+    }
+    if (plan.verdict == NVC_NO_FOLDER) {
+        nvc_stays_line(line, sizeof line, dir, what, why);
+        rt_log("%s", line);
+        return;
+    }
+    if (plan.verdict != NVC_USE) return;
+    int refused = 0;   // the variables the environment did not take
+    if ((plan.set & NVC_SET_PATH) && !plat_setenv(NVC_PATH_VAR, dir)) refused |= NVC_SET_PATH;
+    if (plan.set & NVC_SET_SIZE) {
+        if (!plat_setenv(NVC_SIZE_VAR, NVC_SIZE_VALUE)) refused |= NVC_SET_SIZE;
+        snprintf(size, sizeof size, "%s", NVC_SIZE_VALUE);
+    }
+    if (plan.set & NVC_SET_SKIP) {
+        if (!plat_setenv(NVC_SKIP_VAR, NVC_SKIP_VALUE)) refused |= NVC_SET_SKIP;
+        snprintf(skip, sizeof skip, "%s", NVC_SKIP_VALUE);
+    }
+    nvc_mark_text(plan.set & ~refused, mark, sizeof mark);
+    if (plan.set & ~refused) plat_setenv(NVC_MARK_VAR, mark);   // a restart will know these are the game's
+    if (refused) {
+        nvc_refused_line(line, sizeof line, refused);
+        rt_log("%s", line);
+        return;
+    }
+    nvc_use_line(line, sizeof line, windows, plan.set, dir, size, skip);
+    rt_log("%s", line);
 }
 #endif
 
@@ -175,7 +254,7 @@ void vk_driver_cache_env(void) {
     done = 1;
     mesa_cache_beside_exe();
     mesa_submit_thread();
-#ifdef __linux__
+#if defined(_WIN32) || defined(__linux__)
     nvidia_cache_beside_exe();
 #endif
 }
