@@ -456,6 +456,9 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
 int probe_meshfb(void) {
     const char *dir = cfg_get("NX2SARIA_PROBE_MESHFB_DIR");
     if (dir && *dir) return modules_part(dir);
+    // No game is loaded: Link's own motion vectors (motion_owner.c, selective_motion) would read the player's actor in
+    // guest memory at every submission (vk_usnap_begin) and fault. The probe draws no game, so they are off.
+    cfg_setenv("NX2SARIA_SELECTIVE_MOTION", "0");
     vk_hdr_off();
     const GfxBackend *b = &gfx_vulkan_backend;
     uint64_t heap = 0;
