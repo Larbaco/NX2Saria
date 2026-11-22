@@ -103,9 +103,16 @@ def bc4(lin, wb, hb, w, h):
     return rgba
 
 
+# The runtime's folders by subsystem, as tools/build_game.py RUNTIME_DIRS (tests/runtime_dirs_check.py): tex_astc.c's
+# headers include others by name from them.
+RUNTIME_DIRS = ('audio', 'cfg', 'diag', 'gfx', 'hle', 'input', 'nvn', 'pacing', 'patches', 'ui', 'vk')
+
+
 def astc_library(layout):
     """runtime/gfx/tex_astc.c of this release as a library in data/cache, built once per source with the toolchain."""
     src = layout.app / 'runtime' / 'gfx' / 'tex_astc.c'
+    rt = layout.app / 'runtime'
+    inc = [a for d in (rt, *(rt / n for n in RUNTIME_DIRS)) for a in ('-I', str(d))]
     if not src.is_file():
         raise ArtError(f'{src} is missing')
     tag = hashlib.sha256(src.read_bytes() + (layout.app / 'runtime' / 'gfx' / 'tex.h').read_bytes()).hexdigest()[:12]
@@ -119,7 +126,7 @@ def astc_library(layout):
         vma = next((folder for folder in vma_candidates if (folder / 'vk_mem_alloc.h').is_file()), None)
         if vma is None:
             raise ArtError('the Vulkan Memory Allocator header is missing (the Linux build tools include it)')
-        command = [compiler, '-shared', '-fPIC', '-O2', '-w', '-I', str(src.parent), '-I', str(vma), str(src), '-o',
+        command = [compiler, '-shared', '-fPIC', '-O2', '-w', *inc, '-I', str(vma), str(src), '-o',
                    str(library.with_name(library.name + '.tmp'))]
         env = os.environ.copy()
     else:
@@ -128,7 +135,7 @@ def astc_library(layout):
         if not compiler.is_file():
             raise ArtError('the build tools are not installed (Rebuild the Game installs them)')
         env = dict(os.environ, PATH=str(layout.msys / 'bin') + os.pathsep + os.environ.get('PATH', ''))
-        command = [str(compiler), '-shared', '-O2', '-static', '-w', '-I', str(layout.app / 'runtime'),
+        command = [str(compiler), '-shared', '-O2', '-static', '-w', *inc,
                    '-I', str(layout.msys / 'include' / 'vma'), str(src), '-o',
                    str(library.with_name(library.name + '.tmp'))]
     if not compiler:

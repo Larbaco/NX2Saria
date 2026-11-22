@@ -220,6 +220,7 @@ def runtime_lib(out, llvm, sysroot):
             (rt / p.relative_to(ROOT / 'runtime')).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, rt / p.relative_to(ROOT / 'runtime'))
     for name in build_game.INSTALL_SIDE:
+        (rt / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / 'runtime' / name, rt / name)
     from PIL import Image   # Tk loads no .ico off Windows: the window and the AppImage take a PNG
     with Image.open(ROOT / 'runtime' / 'nx2saria.ico') as ico:
@@ -238,7 +239,8 @@ def used_sysroot_files(out, llvm, sysroot, rtlib_build):
     probe = CHECK / 'sysroot-probe'
     shutil.rmtree(probe, ignore_errors=True)
     probe.mkdir(parents=True)
-    cc = [llvm / 'bin' / 'clang', '--target=x86_64-linux-gnu', f'--sysroot={sysroot}', '-I', out / 'runtime',
+    cc = [llvm / 'bin' / 'clang', '--target=x86_64-linux-gnu', f'--sysroot={sysroot}',
+          *(a for d in build_game.runtime_include_dirs(out / 'runtime') for a in ('-I', d)),
           '-I', out / 'runtime' / 'deps' / 'include', '-I', CHECK / 'rtlib']
     for i, src in enumerate([*(out / 'runtime' / n for n in sorted(build_game.INSTALL_SIDE)),
                              ROOT / 'installer' / 'hostcheck.c']):

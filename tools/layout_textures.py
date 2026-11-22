@@ -52,7 +52,9 @@ def astc_library(cache):
         cc = shutil.which('clang') or shutil.which('cc')
         if not cc:
             raise ld.FormatError('decoding ASTC textures needs clang or a C compiler')
-        includes = [ld.ROOT / 'toolchain' / 'vma', Path(cc).resolve().parents[1] / 'include' / 'vma']
+        import build_game   # the runtime's include folders: tex.h includes headers from several
+        includes = [*build_game.runtime_include_dirs(ld.ROOT / 'runtime'), ld.ROOT / 'toolchain' / 'vma',
+                    Path(cc).resolve().parents[1] / 'include' / 'vma']
         if path := os.environ.get('NX2SARIA_VMA_INCLUDE'):
             includes.insert(0, Path(path))
         with tempfile.TemporaryDirectory(prefix='astc-', dir=cache) as work:

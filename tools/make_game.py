@@ -176,8 +176,11 @@ GENERATED_HEADERS = ('layout.h', 'patches.h', 'romfs_config.h')
 RUNTIME_LIB = 'libnx2navirt.a'
 FFX4_DLLS = ('amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_upscaler_vk.dll')   # AMD's FSR SDK 2.4, for FSR 4
 FFX4_FG_DLL = 'amd_fidelityfx_framegeneration_vk.dll'   # ... and its frame generation, with the two above
-RUNTIME_PATTERNS = ('*.c', '*.cpp', 'platform/*.c', 'ui/*.cpp', 'third_party/imgui/*.cpp',
-                    'third_party/imgui/backends/*.cpp')
+# The runtime's folders by subsystem, as tools/build_game.py RUNTIME_DIRS (tests/runtime_dirs_check.py): their sources
+# compile as the top level's do, and each is on the include path of the runtime's sources (runtime_includes).
+RUNTIME_DIRS = ('audio', 'cfg', 'diag', 'gfx', 'hle', 'input', 'nvn', 'pacing', 'patches', 'ui', 'vk')
+RUNTIME_PATTERNS = ('*.c', '*.cpp', 'platform/*.c', *(f'{d}/*.{x}' for d in RUNTIME_DIRS for x in ('c', 'cpp')),
+                    'third_party/imgui/*.cpp', 'third_party/imgui/backends/*.cpp')
 INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]+"([^"]+)"', re.M)
 
 # Runs a script the way `python script.py` does, with the script's folder first on sys.path. The launcher's
@@ -1325,7 +1328,7 @@ def preflight(msys, jobs, sources=None, work=None):
     say(f'check: {sdl3_line(clang, version, sdl)}')
     rt = KIT / 'runtime'
     runtime_headers(rt)
-    inc = ['-I', str(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma)]
+    inc = ['-I', str(rt), *runtime_includes(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma)]
     vulkan = vulkan_headers(clang, env)
     cmd_for = runtime_cmd(clang, clangxx, inc, first=vulkan + (sdl.include if sdl else []))
     if sources is None:
@@ -1528,6 +1531,11 @@ def runtime_sources():
                 continue
             out.append((p, 'rt_' + p.relative_to(rt).as_posix().replace('/', '_').rsplit('.', 1)[0] + '.o'))
     return out
+
+
+def runtime_includes(rt):
+    """The include flags of the RUNTIME_DIRS folders of rt, which go with -I rt on a runtime source's command."""
+    return [a for d in RUNTIME_DIRS for a in ('-I', str(rt / d))]
 
 
 def per_install_names(generated=GENERATED_HEADERS):
@@ -1831,8 +1839,8 @@ def guest_opt_ini(out):
 
 def runtime_cmd(clang, clangxx, inc, level=0, fast=None, msys=None, first=(), pgo=(), tsan=False):
     """fast: fast_clang's compiler for the lifted code, with msys as its sysroot. first: include flags that go
-    ahead of inc for the runtime's sources only (vulkan_headers); the lifted code includes none of those headers,
-    and its command, which is part of its objects' keys, stays as it was. NX2SARIA_GUEST_OPT (an environment variable,
+    ahead of inc for the runtime's sources only (vulkan_headers, runtime_includes); the lifted code includes none of
+    those headers, and its command, which is part of its objects' keys, stays as it was. NX2SARIA_GUEST_OPT (an environment variable,
     or guest_opt in nx2saria.ini (or an existing nx2navi.ini)) 2 builds the lifted code at -O2; by default -O1: the game's own threads run it and
     bound the frame on a slower CPU; the build takes several times longer. pgo: the flags of a profile-guided build
     for every compile (pgo_use_flags, pgo_gen_flags); with them the lifted code is built at -O2 too, the level the
@@ -1870,7 +1878,7 @@ def make_runtime_lib(dest, msys, jobs, obj=None):
     rt = KIT / 'runtime'
     tainted = per_install_names()
     srcs = [(p, obj / name) for p, name in runtime_sources() if not per_install(p, tainted)]
-    inc = ['-I', str(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma)]
+    inc = ['-I', str(rt), *runtime_includes(rt), '-I', str(rt / 'third_party' / 'imgui'), '-I', str(vma)]
     cache = ObjectCache(obj / 'objects.json', {'<kit>': KIT})
     if pgo_mode() == 'gen':
         fail('the prebuilt runtime is never an instrumented one: an instrumented build (NX2SARIA_PGO=gen) compiles '
@@ -2406,6 +2414,9 @@ def step_compile(out, cache_dir, msys, jobs, romfs_job=None, update=False):
     if sdl:
         say(f'  {sdl3_line(clang, clang_version(clang, env), sdl)}')
     first = vulkan + (sdl.include if sdl else [])   # ahead of the system's folders, for the runtime's sources only
+    # the runtime's folders, for its sources only: the lifted code includes none of their headers, and its command (its
+    # objects' key) stays as it was
+    first += runtime_includes(rt)
     profile = None
     if gen_counts:
         pgo = pgo_gen_flags(out)

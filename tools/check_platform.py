@@ -16,6 +16,8 @@ import re
 import sys
 from pathlib import Path
 
+from build_game import RUNTIME_DIRS
+
 # Per-file allowlist of shared files that still use Win32, with the reason. Empty: every shared file is portable.
 ALLOWED = {}
 
@@ -110,7 +112,7 @@ def main():
     a = ap.parse_args()
     rt = Path(a.runtime) if a.runtime else Path(a.root) / "runtime"
     bad, remaining = [], {}
-    files = [p for pat in ("*.c", "*.h", "*.cpp", "ui/*.cpp", "ui/*.h") for p in rt.glob(pat)]
+    files = [p for d in ("", *RUNTIME_DIRS) for pat in ("*.c", "*.h", "*.cpp") for p in (rt / d).glob(pat)]
     for p in sorted(files):
         if p.stem.endswith("_win"):
             continue
@@ -118,7 +120,7 @@ def main():
         if p.name in ALLOWED:
             remaining[p.name] = len(hits)
         elif hits:
-            bad.append((p.name, hits))
+            bad.append((p.relative_to(rt).as_posix(), hits))
     for name, hits in bad:
         kinds = sorted({h[1] for h in hits})
         print(f"FAIL runtime/{name}: {len(hits)} Win32 uses outside runtime/platform/ ({', '.join(kinds[:8])})")

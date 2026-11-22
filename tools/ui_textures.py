@@ -135,7 +135,9 @@ def astc_library(out):
     if not dll.is_file() or dll.stat().st_mtime < src.stat().st_mtime:
         cc = shutil.which('clang') or r'C:\msys64\ucrt64\bin\clang.exe'
         vma = Path(cc).resolve().parents[1] / 'include' / 'vma'   # tex.h reaches the Vulkan allocator's header
-        if subprocess.run([cc, '-shared', '-O2', '-static', '-w', '-I', str(ROOT / 'runtime'), '-I', str(vma), str(src), '-o',
+        import build_game   # the runtime's include folders: tex.h includes headers from several
+        inc = [a for d in build_game.runtime_include_dirs() for a in ('-I', str(d))]
+        if subprocess.run([cc, '-shared', '-O2', '-static', '-w', *inc, '-I', str(vma), str(src), '-o',
                            str(dll)]).returncode:
             sys.exit('tex_astc.c did not compile')
     lib = ctypes.CDLL(str(dll))

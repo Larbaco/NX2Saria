@@ -425,6 +425,7 @@ def runtime_lib(out, llvm, pgo):
             (rt / p.relative_to(ROOT / 'runtime')).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, rt / p.relative_to(ROOT / 'runtime'))
     for name in sorted(build_game.INSTALL_SIDE):   # compiled at install, so left out of libnx2navirt.a
+        (rt / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / 'runtime' / name, rt / name)
 
 
