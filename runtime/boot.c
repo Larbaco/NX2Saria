@@ -16,6 +16,7 @@
 
 #include "boot_map.h"
 #include "cfg.h"
+#include "changebank_hold.h"
 #include "cheats.h"
 #include "fs.h"
 #include "kernel.h"
@@ -413,6 +414,7 @@ void rt_boot(void) {
     rt_patches_init();
     mods_exefs_switch();   // after the patch sets' settings: an enabled mod's ExeFS patches on
     heap_retry_start();   // after a mod that replaces the set heap_retry turned it off
+    changebank_hold_start();   // the same for the set changebank_hold
     frame_step_init();
     res_init();
     wide_init();   // Ocarina's widescreen sets (recomp/patches-v111.txt)

@@ -498,3 +498,17 @@ site heap_retry main 436910 a90d577f a90d577f 9529a970   # stp xzr, x21, [x27, #
 site heap_retry main 436db4 a90b5b7f a90b5b7f 9529a847   # stp xzr, x22, [x27, #0xb0] -> the same; bl page+0xed0
 site heap_retry main 436f18 94032c4e 9529a7ea            # bl main+0x502050 -> bl page+0xec0
 site heap_retry main 437094 94032bef 9529a78b            # bl main+0x502050 -> bl page+0xec0
+
+# The neighbouring map the game preloads, held (runtime/changebank_hold.c). The "OptimizeChangeBank" manager's update
+# (main+0x3299880) chooses one of its units each frame: its loop over the 16 units (main+0x3299c54..0x3299d34, x10 the
+# unit) leaves in w15 the unit whose load radius Link is in that he heads for (else the nearest) and in w17 one asked
+# for directly (-1 each for none), and after it main+0x3299d90..0x3299d9c take w21 = w15 < 0 && w17 >= 0 ? w17 : w15.
+# The update then asks for that unit's map and lets go of the others: a new map cancels the one loading. Where two
+# radii overlap (the Market's square), walking and turning flipped the choice and every flip was a cancelled load and
+# a new one. The site is the loop's add x10, x10, #1, which every pass goes through: it keeps the add and then calls
+# the page's +0xe30, which returns at once until x10 is 16 (the last pass) and then may put the held unit in w15, so
+# the cmp, ccmn and csel after the loop choose it. No flags are live there (the cmp x10 two words on writes them before
+# anything reads them), x15 and x10 are caller-saved and read from the Cpu again after the call, and x30 is the
+# update's own, saved in its prologue and read again only in its epilogue.
+set changebank_hold NX2SARIA_CHANGEBANK_HOLD 1
+site changebank_hold main 3299d28 9100054a 9100054a 94701c42   # add x10, x10, #1 -> the same; bl page+0xe30
