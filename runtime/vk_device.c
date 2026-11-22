@@ -742,11 +742,12 @@ static int create_device(void) {
         rt_log("vk: mesh shaders: %s", g_vk.has_mesh_shader ? "VK_EXT_mesh_shader" : "the extension is there, its task or mesh feature is not");
     }   // vkGetDeviceFaultInfoEXT needs the feature, not just the extension
     {   // mesh_fallback: auto, 1 (on every device) or 0 (vk_mesh_path.h says when auto takes it, and why on AMD's driver
-        // for RDNA 1 and 2). Without mesh shaders the mesh emulation (mesh_emulation = 1) draws them instead.
+        // for RDNA 1 and 2 and on Intel's). Without mesh shaders the mesh emulation (mesh_emulation = 1) draws them
+        // instead.
         // has_mesh_shader keeps saying what the hardware has: the recorder thread (vk_rec.c) goes by it, not by how
         // mesh programs are drawn.
         const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
-        int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID == 0x10de, mf, me, &why);
+        int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID, mf, me, &why);
         g_vk.mesh_fallback = path == MESH_PATH_FALLBACK;
         g_vk.mesh_emulation = path == MESH_PATH_EMULATION;
         g_mesh_path = path == MESH_PATH_EMULATION ? "emulated (mesh_emulation)"
