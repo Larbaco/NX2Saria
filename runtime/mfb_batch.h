@@ -44,7 +44,9 @@
 #define MFB_READMIT 256u       // records in a row without a jump that take an excluded program back into batches
 #define MFB_MAX_SHORTS 3u      // the batched draws short of their part after which a program stays one by one
 #define MFB_HEADROOM 4u
-#define MFB_FLOOR_DIV 64u      // a part holds at least 1/64 of a buffer: a pass's 55 draws at most fit (Kokiri, Field)
+#define MFB_FLOOR_DIV 32u      // a part holds at least 1/32 of a buffer: 32 such parts fit a pre-pass command buffer
+                               // (a longer run of draws cuts for room). At 1/64 (483 workgroups of 3.8 KB) one draw of a
+                               // program with a settled history of 120 asked for 577 in every Kokiri Forest start.
 
 enum {
     MFB_BATCHED,

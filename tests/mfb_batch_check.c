@@ -86,8 +86,8 @@ int main(void) {
           "a GPU count with a task stage: %u tasks (280), %u slots (3600)", tasks, slots);
     CHECK(mfb_batch_need(1, 0, 0, 0, 1, &seen, FS, FT, &slots, &tasks) == MFB_BATCHED && tasks == FT,
           "a small task history: %u tasks (the floor, %u)", tasks, FT);
-    // the floor: 1/64 of the buffer, in the program's workgroups, never under the least
-    CHECK(mfb_floor(112ull << 20, 540 * 4, MFB_MIN_SLOTS) == (112ull << 20) / 64 / 2160, "the floor of 112 MiB at 2160 "
+    // the floor: 1/MFB_FLOOR_DIV of the buffer, in the program's workgroups, never under the least
+    CHECK(mfb_floor(112ull << 20, 540 * 4, MFB_MIN_SLOTS) == (112ull << 20) / MFB_FLOOR_DIV / 2160, "the floor of 112 MiB at 2160 "
           "bytes: %u", mfb_floor(112ull << 20, 540 * 4, MFB_MIN_SLOTS));
     CHECK(mfb_floor(1 << 20, 1 << 20, MFB_MIN_SLOTS) == MFB_MIN_SLOTS, "a floor under the least");
     CHECK(mfb_floor(1 << 20, 0, 7) == 7, "a floor of 0-byte workgroups");
