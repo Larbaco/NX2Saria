@@ -501,7 +501,16 @@ A new test needs nothing more than its name: the runner finds it.
 only. They still run and are counted apart; one that passes is reported, and its line goes in the change that fixed it.
 
 The Tests workflow (`.github/workflows/tests.yml`) runs `tests/run.py` on Linux on every push and pull request, with
-the pinned VMA and Vulkan headers and `xvfb-run`; what needs the game, a GPU, SDL3 or Windows is skipped there.
+the pinned VMA and Vulkan headers, the shader headers, the build kit's Linux packages and `xvfb-run`; what needs the
+game, a GPU, SDL3 or Windows is skipped there. To run the same set on a Linux PC, fetch and build what it does first,
+since the runner decides what to skip before any test runs (`launcher_test.py` fetches the pinned SDL3, VMA and Vulkan
+headers into `toolchain/` and builds the shader headers as it goes, so a second run can run tests the first skipped):
+
+```sh
+.venv/bin/python -c 'import sys; sys.path.insert(0, "tools"); import build_game; build_game.vma_include()'
+.venv/bin/python tools/vulkan_pin.py && .venv/bin/python tools/build_shaders.py
+CPATH=$PWD/toolchain/vulkan-headers/include xvfb-run -a .venv/bin/python tests/run.py
+```
 
 Before a commit:
 
