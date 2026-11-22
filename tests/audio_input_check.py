@@ -26,7 +26,9 @@ else:
     cc = shutil.which('clang') or 'cc'
     flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'sdl3'], text=True))
 exe = out / ('audio-input-check.exe' if os.name == 'nt' else 'audio-input-check')
+# runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
 subprocess.run([cc, '-std=gnu11', '-O2', '-fno-strict-aliasing', '-Wall', '-Wextra', '-Werror',
+                '-Wno-bitwise-instead-of-logical',
                 '-I', str(root / 'runtime'), str(root / 'tests' / 'audio_input_check.c'),
                 '-o', str(exe), *flags], env=env, check=True)
 subprocess.run([str(exe)], env=env, timeout=15, check=True)

@@ -32,7 +32,9 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror', '-I', str(ROOT / 'runtime'),
+    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
+    subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror',
+                           '-Wno-bitwise-instead-of-logical', '-I', str(ROOT / 'runtime'),
                            str(ROOT / 'tests' / 'stutter_hitch_check.c'), '-o', str(exe)], env=env)
     return subprocess.run([str(exe)], env=env).returncode
 

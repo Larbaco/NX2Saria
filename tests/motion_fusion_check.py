@@ -90,7 +90,9 @@ def main():
         obj = work / (src.stem + '.o')
         subprocess.check_call([*common, '-w', '-c', str(src), '-o', str(obj)], env=env)
         objs.append(obj)
-    subprocess.check_call([*common, '-Wall', '-Wextra', '-Werror', '-Wno-unused-function',
+    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
+    subprocess.check_call([*common, '-Wall', '-Wextra', '-Werror',
+                           '-Wno-bitwise-instead-of-logical', '-Wno-unused-function',
                            str(ROOT / 'tests' / 'motion_fusion_check.c'), *map(str, objs), '-o', str(exe), '-lm', *libs],
                           env=env)
     rc = subprocess.run([str(exe)], env=env, timeout=120).returncode
