@@ -973,17 +973,18 @@ class App:
             self.pick_drag = None
             self.pick_changed(final=True)
 
-    def on_close(self, why='closed by the player'):
+    def on_close(self, why='closed by the player', signalled=None):
         """Close the window: the × of the title band or of the system's frame, Alt+F4, or a signal that ends the
-        process (main, errors.on_end_signals). The line it logs tells a closed window from one that died, whose log
-        ends without it."""
+        process (main, errors.on_end_signals), whose handler ran at time.monotonic() signalled. The line it logs tells
+        a closed window from one that died, whose log ends without it, and for a signal how long the close took."""
         if self.closed:
             return
         self.closed = why
         busy = (f'; {self.job.task or self.job.title or type(self.job).__name__} cancelled'
                 if self.job and self.job.result is None else '')
+        late = f', {time.monotonic() - signalled:.2f} s after the signal' if signalled is not None else ''
         self.ctx.log(f'window {why} on the {self.screen or "first"} screen after '
-                     f'{time.monotonic() - self.opened:.0f} s{busy}')
+                     f'{time.monotonic() - self.opened:.0f} s{late}{busy}')
         if self.job and self.job.result is None:
             self.job.cancel()
         if self.bg.staging():   # what it downloaded is resumed, and its unfinished folder replaced, next time
@@ -3327,6 +3328,7 @@ def main(argv=None):
     from .. import errors
     errors.install(ctx)   # the window's errors; finish() below
     code = 0
+    unwake = None
     try:
         root = tk.Tk(className='NX2Saria')
         root.report_callback_exception = errors.window_hook(ctx)
@@ -3337,11 +3339,15 @@ def main(argv=None):
             # would destroy the canvas under that code. The window closes from the event loop instead.
             nonlocal code
             code = 128 + getattr(signal, name)
+            at = time.monotonic()
             try:
-                root.after(0, lambda: app.on_close(f'ended by {name}'))
+                root.after(0, lambda: app.on_close(f'ended by {name}', at))
             except tk.TclError:   # the window is already gone
                 pass
-        errors.on_end_signals(end_signal)
+        taken = errors.on_end_signals(end_signal)
+        if taken:   # an idle window would act on them only at its next event (errors.wake_for_signals)
+            how, unwake = errors.wake_for_signals(root)
+            ctx.log(f'window: {" and ".join(taken)} {"close" if len(taken) > 1 else "closes"} it, {how}')
         if a.selftest:
             from .selftest import run
             root.after(300, lambda: run(app, a.shots))
@@ -3349,6 +3355,8 @@ def main(argv=None):
         if not app.closed:   # Uninstall, or the selftest, ends the window without on_close
             ctx.log(f'window ended on the {app.screen} screen after {time.monotonic() - app.opened:.0f} s')
     finally:
+        if unwake:
+            unwake()
         errors.finish(ctx)
         if lock:
             lock.release()

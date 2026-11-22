@@ -222,8 +222,16 @@ that died.
   build leaves behind are not adopted.
 - **The end**: `window closed by the player on the <screen> screen after N s` (`App.on_close`: the × of the band or
   of the system's frame, or Alt+F4). On Linux, SIGTERM and SIGHUP (a logout, or the terminal that started it being
-  closed) write `window ended by SIGTERM ...`, close the window from the event loop and exit with 128 + the signal's
-  number. Uninstall and the selftest write `window ended on ...`.
+  closed) write `window ended by SIGTERM on the <screen> screen after N s, 0.01 s after the signal`, close the window
+  from the event loop and exit with 128 + the signal's number. The time is from the signal's handler to the close.
+  Uninstall and the selftest write `window ended on ...`.
+- **Signals** (`errors.wake_for_signals`): at the start, `window: SIGTERM and SIGHUP close it, woken through a
+  socket`. Python runs a signal's handler only when it runs Python code again, and an idle Tk window waits inside Tcl
+  for its next event, so a window nobody touched used to act on a SIGTERM only at its next event, or never. On Linux
+  the signal now also writes a byte to a socket the window listens to (`signal.set_wakeup_fd` and Tk's
+  `createfilehandler`), which wakes it at once. Tk on Windows cannot listen to a socket. There the window runs Python
+  every 0.25 s instead and logs `window: SIGTERM closes it, checked every 0.25 s` (Windows has no SIGHUP, and ends a
+  process without a signal handler for Task Manager's End task).
 - **Errors after the window is up** (`launcher/errors.py`). Python reports these only on stderr, which pythonw.exe
   does not have and which on Linux is the terminal or the session's error file. The launcher records them itself:
   - an exception in a window callback (`report_callback_exception`) or a background thread (`threading.excepthook`)
