@@ -18,6 +18,7 @@
 #include "nvn_api.h"
 #include "prof.h"
 #include "vk.h"
+#include "vk_mesh_fb.h"
 #include "vk_lowlat.h"
 #include "vk_sync_hw.h"
 #include "platform/platform.h"
@@ -1239,6 +1240,7 @@ static VkCommandBuffer pre_end(uint64_t fence) {
     VkCommandBuffer cb = pre_cb;
     if (!cb) return VK_NULL_HANDLE;
     vk_exec_mesh_flush(cb);   // the stages of the pass's emulated draws, by stage
+    vk_meshfb_pre_end(cb);    // the mesh fallback's batched draws (vk_mesh_fb.c): their barrier, and their parts start over
     ts_close(cb, pre_pair, fence, GTL_PRE);
     pre_pair = -1;
     vkEndCommandBuffer(cb);
@@ -1901,6 +1903,13 @@ void vk_sync_shutdown(void) {
             free(WP[w].slots);
             memset(&WP[w], 0, sizeof WP[w]);
         }
+        // the pre-pass command buffers' pool (vk_sync_pre: the mesh emulation's and the mesh fallback's batches); it
+        // stayed past the device's end, a leak each time the device was made again (the probes, a device made anew)
+        if (c && pre_pool) vkDestroyCommandPool(c->device, pre_pool, NULL);
+        pre_pool = VK_NULL_HANDLE;
+        free(pre_slots);
+        pre_slots = NULL;
+        npre = 0, pre_pair = -1, pre_cb = VK_NULL_HANDLE, nchain = 0;
         if (c && exec_tl) vkDestroySemaphore(c->device, exec_tl, NULL);
         exec_tl = VK_NULL_HANDLE;
         perf_gpu_stats = NULL;

@@ -25,6 +25,7 @@
 #include "vk.h"
 #include "vk_exec.h"
 #include "vk_mesh_fb.h"
+#include "mfb_batch.h"
 #include "platform/platform.h"
 
 #include "meshfb_probe_f_spv.h"
@@ -45,6 +46,7 @@
     } while (0)
 
 void vk_exec_probe_shader(const uint8_t *ctl, const GfxShader *s);   // vk_exec_draw.c
+void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts);        // vk_exec_draw.c: mfb_batch.h MfbCount
 void vk_exec_draw_shutdown(void);
 void vk_exec_xfer_shutdown(void);
 
@@ -364,7 +366,10 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     int w01, w23;
     CHECK(!differing(px[1][0], px[1][1], &w01) && !differing(px[1][2], px[1][3], &w23),
           "the fallback's direct and indirect pictures differ");
-    CHECK(!vk_meshfb_short(), "%llu of the draws above did not fit the fallback's buffers", (unsigned long long)vk_meshfb_short());
+    // the draws that did not fit: one by one (vk_meshfb_short) and batched short of their part (vk_meshfb_batch_short;
+    // vk_meshfb_short reads every record back first)
+#define SHORT() (vk_meshfb_short() + vk_meshfb_batch_short())
+    CHECK(!SHORT(), "%llu of the draws above did not fit the fallback's buffers", (unsigned long long)SHORT());
     // More workgroups than the mesh buffer has slots for: what fits is drawn, the rest is dropped and counted. The
     // cells past the grid are outside the picture, so it is the 24-cell picture again.
     uint32_t slots = (uint32_t)(vk_meshfb_mesh_words() / 540), over = slots + 1000;
@@ -378,10 +383,28 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     int wb, db = differing(bpx, px[1][0], &wb);
     CHECK(!db, "a draw of %u workgroups, %u more than the mesh buffer holds: %d texels differ from the 24-cell picture", over,
           over - slots, db);
-    CHECK(vk_meshfb_short() == 1, "a draw of %u workgroups with room for %u was counted as %llu draws that did not fit", over, slots,
-          (unsigned long long)vk_meshfb_short());
+    CHECK(SHORT() == 1, "a draw of %u workgroups with room for %u was counted as %llu draws that did not fit", over, slots,
+          (unsigned long long)SHORT());
     printf("probe-meshfb: a draw of %u workgroups with room for %u: the picture of the first 24 is whole, the draw was counted\n",
            over, slots);
+    // A GPU-written task count past what the task buffer holds: the clamp cuts the dispatch and keeps the count asked
+    // for in the record (meshfb_clamp.comp), so the draw is counted; until 2026-11-22 the scan read the count already
+    // cut and such a draw was never seen. The tasks past the 10 of the grid draw outside the picture.
+    uint64_t cap_task, cap_mesh;
+    vk_meshfb_caps(&cap_task, &cap_mesh);
+    uint32_t tover = (uint32_t)(cap_task / 4 + 1000);   // past the room of any payload size
+    const MeshDraw tbig = {tasked, tover, 1, {8, 5}, {1, 1, 1, 1}};
+    c->mesh_fallback = 1;
+    bad = draw_picture(b, &pool, &color, &tbig, 1, bpx);
+    c->mesh_fallback = was;
+    if (bad) return 1;
+    b->finish();
+    int wt, dt = differing(bpx, px[1][2], &wt);
+    CHECK(!dt, "a task draw of %u workgroups, past the task buffer: %d texels differ from the 40-cell picture", tover, dt);
+    CHECK(SHORT() == 2, "a task draw of %u workgroups, past the task buffer, was not counted (%llu draws that did not fit, "
+          "2 expected)", tover, (unsigned long long)SHORT());
+    printf("probe-meshfb: a task draw of %u workgroups, past the task buffer: the 40-cell picture is whole, the draw was "
+           "counted\n", tover);
     // As the game runs it: pipelines built in the background, and a program's modules made on the fallback's own
     // thread. New shader objects of the same programs are drawn until the picture is whole: the draws before that are
     // skipped, and none may leave a partial picture behind for good.
@@ -404,6 +427,39 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     CHECK(!left, "with background builds the picture still differs in %d texels after %d submissions", left, tries);
     printf("probe-meshfb: with background builds the picture was whole at submission %d (the earlier ones skipped their draws)\n",
            tries);
+    // With NX2SARIA_MESH_FALLBACK_BATCH=1 the pictures above were drawn through mfb_draw's batch and its way back (the
+    // pictures are the same as the mesh pipeline's and as one by one, checked above): the draws batched, those one by
+    // one for want of history (a task program's first draws), and the cuts at each pass and after a draw one by one.
+    if (rt_knob("MESH_FALLBACK_BATCH", "1")) {
+        // More draws of programs with history, so that task draws are batched too. A batched draw's stages use compute
+        // pipelines of their own, built in the background: the draws before they are ready are skipped, as above, and
+        // once the picture is whole it stays whole.
+        int whole = -1, k;
+        c->mesh_fallback = 1;
+        for (k = 0; k < 500 && (whole < 0 || k < whole + 20); k++) {
+            if (k && whole < 0) plat_sleep_ms(10);
+            if (draw_picture(b, &pool, &color, again, 2, bpx)) return 1;
+            int wk, dk = differing(bpx, px[1][5], &wk);
+            if (!dk && whole < 0) whole = k;
+            CHECK(whole < 0 || !dk, "batched draw %d of a task program and a mesh program, after the picture was whole at "
+                  "%d: %d texels differ", k, whole, dk);
+        }
+        c->mesh_fallback = was;
+        CHECK(whole >= 0, "with batching on the picture never became whole in %d submissions", k);
+        uint64_t why[MFB_REASONS], cuts[3];
+        vk_exec_mfb_batch_counts(why, cuts);
+        printf("probe-meshfb: batch: %llu draws batched, %llu one by one for want of history, %llu stage textures, %llu "
+               "no room, %llu no pre-pass; cuts: %llu at a pass, %llu for room, %llu for nothing\n",
+               (unsigned long long)why[MFB_BATCHED], (unsigned long long)why[MFB_ONE_HISTORY],
+               (unsigned long long)why[MFB_ONE_TEXTURES], (unsigned long long)why[MFB_ONE_ROOM],
+               (unsigned long long)why[MFB_ONE_PRE], (unsigned long long)cuts[0], (unsigned long long)cuts[1],
+               (unsigned long long)cuts[2]);
+        CHECK(why[MFB_BATCHED] > 0 && why[MFB_ONE_HISTORY] > 0 && cuts[0] > 0,
+              "with batching on, no draw was batched, none went one by one for want of history, or no pass was cut");
+        CHECK(why[MFB_BATCHED] >= 20, "with batching on only %llu draws were batched: the task program's draws, with "
+              "history now, were not", (unsigned long long)why[MFB_BATCHED]);
+        CHECK(!why[MFB_ONE_PRE], "%llu draws found no pre-pass command buffer", (unsigned long long)why[MFB_ONE_PRE]);
+    }
     b->texture_release(&color);
     b->pool_fini(&pool);
     return 0;
@@ -412,6 +468,9 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
 int probe_meshfb(void) {
     const char *dir = cfg_get("NX2SARIA_PROBE_MESHFB_DIR");
     if (dir && *dir) return modules_part(dir);
+    // No game is loaded: Link's own motion vectors (motion_owner.c, selective_motion) would read the player's actor in
+    // guest memory at every submission (vk_usnap_begin) and fault. The probe draws no game, so they are off.
+    cfg_setenv("NX2SARIA_SELECTIVE_MOTION", "0");
     vk_hdr_off();
     const GfxBackend *b = &gfx_vulkan_backend;
     uint64_t heap = 0;

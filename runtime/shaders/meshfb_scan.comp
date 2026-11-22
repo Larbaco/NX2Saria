@@ -11,7 +11,8 @@ layout(local_size_x = 1) in;
 layout(push_constant) uniform Params {
     uint rec;          // the record's first word in the record buffer
     uint task_words;   // words of a task workgroup's payload in the task buffer
-    uint fan;          // mesh workgroups a task workgroup starts at most
+    uint fan;          // mesh workgroups a task workgroup starts at most; bit 31: the clamp wrote word 13 (the task
+                       // workgroups asked for before it cut the dispatch, meshfb_clamp.comp), which stays
     uint slot_words;   // words of a mesh workgroup's output in the mesh buffer
     uint verts;        // vertices drawn per mesh workgroup
     uint max_groups;   // workgroups one dispatch may have (maxComputeWorkGroupCount)
@@ -28,7 +29,7 @@ void main() {
     uint asked = rec.w[pc.rec];
     uint tasks = min(min(asked, uint(task.w.length()) / pc.task_words), 1u << 24);
     uint room = min(min(uint(mesh.w.length()) / pc.slot_words, uint(list.e.length())), pc.max_groups);
-    uint fan = min(pc.fan, 255u);
+    uint fan = min(pc.fan & 0x7fffffffu, 255u);
     uint m = 0u, want = 0u;
     for (uint t = 0u; t < tasks; t++) {
         uint c = min(task.w[t * pc.task_words + 1u], fan);
@@ -43,5 +44,5 @@ void main() {
     rec.w[pc.rec + 10u] = 0u;
     rec.w[pc.rec + 11u] = 0u;
     rec.w[pc.rec + 12u] = want;
-    rec.w[pc.rec + 13u] = asked;
+    if ((pc.fan >> 31) == 0u) rec.w[pc.rec + 13u] = asked;
 }

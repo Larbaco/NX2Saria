@@ -27,6 +27,7 @@
 #include "vk_lowlat.h"
 #include "mesh_pipeline_check.h"
 #include "vk_mesh_path.h"
+#include "vk_mesh_fb.h"
 
 // The loader's vkGetDeviceProcAddr until Streamline is on the device (see vk.h).
 PFN_vkGetDeviceProcAddr vk_dpa = vkGetDeviceProcAddr;
@@ -828,6 +829,8 @@ static int create_device(void) {
         const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
         int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID, mf, me, &why);
         g_vk.mesh_fallback = path == MESH_PATH_FALLBACK;
+        g_vk.mesh_fallback_default = mesh_path_fallback_default(path, g_vk.has_mesh_shader, vk_caps.amd_sc,
+                                                                g_vk.props.vendorID, me);
         g_vk.mesh_emulation = path == MESH_PATH_EMULATION;
         g_mesh_path = path == MESH_PATH_EMULATION ? "emulated (mesh_emulation)"
                     : path == MESH_PATH_FALLBACK ? (g_vk.has_mesh_shader ? "through the mesh fallback on a device with mesh "
@@ -835,11 +838,15 @@ static int create_device(void) {
                                                                          : "through the mesh fallback (compute passes)")
                     : path == MESH_PATH_NATIVE ? "native (VK_EXT_mesh_shader)" : "skipped (no mesh shaders, mesh_fallback = 0)";
         if (path == MESH_PATH_EMULATION) rt_log("vk: mesh shaders: emulated with compute (mesh_emulation = 1); mesh_fallback is not used");
-        else if (path == MESH_PATH_FALLBACK)
+        else if (path == MESH_PATH_FALLBACK) {
             rt_log("vk: mesh fallback: task and mesh programs run as compute passes and are drawn from their buffers (%s)",
                    why);
+        }
         else if (path == MESH_PATH_NONE)
             rt_log("vk: mesh shaders: not supported and mesh_fallback = 0 (task/mesh draws are skipped)");
+        // says NX2SARIA_MESH_FALLBACK_BATCH's value and whether it is active here (vk_exec_draw.c); vk_ctx() is not
+        // ready yet, so the path and the device's default go as arguments
+        vk_exec_mfb_batch_start(g_vk.mesh_fallback, g_vk.mesh_fallback_default, g_mesh_path);
         mesh_pipeline_check_start(path == MESH_PATH_EMULATION);
     }
     if (g_vk.has_maximal_reconvergence && !c->mrc.shaderMaximalReconvergence) g_vk.has_maximal_reconvergence = 0;

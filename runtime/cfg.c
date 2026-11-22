@@ -49,7 +49,7 @@ static const char *const known[] = {
     "FG_GPU_TIME", "DLAA_TEST_DEFERRED",   // frame generation's GPU time (vk_fg_time.c); the deferred-shape test (vk_dlaa.c vk_dlaa_pass)
     "AA", "AA_LOG", "AB", "AMIIBO_DAILY_LIMIT", "AMIIBO_DIR", "AMIIBO_KEYS", "AMIIBO_POPUP", "AMIIBO_WRITEBACK", "ANISO", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_CATCHUP", "AUDIO_CHANNELS", "AUDIO_DEVICE", "AUDIO_GAME_PRIO", "AUDIO_OFF", "AUDIO_PREFILL_MS", "AUDIO_RAMP", "AUDIO_STATS",
     "AUDIO_STRICT",
-    "BARRIER_GAME", "MESH_AHEAD", "MESH_FALLBACK", "MESH_FALLBACK_MB", "MESH_FALLBACK_WORKERS", "MESH_FALLBACK_HOLD", "PROBE_MESHFB_DIR",
+    "BARRIER_GAME", "MESH_AHEAD", "MESH_FALLBACK", "MESH_FALLBACK_MB", "MESH_FALLBACK_WORKERS", "MESH_FALLBACK_HOLD", "MESH_FALLBACK_BATCH", "PROBE_MESHFB_DIR",
     "CAPTURE_AT", "CAPTURE_DIR", "CAPTURE_REPLAY", "CAPTURE_REPLAY_CAMERA",   // bug captures and their replays (bugcap.c)
     "BOOT_MAP", "BOOT_MAP_SLOT", "BOOT_MAP_AGE", "BOOT_MAP_TIME",   // the game started in an area from a save (boot_map.c)
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
@@ -211,7 +211,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"VK_NAN_PRESERVE", "performance"}, {"VK_NAN_BITS", "performance"},
     {"DRAW_CRUMBS", "diagnostics"}, {"TRACE", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"PASS_CRUMBS", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"}, {"STUTTER_MAP", "diagnostics"}, {"PAR_JOBS", "performance"}, {"PIPE_RELEASE", "performance"},
     {"FLIGHT_FLASH", "diagnostics"}, {"FLIGHT_FLASH_DIFF", "diagnostics"}, {"FLIGHT_FLASH_CELLS", "diagnostics"},
-    {"WB_FENCE_LIMIT", "diagnostics"}, {"WB_MERGE", "diagnostics"}, {"WB_EXACT", "diagnostics"}, {"MEM_CENSUS", "diagnostics"}, {"WB_NO_REUP", "diagnostics"}, {"WB_PROBE", "diagnostics"}, {"WB_SPLIT", "performance"}, {"SHADOW_BULK_WRITE", "performance"}, {"WB_LAZY", "performance"}, {"HEAP_LAZY", "performance"}, {"BARRIER_GAME", "performance"}, {"MESH_AHEAD", "performance"}, {"MESH_FALLBACK", "performance"}, {"MESH_FALLBACK_MB", "performance"}, {"MESH_FALLBACK_WORKERS", "performance"}, {"MESH_FALLBACK_HOLD", "performance"}, {"WB_LAZY_TOUCH", "diagnostics"}, {"WB_LAZY_UNLOCKED", "diagnostics"}, {"WB_LAZY_CHUNK", "performance"}, {"FLUSH_UPLOAD", "diagnostics"}, {"GPA_TWIN_MAX_KB", "diagnostics"}, {"MIRROR_CAPTURE_KB", "diagnostics"}, {"WB_SKIP_MB", "diagnostics"},
+    {"WB_FENCE_LIMIT", "diagnostics"}, {"WB_MERGE", "diagnostics"}, {"WB_EXACT", "diagnostics"}, {"MEM_CENSUS", "diagnostics"}, {"WB_NO_REUP", "diagnostics"}, {"WB_PROBE", "diagnostics"}, {"WB_SPLIT", "performance"}, {"SHADOW_BULK_WRITE", "performance"}, {"WB_LAZY", "performance"}, {"HEAP_LAZY", "performance"}, {"BARRIER_GAME", "performance"}, {"MESH_AHEAD", "performance"}, {"MESH_FALLBACK", "performance"}, {"MESH_FALLBACK_MB", "performance"}, {"MESH_FALLBACK_WORKERS", "performance"}, {"MESH_FALLBACK_HOLD", "performance"}, {"MESH_FALLBACK_BATCH", "performance"}, {"WB_LAZY_TOUCH", "diagnostics"}, {"WB_LAZY_UNLOCKED", "diagnostics"}, {"WB_LAZY_CHUNK", "performance"}, {"FLUSH_UPLOAD", "diagnostics"}, {"GPA_TWIN_MAX_KB", "diagnostics"}, {"MIRROR_CAPTURE_KB", "diagnostics"}, {"WB_SKIP_MB", "diagnostics"},
     {"SVC_SLOW_MS", "diagnostics"}, {"REPLAY_TIME", "diagnostics"}, {"REPLAY_PHASES", "diagnostics"}, {"LOCK_TIME", "diagnostics"},
     {"SHADOW_TABLE_STORES", "diagnostics"}, {"SHADOW_CHECK", "diagnostics"}, {"PREPARE_PIPELINES", "performance"},
     {"WB_MERGE_MAX", "diagnostics"}, {"MV_SURVEY", "diagnostics"}, {"TEXUP_LOG_MS", "diagnostics"},
@@ -453,6 +453,8 @@ static const CfgMeta metas[] = {
     {"MESH_FALLBACK_WORKERS", "auto", "auto|1|2|3|4", RESTART},   // vk_exec_draw.c mfb_worker_count
     // vk_exec_draw.c mfb_hold_role: a list's depth-only draw waits for its colour draw's pipeline
     {"MESH_FALLBACK_HOLD", "1", "0|1", RESTART},
+    // vk_exec_draw.c mfb_batch_on: a pass's fallback draws run their stages before the pass (mfb_batch.h)
+    {"MESH_FALLBACK_BATCH", "1", "1|0|auto", RESTART},
     {"PIPE_AHEAD", "1", "0|1", RESTART},        // vk_exec.c vk_exec_ahead, vk_pipeline.c vk_pipeline_hint
     {"LINE_WIDTH", "1", "0|1", RESTART},        // vk_pipeline.c key_lines
     {"POOL_SHOWN_FIRST", "1", "0|1", RESTART},  // vk_texture.c shown_take
