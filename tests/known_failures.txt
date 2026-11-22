@@ -1,8 +1,6 @@
 # Tests that fail on main, for tests/run.py: "name: reason", or "name [linux]: reason" for a failure on that operating
 # system only. A known failure still runs and is counted apart; it does not fail the run. The line goes in the change
 # that makes the test pass (the runner reports a known failure that passed).
-#
-# Stand-ins that fell behind the runtime (seen on Linux; not run on Windows for this list).
-mouse_direct_check: its stand-in cfg_get answers only NX2NAVI_MOUSE_MODE; runtime/mouse_direct.c direct_mode asks for NX2SARIA_MOUSE_MODE and strcmp gets NULL (SIGSEGV)
 
-# Linux only.
+# Left to G34, the move from the NX2NAVI_ names to NX2SARIA_: the test reads and checks the older name.
+mouse_direct_check: G34: its stand-in cfg_get answers only NX2NAVI_MOUSE_MODE; runtime/mouse_direct.c direct_mode asks for NX2SARIA_MOUSE_MODE and strcmp gets NULL (SIGSEGV)
