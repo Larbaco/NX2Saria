@@ -4,7 +4,6 @@
 #
 # Stand-ins that fell behind the runtime (seen on Linux; not run on Windows for this list).
 mouse_direct_check: its stand-in cfg_get answers only NX2NAVI_MOUSE_MODE; runtime/mouse_direct.c direct_mode asks for NX2SARIA_MOUSE_MODE and strcmp gets NULL (SIGSEGV)
-ocarina_timing_check: check_table wants the set orecord last in recomp/patches-v111.txt; camera_clearance comes after it now
 
 # Linux only.
 gen_width_check [linux]: runtime/simd.h:251 narrows a long to an int (-Wshorten-64-to-32); long is 32 bits on Windows

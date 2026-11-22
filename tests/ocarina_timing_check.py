@@ -85,8 +85,9 @@ def model(step, fraction):
 def check_table():
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', BASE, SIZE)])
     names = [s[0] for s in table.sets]
-    assert table.sets[-1] == ('orecord', 'NX2NAVI_OCARINA_TIMING', 1), table.sets[-1]
+    assert 'orecord' in names, names   # by its name: sets added after it go after it in the table
     key = names.index('orecord')
+    assert table.sets[key] == ('orecord', 'NX2NAVI_OCARINA_TIMING', 1), table.sets[key]
     mine = sorted(off for off, alts in table.sites['main'].items() if any(k == key for k, _, _ in alts))
     assert mine == list(SITES), [hex(s) for s in mine]
     resolved = table.for_module('main', BASE)
