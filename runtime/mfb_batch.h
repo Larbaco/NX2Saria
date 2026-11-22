@@ -40,6 +40,9 @@
 #define MFB_MIN_SLOTS 64u      // the floor's own floor, for programs whose workgroups are large
 #define MFB_MIN_TASKS 16u
 #define MFB_MIN_SEEN 8u        // records read back before a part comes from the history
+#define MFB_MIN_CALM 32u       // and records in a row since its last jump (mfb_hist_note): the history has settled
+#define MFB_READMIT 256u       // records in a row without a jump that take an excluded program back into batches
+#define MFB_MAX_SHORTS 3u      // the batched draws short of their part after which a program stays one by one
 #define MFB_HEADROOM 4u
 #define MFB_FLOOR_DIV 64u      // a part holds at least 1/64 of a buffer: a pass's 55 draws at most fit (Kokiri, Field)
 
@@ -57,10 +60,19 @@ enum {
 };
 
 // A program's history (MfbCs.hist): updated where vk_mesh_fb.c reads a record back (record_check)
+// The parts of a program whose draws GPU-written counts size come from its history. In the bench's sessions every batched
+// draw short of its part came in the first seconds (the loading after the start, before Link arrived), from a history
+// of a few records still growing: parts of 141 to 483 workgroups for draws of 498 to 1581 (2026-11-22). A history is
+// taken only once it has settled: MFB_MIN_CALM records in a row without a jump (a record more than twice the most so
+// far, or the first). A batched draw short of its part excludes the program (its draws one by one, which draw whole);
+// MFB_READMIT calm records later, with the history now holding what it asked for, it is batched again, and after
+// MFB_MAX_SHORTS such draws it stays one by one for the session.
 typedef struct {
     uint32_t slots, tasks;   // the most mesh and task workgroups one of its draws asked for
     uint32_t seen;           // its records read back
-    uint32_t excluded;       // a batched draw of it asked for more than its part held
+    uint32_t excluded;       // a batched draw of it asked for more than its part held (until it is taken back)
+    uint32_t calm;           // records in a row since the last jump
+    uint32_t shorts;         // its batched draws short of their part, this session
 } MfbHist;
 
 // The workgroups of 1/MFB_FLOOR_DIV of a buffer of cap bytes, each of unit bytes; at least least.
@@ -89,11 +101,12 @@ static inline int mfb_batch_need(int on, int writes, int direct, uint32_t count,
             *slots = count;
             return MFB_BATCHED;
         }
-        if (h->seen < MFB_MIN_SEEN) return MFB_ONE_HISTORY;
+        if (h->seen < MFB_MIN_SEEN || h->calm < MFB_MIN_CALM) return MFB_ONE_HISTORY;
         *slots = mfb_twice(h->slots, floor_slots);
         return MFB_BATCHED;
     }
-    if (h->seen < MFB_MIN_SEEN) return MFB_ONE_HISTORY;   // the mesh workgroups the tasks start are known only on the GPU
+    // the mesh workgroups the tasks start are known only on the GPU
+    if (h->seen < MFB_MIN_SEEN || h->calm < MFB_MIN_CALM) return MFB_ONE_HISTORY;
     *tasks = direct ? count : mfb_twice(h->tasks, floor_tasks);
     *slots = mfb_twice(h->slots, floor_slots);
     return MFB_BATCHED;
@@ -140,8 +153,11 @@ static inline int mfb_part_take(MfbSpan *used, const MfbSpan *cap, uint64_t alig
     return 1;
 }
 
+enum { MFB_NOTE_SHORT = 1, MFB_NOTE_READMIT = 2 };   // mfb_hist_note
+
 // What a record read back says (record_check): the program's history grows, and a batched draw that asked for more
-// than its part held excludes the program from batches. Returns 1 when that draw was short.
+// than its part held excludes the program from batches. Returns MFB_NOTE_SHORT when that draw was short,
+// MFB_NOTE_READMIT when the program is taken back into batches, else 0.
 // A draw one by one that asked for more than the whole buffers hold (a garbage count the GPU wrote, meshfb_clamp.comp)
 // raises the history only to what they held: a part from it fits them still (else every later draw of the program would
 // be one by one, or cut for nothing).
@@ -149,12 +165,20 @@ static inline int mfb_hist_note(MfbHist *h, uint32_t want_slots, uint32_t want_t
                                 uint32_t cap_tasks, int batched) {
     uint32_t hs = batched || want_slots <= cap_slots ? want_slots : cap_slots;
     uint32_t ht = batched || want_tasks <= cap_tasks ? want_tasks : cap_tasks;
+    int jump = !h->seen || (uint64_t)hs > 2ull * h->slots || (uint64_t)ht > 2ull * h->tasks;
     if (hs > h->slots) h->slots = hs;
     if (ht > h->tasks) h->tasks = ht;
     h->seen++;
-    int shortfall = want_slots > cap_slots || want_tasks > cap_tasks;
-    if (batched && shortfall) h->excluded = 1;
-    return batched && shortfall;
+    h->calm = jump ? 0 : h->calm + 1;
+    if (batched && (want_slots > cap_slots || want_tasks > cap_tasks)) {
+        h->excluded = 1, h->shorts++, h->calm = 0;
+        return MFB_NOTE_SHORT;
+    }
+    if (h->excluded && h->shorts < MFB_MAX_SHORTS && h->calm >= MFB_READMIT) {
+        h->excluded = 0;
+        return MFB_NOTE_READMIT;
+    }
+    return 0;
 }
 
 // ---- mfb_draw's steps after mfb_batch_need, with the cut, the pre-pass command buffer and the part as calls

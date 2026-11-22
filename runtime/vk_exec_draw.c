@@ -6229,15 +6229,15 @@ static void mfb_batch_line(void) {
     for (int i = 0; i < MFB_REASONS; i++) all += w[i];
     all += MFBB.n.failed;
     rt_log("vk: mesh fallback batch: %llu draws, %llu batched (%.0f%%); cuts: %llu at a pass, %llu for room, %llu for "
-           "nothing; one by one: %llu off, %llu stage writes, %llu stage textures, %llu excluded, %llu no history, "
-           "%llu no room, %llu no pre-pass; %llu batched whose stages failed; %llu batched draws short of their part; the parts took at most %.1f of the mesh "
+           "nothing; one by one: %llu off, %llu stage writes, %llu stage textures, %llu excluded, %llu no settled history, "
+           "%llu no room, %llu no pre-pass; %llu batched whose stages failed; %llu batched draws short of their part (%llu programs taken back since); the parts took at most %.1f of the mesh "
            "buffer's %.0f MB (session totals)",
            (unsigned long long)all, (unsigned long long)w[MFB_BATCHED], all ? 100.0 * (double)w[MFB_BATCHED] / (double)all : 0.0,
            (unsigned long long)MFBB.n.cuts_pass, (unsigned long long)MFBB.n.cuts_room, (unsigned long long)MFBB.n.cuts_lost,
            (unsigned long long)w[MFB_ONE_OFF], (unsigned long long)w[MFB_ONE_WRITES], (unsigned long long)w[MFB_ONE_TEXTURES],
            (unsigned long long)w[MFB_ONE_EXCLUDED], (unsigned long long)w[MFB_ONE_HISTORY],
            (unsigned long long)w[MFB_ONE_ROOM], (unsigned long long)w[MFB_ONE_PRE], (unsigned long long)MFBB.n.failed,
-           (unsigned long long)vk_meshfb_batch_short(),
+           (unsigned long long)vk_meshfb_batch_short(), (unsigned long long)vk_meshfb_batch_readmits(),
            (double)peak / 1048576.0, (double)cap / 1048576.0);
 }
 

@@ -33,7 +33,8 @@ void vk_exec_mfb_batch_exit_log(void);   // gfx_present.c rt_exit_steps: the bat
 int vk_meshfb_closed(void);               // a draw went one by one since the parts began: the next batched cuts
 void vk_meshfb_full_barrier(VkCommandBuffer cb);   // a full memory barrier in a command buffer that is not the part's
 void vk_meshfb_pre_end(VkCommandBuffer cb);        // vk_sync.c pre_end: the barrier the parts' draws need, and the reset
-uint64_t vk_meshfb_batch_short(void);     // batched draws that asked for more than their part held, so far
+uint64_t vk_meshfb_batch_short(void);
+uint64_t vk_meshfb_batch_readmits(void);  // programs taken back into batches after a draw short of its part     // batched draws that asked for more than their part held, so far
 uint64_t vk_meshfb_list_bytes(void);       // the list buffer's bytes
 void vk_meshfb_caps(uint64_t *task, uint64_t *mesh);   // the task and mesh buffers' bytes
 uint64_t vk_meshfb_batch_peak(uint64_t *cap);   // the most of the mesh buffer (*cap bytes) one pre-pass's parts took

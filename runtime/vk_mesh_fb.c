@@ -41,6 +41,7 @@ static struct {
     MfbPart part;
     MfbSpan used;                      // the parts taken for the pre-pass command buffer being recorded
     uint64_t batch_short;              // batched draws that asked for more than their part held
+    uint64_t readmits;                 // programs taken back into batches after such a draw (mfb_hist_note)
     int closed;                        // a draw went one by one since the parts began: the next batched cuts (mfb_batch.h)
     uint64_t peak_mesh;                // the most of the mesh buffer the parts of one pre-pass command buffer took
     uint32_t next;
@@ -174,6 +175,7 @@ void vk_meshfb_pre_end(VkCommandBuffer cb) {
 }
 int vk_meshfb_part_first(void) { return !mfb_parts_taken(&M.used); }
 uint64_t vk_meshfb_batch_short(void) { return M.batch_short; }
+uint64_t vk_meshfb_batch_readmits(void) { return M.readmits; }
 void vk_meshfb_caps(uint64_t *task, uint64_t *mesh) { *task = M.task_bytes, *mesh = M.mesh_bytes; }
 uint64_t vk_meshfb_list_bytes(void) { return M.list_bytes; }
 uint64_t vk_meshfb_batch_peak(uint64_t *cap) { return *cap = M.mesh_bytes, M.peak_mesh; }
@@ -192,12 +194,16 @@ static void record_check(uint32_t i) {
     vmaInvalidateAllocation(vk_ctx()->vma, M.stat_a, (VkDeviceSize)i * 8, 8);   // HOST_ACCESS_RANDOM: may not be coherent
     uint32_t want = M.stat_map[2 * i], tasks = M.stat_map[2 * i + 1];
     int batched = M.batched[i];
-    if (M.owner[i] && mfb_hist_note(M.owner[i], want, tasks, M.cap_slots[i], M.cap_tasks[i], M.batched[i])) {
+    int note = M.owner[i] ? mfb_hist_note(M.owner[i], want, tasks, M.cap_slots[i], M.cap_tasks[i], M.batched[i]) : 0;
+    if (note == MFB_NOTE_SHORT) {
         uint64_t n = ++M.batch_short;
         if (n <= 4 || !(n & (n - 1)))
             rt_log("vk: mesh fallback batch: a batched draw asked for %u mesh and %u task workgroups where its part held %u "
-                   "and %u: what did not fit was not drawn, and its program draws one by one from now on (%llu such "
-                   "draws)", want, tasks, M.cap_slots[i], M.cap_tasks[i], (unsigned long long)n);
+                   "and %u: what did not fit was not drawn, and its program draws one by one until its history settles "
+                   "again (%llu such draws; mfb_batch.h MFB_READMIT, MFB_MAX_SHORTS)", want, tasks, M.cap_slots[i],
+                   M.cap_tasks[i], (unsigned long long)n);
+    } else if (note == MFB_NOTE_READMIT) {
+        M.readmits++;
     }
     M.owner[i] = NULL;
     if (batched || (want <= M.cap_slots[i] && tasks <= M.cap_tasks[i])) return;   // batched: its part, logged above

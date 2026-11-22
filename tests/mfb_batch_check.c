@@ -60,7 +60,7 @@ static int sim_draw(Sim *s, int writes, int direct, uint32_t count, int has_task
 
 int main(void) {
     uint32_t slots, tasks;
-    MfbHist none = {0}, seen = {.slots = 40, .tasks = 3, .seen = MFB_MIN_SEEN}, big = {.slots = 900, .tasks = 70, .seen = 20},
+    MfbHist none = {0}, seen = {.slots = 40, .tasks = 3, .seen = MFB_MIN_SEEN, .calm = MFB_MIN_CALM}, big = {.slots = 900, .tasks = 70, .seen = 40, .calm = MFB_MIN_CALM},
             out = {.slots = 10, .tasks = 1, .seen = 9, .excluded = 1};
     // ---- the reasons, in their order
     CHECK(mfb_batch_need(0, 0, 1, 8, 0, &seen, FS, FT, &slots, &tasks) == MFB_ONE_OFF, "off is not one by one");
@@ -78,7 +78,7 @@ int main(void) {
           "a direct draw without a task stage: %u slots, %u tasks (300, 0)", slots, tasks);
     CHECK(mfb_batch_need(1, 0, 0, 0, 0, &seen, FS, FT, &slots, &tasks) == MFB_BATCHED && slots == 160 && !tasks,
           "a GPU count with history 40: %u slots (four times, 160)", slots);
-    CHECK(mfb_batch_need(1, 0, 0, 0, 0, &(MfbHist){.slots = 3, .seen = 9}, FS, FT, &slots, &tasks) == MFB_BATCHED &&
+    CHECK(mfb_batch_need(1, 0, 0, 0, 0, &(MfbHist){.slots = 3, .seen = 40, .calm = MFB_MIN_CALM}, FS, FT, &slots, &tasks) == MFB_BATCHED &&
               slots == FS, "a small history: %u slots (the floor, %u)", slots, FS);
     CHECK(mfb_batch_need(1, 0, 1, 12, 1, &seen, FS, FT, &slots, &tasks) == MFB_BATCHED && tasks == 12 && slots == 160,
           "a direct draw with a task stage: %u tasks (the count, 12), %u slots (160)", tasks, slots);
@@ -92,7 +92,7 @@ int main(void) {
     CHECK(mfb_floor(1 << 20, 1 << 20, MFB_MIN_SLOTS) == MFB_MIN_SLOTS, "a floor under the least");
     CHECK(mfb_floor(1 << 20, 0, 7) == 7, "a floor of 0-byte workgroups");
     // the case seen in Kokiri Forest: a program that had asked for 32 at most asked for 454 (mfb_batch.h)
-    CHECK(mfb_batch_need(1, 0, 0, 0, 0, &(MfbHist){.slots = 32, .seen = 9},
+    CHECK(mfb_batch_need(1, 0, 0, 0, 0, &(MfbHist){.slots = 32, .seen = 40, .calm = MFB_MIN_CALM},
                          mfb_floor(112ull << 20, 540 * 4, MFB_MIN_SLOTS), FT, &slots, &tasks) == MFB_BATCHED &&
               slots >= 454, "a history of 32 at 2160 bytes a workgroup: %u slots, short of 454", slots);
     CHECK(mfb_twice(0xf0000000u, 1) == 0x7fffffffu, "a huge history does not saturate");
@@ -138,11 +138,35 @@ int main(void) {
     CHECK(hg.tasks == 64, "a garbage task count one by one raised the task history to %u (64)", hg.tasks);
     CHECK(mfb_hist_note(&h, 120, 0, 100, 100, 1) && h.excluded, "a batched draw short of its part does not exclude");
     CHECK(mfb_batch_need(1, 0, 1, 8, 0, &h, FS, FT, &slots, &tasks) == MFB_ONE_EXCLUDED, "excluded, then batched again");
+    // a history is taken once it has settled: MFB_MIN_CALM records in a row without a jump (more than twice the most)
+    MfbHist hc = {0};
+    for (unsigned k = 0; k < MFB_MIN_SEEN + MFB_MIN_CALM; k++) mfb_hist_note(&hc, 30 + k % 3, 0, 1000, 0, 0);
+    CHECK(mfb_batch_need(1, 0, 0, 0, 0, &hc, FS, FT, &slots, &tasks) == MFB_BATCHED, "a settled history: not batched");
+    mfb_hist_note(&hc, 400, 0, 1000, 0, 0);
+    CHECK(hc.calm == 0 && mfb_batch_need(1, 0, 0, 0, 0, &hc, FS, FT, &slots, &tasks) == MFB_ONE_HISTORY,
+          "a jump (31 -> 400) did not unsettle the history (calm %u)", hc.calm);
+    for (unsigned k = 0; k < MFB_MIN_CALM; k++) mfb_hist_note(&hc, 390, 0, 1000, 0, 0);
+    CHECK(mfb_batch_need(1, 0, 0, 0, 0, &hc, FS, FT, &slots, &tasks) == MFB_BATCHED && slots >= 1600,
+          "settled again after the jump: %u slots (4 x 400)", slots);
+    // a batched draw short of its part: excluded, then taken back after MFB_READMIT calm records, until MFB_MAX_SHORTS
+    MfbHist hr = {.slots = 40, .seen = 50, .calm = MFB_MIN_CALM};
+    int got = mfb_hist_note(&hr, 500, 0, 160, 0, 1);
+    CHECK(got == MFB_NOTE_SHORT && hr.excluded && hr.slots == 500 && hr.shorts == 1, "a short batched draw: %d", got);
+    int back = 0;
+    for (unsigned k = 0; k < MFB_READMIT + 1 && !back; k++) back = mfb_hist_note(&hr, 450, 0, 5000, 0, 0) == MFB_NOTE_READMIT;
+    CHECK(back && !hr.excluded && mfb_batch_need(1, 0, 0, 0, 0, &hr, FS, FT, &slots, &tasks) == MFB_BATCHED && slots >= 2000,
+          "not taken back after %u calm records, or its part (%u) does not hold what it asked for", MFB_READMIT, slots);
+    for (unsigned s = 1; s < MFB_MAX_SHORTS; s++) {
+        mfb_hist_note(&hr, 100000, 0, 2000, 0, 1);
+        for (unsigned k = 0; k < MFB_READMIT + 1; k++) mfb_hist_note(&hr, 100, 0, 200000, 0, 0);
+    }
+    CHECK(hr.shorts == MFB_MAX_SHORTS && hr.excluded, "after %u short draws the program is batched again (%u shorts)",
+          MFB_MAX_SHORTS, hr.shorts);
     MfbHist ht = {0};
     CHECK(mfb_hist_note(&ht, 10, 40, 100, 32, 1) && ht.excluded, "batched short of its task part does not exclude");
     // ---- a pass as mfb_draw sees it: the way back to one by one, its reasons and the cuts
     Sim s = {.cap = {1 << 20, 1 << 20, 1 << 24}, .align = 64};
-    MfbHist grass = {.slots = 200, .tasks = 8, .seen = 30}, fresh = {0};
+    MfbHist grass = {.slots = 200, .tasks = 8, .seen = 40, .calm = MFB_MIN_CALM}, fresh = {0};
     for (int i = 0; i < 5; i++)
         CHECK(sim_draw(&s, 0, 0, 0, 1, &grass, 120, 16, &p) == MFB_BATCHED, "draw %d of a run is not batched", i);
     CHECK(s.cuts == 0, "batched draws of one pass cut %d times", s.cuts);
@@ -194,7 +218,7 @@ int main(void) {
     CHECK(!c0.why[MFB_BATCHED] && c0.cuts_lost == 1 && !c0.cuts_pass && c0.failed == 1,
           "a failed batched draw counted as batched, or not as failed");
     // the task overflow (meshfb_clamp.comp keeps the count asked for): a batched draw short of its task part excludes
-    MfbHist tk = {.slots = 10, .tasks = 4, .seen = 9};
+    MfbHist tk = {.slots = 10, .tasks = 4, .seen = 9, .calm = MFB_MIN_CALM};
     CHECK(mfb_hist_note(&tk, 10, 5000, 100, 32, 1) && tk.excluded && tk.tasks == 5000,
           "a task count past the part, kept by the clamp: not excluded");
     if (fails) return 1;
