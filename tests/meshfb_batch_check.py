@@ -1,3 +1,5 @@
+# needs: exe, gpu
+# args: {exe}
 """Run the game executable's --probe-meshfb twice: with the mesh fallback's batch off and on
 (NX2SARIA_MESH_FALLBACK_BATCH, runtime/vk_exec_draw.c mfb_draw, runtime/mfb_batch.h).
 
