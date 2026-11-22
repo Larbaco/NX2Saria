@@ -35,6 +35,20 @@ The repository's additions are all rights reserved (`LICENSE-ADDITIONS`). It nev
 - Graphics bugs: [docs/maxwell.md](docs/maxwell.md) lists the Maxwell behaviour the Vulkan path must match, what goes wrong when it does not, and what our runtime does.
 - Comments say what the code does and why, in words that stand on their own. Cite our code by file plus function (a line number may follow as a hint). Comments and docs do not name other projects or say where code came from: the license header of copied code and its `THIRD_PARTY_NOTICES.md` row carry that.
 
+## Every change leaves a trace in the log
+
+A change to the game (a fix, a feature, a patch set, code brought in from elsewhere) shows in `logs/nx2saria.log`, so a
+player's normal session tells whether it is on and working:
+
+- One line at start that says whether it is on and with what value. A patch set says it by its name in the `patches:`
+  line.
+- When it acts, a line that says what it did, with numbers that can be checked: counts, times, before and after. A
+  line that can repeat is limited per session or aggregated.
+- A test in the style of `tests/` when one can be written.
+
+How to write a line, the limits and the prefix each part uses: [docs/logging.md](docs/logging.md). A new prefix gets
+its row there; `python tests/log_prefixes_check.py` fails without it.
+
 ## Writing
 
 Code, comments, docs and commit messages are in English. Commit messages are plain sentences without type prefixes.

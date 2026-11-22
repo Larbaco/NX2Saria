@@ -82,7 +82,6 @@ after updating can recompile the runtime to apply its new title and icon; saves 
 - The repository's earlier address, `Larbaco/NX2navi`, in text written before the rename. GitHub redirects it, so a
   launcher whose `feed_repo` names it still finds the releases.
 - `docs/releases/`: the release notes of the NX2navi releases, kept as published.
-- `AUDIT.md`: the audit ledger quotes identifiers as the commits it cites had them.
 - `tools/vendor/`: vendored code, kept byte-identical to its source.
 
 ## Build and release coordination
