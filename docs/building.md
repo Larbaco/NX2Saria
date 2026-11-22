@@ -170,6 +170,25 @@ of them.
    version; they build at their first draw instead, another driver version builds them again, and so does deleting the
    file.
 
+   NVIDIA's driver compiles into a disk cache of its own too: by default one folder every program shares
+   (`%LOCALAPPDATA%\NVIDIA\GLCache`), with a limit that belongs to the cache. One laptop's updates found it cold three
+   times in an afternoon, with 17 to 33% of the prepared list still in it and 1.62 GB in the folder before the last of
+   them, and nothing said who cut it. So the game keeps NVIDIA's cache in `nvidia-cache` beside the exe, as it does on Linux (below):
+   `__GL_SHADER_DISK_CACHE_PATH` names that folder, `__GL_SHADER_DISK_CACHE_SIZE` is 8 GiB and
+   `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP` is 1, each only if the environment does not already set it, and only when
+   NVIDIA's driver files are installed (`System32\nvapi64.dll`). `runtime/vk_device.c` `nvidia_cache_beside_exe` sets
+   them in the process before any driver loads, so the launcher, Steam and a click on the exe all get them, and so do
+   `--prepare-shaders` and `--warm-shaders`; `nvidia_cache_dir = 0` in `nx2saria.ini` leaves the driver its own folder.
+   A game that restarts itself passes its environment on, so it names the variables it set in
+   `__NX2SARIA_GL_CACHE_SET`: the new process takes those for its own, not for the player's, and takes them out again
+   when the setting is 0 by then. Whether the Windows
+   driver reads these variables is not documented, so the logs say what happened: the game's start line names what it
+   set and whose each value is (`vk: NVIDIA's shader disk cache: __GL_SHADER_DISK_CACHE_PATH=... (the game's, beside
+   the exe), ...`), the library warm's first line says what the folder holds (`library warm: NVIDIA's shader disk cache
+   folder ... holds 1.37 GB in 4 files`), and the shaders step's `graphics driver caches before/after the step` lines
+   count `nvidia-cache` and the driver's own folder: the folder beside the game fills if the driver reads the
+   variables, the driver's own folder if it does not.
+
    What this step leaves for play, and the shared pipeline list. The step translates every shader's default variant
    and the shader list's variants and builds each one's stage library or compute pipeline. A whole graphics pipeline
    is built ahead at the start of a game folder that has drawn it before (`pipeline-keys.bin`) or whose release
@@ -372,7 +391,8 @@ folder, `~/.cache/nvidia`, is shared with every program. `--prepare-shaders` of 
 driver is loaded (`/proc/driver/nvidia/version`). The driver does not make that folder and caches nothing in a folder it
 cannot write, so the game makes it, and when it cannot make or write it sets neither variable. A game run sets them in
 `main` before any of its threads starts, since a thread can load the Vulkan driver before the instance is made. The
-folder can be deleted; `ocarina --warm-shaders` fills it again.
+folder can be deleted; `ocarina --warm-shaders` fills it again. Windows does the same with NVIDIA's user-mode driver
+files and also turns the driver's cleanup off (the shaders step in Build); `nvidia_cache_dir = 0` turns it off on both.
 
 Memory: on Windows the GPU imports guest memory and `GetWriteWatch` tracks the CPU's writes to it. On Linux,
 re-protecting imported memory invalidates the driver's userptr buffer on every submit (about 1.3 ms per 16 MiB on
@@ -681,6 +701,18 @@ files.
 A change to what the library warm logs when the driver's cache of stage libraries is cold (`runtime/vk_warm_hint.h`,
 `runtime/vk_pipeline.c` `lw_main`) passes `python tests\warm_hint_check.py`, which builds the header alone and checks
 the added text by GPU vendor and by why the cache was cold. No game files.
+
+A change to where NVIDIA's driver keeps its shader cache (`runtime/nvidia_cache.h`, `runtime/vk_device.c`
+`nvidia_cache_beside_exe`, `runtime/vk_pipeline.c` `lw_say_cache_folder`, `platform/win32.c` `plat_setenv`) passes
+`python tests\nvidia_cache_check.py`, which builds the header alone: the plan for every combination of its seven inputs
+(Linux and Windows, the driver there or not, the setting, what the environment already holds, the folder usable or
+not) and a table of written-out cases, among them that a value the player set is never replaced, that only Windows turns
+the cleanup off and that Linux sets what it always has; the mark a restart inherits and what a start takes out of the
+environment; the exact text of the start's lines, the Linux one built here with the format it always had; and the count
+of a folder against a made-up tree (a link counted as a file and not followed, a folder the system refuses, a path past
+the buffer, the entry and depth limits). It also finds in the sources the wiring the Windows-only code cannot show by
+running: the call from `vk_driver_cache_env`, the `System32\nvapi64.dll` test, the mark, the setting's rows in `cfg.c`
+and the folder line before the library warm's sample. No driver, no GPU, no game files.
 
 A change to which GPU the settings choose (`runtime/gpu_choice.h`, `runtime/vk_device.c` `pick_device`,
 `runtime/hw_detect.c` `probe_gpu`, `runtime/ui/menu.cpp` `row_gpu`) passes `python tests\gpu_choice_check.py`, which builds

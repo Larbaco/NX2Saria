@@ -2828,10 +2828,10 @@ def left_text(n):
 # that they are gone, and the size of these folders says whether the files were gone from the disk or were there and
 # did not match. On Windows, under %LOCALAPPDATA%: each folder of NVIDIA's, AMD's and Intel's with "cache" in its name
 # (NVIDIA's GLCache and DXCache, AMD's VkCache, DxCache and GLCache, Intel's ShaderCache) and Windows' own D3DSCache.
-# On Linux, the nvidia-cache and mesa-cache folders the game makes beside its executable (runtime/vk_device.c
-# nvidia_cache_beside_exe and mesa_cache_beside_exe). On both, the folder __GL_SHADER_DISK_CACHE_PATH names, which is
-# the NVIDIA driver's own when it honours the variable (the game sets it on Linux; on Windows a player can set it to
-# see whether the driver takes it).
+# On both systems, the nvidia-cache folder the game makes beside its executable for NVIDIA's driver (runtime/vk_device.c
+# nvidia_cache_beside_exe), first, and on Linux the mesa-cache folder (mesa_cache_beside_exe). On Windows the folder
+# beside the game fills only if the driver honours the variable the game sets, and the driver's own folder if it does
+# not: the two sizes say which. On both, the folder __GL_SHADER_DISK_CACHE_PATH names when a player set it.
 DRIVER_CACHE_VENDORS = ('NVIDIA', 'AMD', 'Intel')
 DRIVER_CACHE_SCAN_S = 20   # counting all the folders of one line stops after this long, and the line says so
 DRIVER_CACHE_ENV = '__GL_SHADER_DISK_CACHE_PATH'
@@ -2839,9 +2839,12 @@ DRIVER_CACHE_ENV = '__GL_SHADER_DISK_CACHE_PATH'
 
 def driver_cache_folders(out, windows=WIN, local_appdata=None):
     """[(label, folder)] of the driver shader cache folders that exist, in a fixed order, each once: a folder that is
-    a link to another listed one is left out, and so is one that cannot be read. windows and local_appdata: the
-    platform and its LOCALAPPDATA, for the tests."""
+    a link to another listed one is left out, and so is one that cannot be read. The game keeps NVIDIA's driver cache in
+    nvidia-cache beside its executable on Windows and Linux alike (runtime/vk_device.c nvidia_cache_beside_exe), and
+    that folder comes first. windows and local_appdata: the platform and its LOCALAPPDATA, for the tests."""
     found = []
+    if (Path(out) / 'nvidia-cache').is_dir():
+        found.append(('nvidia-cache', Path(out) / 'nvidia-cache'))
     if windows:
         base = os.environ.get('LOCALAPPDATA') if local_appdata is None else local_appdata
         if base:
@@ -2856,7 +2859,8 @@ def driver_cache_folders(out, windows=WIN, local_appdata=None):
             if (root / 'D3DSCache').is_dir():
                 found.append(('%LOCALAPPDATA%\\D3DSCache', root / 'D3DSCache'))
     else:
-        found += [(name, Path(out) / name) for name in ('nvidia-cache', 'mesa-cache') if (Path(out) / name).is_dir()]
+        if (Path(out) / 'mesa-cache').is_dir():
+            found.append(('mesa-cache', Path(out) / 'mesa-cache'))
     custom = os.environ.get(DRIVER_CACHE_ENV)
     if custom and Path(custom).is_dir():
         found.append((DRIVER_CACHE_ENV, Path(custom)))

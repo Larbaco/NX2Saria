@@ -2315,9 +2315,10 @@ class MakeGameTest(Tmp):
 
     def test_the_driver_cache_folders_are_found_and_counted(self):
         """The graphics drivers' cache folders the shaders step reports (make_game.py driver_cache_folders): on Windows
-        every folder with "cache" in its name under the vendor's folder in LOCALAPPDATA, and Windows' own; on Linux the
-        two the game makes beside its executable; on both the folder __GL_SHADER_DISK_CACHE_PATH names; each once. A
-        count says what it missed: the time ran out, or the system refused something."""
+        every folder with "cache" in its name under the vendor's folder in LOCALAPPDATA, and Windows' own; on both
+        systems the game's own nvidia-cache beside its executable, first (the game makes it for NVIDIA's driver, and on
+        Linux mesa-cache too); on both the folder __GL_SHADER_DISK_CACHE_PATH names; each once. A count says what it
+        missed: the time ran out, or the system refused something."""
         folders = self.real_driver_cache_folders
         local = self.tmp / 'local'
         gl = local / 'NVIDIA' / 'GLCache'
@@ -2344,6 +2345,13 @@ class MakeGameTest(Tmp):
             (self.out / 'mesa-cache').mkdir()
             (self.out / 'nvidia-cache').mkdir()
             self.assertEqual([label for label, _ in folders(self.out, windows=False)], ['nvidia-cache', 'mesa-cache'])
+            # Windows too: the game's folder first, whether or not LOCALAPPDATA gives any, and no mesa-cache there
+            self.assertEqual([label for label, _ in folders(self.out, windows=True, local_appdata=str(local))],
+                             ['nvidia-cache', '%LOCALAPPDATA%\\NVIDIA\\DXCache', '%LOCALAPPDATA%\\NVIDIA\\GLCache',
+                              '%LOCALAPPDATA%\\AMD\\VkCache', '%LOCALAPPDATA%\\D3DSCache'])
+            self.assertEqual(folders(self.out, windows=True, local_appdata=''), [('nvidia-cache', self.out / 'nvidia-cache')])
+            self.assertEqual(folders(self.out, windows=True, local_appdata=str(self.tmp / 'none')),
+                             [('nvidia-cache', self.out / 'nvidia-cache')])
             # the folder the NVIDIA driver is told to use comes last, and only when it is there
             custom = self.tmp / 'nvcache'
             os.environ[self.mg.DRIVER_CACHE_ENV] = str(custom)
@@ -2354,12 +2362,13 @@ class MakeGameTest(Tmp):
             self.assertEqual(folders(self.out, windows=True, local_appdata=str(local))[-1][0], self.mg.DRIVER_CACHE_ENV)
             # a folder that is a link to one already listed is listed once
             os.environ.pop(self.mg.DRIVER_CACHE_ENV)
+            listed = len(folders(self.out, windows=True, local_appdata=str(local)))
             try:
                 (local / 'Intel' / 'ShaderCache').symlink_to(gl, target_is_directory=True)
             except (OSError, NotImplementedError):
                 pass   # no links here (Windows without the privilege)
             else:
-                self.assertEqual(len(folders(self.out, windows=True, local_appdata=str(local))), len(win))
+                self.assertEqual(len(folders(self.out, windows=True, local_appdata=str(local))), listed)
         size = self.mg.folder_size
         self.assertEqual(size(gl), (1024, 2, ''))
         self.assertEqual(size(local / 'D3DSCache'), (0, 0, ''))

@@ -49,6 +49,7 @@
 #include "log_stall.h"
 #include "boot_warm.h"
 #include "mem_need.h"
+#include "nvidia_cache.h"
 #include "nvn_hmap.h"
 #include "platform/platform.h"
 #include "prp_file.h"
@@ -8347,9 +8348,28 @@ static double lw_probe(int *fast, int *got) {
     return t;
 }
 
+_Static_assert(NVC_KIND_FILE == PLAT_FS_FILE && NVC_KIND_DIR == PLAT_FS_DIR && NVC_KIND_LINK == PLAT_FS_LINK &&
+                   NVC_LISTED == PLAT_FS_OK && NVC_MISSING == PLAT_FS_NOT_FOUND,
+               "nvidia_cache.h mirrors platform.h's file kinds and listing results");
+
+// One line before the sample: the folder NVIDIA's driver keeps its shader cache in and what it holds, so a log that
+// finds the prepared libraries gone says whether the files were gone from the disk or were there and did not match
+// (the launcher's log says the same around an update, for every driver's folder). It is the folder the environment
+// names, which is the game's own beside the exe unless the player named one (vk_device.c nvidia_cache_beside_exe); the
+// driver's default folder is not in the environment, and without the variable there is no line.
+static void lw_say_cache_folder(void) {
+    char dir[PLAT_PATH_MAX * 2], work[PLAT_PATH_MAX * 2 + 64], text[PLAT_PATH_MAX * 2 + 160];
+    if (!plat_getenv(NVC_PATH_VAR, dir, sizeof dir)) return;
+    NvcSize s;
+    nvc_measure(plat_fs_list, dir, work, sizeof work, &s);
+    nvc_size_text(text, sizeof text, dir, &s);
+    rt_log("vk_pipeline: library warm: %s", text);
+}
+
 static void lw_check(void) {
     if (!bf_waiting()) plat_thread_priority(PLAT_PRIO_BELOW_NORMAL);
     no_cache = 1;   // the sample's libraries go into the driver's cache only, as the workers' do (see no_cache)
+    lw_say_cache_folder();
     char was[16] = "", id[64] = "";
     int strikes = 0;
     unsigned long long at = 0;

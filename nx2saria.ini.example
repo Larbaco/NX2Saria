@@ -254,6 +254,15 @@
 # NVIDIA under Windows, Shader Cache Size Unlimited in the NVIDIA app), start once with force, or delete
 # shader-warm.txt, to warm again.
 # lib_warm = 1
+# With NVIDIA's driver (Windows and Linux) the driver's cache of compiled shaders is kept in the folder nvidia-cache
+# beside the game, which no other program opens, with a limit of 8 GiB and, on Windows, without the driver's cleanup,
+# so that an update's shader preparation is not cut down by another program's smaller limit or by the cleanup of the
+# driver's own shared folder. A folder or a limit already set in the environment (__GL_SHADER_DISK_CACHE_PATH,
+# __GL_SHADER_DISK_CACHE_SIZE, __GL_SHADER_DISK_CACHE_SKIP_CLEANUP) is left as it is, and the game's log says at the
+# start which values it uses and whose they are ("vk: NVIDIA's shader disk cache"). 0: the driver keeps its own folder
+# and limit, as before. On Windows the libraries the driver already holds in its own folder are not read from the new
+# one, so the first shader preparation or start after this builds them again.
+# nvidia_cache_dir = 1
 # Draws into a picture drawn for the first time (a lookup table, a new area's target) wait for a pipeline built for
 # the first time from pipe_frame_wait_ms; one left over is drawn the next frame its picture is drawn. 0: as up to
 # 0.7.1, each such draw waits up to oneshot_wait_ms milliseconds, which stops the game for as long as the pipelines
