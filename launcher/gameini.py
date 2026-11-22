@@ -1,12 +1,13 @@
 """The game's own settings, nx2saria.ini (or the legacy nx2navi.ini) in the game folder.
 
 Read the way runtime/cfg/cfg.c reads the file: a UTF-8 byte order mark is skipped, lines starting with #, ; or [ are
-not settings, a key is matched without regard to case and with or without its NX2NAVI_ prefix, a value in double
-quotes loses them, an empty value leaves the setting as it was (its default, or an earlier line's value), and the last
-line with a value wins. For a key whose row in runtime/cfg/cfg.c has a set of values (choices=True: numbers, ranges,
-words), a blank followed by ';' or '#' starts a comment after a value that is not in double quotes, as cfg.c
-cut_comment reads it; free text (a path, a name, the list of mods) keeps its whole value. Sections do not matter to
-the game; a key the file does not have yet goes under its section, as the game writes it.
+not settings, a key is matched without regard to case and with or without a prefix (NX2SARIA_, or the older
+NX2NAVI_ one), a value in double quotes loses them, an empty value leaves the setting as it was (its default, or an
+earlier line's value), and the last line with a value wins. For a key whose row in runtime/cfg/cfg.c has a set of
+values (choices=True: numbers, ranges, words), a blank followed by ';' or '#' starts a comment after a value that is
+not in double quotes, as cfg.c cut_comment reads it; free text (a path, a name, the list of mods) keeps its whole
+value. Sections do not matter to the game; a key the file does not have yet goes under its section, as the game
+writes it.
 A change rewrites only the line it touches, through a temporary file: the other lines keep their bytes (the byte
 order mark, line ends, text that is not UTF-8). A file that exists but cannot be read is never rewritten, as
 runtime/cfg/cfg.c cfg_save_to does not: rebuilding it from nothing would lose its lines.

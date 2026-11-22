@@ -2,7 +2,7 @@
 # of a line to change it. An nx2navi.ini there without an nx2saria.ini (from NX2navi) is renamed to nx2saria.ini at the
 # first start, with every setting in it.
 # Each line shows the default; on a Steam Deck the device profile ([display]) changes a few of them. A NX2SARIA_*
-# environment variable of the same name (NX2SARIA_FPS_LIMIT for fps_limit) overrides the file. Legacy NX2SARIA_* names
+# environment variable of the same name (NX2SARIA_FPS_LIMIT for fps_limit) overrides the file. Legacy NX2NAVI_* names
 # remain accepted when the matching NX2SARIA_* variable is unset. Keys are case-insensitive;
 # '#' and ';' start a comment; [sections] only group lines. After the value of a setting with a list of choices or a
 # range, a space or tab then '#' or ';' starts a comment too ("fps_limit = 144 # my monitor" is 144); a path, a name, a
