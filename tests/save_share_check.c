@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "boot_map.h"
+#include "log_privacy.h"
 #include "save_share.h"
 
 // fs.h's own declarations of these would clash with the stubs below, which only have to link
@@ -28,7 +30,6 @@ static int count_file(void *ctx, const char *rel, const uint8_t *data, size_t n)
 // ---- stubs for the runtime around fs_host.c (host.h and the files that define these in the game)
 const int rt_game_version = 111;
 const char rt_port_version[] = "9.9.9-check";
-const char *cfg_env(const char *name) { return getenv(name); }
 
 void rt_log(const char *fmt, ...) {
     va_list ap;
@@ -66,6 +67,11 @@ int romfs_owns(const char *path) { (void)path; return 0; }
 int mem_probing(void) { return 0; }   // write_file asks before each write: no probe, no lazy heap here
 void mem_kernel_access(uint64_t a, uint64_t n) { (void)a, (void)n; }
 void fs_trace(const char *what, const char *path) { (void)what, (void)path; }
+// no boot map is pending (runtime/boot_map.c): a save file is read as it is
+int boot_map_save_open(const char *path, PlatFile *f) { (void)path, (void)f; return 0; }
+void boot_map_save_read(uint64_t offset, void *buf, uint64_t n) { (void)offset, (void)buf, (void)n; }
+// log_short_paths off (runtime/log_privacy.c): the text is shown as it is
+char *log_privacy_dup(const char *p, size_t n, size_t *out_n) { (void)p, (void)n, (void)out_n; return NULL; }
 
 int main(int argc, char **argv) {
     if (argc < 3) return 2;

@@ -1,4 +1,4 @@
-# needs: clang, linux:sdl3
+# needs: clang
 """Build and run tests/submit_clone_check.c: runtime/nvn_submit_guard.h, a synchronous submission's deferred binds when
 another guest thread may be replaying the same recording copy (nvn_api_cmd.c nvn_submit_prepare, nvn_submit_done).
 Four threads submit two hand-built copies 200,000 times each, a quarter of the calls giving their copy twice, while a
@@ -19,6 +19,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from platform_stand_ins import stand_ins
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -43,6 +45,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
+    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',

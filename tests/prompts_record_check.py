@@ -29,7 +29,9 @@ def main():
         exe = Path(tmp) / ('check.exe' if win else 'check')
         game = Path(tmp) / 'game'
         game.mkdir()
-        subprocess.check_call([cc, '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-fno-strict-aliasing', *sanitize,
+        # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
+        subprocess.check_call([cc, '-O1', '-g', '-Wall', '-Wextra', '-Werror',
+                               '-Wno-bitwise-instead-of-logical', '-fno-strict-aliasing', *sanitize,
                                '-I', str(ROOT / 'runtime'), str(ROOT / 'tests' / 'prompts_record_check.c'),
                                str(ROOT / 'runtime' / 'input_map.c'), *([] if win else ['-lm']), '-o', str(exe)],
                               env=env)

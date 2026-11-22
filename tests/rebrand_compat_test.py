@@ -19,6 +19,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'tools')]
 from launcher import feed, paths, saves, steam, winsys
 import make_launcher
 import capture_run
+import platform_stand_ins
 
 
 class RebrandCompatibilityTest(unittest.TestCase):
@@ -51,8 +52,10 @@ class RebrandCompatibilityTest(unittest.TestCase):
                 release = {'tag_name': 'v1.0.0', 'assets': [
                     {'name': n, 'browser_download_url': 'https://example.invalid/' + n}
                     for n in (name, manifest['app']['name'])]}
+                # the Windows manifest's two names, so the feed looks as on Windows: Linux has a manifest of its own
                 with mock.patch.object(feed.net, 'get_json', return_value=[release]), \
-                     mock.patch.object(feed.net, 'get_bytes', return_value=files[0].read_bytes()):
+                     mock.patch.object(feed.net, 'get_bytes', return_value=files[0].read_bytes()), \
+                     mock.patch.object(feed.sys, 'platform', 'win32'):
                     found = feed.latest({'type': 'github', 'repo': 'Larbaco/NX2Saria'})
                 self.assertEqual(found.asset('app')[0], 'https://example.invalid/NX2Saria-app-1.0.0.zip')
 
@@ -166,11 +169,14 @@ int main(void) {
         cc = shutil.which('clang')
         if not cc or sys.platform != 'linux':
             self.skipTest('Linux clang preprocessing required')
-        for macro in ('NX2SARIA_PGO_GEN', 'NX2NAVI_PGO_GEN'):
-            result = subprocess.run([cc, '-E', '-P', '-D' + macro, '-I', str(ROOT / 'runtime'),
-                                     '-I', str(ROOT / 'runtime/platform'), str(ROOT / 'runtime/platform/linux.c')],
-                                    check=True, capture_output=True, text=True)
-            self.assertIn('__llvm_profile_dump', result.stdout, macro)
+        # linux.c includes SDL3's clipboard header: the stand-in tests/platform_stand_ins.py writes will do
+        with tempfile.TemporaryDirectory() as tmp:
+            sdl = platform_stand_ins.include(tmp)
+            for macro in ('NX2SARIA_PGO_GEN', 'NX2NAVI_PGO_GEN'):
+                result = subprocess.run([cc, '-E', '-P', '-D' + macro, '-I', str(ROOT / 'runtime'), *sdl,
+                                         '-I', str(ROOT / 'runtime/platform'), str(ROOT / 'runtime/platform/linux.c')],
+                                        check=True, capture_output=True, text=True)
+                self.assertIn('__llvm_profile_dump', result.stdout, macro)
 
 
 if __name__ == '__main__':

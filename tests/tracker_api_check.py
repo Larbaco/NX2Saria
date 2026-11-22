@@ -104,7 +104,7 @@ class Client:
         self.s.close()
 
 
-def run_checks(port):
+def run_checks(port, srv, lines):
     c = Client(port)
 
     st = c.call('status', {'fps_window_ms': 0})['result']
@@ -202,6 +202,8 @@ def run_checks(port):
     a, b = c.line(), c.line()
     check(a.get('id') == 7 and b.get('id') == 8 and b['result'] == {'hex': '01'}, f'two requests in one write: {a} {b}')
     c.close()
+    # the server has let it go before four others come: on a busy machine its thread could still count it
+    check(none_open(srv, lines), 'the server logs the first client gone')
 
     # four clients at once; a fifth is refused
     many = [Client(port) for _ in range(4)]
@@ -212,7 +214,7 @@ def run_checks(port):
     extra.close()
     for m in many:
         m.close()
-    time.sleep(0.5)
+    check(none_open(srv, lines), 'the server logs the four clients gone')
     # a tracker checking whether the port is taken: connect, close, no request; three of them log one line
     for _ in range(3):
         Client(port).close()
@@ -274,6 +276,15 @@ def records(res, size):
     raw = bytes.fromhex(res['records'])
     check(len(raw) == res['count'] * size, f'{res["kind"]}: {res["count"]} records of {size} bytes: {len(raw)}')
     return [(int.from_bytes(raw[i:i + 4], 'little'), raw[i + 4:i + size]) for i in range(0, len(raw), size)]
+
+
+def none_open(srv, lines):
+    """Read the server's log until a client's closing line says no client is left open; False at its end."""
+    for line in srv.stdout:
+        lines.append(line)
+        if line.startswith('tracker api: client ') and ' left after ' in line and line.rstrip().endswith('(0 open)'):
+            return True
+    return False
 
 
 def lines_until(srv, lines, word):
@@ -494,7 +505,7 @@ def main():
     check(port is not None, 'the server listens: ' + ''.join(lines))
     if port is not None:
         try:
-            run_checks(port)
+            run_checks(port, srv, lines)
             run_game_data_checks(port, srv, lines)
         finally:
             time.sleep(0.5)   # the client threads log their closing lines

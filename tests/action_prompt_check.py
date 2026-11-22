@@ -56,7 +56,9 @@ def main():
     if os.name != 'nt':
         sanitize.append('-fsanitize=address')
     rt = ROOT / 'runtime'
-    subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror', *sanitize, '-I', str(rt),
+    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
+    subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror',
+                           '-Wno-bitwise-instead-of-logical', *sanitize, '-I', str(rt),
                            str(ROOT / 'tests' / 'action_prompt_check.c'), str(rt / 'action_prompt.c'),
                            str(rt / 'sarc.c'), '-o', str(exe), '-lzstd', '-lm'], env=env)
     run = [str(exe)] + (game_args(args.romfs) if args.romfs else [])

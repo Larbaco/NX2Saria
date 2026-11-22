@@ -30,6 +30,15 @@ WATCHED = re.compile(r'^(?P<where>[^\n]*?:\d+:\d+): (?:error|warning): (?P<what>
                      re.M)
 
 
+def in_file(where, src):
+    """Whether a diagnostic's file:line:column is in src."""
+    path = where.rsplit(':', 2)[0]
+    try:
+        return Path(path).resolve() == src.resolve()
+    except OSError:
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cc', help='the C compiler (default: the build\'s clang)')
@@ -52,15 +61,19 @@ def main():
         src = ROOT / 'runtime' / name
         p = subprocess.run([cc, '-fsyntax-only', '-std=gnu11'] + flags + STRICT + inc + [str(src)], capture_output=True,
                            text=True, errors='replace', env=env)
-        hits = [m for m in WATCHED.finditer(p.stderr)]
+        watched = list(WATCHED.finditer(p.stderr))
+        # only what is written in the file itself: a header it includes is not one of the files that hold generations
+        # (simd.h's simd_directed returns __builtin_expect's long, 0 or 1, as an int, which Linux's 64-bit long flags)
+        hits = [m for m in watched if in_file(m.group('where'), src)]
         for m in hits:
             print(f'gen_width_check: FAIL: {m.group("where")}: {m.group("what").strip()} [{m.group("flag")}]')
-        if p.returncode and not hits:
+        if p.returncode and not watched:
             print(f'gen_width_check: FAIL: runtime/{name} does not compile:\n{p.stderr[-3000:]}')
             bad += 1
         bad += len(hits)
-        if not hits and not p.returncode:
-            print(f'gen_width_check: runtime/{name}: no narrowing, format or pointer-type diagnostic')
+        if not hits and (not p.returncode or watched):
+            print(f'gen_width_check: runtime/{name}: no narrowing, format or pointer-type diagnostic'
+                  + (f' ({len(watched)} in the headers it includes)' if watched else ''))
     if bad:
         print(f'gen_width_check: {bad} problems')
         return 1

@@ -499,6 +499,8 @@ A new test needs nothing more than its name: the runner finds it.
 
 `tests/known_failures.txt` lists the tests that fail on main, each with its reason, some on one operating system
 only. They still run and are counted apart; one that passes is reported, and its line goes in the change that fixed it.
+It also lists flaky tests (`[flaky]`), or flaky cases of a unittest suite (`[flaky:<case>]`): a failure of those is
+reported as flaky and does not fail the run, and a failure of any other case of the suite still does.
 
 The Tests workflow (`.github/workflows/tests.yml`) runs `tests/run.py` on Linux on every push and pull request, with
 the pinned VMA and Vulkan headers, the shader headers, the build kit's Linux packages and `xvfb-run`; what needs the

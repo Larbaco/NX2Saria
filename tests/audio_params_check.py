@@ -49,7 +49,7 @@ def main():
     for case in ('strict-effect', 'strict-update'):
         p = subprocess.run([str(exe), case], env=env, timeout=60, capture_output=True, text=True)
         text = p.stdout + p.stderr
-        ok = p.returncode == 2 and 'FATAL: audio:' in text and 'NX2NAVI_AUDIO_STRICT=1' in text
+        ok = p.returncode == 2 and 'FATAL: audio:' in text and 'NX2SARIA_AUDIO_STRICT=1' in text
         print(f'audio_params_check {case}: {"ok" if ok else "FAIL"} (exit {p.returncode}: {text.strip()[-200:]})')
         fails += not ok
     print('audio_params_check.py:', 'FAIL' if fails else 'ok')
