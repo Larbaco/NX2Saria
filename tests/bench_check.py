@@ -37,7 +37,6 @@ def close(a, b, eps=1e-6):
 
 
 def main():
-    check(False, "deliberately broken for one CI run: a failing test fails the Tests workflow")
     src = PERF_C.read_text(encoding='utf-8')
     # the format strings the parser depends on must still be in the runtime, as written
     for piece in ('"perf: slow frame %llu: %.1f ms; blocked pipeline %.1f xlate %.1f texture %.1f astc %.1f fence %.1f '
