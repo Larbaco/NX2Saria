@@ -18,6 +18,7 @@
 #include "nvn_api.h"
 #include "prof.h"
 #include "vk.h"
+#include "vk_mesh_fb.h"
 #include "vk_lowlat.h"
 #include "vk_sync_hw.h"
 #include "platform/platform.h"
@@ -1239,6 +1240,7 @@ static VkCommandBuffer pre_end(uint64_t fence) {
     VkCommandBuffer cb = pre_cb;
     if (!cb) return VK_NULL_HANDLE;
     vk_exec_mesh_flush(cb);   // the stages of the pass's emulated draws, by stage
+    vk_meshfb_pre_end(cb);    // the mesh fallback's batched draws (vk_mesh_fb.c): their barrier, and their parts start over
     ts_close(cb, pre_pair, fence, GTL_PRE);
     pre_pair = -1;
     vkEndCommandBuffer(cb);

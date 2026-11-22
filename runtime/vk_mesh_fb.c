@@ -19,6 +19,7 @@
 #include "mesh_fb.h"
 #include "vk.h"
 #include "vk_mesh_fb.h"
+#include "mfb_batch.h"
 #include "meshfb_scan_spv.h"
 #include "meshfb_clamp_spv.h"
 
@@ -32,6 +33,16 @@ static struct {
     const uint32_t *stat_map;                          // per record: mesh workgroups and task workgroups it asked for
     uint32_t cap_slots[MESHFB_RECS], slot_words[MESHFB_RECS], cap_tasks[MESHFB_RECS];   // what the record's draw had room for
     uint8_t noted[MESHFB_RECS];
+    uint64_t fence[MESHFB_RECS];       // the submission its note is in (vk_meshfb_note)
+    uint32_t checked;                  // the records read back so far (vk_meshfb_poll), as M.next counts them
+    MfbHist *owner[MESHFB_RECS];       // the record's program's history (vk_exec_draw.c MfbCs.hist), NULL: none
+    uint8_t batched[MESHFB_RECS];      // its draw had a part of the buffers (a batch)
+    int part_on;                       // the draw being recorded uses part (vk_meshfb_part_take)
+    MfbPart part;
+    MfbSpan used;                      // the parts taken for the pre-pass command buffer being recorded
+    uint64_t batch_short;              // batched draws that asked for more than their part held
+    int closed;                        // a draw went one by one since the parts began (mfb_batch.h MFB_ONE_CLOSED)
+    uint64_t peak_mesh;                // the most of the mesh buffer the parts of one pre-pass command buffer took
     uint32_t next;
     uint64_t draws, short_draws, worst_bytes;
     PFN_vkCmdPushDescriptorSetKHR push;
@@ -117,9 +128,58 @@ fail:
 }
 
 VkDescriptorBufferInfo vk_meshfb_buffer(int cb_slot) {
+    if (M.part_on) {   // a batched draw: its part (vk_meshfb_part_take)
+        if (cb_slot == MESHFB_CB_TASK) return (VkDescriptorBufferInfo){M.task, M.part.task_off, M.part.task_len};
+        if (cb_slot == MESHFB_CB_LIST) return (VkDescriptorBufferInfo){M.list, M.part.list_off, M.part.list_len};
+        return (VkDescriptorBufferInfo){M.mesh, M.part.mesh_off, M.part.mesh_len};
+    }
     if (cb_slot == MESHFB_CB_TASK) return (VkDescriptorBufferInfo){M.task, 0, M.task_bytes};
     if (cb_slot == MESHFB_CB_LIST) return (VkDescriptorBufferInfo){M.list, 0, M.list_bytes};
     return (VkDescriptorBufferInfo){M.mesh, 0, M.mesh_bytes};
+}
+
+// ---- a batch's parts (vk_exec_draw.c mfb_draw): each batched draw of a pre-pass command buffer takes a part of the
+// three buffers from the start, in turn; the buffers' use starts over with the next pre-pass command buffer, which
+// begins with a full barrier (the draws of the part before may still read them).
+int vk_meshfb_part_take(uint64_t task_b, uint64_t list_b, uint64_t mesh_b) {
+    MfbSpan cap = {M.task_bytes, M.list_bytes, M.mesh_bytes};
+    uint64_t align = vk_ctx()->props.limits.minStorageBufferOffsetAlignment;
+    if (!mfb_part_take(&M.used, &cap, align, task_b, list_b, mesh_b, &M.part)) return 0;
+    M.part_on = 1;
+    if (M.used.mesh > M.peak_mesh) M.peak_mesh = M.used.mesh;
+    return 1;
+}
+void vk_meshfb_part_done(void) { M.part_on = 0; }
+void vk_meshfb_part_reset(void) { M.used = (MfbSpan){0, 0, 0}, M.part_on = 0, M.closed = 0; }
+void vk_meshfb_one_by_one(void) {   // a draw recorded one by one: with parts taken, none more until they start over
+    if (!vk_meshfb_part_first()) M.closed = 1;
+}
+int vk_meshfb_closed(void) { return M.closed; }
+
+// Every write before it visible to every read and write after it, in cb (a pre-pass command buffer: vk_exec_barrier
+// is the part's, with its pass and layouts).
+void vk_meshfb_full_barrier(VkCommandBuffer cb) {
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(cb, &di);
+}
+
+// vk_sync.c pre_end: the pre-pass command buffer ends. With parts taken, a full barrier first, so the part's draws see
+// what the dispatches wrote; then the parts start over.
+void vk_meshfb_pre_end(VkCommandBuffer cb) {
+    if (!vk_meshfb_part_first()) vk_meshfb_full_barrier(cb);
+    vk_meshfb_part_reset();
+}
+int vk_meshfb_part_first(void) { return !mfb_parts_taken(&M.used); }
+uint64_t vk_meshfb_batch_short(void) { return M.batch_short; }
+void vk_meshfb_caps(uint64_t *task, uint64_t *mesh) { *task = M.task_bytes, *mesh = M.mesh_bytes; }
+uint64_t vk_meshfb_batch_peak(uint64_t *cap) { return *cap = M.mesh_bytes, M.peak_mesh; }
+uint64_t vk_meshfb_slot_room(uint32_t slot_words, int has_task) {   // the whole buffers' room, as a one-by-one draw has it
+    uint64_t r = M.mesh_bytes / 4 / (slot_words ? slot_words : 1);
+    if (has_task && r > M.list_bytes / 4) r = M.list_bytes / 4;
+    return r;
 }
 
 uint64_t vk_meshfb_mesh_words(void) { return M.mesh_bytes / 4; }
@@ -128,8 +188,18 @@ uint64_t vk_meshfb_mesh_words(void) { return M.mesh_bytes / 4; }
 static void record_check(uint32_t i) {
     if (!M.noted[i]) return;
     M.noted[i] = 0;
+    vmaInvalidateAllocation(vk_ctx()->vma, M.stat_a, (VkDeviceSize)i * 8, 8);   // HOST_ACCESS_RANDOM: may not be coherent
     uint32_t want = M.stat_map[2 * i], tasks = M.stat_map[2 * i + 1];
-    if (want <= M.cap_slots[i] && tasks <= M.cap_tasks[i]) return;
+    int batched = M.batched[i];
+    if (M.owner[i] && mfb_hist_note(M.owner[i], want, tasks, M.cap_slots[i], M.cap_tasks[i], M.batched[i])) {
+        uint64_t n = ++M.batch_short;
+        if (n <= 4 || !(n & (n - 1)))
+            rt_log("vk: mesh fallback batch: a batched draw asked for %u mesh and %u task workgroups where its part held %u "
+                   "and %u: what did not fit was not drawn, and its program draws one by one from now on (%llu such "
+                   "draws)", want, tasks, M.cap_slots[i], M.cap_tasks[i], (unsigned long long)n);
+    }
+    M.owner[i] = NULL;
+    if (batched || (want <= M.cap_slots[i] && tasks <= M.cap_tasks[i])) return;   // batched: its part, logged above
     uint64_t need = (uint64_t)want * M.slot_words[i] * 4;
     if (need > M.worst_bytes) M.worst_bytes = need;
     uint64_t n = ++M.short_draws;
@@ -144,14 +214,17 @@ static void record_check(uint32_t i) {
 }
 
 VkDeviceSize vk_meshfb_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_off, uint32_t count, int has_task,
-                              uint32_t verts, uint32_t slot_words, VkBuffer *rec, int *cmds) {
+                              uint32_t verts, uint32_t slot_words, MfbHist *owner, VkBuffer *rec, int *cmds) {
     uint32_t i = M.next++ % MESHFB_RECS;
     VkDeviceSize at = (VkDeviceSize)i * REC_BYTES;
     record_check(i);
+    if (M.next - M.checked > MESHFB_RECS) M.checked = M.next - MESHFB_RECS;   // what the poll had not reached
     M.draws++;
-    M.slot_words[i] = slot_words, M.cap_slots[i] = (uint32_t)(M.mesh_bytes / 4 / (slot_words ? slot_words : 1));
+    VkDeviceSize mesh_b = M.part_on ? M.part.mesh_len : M.mesh_bytes, list_b = M.part_on ? M.part.list_len : M.list_bytes;
+    M.slot_words[i] = slot_words, M.cap_slots[i] = (uint32_t)(mesh_b / 4 / (slot_words ? slot_words : 1));
     M.cap_tasks[i] = 0xffffffffu;   // vk_meshfb_scan knows the payload size
-    if (has_task && M.cap_slots[i] > M.list_bytes / 4) M.cap_slots[i] = (uint32_t)(M.list_bytes / 4);
+    if (has_task && M.cap_slots[i] > list_b / 4) M.cap_slots[i] = (uint32_t)(list_b / 4);
+    M.owner[i] = owner, M.batched[i] = (uint8_t)M.part_on;
     *rec = M.rec;
     int n = 0;
     // Every word of the record is written by exactly one command. A fill of the whole record followed by fills and
@@ -187,9 +260,9 @@ VkDeviceSize vk_meshfb_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src
 
 void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, uint32_t fan, uint32_t slot_words, uint32_t verts) {
     uint32_t i = (uint32_t)(at / REC_BYTES);
-    M.cap_tasks[i] = (uint32_t)(M.task_bytes / 4 / (task_words ? task_words : 1));
-    VkDescriptorBufferInfo bi[4] = {{M.rec, 0, VK_WHOLE_SIZE}, {M.task, 0, M.task_bytes}, {M.list, 0, M.list_bytes},
-                                    {M.mesh, 0, M.mesh_bytes}};
+    VkDescriptorBufferInfo bi[4] = {{M.rec, 0, VK_WHOLE_SIZE}, vk_meshfb_buffer(MESHFB_CB_TASK), vk_meshfb_buffer(MESHFB_CB_LIST),
+                                    vk_meshfb_buffer(MESHFB_CB_MESH)};
+    M.cap_tasks[i] = (uint32_t)(bi[1].range / 4 / (task_words ? task_words : 1));
     VkWriteDescriptorSet w[4];
     for (int k = 0; k < 4; k++)
         w[k] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = (uint32_t)k,
@@ -207,7 +280,7 @@ void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, ui
 // One single-thread dispatch; the caller orders it after the record's copies and before the first dispatch.
 void vk_meshfb_clamp(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words) {
     uint32_t i = (uint32_t)(at / REC_BYTES), most = vk_ctx()->props.limits.maxComputeWorkGroupCount[0];
-    uint32_t room = task_words ? (uint32_t)(M.task_bytes / 4 / task_words) : M.cap_slots[i];
+    uint32_t room = task_words ? (uint32_t)(vk_meshfb_buffer(MESHFB_CB_TASK).range / 4 / task_words) : M.cap_slots[i];
     if (room > most) room = most;
     VkDescriptorBufferInfo bi = {M.rec, 0, VK_WHOLE_SIZE};
     VkWriteDescriptorSet w = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1,
@@ -219,11 +292,24 @@ void vk_meshfb_clamp(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words) {
     vkCmdDispatch(cb, 1, 1, 1);
 }
 
-void vk_meshfb_note(VkCommandBuffer cb, VkDeviceSize at) {
+void vk_meshfb_note(VkCommandBuffer cb, VkDeviceSize at, uint64_t fence) {
     uint32_t i = (uint32_t)(at / REC_BYTES);
     VkBufferCopy cp = {at + 48, (VkDeviceSize)i * 8, 8};
     vkCmdCopyBuffer(cb, M.rec, M.stat, 1, &cp);
-    M.noted[i] = 1;
+    M.noted[i] = 1, M.fence[i] = fence;
+}
+
+// The records whose submissions the GPU finished (done: vk_sync_fence_done), read back in order: a program's history
+// grows, and a batched draw short of its part excludes its program, within frames of the draw and not 4096 records
+// later, when the record is written again.
+void vk_meshfb_poll(uint64_t done) {
+    if (!M.ok) return;
+    while (M.checked != M.next) {
+        uint32_t i = M.checked % MESHFB_RECS;
+        if (M.noted[i] && M.fence[i] > done) break;
+        record_check(i);
+        M.checked++;
+    }
 }
 
 uint64_t vk_meshfb_short(void) {
