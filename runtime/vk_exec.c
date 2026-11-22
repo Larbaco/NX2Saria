@@ -231,6 +231,7 @@ void vk_exec_frame_log(const tex_t *p, uint64_t frame) {
     // submission does (vk_frame_owed.h)
     vk_exec_cond_frame_end(frame);
     runs_frame(frame);
+    vk_exec_phases_frame(frame);   // NX2SARIA_REPLAY_PHASES (vk_exec_draw.c)
     if (!(rt_trace & RT_TRACE_GFX)) return;
     VkExecFrame *f = &vk_exec_frame;
     uint64_t bind_reused = __atomic_exchange_n(&bind_reused_total, 0, __ATOMIC_RELAXED);
@@ -1856,8 +1857,19 @@ int vk_exec_mesh_run(const void *cur, const void **out, int max) {
     return n;
 }
 
-// One op of the stream other than those that steer the walk (END, JUMP, CALL and WAIT_EVENT: walk).
+static void op_one_impl(VkExec *ex, const op_hdr *h);
+// One op of the stream other than those that steer the walk (END, JUMP, CALL and WAIT_EVENT: walk); timed by its code
+// with NX2SARIA_REPLAY_PHASES (vk_exec_phase_op).
 static void op_one(VkExec *ex, const op_hdr *h) {
+    static int timed = -1;   // read once: off, an op costs one more load and branch
+    if (timed < 0) timed = vk_exec_phases_on();
+    if (!timed) { op_one_impl(ex, h); return; }
+    uint64_t t0 = plat_now_ns();
+    op_one_impl(ex, h);
+    vk_exec_phase_op(h->op, plat_now_ns() - t0);
+}
+
+static void op_one_impl(VkExec *ex, const op_hdr *h) {
     const void *a = nvn_op_payload(h);
     switch (h->op) {
     case OP_BEGIN: break;
@@ -2121,6 +2133,7 @@ static void rw_main(void *arg) {
     perf_lock_timing_here();   // NX2SARIA_LOCK_TIME, as on the recording thread
     if (w->idx >= 0 && w->idx < 16) prof_worker_tid[w->idx] = plat_thread_id();
     vk_exec_draw_ctx_use(w->dc);
+    vk_exec_phase_worker();   // NX2SARIA_REPLAY_PHASES counts this thread's ops as a worker's
     for (;;) {
         par_help();
         Chunk *c = chunk_take();
@@ -2515,7 +2528,10 @@ static const op_hdr *group_start(VkExec *ex, const op_hdr *h, int depth) {
     const op_hdr *end;
     int why;
     uint32_t end_op;
+    const int ph = vk_exec_phases_on();
+    uint64_t pt = ph ? kern_now_ns() : 0;
     uint32_t draws = group_peek(ex, h, &end, &why, &end_op);
+    if (ph) vk_exec_phase_seg(SEG_PEEK, kern_now_ns() - pt), pt = kern_now_ns();
     if (why == GE_RUN && end_op < OP_COUNT_) RW.run_end[end_op] += draws;
     if (end == h) return h;   // an op the submitting thread replays itself
     RW.end_draws[why] += draws;
@@ -2547,6 +2563,7 @@ static const op_hdr *group_start(VkExec *ex, const op_hdr *h, int depth) {
     // After the barrier, whose end of an open pass ends that pass's mark and empties the note.
     vk_gpu_gap_note(VK_GAP_GROUP, draws);
     g->upd = vk_exec_draw_group_begin(ex);
+    if (ph) vk_exec_phase_seg(SEG_GBEGIN, kern_now_ns() - pt), pt = kern_now_ns();
     // the front pass
     uint32_t per = (draws + (uint32_t)n - 1) / (uint32_t)n, cd = 0;
     int nc = 1, cut = 0;
@@ -2583,6 +2600,7 @@ static const op_hdr *group_start(VkExec *ex, const op_hdr *h, int depth) {
         c->nops++;
         o = nvn_op_next(o);
     }
+    if (ph) vk_exec_phase_seg(SEG_FRONT, kern_now_ns() - pt), pt = kern_now_ns();
     vk_exec_xfer_group(-1);   // the segments stay listed for the workers until the group is put in its part
     for (int i = 0; i < nc; i++) g->c[i].slot0 = vk_exec_xfer_slots(g->c[i].nslots);   // in the order of the stream
     // handed out: the workers (and without RW.pipe this thread) take the chunks in order
@@ -2598,6 +2616,7 @@ static const op_hdr *group_start(VkExec *ex, const op_hdr *h, int depth) {
     __atomic_store_n(&Q.put, Q.put + (uint64_t)nc, __ATOMIC_SEQ_CST);
     for (int k = 0; k < RW.n; k++)
         if (__atomic_load_n(&RW.w[k]->sleeping, __ATOMIC_SEQ_CST)) plat_event_set(&RW.w[k]->wake);
+    if (ph) vk_exec_phase_seg(SEG_HANDOUT, kern_now_ns() - pt), pt = kern_now_ns();
     ex->barrier_at = ex->recorded;   // the chunks end with a full barrier
     ex->in_pass = 0, ex->nfbl = 0, ex->mark = NULL, ex->dirty = VK_EXEC_DIRTY_ALL, ex->rt_resolved = 0, ex->fb_fs = NULL;
     vk_exec_draw_new_cb();
@@ -2608,6 +2627,7 @@ static const op_hdr *group_start(VkExec *ex, const op_hdr *h, int depth) {
         rw_behind = 1;
         if (small) RW.small_groups++, RW.small_draws += draws;   // a worker takes it: this thread goes on at once
         else group_take(RW.n);
+        if (ph) vk_exec_phase_seg(SEG_OWN, kern_now_ns() - pt), pt = kern_now_ns();
         uint64_t to = kern_now_ns();
         RW.front_ns += tf - t0, RW.own_ns += to - tf, RW.wait_ns += to - t0;
         return end;
@@ -2752,6 +2772,8 @@ void vk_exec_tail_begin(VkExec *ex) {
 int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t fence) {
     if (vk_device_is_lost()) return 0;   // the run is ending (vk_device.c vk_device_lost_check): nothing is recorded
     uint64_t in_ns = kern_now_ns();
+    const int ph = vk_exec_phases_on();   // NX2SARIA_REPLAY_PHASES: the call's parts (vk_exec_phase_seg)
+    uint64_t pt = in_ns;
     gfx_tl_note('R', 0, (uint64_t)n, fence);
     perf_lock_timing_here();   // NX2SARIA_LOCK_TIME
     if (prof_replay_tid != plat_thread_id()) perf_replay_thread();   // the profiler follows the thread replaying now
@@ -2763,7 +2785,9 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     const tex_t *keep[9];   // the render targets carry over to this submission (set_rt compares them by pointer)
     memcpy(keep, ex->rt.color, sizeof ex->rt.color);
     keep[8] = ex->rt.depth;
+    if (ph) pt = kern_now_ns();
     nvn_pins_sweep(nvn_submit_count(), keep, 9);
+    if (ph) vk_exec_phase_seg(SEG_PINS, kern_now_ns() - pt), pt = kern_now_ns();
     ex->cb = cb;
     ex->fence = fence;
     TL.on = 0;
@@ -2786,10 +2810,13 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     int slot = evo ? evq_slot(gfx_submit_queue) : -1;
     if (evo && slot < 0) evo = 0;
     vk_exec_evt('|', (const void *)gfx_submit_queue, (uint32_t)n);
+    if (ph) pt = kern_now_ns();
     vk_exec_event_sync(1);   // before the mirror sync and the uniform copy: a CPU signal after this point came after them
+    if (ph) vk_exec_phase_seg(SEG_EVSYNC, kern_now_ns() - pt), pt = kern_now_ns();
     int synced = n || (evo_pending && held_sync() && vk_exec_held_ready());   // held_sync
     if (synced) {
         vk_mem_mirror_begin();
+        if (ph) vk_exec_phase_seg(SEG_MIRROR_BEGIN, kern_now_ns() - pt), pt = kern_now_ns();
         if (evo_pending) {   // the uniform snapshot covers what held submissions bind too: they may go on here
             int tot = n;
             for (int s = 0; s < EVO_QUEUES; s++)
@@ -2803,9 +2830,12 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
             vk_usnap_begin(all, tot, fence);
             free(all);
         } else vk_usnap_begin(handles, n, fence);
+        if (ph) vk_exec_phase_seg(SEG_USNAP_BEGIN, kern_now_ns() - pt), pt = kern_now_ns();
     }
     for (int i = 0; i < n; i++)
         if (!handles[i]) rt_fatal("vk: command handle %d of a submission is null", i);
+    uint64_t ph0 = ph ? kern_now_ns() : 0;
+    if (ph) vk_exec_phase_seg(SEG_PROLOGUE, ph0 - in_ns);
     if (evo_pending) evo_resume(ex);   // signals the CPU gave since, and holds past CONT_MAX
     if (evo && evq[slot].head) {   // the queue waits: this submission lines up behind it
         if (n) cont_push(slot, cont_new(handles, n, 0, NULL)), evo_held++, vk_exec_evt('p', NULL, 0);
@@ -2823,6 +2853,10 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
         }
         AH.live = 0;
         evo_queue = 0;
+    }
+    if (ph) {
+        uint64_t t = kern_now_ns();
+        vk_exec_phase_seg(SEG_WALK, t - ph0), ph0 = t;
     }
     group_drain(ex, PW_END);
     vk_exec_pass_end(ex);
@@ -2858,7 +2892,15 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
         ex->dirty = VK_EXEC_DIRTY_ALL;
         vk_exec_draw_new_cb();
     }
+    if (ph) {
+        uint64_t t = kern_now_ns();
+        vk_exec_phase_seg(SEG_DRAIN, t - ph0), ph0 = t;
+    }
     if (synced) ex->recorded += vk_mem_mirror_end(ex->cb, fence), vk_usnap_end(fence);   // VRAM mirror bytes the GPU wrote go back to guest memory
+    if (ph) {
+        uint64_t t = kern_now_ns();
+        vk_exec_phase_seg(SEG_MIRROR_END, t - ph0), ph0 = t;
+    }
     if (tail) {
         ex->cb = vk_sync_tail_release();
         part_start = ex->recorded;   // the last command buffer holds nothing: the tail is in the chain before it
@@ -2983,6 +3025,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
         n_subs = n_parts = n_idle_parts = n_pass_splits = n_cuts = 0;
     }
     rec_spent_ns += kern_now_ns() - in_ns;
+    if (ph) vk_exec_phase_seg(SEG_TAIL, kern_now_ns() - ph0), vk_exec_phase_record(kern_now_ns() - in_ns);
     if (rec_spent_ns >= REC_CLAIM_NS) rec_claim();
     gfx_tl_note('r', 0, (uint64_t)(ex->recorded - part_start), 0);
     return ex->recorded - part_start;   // what the last part holds
