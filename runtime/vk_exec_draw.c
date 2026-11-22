@@ -6159,13 +6159,16 @@ static int mfb_stages(VkExec *ex, MfbCs *c, const VkMemSpan *ind, uint32_t count
     if (has_ts) {
         if (!mfb_dispatch(ex, c->cs_task, NVN_STAGE_TASK, *rec, at, !batched)) return 0;
         mfb_step(ex, batched);
-        vk_meshfb_scan(ex->cb, at, c->ti.payload_bytes / 4, c->ti.threads, slot_words, verts);
+        vk_meshfb_scan(ex->cb, at, c->ti.payload_bytes / 4, c->ti.threads, slot_words, verts, ind != NULL);
         cx->B.pipe[1] = VK_NULL_HANDLE;   // the scan bound its own
         ex->recorded += 4;
         mfb_step(ex, batched);
     }
     if (!mfb_dispatch(ex, c->cs_mesh, NVN_STAGE_MESH, *rec, at + 16, !batched)) return 0;
-    mfb_step(ex, batched);
+    // the note copies the record's report words, which the steps before wrote (the mesh dispatch only reads the
+    // record): batched, no barrier between the mesh dispatch and the note, so a batch's draws are one barrier apart
+    // fewer; the next draw's parts and record do not overlap this one's (mfb_part_take, vk_meshfb_record)
+    if (!batched) mfb_step(ex, batched);
     vk_meshfb_note(ex->cb, at, ex->fence);
     ex->recorded++;
     if (!batched) vk_exec_barrier(ex);   // batched, the barrier at the pre-pass command buffer's end (vk_meshfb_pre_end)
@@ -6183,13 +6186,15 @@ static int mfb_stages(VkExec *ex, MfbCs *c, const VkMemSpan *ind, uint32_t count
 // Forest a draw one by one closes the batch for about half the draws (2026-11-22). Whether the GPU's side gains on a
 // card the GPU limits (AMD's Windows driver) is for that card to show.
 static struct {
-    uint64_t why[MFB_REASONS];   // the draws, batched (MFB_BATCHED) or one by one and why (mfb_batch.h)
-    uint64_t cuts;               // parts cut at a pass's first batched draw, for a draw then batched
-    uint64_t cuts_lost;          // parts cut for a draw that then went one by one (no room, no pre-pass) or failed
+    MfbCount n;                  // the draws, batched or one by one and why, and the cuts (mfb_batch.h mfb_count)
     uint64_t last_ns, lines;
 } MFBB;
 static void mfb_batch_line(void);
-static void mfb_batch_exit(void) { if (MFBB.lines || MFBB.why[MFB_BATCHED]) mfb_batch_line(); }
+static void mfb_batch_exit(void) { if (MFBB.lines || MFBB.n.why[MFB_BATCHED]) mfb_batch_line(); }
+void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts) {   // mesh_fb_probe.c: why[MFB_REASONS], cuts[3]
+    memcpy(why, MFBB.n.why, sizeof MFBB.n.why);
+    cuts[0] = MFBB.n.cuts_pass, cuts[1] = MFBB.n.cuts_room, cuts[2] = MFBB.n.cuts_lost;
+}
 // The switch, read once: at the device's start with the mesh fallback (vk_device.c, vk_exec_mfb_batch_start), so the
 // log says its value even in a session that draws nothing through the fallback.
 static int mfb_batch_on(void) {
@@ -6215,20 +6220,26 @@ static void mfb_batch_log(void) {
 }
 static void mfb_batch_line(void) {
     MFBB.lines++;
-    const uint64_t *w = MFBB.why;
+    const uint64_t *w = MFBB.n.why;
     uint64_t all = 0, cap, peak = vk_meshfb_batch_peak(&cap);
     for (int i = 0; i < MFB_REASONS; i++) all += w[i];
-    rt_log("vk: mesh fallback batch: %llu draws, %llu batched (%.0f%%) in %llu cuts (%llu more cut for nothing); one by "
-           "one: %llu off, %llu stage writes, %llu stage textures, %llu after one by one, %llu excluded, %llu no history, "
+    rt_log("vk: mesh fallback batch: %llu draws, %llu batched (%.0f%%); cuts: %llu at a pass, %llu for room, %llu for "
+           "nothing; one by one: %llu off, %llu stage writes, %llu stage textures, %llu excluded, %llu no history, "
            "%llu no room, %llu no pre-pass; %llu batched draws short of their part; the parts took at most %.1f of the mesh "
            "buffer's %.0f MB (session totals)",
            (unsigned long long)all, (unsigned long long)w[MFB_BATCHED], all ? 100.0 * (double)w[MFB_BATCHED] / (double)all : 0.0,
-           (unsigned long long)MFBB.cuts, (unsigned long long)MFBB.cuts_lost, (unsigned long long)w[MFB_ONE_OFF],
-           (unsigned long long)w[MFB_ONE_WRITES], (unsigned long long)w[MFB_ONE_TEXTURES],
-           (unsigned long long)w[MFB_ONE_CLOSED], (unsigned long long)w[MFB_ONE_EXCLUDED], (unsigned long long)w[MFB_ONE_HISTORY],
+           (unsigned long long)MFBB.n.cuts_pass, (unsigned long long)MFBB.n.cuts_room, (unsigned long long)MFBB.n.cuts_lost,
+           (unsigned long long)w[MFB_ONE_OFF], (unsigned long long)w[MFB_ONE_WRITES], (unsigned long long)w[MFB_ONE_TEXTURES],
+           (unsigned long long)w[MFB_ONE_EXCLUDED], (unsigned long long)w[MFB_ONE_HISTORY],
            (unsigned long long)w[MFB_ONE_ROOM], (unsigned long long)w[MFB_ONE_PRE], (unsigned long long)vk_meshfb_batch_short(),
            (double)peak / 1048576.0, (double)cap / 1048576.0);
 }
+
+// mfb_batch_steps' calls in mfb_draw: the cut, the pre-pass command buffer, the part of tb, lb and mb bytes
+typedef struct { VkExec *ex; VkCommandBuffer pre; uint64_t tb, lb, mb; } MfbDrawSteps;
+static int mfb_step_cut(void *u) { return vk_exec_split_now(((MfbDrawSteps *)u)->ex); }
+static int mfb_step_pre(void *u) { MfbDrawSteps *d = u; return (d->pre = vk_sync_pre()) != VK_NULL_HANDLE; }
+static int mfb_step_take(void *u) { MfbDrawSteps *d = u; return vk_meshfb_part_take(d->tb, d->lb, d->mb); }
 
 // A mesh draw of `count` workgroups, or of the count in the game's record at ind (4 bytes, GPU-written), which lies
 // at `list` in the game's memory (0: no record).
@@ -6286,34 +6297,28 @@ static void mfb_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, uint64_t 
     uint32_t b_slots, b_tasks;
     uint64_t cap_task, cap_mesh;
     vk_meshfb_caps(&cap_task, &cap_mesh);
-    int why = mfb_batch_need(mfb_batch_on(), stage_writes(ms) || stage_writes(ts) || stage_writes(fs), vk_meshfb_closed(),
-                             ind == NULL, count, ts != NULL, &c->hist,
-                             mfb_floor(cap_mesh, (uint64_t)slot_words * 4, MFB_MIN_SLOTS),
+    int why = mfb_batch_need(mfb_batch_on(), stage_writes(ms) || stage_writes(ts) || stage_writes(fs), ind == NULL, count,
+                             ts != NULL, &c->hist, mfb_floor(cap_mesh, (uint64_t)slot_words * 4, MFB_MIN_SLOTS),
                              mfb_floor(cap_task, c->ti.payload_bytes, MFB_MIN_TASKS), &b_slots, &b_tasks);
-    // a task or mesh stage that reads a texture or image: its binds in the pre-pass command buffer may record an image's
-    // first fill or an alias copy (vk_exec_inline_begin), which ends and begins the part's pass around it
-    if (why == MFB_BATCHED && (stage_reads_images(ms) || stage_reads_images(ts))) why = MFB_ONE_TEXTURES;
-    VkCommandBuffer pre = VK_NULL_HANDLE;
-    int cut = 0;
-    if (why == MFB_BATCHED) {
-        uint64_t tb, lb, mb;
-        mfb_part_bytes(b_slots, b_tasks, ts != NULL, c->ti.payload_bytes / 4, slot_words, &tb, &lb, &mb);
-        // the first batched draw of a pass cuts the part there (as the mesh emulation does, mesh_emu_draw): what the
-        // part held before, the game's culling and the draws done one by one among them, runs before the pre-pass
-        // command buffer, which begins with a full barrier. Again when that pass ended since (mfb_need_cut).
-        if (mfb_need_cut(ex->in_pass, ex->pre_pass, ex->pass_serial)) {
-            if (vk_exec_split_now(ex)) cut = 1;
-            else why = MFB_ONE_PRE;
-        }
-        if (why == MFB_BATCHED && !(pre = vk_sync_pre())) why = MFB_ONE_PRE;
-        if (why == MFB_BATCHED && !vk_meshfb_part_take(tb, lb, mb)) why = MFB_ONE_ROOM;
-    }
-    if (why != MFB_BATCHED) MFBB.why[why]++, MFBB.cuts_lost += cut;   // a batched draw counts once its stages are in
+    // The steps (mfb_batch.h mfb_batch_steps): a task or mesh stage that reads a texture or image goes one by one (its
+    // binds in the pre-pass command buffer may record an image's first fill or an alias copy, vk_exec_inline_begin,
+    // which ends and begins the part's pass around it). The first batched draw of a pass cuts the part there (as the
+    // mesh emulation does, mesh_emu_draw): what the part held before, the game's culling and the draws done one by one
+    // among them, runs before the pre-pass command buffer, which begins with a full barrier; again when that pass ended
+    // since (mfb_need_cut), after a draw one by one wrote over the parts, and when the part does not fit what is left.
+    MfbDrawSteps ds = {.ex = ex};
+    mfb_part_bytes(b_slots, b_tasks, ts != NULL, c->ti.payload_bytes / 4, slot_words, &ds.tb, &ds.lb, &ds.mb);
+    const MfbSteps steps = {mfb_step_cut, mfb_step_pre, mfb_step_take, &ds};
+    int cut;
+    why = mfb_batch_steps(why, stage_reads_images(ms) || stage_reads_images(ts),
+                          mfb_need_cut(ex->in_pass, ex->pre_pass, ex->pass_serial) || vk_meshfb_closed(), &steps, &cut);
+    VkCommandBuffer pre = ds.pre;
+    if (why != MFB_BATCHED) mfb_count(&MFBB.n, why, cut, 0);   // a batched draw counts once its stages are in
     mfb_batch_log();
     VkBuffer rec;
     VkDeviceSize at;
     if (why != MFB_BATCHED) {
-        vk_meshfb_one_by_one();   // after a batch's parts were taken, it writes over them: the batch ends here
+        vk_meshfb_one_by_one();   // after a batch's parts were taken, it writes over them: a cut before the next batched
         vk_exec_barrier(ex);      // ends the pass; the culling's record and the last draw's reads come before what follows
         if (!mfb_stages(ex, c, ind, count, verts, slot_words, 0, &rec, &at)) { draw_skipped(ex, 1, SK_PIPE_FAILED); return; }
     } else {
@@ -6327,8 +6332,8 @@ static void mfb_draw(VkExec *ex, uint32_t count, const VkMemSpan *ind, uint64_t 
         int ok = mfb_stages(ex, c, ind, count, verts, slot_words, 1, &rec, &at);
         ex->cb = part, ex->recorded = recorded;
         cx->B.pipe[1] = VK_NULL_HANDLE;
-        if (!ok) { vk_meshfb_part_done(); MFBB.cuts_lost += cut; draw_skipped(ex, 1, SK_PIPE_FAILED); return; }
-        MFBB.why[MFB_BATCHED]++, MFBB.cuts += cut;
+        mfb_count(&MFBB.n, why, cut, ok);
+        if (!ok) { vk_meshfb_part_done(); draw_skipped(ex, 1, SK_PIPE_FAILED); return; }
         cx->B.res_valid = 0;   // the vertex stage reads its own part of the mesh buffer: no bind skip into or out of it
     }
     cx->c0_binst = 0;

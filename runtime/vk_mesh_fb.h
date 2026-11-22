@@ -27,9 +27,9 @@ int vk_meshfb_part_take(uint64_t task_b, uint64_t list_b, uint64_t mesh_b);
 void vk_meshfb_part_done(void);
 void vk_meshfb_part_reset(void);
 int vk_meshfb_part_first(void);           // no part taken since the last reset
-void vk_meshfb_one_by_one(void);          // a draw goes one by one: after parts were taken, it closes the batch
+void vk_meshfb_one_by_one(void);          // a draw goes one by one: after parts were taken, the next batched cuts
 void vk_exec_mfb_batch_start(void);      // reads and logs NX2SARIA_MESH_FALLBACK_BATCH (vk_exec_draw.c)
-int vk_meshfb_closed(void);               // closed until the parts start over (mfb_batch.h MFB_ONE_CLOSED)
+int vk_meshfb_closed(void);               // a draw went one by one since the parts began: the next batched cuts
 void vk_meshfb_full_barrier(VkCommandBuffer cb);   // a full memory barrier in a command buffer that is not the part's
 void vk_meshfb_pre_end(VkCommandBuffer cb);        // vk_sync.c pre_end: the barrier the parts' draws need, and the reset
 uint64_t vk_meshfb_batch_short(void);     // batched draws that asked for more than their part held, so far
@@ -41,7 +41,8 @@ uint64_t vk_meshfb_slot_room(uint32_t slot_words, int has_task);   // the mesh s
 // (shaders/meshfb_clamp.comp). Binds its own compute pipeline and set; four commands, between two barriers.
 void vk_meshfb_clamp(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words);
 // The pass between the task and the mesh dispatch (shaders/meshfb_scan.comp): binds its own compute pipeline and set.
-void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, uint32_t fan, uint32_t slot_words, uint32_t verts);
+void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, uint32_t fan, uint32_t slot_words, uint32_t verts,
+                    int clamped);   // clamped: vk_meshfb_clamp ran for the record (it wrote word 13)
 // After the record is complete (the copies or the scan, and a barrier): keeps what the draw asked for where the host
 // reads it later. One copy command.
 void vk_meshfb_note(VkCommandBuffer cb, VkDeviceSize at, uint64_t fence);   // fence: the submission's value

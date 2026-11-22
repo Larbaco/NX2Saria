@@ -14,18 +14,25 @@
 //     of a few records undersizes: in Kokiri Forest programs that had asked for 32 workgroups at most asked for 72,
 //     81 and 454 a moment later (a batch at twice the history, 2026-11-22);
 //   - its task workgroups, with a task stage: the count itself for a direct draw, else the same rule.
-// A draw goes one by one, as before (the way back), when (mfb_batch_need): batching is off; one of its stages writes
-// memory (a later draw of the pass could read it); a draw went one by one since the pre-pass command buffer's parts
-// began (it wrote the buffers from their start, over the parts of the batched draws drawn after it: until the pre-pass
-// command buffer ends, every draw goes one by one); its program once asked for more than its part held in a batch
-// (excluded for the session); its program has no history yet where the part would come from it; the part's buffers
-// have no room left for it (mfb_part_take); there is no pre-pass command buffer, or the part could not be cut; its task
-// or mesh stage reads a texture or image (mfb_draw, MFB_ONE_TEXTURES).
+// A draw goes one by one, as before (the way back), when (mfb_batch_need, mfb_batch_steps): batching is off; one of its
+// stages writes memory (a later draw of the pass could read it); its program once asked for more than its part held in a
+// batch (excluded for the session); its program has no history yet where the part would come from it; its task or mesh
+// stage reads a texture or image (its bind may record an image's first fill, which needs the part's pass); its part
+// does not fit even a pre-pass command buffer of its own; there is no pre-pass command buffer, or the part could not be
+// cut.
 //
-// Known before batching can be on by default (review of 2026-11-22): a task stage's workgroups past its part are cut by
-// meshfb_clamp.comp before meshfb_scan.comp reads the count, so a task overflow is never seen (no exclusion, nothing in
-// batch_short); an overflow is seen only once its submission finished, and excludes the program for the session; and
-// MFB_ONE_CLOSED loses about half the batching in Kokiri Forest where a cut (as for the next pass) would keep it.
+// The cut (mfb_batch_steps): a batched draw cuts the part, so that its stages go to a new pre-pass command buffer that
+// runs after everything the part recorded before, when
+//   - the pass the pre-pass command buffer serves ended since (mfb_need_cut);
+//   - a draw went one by one since the parts began (vk_mesh_fb.c closed): it wrote the buffers from their start, over
+//     the parts. A draw one by one ends its pass, so this is the case above; the flag keeps it so if that changes.
+//     Until 2026-11-22 every later draw went one by one instead (MFB_ONE_CLOSED), which lost about half the batching
+//     in Kokiri Forest;
+//   - its part does not fit what the parts left: they start over in the new pre-pass command buffer.
+//
+// A task overflow: meshfb_clamp.comp keeps the task workgroups asked for in the record's report word (13) before it
+// cuts the dispatch to the part's room, so a batched draw short of its task part excludes its program like one short of
+// its mesh part (until 2026-11-22 the scan read the count already cut, and such a draw was never seen).
 #pragma once
 
 #include <stdint.h>
@@ -40,10 +47,9 @@ enum {
     MFB_BATCHED,
     MFB_ONE_OFF,         // NX2SARIA_MESH_FALLBACK_BATCH=0
     MFB_ONE_WRITES,      // a stage writes memory
-    MFB_ONE_CLOSED,      // a draw went one by one since the parts began
     MFB_ONE_HISTORY,     // too little history for a part the GPU sizes
     MFB_ONE_EXCLUDED,    // the program overflowed its part once
-    MFB_ONE_ROOM,        // no room left in the part's buffers
+    MFB_ONE_ROOM,        // the part does not fit a pre-pass command buffer of its own
     MFB_ONE_PRE,         // no pre-pass command buffer, or the part could not be cut
     MFB_ONE_TEXTURES,    // a task or mesh stage reads a texture or image (vk_exec_draw.c mfb_draw: its bind may record
                          // an image's first fill or an alias copy, vk_exec_inline_begin, which needs the part's pass)
@@ -72,13 +78,11 @@ static inline uint32_t mfb_twice(uint32_t v, uint32_t least) {   // MFB_HEADROOM
 
 // The workgroups a batched draw's part holds, or a reason it goes one by one. direct: the CPU knows count. floor_slots,
 // floor_tasks: the parts' floors (mfb_floor).
-static inline int mfb_batch_need(int on, int writes, int closed, int direct, uint32_t count, int has_task,
-                                 const MfbHist *h, uint32_t floor_slots, uint32_t floor_tasks, uint32_t *slots,
-                                 uint32_t *tasks) {
+static inline int mfb_batch_need(int on, int writes, int direct, uint32_t count, int has_task, const MfbHist *h,
+                                 uint32_t floor_slots, uint32_t floor_tasks, uint32_t *slots, uint32_t *tasks) {
     *slots = *tasks = 0;
     if (!on) return MFB_ONE_OFF;
     if (writes) return MFB_ONE_WRITES;
-    if (closed) return MFB_ONE_CLOSED;
     if (h->excluded) return MFB_ONE_EXCLUDED;
     if (!has_task) {
         if (direct) {
@@ -116,7 +120,7 @@ static inline int mfb_need_cut(int in_pass, uint32_t pre_pass, uint32_t pass_ser
     return !in_pass || pre_pass != pass_serial;
 }
 
-// Parts taken since the buffers' use started over: a draw one by one then closes the batch (MFB_ONE_CLOSED)
+// Parts taken since the buffers' use started over: a draw one by one then closes them (a cut before the next batched)
 static inline int mfb_parts_taken(const MfbSpan *u) { return u->task || u->list || u->mesh; }
 
 static inline uint64_t mfb_align_up(uint64_t v, uint64_t a) { return a > 1 ? (v + a - 1) / a * a : v; }
@@ -146,4 +150,46 @@ static inline int mfb_hist_note(MfbHist *h, uint32_t want_slots, uint32_t want_t
     int shortfall = want_slots > cap_slots || want_tasks > cap_tasks;
     if (batched && shortfall) h->excluded = 1;
     return batched && shortfall;
+}
+
+// ---- mfb_draw's steps after mfb_batch_need, with the cut, the pre-pass command buffer and the part as calls
+// (vk_exec_split_now, vk_sync_pre, vk_meshfb_part_take), so that tests/mfb_batch_check.c runs the same order.
+typedef struct {
+    int (*cut)(void *u);    // the part ends here; 0: it could not be cut
+    int (*pre)(void *u);    // the pre-pass command buffer; 0: none
+    int (*take)(void *u);   // the draw's part of the buffers; 0: it does not fit what is left
+    void *u;
+} MfbSteps;
+enum { MFB_CUT_NONE, MFB_CUT_PASS, MFB_CUT_ROOM };   // mfb_batch_steps *cut: none, at the pass or closed, for room
+
+// why: mfb_batch_need's answer. images: a task or mesh stage reads a texture or image. need_cut: mfb_need_cut, or a
+// draw went one by one since the parts began. Returns MFB_BATCHED (the part taken) or why the draw goes one by one;
+// *cut says whether and why the part was cut on the way (a cut for a draw then one by one was for nothing).
+static inline int mfb_batch_steps(int why, int images, int need_cut, const MfbSteps *s, int *cut) {
+    *cut = MFB_CUT_NONE;
+    if (why != MFB_BATCHED) return why;
+    if (images) return MFB_ONE_TEXTURES;
+    if (need_cut) {
+        if (!s->cut(s->u)) return MFB_ONE_PRE;
+        *cut = MFB_CUT_PASS;
+    }
+    if (!s->pre(s->u)) return MFB_ONE_PRE;
+    if (s->take(s->u)) return MFB_BATCHED;
+    if (*cut) return MFB_ONE_ROOM;   // the buffers' use started over with this cut: the part is too large for them
+    if (!s->cut(s->u)) return MFB_ONE_ROOM;
+    *cut = MFB_CUT_ROOM;
+    if (!s->pre(s->u)) return MFB_ONE_PRE;
+    return s->take(s->u) ? MFB_BATCHED : MFB_ONE_ROOM;
+}
+
+// The counts of the log line (vk_exec_draw.c mfb_batch_line). ok: a batched draw's stages were recorded.
+typedef struct { uint64_t why[MFB_REASONS], cuts_pass, cuts_room, cuts_lost; } MfbCount;
+static inline void mfb_count(MfbCount *n, int why, int cut, int ok) {
+    if (why == MFB_BATCHED && ok) {
+        n->why[MFB_BATCHED]++;
+        n->cuts_pass += cut == MFB_CUT_PASS, n->cuts_room += cut == MFB_CUT_ROOM;
+        return;
+    }
+    if (why != MFB_BATCHED) n->why[why]++;
+    n->cuts_lost += cut != MFB_CUT_NONE;
 }

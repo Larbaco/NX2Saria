@@ -41,7 +41,7 @@ static struct {
     MfbPart part;
     MfbSpan used;                      // the parts taken for the pre-pass command buffer being recorded
     uint64_t batch_short;              // batched draws that asked for more than their part held
-    int closed;                        // a draw went one by one since the parts began (mfb_batch.h MFB_ONE_CLOSED)
+    int closed;                        // a draw went one by one since the parts began: the next batched cuts (mfb_batch.h)
     uint64_t peak_mesh;                // the most of the mesh buffer the parts of one pre-pass command buffer took
     uint32_t next;
     uint64_t draws, short_draws, worst_bytes;
@@ -151,7 +151,7 @@ int vk_meshfb_part_take(uint64_t task_b, uint64_t list_b, uint64_t mesh_b) {
 }
 void vk_meshfb_part_done(void) { M.part_on = 0; }
 void vk_meshfb_part_reset(void) { M.used = (MfbSpan){0, 0, 0}, M.part_on = 0, M.closed = 0; }
-void vk_meshfb_one_by_one(void) {   // a draw recorded one by one: with parts taken, none more until they start over
+void vk_meshfb_one_by_one(void) {   // a draw recorded one by one: with parts taken, the next batched draw cuts first
     if (!vk_meshfb_part_first()) M.closed = 1;
 }
 int vk_meshfb_closed(void) { return M.closed; }
@@ -258,7 +258,8 @@ VkDeviceSize vk_meshfb_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src
     return at;
 }
 
-void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, uint32_t fan, uint32_t slot_words, uint32_t verts) {
+void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, uint32_t fan, uint32_t slot_words, uint32_t verts,
+                    int clamped) {
     uint32_t i = (uint32_t)(at / REC_BYTES);
     VkDescriptorBufferInfo bi[4] = {{M.rec, 0, VK_WHOLE_SIZE}, vk_meshfb_buffer(MESHFB_CB_TASK), vk_meshfb_buffer(MESHFB_CB_LIST),
                                     vk_meshfb_buffer(MESHFB_CB_MESH)};
@@ -268,7 +269,9 @@ void vk_meshfb_scan(VkCommandBuffer cb, VkDeviceSize at, uint32_t task_words, ui
         w[k] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = (uint32_t)k,
                                       .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                       .pBufferInfo = &bi[k]};
-    uint32_t pc[6] = {(uint32_t)(at / 4), task_words, fan, slot_words, verts, vk_ctx()->props.limits.maxComputeWorkGroupCount[0]};
+    // clamped: vk_meshfb_clamp ran for this record and wrote its report of the task workgroups asked for (word 13)
+    uint32_t pc[6] = {(uint32_t)(at / 4), task_words, (fan & 0x7fffffffu) | (clamped ? 0x80000000u : 0u), slot_words, verts,
+                      vk_ctx()->props.limits.maxComputeWorkGroupCount[0]};
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, M.scan);
     rec_push(M.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, M.layout, 0, 4, w);
     vkCmdPushConstants(cb, M.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, pc);

@@ -5,7 +5,9 @@
 // reading memory nothing wrote) would launch up to millions of workgroups that write nothing and instances that draw
 // nothing, past the buffers' end, and keep the GPU busy past the driver's timeout. The count is cut to what the
 // buffers hold, which changes nothing that is drawn; the record's report word keeps the count asked for, so the log
-// names such a draw (vk_mesh_fb.c record_check).
+// names such a draw (vk_mesh_fb.c record_check). For a task count that word (13) is written here, before the cut: the
+// scan would read the count already cut (meshfb_scan.comp leaves it to this pass then), and a batched draw short of
+// its task part would never be seen (vk_mesh_fb.c record_check, mfb_batch.h mfb_hist_note).
 layout(local_size_x = 1) in;
 
 layout(push_constant) uniform Params {
@@ -20,7 +22,9 @@ layout(set = 0, binding = 0) buffer Rec { uint w[]; } rec;
 
 void main() {
     if (pc.task != 0u) {
-        rec.w[pc.rec] = min(rec.w[pc.rec], pc.room);
+        uint asked = rec.w[pc.rec];
+        rec.w[pc.rec + 13u] = asked;
+        rec.w[pc.rec] = min(asked, pc.room);
     } else {
         uint m = min(rec.w[pc.rec + 4u], pc.room);
         rec.w[pc.rec + 4u] = m;
