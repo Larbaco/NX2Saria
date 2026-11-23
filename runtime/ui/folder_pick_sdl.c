@@ -1,6 +1,3 @@
-// The SDL front end of folder_pick.h: SDL_ShowOpenFolderDialog and SDL_ShowOpenFileDialog (the desktop portal, else
-// zenity), started on the window thread, which runs SDL's event loop that delivers the portal's answer, and SDL's user
-// folders.
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,9 +10,9 @@
 #include "input_sdl.h"
 
 typedef struct {
-    char start[PATH_MAX];                // absolute, or empty: the dialog's own default
-    char ext[16];                        // a file of this extension; empty: a folder
-    SDL_DialogFileFilter filters[2];     // read by SDL until the answer comes
+    char start[PATH_MAX];
+    char ext[16];
+    SDL_DialogFileFilter filters[2];
     FolderPickDone done;
     void *ctx;
 } PickReq;
@@ -34,7 +31,7 @@ static void show(void *arg) {
         SDL_ShowOpenFolderDialog(on_pick, r, gfx_window_sdl(), r->start[0] ? r->start : NULL, false);
         return;
     }
-    r->filters[0] = (SDL_DialogFileFilter){r->ext, r->ext};   // the extension is its own name: no text to translate
+    r->filters[0] = (SDL_DialogFileFilter){r->ext, r->ext};
     r->filters[1] = (SDL_DialogFileFilter){"*", "*"};
     SDL_ShowOpenFileDialog(on_pick, r, gfx_window_sdl(), r->filters, 2, r->start[0] ? r->start : NULL, false);
 }
@@ -59,7 +56,7 @@ void file_pick(const char *start, const char *ext, FolderPickDone done, void *ct
 int folder_downloads(char *out, size_t cap) {
     const char *p = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS);
     size_t n = p ? strlen(p) : 0;
-    while (n > 1 && p[n - 1] == '/') n--;   // SDL ends it with a separator
+    while (n > 1 && p[n - 1] == '/') n--;
     if (!n || n >= cap) return 0;
     memcpy(out, p, n);
     out[n] = 0;

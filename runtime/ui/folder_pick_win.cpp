@@ -1,6 +1,3 @@
-// The Win32 front end of folder_pick.h: the shell's open dialog (IFileOpenDialog; FOS_PICKFOLDERS for a folder), owned
-// by the game window, on a thread of its own so the present thread that draws the menu keeps running, and the shell's
-// Downloads folder.
 #include <windows.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -16,7 +13,7 @@ extern "C" {
 
 struct PickReq {
     std::string start;
-    std::string ext;   // a file of this extension; empty: a folder
+    std::string ext;
     FolderPickDone done;
     void *ctx;
 };
@@ -37,7 +34,6 @@ static std::string utf8(const wchar_t *w) {
     return s;
 }
 
-// The dialog wants an absolute folder that exists; anything else leaves it at the shell's last folder.
 static void set_start(IFileOpenDialog *d, const std::string &start) {
     wchar_t full[MAX_PATH * 2];
     if (start.empty() || !GetFullPathNameW(wide(start).c_str(), MAX_PATH * 2, full, NULL)) return;
@@ -61,7 +57,7 @@ static void pick_main(void *arg) {
             d->SetOptions(opt | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
         } else {
             d->SetOptions(opt | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST);
-            std::wstring pattern = L"*." + wide(r->ext);   // the pattern is its own name: no text to translate
+            std::wstring pattern = L"*." + wide(r->ext);
             COMDLG_FILTERSPEC types[] = {{pattern.c_str(), pattern.c_str()}, {L"*.*", L"*.*"}};
             d->SetFileTypes(2, types);
         }
@@ -101,7 +97,6 @@ extern "C" void file_pick(const char *start, const char *ext, FolderPickDone don
 }
 
 extern "C" int folder_downloads(char *out, size_t cap) {
-    // FOLDERID_Downloads, spelled out so no import library has to carry it
     static const GUID downloads = {0x374de290, 0x123f, 0x4565, {0x91, 0x64, 0x39, 0xc4, 0x92, 0x5e, 0x46, 0x7b}};
     PWSTR path = NULL;
     int ok = 0;

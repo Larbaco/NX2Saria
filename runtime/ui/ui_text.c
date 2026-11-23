@@ -1,7 +1,3 @@
-// Catalog of the text the host shows the player (ui_text.h). One array per catalog language, indexed by UiTextId: a new
-// string gets an id in ui_text.h and an entry in every language that has one (a missing entry falls back to English).
-// The software keyboard has every language; the menu has English, Russian, Brazilian Portuguese and Simplified
-// Chinese.
 #include <stdatomic.h>
 #include <string.h>
 
@@ -12,7 +8,6 @@
 
 typedef struct { const char *lang; const char *const *text; } Row;
 
-// The language names are the same in every row.
 #define LANG_NAMES \
     [UI_MENU_LANGNAME_EN] = "English", [UI_MENU_LANGNAME_JA] = "日本語", [UI_MENU_LANGNAME_FR] = "Français", \
     [UI_MENU_LANGNAME_DE] = "Deutsch", [UI_MENU_LANGNAME_IT] = "Italiano", [UI_MENU_LANGNAME_ES] = "Español", \
@@ -22,12 +17,10 @@ typedef struct { const char *lang; const char *const *text; } Row;
     [UI_MENU_LANGNAME_FR_CA] = "Français (Canada)", [UI_MENU_LANGNAME_ES_419] = "Español (Latinoamérica)", \
     [UI_MENU_LANGNAME_PL] = "Polski"
 
-// SWKBD: TITLE, PROMPT, DEFAULT_NAME (at most 9 UTF-16 units, no '@' '%' '\'), OK, CANCEL, PAD_HINT.
 #define SWKBD(title, prompt, name, ok, cancel, hint) \
     [UI_SWKBD_TITLE] = title, [UI_SWKBD_PROMPT] = prompt, [UI_SWKBD_DEFAULT_NAME] = name, [UI_SWKBD_OK] = ok, \
     [UI_SWKBD_CANCEL] = cancel, [UI_SWKBD_PAD_HINT] = hint, LANG_NAMES
 
-// The DLSS model file and the executable, as the player sees them on this platform.
 #ifdef _WIN32
 #define DLSS_FILE "nvngx_dlss.dll"
 #define EXE_FILE "nx2saria.exe"
@@ -69,7 +62,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OVERLAY] = "Performance overlay",
     [UI_MENU_PERF_OVERLAY_DESC] = "Shows frame rate and system stats. F10 switches modes.",
     [UI_MENU_PERF_OFF] = "Off", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Full",
-    // printf format of the overlay line in FPS mode: the frame rate
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Picture",
     [UI_MENU_OUTPUT_RES] = "Game resolution",
@@ -221,17 +213,15 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_AA_SMAA] = "SMAA (Ultra)",
     [UI_MENU_AA_TAA_DLSS] = "TAA (NVIDIA DLAA)",
     [UI_MENU_AA_TAA_FSR] = "TAA (AMD FSR 3.1)",
-    [UI_MENU_AA_TAA_FSR4] = "TAA (%s)",   // FSR 4's name as the Upscaling row gives it ("AMD FSR 4.1")
+    [UI_MENU_AA_TAA_FSR4] = "TAA (%s)",
     [UI_MENU_AA_WITH_TAA] = "plus TAA from Upscaling",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate limit",
     [UI_MENU_FPS_LIMIT_DESC] = "The highest frame rate the game draws at. Frame generation adds its frames on top.",
     [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
     [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
-    // the monitor's refresh rate; printf format with the rate in Hz when it is known
     [UI_MENU_FPS_DISPLAY] = "Monitor rate", [UI_MENU_FPS_DISPLAY_HZ] = "Monitor rate (%.0f Hz)",
     [UI_MENU_FPS_UNLIMITED] = "Unlimited",
-    // notes under the frame rate value: RivaTuner Statistics Server (rtss_limit.c) limits the game, or cannot
     [UI_MENU_FPS_RTSS] = "limited by RivaTuner Statistics Server",
     [UI_MENU_FPS_RTSS_READONLY] = "RivaTuner needs the game run as administrator",
     [UI_MENU_FPS_RTSS_IGNORED] = "RivaTuner does not limit this game; the game does",
@@ -737,7 +727,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
 #ifdef _WIN32
                                       "work. AMD FSR 3.1 is not offered here: it needs amd_fidelityfx_vk.dll, which "
                                       "cannot be loaded.",
-#else   // no library to load: the game's own passes (vk_fsr3.c vk_fsr3_init) found the device cannot run them
+#else
                                       "work. AMD FSR 3.1 is not offered here: the game's own FSR 3.1 cannot run on "
                                       "this GPU or driver (see the fsr3 line in the log for why).",
 #endif
@@ -2295,9 +2285,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DYN_RES_NATIVE] = "nada a baixar com DLAA ou Native AA",
 };
 
-// Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
-// when the menu language is zh-Hans (ui_text.h menu_text). The rows are fixed width, so the strings stay close to the
-// English length; an id without a Chinese entry falls back to English.
 static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     SWKBD("文字输入", "请输入名字", "马儿", "确定", "取消", "手柄：A 确定，B 取消"),
 
@@ -3110,8 +3097,6 @@ const char *ui_text_lang(const char *code) {
     return code;
 }
 
-// Every game language with the Mals file it reads: EUen/USen, USfr/EUfr, USes/EUes ship in every version; USpt only
-// from 1.4.3; EUpl only in Ocarina (since 999: never by version, ui_text_game_langs_in finds it by its file).
 static const struct { const char *code; UiTextId name; int since; const char *mals; } all_langs[] = {
     {"en-US", UI_MENU_LANGNAME_EN, 0, "USen"}, {"en-GB", UI_MENU_LANGNAME_EN_GB, 0, "EUen"},
     {"ja", UI_MENU_LANGNAME_JA, 0, "JPja"}, {"fr", UI_MENU_LANGNAME_FR, 0, "EUfr"},
@@ -3159,8 +3144,6 @@ const char *ui_text_in(const char *lang, UiTextId id) {
 
 const char *ui_text(UiTextId id) { return ui_text_in(ui_text_lang(ov_language()), id); }
 
-// A language's own strings, for the font that draws them: the merged system font must cover the whole menu of the
-// language, not only its name (ui/menu.cpp fonts_up).
 void ui_text_visit(const char *lang, void (*visit)(void *ctx, const char *text), void *ctx) {
     const Row *r = find_row(lang);
     if (!r) return;
@@ -3168,17 +3151,12 @@ void ui_text_visit(const char *lang, void (*visit)(void *ctx, const char *text),
         if (r->text[id] && *r->text[id]) visit(ctx, r->text[id]);
 }
 
-// The menu language, re-read when cfg_version changes. NX2SARIA_MENU_LANG names a catalog language ("en", "ru", "pt-BR",
-// "zh-Hans"); unset, it follows the system UI language, through the same code map the game language uses ("zh-CN" ->
-// "zh-Hans"). Windows names a region with it ("ru-RU"), so a tag without menu text tries its language alone ("ru"). A
-// language whose row has no menu text (only the software keyboard does) shows English, so other Windows locales keep the
-// English menu.
 static const char *resolve_menu_lang(void) {
     const char *v = cfg_value("NX2SARIA_MENU_LANG");
     const char *sys = plat_ui_language();
     const char *lang = v && *v ? ui_text_lang(v) : sys && *sys ? ui_text_lang(sys) : "en";
     if (ui_text_defined(lang, UI_MENU_TITLE)) return lang;
-    static char base[16];   // menu_text calls this on one thread at a time, on a cfg_version change
+    static char base[16];
     size_t n = strcspn(lang, "-");
     if (n < sizeof base && lang[n]) {
         memcpy(base, lang, n), base[n] = 0;

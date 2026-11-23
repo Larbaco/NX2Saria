@@ -1,7 +1,3 @@
-// The remapping rows of the Controls tab (binds_page.h): edits a copy of the input tables (input_map.h), writes the NX2SARIA_BIND_* lines that
-// give the copy, and input_win.c applies them at its next poll; the lines join the menu's draft (opt_change) and nx2navi.ini
-// is written when the player applies it. The
-// gamepad cells show and change the table of the button layout in use (NX2SARIA_PAD_LAYOUT).
 #include <stdio.h>
 #include <string.h>
 
@@ -15,7 +11,6 @@ extern "C" {
 #include "input_map.h"
 #include "platform/platform.h"
 #include "ui_text.h"
-// host.h pulls in cpu.h, which is C only: the one function needed from it, as declared there.
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 }
 
@@ -27,8 +22,6 @@ static_assert(UI_PAD_RPADDLE2 - UI_PAD_SOUTH == PAD_RPADDLE2 - PAD_SOUTH && PAD_
               "UI_PAD_* follow the pad ids");
 
 enum { CAPTURE_SECONDS = 5 };
-// The capture window stays this long after the press: the press and its click reach ImGui a frame or two later and must
-// land on the window, not on a cell (a new capture), on Continue or as Esc closing the menu.
 static const uint64_t kDoneNs = 350000000ull;
 
 static const int kButtons[] = {B_A, B_B, B_X, B_Y, B_L, B_R, B_ZL, B_ZR, B_STICK_L, B_STICK_R, B_PLUS, B_MINUS,
@@ -43,18 +36,18 @@ static_assert(BIND_ACTION_ROWS == 24, "update the bind action-label count when r
 int binds_action_row_count(void) { return BIND_ACTION_ROWS; }
 
 static struct {
-    int action = -1, cell;   // the cell waiting for a press (0, 1 keys, 2 the controller); action -1 none
-    bool reset;              // the next capture poll takes what is held as the start
-    uint64_t start, done;    // plat_now_ns of the start and of the press, timeout or Esc (0 still waiting)
+    int action = -1, cell;
+    bool reset;
+    uint64_t start, done;
 } g_cap;
-static char g_note[160];     // what the last change took or swapped, after its row's description
+static char g_note[160];
 static int g_note_action = -1;
 static uint64_t g_note_until;
 
 static const char *action_label(int a) { return menu_text((UiTextId)(UI_BIND_A + a)); }
 
 static UiTextId action_desc(int a) {
-    if (a <= B_DOWN) return (UiTextId)(UI_BIND_DESC_A + a);   // Ocarina gives each D-pad direction its own action
+    if (a <= B_DOWN) return (UiTextId)(UI_BIND_DESC_A + a);
     if (a == B_SHAKE) return UI_BIND_DESC_SHAKE;
     return a <= B_SL_DOWN ? UI_BIND_DESC_MOVE : UI_BIND_DESC_CAMERA;
 }
@@ -75,8 +68,6 @@ static void utf8(uint32_t c, char *out, size_t n) {
     }
 }
 
-// A key as the player sees it: its catalog name, the numpad format, the character on a punctuation key in the keyboard
-// layout in use, else its nx2navi.ini name in capitals (letters, digits, F keys).
 static const char *key_label(int k, char *buf, size_t n) {
     if (k == KEY_NONE) return "";
     if (k >= KEY_SPACE && k <= KEY_PAGEDOWN) return menu_text((UiTextId)(UI_KEY_SPACE + (k - KEY_SPACE)));
@@ -98,7 +89,6 @@ static const char *key_label(int k, char *buf, size_t n) {
     return buf;
 }
 
-// A gamepad button: the label the open pad has on a face button, else its place on the pad.
 static const char *pad_label(int p) {
     if (p == PAD_NONE) return "";
     switch (input_pad_label(p)) {
@@ -114,13 +104,11 @@ static const char *pad_label(int p) {
     return menu_text((UiTextId)(UI_PAD_SOUTH + (p - PAD_SOUTH)));
 }
 
-// The layout the gamepad cells show: the one in effect, or without a gamepad the one the setting names (Xbox for auto).
 static int shown_layout(void) {
     int l = input_pad_layout();
     return l >= 0 ? l : input_pad_layout_pick(opt_value("NX2SARIA_PAD_LAYOUT"), 0);
 }
 
-// Writes the bind_ line of every action whose line for m differs from the one set; a line at the defaults goes away.
 static void write_lines(const InputMap *m) {
     for (int a = 0; a < ACTION_COUNT; a++) {
         char var[40], line[256];
@@ -129,7 +117,7 @@ static void write_lines(const InputMap *m) {
         const char *now = cfg_get(var);
         if (!strcmp(line, now ? now : "")) continue;
         const char *def = menu_text(UI_MENU_DEFAULT_MARK);
-        opt_change(var, line, action_label(a), now && *now ? now : def, line[0] ? line : def);   // previewed now, saved on Apply
+        opt_change(var, line, action_label(a), now && *now ? now : def, line[0] ? line : def);
         rt_log("menu: bind_%s = %s", input_action_name(a), line[0] ? line : "(default)");
     }
 }
@@ -140,7 +128,6 @@ static void set_note(int action, UiTextId fmt, const char *a, const char *b) {
     g_note_until = plat_now_ns() + 5000000000ull;
 }
 
-// cell 0, 1: a key (KEY_NONE clears it); 2: a gamepad button (PAD_NONE clears it).
 static void change(int action, int cell, int id) {
     InputMap m;
     input_map_snapshot(&m);
@@ -167,7 +154,7 @@ static void reset_binds(void) {
         char var[48];
         snprintf(var, sizeof var, "NX2SARIA_%s", keys[a]);
         const char *now = cfg_get(var);
-        if (!now || !*now || cfg_from_env(var)) continue;   // at the defaults already, or fixed by the environment
+        if (!now || !*now || cfg_from_env(var)) continue;
         opt_change(var, "", action_label(a), now, menu_text(UI_MENU_DEFAULT_MARK));
         n++;
     }
@@ -184,7 +171,7 @@ static void row_action(int a, const InputMap &m, int layout) {
                             a >= B_SL_LEFT ? menu_text(a <= B_SL_DOWN ? UI_PAD_LSTICK : UI_PAD_RSTICK)
                             : np           ? pad_label(p[0])
                                            : ""};
-    const bool enabled[3] = {true, true, a < B_SL_LEFT};   // the sticks stay sticks (and the shake is the right stick's)
+    const bool enabled[3] = {true, true, a < B_SL_LEFT};
     char key[32];
     snprintf(key, sizeof key, "BIND_%s", input_action_name(a));
     const char *note = g_note_action == a && plat_now_ns() < g_note_until ? g_note : nullptr;
@@ -197,18 +184,15 @@ static void row_action(int a, const InputMap &m, int layout) {
         g_cap.start = plat_now_ns();
         g_cap.done = 0;
     } else {
-        change(a, r - 10, 0);   // KEY_NONE / PAD_NONE
+        change(a, r - 10, 0);
     }
 }
 
-// The window over the page while a cell waits: the press is polled from the devices (input_capture), so the menu's own
-// keys (Enter, arrows, Q / E) bind like any other. Esc or the timeout cancels; a controller button cancels a key cell.
 static void capture_window(void) {
     if (g_cap.action < 0) return;
     if (!ImGui::IsPopupOpen("##bind_capture")) ImGui::OpenPopup("##bind_capture");
     uint64_t now = plat_now_ns();
     bool pad_cell = g_cap.cell == 2;
-    // the timeout first: a press polled after it would compare with a held state long gone and bind what is held now
     if (!g_cap.done && now - g_cap.start > CAPTURE_SECONDS * 1000000000ull) g_cap.done = now;
     if (!g_cap.done) {
         int id = 0, got = input_capture(g_cap.reset, &id);
@@ -230,7 +214,7 @@ static void capture_window(void) {
             ImGui::CloseCurrentPopup();
             char id[48];
             snprintf(id, sizeof id, "BIND_%s#%d", input_action_name(g_cap.action), g_cap.cell);
-            opt_focus_key(id);   // back on the cell it came from
+            opt_focus_key(id);
             g_cap.action = -1;
         }
         ImGui::EndPopup();
@@ -241,7 +225,7 @@ bool binds_modal(void) { return g_cap.action >= 0; }
 
 void binds_cancel(void) { g_cap.action = -1; }
 
-static bool g_reset_asked;   // the reset row was chosen this frame (acted on after the page)
+static bool g_reset_asked;
 
 void binds_rows(float scale) {
     InputMap m;
@@ -255,7 +239,6 @@ void binds_rows(float scale) {
     for (int a : kMove) row_action(a, m, layout);
     opt_group(UI_BINDS_GROUP_CAMERA);
     for (int a : kCamera) row_action(a, m, layout);
-    // No row for B_SHAKE: Ocarina has no use for it (bind_shake still sets a key)
     ImGui::Dummy(ImVec2(0, 6 * scale));
     g_reset_asked = opt_button("##binds_reset", UI_BINDS_RESET, UI_BINDS_RESET_DESC);
 }

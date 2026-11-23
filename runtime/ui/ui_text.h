@@ -1,67 +1,57 @@
-// Text the host shows the player (runtime/ui_text.c): one catalog, keyed by stable ids. The software keyboard reads it
-// in the game's language (ui_text); the menu and the performance overlay read it in the menu language (menu_text).
 #pragma once
 #include <stddef.h>
 
 typedef enum {
-    // Software keyboard
-    UI_SWKBD_TITLE,          // caption of the text-entry window
-    UI_SWKBD_PROMPT,         // prompt when the game gives no header, guide or sub text (NX2Saria names a horse)
-    UI_SWKBD_DEFAULT_NAME,   // text the entry starts with when the game gives none, so a controller can confirm it
+    UI_SWKBD_TITLE,
+    UI_SWKBD_PROMPT,
+    UI_SWKBD_DEFAULT_NAME,
     UI_SWKBD_OK,
     UI_SWKBD_CANCEL,
-    UI_SWKBD_PAD_HINT,       // how a controller answers
+    UI_SWKBD_PAD_HINT,
 
-    // Menu: window, tabs, bottom row. UI_MENU_FIRST..UI_MENU_LAST_ID carry English, Russian, Brazilian Portuguese and
-    // Simplified Chinese texts.
     UI_MENU_FIRST,
     UI_MENU_TITLE = UI_MENU_FIRST,
     UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_MODS, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO,
     UI_MENU_TAB_MENU, UI_MENU_TAB_ADVANCED,
     UI_MENU_CONTINUE, UI_MENU_QUIT,
-    UI_MENU_ON, UI_MENU_OFF, UI_MENU_AUTO, UI_MENU_DEFAULT_MARK,      // "default" beside the default value
-    UI_MENU_AFTER_RESTART,    // note on a setting that is read at start
-    UI_MENU_SET_BY_ENV,       // note on a setting an environment variable fixes
+    UI_MENU_ON, UI_MENU_OFF, UI_MENU_AUTO, UI_MENU_DEFAULT_MARK,
+    UI_MENU_AFTER_RESTART,
+    UI_MENU_SET_BY_ENV,
     UI_MENU_SAVE_FAILED,
-    UI_MENU_INI_UNKNOWN,      // "...: %s": the keys of nx2navi.ini that are no settings of this version (cfg_unknown_keys)
-    UI_MENU_VERSION,          // "NX2Saria %s, game %s": the port version and the game update, beside the title
+    UI_MENU_INI_UNKNOWN,
+    UI_MENU_VERSION,
 
-    // Screen
     UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC,
     UI_MENU_WINDOW_SIZE, UI_MENU_WINDOW_SIZE_DESC, UI_MENU_WINDOW_SIZE_CUSTOM,
     UI_MENU_PRESENT_DESC, UI_MENU_PRESENT_MAILBOX, UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_IMMEDIATE,
-    UI_MENU_PRESENT_IN_USE,   // "in use: %s" under the value when the swapchain got another mode than the setting
-    // Low latency without frame generation (ui/menu.cpp row_low_latency, vk_lowlat.c). The last four are the row's
-    // notes: why it is greyed out (no such driver mode, DLSS frame generation's own, a frame generation presents the
-    // frames) or set and not in use (the driver refused it)
+    UI_MENU_PRESENT_IN_USE,
     UI_MENU_LOW_LATENCY, UI_MENU_LOW_LATENCY_DESC, UI_MENU_LOW_LATENCY_BOOST,
     UI_MENU_LOW_LATENCY_NO_DRIVER, UI_MENU_LOW_LATENCY_DLSSG, UI_MENU_LOW_LATENCY_FG, UI_MENU_LOW_LATENCY_FAILED,
     UI_MENU_GPU, UI_MENU_GPU_DESC, UI_MENU_GPU_AUTO,
     UI_MENU_PERF_OVERLAY, UI_MENU_PERF_OVERLAY_DESC, UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL,
     UI_PERF_LINE_FPS,
-    UI_MENU_GRAPHICS,         // group heading over the resolution rows
+    UI_MENU_GRAPHICS,
     UI_MENU_OUTPUT_RES, UI_MENU_OUTPUT_RES_DESC,
     UI_MENU_RENDER_SCALE, UI_MENU_RENDER_SCALE_DESC, UI_MENU_RENDER_SCALE_GAME,
     UI_MENU_UPSCALER, UI_MENU_UPSCALER_DESC, UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR,
     UI_MENU_GAME_ASPECT, UI_MENU_GAME_ASPECT_DESC, UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW,
     UI_MENU_GAME_ASPECT_16_10, UI_MENU_GAME_ASPECT_3_2,
     UI_MENU_GAME_ASPECT_21_9, UI_MENU_GAME_ASPECT_32_9,
-    // where the HUD and the menus go on a picture wider than 16:9 (NX2SARIA_WIDE_HUD, NX2SARIA_WIDE_MENUS)
     UI_MENU_WIDE_HUD, UI_MENU_WIDE_HUD_DESC, UI_MENU_WIDE_HUD_CENTER, UI_MENU_WIDE_HUD_EDGES,
     UI_MENU_WIDE_MENUS, UI_MENU_WIDE_MENUS_DESC, UI_MENU_WIDE_MENUS_FULL, UI_MENU_WIDE_MENUS_CENTER,
     UI_MENU_FOV, UI_MENU_FOV_DESC,
     UI_MENU_SHADOW_RES, UI_MENU_SHADOW_RES_DESC, UI_MENU_SHADOW_RES_GAME,
     UI_MENU_ANISO, UI_MENU_ANISO_DESC, UI_MENU_ANISO_GAME,
     UI_MENU_TEX_DETAIL, UI_MENU_TEX_DETAIL_DESC,
-    UI_MENU_TEX_DETAIL_AUTO,   // "Automatic: %s", %s the level it picks on this card
+    UI_MENU_TEX_DETAIL_AUTO,
     UI_MENU_TEX_DETAIL_FULL, UI_MENU_TEX_DETAIL_REDUCED, UI_MENU_TEX_DETAIL_LOW,
     UI_MENU_SHARPNESS, UI_MENU_SHARPNESS_DESC, UI_MENU_SHARPNESS_NEEDS_FSR,
-    UI_MENU_COLOR,            // group heading over the colour rows
+    UI_MENU_COLOR,
     UI_MENU_COLOR_PRESET, UI_MENU_COLOR_PRESET_DESC, UI_MENU_COLOR_DEFAULT, UI_MENU_COLOR_VIVID, UI_MENU_COLOR_CLARITY,
     UI_MENU_COLOR_CUSTOM,
     UI_MENU_COLOR_BRIGHTNESS, UI_MENU_COLOR_BRIGHTNESS_DESC, UI_MENU_COLOR_CONTRAST, UI_MENU_COLOR_CONTRAST_DESC,
     UI_MENU_COLOR_SATURATION, UI_MENU_COLOR_SATURATION_DESC, UI_MENU_COLOR_GAMMA, UI_MENU_COLOR_GAMMA_DESC,
-    UI_MENU_HDR_GROUP,        // group heading over the HDR rows
+    UI_MENU_HDR_GROUP,
     UI_MENU_HDR, UI_MENU_HDR_DESC, UI_MENU_HDR_PEAK, UI_MENU_HDR_PEAK_DESC, UI_MENU_HDR_GAME, UI_MENU_HDR_GAME_DESC,
     UI_MENU_HDR_UI, UI_MENU_HDR_UI_DESC, UI_MENU_HDR_HUE, UI_MENU_HDR_HUE_DESC,
     UI_MENU_HDR_GAMMA, UI_MENU_HDR_GAMMA_DESC, UI_MENU_HDR_TONEMAP, UI_MENU_HDR_TONEMAP_DESC,
@@ -83,7 +73,6 @@ typedef enum {
     UI_MENU_AA, UI_MENU_AA_DESC, UI_MENU_AA_GAME, UI_MENU_AA_FXAA, UI_MENU_AA_SMAA, UI_MENU_AA_TAA_DLSS, UI_MENU_AA_TAA_FSR,
     UI_MENU_AA_TAA_FSR4, UI_MENU_AA_WITH_TAA,
 
-    // Game
     UI_MENU_FPS_LIMIT, UI_MENU_FPS_LIMIT_DESC, UI_MENU_FPS_30, UI_MENU_FPS_40, UI_MENU_FPS_45, UI_MENU_FPS_60, UI_MENU_FPS_90,
     UI_MENU_FPS_120, UI_MENU_FPS_144,
     UI_MENU_FPS_DISPLAY, UI_MENU_FPS_DISPLAY_HZ, UI_MENU_FPS_UNLIMITED, UI_MENU_FPS_RTSS, UI_MENU_FPS_RTSS_READONLY, UI_MENU_FPS_RTSS_IGNORED,
@@ -97,40 +86,34 @@ typedef enum {
     UI_MENU_TEXT_SPEED, UI_MENU_TEXT_SPEED_DESC, UI_MENU_TEXT_SPEED_NORMAL, UI_MENU_TEXT_SPEED_FAST,
     UI_MENU_TEXT_SPEED_INSTANT,
 
-    // Mods: the port's own patches and the player's mods folder (mods.c)
     UI_MENU_MODS_BUILTIN, UI_MENU_MODS_INSTALLED,
-    UI_MENU_MODS_NONE,           // no mod folder yet: where to unpack one
+    UI_MENU_MODS_NONE,
     UI_MENU_MODS_OPEN, UI_MENU_MODS_OPEN_DESC,
-    UI_MENU_MODS_ROW_DESC,       // printf: files it replaces, files it adds (as of this start)
-    UI_MENU_MODS_OVERRIDDEN,     // printf: files a higher mod serves instead, that mod's name
+    UI_MENU_MODS_ROW_DESC,
+    UI_MENU_MODS_OVERRIDDEN,
     UI_MENU_MODS_MOVE_HINT,
     UI_MENU_MODS_EMPTY, UI_MENU_MODS_SUBSDK, UI_MENU_MODS_EXEFS_LATER, UI_MENU_MODS_BAD_NAME,
-    UI_MENU_MODS_EXEFS_UNSUPPORTED,  // printf: the file and why
+    UI_MENU_MODS_EXEFS_UNSUPPORTED,
     UI_MENU_MODS_EXEFS_OTHER,
-    UI_MENU_MODS_EXEFS_ON,           // printf: its ExeFS patch files in use
-    UI_MENU_MODS_REPLACES_BUILTIN,   // printf: its ExeFS patch files in use, the port's own patch sets they turn off
-    UI_MENU_MODS_OTHER_VERSION,  // printf: files made for another game version, left out
-    UI_MENU_MODS_UNUSED,         // under the switch of a mod the port cannot use
-    UI_MENU_MODS_CHEATS,         // printf: its cheats as read at start
-    UI_MENU_MODS_CHEATS_FILE,    // printf: <build id>.txt, when none were read
+    UI_MENU_MODS_EXEFS_ON,
+    UI_MENU_MODS_REPLACES_BUILTIN,
+    UI_MENU_MODS_OTHER_VERSION,
+    UI_MENU_MODS_UNUSED,
+    UI_MENU_MODS_CHEATS,
+    UI_MENU_MODS_CHEATS_FILE,
     UI_MENU_MODS_FPS60, UI_MENU_MODS_FPS60_DESC, UI_MENU_MODS_RES, UI_MENU_MODS_RES_DESC,
     UI_MENU_MODS_QUICKMENU, UI_MENU_MODS_QUICKMENU_DESC,
 
-    // Sound
     UI_MENU_VOLUME, UI_MENU_VOLUME_DESC, UI_MENU_MENU_SOUNDS, UI_MENU_MENU_SOUNDS_DESC,
     UI_MENU_AUDIO_CHANNELS, UI_MENU_AUDIO_CHANNELS_DESC, UI_MENU_CHANNELS_AUTO, UI_MENU_CHANNELS_STEREO, UI_MENU_CHANNELS_51,
 
-    // Controls
     UI_MENU_MOTION, UI_MENU_MOTION_DESC,
     UI_MENU_SPRINT_BUTTON, UI_MENU_SPRINT_BUTTON_DESC, UI_MENU_SPRINT_OFF, UI_MENU_SPRINT_B, UI_MENU_SPRINT_L3,
     UI_MENU_SPRINT_MODE, UI_MENU_SPRINT_MODE_DESC, UI_MENU_SPRINT_TOGGLE, UI_MENU_SPRINT_HOLD,
     UI_MENU_RUMBLE_STRENGTH, UI_MENU_RUMBLE_STRENGTH_DESC,
     UI_MENU_RUMBLE_CURVE, UI_MENU_RUMBLE_CURVE_DESC,
     UI_MENU_RUMBLE_TRIGGERS, UI_MENU_RUMBLE_TRIGGERS_DESC,
-    // HD rumble, and the note on its row while the gamepad in use cannot take it (input.h input_rumble_hd_available)
     UI_MENU_RUMBLE_HD, UI_MENU_RUMBLE_HD_DESC, UI_MENU_RUMBLE_HD_NEEDS,
-    // the Gyro group (ui/menu.cpp rows_gyro): its heading, rows and dead zone levels, and the note on its rows while
-    // motion controls are off
     UI_MENU_GROUP_GYRO, UI_MENU_GYRO_CALIBRATION, UI_MENU_GYRO_CALIBRATION_DESC,
     UI_MENU_GYRO_DEADZONE, UI_MENU_GYRO_DEADZONE_DESC, UI_MENU_GYRO_DEADZONE_OFF, UI_MENU_GYRO_DEADZONE_LOW,
     UI_MENU_GYRO_DEADZONE_STANDARD, UI_MENU_GYRO_DEADZONE_HIGH,
@@ -141,21 +124,14 @@ typedef enum {
     UI_MENU_PAD_LAYOUT_XBOX, UI_MENU_PAD_LAYOUT_PLAYSTATION, UI_MENU_PAD_LAYOUT_IN_USE,
     UI_MENU_PROMPTS, UI_MENU_PROMPTS_DESC, UI_MENU_PROMPTS_NINTENDO, UI_MENU_PROMPTS_XBOX, UI_MENU_PROMPTS_PLAYSTATION,
     UI_MENU_PROMPTS_STEAMDECK, UI_MENU_PROMPTS_PC,
-    // the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off
     UI_MENU_PROMPTS_MISSING, UI_MENU_PROMPTS_FAILED, UI_MENU_PROMPTS_RESTART, UI_MENU_PROMPTS_OFF_SHAPE,
     UI_MENU_PROMPTS_OFF_MODS, UI_MENU_PROMPTS_OFF_PATCHES,
-    // "Restart now" under the prompts while they change after restart, and its confirmation (Cancel: UI_MENU_RESET_NO)
     UI_MENU_RESTART, UI_MENU_RESTART_DESC, UI_MENU_RESTART_CONFIRM, UI_MENU_QUIT_CONFIRM, UI_MENU_RESTART_YES, UI_MENU_RESTART_SAVING, UI_MENU_QUIT_SAVING,
-    UI_MENU_RESTART_COUNT,   // the bar's Restart with the count of settings waiting for it (printf: %d)
-    // the box that asks about the changes made in the menu when it is left (ui/menu.cpp apply_confirm), and the lines
-    // restarting and quitting add to their confirmation while there are such changes
+    UI_MENU_RESTART_COUNT,
     UI_MENU_DRAFT_TITLE, UI_MENU_DRAFT_APPLY, UI_MENU_DRAFT_DISCARD, UI_MENU_DRAFT_KEEP,
     UI_MENU_DRAFT_RESTART_NOTE, UI_MENU_DRAFT_QUIT_NOTE,
-    // after Apply: the "keep these display settings?" box with its countdown (a printf format with one %d), and the
-    // "restart now / later" box for settings read at start
     UI_MENU_KEEP_TITLE, UI_MENU_KEEP_COUNTDOWN, UI_MENU_KEEP_YES, UI_MENU_KEEP_REVERT,
     UI_MENU_RESTART_NOW_TITLE, UI_MENU_RESTART_NOW, UI_MENU_RESTART_LATER,
-    // the notice Ctrl+F5 shows after reading nx2navi.ini again (printf formats: changed / after restart [/ rejected])
     UI_MENU_RELOAD_NONE, UI_MENU_RELOAD_DONE, UI_MENU_RELOAD_REJECTED, UI_MENU_RELOAD_FAILED, UI_MENU_RELOAD_BUSY,
     UI_MENU_GROUP_STICKS, UI_MENU_LSTICK_DEADZONE, UI_MENU_RSTICK_DEADZONE, UI_MENU_STICK_DEADZONE_DESC,
     UI_MENU_STICK_DEADZONE_NOW, UI_MENU_STICK_SENS, UI_MENU_STICK_SENS_DESC,
@@ -164,44 +140,36 @@ typedef enum {
     UI_MENU_MOUSE_SENS, UI_MENU_MOUSE_SENS_DESC,
     UI_MENU_WALK_KEY, UI_MENU_WALK_KEY_DESC, UI_MENU_WALK_KEY_TAKEN, UI_MENU_WALK_SCALE, UI_MENU_WALK_SCALE_DESC,
 
-    // Controls tab: the remapping rows (ui/binds_page.cpp)
     UI_BINDS_HELP, UI_BINDS_COL_KEY1, UI_BINDS_COL_KEY2, UI_BINDS_COL_PAD,
     UI_BINDS_GROUP_BUTTONS, UI_BINDS_GROUP_MOVE, UI_BINDS_GROUP_CAMERA,
-    UI_BINDS_PRESS_KEY,       // "Press a key or mouse button for %s"
-    UI_BINDS_PRESS_PAD,       // "Press a controller button for %s"
-    UI_BINDS_CANCEL_HINT,     // "Esc cancels, or wait %d s"
-    UI_BINDS_TAKEN,           // "%s was taken from %s": the key, the action that lost it
-    UI_BINDS_SWAPPED,         // "%s swapped with %s": the two actions
+    UI_BINDS_PRESS_KEY,
+    UI_BINDS_PRESS_PAD,
+    UI_BINDS_CANCEL_HINT,
+    UI_BINDS_TAKEN,
+    UI_BINDS_SWAPPED,
     UI_BINDS_RESET, UI_BINDS_RESET_DESC,
-    // the actions, in action order (input_map.h B_A .. B_SHAKE)
     UI_BIND_A, UI_BIND_B, UI_BIND_X, UI_BIND_Y, UI_BIND_LCLICK, UI_BIND_RCLICK, UI_BIND_L, UI_BIND_R, UI_BIND_ZL,
     UI_BIND_ZR, UI_BIND_PLUS, UI_BIND_MINUS, UI_BIND_LEFT, UI_BIND_UP, UI_BIND_RIGHT, UI_BIND_DOWN,
     UI_BIND_LSTICK_LEFT, UI_BIND_LSTICK_UP, UI_BIND_LSTICK_RIGHT, UI_BIND_LSTICK_DOWN,
     UI_BIND_RSTICK_LEFT, UI_BIND_RSTICK_UP, UI_BIND_RSTICK_RIGHT, UI_BIND_RSTICK_DOWN, UI_BIND_SHAKE,
-    // what an action does in the world, in action order up to Minus
     UI_BIND_DESC_A, UI_BIND_DESC_B, UI_BIND_DESC_X, UI_BIND_DESC_Y, UI_BIND_DESC_LCLICK, UI_BIND_DESC_RCLICK,
     UI_BIND_DESC_L, UI_BIND_DESC_R, UI_BIND_DESC_ZL, UI_BIND_DESC_ZR, UI_BIND_DESC_PLUS, UI_BIND_DESC_MINUS,
     UI_BIND_DESC_LEFT, UI_BIND_DESC_UP, UI_BIND_DESC_RIGHT, UI_BIND_DESC_DOWN, UI_BIND_DESC_MOVE, UI_BIND_DESC_CAMERA,
     UI_BIND_DESC_SHAKE,
-    // Short action labels shown beside each Switch control in the bind rows. The stick-direction rows share a label.
     UI_BIND_ACTION_A, UI_BIND_ACTION_B, UI_BIND_ACTION_X, UI_BIND_ACTION_Y, UI_BIND_ACTION_LCLICK, UI_BIND_ACTION_RCLICK,
     UI_BIND_ACTION_L, UI_BIND_ACTION_R, UI_BIND_ACTION_ZL, UI_BIND_ACTION_ZR, UI_BIND_ACTION_PLUS, UI_BIND_ACTION_MINUS,
     UI_BIND_ACTION_LEFT, UI_BIND_ACTION_UP, UI_BIND_ACTION_RIGHT, UI_BIND_ACTION_DOWN, UI_BIND_ACTION_MOVE,
     UI_BIND_ACTION_CAMERA,
-    // key names, in key id order KEY_SPACE .. KEY_PAGEDOWN (letters, digits, F keys and punctuation show as themselves)
     UI_KEY_SPACE, UI_KEY_TAB, UI_KEY_LSHIFT, UI_KEY_LCTRL, UI_KEY_UP, UI_KEY_DOWN, UI_KEY_LEFT, UI_KEY_RIGHT,
     UI_KEY_MOUSE_L, UI_KEY_MOUSE_R, UI_KEY_MOUSE_M, UI_KEY_MOUSE_X1, UI_KEY_MOUSE_X2,
     UI_KEY_ENTER, UI_KEY_BACKSPACE, UI_KEY_RSHIFT, UI_KEY_RCTRL, UI_KEY_LALT, UI_KEY_CAPSLOCK, UI_KEY_INSERT,
     UI_KEY_DELETE, UI_KEY_HOME, UI_KEY_END, UI_KEY_PAGEUP, UI_KEY_PAGEDOWN,
-    UI_KEY_NUM_FMT,           // "Num %s": a numpad key
-    // gamepad buttons, in pad id order PAD_SOUTH .. PAD_RPADDLE2, then the PlayStation face labels
+    UI_KEY_NUM_FMT,
     UI_PAD_SOUTH, UI_PAD_EAST, UI_PAD_WEST, UI_PAD_NORTH, UI_PAD_LSTICK, UI_PAD_RSTICK, UI_PAD_L, UI_PAD_R,
     UI_PAD_START, UI_PAD_BACK, UI_PAD_DPAD_LEFT, UI_PAD_DPAD_UP, UI_PAD_DPAD_RIGHT, UI_PAD_DPAD_DOWN, UI_PAD_ZL,
     UI_PAD_ZR, UI_PAD_LPADDLE1, UI_PAD_RPADDLE1, UI_PAD_LPADDLE2, UI_PAD_RPADDLE2,
     UI_PAD_CROSS, UI_PAD_CIRCLE, UI_PAD_SQUARE, UI_PAD_TRIANGLE,
 
-    // Amiibo tab (ui/amiibo_page.cpp): the dump folder and its files, the emulated NFC reader and its state, the
-    // amiibo on it and the last action. NO_DIR and NONE_FOUND take the folder as "%s".
     UI_MENU_AMIIBO_DIR, UI_MENU_AMIIBO_OPEN, UI_MENU_AMIIBO_DEFAULT_DIR, UI_MENU_AMIIBO_REFRESH,
     UI_MENU_AMIIBO_NO_DIR, UI_MENU_AMIIBO_NONE_FOUND, UI_MENU_AMIIBO_FILTER, UI_MENU_AMIIBO_LIST_HINT,
     UI_MENU_AMIIBO_ADVANCED, UI_MENU_AMIIBO_READER, UI_MENU_AMIIBO_STATE, UI_MENU_AMIIBO_STATE_IDLE,
@@ -211,39 +179,29 @@ typedef enum {
     UI_MENU_AMIIBO_NO_TAG, UI_MENU_AMIIBO_TAG_FILE, UI_MENU_AMIIBO_TAG_ID, UI_MENU_AMIIBO_TAG_UID,
     UI_MENU_AMIIBO_READY, UI_MENU_AMIIBO_TAPPED, UI_MENU_AMIIBO_LOAD_FAILED, UI_MENU_AMIIBO_REMOVED,
     UI_MENU_AMIIBO_STATUS,
-    // the figure's own data (amiibo.h amiibo_get_figure_data): nickname, where it came from, the keys' check, the
-    // writes and the game data; erasing the game data (a second press confirms)
     UI_MENU_AMIIBO_NICKNAME, UI_MENU_AMIIBO_NOT_REGISTERED, UI_MENU_AMIIBO_SOURCE, UI_MENU_AMIIBO_SOURCE_NEW,
     UI_MENU_AMIIBO_SOURCE_SAVED, UI_MENU_AMIIBO_SOURCE_DUMP, UI_MENU_AMIIBO_DECRYPTED, UI_MENU_AMIIBO_NOT_DECRYPTED,
-    UI_MENU_AMIIBO_WRITES,        // "%u" the write counter, then "%04u-%02u-%02u" the last write date
-    UI_MENU_AMIIBO_GAME_DATA,     // "%u" bytes, "%08X" the access id
+    UI_MENU_AMIIBO_WRITES,
+    UI_MENU_AMIIBO_GAME_DATA,
     UI_MENU_AMIIBO_NO_GAME_DATA, UI_MENU_AMIIBO_HAS_GAME_DATA, UI_MENU_AMIIBO_ERASE, UI_MENU_AMIIBO_ERASE_CONFIRM, UI_MENU_AMIIBO_ERASED,
     UI_MENU_AMIIBO_ERASE_FAILED,
-    // the keys file (amiibo_crypto.h amiibo_keys_loaded, amiibo.h amiibo_reload_keys) and the write-back setting
-    // (NX2SARIA_AMIIBO_WRITEBACK); KEYS_FILE, KEYS_RELOADED and KEYS_FAILED take the file's path as "%s"
     UI_MENU_AMIIBO_KEYS, UI_MENU_AMIIBO_KEYS_LOADED, UI_MENU_AMIIBO_KEYS_MISSING, UI_MENU_AMIIBO_KEYS_FILE,
     UI_MENU_AMIIBO_RELOAD_KEYS, UI_MENU_AMIIBO_KEYS_RELOADED, UI_MENU_AMIIBO_KEYS_FAILED, UI_MENU_AMIIBO_WRITEBACK,
     UI_MENU_AMIIBO_WRITEBACK_NEEDS_KEYS,
-    // the picker over the game (NX2SARIA_AMIIBO_POPUP): its setting, its title and its controls
     UI_MENU_AMIIBO_POPUP, UI_MENU_AMIIBO_POPUP_TITLE, UI_MENU_AMIIBO_POPUP_HINT,
-    // the Game tab's switch for the game's once-a-day amiibo limit (NX2SARIA_AMIIBO_DAILY_LIMIT)
     UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC,
 
-    // Menu tab
     UI_MENU_MENU_LANG, UI_MENU_MENU_LANG_DESC, UI_MENU_MENU_LANG_AUTO,
     UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC,
-    // the Game tab's Testing rows (ui/menu.cpp tab_game), English only
     UI_MENU_REPLAY_WORKERS, UI_MENU_REPLAY_WORKERS_DESC, UI_MENU_REPLAY_PIPE, UI_MENU_REPLAY_PIPE_DESC,
     UI_MENU_REPLAY_SMALL, UI_MENU_REPLAY_SMALL_DESC, UI_MENU_TAIL_EARLY, UI_MENU_TAIL_EARLY_DESC,
-    UI_MENU_NEEDS_WORKERS, UI_MENU_NEEDS_PIPE,   // why a row is greyed out
+    UI_MENU_NEEDS_WORKERS, UI_MENU_NEEDS_PIPE,
 
-    // Language names, each in its own language and the same in every row (game language and menu language lists)
     UI_MENU_LANGNAME_EN, UI_MENU_LANGNAME_JA, UI_MENU_LANGNAME_FR, UI_MENU_LANGNAME_DE, UI_MENU_LANGNAME_IT,
     UI_MENU_LANGNAME_ES, UI_MENU_LANGNAME_NL, UI_MENU_LANGNAME_RU, UI_MENU_LANGNAME_ZH_HANS,
     UI_MENU_LANGNAME_ZH_HANT, UI_MENU_LANGNAME_KO, UI_MENU_LANGNAME_PT_BR, UI_MENU_LANGNAME_EN_GB,
     UI_MENU_LANGNAME_FR_CA, UI_MENU_LANGNAME_ES_419, UI_MENU_LANGNAME_PL,
 
-    // Advanced
     UI_MENU_ADV_WARNING,
     UI_MENU_GROUP_SCHED, UI_MENU_GROUP_SHADERS, UI_MENU_GROUP_TEXMEM, UI_MENU_GROUP_FIXES, UI_MENU_GROUP_VULKAN,
     UI_MENU_GROUP_DIAG,
@@ -285,148 +243,95 @@ typedef enum {
     UI_MENU_INPUT_RECORD, UI_MENU_INPUT_RECORD_DESC,
     UI_MENU_OPEN_LOG, UI_MENU_OPEN_LOG_DESC,
     UI_MENU_COPY_INFO, UI_MENU_COPY_INFO_DESC, UI_MENU_COPY_INFO_DONE,
-    UI_MENU_ACTION_FAILED,    // beside a button whose action did not work (no clipboard, no folder)
+    UI_MENU_ACTION_FAILED,
     UI_MENU_RESET, UI_MENU_RESET_DESC, UI_MENU_RESET_CONFIRM, UI_MENU_RESET_YES, UI_MENU_RESET_NO,
 
-    // Performance overlay
     UI_MENU_OV_FPS, UI_MENU_OV_FRAME_MS, UI_MENU_OV_GAME_PCT, UI_MENU_OV_MAX_MS,
-    UI_MENU_OV_FPS_LABEL, UI_MENU_OV_FG_LABEL, UI_PERF_LINE_FPS_FG, UI_MENU_OV_FRAME_LABEL, UI_MENU_OV_FMT_FPS,   // the frame rows: their labels, the rate
-    UI_MENU_OV_LOW1, UI_MENU_OV_LOW01,   // printf: the fps of the slowest 1% / 0.1% of the frames, no unit (the overlay column stays narrow)
+    UI_MENU_OV_FPS_LABEL, UI_MENU_OV_FG_LABEL, UI_PERF_LINE_FPS_FG, UI_MENU_OV_FRAME_LABEL, UI_MENU_OV_FMT_FPS,
+    UI_MENU_OV_LOW1, UI_MENU_OV_LOW01,
     UI_MENU_OV_GPU, UI_MENU_OV_CPU, UI_MENU_OV_RAM, UI_MENU_OV_VRAM, UI_MENU_OV_TEMP, UI_MENU_OV_POWER,
     UI_MENU_OV_CLOCK, UI_MENU_OV_NONE,
     UI_MENU_OV_REPLAY, UI_MENU_OV_GPU_TIME, UI_MENU_OV_PIPE_WAIT, UI_MENU_OV_SHADER_WAIT, UI_MENU_OV_TEX_UPLOADS,
-    // number formats of the overlay's cells (printf, one number each)
     UI_MENU_OV_FMT_PCT, UI_MENU_OV_FMT_TEMP, UI_MENU_OV_FMT_POWER, UI_MENU_OV_FMT_MHZ, UI_MENU_OV_FMT_GB,
     UI_MENU_OV_FMT_GB_OF, UI_MENU_OV_GAME_GB, UI_MENU_OV_FMT_MS, UI_MENU_OV_PER_FRAME,
-    // the picture lines: window, game image and 3D scene sizes, the scaling to the window, frame limit and presentation
     UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE, UI_MENU_OV_SCALING, UI_MENU_OV_LIMIT, UI_MENU_OV_PRESENT,
-    UI_MENU_OV_FMT_SIZE,      // "%ux%u"
-    UI_MENU_OV_FMT_SCENE,     // "%ux%u, %.0f%%": the scene and its share of the game image's width
-    UI_MENU_OV_FMT_FSR,       // "AMD FSR 1, sharpness %d%%"
-    UI_MENU_OV_FMT_SHRINK,    // the image is larger than the window: "bilinear + FSR sharpening %d%%"
+    UI_MENU_OV_FMT_SIZE,
+    UI_MENU_OV_FMT_SCENE,
+    UI_MENU_OV_FMT_FSR,
+    UI_MENU_OV_FMT_SHRINK,
     UI_MENU_OV_SCALE_NONE, UI_MENU_OV_SCALE_BILINEAR,
-    UI_MENU_OV_SCALE_DOWN,    // FSR is selected but the image is larger than the window: FSR only enlarges
-    // the Cheats tab (cheats.c): the file, the kinds of cheat and why one cannot be switched
+    UI_MENU_OV_SCALE_DOWN,
     UI_MENU_TAB_CHEATS,
-    UI_MENU_CHEATS_NONE,      // "%s": <build id>.txt
+    UI_MENU_CHEATS_NONE,
     UI_MENU_CHEATS_MOD,
     UI_MENU_CHEATS_UNBUILT,
     UI_MENU_COUNT_CODE_CHEATS, UI_MENU_COUNT_EXEFS_FILES, UI_MENU_COUNT_CHEATS,
-    UI_MENU_CHEAT_CODE_DESC, UI_MENU_CHEAT_KEY_DESC /* "%s": the buttons */, UI_MENU_CHEAT_DATA_DESC,
+    UI_MENU_CHEAT_CODE_DESC, UI_MENU_CHEAT_KEY_DESC, UI_MENU_CHEAT_DATA_DESC,
     UI_MENU_CHEAT_MASTER, UI_MENU_CHEAT_MASTER_DESC, UI_MENU_CHEAT_RESTORE, UI_MENU_CHEAT_RESTORE_DESC,
     UI_MENU_CHEAT_REBUILD, UI_MENU_CHEAT_REBUILD_DESC, UI_MENU_CHEAT_UNSUPPORTED, UI_MENU_CHEAT_UNSUPPORTED_DESC,
-    // the Game tab's Saves group (ui/menu.cpp rows_saves, save_share.c): export the save into a zip, import a shared
-    // one at the next start. UI_MENU_SAVE_EXPORTED to UI_MENU_SAVE_E_UNSAFE are printf formats with at most one "%s"
-    // (a path, or the zip's NX2Saria version and date)
     UI_MENU_SAVES,
     UI_MENU_SAVE_EXPORT, UI_MENU_SAVE_EXPORT_DESC, UI_MENU_SAVE_EXPORT_BUG, UI_MENU_SAVE_EXPORT_BUG_DESC,
     UI_MENU_SAVE_IMPORT, UI_MENU_SAVE_IMPORT_DESC,
-    UI_MENU_SAVE_IMPORT_WAITING,     // the import row's value while an import waits for the next start
+    UI_MENU_SAVE_IMPORT_WAITING,
     UI_MENU_SAVE_IMPORT_CANCEL, UI_MENU_SAVE_IMPORT_CANCEL_DESC,
-    UI_MENU_SAVE_BUSY,               // note on the rows while an export or import runs
-    UI_MENU_SAVE_EXPORTED,           // "%s": the zip's path
-    UI_MENU_SAVE_IMPORT_READY,       // "%s": "<NX2Saria version>, <export date>" of the zip
+    UI_MENU_SAVE_BUSY,
+    UI_MENU_SAVE_EXPORTED,
+    UI_MENU_SAVE_IMPORT_READY,
     UI_MENU_SAVE_IMPORT_CANCELLED,
-    UI_MENU_SAVE_IMPORTED,           // "%s": the folder the replaced save was copied to, at this start
-    UI_MENU_SAVE_IMPORTED_NEW,       // the same with no save to replace
+    UI_MENU_SAVE_IMPORTED,
+    UI_MENU_SAVE_IMPORTED_NEW,
     UI_MENU_SAVE_E_NO_SAVE, UI_MENU_SAVE_E_READ_SAVE,
-    UI_MENU_SAVE_E_WRITE,            // "%s": the folder the zip could not be written into
-    UI_MENU_SAVE_E_READ,             // "%s" here and below: the zip
+    UI_MENU_SAVE_E_WRITE,
+    UI_MENU_SAVE_E_READ,
     UI_MENU_SAVE_E_STAGE,
     UI_MENU_SAVE_E_NOT_SAVE, UI_MENU_SAVE_E_OTHER_GAME, UI_MENU_SAVE_E_NEWER, UI_MENU_SAVE_E_DAMAGED,
     UI_MENU_SAVE_E_UNSAFE,
-    // the note after F8 (bugcap.c, ui/menu.cpp capture_note): "%d" the capture's number, "%s" its folder's name
     UI_MENU_CAPTURE_SAVED, UI_MENU_CAPTURE_FOLDER, UI_MENU_CAPTURE_FAILED,
     UI_MENU_LAST_ID = UI_MENU_CAPTURE_FAILED,
-    // the boot screen while the boot prewarm prepares shaders and pipelines (boot.c, ui/menu.cpp menu_boot_frame)
     UI_BOOT_TITLE, UI_BOOT_STARTING,
-    UI_BOOT_SHADERS, UI_BOOT_PIPELINES,   // printf: "%lld" done, "%lld" total
-    // after a driver change (vk_pipeline.c bf_decide): the compute pipelines, then the prepared shader variants built
-    // into the driver's own cache; printf as above
+    UI_BOOT_SHADERS, UI_BOOT_PIPELINES,
     UI_BOOT_COMPUTE, UI_BOOT_DRIVER_CACHE,
-    // the settings menu's Picture rows for this game (ui/menu.cpp tab_screen): one upscaling choice (bilinear, FSR 1
-    // or a DLSS mode) and the picture's resolution
     UI_MENU_UPSCALING, UI_MENU_UPSCALING_DESC, UI_MENU_FRAMEGEN, UI_MENU_FRAMEGEN_DESC,
     UI_MENU_FRAMEGEN_OFF, UI_MENU_FRAMEGEN_NOTE, UI_MENU_FRAMEGEN_NEEDS, UI_MENU_HDR_TONEMAPPED, UI_MENU_HDR_NATIVE,
     UI_MENU_GAME_RES, UI_MENU_GAME_RES_DESC, UI_MENU_GAME_RES_NATIVE,
-    // the same rows' texts on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there
     UI_MENU_UPSCALING_DESC_FSR, UI_MENU_FRAMEGEN_DESC_FSR, UI_MENU_FRAMEGEN_NOTE_FSR,
     UI_MENU_FRAMEGEN_NEEDS_FSR,
-    // and where FSR 3.1 cannot run (vk_ffx_available: on Windows amd_fidelityfx_vk.dll does not load, elsewhere the
-    // runtime's own passes cannot run on the device, vk_fsr3.c): the menu leaves it out there, and these texts say so
     UI_MENU_UPSCALING_DESC_NO_FSR,
-    UI_MENU_FSR3_OFF,   // FSR 3.1 is still set but cannot run: "in use: off" and why
-    UI_MENU_UPSCALING_NATIVE,   // the scene at the picture's own size, no upscaler (ui/menu.cpp share_native)
-    UI_MENU_FRAMEGEN_DESC_DLSS, UI_MENU_FRAMEGEN_NOTE_DLSS, UI_MENU_FRAMEGEN_NEEDS_DLSS,   // DLSS only
-    UI_MENU_FRAMEGEN_DESC_NONE, UI_MENU_FRAMEGEN_NEEDS_NONE,                               // neither runs
-    // no DLSS, and FSR 3.1 upscales through the runtime's own passes while its frame generation needs AMD's library,
-    // which only the Windows build loads (ui/menu.cpp row_framegen fsr_win_only): the row says that, not that FSR 3.1
-    // does not run; OFF: frame generation is still set to FSR 3.1 there
+    UI_MENU_FSR3_OFF,
+    UI_MENU_UPSCALING_NATIVE,
+    UI_MENU_FRAMEGEN_DESC_DLSS, UI_MENU_FRAMEGEN_NOTE_DLSS, UI_MENU_FRAMEGEN_NEEDS_DLSS,
+    UI_MENU_FRAMEGEN_DESC_NONE, UI_MENU_FRAMEGEN_NEEDS_NONE,
     UI_MENU_FRAMEGEN_DESC_FSR_WIN, UI_MENU_FRAMEGEN_NEEDS_FSR_WIN, UI_MENU_FRAMEGEN_OFF_FSR_WIN,
-    // FSR 3.1's frame generation through the runtime's own passes (every build but the Windows one, vk_fsr3fg.c): the
-    // row's note while it is chosen, and why it is off while HDR is on (it generates SDR pictures only)
     UI_MENU_FRAMEGEN_FSR3_NATIVE, UI_MENU_FRAMEGEN_OFF_HDR,
-    // DLSS frame generation (ui/menu.cpp row_framegen, row_framegen_mult): the multiplier row, its notes when this GPU
-    // and driver allow less than 4x, and the frame generation row's notes when DLSS's does not run
     UI_MENU_FRAMEGEN_MULT, UI_MENU_FRAMEGEN_MULT_DESC,
-    // the multiplier row where DLSS's frame generation runs through NGX itself (ui/menu.cpp row_framegen_mult_ngx)
     UI_MENU_FG_MULT_DESC, UI_MENU_FG_MULT_DYNAMIC,
-    UI_MENU_FRAMEGEN_MULT_RTX50,     // this GPU and driver do 2x only
-    UI_MENU_FRAMEGEN_MULT_UPTO,      // printf: "%d", the highest multiplier this GPU and driver allow
-    UI_MENU_FRAMEGEN_MULT_OLD_DLL,   // nx2navi_dlssg.dll is older than multi frame generation
+    UI_MENU_FRAMEGEN_MULT_RTX50,
+    UI_MENU_FRAMEGEN_MULT_UPTO,
+    UI_MENU_FRAMEGEN_MULT_OLD_DLL,
     UI_MENU_FRAMEGEN_UNAVAILABLE, UI_MENU_FRAMEGEN_OFF_FILES,
-    // frame generation with any Upscaling choice, an upscaler or none (vk_dlaa.c fg_only_frame); through NGX (every
-    // build but the Windows one) NVIDIA's needs DLSS upscaling on at the start, its note and description there
     UI_MENU_FRAMEGEN_DESC_ANY, UI_MENU_FRAMEGEN_DESC_NGX, UI_MENU_FRAMEGEN_NOTE_NGX,
-    // the Screen tab's Fix overwritten textures row (ui/menu.cpp tab_screen, NX2SARIA_TEX_CLOBBER) and its subtitle
     UI_MENU_TEX_CLOBBER, UI_MENU_TEX_CLOBBER_DESC, UI_MENU_TEX_CLOBBER_NOTE,
-    // the quality preset (ui/menu.cpp row_preset, cfg.h cfg_preset_*): the row, its choices (RECOMMENDED: "%s" the tier
-    // this PC gets; CUSTOM: "%s" a choice's name), its notes (CUSTOM_NOTE: "%d" keys set by hand; REC_NOTE: "%s" a
-    // tier), the one-time notice ("%s" a tier) and the box that lists the keys a choice hands back to the preset
     UI_MENU_PRESET, UI_MENU_PRESET_DESC, UI_MENU_PRESET_RECOMMENDED, UI_MENU_PRESET_LOW, UI_MENU_PRESET_MEDIUM,
     UI_MENU_PRESET_HIGH, UI_MENU_PRESET_ULTRA, UI_MENU_PRESET_CUSTOM, UI_MENU_PRESET_CUSTOM_NOTE, UI_MENU_PRESET_REC_NOTE,
     UI_MENU_PRESET_HW_NOTE, UI_MENU_PRESET_NOTICE, UI_MENU_PRESET_CONFIRM, UI_MENU_PRESET_CONFIRM_YES,
-    // the Scene resolution row (ui/menu.cpp row_scene_res, NX2SARIA_SCENE_SHARE): "%s" a share ("75 %") marked as the
-    // game's own, the native size or the preset's
     UI_MENU_SCENE_RES, UI_MENU_SCENE_RES_DESC, UI_MENU_SCENE_RES_GAME, UI_MENU_SCENE_RES_NATIVE, UI_MENU_SCENE_RES_PRESET,
-    // the Dynamic resolution rows (ui/menu.cpp row_dyn_res, NX2SARIA_DYN_RES and NX2SARIA_DYN_RES_MIN): MIN_OFF is the
-    // note of the minimum's row while dynamic resolution is off
     UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC, UI_MENU_DYN_RES_MIN, UI_MENU_DYN_RES_MIN_DESC, UI_MENU_DYN_RES_MIN_OFF,
     UI_MENU_DYN_RES_NO_ROOM, UI_MENU_DYN_RES_NATIVE,
     UI_TEXT_COUNT
 } UiTextId;
 
-// Bytes of the menu's description pane (ui/option_rows.cpp, struct Desc): a description plus the note appended to it
-// ("after restart", "set by environment variable", a disabled row's note). UTF-8 Cyrillic takes two bytes a letter, so
-// the longest Russian description is about 850 bytes; the probe checks every menu text leaves room for a note.
 enum { UI_DESC_BYTES = 2048 };
 
-// UTF-8 text for id in the language of ov_language(); English when the catalog has no row for that language.
 const char *ui_text(UiTextId id);
-// The same for an explicit catalog language ("en", "ja", "fr", "de", "it", "es", "nl", "pt", "ru", "zh-Hans",
-// "zh-Hant", "ko", "pt-BR"); an empty entry gives the English text.
 const char *ui_text_in(const char *lang, UiTextId id);
-// Calls visit(ctx, text) for every string the row of lang has its own text for (an id that falls back to English is not
-// visited): the font builder covers the glyphs of the text a language shows (ui/menu.cpp).
 void ui_text_visit(const char *lang, void (*visit)(void *ctx, const char *text), void *ctx);
-// 1 when the row of lang has its own text for id (no fallback to English), for the probe.
 int ui_text_defined(const char *lang, UiTextId id);
-// The catalog language for a Switch language code ("en-GB" -> "en", "zh-CN" -> "zh-Hans", ...).
 const char *ui_text_lang(const char *switch_code);
 
-// The game languages the F1 menu offers for a game build (rt_game_version): one entry per Mals language file the build
-// ships, each with the Switch code NX2SARIA_LANG takes and the id of its name. 1.4.3 adds Brazilian Portuguese (USpt).
-// Fills out (room for max entries) and returns the count.
 typedef struct { const char *code; UiTextId name; } UiGameLang;
 int ui_text_game_langs(int game_version, UiGameLang *out, int max);
-// The same list from the Mals files the RomFS ships (Ocarina: Polish and Brazilian Portuguese, no Portugal Portuguese):
-// regions holds the four-letter prefix of each Mals/<region>.Product... file ("USen", "EUpl"); the version gates are
-// not used. Returns the count.
 int ui_text_game_langs_in(const char *const *regions, int nregions, UiGameLang *out, int max);
 
-// Menu text: ui_text_in(menu language, id). The menu language is NX2SARIA_MENU_LANG ("en", "ru", "pt-BR", "zh-Hans");
-// unset, the system UI language when the catalog has menu text for it (English, Russian, Brazilian Portuguese,
-// Simplified Chinese), else English. Follows a live change of the setting.
 const char *menu_text(UiTextId id);
 int ui_text_plural_form(const char *lang, int n);
 const char *ui_text_count(const char *lang, UiTextId id, int n, char *buf, size_t size);
