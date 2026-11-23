@@ -119,7 +119,8 @@ What it reads: the files git tracks (and new files not ignored) under the source
 Python. A comment line is a line that holds any part of a comment; a line of code with a comment after it counts.
 
 Not read: `tools/vendor/` and `runtime/third_party/` (others' code, unmodified), `runtime/shaders/ffx/` and
-`runtime/shaders/ffx3/` (AMD FidelityFX, unmodified), `recomp/patches-*.txt` (data that `recomp/patches.py` reads),
+`runtime/shaders/ffx3/` (AMD FidelityFX, unmodified), `runtime/nvn/nvn.h` (the NVN type definitions, another project's
+header, unmodified), `recomp/patches-*.txt` (data that `recomp/patches.py` reads),
 `generated/`, `build/`, the `*_spv.h` shader headers, any file with the `GENERATED_MARKER`, and `tools/xlate/`, the
 shader translator, whose comments go with its next identity change: its identity, `tools/build_xlate.py` `identity()`, reads the patch
 files byte for byte, and a new identity makes every player prepare the shaders again.

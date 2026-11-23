@@ -43,6 +43,8 @@ EXCLUDED = (
     ('runtime/third_party/*', 'third-party libraries, unmodified, each with its licence (THIRD_PARTY_NOTICES.md)'),
     ('runtime/shaders/ffx/*', 'AMD FidelityFX headers, unmodified (MIT, THIRD_PARTY_NOTICES.md)'),
     ('runtime/shaders/ffx3/*', 'AMD FidelityFX SDK headers, unmodified (MIT, THIRD_PARTY_NOTICES.md)'),
+    ('runtime/nvn/nvn.h', 'the NVN type definitions, another project\'s header, unmodified (MIT, '
+                          'THIRD_PARTY_NOTICES.md)'),
     ('tools/xlate/*', 'the shader translator: its identity (tools/build_xlate.py identity()) reads the patch files '
                       'byte for byte, and a new identity makes every player prepare the shaders again; its comments '
                       'go with the shader translator\'s next identity change'),
@@ -569,6 +571,7 @@ def self_test():
         'recomp/patches-v999.txt': '# data the generator reads\n',
         'runtime/third_party/lib/plant.h': '// third party, not read\n',
         'runtime/shaders/ffx/plant.h': '// AMD, not read\n',
+        'runtime/nvn/nvn.h': '// the NVN types, not read\n',
         'runtime/gen_plant.c': '// ' + GENERATED_MARKER + '\n// a generated file, not counted\n',
     }
     want_counted = {
@@ -612,7 +615,7 @@ def self_test():
             print(f'self-test: {key[0]}:{key[1]} kept as {reason}: {"ok" if ok else f"WRONG ({kept.get(key)})"}')
             bad += not ok
         for rel in ('tools/vendor/lib/plant.c', 'tools/xlate/Plant.cs', 'runtime/third_party/lib/plant.h',
-                    'runtime/shaders/ffx/plant.h'):
+                    'runtime/shaders/ffx/plant.h', 'runtime/nvn/nvn.h'):
             ok = rel not in report['files'] and excluded(rel) is not None
             print(f'self-test: {rel} not read: {"ok" if ok else "WRONG"}')
             bad += not ok
