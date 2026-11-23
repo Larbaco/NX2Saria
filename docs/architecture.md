@@ -426,6 +426,8 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   run. `NX2SARIA_REFLEX_LIMIT=0` (live) leaves the limit to the pacer, as before Reflex's frame limit was used.
   The device gets the drivers' extensions only in a run that starts with the setting on (`vk_device.c`
   `create_device`): turning it on takes a restart, and with it off the device is made as it was before the mode.
+- The pacing code's notes, file by file (the step and its floor, the frame limit, RTSS's profile and state file, the
+  drivers' low latency, Reflex's check, the held present, dynamic resolution): [docs/code/pacing.md](code/pacing.md).
 - ASTC textures are uploaded as they are where the device samples ASTC, and decoded by a compute shader everywhere
   else (`vk_astc.c`); under 20 GiB of video memory the decoder encodes them to BC3.
 - Texture detail (`texture_detail`, `vk_texture.c` "texture detail"): on a card with little video memory the large
