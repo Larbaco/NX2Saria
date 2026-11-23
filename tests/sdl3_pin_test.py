@@ -10,7 +10,6 @@ Run: python tests/sdl3_pin_test.py
 import contextlib
 import hashlib
 import io
-import re
 import sys
 import tarfile
 import tempfile
@@ -260,11 +259,8 @@ class RealPinsTest(unittest.TestCase):
             self.assertTrue(url.startswith('https://') and f'/{name}_' in url and sdl3_pin.VERSION in url)
             self.assertRegex(sha, r'^[0-9a-f]{64}$')
         self.assertRegex(sdl3_pin.CONTENT_SHA256, r'^[0-9a-f]{64}$')
-        # the sysroot is the one tools/make_release_linux.py pins
-        text = (ROOT / 'tools' / 'make_release_linux.py').read_text(encoding='utf-8')
-        snapshot = re.search(r"^SNIPER = '([^']+)'", text, re.M).group(1)
-        self.assertIn(f'/{snapshot}/', sdl3_pin.SYSROOT[0])
-        self.assertIn(f"'{sdl3_pin.SYSROOT[1]}'", text)
+        self.assertTrue(sdl3_pin.SYSROOT[0].startswith('https://repo.steampowered.com/steamrt-images-sniper/'))
+        self.assertRegex(sdl3_pin.SYSROOT[1], r'^[0-9a-f]{64}$')
 
 
 if __name__ == '__main__':

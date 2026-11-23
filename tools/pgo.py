@@ -14,7 +14,7 @@ Beside the profile goes <out>.json, the training record: the game version, recom
 (recomp_tree) and by content (recomp_digest, which a kit without git compares: tools/make_game.py pgo_record), and
 the tool that merged. The profile matches the generated C of that generator, since functions are matched by name and
 control-flow hash and a regenerated function silently loses its counts. tools/make_game.py therefore compiles with a
-profile only while recomp/ is the recorded one, and tools/make_launcher.py --pgo and tools/make_release.py say so
+profile only while recomp/ is the recorded one, and tools/make_launcher.py --pgo says so
 when it is not. Merge right after the training runs, from the commit they were built at: a game folder made by
 make_game.py --pgo gen names the recomp/ it was built from (pgo/training.json), and the merge stops when the
 checkout holds another.
@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXE = '.exe' if sys.platform == 'win32' else ''
-DEFAULT_DIR = ROOT / 'build' / 'pgo'   # make_game.py, make_launcher.py and make_release.py look here
+DEFAULT_DIR = ROOT / 'build' / 'pgo'   # make_game.py and make_launcher.py look here
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 

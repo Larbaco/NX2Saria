@@ -7,8 +7,7 @@ compiler finds no SDL3 headers of the system's (sdl3_choice): the runtime is com
 libSDL3.so.0 goes beside the game (place_sdl3), and the preflight runs a program linked against it, so that a library
 it needs and the system lacks stops the build, by name, before the long steps.
 
-It is SDL 3.4.18 as the Steam Runtime 3 builds it, the build the sniper SDK sysroot of tools/make_release_linux.py
-holds. Built for the Steam Runtime's glibc (its newest symbol version is GLIBC_2.29), it runs on any distribution at
+It is SDL 3.4.18 as the Steam Runtime 3 builds it, the build the Steam Runtime 3 "sniper" SDK sysroot holds. Built for the Steam Runtime's glibc (its newest symbol version is GLIBC_2.29), it runs on any distribution at
 least that new. It links the desktop's client libraries directly instead of loading them when it starts: libX11,
 libXext, libXcursor, libXi, libXfixes, libXrandr, libXss, libXtst, libxkbcommon, libwayland-client, -cursor and -egl,
 libdecor-0, libpulse, libasound and libfribidi, all of which a desktop install of Ubuntu or Mint has.
@@ -50,8 +49,7 @@ DEBS = {
     'libsdl3-dev': (f'{POOL}/libsdl3-dev_{urllib.parse.quote(DEB_VERSION)}_amd64.deb',
                     '0036d658efb9690a4c7f24687ccf4ee7b7ae8da57591d9135973588110eaaf5b'),
 }
-# The sniper SDK sysroot snapshot with libsdl3-0 and libsdl3-dev DEB_VERSION installed: the pin of
-# tools/make_release_linux.py PINS['sniper-sdk'] (tests/sdl3_pin_test.py keeps the two equal).
+# The sniper SDK sysroot snapshot with libsdl3-0 and libsdl3-dev DEB_VERSION installed.
 SYSROOT = ('https://repo.steampowered.com/steamrt-images-sniper/snapshots/3.0.20261021.266025/'
            'com.valvesoftware.SteamRuntime.Sdk-amd64%2Ci386-sniper-sysroot.tar.gz',
            '8f71947035f97925a311b2ed753f22efcf2f13d6f1631945b8e537f8903ce2cf')

@@ -4,6 +4,10 @@ A public release that turns the player's own game files into a playable NX2Saria
 data and no code derived from the game: the installer builds the game on the player's machine. The installed folder
 holds only the game; the installer and its tools stay outside it.
 
+No release script builds this setup now: the releases are the launcher's (`tools/make_launcher.py`,
+[launcher.md](launcher.md)) and the Linux AppImage (`tools/make_appimage.py`, [README-BuildKit.md](README-BuildKit.md)).
+This page describes the `installer/` package and its command line.
+
 ## What the player does
 
 1. Downloads `NX2Saria-Setup-<version>-windows.zip` from GitHub Releases (none is published yet), unpacks it anywhere and
@@ -135,32 +139,6 @@ python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR
 - `tests/installer_test.py`: bookkeeping with fake steps. `tests/installer_e2e.py`: a dev-mode run with the files of
   `config.local.toml`.
 
-## Release layout
-
-The unpacked release; `tools/make_release.py` assembles it and `--zip` packs it:
-
-```
-NX2Saria-Setup.exe        starts python/pythonw.exe -m installer.gui (installer/launcher/launcher.c, no console)
-installer/            the installer: steps, CLI, window, en/ru/zh-Hans text catalog
-python/               Python 3.14.9 embeddable + numpy, lz4, cryptography, cffi, pycparser (+ tkinter for the window)
-recomp/, tools/       the lifter and the build, extraction and shader scripts the steps run (copied from the repo)
-llvm/                 llvm-mingw, x86_64-only subset (Apache-2.0 with LLVM exception; mingw-w64 parts permissive)
-runtime/              libnx2navirt.a, libnx2navirt-v2.a and the headers the generated code and modules.c/romfs.c/patches.c
-                      include
-bin/                  nx2navi_xlate.exe, hactool.exe, SDL3.dll, libopus-0.dll, ninja.exe
-data/                 shader_list.tsv (MIT, THIRD_PARTY_NOTICES.md); pipeline_list.bin when the release was made with
-                      one (building.md, step 6); pgo-<ver>.profdata + .json, the execution profile an
-                      update's code and the runtime libraries compile with (building.md, "Profile-guided build")
-THIRD_PARTY_NOTICES.md
-nx2saria.ini.example, VERSION  the default ini; the release string (the repository's VERSION plus the commit)
-```
-
-- SDL3 comes from the upstream release, not MSYS2: MSYS2's DLL imports the LGPL libiconv.
-- Every bundled third-party piece gets a row in `THIRD_PARTY_NOTICES.md`.
-- The release contains no code, data, text or assets of the game; `make_release.py` runs `tools/check_content.py` over
-  the folder before it finishes. The execution profiles name lifted functions by address (`f_<address>`) and hold
-  branch counts and control-flow hashes of the generated C.
-
 ## Switch system fonts
 
 Simplified Chinese, Traditional Chinese and Korean text needs the Switch system fonts (`0-standard.bfttf` and the other
@@ -172,53 +150,9 @@ nn::pl shared fonts). The game does not ship them. Without them it exits before 
 - Run `python tools/extract_fonts.py --firmware <dir>` with `.venv-py314` and the keys from `config.local.toml`, or
   point `NX2SARIA_SHARED_FONTS` at a folder that holds the extracted fonts.
 
-## Linux release
-
-`tools/make_release_linux.py` builds the same setup for Linux and packs it as `NX2Saria-Setup-x86_64.AppImage` (the static
-type-2 runtime: no libfuse2 needed on the host). The player makes it executable and starts it; on a Steam Deck, from
-Desktop Mode. The command-line setup needs the desktop session's display (`DISPLAY` or `WAYLAND_DISPLAY`) because preparing the
-shaders opens a window; the check step fails at once without it. Building the release also needs `make` and `pkg-config`. The bundled Tcl/Tk 9.0.4 is rebuilt with
-Xft against the sniper sysroot so Russian text uses system TrueType fonts. The setup builds the game into the folder they pick, as on Windows, and the game is `nx2saria` there with
-`libSDL3.so.0` beside it. The folder inside the AppImage:
-
-```
-AppRun                starts python/bin/python3 -m installer.gui (no bytecode written into the read-only mount)
-nx2saria-setup.desktop, nx2saria-setup.png
-installer/, recomp/, tools/, data/, licenses/, THIRD_PARTY_NOTICES.md, nx2saria.ini.example, VERSION   as on Windows
-python/               python-build-standalone 3.14 (with tkinter) + the installer's packages; a .pth puts the folder,
-                      tools/ and recomp/ on sys.path
-llvm/                 LLVM 23 (clang, lld, llvm-ar) and llvm/sysroot: the files of the Steam Runtime 3 "sniper" SDK the
-                      game's compile and link read (about 130 files)
-runtime/              libnx2navirt.a, libnx2navirt-v2.a, headers, the install-side sources, nx2saria.png; deps/ with the Vulkan
-                      headers, VMA and a static zstd
-bin/                  nx2navi_xlate, hactool, ninja, libSDL3.so.0
-```
-
-- What we compile is built against the sniper sysroot (glibc 2.31): the game, hostcheck, hactool and the translator
-  need no newer glibc. The game links Opus, libvpx, zstd and libstdc++ statically and needs only glibc, the system's
-  Vulkan loader and the SDL3 beside it. The setup itself needs glibc 2.34 (Ubuntu 22.04, Debian 12, Fedora 35,
-  SteamOS 3): the official LLVM binaries and the `cryptography` wheel are built against it. `make_release_linux.py`
-  checks every ELF file in the folder against that floor (`check_glibc`), and the setup's check step stops with one
-  message on an older system.
-- The setup's temp folder is `.setup-temp` inside the install folder (`--temp` changes it): the AppImage is mounted
-  read-only, and a Steam Deck's `/home` is often too full for the generated C while the game goes to the SD card.
-- The game keeps Mesa's shader cache in `mesa-cache` beside `nx2saria` unless `MESA_SHADER_CACHE_DIR` is set, for the
-  same reason: RADV fills its default folder in `~/.cache` up to 1 GB. In that folder the limit is 8 GB unless
-  `MESA_SHADER_CACHE_MAX_SIZE` is set, since the shader preparation and the stage libraries built in play do not fit
-  in 1 GB. With NVIDIA's driver, its cache goes to
-  `nvidia-cache` beside it unless `__GL_SHADER_DISK_CACHE_PATH` is set, with a limit of 8 GiB unless
-  `__GL_SHADER_DISK_CACHE_SIZE` is set: the default limit of 1 GiB is smaller than what the shader preparation builds.
-  When that folder cannot be made or written, the driver keeps its own folder and limit.
-- The window follows `LANG` for English or Russian, cancels through SIGTERM to the CLI's process group (the CLI handles
-  it as Ctrl+Break on Windows) and opens the finished folder with `xdg-open`.
-- Requirements beyond Windows': Linux 6.7 or later (the write watch, `docs/building.md`) and glibc 2.34.
-- Building the release needs one game version extracted and lifted (`tools/extract.py`, `recomp/gen.py`, either
-  version): the runtime library includes the generated `layout.h`, whose shared part (`MOD_COUNT`, `MOD_MAIN_BASE`)
-  is the same for both. `tools/make_release.py` takes `generated/v121`, else `generated/v143`.
-
 ## Constraints
 
-- The installer steps contain no Win32 calls: Linux runs the same steps with its own compiler ("Linux release").
+- The installer steps contain no Win32 calls: Linux runs the same steps with its own compiler.
 - The keys file path is passed to the tools; key values never appear in the UI, logs or files.
 - The window is a front end over the CLI (`python -m installer --base ... --update ... --keys ... --lang ... --dest
   ...`), which prints one JSON progress event per line. Tests and CI use the CLI.
