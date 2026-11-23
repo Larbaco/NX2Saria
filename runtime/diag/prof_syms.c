@@ -1,7 +1,3 @@
-// Names for a sampling profile's exe addresses from the exe's own COFF symbol table (runtime/prof_win.c). A MinGW link
-// keeps the table in the file (PointerToSymbolTable), so a profile names its functions without the link map: for each
-// address the profile lists, `sym <address> <function>+<offset>`. Plain file reads, no Windows headers, so the parser
-// builds and is tested anywhere.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +5,7 @@
 
 #include "prof_syms.h"
 
-typedef struct { uint32_t rva; uint32_t str; char sname[8]; } CSym;   // str: string-table offset, 0 short name
+typedef struct { uint32_t rva; uint32_t str; char sname[8]; } CSym;
 
 static int cmp_sym(const void *a, const void *b) {
     uint32_t x = ((const CSym *)a)->rva, y = ((const CSym *)b)->rva;
@@ -45,9 +41,8 @@ int prof_syms_each(const char *exe_path, uint64_t base, const uint64_t *addr, si
     for (int i = 0; i < nsec; i++) {
         if (fread(h, 1, 40, f) != 40) goto done;
         sec_va[i] = rd32(h + 12);
-        sec_exec[i] = (rd32(h + 36) & 0x20000020) != 0;   // CNT_CODE or MEM_EXECUTE
+        sec_exec[i] = (rd32(h + 36) & 0x20000020) != 0;
     }
-    // the string table follows the symbols: its first 4 bytes are its size
     uint8_t szb[4];
     if (fseek(f, (long)symptr + (long)nsym * 18, SEEK_SET) || fread(szb, 1, 4, f) != 4) goto done;
     uint32_t strsz = rd32(szb);
@@ -56,7 +51,6 @@ int prof_syms_each(const char *exe_path, uint64_t base, const uint64_t *addr, si
     memcpy(strtab, szb, 4);
     if (strsz > 4 && fread(strtab + 4, 1, strsz - 4, f) != strsz - 4) goto done;
     strtab[strsz] = 0;
-    // the symbols in chunks; functions in executable sections
     size_t ns = 0, cs = 1 << 16;
     syms = malloc(cs * sizeof *syms);
     enum { CH = 1 << 16 };
@@ -68,7 +62,7 @@ int prof_syms_each(const char *exe_path, uint64_t base, const uint64_t *addr, si
         if (fread(raw, 18, k, f) != k) goto done;
         for (uint32_t i = 0; i < k; i++) {
             const uint8_t *s = raw + i * 18;
-            if (skip) { skip--; continue; }   // auxiliary records
+            if (skip) { skip--; continue; }
             skip = s[17];
             int16_t sec = (int16_t)rd16(s + 12);
             uint8_t cls = s[16];
@@ -77,7 +71,7 @@ int prof_syms_each(const char *exe_path, uint64_t base, const uint64_t *addr, si
             if (rd32(s)) memcpy(c.sname, s, 8);
             else c.str = rd32(s + 4);
             const char *nm = c.str ? (c.str < strsz ? strtab + c.str : "") : c.sname;
-            if (nm[0] == '.' || !nm[0]) continue;   // section symbols
+            if (nm[0] == '.' || !nm[0]) continue;
             if (ns == cs) {
                 CSym *g = realloc(syms, (cs *= 2) * sizeof *syms);
                 if (!g) goto done;
@@ -98,7 +92,7 @@ int prof_syms_each(const char *exe_path, uint64_t base, const uint64_t *addr, si
         if (i && a[i] == a[i - 1]) continue;
         if (a[i] < base || a[i] - base >= 0xffffffffull) continue;
         uint32_t rva = (uint32_t)(a[i] - base);
-        while (j < ns && syms[j].rva <= rva) j++;   // a is sorted, so j only grows
+        while (j < ns && syms[j].rva <= rva) j++;
         if (!j) continue;
         const CSym *c = &syms[j - 1];
         char sn[9] = {0};

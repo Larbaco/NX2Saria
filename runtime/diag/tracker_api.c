@@ -1,55 +1,3 @@
-// The tracker API (NX2SARIA_TRACKER_API, tracker_api in nx2saria.ini; off by default): a read-only view of the game's
-// memory for a map tracker running on the same PC, through 127.0.0.1:<tracker_api_port> (6545 by default). The
-// protocol is the newline-delimited JSON one that trackers already speak to a console emulator's debug server, so a
-// tracker that reads this game there reads it here too; docs/tracker-api.md describes every field.
-//
-// - A request is one line holding a JSON object {"id": <number or string>, "method": <name>, "params": {...}}; the
-//   answer is one line {"id": <the same>, "result": {...}} or {"id": ..., "error": {"code": <n>, "message": <text>}},
-//   in the order the requests came. Nothing is ever sent without a request.
-// - status: whether the game runs (it has presented a frame), the title id, this port's name ("nx2saria"), main's
-//   build id, the game version, the port's version, the API's version (TRACKER_API_VERSION), the methods, and the
-//   folder of the save the game loads and writes (fs_host.c fs_save_dir), so a tracker that reads the save files
-//   reads this game's and not another install's.
-// - read_memory {address, size, as: "hex"}: up to READ_MAX bytes of guest memory as lowercase hex.
-// - search_memory {pattern (hex), start, end, regions: "all" | "heap", max_hits, budget_ms}: the addresses where the
-//   bytes appear. "all" reads the game's modules first and ends there when they hold the pattern (a tracker finds main
-//   by its MOD0 header that way, and asks for more copies than main has); then the heap, then the other regions.
-// - nx2saria.state: this port's own summary, which needs no knowledge of the game's structures: the area the game is
-//   in and Link's position and rotation (debug_tools.c dbg_area, dbg_player_pos, dbg_player_rot), whether the game
-//   data is there, the presents so far, and where main and the heap are.
-// - nx2saria.game_data {kind, hash, if_digest, filter}: the game's progress values of one kind (Bool, Int, Enum,
-//   String64, String64Array, Int64, Bool64bitKey) with the keys the save files know them by, so a tracker that reads
-//   the save files reads the running game the same way, without the game-data manager's place or layout.
-//
-// What can be read: guest addresses are host addresses in this runtime (host.h), and mem_query answers for the whole
-// address space below 2^39, the host's own allocations included (as memory the game cannot have). So a read or a
-// search covers only the game's own regions (memory.c mem_guest_ranges: its modules, stack, heap, mapped physical
-// memory and thread storage, never the host-function window), and within them what the game's memory map says it can
-// read. The runtime's memory, and what it read (the keys, the settings), is outside those regions. Nothing is written.
-//
-// How it reads: a copy, plat_mem_read, which answers 0 instead of faulting, so a page the game unmaps meanwhile or the
-// GPU wrote back and the CPU has not fetched yet (memory.c lazy_fault) fails the read and is not fetched. A read
-// commits heap pages the lazy heap left reserved (they read zero), as frame_rate.c read_guest does. A search copies
-// 1 MiB pieces of the committed, readable runs (plat_mem_state), and outside the modules only the pages that hold
-// memory now (plat_mem_resident): reading a page the game never wrote would allocate it, and a tracker searches the
-// heap often while it finds no player. No lock of memory.c is held while copying.
-//
-// Cost: nothing on the game's threads. One host thread listens, and each client (CLIENTS_MAX at most) has a host
-// thread of its own; none holds a virtual core (kernel.c core_take: only guest threads take one). Searches run one at
-// a time, each until its budget from the request's arrival (BUDGET_MAX_MS at most), at most SEARCH_BYTES_PER_MS, and
-// all of them together read at most SEARCH_BYTES_PER_MIN a minute; past that a search answers what it found.
-//
-// Safety: off unless the player turns it on; bound to 127.0.0.1 alone (platform.h plat_tcp_listen_loopback), so
-// nothing on the network reaches it; read-only. A line whose first byte past blanks is not '{' closes the connection
-// at once: a web page that sends to the port (an HTTP request, a TLS handshake) arrives that way, and it could never
-// read an answer anyway (this is no HTTP server). A line of LINE_CAP bytes without its end, a request left unfinished
-// for LINE_MS, a client silent for IDLE_MS, and a fifth client are closed.
-//
-// The log: one line at start (off; or on, where it listens, and where the heap is), a line when a client sends its
-// first request and one when it leaves, with its counts (CLIENT_LOGS per session), the first answer of each method
-// and the first refusal of each kind, and while clients ask a summary every SUMMARY_MS (SUMMARY_LOGS per session). A
-// connection closed without a byte is a program checking whether the port is taken (a tracker does that every few
-// seconds before it starts a reader of its own): the first one is logged, the others are counted in the summaries.
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -66,29 +14,29 @@
 #include "platform/platform.h"
 
 #define TRACKER_API_VERSION 1
-#define TITLE_ID "0400486024DEC000"         // the game's title id (launcher/gamefiles.py TITLE_ID)
-#define PORT_NAME "nx2saria"                 // status "emulator": what the client shows as the game's source
-#define HEAP_POINTER_FLOOR 0x1000000000ull   // trackers take a heap pointer below 64 GiB for none (docs/tracker-api.md)
-#define LINE_CAP 4096                        // a request is small: the longest, a search, carries a 128-digit pattern
-#define LINE_MS 5000                         // from a request's first byte to its end
-#define READ_MAX (256u << 10)                // bytes a read_memory may ask for
-#define PATTERN_MAX 64                       // bytes of a search pattern
+#define TITLE_ID "0400486024DEC000"
+#define PORT_NAME "nx2saria"
+#define HEAP_POINTER_FLOOR 0x1000000000ull
+#define LINE_CAP 4096
+#define LINE_MS 5000
+#define READ_MAX (256u << 10)
+#define PATTERN_MAX 64
 #define HITS_MAX 64
 #define HITS_DEFAULT 16
 #define BUDGET_MAX_MS 3000
 #define BUDGET_DEFAULT_MS 1000
-#define PIECE (1u << 20)                     // bytes a search copies at a time (plat_mem_resident's limit)
+#define PIECE (1u << 20)
 #define PAGE 0x1000ull
-#define SEARCH_BYTES_PER_MS (4u << 20)       // 4 GiB/s at most for one search
-#ifndef SEARCH_BYTES_PER_MIN                 // tests/tracker_api_check.py builds with a smaller one
-#define SEARCH_BYTES_PER_MIN (8ull << 30)    // 8 GiB a minute copied by all of them: two seconds of reading at most
+#define SEARCH_BYTES_PER_MS (4u << 20)
+#ifndef SEARCH_BYTES_PER_MIN
+#define SEARCH_BYTES_PER_MIN (8ull << 30)
 #endif
 #define CLIENTS_MAX 4
-#define IDLE_MS 60000                        // a client that sends nothing this long is closed
-#define SEND_MS 2000                         // an answer the client does not take this long closes it
+#define IDLE_MS 60000
+#define SEND_MS 2000
 #define RETRY_LISTEN_MS 5000
-#define ACCEPT_ERRORS_MAX 50                 // failed accepts in a row before the listener is made again
-#ifndef CLIENT_LOGS                          // tests/tracker_api_check.py opens more clients than that
+#define ACCEPT_ERRORS_MAX 50
+#ifndef CLIENT_LOGS
 #define CLIENT_LOGS 20
 #endif
 #define SUMMARY_MS 600000
@@ -101,25 +49,22 @@ enum { E_PARAMS, E_UNREADABLE, E_METHOD, E_NOT_YET, E_UNSUPPORTED, E_KINDS };
 
 static int port;
 static char build_id[65];
-static char methods_text[160];   // the methods this run answers, as status lists them (tracker_api_init)
+static char methods_text[160];
 static PlatMutex search_lock = PLAT_MUTEX_INIT;
-static uint64_t search_tokens = SEARCH_BYTES_PER_MIN, search_tokens_ms;   // search_lock: bytes searches may still read
+static uint64_t search_tokens = SEARCH_BYTES_PER_MIN, search_tokens_ms;
 static int32_t open_clients, client_seq, client_logs;
-static uint64_t win_req[M_N], win_errors, win_bytes, win_checks;   // the summary's window, atomics
+static uint64_t win_req[M_N], win_errors, win_bytes, win_checks;
 static int32_t said_first[M_N], said_refusal[M_N][E_KINDS], said_hit, said_check, said_bytes, said_accept;
-
-// ---- logging helpers
 
 static int once(int32_t *flag) { return __atomic_exchange_n(flag, 1, __ATOMIC_ACQ_REL) == 0; }
 
-static int client_log_slot(void) {   // 1 while the session's client lines last; the last one says what follows
+static int client_log_slot(void) {
     int n = __atomic_add_fetch(&client_logs, 1, __ATOMIC_ACQ_REL);
     if (n == CLIENT_LOGS + 1)
         rt_log("tracker api: %d client lines logged; later clients are counted in the summaries only", CLIENT_LOGS);
     return n <= CLIENT_LOGS;
 }
 
-// Bytes a client sent, for the log: printable ASCII as it is, anything else as '.', at most cap - 1 of them.
 static void shown(char *out, size_t cap, const char *p, size_t n) {
     size_t k = 0;
     for (size_t i = 0; i < n && k + 1 < cap; i++)
@@ -127,12 +72,10 @@ static void shown(char *out, size_t cap, const char *p, size_t n) {
     out[k] = 0;
 }
 
-// ---- a strict JSON reader for the one object a request is: its "id", "method" and the flat members of "params"
-
 typedef struct { char key[24]; int is_str, has_num, cut; char str[160]; double num; } Field;
 typedef struct {
-    char id[64];            // the id as it goes back: a JSON number, or the string as sent with its quotes; "" none
-    char method[40];        // printable ASCII ('.' for anything else), so it can go into the log
+    char id[64];
+    char method[40];
     int method_cut;
     Field params[12];
     int nparams;
@@ -145,8 +88,6 @@ static void ws(Js *j) {
 
 static int is_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 
-// A JSON string at j->p into out (cap 0: skipped), escapes decoded, \u as '?'. *cut (may be NULL) is set when it did
-// not fit cap - 1 bytes. 0 when it is not a JSON string.
 static int str(Js *j, char *out, size_t cap, int *cut) {
     size_t n = 0;
     if (cut) *cut = 0;
@@ -179,7 +120,6 @@ static int str(Js *j, char *out, size_t cap, int *cut) {
     return 0;
 }
 
-// A JSON number as JSON spells it: -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?. 0 when there is none at j->p.
 static int number(Js *j, double *v) {
     const char *s = j->p, *p = s, *e = j->e;
     if (p < e && *p == '-') p++;
@@ -248,7 +188,7 @@ static int skip_value(Js *j, int depth) {
 }
 
 static int parse_params(Js *j, Req *r) {
-    j->p++;   // '{'
+    j->p++;
     ws(j);
     if (j->p < j->e && *j->p == '}') return j->p++, 1;
     for (;;) {
@@ -280,8 +220,6 @@ static int parse_params(Js *j, Req *r) {
     }
 }
 
-// The request on one line; 0 when the line is not one JSON object, or its id does not fit (the connection then closes:
-// an answer without its id would be taken for the answer to another request).
 static int parse_request(const char *line, size_t n, Req *r) {
     Js j = {line, line + n};
     memset(r, 0, sizeof *r);
@@ -306,7 +244,7 @@ static int parse_request(const char *line, size_t n, Req *r) {
             } else if (!strcmp(key, "id") && j.p < j.e && *j.p == '"') {
                 const char *s = j.p;
                 if (!str(&j, NULL, 0, NULL)) return 0;
-                size_t len = (size_t)(j.p - s);   // the string as sent, quotes and escapes included: valid JSON
+                size_t len = (size_t)(j.p - s);
                 if (len >= sizeof r->id) return 0;
                 memcpy(r->id, s, len);
                 r->id[len] = 0;
@@ -345,8 +283,6 @@ static const Field *param(const Req *r, const char *key) {
     return NULL;
 }
 
-// An address or a count: a JSON number (a whole one), or a string of hex digits after 0x, or of decimal digits. 0 when
-// it is absent or anything else.
 static int param_u64(const Req *r, const char *key, uint64_t *out) {
     const Field *f = param(r, key);
     if (!f) return 0;
@@ -371,8 +307,6 @@ static const char *param_str(const Req *r, const char *key) {
     const Field *f = param(r, key);
     return f && f->is_str && !f->cut ? f->str : NULL;
 }
-
-// ---- answers
 
 typedef struct { char *p; size_t n, cap; int bad, refused; } Out;
 
@@ -402,7 +336,6 @@ static void out_f(Out *o, const char *fmt, ...) {
     if (n > 0) out_put(o, buf, (size_t)n < sizeof buf ? (size_t)n : sizeof buf - 1);
 }
 
-// Text that goes into a JSON string: the game's area names and file names are plain ASCII; anything else is dropped.
 static void out_text(Out *o, const char *s) {
     out_put(o, "\"", 1);
     for (; *s; s++)
@@ -410,8 +343,6 @@ static void out_text(Out *o, const char *s) {
     out_put(o, "\"", 1);
 }
 
-// A string as JSON spells it, its bytes kept (a path is UTF-8): quotes and backslashes escaped (a Windows path has
-// them), control characters as \u00XX.
 static void out_json_string(Out *o, const char *s) {
     out_put(o, "\"", 1);
     for (; *s; s++) {
@@ -467,7 +398,7 @@ static void do_status(Out *o, const Req *r) {
           on ? "true" : "false", build_id, game_version());
     out_text(o, rt_port_version);
     out_f(o, ",\"api_version\":%d,\"read_only\":true,\"methods\":[", TRACKER_API_VERSION);
-    for (int m = 0; m < M_OTHER; m++)   // nx2saria.game_data where the game data is known (1.1.1)
+    for (int m = 0; m < M_OTHER; m++)
         if (m != M_GAMEDATA || RT_V111) out_f(o, "%s\"%s\"", m ? "," : "", method_name[m]);
     const char *saves = fs_save_dir();
     out_put(o, "],\"save_dir\":", 13);
@@ -490,7 +421,6 @@ static void hex_bytes(Out *o, const uint8_t *b, size_t n) {
     out_put(o, buf, k);
 }
 
-// The game's own regions (mem_guest_ranges) a read or a search may cover: every one but the host-function window.
 static int guest_regions(const char **name, RtRange *range, int max) {
     const char *all_names[24];
     RtRange all[24];
@@ -500,7 +430,6 @@ static int guest_regions(const char **name, RtRange *range, int max) {
     return k;
 }
 
-// Copies [a, a + n) when it lies inside one of the game's own regions and the game can read all of it now: 1, else 0.
 static int guest_copy(uint64_t a, void *to, size_t n) {
     const char *name[24];
     RtRange g[24];
@@ -543,16 +472,14 @@ static void do_read(Out *o, const Req *r) {
                (unsigned long long)a);
 }
 
-// ---- search
-
 typedef struct {
     const uint8_t *pat;
     size_t len;
-    uint8_t *buf;             // PIECE bytes: the copy being searched
-    uint64_t lo, hi;          // the asked range, [lo, hi)
+    uint8_t *buf;
+    uint64_t lo, hi;
     uint64_t hits[HITS_MAX];
     int nhits, max_hits;
-    int resident_only;        // outside the modules: the pages that hold memory now
+    int resident_only;
     uint64_t start_ms, deadline_ms, scanned;
     int out_of_time, out_of_bytes;
 } Search;
@@ -566,7 +493,6 @@ static void scan(Search *s, const uint8_t *p, size_t n, uint64_t at) {
     }
 }
 
-// Takes n bytes of the searches' minute (search_lock held): 0 when the minute's bytes are spent.
 static int take_bytes(uint64_t n) {
     uint64_t now = plat_now_ms();
     if (now > search_tokens_ms) {
@@ -579,8 +505,6 @@ static int take_bytes(uint64_t n) {
     return 1;
 }
 
-// [a, a + n) copied and scanned, when the minute's bytes allow it; a copy that fails (a page went away meanwhile) is
-// scanned page by page.
 static void copy_scan(Search *s, uint64_t a, uint64_t n) {
     if (!take_bytes(n)) {
         s->out_of_bytes = 1;
@@ -597,7 +521,6 @@ static void copy_scan(Search *s, uint64_t a, uint64_t n) {
     }
 }
 
-// The runs of resident pages of [a, a + n), each copied and scanned; nothing when residency is unknown.
 static void resident_scan(Search *s, uint64_t a, uint64_t n) {
     uint8_t vec[PIECE / PAGE];
     if (!plat_mem_resident(a, n, vec)) return;
@@ -618,8 +541,6 @@ static void resident_scan(Search *s, uint64_t a, uint64_t n) {
     }
 }
 
-// The end of the run of committed, readable pages at a (at most limit), or 0 when the page at a is not one of them;
-// *skip then gets the end of the run of pages like it.
 static uint64_t readable_run(uint64_t a, uint64_t limit, uint64_t *skip) {
     uint64_t run = a, next;
     for (;;) {
@@ -633,18 +554,15 @@ static uint64_t readable_run(uint64_t a, uint64_t limit, uint64_t *skip) {
     }
 }
 
-// The pattern in [a, end), a range of the game's memory map it can read, in pieces of at most PIECE bytes, each piece
-// starting len - 1 bytes before the last one's end, so a pattern across two pieces is found once.
 static void search_region(Search *s, uint64_t a, uint64_t end) {
     while (a < end && s->nhits < s->max_hits) {
         if (plat_now_ms() >= s->deadline_ms) {
             s->out_of_time = 1;
             return;
         }
-        // a piece ends at most PIECE past a's page, so it spans at most the pages plat_mem_resident answers for
         uint64_t piece_end = (a & ~(PAGE - 1)) + PIECE, limit = end < piece_end ? end : piece_end, skip = limit,
                  run = readable_run(a, limit, &skip);
-        if (!run) {   // reserved and never committed (the lazy heap), inaccessible, or not ours: nothing to read
+        if (!run) {
             a = skip;
             continue;
         }
@@ -662,7 +580,6 @@ static void search_region(Search *s, uint64_t a, uint64_t end) {
     }
 }
 
-// Every readable part of [base, base + size) clipped to the asked range, by the game's own memory map (mem_query).
 static void search_range(Search *s, uint64_t base, uint64_t size) {
     uint64_t a = base > s->lo ? base : s->lo, end = base + size < s->hi ? base + size : s->hi;
     while (a < end && s->nhits < s->max_hits && !s->out_of_time && !s->out_of_bytes) {
@@ -682,7 +599,7 @@ static int hex_digit(char c) {
 }
 
 static void do_search(Out *o, const Req *r) {
-    uint64_t t0 = plat_now_ms();   // the budget counts from here, waiting for another search included
+    uint64_t t0 = plat_now_ms();
     const char *hex = param_str(r, "pattern"), *regions = param_str(r, "regions");
     uint8_t pat[PATTERN_MAX];
     size_t len = hex ? strlen(hex) : 0;
@@ -713,13 +630,12 @@ static void do_search(Out *o, const Req *r) {
         error_answer(o, r, E_NOT_YET, M_SEARCH, "search_memory has no memory for its copies now");
         return;
     }
-    plat_mutex_lock(&search_lock);   // one search at a time: each one reads memory for up to its budget
+    plat_mutex_lock(&search_lock);
     s.start_ms = plat_now_ms();
     if (s.start_ms >= s.deadline_ms) s.out_of_time = 1;
     const char *name[24];
     RtRange range[24];
     int nr = guest_regions(name, range, 24);
-    // the modules first, then the heap, then the rest; "all" ends after the modules when they hold the pattern
     for (int pass = 0; pass < 3 && s.nhits < s.max_hits && !s.out_of_time && !s.out_of_bytes; pass++) {
         if (pass == 1 && s.nhits && !heap_only) break;
         for (int i = 0; i < nr && s.nhits < s.max_hits && !s.out_of_time && !s.out_of_bytes; i++) {
@@ -738,7 +654,6 @@ static void do_search(Out *o, const Req *r) {
     out_f(o, "],\"complete\":%s}}\n", s.out_of_time || s.out_of_bytes ? "false" : "true");
     char first[40] = "";
     if (s.nhits) snprintf(first, sizeof first, ", the first at %#llx", (unsigned long long)s.hits[0]);
-    // the first answer, and the first that found something: a tracker's first searches look where this port has nothing
     int first_answer = once(&said_first[M_SEARCH]), first_hit = s.nhits && once(&said_hit);
     if (first_answer || first_hit)
         rt_log("tracker api: %s: a %u-byte pattern in %s, %d hit%s%s in %llu ms (%.1f MiB read%s)",
@@ -752,59 +667,37 @@ static void do_search(Out *o, const Req *r) {
                (unsigned long long)(SEARCH_BYTES_PER_MIN >> 20));
 }
 
-// ---- the game data (nx2saria.game_data)
-//
-// The game keeps its progress in a game-data manager, **[main+DBG_GAME_DATA_SLOT] in version 1.1.1 (debug_tools.c
-// gmd). Its values are the ones the save files hold, under the same keys: the MurmurHash3 of each value's name. For
-// each kind of value the manager has a section of 0x60 bytes at the kind's number times 0x60, the kinds numbered as
-// the save files number them: the entries' count (u32) at +0x10, the entries at +0x18, a table of {u32 hash,
-// u32 index} pairs at +0x20 (hash 0 for an empty pair, probed from hash % size on) and the table's size (u32) at
-// +0x2c. Every entry of a kind starts with the same pointer into main, the kind's vtable (Bool's and Int's are known);
-// that tells a real section from one read at the wrong place or stride. The game fills the sections at start, before
-// its first frame, with its game data list's defaults (a save's load then sets the save's values); until then their
-// counts are 0. The placed objects' flags (Gold Skulltulas, Heart Pieces in the world: each
-// object's flag under its placement's 64-bit hash) are a table of 16-byte entries sorted by their u64 key, a u32 class
-// at +8 (bit 0x40: the game clears it again, a respawning object) and the value byte at +12; its count (u32) is at
-// manager+0xc58 and its address at +0xc60. A value is read as the game holds it now: a change the game has queued
-// shows after its next update.
-//
-// The answer is each value with its key, sorted by key, as little-endian records in hex: a tracker that reads the save
-// files reads the running game with the keys it already has. A digest of the records lets a tracker that polls skip an
-// answer that did not change (if_digest). Each request copies one kind, through guest_copy (the game's own regions
-// only), on this thread, one request at a time (gd_lock), and refuses rather than answering a value it could not read:
-// -32002 when asking again may answer (no game data yet, a copy the game changed meanwhile, a value it cannot read
-// now), -32003 when it will not (another game version, a kind not laid out as 1.1.1 lays it out).
 enum { GD_INLINE, GD_TEXT, GD_TEXTS, GD_KEYS };
 typedef struct {
     const char *name;
     int number, how;
-    uint32_t stride;   // bytes of one entry
-    uint32_t at;       // GD_INLINE: the value in the entry; GD_TEXT: the text's pointer; GD_TEXTS: the texts' count
-    uint32_t size;     // GD_INLINE: the value's bytes
-    uint32_t record;   // bytes of one record in the answer; 0 when they vary
-    uint32_t max;      // most entries taken for the kind
-    uint64_t vtable;   // the entries' vtable, main+this, where it is known; 0: any one pointer into main
+    uint32_t stride;
+    uint32_t at;
+    uint32_t size;
+    uint32_t record;
+    uint32_t max;
+    uint64_t vtable;
 } GdKind;
 static const GdKind gd_kinds[] = {
-    {"Bool", 0, GD_INLINE, 0x18, 0x16, 1, 8, 200000, 0x4c20658},   // record: u32 hash, u32 the value (0 or 1)
-    {"Int", 2, GD_INLINE, 0x28, 0x1c, 4, 8, 100000, 0x4c20718},     // u32 hash, s32 value
-    {"Enum", 6, GD_INLINE, 0x38, 0x1c, 4, 8, 50000, 0},             // u32 hash, u32 the hash of the value's name
-    {"String64", 16, GD_TEXT, 0x108, 0x68, 0, 68, 10000, 0},        // u32 hash, 64 bytes of text, zero after its end
-    {"String64Array", 17, GD_TEXTS, 0x90, 0x80, 0, 0, 2000, 0},     // u32 hash, u32 n, n x 64 bytes of text
-    {"Int64", 22, GD_INLINE, 0x30, 0x20, 8, 12, 50000, 0},          // u32 hash, s64 value
-    {"Bool64bitKey", 32, GD_KEYS, 16, 0, 0, 16, 200000, 0},         // u64 key, u32 class, u8 set (0 or 1), 3 zero
+    {"Bool", 0, GD_INLINE, 0x18, 0x16, 1, 8, 200000, 0x4c20658},
+    {"Int", 2, GD_INLINE, 0x28, 0x1c, 4, 8, 100000, 0x4c20718},
+    {"Enum", 6, GD_INLINE, 0x38, 0x1c, 4, 8, 50000, 0},
+    {"String64", 16, GD_TEXT, 0x108, 0x68, 0, 68, 10000, 0},
+    {"String64Array", 17, GD_TEXTS, 0x90, 0x80, 0, 0, 2000, 0},
+    {"Int64", 22, GD_INLINE, 0x30, 0x20, 8, 12, 50000, 0},
+    {"Bool64bitKey", 32, GD_KEYS, 16, 0, 0, 16, 200000, 0},
 };
 #define GD_KINDS (int)(sizeof gd_kinds / sizeof *gd_kinds)
-#define GD_FORMAT 1                 // the records' layout above; a change of it gives another number
-#define GD_TABLE_MAX 1000000u       // pairs of a kind's {hash, index} table
-#define GD_TEXT_ELEMENTS 64u        // texts of one String64Array value
-#define GD_TEXTS_STRIDE 0x50        // a String64Array element: its text at +0x0c
+#define GD_FORMAT 1
+#define GD_TABLE_MAX 1000000u
+#define GD_TEXT_ELEMENTS 64u
+#define GD_TEXTS_STRIDE 0x50
 #define GD_TEXTS_AT 0x0c
-#define GD_KEYS_COUNT 0xc58         // manager+: the placed objects' flags, count (u32), then at +0xc60 their address
-#define GD_ANSWER_MAX (8u << 20)    // bytes of records in one answer (String64Array's texts could be many)
+#define GD_KEYS_COUNT 0xc58
+#define GD_ANSWER_MAX (8u << 20)
 static PlatMutex gd_lock = PLAT_MUTEX_INIT;
 static int32_t said_kind[GD_KINDS], said_kind_refused[GD_KINDS][E_KINDS], said_not_loaded;
-static const char gd_not_loaded[] = "the game has not loaded its game data yet";   // the usual wait, logged once
+static const char gd_not_loaded[] = "the game has not loaded its game data yet";
 
 static uint64_t gd_manager(void) {
     uint64_t slot = 0, m = 0;
@@ -814,7 +707,7 @@ static uint64_t gd_manager(void) {
 }
 
 static int gd_loaded(uint64_t m);
-static int gd_ready(void) {   // the manager is there and the game has loaded its game data
+static int gd_ready(void) {
     uint64_t m = gd_manager();
     return m && gd_loaded(m);
 }
@@ -840,7 +733,6 @@ static int gd_fail(GdAnswer *a, int err, const char *why) {
     return 0;
 }
 
-// A text of 64 bytes as it goes into a record: the bytes up to its first NUL, zero after it.
 static void text_record(uint8_t *to, const uint8_t *text) {
     size_t n = 0;
     while (n < 64 && text[n]) n++;
@@ -848,13 +740,12 @@ static void text_record(uint8_t *to, const uint8_t *text) {
     memset(to + n, 0, 64 - n);
 }
 
-// The placed objects' flags, sorted by key: all of them, or the set ones.
 static int gd_keys(uint64_t m, const GdKind *k, int set_only, GdAnswer *a) {
-    uint64_t head[2] = {0, 0}, again[2] = {0, 0};   // the count (its low 32 bits), the address
+    uint64_t head[2] = {0, 0}, again[2] = {0, 0};
     if (!guest_copy(m + GD_KEYS_COUNT, head, sizeof head)) return gd_fail(a, E_NOT_YET, "the game data cannot be read now");
     head[0] &= 0xffffffffu;
     if (!head[0] || !head[1]) return gd_fail(a, E_NOT_YET, gd_not_loaded);
-    if (head[0] > k->max) {   // the same count twice is no load in progress
+    if (head[0] > k->max) {
         if (!guest_copy(m + GD_KEYS_COUNT, again, sizeof again) || (again[0] &= 0xffffffffu, memcmp(head, again, sizeof head)))
             return gd_fail(a, E_NOT_YET, "the placed objects' flags changed while they were read");
         return gd_fail(a, E_UNSUPPORTED, "the placed objects' flags are not where version 1.1.1 keeps them");
@@ -873,13 +764,13 @@ static int gd_keys(uint64_t m, const GdKind *k, int set_only, GdAnswer *a) {
         uint32_t cls;
         uint8_t set = t[i * 16 + 12] & 1;
         memcpy(&key, t + i * 16, 8), memcpy(&cls, t + i * 16 + 8, 4);
-        if (key <= prev) {   // the game keeps them sorted, without key 0
+        if (key <= prev) {
             free(t);
             return gd_fail(a, E_NOT_YET, "the placed objects' flags are not sorted as version 1.1.1 keeps them");
         }
         prev = key;
         if (set_only && !set) continue;
-        uint8_t *r = t + kept++ * 16;   // at or before entry i, which was read above
+        uint8_t *r = t + kept++ * 16;
         memcpy(r, &key, 8), memcpy(r + 8, &cls, 4);
         memset(r + 12, 0, 4);
         r[12] = set;
@@ -888,7 +779,6 @@ static int gd_keys(uint64_t m, const GdKind *k, int set_only, GdAnswer *a) {
     return 1;
 }
 
-// The fields of a kind's section this reader uses, as they are now: count, entries, table, table size.
 static int gd_fields(uint64_t m, const GdKind *k, uint64_t f[4]) {
     uint8_t sec[0x30];
     uint32_t total = 0, size = 0;
@@ -898,8 +788,6 @@ static int gd_fields(uint64_t m, const GdKind *k, uint64_t f[4]) {
     return 1;
 }
 
-// A kind that does not read as 1.1.1 keeps it: -32003 when its section is still as it was read (else the game was
-// changing it, as while it makes its game data, and -32002).
 static int gd_unsupported(uint64_t m, const GdKind *k, const uint64_t f[4], GdAnswer *a, const char *why) {
     uint64_t now[4];
     if (!gd_fields(m, k, now) || memcmp(f, now, sizeof now))
@@ -907,13 +795,11 @@ static int gd_unsupported(uint64_t m, const GdKind *k, const uint64_t f[4], GdAn
     return gd_fail(a, E_UNSUPPORTED, why);
 }
 
-// The game has loaded its game data: its Bool section has entries.
 static int gd_loaded(uint64_t m) {
     uint32_t bools = 0;
     return guest_copy(m + 0x10, &bools, 4) && bools;
 }
 
-// One kind's records, sorted by key, into a (malloc'd): 1, or 0 with a->err and a->why.
 static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, int set_only, GdAnswer *a) {
     memset(a, 0, sizeof *a);
     if (k->how == GD_KEYS) return gd_keys(m, k, set_only, a);
@@ -922,12 +808,11 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
     if (!gd_fields(m, k, f)) return gd_fail(a, E_NOT_YET, "the game data cannot be read now");
     uint32_t total = (uint32_t)f[0], size = (uint32_t)f[3];
     uint64_t entries = f[1], table = f[2];
-    if (!total && k->number && gd_loaded(m)) return 1;   // a kind the loaded game data holds nothing of: no records
+    if (!total && k->number && gd_loaded(m)) return 1;
     if (!total || !entries || !table) return gd_fail(a, E_NOT_YET, gd_not_loaded);
     if (total > k->max || size < total || size > GD_TABLE_MAX)
         return gd_unsupported(m, k, f, a, "this kind is not where version 1.1.1 keeps it");
 
-    // The {hash, index} pairs: all of them, or the one of the hash, probed as the game probes (debug_tools.c gmd_entry)
     GdPair *pairs = malloc((size_t)size * sizeof *pairs);
     if (!pairs) return gd_fail(a, E_NOT_YET, "the port has no memory for the answer now");
     if (!guest_copy(table, pairs, (size_t)size * sizeof *pairs)) {
@@ -948,7 +833,7 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
     }
     uint8_t *seen = calloc((size_t)total / 8 + 1, 1);
     int odd = np > total || !seen;
-    for (uint32_t i = 0; i < np && !odd; i++) {   // each index below the count, once; each hash once
+    for (uint32_t i = 0; i < np && !odd; i++) {
         odd = pairs[i].index >= total || (seen[pairs[i].index / 8] >> (pairs[i].index % 8) & 1) ||
               (i && pairs[i].hash == pairs[i - 1].hash);
         if (!odd) seen[pairs[i].index / 8] |= (uint8_t)(1u << (pairs[i].index % 8));
@@ -960,7 +845,6 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
                                      "keeps it");
     }
 
-    // The entries: every one (each checked for the kind's vtable), or the one asked for and the first
     size_t span = has_hash ? (size_t)k->stride : (size_t)total * k->stride;
     uint8_t *ent = malloc(span ? span : 1);
     uint64_t vt = k->vtable ? MOD_MAIN_BASE + k->vtable : 0, from = entries;
@@ -972,7 +856,7 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
     for (size_t o = 0; o < span; o += k->stride) {
         uint64_t v;
         memcpy(&v, ent + o, 8);
-        if (v != vt || !in_main(v)) {   // 0: an entry the game is still making
+        if (v != vt || !in_main(v)) {
             free(pairs), free(ent);
             return v ? gd_unsupported(m, k, f, a, "this kind's entries are not laid out as version 1.1.1 lays them out")
                      : gd_fail(a, E_NOT_YET, "this kind's entries are still being made");
@@ -981,7 +865,7 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
 #define ENTRY(i) (ent + (has_hash ? 0 : (size_t)pairs[i].index * k->stride))
 
     size_t cap = (size_t)np * k->record;
-    for (uint32_t i = 0; !k->record && i < np; i++) {   // GD_TEXTS: 8 bytes and the texts of each value
+    for (uint32_t i = 0; !k->record && i < np; i++) {
         uint32_t c = 0;
         memcpy(&c, ENTRY(i) + k->at, 4);
         if (c > GD_TEXT_ELEMENTS) {
@@ -1013,7 +897,7 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
             unread = !p || !guest_copy(p, text, 64);
             if (!unread) text_record(rec + w + 4, text);
             w += k->record;
-        } else {   // GD_TEXTS: the element count at +0x80, their address at +0x88
+        } else {
             uint32_t c = 0;
             uint64_t p = 0;
             memcpy(&c, e + k->at, 4), memcpy(&p, e + k->at + 8, 8);
@@ -1026,7 +910,6 @@ static int gd_records(uint64_t m, const GdKind *k, int has_hash, uint32_t hash, 
     }
 #undef ENTRY
     free(pairs), free(ent);
-    // The section as it was when the copies began: else the indices may be of another table than the entries
     if (unread || !gd_fields(m, k, again) || memcmp(f, again, sizeof again)) {
         const char *why = rec ? "a text of this kind cannot be read now, or the kind changed while it was read"
                               : "the port has no memory for the answer now";
@@ -1065,7 +948,7 @@ static void do_game_data(Out *o, const Req *r) {
         plat_mutex_unlock(&gd_lock);
     }
     int i = (int)(k - gd_kinds);
-    if (!ok) {   // logged here: the wait for the game data once, anything else once per kind
+    if (!ok) {
         __atomic_store_n(&said_refusal[M_GAMEDATA][a.err], 1, __ATOMIC_RELEASE);
         if (a.why == gd_not_loaded && once(&said_not_loaded))
             rt_log("tracker api: nx2saria.game_data asked before the game loaded its game data (the first such answer, "
@@ -1127,15 +1010,13 @@ static void do_state(Out *o, const Req *r) {
     }
 }
 
-// ---- a client
-
 typedef struct {
     PlatTcp *c;
     int id;
     char peer[64];
     uint64_t t0, req[M_N], errors, bytes;
-    int sent_any;      // it sent a byte: a connection closed without one was a port check
-    const char *why;   // how it ended, for its closing line
+    int sent_any;
+    const char *why;
 } Client;
 
 static void not_a_request(Client *cl, const char *p, size_t n) {
@@ -1147,7 +1028,6 @@ static void not_a_request(Client *cl, const char *p, size_t n) {
                "request or TLS handshake arrives this way.", cl->id, text);
 }
 
-// One whole line: 1 when the connection goes on.
 static int handle_line(Client *cl, const char *line, size_t n, Out *o) {
     Req r;
     if (!parse_request(line, n, &r)) {
@@ -1178,7 +1058,6 @@ static int handle_line(Client *cl, const char *line, size_t n, Out *o) {
     return 1;
 }
 
-// The first byte past blanks of the line being received is not '{': no JSON request starts that way.
 static int starts_wrong(const char *p, size_t n) {
     for (size_t i = 0; i < n; i++)
         if (p[i] != ' ' && p[i] != '\t' && p[i] != '\r') return p[i] != '{';
@@ -1204,7 +1083,7 @@ static void counts(char *out, size_t cap, const uint64_t *req) {
 
 static void client_main(void *arg) {
     Client *cl = arg;
-    plat_thread_priority(PLAT_PRIO_NORMAL);   // a Linux thread starts at its creator's level, the listener's lower one
+    plat_thread_priority(PLAT_PRIO_NORMAL);
     char *line = malloc(LINE_CAP);
     size_t have = 0;
     uint64_t heard = plat_now_ms(), line_since = 0;
@@ -1246,13 +1125,13 @@ static void client_main(void *arg) {
             }
             cl->bytes += o.n;
             __atomic_add_fetch(&win_bytes, o.n, __ATOMIC_RELAXED);
-            if (o.cap > (1u << 20)) free(o.p), o.p = NULL, o.cap = 0;   // a large answer's room is not kept
+            if (o.cap > (1u << 20)) free(o.p), o.p = NULL, o.cap = 0;
             have -= n + 1;
             memmove(line, nl + 1, have);
             line_since = plat_now_ms();
         }
         if (!keep) break;
-        if (starts_wrong(line, have)) {   // closed at its first byte, before any line end
+        if (starts_wrong(line, have)) {
             not_a_request(cl, line, have);
             break;
         }
@@ -1260,7 +1139,7 @@ static void client_main(void *arg) {
             cl->why = "it sent 4096 bytes without a line end";
             break;
         }
-        if (have && now - line_since > LINE_MS) {   // bytes that keep coming do not finish a request either
+        if (have && now - line_since > LINE_MS) {
             cl->why = "it left a request unfinished for 5 s";
             break;
         }
@@ -1269,7 +1148,7 @@ static void client_main(void *arg) {
     free(o.p);
     plat_tcp_close(cl->c);
     int left = __atomic_sub_fetch(&open_clients, 1, __ATOMIC_ACQ_REL);
-    if (!cl->sent_any && !strcmp(cl->why, "the client closed the connection")) {   // a check whether the port is taken
+    if (!cl->sent_any && !strcmp(cl->why, "the client closed the connection")) {
         __atomic_add_fetch(&win_checks, 1, __ATOMIC_RELAXED);
         if (once(&said_check))
             rt_log("tracker api: a program connected and left without a request (a tracker checking whether the port "
@@ -1283,8 +1162,6 @@ static void client_main(void *arg) {
     }
     free(cl);
 }
-
-// ---- the listener
 
 static PlatTcp *listen_now(int *err) { return plat_tcp_listen_loopback((uint16_t)port, err); }
 
@@ -1345,7 +1222,7 @@ static void listener_main(void *arg) {
             if (once(&said_accept))
                 rt_log("tracker api: a connection could not be taken (error %d); waiting a moment before the next "
                        "(the first such error)", err);
-            plat_sleep_ms(100);   // the listener stays readable while no descriptor is left: no busy loop
+            plat_sleep_ms(100);
             if (++accept_errors >= ACCEPT_ERRORS_MAX) {
                 rt_log("tracker api: the listener failed %d times in a row; making it again", accept_errors);
                 plat_tcp_close(l);
@@ -1389,10 +1266,10 @@ void tracker_api_init(void) {
                "PC read the game's memory, read-only, on 127.0.0.1:%d)", port);
         return;
     }
-    snprintf(build_id, sizeof build_id, "%s", mods_main_build_id());   // here, once: the getter is not thread-safe
+    snprintf(build_id, sizeof build_id, "%s", mods_main_build_id());
     uint64_t heap = mem_layout()->heap.base;
     char where[160];
-    for (int m = 0, n = 0; m < M_OTHER; m++)   // the start line and refusals name them as status answers them
+    for (int m = 0, n = 0; m < M_OTHER; m++)
         if (m != M_GAMEDATA || RT_V111)
             n += snprintf(methods_text + n, sizeof methods_text - (size_t)n, "%s%s", m ? ", " : "", method_name[m]);
     snprintf(where, sizeof where, "the game's heap at %#llx, %s the 0x1000000000 trackers take heap pointers from",

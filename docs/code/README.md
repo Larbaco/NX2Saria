@@ -31,7 +31,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 7 | `runtime/platform/` | [platform.md](platform.md) | extracted |
 | 8 | `runtime/nvn/` | [nvn.md](nvn.md) | extracted |
 | 9 | `runtime/patches/` | [patches.md](patches.md) | extracted |
-| 10 | `runtime/diag/` | `diag.md` | not yet extracted |
+| 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
 | 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports; the rest not yet extracted |
 | 12 | `runtime/ui/` | [ui.md](ui.md) | started: `cheats_tab.cpp` and what the Cheats tab needs of `menu.cpp` and `option_rows.cpp`; the rest not yet extracted |
 | 13 | `runtime/` top level | `runtime.md` | not yet extracted |
@@ -159,8 +159,9 @@ How the module uses `__doc__`, from the `ast`: as a whole, or only its first lin
 
 The licence lines of a run of comment lines (or of a docstring), by paragraph: a paragraph with licence text in it
 ("Permission is hereby granted", "THE SOFTWARE IS PROVIDED", an SPDX line, the zlib terms) is kept whole; a
-"Copyright (c) ..." notice is kept from its line to the end of its sentence or the line that names
-`THIRD_PARTY_NOTICES.md`. Empty comment lines next to a kept line are kept with it.
+"Copyright (c) ..." notice is kept from the start of its sentence to the end of that sentence or the line that names
+`THIRD_PARTY_NOTICES.md`; the sentence may start on a line above, unless the notice's own line starts it ("Contains
+code", "Portions", "Copyright"). Empty comment lines next to a kept line are kept with it.
 
 #### `classify()`
 

@@ -1,19 +1,3 @@
-// The hang watch: a report in the log when nothing moves for NX2SARIA_HANG_WATCH_S seconds (default 20; 0 off). A
-// present, a GPU submission or the completion of one that never comes back (a deadlock, a driver wait that does not
-// return, a GPU hang without a reset) left a log that just stopped, and nothing in it said where the threads were.
-//
-// Its own thread reads, once a second and without a lock, what moves while the game runs: the frames shown
-// (gfx_counters.frames) and the GPU submissions issued and done (vk_sync.c vk_sync_progress). Two stalls are reported:
-// - no frame shown for N s while the guest runs, the window is in front and not minimized and the process is not
-//   ending: the game stops presenting when it loses the focus, so a focus change starts the count again, and the boot
-//   screen (before the guest starts) is not judged;
-// - submissions issued and not done, with "done" unchanged for N s, whatever the focus.
-// One report per stall, and a new stall needs progress first; at most HW_REPORTS a run. The report names the stall,
-// who holds the present, queue and window-start locks (gfx_present.c gfx_lock_holders), the guest threads' lock and
-// thread-end waits (kernel.c kern_wait_report), and then writes the log out with logq_flush, which leaves the log
-// thread on: rt_log_sync would make every later line a write on the thread that logs it, drawing threads included,
-// in a run that may yet recover. The watch never ends the process, never calls the device, and takes no lock a
-// drawing thread waits for, but for the kernel lock it tries during a report (kernel.c kern_wait_report).
 #include "cfg.h"
 #include "gfx.h"
 #include "host.h"
@@ -23,24 +7,23 @@
 
 #define HW_REPORTS 3
 
-typedef struct {   // what the watch reads each second
+typedef struct {
     uint64_t now_ns, frames, issued, done;
-    int judge_present;   // the guest runs, the window is in front and not minimized, the process is not ending
+    int judge_present;
 } HwBeat;
 
 typedef struct {
     uint64_t limit_ns;
-    uint64_t frames, frames_at;   // the frame count last seen, and since when nothing moved while judged
-    uint64_t done, done_at;       // the same for the submissions done, while some are outstanding
-    int present_told, gpu_told;   // this stall is reported
+    uint64_t frames, frames_at;
+    uint64_t done, done_at;
+    int present_told, gpu_told;
     int reports;
 } HangWatch;
 
 enum { HW_NONE, HW_PRESENT, HW_GPU };
 
-// One second's reading: which stall to report now, if any.
 static int hw_step(HangWatch *w, const HwBeat *b) {
-    if (b->frames != w->frames || !b->judge_present) {   // progress, or not judged: the count starts again
+    if (b->frames != w->frames || !b->judge_present) {
         w->frames = b->frames;
         w->frames_at = b->now_ns;
         w->present_told = 0;
@@ -55,7 +38,7 @@ static int hw_step(HangWatch *w, const HwBeat *b) {
     int present = !w->present_told && b->judge_present && b->now_ns - w->frames_at >= w->limit_ns;
     if (!gpu && !present) return HW_NONE;
     w->reports++;
-    w->present_told = 1;   // a GPU stall stops the frames too: one report for both
+    w->present_told = 1;
     if (gpu) w->gpu_told = 1;
     return gpu ? HW_GPU : HW_PRESENT;
 }

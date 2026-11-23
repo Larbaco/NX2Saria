@@ -1,21 +1,3 @@
-// Sampling profiler (NX2SARIA_PROFILE=<path>) and per-frame timing (NX2SARIA_TRACE=perf). tools/prof_report.py reads the profile.
-// A host thread wakes every 1 ms and, for every other thread, suspends it, reads Rip and resumes it. The sampler never
-// allocates or takes a lock between SuspendThread and ResumeThread and never runs guest code. The profile is text:
-//   nx2navi-prof 1 / base <hex> / period_us / samples N / thread <tid> <samples> <in-exe samples> / module <base> <size> <path> /
-//   rip <hex> <count> (the top PROF_TOP Rips) / stack <count> <rip> <caller> ... (NX2SARIA_PROFILE_RENDER or
-//   NX2SARIA_PROFILE_CHAINS only, the top PROF_STACKS call chains)
-// With NX2SARIA_PROFILE_RENDER (the render thread) or NX2SARIA_PROFILE_CHAINS=1 (every thread, chains of all threads summed: for
-// short frame ranges, as each sample copies a stack) the sampler also copies up to STK_COPY bytes of the suspended
-// thread's stack and, after
-// ResumeThread, unwinds the copy with the .pdata tables (RtlVirtualUnwind), so it takes no lock while the thread is
-// suspended. The unwind stops at the first frame outside the copy; deeper callers are cut.
-// NX2SARIA_PROFILE_SLOW=<ms> keeps every thread's chains of the last half second in a ring (a thread outside the exe, mostly
-// waiting, copies 8 KiB of stack, one in it STK_COPY; a thread that ran no cycle since its previous sample is not
-// suspended and repeats its previous chain; a sample that took over 2 ms to stop its thread, which happens while the
-// thread is in a long kernel call, is written as `tstall <tid> <ms into the window> <ms stopping> <rip>...` with the
-// chain where the thread stopped) and, after a present at least <ms> after the previous one, writes
-// that interval's samples (plus the 20 ms before) to <NX2SARIA_PROFILE>.f<frame>: the profile format, one `stack 1` line per
-// sample, and `tstack <tid> <ms into the window> <rip>...` lines that keep the thread and the time. At most 64 dumps.
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
@@ -36,24 +18,23 @@
 #define main_tid prof_main_tid
 #define replay_tid prof_replay_tid
 
-#define PROF_SLOTS (1u << 16)   // Rip hash table, open addressing; a full table drops new Rips
-#define PROF_TOP 4000           // more than the 200 asked for: the report sums per function
+#define PROF_SLOTS (1u << 16)
+#define PROF_TOP 4000
 #define PROF_THREADS 512
-#define STK_SLOTS (1u << 15)      // call-chain hash table, open addressing; a full table drops new chains
+#define STK_SLOTS (1u << 15)
 #define PROF_STACKS 6000
-#define STK_COPY (64u << 10)      // stack bytes copied per sample
-#define STK_SLACK (64u << 10)     // zeros after the copy: a frame reaching past it reads zeros, and a zero Rip ends the chain
+#define STK_COPY (64u << 10)
+#define STK_SLACK (64u << 10)
 
 typedef struct { uint64_t rip, n; } RipCount;
-#define PROF_DEPTH 24             // frames kept per call chain, the sampled Rip first
-// cycles, depth, last: NX2SARIA_PROFILE_SLOW only, the thread's cycle count and chain at its previous sample
+#define PROF_DEPTH 24
 typedef struct { DWORD tid; HANDLE h; uint64_t n, in_exe, cycles; uint32_t depth; uint64_t last[PROF_DEPTH]; } ThreadSlot;
 
 static RipCount table[PROF_SLOTS];
 typedef struct { uint64_t hash, n; uint32_t depth; uint64_t rip[PROF_DEPTH]; } StackCount;
 static StackCount stacks[STK_SLOTS];
 static uint64_t stacks_dropped;
-static uint8_t stk_buf[STK_COPY + STK_SLACK] __attribute__((aligned(16)));   // the slack is never written
+static uint8_t stk_buf[STK_COPY + STK_SLACK] __attribute__((aligned(16)));
 static ThreadSlot threads[PROF_THREADS];
 static int n_threads;
 static uint64_t total, dropped;
@@ -61,25 +42,24 @@ static const char *out_path;
 static HANDLE sampler;
 static volatile LONG stop, written;
 static uintptr_t exe_lo, exe_hi;
-static int only_render;             // NX2SARIA_PROFILE_RENDER=1: sample the render thread only
-static int only_main;               // NX2SARIA_PROFILE_MAIN=1: sample the guest main thread only
-static int only_replay;             // NX2SARIA_PROFILE_REPLAY=1: sample the replay thread only, without call chains; =2: it and
-                                    // the replay workers (vk_exec.c rw_main), with chains under NX2SARIA_PROFILE_CHAINS
-static int chains;                  // call chains are kept: NX2SARIA_PROFILE_RENDER or NX2SARIA_PROFILE_CHAINS
-static volatile uint64_t cur_frame; // last presented frame
-static uint64_t frame_lo, frame_hi; // NX2SARIA_PROFILE_FRAMES=<lo>-<hi>: sample only while presents lo..hi-1 are pending
-static int64_t world_lo, world_hi;  // NX2SARIA_PROFILE_FRAMES=w<lo>-<hi>: only while the world clock is in [lo, hi) s (us)
+static int only_render;
+static int only_main;
+static int only_replay;
+static int chains;
+static volatile uint64_t cur_frame;
+static uint64_t frame_lo, frame_hi;
+static int64_t world_lo, world_hi;
 
-#define SLOW_RING (1u << 15)        // NX2SARIA_PROFILE_SLOW: about 0.5 s of samples of every thread
+#define SLOW_RING (1u << 15)
 #define SLOW_DUMPS 64
 typedef struct { uint64_t t; DWORD tid; uint32_t depth; uint64_t rip[PROF_DEPTH]; } Sample;
 static Sample ring[SLOW_RING];
 static uint64_t ring_n;
 #define STALL_RING 1024
-static Sample stalls[STALL_RING];   // t: when the stop began; rip[PROF_DEPTH - 1] holds the stop's ns
+static Sample stalls[STALL_RING];
 static uint64_t stall_n;
-static uint64_t slow_ns;            // NX2SARIA_PROFILE_SLOW in ns, 0 off
-static volatile LONG64 dump_lo, dump_hi, dump_frame;   // the render thread asks for a window, the sampler writes it
+static uint64_t slow_ns;
+static volatile LONG64 dump_lo, dump_hi, dump_frame;
 
 static void count_rip(uint64_t rip) {
     uint32_t i = (uint32_t)((rip * 0x9E3779B97F4A7C15ull) >> 48);
@@ -96,7 +76,7 @@ static void count_rip(uint64_t rip) {
 static void count_stack(const uint64_t *rip, uint32_t depth) {
     uint64_t h = 0xcbf29ce484222325ull;
     for (uint32_t d = 0; d < depth; d++) h = (h ^ rip[d]) * 0x100000001b3ull;
-    h |= 1;   // 0 marks a free slot
+    h |= 1;
     uint32_t i = (uint32_t)(h >> 49);
     for (uint32_t k = 0; k < 64; k++, i = (i + 1) & (STK_SLOTS - 1)) {
         StackCount *s = &stacks[i];
@@ -112,10 +92,6 @@ static void count_stack(const uint64_t *rip, uint32_t depth) {
     stacks_dropped++;
 }
 
-// Modules the unwinder walks through freely: the exe and system DLLs that stay loaded for the process's life. Any other
-// module (a driver or vendor DLL, which may load and unload while the game starts) is pinned while its frame unwinds,
-// and a module being unloaded ends the chain: unwinding one read its freed unwind tables and crashed the sampler
-// (NX2SARIA_PROFILE_SLOW at start). The unwind runs after ResumeThread, so taking the loader lock here is safe.
 static struct { uintptr_t lo, hi; } walk_mods[8];
 static int n_walk_mods;
 
@@ -137,8 +113,6 @@ static int walkable(uint64_t rip) {
     return 0;
 }
 
-// Unwinds the stack copied to stk_buf from real address lo (n bytes). Registers that point into the copied range are
-// moved into the copy, so frame-pointer frames read the copy too. Returns the number of frames.
 static uint32_t unwind_copy(CONTEXT *c, uintptr_t lo, size_t n, uint64_t *rip) {
     uintptr_t buf = (uintptr_t)stk_buf, end = buf + n;
     DWORD64 *regs[] = {&c->Rbx, &c->Rbp, &c->Rsi, &c->Rdi, &c->R12, &c->R13, &c->R14, &c->R15};
@@ -150,14 +124,14 @@ static uint32_t unwind_copy(CONTEXT *c, uintptr_t lo, size_t n, uint64_t *rip) {
         rip[d++] = c->Rip;
         HMODULE pin = NULL;
         if (!walkable(c->Rip) && !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCWSTR)(uintptr_t)c->Rip, &pin))
-            break;   // in no loaded module (or one being unloaded): the frame is kept, its callers are not
+            break;
         DWORD64 base;
         PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c->Rip, &base, NULL);
         if (f) {
             void *hd;
             DWORD64 est;
             RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c->Rip, f, c, &hd, &est, NULL);
-        } else {   // a leaf function: the return address is on top
+        } else {
             c->Rip = *(DWORD64 *)c->Rsp;
             c->Rsp += 8;
         }
@@ -166,7 +140,6 @@ static uint32_t unwind_copy(CONTEXT *c, uintptr_t lo, size_t n, uint64_t *rip) {
     return d;
 }
 
-// Re-lists the process's threads: keeps the handle of a thread seen before, opens new ones, closes the gone ones.
 static void refresh_threads(DWORD self) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snap == INVALID_HANDLE_VALUE) return;
@@ -189,7 +162,7 @@ static void refresh_threads(DWORD self) {
     }
     CloseHandle(snap);
     for (int i = 0; i < n_threads; i++)
-        if (threads[i].h) CloseHandle(threads[i].h);   // exited; its counts are lost with the slot
+        if (threads[i].h) CloseHandle(threads[i].h);
     memcpy(threads, next, sizeof(ThreadSlot) * n);
     n_threads = n;
 }
@@ -206,7 +179,6 @@ static void write_modules(FILE *f) {
     }
 }
 
-// The sampler, between ticks: the samples of the window the render thread asked for.
 static void slow_dump(void) {
     uint64_t lo = (uint64_t)dump_lo, hi = (uint64_t)dump_hi, frame = (uint64_t)dump_frame;
     static int dumps;
@@ -242,7 +214,7 @@ static void slow_dump(void) {
     InterlockedExchange64(&dump_hi, 0);
 }
 
-static int is_worker(DWORD tid) {   // NX2SARIA_PROFILE_REPLAY=2: the replay workers are sampled with the replay thread
+static int is_worker(DWORD tid) {
     for (int i = 0; i < 16; i++)
         if (prof_worker_tid[i] == tid) return 1;
     return 0;
@@ -256,7 +228,7 @@ static DWORD WINAPI sampler_main(void *arg) {
     static CONTEXT ctx __attribute__((aligned(16)));
     for (unsigned tick = 0; !stop; tick++) {
         if (timer) {
-            LARGE_INTEGER due = {.QuadPart = -10000};   // 1 ms
+            LARGE_INTEGER due = {.QuadPart = -10000};
             SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE);
             WaitForSingleObject(timer, 10);
         } else {
@@ -265,7 +237,7 @@ static DWORD WINAPI sampler_main(void *arg) {
         if (tick % 64 == 0) refresh_threads(self);
         if (dump_hi) slow_dump();
         if (frame_hi && (cur_frame < frame_lo || cur_frame >= frame_hi)) continue;
-        if (world_hi) {   // -1 before the world clock starts
+        if (world_hi) {
             int64_t w = frame_step_world_us();
             if (w < world_lo || w >= world_hi) continue;
         }
@@ -276,7 +248,7 @@ static DWORD WINAPI sampler_main(void *arg) {
                 (only_replay == 1 && t->tid != replay_tid) || (only_replay == 2 && t->tid != replay_tid && !is_worker(t->tid)))
                 continue;
             uint64_t cyc = 0;
-            if (slow_ns && t->depth && QueryThreadCycleTime(t->h, &cyc) && cyc == t->cycles) {   // still waiting
+            if (slow_ns && t->depth && QueryThreadCycleTime(t->h, &cyc) && cyc == t->cycles) {
                 Sample *s = &ring[ring_n++ & (SLOW_RING - 1)];
                 s->t = now, s->tid = t->tid, s->depth = t->depth;
                 memcpy(s->rip, t->last, t->depth * sizeof *t->last);
@@ -285,14 +257,13 @@ static DWORD WINAPI sampler_main(void *arg) {
             ctx.ContextFlags = chains ? CONTEXT_CONTROL | CONTEXT_INTEGER : CONTEXT_CONTROL;
             uint64_t stop0 = slow_ns ? kern_now_ns() : 0;
             if (SuspendThread(t->h) == (DWORD)-1) continue;
-            BOOL ok = GetThreadContext(t->h, &ctx);   // returns once the thread has stopped in user mode
+            BOOL ok = GetThreadContext(t->h, &ctx);
             uint64_t stop_ns = slow_ns ? kern_now_ns() - stop0 : 0;
             size_t n = 0;
             MEMORY_BASIC_INFORMATION mb;
-            // a thread stopped between its sub rsp and the stack probe has Rsp in the guard page: touching it would fault
             if (ok && chains && VirtualQuery((void *)ctx.Rsp, &mb, sizeof mb) && mb.State == MEM_COMMIT &&
                 !(mb.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
-                n = (uintptr_t)mb.BaseAddress + mb.RegionSize - ctx.Rsp;   // the committed stack above Rsp
+                n = (uintptr_t)mb.BaseAddress + mb.RegionSize - ctx.Rsp;
                 size_t cap = slow_ns && (ctx.Rip < exe_lo || ctx.Rip >= exe_hi) ? 8u << 10 : STK_COPY;
                 if (n > cap) n = cap;
                 memcpy(stk_buf, (void *)ctx.Rsp, n);
@@ -314,7 +285,7 @@ static DWORD WINAPI sampler_main(void *arg) {
                     if (w->depth > PROF_DEPTH - 1) w->depth = PROF_DEPTH - 1;
                     w->rip[PROF_DEPTH - 1] = stop_ns;
                 }
-                QueryThreadCycleTime(t->h, &t->cycles);   // after ResumeThread: the cycles the sample itself cost
+                QueryThreadCycleTime(t->h, &t->cycles);
                 t->depth = s->depth;
                 memcpy(t->last, chain, s->depth * sizeof *chain);
             }
@@ -339,7 +310,7 @@ static int cmp_stack_desc(const void *a, const void *b) {
 void prof_sampler_write(void) {
     if (!out_path || InterlockedExchange(&written, 1)) return;
     InterlockedExchange(&stop, 1);
-    if (WaitForSingleObject(sampler, 2000) != WAIT_OBJECT_0) return;   // sampler stuck: no half-written counts
+    if (WaitForSingleObject(sampler, 2000) != WAIT_OBJECT_0) return;
     FILE *f = fopen(out_path, "w");
     if (!f) {
         rt_log("prof: cannot write %s", out_path);
@@ -365,7 +336,6 @@ void prof_sampler_write(void) {
         fputc('\n', f);
     }
     if (stacks_dropped) fprintf(f, "stacks_dropped %llu\n", (unsigned long long)stacks_dropped);
-    // the exe's own symbol table names the addresses above, so the profile needs no link map
     size_t na = 0, ca = (size_t)cnt + 1;
     for (int i = 0; i < ns && i < PROF_STACKS; i++) ca += stacks[i].depth;
     uint64_t *addrs = malloc(ca * sizeof *addrs);
@@ -417,20 +387,11 @@ int prof_sampler_start(void) {
     return 1;
 }
 
-// NX2SARIA_MEM_CENSUS (perf.c census_check): the process's committed memory by kind, and the allocations of the process's
-// own memory holding the most, so a log shows what grows: the guest's memory, a heap, the graphics driver's mappings or
-// loaded images. One walk of the address space with VirtualQuery, tens of milliseconds, so only now and then; it also
-// counts the guest ranges' committed bytes (mem_guest_ranges), which mem_guest_census would walk a second time.
-// Kinds of committed memory: images and mapped views by type; of the private memory, the write-combined views (device
-// memory the driver maps into the process; Windows charges it to the process's commit), the guest's ranges, and the
-// rest, the process's own ("other private"). The driver places its views anywhere in the free address space, below
-// RT_ADDRESS_LIMIT too: with every private region under it counted as guest, "other private" was 0 MiB in all 33
-// censuses of a session (2026-11-13) and the guest's figure grew with the textures.
 #define CENSUS_TOP 12
 #define CENSUS_RANGES 16
 typedef struct { uint64_t base, bytes; DWORD protect; } CensusRun;
 
-static void census_keep(CensusRun *top, int *nt, const CensusRun *r) {   // top[] stays sorted, largest first
+static void census_keep(CensusRun *top, int *nt, const CensusRun *r) {
     if (!r->bytes || (*nt == CENSUS_TOP && r->bytes <= top[*nt - 1].bytes)) return;
     int k = *nt < CENSUS_TOP ? (*nt)++ : *nt - 1;
     for (; k > 0 && top[k - 1].bytes < r->bytes; k--) top[k] = top[k - 1];
@@ -438,8 +399,6 @@ static void census_keep(CensusRun *top, int *nt, const CensusRun *r) {   // top[
 }
 
 int prof_commit_census(uint64_t frame, uint64_t *wc_out) {
-    // Allocations by committed size: under 256 KiB, under 4 MiB, under 64 MiB, larger. A few large ones growing is a
-    // pool or cache; many small ones is a stream of allocations that are not freed.
     static const uint64_t edge[3] = {256ull << 10, 4ull << 20, 64ull << 20};
     uint64_t bcount[4] = {0}, bbytes[4] = {0};
     uint64_t t0 = plat_now_ns(), guest = 0, priv = 0, wc = 0, mapped = 0, image = 0, regions = 0;
@@ -455,7 +414,7 @@ int prof_commit_census(uint64_t frame, uint64_t *wc_out) {
         uint64_t base = (uint64_t)(uintptr_t)mi.AllocationBase, at = (uint64_t)(uintptr_t)mi.BaseAddress;
         uint64_t end = at + mi.RegionSize, in_guest = 0;
         int committed = mi.State == MEM_COMMIT, host = 0;
-        if (committed)   // the guest ranges' committed bytes, whatever the kind (the census mem_guest_census made)
+        if (committed)
             for (int i = 0; i < ng; i++) {
                 uint64_t lo = at > gr[i].base ? at : gr[i].base, hi = end < gr[i].base + gr[i].size ? end : gr[i].base + gr[i].size;
                 if (hi > lo) gcom[i] += hi - lo, in_guest += hi - lo;
@@ -469,8 +428,6 @@ int prof_commit_census(uint64_t frame, uint64_t *wc_out) {
                 if (in_guest < mi.RegionSize) priv += mi.RegionSize - in_guest, host = 1;
             }
         }
-        // An allocation's regions are contiguous: its run ends where the next allocation begins, reserved gaps inside
-        // it (a heap segment's uncommitted tail) included.
         if (cur.bytes && base != cur.base) {
             int k = cur.bytes < edge[0] ? 0 : cur.bytes < edge[1] ? 1 : cur.bytes < edge[2] ? 2 : 3;
             bcount[k]++, bbytes[k] += cur.bytes;
@@ -480,7 +437,7 @@ int prof_commit_census(uint64_t frame, uint64_t *wc_out) {
             if (!cur.bytes) cur.base = base, cur.protect = mi.AllocationProtect;
             cur.bytes += mi.RegionSize - in_guest;
         }
-        if (end < at) break;   // the top of the address space
+        if (end < at) break;
     }
     if (cur.bytes) {
         int k = cur.bytes < edge[0] ? 0 : cur.bytes < edge[1] ? 1 : cur.bytes < edge[2] ? 2 : 3;
@@ -504,12 +461,8 @@ int prof_commit_census(uint64_t frame, uint64_t *wc_out) {
     return 1;
 }
 
-// perf_present, every present: the frame the sampler's NX2SARIA_PROFILE_FRAMES window counts, and a NX2SARIA_PROFILE_SLOW
-// dump of a present at least slow_ns after the previous one (d 0 on the first present).
 void prof_sampler_frame(uint64_t frame, uint64_t now, uint64_t d) {
     cur_frame = frame;
-    // the end of a NX2SARIA_PROFILE_FRAMES window writes the profile then: a test run ended by a timeout never reaches
-    // the exit handlers (prof_write)
     if (frame_hi && frame > frame_hi && !written) prof_sampler_write();
     if (slow_ns && d >= slow_ns && !dump_hi && frame >= frame_lo && (!frame_hi || frame <= frame_hi)) {
         dump_lo = (LONG64)(now - d - 20000000ull);

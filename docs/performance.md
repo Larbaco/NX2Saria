@@ -131,6 +131,36 @@ To line a stall up with the machine: take the time of the worst frame (or of the
 seconds around it, `journalctl --since 14:46:25 --until 14:46:40`, and the kernel's, `journalctl -k`; the `system`
 line of the same minute says whether memory or the disk was waited on.
 
+## The stutter map
+
+`stutter_map = 1` (`NX2SARIA_STUTTER_MAP=1`; off by default) makes a play session say where its stutters were: which
+frames hitched, in which area, what each one waited for, and which pipelines and shaders the draws met missing, so the
+next pipeline list and shader preparation can take them in. `python tools/stutter_map.py report LOG` reads the lines.
+
+- **A hitch** is a frame that stands out from the frames around it, not a slow frame as such: over 2.5 times the
+  median of the 32 frames before it and at least 12 ms (or over 25 ms), with both of the next two frames under two
+  thirds of it. A frame over 100 ms is one whatever follows. The look at the next two frames keeps a change of pace
+  out: the game drawing its menus or a scene at a steady 60 or 30 fps after 140 is a slower rate, not a run of
+  hitches.
+- **Area loads count apart.** Frames within 3 s of an area's load (the game's, or the texture pool making an area's
+  textures) are the load's: a few long frames there are not a stutter in play.
+- **Consecutive long frames are one episode**, a hitch counted once with their summed time.
+- **The lines.** Each hitch has a `stutter:` line (at most 5 a second and 4000 a run; the counts go on past that) with
+  the part of the frame each cause took, the causes being the frame-time summary's. `stutter map` lines rank the areas
+  and the pipelines every 5 minutes of play, when the window loses the focus in play, and at exit.
+
+The rule, its numbers and the cases behind them: [code/diag.md](code/diag.md) (`runtime/diag/stutter_map.c`).
+
+## The hang watch
+
+When no frame is shown, or no GPU submission completes, for `hang_watch_s` seconds (`NX2SARIA_HANG_WATCH_S`; 20 by
+default, 0 off), the log gets a `hang watch:` report: which of the two stalled, which threads hold the present, queue
+and window-start locks, and what the game's threads wait for. Before it, a deadlock or a driver wait that never
+returned left a log that just stopped. A missing frame is judged only while the game runs with its window in front
+(the game stops presenting without the focus); a GPU stall is judged whatever the focus. One report per stall, at most
+3 a run. The watch only reads and logs: it never ends the process and never calls the device
+(`runtime/diag/hang_watch.c`; [code/diag.md](code/diag.md)).
+
 ## Background builds in play
 
 Pipelines built ahead of their first use rest while the frame shown has `bg_build_play_draws` draws or more, 600 by

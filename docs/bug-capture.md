@@ -131,3 +131,12 @@ Environment or `nx2saria.ini`, for runs without a keyboard:
 `flight = 1` keeps a ring of the last frames with a small picture each (`runtime/diag/flight.c`). Its dump on F8 now
 belongs to the capture: it goes to the capture's `flight` folder. Its other dumps (a frame over `flight_spike_ms`,
 `NX2SARIA_FLIGHT_AT`, `NX2SARIA_FLIGHT_EVERY`) go to the `flight` folder beside the game folder as before.
+
+It also dumps on its own after a one-frame flash (`flight_flash = 1`, the default with the recorder on; at most one
+dump per 30 s): a frame whose picture differs strongly from the frame before and from the frame after while those two
+agree, which is what a texture blank for one frame, a draw gone missing or a picture from somewhere else shown once
+looks like. The test compares the frames' thumbnails as 16 x 9 cells of mean brightness, so a camera cut, a fade and
+steady motion are not taken for one. It cannot tell a fault from a flash the game means (lightning, the white frame of
+a hit), and a flash while the camera turns fast goes unseen: F8 is for those. `flight_flash_diff` (24 of 255) and
+`flight_flash_cells` (3) are its two thresholds. The test and what its defaults were tried on:
+[code/diag.md](code/diag.md) (`runtime/diag/flight_flash.h`, `runtime/diag/flight.c` `flight_cells()`).

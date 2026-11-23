@@ -1,36 +1,3 @@
-// The debug menu's hands in the game (ui/debug_menu.cpp is its window, F9 with debug_menu = 1). Ocarina of Time 1.1.1.
-//
-// Reads go straight to the game's memory from the menu's thread, through plat_mem_read, which answers 0 instead of
-// faulting. Changes are queued and made on the game's own thread at its pad read (dbg_tick, from ov_input.c), between
-// two of the game's frames: a flag through the game's own function, so everything that follows a flag in the game
-// follows this change too; a memory value by a plain write into memory the game may read and write.
-//
-// The game's on/off flags ("game data"): the manager is **[main+0x4c7e180]; +0x10 the number of flags, +0x18 their
-// entries (0x18 bytes each, the value's byte at +0x16), +0x20 a table of {hash, index} pairs probed from hash % size
-// (+0x2c the size). main+0x20d9c0 (manager, u8 *out, hash) reads a flag and main+0x682b20 (manager, value, hash)
-// queues a change, which the manager applies at its next update. A flag is known to the game by the MurmurHash3 of
-// its name only; the names shown are those found in the player's own game files (the event flows), hashed here and
-// matched (dbg_names), so nothing of them is kept in this code.
-//
-// The game's speed: the runtime gives the game its step every frame (frame_rate.c ocarina_step_write, the display
-// interval); the menu's factor multiplies that step, so 0.5 is half speed for the whole game and its interface.
-//
-// Link's position is shown but not written: it is the actor's copy ([[main+0x4e371d0]+0x480]+0x31c), which the physics
-// writes every frame. Writing it, or every copy of it in the heap, moved Link back within three frames.
-//
-// Teleporting is the game's own change of area, as a loading zone, a warp song or a cutscene makes it: the game's
-// event script reserves the next area and the name of a start position in it (game data texts), and asks the
-// sequence that runs during events to change area (the enum Sequence_ControlInEvent = ChangeBancOnEvent). warp_tick
-// does the same during a short event of the game that only waits (DefaultParentEvent, 30 frames), so the game unloads
-// the area, loads the next one and places Link exactly as it does for its own doors. The places offered are the ones
-// in the player's game files (Banc/BancBasedResource/StartPos.byml.zs: each area with its named start positions,
-// the warp songs' pads and both sides of every loading zone among them); none of that list is kept in this code.
-//
-// An event (a cutscene, a conversation, a scripted moment) is started by its file's name through the game's event
-// manager, as the game's own actors start them.
-//
-// The free camera stands in for the game's camera inside the game's own camera update (dbg_freecam_host), so the game
-// itself draws from it.
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -57,7 +24,6 @@ static uint64_t rd_ptr(uint64_t a) {
     uint64_t p = 0;
     return rd(a, &p, 8) ? p : 0;
 }
-// A write into memory the game may read and write: 0 when the place is not such memory.
 static int wr(uint64_t a, const void *from, size_t n) {
     RtMemoryInfo mi;
     if (!a || mem_query(a, &mi) || !mi.state || (mi.perm & 3) != 3 || a + n > mi.base + mi.size) return 0;
@@ -66,7 +32,6 @@ static int wr(uint64_t a, const void *from, size_t n) {
     return 1;
 }
 
-// ---- the player and the game's speed
 static uint64_t player(void) {
     uint64_t manager = rd_ptr(MOD_MAIN_BASE + 0x4e371d0), actor = manager ? rd_ptr(manager + 0x480) : 0;
     char name[7];
@@ -79,7 +44,6 @@ int dbg_player_pos(float xyz[3]) {
     return a && rd(a + 0x31c, xyz, 12) && isfinite(xyz[0]) && isfinite(xyz[1]) && isfinite(xyz[2]);
 }
 
-// The actor's rotation beside its position: nine floats, a 3x3 matrix by rows (bugcap.c writes them as they are).
 int dbg_player_rot(float m[9]) {
     uint64_t a = dbg_supported() ? player() : 0;
     if (!a || !rd(a + 0x328, m, 36)) return 0;
@@ -92,7 +56,6 @@ static float speed_factor = 1.0f;
 float dbg_speed_factor(void) { return speed_factor; }
 void dbg_speed_set(float factor) { speed_factor = factor >= 0.05f && factor <= 8.0f ? factor : 1.0f; }
 
-// ---- what the menu asks for, done by dbg_tick
 enum { Q_FLAG, Q_WRITE, Q_MAX = 256, FREEZE_MAX = 64 };
 typedef struct { int kind; uint32_t hash; uint64_t addr, value; int size; } Req;
 static PlatMutex q_lock = PLAT_MUTEX_INIT;
@@ -144,18 +107,17 @@ void dbg_unfreeze_all(void) {
     plat_mutex_unlock(&q_lock);
 }
 
-// ---- the flags
 static uint64_t gmd(void) {
     uint64_t slot = rd_ptr(MOD_MAIN_BASE + DBG_GAME_DATA_SLOT);
     return slot ? rd_ptr(slot) : 0;
 }
 
 typedef struct { uint32_t hash, index; } Pair;
-static Pair *flag_pairs;       // the flags by hash, sorted; made once the game's table is there
-static const char **flag_name; // parallel: the name found for the hash, or NULL
-static uint8_t *flag_value;    // parallel: the value at the last dbg_flags_refresh
+static Pair *flag_pairs;
+static const char **flag_name;
+static uint8_t *flag_value;
 static int flag_n;
-static volatile int32_t names_state;   // 0 not asked, 1 being read, 2 read
+static volatile int32_t names_state;
 static int names_found;
 
 static int by_hash(const void *a, const void *b) {
@@ -163,7 +125,6 @@ static int by_hash(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-// The list of the game's flags from its hash table. 0 until the manager exists (a save is loaded).
 static int flags_list(void) {
     if (flag_pairs) return 1;
     uint64_t m = gmd(), table = m ? rd_ptr(m + 0x20) : 0;
@@ -194,8 +155,6 @@ static int flags_list(void) {
     return 1;
 }
 
-// Under flags_lock: the menu's thread, the game's thread (test_script, warp_tick) and a bug capture's writer
-// (bugcap.c) all ask, and the list is made by whichever asks first.
 static PlatMutex flags_lock = PLAT_MUTEX_INIT;
 int dbg_flags_refresh(void) {
     if (!dbg_supported()) return 0;
@@ -221,7 +180,6 @@ const char *dbg_flag_name(int i) {
     return i >= 0 && i < flag_n && __atomic_load_n(&names_state, __ATOMIC_ACQUIRE) == 2 ? flag_name[i] : NULL;
 }
 
-// ---- the flags' names, from the player's game files
 static uint32_t murmur3(const uint8_t *p, size_t len) {
     uint32_t h = 0;
     size_t n = len & ~(size_t)3;
@@ -233,8 +191,8 @@ static uint32_t murmur3(const uint8_t *p, size_t len) {
     }
     uint32_t k = 0;
     switch (len & 3) {
-    case 3: k ^= (uint32_t)p[n + 2] << 16;   // fall through
-    case 2: k ^= (uint32_t)p[n + 1] << 8;    // fall through
+    case 3: k ^= (uint32_t)p[n + 2] << 16; __attribute__((fallthrough));
+    case 2: k ^= (uint32_t)p[n + 1] << 8; __attribute__((fallthrough));
     case 1:
         k ^= p[n];
         k *= 0xcc9e2d51u, k = (k << 15) | (k >> 17), k *= 0x1b873593u;
@@ -249,7 +207,6 @@ static int name_char(uint8_t c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.';
 }
 
-// Every run of name characters in a file is hashed and looked up among the flags.
 static void names_in(const uint8_t *p, size_t n) {
     for (size_t i = 0; i < n;) {
         if (!name_char(p[i])) {
@@ -275,7 +232,6 @@ static void names_in(const uint8_t *p, size_t n) {
     }
 }
 
-// A member of a SARC archive: its place and size, 0 when it is not there.
 static int sarc_member(const uint8_t *p, size_t n, const char *name, size_t *at, size_t *size) {
     if (n < 0x20 || memcmp(p, "SARC", 4)) return 0;
     uint16_t head, count;
@@ -299,21 +255,19 @@ static int sarc_member(const uint8_t *p, size_t n, const char *name, size_t *at,
     return 0;
 }
 
-// ---- the places to teleport to and the events, from the player's game files (names_thread)
 typedef struct {
     const char *area, *pos;
-    float xyz[3];              // where it is in the area, metres, when the file gives it (has_xyz)
+    float xyz[3];
     int has_xyz;
 } Place;
-static Place *places;          // by area, as the game's file lists them; the texts stay in the file's buffer
-static const char *place_xyz_key;   // the key the positions' coordinates were found under, for the log
+static Place *places;
+static const char *place_xyz_key;
 static int place_n;
-static char **event_names;     // the event files that hold a script, by name
+static char **event_names;
 static int event_n;
 
 static uint32_t u24(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16; }
 
-// The i-th key of a BYML file's key table (a node 0xc2: its count, then the offsets of its texts).
 static const char *byml_key(const uint8_t *p, size_t n, uint32_t keys, uint32_t i) {
     uint32_t off;
     if ((size_t)keys + 8 > n || p[keys] != 0xc2 || i >= u24(p + keys + 1) || (size_t)keys + 8 + 4 * (size_t)i > n) return NULL;
@@ -322,10 +276,6 @@ static const char *byml_key(const uint8_t *p, size_t n, uint32_t keys, uint32_t 
     return (const char *)p + keys + off;
 }
 
-// Three floats at node off of the given kind: an array of three floats (node 0xc0: its count, the kinds of its items
-// padded to four bytes, then the items; a float is kind 0xd2, its bits in place), or found in a dictionary under the
-// first key that holds one, a key whose name says where (Translate, Trans, Pos) taken before the others. depth bounds
-// the search. *key: the key it was found under.
 static int byml_vec3(const uint8_t *p, size_t n, uint32_t keys, uint32_t off, uint8_t kind, float out[3], int depth,
                      const char **key) {
     if ((size_t)off + 4 > n) return 0;
@@ -354,8 +304,6 @@ static int byml_vec3(const uint8_t *p, size_t n, uint32_t keys, uint32_t off, ui
     return found;
 }
 
-// The start positions file: a dictionary (node 0xc1: its count, then entries of a key's number in 24 bits, the
-// value's kind and the value's offset) of areas, each a dictionary of its start positions.
 static void places_in(const uint8_t *p, size_t n) {
     uint32_t keys, root;
     if (n < 16 || memcmp(p, "YB", 2)) return;
@@ -385,7 +333,6 @@ static void places_in(const uint8_t *p, size_t n) {
     places = list, place_n = count;
 }
 
-// The three floats under key name of a dictionary node (0xc1) at off: 0 when it has no such array of three floats.
 static int byml_dict_vec3(const uint8_t *p, size_t n, uint32_t keys, uint32_t off, const char *name, float out[3]) {
     if ((size_t)off + 4 > n || p[off] != 0xc1) return 0;
     uint32_t count = u24(p + off + 1);
@@ -399,11 +346,6 @@ static int byml_dict_vec3(const uint8_t *p, size_t n, uint32_t keys, uint32_t of
     return 0;
 }
 
-// The start position pos of area in the game's StartPos.byml, read here and now (boot_map.c asks before the guest
-// starts, long before names_thread reads the menu's list). An empty pos, or none, is the area's entry 0: what the game
-// itself takes for an area's default (main+0xb679e0) and for a name the area does not list. *name gets the entry's
-// name ("" for the area's unnamed one), xyz its Trans and rot its Rot (radians). 1 found; 0 with why: the area, or the
-// named position, is not in the file, or the file cannot be read.
 int dbg_start_pos(const char *area, const char *pos, char name[64], float xyz[3], float rot[3], char *why, size_t cap) {
     uint64_t dn = 0, zn = 0;
     uint8_t *dz = romfs_load("Pack/ZsDic.pack.zs", &dn), *dics = NULL, *z = romfs_load("Banc/BancBasedResource/StartPos.byml.zs", &zn);
@@ -495,7 +437,6 @@ static void names_thread(void *arg) {
             if (raw && ZSTD_decompress_usingDDict(dctx, raw, (size_t)rn, z, (size_t)fsize, dd) == rn) {
                 names_in(raw, (size_t)rn);
                 files++;
-                // an event file that holds a script (the count at 0x20) can be started by its name
                 uint16_t scripts = 0;
                 if (rn > 0x22 && !memcmp(raw, "BFEVFL", 6)) memcpy(&scripts, raw + 0x20, 2);
                 const char *dot = strchr(path + 16, '.');
@@ -510,7 +451,7 @@ static void names_thread(void *arg) {
         uint64_t zn = 0;
         uint8_t *z = romfs_load("Banc/BancBasedResource/StartPos.byml.zs", &zn);
         unsigned long long rn = z ? ZSTD_getFrameContentSize(z, (size_t)zn) : 0;
-        uint8_t *raw = z && rn && rn < (16u << 20) ? malloc((size_t)rn) : NULL;   // kept: the places' texts are in it
+        uint8_t *raw = z && rn && rn < (16u << 20) ? malloc((size_t)rn) : NULL;
         if (raw && ZSTD_decompress_usingDDict(dctx, raw, (size_t)rn, z, (size_t)zn, dd) == rn) places_in(raw, (size_t)rn);
         free(z);
     }
@@ -523,14 +464,13 @@ static void names_thread(void *arg) {
     rt_log("debug: names for %d of %d flags, from %d of the game's event files, in %.0f ms; %d events, %d places to teleport to "
            "(%d with their coordinates, under \"%s\")", names_found, flag_n, files, (double)(plat_now_ns() - t0) / 1e6,
            event_n, place_n, with_xyz, place_xyz_key ? place_xyz_key : "");
-    if (cfg_get("NX2SARIA_DBG_TEST"))   // test runs: every place with its coordinates, to plan routes (dbg_route)
+    if (cfg_get("NX2SARIA_DBG_TEST"))
         for (int i = 0; i < place_n; i++)
             rt_log("debug: place %s > %s at %.1f %.1f %.1f%s", places[i].area, places[i].pos, places[i].xyz[0],
                    places[i].xyz[1], places[i].xyz[2], places[i].has_xyz ? "" : " (no coordinates)");
     __atomic_store_n(&names_state, 2, __ATOMIC_RELEASE);
 }
 
-// 0 not started (no flags yet), 1 being read, 2 there. Starts the reading once the flags are listed.
 int dbg_names(int *found) {
     int s = __atomic_load_n(&names_state, __ATOMIC_ACQUIRE);
     if (!s && flag_pairs) {
@@ -548,9 +488,6 @@ int dbg_places(void) { return __atomic_load_n(&names_state, __ATOMIC_ACQUIRE) ==
 const char *dbg_place_area(int i) { return i >= 0 && i < dbg_places() ? places[i].area : ""; }
 const char *dbg_place_pos(int i) { return i >= 0 && i < dbg_places() ? places[i].pos : ""; }
 
-// The start position of area that comes after pos in the game's list, the first one for a pos the area does not list
-// (or none given), NULL for an area without any. A change of area to a start position the area does not have puts
-// Link where nothing holds him: he falls below the map for good, and the game refuses events while he falls.
 static const char *place_after(const char *area, const char *pos) {
     const char *first = NULL;
     int seen = 0, n = dbg_places();
@@ -563,8 +500,6 @@ static const char *place_after(const char *area, const char *pos) {
     return first;
 }
 
-// The start position of area nearest to xyz among those the game's file gives coordinates for (a bug capture names
-// it, and a replay of the capture arrives there, bugcap.c). 0 while the list is not read or the area has none.
 int dbg_place_nearest(const char *area, const float xyz[3], char name[64], float *dist) {
     int n = dbg_places(), best = -1;
     float best_d = 0;
@@ -589,10 +524,6 @@ static int place_listed(const char *area, const char *pos) {
 int dbg_events(void) { return __atomic_load_n(&names_state, __ATOMIC_ACQUIRE) == 2 ? event_n : 0; }
 const char *dbg_event_name(int i) { return i >= 0 && i < dbg_events() ? event_names[i] : ""; }
 
-// ---- the game data's other kinds: the manager holds a section of 0x60 bytes for each kind (the kind's number times
-// 0x60: +0x10 the entries' count, +0x18 the entries, +0x20 the {hash, index} table, +0x2c its size). An entry of a
-// 64-character text is 0x108 bytes, the text's pointer at +0x68 (a second one at +0x18) and its room at +0x70.
-// main+0x3e0980 (manager, value, hash) queues the change of an enum, whose value is the hash of the value's name.
 enum { GD_TEXT64 = 16 };
 static uint32_t hash_of(const char *text) { return murmur3((const uint8_t *)text, strlen(text)); }
 
@@ -616,8 +547,6 @@ static int text_get(const char *name, char out[64]) {
     return 1;
 }
 
-// Every 64-character text of the game data with its name's hash (a bug capture lists them, bugcap.c): the area, the
-// reserved next area and start position among them. Returns how many it visited.
 int dbg_texts(void (*cb)(uint32_t hash, const char *text, void *ctx), void *ctx) {
     uint64_t m = dbg_supported() ? gmd() : 0, sec = m + (uint64_t)GD_TEXT64 * 0x60;
     uint64_t table = m ? rd_ptr(sec + 0x20) : 0, entries = m ? rd_ptr(sec + 0x18) : 0;
@@ -638,10 +567,8 @@ int dbg_texts(void (*cb)(uint32_t hash, const char *text, void *ctx), void *ctx)
 }
 uint32_t dbg_name_hash(const char *name) { return hash_of(name); }
 
-// The area the game is in: its text Sequence_CurrentBanc. 0 while the game has none.
 int dbg_area(char out[64]) { return dbg_supported() && text_get("Sequence_CurrentBanc", out) && out[0]; }
 
-// A text written into the entry's own buffers (game thread). 0: the game has no such text.
 static int text_set(const char *name, const char *value) {
     uint64_t e = gmd_entry(GD_TEXT64, 0x108, hash_of(name)), text = e ? rd_ptr(e + 0x68) : 0, other = e ? rd_ptr(e + 0x18) : 0;
     int32_t room = 0;
@@ -656,10 +583,6 @@ static void enum_set(Cpu *c, const char *name, const char *value) {
     rt_call(c, MOD_MAIN_BASE + 0x3e0980, 3, gmd(), (uint64_t)hash_of(value), (uint64_t)hash_of(name));
 }
 
-// ---- events. main+0xd79f10 builds an event request in a block of 0x2000 bytes: the event's name goes into the buffer
-// its +0x1a90 points to (the room at +0x1a98). main+0xd7a820 (the event manager **[main+0x4c7e090], request) hands it
-// in and answers whether the event starts; the request's two lists at +0x1968 and +0x1950 are then destroyed
-// (main+0x20b6f0, their table main+0x4974b20), as the game's own request node does (main+0x32db1a0).
 static int event_request(Cpu *c, const char *name) {
     static _Alignas(16) uint8_t arg[0x2000];
     uint64_t a = (uint64_t)(uintptr_t)arg, slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e090), mgr = slot ? rd_ptr(slot) : 0;
@@ -681,24 +604,19 @@ static int event_request(Cpu *c, const char *name) {
     return took != 0;
 }
 
-// ---- the teleport and the event start: asked for by the menu, done by warp_tick on the game's thread
-// W_SETTLE: Link arrived and is watched for a while; one who falls FALL_M below where he arrived has no ground under
-// him, and the change of area is asked again for the area's next start position (place_after), up to FALL_TRIES times.
-// The game refuses events while Link is in the air, so such a request is tried again every RETRY_EVERY ticks until
-// RETRY_FOR ticks have passed.
 enum { W_IDLE, W_ASKED, W_EVENT, W_FLIGHT, W_SETTLE };
 enum { SETTLE_TICKS = 180, FALL_TRIES = 3, RETRY_EVERY = 30, RETRY_FOR = 1200, LIST_WAIT = 600 };
-static const float FALL_M = 25.0f;   // metres: an arrival's own drop is a step or two
+static const float FALL_M = 25.0f;
 static struct {
-    char area[64], pos[64], event[80];   // q_lock: what the menu asked for
-    int state;                           // W_*
-    uint64_t at;                         // the tick of the next step, or the one at which the wait for the arrival ends
-    uint64_t retry_until, waited;        // W_ASKED: refused requests are tried again until then; ticks spent on the list
-    float from[3];                       // where Link stood
-    float land;                          // the height he arrived at
-    int tries;                           // start positions tried after falls
+    char area[64], pos[64], event[80];
+    int state;
+    uint64_t at;
+    uint64_t retry_until, waited;
+    float from[3];
+    float land;
+    int tries;
 } warp;
-static char status[160];                 // q_lock: the last thing that happened, for the menu
+static char status[160];
 
 static void status_set(const char *fmt, const char *a, const char *b) {
     plat_mutex_lock(&q_lock);
@@ -745,8 +663,6 @@ static void warp_tick(Cpu *c, uint64_t tick) {
         plat_mutex_unlock(&q_lock);
     }
     if (warp.state == W_ASKED && tick >= warp.at) {
-        // The area's own list of start positions decides the position: read with the flag names, which a test run that
-        // never opened the menu has not started yet
         if (dbg_names(NULL) != 2 && warp.waited++ < LIST_WAIT) {
             dbg_flags_refresh(), dbg_names(NULL);
             return;
@@ -763,11 +679,10 @@ static void warp_tick(Cpu *c, uint64_t tick) {
             snprintf(warp.pos, sizeof warp.pos, "%s", first);
             plat_mutex_unlock(&q_lock);
         }
-        // the game's event that only waits: the change of area is asked for while it runs
         if (player() && gmd() && dbg_player_pos(warp.from) && event_request(c, "DefaultParentEvent")) {
             warp.at = tick + 4, warp.state = W_EVENT;
         } else if (tick < warp.retry_until) {
-            warp.at = tick + RETRY_EVERY;   // Link still falls: the game takes it once he lands, or the time runs out
+            warp.at = tick + RETRY_EVERY;
         } else {
             status_set(warp.tries ? "The game refuses a teleport while Link falls below %s: load the save, or try again "
                                     "should he land."
@@ -776,8 +691,6 @@ static void warp_tick(Cpu *c, uint64_t tick) {
             warp.state = W_IDLE;
         }
     } else if (warp.state == W_EVENT && tick >= warp.at) {
-        // what the game's own script reserves (its actor's ReserveBancChange): the next area and the start position's
-        // name, no event at the arrival, the event held during the change, a black fade, and the request itself
         int ok = text_set("Sequence_ReservedNextBanc", warp.area) && text_set("Sequence_ReservedNextStartPosName", warp.pos);
         text_set("Sequence_ReservedBootEventName", "");
         text_set("Sequence_ReservedEventStarterName", "");
@@ -801,7 +714,7 @@ static void warp_tick(Cpu *c, uint64_t tick) {
                        warp.pos[0] ? warp.pos : "its default start");
             warp.state = there ? W_SETTLE : W_IDLE;
             warp.land = p[1], warp.at = tick + SETTLE_TICKS;
-            dbg_freecam_reset();   // a free camera left behind in the old area's place starts again from the game's view
+            dbg_freecam_reset();
         }
     } else if (warp.state == W_SETTLE) {
         float p[3];
@@ -824,7 +737,6 @@ static void warp_tick(Cpu *c, uint64_t tick) {
     }
 }
 
-// ---- the memory search: values of 1, 2 or 4 bytes in the game's heap
 enum { RESULT_MAX = 2000000 };
 static uint64_t *res_addr;
 static uint32_t *res_last;
@@ -843,8 +755,6 @@ uint64_t dbg_search_addr(int i) { return i >= 0 && i < res_n ? res_addr[i] : 0; 
 int dbg_search_size(void) { return res_size; }
 void dbg_search_clear(void) { res_n = res_over = 0; }
 
-// A new search: every place in the heap, aligned to the size, that holds the value. Returns how many (at most
-// RESULT_MAX are kept; dbg_search_count's over says there were more).
 int dbg_search_new(uint32_t value, int size) {
     enum { PIECE = 16 << 20 };
     if (!res_addr) res_addr = malloc(sizeof(uint64_t) * RESULT_MAX), res_last = malloc(sizeof(uint32_t) * RESULT_MAX);
@@ -859,7 +769,7 @@ int dbg_search_new(uint32_t value, int size) {
             RtMemoryInfo mi;
             if (mem_query(a, &mi) || !mi.size) break;
             uint64_t stop = mi.base + mi.size < end ? mi.base + mi.size : end;
-            if (!mi.state || (mi.perm & 3) != 3) {   // free, or not the game's to read and write
+            if (!mi.state || (mi.perm & 3) != 3) {
                 a = stop;
                 continue;
             }
@@ -887,8 +797,6 @@ int dbg_search_new(uint32_t value, int size) {
     return res_n;
 }
 
-// Keeps the results whose value now passes: mode 0 equals value, 1 changed, 2 unchanged, 3 greater, 4 less than at the
-// search before (unsigned; a float is searched by its bits with mode 0).
 int dbg_search_next(int mode, uint32_t value) {
     int kept = 0;
     for (int i = 0; i < res_n; i++) {
@@ -902,32 +810,23 @@ int dbg_search_next(int mode, uint32_t value) {
     return kept;
 }
 
-// ---- the free camera. The game's camera update (main+0x4c48c0) chooses the frame's position and target (doubles) and
-// up vector between the camera's own and an override, and at main+0x4c4e50 has them in d0-d2, d3-d5 and s7, s16, s6,
-// before it stores them into the look-at camera and makes its matrix. The patch set freecam (recomp/patches-v111.txt)
-// sends that instruction here while the free camera is on: the registers get the free camera's vectors, so the game
-// draws, culls and loads detail for the view it is given, in play and in cutscenes, and Link, the world and the
-// game's own camera work go on as they were. The pad's sticks fly it (dbg_pad, from ov_input.c before the game gets the pad's state).
 #include "input_map.h"
 
 static struct {
-    volatile int on, capture, sticks;   // the menu's: on; take the game's view at the next update; the sticks fly it
-    volatile int avoid;                 // the menu's: ground avoidance (dbg_pad), off unless asked for
-    volatile float speed;               // metres a second
-    double pos[3], reach;               // the game thread's: where it is, and the game's distance to its target
+    volatile int on, capture, sticks;
+    volatile int avoid;
+    volatile float speed;
+    double pos[3], reach;
     float yaw, pitch;
     uint64_t last_ns, updates;
-    float ground[9], ground_tan, ground_aspect;   // dbg_freecam_ground's, under ground_lock
-    volatile uint64_t ground_ns;        // and when; 0 none
+    float ground[9], ground_tan, ground_aspect;
+    volatile uint64_t ground_ns;
 } fc = {.sticks = 1, .speed = 8.0f, .reach = 5.0};
 static PlatMutex ground_lock = PLAT_MUTEX_INIT;
 
-// The game's own camera as its update chose it, before the free camera stands in: kept per scene camera (0 the one
-// that follows Link, 1 the one events direct) while a bug capture watches (dbg_camera_watch) or the free camera is on,
-// which is when the patch site calls dbg_freecam_host at all.
 static struct { double pos[3], at[3]; float up[3]; uint64_t n; } cam_seen[2];
 static PlatMutex cam_lock = PLAT_MUTEX_INIT;
-static volatile int32_t cam_watch;   // how many watch it: a bug capture, and Link's walk to a captured place
+static volatile int32_t cam_watch;
 
 int dbg_freecam_flying(void) { return fc.on && fc.sticks && !fc.capture && fc.avoid; }
 void dbg_freecam_avoid_set(int on) {
@@ -936,9 +835,6 @@ void dbg_freecam_avoid_set(int on) {
 }
 int dbg_freecam_avoid(void) { return fc.avoid; }
 
-// The replay's thread (vk_dlaa.c fcam_probe): view distances read back from the lower part of the view a few frames
-// ago, three rows of three (0.6, 0.78 and 0.96 of the way down; 0.2, 0.5 and 0.8 across), 0 where it saw the sky. Kept
-// for dbg_pad (ground_under).
 void dbg_freecam_ground(const float *dist, int n, float tan_half_y, float aspect) {
     if (n != 9 || !(tan_half_y > 0) || !(aspect > 0)) return;
     plat_mutex_lock(&ground_lock);
@@ -948,28 +844,21 @@ void dbg_freecam_ground(const float *dist, int n, float tan_half_y, float aspect
     __atomic_store_n(&fc.ground_ns, plat_now_ns(), __ATOMIC_RELEASE);
 }
 
-// How far below the camera the ground is, in metres, from the view distances above, or a negative number when they show
-// no ground within reach metres ahead. Each sample is a point of the scene: its height against the camera and its
-// distance ahead follow from the view's angles and the camera's pitch. In each of the three columns the lowest sample
-// counts as ground only when the surface from it to the one above it rises by less than GROUND_SLOPE: the ground the
-// camera flies over, a field or a gentle hill. Whatever stands on it or in front of the camera (a character, a rock, a
-// wall, a tree) is steeper and is left alone, so the camera can go right up to it; taken for ground too, as at first,
-// anything within three metres in the lower view sent the camera upwards on its way to it.
-#define GROUND_SLOPE 0.6   /* rise over run: about 30 degrees */
+#define GROUND_SLOPE 0.6
 static double ground_under(double reach) {
     float d[9], ty, as;
     plat_mutex_lock(&ground_lock);
     memcpy(d, fc.ground, sizeof d), ty = fc.ground_tan, as = fc.ground_aspect;
     plat_mutex_unlock(&ground_lock);
-    static const double xn[3] = {-0.6, 0.0, 0.6}, yn[3] = {-0.2, -0.56, -0.92};   // the samples in the view, -1..1, up positive
+    static const double xn[3] = {-0.6, 0.0, 0.6}, yn[3] = {-0.2, -0.56, -0.92};
     double sp = sin(fc.pitch), cp = cos(fc.pitch), best = -1;
     for (int col = 0; col < 3; col++) {
-        double up[3], run[3];   // per row: the point's height against the camera, and how far ahead it is, level
+        double up[3], run[3];
         for (int row = 0; row < 3; row++) {
             double z = d[row * 3 + col], yv = yn[row] * ty * z, xv = xn[col] * ty * as * z, fwd = z * cp - yv * sp;
             up[row] = yv * cp + z * sp, run[row] = sqrt(fwd * fwd + xv * xv);
         }
-        if (!(d[6 + col] > 0) || !(d[3 + col] > 0)) continue;   // the lowest sample and the one above it
+        if (!(d[6 + col] > 0) || !(d[3 + col] > 0)) continue;
         double rise = fabs(up[1] - up[2]), along = fabs(run[1] - run[2]);
         if (rise > GROUND_SLOPE * along || up[2] >= 0 || run[2] > reach) continue;
         if (best < 0 || -up[2] < best) best = -up[2];
@@ -994,10 +883,6 @@ static void set_s(Cpu *c, int r, float v) {
     c->v[r] = b;
 }
 
-// The update runs for each of the game's cameras, every frame: the one that follows Link and the one its events
-// direct are the scene's, and the free camera stands in for both; the camera of the interface's 3D models and the
-// one the sound follows stay the game's. A camera's state (x19) has its actor at +0x10, the actor its name at +0x20.
-// 1 the camera that follows Link, 2 the events' camera, 0 another.
 static int scene_camera(uint64_t actor) {
     char name[16] = "";
     uint64_t np = actor ? rd_ptr(actor + 0x20) : 0;
@@ -1022,7 +907,6 @@ static void fov_skip_once(unsigned reason, const char *text) {
     if (fov_first(reason)) rt_log("fov: left lens alone: %s", text);
 }
 
-// After the original s0 load at main+0x4c52f8, before the game stores the lens angle and derives the frustum.
 void dbg_fov_host(Cpu *c) {
     uint64_t state = c->x[19], actor = state ? rd_ptr(state + 0x10) : 0;
     if (!atomic_flag_test_and_set_explicit(&fov_hook_logged, memory_order_relaxed))
@@ -1045,7 +929,6 @@ void dbg_fov_host(Cpu *c) {
         return;
     }
     if (wide_menu_open()) { fov_skip_once(FOV_MENU, "pause, map or system menu is open"); return; }
-    // The event manager's active event at +0x68 is the one read by main+0xbcc100.
     uint64_t slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e090), event = 0;
     uint64_t mgr = slot ? rd_ptr(slot) : 0;
     if (!mgr) { fov_skip_once(FOV_NO_EVENT_MANAGER, "event manager is unavailable"); return; }
@@ -1056,15 +939,12 @@ void dbg_fov_host(Cpu *c) {
         fov_skip_once(FOV_ACTIVE_EVENT, reason);
         return;
     }
-    // The aiming action's initializer (main+0x27a2510) gets the PlayerCamera work at component +0x5b8.
-    // Its enter and exit methods (main+0x279f9a0 and main+0x27a1230) toggle bit 8 of work +0x7d8.
     uint64_t components = rd_ptr(actor + 0x270);
     uint64_t player = components ? rd_ptr(components + 0x360) : 0;
     uint32_t flags;
     if (!player) { fov_skip_once(FOV_NO_PLAYER, "player camera component is unavailable"); return; }
     if (!rd(player + 0xd90, &flags, sizeof flags)) { fov_skip_once(FOV_PLAYER_FLAGS_UNREADABLE, "player camera flags are unreadable"); return; }
     if (flags & 0x100) { fov_skip_once(FOV_AIMING, "first-person aiming flag is set"); return; }
-    // Camera zero's bit 0 at +0x88 stayed set in gameplay, so it cannot identify the message log.
     uint32_t bits = (uint32_t)c->v[0];
     float orig;
     memcpy(&orig, &bits, sizeof orig);
@@ -1077,8 +957,6 @@ void dbg_fov_host(Cpu *c) {
         rt_log("fov: gameplay lens adjusted, %.2f -> %.2f deg", orig * 57.29578f, angle * 57.29578f);
 }
 
-// The wide_aspect set shares the lens-load site with the configurable gameplay FOV. Apply that setting first, then
-// open the vertical angle for any 16:9 camera when the chosen picture is narrower, including cutscenes and events.
 void wide_lens_host(Cpu *c) {
     int fov = rt_patch_set("fov");
     if (rt_patch_enabled(fov)) dbg_fov_host(c);
@@ -1105,12 +983,10 @@ void wide_lens_host(Cpu *c) {
                aspect, before * 57.29578f, after * 57.29578f);
 }
 
-// The patch site's host function, on the patch page at +0xf70. patches.c registers it: that file is compiled with
-// the game version's patches.h, which has the page's address.
 void dbg_freecam_host(Cpu *c) {
     fc.updates++;
     int scene = scene_camera(rd_ptr(c->x[19] + 0x10));
-    if (scene) {   // what the game chose, for a bug capture (dbg_camera_seen)
+    if (scene) {
         static const int up_reg[3] = {7, 16, 6};
         plat_mutex_lock(&cam_lock);
         for (int i = 0; i < 3; i++) cam_seen[scene - 1].pos[i] = reg_d(c, i), cam_seen[scene - 1].at[i] = reg_d(c, 3 + i);
@@ -1122,7 +998,7 @@ void dbg_freecam_host(Cpu *c) {
         plat_mutex_unlock(&cam_lock);
     }
     if (fc.on && scene) {
-        if (fc.capture) {   // start where the game's camera is, looking where it looks
+        if (fc.capture) {
             double d[3] = {reg_d(c, 3) - reg_d(c, 0), reg_d(c, 4) - reg_d(c, 1), reg_d(c, 5) - reg_d(c, 2)};
             double len = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
             if (isfinite(len) && len > 1e-3) {
@@ -1135,15 +1011,14 @@ void dbg_freecam_host(Cpu *c) {
         if (!fc.capture) {
             double cp = cos(fc.pitch), dir[3] = {cp * sin(fc.yaw), sin(fc.pitch), cp * cos(fc.yaw)};
             for (int i = 0; i < 3; i++) set_d(c, i, fc.pos[i]), set_d(c, 3 + i, fc.pos[i] + dir[i] * fc.reach);
-            set_s(c, 7, 0), set_s(c, 16, 1), set_s(c, 6, 0);   // up
+            set_s(c, 7, 0), set_s(c, 16, 1), set_s(c, 6, 0);
         }
     }
-    set_s(c, 17, (float)reg_d(c, 0));   // the instruction this call stands in for: fcvt s17, d0
+    set_s(c, 17, (float)reg_d(c, 0));
 }
 
 int dbg_freecam_available(void) { return dbg_supported() && rt_patch_set("freecam") >= 0; }
 
-// The patch site calls dbg_freecam_host while the free camera is on or a bug capture watches the game's camera.
 static void cam_patch_sync(void) { rt_patch_switch(rt_patch_set("freecam"), fc.on || cam_watch); }
 
 void dbg_camera_watch(int on) {
@@ -1163,8 +1038,6 @@ uint64_t dbg_camera_seen(int which, double pos[3], double at[3], float up[3]) {
     return n;
 }
 
-// The game's thread: the free camera, which must be on, at a place and direction given outright (a replay of a bug
-// capture, bugcap.c), instead of where the game's camera is.
 void dbg_freecam_place(const double pos[3], float yaw, float pitch) {
     memcpy(fc.pos, pos, sizeof fc.pos);
     fc.yaw = yaw, fc.pitch = pitch > 1.5f ? 1.5f : pitch < -1.5f ? -1.5f : pitch;
@@ -1177,12 +1050,12 @@ void dbg_freecam_set(int on, int sticks, float speed) {
     fc.sticks = sticks != 0;
     fc.speed = speed >= 0.5f && speed <= 200.0f ? speed : 8.0f;
     if (on && !fc.on) fc.capture = 1;
-    if ((on != 0) != fc.on) rt_log("debug: free camera %s", on ? "on" : "off");   // what a tester changed, for the log
+    if ((on != 0) != fc.on) rt_log("debug: free camera %s", on ? "on" : "off");
     fc.on = on != 0;
     cam_patch_sync();
 }
 
-void dbg_freecam_reset(void) { fc.capture = 1; }   // back to the game's view, and free from there
+void dbg_freecam_reset(void) { fc.capture = 1; }
 
 int dbg_freecam(int *sticks, float *speed, double pos[3]) {
     if (sticks) *sticks = fc.sticks;
@@ -1192,7 +1065,6 @@ int dbg_freecam(int *sticks, float *speed, double pos[3]) {
 }
 void dbg_freecam_angles(float *yaw, float *pitch) { *yaw = fc.yaw, *pitch = fc.pitch; }
 
-// Whether s holds the len characters at part, in any case.
 static int contains_nocase(const char *s, const char *part, size_t len) {
     for (; *s; s++) {
         size_t i = 0;
@@ -1202,30 +1074,19 @@ static int contains_nocase(const char *s, const char *part, size_t len) {
     return 0;
 }
 
-// ---- the route (test runs: NX2SARIA_DBG_TEST "route" and "routeto"): Link runs through points of the area on his
-// own, so a walking test crosses the field instead of pressing into its walls. The left stick is turned from the way
-// he moves towards the next point (the game's camera follows behind him, so a stick to the side turns him), with an
-// integral that takes out the camera's own angle; a point counts as reached within ROUTE_NEAR metres. When he gains
-// less than a metre on it in 2.5 seconds he is stuck (a wall, a fence, a steep slope): he sidesteps for two seconds,
-// three times to one side and then to the other, and after ROUTE_STUCK such tries the route ends. A route asked for
-// with a smaller distance (dbg_route_to, a replay of a bug capture) walks the last three metres, so that Link stops on
-// the point instead of running rings round it, and is steered by the game's own camera (dbg_camera_seen): the stick
-// moves Link along the camera's view and across it, so the stick's angle is the angle between the view and the way to
-// the point, with nothing to estimate. In a room that matters: the estimate starts with a run straight ahead, which
-// in Link's house put him on the furniture beside the door, three metres from the point, for good.
 #define ROUTE_MAX 16
 #define ROUTE_NEAR 4.0
 #define ROUTE_STUCK 10
 static struct {
     volatile int on, gave_up;
-    int by_camera;            // steered by the game's camera, which is watched meanwhile (dbg_route_to)
-    uint64_t cam_n, cam_ns;   // the camera updates seen at the last look, and when their number last grew
-    float within;             // metres: a point counts as reached within them
+    int by_camera;
+    uint64_t cam_n, cam_ns;
+    float within;
     int n, at, have_last, have_heading, side, stuck;
-    float pt[ROUTE_MAX][2];   // x, z in metres
+    float pt[ROUTE_MAX][2];
     char name[ROUTE_MAX][48];
     float last[3], best;
-    double heading, integ;    // radians: the way he moved last; the integral of the turn
+    double heading, integ;
     uint64_t prev_ns, prog_ns, side_until;
 } route;
 
@@ -1239,14 +1100,12 @@ static void route_start(float within) {
     route.within = within, route.gave_up = 0;
     route.at = 0, route.have_last = route.have_heading = 0, route.stuck = 0, route.side = 1, route.integ = 0;
     route.best = 1e9f, route.prog_ns = plat_now_ns(), route.side_until = 0, route.prev_ns = 0;
-    if (route.by_camera) dbg_camera_watch(0);   // of a walk that this route replaces
+    if (route.by_camera) dbg_camera_watch(0);
     route.by_camera = 0;
     route.on = route.n > 0;
     if (route.on) rt_log("debug: route of %d points, first %s at %.1f %.1f", route.n, route.name[0], route.pt[0][0], route.pt[0][1]);
 }
 
-// The game's thread: the left stick while a route runs. Stick right turns Link right, which lowers atan2(x, z) (the
-// free camera's own frame: ahead (sin yaw, cos yaw), right (-cos yaw, sin yaw)).
 static void route_pad(int32_t *lx, int32_t *ly) {
     float p[3];
     if (!route.on || !dbg_player_pos(p)) return;
@@ -1275,14 +1134,13 @@ static void route_pad(int32_t *lx, int32_t *ly) {
     while (err < -M_PI) err += 2 * M_PI;
     route.integ += err * dt * 0.4;
     route.integ = route.integ > 1.0 ? 1.0 : route.integ < -1.0 ? -1.0 : route.integ;
-    double a = -(1.2 * err + route.integ);   // the stick's angle from straight ahead, right positive
+    double a = -(1.2 * err + route.integ);
     if (route.by_camera) {
         double cp[3], ct[3];
         float up[3];
         uint64_t seen = dbg_camera_seen(0, cp, ct, up);
         if (seen != route.cam_n) route.cam_n = seen, route.cam_ns = now;
         double fx = ct[0] - cp[0], fz = ct[2] - cp[2], fl = sqrt(fx * fx + fz * fz);
-        // the view, level: ahead (fx, fz), right (-fz, fx), as the free camera's frame below has them
         if (route.cam_ns && now - route.cam_ns < 250000000ull && fl > 1e-6 && d > 1e-6)
             a = atan2((-dx * fz + dz * fx) / fl, (dx * fx + dz * fz) / fl);
     }
@@ -1294,8 +1152,6 @@ static void route_pad(int32_t *lx, int32_t *ly) {
             rt_log("debug: route given up before %s: stuck %d times at %.1f %.1f %.1f", route.name[route.at], ROUTE_STUCK, p[0], p[1], p[2]);
             return;
         }
-        // the same side three times before the other: a wall is gone round, where turns to alternate sides kept him
-        // pressed against a cliff face south of the Kakariko Village gate
         if (route.stuck % 3 == 1) route.side = -route.side;
         route.side_until = now + 2000000000ull, route.prog_ns = now + 2000000000ull, route.best = (float)d;
         rt_log("debug: route: stuck at %.1f %.1f %.1f, %.1f m before %s: a sidestep to the %s", p[0], p[1], p[2], d,
@@ -1306,8 +1162,6 @@ static void route_pad(int32_t *lx, int32_t *ly) {
     *lx = (int32_t)(sin(a) * 30000 * tilt), *ly = (int32_t)(cos(a) * 30000 * tilt);
 }
 
-// The game's thread: Link runs to one point of the area, reached within near_m metres. dbg_route_state: 1 on his way,
-// 0 there (or no route), 2 given up (stuck).
 void dbg_route_to(float x, float z, float near_m) {
     route.n = 1;
     route.pt[0][0] = x, route.pt[0][1] = z;
@@ -1319,13 +1173,8 @@ void dbg_route_to(float x, float z, float near_m) {
 int dbg_route_state(void) { return route.on ? 1 : route.gave_up ? 2 : 0; }
 void dbg_route_stop(void) { route_end(); }
 
-// The game's thread, with the pad's state before the game gets it: while the free camera has the sticks, the left one
-// moves it where it looks and sideways, the right one turns it, ZR and ZL raise and lower it, R makes it four times as
-// fast and L four times as slow, and the game is told that none of those is touched, so Link stays where he is.
-// Nothing stops it: it goes through walls, objects and the ground, below which the picture shows the void under the
-// map. Ground avoidance (the menu's switch, off unless asked for) keeps it a metre above ground-like surfaces instead.
 void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
-    bugcap_replay_pad(buttons);   // a replay of a bug capture presses A until the save is loaded
+    bugcap_replay_pad(buttons);
     route_pad(lx, ly);
     if (!fc.on || !fc.sticks || fc.capture) {
         fc.last_ns = 0;
@@ -1343,15 +1192,11 @@ void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
     fc.yaw -= (float)(in[2] * 2.4 * dt);
     fc.pitch += (float)(in[3] * 1.8 * dt);
     fc.pitch = fc.pitch > 1.5f ? 1.5f : fc.pitch < -1.5f ? -1.5f : fc.pitch;
-    double cp = cos(fc.pitch), look[3] = {cp * sin(fc.yaw), sin(fc.pitch), cp * cos(fc.yaw)};   // where it looks
-    double right[3] = {-cos(fc.yaw), 0, sin(fc.yaw)};   // the view's direction crossed with up
+    double cp = cos(fc.pitch), look[3] = {cp * sin(fc.yaw), sin(fc.pitch), cp * cos(fc.yaw)};
+    double right[3] = {-cos(fc.yaw), 0, sin(fc.yaw)};
     double move[3];
     for (int i = 0; i < 3; i++) move[i] = (look[i] * in[1] + right[i] * in[0]) * step;
     move[1] += rise * step;
-    // Ground avoidance, when it is on: where the ground under the view (ground_under, from vk_dlaa.c fcam_probe with
-    // DLSS, DLAA or FSR on) is less than a metre below, the camera goes no lower and rises to that metre, instead of
-    // going on into a field or a gentle hill and under the map. Objects and walls do not count. The reach ahead grows
-    // with the speed: the distances are a few frames old.
     uint64_t seen = __atomic_load_n(&fc.ground_ns, __ATOMIC_ACQUIRE);
     if (fc.avoid && seen && now - seen < 300000000ull && dt > 0) {
         const double clear = 1.0;
@@ -1366,19 +1211,10 @@ void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
     *buttons &= ~(zl | zr | l | r);
 }
 
-// ---- NX2SARIA_DBG_TEST="<tick>:flag <hash hex> <0|1>;<tick>:speed <factor>;<tick>:find <value> <size>;
-// <tick>:next <mode> <value>;<tick>:setfirst <value>;<tick>:holdfirst <value>;<tick>:show [<hash hex>];
-// <tick>:warp <area> [<start position>];<tick>:event <name>;<tick>:text <game data text's name>;
-// <tick>:freecam <0|1> <sticks 0|1> <speed>;<tick>:camavoid <0|1>;<tick>:camgo <dx> <dy> <dz> [<yaw> <pitch>];
-// <tick>:camfly <dx> <dy> <dz> <yaw> <pitch> <ticks>;<tick>:camreset;<tick>:campos":
-// the menu's requests without the menu, for test runs. Ticks count the game's pad reads from the player's first appearance.
-// camfly moves the free camera as camgo does, in equal steps over that many ticks: a flight across an area for a run
-// that measures what the moving view costs (video memory, frame time) without a route Link can get stuck on. A camfly
-// that comes while another runs takes over from where the camera is.
 static struct {
-    double d[3];              // per tick
-    float yaw, pitch;         // per tick
-    uint64_t left;            // ticks to go
+    double d[3];
+    float yaw, pitch;
+    uint64_t left;
 } fly;
 
 static void fly_tick(void) {
@@ -1390,9 +1226,6 @@ static void fly_tick(void) {
                             fc.pos[2], fc.yaw, fc.pitch);
 }
 
-// A step written "@<ms>:" in place of "<tick>:" waits for the world clock instead (game time since the save's first
-// frame, frame_step_world_us): pad reads come as often as frames, so a tick is a different moment at another frame rate,
-// and a benchmark (tools/bench.py) needs its teleport and route at the same game time as its input script's marks.
 static int step_due(const char *step, uint64_t tick) {
     if (*step != '@') return strtoull(step, NULL, 10) <= tick;
     int64_t world = frame_step_world_us();
@@ -1407,7 +1240,6 @@ static void test_script(uint64_t tick) {
         const char *e = cfg_get("NX2SARIA_DBG_TEST");
         state = e && *e ? 1 : -1;
         if (state > 0) snprintf(buf, sizeof buf, "%s", e), next = buf;
-        // the places and events, read with the flag names as the menu starts them, for warp, event and routeto
         if (state > 0) dbg_flags_refresh(), dbg_names(NULL);
     }
     while (state > 0 && next && *next && step_due(next, tick)) {
@@ -1424,22 +1256,22 @@ static void test_script(uint64_t tick) {
             rt_log("debug: tick %llu: free camera %s at %.3f %.3f %.3f, yaw %.3f, pitch %.3f; %llu camera updates through it",
                    (unsigned long long)tick, fc.on ? "on" : "off", fc.pos[0], fc.pos[1], fc.pos[2], fc.yaw, fc.pitch,
                    (unsigned long long)fc.updates);
-        } else if (!strncmp(colon + 1, "camavoid ", 9)) {   // camavoid <0|1>: the free camera's ground avoidance
+        } else if (!strncmp(colon + 1, "camavoid ", 9)) {
             dbg_freecam_avoid_set(atoi(colon + 10));
-        } else if (!strncmp(colon + 1, "freecam ", 8)) {   // freecam <on> <sticks> <speed>
+        } else if (!strncmp(colon + 1, "freecam ", 8)) {
             int cam_on = 0, sticks = 1;
             float speed = 8;
             if (sscanf(colon + 9, "%d %d %f", &cam_on, &sticks, &speed) >= 1) dbg_freecam_set(cam_on, sticks, speed);
         } else if (!strncmp(colon + 1, "camreset", 8)) {
             dbg_freecam_reset();
-        } else if (!strncmp(colon + 1, "camgo ", 6)) {      // camgo <dx> <dy> <dz> <yaw> <pitch>: the free camera moved by hand
+        } else if (!strncmp(colon + 1, "camgo ", 6)) {
             double d[3] = {0, 0, 0};
             float yaw = 0, pitch = 0;
             if (sscanf(colon + 7, "%lf %lf %lf %f %f", &d[0], &d[1], &d[2], &yaw, &pitch) >= 3) {
                 for (int i = 0; i < 3; i++) fc.pos[i] += d[i];
                 fc.yaw += yaw, fc.pitch += pitch;
             }
-        } else if (!strncmp(colon + 1, "camfly ", 7)) {     // camfly <dx> <dy> <dz> <yaw> <pitch> <ticks>
+        } else if (!strncmp(colon + 1, "camfly ", 7)) {
             double d[3] = {0, 0, 0};
             float yaw = 0, pitch = 0;
             unsigned long long n = 0;
@@ -1447,7 +1279,7 @@ static void test_script(uint64_t tick) {
                 for (int i = 0; i < 3; i++) fly.d[i] = d[i] / (double)n;
                 fly.yaw = yaw / (float)n, fly.pitch = pitch / (float)n, fly.left = n;
             }
-        } else if (!strncmp(colon + 1, "route ", 6)) {   // route <x> <z> [<x> <z> ...]: points in metres
+        } else if (!strncmp(colon + 1, "route ", 6)) {
             const char *q = colon + 7;
             double x, z;
             int used = 0;
@@ -1459,7 +1291,6 @@ static void test_script(uint64_t tick) {
             }
             route_start((float)ROUTE_NEAR);
         } else if (!strncmp(colon + 1, "routeto ", 8)) {
-            // routeto <part of a start position's name>[/<another part>] ...: the area's own start positions, in order
             char area[64] = "", item[128];
             text_get("Sequence_CurrentBanc", area);
             const char *q = colon + 9;
@@ -1471,7 +1302,7 @@ static void test_script(uint64_t tick) {
                 int found = -1;
                 for (int i = 0; found < 0 && i < dbg_places(); i++) {
                     if (strcmp(places[i].area, area) || !places[i].has_xyz) continue;
-                    for (const char *tok = item; *tok && found < 0;) {   // the parts between the slashes
+                    for (const char *tok = item; *tok && found < 0;) {
                         size_t len = strcspn(tok, "/");
                         if (len && contains_nocase(places[i].pos, tok, len)) found = i;
                         tok += len + (tok[len] == '/');
@@ -1535,10 +1366,6 @@ static void test_script(uint64_t tick) {
     }
 }
 
-// The game's thread, at its pad read.
-// NX2SARIA_POS_TRACE=<file>: Link's position at every tick of the game's update, one line each ("<tick> <ms> <x> <y>
-// <z>", the milliseconds of the host clock from the first line), for movement checks at different frame rates
-// (a jump's height and length, a climb). A developer switch; nothing else changes.
 static void pos_trace(uint64_t tick) {
     static FILE *f;
     static int state;
@@ -1563,7 +1390,7 @@ void dbg_tick(Cpu *c) {
     pos_trace(tick);
     test_script(tick);
     fly_tick();
-    bugcap_replay_tick(tick);   // a replay of a bug capture: the teleport, the walk and the camera (bugcap.c)
+    bugcap_replay_tick(tick);
     warp_tick(c, tick);
     static Req todo[Q_MAX];
     int n;
@@ -1578,7 +1405,7 @@ void dbg_tick(Cpu *c) {
             if (!m) continue;
             rt_call(c, MOD_MAIN_BASE + 0x682b20, 3, m, todo[i].value, (uint64_t)todo[i].hash);
             stat_flags++;
-            rt_log("debug: flag %08x set to %s", todo[i].hash, todo[i].value ? "on" : "off");   // what a tester changed, for the log
+            rt_log("debug: flag %08x set to %s", todo[i].hash, todo[i].value ? "on" : "off");
         } else if (todo[i].size == 1 || todo[i].size == 2 || todo[i].size == 4) {
             if (wr(todo[i].addr, &todo[i].value, (size_t)todo[i].size)) stat_writes++;
             else stat_refused++;

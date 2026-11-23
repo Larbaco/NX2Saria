@@ -1,7 +1,3 @@
-// RenderDoc in-app capture (debug tool). NX2SARIA_RDOC=<frame>[,<frame>...] captures those presented frames; NX2SARIA_RDOC_DIR is the
-// output directory (default build/captures); NX2SARIA_RDOC_DLL overrides the library's path (renderdoc.dll, librenderdoc.so).
-// Only the API fields used are declared here (layout of RENDERDOC_API_1_4_1, renderdoc_app.h, MIT), so no RenderDoc header
-// is vendored.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +14,7 @@
 typedef struct {
     void *GetAPIVersion;
     uint32_t (*SetCaptureOptionU32)(int opt, uint32_t val);
-    void *fn2_10[9];    // SetCaptureOptionF32 .. UnloadCrashHandler
+    void *fn2_10[9];
     void (*SetCaptureFilePathTemplate)(const char *);
     void *GetCaptureFilePathTemplate;
     uint32_t (*GetNumCaptures)(void);
@@ -60,8 +56,6 @@ void rdoc_init(void) {
     void *a = NULL;
     if (!get_api || get_api(RDOC_API_1_4_1, &a) != 1 || !a) { rt_log("rdoc: RENDERDOC_GetAPI(1.4.1) failed"); return; }
     api = a;
-    // Option ids of eRENDERDOC_CaptureOption: 8 RefAllResources, 9 SaveAllInitials, 12 AllowUnsupportedVendorExtensions.
-    // The back end imports guest pages with VK_EXT_external_memory_host, which RenderDoc hides unless 12 is set.
     rt_log("rdoc: AllowUnsupportedVendorExtensions -> %u", api->SetCaptureOptionU32(12, 1));
     api->SetCaptureOptionU32(8, 1);
     api->SetCaptureOptionU32(9, 1);
@@ -74,8 +68,6 @@ void rdoc_init(void) {
     rt_log("rdoc: ready, %d frame(s), captures %s", n_targets, full);
 }
 
-// Called by vk_be_present after frame `frame` was queued and the present drained. A capture of frame N starts after frame N-1's
-// present finished and ends after frame N's present, so it holds frame N's submits and its blit/present.
 void rdoc_after_present(uint64_t frame) {
     if (!api) return;
     if (capturing) {
