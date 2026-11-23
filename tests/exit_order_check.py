@@ -1,8 +1,7 @@
 """The orderly end of the process (runtime/gfx/gfx_present.c rt_exit_begin and rt_exit_steps): the steps run in one order,
 with what a kill of the process must not lose (a save Commit in flight, RivaTuner Statistics Server's profile, the
 controller's rumble, the settings, the frame-time summary) before the slow pipeline save and the final save flush
-last; it runs once, and a second caller on another thread stays where it is. The cheats rebuild's end, before the
-guest runs, puts away the boot prebuild's crash marker and journal (runtime/patches/cheats.c rebuild_if_needed). The frame-time summary of the exit
+last; it runs once, and a second caller on another thread stays where it is. The frame-time summary of the exit
 (runtime/diag/perf.c ft_stop) waits for a present thread's update under way and keeps later ones out. Builds those
 functions into a test program against stand-ins, and checks statically that every orderly end goes through them.
 No game files.
@@ -155,16 +154,6 @@ def static_checks():
     code = strip_comments(exit07)
     ok = 0 <= code.find('rt_exit_begin()') < code.find('rt_log(')
     print(f'svc.c ExitProcess (0x07): its exit line after rt_exit_begin: {"ok" if ok else "FAIL"}', flush=True)
-    bad += not ok
-    # the cheats rebuild's end, before the guest runs: the guard, RTSS, the boot's marker and journal, the summary
-    cheats = (RT / 'patches' / 'cheats.c').read_text(encoding='utf-8')
-    body = strip_comments(function(cheats, 'static void rebuild_if_needed(const char *dir)'))
-    tail = body[body.rfind('plat_spawn('):]
-    want = ['rt_exit_begin', 'rtss_limit_restore', 'vk_pipeline_prewarm_marker_clear', 'vk_pipeline_boot_abandon',
-            'prof_write', 'plat_exit']
-    pos = calls_in_order(tail, want[:-1]) + [tail.rfind('plat_exit(')]   # the last plat_exit is the end's
-    ok = None not in pos and pos == sorted(pos)
-    print(f'cheats.c rebuild_if_needed: {", ".join(want)} in that order: {"ok" if ok else "FAIL " + str(pos)}', flush=True)
     bad += not ok
     # the window's close runs the end on a thread of its own, and the session's end waits for it
     win = strip_comments((RT / 'gfx' / 'gfx_window_win.c').read_text(encoding='utf-8'))

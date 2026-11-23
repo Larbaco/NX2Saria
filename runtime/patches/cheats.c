@@ -28,7 +28,6 @@
 #include "input.h"
 #include "mods.h"
 #include "platform/platform.h"
-#include "vk.h"
 
 #ifdef _WIN32
 #define SEP "\\"
@@ -52,7 +51,6 @@ typedef struct {
 static Cheat *g_cheats;
 static int g_n, g_cap, g_vm;   // g_vm: some cheat needs cheats_frame
 static char g_file[64];        // "<build id>.txt"
-static char g_dir[PLAT_PATH_MAX];   // the folder of nx2saria.exe, with a trailing separator
 static int g_files;            // mods whose file was read
 static uint64_t g_main, g_main_size, g_code_end;   // main's image; its code with the padding up to .rodata
 
@@ -442,91 +440,29 @@ static void plain_name(char *s) {
     }
 }
 
-// ---- rebuild: code cheats and ExeFS patches the build lacks
-// The setup writes build-cache\rebuild.txt (installer/steps.py write_rebuild_command), the command that starts its
-// window in rebuild mode on this install folder, one argument per line. When an enabled mod has code cheats this build
-// lacks (CHEAT_REBUILD) or ExeFS patch files it lacks (mods_exefs_pending), the game runs it and exits; the setup lifts
-// and compiles them in and starts the game again.
-// build-cache\rebuild.skip holds the key of the cheats a rebuild was started for: a rebuild that failed or was
-// cancelled leaves them unbuilt, and the same set does not start it again. NX2SARIA_MODS_REBUILD=off never starts it.
-// Scripted runs (--seconds, --boot) never start it.
-static void rebuild_if_needed(const char *dir) {
-    uint32_t key = 0x811C9DC5u;
-    int need = 0;
-    for (int i = 0; i < g_n; i++) {
-        const Cheat *c = &g_cheats[i];
-        if (c->info.kind != CHEAT_REBUILD) continue;
-        need++;
-        key = (key ^ fnv(c->info.key, strlen(c->info.key))) * 0x01000193u;
-        key = (key ^ c->content) * 0x01000193u;
-    }
-    int patches = mods_exefs_pending(&key);
-    if (!need && !patches) return;
-    char cmd_path[PLAT_PATH_MAX + 64], skip_path[PLAT_PATH_MAX + 64], skip[16] = "", want[16];
-    snprintf(cmd_path, sizeof cmd_path, "%sbuild-cache" SEP "rebuild.txt", dir);
-    snprintf(skip_path, sizeof skip_path, "%sbuild-cache" SEP "rebuild.skip", dir);
-    snprintf(want, sizeof want, "%08X", key);
-    char *old = read_text(skip_path);
-    if (old) snprintf(skip, sizeof skip, "%.8s", old);
-    free(old);
-    const char *why = !strcmp(cfg_value("NX2SARIA_MODS_REBUILD"), "off") ? "mods_rebuild = off"
-                    : rt_config()->seconds || rt_config()->boot   ? "a scripted run"
-                    : !strcmp(skip, want)                           ? "the last rebuild for them failed or was cancelled"
-                                                                    : NULL;
-    char *cmd = why ? NULL : read_text(cmd_path);
-    if (!why && !cmd) why = "no build-cache/rebuild.txt (a build without the setup)";
-    if (why) {
-        rt_log("cheats: %d code cheats and %d ExeFS patch files are not built into the game; no rebuild: %s", need,
-               patches, why);
-        free(cmd);
-        return;
-    }
-    const char *argv[32];
-    int argc = 0;
-    for (char *line = cmd; line && *line && argc < 31;) {
-        char *end = strchr(line, '\n'), *next = end ? end + 1 : NULL;
-        if (end) *end = 0;
-        size_t n = strlen(line);
-        if (n && line[n - 1] == '\r') line[n - 1] = 0;
-        if (*line) argv[argc++] = line;
-        line = next;
-    }
-    argv[argc] = NULL;
-    if (argc < 2 || !plat_file_write(skip_path, want, strlen(want))) {
-        rt_log("cheats: %d code cheats and %d ExeFS patch files are not built into the game; cannot start the "
-               "rebuild (%s)", need, patches, cmd_path);
-        free(cmd);
-        return;
-    }
-    rt_log("cheats: %d code cheats and %d ExeFS patch files are not built into the game; starting the rebuild: %s",
-           need, patches, argv[0]);
-    int ok = plat_spawn(argv, dir);
-    free(cmd);
-    if (!ok) {
-        rt_log("cheats: the rebuild did not start; the game starts with the code it has");
-        return;
-    }
-    // The orderly end's steps a start needs before the guest runs (gfx_present.c rt_exit_steps): no save is mounted
-    // and no menu has run, so the saves and nx2navi.ini have nothing to write. The prewarm builds meanwhile, so its
-    // crash marker and the boot's journal are put away: left in place, the next start took this end for a driver
-    // crash in the boot's builds (vk_pipeline.c pm_skipped, skip_init).
-    if (!rt_exit_begin()) plat_exit(0);
-    rtss_limit_restore();
-    vk_pipeline_prewarm_marker_clear();
-    vk_pipeline_boot_abandon();
-    prof_write();   // plat_exit runs no atexit handlers
-    plat_exit(0);
+static int g_unbuilt_code, g_unbuilt_patches;
+
+static void report_unbuilt(void) {
+    uint32_t key = 0;
+    g_unbuilt_code = 0;
+    for (int i = 0; i < g_n; i++) g_unbuilt_code += g_cheats[i].info.kind == CHEAT_REBUILD;
+    g_unbuilt_patches = mods_exefs_pending(&key);
+    if (g_unbuilt_code || g_unbuilt_patches)
+        rt_log("cheats: %d code cheats and %d ExeFS patch files are not built into the game; Play from the launcher "
+               "builds them in", g_unbuilt_code, g_unbuilt_patches);
 }
 
 void cheats_init(void) {
     const RtLoaded *m = ldr_count() ? ldr_module(0) : NULL;
     char dir[PLAT_PATH_MAX], bid[17], path[2400];   // path: a mod's cheats folder (ModInfo.cheats) + the file
     if (!m || !exe_dir(dir, sizeof dir) || !build_id(bid)) return;
-    snprintf(g_dir, sizeof g_dir, "%s", dir);
     g_main = m->base;
     g_main_size = m->size;
     g_code_end = m->base + ((m->text_end + 0xFFF) & ~0xFFFull);
     snprintf(g_file, sizeof g_file, "%s.txt", bid);
+    if (cfg_is_set("NX2SARIA_MODS_REBUILD"))
+        rt_log("cheats: mods_rebuild = %s does nothing now: Play from the launcher builds code cheats and ExeFS patches "
+               "in", cfg_value("NX2SARIA_MODS_REBUILD"));
     mods_scan();
     for (int k = 0; k < mods_count(); k++) {   // the Mods tab's order, top first
         const ModInfo *mod = mods_at(k);
@@ -543,7 +479,7 @@ void cheats_init(void) {
     }
     if (!g_files) {
         rt_log("cheats: no enabled mod holds cheats/%s", g_file);
-        rebuild_if_needed(dir);   // an enabled mod's ExeFS patches may still wait for it
+        report_unbuilt();
         return;
     }
     snprintf(path, sizeof path, "%sbuild-cache" SEP "cheats.status", dir);
@@ -594,7 +530,7 @@ void cheats_init(void) {
         counts[kind]++;
     }
     free(status);
-    rebuild_if_needed(dir);
+    report_unbuilt();
     for (int i = 0; i < g_n; i++) plain_name((char *)g_cheats[i].info.name);   // the hashes above read the file's bytes
     int on = 0;
     for (int i = 0; i < g_n; i++) on += g_cheats[i].on && g_cheats[i].info.kind != CHEAT_HEADING;
@@ -605,19 +541,9 @@ void cheats_init(void) {
            seen_dups ? " (repeated names numbered)" : "");
 }
 
-int cheats_rebuild_pending(void) {
-    char path[PLAT_PATH_MAX + 64];
-    snprintf(path, sizeof path, "%sbuild-cache" SEP "rebuild.txt", g_dir);
-    uint32_t key = 0;
-    int need = mods_exefs_pending(&key);
-    for (int i = 0; i < g_n && !need; i++) need = g_cheats[i].info.kind == CHEAT_REBUILD;
-    return need && g_dir[0] && plat_file_exists(path);
-}
-
-void cheats_rebuild_allow(void) {
-    char path[PLAT_PATH_MAX + 64];
-    snprintf(path, sizeof path, "%sbuild-cache" SEP "rebuild.skip", g_dir);
-    plat_fs_unlink(path);
+void cheats_unbuilt(int *code, int *patches) {
+    *code = g_unbuilt_code;
+    *patches = g_unbuilt_patches;
 }
 
 int cheats_count(void) { return g_n; }

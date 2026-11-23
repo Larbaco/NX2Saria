@@ -678,8 +678,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_CHEAT_RESTORE_DESC] = "It only writes the game's own code back. Switching a cheat off already does that.",
     [UI_MENU_CHEAT_REBUILD] = "after the rebuild",
     [UI_MENU_CHEAT_REBUILD_DESC] = "This cheat changes the game's code and is new or edited since the game was built. "
-                                   "The game builds it in when it starts next (a few minutes), or use Rebuild the game "
-                                   "now.",
+                                   "Play in the launcher builds it in.",
     [UI_MENU_CHEAT_UNSUPPORTED] = "not supported",
     [UI_MENU_CHEAT_UNSUPPORTED_DESC] = "This cheat cannot be used with this version of the game:",
     [UI_MENU_SAVES] = "Saves",
@@ -779,11 +778,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_GAME_RES_DESC] = "Size of the game's picture; outside fullscreen the window takes it too. Higher is sharper "
                               "but costs more GPU power.",
     [UI_MENU_GAME_RES_NATIVE] = "Native",
-    [UI_MENU_CHEATS_REBUILD] = "Rebuild the game now",
-    [UI_MENU_CHEATS_REBUILD_DESC] = "Some cheats change the game's code and are not built into it: they are new or "
-                                    "edited, or their last rebuild failed or was cancelled. Closes the game; the setup "
-                                    "builds them in (a few minutes) and starts the game again. Progress since your "
-                                    "last save is lost.",
+    [UI_MENU_CHEATS_UNBUILT] = "%d code cheats and %d ExeFS patch files are not built into the game: Play in the "
+                               "launcher builds them in.",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "This mod patches the game code (exefs) in a way the port cannot apply, so the "
                                        "whole mod stays off. %s",
     [UI_MENU_MODS_EXEFS_OTHER] = "Its code patches (exefs) are made for another game version.",
@@ -1442,8 +1438,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_CHEAT_RESTORE] = "не нужен",
     [UI_MENU_CHEAT_RESTORE_DESC] = "Он только возвращает исходный код игры. Выключение чита уже делает это.",
     [UI_MENU_CHEAT_REBUILD] = "после пересборки",
-    [UI_MENU_CHEAT_REBUILD_DESC] = "Этот чит меняет код игры и появился или изменился после сборки игры. Игра соберёт "
-                                   "его при следующем запуске (несколько минут), или нажмите «Пересобрать игру сейчас».",
+    [UI_MENU_CHEAT_REBUILD_DESC] = "Этот чит меняет код игры и появился или изменился после сборки игры. Его соберёт "
+                                   "Play в лаунчере.",
     [UI_MENU_CHEAT_UNSUPPORTED] = "не поддерживается",
     [UI_MENU_CHEAT_UNSUPPORTED_DESC] = "Этот чит нельзя использовать с этой версией игры:",
     [UI_MENU_SAVES] = "Сохранения",
@@ -1486,11 +1482,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_BOOT_TITLE] = "Подготовка шейдеров",
     [UI_BOOT_STARTING] = "Запуск", [UI_BOOT_SHADERS] = "Шейдеры: %lld из %lld", [UI_BOOT_PIPELINES] = "Конвейеры: %lld из %lld",
     [UI_BOOT_COMPUTE] = "Вычислительные конвейеры: %lld из %lld", [UI_BOOT_DRIVER_CACHE] = "Кэш драйвера: %lld из %lld",
-    [UI_MENU_CHEATS_REBUILD] = "Пересобрать игру сейчас",
-    [UI_MENU_CHEATS_REBUILD_DESC] = "Некоторые читы меняют код игры и ещё не собраны в неё: они новые или изменены, "
-                                    "либо прошлая пересборка не удалась или была отменена. Закрывает игру; установщик "
-                                    "собирает их (несколько минут) и снова запускает игру. Прогресс после последнего "
-                                    "сохранения будет потерян.",
+    [UI_MENU_CHEATS_UNBUILT] = "Читов, меняющих код, не собрано в игру: %d, файлов патчей ExeFS: %d. Их соберёт "
+                               "Play в лаунчере.",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "Этот мод меняет код игры (exefs) так, как порт применить не может, поэтому мод "
                                        "выключен целиком. %s",
     [UI_MENU_MODS_EXEFS_OTHER] = "Его патчи кода (exefs) сделаны для другой версии игры.",
@@ -2202,8 +2195,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_CHEAT_RESTORE_DESC] = "Ele só escreve de volta o código original do jogo. Desligar um cheat já faz isso.",
     [UI_MENU_CHEAT_REBUILD] = "após recompilar",
     [UI_MENU_CHEAT_REBUILD_DESC] = "Este cheat altera o código do jogo e é novo ou foi editado depois que o jogo foi "
-                                   "compilado. O jogo o compila na próxima vez que iniciar (alguns minutos), ou use "
-                                   "Recompilar o jogo agora.",
+                                   "compilado. O Play no launcher o compila.",
     [UI_MENU_CHEAT_UNSUPPORTED] = "não suportado",
     [UI_MENU_CHEAT_UNSUPPORTED_DESC] = "Este cheat não pode ser usado com esta versão do jogo:",
     [UI_MENU_SAVES] = "Saves",
@@ -2246,11 +2238,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_BOOT_TITLE] = "Preparando shaders",
     [UI_BOOT_STARTING] = "Iniciando", [UI_BOOT_SHADERS] = "Shaders: %lld de %lld", [UI_BOOT_PIPELINES] = "Pipelines: %lld de %lld",
     [UI_BOOT_COMPUTE] = "Pipelines de computação: %lld de %lld", [UI_BOOT_DRIVER_CACHE] = "Cache do driver: %lld de %lld",
-    [UI_MENU_CHEATS_REBUILD] = "Recompilar o jogo agora",
-    [UI_MENU_CHEATS_REBUILD_DESC] = "Alguns cheats alteram o código do jogo e ainda não foram compilados nele: são "
-                                    "novos ou editados, ou a última recompilação falhou ou foi cancelada. Fecha o "
-                                    "jogo; o instalador os compila (alguns minutos) e inicia o jogo de novo. O "
-                                    "progresso desde o último salvamento é perdido.",
+    [UI_MENU_CHEATS_UNBUILT] = "%d cheats de código e %d arquivos de patch ExeFS não estão compilados no jogo: o "
+                               "Play no launcher os compila.",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "Este mod altera o código do jogo (exefs) de um jeito que o port não consegue "
                                        "aplicar, então o mod inteiro fica desligado. %s",
     [UI_MENU_MODS_EXEFS_OTHER] = "Os patches de código dele (exefs) são para outra versão do jogo.",
@@ -3008,7 +2997,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_CHEAT_RESTORE] = "无需使用",
     [UI_MENU_CHEAT_RESTORE_DESC] = "它只会写回游戏原本的代码。关闭金手指时已经会这样做。",
     [UI_MENU_CHEAT_REBUILD] = "重新构建后",
-    [UI_MENU_CHEAT_REBUILD_DESC] = "此金手指修改游戏代码，并且是在游戏构建后新增或修改的。游戏会在下次启动时把它构建进去（几分钟），也可以使用“立即重新构建游戏”。",
+    [UI_MENU_CHEAT_REBUILD_DESC] = "此金手指修改游戏代码，并且是在游戏构建后新增或修改的。在启动器中点击 Play 会把它构建进去。",
     [UI_MENU_CHEAT_UNSUPPORTED] = "不支持",
     [UI_MENU_CHEAT_UNSUPPORTED_DESC] = "此金手指不能用于此游戏版本：",
     [UI_MENU_SAVES] = "存档",
@@ -3048,8 +3037,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_BOOT_TITLE] = "正在准备着色器",
     [UI_BOOT_STARTING] = "正在启动", [UI_BOOT_SHADERS] = "着色器：%lld / %lld", [UI_BOOT_PIPELINES] = "管线：%lld / %lld",
     [UI_BOOT_COMPUTE] = "计算管线：%lld / %lld", [UI_BOOT_DRIVER_CACHE] = "驱动缓存：%lld / %lld",
-    [UI_MENU_CHEATS_REBUILD] = "立即重新构建游戏",
-    [UI_MENU_CHEATS_REBUILD_DESC] = "有些金手指会修改游戏代码，但尚未构建进游戏：它们是新增或修改的，或上次重新构建失败或被取消。将关闭游戏；安装程序会把它们构建进去（几分钟）并重新启动游戏。上次存档之后的进度会丢失。",
+    [UI_MENU_CHEATS_UNBUILT] = "有 %d 个修改代码的金手指和 %d 个 ExeFS 补丁文件尚未构建进游戏：在启动器中点击 Play 会把它们构建进去。",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "此模组修改游戏代码（exefs）的方式本移植无法应用，因此整个模组保持关闭。%s",
     [UI_MENU_MODS_EXEFS_OTHER] = "它的代码补丁（exefs）是为其他游戏版本制作的。",
     [UI_MENU_MODS_EXEFS_ON] = "正在使用的代码补丁：%d 个文件。",

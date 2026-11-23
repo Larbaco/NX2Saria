@@ -104,7 +104,7 @@ int frame_free_running(void);
 extern const int rt_game_version;
 extern const char rt_port_version[];
 void cheats_frame(uint64_t frame);   // cheats.c
-bool tab_cheats(float scale);        // ui/cheats_tab.cpp; true: restart into the rebuild
+void tab_cheats(float scale);
 }
 
 // Roboto Medium (Apache-2.0, ui/fonts/LICENSE-Roboto.txt) with Latin and Cyrillic glyphs. The file comes in with
@@ -1977,12 +1977,11 @@ static int restart_pending(void) {
 
 // The confirmation of the menu's Restart button, over the menu; Cancel has the cursor first. Restart writes nx2navi.ini,
 // then closes the game as Quit does and starts it again (gfx_window_request_restart). It waits while the game writes a
-// save, and the game stays when nx2navi.ini cannot be written, as the changed settings would not come back. From the
-// Cheats tab (restart_rebuild) Restart also lets the next start rebuild for cheats whose last rebuild failed
-// (cheats_rebuild_allow). The Quit button's confirmation is the same box (g_confirm_quit), and it waits too: the game
+// save, and the game stays when nx2navi.ini cannot be written, as the changed settings would not come back.
+// The Quit button's confirmation is the same box (g_confirm_quit), and it waits too: the game
 // runs on while the menu is open, and closing the window finishes only a Commit that has begun (gfx_window_closed,
 // fs_save_flush), so a save between writing its files and committing them would be dropped.
-static bool restart_rebuild, g_confirm_quit;
+static bool g_confirm_quit;
 static void restart_confirm(float scale) {
     g_modal = false;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -2017,19 +2016,13 @@ static void restart_confirm(float scale) {
             gfx_window_request_close();
         } else {
             if (opt_draft_any()) rt_log("menu: Restart with a draft: applying it first");
-            if (opt_draft_apply()) {
-                if (restart_rebuild) cheats_rebuild_allow();
-                gfx_window_request_restart();
-            }
+            if (opt_draft_apply()) gfx_window_request_restart();
         }
     }
     ImGui::EndDisabled();
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
         close = true, menu_sound_play(MENU_SOUND_CANCEL);
-    if (close) {
-        ImGui::CloseCurrentPopup();
-        restart_rebuild = false;
-    }
+    if (close) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
