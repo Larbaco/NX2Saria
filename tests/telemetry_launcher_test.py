@@ -561,6 +561,29 @@ class WindowTest(Base):
         self.app.start_reports()
         self.assertEqual(self.app.message, '')
 
+    def test_the_question_s_text_is_whole_inside_its_panel(self):
+        """The title and the countdown's line start below the screen's heading and the last line ends above the
+        window's foot, counting and stopped (the longer line), whichever row is focused."""
+        app, c = self.app_module, self.app.canvas
+        self.app.start_reports()
+        for stopped in (False, True):
+            if stopped:
+                self.app.move(1)
+                self.assertIsNone(self.app.question_deadline)
+            for focus in self.app.focusables():
+                self.app.focus = focus
+                self.app.render()
+                self.root.update()
+                texts = [i for i in c.find_withtag('desc') if c.type(i) == 'text']
+                self.assertEqual(c.itemcget(texts[0], 'text'), 'Help improve NX2Saria?')
+                self.assertEqual(c.itemcget(texts[1], 'text'), self.question_line())
+                boxes = [c.bbox(i) for i in texts]
+                where = (stopped, self.app.rows[focus].label, boxes[0], boxes[-1])
+                self.assertGreaterEqual(min(b[1] for b in boxes), self.app.X(112), where)      # under the heading
+                self.assertLessEqual(max(b[3] for b in boxes), self.app.X(app.H - 30), where)  # above the foot
+                self.assertLessEqual(max(b[2] for b in boxes), self.app.X(app.DESC[0] + app.DESC[1]), where)
+                self.assertEqual(boxes, sorted(boxes, key=lambda b: b[1]), where)              # top to bottom
+
     def test_the_countdown_shows_the_seconds_left(self):
         self.app.start_reports()
         self.app.question_deadline = time.monotonic() + 12.5

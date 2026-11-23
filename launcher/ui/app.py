@@ -2596,15 +2596,13 @@ class App:
 
     def consent_desc(self):
         return {'title': 'Help improve NX2Saria?',
-                'text': [self.question_line(),
-                         'After you play, the launcher can send a summary of how the game ran: the version, the '
-                         'system, the processor, the graphics card and its driver, the memory, the main graphics '
-                         'options, which of the port\'s patches are on, how many mods, the frame rate and stutters, '
-                         'the time the shaders took to prepare, and how the session ended (with the error line, if '
-                         'there was one).',
-                         'Nothing personal: no name, no account, no folders, no saves, and your IP address is not '
-                         'kept. It helps find bugs and see what needs optimizing.'],
-                'note': 'You can change this or delete everything in Settings > Session Reports.'}
+                'text': [self.question_line()],
+                'fine': ['After you play, the launcher can send a short summary of how the game ran: versions, '
+                         'system, processor, graphics card and driver, memory, main graphics options, patches that '
+                         'are on, number of mods, frame rate, shader preparation time and how the session ended, '
+                         'with the error line if any.',
+                         'Nothing personal: no name, account, folders or saves; your IP address is not kept. It '
+                         'helps find and fix bugs. Change or delete everything in Settings > Session Reports.']}
 
     def rows_consent(self):
         return [
@@ -2642,8 +2640,8 @@ class App:
             Row('enum', 'Session Reports', options=tuple(REPORT_VALUES.values()),
                 get=lambda: REPORT_VALUES.get(self.settings.get('telemetry'), 'Off'), left=flip, right=flip,
                 desc=('On: after you play, a short report of how the game ran on this PC goes to the project: '
-                      'versions, system, processor, graphics card, memory, the main graphics options, play time, '
-                      'frame rate and the error line if there was one.',
+                      'versions, system, processor, graphics card, memory, the main graphics options, the patches '
+                      'that are on, the number of mods, play time, frame rate and the error line if there was one.',
                       'No files, saves, account or folder names. Your IP address is not kept. Kept 180 days.',
                       'While they are off, each new version of NX2Saria asks once when it first opens.',
                       'The server no longer takes reports from this version.' if closed else '')),
@@ -3505,6 +3503,8 @@ class App:
             add('notes', d['bullets'])
         if d.get('log'):
             add('log', d['log'])
+        for t in d.get('fine', []):   # paragraphs in the small font: a long explanation under its leading lines
+            add('text', t, self.f['small'], P['desc_text'], X(7))
         if d.get('note'):
             add('text', d['note'], self.f['small'], P['muted'], X(4))
         # measure: draw at a provisional top, then move everything to the final top
@@ -3643,6 +3643,7 @@ class App:
                   if self.notes_canvas and self.notes_scrollbar else y - top0 + pady - X(4))
         top = X(236) if height < X(200) else X(112)
         top = min(top, X(H - 30) - height) if top + height > X(H - 30) else top
+        top = max(top, X(112))   # never up behind the screen's heading: a block's first lines are the ones to read
         dy = top - top0
         if dy:
             c.move('desc', 0, dy)
