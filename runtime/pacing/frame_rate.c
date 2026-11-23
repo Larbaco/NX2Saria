@@ -1,45 +1,4 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// Frame rate: the frame limit and the real-time frame step, the host half of the patch sets fps60, realtime and cloth
-// (build tables patches-v121.txt, patches-v143.txt).
-//
-// NX2Saria's adaptive present-interval controller (main+0x8f26c8) turns the main thread's measured work into a number of
-// 60 Hz ticks clamped to [minimum, maximum]; shipping data sets the minimum to 2 (30 fps), the set fps60 lowers it to
-// 1. The controller still raises the interval when a frame does not fit. Shipping code then steps the game by whole
-// vsyncs (VFR step main+0x7ede6c: ratio = interval * 0.5, seconds = interval / 60; global ratio at main+0x8f2394), so
-// game speed is right only when frames take exactly their interval. With the set realtime both read the patch page
-// instead: +0 ratio = seconds * 30, +4 seconds (1.4.3: +8 interval = seconds * 60, the producer's nominal interval
-// before its half-step coefficient), the moving average of the last 5 display intervals, at most 1/15 s
-// (slower frames slow the game down, as on the console) and at least 1/240 s, so a higher frame-rate cap only changes
-// the pacer (frame_step_cap_ns, NX2SARIA_FPS_LIMIT). The set cloth gives hair and cloth the same clock and needs realtime.
-//
-// The floor: with a shorter step (ratio below 0.125) 1.4.3 aborts within seconds of some save loads (issue #241, a
-// 280 Hz monitor): Havok's hkDefaultMemoryImpl reports "Out of memory" for the buffer the physics pre-solve (profiler
-// scope "TtPreSolve") resizes in main+0x1261630. Forced steps on one save: 1/240 s plays, 1/244 s and shorter
-// abort; the field, sky island and fight saves play at 1/280 s, the town save aborts after about 800 frames. The
-// same short steps also crash a physics worker reading that buffer's contacts: an access violation in main+0x1292560
-// or its caller main+0x1286870 (narrowphase contact setup, reached from the grid task main+0x12f1ea0), reading a
-// Havok body's shape at body+0x78 as null or garbage (issues #29 and #92, 240 Hz monitors with fps_limit = display).
-// Steps drawn from 1/252..1/230 s crash that save's load in seconds; 1/240..1/230 s plays. The frame limit
-// stops at 240 too (LIMIT_MAX_HZ), so the floor only catches the average dipping under 1/240 s at that limit: a
-// present late by less than a period keeps the pacer's phase (nvn_api_obj.c, pace), so the next display interval is
-// shorter than the period. No limit makes the game run slower than the clock.
-//
-// The sample is the display time the pacer gives each present (nvnQueuePresentTexture), so the step follows the
-// frames as shown, pacing waits included. With the step on, the pacer ignores the game's interval and holds a frame
-// only to the frame limit (nvn_api_obj.c present_period): the controller's 2 or 3 vsyncs would only add latency. The
-// vsync event stays at 60 Hz whatever the limit: the game does not wait for it each frame (1.4.3 shows its title at 144
-// fps with the event at 60 Hz).
-// One 64-bit and one 32-bit store per present; the guest reads the floats on its own threads, and each stays finite
-// and in range whichever store it sees.
-//
-// The world clock (frame_step_world_us) sums the steps from the first present that finds the player actor away from
-// the origin, where the title screen keeps it (1.1.1 has no player actor until the save has loaded): the end of the
-// first save load. Recorded and scripted input (input.c) runs on it, so a replay presses at the same game time at any
-// frame rate and after a first load of any length; a later load (fast travel) still shifts what follows by its length.
-//
-// NX2SARIA_TRACE=perf adds a line per 120 presents: fps, the game seconds stepped against wall seconds, and with
-// NX2SARIA_SPEED_PROBE=1 the player's position and ground speed (an independent check: Link runs at the same speed at
-// any frame rate when game time follows wall time).
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -61,22 +20,17 @@
 #include "vk_lowlat.h"
 
 #define STEP_SAMPLES 5
-#define STEP_MAX_S (1.0 / 15.0)    // longest step; a longer frame slows the game down
-#define STEP_RESET_S 0.25          // a gap this long (loading, a debugger) restarts the average
+#define STEP_MAX_S (1.0 / 15.0)
+#define STEP_RESET_S 0.25
 #define STEP_FIRST_S (1.0 / 60.0)
-#define STEP_MIN_S (1.0 / 240.0)   // shortest step; a shorter one makes the game's physics run out of memory
+#define STEP_MIN_S (1.0 / 240.0)
 
-static _Atomic uint64_t *step_word;   // patch page +0: ratio (low float), seconds (high float)
-static double step_now = STEP_FIRST_S;   // the step the patch page holds: what the game steps each frame
-static _Atomic uint32_t *step_interval;   // patch page +8: seconds * 60 (patches-v143.txt realtime)
-static _Atomic uint32_t *ostep_page;   // patch page +256 with the set ostep: frames per update (patches-v111.txt)
-static _Atomic uint32_t *carry_page;   // patch page +260 with the set ofollow: 100 / frames per update
+static _Atomic uint64_t *step_word;
+static double step_now = STEP_FIRST_S;
+static _Atomic uint32_t *step_interval;
+static _Atomic uint32_t *ostep_page;
+static _Atomic uint32_t *carry_page;
 
-// The set ofollow (patches-v111.txt): the three follow-surface modules of the character controller keep only a tenth
-// of the supporting floor's velocity when the physics' inverse step is over the number at page +260. The game compares
-// with 100, which the inverse step passed at every update above 100 fps; under one frame per update 100 / frames per
-// update makes the cut come where it came at 60 fps. At one frame or more it stays 100, so 60 and 30 fps keep the
-// game's own cut. Written with frames per update (ocarina_step_write).
 static void floor_carry_store(float frames) {
     if (!carry_page || !(frames > 0)) return;
     float cut = frames < 1.0f ? 100.0f / frames : 100.0f;
@@ -101,16 +55,6 @@ static void step_store(float seconds) {
 
 static void frame_limit_live(void);
 
-// ---- the ocarina's log: what the sets orecord and ostaff of patches-v111.txt do, read from the patch page words their
-// sites write, so a player's log shows them working. The recorder clock (orecord) stores the fraction it carries at
-// +264 on each update of the ocarina manager's note clock (playing, recording, a song played back); a played-back
-// song's staff (ostaff) stores each update's note signal (0 or 1) at +776 and moves the staff one note at an update
-// whose signal is set where the one before was clear. Every present reads both words: a stretch of ocarina use starts
-// at the first present either changed on and ends OCARINA_QUIET_NS after the last change, with one line: its length,
-// presents and frame rate, the presents the clock's fraction changed on (above 60 fps nearly every one; at 60 fps and
-// below the fraction stays 0 and nothing shows), and the notes the staff moved, as rises of the signal from one present
-// to the next (a song played back moves its staff once a note: Zelda's Lullaby 6, the Song of Time 6, Bolero of Fire
-// 8). Nothing else writes either word, so no line comes while the ocarina is put away.
 #define OCARINA_QUIET_NS 2000000000ull
 #define OCARINA_CLOCK_WORD 264
 #define OCARINA_STAFF_WORD 776
@@ -118,12 +62,12 @@ static _Atomic uint32_t *oc_clock_word, *oc_staff_word;
 static struct {
     uint32_t clock, staff;
     int on;
-    uint64_t start_ns, last_ns, presents, last_presents, clock_moves, notes;   // last_*: at the last change
+    uint64_t start_ns, last_ns, presents, last_presents, clock_moves, notes;
 } oc;
 
 static void ocarina_log_init(void) {
     int rec = rt_patch_set("orecord"), staff = rt_patch_set("ostaff");
-    if ((rec < 0 && staff < 0) || !rt_patch_page()) return;   // another game version
+    if ((rec < 0 && staff < 0) || !rt_patch_page()) return;
     if (rec >= 0 && rt_patch_enabled(rec)) {
         oc_clock_word = (_Atomic uint32_t *)((uint8_t *)rt_patch_page() + OCARINA_CLOCK_WORD);
         oc.clock = atomic_load_explicit(oc_clock_word, memory_order_relaxed);
@@ -167,7 +111,7 @@ static void ocarina_watch(uint64_t now_ns) {
 void frame_step_init(void) {
     int fps60 = rt_patch_set("fps60"), realtime = rt_patch_set("realtime"), cloth = rt_patch_set("cloth");
     int ostep = rt_patch_set("ostep");
-    if (ostep >= 0 && rt_patch_enabled(ostep)) {   // Ocarina: frames per update from the page, one 60 Hz frame until the first present
+    if (ostep >= 0 && rt_patch_enabled(ostep)) {
         ostep_page = (_Atomic uint32_t *)((uint8_t *)rt_patch_page() + 256);
         float one = 1.0f;
         uint32_t bits;
@@ -183,9 +127,6 @@ void frame_step_init(void) {
         rt_log("frame rate: a moving floor carries a character as at 60 fps: %s",
                rt_patch_enabled(follow) ? "on (set ofollow)" : "off, the game's cut above 100 fps (floor_carry = 0)");
     }
-    // physics_steps (patches-v111.txt osolver and osolverfull): 0 the game's solver step count, trunc(frames per update
-    // * 4 + 0.001); 1 (the default) that count rounded up; 2 rounded up and at least the 4 of a 60 Hz frame, every
-    // update. The two sets patch the same words; this start keeps one of them on.
     int solver = rt_patch_set("osolver"), solver_full = rt_patch_set("osolverfull");
     if (solver_full >= 0) {
         const char *e = cfg_get("NX2SARIA_PHYSICS_STEPS");
@@ -210,50 +151,30 @@ void frame_step_init(void) {
         step_interval = (_Atomic uint32_t *)((uint8_t *)rt_patch_page() + 8);
         step_store((float)STEP_FIRST_S);
     }
-    frame_limit_live();   // NX2SARIA_FPS_LIMIT decides the set fps60 from the start
+    frame_limit_live();
     rt_log("frame rate: present interval %s, %s", rt_patch_enabled(fps60) ? "1..3 (above 30 fps)" : "2..3 (shipping 30 fps)",
            step_word ? "real-time step (5-frame average of display intervals, at most 1/15 s)" : "whole-vsync steps");
 }
 
 int frame_step_realtime(void) { return step_word != NULL; }
 
-// The frame limit (menu, NX2SARIA_FPS_LIMIT, live): 30, 60, 90, 120, 144, any whole rate from 30 to 240, or display (the
-// refresh rate of the window's monitor, at most 240). A higher number gives 240, the rate of the shortest step the
-// game survives (STEP_MIN_S). Unset, the older NX2SARIA_FPS60=0 still means 30. A limit of 30 switches the set
-// fps60 off (the shipping minimum interval 2), every other limit switches it on; the controller reads its minimum
-// interval from the patched sites each frame. With the real-time step the pacer holds frames to the limit; above 60
-// only the pacer changes, as the step's floor is the limit's ceiling. Without it the game steps whole 60 Hz vsyncs and the pacer
-// follows the game's interval, so the limit stops at 60.
 #define LIMIT_MIN_HZ 30
-#define LIMIT_MAX_HZ 240   // 1 / STEP_MIN_S
+#define LIMIT_MAX_HZ 240
 static int fps60_set = -2;
-static int game_interval = 1;   // the present interval of the newest frame (frame_step_present)
+static int game_interval = 1;
 
-// The rate "display" paces at: 0 is a monitor rate not known yet (no window), taken as 60; a real one below the
-// lowest limit (a 24 or 25 Hz TV) is held at that limit rather than read as unknown and doubled to 60.
 static double shown_hz(double hz) { return hz <= 0 ? 60 : hz < LIMIT_MIN_HZ ? LIMIT_MIN_HZ : hz; }
 
-// A build without the fps60 and realtime patch sets (Ocarina) steps its game by the clock itself: walked by the same
-// frame-numbered input script, Link covered half the distance at 120 fps that he covers at 60. There the pacer holds
-// frames to the limit alone (nvn_api_obj.c present_period), the game's own 60 Hz interval aside, and the limit may be
-// any rate up to LIMIT_FREE_MAX_HZ, or "unlimited", which paces the game at that rate too. Ocarina's code does fail
-// past some rate: on the quick menu, where a frame costs the GPU almost nothing, it ran at 640 to 700 fps and after
-// about two seconds read address 0 in its own draw code (main+0x175b2a0, the same call stack twice), while 92 to 255
-// fps ran on. 240 keeps every common monitor's rate; with frame generation it counts the game's own frames, so the
-// screen still shows the generated ones above it.
 #define LIMIT_FREE_MAX_HZ 240
 int frame_free_running(void) { return rt_patch_set("fps60") < 0 && rt_patch_set("realtime") < 0; }
 int frame_limit_adjustable(void) { return 1; }
 
-// The period the pacer keeps while something else holds the frame limit where the frame starts (Reflex with DLSS Frame
-// Generation, vk_dlssg.c vk_dlssg_pace): a limiter that lets go, or counts other frames than the game's, still leaves
-// the game no faster than the rate its code survives.
 uint64_t frame_step_ceiling_ns(void) {
     return 1000000000ull / (frame_free_running() ? LIMIT_FREE_MAX_HZ : LIMIT_MAX_HZ);
 }
 static unsigned limit_seen;
 static int limit_read;
-static int limit_hz = -1;   // 0: display; -2: unlimited (free-running builds); -1 before the first read
+static int limit_hz = -1;
 
 static int limit_parse(void) {
     const char *e = cfg_get("NX2SARIA_FPS_LIMIT"), *old = cfg_get("NX2SARIA_FPS60");
@@ -302,16 +223,6 @@ static void frame_limit_live(void) {
     else rt_log("frame rate: limit at the monitor's refresh rate (60 until the window measures it)");
 }
 
-// NX2SARIA_MOVIE_FPS (default 60; 0 = off): the game's frame rate while a movie plays (ov_movie2.c ov_movie_live). A
-// movie's event counts the game's updates as 60 Hz frames whatever the step: at 144 fps the intro's narration lines
-// started 2.4 times too early, each over the one before, and its closing fade to black came at 65 s of the movie's
-// 154, hiding the whole dream. The movies are 60 fps, so the cap shows the same pictures. It is the rate in both
-// directions: under a lower limit (40 fps, or 60 shown with frame generation, which is 30 of the game's) the movie ran
-// at that fraction of its speed and ended many seconds behind its sound, so the game is paced at the movie's rate
-// while one plays, above the limit too.
-// With set omovie of recomp/patches-v111.txt (NX2SARIA_MOVIE_PTS, on by default) the event count follows the shown
-// picture's timestamp instead of the redraws, so with the cap off the cues no longer run ahead; the cap stays for the
-// pacing in both directions and for builds without those sites.
 static int movie_cap_hz(void) {
     static int hz = -1;
     if (hz < 0) {
@@ -322,41 +233,22 @@ static int movie_cap_hz(void) {
     return hz && ov_movie_live() ? hz : 0;
 }
 
-// Frames on screen per game frame while frame generation runs: 2 with AMD's (vk_fg.cpp through AMD's library, vk_fsr3fg.c
-// through the runtime's passes: one generated frame), the multiplier with NVIDIA's (vk_dlssg.c, one to three); 1 while
-// none generates (off, or paused for the menu).
 static int generated_factor(void) { return vk_fg_generating() || vk_fsr3fg_generating() ? 2 : vk_dlssg_multiplier(); }
 
-// The limit counts the frames the game draws, and frame generation adds its frames on top: a limit of 60 at 4x is 60
-// drawn and 240 shown. Counted on the screen instead, the game was paced at the limit over the factor, so each step up
-// of the multiplier took drawn frames away (60 at 4x drew 15) and the generated ones had less to work from and more
-// delay. Only "display" is a rate on the screen, the monitor's: there the game draws that rate over the factor, since a
-// frame past the monitor's refresh is never seen. The result is game frames a second, before the ceiling of the step.
 static double limit_game_hz(int limit, int gen) {
     if (limit) return shown_hz(limit);
     double hz = shown_hz(gfx_window_refresh_hz());
     return gen > 1 ? hz / gen : hz;
 }
 
-// The rate the game renders at under the limit (mouse_direct.c, whose camera input follows the game's own frame time);
-// 0 unknown or unlimited.
 double frame_step_game_hz(void) {
     if (frame_step_limit_hz() <= 0) return 0;
     double hz = limit_game_hz(limit_hz, generated_factor());
     return !frame_free_running() && !step_word && hz > 60 ? 60 : hz > LIMIT_MAX_HZ ? LIMIT_MAX_HZ : hz;
 }
 
-// RivaTuner Statistics Server (rtss_limit.c) gets the same limit; while it limits this process the pacer holds the
-// frames only to LIMIT_FREE_MAX_HZ, the ceiling the game's code needs, so the two do not stack, except at a limit of
-// 240 or unlimited, where the ceiling is RTSS's own period; and it takes the limit back once no picture went out for
-// 200 ms (rtss_decide.h rtss_pace_period): a minimised window or a frame hold leaves
-// RTSS no present to hold. While a movie plays the pacer holds the movie's rate and keeps its slots whatever RTSS does.
-// NX2SARIA_RTSS=0 and frame generation (RTSS would count the generated frames) keep it out, and so does a driver's low
-// latency while it is in effect (vk_lowlat.c): the driver holds the limit where the frame starts, and RTSS would hold
-// the finished picture, the wait that mode is there to remove. RTSS gets the reason (RTSS_OUT_*), for the log and for
-// its check of a limit set in RTSS itself.
-static double paced_hz;   // the game frames a second the newest frame_step_cap_ns paces at (ocarina_step); 0: none
-static int movie_paced;   // the movie rate the newest frame_step_cap_ns paces at (ocarina_step, frame_step_movie_hz); 0: none
+static double paced_hz;
+static int movie_paced;
 int frame_step_movie_hz(void) { return movie_paced; }
 uint64_t frame_step_cap_ns(void) {
     frame_limit_live();
@@ -371,7 +263,7 @@ uint64_t frame_step_cap_ns(void) {
                                                              : 0;
     int gen = generated_factor();
     int movie_hz = movie_cap_hz();
-    static int movie_clock = -1;   // NX2SARIA_MOVIE_CLOCK=0: the steady step and the usual pacing through a movie too
+    static int movie_clock = -1;
     if (movie_clock < 0) {
         const char *e = cfg_get("NX2SARIA_MOVIE_CLOCK");
         movie_clock = !(e && !strcmp(e, "0"));
@@ -380,18 +272,17 @@ uint64_t frame_step_cap_ns(void) {
     static int movie_was, movie_logs;
     if (!!movie_hz != movie_was) {
         movie_was = !!movie_hz;
-        if (movie_logs++ < 40) {   // the first 20 movies
+        if (movie_logs++ < 40) {
             if (movie_hz) rt_log("frame rate: a movie plays: %d fps until it ends (NX2SARIA_MOVIE_FPS)", movie_hz);
             else rt_log("frame rate: the movie ended: the frame limit again");
         }
     }
     rtss_limit_movie(movie_hz);
-    if (limit_hz == -2 && !movie_hz && !frame_free_running()) {   // unlimited: the pacer does not hold frames
-        rtss_limit_want(rtss_out);   // kept out (RTSS_OUT_*), or 0: RTSS's limit is cleared
+    if (limit_hz == -2 && !movie_hz && !frame_free_running()) {
+        rtss_limit_want(rtss_out);
         paced_hz = 0;
         return 0;
     }
-    // unlimited in a build that steps by the clock: LIMIT_FREE_MAX_HZ game frames; during a movie, the movie's rate
     double hz = limit_hz == -2 ? LIMIT_FREE_MAX_HZ : limit_game_hz(limit_hz, gen);
     double max = frame_free_running() ? LIMIT_FREE_MAX_HZ : LIMIT_MAX_HZ;
     if (hz > max) hz = max;
@@ -402,9 +293,6 @@ uint64_t frame_step_cap_ns(void) {
         rt_log("frame rate: the game draws up to %.0f frames a second and frame generation shows %d for each (%.0f on "
                "screen)", hz, gen, hz * gen);
     }
-    // RTSS keeps the play limit through a movie and the pacer holds the movie (rtss_decide.h rtss_target): the movie's
-    // rate as the want rewrote RTSS's profile at each start and end, and with the pacer aside under RTSS no movie slot
-    // was kept, so each late frame put the picture behind the sound for good
     int64_t play_mhz = (int64_t)(hz * 1000 + 0.5);
     if (movie_hz) hz = movie_hz;
     paced_hz = hz;
@@ -413,11 +301,8 @@ uint64_t frame_step_cap_ns(void) {
                             (uint64_t)(1e9 / hz + 0.5), frame_step_ceiling_ns());
 }
 
-// The limit as it is set, for the performance overlay: the setting, the monitor's rate for "display", 60 at
-// most without the real-time step; the game's own rate (60 Hz over its present interval) in a build without the patch
-// sets; 0 before the first frame read the setting.
 double frame_step_limit_hz(void) {
-    if (frame_free_running()) {   // 0 for unlimited, as before the first read
+    if (frame_free_running()) {
         frame_limit_live();
         int limit = limit_hz;
         if (limit == -2 || limit == -1) return 0;
@@ -429,14 +314,12 @@ double frame_step_limit_hz(void) {
     return !step_word && r > 60 ? 60 : r > LIMIT_MAX_HZ ? LIMIT_MAX_HZ : r;
 }
 
-// ---- NX2SARIA_TRACE=perf speed lines
-static uint64_t win_t0, win_frames, win_hist[4];   // win_hist: frames by present interval 1, 2, 3+ ([0] unused)
+static uint64_t win_t0, win_frames, win_hist[4];
 static double win_game;
 static int probe = -1;
 static float last_pos[3];
 static uint64_t last_pos_ns;
 
-// plat_mem_read copies through the kernel, which fails on a heap page NX2SARIA_HEAP_LAZY has not committed yet
 static int read_guest(uint64_t a, void *out, size_t n) {
     if (!a) return 0;
     mem_kernel_access(a, n);
@@ -446,13 +329,6 @@ static uint64_t read_ptr(uint64_t a) {
     uint64_t p = 0;
     return read_guest(a, &p, 8) ? p : 0;
 }
-// 1.1.1: [[main+0x4e371d0] + 0x480] is the Player actor, its name pointer at +0x20 reads "Player" and its position, in
-// metres, is the float triplet at +0x31c. The slot is empty until the first save has loaded and then holds the actor.
-// The other builds: [main+0x4728538] (1.1.0: [main+0x4630a68], 1.4.3: [main+0x3add238]) +0x1e8 scene, its component 13
-// lists the resident actors; the one named "Player" has its position at +0x2b4.
-// The 1.1.0 slot was measured from its own dereference chain: 181 scene accesses in that build
-// read it, and one of them reproduces this walk (the 14-component check, component 13, the 0x70 stride and the name
-// compare) instruction for instruction.
 static int player_name(uint64_t name) {
     char text[7];
     return name && read_guest(name, text, 7) && !memcmp(text, "Player", 7);
@@ -479,9 +355,6 @@ static int player_pos(float xyz[3]) {
     return 0;
 }
 
-// Ocarina 1.1.1's time manager, **[main+0x4c7e890]: +0x1c0 the frame's base step in 60 Hz frames, +0x10 the game
-// speed (main+0x2c84c makes each time category's {frames, 1/frames, seconds, 1/seconds} from them and the category's
-// factor). Read by the speed lines of a free-running build: the game seconds a frame stepped, or -1.
 static double ocarina_step_s(void) {
     uint64_t slot = read_ptr(MOD_MAIN_BASE + 0x4c7e890), mgr = slot ? read_ptr(slot) : 0;
     float base = 0, speed = 0;
@@ -490,14 +363,10 @@ static double ocarina_step_s(void) {
     return base * speed / 60.0;
 }
 
-static _Atomic uint64_t guest_presents;   // frame_step_present calls so far (frame_step_flight, frame_step_presents)
+static _Atomic uint64_t guest_presents;
 
-// The game's presents so far, one per update of the game at any frame rate (input.c shake_stick counts its updates).
 uint64_t frame_step_presents(void) { return atomic_load_explicit(&guest_presents, memory_order_relaxed); }
 
-// The flight recorder's view of the step at a host present (flight.c, render thread): the newest step the patch page
-// holds in 60 Hz frames per update (set ostep; -1 without), the game's own step from its time manager in 60 Hz frames
-// (-1 unknown or not free-running), and the game's presents so far, which name the update those two belong to.
 void frame_step_flight(float *page, float *game, uint64_t *presents) {
     *page = ostep_page ? frame_step_frames() : -1.0f;
     double s = frame_free_running() ? ocarina_step_s() : -1;
@@ -505,56 +374,22 @@ void frame_step_flight(float *page, float *game, uint64_t *presents) {
     *presents = atomic_load_explicit(&guest_presents, memory_order_relaxed);
 }
 
-// Free-running builds (Ocarina): the game's step follows the display interval (ocarina_step, in 60 Hz frames), written
-// at each present: frames per update on the patch page with the set ostep, else the time manager's base step. The
-// game left it at one 60 Hz frame whatever the frame rate, so at 144 fps it ran 2.4 times too fast.
-// NX2SARIA_OCARINA_STEP=0 leaves it. Counts how often the game itself had changed the value since the last write
-// (diagnosis).
 static uint64_t ostep_writes, ostep_changed;
 static float ostep_last = -1;
 
-// The step Ocarina is given for a display interval dt, in seconds. The game ships with a step of one 60 Hz frame (two
-// at 30 fps) that never changes in play, so nothing in it was written for a step that differs from frame to frame: its
-// physics takes the step as the length of the next solve while the bodies' velocities come from the step before
-// (the physics system keeps both, main+0x38af1f0), and it derives whole numbers from it (the solver step count,
-// patches-v111.txt osolver). The mean of the last 5 intervals, which stood here, moved with every one of them: display
-// intervals of 5 and 30 ms in turn gave steps of 15 and 20 ms in turn, and one 60 ms frame at 200 fps took the step
-// from 5 to 16 ms for five frames and back. So the step is kept steady and the clock is kept by a slow correction:
-//   - the base is the mean of the last 12 intervals without their longest and shortest: one late frame and the short
-//     one after it (nvn_api_obj.c pace keeps the phase) leave it alone, intervals alternating in a period of 2, 3 or 4
-//     frames give one value, and a real change of frame rate arrives within 12 frames;
-//   - a base within 3% of the pacer's period is that period: at a frame limit the game holds, the step is the same
-//     number every frame, at 60 fps exactly the one frame the game ships with;
-//   - what the display showed and the game was not given is owed (the late frame cut from the base, the 3% of the
-//     snap). Past half a step of it the step repays a 64th a frame, 10% of the step at most, so the game still follows
-//     the clock and a hitch is paid back over the next second rather than in five frames. More than STEP_RESET_S owed
-//     is dropped: the game runs slower than the clock, as it does for a frame longer than STEP_MAX_S.
-// The step is at least OSTEP_MIN_S: the solver step count of the set osolver reaches 0 under a 16th of a frame.
-// NX2SARIA_STEP_STEADY=0 gives the mean of the last 5 intervals again (comparison runs).
 #define OSTEP_WINDOW 12
 #define OSTEP_SNAP 0.03
 #define OSTEP_REPAY_MAX 0.10
 #define OSTEP_MIN_S (1.0 / 480.0)
 static double os_ring[OSTEP_WINDOW], os_owed;
 static unsigned os_count, os_next;
-static double os_step_lo, os_step_hi;   // the steps given since the last speed line (speed_report)
+static double os_step_lo, os_step_hi;
 
 static void ocarina_step_reset(void) {
     os_count = os_next = 0;
     os_owed = 0;
 }
 
-// While a movie plays (frame_step_cap_ns paces the game at the movie's rate) the step is exactly one movie frame, whatever
-// the display intervals; NX2SARIA_MOVIE_CLOCK=0 leaves movies to the steady step (comparison runs). The game's movie
-// player (main+0x3b5ca60) adds the time manager's seconds times 60 to an accumulator at each update and advances the
-// movie by its whole pictures, at most the player's limit per update (+0x20, set at main+0x3b5d094: 1, or 2 in one of
-// its modes), keeping the rest. The Triforce movie showed one picture per update (600 pictures in 600 updates at 59.6
-// updates a second), so the time a late frame left owed, which the steady step pays back as steps over one frame, never
-// became pictures: the picture fell behind its sound, which plays by the clock, by each late frame for good. The
-// movie's event counts updates as 60 Hz frames too (frame_step_cap_ns). So the updates themselves keep the clock
-// (nvn_api_obj.c pace keeps the movie's slots through a late frame) and each counts as one movie frame, for the
-// picture, the event and the game's clock alike. The filter starts again at a movie's start and end, so neither rate's
-// intervals reach the other.
 static double ocarina_step(double dt) {
     static int steady = -1, movie_was;
     if (steady < 0) {
@@ -608,29 +443,20 @@ static double ocarina_step(double dt) {
     return step;
 }
 
-// ---- whole frames out of the real-time step (the set ostep's sites that cut it to a whole number, patches-v111.txt)
-// The game adds the step, or the step times a whole number, to a few counters and cuts the sum to a whole number: at the
-// console's 60 fps the step is 1 and they count frames. With the step the display interval in 60 Hz frames, under one
-// above 60 fps, the cut loses the fraction every frame. whole_frames keeps it per counter (by its guest address) and
-// hands out the whole part, so each counter moves at the game's pace at any frame rate; at a step of exactly one it
-// gives what the game computes. A value that is not positive, or too large for a count, is cut as fcvtzs cuts it.
-// The water's ripples keep their remainders per water object in a table of their own (frame_rate_water_host), and so do
-// the fixed steps of the water and floor surfaces (frame_rate_sim_host).
 #define WHOLE_SLOTS 8
 #define WATER_SLOTS 64
-typedef struct { uint64_t at; float rem; uint64_t used; } WholeSlot;   // used: whole_calls at the slot's last use
+typedef struct { uint64_t at; float rem; uint64_t used; } WholeSlot;
 static WholeSlot whole_slot[WHOLE_SLOTS], water_slot[WATER_SLOTS];
 static uint64_t whole_calls;
 static PlatMutex whole_lock = PLAT_MUTEX_INIT;
 
-static uint32_t cut_fcvtzs(float f) {   // fcvtzs w, s: toward zero, saturating, NaN 0
+static uint32_t cut_fcvtzs(float f) {
     if (f != f) return 0;
     if (f >= 2147483648.0f) return 0x7fffffffu;
     if (f <= -2147483648.0f) return 0x80000000u;
     return (uint32_t)(int32_t)f;
 }
 
-// The whole part of amount plus the remainder the table slot[n] keeps for `at`; a new `at` takes the slot unused longest.
 static uint32_t whole_take(WholeSlot *slot, int n, uint64_t at, float amount) {
     if (!(amount > 0.0f) || amount >= 2147483648.0f) return cut_fcvtzs(amount);
     plat_mutex_lock(&whole_lock);
@@ -655,9 +481,6 @@ uint32_t frame_rate_animation_frames(uint64_t entry, float step) {
     return whole_take(loops, sizeof loops / sizeof *loops, entry, step);
 }
 
-// The time of day (main+0x3cdf70, patches-v111.txt): s0 holds twice the step, the game seconds of this frame; w8 gets
-// the whole ones, the counter being the seconds of the day at +0x3c of the object in x19.
-// NX2SARIA_TRACE=perf: every 10 s, the game seconds the day was given beside those the cut alone would have given.
 void frame_rate_day_host(Cpu *c) {
     uint32_t bits = (uint32_t)c->v[0];
     float secs;
@@ -679,11 +502,6 @@ void frame_rate_day_host(Cpu *c) {
     }
 }
 
-// The water's ripples (main+0x472e0, patches-v111.txt): s0 holds the frame's step and w9 gets the whole steps in it,
-// which the renderer multiplies by the water's substeps. The remainder is kept for the water object in x21, in a table
-// of the waters' own: every water surface of a place asks once a frame, and with fewer slots than surfaces each would
-// take another's slot in turn, start without a remainder every frame and stand still as it did with the cut.
-// NX2SARIA_TRACE=perf: every 10 s, the steps the waters were given beside those the cut alone would have given.
 void frame_rate_water_host(Cpu *c) {
     uint32_t bits = (uint32_t)c->v[0];
     float step;
@@ -693,7 +511,7 @@ void frame_rate_water_host(Cpu *c) {
     if (rt_trace & RT_TRACE_PERF) {
         static uint64_t t0, asked, given, cut;
         uint64_t now = plat_now_ns(), n = 0, g = 0, k = 0, t = 0;
-        plat_mutex_lock(&whole_lock);   // the counts: nothing says one thread alone draws the waters
+        plat_mutex_lock(&whole_lock);
         asked++, given += whole, cut += cut_fcvtzs(step);
         if (!t0) t0 = now;
         if (now - t0 >= 10000000000ull) n = asked, g = given, k = cut, t = now - t0, t0 = now, asked = given = cut = 0;
@@ -705,18 +523,6 @@ void frame_rate_water_host(Cpu *c) {
     }
 }
 
-// The fixed steps of the physics' height-field surfaces (patches-v111.txt owater): the water managers (main+0x3875f20,
-// main+0x3882660) and the interactive floors' simulation (main+0x632cb0, the spider webs' sinking floor). Each update
-// divides its seconds by 1/60 s into s0 and cuts that to the number of steps of exactly 1/60 s it runs (at most 3),
-// dropping the fraction, so every frame shorter than 1/60 s ran none. The site calls this between the division and
-// the game's own cut: s0 becomes the whole steps in the quotient plus the remainder kept for the object in x19, as a
-// float the cut keeps exactly, and only s0 changes (its upper lanes stay zero, as the division left them). A quotient
-// that is not positive, or too large for a count, stays for the cut. The remainders are in a table of their own: an
-// object that shares slots with the counters above would lose its fraction to them.
-// NX2SARIA_TRACE=perf: every 10 s, the steps the objects were given beside those the cut alone would have given.
-// Every interactive floor of a place (the Deku Tree's ground webs are such floors) and both water managers ask once an
-// update, each for its own object, so the table holds as many as the waters' does: with fewer slots than objects each
-// would take another's slot in turn, start without a remainder every update and stand still again above 60 fps.
 #define SIM_SLOTS 64
 static WholeSlot sim_slot[SIM_SLOTS];
 
@@ -725,7 +531,7 @@ void frame_rate_sim_host(Cpu *c) {
     float steps;
     memcpy(&steps, &bits, 4);
     uint32_t whole = whole_take(sim_slot, SIM_SLOTS, c->x[19], steps);
-    if (steps > 0.0f && steps < 2147483648.0f) {   // whole_take's own range: outside it the game's cut stands
+    if (steps > 0.0f && steps < 2147483648.0f) {
         float f = (float)whole;
         memcpy(&bits, &f, 4);
         c->v[0] = bits;
@@ -745,28 +551,11 @@ void frame_rate_sim_host(Cpu *c) {
     }
 }
 
-// ---- the sound manager's job at whole steps (patches-v111.txt osound)
-// The job (main+0x415300) runs in three phases a frame, the phase in w2: 0 loads the time manager's step, frames per
-// update at [[main+0x4c7e890]] +0x10, and hands it to the sound system ([[main+0x4c80c38]] +0xa8, and with its inverse
-// +0x18 of the object at +0x10 of [[main+0x4c806d0]]); 1 runs the sound objects' updates, 2 the system's own
-// (main+0x3798410). Any other phase returns at once (main+0x4155fc); the task wrappers main+0x4151f0 and main+0x4152d0
-// skip a 3 themselves. The sound system counts its fades, delays and parameter ramps in updates of at least one step.
-// With the set ostep the step is the display interval in 60 Hz frames, a fraction of one above 60 fps. Fed fractions,
-// this game has been reported to keep sounds held after an area unloaded until no voice was left free, so that new
-// sounds, then the music, went silent until a restart (not reproduced on this build: the fault takes a few area
-// changes above 60 fps). With the set osound the job runs at 60 Hz while the step is a fraction:
-// - frame_rate_sound_gate_host, after the job's prologue: phase 0 adds the step to what the job is owed and runs once
-//   a whole step has built up, keeping the rest; phases 1 and 2 follow that frame's choice. A job that does not run
-//   gets phase 3 in w2, so it returns through its own epilogue.
-// - frame_rate_sound_step_host, after phase 0's load of the step: a fraction becomes one whole step.
-// A step of one or more (60 fps and below) runs as the game has it and leaves what is owed for the next fractions; a
-// step that is not positive (or NaN) runs as the game has it and clears it. So the sound clock keeps the game's on
-// average at any frame rate, and at 60 fps the job runs every frame as before.
 typedef struct {
-    float owed;   // steps given since the job last ran, under one
-    int run;      // phase 0's choice, which the frame's other phases follow
+    float owed;
+    int run;
 } SoundGate;
-static SoundGate sound_gate = {0.0f, 1};   // every phase runs until a phase 0 has chosen
+static SoundGate sound_gate = {0.0f, 1};
 
 static int sound_gate_take(SoundGate *g, uint32_t phase, float step) {
     if (phase != 0) return g->run;
@@ -781,7 +570,6 @@ static int sound_gate_take(SoundGate *g, uint32_t phase, float step) {
     return g->run;
 }
 
-// The time manager's step (1 before the time manager is there).
 static float game_frame_step(void) {
     uint64_t slot = read_ptr(MOD_MAIN_BASE + 0x4c7e890), mgr = slot ? read_ptr(slot) : 0;
     float step = 1.0f;
@@ -789,12 +577,11 @@ static float game_frame_step(void) {
     return step;
 }
 
-// NX2SARIA_TRACE=perf: every 10 s, how often phase 0 ran of the times it was asked.
 void frame_rate_sound_gate_host(Cpu *c) {
     uint32_t phase = (uint32_t)c->x[2];
     float step = phase == 0 ? game_frame_step() : 1.0f;
     uint64_t asked = 0, ran = 0, t = 0;
-    plat_mutex_lock(&whole_lock);   // the phases may come from different threads
+    plat_mutex_lock(&whole_lock);
     int run = sound_gate_take(&sound_gate, phase, step);
     if (phase == 0) battle_music_gate(run);
     if (phase == 0 && (rt_trace & RT_TRACE_PERF)) {
@@ -815,11 +602,9 @@ void frame_rate_sound_step_host(Cpu *c) {
     uint32_t bits = (uint32_t)c->v[0];
     float step;
     memcpy(&step, &bits, 4);
-    if (step > 0.0f && step < 1.0f) c->v[0] = 0x3f800000u;   // 1.0f, the lanes above it zero as the load left them
+    if (step > 0.0f && step < 1.0f) c->v[0] = 0x3f800000u;
 }
 
-// The 60 Hz frames the game steps at each update where the set ostep gives them (Ocarina); 1 elsewhere, the game's own
-// nominal frame. The mouse camera divides by it (mouse_direct.c): the game multiplies camera input by this step.
 float frame_step_frames(void) {
     if (!ostep_page) return 1.0f;
     uint32_t bits = atomic_load_explicit(ostep_page, memory_order_acquire);
@@ -828,9 +613,6 @@ float frame_step_frames(void) {
     return f > 0 ? f : 1.0f;
 }
 
-// The jump state machine compares s10 (its update step) against s9 (1.0). If the update is shorter than
-// a 60 Hz frame but covers the time manager's whole step, use that step as the threshold. The slow-motion
-// path still sees 1.0, and the normal path writes s9 again before reading it.
 void frame_rate_horse_jump_host(Cpu *c) {
     if (frame_step_frames() >= 1.0f) return;
     uint32_t bits = (uint32_t)c->v[10];
@@ -851,9 +633,6 @@ void frame_rate_horse_jump_host(Cpu *c) {
     }
 }
 
-// The steering update's final clamp stores a turn rate. Its upper bound s0 is the magnitude of the turn
-// applied this update multiplied by the step in s8. Undo that extra multiplication and convert the turn
-// back into a rate. The guest has already restored the caller's s10 before computing the bounds.
 void frame_rate_gohma_turn_host(Cpu *c) {
     if (frame_step_frames() >= 1.0f) return;
     uint32_t bits = (uint32_t)c->v[8];
@@ -887,7 +666,7 @@ static void ocarina_step_write(double dt) {
         on = !(e && !strcmp(e, "0"));
     }
     if (!on || dt <= 0) return;
-    if (ostep_page) {   // the set ostep: the game makes its whole nominal frame from this, the interface's included
+    if (ostep_page) {
         if (dt < 1.0 / 1000) dt = 1.0 / 1000;
         if (dt > STEP_MAX_S) dt = STEP_MAX_S;
         float f = (float)(dt * 60.0);
@@ -918,7 +697,6 @@ static void ocarina_step_write(double dt) {
                v, dt * 1000, (unsigned long long)ostep_changed), ostep_changed = 0;
 }
 
-// NX2SARIA_TIME_DUMP=1: the time manager's first 0x280 bytes once, 30 s into the run (diagnosis)
 static void time_dump(void) {
     static int done;
     const char *e = cfg_get("NX2SARIA_TIME_DUMP");
@@ -965,12 +743,12 @@ static void speed_report(uint64_t now, double step, int interval) {
         memcpy(last_pos, p, sizeof p);
         last_pos_ns = now;
     }
-    float global_step;   // Ocarina 1.1.1: the engine's global step (patches-v111.txt, the set ostep's second site)
+    float global_step;
     if (probe && ostep_page && read_guest(MOD_MAIN_BASE + 0x4d41fc8, &global_step, 4)) {
         size_t o = strlen(pos);
         snprintf(pos + o, sizeof pos - o, "; global step %.3f frames", (double)global_step);
     }
-    if (os_step_hi > 0) {   // Ocarina: the shortest and longest step given in these frames, and the time still owed
+    if (os_step_hi > 0) {
         size_t o = strlen(pos);
         snprintf(pos + o, sizeof pos - o, "; step %.3f..%.3f frames, %.1f ms owed", os_step_lo * 60, os_step_hi * 60,
                  os_owed * 1000);
@@ -991,7 +769,7 @@ static void speed_report(uint64_t now, double step, int interval) {
 }
 
 static _Atomic int64_t world_us = -1;
-static _Atomic uint64_t game_us;   // game time stepped since the first present (frame_step_ticks)
+static _Atomic uint64_t game_us;
 static uint64_t presents;
 
 int64_t frame_step_world_us(void) { return atomic_load_explicit(&world_us, memory_order_relaxed); }
@@ -1002,7 +780,7 @@ static void world_clock(double dt, double step) {
     int64_t w = atomic_load_explicit(&world_us, memory_order_relaxed);
     if (w < 0) {
         float p[3];
-        if (!player_pos(p) || fabsf(p[0]) + fabsf(p[2]) < 1.0f) return;   // a few guest reads, until the load ends
+        if (!player_pos(p) || fabsf(p[0]) + fabsf(p[2]) < 1.0f) return;
         uint64_t guest_start = __atomic_load_n(&rt_guest_start_ns, __ATOMIC_ACQUIRE);
         rt_log("frame step: world clock starts at present %llu, %.2f s after the guest started (the player at %.1f %.1f %.1f)",
                (unsigned long long)presents, guest_start ? (kern_now_ns() - guest_start) / 1e9 : 0.0, p[0],
@@ -1010,33 +788,15 @@ static void world_clock(double dt, double step) {
         atomic_store_explicit(&world_us, 0, memory_order_relaxed);
         return;
     }
-    if (!step_word) step = dt > STEP_MAX_S ? STEP_MAX_S : dt;   // whole-vsync steps: the display time stands in
+    if (!step_word) step = dt > STEP_MAX_S ? STEP_MAX_S : dt;
     atomic_store_explicit(&world_us, w + (int64_t)(step * 1e6 + 0.5), memory_order_relaxed);
 }
 
-// ---- NX2SARIA_FLOOR_PROBE (floor_probe in nx2navi.ini, 0 by default): Link on a moving floor, one line per update
-// (diagnosis, 1.1.1). Above 60 fps Link stands still on the Deku Tree's floating platform while it moves under him, and
-// the code that carries him has not been found; these lines give what a run needs to find it. The moving floors are
-// the engine's ground groups: their manager is [[[main+0x4c7df00]] +0xc0] +0x130 (the ground control moves write it,
-// main+0x3000a90, and its transform setter main+0x386a740 takes it so), the group count at +0x28 and the array of
-// 32-byte entries at +0x30, each starting with the group; a group's transform is three rows of four floats at +0x88,
-// +0x98 and +0xa8 (main+0x386a7e8..0x386a800), its translation in their fourth lanes. Each update the probe reads every
-// group's translation and Link's position (Player +0x31c, player_pos), and logs the step, Link's position and how far
-// he moved since the last update, and FLOOR_PROBE_NEAR groups within FLOOR_PROBE_RADIUS of him horizontally (those
-// that moved since the last present first, nearest first, then the nearest still ones), each with its translation and
-// how far it moved; with no group that near, one line in 30 presents still gives Link alone. At 60 fps the moves of
-// Link and of the group under him match while he stands on it. Each line also gives the time manager's base step, game speed and first two time
-// categories. The value is the number of lines to write (1 means 4000); off it costs one test per present.
 #define FLOOR_PROBE_RADIUS 12.0f
-#define FLOOR_PROBE_NEAR 6   // the groups a line names: the moving ones first, then the nearest still ones
-// The manager holds a few thousand groups (5345 in the Deku Tree; most entries are empty), and a readability check per
-// read costs a system call: at one per group a present the probe made every frame about 1.9 s. So the entries and the
-// groups' rows are read in two batched copies a present (memory.c mem_copy_readable: one lock, no system call for
-// memory that is neither armed nor probed), and only while there is a player (on the title screen the manager is not
-// one yet). A count above FLOOR_PROBE_GROUPS is taken for a wrong manager and skipped.
+#define FLOOR_PROBE_NEAR 6
 #define FLOOR_PROBE_GROUPS 16384
-static int floor_probe_left = -1;   // lines still to write; -1 before the setting was read
-static float *floor_last;            // the groups' translations at the last update (x, y, z each)
+static int floor_probe_left = -1;
+static float *floor_last;
 static uint32_t floor_last_n;
 static float floor_link[3];
 static int floor_link_ok;
@@ -1061,7 +821,7 @@ static void floor_probe(void) {
     if (!floor_probe_left) return;
     float link[3];
     int link_ok = player_pos(link);
-    if (!link_ok) {   // no player (the title screen, a load): nothing to log, and the manager may not be one yet
+    if (!link_ok) {
         floor_link_ok = 0;
         return;
     }
@@ -1075,8 +835,8 @@ static void floor_probe(void) {
         if (!told++) rt_log("floor probe: a ground group count of %u is not plausible: skipped until it is", count);
         return;
     }
-    static uint64_t *entry;              // the manager's entries: 32 bytes each, the group first
-    static float *rows;                  // each group's three rows of four floats (+0x88, +0x98, +0xa8)
+    static uint64_t *entry;
+    static float *rows;
     static uint64_t (*src)[2];
     static uint8_t **dst, *ok;
     if (!floor_last) {
@@ -1088,15 +848,13 @@ static void floor_probe(void) {
         ok = calloc(FLOOR_PROBE_GROUPS, 1);
     }
     if (!floor_last || !entry || !rows || !src || !dst || !ok || !count) return;
-    // the entries' range is checked once a present (one system call); the groups they name are the game's own objects
-    // and must lie in the guest heap, which mem_copy_readable then copies from without asking the system
     uint64_t heap = 0, heap_size = 0;
     if (!mem_info(4, &heap) || !mem_info(5, &heap_size) || !mem_host_readable(array, 32ull * count)) return;
     uint8_t *edst = (uint8_t *)entry, eok = 0;
     uint64_t esrc[1][2] = {{array, 32ull * count}};
     if (mem_copy_readable(&edst, (const uint64_t (*)[2])esrc, 1, &eok) != 1) return;
     int n = 0;
-    static uint32_t *which;   // the group index of each batched read
+    static uint32_t *which;
     if (!which) which = calloc(FLOOR_PROBE_GROUPS, sizeof *which);
     if (!which) return;
     for (uint32_t i = 0; i < count; i++) {
@@ -1120,10 +878,8 @@ static void floor_probe(void) {
         memcpy(last, t, sizeof t);
         float d2 = (t[0] - link[0]) * (t[0] - link[0]) + (t[2] - link[2]) * (t[2] - link[2]);
         if (d2 >= FLOOR_PROBE_RADIUS * FLOOR_PROBE_RADIUS) continue;
-        // a moving group sorts before every still one, so a moving floor is never crowded out by the still map pieces
-        // nearer to Link (a group's translation is its pivot, which for a moved floor can be metres from its surface)
         if (m[0] == 0 && m[1] == 0 && m[2] == 0) d2 += FLOOR_PROBE_RADIUS * FLOOR_PROBE_RADIUS;
-        if (nn == FLOOR_PROBE_NEAR && d2 >= near_d2[nn - 1]) continue;   // insertion by distance, the farthest drops
+        if (nn == FLOOR_PROBE_NEAR && d2 >= near_d2[nn - 1]) continue;
         int at = nn < FLOOR_PROBE_NEAR ? nn++ : nn - 1;
         while (at > 0 && near_d2[at - 1] > d2) {
             near[at] = near[at - 1], near_d2[at] = near_d2[at - 1];
@@ -1134,7 +890,7 @@ static void floor_probe(void) {
         near[at] = (int)i, near_d2[at] = d2, memcpy(near_t[at], t, sizeof t), memcpy(near_m[at], m, sizeof m);
     }
     floor_last_n = count;
-    static unsigned quiet;   // presents since the last line without a group near Link
+    static unsigned quiet;
     if (floor_link_ok && (nn > 0 || ++quiet >= 30)) {
         quiet = 0;
         char line[320 + FLOOR_PROBE_NEAR * 120];
@@ -1142,9 +898,6 @@ static void floor_probe(void) {
                          "%d of %u groups within %.0f m", (double)frame_step_frames(), link[0], link[1], link[2],
                          link[0] - floor_link[0], link[1] - floor_link[1], link[2] - floor_link[2], nn, count,
                          (double)FLOOR_PROBE_RADIUS);
-        // the time manager **[main+0x4c7e890] the game steps by: +0x1c0 the base step and +0x10 the game speed in 60 Hz
-        // frames, and the first two time categories (+0x20 and +0x50: frames, 1 / frames, seconds, 1 / seconds, as
-        // main+0x2c84c makes them), so a line shows whether what the physics reads matches the step
         uint64_t tslot = direct_ptr(MOD_MAIN_BASE + 0x4c7e890), tm = tslot ? direct_ptr(tslot) : 0;
         float tb[2] = {0}, tc[8] = {0};
         if (tm && direct_read(tm + 0x1c0, &tb[0], 4) && direct_read(tm + 0x10, &tb[1], 4) &&
@@ -1162,34 +915,17 @@ static void floor_probe(void) {
     floor_link_ok = link_ok;
 }
 
-// ---- NX2SARIA_FLOOR_SCAN (floor_scan in nx2navi.ini, 0 by default): finds the moving floor under Link in guest memory
-// (diagnosis, 1.1.1). The Deku Tree's floating platform is not one of the engine's ground groups (floor_probe), and
-// where its position lives is not known. The scan arms while Link drifts at the 60 fps rate: a step of one frame, the
-// gamepad's left stick under 20%, and for FLOOR_SCAN_ARM presents in a row a horizontal move of 2 to 30 mm a present,
-// his height within 5 mm of the present before, and the whole stretch straight (its end within 80% of the sum of its
-// moves), so a floor that only sinks does not arm it. It then takes one snapshot of every 4-byte-aligned float triplet
-// in the game's heap and alias regions whose x and z lie within 6 m of Link and whose y lies from 4 m below him to
-// 0.5 m above (walked as the debug menu's memory search walks them, debug_tools.c dbg_search_new), and logs how long
-// that took. FLOOR_SCAN_ARM presents later it keeps the triplets that moved horizontally as far as Link (within a
-// fifth, 2 cm at least) and lie more than 0.3 m below him or more than 0.5 m from him horizontally: the floor's
-// matrix, body and drive, but not Link's own copies (his actor, body, feet) nor what rides above him. A snapshot that
-// keeps none arms the scan again, three times at most. From then on, once a second, it logs Link's position and move
-// over that second and one line per survivor (FLOOR_SCAN_SHOW at most) with its address, position and move over the
-// same second, so a stretch at a higher frame rate shows each one's own speed. The value is the number of lines to
-// write (1 means 20000); off it costs one test per present. NX2SARIA_FLOOR_WATCH switches the scan on too and gets its
-// survivors when the logging starts, with those that lie in the platform's rigid body controller unit marked
-// (floor_watch.c).
 #define FLOOR_SCAN_ARM 30
-#define FLOOR_SCAN_MAX 2000000   // candidate triplets a snapshot keeps
-#define FLOOR_SCAN_SHOW 64       // survivors logged each second
-static int floor_scan_left = -1;   // lines still to write; -1 before the setting was read
-static int floor_watching;         // floor_watch.c has the survivors and is not done (NX2SARIA_FLOOR_WATCH)
+#define FLOOR_SCAN_MAX 2000000
+#define FLOOR_SCAN_SHOW 64
+static int floor_scan_left = -1;
+static int floor_watching;
 static struct {
-    int state, run, tries;         // state 0: waiting for a drift, 1: filtering, 2: logging
+    int state, run, tries;
     float link0[3], last[3], start[3], path, sec_link[3];
     int have_last;
     uint64_t *addr, sec_ns;
-    float *val;                    // the triplets at the snapshot, then at the last line
+    float *val;
     int n;
 } fs;
 
@@ -1221,7 +957,7 @@ static void floor_scan_snapshot(const float link[3]) {
                     bytes += n;
                     for (uint64_t i = 0; i + 2 < words; i++) {
                         float x = f[i];
-                        if (!(fabsf(x - link[0]) < 6.0f)) continue;   // the cheap test first: most words fail it
+                        if (!(fabsf(x - link[0]) < 6.0f)) continue;
                         float y = f[i + 1] - link[1], z = f[i + 2];
                         if (!(fabsf(z - link[2]) < 6.0f) || !(y > -4.0f && y < 0.5f)) continue;
                         if (fs.n < FLOOR_SCAN_MAX) {
@@ -1243,7 +979,6 @@ static void floor_scan_snapshot(const float link[3]) {
            over ? " (more were left out)" : "");
 }
 
-// Reads the n triplets at fs.addr into out (NAN where the memory could not be read), in one batched copy.
 static void floor_scan_read(int n, float *out) {
     static uint64_t (*src)[2];
     static uint8_t **dst, *ok;
@@ -1259,20 +994,12 @@ static void floor_scan_read(int n, float *out) {
 
 static float hdist(const float a[3], const float b[3]) { return hypotf(a[0] - b[0], a[2] - b[2]); }
 
-// The owner of a floor point (floor_scan, once, when its survivors are known): the 0x500 bytes from 0x400 before the
-// point to 0x100 after it as 8-byte words, the words that point into main's data (where its vtables are) named as
-// main offsets, and the objects that hold a pointer to it. Those are found by one more walk of the heap and alias
-// regions, for the start of each of the FLOOR_SCAN_BASES objects nearest below the point (a word that points into
-// main's data is taken as the vtable that starts one), and each holder is logged with the vtable nearest below it. So
-// one run gives the class whose object the platform's position is in, and the classes that refer to it (the character
-// controller's ground reference among them), for the code that reads it to be found by its vtable.
 #define FLOOR_SCAN_BASES 4
 #define FLOOR_SCAN_HOLDERS 24
 static int main_data_word(uint64_t w) {
     return w >= MOD_MAIN_BASE + 0x4800000 && w < MOD_MAIN_BASE + MOD_MAIN_SIZE && !(w & 7);
 }
 
-// The nearest word at or below a (within 0x400) that points into main's data: the vtable of the object a is in.
 static uint64_t vtable_below(uint64_t a, uint64_t *where) {
     uint64_t buf[0x80];
     uint8_t ok = 0, *dst = (uint8_t *)buf;
@@ -1312,7 +1039,6 @@ static void floor_scan_dump(uint64_t a) {
         if (at <= a && nb < FLOOR_SCAN_BASES) starts[nb++] = at;
     }
     if (!nb) return;
-    // the holders: every 8-byte word in the heap and alias regions that holds one of the starts
     uint64_t t0 = plat_now_ns(), holder[FLOOR_SCAN_HOLDERS], held[FLOOR_SCAN_HOLDERS];
     int nh = 0;
     const RtGuestLayout *l = mem_layout();
@@ -1355,7 +1081,7 @@ static void floor_scan(const float link[3], int link_ok) {
     if (floor_scan_left < 0) {
         const char *e = cfg_get("NX2SARIA_FLOOR_SCAN");
         int n = e && *e ? atoi(e) : 0;
-        if (n <= 0 && floor_watch_wanted()) n = 1;   // the watch takes its addresses from the scan
+        if (n <= 0 && floor_watch_wanted()) n = 1;
         floor_scan_left = !RT_V111 || n <= 0 ? 0 : n == 1 ? 20000 : n;
         if (floor_scan_left) rt_log("floor scan: on for %d lines", floor_scan_left);
     }
@@ -1406,23 +1132,23 @@ static void floor_scan(const float link[3], int link_ok) {
             float d = hypotf(v[0] - w[0], v[2] - w[2]);
             if (!(fabsf(d - d_link) <= tol) || d < 0.01f) continue;
             moved++;
-            if (!(v[1] < link[1] - 0.3f || hdist(v, link) > 0.5f)) continue;   // Link's own copies stay at his feet
+            if (!(v[1] < link[1] - 0.3f || hdist(v, link) > 0.5f)) continue;
             if (kept < FLOOR_SCAN_SHOW) fs.addr[kept] = fs.addr[i], memcpy(fs.val + 3 * kept, v, 12);
             kept++;
         }
         rt_log("floor scan: %d of %d triplets moved with Link (%.3f m in %d presents); %d of those lie below him or "
                "away from his feet%s", moved, fs.n, d_link, FLOOR_SCAN_ARM, kept,
                kept > FLOOR_SCAN_SHOW ? " (the first of them are logged)" : "");
-        if (!kept) {   // nothing below him: the next drift arms the scan again
+        if (!kept) {
             fs.state = 0, fs.n = 0;
             return;
         }
         fs.n = kept < FLOOR_SCAN_SHOW ? kept : FLOOR_SCAN_SHOW;
-        int deep = 0;   // the owner of the survivor deepest below Link: the floor's own body or matrix
+        int deep = 0;
         for (int k = 1; k < fs.n; k++)
             if (fs.val[3 * k + 1] < fs.val[3 * deep + 1]) deep = k;
         floor_scan_dump(fs.addr[deep]);
-        if (floor_watch_wanted()) {   // the survivors in the platform's rigid body controller unit (floor_watch.c)
+        if (floor_watch_wanted()) {
             int unit[FLOOR_SCAN_SHOW];
             for (int k = 0; k < fs.n; k++) {
                 uint64_t at = 0;
@@ -1435,7 +1161,6 @@ static void floor_scan(const float link[3], int link_ok) {
         fs.state = 2;
         return;
     }
-    // state 2: once a second, Link and each survivor with its move over that second
     uint64_t t = plat_now_ns();
     if (t - fs.sec_ns < 1000000000ull) return;
     double secs = (t - fs.sec_ns) / 1e9;
@@ -1477,20 +1202,17 @@ void frame_step_present(uint64_t display_ns, int interval) {
         }
     }
     if (frame_free_running() && last_ns) {
-        // the debug menu's speed factor (debug_tools.c) multiplies the step the game is given
         if (dt > 0 && dt < STEP_RESET_S) ocarina_step_write(ocarina_step(dt) * (double)dbg_speed_factor());
-        else ocarina_step_reset();   // a load or a debugger stop: the intervals before it say nothing about the next
+        else ocarina_step_reset();
     }
     last_ns = display_ns;
-    // The game clock of untimed script lines: what the game stepped this frame, the patch page's step with the
-    // real-time step (kept through a reset), whole vsyncs without it.
     double game = step_word ? step_now : ostep_last > 0 ? ostep_last / 60.0 : (interval > 0 ? interval : 1) / 60.0;
     atomic_store_explicit(&game_us, atomic_load_explicit(&game_us, memory_order_relaxed) + (uint64_t)(game * 1e6 + 0.5),
                           memory_order_relaxed);
     world_clock(dt, step);
     ocarina_watch(display_ns);
     floor_probe();
-    if (floor_scan_left || floor_watching) {   // after its first read the scan costs this test alone while off
+    if (floor_scan_left || floor_watching) {
         float link[3];
         int ok = floor_scan_left > 0 || floor_watching ? player_pos(link) : 0;
         if (floor_scan_left) floor_scan(link, ok);
@@ -1498,7 +1220,7 @@ void frame_step_present(uint64_t display_ns, int interval) {
     }
     if (rt_trace & RT_TRACE_PERF) {
         time_dump();
-        if (frame_free_running()) {   // the game's own step, as its time manager holds it
+        if (frame_free_running()) {
             double s = ocarina_step_s();
             step = s > 0 ? s : 0;
         }
