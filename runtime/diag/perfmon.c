@@ -1,6 +1,7 @@
 // Contains code Copyright (c) 2026 Revivedx and the Savage Wind Recomp contributors, Copyright (c) 2026 Peiikai (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// The ADL declarations contain code Copyright (c) 2016 - 2022 Advanced Micro Devices, Inc. (MIT; see THIRD_PARTY_NOTICES.md).
+// The ADL declarations (AdapterInfo, ADLSingleSensorData, ADLPMLogDataOutput, the ADL_PMLOG_* sensor numbers and the
+// ADL2_* signatures) contain code Copyright (c) 2016 - 2022 Advanced Micro Devices, Inc. (MIT; see THIRD_PARTY_NOTICES.md).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
