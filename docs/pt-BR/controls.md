@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=c4c212c525c783d6d394d41d611b99a005bc36c4 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=e1545db1fbc465911d85b8b83cff0812ff56cf90 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -578,7 +578,7 @@ ligado durante o jogo.
 
 ## Captura com RenderDoc (bloqueada)
 
-`NX2SARIA_RDOC=<frame>[,...]` (`runtime/rdoc_win.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) carrega o RenderDoc antes
+`NX2SARIA_RDOC=<frame>[,...]` (`runtime/diag/rdoc.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) carrega o RenderDoc antes
 de `vkCreateInstance`. O RenderDoc esconde `VK_EXT_external_memory_host`, que o back end exige para importar o pool do
 guest (`runtime/vk/vk_memory.c`), então a criação do dispositivo falha sob ele. Uma captura precisa antes de um fallback de
 pool baseado em cópia.

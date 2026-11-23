@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=c4c212c525c783d6d394d41d611b99a005bc36c4 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=e1545db1fbc465911d85b8b83cff0812ff56cf90 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -246,4 +246,4 @@ PS 按键不使用。操作标签页像对待其他手柄一样绑定和重新�
 
 ## RenderDoc 捕获（受阻）
 
-`NX2SARIA_RDOC=<frame>[,...]`（`runtime/rdoc_win.c`；`NX2SARIA_RDOC_DIR`、`NX2SARIA_RDOC_DLL`）会在 `vkCreateInstance` 之前加载 RenderDoc。RenderDoc 会隐藏 `VK_EXT_external_memory_host`，而后端需要它来导入客户机内存池（`runtime/vk/vk_memory.c`），因此在它之下设备创建会失败。要进行捕获，首先需要一个基于复制的内存池后备方案。
+`NX2SARIA_RDOC=<frame>[,...]`（`runtime/diag/rdoc.c`；`NX2SARIA_RDOC_DIR`、`NX2SARIA_RDOC_DLL`）会在 `vkCreateInstance` 之前加载 RenderDoc。RenderDoc 会隐藏 `VK_EXT_external_memory_host`，而后端需要它来导入客户机内存池（`runtime/vk/vk_memory.c`），因此在它之下设备创建会失败。要进行捕获，首先需要一个基于复制的内存池后备方案。

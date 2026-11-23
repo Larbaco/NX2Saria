@@ -258,4 +258,4 @@ The PS button is not used. The Controls tab binds and remaps its buttons like an
 
 ## RenderDoc capture (blocked)
 
-`NX2SARIA_RDOC=<frame>[,...]` (`runtime/rdoc_win.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) loads RenderDoc before `vkCreateInstance`. RenderDoc hides `VK_EXT_external_memory_host`, which the back end requires for guest pool imports (`runtime/vk/vk_memory.c`), so device creation fails under it. A capture needs a copy-based pool fallback first.
+`NX2SARIA_RDOC=<frame>[,...]` (`runtime/diag/rdoc.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) loads RenderDoc before `vkCreateInstance`. RenderDoc hides `VK_EXT_external_memory_host`, which the back end requires for guest pool imports (`runtime/vk/vk_memory.c`), so device creation fails under it. A capture needs a copy-based pool fallback first.
