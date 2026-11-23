@@ -1,23 +1,3 @@
-// NX2SARIA_FLOOR_WATCH (floor_watch in nx2navi.ini, 0 by default; diagnosis, 1.1.1, Windows): which code reads and
-// writes the moving floor under Link, at 60 fps and above it. It takes its addresses from frame_rate.c's floor scan
-// (which it switches on), once the scan has the values below Link that move with him at 60 fps:
-//   - the candidates: up to two survivors inside the platform's rigid body controller unit (the object with vtable
-//     main+0x4bf8a88, where the platform's own position is kept), then one survivor of each distinct object (more than
-//     0x200 bytes from the ones taken) at the height most survivors share below Link (the platform's pivot, 2 m under
-//     him on the Deku Tree's floating platform), FW_CAND in all;
-//   - a pass watches them four at a time (the debug registers, platform.h plat_watch_set) for FW_ROUND_NS each, every
-//     read or write of the 8 bytes at a survivor (its x and y; 4 bytes, x alone, when it is not 8-byte aligned). Each
-//     access counts its call chain (the instruction after it and three return addresses) in a lock-free table, with the
-//     candidate and the kind: a write when the value changed since the candidate's last access, else a read;
-//   - the first pass runs as soon as the candidates are known (the scan arms at 60 fps); the second at the next stretch
-//     of 120 presents at 120 fps or more (frames per update at most 0.5) with Link on the floor (his height over the
-//     pivot within 0.2 m of what it was at the first pass, at most 4 m from it sideways). After each pass the log gets
-//     the pass's frame rate, each candidate's reads and writes a present, and its FW_SHOW most counted chains, each
-//     frame named by the executable's symbol table (lifted functions are f_<guest address>, shown with their main
-//     offset), so the code that reads the floor at 60 fps and not at 120 can be compared.
-// A round ends early after FW_ROUND_HITS accesses; after that each thread that traps again has its watchpoints cleared.
-// Each access costs an exception (several microseconds), so a pass slows the game for its few seconds; symbol lookup
-// after a pass holds one present for up to a second. Off it costs one test a present in frame_rate.c.
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -32,17 +12,17 @@
 #include "platform/platform.h"
 #include "prof_syms.h"
 
-#define FW_CAND 12                       // candidate addresses, four a round
+#define FW_CAND 12
 #define FW_ROUND_NS 1500000000ull
 #define FW_ROUND_HITS 200000
-#define FW_SLOTS 8192                    // call chains, open addressing; a full table drops new ones
-#define FW_SHOW 40                       // chains logged a pass
+#define FW_SLOTS 8192
+#define FW_SHOW 40
 #define FW_PASSES 2
-#define FW_HIGH_FRAMES 0.5f              // the second pass: at most this many 60 Hz frames per update (120 fps)
+#define FW_HIGH_FRAMES 0.5f
 #define FW_HIGH_STRETCH 120
 
 typedef struct {
-    _Atomic uint64_t key;   // 0: free
+    _Atomic uint64_t key;
     _Atomic uint64_t n;
     uint64_t frame[PLAT_WATCH_DEPTH];
     uint8_t cand, kind, depth;
@@ -57,7 +37,7 @@ static int cand_len[FW_CAND], cand_unit[FW_CAND], ncand, floor_ref = -1;
 static float cand_y[FW_CAND], dy0;
 static uint64_t round_presents[(FW_CAND + 3) / 4];
 static struct {
-    int state;   // 0 no candidates, 1 waiting for a pass's frame rate, 2 a pass runs, 3 done
+    int state;
     int pass, round, threads;
     uint64_t pass_t0, round_t0, presents, on_floor, stretch, hits, rounds_armed;
     double frames_sum;
@@ -73,11 +53,9 @@ int floor_watch_wanted(void) {
     return wanted;
 }
 
-// On the thread that made the access, inside its exception handling: no lock, no allocation, no log.
 static int fw_hit(int slot, const uint64_t *frames, int depth) {
     if (atomic_fetch_add_explicit(&fw_hits, 1, memory_order_relaxed) >= FW_ROUND_HITS) return 1;
     int ci = slot_cand[slot];
-    // the value now, read through the system (a read from here would trap again): a write changed it
     uint64_t v = 0;
     plat_mem_read(cand[ci], &v, (size_t)slot_len[slot]);
     int kind = atomic_exchange_explicit(&last_val[slot], v, memory_order_relaxed) != v;
@@ -109,9 +87,8 @@ static int fw_hit(int slot, const uint64_t *frames, int depth) {
 int floor_watch_found(const uint64_t *addr, const float *val, const int *unit, int n, const float link[3]) {
     if (!floor_watch_wanted() || w.state) return 0;
     ncand = 0;
-    for (int k = 0; k < n && ncand < 2; k++)   // the controller unit's own triplets
+    for (int k = 0; k < n && ncand < 2; k++)
         if (unit[k]) cand_y[ncand] = val[3 * k + 1], cand_unit[ncand] = 1, cand[ncand++] = addr[k];
-    // the height most survivors share below Link: the pivot that the floor's copies (body, matrices) hold
     int best = -1, best_n = 0;
     for (int k = 0; k < n; k++) {
         if (!(val[3 * k + 1] < link[1] - 0.3f)) continue;
@@ -143,7 +120,6 @@ int floor_watch_found(const uint64_t *addr, const float *val, const int *unit, i
     return 1;
 }
 
-// Link on the floor: his height over the floor's pivot as at the first pass, and not far from it sideways
 static int on_floor(const float link[3]) {
     float p[3];
     if (!plat_mem_read(cand[floor_ref], p, sizeof p) || !isfinite(p[0]) || !isfinite(p[1]) || !isfinite(p[2])) return 0;
@@ -156,7 +132,7 @@ static int round_arm(void) {
     for (int k = 0; k < 4; k++) {
         int ci = w.round * 4 + k;
         uint64_t v = 0;
-        if (ci >= ncand || !plat_mem_read(cand[ci], &v, (size_t)cand_len[ci])) continue;   // gone with its area
+        if (ci >= ncand || !plat_mem_read(cand[ci], &v, (size_t)cand_len[ci])) continue;
         slot_cand[n] = ci, slot_len[n] = cand_len[ci];
         atomic_store_explicit(&last_val[n], v, memory_order_relaxed);
         a[n] = cand[ci], len[n] = cand_len[ci], n++;
@@ -169,7 +145,6 @@ static int round_arm(void) {
     return t;
 }
 
-// ---- the report of a pass
 typedef struct { uint64_t addr; char name[48]; uint32_t off; } FwName;
 static FwName *names;
 static int nnames;
@@ -185,7 +160,6 @@ static void name_one(void *ctx, uint64_t addr, const char *name, uint32_t off) {
 static int frame_text(char *out, size_t cap, uint64_t a) {
     for (int i = 0; i < nnames; i++) {
         if (names[i].addr != a) continue;
-        // a lifted function is named after its guest address: f_7002c215e0 is main+0x2c215e0
         const char *nm = names[i].name;
         uint64_t guest = !strncmp(nm, "f_", 2) ? strtoull(nm + 2, NULL, 16) : 0;
         if (guest >= MOD_MAIN_BASE && guest < MOD_MAIN_BASE + MOD_MAIN_SIZE)
@@ -225,7 +199,6 @@ static void report(uint64_t t) {
         if (atomic_load(&tab[i].key) && atomic_load(&tab[i].n)) list[n++] = &tab[i];
     qsort(list, (size_t)n, sizeof *list, by_count);
     if (n > FW_SHOW) n = FW_SHOW;
-    // the frames' names from the executable's own symbol table
     uint64_t addrs[FW_SHOW * PLAT_WATCH_DEPTH];
     size_t na = 0;
     for (int i = 0; i < n; i++)
@@ -269,7 +242,7 @@ static void pass_start(uint64_t t) {
 int floor_watch_present(const float link[3], int link_ok, float frames) {
     if (w.state == 0 || w.state == 3) return w.state == 0;
     uint64_t t = plat_now_ns();
-    if (w.state == 1) {   // the pass's frame rate, with Link on the floor
+    if (w.state == 1) {
         int band = w.pass == 0 ? fabsf(frames - 1.0f) < 0.05f : frames <= FW_HIGH_FRAMES;
         w.stretch = band && link_ok && on_floor(link) ? w.stretch + 1 : 0;
         if (w.stretch >= (w.pass == 0 ? 1u : FW_HIGH_STRETCH)) pass_start(t);

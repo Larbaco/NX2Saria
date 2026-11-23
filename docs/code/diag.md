@@ -1599,6 +1599,8 @@ ADL (AMD): loaded once on the sampler thread, kept for the process. `ADL2_New_Qu
 the driver keeps for Radeon RX 5000 and later (the numbers Adrenalin's overlay shows); older GPUs answer with an
 error and their numbers stay -1. Windows only: the Linux driver gives these through sysfs, which this does not read.
 `AdapterInfo` is declared in its Windows layout; `adl.log` is the sampler thread's buffer.
+The ADL declarations the licence notice at the top of the file covers are `AdapterInfo`, `ADLSingleSensorData`
+(`AdlSensor` here), `ADLPMLogDataOutput` (`AdlPmLog`), the `ADL_PMLOG_*` sensor numbers and the `ADL2_*` signatures.
 
 The adapter taken is the one Vulkan renders on: the PCI bus when the device gave one, else the name. ADL lists one
 index per display output of a GPU; the first whose PM log answers is taken. ADL writes the PCI vendor id 0x1002 as

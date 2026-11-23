@@ -1,6 +1,3 @@
-// Frame timing (NX2SARIA_TRACE=perf, the frame-time summary, the performance overlay's counts), the A/B switches (rt_ab,
-// rt_knob) and NX2SARIA_ONE_PER_CORE. The sampling profiler (NX2SARIA_PROFILE) is the OS's (prof_win.c); without one the weak
-// prof_sampler_* below do nothing.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,17 +29,15 @@ __attribute__((weak)) int prof_commit_census(uint64_t frame, uint64_t *wc) { (vo
 __attribute__((weak)) void mem_guest_census(uint64_t frame) { (void)frame; }
 __attribute__((weak)) void mem_lazy_heap_report(uint64_t frame) { (void)frame; }
 
-// NX2SARIA_TRACE=perf, NX2SARIA_FLIGHT=1 or the full performance overlay: event counts are taken. Wait times are always taken
-// (frame-time summary). perf_base: the part fixed at start.
 static int perf_on, perf_base;
-static int overlay;   // performance overlay mode (perf_set_overlay): 0 off, 1 fps, 2 full
+static int overlay;
 
 void perf_set_overlay(int mode) {
     __atomic_store_n(&overlay, mode, __ATOMIC_RELAXED);
     __atomic_store_n(&perf_on, perf_base || mode == 2, __ATOMIC_RELAXED);
 }
 
-static int gpu_want;   // perf_gpu_timing_want: a feature reads GPU time (dynamic resolution)
+static int gpu_want;
 
 void perf_gpu_timing_want(int on) { __atomic_store_n(&gpu_want, on != 0, __ATOMIC_RELAXED); }
 
@@ -57,9 +52,6 @@ void perf_gpu_busy(uint64_t ns) { plat_add64(&gpu_busy_total, (int64_t)ns); }
 
 uint64_t perf_gpu_busy_total(void) { return (uint64_t)__atomic_load_n(&gpu_busy_total, __ATOMIC_RELAXED); }
 
-// Registered before the handlers below, so it runs after them (atexit's order is the reverse): a process that ends
-// through exit() rather than plat_exit, whose log sync this is, gets the lines of the frame-time summary, the stutter
-// map and everything queued before them into the log instead of losing them with the log thread's queue.
 static void log_sync_at_exit(void) { rt_log_sync(); }
 static void hc_start(void);
 
@@ -67,11 +59,11 @@ void prof_start(void) {
     flight_init();
     stutter_map_init();
     atexit(log_sync_at_exit);
-    atexit(perf_summary_flush);   // boot.c's _exit path goes through prof_write instead
+    atexit(perf_summary_flush);
     perf_base = (rt_trace & RT_TRACE_PERF) || flight_on;
     perf_on = perf_base || overlay == 2;
     hc_start();
-    if (prof_sampler_start()) atexit(prof_write);   // a --seconds run ends in _exit: boot.c calls prof_write itself first
+    if (prof_sampler_start()) atexit(prof_write);
 }
 
 void prof_write(void) {
@@ -79,9 +71,7 @@ void prof_write(void) {
     prof_sampler_write();
 }
 
-// ---- NX2SARIA_TRACE=perf: frame interval and the time the render thread spends waiting, logged every 60 presents. The
-// flight recorder (NX2SARIA_FLIGHT=1, flight.c) takes the same numbers per frame.
-static uint64_t wait_ns[PERF_N], frame_ns[PERF_N], worst_ns[PERF_N];   // window totals, this frame, the slowest frame
+static uint64_t wait_ns[PERF_N], frame_ns[PERF_N], worst_ns[PERF_N];
 
 uint64_t perf_begin(void) { return kern_now_ns(); }
 
@@ -93,7 +83,7 @@ void perf_end(int kind, uint64_t t0) {
     uint32_t tid = plat_thread_id();
     if (tid != prof_render_tid && tid != prof_replay_tid) return;
     uint64_t d = kern_now_ns() - t0;
-    if (tid == prof_render_tid && !prof_replay_tid) {   // one thread adds: no atomics on the synchronous path
+    if (tid == prof_render_tid && !prof_replay_tid) {
         wait_ns[kind] += d;
         frame_ns[kind] += d;
         return;
@@ -102,10 +92,6 @@ void perf_end(int kind, uint64_t t0) {
     __atomic_fetch_add(&frame_ns[kind], d, __ATOMIC_RELAXED);
 }
 
-// The waits of other threads that hold the frame all the same: a game may acquire its window image on a thread other
-// than the one that presents (vk_lowlat.c vk_lowlat_pace's comment notes it), and perf_end leaves those waits out, so
-// the pacer's wait in the acquire showed nowhere. Added to frame_ns and wait_ns by the present (perf_present) before
-// the frame's parts are read.
 static volatile int64_t any_ns[PERF_N];
 
 void perf_end_any(int kind, uint64_t t0) {
@@ -118,8 +104,8 @@ void perf_end_any(int kind, uint64_t t0) {
     plat_add64(&any_ns[kind], (int64_t)(kern_now_ns() - t0));
 }
 
-static volatile int64_t other_wait_ns;     // perf_gpu_wait on threads other than the render thread, over the window
-static volatile int64_t render_wait_ns;    // the same on the render thread
+static volatile int64_t other_wait_ns;
+static volatile int64_t render_wait_ns;
 void (*perf_gpu_stats)(PerfGpu *out);
 
 void perf_gpu_wait(uint64_t t0) {
@@ -128,10 +114,8 @@ void perf_gpu_wait(uint64_t t0) {
     plat_add64(plat_thread_id() == prof_render_tid ? &render_wait_ns : &other_wait_ns, d);
 }
 
-static volatile int64_t replay_ns;         // perf_replay: summed over the window, any thread
-static volatile int64_t frame_replay_ns;   // the same since the previous present (frame-time summary)
-// The replaying thread's CPU time over the same spans (perf_replay_cpu): the rest of the replay's wall time it was
-// waiting (a lock, the recorder) or not running (preempted). Since the previous present, and over the period.
+static volatile int64_t replay_ns;
+static volatile int64_t frame_replay_ns;
 static volatile int64_t frame_replay_cpu_ns;
 static uint64_t per_replay_ns, per_replay_cpu_ns;
 
@@ -144,20 +128,18 @@ void perf_replay(uint64_t t0) {
     if (__atomic_load_n(&perf_on, __ATOMIC_RELAXED)) plat_add64(&replay_ns, d);
 }
 
-static volatile int64_t counts[PERF_CNT_N];   // running totals: the perf log and the flight recorder take differences
+static volatile int64_t counts[PERF_CNT_N];
 
 void perf_count(int kind) {
     if (__atomic_load_n(&perf_on, __ATOMIC_RELAXED)) plat_inc64(&counts[kind]);
 }
 
-// ---- NX2SARIA_TRACE=perf work marks (host.h PERF_M_*): any thread adds; the present takes the frame's sums (mark_frame),
-// names them on a slow frame's line and adds them to the 60-frame window's line.
 static const char *const mark_name[PERF_M_N] = {"file reads", "zstd decodes", "pipeline creates", "guest memory maps",
                                                 "pool init/finalize", "device memory allocations",
                                                 "DLSS feature creates", "upscaler GPU waits", "upscaler releases"};
-static volatile int64_t mk_ns[PERF_M_N], mk_n[PERF_M_N], mk_bytes[PERF_M_N], mk_max[PERF_M_N];   // since the last present
+static volatile int64_t mk_ns[PERF_M_N], mk_n[PERF_M_N], mk_bytes[PERF_M_N], mk_max[PERF_M_N];
 typedef struct { uint64_t ns[PERF_M_N], n[PERF_M_N], bytes[PERF_M_N], max[PERF_M_N]; } MarkSums;
-static MarkSums mk_win;   // the 60-frame window's, present thread only
+static MarkSums mk_win;
 
 uint64_t perf_mark_begin(void) { return (rt_trace & RT_TRACE_PERF) ? kern_now_ns() : 0; }
 
@@ -174,7 +156,6 @@ void perf_mark_end(int kind, uint64_t t0, uint64_t bytes) {
     if (t0) perf_mark_add(kind, kern_now_ns() - t0, bytes);
 }
 
-// Takes the sums since the last present into *f and adds them to the window.
 static void mark_frame(MarkSums *f) {
     for (int k = 0; k < PERF_M_N; k++) {
         f->ns[k] = (uint64_t)plat_xchg64(&mk_ns[k], 0), f->n[k] = (uint64_t)plat_xchg64(&mk_n[k], 0);
@@ -184,7 +165,6 @@ static void mark_frame(MarkSums *f) {
     }
 }
 
-// "; on any thread: file reads 12.3 ms (40, 5.1 MiB, longest 2.0 ms), ..." for the kinds with work, appended at line + n.
 static int mark_text(const MarkSums *s, char *line, int n, size_t cap) {
     int any = 0;
     for (int k = 0; k < PERF_M_N && n >= 0 && n < (int)cap - 100; k++) {
@@ -197,17 +177,13 @@ static int mark_text(const MarkSums *s, char *line, int n, size_t cap) {
     return n;
 }
 
-// ---- NX2SARIA_TRACE=perf segments (host.h perf_segment) and scenes (perf_scene). The present thread keeps the running
-// segment's frame times in 50 us bins (SEG_BINS, up to 204.8 ms; slower frames land in the last bin, the worst is kept
-// apart), so a segment's 1% low is exact to 50 us at any frame rate. perf_segment and perf_scene come from any thread
-// (the input script's guest thread, the game's loading threads) and leave a request under seg_lock for the present.
 #define SEG_BINS 4096
 #define SEG_BIN_NS 50000ull
 #define SCENE_SETTLE_NS 10000000000ull
 static PlatMutex seg_lock = PLAT_MUTEX_INIT;
-static char seg_next[96], scene_name[256];   // seg_lock: the requested segment's name; the areas loaded since the last snapshot
-static int seg_asked;                          // seg_lock: a segment was asked for
-static uint64_t scene_at;                      // seg_lock: the last area load (plat_now_ns), 0 none since the last snapshot
+static char seg_next[96], scene_name[256];
+static int seg_asked;
+static uint64_t scene_at;
 static struct {
     char name[96];
     uint64_t f0, t0, frames, sum, max, max_frame, over25, over50, over100;
@@ -219,8 +195,6 @@ static struct {
 
 __attribute__((weak)) void vk_mem_snapshot(uint64_t frame) { (void)frame; }
 
-// ---- "mem: sizes" lines (host.h PerfSizes): one line per group; a line that grows past the log's line size goes out
-// and the group goes on in the next.
 #define SIZES_WEAK(f) __attribute__((weak)) void f(PerfSizes *s) { (void)s; }
 SIZES_WEAK(mem_sizes) SIZES_WEAK(kern_sizes) SIZES_WEAK(setjmp_sizes) SIZES_WEAK(fs_host_sizes) SIZES_WEAK(romfs_sizes)
 SIZES_WEAK(zstd_sizes) SIZES_WEAK(cfg_sizes) SIZES_WEAK(vk_mem_sizes) SIZES_WEAK(vk_gpa_sizes) SIZES_WEAK(vk_texture_sizes)
@@ -260,16 +234,10 @@ static void sizes_log(uint64_t frame) {
     }
 }
 
-// ---- NX2SARIA_HANDLE_CENSUS=1 with NX2SARIA_TRACE=perf: the process's OS handles by kind (platform.h plat_handle_census)
-// at the 600-frame report, when their count (the sizes line's "process handles") grew by HC_GROWTH or more since the
-// last census. In a session of 2026-11-13 that count rose at every area load, 683 to 1095 in 11 minutes, and never
-// fell, while the guest's handles stayed at 116-122: this says which kind grows. The census reads the system's whole
-// handle table (2-5 ms and a buffer of a few MiB), so it runs on one thread of its own, started with the trace and
-// woken by the report; a new thread per census would add its own Thread handle to what it counts.
 #define HC_GROWTH 16
 #define HC_KINDS 64
 static PlatEvent hc_ev;
-static volatile uint64_t hc_frame;   // the report's frame, for the line
+static volatile uint64_t hc_frame;
 static int hc_on;
 
 static int hc_cmp(const void *x, const void *y) {
@@ -322,15 +290,12 @@ static void hc_start(void) {
     hc_on = plat_thread_spawn(hc_main, NULL, "handle census", 0);
 }
 
-// The 600-frame report (perf_present): wakes the census thread, which decides whether the count grew enough.
 static void hc_report(uint64_t frame) {
     if (!hc_on) return;
     __atomic_store_n(&hc_frame, frame, __ATOMIC_RELAXED);
     plat_event_set(&hc_ev);
 }
 
-// The memory lines of a segment's end or a settled scene: the back end's (vk_mem_snapshot), then the sizes. Their
-// time on the presenting thread delays the next frame: its "report" part.
 static void mem_snapshot(uint64_t frame) {
     uint64_t t0 = kern_now_ns();
     vk_mem_snapshot(frame);
@@ -342,7 +307,6 @@ __attribute__((weak)) int vk_mem_vram(uint64_t *used, uint64_t *budget, int *exa
     return 0;
 }
 
-// The world clock as the segment and scene lines give it: seconds, or "-" before the loaded save's first frame.
 static const char *wtxt(int64_t w, char *b) {
     if (w < 0) return "-";
     snprintf(b, 24, "%.1f", w / 1e6);
@@ -357,7 +321,7 @@ void perf_segment(const char *name) {
     plat_mutex_unlock(&seg_lock);
 }
 
-static volatile uint64_t area_load_ns;   // plat_now_ns of the last area load (perf_scene), 0 none
+static volatile uint64_t area_load_ns;
 
 uint64_t perf_area_load_ns(void) { return __atomic_load_n(&area_load_ns, __ATOMIC_RELAXED); }
 
@@ -375,7 +339,6 @@ void perf_scene(const char *name) {
     plat_mutex_unlock(&seg_lock);
 }
 
-// The process's memory and the VRAM in use, for the segment and scene lines.
 static void mem_text(char *out, size_t cap, int vram) {
     uint64_t res, prv, used, budget;
     int exact;
@@ -396,7 +359,7 @@ static void seg_close(uint64_t frame, uint64_t now, int at_exit) {
         rt_log("segment: '%s' ended at frame %llu with no frames timed; %s", seg.name, (unsigned long long)frame, mem);
         return;
     }
-    uint64_t cut = (seg.frames + 99) / 100, acc = 0, low = 0;   // the slowest 1% of frames: the upper edge of its bin
+    uint64_t cut = (seg.frames + 99) / 100, acc = 0, low = 0;
     for (int b = SEG_BINS - 1; b >= 0; b--)
         if ((acc += seg.hist[b]) >= cut) { low = (uint64_t)(b + 1) * SEG_BIN_NS; break; }
     if (low > seg.max) low = seg.max;
@@ -416,10 +379,8 @@ static void seg_open(const char *name, uint64_t frame, uint64_t now) {
     seg.f0 = frame, seg.t0 = now, seg.w0 = frame_step_world_us(), seg.on = 1;
 }
 
-// Each present while the trace is on: the frame into the running segment (d 0: the first present), then a requested
-// segment change and a settled scene's snapshot.
 static void seg_frame(uint64_t frame, uint64_t now, uint64_t d, const MarkSums *fm) {
-    if (!seg.on && seg.f0 == 0) seg_open("boot", frame, now);   // the first present opens the boot segment
+    if (!seg.on && seg.f0 == 0) seg_open("boot", frame, now);
     if (seg.on && d) {
         seg.frames++, seg.sum += d;
         uint64_t b = d / SEG_BIN_NS;
@@ -454,41 +415,25 @@ static void seg_frame(uint64_t frame, uint64_t now, uint64_t d, const MarkSums *
     }
 }
 
-// ---- Frame-time summary, always on: every 60 s of play and at exit one line of frame count, mean fps, 1% low and the
-// frames over 25/50/100 ms, then the worst frames of the period with the render thread's waits in them. Per frame: a
-// histogram increment, the compare against the worst list, a memset of the wait array. No allocation.
-#define FT_BINS 1024              // 0.25 ms bins up to 256 ms; slower frames land in the last bin
+#define FT_BINS 1024
 #define FT_WORST 5
 #define FT_PERIOD_NS 60000000000ull
 typedef struct {
     uint64_t frame, ns, wait[PERF_N], replay;
-    uint64_t at;   // when its present came (kern_now_ns): log_stamp turns it into the local time the line carries
-    uint64_t op_ns[PERF_RP_N], op_n[PERF_RP_N], max_ns, hold_ns;   // NX2SARIA_REPLAY_TIME: the frame's replay ops
-    uint64_t replay_cpu;   // the replaying thread's CPU time in the frame's replay
+    uint64_t at;
+    uint64_t op_ns[PERF_RP_N], op_n[PERF_RP_N], max_ns, hold_ns;
+    uint64_t replay_cpu;
     uint32_t max_op;
 } FtWorst;
-// What a frame over 25 ms spent its time on, so a count of slow frames says where to look instead of only that they
-// happened. A frame is charged to the largest part when that part is at least a quarter of it, and to "unattributed"
-// otherwise - the part of a slow frame none of the recorded waits explains (the GPU, or a stall outside them).
-// The replay's part is its time without the pipeline, translation and texture waits, which all happen inside it: with
-// them in, every frame that waited 900 ms for a pipeline was charged to "replay", the larger number, and a log
-// could not tell a pipeline stall from a slow replay.
-// "census" is the address-space walk of NX2SARIA_MEM_CENSUS: census_check's on the presenting thread after a present,
-// whose time is charged to the next frame, which it delays, and the part of a frame vk_memory.c census_main's walk on
-// its own thread overlapped (perf_census.h census_charge). "report" is the memory report's time on the presenting
-// thread (vk_memory.c vk_mem_census every 600 frames with the perf trace, every 3600 without; the snapshots and sizes
-// lines here), charged to the next frame too. "hand-off" is the wait for the present thread to take the previous
-// picture (PERF_HANDOFF): its own pacing and its present call, an overlay's frame limiter included.
-// stutter_map.c cause_short and tools/stutter_map.py read these names, in this order.
 enum { FT_C_PIPE, FT_C_XLATE, FT_C_TEX, FT_C_FENCE, FT_C_PACE, FT_C_HANDOFF, FT_C_REPLAY, FT_C_CENSUS, FT_C_REPORT,
        FT_C_OTHER, FT_C_N };
 _Static_assert(FT_C_N == STUTTER_CAUSES, "stutter_map.c cause_short and its counts follow FT_C_*");
 static const char *const ft_cause_name[FT_C_N] = { "pipeline", "translation", "texture", "fence", "pacing", "hand-off",
                                                    "replay", "census", "report", "unattributed" };
-static uint64_t census_part_ns;   // present thread: the census walks since the last present (census_check)
-static volatile int64_t report_part_ns;   // the memory report's time since the last present (perf_report_part), any thread
-static volatile uint64_t walk_t0, walk_t1;   // census_main's last walk (perf_census_walk); walk_t1 0 while it runs
-static volatile uint64_t census_walked = UINT64_MAX;   // the frame census_check walked last
+static uint64_t census_part_ns;
+static volatile int64_t report_part_ns;
+static volatile uint64_t walk_t0, walk_t1;
+static volatile uint64_t census_walked = UINT64_MAX;
 
 void perf_census_walk(int begin) {
     if (begin) {
@@ -505,22 +450,16 @@ uint64_t perf_census_walked_frame(void) { return __atomic_load_n(&census_walked,
 static struct {
     uint64_t t0, frames, sum, over25, over50, over100;
     uint32_t hist[FT_BINS];
-    uint64_t slow_n[FT_C_N], slow_ns[FT_C_N];   // frames over 25 ms by cause
-    FtWorst worst[FT_WORST];   // slowest first
+    uint64_t slow_n[FT_C_N], slow_ns[FT_C_N];
+    FtWorst worst[FT_WORST];
     int nworst;
 } ft;
-static uint64_t summary_t0;   // start of the current period (0: not started)
-// The whole session's numbers, the same as ft's but never reset (perf_session_stats, for session_summary.c).
+static uint64_t summary_t0;
 static struct {
     uint64_t frames, sum, max, over25, over100;
     uint32_t hist[FT_BINS];
 } ses;
 
-// The exit's summary (perf_summary_flush) runs on the exiting thread while the present thread may still add frames to
-// `ft` and write its own reports (ft_frame, session_report), with no lock between them: the exit lines came out torn,
-// or twice. ft_stop marks the end, after which the present thread adds nothing, and waits a little for an update
-// already under way; it is the exiting thread that waits, never the present thread. Both sides are sequentially
-// consistent, so either the present thread sees ft_ending or ft_stop sees it counted in ft_busy.
 static volatile int32_t ft_ending, ft_busy;
 
 static int ft_enter(void) {
@@ -535,18 +474,12 @@ static void ft_stop(void) {
     for (int i = 0; i < 50 && __atomic_load_n(&ft_busy, __ATOMIC_SEQ_CST); i++) plat_sleep_ms(1);
 }
 
-// NX2SARIA_REPLAY_TIME=1: how the replay splits between the kinds of op it walks, reported with the frame-time summary.
-// The replay is recorded on one thread, so these need no atomics. The kinds are PERF_RP_* in host.h.
-// NX2SARIA_LOCK_TIME=1 (default 0): the replay threads time every lock they have to wait for (platform.h
-// plat_lock_timing), kept per asking site, and the frame-time summary lists the sites that waited longest since the last
-// summary, with the recorder's full-ring and drain waits. Sites are code addresses; "ref" is perf_lock_timing_here's,
-// which the link map names, so the others resolve as offsets from it.
 #define LT_N 512
 static struct { void *site; uint64_t ns, n, max, ns0, n0; } lt[LT_N];
-static struct { void *site; uint64_t ns, n, max, ns0, n0; } lh[LT_N];   // texture lock holds over 1 ms (perf_lock_hold)
-static struct { void *site; uint64_t ns, n, max, ns0, n0; } lq[LT_N];   // queue lock holds of 5 ms or more (perf_qlock_hold)
+static struct { void *site; uint64_t ns, n, max, ns0, n0; } lh[LT_N];
+static struct { void *site; uint64_t ns, n, max, ns0, n0; } lq[LT_N];
 static uint64_t lt_lost_ns, lt_rec0[2];
-static volatile int64_t fr_hold_ns;   // the texture lock's holds over 1 ms since the last present (ft_frame)
+static volatile int64_t fr_hold_ns;
 void (*perf_rec_waits)(uint64_t *full_ns, uint64_t *drain_ns);
 
 static void lt_add(typeof(lt[0]) *tab, void *site, uint64_t ns) {
@@ -582,8 +515,6 @@ void perf_lock_timing_here(void) {
     if (lt_on) plat_lock_timing(lt_note);
 }
 
-// The eight sites of tab with the most time since the last summary, appended to line; returns the period's total and
-// sets *count, then starts a new period.
 static uint64_t lt_top(typeof(lt[0]) *tab, char *line, int *n, size_t cap, uint64_t *count) {
     uint64_t all = 0, cnt = 0;
     int top[8], ntop = 0;
@@ -596,7 +527,7 @@ static uint64_t lt_top(typeof(lt[0]) *tab, char *line, int *n, size_t cap, uint6
         else if (d > tab[top[7]].ns - tab[top[7]].ns0) at = 7;
         else continue;
         top[at] = i;
-        for (int j = at; j > 0; j--) {   // keep top sorted by this period's time
+        for (int j = at; j > 0; j--) {
             uint64_t x = tab[top[j]].ns - tab[top[j]].ns0, y = tab[top[j - 1]].ns - tab[top[j - 1]].ns0;
             if (x <= y) break;
             int t = top[j]; top[j] = top[j - 1], top[j - 1] = t;
@@ -612,8 +543,6 @@ static uint64_t lt_top(typeof(lt[0]) *tab, char *line, int *n, size_t cap, uint6
     return all;
 }
 
-// The lock lines of a summary: the replay threads' waits with the recorder's, then the texture lock's and the queue
-// lock's long holds.
 static void lt_report(void) {
     uint64_t rec[2] = {0, 0}, waits, holds;
     if (perf_rec_waits) perf_rec_waits(&rec[0], &rec[1]);
@@ -642,11 +571,7 @@ void perf_replay_op(int cat, uint64_t ns) {
     if ((unsigned)cat < PERF_RP_N) rp_ns[cat] += ns, rp_n[cat]++;
 }
 
-// The replay ops since the last present (NX2SARIA_REPLAY_TIME), so a frame over 25 ms charged to the replay can say
-// what its replay was: how many ops of each kind, their time, the slowest op and how long the texture lock was held
-// over 1 ms (NX2SARIA_LOCK_TIME). The present thread takes and clears them in ft_frame; the replay adds.
 static volatile int64_t fr_ns[PERF_RP_N], fr_n[PERF_RP_N], fr_max_ns, fr_max_op;
-// Over the period: the frames over 25 ms charged to the replay, their sums, and how often each op was a frame's slowest.
 static uint64_t sr_n, sr_ns[PERF_RP_N], sr_cnt[PERF_RP_N], sr_max_ns, sr_hold_ns, sr_max_op[256], sr_wall, sr_cpu;
 
 void perf_replay_op_at(int cat, uint32_t op, uint64_t ns) {
@@ -654,14 +579,9 @@ void perf_replay_op_at(int cat, uint32_t op, uint64_t ns) {
     perf_replay_op(cat, ns);
     plat_add64(&fr_ns[cat], (int64_t)ns);
     plat_add64(&fr_n[cat], 1);
-    // one replay thread at a time records ops; a race with the present only misnames the frame's slowest op
     if ((int64_t)ns > fr_max_ns) fr_max_ns = (int64_t)ns, fr_max_op = op;
 }
 
-// The events of the whole run (log_stall.c), once: the orderly end writes them, and a fatal error or a second call during
-// that end (the pipeline save takes seconds) finds them written. A run that ends before its first present has no
-// frame-time period to carry them, so the ends write them on their own then: refusals of the physical memory map are
-// counted from the start of the boot, and a boot that ends in a fatal error would have the first line of each and no count.
 static volatile int32_t events_whole_done;
 static void events_whole_once(void) {
     char note[900];
@@ -671,10 +591,10 @@ static void events_whole_once(void) {
 
 static void ft_report(uint64_t now, const char *tag) {
     if (ft.frames && ft.sum) {
-        uint64_t cut = (ft.frames + 99) / 100, acc = 0, low = 0;   // the slowest 1% of frames
+        uint64_t cut = (ft.frames + 99) / 100, acc = 0, low = 0;
         for (int b = FT_BINS - 1; b >= 0; b--) {
             acc += ft.hist[b];
-            if (acc >= cut) { low = (uint64_t)(b + 1) * 250000ull; break; }   // upper edge of the bin
+            if (acc >= cut) { low = (uint64_t)(b + 1) * 250000ull; break; }
         }
         rt_log("frametime: %s: %llu frames in %.1f s, mean %.1f fps, 1%% low %.1f fps, over 25 ms %llu, 50 ms %llu, 100 ms %llu",
                tag, (unsigned long long)ft.frames, (now - ft.t0) / 1e9, ft.frames * 1e9 / ft.sum, low ? 1e9 / low : 0.0,
@@ -703,7 +623,7 @@ static void ft_report(uint64_t now, const char *tag) {
                    "25 ms charged to the replay: %.0f ms, on the CPU %.0f ms (%.0f%%)", per_replay_ns / 1e6,
                    per_replay_cpu_ns / 1e6, 100.0 * per_replay_cpu_ns / per_replay_ns, sr_wall / 1e6, sr_cpu / 1e6,
                    sr_wall ? 100.0 * sr_cpu / sr_wall : 0.0);
-        if (sr_n && (sr_cnt[PERF_RP_DRAW] || sr_cnt[PERF_RP_BIND])) {   // the replay of the frames over 25 ms charged to it, per frame
+        if (sr_n && (sr_cnt[PERF_RP_DRAW] || sr_cnt[PERF_RP_BIND])) {
             int top[3] = {-1, -1, -1};
             for (int o = 0; o < 256; o++)
                 for (int j = 0; j < 3; j++)
@@ -742,9 +662,6 @@ static void ft_report(uint64_t now, const char *tag) {
                    w->wait[PERF_HANDOFF] / 1e6, ops);
         }
     }
-    // Beside the window, whatever the frames did: the events whose own lines are limited or left out, counted (the
-    // whole run's at the end), and the machine's memory and I/O pressure, so a stall that has a cause outside the game
-    // shows in the minute it happened in (log_stall.c).
     char note[900];
     if (!strcmp(tag, "exit") || !strcmp(tag, "at a fatal error")) events_whole_once();
     else if (log_events_text(note, sizeof note, 0)) rt_log("frametime:   events: %s", note);
@@ -764,18 +681,11 @@ __attribute__((weak)) void vk_gpu_parts_log(uint64_t frame, uint64_t t0, uint64_
 }
 __attribute__((weak)) void vk_mem_rank_log(const char *when) { (void)when; }
 
-// The session's reports when the window loses the focus in play: the frame-time summary of the period so far (which
-// starts a new period), the stutter map and the memory report's growth ranking, at most every SESSION_REPORT_GAP_NS.
-// They are written at the exit too (perf_summary_flush, vk_mem_exit_log), but a process ended from outside, or by a
-// path that skips them, leaves none: a session of 2026-11-13 ended 8 s after its window lost the focus, after 7 minutes
-// of play, with no ranking (one every 10 minutes then) and no map of its last minute. gfx_present.c
-// gfx_window_focus_changed asks for them; the present thread writes them at its next present (perf_present). Formatting
-// only, after copying the stutter map under its lock (stutter_map.c stutter_report): no device call, no wait.
 #define SESSION_REPORT_GAP_NS 60000000000ull
 static volatile int32_t session_due;
 
 void perf_focus_lost(void) {
-    if (frame_step_world_us() >= 0) plat_xchg32(&session_due, 1);   // in play: the loaded save's world clock runs
+    if (frame_step_world_us() >= 0) plat_xchg32(&session_due, 1);
 }
 
 static void session_report(uint64_t now) {
@@ -789,11 +699,10 @@ static void session_report(uint64_t now) {
     stutter_report("at focus loss");
     vk_mem_rank_log("at focus loss, after");
 }
-// The renderer's per-frame texture work (vk_texture.c): closes the frame's sums; d is the frame's interval.
 __attribute__((weak)) void vk_texstat_frame(uint64_t frame, uint64_t d) { (void)frame, (void)d; }
 
-void perf_summary_flush(void) {   // at exit (prof_write)
-    rt_log_ending();   // the summary and the stutter map reach the log file past its cap (main.c log_sink)
+void perf_summary_flush(void) {
+    rt_log_ending();
     ft_stop();
     if (rt_trace & RT_TRACE_PERF) seg_close(__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), kern_now_ns(), 1);
     if (summary_t0) {
@@ -801,22 +710,18 @@ void perf_summary_flush(void) {   // at exit (prof_write)
         stutter_report("exit");
         gfx_exit_log();
     } else {
-        events_whole_once();   // an end before the first present (summary_t0 is also 0 after a first end: written once)
+        events_whole_once();
     }
     summary_t0 = 0;
 }
 
-// A fatal error's frame-time summary (dispatch.c fatal_end), on the failing thread, which may hold any lock: the
-// running period's "frametime" lines and the stutter map so far, the map only when its lock is free. The back end's
-// exit lines (gfx_exit_log) and the trace's segments (seg_close) are left out: they read state the failure may have
-// left half made. The present thread's numbers may be caught mid-frame if it still runs past ft_stop's wait.
 void perf_summary_flush_try(void) {
     ft_stop();
     if (summary_t0) {
         ft_report(kern_now_ns(), "at a fatal error");
         if (!stutter_report_as("at a fatal error", 1)) rt_log("stutter map: its lock is held; not written at the fatal error");
     } else {
-        events_whole_once();   // an end before the first present (summary_t0 is also 0 after a first end: written once)
+        events_whole_once();
     }
     summary_t0 = 0;
 }
@@ -830,8 +735,6 @@ int perf_session_stats(PerfSession *out) {
     return 1;
 }
 
-// Returns the replay time since the previous present. add 0: the exit's summary is written (ft_stop), so the frame
-// is not added to it.
 static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
     int64_t rep = plat_xchg64(&frame_replay_ns, 0);
     vk_texstat_frame(frame, d);
@@ -842,10 +745,10 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
     uint32_t f_op = (uint32_t)fr_max_op;
     for (int c = 0; c < PERF_RP_N; c++) f_ns[c] = (uint64_t)plat_xchg64(&fr_ns[c], 0), f_n[c] = (uint64_t)plat_xchg64(&fr_n[c], 0);
     if (!add) return (uint64_t)rep;
-    if (!summary_t0) {   // the first present starts the period; there is no interval yet
+    if (!summary_t0) {
         summary_t0 = now;
         ft.t0 = now;
-        log_pressure_baseline();   // the first minute's system line counts its stalls from here
+        log_pressure_baseline();
         return (uint64_t)rep;
     }
     ft.frames++;
@@ -859,8 +762,6 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
     if (d > 25000000ull) ft.over25++;
     if (d > 50000000ull) ft.over50++;
     if (d > 100000000ull) ft.over100++;
-    // which part it went to: for a frame over 25 ms, and for the stutter map's hitches, which are 12 ms at least
-    // (stutter_map.c)
     uint64_t part[FT_C_N] = {0};
     int best = FT_C_OTHER;
     uint64_t census_ns = census_part_ns;
@@ -876,7 +777,7 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
         part[FT_C_PACE] = frame_ns[PERF_PACE];
         part[FT_C_HANDOFF] = frame_ns[PERF_HANDOFF];
         part[FT_C_REPLAY] = rep > 0 ? (uint64_t)rep : 0;
-        uint64_t inside = part[FT_C_PIPE] + part[FT_C_XLATE] + part[FT_C_TEX];   // waits on the replay thread
+        uint64_t inside = part[FT_C_PIPE] + part[FT_C_XLATE] + part[FT_C_TEX];
         part[FT_C_REPLAY] = part[FT_C_REPLAY] > inside ? part[FT_C_REPLAY] - inside : 0;
         uint64_t known = 0;
         for (int c = 0; c < FT_C_OTHER; c++) known += part[c];
@@ -885,7 +786,7 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
         census_charge(now, d, w0, w1, &part[FT_C_REPLAY], &part[FT_C_OTHER], &part[FT_C_CENSUS]);
         for (int c = 0; c < FT_C_N; c++)
             if (part[c] > part[best]) best = c;
-        if (part[best] * 4 < d) best = FT_C_OTHER;   // no recorded part explains a quarter of the frame
+        if (part[best] * 4 < d) best = FT_C_OTHER;
     }
     stutter_frame(frame, now, d, part, ft_cause_name, FT_C_N, best);
     if (d > 25000000ull) {
@@ -915,12 +816,8 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d, int add) {
     return (uint64_t)rep;
 }
 
-// The write-combined memory of the process (device-local memory the driver maps into it, which Windows charges to the
-// process's private bytes) as the latest walk of the address space counted it: vk_memory.c census_main every 600 frames
-// and the commit census below, both only with NX2SARIA_MEM_CENSUS=1. vram_used: the driver's device-local figure at that
-// walk, so that a later estimate can add what the device memory grew since.
 static PlatMutex wc_lock = PLAT_MUTEX_INIT;
-static uint64_t wc_bytes, wc_vram, wc_at;   // wc_lock; wc_at 0: no walk yet
+static uint64_t wc_bytes, wc_vram, wc_at;
 
 void perf_note_wc(uint64_t wc, uint64_t vram_used) {
     plat_mutex_lock(&wc_lock);
@@ -936,10 +833,6 @@ int perf_wc_recent(uint64_t max_age_ns, uint64_t *wc, uint64_t *vram_used) {
     return ok;
 }
 
-// The process's commit without the device memory charged to it: the private bytes less the write-combined memory of
-// the last walk and less what the driver's device-local figure grew since (before any walk, less that figure alone).
-// The device-local figure (heapUsage) lies 0.2-1.1 GiB under the write-combined total, so it serves for the change only.
-// Where the commit does not count device memory (plat_commit_counts_vram) it is the private bytes.
 static uint64_t host_commit(uint64_t prv, const PerfGpu *g) {
     if (!plat_commit_counts_vram()) return prv;
     uint64_t wc, at_vram;
@@ -952,15 +845,6 @@ static uint64_t host_commit(uint64_t prv, const PerfGpu *g) {
     return (uint64_t)dev >= prv ? 0 : prv - (uint64_t)dev;
 }
 
-// Where the committed memory lies (NX2SARIA_MEM_CENSUS=1 only), every 3600 frames and when the process's own commit
-// (host_commit) rose 1 GiB over the highest it was at a census: the process has run out of commit in long sessions
-// while the game's own pools stayed flat. The walk holds the address-space lock the game's threads take at every page
-// fault and runs here on the presenting thread, so each one delays the next frame by 130-260 ms (ft_frame charges it
-// to "census"). In a session of 2026-11-13 the trigger read the private bytes, which take in the device memory Windows
-// charges to the process, so every gigabyte of textures re-armed it: 22 of the 33 walks came from it, 120 frames
-// apart in bursts, while the process's own commit grew 307 MiB in 7 minutes of play. So the trigger reads the commit
-// without the device memory against the highest it was at a census (a figure that falls and rises again does not
-// re-arm it), and a growth census waits CENSUS_GAP_NS after the last walk. The scheduled ones stay.
 #define CENSUS_GAP_NS 60000000000ull
 static void census_check(uint64_t frame, uint64_t prv, const PerfGpu *g) {
     static int census_on = -1;
@@ -970,24 +854,16 @@ static void census_check(uint64_t frame, uint64_t prv, const PerfGpu *g) {
     uint64_t host = host_commit(prv, g), t0 = kern_now_ns();
     int grown = host >= census_high + (1ull << 30) && (!census_ns || t0 - census_ns >= CENSUS_GAP_NS);
     if (frame % 3600 && !grown) return;
-    // This frame's memory report (vk_memory.c heap_log, after this present) leaves out its own walk: one is enough,
-    // and the second, 100-240 ms on census_main's thread, delayed the frames after it once more.
     __atomic_store_n(&census_walked, frame, __ATOMIC_RELEASE);
     uint64_t wc = 0;
-    if (prof_commit_census(frame, &wc)) perf_note_wc(wc, g->have_vram ? g->vram_used : 0);   // one walk for both lines
+    if (prof_commit_census(frame, &wc)) perf_note_wc(wc, g->have_vram ? g->vram_used : 0);
     else mem_guest_census(frame);
     uint64_t t1 = kern_now_ns();
     census_part_ns += t1 - t0, census_ns = t1;
-    host = host_commit(prv, g);   // with the walk's own write-combined figure
+    host = host_commit(prv, g);
     if (host > census_high) census_high = host;
 }
 
-// The second line of the 60-frame window: GPU busy time (timestamps), the time threads waited for GPU fences, VRAM and
-// process memory, and which side holds the frame back (perf_bound.h perf_bound: pace, gpu, serial or cpu, and why
-// serial is apart). The first window logs the rule once.
-// With calibrated timestamps a third line splits the GPU's idle time between timed parts: the part was submitted only
-// after the previous one had ended (the GPU waited for the CPU's replay or the game), or it was already queued (untimed
-// work such as uploads and presents ran there, or a wait held it).
 static void perf_gpu_line(uint64_t frame, double interval_ms, double pace_share, uint64_t n) {
     PerfGpu g;
     memset(&g, 0, sizeof g);
@@ -1026,22 +902,17 @@ static void perf_gpu_line(uint64_t frame, double interval_ms, double pace_share,
 }
 
 int rt_ab(void) {
-    static int64_t period = -1;   // us of world clock; 0: off
+    static int64_t period = -1;
     if (period < 0) {
         const char *e = cfg_get("NX2SARIA_AB");
         period = e && *e ? (int64_t)(atof(e) * 1e6) : 0;
     }
     int64_t w = period ? frame_step_world_us() : -1;
-    if (w < 0) return 0;   // before the world clock: A
+    if (w < 0) return 0;
     int64_t k = w / period % 4;
     return k == 1 || k == 2;
 }
 
-// rt_knob reads "0", false, off and no (any case) as off, "ab" as the A/B blocks, and anything else as on, as cfg.c
-// cfg_bool does; nx2navi.ini's loader has already cut a comment after a value of a key whose row has a set of
-// values ("0 ; a note", cfg.c cut_comment). A value other than 0, 1, ab and those words (true, on and yes for on) is
-// logged once per switch; the names are string literals, so the table holds their pointers (a full table logs no
-// more).
 #define KNOB_WARNED 32
 static const char *knob_warned[KNOB_WARNED];
 
@@ -1052,7 +923,7 @@ static void knob_warn(const char *name, const char *key, const char *value) {
             rt_log("cfg: %s = '%s' is not 0, 1, ab, on, off, true, false, yes or no: read as 1", key, value);
             return;
         }
-        if (cur == name) return;   // logged already (another thread may have taken this slot for it just now)
+        if (cur == name) return;
     }
 }
 
@@ -1069,22 +940,8 @@ int rt_knob(const char *name, const char *def) {
     return strcmp(e, "0") != 0;
 }
 
-// NX2SARIA_ONE_PER_CORE=1: the process keeps the first logical processor of each physical core, so busy threads (the
-// render thread, the guest cores, the job workers) never share a core's execution units with another; "ab" switches
-// it with the A/B blocks. Off by default until measured here; the same rule
-// is reported to give +4-10% on an 8-core SMT CPU.
-//
-// NX2SARIA_CACHE_DIE=1, the default: on a processor whose dies have L3 caches of different sizes (AMD's two-die
-// X3D processors, 3D V-Cache on one die) the process runs on the die with the larger cache, so the guest cores, the
-// render thread and the recorder share one L3 and never cross dies. Windows' own placement of games on that die
-// (game mode with AMD's driver) depends on recognizing the exe as a game. 0 leaves the placement to the OS; "ab"
-// switches it with the A/B blocks. No change on one-die and Intel processors.
-//
-// The placement is set at start (perf_cpu_start, before the thread pools count the usable processors) and checked at
-// every present for the A/B switches. The rules narrow the processors the process was given (start /affinity, a
-// launcher's or a benchmark's pin), never widen them; with both off nothing is set.
 static int one_mode = -1, die_mode;
-static uint64_t cpu_all, cpu_one, cpu_die, cpu_applied;   // cpu_applied: the mask set last, 0 none
+static uint64_t cpu_all, cpu_one, cpu_die, cpu_applied;
 
 static void cpu_placement(void) {
     if (one_mode < 0) {
@@ -1098,10 +955,6 @@ static void cpu_placement(void) {
                    one_mode == 2 ? " in the B blocks" : "");
         else
             one_mode = 0;
-        // The largest L3 is a reason to stay on its processors only where it serves enough cores to run the game: two
-        // dies of one design, one of them with stacked cache (a two-die X3D desktop part, 8 cores a die). A die of
-        // fewer cores holds the game to them: the 4 large cores of a mobile part whose 8 small cores share a smaller
-        // L3, or the 6 of a 12-core X3D part, where the recording thread's own core (vk_exec.c rec_claim) left 5.
         int die_cores = __builtin_popcountll(cpu_die & cpu_one);
         if (cpu_die && cpu_die != cpu_all && die_cores < 8) {
             rt_log("cpu: logical processors %#llx of %#llx share the largest L3 cache (%u MiB), but only %d cores: not "
@@ -1119,7 +972,7 @@ static void cpu_placement(void) {
     if (RT_KNOB_ON(die_mode)) want &= cpu_die;
     if (RT_KNOB_ON(one_mode)) want &= cpu_one;
     if (!want) want = cpu_all;
-    if (want == (cpu_applied ? cpu_applied : cpu_all)) return;   // nothing new; never restricted: as it was given
+    if (want == (cpu_applied ? cpu_applied : cpu_all)) return;
     cpu_applied = want;
     if (!plat_process_affinity(want)) rt_log("cpu: could not move the process to logical processors %#llx", (unsigned long long)want);
 }
@@ -1128,9 +981,6 @@ void perf_cpu_start(void) { cpu_placement(); }
 
 int perf_cpu_on_cache_die(void) { return cpu_applied && cpu_die && (cpu_applied & ~cpu_die) == 0; }
 
-// NX2SARIA_CRASH_FILTER_GUARD (default 1; 0 off): once a second, the crash report's last-chance exception filter is put
-// back if a DLL loaded after the start (a GPU driver, an overlay) set its own in its place. Without it, a fault in such
-// a DLL ends the process with no FATAL line in the log. The first eight replacements are logged with the module.
 static void crash_filter_guard(uint64_t frame) {
     static int on = -1, logged;
     if (on < 0) on = rt_knob("CRASH_FILTER_GUARD", "1");
@@ -1143,8 +993,6 @@ static void crash_filter_guard(uint64_t frame) {
     }
 }
 
-// A thread the recording thread starts through a library inherits its reserved core, and the core would stay reserved
-// after the recording thread ended (plat_cpu_reserve_sweep): every RESERVE_SWEEP presents both are put right.
 #define RESERVE_SWEEP 300
 static void reserve_sweep(uint64_t frame) {
     static int logged;
@@ -1159,38 +1007,38 @@ static void reserve_sweep(uint64_t frame) {
 }
 
 void perf_present(uint64_t frame) {
-    static uint64_t last, sum, max, n, win_start, ab_b, pace_any;   // pace_any: other threads' pacing in the window
+    static uint64_t last, sum, max, n, win_start, ab_b, pace_any;
     crash_filter_guard(frame);
     static int64_t win_prev[PERF_CNT_N];
     prof_render_tid = plat_thread_id();
     if (rt_trace & RT_TRACE_SCHED) kern_sched_report(frame);
     uint64_t now = kern_now_ns(), d = last ? now - last : 0;
     prof_sampler_frame(frame, now, last ? d : 0);
-    for (int k = 0; k < PERF_N; k++) {   // other threads' waits for this frame (perf_end_any), before its parts are read
+    for (int k = 0; k < PERF_N; k++) {
         int64_t a = __atomic_load_n(&any_ns[k], __ATOMIC_RELAXED) ? plat_xchg64(&any_ns[k], 0) : 0;
         if (a <= 0) continue;
         __atomic_fetch_add(&frame_ns[k], (uint64_t)a, __ATOMIC_RELAXED);
         __atomic_fetch_add(&wait_ns[k], (uint64_t)a, __ATOMIC_RELAXED);
         if (k == PERF_PACE) pace_any += (uint64_t)a;
     }
-    int ft_add = ft_enter();   // 0 once the exit's summary is written
-    uint64_t rep = ft_frame(frame, now, d, ft_add);   // d is 0 on the first present: it only starts the period
+    int ft_add = ft_enter();
+    uint64_t rep = ft_frame(frame, now, d, ft_add);
     if (ft_add && __atomic_load_n(&session_due, __ATOMIC_RELAXED) && plat_xchg32(&session_due, 0)) session_report(now);
     ft_leave();
     ab_b += rt_ab();
     cpu_placement();
     reserve_sweep(frame);
-    if (__atomic_load_n(&overlay, __ATOMIC_RELAXED))   // the overlay's only cost while it is off: this branch
+    if (__atomic_load_n(&overlay, __ATOMIC_RELAXED))
         perfmon_frame(now, d, frame_ns, rep, __atomic_load_n(&counts[PERF_CNT_TEX_UP], __ATOMIC_RELAXED));
     kern_core_diag_frame(frame, d);
     if (flight_on) flight_frame(frame, now, d, frame_ns, counts);
-    bugcap_frame(frame, now, d, rep);   // F8: a bug capture (bugcap.c); otherwise one record into its ring
+    bugcap_frame(frame, now, d, rep);
     if (!(rt_trace & RT_TRACE_PERF)) {
         memset(frame_ns, 0, sizeof frame_ns);
         last = now;
         return;
     }
-    static uint64_t slow_ns;   // NX2SARIA_PERF_SLOW_MS (default 50): frames at least this long get a line of their own
+    static uint64_t slow_ns;
     if (!slow_ns) {
         const char *e = cfg_get("NX2SARIA_PERF_SLOW_MS");
         slow_ns = (uint64_t)(e && atoi(e) > 0 ? atoi(e) : 50) * 1000000ull;
@@ -1198,8 +1046,6 @@ void perf_present(uint64_t frame) {
     MarkSums fm;
     mark_frame(&fm);
     seg_frame(frame, now, last ? d : 0, &fm);
-    // A frame whose render thread waited 20 ms or more for GPU fences: at the next present, the GPU's timed parts that
-    // ended in its interval (vk_sync.c vk_gpu_parts_log), read then, so that the completion thread has read them.
     static uint64_t parts_frame, parts_t0, parts_t1;
     static double parts_fence;
     if (parts_frame) vk_gpu_parts_log(parts_frame, parts_t0, parts_t1, parts_fence), parts_frame = 0;
@@ -1213,9 +1059,6 @@ void perf_present(uint64_t frame) {
             char marks[700];
             marks[0] = 0;
             mark_text(&fm, marks, 0, sizeof marks);
-            // drain: the wait for the present thread's previous job; handoff: the wait to hand it the next one;
-            // replay: the replays since the last present, the pipeline, translation and texture waits above included
-            // (the rest of a slow frame is the game's own work)
             rt_log("perf: slow frame %llu: %.1f ms; blocked pipeline %.1f xlate %.1f texture %.1f astc %.1f fence %.1f pacing %.1f "
                    "drain %.1f handoff %.1f; replay %.1f%s",
                    (unsigned long long)frame, d / 1e6, frame_ns[PERF_PIPE] / 1e6, frame_ns[PERF_XLATE] / 1e6,
@@ -1243,10 +1086,6 @@ void perf_present(uint64_t frame) {
     gfx_shader_disk_counts(&disk[0], &disk[1], &disk[2]);
     uint64_t dwin[3];
     for (int i = 0; i < 3; i++) dwin[i] = disk[i] - disk_prev[i], disk_prev[i] = disk[i];
-    // The pacing share counts other threads' pacing too (perf_end_any: the acquire's wait of a game that acquires its
-    // window images on a thread other than the presenting one, which the one-time "nvn: the game acquires" line of
-    // nvn_api_obj.c nvnWindowAcquireTexture names). That wait can overlap the render thread's own work, so for such a
-    // game the shares can add up to more than 100%. "render busy" takes out only the render thread's own pacing.
     uint64_t pace_own = wait_ns[PERF_PACE] > pace_any ? wait_ns[PERF_PACE] - pace_any : 0;
     if (n && span)
         rt_log("perf: frame %llu: interval avg %.2f ms max %.2f ms (%.1f fps); render thread blocked: pacing %.0f%% fence %.0f%% drain %.0f%% handoff %.0f%% pipeline build %.0f%% shader xlate %.0f%% texture %.0f%% (astc %.0f%%); pipelines built in background %lld, draws skipped pending %lld, waited %lld, waiting for a shader %lld, one-shot waited %lld; textures uploaded %lld re-uploaded %lld; slowest frame: xlate %.1f ms texture %.1f ms (astc %.1f) pipeline %.1f ms fence %.1f ms; shaders: %llu keys, %llu translated; render busy avg %.2f ms; replay avg %.2f ms; ab %llu/%llu; world %.1f s; shader disk reads: %llu on the render thread (%.1f ms), %llu by the loaders",
@@ -1267,7 +1106,7 @@ void perf_present(uint64_t frame) {
     sum = max = n = ab_b = pace_any = 0;
     memset(wait_ns, 0, sizeof wait_ns);
     win_start = now;
-    if (frame % 600 == 0) {   // beside vk_memory.c's 600-frame memory lines, and like them the next frame's "report"
+    if (frame % 600 == 0) {
         uint64_t s0 = kern_now_ns();
         sizes_log(frame), hc_report(frame);
         perf_report_part(kern_now_ns() - s0);

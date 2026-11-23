@@ -1,5 +1,3 @@
-// What a bug report needs about the machine (sysinfo.h). The OS calls sit behind platform.h; the GPU and driver come
-// from the Vulkan device the game renders on.
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,8 +51,7 @@ static void put(Out *o, const char *fmt, ...) {
     if (k > 0) o->at = o->at + (size_t)k < o->n ? o->at + (size_t)k : o->n - 1;
 }
 
-// The private settings (cfg_private.h) stay out of a text that ends up in bug reports: only whether they are set.
-static int private_setting(const char *key) { return cfg_private_key(key); }   // cfg_private.h: one list for all
+static int private_setting(const char *key) { return cfg_private_key(key); }
 
 static void put_setting(const char *key, const char *value, int from_env, void *ctx) {
     if (private_setting(key)) value = CFG_PRIVATE_SHOWN;

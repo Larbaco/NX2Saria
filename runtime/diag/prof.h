@@ -1,17 +1,12 @@
-// Between perf.c (frame timing, always built) and the OS's sampling profiler (prof_win.c on Windows).
 #pragma once
 #include <stdint.h>
 
-extern volatile uint32_t prof_render_tid;   // the thread that presents (perf_present)
-extern volatile uint32_t prof_main_tid;     // the guest main thread (perf_main_thread)
-extern volatile uint32_t prof_worker_tid[16];   // the replay workers (vk_exec.c rw_main): NX2SARIA_PROFILE_REPLAY=2
-extern volatile uint32_t prof_replay_tid;   // the asynchronous replay (perf_replay_thread): its waits hold up the frame too
+extern volatile uint32_t prof_render_tid;
+extern volatile uint32_t prof_main_tid;
+extern volatile uint32_t prof_worker_tid[16];
+extern volatile uint32_t prof_replay_tid;
 
-// The sampler; perf.c's weak versions do nothing.
-int prof_sampler_start(void);               // NX2SARIA_PROFILE: starts sampling; 1 when it runs
-void prof_sampler_write(void);              // writes the profile once (prof_write)
-void prof_sampler_frame(uint64_t frame, uint64_t now, uint64_t d);   // every present; d: the interval, 0 on the first
-// NX2SARIA_MEM_CENSUS (perf.c census_check): logs where the process's committed memory lies and the guest regions'
-// committed bytes from one walk of the address space; *wc the write-combined total. 0 where there is no such walk
-// (perf.c's weak version): mem_guest_census walks the guest regions then.
+int prof_sampler_start(void);
+void prof_sampler_write(void);
+void prof_sampler_frame(uint64_t frame, uint64_t now, uint64_t d);
 int prof_commit_census(uint64_t frame, uint64_t *wc);

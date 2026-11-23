@@ -1,32 +1,3 @@
-// Bug captures (bugcap.h): what a player's F8 writes, and the run that starts from it. docs/bug-capture.md.
-//
-// A capture is one folder, <log folder>/captures/<number>-<YYYYMMDD-HHMMSS>/ (NX2SARIA_CAPTURE_DIR names another base):
-//
-//   capture.txt     written last, so a folder that has it is complete. "key = value" lines under [sections]: when,
-//                   versions, the area, Link's position and rotation, the camera of the frame on screen and the
-//                   game's own, the window and picture, frame times around the press, the machine, and the settings
-//                   that differ from the defaults
-//   frame.png       the presented frame as the window got it, overlay included, without this capture's own note
-//   frames.tsv      the last RING presents before the press and the POST after it: frame, interval, replay time
-//   log-tail.txt    the end of this run's log
-//   settings.ini    every setting with a value, as nx2navi.ini lines, without the private ones (cfg_private.h), and
-//                   the values the quality preset gave the others (preset_lines): what a replay runs with
-//   NX2Saria-save-*.zip   the save the game would load next (save_share.c), which a replay starts from
-//   flags.tsv, texts.tsv   the game's on/off flags and its 64-character texts, by the hash of their names
-//   flight/         the flight recorder's dump of the same moment, when flight = 1 (flight.c)
-//
-// The press is taken on the render thread (bugcap_frame), which reads what cannot wait: the position, the camera of
-// the frame being shown, the frame times. It asks the present path for the next frame's pixels (vk_present_grab) and
-// the game's camera update for its own choice (dbg_camera_watch), and a thread of its own waits for both, writes the
-// files and then lets the note show. One capture at a time: a press while one is being written is logged and dropped.
-//
-// A replay (NX2SARIA_CAPTURE_REPLAY=<folder>) is a test run: cfg.c takes the folder's settings.ini in place of
-// the selected settings file, the environment still on top, and writes no settings file. On the game's thread bugcap_replay_pad
-// presses A until the save is loaded and bugcap_replay_tick then goes where the capture was taken with the debug
-// menu's own tools (debug_tools.c): the game's change of area to the start position nearest to the place, Link's
-// walk to it, the free camera at the captured camera. Link is walked, not put: his position cannot be written
-// (debug_tools.c). At the end the replay takes a capture of its own, into <folder>/replays unless NX2SARIA_CAPTURE_DIR
-// says otherwise, whose capture.txt names the original and how far from it Link ended.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -51,15 +22,13 @@
 #include "vk.h"
 #include "vk_dlaa.h"
 
-#define RING 600   // presents kept before a press: ten seconds at 60 a second
-#define POST 30    // presents recorded after it
+#define RING 600
+#define POST 30
 #define NOTE_NS 6000000000ull
 #define LOG_TAIL (256u << 10)
 
 typedef struct { uint64_t frame; uint32_t interval_us, replay_us; } FrameRec;
 
-// The capture being taken. Filled by the render thread at the press, then read by the writer; grab comes from the
-// present path and post from the render thread meanwhile, each behind its own count.
 static struct {
     int number;
     char name[64], dir[PLAT_PATH_MAX], why[160];
@@ -72,7 +41,7 @@ static struct {
     int fc_on, fc_sticks;
     float fc_speed, fc_yaw, fc_pitch;
     double fc_pos[3];
-    uint64_t seen0[2];           // the game's camera updates seen before this capture watched them
+    uint64_t seen0[2];
     PerfStats perf;
     FrameRec pre[RING];
     int pre_n, flight;
@@ -80,27 +49,26 @@ static struct {
     volatile int post_n;
     VkGrab *grab;
     volatile int grab_done;
-    char replay_note[400];       // a replay's capture: what it was a replay of and how close it came
+    char replay_note[400];
 } job;
-static volatile int32_t busy;    // a capture is being taken or written
+static volatile int32_t busy;
 
-static FrameRec ring[RING];      // the render thread's
+static FrameRec ring[RING];
 static uint64_t ring_n;
 
-static volatile uint64_t note_until;   // the note shows until then (plat_now_ns); the three below are set before it
+static volatile uint64_t note_until;
 static int note_number, note_ok;
 static char note_name[64];
 
-// ---- where captures go
 static struct {
-    int state;                   // 0 not looked at, 1 a replay, -1 none
+    int state;
     char dir[PLAT_PATH_MAX], name[64];
-    char text[16384];            // the replayed capture.txt
+    char text[16384];
 } rp_src;
 
 static void replay_source(void) {
     if (rp_src.state) return;
-    const char *e = cfg_env("NX2SARIA_CAPTURE_REPLAY");   // the environment only: a replay is one run, never a saved setting
+    const char *e = cfg_env("NX2SARIA_CAPTURE_REPLAY");
     if (!e || !*e) {
         rp_src.state = -1;
         return;
@@ -145,7 +113,6 @@ static int highest(const char *name, int kind, uint64_t size, void *ctx) {
     return 1;
 }
 
-// ---- the writer
 typedef struct { FILE *f; } Txt;
 
 static void put(Txt *t, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -196,7 +163,7 @@ static void put_timing(Txt *t) {
     for (int i = 0; i < post_n; i++) put(t, " %.1f", job.post[i].interval_us / 1e3);
     put(t, "\n");
     const PerfStats *p = &job.perf;
-    if (p->fps > 0) {   // the performance overlay was on: its numbers of the last second
+    if (p->fps > 0) {
         put(t, "overlay_fps = %.1f\noverlay_1pct_low_fps = %.1f\noverlay_frame_ms_max = %.2f\n", p->fps, p->low1_fps, p->frame_ms_max);
         put(t, "overlay_cpu_pct = %.0f (the game %.0f)\noverlay_gpu_pct = %.0f\noverlay_vram_mb = %.0f of %.0f (the game %.0f)\n",
             p->cpu_total_pct, p->cpu_game_pct, p->gpu_pct, p->vram_used_mb, p->vram_total_mb, p->vram_game_mb);
@@ -220,14 +187,12 @@ static void write_frames(void) {
     fclose(f);
 }
 
-// The end of the log: the last LOG_TAIL bytes from the first whole line on.
 static void write_log_tail(void) {
     char path[PLAT_PATH_MAX];
     const char *log = rt_log_path();
     if (log) snprintf(path, sizeof path, "%s", log);
     else if (!plat_stderr_path(path, sizeof path)) return;
     rt_log_sync();
-    // the game holds the log open for writing: the C library's open shares it, where plat_file_open is refused
     FILE *in = fopen(path, "rb");
     if (!in) return;
     plat_fseek64(in, 0, SEEK_END);
@@ -244,7 +209,7 @@ static void write_log_tail(void) {
             const char *line = memchr(buf, '\n', (size_t)got);
             if (line) p = line + 1;
         }
-        char shown[PLAT_PATH_MAX];   // the log's own path, with the personal folder short like the lines below it
+        char shown[PLAT_PATH_MAX];
         fprintf(f, "# the last %lld of %lld bytes of %s\n", (long long)(got - (p - buf)), (long long)size,
                 log_privacy_str(path, shown, sizeof shown));
         fwrite(p, 1, (size_t)(got - (p - buf)), f);
@@ -253,9 +218,6 @@ static void write_log_tail(void) {
     free(buf);
 }
 
-// Keys that are of one run and not of the game's settings: what a test run's harness sets (scripted input, shots,
-// dumps, the window kept in the background). capture.txt lists them; settings.ini, which a replay runs with, leaves
-// them out.
 static int run_key(const char *key) {
     static const char *const starts[] = {"MENU_TEST", "SHOT_", "SHOTS", "DUMP", "PROFILE", "DBG_TEST"};
     static const char *const whole[] = {"INPUT", "INPUT_SCRIPT", "INPUT_RECORD", "ASSUME_FOCUS", "BACKGROUND_WINDOW",
@@ -271,27 +233,24 @@ typedef struct { FILE *ini; Txt *txt; int differ; } Settings;
 
 static void setting_cb(const char *key, const char *value, int from_env, void *ctx) {
     Settings *s = ctx;
-    if (!strncmp(key, "CAPTURE_", 8)) return;   // a replay's own keys
+    if (!strncmp(key, "CAPTURE_", 8)) return;
     char lower[80], var[96];
     snprintf(lower, sizeof lower, "%s", key);
     for (char *p = lower; *p; p++) *p = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
     snprintf(var, sizeof var, "NX2SARIA_%s", key);
-    if (!from_env && cfg_from_env(var)) return;   // the file's line of a key the environment sets too: that one counts
+    if (!from_env && cfg_from_env(var)) return;
     int private = cfg_private_key(key);
-    char shown[1024];   // a folder in the account's home written short (log_privacy.c), as in the log
+    char shown[1024];
     value = log_privacy_str(value, shown, sizeof shown);
     if (s->ini && !private && *value && !run_key(key)) fprintf(s->ini, "%s = %s\n", lower, value);
     if (!s->txt || !*value) return;
     const char *def = cfg_default(key);
-    if (def && *def && !strcmp(def, value)) return;   // set, to what it would be anyway
+    if (def && *def && !strcmp(def, value)) return;
     put(s->txt, "%s = %s%s\n", lower, private ? CFG_PRIVATE_SHOWN : value,
         from_env ? "   # from the environment" : def && *def ? "" : "   # no fixed default");
     s->differ++;
 }
 
-// The quality preset (cfg.c "quality presets"): its name in capture.txt, and in settings.ini the value of each key it
-// can set that the player did not, where that differs from the table's default. A replay runs on high, which sets
-// nothing (cfg.c preset_init): its PC's own preset would otherwise give these keys values of another PC.
 static void preset_lines(FILE *ini) {
     int in_use = cfg_preset_in_use(), n;
     const char *const *keys = cfg_preset_keys(&n);
@@ -339,7 +298,6 @@ static void write_game_data(void) {
 
 static void put_vec(Txt *t, const char *key, const double v[3]) { put(t, "%s = %.4f %.4f %.4f\n", key, v[0], v[1], v[2]); }
 
-// A direction as the free camera's angles (debug_tools.c): it looks along (cos p sin y, sin p, cos p cos y).
 static void angles_of(const double d[3], double *yaw, double *pitch) {
     double len = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
     *yaw = atan2(d[0], d[2]);
@@ -348,7 +306,6 @@ static void angles_of(const double d[3], double *yaw, double *pitch) {
 
 static void put_camera(Txt *t) {
     put(t, "\n[camera]\n");
-    // the game's own cameras, as its update chose them in the frames after the press
     static const char *const which[2] = {"game_camera", "event_camera"};
     double gpos[2][3], gat[2][3];
     int fresh[2] = {0, 0};
@@ -358,7 +315,7 @@ static void put_camera(Txt *t) {
     }
     double pos[3], dir[3], yaw = 0, pitch = 0;
     const char *source = "none";
-    if (job.have_cam) {   // what the frame on screen was drawn with
+    if (job.have_cam) {
         for (int i = 0; i < 3; i++) pos[i] = job.cam.pos[i], dir[i] = job.cam.fwd[i];
         source = "the frame on screen (the upscaler's camera)";
     } else if (job.fc_on) {
@@ -414,8 +371,6 @@ static void writer(void *arg) {
     plat_file_mkdir_p(job.dir);
     int ok = plat_dir_exists(job.dir);
     if (!ok) rt_log("capture: cannot create %s", job.dir);
-    // the frame's pixels come with the next present, the game's camera with its next update, the frames after the
-    // press as they are shown: a second at most for all three
     while (plat_now_ns() - job.start_ns < 2000000000ull && !__atomic_load_n(&job.grab_done, __ATOMIC_ACQUIRE)) plat_sleep_ms(2);
     if (!__atomic_load_n(&job.grab_done, __ATOMIC_ACQUIRE)) vk_present_grab_cancel();
     while (plat_now_ns() - job.start_ns < 700000000ull && __atomic_load_n(&job.post_n, __ATOMIC_ACQUIRE) < POST) plat_sleep_ms(5);
@@ -464,7 +419,6 @@ static void writer(void *arg) {
         if (job.have_rot) {
             put(&t, "player_rot =");
             for (int i = 0; i < 9; i++) put(&t, " %.5f", job.rot[i]);
-            // the matrix's third column is the way he faces, as the free camera's yaw counts it
             put(&t, "\nplayer_yaw = %.5f\n", atan2(job.rot[2], job.rot[8]));
         }
         if (job.speed != 1.0f) put(&t, "game_speed = %.3f\n", job.speed);
@@ -489,7 +443,7 @@ static void writer(void *arg) {
         sysinfo_text(sys, sizeof sys);
         char *cut = strstr(sys, "Settings with a value:");
         if (cut) *cut = 0;
-        for (char *line = sys, *end; line && *line; line = end ? end + 1 : NULL) {   // "OS: ..." as "os = ..."
+        for (char *line = sys, *end; line && *line; line = end ? end + 1 : NULL) {
             if ((end = strchr(line, '\n'))) *end = 0;
             char *colon = strstr(line, ": ");
             if (!colon) continue;
@@ -518,7 +472,6 @@ static void writer(void *arg) {
         write_game_data();
         char zip[PLAT_PATH_MAX];
         save_share_export(job.dir, 0, zip, sizeof zip);
-        // capture.txt appears last and whole
         char part[PLAT_PATH_MAX + 32], done[PLAT_PATH_MAX + 32];
         snprintf(part, sizeof part, "%s/capture.txt.part", job.dir);
         snprintf(done, sizeof done, "%s/capture.txt", job.dir);
@@ -542,9 +495,8 @@ int bugcap_note(int *number, int *ok, char name[64]) {
     return 1;
 }
 
-// ---- the press (render thread)
-static volatile int32_t replay_wants;   // the replay's own capture, asked for by the game's thread
-static char replay_note[400];           // ... with these lines for its capture.txt, written before replay_wants
+static volatile int32_t replay_wants;
+static char replay_note[400];
 
 static void start(uint64_t frame, uint64_t interval_ns, const char *why) {
     int32_t idle = 0;
@@ -565,7 +517,6 @@ static void start(uint64_t frame, uint64_t interval_ns, const char *why) {
     snprintf(job.name, sizeof job.name, "%03d-%04d%02d%02d-%02d%02d%02d", job.number, job.local.tm_year + 1900,
              job.local.tm_mon + 1, job.local.tm_mday, job.local.tm_hour, job.local.tm_min, job.local.tm_sec);
     snprintf(job.dir, sizeof job.dir, "%s/%s", base, job.name);
-    // what the game holds now: the writer comes later
     job.have_pos = dbg_player_pos(job.pos);
     job.have_rot = dbg_player_rot(job.rot);
     job.have_area = dbg_area(job.area);
@@ -610,7 +561,6 @@ void bugcap_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, uint64_
     if (__atomic_load_n(&busy, __ATOMIC_ACQUIRE)) {
         int n = job.post_n;
         if (n < POST && frame > job.frame) job.post[n] = r, __atomic_store_n(&job.post_n, n + 1, __ATOMIC_RELEASE);
-        // the game's camera update has had its frames: the patch site goes quiet again
         if (watch_frames >= 0 && ++watch_frames > 8) dbg_camera_watch(0), watch_frames = -1;
     } else {
         if (watch_frames > 0) dbg_camera_watch(0);
@@ -618,7 +568,7 @@ void bugcap_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, uint64_
     }
     static uint64_t at[16];
     static int n_at = -1;
-    if (n_at < 0) {   // NX2SARIA_CAPTURE_AT=<frame>[,<frame>...]: captures without a key, for test runs
+    if (n_at < 0) {
         n_at = 0;
         for (const char *p = cfg_get("NX2SARIA_CAPTURE_AT"); p && *p && n_at < 16;) {
             char *end;
@@ -638,8 +588,6 @@ void bugcap_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, uint64_
     if (why) start(frame, interval_ns, why);
 }
 
-// ---- the replay (the game's thread)
-// The value of key in the replayed capture.txt ("key = value" at a line's start); 0 without it.
 static int src_get(const char *key, char *out, size_t cap) {
     size_t kl = strlen(key);
     for (const char *p = rp_src.text; p && *p; p = strchr(p, '\n'), p = p ? p + 1 : NULL) {
@@ -659,23 +607,20 @@ static struct {
     float pos[3], yaw, pitch;
     double cam[3];
     uint64_t t_ns, tick;
-    float still_at[3];        // R_ROUTING: where Link was when he last moved, and when
+    float still_at[3];
     uint64_t still_ns;
 } rp;
-static volatile int32_t rp_loaded;   // Link has appeared: bugcap_replay_pad stops pressing A
-static volatile int32_t rp_held;     // Link stands still on his walk (a conversation holds him): it presses A again
+static volatile int32_t rp_loaded;
+static volatile int32_t rp_held;
 
 void bugcap_replay_pad(uint64_t *buttons) {
     static uint64_t reads;
     if (!bugcap_replay_dir()) return;
     reads++;
     if (__atomic_load_n(&rp_loaded, __ATOMIC_RELAXED)) {
-        // a conversation that began where the teleport arrived (the game's own, on a save that had not been there):
-        // A takes it to its end
         if (__atomic_load_n(&rp_held, __ATOMIC_RELAXED) && reads % 60 < 4) *buttons |= 1ull << B_A;
         return;
     }
-    // through the title screen and the file menu: A for four reads, every hundred, from the fifth second on
     if (reads > 300 && reads % 100 < 4) *buttons |= 1ull << B_A;
 }
 
@@ -704,7 +649,7 @@ void bugcap_replay_tick(uint64_t tick) {
         rp.have_cam = src_get("camera_pos", text, sizeof text) && sscanf(text, "%lf %lf %lf", &rp.cam[0], &rp.cam[1], &rp.cam[2]) == 3 &&
                       src_get("camera_yaw", text, sizeof text) && sscanf(text, "%f", &rp.yaw) == 1 &&
                       src_get("camera_pitch", text, sizeof text) && sscanf(text, "%f", &rp.pitch) == 1;
-        const char *cam = cfg_env("NX2SARIA_CAPTURE_REPLAY_CAMERA");   // 0: the game's own camera stays
+        const char *cam = cfg_env("NX2SARIA_CAPTURE_REPLAY_CAMERA");
         rp.cam_on = !(cam && !strcmp(cam, "0"));
         rt_log("capture: replay of %s: %s, Link at %.2f %.2f %.2f%s, camera %s", rp_src.name, rp.area[0] ? rp.area : "no area",
                rp.pos[0], rp.pos[1], rp.pos[2], rp.have_pos ? "" : " (not in the capture)",
@@ -715,9 +660,9 @@ void bugcap_replay_tick(uint64_t tick) {
         }
         rp_go(R_WAIT);
         break;
-    case R_WAIT:   // the save has just loaded: the game takes no change of area in its first moments
+    case R_WAIT:
         if (in_state < 3) break;
-        dbg_flags_refresh(), dbg_names(NULL);   // the start positions, read with the flag names
+        dbg_flags_refresh(), dbg_names(NULL);
         rp_go(R_LIST);
         break;
     case R_LIST:
@@ -732,7 +677,7 @@ void bugcap_replay_tick(uint64_t tick) {
             rp_go(R_ROUTE);
             break;
         }
-        // fall through
+        __attribute__((fallthrough));
     case R_WARP:
         if (rp.state == R_WARP) {
             if (dbg_busy() || in_state < 1) {
@@ -743,7 +688,7 @@ void bugcap_replay_tick(uint64_t tick) {
                 rp_go(R_ROUTE);
                 break;
             }
-            if (in_state < 4) break;   // a refusal (an event still runs after the load): asked again in a moment
+            if (in_state < 4) break;
             dbg_status(text);
             if (++rp.tries >= 6) {
                 rt_log("capture: replay: the game's last word on the teleport: %s", text);
@@ -773,9 +718,6 @@ void bugcap_replay_tick(uint64_t tick) {
         }
         break;
     case R_ROUTING:
-        // Link not moving at all for two seconds is no wall (he would slide along it or sidestep): the game holds him,
-        // for a conversation or an event. A is pressed until he moves again, and the walk is asked for once more
-        // should the route have given up meanwhile.
         if (dbg_player_pos(p) && fabsf(p[0] - rp.still_at[0]) + fabsf(p[1] - rp.still_at[1]) + fabsf(p[2] - rp.still_at[2]) > 0.05f) {
             memcpy(rp.still_at, p, sizeof rp.still_at), rp.still_ns = now;
             __atomic_store_n(&rp_held, 0, __ATOMIC_RELAXED);
@@ -784,7 +726,7 @@ void bugcap_replay_tick(uint64_t tick) {
             if (!rp.held_seen++) rt_log("capture: replay: Link does not move (a conversation or an event holds him): pressing A until he does");
         }
         if (dbg_route_state() == 1 && in_state < 120) break;
-        if (dbg_route_state() == 2 && rp.held_seen && rp.walks < 3 && in_state < 120) {   // given up while he was held
+        if (dbg_route_state() == 2 && rp.held_seen && rp.walks < 3 && in_state < 120) {
             dbg_route_to(rp.pos[0], rp.pos[2], 0.5f);
             rp.walks++;
             break;
@@ -794,9 +736,9 @@ void bugcap_replay_tick(uint64_t tick) {
         rp_go(R_CAMERA);
         break;
     case R_CAMERA:
-        if (in_state < 1) break;   // Link has stopped
+        if (in_state < 1) break;
         if (rp.have_cam && rp.cam_on && dbg_freecam_available()) {
-            dbg_freecam_set(1, 0, 8.0f);   // standing: the pad still plays the game
+            dbg_freecam_set(1, 0, 8.0f);
             rp.tick = tick;
             rp_go(R_CAMERA_PUT);
         } else {
@@ -805,12 +747,12 @@ void bugcap_replay_tick(uint64_t tick) {
         }
         break;
     case R_CAMERA_PUT:
-        if (tick < rp.tick + 3) break;   // its first update took the game's view: now the captured one
+        if (tick < rp.tick + 3) break;
         dbg_freecam_place(rp.cam, rp.yaw, rp.pitch);
         rp_go(R_SETTLE);
         break;
     case R_SETTLE: {
-        if (in_state < 3) break;   // the picture's history and the area's detail settle
+        if (in_state < 3) break;
         int have = dbg_player_pos(p);
         float off = have && rp.have_pos ? sqrtf((p[0] - rp.pos[0]) * (p[0] - rp.pos[0]) + (p[1] - rp.pos[1]) * (p[1] - rp.pos[1]) +
                                                 (p[2] - rp.pos[2]) * (p[2] - rp.pos[2])) : -1;
