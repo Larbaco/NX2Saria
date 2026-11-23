@@ -1,6 +1,7 @@
 # needs: linux, display
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -80,7 +81,7 @@ class LauncherLifecycleTest(unittest.TestCase):
         }))
         (self.game / 'build-cache' / 'state.json').write_text(json.dumps({'kit': '0.24.0', 'steps': {'compile': {}}}))
         self.exe = self.game / 'ocarina'
-        self.exe.write_text('#!/bin/sh\ntouch game-started\nwhile [ ! -e game-release ]; do sleep 0.1; done\ntouch game-ended\n')
+        self.exe.write_text('#!/bin/sh\necho $$ > game-started\nwhile [ ! -e game-release ]; do sleep 0.1; done\ntouch game-ended\n')
         self.exe.chmod(0o755)
         self.env = {k: v for k, v in os.environ.items() if k in ('DISPLAY', 'XAUTHORITY', 'PATH', 'LANG')}
         self.env.update(HOME=str(self.base), XDG_DATA_HOME=str(self.base / 'data'),
@@ -95,6 +96,18 @@ class LauncherLifecycleTest(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=10)
+        started, ended = self.game / 'game-started', self.game / 'game-ended'
+        deadline = time.monotonic() + 3
+        while started.exists() and not ended.exists() and time.monotonic() < deadline:
+            time.sleep(.05)
+        if started.exists() and not ended.exists():
+            try:
+                pid = int(started.read_text())
+                command = (Path('/proc') / str(pid) / 'cmdline').read_bytes().split(b'\0')
+                if os.fsencode(self.exe) in command:
+                    os.kill(pid, signal.SIGTERM)
+            except (OSError, ValueError):
+                pass
 
     def wait_file(self, file, process=None):
         deadline = time.monotonic() + 30
