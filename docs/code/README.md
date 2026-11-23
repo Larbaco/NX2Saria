@@ -30,7 +30,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 6 | `runtime/input/` | [input.md](input.md) | extracted |
 | 7 | `runtime/platform/` | [platform.md](platform.md) | extracted |
 | 8 | `runtime/nvn/` | [nvn.md](nvn.md) | extracted |
-| 9 | `runtime/patches/` | [patches.md](patches.md) | started: the unbuilt mod code and the cheats' switches in `cheats.c`; the rest not yet extracted |
+| 9 | `runtime/patches/` | [patches.md](patches.md) | extracted |
 | 10 | `runtime/diag/` | `diag.md` | not yet extracted |
 | 11 | `launcher/` | `launcher.md` | not yet extracted |
 | 12 | `runtime/ui/` | [ui.md](ui.md) | started: `cheats_tab.cpp` and what the Cheats tab needs of `menu.cpp` and `option_rows.cpp`; the rest not yet extracted |
