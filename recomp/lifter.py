@@ -1,14 +1,6 @@
 # Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-"""AArch64 -> C static recompiler.
-
-Integer, memory, and control flow are translated to C. FP/SIMD instructions (and CRC32) are
-either re-emitted as inline assembly (simd='asm', AArch64 hosts), with guest V registers
-loaded from / stored to the Cpu struct around each batch, so their semantics are
-bit-exact by construction, or lowered to portable C (simd='c', tools/simd_c.py + runtime/simd.h).
-"""
 import struct
 
-# Cpu struct offsets (must match runtime/cpu.h)
 OFF_X = 0
 OFF_SP = 256
 OFF_PC = 264
@@ -73,8 +65,6 @@ def hx(v):
     return f'0x{v:x}ull'
 
 
-# ---------------------------------------------------------------- register helpers
-
 def X(r):
     return '0ull' if r == 31 else f'c->x[{r}]'
 
@@ -98,7 +88,6 @@ def R(sf, r, sp=False):
 
 
 def set_reg(sf, r, expr, sp=False):
-    """Statement writing expr to Rd (zero-extending 32-bit results)."""
     if r == 31 and not sp:
         return f'(void)({expr});'
     dst = 'c->sp' if r == 31 else f'c->x[{r}]'
@@ -134,30 +123,26 @@ def extend_expr(r, option, shift):
     return f'({e} << {shift})' if shift else e
 
 
-# ---------------------------------------------------------------- instruction classes
-
 class Insn:
-    """Result of lifting one instruction."""
     __slots__ = ('kind', 'code', 'target', 'cond', 'asm')
 
     def __init__(self, kind, code='', target=None, cond=None, asm=None):
-        self.kind = kind      # 'op', 'asm', 'b', 'bcond', 'bl', 'blr', 'br', 'ret', 'trap'
-        self.code = code      # C statements (for 'op'), or condition expr for 'bcond'
-        self.target = target  # branch target (int) or register expr
+        self.kind = kind
+        self.code = code
+        self.target = target
         self.cond = cond
-        self.asm = asm        # AsmInsn for 'asm'
+        self.asm = asm
 
 
 class AsmInsn:
-    """An FP/SIMD instruction to pass through as inline asm."""
     __slots__ = ('word', 'vregs', 'gprs', 'flags', 'consts')
 
     def __init__(self, word, vregs, gprs, flags=False, consts=None):
         self.word = word
-        self.vregs = vregs    # set of V register numbers touched
-        self.gprs = gprs      # list of (bit position, guest reg or 'sp')
+        self.vregs = vregs
+        self.gprs = gprs
         self.flags = flags
-        self.consts = consts or []  # list of (bit position, constant) loaded into scratch
+        self.consts = consts or []
 
 
 def is_fp_simd_dp(w):
@@ -170,17 +155,15 @@ def is_ldst(w):
 
 class Lifter:
     def __init__(self, base, simd='asm'):
-        self.base = base  # absolute load address of the module (guest == host)
+        self.base = base
         if simd not in ('asm', 'c'):
             raise ValueError(f'simd={simd!r}')
         self.sc = None
         if simd == 'c':
-            # simd_c imports lifter at module level, so this import cannot move to the top.
             from simd_c import SimdC
             self.sc = SimdC()
 
     def lift(self, w, pc):
-        """pc is absolute. Returns an Insn."""
         op0 = bits(w, 25, 4)
         if (op0 & 0b1110) == 0b1000:
             return self.dp_imm(w, pc)
@@ -192,23 +175,21 @@ class Lifter:
             return self.dp_reg(w, pc)
         if (op0 & 0b0111) == 0b0111:
             return self.fp_simd(w, pc)
-        # padding, trap words (e7ffdefe), header data: trap if ever executed
         return Insn('trap', f'rt_udf(c, {hx(pc)});')
 
-    # ------------------------------------------------------------ data processing (imm)
 
     def dp_imm(self, w, pc):
         op = bits(w, 23, 3)
         sf = bits(w, 31, 1)
         rd, rn = bits(w, 0, 5), bits(w, 5, 5)
-        if op in (0, 1):  # PC-relative
+        if op in (0, 1):
             imm = sext((bits(w, 5, 19) << 2) | bits(w, 29, 2), 21)
             if bits(w, 31, 1):
                 val = (pc & ~0xFFF) + (imm << 12)
             else:
                 val = pc + imm
             return Insn('op', set_reg(1, rd, hx(val & ones(64))))
-        if op == 2:  # add/sub imm
+        if op == 2:
             opc, S, sh = bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 1)
             imm = bits(w, 10, 12) << (12 if sh else 0)
             a = R(sf, rn, sp=True)
@@ -216,7 +197,7 @@ class Lifter:
                 fn = ('subs' if opc else 'adds') + ('64' if sf else '32')
                 return Insn('op', set_reg(sf, rd, f'{fn}(c, {a}, {hx(imm)})'))
             return Insn('op', set_reg(sf, rd, f'{a} {"-" if opc else "+"} {hx(imm)}', sp=True))
-        if op == 4:  # logical imm
+        if op == 4:
             opc, N = bits(w, 29, 2), bits(w, 22, 1)
             if not sf and N:
                 raise Unsupported('logical imm N=1 32-bit')
@@ -230,7 +211,7 @@ class Lifter:
             if opc == 2:
                 return Insn('op', set_reg(sf, rd, f'{a} ^ {hx(imm)}', sp=True))
             return Insn('op', set_reg(sf, rd, f'logic{size}(c, {a} & {hx(imm)})'))
-        if op == 5:  # move wide
+        if op == 5:
             opc, hw = bits(w, 29, 2), bits(w, 21, 2)
             if not sf and hw > 1:
                 raise Unsupported('movw hw')
@@ -243,7 +224,7 @@ class Lifter:
                 mask = ~(0xFFFF << (hw * 16)) & ones(64)
                 return Insn('op', set_reg(sf, rd, f'({X(rd)} & {hx(mask)}) | {hx(imm)}'))
             raise Unsupported('movw opc')
-        if op == 6:  # bitfield
+        if op == 6:
             opc, N = bits(w, 29, 2), bits(w, 22, 1)
             immr, imms = bits(w, 16, 6), bits(w, 10, 6)
             size = 64 if sf else 32
@@ -252,19 +233,19 @@ class Lifter:
             wmask, tmask = decode_bit_masks(N, imms, immr, size, False)
             src = R(sf, rn)
             rot = f'ROR{size}({src}, {immr})' if immr else src
-            if opc == 2:  # UBFM
+            if opc == 2:
                 return Insn('op', set_reg(sf, rd, f'{rot} & {hx(wmask & tmask)}'))
-            if opc == 0:  # SBFM
+            if opc == 0:
                 top = f'(uint{size}_t)(-(int{size}_t)(({src} >> {imms}) & 1))'
                 return Insn('op', set_reg(
                     sf, rd, f'({top} & {hx(~tmask & ones(size))}) | ({rot} & {hx(wmask & tmask)})'))
-            if opc == 1:  # BFM
+            if opc == 1:
                 dst = R(sf, rd)
                 bot = f'(({dst} & {hx(~wmask & ones(size))}) | ({rot} & {hx(wmask)}))'
                 return Insn('op', set_reg(
                     sf, rd, f'({dst} & {hx(~tmask & ones(size))}) | ({bot} & {hx(tmask)})'))
             raise Unsupported('bitfield opc')
-        if op == 7:  # EXTR
+        if op == 7:
             rm, lsb = bits(w, 16, 5), bits(w, 10, 6)
             size = 64 if sf else 32
             if lsb == 0:
@@ -273,33 +254,30 @@ class Lifter:
                 sf, rd, f'({R(sf, rm)} >> {lsb}) | ((uint{size}_t){R(sf, rn)} << {size - lsb})'))
         raise Unsupported(f'dp_imm {w:08x}')
 
-    # ------------------------------------------------------------ branches / system
 
     def branch_sys(self, w, pc):
-        if bits(w, 26, 5) == 0b00101:  # B / BL
+        if bits(w, 26, 5) == 0b00101:
             t = (pc + sext(bits(w, 0, 26), 26) * 4) & ones(64)
             return Insn('bl' if bits(w, 31, 1) else 'b', target=t)
-        if bits(w, 25, 7) == 0b0101010 and not bits(w, 4, 1):  # B.cond
+        if bits(w, 25, 7) == 0b0101010 and not bits(w, 4, 1):
             t = pc + sext(bits(w, 5, 19), 19) * 4
             cond = bits(w, 0, 4)
             if cond >= 14:
                 return Insn('b', target=t)
             return Insn('bcond', target=t, cond=f'COND_{COND_NAMES[cond].upper()}(c)')
-        if bits(w, 25, 6) == 0b011010:  # CBZ/CBNZ
+        if bits(w, 25, 6) == 0b011010:
             sf, nz, rt = bits(w, 31, 1), bits(w, 24, 1), bits(w, 0, 5)
             t = pc + sext(bits(w, 5, 19), 19) * 4
             return Insn('bcond', target=t, cond=f'{R(sf, rt)} {"!=" if nz else "=="} 0')
-        if bits(w, 25, 6) == 0b011011:  # TBZ/TBNZ
+        if bits(w, 25, 6) == 0b011011:
             b = (bits(w, 31, 1) << 5) | bits(w, 19, 5)
             nz, rt = bits(w, 24, 1), bits(w, 0, 5)
             t = pc + sext(bits(w, 5, 14), 14) * 4
             return Insn('bcond', target=t, cond=f'(({X(rt)} >> {b}) & 1) {"!=" if nz else "=="} 0')
-        if bits(w, 25, 7) == 0b1101011:  # branch register
+        if bits(w, 25, 7) == 0b1101011:
             opc, rn = bits(w, 21, 4), bits(w, 5, 5)
             op3 = bits(w, 10, 6)
-            if op3 in (0b000010, 0b000011):  # BRAA/BLRAA/RETAA/RETAB (pointer auth, key A or B)
-                # The lift runs with no signing keys, so the authenticate step is a no-op: the branch
-                # itself is the ordinary one. RETAA/RETAB carry Rn = 11111 and return through X30.
+            if op3 in (0b000010, 0b000011):
                 if bits(w, 16, 5) != 31 or bits(w, 0, 5) not in (0, 31):
                     raise Unsupported('branch reg auth variant')
                 if opc == 0:
@@ -318,7 +296,7 @@ class Lifter:
             if opc == 2:
                 return Insn('ret')
             raise Unsupported('branch reg opc')
-        if bits(w, 24, 8) == 0b11010100:  # exception generation
+        if bits(w, 24, 8) == 0b11010100:
             opc, ll, imm = bits(w, 21, 3), bits(w, 0, 5), bits(w, 5, 16)
             if opc == 0 and ll == 1:
                 return Insn('op', f'rt_svc(c, {imm}, {hx(pc)});')
@@ -334,19 +312,19 @@ class Lifter:
         op0, op1, crn, crm, op2, rt = (bits(w, 19, 2), bits(w, 16, 3), bits(w, 12, 4),
                                        bits(w, 8, 4), bits(w, 5, 3), bits(w, 0, 5))
         if op0 == 0 and not L:
-            if crn == 2 and op1 == 3 and rt == 31:  # hints
+            if crn == 2 and op1 == 3 and rt == 31:
                 return Insn('op', '/* hint */')
-            if crn == 3 and op1 == 3 and rt == 31:  # barriers
+            if crn == 3 and op1 == 3 and rt == 31:
                 if op2 == 2:
                     return Insn('op', 'c->excl_addr = ~0ull;')
                 return Insn('op', '__atomic_thread_fence(__ATOMIC_SEQ_CST);')
             raise Unsupported(f'pstate/system {w:08x}')
-        if op0 == 1:  # SYS
-            if not L and op1 == 3 and crn == 7 and crm == 4 and op2 == 1:  # DC ZVA
+        if op0 == 1:
+            if not L and op1 == 3 and crn == 7 and crm == 4 and op2 == 1:
                 return Insn('op', f'memset((void*)(uintptr_t)({X(rt)} & ~63ull), 0, 64);')
             return Insn('op', '/* cache maintenance */')
         key = (op0, op1, crn, crm, op2)
-        if L:  # MRS
+        if L:
             src = {
                 (3, 3, 13, 0, 3): 'c->tpidrro',
                 (3, 3, 13, 0, 2): 'c->tpidr',
@@ -372,7 +350,6 @@ class Lifter:
             raise Unsupported(f'msr {key}')
         return Insn('op', dst.format(v=X(rt)))
 
-    # ------------------------------------------------------------ loads / stores
 
     def ldst(self, w, pc):
         V = bits(w, 26, 1)
@@ -382,7 +359,7 @@ class Lifter:
             return self.ldst_simd(w, pc)
         if bits(w, 24, 6) == 0b001000:
             return self.ldst_excl(w, pc)
-        if bits(w, 27, 3) == 0b011 and bits(w, 24, 2) == 0:  # literal
+        if bits(w, 27, 3) == 0b011 and bits(w, 24, 2) == 0:
             opc, rt = bits(w, 30, 2), bits(w, 0, 5)
             addr = pc + sext(bits(w, 5, 19), 19) * 4
             if opc == 0:
@@ -401,8 +378,6 @@ class Lifter:
         raise Unsupported(f'ldst {w:08x}')
 
     def stg(self, w):
-        """STG (post-index, signed offset, pre-index). Horizon runs without MTE, so storing an allocation tag
-        changes no memory; only the base writeback remains (1.4.3 sdk+0x640050)."""
         mode, rn = bits(w, 10, 2), bits(w, 5, 5)
         if mode == 2:
             return Insn('op', '/* stg */')
@@ -430,7 +405,6 @@ class Lifter:
         return Insn('op', f'stl{nbits}({addr}, {X(rt)});')
 
     def excl_pair(self, sz, L, rs, rt2, rt, addr):
-        """LDXP/LDAXP/STXP/STLXP. Two W registers form one 64-bit exclusive, two X registers one 128-bit."""
         if L:
             if sz:
                 return Insn('op', f'{{ __uint128_t p = ldxp128(c, {addr}); '
@@ -444,13 +418,11 @@ class Lifter:
         return Insn('op', f'{{ uint32_t st = {st}; {set_reg(0, rs, "st")} }}')
 
     def cas(self, size, rs, rt, addr):
-        """CAS{A}{L}{B,H}: Rs is the compare value and receives the old memory value."""
         t = f'uint{8 << size}_t'
         return Insn('op', f'{{ {t} e = ({t}){X(rs)}; __atomic_compare_exchange_n(({t} *)(uintptr_t)({addr}), &e, '
                           f'({t}){X(rt)}, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); {set_reg(size == 3, rs, "e")} }}')
 
     def casp(self, sz, rs, rt, addr):
-        """CASP{A}{L}: register pairs (Rs, Rs+1) compared and (Rt, Rt+1) stored as one 64- or 128-bit access."""
         if rs & 1 or rt & 1:
             raise Unsupported('casp odd register')
         if sz:
@@ -467,7 +439,6 @@ class Lifter:
                           f'__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); {lo} {hi} }}')
 
     def atomic(self, w):
-        """LSE LD<op>{A}{L}{B,H} and SWP{A}{L}{B,H}: Rt receives the old memory value, Rs is the operand."""
         size, A, R, rs, o3, opc, rn, rt = (bits(w, 30, 2), bits(w, 23, 1), bits(w, 22, 1), bits(w, 16, 5),
                                            bits(w, 15, 1), bits(w, 12, 3), bits(w, 5, 5), bits(w, 0, 5))
         nbits = 8 << size
@@ -475,7 +446,7 @@ class Lifter:
         p, v = f'({t} *)(uintptr_t)({XS(rn)})', f'({t}){X(rs)}'
         order = ('__ATOMIC_RELAXED', '__ATOMIC_RELEASE', '__ATOMIC_ACQUIRE', '__ATOMIC_ACQ_REL')[A << 1 | R]
         if o3:
-            if rs == 31 and opc in (1, 4):  # LDAPR (byte/half/word/dword): load-acquire RCpc into Rt
+            if rs == 31 and opc in (1, 4):
                 return Insn('op', set_reg(size == 3, rt, f'__atomic_load_n({p}, __ATOMIC_ACQUIRE)'))
             if opc:
                 raise Unsupported('ldapr')
@@ -503,7 +474,7 @@ class Lifter:
         if L:
             if opc == 2:
                 lines.append('uint64_t a = LD64(ea), b = LD64(ea + 8);')
-            elif opc == 1:  # LDPSW
+            elif opc == 1:
                 lines.append('uint64_t a = (int64_t)(int32_t)LD32(ea), b = (int64_t)(int32_t)LD32(ea + 4);')
             else:
                 lines.append('uint64_t a = LD32(ea), b = LD32(ea + 4);')
@@ -543,12 +514,12 @@ class Lifter:
             else:
                 imm9 = sext(bits(w, 12, 9), 9)
                 sign_imm = f'+ {imm9}' if imm9 >= 0 else f'- {-imm9}'
-                if kind in (0, 2):  # unscaled, unprivileged
+                if kind in (0, 2):
                     ea = f'{base} {sign_imm}'
-                elif kind == 1:  # post
+                elif kind == 1:
                     ea = base
                     wb = f'{base} {sign_imm}'
-                else:  # pre
+                else:
                     ea = f'{base} {sign_imm}'
                     wb = 'ea'
         nbits = 8 << size
@@ -567,22 +538,20 @@ class Lifter:
             load = set_reg(1 if opc == 2 else 0, rt, 'v')
         parts.insert(0, f'uint64_t ea = {ea};')
         if wb:
-            # writeback before the register load, so a load into rn wins
             parts.append(f'{"c->sp" if rn == 31 else f"c->x[{rn}]"} = {wb};')
         if load:
             parts.append(load)
         return Insn('op', '{ ' + ' '.join(parts) + ' }')
 
     def ldst_simd(self, w, pc):
-        """FP/SIMD loads and stores are passed through as asm; GPR address regs are remapped."""
         rt = bits(w, 0, 5)
-        if bits(w, 27, 3) == 0b011 and bits(w, 24, 2) == 0:  # literal -> LDR (imm, offset 0) via scratch
+        if bits(w, 27, 3) == 0b011 and bits(w, 24, 2) == 0:
             opc = bits(w, 30, 2)
             size, o = {0: (2, 1), 1: (3, 1), 2: (0, 3)}[opc]
             addr = pc + sext(bits(w, 5, 19), 19) * 4
             new = (size << 30) | 0x3D000000 | (o << 22) | (31 << 5) | rt
             return Insn('asm', asm=AsmInsn(new, {rt}, [], consts=[(5, addr)]))
-        if bits(w, 31, 1) == 0 and bits(w, 24, 6) in (0b001100, 0b001101):  # structures
+        if bits(w, 31, 1) == 0 and bits(w, 24, 6) in (0b001100, 0b001101):
             post = bits(w, 23, 1)
             rn, rm = bits(w, 5, 5), bits(w, 16, 5)
             if bits(w, 24, 1) == 0:
@@ -599,7 +568,7 @@ class Lifter:
         rn = bits(w, 5, 5)
         gprs = [(5, 'sp' if rn == 31 else rn)]
         vregs = {rt}
-        if bits(w, 27, 3) == 0b101:  # pair
+        if bits(w, 27, 3) == 0b101:
             vregs.add(bits(w, 10, 5))
         elif bits(w, 27, 3) == 0b111 and bits(w, 24, 2) == 0 and bits(w, 21, 1) and bits(w, 10, 2) == 2:
             rm = bits(w, 16, 5)
@@ -607,7 +576,6 @@ class Lifter:
                 gprs.append((16, rm))
         return Insn('asm', asm=AsmInsn(w, vregs, gprs))
 
-    # ------------------------------------------------------------ data processing (reg)
 
     def dp_reg(self, w, pc):
         sf = bits(w, 31, 1)
@@ -615,7 +583,7 @@ class Lifter:
         size = 64 if sf else 32
         op1 = bits(w, 28, 1)
         if not op1:
-            if bits(w, 24, 4) == 0b1010:  # logical shifted
+            if bits(w, 24, 4) == 0b1010:
                 opc, sh, N, amt = bits(w, 29, 2), bits(w, 22, 2), bits(w, 21, 1), bits(w, 10, 6)
                 if not sf and amt >= 32:
                     raise Unsupported('logical shift amount')
@@ -627,7 +595,7 @@ class Lifter:
                 if opc == 3:
                     return Insn('op', set_reg(sf, rd, f'logic{size}(c, (uint{size}_t)({expr}))'))
                 return Insn('op', set_reg(sf, rd, expr))
-            if bits(w, 24, 4) == 0b1011:  # add/sub shifted or extended
+            if bits(w, 24, 4) == 0b1011:
                 op, S = bits(w, 30, 1), bits(w, 29, 1)
                 if bits(w, 21, 1) == 0:
                     sh, amt = bits(w, 22, 2), bits(w, 10, 6)
@@ -651,7 +619,7 @@ class Lifter:
                 return Insn('op', set_reg(sf, rd, f'{a} {"-" if op else "+"} {b}', sp=sp_ok))
             raise Unsupported(f'dp_reg {w:08x}')
         op2 = bits(w, 21, 4)
-        if bits(w, 24, 4) == 0b1011:  # 3-source
+        if bits(w, 24, 4) == 0b1011:
             op54, op31, o0, ra = bits(w, 29, 2), bits(w, 21, 3), bits(w, 15, 1), bits(w, 10, 5)
             if op54:
                 raise Unsupported('dp3 op54')
@@ -668,17 +636,17 @@ class Lifter:
             if op31 == 6:
                 return Insn('op', set_reg(1, rd, f'(uint64_t)(((unsigned __int128){X(rn)} * {X(rm)}) >> 64)'))
             raise Unsupported('dp3')
-        if op2 == 0:  # add/sub with carry
+        if op2 == 0:
             op, S = bits(w, 30, 1), bits(w, 29, 1)
             fn = ('sbc' if op else 'adc') + ('s' if S else '') + str(size)
             return Insn('op', set_reg(sf, rd, f'{fn}(c, {R(sf, rn)}, {R(sf, rm)})'))
-        if op2 == 2:  # conditional compare
+        if op2 == 2:
             op, imm_form, cond, nzcv = bits(w, 30, 1), bits(w, 11, 1), bits(w, 12, 4), bits(w, 0, 4)
             b = hx(rm) if imm_form else R(sf, rm)
             fn = ('subs' if op else 'adds') + str(size)
             return Insn('op', f'if ({cond_expr(cond)}) (void){fn}(c, {R(sf, rn)}, {b}); '
                               f'else c->nzcv = {hx(nzcv << 28)};')
-        if op2 == 4:  # conditional select
+        if op2 == 4:
             op, o2, cond = bits(w, 30, 1), bits(w, 10, 2), bits(w, 12, 4)
             b = R(sf, rm)
             alt = {(0, 0): b, (0, 1): f'{b} + 1', (1, 0): f'~{b}', (1, 1): f'-{b}'}.get((op, o2))
@@ -687,12 +655,8 @@ class Lifter:
             return Insn('op', set_reg(sf, rd, f'({cond_expr(cond)}) ? {R(sf, rn)} : (uint{size}_t)({alt})'))
         if op2 == 6:
             opcode = bits(w, 10, 6)
-            if bits(w, 30, 1):  # 1-source
+            if bits(w, 30, 1):
                 if bits(w, 16, 5) == 1 and sf and opcode <= 17:
-                    # PACIA/PACIB/PACDA/PACDB/AUTIA/AUTIB/AUTDA/AUTDB (opcode 0-7), their Z forms (8-15) and
-                    # XPACI/XPACD (16-17): pointer authentication. Lifted code never signs pointers, so signing,
-                    # authenticating and stripping all leave Rd unchanged (as RETAB/BRAA are lifted as RET/BR).
-                    # Switch 2's hardened _setjmp signs x30 with PACIB and checks its low bits afterwards.
                     return Insn('op', '/* pac/aut: no-op */')
                 if bits(w, 16, 5):
                     raise Unsupported('dp1 opcode2')
@@ -708,7 +672,7 @@ class Lifter:
                 if expr is None:
                     raise Unsupported('dp1')
                 return Insn('op', set_reg(sf, rd, expr))
-            if 16 <= opcode <= 23:  # CRC32: host has the same instruction
+            if 16 <= opcode <= 23:
                 if self.sc:
                     return Insn('op', self.sc.crc(w))
                 gprs = [(p, r) for p, r in ((0, rd), (5, rn), (16, rm)) if r != 31]
@@ -721,9 +685,6 @@ class Lifter:
                 9: f'{a} >> ({b} & {size - 1})',
                 10: f'(uint{size}_t)((int{size}_t){a} >> ({b} & {size - 1}))',
                 11: f'ROR{size}({a}, {b} & {size - 1})',
-                # PACGA Xd, Xn, Xm|SP: a 32-bit code of (Xn, Xm) in the top half. Its only use is a checksum compared
-                # against a second PACGA of the same values (the SDK's _setjmp/longjmp guard), so a constant code
-                # keeps every such comparison equal.
                 12: '0ull' if sf else None,
             }.get(opcode)
             if expr is None:
@@ -731,7 +692,6 @@ class Lifter:
             return Insn('op', set_reg(sf, rd, expr))
         raise Unsupported(f'dp_reg {w:08x}')
 
-    # ------------------------------------------------------------ FP / SIMD data processing
 
     def fp_simd(self, w, pc):
         if self.sc:
@@ -740,7 +700,7 @@ class Lifter:
         vregs = {rd, rn, rm, ra}
         gprs = []
         flags = False
-        if (w & 0x5F20FC00) == 0x1E200000:  # FP <-> integer
+        if (w & 0x5F20FC00) == 0x1E200000:
             opcode = bits(w, 16, 3)
             if opcode in (0, 1, 4, 5, 6):
                 gprs = [(0, rd)]
@@ -748,7 +708,7 @@ class Lifter:
             else:
                 gprs = [(5, rn)]
                 vregs = {rd}
-        elif (w & 0x5F200000) == 0x1E000000:  # FP <-> fixed point
+        elif (w & 0x5F200000) == 0x1E000000:
             opcode = bits(w, 16, 3)
             if opcode in (0, 1):
                 gprs = [(0, rd)]
@@ -756,7 +716,7 @@ class Lifter:
             else:
                 gprs = [(5, rn)]
                 vregs = {rd}
-        elif (w & 0x9FE08400) == 0x0E000400 and bits(w, 29, 1) == 0:  # AdvSIMD copy
+        elif (w & 0x9FE08400) == 0x0E000400 and bits(w, 29, 1) == 0:
             imm4 = bits(w, 11, 4)
             if imm4 in (1, 3):
                 gprs = [(5, rn)]
@@ -766,12 +726,12 @@ class Lifter:
                 vregs = {rn}
             else:
                 vregs = {rd, rn}
-        elif (w & 0xBFE08C00) == 0x0E000000:  # TBL/TBX
+        elif (w & 0xBFE08C00) == 0x0E000000:
             n = bits(w, 13, 2) + 1
             vregs = {rd, rm} | {(rn + i) % 32 for i in range(n)}
         if (w & 0x5F203C00) == 0x1E202000 or (w & 0x5F200C00) in (0x1E200400, 0x1E200C00):
             flags = True
-        gprs = [(p, r) for p, r in gprs if r != 31]  # register 31 is zr in these encodings
+        gprs = [(p, r) for p, r in gprs if r != 31]
         return Insn('asm', asm=AsmInsn(w, vregs, gprs, flags))
 
 
@@ -780,7 +740,6 @@ def cond_expr(cond):
 
 
 def emit_asm_batch(batch):
-    """Emit one inline-asm block for a run of FP/SIMD instructions."""
     vregs = set()
     gmap = {}
     flags = False
