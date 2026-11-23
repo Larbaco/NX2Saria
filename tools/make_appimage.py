@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-KIT_DIRS = ('launcher', 'recomp', 'runtime')
+KIT_DIRS = ('launcher', 'recomp', 'runtime', 'licenses')
 KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')   # the translator ships built (bin/); its sources stay out
 PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0', 'pillow==12.3.0')

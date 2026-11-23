@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_DIRS = ('launcher', 'recomp', 'runtime', 'tools', 'prompt-art', 'toolchain')
+APP_DIRS = ('launcher', 'recomp', 'runtime', 'licenses', 'tools', 'prompt-art', 'toolchain')
 APP_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 SKIP = {'vendor', 'xlate', '__pycache__', '.pytest_cache'}
 

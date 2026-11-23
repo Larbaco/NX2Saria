@@ -230,7 +230,7 @@ def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, d
     # runtime/ (make_game.py) and has no shader compiler. Build the missing and the stale ones before the copy.
     build_shaders.build(ROOT / 'runtime')
     copy_tree(ROOT / 'launcher', app / 'launcher')
-    for d in ('runtime', 'recomp'):
+    for d in ('runtime', 'recomp', 'licenses'):
         copy_tree(ROOT / d, app / d)
     (app / 'tools').mkdir(parents=True)
     for t in TOOLS:

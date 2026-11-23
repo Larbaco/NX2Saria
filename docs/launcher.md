@@ -159,6 +159,7 @@ python/                  python.org's embeddable Python 3.14.9 with tkinter, num
                          and truststore
 app/current.txt          the version the stub starts; app/previous.txt the one before it
 app/<version>/           launcher/, runtime/, recomp/, tools/, bin/nx2navi_xlate.exe, VERSION,
+                         licenses/ (the licence texts THIRD_PARTY_NOTICES.md names that are not beside their code),
                          toolchain.lock.json (the pinned build tools), feed.json (where updates come from),
                          prompt-art/ (the button art the prompts are drawn from, with its SOURCE.md);
                          in one made with --pgo, data/pgo-v111.profdata and .json (the execution profile the game's
