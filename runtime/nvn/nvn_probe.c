@@ -1,15 +1,3 @@
-// nx2saria.exe --probe-nvn: the NVN front end and the null back end, called the way the
-// game calls them: through the real nvnp_* procs with a synthetic Cpu (AAPCS64 arguments in x0..x7 and v0..v7), on the
-// guest main thread, on the null back end whatever NX2SARIA_GPU says. Checks, in order:
-//   - pool, buffer, texture, sampler, sync and event objects against the expected NVN semantics, the
-//     texture storage sizes against original-SDK goldens;
-//   - every op kind recorded through the CommandBuffer procs and parsed back with nvn_op_first/next/payload, and
-//     CallCommands inlining a recording;
-//   - the null back end's CPU-visible side effects (event write and add, counter report, buffer copy, uniform update,
-//     in stream order across handles) landing in guest memory at submit, and not before;
-//   - the proc table: every name of nvn_procs.inc resolves to its own synthetic address, an unknown name to NULL;
-//   - named fatal stubs stop with their name, each in a child process (this executable again, NX2SARIA_PROBE_NVN_CHILD).
-// The 40 layout goldens themselves are run by --probe-nvn-tex against nvn_tex.c; here four of them go through the procs.
 // Contains code Copyright (c) 2026 jhaizhou (MIT; see THIRD_PARTY_NOTICES.md). The golden metadata holds no game bytes.
 #include <stdint.h>
 #include <stdio.h>
@@ -35,8 +23,6 @@ static const ProcRow procs[] = {
 };
 #define NPROCS ((int)(sizeof procs / sizeof *procs))
 
-// The named fatal stubs checked in child processes: proc names that no task implements (NvRm interop of the NVX
-// extension), so the check does not go stale when the stub list shrinks.
 static const char *const fatal_procs[] = {"nvnSyncGetNvRmSyncNVX", "nvnTextureGetNvRmSurfaceNVX"};
 #define NFATAL ((int)(sizeof fatal_procs / sizeof *fatal_procs))
 
@@ -44,7 +30,6 @@ static int failures, checks, n_objects, n_ops, n_effects;
 #define CHECK(cond, ...) \
     do { checks++; if (!(cond)) { failures++; printf("  FAIL: " __VA_ARGS__); putchar('\n'); } } while (0)
 
-// ---- calling a proc
 static Cpu cpu;
 static uint64_t call(void (*f)(Cpu *), const uint64_t a[8]) {
     memcpy(cpu.x, a, 8 * sizeof *a);
@@ -54,19 +39,18 @@ static uint64_t call(void (*f)(Cpu *), const uint64_t a[8]) {
 #define CALL(n, ...) call(nvnp_##n, (const uint64_t[8]){__VA_ARGS__})
 #define U(p) ((uint64_t)(uintptr_t)(p))
 #define I(x) ((uint64_t)(int64_t)(x))
-static void fv(int i, float f) {   // a float argument: low 32 bits of vi
+static void fv(int i, float f) {
     uint32_t b;
     memcpy(&b, &f, 4);
     cpu.v[i] = b;
 }
 
-// ---- the objects, in place like the game's (each type is its NVN reserved size)
 #define OBJ(T, n) static T n __attribute__((aligned(16)))
 OBJ(NVNdevice, dev);
 OBJ(NVNdeviceBuilder, devb);
-OBJ(NVNmemoryPool, pool);        // CPU-visible, game storage
-OBJ(NVNmemoryPool, gpool);       // physical, CPU_NO_ACCESS: GPU window
-OBJ(NVNmemoryPool, vpool);       // virtual
+OBJ(NVNmemoryPool, pool);
+OBJ(NVNmemoryPool, gpool);
+OBJ(NVNmemoryPool, vpool);
 OBJ(NVNmemoryPoolBuilder, poolb);
 OBJ(NVNqueue, queue);
 OBJ(NVNqueueBuilder, queueb);
@@ -76,7 +60,6 @@ static const uint64_t PROBE_POOL_SIZE = 0x40000, PROBE_GPOOL_SIZE = 0x20000;
 static pool_t *P(void) { return (pool_t *)(void *)&pool; }
 static pool_t *G(void) { return (pool_t *)(void *)&gpool; }
 
-// ---- pools
 static uint64_t make_pool(NVNmemoryPool *p, void *storage, uint64_t size, uint32_t flags) {
     CALL(nvnMemoryPoolBuilderSetDefaults, U(&poolb));
     CALL(nvnMemoryPoolBuilderSetDevice, U(&poolb), U(&dev));
@@ -106,22 +89,19 @@ static void probe_device_and_pools(void) {
     CHECK(nvn_pool_find(U(pmem) + 0x100, 0x200) == P() && !nvn_pool_find(U(pmem) + PROBE_POOL_SIZE - 8, 16), "pool index");
     n_objects += 6;
 
-    // getters asked of no object answer 0 instead of reading address 0 (nvn_no_object); a buffer with no pool maps to
-    // writable memory of its own, not to 0
     CHECK(CALL(nvnMemoryPoolGetFlags, 0) == 0 && CALL(nvnMemoryPoolGetSize, 0) == 0 && CALL(nvnMemoryPoolMap, 0) == 0 &&
               CALL(nvnMemoryPoolGetBufferAddress, 0) == 0, "pool getters of no pool");
     CALL(nvnMemoryPoolInvalidateMappedRange, 0, 0, 0x100);
     CHECK(CALL(nvnTextureBuilderGetStorageSize, 0) == 0 && CALL(nvnTextureBuilderGetStorageAlignment, 0) == 0,
           "storage size and alignment of no texture builder");
     {
-        static NVNbuffer nopool;   // zeroed, as a buffer whose initialization failed
+        static NVNbuffer nopool;
         uint8_t *m = (uint8_t *)(uintptr_t)CALL(nvnBufferMap, U(&nopool));
         int ok = m != NULL;
         if (ok) memset(m, 0xab, 0x3d0), ok = m[0x3cf] == 0xab;
         CHECK(ok, "a buffer with no pool maps to writable memory");
     }
 
-    // refused: no storage, PHYSICAL | VIRTUAL, a size that is not a 64 KiB multiple
     static NVNmemoryPool bad;
     CHECK(make_pool(&bad, NULL, 0x10000, NVN_MEMORY_POOL_FLAGS_CPU_CACHED) == 0, "a pool without storage is refused");
     CHECK(make_pool(&bad, gmem, PROBE_GPOOL_SIZE, NVN_MEMORY_POOL_FLAGS_PHYSICAL | NVN_MEMORY_POOL_FLAGS_VIRTUAL) == 0,
@@ -130,27 +110,24 @@ static void probe_device_and_pools(void) {
           "a physical pool of 0x1800 bytes is refused");
     n_objects += 3;
 
-    // a CPU-invisible physical pool lives in the GPU window, has no CPU view, and is not in the host address space
     CHECK((uint8_t)make_pool(&gpool, gmem, PROBE_GPOOL_SIZE, NVN_MEMORY_POOL_FLAGS_PHYSICAL | NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS |
                                                        NVN_MEMORY_POOL_FLAGS_GPU_CACHED) == 1, "physical pool");
     CHECK(nvn_gpu_only(U(G()->mem)) && G()->game_mem == gmem && G()->span == PROBE_GPOOL_SIZE, "physical pool placed in the GPU window");
     CHECK(CALL(nvnMemoryPoolMap, U(&gpool)) == 0, "a CPU_NO_ACCESS pool has no CPU view");
     CHECK(CALL(nvnMemoryPoolGetBufferAddress, U(&gpool)) == U(G()->mem), "GPU address of the physical pool");
 
-    // a virtual pool: requests are validated before any mapping changes
     CHECK((uint8_t)make_pool(&vpool, NULL, PROBE_POOL_SIZE, NVN_MEMORY_POOL_FLAGS_VIRTUAL | NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) == 1,
           "virtual pool");
     nvn_mapping_t map[2] = {{(const NVNmemoryPool *)&gpool, 0, 0x10000, 0x10000}, {NULL, 0, 0x10000, 0x10000}};
     CHECK((uint8_t)CALL(nvnMemoryPoolMapVirtual, U(&vpool), 1, U(map)) == 1, "map 64 KiB into the virtual pool");
     CHECK((uint8_t)CALL(nvnMemoryPoolMapVirtual, U(&vpool), 2, U(map)) == 1, "map then unmap");
-    nvn_mapping_t bad_map[3] = {{(const NVNmemoryPool *)&gpool, 0, 0x100, 0x10000},          // unaligned
-                                {(const NVNmemoryPool *)&gpool, 0, 0x30000, 0x20000},        // past the virtual pool
-                                {(const NVNmemoryPool *)&pool, 0, 0, 0x10000}};              // source is not physical
+    nvn_mapping_t bad_map[3] = {{(const NVNmemoryPool *)&gpool, 0, 0x100, 0x10000},
+                                {(const NVNmemoryPool *)&gpool, 0, 0x30000, 0x20000},
+                                {(const NVNmemoryPool *)&pool, 0, 0, 0x10000}};
     for (int i = 0; i < 3; i++)
         CHECK((uint8_t)CALL(nvnMemoryPoolMapVirtual, U(&vpool), 1, U(&bad_map[i])) == 0, "invalid mapping request %d accepted", i);
     n_objects += 9;
 
-    // Finalize returns a GPU window range, so the pool can be initialized again
     uint64_t gva = U(((pool_t *)(void *)&vpool)->mem);
     CALL(nvnMemoryPoolFinalize, U(&vpool));
     CHECK(((pool_t *)(void *)&vpool)->magic == 0 && !nvn_gpu_only(U(((pool_t *)(void *)&vpool)->mem)), "virtual pool finalized");
@@ -160,7 +137,6 @@ static void probe_device_and_pools(void) {
     n_objects += 2;
 }
 
-// ---- buffers
 OBJ(NVNbufferBuilder, bufb);
 OBJ(NVNbuffer, buf);
 OBJ(NVNbuffer, gbuf);
@@ -190,7 +166,6 @@ static void probe_buffers(void) {
     n_objects += 7;
 }
 
-// ---- textures and views
 OBJ(NVNtextureBuilder, texb);
 OBJ(NVNtexture, tex1);
 OBJ(NVNtexture, tex2);
@@ -207,7 +182,6 @@ static void set_tex(int fmt, int w, int h, int levels, uint64_t off) {
     CALL(nvnTextureBuilderSetStorage, U(&texb), U(&pool), off);
 }
 
-// Four of the 40 original-SDK layout goldens: {format, width, height, levels, size}
 static const struct { int format, width, height, levels; uint64_t size; } layout_goldens[] = {
     {0x25, 40, 9, 6, 6144}, {0x25, 40, 128, 8, 37888}, {0x48, 160, 160, 8, 57344}, {0x48, 160, 516, 10, 222208}};
 
@@ -232,13 +206,11 @@ static void probe_textures(void) {
     tex_t live;
     CHECK(nvn_tex_live_at(pmem + 0x1000, &live) && live.serial == t1->serial, "the live texture table resolves the storage");
 
-    // a second texture and a third, in the other pools of the layout
     set_tex(NVN_FORMAT_RGBA_DXT5_SRGB, 160, 160, 8, 0x10000);
     CHECK((uint8_t)CALL(nvnTextureInitialize, U(&tex2), U(&texb)) == 1, "BC3 texture");
     CHECK(CALL(nvnTextureGetStorageSize, U(&tex2)) == 57344, "BC3 160x160 storage size");
     CHECK(CALL(nvnTextureCompare, U(&tex1), U(&tex1)) == 1 && CALL(nvnTextureCompare, U(&tex1), U(&tex2)) == 0, "TextureCompare");
 
-    // packaged texture data is copied into the pool storage at Initialize
     set_tex(NVN_FORMAT_RGBA8, 4, 4, 1, 0x20000);
     uint64_t need = CALL(nvnTextureBuilderGetStorageSize, U(&texb));
     static uint8_t pkg[4096];
@@ -249,7 +221,6 @@ static void probe_textures(void) {
     CHECK((uint8_t)CALL(nvnTextureInitialize, U(&tex3), U(&texb)) == 1, "packaged texture");
     CHECK(!memcmp(pmem + 0x20000, pkg, (size_t)need), "packaged data copied into the pool storage");
 
-    // views: levels and layers, and the byte offset of a level (hand-derived in nvn_tex_probe.c)
     CALL(nvnTextureViewSetDefaults, U(&view));
     CALL(nvnTextureViewSetLevels, U(&view), 1, 3);
     CALL(nvnTextureViewSetLayers, U(&view), 2, 4);
@@ -259,7 +230,6 @@ static void probe_textures(void) {
     CALL(nvnTextureViewSetLayers, U(&view), 0, 1);
     CHECK(CALL(nvnTextureGetViewOffset, U(&tex1), U(&view)) == 24576, "offset of level 1 of the RGBA8 40x128 texture");
     CHECK(CALL(nvnTextureGetViewOffset, U(&tex1), 0) == 0, "no view, no offset");
-    // depth-stencil mode: unset reads DEPTH and false; STENCIL is kept, read back and compared
     OBJ(NVNtextureView, sview);
     int dsm = -1;
     CALL(nvnTextureViewSetDefaults, U(&sview));
@@ -277,7 +247,6 @@ static void probe_textures(void) {
     CHECK(((const view_t *)(const void *)&sview)->set_dsmode && ((const view_t *)(const void *)&sview)->dsmode == 1 &&
               !((const view_t *)(const void *)&sview)->set_levels, "STENCIL view bits");
 
-    // descriptor pools
     OBJ(NVNtexturePool, tp);
     CHECK((uint8_t)CALL(nvnTexturePoolInitialize, U(&tp), U(&pool), 0x30000, 16) == 1, "texture pool");
     CALL(nvnTexturePoolRegisterTexture, U(&tp), 3, U(&tex1), 0);
@@ -287,7 +256,6 @@ static void probe_textures(void) {
     n_objects += 15;
 }
 
-// ---- samplers
 OBJ(NVNsamplerBuilder, sampb);
 OBJ(NVNsampler, samp);
 
@@ -330,7 +298,6 @@ static void probe_samplers(void) {
     n_objects += 6;
 }
 
-// ---- sync and events
 OBJ(NVNsync, syncs);
 OBJ(NVNsync, sync_future);
 OBJ(NVNevent, ev);
@@ -364,7 +331,6 @@ static void probe_sync_events(void) {
     CHECK((uint8_t)CALL(nvnEventInitialize, U(&ev2), U(&evb)) == 0, "an event in a GPU-window pool is refused");
     CALL(nvnEventFinalize, U(&ev2));
 
-    // QueueBuilder defaults, then the queue
     CALL(nvnQueueBuilderSetDevice, U(&queueb), U(&dev));
     CALL(nvnQueueBuilderSetDefaults, U(&queueb));
     CHECK(CALL(nvnQueueBuilderGetQueueMemorySize, U(&queueb)) == ((65536u + 262144u + 16384u + 4095) & ~4095u), "queue memory size");
@@ -378,7 +344,6 @@ static void probe_sync_events(void) {
     n_objects += 11;
 }
 
-// ---- recording every op kind and parsing it back
 OBJ(NVNcommandBuffer, cmd);
 OBJ(NVNcommandBuffer, cmd2);
 OBJ(NVNprogram, prog);
@@ -473,7 +438,7 @@ static uint64_t record_all(void) {
     REC(OP_CLEAR_BUF, CALL(nvnCommandBufferClearBuffer, U(c), 0xc200, 0x40, 0xdeadbeef));
     REC(OP_CLEAR_BUF, CALL(nvnCommandBufferReportValue, U(c), 0x1234, 0xc300));
     static const int thresholds[4] = {1, 2, 3, 4};
-    CALL(nvnCommandBufferSetColorReductionEnable, U(c), 1);   // hints: nothing recorded
+    CALL(nvnCommandBufferSetColorReductionEnable, U(c), 1);
     CALL(nvnCommandBufferSetColorReductionThresholds, U(c), 0, U(thresholds));
     REC(OP_COPY_T2T, CALL(nvnCommandBufferDownsample, U(c), U(&tex1), U(&tex2)));
     CHECK((uint8_t)CALL(nvnCommandBufferIsRecording, U(c)) == 1, "IsRecording while recording");
@@ -660,7 +625,7 @@ static void parse_all(uint64_t h) {
         }
         case OP_COPY_T2T: {
             const p_copy_t2t *p = a;
-            if (p->flags == NVN_COPY_FLAGS_LINEAR_FILTER_BIT) {   // Downsample: whole level 0 of each, filtered
+            if (p->flags == NVN_COPY_FLAGS_LINEAR_FILTER_BIT) {
                 CHECK(p->src && p->src->serial == t1->serial && p->dst && p->dst->serial == t2->serial && !p->has_sv && !p->has_dv &&
                           p->sr.width == 40 && p->sr.height == 128 && p->dr.width == 160 && p->dr.height == 160 && p->sr.depth == 1,
                       "Downsample payload");
@@ -704,7 +669,7 @@ static void parse_all(uint64_t h) {
         default: CHECK(0, "unexpected op %s", nvn_op_name(o->op)); break;
         }
     }
-    bytes += o->size;   // OP_END
+    bytes += o->size;
     CHECK(idx == nexpect, "%d of %d ops parsed", idx, nexpect);
     CHECK(bytes == nvn_handle_bytes(h), "the copy holds %llu bytes, the walk %llu", (unsigned long long)nvn_handle_bytes(h),
           (unsigned long long)bytes);
@@ -714,7 +679,6 @@ static void parse_all(uint64_t h) {
     n_ops = OP_COUNT_ - OP_SIGNAL_EVENT;
 }
 
-// A recording naming tex3 as its render target; *pin: the texture pin in its SET_RT payload.
 static uint64_t record_target(uint8_t *ctl, const tex_t **pin) {
     const NVNtexture *colors[1] = {&tex3};
     begin(&cmd2, ctl, 0x3a000);
@@ -726,8 +690,6 @@ static uint64_t record_target(uint8_t *ctl, const tex_t **pin) {
     return h;
 }
 
-// Texture pins are freed NVN_PIN_AGE submits after the last recording copy naming them is released, unless the replay
-// keeps them as its current render targets; a texture named again gets a new pin.
 static void probe_pins(void) {
     uint8_t *ctl = mem_kernel_alloc(0x1000, 16);
     set_tex(NVN_FORMAT_RGBA8, 16, 16, 1, 0x20000);
@@ -743,7 +705,7 @@ static void probe_pins(void) {
     nvn_pins_sweep(s + 10 * NVN_PIN_AGE, NULL, 0);
     nvn_pins_stats(&live, &freed);
     CHECK(live == live0 + 1 && freed == freed0 && nvn_handle_live(h), "a pin a live recording names stays");
-    CALL(nvnCommandBufferAddControlMemory, U(&cmd2), U(ctl), 0x1000);   // retires h: the pin has no copy left
+    CALL(nvnCommandBufferAddControlMemory, U(&cmd2), U(ctl), 0x1000);
     CHECK(!nvn_handle_live(h), "the pin's recording is retired");
     nvn_pins_sweep(s + NVN_PIN_AGE - 1, NULL, 0);
     nvn_pins_stats(&live, &freed);
@@ -770,7 +732,6 @@ static void probe_commands(void) {
     uint64_t h = record_all();
     parse_all(h);
 
-    // CallCommands inlines the called recording at the call position
     begin(&cmd2, ctlmem2, 0x34000);
     CALL(nvnCommandBufferBarrier, U(&cmd2), 1);
     CALL(nvnCommandBufferCallCommands, U(&cmd2), 1, U(&h));
@@ -787,7 +748,6 @@ static void probe_commands(void) {
           n, nexpect + 2, barriers);
     CHECK(nvn_op_first(h2)->op == OP_BEGIN && nvn_op_next(nvn_op_first(h2))->op == OP_BARRIER, "the first op before the call stays first");
 
-    // adding the control memory again retires the recordings made in it
     CALL(nvnCommandBufferAddControlMemory, U(&cmd2), U(ctlmem2), 0x1000);
     CHECK(!nvn_handle_live(h2) && nvn_handle_live(h), "reusing control memory retires only the handles recorded in it");
     CALL(nvnCommandBufferFinalize, U(&cmd2));
@@ -795,9 +755,7 @@ static void probe_commands(void) {
     n_objects += 5;
 }
 
-// ---- the null back end's side effects, at submit and in stream order
 static void probe_null_effects(void) {
-    // layout in the CPU-visible pool; offsets are bytes from pmem
     enum { OFF_COUNTER_A = 0x100, OFF_COUNTER_B = 0x200, OFF_UB = 0x300, OFF_DST = 0x400, OFF_B2B_DST = 0x500 };
     uint8_t *ev_val = pmem;
     static const uint8_t d1[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
@@ -818,17 +776,16 @@ static void probe_null_effects(void) {
     CALL(nvnCommandBufferCopyBufferToBuffer, U(c), base + OFF_UB + 4, base + OFF_DST, 16, 0);
     CALL(nvnCommandBufferReportCounter, U(c), NVN_COUNTER_TYPE_TIMESTAMP, base + OFF_COUNTER_A);
     CALL(nvnCommandBufferReportCounter, U(c), NVN_COUNTER_TYPE_SAMPLES_PASSED, base + OFF_COUNTER_B);
-    // GPU-window addresses hold no host memory: these have no effect and must not stop the run
     CALL(nvnCommandBufferCopyBufferToBuffer, U(c), base + OFF_UB + 4, gbase + 0x10, 16, 0);
     CALL(nvnCommandBufferCopyBufferToBuffer, U(c), gbase + 0x10, base + OFF_B2B_DST, 16, 0);
     CALL(nvnCommandBufferReportCounter, U(c), NVN_COUNTER_TYPE_TIMESTAMP, gbase + 0x20);
     CALL(nvnCommandBufferUpdateUniformBuffer, U(c), gbase, 64, 8, 8, U(d2));
-    CALL(nvnCommandBufferDrawArrays, U(c), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);   // ignored
+    CALL(nvnCommandBufferDrawArrays, U(c), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
     CALL(nvnCommandBufferBarrier, U(c), 1);
     uint64_t ha = CALL(nvnCommandBufferEndRecording, U(c));
 
     begin(&cmd2, ctlmem2, 0x38000);
-    CALL(nvnCommandBufferUpdateUniformBuffer, U(&cmd2), base + OFF_DST, 64, 0, 8, U(d2));   // after the first copy
+    CALL(nvnCommandBufferUpdateUniformBuffer, U(&cmd2), base + OFF_DST, 64, 0, 8, U(d2));
     CALL(nvnCommandBufferSignalEvent, U(&cmd2), U(&ev), NVN_EVENT_SIGNAL_MODE_WRITE, NVN_EVENT_SIGNAL_LOCATION_TOP, 0, 0x99);
     uint64_t hb = CALL(nvnCommandBufferEndRecording, U(&cmd2));
 
@@ -846,14 +803,10 @@ static void probe_null_effects(void) {
     CHECK(nvn_submit_count() == subs + 1 && nvn_fence_last() == fence0 + 1 && gfx_backend()->fence_done() == nvn_fence_last(),
           "one submit advances the fence once (%llu -> %llu)", (unsigned long long)fence0, (unsigned long long)nvn_fence_last());
 
-    // event: WRITE 0x11, ADD 5, then handle 2's WRITE 0x99
     CHECK((uint32_t)CALL(nvnEventGetValue, U(&ev)) == 0x99, "event value %#x after the stream, expected 0x99", *(uint32_t *)ev_val);
-    // uniform update lands at buffer + offset, nothing around it moves
     CHECK(!memcmp(pmem + OFF_UB + 4, d1, 16) && !pmem[OFF_UB + 3] && !pmem[OFF_UB + 20], "uniform update");
-    // buffer copy in stream order: handle 1's copy, then handle 2's update over its first 8 bytes
     CHECK(!memcmp(pmem + OFF_DST, d2, 8) && !memcmp(pmem + OFF_DST + 8, d1 + 8, 8) && !pmem[OFF_DST + 16],
           "buffer copy and later update in stream order");
-    // counters: NVNcounterData {counter, timestamp}; the null GPU reports 0 and a timestamp in 19.2 MHz ticks
     uint64_t ca[2], cb[2];
     memcpy(ca, pmem + OFF_COUNTER_A, 16);
     memcpy(cb, pmem + OFF_COUNTER_B, 16);
@@ -882,7 +835,6 @@ static void probe_main(Cpu *unused) {
     CALL(nvnDeviceFinalize, U(&dev));
 }
 
-// ---- the proc table
 static void probe_proc_table(void) {
     int dup = 0;
     uint64_t addr[NPROCS];
@@ -899,12 +851,10 @@ static void probe_proc_table(void) {
     CHECK(NPROCS >= 534, "the proc list has %d names, the loader asks for 534", NPROCS);
     CHECK(nvn_proc_address("nvnNoSuchProc") == 0 && nvn_proc_address("") == 0 && nvn_proc_address(NULL) == 0,
           "an unknown name returns NULL");
-    // nvnDeviceGetProcAddress(device, name), the way the loader calls it
     CHECK(CALL(nvnDeviceGetProcAddress, U(&dev), U("nvnBufferGetSize")) == nvn_proc_address("nvnBufferGetSize") &&
               CALL(nvnDeviceGetProcAddress, U(&dev), U("nvnNoSuchProc")) == 0, "nvnDeviceGetProcAddress");
 }
 
-// ---- named fatal stubs, each in a child process
 static uint32_t run_child(const char *mode, char *out, size_t cap) {
     int code = plat_run_self(CHILD_ENV, mode, out, cap, 0);
     if (code < 0) rt_fatal("probe-nvn: cannot start the %s child", mode);
@@ -937,7 +887,6 @@ static void probe_children(void) {
 int probe_nvn(void) {
     const char *child = getenv(CHILD_ENV);
     if (child && *child) return run_as_child(child);
-    // The probe checks the null back end whatever NX2SARIA_GPU says; the choice is made once, at the first object call.
     ((RtConfig *)rt_config())->gpu = "null";
     nvn_procs_register();
     hostfn_seal();

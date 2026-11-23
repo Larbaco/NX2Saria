@@ -166,7 +166,7 @@ def main():
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     src = (ROOT / 'runtime' / 'nvn' / 'nvn_api_cmd.c').read_text(encoding='utf-8')
-    body = cut(src, '// ---------- recording copies whose control memory the game reused', '\nstatic void retire_main(')
+    body = cut(src, '#define RETIRE_PERIOD_MS', '\nstatic void retire_main(')
     sweep = cut(src, '\nstatic void retire_main(', '\n}\n')
     lowered = [p for p in ('PLAT_PRIO_IDLE', 'PLAT_PRIO_LOWEST', 'PLAT_PRIO_BELOW_NORMAL') if p in sweep]
     if lowered:
