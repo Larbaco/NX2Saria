@@ -412,7 +412,9 @@ def window_toolkit():
 
 
 @unittest.skipIf(window_toolkit(), window_toolkit())
-class WindowTest(Base):
+class WindowBase(Base):
+    ARGV = ['--selftest']
+
     def setUp(self):
         super().setUp()
         import tkinter as tk
@@ -425,7 +427,7 @@ class WindowTest(Base):
         self.addCleanup(lambda: self.ctx._file and self.ctx._file.close())
         self.ctx.settings['game_dir'] = str(self.game)
         self.ctx.settings['sounds'] = 'off'
-        args = app.parse_args(['--root', str(layout.root), '--selftest'])   # --selftest: no sounds, no updates
+        args = app.parse_args(['--root', str(layout.root), *self.ARGV])   # --selftest: no sounds, no updates
         self.root = tk.Tk(className='NX2Saria')
         self.addCleanup(self.close_window)
         quiet = mock.patch.object(app.App, 'find_dumps', lambda a: None)   # no search of this PC's folders
@@ -449,6 +451,16 @@ class WindowTest(Base):
         r = self.app.focused()
         return r.label if r.kind != 'pair' else r.actions[getattr(r, 'pick', 0)][0]
 
+    def logged(self, end):
+        """Whether a line of launcher.log ends with end."""
+        return any(ln.rstrip('\n').endswith(end) for ln in self.ctx.log_tail(30))
+
+    def question_line(self):
+        return self.app.consent_desc()['text'][0]
+
+
+@unittest.skipIf(window_toolkit(), window_toolkit())
+class WindowTest(WindowBase):
     def test_the_view_shows_the_bytes_that_are_sent(self):
         s = summary()
         self.write_summary(s)
@@ -465,13 +477,6 @@ class WindowTest(Base):
         self.assertTrue(self.app.sent_example)
         self.assertNotIn('install_id', self.app.sent_text)
         self.assertEqual(set(json.loads(self.app.sent_text)), {'launcher_version', 'summary'})
-
-    def logged(self, end):
-        """Whether a line of launcher.log ends with end."""
-        return any(ln.rstrip('\n').endswith(end) for ln in self.ctx.log_tail(30))
-
-    def question_line(self):
-        return self.app.consent_desc()['text'][0]
 
     def test_the_first_start_of_a_version_asks_with_send_focused(self):
         self.write_summary()
@@ -719,6 +724,103 @@ class WindowTest(Base):
             self.root.update()
             self.assertEqual(self.app.screen, screen)
         self.assertEqual(self.server.hits, [])
+
+
+@unittest.skipIf(window_toolkit(), window_toolkit())
+class UpdateStartBase(WindowBase):
+    ARGV = ['--continue-update', '0.18.0']
+    FAILS = False
+
+    def setUp(self):
+        from launcher import build, jobs
+        from launcher.ui import app
+        test = self
+
+        class UpdateJob(jobs.ContinueUpdateJob):
+            claims = ()
+
+            def run(self):
+                test.release.wait(20)
+                if test.fails:
+                    raise RuntimeError('the compiler stopped')
+
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+        self.fails = self.FAILS
+        for target, name, new in ((build, 'installed', lambda gd: bool(gd)), (jobs, 'ContinueUpdateJob', UpdateJob),
+                                  (jobs, 'interrupted', lambda ctx: None), (app.App, 'check_now', lambda a: None),
+                                  (app.winsys, 'keep_awake', lambda on, log: None)):
+            p = mock.patch.object(target, name, new)
+            p.start()
+            self.addCleanup(p.stop)
+        super().setUp()
+
+    def job_ends(self):
+        self.release.set()
+        end = time.monotonic() + 20
+        while self.app.job.result is None and time.monotonic() < end:
+            time.sleep(0.01)
+        self.app.job_rev = self.app.job.rev
+        self.app.job_finished()
+        self.root.update()
+
+
+@unittest.skipIf(window_toolkit(), window_toolkit())
+class UpdateStartTest(UpdateStartBase):
+    def test_the_start_that_finishes_an_update_asks_when_its_job_ends(self):
+        self.assertEqual(self.app.screen, 'job')
+        self.assertIsNone(self.app.question)
+        self.assertTrue(self.logged('telemetry: the question waits for the update to finish'))
+        self.job_ends()
+        self.assertEqual(self.app.job.result, 'ok')
+        self.assertEqual(self.app.screen, 'consent')
+        self.assertEqual(self.app.question, 'ask')
+        self.assertEqual(self.label(), 'Send')
+        self.assertIsNone(self.app.question_deadline)
+        self.assertIn('turn on when you choose Send or close this window', self.question_line())
+        self.assertTrue(self.logged(f'telemetry: the question opens after {self.app.job.doing()}, without its '
+                                    'countdown'))
+        self.app.move(1)
+        self.app.activate()
+        self.assertEqual(self.app.screen, 'home')
+        self.assertEqual(self.ctx.settings['telemetry'], 'off')
+        self.assertTrue(self.logged(f"telemetry: asked after the update to {self.app.reporter.version}: don't send"))
+        self.assertIn('NX2Saria is now', self.app.message)
+        self.app.reporter.version = '99.0.0'
+        self.app.home_reports()
+        self.assertEqual(self.app.screen, 'home')
+
+    def test_the_rest_of_the_start_s_reports_runs_there_too(self):
+        self.ctx.settings['telemetry'] = 'on'
+        self.ctx.settings['telemetry_notice'] = '1'
+        self.write_summary()
+        self.job_ends()
+        self.assertEqual(self.app.screen, 'home')
+        self.app.tasks.wait()
+        self.assertEqual([h[1] for h in self.server.hits], ['/v1/session'])
+        self.assertIn('NX2Saria is now', self.app.message)
+        self.assertEqual(self.ctx.settings['telemetry_notice'], '1')
+        self.assertFalse(self.logged('telemetry: told that session reports are on'))
+
+
+@unittest.skipIf(window_toolkit(), window_toolkit())
+class FailedUpdateStartTest(UpdateStartBase):
+    FAILS = True
+
+    def test_no_question_over_a_failed_update_until_it_is_left_or_done(self):
+        self.job_ends()
+        self.assertEqual(self.app.job.result, 'failed')
+        self.assertEqual(self.app.screen, 'job')
+        self.assertIsNone(self.app.question)
+        self.assertEqual(self.ctx.settings['telemetry_asked'], '')
+        self.fails = False
+        self.release.clear()
+        self.app.retry_job()
+        self.assertEqual(self.app.screen, 'job')
+        self.assertIsNone(self.app.question)
+        self.job_ends()
+        self.assertEqual(self.app.screen, 'consent')
+        self.assertIsNone(self.app.question_deadline)
 
 
 if __name__ == '__main__':

@@ -38,6 +38,20 @@ draft. No GPU, no game files.
   at once, then none within a minute nor without a new write or refusal, and the wording of the `so far` and
   `this session` lines. Dear ImGui's objects are kept in `build/test/cheats-tab-imgui` between runs.
 
+## `tests/telemetry_launcher_test.py`
+
+`UpdateStartBase` opens the window as the start after an update does (`--continue-update`, without `--selftest`) over a
+game folder taken as installed, with a `ContinueUpdateJob` whose `run()` waits for the test and then ends or raises; it
+holds no lock (`claims` empty), the update check and the keep-awake call do nothing. `job_ends()` lets the job end and
+calls `launcher/ui/app.py` `App.job_finished()` itself instead of waiting for the window's timer.
+
+- `UpdateStartTest`: nothing is asked over the job's screen and the log says the question waits; at the job's end the
+  question is open with Send focused and no countdown; Don't Send leaves the home screen with the update's message and
+  the same run does not ask again. With reports on and a summary waiting, the job's end sends it, and the notice of
+  reports turned on is kept for a later start because the update's message is on screen.
+- `FailedUpdateStartTest`: a job that fails leaves its own screen without the question and without an answer recorded;
+  Try Again asks when it ends well.
+
 ## `tests/runtime_dirs_check.py`
 
 The runtime's folders by subsystem ([architecture.md](../architecture.md#runtime-folders)) as the build scripts see

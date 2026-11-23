@@ -28,7 +28,12 @@ reports are on. You can change this in Settings > Session Reports.*
 
 The question comes back at the first start of **every new version** as long as session reports are not on: if you
 chose *Don't Send*, and if you switched them off in Settings. It is asked once for each version. While reports are on
-it is never asked. A new installation is asked the first time the launcher opens after the setup, not during it.
+it is never asked.
+
+The question opens on the launcher's main screen, never over an installation or an update in progress. When the
+launcher opens to finish an update, or has just built the game for the first time, it asks as soon as that is done.
+No countdown runs then, because you may be away from the PC: the question waits, and reports turn on only when you
+choose *Send* or close it.
 
 No report is sent at the moment reports turn on: the first one is the report of the next session you play. From then
 on one report goes each time the game ends, and one more when the game crashed and the launcher made the report from

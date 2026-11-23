@@ -139,7 +139,8 @@ Build Cache, Update Channel, Session Reports, the folders, Open Logs Folder, Uni
 (Session Reports: Not Asked Yet, On or Off; See What Is Sent; Send a Comment;
 Back; [telemetry.md](telemetry.md)); the question about them, asked at the first start of each new version on the home
 screen while they are not on (Send, which is focused, Don't Send, See What Is Sent; closing it or 30 seconds without
-input turns reports on, as its first line says); See What Is
+input turns reports on, as its first line says; a start that finishes an update, and the first installation, ask when
+their job ends and the home screen shows, without the countdown); See What Is
 Sent (the exact JSON a report sends, scrolled with up and down); Send a Comment (a text box typed into after its row is
 selected, Attach the Last Log Lines, Send and Cancel); uninstall (keep or remove the built game).
 A screen with more rows than the window holds draws them closer together (`fit_rows`).

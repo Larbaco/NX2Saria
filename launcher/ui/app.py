@@ -468,6 +468,7 @@ class App:
                                         # counts) or 'preview' (--screen consent and the selftest: nothing changes)
         self.question_deadline = None   # time.monotonic() at which the open question turns reports on; None: stopped
         self.question_left = None       # the seconds its countdown last drew
+        self.reports_started = False
         self.sent_return = 'home'       # ... and See What Is Sent
         self.sent_text = ''             # the text See What Is Sent shows: the bytes a report sends
         self.sent_example = False       # ... made from an example, as the game has written no summary yet
@@ -1051,6 +1052,8 @@ class App:
         elif a.continue_update is not None and not a.rolled_back:
             # after a rollback the stub passes the failed version's --continue-update on to this one: the game was
             # never rebuilt for the new version, so there is nothing to finish, and home tells why the version is back
+            if not a.selftest and build.installed(gd) and self.reporter.question_due():
+                self.ctx.log('telemetry: the question waits for the update to finish')
             self.run_job(jobs.ContinueUpdateJob(self.ctx, gd if build.installed(gd) else '',
                                                 a.continue_update, self.settings.get('dump')), 'home')
         elif build.installed(gd):
@@ -1071,8 +1074,7 @@ class App:
                 return
             if self.settings.get('auto_check'):
                 self.check_now()
-            if not a.selftest:
-                self.start_reports()
+            self.home_reports()
         else:
             if left and not self.message:
                 self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Begin '
@@ -1081,17 +1083,27 @@ class App:
             self.log_first_run()
             self.find_dumps()
 
-    def start_reports(self):
-        """Session reports at the launcher's start, on the home screen of an installed game (never over the first
-        run's screen): a summary left by a run this launcher did not watch (Steam, a shortcut, a crash) goes if
-        reports are on; reports the question's countdown or its closing turned on are told once; and the first
-        start of a new version asks while they are not on (telemetry.Reporter.question_due)."""
+    def home_reports(self, after=''):
+        if self.reports_started or self.args.selftest or self.screen != 'home':
+            return
+        if not build.installed(self.settings.get('game_dir')):
+            return
+        self.reports_started = True
+        self.start_reports(after)
+
+    def start_reports(self, after=''):
+        """Session reports on the first home screen of an installed game in a run of the launcher (never over the
+        first run's screen or a job's): a summary left by a run this launcher did not watch (Steam, a shortcut, a
+        crash) goes if reports are on; reports the question's countdown or its closing turned on are told once; and
+        the first start of a new version asks while they are not on (telemetry.Reporter.question_due)."""
         self.after_game_reports(startup=True)
-        if self.reporter.take_notice() and not self.message:
+        if not self.message and self.reporter.take_notice():
             self.message = REPORTS_ON_NOTICE
             self.render()
         if self.reporter.question_due():
-            self.open_question()
+            if after:
+                self.ctx.log(f'telemetry: the question opens after {after}, without its countdown')
+            self.open_question(countdown=not after)
 
     def open_screen(self, name):
         """--screen: one of the session reports' screens at once, for looking at it or taking its picture
@@ -2534,9 +2546,9 @@ class App:
     # screen says in its first line, with the seconds left. Any input stops the countdown for good: a key, a button,
     # the mouse moving over the window, opening See What Is Sent.
 
-    def open_question(self, preview=False):
+    def open_question(self, preview=False, countdown=True):
         self.question = 'preview' if preview else 'ask'
-        self.question_deadline = None if preview else time.monotonic() + telemetry.QUESTION_SECONDS
+        self.question_deadline = time.monotonic() + telemetry.QUESTION_SECONDS if countdown and not preview else None
         self.question_left = None
         self.show('consent')
 
@@ -2969,6 +2981,7 @@ class App:
             self.show(self.job_back)
         else:
             self.show(self.job_back)
+        self.home_reports(j.doing())
 
     def job_finished(self):
         j = self.job
@@ -3007,9 +3020,11 @@ class App:
             self.show(self.job_return)
             if j.kind == 'install' and self.settings.get('auto_check'):
                 self.check_now()
+            self.home_reports(j.doing())
         elif j.result == 'cancelled':
             self.mods_failed = getattr(j, 'waiting', self.mods_failed)
             self.show(self.job_back)
+            self.home_reports(j.doing())
         else:
             self.mods_failed = getattr(j, 'waiting', self.mods_failed)
             self.show('job')
