@@ -1,5 +1,3 @@
-// --probe-cfg: nx2navi.ini parsing, the environment override, a missing file and the settings waiting for a restart
-// (cfg.c). Needs no game files.
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,8 +16,6 @@ static int fails;
 #define EQ(a, b) ((a) && !strcmp((a), (b)))
 
 int probe_cfg(void) {
-    // cfg_pending, before this probe's files replace the settings cfg_init read: a restart-only setting counts while its
-    // value differs from the one at start, a live one never
     if (!cfg_from_env("NX2SARIA_MICROPHONE") && !cfg_from_env("NX2SARIA_VOLUME")) {
         const char *mic = cfg_value("NX2SARIA_MICROPHONE");
         int base = cfg_pending_count();
@@ -30,8 +26,6 @@ int probe_cfg(void) {
         CHECK(!cfg_pending("NX2SARIA_MICROPHONE") && cfg_pending_count() == base, "pending: set back to its start value");
         cfg_set("NX2SARIA_VOLUME", "7");
         CHECK(!cfg_pending("NX2SARIA_VOLUME") && cfg_pending_count() == base, "pending: a live setting never counts");
-        // a value the environment sets after the start (the command line's --monitor arrives that way) never waits:
-        // no row can change it and a restart keeps it
         if (!cfg_from_env("NX2SARIA_MONITOR")) {
             cfg_setenv("NX2SARIA_MONITOR", "2");
             CHECK(!cfg_pending("NX2SARIA_MONITOR") && cfg_pending_count() == base, "pending: set by the environment after the start");
@@ -88,10 +82,6 @@ int probe_cfg(void) {
         CHECK(EQ(cfg_unknown_keys(&n), "") && n == 0, "a missing file leaves no unknown keys either");
     }
 
-    // A player's file as a report showed it: settings the menu wrote, and three lines added by hand that are no
-    // settings of this version (the player took the first for the fix of a crash). The three are named as such, a
-    // repeated one once, a key of other characters is counted without being listed, and the menu's save keeps every
-    // line it does not change byte for byte, the three included: only the changed, the reset and the new key move.
 #define PLAYER_HEAD \
         "[display]\n" \
         "async_compute = 1\n" \
@@ -158,7 +148,6 @@ int probe_cfg(void) {
     plat_file_delete(path);
     CHECK(cfg_load(path) == 0, "the player's ini is gone again");
 
-    // cfg_set / cfg_save: only changed lines move, comments stay, a missing key goes under its section
     static const char before[] =
         "\xEF\xBB\xBF# my settings\r\n"
         "[frame rate]\r\n"
@@ -230,7 +219,6 @@ int probe_cfg(void) {
     got = plat_file_read(path, &got_n);
     CHECK(got && !strcmp((const char *)got, "[audio]\nvolume = 90\n"), "new file: the section and the key");
     free(got);
-    // values cfg_load would trim or unquote: mod folder names in the order list start with a space or are quoted
     cfg_set("NX2SARIA_MODS_ORDER", " Lead|Tail ");
     cfg_set("NX2SARIA_MODS_DISABLED", "\"Q\"");
     CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && EQ(cfg_get("NX2SARIA_MODS_ORDER"), " Lead|Tail ") &&
@@ -244,7 +232,6 @@ int probe_cfg(void) {
           "only the values that need it are quoted");
     free(got);
 
-    // Defaults table: the menu's "default" marks and Reset
     const CfgMeta *m = cfg_meta("FPS60");
     CHECK(m && EQ(m->def, "1") && m->live, "meta: fps60 defaults to 1 and is live");
     m = cfg_meta("ASYNC_PREEMPT");
@@ -265,8 +252,6 @@ int probe_cfg(void) {
     m = cfg_meta("FRAMEGEN_MULTIPLIER");
     CHECK(m && EQ(m->def, "2") && EQ(m->values, "2|3|4") && m->live, "meta: framegen_multiplier is 2|3|4, 2 by default, live");
 
-    // DLSS frame generation's multiplier (vk_dlssg.c): the setting clamped to what the GPU and driver allow, with the
-    // reason vk_dlssg_frame logs when it is not taken as it is
     const char *why = "";
     CHECK(vk_dlssg_multiplier_of("3", 4, &why) == 3 && !why, "multiplier: 3 where 4x runs");
     CHECK(vk_dlssg_multiplier_of("4x", 4, &why) == 4 && !why, "multiplier: 4x reads as 4");
@@ -281,7 +266,6 @@ int probe_cfg(void) {
     CHECK(vk_dlssg_multiplier_of("4", 0, &why) == 4 && !why, "multiplier: kept as it is while the GPU's limit is not known");
     CHECK(vk_dlssg_multiplier_max(NULL) == 0 && vk_dlssg_multiplier() == 1, "multiplier: 1, no limit, while DLSS-G does not run");
 
-    // cfg_reset: the key's active lines leave nx2navi.ini, the commented example stays
     static const char rbase[] = "[audio]\n# volume = 100\n[input]\nmotion = 0\n";
     static const char *const vol[] = {"VOLUME"};
     cfg_setenv("NX2SARIA_VOLUME", NULL);
@@ -310,7 +294,6 @@ int probe_cfg(void) {
     CHECK(got && strstr((const char *)got, "\nvolume = 60\n"), "reset then set: the new line is written");
     free(got);
 
-    // an active line with an empty value has no entry in memory; Reset still removes it from the file
     static const char rempty[] = "[audio]\n# volume = 100\nvolume =\n[input]\nmotion = 0\n";
     CHECK(plat_file_write(path, rempty, sizeof rempty - 1) && cfg_load(path) == 1 && cfg_get("NX2SARIA_VOLUME") == NULL,
           "reset: load an ini with an empty value");
@@ -321,7 +304,6 @@ int probe_cfg(void) {
     cfg_set("NX2SARIA_VOLUME", "60");
     CHECK(cfg_save_to(path) == 1, "reset: volume 60 again for the environment case");
 
-    // a file saved as UTF-16 (little and big endian, with a line ending of two characters) reads as the same lines
     static const char wtext[] = "[audio]\r\nvolume = 35\r\n[input]\r\nmotion = 0\r\n";
     for (int be = 0; be < 2; be++) {
         uint8_t wbuf[2 + 2 * sizeof wtext];
@@ -335,7 +317,6 @@ int probe_cfg(void) {
     }
     plat_file_delete("cfg-probe-utf16.ini");
 
-    // a key the environment sets is skipped and keeps its file line
     CHECK(cfg_load(path) == 1 && EQ(cfg_get("NX2SARIA_VOLUME"), "60"), "reset: reload");
     cfg_setenv("NX2SARIA_VOLUME", "70");
     CHECK(cfg_reset(vol, 1) == 0, "reset: an environment-set key is skipped");
@@ -346,7 +327,6 @@ int probe_cfg(void) {
     CHECK(got && strstr((const char *)got, "\nvolume = 60\n"), "reset: the skipped key keeps its file line");
     free(got);
 
-    // a failed save: the call fails, cfg_last_save_ok says so, the value stays set and a later save works
     CHECK(cfg_last_save_ok() == 1, "save status: ok after a good save");
     cfg_set("NX2SARIA_VOLUME", "20");
     char bad[1100];
@@ -371,7 +351,6 @@ int probe_cfg(void) {
     CHECK(rumble_motor(0.25f, 1, 1) > 16000 && rumble_motor(0.25f, 1, 1) < 16800, "rumble: curve 1, strength 100% is linear");
     CHECK(rumble_motor(0.1f, 0.6f, 1.3f) > rumble_motor(0.1f, 1, 1.3f), "rumble: curve lifts weak values");
     CHECK(rumble_motor(0.3f, 0.6f, 1.3f) > rumble_motor(0.3f, 0.6f, 1), "rumble: strength scales");
-    // Keyboard and mouse bindings (input_map.c)
     uint8_t dn[KEY_COUNT] = {0};
     int32_t st[2];
     CHECK(input_map_buttons(dn) == 0, "keys: nothing held, no buttons");
@@ -452,7 +431,6 @@ int probe_cfg(void) {
     CHECK(input_stick_percent(32767, 0) > 99.99 && input_stick_percent(32767, 0) < 100.01 &&
               input_stick_percent(0, 0) == 0 && fabs(input_stick_percent(3000, -4000) - 5000 * 100.0 / 32767) < 1e-9,
           "stick percent: an axis's end is 100%, the centre 0%, round in between");
-    // Gamepad layouts (input_map.c)
     CHECK(input_pad_layout_pick("auto", 1) == PAD_LAYOUT_NINTENDO && input_pad_layout_pick(NULL, 0) == PAD_LAYOUT_XBOX,
           "pad layout: automatic is Nintendo for an east button labelled A, Xbox otherwise");
     CHECK(input_pad_layout_pick("Xbox", 1) == PAD_LAYOUT_XBOX && input_pad_layout_pick("nintendo", 0) == PAD_LAYOUT_NINTENDO,
@@ -462,7 +440,6 @@ int probe_cfg(void) {
           "pad layout: 0.1.9's xbox_prompts keeps the Nintendo positions (only the prompts change, romfs.c overlay_init)");
     CHECK(input_pad_layout_pick("PlayStation", 1) == PAD_LAYOUT_XBOX && input_pad_layout_pick("playstation", 0) == PAD_LAYOUT_XBOX,
           "pad layout: playstation plays by label as xbox does (cross A), whatever the pad's labels");
-    // Button prompts (input_map.c)
     CHECK(input_prompts_pick(NULL, "auto") == PROMPTS_NINTENDO && input_prompts_pick("", "xbox") == PROMPTS_NINTENDO &&
               input_prompts_pick("Xbox", "nintendo") == PROMPTS_XBOX && input_prompts_pick("nintendo", "xbox") == PROMPTS_NINTENDO,
           "prompts: the game's own unless set to Xbox");
@@ -498,8 +475,6 @@ int probe_cfg(void) {
               EQ(input_prompts_folder(PROMPTS_PLAYSTATION, "auto"), "romfs-patches-playstation-label") &&
               EQ(input_prompts_folder(PROMPTS_PLAYSTATION, NULL), "romfs-patches-playstation-label"),
           "prompts: the PlayStation face buttons by position for the Nintendo layout, by label for xbox and auto");
-    // romfs-patches-xbox shows A as B and romfs-patches-playstation A as circle (tools/pad_prompts.py FACE). That is
-    // right exactly where the layout puts A on the east button, which an Xbox pad labels B and a PlayStation pad circle.
     input_map_reset();
     static const char *const layouts[] = {"nintendo", "xbox", "playstation", "auto", "xbox_prompts"};
     for (int i = 0; i < 5; i++) {
@@ -509,8 +484,6 @@ int probe_cfg(void) {
         CHECK(a_east == EQ(input_prompts_folder(PROMPTS_PLAYSTATION, layouts[i]), "romfs-patches-playstation"),
               "prompts: the folder names A as circle exactly when the layout puts A on the circle button");
     }
-    // The default layout is the Switch's own buttons by position, whatever the pad's labels (an Xbox pad's east button
-    // is labelled B and does Switch A): A right, B bottom, X top, Y left, L/R the bumpers, ZL/ZR the triggers.
     const CfgMeta *pl = cfg_meta("PAD_LAYOUT");
     CHECK(pl && input_pad_layout_pick(pl->def, 0) == PAD_LAYOUT_NINTENDO, "pad layout: the default is Nintendo, also for an Xbox pad");
     static const struct { int pad, button; } sw[] = {{PAD_EAST, B_A}, {PAD_SOUTH, B_B}, {PAD_NORTH, B_X}, {PAD_WEST, B_Y},
@@ -546,7 +519,6 @@ int probe_cfg(void) {
               input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_ZL] = 1}, PAD_LAYOUT_NINTENDO) == 1ull << B_ZL,
           "bind: pad:rpaddle1 adds a back paddle, pad:default keeps the trigger");
     input_map_reset();
-    // Bind lines for stick directions and default parts; the remapping rows' edits (input_map.c)
     memset(dn, 0, sizeof dn);
     dn[KEY_I] = 1;
     CHECK(input_map_bind("LSTICK_UP", "key:i, pad:south") == 1, "bind: a stick direction takes keys, skips pad entries");
@@ -587,7 +559,7 @@ int probe_cfg(void) {
           "edit: the face buttons are pinned in every layout after a gamepad edit");
     input_map_line(&mp, B_X, line, sizeof line);
     CHECK(!strcmp(line, "key:default, pad:south"), "edit: X's line is key:default, pad:south");
-    input_map_set_pad(&mp, B_X, PAD_LAYOUT_XBOX, PAD_WEST);   // and back
+    input_map_set_pad(&mp, B_X, PAD_LAYOUT_XBOX, PAD_WEST);
     input_map_line(&mp, B_A, line, sizeof line);
     CHECK(!line[0] && input_map_pads_of(&mp, B_A, PAD_LAYOUT_NINTENDO, ps, 8) == 1 && ps[0] == PAD_EAST,
           "edit: swapping back restores every layout's defaults");
@@ -595,7 +567,6 @@ int probe_cfg(void) {
     input_map_set_key(&mp, B_SL_UP, 0, KEY_NONE);
     input_map_line(&mp, B_SL_UP, line, sizeof line);
     CHECK(!strcmp(line, "none"), "edit: a stick direction without keys is none");
-    // defaults live in the CfgMeta table: cfg_value and the typed accessors fall back to it
     cfg_load("cfg-probe-missing.ini");
     cfg_setenv("NX2SARIA_FPS60", NULL);
     cfg_setenv("NX2SARIA_MOUSE_SENS", NULL);
@@ -615,7 +586,6 @@ int probe_cfg(void) {
     cfg_setenv("NX2SARIA_FREE_CORES", "1");
     CHECK(cfg_bool("NX2SARIA_FREE_CORES") == 1, "free_cores 1: on");
     cfg_setenv("NX2SARIA_FREE_CORES", NULL);
-    // 0.1.9's pad_layout = xbox_prompts (cfg.c migrate): read as the Nintendo layout with the Xbox prompts, saved so
     cfg_setenv("NX2SARIA_PAD_LAYOUT", NULL);
     cfg_setenv("NX2SARIA_PROMPTS", NULL);
     static const char old_layout[] = "[input]\r\npad_layout = xbox_prompts\r\n";
@@ -646,7 +616,6 @@ int probe_cfg(void) {
         int ok = 0;
         if (!m->values) ok = 1;
         else if (strstr(m->values, "..")) {
-            // strtod: ranges such as 0.2..0.9 have fractional ends
             double lo = strtod(m->values, NULL), hi = strtod(strstr(m->values, "..") + 2, NULL);
             double d = strtod(m->def, NULL);
             ok = d >= lo && d <= hi;
@@ -661,12 +630,10 @@ int probe_cfg(void) {
         if (!ok) fprintf(stderr, "FAIL cfg: default '%s' of %s is not one of its values '%s'\n", m->def, m->key, m->values), fails++;
     }
     CHECK(listed >= 30, "the defaults table was walked");
-    // cfg_meta answers with the first row of a key: a second row would be dead, and Reset would visit the key twice
     for (int i = 0; cfg_meta_at(i); i++)
         for (int j = i + 1; cfg_meta_at(j); j++)
             if (!strcmp(cfg_meta_at(i)->key, cfg_meta_at(j)->key))
                 fprintf(stderr, "FAIL cfg: %s has two rows in the defaults table\n", cfg_meta_at(i)->key), fails++;
-    // every setting the menu lists has a section for cfg_save (a key without one would go to [misc], not where it belongs)
     for (int i = 0; cfg_meta_at(i); i++)
         if (!cfg_has_section(cfg_meta_at(i)->key))
             fprintf(stderr, "FAIL cfg: %s has no section in cfg.c's sections table\n", cfg_meta_at(i)->key), fails++;

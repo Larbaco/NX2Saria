@@ -1,15 +1,4 @@
-﻿// nx2saria.ini: file-backed defaults for NX2SARIA_* variables; nx2navi.ini and NX2NAVI_* remain readable aliases.
-// Format: "key = value" lines, '#' or ';' at the start of a line begins a comment, [sections] only group. A key is a
-// variable name without either prefix (both optional prefixes are accepted), case-insensitive. A value is the rest of the
-// line, trimmed, optionally in double quotes; an empty value counts as unset. For a setting with a set of values (a row
-// of metas[] with values), a blank followed by ';' or '#' starts a comment after the value too (cut_comment). A switch
-// (values 0|1) reads false, off and no as 0 and true, on and yes as 1 (switch_word). The environment wins over the
-// file.
-//
-// Live settings: cfg_set changes a value in memory (readers see the new pointer; the old string is kept, so a pointer
-// cfg_get handed out stays valid) and cfg_save writes only the changed keys back, keeping the rest of the file.
-// Readers take no lock: an entry is complete before n_entries counts it, and value pointers are swapped atomically.
-#include <ctype.h>
+﻿#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,30 +17,28 @@
 #define PREFIX_LEN (sizeof PREFIX - 1)
 #define CFG_MAX_KEYS 512
 
-typedef struct { char *key, *value; int dirty, removed, held, test; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it; test: set by a test hook (cfg_set_test), cfg_save skips it too
+typedef struct { char *key, *value; int dirty, removed, held, test; } CfgEntry;
 
 static CfgEntry entries[CFG_MAX_KEYS];
 static int n_entries;
 static unsigned version;
-static PlatMutex set_lock = PLAT_MUTEX_INIT;   // cfg_set, cfg_reset, cfg_save
-static uint64_t kept_n, kept_bytes;            // set_lock: values cfg_set replaced and kept for readers (cfg_sizes)
-static int save_ok = 1;                         // the last cfg_save_to wrote (or had nothing to write)
+static PlatMutex set_lock = PLAT_MUTEX_INIT;
+static uint64_t kept_n, kept_bytes;
+static int save_ok = 1;
 
-// Every name the runtime reads (and the patch sets in generated/), without the prefix. A file key outside this list is
-// logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line.
 static const char *const known[] = {
     "HORSE_JUMP_FIX", "GOHMA_TURN_FIX", "FROZEN_ZORA_FIX", "BATTLE_MUSIC_FIX", "VOICE_LANGUAGE_FIX",
     "BALLOON_ANCHOR_FIX",
-    "CORES", "TM_DISPATCH", "NVN2_CS_TABLE", "SKIP_SHADERS", "MOVIE_DEBAND", "MOVIE_FPS", "MOVIE_SKIP", "MOVIE_OVERLAY", "MOVIES", "NPLN", "NVN2_PROGRAMS", "NVN_TRAP", "OCARINA_REALTIME", "ONESHOT_BUDGET", "ONESHOT_WAIT_MS", "OCARINA_STEP", "PHYSICS_STEPS", "PHYSICS_STEPS_FULL", "PICKUP_COUNT", "SONG_STAFF", "WATER_STEPS", "SOUND_STEPS", "FLOOR_PROBE", "FLOOR_SCAN", "FLOOR_WATCH", "FLOOR_CARRY", "MOVIE_PTS", "STEP_STEADY", "VI_HZ", "VI_VRR", "TIME_DUMP", "SHADER_DUMP", "SHOT_AFTER", "SHOT_DIR", "SHOT_EVERY",   // Switch 2 port: movie skip (romfs.c), NVN2 proc traps (nvn_procs.c)
+    "CORES", "TM_DISPATCH", "NVN2_CS_TABLE", "SKIP_SHADERS", "MOVIE_DEBAND", "MOVIE_FPS", "MOVIE_SKIP", "MOVIE_OVERLAY", "MOVIES", "NPLN", "NVN2_PROGRAMS", "NVN_TRAP", "OCARINA_REALTIME", "ONESHOT_BUDGET", "ONESHOT_WAIT_MS", "OCARINA_STEP", "PHYSICS_STEPS", "PHYSICS_STEPS_FULL", "PICKUP_COUNT", "SONG_STAFF", "WATER_STEPS", "SOUND_STEPS", "FLOOR_PROBE", "FLOOR_SCAN", "FLOOR_WATCH", "FLOOR_CARRY", "MOVIE_PTS", "STEP_STEADY", "VI_HZ", "VI_VRR", "TIME_DUMP", "SHADER_DUMP", "SHOT_AFTER", "SHOT_DIR", "SHOT_EVERY",
     "OCARINA_TIMING",
-    "FSR3_PROBE_PAN", "FSR3_PROBE_PPM",   // the FSR 3.1 probe (fsr3_probe.c)
-    "FSR3FG_PROBE_PPM", "FSR3FG_PASS_TIMES", "FSR3FG_DUMP", "FSR3FG_DUMP_EVERY", "FSR3FG_TEST_FAIL",   // the FSR 3.1 frame generation probe (fsr3fg_probe.c), vk_fsr3fg.c
-    "FG_GPU_TIME", "DLAA_TEST_DEFERRED",   // frame generation's GPU time (vk_fg_time.c); the deferred-shape test (vk_dlaa.c vk_dlaa_pass)
+    "FSR3_PROBE_PAN", "FSR3_PROBE_PPM",
+    "FSR3FG_PROBE_PPM", "FSR3FG_PASS_TIMES", "FSR3FG_DUMP", "FSR3FG_DUMP_EVERY", "FSR3FG_TEST_FAIL",
+    "FG_GPU_TIME", "DLAA_TEST_DEFERRED",
     "AA", "AA_LOG", "AB", "AMIIBO_DAILY_LIMIT", "AMIIBO_DIR", "AMIIBO_KEYS", "AMIIBO_POPUP", "AMIIBO_WRITEBACK", "ANISO", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_CATCHUP", "AUDIO_CHANNELS", "AUDIO_DEVICE", "AUDIO_GAME_PRIO", "AUDIO_OFF", "AUDIO_PREFILL_MS", "AUDIO_RAMP", "AUDIO_STATS",
     "AUDIO_STRICT",
     "BARRIER_GAME", "MESH_AHEAD", "MESH_FALLBACK", "MESH_FALLBACK_MB", "MESH_FALLBACK_WORKERS", "MESH_FALLBACK_HOLD", "MESH_FALLBACK_BATCH", "PROBE_MESHFB_DIR",
-    "CAPTURE_AT", "CAPTURE_DIR", "CAPTURE_REPLAY", "CAPTURE_REPLAY_CAMERA",   // bug captures and their replays (bugcap.c)
-    "BOOT_MAP", "BOOT_MAP_SLOT", "BOOT_MAP_AGE", "BOOT_MAP_TIME",   // the game started in an area from a save (boot_map.c)
+    "CAPTURE_AT", "CAPTURE_DIR", "CAPTURE_REPLAY", "CAPTURE_REPLAY_CAMERA",
+    "BOOT_MAP", "BOOT_MAP_SLOT", "BOOT_MAP_AGE", "BOOT_MAP_TIME",
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
     "BIND_LSTICK_RIGHT", "BIND_LSTICK_UP", "BIND_MINUS",
     "BIND_PLUS", "BIND_R", "BIND_RCLICK", "BIND_RIGHT", "BIND_RSTICK_DOWN", "BIND_RSTICK_LEFT", "BIND_RSTICK_RIGHT", "BIND_RSTICK_UP",
@@ -70,10 +57,10 @@ static const char *const known[] = {
     "HDR_TONEMAP", "HDR_TONE_SLOPE", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
     "BIG_BUILD_FREE_MB", "BIG_BUILD_MAX_MB", "BG_BUILD_PLAY_DRAWS", "BUILD_FREE_MB", "BUILD_RESERVE_MB", "LIB_PREBUILD_BIG", "LIB_PREBUILD_BIG_BG", "COMPUTE_WARM_REUSE", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIB_WARM", "PREPARE_STALL_S", "PREPARE_STALL_TEST_MS", "LINE_WIDTH", "POOL_SHOWN_FIRST", "POOL_TEX_RELEASE", "POOL_DATA_FIRST", "TEX_REUSE_NAMED", "TEX_OVERWRITTEN_USED", "PIPE_LINK_MS", "FRAME_HOLD_MS", "PACE_SMOOTH", "OQ_BATCH", "OQ_HOLD", "QUAD_INDEX", "CLEAR_SMALL_CPU", "GATE_WAIT_MS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY", "MEM_CENSUS", "MEM_NEED_MB", "MENU_LANG", "MENU_SOUND_VOLUME", "MENU_TEST",
     "MENU_CURSOR", "MENU_CURSOR_LOG", "MENU_MOUSE_PATCH", "MENU_TEST_CLICK", "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MICROPHONE", "MIRROR_GAP", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MONITOR", "MOTION", "MOUSE_MODE", "MOUSE_DIRECT_PATCH", "MOUSE_SENS", "MOUSE_TRACE", "MOVIE_HOST", "MOVIE_PACE", "MOVIE_CLOCK", "TEST_HITCH", "SPRINT_BUTTON", "SPRINT_MODE", "SPRINT_BUTTON_PATCH", "TEXT_SPEED", "TEXT_SPEED_PATCH", "AMIIBO_DAILY_PATCH",
-    "MOTION_GUARD_DEGREES", "MOTION_POLICY_TRACE", "SELECTIVE_MOTION", "SELECTIVE_MOTION_RAW",   // motion_owner.c, vk_fg_pose.inc
-    "SKIN_MOTION",   // vk_skin_motion.inc
-    "GYRO_CALIBRATION", "GYRO_DEADZONE", "GYRO_TURN_SENS", "GYRO_TILT_SENS", "GYRO_TURN_INVERT", "GYRO_TILT_INVERT", "TEST_PAD_GYRO",   // input.c motion_options_refresh and test_pad_make (TEST_PAD_GYRO): the gyro
-    "TRACKER_API", "TRACKER_API_PORT",   // the read-only view of the game's memory for a map tracker (tracker_api.c)
+    "MOTION_GUARD_DEGREES", "MOTION_POLICY_TRACE", "SELECTIVE_MOTION", "SELECTIVE_MOTION_RAW",
+    "SKIN_MOTION",
+    "GYRO_CALIBRATION", "GYRO_DEADZONE", "GYRO_TURN_SENS", "GYRO_TILT_SENS", "GYRO_TURN_INVERT", "GYRO_TILT_INVERT", "TEST_PAD_GYRO",
+    "TRACKER_API", "TRACKER_API_PORT",
     "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
     "MV_SURVEY",
     "HANDLE_CENSUS",
@@ -98,39 +85,31 @@ static const char *const known[] = {
     "ZSTD_CHECK", "ZSTD_NATIVE",
     "BIND_REUSE", "DYN_DELTA", "STG_ARENA", "SUBMIT_BATCH", "SUBMIT_THREAD", "ASTC_GPU_DESWIZZLE", "ASTC_SCRATCH_KEEP", "ASTC_ARENA", "ASTC_BC1",
     "MERGE_CPU", "MERGE_CPU_CHECK", "MERGE_CPU_MIN", "WB_DIFF",
-    "TEXUP_LOG_MS", "DYN_RES", "DYN_RES_TARGET", "DYN_RES_STEP", "DYN_RES_MIN", "TEXTURE_DETAIL", "VRAM_USE",   // vram_use: the removed Video memory use row, read by nothing
+    "TEXUP_LOG_MS", "DYN_RES", "DYN_RES_TARGET", "DYN_RES_STEP", "DYN_RES_MIN", "TEXTURE_DETAIL", "VRAM_USE",
     "RECORDER_CORE", "RECORDER_PRIO", "READABLE_FAST", "REPLAY_TIME", "REPLAY_PHASES", "LOCK_TIME", "POOL_CREATE_BUDGET", "POOL_CREATE_MS", "POOL_FINI_IDLE", "POOL_LOAD_BACKLOG", "POOL_LOAD_MS",
     "VMA_BLOCK_MB", "SYNC_WAKE_ALL", "LOG_ASYNC", "LOG_SHORT_PATHS", "DEVICE_LOST_AT", "STAGING_FAIL_AT", "VRAM_BALLAST_MB",
     "GEN_SEED",
     "COPY_RETIRE",
-    "PRESET",   // the quality preset (cfg.c "quality presets", preset_pick.h)
-    "PRESET_PROBE",   // the quality preset's hardware probe at start (hw_detect.c); no menu row
-    "NVIDIA_CACHE_DIR",   // NVIDIA's shader disk cache in a folder beside the exe (vk_device.c nvidia_cache_beside_exe); no menu row
+    "PRESET",
+    "PRESET_PROBE",
+    "NVIDIA_CACHE_DIR",
     "MEM_BUDGET_TEST_VRAM_MB", "MEM_BUDGET_TEST_RAM_MB",
-    "TEX_COMPACT", "TEX_COMPACT_MIN_MB", "TEX_COMPACT_FRAME_MB",   // texture compaction (vk_texture.c); no menu row
-    "STANDIN_FILTER",   // the filter of the scene upscaler's stand-in (vk_tonemap.c); no menu row
-    // developer switches read with cfg_get, rt_knob or vk_caps.c env_u32, without a menu row (tests/cfg_rows_check.py)
+    "TEX_COMPACT", "TEX_COMPACT_MIN_MB", "TEX_COMPACT_FRAME_MB",
+    "STANDIN_FILTER",
     "AUDIO_DUMP", "DEFER_STAMP", "DEPTH_TWIN", "DLAA_ZFIT", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "EVENT_ORDER",
     "GATHER_BIAS", "PIN_SWEEP", "REC_CHECK", "REC_DELAY_US", "REG_ORDER", "SHADOW", "ZERO_LOCALS",
-    "HEAP_RETRY", "HEAP_RETRY_TEST_FAIL", "HEAP_RETRY_TEST_SHIPPED",   // heap_retry.c: the set heap_retry and its test switches
-    "CHANGEBANK_HOLD", "CHANGEBANK_HOLD_MS",   // changebank_hold.c: the set changebank_hold and its hold
-    "CAMERA_CLEARANCE_FIX",   // camera_clearance.c: the set camera_clearance
-    "POS_TRACE",   // debug_tools.c: Link's position each frame to a file, for movement checks; no menu row
-    // hang_watch.c: the hang watch's seconds
+    "HEAP_RETRY", "HEAP_RETRY_TEST_FAIL", "HEAP_RETRY_TEST_SHIPPED",
+    "CHANGEBANK_HOLD", "CHANGEBANK_HOLD_MS",
+    "CAMERA_CLEARANCE_FIX",
+    "POS_TRACE",
     "HANG_WATCH_S",
-    // retired: the settings of the co-op of versions up to 0.9.2; read by nothing, listed so that a file which still
-    // sets them logs no unknown key
     "COOP", "COOP_BETA", "COOP_NAME", "COOP_SERVER", "COOP_PORT", "COOP_ROOM", "COOP_AUTO", "COOP_DROP",
     "COOP_PROGRESS", "COOP_ITEMS", "COOP_SONGS", "COOP_QUEST", "COOP_KEYS", "COOP_RUPEES", "COOP_AMMO",
     "COOP_TEST_SET", "COOP_ACCEPT", "COOP_REMOVE", "COOP_RESET_POOLS",
-    // retired: the settings of the co-op through Steam that the main branch held for a while after 0.9.2 and no
-    // release shipped; listed like the ones above, for the file of someone who built from it then and turned it on
     "COOP_STEAM", "COOP_SHARE", "COOP_NAMES", "COOP_CHAT",
 };
 
-// The settings-file section a key cfg_set may write goes to when the file lacks it (the example file's sections).
 static const struct { const char *key, *section; } sections[] = {
-    // the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below)
     {"TEX_RELEASED_MAX", "performance"}, {"MIRROR_HOT", "performance"}, {"FREEZE_IDLE", "performance"}, {"SUBMIT_FINISH_KINDS", "performance"}, {"FOLIAGE", "performance"},
     {"ZSTD_NATIVE", "performance"},
     {"VRAM_HEAP_LIMIT", "performance"}, {"VRAM_RESERVE_MB", "performance"}, {"UPLOAD_BATCH_MB", "performance"}, {"MESH_EMULATION", "performance"},
@@ -226,15 +205,8 @@ static const struct { const char *key, *section; } sections[] = {
     {"TEX_COMPACT", "performance"}, {"TEX_COMPACT_MIN_MB", "performance"}, {"TEX_COMPACT_FRAME_MB", "performance"},
 };
 
-// The settings the menu shows: the value in effect when the key is unset, and what the key accepts. The only place a
-// default lives: consumers read cfg_value / cfg_int / cfg_double / cfg_bool. A row with an empty default has no fixed
-// value (it depends on the machine); its consumer reads cfg_get and keeps an "unset" branch.
 #define LIVE 1
 #define RESTART 0
-// The lazy write-back (memory.c "Lazy write-back") is on where it has run: its fetch inside the access-fault handler
-// has only ever run on Windows. This is the platform's part of the default, which memory.c mem_init goes by to take
-// the access faults; the back end then turns it off for a driver it is not trusted on while the key is unset
-// (wb_lazy_choice.h: AMD's own), and with shadow storage whatever is set (vk_memory.c vk_mem_lazy_decide).
 #ifdef _WIN32
 #define WB_LAZY_DEFAULT "1"
 #else
@@ -242,72 +214,46 @@ static const struct { const char *key, *section; } sections[] = {
 #endif
 
 static const CfgMeta metas[] = {
-    // Screen
     {"FULLSCREEN", "0", "0|1", LIVE}, {"WINDOW_SIZE", "1920x1080", NULL, LIVE},
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
-    {"GPU_NAME", "", NULL, RESTART},   // gpu_choice.h: the Graphics card row writes the card's name beside its position
-    // the quality preset (cfg.c "quality presets"): recommended is the tier preset_pick.h chooses for this PC at each
-    // start; the restart-only keys of a tier the menu switches to apply at the next start (cfg_pending)
+    {"GPU_NAME", "", NULL, RESTART},
     {"PRESET", "recommended", "recommended|low|medium|high|ultra", LIVE},
-    // 0: no Vulkan probe at start for the preset; the state file's last GPU, else nothing known (cfg.c preset_init)
     {"PRESET_PROBE", "1", "0|1", RESTART},
-    // vk_lowlat.c level_now: the driver's low latency without frame generation (0 off, 1 on, 2 on with boost)
     {"LOW_LATENCY", "0", "0|1|2", LIVE},
-    {"MONITOR", "auto", NULL, RESTART},   // auto|primary|<1-based index>|<part of a monitor name> (gfx_window_win.c, gfx_window_sdl.c chosen_monitor)
+    {"MONITOR", "auto", NULL, RESTART},
     {"PERF_OVERLAY", "off", "off|fps|full", LIVE},
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
-    {"STANDIN_FILTER", "easu", "easu|bilinear", LIVE},   // vk_tonemap.c vk_tonemap_record: how the scene is scaled to the picture
-    // widescreen.c plain_share: the scene's share of the picture without DLSS or FSR; 1 is the Upscaling row's Native,
-    // 0 the game's dynamic resolution. Live within the render-target heap the start made for it (heap_share).
+    {"STANDIN_FILTER", "easu", "easu|bilinear", LIVE},
     {"SCENE_SHARE", "0.75", "0..1", LIVE},
     {"DLAA", "0", "0|1", LIVE}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance|ultra_performance", LIVE},
-    {"DLSS_PRESET", "default", "default|k|j", LIVE}, {"DLSS_IDLE_FREE", "1", "0|1|2", RESTART}, {"TAA", "dlss", "dlss|fsr3", LIVE},   // vk_dlaa.c fsr3
-    // vk_dlaa.c vk_upscaler_idle_wait: 1 waits for the device to be idle wherever an upscaler lets go of something, as up
-    // to 0.10.1 (what was let go of still goes once the GPU is past it, behind its present gate)
+    {"DLSS_PRESET", "default", "default|k|j", LIVE}, {"DLSS_IDLE_FREE", "1", "0|1|2", RESTART}, {"TAA", "dlss", "dlss|fsr3", LIVE},
     {"UPSCALER_IDLE_WAIT", "0", "0|1", RESTART},
-    {"DLSS_RANGE", "0", "0|1", RESTART},   // vk_dlaa.c range_on: one DLSS feature for the render sizes of a mode
-    {"DLSS_PREBLOOM", "0", "0|1", LIVE},   // vk_dlaa.c prebloom_run: DLSS or FSR 3.1 before the bloom, not after the tonemap
-    {"FSR4", "0", "0|1", LIVE},   // vk_ffx.cpp vk_ffx_fsr4
-    {"FSR4_FG", "0", "0|1", LIVE},   // vk_fg.cpp use4
-    {"FRAMEGEN", "off", "off|fsr3|dlss", LIVE},   // vk_fg.cpp, vk_dlssg.c
-    {"FRAMEGEN_MULTIPLIER", "2", "2|3|4", LIVE},   // vk_dlssg.c: frames on screen per rendered frame with DLSS
-    // the same where DLSS's frame generation runs through NGX itself (gfx_present.c ng_multiplier): 2x to 6x or dynamic
+    {"DLSS_RANGE", "0", "0|1", RESTART},
+    {"DLSS_PREBLOOM", "0", "0|1", LIVE},
+    {"FSR4", "0", "0|1", LIVE},
+    {"FSR4_FG", "0", "0|1", LIVE},
+    {"FRAMEGEN", "off", "off|fsr3|dlss", LIVE},
+    {"FRAMEGEN_MULTIPLIER", "2", "2|3|4", LIVE},
     {"FG_MULT", "2", "2|3|4|5|6|dynamic", LIVE},
-    // vk_dlssg.c limit_allowed: with DLSS Frame Generation, Reflex holds the frame limit where each frame starts; 0 leaves
-    // it to the game's own limiter
     {"REFLEX_LIMIT", "1", "0|1", LIVE},
     {"DLSS_CHAR_MASK", "65", "0|35|65|100", LIVE}, {"FXAA", "1", "0|1", LIVE},
-    // vk_skin_motion.inc skin_enabled: motion vectors of their own for every skinned character, not the player alone
     {"SKIN_MOTION", "1", "0|1", RESTART},
-    {"AA", "game", "game|off|fxaa|smaa|taa", LIVE},   // vk_aa.c: what runs in place of the game's SMAA
-    {"GAME_ASPECT", "16:9", "16:9|window|16:10|3:2|21:9|32:9", RESTART},   // widescreen.c
-    {"GAME_RES", "1440", "1080|1440|1800|2160|2880|window", RESTART},   // widescreen.c: the picture's height
-    // romfs.c wide_hud_overlay, wide_hud.c: the HUD's corner elements at the edges of a picture wider than 16:9 (edges)
-    // or in the corners of its middle 16:9 (center, the game's layout); the layouts are read once at start
+    {"AA", "game", "game|off|fxaa|smaa|taa", LIVE},
+    {"GAME_ASPECT", "16:9", "16:9|window|16:10|3:2|21:9|32:9", RESTART},
+    {"GAME_RES", "1440", "1080|1440|1800|2160|2880|window", RESTART},
     {"WIDE_HUD", "center", "center|edges", RESTART},
-    // the pause, system, map and loading screens on a picture wider than 16:9: full fills the screen (wide_hud.c
-    // lays their layouts out over the whole picture), center keeps them in the middle 16:9 with black bars at the
-    // sides while one is up (wide_bars.c wide_menu_sides; wide_hud.c moves the loading icon into the middle)
     {"WIDE_MENUS", "full", "full|center", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
-    {"ANISO", "16", "game|2|4|8|16", LIVE},   // vk_texture.c sampler_features, vk_sampler_aniso_live; 16: the game asks 1x or 2x
-    {"TEXTURE_DETAIL", "auto", "auto|full|reduced|low", RESTART},   // vk_texture.c "texture detail", read at the first texture
-    // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
+    {"ANISO", "16", "game|2|4|8|16", LIVE},
+    {"TEXTURE_DETAIL", "auto", "auto|full|reduced|low", RESTART},
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},
     {"COLOR_CONTRAST", "100", "70..150", LIVE}, {"COLOR_SATURATION", "100", "50..200", LIVE},
     {"COLOR_GAMMA", "1", "0.8..1.2", LIVE},
-    // HDR output (vk_hdr.c): on, off, the tone mapper and its grading apply at once (the HDR tonemap is spliced into
-    // the game's as shaders load whatever is set, vk_hdr_armed); native is the game's own and is asked for once, at
-    // start (vk_hdr_needs_restart). HDR_LIVE = 0 leaves the HDR path out of a run that starts with HDR off.
-    // The grading sliders: 50 leaves the picture as it is, exposure in percent. HDR_GAMMA is the display the present
-    // shows the picture as, with every tone mapper; off shows the sRGB code as it decodes, the dark tones lighter.
     {"HDR", "0", "0|1|native", LIVE}, {"HDR_LIVE", "1", "0|1", RESTART},
     {"HDR_PEAK_NITS", "1000", "400..10000", LIVE}, {"HDR_GAME_NITS", "203", "48..500", LIVE},
     {"HDR_UI_NITS", "203", "48..500", LIVE}, {"HDR_GAMMA", "2.2", "off|2.2|2.4", LIVE},
     {"HDR_TONEMAP", "psychov35", "vanilla|psychov35|renodrt", LIVE}, {"HDR_EXPOSURE", "100", "0..200", LIVE},
-    // the observer-response mapper's: where scene grey lands, its slope there matched to the game's curve, that slope
-    // (50 unchanged) and how much of the game's hue bend at its clamp bright colours get
     {"HDR_MIDGRAY", "vanilla", "render|vanilla", LIVE}, {"HDR_MATCH_SLOPE", "1", "0|1", LIVE},
     {"HDR_TONE_SLOPE", "50", "0..100", LIVE}, {"HDR_HUE_CLIP", "50", "0..100", LIVE},
     {"HDR_HIGHLIGHTS", "50", "0..100", LIVE}, {"HDR_SHADOWS", "50", "0..100", LIVE}, {"HDR_CONTRAST", "50", "0..100", LIVE},
@@ -316,18 +262,15 @@ static const CfgMeta metas[] = {
     {"HDR_GRADE", "100", "0..100", LIVE},
     {"DEVICE_PROFILE", "auto", "auto|desktop|deck", RESTART},
     {"SHADOW_RES", "game", "game|256|512|768|1024|1536|2048", RESTART},
-    {"SHADOW_SCALE", "1", "1..4", RESTART}, {"SHADOW_COMPARE", "1", "0|1", RESTART},   // vk_texture.c
-    {"SHADOW_BULK_WRITE", "0", "0|1", RESTART},   // vk_memory.c shadow_write_back
-    // vk_memory.c "Pages a shader stores into through the device address table"
+    {"SHADOW_SCALE", "1", "1..4", RESTART}, {"SHADOW_COMPARE", "1", "0|1", RESTART},
+    {"SHADOW_BULK_WRITE", "0", "0|1", RESTART},
     {"SHADOW_TABLE_STORES", "0", "0|1", RESTART}, {"SHADOW_CHECK", "0", "0|1", RESTART},
-    {"SVC_SLOW_MS", "0", "0..60000", RESTART},   // kernel.c kern_svc: log services slower than this
+    {"SVC_SLOW_MS", "0", "0..60000", RESTART},
     {"SHADOW_RANGE", "100", "50..400", RESTART}, {"CONTACT_SHADOWS", "0", "0..100", RESTART},
     {"PCSS", "0", "0..200", RESTART},
-    // vk_texture.c shadow_pcf: every depth-compare sampler filters linearly (2x2 percentage-closer filtering)
     {"SHADOW_PCF", "0", "0|1", RESTART},
-    // Game
     {"FPS_LIMIT", "60", "30..240|display|unlimited", LIVE}, {"FPS60", "1", "0|1", LIVE},
-    {"RTSS", "1", "0|1", RESTART},   // rtss_limit.c: RivaTuner Statistics Server takes the limit where it runs
+    {"RTSS", "1", "0|1", RESTART},
     {"REALTIME", "1", "0|1", RESTART}, {"CLOTH_REALTIME", "1", "0|1", RESTART},
     {"MODS_REBUILD", "auto", "auto|off", RESTART},
     {"HIGHFPS_FIX", "1", "0|1", RESTART},
@@ -337,254 +280,177 @@ static const CfgMeta metas[] = {
     {"BATTLE_MUSIC_FIX", "1", "0|1", RESTART},
     {"VOICE_LANGUAGE_FIX", "1", "0|1", RESTART},
     {"BALLOON_ANCHOR_FIX", "1", "0|1", RESTART},
-    // the set owater of patches-v111.txt (frame_rate.c frame_rate_sim_host): water and floor surfaces' fixed steps
     {"WATER_STEPS", "1", "0|1", RESTART},
-    // the set osound of patches-v111.txt (frame_rate.c frame_rate_sound_gate_host): the sound job at 60 Hz above 60 fps
     {"SOUND_STEPS", "1", "0|1", RESTART},
-    // the set ostaff of patches-v111.txt: a song the game plays back moves its staff one note for each note of the melody
     {"SONG_STAFF", "1", "0|1", RESTART},
-    // the set ofollow of patches-v111.txt (frame_rate.c floor_carry_store): a moving floor carries a character above
-    // 100 fps as at 60
     {"FLOOR_CARRY", "1", "0|1", RESTART},
-    // the set orecord of patches-v111.txt: the ocarina recorder's clock keeps each frame's fraction above 60 fps
     {"OCARINA_TIMING", "1", "0|1", RESTART},
-    // frame_rate.c floor_probe: lines about Link on a moving floor (0 off, 1 = 4000 lines, or a count)
     {"FLOOR_PROBE", "0", NULL, RESTART},
-    // frame_rate.c floor_scan: finds the moving floor under Link in guest memory (0 off, 1 = 20000 lines, or a count)
     {"FLOOR_SCAN", "0", NULL, RESTART},
-    // floor_watch.c: hardware watchpoints on the floor the scan finds, at 60 fps and at 120 or more (0 off, 1 on)
     {"FLOOR_WATCH", "0", "0|1", RESTART},
-    // log_privacy.c: the account's folders and name written short in the log, the bug capture and the crash report
     {"LOG_SHORT_PATHS", "1", "0|1", RESTART},
     {"LANG", "", "ja|en-US|fr|de|it|es|zh-CN|ko|nl|pt|ru|zh-TW|en-GB|fr-CA|es-419|zh-Hans|zh-Hant|pt-BR|pl", RESTART},
     {"OPERATION_MODE", "docked", "docked|handheld", LIVE},
-    {"TEXT_SPEED", "normal", "normal|fast|instant", LIVE},   // text_speed.c: the message window's typing
-    {"ASSUME_FOCUS", "1", "0|1", LIVE},   // read on every focus change (ov_system.c)
-    // Sound, Controls, Menu
-    {"VOLUME", "100", "0..100", LIVE}, {"MENU_SOUND_VOLUME", "80", "0..100", LIVE}, {"AUDIO_CHANNELS", "stereo", "auto|stereo|5.1", LIVE},   // audio_mixer.c audio_channels_live
-    {"AUDIO_DEVICE", "default", NULL, RESTART},   // default|<1-based index>|<part of a device name> (audio_mixer.c resolve_audio_device)
-    {"MICROPHONE", "1", "0|1", RESTART},   // ov_audio_input.c mic_on: 0 refuses the game's input streams
-    {"AUDIO_RAMP", "1", "0|1", RESTART},   // audio_mixer.c accumulate_ramp: a changed volume is reached across the frame
-    {"AUDIO_CATCHUP", "1", "0|1", RESTART},   // audren.c render_thread: frames owed after a stall are rendered and dropped
-    // audren.c audio_bad: 1 ends the process at the first game audio value the renderer cannot use, as 0.10.1 did for
-    // most of them (a limiter time that is not a number and a negative mix buffer count end it too)
+    {"TEXT_SPEED", "normal", "normal|fast|instant", LIVE},
+    {"ASSUME_FOCUS", "1", "0|1", LIVE},
+    {"VOLUME", "100", "0..100", LIVE}, {"MENU_SOUND_VOLUME", "80", "0..100", LIVE}, {"AUDIO_CHANNELS", "stereo", "auto|stereo|5.1", LIVE},
+    {"AUDIO_DEVICE", "default", NULL, RESTART},
+    {"MICROPHONE", "1", "0|1", RESTART},
+    {"AUDIO_RAMP", "1", "0|1", RESTART},
+    {"AUDIO_CATCHUP", "1", "0|1", RESTART},
     {"AUDIO_STRICT", "0", "0|1", RESTART},
-    // sprint.c: the sprint button (b the game's B, l3 the left stick's click) and toggle or hold; the Controls tab's
-    // Sprint rows (1.1.1)
     {"SPRINT_BUTTON", "off", "off|b|l3", LIVE}, {"SPRINT_MODE", "toggle", "toggle|hold", LIVE},
     {"MOTION", "1", "0|1", LIVE}, {"RUMBLE_STRENGTH", "130", "0..300", LIVE}, {"RUMBLE_CURVE", "0.6", "0.2..1.5", LIVE},
     {"RUMBLE_TRIGGERS", "0", "0|1", LIVE}, {"PAD_LAYOUT", "nintendo", "auto|nintendo|xbox|playstation", LIVE},
-    {"DS3", "0", "0|1", LIVE},   // input_ds3_win.c ds3_read: read a DualShock 3 directly; off: no HID scan
-    // input.c hd_setting: a Switch Pro Controller or Joy-Con gets the game's vibration values as they are
+    {"DS3", "0", "0|1", LIVE},
     {"RUMBLE_HD", "0", "0|1", LIVE},
-    // input.c motion_options_refresh: the gyro's rest calibration, dead zone, and turn / tilt sensitivity and inversion
     {"GYRO_CALIBRATION", "1", "0|1", LIVE}, {"GYRO_DEADZONE", "low", "off|low|standard|high", LIVE},
     {"GYRO_TURN_SENS", "100", "10..400", LIVE}, {"GYRO_TILT_SENS", "100", "10..400", LIVE},
     {"GYRO_TURN_INVERT", "0", "0|1", LIVE}, {"GYRO_TILT_INVERT", "0", "0|1", LIVE},
     {"PROMPTS", "nintendo", "nintendo|xbox|playstation|steamdeck|pc", RESTART},
-    {"STICK_DEADZONE", "8", "0..50", LIVE}, {"STICK_SENS", "1", "0.1..3", LIVE},   // camera_speed.c cam_speed_tick
-    {"DEBUG_MENU", "0", "0|1", LIVE},   // ui/menu.cpp menu_debug_toggle
+    {"STICK_DEADZONE", "8", "0..50", LIVE}, {"STICK_SENS", "1", "0.1..3", LIVE},
+    {"DEBUG_MENU", "0", "0|1", LIVE},
     {"LSTICK_DEADZONE", "", "0..50", LIVE}, {"RSTICK_DEADZONE", "", "0..50", LIVE},
     {"MOUSE_MODE", "direct", "stick|direct", LIVE},
     {"MOUSE_SENS", "1", "0..10", LIVE}, {"MENU_CURSOR", "1", "0|1", LIVE},
     {"WALK_KEY", "none", NULL, LIVE}, {"WALK_SCALE", "0.51", "0.2..0.9", LIVE},
     {"MENU_LANG", "", "en|ru|pt-BR|zh-Hans", LIVE},
     {"AMIIBO_DIR", "", NULL, LIVE},
-    // amiibo.c amiibo_reload_keys: the 160-byte keys file; empty: key_retail.bin in the amiibo folder (AMIIBO_DIR,
-    // else ./amiibo). The Amiibo tab's Reload keys reads it again.
     {"AMIIBO_KEYS", "", NULL, LIVE},
-    // amiibo.c amiibo_flush_figure: also write the game's changes into the dump file (after a one-time <dump>.bak copy)
-    // when the keys decrypted it
     {"AMIIBO_WRITEBACK", "0", "0|1", LIVE},
-    // ui/amiibo_page.cpp amiibo_picker_wanted: the amiibo list opens over the game when it starts waiting for an amiibo
     {"AMIIBO_POPUP", "1", "0|1", LIVE},
-    // amiibo_daily.c: 0 switches on the patch set amiibo_daily, which lifts the game's once-a-day amiibo limit; live,
-    // where the game version has the set. The Game tab switches it.
     {"AMIIBO_DAILY_LIMIT", "1", "0|1", LIVE},
-    // Discord Rich Presence (discord_rpc.c): on by default (it only talks to a Discord client running on this PC, and
-    // does nothing without one); the Game tab of the settings menu and the launcher's Settings switch it. No application
-    // ID or art key is built in; a player may configure their own.
     {"DISCORD_RPC", "1", "0|1", LIVE},
     {"DISCORD_APP_ID", NX2SARIA_DISCORD_APP_ID_DEFAULT, NULL, LIVE},
     {"DISCORD_IMAGE", NX2SARIA_DISCORD_IMAGE_DEFAULT, NULL, LIVE},
-    // The tracker API (tracker_api.c): off by default; on, a map tracker on this PC reads the game's memory through
-    // 127.0.0.1:<port>, read-only. Read at start: the stack and heap block is placed for it in mem_init.
     {"TRACKER_API", "0", "0|1", RESTART},
     {"TRACKER_API_PORT", "6545", "1024..65535", RESTART},
-    // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},
     {"REPLAY_PIPE", "0", "0..4", RESTART},
-    {"REPLAY_WORKERS", "auto", "auto|0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16", RESTART},   // vk_exec.c rw_init, vk_exec_replay_workers_auto
-    // vk_exec.c "the early tail"; on by default since 0.10.0
+    {"REPLAY_WORKERS", "auto", "auto|0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16", RESTART},
     {"TAIL_EARLY", "1", "0|1", RESTART},
-    {"REPLAY_SMALL", "0", "0..63", RESTART},   // vk_exec.c group_start
+    {"REPLAY_SMALL", "0", "0..63", RESTART},
     {"FREE_CORES", "0", "0|1", RESTART}, {"TIMER_1MS", "1", "0|1", RESTART},
-    // dynamic resolution (dynres.c): the scene follows the GPU time toward DYN_RES_TARGET milliseconds (under 1: 90 %
-    // of the frame limit's frame time), holding each step DYN_RES_STEP 60 Hz frames of the clock (1 s at least,
-    // whatever is set); without DLSS or FSR it steps the scene share down to DYN_RES_MIN at the lowest. DYN_RES and
-    // DYN_RES_MIN have menu rows (ui/menu.cpp row_dyn_res)
     {"DYN_RES", "0", "0|1", LIVE}, {"DYN_RES_TARGET", "0", "0..100", LIVE}, {"DYN_RES_STEP", "45", "8..600", LIVE},
     {"DYN_RES_MIN", "0.5", "0.33..1", LIVE},
-    // the recording thread: a core of its own (auto: with 12 or more logical processors) and the highest priority
-    // (vk_exec.c rec_claim)
     {"RECORDER_CORE", "0", "auto|0|1", RESTART}, {"RECORDER_PRIO", "1", "0|1", RESTART}, {"READABLE_FAST", "1", "0|1|ab", RESTART}, {"REPLAY_TIME", "0", "0|1", RESTART}, {"REPLAY_PHASES", "0", "0|1", RESTART}, {"LOCK_TIME", "0", "0|1", RESTART}, {"POOL_CREATE_BUDGET", "16", "1..4096", RESTART}, {"POOL_CREATE_MS", "6", "0..100", RESTART}, {"POOL_FINI_IDLE", "0", "0|1", RESTART}, {"FREEZE_BUDGET_US", "1000", "0..100000", RESTART}, {"POOL_LOAD_BACKLOG", "512", "0..65536", RESTART},
-    // vk_memory.c freeze_pass: the backoff's quiet time and the hold around area loads
     {"FREEZE_QUIET_MS", "5000", "0..60000", RESTART}, {"FREEZE_LOAD_HOLD_MS", "3000", "0..30000", RESTART}, {"POOL_LOAD_MS", "50", "1..1000", RESTART},
-    // held submissions handed to the queue together (vk_sync.c, submit batching)
     {"SUBMIT_BATCH", "4", "1..16", RESTART},
 #ifdef _WIN32
-    {"SUBMIT_THREAD", "0", "0|1", RESTART},   // vk_device.c mesa_submit_thread: Mesa's submit thread (RADV)
+    {"SUBMIT_THREAD", "0", "0|1", RESTART},
 #else
-    {"SUBMIT_THREAD", "1", "0|1", RESTART},   // vk_device.c mesa_submit_thread: Mesa's submit thread (RADV)
+    {"SUBMIT_THREAD", "1", "0|1", RESTART},
 #endif
-    {"CACHE_DIE", "1", "0|1|ab", RESTART}, {"ONE_PER_CORE", "0", "0|1|ab", RESTART},   // perf.c cpu_placement
-    // shaders and pipelines
+    {"CACHE_DIE", "1", "0|1|ab", RESTART}, {"ONE_PER_CORE", "0", "0|1|ab", RESTART},
     {"PIPE_WAIT", "default", "default|draw", RESTART}, {"PIPE_SKIP", "any", "strict|any|fullscreen", RESTART},
-    {"PIPE_LINK_MS", "6", "0..100", RESTART},   // vk_exec_draw.c link_budget
-    {"PIPE_LINK_DRAW_MS", "3", "1..50", RESTART},   // vk_exec_draw.c link_draw_ms
-    {"PIPE_FRAME_WAIT_MS", "50", "0..500", RESTART},   // vk_exec_draw.c frame_wait
-    {"PIPE_SKIP_STEADY", "1", "0|1", RESTART},  // vk_exec.c steady_on
-    {"DRAW_WRITERS_WAIT", "1", "0|1", RESTART},   // vk_exec_draw.c writers_wait_on
-    {"PREPARE_PIPELINES", "all", "0|mesh|all", RESTART},   // vk_pipeline.c seed_pipelines
-    // vk_device.c: task and mesh programs through compute passes (vk_exec_draw.c "mesh fallback"); auto: on a device
-    // without mesh shaders, on AMD's Windows driver for RDNA 1 and 2 and on Intel's (vk_mesh_path.h). The megabytes
-    // are the buffers the passes write (vk_mesh_fb.c).
+    {"PIPE_LINK_MS", "6", "0..100", RESTART},
+    {"PIPE_LINK_DRAW_MS", "3", "1..50", RESTART},
+    {"PIPE_FRAME_WAIT_MS", "50", "0..500", RESTART},
+    {"PIPE_SKIP_STEADY", "1", "0|1", RESTART},
+    {"DRAW_WRITERS_WAIT", "1", "0|1", RESTART},
+    {"PREPARE_PIPELINES", "all", "0|mesh|all", RESTART},
     {"MESH_FALLBACK", "auto", "auto|0|1", RESTART}, {"MESH_FALLBACK_MB", "128", "16..4096", RESTART},
-    {"MESH_FALLBACK_WORKERS", "auto", "auto|1|2|3|4", RESTART},   // vk_exec_draw.c mfb_worker_count
-    // vk_exec_draw.c mfb_hold_role: a list's depth-only draw waits for its colour draw's pipeline
+    {"MESH_FALLBACK_WORKERS", "auto", "auto|1|2|3|4", RESTART},
     {"MESH_FALLBACK_HOLD", "1", "0|1", RESTART},
-    // vk_exec_draw.c mfb_batch_on: a pass's fallback draws run their stages before the pass (mfb_batch.h)
     {"MESH_FALLBACK_BATCH", "1", "1|0|auto", RESTART},
-    {"PIPE_AHEAD", "1", "0|1", RESTART},        // vk_exec.c vk_exec_ahead, vk_pipeline.c vk_pipeline_hint
-    {"LINE_WIDTH", "1", "0|1", RESTART},        // vk_pipeline.c key_lines
-    {"POOL_SHOWN_FIRST", "1", "0|1", RESTART},  // vk_texture.c shown_take
-    {"POOL_DATA_FIRST", "1", "0|1", RESTART},   // vk_texture.c data_take
-    {"TEX_REUSE_NAMED", "0", "0|1", RESTART},   // vk_texture.c slot_names
-    {"TEX_OVERWRITTEN_USED", "1", "0|1", RESTART},   // vk_texture.c drop_overwritten
-    {"GPL_FEEDBACK", "1", "0|1", RESTART},      // vk_pipeline.c gpl_feedback
-    {"GPL_MESH", "1", "0|1", RESTART},          // vk_pipeline.c mesh_lib_init
-    {"PIPE_FAST_WORKERS", "1", "0|1", RESTART}, // vk_pipeline.c lib_worker, fast_take
-    {"FRAME_HOLD_MS", "120", "0..500", RESTART},   // vk_backend.c frame_hold
-    {"PACE_SMOOTH", "1", "0|1", RESTART},   // vk_backend.c pace_smooth
-    {"OQ_BATCH", "1", "0|1", RESTART},   // vk_exec_xfer.c oq_take
-    {"CLEAR_SMALL_CPU", "1", "0|1", RESTART},   // vk_exec_xfer.c clear_small
-    // vk_exec_xfer.c oq_report_count: a samples-passed report missing draws the full query ring left uncounted
-    // repeats its record's last complete count where that is more than the part counted
+    {"PIPE_AHEAD", "1", "0|1", RESTART},
+    {"LINE_WIDTH", "1", "0|1", RESTART},
+    {"POOL_SHOWN_FIRST", "1", "0|1", RESTART},
+    {"POOL_DATA_FIRST", "1", "0|1", RESTART},
+    {"TEX_REUSE_NAMED", "0", "0|1", RESTART},
+    {"TEX_OVERWRITTEN_USED", "1", "0|1", RESTART},
+    {"GPL_FEEDBACK", "1", "0|1", RESTART},
+    {"GPL_MESH", "1", "0|1", RESTART},
+    {"PIPE_FAST_WORKERS", "1", "0|1", RESTART},
+    {"FRAME_HOLD_MS", "120", "0..500", RESTART},
+    {"PACE_SMOOTH", "1", "0|1", RESTART},
+    {"OQ_BATCH", "1", "0|1", RESTART},
+    {"CLEAR_SMALL_CPU", "1", "0|1", RESTART},
     {"OQ_HOLD", "0", "0|1", RESTART},
-    // vk_exec_draw.c draw_idx_rewritten: indexed quads drawn as two triangles each, indexed line loops closed
     {"QUAD_INDEX", "0", "0|1", RESTART},
-    // the patch set occlusion_off (recomp/patches-v111.txt): the game makes no occlusion queries. The row is what
-    // gives the set its default (patches.c rt_patches_init).
     {"PATCH_OCCLUSION_OFF", "0", "0|1", RESTART},
-    {"GATE_WAIT_MS", "10", "0..100", RESTART},   // vk_exec.c vk_exec_gate_wait
+    {"GATE_WAIT_MS", "10", "0..100", RESTART},
     {"LIB_PREBUILD", "1", "0|1", RESTART}, {"LIB_PREBUILD_THREADS", "", "1..64", RESTART},
-    {"LIB_WARM", "1", "0|1|force", RESTART},   // vk_pipeline.c lw_start: the driver's cache of stage libraries, warmed when cold
-    // vk_pipeline.c prep_stalled: seconds the shader preparation waits for builds the driver still holds once the rest
-    // are done; the game goes on with them in the background. 0 waits for every build
+    {"LIB_WARM", "1", "0|1|force", RESTART},
     {"PREPARE_STALL_S", "300", "0..86400", RESTART},
-    {"PREPARE_STALL_TEST_MS", "0", "0..3600000", RESTART},   // tests of prep_stalled: the last variant waits this long first
-    {"PIPE_PREBUILD", "1", "0|1", RESTART}, {"PIPE_SEED", "1", "0|1", RESTART}, {"PIPE_SEED_BOOT", "auto", "0|1|auto", RESTART},   // vk_pipeline.c keys_open_seed
-    {"PREWARM_XLATE", "", "1..64", RESTART}, {"GPL", "", "0|1", RESTART},   // vk_caps.c vk_caps_gpl: by the driver, off with AMD's for RDNA 2 and older
+    {"PREPARE_STALL_TEST_MS", "0", "0..3600000", RESTART},
+    {"PIPE_PREBUILD", "1", "0|1", RESTART}, {"PIPE_SEED", "1", "0|1", RESTART}, {"PIPE_SEED_BOOT", "auto", "0|1|auto", RESTART},
+    {"PREWARM_XLATE", "", "1..64", RESTART}, {"GPL", "", "0|1", RESTART},
     {"LIB_PREBUILD_BIG_BG", "1", "0|1", RESTART}, {"PIPE_FEEDBACK", "1", "0|1|2", RESTART},
-    {"PIPELINE_CACHE_MAX_MB", "", "0..65536", RESTART},   // vk_pipeline.c cache_cap: unset, from the RAM (1024 to 4096)
-    {"FFX_PIPE_CACHE", "1", "0|1", RESTART},   // vk_ffx.cpp vk_ffx_proc_addr: FSR 3.1's pipelines through the pipeline caches
-    {"PIPELINE_CACHE_PLAY", "1", "0|1", RESTART}, {"PIPELINE_CACHE_PLAY_MB", "64", "1..65536", RESTART},   // vk_pipeline.c "the play cache": what a run compiles goes into a file of its own
-    {"PIPELINE_CACHE_STAMP", "1", "0|1", RESTART},   // vk_pipeline.c cache_stamp_check: files of a translator nothing serves any more are deleted
-    {"NVIDIA_CACHE_DIR", "1", "0|1", RESTART},   // vk_device.c nvidia_cache_beside_exe: NVIDIA's shader disk cache in nvidia-cache beside the exe
+    {"PIPELINE_CACHE_MAX_MB", "", "0..65536", RESTART},
+    {"FFX_PIPE_CACHE", "1", "0|1", RESTART},
+    {"PIPELINE_CACHE_PLAY", "1", "0|1", RESTART}, {"PIPELINE_CACHE_PLAY_MB", "64", "1..65536", RESTART},
+    {"PIPELINE_CACHE_STAMP", "1", "0|1", RESTART},
+    {"NVIDIA_CACHE_DIR", "1", "0|1", RESTART},
     {"PIPE_BINARIES", "0", "0|1", RESTART}, {"ONESHOT_WAIT_MS", "30000", "0..60000", RESTART}, {"ONESHOT_BUDGET", "1", "0|1", RESTART}, {"PIPE_BINARIES_MAX_MB", "1024", "0..65536", RESTART}, {"BIG_BUILD_FREE_MB", "8192", "0..262144", RESTART},
     {"BIG_BUILD_MAX_MB", "4096", "0..262144", RESTART},
-    {"BUILD_FREE_MB", "4096", "0..1048576", RESTART}, {"BUILD_RESERVE_MB", "64", "0..65536", RESTART},   // vk_pipeline.c gate_enter
-    {"BG_BUILD_PLAY_DRAWS", "600", "0..1000000", RESTART},   // vk_pipeline.c play_rest: background builds rest in heavy frames
-    {"MEM_NEED_MB", "24576", "0..1048576", RESTART},   // memory.c mem_start_note; the default is mem_need.h MEM_NEED_DEFAULT_MB
-    // all|<count>: the compute pipelines the boot keeps, those dispatched most recently (vk_pipeline.c, compute-used.bin)
+    {"BUILD_FREE_MB", "4096", "0..1048576", RESTART}, {"BUILD_RESERVE_MB", "64", "0..65536", RESTART},
+    {"BG_BUILD_PLAY_DRAWS", "600", "0..1000000", RESTART},
+    {"MEM_NEED_MB", "24576", "0..1048576", RESTART},
     {"COMPUTE_KEEP", "512", NULL, RESTART},
-    {"SHADER_CARRY", "1", "0|1", RESTART},   // gfx_shader.c "Carry": a previous translator's translations until translated again
-    // gfx_shader.c "SPIR-V at rest": a shader's SPIR-V is kept zstd-compressed in memory once no pipeline was made of
-    // it for the idle seconds; 0 keeps every shader's SPIR-V plain
+    {"SHADER_CARRY", "1", "0|1", RESTART},
     {"SHADER_COMPRESS", "1", "0|1", RESTART},
     {"SHADER_COMPRESS_IDLE_S", "30", "1..3600", RESTART},
-    // the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below): each is read by itself now
-    {"TEX_RELEASED_MAX", "", NULL, RESTART},   // vk_texture.c released_max: "" by the video memory budget, else 1..16384
+    {"TEX_RELEASED_MAX", "", NULL, RESTART},
     {"MIRROR_HOT", "0", "0..1000", RESTART}, {"FREEZE_IDLE", "1800", "0..100000", RESTART},
-    {"SUBMIT_FINISH_KINDS", "31", "0..31", RESTART},   // vk_sync.c res_mask
-    {"FOLIAGE", "full", "full|reduced|off", RESTART},   // vk_exec_draw.c foliage_skip
-    {"VRAM_HEAP_LIMIT", "0", NULL, RESTART},   // vk_device.c vram_heap_limits: auto, 0 or MiB
-    {"VRAM_RESERVE_MB", "0", "0..4096", RESTART},   // vk_vma_budget.c: video memory kept free of VMA's allocations
-    // vk_memory.c vk_upload_end: MiB of staging before a batch goes early. 0: at 64 MiB, the staging pool's own limit
-    // (STG_FLUSH), which also holds for every value above it
+    {"SUBMIT_FINISH_KINDS", "31", "0..31", RESTART},
+    {"FOLIAGE", "full", "full|reduced|off", RESTART},
+    {"VRAM_HEAP_LIMIT", "0", NULL, RESTART},
+    {"VRAM_RESERVE_MB", "0", "0..4096", RESTART},
     {"UPLOAD_BATCH_MB", "0", NULL, RESTART},
     {"MESH_EMULATION", "0", "0|1", RESTART}, {"MESH_EMU_MB", "256", "32..2048", RESTART},
     {"MESH_EMU_TASKS", "16384", "256..262144", RESTART}, {"MESH_EMU_BATCH", "1", "0|1", RESTART}, {"VEC_INDEX_FIX", "0", "0|auto|1", RESTART},
-    {"GUEST_OPT", "1", "1|2", RESTART},   // tools/make_game.py: the next Rebuild the Game
-    {"PASS_TIMES", "0", "0|1", RESTART}, {"DUMP_KEY", "", NULL, RESTART},   // vk_crumbs.c, vk_dump.c
-    // textures and memory
+    {"GUEST_OPT", "1", "1|2", RESTART},
+    {"PASS_TIMES", "0", "0|1", RESTART}, {"DUMP_KEY", "", NULL, RESTART},
     {"ASTC", "auto", "auto|gpu|native|cpu", RESTART}, {"MEMORY", "auto", "auto|import|mirror|verify", RESTART},
     {"TEX_ALIAS", "1", "0|1", RESTART}, {"DEPTH_INIT_INLINE", "1", "0|1", RESTART}, {"DEPTH_ALIAS_LOG", "0", "0|1", RESTART}, {"TEX_DISUSE", "1", "0|1|2", RESTART}, {"POOL_MARK_SHARED", "1", "0|1", RESTART}, {"TEX_DISUSE_EVICT", "0", "0|1", RESTART}, {"TEX_GEN_UNDO", "1", "0|1", RESTART}, {"TEX_REUSE", "1", "0|1", RESTART}, {"TEX_SPLIT_FILL", "1", "0|1|2", RESTART}, {"TEX_VRAM_PRESSURE", "80", "0..100", RESTART},
-    // vk_texture.c drop_aged: seconds a released texture is kept unused (vk_tex_release.h)
     {"TEX_RELEASED_HOLD", "60", "0..900", RESTART}, {"ASTC_BC", "", "0|1", RESTART}, {"ZSTD_NATIVE", "1", "0|1", RESTART}, {"ZSTD_CHECK", "0", "0|1", RESTART},
     {"TEX_CLOBBER", "0", "0|1", RESTART},
-    // the switch of the low-end GPU mode, which is gone: still a known key, and it does nothing (lowend_set, below)
     {"LOW_END_GPU", "0", "0|1", RESTART},
     {"STG_ARENA", "1", "0|1", RESTART}, {"ASTC_GPU_DESWIZZLE", "1", "0|1", RESTART},
-    {"ASTC_SCRATCH_KEEP", "1", "0|1", RESTART}, {"ASTC_ARENA", "1", "0|1", RESTART},   // vk_astc.c scratch_get, vk_texture.c astc_arena
-    // render fixes
+    {"ASTC_SCRATCH_KEEP", "1", "0|1", RESTART}, {"ASTC_ARENA", "1", "0|1", RESTART},
     {"LOD_GUARD", "1", "0|1", RESTART}, {"FIX_C0", "1", "0|1", RESTART}, {"FIX_ZERO", "1", "0|1", RESTART},
-    {"WATER_PROJECTIVE", "1", "0|1", RESTART},   // vk_pipeline.c water_projective_pair
+    {"WATER_PROJECTIVE", "1", "0|1", RESTART},
     {"BIND_SKIP", "1", "0|1", RESTART}, {"SHADER_CACHE_FLUSH", "0", "0|1", RESTART}, {"SHADER_MEMO", "1", "0|1", RESTART}, {"PIPE_MEMO", "1", "0|1", RESTART}, {"TEX_MEMO", "1", "0|1", RESTART},
     {"BIND_REUSE", "1", "0|1", RESTART}, {"DYN_DELTA", "1", "0|1", RESTART},
     {"DESC_TEMPLATE", "1", "0|1", RESTART},
     {"PUSH_SKIP", "1", "0|1", RESTART}, {"SPLIT_DRAWS", "64", "0..1000", RESTART},
     {"SPLIT_US", "1000", "0..20000", RESTART}, {"SPLIT_IDLE", "0", "0|1", RESTART}, {"SPLIT_IN_PASS", "1", "0|1", RESTART},
-    // Vulkan
     {"VK_VALIDATION", "0", "0|1", RESTART}, {"VK_DYN_VERTEX", "", "0|1", RESTART},
     {"VK_DYN_A2C", "", "0|1", RESTART}, {"VK_SUBGROUP_PIN", "1", "0|1", RESTART},
-    {"VK_RECONVERGE", "1", "0|1", RESTART},   // vk_pipeline.c spirv_reconverge
-    {"VK_MESH_SUBGROUPS", "1", "0|1", RESTART},   // vk_pipeline.c mesh_stages_init, stage_sg
-    {"VK_MESH_INVARIANT", "1", "0|1", RESTART},   // vk_pipeline.c spirv_mesh_invariant
-    {"VK_NAN_PRESERVE", "", "0|1", RESTART},   // vk_pipeline.c spirv_nan_preserve; unset: every driver but NVIDIA's
-    {"VK_NAN_BITS", "", "0|1", RESTART},   // vk_pipeline.c spirv_nan_bits; unset: AMD's driver for RDNA 1 and 2
-    {"VK_NOOPT", "", "0|1|mesh", RESTART},   // vk_pipeline.c noopt_flag_for; unset: mesh on AMD's driver for RDNA 1 and 2
-    // diagnostics
+    {"VK_RECONVERGE", "1", "0|1", RESTART},
+    {"VK_MESH_SUBGROUPS", "1", "0|1", RESTART},
+    {"VK_MESH_INVARIANT", "1", "0|1", RESTART},
+    {"VK_NAN_PRESERVE", "", "0|1", RESTART},
+    {"VK_NAN_BITS", "", "0|1", RESTART},
+    {"VK_NOOPT", "", "0|1|mesh", RESTART},
     {"TRACE", "", NULL, RESTART}, {"FLIGHT", "0", "0|1", RESTART}, {"FLIGHT_SPIKE_MS", "100", "0..60000", RESTART},
-    // stutter_map.c: hitches by area and cause, and the pipelines and shaders draws met missing (0 off, 1 on)
     {"STUTTER_MAP", "0", "0|1", RESTART},
-    // par_jobs.c: the worker pool that splits a large texture's copy out of the game's memory (0: the thread that makes it alone)
     {"PAR_JOBS", "1", "0|1", RESTART},
-    // vk_pipeline.c "pipelines no draw has used, given back while video memory is short" (0: every pipeline stays)
     {"PIPE_RELEASE", "1", "0|1", RESTART},
-    // flight.c "The flash trigger": on or off, and flight_flash.h flash_test's two thresholds
     {"FLIGHT_FLASH", "1", "0|1", RESTART}, {"FLIGHT_FLASH_DIFF", "24", "4..255", RESTART}, {"FLIGHT_FLASH_CELLS", "3", "1..144", RESTART},
     {"WB_FENCE_LIMIT", "65536", "0..1073741824", RESTART}, {"WB_MERGE", "1", "0|1", RESTART}, {"WB_EXACT", "1", "0|1", RESTART}, {"MEM_CENSUS", "0", "0|1", RESTART}, {"WB_NO_REUP", "1", "0|1", RESTART}, {"WB_PROBE", "0", "0|1", RESTART}, {"WB_SPLIT", "1", "0|1|2|3", RESTART}, {"WB_LAZY", WB_LAZY_DEFAULT, "0|1", RESTART}, {"HEAP_LAZY", "0", "0|1", RESTART}, {"WB_LAZY_TOUCH", "0", "0..16", RESTART}, {"WB_LAZY_CHUNK", "0", "0|1", RESTART}, {"WB_LAZY_UNLOCKED", "1", "0|1", RESTART}, {"FLUSH_UPLOAD", "0", "0|1", RESTART}, {"GPA_TWIN_MAX_KB", "0", "0..1048576", RESTART},
-    {"MIRROR_CAPTURE_KB", "0", "0..1048576", RESTART}, {"WB_SKIP_MB", "0", "0..4096", RESTART},   // vk_memory.c capture_cap, wb_skip
-    {"WB_MERGE_MAX", "32", "1..256", RESTART}, {"TEXUP_LOG_MS", "0", "0..60000", RESTART},   // vk_texture.c vk_texstat_frame
-    {"WAIT_WATCH_S", "0", "0..3600", RESTART},   // kernel.c wait_watch: a lock or thread-end wait this long is logged; 0 off
-    // vk_backend.c present_order_on: a frame's bookkeeping between two replays (vk_frame_owed.h); 0 at the present
+    {"MIRROR_CAPTURE_KB", "0", "0..1048576", RESTART}, {"WB_SKIP_MB", "0", "0..4096", RESTART},
+    {"WB_MERGE_MAX", "32", "1..256", RESTART}, {"TEXUP_LOG_MS", "0", "0..60000", RESTART},
+    {"WAIT_WATCH_S", "0", "0..3600", RESTART},
     {"PRESENT_ORDER", "1", "0|1", RESTART},
-    // perf.c hc_main: with NX2SARIA_TRACE=perf, the process's handles by kind when their count grew
     {"HANDLE_CENSUS", "0", "0|1", RESTART},
-    // hang_watch.c: a report when no frame is shown with the window in front, or the GPU does not finish, this long; 0 off
     {"HANG_WATCH_S", "20", "0..600", RESTART},
-    {"VMA_BLOCK_MB", "64", "16..256", RESTART},   // vk_headroom.c vk_vma_block_size
-    // vk_texture.c compact_on: idle textures move out of sparsely used blocks of video memory; the free space inside
-    // the blocks from which a pass starts, and the bytes moved per frame (also the largest texture that moves)
+    {"VMA_BLOCK_MB", "64", "16..256", RESTART},
     {"TEX_COMPACT", "0", "0|1", RESTART}, {"TEX_COMPACT_MIN_MB", "256", "64..65536", RESTART},
     {"TEX_COMPACT_FRAME_MB", "8", "1..32", RESTART},
-    {"ASTC_BC1", "1", "0|1", RESTART},   // vk_astc.c bc1_on
-    {"VRAM_PAGEABLE", "1", "0|1", RESTART},   // vk_device.c: pageable video memory with priorities
-    {"TEX_RESIDENCY", "1", "0|1", RESTART},   // vk_texture.c residency_step
-    {"POOL_TEX_RELEASE", "1", "0|1", RESTART},   // vk_memory.c vk_mem_tex_pools
-    {"PASS_CRUMBS", "", "0|1", RESTART},   // vk_crumbs.c pass marks; unset: VK_AMD_buffer_marker only
-    {"DRAW_CRUMBS", "0", "0|1", RESTART},   // vk_crumbs.c draw marks: a mark at each change of shaders inside a pass
-    {"STAGING_FAIL_AT", "0", "0..1000000000", RESTART},   // vk_memory.c staging_fail_now: a test of give_back
-    {"VRAM_BALLAST_MB", "0", "0..131072", RESTART},   // vk_memory.c vk_mem_ballast: a test of a smaller card
-    // vk_memory.c gen_seed: a test that starts the page write generations at this value (at most 2^62)
+    {"ASTC_BC1", "1", "0|1", RESTART},
+    {"VRAM_PAGEABLE", "1", "0|1", RESTART},
+    {"TEX_RESIDENCY", "1", "0|1", RESTART},
+    {"POOL_TEX_RELEASE", "1", "0|1", RESTART},
+    {"PASS_CRUMBS", "", "0|1", RESTART},
+    {"DRAW_CRUMBS", "0", "0|1", RESTART},
+    {"STAGING_FAIL_AT", "0", "0..1000000000", RESTART},
+    {"VRAM_BALLAST_MB", "0", "0..131072", RESTART},
     {"GEN_SEED", "0", "0..4611686018427387904", RESTART},
-    // mem_budget.h: a test that pretends the video memory or the system memory is that many MiB, for the levels the
-    // owners that give memory back go by; 0 as it is
     {"MEM_BUDGET_TEST_VRAM_MB", "0", "0..1048576", RESTART},
     {"MEM_BUDGET_TEST_RAM_MB", "0", "0..1048576", RESTART},
-    {"DEVICE_LOST_AT", "0", "0..1000000000", RESTART},   // vk_sync.c lost_at_due: a test of the lost device's end
-    // nvn_api_cmd.c retire_pass: counts the recording copies whose control memory the game reused; frees nothing
+    {"DEVICE_LOST_AT", "0", "0..1000000000", RESTART},
     {"COPY_RETIRE", "0", "0|1", RESTART},
     {"INPUT_RECORD", "", NULL, RESTART},
 };
@@ -592,20 +458,16 @@ static const CfgMeta metas[] = {
 static int is_known(const char *key) {
     for (size_t i = 0; i < sizeof known / sizeof *known; i++)
         if (!strcmp(known[i], key)) return 1;
-    return !strncmp(key, "CHEAT_", 6);   // cheats.c and the cheat patch sets (tools/cheats.py)
+    return !strncmp(key, "CHEAT_", 6);
 }
 
-// The keys of the file's lines that are not settings of this version (add), lower-case, ", " between them, each once;
-// what did not fit is counted and left out. Written by cfg_load, before any other thread reads settings.
 static char unknown_keys[384];
-static int n_unknown, unknown_cut;   // how many; whether the list left some out
+static int n_unknown, unknown_cut;
 
 static void note_unknown(const char *key) {
     char low[64];
     size_t n = 0;
     for (; key[n] && n < sizeof low - 1; n++) {
-        // a key of other characters (a line of text with an '=' in it) is counted, not listed: the menu cuts the list
-        // by bytes to fit its row
         if (!isalnum((unsigned char)key[n]) && key[n] != '_') break;
         low[n] = (char)tolower((unsigned char)key[n]);
     }
@@ -615,7 +477,7 @@ static void note_unknown(const char *key) {
     }
     low[n] = 0;
     size_t have = strlen(unknown_keys);
-    for (const char *p = unknown_keys; (p = strstr(p, low)) != NULL; p += n)   // a repeated line counts once
+    for (const char *p = unknown_keys; (p = strstr(p, low)) != NULL; p += n)
         if ((p == unknown_keys || p[-1] == ' ') && (p[n] == ',' || !p[n])) return;
     n_unknown++;
     if (have + n + 3 > sizeof unknown_keys) {
@@ -630,9 +492,6 @@ const char *cfg_unknown_keys(int *count) {
     return unknown_keys;
 }
 
-// The table holds CFG_MAX_KEYS keys and keeps none past them: a file's later keys were not read, and a menu change was
-// lost, without a word (every cheat ever switched keeps a line, cheats.c cheats_set). A line says so once per load, and
-// once a run for the changes (cfg_set, cfg_reset, migrate).
 static int full_load_told, full_set_told;
 
 static void full_set(const char *key, const char *what) {
@@ -653,27 +512,17 @@ static char *trim(char *s) {
     return s;
 }
 
-// The upper-case key without the prefix, in place.
 static char *norm_key(char *key) {
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
     if (!strncmp(key, PREFIX, PREFIX_LEN)) return key + PREFIX_LEN;
     return strncmp(key, OLD_PREFIX, OLD_PREFIX_LEN) ? key : key + OLD_PREFIX_LEN;
 }
 
-static int entry_line[CFG_MAX_KEYS];   // the file line each entry's value came from (cfg_load's check_values)
+static int entry_line[CFG_MAX_KEYS];
 
-// ---- a comment after a value (cfg_load)
-// "pace_smooth = 0 ; off" kept the comment in the value, which cfg_bool read as on, and "fps_limit = 144 # monitor"
-// gave 60. For a key whose row has a set of values (numbers, ranges, words: none has a blank followed by ';' or '#')
-// the value ends at the first blank followed by ';' or '#' in the text after '=' ("key = ; note" is empty), and the
-// line is logged once at load. Free text keeps the whole value: a row without a set (window_size, monitor,
-// audio_device) and a key without a row (mods_dir, pipeline_cache, the bindings), where a path or a name may hold
-// " #". So does a value in double quotes. The menu's save writes a changed key's line again without its comment
-// (cfg_save_to), the same way every time. At most CHECK_LINES lines per load, then a count (check_end).
 #define CHECK_LINES 16
 static int cuts;
 
-// raw: the text after '=' as written; returns the value trimmed, cut at its comment when key has a set of values.
 static char *cut_comment(const char *key, char *raw, int line) {
     char *v = trim(raw);
     size_t n = strlen(v);
@@ -697,17 +546,11 @@ static char *cut_comment(const char *key, char *raw, int line) {
     return v;
 }
 
-// value: the text after '=' as written (cut_comment trims it).
-// ---- older names: a setting set as NX2NAVI_<KEY> in the environment or written so in the settings file is read as
-// NX2SARIA_<KEY> (cfg_env, norm_key). The log says so once per name and place in a run, the first time it is seen: the
-// environment's at cfg_init (older_env), the file's at a load or a reload of it (older_file_key). A name the runtime does
-// not read (is_known) gets no line. At most OLDER_MAX lines, then one saying the rest are not listed.
 #define OLDER_MAX 32
 static PlatMutex older_lock = PLAT_MUTEX_INIT;
-static char older_told[OLDER_MAX][72];   // "e:" or "f:" (environment, file) and the upper-case key without a prefix
+static char older_told[OLDER_MAX][72];
 static int n_older_told, older_full;
 
-// 1 the first time where:key comes by (where 'e' or 'f'); 0 after, and once OLDER_MAX are told.
 static int older_first(char where, const char *key) {
     char k[72];
     snprintf(k, sizeof k, "%c:%s", where, key);
@@ -725,7 +568,6 @@ static int older_first(char where, const char *key) {
     return first > 0;
 }
 
-// raw: a key as the settings file at line writes it, before norm_key.
 static void older_file_key(const char *raw, int line) {
     if (strncasecmp(raw, OLD_PREFIX, OLD_PREFIX_LEN)) return;
     const char *key = raw + OLD_PREFIX_LEN;
@@ -738,9 +580,8 @@ static void older_file_key(const char *raw, int line) {
     rt_log("cfg: settings file line %d: %s read under its older name; %s is the current one", line, raw, low);
 }
 
-// The environment's NX2NAVI_<KEY> variables: read where NX2SARIA_<KEY> is not set (cfg_env), and not where it is.
 #ifdef _WIN32
-#define CFG_ENVIRON _environ   // the C runtime's copy, which getenv reads (main, not wmain: set up at start)
+#define CFG_ENVIRON _environ
 #else
 extern char **environ;
 #define CFG_ENVIRON environ
@@ -756,7 +597,6 @@ static void older_env(void) {
         up[n] = 0;
         snprintf(legacy, sizeof legacy, OLD_PREFIX "%s", up);
         snprintf(current, sizeof current, PREFIX "%s", up);
-        // the name as cfg_env asks for it, in upper case: on Linux a variable in another case is not read, and gets no line
         if (!getenv(legacy) || !is_known(up) || !older_first('e', up)) continue;
         if (getenv(current)) rt_log("cfg: %s is not read: %s is set too and wins", legacy, current);
         else rt_log("cfg: %s read under its older name; %s is the current one", legacy, current);
@@ -774,9 +614,9 @@ static void add(char *key, char *value, int line) {
         rt_log("cfg: settings file line %d: unknown key '%s'", line, key);
         note_unknown(key);
     }
-    if (!*value) return;   // "key =" leaves the setting at its default
+    if (!*value) return;
     for (int i = 0; i < n_entries; i++)
-        if (!strcmp(entries[i].key, key)) {   // a repeated key: the later line wins
+        if (!strcmp(entries[i].key, key)) {
             free(entries[i].value);
             entries[i].value = strdup(value);
             entry_line[i] = line;
@@ -792,45 +632,33 @@ static void add(char *key, char *value, int line) {
     entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 0, 0, 0, 0};
 }
 
-// ---- values outside their rows' sets, logged at load (the values are read as they are written, a comment after a
-// value of a row with a set cut first, cut_comment)
-// Hand-edited files had values no consumer takes, and nothing said so: "sharpness = 250" is past 0..100. Only the
-// sets that are the consumers' own are checked: 0|1 (with the words switch_word reads), ranges lo..hi, and lists of
-// words. A list with a number in it is the menu's presets, and its consumer takes more (render_scale 25..400), so it
-// is left alone. A list may hold one range among its words (fps_limit 30..240|display|unlimited): a number fits it as
-// it fits a range alone. A list of words names the menu's choices; a consumer may take more (dlss_preset any letter
-// a..m), so the line says no more than that. A ';' or '#' after a blank is still named where it stays in the value: a
-// free-text row's value, and the environment's. At most CHECK_LINES lines per load, then a count.
 static int misfits;
 static int switch_of(const char *v);
 
-// Whether v is a number in the range m[0..n) ("lo..hi"): 1 yes, 0 no, -1 when m is not such a range.
 static int range_fit(const char *m, size_t n, const char *v) {
     char s[64], *end;
     if (n >= sizeof s) return -1;
     memcpy(s, m, n), s[n] = 0;
     char *dots = strstr(s, "..");
     if (!dots || dots == s) return -1;
-    *dots = 0;   // the low end apart: strtod would take "0." of "0..100" for a number
+    *dots = 0;
     double lo = strtod(s, &end);
     if (*end) return -1;
     double hi = strtod(dots + 2, &end);
     if (end == dots + 2 || *end) return -1;
-    // any number: some rows with whole ends take fractions (dyn_res_target 16.7 in 0..100)
     double x = strtod(v, &end);
     return end != v && !*end && x == x && x >= lo && x <= hi;
 }
 
-// NULL when v fits the set, else what the log line says of it (in buf).
 static const char *misfit(const char *set, const char *v, char *buf, size_t cap) {
     if (!strcmp(set, "0|1")) return switch_of(v) < 0 ? "is not 0, 1, on, off, true, false, yes or no" : NULL;
     if (strstr(set, "..") && !strchr(set, '|')) {
         int fit = range_fit(set, strlen(set), v);
-        if (fit) return NULL;   // fits, or a set that is no range this reads
+        if (fit) return NULL;
         snprintf(buf, cap, "is not a number in %s", set);
         return buf;
     }
-    for (const char *m = set; *m;) {   // a member that is a number: the menu's presets, not checked
+    for (const char *m = set; *m;) {
         char *end;
         size_t n = strcspn(m, "|");
         strtod(m, &end);
@@ -847,7 +675,6 @@ static const char *misfit(const char *set, const char *v, char *buf, size_t cap)
     return buf;
 }
 
-// key: upper case without the prefix; line 0: the value comes from the environment.
 static void check_value(const char *key, const char *v, int line) {
     const CfgMeta *m = cfg_meta(key);
     if (!m) return;
@@ -884,9 +711,6 @@ static void check_values(void) {
     check_end();
 }
 
-// 0.1.9 had the Xbox prompts as a pad layout: pad_layout = xbox_prompts is pad_layout = nintendo with prompts = xbox.
-// Read as those two, which the menu shows and the next cfg_save writes; a prompts line of the file's own wins. The
-// value still works from the environment (input_pad_layout_pick, input_prompts_pick).
 static void migrate(void) {
     CfgEntry *layout = NULL, *prompts = NULL;
     for (int i = 0; i < n_entries; i++) {
@@ -905,9 +729,6 @@ static void migrate(void) {
            prompts ? prompts->value : "xbox");
 }
 
-// A file saved as UTF-16 (Notepad's "Unicode": the byte order mark FF FE or FE FF, then two bytes per character) as
-// UTF-8 in a new buffer; NULL for any other file. Read as bytes such a file ends at the zero after its first character:
-// no line was taken, and every setting kept its default without a word in the log.
 static uint8_t *utf16_text(const uint8_t *d, uint64_t size) {
     if (size < 2 || !((d[0] == 0xFF && d[1] == 0xFE) || (d[0] == 0xFE && d[1] == 0xFF))) return NULL;
     int be = d[0] == 0xFE;
@@ -916,7 +737,7 @@ static uint8_t *utf16_text(const uint8_t *d, uint64_t size) {
     for (uint64_t i = 2; i + 1 < size; i += 2) {
         uint32_t c = be ? (uint32_t)d[i] << 8 | d[i + 1] : (uint32_t)d[i + 1] << 8 | d[i];
         if (!c) break;
-        if (c >= 0xD800 && c < 0xDC00 && i + 3 < size) {   // a pair: one character above U+FFFF
+        if (c >= 0xD800 && c < 0xDC00 && i + 3 < size) {
             uint32_t lo = be ? (uint32_t)d[i + 2] << 8 | d[i + 3] : (uint32_t)d[i + 3] << 8 | d[i + 2];
             if (lo >= 0xDC00 && lo < 0xE000) c = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00), i += 2;
         }
@@ -932,8 +753,6 @@ static uint8_t *utf16_text(const uint8_t *d, uint64_t size) {
     return out;
 }
 
-// Calls sink(key, value, line, ctx) for each "key = value" line of the file at path (key and value trimmed, in place).
-// 0 when the file is missing.
 static int parse_ini(const char *path, void (*sink)(char *key, char *value, int line, void *ctx), void *ctx) {
     uint64_t size = 0;
     uint8_t *data = plat_file_read(path, &size);
@@ -945,7 +764,7 @@ static int parse_ini(const char *path, void (*sink)(char *key, char *value, int 
         rt_log("cfg: %s is saved as UTF-16; read as that (the menu saves it as UTF-8)", path);
     }
     char *p = (char *)data;
-    if (size >= 3 && !memcmp(p, "\xEF\xBB\xBF", 3)) p += 3;   // editors add a BOM
+    if (size >= 3 && !memcmp(p, "\xEF\xBB\xBF", 3)) p += 3;
     for (int line = 1; *p; line++) {
         char *eol = strchr(p, '\n');
         if (eol) *eol = 0;
@@ -955,7 +774,7 @@ static int parse_ini(const char *path, void (*sink)(char *key, char *value, int 
             if (!eq) rt_log("cfg: settings file line %d: no '=' in '%s'", line, s);
             else {
                 *eq = 0;
-                sink(trim(s), eq + 1, line, ctx);   // the value as written: the sink cuts a comment (cut_comment)
+                sink(trim(s), eq + 1, line, ctx);
             }
         }
         if (!eol) break;
@@ -972,33 +791,21 @@ static void add_sink(char *key, char *value, int line, void *ctx) {
 
 int cfg_load(const char *path) {
     clear();
-    __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);   // the lookup memo (cfg_memo) forgets the freed strings
+    __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     if (!parse_ini(path, add_sink, NULL)) return 0;
     migrate();
-    check_values();   // after migrate: a value it rewrites is checked as the game reads it
+    check_values();
     return 1;
 }
 
-// ---- device profiles: defaults for a known machine, below the environment and settings file and above the quality
-// preset and the table, so any key the player sets wins and resetting a key in the menu returns to the profile's value. NX2SARIA_DEVICE_PROFILE = auto
-// (default: the Steam Deck when the firmware says so), desktop (none) or deck.
-//
-// The Steam Deck (LCD Jupiter, OLED Galileo; 1280x800, 16:10, 4 Zen 2 cores, RDNA 2 with 8 CUs sharing 16 GB): the game
-// uses the monitor's 16:10 shape; Ocarina chooses its picture with GAME_ASPECT/GAME_RES, not OUTPUT_RES;
-// fullscreen and vsync, as gamescope composes Game Mode; 40 fps, which divides 40 Hz (and 120 Hz on the OLED); the
-// game's six virtual cores folded onto four, one per physical core (kernel.c cores_enabled); ASTC textures stored as
-// BC3, as the automatic choice gives with 16 GB shared between the CPU and the GPU; and a spinning guest thread handed
-// off after 30 us instead of 50 (kernel.c), with four cores to share.
-// Starting points to replace with measured ones (docs/tester-guide.md, Steam Deck).
 static const struct { const char *key, *value; } DECK[] = {
     {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"GAME_ASPECT", "window"}, {"RENDER_SCALE", "game"},
     {"VK_PRESENT", "fifo"}, {"FPS_LIMIT", "40"}, {"CORES", "4"}, {"ASTC_BC", "1"}, {"SPIN_HANDOFF_US", "30"},
 #ifdef CFG_TEST_DECK_ROW
-    // tests/preset_check.py only: a row of its own, for a key a tier also sets with another value
     CFG_TEST_DECK_ROW,
 #endif
 };
-static int profile = -1;   // 0 none, 1 Steam Deck
+static int profile = -1;
 
 static int read_line(const char *path, char *out, size_t n) {
     FILE *f = fopen(path, "r");
@@ -1009,7 +816,6 @@ static int read_line(const char *path, char *out, size_t n) {
     return ok;
 }
 
-// The Steam Deck: Valve's board, product Jupiter or Galileo (/sys/class/dmi/id); SteamDeck=1, which Steam sets on it.
 static int on_steam_deck(void) {
     const char *env = getenv("SteamDeck");
     if (env && !strcmp(env, "1")) return 1;
@@ -1021,16 +827,6 @@ static int on_steam_deck(void) {
 
 static const char *raw_get(const char *name);
 
-// low_end_gpu (NX2SARIA_LOW_END_GPU, formerly NX2NAVI_LOW_END_GPU) was the switch of the low-end GPU mode up to 0.10.1. With it on, nine keys got
-// other defaults (mesh shaders run as compute where the card has none, a texture read after another image drew over
-// its pool memory given memory of its own, game memory copied for the GPU while the replay records, video memory kept
-// within the heaps' budgets, large upload batches sent early, pools the game refills every frame kept in system
-// memory), and those keys and a dozen more were read only while it was on. The mode is gone. Its switch is still a
-// known key, so that an old file's line is no unknown one, and does nothing. Each of its keys is read like any other,
-// with the default of its row or of its reader: a value a player set by hand counts, and a file that sets none runs
-// the game as it runs for everyone else. cfg_init says so once while the switch is on.
-// Read through raw_get, which skips switch_word, so the words are taken here as cfg_bool takes them: "low_end_gpu =
-// off" is off, and any value that is not 0 or one of the off words is on.
 static int lowend_set(void) {
     const char *set = raw_get(PREFIX "LOW_END_GPU");
     return set && *set && switch_of(set) != 0;
@@ -1049,12 +845,8 @@ static int profile_of(void) {
 
 const char *cfg_device_profile(void) { return profile_of() ? "deck" : "desktop"; }
 
-// ---- quality presets: defaults below the device profile and above the table (preset_pick.h). cfg_start (preset_init)
-// reads the hardware into preset_hw once and then turns the layer on; the menu can switch it to another tier
-// (cfg_preset_use). preset_hw does not change after the layer is on, and the tier is one atomic int, so readers take no
-// lock; every value is a literal of PRESET_ROWS, valid for the process.
 static PresetHw preset_hw;
-static int preset_tier = -1;   // the tier whose rows make the layer; -1: no layer (before cfg_start)
+static int preset_tier = -1;
 
 static const char *preset_layer(const char *key) {
     int t = __atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE);
@@ -1063,8 +855,6 @@ static const char *preset_layer(const char *key) {
 
 const PresetHw *cfg_preset_hw(void) { return __atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE) >= 0 ? &preset_hw : NULL; }
 
-// NX2SARIA_* is the current public name; NX2NAVI_* remains an alias for existing scripts. When both exist, the
-// current name wins even when it is empty, so an explicit new setting can clear a legacy override.
 const char *cfg_env(const char *name) {
     const char *key = name;
     if (!strncmp(key, PREFIX, PREFIX_LEN)) key += PREFIX_LEN;
@@ -1088,8 +878,6 @@ static const char *raw_get(const char *name) {
     return NULL;
 }
 
-// A switch written as a word: 0 for false, off and no, 1 for true, on and yes (any case); -1 for anything else but 0
-// and 1, which give themselves.
 static int switch_of(const char *v) {
     static const char *const word[] = {"false", "off", "no", "true", "on", "yes"};
     if (!strcmp(v, "0") || !strcmp(v, "1")) return v[0] - '0';
@@ -1098,10 +886,6 @@ static int switch_of(const char *v) {
     return -1;
 }
 
-// The value of a switch (a row whose set is 0|1) written as a word, as "0" or "1" for every reader: cfg_bool, rt_knob
-// and the readers that compare with "0" (frame_rate.c frame_step_cap_ns for rtss) or parse a number (cfg_int).
-// "fullscreen = false" and "rtss = off" were on, read as anything but "0". Other values and other rows are handed on
-// as they are.
 static const char *switch_word(const char *name, const char *v) {
     if (!v || !strcmp(v, "0") || !strcmp(v, "1")) return v;
     int on = switch_of(v);
@@ -1121,7 +905,6 @@ static const char *cfg_get_now(const char *name) {
     return preset_layer(key);
 }
 
-// Whether name's value comes from the player (the environment or nx2navi.ini), not a profile or the table.
 int cfg_is_set(const char *name) { return raw_get(name) != NULL; }
 
 unsigned cfg_version(void) { return __atomic_load_n(&version, __ATOMIC_ACQUIRE); }
@@ -1138,9 +921,6 @@ int cfg_setenv(const char *name, const char *value) {
 
 int cfg_from_env(const char *name) { return cfg_env(name) != NULL; }
 
-// cfg_set and cfg_set_test: one change under one hold of set_lock, so a save on another thread (the one at exit) never
-// sees a test value before it is marked as the test's. test 0: the value is the player's, and saved; test 1: the
-// test's (cfg_set_test), unless the entry already holds that value as the player's unsaved change, which stays theirs.
 static void set_value(const char *name, const char *value, int test) {
     if ((strncmp(name, OLD_PREFIX, OLD_PREFIX_LEN) && strncmp(name, PREFIX, PREFIX_LEN)) || !value) return;
     char key[64];
@@ -1152,12 +932,12 @@ static void set_value(const char *name, const char *value, int test) {
     if (i < n) {
         const int changed = !entries[i].value || strcmp(entries[i].value, value);
         if (changed) {
-            if (entries[i].value) kept_n++, kept_bytes += strlen(entries[i].value) + 1;   // cfg_sizes
-            __atomic_store_n(&entries[i].value, strdup(value), __ATOMIC_RELEASE);   // the old string stays for readers
+            if (entries[i].value) kept_n++, kept_bytes += strlen(entries[i].value) + 1;
+            __atomic_store_n(&entries[i].value, strdup(value), __ATOMIC_RELEASE);
         }
-        if (test && !changed && entries[i].dirty && !entries[i].test) test = 0;   // the player's unsaved change
+        if (test && !changed && entries[i].dirty && !entries[i].test) test = 0;
         if (changed) entries[i].dirty = 1;
-        entries[i].removed = 0;   // a value set after cfg_reset replaces the line instead of deleting it
+        entries[i].removed = 0;
         entries[i].test = test;
     } else if (n < CFG_MAX_KEYS) {
         entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0, 0, test};
@@ -1179,10 +959,10 @@ int cfg_reset(const char *const *keys, int n) {
         snprintf(key, sizeof key, "%s", keys[k]);
         const char *name = norm_key(key);
         snprintf(var, sizeof var, PREFIX "%s", name);
-        if (cfg_env(var)) continue;   // the environment wins; the file line stays
+        if (cfg_env(var)) continue;
         int i = 0;
         while (i < n_entries && strcmp(entries[i].key, name)) i++;
-        if (i == n_entries) {   // no value in memory ("key =" in the file): the line still has to go
+        if (i == n_entries) {
             if (i == CFG_MAX_KEYS) {
                 full_set(name, "keeps its line in the file");
                 continue;
@@ -1190,10 +970,10 @@ int cfg_reset(const char *const *keys, int n) {
             entries[i] = (CfgEntry){strdup(name), NULL, 0, 1, 0, 0};
             __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
         } else if (entries[i].value) {
-            __atomic_store_n(&entries[i].value, NULL, __ATOMIC_RELEASE);   // the old string stays for readers
+            __atomic_store_n(&entries[i].value, NULL, __ATOMIC_RELEASE);
             entries[i].dirty = 0;
-            entries[i].removed = 1;   // cfg_save_to deletes the key's lines
-            entries[i].test = 0;      // the removal is the player's, and saved
+            entries[i].removed = 1;
+            entries[i].test = 0;
             done++;
         } else {
             entries[i].removed = 1;
@@ -1205,7 +985,6 @@ int cfg_reset(const char *const *keys, int n) {
     return done;
 }
 
-// The entry of upper-case key without the prefix, or -1. set_lock held.
 static int find_entry(const char *key) {
     for (int i = 0; i < n_entries; i++)
         if (!strcmp(entries[i].key, key)) return i;
@@ -1238,7 +1017,7 @@ void cfg_hold(const char *name, int on) {
     entry_key(name, key, sizeof key);
     plat_mutex_lock(&set_lock);
     int i = find_entry(key);
-    if (i < 0 && on && n_entries < CFG_MAX_KEYS) {   // a key not set yet: an empty entry the following cfg_set fills
+    if (i < 0 && on && n_entries < CFG_MAX_KEYS) {
         i = n_entries;
         entries[i] = (CfgEntry){strdup(key), NULL, 0, 0, 0, 0};
         __atomic_store_n(&n_entries, i + 1, __ATOMIC_RELEASE);
@@ -1264,10 +1043,10 @@ void cfg_revert(const char *name, const char *orig_value, int orig_state) {
     plat_mutex_lock(&set_lock);
     int i = find_entry(key);
     if (i >= 0) {
-        __atomic_store_n(&entries[i].value, (char *)orig_value, __ATOMIC_RELEASE);   // the strings are never freed
+        __atomic_store_n(&entries[i].value, (char *)orig_value, __ATOMIC_RELEASE);
         entries[i].dirty = (orig_state & CFG_DIRTY) != 0;
         entries[i].removed = (orig_state & CFG_REMOVED) != 0;
-        entries[i].test = (orig_state & CFG_TEST) != 0;   // a test value put back stays the test's
+        entries[i].test = (orig_state & CFG_TEST) != 0;
         entries[i].held = 0;
         __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     }
@@ -1322,12 +1101,6 @@ static const char *cfg_value_now(const char *name) {
     return m->def;
 }
 
-// Lookup memo. cfg_get reads the environment (getenv walks the whole block comparing names) and then the file's
-// entries and the settings table by name, and several per-draw paths ask for live settings: on the replay thread those
-// lookups were about a sixth of the samples in a play profile (ucrtbase's string routines). Each thread keeps the
-// answers it got per name until the settings version changes (cfg_set, cfg_reset, cfg_load); values stay valid that
-// long because a set keeps the old string for readers and a load bumps the version. NX2SARIA_CFG_MEMO=0 (environment
-// only, read once) asks every time.
 #define CFG_MEMO_N 256
 typedef struct { unsigned ver; uint32_t h; uint8_t kind; char name[55]; const char *v; } CfgMemo;
 static _Thread_local CfgMemo cfg_memo[CFG_MEMO_N];
@@ -1344,9 +1117,9 @@ static const char *cfg_memo_get(const char *name, int kind) {
     for (size_t i = 0; i < len; i++) h = (h ^ (uint8_t)name[i]) * 16777619u;
     h = h * 2 + (uint32_t)kind;
     CfgMemo *m = &cfg_memo[h % CFG_MEMO_N];
-    unsigned ver = __atomic_load_n(&version, __ATOMIC_ACQUIRE) + 1;   // 0 marks an empty slot
+    unsigned ver = __atomic_load_n(&version, __ATOMIC_ACQUIRE) + 1;
     if (m->ver == ver && m->h == h && m->kind == kind && !memcmp(m->name, name, len + 1)) return m->v;
-    const char *v = kind ? cfg_value_now(name) : cfg_get_now(name);   // read after ver: a change meanwhile misses next time
+    const char *v = kind ? cfg_value_now(name) : cfg_get_now(name);
     m->ver = ver, m->h = h, m->kind = (uint8_t)kind, m->v = v;
     memcpy(m->name, name, len + 1);
     return v;
@@ -1355,8 +1128,6 @@ static const char *cfg_memo_get(const char *name, int kind) {
 const char *cfg_get(const char *name) { return cfg_memo_get(name, 0); }
 const char *cfg_value(const char *name) { return cfg_memo_get(name, 1); }
 
-// The row's default as a number, for a set value that does not parse; 0 for a key without a row, whose set value
-// cfg_value hands out without one (tests/cfg_rows_check.py keeps such reads guarded).
 static double default_number(const char *name) {
     const CfgMeta *m = cfg_meta(name);
     return m ? strtod(m->def, NULL) : 0;
@@ -1376,15 +1147,11 @@ int cfg_int(const char *name) {
     return end == v || *end ? (int)default_number(name) : (int)l;
 }
 
-// Off for "0" and for false, off and no in any case (switch_of), also for a key whose row is not 0|1; on otherwise.
 int cfg_bool(const char *name) {
     const char *v = cfg_value(name);
     return strcmp(v, "0") != 0 && switch_of(v) != 0;
 }
 
-// ---- the restart-only settings' values at start (cfg_start), which the running game keeps using whatever the menu sets
-// later: cfg_pending compares against them, so the menu says "after restart" only while a restart would change
-// something. One per row of metas, NULL for a live one.
 static const char *at_start[sizeof metas / sizeof *metas];
 
 static const char *meta_value(size_t i) {
@@ -1395,11 +1162,9 @@ static const char *meta_value(size_t i) {
 
 static void start_values(void) {
     for (size_t i = 0; i < sizeof metas / sizeof *metas; i++)
-        if (!metas[i].live) at_start[i] = strdup(meta_value(i));   // a copy: cfg_load (the probes) frees what it read
+        if (!metas[i].live) at_start[i] = strdup(meta_value(i));
 }
 
-// A value the environment sets never waits: the menu cannot change it and a restart keeps the environment. The command
-// line's --monitor and --audio-device arrive that way after the start values are taken (main.c).
 static int pending_at(size_t i) {
     char name[80];
     if (!at_start[i]) return 0;
@@ -1412,8 +1177,6 @@ int cfg_pending(const char *key) {
     return m ? pending_at((size_t)(m - metas)) : 0;
 }
 
-// As cfg_pending, for a value the key may get: the settings menu asks it of the value its draft holds, which waits for
-// Apply and so is not cfg_value yet.
 int cfg_pending_for(const char *key, const char *value) {
     const CfgMeta *m = cfg_meta(key);
     if (!m || !value) return 0;
@@ -1430,8 +1193,7 @@ int cfg_pending_count(void) {
     return n;
 }
 
-// ---- cfg_save: the file as lines, each with its line ending
-typedef struct { const char *s; size_t n; } Line;   // n includes the '\n' (and '\r') when present
+typedef struct { const char *s; size_t n; } Line;
 
 static int line_count(const char *p, size_t size) {
     int n = 0;
@@ -1439,7 +1201,6 @@ static int line_count(const char *p, size_t size) {
     return n + 1;
 }
 
-// The line's text without its ending, BOM and surrounding blanks, into out.
 static void line_text(const Line *l, int first, char *out, size_t cap) {
     size_t n = l->n;
     const char *s = l->s;
@@ -1452,8 +1213,6 @@ static void line_text(const Line *l, int first, char *out, size_t cap) {
     memmove(out, t, strlen(t) + 1);
 }
 
-// The key of a "key = value" line (comment = 0) or of a commented "# key = value" line (comment = 1), normalised,
-// into key; 0 when the line is not one.
 static int line_key(const char *text, int comment, char *key, size_t cap) {
     if (comment) {
         if (*text != '#' && *text != ';') return 0;
@@ -1475,7 +1234,6 @@ static int line_key(const char *text, int comment, char *key, size_t cap) {
     return 1;
 }
 
-// The section name of a "[name]" line, lower-case, into out; 0 when the line is not one.
 static int line_section(const char *text, char *out, size_t cap) {
     if (*text != '[') return 0;
     const char *e = strchr(text, ']');
@@ -1505,22 +1263,17 @@ static void puts_(Out *o, const char *s) { put(o, s, strlen(s)); }
 static const char *section_of(const char *key) {
     for (size_t i = 0; i < sizeof sections / sizeof *sections; i++)
         if (!strcmp(sections[i].key, key)) return sections[i].section;
-    if (!strncmp(key, "CHEAT_", 6)) return "cheats";   // cheats.c: one key per cheat of the cheat file
+    if (!strncmp(key, "CHEAT_", 6)) return "cheats";
     return NULL;
 }
 
-// 1 when key has a section of its own (the probe checks every row of the settings table has one).
 int cfg_has_section(const char *key) { return section_of(key) != NULL; }
 
-// The section cfg_save_to writes key under. A key with none goes to [misc]: a bare line appended at the end of the file would
-// belong to whatever section happens to come last (the loader ignores section names, but a person does not).
 static const char *section_for(const char *key) {
     const char *sec = section_of(key);
     return sec ? sec : "misc";
 }
 
-// A value as cfg_load reads it back: quoted when it starts or ends with a blank (cfg_load trims those) or is itself
-// quoted (cfg_load takes one pair of quotes off). A mod's folder name in mods_order can start with a space.
 static void put_value(Out *o, const char *v) {
     size_t n = strlen(v);
     int quote = n && (v[0] == ' ' || v[0] == '\t' || v[n - 1] == ' ' || v[n - 1] == '\t' ||
@@ -1530,7 +1283,6 @@ static void put_value(Out *o, const char *v) {
     if (quote) puts_(o, "\"");
 }
 
-// "key = value" + eol for entry e (key lower-case)
 static void put_entry(Out *o, const CfgEntry *e, const char *eol) {
     char k[64];
     snprintf(k, sizeof k, "%s", e->key);
@@ -1541,10 +1293,6 @@ static void put_entry(Out *o, const CfgEntry *e, const char *eol) {
     puts_(o, eol);
 }
 
-// A held entry (cfg_hold: a value the menu previews and the player has not applied) is invisible to a save: its flags are
-// parked here for the length of cfg_save_to and put back after it, so a save made by anything else (F10, F11, closing the
-// window) never writes it. So is a test hook's value (cfg_set_test): a test run's settings stay out of the file, the save
-// at exit included, and the log says how many were left out, again only when that number changes.
 static void park_held(unsigned char *parked, int n) {
     static int test_logged;
     char names[256];
@@ -1588,7 +1336,6 @@ int cfg_save_to(const char *path) {
     uint64_t size = 0;
     uint8_t *data = plat_file_read(path, &size);
     if (!data && plat_file_exists(path) && plat_file_size(path) != 0) {
-        // the file is there but unreadable (locked, transient error): rebuilding it from nothing would lose its lines
         rt_log("cfg: cannot read %s, nothing written", path);
         unpark_held(parked, n);
         __atomic_store_n(&save_ok, 0, __ATOMIC_RELEASE);
@@ -1598,9 +1345,8 @@ int cfg_save_to(const char *path) {
     const char *text = data ? (const char *)data : "";
     int nl = data ? line_count(text, size) : 0;
     Line *lines = calloc((size_t)nl + 1, sizeof *lines);
-    // after[i]: entries to write after line i (-1 = none); replace[i]: the entry whose value line i now carries
     int *replace = malloc(sizeof(int) * ((size_t)nl + 1)), *after_key = malloc(sizeof(int) * (size_t)(n + 1));
-    char *drop = calloc((size_t)nl + 1, 1);   // lines of a reset key
+    char *drop = calloc((size_t)nl + 1, 1);
     if (!lines || !replace || !after_key || !drop) rt_fatal("cfg: out of memory writing the settings file");
     for (int i = 0, at = 0; i < nl; i++) {
         size_t start = (size_t)at;
@@ -1609,11 +1355,11 @@ int cfg_save_to(const char *path) {
         lines[i] = (Line){text + start, (size_t)at - start};
         replace[i] = -1;
     }
-    if (nl && !lines[nl - 1].n) nl--;   // the text ended with a newline: no last empty line
+    if (nl && !lines[nl - 1].n) nl--;
     const char *eol = data && strstr(text, "\r\n") ? "\r\n" : "\n";
     char t[1024], k[128], sec[128];
     for (int e = 0; e < n; e++) {
-        after_key[e] = -2;   // -2 clean, -1 append in a new section at the end, >= 0 insert after that line
+        after_key[e] = -2;
         if (entries[e].removed)
             for (int i = 0; i < nl; i++) {
                 line_text(&lines[i], i == 0, t, sizeof t);
@@ -1647,9 +1393,7 @@ int cfg_save_to(const char *path) {
     Out o = {0};
     for (int i = 0; i < nl; i++) {
         if (drop[i]) {
-            // the line leaves the file; keys inserted after it still need a line ending before them
         } else if (replace[i] >= 0) {
-            // keep the line's indentation and key spelling, put the new value after " = "
             const char *s = lines[i].s;
             size_t len = lines[i].n;
             if (i == 0 && len >= 3 && !memcmp(s, "\xEF\xBB\xBF", 3)) put(&o, s, 3), s += 3, len -= 3;
@@ -1670,7 +1414,6 @@ int cfg_save_to(const char *path) {
                 put_entry(&o, &entries[e], eol);
             }
     }
-    // keys whose section the file lacks: one new section each, at the end
     for (int e = 0; e < n; e++) {
         if (after_key[e] != -1) continue;
         const char *want = section_for(entries[e].key);
@@ -1683,7 +1426,6 @@ int cfg_save_to(const char *path) {
             puts_(&o, eol);
         }
         put_entry(&o, &entries[e], eol);
-        // the following keys of the same new section go right after this one
         for (int f = e + 1; f < n && want; f++)
             if (after_key[f] == -1 && section_for(entries[f].key) && !strcmp(section_for(entries[f].key), want)) {
                 put_entry(&o, &entries[f], eol);
@@ -1692,7 +1434,7 @@ int cfg_save_to(const char *path) {
     }
     int ok = plat_file_write_atomic(path, o.buf ? o.buf : "", o.n);
     if (ok) {
-        char names[256];   // which keys this save wrote, so a log shows what reached the file and when
+        char names[256];
         int nn = 0, len = 0;
         names[0] = 0;
         for (int e = 0; e < n; e++)
@@ -1720,18 +1462,13 @@ int cfg_save_to(const char *path) {
 
 static char ini_path[1024];
 
-// The settings file beside the game: nx2saria.ini. An nx2navi.ini there without one, the name before NX2Saria (any
-// version of NX2navi), is renamed to it the first time the game looks, so a player who moves over keeps every setting
-// and the folder holds one settings file from then on; launcher/gameini.py does the same where the launcher reads it
-// first. The rename never replaces a file (plat_fs_rename); where it fails, the old file is read and written under its
-// own name. With both there, nx2saria.ini is the one, and the log says the other is not read.
 static int find_ini(void) {
     if (ini_path[0]) return 1;
     char path[1024], legacy[1024];
     if (!plat_exe_path(path, sizeof path)) return 0;
     char *cut = plat_last_sep(path);
     if (!cut) cut = strrchr(path, '/');
-    if (!cut || cut + 13 >= path + sizeof path) return 0;   // room for "nx2saria.ini" and its NUL after the separator
+    if (!cut || cut + 13 >= path + sizeof path) return 0;
     strcpy(cut + 1, "nx2navi.ini");
     snprintf(legacy, sizeof legacy, "%s", path);
     strcpy(cut + 1, "nx2saria.ini");
@@ -1754,8 +1491,6 @@ static int find_ini(void) {
     return 1;
 }
 
-// A replay of a bug capture (bugcap.c) runs on the capture's settings and leaves the player's settings file as it is:
-// nothing is saved, whatever the run sets.
 int cfg_save(void) {
     if (bugcap_replay_dir()) return 1;
     if (find_ini()) return cfg_save_to(ini_path);
@@ -1763,10 +1498,6 @@ int cfg_save(void) {
     return 0;
 }
 
-// What the file sets, in the log once at start: the settings of this version with their values, in lines of up to
-// about 900 characters, and then the keys that are no settings of this version, which do nothing. A report's log then
-// shows which settings its run had and which of the file's lines had no effect; before, it held only the count of
-// keys, and a player who had added a line this version does not read could take it for the cause of what changed.
 static void log_file_settings(const char *file) {
     char line[1024];
     size_t k = 0;
@@ -1775,10 +1506,9 @@ static void log_file_settings(const char *file) {
         char key[64];
         snprintf(key, sizeof key, "%s", entries[i].key);
         for (char *p = key; *p; p++) *p = (char)tolower((unsigned char)*p);
-        // a private setting (cfg_private.h): only that it is set
         const char *value = cfg_private_key(entries[i].key) && entries[i].value[0] ? CFG_PRIVATE_SHOWN : entries[i].value;
         size_t vl = strlen(value);
-        if (vl > 200) vl = 200;   // a long value (a list of mods) is cut: the line shows that the key is set
+        if (vl > 200) vl = 200;
         if (k && k + strlen(key) + vl + 5 > 900) {
             rt_log("cfg: %s sets: %s", file, line);
             k = 0;
@@ -1792,7 +1522,6 @@ static void log_file_settings(const char *file) {
                unknown_cut ? ", ..." : "");
 }
 
-// ---- cfg_reload_file: the file's lines as a list of (key, value), a repeated key keeping its later line.
 typedef struct { char *key, *value; int line; } FileKey;
 typedef struct { FileKey k[CFG_MAX_KEYS]; int n; } FileKeys;
 
@@ -1802,7 +1531,6 @@ static const char *file_get(const FileKeys *f, const char *key) {
     return NULL;
 }
 
-// As add reads a line: the comment after a value cut where cfg_load cuts it (cut_comment), one pair of quotes off.
 static void file_sink(char *key, char *value, int line, void *ctx) {
     FileKeys *f = ctx;
     older_file_key(key, line);
@@ -1810,7 +1538,7 @@ static void file_sink(char *key, char *value, int line, void *ctx) {
     value = cut_comment(key, value, line);
     size_t vl = strlen(value);
     if (vl >= 2 && value[0] == '"' && value[vl - 1] == '"') value[vl - 1] = 0, value++;
-    if (!*key || !*value) return;   // "key =" leaves the setting at its default
+    if (!*key || !*value) return;
     for (int i = 0; i < f->n; i++)
         if (!strcmp(f->k[i].key, key)) {
             free(f->k[i].value);
@@ -1821,7 +1549,6 @@ static void file_sink(char *key, char *value, int line, void *ctx) {
     if (f->n < CFG_MAX_KEYS) f->k[f->n++] = (FileKey){strdup(key), strdup(value), line};
 }
 
-// migrate() on the file's list: pad_layout = xbox_prompts reads as pad_layout = nintendo and prompts = xbox.
 static void file_migrate(FileKeys *f) {
     const char *layout = file_get(f, "PAD_LAYOUT");
     if (!layout || strcasecmp(layout, "xbox_prompts")) return;
@@ -1830,20 +1557,13 @@ static void file_migrate(FileKeys *f) {
     if (!file_get(f, "PROMPTS") && f->n < CFG_MAX_KEYS) f->k[f->n++] = (FileKey){strdup("PROMPTS"), strdup("xbox"), 0};
 }
 
-// ---- validation: a reloaded value is checked before it reaches a consumer. At start a bad value is the player's to fix
-// (some consumers stop the game with it: ov_language, ov_handheld, mem_init); a reload must never do that, so a value that
-// does not fit is rejected and the current one stays. The check is the one cfg_load logs at start (misfit: 0|1 with the
-// switch words, a range lo..hi, a list of words; a list with a number in it is the menu's presets and is not checked);
-// keys whose consumers take more than their row lists, or stop the game on a miss, have their own rule in value_ok, and
-// keys without a row or a set (bindings, mod lists, cheats, free text) have consumers that fall back on their own and
-// are not checked.
 static int whole_in(const char *v, long lo, long hi) {
     char *end;
     long l = strtol(v, &end, 10);
     return *v && !*end && l >= lo && l <= hi;
 }
 
-static int size_in(const char *v, long min_w, long min_h, long max_w, long max_h) {   // "WxH"
+static int size_in(const char *v, long min_w, long min_h, long max_w, long max_h) {
     char *end;
     long w = strtol(v, &end, 10);
     if (end == v || (*end != 'x' && *end != 'X')) return 0;
@@ -1852,7 +1572,6 @@ static int size_in(const char *v, long min_w, long min_h, long max_w, long max_h
     return end != h_at && !*end && w >= min_w && w <= max_w && h >= min_h && h <= max_h;
 }
 
-// v is one of the row's "a|b|c" values, case and all (ov_language and ov_handheld compare exactly).
 static int listed_exact(const CfgMeta *m, const char *v) {
     if (!m || !m->values) return 1;
     for (const char *p = m->values; *p;) {
@@ -1869,7 +1588,7 @@ static int value_ok(const char *key, const char *v) {
     if (!strcmp(key, "RENDER_SCALE")) return !strcasecmp(v, "game") || whole_in(v, 25, 400);
     if (!strcmp(key, "WINDOW_SIZE")) return size_in(v, 640, 360, 7680, 4320);
     if (!strcmp(key, "OUTPUT_RES")) return size_in(v, 1, 1, 16384, 16384);
-    if (!strcmp(key, "APP_POOL")) {   // mem_init stops the game on 0
+    if (!strcmp(key, "APP_POOL")) {
         char *end;
         return *v && strtoull(v, &end, 0) != 0 && !*end;
     }
@@ -1882,21 +1601,19 @@ static void log_reload(const char *key, const char *value, const char *note) {
     rt_log("cfg: reload %s = %s%s", key, value ? value : "(default)", note);
 }
 
-static int env_sets(const char *key) {   // the file's new value would not show
+static int env_sets(const char *key) {
     char var[128];
     snprintf(var, sizeof var, PREFIX "%s", key);
     return cfg_env(var) != NULL;
 }
 
-// One key of the file that differs from memory: entry e, or NULL for a key the file gained (want is then set). set_lock
-// held. Counts the outcome in r.
 static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const char *want, int line) {
     if (env_sets(key)) {
         log_reload(key, want, " (overridden by environment)");
         r->env++;
         return;
     }
-    if (e && (e->held || e->dirty || e->removed)) {   // a menu change not saved yet: the file would overwrite it
+    if (e && (e->held || e->dirty || e->removed)) {
         rt_log("cfg: reload %s skipped: changed in the menu, not saved yet", key);
         r->kept++;
         return;
@@ -1907,8 +1624,8 @@ static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const c
         return;
     }
     if (e) {
-        if (e->value) kept_n++, kept_bytes += strlen(e->value) + 1;   // cfg_sizes
-        __atomic_store_n(&e->value, want ? strdup(want) : NULL, __ATOMIC_RELEASE);   // the old string stays for readers
+        if (e->value) kept_n++, kept_bytes += strlen(e->value) + 1;
+        __atomic_store_n(&e->value, want ? strdup(want) : NULL, __ATOMIC_RELEASE);
         entry_line[e - entries] = want ? line : 0;
     } else {
         if (n_entries == CFG_MAX_KEYS) {
@@ -1919,7 +1636,7 @@ static void reload_one(CfgReloadResult *r, CfgEntry *e, const char *key, const c
         entries[n_entries] = (CfgEntry){strdup(key), strdup(want), 0, 0, 0, 0};
         __atomic_store_n(&n_entries, n_entries + 1, __ATOMIC_RELEASE);
     }
-    if (!cfg_supported(key)) {   // stored, so memory and file agree, but nothing reads it on this build
+    if (!cfg_supported(key)) {
         log_reload(key, want, "");
         rt_log("cfg: %s has no effect on this game version", key);
         return;
@@ -1938,7 +1655,7 @@ int cfg_reload_file(CfgReloadResult *r) {
     CfgReloadResult none = {0};
     if (!r) r = &none;
     *r = (CfgReloadResult){0};
-    if (bugcap_replay_dir()) {   // the capture's settings.ini stands in for the player's settings file (load_ini)
+    if (bugcap_replay_dir()) {
         rt_log("cfg: reload: not run: this run replays a bug capture's settings and does not read the player's settings file");
         return 0;
     }
@@ -1948,10 +1665,10 @@ int cfg_reload_file(CfgReloadResult *r) {
         free(f);
         return 0;
     }
-    check_end();   // the comments cut_comment named, counted afresh for this read
+    check_end();
     file_migrate(f);
     plat_mutex_lock(&set_lock);
-    int preset_before = preset_parse(raw_get(PREFIX "PRESET"));   // preset_follow: whether the reload changes it
+    int preset_before = preset_parse(raw_get(PREFIX "PRESET"));
     int n = n_entries;
     for (int i = 0; i < n; i++) {
         CfgEntry *e = &entries[i];
@@ -1962,7 +1679,7 @@ int cfg_reload_file(CfgReloadResult *r) {
             if (!strcmp(f->k[k].key, e->key)) line = f->k[k].line;
         reload_one(r, e, e->key, want, line);
     }
-    for (int i = 0; i < f->n; i++) {   // keys the file gained
+    for (int i = 0; i < f->n; i++) {
         int have = 0;
         for (int j = 0; j < n && !have; j++) have = !strcmp(entries[j].key, f->k[i].key);
         if (!have) reload_one(r, NULL, f->k[i].key, f->k[i].value, f->k[i].line);
@@ -1977,52 +1694,22 @@ int cfg_reload_file(CfgReloadResult *r) {
     return 1;
 }
 
-// ---- quality presets: the tier at start, the state file, and what the settings menu asks and does
-//
-// cfg_start (preset_init), after the settings file is read and the guest address space is claimed (memory.c mem_init)
-// and before the restart-only values are kept: reads the hardware (hw_detect.c hw_detect), asks preset_pick.h for the
-// tier this PC should get and turns the layer on with the tier in use. preset = recommended (the default) is that tier, decided anew at every start, so a first start and a
-// start on new hardware get theirs. A tier the player chose is used as it is, unless it was chosen on other hardware
-// (the state file's chosen_on against this start's fingerprint, the driver version left out:
-// preset_pick.h preset_same_hardware): this run then uses the recommended tier, the log says why and
-// cfg_preset_hw_changed tells the menu, until the player picks a tier again (cfg_preset_chosen). A tier without a
-// chosen_on is taken as chosen on this PC, and this PC's fingerprint is recorded. A run that replays a bug capture
-// uses high, which sets nothing: the capture's settings.ini holds the values its own preset gave (bugcap.c), and the
-// replaying PC's preset would change them.
-//
-// The state file is preset-state.txt beside the game executable and nx2saria.ini: the game's own record of what it saw,
-// never settings; nothing here writes nx2saria.ini. Lines "key = value":
-//   hardware   this start's fingerprint (preset_pick.h preset_fingerprint)
-//   chosen_on  the fingerprint when the player last chose a tier; absent while none is recorded
-//   noticed    the recommended tier the one-time notice last named (cfg_preset_notice_due); absent before any
-//   gpu_*      the last probe that found a GPU (name, vendor, device, driver, type, vram_mib, mesh): a start that cannot
-//              probe (hw_detect.c) goes by them; a GPU missing any of them is none
-//   probing    1 from right before the probe's first Vulkan call until it returns (preset_probe_begin). A start that
-//              finds it skips the probe and goes by the GPU above: the probe runs before the crash report and the log
-//              file are set up (main.c main_run), so a driver that crashes or hangs in it would otherwise stop every
-//              start. It stays until the game has chosen its own Vulkan device (cfg_preset_device_started), which
-//              shows the drivers load, or the line is deleted by hand; every start that finds it says so in its log.
-// It is written through a temporary file and a rename (plat_file_write_atomic), only when its text changes, and only by
-// the game itself: not by a tool mode (cfg_start's game 0) and not in a run that replays a bug capture.
 #define PRESET_KEYS_MAX 32
-static PlatMutex preset_lock = PLAT_MUTEX_INIT;   // the state file and the fields below once cfg_start has returned
+static PlatMutex preset_lock = PLAT_MUTEX_INIT;
 static struct {
-    char path[1024];          // the state file; "" when the executable's folder is unknown
-    char text[2048];          // the state file's text as read or last written
-    char logged[2048];        // the text as read or last written with a log line (state_write's quiet writes aside)
-    char chosen_on[160];      // "" while none is recorded
-    char noticed[16];         // the tier the one-time notice named, "" before any
-    char fp[160];             // this start's fingerprint; until the probe returns, the state file's hardware line
-    char why[192];            // why the recommended tier
-    PresetHw gpu;             // the state file's last probe (have_gpu 0 without one)
-    int rec;                  // the recommended tier
-    int write;                // the state file may be written: the game itself, not a replay
-    int probing;              // the state file's probing mark (above): found at start, or the probe runs now
-    int hw_changed;           // atomic: the player's tier gave way to the recommended one (above)
-    int n_keys, keys_done;    // keys_done atomic
-    // every key some tier sets on this PC's hardware, in the table's order: the keys among which the menu hands back
-    // to a preset, and Custom counts, those the tier in question sets (cfg_preset_differs). A key only another kind of
-    // PC gets from a tier (fps_limit, set on integrated GPUs and handhelds alone) stays the player's own here.
+    char path[1024];
+    char text[2048];
+    char logged[2048];
+    char chosen_on[160];
+    char noticed[16];
+    char fp[160];
+    char why[192];
+    PresetHw gpu;
+    int rec;
+    int write;
+    int probing;
+    int hw_changed;
+    int n_keys, keys_done;
     const char *keys[PRESET_KEYS_MAX];
 } PS = {.rec = PRESET_HIGH};
 
@@ -2031,7 +1718,7 @@ static void preset_keys_init(void) {
     plat_mutex_lock(&preset_lock);
     if (!PS.keys_done) {
         for (size_t i = 0; i < PRESET_ROW_COUNT; i++) {
-            if (!preset_applies(PRESET_ROWS[i].when, &preset_hw)) continue;   // no tier sets it on this PC
+            if (!preset_applies(PRESET_ROWS[i].when, &preset_hw)) continue;
             int have = 0;
             for (int k = 0; k < PS.n_keys && !have; k++) have = !strcmp(PS.keys[k], PRESET_ROWS[i].key);
             if (have) continue;
@@ -2043,7 +1730,6 @@ static void preset_keys_init(void) {
     plat_mutex_unlock(&preset_lock);
 }
 
-// "low".."ultra" to their tier, "recommended" (or nothing) to -1, anything else to -2.
 static int preset_parse(const char *v) {
     if (!v || !*v || !strcasecmp(v, "recommended")) return -1;
     for (int t = 0; t < PRESET_TIERS; t++)
@@ -2056,7 +1742,6 @@ static const char *gpu_type_name(int type) {
          : type == PRESET_GPU_CPU ? "cpu" : "other";
 }
 
-// A whole number of the state file (decimal or 0x hex) into *out; 0 when v is not one.
 static int state_number(const char *v, uint32_t *out) {
     char *end;
     unsigned long n = strtoul(v, &end, 0);
@@ -2074,9 +1759,6 @@ static void state_path_init(void) {
     snprintf(PS.path, sizeof PS.path, "%.*spreset-state.txt", (int)(cut + 1 - path), path);
 }
 
-// Reads the whole file, line by line to its end: a blank line or a stray NUL byte ends only its own line. A kept GPU
-// needs every one of its seven lines with a value of its kind, else none is kept: a GPU with fields left at 0 would
-// give a tier of its own (no mesh shaders: Low).
 static void state_read(void) {
     if (!PS.path[0]) return;
     uint64_t size = 0;
@@ -2114,11 +1796,9 @@ static void state_read(void) {
     }
     free(data);
     if (have == G_ALL) g->have_gpu = 1;
-    else memset(g, 0, sizeof *g);   // a GPU without all of its lines: none kept
+    else memset(g, 0, sizeof *g);
 }
 
-// preset_lock held, or cfg_start. quiet: no "wrote" line (the probing mark and its removal, which leave the file as it
-// was when nothing else changed); a failed write is logged either way.
 static void state_write(int quiet) {
     if (!PS.path[0] || !PS.write) return;
     char t[sizeof PS.text];
@@ -2145,8 +1825,6 @@ static void state_write(int quiet) {
     }
 }
 
-// The state file written on a thread of its own, for a caller on the present thread (the one-time notice, a Ctrl+F5
-// that changes the preset line), which should not wait for the disk. Written inline when no thread starts.
 static void state_write_main(void *arg) {
     (void)arg;
     plat_mutex_lock(&preset_lock);
@@ -2158,9 +1836,6 @@ static void state_write_later(void) {
     if (!plat_thread_spawn(state_write_main, NULL, "preset state", 256u << 10)) state_write_main(NULL);
 }
 
-// hw_detect.c hw_detect, right before the probe's first Vulkan call: one log line (before log_open it waits in main.c's
-// early buffer and is on stderr at once), and the probing mark in the state file, which the end of preset_init takes
-// out again once the probe has returned.
 static void preset_probe_begin(void) {
     rt_log("preset: probing the GPU (a Vulkan instance; preset_probe = 0 turns it off)");
     if (!PS.write) return;
@@ -2175,7 +1850,6 @@ static const char *deck_value(const char *key) {
     return NULL;
 }
 
-// Two values of one setting the same: equal apart from case, or the same number ("0.50" and "0.5").
 static int same_value(const char *a, const char *b) {
     if (!a || !b) return a == b;
     if (!strcasecmp(a, b)) return 1;
@@ -2184,7 +1858,6 @@ static int same_value(const char *a, const char *b) {
     return ea != a && eb != b && !*ea && !*eb && x == y;
 }
 
-// The log's lines of each key the tier sets: where the value in effect comes from. Once per start.
 static void preset_log_keys(int tier) {
     int any = 0;
     for (int k = 0; k < PS.n_keys; k++) {
@@ -2224,11 +1897,11 @@ static void preset_init(int game) {
                                         "delete that line to probe again"
                          : NULL;
     hw_detect(&hw, no_probe, preset_probe_begin, skipped, sizeof skipped, note, sizeof note, &ms);
-    if (!skipped[0]) PS.probing = 0;   // the probe returned: the end's state_write takes the mark out
+    if (!skipped[0]) PS.probing = 0;
     int cached = 0;
     if (hw.have_gpu) {
-        PS.gpu = hw;   // the state file keeps its GPU fields
-    } else if (skipped[0] && PS.gpu.have_gpu) {   // no probe this start: the last one's GPU
+        PS.gpu = hw;
+    } else if (skipped[0] && PS.gpu.have_gpu) {
         const PresetHw *g = &PS.gpu;
         hw.have_gpu = 1, hw.vendor = g->vendor, hw.device = g->device, hw.driver = g->driver;
         hw.gpu_type = g->gpu_type, hw.vram_mib = g->vram_mib, hw.mesh = g->mesh;
@@ -2241,7 +1914,7 @@ static void preset_init(int game) {
         cached = 1;
     }
     preset_hw = hw;
-    __atomic_store_n(&PS.keys_done, 0, __ATOMIC_RELEASE);   // the key list again, for this hardware
+    __atomic_store_n(&PS.keys_done, 0, __ATOMIC_RELEASE);
     PS.n_keys = 0;
     preset_keys_init();
     char gpu[512], tail[256];
@@ -2258,9 +1931,6 @@ static void preset_init(int game) {
            hw.ram_mib / 1024.0, hw.handheld[0] ? hw.handheld : "none", tail);
     PS.rec = preset_pick(&hw, PS.why, sizeof PS.why);
     rt_log("preset: recommended %s: %s", preset_tier_names[PS.rec], PS.why);
-    // The Steam Deck's GPU runs at the clock its power management picks; asking the amdgpu driver for its stable peak
-    // clock through the render node would raise the frame rate there, at more power. Nothing here does that yet: it
-    // waits for someone with a Deck to measure it, and this line marks where it would go.
     if (!strcmp(hw.handheld, "Steam Deck"))
         rt_log("preset: Steam Deck: the GPU clock is left to the system's power management (no peak clock request)");
     preset_fingerprint(&hw, PS.fp, sizeof PS.fp);
@@ -2268,7 +1938,7 @@ static void preset_init(int game) {
     char name[] = PREFIX "PRESET";
     const char *v = raw_get(name);
     int want = preset_parse(v), tier = PS.rec;
-    if (want == -2) {   // check_value has named the value
+    if (want == -2) {
         rt_log("preset: '%s' is no preset: recommended", v);
         want = -1;
     }
@@ -2277,8 +1947,6 @@ static void preset_init(int game) {
         tier = PRESET_HIGH, want = -1;
         snprintf(source, sizeof source, "a bug capture's replay: its settings.ini holds the capture's preset values");
     } else if (want >= 0) {
-        // A tier the environment sets is used as it is: the new-hardware rule is for the settings file's line, which
-        // the player chose on some PC; the environment's is set for this run, and is no choice recorded here.
         const int env = cfg_env(name) != NULL;
         if (!env && PS.chosen_on[0] && hw.have_gpu && !preset_same_hardware(PS.chosen_on, PS.fp)) {
             __atomic_store_n(&PS.hw_changed, 1, __ATOMIC_RELEASE);
@@ -2290,7 +1958,7 @@ static void preset_init(int game) {
         }
     }
     __atomic_store_n(&preset_tier, tier, __ATOMIC_RELEASE);
-    __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);   // the lookup memo forgets what it read without the layer
+    __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     rt_log("preset: in use %s (%s)", preset_tier_names[tier], source);
     if (PS.hw_changed)
         rt_log("preset: %s was chosen on %s, and this PC is %s (vendor:device:driver:video GiB:threads:RAM GiB:handheld); "
@@ -2305,11 +1973,6 @@ static void preset_init(int game) {
     state_write(0);
 }
 
-// cfg_reload_file: the file's preset line changed (Ctrl+F5) from before, the tier the line named before the reload
-// (preset_parse): the layer follows it. The line as it was, not the tier at start: the menu may have switched since.
-// An edited line is the player's choice on this PC, as one made in the menu: a tier chosen on other hardware no longer
-// gives way (cfg_preset_hw_changed), and a tier is recorded as chosen here (written on a thread of its own: Ctrl+F5
-// runs on the present thread).
 static void preset_follow(int before) {
     if (__atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE) < 0 || bugcap_replay_dir()) return;
     int want = preset_parse(raw_get(PREFIX "PRESET"));
@@ -2386,7 +2049,7 @@ int cfg_preset_notice_due(void) {
     int t = __atomic_load_n(&preset_tier, __ATOMIC_ACQUIRE);
     if (t < 0 || !PS.write || PS.rec == PRESET_HIGH || t != PS.rec) return 0;
     const char *set = raw_get(PREFIX "PRESET");
-    if (set && *set) return 0;   // the player chose, recommended included: nothing to tell
+    if (set && *set) return 0;
     plat_mutex_lock(&preset_lock);
     int due = strcmp(PS.noticed, preset_tier_names[PS.rec]) != 0;
     plat_mutex_unlock(&preset_lock);
@@ -2398,7 +2061,7 @@ void cfg_preset_notice_done(void) {
     snprintf(PS.noticed, sizeof PS.noticed, "%s", preset_tier_names[PS.rec]);
     rt_log("preset: notice shown: recommended %s in use", preset_tier_names[PS.rec]);
     plat_mutex_unlock(&preset_lock);
-    state_write_later();   // called on the present thread (ui/menu.cpp preset_notice_tick)
+    state_write_later();
 }
 
 void cfg_preset_device_started(void) {
@@ -2409,16 +2072,14 @@ void cfg_preset_device_started(void) {
     if (!clear) return;
     rt_log("preset: the game's Vulkan device is chosen: the probing mark of an earlier start is taken out of %s, and the "
            "next start probes again", PS.path);
-    state_write_later();   // called where the game picks its device (vk_device.c); the disk is not waited for
+    state_write_later();
 }
 
 void cfg_preset_chosen(void) {
     plat_mutex_lock(&preset_lock);
     if (preset_hw.have_gpu) snprintf(PS.chosen_on, sizeof PS.chosen_on, "%s", PS.fp);
-    else PS.chosen_on[0] = 0;   // nothing to compare a later start with: recorded at the first start that knows its GPU
+    else PS.chosen_on[0] = 0;
     __atomic_store_n(&PS.hw_changed, 0, __ATOMIC_RELEASE);
-    // a player who chose a preset in the menu has seen it: the one-time notice (cfg_preset_notice_due) has nothing left
-    // to tell, also when the choice was Recommended, which leaves the settings file without a preset line
     if (PS.rec >= 0 && PS.rec < PRESET_TIERS) snprintf(PS.noticed, sizeof PS.noticed, "%s", preset_tier_names[PS.rec]);
     state_write(0);
     plat_mutex_unlock(&preset_lock);
@@ -2456,8 +2117,6 @@ void cfg_preset_use_from(int tier, const char *const *from_values) {
 }
 
 static void load_ini(void) {
-    // NX2SARIA_CAPTURE_REPLAY=<a bug capture's folder>: the settings that capture was taken with (its settings.ini) stand
-    // in for the player's settings file, which is neither read nor written in such a run; the environment still wins over them
     const char *replay = bugcap_replay_dir();
     if (replay) {
         char path[1100];
@@ -2481,7 +2140,7 @@ static void load_ini(void) {
         char var[128], legacy[128];
         snprintf(var, sizeof var, PREFIX "%s", entries[i].key);
         snprintf(legacy, sizeof legacy, OLD_PREFIX "%s", entries[i].key);
-        if (cfg_env(var))   // the name that is set: the current one wins when both are
+        if (cfg_env(var))
             rt_log("cfg: %s is set in the environment and overrides the settings file", getenv(var) ? var : legacy);
     }
 }
@@ -2489,7 +2148,7 @@ static void load_ini(void) {
 void cfg_init(void) {
     load_ini();
     older_env();
-    for (size_t i = 0; i < sizeof metas / sizeof *metas; i++) {   // the environment's values, as the file's (cfg_load)
+    for (size_t i = 0; i < sizeof metas / sizeof *metas; i++) {
         char var[80];
         snprintf(var, sizeof var, PREFIX "%s", metas[i].key);
         const char *e = cfg_env(var);
@@ -2506,11 +2165,10 @@ void cfg_init(void) {
 }
 
 void cfg_start(int game) {
-    preset_init(game);   // before the restart-only values are kept: a preset's are among them
+    preset_init(game);
     start_values();
 }
 
-// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): settings entries, and the replaced values cfg_set keeps for readers.
 void cfg_sizes(PerfSizes *s) {
     plat_mutex_lock(&set_lock);
     uint64_t n = (uint64_t)n_entries, kn = kept_n, kb = kept_bytes;

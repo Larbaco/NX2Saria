@@ -1,27 +1,3 @@
-// The hardware the quality presets are chosen by (cfg.c cfg_start; the choice: preset_pick.h).
-//
-// Design. The preset is decided inside cfg_start, before any restart-only setting is read and long before the game
-// makes its Vulkan device, so the GPU is read by a probe of its own: a Vulkan instance without surface extensions,
-// which lists the devices, picks the one vk_device.c pick_device would pick (NX2SARIA_GPU_INDEX or NX2SARIA_GPU_NAME, a
-// gpu_index alone that lists a card that is not a discrete one counting as unset while a discrete one is usable
-// (gpu_choice.h), else a discrete GPU before an integrated one before any other, a software renderer on the processor among the
-// others; Vulkan 1.3 and the extensions the game needs; of one GPU listed by two drivers, the newer driver's listing), reads its name, IDs, driver version, type, largest
-// device-local heap and mesh shader support, and is destroyed again. The window's present support cannot be asked
-// without a window, so a GPU the game later refuses for that is the one case the probe and the game disagree on;
-// vk_device.c says so in the log (hw_detect_device_check).
-//
-// The probe is the process's first Vulkan call, so it first puts the drivers' cache variables in the environment
-// (vk_device.c vk_driver_cache_env, which a driver reads when it loads). It does not run where something else must
-// make the first Vulkan call: DLSS Frame Generation on Windows (framegen = dlss: Streamline's interposer, vk_dlssg.c
-// vk_dlssg_early) and a RenderDoc capture (rdoc); nor in the tool modes (--selftest, --prepare-shaders and the others,
-// cfg_start's game 0), which have no use for an early driver load; nor with preset_probe = 0, nor after a start whose
-// probe never returned (cfg.c preset_init: the state file's probing mark). cfg.c then goes by the last probe's result,
-// which it keeps in its state file. cfg_start runs once memory.c mem_init has claimed the whole guest address space, so the
-// drivers' libraries and allocations land outside it, as they do for the game's own device later. The probe's time, the drivers' first load included, goes to the log each start.
-//
-// The rest: logical processors (plat_cpu_count), physical cores (plat_cpu_cores), installed memory (plat_mem_info),
-// and the handheld the firmware names (preset_pick.h preset_handheld; Linux's DMI tables, Windows' registry copy of the
-// firmware's SMBIOS strings; also Steam's SteamDeck=1).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +16,6 @@
 #include <windows.h>
 #endif
 
-// The device extensions vk_device.c pick_device requires (its k_required_ext): a GPU without one is not the game's.
 static const char *const required_ext[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME,
     VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME};
@@ -51,7 +26,6 @@ static int ext_listed(const VkExtensionProperties *e, uint32_t n, const char *na
     return 0;
 }
 
-// 1 when pd has every required extension; *mesh: VK_EXT_mesh_shader is listed.
 static int usable_exts(VkPhysicalDevice pd, int *mesh) {
     uint32_t n = 0;
     vkEnumerateDeviceExtensionProperties(pd, NULL, &n, NULL);
@@ -65,8 +39,6 @@ static int usable_exts(VkPhysicalDevice pd, int *mesh) {
     return ok;
 }
 
-// 1 when pd has a queue family that does graphics and compute: the part of vk_device.c find_gfx_family that needs no
-// window (whether that family presents cannot be asked here, as the design note above says).
 static int has_graphics_queue(VkPhysicalDevice pd) {
     uint32_t n = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &n, NULL);
@@ -95,14 +67,11 @@ static void probe_gpu(PresetHw *hw, char *note, size_t note_cap) {
     VkPhysicalDevice *pd = calloc(n ? n : 1, sizeof *pd);
     if (pd) vkEnumeratePhysicalDevices(inst, &n, pd);
     else n = 0;
-    const char *e = cfg_get("NX2SARIA_GPU_INDEX");   // as vk_device.c pick_device: the best device when unset
+    const char *e = cfg_get("NX2SARIA_GPU_INDEX");
     int want = e && *e ? atoi(e) : -1;
     const char *name = cfg_get("NX2SARIA_GPU_NAME");
     int best = -1, best_score = -1, best_mesh = 0;
     VkPhysicalDeviceProperties bp = {0};
-    // A gpu_index that lists a card without gpu_name's name is dropped and the name decides, and a gpu_index alone that
-    // lists a card that is not a discrete one gives way to a discrete card the game can use, as in pick_device
-    // (gpu_choice.h gpuc_resolve): the preset has to be chosen for the card the game will use
     const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX");
     GpucCard *cards = calloc(n ? n : 1, sizeof *cards);
     VkPhysicalDeviceProperties *props = calloc(n ? n : 1, sizeof *props);
@@ -112,9 +81,6 @@ static void probe_gpu(PresetHw *hw, char *note, size_t note_cap) {
             cards[i].name = props[i].deviceName;
             cards[i].type = (int)props[i].deviceType;
         }
-        // Which discrete cards the game can use is asked only then, by the game's own tests but the one that needs a window
-        // (present support): a discrete card that cannot present is the case where the position gives way here and stands
-        // in the game, and hw_detect_device_check logs that the device differs from the probe.
         if (gpuc_legacy_applies(cards, (int)n, want, name, from_env))
             for (uint32_t i = 0; i < n; i++) {
                 int mesh;
@@ -131,17 +97,16 @@ retry:
         vkGetPhysicalDeviceProperties(pd[i], &p);
         if (want >= 0 && (int)i != want) continue;
         if (name && *name && !preset_has(p.deviceName, name)) continue;
-        if (p.apiVersion < VK_API_VERSION_1_3) continue;   // a CPU device counts, ranked with the others (as pick_device)
+        if (p.apiVersion < VK_API_VERSION_1_3) continue;
         int mesh = 0;
-        if (!usable_exts(pd[i], &mesh) || !has_graphics_queue(pd[i])) continue;   // as pick_device, but for the present test
+        if (!usable_exts(pd[i], &mesh) || !has_graphics_queue(pd[i])) continue;
         int score = (int)i == want ? 100 : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3
                   : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
-        // of one GPU listed by two drivers, the newer driver's listing (as pick_device)
         int newer = score == best_score && bp.vendorID == p.vendorID && bp.deviceID == p.deviceID &&
                     p.driverVersion > bp.driverVersion;
         if (score > best_score || newer) best = (int)i, best_score = score, bp = p, best_mesh = mesh;
     }
-    if (best < 0 && (want >= 0 || (name && *name))) {   // a choice that is not usable: the best usable one, as the game does
+    if (best < 0 && (want >= 0 || (name && *name))) {
         want = -1, name = NULL;
         goto retry;
     }
@@ -172,9 +137,7 @@ retry:
     vkDestroyInstance(inst, NULL);
 }
 
-// ---- the handheld the firmware names
 #ifdef _WIN32
-// One string of the firmware's SMBIOS tables as Windows keeps them (HKLM\HARDWARE\DESCRIPTION\System\BIOS); "" when absent.
 static void bios_string(const char *value, char *out, DWORD cap) {
     DWORD n = cap;
     if (RegGetValueA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", value, RRF_RT_REG_SZ, NULL, out, &n) !=
@@ -195,7 +158,7 @@ static void dmi_string(const char *file, char *out, size_t cap) {
 #endif
 
 static const char *handheld(void) {
-    const char *env = getenv("SteamDeck");   // Steam sets it on the Steam Deck
+    const char *env = getenv("SteamDeck");
     if (env && !strcmp(env, "1")) return "Steam Deck";
     char vendor[128], product[128], family[128], board_vendor[128], board[128];
 #ifdef _WIN32
@@ -236,7 +199,7 @@ void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), c
     if (!skipped[0] && rdoc && *rdoc) snprintf(skipped, skipped_cap, "a RenderDoc capture (rdoc) is set up");
     if (skipped[0]) return;
     uint64_t t0 = plat_now_ns();
-    vk_driver_cache_env();   // before the drivers first load: they read these variables then
+    vk_driver_cache_env();
     if (before_probe) before_probe();
     probe_gpu(hw, note, note_cap);
     *probe_ms = (double)(plat_now_ns() - t0) / 1e6;
@@ -248,7 +211,7 @@ void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), c
 }
 
 void hw_detect_device_check(uint32_t vendor, uint32_t device, uint32_t driver, const char *name) {
-    cfg_preset_device_started();   // the drivers load: a probing mark of an earlier start can go
+    cfg_preset_device_started();
     const PresetHw *hw = cfg_preset_hw();
     if (!hw || !hw->have_gpu) {
         rt_log("preset: the Vulkan device is \"%s\"; the preset had no GPU to go by", name);
