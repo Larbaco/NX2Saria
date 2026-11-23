@@ -105,7 +105,7 @@ listed as they are; search for all of a group when you look at one subsystem:
 - Input and motion: `input:`, `hid:`, `motion:` (the gyro), `mouse:`, `mousetrace:`, `mic:`.
 - Audio: `audio:`, `audren:`, `aud:u:`, `auddmg:u manager:`, `audsmx:u:`, `nn::codec:`.
 - amiibo: `amiibo:`, `amiibo crypto selftest:`, `amiibo crypto selftest failed:`, `nfp:`.
-- Boot and modules: `boot:`, `boot map:`, `loader:`, `loaded`, `libs:`, `patches:`, `version:`.
+- Boot and modules: `boot:`, `boot map:`, `loader:`, `loaded`, `libs:`, `patches:`, `version:`, `telemetry:`.
 - Host and guest calls: `host calls:`, `host` (the trace of each call), `guest`, `svc`, `setjmp:`, `longjmp`,
   `ENTER`, `RETURN`, `CreateThread`, `AllocateAddressRegion`, `AllocateMemoryPages`.
 - System services: `applet:`, `applet proxy:`, `appletOE:`, `oe:`, `ipc:`, `csrng:`, `aoc:`, `nifm:`, `pctl:`,
@@ -282,6 +282,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `stutter map:` | Stutter map report | `stutter_map.c`, `perf.c` |
 | `svc` | Trace of supervisor calls (NX2SARIA_TRACE=svc), no colon | `svc.c` |
 | `swkbd:` | Software keyboard | `swkbd.c`, `swkbd_sdl.c` |
+| `telemetry:` | The session summary for the launcher's session reports ([telemetry.md](telemetry.md)): where it goes, at start, and that it was written, at the end | `session_summary.c` |
 | `tex_astc:` | ASTC decode workers | `tex_astc_mt.c` |
 | `text speed:` | Text speed setting | `text_speed.c` |
 | `texup:` | Texture upload work per frame | `vk_texture.c` |
