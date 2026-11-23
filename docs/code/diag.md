@@ -14,8 +14,8 @@ asks (the debug menu, a replay of a bug capture, a test script). The feature doc
 - [logging.md](../logging.md): the prefixes this folder logs with (`bugcap:`, `debug:`, `flight:`, `floor watch:`,
   `frametime:`, `hang watch:`, `mem:`, `perf:`, `prof:`, `rdoc:`, `stutter`, `tracker:` and the others in its table).
 
-Several comments named the settings file by its older name, `nx2navi.ini`; the file is the selected settings file,
-`nx2saria.ini` or the older name ([branding.md](../branding.md)), and this page says "the settings file".
+"The settings file" on this page is the selected one, `nx2saria.ini` or the older name that still works
+([branding.md](../branding.md)).
 
 ## `runtime/diag/bugcap.h`
 
@@ -137,7 +137,7 @@ then, when the capture has it, what the frame on screen was drawn with.
 
 The frame's pixels come with the next present, the game's camera with its next update, the frames after the press as
 they are shown. The writer waits for the pixels until 2 s after the press, then for the `POST` frames until 0.7 s
-after the press (the comment said "a second at most for all three").
+after the press.
 `player_yaw` is `atan2` of the rotation matrix's third column, the way Link faces, as the free camera's yaw counts
 it. The system info text's lines ("OS: ...") become "os = ..." keys. `capture.txt` appears last and whole: written as
 a part file and renamed.
@@ -653,7 +653,7 @@ after a slow frame or after a one-frame flash, so a glitch or stutter seen in pl
 triggers for a reader: [bug-capture.md](../bug-capture.md#the-flight-recorder).
 
 `flight_on` is `NX2SARIA_FLIGHT=1`, set once by `flight_init()` before the first present. `vk_dump_white` is
-`runtime/vk/vk_dump.c`'s, `NX2SARIA_DUMP_WHITE`. (The header had both notes after `vk_dump_white`.)
+`runtime/vk/vk_dump.c`'s, `NX2SARIA_DUMP_WHITE`.
 
 ### `flight_init()`
 
@@ -740,9 +740,9 @@ per thumbnail and `frames.tsv`, written in that order by a background thread. Tr
 A dump holds the frames up to `FLIGHT_POST` (30) presents after the trigger, so the aftermath is in it too.
 `tools/flight_view.py` reads it.
 
-Records come from `runtime/diag/perf.c` `perf_present()` on the render thread (the comment placed it in
-`prof_win.c`); the counts are differences of the `NX2SARIA_TRACE=perf` running totals and of `vk_exec_frame`. Off,
-the only cost is the `flight_on` branch in `perf_present()` and in `runtime/vk/vk_backend.c`.
+Records come from `runtime/diag/perf.c` `perf_present()` on the render thread; the counts are differences of the
+`NX2SARIA_TRACE=perf` running totals and of `vk_exec_frame`. Off, the only cost is the `flight_on` branch in
+`perf_present()` and in `runtime/vk/vk_backend.c`.
 
 Notes on the file's data:
 
@@ -1529,7 +1529,7 @@ between these.
 
 A game frame was presented (`perf_present()`, the render thread, only while the overlay is on): the time since the
 last one, the render thread's waits of this frame (`PERF_N` entries, `runtime/host.h`), its replay time and the
-running count of texture uploads. (In the header this note stood above `perfmon_shown()`.)
+running count of texture uploads.
 
 ### `perfmon_snapshot()`
 
@@ -1538,7 +1538,7 @@ The latest numbers (the overlay, present path).
 ## `runtime/diag/perfmon.c`
 
 Frame times come from the game's presents (`perf_present()`, only while the overlay is on); the per-frame waits from
-the perf counters `runtime/diag/perf.c` keeps (the comment named `prof_win.c`). The machine's numbers are sampled
+the perf counters `runtime/diag/perf.c` keeps. The machine's numbers are sampled
 twice a second on a thread of their own (some calls take milliseconds), which runs only while the overlay is full.
 The OS calls sit behind `runtime/platform/platform.h` (`plat_cpu_load()`, `plat_mem_info()`, `plat_gpu_load()`). GPU
 load and video memory come from the system's counters for every vendor. Temperature, power and clock come from the
@@ -1658,8 +1658,8 @@ in address order, once each. Returns the addresses named, -1 as above.
 
 ## `runtime/diag/prof_syms.c`
 
-Names for a sampling profile's exe addresses from the exe's own COFF symbol table (`runtime/diag/prof_win.c`; the
-comment gave the path without `diag/`). A MinGW link keeps the table in the file (`PointerToSymbolTable`), so a
+Names for a sampling profile's exe addresses from the exe's own COFF symbol table (`runtime/diag/prof_win.c`).
+A MinGW link keeps the table in the file (`PointerToSymbolTable`), so a
 profile names its functions without the link map: for each address the profile lists,
 `sym <address> <function>+<offset>`. Plain file reads, no Windows headers, so the parser builds and is tested
 anywhere.
@@ -1675,8 +1675,8 @@ anywhere.
 
 ## `runtime/diag/prof_win.c`
 
-The sampling profiler (`NX2SARIA_PROFILE=<path>`), Windows only. `tools/prof_report.py` reads the profile. (The
-comment also listed the per-frame timing of `NX2SARIA_TRACE=perf` here; that is `runtime/diag/perf.c`.)
+The sampling profiler (`NX2SARIA_PROFILE=<path>`), Windows only. `tools/prof_report.py` reads the profile. The
+per-frame timing of `NX2SARIA_TRACE=perf` is `runtime/diag/perf.c`'s.
 
 A host thread wakes every 1 ms and, for every other thread, suspends it, reads Rip and resumes it. The sampler never
 allocates or takes a lock between `SuspendThread` and `ResumeThread` and never runs guest code. The profile is text:
