@@ -121,6 +121,9 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
 
 - NVN 2 front end (`nvn_api_*.c`, `nvn_obj.h`, texture layout and deswizzle, the Switch 2 GOB layout). The game
   records command buffers through it; nothing reaches the GPU until the game submits.
+  The front end's notes, file by file (the object layouts and the record format, pools and the GPU window, the
+  waits at a submission, texture pins and recording copies, deferred binds, the pacer, the proc table and its traps,
+  the texture layout, the probes): [docs/code/nvn.md](code/nvn.md).
 - Vulkan 1.3 back end. At `QueueSubmitCommands` the recorded NVN commands are replayed into Vulkan command buffers on
   the submitting thread (`vk_exec*.c`); a recorder thread makes the `vkCmd*` calls from a ring of packets
   (`vk_rec.c`).
