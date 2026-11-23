@@ -59,15 +59,16 @@ app.whenReady().then(() => {
     const timer = (process.platform === 'linux' || process.platform === 'win32') && session.pid !== undefined
       ? setInterval(() => { void monitor.check(); }, 300) : null;
     if (timer) void monitor.check();
-    void session.done.then(end => {
+    void session.done.then(async end => {
       if (timer) clearInterval(timer);
       const hidden = monitor.stop();
+      await log?.write('play', 'error' in end ? 'start failed' : end.signal ? `ended signal=${end.signal}` : `ended code=${end.code ?? 'unknown'}`);
+      if (!window.isDestroyed() && hidden) { window.show(); window.focus(); await log?.write('window', 'restored'); }
+      const state = await inspect(root, python, source);
+      await log?.write('inspection', state.status);
+      selectedRoot = state.status === 'ready' ? root : null;
       playing = false;
-      void log?.write('play', 'error' in end ? 'start failed' : end.signal ? `ended signal=${end.signal}` : `ended code=${end.code ?? 'unknown'}`);
-      if (!window.isDestroyed()) {
-        if (hidden) { window.show(); window.focus(); void log?.write('window', 'restored'); }
-        window.webContents.send('play-ended', end);
-      }
+      if (!window.isDestroyed()) window.webContents.send('play-ended', { ...end, state });
     });
     return started;
   });

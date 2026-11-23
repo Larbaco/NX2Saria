@@ -51,6 +51,9 @@ async function expectVisibility(app, expected) {
     await page.waitForFunction(() => !document.querySelector('#play').disabled);
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('Fluxo de jogo encerrado').waitFor({ timeout: 5000 });
+    await page.waitForFunction(() => !document.querySelector('#play').disabled, null, { timeout: 3000 });
+    await page.getByRole('button', { name: 'Jogar' }).click();
+    await page.locator('#status').getByText('Fluxo de jogo encerrado').waitFor({ timeout: 5000 });
     assert.deepEqual(JSON.parse(await fs.readFile(sentinel, 'utf8')), ['-I', script, '--root', root, '--play']);
     const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
     assert.match(log, /electron: root default \(NX2Saria\)/);
@@ -97,7 +100,27 @@ async function expectVisibility(app, expected) {
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('Não foi possível iniciar').waitFor({ timeout: 5000 });
     assert.equal(await page.getByRole('button', { name: 'Selecionar instalação' }).isEnabled(), true);
-    console.log('Synthetic selection, Play, visibility, marker refusal and errors passed');
+    const pidFile = path.join(root, 'synthetic-pid');
+    await fs.writeFile(fakePython, `#!${process.execPath}\nconst child = require('node:child_process').spawn(${JSON.stringify(path.join(game, 'ocarina'))}, ['5']); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); child.on('exit', () => process.exit(0));\n`, { mode: 0o755 });
+    await fs.chmod(fakePython, 0o755);
+    await page.getByRole('button', { name: 'Selecionar instalação' }).click();
+    await page.waitForFunction(() => !document.querySelector('#play').disabled);
+    await page.getByRole('button', { name: 'Jogar' }).click();
+    for (let i = 0; i < 100; i++) {
+      try { await fs.access(pidFile); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); }
+    }
+    const syntheticPid = Number(await fs.readFile(pidFile, 'utf8'));
+    try {
+      const windowClosed = page.waitForEvent('close', { timeout: 3000 });
+      const closing = app.close();
+      await windowClosed;
+      assert.doesNotThrow(() => process.kill(syntheticPid, 0));
+      await closing;
+      app = null;
+    } finally {
+      try { process.kill(syntheticPid, 'SIGTERM'); } catch {}
+    }
+    console.log('Synthetic selection, Play, visibility, marker refusal, errors and close-with-game passed');
   } finally {
     if (app) await app.close();
     await fs.rm(base, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; play(): Promise<{ started?: boolean; error?: string }>; onPlayEnded(callback: (result: { code?: number | null; signal?: string | null; error?: string }) => void): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; play(): Promise<{ started?: boolean; error?: string }>; onPlayEnded(callback: (result: { code?: number | null; signal?: string | null; error?: string; state?: Result }) => void): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -32,7 +32,8 @@ playButton.onclick = async () => {
 };
 window.launcher.onPlayEnded(result => {
   button.disabled = false;
+  playButton.disabled = !result.state || result.state.status !== 'ready' || result.state.job_marker_present === true || result.state.game_running === true;
   const failed = Boolean(result.error || result.signal || (typeof result.code === 'number' && result.code !== 0));
   statusElement.textContent = result.error ? 'Não foi possível iniciar' : failed ? 'Fluxo de jogo encerrado com erro' : 'Fluxo de jogo encerrado';
-  detail.textContent = failed ? 'Confira os logs do launcher para identificar o problema.' : 'Confira os logs para o resultado; selecione a instalação novamente para atualizar o estado.';
+  detail.textContent = failed ? 'Confira os logs do launcher para identificar o problema.' : 'Confira os logs para o resultado. Você pode jogar novamente quando a instalação estiver pronta.';
 });
