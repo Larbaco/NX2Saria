@@ -3,6 +3,7 @@
 // published release is checked afterwards against D1 (index.ts), since it needs the database.
 
 import { HttpError } from "./http";
+import { PATCH_SETS } from "./patch_sets";
 
 export const SUMMARY_SCHEMA = "nx2saria.session/1";
 
@@ -23,6 +24,10 @@ export const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$/;
 // The characters of settings and display values.
 const TOKEN_RE = /^[A-Za-z0-9_.:x+-]*$/;
 const PCI_ID_RE = /^0x[0-9a-f]{4}$/;
+// A patch set's name as recomp/patches-v*.txt writes it.
+const PATCH_NAME_RE = /^[a-z0-9_]{1,32}$/;
+const MAX_PATCHES = 96;
+const MAX_MODS = 512;
 // C0 controls, DEL and C1 controls: never allowed in a one-line string.
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 // Multi-line text (comments, log lines) may hold tab, line feed and carriage return, and no other control.
@@ -35,7 +40,9 @@ type Spec =
   | { kind: "int"; max: number; nullable: boolean }
   // A number >= 0 with at most one decimal.
   | { kind: "decimal1"; max: number; nullable: boolean }
-  | { kind: "bool"; nullable: boolean };
+  | { kind: "bool"; nullable: boolean }
+  // A list of patch set names, each once.
+  | { kind: "names"; max: number; nullable: boolean };
 
 const obj = (fields: Record<string, Spec>): Spec => ({ kind: "object", fields });
 const str = (max: number, extra: { pattern?: RegExp; oneOf?: readonly string[]; required?: boolean } = {}): Spec => ({
@@ -96,6 +103,8 @@ const SUMMARY_SPEC = obj({
     pipelines_built: int(MAX_INT),
     pipeline_build_ms: int(MAX_INT),
   }),
+  patches: { kind: "names", max: MAX_PATCHES, nullable: true },
+  mods: obj({ count: int(MAX_MODS), code: int(MAX_MODS) }),
   fatal: str(300),
 });
 
@@ -137,6 +146,8 @@ export interface Summary {
     pipelines_built: number | null;
     pipeline_build_ms: number | null;
   };
+  patches: string[] | null;
+  mods: { count: number | null; code: number | null };
   fatal: string | null;
 }
 
@@ -215,6 +226,14 @@ function checkSpec(value: unknown, spec: Spec, path: string): void {
     case "bool":
       if (typeof value !== "boolean") fail(`${path} must be true, false or null`);
       return;
+    case "names":
+      if (!Array.isArray(value)) fail(`${path} must be a list or null`);
+      if (value.length > spec.max) fail(`${path} is too long`);
+      for (const name of value) {
+        if (typeof name !== "string" || !PATCH_NAME_RE.test(name)) fail(`${path} has an entry that is not a patch set's name`);
+      }
+      if (new Set(value).size !== value.length) fail(`${path} names a patch set twice`);
+      return;
   }
 }
 
@@ -238,6 +257,12 @@ export function validateSummary(value: unknown, path: string, gameVersions: read
   const summary = value as Summary;
   if (summary.schema !== SUMMARY_SCHEMA) fail(`${path}.schema is not ${SUMMARY_SCHEMA}`);
   if (!gameVersions.includes(summary.game_version)) fail(`${path}.game_version is not supported`);
+  if (summary.mods.count !== null && summary.mods.code !== null && summary.mods.code > summary.mods.count) {
+    fail(`${path}.mods.code is above ${path}.mods.count`);
+  }
+  // Only the port's own sets are kept: a name this server does not know (a newer release's set) is dropped, sorted so
+  // that the same sets always give the same text.
+  if (summary.patches !== null) summary.patches = summary.patches.filter((name) => PATCH_SETS.includes(name)).sort();
   return summary;
 }
 

@@ -73,7 +73,10 @@ describe("panel", () => {
     expect(html).toContain("0x1002");
     expect(html).toMatch(/By aspect ratio<\/caption>[\s\S]*?<td>16:10<\/td>/);
     expect(html).toMatch(/By preset<\/caption>[\s\S]*?<td>high<\/td>/);
-    expect(html).toMatch(/<td>BR<\/td><td class="n">2<\/td>/);
+    // Three sessions had the sets fps60, wide_hud and zstd on, and two mods, one with code; the crash knows neither.
+    expect(html).toMatch(/By patch set on<\/caption>[\s\S]*?<td>fps60<\/td><td class="n">3<\/td>/);
+    expect(html).toMatch(/By mods<\/caption>[\s\S]*?<td>with code<\/td><td class="n">3<\/td>/);
+    expect(html).not.toContain("country");
     // Median fps_mean of version RELEASE over 59.9, 30.5 and 59.9 (the crash has none).
     expect(html).toMatch(new RegExp(`<td>${RELEASE.replace(/\./g, "\\.")}</td><td class="n">4</td><td class="n">59\\.9</td>`));
     // The crash's fatal line, normalized.
@@ -89,9 +92,9 @@ describe("panel", () => {
   });
 
   it("filters by days and version", async () => {
-    await seed();
+    const { installA } = await seed();
     const old = Math.floor(Date.now() / 1000) - 40 * 86400;
-    await env.DB.prepare("UPDATE sessions SET received_at = ? WHERE country = 'BR'").bind(old).run();
+    await env.DB.prepare("UPDATE sessions SET received_at = ? WHERE install_id = ?").bind(old, installA).run();
     const html30 = await (await adminGet("/v1/admin?days=30")).text();
     expect(html30).toContain('<b id="sessions">2</b>');
     const html180 = await (await adminGet("/v1/admin?days=180")).text();
@@ -119,7 +122,7 @@ describe("CSV", () => {
     expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="sessions.csv"');
     const lines = (await response.text()).trimEnd().split("\r\n");
     expect(lines).toHaveLength(5);
-    expect(lines[0]).toContain('"install_id","launcher_version","country","schema","version"');
+    expect(lines[0]).toContain('"install_id","launcher_version","schema","version"');
     expect(lines[0]).toContain('"frametime_fps_low_1pct"');
     expect(lines.filter((l) => l.includes(installA))).toHaveLength(2);
     expect(lines.some((l) => l.includes('"AMD Radeon RX 6600","0x1002"'))).toBe(true);
@@ -134,7 +137,7 @@ describe("CSV", () => {
     expect(text).toContain(`"'@cmd, with comma\nand line"`);
     expect(text).toContain(`"<script>alert(""x"")</script> & =SUM(A1)"`);
     expect(text.split("\r\n")[0]).toBe(
-      '"id","received_at","install_id","launcher_version","version","gpu_name","gpu_vendor","os_family","country","text","has_log","summary_json"',
+      '"id","received_at","install_id","launcher_version","version","gpu_name","gpu_vendor","os_family","text","has_log","summary_json"',
     );
   });
 

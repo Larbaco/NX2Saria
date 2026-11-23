@@ -2,11 +2,11 @@
 // installation's data on request, and serves the admin panel. Routes are listed in README.md.
 //
 // The Worker reads no request header except Content-Type, Content-Length, CF-Connecting-IP (the public routes, as the
-// key of the in-memory rate limiter only) and (admin routes only) Authorization. It stores no IP: the only thing it
-// keeps about where a request came from is Cloudflare's two-letter country.
+// key of the in-memory rate limiter only) and (admin routes only) Authorization. It stores no IP and nothing else
+// about where a request came from.
 
 import type { Env } from "./env";
-import { HttpError, countryOf, error, isJsonContentType, json, methodNotAllowed, readCappedBody } from "./http";
+import { HttpError, error, isJsonContentType, json, methodNotAllowed, readCappedBody } from "./http";
 import {
   FEEDBACK_BODY_CAP,
   SESSION_BODY_CAP,
@@ -64,7 +64,7 @@ async function postSession(request: Request, env: Env): Promise<Response> {
   const now = nowSeconds();
   if (await isRateLimited(env.DB, body.install_id, "session", now)) return error(429, "rate limited");
   await env.DB.batch([
-    insertSession(env.DB, body.install_id, body.launcher_version, countryOf(request), now, body.summary),
+    insertSession(env.DB, body.install_id, body.launcher_version, now, body.summary),
     ...rateIncrements(env.DB, body.install_id, "session", now),
   ]);
   return json(201, { ok: true });
@@ -83,7 +83,6 @@ async function postFeedback(request: Request, env: Env): Promise<Response> {
       text: body.text,
       summary: body.summary,
       logTail: body.log_tail,
-      country: countryOf(request),
       now,
     }),
     ...rateIncrements(env.DB, body.install_id, "feedback", now),

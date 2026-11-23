@@ -27,6 +27,8 @@ export function validSummary(): Record<string, any> {
     session: { duration_s: 1834, frames: 109800, end: "normal" },
     frametime: { fps_mean: 59.9, fps_low_1pct: 52.1, worst_ms: 88.4, over_25ms: 14, over_100ms: 0 },
     startup: { shader_prewarm_ms: 5400, shaders_translated: 120, pipelines_built: 900, pipeline_build_ms: 3100 },
+    patches: ["fps60", "wide_hud", "zstd"],
+    mods: { count: 2, code: 1 },
     fatal: null,
   };
 }
@@ -46,6 +48,8 @@ export function crashSummary(): Record<string, any> {
     session: { duration_s: null, frames: null, end: "crash" },
     frametime: { fps_mean: null, fps_low_1pct: null, worst_ms: null, over_25ms: null, over_100ms: null },
     startup: { shader_prewarm_ms: null, shaders_translated: null, pipelines_built: null, pipeline_build_ms: null },
+    patches: null,
+    mods: { count: null, code: null },
     fatal: "access violation at 0x00007ff6a1b2c3d4 in module main+0x1234",
   };
 }

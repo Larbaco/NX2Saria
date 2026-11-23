@@ -269,12 +269,11 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
       launcher_version: string;
       gpu_name: string | null;
       gpu_vendor: string | null;
-      country: string;
       text: string;
       has_log: number;
     }>(
       db,
-      `SELECT id, received_at, version, launcher_version, gpu_name, gpu_vendor, country, text,
+      `SELECT id, received_at, version, launcher_version, gpu_name, gpu_vendor, text,
               log_tail IS NOT NULL AS has_log
        FROM feedback WHERE ${fw.sql} ORDER BY received_at DESC, id DESC LIMIT 50`,
       fw.params,
@@ -285,7 +284,7 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
   const sessions = head?.sessions ?? 0;
   const abnormalPct = sessions === 0 ? 0 : ((head?.abnormal ?? 0) * 100) / sessions;
 
-  const [byGpu, byOs, byPreset, byAspect, byUpscaler, byFramegen, byCountry] = await Promise.all([
+  const [byGpu, byOs, byPreset, byAspect, byUpscaler, byFramegen, byMods, patchRows] = await Promise.all([
     (async () => {
       const rows = await all<{ name: string | null; vendor: string | null; n: number }>(
         db,
@@ -308,8 +307,27 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
     countBy(db, f, "display_game_aspect", 20),
     countBy(db, f, "settings_upscaler", 20),
     countBy(db, f, "settings_framegen", 20),
-    countBy(db, f, "country", 50),
+    countBy(
+      db,
+      f,
+      `CASE WHEN mods_count IS NULL THEN NULL WHEN mods_count = 0 THEN 'none'
+            WHEN mods_code > 0 THEN 'with code' ELSE 'without code' END`,
+      10,
+    ),
+    all<{ patches: string; n: number }>(
+      db,
+      `SELECT patches, COUNT(*) AS n FROM sessions WHERE ${sw.sql} AND patches IS NOT NULL
+       GROUP BY patches ORDER BY n DESC LIMIT ${STATS_ROW_CAP}`,
+      sw.params,
+    ),
   ]);
+
+  // Sessions per patch set that was on: a session's sets are one comma-separated text.
+  const patchCounts = new Map<string, number>();
+  for (const r of patchRows) {
+    for (const name of r.patches.split(",")) if (name) patchCounts.set(name, (patchCounts.get(name) ?? 0) + r.n);
+  }
+  const byPatch: Cell[][] = [...patchCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
   // Fatal lines grouped by their normalized text.
   const fatalGroups = new Map<string, { n: number; versions: Set<string>; last: number }>();
@@ -340,7 +358,6 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
   <td class="n">${escapeHtml(isoDate(c.received_at))}</td>
   <td>${escapeHtml(c.version ?? c.launcher_version)}</td>
   <td>${escapeHtml(c.gpu_name === null ? "" : gpuLabel(c.gpu_name, c.gpu_vendor))}</td>
-  <td>${escapeHtml(c.country)}</td>
   <td class="comment">${escapeHtml(c.text)}</td>
   <td>${c.has_log ? `<a href="/v1/admin/feedback/${encodeURIComponent(String(c.id))}/log">log</a>` : ""}</td>
 </tr>`,
@@ -386,7 +403,8 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
 <div class="scroll">${table("By aspect ratio", ["game_aspect", "sessions"], byAspect)}</div>
 <div class="scroll">${table("By upscaler", ["upscaler", "sessions"], byUpscaler)}</div>
 <div class="scroll">${table("By frame generation", ["framegen", "sessions"], byFramegen)}</div>
-<div class="scroll">${table("By country", ["country", "sessions"], byCountry)}</div>
+<div class="scroll">${table("By mods", ["mods on", "sessions"], byMods)}</div>
+<div class="scroll">${table("By patch set on", ["patch set", "sessions"], byPatch)}</div>
 </div>
 
 <h2>Performance</h2>
@@ -402,8 +420,8 @@ ${capNote(fatalRows.length)}
 
 <h2>Recent comments</h2>
 <div class="scroll"><table><caption>The 50 newest</caption>
-<thead><tr><th class="n">date (UTC)</th><th>version</th><th>gpu</th><th>country</th><th>text</th><th>log</th></tr></thead>
-<tbody>${commentRows || '<tr><td colspan="6" class="empty">No data.</td></tr>'}</tbody></table></div>
+<thead><tr><th class="n">date (UTC)</th><th>version</th><th>gpu</th><th>text</th><th>log</th></tr></thead>
+<tbody>${commentRows || '<tr><td colspan="5" class="empty">No data.</td></tr>'}</tbody></table></div>
 </main></body></html>`;
 
   return respond(html, 200, "text/html; charset=utf-8");
@@ -428,7 +446,7 @@ function csvResponse(name: string, headers: readonly string[], rows: Record<stri
   });
 }
 
-const SESSION_CSV_COLUMNS = ["id", "received_at", "install_id", "launcher_version", "country", ...SUMMARY_COLUMNS] as const;
+const SESSION_CSV_COLUMNS = ["id", "received_at", "install_id", "launcher_version", ...SUMMARY_COLUMNS] as const;
 
 export async function sessionsCsv(request: Request, env: Env, now: number): Promise<Response> {
   const f = filtersOf(new URL(request.url), now);
@@ -451,7 +469,6 @@ const FEEDBACK_CSV_COLUMNS = [
   "gpu_name",
   "gpu_vendor",
   "os_family",
-  "country",
   "text",
   "has_log",
   "summary_json",
@@ -462,7 +479,7 @@ export async function feedbackCsv(request: Request, env: Env, now: number): Prom
   const w = feedbackWhere(f);
   const rows = await all<Record<string, unknown>>(
     env.DB,
-    `SELECT id, received_at, install_id, launcher_version, version, gpu_name, gpu_vendor, os_family, country, text,
+    `SELECT id, received_at, install_id, launcher_version, version, gpu_name, gpu_vendor, os_family, text,
             log_tail IS NOT NULL AS has_log, summary_json
      FROM feedback WHERE ${w.sql} ORDER BY received_at DESC, id DESC LIMIT ${CSV_ROW_CAP}`,
     w.params,

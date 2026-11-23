@@ -20,7 +20,6 @@ describe("feedback", () => {
       launcher_version: RELEASE,
       text: "Olá! Water flickers.\nSecond line.",
       log_tail: logTail,
-      country: "PT",
       version: RELEASE,
       gpu_name: "NVIDIA GeForce RTX 4070",
       gpu_vendor: "0x10de",

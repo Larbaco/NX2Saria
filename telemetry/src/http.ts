@@ -80,11 +80,3 @@ export async function readCappedBody(request: Request, cap: number): Promise<str
     throw new HttpError(400, "body is not UTF-8");
   }
 }
-
-// The two-letter country Cloudflare attaches to the request, or "XX" when it is missing or anything other than two
-// uppercase letters (Cloudflare's "T1" for Tor becomes "XX" too).
-export function countryOf(request: Request): string {
-  const cf = (request as { cf?: { country?: unknown } }).cf;
-  const country = cf?.country;
-  return typeof country === "string" && /^[A-Z]{2}$/.test(country) ? country : "XX";
-}

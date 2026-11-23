@@ -8,8 +8,12 @@ What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 - The Worker reads no request header other than `Content-Type`, `Content-Length`, `CF-Connecting-IP` and, on the
   admin routes, `Authorization`. The client's IP address (`CF-Connecting-IP`) is used only as the key of
   Cloudflare's in-memory rate limiter on the public routes (`IP_LIMITER` in `wrangler.toml`, 20 requests a minute);
-  it is never written to D1 or logged. The only trace kept of where a request came from is Cloudflare's two-letter
-  country (`XX` when unknown). Cloudflare itself, which runs the Worker, handles each connection as for any site.
+  it is never written to D1 or logged. Nothing is kept of where a request came from: no country either (migration
+  `0002` removed the column and what it held). Cloudflare itself, which runs the Worker, handles each connection as
+  for any site.
+- A report's `patches` list is kept only as far as it names the port's own patch sets (`src/patch_sets.ts`, every
+  `set` line of `recomp/patches-v*.txt`); a name the server does not know is dropped, not stored. After adding a
+  patch set, update that list (`tests/telemetry_patch_sets_check.py` fails until then) and deploy again.
 - Sessions and comments are deleted after 180 days by a daily cron.
 
 ## Files
@@ -20,7 +24,8 @@ What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 | `src/validate.ts` | The strict validator of both POST bodies (keys, types, ranges, lengths, characters) |
 | `src/db.ts` | D1 statements: inserts, rate counters, deletion, retention, releases refresh |
 | `src/admin.ts` | Admin panel, CSV exports, log view, Basic auth |
-| `src/http.ts` | Responses, the capped body reader, the country |
+| `src/http.ts` | Responses, the capped body reader |
+| `src/patch_sets.ts` | The names of the port's patch sets a report may name |
 | `src/crons.ts` | Which cron is the purge |
 | `migrations/` | The D1 schema |
 | `scripts/releases-sql.mjs` | Prints SQL that fills the `releases` table (from GitHub, or one given version) |
@@ -60,8 +65,8 @@ The exact schema of `summary` is in [docs/telemetry.md](../docs/telemetry.md) an
 
 Open `https://<worker>/v1/admin` in a browser; any user name, the password is `ADMIN_TOKEN`. It shows the number of
 sessions, distinct installs and comments, the share of sessions that did not end normally; counts by version, GPU,
-OS, preset, aspect ratio, upscaler, frame generation and country; median `fps_mean`, median `fps_low_1pct` and p95 `worst_ms` by
-version and by GPU; the most common fatal lines with numbers and addresses replaced by `#`; and the 50 newest
+OS, preset, aspect ratio, upscaler, frame generation, mods (none, without code, with code) and patch set on; median
+`fps_mean`, median `fps_low_1pct` and p95 `worst_ms` by version and by GPU; the most common fatal lines with numbers and addresses replaced by `#`; and the 50 newest
 comments with links to their logs. The statistics read at most the newest 50 000 sessions of the period.
 
 Every value is HTML-escaped. Pages are sent with `Content-Security-Policy: default-src 'none'; style-src

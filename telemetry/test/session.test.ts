@@ -1,7 +1,7 @@
 // POST /v1/session: the strict schema, body limits, content type, release lookup, rate limits and the kill switch.
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BASE, OLD_RELEASE, RELEASE, call, count, crashSummary, newInstallId, postJson, resetDb, sessionBody, validSummary } from "./helpers";
+import { BASE, OLD_RELEASE, RELEASE, call, count, crashSummary, feedbackBody, newInstallId, postJson, resetDb, sessionBody, validSummary } from "./helpers";
 
 beforeEach(resetDb);
 
@@ -30,7 +30,6 @@ describe("accepted reports", () => {
     expect(row).toMatchObject({
       install_id: id,
       launcher_version: RELEASE,
-      country: "BR",
       schema: "nx2saria.session/1",
       version: RELEASE,
       game_version: "1.1.1",
@@ -62,11 +61,41 @@ describe("accepted reports", () => {
     expect(await count("sessions", "session_end = 'crash' AND gpu_name IS NULL")).toBe(1);
   });
 
-  it("records XX when Cloudflare gives no usable country", async () => {
-    await postJson("/v1/session", sessionBody(), {});
-    await postJson("/v1/session", sessionBody(), { country: "T1" });
-    await postJson("/v1/session", sessionBody(), { country: "br" });
-    expect(await count("sessions", "country = 'XX'")).toBe(3);
+  it("keeps nothing of the country Cloudflare names", async () => {
+    const id = newInstallId();
+    await postJson("/v1/session", sessionBody(id), { country: "BR" });
+    await postJson("/v1/feedback", feedbackBody(id), { country: "BR" });
+    for (const table of ["sessions", "feedback"]) {
+      const row = await env.DB.prepare(`SELECT * FROM ${table} WHERE install_id = ?`).bind(id).first<Record<string, unknown>>();
+      expect(Object.keys(row!)).not.toContain("country");
+      expect(Object.values(row!)).not.toContain("BR");
+    }
+  });
+
+  it("stores the patch sets that were on and the numbers of mods", async () => {
+    const id = newInstallId();
+    await postJson("/v1/session", sessionBody(id));
+    const row = await env.DB.prepare("SELECT patches, mods_count, mods_code FROM sessions WHERE install_id = ?").bind(id).first();
+    expect(row).toEqual({ patches: "fps60,wide_hud,zstd", mods_count: 2, mods_code: 1 });
+  });
+
+  it("keeps only the port's own patch sets, sorted", async () => {
+    const id = newInstallId();
+    const s = validSummary();
+    s.patches = ["zstd", "a_set_of_a_later_release", "fps60"];
+    expect((await postJson("/v1/session", sessionBody(id, s))).status).toBe(201);
+    const row = await env.DB.prepare("SELECT patches FROM sessions WHERE install_id = ?").bind(id).first();
+    expect(row).toEqual({ patches: "fps60,zstd" });
+  });
+
+  it("stores no patches and no mods as null and as an empty list", async () => {
+    const id = newInstallId();
+    const s = validSummary();
+    s.patches = [];
+    s.mods = { count: 0, code: 0 };
+    await postJson("/v1/session", sessionBody(id, s));
+    const row = await env.DB.prepare("SELECT patches, mods_count, mods_code FROM sessions WHERE install_id = ?").bind(id).first();
+    expect(row).toEqual({ patches: "", mods_count: 0, mods_code: 0 });
   });
 
   it("accepts an older published release and Content-Type parameters", async () => {
@@ -144,6 +173,23 @@ describe("schema rejections", () => {
     await expect400(withSummary((s) => (s.os.family = "macos")), "summary.os.family");
     await expect400(withSummary((s) => (s.session.end = "quit")), "summary.session.end");
     await expect400(withSummary((s) => (s.schema = "nx2saria.session/2")), "summary.schema");
+  });
+
+  it("patches that are not a list of patch set names", async () => {
+    await expect400(withSummary((s) => (s.patches = "fps60")), "summary.patches must be a list or null");
+    await expect400(withSummary((s) => (s.patches = ["fps60", 3])), "not a patch set's name");
+    await expect400(withSummary((s) => (s.patches = ["Mod of Ana"])), "not a patch set's name");
+    await expect400(withSummary((s) => (s.patches = ["mod_" + "a".repeat(40)])), "not a patch set's name");
+    await expect400(withSummary((s) => (s.patches = ["fps60", "fps60"])), "names a patch set twice");
+    await expect400(withSummary((s) => (s.patches = Array.from({ length: 97 }, (_, i) => `set_${i}`))), "summary.patches is too long");
+  });
+
+  it("mods that are not small numbers", async () => {
+    await expect400(withSummary((s) => (s.mods.count = 513)), "summary.mods.count is out of range");
+    await expect400(withSummary((s) => (s.mods.code = -1)), "summary.mods.code must be an integer");
+    await expect400(withSummary((s) => (s.mods = { count: 1, code: 2 })), "summary.mods.code is above summary.mods.count");
+    await expect400(withSummary((s) => (s.mods.names = ["a"])), "unknown key summary.mods.names");
+    await expect400(withSummary((s) => (s.mods = 2)), "summary.mods must be an object");
   });
 
   it("wrong game_version", () => expect400(withSummary((s) => (s.game_version = "1.0.0")), "game_version is not supported"));

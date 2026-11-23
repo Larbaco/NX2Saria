@@ -56,6 +56,9 @@ export const SUMMARY_COLUMNS = [
   "startup_shaders_translated",
   "startup_pipelines_built",
   "startup_pipeline_build_ms",
+  "patches",
+  "mods_count",
+  "mods_code",
   "fatal",
 ] as const;
 
@@ -99,26 +102,29 @@ function flattenSummary(s: Summary): (string | number | null)[] {
     s.startup.shaders_translated,
     s.startup.pipelines_built,
     s.startup.pipeline_build_ms,
+    s.patches === null ? null : s.patches.join(","),
+    s.mods.count,
+    s.mods.code,
     s.fatal,
   ];
 }
 
-const INSERT_SESSION_SQL = `INSERT INTO sessions (install_id, launcher_version, country, received_at, ${SUMMARY_COLUMNS.join(", ")})
-  VALUES (${new Array(4 + SUMMARY_COLUMNS.length).fill("?").join(", ")})`;
+const INSERT_SESSION_SQL = `INSERT INTO sessions (install_id, launcher_version, received_at, ${SUMMARY_COLUMNS.join(", ")})
+  VALUES (${new Array(3 + SUMMARY_COLUMNS.length).fill("?").join(", ")})`;
 
-export function insertSession(db: D1Database, installId: string, launcherVersion: string, country: string, now: number, summary: Summary): D1PreparedStatement {
-  return db.prepare(INSERT_SESSION_SQL).bind(installId, launcherVersion, country, now, ...flattenSummary(summary));
+export function insertSession(db: D1Database, installId: string, launcherVersion: string, now: number, summary: Summary): D1PreparedStatement {
+  return db.prepare(INSERT_SESSION_SQL).bind(installId, launcherVersion, now, ...flattenSummary(summary));
 }
 
 export function insertFeedback(
   db: D1Database,
-  row: { installId: string; launcherVersion: string; text: string; summary: Summary | null; logTail: string | null; country: string; now: number },
+  row: { installId: string; launcherVersion: string; text: string; summary: Summary | null; logTail: string | null; now: number },
 ): D1PreparedStatement {
   const s = row.summary;
   return db
     .prepare(
-      `INSERT INTO feedback (install_id, launcher_version, text, summary_json, log_tail, country, received_at, version, gpu_name, gpu_vendor, os_family)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO feedback (install_id, launcher_version, text, summary_json, log_tail, received_at, version, gpu_name, gpu_vendor, os_family)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       row.installId,
@@ -126,7 +132,6 @@ export function insertFeedback(
       row.text,
       s === null ? null : JSON.stringify(s),
       row.logTail,
-      row.country,
       row.now,
       s?.version ?? null,
       s?.gpu.name ?? null,
