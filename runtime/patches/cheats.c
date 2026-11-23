@@ -441,6 +441,7 @@ static void plain_name(char *s) {
 }
 
 static int g_unbuilt_code, g_unbuilt_patches;
+static unsigned g_cfg_seen;
 
 static void report_unbuilt(void) {
     uint32_t key = 0;
@@ -478,7 +479,7 @@ void cheats_init(void) {
         g_files++;
     }
     if (!g_files) {
-        rt_log("cheats: no enabled mod holds cheats/%s", g_file);
+        rt_log("cheats: no enabled mod holds cheats/%s; the menu has no Cheats tab", g_file);
         report_unbuilt();
         return;
     }
@@ -535,10 +536,12 @@ void cheats_init(void) {
     int on = 0;
     for (int i = 0; i < g_n; i++) on += g_cheats[i].on && g_cheats[i].info.kind != CHEAT_HEADING;
     rt_log("cheats: %s in %d mods: %d cheats, %d on; %d code, %d while buttons are held, %d data, %d master, "
-           "%d restore, %d headings, %d wait for a rebuild, %d not supported%s",
+           "%d restore, %d headings, %d wait for a rebuild, %d not supported%s; %s",
            g_file, g_files, g_n, on, counts[CHEAT_CODE], counts[CHEAT_KEY], counts[CHEAT_DATA], counts[CHEAT_MASTER],
            counts[CHEAT_RESTORE], counts[CHEAT_HEADING], counts[CHEAT_REBUILD], counts[CHEAT_UNSUPPORTED],
-           seen_dups ? " (repeated names numbered)" : "");
+           seen_dups ? " (repeated names numbered)" : "",
+           g_n ? "the menu's Cheats tab lists them" : "the menu has no Cheats tab");
+    g_cfg_seen = cfg_version();
 }
 
 void cheats_unbuilt(int *code, int *patches) {
@@ -554,17 +557,28 @@ int cheats_on(int i) { return i >= 0 && i < g_n && g_cheats[i].on; }
 
 const char *cheats_file(void) { return g_file; }
 
-void cheats_set(int i, int on) {
-    if (i < 0 || i >= g_n) return;
-    Cheat *c = &g_cheats[i];
-    if (c->info.kind != CHEAT_CODE && c->info.kind != CHEAT_KEY && c->info.kind != CHEAT_DATA) return;
-    plat_xchg32(&c->on, on != 0);
-    if (c->info.kind == CHEAT_CODE) rt_patch_switch(c->set, on);   // CHEAT_KEY: cheats_frame follows the buttons
-    cfg_set(c->info.key, on ? "1" : "0");
-    rt_log("cheats: %s/%s %s", c->info.mod, c->info.name, on ? "on" : "off");
+static int switchable(const Cheat *c) {
+    return c->info.kind == CHEAT_CODE || c->info.kind == CHEAT_KEY || c->info.kind == CHEAT_DATA;
+}
+
+static void follow_settings(void) {
+    unsigned ver = cfg_version();
+    if (ver == g_cfg_seen) return;
+    g_cfg_seen = ver;
+    for (int i = 0; i < g_n; i++) {
+        Cheat *c = &g_cheats[i];
+        if (!switchable(c)) continue;
+        const char *v = cfg_get(c->info.key);
+        int on = v && *v && strcmp(v, "0") != 0;
+        if (on == (c->on != 0)) continue;
+        plat_xchg32(&c->on, on);
+        if (c->info.kind == CHEAT_CODE) rt_patch_switch(c->set, on);
+        rt_log("cheats: %s/%s %s", c->info.mod, c->info.name, on ? "on" : "off");
+    }
 }
 
 void cheats_frame(uint64_t frame) {
+    follow_settings();
     if (!g_vm || frame < 60) return;   // the game polls its input (and starts SDL) before this
     uint64_t keys = 0;
     int32_t lx, ly, rx, ry;

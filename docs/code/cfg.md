@@ -258,7 +258,7 @@ A key of other characters (a line of text with an '=' in it) is counted, not lis
 
 ### `cfg_unknown_keys()`
 
-The table holds CFG_MAX_KEYS keys and keeps none past them: a file's later keys were not read, and a menu change was lost, without a word (every cheat ever switched keeps a line, `cheats.c` cheats_set). A line says so once per load, and once a run for the changes (cfg_set, cfg_reset, migrate).
+The table holds CFG_MAX_KEYS keys and keeps none past them: a file's later keys were not read, and a menu change was lost, without a word (every cheat ever switched keeps a line). A line says so once per load, and once a run for the changes (cfg_set, cfg_reset, migrate).
 
 ### `norm_key()`
 

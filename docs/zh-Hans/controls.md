@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=e1545db1fbc465911d85b8b83cff0812ff56cf90 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=3e1215cb4eabd364dac0d0f0c1e4c0a6487cc2ce reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -99,12 +99,12 @@ Minus+Plus 组合键永远不会传给游戏。在菜单中，方向键、十字
 在设置菜单中所做的更改在应用之前都只是草稿；更改某一行时不会向 `nx2saria.ini` 写入任何内容（`runtime/ui/option_rows.cpp`）。
 
 - 可以低成本预览的实时设置会立即生效，方便你判断效果：音量、锐度、HDR 亮度和色调映射各行、超分辨率器、抗锯齿、画面比例、低延迟、文字速度、性能浮层、振动、冲刺按键、死区以及按键绑定。草稿会保留它原来的值，*Discard* 会把它恢复。
-- 所有在启动时读取的设置（其行显示*重启后生效*），以及帧率限制、垂直同步、HDR、按键布局、步行键、体感、全屏和窗口大小，则会留在草稿中等待；该行显示待定的值，只有 *Apply* 才会改变游戏。这些是 `option_rows.cpp` 中的 `is_staged` 情况。
+- 所有在启动时读取的设置（其行显示*重启后生效*），以及帧率限制、垂直同步、HDR、按键布局、步行键、体感、全屏和窗口大小，则会留在草稿中等待，*金手指*选项卡（在已启用的模组带有金手指时显示）中的每个金手指也是如此；该行显示待定的值，只有 *Apply* 才会改变游戏。这些是 `option_rows.cpp` 中的 `is_staged` 情况。
 - 带着更改离开菜单时（Esc、B、*继续*、F1，或同时按 Minus 和 Plus），会打开 *Apply your changes?*，以 `setting: old -> new` 的形式列出更改，并标出只在重启后生效的项。*Apply* 会写入设置、保存 `nx2saria.ini` 并关闭菜单；*Discard* 会撤销预览并关闭菜单；*Continue editing*（默认选项，也可按 Esc 或 B）会返回设置页面并保留草稿。切换标签页不会询问。F1 和手柄组合键只会发出一个由菜单自身线程处理的请求，因此它们永远不会丢失草稿。
-- *Apply* 之后，可能会接连出现另外两个对话框（每个都会在前一个关闭后的下一帧打开）。首先，当*全屏*、窗口大小（*Resolution* 行，或者在没有宽屏设置的游戏版本上为*窗口大小*）、*垂直同步*或 *HDR*（在关闭和色调映射之间切换，这会以另一种格式重新创建交换链）发生变化时，会出现 *Keep these display settings?*：这些实时设置可能让玩家得不到可用的画面。它们会立即生效，只有在 *Keep* 之后才写入 `nx2saria.ini`；草稿的其余部分在 Apply 时保存。*Resolution* 行会随窗口大小一起设置游戏分辨率，两者一同处理：它的游戏分辨率在 *Keep* 时保存，在 *Revert* 时恢复，之后不再出现在下面的重启对话框中（`option_rows.cpp` 中的 `group_timed`）。此时会运行 15 秒的倒计时（`plat_now_ns`）；*Revert*（默认选项，也可按 Esc 或 B）、超时、以任何方式关闭菜单以及退出游戏，都会恢复旧值且不保存，而在此期间进行的保存（F10、金手指、关闭窗口）会跳过这些值（`cfg_hold`）。倒计时期间按 F11 表示玩家接管：对话框关闭，所有已应用的内容（包括 F11 的全屏状态）都会保留并保存。然后，当某个已应用的设置在启动时读取时（GPU、HDR 切换到或离开游戏原生 HDR、在关闭低延迟启动的运行中开启低延迟……），会出现 *Some changes take effect after a restart*：它列出这些设置，并提供 *Restart now*（与“重启”按钮相同的重启）和 *Later*（默认选项，也可按 Esc 或 B），后者会关闭菜单，并把这些值保存到下次启动时使用。
+- *Apply* 之后，可能会接连出现另外两个对话框（每个都会在前一个关闭后的下一帧打开）。首先，当*全屏*、窗口大小（*Resolution* 行，或者在没有宽屏设置的游戏版本上为*窗口大小*）、*垂直同步*或 *HDR*（在关闭和色调映射之间切换，这会以另一种格式重新创建交换链）发生变化时，会出现 *Keep these display settings?*：这些实时设置可能让玩家得不到可用的画面。它们会立即生效，只有在 *Keep* 之后才写入 `nx2saria.ini`；草稿的其余部分在 Apply 时保存。*Resolution* 行会随窗口大小一起设置游戏分辨率，两者一同处理：它的游戏分辨率在 *Keep* 时保存，在 *Revert* 时恢复，之后不再出现在下面的重启对话框中（`option_rows.cpp` 中的 `group_timed`）。此时会运行 15 秒的倒计时（`plat_now_ns`）；*Revert*（默认选项，也可按 Esc 或 B）、超时、以任何方式关闭菜单以及退出游戏，都会恢复旧值且不保存，而在此期间进行的保存（F10、关闭窗口）会跳过这些值（`cfg_hold`）。倒计时期间按 F11 表示玩家接管：对话框关闭，所有已应用的内容（包括 F11 的全屏状态）都会保留并保存。然后，当某个已应用的设置在启动时读取时（GPU、HDR 切换到或离开游戏原生 HDR、在关闭低延迟启动的运行中开启低延迟……），会出现 *Some changes take effect after a restart*：它列出这些设置，并提供 *Restart now*（与“重启”按钮相同的重启）和 *Later*（默认选项，也可按 Esc 或 B），后者会关闭菜单，并把这些值保存到下次启动时使用。
 - *重启*会先应用并保存草稿，因为正是重启让那些只在重启后生效的更改生效；它的对话框会这样说明。*退出游戏*会丢弃草稿（它的对话框会这样说明），关闭窗口也是如此。
 - 改回初始值的更改会离开草稿。在此期间被其他东西改变的设置（*全屏*上的 F11）也会离开草稿，并保留外部的值。由环境变量固定的设置显示为灰色，永远不会进入草稿。
-- 草稿打开期间由其他任何操作触发的保存（菜单关闭时的 F10、F11、金手指）不会写入预览中的值：该项在 Apply 之前不参与任何保存（`runtime/cfg/cfg.c` 中的 `cfg_hold`、`cfg_revert`）。
+- 草稿打开期间由其他任何操作触发的保存（菜单关闭时的 F10、F11）不会写入预览中的值：该项在 Apply 之前不参与任何保存（`runtime/cfg/cfg.c` 中的 `cfg_hold`、`cfg_revert`）。
 - 每一步都会记录在 `logs/nx2saria.log` 中，因此事后可以检查一次运行：某个设置进入或离开草稿时（预览或待定）记录 `menu: draft +` 和 `menu: draft -`，每个打开的对话框及给出的回答（按钮、Esc 或 B、倒计时结束、F11）记录 `menu: box`，`menu: draft applied` / `discarded` 附带每个值，`menu: display kept` / `reverted`，每次保存记录 `cfg: wrote <path>: <keys>`，被保留的预览记录 `cfg: save leaves out <key>`，Ctrl+F5 等待菜单时记录 `cfg: reload: not run`。
 
 ## 画质预设

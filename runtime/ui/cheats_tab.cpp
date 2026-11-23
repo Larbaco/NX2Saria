@@ -8,7 +8,9 @@
 #include "ui/option_rows.h"
 
 extern "C" {
+#include "cfg.h"
 #include "cheats.h"
+#include "menu_sound.h"
 #include "ui_text.h"
 }
 
@@ -58,9 +60,13 @@ extern "C" void tab_cheats(float scale) {
             snprintf(desc, sizeof desc, "%s %s", menu_text(text), c->note);
         else
             snprintf(desc, sizeof desc, "%s", menu_text(text));
-        if (opt_toggle_text(c->key, c->name, desc, cheats_on(i) != 0)) {
-            cheats_set(i, !cheats_on(i));
-            opt_save_now();   // a cheat is a switch of the game, not a setting of the draft: it is kept at once
+        const bool switched = c->kind == CHEAT_CODE || c->kind == CHEAT_KEY || c->kind == CHEAT_DATA;
+        const char *set = switched ? opt_get(c->key) : nullptr;
+        const bool on = switched ? set && *set && strcmp(set, "0") != 0 : cheats_on(i) != 0;
+        if (opt_toggle_text(c->key, c->name, desc, on) && switched) {
+            opt_change(c->key, on ? cfg_is_set(c->key) ? "0" : "" : "1", c->name, menu_text(on ? UI_MENU_ON : UI_MENU_OFF),
+                       menu_text(on ? UI_MENU_OFF : UI_MENU_ON));
+            menu_sound_play(MENU_SOUND_CURSOR);
         }
     }
     opt_end();

@@ -456,7 +456,7 @@ bool is_staged(const std::string &key) {
     static const char *const forced[] = {"FPS_LIMIT", "VK_PRESENT", "HDR", "PAD_LAYOUT", "WALK_KEY", "MOTION",
                                         "FULLSCREEN", "WINDOW_SIZE", "FOV", "PRESET"};
     const CfgMeta *m = cfg_meta(key.c_str());
-    if (!m) return false;   // a key without a row (the bindings) is a live one
+    if (!m) return !key.compare(KEY_PREFIX, sizeof "CHEAT_" - 1, "CHEAT_");
     if (!m->live) return true;
     for (const char *f : forced)
         if (!strcmp(f, m->key)) return true;
@@ -854,7 +854,8 @@ bool opt_draft_apply(bool timed) {
                shown(eff_of(c.key, c.new_val)).c_str(),
                !held ? ", saved" : is_timed(c) ? ", in effect now, saved only after Keep"
                                            : ", saved only after Keep, with the display settings of its row",
-               live_needs_restart(c) || (c.staged && !cfg_meta(c.key.c_str())->live) ? ", takes effect after a restart" : "");
+               live_needs_restart(c) || (c.staged && cfg_meta(c.key.c_str()) && !cfg_meta(c.key.c_str())->live)
+                   ? ", takes effect after a restart" : "");
         if (held) {
             cfg_hold(c.key.c_str(), 1);   // before the write: no save in between can take the new value
             write_key(c.key, c.new_val);

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=e1545db1fbc465911d85b8b83cff0812ff56cf90 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=3e1215cb4eabd364dac0d0f0c1e4c0a6487cc2ce reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -186,7 +186,8 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
   botões. O rascunho guarda o valor que ela tinha e Descartar o restaura.
 - Toda configuração lida na inicialização (a linha dela diz *após reiniciar*) e também o limite de quadros, o VSync, o
   HDR, o layout dos botões, a tecla de andar, o sensor de movimento, a tela cheia e o tamanho da janela esperam no
-  rascunho; a linha mostra o valor pendente e é Aplicar que muda o jogo. Esses são os casos `is_staged` em
+  rascunho, assim como cada cheat da aba *Cheats* (exibida quando um mod ativado traz cheats); a linha mostra o valor
+  pendente e é Aplicar que muda o jogo. Esses são os casos `is_staged` em
   `option_rows.cpp`.
 - Sair do menu com mudanças (Esc, B, *Continuar*, F1, ou Minus e Plus juntos) abre *Aplicar as alterações?*, uma lista de
   `setting: old -> new` com as que só valem após reiniciar marcadas. *Aplicar* grava as configurações, salva o
@@ -202,7 +203,7 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
   tamanho da janela, e as duas andam juntas: a resolução do jogo dela é salva com *Manter* e restaurada com *Reverter*, e
   por isso fica fora da caixa de reinício abaixo (`group_timed` em `option_rows.cpp`). Uma contagem regressiva de 15
   segundos (`plat_now_ns`) corre; *Reverter* (o padrão, e Esc ou B), o fim do tempo, fechar o menu de qualquer forma e
-  sair do jogo restauram os valores antigos sem salvar, e um salvamento feito nesse meio-tempo (F10, um cheat, fechar a
+  sair do jogo restauram os valores antigos sem salvar, e um salvamento feito nesse meio-tempo (F10, fechar a
   janela) os deixa de fora (`cfg_hold`). F11 durante a contagem é o jogador assumindo o controle: a caixa fecha e tudo o
   que foi aplicado, incluindo o estado de tela cheia do F11, é mantido e salvo. Depois vem *Algumas alterações só valem
   depois de reiniciar*, quando uma configuração aplicada é lida na inicialização (GPU, HDR para o modo do próprio jogo ou
@@ -214,7 +215,7 @@ uma linha muda (`runtime/ui/option_rows.cpp`).
 - Uma mudança que volta ao valor com que começou sai do rascunho. Uma chave que outra coisa muda nesse meio-tempo (F11
   em *Tela cheia*) também sai, e o valor vindo de fora é mantido. Configurações que uma variável de ambiente fixa ficam
   em cinza e nunca entram nele.
-- Um salvamento feito por qualquer outra coisa enquanto o rascunho está aberto (F10 com o menu fechado, F11, um cheat)
+- Um salvamento feito por qualquer outra coisa enquanto o rascunho está aberto (F10 com o menu fechado, F11)
   não grava um valor em prévia: a entrada fica fora de todo salvamento até o Aplicar (`cfg_hold`, `cfg_revert` em
   `runtime/cfg/cfg.c`).
 - Cada passo fica registrado em `logs/nx2saria.log`, para que uma execução possa ser conferida depois: `menu: draft +` e
