@@ -7,8 +7,6 @@
 #include <limits.h>
 #include <stdlib.h>
 
-// The supported game build exposes a player equipment component with generation-checked actor links.
-// Selection follows those links and the equipment's model-binding parent; proximity is never an identity.
 #define OWNER_MODELS 128
 #define OWNER_ACTORS 22
 typedef struct {
@@ -32,10 +30,6 @@ static int owner_on;
 
 static void owner_init(void *unused) {
     (void)unused;
-    // NX2SARIA_SELECTIVE_MOTION (selective_motion; default 1, 0 off: the estimate from colour and depth). On, every guest
-    // submission walks the player's actor, equipment and models in guest memory (motion_owner_capture), each scene
-    // draw is looked up in that list (vk_fg_pose.inc pose_owner), and the player's meshes are drawn a second time
-    // into the motion vectors DLSS, FSR 3.1 and frame generation read.
     owner_on = RT_V111 && rt_knob("SELECTIVE_MOTION", "1");
 }
 int motion_owner_enabled(void) {
@@ -70,8 +64,6 @@ static int actor_link(uint64_t link, OwnerActor *out) {
         !read_at(a.table + 0x48, &generation, 4) || generation != a.generation) return 0;
     uint64_t actor = field(a.table, 0x40);
     if (!actor || !read_at(actor + 0x2c, &state, 4) || (uint32_t)(state - 7) < 5) return 0;
-    // Reject a slot replaced during the read. This is not a replacement for the game's actor locking:
-    // unknown layouts and any observed disagreement fail closed, and runtime lifetime checks remain required.
     if (!read_at(link + 8, &b, sizeof b) || a.table != b.table || a.generation != b.generation ||
         !read_at(a.table + 0x48, &generation, 4) || generation != a.generation || field(a.table, 0x40) != actor) return 0;
     *out = (OwnerActor){actor, a.table, generation, 0};
@@ -91,9 +83,6 @@ static int parent_is_player(uint64_t actor, uint64_t player) {
     return 0;
 }
 static uint32_t equipment_flags(uint64_t actor) {
-    // This classification is reached only for a generation-checked actor attached to the player.
-    // A matching resource elsewhere in the world therefore cannot acquire this policy.
-    // Head armor is deliberately excluded: its cap can deform independently of the attachment.
     char name[64];
     if (!read_at(field(actor, 0x20), name, sizeof name)) return 0;
     name[sizeof name - 1] = 0;
@@ -103,7 +92,6 @@ static uint32_t equipment_flags(uint64_t actor) {
 static int collect_models(uint64_t player, OwnerActor actor) {
     uint64_t model_component = component(actor.actor, 8);
     if (!model_component) return 1;
-    // Only decode the implementation whose getter directly returns its model collection.
     if (field(ptr(model_component), 0xf8) != MOD_MAIN_BASE + 0x9d7160) return 1;
     uint64_t collection = field(model_component, 0x18), list = field(collection, 0x28);
     int32_t count;
@@ -111,7 +99,6 @@ static int collect_models(uint64_t player, OwnerActor actor) {
     for (int i = 0; i < count; ++i) {
         uint64_t model = ptr(ptr(list + (uint64_t)i * 8));
         if (!model) continue;
-        // Match the model implementation used by the traced skeleton and shape binding path.
         if (field(ptr(model), 0x40) != MOD_MAIN_BASE + 0x735430) continue;
         if (O.count == OWNER_MODELS) return 0;
         O.models[O.count++] = (MotionOwner){.player = player, .actor = actor.actor, .link = actor.link,
@@ -134,7 +121,6 @@ static void refresh(uint64_t frame, int force) {
     unsigned count = 1;
     uint64_t equipment = component(player, 0x200);
     if (equipment) {
-        // Eight static and thirteen dynamic slots, each a 24-byte actor link.
         for (unsigned slot = 0; slot < 21; ++slot) {
             uint64_t link = equipment + (slot < 8 ? 0x20 + slot * 24 : 0xe0 + (slot - 8) * 24);
             OwnerActor a;
@@ -172,8 +158,6 @@ void motion_owner_observe(Cpu *c, uint64_t address, uint64_t size) {
     uint64_t lr = c->x[30] - MOD_MAIN_BASE;
     uint64_t draw = 0, model;
     int shape_query = 0;
-    // Both inline binding paths retain the shape object in their stack frame.
-    // Read that saved pointer rather than temporary registers reused during binding.
     switch (lr) {
     case 0x35e4950: case 0x35e4b34: case 0x35e4cec:
         if (c->x[29] < 16) return;
@@ -210,7 +194,6 @@ void motion_owner_observe(Cpu *c, uint64_t address, uint64_t size) {
             b->ambiguous = 1;
         }
     }
-    // Never evict an entry during this producer frame: a collision must not erase an ambiguity.
     if (owner && !existing && O.nbindings < MOTION_OWNER_BINDINGS) {
         MotionOwnerBinding *b = &O.bindings[O.nbindings++];
         *b = (MotionOwnerBinding){.address = address, .size = size, .observed = frame,
@@ -268,7 +251,7 @@ void motion_owner_present(void) {
     if (!motion_owner_enabled()) return;
     plat_mutex_lock(&owner_lock);
     ++O.producer_frame;
-    if (O.producer_frame % 7200 == 0)   // on by default: a line every minute or two, not every two seconds
+    if (O.producer_frame % 7200 == 0)
         rt_log("motion ownership: %u models, %llu captures, %llu owned/%llu other queries, "
                "%llu conflicts, %llu capacity misses, %u attachment rejections",
                O.count, (unsigned long long)O.captures, (unsigned long long)O.owned_queries,

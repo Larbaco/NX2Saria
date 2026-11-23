@@ -1,166 +1,86 @@
-// Host input sampling (runtime/input.c, with input_win.c or input_sdl.c): SDL3 gamepad and the keyboard as one Switch npad.
 #pragma once
 #include <stdint.h>
 
 #include "rumble_hd.h"
 
-// Bits of HidNpadButton (A=0 B=1 X=2 Y=3 StickL=4 StickR=5 L=6 R=7 ZL=8 ZR=9 Plus=10 Minus=11 Left=12 Up=13 Right=14
-// Down=15) and the stick directions (StickLLeft..Down 16-19, StickRLeft..Down 20-23, derived from the sticks).
-// Sticks are -32767..32767, up is +y. NX2SARIA_INPUT=none reports no input. Callable from any thread.
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
-// The SDL the process loaded (SDL_GetVersion) and, into *built, the one its headers were (SDL_VERSION), both as
-// SDL_VERSIONNUM values: input is the SDL part both platforms share (main.c log_libs).
 int input_sdl_version(int *built);
-// 1 when keyboard and mouse are the device the player used last, 0 when the gamepad is: what is shown for pointing
-// (menu_cursor.c shows the pointer in the game's menus only for the keyboard and mouse)
 int input_kbm_last(void);
-// Direct mouse input is consumed by the game's camera-input update, after its stick response. While that update
-// accepts camera input, the HID right stick contains only the controller and keyboard. Selectors route mouse input
-// separately: a persistent radial cursor for the ability wheel, discrete steps for horizontal quick lists.
 int input_direct_mouse_active(void);
 int input_direct_mouse_enabled(void);
-int input_direct_mouse_available(void);   // the game version has the patch set and it is on: the mode can be chosen
-// Ocarina 1.1.1's camera input update (mouse_direct.c camera_input_oot; recomp/patches-v111.txt). Measured with a
-// scripted stick, its processed stick at one turns the camera 1 degree up or down and 1.78 degrees sideways
-// (StickSensitivityLat2LngRatio) per 60 Hz frame; the game's own camera sensitivity option scales both.
-// INPUT_OOT_COUNT_X and _Y, what one mouse count adds to the processed stick per frame at sensitivity 1, make a count
-// 0.08 degrees on either axis.
+int input_direct_mouse_available(void);
 #define INPUT_OOT_COUNT_X (0.08 / 1.78)
 #define INPUT_OOT_COUNT_Y 0.08
-// A radial selector uses a persistent virtual cursor while its opening button is held.
 void input_direct_mouse_radial(int32_t dx, int32_t dy, float sensitivity, float cursor[2], int32_t out[2]);
-// Horizontal quick selectors receive short, separated steps instead of a latched radial-cursor direction.
 typedef struct { float distance; uint64_t pulse_until, neutral_until; int direction; } InputMouseRow;
 void input_direct_mouse_row(int32_t dx, float sensitivity, uint64_t now, InputMouseRow *row, int32_t out[2]);
 int input_direct_mouse_selector_active(void);
-// Consume direct mouse counts, including one-shot MOUSE events from an input script. enabled=0 discards scripted
-// counts while leaving the real mouse for menu input. Live counts require cursor capture and foreground focus.
 void input_direct_mouse_sample(int enabled, int32_t *dx, int32_t *dy);
-// menu_cursor.c: the pointer in the game's menus (1.4.3). poll: once per pad read, adds a click's A or B; pointer: a
-// menu has the pointer, so the mouse camera's capture is released
 void menu_cursor_poll(uint64_t *buttons);
 int menu_cursor_pointer(void);
-// menu_mouse.c: the same for 1.1.1's menus (poll: the A, B, up and down the mouse asked for; pointer: as above)
 void menu_mouse_poll(uint64_t *buttons);
 int menu_mouse_pointer(void);
-// The game gets no input now: a text entry or the in-game menu (the overlay) is open, or one just closed
 int input_game_input_blocked(void);
-// The mouse for the game's own menus (menu_mouse.c), from the window or from NX2SARIA_INPUT_SCRIPT's POINTER, MOUSEL,
-// MOUSER and WHEEL lines. pointer: fractions of the window, 0..1 from its top left; 0 when the window is not in front,
-// the pointer is outside it or the camera has it captured; 2 when the script placed it. mouse_presses: the left (0) or
-// right (1) button's presses so far. wheel_take: notches since the last call, up positive. Any thread.
 int input_menu_pointer(float *nx, float *ny);
-uint32_t input_menu_mouse_presses(int right);   // presses so far, counted at the event: a click shorter than a frame counts
+uint32_t input_menu_mouse_presses(int right);
 int32_t input_menu_wheel_take(void);
-// The same for host UI (the text entry): never blocked. input_block(1) while a text entry is open: input_poll then
-// reports nothing; input_block(0) when it closes: nothing until all buttons and stick directions are released.
 void input_poll_ui(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
 void input_block(int on);
-// The in-game menu (ui/menu.h): input_menu(1) when it opens (input_poll reports nothing, the cursor is released), (0) when
-// it closes (nothing until every button and stick direction is released). Independent of input_block.
 void input_menu(int open);
-// The gamepad alone, for the menu: Switch button bits and the left stick (up +y). 0 without a connected gamepad.
-// Minus+Plus combo and the neutral pad while the menu is open (input_map.c, window-system free): *held is the caller's memory
-// of the combo, sticks are lx, ly, rx, ry. Returns 1 in the poll where the combo goes down (toggle the menu once).
 int input_menu_gate(int *held, int menu_open, uint64_t *buttons, int32_t sticks[4]);
-int input_overlay_gate(int *held, uint64_t *buttons);   // L3+R3: 1 in the poll both go down
+int input_overlay_gate(int *held, uint64_t *buttons);
 int input_pad_read(uint64_t *buttons, int32_t *lx, int32_t *ly);
-// The gamepad layout in effect (PAD_LAYOUT_*, input_map.h; NX2SARIA_PAD_LAYOUT, live); -1 without a gamepad. Any thread.
 int input_pad_layout(void);
-// How far the open gamepad's left (pct[0]) and right (pct[1]) sticks are from the centre now, in percent of full
-// deflection, before the dead zone: the menu shows it on the dead zone rows, so a drifting stick's resting value can be
-// read off. 0 (and both 0) without a connected gamepad. Any thread.
 int input_pad_stick_percent(double pct[2]);
-// The label on a face button of the open gamepad (input_map.h PAD_SOUTH..PAD_NORTH, as SDL reports it); PAD_LABEL_NONE for another
-// button, an unknown label or no gamepad. Any thread.
 enum { PAD_LABEL_NONE, PAD_LABEL_A, PAD_LABEL_B, PAD_LABEL_X, PAD_LABEL_Y, PAD_LABEL_CROSS, PAD_LABEL_CIRCLE,
        PAD_LABEL_SQUARE, PAD_LABEL_TRIANGLE };
 int input_pad_label(int pad);
-// The menu's remapping rows (Controls tab). input_map_snapshot copies the tables in effect (after any changed NX2SARIA_BIND_* line).
-// input_capture polls the keys, the mouse buttons and the gamepad for a press: reset 1 takes what is held now as the
-// start (a held key counts once released and pressed again) and returns NONE; then it returns KEY or PAD with *id the
-// key or pad id (input_map.h) pressed since the last call, or CANCEL for Esc. Keys count only while the game window is in front.
 enum { INPUT_CAPTURE_NONE, INPUT_CAPTURE_KEY, INPUT_CAPTURE_PAD, INPUT_CAPTURE_CANCEL };
-struct InputMap;   // input_map.h (not included here: swkbd_win.c has button names of its own)
+struct InputMap;
 void input_map_snapshot(struct InputMap *m);
 int input_capture(int reset, int *id);
-// The character on a punctuation key (KEY_MINUS..KEY_GRAVE) in the keyboard layout in use, 0 for another key.
 uint32_t input_key_char(int key);
-// F8, the bug capture's key (bugcap.c; no KEY_ id), held while the game window is in front.
 int input_flight_key(void);
-// Insert, the frame dump's key (vk_dump.c, NX2SARIA_DUMP=key), held. On Windows also while another window is in front:
-// a player on a gamepad often leaves the focus elsewhere. Unbound in the game's default layout.
 int input_dump_key(void);
 
-// Mouse camera and cursor (input_win.c, Win32 window thread). The window procedure calls input_window_msg first for raw
-// mouse input, cursor hiding and confinement; it returns 1 with *res set when the message is handled. input_cursor_suspend(1)
-// releases the cursor around an F11 window change, (0) captures it again once the client area has its new size.
 void input_cursor_suspend(int on);
-int input_cursor_released(void);   // Esc or a non-client activation released the cursor (probe)
+int input_cursor_released(void);
 
-// Rumble: SDL_RumbleGamepad on the open gamepad, low (heavy, left) and high (light, right) motor 0..65535 for ms
-// milliseconds. 1 if a gamepad with rumble took it. Callable from any thread.
 int input_rumble(uint16_t low, uint16_t high, uint32_t ms);
-// Motor value for a normalised amplitude: pow(a, curve) * strength, saturated to 0..65535. Pure.
 uint16_t rumble_motor(float a, float curve, float strength);
-// NX2SARIA_RUMBLE_TRIGGERS=1: input_rumble also drives the impulse triggers (Xbox) with the high motor's value.
 int input_rumble_triggers_enabled(void);
-// HD rumble (input.c "HD rumble", rumble_hd.h): the game's vibration values as they are, for a gamepad with linear
-// actuators (a Switch Pro Controller, a Joy-Con or a pair of them). All callable from any thread.
-// input_rumble_hd_available: the gamepad the game reads is one of these (the menu's row).
-// input_rumble_hd_on: ... and NX2SARIA_RUMBLE_HD is 1 (live) and NX2SARIA_RUMBLE is not 0: input_rumble then leaves that
-// gamepad's motors alone, and the caller posts every new value with input_rumble_hd.
-// input_rumble_hd: the game's newest value per side (v[0] left, v[1] right; live[s] 0: that side is at rest), the
-// amplitudes scaled by strength (1 = as they are). Returns at once: a thread of input.c writes the reports, the newest
-// value only, and the neutral value once the game stops posting.
-// input_rumble_hd_stop: before the process ends, the neutral value for a controller that is still vibrating.
 int input_rumble_hd_available(void);
 int input_rumble_hd_on(void);
 void input_rumble_hd(const RumbleHdValue v[2], const int live[2], float strength);
 void input_rumble_hd_stop(void);
 
-// Motion (NX2SARIA_MOTION=0 turns it off, live). input_motion_start starts the sensor thread once: every 4 ms it reads the
-// gamepad's gyro and accelerometer (when it has them) and feeds motion_global(). Callable from any thread.
 void input_motion_start(void);
-// NX2SARIA_MOTION is not "0" (a live setting: read again when cfg_version changes). Off: the sensor reads at rest.
 int input_motion_enabled(void);
-// SDL sensor values (accelerometer m/s^2, gyro rad/s, SDL gamepad axes) to the Switch controller frame motion_feed
-// takes (acceleration in G as gravity reads, rotation rad/s). The mapping is documented in input.c.
 void input_motion_axes(const float sdl_acc[3], const float sdl_gyro[3], double acc_g[3], double gyro[3]);
 
-// motion_fusion.c: nn::hid::SixAxisSensorState and the sensor fusion that produces it.
 typedef struct {
     int64_t delta_ns, sampling;
-    float acc[3], gyro[3], angle[3], dir[9];   // G, revolutions/s, revolutions, controller axes in the reference frame
-    uint32_t attributes, reserved;             // bit 0 connected
+    float acc[3], gyro[3], angle[3], dir[9];
+    uint32_t attributes, reserved;
 } MotionState;
 _Static_assert(sizeof(MotionState) == 0x60, "SixAxisSensorState ABI");
 typedef struct MotionFusion MotionFusion;
-MotionFusion *motion_new(void);      // with MOTION_OPTIONS_DEFAULT and no sensor source named yet
-MotionFusion *motion_global(void);   // the gamepad's, fed by input.c's motion thread
+MotionFusion *motion_new(void);
+MotionFusion *motion_global(void);
 void motion_feed(MotionFusion *m, const double acc_g[3], const double gyro_rad_s[3], uint64_t now_ns);
-int motion_read(MotionFusion *m, MotionState *out, int max, uint64_t now_ns);   // newest first; 0 = none in 200 ms
-void motion_restart(MotionFusion *m);   // angle and direction start over at the next sample; the learned bias stays
+int motion_read(MotionFusion *m, MotionState *out, int max, uint64_t now_ns);
+void motion_restart(MotionFusion *m);
 
-// The gyro's handling in motion_fusion.c, set from the gyro_* settings by input.c (live). The bias is the rate a still
-// controller reads; it is learned while the controller lies still and taken off every sample (calibrate). Rates under
-// the dead zone (revolutions a second, on the length of the rate after the bias) count as none, the console's
-// zero-drift levels. The rate the game gets, and the angle and direction built from it, are split into the part about
-// the world's up (the turn, X: left and right) and the rest (the tilt, Y: up and down), each multiplied by its factor;
-// a negative factor is that axis inverted. 1 and 1 give the sensor's own rate.
 typedef struct {
-    int calibrate;         // gyro_calibration: learn the bias while still
-    double deadzone_rps;   // gyro_deadzone: 0, MOTION_DEADZONE_LOW, _STANDARD or _HIGH
-    double turn, tilt;     // gyro_turn_sens / gyro_tilt_sens as factors, negative when gyro_turn_invert / gyro_tilt_invert
+    int calibrate;
+    double deadzone_rps;
+    double turn, tilt;
 } MotionOptions;
-#define MOTION_DEADZONE_LOW 0.002        // revolutions a second: the console's tight zero-drift mode
-#define MOTION_DEADZONE_STANDARD 0.007   // its standard mode
-#define MOTION_DEADZONE_HIGH 0.01        // its loose mode
-#define MOTION_KP 0.5                    // the filter's pull toward the measured gravity, 1/s
-#define MOTION_KI 0.1                    // its integral term, 1/s^2: the gyro bias the gravity can see
+#define MOTION_DEADZONE_LOW 0.002
+#define MOTION_DEADZONE_STANDARD 0.007
+#define MOTION_DEADZONE_HIGH 0.01
+#define MOTION_KP 0.5
+#define MOTION_KI 0.1
 #define MOTION_OPTIONS_DEFAULT ((MotionOptions){1, MOTION_DEADZONE_LOW, 1.0, 1.0})
 void motion_set_options(MotionFusion *m, const MotionOptions *o);
-// The controller whose sensors feed m from now on (id: nonzero and unique per connection, e.g. SDL's joystick id; name
-// for the log). A different one restarts the orientation and its rest statistics; the bias learned for each of the
-// last few controllers is kept and comes back when that one feeds again, a new one starts with none learned.
 void motion_source(MotionFusion *m, uint64_t id, const char *name);

@@ -1,11 +1,3 @@
-// Host input for nn::hid (runtime/ov_input.c): an SDL3 gamepad (no SDL window needed), the keyboard and the mouse,
-// merged into Switch npad button bits and stick axes. Button order follows HidNpadButton. The key and pad
-// bindings are the tables in input_map.c (nx2navi.ini overrides them). The keyboard and the mouse come from the window
-// system's back end (input_wsys.h: input_win.c with Win32, input_sdl.c with SDL), which also owns the cursor capture.
-// Keys and their map: docs/controls.md.
-// The gamepad also rumbles (input_rumble; a Switch controller's linear actuators can take the game's own values instead,
-// "HD rumble" below) and, when it has a gyro and an accelerometer, feeds the six-axis sensor from a thread of its own
-// (input_motion_start). Every SDL call on the gamepad is made under `lock`.
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -30,28 +22,24 @@
 enum { STICK_MAX = 32767, STICK_DIR = 16384, TRIGGER_ON = 16384, RESCAN_MS = 1000 };
 
 static PlatMutex lock = PLAT_MUTEX_INIT;
-static int state;                    // 0 not started, 1 running, -1 disabled or SDL failed
-static volatile int32_t g_block, g_menu;   // text entry / host menu: 0 off, 1 open, 2 waiting for release
-// The device the player used last (input_kbm_last): 1 keyboard and mouse, 0 the gamepad. A pad counts once a button is
-// down or a stick is past half way (a drifting stick never switches), the mouse once it moved MOUSE_USED raw counts
-// within one poll (a slow deliberate move does; a desk bump does not), the keyboard with any key or mouse button.
+static int state;
+static volatile int32_t g_block, g_menu;
 enum { PAD_USED = 16384, MOUSE_USED = 6 };
 static volatile int32_t g_kbm_last = 1;
 int input_kbm_last(void) { return __atomic_load_n(&g_kbm_last, __ATOMIC_RELAXED); }
 static SDL_Gamepad *pad;
 static uint64_t next_scan;
-static int pad_rumble;               // the open gamepad has rumble motors
-static volatile int32_t pad_labels[4];  // ... and the labels of its south, east, west, north buttons (PAD_LABEL_*), any thread
-static int pad_east_a;               // ... and labels its east face button A (Nintendo layout under NX2SARIA_PAD_LAYOUT=auto)
-static int pad_layout = -1;          // PAD_LAYOUT_* in effect for the open gamepad, -1 to pick again; live (cfg_version)
+static int pad_rumble;
+static volatile int32_t pad_labels[4];
+static int pad_east_a;
+static int pad_layout = -1;
 static unsigned pad_layout_seen;
-static volatile int32_t pad_layout_shown = -1;   // pad_layout for the menu (any thread), -1 without a gamepad
-static SDL_JoystickID sensor_pad;    // the gamepad whose sensors the motion thread set up, 0 none
-static int sensor_ok;                // ... and it has both sensors, enabled
-static SDL_SensorType sensor_gyro = SDL_SENSOR_GYRO, sensor_acc = SDL_SENSOR_ACCEL;   // ... the pair read (sensors_ready)
-static int motion_thread;            // 0 not started, 1 running, -1 off (NX2SARIA_MOTION=0, no SDL)
+static volatile int32_t pad_layout_shown = -1;
+static SDL_JoystickID sensor_pad;
+static int sensor_ok;
+static SDL_SensorType sensor_gyro = SDL_SENSOR_GYRO, sensor_acc = SDL_SENSOR_ACCEL;
+static int motion_thread;
 
-// SDL buttons of the gamepad inputs (input_map.h PAD_*), by position; PAD_ZL and PAD_ZR are the triggers (axes).
 static const SDL_GamepadButton pad_sdl[PAD_COUNT] = {
     [PAD_SOUTH] = SDL_GAMEPAD_BUTTON_SOUTH, [PAD_EAST] = SDL_GAMEPAD_BUTTON_EAST, [PAD_WEST] = SDL_GAMEPAD_BUTTON_WEST,
     [PAD_NORTH] = SDL_GAMEPAD_BUTTON_NORTH, [PAD_LSTICK] = SDL_GAMEPAD_BUTTON_LEFT_STICK,
@@ -63,34 +51,19 @@ static const SDL_GamepadButton pad_sdl[PAD_COUNT] = {
     [PAD_LPADDLE2] = SDL_GAMEPAD_BUTTON_LEFT_PADDLE2, [PAD_RPADDLE2] = SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2,
 };
 
-// NX2SARIA_INPUT_SCRIPT=<file>: lines "<frame> <button> [hold]" or "<frame> LSTICK|RSTICK <x> <y> [hold]", ORed into the real input.
-// The game menus' mouse (menu_mouse.c) has its own lines: "<frame> POINTER <x> <y>" places the pointer at those
-// fractions of the window (0..1 from its top left; it stays there until the next POINTER), "<frame> MOUSEL|MOUSER
-// [hold]" holds the left or right mouse button for it, "<frame> WHEEL <notches>" turns the wheel (up positive). They
-// reach only that module (input_menu_pointer, input_menu_mouse_presses, input_menu_wheel_take), never the key bindings.
-// <frame> and its hold are 60 Hz ticks of game time since the first present (frame_step_ticks: presents at 60 fps), so
-// the title menus get the presses at the same game time at any frame limit. A line "@<ms> ..." is timed instead: <ms>
-// and its hold are milliseconds of the world clock (frame_step_world_us, game time since the loaded save's first
-// frame), so it lands at the same game time at any frame rate and load length. A timed event shorter than a frame is
-// applied once. In a script with timed lines (a recording) the untimed ones belong before the world clock: they stop
-// when it starts, as the load ends at another tick in each run. "<frame> MARK <name>" presses nothing: with
-// NX2SARIA_TRACE=perf it ends the running segment of frame times and starts one called <name> (perf.c perf_segment).
-// at, hold: ticks, or microseconds of the world clock when timed.
 typedef struct { uint64_t at, hold; int bit, stick, timed, mark, mouse; int32_t x, y; float fx, fy; int logged; char text[48]; } ScriptEv;
-enum { SM_POINTER = 1, SM_LEFT, SM_RIGHT, SM_WHEEL };   // ScriptEv.mouse: a line for the menus' mouse
+enum { SM_POINTER = 1, SM_LEFT, SM_RIGHT, SM_WHEEL };
 static const struct { const char *name; int bit; } script_buttons[] = {
     {"A", B_A}, {"B", B_B}, {"X", B_X}, {"Y", B_Y}, {"LCLICK", B_STICK_L}, {"RCLICK", B_STICK_R}, {"L", B_L}, {"R", B_R},
     {"ZL", B_ZL}, {"ZR", B_ZR}, {"PLUS", B_PLUS}, {"MINUS", B_MINUS}, {"LEFT", B_LEFT}, {"UP", B_UP}, {"RIGHT", B_RIGHT}, {"DOWN", B_DOWN},
 };
 static ScriptEv *script_ev;
-static int script_n, script_state;   // 0 not loaded, 1 loaded
-static int script_mixed;             // the script has timed lines: its untimed ones end where the world clock starts
-static int32_t script_mouse[2];      // one-shot raw counts, consumed by the camera hook; under lock
-// The menus' mouse from the script: the pointer (float bits of x, y; script_ptr_on once placed) and wheel notches not
-// taken yet. Written under lock, read by any thread.
+static int script_n, script_state;
+static int script_mixed;
+static int32_t script_mouse[2];
 static volatile uint32_t script_ptr[2];
 static volatile int32_t script_ptr_on, script_wheel;
-static volatile uint32_t script_presses[2];   // MOUSEL / MOUSER lines started so far
+static volatile uint32_t script_presses[2];
 
 static void script_load(void) {
     script_state = 1;
@@ -109,7 +82,7 @@ static void script_load(void) {
         int off = 0, timed = line[0] == '@';
         if (sscanf(line + timed, "%lf %31s%n", &at, name, &off) < 2 || at < 0) continue;
         off += timed;
-        double unit = timed ? 1000.0 : 1.0;   // ms to us, or presents
+        double unit = timed ? 1000.0 : 1.0;
         ScriptEv e = {.at = (uint64_t)(at * unit + 0.5), .hold = timed ? 66667 : 4, .bit = -1, .timed = timed};
         long a, b;
         double c;
@@ -139,7 +112,7 @@ static void script_load(void) {
             int n = sscanf(line + off, "%ld %ld %lf", &a, &b, &c);
             if (n < 2) { rt_log("input: script line %d: %s needs x y [hold]", ln, name); continue; }
             e.stick = name[0] == 'M' ? 3 : name[0] == 'L' ? 1 : 2; e.x = (int32_t)a; e.y = (int32_t)b;
-            if (e.stick == 3) e.hold = 1;   // a displacement, never a held speed
+            if (e.stick == 3) e.hold = 1;
             if (n >= 3 && c > 0) e.hold = (uint64_t)(c * unit + 0.5);
             snprintf(e.text, sizeof e.text, "%s %d %d", name, e.x, e.y);
         } else {
@@ -170,7 +143,6 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
         ScriptEv *e = &script_ev[i];
         if (e->timed ? w < 0 : script_mixed && w >= 0) continue;
         uint64_t now = e->timed ? (uint64_t)w : tick;
-        // A one-shot line (a mark, mouse counts, the pointer placed, the wheel) fires late too: a poll may skip its tick
         int once = e->mark || e->stick == 3 || e->mouse == SM_POINTER || e->mouse == SM_WHEEL;
         if (now < e->at || (now >= e->at + e->hold && (e->logged || (!e->timed && !once)))) continue;
         if (once && e->logged) continue;
@@ -188,9 +160,9 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
             __atomic_store_n(&script_ptr[0], u[0], __ATOMIC_RELAXED);
             __atomic_store_n(&script_ptr[1], u[1], __ATOMIC_RELAXED);
             plat_xchg32(&script_ptr_on, 1);
-            __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // as the mouse moved: keyboard and mouse used last
+            __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
         } else if (e->mouse == SM_WHEEL) plat_add32(&script_wheel, e->x), __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
-        else if (e->mouse) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);   // a button held, as the mouse's
+        else if (e->mouse) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
         else if (e->stick == 3) {
             int64_t x = (int64_t)script_mouse[0] + e->x, y = (int64_t)script_mouse[1] + e->y;
             script_mouse[0] = (int32_t)(x < INT32_MIN ? INT32_MIN : x > INT32_MAX ? INT32_MAX : x);
@@ -215,21 +187,16 @@ uint32_t input_menu_mouse_presses(int right) {
 
 int32_t input_menu_wheel_take(void) { return plat_xchg32(&script_wheel, 0) + ikb_wheel_take(); }
 
-// NX2SARIA_INPUT_RECORD=<file>: writes the merged input as NX2SARIA_INPUT_SCRIPT lines, one per button press and per stick
-// segment, so a played session replays as a script. A stick segment ends when an axis moves by more than REC_STICK_STEP.
-// An event that begins on the world clock is written timed ("@<ms>", hold in ms), one before it in ticks
-// (frame_step_ticks). When the world clock starts, held buttons and sticks are cut there and go on as timed events.
 enum { REC_STICK_STEP = 2048 };
 static FILE *rec;
-static int rec_state;                // 0 not opened, 1 recording, -1 off
-static uint64_t rec_down[16];        // tick + 1 at which each button went down, 0 while up
-static int64_t rec_down_w[16];       // the world clock then, -1 before it started
-static uint64_t rec_stick_from[2];   // tick + 1 at which the current non-zero stick segment began
+static int rec_state;
+static uint64_t rec_down[16];
+static int64_t rec_down_w[16];
+static uint64_t rec_stick_from[2];
 static int64_t rec_stick_w[2];
 static int32_t rec_stick[2][2];
-static int64_t rec_last_w = -1;      // the world clock at the previous apply
+static int64_t rec_last_w = -1;
 
-// "<tick> <what> <hold>" or "@<ms> <what> <hold ms>": from tick from and world clock from_w to now.
 static void rec_line(uint64_t from, int64_t from_w, uint64_t fr, int64_t w, const char *what) {
     if (from_w >= 0 && w >= from_w)
         fprintf(rec, "@%.1f %s %.1f\n", from_w / 1000.0, what, (w > from_w ? w - from_w : 1000) / 1000.0);
@@ -258,7 +225,7 @@ static void rec_flush_all(void) {
 
 static void rec_apply(uint64_t b, const int32_t sl[2], const int32_t sr[2]) {
     if (!rec_state) {
-        const char *path = cfg_get("NX2SARIA_INPUT_RECORD");   // no default: not recording when unset
+        const char *path = cfg_get("NX2SARIA_INPUT_RECORD");
         rec = path && *path ? fopen(path, "w") : NULL;
         rec_state = rec ? 1 : -1;
         if (path && *path && !rec) rt_log("input: cannot open NX2SARIA_INPUT_RECORD %s", path);
@@ -269,7 +236,7 @@ static void rec_apply(uint64_t b, const int32_t sl[2], const int32_t sr[2]) {
     uint64_t fr = frame_step_ticks();
     int64_t w = frame_step_world_us();
     int wrote = 0;
-    if (w >= 0 && rec_last_w < 0) {   // the world clock starts: what is held goes on as timed events from @0
+    if (w >= 0 && rec_last_w < 0) {
         for (int i = 0; i < 16; i++)
             if (rec_down[i]) {
                 rec_line(rec_down[i] - 1, -1, fr, -1, script_buttons[i].name);
@@ -329,7 +296,7 @@ void input_direct_mouse_sample(int enabled, int32_t *dx, int32_t *dy) {
     plat_mutex_unlock(&lock);
 }
 
-static float mouse_sens = -1;              // NX2SARIA_MOUSE_SENS, 0 = mouse camera off; live (cfg_version)
+static float mouse_sens = -1;
 static unsigned mouse_sens_seen;
 
 static float mouse_sens_get(void) {
@@ -342,16 +309,10 @@ static float mouse_sens_get(void) {
 }
 
 
-// ---- walk key: the keyboard's stick samples scaled down while a key is held (NX2SARIA_WALK_KEY, NX2SARIA_WALK_SCALE)
-// A keyboard key is all or nothing, so every keyboard-driven stick sample is +/-32767 and the game only ever sees a
-// full tilt. Holding this key scales those two samples, which gives the half tilt a gamepad gets from its analog range,
-// so the keyboard can walk as well as run.
-// Only the keyboard is scaled: the gamepad's axes and the mouse camera sample their own values.
-static int walk_key = KEY_NONE;        // NX2SARIA_WALK_KEY as a KEY_*, KEY_NONE = off; live (cfg_version)
-static float walk_scale = 0.51f;       // NX2SARIA_WALK_SCALE, 0.2 to 0.9; live (cfg_version)
+static int walk_key = KEY_NONE;
+static float walk_scale = 0.51f;
 static unsigned walk_seen = ~0u;
 
-// The ini takes the key names the Controls tab writes; a hand-written line may spell them in any case.
 static int name_matches(const char *name, const char *key) {
     for (; *name && *key; name++, key++) {
         unsigned char a = (unsigned char)*name, b = (unsigned char)*key;
@@ -366,16 +327,13 @@ static void walk_get(void) {
     unsigned ver = cfg_version();
     if (ver == walk_seen) return;
     walk_seen = ver;
-    const char *name = cfg_value("NX2SARIA_WALK_KEY");   // "none" (the default) turns the key off
+    const char *name = cfg_value("NX2SARIA_WALK_KEY");
     int key = KEY_NONE;
     if (*name && !name_matches(name, "none")) {
         for (int k = KEY_A; k < KEY_COUNT && key == KEY_NONE; k++)
             if (input_key_name(k) && name_matches(name, input_key_name(k))) key = k;
         if (key == KEY_NONE) rt_log("input: walk_key: unknown key '%s', the keyboard sticks keep their full tilt", name);
     }
-    // 0.51 rather than 0.5: a keyboard sample is 32767, and 32767 * 0.5 = 16383 falls one short of stick_bits'
-    // STICK_DIR (16384), which would leave the game's stick-direction bits clear while the walk key is held. The value
-    // in the settings table carries that default; this code only rejects what the table's range does not allow.
     const char *sv = cfg_value("NX2SARIA_WALK_SCALE");
     char *end;
     double d = strtod(sv, &end);
@@ -391,8 +349,6 @@ static void walk_get(void) {
 static int mouse_selector;
 int input_direct_mouse_selector_active(void) { return __atomic_load_n(&mouse_selector, __ATOMIC_RELAXED) != 0; }
 
-// Selector 1 is a radial wheel, 2..4 are distinct horizontal quick lists; only a wheel retains a virtual cursor.
-// Under `lock`.
 static void mouse_camera(int32_t out[2], int selector) {
     static uint64_t frame = ~0ull, t0;
     static int32_t held[2];
@@ -414,14 +370,14 @@ static void mouse_camera(int32_t out[2], int selector) {
     }
     if (was_selector) {
         was_selector = 0; cursor[0] = cursor[1] = 0; row = (InputMouseRow){0};
-        ikb_mouse_take(&dx, &dy);   // release the wheel without sending its last movement to the camera
+        ikb_mouse_take(&dx, &dy);
         held[0] = held[1] = out[0] = out[1] = 0; frame = ~0ull;
         return;
     }
     if (input_direct_mouse_active()) {
         held[0] = held[1] = out[0] = out[1] = 0;
         frame = ~0ull;
-        return;   // the camera update takes the raw counts itself, once, outside the HID stick path
+        return;
     }
     if (!ikb_captured()) {
         ikb_mouse_take(&dx, &dy);
@@ -437,14 +393,14 @@ static void mouse_camera(int32_t out[2], int selector) {
             frame = fr;
             t0 = now;
         } else if (age > 0.1) {
-            held[0] = held[1] = 0;   // frames stopped: do not hold a deflection
+            held[0] = held[1] = 0;
         }
     }
     out[0] = held[0];
     out[1] = held[1];
 }
 
-static float stick_dead[2] = {-1, -1};     // input_pad_deadzone of the left and right stick; live (cfg_version)
+static float stick_dead[2] = {-1, -1};
 static unsigned stick_dead_seen;
 
 static float stick_dead_get(int s) {
@@ -457,31 +413,18 @@ static float stick_dead_get(int s) {
     return stick_dead[s];
 }
 
-// One gamepad stick through the dead zone; SDL's Y grows downwards, the Switch's upwards.
-// ---- SDL's gamepad update on a thread of its own
-// SDL_UpdateGamepads reads the controllers, and when a device came or went it first finds every device again, 100 ms
-// and more inside the system's input libraries. It ran on the game's polling thread with the input lock held: a
-// controller that disconnected (a wireless one going to sleep, a cable pulled) gave a burst of 120 to 240 ms frames,
-// one per device notification, with the game's other pollers queued on the lock.
-// The pad thread (up_main) makes SDL's initialisation and every update. A poll asks for an update and waits for it,
-// UP_WAIT_NS at most (sdl_enter): an ordinary update is done in microseconds and the poll reads fresh state, as before;
-// one that runs into the device search is not, and the poll goes on with what it read last. sdl_lock is held around
-// every SDL gamepad call: by the pad thread for an update, by everyone else through sdl_enter or a try
-// (plat_mutex_trylock), never by waiting, so no thread of the game stands behind the device search.
-#define UP_WAIT_NS 2000000ull     // how long a poll waits for its update
-#define UP_FRESH_NS 500000ull     // polls this soon after an update share it (the game reads several pads in a row)
+#define UP_WAIT_NS 2000000ull
+#define UP_FRESH_NS 500000ull
 static PlatMutex sdl_lock = PLAT_MUTEX_INIT;
-static PlatMutex up_lock = PLAT_MUTEX_INIT;   // guards the fields below
+static PlatMutex up_lock = PLAT_MUTEX_INIT;
 static PlatCond up_go = PLAT_COND_INIT, up_done = PLAT_COND_INIT;
 static int up_started, up_inited, up_init_ok, up_want, up_busy;
-static uint64_t up_gen, up_at, up_t0;         // updates finished; when the last one finished; when the running one began
-static uint64_t up_stale;                     // polls that went on without an update
-static volatile uint64_t up_test_ns;          // --probe-input: the next update takes this long, as a device search does
+static uint64_t up_gen, up_at, up_t0;
+static uint64_t up_stale;
+static volatile uint64_t up_test_ns;
 
 static void up_main(void *arg) {
     (void)arg;
-    // SDL drops gamepad presses while it thinks the program is in the background, and it judges that from windows of
-    // its own: the Win32 window (gfx_window_win.c) is not one, and keyboard focus is gated here (ikb_foreground)
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     int ok = SDL_Init(SDL_INIT_GAMEPAD);
     if (!ok) rt_log("input: SDL gamepad init failed (%s), keyboard only", SDL_GetError());
@@ -497,9 +440,6 @@ static void up_main(void *arg) {
         if (slow) plat_wait_ns(slow);
         SDL_UpdateGamepads();
 #ifdef _WIN32
-        // The Windows window is our own (gfx_window_win.c), so nothing reads SDL's event queue, yet every axis and
-        // button change of a gamepad is queued there: at SDL's cap (about 65,000 events, several MB) each further one
-        // fails and sets SDL's error text. The state the getters read does not come from the queue.
         SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
 #endif
         plat_mutex_unlock(&sdl_lock);
@@ -515,7 +455,6 @@ static void up_main(void *arg) {
     plat_mutex_unlock(&up_lock);
 }
 
-// Under lock: starts the pad thread and waits for SDL's initialisation on it. 1 when SDL's gamepads can be used.
 static int sdl_start(void) {
     plat_mutex_lock(&up_lock);
     if (!up_started) {
@@ -528,14 +467,12 @@ static int sdl_start(void) {
     return ok;
 }
 
-// Under lock: brings SDL's gamepad state up to date and takes sdl_lock for the caller's SDL calls. 1 with it held
-// (sdl_leave gives it back); 0 when the update is not done within UP_WAIT_NS, and then nothing of SDL may be called.
 static int sdl_enter(void) {
     plat_mutex_lock(&up_lock);
     uint64_t now = plat_now_ns();
     int ok = 1;
     if (up_busy && now - up_t0 >= UP_WAIT_NS) {
-        ok = 0;   // the device search: the first poll waited for it, the ones after it do not
+        ok = 0;
     } else if (up_busy || now - up_at >= UP_FRESH_NS) {
         uint64_t next = up_gen + 1;
         if (!up_busy) up_want = 1, plat_cond_signal(&up_go);
@@ -548,48 +485,28 @@ static int sdl_enter(void) {
     }
     if (!ok) up_stale++;
     plat_mutex_unlock(&up_lock);
-    if (ok && !plat_mutex_trylock(&sdl_lock)) ok = 0;   // the next update began already, for another poller
+    if (ok && !plat_mutex_trylock(&sdl_lock)) ok = 0;
     return ok;
 }
 
 static void sdl_leave(void) { plat_mutex_unlock(&sdl_lock); }
 
-// ---- HD rumble: the game's vibration values as they are, for a controller with linear actuators
-// A Switch Pro Controller and a Joy-Con play a frequency and an amplitude per band, which is what the game sends
-// (ov_input.c VibrationValue); SDL_RumbleGamepad drives them at two fixed frequencies. With NX2SARIA_RUMBLE_HD=1 (live,
-// off by default) the primary gamepad, when it is one of these, gets the game's values in the controller's own rumble
-// report (rumble_hd.c) and no dual-motor call any more (input_rumble):
-// - HD_SDL, a Pro Controller or a single Joy-Con: SDL_SendGamepadEffect takes the report for these controllers and
-//   writes it with SDL's own report number, over USB and over Bluetooth. With the setting on, hd_probe tries the call
-//   with the neutral value when the gamepad becomes the primary, so the log says at once whether it is taken. With the
-//   setting off nothing is written: the controller is known by its ids, and the first report after the setting is
-//   turned on is the trial (hd_wrote; a refusal sends the gamepad back to its motors).
-// - HD_PAIR, a left and a right Joy-Con that SDL presents as one gamepad: SDL refuses the call for that gamepad, so the
-//   reports go to the two HID devices directly (input_hd_pair.c).
-// Every other gamepad keeps the motors' path, the Switch 2 controllers too (other product ids, another protocol).
-// The game's thread only posts its newest values (input_rumble_hd). A thread of its own writes the reports (hd_main):
-// every HD_TICK_NS while there is something to write it asks rumble_hd_due, which spaces the reports, keeps only the
-// newest value, repeats a held one, and turns values the game stopped renewing into the neutral one, so a paused or
-// frozen game does not leave the controller vibrating. The thread sleeps once the neutral value is out. The neutral
-// value is also written when another gamepad becomes the primary (hd_pad_leave), when the setting is turned off
-// (hd_tick) and before the process ends (input_rumble_hd_stop).
 enum { HD_NONE, HD_SDL, HD_PAIR };
 enum { VID_NINTENDO = 0x057E, PID_JOYCON_LEFT = 0x2006, PID_JOYCON_RIGHT = 0x2007, PID_SWITCH_PRO = 0x2009,
        PID_JOYCON_GRIP = 0x200E };
 #define HD_TICK_NS 5000000ull
-static int pad_hd;                    // under lock: how the primary takes rumble reports (HD_*)
-static volatile int32_t hd_shown;     // any thread: 0 the primary takes none, 1 it takes them, 2 for its single actuator
-static int sdl_rumbling;              // under lock: the primary's motors were last set to more than 0 (input_rumble)
-static PlatMutex hd_lock = PLAT_MUTEX_INIT;   // guards the fields below; taken after `lock`, never before it
+static int pad_hd;
+static volatile int32_t hd_shown;
+static int sdl_rumbling;
+static PlatMutex hd_lock = PLAT_MUTEX_INIT;
 static PlatCond hd_go = PLAT_COND_INIT;
-static RumbleHd hd;                   // what the primary is to get and what it got
-static int hd_kick;                   // work for the thread: a post, or a pair that left
-static int hd_pair_left;              // the pair stopped being the primary: its two devices are to be closed
-static int hd_ended;                  // input_rumble_hd_stop ran: nothing is written any more
-static int hd_first_logged;           // under lock: the primary's first report was logged (hd_wrote)
-static volatile int32_t hd_thread;    // 0 not started, 1 running, -1 it could not be started (set under hd_lock)
+static RumbleHd hd;
+static int hd_kick;
+static int hd_pair_left;
+static int hd_ended;
+static int hd_first_logged;
+static volatile int32_t hd_thread;
 
-// NX2SARIA_RUMBLE_HD is on and rumble is not off altogether (NX2SARIA_RUMBLE=0); live (cfg_version). Any thread.
 static int hd_setting(void) {
     static volatile int32_t on = -1;
     static volatile uint32_t seen;
@@ -602,7 +519,6 @@ static int hd_setting(void) {
     return __atomic_load_n(&on, __ATOMIC_RELAXED);
 }
 
-// The time between two reports: NX2SARIA_RUMBLE_HD_MS, 5 to 50 ms, RUMBLE_HD_GAP_NS when unset; live. The HD thread only.
 static uint64_t hd_gap_ns(void) {
     static uint64_t gap = RUMBLE_HD_GAP_NS;
     static unsigned seen = ~0u;
@@ -616,9 +532,6 @@ static uint64_t hd_gap_ns(void) {
     return gap = set;
 }
 
-// Under lock and sdl_lock: how gamepad p takes rumble reports (HD_*), with *one set for a single actuator and the
-// words for the log in how. The controllers are known by Nintendo's vendor id, their product ids and the kind SDL
-// reads from the controller itself: a pad of another make that only looks like one to SDL stays on its motors.
 static int hd_probe(SDL_Gamepad *p, int *one, char *how, size_t cap) {
     *one = 0;
     uint16_t vid = SDL_GetGamepadVendor(p), pid = SDL_GetGamepadProduct(p);
@@ -640,7 +553,7 @@ static int hd_probe(SDL_Gamepad *p, int *one, char *how, size_t cap) {
     }
     const char *what = single ? "a single Joy-Con, one actuator" : "a Pro Controller";
     *one = single;
-    if (!hd_setting()) {   // off: nothing is written to the controller
+    if (!hd_setting()) {
         snprintf(how, cap, "%s, through SDL, whose driver is asked once rumble_hd is 1", what);
         return HD_SDL;
     }
@@ -654,15 +567,12 @@ static int hd_probe(SDL_Gamepad *p, int *one, char *how, size_t cap) {
     return HD_SDL;
 }
 
-// Under lock, and under sdl_lock when connected is set: the primary stops being the primary (another gamepad takes
-// over, or it went away). A controller the HD path left vibrating gets the neutral value, and what was written to it
-// does not count for the next primary.
 static void hd_pad_leave(int connected) {
     if (!pad) return;
     plat_mutex_lock(&hd_lock);
     int buzzing = rumble_hd_buzzing(&hd);
     rumble_hd_forget(&hd);
-    if (pad_hd == HD_PAIR) {   // the HD thread closes the two devices, after a neutral report to each
+    if (pad_hd == HD_PAIR) {
         hd_pair_left = 1, hd_kick = 1;
         plat_cond_signal(&hd_go);
     }
@@ -676,9 +586,6 @@ static void hd_pad_leave(int connected) {
     __atomic_store_n(&hd_shown, 0, __ATOMIC_RELAXED);
 }
 
-// Under lock: the report with data d was written at `now` (ok), or the controller or its driver did not take it: the
-// gamepad then goes back to its motors until it becomes the primary again. The primary's first report is logged with
-// its bytes, so a log shows that the path is in use and what the controller was sent.
 static void hd_wrote(int ok, const uint8_t d[RUMBLE_HD_DATA], uint64_t now, const char *err) {
     plat_mutex_lock(&hd_lock);
     if (ok) rumble_hd_sent(&hd, d, now);
@@ -696,8 +603,6 @@ static void hd_wrote(int ok, const uint8_t d[RUMBLE_HD_DATA], uint64_t now, cons
     __atomic_store_n(&hd_shown, 0, __ATOMIC_RELAXED);
 }
 
-// One round of the HD rumble thread: writes the report that is due, if one is. 1 when nothing is left to write until
-// the game posts again.
 static int hd_tick(void) {
     uint8_t d[RUMBLE_HD_DATA];
     uint64_t now = plat_now_ns(), gap = hd_gap_ns();
@@ -709,10 +614,10 @@ static int hd_tick(void) {
     int due = !hd_ended && kind != HD_NONE && rumble_hd_due(&hd, on, now, gap, d);
     int idle = hd_ended || kind == HD_NONE || (!due && rumble_hd_idle(&hd, on, now));
     plat_mutex_unlock(&hd_lock);
-    if (due && kind == HD_SDL && plat_mutex_trylock(&sdl_lock)) {   // a round later while SDL updates
-        if (SDL_GamepadConnected(pad)) {   // a gamepad that went away is let go by the next scan (scan_pads)
+    if (due && kind == HD_SDL && plat_mutex_trylock(&sdl_lock)) {
+        if (SDL_GamepadConnected(pad)) {
             uint8_t r[RUMBLE_HD_REPORT];
-            rumble_hd_report(d, 0, r, sizeof r);   // SDL puts its own number in
+            rumble_hd_report(d, 0, r, sizeof r);
             int ok = SDL_SendGamepadEffect(pad, r, sizeof r);
             hd_wrote(ok, d, now, ok ? "" : SDL_GetError());
         }
@@ -721,10 +626,8 @@ static int hd_tick(void) {
     plat_mutex_unlock(&lock);
     if (close_pair) hd_pair_close(1, 0);
     if (due && kind == HD_PAIR) {
-        // waits for the two writes, so not under lock; after input_rumble_hd_stop it writes nothing (hd_pair_end)
         int ok = hd_pair_write(d);
         plat_mutex_lock(&lock);
-        // unless the pair left or the stop came meanwhile (hd_ended is written under lock as well)
         if (pad && pad_hd == HD_PAIR && !hd_ended) hd_wrote(ok, d, now, ok ? "" : SDL_GetError());
         plat_mutex_unlock(&lock);
     }
@@ -768,12 +671,11 @@ void input_rumble_hd(const RumbleHdValue v[2], const int live[2], float strength
 
 void input_rumble_hd_stop(void) {
     int got = 0, wait = 0;
-    // The locks are tried for a while and not waited for: a thread of the game may hold one for good by now.
     for (int i = 0; i < 50 && !(got = plat_mutex_trylock(&lock)); i++) plat_wait_ns(1000000);
     if (!got) return;
     got = 0;
     for (int i = 0; i < 50 && !(got = plat_mutex_trylock(&hd_lock)); i++) plat_wait_ns(1000000);
-    if (!got) {   // a fatal error or a crash on the thread that writes the reports (dispatch.c rt_rumble_stop_bounded)
+    if (!got) {
         plat_mutex_unlock(&lock);
         return;
     }
@@ -794,22 +696,15 @@ void input_rumble_hd_stop(void) {
     }
     plat_mutex_unlock(&lock);
     if (pair) hd_pair_end(100);
-    if (wait) plat_wait_ns(30000000);   // SDL writes the report on a thread of its own: time for it before the process ends
+    if (wait) plat_wait_ns(30000000);
 }
 
-// Every connected gamepad is kept open; `pad` is the one the game reads (and the one that rumbles and feeds motion):
-// the first one found, then whichever one the player presses (pad_follow). Taking only the first gamepad SDL lists
-// left the game deaf when that one was a device nobody holds: a virtual pad of Steam Input or DS4Windows, a wheel, a
-// receiver's idle second slot, listed before the controller in the player's hands.
 enum { MAX_PADS = 8 };
 static SDL_Gamepad *pads[MAX_PADS];
-static uint8_t pad_rest[MAX_PADS];   // per open gamepad, bit a: axis a has been seen at rest (pad_axis)
+static uint8_t pad_rest[MAX_PADS];
 static int npads;
-static int pad_pressed_logged;       // the primary's first press was logged (once per primary)
+static int pad_pressed_logged;
 
-// The gyro and accelerometer pairs a gamepad may have, in the order they are taken: the gamepad's own, then a Joy-Con
-// half's. SDL gives a combined Joy-Con pair the right Joy-Con's sensors as the plain pair already; the right and left
-// pairs are for drivers that list only those.
 static const struct { SDL_SensorType gyro, acc; const char *which; } sensor_pairs[] = {
     {SDL_SENSOR_GYRO, SDL_SENSOR_ACCEL, ""},
     {SDL_SENSOR_GYRO_R, SDL_SENSOR_ACCEL_R, ", the right Joy-Con's"},
@@ -817,12 +712,10 @@ static const struct { SDL_SensorType gyro, acc; const char *which; } sensor_pair
 };
 enum { SENSOR_PAIRS = sizeof sensor_pairs / sizeof sensor_pairs[0] };
 
-// Under lock and sdl_lock: 1 when gamepad p has pair i of sensor_pairs.
 static int sensor_pair_has(SDL_Gamepad *p, int i) {
     return SDL_GamepadHasSensor(p, sensor_pairs[i].gyro) && SDL_GamepadHasSensor(p, sensor_pairs[i].acc);
 }
 
-// Under lock: makes p the gamepad the game reads, with its labels, rumble and layout; logs it.
 static void pad_primary(SDL_Gamepad *p, const char *why) {
     hd_pad_leave(1);
     pad = p;
@@ -855,13 +748,6 @@ static void pad_primary(SDL_Gamepad *p, const char *why) {
            how, cfg_value("NX2SARIA_RUMBLE_HD"));
 }
 
-// Joysticks SDL has no gamepad mapping for are not gamepads to it, and this file opens gamepads only. Known ones get a
-// mapping built from their own GUID (so it matches whatever bus, version and name checksum SDL put in it); any other is
-// logged once with its name, ids and GUID.
-// - A Switch that presents its Joy-Con over USB from its boot menu's tools:
-//   "Nyx Joy-Con", VID 0x11EC, PID 0xA7E1, a plain HID joystick: X, Y (left stick), Z, Rz (right stick) from 0 to 255
-//   with up at 0, a hat for the D-pad, and buttons 1-12 B, A, Y, X (south, east, west, north), L, R, ZL, ZR, Minus,
-//   Plus, left and right stick clicks. Capture and Home are not sent.
 static const struct { uint16_t vid, pid; const char *name, *map; } known_joysticks[] = {
     {0x11EC, 0xA7E1, "Nyx Joy-Con (USB HID)",
      "a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,lefttrigger:b6,righttrigger:b7,back:b8,start:b9,leftstick:b10,"
@@ -899,11 +785,6 @@ static void map_joysticks(void) {
     SDL_free(ids);
 }
 
-// Under lock: closes the gamepads that went away and opens the ones that came; the primary falls back to the first
-// open one when it left. Logs each change.
-// The game is always told one controller is connected, so a disconnect read as nothing pressed and play went on
-// uncontrolled (the console would stop and ask for a controller). When the primary goes and no other gamepad takes
-// its place, the menu opens: the player sees it, and it takes the keyboard and mouse until it is closed.
 static void scan_pads(void) {
     int had = pad != NULL;
     map_joysticks();
@@ -940,11 +821,6 @@ static void scan_pads(void) {
     }
 }
 
-// Under lock: axis a of open gamepad p, or 0 until the axis has been seen at rest (within a quarter of its range of the
-// middle; a trigger's rest is 0). A device that reports an axis held from the start (a virtual pad nobody holds, a
-// trigger or pedal mapped onto a stick, a stick that rests far off its middle) would otherwise turn the camera on its
-// own, and, counted as pressed, take the gamepad role from the controller in the player's hands for good (pad_follow).
-// A stick the player holds at the start counts once it has been let go.
 enum { AXIS_REST = 8192 };
 static int16_t pad_axis(SDL_Gamepad *p, SDL_GamepadAxis a) {
     int16_t v = SDL_GetGamepadAxis(p, a);
@@ -962,8 +838,6 @@ static void stick(SDL_GamepadAxis ax, SDL_GamepadAxis ay, float dead, int32_t ou
     input_pad_stick(pad_axis(pad, ax), -(int32_t)pad_axis(pad, ay), dead, out);
 }
 
-// Under lock: 1 when p has a button down, a trigger pulled or a stick past half way (a drifting stick does not count,
-// nor an axis not yet seen at rest).
 static int pad_active(SDL_Gamepad *p) {
     for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++)
         if (SDL_GetGamepadButton(p, (SDL_GamepadButton)b)) return 1;
@@ -972,14 +846,12 @@ static int pad_active(SDL_Gamepad *p) {
     return 0;
 }
 
-// Under lock: when the primary is idle and another open gamepad is pressed, that one becomes the primary.
 static void pad_follow(void) {
     if (npads < 2 || (pad && pad_active(pad))) return;
     for (int i = 0; i < npads; i++)
         if (pads[i] != pad && pad_active(pads[i])) { pad_primary(pads[i], "in use (pressed)"); return; }
 }
 
-// Under lock: the layout of the open gamepad, picked again when a setting or the gamepad changed; logs each change.
 static int pad_layout_get(void) {
     unsigned ver = cfg_version();
     if (pad_layout >= 0 && ver == pad_layout_seen) return pad_layout;
@@ -993,8 +865,6 @@ static int pad_layout_get(void) {
     return pad_layout;
 }
 
-// The NX2SARIA_BIND_* values last applied, one per line; the tables are built again when one changes (the menu's remapping rows write
-// them while the game runs). Under lock.
 static unsigned binds_seen = ~0u;
 static char binds_applied[4096];
 
@@ -1015,40 +885,26 @@ static void binds_refresh(void) {
     input_map_configure();
 }
 
-// NX2SARIA_TEST_PAD=<lx>,<ly>,<rx>,<ry> (test runs): an SDL virtual gamepad whose sticks rest at these raw SDL axis values
-// (-32768..32767, down is +y), attached before the first scan so it is the gamepad the game reads: drift and full
-// deflection go through the same mapping and dead zone as a real pad. NX2SARIA_TEST_PAD_AT=<ms>: attached that long after
-// input starts instead, like a controller switched on in play, and its south button pressed for half a second one
-// second later (the log then shows the hot-plug and the press arriving: scan_pads, pad_physical).
-// NX2SARIA_TEST_PAD_GYRO=<x>,<y>,<z> (test runs, with NX2SARIA_TEST_PAD): the test gamepad also has a gyro and an
-// accelerometer. It lies face up and its gyro reads that bias (deg/s, SDL gamepad axes) plus a little noise, in a
-// repeating script of TEST_STILL_NS still and then TEST_HELD_NS "held" (much more noise on both sensors), so the log
-// shows the gyro bias learned while still and learned again after each held phase (motion_fusion.c).
-static SDL_Joystick *test_joy;     // kept open: a virtual joystick's axes and buttons are set through an open handle
-static uint64_t test_attach_ns, test_press_ns;   // NX2SARIA_TEST_PAD_AT: when to attach, when to press (0: done)
+static SDL_Joystick *test_joy;
+static uint64_t test_attach_ns, test_press_ns;
 #define TEST_STILL_NS 4000000000ull
 #define TEST_HELD_NS 2000000000ull
-static int test_gyro;              // test only: the test gamepad has the sensors of NX2SARIA_TEST_PAD_GYRO
-static float test_gyro_bias[3];    // ... its gyro's bias, rad/s
-static uint64_t test_gyro_t0;      // ... when its script began
-static uint32_t test_gyro_rng = 1; // ... the noise's generator (a fixed seed: every run reads the same samples)
+static int test_gyro;
+static float test_gyro_bias[3];
+static uint64_t test_gyro_t0;
+static uint32_t test_gyro_rng = 1;
 
-// Test only: a uniform number in [-1, 1) from a small linear congruential generator.
 static float test_noise(void) {
     test_gyro_rng = test_gyro_rng * 1664525u + 1013904223u;
     return (float)(test_gyro_rng >> 8) / (float)(1u << 23) - 1.0f;
 }
 
-// Test only, under lock and sdl_lock: one gyro and accelerometer sample of the script for the test gamepad. SDL
-// applies it at the next SDL_UpdateGamepads (up_main); test_pad_tick and motion_main both send, so a sample comes at
-// least every 4 ms while the motion thread runs with a gamepad open and its sdl_enter succeeds (not while SDL finds
-// devices again).
 static void test_pad_gyro_send(void) {
     if (!test_joy || !test_gyro) return;
     uint64_t now = plat_now_ns();
     int held = (now - test_gyro_t0) % (TEST_STILL_NS + TEST_HELD_NS) >= TEST_STILL_NS;
     float gn = (held ? 3.0f : 0.05f) * SDL_PI_F / 180, an = held ? 0.05f * SDL_STANDARD_GRAVITY : 0;
-    float g[3], a[3] = {0, SDL_STANDARD_GRAVITY, 0};   // lying face up: the push against gravity is +y
+    float g[3], a[3] = {0, SDL_STANDARD_GRAVITY, 0};
     for (int i = 0; i < 3; i++) g[i] = test_gyro_bias[i] + gn * test_noise(), a[i] += an * test_noise();
     SDL_SendJoystickVirtualSensorData(test_joy, SDL_SENSOR_GYRO, now, g, 3);
     SDL_SendJoystickVirtualSensorData(test_joy, SDL_SENSOR_ACCEL, now, a, 3);
@@ -1068,7 +924,6 @@ static void test_pad_make(void) {
     d.naxes = SDL_GAMEPAD_AXIS_COUNT;
     d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
     d.name = "NX2Saria test gamepad";
-    // test only: NX2SARIA_TEST_PAD_GYRO adds a gyro and an accelerometer (test_pad_gyro_send)
     static const SDL_VirtualJoystickSensorDesc sensors[2] = {{SDL_SENSOR_GYRO, 200}, {SDL_SENSOR_ACCEL, 200}};
     const char *ge = cfg_get("NX2SARIA_TEST_PAD_GYRO");
     float bias[3];
@@ -1105,8 +960,6 @@ static void test_pad_attach(void) {
     test_pad_make();
 }
 
-// Under lock and sdl_lock, every poll: the delayed attach and the press of NX2SARIA_TEST_PAD_AT, and the test gyro's
-// sample.
 static void test_pad_tick(void) {
     test_pad_gyro_send();
     uint64_t now = plat_now_ns();
@@ -1126,15 +979,15 @@ static void start(void) {
     binds_refresh();
     const char *e = cfg_get("NX2SARIA_INPUT");
     if (e && !strcmp(e, "none")) { state = -1; rt_log("input: disabled (NX2SARIA_INPUT=none)"); return; }
-    state = sdl_start() ? 1 : -1;   // SDL's initialisation, on the pad thread (up_main)
+    state = sdl_start() ? 1 : -1;
     if (state == 1) {
-        plat_mutex_lock(&sdl_lock);   // the pad thread updates only when asked, and nobody has asked yet
+        plat_mutex_lock(&sdl_lock);
         test_pad_attach();
         scan_pads();
         plat_mutex_unlock(&sdl_lock);
         if (!pad) rt_log("input: no gamepad (keyboard only until one is connected)");
     }
-    if (state == -1) state = 2;   // keyboard only
+    if (state == -1) state = 2;
 }
 
 static void stick_bits(uint64_t *b, int32_t x, int32_t y, int first) {
@@ -1149,12 +1002,6 @@ static void pick(int32_t *x, int32_t *y, int32_t kx, int32_t ky) {
     if (b > a) { *x = kx; *y = ky; }
 }
 
-// The shake key (B_SHAKE): the game detaches a part fused to the held object when the right stick swings left and
-// right a few times. A press swings it for SHAKE_NS, holding keeps it swinging. Each side lasts SHAKE_SIDE_STEPS
-// updates of the game, counted by its presents (frame_rate.c frame_step_presents), as two frames at the game's 30 fps
-// did, so the game sees the same swings at any frame rate. A side of a fixed time (two 30 fps frames, 67 ms) lasted 8
-// updates at 120 fps and 16 at 240. Returns the stick x, 0 while not shaking.
-// Under lock.
 #define SHAKE_NS 800000000ull
 #define SHAKE_SIDE_STEPS 2
 static int32_t shake_stick(int held) {
@@ -1169,38 +1016,29 @@ static int32_t shake_stick(int held) {
     return (steps - from) / SHAKE_SIDE_STEPS % 2 ? STICK_MAX : -STICK_MAX;
 }
 
-// Under lock and inside sdl_enter (the gamepads' state is up to date), state 1: the open gamepad's inputs by position
-// (pd[PAD_*] != 0 held); 0 without a connected gamepad.
 static int pad_physical(uint8_t pd[PAD_COUNT]) {
     test_pad_tick();
-    // every RESCAN_MS, not only without a gamepad: a second controller, or one that wakes up after the start, is found
     if (plat_now_ns() / 1000000u >= next_scan) { next_scan = plat_now_ns() / 1000000u + RESCAN_MS; scan_pads(); }
     pad_follow();
     if (!pad || !SDL_GamepadConnected(pad)) return 0;
     for (int p = PAD_SOUTH; p < PAD_ZL; p++) pd[p] = SDL_GetGamepadButton(pad, pad_sdl[p]);
     pd[PAD_ZL] = pad_axis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > TRIGGER_ON;
     pd[PAD_ZR] = pad_axis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > TRIGGER_ON;
-    for (int p = PAD_ZR + 1; p < PAD_COUNT; p++) pd[p] = SDL_GetGamepadButton(pad, pad_sdl[p]);   // false without paddles
-    if (!pad_pressed_logged) {   // once per primary: the log then shows that its presses arrive
+    for (int p = PAD_ZR + 1; p < PAD_COUNT; p++) pd[p] = SDL_GetGamepadButton(pad, pad_sdl[p]);
+    if (!pad_pressed_logged) {
         for (int p = PAD_SOUTH; p < PAD_COUNT && !pad_pressed_logged; p++)
             if (pd[p]) pad_pressed_logged = 1, rt_log("input: gamepad \"%s\": first press (%s)", SDL_GetGamepadName(pad), input_pad_name(p));
     }
     return 1;
 }
 
-// Under lock, state 1: the open gamepad's buttons (Switch bits after NX2SARIA_PAD_LAYOUT and the NX2SARIA_BIND_* lines) and
-// sticks; 0 without a connected gamepad.
 #ifdef _WIN32
-// Without a gamepad SDL can open, Xbox controllers are read through XInput directly (xinput1_4, else xinput9_1_0):
-// SDL may miss a pad another program or driver presents only as XInput. Slots 0-3, the first connected one; a slot
-// found empty is asked again once a second, as XInputGetState on an empty slot takes milliseconds.
 typedef struct { uint16_t buttons; uint8_t lt, rt; int16_t lx, ly, rx, ry; } XiPad;
 typedef struct { uint32_t packet; XiPad pad; } XiState;
 typedef uint32_t(__stdcall *XiGetState)(uint32_t, XiState *);
 __declspec(dllimport) void *__stdcall LoadLibraryA(const char *);
 __declspec(dllimport) void *__stdcall GetProcAddress(void *, const char *);
 
-// Under lock: the first connected XInput pad's inputs by position (input_map.h PAD_*) and sticks (y up); 0 without one.
 static int xinput_read(uint8_t pd[PAD_COUNT], int32_t *raw) {
     static XiGetState get;
     static int tried, slot = -1;
@@ -1238,7 +1076,6 @@ static int xinput_read(uint8_t pd[PAD_COUNT], int32_t *raw) {
 #endif
 
 #ifdef _WIN32
-// 1 when the DualShock 3 reader (input_ds3_win.c) has input beyond rest: a button down or a stick past half way.
 static int ds3_pressed(const uint8_t pd[PAD_COUNT], const int32_t raw[4]) {
     for (int p = PAD_SOUTH; p < PAD_COUNT; p++)
         if (pd[p]) return 1;
@@ -1247,9 +1084,6 @@ static int ds3_pressed(const uint8_t pd[PAD_COUNT], const int32_t raw[4]) {
     return 0;
 }
 
-// Under lock: the DualShock 3 reader's inputs when it is the controller the game follows, else 0. Next to an SDL
-// gamepad the one pressed last is followed, as between two SDL gamepads (pad_follow); the same DualShock 3 that a driver
-// also presents to SDL is two sources of one device, and either one gives the same presses.
 static int ds3_primary(uint8_t pd[PAD_COUNT], int32_t raw[4], int sdl_pad) {
     if (!ds3_read(pd, raw)) return 0;
     if (!sdl_pad) return 1;
@@ -1262,8 +1096,6 @@ static int ds3_primary(uint8_t pd[PAD_COUNT], int32_t raw[4], int sdl_pad) {
 
 static int pad_read_now(uint64_t *b, int32_t sl[2], int32_t sr[2]);
 
-// Under lock, state 1: the gamepad's buttons (ORed into *b) and sticks; 0 without one. While SDL is finding devices
-// again (sdl_enter) the answer is the last one read: what was held stays held for those moments.
 static int pad_read(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
     static uint64_t last_b;
     static int32_t last_sl[2], last_sr[2];
@@ -1311,7 +1143,7 @@ int input_pad_stick_percent(double pct[2]) {
     int ok = 0;
     pct[0] = pct[1] = 0;
     plat_mutex_lock(&lock);
-    int in = state == 1 && plat_mutex_trylock(&sdl_lock);   // not while SDL updates: this reading is skipped then
+    int in = state == 1 && plat_mutex_trylock(&sdl_lock);
     int sdl_pad = in && pad && SDL_GamepadConnected(pad);
 #ifdef _WIN32
     uint8_t dd[PAD_COUNT];
@@ -1322,7 +1154,7 @@ int input_pad_stick_percent(double pct[2]) {
         ok = 1;
     } else
 #endif
-    if (sdl_pad) {   // the game's poll keeps the state fresh (sdl_enter)
+    if (sdl_pad) {
         pct[0] = input_stick_percent(pad_axis(pad, SDL_GAMEPAD_AXIS_LEFTX), pad_axis(pad, SDL_GAMEPAD_AXIS_LEFTY));
         pct[1] = input_stick_percent(pad_axis(pad, SDL_GAMEPAD_AXIS_RIGHTX), pad_axis(pad, SDL_GAMEPAD_AXIS_RIGHTY));
         ok = 1;
@@ -1344,15 +1176,9 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
                        abs(sr[1]) > PAD_USED, kbm_used = 0;
         if (ikb_foreground()) {
             uint8_t down[KEY_COUNT] = {0};
-            // Mouse buttons count only while the cursor is captured, and a button already held when the capture began
-            // (the click that refocused the window) is ignored until it is released. Not while a game menu has the
-            // pointer (menu_cursor.c, menu_mouse.c): its clicks are A and B there, also in the moment before the
-            // window thread has released the capture.
             static int was_captured;
             static uint8_t mouse_ignore[KEY_COUNT];
             int cap = ikb_captured() && !menu_cursor_pointer() && !menu_mouse_pointer();
-            // A scan is one key state system call per key (about 95). The game reads several pads in a row: reads
-            // within a millisecond of a scan get its answers again.
             static uint8_t raw[KEY_COUNT];
             static uint64_t raw_at;
             uint64_t now = plat_now_ns();
@@ -1379,9 +1205,6 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
             input_map_stick(down, 1, k);
             if (walk) k[0] = (int32_t)(k[0] * walk_scale), k[1] = (int32_t)(k[1] * walk_scale);
             pick(&sr[0], &sr[1], k[0], k[1]);
-            // The buttons whose selector the right stick picks from. None in Ocarina (1.1.1): its D-pad acts at once
-            // (ocarina, accessory, Navi, boots), and with L or R held the camera input update goes on taking the
-            // mouse; where an update stops taking it, the mouse is the right stick again (mouse_camera).
             int selector = rt_game_version == 111 ? 0
                                : b & (1ull << B_L) ? 1 : b & (1ull << B_UP) ? 2 :
                                  b & (1ull << B_LEFT) ? 3 : b & (1ull << B_RIGHT) ? 4 : 0;
@@ -1394,17 +1217,15 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
             if (travel - travel_seen >= MOUSE_USED) kbm_used = 1;
             travel_seen = travel;
         }
-        // A press or a full-way stick on the pad wins over keys held in the same poll: the player picked it up
         if (pad_used) __atomic_store_n(&g_kbm_last, 0, __ATOMIC_RELAXED);
         else if (kbm_used) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
     }
     script_apply(&b, sl, sr);
     rec_apply(b, sl, sr);
-    // Minus and Plus held together (gamepad or keys) open or close the menu and never reach the game
     static int combo_held;
     int32_t st[4] = {sl[0], sl[1], sr[0], sr[1]};
     int toggle = input_menu_gate(&combo_held, menu_is_open(), &b, st);
-    static int overlay_held;   // L3+R3 step the performance overlay (F10)
+    static int overlay_held;
     int overlay = input_overlay_gate(&overlay_held, &b);
     sl[0] = st[0], sl[1] = st[1], sr[0] = st[2], sr[1] = st[3];
     plat_mutex_unlock(&lock);
@@ -1415,13 +1236,6 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
     *buttons = b; *lx = sl[0]; *ly = sl[1]; *rx = sr[0]; *ry = sr[1];
 }
 
-// Text entry (swkbd_*.c): while it is open the game reads no input, as behind the keyboard applet; after it closes
-// the game reads none until every button and stick direction is released, so the press that closed it stays there.
-// g_block: 0 off, 1 text entry open, 2 closed, waiting for the release. The cursor is released while it is open.
-// When g_block and g_menu last went to 2 (plat_now_ns). The wait for the release ends after RELEASE_WAIT_NS even with
-// something held: an input that never reads as released (a button another program holds down, a key whose release
-// went to another window, a stick that rests outside its dead zone) would otherwise keep the game deaf until restart
-// (#462, #494). A press that closed the menu is let go well within the wait; one still held after it is meant.
 static volatile uint64_t g_block_closed, g_menu_closed;
 #define RELEASE_WAIT_NS 1000000000ull
 
@@ -1437,19 +1251,13 @@ void input_block(int on) {
     ikb_cursor_update();
 }
 
-// The in-game menu (ui/menu.cpp) blocks the game's input the same way: g_menu 0 closed, 1 open, 2 closed, waiting for
-// the release. The cursor is released while it is open, for the menu's mouse.
 void input_menu(int open) {
     if (!open) __atomic_store_n(&g_menu_closed, plat_now_ns(), __ATOMIC_RELEASE);
     plat_xchg32(&g_menu, open ? 1 : 2);
-    if (!open) ikb_menu_closed();   // the capture before Esc comes back
+    if (!open) ikb_menu_closed();
     ikb_cursor_update();
 }
 
-// 1 while flag (g_block, g_menu) blocks the game's input; state 2 ends at the first poll with nothing held, or with
-// something still held RELEASE_WAIT_NS after closed. A stick axis counts as held as well: with the walk key the
-// keyboard's sticks move part way without setting a direction bit, so a gate that watched the buttons alone would let
-// that movement through the moment the menu or the text entry closes.
 static int blocked(volatile int32_t *flag, volatile uint64_t *closed, const char *what, uint64_t buttons,
                    const int32_t *axes) {
     int32_t k = *flag;
@@ -1457,7 +1265,7 @@ static int blocked(volatile int32_t *flag, volatile uint64_t *closed, const char
     int held = buttons != 0;
     for (int i = 0; i < 4; i++) held |= axes[i] != 0;
     if (held && plat_now_ns() - __atomic_load_n(closed, __ATOMIC_ACQUIRE) < RELEASE_WAIT_NS) return 1;
-    if (plat_cas32(flag, 0, 2) != 2) return *flag != 0;   // reopened meanwhile
+    if (plat_cas32(flag, 0, 2) != 2) return *flag != 0;
     if (held)
         rt_log("input: the %s closed 1 s ago and input is still held (buttons %#llx, sticks %d %d %d %d); the game "
                "gets it from now on", what, (unsigned long long)buttons, axes[0], axes[1], axes[2], axes[3]);
@@ -1468,7 +1276,7 @@ int input_game_input_blocked(void) { return g_block != 0 || g_menu != 0; }
 
 int input_sdl_version(int *built) {
     *built = SDL_VERSION;
-    return SDL_GetVersion();   // safe before SDL_Init
+    return SDL_GetVersion();
 }
 
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
@@ -1533,7 +1341,7 @@ int input_capture(int reset, int *id) {
     if (!state) start();
     if (state == 1 && sdl_enter()) pad_physical(p), sdl_leave();
 #ifdef _WIN32
-    if (state == 1) {   // a DualShock 3 the reader has: its presses can be bound too
+    if (state == 1) {
         uint8_t dd[PAD_COUNT];
         int32_t raw[4];
         if (ds3_read(dd, raw))
@@ -1565,34 +1373,25 @@ int input_rumble(uint16_t low, uint16_t high, uint32_t ms) {
     static unsigned seen;
     if (triggers < 0 || seen != cfg_version()) seen = cfg_version(), triggers = input_rumble_triggers_enabled();
     plat_mutex_lock(&lock);
-    if (state == 1 && pad && pad_rumble && plat_mutex_trylock(&sdl_lock)) {   // one skipped while SDL updates
+    if (state == 1 && pad && pad_rumble && plat_mutex_trylock(&sdl_lock)) {
         if (pad_hd != HD_NONE && input_rumble_hd_on()) {
-            // HD rumble has this gamepad (hd_tick): its motors are stopped once and get nothing more, so the reports
-            // with the game's values are the only rumble it is sent
             if (sdl_rumbling) SDL_RumbleGamepad(pad, 0, 0, 0);
             sdl_rumbling = 0;
             ok = 1;
         } else {
             ok = SDL_RumbleGamepad(pad, low, high, ms);
             sdl_rumbling = low || high;
-            if (triggers) SDL_RumbleGamepadTriggers(pad, high, high, ms);   // unsupported pads return false: ignored
+            if (triggers) SDL_RumbleGamepadTriggers(pad, high, high, ms);
         }
         sdl_leave();
     }
 #ifdef _WIN32
-    if (state == 1 && ds3_rumble(low, high, ms)) ok = 1;   // no-op unless the DualShock 3 reader has a controller
+    if (state == 1 && ds3_rumble(low, high, ms)) ok = 1;
 #endif
     plat_mutex_unlock(&lock);
     return ok;
 }
 
-// SDL gamepad sensor axes (SDL_sensor.h, a gamepad held in front of you): x to the right, y up out of the face (lying
-// flat face up, +y points at the ceiling), z toward the player (out of the bottom edge). The accelerometer reads the
-// push against gravity in m/s^2 (lying flat: y = +9.81); the gyro reads rad/s, counter-clockwise positive (right hand).
-// Switch six-axis axes (nn::hid): x to the
-// right, y toward the top edge (away from the player), z out of the face; acceleration as gravity reads (lying flat:
-// z = -1 G). So Switch x = SDL x, Switch y = -SDL z, Switch z = SDL y: a rotation (right-handed to right-handed), so the
-// gyro keeps its sense, while the acceleration is also negated (push -> gravity) and scaled to G.
 void input_motion_axes(const float a[3], const float g[3], double acc[3], double gyro[3]) {
     acc[0] = -a[0] / SDL_STANDARD_GRAVITY;
     acc[1] = a[2] / SDL_STANDARD_GRAVITY;
@@ -1602,26 +1401,21 @@ void input_motion_axes(const float a[3], const float g[3], double acc[3], double
     gyro[2] = g[1];
 }
 
-// The controller whose sensors motion_main hands to the fusion next (motion_source), set by sensors_ready under lock
-// and taken by motion_main under lock; the call itself is made after the lock is let go.
 static int source_pending;
 static SDL_JoystickID source_id;
 static char source_name[128];
 
-// Under lock and sdl_lock: (re)enable the sensors when the open gamepad changed; 1 if it has a gyro and an
-// accelerometer (sensor_pairs, the first pair it has that turns on) and they are on.
 static int sensors_ready(void) {
     SDL_JoystickID id = SDL_GetGamepadID(pad);
     if (id == sensor_pad) return sensor_ok;
     sensor_pad = id;
-    // Nothing drains the SDL event queue: no event per sample (the data still updates, SDL_SendJoystickSensor)
     SDL_SetEventEnabled(SDL_EVENT_GAMEPAD_SENSOR_UPDATE, false);
     sensor_ok = 0;
     int i = 0;
     for (; i < SENSOR_PAIRS && !sensor_ok; i++) {
         if (!sensor_pair_has(pad, i) || !SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].gyro, true)) continue;
         sensor_ok = SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].acc, true);
-        if (!sensor_ok) SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].gyro, false);   // half a pair is of no use
+        if (!sensor_ok) SDL_SetGamepadSensorEnabled(pad, sensor_pairs[i].gyro, false);
     }
     const char *name = SDL_GetGamepadName(pad);
     if (!name) name = "?";
@@ -1647,9 +1441,6 @@ int input_motion_enabled(void) {
     return on;
 }
 
-// Motion thread only: the gyro settings (gyro_calibration, gyro_deadzone, gyro_turn_sens, gyro_tilt_sens,
-// gyro_turn_invert, gyro_tilt_invert; live) into the fusion's options (motion_set_options). Read again when
-// cfg_version changes; the options in force are logged the first time and at each change (32 lines at most).
 static void motion_options_refresh(void) {
     static unsigned seen;
     static int have, logged;
@@ -1660,7 +1451,7 @@ static void motion_options_refresh(void) {
     static const struct { const char *name; double rps; } zones[] = {
         {"off", 0}, {"low", MOTION_DEADZONE_LOW}, {"standard", MOTION_DEADZONE_STANDARD}, {"high", MOTION_DEADZONE_HIGH}};
     const char *dz = cfg_value("NX2SARIA_GYRO_DEADZONE");
-    int z = 1;   // anything else: low, the default
+    int z = 1;
     for (int i = 0; i < 4; i++)
         if (dz && !strcmp(dz, zones[i].name)) z = i;
     double turn = cfg_double("NX2SARIA_GYRO_TURN_SENS"), tilt = cfg_double("NX2SARIA_GYRO_TILT_SENS");
@@ -1681,10 +1472,6 @@ static void motion_options_refresh(void) {
            o.tilt < 0 ? " inverted" : "", MOTION_KP, MOTION_KI);
 }
 
-// 250 Hz: the gamepads update (reports read, rumble expiry) and the newest gyro and accelerometer sample goes into the
-// fusion. Without a gamepad with sensors, or with motion off (NX2SARIA_MOTION=0, live), nothing is fed and the six-axis
-// sensor reads at rest. The fusion's own lock is never taken under `lock` (motion_source, motion_set_options,
-// motion_restart and motion_feed are called after it is let go), so the two never nest.
 static void motion_main(void *arg) {
     (void)arg;
     int was_on = -1;
@@ -1696,8 +1483,8 @@ static void motion_main(void *arg) {
         SDL_JoystickID sid = 0;
         char sname[sizeof source_name];
         plat_mutex_lock(&lock);
-        if (pad && sdl_enter()) {   // no sample while SDL finds devices again
-            test_pad_gyro_send();   // test only (NX2SARIA_TEST_PAD_GYRO): a sample every round, not only at the game's polls
+        if (pad && sdl_enter()) {
+            test_pad_gyro_send();
             have = SDL_GamepadConnected(pad) && sensors_ready() &&
                    SDL_GetGamepadSensorData(pad, sensor_acc, a, 3) && SDL_GetGamepadSensorData(pad, sensor_gyro, g, 3);
             sdl_leave();
@@ -1706,8 +1493,6 @@ static void motion_main(void *arg) {
         plat_mutex_unlock(&lock);
         if (source) motion_source(motion_global(), (uint64_t)sid, sname);
         int on = input_motion_enabled();
-        // Motion turned back on: the orientation and angle from before it went off describe a controller that has
-        // moved since without being followed, so they start over at the next sample (the learned bias stays).
         if (on && !was_on) motion_restart(motion_global());
         was_on = on;
         if (!have || !on) continue;
@@ -1731,9 +1516,6 @@ void input_motion_start(void) {
     plat_mutex_unlock(&lock);
 }
 
-// --probe-input: the gamepad path on SDL's virtual test gamepad (NX2SARIA_TEST_PAD). The pad thread comes up, a poll
-// reads the gamepad, polls are quick, and while an update takes as long as a device search (up_test_ns) the polls go on
-// with their last state instead of waiting for it. Needs no game files and no controller.
 int probe_gamepad(void) {
     int fails = 0;
     cfg_setenv("NX2SARIA_TEST_PAD", "20000,-12000,0,0");
@@ -1751,11 +1533,10 @@ int probe_gamepad(void) {
     plat_mutex_unlock(&lock);
     if (test && (lx < 8000 || ly == 0)) fails++, printf("FAIL: the test gamepad's left stick read %d,%d\n", lx, ly);
     if (!test) printf("input: another gamepad is the primary one; the stick values are not checked\n");
-    // ordinary polls: each asks the pad thread for an update unless one is fresh
     uint64_t worst = 0, sum = 0;
     enum { N = 400 };
     for (int i = 0; i < N; i++) {
-        plat_wait_ns(700000);   // past UP_FRESH_NS: every poll asks
+        plat_wait_ns(700000);
         uint64_t p0 = plat_now_ns();
         int32_t x, y;
         ok = input_pad_read(&b, &x, &y);
@@ -1767,7 +1548,6 @@ int probe_gamepad(void) {
     printf("input: %d polls, each with its own update: %.0f us on average, %.0f us the longest\n", N, sum / 1e3 / N, worst / 1e3);
     if (worst > UP_WAIT_NS + 3000000) fails++, printf("FAIL: a poll took %.1f ms\n", worst / 1e6);
     uint64_t stale0 = up_stale;
-    // an update that takes 300 ms: the first poll waits UP_WAIT_NS for it, the others not at all, and all get the stick
     __atomic_store_n(&up_test_ns, 300000000ull, __ATOMIC_RELAXED);
     plat_wait_ns(700000);
     uint64_t s0 = plat_now_ns(), first = 0, rest = 0;
@@ -1787,7 +1567,7 @@ int probe_gamepad(void) {
            "the last state\n", n, first / 1e6, rest / 1e3, (unsigned long long)(up_stale - stale0));
     if (first > UP_WAIT_NS + 3000000 || rest > 1500000 || up_stale - stale0 < (uint64_t)n - 1)
         fails++, printf("FAIL: polls waited for the long update\n");
-    plat_wait_ns(120000000);   // the long update ends: polls are fresh again
+    plat_wait_ns(120000000);
     uint64_t g0 = up_gen;
     ok = input_pad_read(&b, &lx, &ly);
     if (!ok || up_gen == g0) fails++, printf("FAIL: no update after the long one\n");

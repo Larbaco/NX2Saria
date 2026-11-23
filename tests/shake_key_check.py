@@ -117,7 +117,7 @@ def main():
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     src = (ROOT / 'runtime' / 'input' / 'input.c').read_text(encoding='utf-8')
-    body = cut(src, '#define SHAKE_NS', '\n// Under lock and inside sdl_enter')
+    body = cut(src, '#define SHAKE_NS', '\nstatic int pad_physical(')
     with tempfile.TemporaryDirectory(prefix='nx2navi-shake-') as tmp:
         c = Path(tmp) / 'check.c'
         c.write_text(HARNESS % body, encoding='utf-8')
