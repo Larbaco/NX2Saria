@@ -29,6 +29,8 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
   and tail-calls it.
 - Testing: a differential harness checks every lifted instruction class against Unicorn (test-only, never linked into
   the game).
+- The generator's notes, file by file (discovery, chunking, the patch file format and the patch page's words, the jump
+  table resolver, the flag and register plans): [docs/code/recomp.md](code/recomp.md).
 
 ### 3. Host
 
