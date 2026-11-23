@@ -2048,3 +2048,312 @@ Two exports in one second: the second is named with "(2)" (up to 99), as the lau
 
 `check_manifest()` gives the manifest's verdict on the zip; `detail` gets its NX2Saria version and export date. In
 `save_share_import()` the save's members are all checked before any is extracted.
+
+## `runtime/hle/audren.h`
+
+`audren:u`, the audio renderer service: the RequestUpdate wire formats, the server-side renderer state, and the mixer
+interface (`runtime/audio/audio_mixer.c`: the real mixer with SDL3 output; its notes are on [audio.md](audio.md)).
+The wire layouts follow the public `audren:u` wire format. Its first line is a licence notice.
+
+- `AudrenVoiceInV2`: REV15 widens only the two filter records (Q14 -> float); the fields after them move by 24 bytes.
+- `AUDREN_REV(n)` is "REVn" (0x30564552 + (n << 24)). `AUDREN_WORK_BUFFER_BYTES` is 0x10000: the host keeps its state
+  in host memory.
+- `AUDIO_CATCHUP_MAX_MS` (3000): catch-up after a stall (`NX2SARIA_AUDIO_CATCHUP`; `runtime/hle/audren.c`
+  `render_thread()`, `runtime/audio/audio_mixer.c` `audio_mixer_owed()`): a gap longer than this is not caught up, the
+  sound goes on from now.
+
+### `ServerVoice`
+
+The server-side voice: the DSP's view of one client voice.
+
+- `pending[4]`: buffers sent while the voice was not playing: valid once it plays.
+- `state`: `SV_*`: the client's Start, Stop and Pause, plus Stopping until the next frame.
+- `flush` and `flush_from`: FlushWaveBuffers since the last frame, from the client's current buffer.
+- `adpcm`: the DSP-ADPCM decode cursor (buffer slot, next sample) and history.
+- `biquad_state[2][6][2]`: per filter and channel, the transposed direct-form II delays.
+- `dry_pass`: `NX2SARIA_AUDIO_STATS`: 1 + the render pass in which the voice ran out of queued buffers before its end
+  of stream (`runtime/hle/audren.c` `advance_voice()`), 0 otherwise.
+- Volume ramps (`runtime/audio/audio_mixer.c` `audio_mixer_render()`): what the voice was mixed with in its last
+  render pass. The pass after it starts every gain there and reaches the new volumes at its end; `voice_reset()` of
+  `audren.c` forgets it. `ramp_pass` is 1 + the render pass the voice was last mixed in, 0 when it has none to ramp
+  from; `ramp_mix` the mix and `ramp_splitter` the splitter it went to then, and `ramp_channels` its channel count: a
+  pass with another of these starts at the new volumes; `ramp_buffers`, into a mix: how many of the mix's buffers
+  `ramp_gain` holds; `ramp_volume`, into a splitter: the voice's volume then (the destinations keep their own);
+  `ramp_gain[6][24]`, into a mix: the gain channel c went into buffer b with (NaN: nothing went in).
+
+### Refused values
+
+`AUDREN_R_INVALID_UPDATE` (0x5299): a RequestUpdate this host refuses (`runtime/hle/audren.c` `update_check()`,
+`runtime/audio/audio_mixer.c` `audio_mixer_routing_check()` and `audio_mixer_mix_layout_check()`): audio module 153,
+description 41, the update's sections do not match the renderer. The SDK's RequestUpdateAudioRenderer hands it back to
+its caller (as it does descriptions 42 and 43) and aborts on any other result; the game ignores it and sends its next
+update. Nothing of a refused update is applied.
+
+The `AB_*` values are the kinds of game value this host cannot use (`runtime/hle/audren.c` `audio_bad()`), one per
+site; each is logged once per renderer. Three groups: the RequestUpdate is refused (`AB_UPD_BUFFERS` to
+`AB_MIX_LAYOUT`); one record of the update is left out and the rest is applied (`AB_CHANNEL_ID` to `AB_MIX_ID`); one
+effect or sink is passed through or skipped (`AB_LIMITER_SIZE` to `AB_SINK_INDEX`).
+
+- `audio_bad()`: a value the game sent that this host cannot use: the caller refuses the update or leaves the one
+  record, effect or sink out. It logs the first of each kind per renderer, with the game frame, and counts every one;
+  with `NX2SARIA_AUDIO_STRICT=1` it ends the process instead, as most of these values did before 0.11.0. Any thread;
+  it takes no lock but the log's.
+- `AUDIO_REFUSE()` is `audio_bad()` for a refused RequestUpdate, as an expression that gives
+  `AUDREN_R_INVALID_UPDATE`.
+
+### `AudioRenderer`
+
+- `state` is 0 started, 1 stopped; `event` the writable handle.
+- `stats`: `NX2SARIA_AUDIO_STATS` (`audren.c`), NULL when off.
+- `strict`: `NX2SARIA_AUDIO_STRICT` (OpenAudioRenderer): `audio_bad()` ends the process.
+- `bad_seen[AB_KINDS]`: the kinds `audio_bad()` logged so far (atomic exchange; any thread). `bad_count`: the times a
+  value was left out (per update or per render pass) or an update refused (atomic).
+- `refused` and `refused_run`: updates refused, and refused in a row (the thread that sends RequestUpdate).
+
+### The mixer interface
+
+`audren_manager_handler()` is IAudioRendererManager, served under "audren:u" (the service table of
+`runtime/hle/ipc.c`). `audren_renderers_live()` counts the renderers whose render tick runs.
+
+Every call of the mixer interface (`runtime/audio/audio_mixer.c`) runs with `r->lock` held except open, close and
+set_running, the render thread's `audio_mixer_pace_ns()`, `audio_mixer_owed()` and `audio_mixer_out_stats()`
+(`runtime/hle/audren.c` `render_thread()` and `stats_report()` call them without it), and
+`audio_mixer_routing_check()`. The render thread's three touch only atomics and state that only the render thread
+changes: `device_check` and `channels_switch`, which close and open the output stream, run on that thread too, and
+`audio_mixer_close()` runs after `renderer_close()` has joined it. `audio_mixer_routing_check()` runs on the game's
+update thread before it takes the lock and reads only the renderer's fixed counts and the game's input.
+
+- `audio_mixer_routing_check()`: before an update is applied, without the renderer lock: the framing of the splitter
+  and mix sections in the layout of `revision`. 0, or `AUDREN_R_INVALID_UPDATE` (logged through `audio_bad()`).
+- `audio_mixer_mix_layout_check()`: renderer lock held, before the update is applied: the mixes in use, as the update
+  leaves them, fit the renderer's mix buffers (`audio_mixer_render()` lays them out one after another). 0, or
+  `AUDREN_R_INVALID_UPDATE`.
+- `audio_mixer_update_routing()`: after both checks passed. A record whose ids the renderer does not have is left out
+  (`audio_bad()`).
+- `audio_mixer_update_effects()`: an enabled effect whose parameters the DSP cannot use is passed through by
+  `audio_mixer_render()` (`audio_bad()`).
+- `audio_mixer_render()`: after `voices_prepare()` of `audren.c`, before voices advance. `drop`: a catch-up frame
+  (`render_thread()`). It is mixed in full, so the voices' filters, the effects and the sinks the game reads back
+  advance as for any frame, and nothing of it is queued for the device.
+- `audio_mixer_pace_ns()`: device pacing for the render thread at `kern_now_ns` `now`: 0 renders the next frame now, a
+  positive value waits that many ns (the ring is at its target), -1 leaves the pace to the render thread's timer (no
+  device, renderer stopped, device stalled).
+- `audio_mixer_owed()`: catch-up for the frames the device paces (render thread, lock not held). 1: the device has
+  played at least one render frame of silence for want of rendered sound that is not made up for yet; that frame is
+  taken off what is owed and the caller renders one frame with `drop` set. 0: nothing is owed. -1: more than
+  `AUDIO_CATCHUP_MAX_MS` was owed and is forgotten.
+- `audio_mixer_out_stats()` (`AudioOutStats`): `NX2SARIA_AUDIO_STATS`: the output's counters since it opened, and the
+  longest gap between two device requests since the last call (which starts that measure again). False without a
+  device.
+- `audio_mixer_ramp_stats()`: `NX2SARIA_AUDIO_STATS`: the render passes in which at least one volume was ramped
+  (`NX2SARIA_AUDIO_RAMP`), and the ramps (one source channel into one mix buffer), since the mixer opened.
+- `audio_voice_consumed()`: the source samples over one frame; it advances `v->fraction`.
+- `audio_buffer_empty()`: no samples to decode: played as soon as it is reached.
+- `audio_device_handler()` is IAudioDevice. `audio_channels_live()`: after a settings change, another
+  `NX2SARIA_AUDIO_CHANNELS` reaches the game and the mixer. `audio_dmg_handler()` is `auddmg:u` and
+  `audio_sysmix_handler()` `audsmx:u` (both Switch 2).
+
+## `runtime/hle/audren.c`
+
+`audren:u`. The SDK's `nn::audio` client builds RequestUpdate input unchanged; this service validates every section
+against the header, keeps server-side voice state, advances it in real time (one frame of sample_count / sample_rate
+seconds per render tick, signalling the renderer's event) and writes the output status the client expects. The mixer
+behind it is `runtime/audio/audio_mixer.c`. The file's first two lines are a licence notice.
+
+A value in the game's RequestUpdate is not a reason to end the process (`audio_bad()`): an update whose sections do
+not match the renderer is refused whole with `AUDREN_R_INVALID_UPDATE`, and a record, effect or sink whose values the
+renderer cannot use is left out of an update that is otherwise applied. `NX2SARIA_AUDIO_STRICT=1` ends the process
+there instead. OpenAudioRenderer's parameters (`need()`) and the request's buffer descriptors (`ipc_guest` of
+`runtime/hle/ipc.c`) still end it.
+
+`gfx_counters.frames` is the game frame a stats line names, to match the frametime lines.
+
+### The statistics
+
+`NX2SARIA_AUDIO_STATS` (default 0; 1 on): where a crackle comes from. A gap in the sound has one of two sources here.
+The output device took a period and the ring held less (an underrun: silence until the prefill is queued again),
+because the render thread came late: a long gap between two of its passes, or a long wait for the renderer lock, which
+the game's audio thread holds while its RequestUpdate is read. Or the game's audio thread came late: on the console it
+sends RequestUpdate after each render pass and keeps every streamed voice's queue filled; a voice whose queue runs out
+before its end of stream ("dry") plays silence until its next buffer arrives ("late", counted when that comes within
+`AS_LATE_PASSES` passes, by how many passes it missed). One line per `AS_WINDOW_NS` (10 s) in which something went
+wrong (and once a minute regardless), plus a line for each of the first `AS_EVENTS` underruns and late game updates,
+with the game frame (the frame numbers of the frametime lines).
+
+- `AS_LATE_PASSES` (40) is 200 ms: a buffer later than that is taken for a new sound, not a late one.
+- `AS_GAP_NS` (15 ms): a render pass more than this after the one before (a 10 ms device period + 5).
+- `AS_LOCK_NS` (2 ms): a wait for the renderer lock longer than this.
+- `AS_UPDATE_NS` (20 ms): a game update more than this after the one before (four passes). `AS_UPDATE_EVENT_NS` is
+  30 ms.
+- `AudrenStats`, by who writes it. The render thread (under the lock): passes, gaps between them, lock waits, the
+  ring's level when a pass began; `out_underruns`, `out_missing`, `out_skipped` and `out_overruns` are the output's
+  counters at the window's start; `seen_underruns` the last count an event line was written for. The game's
+  RequestUpdate (under the lock): the `upd_*` fields. Voices (under the lock): `dry`, and `late[3]` for a next buffer
+  late by 1-2 passes, 3-8, 9-`AS_LATE_PASSES`; `ramp_passes` and `ramps` are the mixer's volume ramp counts at the
+  window's start (`audio_mixer_ramp_stats`). Catch-up (`render_thread()`, under the lock): `caught_up` frames rendered
+  and dropped, `gave_up` gaps over `AUDIO_CATCHUP_MAX_MS`, which are left as they are. `voices_ns` is the last voice
+  census line (the game's update, under the lock); `voices_most` the most voices in use a census found.
+
+`g_game_prio` is `NX2SARIA_AUDIO_GAME_PRIO` (default 0): the host priority of the game's thread that sends
+RequestUpdate. 0 leaves it alone. 1 raises it to the highest while the update is read, so the render thread (highest
+priority) never waits for the renderer lock behind a game thread the host has preempted for busier threads. 2 also
+keeps that thread above normal from its first update on, so it is not queued behind the shader and pipeline workers
+when it wakes for the next render pass.
+
+### `audio_bad()`
+
+Without strict, a kind already seen returns before anything is formatted: it formats only once. In strict mode
+`ipc_backtrace` prints the game's frame chain when the game's update thread is here; nothing on the render thread.
+
+### `need()`
+
+For OpenAudioRenderer's and GetWorkBufferSize's parameters, and host allocations: once per renderer, the SDK's fixed
+values, not the game's updates.
+
+### `renderer_new()`
+
+A new renderer is stopped (state 1).
+
+### `take()`
+
+The next `n` bytes, or NULL when they run past the header's total (`update_check()` refuses the update).
+
+### `voice_reset()`
+
+`ramp_pass` goes to 0: a new voice starts at its volumes, with no ramp from what the slot's last voice was mixed with.
+
+### `update_voice()`
+
+`request_update()` has checked the id against the voice count and, for a voice in use, its wave buffer index. The play
+state is kept as the DSP keeps it: Stop on a voice that is not stopped becomes Stopping, which the next render frame
+turns into Stopped after giving back every queued buffer. A new buffer waits until a render frame finds the voice
+playing.
+
+### `audio_buffer_empty()` `skip_empty()`
+
+No samples (no memory, no size or an empty range): the DSP counts the buffer as played when it reaches it, so a
+stream's empty last buffer does not hold up the buffers queued behind it. In `skip_empty()` an endless empty loop
+starves the voice, as on the DSP.
+
+### `voices_prepare()`
+
+Each render frame, before mixing: flush, stop, start. FlushWaveBuffers: from the client's current buffer, the queued
+ones count as played. Stopping: every queued buffer counts as played; unsent ones are dropped. With
+`NX2SARIA_AUDIO_STATS`, the buffer a dry voice waited for is counted by the passes it missed.
+
+### `output_header()`
+
+The output header of an update in the layout of `revision`, section by section: the SDK reads every section back and
+aborts when a size differs from the one it expects. The effect output record is 0x90 bytes from REV9, 0x10 before
+(`effect_out_bytes()`).
+
+### `update_check()`
+
+`UpdateIn` is an update's sections as `update_check()` found them, and the output header it checked against the
+output buffer.
+
+Every check of an update's framing, before anything of it is applied, in the order the sections come; without the
+renderer lock (it reads the renderer's fixed counts and the game's input). The SDK builds each section from the
+renderer's own counts, so a mismatch means this host reads another layout than the one the game wrote (a revision),
+not a value the game chose. 0, or `AUDREN_R_INVALID_UPDATE` after one `audio_bad()` line. `TAKE()` is the next
+section, or the update refused when it runs past the header's total.
+
+### `note_refused()`
+
+A refused update, on the thread that sends RequestUpdate only (the SDK sends from one; a second sender would only race
+these diagnostic counts). The game ignores the result and goes on; while refusals go on, its sounds stop following it.
+
+### `request_update()`
+
+0, or `AUDREN_R_INVALID_UPDATE` with nothing of the update applied and nothing written to `output`.
+
+- The first update's sizes are logged, also when it is refused.
+- `audio_mixer_mix_layout_check` is the one check that needs the mixes as they are: under the lock, before the first
+  write.
+- From there on a value the renderer cannot use leaves its one record out (`audio_bad()`); the rest is applied.
+- An unused voice slot can have a zero id: its own voice is released and voice zero is left playing.
+- The output: `update_check()` has checked its size against the output buffer. EffectStatus is Enabled 3 or Disabled
+  4. The performance section (0x10) has nothing written; the behavior section (`AUDREN_BEHAVIOR_OUT`, 0xb0) reports
+  no errors.
+- With `NX2SARIA_AUDIO_STATS`: the game's cadence and how long its update held the lock. The voice census, once per
+  window: the voices the game holds. Its sound engine takes one per sound from a budget of the renderer's voice count,
+  so sounds that are never let go show as a count that climbs from area to area until new sounds are refused.
+
+### `advance_voice()`
+
+The render tick: one frame each time the output device has taken the ring below its target (`audio_mixer_pace_ns`), or
+every sample_count / sample_rate seconds of the host clock without a device, while stopped or while it stalls; after a
+stall the frames that are owed are rendered and dropped (`render_thread()`, catch-up).
+
+An endless empty loop `skip_empty()` kept starves the voice, and its zero length would make the loop go round for
+good, so the walk stops there. With `NX2SARIA_AUDIO_STATS` a voice is marked dry when the queue ran out within this
+pass, not at an end of stream (which zeroes `played`).
+
+### `stats_pass()` `stats_report()`
+
+`stats_pass()`: `NX2SARIA_AUDIO_STATS`, render thread: the pass that begins at `now` (lock held after waiting
+`lock_ns` for it). `paced`: the device paces this pass (the timer's passes, without a device or in a stall, keep their
+own cadence). `stats_report()`: render thread after a pass, lock not held: the event lines and the window line. When
+the window is reset `upd_last_ns` and `upd_pass_last` stay: the next gap is measured from the last update.
+
+### `render_thread()`
+
+**The gap between device-paced frames.** When the device pulls a period (1024 samples on PipeWire, 4-5 frames) the
+ring drops below its target and the frames would otherwise render back to back. On hardware the DSP renders one frame
+every 5 ms and the game's audio thread works in between; AUX effects need that time to fill the return ring, or
+`mix_aux` reads stale samples and the frame clicks at its seams. Device-paced frames stay at least 4/5 of a frame
+apart, which still refills a period well before the device drains it. Linux only: on Windows SDL pulls 480-sample
+periods, and a sink dump (`NX2SARIA_AUDIO_DUMP`) of the bursts there showed no more seam spikes than chance, so a wait
+on this thread buys nothing.
+
+**Catch-up** (`NX2SARIA_AUDIO_CATCHUP`, default 1). The console's audio hardware takes a frame every 5 ms whatever the
+rest of the system does, so the game's sound keeps its place against the picture. Here a frame that is not rendered
+when it is due is time the sound loses for good: the device plays silence meanwhile, rendering goes on where it
+stopped, and everything after the gap is heard that much later than the picture it belongs to. So after a stall the
+frames that are owed are rendered and dropped: mixed in full, which moves the voices, the effects and what the game
+reads back on as if they had been heard, and not queued for the device, whose queue is then filled as before. While
+the device paces, it says what is owed: the silence it played for want of frames (`audio_mixer_owed`), asked before
+anything is waited for or queued, so the dropped frames come right after the gap. On the timer a frame is owed when
+its deadline passed a whole frame ago. A gap of more than `AUDIO_CATCHUP_MAX_MS` (a debugger, the PC asleep) is not
+caught up: the sound goes on from now. With the setting off nothing is dropped, and the timer queues frames up to
+100 ms late back to back and skips a longer gap.
+
+While the device paces, `next` is kept at now + one frame: where the timer goes on if the device stops pacing. On the
+timer, a thread that fell far behind resynchronises.
+
+### `renderer_handler()`
+
+IAudioRenderer:
+
+| Command | Call |
+|---|---|
+| 0 | GetSampleRate |
+| 1 | GetSampleCount |
+| 2 | GetMixBufferCount |
+| 3 | GetState |
+| 4, 10 | RequestUpdate and RequestUpdateAuto: out(output), out(performance), in(input) |
+| 5 | Start |
+| 6 | Stop |
+| 7 | QuerySystemEvent |
+| 8 | SetRenderingTimeLimit |
+| 9 | GetRenderingTimeLimit (100 when never set) |
+| 12, 13 | SetVoiceDropParameter and GetVoiceDropParameter |
+
+- RequestUpdate raises the thread's priority around the update when `NX2SARIA_AUDIO_GAME_PRIO` is set. For command 10
+  the C buffers get their reply entries only when the update was not refused: the SDK reads no output of a refusal.
+- Set/GetVoiceDropParameter are 15.0.0+ (the system's audio renderer service): the factor the DSP uses to drop voices
+  when a frame overruns its time. The host mixer renders every voice, so the value is only kept (`voice_drop_bits`,
+  the float 1.0 until set).
+
+### `audren_manager_handler()`
+
+IAudioRendererManager:
+
+| Command | Call |
+|---|---|
+| 0 | OpenAudioRenderer(param, pad, work size, aruid; copy tmem, process; pid) |
+| 1 | GetWorkBufferSize(param) -> u64 |
+| 2, 4 | GetAudioDeviceService(aruid), GetAudioDeviceServiceWithRevisionInfo(revision, aruid) |
+
+OpenAudioRenderer takes a copy of the transfer memory made under the kernel lock: a CloseHandle of the transfer memory
+on another thread frees the object.
