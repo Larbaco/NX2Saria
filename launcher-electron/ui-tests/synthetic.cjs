@@ -22,7 +22,7 @@ async function expectVisibility(app, expected) {
     const script = path.join(root, 'app', 'v1', 'launcher', 'start.pyw');
     const fakePython = path.join(root, 'python', 'bin', 'python3');
     const sentinel = path.join(root, 'called.json');
-    await fs.mkdir(path.join(root, 'data'), { recursive: true });
+    await fs.mkdir(path.join(root, 'data', 'logs'), { recursive: true });
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.mkdir(path.dirname(script), { recursive: true });
     await fs.mkdir(path.dirname(fakePython), { recursive: true });
@@ -52,6 +52,19 @@ async function expectVisibility(app, expected) {
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('Fluxo de jogo encerrado').waitFor({ timeout: 5000 });
     assert.deepEqual(JSON.parse(await fs.readFile(sentinel, 'utf8')), ['-I', script, '--root', root, '--play']);
+    const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
+    assert.match(log, /electron: root default \(NX2Saria\)/);
+    assert.match(log, /electron: inspection ready/);
+    assert.match(log, /electron: play requested/);
+    assert.match(log, /electron: play started/);
+    assert.match(log, /electron: play ended code=0/);
+    assert.equal(log.includes(root), false);
+    await fs.writeFile(fakePython, `#!${process.execPath}\nsetTimeout(() => process.exit(0), 500);\n`, { mode: 0o755 });
+    await page.getByRole('button', { name: 'Selecionar instalação' }).click();
+    await page.waitForFunction(() => !document.querySelector('#play').disabled);
+    const concurrent = await page.evaluate(() => Promise.all([window.launcher.play(), window.launcher.play()]));
+    assert.equal(concurrent.filter(result => result.started).length, 1);
+    await page.locator('#status').getByText('Fluxo de jogo encerrado').waitFor({ timeout: 5000 });
     await fs.writeFile(path.join(root, 'data', 'job-running.json'), '{}');
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.getByText('Há um registro de trabalho:', { exact: false }).waitFor({ timeout: 5000 });

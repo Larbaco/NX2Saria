@@ -123,7 +123,7 @@ and `vk`. Five of them share their word with a prefix that has a colon and names
 
 ### The table
 
-Files are under `runtime/`; the first three by number of lines, `...` when there are more.
+Files are under `runtime/` unless stated otherwise; the first three by number of lines, `...` when there are more.
 
 | Prefix | What writes it | Main files |
 |---|---|---|
@@ -169,6 +169,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `dlaa times:` | GPU times of the DLAA passes | `vk_dlaa.c` |
 | `dlssg:` | DLSS Frame Generation through Streamline | `vk_dlssg.c` |
 | `ENTER` | Trace of a host override being entered (ov_system), no colon | `ov_system.c` |
+| `electron:` | Development Electron launcher: startup, selection, inspection, Play and window visibility; no paths | `launcher-electron/src/dev-log.ts` (outside `runtime/`) |
 | `err:` | Game error dialog | `ov_system.c` |
 | `evo:` | Changes of draw order over frames (vk_exec, debug) | `vk_exec.c` |
 | `exit:` | A fault while the process was ending | `main.c` |
