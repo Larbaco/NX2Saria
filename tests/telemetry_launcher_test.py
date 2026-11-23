@@ -170,6 +170,9 @@ class ConsentTest(Base):
     def test_the_address_comes_from_the_environment(self):
         with mock.patch.dict(os.environ, {telemetry.URL_ENV: 'http://127.0.0.1:8787/'}):
             self.assertEqual(telemetry.Reporter(self.settings, VERSION).url, 'http://127.0.0.1:8787')
+        with mock.patch.dict(os.environ, {telemetry.URL_ENV: 'none'}):         # no server at all, whatever is built in
+            self.assertEqual(telemetry.server_url(), '')
+            self.assertFalse(telemetry.enabled())
 
     def test_the_settings_switch(self):
         r = self.reporter()

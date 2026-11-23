@@ -1,4 +1,4 @@
-// NX2Saria's telemetry Worker: receives opt-in session reports and player comments from the launcher, deletes an
+// NX2Saria's telemetry Worker: receives session reports and player comments from the launcher, deletes an
 // installation's data on request, and serves the admin panel. Routes are listed in README.md.
 //
 // The Worker reads no request header except Content-Type, Content-Length, CF-Connecting-IP (the public routes, as the

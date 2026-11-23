@@ -1,6 +1,6 @@
 # NX2Saria telemetry server
 
-A Cloudflare Worker with a D1 database that receives the launcher's opt-in session reports and player comments, lets a
+A Cloudflare Worker with a D1 database that receives the launcher's session reports and player comments, lets a
 player delete everything sent from their installation, and shows the results on a password-protected admin page.
 What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 

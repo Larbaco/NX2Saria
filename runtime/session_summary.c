@@ -83,7 +83,7 @@ void session_summary_start(void) {
     __atomic_store_n(&armed, 1, __ATOMIC_RELEASE);
     if (path[0])
         rt_log("telemetry: a session summary goes to logs/%s at the end; the game sends nothing (the launcher sends it "
-               "only when the player said yes)", FILE_NAME);
+               "only while session reports are on)", FILE_NAME);
     else
         rt_log("telemetry: no session summary this run: no folder for it");
 }

@@ -1,5 +1,5 @@
 // The session summary: logs/session-summary.json, written once at the game's end (session_summary.c) for the
-// launcher, which may send it when the player has said yes. The game sends nothing itself.
+// launcher, which sends it while session reports are on (docs/telemetry.md). The game sends nothing itself.
 //
 // Two parts. session_summary_fmt.c turns a SessionSummary into the JSON text and needs nothing of the runtime (the unit
 // check tests/session_summary_check.py builds it alone). session_summary.c gathers the values and writes the file.

@@ -2,7 +2,7 @@
   "name": "nx2saria-telemetry",
   "version": "1.0.0",
   "private": true,
-  "description": "Opt-in session reports and player comments for NX2Saria (Cloudflare Worker + D1).",
+  "description": "Session reports and player comments for NX2Saria (Cloudflare Worker + D1).",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {

@@ -1,5 +1,6 @@
-"""Session reports and comments (docs/telemetry.md): what the launcher sends to the project's own server, and only
-with the player's say.
+"""Session reports and comments (docs/telemetry.md): what the launcher sends to the project's own server, and when.
+The window asks about session reports at the first start of each version while they are not on (Reporter.question_due,
+answer_question): Don't Send keeps them off; Send, closing the question and its countdown turn them on.
 
 - A session report is the summary the game writes when it ends (logs/session-summary.json in the game folder,
   runtime side), sent with the install's random id and the launcher's version. Nothing is sent unless the settings'
@@ -50,8 +51,10 @@ VERSION_LINE = re.compile(r'version: NX2Saria (\S+), game (\d+\.\d+\.\d+)')
 
 
 def server_url():
-    """The server's address without a trailing slash: NX2SARIA_TELEMETRY_URL when set, else TELEMETRY_URL."""
-    return (os.environ.get(URL_ENV) or TELEMETRY_URL).strip().rstrip('/')
+    """The server's address without a trailing slash: NX2SARIA_TELEMETRY_URL when set, else TELEMETRY_URL.
+    NX2SARIA_TELEMETRY_URL=none is no server at all: nothing is asked, shown or sent (enabled)."""
+    url = (os.environ.get(URL_ENV) or TELEMETRY_URL).strip().rstrip('/')
+    return '' if url.lower() == 'none' else url
 
 
 def enabled():

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=8591ed12455f02a6ea746c22c0412a34e2522815 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=b3d29d174eeb17bc94bd74abdabb49b81903a254 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -8,12 +8,31 @@
 <!-- /languages -->
 # Relatórios de sessão e comentários
 
-O launcher pode enviar duas coisas para o servidor do próprio projeto, e só quando você manda:
+O launcher pode enviar duas coisas para o servidor do próprio projeto:
 
-- **Relatórios de sessão:** depois que você joga, um resumo curto de como o jogo rodou no seu PC. Desligados até você responder à pergunta do launcher com *Send*.
+- **Relatórios de sessão:** depois que você joga, um resumo curto de como o jogo rodou no seu PC.
 - **Comentários:** o texto que você escreve em *Send a Comment*, enviado quando você aperta *Send*.
 
-Nada é enviado antes de você escolher. Na primeira vez que você volta do jogo, o launcher pergunta uma vez, com *Send* e *Don't Send*, e *See What Is Sent* mostra o texto exato que seria enviado. Você pode mudar a resposta a qualquer momento em **Settings → Session Reports**, que mostra *Not Asked Yet* até você responder.
+## Quando o launcher pergunta
+
+Na primeira vez que uma versão nova do launcher abre, ele pergunta **Help improve NX2Saria?** com três escolhas:
+
+- **Send** liga os relatórios de sessão. É o botão selecionado, então Enter o escolhe.
+- **Don't Send** os mantém desligados. É a única escolha que faz isso.
+- **See What Is Sent** mostra o texto exato de um relatório.
+
+**Os relatórios de sessão também ligam sozinhos** em dois casos, que a primeira linha da pergunta diz enquanto ela está aberta:
+
+- quando você fecha a pergunta sem escolher: Esc, o botão de fechar da janela ou Alt+F4;
+- depois de 30 segundos sem nenhuma entrada. A linha conta os segundos. Qualquer entrada para a contagem de vez: uma tecla, um botão do controle, mover o mouse sobre a janela, abrir *See What Is Sent*.
+
+Quando os relatórios foram ligados de um desses dois modos, o launcher avisa uma vez na próxima vez que abrir: *Session reports are on. You can change this in Settings > Session Reports.*
+
+A pergunta volta no primeiro início de **cada versão nova** enquanto os relatórios de sessão não estiverem ligados: se você escolheu *Don't Send*, e se você os desligou nas configurações. Ela é feita uma vez por versão. Com os relatórios ligados, ela nunca é feita. Uma instalação nova recebe a pergunta na primeira vez que o launcher abre depois da instalação, não durante ela.
+
+Nenhum relatório é enviado no momento em que os relatórios ligam: o primeiro é o da próxima sessão que você jogar. Daí em diante vai um relatório cada vez que o jogo termina, e mais um quando o jogo travou e o launcher montou o relatório a partir do log. Nada é enviado enquanto você joga.
+
+Você pode ligar e desligar os relatórios de sessão a qualquer momento em **Settings → Session Reports**, e apagar ali o que foi enviado.
 
 Um launcher compilado sem endereço de servidor não mostra nada disso: nem a pergunta, nem a tela Session Reports, nem *Send a Comment*.
 
@@ -37,35 +56,39 @@ O jogo o grava em `logs/session-summary.json` na pasta do jogo quando termina, p
 | `session.duration_s`, `session.frames`, `session.end` | Quanto tempo o jogo rodou, quantos quadros mostrou, como terminou: `normal`, `fatal`, `device_lost` ou `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | A taxa de quadros média da sessão inteira, o 1% low dela, o quadro mais lento e quantos quadros levaram mais de 25 ms e mais de 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | O tempo gasto preparando shaders e pipelines no início, quando houve algum | `5400`, `120`, `900`, `3100` |
+| `patches` | Os nomes dos patches do próprio port que estavam ligados, da lista na linha `patches:` do log do jogo. O servidor guarda só os nomes que conhece | `["fps60", "ostep", "zstd"]` |
+| `mods.count`, `mods.code` | Quantos mods estavam em uso, e quantos deles mudam o código do jogo. Nunca os nomes deles | `1`, `0` |
 | `fatal` | A linha de erro do jogo, quando a sessão terminou com uma, com as suas pastas escritas de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), com no máximo 300 caracteres | `null` |
 
 Um campo que o jogo não conhece é `null`. Quando o jogo travou de forma tão grave que não conseguiu gravar o relatório, o launcher monta um a partir da linha de erro no log: só `version`, `game_version`, `os.family`, `session.end` (`crash`) e `fatal`, com todos os outros campos `null`.
+
+Nada mais é coletado. Em particular, o servidor não guarda o país de onde um relatório veio.
 
 Junto com o relatório, o launcher envia:
 
 - `install_id`: um número aleatório criado pelo launcher na primeira vez que ele é necessário e guardado nas configurações do launcher. Ele não é gerado a partir de nada no seu PC; só permite que os relatórios de uma instalação sejam contados juntos e apagados juntos.
 - `launcher_version`: a versão do launcher.
 
-O servidor acrescenta o **país** de onde o relatório veio, em duas letras (`BR`, `DE`), que o Cloudflare informa a cada requisição, e a hora em que ele chegou.
+O servidor acrescenta a hora em que o relatório chegou, e nada sobre de onde ele veio.
 
 ## O que um comentário contém
 
 - O seu texto, com até 4000 caracteres, **exatamente como você o escreveu**. Não inclua o seu e-mail, nome nem nada mais que você não queira enviar.
 - O relatório da sua última sessão, como acima, quando houver um, a menos que **Session Reports** esteja em *Off*.
 - Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com a sua pasta pessoal, o nome da conta e o nome do computador escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta nessas linhas, como o local onde o jogo está instalado, ficam como estão.
-- O mesmo `install_id`, `launcher_version`, país e hora.
+- O mesmo `install_id`, `launcher_version` e hora.
 
-Enviar um comentário não exige que os relatórios de sessão estejam ligados: apertar *Send* é a escolha.
+Um comentário só é enviado quando você aperta *Send* nele, com os relatórios de sessão ligados ou desligados.
 
 ## O que não é enviado ou não é guardado
 
-- **O seu endereço IP não é guardado.** Toda conexão com um servidor o carrega, então o servidor o vê: ele o usa naquele momento, na memória, para limitar abusos (no máximo 20 requisições por minuto de um mesmo endereço) e como a origem do país, e nunca o grava. O Cloudflare, que roda o servidor, trata a conexão como faz com qualquer site.
+- **O seu endereço IP não é guardado.** Toda conexão com um servidor o carrega, então o servidor o vê: ele o usa naquele momento, na memória, para limitar abusos (no máximo 20 requisições por minuto de um mesmo endereço), e nunca o grava. Ele também não guarda nenhum país. O Cloudflare, que roda o servidor, trata a conexão como faz com qualquer site.
 - Nenhum arquivo: nenhum save, nenhum arquivo de configurações, nenhum log inteiro, nenhum arquivo do jogo, nenhuma chave.
-- Um relatório de sessão não contém nome de conta, nome de computador, nome de pasta, e-mail nem número de série de hardware: o servidor recusa um relatório com um campo que o formato não tem. Um comentário contém o que você escreve e, quando você as anexa, linhas do log como descrito acima.
+- Um relatório de sessão não contém nome de conta, nome de computador, nome de pasta, e-mail, número de série de hardware nem nome de mod: o servidor recusa um relatório com um campo que o formato não tem. Um comentário contém o que você escreve e, quando você as anexa, linhas do log como descrito acima.
 
 ## Por quanto tempo fica guardado
 
-Relatórios e comentários são apagados por uma limpeza diária quando completam 180 dias. Só o mantenedor do projeto pode lê-los, por uma página protegida por uma chave secreta: contagens por versão, placa de vídeo, sistema e opções, taxas de quadros, os erros mais comuns e os comentários.
+Relatórios e comentários são apagados por uma limpeza diária quando completam 180 dias. Só o mantenedor do projeto pode lê-los, por uma página protegida por uma chave secreta: contagens por versão, placa de vídeo, sistema, opções, patches e mods, taxas de quadros, os erros mais comuns e os comentários.
 
 ## Apagar os seus dados
 
@@ -73,7 +96,7 @@ Relatórios e comentários são apagados por uma limpeza diária quando completa
 
 ## Desligar
 
-Coloque **Settings → Session Reports** em *Off*. Se um dia o projeto parar de coletar, o servidor responde isso e o launcher para de enviar até a próxima versão dele.
+Coloque **Settings → Session Reports** em *Off*, ou escolha *Don't Send* quando o launcher perguntar. A próxima versão do launcher pergunta de novo uma vez; escolha *Don't Send* outra vez para mantê-los desligados. Se um dia o projeto parar de coletar, o servidor responde isso e o launcher para de enviar até a próxima versão dele.
 
 ## Limitações conhecidas
 

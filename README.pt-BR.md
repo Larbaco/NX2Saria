@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=README.md source-hash=22a5389400321373b6bc97873abc1ca91bc71d8a reviewed=no -->
+<!-- translation: lang=pt-BR source=README.md source-hash=cdb66f910a3bd7945748728d03f3f678871d6980 reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -107,7 +107,7 @@ O build inicia cada compilação quando a memória livre comporta, então não p
 
 **Encontrou um bug?** Abra uma issue no [rastreador de issues](https://github.com/Larbaco/NX2Saria/issues) e anexe `logs\nx2saria.log` (`logs/nx2saria.log` no Linux) da pasta do jogo. Diga qual versão ou commit, sistema operacional, GPU e driver você usa e como reproduzir o problema; o [CONTRIBUTING.md](CONTRIBUTING.md) (em inglês) tem a lista completa. Confira se os anexos não têm caminhos privados e nunca envie arquivos do jogo nem chaves.
 
-O launcher também pode enviar um relatório curto de como cada sessão rodou, e comentários, sem conta no GitHub: só quando você escolhe. [Relatórios de sessão e comentários](docs/pt-BR/telemetry.md) lista todos os campos.
+O launcher também pode enviar um relatório curto de como cada sessão rodou, e comentários, sem conta no GitHub. Cada versão nova pergunta uma vez ao abrir pela primeira vez; os relatórios ligam, a menos que você escolha *Don't Send*, e as Configurações os desligam e apagam o que foi enviado. [Relatórios de sessão e comentários](docs/pt-BR/telemetry.md) diz exatamente quando e lista todos os campos.
 
 ## Documentação
 

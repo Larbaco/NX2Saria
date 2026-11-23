@@ -1,4 +1,4 @@
-# Opt-in session reports and player comments of NX2Saria (README.md in this folder).
+# Session reports and player comments of NX2Saria (README.md in this folder).
 # This file holds no secret and no account id. ADMIN_TOKEN is a secret (`wrangler secret put ADMIN_TOKEN`, or
 # .dev.vars locally). deploy.sh copies this file to wrangler.deploy.toml (git-ignored) with the real database_id.
 name = "nx2saria-telemetry"

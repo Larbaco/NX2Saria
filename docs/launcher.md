@@ -137,8 +137,9 @@ Windows, Back); the colour picker (Hue, Saturation, Brightness, Hex Code, Reset,
 Open Saves Folder, Back); settings (update check, Install Updates Automatically, Hide Launcher While Playing, Keep
 Build Cache, Update Channel, Session Reports, the folders, Open Logs Folder, Uninstall, Back); session reports
 (Session Reports: Not Asked Yet, On or Off; See What Is Sent; Send a Comment; Delete My Data, with its confirmation;
-Back; [telemetry.md](telemetry.md)); the question asked once, the first time a session report waits after the game
-exits or when the launcher opens (See What Is Sent, Send, Don't Send; nothing is chosen for the player); See What Is
+Back; [telemetry.md](telemetry.md)); the question about them, asked at the first start of each new version on the home
+screen while they are not on (Send, which is focused, Don't Send, See What Is Sent; closing it or 30 seconds without
+input turns reports on, as its first line says); See What Is
 Sent (the exact JSON a report sends, scrolled with up and down); Send a Comment (a text box typed into after its row is
 selected, Attach the Last Log Lines, Send and Cancel); uninstall (keep or remove the built game).
 A screen with more rows than the window holds draws them closer together (`fit_rows`).
@@ -150,8 +151,9 @@ stick keeps moving the row cursor.
 
 `python -m launcher --selftest --shots DIR` draws every screen with made-up states and saves a PNG of each.
 `python -m launcher --screen consent` (or `sent`, `comment`, `reports`, `delete_data`) opens that screen of the session
-reports at once; `NX2SARIA_TELEMETRY_URL=http://127.0.0.1:8787` points the reports and comments at a local server.
-With no server address (`launcher/telemetry.py` `TELEMETRY_URL` empty and no `NX2SARIA_TELEMETRY_URL`), the window
+reports at once (the question as a preview: no countdown runs and closing it changes nothing); `NX2SARIA_TELEMETRY_URL=http://127.0.0.1:8787` points the reports and comments at a local server.
+With no server address (`NX2SARIA_TELEMETRY_URL=none`, or `launcher/telemetry.py` `TELEMETRY_URL` empty and no
+`NX2SARIA_TELEMETRY_URL`), the window
 shows none of the session reports' screens, rows or question, and `--screen` opens none of them.
 
 Run from a checkout, the launcher and the build use the Python that started it, which needs the packages of

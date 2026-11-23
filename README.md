@@ -145,8 +145,10 @@ driver.
 driver you use and how to reproduce it; [CONTRIBUTING.md](CONTRIBUTING.md) has the full list. Check attachments for
 private paths, and never upload game files or keys.
 
-The launcher can also send a short report of how each session ran, and comments, without a GitHub account: only
-when you choose to. [Session reports and comments](docs/telemetry.md) lists every field.
+The launcher can also send a short report of how each session ran, and comments, without a GitHub account. Each new
+version asks once when it first opens; reports turn on unless you choose *Don't Send*, and Settings switches them
+off and deletes what was sent. [Session reports and comments](docs/telemetry.md) says exactly when and lists every
+field.
 
 ## Documentation
 

@@ -4,15 +4,38 @@
 
 # Session reports and comments
 
-The launcher can send two things to the project's own server, and only when you say so:
+The launcher can send two things to the project's own server:
 
-- **Session reports:** after you play, a short summary of how the game ran on your PC. Off until you answer the
-  launcher's question with *Send*.
+- **Session reports:** after you play, a short summary of how the game ran on your PC.
 - **Comments:** text you write in *Send a Comment*, sent when you press *Send*.
 
-Nothing is sent before you choose. The first time you come back from the game, the launcher asks once, with *Send* and
-*Don't Send*, and *See What Is Sent* shows the exact text that would go. You can change the answer at any time in
-**Settings → Session Reports**, which says *Not Asked Yet* until you answer.
+## When the launcher asks
+
+The first time a new version of the launcher opens, it asks **Help improve NX2Saria?** with three choices:
+
+- **Send** turns session reports on. It is the selected button, so Enter chooses it.
+- **Don't Send** keeps them off. It is the only choice that does.
+- **See What Is Sent** shows the exact text of a report.
+
+**Session reports also turn on by themselves** in two cases, which the question's first line says while it is open:
+
+- when you close the question without choosing: Esc, the window's close button or Alt+F4;
+- after 30 seconds without any input. The line counts the seconds down. Any input stops the countdown for good: a
+  key, a controller button, moving the mouse over the window, opening *See What Is Sent*.
+
+When reports were turned on in one of these two ways, the launcher says so once the next time it opens: *Session
+reports are on. You can change this in Settings > Session Reports.*
+
+The question comes back at the first start of **every new version** as long as session reports are not on: if you
+chose *Don't Send*, and if you switched them off in Settings. It is asked once for each version. While reports are on
+it is never asked. A new installation is asked the first time the launcher opens after the setup, not during it.
+
+No report is sent at the moment reports turn on: the first one is the report of the next session you play. From then
+on one report goes each time the game ends, and one more when the game crashed and the launcher made the report from
+the log. Nothing is sent while you play.
+
+You can switch session reports on and off at any time in **Settings → Session Reports**, and delete what was sent
+there.
 
 A launcher built without a server address shows none of this: no question, no Session Reports screen and no
 *Send a Comment*.
@@ -39,11 +62,15 @@ is sent. A report has these fields and nothing else; the server refuses a report
 | `session.duration_s`, `session.frames`, `session.end` | How long the game ran, how many frames it showed, how it ended: `normal`, `fatal`, `device_lost` or `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | The average frame rate of the whole session, its 1% low, the slowest frame, and how many frames took over 25 ms and over 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | The time spent preparing shaders and pipelines at the start, when there was any | `5400`, `120`, `900`, `3100` |
+| `patches` | The names of the port's own patches that were on, from the list in the game's log line `patches:`. The server keeps only names it knows | `["fps60", "ostep", "zstd"]` |
+| `mods.count`, `mods.code` | How many mods were in use, and how many of them change the game's code. Never their names | `1`, `0` |
 | `fatal` | The game's error line, when the session ended with one, with your folders written short as in the log ([log privacy](log-privacy.md)), at most 300 characters | `null` |
 
 A field the game does not know is `null`. When the game crashed so hard that it could not write the report, the
 launcher makes one from the error line in the log: only `version`, `game_version`, `os.family`, `session.end`
 (`crash`) and `fatal`, every other field `null`.
+
+Nothing else is collected. In particular the server does not keep the country a report came from.
 
 With the report the launcher sends:
 
@@ -52,8 +79,7 @@ With the report the launcher sends:
   together.
 - `launcher_version`: the launcher's version.
 
-The server adds the **country** the report came from, as two letters (`BR`, `DE`), which Cloudflare gives for each
-request, and the time it arrived.
+The server adds the time the report arrived, and nothing about where it came from.
 
 ## What a comment holds
 
@@ -63,25 +89,25 @@ request, and the time it arrived.
 - If you tick *Attach the Last Log Lines*: the last 200 lines of `logs/nx2saria.log`, at most 24 KB, with your home
   folder, account name and computer name written short as in the log ([log privacy](log-privacy.md)). Other folder
   names in those lines, such as where the game is installed, stay as they are.
-- The same `install_id`, `launcher_version`, country and time.
+- The same `install_id`, `launcher_version` and time.
 
-Sending a comment does not need session reports to be on: pressing *Send* is the choice.
+A comment is sent only when you press *Send* on it, whether session reports are on or off.
 
 ## What is not sent or not kept
 
 - **Your IP address is not kept.** Every connection to a server carries it, so the server sees it: it uses it at that
-  moment, in memory, to limit abuse (at most 20 requests a minute from one address) and as the source of the country,
-  and never writes it down. Cloudflare, which runs the server, handles the connection as it does for any website.
+  moment, in memory, to limit abuse (at most 20 requests a minute from one address), and never writes it down. It
+  keeps no country either. Cloudflare, which runs the server, handles the connection as it does for any website.
 - No files: no saves, no settings file, no whole log, no game files, no keys.
-- A session report holds no account name, computer name, folder name, e-mail or hardware serial number: the server
-  refuses a report with a field the format does not have. A comment holds what you write and, when you attach them,
+- A session report holds no account name, computer name, folder name, e-mail, hardware serial number or mod name:
+  the server refuses a report with a field the format does not have. A comment holds what you write and, when you attach them,
   log lines as described above.
 
 ## How long it is kept
 
 Reports and comments are deleted by a daily cleanup once they are 180 days old. Only the project's maintainer can read
-them, through a page protected by a secret key: counts by version, graphics card, system and options, frame rates, the most common
-errors and the comments.
+them, through a page protected by a secret key: counts by version, graphics card, system, options, patches and mods,
+frame rates, the most common errors and the comments.
 
 ## Deleting your data
 
@@ -92,8 +118,9 @@ answer whether it held anything or not. The database service keeps its own resto
 
 ## Turning it off
 
-Set **Settings → Session Reports** to *Off*. If the project ever stops collecting, the server answers so and the
-launcher stops sending until its next version.
+Set **Settings → Session Reports** to *Off*, or choose *Don't Send* when the launcher asks. The next version of the
+launcher asks again once; choose *Don't Send* again to keep them off. If the project ever stops collecting, the
+server answers so and the launcher stops sending until its next version.
 
 ## Known limits
 

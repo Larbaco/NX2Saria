@@ -54,6 +54,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
+# No test here reaches the session reports' server or opens their question over a screen (launcher/telemetry.py
+# server_url); TelemetryHiddenTest sets its own.
+os.environ['NX2SARIA_TELEMETRY_URL'] = 'none'
 
 from launcher import build, feed, gameini, gamefiles, jobs, locks, net, saves, settings, toolchain, updater, versions, winsys  # noqa: E402
 from launcher.context import Context, shorten  # noqa: E402
@@ -6604,7 +6607,8 @@ class LinuxPlayTest(Tmp):
             {'game_dir': str(game), 'auto_check': False, 'auto_update': False, 'hide_while_playing': True}))
         env = {k: v for k, v in os.environ.items() if k in ('DISPLAY', 'XAUTHORITY', 'PATH', 'LANG')}
         env.update(HOME=str(home), XDG_DATA_HOME=str(home / 'data'), XDG_CONFIG_HOME=str(home / 'config'),
-                   XDG_CACHE_HOME=str(home / 'cache'), XDG_STATE_HOME=str(home / 'state'))
+                   XDG_CACHE_HOME=str(home / 'cache'), XDG_STATE_HOME=str(home / 'state'),
+                   NX2SARIA_TELEMETRY_URL='none')   # no session reports: their question would open over home
         start = (
             'import sys\nimport launcher.platform.linux as linux\nlinux.mounted_drives = lambda *a, **k: []\n'
             'from launcher.ui import app\n'
