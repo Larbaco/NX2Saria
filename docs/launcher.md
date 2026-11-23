@@ -136,7 +136,7 @@ Button Color, Background, with a picture set Background Dimming and Remove Backg
 Windows, Back); the colour picker (Hue, Saturation, Brightness, Hex Code, Reset, Done); saves (Export Save, Add Log and Settings, Export To, Import a Save, Import a Save Folder,
 Open Saves Folder, Back); settings (update check, Install Updates Automatically, Hide Launcher While Playing, Keep
 Build Cache, Update Channel, Session Reports, the folders, Open Logs Folder, Uninstall, Back); session reports
-(Session Reports: Not Asked Yet, On or Off; See What Is Sent; Send a Comment; Delete My Data, with its confirmation;
+(Session Reports: Not Asked Yet, On or Off; See What Is Sent; Send a Comment;
 Back; [telemetry.md](telemetry.md)); the question about them, asked at the first start of each new version on the home
 screen while they are not on (Send, which is focused, Don't Send, See What Is Sent; closing it or 30 seconds without
 input turns reports on, as its first line says); See What Is
@@ -150,7 +150,7 @@ need scrolling, use the mouse wheel or drag the scrollbar, Page Up/Page Down, or
 stick keeps moving the row cursor.
 
 `python -m launcher --selftest --shots DIR` draws every screen with made-up states and saves a PNG of each.
-`python -m launcher --screen consent` (or `sent`, `comment`, `reports`, `delete_data`) opens that screen of the session
+`python -m launcher --screen consent` (or `sent`, `comment`, `reports`) opens that screen of the session
 reports at once (the question as a preview: no countdown runs and closing it changes nothing); `NX2SARIA_TELEMETRY_URL=http://127.0.0.1:8787` points the reports and comments at a local server.
 With no server address (`NX2SARIA_TELEMETRY_URL=none`, or `launcher/telemetry.py` `TELEMETRY_URL` empty and no
 `NX2SARIA_TELEMETRY_URL`), the window

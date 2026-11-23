@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=b3d29d174eeb17bc94bd74abdabb49b81903a254 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=f6c0100d7cd41cfe845cac8956710cbf3300db29 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -32,7 +32,7 @@ A pergunta volta no primeiro início de **cada versão nova** enquanto os relat�
 
 Nenhum relatório é enviado no momento em que os relatórios ligam: o primeiro é o da próxima sessão que você jogar. Daí em diante vai um relatório cada vez que o jogo termina, e mais um quando o jogo travou e o launcher montou o relatório a partir do log. Nada é enviado enquanto você joga.
 
-Você pode ligar e desligar os relatórios de sessão a qualquer momento em **Settings → Session Reports**, e apagar ali o que foi enviado.
+Você pode ligar e desligar os relatórios de sessão a qualquer momento em **Settings → Session Reports**.
 
 Um launcher compilado sem endereço de servidor não mostra nada disso: nem a pergunta, nem a tela Session Reports, nem *Send a Comment*.
 
@@ -64,10 +64,7 @@ Um campo que o jogo não conhece é `null`. Quando o jogo travou de forma tão g
 
 Nada mais é coletado. Em particular, o servidor não guarda o país de onde um relatório veio.
 
-Junto com o relatório, o launcher envia:
-
-- `install_id`: um número aleatório criado pelo launcher na primeira vez que ele é necessário e guardado nas configurações do launcher. Ele não é gerado a partir de nada no seu PC; só permite que os relatórios de uma instalação sejam contados juntos e apagados juntos.
-- `launcher_version`: a versão do launcher.
+Junto com o relatório, o launcher envia só `launcher_version`, a versão do launcher. Ele **não envia nenhum id da sua instalação**: nada num relatório diz de qual PC ele veio, nem que dois relatórios vieram do mesmo. Um launcher que criou um id desses numa versão anterior o remove das configurações na primeira vez que abre.
 
 O servidor acrescenta a hora em que o relatório chegou, e nada sobre de onde ele veio.
 
@@ -76,7 +73,7 @@ O servidor acrescenta a hora em que o relatório chegou, e nada sobre de onde el
 - O seu texto, com até 4000 caracteres, **exatamente como você o escreveu**. Não inclua o seu e-mail, nome nem nada mais que você não queira enviar.
 - O relatório da sua última sessão, como acima, quando houver um, a menos que **Session Reports** esteja em *Off*.
 - Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com a sua pasta pessoal, o nome da conta e o nome do computador escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta nessas linhas, como o local onde o jogo está instalado, ficam como estão.
-- O mesmo `install_id`, `launcher_version` e hora.
+- O `launcher_version` e a hora, como num relatório. Nenhum id da sua instalação.
 
 Um comentário só é enviado quando você aperta *Send* nele, com os relatórios de sessão ligados ou desligados.
 
@@ -84,19 +81,22 @@ Um comentário só é enviado quando você aperta *Send* nele, com os relatório
 
 - **O seu endereço IP não é guardado.** Toda conexão com um servidor o carrega, então o servidor o vê: ele o usa naquele momento, na memória, para limitar abusos (no máximo 20 requisições por minuto de um mesmo endereço), e nunca o grava. Ele também não guarda nenhum país. O Cloudflare, que roda o servidor, trata a conexão como faz com qualquer site.
 - Nenhum arquivo: nenhum save, nenhum arquivo de configurações, nenhum log inteiro, nenhum arquivo do jogo, nenhuma chave.
+- **Nenhum id da sua instalação.** O launcher não cria, não guarda e não envia nenhum.
 - Um relatório de sessão não contém nome de conta, nome de computador, nome de pasta, e-mail, número de série de hardware nem nome de mod: o servidor recusa um relatório com um campo que o formato não tem. Um comentário contém o que você escreve e, quando você as anexa, linhas do log como descrito acima.
 
 ## Por quanto tempo fica guardado
 
 Relatórios e comentários são apagados por uma limpeza diária quando completam 180 dias. Só o mantenedor do projeto pode lê-los, por uma página protegida por uma chave secreta: contagens por versão, placa de vídeo, sistema, opções, patches e mods, taxas de quadros, os erros mais comuns e os comentários.
 
-## Apagar os seus dados
+## Por que nada pode ser apagado a pedido
 
-**Settings → Session Reports → Delete My Data** apaga do servidor todos os relatórios e comentários enviados com o seu `install_id` e depois cria um novo `install_id`. Funciona com os relatórios de sessão ligados ou desligados. O servidor dá a mesma resposta quer tivesse algo guardado, quer não. O serviço de banco de dados mantém o seu próprio histórico de restauração por um tempo limitado (até 30 dias no Cloudflare); as linhas apagadas saem dele à medida que esse histórico envelhece.
+Um relatório não tem nenhum id da sua instalação e o servidor não guarda endereço IP, então o servidor não consegue saber quais relatórios são seus: não há nada que ele possa procurar e apagar para você. Todo relatório e todo comentário é apagado quando completa 180 dias. O serviço de banco de dados mantém o seu próprio histórico de restauração por um tempo limitado (até 30 dias no Cloudflare); as linhas apagadas saem dele à medida que esse histórico envelhece.
+
+Um comentário é a única coisa que contém o que você decide escrever nele. Ele é enviado exatamente como foi escrito, então não inclua nada que diga quem você é.
 
 ## Desligar
 
-Coloque **Settings → Session Reports** em *Off*, ou escolha *Don't Send* quando o launcher perguntar. A próxima versão do launcher pergunta de novo uma vez; escolha *Don't Send* outra vez para mantê-los desligados. Se um dia o projeto parar de coletar, o servidor responde isso e o launcher para de enviar até a próxima versão dele.
+Se você não quer enviar relatórios, coloque **Settings → Session Reports** em *Off*, ou escolha *Don't Send* quando o launcher perguntar. A próxima versão do launcher pergunta de novo uma vez; escolha *Don't Send* outra vez para mantê-los desligados. Se um dia o projeto parar de coletar, o servidor responde isso e o launcher para de enviar até a próxima versão dele.
 
 ## Limitações conhecidas
 

@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=README.md source-hash=cdb66f910a3bd7945748728d03f3f678871d6980 reviewed=no -->
+<!-- translation: lang=ru source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -162,7 +162,7 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 
 Лаунчер также может отправлять короткий отчёт о том, как прошёл каждый сеанс, и комментарии без учётной записи
 GitHub. Каждая новая версия спрашивает один раз при первом запуске; отчёты включаются, если вы не выберете
-*Don't Send*, а в настройках их можно выключить и удалить отправленное. В
+*Don't Send*, а в настройках их можно выключить. Отчёт не содержит идентификатора вашей установки. В
 [отчётах о сеансах и комментариях](docs/ru/telemetry.md) точно сказано когда и перечислено каждое поле.
 
 ## Документация

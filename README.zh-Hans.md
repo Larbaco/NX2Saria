@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=README.md source-hash=cdb66f910a3bd7945748728d03f3f678871d6980 reviewed=no -->
+<!-- translation: lang=zh-Hans source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -104,7 +104,7 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 
 **发现了 bug？** 请在[问题跟踪器](https://github.com/Larbaco/NX2Saria/issues)上提交问题，并附上游戏文件夹中的 `logs\nx2saria.log`（Linux 上为 `logs/nx2saria.log`）。请说明你使用的版本或提交、操作系统、GPU 和驱动程序，以及如何复现；[CONTRIBUTING.md](CONTRIBUTING.md)（英文）有完整的清单。检查附件中是否含有私人路径，并且绝不要上传游戏文件或密钥。
 
-启动器还可以发送每次会话运行情况的简短报告以及评论，无需 GitHub 账户。每个新版本在首次打开时询问一次；除非你选择 *Don't Send*，否则报告会开启，你可以在设置中关闭报告并删除已发送的内容。[会话报告与评论](docs/zh-Hans/telemetry.md)准确说明了何时发送，并列出了每一个字段。
+启动器还可以发送每次会话运行情况的简短报告以及评论，无需 GitHub 账户。每个新版本在首次打开时询问一次；除非你选择 *Don't Send*，否则报告会开启，你可以在设置中关闭报告。报告不带有你的安装的任何标识符。[会话报告与评论](docs/zh-Hans/telemetry.md)准确说明了何时发送，并列出了每一个字段。
 
 ## 文档
 

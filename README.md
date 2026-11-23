@@ -147,7 +147,7 @@ private paths, and never upload game files or keys.
 
 The launcher can also send a short report of how each session ran, and comments, without a GitHub account. Each new
 version asks once when it first opens; reports turn on unless you choose *Don't Send*, and Settings switches them
-off and deletes what was sent. [Session reports and comments](docs/telemetry.md) says exactly when and lists every
+off. A report carries no id of your installation. [Session reports and comments](docs/telemetry.md) says exactly when and lists every
 field.
 
 ## Documentation

@@ -34,8 +34,7 @@ No report is sent at the moment reports turn on: the first one is the report of 
 on one report goes each time the game ends, and one more when the game crashed and the launcher made the report from
 the log. Nothing is sent while you play.
 
-You can switch session reports on and off at any time in **Settings → Session Reports**, and delete what was sent
-there.
+You can switch session reports on and off at any time in **Settings → Session Reports**.
 
 A launcher built without a server address shows none of this: no question, no Session Reports screen and no
 *Send a Comment*.
@@ -72,12 +71,9 @@ launcher makes one from the error line in the log: only `version`, `game_version
 
 Nothing else is collected. In particular the server does not keep the country a report came from.
 
-With the report the launcher sends:
-
-- `install_id`: a random number made by the launcher the first time it is needed and kept in its settings. It is not
-  made from anything on your PC; it only lets the reports of one installation be counted together and be deleted
-  together.
-- `launcher_version`: the launcher's version.
+With the report the launcher sends only `launcher_version`, the launcher's version. It sends **no id of your
+installation**: nothing in a report says which PC it came from, or that two reports came from the same one. A
+launcher that made such an id in an earlier version removes it from its settings the first time it opens.
 
 The server adds the time the report arrived, and nothing about where it came from.
 
@@ -89,7 +85,7 @@ The server adds the time the report arrived, and nothing about where it came fro
 - If you tick *Attach the Last Log Lines*: the last 200 lines of `logs/nx2saria.log`, at most 24 KB, with your home
   folder, account name and computer name written short as in the log ([log privacy](log-privacy.md)). Other folder
   names in those lines, such as where the game is installed, stay as they are.
-- The same `install_id`, `launcher_version` and time.
+- The `launcher_version` and the time, as with a report. No id of your installation.
 
 A comment is sent only when you press *Send* on it, whether session reports are on or off.
 
@@ -99,6 +95,7 @@ A comment is sent only when you press *Send* on it, whether session reports are 
   moment, in memory, to limit abuse (at most 20 requests a minute from one address), and never writes it down. It
   keeps no country either. Cloudflare, which runs the server, handles the connection as it does for any website.
 - No files: no saves, no settings file, no whole log, no game files, no keys.
+- **No id of your installation.** The launcher makes none, keeps none and sends none.
 - A session report holds no account name, computer name, folder name, e-mail, hardware serial number or mod name:
   the server refuses a report with a field the format does not have. A comment holds what you write and, when you attach them,
   log lines as described above.
@@ -109,16 +106,20 @@ Reports and comments are deleted by a daily cleanup once they are 180 days old. 
 them, through a page protected by a secret key: counts by version, graphics card, system, options, patches and mods,
 frame rates, the most common errors and the comments.
 
-## Deleting your data
+## Why nothing can be deleted on request
 
-**Settings → Session Reports → Delete My Data** deletes every report and comment sent with your `install_id` from the
-server, then makes a new `install_id`. It works whether session reports are on or off. The server gives the same
-answer whether it held anything or not. The database service keeps its own restore history for a limited time (up to
-30 days at Cloudflare); deleted rows leave it as that history ages.
+A report has no id of your installation and the server keeps no IP address, so the server cannot tell which reports
+are yours: there is nothing it could look up and delete for you. Every report and comment is deleted when it is 180
+days old. The database service keeps its own restore history for a limited time (up to 30 days at Cloudflare);
+deleted rows leave it as that history ages.
+
+A comment is the one thing that holds what you choose to put in it. It is sent exactly as written, so leave out
+anything that says who you are.
 
 ## Turning it off
 
-Set **Settings → Session Reports** to *Off*, or choose *Don't Send* when the launcher asks. The next version of the
+If you do not want to send reports, set **Settings → Session Reports** to *Off*, or choose *Don't Send* when the
+launcher asks. The next version of the
 launcher asks again once; choose *Don't Send* again to keep them off. If the project ever stops collecting, the
 server answers so and the launcher stops sending until its next version.
 
