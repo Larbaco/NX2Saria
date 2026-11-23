@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=f6c0100d7cd41cfe845cac8956710cbf3300db29 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=283a097caac10d3c4752d5cdfdca6d539829ee84 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · [Русский](../ru/telemetry.md) · **简体中文**
 
@@ -28,7 +28,9 @@
 
 如果报告是以这两种方式之一开启的，启动器会在下次打开时提示一次：*Session reports are on. You can change this in Settings > Session Reports.*
 
-只要会话报告没有开启，**每个新版本**第一次启动时都会再次询问：无论你之前选择了 *Don't Send*，还是在设置中关闭了报告。每个版本只询问一次。报告开启期间，永远不会询问。全新安装会在安装完成后启动器第一次打开时询问，而不是在安装过程中。
+只要会话报告没有开启，**每个新版本**第一次启动时都会再次询问：无论你之前选择了 *Don't Send*，还是在设置中关闭了报告。每个版本只询问一次。报告开启期间，永远不会询问。
+
+提问出现在启动器的主界面上，绝不会盖在正在进行的安装或更新之上。当启动器打开是为了完成一次更新，或者刚刚第一次构建好游戏时，它会在这一步完成后立即询问。这时不会倒计时，因为你可能不在电脑前：提问会一直等待，只有当你选择 *Send* 或关闭它时，报告才会开启。
 
 报告开启的那一刻不会发送任何报告：第一份报告是你下一次游玩会话的报告。此后，游戏每次结束时发送一份报告；游戏崩溃、由启动器根据日志生成报告时，再发送一份。游玩期间不发送任何内容。
 

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=f6c0100d7cd41cfe845cac8956710cbf3300db29 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=283a097caac10d3c4752d5cdfdca6d539829ee84 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -28,7 +28,9 @@ Na primeira vez que uma versão nova do launcher abre, ele pergunta **Help impro
 
 Quando os relatórios foram ligados de um desses dois modos, o launcher avisa uma vez na próxima vez que abrir: *Session reports are on. You can change this in Settings > Session Reports.*
 
-A pergunta volta no primeiro início de **cada versão nova** enquanto os relatórios de sessão não estiverem ligados: se você escolheu *Don't Send*, e se você os desligou nas configurações. Ela é feita uma vez por versão. Com os relatórios ligados, ela nunca é feita. Uma instalação nova recebe a pergunta na primeira vez que o launcher abre depois da instalação, não durante ela.
+A pergunta volta no primeiro início de **cada versão nova** enquanto os relatórios de sessão não estiverem ligados: se você escolheu *Don't Send*, e se você os desligou nas configurações. Ela é feita uma vez por versão. Com os relatórios ligados, ela nunca é feita.
+
+A pergunta abre na tela principal do launcher, nunca por cima de uma instalação ou atualização em andamento. Quando o launcher abre para terminar uma atualização, ou acabou de montar o jogo pela primeira vez, ele pergunta assim que isso termina. Nesse caso não há contagem regressiva, porque você pode estar longe do PC: a pergunta espera, e os relatórios só ligam quando você escolhe *Send* ou a fecha.
 
 Nenhum relatório é enviado no momento em que os relatórios ligam: o primeiro é o da próxima sessão que você jogar. Daí em diante vai um relatório cada vez que o jogo termina, e mais um quando o jogo travou e o launcher montou o relatório a partir do log. Nada é enviado enquanto você joga.
 
