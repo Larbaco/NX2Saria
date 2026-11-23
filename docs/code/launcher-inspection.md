@@ -1,0 +1,27 @@
+# Launcher installation inspection
+
+`launcher/inspect_installation.py` `inspect_installation()` reads the selected launcher's settings without creating a normal `Context`, which would create directories and write logs and can copy malformed settings. It returns only the root, selected game path and status, never the settings dictionary or its secrets. It uses `build.installed()` for the existing finished-build and interrupted-rebuild rules. Its command-line entry point accepts an explicit root and prints one JSON object.
+
+This is an initial inspection slice. Running-game detection, interrupted-job reporting, a persistent worker and Electron integration remain unimplemented. A `ready` response reflects the existing installation check, not proof that the game has run.
+
+`launcher-electron/src/inspection.ts` `inspect()` starts the inspection command with a bounded timeout and output size and validates its response before returning a limited result. `launcher-electron/src/main.ts` lets the user select the root using the native dialog; its preload exposes only that operation. This development slice does not own the launcher lock and performs no game operations. It is not the persistent worker described in the plan.
+
+`inspect_installation()` reports the presence of a job marker independently of the installation status. A marker alone cannot distinguish active work from an interrupted job, so the interface must not claim that it does. On Linux, an observed executable in `/proc` confirms that the game is running; no match leaves the result unknown because process visibility may be restricted. On Windows, `launcher/platform/windows.py` `game_running()` reads a process snapshot and process image paths without changing the executable; a match is confirmed only when the path and, when supplied, owner ancestry match. Failure to observe a match remains unknown.
+
+`launcher-electron/src/play.ts` `startPlay()` resolves `app/current.txt` beneath the selected installation, checks that its version is a single safe path component, and starts that installation's bundled Python and `launcher/start.pyw --play` without a shell. This is a development bridge to the existing Play flow, not the planned persistent worker. Its process exit does not prove that the game started: the existing launcher can refuse or open its own window. The main process repeats inspection immediately before starting and refuses a present job marker, even when it may be stale. It does not yet own the launcher lock or implement update handover.
+
+`launcher-electron/ui-tests/synthetic.cjs` exercises folder selection, the Play action and the refusal when a job marker exists in an Electron window with temporary files and a stand-in process. The native folder dialog is stubbed and this is not a real-game test. The selection control is disabled while the delegated Play flow runs.
+
+`startPlay()` exposes separate started and finished results: the former resolves only on the child process spawn event, or reports an immediate failure. The Electron window restores the selection control after a refused or failed start. Spawn confirms only the installed launcher process, not game startup.
+
+`launcher-electron/src/main.ts` clears the selected root before opening the folder chooser; cancellation or failure leaves no root eligible for Play. The renderer disables Play until a new selection is inspected. The synthetic UI test covers cancellation after a previously valid selection.
+
+The Electron renderer distinguishes a nonzero exit or signal from a normal end of the delegated process, directing the player to the existing logs on failure. A zero exit still does not prove game startup. The synthetic UI test covers a nonzero exit.
+
+`inspect_installation()` can restrict Linux process observation to descendants of a supplied owner PID. `launcher-electron/src/monitor.ts` `createMonitor()` ignores late responses after stop and requests a hide only when the descendant is observed and the saved preference is enabled. The main process restores the window when its delegated Play process ends, but only if it hid the window itself. Missing `/proc` visibility leaves the window visible. Windows synthetic process tests cover executable path and owner ancestry; real-window behavior, actual game and restart remain unverified.
+
+`launcher-electron/src/discovery.ts` computes standard roots without writing: on Linux `$XDG_DATA_HOME` when absolute, otherwise `~/.local/share`, with `nx2saria` before `nx2navi`; on Windows `%LOCALAPPDATA%/Programs`, with `NX2Saria` before `NX2navi`. A candidate is recognized by `app/current.txt`; inspection decides whether the game is configured. The Windows lookup uses the ordinary LOCALAPPDATA location and does not yet query a redirected UserProgramFiles known folder. The UI waits for discovery before enabling selection and keeps manual selection available.
+
+Windows process observation uses a read-only Tool Help snapshot and `QueryFullProcessImageNameW` with limited query access. Handles are closed after use. Process ancestry and image paths are observations subject to permissions, process exit and PID races; a missing match is not treated as proof of absence.
+
+`launcher-electron/src/runtime-paths.ts` `runtimePaths()` uses the bundled Python and backend under Electron resources in a packaged build, and preserves the development interpreter override in a checkout. The Windows development ZIP ships Python bytecode rather than project Python source; the embedded Python search path includes the resources directory.
