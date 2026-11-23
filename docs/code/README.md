@@ -26,7 +26,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 1 | `runtime/dlssg/`, `runtime/audio/` | [dlssg.md](dlssg.md), [audio.md](audio.md) | extracted |
 | 3 | `recomp/` | [recomp.md](recomp.md) | extracted |
 | 4 | `runtime/cfg/` | [cfg.md](cfg.md) | extracted |
-| 5 | `runtime/pacing/` | `pacing.md` | not yet extracted |
+| 5 | `runtime/pacing/` | [pacing.md](pacing.md) | extracted |
 | 6 | `runtime/input/` | `input.md` | not yet extracted |
 | 7 | `runtime/platform/` | `platform.md` | not yet extracted |
 | 8 | `runtime/nvn/` | `nvn.md` | not yet extracted |
