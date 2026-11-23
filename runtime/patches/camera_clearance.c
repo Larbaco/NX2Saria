@@ -1,24 +1,3 @@
-// The camera's clearance from walls on pictures wider or narrower than 16:9 (Ocarina of Time 1.1.1, the patch set
-// camera_clearance, recomp/patches-v111.txt).
-//
-// The camera's collision step (main+0x71a4a0) sizes the sphere it keeps clear of walls from its near plane:
-// h = tan(fov / 2) * near, w = h * ratio and sqrt(w * w + h * h), plus a margin, at least a minimum (main+0x71a84c..
-// and its second path at main+0x71b620..). The ratio is a camera parameter it loads from its object's +0x51c at
-// main+0x71a844 (into s10) and main+0x71b624 (into s14), copied there from the camera's parameters (main+0x478798).
-// Where the game's camera works with the picture's own ratio, a 32:9 picture makes the sphere about 1.8 times its 16:9
-// size, and the camera cannot follow Link into a crawl passage.
-//
-// The sites keep their load and then call the page's +0xe00 (camera_clearance_host). When the picture is not 16:9
-// (the page's +116, widescreen.c) and the loaded value is that picture's ratio (within 0.1%), it is replaced by 16:9
-// (the page's +112) for this sum alone; any other value stays. The register written is the load's own, which the code
-// after it reads; nothing reads the flags between the sites and the call that follows each (main+0x71a878,
-// main+0x71b64c), and x30 is the function's own, saved in its prologue.
-//
-// The log counts the loads by what they held (16:9, the picture's ratio, other), so a session shows whether the game's
-// camera ever sees the wide ratio here: the fork's own widescreen keeps the camera's parameters at 16:9 and widens
-// only the projection (the set wide_aspect), so with it the sites are expected to see 16:9.
-//
-// NX2SARIA_CAMERA_CLEARANCE_FIX=0 turns the set off.
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -33,31 +12,30 @@
 #include "patches.h"
 #endif
 
-#define SITE_A 0x71a844ull     // ldr s10, [x19, #0x51c]
-#define SITE_B 0x71b624ull     // ldr s14, [x19, #0x51c]
+#define SITE_A 0x71a844ull
+#define SITE_B 0x71b624ull
 #define WORD_A 0xbd451e6au
 #define WORD_B 0xbd451e6eu
-#define HOST_SLOT 0xe00        // patch page slot (runtime/patches.c lists the others)
+#define HOST_SLOT 0xe00
 
 enum { K_BASE, K_PICTURE, K_OTHER, NK };
 static int set_index = -1;
 static _Atomic uint64_t seen[2][NK], replaced[2];
 static _Atomic int told[2];
 
-static float page_f32(int off) {   // 0 without the page (no patch table: the sites are not there either)
+static float page_f32(int off) {
     const uint8_t *page = rt_patch_page();
     float f = 0;
     if (page) memcpy(&f, page + off, 4);
     return f;
 }
 
-// 1 when a and b differ by at most rel of b
 static int near_ratio(float a, float b, float rel) { return isfinite(a) && b > 0 && fabsf(a - b) <= rel * b; }
 
 static void camera_clearance_host(Cpu *c) {
     const uint64_t at = c->x[30] - MOD_MAIN_BASE - 4;
     const int site = at == SITE_A ? 0 : at == SITE_B ? 1 : -1;
-    if (site < 0) return;   // (only the set's two sites call the slot)
+    if (site < 0) return;
     const int reg = site ? 14 : 10;
     uint32_t bits = (uint32_t)c->v[reg];
     float v;
@@ -72,7 +50,7 @@ static void camera_clearance_host(Cpu *c) {
                k == K_PICTURE && wide ? ": the picture's ratio, made 16:9 for the clearance" : "");
     if (k != K_PICTURE || !wide) return;
     memcpy(&bits, &base, 4);
-    c->v[reg] = bits;   // (the upper lanes of a 32-bit load are zero, as the load leaves them)
+    c->v[reg] = bits;
     replaced[site]++;
 }
 

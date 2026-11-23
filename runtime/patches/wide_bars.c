@@ -1,28 +1,3 @@
-// Centered 16:9 screens: while a pause or system menu, an event/loading fade or a movie is active, the present clears
-// margins outside the middle 16:9 when the picture is wider. Tall pictures keep their full-height backgrounds and fades.
-//
-// The signal is the game's own state of the screens behind those menus. Every interface screen of the game is an
-// object whose byte +0x1a6 says where it is in its life: 0 closed, 1 opening (main+0x2d62e0 sets it when the screen is
-// asked to open), 2 open (vtable +0x240, main+0x2cda10), 3 closing (vtable +0x248, main+0x2d8af0) and 0 again once it
-// has closed (vtable +0x258, main+0xc60a10). Two classes of screen are watched, by their vtables, the ones the
-// widescreen keep list names (widescreen.c wide_init):
-// - main+0x4be4fb0, the background of the pause and system menus (MenuBG_00, SystemBG_00): a capture of the picture
-//   the menu opens over, redrawn under it. Its screen is on (states 1 to 3) for as long as such a menu is up: the sides
-//   go black on a wide picture when the menu starts to open and return once it has closed. The game keeps drawing 3D
-//   under the pause
-//   menu (the item's model on the items page, Link on the equipment page), so whether a 3D scene is drawn does not
-//   tell a menu from play; this does.
-// - main+0x4be7b30, the loading fade (LoadingFade_00), and main+0x4be61c8, the event fade: their canvases cover the
-//   whole picture. Wide pictures keep their side margins black while their contents are centered; tall pictures keep
-//   their full height so the fades cover the extra scene above and below the UI band.
-// A movie (ov_movie2.c ov_movie_live) is cropped to the middle 16:9 on wide pictures and fills a tall picture by set wide_movie.
-//
-// The screens' addresses come from the patch set wide_bars (recomp/patches-v111.txt): right after the screen's setup
-// (main+0x773b90, vtable +0x80) has set up its 2D canvas, its site calls the patch page's +0xef0 with the screen in x19
-// (wide_bars_screen_host, registered by patches.c). The setup runs when the game makes a screen, which lives on from
-// there, so the table below is short and a screen set up again is found in it. A screen the game has destroyed no
-// longer holds a watched vtable (a destructor writes its base class's, or the memory is reused or unmapped): the
-// present notices and frees its entry. The set is switched on only for a non-16:9 picture (wide_bars_init).
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -33,17 +8,17 @@
 #define VT_MENU_BG 0x4be4fb0ull
 #define VT_LOADING_FADE 0x4be7b30ull
 #define VT_EVENT_FADE 0x4be61c8ull
-#define SCREEN_STATE 0x1a6            // the screen's state byte (above)
-#define BARS_SCREENS 16               // screens watched at once (the game makes a few of each)
-#define BARS_TOLD 24                  // lines a run about the sides (black, shown again)
-#define SCREENS_TOLD 48               // lines a run about the watched screens (found, state changes, gone)
+#define SCREEN_STATE 0x1a6
+#define BARS_SCREENS 16
+#define BARS_TOLD 24
+#define SCREENS_TOLD 48
 
 enum { KIND_NONE, KIND_MENU, KIND_LOADING, KIND_EVENT_FADE };
 enum { WHY_NONE, WHY_MOVIE, WHY_MENU, WHY_LOADING, WHY_EVENT_FADE };
 
-static int bars_on;              // wide_bars_init: center on a non-16:9 picture, with the set on
-static double bars_x_margin, bars_y_margin;  // shares of the picture outside its middle 16:9
-static uint64_t screens[BARS_SCREENS];         // watched screens' guest addresses, 0 free
+static int bars_on;
+static double bars_x_margin, bars_y_margin;
+static uint64_t screens[BARS_SCREENS];
 
 static uint64_t ld64(uint64_t a) { return a && mem_readable(a, 8) ? *(const volatile uint64_t *)(uintptr_t)a : 0; }
 static int ld8(uint64_t a) { return a && mem_readable(a, 1) ? *(const volatile uint8_t *)(uintptr_t)a : -1; }
@@ -74,17 +49,15 @@ static void screen_log(const char *fmt, ...) {
     rt_log("widescreen: menus: %s%s", line, n == SCREENS_TOLD - 1 ? " (further screen lines are not logged)" : "");
 }
 
-// main+0x774068 (set wide_bars), after the screen's setup has set up its canvas: x19 is the screen. Every register is
-// left as it is (the site's next instruction reads x8, which the site loaded before the call).
 void wide_bars_screen_host(Cpu *c) {
     uint64_t s = c->x[19];
     int kind = kind_of(s);
     if (!kind || (!bars_on && kind != KIND_MENU)) return;
     for (int i = 0; i < BARS_SCREENS; i++)
-        if (__atomic_load_n(&screens[i], __ATOMIC_RELAXED) == s) return;   // set up again: already watched
+        if (__atomic_load_n(&screens[i], __ATOMIC_RELAXED) == s) return;
     for (int i = 0; i < BARS_SCREENS; i++) {
         uint64_t old = __atomic_load_n(&screens[i], __ATOMIC_RELAXED);
-        if (old && kind_of(old)) continue;   // a live screen (one destroyed since is taken over here)
+        if (old && kind_of(old)) continue;
         if (__atomic_compare_exchange_n(&screens[i], &old, s, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
             if (bars_on)
                 screen_log("watching the %s screen at %#llx (state %s)", kind_names[kind], (unsigned long long)s,
@@ -108,7 +81,6 @@ int wide_menu_open(void) {
     return 0;
 }
 
-// wide_init: center the screens, with margins on the axis that differs from 16:9.
 void wide_bars_init(double x_margin, double y_margin) {
     int set = rt_patch_set("wide_bars");
     bars_x_margin = x_margin, bars_y_margin = y_margin;
@@ -121,7 +93,6 @@ void wide_bars_init(double x_margin, double y_margin) {
     bars_on = 1;
 }
 
-// Each present, from the present's thread: the x/y shares outside the middle 16:9, 0 when no centered screen is active.
 void wide_menu_bars(double *x, double *y) {
     *x = *y = 0;
     if (!bars_on) return;
@@ -133,9 +104,9 @@ void wide_menu_bars(double *x, double *y) {
     for (int i = 0; i < BARS_SCREENS; i++) {
         uint64_t s = __atomic_load_n(&screens[i], __ATOMIC_ACQUIRE);
         int kind = s ? kind_of(s) : KIND_NONE, st = kind ? ld8(s + SCREEN_STATE) : -1;
-        if (s != seen_screen[i]) seen_screen[i] = s, seen_state[i] = kind ? st : -1;   // newly watched: logged there
+        if (s != seen_screen[i]) seen_screen[i] = s, seen_state[i] = kind ? st : -1;
         if (!s) continue;
-        if (!kind) {   // destroyed: its memory is no longer a watched screen
+        if (!kind) {
             screen_log("the screen at %#llx is gone (present %llu)", (unsigned long long)s, (unsigned long long)n);
             if (__atomic_compare_exchange_n(&screens[i], &s, 0, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
                 seen_screen[i] = 0;

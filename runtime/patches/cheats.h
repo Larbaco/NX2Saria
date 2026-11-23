@@ -1,6 +1,3 @@
-// Cheats of the mods' Atmosphere cheat files (cheats.c): mods\<mod>\cheats\<build id>.txt of each enabled mod,
-// switched from the menu's Cheats tab. A cheat that writes the game's instructions is a code patch set that tools/cheats.py built into the game
-// (switched with rt_patch_switch); one that writes data runs in the cheat VM every presented frame.
 #pragma once
 #include <stdint.h>
 
@@ -9,35 +6,33 @@ extern "C" {
 #endif
 
 typedef enum {
-    CHEAT_HEADING,       // no opcodes: a title or a group label
-    CHEAT_CODE,          // a patch set
-    CHEAT_KEY,           // a patch set on while the buttons are held
-    CHEAT_DATA,          // the cheat VM
-    CHEAT_MASTER,        // {master}: always on
-    CHEAT_RESTORE,       // writes the original instructions back: nothing to do
-    CHEAT_REBUILD,       // writes instructions, but the game was built without this version of it
-    CHEAT_UNSUPPORTED,   // note says why
+    CHEAT_HEADING,
+    CHEAT_CODE,
+    CHEAT_KEY,
+    CHEAT_DATA,
+    CHEAT_MASTER,
+    CHEAT_RESTORE,
+    CHEAT_REBUILD,
+    CHEAT_UNSUPPORTED,
 } CheatKind;
 
 typedef struct {
-    const char *name;     // UTF-8, as in the file
-    const char *mod;      // the mod's folder name; cheats come grouped by mod, in the Mods tab's order
-    const char *note;     // why it is unsupported ("" otherwise)
+    const char *name;
+    const char *mod;
+    const char *note;
     CheatKind kind;
-    uint32_t buttons;     // CHEAT_KEY: HidNpadButton mask
-    char key[24];         // its setting, NX2SARIA_CHEAT_<hash of "<mod>/<name>">
+    uint32_t buttons;
+    char key[24];
 } CheatInfo;
 
-void cheats_init(void);                    // after rt_patches_init: reads the mods' files and their build status
+void cheats_init(void);
 int cheats_count(void);
 void cheats_unbuilt(int *code, int *patches);
 const CheatInfo *cheats_info(int i);
-int cheats_on(int i);                      // the player's switch (1 for a master cheat)
+int cheats_on(int i);
 void cheats_exit_log(void);
-const char *cheats_file(void);             // "<build id>.txt", the name the files have for this game version
-// Every presented frame (the present path): the data cheats' VM and the button state of CHEAT_KEY cheats.
+const char *cheats_file(void);
 void cheats_frame(uint64_t frame);
-// The button names of a mask ("ZL + Right stick left"), into buf.
 const char *cheats_buttons(uint32_t mask, char *buf, int n);
 
 #ifdef __cplusplus
