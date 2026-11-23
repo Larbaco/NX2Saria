@@ -1194,9 +1194,8 @@
 # mods_order =
 # Mods switched off, names separated by |. The launcher's Mods screen sets it.
 # mods_disabled =
-# auto: when an enabled mod has cheats that change the game's code and the game was built without them, the game starts
-# the setup's rebuild at start (a few minutes) and starts again after it. off: the game starts with the code it has.
-# A rebuild that failed or was cancelled is not started again for the same cheats. Default: auto.
+# Retired: the game no longer rebuilds itself for mods. Play in the launcher builds an enabled mod's code cheats and
+# ExeFS patches in before the game starts. A file that still sets it gets one log line saying so.
 # mods_rebuild = auto
 
 [files]
