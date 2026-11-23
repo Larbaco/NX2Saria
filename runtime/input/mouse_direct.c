@@ -1,12 +1,3 @@
-// Direct mouse input for NX2Saria 1.4.3. The camera controller's input update (main+0x874c1c) turns HID stick floats
-// into a radial dead zone, clamps the radius to one and applies StickExponent. The mouse enters after all three,
-// at main+0x874cb4, before the game's X/Y inversion and input-activity flags. It never becomes a HID stick value.
-// Free orbit removes that sample again before the camera's additional vertical square/velocity filters and adds
-// raw-count angular deltas at its spherical-angle output instead. Object manipulation has a separate post-curve hook.
-// The ordinary stick's result stays, so a controller still uses the game's own response.
-//
-// This is deliberately not a render-camera override: the game remains responsible for aiming, camera collision,
-// lock-on and scripted cameras. Which of its other modes consume this camera input needs in-game verification.
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -23,7 +14,6 @@
 #endif
 
 static int direct_mode(void) {
-    // cfg_value: unset is the settings table's default (direct), as the menu shows it
     return !strcmp(cfg_value("NX2SARIA_MOUSE_MODE"), "direct") && rt_patch_enabled(rt_patch_set("mouse_direct"));
 }
 
@@ -61,8 +51,6 @@ void input_direct_mouse_row(int32_t dx, float sensitivity, uint64_t now, InputMo
     out[0] = out[1] = 0;
     if (!(sensitivity > 0)) { *row = (InputMouseRow){0}; return; }
     if (dx) {
-        // Reversing direction cancels any remainder from the previous drag. Bound a fast flick to one pending step;
-        // a stopped mouse never starts another pulse, regardless of how often HID is polled.
         if ((dx < 0 && row->distance > 0) || (dx > 0 && row->distance < 0)) row->distance = 0;
         row->distance = fmaxf(-2 * step_counts, fminf(2 * step_counts, row->distance + dx * sensitivity));
     }
@@ -73,7 +61,7 @@ void input_direct_mouse_row(int32_t dx, float sensitivity, uint64_t now, InputMo
         }
         row->direction = 0;
         row->neutral_until = now + 32000000ull;
-        return;   // publish neutral even when a slow frame skipped the pulse's deadline
+        return;
     }
     if (!dx || now < row->neutral_until || fabsf(row->distance) < step_counts) return;
     row->direction = row->distance > 0 ? 1 : -1;
@@ -92,7 +80,7 @@ static _Thread_local uint64_t mouse_input_object;
 
 typedef struct {
     uint64_t object, generation, when;
-    float pad[2], motion[2], angle[2];   // post-inversion controller input, mouse input, mouse yaw/pitch in degrees
+    float pad[2], motion[2], angle[2];
     int camera_enabled;
 } MouseSample;
 static MouseSample sample;
@@ -105,7 +93,6 @@ typedef struct {
 } OrbitTrack;
 static OrbitTrack orbit_seen[16];
 
-// sample_lock held. Camera objects can coexist while the game blends between their outputs.
 static OrbitTrack *orbit_track(uint64_t object) {
     int oldest = 0;
     for (int i = 0; i < 16; i++) {
@@ -136,8 +123,6 @@ static MouseSample sample_read(void) {
 }
 static float wrap_degrees(float a) { return remainderf(a, 360.0f); }
 
-// main+0x191d78 builds the pitch target from +0x15c and +0x11c; the orbit update filters +0x108 toward it and adds
-// (1 - +0x88) * +0x10c at output. Updating only +0x108 makes the camera spring back to the unchanged target.
 static float orbit_pitch_offset(uint64_t object) {
     return (1 - guest_float(object + 0x88)) * guest_float(object + 0x10c);
 }
@@ -151,8 +136,6 @@ static void orbit_pitch_release(OrbitTrack *track) {
     track->hold_pitch = track->target_saved = 0;
 }
 
-// A host call at an instruction site, not an AAPCS64 function replacement. Preserve every guest register except
-// s9/s10, which carry the processed camera input, and perform the displaced store of s9 at [x20 + 0x420].
 static void camera_input(Cpu *c) {
     mouse_input_object = 0;
     uint32_t flags = (uint32_t)c->x[21];
@@ -169,12 +152,10 @@ static void camera_input(Cpu *c) {
         input_direct_mouse_sample(!input_direct_mouse_selector_active() && (accept || hand_active(plat_now_ns())), &dx, &dy);
         float sensitivity = (float)cfg_double("NX2SARIA_MOUSE_SENS");
         sensitivity = fminf(10, fmaxf(0, sensitivity));
-        // The game multiplies camera input by its 30 Hz frame ratio later. Divide by that exact ratio, rather
-        // than wall-clock time: an equal distance of mouse motion then gives equal input at every frame rate.
         float ratio = 1;
         if (frame_step_realtime()) memcpy(&ratio, rt_patch_page(), sizeof ratio);
         else {
-            double hz = frame_step_game_hz();   // frame generation's frames are not the game's
+            double hz = frame_step_game_hz();
             if (hz > 0) ratio = (float)(30 / hz);
         }
         if (isfinite(ratio) && ratio > 0 && sensitivity > 0 && (dx || dy)) {
@@ -208,10 +189,6 @@ static void camera_input(Cpu *c) {
     memcpy((void *)(uintptr_t)(c->x[20] + 0x420), &original, sizeof original);
 }
 
-// Free camera has another signed-square curve for its vertical axis, plus mode-dependent velocity filters.
-// Remove only this mouse sample before that controller runs. At its final spherical-angle output, add degrees
-// directly and move its persistent pitch/yaw by the same amounts so the next update starts at the new orientation.
-// The controller still handles its gamepad input, following, collision and focus normally.
 static void orbit_begin(Cpu *c) {
     orbit.object = 0;
     uint64_t object = c->x[0];
@@ -219,8 +196,6 @@ static void orbit_begin(Cpu *c) {
         MouseSample m = sample_read();
         uint64_t input = guest_pointer(object + 0x20);
         if (m.object == input && m.camera_enabled) {
-            // The hooks take a step when the mouse moved in it, or while the mouse holds the pitch. A step of the
-            // gamepad alone (no mouse motion, no hold: a player who never moved the mouse) keeps the game's input.
             int moved = m.motion[0] != 0 || m.motion[1] != 0, take;
             uint64_t held = guest_pointer(input + 0x148);
             uint8_t override;
@@ -233,7 +208,7 @@ static void orbit_begin(Cpu *c) {
             if (take) track->input = input;
             if (track->hold_pitch) orbit_pitch_target(object, track->pitch);
             plat_mutex_unlock(&sample_lock);
-            if (moved) {   // the mouse's part of this step's stick goes to the final angles instead
+            if (moved) {
                 guest_float_store(input + 0x420, m.pad[0]);
                 guest_float_store(input + 0x424, m.pad[1]);
             }
@@ -244,7 +219,7 @@ static void orbit_begin(Cpu *c) {
         orbit_pitch_release(orbit_track(object));
         plat_mutex_unlock(&sample_lock);
     }
-    c->x[8] = guest_pointer(object + 8);   // displaced ldr x8, [x0, #8]
+    c->x[8] = guest_pointer(object + 8);
 }
 
 static void orbit_angles(Cpu *c) {
@@ -261,8 +236,6 @@ static void orbit_angles(Cpu *c) {
             float low = guest_float(object + 0xf8), high = guest_float(object + 0xfc);
             if (!isfinite(low) || !isfinite(high) || low >= high) low = -89.9f, high = 89.9f;
             low = fmaxf(-89.9f, low); high = fminf(89.9f, high);
-            // The game can recalculate its pitch after orbit_begin (following, mode changes and another filter).
-            // Integrate from our last requested angle, then correct the final output even on stationary frames.
             float base = track->hold_pitch ? track->pitch : pitch;
             float new_pitch = fminf(high, fmaxf(low, base + pitch_delta));
             guest_float_store(c->sp + 0x44, new_pitch);
@@ -283,11 +256,9 @@ static void orbit_angles(Cpu *c) {
     }
     uint32_t bits;
     memcpy(&bits, (const void *)(uintptr_t)(c->sp + 0x44), sizeof bits);
-    c->v[12] = bits;   // displaced ldr s12, [sp, #0x44]
+    c->v[12] = bits;
 }
 
-// Object manipulation reads the player's manipulation input rather than the camera's processed stick. Insert the mouse
-// after that controller's per-axis power curves (main+0x1d59460), preserving the keyboard/controller contribution.
 static void hand_input(Cpu *c) {
     __atomic_store_n(&hand_update, plat_now_ns(), __ATOMIC_RELEASE);
     static _Thread_local uint64_t object, generation;
@@ -314,11 +285,6 @@ static void hand_input(Cpu *c) {
     memcpy((void *)(uintptr_t)(c->sp + 0x48), &original, sizeof original);
 }
 
-// The game also uses a 10% activity threshold after processing the stick. A one-count mouse movement must count
-// as active, even when its displacement is smaller than that threshold. The site is the displaced ldp d9, d8, [sp, #8]
-// just before the update's last `str w8, [x20, #0x418]`: w8 holds the flags then (bit 0 raw input, bit 4 any input,
-// bits 3 and 5 processed input below the threshold), so they are changed in w8; a write to +0x418 would be overwritten
-// by that store. No flag is changed for controller-only input.
 static void camera_activity(Cpu *c) {
     if (mouse_input_object && mouse_input_object == c->x[20]) {
         uint32_t flags = (uint32_t)c->x[8];
@@ -332,17 +298,10 @@ static void camera_activity(Cpu *c) {
     c->v[8] = d8;
 }
 
-// ---- Ocarina 1.1.1 (recomp/patches-v111.txt, set mouse_direct)
-// Its camera input update is main+0x37c300: the same steps as above with other registers and offsets. At the site s1
-// and s0 hold the processed x and y (both zero while the camera-reset timer at +0x5e0 runs), x20 the input object and
-// x21 the flags (bit 0 camera input off, bit 1 invert x, bit 2 invert y). The two stores, the inversion and the idle
-// test that follow read s1 and s0, so the counts added here go through them as the stick's part does.
-#define OOT_STICK 0x538         // the processed stick: x, and y at +0x53c
-#define OOT_RESET_TIMER 0x5e0   // 60 Hz frames left of the pause after a camera reset (right stick click)
-#define OOT_FLAG_IDLE 0x10u     // flags (+0x530): the processed stick is under the game's 10% idle threshold
+#define OOT_STICK 0x538
+#define OOT_RESET_TIMER 0x5e0
+#define OOT_FLAG_IDLE 0x10u
 
-// NX2SARIA_MOUSE_TRACE=1 (test runs): one line per camera input update, with the stick the update made, the counts taken
-// and what they added. vk_dlaa.c adds the camera's direction per frame, so a scripted run gives degrees per count.
 static int mouse_trace(void) {
     static int on = -1;
     if (on < 0) {
@@ -367,9 +326,6 @@ static void camera_input_oot(Cpu *c) {
     if (direct_mode()) {
         input_direct_mouse_sample(accept, &dx, &dy);
         float sensitivity = fminf(10, fmaxf(0, (float)cfg_double("NX2SARIA_MOUSE_SENS")));
-        // The game multiplies the processed stick by the frames it steps and by its camera speeds, which
-        // NX2SARIA_STICK_SENS scales (camera_speed.c): divided by both, a count turns the camera by the same angle at
-        // every frame rate and stick speed. Nothing after the site clamps the sum, so a fast flick is not cut short.
         float per = frames * cam_speed_applied();
         if (accept && sensitivity > 0 && isfinite(per) && per > 0 && (dx || dy)) {
             mouse_input_object = object;
@@ -392,12 +348,9 @@ static void camera_input_oot(Cpu *c) {
         rt_log("mousetrace: in t=%.3f frames=%.4f flags=%x accept=%d timer=%.2f stick=%.5f,%.5f counts=%d,%d add=%.5f,%.5f",
                now / 1e6, frames, flags, accept, timer, x, y, dx, dy, add[0], add[1]);
     uint32_t original = (uint32_t)c->v[1];
-    memcpy((void *)(uintptr_t)(object + OOT_STICK), &original, sizeof original);   // displaced str s1, [x20, #0x538]
+    memcpy((void *)(uintptr_t)(object + OOT_STICK), &original, sizeof original);
 }
 
-// The idle test follows the first site and already counts the mouse's part, but one slow count adds less than the
-// game's 10% threshold: an update the mouse moved in is not idle. The site is the displaced ldp d9, d8, [sp, #0x10]
-// before the update's last `str w8, [x20, #0x530]`, with the flags in w8.
 static void camera_activity_oot(Cpu *c) {
     if (mouse_input_object && mouse_input_object == c->x[20]) {
         c->x[8] = (uint32_t)c->x[8] & ~OOT_FLAG_IDLE;
@@ -411,7 +364,7 @@ static void camera_activity_oot(Cpu *c) {
 }
 
 __attribute__((constructor)) static void mouse_direct_register(void) {
-    if (rt_game_version == 111) {   // Ocarina: two sites of its own, no orbit or held-object site
+    if (rt_game_version == 111) {
         rt_register_host(HOST_MOUSE_DIRECT, camera_input_oot);
         rt_register_host(HOST_MOUSE_ACTIVITY, camera_activity_oot);
         return;

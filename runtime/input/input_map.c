@@ -1,5 +1,3 @@
-// Binding tables (keyboard/mouse and gamepad), their nx2navi.ini overrides, the pure mapping functions and the Buttons
-// tab's edits (input_map.h). No Win32 or SDL here.
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -11,26 +9,18 @@
 #include "input_map.h"
 
 #define STICK_MAX 32767
-#define DIAGONAL 23170   // STICK_MAX / sqrt(2)
+#define DIAGONAL 23170
 #define MOUSE_FULL_CPS 3000.0
 
-// Ocarina's controls (its Basic Controls screen, LayoutMsg/PlusMenu_00 of the game's messages): A actions and, held,
-// dash; B put away; X jump; Y the sword; ZL target; ZR the selected item; L and R quick-select items; the d-pad plays
-// the ocarina (left), puts the accessory on (up), calls Navi (right) and changes boots (down); the right stick's press
-// resets the camera. So E acts and Left Shift, held, dashes (both A); Space jumps; Left Ctrl and Backspace put away; the
-// mouse buttons attack (left), target (right) and reset the camera (middle); O and N are the ocarina and Navi besides 1
-// to 4. SHAKE (the right-stick shake) has no key: Ocarina has no use for it, and bind_shake still sets one.
 #define DEFAULT_KEYS \
-    {KEY_W, B_SL_UP}, {KEY_A, B_SL_LEFT}, {KEY_S, B_SL_DOWN}, {KEY_D, B_SL_RIGHT},                  /* move */ \
-    {KEY_UP, B_SR_UP}, {KEY_LEFT, B_SR_LEFT}, {KEY_DOWN, B_SR_DOWN}, {KEY_RIGHT, B_SR_RIGHT},       /* camera, second source */ \
+    {KEY_W, B_SL_UP}, {KEY_A, B_SL_LEFT}, {KEY_S, B_SL_DOWN}, {KEY_D, B_SL_RIGHT}, \
+    {KEY_UP, B_SR_UP}, {KEY_LEFT, B_SR_LEFT}, {KEY_DOWN, B_SR_DOWN}, {KEY_RIGHT, B_SR_RIGHT}, \
     {KEY_MOUSE_L, B_Y}, {KEY_MOUSE_R, B_ZL}, {KEY_Z, B_ZL}, {KEY_F, B_ZR}, {KEY_X, B_ZR}, \
     {KEY_SPACE, B_X}, {KEY_E, B_A}, {KEY_LSHIFT, B_A}, {KEY_LCTRL, B_B}, {KEY_BACKSPACE, B_B}, {KEY_Q, B_L}, \
     {KEY_R, B_R}, {KEY_V, B_STICK_L}, {KEY_C, B_STICK_R}, {KEY_MOUSE_M, B_STICK_R}, \
     {KEY_1, B_LEFT}, {KEY_O, B_LEFT}, {KEY_2, B_UP}, {KEY_3, B_RIGHT}, {KEY_N, B_RIGHT}, {KEY_4, B_DOWN}, \
     {KEY_TAB, B_PLUS}, {KEY_M, B_MINUS}
 
-// By position: south is Switch B, east A, west Y, north X (Nintendo layout); the Xbox layout swaps A with B and X with Y
-// (south A, as the Xbox labels; cross A on a PlayStation pad). The triggers are ZL and ZR.
 #define DEFAULT_PADS(south, east, west, north) \
     {PAD_SOUTH, south}, {PAD_EAST, east}, {PAD_WEST, west}, {PAD_NORTH, north}, {PAD_LSTICK, B_STICK_L}, \
     {PAD_RSTICK, B_STICK_R}, {PAD_L, B_L}, {PAD_R, B_R}, {PAD_START, B_PLUS}, {PAD_BACK, B_MINUS}, \
@@ -52,7 +42,7 @@ static const char *const action_names[ACTION_COUNT] = {
 static const char *const pad_names[PAD_COUNT] = {
     NULL, "south", "east", "west", "north", "lstick", "rstick", "l", "r", "start", "back",
     "dpad_left", "dpad_up", "dpad_right", "dpad_down", "zl", "zr", "lpaddle1", "rpaddle1", "lpaddle2", "rpaddle2"};
-static const char *const key_names[KEY_COUNT] = {   // each group starts at its id; the ids of a group are consecutive
+static const char *const key_names[KEY_COUNT] = {
     [KEY_A] = "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
     "v", "w", "x", "y", "z",
     [KEY_0] = "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
@@ -105,7 +95,6 @@ int input_map_pads_of(const InputMap *m, int action, int layout, uint8_t *out, i
     return n;
 }
 
-// action's keys become list[0..n): its old ones go, the new ones are appended (the table keeps its order otherwise).
 static void keys_put(InputMap *m, int action, const uint8_t *list, int n) {
     int w = 0;
     for (int i = 0; i < m->nkeys; i++)
@@ -162,7 +151,7 @@ int input_map_bind(const char *button, const char *list) {
     int n = key_def ? input_map_keys_of(&defaults, action, list_k, INPUT_BINDING_MAX) : 0;
     for (int i = 0; i < nk && n < INPUT_BINDING_MAX; i++) list_k[n++] = keys[i];
     keys_put(&input_map, action, list_k, n);
-    for (int l = 0; l < PAD_LAYOUT_COUNT; l++) {   // a bind line names physical buttons: the same in every layout
+    for (int l = 0; l < PAD_LAYOUT_COUNT; l++) {
         uint8_t list_p[INPUT_PAD_BINDING_MAX];
         int c = pad_def ? input_map_pads_of(&defaults, action, l, list_p, INPUT_PAD_BINDING_MAX) : 0;
         for (int i = 0; i < np && c < INPUT_PAD_BINDING_MAX; i++) list_p[c++] = pads[i];
@@ -194,7 +183,7 @@ int input_map_set_key(InputMap *m, int action, int slot, int key) {
                 if (m->keys[i].action == lost && m->keys[i].key != key) other[c++] = m->keys[i].key;
             keys_put(m, lost, other, c);
         }
-        int w = 0;   // the key once in this action's list too
+        int w = 0;
         for (int i = 0; i < n; i++)
             if (list[i] != key) list[w++] = list[i];
         n = w;
@@ -210,7 +199,6 @@ int input_map_set_key(InputMap *m, int action, int slot, int key) {
 
 static int same_set(const uint8_t *a, int na, const uint8_t *b, int nb);
 
-// Every action has its default gamepad buttons in layout.
 static int pads_at_defaults(const InputMap *m, int layout) {
     for (int a = 0; a < B_SL_LEFT; a++) {
         uint8_t p[INPUT_PAD_BINDING_MAX], dp[INPUT_PAD_BINDING_MAX];
@@ -226,7 +214,7 @@ int input_map_set_pad(InputMap *m, int action, int layout, int pad) {
     if (pad != PAD_NONE)
         for (int i = 0; i < m->npads[layout]; i++)
             if (m->pads[layout][i].pad == pad && m->pads[layout][i].action != action) other = m->pads[layout][i].action;
-    if (other >= 0) {   // the other action gives up pad and takes this action's old button
+    if (other >= 0) {
         uint8_t list[INPUT_PAD_BINDING_MAX];
         int c = 0;
         for (int i = 0; i < m->npads[layout]; i++)
@@ -236,7 +224,7 @@ int input_map_set_pad(InputMap *m, int action, int layout, int pad) {
     }
     uint8_t p = (uint8_t)pad;
     pads_put(m, layout, action, &p, pad != PAD_NONE);
-    if (pads_at_defaults(m, layout)) {   // put back as it was: the layout setting moves the face buttons again
+    if (pads_at_defaults(m, layout)) {
         memcpy(m->pads, defaults.pads, sizeof m->pads);
         memcpy(m->npads, defaults.npads, sizeof m->npads);
         return other;
@@ -251,7 +239,6 @@ int input_map_set_pad(InputMap *m, int action, int layout, int pad) {
     return other;
 }
 
-// The same bindings in any order (the menu appends; a line lists them its own way).
 static int same_set(const uint8_t *a, int na, const uint8_t *b, int nb) {
     if (na != nb) return 0;
     for (int i = 0; i < na; i++) {
@@ -314,7 +301,6 @@ int input_prompts_record(const char *dir, char *out, size_t n) {
     if (!f) return 0;
     size_t len = 0;
     int c;
-    // the first line; a longer one is cut short, as the log line it goes into is
     while ((c = fgetc(f)) != EOF && c != '\n' && c != '\r')
         if (len + 1 < n) out[len++] = (char)c;
     fclose(f);
@@ -325,8 +311,6 @@ int input_prompts_record(const char *dir, char *out, size_t n) {
 const char *input_prompts_folder(int prompts, const char *pad_layout) {
     if (prompts == PROMPTS_PC) return "romfs-patches-pc";
     if (prompts != PROMPTS_XBOX && prompts != PROMPTS_PLAYSTATION && prompts != PROMPTS_STEAMDECK) return NULL;
-    // The folders are read at start, before a pad is open: auto counts as Xbox, as for a pad without Nintendo labels.
-    // A Nintendo-labelled pad under auto plays by label too (its A is on the button labelled A), so it matches as well.
     int by_position = input_pad_layout_pick(pad_layout, 0) == PAD_LAYOUT_NINTENDO;
     if (prompts == PROMPTS_PLAYSTATION) return by_position ? "romfs-patches-playstation" : "romfs-patches-playstation-label";
     if (prompts == PROMPTS_STEAMDECK) return by_position ? "romfs-patches-steamdeck" : "romfs-patches-steamdeck-label";
@@ -355,7 +339,7 @@ int input_map_held(const uint8_t down[KEY_COUNT], int action) {
 }
 
 void input_map_stick(const uint8_t down[KEY_COUNT], int stick, int32_t out[2]) {
-    int first = stick ? B_SR_LEFT : B_SL_LEFT, dir[4] = {0, 0, 0, 0};   // left, up, right, down
+    int first = stick ? B_SR_LEFT : B_SL_LEFT, dir[4] = {0, 0, 0, 0};
     for (int i = 0; i < input_map.nkeys; i++) {
         int a = input_map.keys[i].action - first;
         if (a >= 0 && a < 4 && down[input_map.keys[i].key]) dir[a] = 1;
@@ -380,14 +364,12 @@ void input_pad_stick(int32_t x, int32_t y, float dead, int32_t out[2]) {
     double fx = x / (double)STICK_MAX, fy = y / (double)STICK_MAX, m = sqrt(fx * fx + fy * fy);
     out[0] = out[1] = 0;
     if (m <= dead) return;
-    double k = ((m > 1 ? 1 : m) - dead) / (1 - dead) / m;   // past the edge (a square gate's corner) the length is 1
+    double k = ((m > 1 ? 1 : m) - dead) / (1 - dead) / m;
     out[0] = (int32_t)lrint(fmax(-1, fmin(1, fx * k)) * STICK_MAX);
     out[1] = (int32_t)lrint(fmax(-1, fmin(1, fy * k)) * STICK_MAX);
 }
 
 float input_pad_deadzone(int stick) {
-    // the stick's own dead zone when it reads as a number; else (unset, or "8%" and other typos, whose row has no
-    // default of its own and would read as 0, no dead zone at all) the shared stick_deadzone
     const char *own = stick ? "NX2SARIA_RSTICK_DEADZONE" : "NX2SARIA_LSTICK_DEADZONE", *set = cfg_get(own);
     char *end = NULL;
     double v = set && *set ? strtod(set, &end) : 0;
@@ -399,10 +381,6 @@ double input_stick_percent(int32_t x, int32_t y) {
     return sqrt((double)x * x + (double)y * y) * 100.0 / STICK_MAX;
 }
 
-// Minus and Plus held together open or close the menu. *held: latched from the poll where both go down until neither is
-// down (the caller keeps it). Every poll of the latch reports neither to the game, so releasing one button first does not
-// leak the other; Minus alone before Plus reaches the game unchanged. With the menu open the game sees a neutral pad.
-// Returns 1 in the poll where both go down: the caller toggles the menu once.
 static int chord(int *held, uint64_t *buttons, uint64_t combo) {
     uint64_t raw = *buttons & combo;
     int edge = 0;
@@ -425,8 +403,6 @@ int input_menu_gate(int *held, int menu_open, uint64_t *buttons, int32_t sticks[
     return edge;
 }
 
-// Both stick clicks held together step the performance overlay as F10 does (a gamepad has no F10: the Steam Deck in
-// Game Mode). The same latch as the menu's above; the game sees neither click while it holds.
 int input_overlay_gate(int *held, uint64_t *buttons) {
     return chord(held, buttons, 1ull << B_STICK_L | 1ull << B_STICK_R);
 }

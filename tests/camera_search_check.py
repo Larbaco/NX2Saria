@@ -101,7 +101,7 @@ def main():
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     src = (ROOT / 'runtime' / 'input' / 'camera_speed.c').read_text(encoding='utf-8')
-    body = cut(src, '#define COPIES 16', '\n// The copies of the last search, still holding the array at factor k')
+    body = cut(src, '#define COPIES 16', '\nstatic int rewrite_known(')
     with tempfile.TemporaryDirectory(prefix='nx2navi-camera-search-') as tmp:
         c = Path(tmp) / 'check.c'
         c.write_text(HARNESS % body, encoding='utf-8')

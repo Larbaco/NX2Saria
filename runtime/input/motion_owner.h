@@ -18,9 +18,7 @@ typedef struct {
 } MotionOwnerSnapshot;
 
 struct Cpu;
-// Record the model responsible for an address query in a recognized model-binding call site.
 void motion_owner_observe(struct Cpu *cpu, uint64_t address, uint64_t size);
-// Capture identities alongside the submission's uniform bytes, before asynchronous replay.
 void motion_owner_capture(MotionOwnerSnapshot *out);
 void motion_owner_present(void);
 void motion_owner_forget(uint64_t buffer);

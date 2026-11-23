@@ -1,21 +1,3 @@
-// HD rumble for a pair of Joy-Con (input_hd_pair.h).
-//
-// SDL presents a left and a right Joy-Con as one gamepad and drives its two halves at fixed frequencies; the call
-// that hands a Switch controller raw rumble data (input.c hd_tick, SDL_SendGamepadEffect) is refused for the combined
-// gamepad. So for a pair this file writes the rumble output report itself, through SDL's HID interface, to the two
-// HID devices SDL also has open:
-// - Each Joy-Con is opened a second time (the system shares a HID device between handles) and gets output report
-//   0x10 (rumble_hd.c rumble_hd_report), 49 bytes, the length of a Bluetooth output report. A Joy-Con by itself has no
-//   other connection: its USB charging grip is another product id and is left to the motors' path.
-// - The report carries a number that goes round 0..15. Each handle here counts its own; the controller plays a report
-//   whatever number it carries, so SDL's count for its own reports is not disturbed.
-// - While HD rumble is on, input.c makes no dual-motor call for the gamepad (input_rumble), so these reports are the
-//   only rumble the Joy-Con get. SDL still writes its own commands (player lights, sensors on), which carry the rumble
-//   value SDL last set, the one at rest: such a command silences the actuators until the next report from here, at most
-//   RUMBLE_HD_REFRESH_NS later.
-// - A report holds a left and a right value and a Joy-Con plays the one of its side; both halves get the same value
-//   here, so nothing depends on which half a Joy-Con reads.
-// With several pairs connected the first left and the first right Joy-Con listed are taken.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,12 +8,12 @@
 
 enum { VID_NINTENDO = 0x057E, PID_JOYCON_LEFT = 0x2006, PID_JOYCON_RIGHT = 0x2007, BLUETOOTH_REPORT = 49 };
 
-static PlatMutex path_lock = PLAT_MUTEX_INIT;   // guards path[]
-static char *path[2];                           // the HID paths hd_pair_find saw last: left, right
-static PlatMutex dev_lock = PLAT_MUTEX_INIT;    // guards dev[] and number[], and is held across a write
+static PlatMutex path_lock = PLAT_MUTEX_INIT;
+static char *path[2];
+static PlatMutex dev_lock = PLAT_MUTEX_INIT;
 static SDL_hid_device *dev[2];
-static unsigned number[2];                      // the next report's number, per device
-static volatile int32_t ended;                  // hd_pair_end ran: hd_pair_write, under dev_lock, writes nothing
+static unsigned number[2];
+static volatile int32_t ended;
 
 int hd_pair_find(void) {
     char *found[2] = {NULL, NULL};
@@ -52,7 +34,6 @@ int hd_pair_find(void) {
     return both;
 }
 
-// Under dev_lock.
 static void close_devices(void) {
     for (int s = 0; s < 2; s++) {
         if (dev[s]) SDL_hid_close(dev[s]);
@@ -60,7 +41,6 @@ static void close_devices(void) {
     }
 }
 
-// Under dev_lock: one report with v in both halves to device s. 1 when the whole report was taken.
 static int write_side(int s, const uint8_t v[RUMBLE_HD_SIDE]) {
     uint8_t data[RUMBLE_HD_DATA], report[BLUETOOTH_REPORT];
     memcpy(data, v, RUMBLE_HD_SIDE);
@@ -72,7 +52,7 @@ static int write_side(int s, const uint8_t v[RUMBLE_HD_SIDE]) {
 int hd_pair_write(const uint8_t data[RUMBLE_HD_DATA]) {
     int ok = 1;
     plat_mutex_lock(&dev_lock);
-    if (__atomic_load_n(&ended, __ATOMIC_ACQUIRE)) {   // under the write's lock: no stop between this and the write
+    if (__atomic_load_n(&ended, __ATOMIC_ACQUIRE)) {
         plat_mutex_unlock(&dev_lock);
         SDL_SetError("HD rumble has ended");
         return 0;
@@ -119,6 +99,6 @@ void hd_pair_close(int neutral, unsigned wait_ms) {
 }
 
 void hd_pair_end(unsigned wait_ms) {
-    __atomic_store_n(&ended, 1, __ATOMIC_RELEASE);   // before the lock: a write that holds it now is the last one
+    __atomic_store_n(&ended, 1, __ATOMIC_RELEASE);
     hd_pair_close(1, wait_ms);
 }

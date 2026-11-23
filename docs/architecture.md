@@ -44,6 +44,9 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
 - Window, keyboard and mouse: Win32 (`gfx_window_win.c`, `input_win.c`). Gamepads and audio output: SDL3 (every
   connected gamepad is open; the game reads the one pressed last, `input.c`). Voice: libopus. Movies: a host VP9
   decoder over libvpx replaces the SDK's `movie::Decoder` (`runtime/hle/ov_movie.c`).
+- The input code's notes, file by file (the gamepads and their update thread, the keyboard and mouse back ends, the
+  bindings and prompts, the DualShock 3 reader, HD rumble, the gyro's fusion, the direct mouse camera, the camera
+  speed): [docs/code/input.md](code/input.md).
 - Settings and menu: every key with its default is in one table (`cfg.c`), read from `nx2saria.ini` and `NX2SARIA_*`
   variables (the older `nx2navi.ini` and `NX2NAVI_*` names are still read) and written back when the player applies the in-game menu's changes (a draft; `docs/controls.md`). The menu and the performance overlay are Dear ImGui,
   drawn into the swapchain image (`runtime/ui/`); their text is in `ui_text.c`.

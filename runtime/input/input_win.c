@@ -1,6 +1,3 @@
-// The Win32 back end of the keyboard and the mouse (input_wsys.h; input.c merges them with the gamepad): Win32 virtual
-// keys to the key ids of input_map.h, the mouse camera's raw motion (raw input, WM_INPUT) and the cursor capture.
-// Keys and their map: docs/controls.md.
 #include <windows.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -17,7 +14,6 @@
 #include "ui/menu.h"
 #include "vk.h"
 
-// Win32 virtual key of a key id (the one place that knows them), 0 for an id without a key.
 static int key_vk(int key) {
     if (key >= KEY_A && key <= KEY_Z) return 'A' + (key - KEY_A);
     if (key >= KEY_0 && key <= KEY_9) return '0' + (key - KEY_0);
@@ -31,8 +27,6 @@ static int key_vk(int key) {
     case KEY_DOWN: return VK_DOWN;
     case KEY_LEFT: return VK_LEFT;
     case KEY_RIGHT: return VK_RIGHT;
-    // GetAsyncKeyState reads the physical buttons: with Windows' "switch primary and secondary buttons" on, the
-    // primary (left) button is the physical right one, as the window's own WM_LBUTTONDOWN has it
     case KEY_MOUSE_L: return GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
     case KEY_MOUSE_R: return GetSystemMetrics(SM_SWAPBUTTON) ? VK_LBUTTON : VK_RBUTTON;
     case KEY_MOUSE_M: return VK_MBUTTON;
@@ -80,18 +74,15 @@ static int key_vk(int key) {
 
 uint32_t input_key_char(int key) {
     if (key < KEY_MINUS || key > KEY_GRAVE) return 0;
-    return MapVirtualKeyW((UINT)key_vk(key), MAPVK_VK_TO_CHAR) & 0x7fffffffu;   // the top bit marks a dead key
+    return MapVirtualKeyW((UINT)key_vk(key), MAPVK_VK_TO_CHAR) & 0x7fffffffu;
 }
 
-// ---- mouse camera: raw motion accumulated by the window thread, one stick sample per presented frame
-static volatile LONG mouse_dx, mouse_dy;   // raw counts since the last frame sample
-static volatile LONG mouse_travel;          // raw counts moved in total, captured or not (ikb_mouse_travel)
-static volatile LONG presses[2];           // left and right button presses so far (ikb_mouse_presses)
-static volatile LONG wheel_delta;          // WM_MOUSEWHEEL deltas not taken yet (WHEEL_DELTA a notch, up positive)
-static volatile LONG cur_captured;         // cursor hidden and confined to the client area
-static volatile LONG cur_active;           // WM_ACTIVATEAPP: the window's application is active
-// Bits: CUR_REL, Esc or activation by a click on the title bar or border: until a client click; CUR_ESC, set with CUR_REL
-// by Esc (not when it was already set): closing the menu gives the capture back. One word, changed by one CAS.
+static volatile LONG mouse_dx, mouse_dy;
+static volatile LONG mouse_travel;
+static volatile LONG presses[2];
+static volatile LONG wheel_delta;
+static volatile LONG cur_captured;
+static volatile LONG cur_active;
 enum { CUR_REL = 1, CUR_ESC = 2 };
 static volatile LONG cur_rel;
 static void cur_rel_update(LONG (*f)(LONG)) {
@@ -102,10 +93,8 @@ static LONG rel_esc(LONG o) { return o & CUR_REL ? o : CUR_REL | CUR_ESC; }
 static LONG rel_title(LONG o) { (void)o; return CUR_REL; }
 static LONG rel_clear(LONG o) { (void)o; return 0; }
 static LONG rel_menu_closed(LONG o) { return o & CUR_ESC ? 0 : o; }
-static volatile LONG cur_suspend;          // F11 or a modal size or move loop under way
-static SRWLOCK cur_lock = SRWLOCK_INIT;    // serialises cursor_update (window thread, input_block callers)
-// Hide the cursor and confine it to the client area while the window is focused, not suspended, not behind a text entry
-// or the menu, and the mouse camera is on; release it otherwise. Safe from any thread.
+static volatile LONG cur_suspend;
+static SRWLOCK cur_lock = SRWLOCK_INIT;
 static void cursor_update(HWND h) {
     AcquireSRWLockExclusive(&cur_lock);
     int want = h && cur_active && !(cur_rel & CUR_REL) && !cur_suspend && input_cursor_allowed() &&
@@ -117,7 +106,7 @@ static void cursor_update(HWND h) {
         ClipCursor(&clip);
         if (!cur_captured) { InterlockedExchange(&mouse_dx, 0); InterlockedExchange(&mouse_dy, 0); }
         if (!InterlockedExchange(&cur_captured, 1)) {
-            static volatile LONG lines;   // (the first changes: a run's log shows the camera got its mouse, or gave it up)
+            static volatile LONG lines;
             if (InterlockedIncrement(&lines) <= 40) rt_log("input: the mouse captured for the camera (confined and hidden)");
         }
     } else {
@@ -137,11 +126,10 @@ void input_cursor_suspend(int on) {
     cursor_update(gfx_window_handle());
 }
 
-// Window procedure hook (gfx_window_win.c calls it first). Returns 1 with *res set when the message is fully handled.
 int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
     switch (m) {
     case WM_CREATE: {
-        RAWINPUTDEVICE rid = {.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = h};   // generic mouse
+        RAWINPUTDEVICE rid = {.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = h};
         if (!RegisterRawInputDevices(&rid, 1, sizeof rid)) rt_log("input: raw mouse registration failed (%lu)", GetLastError());
         break;
     }
@@ -157,29 +145,29 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
                 InterlockedAdd(&mouse_dy, y);
             }
         }
-        break;   // DefWindowProc must see WM_INPUT for cleanup
+        break;
     }
     case WM_SETCURSOR:
         if (cur_captured && LOWORD(l) == HTCLIENT) { SetCursor(NULL); *res = TRUE; return 1; }
         break;
-    case WM_MOUSEWHEEL:   // counted for the game's menus (ikb_wheel_take); the menu's own handler still sees it
+    case WM_MOUSEWHEEL:
         InterlockedAdd(&wheel_delta, GET_WHEEL_DELTA_WPARAM(w));
         break;
-    case WM_SYSCOMMAND:   // Alt pressed alone would enter the window menu loop, which stalls the game: Alt is a game key
+    case WM_SYSCOMMAND:
         if ((w & 0xFFF0) == SC_KEYMENU && l == 0) { *res = 0; return 1; }
         break;
-    case WM_KEYDOWN:   // Esc is unbound in the game layout: it releases the cursor and opens the menu (menu_window_msg)
+    case WM_KEYDOWN:
         if (w == VK_ESCAPE && !(cur_rel & CUR_REL)) { cur_rel_update(rel_esc); cursor_update(h); }
         break;
-    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:   // client area only; poll_merged drops the click
+    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
         if (m != WM_MBUTTONDOWN) InterlockedIncrement(&presses[m == WM_RBUTTONDOWN]);
         if (cur_rel & CUR_REL) { cur_rel_update(rel_clear); cursor_update(h); }
         break;
-    case WM_MOUSEACTIVATE:   // sent before WM_ACTIVATEAPP: a title bar or border click must not capture
+    case WM_MOUSEACTIVATE:
         if (LOWORD(l) != HTCLIENT) cur_rel_update(rel_title);
         break;
     case WM_ACTIVATEAPP:
-        if (!w) cur_rel_update(rel_clear);   // Alt+Tab back in captures again
+        if (!w) cur_rel_update(rel_clear);
         InterlockedExchange(&cur_active, w != 0);
         cursor_update(h);
         break;
@@ -209,7 +197,6 @@ int input_flight_key(void) {
 
 int input_dump_key(void) { return key_down(VK_INSERT); }
 
-// ---- input_wsys.h
 int ikb_foreground(void) {
     HWND w = gfx_window_handle();
     return w && w == GetForegroundWindow();
@@ -246,7 +233,6 @@ void ikb_pointer_set(float nx, float ny) {
 uint32_t ikb_mouse_travel(void) { return (uint32_t)mouse_travel; }
 uint32_t ikb_mouse_presses(int right) { return (uint32_t)presses[right != 0]; }
 
-// Whole notches since the last call; a smooth wheel's part of a notch stays for the next
 int32_t ikb_wheel_take(void) {
     LONG o, n;
     do { o = wheel_delta; n = o % WHEEL_DELTA; } while (InterlockedCompareExchange(&wheel_delta, n, o) != o);
