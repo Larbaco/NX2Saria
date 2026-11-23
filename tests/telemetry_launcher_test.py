@@ -1,5 +1,5 @@
 """launcher/telemetry.py and the session reports' screens of the window (launcher/ui/app.py): consent before anything
-is sent, the exact bytes sent and shown, the server's 410, silent network errors, Delete My Data, the crash summary
+is sent, the exact bytes sent and shown, the server's 410, silent network errors, no id of the installation, the crash summary
 made from a FATAL line, the log lines a comment carries.
 
 Run: python tests/telemetry_launcher_test.py   (the window tests need tkinter, numpy and a display: on Linux under
@@ -16,7 +16,6 @@ import tempfile
 import threading
 import time
 import unittest
-import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -128,7 +127,7 @@ class ConsentTest(Base):
         s = summary()
         self.write_summary(s)
         self.settings['telemetry'] = 'on'
-        expected = telemetry.body(telemetry.payload(s, self.settings, VERSION))
+        expected = telemetry.body(telemetry.payload(s, VERSION))
         got = self.reporter().send_session(self.game)
         self.assertTrue(got.ok, got.reason)
         method, path, headers, body = self.server.hits[0]
@@ -137,8 +136,7 @@ class ConsentTest(Base):
         self.assertEqual(headers['Content-Type'], 'application/json')
         self.assertTrue(headers['User-Agent'].startswith('NX2Saria-Launcher/'))
         sent = json.loads(body)
-        self.assertEqual(set(sent), {'install_id', 'launcher_version', 'summary'})
-        self.assertEqual(str(uuid.UUID(sent['install_id'], version=4)), sent['install_id'])
+        self.assertEqual(set(sent), {'launcher_version', 'summary'})          # no id of the installation
         self.assertEqual(sent['launcher_version'], VERSION)
         self.assertEqual(sent['summary'], s)
         self.assertLessEqual(len(body), telemetry.SESSION_LIMIT)
@@ -148,11 +146,33 @@ class ConsentTest(Base):
         self.assertFalse(self.reporter().send_session(self.game).ok)                  # nothing left to send
         self.assertEqual(len(self.server.hits), 1)
 
-    def test_the_install_id_is_made_once_and_kept(self):
-        self.assertEqual(self.settings['telemetry_id'], '')
-        first = telemetry.install_id(self.settings)
-        self.assertEqual(settings.Settings(self.tmp / 'launcher.json')['telemetry_id'], first)
-        self.assertEqual(telemetry.install_id(self.settings), first)
+    def test_no_id_is_made_kept_or_sent(self):
+        self.write_summary()
+        self.settings['telemetry'] = 'on'
+        r = self.reporter()
+        self.assertTrue(r.send_session(self.game).ok)
+        self.assertTrue(r.send_feedback('A comment', False, self.game).ok)
+        for _, _, _, body in self.server.hits:
+            self.assertNotIn(b'install', body)
+            self.assertNotIn(b'_id', body)
+        self.settings.save()
+        kept = json.loads((self.tmp / 'launcher.json').read_text(encoding='utf-8'))
+        self.assertFalse([k for k in kept if 'id' in k.split('_')], kept)
+
+    def test_an_earlier_version_s_id_is_removed_from_the_settings_file(self):
+        path = self.tmp / 'launcher.json'
+        path.write_text(json.dumps({'telemetry': 'on', 'telemetry_id': '3b241101-e2bb-4255-8caf-4136c566a962',
+                                    'sounds': 'off'}), encoding='utf-8')
+        s = settings.Settings(path)
+        telemetry.forget_install_id(s, self.lines.append)
+        kept = json.loads(path.read_text(encoding='utf-8'))
+        self.assertNotIn('telemetry_id', kept)
+        self.assertNotIn('3b241101', path.read_text(encoding='utf-8'))
+        self.assertEqual((kept['telemetry'], kept['sounds']), ('on', 'off'))   # the other settings stay
+        self.assertEqual(len(self.telemetry_lines()), 1)
+        self.assertIn('installation id an earlier version kept was removed', self.lines[0])
+        telemetry.forget_install_id(s, self.lines.append)                     # once: nothing to remove, no line
+        self.assertEqual(len(self.telemetry_lines()), 1)
 
     def test_no_server_sends_nothing_and_says_so_once(self):
         self.write_summary()
@@ -266,21 +286,6 @@ class ServerAnswerTest(Base):
         self.assertFalse(self.reporter().send_session(self.game).ok)
         self.assertTrue((self.game / 'logs' / telemetry.SUMMARY).is_file())
 
-    def test_delete_makes_a_new_id(self):
-        self.settings['telemetry'] = 'off'                                    # works with reports off
-        old = telemetry.install_id(self.settings)
-        got = self.reporter().delete_data()
-        self.assertTrue(got.ok, got.reason)
-        method, path, _, body = self.server.hits[0]
-        self.assertEqual((method, path, body), ('DELETE', f'/v1/install/{old}', b''))
-        new = settings.Settings(self.tmp / 'launcher.json')['telemetry_id']
-        self.assertNotEqual(new, old)
-        self.assertEqual(str(uuid.UUID(new, version=4)), new)
-        self.assertIn('telemetry: data deleted (HTTP 200), new install id', self.lines)
-        self.server.status = 500                                              # a failed delete keeps the id
-        self.assertFalse(self.reporter().delete_data().ok)
-        self.assertEqual(self.settings['telemetry_id'], new)
-
     def test_a_comment_needs_no_session_consent(self):
         """Pressing Send on a comment is its own consent: it goes before the question was answered, with the last
         summary and the log lines asked for."""
@@ -294,7 +299,7 @@ class ServerAnswerTest(Base):
         method, path, headers, body = self.server.hits[0]
         self.assertEqual((method, path), ('POST', '/v1/feedback'))
         sent = json.loads(body)
-        self.assertEqual(set(sent), {'install_id', 'launcher_version', 'text', 'summary', 'log_tail'})
+        self.assertEqual(set(sent), {'launcher_version', 'text', 'summary', 'log_tail'})
         self.assertEqual(sent['text'], 'The water temple\nstutters.')
         self.assertEqual(sent['summary'], s)
         self.assertIn('~/Games/NX2Saria/profile', sent['log_tail'])
@@ -312,14 +317,6 @@ class ServerAnswerTest(Base):
         got = self.reporter().send_feedback('Reports are off', False, self.game)
         self.assertTrue(got.ok)
         self.assertIsNone(json.loads(self.server.hits[2][3])['summary'])
-
-    def test_see_what_is_sent_writes_no_id(self):
-        """See What Is Sent before any choice shows an id without saving it; the first send saves that same id."""
-        self.assertFalse(self.settings.get('telemetry_id'))
-        shown = telemetry.payload(summary(), self.settings, VERSION, save=False)['install_id']
-        self.assertFalse(self.settings.get('telemetry_id'))
-        self.assertEqual(telemetry.install_id(self.settings), shown)
-        self.assertEqual(self.settings['telemetry_id'], shown)
 
 
 class CrashSummaryTest(Base):
@@ -466,7 +463,8 @@ class WindowTest(Base):
         self.assertEqual(self.server.hits[0][3], shown.encode('utf-8'))
         self.app.open_sent('settings')                                        # sent: an example now
         self.assertTrue(self.app.sent_example)
-        self.assertIn('"install_id": "' + self.ctx.settings['telemetry_id'], self.app.sent_text)
+        self.assertNotIn('install_id', self.app.sent_text)
+        self.assertEqual(set(json.loads(self.app.sent_text)), {'launcher_version', 'summary'})
 
     def logged(self, end):
         """Whether a line of launcher.log ends with end."""
@@ -696,19 +694,13 @@ class WindowTest(Base):
         self.assertEqual(self.ctx.settings['telemetry'], '')                  # a comment is no consent to reports
         self.app.back()
         self.assertEqual(self.app.screen, 'reports')
-        self.app.focus = self.app.row_index(self.app.rows, 'Delete My Data')
-        self.app.activate()
-        self.assertEqual(self.app.screen, 'delete_data')
-        old = self.ctx.settings['telemetry_id']
-        self.app.activate()                                                    # Delete My Data
-        self.app.tasks.wait()
-        self.assertEqual(self.server.hits[-1][:2], ('DELETE', f'/v1/install/{old}'))
-        self.assertNotEqual(self.ctx.settings['telemetry_id'], old)
-        self.assertIn('deleted', self.app.reports_message)
+        self.assertEqual([r.label for r in self.app.rows if r.label],
+                         ['Session Reports', 'See What Is Sent', 'Send a Comment', 'Back'])   # nothing to delete by
+        self.assertEqual([h[0] for h in self.server.hits], ['POST'])
 
     def test_screen_option_opens_a_screen(self):
         for name, screen in (('consent', 'consent'), ('sent', 'sent_view'), ('comment', 'comment'),
-                             ('reports', 'reports'), ('delete_data', 'delete_data')):
+                             ('reports', 'reports')):
             self.app.open_screen(name)
             self.root.update()
             self.assertEqual(self.app.screen, screen)

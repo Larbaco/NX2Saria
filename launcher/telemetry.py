@@ -7,7 +7,8 @@ answer_question): Don't Send keeps them off; Send, closing the question and its 
   `telemetry` is "on": Reporter.prepare_session refuses everything else itself, so no caller can send without it.
 - A comment is text the player wrote in Send a Comment, with the last session's summary and, when asked for, the last
   lines of the game's log. Its own Send button is the player's consent: it does not need `telemetry` on.
-- Delete My Data asks the server to delete everything sent with the install's id, then makes a new id.
+- Neither carries an id of the installation, and the server keeps no IP address: nothing sent can be deleted on
+  request, because the server cannot tell whose it is. It deletes every report and comment after 180 days.
 
 A run that ended in a hard crash writes no summary; the launcher makes one from the crash's FATAL line
 (synthesize_crash), with every value it cannot know left null.
@@ -22,7 +23,6 @@ import re
 import threading
 import unicodedata
 import urllib.error
-import uuid
 from pathlib import Path
 
 from . import net, versions
@@ -244,29 +244,26 @@ def log_tail(game_dir, lines=TAIL_LINES, limit=TAIL_LIMIT):
 
 # ---------------------------------------------------------------- what is sent
 
-_unsaved_id = None   # the id "See What Is Sent" showed before any was saved; the first send saves this same one
+def payload(summary, launcher_version):
+    """The session report exactly as it is sent: what "See What Is Sent" shows and send_session posts. It carries no
+    id of the installation: nothing in it tells two reports of one PC from those of two PCs alike."""
+    return {'launcher_version': versions.display(launcher_version), 'summary': summary}
 
 
-def install_id(settings, save=True):
-    """The install's random id (uuid4). save: made and saved the first time something is sent. Without save (See What
-    Is Sent before the player chose), an id is made for this launcher run only and nothing is written; a send later in
-    the run saves that same id, so what was shown is what goes."""
-    global _unsaved_id
-    if settings.get('telemetry_id'):
-        return settings['telemetry_id']
-    _unsaved_id = _unsaved_id or str(uuid.uuid4())
-    if not save:
-        return _unsaved_id
-    settings['telemetry_id'], _unsaved_id = _unsaved_id, None
+def forget_install_id(settings, log=None):
+    """Removes the installation id an earlier version of the launcher made and kept in the settings file. Reports
+    and comments carry none, so the launcher keeps none. The settings no longer know the key (settings.py DEFAULTS),
+    so it is looked for in the file itself, and saving writes the file without it."""
+    try:
+        data = json.loads(settings.path.read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or 'telemetry_id' not in data:
+        return
     settings.save()
-    return settings['telemetry_id']
-
-
-def payload(summary, settings, launcher_version, save=True):
-    """The session report exactly as it is sent: what "See What Is Sent" shows (save False: no id written yet) and
-    send_session posts."""
-    return {'install_id': install_id(settings, save), 'launcher_version': versions.display(launcher_version),
-            'summary': summary}
+    if log:
+        log('telemetry: the installation id an earlier version kept was removed from the settings; reports and '
+            'comments carry no id')
 
 
 def body(data):
@@ -282,12 +279,12 @@ def clean_text(text):
 
 # ---------------------------------------------------------------- requests
 
-Request = collections.namedtuple('Request', 'kind method path data')   # kind: 'session', 'feedback' or 'delete'
+Request = collections.namedtuple('Request', 'kind method path data')   # kind: 'session' or 'feedback'
 Result = collections.namedtuple('Result', 'ok reason')   # reason: for the player, '' when ok
 
 
 class Reporter:
-    """Sends and deletes for one launcher run. Each of send_session, send_feedback and delete_data is prepare_*
+    """Sends for one launcher run. Each of send_session and send_feedback is prepare_*
     (checks and the request, on the caller's thread), post (the network, which the window runs on a thread) and
     finish (the settings and the files, on the caller's thread again)."""
 
@@ -371,7 +368,7 @@ class Reporter:
         summary = pending_summary(game_dir)
         if summary is None:
             return Result(False, 'no session to report')
-        data = body(payload(summary, self.settings, self.version))
+        data = body(payload(summary, self.version))
         if len(data) > SESSION_LIMIT:
             mark_sent(game_dir)
             self.error(f'telemetry: session report not sent: {len(data)} bytes, more than the server takes')
@@ -415,7 +412,7 @@ class Reporter:
         if self.no_server():
             return Result(False, 'no server is set up')
         tail = log_tail(game_dir) if attach_log and game_dir else None
-        data = {'install_id': install_id(self.settings), 'launcher_version': self.version, 'text': text,
+        data = {'launcher_version': self.version, 'text': text,
                 'summary': last_summary(game_dir, self.settings), 'log_tail': tail}
         raw = body(data)
         while len(raw) > FEEDBACK_LIMIT and data['log_tail']:   # escaped characters can make the log lines grow
@@ -443,34 +440,6 @@ class Reporter:
         if isinstance(req, Result):
             return req
         return self.finish_feedback(req, self.post(req))
-
-    # ---- deleting
-
-    def prepare_delete(self):
-        """The request that deletes what was sent with this install's id, whether reports are on or off; a Result
-        when there is nothing to ask."""
-        if self.no_server():
-            return Result(False, 'no server is set up')
-        if not self.settings.get('telemetry_id'):
-            return Result(True, '')   # no id was ever made: nothing was sent
-        return Request('delete', 'DELETE', f'/v1/install/{self.settings["telemetry_id"]}', None)
-
-    def finish_delete(self, req, answer):
-        status, error = answer
-        if status in (200, 204):
-            self.settings['telemetry_id'] = str(uuid.uuid4())
-            self.settings.save()
-            self.log(f'telemetry: data deleted (HTTP {status}), new install id')
-            return Result(True, '')
-        self.error(f'telemetry: data not deleted ({self._answer(status, error)})')
-        return Result(False, self._why(status, error))
-
-    def delete_data(self):
-        """Deletes what was sent with this install's id, then makes a new id; a Result."""
-        req = self.prepare_delete()
-        if isinstance(req, Result):
-            return req
-        return self.finish_delete(req, self.post(req))
 
     # ---- consent
 

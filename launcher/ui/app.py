@@ -16,12 +16,11 @@ flat cells and the orange choices are canvas items. Screens:
                 and Copy Report
     settings    the launcher's choices, the folders, the logs and Uninstall
     reports     session reports and comments (launcher/telemetry.py): Session Reports, See What Is Sent, Send a
-                Comment, Delete My Data
+                Comment
     consent     the question about session reports, at the first start of each new version while they are not on:
                 Send (focused), Don't Send, See What Is Sent, and a countdown that turns them on
     sent_view   the exact JSON a session report sends, in a read-only text box in the description's place
     comment     Send a Comment: a text box for the comment, Attach the Last Log Lines, Send and Cancel
-    delete_data Delete My Data's confirmation
     uninstall   what to remove, then Uninstall or Cancel
 
 Mouse, keyboard (arrows, Enter or Space, Esc, F5) and an XInput gamepad (d-pad or stick, A, B, Y) all move the cursor.
@@ -71,7 +70,7 @@ if os.name != 'nt':
 SPARKS = 22                     # the dust drifting over the backdrop
 DEPTH = {'first_run': 0, 'home': 0, 'job': 1, 'saves': 1, 'settings': 1, 'customize': 1, 'uninstall': 2,
          'color': 2, 'mods': 1, 'mod_order': 2, 'udmabuf': 2, 'reports': 2, 'consent': 1, 'sent_view': 3,
-         'comment': 3, 'delete_data': 3}
+         'comment': 3}
 MODS_PAGE = 7     # mods on a page of the Mods screen, beside its other rows
 ORDER_PAGE = 10   # ... of the Load Order screen
 # the Custom scheme's picker (draw_picker), logical pixels: its box (x, top, width, height), the colour square and
@@ -462,6 +461,7 @@ class App:
         self.uninstall_game = False
         self.game_run = None   # the Play being followed (GameRun), until watch_game sees its end
         # session reports and comments (launcher/telemetry.py): the requests run on threads (tasks, polled by tick)
+        telemetry.forget_install_id(self.settings, ctx.log)
         self.reporter = telemetry.Reporter(self.settings, ctx.version, ctx.log)
         self.tasks = telemetry.Tasks()
         self.question = None            # the question about session reports while it is open: 'ask' (its answer
@@ -472,7 +472,6 @@ class App:
         self.sent_text = ''             # the text See What Is Sent shows: the bytes a report sends
         self.sent_example = False       # ... made from an example, as the game has written no summary yet
         self.session_sending = False    # a session report is on its way
-        self.reports_message = ''       # what the last change on the reports screen did (Delete My Data)
         self.comment_draft = ''         # the comment as typed so far
         self.comment_log = False        # Attach the Last Log Lines
         self.comment_message = ''       # the last Send's result
@@ -878,7 +877,7 @@ class App:
             self.leave_comment_box()
             return
         if self.screen in ('settings', 'uninstall', 'saves', 'customize', 'job', 'color', 'mods', 'mod_order',
-                           'udmabuf', 'reports', 'consent', 'sent_view', 'comment', 'delete_data'):
+                           'udmabuf', 'reports', 'consent', 'sent_view', 'comment'):
             self.sounds.play('back')
         if self.screen == 'consent':   # Esc or B closes the question, which turns reports on as the screen says
             self.question_end('closed')
@@ -888,8 +887,6 @@ class App:
             self.show('settings', self.row_index(self.rows_settings(), 'Session Reports'))
         elif self.screen == 'comment':
             self.show('reports', self.row_index(self.rows_reports(), 'Send a Comment'))
-        elif self.screen == 'delete_data':
-            self.show('reports', self.row_index(self.rows_reports(), 'Delete My Data'))
         elif self.screen == 'color':
             self.pick_done()
         elif self.screen == 'settings':
@@ -1106,7 +1103,7 @@ class App:
             self.open_sent('home')
         elif name == 'consent':
             self.open_question(preview=True)
-        elif name in ('reports', 'comment', 'delete_data'):
+        elif name in ('reports', 'comment'):
             self.show(name)
 
     def after_update_notice(self):
@@ -2601,8 +2598,9 @@ class App:
                          'system, processor, graphics card and driver, memory, main graphics options, patches that '
                          'are on, number of mods, frame rate, shader preparation time and how the session ended, '
                          'with the error line if any.',
-                         'Nothing personal: no name, account, folders or saves; your IP address is not kept. It '
-                         'helps find and fix bugs. Change or delete everything in Settings > Session Reports.']}
+                         'Nothing personal: no name, account, folders or saves, no id of this installation; your '
+                         'IP address is not kept. It helps find and fix bugs. Change this in Settings > Session '
+                         'Reports.']}
 
     def rows_consent(self):
         return [
@@ -2620,8 +2618,7 @@ class App:
         self.question_touched()
         summary = telemetry.pending_summary(self.settings.get('game_dir'))
         self.sent_example = summary is None
-        data = telemetry.payload(summary or telemetry.example_summary(), self.settings, self.ctx.version,
-                                 save=False)
+        data = telemetry.payload(summary or telemetry.example_summary(), self.ctx.version)
         self.sent_text = telemetry.body(data).decode('utf-8')
         self.sent_return = came_from
         self.show('sent_view')
@@ -2632,7 +2629,6 @@ class App:
     def rows_reports(self):
         def flip():
             self.reporter.set_consent(self.settings.get('telemetry') != 'on')
-            self.reports_message = ''
             if self.settings.get('telemetry') == 'on':
                 self.send_pending()
         closed = self.reporter.closed()
@@ -2642,7 +2638,9 @@ class App:
                 desc=('On: after you play, a short report of how the game ran on this PC goes to the project: '
                       'versions, system, processor, graphics card, memory, the main graphics options, the patches '
                       'that are on, the number of mods, play time, frame rate and the error line if there was one.',
-                      'No files, saves, account or folder names. Your IP address is not kept. Kept 180 days.',
+                      'No files, saves, account or folder names, and no id of this installation. Your IP address is '
+                      'not kept. Reports are deleted after 180 days; with no id on them, none can be picked out and '
+                      'deleted before.',
                       'While they are off, each new version of NX2Saria asks once when it first opens.',
                       'The server no longer takes reports from this version.' if closed else '')),
             Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('reports'),
@@ -2652,38 +2650,8 @@ class App:
                 desc=('Write to the project: a problem, an idea. It goes when you select Send, also with session '
                       'reports off.',)),
             Row('divider'),
-            Row('value', 'Delete My Data', '', 'salmon', on=lambda: self.show('delete_data'),
-                desc=('Delete every report and comment this installation sent from the server, and start a new '
-                      'random id. Works with reports on or off.',)),
             Row('action', 'Back', on=self.back, height=40, desc=('Back to Settings.',)),
         ]
-
-    def rows_delete_data(self):
-        return [
-            Row('pair', actions=[('Delete My Data', self.delete_data), ('Cancel', self.back)],
-                desc={'title': 'Delete My Data',
-                      'text': ['The server deletes every report and comment sent with this installation\'s id, '
-                               'then the launcher makes a new id.',
-                               'The server gives the same answer whether it held anything or not.']}),
-        ]
-
-    def delete_data(self):
-        req = self.reporter.prepare_delete()
-        if isinstance(req, telemetry.Result):
-            self.reports_message = ('Nothing was sent from this installation.' if req.ok else
-                                    f'Could not delete: {req.reason}.')
-            self.show('reports', self.row_index(self.rows_reports(), 'Delete My Data'))
-            return
-
-        def done(answer):
-            got = self.reporter.finish_delete(req, answer)
-            self.reports_message = ('Your data was deleted from the server. New reports go with a new id.' if got.ok
-                                    else f'Could not delete: {got.reason}.')
-            if self.screen == 'reports':
-                self.show('reports', self.focus)
-        self.reports_message = 'Deleting…'
-        self.tasks.start(lambda: self.reporter.post(req), done)
-        self.show('reports', self.row_index(self.rows_reports(), 'Delete My Data'))
 
     def rows_comment(self):
         n = len(self.comment_draft)
@@ -3473,9 +3441,6 @@ class App:
         elif self.message and self.screen in ('first_run', 'settings', 'uninstall', 'udmabuf'):
             d = dict(d)
             d['text'] = [self.message] + list(d.get('text', []))
-        if self.reports_message and self.screen == 'reports':
-            d = dict(d) if isinstance(d, dict) else {'text': list(d)}
-            d['text'] = [self.reports_message] + list(d.get('text', []))
         c, X = self.canvas, self.X
         dx, dw = DESC
         x0 = X(dx)
@@ -3666,7 +3631,7 @@ def parse_args(argv):
     ap.add_argument('--root', help='the launcher folder (tests)')
     ap.add_argument('--selftest', action='store_true', help='draw every screen and close')
     ap.add_argument('--shots', help='with --selftest: save a PNG of each screen into this folder')
-    ap.add_argument('--screen', choices=('consent', 'sent', 'comment', 'reports', 'delete_data'),
+    ap.add_argument('--screen', choices=('consent', 'sent', 'comment', 'reports'),
                     help='open this screen of the session reports at once (looking at it, screenshots)')
     ap.add_argument('--play', action='store_true',
                     help='start the game without the window and wait for it (the Steam shortcut, launcher/steam.py)')

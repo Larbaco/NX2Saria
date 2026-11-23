@@ -7236,7 +7236,7 @@ class TelemetryHiddenTest(Tmp):
         a.open_screen('consent')
         self.assertNotEqual(a.screen, 'consent')
         self.assertEqual(ctx.settings['telemetry'], '')
-        self.assertFalse(ctx.settings['telemetry_id'])
+        self.assertNotIn('telemetry_id', ctx.settings)
 
     def test_the_override_turns_them_on(self):
         a, ctx = self.make_app('http://127.0.0.1:9')
