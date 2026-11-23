@@ -74,7 +74,7 @@ WIRING = [
     ('runtime/vk/vk_pipeline.c', 'the folder line says what the folder holds',
      r'rt_log\("vk_pipeline: library warm: %s", text\)'),
     ('runtime/vk/vk_pipeline.c', 'the count asks the platform\'s listing', r'nvc_measure\(plat_fs_list, dir, work, sizeof work, &s\)'),
-    ('runtime/cfg/cfg.c', 'a known name', r'"NVIDIA_CACHE_DIR",\s*//'),
+    ('runtime/cfg/cfg.c', 'a known name', r'(?<!\{)"NVIDIA_CACHE_DIR",'),
     ('runtime/cfg/cfg.c', 'a row in the settings table', r'\{"NVIDIA_CACHE_DIR", "1", "0\|1", RESTART\}'),
     ('runtime/cfg/cfg.c', 'a section', r'\{"NVIDIA_CACHE_DIR", "performance"\}'),
     ('nx2saria.ini.example', 'the setting is documented', r'(?m)^# nvidia_cache_dir = 1$'),

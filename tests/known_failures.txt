@@ -1,3 +1,4 @@
 # Tests that fail on main, for tests/run.py: "name: reason", or "name [linux]: reason" for a failure on that operating
 # system only. A known failure still runs and is counted apart; it does not fail the run. The line goes in the change
 # that makes the test pass (the runner reports a known failure that passed).
+jumptables_check: on game 1.1.1 recomp/jumptables.py raises _Exhausted inside the test's own hoisted_base (the same on main); whether the test or the resolver is wrong is not known yet
