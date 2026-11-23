@@ -156,5 +156,5 @@ bool opt_display_keep(void);       // releases them and saves nx2navi.ini; false
 // opt_display_external, keeps what is on screen instead and returns false.
 bool opt_display_revert(void);
 void opt_draft_discard(void);                     // puts the previews back, drops the staged keys
-// Writes nx2navi.ini now (a toggle outside the draft: a cheat).
+// Writes nx2navi.ini now.
 void opt_save_now(void);

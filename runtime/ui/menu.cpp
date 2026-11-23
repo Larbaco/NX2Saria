@@ -528,7 +528,8 @@ static int fonts_up(float scale) {
         // what the title face shows in the CJK languages: the menu's title and tabs (Simplified Chinese menu text) and
         // the boot screen's title (the game's language)
         static const UiTextId titles[] = {UI_MENU_TITLE, UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
-                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_BOOT_TITLE};
+                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_CHEATS,
+                                          UI_BOOT_TITLE};
         for (int i = 0; i < N; i++) {
             if (!data[i]) continue;
             ImFontGlyphRangesBuilder b;
@@ -597,7 +598,8 @@ extern "C" void menu_vk_release(void) {
 // NX2SARIA_ prefix optional) puts the cursor on that setting's row and scrolls it into view when the row is next drawn
 // (opt_focus_key); for a bind cell, use BIND_<action>#<cell> with cell 0..2. FOCUS does not switch tabs.
 // Ocarina of Time: the options this port has
-enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_COUNT };
+enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_CHEATS, TAB_COUNT };
+static int tabs_shown(void) { return cheats_count() > 0 ? TAB_COUNT : TAB_CHEATS; }
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16, TEST_OPENS = 8 };
 struct TestSet { uint64_t frame; char key[64], value[64]; };
 static struct {
@@ -660,6 +662,12 @@ static void test_apply_sets(uint64_t frame) {
         if (!strcmp(t.key, "NX2SARIA_SAVE")) {
             const int kept = cfg_test_keep();
             rt_log("menu: test hook: cfg_save of %d test value(s) %s", kept, cfg_save() ? "wrote" : "failed");
+        } else if (!strcmp(t.key, "NX2SARIA_LEAVE")) {
+            if (opt_draft_count() > 0) g_close_req.store(1);
+            else rt_log("menu: test hook: LEAVE with nothing in the draft: no box to open");
+        } else if (!strcmp(t.key, "NX2SARIA_APPLY")) {
+            const int n = opt_draft_any();
+            rt_log("menu: test hook: Apply of the draft's %d change(s) %s", n, opt_draft_apply() ? "saved" : "failed");
         } else if (!strcmp(t.key, "NX2SARIA_FOCUS")) {
             char row[80];
             snprintf(row, sizeof row, "%s%s", !strncmp(t.value, "BIND_", 5) || !strncmp(t.value, "NX2SARIA_", 9)
@@ -2415,7 +2423,7 @@ static void tab_controls(float scale) {
 }
 
 static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
-                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO};
+                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_CHEATS};
 static int g_tab;               // the tab shown
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
 static int g_focus_page = -1;   // this tab's first row takes the cursor once it is shown; -1 none
@@ -2508,7 +2516,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
              : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
              : ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? -1
                                                                                                          : 0;
-    const int ntabs = TAB_COUNT;
+    const int ntabs = tabs_shown();
     if (step) g_tab_request = g_tab_sounded = (g_tab + step + ntabs) % ntabs;
     if (step) menu_sound_play(step > 0 ? MENU_SOUND_TAB_RIGHT : MENU_SOUND_TAB_LEFT);
     if (g_tab_request >= 0) g_focus_page = g_tab_request;   // the new page's first row takes the cursor
@@ -2538,6 +2546,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
             case TAB_SOUND: tab_sound(scale); break;
             case TAB_CONTROLS: tab_controls(scale); break;
             case TAB_AMIIBO: tab_amiibo(scale); break;   // ui/amiibo_page.cpp: the emulated NFC reader
+            case TAB_CHEATS: tab_cheats(scale); break;
             }
             ImGui::EndTabItem();
         }
@@ -3003,7 +3012,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
         const char *dir = cfg_get("NX2SARIA_MENU_TEST_DIR");
         snprintf(path, sizeof path, "%s/menu-test-%llu-%d.png", dir ? dir : ".", (unsigned long long)frame, g_test.page);
         *shot = path;
-        if (++g_test.page == (g_debug.load() ? DEBUG_MENU_TABS : TAB_COUNT)) {
+        if (++g_test.page == (g_debug.load() ? DEBUG_MENU_TABS : tabs_shown())) {
             g_test.page = -1;
             g_test.opened = 0, g_test.next_at++;   // the next NX2SARIA_MENU_TEST frame opens it again
             set_open(0);   // the next frame lays out nothing

@@ -8,7 +8,9 @@
 #include "ui/option_rows.h"
 
 extern "C" {
+#include "cfg.h"
 #include "cheats.h"
+#include "menu_sound.h"
 #include "ui_text.h"
 }
 
@@ -25,7 +27,10 @@ extern "C" void tab_cheats(float scale) {
     int code, patches;
     cheats_unbuilt(&code, &patches);
     if (code || patches) {
-        snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_UNBUILT), code, patches);
+        char cheats[200], files[200];
+        snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_UNBUILT),
+                 menu_count(UI_MENU_COUNT_CODE_CHEATS, code, cheats, sizeof cheats),
+                 menu_count(UI_MENU_COUNT_EXEFS_FILES, patches, files, sizeof files));
         opt_text_str(line);
     }
     for (int i = 0; i < n; i++) {
@@ -34,7 +39,9 @@ extern "C" void tab_cheats(float scale) {
             int listed = 0;
             for (int j = i; j < n && !strcmp(cheats_info(j)->mod, c->mod); j++)
                 listed += cheats_info(j)->kind != CHEAT_HEADING;
-            snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_MOD), c->mod, listed);
+            char count[160];
+            snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_MOD), c->mod,
+                     menu_count(UI_MENU_COUNT_CHEATS, listed, count, sizeof count));
             opt_group_text(line);
         }
         UiTextId text = UI_MENU_CHEAT_CODE_DESC;
@@ -58,9 +65,13 @@ extern "C" void tab_cheats(float scale) {
             snprintf(desc, sizeof desc, "%s %s", menu_text(text), c->note);
         else
             snprintf(desc, sizeof desc, "%s", menu_text(text));
-        if (opt_toggle_text(c->key, c->name, desc, cheats_on(i) != 0)) {
-            cheats_set(i, !cheats_on(i));
-            opt_save_now();   // a cheat is a switch of the game, not a setting of the draft: it is kept at once
+        const bool switched = c->kind == CHEAT_CODE || c->kind == CHEAT_KEY || c->kind == CHEAT_DATA;
+        const char *set = switched ? opt_get(c->key) : nullptr;
+        const bool on = switched ? set && *set && strcmp(set, "0") != 0 : cheats_on(i) != 0;
+        if (opt_toggle_text(c->key, c->name, desc, on) && switched) {
+            opt_change(c->key, on ? cfg_is_set(c->key) ? "0" : "" : "1", c->name, menu_text(on ? UI_MENU_ON : UI_MENU_OFF),
+                       menu_text(on ? UI_MENU_OFF : UI_MENU_ON));
+            menu_sound_play(MENU_SOUND_CURSOR);
         }
     }
     opt_end();

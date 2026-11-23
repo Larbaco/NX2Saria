@@ -668,7 +668,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                             "cheats folder, named after the game's build: mods\\<mod>\\cheats\\%s. Restart the game to "
                             "read them. For cheats that change the game's code, the game rebuilds itself at start (a "
                             "few minutes).",
-    [UI_MENU_CHEATS_MOD] = "%s: %d cheats",
+    [UI_MENU_CHEATS_MOD] = "%s: %s",
     [UI_MENU_CHEAT_CODE_DESC] = "Changes the game's code. Switches at once.",
     [UI_MENU_CHEAT_KEY_DESC] = "Changes the game's code while you hold %s. Switches at once.",
     [UI_MENU_CHEAT_DATA_DESC] = "Writes the game's memory every frame while it is on.",
@@ -678,7 +678,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_CHEAT_RESTORE_DESC] = "It only writes the game's own code back. Switching a cheat off already does that.",
     [UI_MENU_CHEAT_REBUILD] = "after the rebuild",
     [UI_MENU_CHEAT_REBUILD_DESC] = "This cheat changes the game's code and is new or edited since the game was built. "
-                                   "Play in the launcher builds it in.",
+                                   "Play from the launcher builds it in.",
     [UI_MENU_CHEAT_UNSUPPORTED] = "not supported",
     [UI_MENU_CHEAT_UNSUPPORTED_DESC] = "This cheat cannot be used with this version of the game:",
     [UI_MENU_SAVES] = "Saves",
@@ -778,8 +778,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_GAME_RES_DESC] = "Size of the game's picture; outside fullscreen the window takes it too. Higher is sharper "
                               "but costs more GPU power.",
     [UI_MENU_GAME_RES_NATIVE] = "Native",
-    [UI_MENU_CHEATS_UNBUILT] = "%d code cheats and %d ExeFS patch files are not built into the game: Play in the "
-                               "launcher builds them in.",
+    [UI_MENU_CHEATS_UNBUILT] = "%s and %s are not built into the game: Play from the launcher builds them in.",
+    [UI_MENU_COUNT_CODE_CHEATS] = "%d code cheat|%d code cheats",
+    [UI_MENU_COUNT_EXEFS_FILES] = "%d ExeFS patch file|%d ExeFS patch files",
+    [UI_MENU_COUNT_CHEATS] = "%d cheat|%d cheats",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "This mod patches the game code (exefs) in a way the port cannot apply, so the "
                                        "whole mod stays off. %s",
     [UI_MENU_MODS_EXEFS_OTHER] = "Its code patches (exefs) are made for another game version.",
@@ -1429,7 +1431,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                             "с именем по сборке игры: mods\\<мод>\\cheats\\%s. Перезапустите игру, чтобы они "
                             "прочитались. Для читов, меняющих код игры, игра пересоберётся сама при запуске (несколько "
                             "минут).",
-    [UI_MENU_CHEATS_MOD] = "%s — читов: %d",
+    [UI_MENU_CHEATS_MOD] = "%s — %s",
     [UI_MENU_CHEAT_CODE_DESC] = "Меняет код игры. Включается и выключается сразу.",
     [UI_MENU_CHEAT_KEY_DESC] = "Меняет код игры, пока вы держите %s. Включается и выключается сразу.",
     [UI_MENU_CHEAT_DATA_DESC] = "Пока включён, записывает память игры каждый кадр.",
@@ -1482,8 +1484,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_BOOT_TITLE] = "Подготовка шейдеров",
     [UI_BOOT_STARTING] = "Запуск", [UI_BOOT_SHADERS] = "Шейдеры: %lld из %lld", [UI_BOOT_PIPELINES] = "Конвейеры: %lld из %lld",
     [UI_BOOT_COMPUTE] = "Вычислительные конвейеры: %lld из %lld", [UI_BOOT_DRIVER_CACHE] = "Кэш драйвера: %lld из %lld",
-    [UI_MENU_CHEATS_UNBUILT] = "Читов, меняющих код, не собрано в игру: %d, файлов патчей ExeFS: %d. Их соберёт "
-                               "Play в лаунчере.",
+    [UI_MENU_CHEATS_UNBUILT] = "Не собрано в игру: %s и %s. Их соберёт Play в лаунчере.",
+    [UI_MENU_COUNT_CODE_CHEATS] = "%d чит, меняющий код|%d чита, меняющих код|%d читов, меняющих код",
+    [UI_MENU_COUNT_EXEFS_FILES] = "%d файл патчей ExeFS|%d файла патчей ExeFS|%d файлов патчей ExeFS",
+    [UI_MENU_COUNT_CHEATS] = "%d чит|%d чита|%d читов",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "Этот мод меняет код игры (exefs) так, как порт применить не может, поэтому мод "
                                        "выключен целиком. %s",
     [UI_MENU_MODS_EXEFS_OTHER] = "Его патчи кода (exefs) сделаны для другой версии игры.",
@@ -2185,7 +2189,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                             "Atmosphere na pasta cheats dele, com o nome da build do jogo: mods\\<mod>\\cheats\\%s. "
                             "Reinicie o jogo para lê-los. Para cheats que alteram o código do jogo, o jogo se recompila "
                             "sozinho ao iniciar (alguns minutos).",
-    [UI_MENU_CHEATS_MOD] = "%s: %d cheats",
+    [UI_MENU_CHEATS_MOD] = "%s: %s",
     [UI_MENU_CHEAT_CODE_DESC] = "Altera o código do jogo. Liga e desliga na hora.",
     [UI_MENU_CHEAT_KEY_DESC] = "Altera o código do jogo enquanto você segura %s. Liga e desliga na hora.",
     [UI_MENU_CHEAT_DATA_DESC] = "Escreve na memória do jogo a cada quadro enquanto está ligado.",
@@ -2238,8 +2242,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_BOOT_TITLE] = "Preparando shaders",
     [UI_BOOT_STARTING] = "Iniciando", [UI_BOOT_SHADERS] = "Shaders: %lld de %lld", [UI_BOOT_PIPELINES] = "Pipelines: %lld de %lld",
     [UI_BOOT_COMPUTE] = "Pipelines de computação: %lld de %lld", [UI_BOOT_DRIVER_CACHE] = "Cache do driver: %lld de %lld",
-    [UI_MENU_CHEATS_UNBUILT] = "%d cheats de código e %d arquivos de patch ExeFS não estão compilados no jogo: o "
-                               "Play no launcher os compila.",
+    [UI_MENU_CHEATS_UNBUILT] = "%s e %s não estão compilados no jogo: o Play no launcher os compila.",
+    [UI_MENU_COUNT_CODE_CHEATS] = "%d cheat de código|%d cheats de código",
+    [UI_MENU_COUNT_EXEFS_FILES] = "%d arquivo de patch ExeFS|%d arquivos de patch ExeFS",
+    [UI_MENU_COUNT_CHEATS] = "%d cheat|%d cheats",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "Este mod altera o código do jogo (exefs) de um jeito que o port não consegue "
                                        "aplicar, então o mod inteiro fica desligado. %s",
     [UI_MENU_MODS_EXEFS_OTHER] = "Os patches de código dele (exefs) são para outra versão do jogo.",
@@ -2988,7 +2994,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_CHEATS_NONE] = "此游戏版本没有金手指。模组的金手指是它的 cheats 文件夹中以游戏构建命名的 Atmosphere "
                             "金手指文件：mods\\<模组>\\cheats\\%s。重启游戏后才会读取。对于修改游戏代码的金手指，"
                             "游戏会在启动时自行重新构建（几分钟）。",
-    [UI_MENU_CHEATS_MOD] = "%s：%d 个金手指",
+    [UI_MENU_CHEATS_MOD] = "%s：%s",
     [UI_MENU_CHEAT_CODE_DESC] = "修改游戏代码。立即开关。",
     [UI_MENU_CHEAT_KEY_DESC] = "按住 %s 时修改游戏代码。立即开关。",
     [UI_MENU_CHEAT_DATA_DESC] = "开启时每帧写入游戏内存。",
@@ -3037,7 +3043,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_BOOT_TITLE] = "正在准备着色器",
     [UI_BOOT_STARTING] = "正在启动", [UI_BOOT_SHADERS] = "着色器：%lld / %lld", [UI_BOOT_PIPELINES] = "管线：%lld / %lld",
     [UI_BOOT_COMPUTE] = "计算管线：%lld / %lld", [UI_BOOT_DRIVER_CACHE] = "驱动缓存：%lld / %lld",
-    [UI_MENU_CHEATS_UNBUILT] = "有 %d 个修改代码的金手指和 %d 个 ExeFS 补丁文件尚未构建进游戏：在启动器中点击 Play 会把它们构建进去。",
+    [UI_MENU_CHEATS_UNBUILT] = "有 %s和 %s尚未构建进游戏：在启动器中点击 Play 会把它们构建进去。",
+    [UI_MENU_COUNT_CODE_CHEATS] = "%d 个修改代码的金手指",
+    [UI_MENU_COUNT_EXEFS_FILES] = "%d 个 ExeFS 补丁文件",
+    [UI_MENU_COUNT_CHEATS] = "%d 个金手指",
     [UI_MENU_MODS_EXEFS_UNSUPPORTED] = "此模组修改游戏代码（exefs）的方式本移植无法应用，因此整个模组保持关闭。%s",
     [UI_MENU_MODS_EXEFS_OTHER] = "它的代码补丁（exefs）是为其他游戏版本制作的。",
     [UI_MENU_MODS_EXEFS_ON] = "正在使用的代码补丁：%d 个文件。",
@@ -3178,7 +3187,7 @@ static const char *resolve_menu_lang(void) {
     return "en";
 }
 
-const char *menu_text(UiTextId id) {
+static const char *menu_lang(void) {
     static _Atomic(const char *) lang = "en";
     static _Atomic unsigned seen = ~0u;
     unsigned v = cfg_version();
@@ -3186,5 +3195,31 @@ const char *menu_text(UiTextId id) {
         atomic_store_explicit(&lang, resolve_menu_lang(), memory_order_relaxed);
         atomic_store_explicit(&seen, v, memory_order_relaxed);
     }
-    return ui_text_in(atomic_load_explicit(&lang, memory_order_relaxed), id);
+    return atomic_load_explicit(&lang, memory_order_relaxed);
 }
+
+const char *menu_text(UiTextId id) { return ui_text_in(menu_lang(), id); }
+
+int ui_text_plural_form(const char *lang, int n) {
+    unsigned u = n < 0 ? 0u - (unsigned)n : (unsigned)n;
+    if (!strcmp(lang, "ru")) {
+        unsigned d = u % 10, h = u % 100;
+        return d == 1 && h != 11 ? 0 : d >= 2 && d <= 4 && (h < 12 || h > 14) ? 1 : 2;
+    }
+    return u != 1;
+}
+
+const char *ui_text_count(const char *lang, UiTextId id, int n, char *buf, size_t size) {
+    const char *form = ui_text_in(lang, id);
+    for (int k = ui_text_plural_form(ui_text_defined(lang, id) ? lang : "en", n); k > 0; k--) {
+        const char *bar = strchr(form, '|');
+        if (!bar) break;
+        form = bar + 1;
+    }
+    char one[256];
+    snprintf(one, sizeof one, "%.*s", (int)strcspn(form, "|"), form);
+    snprintf(buf, size, one, n);
+    return buf;
+}
+
+const char *menu_count(UiTextId id, int n, char *buf, size_t size) { return ui_text_count(menu_lang(), id, n, buf, size); }

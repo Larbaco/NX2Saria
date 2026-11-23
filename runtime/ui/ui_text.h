@@ -1,6 +1,7 @@
 // Text the host shows the player (runtime/ui_text.c): one catalog, keyed by stable ids. The software keyboard reads it
 // in the game's language (ui_text); the menu and the performance overlay read it in the menu language (menu_text).
 #pragma once
+#include <stddef.h>
 
 typedef enum {
     // Software keyboard
@@ -308,8 +309,9 @@ typedef enum {
     // the Cheats tab (cheats.c): the file, the kinds of cheat and why one cannot be switched
     UI_MENU_TAB_CHEATS,
     UI_MENU_CHEATS_NONE,      // "%s": <build id>.txt
-    UI_MENU_CHEATS_MOD,       // "%s": the mod, "%d": its cheats
+    UI_MENU_CHEATS_MOD,
     UI_MENU_CHEATS_UNBUILT,
+    UI_MENU_COUNT_CODE_CHEATS, UI_MENU_COUNT_EXEFS_FILES, UI_MENU_COUNT_CHEATS,
     UI_MENU_CHEAT_CODE_DESC, UI_MENU_CHEAT_KEY_DESC /* "%s": the buttons */, UI_MENU_CHEAT_DATA_DESC,
     UI_MENU_CHEAT_MASTER, UI_MENU_CHEAT_MASTER_DESC, UI_MENU_CHEAT_RESTORE, UI_MENU_CHEAT_RESTORE_DESC,
     UI_MENU_CHEAT_REBUILD, UI_MENU_CHEAT_REBUILD_DESC, UI_MENU_CHEAT_UNSUPPORTED, UI_MENU_CHEAT_UNSUPPORTED_DESC,
@@ -426,3 +428,6 @@ int ui_text_game_langs_in(const char *const *regions, int nregions, UiGameLang *
 // unset, the system UI language when the catalog has menu text for it (English, Russian, Brazilian Portuguese,
 // Simplified Chinese), else English. Follows a live change of the setting.
 const char *menu_text(UiTextId id);
+int ui_text_plural_form(const char *lang, int n);
+const char *ui_text_count(const char *lang, UiTextId id, int n, char *buf, size_t size);
+const char *menu_count(UiTextId id, int n, char *buf, size_t size);

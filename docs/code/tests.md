@@ -8,6 +8,36 @@ One line per test, for what [building.md](../building.md#checks) does not alread
 `EXTRA` lists the tests whose names do not end in `_check` or `_test`. `tests/maxwell_warp_emu.py` is not among them:
 it is the emulator the tensor checks use, not a test.
 
+## `tests/cheats_tab_check.py`
+
+The Cheats tab of the settings menu: it is reached, it shows only with cheats, and a cheat's switch goes through the
+draft. No GPU, no game files.
+
+- Read from the source, comments left out: `runtime/ui/menu.cpp` `layout_menu()` has a `case TAB_CHEATS` that calls
+  `tab_cheats(scale)` and counts its tabs with `tabs_shown()`; `TAB_CHEATS` is the enum's last tab and the last name
+  of `kTabNames`; `TAB_COUNT` appears nowhere else than the enum, `tabs_shown()` and the size of `kTabNames`.
+  `runtime/ui/cheats_tab.cpp` `tab_cheats()` hands the toggle row's change to `opt_change()` and calls none of
+  `cheats_set`, `cfg_set`, `cfg_set_test`, `cfg_reset`, `cfg_save`, `opt_save_now` or `rt_patch_switch`.
+  `runtime/patches/cheats.c` calls none of `cfg_set`, `cfg_save` or `cfg_reset`, and `cheats_frame()` starts with
+  `follow_settings()`. No English menu text says "Play in the launcher"; the two that name it end "Play from the
+  launcher builds them in." and "... builds it in.". The counted log lines of `cheats.c` carry their plural `%s`.
+  `wr()` counts every way out, `cheats_frame()` runs a cheat only through `run_counted()`, and
+  `runtime/gfx/gfx_present.c` `rt_exit_steps()` calls `cheats_exit_log()` before `logq_flush()`.
+  `runtime/session_summary.c`, `runtime/session_summary_fmt.c` and `runtime/session_summary.h` do not hold the word
+  cheat: what a cheat did stays in the local log.
+- Built and run (`tests/cheats_tab_check.cpp`, with `runtime/ui/option_rows.cpp`, `runtime/cfg/cfg.c`,
+  `runtime/ui/ui_text.c`, Dear ImGui and the stand-ins of `tests/preset_check_stubs.h`): the enum and `tabs_shown()`
+  cut out of `menu.cpp` give the tabs before Cheats with no cheats and all of them with some; over a settings file
+  with one cheat on, a cheat's key changed with `opt_change()` is not written before Apply, reads its draft value
+  through `opt_get()`, gives one draft line with its label, from and to and no restart mark, leaves the draft when
+  set back, is untouched by Discard, and Apply writes both keys, saves `cheat_<hash>` lines to `nx2saria.ini` and
+  leaves nothing waiting for *Keep*. The same program checks the counted nouns of the tab
+  (`runtime/ui/ui_text.c` `ui_text_count()`) in English, Brazilian Portuguese, Simplified Chinese and Russian for 0,
+  1, 2 and 5, Russian also for 11, 21 and 22, and a language without menu text for the English fallback; and a
+  cheat's counters and line (`runtime/patches/cheat_stats.h`): frames and stores add up, the first write gives a line
+  at once, then none within a minute nor without a new write or refusal, and the wording of the `so far` and
+  `this session` lines. Dear ImGui's objects are kept in `build/test/cheats-tab-imgui` between runs.
+
 ## `tests/runtime_dirs_check.py`
 
 The runtime's folders by subsystem ([architecture.md](../architecture.md#runtime-folders)) as the build scripts see

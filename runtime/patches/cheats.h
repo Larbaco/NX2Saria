@@ -33,7 +33,7 @@ int cheats_count(void);
 void cheats_unbuilt(int *code, int *patches);
 const CheatInfo *cheats_info(int i);
 int cheats_on(int i);                      // the player's switch (1 for a master cheat)
-void cheats_set(int i, int on);            // switches at once and sets the cheat's setting (the menu saves nx2navi.ini)
+void cheats_exit_log(void);
 const char *cheats_file(void);             // "<build id>.txt", the name the files have for this game version
 // Every presented frame (the present path): the data cheats' VM and the button state of CHEAT_KEY cheats.
 void cheats_frame(uint64_t frame);

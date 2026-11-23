@@ -153,7 +153,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `capture:` | F8 bug capture (docs/bug-capture.md) | `bugcap.c` |
 | `cfg:` | Settings file and environment: keys read, unknown keys, replays of a capture | `cfg.c`, `cfg_support.c`, `perf.c`, ... |
 | `changebank hold:` | Map bank changes held for the neighbour (docs/changebank-hold.md) | `changebank_hold.c` |
-| `cheats:` | Code cheats and ExeFS patch files | `cheats.c` |
+| `cheats:` | Cheats of the mods' cheat files: how many and how many on at start and whether the menu shows its Cheats tab, each cheat switched on or off, code cheats and ExeFS patch files not built in, and per data cheat its writes: `<mod>/<name>: N writes in N frames, N unchanged, N refused so far` at its first write and at most once a minute while it keeps writing, `... this session` at the end | `cheats.c` |
 | `console:` | Console window closed or Ctrl+C | `main.c` |
 | `core-diag:` | CPU core diagnostics (NX2SARIA_CORE_DIAG) | `kernel.c` |
 | `cpu:` | CPU cores and logical processors at start | `perf.c` |
