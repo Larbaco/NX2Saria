@@ -77,6 +77,7 @@ LICENSE_FULL = re.compile(
     r'This notice may not be removed', re.I)
 COPYRIGHT = re.compile(r'Copyright\s*(?:\([cC]\)|©|\d)')
 SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES|\.\)?\s*$')
+NOTICE_START = re.compile(r'^[#/*;\s]*(?:Contains code|Portions|Copyright)\b')
 
 PY_DIRECTIVE = re.compile(r'#\s*(?:noqa\b|type:\s*ignore\b|pragma\b|fmt:\s*(?:off|on|skip)\b|isort:|pylint:|mypy:|'
                           r'pyright:|nosec\b)')
@@ -346,7 +347,11 @@ def license_lines(lines):
                     j = k
                     while j < len(para) - 1 and not SENTENCE_END.search(lines[para[j]]):
                         j += 1
-                    kept.update(para[k:j + 1])
+                    s = k
+                    while (s > 0 and not NOTICE_START.search(lines[para[k]]) and para[s - 1] not in kept
+                           and not SENTENCE_END.search(lines[para[s - 1]])):
+                        s -= 1
+                    kept.update(para[s:j + 1])
                     k = j + 1
                 else:
                     k += 1
@@ -525,6 +530,14 @@ def self_test():
             ' * two lines of a block,\n'
             ' * both counted\n'
             ' */\n'),
+        'runtime/diag/plant.c': (
+            '// What the file does, counted.\n'
+            '// The declarations (Alpha, Beta and the\n'
+            '// Gamma signatures) contain code Copyright (c) 2020 Ana Souza (MIT; see THIRD_PARTY_NOTICES.md).\n'
+            'int g;\n'
+            '// ---- a heading, counted\n'
+            '// Contains code Copyright (c) 2021 Ana Souza (MIT; see THIRD_PARTY_NOTICES.md).\n'
+            'int h;\n'),
         'runtime/shaders/plant.frag': (
             '#version 450\n'
             '// build_shaders: keep functions\n'
@@ -576,6 +589,7 @@ def self_test():
     }
     want_counted = {
         'runtime/audio/plant.c': {3, 12, 17, 18, 19, 20},
+        'runtime/diag/plant.c': {1, 5},
         'runtime/shaders/plant.frag': {10},
         'runtime/plant.spvasm': {1},
         'tools/plant.py': {4, 5, 6, 8, 14},
@@ -587,6 +601,8 @@ def self_test():
         ('runtime/audio/plant.c', 1): 'license', ('runtime/audio/plant.c', 2): 'license',
         ('runtime/audio/plant.c', 11): 'directive', ('runtime/audio/plant.c', 14): 'directive',
         ('runtime/audio/plant.c', 15): 'directive',
+        ('runtime/diag/plant.c', 2): 'license', ('runtime/diag/plant.c', 3): 'license',
+        ('runtime/diag/plant.c', 6): 'license',
         ('runtime/shaders/plant.frag', 2): 'directive', ('runtime/shaders/plant.frag', 3): 'license',
         ('runtime/shaders/plant.frag', 4): 'license', ('runtime/shaders/plant.frag', 9): 'license',
         ('runtime/shaders/plant.frag', 6): 'license', ('runtime/shaders/plant.frag', 8): 'license',
