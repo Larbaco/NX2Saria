@@ -783,3 +783,999 @@ With `kern_host_track`, the SVC is counted in the thread's host depth (`hostfn_t
   the process keeps this thread there, and the exit line is that close's alone; this thread coming back would resume
   guest code after its ExitProcess, so it ends the process instead. The log line is written after that guard, which
   also lets the line reach the log file past its cap (`log_sink` of `runtime/main.c`).
+
+## `runtime/hle/ipc.h`
+
+In-process Horizon IPC: HIPC messages with CMIF or TIPC payloads, answered in place in the caller's message buffer.
+The message framing follows the HIPC, CMIF and TIPC wire layouts. Services are host implementations looked up by name
+through `sm:`.
+
+- `IPC_R_BAD_HANDLE` (0xE401) is the kernel's invalid handle; `IPC_R_UNKNOWN_COMMAND` (0xF601) is sf's unknown command
+  (module 10, description 123).
+- `IpcRequest`: `type` is the HIPC type (4, 5, 6, 7 CMIF; 16 and above TIPC) and `cmd` the command id; `data` the
+  command arguments after the CMIF header (TIPC: after the HIPC header).
+- `IpcResponse`: `xout` is the pointer data the service placed into the client's C buffers; `domain` says the reply
+  carries a domain message header; `domain_objects` counts the objects the service appended to the client's domain.
+- `IpcSession` is one server object. Every kernel handle to it (the first one, and CloneCurrentObject copies) holds a
+  reference, and so does a request on it while it runs; the last reference calls `close(state)`. A domain's table holds
+  one on each of its objects, and each object one on its domain (`held_root`), until the client closes the object's id
+  (CloseVirtualHandle) or its last handle to the domain itself. The domain lock of `runtime/hle/ipc.c` guards
+  `objects`, `nobjects`, `subs` and `dom_closed`.
+  - `is_domain`: ConvertCurrentObjectToDomain ran, and requests carry a domain header.
+  - `root`: the domain session every object id belongs to (objects share it).
+  - `objects[32]`: object 1 is this session, then what the service handed out; NULL is a closed one. `nobjects`: the
+    slots used so far (closed ones are given out again).
+  - `event`: the readable event handed to the client (applet state changes).
+  - `held_root`: the domain this object holds a reference on (`ipc_domain_add()`).
+  - `subs`: as a domain, the references its objects hold on it. `dom_closed`: as a domain, its client closed it and its
+    table let the objects go.
+- `ipc_domain_add()` registers an object inside a domain: the table takes the object's first reference (the caller's),
+  the object one on the domain. It returns the 1-based id, 0 when the table is full or the domain closed.
+- `ipc_session_new()` returns a handle. `ipc_guest()` gives a client buffer as a host pointer (identity map), range
+  checked.
+- `IpcTransferMemory` is transfer memory from svcCreateTransferMemory (0x15), a `KERN_TMEM` handle object.
+- `ipc_sessions_live()` and `ipc_sessions_released()`: the server objects alive now and closed so far (the probe
+  checks that CloseHandle releases them).
+- `ipc_backtrace()` prints the guest frame chain of the request being served, for fatal reports from services.
+- `ipc_applet_event_init()` is called once at boot, before the guest starts. `ipc_applet_push_message()` queues an
+  AppletMessage and signals the applet event.
+
+## `runtime/hle/ipc.c`
+
+In-process Horizon IPC: SVCs 0x15, 0x1F, 0x21 and 0x22, the `sm:` service manager and the service table. The SDK
+client code runs unchanged: requests are read from the calling thread's message buffer (the TLR, or the user buffer of
+0x22) and answered in place. Unknown ports, services and commands stop with their name and id instead of returning a
+fake success. The file also holds `--probe-ipc`. Like `kernel.h`, it starts with a UTF-8 byte order mark, in front of
+its licence line.
+
+`CMIF_IN_MAGIC` (0x49434653) is "SFCI" and `CMIF_OUT_MAGIC` (0x4f434653) "SFCO". `t_req` is the guest context of the
+request being served.
+
+### The applet lifecycle
+
+The application's lifecycle, as the system's applet manager runs it: one state-changed event per applet, signalled
+while a message is waiting and cleared by the server once the queue drains (Horizon does not clear it on a wait). An
+*application* learns it has focus through FocusStateChanged (15) followed by GetCurrentFocusState == InFocus;
+ChangeIntoForeground (1) is the library-applet message and an application ignores it, which is what parked
+`nn::oe::InitializeApplet` on the event. `AM_R_NO_MESSAGES` (0x680) is the "no messages" result this SDK checks for.
+
+### `applet_proxy_handler()`
+
+A stub object the applet proxy commands are answered on: the interfaces exist, their calls succeed. The getters each
+hand out one of those objects, which is what the SDK stores and dereferences. Object ids belong to the client's whole
+domain, so the object is added to the root.
+
+### `applet_stub_handler()`
+
+The interfaces themselves. Only the calls the game makes while booting are modelled: the common state getter hands
+out the applet's state-changed event, and everything else reports success. On the common state getter:
+
+| Command | Call |
+|---|---|
+| 0 | GetEventHandle: the applet state-changed event |
+| 1 | ReceiveMessage: the next queued applet message, else "no messages" |
+| 5 | GetOperationMode (matches the oe override) |
+| 6 | GetPerformanceMode: boost when docked |
+| 9 | GetCurrentFocusState |
+
+On the graphics scale controller, command 10 is GetCurrentGraphicsScale: it answers {10, 0, 0}; see
+`runtime/hle/ov_system.c` `ov_oe_scaling_parameters()`.
+
+### `ipc_domain_add()`
+
+`g_domains` guards the domain tables, their counts of their objects' references on them and their closed flags
+(`IpcSession`). It is taken only for sessions in a domain, and never held across a handler or a close callback. The
+object gets the first free slot: a closed object's id is given out again, so a client that opens and closes objects in
+a loop never runs out of the 32. The object counts as a live server object from there; its last reference counts it
+out.
+
+### `applet_oe_handler()`
+
+`appletOE`: the application-environment service. `nn::oe::Initialize` opens it; the calls that matter for boot answer
+through symbol overrides (focus, performance, language), so a permissive handler that reports success and writes
+nothing is enough until a command needs real data; then it is added here. Commands 0 and 10 are
+OpenApplicationProxy: they hand the client a domain object, whose id inside the domain is written into the reply
+data.
+
+### `aud_user_handler()`
+
+`aud:u`: the Switch 2 audio entry point (`nn::audio::CreateUserClientSessionByHipc`). It hands out the Switch 1
+managers as sub-objects (command ids inferred from the calls the SDK makes): 2 -> IAudioRendererManager (the
+`audren:u` manager), 1 -> IAudioOutManager (not served by this host).
+
+### `csrng_handler()`
+
+`csrng`: the SDK's cryptographic random source. GenerateRandomBytes (0) is its one command; the host's generator
+fills the output buffer. The SDK sends it as a B buffer (a contributor's trace: one B buffer, no others); a C buffer
+is filled too, with its reply entry, for a caller that lets the buffer type be chosen. No start or session logged on
+our own PCs opens the service, but the game imports the call, and without the service a request for it ended the game
+("sm: service csrng is not implemented").
+
+The `services` table lists what `sm:` hands out (`audren:u`, `nfp:user`, `appletOE`, `aud:u`, `auddmg:u`, `audsmx:u`,
+`csrng`). Anything else is a named fatal.
+
+### `session_hold()` `session_release()`
+
+`session_hold()` is the callback of `kern_handle_hold`: a request's reference, dropped through `ipc_handle_closed()`
+once the request is answered.
+
+`session_release()` drops one reference on a session; `sub`: the one an object of a domain held on that domain. A
+session in no domain takes no lock here. A domain whose remaining references are all its objects' has lost its
+client: its table lets the objects go, and each object that nothing else holds is closed and lets go of the domain in
+turn.
+
+### `respond()`
+
+A CMIF domain reply has a 16-byte header with the objects appended, then SFCO. CMIF keeps alignment slack in the word
+count (16 more bytes than TIPC).
+
+### `control()`
+
+The CMIF control requests:
+
+| Command | Call |
+|---|---|
+| 0 | ConvertCurrentObjectToDomain: the session answers domain-tagged requests from now on |
+| 1 | CopyFromCurrentDomain(object id): a handle to that object of the domain (a closed id is a bad handle) |
+| 2, 4 | CloneCurrentObject and CloneCurrentObjectEx |
+| 3 | QueryPointerBufferSize (`POINTER_BUFFER_SIZE`, 0x8000) |
+
+### `dispatch()`
+
+`held` is a domain object the request holds a reference on. Object ids belong to the client's domain, not to this
+object. A domain request has a 16-byte domain header that names the object (1-based), then the usual SFCI payload.
+Domain command 2 is CloseVirtualHandle: the object leaves the domain (never the domain's own); there is no answer.
+This SDK addresses the domain's own object as 0, which is taken as 1. An id the client closed answers
+`IPC_R_BAD_HANDLE`.
+
+### `sm_handler()`
+
+`sm:`, the service manager, in CMIF, and in TIPC as the SDK's sm client speaks it since 12.0.0. Command 0 is
+RegisterClient / Initialize (pid), command 1 GetServiceHandle(name).
+
+### `ipc_svc()`
+
+| SVC | Call |
+|---|---|
+| 0x15 | CreateTransferMemory(x1 address, x2 size, w3 permission -> w1 handle) |
+| 0x1F | ConnectToNamedPort(x1 name -> w1 handle) |
+| 0x21, 0x22 | SendSyncRequest(w0 handle) and SendSyncRequestWithUserBuffer(x0 buffer, x1 size, w2 handle) |
+
+The request holds a reference on the session until it is answered: a CloseHandle of the session on another thread
+meanwhile leaves the object, and its close callback (`renderer_close` frees the audio renderer the handler uses), to
+whichever drops the last reference.
+
+### The probe
+
+`--probe-ipc`: hand-built CMIF and TIPC requests in the guest main thread's TLR go through `rt_svc`, the entry the
+lifted SVC wrappers use: `sm:` -> `audren:u` -> GetWorkBufferSize -> an audio renderer with the null mixer, whose
+frame event the probe times while it sends RequestUpdate every frame (`PROBE_FRAMES`, 200). A child process checks the
+unknown-service fatal.
+
+- `msg_build()`: with a process id the kernel fills it in, so two words are skipped. In a domain message the 16-byte
+  alignment pad is reserved in the data size.
+- `call()`: one request on the TLR message buffer; it returns the kernel result of SendSyncRequest, and the service
+  result is in `r->result`.
+- `g_param` is a renderer like the game's: 48 kHz, 240-sample (5 ms) frames, final mix plus submixes, two sinks,
+  REV11.
+- `update_build()`: the client leaves the id of an unused slot zero. Voice 0 is one PCM16 voice with a 100 ms buffer,
+  consumed after 20 frames.
+- `probe_renderer()`: GetWorkBufferSize(AudioRendererParameterInternal) -> u64; OpenAudioRenderer(param, pad, work
+  size, aruid; pid; copy transfer memory, current process); command 7 is QuerySystemEvent. Then every frame, as the
+  game's audio thread does: wait for the event, clear it, RequestUpdate.
+- `probe_main()`: `csrng` GenerateRandomBytes into a B buffer, as the SDK sends it; two requests give different
+  bytes.
+- `probe_unknown_service()` re-runs this executable with the same arguments and `PROBE_CHILD_ENV` set; it must stop
+  with the named fatal.
+
+### `sdk_prepare()` `probe_sdk_client()`
+
+The game's own `nn::audio` client: main's PLT stubs -> lifted sdk -> SVCs -> this file.
+
+Without `nn::init::Start` the SDK's own initialisation has not run; the probe sets up the two things the audio client
+path reads (found by running it):
+
+- the "current thread object" at TLR+0x1F8 is the kernel's zeroed placeholder. SdkMutex compares its lock tag with
+  ThreadType+0x1B0 (`sdk+0x13186c`), which `nnosInitialize` sets to the thread's handle; a zero there makes every free
+  mutex look owned by the caller (`__cxa_guard_acquire` in `nn::sm::Initialize` aborts);
+- sdk's full DT_INIT needs `nn::os` initialised (its TLS slot constructor reaches ThreadManager), which is the boot
+  sequence's job. The audio client only needs its two sf heap constructors: 16 KiB ExpHeaps on static buffers, stored
+  at `sdk+0xd37e90` and `sdk+0xd3bec0` (CreateAudioRendererManagerByHipc reads the second). The 1.4.3 SDK creates that
+  heap lazily; its OpenAudioRenderer takes `nn::audio::detail::g_RendererResourceSemaphore` first, which the
+  constructor at `sdk+0x221fb0` initializes (two renderers).
+
+`probe_sdk_client()` turns the IPC trace on to log the requests the SDK sends during set-up; the first update is
+logged, the rest is quiet. An AudioRendererHandle is 16 bytes, passed in x0 and x1. At the end the 1.2.1 SDK closes
+the renderer, device and manager sessions and keeps sm; the 1.4.3 SDK keeps the `audren:u` manager it created lazily,
+beside sm.
+
+### `ipc_applet_event_init()`
+
+Creates the applet state-changed event at boot and queues the launch message: the application starts in focus (the
+applet manager: SetFocusState(InFocus) -> FocusStateChanged for an application).
+
+## `runtime/hle/fs.h`
+
+The `nn::fs` host layer: the read-only RomFS (`runtime/hle/romfs.c`) and writable save, temporary and cache storage
+under the profile directory (`runtime/hle/fs_host.c`). Both register their `nn::fs` overrides with `HOST_OVERRIDE`;
+this header is what the two files and the probe share.
+
+- Results: `FS_R_UNSUPPORTED_OPEN` (0x6402) is the RomFS's answer to any open mode but read; `FS_R_INVALID` (0xe402)
+  its answer to a bad handle, offset or argument. `FS_OPEN_*` is `nn::fs::OpenMode`, `FS_ENTRY_*`
+  `nn::fs::DirectoryEntryType`.
+- Handles: RomFS handles are 0x1_0000_0000 + j (`ROMFS_HANDLE_BASE`); host storage uses 0x2_0000_0000 + j for files
+  and 0x3_0000_0000 + j for directories.
+- `romfs_owns()`: the path is on the mounted RomFS ("<mount>:..."). `romfs_handle()`: `h` is a RomFS file handle.
+  `romfs_mount()`: `nn::fs::MountRom`.
+- `romfs_load()`: a whole file by its RomFS-relative path, malloc'd (or NULL).
+- `romfs_list()`: the children of RomFS directory `path`: `fn(name, is_dir, size, ctx)` once per file and once per
+  subdirectory, in index order; `fn` returns 0 to stop. `FS_R_PATH_NOT_FOUND` when `path` is not a directory.
+- `romfs_file_count()`: the files in the index (`fs_init()` first). `romfs_entry()`: the path, image offset and size
+  of index row i. `romfs_image_path()`: the `romfs.bin` path `fs_init()` opened. `romfs_patches_loaded()`: a
+  romfs-patches manifest gave at least one file. `romfs_overlay()`: the RomFS path of overlay k.
+- The button prompts (`input_prompts_folder`): `romfs_prompts()` is the folder loaded at start, NULL for the game's
+  own prompts; `romfs_prompts_ready()` whether a folder had a manifest at start; `romfs_prompts_off()` why the folder
+  the settings asked for at start was not loaded (`ROMFS_PROMPTS_OK` for any other folder: it was not asked for).
+  romfs-patches-pc goes by that name also where romfs-patches-pc-<w>x<h> stands in for it (`runtime/hle/romfs.c`
+  `overlay_init()`).
+- `romfs_action_prompt()`: the pad layout (`PAD_LAYOUT_*` of `runtime/input/input_map.h`) the action prompt's diamond
+  of face buttons has from start (`runtime/patches/action_prompt.c`); -1 when the layout by label was asked for but the
+  layout file could not be changed.
+- `romfs_read_patch()`: bytes changed in what the game reads of an original RomFS file (`runtime/patches/boot_map.c`):
+  from `offset` on, the `n` bytes `orig` become `repl` in every read of `rel` that covers them, while the read patches
+  are on. Before the guest starts. 0 when `rel` is not in the RomFS, an overlay or a mod serves it, `n` is over 16, the
+  file is shorter, or its bytes there are not `orig` (`why` says which). `romfs_read_patches_off()` ends all of them;
+  `romfs_load()` always gives the original.
+- `fs_trace()`: `NX2SARIA_TRACE=fs`, one line per open.
+- `fs_host_set_profile()`: the profile directory; before the first storage mount only (default
+  `rt_config()->profile`).
+- `fs_host_lock_profile()`: the one-game-per-profile lock; fatal when another copy holds it (`rt_boot`, before the
+  prewarm; `storage_init()` of `fs_host.c`).
+- `fs_save_dir()`: `<profile>/save/<account>`, the committed save's folder, where a tracker reads the slots; "" until
+  storage is made.
+- `fs_save_busy()`: a save is being written: a save file open for writing, or save data changed in the last 3 s and
+  not committed.
+- `fs_save_flush()`: waits for a save Commit still running in the background; every exit path calls it before the
+  process ends. `fs_save_wait()`: waits for a save Commit under way, refusing none later (the orderly end's first
+  step, `rt_exit_steps` of `runtime/gfx/gfx_present.c`).
+- A shared save (`runtime/hle/save_share.c`). `fs_save_export()`: `visit(ctx, path below the save with '/', bytes,
+  size)` for every file of the save the game would load next, under the commit lock; `visit` returns 0 to fail. It
+  returns the number of files (0: no save yet), -1 when one could not be read or `visit` failed.
+- `fs_save_load()`: the bytes of `rel` (a path below the save with '/', "slot_02/progress.sav") in the save the game
+  would load next, malloc'd; NULL when the file is absent, empty or unreadable. Storage starts first (a waiting import
+  becomes the save).
+- `fs_save_import_stage()`: the menu's import: `count` files (relative '/' paths, bytes) become
+  `<profile>/save-import`, which the next start makes the save, backing up the save it replaces; one waiting already
+  is replaced. 0 on success. `fs_save_import_waiting()`: 1 while an import waits for the next start (0 before the
+  first storage use). `fs_save_import_cancel()` drops it; 0 on success. `fs_save_import_done()`: the backup of the
+  save an import replaced at this start, "-" when there was none, "" when no import ran.
+- `fs_save_snapshot()`: a copy of the newest committed save (every slot) in `<profile>/<folder>/<UTC time>/`,
+  flushed, taken while no Commit runs; the newest `keep` copies stay. `prefix` (NULL: none) goes before the time, and a
+  copy whose name it begins is never pruned, so a first copy outlasts the ones made later. 1 and the copy's path in
+  `out` (empty when nothing is saved yet: nothing to copy), 0 when it could not be made (logged). Slow (the whole
+  save): not on the game's thread.
+
+## `runtime/hle/romfs_path.h`
+
+RomFS path validation shared by the runtime (`runtime/hle/romfs.c`) and its probe (`runtime/hle/fs_host.c`
+`probe_fs()`). Its first line is a licence notice.
+
+### `romfs_path_valid_relative()`
+
+A RomFS-relative path: non-empty, no leading '/', no '\', no empty, "." or ".." component.
+
+### `romfs_path_collapse()`
+
+Copies `path` into `out` (`cap` bytes) with each run of '/' after the first ':' folded into one, as a file system
+reads "a//b". Switch 2 voice requests join "Voice/Resource/" and "/Stream/..." (Ocarina's
+"content://Voice/Resource//Stream/USen_...bwav"). 0 when it does not fit. "<mount>:/" and one more '/' are kept.
+
+### `romfs_path_relative()`
+
+"<mount>:/<path>" -> "<path>", or NULL. Audio stream requests join a mount root and a leading-slash resource,
+producing "content://Sound/...": repeated root separators are skipped; traversal, backslashes and empty interior
+components are still rejected.
+
+## `runtime/hle/fs_host.c`
+
+The `nn::fs` host implementation of the functions main imports. RomFS paths and handles go to the read-only backend
+(`runtime/hle/romfs.c`); save, temporary and cache storage are host directories under the profile directory
+(`rt_config()->profile`, default `build/profile`):
+
+| Folder | What |
+|---|---|
+| `<profile>/save/<uid hi><uid lo>/` | committed application save data, created on first use as the system launcher does for titles that declare save data |
+| `<profile>/save-tx/` | the save mount's working copy and Commit's staging ([Save transactions](#save-transactions)) |
+| `<profile>/save-backup/<time>/` | the three committed saves before the current one |
+| `<profile>/save-import/` | a save the menu imported, made the save at the next start ([A shared save](#a-shared-save)) |
+| `<profile>/temp/` | emptied at start |
+| `<profile>/cache/<index>/` | cache storage |
+
+The save mount is journaled as on Horizon: changes go to a working copy and become the committed save atomically at
+Commit; a crash or an Unmount before Commit leaves the previous committed save. Commit returns at once and the copy
+runs on a background thread; `fs_save_flush()` lets the exit paths wait for it. Paths are UTF-8 (`plat_fs_*` of
+`runtime/platform/platform.h`).
+
+- `NX2SARIA_APPLICATION_ID` (0x0400486024dec000) is the game's title id, as `PROGRAM_ID` of `runtime/hle/svc.c` tells
+  it.
+- Mount kinds: `M_SAVE` is the working copy, `M_SAVE_RO` the committed save.
+- `File`: `h` NULL is a free slot; `save`: on a save-data mount; `users`: the calls using `h` now (`file_of()` to
+  `file_release()`); `closing`: CloseFile came while `users` > 0, and the last of them closes `h`. `users` and
+  `closing` are read without `lock` (`file_release()`). `boot_map`: the boot map changes what is read of this file
+  (`boot_map_save_open` of `runtime/patches/boot_map.c`).
+- `Dir`: the directory's entries at open; `used` 0 is a free slot.
+
+### `list_dir()`
+
+Directory listings: every entry but "." and "..", taken whole before the caller changes the directory. `join()` gives
+dir/name in a malloc'd string.
+
+### `save_touched()` `fs_save_busy()`
+
+Save in progress: a save-data file open for writing, or save data changed in the last 3 s and not committed yet (the
+game writes a slot's files back to back and then commits; between the files nothing is open for a moment). Every
+change to save data comes to `save_touched()` first, which waits for a Commit under way: none lands in a commit's
+snapshot.
+
+### `make_dir()` `make_dirs()`
+
+A junction or symbolic link to a folder counts as the folder: a player who moved the profile to another drive links
+it back, and the start stopped at "cannot create directory" for it. `make_dirs()` makes `p` and every missing parent.
+
+### `remove_tree()` `remove_tree_retry()`
+
+`remove_failed` holds the first path `remove_tree()` could not delete and the OS error code, for the message of a
+fatal. `remove_tree()` removes a directory tree; a link (symbolic link, junction) is removed as a link, never followed:
+a link to a file goes by unlink, a link to a directory by rmdir. 0 also when nothing is there.
+
+`remove_tree_retry()` is `remove_tree()`, tried again every 50 ms for up to 2 s (`MOVE_TRIES`, 40, also `move_dir()`'s)
+while another process (the previous run still exiting, a virus scanner, a sync client) holds a file in the tree. The
+failing path and its OS error stay in `remove_failed`.
+
+### Save transactions
+
+The save mount's root is a working copy, made from the newest save when the first save mount appears. Commit copies
+it to a staging directory, which a rename makes a finished commit, and swaps that in for the committed save:
+
+| Folder | What |
+|---|---|
+| `<profile>/save/<uid>/` | the committed save: what the next start loads when no finished commit waits |
+| `<profile>/save-tx/work/` | the working copy, the save mount's root; deleted at the last Unmount and at start |
+| `<profile>/save-tx/new/` | Commit's staging copy of the working copy |
+| `<profile>/save-tx/ready-<n>/` | a finished commit not swapped in yet: the newest save |
+| `<profile>/save-tx/old/` | the committed save a Commit replaced, on its way to save-backup |
+
+Commit: (1) copy work to new and flush every file (`plat_file_fsync`; FlushFileBuffers on Windows) and directory, a
+file equal to the newest save's as a hard link to it; (2) rename new to ready-<n>, the commit point, and delete the
+ready-<n> it supersedes; (3) rename save/<uid> to old; (4) rename ready-<n> to save/<uid>; (5) move old to
+save-backup/<UTC time> and keep the newest three (`SAVE_BACKUPS`). Every rename is durable (`plat_fs_rename`).
+
+Windows refuses (3) while any file under save/<uid> is open, in this or another process (a virus scanner, Explorer's
+preview, a sync tool), and a folder an elevated run made can refuse it too. ready-<n> then stays the newest save:
+later working copies are made from it, and the next Commit and the next start try (3) to (5) again.
+
+The game's Commit returns 0 once the steps are queued; a thread runs them (95-135 ms on the game thread before, in
+the 1.4.3 fight save) while every change to the working copy waits in `save_touched()`, and Unmount and the next Commit
+wait too. A crash in that time loses this Commit only, and a failed one is logged instead of returned.
+
+The recovery rule at start (`save_recover()`):
+
+- new present: an unfinished copy, deleted (rollback). An older build renamed save/<uid> away before its finished
+  copy: with save/<uid> and ready-<n> absent, new is that copy and becomes save/<uid>;
+- ready-<n> present: the highest n is the newest save and (3) to (5) run (roll forward); the others are deleted;
+- save/<uid> absent: with no ready-<n> either, old goes back to save/<uid>.
+
+Then old, if present, goes to save-backup, and work (changes no Commit took) is deleted.
+
+State: `ready_root` is the newest finished commit not swapped in, empty when none; `ready_seq` the highest ready-<n>
+this run made or found; `tx_lock` is taken before `lock`, never inside it; `save_mounts` counts the `M_SAVE` mounts:
+the working copy exists while it is above 0. Probe hook: Commit stops at its `tx_crash_at`-th step (from 1) and leaves
+the disk as a process killed there would (`crashed()`).
+
+### `move_dir()`
+
+Renames a directory, durably; retried every 50 ms, `tries` times in all, while another process (a virus scanner, the
+indexer) holds a file in it. 0 on success. A folder rename cannot cross drives: save/ linked to another drive than
+save-tx/ fails every commit here (link the whole profile folder instead), and the log line says so.
+
+### `copy_file()` `same_file()`
+
+`copy_file()` copies one file; the source may be open for writing (a save file the game has not closed). 0 on
+success. `same_file()`: whether files a and b hold the same bytes; 0 when either cannot be read.
+
+### `copy_tree()`
+
+Copies the tree `src` to `dst`, which must not exist; links are skipped. `durable`: every file is flushed, and every
+directory as far as the file system allows. `base` (or NULL) is the committed save: a file whose bytes equal base's
+file at the same path becomes a hard link to it instead of a copy (`*nlinked`), as committed files are never written
+in place (the game writes the working copy). A save commit then writes the 3-4 files of the slot the game saved
+instead of all 82 (300-380 ms of flushes on the game thread). 0 on success.
+
+### `same_inode()` `same_tree()`
+
+`same_inode()`: whether paths a and b are one file (hard links of it). `same_tree()`: whether tree a holds the names
+and kinds of tree b and each file of it as a hard link: what `copy_tree()` makes from a working copy whose every file
+equals base's.
+
+### `backup_names()` `rotate_backup()`
+
+`backup_names()`: the backups' folder names (digits first), sorted: oldest first, as `rotate_backup()` names them in
+creation order.
+
+`rotate_backup()` moves old to save-backup/<UTC time> and deletes all backups but the newest `SAVE_BACKUPS`. The name
+always sorts after every existing one: a commit in the same millisecond as the newest backup (or after the clock went
+back) takes its time and the next -NNN suffix. A name that sorted lower would be the first one pruned, losing the
+backup just made. With no suffix on the newest, k stays 0; the suffix is raised until the name sorts after the newest,
+even after an unpadded "-1" of older builds.
+
+### `newest_save()`
+
+The newest save: the finished commit waiting to be swapped in, else the committed save.
+
+### `swap_in()`
+
+Steps (3) to (5): swaps the finished commit `ready_root` in for the committed save. 0 on success; on failure
+`ready_root` stays the newest save. (3) is tried for 200 ms only (`SWAP_TRIES`, 4): the commit is safe in
+`ready_root`, the next Commit or start tries again, and the game's next change to its save data waits for this one. An
+old left by a failed (5) is rotated first: (3) needs its name. When (4) fails old is moved back; else save/<uid> stays
+absent and the next start rolls forward.
+
+### `ready_number()` `ready_scan()` `save_recover()`
+
+`ready_number()`: the number n of a "ready-<n>" name, 0 for any other name. `ready_scan()`, at startup: the newest
+finished commit into `ready_root`; the older ones, which it supersedes, are deleted. `save_recover()`, at startup:
+finish or roll back an interrupted Commit and drop uncommitted changes (the rule above).
+
+### `work_create()` `work_discard()`
+
+`work_create()`: the first save mount gets a fresh working copy of the newest save. It uses `remove_tree_retry()`: the
+last unmount's delete may have been held up by a scanner, as at the start. `work_discard()`: at the last save unmount,
+changes no Commit took are dropped.
+
+### `save_commit_locked()`
+
+Commit of the save mount, `tx_lock` held: steps (1) to (5) above; a failure before (2) leaves the newest save as it
+was, one after it leaves the commit waiting in `ready_root`. When the game rewrote equal bytes (every file linked and
+the tree the same as the base) there is no save and no backup. A `ready_root` that the new commit supersedes is
+removed: the working copy it was made from held all of it.
+
+### `save_wait_commit()` `fs_save_wait()` `fs_save_flush()`
+
+The background commit: `commit_pending` counts the game's Commits whose thread has not run `save_commit_locked()` to
+its end yet. A count, not a flag: with two Commits entered at once the first thread's end cleared the flag while the
+second still waited for `tx_lock`, and a save write then went into the working copy the second was copying.
+`exiting` (under `pend_lock`): `fs_save_flush()` ran, the process is ending.
+
+`fs_save_wait()` is the orderly end's first step (`rt_exit_steps` of `runtime/gfx/gfx_present.c`): a Commit under way
+finishes before the quick put-backs and the slow pipeline save, and a later one is still taken; `fs_save_flush()`, the
+end's last step, refuses those. `fs_save_flush()`: the window closed: a Commit already started finishes first, and none
+starts afterwards, as the process exit would cut it off halfway (the startup recovery then keeps the previous one;
+here it is kept outright).
+
+### `fs_save_crash_wait()`
+
+The process is about to end on a crash or a fatal error (`crash_handler` of `runtime/main.c`, `rt_fatal` of
+`runtime/dispatch.c`). The game's Commit returns once its commit is queued, so the game may already have told the
+player the save is done while the commit thread still copies (95-135 ms): ending now would leave an unfinished copy,
+which the next start rolls back. The thread goes on while this one waits, for at most `CRASH_WAIT_MS` (2000), without
+taking a lock (the failing thread may hold one). Not when the failing thread is the one committing: its commit cannot
+finish.
+
+### `fs_save_snapshot()`
+
+A prefix that begins with a digit is refused: a name that begins with a digit is one the pruning may take. Two copies
+in one millisecond get a numbered name. `tx_lock` is held so no Commit swaps the save while it is copied. With nothing
+saved yet it returns 1: nothing to go back to. In the pruning the newest `keep` copies stay; their names sort by time;
+a prefixed one is never pruned.
+
+### `save_commit()`
+
+It waits for the previous Commit first. `save_writers` is raised so `fs_save_busy()` holds until the thread is done.
+
+### A shared save
+
+`runtime/hle/save_share.c`: the export reads the newest save, the menu's import waits for the next start.
+
+| Folder | What |
+|---|---|
+| `<profile>/save-import/` | a save the menu took from a zip: it becomes the save at the next start |
+| `<profile>/save-import.part/` | that save while the menu writes it; renamed to save-import when complete |
+
+The import cannot replace the save while the game runs: the game holds its progress in memory and writes it back at
+its next save, over the imported files, and the save mount's working copy is made once per mount. So the start takes
+it (`runtime/hle/fs_host.c` `import_pending()`), in `storage_init()` after `save_recover()` and before the game mounts
+its save: the save the game would load is copied to `<game folder>/saves/backup <local time>`
+(`save_share_backup_dir`, where the launcher keeps the backups of its imports), then the import becomes a finished
+commit (ready-<n>) and swaps in as one (`swap_in()`), which also moves the replaced save to save-backup. When the copy
+fails the import waits for the next start.
+
+`import_done` is the backup folder of the import this start made the save; "-" with none to back up. In
+`import_pending()` an empty account folder has nothing to keep, so its backup folder is removed; a waiting
+`ready_root` is removed, being the save the backup holds.
+
+### `export_tree()` `fs_save_load()` `fs_save_export()`
+
+`export_tree()` visits every file under `dir` (`rel`: its path below the save, "" at the top), in name order; links
+are left out. -1 when a file cannot be read (`plat_file_read` gives NULL for an empty file as well, so the size is
+checked). `fs_save_load()` and `fs_save_export()` hold `tx_lock`: the commit thread holds it while it swaps a commit
+in, and the committed save is never written in place, so no commit swaps the save meanwhile.
+
+### `stage_file()` `fs_save_import_stage()` `fs_save_import_waiting()`
+
+`stage_file()` writes one file and flushes it; 0 on success. `fs_save_import_stage()` starts storage first, so the
+start's own `import_pending()` has run: this import waits for the next start. `fs_save_import_waiting()`: the menu
+asks every frame; before the game's first storage use the start's own `import_pending()` has not run, and this is no
+reason to run it on the present thread, so it answers 0.
+
+### `fs_host_lock_profile()`
+
+One game per profile: a second one's start would take the first one's commit in progress for an interrupted one and
+delete it, and both would write into one working copy (save-tx/work), losing or mixing their saves. `rt_boot` takes
+the lock before the shader prewarm, so a second copy ends at once instead of after the prewarm's seconds of work on
+every core and the gigabytes of memory it commits; `storage_init()` takes it again (`plat_lock_file` keeps one handle
+per path, so the second call holds it already).
+
+### `storage_init()`
+
+`save_recover()` runs before `save_root` is created: an absent `save_root` means a commit to complete.
+
+### `fs_save_dir()`
+
+The committed save's folder, with its slot_00..05 (a tracker reads the save files there: the status of
+`runtime/diag/tracker_api.c`); "" until the save storage is made, at the game's first storage use. `save_root` does
+not change after that.
+
+### `mount_add()` `component_ok()` `host_path_kind()` `save_change_path()`
+
+- `mount_add()` refuses the RomFS mount's name (`FS_R_ALREADY_EXISTS`).
+- `component_ok()`: a path component every host stores under exactly this name: not empty, ".", "..", no reserved
+  character, no trailing dot or space (Windows strips those, which would alias two names).
+- `host_path_kind()`: "name:/a/b" -> host path; 0 on success; `*kind` gets the mount's kind (`M_SAVE` ...) when
+  `kind` is given.
+- `save_change_path()`: a change to save data through a path (create, delete, rename, directories) marks the save as
+  in progress.
+
+### `mount_save_ro()`
+
+Other titles' save data (data-link bonuses) is not present on this host.
+
+### `unmount()` `commit()`
+
+`unmount()` waits for a Commit first: else the working copy could go before a Commit queued just now has copied it.
+`commit()` of a save mount: durability comes from the staging copy, not the working copy's handles.
+
+### `file_of()` `file_closed()` `file_clear()` `file_release()` `close_file()`
+
+A guest handle's host file is used outside `lock` (a read or write may take long, and a save write waits for a Commit
+first, `save_touched()`), so a CloseFile on another thread could close it in the middle of a call. Windows hands a
+closed HANDLE's value to the next file opened, so the call went on in another file: a save write could land in the
+wrong one. Each call now counts itself in the slot from `file_of()` to `file_release()`. CloseFile closes at once when
+no call is under way, and otherwise marks the slot; the last call out closes it. Nothing waits for another call: a
+call takes `lock` exclusive at its end only when it finds the slot marked, so the fsync loop a Commit runs under the
+shared lock (`commit()`) does not hold up the end of every read and write. The slot (and with it the guest's handle
+value) is not handed out again before the close, and a call that comes after the CloseFile gets
+`FS_R_INVALID_ARGUMENT`, as a closed handle does.
+
+- `file_of()`: `closing` is stored only under the exclusive lock. Shared holders count themselves at once;
+  `close_file()` reads the count exclusive.
+- `file_closed()`: after the host file's close, the save's bookkeeping, as a closed save file needs.
+- `file_clear()` empties a slot, under the exclusive lock. `users` and `closing` are stored as atomics: the call that
+  has just left the slot may still read `closing` without the lock (`file_release()`). `open_file()` fills only `h`,
+  `mode`, `save` and `boot_map`.
+- `file_release()`: the end of a call that `file_of()` let in. The last call out of a slot CloseFile closed meanwhile
+  closes the file. The decrement and `close_file()`'s mark are a sequentially consistent pair: either this call sees
+  `closing`, or `close_file()` sees `users` at 0 and closes the file itself. Only the first case takes the lock, and
+  its check under the lock keeps the close to one.
+- `close_file()`: the mark first, then the count (`file_release()` does the reverse): a call that is still under way
+  closes it.
+
+### `host_read_at()`
+
+Positional reads: the bytes read at `off`, 0 at the end, -1 on an error. The buffer is thawed first (`mem_thaw`): the
+kernel's write would fail on a frozen page instead of faulting. A result of -2 is a read-only page in the buffer: a
+frozen region missed its thaw, and the log says so.
+
+### `open_file()`
+
+A save file read to be loaded while a boot map is pending: its reads get the boot map's place
+(`runtime/patches/boot_map.c`). `users` and `closing` are 0 in a free slot (`file_clear()`).
+
+### `write_file()`
+
+The range check is offset + size without the sum: a size near 2^64 would wrap it below the file's size. With
+`NX2SARIA_WB_PROBE` the kernel reads the buffer, and a probed page would fail the write instead of faulting; so would
+a heap page `NX2SARIA_HEAP_LAZY` has not committed yet, so the buffer is thawed while probing. Bit 0 of the option is
+WriteOptionFlag_Flush.
+
+### `delete_file()` `rename_file()`
+
+DeleteFile on a directory answers `FS_R_INVALID_ARGUMENT`. A rename across mounts answers `FS_R_INVALID_PATH`.
+
+### `open_directory()` `read_directory()` `directory_entry_count()`
+
+- `open_directory()`: Switch 2 titles list RomFS folders (content:/Foliage/...); the Switch 1 title never did.
+- `read_directory()` holds `lock` to the end: CloseDirectory on another guest thread frees the listing this copies
+  from. A name over 768 bytes is skipped: `nn::fs` cannot name it.
+- `directory_entry_count()`: `Result GetDirectoryEntryCount(int64_t *out, DirectoryHandle h)`: the entries
+  ReadDirectory would still return. The shared lock is against a CloseDirectory on another guest thread.
+
+### The overrides
+
+AAPCS64 thunks. FileHandle, DirectoryHandle, CacheStorageListHandle and ApplicationId are 8-byte structs passed in
+one register; Uid, ReadOption and WriteOption go by reference. `ov_set_priority()` does nothing: the fs priority only
+orders I/O inside the system fs process; host I/O is unordered. `S_MOUNT_ROM`, `S_QUERY_CACHE` and `S_INITIALIZE` are
+the symbols `runtime/hle/romfs.c` overrides.
+
+### `probe_fs()`
+
+`--probe-fs`: every check calls the overrides the way guest code does: by synthetic address through `rt_call`, with
+AAPCS64 arguments in a `Cpu`, on this (probe) thread. It prints counts only, never RomFS paths.
+
+- `HEAD_BYTES` (8 MiB): a sampled file is compared whole up to this size, else head (and `TAIL_BYTES`, 64 KiB) tail.
+- `fs_call()`: the override registered for `sym`, called through its synthetic address with up to 6 arguments; x0..x18
+  hold caller-saved garbage first. It returns x0.
+- `compare_range()` reads [pos, pos+n) of the open RomFS handle `h` through one of the three ReadFile overloads, and
+  compares it with an independent read of `romfs.bin` at the index offset.
+- `probe_romfs()` samples 64 files (`SAMPLES`) and the largest file beyond the 64. A read at EOF gives 0 bytes, one
+  past EOF `FS_R_INVALID`. The same file is opened under "rom:/", "rom://" and "rom:///"; its folder is a directory;
+  traversal and writes are refused. Overlays (`NX2SARIA_ROMFS_PATCHES`, `NX2SARIA_ROMFS_MODS`): served in place of the
+  original, added files and their folders exist, bytes equal the overlay file.
+- `probe_restart()`: the process "dies" here: the save mount goes without Unmount, and the next start runs
+  `save_recover()` and mounts again.
+- `tx_commit()`: Commit through the override, then a wait for its background thread, as the checks read the disk
+  next. Not with `fs_save_flush()`: that also marks the process as exiting, and every later Commit of the probe would
+  be refused.
+- `tx_write()` fills a save file, created when absent, with byte g through the overrides. `tx_read()`: the byte a
+  save file is filled with, read through the overrides; -1 absent, -2 short or mixed. `tx_read_committed()`: the same,
+  read from the committed save on disk. `tx_links_committed()`: the hard links of a file of the committed save on
+  disk; 0 when absent.
+- `probe_save_tx()`, the save transactions: restarts, uncommitted and committed changes, a crash at every step of a
+  Commit. In order: uncommitted changes (the game reads them; the committed save and the next start do not see them);
+  committed changes survive a restart, and an Unmount without Commit drops changes; a crash at step k of a Commit,
+  k = 1, 2, ... until a Commit completes (the next start sees all of the old generation or all of the new one); a
+  Commit writes the changed file and links the unchanged one to the committed save it replaces; a Commit that changed
+  no byte (the game rewrites its files at start) makes no new save and no backup; the background commit (a write right
+  after Commit waits for it and stays out of it; an Unmount right after Commit waits for it and keeps it); a file of
+  the committed save held open by another program (a virus scanner, Explorer's preview, a sync tool): Windows refuses
+  to rename a directory with an open file under it, so the committed save cannot be swapped out, the game and a
+  restart still see every Commit, and the first start after the file is closed swaps them in; the read-only mount
+  shows the committed save and refuses changes; a run that left read-only folders and files in the working copy
+  (attributes another emulator's save carried): the next start deletes them and names the failing path if it cannot.
+- `probe_storage()`: create, write, commit; paths; directories; reopen after unmount (the bytes come back through the
+  overrides and are on disk); resize, rename, delete; copies of the save (the first one, prefixed, outlasts the
+  rotation of the later ones); temporary and cache storage. At the end `storage_init()`'s one-game-per-profile lock,
+  held open until then, is given back before the folder is removed.
+- `probe_fs()` calls `nn::fs::InitializeForApplication` (`fs_init()` again, idempotent).
+
+### `fs_host_sizes()`
+
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): open save-data files and directory listings against their
+tables.
+
+## `runtime/hle/romfs.c`
+
+The read-only game RomFS, backed by the player's extracted image.
+
+Input: `<romfs>/romfs.bin` (`rt_config()->romfs`), whose six IVFC levels and SHA-256 `tools/extract.py` verified, and
+`romfs-index.bin` next to the executable (`NX2SARIA_ROMFS_INDEX` overrides), which `tools/romfs_index.py` wrote
+together with `romfs_config.h`. `fs_init()` checks the index's SHA-256 and layout and the image size. The full 17 GB
+hash runs only with `NX2SARIA_ROMFS_VERIFY=full`; a proof file (`.romfs-verified-v1` next to the index, or in
+`NX2SARIA_ROMFS_PROOF_DIR`) keyed by the file's volume, file id, size and times skips it on later starts;
+`NX2SARIA_ROMFS_VERIFY=force` ignores the proof.
+
+Reads are positional (`plat_file_pread` of `runtime/platform/platform.h`), so threads read the image in parallel
+without a file-pointer lock. `NX2SARIA_ROMFS_MMAP=1` maps the image instead.
+
+Overlays: files listed in a directory's `manifest.tsv` are served in place of the originals. Each line names a RomFS
+path, the overlay's size and SHA-256 and the original's SHA-256 ("-" adds a file the RomFS lacks; it is numbered after
+the RomFS's own files, file_count + k in path order). The directories, in this order: `NX2SARIA_ROMFS_PATCHES` and
+`NX2SARIA_ROMFS_MODS`; unset or "0" = none. A missing path, a size or hash mismatch or a changed original stops the
+start. An overlay file is opened when the game opens it; its identity (volume, file id, size, last write) is kept from
+the start check, and an open that finds another file there stops the game.
+
+Player mods (`runtime/patches/mods.c`): the files under each enabled mod's RomFS root are overlays too, checked by identity
+only (no hash, no manifest). A path several overlays give is served by one: a player mod higher in the order beats a
+lower one, any player mod beats the `NX2SARIA_ROMFS_MODS` manifest, which beats romfs-patches (`overlay_contest()`). A
+mod path that matches a RomFS path only without case is served under the RomFS spelling.
+
+The resource size table: with a player mod enabled, the game's table is rebuilt at start with the tables the mods
+ship merged in and the entries of the mods' files raised to what they need (`restbl_overlay()`), and served from
+`<profile>/mods/` in place of the game's or a mod's table.
+
+- `NH` (65536) is the RomFS handle slots; `READ_CHUNK` (64 MiB) the largest single read; `ADDED` (`UINT64_MAX`) an
+  added overlay file's index until `overlay_init()` numbers it.
+- `Identity` has no padding.
+- `Overlay`: `prio` says which overlay serves a path two of them give (the higher): romfs-patches 0, the
+  `NX2SARIA_ROMFS_MODS` manifest 1, a player mod 2 + its distance from the bottom of the order. `mod` is its index in
+  `mods_at` + 1, 0 for any other overlay.
+- `index_dir` is the directory of `romfs-index.bin`: the proof file's default place.
+- `NROM_NAMES` (4): the names the RomFS is mounted under: one for the Switch 1 title; Switch 2 titles mount it again
+  under other names (`nn::fs::MountRom(const char *)`), each an alias of the same image.
+- `handles[]` holds the file index + 1 (0 is free); `handle_ovl[]` the overlay slot + 1 of an open handle (0: the
+  original); `handle_file[]` the handle's open overlay file, when `handle_ovl` is set; `overlays` is sorted by RomFS
+  index after `overlay_init()`; `open_ms` and `open_n` are `open_note()`'s: per file, the last open and the opens in a
+  row; `added` the RomFS paths of the added files, sorted (`added[k]` is index file_count + k); `patches_loaded` that
+  a romfs-patches manifest gave a file (`romfs_patches_loaded()`).
+
+### `rom_relative()`
+
+The path relative to the RomFS root when `path` is "<a mounted name>:/...", else NULL. Repeated '/' inside the path
+read as one (`romfs_path_collapse` of `runtime/hle/romfs_path.h`); the result lives in a per-thread buffer until the
+thread's next call.
+
+### `read_at()`
+
+Positional reads: the bytes read at `off` (0 at or past the end of the file), -1 on an I/O error. As in
+`runtime/hle/fs_host.c` `host_read_at()`, the buffer is thawed first (the kernel's write would fail on a frozen page
+instead of faulting), and -2 means a read-only page in the buffer: a frozen region missed its thaw.
+
+### `sha_range()` `verify_image()`
+
+SHA-256 over a file range, streaming; and the full image verification with a proof file (`RomfsProof`).
+
+### `file_index()` `folder_exists()` `overlay_slot()`
+
+The index lookup. `file_index()`: the index of RomFS path `p` (an added file: file_count + k), or `UINT64_MAX`.
+`folder_exists()`: 1 when a RomFS file or an added one lies under `folder` (a path ending in '/'). `overlay_slot()`:
+the overlay slot + 1 that replaces RomFS file i, or 0.
+
+### `overlay_load()`
+
+Loads and checks one overlay folder. A failed check stops the game, except with `optional` set (a prompts
+folder): the folder is dropped, the reason logged, and 0 returned. It returns 1 when the folder is loaded or has no
+manifest. `prio` is the `Overlay` field (0 for the port's own folders, 1 for the `NX2SARIA_ROMFS_MODS` manifest).
+
+### `index_any_case()`
+
+Player mods (`runtime/patches/mods.c`): every file under an enabled mod's RomFS root is taken by identity (no hash: a texture
+pack is gigabytes and the player changes it at will; `romfs_open()` still stops on a file that changed after the
+start). `folded` is the RomFS indices sorted by name ignoring ASCII case, built on the first mod path that misses.
+
+`index_any_case()`: the RomFS index of `name`, or of the RomFS path equal to it but for case (a mod made on Windows,
+where an emulator's folder lookup ignores case); `UINT64_MAX` for a path the RomFS lacks.
+
+### `other_version()`
+
+1 when `path` names a file of one game version only (Product.<n> in a name: the resource size table, the actor
+database and other version-bound files); the RomFS lacking it means it is another version's.
+
+### `is_restbl()` `shipped_add()` `restbl_find()` `restbl_collect()`
+
+The resource size table's inputs: the tables the overlays carry, before `overlay_contest()` keeps one of them.
+`restbl_rel` is the RomFS path of the game's table, "" when it has none. `Shipped.mod` is the ModInfo index + 1, 0 for
+the port's folders; `other` says it was made for another game version.
+
+- `is_restbl()`: 1 when `rel` is a resource size table of any game version.
+- `restbl_find()`: the game's table: the one `System/Resource/ResourceSizeTable.*.rsizetable.zs` of the RomFS.
+- `restbl_collect()`: the tables the overlays carry for this game version, every one of them (`overlay_contest()`
+  keeps one).
+
+### `mod_walk_cb()` `mod_walk()`
+
+`MOD_WALK_DEPTH` (32): folders nest at most this deep in a mod's RomFS folder: each level costs a stack frame (two
+4 KiB paths here and the listing's own), and no RomFS path of the game is deeper.
+
+`mod_walk_cb()` takes one entry of a mod's RomFS folder. A resource size table for another game version is still
+kept as shipped: its entries for this mod's files still apply. `mod_walk()`: the files under `dir` (a mod's RomFS
+root; `rel`: the RomFS path of `dir`, "" at the root) as overlays of mod k. A folder that cannot be listed (no
+permission, a path longer than Windows allows) loses its files, and the log says so.
+
+### `contest_order()` `overlay_contest()`
+
+`contest_order()`: what overlays compete on: the RomFS index, an added file's path; the higher `prio` first.
+`overlay_contest()`: one overlay per path: the highest `prio` serves it; the others are dropped and counted on their
+mod.
+
+### `mods_overlay_init()`
+
+A mod with ExeFS patches waits for the rebuild that applies them: half of a mod is worse than none.
+
+### `added_init()`
+
+Numbers the added files in path order after the RomFS's own (file_count + k); `overlay_contest()` left one per path.
+
+### `read_served()` `served_overlay()` `serve_generated()`
+
+- `read_served()`: RomFS file `rel` as the game would read it: from an overlay that replaces it (`*base`), else from
+  the image. malloc'd; NULL when it is missing, unreadable or 16 MiB or more (logged with `keeps`, what the game does
+  without it).
+- `served_overlay()`: the overlay that serves RomFS file `rel` now (the last one, as `read_served()` picks it), or
+  NULL. A pointer `read_served()` gave goes stale once anything adds an overlay, since the table can move
+  (`serve_generated()`'s realloc): ask again.
+- `serve_generated()` serves `out[0..out_n)` (malloc'd, freed here) in place of RomFS file `rel` and of an overlay
+  that replaces it (`base`): written to `<profile>/<sub>/<file name of rel>`. `what` names the change in the log. 0
+  when it cannot be written. A base under the profile folder is one an earlier change wrote here (the action
+  prompt's), not a mod's.
+
+### `content_size()` `restbl_unpack()`
+
+The resource size table (`runtime/hle/restbl.c`). `content_size()`: the decompressed size of a file's bytes as the
+game unpacks them: the content size its zstd frame records (.zs; the game's files and zstd's own tools write it), four
+times the bytes for a frame without one, else its size. `restbl_unpack()`: a table from its zstd bytes; NULL when they
+are not one.
+
+### `restbl_overlay()`
+
+With a player mod (or the `NX2SARIA_ROMFS_MODS` manifest) serving files: the game's table with every shipped table of
+this version merged in (an entry larger than the game's wins), the entries a mod's table for another version gives for
+that mod's files, and each served mod file's entry raised to what its size needs (`restbl_grow` for a file the game
+has, `restbl_estimate` for an added one). It never lowers the game's entries.
+
+Of another version's table only the entries of the files its mod serves are taken. A file with no entry in the game's
+table is left: the game sizes it without the table (streamed). For the estimate a mesh codec file counts at 8 times
+its size: it unpacks to several times its size.
+
+### `restbl_room()`
+
+The resource size table with the entry of `rel` (a file of the game's that a change of ours serves larger: its
+decompressed size from `was` to `now`) raised to hold it (`restbl_fit` of `runtime/hle/restbl.c`: the growth added to
+the entry the table served has, a mod's higher merged entry included), served in its place and written to
+`<profile>/<sub>/`. The game sizes the buffer it reads a file into from its entry, so a larger file needs a larger
+one. It runs after `restbl_overlay()`, whose table, when it served one, is the one raised. 1 when served, 0 with why.
+
+### `heapdef_overlay()`
+
+The HeapDef table a bigger game resolution needs (`runtime/gfx/resolution.c`): its texture heap and that heap's
+parent grow. The base is an overlay that replaces the table (a mod's heap sizes stay), else the RomFS original; the
+grown table is written to `<profile>/resolution/` and served in the base's place. Switch titles name it for NX
+(`System/HeapSize/Product.Nin_NX_NVN.HeapDef.byml.zs`), Switch 2 ones (Ocarina) for Ounce.
+
+### `camera_overlay()`
+
+The player camera's pack (`CAMPACK`, `Pack/Actor/PlayerCamera.pack.zs`) with its stick speeds multiplied by
+`NX2SARIA_STICK_SENS` (`runtime/input/camera_speed.c`). The base is an overlay that replaces the pack (a mod's camera
+stays), else the RomFS original; the dictionary is the RomFS's own. It runs also at factor 1: `cam_pack_build` reads
+the game's own values, which a change during the run needs.
+
+### `action_prompt_overlay()`
+
+The action prompt's diamond of face buttons for the pad layout at start (`runtime/patches/action_prompt.c`). By
+position (the Switch's places) the game's own layout is right; by label the Common layout archive the game would read
+(a mod's, else the RomFS's) is served with the diamond laid out again, written to `<profile>/action-prompt/`. A pad is
+not open yet this early, so auto counts as by label, as for the prompts' folders (`input_prompts_folder` of
+`runtime/input/input_map.c`). `action_prompt_for` is what `romfs_action_prompt()` returns.
+
+### `wide_hud_overlay()`
+
+The HUD at the picture's edges (`NX2SARIA_WIDE_HUD = edges`) and the loading screen's icon in the middle 16:9
+(`NX2SARIA_WIDE_MENUS = center`), `runtime/patches/wide_hud.c`: the Common layout archive the game would read (a mod's,
+the action prompt's above, else the RomFS's) is served with them, for the picture `wide_init` sets up, written to
+`<profile>/wide-hud/`. On a build with the widescreen sets, one line says the HUD's mode, the picture's shape and what
+each layout moves, whether or not anything does, so a player's log shows the setting in effect. The feature:
+[wide-hud.md](../wide-hud.md).
+
+- Without `wide_available()` it returns: no squeeze to place anything against (`runtime/cfg/cfg_support.c`: the
+  settings do nothing).
+- `wider` is 0 for a picture of 16:9 or narrower. The log lists what the HUD's edges, then the menus' redesign, change
+  in each layout.
+- The Common layout archive (the HUD, the loading icon and most of the menus' redesign) comes first, then the title
+  screen's when the menus fill the picture: each is the file the game would read (a mod's, else the RomFS's), edited
+  and written to `<profile>/wide-hud/`.
+- A larger archive (the pause menu's backdrop in pieces) needs a larger resource size table entry; without one the
+  game's buffer would be too small, so the archive is made again without what grew it.
+- The base is asked for again before serving: `restbl_room()` may have added the resource size table's overlay, which
+  can move the table.
+
+### The prompts' folders
+
+The button prompts' folders (`input_prompts_folder`) and whether each had a manifest next to `romfs-index.bin` at
+start; the one the settings asked for at start, the one `overlay_init()` loaded (NULL: the game's own prompts) and why
+the first did not load (`ROMFS_PROMPTS_*`). The menu compares them with the settings in effect (`prompts_note` of
+`runtime/ui/menu.cpp`). romfs-patches-pc keeps that name, but at a game resolution of another shape than 16:9 its
+files come from `pc_dir`, romfs-patches-pc-<w>x<h> (`overlay_init()`).
+
+`PROMPTS_PADS` is 3, the pad styles: Xbox, PlayStation, Steam Deck. `PROMPTS_FOLDERS` is `PROMPTS_PADS` * 2 + 1: each
+pad style by position and by label, then PC. `prompts_style()` and `prompts_value()` give a style's name in the log
+and its `NX2SARIA_PROMPTS` value.
+
+### `overlay_clash()` `overlay_drop()`
+
+`overlay_clash()`: the first RomFS file that the overlays [a, b) and [c, d) both replace, or NULL. The resource size
+table is no clash: `restbl_overlay()` merges both tables. `overlay_drop()` drops the overlays [a, b), the ones after
+them moving down.
+
+### `overlay_init()`
+
+`NX2SARIA_ROMFS_PATCHES` unset: romfs-patches next to `romfs-index.bin` if it has a manifest
+(`tools/make_romfs_patches.py`). A game resolution that is not 16:9 takes romfs-patches-<w>x<h> instead when it is
+there: the same overlay with the UI laid out for that shape (`make_romfs_patches.py --aspect`), when the game version
+has the camera aspect patch the layout goes with (`res_wants_wide_overlay`).
+
+With prompts = xbox, playstation or steamdeck, that pad's prompts folder for the pad layout takes its place
+(`input_prompts_folder`): the game's button font and interface textures with that pad's buttons drawn in
+(`tools/pad_prompts.py`). The game reads the font and the archives once at boot, so the prompts stay until restart
+even though the layout itself changes live. Each folder replaces romfs-patches as a whole and the setup builds no
+folder of another shape with a pad's prompts, so a game resolution that is not 16:9 keeps the Switch prompts. So does a
+RomFS mod (the `NX2SARIA_ROMFS_MODS` manifest or a player mod) that replaces one of the prompts' fonts: romfs-patches
+loads in their place, so the mod's file is not served beside prompts files made for the game's own. A mod's resource
+size table is no clash: `restbl_overlay()` merges it with the prompts' one.
+
+prompts = pc takes romfs-patches-pc whatever the pad layout, and at a game resolution of another shape
+romfs-patches-pc-<w>x<h> (`make_romfs_patches.py --prompts pc --aspect`): it carries that shape's UI layout too, so it
+replaces romfs-patches-<w>x<h> as romfs-patches-pc replaces romfs-patches. The player's side:
+[controls.md](../controls.md#button-prompts).
+
+- The folders are each pad's two (`nintendo`, `xbox` layouts), then the PC one.
+- The log says where the build drew the Xbox, PlayStation, Steam Deck and keyboard prompts from, or why it drew none
+  (its record in the game folder), whatever the prompts asked for: a report's log then says which prompts the Controls
+  menu can offer.
+- A shaped PC folder is loaded in place of romfs-patches-<w>x<h>, whose UI layout it carries.
+- `wide_hud_overlay()` runs after the action prompt's: it edits the same archive, as that one serves it.
+- After `overlay_contest()` left one overlay per file, the generated ones replace in place.
+
+### `index_path()`
+
+`romfs-index.bin` next to the executable, or `NX2SARIA_ROMFS_INDEX`.
+
+### `romfs_load()`
+
+The whole of a RomFS file by its path from the RomFS root, for host-side readers (`runtime/ui/menu_sound.c`: the
+game's own interface sounds); malloc'd, NULL when the file is absent or not in the image (an added mod file). The
+original file, not a mod's replacement. It opens the RomFS when nothing has yet: the boot screen (`menu_boot_frame` of
+`runtime/ui/menu.cpp`) loads the menu's fonts before the guest's first file access.
+
+### `movie_skipped()`
+
+`NX2SARIA_MOVIES=off` skips movies: the RomFS reports .webm files as absent, and the game's movie player
+(`main+0x3b5eb40`), which opens the file with `nn::fs::OpenFile` before it creates a decoder, abandons the movie
+cleanly. Movies play otherwise (`runtime/hle/ov_movie2.c` decodes them).
+
+### `open_note()`
+
+A file the game cannot load, damaged or refused for any other reason: its loader opens it again and again and in the
+end does without it, and whatever needs it stays out of the world. `tools/romfs_check.py` finds damaged files before
+play; this names the ones that still fail, in the log. One timestamp and one count per file, read and written only
+here, where a file is opened (a few thousand times a session), without a lock: a race at worst logs a line twice.
+`RETRY_OPENS` is 24 opens, each less than `RETRY_GAP_MS` (3000) after the last; a file reloaded in play stays far
+below.
+
+### `area_name()` `scene_note()`
+
+`NX2SARIA_TRACE=perf` and the stutter map (`runtime/diag/stutter_map.c`): an area's static placement,
+`Banc/<area>/<area>_<age>_Static.bcett.byml.zs`, is read once when the area loads (the game streams a neighbouring area
+the same way): `perf_scene` names it.
+
+### `area_missing_fatal_note()` `area_missing()`
+
+The game asked for an area's static placement and the RomFS has none: the save being loaded (or the game's own state)
+names an area this game version does not have. The game does not check for that and reads through a null area object a
+moment later (a child save naming HyruleCastle_Child on 1.1.1, whose castle has one placement for both ages). The log
+names the area once, and the crash report that follows repeats it, so the report explains itself.
+`area_missing_name` is the first such area, written once under lock; the fatal note reads it.
+
+### `romfs_open()`
+
+- `NX2SARIA_NPLN=off`: the online client's configuration (`npln_config.json`) is absent (diagnosis of the crashes that
+  follow its start).
+- With the perf trace or the stutter map on, `scene_note()` runs: the stutter map counts hitches by area.
+- Opening `CAMPACK` calls `cam_pack_opened`: its values come into memory at the start's factor
+  (`runtime/input/camera_speed.c`).
+
+### `handle_source()`
+
+The handle's index row (an added file's is empty: its bytes are all in its overlay), and where its bytes come from:
+the overlay file, or the original's range of the image.
+
+### `romfs_read_patch()` `romfs_read_patches_off()` `read_patch_apply()`
+
+Read patches: a few bytes of an original file, changed in the reads that cover them (at most `READ_PATCH_MAX`, 8).
+They are registered before the guest starts and only switched off later, so `romfs_read()` looks at the table without a
+lock. `read_patch_apply()`: the read patches of the original file at image offset `base` that fall into the `n` bytes
+read at `offset`.
+
+### `romfs_list()`
+
+The directory listing over the sorted index: every path under "<p>/" is contiguous, and so is every path under one
+subdirectory, so one pass emits each file and each distinct subdirectory once. Files the RomFS-mods manifest adds
+(`added[]`) are not listed yet.
+
+### `ov_mount_rom()` `ov_query_cache()` `ov_initialize()`
+
+- `nn::Result nn::fs::MountRom(const char *name, void *cache, size_t cache_size)`, and
+  `nn::Result nn::fs::MountRom(const char *name)`, the Switch 2 SDK's form, without a cache.
+- `nn::Result nn::fs::QueryMountRomCacheSize(size_t *out)`: no cache needed, the host reads the image directly.
+- `void nn::fs::InitializeForApplication()`: SDK-internal; it opens the index instead of the fs service session.
+
+### `romfs_sizes()`
+
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): open RomFS handles against the table.
