@@ -1,18 +1,3 @@
-// boot_map = <area>[:<start position>]: the game starts in that area from the save of a slot, without the title screen
-// and its file menu (Ocarina of Time 1.1.1). docs/boot-to-map.md has the research behind it and its risks.
-//
-// Nothing is called in the game and no game code is patched. The setting changes what the game reads, while it is
-// pending:
-// - Sequence/NormalTitle.module.ainb: the title's graph starts with what Continue and then Yes start
-//   (TitleToMainWithLoadSave), so the title's buttons and the file menu never show (romfs.c romfs_read_patch);
-// - Sequence/OnLoadGameSaveData.module.ainb: the slot loaded is a constant instead of the file menu's choice;
-// - slot_NN/progress.sav: the area, Link's position and heading, and on request his age and the time of day are the
-//   destination's (fs_host.c calls boot_map_save_open and boot_map_save_read). The file on disk stays as it is.
-// The game's own code then loads the save and the area in its own order. The first pad read with Link in the world
-// ends it: the log says where he is, and the changes stop.
-//
-// Settings, read once at start: boot_map, boot_map_slot (0..5 or latest), boot_map_age (child, adult or save),
-// boot_map_time (HH:MM or save).
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,15 +12,15 @@
 #include "platform/platform.h"
 
 enum { BM_OFF, BM_PENDING, BM_DONE };
-static int32_t state;                  // BM_*; BM_PENDING only once every change is armed
+static int32_t state;
 static struct {
-    char area[64], start[64];          // the destination: the area and the name of its start position ("" its default)
-    int slot, file_slot, mq;           // the slot asked for (0..5), the slot_NN it loads (+6 in Master Quest)
+    char area[64], start[64];
+    int slot, file_slot, mq;
     BmPlace place;
     uint64_t t0_ns;
 } bm;
 static PlatMutex save_lock = PLAT_MUTEX_INIT;
-static BmEdit save_edit[8];            // under save_lock: the edits of the save file the game opened
+static BmEdit save_edit[8];
 static int save_edit_n;
 
 static void fallback(const char *why) {
@@ -43,8 +28,6 @@ static void fallback(const char *why) {
     rt_log("boot map: %s: normal boot", why);
 }
 
-// The account's Master Quest mode (account.sav IsLastSelectedMQMode): the game loads slot N + 6 then
-// (SeqExecuteLoadSaveData, main+0x32c1db0).
 static int mq_mode(void) {
     uint64_t n = 0;
     uint8_t *d = fs_save_load("account.sav", &n);
@@ -54,7 +37,6 @@ static int mq_mode(void) {
     return on;
 }
 
-// The slot whose file-menu card has the newest date (the game's own latest, SeqQueryGetLatestSaveIndex), -1 none.
 static int latest_slot(int base) {
     int best = -1;
     uint64_t best_date = 0;
@@ -73,7 +55,6 @@ static int latest_slot(int base) {
     return best;
 }
 
-// One of the sequence graphs: its edits found in the original file and armed in romfs.c. 0 with why.
 static int arm_graph(const char *rel, int slot, char *why, size_t cap) {
     uint64_t n = 0;
     uint8_t *d = romfs_load(rel, &n);
@@ -121,7 +102,6 @@ void boot_map_init(void) {
     bm.place.area = bm.area;
     bm.place.yaw = bm_yaw(rot);
 
-    // the slot, and its save: the one the game would load next (a waiting import is that save already)
     const char *sv = cfg_get("NX2SARIA_BOOT_MAP_SLOT");
     bm.mq = mq_mode();
     int latest = !sv || !*sv || !strcmp(sv, "latest");
@@ -147,7 +127,6 @@ void boot_map_init(void) {
         return;
     }
 
-    // age and time
     const char *av = cfg_get("NX2SARIA_BOOT_MAP_AGE"), *tv = cfg_get("NX2SARIA_BOOT_MAP_TIME");
     int area_age = bm_area_age(bm.area), want = -1;
     if (av && *av && strcmp(av, "save")) {
@@ -159,7 +138,6 @@ void boot_map_init(void) {
             return;
         }
     }
-    // an area whose name has an age makes Link that age whatever the save says (LoadBancImpl): the save says it too
     bm.place.child = area_age >= 0 ? area_age : want;
     bm.place.day_seconds = -1;
     if (tv && *tv && strcmp(tv, "save") && (bm.place.day_seconds = bm_day_seconds(tv)) < 0) {
@@ -168,7 +146,6 @@ void boot_map_init(void) {
         fallback(why);
         return;
     }
-    // the save must hold what is changed in it: tried now on the file the game will read
     BmEdit trial[8];
     int edits = bm_save_edits(save, (size_t)n, &bm.place, trial, why, sizeof why);
     uint32_t was_child = 1;
@@ -181,7 +158,6 @@ void boot_map_init(void) {
         fallback(why);
         return;
     }
-    // the title's graph and the slot's: last, so that a refusal above leaves the RomFS as it is
     if (!arm_graph("Sequence/NormalTitle.module.ainb", -1, why, sizeof why) ||
         !arm_graph("Sequence/OnLoadGameSaveData.module.ainb", bm.slot, why, sizeof why)) {
         fallback(why);
@@ -208,7 +184,6 @@ int boot_map_save_open(const char *path, PlatFile *f) {
     snprintf(tail, sizeof tail, "/slot_%02d/progress.sav", bm.file_slot);
     size_t pl = strlen(path), tl = strlen(tail);
     if (pl < tl || strcmp(path + pl - tl, tail)) return 0;
-    // the edits from the bytes this open reads, which a commit since the start may have changed
     PlatFileId id;
     uint8_t *d = plat_file_id(f, &id) && id.size >= 0x28 && id.size < (64u << 20) ? malloc((size_t)id.size) : NULL;
     int ok = d && plat_file_pread(f, d, (uint32_t)id.size, 0) == (int64_t)id.size;
@@ -216,9 +191,6 @@ int boot_map_save_open(const char *path, PlatFile *f) {
     BmEdit e[8];
     int count = ok ? bm_save_edits(d, (size_t)id.size, &bm.place, e, why, sizeof why) : 0;
     free(d);
-    // the first open that has every value sets the edits, which every handle reads by. A later open is changed only
-    // when its file gives the same edits (a commit in between may have moved the values); otherwise it reads its file
-    // as it is, and the handles of the first keep theirs.
     plat_mutex_lock(&save_lock);
     int first = count && !save_edit_n;
     if (first) memcpy(save_edit, e, sizeof e), save_edit_n = count;
@@ -246,8 +218,7 @@ void boot_map_tick(void) {
     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) != BM_PENDING) return;
     float p[3];
     uint64_t now = plat_now_ns();
-    if (!dbg_player_pos(p)) {   // the title has no player; he comes with the area the save loads
-        // no arrival in 300 s: the changes stop, so that a return to the title is the game's own again
+    if (!dbg_player_pos(p)) {
         if (now - bm.t0_ns > 300000000000ull) {
             __atomic_store_n(&state, BM_DONE, __ATOMIC_RELEASE);
             romfs_read_patches_off();

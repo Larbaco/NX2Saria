@@ -1,31 +1,3 @@
-// The action prompt's diamond of face buttons for the pad layout at start. The action prompt (top right) shows the
-// four face buttons as a diamond in the Switch's places, A on the right. Under a layout by label (NX2SARIA_PAD_LAYOUT =
-// xbox or playstation; input_map.c input_pad_layout_pick) A is the bottom button, and auto is treated the same at
-// start, when no pad is open yet: a pad that labels its right button A then plays by position under auto and sees
-// the diamond the other way round, which docs/controls.md says and nintendo avoids. So romfs.c
-// (action_prompt_overlay) serves the shared interface layouts with the diamond laid out as such a pad has its buttons:
-// A bottom, B right, X left, Y top. The game reads the layouts once at start, so a change of layout shows after a
-// restart.
-//
-// The layout is DoCommand_00.buil in the SARC UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs, a BFFH
-// file of little-endian records that point at each other by 64-bit file offsets:
-// - The header has a group of slots per table: at +0x00 the offset of the list of name offsets, at +0x08 that of the
-//   list of record offsets, at +0x10 that of the names' hashes, at +0x18 the count. Panes at 0x118, materials at 0x138.
-//   The group at 0x218 is the materials' texture blocks: no names, the list of the blocks' offsets in the third slot
-//   (0x228), the count at 0x230.
-// - A pane record holds scale x and y at +0x10 and +0x14, translate x and y at +0x1c and +0x20, and flags at +0x38, in
-//   which 0x1000 puts a text pane's origin on its right edge.
-// - A material record holds its block's index at +0x14. A block starts with the offset of its texture bindings and
-//   their count; a binding is 16 bytes, the offset of the texture's name at +0x08.
-// Each face button K has a group N_K_00, shown while K's action is offered: P_BaseK_00, a cross whose lit arm points at
-// K; three dots, the other buttons, each 80 units out in its own direction; and N_BtnK_00 at K's place, with K's
-// letter, the bubble behind the action's name (W_BaseK_00, and W_BaseKDecide_00 under the null N_BaseKDecide_00, which
-// the Decide animation scales) and the name (T_GuideK_00). The bubble opens to the right, or to the left for the left
-// button, so the name stays clear of the diamond. The cross has two pictures, the lit arm right
-// (DoCommandCrossBase_A_00 and DoCommandCrossBaseGrd_A_00) or down (_B_00), flipped for left and up. Each cross's
-// material has texture bindings of its own; only the names' strings are shared, so a cross changes picture by taking
-// the other picture's name offsets. No animation keys these positions, flips or flags, so the layout holds while the
-// prompt animates.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,29 +12,21 @@
 #define MEMBER "DoCommand_00.buil"
 #define MAX_RAW (64u << 20)
 enum { PANE_TABLE = 0x118, MATERIAL_TABLE = 0x138, BLOCKS = 0x228, BLOCK_COUNT = 0x230 };
-// The pane record's fields this reads; PANE_NEEDS: the bytes a record needs to hold all of them. The same for a
-// material record.
 enum { PANE_SCALE_X = 0x10, PANE_SCALE_Y = 0x14, PANE_X = 0x1c, PANE_Y = 0x20, PANE_FLAGS = 0x38, PANE_NEEDS = 0x3c };
 enum { MATERIAL_BLOCK = 0x14, MATERIAL_NEEDS = 0x18, BINDING_SIZE = 16, BINDING_NAME = 0x08, TEXT_RIGHT = 0x1000 };
 
-// ---- the diamond in each layout
 enum { EAST, SOUTH, NORTH, WEST };
-// A field is a float of a pane record, the text origin of a pane (F_RIGHT: 1 on its right edge, else 0) or the picture
-// of a cross (F_CROSS: 0 the lit arm right, 1 down). The last two are held as floats too, so that one comparison checks
-// every field.
 enum { F_X, F_Y, F_SCALE_X, F_SCALE_Y, F_RIGHT, F_CROSS };
 static const unsigned field_at[] = {
     [F_X] = PANE_X, [F_Y] = PANE_Y, [F_SCALE_X] = PANE_SCALE_X, [F_SCALE_Y] = PANE_SCALE_Y, [F_RIGHT] = PANE_FLAGS};
 static const char *const field_name[] = {"x", "y", "scale x", "scale y", "text origin", "cross picture"};
 
 static const char buttons[4] = {'A', 'B', 'X', 'Y'};
-static const int direction[2][4] = {{EAST, SOUTH, NORTH, WEST},    // by position: the Switch's places
-                                    {SOUTH, EAST, WEST, NORTH}};   // by label: an Xbox pad's
+static const int direction[2][4] = {{EAST, SOUTH, NORTH, WEST},
+                                    {SOUTH, EAST, WEST, NORTH}};
 static const float place[4][2] = {[EAST] = {80, 0}, [SOUTH] = {0, -80}, [NORTH] = {0, 80}, [WEST] = {-80, 0}};
-// The cross lit toward each direction: its picture and the flips that turn it.
 static const struct { int picture; float sx, sy; } cross[4] = {
     [EAST] = {0, 1, 1}, [SOUTH] = {1, 1, 1}, [NORTH] = {1, 1, -1}, [WEST] = {0, -1, 1}};
-// The panes at a face button's place: the other buttons' dots in each group, and each button (index into buttons).
 static const struct { const char *pane; int button; } at_button[] = {
     {"P_B_00", 1},    {"P_X_00", 2},    {"P_Y_00", 3},    {"P_A_00", 0},    {"P_X_02", 2},    {"P_Y_02", 3},
     {"P_A_02", 0},    {"P_B_03", 1},    {"P_Y_04", 3},    {"P_A_01", 0},    {"P_B_02", 1},    {"P_X_03", 2},
@@ -70,22 +34,19 @@ static const struct { const char *pane; int button; } at_button[] = {
 enum { AT_BUTTON = sizeof at_button / sizeof *at_button };
 
 typedef struct {
-    char pane[24];   // the pane; for F_CROSS the cross's pane, whose material has the same name
+    char pane[24];
     int field;
     float value;
 } Field;
-// What diamond() sets: x and y of each pane at a button's place; each button's cross (picture, flips); for X and Y,
-// which may be the left button, the flip and x of both bubbles and the name's x and origin.
 enum { MAX_FIELDS = 2 * AT_BUTTON + 4 * 3 + 2 * 6 };
 
 static int put(Field *f, int k, const char *pane, int field, float value) {
-    if (k >= MAX_FIELDS) return k + 1;   // counted, not stored: action_prompt_lay_out refuses a count it does not expect
+    if (k >= MAX_FIELDS) return k + 1;
     snprintf(f[k].pane, sizeof f[k].pane, "%s", pane);
     f[k].field = field, f[k].value = value;
     return k + 1;
 }
 
-// Every field the diamond's layout sets, by label (label = 1) or by position; their count.
 static int diamond(int label, Field *f) {
     int k = 0;
     char name[24];
@@ -100,7 +61,7 @@ static int diamond(int label, Field *f) {
         k = put(f, k, name, F_CROSS, (float)cross[d].picture);
         k = put(f, k, name, F_SCALE_X, cross[d].sx);
         k = put(f, k, name, F_SCALE_Y, cross[d].sy);
-        if (b < 2) continue;   // A and B are never the left button: their bubbles open to the right in both layouts
+        if (b < 2) continue;
         int left = d == WEST;
         snprintf(name, sizeof name, "W_Base%c_00", buttons[b]);
         k = put(f, k, name, F_SCALE_X, left ? -1.0f : 1.0f);
@@ -115,7 +76,6 @@ static int diamond(int label, Field *f) {
     return k;
 }
 
-// ---- reading the layout, every offset checked against its size
 static int u32_at(const uint8_t *p, size_t n, uint64_t off, uint32_t *v) {
     if (off > n || n - off < 4) return 0;
     memcpy(v, p + off, 4);
@@ -132,8 +92,6 @@ static const char *str_at(const uint8_t *p, size_t n, uint64_t off) {
     return off < n && memchr(p + off, 0, n - off) ? (const char *)p + off : NULL;
 }
 
-// The record of the entry `name` of the table whose header slots start at slot, with at least size bytes; 0 when it
-// is not there.
 static uint64_t table_find(const uint8_t *p, size_t n, size_t slot, const char *name, size_t size) {
     uint64_t names, records;
     uint32_t count;
@@ -149,8 +107,6 @@ static uint64_t table_find(const uint8_t *p, size_t n, size_t slot, const char *
     return 0;
 }
 
-// The offsets of the name offsets of the cross `pane`'s picture and gradient (its material's first two texture
-// bindings); 0 when they are not there.
 static int cross_names(const uint8_t *p, size_t n, const char *pane, uint64_t at[2]) {
     uint64_t m = table_find(p, n, MATERIAL_TABLE, pane, MATERIAL_NEEDS), blocks, block, bindings;
     uint32_t index, count, bound;
@@ -168,7 +124,6 @@ static int cross_names(const uint8_t *p, size_t n, const char *pane, uint64_t at
     return 1;
 }
 
-// Which picture the names at at[] give the cross: 0 the lit arm right (A), 1 down (B), -1 neither.
 static int cross_picture(const uint8_t *p, size_t n, const uint64_t at[2]) {
     static const char *const names[2][2] = {{"DoCommandCrossBase_A_00", "DoCommandCrossBaseGrd_A_00"},
                                             {"DoCommandCrossBase_B_00", "DoCommandCrossBaseGrd_B_00"}};
@@ -181,8 +136,6 @@ static int cross_picture(const uint8_t *p, size_t n, const uint64_t at[2]) {
     return -1;
 }
 
-// Where a field is: the offset of its 4-byte word (the pane's flags for F_RIGHT), or for F_CROSS the offsets of the
-// cross's two name offsets. Every offset is checked against the file's size when it is found.
 typedef struct {
     uint64_t at[2];
 } Where;
@@ -194,7 +147,6 @@ static int field_find(const uint8_t *p, size_t n, const Field *f, Where *w) {
     return r != 0;
 }
 
-// A found field's value; 0 when it is not one this knows (a cross with another picture).
 static int field_get(const uint8_t *p, size_t n, const Field *f, const Where *w, float *v) {
     if (f->field == F_CROSS) {
         int c = cross_picture(p, n, w->at);
@@ -211,7 +163,6 @@ static int field_get(const uint8_t *p, size_t n, const Field *f, const Where *w,
     return 1;
 }
 
-// The game stores some zeros as -2.8e-14.
 static int same(float a, float b) { return fabsf(a - b) < 1e-3f; }
 
 int action_prompt_lay_out(uint8_t *p, size_t n, int label, char *why, size_t why_n) {
@@ -226,7 +177,6 @@ int action_prompt_lay_out(uint8_t *p, size_t n, int label, char *why, size_t why
         snprintf(why, why_n, "%s is not a BFFH layout", MEMBER);
         return -1;
     }
-    // Find and read every field before anything is written.
     Where where[MAX_FIELDS];
     float now[MAX_FIELDS];
     int done = 1;
@@ -244,12 +194,10 @@ int action_prompt_lay_out(uint8_t *p, size_t n, int label, char *why, size_t why
                      (double)now[k], (double)from[k].value);
             return -1;
         }
-    // The name offsets of both pictures, from the crosses that show them now (the diamond by either layout shows both).
     uint64_t names[2][2];
     for (int k = 0; k < count; k++)
         if (from[k].field == F_CROSS)
             for (int j = 0; j < 2; j++) memcpy(&names[(int)now[k]][j], p + where[k].at[j], 8);
-    // Write, keeping each word's bytes as they were.
     uint8_t undo[MAX_FIELDS][2][8];
     int changed = 0;
     for (int k = 0; k < count; k++) {
@@ -268,8 +216,6 @@ int action_prompt_lay_out(uint8_t *p, size_t n, int label, char *why, size_t why
             memcpy(p + where[k].at[0], &to[k].value, 4);
         }
     }
-    // Read the layout again as the game will: each field where it was, with its new value. A file whose fields lie on
-    // the records that lead to them (or on each other) reads otherwise; it gets its bytes back, last written first.
     for (int k = 0; k < count; k++) {
         Where w;
         float v;
@@ -287,9 +233,6 @@ int action_prompt_lay_out(uint8_t *p, size_t n, int label, char *why, size_t why
     return changed;
 }
 
-// The game's archive holds each layout four times under the same name (628 members, 157 names; the four copies of
-// DoCommand_00.buil are the same bytes, each at its own offset). Every copy is laid out, each checked first on a copy
-// of its own, so either all of them change or none.
 int action_prompt_archive(uint8_t *sarc, size_t n, int label, char *why, size_t why_n) {
     enum { MAX_COPIES = 16 };
     size_t at[MAX_COPIES], size[MAX_COPIES], a, s;
@@ -310,7 +253,6 @@ int action_prompt_archive(uint8_t *sarc, size_t n, int label, char *why, size_t 
         snprintf(why, why_n, "the layout archive has no %s", MEMBER);
         return -1;
     }
-    // Copies that share their bytes are laid out once; copies that share only some of them cannot be laid out alone.
     for (int c = 0; c < copies; c++)
         for (int d = 0; d < c; d++)
             if (!(at[c] == at[d] && size[c] == size[d]) && at[c] < at[d] + size[d] && at[d] < at[c] + size[c]) {
@@ -330,7 +272,7 @@ int action_prompt_archive(uint8_t *sarc, size_t n, int label, char *why, size_t 
     }
     for (int c = 0; c < copies; c++) {
         int r = action_prompt_lay_out(sarc + at[c], size[c], label, why, why_n);
-        if (r < 0) return -1;   // not after a trial of the same bytes; kept so that a change here cannot hide one
+        if (r < 0) return -1;
         total += r;
     }
     return total;
@@ -347,7 +289,6 @@ int action_prompt_build(const void *in, size_t n, const void *zsdic, size_t zsdi
     ZSTD_DDict *dd = NULL;
     ZSTD_CDict *cd = NULL;
     char why[200] = "";
-    // The frame names its dictionary by id (0: none); Pack/ZsDic.pack.zs holds them.
     unsigned id = ZSTD_getDictID_fromFrame(in, n);
     size_t dn = 0, dic_at = 0, dic_n = 0;
     if (id && (!(dics = zsdic_unpack(zsdic, zsdic_n, MAX_RAW, &dn)) || !zsdic_find(dics, dn, id, &dic_at, &dic_n))) {
@@ -380,7 +321,6 @@ int action_prompt_build(const void *in, size_t n, const void *zsdic, size_t zsdi
         result = changed;
         goto done;
     }
-    // Level 3: the archive unpacks to about 10 MB and is packed again at every start (about 15 ms).
     size_t cap = ZSTD_compressBound((size_t)rn), zn = 0;
     ZSTD_CCtx *cctx = ZSTD_createCCtx();
     if (cctx && (z = malloc(cap)))

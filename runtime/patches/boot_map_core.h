@@ -1,6 +1,3 @@
-// The parts of boot_map.c that only read and change bytes, apart so that tests/boot_map_check.c runs them on made-up
-// files: the two sequence graphs (AINB) the title runs, the save file, the file menu's card, the setting's values.
-// Ocarina of Time 1.1.1. docs/boot-to-map.md says what each change is for.
 #pragma once
 #include <math.h>
 #include <stdint.h>
@@ -8,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// One change of bytes: at off, n bytes (at most 64) become repl; orig is what the file held there.
 typedef struct {
     uint64_t off;
     uint32_t n;
@@ -18,7 +14,6 @@ typedef struct {
 static inline uint32_t bm_u32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static inline uint16_t bm_u16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v; }
 
-// The hash the game knows a game data value by: MurmurHash3 (x86, 32 bits, seed 0) of its name.
 static inline uint32_t bm_hash(const char *s) {
     const uint8_t *p = (const uint8_t *)s;
     size_t len = strlen(s), n = len & ~(size_t)3;
@@ -29,8 +24,8 @@ static inline uint32_t bm_hash(const char *s) {
     }
     k = 0;
     switch (len & 3) {
-    case 3: k ^= (uint32_t)p[n + 2] << 16;   // fall through
-    case 2: k ^= (uint32_t)p[n + 1] << 8;    // fall through
+    case 3: k ^= (uint32_t)p[n + 2] << 16; __attribute__((fallthrough));
+    case 2: k ^= (uint32_t)p[n + 1] << 8; __attribute__((fallthrough));
     case 1: k ^= p[n], k *= 0xcc9e2d51u, k = (k << 15) | (k >> 17), k *= 0x1b873593u, h ^= k;
     }
     h ^= (uint32_t)len;
@@ -42,14 +37,6 @@ static inline void bm_why(char *why, size_t cap, const char *text) {
     if (why && cap) snprintf(why, cap, "%s", text);
 }
 
-// ---- AINB, version 0x408. Header: +0xc the commands' count, +0x10 the nodes', +0x24 the string pool (names are
-// offsets into it), +0x34 the input and output parameters (twelve offsets: inputs, outputs of int, bool, float,
-// string, vec3f, ptr). The commands follow at +0x74, 0x18 bytes each: the name, a GUID, the root node (u16 at +0x14).
-// The nodes follow, 0x3c bytes each: type (u16; 2 Sequential, 3 Simultaneous), name at +8, body at +0x14. A body has at
-// +0x30 per parameter type {first input, inputs, first output, outputs} and at +0x90 ten {count, first} byte pairs of
-// links, kind 2 the children, whose offsets follow at +0xa4 (each link starts with the node's index). An int input is
-// 0x10 bytes: name, the node it comes from (s16, -1 none), that node's output (u16), flags, the value; every input
-// without a link in the game's graphs has flag 0x800000.
 typedef struct {
     const uint8_t *d;
     size_t n;
@@ -62,7 +49,6 @@ static inline int bm_ainb_open(BmAinb *a, const uint8_t *d, size_t n) {
     return a->ncmd < 64 && a->nnode < 4096 && a->pool < n && (uint64_t)a->io + 48 <= n && 0x74 + 0x18ull * a->ncmd + 0x3cull * a->nnode <= n;
 }
 
-// The pool's text at off, NULL when it runs past the file.
 static inline const char *bm_ainb_str(const BmAinb *a, uint32_t off) {
     if ((uint64_t)a->pool + off >= a->n || !memchr(a->d + a->pool + off, 0, a->n - a->pool - off)) return NULL;
     return (const char *)a->d + a->pool + off;
@@ -75,7 +61,6 @@ static inline int bm_ainb_named(const BmAinb *a, uint32_t i, const char *name) {
     return s && !strcmp(s, name);
 }
 
-// The only node named name, or -1 (none, or more than one).
 static inline int bm_ainb_find(const BmAinb *a, const char *name) {
     int at = -1;
     for (uint32_t i = 0; i < a->nnode; i++)
@@ -86,7 +71,6 @@ static inline int bm_ainb_find(const BmAinb *a, const char *name) {
     return at;
 }
 
-// The children of node i (its links of kind 2), at most max; their number, -1 when the node's body runs past the file.
 static inline int bm_ainb_children(const BmAinb *a, uint32_t i, int *out, int max) {
     uint32_t body = bm_u32(a->d + bm_ainb_node(a, i) + 0x14);
     if ((uint64_t)body + 0xa4 > a->n) return -1;
@@ -104,9 +88,6 @@ static inline int bm_ainb_children(const BmAinb *a, uint32_t i, int *out, int ma
     return count;
 }
 
-// NormalTitle.module: its command Root starts the title (node 35 in 1.1.1, a Simultaneous that shows the title and
-// waits for a button). The edit makes it start the Sequential whose children are the Simultaneous of the scene
-// transition's pause and TitleToMainWithLoadSave.module: what Continue and then Yes in the file menu start.
 static inline int bm_ainb_title_edit(const uint8_t *d, size_t n, BmEdit *e, char *why, size_t cap) {
     BmAinb a;
     if (!bm_ainb_open(&a, d, n)) return bm_why(why, cap, "not an AINB file of version 0x408"), 0;
@@ -133,9 +114,6 @@ static inline int bm_ainb_title_edit(const uint8_t *d, size_t n, BmEdit *e, char
     return 1;
 }
 
-// OnLoadGameSaveData.module: SeqExecuteLoadSaveData and SeqOneShotSetCaptionMgrLatestIndex take their Index from the
-// query of CaptionData.SelectedSavePathIndex, which the file menu sets. The two edits make each Index a constant, the
-// slot: no link (-1), flag 0x800000, the value.
 static inline int bm_ainb_slot_edits(const uint8_t *d, size_t n, int slot, BmEdit e[2], char *why, size_t cap) {
     static const char *const nodes[2] = {"SeqExecuteLoadSaveData", "SeqOneShotSetCaptionMgrLatestIndex"};
     BmAinb a;
@@ -169,13 +147,8 @@ static inline int bm_ainb_slot_edits(const uint8_t *d, size_t n, int slot, BmEdi
     return 1;
 }
 
-// ---- save files (progress.sav, caption.sav, account.sav): u32 0x01020304, the version, the data's offset; from 0x28
-// up to that offset {u32 name hash, u32 value} pairs, where {0, k} starts the values of type k (0 Bool, 2 Int,
-// 4 Float, 10 Vector3, 16 String64, 24 UInt64, ...). Bool, Int and Float values are the pair's own; Vector3, String64
-// and UInt64 values are the offset of 12, 64 and 8 bytes in the file.
 enum { BM_BOOL = 0, BM_INT = 2, BM_FLOAT = 4, BM_VEC3 = 10, BM_STR64 = 16, BM_UINT64 = 24 };
 
-// The place of a value: the pair's offset; *value its second word. 0 when the file has no such value.
 static inline uint64_t bm_save_find(const uint8_t *d, size_t n, int type, uint32_t hash, uint32_t *value) {
     if (n < 0x28 || bm_u32(d) != 0x01020304u) return 0;
     uint64_t end = bm_u32(d + 8);
@@ -192,7 +165,6 @@ static inline uint64_t bm_save_find(const uint8_t *d, size_t n, int type, uint32
     return 0;
 }
 
-// The file menu's date of a card (caption.sav) as one number that grows with it, 0 without one.
 static inline uint64_t bm_caption_date(const uint8_t *d, size_t n) {
     static const char *const parts[6] = {"CaptionData.Date.Year", "CaptionData.Date.Month", "CaptionData.Date.Day",
                                          "CaptionData.Date.Hour", "CaptionData.Date.Minute", "CaptionData.Date.Second"};
@@ -206,17 +178,13 @@ static inline uint64_t bm_caption_date(const uint8_t *d, size_t n) {
     return date;
 }
 
-// What a boot map changes in the save it loads.
 typedef struct {
-    const char *area;        // Sequence_CurrentBanc
-    float pos[3], yaw;       // PlayerStatus.SavePos, PlayerStatus.SavePosRadY
-    int child;               // Sequence_IsChildhood: 1 child, 0 adult, -1 the save's
-    int day_seconds;         // the clock's seconds of the day (UInt64 ef10b80f, low word), -1 the save's
+    const char *area;
+    float pos[3], yaw;
+    int child;
+    int day_seconds;
 } BmPlace;
 
-// The edits that make the save s (n bytes) start at place p, at most 8. Their number; 0 with why when the save lacks
-// one of the values. DungeonRoom, the save's room of a dungeon, becomes -1 (none) whatever the area: Link starts at
-// another place than the save's, in another room or another area.
 static inline int bm_save_edits(const uint8_t *s, size_t n, const BmPlace *p, BmEdit *e, char *why, size_t cap) {
     uint32_t v = 0;
     int k = 0;
@@ -245,7 +213,7 @@ static inline int bm_save_edits(const uint8_t *s, size_t n, const BmPlace *p, Bm
         k++;
     }
     if (p->day_seconds >= 0) {
-        at = bm_save_find(s, n, BM_UINT64, 0xef10b80fu, &v);   // the clock: {u32 seconds of the day, s32 day}; its name is not known
+        at = bm_save_find(s, n, BM_UINT64, 0xef10b80fu, &v);
         if (!at || (uint64_t)v + 8 > n) return bm_why(why, cap, "no clock (UInt64 ef10b80f)"), 0;
         uint32_t secs = (uint32_t)p->day_seconds;
         e[k].off = v, e[k].n = 4, memcpy(e[k].orig, s + v, 4), memcpy(e[k].repl, &secs, 4);
@@ -254,8 +222,6 @@ static inline int bm_save_edits(const uint8_t *s, size_t n, const BmPlace *p, Bm
     return k;
 }
 
-// Whether two lists of edits change the same bytes into the same values (only the bytes in use count: the rest of
-// orig and repl holds nothing).
 static inline int bm_edits_same(const BmEdit *a, int na, const BmEdit *b, int nb) {
     if (na != nb) return 0;
     for (int k = 0; k < na; k++)
@@ -263,7 +229,6 @@ static inline int bm_edits_same(const BmEdit *a, int na, const BmEdit *b, int nb
     return 1;
 }
 
-// Applies edits to the n bytes read at offset off.
 static inline void bm_edits_apply(const BmEdit *e, int count, uint64_t off, uint8_t *buf, uint64_t n) {
     for (int k = 0; k < count; k++) {
         uint64_t a = e[k].off, b = a + e[k].n;
@@ -273,24 +238,18 @@ static inline void bm_edits_apply(const BmEdit *e, int count, uint64_t off, uint
     }
 }
 
-// ---- the setting's values
-// The heading a start position's Rot (radians about x, y, z; R = Rz Ry Rx) gives Link: atan2 of its forward vector's
-// x and z, as SeqCalcSavePlayerForward turns a heading back into a forward vector. Rot (pi, t, pi) faces pi - t.
 static inline float bm_yaw(const float r[3]) {
     double cx = cos(r[0]), sx = sin(r[0]), cy = cos(r[1]), sy = sin(r[1]), cz = cos(r[2]), sz = sin(r[2]);
-    double fx = cz * sy * cx + sz * sx, fz = cy * cx;   // R * (0, 0, 1)
+    double fx = cz * sy * cx + sz * sx, fz = cy * cx;
     return (float)atan2(fx, fz);
 }
 
-// "HH:MM" (24 hours) as seconds of the day; -1 when it is not one.
 static inline int bm_day_seconds(const char *s) {
     int h = -1, m = -1, used = 0;
     if (!s || sscanf(s, "%2d:%2d%n", &h, &m, &used) != 2 || s[used] || h < 0 || h > 23 || m < 0 || m > 59) return -1;
     return h * 3600 + m * 60;
 }
 
-// The age an area's name gives Link (1 child, 0 adult), -1 for an area both ages use: the game's overworld areas end in
-// _Child or _Adult (_Adult_Alternative too), and its castle grounds, HyruleCastle, are the child's.
 static inline int bm_area_age(const char *area) {
     if (strstr(area, "_Child")) return 1;
     if (strstr(area, "_Adult")) return 0;

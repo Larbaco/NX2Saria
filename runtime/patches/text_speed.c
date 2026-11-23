@@ -1,16 +1,3 @@
-// Text speed for Ocarina of Time 1.1.1 (the patch set text_speed, recomp/patches-v111.txt). The message window shows
-// its text through a typewriter whose speed and waits the message's own tags set, and a press of the decide button
-// while it types shows the page at once, unless the window marked the message unskippable (a message that turns its
-// page by itself on a timer, and some window types). The set's two sites read the patch page words this file writes:
-//
-//   +0x200  the typewriter of the message window while its message may be skipped, 0 otherwise (written by the game's
-//           code at the first site, read at the second)
-//   +0x208  the fast factor less one, as a float: 0 leaves the speed as it is
-//   +0x20c  1 for instant: the window's skip runs on the first frame of each page, as if the button were pressed
-//
-// Setting text_speed (live): normal (the game's, and the set off), fast (the skippable messages type
-// TEXT_SPEED_FAST_FACTOR times as fast, their scripted waits as long as before) or instant (the skippable messages
-// show each page at once, as the game's skip does). Unskippable messages keep the game's speed under both.
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
@@ -32,8 +19,6 @@ static int setting_speed(void) {
     return SPEED_NORMAL;
 }
 
-// Whether the set may run at all is read once, after the start: NX2SARIA_TEXT_SPEED_PATCH=0, or a mod whose code
-// patches the same sites (mods.c mods_exefs_switch), leaves it off then, and switching it on later must not undo that.
 static _Atomic int allowed = -1;
 static int speed_set(void) { return rt_patch_set("text_speed"); }
 int text_speed_available(void) {

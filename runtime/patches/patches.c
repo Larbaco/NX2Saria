@@ -1,14 +1,3 @@
-// Code patch sets (recomp/patches.py, gen.py --patches). The generator lifts both the original and the replacement
-// instructions of every patched site, and rt_patch_on[set] picks one when the site runs, so a set is switched at start
-// without touching code, and also while the game runs (rt_patch_switch: the frame-limit setting of the menu). The sets,
-// their environment switches and defaults, and the patch page come from the generated patches.h; without it (C
-// generated without --patches) there are no sets and every site runs the original.
-//
-// The patch page is the first 4 KiB page after main's image, inside the module window memory.c reserved: replacement
-// code reaches it with one adrp. Its
-// layout belongs to the sets that use it (frame_rate.c: +0 the 30 Hz ratio, +4 the frame step in seconds, +8 the
-// step in 60 Hz ticks).
-// Probe modes never call rt_patches_init: every set stays off.
 #include "cfg.h"
 #include "platform/platform.h"
 #include <stdint.h>
@@ -25,10 +14,8 @@
 #define RT_PATCH_COUNT 0
 #endif
 
-uint8_t rt_patch_on[RT_PATCH_COUNT > 0 ? RT_PATCH_COUNT : 1];   // read by the generated C at every patched site
+uint8_t rt_patch_on[RT_PATCH_COUNT > 0 ? RT_PATCH_COUNT : 1];
 
-// The debug menu's free camera (debug_tools.c dbg_freecam_host): the site of the set freecam calls the page's +0xf70.
-// Registered here, in the file that has the game version's page address.
 #ifdef RT_PATCH_PAGE
 #include "debug_tools.h"
 __attribute__((constructor)) static void freecam_register(void) { rt_register_host(RT_PATCH_PAGE + 0xf70, dbg_freecam_host); }
@@ -38,9 +25,6 @@ __attribute__((constructor)) static void fov_register(void) {
 __attribute__((constructor)) static void wide_lens_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xe40, wide_lens_host);
 }
-// The time of day's site of the set ostep (patches-v111.txt) calls the page's +0xf60, the water renderer's site its
-// +0xf50, the surfaces' fixed-step sites of the set owater its +0xf20, and the sound job's two sites of the set osound
-// its +0xf10 and +0xf00 (frame_rate.c).
 __attribute__((constructor)) static void day_register(void) {
     if (!RT_V111) return;
     rt_register_host(RT_PATCH_PAGE + 0xf60, frame_rate_day_host);
@@ -55,20 +39,12 @@ __attribute__((constructor)) static void day_register(void) {
     rt_register_host(RT_PATCH_PAGE + 0xe60, voice_language_host);
     rt_register_host(RT_PATCH_PAGE + 0xe50, wide_balloon_host);
 }
-// The G14 callbacks use +0xe60 (voice_language.c) and +0xe50 (widescreen.c). The screens' setup site of the set
-// wide_bars (patches-v111.txt) calls the page's +0xef0: wide_bars.c watches the
-// menus' background screens and the loading fade it hands over, for the black bars of NX2SARIA_WIDE_MENUS = center.
 __attribute__((constructor)) static void wide_bars_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xef0, wide_bars_screen_host);
 }
-// Every interface screen's update site of the set menu_mouse (patches-v111.txt) calls the page's +0xee0: menu_mouse.c,
-// the mouse in the game's own menus.
 __attribute__((constructor)) static void menu_mouse_register(void) {
     if (RT_V111) rt_register_host(RT_PATCH_PAGE + 0xee0, menu_mouse_screen_host);
 }
-// The set heap_retry's sites call the page's +0xed0 and +0xec0, which heap_retry.c registers; the set changebank_hold's
-// site calls its +0xe30, which changebank_hold.c registers; the set camera_clearance's sites call its +0xe00, which
-// camera_clearance.c registers.
 #endif
 
 #if RT_PATCH_COUNT
@@ -89,7 +65,6 @@ void rt_patches_init(void) {
     list[0] = 0;
     for (int i = 0; i < RT_PATCH_COUNT; i++) {
         const char *e = cfg_get(sets[i].env);
-        // a set with a row in the settings table takes its default from there; the generated default serves the rest
         rt_patch_on[i] = (uint8_t)(cfg_meta(sets[i].env) ? cfg_bool(sets[i].env) : e && *e ? strcmp(e, "0") != 0 : sets[i].on);
         n += (size_t)snprintf(list + n, sizeof list - n, "%s%s %s", i ? ", " : "", sets[i].name,
                               rt_patch_on[i] ? "on" : "off");

@@ -1,4 +1,3 @@
-// Battle music change flags for frames held by the sound gate (recomp/patches-v111.txt, obgm).
 #include "host.h"
 #include "layout.h"
 #include "platform/platform.h"
@@ -8,8 +7,6 @@
 #define BATTLE_CHANGE_BYTE 0x4898
 #define BATTLE_CHANGE_MASK 0x66u
 
-// Phase 0 owns pending, under the sound gate's lock. Its result is published as one (address, bits)
-// pair so phase 1 can read it without taking the lock. The address associates the bits with their manager.
 static uint64_t pending;
 static _Atomic uint64_t active;
 

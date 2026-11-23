@@ -1,12 +1,8 @@
-// Single-frame loops in the 1.1.1 animation clock and pose update (recomp/patches-v111.txt, ozora).
 #include "host.h"
 #include "layout.h"
 #include "simd.h"
 #include <stdatomic.h>
 
-// The descriptor and container identify the same animation clock entry in the update and draw paths.
-// Each clock has 0x4c bytes. A signed descriptor index outside the container's list is a fallback in
-// the game, so it does not identify the intended animation.
 static uint64_t loop_entry(uint64_t desc, uint64_t container) {
     if (!desc || !container || !(LD16(desc + 0x18) & 0x40) || (int8_t)LD8(desc + 0x1c) < 0) return 0;
     unsigned index = LD16(desc + 0x1a);
@@ -16,7 +12,6 @@ static uint64_t loop_entry(uint64_t desc, uint64_t container) {
 }
 
 static int single_frame(uint64_t entry) {
-    // The clock wraps only with flag bit 1. The frozen pose loops over [0, 1].
     return entry && (LD32(entry) & 2) && LD32(entry + 0x10) == 0 && LD32(entry + 0x14) == 0x3f800000u;
 }
 
@@ -41,8 +36,6 @@ static void pose_store(Cpu *c) {
     uint64_t pose = c->x[22];
     uint32_t time = VS32(0);
     float phase = VSF32(0);
-    // The pose pass has its own clock. Confirm its range and the looping source animation before
-    // setting a fractional pose phase to the first frame. The guest also still uses s0 after this store.
     if (phase > 0.0f && phase < 1.0f && LD32(pose + 4) == 0 && LD32(pose + 8) == 0x3f800000u &&
         frame_step_frames() < 1.0f && single_frame(loop_entry(c->x[26], c->x[27]))) {
         time = 0;
