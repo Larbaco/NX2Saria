@@ -513,6 +513,8 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   `vk_dump.c`), a sampling profiler (`NX2SARIA_PROFILE`, `tools/prof_report.py`), a flight recorder
   (`NX2SARIA_FLIGHT`) and bug captures, which a player's F8 writes and a test run starts from (`bugcap.c`,
   [bug-capture.md](bug-capture.md)). RenderDoc cannot capture, because it hides `VK_EXT_external_memory_host` from the application.
+  The notes of `runtime/diag/` (frame timing, the overlay's numbers, the profiler, the flight recorder, bug captures,
+  the stutter map, the hang watch, the debug tools, the tracker API): [docs/code/diag.md](code/diag.md).
 
 Maxwell behaviour the back end has to match: [maxwell.md](maxwell.md).
 
