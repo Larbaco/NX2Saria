@@ -22,9 +22,9 @@ database_name = "nx2saria-telemetry"
 database_id = "00000000-0000-4000-8000-000000000000"
 migrations_dir = "migrations"
 
-# Requests per minute from one IP address to the public routes (POST and DELETE), counted by Cloudflare's rate
-# limiter in memory: the address is the counter's key at that moment and is never written anywhere. The per-install
-# limits in D1 (src/db.ts RATE_LIMITS) still apply on top. namespace_id is any number unique within the account.
+# Requests per minute from one IP address to the two POST routes, counted by Cloudflare's rate limiter in memory: the
+# address is the counter's key at that moment and is never written anywhere. It is the only limit on those routes.
+# namespace_id is any number unique within the account.
 [[ratelimits]]
 name = "IP_LIMITER"
 namespace_id = "2101"

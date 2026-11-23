@@ -238,12 +238,12 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
   const [head, comments, versions, perfRows, fatalRows, recent, versionChoices] = await Promise.all([
     db
       .prepare(
-        `SELECT COUNT(*) AS sessions, COUNT(DISTINCT install_id) AS installs,
+        `SELECT COUNT(*) AS sessions,
                 SUM(CASE WHEN session_end <> 'normal' THEN 1 ELSE 0 END) AS abnormal
          FROM sessions WHERE ${sw.sql}`,
       )
       .bind(...sw.params)
-      .first<{ sessions: number; installs: number; abnormal: number | null }>(),
+      .first<{ sessions: number; abnormal: number | null }>(),
     db
       .prepare(`SELECT COUNT(*) AS n FROM feedback WHERE ${fw.sql}`)
       .bind(...fw.params)
@@ -389,7 +389,6 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
 
 <section class="cards">
   <div class="card"><b id="sessions">${sessions}</b><span>sessions</span></div>
-  <div class="card"><b id="installs">${head?.installs ?? 0}</b><span>distinct installs</span></div>
   <div class="card"><b id="comments">${comments?.n ?? 0}</b><span>comments</span></div>
   <div class="card"><b id="abnormal">${abnormalPct.toFixed(1)}%</b><span>sessions with end other than normal</span></div>
 </section>
@@ -446,7 +445,7 @@ function csvResponse(name: string, headers: readonly string[], rows: Record<stri
   });
 }
 
-const SESSION_CSV_COLUMNS = ["id", "received_at", "install_id", "launcher_version", ...SUMMARY_COLUMNS] as const;
+const SESSION_CSV_COLUMNS = ["id", "received_at", "launcher_version", ...SUMMARY_COLUMNS] as const;
 
 export async function sessionsCsv(request: Request, env: Env, now: number): Promise<Response> {
   const f = filtersOf(new URL(request.url), now);
@@ -463,7 +462,6 @@ export async function sessionsCsv(request: Request, env: Env, now: number): Prom
 const FEEDBACK_CSV_COLUMNS = [
   "id",
   "received_at",
-  "install_id",
   "launcher_version",
   "version",
   "gpu_name",
@@ -479,7 +477,7 @@ export async function feedbackCsv(request: Request, env: Env, now: number): Prom
   const w = feedbackWhere(f);
   const rows = await all<Record<string, unknown>>(
     env.DB,
-    `SELECT id, received_at, install_id, launcher_version, version, gpu_name, gpu_vendor, os_family, text,
+    `SELECT id, received_at, launcher_version, version, gpu_name, gpu_vendor, os_family, text,
             log_tail IS NOT NULL AS has_log, summary_json
      FROM feedback WHERE ${w.sql} ORDER BY received_at DESC, id DESC LIMIT ${CSV_ROW_CAP}`,
     w.params,

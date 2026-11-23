@@ -8,11 +8,6 @@ export const RELEASE = "0.19.0-rc.2";
 export const OLD_RELEASE = "0.18.7";
 export const ADMIN_TOKEN = "test-admin-token";
 
-// A fresh lowercase uuid4 for each call, so tests never share rate counters by accident.
-export function newInstallId(): string {
-  return crypto.randomUUID();
-}
-
 export function validSummary(): Record<string, any> {
   return {
     schema: "nx2saria.session/1",
@@ -54,12 +49,12 @@ export function crashSummary(): Record<string, any> {
   };
 }
 
-export function sessionBody(installId = newInstallId(), summary: Record<string, any> = validSummary()): Record<string, any> {
-  return { install_id: installId, launcher_version: RELEASE, summary };
+export function sessionBody(summary: Record<string, any> = validSummary()): Record<string, any> {
+  return { launcher_version: RELEASE, summary };
 }
 
-export function feedbackBody(installId = newInstallId(), extra: Record<string, any> = {}): Record<string, any> {
-  return { install_id: installId, launcher_version: RELEASE, text: "Runs well on my PC.", summary: null, log_tail: null, ...extra };
+export function feedbackBody(extra: Record<string, any> = {}): Record<string, any> {
+  return { launcher_version: RELEASE, text: "Runs well on my PC.", summary: null, log_tail: null, ...extra };
 }
 
 export function testEnv(overrides: Partial<Env> = {}): Env {
@@ -109,7 +104,6 @@ export async function resetDb(): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM sessions"),
     env.DB.prepare("DELETE FROM feedback"),
-    env.DB.prepare("DELETE FROM rate"),
     env.DB.prepare("DELETE FROM releases"),
     // the on-demand releases refresh stays off (a refresh "just now" far in the future); test/cron.test.ts clears it
     env.DB.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('releases_refresh', 4000000000)"),

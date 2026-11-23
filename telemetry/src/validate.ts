@@ -18,7 +18,6 @@ const THIRTY_DAYS_S = 30 * 24 * 3600;
 const MAX_FPS = 2000;
 const MAX_MEMORY_MB = 4194304;
 
-const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 // A release version as tagged, without the "v": starts with a letter or digit, then letters, digits, . + -.
 export const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$/;
 // The characters of settings and display values.
@@ -152,13 +151,11 @@ export interface Summary {
 }
 
 export interface SessionBody {
-  install_id: string;
   launcher_version: string;
   summary: Summary;
 }
 
 export interface FeedbackBody {
-  install_id: string;
   launcher_version: string;
   text: string;
   summary: Summary | null;
@@ -237,15 +234,6 @@ function checkSpec(value: unknown, spec: Spec, path: string): void {
   }
 }
 
-function checkInstallId(value: unknown): string {
-  if (typeof value !== "string" || !UUID4.test(value)) fail("install_id must be a lowercase uuid4");
-  return value;
-}
-
-export function isInstallId(value: string): boolean {
-  return UUID4.test(value);
-}
-
 function checkVersionString(value: unknown, path: string): string {
   if (typeof value !== "string" || !VERSION_RE.test(value)) fail(`${path} is not a version`);
   return value;
@@ -286,9 +274,8 @@ function parseJsonObject(text: string): Record<string, unknown> {
 
 export function validateSessionBody(text: string, gameVersions: readonly string[]): SessionBody {
   const body = parseJsonObject(text);
-  checkKeys(body, ["install_id", "launcher_version", "summary"], "");
+  checkKeys(body, ["launcher_version", "summary"], "");
   return {
-    install_id: checkInstallId(body.install_id),
     launcher_version: checkVersionString(body.launcher_version, "launcher_version"),
     summary: validateSummary(body.summary, "summary", gameVersions),
   };
@@ -308,8 +295,7 @@ export function lineCount(value: string): number {
 
 export function validateFeedbackBody(text: string, gameVersions: readonly string[]): FeedbackBody {
   const body = parseJsonObject(text);
-  checkKeys(body, ["install_id", "launcher_version", "text", "summary", "log_tail"], "");
-  const installId = checkInstallId(body.install_id);
+  checkKeys(body, ["launcher_version", "text", "summary", "log_tail"], "");
   const launcherVersion = checkVersionString(body.launcher_version, "launcher_version");
 
   const comment = body.text;
@@ -328,5 +314,5 @@ export function validateFeedbackBody(text: string, gameVersions: readonly string
     if (lineCount(logTail) > LOG_TAIL_MAX_LINES) fail("log_tail has too many lines");
   }
 
-  return { install_id: installId, launcher_version: launcherVersion, text: comment, summary, log_tail: logTail };
+  return { launcher_version: launcherVersion, text: comment, summary, log_tail: logTail };
 }

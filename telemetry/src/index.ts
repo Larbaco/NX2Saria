@@ -1,7 +1,8 @@
-// NX2Saria's telemetry Worker: receives session reports and player comments from the launcher, deletes an
-// installation's data on request, and serves the admin panel. Routes are listed in README.md.
+// NX2Saria's telemetry Worker: receives session reports and player comments from the launcher and serves the admin
+// panel. A report and a comment carry no installation id: no stored row names an installation or a person.
+// Routes are listed in README.md.
 //
-// The Worker reads no request header except Content-Type, Content-Length, CF-Connecting-IP (the public routes, as the
+// The Worker reads no request header except Content-Type, Content-Length, CF-Connecting-IP (the POST routes, as the
 // key of the in-memory rate limiter only) and (admin routes only) Authorization. It stores no IP and nothing else
 // about where a request came from.
 
@@ -10,7 +11,6 @@ import { HttpError, error, isJsonContentType, json, methodNotAllowed, readCapped
 import {
   FEEDBACK_BODY_CAP,
   SESSION_BODY_CAP,
-  isInstallId,
   parseGameVersions,
   validateFeedbackBody,
   validateSessionBody,
@@ -18,13 +18,10 @@ import {
 import {
   areReleases,
   claimReleasesRefresh,
-  deleteInstall,
   insertFeedback,
   insertSession,
-  isRateLimited,
   nowSeconds,
   purgeOld,
-  rateIncrements,
   refreshReleases,
 } from "./db";
 import { PURGE_CRON } from "./crons";
@@ -61,12 +58,7 @@ async function postSession(request: Request, env: Env): Promise<Response> {
   const text = await readPost(request, env, SESSION_BODY_CAP);
   const body = validateSessionBody(text, parseGameVersions(env.GAME_VERSIONS));
   await checkVersions(env, [body.launcher_version, body.summary.version]);
-  const now = nowSeconds();
-  if (await isRateLimited(env.DB, body.install_id, "session", now)) return error(429, "rate limited");
-  await env.DB.batch([
-    insertSession(env.DB, body.install_id, body.launcher_version, now, body.summary),
-    ...rateIncrements(env.DB, body.install_id, "session", now),
-  ]);
+  await insertSession(env.DB, body.launcher_version, nowSeconds(), body.summary).run();
   return json(201, { ok: true });
 }
 
@@ -74,24 +66,19 @@ async function postFeedback(request: Request, env: Env): Promise<Response> {
   const text = await readPost(request, env, FEEDBACK_BODY_CAP);
   const body = validateFeedbackBody(text, parseGameVersions(env.GAME_VERSIONS));
   await checkVersions(env, body.summary === null ? [body.launcher_version] : [body.launcher_version, body.summary.version]);
-  const now = nowSeconds();
-  if (await isRateLimited(env.DB, body.install_id, "feedback", now)) return error(429, "rate limited");
-  await env.DB.batch([
-    insertFeedback(env.DB, {
-      installId: body.install_id,
-      launcherVersion: body.launcher_version,
-      text: body.text,
-      summary: body.summary,
-      logTail: body.log_tail,
-      now,
-    }),
-    ...rateIncrements(env.DB, body.install_id, "feedback", now),
-  ]);
+  await insertFeedback(env.DB, {
+    launcherVersion: body.launcher_version,
+    text: body.text,
+    summary: body.summary,
+    logTail: body.log_tail,
+    now: nowSeconds(),
+  }).run();
   return json(201, { ok: true });
 }
 
-// The per-IP limit of the public routes: the address is the key of Cloudflare's in-memory counter for this request and
-// is not kept, logged or written anywhere. A request without the header (never on Cloudflare) shares one key.
+// The per-IP limit of the POST routes, the only limit there is: the address is the key of Cloudflare's in-memory
+// counter for this request and is not kept, logged or written anywhere. A request without the header (never on
+// Cloudflare) shares one key.
 async function ipLimited(request: Request, env: Env): Promise<boolean> {
   const ip = request.headers.get("CF-Connecting-IP") ?? "none";
   const { success } = await env.IP_LIMITER.limit({ key: ip });
@@ -101,9 +88,7 @@ async function ipLimited(request: Request, env: Env): Promise<boolean> {
 async function route(request: Request, env: Env): Promise<Response> {
   const { pathname } = new URL(request.url);
   const method = request.method;
-  const isPublicWrite =
-    (method === "POST" && (pathname === "/v1/session" || pathname === "/v1/feedback")) ||
-    (method === "DELETE" && pathname.startsWith("/v1/install/"));
+  const isPublicWrite = method === "POST" && (pathname === "/v1/session" || pathname === "/v1/feedback");
   if (isPublicWrite && (await ipLimited(request, env))) return error(429, "rate limited");
 
   if (pathname === "/v1/session") {
@@ -111,16 +96,6 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (pathname === "/v1/feedback") {
     return method === "POST" ? postFeedback(request, env) : methodNotAllowed("POST");
-  }
-
-  const install = /^\/v1\/install\/([^/]+)$/.exec(pathname);
-  if (install) {
-    if (method !== "DELETE") return methodNotAllowed("DELETE");
-    // Always 200 for a well-formed id, so the answer never tells whether the id had any data.
-    const id = install[1]!;
-    if (!isInstallId(id)) return error(400, "install id must be a lowercase uuid4");
-    await deleteInstall(env.DB, id);
-    return json(200, { ok: true });
   }
 
   const adminLog = /^\/v1\/admin\/feedback\/([^/]+)\/log$/.exec(pathname);

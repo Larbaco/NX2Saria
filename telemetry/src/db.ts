@@ -1,5 +1,5 @@
-// Every D1 statement of the public routes and the crons: storing reports and comments, rate counters, deletion by
-// install id, retention, and the releases table.
+// Every D1 statement of the public routes and the crons: storing reports and comments, retention, and the releases
+// table. A stored row holds nothing that names an installation or a person.
 
 import type { Summary } from "./validate";
 import { VERSION_RE } from "./validate";
@@ -109,25 +109,24 @@ function flattenSummary(s: Summary): (string | number | null)[] {
   ];
 }
 
-const INSERT_SESSION_SQL = `INSERT INTO sessions (install_id, launcher_version, received_at, ${SUMMARY_COLUMNS.join(", ")})
-  VALUES (${new Array(3 + SUMMARY_COLUMNS.length).fill("?").join(", ")})`;
+const INSERT_SESSION_SQL = `INSERT INTO sessions (launcher_version, received_at, ${SUMMARY_COLUMNS.join(", ")})
+  VALUES (${new Array(2 + SUMMARY_COLUMNS.length).fill("?").join(", ")})`;
 
-export function insertSession(db: D1Database, installId: string, launcherVersion: string, now: number, summary: Summary): D1PreparedStatement {
-  return db.prepare(INSERT_SESSION_SQL).bind(installId, launcherVersion, now, ...flattenSummary(summary));
+export function insertSession(db: D1Database, launcherVersion: string, now: number, summary: Summary): D1PreparedStatement {
+  return db.prepare(INSERT_SESSION_SQL).bind(launcherVersion, now, ...flattenSummary(summary));
 }
 
 export function insertFeedback(
   db: D1Database,
-  row: { installId: string; launcherVersion: string; text: string; summary: Summary | null; logTail: string | null; now: number },
+  row: { launcherVersion: string; text: string; summary: Summary | null; logTail: string | null; now: number },
 ): D1PreparedStatement {
   const s = row.summary;
   return db
     .prepare(
-      `INSERT INTO feedback (install_id, launcher_version, text, summary_json, log_tail, received_at, version, gpu_name, gpu_vendor, os_family)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO feedback (launcher_version, text, summary_json, log_tail, received_at, version, gpu_name, gpu_vendor, os_family)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
-      row.installId,
       row.launcherVersion,
       row.text,
       s === null ? null : JSON.stringify(s),
@@ -167,60 +166,12 @@ export async function claimReleasesRefresh(db: D1Database, now: number): Promise
   return (result.meta.changes ?? 0) > 0;
 }
 
-export type RateKind = "session" | "feedback";
-
-export const RATE_LIMITS: Record<RateKind, { perMinute: number; perDay: number }> = {
-  session: { perMinute: 6, perDay: 60 },
-  feedback: { perMinute: 2, perDay: 10 },
-};
-
-function rateWindows(now: number): { minute: number; day: number } {
-  return { minute: now - (now % 60), day: now - (now % DAY_S) };
-}
-
-// True when one more POST of this kind would pass the minute or the day limit of this install id. Only accepted
-// POSTs are counted (rateIncrements runs in the same batch as the insert), so a client that keeps retrying while
-// limited does not use up its own daily budget.
-export async function isRateLimited(db: D1Database, installId: string, kind: RateKind, now: number): Promise<boolean> {
-  const w = rateWindows(now);
-  const { results } = await db
-    .prepare(
-      `SELECT kind, count FROM rate WHERE install_id = ?
-         AND ((kind = ? AND "window" = ?) OR (kind = ? AND "window" = ?))`,
-    )
-    .bind(installId, `${kind}_min`, w.minute, `${kind}_day`, w.day)
-    .all<{ kind: string; count: number }>();
-  const limits = RATE_LIMITS[kind];
-  for (const row of results) {
-    if (row.kind === `${kind}_min` && row.count >= limits.perMinute) return true;
-    if (row.kind === `${kind}_day` && row.count >= limits.perDay) return true;
-  }
-  return false;
-}
-
-export function rateIncrements(db: D1Database, installId: string, kind: RateKind, now: number): D1PreparedStatement[] {
-  const w = rateWindows(now);
-  const sql = `INSERT INTO rate (install_id, kind, "window", count) VALUES (?, ?, ?, 1)
-    ON CONFLICT (install_id, kind, "window") DO UPDATE SET count = count + 1`;
-  return [db.prepare(sql).bind(installId, `${kind}_min`, w.minute), db.prepare(sql).bind(installId, `${kind}_day`, w.day)];
-}
-
-// Removes everything stored under one install id: its sessions, its comments and its rate counters.
-export async function deleteInstall(db: D1Database, installId: string): Promise<void> {
-  await db.batch([
-    db.prepare("DELETE FROM sessions WHERE install_id = ?").bind(installId),
-    db.prepare("DELETE FROM feedback WHERE install_id = ?").bind(installId),
-    db.prepare("DELETE FROM rate WHERE install_id = ?").bind(installId),
-  ]);
-}
-
-// Deletes sessions and comments older than RETENTION_DAYS, and rate counters whose window ended over a day ago.
+// Deletes sessions and comments older than RETENTION_DAYS.
 export async function purgeOld(db: D1Database, now: number): Promise<void> {
   const cutoff = now - RETENTION_DAYS * DAY_S;
   await db.batch([
     db.prepare("DELETE FROM sessions WHERE received_at < ?").bind(cutoff),
     db.prepare("DELETE FROM feedback WHERE received_at < ?").bind(cutoff),
-    db.prepare('DELETE FROM rate WHERE "window" < ?').bind(now - 2 * DAY_S),
   ]);
 }
 

@@ -1,7 +1,7 @@
-// POST /v1/session: the strict schema, body limits, content type, release lookup, rate limits and the kill switch.
+// POST /v1/session: the strict schema, body limits, content type, release lookup, the per-IP limit and the kill switch.
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BASE, OLD_RELEASE, RELEASE, call, count, crashSummary, feedbackBody, newInstallId, postJson, resetDb, sessionBody, validSummary } from "./helpers";
+import { beforeEach, describe, expect, it } from "vitest";
+import { BASE, OLD_RELEASE, RELEASE, call, count, crashSummary, feedbackBody, postJson, resetDb, sessionBody, validSummary } from "./helpers";
 
 beforeEach(resetDb);
 
@@ -17,18 +17,16 @@ async function expect400(body: unknown, messagePart?: string): Promise<void> {
 function withSummary(change: (s: Record<string, any>) => void): Record<string, any> {
   const s = validSummary();
   change(s);
-  return sessionBody(newInstallId(), s);
+  return sessionBody(s);
 }
 
 describe("accepted reports", () => {
   it("stores a valid summary with every leaf in its column", async () => {
-    const id = newInstallId();
-    const response = await postJson("/v1/session", sessionBody(id), { country: "BR" });
+    const response = await postJson("/v1/session", sessionBody(), { country: "BR" });
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ ok: true });
-    const row = await env.DB.prepare("SELECT * FROM sessions WHERE install_id = ?").bind(id).first<Record<string, unknown>>();
+    const row = await env.DB.prepare("SELECT * FROM sessions ORDER BY id DESC LIMIT 1").first<Record<string, unknown>>();
     expect(row).toMatchObject({
-      install_id: id,
       launcher_version: RELEASE,
       schema: "nx2saria.session/1",
       version: RELEASE,
@@ -51,50 +49,47 @@ describe("accepted reports", () => {
       fatal: null,
     });
     expect(typeof row!.received_at).toBe("number");
-    // The row has no column that could hold an address or a header.
+    // The row has no column that could hold an address or a header, and none that names an installation.
     expect(Object.keys(row!).some((k) => /(^|_)ip(_|$)|addr|header|agent/i.test(k))).toBe(false);
+    expect(Object.keys(row!)).not.toContain("install_id");
   });
 
   it("accepts the launcher's crash summary with null leaves", async () => {
-    const response = await postJson("/v1/session", sessionBody(newInstallId(), crashSummary()));
+    const response = await postJson("/v1/session", sessionBody(crashSummary()));
     expect(response.status).toBe(201);
     expect(await count("sessions", "session_end = 'crash' AND gpu_name IS NULL")).toBe(1);
   });
 
   it("keeps nothing of the country Cloudflare names", async () => {
-    const id = newInstallId();
-    await postJson("/v1/session", sessionBody(id), { country: "BR" });
-    await postJson("/v1/feedback", feedbackBody(id), { country: "BR" });
+    await postJson("/v1/session", sessionBody(), { country: "BR" });
+    await postJson("/v1/feedback", feedbackBody(), { country: "BR" });
     for (const table of ["sessions", "feedback"]) {
-      const row = await env.DB.prepare(`SELECT * FROM ${table} WHERE install_id = ?`).bind(id).first<Record<string, unknown>>();
+      const row = await env.DB.prepare(`SELECT * FROM ${table} ORDER BY id DESC LIMIT 1`).first<Record<string, unknown>>();
       expect(Object.keys(row!)).not.toContain("country");
       expect(Object.values(row!)).not.toContain("BR");
     }
   });
 
   it("stores the patch sets that were on and the numbers of mods", async () => {
-    const id = newInstallId();
-    await postJson("/v1/session", sessionBody(id));
-    const row = await env.DB.prepare("SELECT patches, mods_count, mods_code FROM sessions WHERE install_id = ?").bind(id).first();
+    await postJson("/v1/session", sessionBody());
+    const row = await env.DB.prepare("SELECT patches, mods_count, mods_code FROM sessions ORDER BY id DESC LIMIT 1").first();
     expect(row).toEqual({ patches: "fps60,wide_hud,zstd", mods_count: 2, mods_code: 1 });
   });
 
   it("keeps only the port's own patch sets, sorted", async () => {
-    const id = newInstallId();
     const s = validSummary();
     s.patches = ["zstd", "a_set_of_a_later_release", "fps60"];
-    expect((await postJson("/v1/session", sessionBody(id, s))).status).toBe(201);
-    const row = await env.DB.prepare("SELECT patches FROM sessions WHERE install_id = ?").bind(id).first();
+    expect((await postJson("/v1/session", sessionBody(s))).status).toBe(201);
+    const row = await env.DB.prepare("SELECT patches FROM sessions ORDER BY id DESC LIMIT 1").first();
     expect(row).toEqual({ patches: "fps60,zstd" });
   });
 
   it("stores no patches and no mods as null and as an empty list", async () => {
-    const id = newInstallId();
     const s = validSummary();
     s.patches = [];
     s.mods = { count: 0, code: 0 };
-    await postJson("/v1/session", sessionBody(id, s));
-    const row = await env.DB.prepare("SELECT patches, mods_count, mods_code FROM sessions WHERE install_id = ?").bind(id).first();
+    await postJson("/v1/session", sessionBody(s));
+    const row = await env.DB.prepare("SELECT patches, mods_count, mods_code FROM sessions ORDER BY id DESC LIMIT 1").first();
     expect(row).toEqual({ patches: "", mods_count: 0, mods_code: 0 });
   });
 
@@ -108,6 +103,8 @@ describe("accepted reports", () => {
 
 describe("schema rejections", () => {
   it("unknown top-level key", () => expect400({ ...sessionBody(), extra: 1 }, "unknown key extra"));
+  it("an install_id key", () =>
+    expect400({ ...sessionBody(), install_id: "3b241101-e2bb-4255-8caf-4136c566a962" }, "unknown key install_id"));
   it("unknown nested key", () => expect400(withSummary((s) => (s.gpu.serial = "x")), "unknown key summary.gpu.serial"));
   it("unknown summary key", () => expect400(withSummary((s) => (s.hostname = "pc")), "unknown key summary.hostname"));
   it("missing key", () => expect400(withSummary((s) => delete s.startup), "missing key summary.startup"));
@@ -133,7 +130,7 @@ describe("schema rejections", () => {
     await expect400(withSummary((s) => (s.os.wine = "no")), "summary.os.wine");
     await expect400(withSummary((s) => (s.gpu.name = 4070)), "summary.gpu.name");
     await expect400(withSummary((s) => (s.frametime.fps_mean = "59.9")), "summary.frametime.fps_mean");
-    await expect400({ ...sessionBody(), install_id: 5 }, "install_id");
+    await expect400({ ...sessionBody(), launcher_version: 19 }, "launcher_version is not a version");
   });
 
   it("number ranges and decimals", async () => {
@@ -165,8 +162,6 @@ describe("schema rejections", () => {
     await expect400(withSummary((s) => (s.cpu.name = "AMD\nRyzen")), "control character");
     await expect400(withSummary((s) => (s.fatal = "bad\u0007bell")), "control character");
     await expect400(withSummary((s) => (s.gpu.driver = "x\ud800")), "control character");
-    await expect400({ ...sessionBody(), install_id: "6F9619FF-8B86-4D01-B42D-00CF4FC964FF" }, "uuid4");
-    await expect400({ ...sessionBody(), install_id: "6f9619ff-8b86-1d01-b42d-00cf4fc964ff" }, "uuid4");
   });
 
   it("values outside their lists", async () => {
@@ -262,41 +257,6 @@ describe("transport", () => {
   });
 });
 
-describe("rate limits", () => {
-  // Pin the clock to the middle of a minute so a test never straddles two minute windows.
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-19T12:00:30Z"));
-  });
-  afterEach(() => vi.useRealTimers());
-
-  it("6 sessions per minute per install id", async () => {
-    const id = newInstallId();
-    for (let i = 0; i < 6; i++) expect((await postJson("/v1/session", sessionBody(id))).status).toBe(201);
-    expect((await postJson("/v1/session", sessionBody(id))).status).toBe(429);
-    // Another install id is not affected.
-    expect((await postJson("/v1/session", sessionBody())).status).toBe(201);
-    expect(await count("sessions", "install_id = ?", id)).toBe(6);
-  });
-
-  it("60 sessions per day per install id", async () => {
-    const id = newInstallId();
-    const now = Math.floor(Date.now() / 1000);
-    const day = now - (now % 86400);
-    await env.DB.prepare(`INSERT INTO rate (install_id, kind, "window", count) VALUES (?, 'session_day', ?, 60)`).bind(id, day).run();
-    expect((await postJson("/v1/session", sessionBody(id))).status).toBe(429);
-    await env.DB.prepare(`UPDATE rate SET count = 59 WHERE install_id = ?`).bind(id).run();
-    expect((await postJson("/v1/session", sessionBody(id))).status).toBe(201);
-    expect((await postJson("/v1/session", sessionBody(id))).status).toBe(429);
-  });
-
-  it("a rejected body does not count", async () => {
-    const id = newInstallId();
-    for (let i = 0; i < 10; i++) await postJson("/v1/session", { ...sessionBody(id), extra: true });
-    expect(await count("rate", "install_id = ?", id)).toBe(0);
-  });
-});
-
 describe("kill switch", () => {
   it("410 closed on POST when TELEMETRY_OPEN is 0", async () => {
     const response = await postJson("/v1/session", sessionBody(), { overrides: { TELEMETRY_OPEN: "0" } });
@@ -309,19 +269,18 @@ describe("kill switch", () => {
 });
 
 describe("per-IP limit", () => {
-  it("answers 429 past 20 requests a minute from one address, whatever the install ids, and stores nothing then", async () => {
+  it("answers 429 past 20 POSTs a minute from one address, on both routes, and stores nothing then", async () => {
     const ip = "203.0.113.7";
     for (let i = 0; i < 20; i++) {
       expect((await postJson("/v1/session", sessionBody(), { ip })).status).toBe(201);
     }
-    const id = newInstallId();
-    const limited = await postJson("/v1/session", sessionBody(id), { ip });
+    const limited = await postJson("/v1/session", sessionBody(), { ip });
     expect(limited.status).toBe(429);
     expect(await limited.json()).toEqual({ error: "rate limited" });
-    expect(await count("sessions", "install_id = ?", id)).toBe(0);
-    // DELETE counts against the same address; another address is not affected
-    const del = new Request(`${BASE}/v1/install/${newInstallId()}`, { method: "DELETE", headers: { "CF-Connecting-IP": ip } });
-    expect((await call(del)).status).toBe(429);
+    expect(await count("sessions")).toBe(20);
+    // a comment counts against the same address; another address is not affected
+    expect((await postJson("/v1/feedback", feedbackBody(), { ip })).status).toBe(429);
+    expect(await count("feedback")).toBe(0);
     expect((await postJson("/v1/session", sessionBody(), { ip: "203.0.113.8" })).status).toBe(201);
     // the address is not written anywhere
     const rows = await env.DB.prepare("SELECT * FROM sessions").all();

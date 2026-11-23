@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { PURGE_CRON } from "../src/crons";
 import { releasesFromListing } from "../src/db";
-import { count, feedbackBody, newInstallId, postJson, resetDb, sessionBody, testEnv } from "./helpers";
+import { count, feedbackBody, postJson, resetDb, sessionBody, testEnv } from "./helpers";
 
 beforeEach(resetDb);
 afterEach(() => vi.restoreAllMocks());
@@ -20,13 +20,11 @@ describe("retention purge", () => {
     expect(env.TEST_CRONS.filter((c) => c !== PURGE_CRON)).toEqual(["17 * * * *"]);
   });
 
-  it("deletes sessions, comments and rate counters past their age", async () => {
-    const id = newInstallId();
-    await postJson("/v1/session", sessionBody(id));
-    await postJson("/v1/session", sessionBody(id));
-    await postJson("/v1/feedback", feedbackBody(id));
-    await postJson("/v1/feedback", feedbackBody(id));
-    const currentWindows = await count("rate", "install_id = ?", id);
+  it("deletes sessions and comments past their age", async () => {
+    await postJson("/v1/session", sessionBody());
+    await postJson("/v1/session", sessionBody());
+    await postJson("/v1/feedback", feedbackBody());
+    await postJson("/v1/feedback", feedbackBody());
     const now = Math.floor(Date.now() / 1000);
     const old = now - 181 * 86400;
     const recent = now - 179 * 86400;
@@ -34,17 +32,13 @@ describe("retention purge", () => {
       env.DB.prepare("UPDATE sessions SET received_at = ? WHERE id = (SELECT MIN(id) FROM sessions)").bind(old),
       env.DB.prepare("UPDATE sessions SET received_at = ? WHERE id = (SELECT MAX(id) FROM sessions)").bind(recent),
       env.DB.prepare("UPDATE feedback SET received_at = ? WHERE id = (SELECT MIN(id) FROM feedback)").bind(old),
-      env.DB.prepare(`INSERT INTO rate (install_id, kind, "window", count) VALUES (?, 'session_day', ?, 3)`).bind(id, now - 3 * 86400),
     ]);
-    expect(await count("rate", "install_id = ?", id)).toBe(currentWindows + 1);
 
     await runCron(PURGE_CRON);
 
     expect(await count("sessions")).toBe(1);
     expect(await count("sessions", "received_at = ?", recent)).toBe(1);
     expect(await count("feedback")).toBe(1);
-    // The current windows stay; the three-day-old one is gone.
-    expect(await count("rate", "install_id = ?", id)).toBe(currentWindows);
   });
 
   it("the purge cron does not call GitHub", async () => {
