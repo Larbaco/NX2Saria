@@ -11,6 +11,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
 NOTICES = ROOT / 'THIRD_PARTY_NOTICES.md'
 WIN, LINUX, BOTH = 'Windows', 'Linux', 'both'
+REMOVED = {
+    '_dbm': ('Berkeley DB 6.0.19, Sleepycat licence: the complete source of every program that uses it must be offered',
+             r'^\s*(import|from)\s+(_dbm|dbm\.ndbm|dbm|shelve)\b'),
+}
+SEARCHED = ('launcher', 'tools', 'recomp', 'tests', 'installer')
 HEADINGS = {WIN: '## Shipped in the Windows launcher release', LINUX: '## Shipped in the Linux AppImage',
             BOTH: '## Shipped in both releases'}
 
@@ -122,14 +127,79 @@ def check(extra_linux_packages=(), quiet=False):
     return missing, unmatched
 
 
+def python_rows(rows):
+    import make_launcher
+    import python_licences as pl
+    bad = []
+    wf = (ROOT / '.github' / 'workflows' / 'linux-appimage.yml').read_text(encoding='utf-8')
+    m = re.search(r'uv python install(?: -q)? (\d+\.\d+\.\d+)', wf)
+    for where, version in (('make_launcher.PY_VERSION', make_launcher.PY_VERSION),
+                           ('linux-appimage.yml', m.group(1) if m else '?')):
+        if version != pl.VERSION:
+            bad.append(f'{where} ships Python {version}, tools/python_licences.py pins texts for {pl.VERSION}')
+    for artifact, texts, row_key, folder in ((WIN, pl.WINDOWS_TEXTS, 'CPython 3.14.9 embeddable', 'licenses/python/'),
+                                            (LINUX, pl.LINUX_TEXTS, 'python-build-standalone', 'usr/kit/licenses/python/')):
+        row = next((r for r in rows[artifact] if row_key in r), '')
+        if folder not in row:
+            bad.append(f'{artifact}: the Python row does not say its texts are in {folder}')
+        tk = next((r for r in rows[artifact] if 'tkinter' in r and 'Tcl/Tk' in r), '')
+        for lib in texts:
+            if lib == 'CPython':
+                continue
+            if lib not in row and lib not in tk:
+                bad.append(f'{artifact}: the Python row does not name {lib}, whose text tools/python_licences.py ships')
+    return bad
+
+
+def removed_problems(removed=None, python_dir=None):
+    import make_appimage
+    removed = make_appimage.PYTHON_REMOVED if removed is None else removed
+    bad = []
+    src = (ROOT / 'tools' / 'make_appimage.py').read_text(encoding='utf-8')
+    if 'for f in removed_modules(py):' not in src or 'f.unlink()' not in src:
+        bad.append('make_appimage.py no longer deletes removed_modules(py)')
+    for name, (why, imports) in REMOVED.items():
+        if name not in removed:
+            bad.append(f'{name} is packaged again ({why}): it is not in make_appimage.PYTHON_REMOVED')
+        pattern = re.compile(imports, re.M)
+        for d in SEARCHED:
+            for f in sorted((ROOT / d).rglob('*.py')):
+                if f.resolve() == Path(__file__).resolve():
+                    continue
+                for hit in pattern.finditer(f.read_text(encoding='utf-8', errors='replace')):
+                    bad.append(f'{f.relative_to(ROOT)} imports {hit.group(2)}, which needs {name} ({why})')
+    if python_dir is not None:
+        left = [p for p in make_appimage.removed_modules(python_dir)
+                if p.name.split('.')[0] in REMOVED and p.name.split('.')[0] not in removed]
+        bad += [f'{p} would be packaged' for p in left]
+    return bad
+
+
 def self_test():
+    import tempfile
+    rc = 0
     missing, _ = check(extra_linux_packages=('plantedpkg==9.9.9',), quiet=True)
     planted = [m for m in missing if 'plantedpkg' in m]
-    if not planted:
+    if planted:
+        print(f'shipped_notices_check: self-test: the planted package fails the check ({planted[0]})')
+    else:
         print('shipped_notices_check: FAIL: self-test: a planted package without a row passed the check')
-        return 1
-    print(f'shipped_notices_check: self-test: the planted package fails the check ({planted[0]})')
-    return 0
+        rc = 1
+    with tempfile.TemporaryDirectory() as d:
+        dyn = Path(d) / 'lib' / 'python3.14' / 'lib-dynload'
+        dyn.mkdir(parents=True)
+        (dyn / '_dbm.cpython-314-x86_64-linux-gnu.so').write_bytes(b'')
+        (dyn / '_json.cpython-314-x86_64-linux-gnu.so').write_bytes(b'')
+        import make_appimage
+        found = [p.name for p in make_appimage.removed_modules(d)]
+        back = removed_problems(removed={}, python_dir=d)
+    if found == ['_dbm.cpython-314-x86_64-linux-gnu.so'] and any('_dbm' in b for b in back):
+        print(f'shipped_notices_check: self-test: a planted _dbm is found and removed ({found[0]}), and fails the check '
+              f'when the removal list drops it ({back[0]})')
+    else:
+        print(f'shipped_notices_check: FAIL: self-test: planted _dbm: found {found}, problems {back}')
+        rc = 1
+    return rc
 
 
 def main():
@@ -140,7 +210,15 @@ def main():
     if a.self_test:
         return self_test()
     missing, _ = check()
-    rc = 1 if missing else 0
+    rows = sections(NOTICES.read_text(encoding='utf-8'))
+    other = python_rows(rows) + removed_problems()
+    for b in other:
+        print(f'shipped_notices_check: FAIL: {b}')
+    if not other:
+        import make_appimage
+        print(f'shipped_notices_check: the Python rows name every library whose text ships; removed from the AppImage\'s '
+              f'Python and imported nowhere: {", ".join(f"{k} ({REMOVED[k][0]})" for k in sorted(make_appimage.PYTHON_REMOVED))}')
+    rc = 1 if missing or other else 0
     if a.with_self_test:
         rc |= self_test()
     return rc

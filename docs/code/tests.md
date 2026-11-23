@@ -33,6 +33,21 @@ case.
 A component without a row fails the check. A row of the three sections that names no component is printed as a
 warning: a row can stay for something shipped that the scripts do not name, such as the repository's own sources.
 
+### `python_rows()`
+
+The Python each release ships: every library `tools/python_licences.py` lists for it (`WINDOWS_TEXTS`, `LINUX_TEXTS`)
+is named in that Python's row (or the tkinter row), and the row names where the texts are (`licenses/python/`). The
+pins there must be for the version `tools/make_launcher.py` `PY_VERSION` and `.github/workflows/linux-appimage.yml`
+ship. The build scripts check that each text is there when they run.
+
+### `removed_problems()`
+
+The modules taken out of the AppImage's Python (`tools/make_appimage.py` `PYTHON_REMOVED`): each one of `REMOVED`, with
+its reason, is still on that list and still deleted by `tools/make_appimage.py`, and none of them is imported by a `.py`
+under `SEARCHED` (`launcher/`, `tools/`, `recomp/`, `tests/`, `installer/`; a grep of the imports that would need it).
+Given a Python folder, it also reports a removed module that would be packaged there.
+
 ### `self_test()`
 
-A planted package that neither table names must fail the check.
+A planted package that neither table names must fail the check; a planted Python folder holding `_dbm` must be found by
+`tools/make_appimage.py` `removed_modules()`, and must fail the check when the removal list drops it.
