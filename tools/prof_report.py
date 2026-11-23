@@ -1,4 +1,4 @@
-"""Report for a NX2NAVI_PROFILE sampling profile (runtime/diag/prof_win.c): top functions and the guest/runtime/outside split.
+"""Report for a NX2SARIA_PROFILE sampling profile (runtime/diag/prof_win.c): top functions and the guest/runtime/outside split.
 
 usage: prof_report.py <profile> <nx2navi.map | nm -n output> [--top 40] [--chains 30]
 
@@ -8,7 +8,7 @@ runtime image base, so ASLR does not matter. Symbols in the map are labels witho
 symbol at or below it. A map lists global symbols only, so a static function's time lands on the global function before
 it: the output of `nm -n <exe>` in the map's place names the static functions too.
 
-A profile taken with NX2NAVI_PROFILE_RENDER=1 or NX2NAVI_PROFILE_CHAINS=1 also has call chains: the report then adds the inclusive time per
+A profile taken with NX2SARIA_PROFILE_RENDER=1 or NX2SARIA_PROFILE_CHAINS=1 also has call chains: the report then adds the inclusive time per
 function (a function counted once per chain), and for each module outside the exe the exe functions that call into it
 and the longest common chains down to it.
 """
@@ -61,7 +61,7 @@ def load_profile(path):
 def report_chains(prof, name_of, in_exe, top):
     stacks = prof['stacks']
     total = sum(n for n, _ in stacks) or 1
-    print(f'\ncall chains: {total} samples in {len(stacks)} chains (render thread, or every thread with NX2NAVI_PROFILE_CHAINS)')
+    print(f'\ncall chains: {total} samples in {len(stacks)} chains (render thread, or every thread with NX2SARIA_PROFILE_CHAINS)')
     incl = collections.Counter()
     for n, chain in stacks:
         for f in set(name_of(r) for r in chain):

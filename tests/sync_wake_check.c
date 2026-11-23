@@ -1,7 +1,7 @@
 // runtime/hle/kernel.c: which WaitSynchronization waits a signalled event or an ended thread wakes (wake_sync_waiters),
 // on guest threads whose entries are host functions, with the rest of the runtime stubbed. Built and run by
 // tests/sync_wake_check.py; prints each failed check and exits 1 on any. With the argument "all" it runs with
-// NX2NAVI_SYNC_WAKE_ALL=1 and checks that every wait is woken and blocks again.
+// NX2SARIA_SYNC_WAKE_ALL=1 and checks that every wait is woken and blocks again.
 #include "kernel.c"
 
 #include <stdarg.h>
@@ -13,14 +13,14 @@ static int fails, wake_all;
 unsigned rt_trace;
 uint64_t rt_guest_start_ns;
 volatile uint32_t prof_replay_tid, prof_main_tid;
-int mem_readable(uint64_t a, uint64_t n) { (void)a, (void)n; return 0; }   // NX2NAVI_SVC_WAITS walks guest frames: off here
-const char *cfg_get(const char *name) { return !strcmp(name, "NX2NAVI_SYNC_WAKE_ALL") && wake_all ? "1" : NULL; }
+int mem_readable(uint64_t a, uint64_t n) { (void)a, (void)n; return 0; }   // NX2SARIA_SVC_WAITS walks guest frames: off here
+const char *cfg_get(const char *name) { return !strcmp(name, "NX2SARIA_SYNC_WAKE_ALL") && wake_all ? "1" : NULL; }
 const char *cfg_value(const char *name) { (void)name; return "0"; }   // no asynchronous preemption, no slow-service log
 int cfg_bool(const char *name) { (void)name; return 0; }
 int rt_ab(void) { return 0; }
 int rt_knob(const char *name, const char *def) {
     char key[64];
-    snprintf(key, sizeof key, "NX2NAVI_%s", name);
+    snprintf(key, sizeof key, "NX2SARIA_%s", name);
     const char *e = cfg_get(key);
     return strcmp(e && *e ? e : def, "0") != 0;
 }
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
     CHECK(in_sync(A.thread, 2000) && in_sync(B.thread, 2000) && in_sync(C.thread, 2000), "the waiters did not block");
     kern_event_signal(ea);
     CHECK(until(&A.done, 1, 2000) && A.res == 0 && A.idx == 0, "A: result %#x index %d", A.res, A.idx);
-    // A's thread ends only once B and C are back in their waits (with NX2NAVI_SYNC_WAKE_ALL the signal woke them too),
+    // A's thread ends only once B and C are back in their waits (with NX2SARIA_SYNC_WAKE_ALL the signal woke them too),
     // so that its end finds them there; the counts below are taken after it ended and they blocked again
     settle((Wait *[]){&B, &C}, 2);
     __atomic_store_n(&A.hold, 0, __ATOMIC_SEQ_CST);

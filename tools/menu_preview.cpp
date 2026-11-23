@@ -249,16 +249,16 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
             if (frame == 1 && focus && *focus) opt_focus_key(focus);
             // the Screen tab's first rows, as menu.cpp tab_screen shows them
             opt_begin("##screen", scale);
-            opt_toggle("NX2NAVI_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
+            opt_toggle("NX2SARIA_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
             static const char *const sizes[] = {"", "1920x1080"};
             static const char *const size_names[] = {"1920 \xC3\x97 1080", "1920 \xC3\x97 1080"};
-            opt_choice_list("NX2NAVI_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, sizes, size_names, 2, UI_MENU_WINDOW_SIZE_DESC, 0);
-            opt_toggle_value("NX2NAVI_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate");
+            opt_choice_list("NX2SARIA_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, sizes, size_names, 2, UI_MENU_WINDOW_SIZE_DESC, 0);
+            opt_toggle_value("NX2SARIA_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate");
             static const char *const gpus[] = {""};
             static const char *const gpu_names[] = {"NVIDIA GeForce RTX 3050 Ti Laptop GPU"};   // a long name
-            opt_choice_list("NX2NAVI_GPU_INDEX", UI_MENU_GPU, gpus, gpu_names, 1, UI_MENU_GPU_DESC, 0);
+            opt_choice_list("NX2SARIA_GPU_INDEX", UI_MENU_GPU, gpus, gpu_names, 1, UI_MENU_GPU_DESC, 0);
             static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
-            opt_choice("NX2NAVI_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
+            opt_choice("NX2SARIA_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
             opt_group(UI_MENU_GRAPHICS);
             // the Quality preset row as menu.cpp row_preset shows a tier with keys set by hand (custom)
             char rec[96], custom[96], note[96];
@@ -267,13 +267,13 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
             snprintf(note, sizeof note, menu_text(UI_MENU_PRESET_CUSTOM_NOTE), 2);
             const char *presets[] = {rec, custom, menu_text(UI_MENU_PRESET_MEDIUM), menu_text(UI_MENU_PRESET_HIGH),
                                      menu_text(UI_MENU_PRESET_ULTRA)};
-            opt_choice_index("NX2NAVI_PRESET", UI_MENU_PRESET, presets, 5, 1, 0, UI_MENU_PRESET_DESC, note);
+            opt_choice_index("NX2SARIA_PRESET", UI_MENU_PRESET, presets, 5, 1, 0, UI_MENU_PRESET_DESC, note);
             // the Scene resolution row as menu.cpp row_scene_res shows the game's own share
             char game[48], native[48];
             snprintf(game, sizeof game, menu_text(UI_MENU_SCENE_RES_GAME), "75 %");
             snprintf(native, sizeof native, menu_text(UI_MENU_SCENE_RES_NATIVE), "100 %");
             const char *shares[] = {"33 %", "40 %", "50 %", "58 %", "67 %", game, native};
-            opt_choice_index("NX2NAVI_SCENE_SHARE", UI_MENU_SCENE_RES, shares, 7, 5, 5, UI_MENU_SCENE_RES_DESC);
+            opt_choice_index("NX2SARIA_SCENE_SHARE", UI_MENU_SCENE_RES, shares, 7, 5, 5, UI_MENU_SCENE_RES_DESC);
             // the Dynamic resolution rows as menu.cpp row_dyn_res shows them without an upscaler
             opt_toggle("NX2SARIA_DYN_RES", UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC);
             static const char *const mins[] = {"0.33", "0.4", "0.5", "0.58", "0.67", "0.75", "1"};
@@ -282,12 +282,12 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
             opt_choice_list("NX2SARIA_DYN_RES_MIN", UI_MENU_DYN_RES_MIN, mins, min_names, 7, UI_MENU_DYN_RES_MIN_DESC);
             static const UiTextId wide[] = {UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW, UI_MENU_GAME_ASPECT_21_9,
                                             UI_MENU_GAME_ASPECT_32_9};
-            opt_choice("NX2NAVI_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
+            opt_choice("NX2SARIA_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 4, UI_MENU_GAME_ASPECT_DESC);
             static const UiTextId hud[] = {UI_MENU_WIDE_HUD_CENTER, UI_MENU_WIDE_HUD_EDGES};
-            opt_choice("NX2NAVI_WIDE_HUD", UI_MENU_WIDE_HUD, hud, 2, UI_MENU_WIDE_HUD_DESC);
+            opt_choice("NX2SARIA_WIDE_HUD", UI_MENU_WIDE_HUD, hud, 2, UI_MENU_WIDE_HUD_DESC);
             static const UiTextId menus[] = {UI_MENU_WIDE_MENUS_FULL, UI_MENU_WIDE_MENUS_CENTER};
-            opt_choice("NX2NAVI_WIDE_MENUS", UI_MENU_WIDE_MENUS, menus, 2, UI_MENU_WIDE_MENUS_DESC);
-            opt_slider("NX2NAVI_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
+            opt_choice("NX2SARIA_WIDE_MENUS", UI_MENU_WIDE_MENUS, menus, 2, UI_MENU_WIDE_MENUS_DESC);
+            opt_slider("NX2SARIA_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
             opt_end();
             ImGui::EndTabItem();
         }

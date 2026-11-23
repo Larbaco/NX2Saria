@@ -2,7 +2,7 @@
    request_update, audio_bad; runtime/audio/audio_mixer.c splitters_walk, audio_mixer_routing_check,
    audio_mixer_mix_layout_check, audio_mixer_update_effects and the render-pass effects), with the rest of the runtime
    stubbed and the real effect DSPs (runtime/audio/audio_effects.c, runtime/audio/audio_reverb.c) linked. No game data and no audio
-   device: NX2NAVI_AUDIO=none mixes without one.
+   device: NX2SARIA_AUDIO=none mixes without one.
 
    Every RequestUpdate goes through renderer_handler with a hand-built input. A refused update must answer 0x5299 (the
    SDK hands that result to the game, which ignores it; the SDK aborts on any result but 0x5299, 0x5499 and 0x5699),
@@ -11,7 +11,7 @@
    prints "FATAL:" and exits with 2, so a value that still ends the process fails the run.
 
    audio_params_check [-v]                              every check below (-v prints the log lines)
-   audio_params_check strict-effect | strict-update     NX2NAVI_AUDIO_STRICT=1: must end with "FATAL: audio:" */
+   audio_params_check strict-effect | strict-update     NX2SARIA_AUDIO_STRICT=1: must end with "FATAL: audio:" */
 #include "../runtime/hle/audren.c"
 #include "../runtime/audio/audio_mixer.c"
 
@@ -148,7 +148,7 @@ static AudioRenderer *open_renderer(void) {
                          .splitter_destination_count = 2, .revision = AUDREN_REV(11)};
     for (size_t i = 0; i < sizeof pcm / sizeof *pcm; i++) pcm[i] = 16384;
     AudioRenderer *r = renderer_new(&p);
-    r->strict = (uint8_t)cfg_bool("NX2NAVI_AUDIO_STRICT");
+    r->strict = (uint8_t)cfg_bool("NX2SARIA_AUDIO_STRICT");
     audio_mixer_open(r);
     r->state = 0;
     audio_mixer_set_running(r, 1);
@@ -925,7 +925,7 @@ static void in_range_quiet(void) {
     }
 }
 
-/* 6. NX2NAVI_AUDIO_STRICT=1: such a value ends the process, as most did before 0.11.0 (tests/audio_params_check.py
+/* 6. NX2SARIA_AUDIO_STRICT=1: such a value ends the process, as most did before 0.11.0 (tests/audio_params_check.py
    runs these in their own processes and expects exit 2). */
 static int strict(const char *what) {
     strict_setting = 1;

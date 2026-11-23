@@ -3,17 +3,17 @@ content guard workflow runs it beside tools/check_content.py.
 
 It fails on:
 - a row or name after a // on a line of known[], metas[], sections[] or DECK[]: it is not compiled, and a
-  hidden metas[] row ends every start with "FATAL: cfg: NX2NAVI_<X> has no row in the settings table" (this shipped
+  hidden metas[] row ends every start with "FATAL: cfg: NX2SARIA_<X> has no row in the settings table" (this shipped
   in two test builds); a /* inside those tables, which this check does not read;
 - a name twice in known[], or two metas[] rows for one key in one #if branch (the first branch stands for the table,
   later ones repeat its keys);
 - a metas[] row whose key is not in known[];
-- a read with cfg_value, cfg_int, cfg_bool or cfg_double of "NX2NAVI_<KEY>" (directly, or through one level of a
+- a read with cfg_value, cfg_int, cfg_bool or cfg_double of "NX2SARIA_<KEY>" (directly, or through one level of a
   function that passes its const char * parameter on to one of them) whose key has no metas[] row, unless the same
   function asked cfg_get, cfg_is_set or cfg_meta about that key before it;
 - a name the runtime reads that is not in known[] and does not start with CHEAT_ (cfg.c is_known): cfg_get, cfg_is_set
-  and cfg_meta of "NX2NAVI_<KEY>", rt_knob("<KEY>", ...), one level of functions whose const char * parameter reaches
-  cfg_get or a "NX2NAVI_%s" of it, and the `set <name> NX2NAVI_<KEY>` lines of recomp/patches-v111.txt. Such a key set
+  and cfg_meta of "NX2SARIA_<KEY>", rt_knob("<KEY>", ...), one level of functions whose const char * parameter reaches
+  cfg_get or a "NX2SARIA_%s" of it, and the `set <name> NX2SARIA_<KEY>` lines of recomp/patches-v111.txt. Such a key set
   in nx2navi.ini logs "unknown key" and is listed as unknown in the menu.
 
 Names read only with getenv, plat_setenv or cfg_setenv are environment-only and not checked. runtime/cfg/cfg_probe.c asks
@@ -35,7 +35,7 @@ TABLES = {   # declaration, what a row looks like on a line
 }
 VALUE_FNS = ('cfg_value', 'cfg_int', 'cfg_bool', 'cfg_double')
 GUARD_FNS = ('cfg_get', 'cfg_is_set', 'cfg_meta')
-LIT = r'"NX2NAVI_(' + KEY + r')"'
+LIT = r'"NX2SARIA_(' + KEY + r')"'
 
 
 def matching(src, open_at):
@@ -214,7 +214,7 @@ def check(cfg_text, sources, patches):
             problems.append(f'runtime/cfg/cfg.c:{n}: metas[] row {k} is not in known[]')
 
     stripped = {p: strip_comments(t) for p, t in sources.items()}
-    # one level of wrappers: a const char * parameter passed on to a value read, or to cfg_get / "NX2NAVI_%s"
+    # one level of wrappers: a const char * parameter passed on to a value read, or to cfg_get / "NX2SARIA_%s"
     wrappers = {}   # name -> (argument index, 'value' | 'name', the literal carries the prefix)
     for p, s in stripped.items():
         for fname, params, b, e in functions(s):
@@ -230,7 +230,7 @@ def check(cfg_text, sources, patches):
                     wrappers[fname] = (idx, 'value', True)
                 elif re.search(r'\bcfg_get\s*\(\s*%s\s*\)' % v, body):
                     wrappers.setdefault(fname, (idx, 'name', True))
-                elif re.search(r'"NX2NAVI_%%s"\s*,\s*%s\b' % v, body):
+                elif re.search(r'"NX2SARIA_%%s"\s*,\s*%s\b' % v, body):
                     wrappers.setdefault(fname, (idx, 'name', False))
 
     value_sites, name_sites = [], []   # (key, file, position, how)
@@ -249,12 +249,12 @@ def check(cfg_text, sources, patches):
                 args = call_args(s, m.end() - 1)
                 if idx >= len(args):
                     continue
-                lm = re.fullmatch(r'"(NX2NAVI_)?(' + KEY + r')"', args[idx])
+                lm = re.fullmatch(r'"(NX2SARIA_)?(' + KEY + r')"', args[idx])
                 if not lm or bool(lm.group(1)) != prefixed:
                     continue
                 (value_sites if kind == 'value' else name_sites).append((lm.group(2), p, m.start(), w))
     for n, line in enumerate(patches.split('\n'), 1):
-        m = re.match(r'\s*set\s+\S+\s+NX2NAVI_(' + KEY + r')\b', line)
+        m = re.match(r'\s*set\s+\S+\s+NX2SARIA_(' + KEY + r')\b', line)
         if m:
             name_sites.append((m.group(1), 'recomp/patches-v111.txt', -n, 'a patch set'))
 
@@ -267,9 +267,9 @@ def check(cfg_text, sources, patches):
             continue
         body = next(((b, e) for _, _, b, e in bodies[p] if b < pos < e), None)
         text = stripped[p][body[0]:pos] if body else ''
-        if re.search(r'\b(?:%s)\s*\(\s*"NX2NAVI_%s"' % ('|'.join(GUARD_FNS), k), text):
+        if re.search(r'\b(?:%s)\s*\(\s*"NX2SARIA_%s"' % ('|'.join(GUARD_FNS), k), text):
             continue   # the function asked whether the key is set first (kernel.c SPIN, vk_headroom.c)
-        problems.append(f'{where(p, pos)}: {how}("NX2NAVI_{k}") has no metas[] row and no cfg_get guard before it: '
+        problems.append(f'{where(p, pos)}: {how}("NX2SARIA_{k}") has no metas[] row and no cfg_get guard before it: '
                         f'the game would end with "has no row in the settings table"')
     missing = {}
     for k, p, pos, how in name_sites + value_sites:
@@ -338,16 +338,16 @@ def self_test(repo):
 static int my_opt(const char *key) { return cfg_int(key); }
 static unsigned my_env(const char *name) { return cfg_get(name) ? 1 : 0; }
 void fake(void) {
-    int a = cfg_int("NX2NAVI_NO_ROW_INT");
-    if (cfg_get("NX2NAVI_GUARDED_BOOL") && cfg_bool("NX2NAVI_GUARDED_BOOL")) a++;
-    a += my_opt("NX2NAVI_WRAPPED_NO_ROW");
+    int a = cfg_int("NX2SARIA_NO_ROW_INT");
+    if (cfg_get("NX2SARIA_GUARDED_BOOL") && cfg_bool("NX2SARIA_GUARDED_BOOL")) a++;
+    a += my_opt("NX2SARIA_WRAPPED_NO_ROW");
     a += rt_knob("KNOB_NOT_KNOWN", 0);
-    a += (int)my_env("NX2NAVI_ENV_NOT_KNOWN");
+    a += (int)my_env("NX2SARIA_ENV_NOT_KNOWN");
 }
 '''
     extra = {'runtime/fake_check.c': fake}
-    case('an unguarded cfg_int without a row', r'cfg_int\("NX2NAVI_NO_ROW_INT"\) has no metas', extra=extra)
-    case('a value read through a wrapper without a row', r'my_opt\("NX2NAVI_WRAPPED_NO_ROW"\) has no metas', extra=extra)
+    case('an unguarded cfg_int without a row', r'cfg_int\("NX2SARIA_NO_ROW_INT"\) has no metas', extra=extra)
+    case('a value read through a wrapper without a row', r'my_opt\("NX2SARIA_WRAPPED_NO_ROW"\) has no metas', extra=extra)
     case('a guarded read without a row is not reported as such, its name is',
          r'GUARDED_BOOL is read .* not in cfg.c known', extra=extra)
     got, *_ = check(cfg, {**sources, **extra}, patches)
@@ -357,7 +357,22 @@ void fake(void) {
     case('an rt_knob name not in known[]', r'KNOB_NOT_KNOWN is read', extra=extra)
     case('a name read through a cfg_get wrapper', r'ENV_NOT_KNOWN is read', extra=extra)
     case('a patch set\'s name not in known[]', r'PATCH_SET_NOT_KNOWN is read',
-         patch_text=patches + '\nset some_patch NX2NAVI_PATCH_SET_NOT_KNOWN 1\n')
+         patch_text=patches + '\nset some_patch NX2SARIA_PATCH_SET_NOT_KNOWN 1\n')
+    # G42: a key the game reads with cfg_bool (or another typed read: they all take cfg_value's row default) that is
+    # in known[] but has no metas[] row. The game ends at start with "FATAL: cfg: ... has no row in the settings table"
+    # whenever neither the environment nor the settings file sets the key.
+    typed = {'runtime/fake_typed.c': '''
+void fake_typed(void) {
+    int a = cfg_bool("NX2SARIA_G42_BOOL");
+    a += (int)cfg_double("NX2SARIA_G42_DOUBLE");
+    a += cfg_value("NX2SARIA_G42_VALUE")[0];
+    (void)a;
+}
+'''}
+    known_g42 = add_line(TABLES['known[]'][0], '"G42_BOOL", "G42_DOUBLE", "G42_VALUE",')
+    for fn, key in (('cfg_bool', 'G42_BOOL'), ('cfg_double', 'G42_DOUBLE'), ('cfg_value', 'G42_VALUE')):
+        case(f'a known key read with {fn} without a metas[] row (G42)',
+             r'%s\("NX2SARIA_%s"\) has no metas\[\] row' % (fn, key), known_g42, extra=typed)
     print(f'cfg_rows_check self-test: {"FAILED" if bad else "ok"}')
     return 1 if bad else 0
 

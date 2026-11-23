@@ -1,5 +1,5 @@
 # needs: clang
-"""The count of recording copies whose control memory the game reused (runtime/nvn/nvn_api_cmd.c, NX2NAVI_COPY_RETIRE):
+"""The count of recording copies whose control memory the game reused (runtime/nvn/nvn_api_cmd.c, NX2SARIA_COPY_RETIRE):
 builds ctl_fingerprint, retire_visit, retire_queue and retire_pass, cut from nvn_api_cmd.c by their text, with a stub
 table of live copies and stub guest memory, and checks that
 

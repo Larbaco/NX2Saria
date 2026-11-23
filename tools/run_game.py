@@ -5,16 +5,16 @@ afterwards. It is the game folder's own profile when there is one (<exe dir>/pro
 build/profile. The log records how many other copies of the game and of Ninja ran, because timings taken next to them
 are not comparable.
 
-    python tools/run_game.py build/v143 --save <backup> --seconds 15 --tag idle --env NX2NAVI_TRACE=perf
+    python tools/run_game.py build/v143 --save <backup> --seconds 15 --tag idle --env NX2SARIA_TRACE=perf
     python tools/run_game.py build/v143 --save <backup> --script <input.txt> --seconds 18 --tag fight --quiet \
-        --env NX2NAVI_TRACE=perf,sched
+        --env NX2SARIA_TRACE=perf,sched
     python3 tools/run_game.py ~/Games/Ocarina --save <report.zip> --seconds 600 --wall 90 \
-        --env NX2NAVI_SHOT_DIR=shots --env NX2NAVI_SHOT_AFTER=40 --env NX2NAVI_SHOT_EVERY=10
+        --env NX2SARIA_SHOT_DIR=shots --env NX2SARIA_SHOT_AFTER=40 --env NX2SARIA_SHOT_EVERY=10
 
 <backup> is a folder of build/save-backup or of the profile's save-backup (the game keeps its last three saves there),
 or a save folder or .zip from elsewhere, such as a crash report's zipped profile folder; --script defaults to
-tools/input/load_save.txt (title screen to the first save slot), and a recording made with NX2NAVI_INPUT_RECORD replays
-the same way. --wall ends a run whose script never reaches the world clock; NX2NAVI_SHOT_EVERY takes its pictures by
+tools/input/load_save.txt (title screen to the first save slot), and a recording made with NX2SARIA_INPUT_RECORD replays
+the same way. --wall ends a run whose script never reaches the world clock; NX2SARIA_SHOT_EVERY takes its pictures by
 wall time.
 
 --boot-map <area>[:<start position>] starts the game in that area from the save without the title screen or the file
@@ -85,7 +85,7 @@ def game_exe(exe_dir):
 
 def keep_in_background(proc):
     """Push the game window behind the user's windows as soon as it appears, for builds older than
-    NX2NAVI_BACKGROUND_WINDOW."""
+    NX2SARIA_BACKGROUND_WINDOW."""
     user32 = ctypes.windll.user32
     user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
     user32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -230,7 +230,7 @@ def main():
     ap.add_argument('--save', help="the save to run: a backup's name in build/save-backup or the profile's save-backup, "
                                    "or a save folder or .zip from elsewhere (a crash report's zipped profile folder); "
                                    'default: the profile as it is')
-    ap.add_argument('--script', type=Path, help='NX2NAVI_INPUT_SCRIPT (default: tools/input/load_save.txt, or '
+    ap.add_argument('--script', type=Path, help='NX2SARIA_INPUT_SCRIPT (default: tools/input/load_save.txt, or '
                                                  'tools/input/boot_map.txt with --boot-map)')
     ap.add_argument('--boot-map', metavar='AREA[:START]', help='start in that area without the title screen (NX2SARIA_BOOT_MAP)')
     ap.add_argument('--boot-map-slot', metavar='N', help='the slot it loads, 0 to 5 or latest (NX2SARIA_BOOT_MAP_SLOT)')

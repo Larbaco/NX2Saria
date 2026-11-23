@@ -45,10 +45,10 @@ def snapshot(cache):
 
 
 def run(exe, translator, folder, keep=False):
-    env = dict(os.environ, NX2NAVI_XLATE=str(translator), NX2NAVI_XLATE_ID='request-reuse-test',
-               NX2NAVI_XLATE_KEEP='2' if keep else '0', NX2NAVI_SHADER_CARRY='0',
-               NX2NAVI_PREWARM_XLATE='4', NX2NAVI_PIPELINE_CACHE=str(folder/'pipeline-cache.bin'),
-               NX2NAVI_SHADER_CACHE=str(folder/'shader-cache'))
+    env = dict(os.environ, NX2SARIA_XLATE=str(translator), NX2SARIA_XLATE_ID='request-reuse-test',
+               NX2SARIA_XLATE_KEEP='2' if keep else '0', NX2SARIA_SHADER_CARRY='0',
+               NX2SARIA_PREWARM_XLATE='4', NX2SARIA_PIPELINE_CACHE=str(folder/'pipeline-cache.bin'),
+               NX2SARIA_SHADER_CACHE=str(folder/'shader-cache'))
     t=time.perf_counter()
     result=subprocess.run([str(exe),'--prepare-shaders'],cwd=folder,env=env,capture_output=True,timeout=90)
     elapsed=time.perf_counter()-t

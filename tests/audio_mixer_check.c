@@ -1,7 +1,7 @@
 /* The mixer's volume ramps (runtime/audio/audio_mixer.c accumulate_ramp, audio_mixer_render), what it owes the device
    after a stall (ring_pull, audio_mixer_owed) and the device change events (change_event_of, audio_channels_live),
    with the rest of the runtime stubbed. No game data and no audio device:
-   NX2NAVI_AUDIO=none mixes without opening one, and the device's requests are made by hand. Each voice plays a wave
+   NX2SARIA_AUDIO=none mixes without opening one, and the device's requests are made by hand. Each voice plays a wave
    buffer of one constant sample, so a mix buffer holds the gain the voice went in with, sample by sample. */
 #include "../runtime/audio/audio_mixer.c"
 
@@ -312,7 +312,7 @@ static void ramps_off(void) {
     pass(r);
     v->in.volume = 1;
     pass(r);
-    CHECK(flat(buf(r, 0), 0.5f), "NX2NAVI_AUDIO_RAMP=0: the new volume applies to the whole pass");
+    CHECK(flat(buf(r, 0), 0.5f), "NX2SARIA_AUDIO_RAMP=0: the new volume applies to the whole pass");
     renderer_close(r);
     ramp_setting = 1;
 }

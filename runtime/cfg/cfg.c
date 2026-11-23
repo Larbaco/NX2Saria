@@ -22,10 +22,10 @@
 #include "hw_detect.h"
 #include "platform/platform.h"
 
-#define PREFIX "NX2NAVI_"
+#define OLD_PREFIX "NX2NAVI_"
+#define OLD_PREFIX_LEN (sizeof OLD_PREFIX - 1)
+#define PREFIX "NX2SARIA_"
 #define PREFIX_LEN (sizeof PREFIX - 1)
-#define NEW_PREFIX "NX2SARIA_"
-#define NEW_PREFIX_LEN (sizeof NEW_PREFIX - 1)
 #define CFG_MAX_KEYS 512
 
 typedef struct { char *key, *value; int dirty, removed, held, test; } CfgEntry;   // key upper-case, without the prefix; value NULL after cfg_reset; held: previewed by the menu, cfg_save skips it; test: set by a test hook (cfg_set_test), cfg_save skips it too
@@ -656,8 +656,8 @@ static char *trim(char *s) {
 // The upper-case key without the prefix, in place.
 static char *norm_key(char *key) {
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
-    if (!strncmp(key, NEW_PREFIX, NEW_PREFIX_LEN)) return key + NEW_PREFIX_LEN;
-    return strncmp(key, PREFIX, PREFIX_LEN) ? key : key + PREFIX_LEN;
+    if (!strncmp(key, PREFIX, PREFIX_LEN)) return key + PREFIX_LEN;
+    return strncmp(key, OLD_PREFIX, OLD_PREFIX_LEN) ? key : key + OLD_PREFIX_LEN;
 }
 
 static int entry_line[CFG_MAX_KEYS];   // the file line each entry's value came from (cfg_load's check_values)
@@ -698,7 +698,73 @@ static char *cut_comment(const char *key, char *raw, int line) {
 }
 
 // value: the text after '=' as written (cut_comment trims it).
+// ---- older names: a setting set as NX2NAVI_<KEY> in the environment or written so in the settings file is read as
+// NX2SARIA_<KEY> (cfg_env, norm_key). The log says so once per name and place in a run, the first time it is seen: the
+// environment's at cfg_init (older_env), the file's at a load or a reload of it (older_file_key). A name the runtime does
+// not read (is_known) gets no line. At most OLDER_MAX lines, then one saying the rest are not listed.
+#define OLDER_MAX 32
+static PlatMutex older_lock = PLAT_MUTEX_INIT;
+static char older_told[OLDER_MAX][72];   // "e:" or "f:" (environment, file) and the upper-case key without a prefix
+static int n_older_told, older_full;
+
+// 1 the first time where:key comes by (where 'e' or 'f'); 0 after, and once OLDER_MAX are told.
+static int older_first(char where, const char *key) {
+    char k[72];
+    snprintf(k, sizeof k, "%c:%s", where, key);
+    for (char *p = k + 2; *p; p++) *p = (char)toupper((unsigned char)*p);
+    int first = 0;
+    plat_mutex_lock(&older_lock);
+    int i = 0;
+    while (i < n_older_told && strcmp(older_told[i], k)) i++;
+    if (i == n_older_told) {
+        if (n_older_told < OLDER_MAX) memcpy(older_told[n_older_told++], k, sizeof k), first = 1;
+        else if (!older_full) older_full = 1, first = -1;
+    }
+    plat_mutex_unlock(&older_lock);
+    if (first < 0) rt_log("cfg: more than %d settings use their older NX2NAVI_ names; the rest are not listed", OLDER_MAX);
+    return first > 0;
+}
+
+// raw: a key as the settings file at line writes it, before norm_key.
+static void older_file_key(const char *raw, int line) {
+    if (strncasecmp(raw, OLD_PREFIX, OLD_PREFIX_LEN)) return;
+    const char *key = raw + OLD_PREFIX_LEN;
+    char up[64], low[64];
+    size_t n = 0;
+    for (; key[n] && n < sizeof up - 1; n++)
+        up[n] = (char)toupper((unsigned char)key[n]), low[n] = (char)tolower((unsigned char)key[n]);
+    up[n] = low[n] = 0;
+    if (!*up || !is_known(up) || !older_first('f', up)) return;
+    rt_log("cfg: settings file line %d: %s read under its older name; %s is the current one", line, raw, low);
+}
+
+// The environment's NX2NAVI_<KEY> variables: read where NX2SARIA_<KEY> is not set (cfg_env), and not where it is.
+#ifdef _WIN32
+#define CFG_ENVIRON _environ   // the C runtime's copy, which getenv reads (main, not wmain: set up at start)
+#else
+extern char **environ;
+#define CFG_ENVIRON environ
+#endif
+static void older_env(void) {
+    for (char **e = CFG_ENVIRON; e && *e; e++) {
+        if (strncasecmp(*e, OLD_PREFIX, OLD_PREFIX_LEN)) continue;
+        const char *key = *e + OLD_PREFIX_LEN, *eq = strchr(key, '=');
+        if (!eq || eq == key || eq - key >= 64) continue;
+        char up[64], legacy[96], current[96];
+        size_t n = (size_t)(eq - key);
+        for (size_t i = 0; i < n; i++) up[i] = (char)toupper((unsigned char)key[i]);
+        up[n] = 0;
+        snprintf(legacy, sizeof legacy, OLD_PREFIX "%s", up);
+        snprintf(current, sizeof current, PREFIX "%s", up);
+        // the name as cfg_env asks for it, in upper case: on Linux a variable in another case is not read, and gets no line
+        if (!getenv(legacy) || !is_known(up) || !older_first('e', up)) continue;
+        if (getenv(current)) rt_log("cfg: %s is not read: %s is set too and wins", legacy, current);
+        else rt_log("cfg: %s read under its older name; %s is the current one", legacy, current);
+    }
+}
+
 static void add(char *key, char *value, int line) {
+    older_file_key(key, line);
     key = norm_key(key);
     value = cut_comment(key, value, line);
     size_t vl = strlen(value);
@@ -797,8 +863,8 @@ static void check_value(const char *key, const char *v, int line) {
     if (line) snprintf(where, sizeof where, "settings file line %d: %s", line, low);
     else {
         char current[128], legacy[128];
-        snprintf(current, sizeof current, NEW_PREFIX "%s", key);
-        snprintf(legacy, sizeof legacy, PREFIX "%s", key);
+        snprintf(current, sizeof current, PREFIX "%s", key);
+        snprintf(legacy, sizeof legacy, OLD_PREFIX "%s", key);
         snprintf(where, sizeof where, "the environment's %s", getenv(current) ? current : legacy);
     }
     rt_log("cfg: %s = '%s' %s%s%s", where, v, bad ? bad : "", bad && comment ? "; " : "",
@@ -1001,21 +1067,21 @@ const PresetHw *cfg_preset_hw(void) { return __atomic_load_n(&preset_tier, __ATO
 // current name wins even when it is empty, so an explicit new setting can clear a legacy override.
 const char *cfg_env(const char *name) {
     const char *key = name;
-    if (!strncmp(key, NEW_PREFIX, NEW_PREFIX_LEN)) key += NEW_PREFIX_LEN;
-    else if (!strncmp(key, PREFIX, PREFIX_LEN)) key += PREFIX_LEN;
+    if (!strncmp(key, PREFIX, PREFIX_LEN)) key += PREFIX_LEN;
+    else if (!strncmp(key, OLD_PREFIX, OLD_PREFIX_LEN)) key += OLD_PREFIX_LEN;
     else return getenv(name);
     char current[128], legacy[128];
-    if (snprintf(current, sizeof current, NEW_PREFIX "%s", key) >= (int)sizeof current ||
-        snprintf(legacy, sizeof legacy, PREFIX "%s", key) >= (int)sizeof legacy) return NULL;
+    if (snprintf(current, sizeof current, PREFIX "%s", key) >= (int)sizeof current ||
+        snprintf(legacy, sizeof legacy, OLD_PREFIX "%s", key) >= (int)sizeof legacy) return NULL;
     const char *e = getenv(current);
     return e ? e : getenv(legacy);
 }
 
 static const char *raw_get(const char *name) {
     const char *e = cfg_env(name);
-    if (strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) return e;
+    if (strncmp(name, OLD_PREFIX, OLD_PREFIX_LEN) && strncmp(name, PREFIX, PREFIX_LEN)) return e;
     int n = __atomic_load_n(&n_entries, __ATOMIC_ACQUIRE);
-    const char *key = !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN;
+    const char *key = !strncmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : name + OLD_PREFIX_LEN;
     if (e) return e;
     for (int i = 0; i < n; i++)
         if (!strcasecmp(entries[i].key, key)) return __atomic_load_n(&entries[i].value, __ATOMIC_ACQUIRE);
@@ -1046,9 +1112,9 @@ static const char *switch_word(const char *name, const char *v) {
 
 static const char *cfg_get_now(const char *name) {
     const char *v = raw_get(name);
-    if (strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) return v;
+    if (strncmp(name, OLD_PREFIX, OLD_PREFIX_LEN) && strncmp(name, PREFIX, PREFIX_LEN)) return v;
     if (v) return switch_word(name, v);
-    const char *key = !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN;
+    const char *key = !strncmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : name + OLD_PREFIX_LEN;
     if (profile_of())
         for (size_t i = 0; i < sizeof DECK / sizeof *DECK; i++)
             if (!strcasecmp(DECK[i].key, key)) return DECK[i].value;
@@ -1061,10 +1127,10 @@ int cfg_is_set(const char *name) { return raw_get(name) != NULL; }
 unsigned cfg_version(void) { return __atomic_load_n(&version, __ATOMIC_ACQUIRE); }
 
 int cfg_setenv(const char *name, const char *value) {
-    const char *key = !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN :
-                      !strncmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : NULL;
+    const char *key = !strncmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN :
+                      !strncmp(name, OLD_PREFIX, OLD_PREFIX_LEN) ? name + OLD_PREFIX_LEN : NULL;
     char current[128];
-    if (key && snprintf(current, sizeof current, NEW_PREFIX "%s", key) < (int)sizeof current) name = current;
+    if (key && snprintf(current, sizeof current, PREFIX "%s", key) < (int)sizeof current) name = current;
     int ok = plat_setenv(name, value);
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     return ok;
@@ -1076,9 +1142,9 @@ int cfg_from_env(const char *name) { return cfg_env(name) != NULL; }
 // sees a test value before it is marked as the test's. test 0: the value is the player's, and saved; test 1: the
 // test's (cfg_set_test), unless the entry already holds that value as the player's unsaved change, which stays theirs.
 static void set_value(const char *name, const char *value, int test) {
-    if ((strncmp(name, PREFIX, PREFIX_LEN) && strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN)) || !value) return;
+    if ((strncmp(name, OLD_PREFIX, OLD_PREFIX_LEN) && strncmp(name, PREFIX, PREFIX_LEN)) || !value) return;
     char key[64];
-    snprintf(key, sizeof key, "%s", !strncmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN : name + PREFIX_LEN);
+    snprintf(key, sizeof key, "%s", !strncmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : name + OLD_PREFIX_LEN);
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
     plat_mutex_lock(&set_lock);
     int i = 0, n = n_entries;
@@ -1147,8 +1213,8 @@ static int find_entry(const char *key) {
 }
 
 static void entry_key(const char *name, char *key, size_t size) {
-    const char *suffix = !strncasecmp(name, NEW_PREFIX, NEW_PREFIX_LEN) ? name + NEW_PREFIX_LEN :
-                         !strncasecmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN : name;
+    const char *suffix = !strncasecmp(name, PREFIX, PREFIX_LEN) ? name + PREFIX_LEN :
+                         !strncasecmp(name, OLD_PREFIX, OLD_PREFIX_LEN) ? name + OLD_PREFIX_LEN : name;
     snprintf(key, size, "%s", suffix);
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
 }
@@ -1739,6 +1805,7 @@ static const char *file_get(const FileKeys *f, const char *key) {
 // As add reads a line: the comment after a value cut where cfg_load cuts it (cut_comment), one pair of quotes off.
 static void file_sink(char *key, char *value, int line, void *ctx) {
     FileKeys *f = ctx;
+    older_file_key(key, line);
     key = norm_key(key);
     value = cut_comment(key, value, line);
     size_t vl = strlen(value);
@@ -2411,14 +2478,17 @@ static void load_ini(void) {
     rt_log("cfg: read %s: %d keys", ini_path, n_entries);
     log_file_settings("settings file");
     for (int i = 0; i < n_entries; i++) {
-        char var[128];
+        char var[128], legacy[128];
         snprintf(var, sizeof var, PREFIX "%s", entries[i].key);
-        if (cfg_env(var)) rt_log("cfg: NX2SARIA_%s or its legacy alias is set in the environment and overrides the settings file", entries[i].key);
+        snprintf(legacy, sizeof legacy, OLD_PREFIX "%s", entries[i].key);
+        if (cfg_env(var))   // the name that is set: the current one wins when both are
+            rt_log("cfg: %s is set in the environment and overrides the settings file", getenv(var) ? var : legacy);
     }
 }
 
 void cfg_init(void) {
     load_ini();
+    older_env();
     for (size_t i = 0; i < sizeof metas / sizeof *metas; i++) {   // the environment's values, as the file's (cfg_load)
         char var[80];
         snprintf(var, sizeof var, PREFIX "%s", metas[i].key);

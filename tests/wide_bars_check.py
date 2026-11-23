@@ -48,7 +48,7 @@ def check_site():
     names = [s[0] for s in table.sets]
     assert names.count('wide_bars') == 1, names
     key = names.index('wide_bars')
-    assert table.sets[key] == ('wide_bars', 'NX2NAVI_PATCH_WIDE_BARS', 0), table.sets[key]
+    assert table.sets[key] == ('wide_bars', 'NX2SARIA_PATCH_WIDE_BARS', 0), table.sets[key]
     mine = [(off, alts) for off, alts in table.sites['main'].items() if any(k == key for k, _, _ in alts)]
     assert [off for off, _ in mine] == [SITE], [hex(off) for off, _ in mine]
     alts = table.sites['main'][SITE]

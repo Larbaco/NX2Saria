@@ -1,14 +1,14 @@
-"""Condense the NX2NAVI_TRACE=perf and NX2NAVI_TRACE=sched lines of a game log over a frame window.
+"""Condense the NX2SARIA_TRACE=perf and NX2SARIA_TRACE=sched lines of a game log over a frame window.
 
     python tools/perf_summary.py build/v121/logs/fight.log 1560 2600
 
 `mem: dirty` lines (vk_memory.c dirty census) are summarised per pool class (CPU_CACHED, CPU_UNCACHED, other): what
 a device-local mirror of buffer-bound pools would upload per frame and per submit, FlushMappedRange use, mirror size.
 
-The present side (runtime/vk/vk_backend.c present_main): the `present:` lines of NX2NAVI_TRACE=present give percentiles
+The present side (runtime/vk/vk_backend.c present_main): the `present:` lines of NX2SARIA_TRACE=present give percentiles
 of the host present's interval, its paced wait, how far past its target it went, the present call and the presenting
 thread's hand-off wait (the last two only in logs that have them), and the `perf: present thread` lines of
-NX2NAVI_TRACE=perf the present thread's averages per window. The render thread's hand-off share is read from the perf
+NX2SARIA_TRACE=perf the present thread's averages per window. The render thread's hand-off share is read from the perf
 lines that have it.
 """
 import re

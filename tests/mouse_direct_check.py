@@ -22,7 +22,7 @@ static float ratio=0.5f, frames=1, speed=1;
 static double sens=1;
 static uint64_t now=1000000000;
 static GuestFn hook, activity_hook, begin_hook, angles_hook, hand_hook;
-const char *cfg_get(const char *key) { return strcmp(key, "NX2NAVI_MOUSE_MODE") ? NULL : mode ? "direct" : "stick"; }
+const char *cfg_get(const char *key) { return strcmp(key, "NX2SARIA_MOUSE_MODE") ? NULL : mode ? "direct" : "stick"; }
 const char *cfg_value(const char *key) { return cfg_get(key); }
 double cfg_double(const char *key) { (void)key; return sens; }
 float frame_step_frames(void) { return frames; }
@@ -330,8 +330,8 @@ static const char *script_path;
 static uint64_t test_tick;
 static int64_t test_world=-1;
 const char *cfg_get(const char *key) {
-    if (!strcmp(key,"NX2NAVI_INPUT_SCRIPT")) return script_path;
-    if (!strcmp(key,"NX2NAVI_INPUT")) return "none";
+    if (!strcmp(key,"NX2SARIA_INPUT_SCRIPT")) return script_path;
+    if (!strcmp(key,"NX2SARIA_INPUT")) return "none";
     return NULL;
 }
 unsigned cfg_version(void) { return 0; }

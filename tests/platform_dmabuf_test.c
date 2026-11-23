@@ -1,4 +1,4 @@
-// Guest memory as a memfd's (runtime/platform/linux.c, NX2NAVI_DMABUF): a dma-buf of a watched range maps the very
+// Guest memory as a memfd's (runtime/platform/linux.c, NX2SARIA_DMABUF): a dma-buf of a watched range maps the very
 // pages the CPU writes; a decommit inside it zeroes them in place (the dma-buf still sees the CPU's pages), one outside
 // it reads zero when committed again; the write watch keeps working. No GPU, no game files. Build and run from the
 // repository root:
@@ -37,7 +37,7 @@ int main(void) {
     const uint64_t a = 0x6100000000ull, n = 64 * MiB;
     uint64_t pages[16], limit = 0, any = 0;
     const char *why = "";
-    setenv("NX2NAVI_DMABUF", "1", 0);
+    setenv("NX2SARIA_DMABUF", "1", 0);
     assert(plat_mem_reserve(a, n, 1));
     if (!plat_mem_dmabuf_ok(&limit, &any, &why)) { printf("SKIP: guest memory is not a memfd's here: %s\n", why); return 77; }
     assert(any == a);

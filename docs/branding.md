@@ -47,7 +47,7 @@ the names kept on purpose, and what has to change together when a release is bui
 | Older name | What still works |
 |---|---|
 | `nx2navi.ini` | Settings. The game and the launcher read `nx2saria.ini` in the game folder. From 0.13.0, an `nx2navi.ini` there without an `nx2saria.ini` is renamed to `nx2saria.ini` the first time either looks, whatever NX2navi version wrote it, and every setting in it is kept (the game's log says so); where the rename fails, `nx2navi.ini` is read and written under its old name. When both files exist, `nx2saria.ini` wins and the log says the other is not read. |
-| `NX2NAVI_*` environment variables | The same settings as `NX2SARIA_*`. When both are set, the `NX2SARIA_*` one wins. |
+| `NX2NAVI_*` environment variables and settings file keys | The same settings as `NX2SARIA_*`. When both variables are set, the `NX2SARIA_*` one wins. In the settings file a key may carry either prefix or none; the file's last line for it wins. The game's log names each older name in use once per run, for example `cfg: NX2NAVI_FPS60 read under its older name; NX2SARIA_FPS60 is the current one`. The code, the patch tables and the tests spell every setting `NX2SARIA_*`; `tools/rename_legacy_names.py` renames what a branch made before that still spells `NX2NAVI_*`. |
 | Existing installs | An install folder made by NX2navi is not moved or renamed. Its game files, saves, profiles and mods stay where they are. New installs use the folder names above. |
 | `NX2navi.exe` launcher stub | Reused until `NX2Saria.exe` is installed in the same folder. When both exist, the current stub wins. |
 | `NX2navi-update.json` | Published alongside the identical `NX2Saria-update.json`, both referencing the actual NX2Saria payload names. New launchers read either manifest, preferring the current name. |
@@ -83,6 +83,8 @@ after updating can recompile the runtime to apply its new title and icon; saves 
   launcher whose `feed_repo` names it still finds the releases.
 - `docs/releases/`: the release notes of the NX2navi releases, kept as published.
 - `tools/vendor/`: vendored code, kept byte-identical to its source.
+- `tools/xlate/`: its comments still name a few settings `NX2NAVI_*`. These files make the shader translator's identity
+  (`tools/build_xlate.py`), which keys every player's shader cache, so they change only with the translator.
 
 ## Build and release coordination
 
