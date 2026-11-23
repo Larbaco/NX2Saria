@@ -30,6 +30,7 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
 - the window: --selftest draws every screen (skipped without a display)
 """
 import contextlib
+import gc
 import hashlib
 import http.server
 import io
@@ -7202,15 +7203,23 @@ class TelemetryHiddenTest(Tmp):
         except tk.TclError as e:
             self.skipTest(f'no display: {e}')
 
+        made = []
+
         def close():
             for after in root.tk.call('after', 'info'):
                 root.after_cancel(after)
             root.destroy()
+            # The window's pictures go now, on this thread: collected later on a thread a following test starts, Tk
+            # ends the process ("main thread is not in main loop").
+            if made:
+                made[0].__dict__.clear()
+            gc.collect()
         self.addCleanup(close)
         quiet = mock.patch.object(app.App, 'find_dumps', lambda a: None)
         quiet.start()
         self.addCleanup(quiet.stop)
         a = app.App(root, ctx, app.parse_args(['--root', str(self.layout.root), '--selftest']))
+        made.append(a)
         root.update()
         return a, ctx
 
