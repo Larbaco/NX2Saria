@@ -82,6 +82,10 @@ of the runtime's sources (`tools/build_game.py` `RUNTIME_DIRS`, the same list in
 level, so its compile command does not change when a folder is added. A new folder goes into both lists.
 `tools/runtime_folders.py` holds the table of the move that made the folders.
 
+The notes on how each folder's code works, and why, are in [docs/code/](code/README.md), one page per folder (and five
+for `vk/`), by file and function: the source code itself has no comments
+([AGENTS.md](../AGENTS.md#no-comments-in-the-code)).
+
 #### Threads and cores
 
 Every guest thread is a host thread. The game assumes Horizon's scheduler: three application cores, a thread runs
