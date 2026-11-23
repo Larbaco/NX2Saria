@@ -26,10 +26,29 @@ The value a flip writes: `1` to switch on; to switch off, `0` when the settings 
 change leaves the draft instead of adding a `cheat_<hash> = 0` line to the file.
 
 When an enabled mod has code cheats or ExeFS patch files the build has not taken up
-(`runtime/patches/cheats.c` `cheats_unbuilt()`), the tab's first line says how many and that Play in the launcher builds
-them in (`UI_MENU_CHEATS_UNBUILT`, two `%d`: the code cheats, then the ExeFS patch files; English, Russian, Brazilian
-Portuguese and Simplified Chinese in `runtime/ui/ui_text.c`). There is no button: the game no longer restarts into a
+(`runtime/patches/cheats.c` `cheats_unbuilt()`), the tab's first line says how many and that Play from the launcher
+builds them in, the words of the log's line (`UI_MENU_CHEATS_UNBUILT`, two `%s`: the code cheats, then the ExeFS patch
+files, each a counted noun from `runtime/ui/ui_text.c` `menu_count()` with `UI_MENU_COUNT_CODE_CHEATS` and
+`UI_MENU_COUNT_EXEFS_FILES`; English, Russian, Brazilian Portuguese and Simplified Chinese). A mod's heading counts
+its cheats the same way (`UI_MENU_CHEATS_MOD`, `UI_MENU_COUNT_CHEATS`). The Russian, Portuguese and Chinese sentences
+say Play in the launcher, which is how those languages put it. There is no button: the game no longer restarts into a
 rebuild.
+
+## `runtime/ui/ui_text.c`
+
+### `ui_text_count()`
+
+A counted noun in a language's own plural form. Its catalog text holds the forms with `|` between them, each a printf
+format with one `%d`: `"%d code cheat|%d code cheats"`. `ui_text_plural_form()` picks one, and a text with fewer forms
+than the rule asks for gives its last one, so Simplified Chinese writes a single form. A language without its own text
+for the id shows the English text by the English rule. `menu_count()` is the same in the menu language. The menu had
+no plural texts before these; a new counted noun gets an id of its own and its forms in each menu language.
+
+### `ui_text_plural_form()`
+
+- Russian, three forms: 0 for a count ending in 1 but not in 11 (1, 21, 101), 1 for one ending in 2 to 4 but not in 12
+  to 14 (2, 3, 4, 22), 2 for the rest (0, 5 to 20, 11 to 14).
+- Every other language, two forms: 0 for 1, else 1. Brazilian Portuguese writes 0 with the plural here (`0 cheats`).
 
 ## `runtime/ui/menu.cpp`
 

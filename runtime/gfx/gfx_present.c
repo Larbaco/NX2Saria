@@ -40,6 +40,7 @@
 #include "vk_lowlat.h"
 #include "changebank_hold.h"
 #include "camera_clearance.h"
+#include "cheats.h"
 #include "heap_retry.h"
 #include "session_summary.h"
 
@@ -165,6 +166,7 @@ void rt_exit_steps(unsigned what) {
     heap_retry_exit_log();   // the model heaps' retries of the session
     changebank_hold_exit_log();   // the neighbouring map preloads held
     camera_clearance_exit_log();   // what the camera's clearance loaded
+    cheats_exit_log();
     vk_exec_mfb_batch_exit_log();   // the mesh fallback batch's totals (vk_exec_draw.c), with it on
     logq_flush();   // the lines so far on the disk before the slow part; the queue stays on
     vk_pipeline_save_exit();

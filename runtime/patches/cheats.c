@@ -23,6 +23,7 @@
 #include <strings.h>
 
 #include "cfg.h"
+#include "cheat_stats.h"
 #include "cheats.h"
 #include "host.h"
 #include "input.h"
@@ -45,6 +46,7 @@ typedef struct {
     uint32_t content;     // FNV-1a 32 of its words as tools/cheats.py writes them
     int set;              // patch set, -1 none
     volatile int32_t on;
+    CheatStats stats;
     char note[STATUS_MAX];
 } Cheat;
 
@@ -170,31 +172,43 @@ static int rd(uint64_t a, int width, uint64_t *v) {
 }
 
 // Writes n bytes into main's image a page at a time: a read-only page is writable for its part of the copy only.
-static void wr_main(uint64_t a, const uint8_t *from, int n) {
+static int wr_main(uint64_t a, const uint8_t *from, int n) {
     while (n > 0) {
         uint64_t page = a & ~0xFFFull, end;
         int k = (int)(page + 0x1000 - a);
         if (k > n) k = n;
         int prot = plat_mem_state(page, page + 0x1000, &end);
-        if (prot != PLAT_PROT_READ && prot != PLAT_PROT_RW) return;
-        if (prot == PLAT_PROT_READ && !plat_mem_protect(page, 0x1000, PLAT_PROT_RW)) return;
+        if (prot != PLAT_PROT_READ && prot != PLAT_PROT_RW) return 0;
+        if (prot == PLAT_PROT_READ && !plat_mem_protect(page, 0x1000, PLAT_PROT_RW)) return 0;
         memcpy((void *)(uintptr_t)a, from, (size_t)k);
         if (prot == PLAT_PROT_READ) plat_mem_protect(page, 0x1000, PLAT_PROT_READ);
         a += (uint64_t)k;
         from += k;
         n -= k;
     }
+    return 1;
 }
+
+static uint32_t g_wr[CHEAT_WR_KINDS];
 
 static void wr(uint64_t a, int width, uint64_t v) {
     uint64_t now;
-    if (!rd(a, width, &now) || !memcmp(&now, &v, (size_t)width)) return;   // unchanged: no write, no protection change
-    void *p = (void *)(uintptr_t)a;
-    if (in_main(a, (unsigned)width)) {
-        wr_main(a, (const uint8_t *)&v, width);
-    } else if (guest_ok(a, (unsigned)width, 2)) {
-        memcpy(p, &v, (size_t)width);   // a frozen region thaws on the write (memory.c)
+    if (!rd(a, width, &now)) {
+        g_wr[CHEAT_WR_REFUSED]++;
+        return;
     }
+    if (!memcmp(&now, &v, (size_t)width)) {
+        g_wr[CHEAT_WR_UNCHANGED]++;
+        return;
+    }
+    int stored = 0;
+    if (in_main(a, (unsigned)width)) {
+        stored = wr_main(a, (const uint8_t *)&v, width);
+    } else if (guest_ok(a, (unsigned)width, 2)) {
+        memcpy((void *)(uintptr_t)a, &v, (size_t)width);
+        stored = 1;
+    }
+    g_wr[stored ? CHEAT_WR_WRITTEN : CHEAT_WR_REFUSED]++;
 }
 
 static uint64_t masked(int width, uint64_t v) { return width >= 8 ? v : v & ((1ull << (8 * width)) - 1); }
@@ -449,8 +463,8 @@ static void report_unbuilt(void) {
     for (int i = 0; i < g_n; i++) g_unbuilt_code += g_cheats[i].info.kind == CHEAT_REBUILD;
     g_unbuilt_patches = mods_exefs_pending(&key);
     if (g_unbuilt_code || g_unbuilt_patches)
-        rt_log("cheats: %d code cheats and %d ExeFS patch files are not built into the game; Play from the launcher "
-               "builds them in", g_unbuilt_code, g_unbuilt_patches);
+        rt_log("cheats: %d code cheat%s and %d ExeFS patch file%s are not built into the game; Play from the launcher "
+               "builds them in", g_unbuilt_code, cheat_s(g_unbuilt_code), g_unbuilt_patches, cheat_s(g_unbuilt_patches));
 }
 
 void cheats_init(void) {
@@ -535,10 +549,12 @@ void cheats_init(void) {
     for (int i = 0; i < g_n; i++) plain_name((char *)g_cheats[i].info.name);   // the hashes above read the file's bytes
     int on = 0;
     for (int i = 0; i < g_n; i++) on += g_cheats[i].on && g_cheats[i].info.kind != CHEAT_HEADING;
-    rt_log("cheats: %s in %d mods: %d cheats, %d on; %d code, %d while buttons are held, %d data, %d master, "
-           "%d restore, %d headings, %d wait for a rebuild, %d not supported%s; %s",
-           g_file, g_files, g_n, on, counts[CHEAT_CODE], counts[CHEAT_KEY], counts[CHEAT_DATA], counts[CHEAT_MASTER],
-           counts[CHEAT_RESTORE], counts[CHEAT_HEADING], counts[CHEAT_REBUILD], counts[CHEAT_UNSUPPORTED],
+    rt_log("cheats: %s in %d mod%s: %d cheat%s, %d on; %d code, %d while buttons are held, %d data, %d master, "
+           "%d restore, %d heading%s, %d wait%s for a rebuild, %d not supported%s; %s",
+           g_file, g_files, cheat_s(g_files), g_n, cheat_s(g_n), on, counts[CHEAT_CODE], counts[CHEAT_KEY],
+           counts[CHEAT_DATA], counts[CHEAT_MASTER], counts[CHEAT_RESTORE], counts[CHEAT_HEADING],
+           cheat_s(counts[CHEAT_HEADING]), counts[CHEAT_REBUILD], counts[CHEAT_REBUILD] == 1 ? "s" : "",
+           counts[CHEAT_UNSUPPORTED],
            seen_dups ? " (repeated names numbered)" : "",
            g_n ? "the menu's Cheats tab lists them" : "the menu has no Cheats tab");
     g_cfg_seen = cfg_version();
@@ -577,12 +593,33 @@ static void follow_settings(void) {
     }
 }
 
+static void say_stats(const Cheat *c, const char *when) {
+    char line[1100];
+    rt_log("cheats: %s", cheat_stats_line(&c->stats, c->info.mod, c->info.name, when, line, sizeof line));
+}
+
+static void run_counted(Cheat *c, uint64_t keys, uint64_t now_ns) {
+    memset(g_wr, 0, sizeof g_wr);
+    run(c, keys);
+    cheat_stats_frame(&c->stats, g_wr);
+    if (cheat_stats_due(&c->stats, now_ns)) say_stats(c, "so far");
+}
+
+void cheats_exit_log(void) {
+    for (int i = 0; i < g_n; i++) {
+        const Cheat *c = &g_cheats[i];
+        int vm = c->info.kind == CHEAT_DATA || (c->info.kind == CHEAT_MASTER && c->set < 0);
+        if (vm && (c->on || cheat_stats_get(&c->stats.frames))) say_stats(c, "this session");
+    }
+}
+
 void cheats_frame(uint64_t frame) {
     follow_settings();
     if (!g_vm || frame < 60) return;   // the game polls its input (and starts SDL) before this
     uint64_t keys = 0;
     int32_t lx, ly, rx, ry;
     input_poll(&keys, &lx, &ly, &rx, &ry);   // 0 while the menu is open
+    uint64_t now_ns = plat_now_ns();
     for (int i = 0; i < g_n; i++) {
         Cheat *c = &g_cheats[i];
         switch (c->info.kind) {
@@ -593,10 +630,10 @@ void cheats_frame(uint64_t frame) {
             }
             break;
         case CHEAT_DATA:
-            if (c->on) run(c, keys);
+            if (c->on) run_counted(c, keys, now_ns);
             break;
         case CHEAT_MASTER:
-            if (c->set < 0) run(c, keys);
+            if (c->set < 0) run_counted(c, keys, now_ns);
             break;
         default:
             break;

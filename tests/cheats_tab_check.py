@@ -83,11 +83,47 @@ def cheats_checks(cheats):
     return bad
 
 
+def text_checks(text, cheats, present):
+    bad = []
+    for m in re.finditer(r'Play in the\s*"?\s*"?launcher', text):
+        bad.append(f'runtime/ui/ui_text.c:{text[:m.start()].count(chr(10)) + 1}: "Play in the launcher": the menu and '
+                   'the log say "Play from the launcher"')
+    for want in ('Play from the launcher builds them in.', 'Play from the launcher builds it in.'):
+        if want not in re.sub(r'"\s*\n\s*"', '', text):
+            bad.append(f'runtime/ui/ui_text.c: no English text ends "{want}"')
+    for want in ('%d code cheat%s and %d ExeFS patch file%s are not built into the game; Play from the launcher builds '
+                 'them in', 'in %d mod%s: %d cheat%s, %d on;', '%d heading%s, %d wait%s for a rebuild'):
+        if want not in re.sub(r'"\s*\n\s*"', '', cheats):
+            bad.append(f'runtime/patches/cheats.c: no log line with "{want}"')
+    wr = body_of(cheats, 'static void wr(uint64_t a, int width, uint64_t v)')
+    if len(re.findall(r'g_wr\[', wr)) != 3 or 'return;' in wr.split('g_wr[stored')[1]:
+        bad.append('runtime/patches/cheats.c wr(): every way out must count in g_wr (unchanged, written or refused)')
+    counted = body_of(cheats, 'static void run_counted(')
+    if not re.search(r'memset\(g_wr, 0, sizeof g_wr\);\s*run\(c, keys\);\s*cheat_stats_frame\(&c->stats, g_wr\);\s*'
+                     r'if \(cheat_stats_due\(&c->stats, now_ns\)\)', counted):
+        bad.append('runtime/patches/cheats.c run_counted(): not clear, run, count, then the line when due')
+    frame = body_of(cheats, 'void cheats_frame(uint64_t frame)')
+    if re.search(r'[^_]run\(c,', frame) or len(re.findall(r'run_counted\(c, keys, now_ns\)', frame)) != 2:
+        bad.append('runtime/patches/cheats.c cheats_frame(): a cheat runs outside run_counted()')
+    steps = body_of(present, 'void rt_exit_steps(unsigned what)')
+    at, flush = steps.find('cheats_exit_log();'), steps.find('logq_flush();')
+    if not 0 <= at < flush:
+        bad.append('runtime/gfx/gfx_present.c rt_exit_steps(): cheats_exit_log() is not called before logq_flush()')
+    for name in ('session_summary.c', 'session_summary_fmt.c', 'session_summary.h'):
+        if re.search('cheat', (ROOT / 'runtime' / name).read_text(encoding='utf-8'), re.I):
+            bad.append(f'runtime/{name}: names cheats: a mod\'s and a cheat\'s names stay in the local log, out of '
+                       'the session summary the launcher sends')
+    return bad
+
+
 def main():
     menu = code_of((UI / 'menu.cpp').read_text(encoding='utf-8'))
     bad, cut = menu_checks(menu)
     bad += tab_checks(code_of((UI / 'cheats_tab.cpp').read_text(encoding='utf-8')))
     bad += cheats_checks(code_of((ROOT / 'runtime' / 'patches' / 'cheats.c').read_text(encoding='utf-8')))
+    bad += text_checks((UI / 'ui_text.c').read_text(encoding='utf-8'),
+                       code_of((ROOT / 'runtime' / 'patches' / 'cheats.c').read_text(encoding='utf-8')),
+                       code_of((ROOT / 'runtime' / 'gfx' / 'gfx_present.c').read_text(encoding='utf-8')))
     for b in bad:
         print('FAIL ' + b)
     if not cut:

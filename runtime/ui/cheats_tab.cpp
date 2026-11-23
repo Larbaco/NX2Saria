@@ -27,7 +27,10 @@ extern "C" void tab_cheats(float scale) {
     int code, patches;
     cheats_unbuilt(&code, &patches);
     if (code || patches) {
-        snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_UNBUILT), code, patches);
+        char cheats[200], files[200];
+        snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_UNBUILT),
+                 menu_count(UI_MENU_COUNT_CODE_CHEATS, code, cheats, sizeof cheats),
+                 menu_count(UI_MENU_COUNT_EXEFS_FILES, patches, files, sizeof files));
         opt_text_str(line);
     }
     for (int i = 0; i < n; i++) {
@@ -36,7 +39,9 @@ extern "C" void tab_cheats(float scale) {
             int listed = 0;
             for (int j = i; j < n && !strcmp(cheats_info(j)->mod, c->mod); j++)
                 listed += cheats_info(j)->kind != CHEAT_HEADING;
-            snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_MOD), c->mod, listed);
+            char count[160];
+            snprintf(line, sizeof line, menu_text(UI_MENU_CHEATS_MOD), c->mod,
+                     menu_count(UI_MENU_COUNT_CHEATS, listed, count, sizeof count));
             opt_group_text(line);
         }
         UiTextId text = UI_MENU_CHEAT_CODE_DESC;
