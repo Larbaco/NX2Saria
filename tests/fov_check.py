@@ -1,5 +1,6 @@
 # needs: py:numpy, py:lz4
 """Check the 1.1.1 lens patch through the normal lifter and code emitter."""
+import re
 import sys
 from pathlib import Path
 
@@ -18,7 +19,8 @@ def main():
     assert 'atomic_flag_test_and_set_explicit(&fov_hook_logged' in source
     assert '!memcmp(name, "PlayerCamera", 12)' in source
     assert '!memcmp(name, "EventCamera", 11)' in source
-    assert 'Camera zero\'s bit 0 at +0x88 stayed set in gameplay' in source
+    assert re.search(r'if \(flags & 0x100\) \{ fov_skip_once\(FOV_AIMING, "first-person aiming flag is set"\); return; \}\n'
+                     r'(?:[ \t]*//[^\n]*\n)*    uint32_t bits = \(uint32_t\)c->v\[0\];', source)
     assert 'FOV_MESSAGE_LOG' not in source
     resolution = (ROOT / 'runtime/gfx/resolution.c').read_text()
     assert 'excludes non-player cameras, pause/map/system menus, active events and first-person aiming' in resolution
