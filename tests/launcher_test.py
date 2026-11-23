@@ -7173,7 +7173,7 @@ class WindowTest(Tmp):
 
 class TelemetryHiddenTest(Tmp):
     """With no telemetry server (launcher/telemetry.py TELEMETRY_URL empty, no NX2SARIA_TELEMETRY_URL) the window
-    shows nothing of session reports: no question after a game, no Session Reports row, no --screen of them. The
+    shows nothing of session reports: no question at its start, no Session Reports row, no --screen of them. The
     environment override turns all of it on."""
 
     def make_app(self, url):
@@ -7226,8 +7226,9 @@ class TelemetryHiddenTest(Tmp):
     def test_no_server_no_reports_in_the_window(self):
         a, ctx = self.make_app('')
         self.assertNotIn('Session Reports', [r.label for r in a.rows_settings()])
-        self.assertFalse(a.after_game_reports())          # a summary waits and nothing was asked: still no question
+        a.start_reports()                                 # a summary waits and nothing was asked: still no question
         self.assertNotEqual(a.screen, 'consent')
+        self.assertIsNone(a.question)
         a.open_screen('consent')
         self.assertNotEqual(a.screen, 'consent')
         self.assertEqual(ctx.settings['telemetry'], '')
@@ -7236,8 +7237,9 @@ class TelemetryHiddenTest(Tmp):
     def test_the_override_turns_them_on(self):
         a, ctx = self.make_app('http://127.0.0.1:9')
         self.assertIn('Session Reports', [r.label for r in a.rows_settings()])
-        self.assertTrue(a.after_game_reports())
+        a.start_reports()
         self.assertEqual(a.screen, 'consent')
+        a.question_end("don't send")                      # answered, so that closing the window turns nothing on
 
 
 # ---------------------------------------------------------------- mods

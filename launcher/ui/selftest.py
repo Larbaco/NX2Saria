@@ -281,9 +281,8 @@ def states(app):
         s['game_dir'] = was_game
         app.show('home', 0)
 
-    def consent():   # the question asked once; nothing is sent from the selftest (no answer is given)
-        app.consent_asked, app.consent_return = True, 'home'
-        app.show('consent')
+    def consent():   # the question as a preview: no countdown runs and nothing changes or is sent
+        app.open_question(preview=True)
 
     def sent_view():
         app.open_sent('consent')

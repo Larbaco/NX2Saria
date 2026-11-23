@@ -5,6 +5,7 @@ made from a FATAL line, the log lines a comment carries.
 Run: python tests/telemetry_launcher_test.py   (the window tests need tkinter, numpy and a display: on Linux under
 xvfb-run, so that no window opens on the desktop)
 """
+import collections
 import gc
 import http.server
 import json
@@ -143,7 +144,7 @@ class ConsentTest(Base):
         self.assertLessEqual(len(body), telemetry.SESSION_LIMIT)
         self.assertFalse((self.game / 'logs' / telemetry.SUMMARY).exists())          # not offered again
         self.assertTrue((self.game / 'logs' / telemetry.SENT).is_file())
-        self.assertIn(f'telemetry: session report sent ({len(body)} bytes)', self.lines)
+        self.assertIn(f'telemetry: session report sent (HTTP 200, {len(body)} bytes)', self.lines)
         self.assertFalse(self.reporter().send_session(self.game).ok)                  # nothing left to send
         self.assertEqual(len(self.server.hits), 1)
 
@@ -170,13 +171,50 @@ class ConsentTest(Base):
         with mock.patch.dict(os.environ, {telemetry.URL_ENV: 'http://127.0.0.1:8787/'}):
             self.assertEqual(telemetry.Reporter(self.settings, VERSION).url, 'http://127.0.0.1:8787')
 
-    def test_consent_lines(self):
+    def test_the_settings_switch(self):
         r = self.reporter()
         r.set_consent(True)
         self.assertEqual(settings.Settings(self.tmp / 'launcher.json')['telemetry'], 'on')
         r.set_consent(False)
         self.assertEqual(self.settings['telemetry'], 'off')
-        self.assertEqual(self.telemetry_lines(), ['telemetry: consent given', 'telemetry: consent refused'])
+        self.assertEqual(self.telemetry_lines(), ['telemetry: session reports switched on in Settings',
+                                                  'telemetry: session reports switched off in Settings'])
+        self.assertFalse(r.question_due())                                    # off in Settings: this version's answer
+        self.assertTrue(self.reporter(version='0.25.0').question_due())       # ... and the next version asks
+
+    def test_the_question_is_due_once_a_version_while_reports_are_not_on(self):
+        r = self.reporter()
+        self.assertTrue(r.question_due())                                     # not asked yet
+        self.assertFalse(r.answer_question("don't send"))
+        self.assertEqual(self.settings['telemetry'], 'off')
+        self.assertFalse(r.question_due())                                    # not twice in one version
+        later = self.reporter(version='0.25.0')
+        self.assertTrue(later.question_due())                                 # Don't Send in 0.24: asked again in 0.25
+        self.assertTrue(later.answer_question('send'))
+        self.assertEqual(settings.Settings(self.tmp / 'launcher.json')['telemetry'], 'on')
+        for version in ('0.25.0', '0.26.0', '1.0.0'):
+            self.assertFalse(self.reporter(version=version).question_due())   # on: never asked
+        self.assertFalse(self.reporter(url='').question_due())                # no server: no question
+
+    def test_the_question_s_four_ends(self):
+        for how, on, notice in (('send', True, False), ("don't send", False, False), ('closed', True, True),
+                                ('timeout', True, True)):
+            self.settings.update(telemetry='', telemetry_asked='', telemetry_notice='')
+            del self.lines[:]
+            r = self.reporter()
+            self.assertEqual(r.answer_question(how), on)
+            self.assertEqual(self.settings['telemetry'], 'on' if on else 'off')
+            self.assertEqual(self.settings['telemetry_asked'], VERSION)
+            self.assertEqual(self.telemetry_lines(),
+                             [f'telemetry: asked after the update to {VERSION}: {how}{" (on)" if notice else ""}'])
+            self.assertEqual(r.take_notice(), notice)                         # told once ...
+            self.assertFalse(r.take_notice())                                 # ... and not again
+
+    def test_no_notice_when_reports_were_switched_off_since(self):
+        r = self.reporter()
+        r.answer_question('timeout')
+        r.set_consent(False)
+        self.assertFalse(r.take_notice())
 
 
 class ServerAnswerTest(Base):
@@ -187,7 +225,7 @@ class ServerAnswerTest(Base):
         got = self.reporter().send_session(self.game)
         self.assertFalse(got.ok)
         self.assertEqual(self.settings['telemetry_closed'], VERSION)
-        self.assertIn('telemetry: the server stopped accepting reports (410); none until the next launcher version',
+        self.assertIn('telemetry: the server stopped accepting reports (HTTP 410); none until the next launcher version',
                       self.lines)
         self.server.status = 200
         self.assertFalse(self.reporter().send_session(self.game).ok)          # the same version: nothing goes
@@ -210,7 +248,7 @@ class ServerAnswerTest(Base):
         self.assertFalse(r.send_feedback('hello', False, self.game).ok)
         errors = self.telemetry_lines()
         self.assertEqual(len(errors), telemetry.MAX_ERROR_LINES)
-        self.assertTrue(all(ln.startswith('telemetry: session report not sent: no connection') for ln in errors))
+        self.assertTrue(all(ln.startswith('telemetry: session report not sent (no answer: no connection') for ln in errors))
         self.assertTrue((self.game / 'logs' / telemetry.SUMMARY).is_file())    # tried again on the next start
 
     def test_a_refused_report_is_not_offered_again(self):
@@ -235,7 +273,7 @@ class ServerAnswerTest(Base):
         new = settings.Settings(self.tmp / 'launcher.json')['telemetry_id']
         self.assertNotEqual(new, old)
         self.assertEqual(str(uuid.UUID(new, version=4)), new)
-        self.assertIn('telemetry: data deleted, new install id', self.lines)
+        self.assertIn('telemetry: data deleted (HTTP 200), new install id', self.lines)
         self.server.status = 500                                              # a failed delete keeps the id
         self.assertFalse(self.reporter().delete_data().ok)
         self.assertEqual(self.settings['telemetry_id'], new)
@@ -258,7 +296,7 @@ class ServerAnswerTest(Base):
         self.assertEqual(sent['summary'], s)
         self.assertIn('~/Games/NX2Saria/profile', sent['log_tail'])
         self.assertNotIn('/home/ana', sent['log_tail'])
-        self.assertIn('telemetry: comment sent', self.lines)
+        self.assertTrue(any(ln.startswith('telemetry: comment sent (HTTP 200, ') for ln in self.lines))
         self.assertTrue((self.game / 'logs' / telemetry.SUMMARY).is_file())   # a comment does not use it up
         got = self.reporter().send_feedback('Without the log', False, self.game)
         self.assertTrue(got.ok)
@@ -427,11 +465,67 @@ class WindowTest(Base):
         self.assertTrue(self.app.sent_example)
         self.assertIn('"install_id": "' + self.ctx.settings['telemetry_id'], self.app.sent_text)
 
-    def test_consent_walked_with_keys(self):
+    def logged(self, end):
+        """Whether a line of launcher.log ends with end."""
+        return any(ln.rstrip('\n').endswith(end) for ln in self.ctx.log_tail(30))
+
+    def question_line(self):
+        return self.app.consent_desc()['text'][0]
+
+    def test_the_first_start_of_a_version_asks_with_send_focused(self):
         self.write_summary()
-        self.assertTrue(self.app.after_game_reports())                        # not asked yet: the question
+        self.app.start_reports()
         self.assertEqual(self.app.screen, 'consent')
-        self.assertEqual(self.label(), 'See What Is Sent')                    # nothing yes by default
+        self.assertEqual(self.label(), 'Send')                                # the default: Enter sends
+        self.assertEqual(self.app.consent_desc()['title'], 'Help improve NX2Saria?')
+        self.assertIn(f'turn on in {telemetry.QUESTION_SECONDS} s or when you close this window', self.question_line())
+        self.assertIn("Choose Don't Send to keep them off", self.question_line())
+        self.assertEqual(self.server.hits, [])
+        self.app.activate()
+        self.assertEqual(self.app.screen, 'home')
+        self.assertEqual(self.ctx.settings['telemetry'], 'on')
+        self.assertEqual(self.ctx.settings['telemetry_asked'], self.app.reporter.version)
+        self.assertTrue(self.logged(f'telemetry: asked after the update to {self.app.reporter.version}: send'))
+        self.app.tasks.wait()
+        self.assertEqual(self.server.hits, [])                                # nothing goes at once ...
+        self.assertIsNone(telemetry.pending_summary(self.game))               # ... the waiting summary never does
+        self.write_summary()                                                  # the next session: sent by itself
+        self.assertFalse(self.app.after_game_reports())
+        self.app.tasks.wait()
+        self.assertEqual([h[1] for h in self.server.hits], ['/v1/session'])
+        self.app.start_reports()                                              # on: never asked again,
+        self.assertEqual(self.app.screen, 'home')
+        self.app.reporter.version = '99.0.0'                                  # ... not by a new version either
+        self.app.start_reports()
+        self.assertEqual(self.app.screen, 'home')
+
+    def test_dont_send_keeps_them_off_and_the_next_version_asks_again(self):
+        self.write_summary()
+        self.app.start_reports()
+        self.app.move(1)
+        self.assertEqual(self.label(), "Don't Send")
+        self.app.activate()
+        self.assertEqual(self.ctx.settings['telemetry'], 'off')
+        self.assertEqual(self.app.screen, 'home')
+        self.assertEqual(self.app.message, '')
+        self.assertIsNone(telemetry.pending_summary(self.game))               # declined: not offered again
+        self.app.start_reports()                                              # the same version: not asked again
+        self.assertEqual(self.app.screen, 'home')
+        self.write_summary()
+        self.assertFalse(self.app.after_game_reports())                       # a game played: nothing asked or sent
+        self.assertEqual(self.app.screen, 'home')
+        self.app.reporter.version = '99.0.0'                                  # after the next update
+        self.app.start_reports()
+        self.assertEqual(self.app.screen, 'consent')
+        self.assertEqual(self.label(), 'Send')
+        self.app.tasks.wait()
+        self.assertEqual(self.server.hits, [])
+
+    def test_see_what_is_sent_from_the_question(self):
+        self.write_summary()
+        self.app.start_reports()
+        self.app.move(2)
+        self.assertEqual(self.label(), 'See What Is Sent')
         self.app.activate()
         self.assertEqual(self.app.screen, 'sent_view')
         first = self.app.overlay.yview()[0]
@@ -439,31 +533,110 @@ class WindowTest(Base):
         self.root.update()
         self.assertGreater(self.app.overlay.yview()[0], first)                 # down scrolls the JSON
         self.app.back()
-        self.assertEqual(self.app.screen, 'consent')
-        self.app.move(1)
-        self.assertEqual(self.label(), 'Send')
-        self.app.move(1)
-        self.assertEqual(self.label(), "Don't Send")
-        self.app.activate()
-        self.assertEqual(self.ctx.settings['telemetry'], 'off')
-        self.assertEqual(self.app.screen, 'home')
-        self.assertIsNone(telemetry.pending_summary(self.game))               # declined: not offered again
-        self.assertFalse(self.app.after_game_reports())
-        self.app.tasks.wait()
-        self.assertEqual(self.server.hits, [])
+        self.assertEqual(self.app.screen, 'consent')                           # back to the question, still open
+        self.assertEqual(self.ctx.settings['telemetry'], '')
+        self.assertEqual(self.ctx.settings['telemetry_asked'], '')
 
-    def test_send_from_consent_and_after_the_game(self):
+    def test_the_countdown_turns_reports_on_and_the_next_start_says_so_once(self):
         self.write_summary()
-        self.app.after_game_reports()
-        self.app.move(1)
-        self.app.activate()                                                   # Send
-        self.app.tasks.wait()
+        self.app.start_reports()
+        self.app.question_tick()
+        self.assertEqual(self.ctx.settings['telemetry'], '')                  # the time is not up
+        self.app.question_deadline = time.monotonic() - 0.1                    # 30 s later, no input
+        self.app.question_tick()
         self.assertEqual(self.ctx.settings['telemetry'], 'on')
-        self.assertEqual([h[1] for h in self.server.hits], ['/v1/session'])
-        self.write_summary()                                                  # the next session: sent by itself
-        self.assertFalse(self.app.after_game_reports())
+        self.assertEqual(self.app.screen, 'home')
+        self.assertTrue(self.logged(f'asked after the update to {self.app.reporter.version}: timeout (on)'))
         self.app.tasks.wait()
-        self.assertEqual(len(self.server.hits), 2)
+        self.assertEqual(self.server.hits, [])                                # the first report: the next session's
+        self.assertIsNone(telemetry.pending_summary(self.game))
+        self.app.message = ''                                                  # the launcher opens again
+        self.app.start_reports()
+        self.assertEqual(self.app.screen, 'home')
+        self.assertEqual(self.app.message, self.app_module.REPORTS_ON_NOTICE)
+        self.app.message = ''                                                  # ... and once more: told once
+        self.app.start_reports()
+        self.assertEqual(self.app.message, '')
+
+    def test_the_countdown_shows_the_seconds_left(self):
+        self.app.start_reports()
+        self.app.question_deadline = time.monotonic() + 12.5
+        self.assertIn('turn on in 13 s or', self.question_line())
+        self.app.question_deadline = time.monotonic() + 0.4
+        self.assertIn('turn on in 1 s or', self.question_line())
+
+    def test_any_input_stops_the_countdown(self):
+        Event = collections.namedtuple('Event', 'x y x_root y_root')
+        for name, touch in (('a key', lambda: self.app.move(1)), ('left or right', lambda: self.app.side(1)),
+                            ('the mouse over the window', lambda: self.app.on_motion(Event(300, 300, 300, 300))),
+                            ('See What Is Sent', lambda: self.app.open_sent('consent'))):
+            self.ctx.settings.update(telemetry='', telemetry_asked='')
+            self.app.start_reports()
+            self.assertIsNotNone(self.app.question_deadline, name)
+            touch()
+            self.assertIsNone(self.app.question_deadline, name)
+            if self.app.screen == 'sent_view':
+                self.app.back()
+            self.assertEqual(self.app.screen, 'consent', name)
+            self.assertIn('turn on when you choose Send or close this window', self.question_line())
+            self.assertNotIn(' s or', self.question_line())
+            for _ in range(3):
+                self.app.question_tick()                                       # no time runs any more
+            self.assertEqual(self.ctx.settings['telemetry'], '', name)
+            self.app.question = None                                           # this round's question, put away
+
+    def test_closing_the_question_turns_reports_on(self):
+        self.app.start_reports()
+        self.app.back()                                                        # Esc or B
+        self.assertEqual(self.ctx.settings['telemetry'], 'on')
+        self.assertEqual(self.app.screen, 'home')
+        self.assertEqual(self.app.message, self.app_module.REPORTS_ON_NOTICE)
+        self.assertTrue(self.logged(': closed (on)'))
+
+    def test_closing_the_window_over_the_question_turns_reports_on(self):
+        self.app.start_reports()
+        self.app.move(1)                                                       # the countdown stopped: still so
+        with mock.patch.object(self.root, 'destroy'):
+            self.app.on_close()                                                # the window's close, Alt+F4
+        self.assertEqual(self.ctx.settings['telemetry'], 'on')
+        self.assertEqual(self.ctx.settings['telemetry_notice'], '1')          # told at the next start
+        self.assertTrue(self.logged(': closed (on)'))
+
+    def test_a_signal_that_ends_the_launcher_is_no_answer(self):
+        self.app.start_reports()
+        with mock.patch.object(self.root, 'destroy'):
+            self.app.on_close('ended by SIGTERM', time.monotonic())
+        self.assertEqual(self.ctx.settings['telemetry'], '')
+        self.assertEqual(self.ctx.settings['telemetry_asked'], '')            # the next start asks again
+
+    def test_closing_the_window_elsewhere_changes_nothing(self):
+        self.app.start_reports()
+        self.app.move(1)
+        self.app.activate()                                                    # Don't Send
+        with mock.patch.object(self.root, 'destroy'):
+            self.app.on_close()
+        self.assertEqual(self.ctx.settings['telemetry'], 'off')
+
+    def test_no_question_over_the_first_run_screen_or_in_a_preview(self):
+        self.assertEqual(self.app.screen, 'first_run')                        # no game yet: start asked nothing
+        self.assertIsNone(self.app.question)
+        self.app.open_screen('consent')                                       # --screen consent: a preview
+        self.assertEqual(self.app.screen, 'consent')
+        self.assertIsNone(self.app.question_deadline)
+        self.assertIn(f'turn on in {telemetry.QUESTION_SECONDS} s', self.question_line())
+        self.app.back()
+        self.assertEqual(self.ctx.settings['telemetry'], '')
+        self.assertEqual(self.ctx.settings['telemetry_asked'], '')
+
+    def test_the_settings_switch_from_not_asked_yet(self):
+        self.app.show('reports')
+        self.assertEqual(self.app.focused().get(), 'Not Asked Yet')
+        self.app.side(1)
+        self.assertEqual(self.app.screen, 'reports')
+        self.assertEqual(self.ctx.settings['telemetry'], 'on')
+        self.app.side(1)
+        self.assertEqual(self.ctx.settings['telemetry'], 'off')
+        self.assertFalse(self.app.reporter.question_due())                    # asked again by the next version only
 
     def test_reports_screen_and_comment_walked_with_keys(self):
         self.app.show('settings')
@@ -471,11 +644,6 @@ class WindowTest(Base):
         self.app.activate()
         self.assertEqual(self.app.screen, 'reports')
         self.assertEqual(self.app.focused().get(), 'Not Asked Yet')
-        self.app.side(1)                                                       # the first answer: the question
-        self.assertEqual(self.app.screen, 'consent')
-        self.app.back()                                                        # no answer
-        self.assertEqual(self.app.screen, 'reports')
-        self.assertEqual(self.ctx.settings['telemetry'], '')
         self.app.move(2)
         self.assertEqual(self.label(), 'Send a Comment')
         self.app.activate()

@@ -17,7 +17,8 @@ flat cells and the orange choices are canvas items. Screens:
     settings    the launcher's choices, the folders, the logs and Uninstall
     reports     session reports and comments (launcher/telemetry.py): Session Reports, See What Is Sent, Send a
                 Comment, Delete My Data
-    consent     the question asked once, the first time a session report waits: Send, Don't Send, See What Is Sent
+    consent     the question about session reports, at the first start of each new version while they are not on:
+                Send (focused), Don't Send, See What Is Sent, and a countdown that turns them on
     sent_view   the exact JSON a session report sends, in a read-only text box in the description's place
     comment     Send a Comment: a text box for the comment, Attach the Last Log Lines, Send and Cancel
     delete_data Delete My Data's confirmation
@@ -199,6 +200,7 @@ def exit_code_text(code):
     return f'{shown} ({meaning})' if meaning else shown
 
 
+REPORTS_ON_NOTICE = 'Session reports are on. You can change this in Settings > Session Reports.'
 FATAL_SHOWN = 240        # characters of a FATAL line the home screen shows; the launcher's log has all of it
 
 
@@ -462,8 +464,10 @@ class App:
         # session reports and comments (launcher/telemetry.py): the requests run on threads (tasks, polled by tick)
         self.reporter = telemetry.Reporter(self.settings, ctx.version, ctx.log)
         self.tasks = telemetry.Tasks()
-        self.consent_asked = False      # the consent screen was shown in this run: it is not shown again until the next
-        self.consent_return = 'home'    # where the consent screen goes back to
+        self.question = None            # the question about session reports while it is open: 'ask' (its answer
+                                        # counts) or 'preview' (--screen consent and the selftest: nothing changes)
+        self.question_deadline = None   # time.monotonic() at which the open question turns reports on; None: stopped
+        self.question_left = None       # the seconds its countdown last drew
         self.sent_return = 'home'       # ... and See What Is Sent
         self.sent_text = ''             # the text See What Is Sent shows: the bytes a report sends
         self.sent_example = False       # ... made from an example, as the game has written no summary yet
@@ -812,6 +816,7 @@ class App:
         return [i for i, r in enumerate(self.rows) if r.focusable]
 
     def move(self, d):
+        self.question_touched()
         if self.screen == 'sent_view' and self.overlay:   # up and down scroll the JSON; Back is the only row
             self.overlay.yview_scroll(d * 3, 'units')
             return
@@ -828,6 +833,7 @@ class App:
         return self.rows[self.focus] if 0 <= self.focus < len(self.rows) else None
 
     def side(self, d):
+        self.question_touched()
         r = self.focused()
         if not r:
             return
@@ -874,8 +880,8 @@ class App:
         if self.screen in ('settings', 'uninstall', 'saves', 'customize', 'job', 'color', 'mods', 'mod_order',
                            'udmabuf', 'reports', 'consent', 'sent_view', 'comment', 'delete_data'):
             self.sounds.play('back')
-        if self.screen == 'consent':   # no answer: asked again at the next opening of the launcher
-            self.show(self.consent_return, self.return_focus(self.consent_return))
+        if self.screen == 'consent':   # Esc or B closes the question, which turns reports on as the screen says
+            self.question_end('closed')
         elif self.screen == 'sent_view':
             self.show(self.sent_return, self.return_focus(self.sent_return, 'See What Is Sent'))
         elif self.screen == 'reports':
@@ -927,6 +933,7 @@ class App:
             self.root.geometry(f'+{e.x_root - dx}+{e.y_root - dy}')
 
     def on_motion(self, e):
+        self.question_touched()
         self.set_tb_hover(self.title_button_at(e.x, e.y))
         i = self.hit(e.x, e.y)
         if i is not None and i != self.focus:
@@ -943,6 +950,7 @@ class App:
                 self.render()
 
     def on_click(self, e):
+        self.question_touched()
         try:
             self.root.focus_force()
         except tk.TclError:
@@ -1002,6 +1010,12 @@ class App:
         if self.closed:
             return
         self.closed = why
+        # The player closed the window over the open question: reports turn on, as the screen says. A signal that
+        # ends the process is no answer: the next start asks again.
+        if self.question == 'ask' and signalled is None:
+            self.question, self.question_deadline = None, None
+            self.reporter.answer_question('closed')
+            self.set_waiting_aside()
         busy = (f'; {self.job.task or self.job.title or type(self.job).__name__} cancelled'
                 if self.job and self.job.result is None else '')
         late = f', {time.monotonic() - signalled:.2f} s after the signal' if signalled is not None else ''
@@ -1060,8 +1074,8 @@ class App:
                 return
             if self.settings.get('auto_check'):
                 self.check_now()
-            if not a.selftest:   # a summary left by a run this launcher did not watch (Steam, a shortcut, a crash)
-                self.after_game_reports(startup=True)
+            if not a.selftest:
+                self.start_reports()
         else:
             if left and not self.message:
                 self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Begin '
@@ -1069,6 +1083,18 @@ class App:
             self.show('first_run')
             self.log_first_run()
             self.find_dumps()
+
+    def start_reports(self):
+        """Session reports at the launcher's start, on the home screen of an installed game (never over the first
+        run's screen): a summary left by a run this launcher did not watch (Steam, a shortcut, a crash) goes if
+        reports are on; reports the question's countdown or its closing turned on are told once; and the first
+        start of a new version asks while they are not on (telemetry.Reporter.question_due)."""
+        self.after_game_reports(startup=True)
+        if self.reporter.take_notice() and not self.message:
+            self.message = REPORTS_ON_NOTICE
+            self.render()
+        if self.reporter.question_due():
+            self.open_question()
 
     def open_screen(self, name):
         """--screen: one of the session reports' screens at once, for looking at it or taking its picture
@@ -1079,8 +1105,7 @@ class App:
         if name == 'sent':
             self.open_sent('home')
         elif name == 'consent':
-            self.consent_asked, self.consent_return = True, 'home'
-            self.show('consent')
+            self.open_question(preview=True)
         elif name in ('reports', 'comment', 'delete_data'):
             self.show(name)
 
@@ -2477,8 +2502,8 @@ class App:
 
     def after_game_reports(self, startup=False):
         """After the game ended (watch_game) or when the launcher opens (start): with session reports on, the
-        pending summary goes in the background; not asked yet, the consent screen opens, once in a run. True when
-        it opened."""
+        pending summary goes in the background; else nothing is sent. The question about them is asked by start,
+        not here. Always False (no screen opens)."""
         gd = self.settings.get('game_dir')
         if not gd or not telemetry.enabled():   # no server: no question, nothing made or sent
             return False
@@ -2486,14 +2511,8 @@ class App:
             telemetry.synthesize_crash(gd, self.ctx.log)
         if telemetry.pending_summary(gd) is None:
             return False
-        answer = self.settings.get('telemetry')
-        if answer == 'on':
+        if self.settings.get('telemetry') == 'on':
             self.send_pending()
-        elif answer == '' and not self.consent_asked:
-            self.consent_asked = True
-            self.consent_return = 'home'
-            self.show('consent')
-            return True
         return False
 
     def send_pending(self):
@@ -2512,45 +2531,95 @@ class App:
             self.reporter.finish_session(gd, req, answer)
         self.tasks.start(lambda: self.reporter.post(req), done)
 
-    def consent_desc(self, first):
-        return {'title': 'Help Improve NX2Saria',
-                'text': [first, 'May NX2Saria send a short report of how the game ran on this PC after you play? '
-                                'It shows what to fix first.'],
-                'subtitle': 'What is sent',
-                'bullets': ['Versions, system, processor, graphics card and memory',
-                            'The main graphics options, play time and frame rate',
-                            'The error line, if the game stopped on one'],
-                'note': 'No files, saves, account or folder names. Your IP address is not kept: the server uses it '
-                        'only to limit abuse and keeps only the country. Kept 180 days; Settings > Session Reports '
-                        'deletes it any time.'}
+    # The question about session reports (docs/telemetry.md "When the launcher asks"). start opens it at the first
+    # start of a launcher version while reports are not on. Send is focused. It ends with Send or Don't Send; closing
+    # it (Esc, B, the window's close) and QUESTION_SECONDS without any input turn reports on as well, which the
+    # screen says in its first line, with the seconds left. Any input stops the countdown for good: a key, a button,
+    # the mouse moving over the window, opening See What Is Sent.
+
+    def open_question(self, preview=False):
+        self.question = 'preview' if preview else 'ask'
+        self.question_deadline = None if preview else time.monotonic() + telemetry.QUESTION_SECONDS
+        self.question_left = None
+        self.show('consent')
+
+    def question_touched(self):
+        """Any input while the question is open: the countdown stops and does not start again."""
+        if self.question and self.question_deadline is not None:
+            self.question_deadline = None
+            self.ctx.log('telemetry: the question\'s countdown stopped at the first input')
+            if self.screen == 'consent':
+                self.render()
+
+    def question_seconds(self):
+        """The whole seconds left on the open question's countdown; None when it is stopped."""
+        if self.question_deadline is None:
+            return None
+        return max(0, math.ceil(self.question_deadline - time.monotonic()))
+
+    def question_tick(self):
+        """From tick: the countdown's end turns reports on; each new second is drawn."""
+        if self.question != 'ask' or self.question_deadline is None or self.screen != 'consent':
+            return
+        left = self.question_seconds()
+        if left <= 0:
+            self.question_end('timeout')
+        elif left != self.question_left and self.screen == 'consent':
+            self.render()
+
+    def set_waiting_aside(self):
+        """The summary that waited when the question was answered is never sent: the first report is the one of the
+        next session played."""
+        gd = self.settings.get('game_dir')
+        if gd:
+            telemetry.mark_sent(gd)
+
+    def question_end(self, how):
+        """The question's end: 'send', "don't send", 'closed' or 'timeout' (telemetry.Reporter.answer_question). A
+        preview changes nothing."""
+        was, self.question, self.question_deadline = self.question, None, None
+        if was == 'ask':
+            self.reporter.answer_question(how)
+            self.set_waiting_aside()
+            if how in ('closed', 'timeout'):   # said now, and once more at the next start (start_reports)
+                self.message = REPORTS_ON_NOTICE
+        self.show('home', 0)
+
+    def question_line(self):
+        left = telemetry.QUESTION_SECONDS if self.question == 'preview' else self.question_seconds()
+        self.question_left = left
+        if left is None:
+            return ("Session reports turn on when you choose Send or close this window. Choose Don't Send to keep "
+                    'them off.')
+        return (f"Session reports turn on in {left} s or when you close this window. Choose Don't Send to keep "
+                'them off.')
+
+    def consent_desc(self):
+        return {'title': 'Help improve NX2Saria?',
+                'text': [self.question_line(),
+                         'After you play, the launcher can send a summary of how the game ran: the version, the '
+                         'system, the processor, the graphics card and its driver, the memory, the main graphics '
+                         'options, which of the port\'s patches are on, how many mods, the frame rate and stutters, '
+                         'the time the shaders took to prepare, and how the session ended (with the error line, if '
+                         'there was one).',
+                         'Nothing personal: no name, no account, no folders, no saves, and your IP address is not '
+                         'kept. It helps find bugs and see what needs optimizing.'],
+                'note': 'You can change this or delete everything in Settings > Session Reports.'}
 
     def rows_consent(self):
         return [
-            Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('consent'),
-                desc=self.consent_desc('See the exact text of the report before you choose.')),
+            Row('action', 'Send', on=lambda: self.question_end('send'), height=44, desc=self.consent_desc),
+            Row('action', "Don't Send", on=lambda: self.question_end("don't send"), height=44,
+                desc=self.consent_desc),
             Row('divider'),
-            Row('action', 'Send', on=lambda: self.consent_choice(True), height=44,
-                desc=self.consent_desc('Send a report after each session. You can turn it off in Settings.')),
-            Row('action', "Don't Send", on=lambda: self.consent_choice(False), height=44,
-                desc=self.consent_desc('Send nothing. You can turn reports on in Settings.')),
+            Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('consent'),
+                desc=self.consent_desc),
         ]
-
-    def consent_choice(self, on):
-        """Send or Don't Send on the consent screen. Don't Send also sets the waiting summary aside: it is never
-        offered again."""
-        self.reporter.set_consent(on)
-        self.consent_asked = True
-        gd = self.settings.get('game_dir')
-        if on:
-            self.send_pending()
-        elif gd:
-            telemetry.mark_sent(gd)
-        back = self.consent_return
-        self.show(back, self.return_focus(back, 'Session Reports'))
 
     def open_sent(self, came_from):
         """See What Is Sent: the bytes the pending report would send (telemetry.body of telemetry.payload), or an
         example's when the game has written none."""
+        self.question_touched()
         summary = telemetry.pending_summary(self.settings.get('game_dir'))
         self.sent_example = summary is None
         data = telemetry.payload(summary or telemetry.example_summary(), self.settings, self.ctx.version,
@@ -2564,10 +2633,6 @@ class App:
 
     def rows_reports(self):
         def flip():
-            if self.settings.get('telemetry') == '':   # the first answer is given with the whole explanation
-                self.consent_return = 'reports'
-                self.show('consent')
-                return
             self.reporter.set_consent(self.settings.get('telemetry') != 'on')
             self.reports_message = ''
             if self.settings.get('telemetry') == 'on':
@@ -2579,8 +2644,8 @@ class App:
                 desc=('On: after you play, a short report of how the game ran on this PC goes to the project: '
                       'versions, system, processor, graphics card, memory, the main graphics options, play time, '
                       'frame rate and the error line if there was one.',
-                      'No files, saves, account or folder names. Your IP address is not kept, only the country. '
-                      'Kept 180 days.',
+                      'No files, saves, account or folder names. Your IP address is not kept. Kept 180 days.',
+                      'While they are off, each new version of NX2Saria asks once when it first opens.',
                       'The server no longer takes reports from this version.' if closed else '')),
             Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('reports'),
                 desc=('The exact text of a report: the one of your last session when it waits to be sent, '
@@ -3022,6 +3087,7 @@ class App:
                         self.render()
                 elif int(time.time()) != self.last_second and self.job.result is None:
                     self.render()
+            self.question_tick()
             self.last_second = int(time.time())
         except Exception as e:   # a drawing error must not stop the timer
             self.ctx.log(f'tick: {e!r}')

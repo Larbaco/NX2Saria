@@ -33,6 +33,7 @@ TELEMETRY_URL = 'https://nx2saria-telemetry.larbaco-ct.workers.dev'
 URL_ENV = 'NX2SARIA_TELEMETRY_URL'
 SCHEMA = 'nx2saria.session/1'
 TIMEOUT = 10                   # seconds a request may take; a report is never worth a longer wait
+QUESTION_SECONDS = 30          # the question after an update turns reports on after this long without any input
 MAX_ERROR_LINES = 5            # launcher.log lines about failed requests in one launcher run
 SESSION_LIMIT = 8 * 1024       # bytes of a session report's body the server takes
 FEEDBACK_LIMIT = 40 * 1024     # ... of a comment's body
@@ -79,6 +80,8 @@ def empty_summary(version, game_version):
                       'over_100ms': None},
         'startup': {'shader_prewarm_ms': None, 'shaders_translated': None, 'pipelines_built': None,
                     'pipeline_build_ms': None},
+        'patches': None,
+        'mods': {'count': None, 'code': None},
         'fatal': None,
     }
 
@@ -97,7 +100,8 @@ def example_summary():
              session={'duration_s': 1834, 'frames': 109800, 'end': 'normal'},
              frametime={'fps_mean': 59.9, 'fps_low_1pct': 52.1, 'worst_ms': 88.4, 'over_25ms': 14, 'over_100ms': 0},
              startup={'shader_prewarm_ms': 5400, 'shaders_translated': 120, 'pipelines_built': 900,
-                      'pipeline_build_ms': 3100})
+                      'pipeline_build_ms': 3100},
+             patches=['fps60', 'ostep', 'zstd'], mods={'count': 1, 'code': 0})
     return s
 
 
@@ -331,6 +335,11 @@ class Reporter:
             return None, f'no connection ({type(e).__name__}: {e})'
 
     @staticmethod
+    def _answer(status, error):
+        """The answer as launcher.log names it: the HTTP status, or why none came."""
+        return f'HTTP {status}' if status is not None else f'no answer: {error}'
+
+    @staticmethod
     def _why(status, error):
         if status is None:
             return error.split(' (')[0]
@@ -343,7 +352,7 @@ class Reporter:
     def _closed_now(self):
         self.settings['telemetry_closed'] = self.version
         self.settings.save()
-        self.log('telemetry: the server stopped accepting reports (410); none until the next launcher version')
+        self.log('telemetry: the server stopped accepting reports (HTTP 410); none until the next launcher version')
 
     # ---- session reports
 
@@ -370,14 +379,14 @@ class Reporter:
         status, error = answer
         if status in (200, 201):
             mark_sent(game_dir)
-            self.log(f'telemetry: session report sent ({len(req.data)} bytes)')
+            self.log(f'telemetry: session report sent (HTTP {status}, {len(req.data)} bytes)')
             return Result(True, '')
         if status == 410:
             self._closed_now()
             return Result(False, 'the server no longer takes reports')
         if status is not None and status < 500 and status != 429:
             mark_sent(game_dir)   # the server will refuse it again: it is not offered on every start
-        self.error(f'telemetry: session report not sent: {self._why(status, error) if status else error}')
+        self.error(f'telemetry: session report not sent ({self._answer(status, error)})')
         return Result(False, self._why(status, error))
 
     def send_session(self, game_dir):
@@ -417,12 +426,12 @@ class Reporter:
     def finish_feedback(self, req, answer):
         status, error = answer
         if status in (200, 201):
-            self.log('telemetry: comment sent')
+            self.log(f'telemetry: comment sent (HTTP {status}, {len(req.data)} bytes)')
             return Result(True, '')
         if status == 410:
             self._closed_now()
             return Result(False, 'the server no longer takes comments')
-        self.error(f'telemetry: comment not sent: {self._why(status, error) if status else error}')
+        self.error(f'telemetry: comment not sent ({self._answer(status, error)})')
         return Result(False, self._why(status, error))
 
     def send_feedback(self, text, attach_log, game_dir):
@@ -448,9 +457,9 @@ class Reporter:
         if status in (200, 204):
             self.settings['telemetry_id'] = str(uuid.uuid4())
             self.settings.save()
-            self.log('telemetry: data deleted, new install id')
+            self.log(f'telemetry: data deleted (HTTP {status}), new install id')
             return Result(True, '')
-        self.error(f'telemetry: data not deleted: {self._why(status, error) if status else error}')
+        self.error(f'telemetry: data not deleted ({self._answer(status, error)})')
         return Result(False, self._why(status, error))
 
     def delete_data(self):
@@ -463,9 +472,47 @@ class Reporter:
     # ---- consent
 
     def set_consent(self, on):
+        """Session reports switched in Settings. Switching them off there counts as this version's answer: the
+        question comes again with the next version (question_due), not at the next start."""
         self.settings['telemetry'] = 'on' if on else 'off'
+        if not on:
+            self.settings['telemetry_asked'] = self.version
         self.settings.save()
-        self.log('telemetry: consent given' if on else 'telemetry: consent refused')
+        self.log(f'telemetry: session reports switched {"on" if on else "off"} in Settings')
+
+    # ---- the question after an update (launcher/ui/app.py, the consent screen)
+
+    def question_due(self):
+        """Whether this start asks about session reports: there is a server, reports are not on, and this launcher
+        version has not asked yet. Reports that are on are never asked about; whoever answered Don't Send, switched
+        them off in Settings or never answered is asked once by each new version."""
+        return (bool(self.url) and self.settings.get('telemetry') != 'on'
+                and self.settings.get('telemetry_asked') != self.version)
+
+    def answer_question(self, how):
+        """The question's end. how: 'send' and "don't send" are the two buttons; 'closed' (the window's close, Alt+F4,
+        Esc) and 'timeout' (QUESTION_SECONDS without any input) turn reports on too, and are told once at the next
+        start (take_notice). Only Don't Send keeps them off. True when reports are on now."""
+        on = how != "don't send"
+        self.settings['telemetry'] = 'on' if on else 'off'
+        self.settings['telemetry_asked'] = self.version
+        self.settings['telemetry_notice'] = '1' if how in ('closed', 'timeout') else ''
+        self.settings.save()
+        self.log(f'telemetry: asked after the update to {self.version}: {how}'
+                 + (' (on)' if how in ('closed', 'timeout') else ''))
+        return on
+
+    def take_notice(self):
+        """True once after reports were turned on by the countdown or by closing the question, if they are still
+        on: the next start tells it."""
+        if not self.settings.get('telemetry_notice'):
+            return False
+        self.settings['telemetry_notice'] = ''
+        self.settings.save()
+        if self.settings.get('telemetry') != 'on':
+            return False
+        self.log('telemetry: told that session reports are on')
+        return True
 
 
 class Tasks:
