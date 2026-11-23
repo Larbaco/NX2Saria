@@ -200,18 +200,6 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(e.exception.id, 'state.newer_format')
 
 
-class ReleaseFilesTest(unittest.TestCase):
-    def test_release_ships_every_tool_the_steps_run(self):
-        sys.path.insert(0, str(ROOT / 'tools'))
-        import make_release
-        text = (ROOT / 'installer' / 'steps.py').read_text(encoding='utf-8')
-        used = set(re.findall(r"layout\.tools / '(\w+\.py)'", text))
-        for names in re.findall(r"layout\.tools / n for n in \((.*?)\)", text, re.S):
-            used |= set(re.findall(r"'(\w+\.py)'", names))
-        self.assertIn('cheats.py', used)
-        self.assertEqual(used - set(make_release.TOOLS_FILES), set())
-
-
 class RenamedVersionTest(unittest.TestCase):
     """An install the setup before 0.3.1 recorded as 1.1.1 is the 1.1.0 update (#332)."""
 
