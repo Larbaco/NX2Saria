@@ -1,7 +1,9 @@
+# needs: git
 # args: --self-test
 import argparse
 import ast
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +32,7 @@ FUNC = re.compile(r'([A-Za-z_]\w*(?:(?:::|\.)[A-Za-z_]\w*)*)\(\)')
 BETWEEN = re.compile(r'(?:\s*(?:,|and)?\s*)')
 HEADING = re.compile(r'^(#{1,6})\s+(.*?)\s*#*\s*$')
 FENCE = re.compile(r'^\s*(```|~~~)')
+ELSEWHERE = re.compile(r'^\s*<!--\s*code-docs:\s*other repository\b.*-->\s*$')
 AFTER_PARAMS = re.compile(r'\s*(?:const\b\s*|noexcept\b\s*|override\b\s*|final\b\s*|->\s*[\w:<>*&\s]+?)*([{;])')
 
 
@@ -64,17 +67,27 @@ def citations(text):
     found = []
     in_fence = False
     stack = []
+    level = 0
+    elsewhere = None
     for n, line in enumerate(text.split('\n'), 1):
         if FENCE.match(line):
             in_fence = not in_fence
             continue
         if in_fence:
             continue
+        if ELSEWHERE.match(line):
+            elsewhere = level
+            continue
         h = HEADING.match(line)
         if h:
             level = len(h.group(1))
+            if elsewhere is not None and level <= elsewhere:
+                elsewhere = None
             while stack and stack[-1][0] >= level:
                 stack.pop()
+        if elsewhere is not None:
+            continue
+        if h:
             paths = spans_only(h.group(2), 'path')
             if len(paths) == 1:
                 found.append((n, paths[0], None))
@@ -176,8 +189,16 @@ def defined(path, name):
     return re.search(r'\b%s\s*\(' % re.escape(name.split('.')[-1].split('::')[-1]), text) is not None
 
 
+def ignored(root, path):
+    try:
+        r = subprocess.run(['git', '-C', str(root), 'check-ignore', '-q', '--', path], capture_output=True)
+    except OSError:
+        return False
+    return r.returncode == 0
+
+
 def check_page(root, page):
-    problems = []
+    problems, generated = [], []
     rel = page.relative_to(root).as_posix()
     text = page.read_text(encoding='utf-8')
     count = 0
@@ -185,6 +206,9 @@ def check_page(root, page):
         count += 1
         target = root / path
         where = f'{rel}:{n}'
+        if not target.exists() and ignored(root, path):
+            generated.append(f'{where}: `{path}` is generated (git ignores it): not checked')
+            continue
         if func is None:
             if not target.exists():
                 problems.append(f'{where}: `{path}` does not exist')
@@ -193,7 +217,7 @@ def check_page(root, page):
             problems.append(f'{where}: `{path}` is a folder: `{func}()` needs a file')
         elif target.is_file() and not defined(target, func):
             problems.append(f'{where}: `{func}()` is not defined in `{path}`')
-    return problems, count
+    return problems, generated, count
 
 
 def pages(root, all_docs):
@@ -204,13 +228,14 @@ def pages(root, all_docs):
 
 
 def check(root, all_docs=False):
-    problems, count, read = [], 0, 0
+    problems, generated, count, read = [], [], 0, 0
     for page in pages(root, all_docs):
-        p, c = check_page(root, page)
+        p, g, c = check_page(root, page)
         problems += p
+        generated += g
         count += c
         read += 1
-    return problems, count, read
+    return problems, generated, count, read
 
 
 def self_test():
@@ -256,7 +281,23 @@ def self_test():
                            '\n'
                            '## Other notes\n'
                            '\n'
-                           '### `helper()`\n'),
+                           '### `helper()`\n'
+                           '\n'
+                           '`runtime/x/gen.h` is written by the build, `runtime/x/gen.h` `made()` too.\n'
+                           '\n'
+                           '## Another repository\n'
+                           '\n'
+                           '<!-- code-docs: other repository -->\n'
+                           '`launcher/Other.cs` `Run()` is in the other repository.\n'
+                           '\n'
+                           '### Deeper\n'
+                           '\n'
+                           '`launcher/also.mjs` too.\n'
+                           '\n'
+                           '## Back here\n'
+                           '\n'
+                           '`runtime/x/missing.c` is checked again.\n'),
+        '.gitignore': '/runtime/x/gen.h\n',
     }
     want = {
         'docs/code/x.md:5: `runtime/x/gone.c` does not exist',
@@ -264,6 +305,10 @@ def self_test():
         'docs/code/x.md:9: `runtime/x/` is a folder: `x_build()` needs a file',
         'docs/code/x.md:10: `Box.close()` is not defined in `tools/t.py`',
         'docs/code/x.md:17: `renamed()` is not defined in `runtime/x/a.c`',
+        'docs/code/x.md:40: `runtime/x/missing.c` does not exist',
+    }
+    want_generated = {
+        'docs/code/x.md:27: `runtime/x/gen.h` is generated (git ignores it): not checked',
     }
     bad = 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -272,8 +317,16 @@ def self_test():
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(text, encoding='utf-8')
-        problems, count, _ = check(root)
+        subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        problems, generated, count, _ = check(root)
         got = set(problems)
+        for w in sorted(want_generated):
+            ok = w in generated
+            print(f'self-test: {w}: {"ok" if ok else "MISSED"}')
+            bad += not ok
+        if len(generated) != 3:
+            print(f'self-test: {len(generated)} generated citations, want 3 (the path twice and its function): WRONG')
+            bad += 1
         for w in sorted(want, key=lambda w: int(w.split(':')[1])):
             ok = w in got
             print(f'self-test: {w}: {"caught" if ok else "MISSED"}')
@@ -294,12 +347,15 @@ def main():
     ap.add_argument('--root', default=str(ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args()
     failed_self = self_test() if args.self_test else 0
-    problems, count, read = check(Path(args.root), args.all_docs)
+    problems, generated, count, read = check(Path(args.root), args.all_docs)
+    for g in generated:
+        print(g)
     for p in problems:
         print(p)
     strict = args.strict or STRICT
     label = '' if strict else 'warning: '
-    print(f'code_docs_check: {label}{read} pages, {count} citations, {len(problems)} stale'
+    print(f'code_docs_check: {label}{read} pages, {count} citations, {len(generated)} of generated files, '
+          f'{len(problems)} stale'
           + ('' if strict else ' (warning mode until the last area is done; --strict fails on them)'))
     if failed_self:
         return 1
