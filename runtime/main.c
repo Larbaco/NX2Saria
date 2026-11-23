@@ -58,6 +58,7 @@
 #include "log_stall.h"
 #include "logq.h"
 #include "prof.h"
+#include "session_summary.h"
 #include "platform/platform.h"
 #include "sha256.h"
 
@@ -889,6 +890,7 @@ static int main_run(int argc, char **argv) {
         if (plat_console_setup(console_closed))
             rt_log("console: QuickEdit off; closing the console ends the game as its window does");
         mem_start_note(0);   // memory.c: a warning when the machine has less memory free than the game takes
+        session_summary_start();   // logs/session-summary.json at the end (session_summary.c); not in tool modes
         hang_watch_start();   // a report in the log when the frames or the GPU stop (hang_watch.c); never in tool modes
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
         vk_driver_cache_env();   // before the threads below and rt_boot's, any of which may load the Vulkan driver

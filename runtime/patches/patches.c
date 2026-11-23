@@ -108,6 +108,19 @@ int rt_patch_set(const char *name) {
     return -1;
 }
 
+int rt_patches_on(const char **names, int cap) {
+#if RT_PATCH_COUNT
+    if (!page) return -1;
+    int n = 0;
+    for (int i = 0; i < RT_PATCH_COUNT && n < cap; i++)
+        if (__atomic_load_n(&rt_patch_on[i], __ATOMIC_RELAXED) && strncmp(sets[i].name, "mod_", 4)) names[n++] = sets[i].name;
+    return n;
+#else
+    (void)names, (void)cap;
+    return -1;
+#endif
+}
+
 int rt_patch_enabled(int set) { return set >= 0 && set < RT_PATCH_COUNT && rt_patch_on[set]; }
 
 void rt_patch_disable(int set) {

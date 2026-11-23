@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=README.md source-hash=4a6230d5353d680f817462a90a98992372906345 reviewed=no -->
+<!-- translation: lang=pt-BR source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -107,11 +107,13 @@ O build inicia cada compilação quando a memória livre comporta, então não p
 
 **Encontrou um bug?** Abra uma issue no [rastreador de issues](https://github.com/Larbaco/NX2Saria/issues) e anexe `logs\nx2saria.log` (`logs/nx2saria.log` no Linux) da pasta do jogo. Diga qual versão ou commit, sistema operacional, GPU e driver você usa e como reproduzir o problema; o [CONTRIBUTING.md](CONTRIBUTING.md) (em inglês) tem a lista completa. Confira se os anexos não têm caminhos privados e nunca envie arquivos do jogo nem chaves.
 
+O launcher também pode enviar um relatório curto de como cada sessão rodou, e comentários, sem conta no GitHub. Cada versão nova pergunta uma vez ao abrir pela primeira vez; os relatórios ligam, a menos que você escolha *Don't Send*, e as Configurações os desligam. Um relatório não leva nenhum id da sua instalação. [Relatórios de sessão e comentários](docs/pt-BR/telemetry.md) diz exatamente quando e lista todos os campos.
+
 ## Documentação
 
 | Tema | Guias |
 |---|---|
-| Jogar | [Instalar e atualizar](docs/pt-BR/install.md) · [Controles](docs/pt-BR/controls.md) · [Configurações](nx2saria.ini.example) (em inglês) · [Amiibo](docs/pt-BR/amiibo.md) · [Problemas conhecidos](docs/pt-BR/known-issues.md) |
+| Jogar | [Instalar e atualizar](docs/pt-BR/install.md) · [Controles](docs/pt-BR/controls.md) · [Configurações](nx2saria.ini.example) (em inglês) · [Amiibo](docs/pt-BR/amiibo.md) · [Problemas conhecidos](docs/pt-BR/known-issues.md) · [Relatórios de sessão](docs/pt-BR/telemetry.md) |
 | Trackers | [API de tracker](docs/tracker-api.md) (em inglês) · [Ocarina Atlas](docs/ocarina-atlas.md) (em inglês) · [hyrule-tracker](docs/hyrule-tracker.md) (em inglês) |
 | Versões | [Notas de versão](docs/releases/) (em inglês) · [Changelogs](docs/changelog/) (em inglês) |
 | Compilação | [Build kit](docs/README-BuildKit.md) (em inglês) · [A partir do código-fonte](docs/building.md) (em inglês) · [Launcher](docs/launcher.md) (em inglês) |

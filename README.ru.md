@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=README.md source-hash=4a6230d5353d680f817462a90a98992372906345 reviewed=no -->
+<!-- translation: lang=ru source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -160,11 +160,16 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 которые вы используете, и как воспроизвести ошибку; полный список есть в [CONTRIBUTING.md](CONTRIBUTING.md) (на
 английском). Проверьте вложения на личные пути и никогда не загружайте файлы игры или ключи.
 
+Лаунчер также может отправлять короткий отчёт о том, как прошёл каждый сеанс, и комментарии без учётной записи
+GitHub. Каждая новая версия спрашивает один раз при первом запуске; отчёты включаются, если вы не выберете
+*Don't Send*, а в настройках их можно выключить. Отчёт не содержит идентификатора вашей установки. В
+[отчётах о сеансах и комментариях](docs/ru/telemetry.md) точно сказано когда и перечислено каждое поле.
+
 ## Документация
 
 | Тема | Руководства |
 |---|---|
-| Игра | [Установка и обновление](docs/ru/install.md) · [Управление](docs/ru/controls.md) · [Настройки](nx2saria.ini.example) (на английском) · [Amiibo](docs/ru/amiibo.md) · [Известные проблемы](docs/ru/known-issues.md) |
+| Игра | [Установка и обновление](docs/ru/install.md) · [Управление](docs/ru/controls.md) · [Настройки](nx2saria.ini.example) (на английском) · [Amiibo](docs/ru/amiibo.md) · [Известные проблемы](docs/ru/known-issues.md) · [Отчёты о сеансах](docs/ru/telemetry.md) |
 | Трекеры | [API трекеров](docs/tracker-api.md) (на английском) · [Ocarina Atlas](docs/ocarina-atlas.md) (на английском) · [hyrule-tracker](docs/hyrule-tracker.md) (на английском) |
 | Выпуски | [Примечания к выпускам](docs/releases/) (на английском) · [Списки изменений](docs/changelog/) (на английском) |
 | Сборка | [Набор для сборки](docs/README-BuildKit.md) (на английском) · [Из исходного кода](docs/building.md) (на английском) · [Лаунчер](docs/launcher.md) (на английском) |

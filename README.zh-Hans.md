@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=README.md source-hash=4a6230d5353d680f817462a90a98992372906345 reviewed=no -->
+<!-- translation: lang=zh-Hans source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -104,11 +104,13 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 
 **发现了 bug？** 请在[问题跟踪器](https://github.com/Larbaco/NX2Saria/issues)上提交问题，并附上游戏文件夹中的 `logs\nx2saria.log`（Linux 上为 `logs/nx2saria.log`）。请说明你使用的版本或提交、操作系统、GPU 和驱动程序，以及如何复现；[CONTRIBUTING.md](CONTRIBUTING.md)（英文）有完整的清单。检查附件中是否含有私人路径，并且绝不要上传游戏文件或密钥。
 
+启动器还可以发送每次会话运行情况的简短报告以及评论，无需 GitHub 账户。每个新版本在首次打开时询问一次；除非你选择 *Don't Send*，否则报告会开启，你可以在设置中关闭报告。报告不带有你的安装的任何标识符。[会话报告与评论](docs/zh-Hans/telemetry.md)准确说明了何时发送，并列出了每一个字段。
+
 ## 文档
 
 | 主题 | 指南 |
 |---|---|
-| 游玩 | [安装与更新](docs/zh-Hans/install.md) · [操作](docs/zh-Hans/controls.md) · [设置](nx2saria.ini.example)（英文） · [amiibo](docs/zh-Hans/amiibo.md) · [已知问题](docs/zh-Hans/known-issues.md) |
+| 游玩 | [安装与更新](docs/zh-Hans/install.md) · [操作](docs/zh-Hans/controls.md) · [设置](nx2saria.ini.example)（英文） · [amiibo](docs/zh-Hans/amiibo.md) · [已知问题](docs/zh-Hans/known-issues.md) · [会话报告](docs/zh-Hans/telemetry.md) |
 | 追踪器 | [追踪器 API](docs/tracker-api.md)（英文） · [Ocarina Atlas](docs/ocarina-atlas.md)（英文） · [hyrule-tracker](docs/hyrule-tracker.md)（英文） |
 | 发布 | [发布说明](docs/releases/)（英文） · [更新日志](docs/changelog/)（英文） |
 | 构建 | [构建套件](docs/README-BuildKit.md)（英文） · [从源码构建](docs/building.md)（英文） · [启动器](docs/launcher.md)（英文） |

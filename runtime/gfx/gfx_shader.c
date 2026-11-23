@@ -92,6 +92,7 @@
 #include "platform/platform.h"
 #include "prof.h"
 #include "prp_file.h"
+#include "session_summary.h"
 #include "spv_store.h"
 
 #define CONTROL_SIZE 0x880
@@ -3016,6 +3017,15 @@ typedef struct {
 // The running prewarm's numbers for gfx_shader_prewarm_progress (boot.c's wait screen), copied from its Warm while it
 // waits for the workers: the Warm lives on that function's stack.
 static int64_t pw_done, pw_total, pw_xlated;
+static int64_t pw_ms = -1;   // the last prewarm's time once it ended (gfx_shader_prewarm_stats), else -1
+
+int gfx_shader_prewarm_stats(int64_t *ms, int64_t *translated) {
+    int64_t t = __atomic_load_n(&pw_ms, __ATOMIC_ACQUIRE);
+    if (t < 0) return 0;
+    *ms = t;
+    *translated = __atomic_load_n(&pw_xlated, __ATOMIC_RELAXED);
+    return 1;
+}
 
 void gfx_shader_prewarm_progress(int64_t *done, int64_t *total, int64_t *translated) {
     *done = __atomic_load_n(&pw_done, __ATOMIC_RELAXED);
@@ -3129,6 +3139,7 @@ void gfx_shader_prewarm(const uint8_t (*iids)[32], size_t n, const GfxShader **o
            (unsigned long long)((uint64_t)n_xlated - xl0), (unsigned long long)((uint64_t)n_failures - fail0), procs, k,
            (double)plat_now_ms() - t0);
     free(w.other);
+    __atomic_store_n(&pw_ms, (int64_t)((double)plat_now_ms() - t0), __ATOMIC_RELEASE);
 }
 // Section "SPIR-V at rest": the plain SPIR-V, decoded first when the shader holds it compressed; valid until the
 // matching unpin. A frame that does not decode (the packer checked it when it made it) or a decode buffer that cannot

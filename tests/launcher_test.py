@@ -30,6 +30,7 @@ Run: python tests/launcher_test.py   (Python 3.14 for the zstd tests; the window
 - the window: --selftest draws every screen (skipped without a display)
 """
 import contextlib
+import gc
 import hashlib
 import http.server
 import io
@@ -53,6 +54,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
+# No test here reaches the session reports' server or opens their question over a screen (launcher/telemetry.py
+# server_url); TelemetryHiddenTest sets its own.
+os.environ['NX2SARIA_TELEMETRY_URL'] = 'none'
 
 from launcher import build, feed, gameini, gamefiles, jobs, locks, net, saves, settings, toolchain, updater, versions, winsys  # noqa: E402
 from launcher.context import Context, shorten  # noqa: E402
@@ -6603,7 +6607,8 @@ class LinuxPlayTest(Tmp):
             {'game_dir': str(game), 'auto_check': False, 'auto_update': False, 'hide_while_playing': True}))
         env = {k: v for k, v in os.environ.items() if k in ('DISPLAY', 'XAUTHORITY', 'PATH', 'LANG')}
         env.update(HOME=str(home), XDG_DATA_HOME=str(home / 'data'), XDG_CONFIG_HOME=str(home / 'config'),
-                   XDG_CACHE_HOME=str(home / 'cache'), XDG_STATE_HOME=str(home / 'state'))
+                   XDG_CACHE_HOME=str(home / 'cache'), XDG_STATE_HOME=str(home / 'state'),
+                   NX2SARIA_TELEMETRY_URL='none')   # no session reports: their question would open over home
         start = (
             'import sys\nimport launcher.platform.linux as linux\nlinux.mounted_drives = lambda *a, **k: []\n'
             'from launcher.ui import app\n'
@@ -7167,7 +7172,78 @@ class WindowTest(Tmp):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],
                            cwd=ROOT, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('22 screens drawn', r.stdout)
+        self.assertIn('26 screens drawn', r.stdout)
+
+
+class TelemetryHiddenTest(Tmp):
+    """With no telemetry server (launcher/telemetry.py TELEMETRY_URL empty, no NX2SARIA_TELEMETRY_URL) the window
+    shows nothing of session reports: no question at its start, no Session Reports row, no --screen of them. The
+    environment override turns all of it on."""
+
+    def make_app(self, url):
+        try:
+            import tkinter as tk
+            from launcher.ui import app
+        except ImportError as e:
+            self.skipTest(f'no window toolkit: {e}')
+        from launcher import telemetry
+        env = {k: v for k, v in os.environ.items() if k != telemetry.URL_ENV}
+        if url:
+            env[telemetry.URL_ENV] = url
+        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        tele = mock.patch.object(telemetry, 'TELEMETRY_URL', '')
+        tele.start()
+        self.addCleanup(tele.stop)
+        game = self.tmp / 'game'
+        (game / 'logs').mkdir(parents=True)
+        (game / 'logs' / telemetry.SUMMARY).write_text(json.dumps(telemetry.example_summary()), encoding='utf-8')
+        ctx = Context(self.layout)
+        self.addCleanup(lambda: ctx._file and ctx._file.close())
+        ctx.settings['game_dir'], ctx.settings['sounds'] = str(game), 'off'
+        try:
+            root = tk.Tk(className='NX2Saria')
+        except tk.TclError as e:
+            self.skipTest(f'no display: {e}')
+
+        made = []
+
+        def close():
+            for after in root.tk.call('after', 'info'):
+                root.after_cancel(after)
+            root.destroy()
+            # The window's pictures go now, on this thread: collected later on a thread a following test starts, Tk
+            # ends the process ("main thread is not in main loop").
+            if made:
+                made[0].__dict__.clear()
+            gc.collect()
+        self.addCleanup(close)
+        quiet = mock.patch.object(app.App, 'find_dumps', lambda a: None)
+        quiet.start()
+        self.addCleanup(quiet.stop)
+        a = app.App(root, ctx, app.parse_args(['--root', str(self.layout.root), '--selftest']))
+        made.append(a)
+        root.update()
+        return a, ctx
+
+    def test_no_server_no_reports_in_the_window(self):
+        a, ctx = self.make_app('')
+        self.assertNotIn('Session Reports', [r.label for r in a.rows_settings()])
+        a.start_reports()                                 # a summary waits and nothing was asked: still no question
+        self.assertNotEqual(a.screen, 'consent')
+        self.assertIsNone(a.question)
+        a.open_screen('consent')
+        self.assertNotEqual(a.screen, 'consent')
+        self.assertEqual(ctx.settings['telemetry'], '')
+        self.assertNotIn('telemetry_id', ctx.settings)
+
+    def test_the_override_turns_them_on(self):
+        a, ctx = self.make_app('http://127.0.0.1:9')
+        self.assertIn('Session Reports', [r.label for r in a.rows_settings()])
+        a.start_reports()
+        self.assertEqual(a.screen, 'consent')
+        a.question_end("don't send")                      # answered, so that closing the window turns nothing on
 
 
 # ---------------------------------------------------------------- mods

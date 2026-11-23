@@ -1,0 +1,104 @@
+<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=f6c0100d7cd41cfe845cac8956710cbf3300db29 reviewed=no -->
+<!-- languages -->
+[English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · [Русский](../ru/telemetry.md) · **简体中文**
+
+> 本页译自[英文版](../telemetry.md)。如两者有出入，以英文版为准。
+>
+> 本译文尚未经母语者审校。欢迎在[问题跟踪器](https://github.com/Larbaco/NX2Saria/issues)中提出修改。
+<!-- /languages -->
+# 会话报告与评论
+
+启动器可以向本项目自己的服务器发送两样东西：
+
+- **会话报告**：在你游玩之后，一份关于游戏在你的电脑上运行情况的简短摘要。
+- **评论**：你在 *Send a Comment* 中写下的文字，在你按下 *Send* 时发送。
+
+## 启动器何时询问
+
+新版本的启动器第一次打开时，会询问 **Help improve NX2Saria?**，并给出三个选择：
+
+- **Send** 开启会话报告。它是默认选中的按钮，因此按 Enter 就会选择它。
+- **Don't Send** 让报告保持关闭。只有这个选择会让报告保持关闭。
+- **See What Is Sent** 显示一份报告的确切文本。
+
+在以下两种情况下，**会话报告也会自行开启**，提问打开期间，它的第一行会说明这一点：
+
+- 你没有选择就关闭了提问：按 Esc、点击窗口的关闭按钮或按 Alt+F4；
+- 30 秒内没有任何输入。这一行会倒数秒数。任何输入都会让倒计时彻底停止：按键、手柄按钮、在窗口上移动鼠标、打开 *See What Is Sent*。
+
+如果报告是以这两种方式之一开启的，启动器会在下次打开时提示一次：*Session reports are on. You can change this in Settings > Session Reports.*
+
+只要会话报告没有开启，**每个新版本**第一次启动时都会再次询问：无论你之前选择了 *Don't Send*，还是在设置中关闭了报告。每个版本只询问一次。报告开启期间，永远不会询问。全新安装会在安装完成后启动器第一次打开时询问，而不是在安装过程中。
+
+报告开启的那一刻不会发送任何报告：第一份报告是你下一次游玩会话的报告。此后，游戏每次结束时发送一份报告；游戏崩溃、由启动器根据日志生成报告时，再发送一份。游玩期间不发送任何内容。
+
+你可以随时在 **Settings → Session Reports** 中开启或关闭会话报告。
+
+没有服务器地址构建的启动器不会显示这些内容：没有提问，没有 Session Reports 界面，也没有 *Send a Comment*。
+
+服务器是本项目在 Cloudflare Workers 上运行的一个小程序，使用 Cloudflare D1 数据库。它的全部源码都在仓库中：[`telemetry/`](../../telemetry/)（英文）。不使用任何其他人的分析服务。
+
+## 会话报告包含什么
+
+游戏结束时会把它写入游戏文件夹中的 `logs/session-summary.json`，因此你可以在发送任何内容之前阅读它。报告只有以下字段，没有其他内容；服务器会拒绝带有任何其他字段的报告。
+
+| 字段 | 含义 | 示例 |
+|---|---|---|
+| `schema` | 格式的名称和版本 | `nx2saria.session/1` |
+| `version` | NX2Saria 的版本 | `0.19.0` |
+| `game_version` | 游戏的版本 | `1.1.1` |
+| `os.family`、`os.name`、`os.wine` | Windows 还是 Linux，系统的名称和版本号，是否在 Wine 下运行 | `windows`、`Windows 11 (build 26100)`、`false` |
+| `cpu.name`、`cpu.threads` | 处理器的型号名称及其线程数 | `AMD Ryzen 5 5600 6-Core Processor`、`12` |
+| `ram_mb` | 电脑的内存，以 MB 为单位 | `16384` |
+| `gpu.name`、`gpu.vendor`、`gpu.device`、`gpu.driver`、`gpu.vram_mb` | 显卡的型号及其 PCI ID，驱动程序的名称和版本，显卡的显存 | `NVIDIA GeForce RTX 3060`、`0x10de`、`0x2504`、`NVIDIA 581.57`、`12288` |
+| `display.output`、`display.render_scale`、`display.fullscreen`、`display.game_aspect`、`display.picture` | 输出分辨率、渲染比例、全屏还是窗口、画面比例设置，以及游戏绘制的画面尺寸 | `1920x1080`、`game`、`true`、`16:10`、`2304x1440` |
+| `settings.preset`、`settings.upscaler`、`settings.taa`、`settings.dlss`、`settings.framegen`、`settings.fps_limit`、`settings.vk_present` | 正在使用的画质预设（`low`、`medium`、`high`、`ultra`，若你改过它的某项设置则为 `custom`）以及主要的图形选项。不属于该选项自身可选值的值会以 `other` 发送 | `high`、`fsr`、`dlss`、`dlaa`、`off`、`60`、`fifo` |
+| `session.duration_s`、`session.frames`、`session.end` | 游戏运行了多长时间，显示了多少帧，以何种方式结束：`normal`、`fatal`、`device_lost` 或 `crash` | `1834`、`109800`、`normal` |
+| `frametime.fps_mean`、`frametime.fps_low_1pct`、`frametime.worst_ms`、`frametime.over_25ms`、`frametime.over_100ms` | 整个会话的平均帧率、其 1% low、最慢的一帧，以及有多少帧耗时超过 25 ms 和超过 100 ms | `59.9`、`52.1`、`88.4`、`14`、`0` |
+| `startup.shader_prewarm_ms`、`startup.shaders_translated`、`startup.pipelines_built`、`startup.pipeline_build_ms` | 启动时准备着色器和管线所花的时间（如果有的话） | `5400`、`120`、`900`、`3100` |
+| `patches` | 处于开启状态的移植版自带补丁的名称，取自游戏日志中 `patches:` 一行的列表。服务器只保存它认识的名称 | `["fps60", "ostep", "zstd"]` |
+| `mods.count`、`mods.code` | 正在使用的模组数量，以及其中修改游戏代码的模组数量。绝不包含模组的名称 | `1`、`0` |
+| `fatal` | 会话因错误结束时游戏的错误行，其中你的文件夹像日志中一样以简写形式写出（[日志隐私](../log-privacy.md)（英文）），最多 300 个字符 | `null` |
+
+游戏不知道的字段为 `null`。如果游戏崩溃得太严重而无法写入报告，启动器会根据日志中的错误行生成一份：只有 `version`、`game_version`、`os.family`、`session.end`（`crash`）和 `fatal`，其他所有字段都为 `null`。
+
+除此之外不收集任何内容。特别是，服务器不保存报告来自哪个国家。
+
+启动器随报告一起只发送 `launcher_version`，即启动器的版本。它**不发送你的安装的任何标识符**：报告中没有任何内容说明它来自哪台电脑，也无法看出两份报告来自同一台电脑。在较早版本中生成过这种标识符的启动器，会在第一次打开时把它从设置中删除。
+
+服务器会加上报告到达的时间，不记录任何关于报告来源的信息。
+
+## 评论包含什么
+
+- 你的文字，最多 4000 个字符，**与你写的完全一样**。不要写入你的电子邮件、姓名或其他任何你不想发送的内容。
+- 你上一次会话的报告（如上所述），如果有的话；**Session Reports** 设为 *Off* 时不附带。
+- 如果你勾选 *Attach the Last Log Lines*：`logs/nx2saria.log` 的最后 200 行，最多 24 KB，其中你的主文件夹、账户名和计算机名像日志中一样以简写形式写出（[日志隐私](../log-privacy.md)（英文））。这些行中的其他文件夹名，例如游戏的安装位置，保持原样。
+- `launcher_version` 和时间，与报告相同。不包含你的安装的任何标识符。
+
+只有在你对评论按下 *Send* 时才会发送评论，无论会话报告是开还是关。
+
+## 不会发送或不会保存的内容
+
+- **不会保存你的 IP 地址**。与服务器的每个连接都带有它，因此服务器能看到它：服务器在那一刻于内存中使用它来限制滥用（同一地址每分钟最多 20 个请求），但从不把它写下来。它也不保存任何国家信息。运行服务器的 Cloudflare 会像对待任何网站一样处理这个连接。
+- 不发送任何文件：没有存档，没有设置文件，没有完整的日志，没有游戏文件，没有密钥。
+- **没有你的安装的任何标识符**。启动器不生成、不保存、也不发送任何标识符。
+- 会话报告不包含账户名、计算机名、文件夹名、电子邮件、硬件序列号或模组名称：服务器会拒绝带有格式中不存在的字段的报告。评论包含你写的内容，以及在你附加时如上所述的日志行。
+
+## 保存多久
+
+报告和评论在满 180 天后由每日清理删除。只有项目的维护者可以通过一个受密钥保护的页面阅读它们：按版本、显卡、系统、选项、补丁和模组的统计数、帧率、最常见的错误以及评论。
+
+## 为什么无法按请求删除
+
+报告中没有你的安装的标识符，服务器也不保存 IP 地址，因此服务器无法知道哪些报告是你的：它没有任何东西可以为你查找并删除。每份报告和每条评论在满 180 天时都会被删除。数据库服务会在有限的时间内保留自己的恢复历史（在 Cloudflare 上最多 30 天）；随着这段历史过期，已删除的行也会从中消失。
+
+评论是唯一包含你自己决定写入内容的东西。它会按你写的原样发送，所以不要写入任何能表明你是谁的内容。
+
+## 关闭
+
+如果你不想发送报告，把 **Settings → Session Reports** 设为 *Off*，或者在启动器询问时选择 *Don't Send*。启动器的下一个版本会再询问一次；要让报告保持关闭，请再次选择 *Don't Send*。如果项目将来停止收集，服务器会如此回答，启动器在下一个版本之前都会停止发送。
+
+## 已知限制
+
+- 从游戏的设置菜单重启游戏会启动一个新进程，它会在启动器发送第一个进程的报告之前将其删除：只会发送最后一个进程的报告。
+- 写评论需要键盘（或屏幕键盘，例如 Steam 的屏幕键盘）；其余界面都可以用手柄操作。
