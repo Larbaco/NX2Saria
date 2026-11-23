@@ -1,13 +1,11 @@
-// Windows implementation of platform.h: CreateThread, QueryPerformanceCounter, high-resolution waitable timers,
-// SRW locks and condition variables.
 #include <io.h>
 #include <limits.h>
-#include <malloc.h>     // _get_heap_handle (plat_heap_info)
+#include <malloc.h>
 #include <stdio.h>
-#include <winsock2.h>   // before windows.h, which would otherwise pull in the old winsock.h
+#include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-#include <aclapi.h>     // SetNamedSecurityInfoW (plat_file_private)
+#include <aclapi.h>
 #include <bcrypt.h>
 #include <pdh.h>
 #include <pdhmsg.h>
@@ -15,7 +13,7 @@
 #include <restartmanager.h>
 #include <shellapi.h>
 #include <timeapi.h>
-#include <tlhelp32.h>   // CreateToolhelp32Snapshot (plat_watch_set)
+#include <tlhelp32.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,33 +27,19 @@
 _Static_assert(sizeof(PlatMutex) == sizeof(SRWLOCK), "PlatMutex holds an SRWLOCK");
 _Static_assert(sizeof(PlatCond) == sizeof(CONDITION_VARIABLE), "PlatCond holds a CONDITION_VARIABLE");
 
-// ---- threads
-
 struct PlatThread {
     HANDLE h;
     PlatThreadFn fn;
     void *arg;
-    volatile int32_t state;   // 0 running and owned by its maker, 1 detached, 2 its function has returned
+    volatile int32_t state;
     char name[32];
 };
 
-static __thread char thread_name[32];   // plat_thread_name: copied at the start, as a detached thread's struct may go
+static __thread char thread_name[32];
 const char *plat_thread_name(void) { return thread_name[0] ? thread_name : NULL; }
 
-// What a thread made here keeps for itself is given back when its function returns: the handles below (the sleep
-// timer of plat_wait_ns, the events of plat_file_pread and plat_file_pwrite), what the other files keep per thread
-// (plat_thread_end_hook) and, for a detached thread, its PlatThread. The game makes and ends threads all through
-// play, each a host thread: nothing closed them, so every ended thread that had slept, read or written left up
-// to three kernel handles behind for the rest of the run. A guest thread ends by returning here too (kernel.c:
-// ExitThread jumps back to the thread's start).
 static void thread_handles_close(void);
 
-// A stack overflow leaves the faulting thread a guard page's worth of stack, about 12 KiB of which a crash handler
-// gets, and the report (main.c crash_handler) needs more: rt_log's 2 KiB buffers, the frame walk, and during the
-// boot's builds a file write first (plat_file_write's frame is about 4 KiB). It faulted again inside the report, and
-// the process ended with no FATAL line (the audit's probe: a 16 MiB-reserve thread recursing in 1 KiB frames). With
-// 32 KiB kept back, the probe's report ran whole with room to spare. The guarantee belongs to the running fiber, so
-// fiber_start asks for it too. Each thread and fiber commits that much more of its stack.
 void plat_stack_guarantee(void) {
     ULONG g = PLAT_STACK_GUARANTEE;
     SetThreadStackGuarantee(&g);
@@ -68,7 +52,7 @@ static DWORD WINAPI thread_main(LPVOID p) {
     t->fn(t->arg);
     plat_thread_end_run();
     thread_handles_close();
-    if (plat_xchg32(&t->state, 2) == 1) free(t);   // detached while it ran: nobody else frees it
+    if (plat_xchg32(&t->state, 2) == 1) free(t);
     return 0;
 }
 
@@ -107,8 +91,6 @@ int plat_thread_join_ns(PlatThread *t, uint64_t ns) {
     return 1;
 }
 
-// The thread still reads t->fn and t->arg when it starts, so the struct goes when the thread's function has
-// returned (thread_main), or here when it already has.
 void plat_thread_detach(PlatThread *t) {
     CloseHandle(t->h);
     t->h = NULL;
@@ -128,7 +110,7 @@ int plat_cpu_cores(uint64_t *all, uint64_t *first) {
         for (DWORD off = 0; off < len;) {
             SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *e = (void *)((char *)buf + off);
             KAFFINITY m = e->Processor.GroupMask[0].Mask & proc;
-            if (e->Processor.GroupMask[0].Group == 0 && m) *first |= m & -m, cores++;   // the lowest of the core's
+            if (e->Processor.GroupMask[0].Group == 0 && m) *first |= m & -m, cores++;
             off += e->Size;
         }
     free(buf);
@@ -148,7 +130,7 @@ uint64_t plat_cpu_cache_die(uint32_t *l3_kb) {
         for (DWORD off = 0; off < len;) {
             SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *e = (void *)((char *)buf + off);
             const CACHE_RELATIONSHIP *c = &e->Cache;
-            if (c->Level == 3 && c->GroupMask.Group == 0) {   // every L3, also those outside the process's set
+            if (c->Level == 3 && c->GroupMask.Group == 0) {
                 if (c->CacheSize > big) big = c->CacheSize, die = 0;
                 if (c->CacheSize == big) die |= c->GroupMask.Mask;
                 if (c->CacheSize < small) small = c->CacheSize;
@@ -174,9 +156,8 @@ uint64_t plat_thread_cpu_ns(uint32_t tid) {
     return ns;
 }
 
-// ---- thread interruption: SuspendThread, Get/SetThreadContext, ResumeThread.
 struct PlatIntr {
-    CONTEXT ctx;   // first: CONTEXT wants 16-byte alignment
+    CONTEXT ctx;
     HANDLE h;
 };
 
@@ -201,7 +182,7 @@ void plat_intr_free(PlatIntr *t) {
 int plat_intr_stop(PlatIntr *t, uint64_t *rip, uint64_t *rsp) {
     if (SuspendThread(t->h) == (DWORD)-1) return 0;
     memset(&t->ctx, 0, sizeof t->ctx);
-    t->ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;   // set back whole, so the kernel restores every GPR
+    t->ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
     if (!GetThreadContext(t->h, &t->ctx)) {
         ResumeThread(t->h);
         return 0;
@@ -221,21 +202,11 @@ int plat_intr_resume(PlatIntr *t, uint64_t to) {
     return ok;
 }
 
-// ---- hardware data watchpoints (platform.h plat_watch_set): the debug registers DR0-DR3 hold the addresses and DR7
-// enables them, each for reads and writes (R/W 11) of its length. A thread's debug registers are part of its context:
-// a helper thread lists the process's threads, then stops each, sets them with SetThreadContext and lets it go on; it
-// opens every handle before it stops anything and takes no lock while a thread is stopped, so a thread stopped while
-// holding the heap or loader lock cannot block it. The caller waits for the helper, which also sets the caller's own
-// registers. An access traps after the instruction that made it, as EXCEPTION_SINGLE_STEP with the slot's bit in DR6;
-// watch_veh hands it on and writes the current set into the context it continues with. So a thread that traps after
-// its registers were cleared, or whose continue would restore registers from before a change, ends up with the
-// current set too.
 static PlatWatchHit watch_fn;
 static volatile LONG watch_on;
 static DWORD64 watch_addr[4], watch_dr7;
 static int watch_added;
 
-// frames[0] the instruction after the access, then the return addresses the unwind tables give
 static int watch_unwind(const CONTEXT *at, uint64_t *frames) {
     CONTEXT c = *at;
     int d = 0;
@@ -247,7 +218,7 @@ static int watch_unwind(const CONTEXT *at, uint64_t *frames) {
             void *hd;
             DWORD64 est;
             RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c.Rip, f, &c, &hd, &est, NULL);
-        } else {   // a leaf function: the return address is on top
+        } else {
             c.Rip = *(DWORD64 *)c.Rsp;
             c.Rsp += 8;
         }
@@ -261,7 +232,7 @@ static LONG CALLBACK watch_veh(EXCEPTION_POINTERS *ep) {
     if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
     CONTEXT *c = ep->ContextRecord;
     unsigned bits = (unsigned)(c->Dr6 & 0xf);
-    if (!bits) return EXCEPTION_CONTINUE_SEARCH;   // a trap-flag step, not a watchpoint
+    if (!bits) return EXCEPTION_CONTINUE_SEARCH;
     int on = watch_on != 0, stop = !on;
     if (on && watch_fn) {
         uint64_t frames[PLAT_WATCH_DEPTH];
@@ -300,7 +271,7 @@ static DWORD WINAPI watch_apply(void *arg) {
     ctx.Dr0 = watch_addr[0], ctx.Dr1 = watch_addr[1], ctx.Dr2 = watch_addr[2], ctx.Dr3 = watch_addr[3];
     ctx.Dr7 = watch_on ? watch_dr7 : 0;
     DWORD done = 0;
-    for (int i = 0; i < nh; i++) {   // nothing between the stop and the go-on but the context call
+    for (int i = 0; i < nh; i++) {
         if (SuspendThread(hs[i]) != (DWORD)-1) {
             if (SetThreadContext(hs[i], &ctx)) done++;
             ResumeThread(hs[i]);
@@ -321,10 +292,9 @@ int plat_watch_set(const uint64_t *addr, const int *len, int n, PlatWatchHit hit
     DWORD64 dr7 = 0;
     for (int i = 0; i < 4; i++) watch_addr[i] = i < n ? addr[i] : 0;
     for (int i = 0; i < n; i++) {
-        DWORD64 size = len[i] == 8 ? 2 : len[i] == 4 ? 3 : len[i] == 2 ? 1 : 0;   // DR7's LEN encoding
+        DWORD64 size = len[i] == 8 ? 2 : len[i] == 4 ? 3 : len[i] == 2 ? 1 : 0;
         dr7 |= 1ull << (2 * i) | 3ull << (16 + 4 * i) | size << (18 + 4 * i);
     }
-    // the hook and the registers are in place before watch_on says so, and a clear takes watch_on away first
     if (n) watch_fn = hit, watch_dr7 = dr7;
     InterlockedExchange(&watch_on, n > 0);
     HANDLE t = CreateThread(NULL, 64 << 10, watch_apply, NULL, 0, NULL);
@@ -335,7 +305,6 @@ int plat_watch_set(const uint64_t *addr, const int *len, int n, PlatWatchHit hit
     return code == (DWORD)-1 ? -1 : (int)code;
 }
 
-// ---- fibers: Windows fibers with FIBER_FLAG_FLOAT_SWITCH (the MXCSR and x87 control word switch with them).
 struct PlatFiber {
     void *h;
     void (*fn)(void *arg);
@@ -356,7 +325,7 @@ void plat_fiber_unself(void) {
 
 static void WINAPI fiber_start(void *p) {
     PlatFiber *f = p;
-    plat_stack_guarantee();   // a guest fiber's stack is its own (kernel.c kern_fiber_init)
+    plat_stack_guarantee();
     f->fn(f->arg);
 }
 
@@ -380,9 +349,6 @@ void plat_fiber_free(PlatFiber *f) {
     free(f);
 }
 
-// plat_jmp_save / plat_jmp_go: PlatJmp holds rbx, rbp, rdi, rsi, r12-r15, the caller's rsp and the return address at
-// 0..72, MXCSR at 80, the x87 control word at 84 and xmm6-xmm15 from 96, the Win64 callee-saved state. Both are leaf
-// code that does not move rsp before it leaves, so they need no unwind data.
 _Static_assert(sizeof(PlatJmp) == 256 && __builtin_offsetof(PlatJmp, xmm) == 96, "plat_jmp_save layout");
 __asm__(".text\n"
         ".globl plat_jmp_save\n"
@@ -397,7 +363,7 @@ __asm__(".text\n"
         "    movq %r13, 40(%rcx)\n"
         "    movq %r14, 48(%rcx)\n"
         "    movq %r15, 56(%rcx)\n"
-        "    leaq 8(%rsp), %rdx\n"   // the caller's rsp after this call returns
+        "    leaq 8(%rsp), %rdx\n"
         "    movq %rdx, 64(%rcx)\n"
         "    movq (%rsp), %rdx\n"
         "    movq %rdx, 72(%rcx)\n"
@@ -455,7 +421,7 @@ int plat_frame_capture(PlatJmp *out, int (*want)(uintptr_t rip, void *arg), void
             void *data;
             DWORD64 frame;
             RtlVirtualUnwind(UNW_FLAG_NHANDLER, img, c.Rip, fe, &c, &data, &frame, NULL);
-        } else {   // a leaf: the return address is on top of the stack
+        } else {
             c.Rip = *(const DWORD64 *)c.Rsp;
             c.Rsp += 8;
         }
@@ -465,7 +431,7 @@ int plat_frame_capture(PlatJmp *out, int (*want)(uintptr_t rip, void *arg), void
         out->gpr[4] = c.R12, out->gpr[5] = c.R13, out->gpr[6] = c.R14, out->gpr[7] = c.R15;
         out->gpr[8] = c.Rsp, out->gpr[9] = c.Rip;
         __asm__ volatile("stmxcsr %0\n\tfnstcw %1" : "=m"(out->mxcsr), "=m"(out->fpcw));
-        memcpy(out->xmm, &c.Xmm6, 160);   // xmm6-xmm15, consecutive in CONTEXT
+        memcpy(out->xmm, &c.Xmm6, 160);
         return 1;
     }
     return 0;
@@ -481,13 +447,6 @@ uint64_t plat_thread_affinity(PlatThread *t, uint64_t mask) {
     return (uint64_t)SetThreadAffinityMask(t ? t->h : GetCurrentThread(), (DWORD_PTR)mask);
 }
 
-// The calling thread gets a core of its own through CPU sets: the process's default sets, which every thread without
-// sets of its own runs on (those started later too), leave the core out, and the caller's selected sets are that
-// core. The core is the highest-numbered one of the fastest efficiency class (a performance core on a hybrid CPU),
-// with both its logical processors when it has two; only processors in group 0 and in the process's affinity mask
-// count. CPU sets are soft: the scheduler may still use the core when nothing else wants it. Returns the logical
-// processors reserved, 0 when Windows has no CPU sets (before Windows 10) or fewer than two cores qualify; *which
-// (when not NULL, size bytes) receives their numbers, such as "10,11".
 int plat_cpu_reserve(char *which, size_t size) {
     typedef BOOL(WINAPI * GetInfoFn)(PSYSTEM_CPU_SET_INFORMATION, ULONG, PULONG, HANDLE, ULONG);
     typedef BOOL(WINAPI * SetProcFn)(HANDLE, const ULONG *, ULONG);
@@ -507,7 +466,7 @@ int plat_cpu_reserve(char *which, size_t size) {
     DWORD_PTR proc = 0, sys = 0;
     if (!GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys) || !proc) proc = ~(DWORD_PTR)0;
     int best_class = -1, best_core = -1;
-    for (ULONG o = 0; o + sizeof(DWORD) * 2 <= len;) {   // the core: fastest class, then highest index
+    for (ULONG o = 0; o + sizeof(DWORD) * 2 <= len;) {
         const SYSTEM_CPU_SET_INFORMATION *s = (const void *)(buf + o);
         if (!s->Size) break;
         if (s->Type == CpuSetInformation && s->CpuSet.Group == 0 && s->CpuSet.LogicalProcessorIndex < 64 &&
@@ -518,7 +477,7 @@ int plat_cpu_reserve(char *which, size_t size) {
         o += s->Size;
     }
     ULONG rest[64], mine[8];
-    unsigned mine_cpu[8];   // the logical processor numbers of mine
+    unsigned mine_cpu[8];
     int nrest = 0, nmine = 0;
     for (ULONG o = 0; o + sizeof(DWORD) * 2 <= len;) {
         const SYSTEM_CPU_SET_INFORMATION *s = (const void *)(buf + o);
@@ -537,7 +496,7 @@ int plat_cpu_reserve(char *which, size_t size) {
     if (!nmine || nrest < 2) return 0;
     if (!set_proc(GetCurrentProcess(), rest, (ULONG)nrest)) return 0;
     if (!set_thread(GetCurrentThread(), mine, (ULONG)nmine)) {
-        set_proc(GetCurrentProcess(), NULL, 0);   // back to every processor
+        set_proc(GetCurrentProcess(), NULL, 0);
         return 0;
     }
     if (which && size) {
@@ -556,9 +515,6 @@ uint32_t plat_cpu_count(void) {
     return n ? (uint32_t)n : 1;
 }
 
-// The processors of the process's affinity mask: what `start /affinity`, Task Manager's "Set affinity" or a launcher
-// leaves this process. A process that spans processor groups (more than 64 logical processors) gets no mask from
-// GetProcessAffinityMask (both masks 0): every active processor counts then.
 uint32_t plat_cpu_usable(void) {
     DWORD_PTR proc = 0, sys = 0;
     if (GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys) && proc && sys) {
@@ -568,14 +524,11 @@ uint32_t plat_cpu_usable(void) {
     return plat_cpu_count();
 }
 
-// PLAT_PRIO_* are the THREAD_PRIORITY_* values.
 void plat_thread_priority(int prio) { SetThreadPriority(GetCurrentThread(), prio); }
 void plat_thread_set_priority(PlatThread *t, int prio) { SetThreadPriority(t->h, prio); }
 int plat_thread_priority_get(void) { return GetThreadPriority(GetCurrentThread()); }
 
 void plat_yield(void) { SwitchToThread(); }
-
-// ---- time
 
 static uint64_t qpc_freq(void) {
     static uint64_t freq;
@@ -595,13 +548,8 @@ uint64_t plat_counter(void) {
 
 uint64_t plat_counter_hz(void) { return qpc_freq(); }
 
-// The default timer tick is 15.6 ms; a 1 ms wait would cost a full tick.
 void plat_timer_1ms(void) { timeBeginPeriod(1); }
 
-// Windows 11 runs a process whose window is not in front (another window focused, a second monitor's overlay) at
-// efficiency speed (EcoQoS, the E-cores of a hybrid CPU) and may ignore its timer resolution request, which turns the
-// 1 ms waits the pacing and short sleeps rely on into 15.6 ms ones. Opting out keeps full speed and the 1 ms timer.
-// The ignore-timer-resolution control needs Windows 11; on Windows 10 the call fails and execution speed alone is asked.
 #ifndef PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
 #define PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION 0x4
 #endif
@@ -615,7 +563,7 @@ int plat_power_full(void) {
     return SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &st, sizeof st) ? 1 : 0;
 }
 
-static PlatScale qpc_ns;   // set before main, so no thread reads it half written
+static PlatScale qpc_ns;
 
 __attribute__((constructor)) static void qpc_ns_init(void) { qpc_ns = plat_scale(1000000000u, qpc_freq()); }
 
@@ -625,15 +573,11 @@ uint64_t plat_now_ns(void) {
     return plat_scaled(qpc_ns, (uint64_t)t.QuadPart);
 }
 
-// A high-resolution waitable timer per sleeping thread (Windows 10 1803+; one handle per thread, closed when the
-// thread's function returns, thread_handles_close)
-// wakes within about 0.1-0.5 ms; the last PLAT_SPIN_NS are spent yielding so the deadline is met closely.
-// Without that timer kind, Sleep(1) granularity applies.
 #define PLAT_SPIN_NS 300000u
 
 static __thread HANDLE sleep_timer;
 static __thread int sleep_timer_tried;
-static __thread HANDLE pread_ev, pwrite_ev;   // plat_file_pread, plat_file_pwrite: the event of their overlapped call
+static __thread HANDLE pread_ev, pwrite_ev;
 
 static void thread_handles_close(void) {
     if (sleep_timer) CloseHandle(sleep_timer);
@@ -647,7 +591,7 @@ void plat_wait_ns(uint64_t ns) {
         sleep_timer_tried = 1;
         sleep_timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     }
-    LARGE_INTEGER due = {.QuadPart = -(LONGLONG)(ns / 100)};   // relative, 100 ns units
+    LARGE_INTEGER due = {.QuadPart = -(LONGLONG)(ns / 100)};
     if (!due.QuadPart) due.QuadPart = -1;
     if (sleep_timer && SetWaitableTimerEx(sleep_timer, &due, 0, NULL, NULL, NULL, 0))
         WaitForSingleObject(sleep_timer, INFINITE);
@@ -662,10 +606,8 @@ void plat_sleep_ns(uint64_t ns) {
 
 void plat_sleep_ms(uint32_t ms) { Sleep(ms); }
 
-// ---- locks and condition variables
-
 void plat_mutex_init(PlatMutex *m) { InitializeSRWLock((PSRWLOCK)m); }
-static _Thread_local PlatLockNote lock_note;   // plat_lock_timing
+static _Thread_local PlatLockNote lock_note;
 void plat_lock_timing(PlatLockNote fn) { lock_note = fn; }
 
 void plat_mutex_lock_at(PlatMutex *m, void *site) {
@@ -708,8 +650,6 @@ int plat_cond_wait_ns(PlatCond *c, PlatMutex *m, uint64_t ns) {
 
 void plat_cond_signal(PlatCond *c) { WakeConditionVariable((PCONDITION_VARIABLE)c); }
 void plat_cond_broadcast(PlatCond *c) { WakeAllConditionVariable((PCONDITION_VARIABLE)c); }
-
-// ---- files
 
 static int widen(const char *s, wchar_t *w, int cap) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, w, cap);
@@ -799,7 +739,6 @@ PlatAppend *plat_append_open(const char *path) {
 }
 
 int plat_append_write(PlatAppend *f, const void *data, size_t n) {
-    // Offset and OffsetHigh all ones: WriteFile appends at the end of the file, atomically against other writers.
     OVERLAPPED o = {.Offset = 0xffffffff, .OffsetHigh = 0xffffffff};
     DWORD put = 0;
     return WriteFile((HANDLE)f, data, (DWORD)n, &put, &o) && put == n;
@@ -822,8 +761,6 @@ int plat_lock_file(const char *path) {
     for (int i = 0; i < nheld; i++)
         if (!strcmp(lock_held[i], path)) goto done;
     wchar_t w[WPATH];
-    // no sharing at all: a second process's open fails with a sharing violation; the handle stays open until
-    // plat_unlock_file or the process ends
     HANDLE h = widen(path, w, WPATH) ? CreateFileW(w, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS,
                                                    FILE_ATTRIBUTE_NORMAL, NULL)
                                      : INVALID_HANDLE_VALUE;
@@ -854,7 +791,6 @@ void plat_unlock_file(const char *path) {
     plat_mutex_unlock(&lock_lock);
 }
 
-// path.<pid>.<tid>.tmp renamed over path; durable: flushed to the disk before the rename, which is written through.
 static int write_swap(const char *path, const void *data, size_t n, int durable) {
     char tmp[WPATH + 48];
     wchar_t a[WPATH], b[WPATH];
@@ -862,8 +798,6 @@ static int write_swap(const char *path, const void *data, size_t n, int durable)
     if (len < 0 || len >= (int)sizeof tmp || !widen(tmp, a, WPATH) || !widen(path, b, WPATH)) return 0;
     HANDLE h = CreateFileW(a, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return 0;
-    // In pieces: WriteFile takes a 32-bit count, so a block of 4 GB or more (a pipeline cache can grow that far)
-    // would otherwise be cut to its low 32 bits and the write refused.
     int ok = 1;
     for (size_t at = 0; ok && at < n;) {
         DWORD piece = n - at > (1u << 30) ? (1u << 30) : (DWORD)(n - at), put = 0;
@@ -888,8 +822,6 @@ struct PlatFileSwap {
     wchar_t tmp[WPATH + 48], path[WPATH];
 };
 
-// The mapping object extends the new file to n bytes, which allocates them on the disk: a full disk fails here and
-// not at a page of the view.
 void *plat_file_swap_begin(const char *path, size_t n, PlatFileSwap **swap) {
     char tmp[WPATH + 48];
     PlatFileSwap *s = n ? calloc(1, sizeof *s) : NULL;
@@ -920,7 +852,7 @@ void *plat_file_swap_begin(const char *path, size_t n, PlatFileSwap **swap) {
 int plat_file_swap_end(PlatFileSwap *s, size_t used, int ok) {
     ok = ok && used && used <= s->n && FlushViewOfFile(s->view, used);
     UnmapViewOfFile(s->view);
-    CloseHandle(s->map);   // the file's size can change only once no mapping of it is left
+    CloseHandle(s->map);
     LARGE_INTEGER at = {.QuadPart = (LONGLONG)used};
     ok = ok && (used == s->n || (SetFilePointerEx(s->file, at, NULL, FILE_BEGIN) && SetEndOfFile(s->file))) &&
          FlushFileBuffers(s->file);
@@ -974,9 +906,6 @@ int plat_file_set_readonly(const char *path, int on) {
     return SetFileAttributesW(w, on ? a | FILE_ATTRIBUTE_READONLY : a & ~(DWORD)FILE_ATTRIBUTE_READONLY) != 0;
 }
 
-// The file or folder gets an access list of its own with one entry, full control for the account the game runs as,
-// and inherits none from its folder: a game folder outside the user's own folders is often readable by every account
-// of the PC. Administrators can still take ownership, as on any file.
 int plat_file_private(const char *path) {
     wchar_t w[WPATH];
     if (!widen(path, w, WPATH) || GetFileAttributesW(w) == INVALID_FILE_ATTRIBUTES) return 0;
@@ -1010,8 +939,6 @@ int plat_file_list(const char *dir, const char *ext, int (*cb)(const char *name,
     FindClose(h);
     return 1;
 }
-
-// ---- virtual memory: VirtualAlloc reservations, MEM_WRITE_WATCH for the watched ones.
 
 int plat_mem_reserve(uint64_t addr, uint64_t n, int watch) {
     void *p = VirtualAlloc((void *)(uintptr_t)addr, n, MEM_RESERVE | (watch ? MEM_WRITE_WATCH : 0), PAGE_NOACCESS);
@@ -1058,7 +985,6 @@ void plat_mem_commit_error(uint32_t error, char *out, size_t cap) {
         snprintf(out, cap, "Win32 %u (%s)", error, name);
 }
 
-// Decommitted pages come back zeroed when committed again.
 int plat_mem_decommit(uint64_t addr, uint64_t n) { return VirtualFree((void *)(uintptr_t)addr, n, MEM_DECOMMIT) != 0; }
 
 int plat_mem_protect(uint64_t addr, uint64_t n, int prot) {
@@ -1106,13 +1032,11 @@ int plat_mem_prepare_write(uint64_t addr, uint64_t n) {
     return 0;
 }
 
-// Guest memory as dma-bufs is Linux's (platform.h).
 int plat_mem_dmabuf_ok(uint64_t *limit, uint64_t *any, const char **why) { *limit = *any = 0, *why = ""; return 0; }
 int plat_mem_dmabuf(uint64_t addr, uint64_t n) { (void)addr; (void)n; return -1; }
 void plat_mem_dmabuf_done(uint64_t addr, uint64_t n) { (void)addr; (void)n; }
 
 // Contains code Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-// GetWriteWatch with the reset flag.
 uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t max, int reset) {
     if (!max || !n) return 0;
     ULONG_PTR got = (ULONG_PTR)max;
@@ -1127,8 +1051,6 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
 static int (*fault_hook)(uint64_t addr);
 static int (*access_hook)(uint64_t addr, int write, uint64_t ip);
 
-// A read or write access violation (ExceptionInformation[0] 0 or 1) goes to the access hook when there is one, then a
-// write to the write-fault hook; registered first, before the crash handler.
 static LONG CALLBACK fault_veh(EXCEPTION_POINTERS *ep) {
     const EXCEPTION_RECORD *er = ep->ExceptionRecord;
     if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || er->NumberParameters < 2 || er->ExceptionInformation[0] > 1)
@@ -1149,7 +1071,6 @@ void plat_mem_fault_hook(int (*fn)(uint64_t addr)) {
 
 static void (*crash_fn)(const PlatCrash *c);
 
-// A line written straight to the standard error handle, for the crash path: no C runtime buffering or locks.
 static const char *image_name(const char *base);
 static __thread const char *crash_ctx;
 void plat_crash_context(const char *s) { crash_ctx = s; }
@@ -1178,7 +1099,6 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
         raw_note("crash_veh", code, (uintptr_t)ep->ContextRecord->Rip,
                  ep->ExceptionRecord->NumberParameters >= 2 ? (uintptr_t)ep->ExceptionRecord->ExceptionInformation[1] : 0);
     if (code == EXCEPTION_ACCESS_VIOLATION && !ep->ContextRecord->Rip) {
-        // a call through a null pointer: the call's return address is on top of the stack, in whichever module made it
         const uintptr_t *sp = (const uintptr_t *)ep->ContextRecord->Rsp;
         for (int i = 0; i < 4; i++) {
             void *base = NULL;
@@ -1189,7 +1109,6 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
             DWORD w;
             if (n > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), b, (DWORD)n, &w, NULL);
         }
-        // the caller's registers (the object a call through a table read its pointer from is often one of them)
         const CONTEXT *x = ep->ContextRecord;
         char b[600];
         int n = snprintf(b, sizeof b,
@@ -1214,11 +1133,11 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     MODULEINFO mi;
     if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandleW(NULL), &mi, sizeof mi) ||
         rip - (uintptr_t)mi.lpBaseOfDll >= mi.SizeOfImage)
-        return EXCEPTION_CONTINUE_SEARCH;   // not our code: leave it to the handler that expects it
+        return EXCEPTION_CONTINUE_SEARCH;
     PlatCrash c = {what, (uint32_t)code, rip, rip - (uintptr_t)mi.lpBaseOfDll, -1, 0};
     if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
         c.access = (int)ep->ExceptionRecord->ExceptionInformation[0], c.addr = ep->ExceptionRecord->ExceptionInformation[1];
-    {   // the faulting host stack, so the report can name the runtime frame that took it
+    {
         void *f[32];
         USHORT n = RtlCaptureStackBackTrace(0, 32, f, NULL);
         for (USHORT i = 0; i < n && c.nframes < (int)(sizeof c.frames / sizeof *c.frames); i++)
@@ -1229,10 +1148,6 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-// abort() and an invalid parameter to a C runtime function raise no exception: the C runtime ends the process with
-// 0xc0000409 after calling the SIGABRT or invalid-parameter handler. The report names the host frames in this
-// executable; the innermost is the caller of abort (assert) or of the C runtime function. Skipped frames: this function
-// and the handler that called it.
 __attribute__((noinline)) static void crash_from_runtime(const char *what, uint32_t code) {
     PlatCrash c = {what, code, 0, 0, -1, 0};
     void *f[62];
@@ -1247,8 +1162,6 @@ __attribute__((noinline)) static void crash_from_runtime(const char *what, uint3
     crash_fn(&c);
 }
 
-// The name a DLL records for itself in its export directory ("amdvlk64.dll"). Read from its mapped headers, not through
-// the loader, whose lock another thread may hold when the process crashes.
 static const char *image_name(const char *base) {
     const IMAGE_NT_HEADERS64 *nt = (const void *)(base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
     const IMAGE_DATA_DIRECTORY *d = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
@@ -1256,10 +1169,6 @@ static const char *image_name(const char *base) {
     return base + ((const IMAGE_EXPORT_DIRECTORY *)(base + d->VirtualAddress))->Name;
 }
 
-// The return addresses in [lo, lo + size) on the crashed thread's stack, innermost first: unwinds the faulting context
-// with the x64 unwind tables; a function without a table entry (a leaf, or address 0 after a call through a null
-// pointer) has its return address on top of the stack. The walk stops at return address 0 (the thread's first frame)
-// and when the stack pointer leaves the thread's stack, so a damaged stack ends it instead of faulting.
 static int frames_in(const CONTEXT *at, uintptr_t lo, uintptr_t size, uintptr_t *out, int max) {
     CONTEXT c = *at;
     ULONG_PTR low, high;
@@ -1281,11 +1190,6 @@ static int frames_in(const CONTEXT *at, uintptr_t lo, uintptr_t size, uintptr_t 
     return n;
 }
 
-// The last-chance filter: an exception no handler took, in any module. crash_veh reports faults in this executable as
-// they happen; this one catches the rest, which used to end the process with no line in the log: a fault in a GPU
-// driver's own thread or in a driver call (vkQueueSubmit, vkAllocateMemory), a C++ exception a library let escape, a
-// call through a null pointer (rip 0, outside every module). Windows calls it only after every handler declined, so
-// the exceptions drivers raise and catch themselves never get here; it costs nothing until a crash.
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
     const EXCEPTION_RECORD *er = ep->ExceptionRecord;
     DWORD code = er->ExceptionCode;
@@ -1299,7 +1203,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
                    : code == EXCEPTION_IN_PAGE_ERROR         ? "in-page error"
                    : code == EXCEPTION_BREAKPOINT            ? "breakpoint"
                    : code == 0xe06d7363u                     ? "C++ exception"
-                   : code == 0xc0000374u                     ? "heap corruption"   // STATUS_HEAP_CORRUPTION
+                   : code == 0xc0000374u                     ? "heap corruption"
                                                              : "unhandled exception",
                    (uint32_t)code, rip, 0, -1, 0};
     if (code == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
@@ -1322,22 +1226,18 @@ static void abort_signal(int sig) { crash_from_runtime("abort", (uint32_t)sig); 
 
 static void invalid_parameter(const wchar_t *expr, const wchar_t *func, const wchar_t *file, unsigned line,
                               uintptr_t reserved) {
-    (void)expr, (void)func, (void)file, (void)line, (void)reserved;   // NULL and 0 in the release C runtime
-    crash_from_runtime("invalid parameter to a C runtime function", 0xc0000417u);   // STATUS_INVALID_CRUNTIME_PARAMETER
+    (void)expr, (void)func, (void)file, (void)line, (void)reserved;
+    crash_from_runtime("invalid parameter to a C runtime function", 0xc0000417u);
 }
 
 void plat_crash_hook(void (*fn)(const PlatCrash *c)) {
     crash_fn = fn;
     AddVectoredExceptionHandler(0, crash_veh);
-    SetUnhandledExceptionFilter(crash_filter);   // replaces the C runtime's filter; crash_fn never returns
+    SetUnhandledExceptionFilter(crash_filter);
     signal(SIGABRT, abort_signal);
     _set_invalid_parameter_handler(invalid_parameter);
 }
 
-// The last-chance filter is set once, at the start, before the GPU driver, the window and audio libraries and the
-// movie decoder load. A DLL that sets its own filter later takes the place of crash_filter, and a fault outside this
-// executable then ends the process with no line in the log. This puts crash_filter back; when another filter had
-// taken its place, `who` gets the module and offset of that filter and the call returns 1.
 int plat_crash_filter_reassert(char *who, size_t n) {
     LPTOP_LEVEL_EXCEPTION_FILTER prev = SetUnhandledExceptionFilter(crash_filter);
     if (prev == crash_filter) return 0;
@@ -1349,16 +1249,14 @@ int plat_crash_filter_reassert(char *who, size_t n) {
     return 1;
 }
 
-// A fresh process gets a fresh layout: Windows places DLLs, heaps and thread stacks at random addresses. The parent
-// waits and exits with the child's code.
 void plat_reexec(void) {
-    plat_exit_orderly();   // this process ends with ExitProcess below, on purpose
+    plat_exit_orderly();
     fprintf(stderr, "[host] memory: a fixed region is taken; re-running the process\n");
     fflush(stdout);
     fflush(stderr);
     STARTUPINFOW si = {.cb = sizeof si};
     PROCESS_INFORMATION pi;
-    wchar_t *cmd = _wcsdup(GetCommandLineW());   // CreateProcessW may write its command line
+    wchar_t *cmd = _wcsdup(GetCommandLineW());
     if (!cmd || !CreateProcessW(NULL, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         fprintf(stderr, "FATAL: re-running the process failed (error %lu)\n", GetLastError());
         ExitProcess(70);
@@ -1400,18 +1298,11 @@ int plat_mem_readable(uint64_t addr, uint64_t n) {
 void *plat_aligned_alloc(size_t size, size_t align) { return _aligned_malloc(size, align); }
 void plat_aligned_free(void *p) { _aligned_free(p); }
 
-// ---- process
-
 #if defined(NX2SARIA_PGO_GEN) || defined(NX2NAVI_PGO_GEN)
-// compiler-rt's profile runtime (an instrumented build: --pgo gen of tools/make_game.py or tools/build_game.py). It
-// writes its counters from an atexit handler, which ExitProcess skips; __llvm_profile_dump writes them once and makes
-// later writes no-ops.
 int __llvm_profile_dump(void);
 int __llvm_profile_write_file(void);
 void __llvm_profile_reset_counters(void);
 
-// A long played session must not lose its counts to a crash or a reboot: every minute the counters are added to the
-// .profraw (the file merges, -fprofile-generate's %m) and zeroed. Counts taken between the write and the reset are lost.
 static DWORD WINAPI pgo_flush_thread(void *arg) {
     (void)arg;
     for (;;) {
@@ -1426,25 +1317,18 @@ __attribute__((constructor)) static void pgo_flush_start(void) {
 }
 #endif
 
-// ---- the console window (plat_console_setup)
-static HANDLE con_in = INVALID_HANDLE_VALUE;   // the console's input, while its QuickEdit mode is off; con_mode as it was
+static HANDLE con_in = INVALID_HANDLE_VALUE;
 static DWORD con_mode;
 static void (*con_close)(const char *what);
 static volatile LONG con_closing;
 
-// fs_host.c: a save Commit under way finishes first, 2 s at most and without a lock; builds without it have no saves
 __attribute__((weak)) void fs_save_crash_wait(void) {}
 
-// Runs on a thread the system starts for the event. A close returns only when on_close does, which it must not.
 static BOOL WINAPI con_ctrl(DWORD ev) {
     const char *what = ev == CTRL_CLOSE_EVENT ? "closed" : ev == CTRL_C_EVENT ? "Ctrl+C"
                      : ev == CTRL_BREAK_EVENT ? "Ctrl+Break" : NULL;
-    // log-off and shutdown reach a process with a window as WM_ENDSESSION (gfx_window_win.c), not here
     if (!what || !con_close) return FALSE;
     if (InterlockedExchange(&con_closing, 1)) {
-        // A second event while on_close runs: the player wants out now. Left to the default handler, its ExitProcess
-        // cut a save Commit in flight and ran every library's detach; the Commit finishes first, and the process ends
-        // with the code the default handler gives (STATUS_CONTROL_C_EXIT).
         fs_save_crash_wait();
         plat_exit((int)0xC000013Au);
     }
@@ -1456,8 +1340,6 @@ int plat_console_setup(void (*on_close)(const char *what)) {
     HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
     DWORD m;
     if (!err || err == INVALID_HANDLE_VALUE || !GetConsoleMode(err, &m)) return 0;
-    // CONIN$: the console's input even when stdin was redirected. ENABLE_EXTENDED_FLAGS makes the call change the
-    // QuickEdit bit at all.
     HANDLE in = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                             OPEN_EXISTING, 0, NULL);
     if (in != INVALID_HANDLE_VALUE && GetConsoleMode(in, &con_mode) && (con_mode & ENABLE_QUICK_EDIT_MODE) &&
@@ -1471,7 +1353,7 @@ int plat_console_setup(void (*on_close)(const char *what)) {
 }
 
 int plat_stderr_write(const void *p, size_t n) {
-    int fd = _fileno(stderr);   // the descriptor fwrite(stderr) writes to; negative when the process has no stderr
+    int fd = _fileno(stderr);
     if (fd < 0) return 0;
     for (const char *c = p; n;) {
         int k = _write(fd, c, n > (1u << 30) ? 1u << 30 : (unsigned)n);
@@ -1489,40 +1371,24 @@ void plat_exit(int code) {
 #if defined(NX2SARIA_PGO_GEN) || defined(NX2NAVI_PGO_GEN)
     __llvm_profile_dump();
 #endif
-    // QuickEdit back on in a console that outlives the process (the one of the shell that started it)
     if (con_in != INVALID_HANDLE_VALUE) SetConsoleMode(con_in, con_mode | ENABLE_EXTENDED_FLAGS);
-    fflush(NULL);   // every open stream: nothing below runs the C runtime's own exit
-    // The process ends here, without the libraries' detach calls that ExitProcess makes. The callers have saved what
-    // is to be kept (gfx_present.c gfx_window_closed: settings, pipeline cache, profile, saves), and the game's other
-    // threads are still running when this is called. ExitProcess stops them wherever they are and then runs every
-    // library's detach on this thread: NVIDIA's NGX core, which still held the device and the DLSS features, read a
-    // dead pointer in its detach on the window thread after the window was closed (an access violation in
-    // _nvngx.dll after the last save, once in 5 scripted runs that had freed and made a DLSS feature again), and the
-    // crash handler wrote a FATAL for a run that had ended cleanly.
+    fflush(NULL);
     TerminateProcess(GetCurrentProcess(), (UINT)code);
-    ExitProcess((UINT)code);   // not reached
+    ExitProcess((UINT)code);
 }
 
 void plat_terminate(int code) {
     plat_exit_orderly();
     TerminateProcess(GetCurrentProcess(), (UINT)code);
-    ExitProcess((UINT)code);   // not reached
+    ExitProcess((UINT)code);
 }
 
-// ---- an end the game did not ask for (plat_exit_note_setup)
-// Two runs of 2026-11-13 ended seconds after a focus loss with exit code 0, no crash event and no line of their own: an
-// ExitProcess by a module in the process, or a kill from outside, could not be told apart. ExitProcess stops every
-// other thread and then calls each module's detach, the executable's TLS callbacks included; TerminateProcess calls
-// none. The callback runs under the loader lock with the other threads gone, so any lock they held stays held: it
-// uses no C runtime (no formatting, allocation or streams: their locks), does not ask the loader (RtlPcToFileHeader
-// takes its module lock) and names addresses from the module list noted earlier. RtlCaptureStackBackTrace and
-// WriteFile take no lock of the process.
 #define EN_MODS 384
 typedef struct { uintptr_t base, size; char name[40]; } EnMod;
 static EnMod en_mods[2][EN_MODS];
 static int en_n[2];
-static volatile LONG en_cur = -1;   // the table the callback reads, -1 none yet
-static PlatMutex en_lock = PLAT_MUTEX_INIT;   // the writers of the tables (start, focus losses)
+static volatile LONG en_cur = -1;
+static PlatMutex en_lock = PLAT_MUTEX_INIT;
 static PlatAppend *volatile en_log;
 static void (*volatile en_queued)(const char **p, size_t *n);
 static volatile LONG en_orderly;
@@ -1534,17 +1400,13 @@ void plat_exit_note_setup(PlatAppend *log, void (*queued)(const char **p, size_t
     en_log = log;
 }
 
-// Each module's size comes from its own image header and its name from GetModuleFileNameA. GetModuleInformation and
-// GetModuleBaseNameA each walk the whole module list through ReadProcessMemory, so a note took about 27 ms with 290
-// modules, on the window thread at every focus loss; this takes about 0.3 ms. The header is read through
-// ReadProcessMemory too, which fails for a module unloaded since EnumProcessModules where a plain read would fault.
 void plat_exit_note_modules(void) {
     HMODULE m[EN_MODS];
     DWORD need = 0;
     if (!EnumProcessModules(GetCurrentProcess(), m, sizeof m, &need)) return;
     int n = (int)(need / sizeof m[0] < EN_MODS ? need / sizeof m[0] : EN_MODS), k = 0;
     plat_mutex_lock(&en_lock);
-    int t = InterlockedCompareExchange(&en_cur, 0, 0) == 0 ? 1 : 0;   // the table the callback does not read
+    int t = InterlockedCompareExchange(&en_cur, 0, 0) == 0 ? 1 : 0;
     for (int i = 0; i < n; i++) {
         unsigned char hdr[1024];
         SIZE_T got = 0;
@@ -1585,7 +1447,6 @@ static size_t en_hex(char *o, size_t at, size_t cap, uintptr_t v) {
     return at;
 }
 
-// An executable gets DLL_PROCESS_DETACH only as the process ends (its reserved argument is NULL there all the same).
 static void NTAPI exit_note_tls(PVOID h, DWORD reason, PVOID reserved) {
     (void)h, (void)reserved;
     PlatAppend *log = en_log;
@@ -1616,14 +1477,10 @@ static void NTAPI exit_note_tls(PVOID h, DWORD reason, PVOID reserved) {
     line[at++] = '\n';
     plat_append_write(log, line, at);
 }
-// The callback in the executable's TLS callback list (the .CRT$XL* sections), which the TLS directory the image has
-// for its thread-local variables points to; _tls_used is that directory.
 __attribute__((section(".CRT$XLB"), used)) PIMAGE_TLS_CALLBACK plat_exit_note_cb = exit_note_tls;
 extern const IMAGE_TLS_DIRECTORY _tls_used;
 __attribute__((used)) static const void *volatile exit_note_tls_dir = &_tls_used;
 
-// _putenv_s, not SetEnvironmentVariableA: getenv reads the C runtime's copy of the environment, which only the CRT's
-// own calls update. An empty value removes the variable.
 int plat_setenv(const char *name, const char *value) { return _putenv_s(name, value ? value : "") == 0; }
 
 uint32_t plat_process_id(void) { return GetCurrentProcessId(); }
@@ -1646,7 +1503,7 @@ uint64_t plat_process_uptime_ns(void) {
 uint64_t plat_unix_time_ns(void) {
     FILETIME now;
     GetSystemTimeAsFileTime(&now);
-    return (ft64(now) - 116444736000000000ull) * 100;   // FILETIME counts 100 ns from 1601
+    return (ft64(now) - 116444736000000000ull) * 100;
 }
 
 void plat_local_time(struct tm *out) {
@@ -1709,8 +1566,6 @@ int plat_random(void *out, size_t n) {
     return BCryptGenRandom(NULL, out, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 }
 
-// FILE_FLAG_OVERLAPPED handles: a read names its offset, and each thread waits on an event of its own, so concurrent
-// reads on one handle do not share the file pointer or the event.
 PlatFile *plat_file_open(const char *path) {
     wchar_t w[WPATH];
     if (!widen(path, w, WPATH)) return NULL;
@@ -1758,7 +1613,7 @@ int plat_file_id(PlatFile *f, PlatFileId *out) {
 const void *plat_file_map(PlatFile *f) {
     HANDLE map = CreateFileMappingW((HANDLE)f, NULL, PAGE_READONLY, 0, 0, NULL);
     const void *v = map ? MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0) : NULL;
-    if (map) CloseHandle(map);   // the view keeps the mapping alive
+    if (map) CloseHandle(map);
     return v;
 }
 
@@ -1776,8 +1631,6 @@ static int fs_err(DWORD e) {
     }
 }
 
-// A symbolic link or junction is a link: removed as a link, never followed. Any other reparse point (OneDrive's cloud
-// placeholders, deduplicated files) is an ordinary file or directory whose content the file system fetches on access.
 static int fs_kind_of(const WIN32_FIND_DATAW *fd) {
     DWORD a = fd->dwFileAttributes;
     if (a & FILE_ATTRIBUTE_REPARSE_POINT && (fd->dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd->dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT))
@@ -1791,8 +1644,6 @@ int plat_fs_kind(const char *path) {
     DWORD a = GetFileAttributesW(w);
     if (a == INVALID_FILE_ATTRIBUTES) return PLAT_FS_MISSING;
     if (!(a & FILE_ATTRIBUTE_REPARSE_POINT)) return a & FILE_ATTRIBUTE_DIRECTORY ? PLAT_FS_DIR : PLAT_FS_FILE;
-    // the reparse tag comes with the find data only; FindFirstFileW is asked only here, since it fails on a path
-    // with a trailing separator and reads wildcards
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(w, &fd);
     if (h == INVALID_HANDLE_VALUE) return PLAT_FS_LINK;
@@ -1812,7 +1663,6 @@ int plat_fs_rmdir(const char *path) {
     if (RemoveDirectoryW(w)) return PLAT_FS_OK;
     DWORD e = GetLastError(), a = GetFileAttributesW(w);
     if (e == ERROR_ACCESS_DENIED && a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_READONLY)) {
-        // a read-only directory (copied over from another emulator's save folder) refuses RemoveDirectoryW
         SetFileAttributesW(w, a & ~(DWORD)FILE_ATTRIBUTE_READONLY);
         if (RemoveDirectoryW(w)) return PLAT_FS_OK;
         e = GetLastError();
@@ -1851,7 +1701,6 @@ int plat_fs_links(const char *path) {
     return links;
 }
 
-// NTFS journals directory entries; flushing the directory handle is as far as Windows goes.
 void plat_fs_sync_dir(const char *path) {
     wchar_t w[WPATH];
     if (!widen(path, w, WPATH)) return;
@@ -1863,7 +1712,6 @@ void plat_fs_sync_dir(const char *path) {
     }
 }
 
-// Restart Manager (rstrtmgr.dll, loaded on first use) names the processes that hold a file open.
 typedef DWORD(WINAPI *RmStartSession_t)(DWORD *, DWORD, WCHAR *);
 typedef DWORD(WINAPI *RmRegisterResources_t)(DWORD, UINT, LPCWSTR *, UINT, RM_UNIQUE_PROCESS *, UINT, LPCWSTR *);
 typedef DWORD(WINAPI *RmGetList_t)(DWORD, UINT *, UINT *, RM_PROCESS_INFO *, LPDWORD);
@@ -1884,11 +1732,10 @@ static BOOL CALLBACK rm_load(INIT_ONCE *o, void *p, void **c) {
     rm.list = (RmGetList_t)(void *)GetProcAddress(l, "RmGetList");
     rm.end = (RmEndSession_t)(void *)GetProcAddress(l, "RmEndSession");
     RmStartSession_t start = (RmStartSession_t)(void *)GetProcAddress(l, "RmStartSession");
-    if (rm.add && rm.list && rm.end) rm.start = start;   // start set: all of them are there
+    if (rm.add && rm.list && rm.end) rm.start = start;
     return TRUE;
 }
 
-// The files under dir (links not followed), at most BUSY_FILES of them, each a malloc'd path.
 #define BUSY_FILES 256
 typedef struct { LPCWSTR p[BUSY_FILES]; UINT n; } BusyFiles;
 
@@ -1918,7 +1765,6 @@ void plat_fs_busy_reason(const char *dir, char *out, size_t cap) {
     if (!widen(dir, w, WPATH)) return;
     for (wchar_t *q = w; *q; q++)
         if (*q == L'/') *q = L'\\';
-    // a rename needs DELETE access to the directory: a folder made by an elevated run can refuse it
     HANDLE h = CreateFileW(w, DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
                            FILE_FLAG_BACKUP_SEMANTICS, NULL);
     if (h == INVALID_HANDLE_VALUE) {
@@ -1939,10 +1785,10 @@ void plat_fs_busy_reason(const char *dir, char *out, size_t cap) {
     else n = 0;
     rm.end(session);
     for (UINT i = 0; i < f.n; i++) free((void *)f.p[i]);
-    if (e == ERROR_MORE_DATA) snprintf(out, cap, "%u programs hold files in it", need);   // info is not filled then
+    if (e == ERROR_MORE_DATA) snprintf(out, cap, "%u programs hold files in it", need);
     if (e != ERROR_SUCCESS) return;
     size_t at = 0;
-    for (UINT i = 0; i < n && at < cap; i++) {   // the program's display name ("Windows Explorer") and process id
+    for (UINT i = 0; i < n && at < cap; i++) {
         char name[CCH_RM_MAX_APP_NAME + 1];
         if (!WideCharToMultiByte(CP_UTF8, 0, info[i].strAppName, -1, name, sizeof name, NULL, NULL)) strcpy(name, "?");
         int k = snprintf(out + at, cap - at, "%s%s %lu", i ? ", " : "", name, info[i].Process.dwProcessId);
@@ -2114,13 +1960,12 @@ int plat_font_path(const char *lang, char *out, size_t cap) {
 }
 
 int plat_os_version(char *out, size_t cap) {
-    // GetVersionEx reports the version the manifest asks for; ntdll's RtlGetVersion the real one
     typedef LONG(WINAPI * RtlGetVersion_t)(OSVERSIONINFOW *);
     HMODULE nt = GetModuleHandleW(L"ntdll.dll");
     RtlGetVersion_t get = nt ? (RtlGetVersion_t)(void *)GetProcAddress(nt, "RtlGetVersion") : NULL;
     OSVERSIONINFOW v = {.dwOSVersionInfoSize = sizeof v};
     if (!get || get(&v) != 0) return 0;
-    DWORD ubr = 0, size = sizeof ubr;   // the update build revision, the number after the build
+    DWORD ubr = 0, size = sizeof ubr;
     if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"UBR", RRF_RT_REG_DWORD,
                      NULL, &ubr, &size) != ERROR_SUCCESS)
         ubr = 0;
@@ -2140,11 +1985,9 @@ int plat_stderr_path(char *out, size_t cap) {
     if (!h || h == INVALID_HANDLE_VALUE || GetFileType(h) != FILE_TYPE_DISK) return 0;
     DWORD n = GetFinalPathNameByHandleW(h, w, WPATH, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
     if (!n || n >= WPATH) return 0;
-    const wchar_t *p = wcsncmp(w, L"\\\\?\\", 4) ? w : w + 4;   // the \\?\ prefix
+    const wchar_t *p = wcsncmp(w, L"\\\\?\\", 4) ? w : w + 4;
     return WideCharToMultiByte(CP_UTF8, 0, p, -1, out, (int)cap, NULL, NULL) != 0;
 }
-
-// ---- desktop
 
 int plat_clipboard_set(const char *utf8) {
     int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
@@ -2154,8 +1997,6 @@ int plat_clipboard_set(const char *utf8) {
     wchar_t *w = GlobalLock(mem);
     MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w, n);
     GlobalUnlock(mem);
-    // A clipboard opened without a window gets no owner, and SetClipboardData may then fail: a message-only window of
-    // the calling thread owns it for the call.
     HWND owner = CreateWindowExW(0, L"STATIC", NULL, 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
     int ok = 0;
     if (OpenClipboard(owner)) {
@@ -2163,17 +2004,17 @@ int plat_clipboard_set(const char *utf8) {
         CloseClipboard();
     }
     if (owner) DestroyWindow(owner);
-    if (!ok) GlobalFree(mem);   // after a successful SetClipboardData the system owns it
+    if (!ok) GlobalFree(mem);
     return ok;
 }
 
 int plat_clipboard_get(char *out, size_t cap) {
     if (!cap) return 0;
     out[0] = 0;
-    if (!OpenClipboard(NULL)) return 0;   // reading needs no owner window
+    if (!OpenClipboard(NULL)) return 0;
     HANDLE h = GetClipboardData(CF_UNICODETEXT);
     const wchar_t *w = h ? GlobalLock(h) : NULL;
-    int n = w ? WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)cap, NULL, NULL) : 0;   // 0 when it does not fit
+    int n = w ? WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)cap, NULL, NULL) : 0;
     if (w) GlobalUnlock(h);
     CloseClipboard();
     if (n <= 0) out[0] = 0;
@@ -2191,14 +2032,11 @@ int plat_open_folder(const char *path) {
     if (!w || !widen(path, w, WPATH)) return free(w), 0;
     DWORD a = GetFileAttributesW(w);
     if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_DIRECTORY)) return free(w), 0;
-    // the shell can take a while to answer: not on the caller's thread (the present path)
     HANDLE t = CreateThread(NULL, 0, open_folder_main, w, 0, NULL);
     if (!t) return free(w), 0;
     CloseHandle(t);
     return 1;
 }
-
-// ---- dynamic libraries
 
 void *plat_lib_open(const char *name) {
     wchar_t w[WPATH];
@@ -2208,9 +2046,6 @@ void *plat_lib_open(const char *name) {
 }
 
 void *plat_lib_sym(void *lib, const char *name) { return lib ? (void *)GetProcAddress((HMODULE)lib, name) : NULL; }
-
-// ---- machine load: GetSystemTimes for the CPU, PDH (pdh.dll, loaded on first use) for the thermal zones and the GPU
-// engine and adapter memory counters that Task Manager reads.
 
 typedef PDH_STATUS(WINAPI *PdhOpenQueryW_t)(LPCWSTR, DWORD_PTR, PDH_HQUERY *);
 typedef PDH_STATUS(WINAPI *PdhAddEnglishCounterW_t)(PDH_HQUERY, LPCWSTR, DWORD_PTR, PDH_HCOUNTER *);
@@ -2236,11 +2071,10 @@ static BOOL CALLBACK pdh_load(INIT_ONCE *o, void *p, void **c) {
     pdh.get = (PdhGetFormattedCounterArrayW_t)(void *)GetProcAddress(l, "PdhGetFormattedCounterArrayW");
     pdh.close = (PdhCloseQuery_t)(void *)GetProcAddress(l, "PdhCloseQuery");
     PdhOpenQueryW_t open = (PdhOpenQueryW_t)(void *)GetProcAddress(l, "PdhOpenQueryW");
-    if (pdh.add && pdh.collect && pdh.get && pdh.close) pdh.open = open;   // open set: all of them are there
+    if (pdh.add && pdh.collect && pdh.get && pdh.close) pdh.open = open;
     return TRUE;
 }
 
-// One PDH query with its wildcard counters ("\Object(*)\Counter"). A query whose open failed stays NULL.
 typedef struct { PDH_HQUERY q; PDH_HCOUNTER c[2]; } PdhQuery;
 
 static void pdh_query(PdhQuery *pq, const wchar_t *c0, const wchar_t *c1) {
@@ -2258,8 +2092,6 @@ static void pdh_query(PdhQuery *pq, const wchar_t *c0, const wchar_t *c1) {
     }
 }
 
-// The counter's instances as a malloc'd array (free it), *count of them; NULL when there is no valid data yet (a rate
-// counter needs two collections).
 static PDH_FMT_COUNTERVALUE_ITEM_W *pdh_items(PDH_HCOUNTER c, DWORD *count) {
     DWORD size = 0;
     *count = 0;
@@ -2272,16 +2104,16 @@ static PDH_FMT_COUNTERVALUE_ITEM_W *pdh_items(PDH_HCOUNTER c, DWORD *count) {
 }
 
 struct PlatLoad {
-    uint64_t idle, kernel, user, proc;   // the previous call's times; kernel 0 before the first
-    PdhQuery thermal, gpu;               // gpu: engine utilisation, adapter dedicated memory
-    wchar_t luid[40];                    // "luid_0x<high>_0x<low>" of the adapter, lower case; empty for any
+    uint64_t idle, kernel, user, proc;
+    PdhQuery thermal, gpu;
+    wchar_t luid[40];
 };
 
 PlatLoad *plat_load_open(const uint8_t *gpu_luid, int pci_bus) {
-    (void)pci_bus;   // the LUID names the adapter
+    (void)pci_bus;
     PlatLoad *l = calloc(1, sizeof *l);
     if (!l) return NULL;
-    if (gpu_luid) {   // Vulkan's deviceLUID is the LUID struct's memory: LowPart, then HighPart
+    if (gpu_luid) {
         uint32_t lo, hi;
         memcpy(&lo, gpu_luid, 4);
         memcpy(&hi, gpu_luid + 4, 4);
@@ -2305,18 +2137,17 @@ void plat_cpu_load(PlatLoad *l, float *total_pct, float *proc_pct, float *temp_c
     FILETIME idle, kern, user, cr, ex, pk, pu;
     if (GetSystemTimes(&idle, &kern, &user) && GetProcessTimes(GetCurrentProcess(), &cr, &ex, &pk, &pu)) {
         uint64_t i = ft64(idle), k = ft64(kern), u = ft64(user), p = ft64(pk) + ft64(pu);
-        uint64_t total = (k - l->kernel) + (u - l->user);   // kernel time includes idle time
+        uint64_t total = (k - l->kernel) + (u - l->user);
         if (l->kernel && total) {
             *total_pct = 100.0f * (float)(total - (i - l->idle)) / (float)total;
             *proc_pct = 100.0f * (float)(p - l->proc) / (float)total;
         }
         l->idle = i, l->kernel = k, l->user = u, l->proc = p;
     }
-    // the firmware's ACPI zones, near the CPU on most boards; the exact package temperature needs a kernel driver
     DWORD n;
     PDH_FMT_COUNTERVALUE_ITEM_W *it;
     if (l->thermal.q && pdh.collect(l->thermal.q) == ERROR_SUCCESS && (it = pdh_items(l->thermal.c[0], &n))) {
-        for (DWORD i = 0; i < n; i++) {   // the hottest zone, in kelvin
+        for (DWORD i = 0; i < n; i++) {
             double c = it[i].FmtValue.doubleValue - 273.15;
             if (it[i].FmtValue.CStatus == PDH_CSTATUS_VALID_DATA && c > *temp_c && c < 150) *temp_c = (float)c;
         }
@@ -2324,19 +2155,16 @@ void plat_cpu_load(PlatLoad *l, float *total_pct, float *proc_pct, float *temp_c
     }
 }
 
-// The adapter part of an instance name, "luid_0x..._0x...", lower case, into out (40 wide characters).
 static void inst_luid(const wchar_t *name, wchar_t *out) {
     const wchar_t *p = wcsstr(name, L"luid_");
     size_t n = 0;
-    while (p && p[n] && n < 26 && n < 39) out[n] = (wchar_t)towlower(p[n]), n++;   // luid_0x%08x_0x%08x: 26
+    while (p && p[n] && n < 26 && n < 39) out[n] = (wchar_t)towlower(p[n]), n++;
     out[n] = 0;
 }
 
 void plat_gpu_load(PlatLoad *l, float *load_pct, float *vram_used_mb) {
     *load_pct = *vram_used_mb = -1;
     if (!l || !l->gpu.q || pdh.collect(l->gpu.q) != ERROR_SUCCESS) return;
-    // Engine instances: "pid_<n>_luid_0x.._0x.._phys_<n>_eng_<n>_engtype_<type>". Per adapter and engine type the
-    // processes' shares add up; the load is the busiest engine type.
     enum { TYPES = 32 };
     struct { wchar_t luid[40], type[32]; double sum; } t[TYPES];
     int nt = 0;
@@ -2364,7 +2192,6 @@ void plat_gpu_load(PlatLoad *l, float *load_pct, float *vram_used_mb) {
     free(it);
     for (int k = 0; k < nt; k++)
         if (t[k].sum > *load_pct) *load_pct = (float)(t[k].sum > 100 ? 100 : t[k].sum);
-    // Adapter memory instances: "luid_0x.._0x.._phys_<n>", bytes. Without a LUID: the adapter that uses the most.
     it = pdh_items(l->gpu.c[1], &n);
     double sum = 0, best = -1;
     for (DWORD i = 0; it && i < n; i++) {
@@ -2401,7 +2228,6 @@ void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb) {
         *proc_mb = (double)(pmc.PrivateUsage >> 20);
 }
 
-// Windows has no stall counters: the physical memory available and the system's commit against its limit.
 void plat_pressure(PlatPressure *p) {
     plat_pressure_clear(p);
     MEMORYSTATUSEX ms = {.dwLength = sizeof ms};
@@ -2415,18 +2241,13 @@ void plat_pressure(PlatPressure *p) {
 
 int plat_commit_enforced(void) { return 1; }
 
-// The numbers name the one limit there is, the system's commit.
 int plat_commit_note(char *out, size_t cap) {
     if (cap) out[0] = 0;
     return 0;
 }
 
-// The driver charges the device memory it allocates to the system's commit.
 int plat_commit_counts_vram(void) { return 1; }
 
-// The PagingFiles value under Memory Management, one "<path> <initial MB> <maximum MB>" per page file: a path of
-// "?:\..." (System managed size on every drive) or no sizes or "0 0" (System managed size on that drive) leaves the
-// size to Windows. Read once; the setting takes effect only after a restart.
 int plat_page_file_managed(void) {
     static int managed = -2;
     if (managed != -2) return managed;
@@ -2440,7 +2261,7 @@ int plat_page_file_managed(void) {
             wchar_t *sp = wcschr(e, L' ');
             unsigned long lo = sp ? wcstoul(sp, &sp, 10) : 0, hi = sp ? wcstoul(sp, NULL, 10) : 0;
             int own = e[0] == L'?' || (!lo && !hi);
-            r = own && r != 0 ? 1 : 0;   // a page file with its sizes set is the user's choice: no advice then
+            r = own && r != 0 ? 1 : 0;
         }
     }
     return managed = r;
@@ -2458,10 +2279,6 @@ uint32_t plat_handle_count(void) {
     return GetProcessHandleCount(GetCurrentProcess(), &n) ? (uint32_t)n : 0;
 }
 
-// plat_handle_census: the system's handle table (NtQuerySystemInformation, class 64, the extended handle information)
-// filtered by this process's id, and the object types' names from NtQueryObject's ObjectTypesInformation, whose entries
-// carry the type index the table uses (Windows 8.1 and later). The table holds every process's handles; a census took
-// 1.5-4.7 ms over 3.6 MiB of it on the development PC.
 typedef struct {
     PVOID object;
     ULONG_PTR pid, handle;
@@ -2477,9 +2294,9 @@ typedef struct {
     USHORT len, max;
     PWSTR buf;
 } HcName;
-typedef struct {   // one entry of ObjectTypesInformation; its name's characters follow it
+typedef struct {
     HcName name;
-    ULONG totals[13];   // object and handle counts, pool use, their high-water marks, invalid attributes: not read
+    ULONG totals[13];
     GENERIC_MAPPING mapping;
     ULONG valid_access;
     BOOLEAN security, maintain;
@@ -2501,12 +2318,12 @@ static void hc_type_names(char names[256][32]) {
         if (!b) break;
         buf = b;
         ULONG need = 0;
-        st = qo(NULL, 3, buf, (ULONG)cap, &need);   // ObjectTypesInformation
-        if (st != (LONG)0xC0000004L) break;          // not STATUS_INFO_LENGTH_MISMATCH: done, or failed
+        st = qo(NULL, 3, buf, (ULONG)cap, &need);
+        if (st != (LONG)0xC0000004L) break;
     }
     if (st >= 0 && buf) {
         ULONG count = *(ULONG *)buf;
-        const uint8_t *p = buf + sizeof(void *), *end = buf + cap;   // the count, then entries at pointer alignment
+        const uint8_t *p = buf + sizeof(void *), *end = buf + cap;
         for (ULONG i = 0; i < count && p + sizeof(HcType) <= end; i++) {
             const HcType *t = (const HcType *)p;
             WideCharToMultiByte(CP_UTF8, 0, t->name.buf, t->name.len / 2, names[t->index], 31, NULL, NULL);
@@ -2530,8 +2347,8 @@ int plat_handle_census(PlatHandleKind *out, int max) {
     for (int tries = 0; tries < 6; tries++) {
         if (!table && !(table = malloc(cap = 4u << 20))) return -1;
         ULONG need = 0;
-        st = qsi(64, table, (ULONG)cap, &need);   // SystemExtendedHandleInformation
-        if (st != (LONG)0xC0000004L) break;       // the table outgrew the buffer: a larger one
+        st = qsi(64, table, (ULONG)cap, &need);
+        if (st != (LONG)0xC0000004L) break;
         size_t want = need > cap ? need + (1u << 20) : cap * 2;
         void *b = realloc(table, want);
         if (!b) return -1;
@@ -2546,7 +2363,7 @@ int plat_handle_census(PlatHandleKind *out, int max) {
     int n = 0;
     for (int k = 0; k < 256; k++) {
         if (!count[k]) continue;
-        if (n == max) {   // no room: the last entry takes the rest
+        if (n == max) {
             snprintf(out[max - 1].name, sizeof out[0].name, "%s", "(more kinds)");
             out[max - 1].n += count[k];
             continue;
@@ -2558,8 +2375,6 @@ int plat_handle_census(PlatHandleKind *out, int max) {
     return n;
 }
 
-// The UCRT's malloc takes its memory from the heap _get_heap_handle names (the process heap); HeapSummary sums it. The
-// other heaps are only counted: one made with HEAP_NO_SERIALIZE has no lock to take.
 void plat_heap_info(PlatHeapInfo *h) {
     memset(h, 0, sizeof *h);
     HANDLE crt = (HANDLE)_get_heap_handle();
@@ -2570,10 +2385,8 @@ void plat_heap_info(PlatHeapInfo *h) {
     for (DWORD i = 0; i < n && i < 256; i++) h->other_heaps += hs[i] != crt;
 }
 
-// ---- child processes
-
 struct PlatChild {
-    HANDLE proc, in, out;                                  // in: our write end, out: our read end
+    HANDLE proc, in, out;
 };
 
 PlatChild *plat_child_start(const char *exe, const char *arg, uint32_t *err) {
@@ -2583,8 +2396,6 @@ PlatChild *plat_child_start(const char *exe, const char *arg, uint32_t *err) {
     swprintf(cmd, WPATH + 300, arg ? L"\"%ls\" %ls" : L"\"%ls\"", we, wa);
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
     HANDLE in_r, in_w, out_r, out_w;
-    // Pipes are created and handed out one child at a time: a child started meanwhile would inherit the other pipe
-    // ends and keep them open after their owner closed them.
     static SRWLOCK spawn = SRWLOCK_INIT;
     AcquireSRWLockExclusive(&spawn);
     if (!CreatePipe(&in_r, &in_w, &sa, 0)) return ReleaseSRWLockExclusive(&spawn), NULL;
@@ -2610,9 +2421,6 @@ PlatChild *plat_child_start(const char *exe, const char *arg, uint32_t *err) {
         return NULL;
     }
     CloseHandle(pi.hThread);
-    // Every child goes into one job that ends its processes when its last handle closes, which is when this process
-    // ends: a translator stuck on a program would otherwise outlive a game that exited or crashed before stopping it.
-    // The handle is never closed by hand. A failure leaves the child as it was before.
     static HANDLE job;
     static INIT_ONCE job_once = INIT_ONCE_STATIC_INIT;
     BOOL pending;
@@ -2653,15 +2461,11 @@ int plat_child_write(PlatChild *c, const void *data, size_t n) {
     return WriteFile(c->in, data, (DWORD)n, &put, NULL) && put == n;
 }
 
-// A child that stays alive but never answers (a translator stuck on one program) used to block the reader for good,
-// and with it the draw or dispatch waiting for that shader: after PLAT_CHILD_READ_MS without a byte the read fails
-// with -2, apart from the -1 of a broken pipe, and the caller stops the child without sending the request again
-// (gfx_shader.c svc_request). The pipe is anonymous, so readiness is polled.
 long plat_child_read(PlatChild *c, void *buf, size_t cap) {
     ULONGLONG t0 = GetTickCount64();
     for (unsigned spins = 0;; spins++) {
         DWORD avail = 0;
-        if (!PeekNamedPipe(c->out, NULL, 0, NULL, &avail, NULL)) return -1;   // broken: the child exited
+        if (!PeekNamedPipe(c->out, NULL, 0, NULL, &avail, NULL)) return -1;
         if (avail) break;
         if (GetTickCount64() - t0 > PLAT_CHILD_READ_MS) return -2;
         Sleep(spins < 50 ? 0 : 1);
@@ -2671,7 +2475,6 @@ long plat_child_read(PlatChild *c, void *buf, size_t cap) {
     return (long)got;
 }
 
-// ---- local IPC (platform.h): Discord's Rich Presence named pipe
 struct PlatIpc { HANDLE h; };
 
 PlatIpc *plat_ipc_connect(const char *name) {
@@ -2679,7 +2482,7 @@ PlatIpc *plat_ipc_connect(const char *name) {
     if (!widen(name, wname, 128)) return NULL;
     swprintf(path, 152, L"\\\\.\\pipe\\%ls", wname);
     HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-    if (h == INVALID_HANDLE_VALUE) return NULL;   // no listener, or the pipe is busy: the caller retries later
+    if (h == INVALID_HANDLE_VALUE) return NULL;
     PlatIpc *p = malloc(sizeof *p);
     if (!p) {
         CloseHandle(h);
@@ -2693,7 +2496,7 @@ int plat_ipc_read(PlatIpc *p, void *buf, size_t n, uint32_t ms) {
     uint64_t deadline = plat_now_ms() + ms;
     for (;;) {
         DWORD have = 0;
-        if (!PeekNamedPipe(p->h, NULL, 0, NULL, &have, NULL)) return -1;   // the writer closed the pipe
+        if (!PeekNamedPipe(p->h, NULL, 0, NULL, &have, NULL)) return -1;
         if (have) {
             DWORD got = 0;
             if (!ReadFile(p->h, buf, have < n ? have : (DWORD)n, &got, NULL) || !got) return -1;
@@ -2720,7 +2523,6 @@ void plat_ipc_close(PlatIpc *p) {
     free(p);
 }
 
-// ---- UDP sockets (platform.h). Winsock starts at the first call that needs it.
 #ifndef SIO_UDP_CONNRESET
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
 #endif
@@ -2758,7 +2560,6 @@ static void addr_from_sockaddr(PlatAddr *out, const SOCKADDR_STORAGE *ss) {
     }
 }
 
-// The socket address of a for a socket of family v6 (1: AF_INET6, 0: AF_INET); 0 when an IPv4 socket cannot reach it.
 static int addr_to_sockaddr(const PlatAddr *a, int v6, SOCKADDR_STORAGE *ss, int *len) {
     uint8_t ip[16];
     uint32_t scope;
@@ -2790,7 +2591,7 @@ int plat_net_resolve(const char *host, uint16_t port, PlatAddr *out) {
     if (GetAddrInfoW(whost, NULL, &hints, &res) != 0) return 0;
     for (ADDRINFOW *r = res; r; r = r->ai_next) {
         if (r->ai_addrlen > sizeof(SOCKADDR_STORAGE) || (r->ai_family != AF_INET && r->ai_family != AF_INET6)) continue;
-        if (!pick || (r->ai_family == AF_INET && pick->ai_family != AF_INET)) pick = r;   // IPv4 first
+        if (!pick || (r->ai_family == AF_INET && pick->ai_family != AF_INET)) pick = r;
     }
     int ok = pick != NULL;
     if (ok) {
@@ -2807,8 +2608,6 @@ int plat_net_resolve(const char *host, uint16_t port, PlatAddr *out) {
     return ok;
 }
 
-// A non-blocking UDP socket of family af that no child process inherits, with Windows' report of an ICMP port-unreachable
-// as a failed receive (WSAECONNRESET on an unconnected socket) switched off: a peer that is gone is not an error here.
 static SOCKET udp_socket(int af) {
     SOCKET s = WSASocketW(af, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (s == INVALID_SOCKET) return s;
@@ -2828,15 +2627,15 @@ PlatUdp *plat_udp_open(uint16_t port, int dual_stack) {
     int v6 = dual_stack;
     SOCKET s = v6 ? udp_socket(AF_INET6) : INVALID_SOCKET;
     if (s != INVALID_SOCKET) {
-        DWORD only_v6 = 0;   // Windows defaults to IPv6 only
+        DWORD only_v6 = 0;
         setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&only_v6, sizeof only_v6);
         SOCKADDR_IN6 a;
-        memset(&a, 0, sizeof a);   // in6addr_any
+        memset(&a, 0, sizeof a);
         a.sin6_family = AF_INET6;
         a.sin6_port = htons(port);
         if (bind(s, (SOCKADDR *)&a, sizeof a) != 0) closesocket(s), s = INVALID_SOCKET;
     }
-    if (s == INVALID_SOCKET) {   // IPv4 only, asked for or all the machine has
+    if (s == INVALID_SOCKET) {
         v6 = 0;
         s = udp_socket(AF_INET);
         if (s == INVALID_SOCKET) return NULL;
@@ -2873,8 +2672,6 @@ int plat_udp_send(PlatUdp *u, const PlatAddr *to, const void *p, size_t n) {
     int len;
     if (!u || n > 65507 || !addr_to_sockaddr(to, u->v6, &ss, &len)) return 0;
     if (sendto(u->s, (const char *)p, (int)n, 0, (SOCKADDR *)&ss, len) != SOCKET_ERROR) return 1;
-    // a full buffer, a missing route or an ICMP error is a lost datagram; a datagram too long or a socket that is not
-    // ours to use can never be sent
     int e = WSAGetLastError();
     return e != WSAEMSGSIZE && e != WSAENOTSOCK && e != WSAEINVAL && e != WSAEAFNOSUPPORT;
 }
@@ -2890,7 +2687,7 @@ int plat_udp_recv(PlatUdp *u, void *buf, size_t cap, PlatAddr *from, uint32_t ms
     int k = recvfrom(u->s, (char *)buf, cap > (size_t)INT_MAX ? INT_MAX : (int)cap, 0, (SOCKADDR *)&ss, &len);
     if (k == SOCKET_ERROR) {
         int e = WSAGetLastError();
-        if (e == WSAEMSGSIZE) {   // longer than buf: Windows reports it as an error but has filled buf
+        if (e == WSAEMSGSIZE) {
             k = cap > (size_t)INT_MAX ? INT_MAX : (int)cap;
         } else {
             return e == WSAEWOULDBLOCK || e == WSAEINTR || e == WSAECONNRESET || e == WSAENETRESET || e == WSAEHOSTUNREACH ||
@@ -2908,7 +2705,6 @@ void plat_udp_close(PlatUdp *u) {
     free(u);
 }
 
-// ---- TCP on the loopback address (platform.h)
 struct PlatTcp { SOCKET s; };
 
 static PlatTcp *tcp_wrap(SOCKET s) {
@@ -2921,7 +2717,7 @@ static PlatTcp *tcp_wrap(SOCKET s) {
     return t;
 }
 
-static int tcp_wait(SOCKET s, short events, uint32_t ms) {   // 1 ready, 0 none in time, -1 the socket broke
+static int tcp_wait(SOCKET s, short events, uint32_t ms) {
     WSAPOLLFD pf = {.fd = s, .events = events};
     int r = WSAPoll(&pf, 1, ms > (uint32_t)INT_MAX ? INT_MAX : (int)ms);
     if (r == SOCKET_ERROR) return WSAGetLastError() == WSAEINTR ? 0 : -1;
@@ -2938,8 +2734,6 @@ PlatTcp *plat_tcp_listen_loopback(uint16_t port, int *err) {
         if (err) *err = WSAGetLastError();
         return NULL;
     }
-    // no SO_EXCLUSIVEADDRUSE: with it a restarted game could not bind the port while the last run's connections are in
-    // TIME_WAIT (up to two minutes), and the default bind already refuses a second plain listener on the port
     u_long nonblocking = 1;
     SOCKADDR_IN a;
     memset(&a, 0, sizeof a);
@@ -2963,13 +2757,13 @@ PlatTcp *plat_tcp_accept(PlatTcp *listener, uint32_t ms, PlatAddr *peer, int *er
     if (r <= 0) return NULL;
     SOCKADDR_STORAGE ss;
     int len = (int)sizeof ss;
-    SOCKET s = accept(listener->s, (SOCKADDR *)&ss, &len);   // inherits the listener's non-blocking mode
-    if (s == INVALID_SOCKET) {   // the peer gave up between the poll and the accept: the caller asks again
+    SOCKET s = accept(listener->s, (SOCKADDR *)&ss, &len);
+    if (s == INVALID_SOCKET) {
         int e = WSAGetLastError();
-        if (err && e != WSAEWOULDBLOCK && e != WSAEINTR && e != WSAECONNRESET) *err = e;   // no buffer or socket left
+        if (err && e != WSAEWOULDBLOCK && e != WSAEINTR && e != WSAECONNRESET) *err = e;
         return NULL;
     }
-    SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0);   // no child process gets the connection
+    SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0);
     BOOL on = TRUE;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&on, sizeof on);
     if (peer) addr_from_sockaddr(peer, &ss);
@@ -2985,7 +2779,7 @@ int plat_tcp_recv(PlatTcp *c, void *buf, size_t cap, uint32_t ms) {
         int e = WSAGetLastError();
         return e == WSAEWOULDBLOCK || e == WSAEINTR ? 0 : -1;
     }
-    return k > 0 ? k : -1;   // 0 bytes: the peer closed its end
+    return k > 0 ? k : -1;
 }
 
 int plat_tcp_send(PlatTcp *c, const void *buf, size_t n, uint32_t ms) {
@@ -3001,7 +2795,7 @@ int plat_tcp_send(PlatTcp *c, const void *buf, size_t n, uint32_t ms) {
         int e = put == SOCKET_ERROR ? WSAGetLastError() : 0;
         if (e == WSAEINTR) continue;
         if (e != WSAEWOULDBLOCK) return 0;
-        uint64_t now = plat_now_ms();   // the peer's buffer is full: wait for room until the deadline
+        uint64_t now = plat_now_ms();
         if (now >= deadline || tcp_wait(c->s, POLLWRNORM, (uint32_t)(deadline - now)) < 0) return 0;
     }
     return 1;
@@ -3014,10 +2808,6 @@ void plat_tcp_close(PlatTcp *c) {
 }
 
 
-// ---- restart
-// NX2SARIA_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
-// reused the id is not waited for. Waiting keeps the new process off the old one's files (the log it moves at start,
-// the saves) until the old one is gone; no handle is inherited, so none of them stays open in the new one either.
 #define RESTART_WAIT "NX2SARIA_RESTART_WAIT"
 
 static uint64_t process_created(HANDLE h) {
@@ -3031,7 +2821,7 @@ int plat_restart(void) {
     plat_setenv(RESTART_WAIT, wait);
     STARTUPINFOW si = {.cb = sizeof si};
     PROCESS_INFORMATION pi;
-    wchar_t *cmd = _wcsdup(GetCommandLineW());   // CreateProcessW may write its command line
+    wchar_t *cmd = _wcsdup(GetCommandLineW());
     BOOL ok = cmd && CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
     free(cmd);
     plat_setenv(RESTART_WAIT, NULL);
@@ -3044,12 +2834,12 @@ int plat_restart(void) {
 int plat_restart_wait(uint32_t timeout_ms) {
     char v[48];
     if (!plat_getenv(RESTART_WAIT, v, sizeof v)) return 0;
-    plat_setenv(RESTART_WAIT, NULL);   // the processes this one starts do not wait again
+    plat_setenv(RESTART_WAIT, NULL);
     unsigned long pid = 0;
     unsigned long long created = 0;
     if (sscanf(v, "%lu.%llu", &pid, &created) != 2) return 0;
     HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!h) return 0;   // already gone
+    if (!h) return 0;
     int r = process_created(h) != created ? 0 : WaitForSingleObject(h, timeout_ms) == WAIT_OBJECT_0 ? 1 : -1;
     CloseHandle(h);
     return r;

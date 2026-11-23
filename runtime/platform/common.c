@@ -1,9 +1,5 @@
-// The parts of platform.h built on its locks rather than on the OS: recursive mutexes, one-time initialisation and
-// events, and the network address helpers. Every OS shares them.
 #include "platform.h"
 #include <string.h>
-
-// ---- recursive mutex: owner is the holder's thread id (0 when free); only the holder writes depth.
 
 void plat_rmutex_lock_at(PlatRMutex *m, void *site) {
     uint32_t me = plat_thread_id();
@@ -36,9 +32,6 @@ void plat_rmutex_unlock(PlatRMutex *m) {
     plat_mutex_unlock(&m->m);
 }
 
-// ---- once: state 0 not run, 1 running, 2 done. Waiters for a running initialiser sleep on one process-wide
-// condition variable; initialisers are rare and short.
-
 static PlatMutex once_lock = PLAT_MUTEX_INIT;
 static PlatCond once_done = PLAT_COND_INIT;
 
@@ -57,8 +50,6 @@ void plat_once(PlatOnce *o, void (*fn)(void *arg), void *arg) {
     while (__atomic_load_n(&o->state, __ATOMIC_ACQUIRE) != 2) plat_cond_wait(&once_done, &once_lock);
     plat_mutex_unlock(&once_lock);
 }
-
-// ---- events
 
 void plat_event_init(PlatEvent *e, int manual, int initially_set) {
     plat_mutex_init(&e->m);
@@ -102,9 +93,6 @@ int plat_event_wait_ns(PlatEvent *e, uint64_t ns) {
     return got;
 }
 
-// ---- network addresses: the OS-free part of platform.h's UDP sockets. Layout of PlatAddr.b: the IPv6 address at 0 (an
-// IPv4 one as ::ffff:a.b.c.d), the port big-endian at 16, the scope id little-endian at 18, zeros after.
-
 void plat_addr_set(PlatAddr *a, const uint8_t ip[16], uint16_t port, uint32_t scope) {
     memset(a, 0, sizeof *a);
     memcpy(a->b, ip, 16);
@@ -137,7 +125,7 @@ int plat_addr_str(const PlatAddr *a, char *out, size_t cap) {
     } else {
         unsigned g[8];
         for (int i = 0; i < 8; i++) g[i] = (unsigned)ip[2 * i] << 8 | ip[2 * i + 1];
-        int best = -1, best_len = 1;   // the longest run of two or more zero groups becomes "::"
+        int best = -1, best_len = 1;
         for (int i = 0, run; i < 8; i += run ? run : 1) {
             run = 0;
             while (i + run < 8 && !g[i + run]) run++;
@@ -160,7 +148,6 @@ int plat_addr_str(const PlatAddr *a, char *out, size_t cap) {
     return n;
 }
 
-// ---- what a thread keeps for itself (platform.h plat_thread_end_hook)
 static void (*end_hooks[PLAT_THREAD_END_HOOKS])(void);
 static volatile int32_t n_end_hooks;
 
