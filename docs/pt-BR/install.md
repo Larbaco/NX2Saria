@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/install.md source-hash=3a878eece169ce485cc51ff4f547b1522813d5c9 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=31761c484049a7871ae3cc9a97041a6249196ec3 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · **Português (Brasil)** · [Русский](../ru/install.md) · [简体中文](../zh-Hans/install.md)
 
@@ -75,4 +75,4 @@ O launcher faz sozinho a segunda conferência em cada atualização: no Windows 
 
 [Problemas conhecidos](known-issues.md) lista os problemas que conhecemos e o que os evita. Para qualquer outra coisa, abra uma issue em https://github.com/Larbaco/NX2Saria/issues e anexe `logs\nx2saria.log` (`logs/nx2saria.log` no Linux) da pasta do jogo.
 
-[O guia do launcher](../launcher.md) (em inglês) e [o guia do instalador](../installer.md) (em inglês) descrevem em detalhe como os dois funcionam.
+[O guia do launcher](../launcher.md) (em inglês) descreve em detalhe como ele funciona.

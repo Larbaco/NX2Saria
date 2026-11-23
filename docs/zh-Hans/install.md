@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/install.md source-hash=3a878eece169ce485cc51ff4f547b1522813d5c9 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/install.md source-hash=31761c484049a7871ae3cc9a97041a6249196ec3 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · [Русский](../ru/install.md) · **简体中文**
 
@@ -68,4 +68,4 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 
 [已知问题](known-issues.md)列出了我们已知的问题以及避免它们的方法。其他问题请在 https://github.com/Larbaco/NX2Saria/issues 提交问题，并附上游戏文件夹中的 `logs\nx2saria.log`（Linux 上为 `logs/nx2saria.log`）。
 
-[启动器指南](../launcher.md)（英文）和[安装程序指南](../installer.md)（英文）详细介绍了两者的工作方式。
+[启动器指南](../launcher.md)（英文）详细介绍了它的工作方式。

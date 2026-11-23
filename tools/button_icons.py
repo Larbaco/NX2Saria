@@ -19,7 +19,7 @@ archive instead (timg/__Combined.bntx, Nt_KeyTexL_00 and Nt_KeyTexZL_00): bntx_r
 the size unchanged. The Xbox prompts redraw L and ZL, the keyboard and mouse ones every image (PC_HUD_TEXTURES: A, B, X,
 Y, L, ZL and the stick's two). Prompts drawn as fixed images (some tutorial animations) keep the Switch icons.
 
-Needs fontTools (tools/requirements-installer.txt, tools/requirements-py314.txt).
+Needs fontTools (tools/requirements-py314.txt).
 """
 import io
 import struct

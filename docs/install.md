@@ -87,4 +87,4 @@ its size and SHA-256 match. Releases older than 0.19.0-rc.1 were uploaded by han
 at https://github.com/Larbaco/NX2Saria/issues and attach `logs\nx2saria.log` (`logs/nx2saria.log` on Linux) from the
 game folder.
 
-[The launcher guide](launcher.md) and [the installer guide](installer.md) describe how both work in detail.
+[The launcher guide](launcher.md) describes how it works in detail.

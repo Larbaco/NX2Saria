@@ -31,7 +31,7 @@ the last area is done the check only warns. docs/code/README.md ("The checks") s
 
 STRICT = False
 
-TREES = ('runtime', 'recomp', 'tools', 'launcher', 'installer', 'tests')
+TREES = ('runtime', 'recomp', 'tools', 'launcher', 'tests')
 
 C_LIKE = {'.c', '.h', '.cpp', '.hpp', '.cc', '.inc', '.cs', '.comp', '.vert', '.frag', '.glsl', '.mesh', '.task',
           '.geom', '.tesc', '.tese', '.rc'}

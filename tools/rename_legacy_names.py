@@ -5,7 +5,7 @@ cfg_env, launcher/gameini.py, tools/make_game.py setting_env, recomp/gen.py sett
 code spells the names it reads, writes and tests, so that a reader of the code sees the current name. It is
 mechanical and can be run again: on a branch made before the rename, or after a rebase that brought new code.
 
-It rewrites the files git tracks under runtime/, launcher/, installer/, tools/, recomp/ and tests/, and leaves alone:
+It rewrites the files git tracks under runtime/, launcher/, tools/, recomp/ and tests/, and leaves alone:
 - tools/vendor/ (kept byte-identical to its source) and runtime/third_party/;
 - tests/legacy_names_check.py, whose planted lines spell the older names on purpose;
 - tools/xlate/: its files make the shader translator's identity (tools/build_xlate.py identity), which keys every
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DIRS = ('runtime', 'launcher', 'installer', 'tools', 'recomp', 'tests')
+DIRS = ('runtime', 'launcher', 'tools', 'recomp', 'tests')
 SKIP_DIRS = ('tools/vendor/', 'tools/xlate/', 'runtime/third_party/')
 SELF = ('tools/rename_legacy_names.py', 'tests/legacy_names_check.py')   # this script, and its check's planted names
 

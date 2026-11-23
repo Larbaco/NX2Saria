@@ -396,9 +396,6 @@ class GameIniTest(Tmp):
         self.assertTrue((self.tmp / 'nx2navi.ini').is_dir())
 
 class PlayerIniTest(Tmp):
-    """The settings file of a player (PLAYER_INI) under the two writers outside the game: the launcher's Settings
-    (launcher/gameini.py) and the older installer's last step (installer/ini.py). Each changes the one line it is
-    for; the lines that are no settings of the game, the comment and every other byte stay."""
 
     def test_the_launchers_setting_adds_one_line(self):
         ini = self.tmp / 'nx2saria.ini'
@@ -435,31 +432,6 @@ class PlayerIniTest(Tmp):
         ini.write_bytes(b'pace_smooth = 0 ; off\r\n')   # the line is written again whole, as the game's menu writes it
         gameini.put(self.tmp, 'performance', 'pace_smooth', '1', choices=True)
         self.assertEqual(ini.read_bytes(), b'pace_smooth = 1\r\n')
-
-    def test_the_older_installer_changes_the_language_line_only(self):
-        """installer/ini.py sets the language, in the older installer's last step at every install and update: the
-        one line goes under [language] with the file's own line ends, and every other byte stays (it used to write
-        the whole file again with LF line ends, a line end after the last line and no byte order mark). A second run
-        leaves the file alone; a changed language changes that line; a byte order mark and a line that is not UTF-8
-        stay too."""
-        from installer import ini as inst_ini
-        path = self.tmp / 'nx2saria.ini'
-        path.write_bytes(PLAYER_INI)
-        inst_ini.write(self.tmp, 'en-US')
-        want = PLAYER_INI.replace(b'[language]\r\n', b'[language]\r\nlang = en-US\r\n')
-        self.assertEqual(path.read_bytes(), want)
-        self.assertEqual(want.count(b'lang = en-US'), 1)
-        stamp = path.stat().st_mtime_ns
-        inst_ini.write(self.tmp, 'en-US')
-        self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), (want, stamp))
-        inst_ini.write(self.tmp, 'de')
-        self.assertEqual(path.read_bytes(), want.replace(b'lang = en-US', b'lang = de'))
-        marked = b'\xef\xbb\xbf# caf\xe9\r\nlang = ja\r\nasync_compute = 1'
-        path.write_bytes(marked)
-        inst_ini.write(self.tmp, 'fr')
-        self.assertEqual(path.read_bytes(), marked.replace(b'lang = ja', b'lang = fr'))
-        self.assertFalse((self.tmp / 'nx2saria.ini.tmp').exists())
-
 
 class RebuildArgsTest(Tmp):
     """Rebuild the Game compiles the game's code for this processor's level (--retune); an update keeps the level its

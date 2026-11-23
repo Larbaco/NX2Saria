@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
+<!-- translation: lang=pt-BR source=README.md source-hash=4a6230d5353d680f817462a90a98992372906345 reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -114,7 +114,7 @@ O build inicia cada compilação quando a memória livre comporta, então não p
 | Jogar | [Instalar e atualizar](docs/pt-BR/install.md) · [Controles](docs/pt-BR/controls.md) · [Configurações](nx2saria.ini.example) (em inglês) · [Amiibo](docs/pt-BR/amiibo.md) · [Problemas conhecidos](docs/pt-BR/known-issues.md) |
 | Trackers | [API de tracker](docs/tracker-api.md) (em inglês) · [Ocarina Atlas](docs/ocarina-atlas.md) (em inglês) · [hyrule-tracker](docs/hyrule-tracker.md) (em inglês) |
 | Versões | [Notas de versão](docs/releases/) (em inglês) · [Changelogs](docs/changelog/) (em inglês) |
-| Compilação | [Build kit](docs/README-BuildKit.md) (em inglês) · [A partir do código-fonte](docs/building.md) (em inglês) · [Launcher](docs/launcher.md) (em inglês) · [Instalador](docs/installer.md) (em inglês) |
+| Compilação | [Build kit](docs/README-BuildKit.md) (em inglês) · [A partir do código-fonte](docs/building.md) (em inglês) · [Launcher](docs/launcher.md) (em inglês) |
 | Testes | [Desempenho](docs/performance.md) (em inglês) · [Iniciar em um mapa](docs/boot-to-map.md) (em inglês) |
 | Contribuir | [Guia de contribuição](CONTRIBUTING.md) (em inglês) · [Arquitetura](docs/architecture.md) (em inglês) · [Notas sobre o renderizador Maxwell](docs/maxwell.md) (em inglês) |
 

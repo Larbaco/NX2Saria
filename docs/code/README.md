@@ -24,7 +24,6 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | Order | Area | Page | Status |
 |---|---|---|---|
 | 1 | `runtime/dlssg/`, `runtime/audio/` | [dlssg.md](dlssg.md), [audio.md](audio.md) | extracted |
-| 2 | `installer/` | `installer.md` | not yet extracted |
 | 3 | `recomp/` | `recomp.md` | not yet extracted |
 | 4 | `runtime/cfg/` | `cfg.md` | not yet extracted |
 | 5 | `runtime/pacing/` | `pacing.md` | not yet extracted |
@@ -90,7 +89,7 @@ and `tests/code_docs_check.py` reads both:
   only function spans cites those functions of that file, as in [A page](#a-page). A heading of the same or a higher
   level ends the file's section.
 
-A path starts with one of the source folders (`runtime/`, `recomp/`, `tools/`, `launcher/`, `installer/`, `tests/`).
+A path starts with one of the source folders (`runtime/`, `recomp/`, `tools/`, `launcher/`, `tests/`).
 A function is a name with `()`: `name()`, `Class.method()` in Python, `Class::method()` in C++. A function counts as
 there when the file defines it (C and GLSL: a body, a function-like `#define`, or a declaration in a header; Python: a
 `def` or `class`, a method inside its class). Not citations, so not checked: a function span not right after a path, a
@@ -111,7 +110,7 @@ then `STRICT` in each becomes `True`. The two files hold no comments, so their n
 ### `tests/source_comments_check.py`
 
 Counts the comment lines left in the source, per area (`runtime/<folder>`, the top level of `runtime/`, `recomp`,
-`tools`, `launcher`, `installer`, `tests`), and prints the table. `--strict <area or path>...` exits 1 when a comment
+`tools`, `launcher`, `tests`), and prints the table. `--strict <area or path>...` exits 1 when a comment
 is left there: the pull request that cleans an area runs it on that area. `--list` prints each line counted, `--kept`
 each line kept and why, `--exceptions` the list below.
 

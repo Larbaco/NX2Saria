@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/install.md source-hash=3a878eece169ce485cc51ff4f547b1522813d5c9 reviewed=no -->
+<!-- translation: lang=ru source=docs/install.md source-hash=31761c484049a7871ae3cc9a97041a6249196ec3 reviewed=no -->
 <!-- languages -->
 [English](../install.md) · [Português (Brasil)](../pt-BR/install.md) · **Русский** · [简体中文](../zh-Hans/install.md)
 
@@ -96,5 +96,4 @@ gh attestation verify NX2Saria-Setup-0.19.0.exe --repo Larbaco/NX2Saria \
 остальных случаях создайте задачу (issue) на https://github.com/Larbaco/NX2Saria/issues и приложите
 `logs\nx2saria.log` (`logs/nx2saria.log` в Linux) из папки игры.
 
-[Руководство по лаунчеру](../launcher.md) (на английском) и [руководство по установщику](../installer.md) (на
-английском) подробно описывают, как они работают.
+[Руководство по лаунчеру](../launcher.md) (на английском) подробно описывает, как он работает.

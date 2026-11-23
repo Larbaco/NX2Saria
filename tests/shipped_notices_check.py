@@ -15,7 +15,7 @@ REMOVED = {
     '_dbm': ('Berkeley DB 6.0.19, Sleepycat licence: the complete source of every program that uses it must be offered',
              r'^\s*(import|from)\s+(_dbm|dbm\.ndbm|dbm|shelve)\b'),
 }
-SEARCHED = ('launcher', 'tools', 'recomp', 'tests', 'installer')
+SEARCHED = ('launcher', 'tools', 'recomp', 'tests')
 HEADINGS = {WIN: '## Shipped in the Windows launcher release', LINUX: '## Shipped in the Linux AppImage',
             BOTH: '## Shipped in both releases'}
 
