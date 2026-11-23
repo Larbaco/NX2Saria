@@ -2635,13 +2635,12 @@ class App:
         return [
             Row('enum', 'Session Reports', options=tuple(REPORT_VALUES.values()),
                 get=lambda: REPORT_VALUES.get(self.settings.get('telemetry'), 'Off'), left=flip, right=flip,
-                desc=('On: after you play, a short report of how the game ran on this PC goes to the project: '
-                      'versions, system, processor, graphics card, memory, the main graphics options, the patches '
-                      'that are on, the number of mods, play time, frame rate and the error line if there was one.',
-                      'No files, saves, account or folder names, and no id of this installation. Your IP address is '
-                      'not kept. Reports are deleted after 180 days; with no id on them, none can be picked out and '
-                      'deleted before.',
-                      'While they are off, each new version of NX2Saria asks once when it first opens.',
+                desc=('On: after you play, a short report of how the game ran goes to the project: versions, system, '
+                      'processor, graphics card, memory, main graphics options, patches that are on, number of mods, '
+                      'play time, frame rate and the error line if any.',
+                      'No files, saves, account or folder names, no id of this installation. Your IP address is not '
+                      'kept. Reports are deleted after 180 days.',
+                      'While they are off, each new version asks once when it first opens.',
                       'The server no longer takes reports from this version.' if closed else '')),
             Row('value', 'See What Is Sent', '', 'arrow', on=lambda: self.open_sent('reports'),
                 desc=('The exact text of a report: the one of your last session when it waits to be sent, '

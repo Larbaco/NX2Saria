@@ -582,6 +582,20 @@ class WindowTest(Base):
                 self.assertLessEqual(max(b[2] for b in boxes), self.app.X(app.DESC[0] + app.DESC[1]), where)
                 self.assertEqual(boxes, sorted(boxes, key=lambda b: b[1]), where)              # top to bottom
 
+    def test_the_reports_screen_s_texts_are_whole_inside_their_panel(self):
+        app, c = self.app_module, self.app.canvas
+        for state, closed in (('', ''), ('on', ''), ('off', self.app.reporter.version)):
+            self.ctx.settings.update(telemetry=state, telemetry_closed=closed)
+            self.app.show('reports')
+            for focus in self.app.focusables():
+                self.app.focus = focus
+                self.app.render()
+                self.root.update()
+                boxes = [c.bbox(i) for i in c.find_withtag('desc') if c.type(i) == 'text']
+                where = (state, bool(closed), self.app.rows[focus].label)
+                self.assertGreaterEqual(min(b[1] for b in boxes), self.app.X(112), where)
+                self.assertLessEqual(max(b[3] for b in boxes), self.app.X(app.H - 30), where)
+
     def test_the_countdown_shows_the_seconds_left(self):
         self.app.start_reports()
         self.app.question_deadline = time.monotonic() + 12.5
