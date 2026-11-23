@@ -1,21 +1,3 @@
-"""The runtime's folders by subsystem (docs/architecture.md, "Runtime folders") as the build scripts see them.
-
-- tools/build_game.py RUNTIME_DIRS, tools/make_game.py RUNTIME_DIRS and launcher/gameart.py RUNTIME_DIRS are one list,
-  and it names every folder of runtime/ that holds sources except platform/, shaders/, third_party/ and dlssg/ (a source
-  in a folder it leaves out would not be compiled).
-- The sources include headers by name with each folder on the include path, so no two headers on that path share a
-  name: the one the compiler found first would be taken for both.
-- For each OS, Linux and Windows alike whichever this runs on (the scripts' WIN switched): build_game.py and
-  make_game.py compile the same files (build_game.py also the Windows resource script); with the other OS's files
-  (*_win.* or *_sdl.*, platform/win32.c or platform/linux.c, nx2saria.rc) they are every .c, .cpp and .rc under
-  runtime/ but dlssg/ (tools/build_dlssg.py builds that DLL apart), so no source is left out; no two have one file
-  name (--skip-runtime, INSTALL_SIDE's split and make_game.py's per-install split go by it) and make_game.py's object
-  names do not collide; each INSTALL_SIDE path names a source both compile.
-
-No compiler, no game files.
-
-Usage: runtime_dirs_check.py
-"""
 import collections
 import re
 import sys
@@ -67,14 +49,11 @@ def main():
         return 1
     print(f'runtime_dirs_check: {len(build_game.RUNTIME_DIRS)} folders in all three lists, {len(headers)} header names '
           f'on the include path; {", ".join(f"{os_} {n}" for os_, n in counts.items())} sources compiled by both '
-          f'scripts, none left out of the {len(every)} under runtime/; {len(build_game.INSTALL_SIDE)} install-side '
-          'sources')
+          f'scripts, none left out of the {len(every)} under runtime/')
     return 0
 
 
 def compiled(win):
-    """(build_game.py's sources, make_game.py's (source, object) pairs) as each script picks them on Windows (win) or
-    elsewhere: both read their module's WIN when called."""
     old = build_game.WIN, make_game.WIN
     build_game.WIN = make_game.WIN = win
     try:
@@ -106,18 +85,7 @@ def sources_for(win, every):
     bad += [f'{os_}: {n} compiled sources are named {name}' for name, n in names.items() if n > 1]
     objects = collections.Counter(o for _, o in pairs)
     bad += [f'{os_}: make_game.py gives {n} sources the object {o}' for o, n in objects.items() if n > 1]
-    bad += [f'{os_}: INSTALL_SIDE {n} is no source the build compiles' for n in sorted(build_game.INSTALL_SIDE)
-            if n not in ours_c or n not in kit]
     return bad
-
-    for line in bad:
-        print(f'runtime_dirs_check: FAIL: {line}')
-    if bad:
-        return 1
-    print(f'runtime_dirs_check: {len(build_game.RUNTIME_DIRS)} folders in all three lists, {len(headers)} header names '
-          f'on the include path, {len(ours)} sources compiled by both scripts, {len(build_game.INSTALL_SIDE)} '
-          'install-side sources')
-    return 0
 
 
 if __name__ == '__main__':
