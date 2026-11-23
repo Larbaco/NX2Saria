@@ -1,0 +1,2 @@
+import { contextBridge, ipcRenderer } from 'electron';
+contextBridge.exposeInMainWorld('launcher', { discoverInstallation: () => ipcRenderer.invoke('discover-installation'), selectInstallation: () => ipcRenderer.invoke('select-installation'), play: () => ipcRenderer.invoke('play'), onPlayEnded: (callback: (result: unknown) => void) => ipcRenderer.on('play-ended', (_event, result) => callback(result)) });
