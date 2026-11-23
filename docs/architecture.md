@@ -59,7 +59,10 @@ from other projects, with its license, is listed in [THIRD_PARTY_NOTICES.md](../
   full is written after everything queued before it. A fatal error, the crash report and the end of the process write
   the queue out first (`rt_log_sync`). `NX2SARIA_LOG_ASYNC=0` writes each line where it is logged. Every line has
   the account's folders written short first (`runtime/log_privacy.c`, [log-privacy.md](log-privacy.md)).
-- OS calls the host makes go through `runtime/platform/` (`platform.h`, `win32.c`).
+- OS calls the host makes go through `runtime/platform/` (`platform.h`, `win32.c`, `linux.c`). The notes of that
+  code, file by file (threads, fibers and the reserved core, the locks, virtual memory and the write watch, guest
+  memory as dma-bufs on Linux, the crash hooks, the ends of the process, files, the load counters and memory limits,
+  child processes, sockets, the restart): [docs/code/platform.md](code/platform.md).
 
 #### Runtime folders
 

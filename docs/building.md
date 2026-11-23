@@ -411,7 +411,7 @@ copies are only the slower path. In Kokiri Forest on 0.7.1 (RTX 4090, driver 615
 frame, which the wait for the write-backs under shadow storage (`vk_sync_exec_wait`) has since addressed.
 
 On Linux the pools are imports after all where the system allows dma-bufs of guest memory (`runtime/platform/linux.c`,
-"Guest memory as a memfd's"; `runtime/vk/vk_memory.c`, "dma-buf imports"). The watched reservations are then shared
+[Guest memory as a memfd's](code/platform.md#guest-memory-as-a-memfds); `runtime/vk/vk_memory.c`, "dma-buf imports"). The watched reservations are then shared
 mappings of one memfd, `/dev/udmabuf` makes dma-bufs of page ranges of it, and the device imports those
 (`VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`). A dma-buf pins its pages once and is not tied to the
 process's page tables, so the write watch and the freezes leave the GPU's mapping alone, and nothing is copied. RADV

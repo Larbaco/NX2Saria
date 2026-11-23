@@ -1,16 +1,8 @@
-// Readers of the text Linux gives for memory and I/O pressure (platform/linux.c plat_pressure): the lines of
-// /proc/pressure/memory and /proc/pressure/io, and the figures of /proc/meminfo. Pure functions over the text, so
-// tests/log_stall_check.c runs them on made-up files. No allocation, no locale: a decimal separator other than "." in
-// the process's locale does not change what they read (strtod would).
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-// Reads the line that starts with kind ("some" or "full") out of a pressure file's text:
-//   some avg10=0.00 avg60=0.00 avg300=0.00 total=0
-// avg10 is a percent with two decimals, total microseconds. 1 when the line is there and whole, else 0 and the outputs
-// are left alone.
 static inline int psi_line(const char *text, const char *kind, double *avg10, uint64_t *total_us) {
     size_t k = strlen(kind);
     for (const char *line = text; line && *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : NULL) {
@@ -36,7 +28,6 @@ static inline int psi_line(const char *text, const char *kind, double *avg10, ui
     return 0;
 }
 
-// One figure of /proc/meminfo in kB ("MemAvailable:   20835692 kB"): key is the name with its colon. 1 when found.
 static inline int meminfo_kb(const char *text, const char *key, uint64_t *kb) {
     size_t k = strlen(key);
     for (const char *line = text; line && *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : NULL) {
