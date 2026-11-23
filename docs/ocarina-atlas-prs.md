@@ -46,6 +46,9 @@ works with the heap where it is).
 
 ## 2. Atlas (antonioalvromero/Ocarina-Atlas): NX2Saria as a source
 
+<!-- code-docs: other repository -->
+Paths in this section are in the Ocarina Atlas repository.
+
 **Patch:** [ocarina-atlas-pr.patch](ocarina-atlas-pr.patch), against Atlas `main` at `005c711` (applies cleanly).
 Six files, about 110 lines added.
 

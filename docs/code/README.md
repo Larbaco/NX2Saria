@@ -23,7 +23,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 
 | Order | Area | Page | Status |
 |---|---|---|---|
-| 1 | `runtime/dlssg/`, `runtime/audio/` | `dlssg.md`, `audio.md` | not yet extracted |
+| 1 | `runtime/dlssg/`, `runtime/audio/` | [dlssg.md](dlssg.md), [audio.md](audio.md) | extracted |
 | 2 | `installer/` | `installer.md` | not yet extracted |
 | 3 | `recomp/` | `recomp.md` | not yet extracted |
 | 4 | `runtime/cfg/` | `cfg.md` | not yet extracted |
@@ -95,6 +95,13 @@ A function is a name with `()`: `name()`, `Class.method()` in Python, `Class::me
 there when the file defines it (C and GLSL: a body, a function-like `#define`, or a declaration in a header; Python: a
 `def` or `class`, a method inside its class). Not citations, so not checked: a function span not right after a path, a
 path with `*`, `<...>` or `{...}` in it (a pattern), and anything inside a fenced block.
+
+- **Another repository.** A section whose paths are in another repository says so with the line
+  `<!-- code-docs: other repository -->` (on a line of its own, best right under the heading, with a sentence that
+  says which repository for the reader). The check skips the citations from that line to the next heading of the same
+  or a higher level; above the page's first heading, to the end of the page.
+- **Generated files.** A cited path that does not exist and that git ignores (`git check-ignore`), such as a header the
+  build writes, is listed as generated and not checked.
 
 ## The checks
 
@@ -168,11 +175,16 @@ text in strings and URLs left alone, a run-time `__doc__` kept and the rest of i
 ### `tests/code_docs_check.py`
 
 Reads every `docs/code/*.md` (with `--all-docs`, `docs/*.md` too) and lists each cited path that does not exist and
-each cited function its file does not define. `--strict` exits 1 when there is one.
+each cited function its file does not define. `--strict` exits 1 when there is one. It needs git, for the generated files.
 
 #### `citations()`
 
-The citations of a page as (line, path, function or none), in the two forms of [Citing the code](#citing-the-code).
+The citations of a page as (line, path, function or none), in the two forms of [Citing the code](#citing-the-code),
+without those of a section marked as another repository's.
+
+#### `ignored()`
+
+Whether git ignores a path (`git check-ignore -q`): a cited file that does not exist is then a generated one.
 
 #### `defined_in_c()`
 
@@ -187,6 +199,7 @@ Looks for a `def` or `class` of that name anywhere in the module; `Class.method`
 #### `self_test()`
 
 A planted page with good citations in both forms and one of each fault: a missing file, a function only in a comment,
-a function cited after a folder, a missing method, a function heading whose function is gone; and citations the check
-must not read (a function span after other words, a pattern, a fenced block, a function heading outside a file's
-section).
+a function cited after a folder, a missing method, a function heading whose function is gone, a missing file after a
+section of another repository; citations the check must not read (a function span after other words, a pattern, a
+fenced block, a function heading outside a file's section, the section of another repository); and a file git
+ignores, reported as generated.

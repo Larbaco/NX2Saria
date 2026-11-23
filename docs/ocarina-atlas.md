@@ -36,6 +36,9 @@ game version 1.1.1, main build `e0f3ccfaf50065ae`.
 
 ## What Atlas is
 
+<!-- code-docs: other repository -->
+Paths in this section are in the Ocarina Atlas repository.
+
 - **Language and parts.** A TypeScript web app (React 19, TanStack Start, Vite; Node 22/24) whose server side
   (`src/lib/lichii-server.ts`) reads the game and serves the map on `http://<host>:3000`, also to a tablet on the LAN.
   A Windows launcher in C# WinForms (`launcher/OcarinaAtlas.cs`, .NET Framework 4) and an experimental Linux one

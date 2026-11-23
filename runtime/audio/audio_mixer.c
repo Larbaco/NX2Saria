@@ -1,26 +1,5 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors, Copyright (c) Ryujinx Team and Contributors (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// The mixing stage (voice decode and resampling, splitters, mixes, effects, sinks) and the IAudioDevice service, with
-// SDL3 audio output.
-//
-// Per 5 ms frame the render thread (audren.c, renderer lock held) decodes every started voice (PCM8/16/24/32, float,
-// DSP-ADPCM) along the sample path the voice clock consumes, resamples it linearly, runs the voice biquads, scales it
-// into its destination mix (a volume the game changed is reached in equal steps across the frame's samples,
-// accumulate_ramp), folds the submixes, runs the mix effects and writes the device sink's mix (stereo, or 5.1
-// with NX2SARIA_AUDIO_CHANNELS, output_channels) into a single-producer single-consumer ring. The SDL audio thread drains
-// that ring without taking any lock: an empty ring
-// plays silence and never blocks the render thread or the guest. NX2SARIA_AUDIO=none (or NX2SARIA_AUDIO_OFF) mixes without a
-// device; NX2SARIA_AUDIO_DEVICE picks the playback device (resolve_audio_device); NX2SARIA_AUDIO_PREFILL_MS (0..500, default 20, 60 on Linux) is the queued audio the output waits for after start or underrun.
-// The device's clock paces the render thread, as the audio hardware paces the Switch's DSP (audio_mixer_pace_ns): a
-// frame is rendered when the ring holds less than the output target, max(prefill, two device periods), so the queue and
-// the delay from the game to the speakers stay there and the host and device clocks cannot drift apart.
-// When the render thread is held up the ring runs out and the device plays silence; the frames that silence stands for
-// are then rendered and dropped (audio_mixer_owed, NX2SARIA_AUDIO_CATCHUP), so the sound keeps its place against the
-// picture.
-// Without a device, while the renderer is
-// stopped and while the device takes nothing (a stall), the render thread keeps real time on its own timer; what piled
-// up meanwhile is skipped on the SDL thread once the device resumes (more than QUEUE_SLACK_MS above the target plus the
-// device's request), which trims the ring after a device stall.
 #include <math.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -38,71 +17,65 @@
 #include "ipc.h"
 
 #define MAX_FRAME 1024
-#define RING_FRAMES 16384            // output frames, about 340 ms at 48 kHz
-#define OUT_MAX 6                    // output channels at most: 5.1
-#define QUEUE_SLACK_MS 40            // queued audio above the target plus the device's request that ring_pull skips
-#define STALL_MS 50                  // the device took nothing this long (at least 4 periods): the timer paces
+#define RING_FRAMES 16384
+#define OUT_MAX 6
+#define QUEUE_SLACK_MS 40
+#define STALL_MS 50
 #define SPLITTER_UNUSED 0xffffffffu
-#define dm_guest_write_prepare(p, n) ((void)(p), (void)(n))   // guest memory is plain host memory on Windows
+#define dm_guest_write_prepare(p, n) ((void)(p), (void)(n))
 
 typedef struct {
     float vol[24]; int32_t dest; uint8_t used; AudrenBiquadFloat biquads[2]; float state[2][2];
-    // volume ramps (audio_mixer_render): the volumes it had in the render pass before, the mix it went to and how many
-    // of that mix's buffers; prev_ok 0 when that pass did not use it
     float prev[24]; int32_t prev_dest, prev_buffers; uint8_t prev_ok;
 } SplitDest;
 typedef struct { int32_t ndest; int32_t *ids; } SplitInfo;
-// volume ramps: a mix in the render pass before: its volume, the splitter it went to, its buffer count, whether in use
 typedef struct { float volume; uint32_t splitter; int32_t buffers; uint8_t ok; } MixPrev;
 typedef struct {
     Reverb3d *reverb; Reverb3dParam param; int pending;
     float *delay, detector[6], compression[6], peak[6], minimum[6]; int position[6], delay_max, channels;
     AudioEffectDsp *dsp; unsigned type; uint8_t wire[160];
     float biquad_z[6][2], numerator[3], denominator[2]; uint8_t biquad_channels;
-    uint8_t bad;   // the game's parameters for it cannot be used: passed through (audio_mixer_update_effects)
+    uint8_t bad;
 } EffectState;
 typedef struct Mixer {
     float *buf; int nbuf, frame;
-    int *offset;                                   // first mix buffer of each mix id
+    int *offset;
     SplitInfo *split; int nsplit; SplitDest *dest; int ndest;
     SDL_AudioStream *stream; int device_ok, rate;
-    SDL_AudioDeviceID device;                      // the explicitly chosen device, 0 while the system default is open
-    char device_name[128];                         // its name, for the log when it goes away
-    uint64_t watch_ns;                             // render thread: when device_check last looked
-    int channels;                                  // output channels, 2 or 6 (output_channels)
+    SDL_AudioDeviceID device;
+    char device_name[128];
+    uint64_t watch_ns;
+    int channels;
     float ring[RING_FRAMES * OUT_MAX];
     _Atomic uint64_t wr, rd, underruns, overruns, missing_frames, callback_frames, callback_nonzero, skipped_frames;
-    _Atomic int playing; int ready;                // ready: the callback's own state
-    int gap;                                       // the callback's own: an underrun's silence has not ended yet
-    _Atomic uint64_t silent_frames;                // silence played in such gaps so far (audio_mixer_owed)
-    uint64_t made_up; unsigned owed_epoch;         // render thread: how much of it is caught up or forgotten; the
-                                                   // stop_epoch that count belongs to
-    int target, period;                            // output target and device period, frames (output_open)
+    _Atomic int playing; int ready;
+    int gap;
+    _Atomic uint64_t silent_frames;
+    uint64_t made_up; unsigned owed_epoch;
+    int target, period;
     uint64_t stall_ns;
-    _Atomic uint64_t pulled_ns;                    // kern_now_ns of the device's last request, 0 before the first
-    _Atomic uint64_t pull_gap_max;                 // NX2SARIA_AUDIO_STATS: longest gap between two requests (ns)
+    _Atomic uint64_t pulled_ns;
+    _Atomic uint64_t pull_gap_max;
     _Atomic uint64_t flush_until; _Atomic unsigned stop_epoch; unsigned callback_epoch;
     EffectState *effect; int *effect_order; unsigned effect_reported;
     uint64_t *sink_address; uint32_t *sink_size, *sink_offset, *sink_old, *sink_written;
-    unsigned reported;                             // one-time reports
+    unsigned reported;
     float voice_scratch[6][MAX_FRAME], filter_scratch[MAX_FRAME], output_scratch[MAX_FRAME * OUT_MAX];
     double level_sum, level_peak; uint64_t level_count, level_frames; int first_sound_logged;
-    double input_sum[6];                           // NX2SARIA_TRACE=audio: the device sink's inputs, squared and summed
-    int prefill;                                   // render blocks
-    int ramp;                                      // NX2SARIA_AUDIO_RAMP: volumes ramp across a frame (accumulate_ramp)
-    int snap;                                      // the next pass has no pass before it to ramp from (open, start)
-    MixPrev *mix_prev;                             // each mix in the pass before
-    uint64_t ramps, ramp_passes;                   // ramps made; render passes with at least one (audio_mixer_ramp_stats)
-    uint64_t trace_pass, trace_seen[1024];         // NX2SARIA_TRACE=audio: render passes; the pass each voice was last mixed in
-    uint64_t trace_buf[1024];                      // and the wave buffer address it read in that pass
-    uint64_t trace_pair[1024];                     // the last shared-buffer pair logged for each voice (other voice, address)
-    unsigned trace_shared;                         // "voices share a buffer" lines written (capped)
+    double input_sum[6];
+    int prefill;
+    int ramp;
+    int snap;
+    MixPrev *mix_prev;
+    uint64_t ramps, ramp_passes;
+    uint64_t trace_pass, trace_seen[1024];
+    uint64_t trace_buf[1024];
+    uint64_t trace_pair[1024];
+    unsigned trace_shared;
 } Mixer;
 
 static _Atomic float device_volume = 1.0f;
 
-// NX2SARIA_VOLUME: the player's volume in percent (0..100) on top of the game's own; a live setting (the
-// menu), parsed again when cfg_version changes. Render thread only.
 static float host_volume(void) {
     static float v = 1.0f;
     static unsigned seen = ~0u;
@@ -119,17 +92,10 @@ static void report_once(Mixer *m, unsigned bit, const char *msg, int value) {
     m->reported |= 1u << bit;
     rt_log("audio: %s (%d)", msg, value);
 }
-// A guest range ipc.c ipc_guest takes (it ends the process on any other): not 0, not wrapping, below the guest address
-// limit. It does not prove the memory is mapped.
 static int guest_range_ok(uint64_t addr, uint64_t size) {
     return addr && addr + size >= addr && addr + size <= RT_ADDRESS_LIMIT;
 }
 
-// ---- output: SDL3 audio stream fed from the ring
-// How much audio the output waits for before it starts, and again after an underrun: NX2SARIA_AUDIO_PREFILL_MS rounded up
-// to whole 5 ms render blocks. Returns -1 for a value outside 0..500 ms.
-// The Linux default is higher: at 20 ms PipeWire's queue (max(prefill, two 1024-sample periods)) underran
-// thousands of times within minutes in busy scenes, and 60 ms removed the underruns.
 #ifdef __linux__
 #define PREFILL_DEFAULT_MS 60
 #else
@@ -143,11 +109,6 @@ static int prefill_blocks_for(const char *e) {
     return (int)ceil(ms / 5.0);
 }
 
-// ---- playback device choice (NX2SARIA_AUDIO_DEVICE)
-// SDL's playback device ids sorted by name (ties by id), the order --list-audio-devices prints them and the numbering of
-// the index form. SDL's own order is not stable: it differed between two enumerations in one process, so an index into it
-// would pick another device from one start to the next. Free the result with SDL_free. SDL audio must be initialised.
-// *count is 0 when SDL reports none.
 static int device_order(const void *x, const void *y) {
     SDL_AudioDeviceID a = *(const SDL_AudioDeviceID *)x, b = *(const SDL_AudioDeviceID *)y;
     const char *na = SDL_GetAudioDeviceName(a), *nb = SDL_GetAudioDeviceName(b);
@@ -161,7 +122,6 @@ static SDL_AudioDeviceID *playback_devices(int *count) {
     return ids;
 }
 
-// One line describing device `id` ("name, 2 ch, 48000 Hz"), without a leading index.
 static void describe_device(char *buf, size_t n, SDL_AudioDeviceID id) {
     SDL_AudioSpec spec = {0};
     const char *name = SDL_GetAudioDeviceName(id);
@@ -181,11 +141,6 @@ static void log_playback_devices(void) {
     SDL_free(ids);
 }
 
-// NX2SARIA_AUDIO_DEVICE `want` to the SDL device to open, with `how` saying which rule decided. default (or empty) gives
-// SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, which SDL keeps pointed at the system default when Windows changes it. An all-digit
-// value is a 1-based index into playback_devices; any other text is a case-insensitive substring of SDL_GetAudioDeviceName,
-// and the first device in list order that contains it wins. A value that matches nothing also gives the default device
-// (the game is never silent because of this setting); `say` then logs the playback devices. SDL audio must be initialised.
 static SDL_AudioDeviceID resolve_audio_device(const char *want, char *how, size_t how_n, int say) {
     if (!want || !*want || !SDL_strcasecmp(want, "default")) {
         snprintf(how, how_n, "NX2SARIA_AUDIO_DEVICE=default: the system default playback device");
@@ -194,7 +149,7 @@ static SDL_AudioDeviceID resolve_audio_device(const char *want, char *how, size_
     int count, matches = 0;
     SDL_AudioDeviceID *ids = playback_devices(&count), pick = 0;
     if (want[strspn(want, "0123456789")] == 0) {
-        long index = strtol(want, NULL, 10);   // more digits than a long holds: out of range either way
+        long index = strtol(want, NULL, 10);
         if (index >= 1 && index <= count) {
             pick = ids[index - 1];
             snprintf(how, how_n, "NX2SARIA_AUDIO_DEVICE=%s: index %ld in the device list", want, index);
@@ -223,8 +178,6 @@ static SDL_AudioDeviceID resolve_audio_device(const char *want, char *how, size_
     return pick ? pick : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
 }
 
-// --list-audio-devices (main.c): each playback device with its index, name, channels and frequency, the one the system
-// default points at, then what NX2SARIA_AUDIO_DEVICE would pick. Needs no game files. Returns the exit code.
 int list_audio_devices(void) {
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         fprintf(stderr, "SDL audio init failed: %s\n", SDL_GetError());
@@ -251,12 +204,7 @@ int list_audio_devices(void) {
     return 0;
 }
 
-// NX2SARIA_AUDIO_CHANNELS: the output channels, decided at the first call and again when the setting changes
-// (audio_channels_live). stereo gives 2; 5.1 gives 6 (FL FR C LFE RL RR,
-// the device sink's order and SDL's); auto gives 6 when the chosen playback device (NX2SARIA_AUDIO_DEVICE; the system default unless set) has at least six channels (a 5.1
-// or 7.1 speaker setup in Windows; SDL places 5.1 on 7.1) and 2 otherwise. IAudioDevice reports the same count to the
-// game (GetActiveChannelCount), which picks its sink layout from it. NX2SARIA_AUDIO=none: 2, without touching SDL.
-static _Atomic int decided;   // 0: output_channels decides at its next call
+static _Atomic int decided;
 static int output_channels(void) {
     int n = atomic_load(&decided);
     if (n) return n;
@@ -269,7 +217,6 @@ static int output_channels(void) {
         char how[256];
         n = 2;
         if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-            // The choice output_open makes again (only that one logs the playback devices when nothing matches).
             SDL_AudioDeviceID id = resolve_audio_device(cfg_value("NX2SARIA_AUDIO_DEVICE"), how, sizeof how, 0);
             if (SDL_GetAudioDeviceFormat(id, &dev, NULL) && dev.channels >= 6) n = 6;
         }
@@ -280,13 +227,12 @@ static int output_channels(void) {
     return atomic_compare_exchange_strong(&decided, &expected, n) ? n : expected;
 }
 
-// Fills `frames` output frames from the ring (zeros for what is missing). Lock-free; runs on SDL's audio thread.
 static void ring_pull(Mixer *m, float *out, uint32_t frames) {
     const int oc = m->channels;
     atomic_fetch_add(&m->callback_frames, frames);
     unsigned epoch = atomic_load_explicit(&m->stop_epoch, memory_order_acquire);
     uint64_t rd = atomic_load(&m->rd), wr = atomic_load_explicit(&m->wr, memory_order_acquire), have = wr - rd;
-    if (epoch != m->callback_epoch) {   // the renderer stopped: drop what was queued before the stop
+    if (epoch != m->callback_epoch) {
         uint64_t until = atomic_load_explicit(&m->flush_until, memory_order_acquire);
         if (until > rd) {
             rd = until < wr ? until : wr;
@@ -306,14 +252,10 @@ static void ring_pull(Mixer *m, float *out, uint32_t frames) {
     }
     uint64_t prefill = (uint64_t)m->frame * (uint64_t)m->prefill;
     if (prefill < frames) prefill = frames;
-    // no more than the target the renderer fills the ring to (output_open caps it at half the ring): a longer
-    // prefill (audio_prefill_ms of 180 and up) was never reached, and the output stayed silent for good
     if (prefill > RING_FRAMES / 2) prefill = RING_FRAMES / 2;
     if (!m->ready) {
         if (have < prefill) {
             memset(out, 0, (size_t)frames * oc * sizeof(float));
-            // an underrun's silence goes on until the prefill is queued again (audio_mixer_owed); the wait for the
-            // first prefill after a start is not such a gap
             if (m->gap) atomic_fetch_add_explicit(&m->silent_frames, frames, memory_order_release);
             return;
         }
@@ -322,7 +264,7 @@ static void ring_pull(Mixer *m, float *out, uint32_t frames) {
     }
     uint64_t keep = (prefill > (uint64_t)m->target ? prefill : (uint64_t)m->target) + frames;
     uint64_t slack = (uint64_t)m->rate * QUEUE_SLACK_MS / 1000;
-    if (have > keep + slack) {   // piled up while the device stalled: skip the oldest, keep target + request
+    if (have > keep + slack) {
         atomic_fetch_add(&m->skipped_frames, have - keep);
         rd = wr - keep;
         have = keep;
@@ -357,13 +299,13 @@ static void SDLCALL sdl_pull(void *user, SDL_AudioStream *stream, int additional
     const uint32_t frame_bytes = (uint32_t)m->channels * sizeof(float);
     uint64_t now = kern_now_ns(), prev = atomic_exchange_explicit(&m->pulled_ns, now, memory_order_acq_rel);
     if (prev && now > prev && now - prev > atomic_load_explicit(&m->pull_gap_max, memory_order_relaxed))
-        atomic_store_explicit(&m->pull_gap_max, now - prev, memory_order_relaxed);   // a lost race only loses a sample
+        atomic_store_explicit(&m->pull_gap_max, now - prev, memory_order_relaxed);
     while (additional > 0) {
         uint32_t frames = (uint32_t)additional / frame_bytes;
         if (!frames) break;
         if (frames > 1024) frames = 1024;
         ring_pull(m, tmp, frames);
-        menu_sound_mix(tmp, frames, (int)m->channels, (int)m->rate);   // the settings menu's sounds (menu_sound.c)
+        menu_sound_mix(tmp, frames, (int)m->channels, (int)m->rate);
         if (!SDL_PutAudioStreamData(stream, tmp, (int)(frames * frame_bytes))) break;
         additional -= (int)(frames * frame_bytes);
     }
@@ -371,7 +313,6 @@ static void SDLCALL sdl_pull(void *user, SDL_AudioStream *stream, int additional
 
 static void output_timing(Mixer *m, int rate);
 
-// Opens an SDL stream on `dev` and starts it. Returns 0 with the reason in `err` otherwise (no stream is left behind).
 static int stream_open(Mixer *m, int rate, SDL_AudioDeviceID dev, char *err, size_t err_n) {
     SDL_AudioSpec spec = {SDL_AUDIO_F32, m->channels, rate};
     m->stream = SDL_OpenAudioDeviceStream(dev, &spec, sdl_pull, m);
@@ -403,7 +344,7 @@ static void output_open(Mixer *m, int rate) {
     const char *chosen = dev == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK ? NULL : SDL_GetAudioDeviceName(dev);
     if (chosen) snprintf(m->device_name, sizeof m->device_name, "%s", chosen);
     int ok = stream_open(m, rate, dev, err, sizeof err);
-    if (!ok && chosen) {   // the chosen device would not open: the default device, so the game still has sound
+    if (!ok && chosen) {
         rt_log("audio: %s: '%s' %s; using the system default, playback devices:", how, m->device_name, err);
         log_playback_devices();
         dev = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
@@ -421,7 +362,6 @@ static void output_open(Mixer *m, int rate) {
     output_timing(m, rate);
 }
 
-// After stream_open: the device's period, the output target that follows from it, and the stall limit. Logs the device.
 static void output_timing(Mixer *m, int rate) {
     SDL_AudioSpec dev = {0};
     int period = 0;
@@ -437,10 +377,6 @@ static void output_timing(Mixer *m, int rate) {
            dev.channels, m->prefill * 5, period, m->target * 1000.0 / rate);
 }
 
-// Render thread (audio_mixer_render): the output takes another channel count after NX2SARIA_AUDIO_CHANNELS changed
-// (audio_channels_live). The stream is made again with the new count on the device it was on: destroying it waits
-// for the SDL callback, the only other reader of the ring and of m->channels, and what was queued in the old layout
-// is dropped.
 static void channels_switch(Mixer *m, int channels) {
     if (m->stream) SDL_DestroyAudioStream(m->stream);
     m->stream = NULL;
@@ -448,10 +384,10 @@ static void channels_switch(Mixer *m, int channels) {
     m->channels = channels;
     m->ready = 0;
     m->gap = 0;
-    m->reported &= ~(1u << 6);   // the device sink's line again, with the new output
+    m->reported &= ~(1u << 6);
     atomic_store_explicit(&m->pulled_ns, 0, memory_order_release);
     rt_log("audio: the output is now %s", channels == 6 ? "5.1" : "stereo");
-    if (!m->device_ok) return;   // mixing without a device
+    if (!m->device_ok) return;
     char err[256];
     if (stream_open(m, m->rate, m->device ? m->device : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, err, sizeof err)) {
         output_timing(m, m->rate);
@@ -461,12 +397,6 @@ static void channels_switch(Mixer *m, int channels) {
     }
 }
 
-// Render thread, from audio_mixer_pace_ns while the device takes nothing. An explicitly chosen device (NX2SARIA_AUDIO_DEVICE)
-// can disappear (a virtual sink removed, a USB headset unplugged); SDL keeps only the system default device alive across
-// that, so the stream of a chosen one just stops being pulled, and nothing in this file polls SDL's event queue for the
-// removal. This looks once a second whether SDL still knows the device and, if not, moves the output to the system
-// default; if that fails too, the mixer goes on without a device, as with NX2SARIA_AUDIO=none. Destroying the stream waits
-// for the SDL callback (sdl_pull), which takes no lock the render thread holds.
 static void device_check(Mixer *m, uint64_t now) {
     if (now - m->watch_ns < 1000000000ull) return;
     m->watch_ns = now;
@@ -499,20 +429,9 @@ int64_t audio_mixer_pace_ns(AudioRenderer *r, uint64_t now) {
     uint64_t have = atomic_load(&m->wr) - atomic_load_explicit(&m->rd, memory_order_acquire);
     if (have < (uint64_t)m->target) return 0;
     int64_t ns = (int64_t)((have - (uint64_t)m->target + 1) * 1000000000ull / (uint64_t)m->rate);
-    return ns < 500000 ? 500000 : ns;   // until the device has taken it below the target
+    return ns < 500000 ? 500000 : ns;
 }
 
-// Catch-up after a stall (NX2SARIA_AUDIO_CATCHUP, audren.c render_thread), for the frames the device paces. While the
-// render thread is held up the device goes on taking periods: the ring runs out and ring_pull plays silence, first for
-// the rest of that request (the underrun) and then until the prefill is queued again. The device's clock went on by
-// that silence and the game's sound did not, and audio_mixer_pace_ns only fills the ring to its target again, so
-// everything after the gap would be heard that much later than the picture it belongs to, and every further gap would
-// add to it. This says whether a whole render frame of such silence is still owed and takes it off the debt; the
-// caller renders that frame with `drop` set (audio_mixer_render), which moves the game's sound on and queues nothing,
-// so the ring is filled to the same target afterwards. The debt is counted in the device's own samples, not in host
-// time: the two clocks cannot drift into it, and a gap of less than a frame waits for the next one. Whatever was owed
-// when the renderer stopped is forgotten, and so is a debt of more than AUDIO_CATCHUP_MAX_MS, with -1 returned: after
-// that long the sound goes on from now.
 int audio_mixer_owed(AudioRenderer *r) {
     Mixer *m = r->mixer;
     if (!m || !m->device_ok) return 0;
@@ -544,11 +463,10 @@ int audio_mixer_out_stats(AudioRenderer *r, AudioOutStats *o) {
     return 1;
 }
 
-// Render thread only.
 static void output_push(Mixer *m, const float *out, int frames) {
     const int oc = m->channels;
     uint64_t wr = atomic_load(&m->wr), rd = atomic_load_explicit(&m->rd, memory_order_acquire);
-    if (m->device_ok && wr + (uint64_t)frames - rd > RING_FRAMES) {   // device stalled: drop this frame
+    if (m->device_ok && wr + (uint64_t)frames - rd > RING_FRAMES) {
         atomic_fetch_add(&m->overruns, 1);
         return;
     }
@@ -557,12 +475,9 @@ static void output_push(Mixer *m, const float *out, int frames) {
         memcpy(&m->ring[oc * k], &out[oc * i], (size_t)oc * sizeof(float));
     }
     atomic_store_explicit(&m->wr, wr + (uint64_t)frames, memory_order_release);
-    if (!m->device_ok) atomic_store(&m->rd, wr + (uint64_t)frames);   // no device: the ring only keeps the latest frames
+    if (!m->device_ok) atomic_store(&m->rd, wr + (uint64_t)frames);
 }
 
-// NX2SARIA_AUDIO_DUMP=<path>: the sink mix before the clamp as raw interleaved float32 stereo, and every 5 s one log line with
-// how many frames were rendered less than 1 ms after the one before (a burst refill). File writes on the render thread:
-// for diagnosis only.
 static void sink_dump(const float *raw, int frames) {
     static FILE *f;
     static int opened;
@@ -588,7 +503,6 @@ static void sink_dump(const float *raw, int frames) {
     }
 }
 
-// Level meter (NX2SARIA_TRACE=audio): one line per 5 s of output, and the first nonzero frame.
 static void level_note(AudioRenderer *r, Mixer *m, const float *out, int frames) {
     if (!(rt_trace & RT_TRACE_AUDIO)) return;
     int sound = 0;
@@ -672,7 +586,7 @@ void audio_mixer_set_running(AudioRenderer *r, int running) {
         atomic_store_explicit(&m->flush_until, atomic_load_explicit(&m->wr, memory_order_acquire), memory_order_release);
         atomic_fetch_add_explicit(&m->stop_epoch, 1, memory_order_release);
     } else {
-        m->snap = 1;   // what was mixed before the stop is not the sample before the next pass's first
+        m->snap = 1;
     }
     atomic_store_explicit(&m->playing, running, memory_order_release);
 }
@@ -680,7 +594,7 @@ void audio_mixer_set_running(AudioRenderer *r, int running) {
 void audio_mixer_close(AudioRenderer *r) {
     Mixer *m = r->mixer;
     if (!m) return;
-    if (m->stream) {   // destroying the stream closes the device and waits for the callback to finish
+    if (m->stream) {
         SDL_DestroyAudioStream(m->stream);
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
     }
@@ -706,24 +620,9 @@ void audio_mixer_close(AudioRenderer *r) {
     r->mixer = NULL;
 }
 
-/* ---------- routing input: splitters and mixes ---------- */
 #define SNDH 0x48444e53u
 #define SNDI 0x49444e53u
 #define SNDD 0x44444e53u
-// The splitter section of an update: the SNDH header with the record counts, one SNDI record per splitter the update
-// changes with its destination ids and 12 reserved bytes (measured, REV11), then one SNDD record per destination it
-// changes (0x70, 0x90 or 0xa8 bytes by revision); the section is padded to 16 bytes, and the game leaves the padding as
-// it is (measured). One walk serves both passes of an update, so both read the same bytes. With `apply` 0
-// (audio_mixer_routing_check: before anything of the update is applied, without the lock) it checks the framing only
-// and returns AUDREN_R_INVALID_UPDATE on a fault, which refuses the update. With `apply` 1 (audio_mixer_update_routing,
-// lock held) it stores the records: a record that names a splitter or destination the renderer does not have is left
-// out, a destination id in a splitter's list that the renderer does not have is stored as -1, which both splitter loops
-// of audio_mixer_render skip, and a destination filter with a coefficient that is not a finite number is off (audio_bad
-// each). Offsets are 64-bit, so a huge id count cannot wrap a bounds test.
-// A framing fault (SPL_FAULT): with `apply` 0 the update is refused (AUDIO_REFUSE). With `apply` 1 it can only come
-// from the game rewriting its input during its own RequestUpdate, between the two walks; the update is taken by then,
-// so the walk stops there, the records before it stay applied, the mix section is applied after it, and the log says
-// the rest of the splitter section is left out (audio_mixer_update_routing ignores the result).
 #define SPL_FAULT(kind, fmt, ...)                                                                                      \
     (apply ? (audio_bad(r, (kind), fmt "; the rest of the splitter section is left out", ##__VA_ARGS__),             \
               AUDREN_R_INVALID_UPDATE)                                                                                 \
@@ -808,7 +707,7 @@ static uint32_t splitters_walk(AudioRenderer *r, uint32_t revision, const uint8_
             AudrenBiquadFloat b = {0};
             if (rev >= 15) {
                 memcpy(&b, e + 0x6c + f * sizeof b, sizeof b);
-            } else if (rev >= 12) {   // Q14 filters
+            } else if (rev >= 12) {
                 AudrenBiquad q;
                 memcpy(&q, e + 0x6c + f * sizeof q, sizeof q);
                 b.enable = q.enable;
@@ -820,13 +719,13 @@ static uint32_t splitters_walk(AudioRenderer *r, uint32_t revision, const uint8_
                 audio_bad(r, AB_DEST_FILTER, "splitter destination %u's filter %u has a coefficient that is not a "
                           "finite number (%g %g %g / %g %g): that filter is off", id, f, b.numerator[0],
                           b.numerator[1], b.numerator[2], b.denominator[0], b.denominator[1]);
-                b.enable = 0;   // its state is cleared below, as for a filter the game turned off
+                b.enable = 0;
             }
             if (!b.enable || !d->biquads[f].enable || !d->used) memset(d->state[f], 0, sizeof d->state[f]);
             d->biquads[f] = b;
         }
     }
-    if (at <= n && n - at < 16) at = n;   // the padding to 16 bytes, which the game does not clear (measured)
+    if (at <= n && n - at < 16) at = n;
     if (at != n)
         return SPL_FAULT(AB_SPL_SIZE,
                          "the splitter section is %u bytes and its records end at %#llx (infos %u, destinations %u)",
@@ -839,7 +738,6 @@ uint32_t audio_mixer_routing_check(AudioRenderer *r, uint32_t revision, const ui
     uint32_t refused = splitters_walk(r, revision, splitters, splitter_bytes, 0);
     if (refused) return refused;
     if (mix_bytes == (uint32_t)mix_count * sizeof(AudrenMixIn)) return 0;
-    /* MixInParameterDirtyOnly: 0x20-byte header {u32 magic 0xCAFEBABE, u32 count, pad} followed by the dirty mixes */
     if (mix_bytes >= 0x20 && (mix_bytes - 0x20) % sizeof(AudrenMixIn) == 0) {
         uint32_t magic, count;
         memcpy(&magic, mixes, 4);
@@ -852,17 +750,10 @@ uint32_t audio_mixer_routing_check(AudioRenderer *r, uint32_t revision, const ui
     return AUDIO_REFUSE(r, AB_MIX_SIZE, "the mix section is %u bytes for %d mixes of %#x bytes", mix_bytes, mix_count,
                         (unsigned)sizeof(AudrenMixIn));
 }
-// The mixes' buffers as audio_mixer_render lays them out: one after another, for the mixes in use, from buffer 0. A
-// negative count of a mix in use would start the mixes after it before buffer 0, and more buffers than the renderer
-// has would run past them, so such an update is refused before anything of it is applied; the render's layout check is
-// then an invariant. The update's records are applied as audio_mixer_update_routing applies them (a changed-mix record
-// with an id the renderer does not have is left out). This check and audio_mixer_update_routing each read the mix
-// section from guest memory, so the check holds for the apply only because the game does not rewrite its input during
-// its own RequestUpdate (its sending thread waits in the IPC call).
 uint32_t audio_mixer_mix_layout_check(AudioRenderer *r, const uint8_t *mixes, uint32_t mix_bytes, int mix_count) {
     int32_t buffers[256];
     uint8_t used[256];
-    if (mix_count > 256) mix_count = 256;   // audren.c renderer_new keeps submix_count below 256
+    if (mix_count > 256) mix_count = 256;
     for (int i = 0; i < mix_count; i++) buffers[i] = r->mixes[i].buffer_count, used[i] = r->mixes[i].in_use;
     const int full = mix_bytes == (uint32_t)mix_count * sizeof(AudrenMixIn);
     const uint32_t records =
@@ -894,8 +785,7 @@ void audio_mixer_update_routing(AudioRenderer *r, const uint8_t *splitters, uint
         memcpy(r->mixes, mixes, mix_bytes);
         return;
     }
-    if (mix_bytes < 0x20) return;   // refused by audio_mixer_routing_check
-    /* the changed mixes only: audio_mixer_routing_check has checked the header against the section's size */
+    if (mix_bytes < 0x20) return;
     const uint32_t n = (mix_bytes - 0x20) / sizeof(AudrenMixIn);
     for (uint32_t i = 0; i < n; i++) {
         AudrenMixIn x;
@@ -909,7 +799,6 @@ void audio_mixer_update_routing(AudioRenderer *r, const uint8_t *splitters, uint
     }
 }
 
-// A delay, reverb or compressor block audio_effect_invalid refused, with its values: one line per kind.
 static void effect_bad(AudioRenderer *r, int id, const AudrenEffectIn *e, const char *why) {
     if (e->type == 3) {
         AudrenDelayParam p;
@@ -937,9 +826,6 @@ static void effect_bad(AudioRenderer *r, int id, const AudrenEffectIn *e, const 
     }
 }
 
-/* Effect parameters arrive once per IPC update, while the DSP may process multiple frames. An enabled effect whose
-   parameters cannot be used is marked bad (audio_bad logs it): audio_mixer_render passes its sound through, with no
-   DSP, delay line or reverb state made from those values, until an update brings usable ones. */
 void audio_mixer_update_effects(AudioRenderer *r) {
     Mixer *m = r->mixer;
     for (int i=0;i<r->param.effect_count;i++) {
@@ -966,7 +852,6 @@ void audio_mixer_update_effects(AudioRenderer *r) {
             if(revision>=15){AudrenBiquadEffectV2 p;memcpy(&p,e->specific,sizeof p);s->biquad_channels=p.channels;status=p.status;memcpy(s->numerator,p.numerator,sizeof p.numerator);memcpy(s->denominator,p.denominator,sizeof p.denominator);}
             else {AudrenBiquadEffectV1 p;memcpy(&p,e->specific,sizeof p);s->biquad_channels=p.channels;status=p.status;for(int k=0;k<3;k++)s->numerator[k]=p.numerator[k]/16384.f;for(int k=0;k<2;k++)s->denominator[k]=p.denominator[k]/16384.f;}
             if(status==0 || (status==1 && revision<6))memset(s->biquad_z,0,sizeof s->biquad_z);
-            // an enabled one with a channel count outside 1-6 is skipped by mix_simple_effect, which logs it
         }
         s->type=e->type;memcpy(s->wire,e->specific,sizeof s->wire);
         if(e->type!=5 || e->is_new) { audio_reverb_free(s->reverb); s->reverb=NULL; s->pending=1; }
@@ -977,10 +862,9 @@ void audio_mixer_update_effects(AudioRenderer *r) {
                 memset(s->detector,0,sizeof s->detector);memset(s->position,0,sizeof s->position);
                 for(int c=0;c<6;c++)s->compression[c]=s->minimum[c]=1;
                 memset(s->peak,0,sizeof s->peak);
-                // channels outside 1-6: no delay line, and mix_limiter skips the effect and logs it
                 if(e->enabled && p.channels>=1 && p.channels<=6) {
                     if(p.delay_max<1 || p.delay_max>192000) {
-                        s->bad=1;   // checked again at the next update: without a delay line this block runs each time
+                        s->bad=1;
                         audio_bad(r,AB_LIMITER_SIZE,"limiter effect %d on mix %d has a longest delay of %d "
                                   "samples, not 1 to 192000: its sound passes through unchanged",i,e->mix_id,
                                   p.delay_max);
@@ -997,8 +881,6 @@ void audio_mixer_update_effects(AudioRenderer *r) {
         if(s->reverb && p.sample_rate!=s->param.sample_rate) { audio_reverb_free(s->reverb); s->reverb=NULL; }
         if(memcmp(&p,&s->param,72) || p.status<2) s->pending=1;
         s->param=p;
-        // the render creates or updates the reverb from these values (mix_effects); one with another channel count is
-        // skipped there
         if(e->enabled && (p.channels==1 || p.channels==2 || p.channels==4 || p.channels==6)) {
             const char *why=audio_reverb_invalid(&p);
             if(why) {
@@ -1012,10 +894,8 @@ void audio_mixer_update_effects(AudioRenderer *r) {
     }
 }
 
-/* ---------- voice decoding along the voice clock's sample path ---------- */
 typedef struct { ServerVoice *v; unsigned index; uint64_t offset; int32_t loops; uint8_t valid[4]; int ended; int16_t h1, h2; int32_t abuf; uint64_t aat; } Walk;
 static int fmt_bytes(int f) { return f == FMT_PCM8 ? 1 : f == FMT_PCM16 ? 2 : f==FMT_PCM24?3:f == FMT_PCM32 || f == FMT_PCMF32 ? 4 : 0; }
-/* DSP-ADPCM: 8-byte frames of a predictor/scale byte and 14 4-bit samples; the history runs across samples. */
 static int16_t adpcm_next(Walk *w, const AudrenWaveBuffer *b, const int16_t *coef, uint64_t i) {
     const uint8_t *d = (const uint8_t *)(uintptr_t)b->address;
     uint64_t frame = i / 14, nib = i % 14;
@@ -1033,7 +913,7 @@ static float sample_at(Walk *w, int ch) {
     if (f == FMT_ADPCM) {
         if (cc != 1 || !v->in.extra_address || v->in.extra_size < 32) return 0;
         const int16_t *coef = (const int16_t *)(uintptr_t)v->in.extra_address;
-        if (w->abuf != (int32_t)w->index || w->aat > i + 1) {   /* (re)start this buffer: from its context, else from the frame boundary with carried history */
+        if (w->abuf != (int32_t)w->index || w->aat > i + 1) {
             w->abuf = (int32_t)w->index;
             if (b->context_address && b->context_size >= 6) { const int16_t *c = (const int16_t *)(uintptr_t)b->context_address; w->h1 = c[1]; w->h2 = c[2]; w->aat = (uint64_t)b->start; }
             else w->aat = (uint64_t)b->start - (uint64_t)b->start % 14;
@@ -1054,7 +934,7 @@ static float sample_at(Walk *w, int ch) {
     default: { float s; memcpy(&s, p, 4); return s; }
     }
 }
-static void walk_skip_empty(Walk *w) {   /* the same as skip_empty in audio_renderer.c: no samples, played on arrival */
+static void walk_skip_empty(Walk *w) {
     while (!w->ended && w->valid[w->index] && audio_buffer_empty(&w->v->buffers[w->index])) {
         const AudrenWaveBuffer *b = &w->v->buffers[w->index];
         if (b->loop && b->loop_count < 0) break;
@@ -1062,7 +942,7 @@ static void walk_skip_empty(Walk *w) {   /* the same as skip_empty in audio_rend
         if (b->end_of_stream) w->ended = 1;
     }
 }
-static void walk_step(Walk *w) {   /* the same transitions as advance_voice in audio_renderer.c */
+static void walk_step(Walk *w) {
     if (w->ended || !w->valid[w->index]) { w->ended = 1; return; }
     const AudrenWaveBuffer *b = &w->v->buffers[w->index];
     uint64_t length = (uint64_t)(b->end - b->start);
@@ -1072,17 +952,10 @@ static void walk_step(Walk *w) {   /* the same transitions as advance_voice in a
     if (b->end_of_stream) w->ended = 1;
     walk_skip_empty(w);
 }
-/* Decodes `frames` output samples per channel into out[c][k]; the renderer advances the voice afterwards by the same amount. */
-// Source samples per output sample. The guest's sample rate and pitch are not checked: an infinite or huge step
-// would keep the per-sample loops below (audio_voice_consumed, voice_render) running for good under the renderer's
-// lock, so it is held to 64 source samples per output sample, far above any pitch the game asks for.
 static double voice_step(const AudioRenderer *r, const ServerVoice *v) {
     double step = v->in.sample_rate * (v->in.pitch > 0 ? v->in.pitch : 1.0) / r->param.sample_rate;
-    return step >= 0 && step <= 64 ? step : step > 64 ? 64 : 0;   // NaN: no progress
+    return step >= 0 && step <= 64 ? step : step > 64 ? 64 : 0;
 }
-/* Source samples the voice consumes over `frames` output samples, counted with the exact accumulation voice_render steps by
-   (float rounding makes `fraction + seconds * rate * pitch` differ from it by one sample on some frames, a seam click);
-   leaves the fractional position in v->fraction. */
 uint64_t audio_voice_consumed(const AudioRenderer *r, ServerVoice *v, int frames) {
     const double step = voice_step(r, v);
     double frac = v->fraction;
@@ -1109,19 +982,11 @@ static void voice_render(AudioRenderer *r, ServerVoice *v, float out[6][MAX_FRAM
     v->adpcm.history[0] = w.h1; v->adpcm.history[1] = w.h2; v->adpcm.buffer = w.abuf; v->adpcm.at = w.aat;
 }
 
-/* ---------- mixing ---------- */
 static float *mixbuf(Mixer *m, int i) { return m->buf + (size_t)i * (size_t)m->frame; }
 static void accumulate(Mixer *m, int buffer, const float *src, float vol, int frames) {
     if (vol == 0 || buffer < 0 || buffer >= m->nbuf) return;
     float *d = mixbuf(m, buffer); for (int k = 0; k < frames; k++) d[k] += src[k] * vol;
 }
-// Volume ramps (NX2SARIA_AUDIO_RAMP, default 1). The game sets volumes once per audio update, and a volume applied to a
-// whole frame as one constant makes the level jump at the frame's first sample whenever the game moves it (a fade, a
-// pan, a sound going past the camera): a step in the waveform, heard as a click. The console's renderer goes from the
-// volume of the frame before to the new one across the frame's samples, and so does this: `from` is the gain the same
-// source went into this buffer with in the render pass before, sample k gets from + k (to - from) / frames, and the
-// next pass, which starts at `to`, continues the line. Equal gains take accumulate's constant path, and so does a gain
-// that is not a finite number (NaN also marks "no gain in the pass before").
 static void accumulate_ramp(Mixer *m, int buffer, const float *src, float from, float to, int frames) {
     if (from == to || !isfinite(from) || !isfinite(to)) { accumulate(m, buffer, src, to, frames); return; }
     if (buffer < 0 || buffer >= m->nbuf) return;
@@ -1130,8 +995,6 @@ static void accumulate_ramp(Mixer *m, int buffer, const float *src, float from, 
     for (int k = 0; k < frames; k++) { d[k] += src[k] * gain; gain += step; }
     m->ramps++;
 }
-// A splitter destination ramps when the pass before used it and sent it to the same mix: one that is new or was moved
-// starts at its new volumes.
 static int dest_ramps(const SplitDest *d) { return d->prev_ok && d->prev_dest == d->dest; }
 void audio_mixer_ramp_stats(const AudioRenderer *r, uint64_t *passes, uint64_t *ramps) {
     const Mixer *m = r->mixer;
@@ -1148,11 +1011,6 @@ static int mix_depth(AudioRenderer *r, int id) {
     return d;
 }
 
-/* Guest custom effects exchange int32 samples in two rings. Each ring has CPU and DSP
-   0x40-byte headers followed by samples; only the DSP header's owned cursor is advanced. */
-// The render-pass effects below skip an effect whose dimensions, guest ring or mix buffer indices the game set out of
-// range (nothing of it is read or written in that pass) and log it once per kind through audio_bad; every index is
-// checked before the first write.
 static void mix_aux(AudioRenderer *r, int mix, int id, const AudrenEffectIn *e) {
     Mixer *m=r->mixer; AudrenAuxParam p; memcpy(&p,e->specific,sizeof p);
     if(!p.send_info || !p.return_info || !p.capacity || !p.channels) return;
@@ -1212,11 +1070,10 @@ static void mix_limiter(AudioRenderer *r, int mix, int id) {
                       "it is skipped",id,mix,p.input[c],p.output[c],r->mixes[mix].buffer_count);
             return;
         }
-    // NaN-safe: an attack or release that is not a number would turn the mix, and every mix it feeds, into NaN
     int pass=!e->enabled;
     if(e->enabled && (!s->delay || !(p.delay_min>=1 && p.delay_min<=p.delay_max) || !(p.attack>=0 && p.attack<=1) ||
                       !(p.release>=0 && p.release<=1))) {
-        if(!s->bad)   // bad: audio_mixer_update_effects logged the longest delay that left it without a delay line
+        if(!s->bad)
             audio_bad(r,AB_LIMITER_PARAMS,"limiter effect %d on mix %d: delay %d of %d samples, attack %g, release "
                       "%g (a delay of 1 to the longest, times of 0 to 1): its sound passes through unchanged",id,mix,
                       p.delay_min,p.delay_max,p.attack,p.release);
@@ -1245,8 +1102,6 @@ static void prepare_ring_write(uint8_t *base,uint32_t size,uint32_t at,uint64_t 
     uint32_t first=(uint32_t)bytes;if(first>size-at)first=size-at;
     dm_guest_write_prepare(base+at,first);if(bytes>first)dm_guest_write_prepare(base,(size_t)bytes-first);
 }
-/* SDK SampleCounter::Add advances the producer counter itself, not the
-   producer-consumer difference or the ring cursor. Saturate on diff overflow. */
 static void effect_counter_add(uint32_t cpu,uint32_t *dsp,uint32_t count) {
     uint32_t previous=*dsp-cpu,next=*dsp+count;
     *dsp=next-cpu<previous?cpu-1:next;
@@ -1310,7 +1165,6 @@ static void mix_simple_effect(AudioRenderer *r,int mix,int id) {
     }
     unsigned channels;if(e->type==6)channels=s->biquad_channels;else {uint16_t n;memcpy(&n,e->specific+14,2);channels=n;}
     if(channels<1 || channels>6){
-        // bad: a delay, reverb or compressor with such a count was logged at its update, by its parameters' kind
         if(e->enabled && !s->bad)
             audio_bad(r,AB_DSP_CHANNELS,"%s effect %d on mix %d has %u channels, not 1 to 6: it is skipped",
                       names[e->type],id,mix,channels);
@@ -1323,11 +1177,10 @@ static void mix_simple_effect(AudioRenderer *r,int mix,int id) {
         if(e->specific[idx]>=r->mixes[mix].buffer_count || e->specific[6+idx]>=r->mixes[mix].buffer_count) {
             audio_bad(r,AB_DSP_INDEX,"%s effect %d on mix %d reads buffer %u and writes %u of the mix's %d: it is "
                       "skipped",names[e->type],id,mix,e->specific[idx],e->specific[6+idx],r->mixes[mix].buffer_count);
-            return;   // nothing written yet: the loop only takes pointers
+            return;
         }
         in[c]=mixbuf(m,m->offset[mix]+e->specific[idx]);out[c]=mixbuf(m,m->offset[mix]+e->specific[6+idx]);
     }
-    // bad: parameters audio_mixer_update_effects could not use; it logged them and made no DSP
     if(!e->enabled || s->bad){
         for(unsigned c=0;c<channels;c++)if(in[c]!=out[c])memmove(out[c],in[c],(size_t)m->frame*sizeof(float));
         return;
@@ -1338,8 +1191,6 @@ static void mix_simple_effect(AudioRenderer *r,int mix,int id) {
             s->biquad_z[c][0]=s->numerator[1]*x+s->denominator[0]*y+s->biquad_z[c][1];s->biquad_z[c][1]=s->numerator[2]*x+s->denominator[1]*y;out[c][k]=y;
         }
     } else {
-        // an invariant: audio_mixer_update_effects makes the DSP of every enabled effect with channels whose
-        // parameters pass, and marks the others bad
         if(!s->dsp)rt_fatal("audio DSP effect state missing");
         audio_effect_process(s->dsp,in,out,m->frame);
     }
@@ -1367,19 +1218,17 @@ static void mix_effects(AudioRenderer *r, int mix) {
         }
         int skip=0;
         for(int c=0;c<p->channels && !skip;c++) {
-            int idx=c; /* REV11+ channel resources use L,R,C,LFE,BL,BR; the reference DSP uses legacy order. */
+            int idx=c;
             if(p->channels==6 && (r->revision>>24)>='0'+11) { static const int map[6]={0,1,4,5,2,3}; idx=map[c]; }
             if(p->input[idx]>=r->mixes[mix].buffer_count || p->output[idx]>=r->mixes[mix].buffer_count) {
                 audio_bad(r,AB_R3D_INDEX,"reverb3d effect %d on mix %d reads buffer %u and writes %u of the mix's %d: "
                           "it is skipped",id,mix,p->input[idx],p->output[idx],r->mixes[mix].buffer_count);
-                skip=1;   // nothing written yet: the loop only takes pointers
+                skip=1;
                 continue;
             }
             input[c]=mixbuf(m,m->offset[mix]+p->input[idx]); output[c]=mixbuf(m,m->offset[mix]+p->output[idx]);
         }
         if(skip) continue;
-        // bad: values audio_reverb_invalid refused (audio_mixer_update_effects logged them); the reverb is neither made
-        // nor updated from them
         if(!e->enabled || s->bad) {
             for(int c=0;c<p->channels;c++)if(input[c]!=output[c])memmove(output[c],input[c],m->frame*sizeof(float));
             continue;
@@ -1410,7 +1259,6 @@ _Static_assert(__builtin_offsetof(CircularSinkParam,input)==28,"circular sink wi
 static void mix_circular_sink(AudioRenderer *r,int id) {
     Mixer *m=r->mixer;CircularSinkParam p;memcpy(&p,r->sinks[id].name,sizeof p);
     if(!p.address || !p.size)return;
-    // a sink the game set out of range is skipped in this pass: nothing of it is written, its position stays
     if(p.channels<1 || p.channels>6 || p.format!=FMT_PCM16 || p.size>256*1024*1024 || p.size%2) {
         audio_bad(r,AB_SINK_PARAMS,"circular sink %d has %u channels, format %u and %u bytes (1 to 6, 16-bit, an even "
                   "size up to 256 MiB): it is skipped",id,p.channels,p.format,p.size);
@@ -1449,12 +1297,10 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
     memset(m->buf, 0, (size_t)m->nbuf * (size_t)frames * sizeof(float));
     int at = 0;
     for (int i = 0; i < mc; i++) { m->offset[i] = at; if (r->mixes[i].in_use) at += r->mixes[i].buffer_count; }
-    // an invariant: audio_mixer_mix_layout_check refuses an update that would leave the mixes so
     if (at > m->nbuf) { rt_log("audio: mixes use %d buffers, renderer has %d", at, m->nbuf); rt_fatal("audio mix buffer layout"); }
 
     float (*vs)[MAX_FRAME]=m->voice_scratch,*filtered=m->filter_scratch;
     m->trace_pass++;
-    // A pass ramps from the pass before it. The first one after the mixer opened or the renderer started has none.
     const int ramp = m->ramp && !m->snap;
     const uint64_t ramps_before = m->ramps;
     m->snap = 0;
@@ -1462,7 +1308,7 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
         ServerVoice *v = &r->voices[i];
         if (!v->in.in_use || v->state != SV_STARTED || !v->in.sample_rate || !v->valid[v->index]) continue;
         int cc = (int)v->in.channel_count; if (cc < 1 || cc > 6) { report_once(m, 2, "voice channel count unsupported", cc); continue; }
-        {   /* each sample format a started voice uses, logged once: one the mixer cannot decode plays as silence */
+        {
             static volatile uint32_t seen;
             unsigned f = v->in.sample_format & 31;
             if (!(__atomic_fetch_or(&seen, 1u << f, __ATOMIC_RELAXED) & (1u << f)))
@@ -1470,9 +1316,9 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
                        v->in.sample_format == FMT_ADPCM || fmt_bytes(v->in.sample_format) ? "decoded" : "NOT decoded: silent",
                        cc, (unsigned)v->in.sample_rate);
         }
-        if ((rt_trace & RT_TRACE_AUDIO) && i < 1024) {   // mixed now and not in the last pass: what it plays and where to
+        if ((rt_trace & RT_TRACE_AUDIO) && i < 1024) {
             const AudrenWaveBuffer *wb = &v->buffers[v->index & 3];
-            if (m->trace_seen[i] + 1 != m->trace_pass)   // pass: 5 ms each at 48 kHz (frame samples per pass)
+            if (m->trace_seen[i] + 1 != m->trace_pass)
                 rt_log("audio: voice %d plays at pass %llu: format %u, %d channel(s) at %u Hz, buffer %u at %#llx+%#llx "
                        "(%s%s), volume %.3f, pitch %.3f, mix %d, splitter %u, priority %d", i,
                        (unsigned long long)m->trace_pass, (unsigned)v->in.sample_format, cc, (unsigned)v->in.sample_rate,
@@ -1501,21 +1347,16 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
                 }
             }
         }
-        // The voice ramps when the pass before mixed it, with as many channels and into the same mix or splitter. One
-        // that has just started (voice_reset in audren.c; or stopped, paused or out of wave buffers in that pass) and
-        // one the game moved to another destination start at their new volumes.
         const int vramp = ramp && v->ramp_pass == r->elapsed_frames && v->ramp_channels == (uint32_t)cc &&
                           v->ramp_mix == v->in.mix_id && v->ramp_splitter == v->in.splitter_id;
         int routed = 0;
         if (v->in.splitter_id != SPLITTER_UNUSED && v->in.splitter_id < (uint32_t)m->nsplit) {
             const SplitInfo *s = &m->split[v->in.splitter_id];
             for (int c = 0; c < cc; c++) for (int k = c; k < s->ndest; k += cc) {
-                if (s->ids[k] < 0) continue;   // an id the renderer does not have (splitters_walk)
+                if (s->ids[k] < 0) continue;
                 SplitDest *d = &m->dest[s->ids[k]];
                 if (!d->used || !mix_valid(r, d->dest)) continue;
                 const float *source=splitter_filter(d,vs[c],filtered,frames);
-                // from the destination's volumes and the voice's volume of the pass before, whose product is the gain
-                // that pass mixed with (the destination's are kept once per pass: other voices may feed it too)
                 const int from_prev = vramp && dest_ramps(d);
                 for (int b = 0; b < r->mixes[d->dest].buffer_count && b < 24; b++) {
                     const float to = d->vol[b] * v->in.volume;
@@ -1527,7 +1368,7 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
             const int nb = r->mixes[v->in.mix_id].buffer_count < 24 ? r->mixes[v->in.mix_id].buffer_count : 24;
             for (int c = 0; c < cc; c++) {
                 int32_t id = v->in.channel_ids[c];
-                if (id < 0 || id >= r->param.voice_count * 6) {   // nothing goes in: no gain for the next pass to ramp from
+                if (id < 0 || id >= r->param.voice_count * 6) {
                     for (int b = 0; b < nb; b++) v->ramp_gain[c][b] = NAN;
                     continue;
                 }
@@ -1541,17 +1382,15 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
             v->ramp_buffers = nb;
             routed = 1;
         }
-        v->ramp_pass = routed ? r->elapsed_frames + 1 : 0;   // audren.c render_thread counts the pass after this render
+        v->ramp_pass = routed ? r->elapsed_frames + 1 : 0;
         v->ramp_channels = (uint32_t)cc;
         v->ramp_mix = v->in.mix_id;
         v->ramp_splitter = v->in.splitter_id;
         v->ramp_volume = v->in.volume;
     }
     if (rt_trace & RT_TRACE_AUDIO) {
-        // Voices mixed in the last pass and not in this one, and why; then voices that read the same wave buffer memory
-        // in this pass (one stream heard twice, offset by how far apart the two read).
         for (int i = 0; i < r->param.voice_count && i < 1024; i++) {
-            if (!m->trace_seen[i] || m->trace_seen[i] + 1 != m->trace_pass) continue;   // 0: never mixed
+            if (!m->trace_seen[i] || m->trace_seen[i] + 1 != m->trace_pass) continue;
             const ServerVoice *v = &r->voices[i];
             rt_log("audio: voice %d stops at pass %llu: %s; %llu samples played, %u buffers consumed", i,
                    (unsigned long long)m->trace_pass,
@@ -1563,7 +1402,7 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
             if (m->trace_seen[i] != m->trace_pass || !m->trace_buf[i]) continue;
             for (int j = i + 1; j < r->param.voice_count && j < 1024 && m->trace_shared < 400; j++)
                 if (m->trace_seen[j] == m->trace_pass && m->trace_buf[j] == m->trace_buf[i] &&
-                    m->trace_pair[i] != ((uint64_t)j << 48 ^ m->trace_buf[i])) {   // once per pair and buffer
+                    m->trace_pair[i] != ((uint64_t)j << 48 ^ m->trace_buf[i])) {
                     m->trace_pair[i] = (uint64_t)j << 48 ^ m->trace_buf[i];
                     m->trace_shared++;
                     rt_log("audio: voices %d and %d both play the wave buffer at %#llx in pass %llu (offsets %llu and %llu)",
@@ -1572,7 +1411,6 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
                 }
         }
     }
-    /* submixes: deepest first, so every mix is complete before it is folded into its destination */
     int order[256], n = 0, depth[256];
     for (int i = 1; i < mc && n < 256; i++) if (r->mixes[i].in_use) { depth[n] = mix_depth(r, i); order[n++] = i; }
     for (int a = 0; a < n; a++) for (int b = a + 1; b < n; b++) if (depth[b] > depth[a]) { int t = order[a]; order[a] = order[b]; order[b] = t; t = depth[a]; depth[a] = depth[b]; depth[b] = t; }
@@ -1581,12 +1419,10 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
         const AudrenMixIn *x = &r->mixes[order[a]]; int src = m->offset[order[a]];
         if (x->dest_splitter_id != SPLITTER_UNUSED && x->dest_splitter_id < (uint32_t)m->nsplit) {
             const SplitInfo *s = &m->split[x->dest_splitter_id];
-            // a mix into a splitter ramps like a voice into one: from the destination's volumes and the mix's volume
-            // of the pass before, when that pass had the mix with as many buffers on the same splitter
             const MixPrev *xp = &m->mix_prev[order[a]];
             const int xramp = ramp && xp->ok && xp->splitter == x->dest_splitter_id && xp->buffers == x->buffer_count;
             for (int c = 0; c < x->buffer_count && c < 24; c++) for (int k = c; k < s->ndest; k += x->buffer_count) {
-                if (s->ids[k] < 0) continue;   // an id the renderer does not have (splitters_walk)
+                if (s->ids[k] < 0) continue;
                 SplitDest *d = &m->dest[s->ids[k]];
                 if (!d->used || !mix_valid(r, d->dest)) continue;
                 const float *source=splitter_filter(d,mixbuf(m,src+c),filtered,frames);
@@ -1601,8 +1437,6 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
                 for (int b = 0; b < r->mixes[x->dest_mix_id].buffer_count && b < 24; b++) accumulate(m, m->offset[x->dest_mix_id] + b, mixbuf(m, src + c), x->mix[c][b] * x->volume, frames);
         }
     }
-    // What every splitter destination and every mix went in with, for the next pass's ramps: kept here, once per pass,
-    // after every voice and mix that feeds a destination has read the values of the pass before.
     for (int i = 0; i < m->ndest; i++) {
         SplitDest *d = &m->dest[i];
         d->prev_ok = d->used && mix_valid(r, d->dest);
@@ -1615,7 +1449,6 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
         m->mix_prev[i] = (MixPrev){r->mixes[i].volume, r->mixes[i].dest_splitter_id, r->mixes[i].buffer_count, r->mixes[i].in_use != 0};
     if (m->ramps != ramps_before) m->ramp_passes++;
     if (r->mixes[0].in_use) mix_effects(r, 0);
-    /* device sink */
     const AudrenSinkIn *sink = NULL;int circular=0;
     for (int i = 0; i < r->param.sink_count; i++) if (r->sinks[i].in_use) {
         if(r->sinks[i].type!=SINK_CIRCULAR){m->sink_address[i]=0;m->sink_size[i]=m->sink_offset[i]=m->sink_old[i]=m->sink_written[i]=0;}
@@ -1623,9 +1456,6 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
         else if (r->sinks[i].type == SINK_CIRCULAR){mix_circular_sink(r,i);circular=1;}
     } else {m->sink_address[i]=0;m->sink_size[i]=m->sink_offset[i]=m->sink_old[i]=m->sink_written[i]=0;}
     if (m->channels != output_channels()) channels_switch(m, output_channels());
-    // A catch-up frame (audren.c render_thread) ends here. Everything above ran, so the voices' filters and ramps, the
-    // effects and the sinks the game reads back are where they would be had the frame been heard; the device gets
-    // nothing of it.
     if (drop) return;
     const int oc = m->channels;
     float *out=m->output_scratch;
@@ -1642,24 +1472,23 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
         const float *ch[6] = {0};
         float raw[2 * MAX_FRAME];
         for (uint32_t c = 0; c < sink->input_count; c++) if (sink->inputs[c] >= 0 && sink->inputs[c] < m->nbuf) ch[c] = mixbuf(m, sink->inputs[c]);
-        if (rt_trace & RT_TRACE_AUDIO)   // what the game puts on each input: shows whether it mixes for 5.1 (level_note)
+        if (rt_trace & RT_TRACE_AUDIO)
             for (int c = 0; c < 6; c++)
                 for (int k = 0; ch[c] && k < frames; k++) m->input_sum[c] += (double)ch[c][k] * ch[c][k];
         for (int k = 0; k < frames; k++) {
-            float s[OUT_MAX] = {0};   /* FL FR C LFE RL RR */
+            float s[OUT_MAX] = {0};
             if (sink->input_count >= 6 && oc == 6) {
                 for (int c = 0; c < 6; c++) s[c] = ch[c] ? ch[c][k] : 0;
-            } else if (sink->input_count >= 6) {   /* 5.1 -> stereo; the LFE is left out, as the Switch's downmix does */
+            } else if (sink->input_count >= 6) {
                 float ff = sink->downmix_enabled ? sink->downmix[0] : 1.0f, cf = sink->downmix_enabled ? sink->downmix[1] : 0.7071f, sf = sink->downmix_enabled ? sink->downmix[2] : 0.7071f;
                 float C = ch[2] ? ch[2][k] : 0;
                 s[0] = ff * (ch[0] ? ch[0][k] : 0) + cf * C + sf * (ch[4] ? ch[4][k] : 0);
                 s[1] = ff * (ch[1] ? ch[1][k] : 0) + cf * C + sf * (ch[5] ? ch[5][k] : 0);
             } else if (sink->input_count >= 2) { s[0] = ch[0] ? ch[0][k] : 0; s[1] = ch[1] ? ch[1][k] : 0; }
             else s[0] = s[1] = ch[0] ? ch[0][k] : 0;
-            raw[2 * k] = s[0] * gain; raw[2 * k + 1] = s[1] * gain;   /* NX2SARIA_AUDIO_DUMP: the front pair before clipping */
+            raw[2 * k] = s[0] * gain; raw[2 * k + 1] = s[1] * gain;
             for (int c = 0; c < oc; c++) {
                 float x = s[c] * gain;
-                // NaN (a NaN sample, an effect's state gone NaN) reaches the device as silence, not full scale
                 out[oc * k + c] = x > 1 ? 1 : x < -1 ? -1 : x == x ? x : 0;
             }
         }
@@ -1669,13 +1498,8 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
     output_push(m, out, frames);
 }
 
-// ---- IAudioDevice: one output device, stereo or 5.1 (output_channels)
 static const char device_name[] = "AudioTvOutput";
 
-// The events the game took to hear of a change of the output device (IAudioDevice's, its two notifications' and the
-// virtual device manager's). audio_channels_live signals them all: the game then asks for the channel count again, as
-// it does on a console whose output moves from the TV to headphones. A slot is counted before its handle is stored, so
-// audio_channels_live skips a slot that still reads 0 (kern_event_signal ends the process on a bad handle).
 static uint32_t change_events[16];
 static _Atomic int n_change_events;
 
@@ -1684,9 +1508,6 @@ static void change_event_list(uint32_t ev) {
     if (i < 16) __atomic_store_n(&change_events[i], ev, __ATOMIC_RELEASE);
 }
 
-// One event per kind, made at the kind's first request; every request gets its own readable handle to it. Made per
-// request, each call took a kernel handle for good, and past 16 the events were no longer signalled. Two first
-// requests at once each make one: the loser closes its own, which was never listed, so nothing signals a closed handle.
 static uint32_t change_event_of(volatile uint32_t *kind) {
     uint32_t ev = __atomic_load_n(kind, __ATOMIC_ACQUIRE);
     if (ev) return ev;
@@ -1700,10 +1521,6 @@ static uint32_t change_event_of(volatile uint32_t *kind) {
 }
 static volatile uint32_t device_event, input_notify_event, output_notify_event, vdm_event;
 
-// Present path, after a settings change (gfx_present.c window_settings_live): a changed NX2SARIA_AUDIO_CHANNELS is
-// decided again, and when it gives another channel count the game is told its output device changed. The game asks
-// GetActiveChannelCount again and mixes for the new count; the mixer moves its device to that count at its next
-// render (channels_switch). Measured on Ocarina 1.1.1: one event held, and the game asked within the same second.
 void audio_channels_live(void) {
     static char seen[16];
     const char *want = cfg_value("NX2SARIA_AUDIO_CHANNELS");
@@ -1711,7 +1528,7 @@ void audio_channels_live(void) {
     int first = !seen[0];
     snprintf(seen, sizeof seen, "%s", want);
     int was = atomic_load(&decided);
-    if (first || !was) return;   // nothing has asked yet: the first call decides
+    if (first || !was) return;
     atomic_store(&decided, 0);
     int now = output_channels();
     if (now == was) return;
@@ -1742,33 +1559,29 @@ static IpcBuffer out_buffer(const IpcRequest *rq, int *pointer) {
 void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     int pointer;
     switch (rq->cmd) {
-    case 0: case 6: case 14: {   // ListAudioDeviceName(Auto), ListAudioOutputDeviceName [13.0.0+]
+    case 0: case 6: case 14: {
         IpcBuffer b = out_buffer(rq, &pointer);
         int32_t n = b.size >= 0x100 ? 1 : 0;
         if (n) put_name(&b, rs, pointer);
         IPC_OUT(rs, n);
         return;
     }
-    case 1: case 7: {   // SetAudioDeviceOutputVolume(Auto)
+    case 1: case 7: {
         float v = IPC_ARG(rq, float, 0);
         atomic_store(&device_volume, isfinite(v) ? v : 0.0f);
         return;
     }
-    case 2: case 8: { float v = atomic_load(&device_volume); IPC_OUT(rs, v); return; }   // GetAudioDeviceOutputVolume(Auto)
-    case 3: case 10: case 13: {   // GetActiveAudioDeviceName(Auto), GetActiveAudioOutputDeviceName [13.0.0+]
+    case 2: case 8: { float v = atomic_load(&device_volume); IPC_OUT(rs, v); return; }
+    case 3: case 10: case 13: {
         IpcBuffer b = out_buffer(rq, &pointer);
         put_name(&b, rs, pointer);
         return;
     }
-    case 5: { int32_t n = output_channels(); IPC_OUT(rs, n); return; }   // GetActiveChannelCount
-    case 4: case 11: case 12:   // QueryAudioDeviceSystemEvent, ...InputEvent, ...OutputEvent
+    case 5: { int32_t n = output_channels(); IPC_OUT(rs, n); return; }
+    case 4: case 11: case 12:
         rs->copy[rs->ncopy++] = kern_event_readable(change_event_of(&device_event));
         return;
-    // 17.0.0+: Acquire/Release Audio{Input,Output}DeviceNotification (15-18), 18.0.0+: SetAudioDeviceOutputVolume-
-    // AutoTuneEnabled (19) / IsAudioDeviceOutputVolumeAutoTuneEnabled (20), 21.0.0+:
-    // IsActiveOutputDeviceEstimatedLowLatency (21). Command ids as the system answers them. The
-    // host applies no auto-tuned volume, so the answers are "off" / "no".
-    case 15: case 17:   // Acquire...Notification -> a readable event, signalled with the others
+    case 15: case 17:
         rs->copy[rs->ncopy++] = kern_event_readable(change_event_of(rq->cmd == 15 ? &input_notify_event
                                                                                   : &output_notify_event));
         return;
@@ -1778,14 +1591,9 @@ void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) 
     }
 }
 
-// ---- auddmg:u: the Switch 2 audio device manager. Command 0 opens the virtual device manager. Its output-side
-// commands and the 0x228-byte property block follow the system service's layout
-// (INx2AudioVirtualDeviceManager); ids there are partly guessed. One virtual output device feeds the host mixer;
-// there are no input devices, so a command not listed here (the input side the SDK's ListVirtualInputDevices
-// reaches) is logged once and answered with success and a zero count.
 static const char virtual_output[] = "AudioVirtualOutput0";
-#define AUD_R_NOT_SUPPORTED 0x40299u      // audio module 153, description 513
-#define AUD_R_INVALID_ARGUMENT 0x70899u   // audio module 153, description 900
+#define AUD_R_NOT_SUPPORTED 0x40299u
+#define AUD_R_INVALID_ARGUMENT 0x70899u
 
 static void put_block(const IpcRequest *rq, IpcResponse *rs, const void *src, size_t n) {
     int pointer;
@@ -1800,7 +1608,7 @@ static void put_block(const IpcRequest *rq, IpcResponse *rs, const void *src, si
 static void virtual_device_manager_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     (void)s;
     switch (rq->cmd) {
-    case 0: {   // ListVirtualOutputDevices -> count, names (0x100 each)
+    case 0: {
         char name[0x100] = {0};
         memcpy(name, virtual_output, sizeof virtual_output);
         int pointer;
@@ -1810,35 +1618,32 @@ static void virtual_device_manager_handler(IpcSession *s, const IpcRequest *rq, 
         IPC_OUT(rs, n);
         return;
     }
-    case 100: {   // GetDefaultVirtualOutputDevice -> name
+    case 100: {
         char name[0x100] = {0};
         memcpy(name, virtual_output, sizeof virtual_output);
         put_block(rq, rs, name, sizeof name);
         return;
     }
-    case 300: {   // IsVirtualOutputDeviceStreamFormatSupported(sample type, channels, rate, functionality)
+    case 300: {
         uint32_t channels = IPC_ARG(rq, uint32_t, 4), rate = IPC_ARG(rq, uint32_t, 8), fn = IPC_ARG(rq, uint32_t, 12);
         rs->result = fn == 1 && (channels == 1 || channels == 2 || channels == 6) && rate == 48000 ? 0 : AUD_R_NOT_SUPPORTED;
         return;
     }
-    case 401: {   // GetVirtualOutputDeviceProperties(name) -> block
+    case 401: {
         uint8_t block[0x228] = {0};
         memcpy(block, virtual_output, sizeof virtual_output);
-        // type, (2), channels, sample rate. The channels are this run's output (output_channels), as IAudioDevice's
-        // GetActiveChannelCount reports: a Switch 2 game (Ocarina) sizes its mix from this block, so a constant 2
-        // here kept 5.1 at stereo
         uint32_t v[4] = {3, 2, (uint32_t)output_channels(), 48000};
         memcpy(block + 0x100, v, sizeof v);
         memcpy(block + 0x110, device_name, sizeof device_name);
         uint64_t latency_ns = 10000000;
         memcpy(block + 0x218, &latency_ns, sizeof latency_ns);
-        uint32_t id = 1;   // nonzero: the SDK's output streams pass it on (a zero breaks stream creation)
+        uint32_t id = 1;
         memcpy(block + 0x220, &id, sizeof id);
         put_block(rq, rs, block, sizeof block);
         return;
     }
-    case 500: rs->copy[rs->ncopy++] = kern_event_readable(change_event_of(&vdm_event)); return;   // state change event
-    case 700: case 800: return;   // AttachStream / DetachStream
+    case 500: rs->copy[rs->ncopy++] = kern_event_readable(change_event_of(&vdm_event)); return;
+    case 700: case 800: return;
     default: {
         static volatile int32_t seen[64];
         if (rq->cmd >= 64 || !__atomic_exchange_n(&seen[rq->cmd], 1, __ATOMIC_RELAXED))
@@ -1851,18 +1656,13 @@ static void virtual_device_manager_handler(IpcSession *s, const IpcRequest *rq, 
 }
 
 void audio_dmg_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
-    if (rq->cmd == 0) {   // OpenVirtualDeviceManager
+    if (rq->cmd == 0) {
         rs->move[rs->nmove++] = ipc_session_new("auddmg:u manager", virtual_device_manager_handler, NULL, NULL);
         return;
     }
     ipc_unimplemented(s, rq);
 }
 
-// ---- audsmx:u: the Switch 2 sound mixer (sysmix). Command 0 opens a user session; the session's CreateStream (1)
-// makes a stream of a virtual device (the sysmix user session: device 1 is the virtual output). This host
-// renders through audren, has no sysmix output streams yet and no input devices: CreateStream of a device other
-// than 1 fails with InvalidArgument (as the system does), and device 1 stops with its name so the first title that needs
-// a sysmix output stream says so. Engage/DisengageStreams (2/3) succeed.
 static void sysmix_session_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     (void)s;
     switch (rq->cmd) {
@@ -1879,7 +1679,7 @@ static void sysmix_session_handler(IpcSession *s, const IpcRequest *rq, IpcRespo
 }
 
 void audio_sysmix_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
-    if (rq->cmd == 0) {   // OpenUserSession(process handle)
+    if (rq->cmd == 0) {
         rs->move[rs->nmove++] = ipc_session_new("audsmx:u session", sysmix_session_handler, NULL, NULL);
         return;
     }
