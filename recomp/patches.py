@@ -1,36 +1,3 @@
-"""Code patch table for the generator: guest instructions replaced in the lifted C, switchable at run time.
-
-Lifted code cannot be byte-patched when the game runs, so a patch is applied when the C is generated. A patch file
-(gen.py --patches) has two kinds of lines; `#` starts a comment, fields are separated by whitespace:
-
-  set  <name> <env> <default>               a patch set: a run-time switch <env>=0/1, <default> when it is unset
-  site <set> <module> <address> <original> <replacement> [<replacement> ...]
-
-  spin <module> <head> <back-edge> [<back-edge> ...]
-
-<address> is a module offset (hex), <original> the instruction word the module has there (checked; a mismatch stops
-the generator), each <replacement> an instruction word (hex) or `@page:x<n>`, which is `adrp x<n>, <patch page>`
-encoded for the site's address. The patch page is the first 4 KiB page after main's image (layout.py leaves the rest
-of the 2 MiB-aligned module slot free); the runtime commits it and owns its contents. Words in use, by byte offset:
-+0..15 the frame-rate step (runtime/pacing/frame_rate.c), +16..55 the output, swapchain and scene sizes
-(runtime/gfx/resolution.c res_init), +56..59 the camera's aspect ratio (runtime/gfx/resolution.c res_init, set aspect), +60..63
-the field-of-view factor (runtime/gfx/resolution.c res_fov_live, set fov), +92..95 the sun shadow map size
-(runtime/gfx/resolution.c shadow_init, set shadow), +776..779 the ocarina staff's last note signal (set ostaff, written
-by the game's code). A new set takes words outside these.
-
-The replacement words are lifted at the site's address in place of the original instruction, and the generated C reads
-`if (rt_patch_on[<set>]) { replacement } else { original }`: one byte load and a branch per executed site. Several
-sets may patch one address (cheats that write different values there): `if (a) {..} else if (b) {..} else {..}`, the
-first set in file order wins. The original may be any instruction but br, blr and ret; a replacement's last word may be
-a bl (lifted with the site's return address), a b or b.cond / cbz / tbz (its target joins the function's labels when
-inside it) or a ret; earlier words must not branch. Every alternative of a site writes the same flags. The generator
-writes patches.h (set names, switches, the page address) next to layout.h for the runtime.
-
-A `spin` line names a spin wait found by tools/spin_waits.py: a loop with head <head> that only another thread can end,
-and the direct branches back to it (module offsets). Each back-edge (checked: a b, b.cond, cbz / cbnz or tbz / tbnz to
-<head>) is lifted as `rt_spin_gate(c, <head>); goto <head>`, which keeps every register and only adds time
-(runtime/hle/kernel.c kern_spin_gate).
-"""
 from pathlib import Path
 
 PAGE = 0x1000
@@ -49,21 +16,17 @@ def adrp(pc, target, rd):
 
 
 class Table:
-    """sets: [(name, env, default)]; sites: {module: {offset: [(set index, [word | ('page', reg)], original)]}} (the
-    alternatives of a site in file order); page."""
 
     def __init__(self, sets=(), sites=None, page=0, spins=None):
         self.sets = list(sets)
         self.sites = sites or {}
         self.page = page
-        self.spins = spins or {}   # {module: {back-edge offset: head offset}}
+        self.spins = spins or {}
 
     def spins_for(self, name, base):
-        """{absolute back-edge address: absolute head address}."""
         return {base + b: base + h for b, h in self.spins.get(name, {}).items()}
 
     def for_module(self, name, base):
-        """{absolute address: [(set index, [words])]} with @page resolved."""
         out = {}
         for off, alts in self.sites.get(name, {}).items():
             a = base + off
@@ -73,7 +36,6 @@ class Table:
 
 
 def load(path, mods):
-    """Table from a patch file; mods is layout() output [(name, base, size)]."""
     sets, index, sites, spins = [], {}, {}, {}
     bases = {n: (b, s) for n, b, s in mods}
     for no, raw in enumerate(Path(path).read_text().splitlines(), 1):
@@ -124,7 +86,6 @@ def load(path, mods):
 
 
 def check(table, mod, name):
-    """Stops on a site whose original word differs from the module's."""
     for off, [(_, _, want), *_] in table.sites.get(name, {}).items():
         a = mod.base + off
         if not mod.in_text(a):
@@ -139,7 +100,6 @@ def check(table, mod, name):
 
 
 def branch_target(w, a):
-    """Target of the direct branch w at a (b, b.cond, cbz / cbnz, tbz / tbnz), or None."""
     if w >> 26 == 0x05:
         return a + ((((w & 0x3FFFFFF) ^ 0x2000000) - 0x2000000) << 2)
     if w & 0xFF000010 == 0x54000000 or w & 0x7E000000 == 0x34000000:

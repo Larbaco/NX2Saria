@@ -1,25 +1,3 @@
-"""Static jump-table resolution for computed `br`.
-
-Clang lowers a dense switch to a bounds check (`cmp wI, #N; b.hi default`, or `b.ls` to a dispatch block placed
-elsewhere), a table load (`ldrb/ldrh/ldrsw wO, [xT, xI, lsl #s]`) and an add to an anchor (`adr xB, L;
-add xB, xB, wO, sxtb #2`, or the table address itself). The resolver walks back from the `br` over its block and the
-predecessor blocks (_explore), evaluates each path forward symbolically (_run), and enumerates the values the path
-conditions (bounds checks, ccmp chains, cbz/tbz) or the construction (masks, bit inserts, selects of constants)
-allow for the unknowns the target depends on (_solve). Table entries come from .text/.rodata of the unrelocated
-image. Anything it cannot prove is rejected.
-
-Values are expression tuples over the registers at the top of the path. 32/64-bit views are normalised
-(`lo(zx(e)) = e`, `uxtw`, `and #0xffffffff`, ...) so that the copies and extensions clang inserts compare equal.
-Registers at a path top come from a function-wide must-analysis (_facts): constants, small constant sets, terms
-over named values, zero-extension. That carries table bases clang hoists out of loops and index copies made
-before them.
-
-A function is resolved as a whole (_function): table targets are blocks and edges for the facts and the paths, and
-the tables and the facts are iterated to a common fixpoint. Assumptions: control enters [entry, end) only at the
-entry, at targets of direct branches (seen module-wide), at exception landing pads (.eh_frame LSDAs) and through
-its own table jumps; an unresolved table never enters another switch between its bounds check and its `br`.
-Work per function is capped (MAX_STEPS); past the cap nothing in the function is resolved.
-"""
 import bisect
 import itertools
 import weakref
@@ -29,14 +7,14 @@ import numpy as np
 
 from lifter import bits, decode_bit_masks, sext
 
-MAX_BLOCK = 64       # instructions in one block
-MAX_DEPTH = 4        # predecessor blocks above the dispatch block
-MAX_PATHS = 32       # paths explored per br
-MAX_COUNT = 4096     # table entries
-MAX_CANDS = 8        # candidates combined in pairs and triples
-MAX_SET = 8          # constants a register fact may hold
-MAX_STEPS = 1 << 19  # work units per function (instructions evaluated, blocks met, assignments tried)
-MAX_ROUNDS = 8       # rounds of the per-function table/fact iteration
+MAX_BLOCK = 64
+MAX_DEPTH = 4
+MAX_PATHS = 32
+MAX_COUNT = 4096
+MAX_CANDS = 8
+MAX_SET = 8
+MAX_STEPS = 1 << 19
+MAX_ROUNDS = 8
 
 M32, M64 = 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF
 HS, LO, HI, LS = 2, 3, 8, 9
@@ -51,14 +29,11 @@ def _mask(sz):
     return M32 if sz == 32 else M64
 
 
-# ---------------------------------------------------------------- expressions
-
 def C(v, sz=64):
     return ('c', v & _mask(sz))
 
 
 def lo(e):
-    """Low 32 bits of a 64-bit value."""
     k = e[0]
     if k == 'c':
         return ('c', e[1] & M32)
@@ -101,7 +76,6 @@ def shift(op, sz, a, n):
 
 
 def bfm(sz, signed, immr, imms, x):
-    """UBFM/SBFM of the sz-bit value x."""
     if not signed and immr == 0 and imms == 31 and sz == 64:
         return zx(lo(x))
     if signed and immr == 0 and imms == 31 and sz == 64:
@@ -119,7 +93,6 @@ def bfm(sz, signed, immr, imms, x):
 
 
 def bfi(sz, immr, imms, dst, src):
-    """BFM (bfi, bfxil): bits of src inserted into dst."""
     if dst[0] == 'c' and src[0] == 'c':
         return C(_bfi(sz, immr, imms, dst[1], src[1]), sz)
     return ('bfi', sz, immr, imms, dst, src)
@@ -133,7 +106,6 @@ def _bfi(sz, immr, imms, d, v):
 
 
 def extend(e, option, sz):
-    """Extended-register operand: option applied to the 64-bit register value e, result sz bits."""
     if option in (3, 7):
         return e if sz == 64 else lo(e)
     if option == 2:
@@ -179,17 +151,15 @@ _SH = {
 _SHIFT_NAMES = ('lsl', 'lsr', 'asr', 'ror')
 
 
-# ---------------------------------------------------------------- symbolic execution of one path
-
 class _State:
     __slots__ = ('regs', 'flags', 'epoch', 'mem', 'conds', 'fresh')
 
     def __init__(self):
-        self.regs = [('r', r) for r in range(32)]  # 31 is SP
+        self.regs = [('r', r) for r in range(32)]
         self.flags = None
-        self.epoch = 0   # memory version: loads of different versions are different values
-        self.mem = []    # [(base, offset, size, value)] stores of this version, disjoint
-        self.conds = []   # conditions the branches on the path prove (see _edge)
+        self.epoch = 0
+        self.mem = []
+        self.conds = []
         self.fresh = 0
 
     def unknown(self):
@@ -208,12 +178,10 @@ class _State:
         self.regs[r] = e if sz == 64 else zx(e)
 
     def kill(self, r, sz=64, sp=False):
-        """r gets an unknown value; a 32-bit write leaves the upper half zero."""
         if r != 31 or sp:
             self.regs[r] = self.unknown() if sz == 64 else ('zx', self.unknown())
 
     def clobber(self):
-        """Memory changed in an unknown way."""
         self.epoch += 1
         self.mem = []
 
@@ -230,15 +198,12 @@ class _State:
         self.clobber()
 
     def store(self, addr, size, value):
-        """value (64-bit for 8 bytes, else 32-bit) stored at addr. Stores that may overlap are forgotten: same base
-        and overlapping offsets, or a different base."""
         base, off = _split(addr)
         self.epoch += 1
         self.mem = [m for m in self.mem if m[0] == base and (m[1] + m[2] <= off or off + size <= m[1])]
         self.mem.append((base, off, size, value))
 
     def load(self, size, signed, sz, addr):
-        """sz-bit value of the size-byte load at addr, forwarded from a store when the same bytes were stored."""
         base, off = _split(addr)
         for b, o, n, v in self.mem:
             if b == base and o == off and n == size:
@@ -263,12 +228,11 @@ def _split(addr):
 
 
 def _addr_imm(st, w, scale):
-    """Base and offset of the load/store register (immediate and register offset) forms."""
     rn = bits(w, 5, 5)
     base = st.get(rn, 64, sp=True)
-    if bits(w, 24, 1):  # unsigned offset
+    if bits(w, 24, 1):
         return base, binop('add', 64, base, C(bits(w, 10, 12) << scale)), None
-    if bits(w, 21, 1):  # register offset
+    if bits(w, 21, 1):
         if bits(w, 10, 2) != 2:
             return None
         off = extend(st.get(bits(w, 16, 5), 64), bits(w, 13, 3), 64)
@@ -278,22 +242,22 @@ def _addr_imm(st, w, scale):
     imm = sext(bits(w, 12, 9), 9)
     mode = bits(w, 10, 2)
     new = binop('add', 64, base, C(imm))
-    if mode == 1:  # post-index
+    if mode == 1:
         return base, base, new
-    if mode == 3:  # pre-index
+    if mode == 3:
         return base, new, new
     return base, new, None
 
 
 def _ldst(st, w, pc):
     rt, rn = bits(w, 0, 5), bits(w, 5, 5)
-    if (w & 0x3B000000) == 0x18000000:  # load literal
+    if (w & 0x3B000000) == 0x18000000:
         opc, v = bits(w, 30, 2), bits(w, 26, 1)
         if not v and opc != 3:
             a = C(pc + sext(bits(w, 5, 19), 19) * 4)
             st.set(rt, 64, st.load(8 if opc == 1 else 4, opc == 2, 64, a) if opc else zx(st.load(4, False, 32, a)))
         return
-    if (w & 0x3A000000) == 0x28000000:  # pair
+    if (w & 0x3A000000) == 0x28000000:
         mode, load, v, opc = bits(w, 23, 2), bits(w, 22, 1), bits(w, 26, 1), bits(w, 30, 2)
         scale = 2 + (bits(w, 31, 1) if not v else opc)
         base = st.get(rn, 64, sp=True)
@@ -336,7 +300,7 @@ def _ldst(st, w, pc):
             st.store(addr, 1 << size, st.get(rt, 64 if size == 3 else 32))
         elif opc == 1:
             st.set(rt, 64, zx(st.load(1 << size, False, 32, addr)) if size < 3 else st.load(8, False, 64, addr))
-        elif size == 3:  # prfm
+        elif size == 3:
             pass
         elif opc == 2:
             st.set(rt, 64, st.load(1 << size, True, 64, addr))
@@ -348,20 +312,20 @@ def _ldst(st, w, pc):
         if new is not None:
             st.set(rn, 64, new, sp=True)
         return
-    if (w & 0xBE000000) == 0x0C000000:  # SIMD structures (multiple and single)
+    if (w & 0xBE000000) == 0x0C000000:
         if not bits(w, 22, 1):
             st.clobber()
         if bits(w, 23, 1):
             st.kill(rn, sp=True)
         return
     sz = 64 if bits(w, 30, 2) == 3 else 32
-    if (w & 0x3F000000) == 0x08000000:  # exclusives, acquire/release
+    if (w & 0x3F000000) == 0x08000000:
         st.kill(rt, sz)
         st.kill(bits(w, 16, 5), 32)
         st.kill(bits(w, 10, 5), sz)
         st.clobber()
         return
-    if (w & 0x3B200C00) == 0x38200000:  # LSE atomics
+    if (w & 0x3B200C00) == 0x38200000:
         st.kill(rt, sz)
         st.clobber()
         return
@@ -372,10 +336,10 @@ def _dp_imm(st, w, pc):
     sf, rd, rn = bits(w, 31, 1), bits(w, 0, 5), bits(w, 5, 5)
     sz = 64 if sf else 32
     op = bits(w, 23, 3)
-    if op in (0, 1):  # ADR, ADRP
+    if op in (0, 1):
         imm = sext((bits(w, 5, 19) << 2) | bits(w, 29, 2), 21)
         st.set(rd, 64, C((pc & ~0xFFF) + (imm << 12) if sf else pc + imm))
-    elif op == 2:  # add/sub imm
+    elif op == 2:
         opc, s = bits(w, 30, 1), bits(w, 29, 1)
         imm = C(bits(w, 10, 12) << (12 if bits(w, 22, 1) else 0), sz)
         a = st.get(rn, sz, sp=True)
@@ -383,7 +347,7 @@ def _dp_imm(st, w, pc):
         if s:
             st.flags = ('sub' if opc else 'add', sz, a, imm)
         st.set(rd, sz, r, sp=not s)
-    elif op == 4:  # logical imm
+    elif op == 4:
         opc, n = bits(w, 29, 2), bits(w, 22, 1)
         if not sf and n:
             st.kill_all()
@@ -393,7 +357,7 @@ def _dp_imm(st, w, pc):
         if opc == 3:
             st.flags = ('logic', sz, r)
         st.set(rd, sz, r, sp=opc != 3)
-    elif op == 5:  # move wide
+    elif op == 5:
         opc, hw = bits(w, 29, 2), bits(w, 21, 2)
         imm = bits(w, 5, 16) << (hw * 16)
         if opc == 0:
@@ -405,15 +369,15 @@ def _dp_imm(st, w, pc):
             st.set(rd, sz, C((old[1] & ~(0xFFFF << (hw * 16))) | imm, sz) if old[0] == 'c' else st.unknown())
         else:
             st.kill_all()
-    elif op == 6:  # bitfield
+    elif op == 6:
         opc = bits(w, 29, 2)
-        if opc == 1:  # BFM: bfi, bfxil
+        if opc == 1:
             st.set(rd, sz, bfi(sz, bits(w, 16, 6), bits(w, 10, 6), st.get(rd, sz), st.get(rn, sz)))
         elif opc == 3:
             st.kill(rd, sz)
         else:
             st.set(rd, sz, bfm(sz, opc == 0, bits(w, 16, 6), bits(w, 10, 6), st.get(rn, sz)))
-    elif bits(w, 16, 5) == rn:  # ROR (EXTR with Rn = Rm)
+    elif bits(w, 16, 5) == rn:
         st.set(rd, sz, shift('ror', sz, st.get(rn, sz), bits(w, 10, 6)))
     else:
         st.kill(rd, sz)
@@ -422,7 +386,7 @@ def _dp_imm(st, w, pc):
 def _dp_reg(st, w):
     sf, rd, rn, rm = bits(w, 31, 1), bits(w, 0, 5), bits(w, 5, 5), bits(w, 16, 5)
     sz = 64 if sf else 32
-    if (w & 0x1F000000) == 0x0A000000:  # logical shifted register
+    if (w & 0x1F000000) == 0x0A000000:
         opc, n = bits(w, 29, 2), bits(w, 21, 1)
         b = shift(_SHIFT_NAMES[bits(w, 22, 2)], sz, st.get(rm, sz), bits(w, 10, 6))
         name = (('and', 'orr', 'eor', 'and'), ('bic', 'orn', 'eon', 'bic'))[n][opc]
@@ -430,7 +394,7 @@ def _dp_reg(st, w):
         if opc == 3:
             st.flags = ('logic', sz, r)
         st.set(rd, sz, r)
-    elif (w & 0x1F200000) == 0x0B000000:  # add/sub shifted register
+    elif (w & 0x1F200000) == 0x0B000000:
         opc, s, typ = bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 2)
         if typ == 3:
             st.kill_all()
@@ -440,46 +404,43 @@ def _dp_reg(st, w):
         if s:
             st.flags = ('sub' if opc else 'add', sz, a, b)
         st.set(rd, sz, binop('sub' if opc else 'add', sz, a, b))
-    elif (w & 0x1F200000) == 0x0B200000:  # add/sub extended register
+    elif (w & 0x1F200000) == 0x0B200000:
         opc, s = bits(w, 30, 1), bits(w, 29, 1)
         a = st.get(rn, sz, sp=True)
         b = shift('lsl', sz, extend(st.get(rm, 64), bits(w, 13, 3), sz), bits(w, 10, 3))
         if s:
             st.flags = ('sub' if opc else 'add', sz, a, b)
         st.set(rd, sz, binop('sub' if opc else 'add', sz, a, b), sp=not s)
-    elif (w & 0x1FE00000) == 0x1A400000 and bits(w, 29, 1):  # ccmp, ccmn
+    elif (w & 0x1FE00000) == 0x1A400000 and bits(w, 29, 1):
         b = C(rm, sz) if bits(w, 11, 1) else st.get(rm, sz)
         st.flags = ('ccmp', sz, st.get(rn, sz), b, not bits(w, 30, 1), bits(w, 12, 4), bits(w, 0, 4), st.flags)
     elif (w & 0x1FE00000) == 0x1A000000 and (w & 0xFC00):
-        st.flags = None  # rmif, setf
-    elif (w & 0x1FE00800) == 0x1A800000 and not bits(w, 29, 1):  # csel, csinc, csinv, csneg
+        st.flags = None
+    elif (w & 0x1FE00800) == 0x1A800000 and not bits(w, 29, 1):
         x, y = st.get(rn, sz), st.get(rm, sz)
         if bits(w, 10, 1):
             y = binop('add', sz, y, C(1)) if not bits(w, 30, 1) else binop('sub', sz, C(0), y)
         elif bits(w, 30, 1):
             y = binop('eor', sz, y, C(_mask(sz)))
-        # Equal expressions are equal values, so a select carries what picks the arm: the condition and the flags
-        # record, or a fresh unknown when the flags are not known (two `cset wN, ne` on different compares differ).
         sel = st.flags if st.flags is not None else st.unknown()
         st.set(rd, sz, x if x == y else ('csel', sz, x, y, bits(w, 12, 4), sel))
-    else:  # adc, sbc, csel, 1/2/3-source
+    else:
         st.kill(rd, sz)
         if bits(w, 29, 1):
             st.flags = None
 
 
 def _fp_simd(st, w):
-    if (w & 0x5F203C00) == 0x1E202000 or (w & 0x5F200C00) == 0x1E200400:  # fcmp, fccmp
+    if (w & 0x5F203C00) == 0x1E202000 or (w & 0x5F200C00) == 0x1E200400:
         st.flags = None
-    elif (w & 0x5F200000) == 0x1E000000 or (w & 0x5F20FC00) == 0x1E200000:  # conversions with a general register
-        if bits(w, 16, 3) in (0, 1, 4, 5, 6):  # to a general register (fcvt*, fmov Rd, Vn)
+    elif (w & 0x5F200000) == 0x1E000000 or (w & 0x5F20FC00) == 0x1E200000:
+        if bits(w, 16, 3) in (0, 1, 4, 5, 6):
             st.kill(bits(w, 0, 5), 64 if bits(w, 31, 1) else 32)
-    elif (w & 0x9FE08400) == 0x0E000400 and bits(w, 11, 4) in (5, 7):  # smov, umov
+    elif (w & 0x9FE08400) == 0x0E000400 and bits(w, 11, 4) in (5, 7):
         st.kill(bits(w, 0, 5), 64 if bits(w, 30, 1) else 32)
 
 
 def _step(st, w, pc):
-    """Effect of one non-branch instruction."""
     op0 = bits(w, 25, 4)
     if (op0 & 0b1110) == 0b1000:
         _dp_imm(st, w, pc)
@@ -489,42 +450,40 @@ def _step(st, w, pc):
         _dp_reg(st, w)
     elif (op0 & 0b0111) == 0b0111:
         _fp_simd(st, w)
-    elif (w & 0xFC000000) == 0x94000000 or (w & 0xFFFFFC1F) == 0xD63F0000:  # bl, blr
+    elif (w & 0xFC000000) == 0x94000000 or (w & 0xFFFFFC1F) == 0xD63F0000:
         st.call()
-    elif (w & 0xFFFFF01F) in (0xD503201F, 0xD503301F):  # hints, barriers
+    elif (w & 0xFFFFF01F) in (0xD503201F, 0xD503301F):
         pass
-    elif (w & 0xFFF00000) == 0xD5300000:  # mrs
+    elif (w & 0xFFF00000) == 0xD5300000:
         st.kill(bits(w, 0, 5))
-    elif (w & 0xFFF00000) == 0xD5100000:  # msr (system register): may write NZCV
+    elif (w & 0xFFF00000) == 0xD5100000:
         st.flags = None
-    elif (w & 0xFFF80000) == 0xD5080000:  # sys: dc, ic, tlbi
+    elif (w & 0xFFF80000) == 0xD5080000:
         st.clobber()
     else:
         st.kill_all()
 
 
 def _edge(st, w, taken):
-    """Record the condition a conditional branch edge proves."""
     if (w & 0xFF000010) == 0x54000000:
         cond = bits(w, 0, 4)
         if cond < 14 and st.flags is not None:
             st.conds.append(('flags', st.flags, cond, taken))
-    elif (w & 0x7E000000) == 0x34000000:  # cbz, cbnz
+    elif (w & 0x7E000000) == 0x34000000:
         sz = 64 if bits(w, 31, 1) else 32
         st.conds.append(('zero', sz, st.get(bits(w, 0, 5), sz), taken != bool(bits(w, 24, 1))))
-    elif (w & 0x7E000000) == 0x36000000:  # tbz, tbnz
+    elif (w & 0x7E000000) == 0x36000000:
         bit = (bits(w, 31, 1) << 5) | bits(w, 19, 5)
         st.conds.append(('bit', st.get(bits(w, 0, 5), 64), bit, taken == bool(bits(w, 24, 1))))
 
 
 def _init(st, facts):
-    """Registers at the top of a path from the function-wide facts (see _facts)."""
     for r, v in facts.items():
         st.regs[r] = ('zx', ('lo', ('r', r))) if v == 'z' else ('oneof', r, v[1]) if v[0] == 'set' else v
 
 
 class _Exhausted(Exception):
-    """The per-function step budget ran out."""
+    pass
 
 
 _budget = [0]
@@ -537,11 +496,6 @@ def _spend(n):
 
 
 def _run(mod, path, rn, facts, spend=True):
-    """Symbolic state at the br that ends path [(start, last, taken)] (top block first) and the br register value.
-
-    taken says which edge of a conditional branch at `last` the path follows; None for any other block end
-    (fall-through, unconditional branch, table jump).
-    """
     if spend:
         _spend(sum(last - start >> 2 for start, last, _ in path) + 1)
     st = _State()
@@ -561,10 +515,7 @@ def _run(mod, path, rn, facts, spend=True):
     return st, st.get(rn, 64)
 
 
-# ---------------------------------------------------------------- control flow
-
 def _branch_target(w, pc):
-    """Target of a direct branch (b, b.cond, cbz/cbnz, tbz/tbnz), else None."""
     if (w & 0xFC000000) == 0x14000000:
         return pc + sext(w & 0x3FFFFFF, 26) * 4
     if (w & 0xFF000010) == 0x54000000 or (w & 0x7E000000) == 0x34000000:
@@ -575,7 +526,6 @@ def _branch_target(w, pc):
 
 
 def _no_fallthrough(w):
-    """b, b.al, br/ret/eret (branch-register forms other than blr), udf, brk, hlt."""
     return ((w & 0xFC000000) == 0x14000000 or (w & 0xFF00001E) == 0x5400000E
             or (w & 0xFE000000) == 0xD6000000 and (w & 0x01E00000) != 0x00200000
             or (w >> 16) == 0 or (w & 0xFFE0001F) in (0xD4200000, 0xD4400000))
@@ -600,7 +550,6 @@ def _is_call(w):
 
 
 def _branch_index(mod):
-    """(targets, sources) of every direct branch in .text, sorted by target; cached per module."""
     r = _INDEX.get(mod)
     if r is None:
         w = mod.words.astype(np.int64)
@@ -620,7 +569,6 @@ def _branch_index(mod):
 
 
 def branch_sources(mod, entry, end):
-    """{target: [sources]} of the direct branches anywhere in .text that land in [entry, end)."""
     dst, src = _branch_index(mod)
     i, j = np.searchsorted(dst, [entry, end])
     out = {}
@@ -630,13 +578,6 @@ def branch_sources(mod, entry, end):
 
 
 class _Cfg:
-    """Basic blocks of [entry, end) with direct, fall-through and table edges.
-
-    tables maps each table-shaped br to its targets so far, or None when it is unresolved and may reach any block.
-    Leaders are the entry, direct branch targets, landing pads, table targets and the instruction after each
-    block-ending instruction. `unknown` holds the blocks entered in ways the function does not show: the entry and
-    targets of branches from other functions.
-    """
 
     def __init__(self, mod, entry, end, tables, pads):
         self.mod, self.entry, self.end, self.pads = mod, entry, end, pads
@@ -648,7 +589,7 @@ class _Cfg:
         self.stops = self.leaders[1:] + [end]
         self.unknown = {entry} | {t for t, srcs in labels.items() if any(not entry <= a < end for a in srcs)}
         self.everywhere = [br for br, ts in tables.items() if ts is None]
-        self.preds = {b: [] for b in self.leaders}  # [(last instruction of the predecessor, taken)]
+        self.preds = {b: [] for b in self.leaders}
         for b, stop in zip(self.leaders, self.stops):
             last = stop - 4
             w = mod.word(last)
@@ -664,33 +605,15 @@ class _Cfg:
                     self.preds[t].append((br, None))
 
     def block(self, a):
-        """Start of the block holding a."""
         return self.leaders[bisect.bisect_right(self.leaders, a) - 1]
 
     def path_preds(self, b):
-        """[(start, last, taken)] predecessor segments of block b, or None if some entry is not visible.
-
-        Unresolved table jumps are not counted: a table is assumed never to enter another switch's dispatch path
-        after its bounds check.
-        """
         if b in self.unknown or b in self.pads or not self.preds[b]:
             return None
         return [(self.block(src), src, taken) for src, taken in self.preds[b]]
 
 
 def _facts(cfg):
-    """{block start: {reg: fact}} for the registers whose value is known the same way on every path into the block.
-
-    A fact is a constant, a small set of constants ('set', values), a term, or 'z' (a zero-extended 32-bit value).
-    Terms are expressions over names ('v', A, r) / ('vw', A, r): the 64-bit / 32-bit value the most recent execution
-    of instruction A wrote to r.
-    They keep copies and extensions of one value equal across blocks (`mov w12, w8` before a loop, the check on w8
-    inside it). A name dies when its instruction executes again.
-
-    A forward must-analysis over cfg, optimistic for blocks not yet reached. An exception landing pad is entered from
-    the calls of its call-site ranges with the caller-saved registers clobbered; an unresolved table jump may enter
-    any block. None if the analysis does not settle.
-    """
     mod, out, ins, calls, names = cfg.mod, {}, {}, {}, set()
     for _ in range(64):
         _spend(len(cfg.leaders))
@@ -713,7 +636,7 @@ def _facts(cfg):
                 if d is None:
                     continue
             if ins.get(b) == d and stop - 4 in out:
-                continue  # same input as last round: the transfer gives the same output
+                continue
             ins[b] = d
             _spend(stop - b >> 2)
             st = _State()
@@ -749,7 +672,6 @@ def _facts(cfg):
 
 
 def _clean(e, depth=8):
-    """e is built from constants and names only, and is small (larger values get a name)."""
     k = e[0]
     if k in ('c', 'v', 'vw'):
         return True
@@ -759,7 +681,6 @@ def _clean(e, depth=8):
 
 
 def _names(e, a):
-    """e mentions a name written by instruction a."""
     k = e[0]
     if k in ('v', 'vw'):
         return e[1] == a
@@ -811,15 +732,11 @@ def _meet(a, b):
     return out
 
 
-# ---------------------------------------------------------------- enumeration
-
 class _Unknown(Exception):
-    """The value depends on something the assignment does not fix (a register, or memory other than .text and
-    .rodata)."""
+    pass
 
 
 def _eval(mod, e, env):
-    """Value of e with the subexpressions in env [(expr, value)] fixed."""
     for x, v in env:
         if e is x:
             return v
@@ -857,7 +774,6 @@ def _eval(mod, e, env):
 
 
 def _const_mem(mod, a, n):
-    """[a, a+n) lies in .text or .rodata (no relocations, never written)."""
     for off, size in (mod.nso.text, mod.nso.rodata):
         if mod.base + off <= a and a + n <= mod.base + off + size:
             return True
@@ -882,7 +798,6 @@ def _nzcv(kind, sz, x, y):
 
 
 def _flags(mod, f, env):
-    """Possible NZCV values of the flags record f under env; None for one that is not determined."""
     k = f[0]
     if k == 'ccmp':
         _, sz, a, b, add, cond, imm, prev = f
@@ -905,7 +820,6 @@ def _flags(mod, f, env):
 
 
 def _violated(mod, rec, env):
-    """The path condition rec is provably false under env."""
     try:
         if rec[0] == 'flags':
             _, f, cond, holds = rec
@@ -924,7 +838,6 @@ _SWAP = {HS: LS, LS: HS, HI: LO, LO: HI, 10: 13, 13: 10, 11: 12, 12: 11, 0: 0, 1
 
 
 def _bounds(st):
-    """[(expr, values)] that the path conditions bound: x <= N, x < N, x == N, x == 0."""
     out = []
     for rec in st.conds:
         if rec[0] == 'zero':
@@ -937,7 +850,7 @@ def _bounds(st):
         if f[0] == 'ccmp':
             _, sz, a, b, add, ccond, imm, _ = f
             if add or _holds(cond, (imm >> 3 & 1, imm >> 2 & 1, imm >> 1 & 1, imm & 1)) == holds:
-                continue  # the fixed flags alone could take this edge
+                continue
             f = ('sub', sz, a, b)
         if f[0] != 'sub':
             continue
@@ -966,7 +879,6 @@ def _subexprs(e, out):
 
 
 def _indices(e, out):
-    """Subexpressions of the addresses of the loads in e (candidate table indices)."""
     if e[0] == 'ld':
         _subexprs(e[4], out)
     if e[0] not in ('c', 'r', 'u', 'v', 'vw'):
@@ -976,18 +888,17 @@ def _indices(e, out):
 
 
 def _domain(e):
-    """Values e can take by construction (masks, narrow extracts, selects of constants), or None."""
     k = e[0]
     if k == 'and' and e[3][0] == 'c' and bin(e[3][1]).count('1') <= 10:
         m, out, x = e[3][1], [], 0
-        while True:  # every submask of m
+        while True:
             out.append(x)
             x = (x - m) & m
             if not x:
                 return out
     if k == 'bfm' and not e[2] and e[3] <= e[4] < e[3] + 10:
         return range(1 << (e[4] - e[3] + 1))
-    if k == 'bfm' and not e[2] and e[4] < e[3] and e[4] < 8:  # ubfiz
+    if k == 'bfm' and not e[2] and e[4] < e[3] and e[4] < 8:
         return tuple((v << (e[1] - e[3])) & _mask(e[1]) for v in range(1 << (e[4] + 1)))
     if k in ('orr', 'add', 'eor'):
         a, b = (_domain(x) if x[0] != 'c' else (x[1],) for x in e[2:])
@@ -1020,19 +931,12 @@ def _domain(e):
 
 
 def _solve(mod, t, st, masks):
-    """Targets of t over the values the path proves for the unknowns in it, or None.
-
-    Candidates are values bounded by path conditions and, with masks, values bounded by construction. One, two
-    or three candidates must together fix t; every assignment the path conditions rule out is dropped.
-    """
     try:
         return {_eval(mod, t, ())}
     except _Unknown:
         pass
     cands = _bounds(st)
     if masks:
-        # A mask is a sound bound but may far exceed the table; with a bounds check on the path (of some other
-        # value) it is only taken if no larger than that check.
         limit = min((len(v) for _, v in cands if len(v) > 1), default=MAX_COUNT)
         subs = []
         _indices(t, subs)
@@ -1062,15 +966,13 @@ def _solve(mod, t, st, masks):
                     out.add(_eval(mod, t, env))
                 except _Unknown:
                     if out:
-                        return None  # fixes t for some values only
-                    break  # the first feasible value leaves t unfixed: not this combination
+                        return None
+                    break
             else:
                 if out:
                     return out
     return None
 
-
-# ---------------------------------------------------------------- exception landing pads
 
 def _uleb(img, o):
     v = sh = 0
@@ -1090,7 +992,6 @@ def _sleb(img, o):
 
 
 def _enc(img, o, enc):
-    """DWARF pointer encoding at image offset o: (value as image offset or plain number, next offset)."""
     if enc == 0xFF:
         return 0, o
     fmt = enc & 0x0F
@@ -1108,7 +1009,6 @@ def _enc(img, o, enc):
 
 
 def landing_pads(mod):
-    """{landing pad: [(start, end)]}: the call-site ranges of each pad, from .eh_frame and the LSDAs."""
     hit = _PADS.get(mod)
     if hit is not None:
         return hit
@@ -1173,10 +1073,7 @@ def _lsda(img, o, func, base, pads):
             pads.setdefault(base + lpstart + lp, []).append((base + func + s, base + func + s + ln))
 
 
-# ---------------------------------------------------------------- per-function resolution
-
 def _explore(cfg, facts, br_pc):
-    """Targets of the table jump at br_pc over every path into its dispatch block, or None."""
     mod = cfg.mod
     rn = bits(mod.word(br_pc), 5, 5)
     budget = [MAX_PATHS]
@@ -1208,7 +1105,6 @@ def _explore(cfg, facts, br_pc):
 
 
 def _round(mod, entry, end, brs, tables, pads):
-    """Resolution of every br in brs over the blocks, facts and predecessors that the table edges `tables` give."""
     cfg = _Cfg(mod, entry, end, tables, pads)
     facts, new = None, {}
     for a in brs:
@@ -1223,16 +1119,6 @@ def _round(mod, entry, end, brs, tables, pads):
 
 
 def _function(mod, entry, end):
-    """{br: set of targets or None} for the table-shaped brs of [entry, end); cached for the last function.
-
-    Table edges change the blocks, the facts and the predecessors the paths may take, so the function is resolved
-    as a whole. Growth: start without table edges, resolve, add the targets found as edges, until no table grows
-    (a table found unresolved here may still resolve once the blocks before it are reached). Check: give every
-    unresolved table edges to every block, resolve again, drop any table that no longer resolves and grow any
-    whose result its edges do not cover (an unresolved one included), until all are covered. By induction over an
-    execution, the facts and every resolved table then hold together. The work is capped at MAX_STEPS evaluated
-    instructions; a function that needs more gets no tables.
-    """
     hit = _FUNCS.get(mod)
     if hit is not None and hit[0] == (entry, end):
         return hit[1]
@@ -1277,10 +1163,7 @@ def _resolve_all(mod, entry, end, brs, pads):
     return result
 
 
-# ---------------------------------------------------------------- interface
-
 def table_targets(mod, br_pc, entry, end):
-    """Every target the `br` at br_pc can reach through a proved table index, anywhere in .text; None if unproved."""
     if not is_computed(mod, br_pc, entry):
         return None
     t = _function(mod, entry, end).get(br_pc)
@@ -1288,11 +1171,6 @@ def table_targets(mod, br_pc, entry, end):
 
 
 def resolve(mod, br_pc, entry, end):
-    """Targets of the `br` at br_pc when it dispatches through a bounds-checked jump table inside [entry, end).
-
-    mod is a recomp.module.Module. Returns a sorted list of distinct target addresses, every one in [entry, end)
-    and 4-byte aligned, or None when the br is not a recognised table jump.
-    """
     t = table_targets(mod, br_pc, entry, end)
     if t is None or t[0] < entry or t[-1] >= end:
         return None
@@ -1300,10 +1178,6 @@ def resolve(mod, br_pc, entry, end):
 
 
 def _table_shape(mod, t):
-    """The br value is a code address, or address arithmetic over a loaded entry or an image address.
-
-    A value loaded as a whole is a pointer (vtables, function-pointer arrays in .data): a call, not a table.
-    """
     k = t[0]
     if k == 'c':
         return mod.in_text(t[1])
@@ -1313,7 +1187,6 @@ def _table_shape(mod, t):
 
 
 def _refers(mod, e):
-    """e contains a load or an image address and something unknown or loaded."""
     has_addr = has_var = False
     stack = [e]
     while stack:
@@ -1332,10 +1205,6 @@ def _refers(mod, e):
 
 
 def is_computed(mod, br_pc, entry):
-    """True if the br register comes from address arithmetic (a table) rather than a load (a pointer call).
-
-    Decided on the straight-line code before the br alone, so it does not depend on the function bounds.
-    """
     w = mod.word(br_pc)
     if not _is_br(w):
         return False

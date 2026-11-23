@@ -1,16 +1,8 @@
 # Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-"""Portable C lowering of AArch64 FP / AdvSIMD / crypto / CRC32 instructions (lifter --simd=c).
-
-Every encoding is decoded here at lift time and turned into C over the Cpu struct, calling the static
-inline helpers in runtime/simd.h with constant fields (sizes, lanes, ops), so clang folds the helpers'
-switches. Covers ARMv8.0-A + Crypto + CRC32 (the Switch's Cortex-A57); unallocated or later-architecture
-encodings (FP16 arithmetic, RDM, dot product, FCMA, JSCVT, ...) raise Unsupported.
-"""
 from lifter import COND_NAMES, Unsupported, W, X, XS, bits, extend_expr, hx, set_reg, sext
 
 
 def lop(name, u=0):
-    """C name of a lane op (enum in runtime/simd.h), with the unsigned flag."""
     return f'LOP_{name}' + (' | LOP_U' if u else '')
 
 
@@ -39,8 +31,6 @@ def VWr(T, Q, d, e):
 
 
 def vset(d, e, full=False):
-    """C that writes V register d whole (runtime/simd.h VSET, VSET128): e is a scalar of at most 64 bits, which leaves
-    the bits above it zero, or with full a 128-bit value."""
     return f'VSET128({d}, {e});' if full else f'VSET({d}, {e});'
 
 
@@ -54,7 +44,6 @@ def gen(op, sz, ne, d, szd, offd, keep, n, szn, offn, m=-1, szm=0, offm=0, bidx=
 
 
 def same(op, sz, ne, d, n, m=-1, bimm=0, bidx=-1):
-    """Lane-wise op, all operands the same size."""
     return gen(op, sz, ne, d, sz, 0, 0, n, sz, 0, m, sz, 0, bidx, bimm)
 
 
@@ -74,7 +63,7 @@ def u128(v):
 FT = {0: ('s', 'vf32', 'vu32', 'float', 'VSF32', 'VS32', 'FP_SETS'),
       1: ('d', 'vf64', 'vu64', 'double', 'VSF64', 'VS64', 'FP_SETD')}
 
-FOP3 = {  # vector three-same FP: (U, a, opcode) -> FOP
+FOP3 = {
     (0, 0, 0b11000): 'FOP_MAXNM', (0, 0, 0b11010): 'FOP_ADD', (0, 0, 0b11011): 'FOP_MULX',
     (0, 0, 0b11110): 'FOP_MAX', (0, 0, 0b11111): 'FOP_RECPS',
     (0, 1, 0b11000): 'FOP_MINNM', (0, 1, 0b11010): 'FOP_SUB', (0, 1, 0b11110): 'FOP_MIN', (0, 1, 0b11111): 'FOP_RSQRTS',
@@ -129,9 +118,7 @@ def simd_expand_imm(op, cmode, imm8):
 
 
 class SimdC:
-    """FP/SIMD decoder emitting portable C. Methods return C statements or raise Unsupported."""
 
-    # ------------------------------------------------------------ top level
 
     def dp(self, w, pc):
         op0, op1, op2, op3 = bits(w, 28, 4), bits(w, 23, 2), bits(w, 19, 4), bits(w, 10, 9)
@@ -141,7 +128,7 @@ class SimdC:
             return self.crypto_sha3(w)
         if op0 == 0b0101 and not (op1 & 2) and (op2 & 7) == 5 and (op3 & 0b110000011) == 0b10:
             return self.crypto_sha2(w)
-        if (op0 & 0b1101) == 0b0101:  # AdvSIMD scalar
+        if (op0 & 0b1101) == 0b0101:
             if op1 == 0 and not (op2 & 0b1100) and (op3 & 0b000100001) == 1:
                 return self.scalar_copy(w)
             if not (op1 & 2) and (op2 & 7) == 4 and (op3 & 0b110000011) == 0b10:
@@ -163,7 +150,7 @@ class SimdC:
             return self.permute(w)
         if (op0 & 0b1011) == 0b0010 and not (op1 & 2) and not (op2 & 4) and (op3 & 0b000100001) == 0:
             return self.ext(w)
-        if (op0 & 0b1001) == 0:  # AdvSIMD vector
+        if (op0 & 0b1001) == 0:
             if op1 == 0 and not (op2 & 0b1100) and (op3 & 0b000100001) == 1:
                 return self.copy(w)
             if not (op1 & 2) and (op2 & 4) and (op3 & 1):
@@ -181,7 +168,7 @@ class SimdC:
             if (op1 & 2) and not (op3 & 1):
                 return self.indexed(w)
             raise Unsupported(f'simd vector {w:08x}')
-        if (op0 & 0b0101) == 0b0001:  # scalar FP
+        if (op0 & 0b0101) == 0b0001:
             if bits(w, 29, 1) or (bits(w, 31, 1) and (op1 & 2 or (op2 & 4 and op3 & 0b111111))):
                 raise Unsupported('fp M/S')
             if op1 & 2:
@@ -205,7 +192,6 @@ class SimdC:
             raise Unsupported('fp op3')
         raise Unsupported(f'fp/simd {w:08x}')
 
-    # ------------------------------------------------------------ crypto
 
     def crypto_aes(self, w):
         if bits(w, 22, 2):
@@ -238,7 +224,6 @@ class SimdC:
             raise Unsupported('sha2 opcode')
         return f'sv_sha_misc(c, {op}, {d}, {n}, 0);'
 
-    # ------------------------------------------------------------ copy / permute / table
 
     @staticmethod
     def _imm5(imm5):
@@ -268,25 +253,25 @@ class SimdC:
                 raise Unsupported('ins elem Q')
             idx2 = imm4 >> sz
             return f'VINS({vu(sz)}, {d}, {idx}, (({P} *)&c->v[{n}])[{idx2}]);'
-        if imm4 == 0:  # DUP (element)
+        if imm4 == 0:
             if sz == 3 and not Q:
                 raise Unsupported('dup 1d')
             nl = 16 >> sz
             return VWr(vu(sz), Q, d, shuf(vu(sz), VR(vu(sz), n), VR(vu(sz), n), [idx] * nl))
-        if imm4 == 1:  # DUP (general)
+        if imm4 == 1:
             if sz == 3 and not Q:
                 raise Unsupported('dup 1d')
             return VWr(vu(sz), Q, d, f'({vu(sz)}){{}} + ({ut(sz)}){X(n)}')
-        if imm4 == 3:  # INS (general)
+        if imm4 == 3:
             if not Q:
                 raise Unsupported('ins Q')
             return f'VINS({vu(sz)}, {d}, {idx}, ({ut(sz)}){X(n)});'
-        if imm4 == 5:  # SMOV
+        if imm4 == 5:
             if sz >= 2 + Q:
                 raise Unsupported('smov size')
             st = ('int8_t', 'int16_t', 'int32_t')[sz]
             return set_reg(Q, d, f'(uint64_t)(int64_t)({st})(({P} *)&c->v[{n}])[{idx}]')
-        if imm4 == 7:  # UMOV
+        if imm4 == 7:
             if (Q and sz != 3) or (not Q and sz == 3):
                 raise Unsupported('umov size')
             return set_reg(Q, d, f'(({P} *)&c->v[{n}])[{idx}]')
@@ -301,13 +286,13 @@ class SimdC:
         kind = opc & 3
         idx = []
         for i in range(ne):
-            if kind == 1:  # UZP
+            if kind == 1:
                 j = 2 * i + part
                 idx.append(j if j < ne else NL + j - ne)
-            elif kind == 2:  # TRN
+            elif kind == 2:
                 p = i & ~1
                 idx.append(p + part if not (i & 1) else NL + p + part)
-            else:  # ZIP
+            else:
                 base = part * ne // 2
                 idx.append(base + i // 2 if not (i & 1) else NL + base + i // 2)
         idx += [0] * (NL - ne)
@@ -329,7 +314,6 @@ class SimdC:
             raise Unsupported('tbl op2')
         return f'sv_tbl(c, {Q}, {ln}, {op}, {d}, {n}, {m});'
 
-    # ------------------------------------------------------------ three same
 
     def three_same(self, w, scalar=False):
         Q, U, sz, m, opc, n, d = (bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 2), bits(w, 16, 5), bits(w, 11, 5),
@@ -407,8 +391,6 @@ class SimdC:
 
     @staticmethod
     def _pair_idx(Q, sz):
-        """Lane indices (into SHUF(a, b)) of the left / right operands of a pairwise op; for Q=0 the
-        padding lanes point at a's upper half."""
         ne, NL = lanes(Q, sz), 16 >> sz
         src = list(range(ne)) + [NL + i for i in range(ne)]
         ev = [src[2 * k] for k in range(ne)] + [ne % NL] * (NL - ne)
@@ -464,7 +446,7 @@ class SimdC:
         if key in FPAIRV:
             ev, od = self._pair_idx(Q, 2 + sz)
             return f'SV_FOP_{F.upper()}({FPAIRV[key]}, {Q}, {d}, {shuf(VT, A, B, ev)}, {shuf(VT, A, B, od)}, ({VT}){{}});'
-        if U == 0 and opc == 0b11001:  # FMLA / FMLS: the multiplicand is negated for FMLS
+        if U == 0 and opc == 0b11001:
             return f'SV_FOP_{F.upper()}(FOP_MADD, {Q}, {d}, {VQ(VT, Q, d)}, {f"vneg_{F}({A})" if a_ else A}, {B});'
         fop = FOP3.get(key)
         if fop is None:
@@ -473,7 +455,6 @@ class SimdC:
             A = f'vneg_{F}({A})'
         return f'SV_FOP_{F.upper()}({fop}, {Q}, {d}, {A}, {B}, ({VT}){{}});'
 
-    # ------------------------------------------------------------ three different
 
     def three_diff(self, w, scalar=False):
         Q, U, sz, m, opc, n, d = (bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 2), bits(w, 16, 5), bits(w, 12, 4),
@@ -483,7 +464,7 @@ class SimdC:
                 raise Unsupported('scalar 3diff')
             op = {9: 'SQDMLAL', 11: 'SQDMLSL', 13: 'SQDMULL'}[opc]
             return gen(lop(op), sz, 1, d, sz + 1, 0, 0, n, sz, 0, m, sz, 0)
-        if opc == 14:  # PMULL
+        if opc == 14:
             if U:
                 raise Unsupported('pmull U')
             if sz == 3:
@@ -494,10 +475,10 @@ class SimdC:
             raise Unsupported('3diff size')
         ne = 8 >> sz
         off = Q * ne
-        if opc in (4, 6):  # ADDHN/RADDHN/SUBHN/RSUBHN: narrow into the low or high half
+        if opc in (4, 6):
             op = ('ADDHN', 'RADDHN', 'SUBHN', 'RSUBHN')[(opc == 6) * 2 + U]
             return gen(lop(op), sz, ne, d, sz, off, Q, n, sz + 1, 0, m, sz + 1, 0)
-        if opc in (1, 3):  # wide
+        if opc in (1, 3):
             op = 'ADDW' if opc == 1 else 'SUBW'
             return gen(lop(op, U), sz, ne, d, sz + 1, 0, 0, n, sz + 1, 0, m, sz, off)
         op = {0: 'ADDL', 2: 'SUBL', 5: 'ABAL', 7: 'ABDL', 8: 'MLAL', 10: 'MLSL', 12: 'MULL',
@@ -508,7 +489,6 @@ class SimdC:
         return gen(lop(op, U if not op.startswith(('SQD', 'PM')) else 0), sz, ne, d, sz + 1, 0, 0, n, sz, off,
                    m, sz, off)
 
-    # ------------------------------------------------------------ two-register misc
 
     def misc2(self, w, scalar=False):
         Q, U, sz, opc, n, d = bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 2), bits(w, 12, 5), bits(w, 5, 5), bits(w, 0, 5)
@@ -518,7 +498,7 @@ class SimdC:
             return self.misc2_scalar(U, sz, opc, d, n)
         ne = lanes(Q, sz)
         T, S = vu(sz), vs(sz)
-        if opc == 0 or (opc == 1 and not U):  # REV64 / REV32 / REV16
+        if opc == 0 or (opc == 1 and not U):
             gsz = {(0, 0): 3, (1, 0): 2, (0, 1): 1}.get((U, opc))
             if gsz is None or sz >= gsz:
                 raise Unsupported('rev')
@@ -565,13 +545,13 @@ class SimdC:
             if U:
                 return VWr(T, Q, d, f'-{a}')
             return VWr(T, Q, d, f'(({T}){sa} ^ ({T})({sa} >> {(8 << sz) - 1})) - ({T})({sa} >> {(8 << sz) - 1})')
-        if opc in (0b10010, 0b10100):  # XTN / SQXTUN / SQXTN / UQXTN
+        if opc in (0b10010, 0b10100):
             if sz == 3:
                 raise Unsupported('xtn size')
             op = {(0b10010, 0): 'XTN', (0b10010, 1): 'SQXTUN', (0b10100, 0): 'SQXTN', (0b10100, 1): 'UQXTN'}[(opc, U)]
             ne = 8 >> sz
             return gen(lop(op), sz, ne, d, sz, Q * ne, Q, n, sz + 1, 0)
-        if opc == 0b10011 and U:  # SHLL
+        if opc == 0b10011 and U:
             if sz == 3:
                 raise Unsupported('shll size')
             ne = 8 >> sz
@@ -602,11 +582,10 @@ class SimdC:
         raise Unsupported('scalar misc opcode')
 
     def misc2_fp(self, w, scalar):
-        """FP two-register misc, vector and scalar."""
         Q, U, a_, sz, opc, n, d = (bits(w, 30, 1), bits(w, 29, 1), bits(w, 23, 1), bits(w, 22, 1), bits(w, 12, 5),
                                    bits(w, 5, 5), bits(w, 0, 5))
         F, VT, VU, T, SF, SU, SET = FT[sz]
-        if opc in (0b10110, 0b10111):  # FCVTN / FCVTL / FCVTXN
+        if opc in (0b10110, 0b10111):
             if a_:
                 raise Unsupported('fcvtn a')
             if opc == 0b10110 and U:
@@ -626,7 +605,7 @@ class SimdC:
         if 0b01100 <= opc <= 0b01111:
             if not a_:
                 raise Unsupported('fp16 misc')
-            if opc == 0b01111:  # FABS / FNEG
+            if opc == 0b01111:
                 if scalar:
                     raise Unsupported('scalar fabs')
                 mask = '0x80000000u' if not sz else '0x8000000000000000ull'
@@ -655,7 +634,7 @@ class SimdC:
             if not scalar:
                 raise Unsupported('vector frecpx')
             return f'{SET}({d}, recpx_{F}(c, {SF}({n})));'
-        if opc in (0b11000, 0b11001):  # FRINT*
+        if opc in (0b11000, 0b11001):
             if scalar:
                 raise Unsupported('scalar frint')
             rm = {(0, 0, 0): 0, (0, 0, 1): 2, (0, 1, 0): 1, (0, 1, 1): 3, (1, 0, 0): 4, (1, 0, 1): 5, (1, 1, 1): 6}.get(
@@ -663,26 +642,25 @@ class SimdC:
             if rm is None:
                 raise Unsupported('frint')
             return VWr(VT, Q, d, f'vfrint_{F}(c, {x}, {rm})')
-        if opc in (0b11010, 0b11011) or (opc == 0b11100 and not a_):  # FCVT[NPMZA][SU]
+        if opc in (0b11010, 0b11011) or (opc == 0b11100 and not a_):
             rm = {(0b11010, 0): 0, (0b11010, 1): 1, (0b11011, 0): 2, (0b11011, 1): 3, (0b11100, 0): 4}[(opc, a_)]
             if scalar:
                 return f'VSET({d}, ({ut(2 + sz)})toint_{F}(c, {SF}({n}), {rm}, 0, {32 << sz}, {U}));'
             return VWr(VU, Q, d, f'vtoint_{F}(c, {x}, {rm}, 0, {U})')
-        if opc == 0b11100:  # URECPE / URSQRTE
+        if opc == 0b11100:
             if scalar or sz:
                 raise Unsupported('urecpe')
             return same(lop('URSQRTE' if U else 'URECPE'), 2, lanes(Q, 2), d, n)
         if opc == 0b11101:
-            if not a_:  # SCVTF / UCVTF
+            if not a_:
                 if scalar:
                     return f'{SET}({d}, fromint_{F}(c, {SU}({n}), {32 << sz}, {U}, 0));'
                 return VWr(VT, Q, d, f'vfromint_{F}(c, {VR(VU, n)}, 0, {U})')
-            if scalar:  # FRECPE / FRSQRTE
+            if scalar:
                 return f'{SET}({d}, {"rsqrte" if U else "recpe"}_{F}(c, {SF}({n})));'
             return VWr(VT, Q, d, f'v{"rsqrte" if U else "recpe"}_{F}(c, {x})')
         raise Unsupported('fp misc opcode')
 
-    # ------------------------------------------------------------ across lanes / pairwise
 
     def across(self, w):
         Q, U, sz, opc, n, d = bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 2), bits(w, 12, 5), bits(w, 5, 5), bits(w, 0, 5)
@@ -712,7 +690,6 @@ class SimdC:
         F, VT, VU, T, SF, SU, SET = FT[sz & 1]
         return f'{SET}({d}, pair_{F}(c, {fop}, {VR(VT, n)}[0], {VR(VT, n)}[1]));'
 
-    # ------------------------------------------------------------ modified immediate
 
     def modimm(self, w):
         Q, op, cmode, o2, d = bits(w, 30, 1), bits(w, 29, 1), bits(w, 12, 4), bits(w, 11, 1), bits(w, 0, 5)
@@ -723,17 +700,16 @@ class SimdC:
             raise Unsupported('fmov 1d')
         imm = simd_expand_imm(op, cmode, imm8)
         c4 = cmode
-        if (c4 < 8 and c4 & 1) or (8 <= c4 < 12 and c4 & 1):  # ORR / BIC
+        if (c4 < 8 and c4 & 1) or (8 <= c4 < 12 and c4 & 1):
             if op:
                 imm = ~imm & ((1 << 64) - 1)
                 return VWr('vu64', Q, d, f'{VR("vu64", d)} & {hx(imm)}')
             return VWr('vu64', Q, d, f'{VR("vu64", d)} | {hx(imm)}')
-        if op and not (c4 == 14 or c4 == 15):  # MVNI
+        if op and not (c4 == 14 or c4 == 15):
             imm = ~imm & ((1 << 64) - 1)
         v = imm | (imm << 64) if Q else imm
         return vset(d, u128(v), v >> 64 != 0)
 
-    # ------------------------------------------------------------ shift by immediate
 
     def shift_imm(self, w, scalar=False):
         Q, U, immh, immb, opc, n, d = (bits(w, 30, 1), bits(w, 29, 1), bits(w, 19, 4), bits(w, 16, 3), bits(w, 11, 5),
@@ -748,7 +724,7 @@ class SimdC:
             Q = 1
         ne = 1 if scalar else lanes(Q, sz)
         narrow = 0b10000 <= opc <= 0b10011
-        if opc in (0b11100, 0b11111):  # fixed-point conversions
+        if opc in (0b11100, 0b11111):
             if sz < 2:
                 raise Unsupported('fp16 fixed')
             if sz == 3 and not Q:
@@ -773,7 +749,7 @@ class SimdC:
                 raise Unsupported('scalar shrn')
             part = 0 if scalar else Q
             return gen(lop(*op), sz, ne, d, sz, part * ne, part, n, sz + 1, 0, -1, 0, 0, -1, rsh)
-        if opc == 0b10100:  # SSHLL / USHLL
+        if opc == 0b10100:
             if scalar or sz == 3:
                 raise Unsupported('sshll')
             ne = 8 >> sz
@@ -783,7 +759,7 @@ class SimdC:
         if scalar and sz != 3 and opc not in (0b01100, 0b01110):
             raise Unsupported('scalar shift size')
         T, S = vu(sz), vs(sz)
-        if opc in (0, 2):  # SSHR/USHR, SSRA/USRA
+        if opc in (0, 2):
             if U:
                 e = f'({T}){{}}' if rsh >= es else f'({VR(T, n)} >> {rsh})'
             else:
@@ -810,7 +786,6 @@ class SimdC:
             return same(lop('QSHLI', U), sz, ne, d, n, -1, lsh)
         raise Unsupported('shift imm opcode')
 
-    # ------------------------------------------------------------ indexed element
 
     def indexed(self, w, scalar=False):
         Q, U, sz, L, M, rm, opc, H, n, d = (bits(w, 30, 1), bits(w, 29, 1), bits(w, 22, 2), bits(w, 21, 1),
@@ -871,7 +846,6 @@ class SimdC:
         ne = 8 >> sz
         return gen(lop(lng, U if not lng.startswith('SQ') else 0), sz, ne, d, sz + 1, 0, 0, n, sz, Q * ne, m, sz, 0, idx)
 
-    # ------------------------------------------------------------ scalar FP
 
     @staticmethod
     def _ftype(w):
@@ -885,7 +859,7 @@ class SimdC:
         o1, o0 = bits(w, 21, 1), bits(w, 15, 1)
         d, n, m, a = bits(w, 0, 5), bits(w, 5, 5), bits(w, 16, 5), bits(w, 10, 5)
         F = FT[t][0]
-        na, nn = o1, o1 ^ o0  # FMADD 00, FMSUB 01 (-n), FNMADD 10 (-a, -n), FNMSUB 11 (-a)
+        na, nn = o1, o1 ^ o0
         return f'fp_fma_{F}(c, {na}, {nn}, {d}, {n}, {m}, {a});'
 
     def fp_dp2(self, w):
@@ -900,7 +874,7 @@ class SimdC:
     def fp_dp1(self, w):
         t = bits(w, 22, 2)
         opc, d, n = bits(w, 15, 6), bits(w, 0, 5), bits(w, 5, 5)
-        if t == 3:  # half source: only FCVT
+        if t == 3:
             if opc == 4:
                 return f'FP_SETS({d}, simd_h2s(c, VS16({n})));'
             if opc == 5:
@@ -976,7 +950,7 @@ class SimdC:
 
     def fp_int(self, w):
         sf, t, rmode, opc, n, d = bits(w, 31, 1), bits(w, 22, 2), bits(w, 19, 2), bits(w, 16, 3), bits(w, 5, 5), bits(w, 0, 5)
-        if opc in (6, 7):  # FMOV
+        if opc in (6, 7):
             if t == 2 and sf and rmode == 1:
                 return set_reg(1, d, f'VHI64({n})') if opc == 6 else f'VINS(vu64, {d}, 1, {X(n)});'
             if rmode or t != sf or t > 1:
@@ -1000,11 +974,10 @@ class SimdC:
             rm = (0, 1, 2, 3)[rmode]
         return set_reg(sf, d, f'toint_{F}(c, {SF}({n}), {rm}, 0, {ib}, {opc & 1})')
 
-    # ------------------------------------------------------------ loads / stores
 
     def ldst(self, w, pc):
         rt = bits(w, 0, 5)
-        if bits(w, 27, 3) == 0b011 and bits(w, 24, 2) == 0:  # literal
+        if bits(w, 27, 3) == 0b011 and bits(w, 24, 2) == 0:
             opc = bits(w, 30, 2)
             if opc == 3:
                 raise Unsupported('ldr literal opc')
@@ -1097,7 +1070,7 @@ class SimdC:
         if not post and rm:
             raise Unsupported('ldst struct rm')
         base = XS(rn)
-        if bits(w, 24, 1) == 0:  # multiple structures
+        if bits(w, 24, 1) == 0:
             if bits(w, 21, 1):
                 raise Unsupported('ldst multiple bit21')
             opc = bits(w, 12, 4)
@@ -1108,7 +1081,7 @@ class SimdC:
             if sz == 3 and not Q and selem > 1:
                 raise Unsupported('ldst multiple 1d')
             total = (8 << Q) * selem * rpt
-            if selem == 1:  # LD1/ST1: whole registers
+            if selem == 1:
                 regs = [(rt + i) % 32 for i in range(rpt)]
                 step = 16 if Q else 8
                 if L:
@@ -1119,7 +1092,7 @@ class SimdC:
                                    for i, r in enumerate(regs))
             else:
                 acc = f'sl_{"ldm" if L else "stm"}(c, {Q}, {sz}, {selem}, {rpt}, {rt}, ea);'
-        else:  # single structure
+        else:
             opc, S, R = bits(w, 13, 3), bits(w, 12, 1), bits(w, 21, 1)
             scale = opc >> 1
             selem = ((opc & 1) << 1 | R) + 1
@@ -1152,7 +1125,6 @@ class SimdC:
             parts.append(f'{dst} = ea + {total};' if rm == 31 else f'{dst} = ea + {X(rm)};')
         return '{ ' + ' '.join(parts) + ' }'
 
-    # ------------------------------------------------------------ CRC32
 
     @staticmethod
     def crc(w):

@@ -1,14 +1,3 @@
-"""Guest address layout of the loaded modules, computed from their sizes.
-
-Guest addresses equal host addresses, and the lifter writes absolute addresses into the generated C, so the
-generator and the runtime must agree on every module base. This is the single place that decides them: the generator
-calls layout() and writes the result into generated/<version>/layout.h and layout.json, which the runtime and the
-build read.
-
-Modules are placed in Horizon's load order (rtld is dropped; the host links the modules):
-main, subsdk0..9, sdk. Each base is aligned to 2 MiB. Everything must stay below 2^39, the limit of the addresses
-IPC buffers can encode.
-"""
 import json
 from pathlib import Path
 
@@ -25,7 +14,6 @@ def align_up(v, a=ALIGN):
 
 
 def layout(exefs):
-    """[(name, base, size)] for the modules present in the ExeFS directory, in load order."""
     exefs = Path(exefs)
     out, base = [], FIRST_BASE
     for name in ORDER:
@@ -41,7 +29,6 @@ def layout(exefs):
 
 
 def write(mods, outdir):
-    """layout.json for Python tools and layout.h for the runtime."""
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / 'layout.json').write_text(json.dumps(
@@ -56,6 +43,5 @@ def write(mods, outdir):
 
 
 def read(outdir):
-    """[(name, base, size)] from a layout.json written by write()."""
     data = json.loads((Path(outdir) / 'layout.json').read_text())
     return [(m['name'], int(m['base'], 16), int(m['size'], 16)) for m in data]
