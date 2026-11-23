@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/controls.md source-hash=c4c212c525c783d6d394d41d611b99a005bc36c4 reviewed=no -->
+<!-- translation: lang=ru source=docs/controls.md source-hash=e1545db1fbc465911d85b8b83cff0812ff56cf90 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · **Русский** · [简体中文](../zh-Hans/controls.md)
 
@@ -582,7 +582,7 @@ Steam, если мост его не находит. Когда подключе
 
 ## Захват RenderDoc (заблокирован)
 
-`NX2SARIA_RDOC=<frame>[,...]` (`runtime/rdoc_win.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) загружает RenderDoc перед
+`NX2SARIA_RDOC=<frame>[,...]` (`runtime/diag/rdoc.c`; `NX2SARIA_RDOC_DIR`, `NX2SARIA_RDOC_DLL`) загружает RenderDoc перед
 `vkCreateInstance`. RenderDoc скрывает `VK_EXT_external_memory_host`, которое бэкенд требует для импорта гостевых пулов
 (`runtime/vk/vk_memory.c`), поэтому создание устройства под ним завершается ошибкой. Для захвата сначала нужен запасной
 вариант пула на основе копирования.
