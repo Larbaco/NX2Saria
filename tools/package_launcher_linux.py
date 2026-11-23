@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_DIRS = ('launcher', 'recomp', 'runtime', 'tools', 'prompt-art', 'toolchain')
+APP_DIRS = ('launcher', 'recomp', 'runtime', 'licenses', 'tools', 'prompt-art', 'toolchain')
 APP_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 SKIP = {'vendor', 'xlate', '__pycache__', '.pytest_cache'}
 
@@ -42,16 +42,16 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     ver = a.version.removeprefix('v')
     sys.path.insert(0, str(ROOT / 'tools'))
-    from make_appimage import PACKAGES
+    from make_appimage import RUNTIME_PINS
     from linux_runtime import runtime_id as get_runtime_id
-    runtime_id = get_runtime_id(a.python / 'bin' / 'python3', PACKAGES)
+    runtime_id = get_runtime_id(a.python / 'bin' / 'python3', RUNTIME_PINS)
     build_sha = subprocess.run(['git', 'rev-parse', '--short=12', 'HEAD'], cwd=ROOT,
                                check=True, capture_output=True, text=True).stdout.strip()
     app = a.out / f'NX2Saria-app-linux-x86_64-{ver}.zip'
     with zipfile.ZipFile(app, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for name in APP_DIRS:
             src = ROOT / name
-            if name in ('toolchain', 'prompt-art') and a.kit.joinpath(name).is_dir():
+            if name in ('toolchain', 'prompt-art', 'licenses') and a.kit.joinpath(name).is_dir():
                 src = a.kit / name
             if src.is_dir():
                 add_tree(z, src, name)

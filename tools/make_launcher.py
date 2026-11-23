@@ -190,6 +190,22 @@ def build_python(py):
     (py / 'runtime-id.txt').write_text(runtime_id() + '\n', encoding='utf-8')
 
 
+def python_texts(folder, ver):
+    import python_licences
+    python_licences.cpython_license(folder / 'app' / ver / 'licenses' / 'python', DL)
+    missing = []
+    for lib, where in python_licences.WINDOWS_TEXTS.items():
+        if where is None:
+            continue
+        rel, line = where
+        path = folder / rel if rel.startswith('python/') else folder / 'app' / ver / rel
+        if not path.is_file() or line not in path.read_text(encoding='utf-8', errors='replace'):
+            missing.append(f'{lib} ({rel})')
+    if missing:
+        sys.exit(f'the release has no licence text for {", ".join(missing)}')
+    say(f'Python licence texts: {len(python_licences.WINDOWS_TEXTS)} libraries, {python_licences.CPYTHON_TEXT}')
+
+
 # ---------------------------------------------------------------- app/<version>/
 
 def check_xlate(xlate):
@@ -230,7 +246,7 @@ def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, d
     # runtime/ (make_game.py) and has no shader compiler. Build the missing and the stale ones before the copy.
     build_shaders.build(ROOT / 'runtime')
     copy_tree(ROOT / 'launcher', app / 'launcher')
-    for d in ('runtime', 'recomp'):
+    for d in ('runtime', 'recomp', 'licenses'):
         copy_tree(ROOT / d, app / d)
     (app / 'tools').mkdir(parents=True)
     for t in TOOLS:
@@ -464,6 +480,7 @@ def main():
               a.pgo)
     (folder / 'app' / 'current.txt').write_text(ver + '\n', encoding='utf-8')
     build_python(folder / 'python')
+    python_texts(folder, ver)
     cc, windres = native_compiler(lock)
     build_runtime_lib(folder, ver, out, a.wine)
     stub, setup_stub = build_native(out / 'native', cc, windres)

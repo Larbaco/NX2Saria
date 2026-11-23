@@ -520,6 +520,9 @@ Before a commit:
 - `python tools\check_platform.py` after a runtime change outside `runtime/platform/`: no shared file uses Win32 outside
   a branch that only a Windows build compiles (`#ifdef _WIN32`, the `#else` of `#ifndef _WIN32`).
   `python tests\check_platform_test.py` checks the scanner itself on made-up files.
+- `python tests/shipped_notices_check.py` after changing what `tools/make_launcher.py` or `tools/make_appimage.py`
+  packages (a pin, a package, a copied file) or `licenses/`: each third-party component they package has its row in
+  `THIRD_PARTY_NOTICES.md`, in the section of its artifact, and each licence text in `licenses/` is named by one.
 - `python tests/runtime_dirs_check.py` after adding a folder, a source or a header to `runtime/`: the build scripts'
   lists of the runtime's folders agree with the tree, no two headers on the include path share a name
   ([architecture.md](architecture.md#runtime-folders)), and on Linux and on Windows both build scripts compile every

@@ -38,10 +38,19 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-KIT_DIRS = ('launcher', 'recomp', 'runtime')
+KIT_DIRS = ('launcher', 'recomp', 'runtime', 'licenses')
 KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
 TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')   # the translator ships built (bin/); its sources stay out
 PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0', 'pillow==12.3.0')
+PYTHON_REMOVED = {
+    '_dbm': 'links Berkeley DB 6.0.19, whose Sleepycat licence asks for the complete source of every program that uses '
+            'it; dbm.ndbm is its only user, and nothing here imports dbm',
+}
+RUNTIME_PINS = PACKAGES + tuple(f'without {name}' for name in sorted(PYTHON_REMOVED))
+
+
+def removed_modules(python):
+    return sorted(p for name in PYTHON_REMOVED for p in Path(python).glob(f'lib/python3*/lib-dynload/{name}.*.so'))
 
 APPRUN = r'''#!/bin/bash
 # NX2Saria build kit for Linux: builds Ocarina of Time (Switch 2, game 1.1.1) from the player's own dump.
@@ -252,6 +261,10 @@ def main():
     reason = build_xlate.check_built(xlate, 'nx2navi_xlate')   # the translator of this checkout's sources, or none
     if reason:
         sys.exit(reason)
+    import python_licences
+    reason = python_licences.check_build(a.python)
+    if reason:
+        sys.exit(reason)
     import dlss_pin
     dlss = None if a.no_dlss else dlss_pin.resolve(a.dlss, ROOT / 'build' / 'dl', linux=True)
 
@@ -290,13 +303,20 @@ def main():
     py = app / 'usr' / 'python'
     shutil.copytree(a.python, py, symlinks=True)
     from linux_runtime import runtime_id
-    (py / 'runtime-id.txt').write_text(runtime_id(py / 'bin' / 'python3', PACKAGES) + '\n', encoding='utf-8')
+    (py / 'runtime-id.txt').write_text(runtime_id(py / 'bin' / 'python3', RUNTIME_PINS) + '\n', encoding='utf-8')
     for marker in py.glob('lib/python3*/EXTERNALLY-MANAGED'):   # uv marks its Pythons; this copy is the AppImage's own
         marker.unlink()
     subprocess.run([py / 'bin' / 'python3', '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
                     '--no-warn-script-location', *PACKAGES], check=True)
     for cache in py.rglob('__pycache__'):
         shutil.rmtree(cache, ignore_errors=True)
+    for f in removed_modules(py):
+        print(f'{f.relative_to(py)}: left out ({PYTHON_REMOVED[f.name.split(".")[0]]})')
+        f.unlink()
+    texts = python_licences.pbs_licences(kit / 'licenses' / 'python')
+    python_licences.cpython_license(kit / 'licenses' / 'python')
+    print(f'Python licence texts: {len(texts)} files from python-build-standalone {python_licences.PBS_BUILD}, and '
+          f'{python_licences.CPYTHON_TEXT}')
 
     apprun = APPRUN
     for key, value in (('VERSION', dlss_pin.VERSION), ('SO', pin.name), ('SHA256', pin.sha256), ('URL', pin.url)):
