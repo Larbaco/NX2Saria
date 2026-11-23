@@ -2,8 +2,8 @@
 
 The player docs are translated into the languages of the settings menu: Brazilian Portuguese (`pt-BR`), Russian (`ru`)
 and Simplified Chinese (`zh-Hans`). English is the source. Developer docs (building, architecture, the renderer notes,
-the studies), the release notes and the changelogs stay in English only: the launcher shows the release notes as they
-are, in one language.
+the studies, the code notes of `docs/code/`), the release notes and the changelogs stay in English only: the launcher
+shows the release notes as they are, in one language. `check` refuses a translation of a page of `docs/code/`.
 
 ## Layout
 

@@ -525,6 +525,11 @@ Before a commit:
   ([architecture.md](architecture.md#runtime-folders)), and on Linux and on Windows both build scripts compile every
   runtime source once (dlssg/ aside), each INSTALL_SIDE path among them. A test that compiles runtime sources passes
   `runtime_include.flags()` (`tests/runtime_include.py`): runtime/ and each folder, as the build does.
+- `docs/code/<area>.md` of each area you changed: its notes follow the code, by file and function, since the code has no
+  comments ([docs/code/README.md](code/README.md)).
+- `python tests/source_comments_check.py`: the comment lines left in the source, per area; a warning until the last
+  area is done, and `--strict <area>` fails on any left there.
+- `python tests/code_docs_check.py`: every file and function `docs/code/` cites exists (a warning, `--strict` fails).
 
 The rest of this section is the reference: which test covers which change, how to run it on its own, and what it
 checks. `tests/run.py` runs all of them; a filter runs one (`tests/run.py sprint`).

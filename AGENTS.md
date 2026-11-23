@@ -33,7 +33,15 @@ The repository's additions are all rights reserved (`LICENSE-ADDITIONS`). It nev
 - Every lifter change passes the differential tests against Unicorn ([docs/building.md](docs/building.md), "Checks"). After changing `recomp/jumptables.py`, `tests\jumptables_check.py` reports 0 disagreements on 1.2.1 and 1.4.3.
 - `recomp/layout.py` alone decides module bases.
 - Graphics bugs: [docs/maxwell.md](docs/maxwell.md) lists the Maxwell behaviour the Vulkan path must match, what goes wrong when it does not, and what our runtime does.
-- Comments say what the code does and why, in words that stand on their own. Cite our code by file plus function (a line number may follow as a hint). Comments and docs do not name other projects or say where code came from: the license header of copied code and its `THIRD_PARTY_NOTICES.md` row carry that.
+
+## No comments in the code
+
+Source code has no comments. What a comment would say (why the code is so, its limits and traps, the game's addresses, measured numbers, Maxwell behaviour, issue and pull request references) lives in `docs/code/<area>.md`, grouped by file and function, or in the feature's own doc when it explains a feature. [docs/code/README.md](docs/code/README.md) lists the areas, the layout of a page and the citation format.
+
+- Before changing an area, read its `docs/code/<area>.md`. A change updates that page in the same pull request. New code adds no comment in any area; its notes go on the area's page, which the change starts if the area has none yet.
+- Docs cite our code by file and function (`` `runtime/vk/vk_pipeline.c` `cache_path_init()` ``); the code does not cite the docs. Docs do not name other projects or say where code came from: the license header of copied code and its `THIRD_PARTY_NOTICES.md` row carry that.
+- Exceptions, kept in the code: the license header or notice of copied code; the `GENERATED_MARKER` and everything under `generated/`; shebang and Python coding lines; what a tool or compiler reads (`# noqa`, `# needs:` and `# args:` of `tests/run.py`, `// build_shaders: keep functions`, `// clang-format off`, `// NOLINT`, a fall-through marker); the part of a module docstring the program prints (`description=__doc__`), until its area turns it into a plain string. Left as they are: `tools/vendor/`, `runtime/third_party/`, `runtime/shaders/ffx/` and `runtime/shaders/ffx3/` (unmodified third-party code), `recomp/patches-*.txt` (data the generator reads) and `tools/xlate/` (its comments go with the shader translator's next identity change). docs/code/README.md ("The checks") has the full list and the reasons.
+- The comments already in the code move out area by area, one pull request per area in the order docs/code/README.md gives: the notes onto the page in one commit, the comments out of the code in the next, with no change to the code itself. Until the last area, `python tests/source_comments_check.py` only warns and prints the comment lines left per area; the pull request that cleans an area proves it with `--strict <area>`. `python tests/code_docs_check.py` checks that every file and function `docs/code/` cites exists, also as a warning until then.
 
 ## Every change leaves a trace in the log
 
@@ -51,7 +59,7 @@ its row there; `python tests/log_prefixes_check.py` fails without it.
 
 ## Writing
 
-Code, comments, docs and commit messages are in English. Commit messages are plain sentences without type prefixes.
+Code, docs and commit messages are in English. Commit messages are plain sentences without type prefixes.
 
 The player docs also have translations (`README.<lang>.md`, `docs/<lang>/`), made and kept as
 [docs/translating.md](docs/translating.md) says. After changing an English page that has them, run

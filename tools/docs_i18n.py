@@ -63,6 +63,7 @@ UNREVIEWED = {
 
 # Markdown that is not ours: pinned checkouts, vendored and third-party code.
 SKIP_PREFIXES = ('refs/', 'runtime/third_party/', 'tools/vendor/', 'build/', 'generated/')
+ENGLISH_ONLY = ('docs/code/',)
 
 HEADER_RE = re.compile(r'<!-- translation: lang=(\S+) source=(\S+) source-hash=([0-9a-f]{40}) reviewed=(yes|no) -->')
 BLOCK_RE = re.compile(r'<!-- languages -->\n(.*?)<!-- /languages -->\n', re.S)
@@ -190,6 +191,10 @@ def read_translations(files: list[Path], errors: list[str]) -> list[Translation]
             continue
         if not source.is_file():
             errors.append(f'{rel(f)}: its source {src} does not exist')
+            continue
+        if src.startswith(ENGLISH_ONLY):
+            errors.append(f'{rel(f)}: {src} is a code note, and docs/code/ stays in English only '
+                          f'(docs/code/README.md)')
             continue
         if translation_path(source, hlang) != f:
             errors.append(f'{rel(f)}: the {hlang} translation of {src} belongs at {rel(translation_path(source, hlang))}')
