@@ -28,7 +28,8 @@ from . import net, versions
 from .build import game_log_path, last_fatal
 from .context import shorten
 
-TELEMETRY_URL = ''   # the server's address; empty until it is deployed
+# The server's address (telemetry/, the project's own Worker). Empty, the window shows nothing of session reports.
+TELEMETRY_URL = 'https://nx2saria-telemetry.larbaco-ct.workers.dev'
 URL_ENV = 'NX2SARIA_TELEMETRY_URL'
 SCHEMA = 'nx2saria.session/1'
 TIMEOUT = 10                   # seconds a request may take; a report is never worth a longer wait

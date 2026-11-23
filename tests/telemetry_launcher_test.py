@@ -5,6 +5,7 @@ made from a FATAL line, the log lines a comment carries.
 Run: python tests/telemetry_launcher_test.py   (the window tests need tkinter, numpy and a display: on Linux under
 xvfb-run, so that no window opens on the desktop)
 """
+import gc
 import http.server
 import json
 import os
@@ -155,11 +156,10 @@ class ConsentTest(Base):
     def test_no_server_sends_nothing_and_says_so_once(self):
         self.write_summary()
         self.settings['telemetry'] = 'on'
-        with mock.patch.dict(os.environ, {telemetry.URL_ENV: ''}), mock.patch('launcher.net.request') as req:
+        with mock.patch.dict(os.environ, {telemetry.URL_ENV: ''}), mock.patch('launcher.net.request') as req, \
+                mock.patch.object(telemetry, 'TELEMETRY_URL', ''):   # a build without a server
             r = telemetry.Reporter(self.settings, VERSION, self.lines.append)
-            self.assertEqual(r.url, telemetry.TELEMETRY_URL)
-            if r.url:
-                self.skipTest('TELEMETRY_URL is set in this version')
+            self.assertEqual(r.url, '')
             for _ in range(3):
                 self.assertFalse(r.send_session(self.game).ok)
             self.assertFalse(r.send_feedback('hello', False, self.game).ok)
@@ -403,6 +403,9 @@ class WindowTest(Base):
         for after in self.root.tk.call('after', 'info'):   # the window's timers, which would run on a closed window
             self.root.after_cancel(after)
         self.root.destroy()
+        if getattr(self, 'app', None):
+            self.app.__dict__.clear()   # its pictures go now, on this thread, not on one a later test starts
+        gc.collect()
 
     def label(self):
         r = self.app.focused()
