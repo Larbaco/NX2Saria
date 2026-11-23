@@ -1779,3 +1779,272 @@ subdirectory, so one pass emits each file and each distinct subdirectory once. F
 ### `romfs_sizes()`
 
 `NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): open RomFS handles against the table.
+
+## `runtime/hle/sarc.h`
+
+SARC archives and the zstd dictionaries of `Pack/ZsDic.pack.zs` (`runtime/hle/sarc.c`).
+
+- `sarc_next()`: the next member of the SARC `p[0..n)` from member `*next` on that is named `name` (any member when
+  `name` is NULL): 1 with its start and size, `*next` moved past it; 0 when no such member is left; -1 when the archive
+  is damaged (its header, or the found member's range).
+- `sarc_member()`: the first member named `name`: 1 with its start and size; 0 when there is none or the archive is
+  damaged.
+- `sarc_count()`: the number of member entries of the SARC `p[0..n)`; -1 when its header is damaged.
+- `sarc_rebuild()`: the SARC `p[0..n)` with the data of some members replaced: entry i (of `sarc_count()`'s) takes
+  `with[i][0..with_n[i])` in place of its own bytes, or keeps them where `with[i]` is NULL. The header, the entries'
+  order, hashes and names, and SFNT stay; the members' data is laid out again in the order the archive has it, each
+  member at the first offset past the one before that keeps its start's alignment (the largest power of two dividing
+  it, up to 8 KiB), and the entries' ranges and the archive's size follow. Entries that shared one range share it still
+  unless one of them is replaced; a replaced entry gets a range of its own. malloc'd, `*out_n` its size; NULL when the
+  archive is damaged, two entries' ranges overlap without being the same, or out of memory.
+- `zsdic_unpack()`: `Pack/ZsDic.pack.zs`'s archive (`z[0..zn)`, a frame compressed without a dictionary) unpacked:
+  malloc'd, `*n` its size; NULL when it is not a zstd frame that says its size, or that size is over `max`.
+- `zsdic_find()`: the dictionary with id `id` among the members of that archive (`dics[0..n)`): 1 with its start and
+  size; 0 when none has it (and always for id 0, the id of a frame without a dictionary).
+
+## `runtime/hle/sarc.c`
+
+SARC archives and the zstd dictionaries of `Pack/ZsDic.pack.zs`. A SARC is a little-endian header ("SARC", its length
+at +4, the byte-order mark 0xfeff at +6, the archive's size at +8, the start of the members' data at +12), then SFAT:
+its member count at +6 and from +12 one 16-byte entry per member (name hash, attributes, start and end relative to the
+data). An entry's attributes hold a nonzero top byte when the member has a name, and in the low 24 bits the name's
+offset in SFNT's string table divided by 4; SFNT's 8-byte header follows the entries. The game's archives may hold
+several members under one name (`UI/Layout2Archive/Common...blarc.zs` holds each layout four times), so members are
+walked one by one. `sarc_rebuild()` lays the members out again when some of them change size.
+
+### `sarc_head()`
+
+The header's fields: SFAT's start, its entry count and the start of the members' data. 0 when it is damaged. The
+entries end where SFNT starts.
+
+### `sarc_rebuild()`
+
+- The members' data starts after their entries and the name table's header (SFNT, 8 bytes): a data offset inside them
+  would let the copies write over entries still to be read, so such an archive is refused.
+- `Range` is an entry's range of the members' data, and the entry's number. `at[]` is each entry's new start, from the
+  data's.
+- The ranges are laid out in the archive's order: a kept range that is the same as the last kept one shares its place.
+  A range that lies inside the range before without being the same one fails. `MAX_ALIGN` is 0x2000.
+- What followed the last member follows it still. A total over `UINT32_MAX` fails.
+- The entries' old ranges are read from the input, which nothing writes: they are the ranges checked above.
+
+## `runtime/hle/restbl.h`
+
+The game's resource size table (`runtime/hle/restbl.c`):
+`System/Resource/ResourceSizeTable.Product.<n>.Nin_NX_NVN.rsizetable.zs`, a zstd-compressed RESTBL. The game sizes the
+buffer it loads a file into from the file's entry, so a mod file larger than the original needs a larger entry, and a
+file a mod adds needs one of its own. `runtime/hle/romfs.c` merges the tables the mods ship and raises the entries of
+the files they serve (`runtime/hle/romfs.c` `restbl_overlay()`).
+
+- `restbl_parse()`: the table of a decompressed RESTBL (copied); NULL when it is not one.
+- `restbl_key()`: the table's key of a RomFS path: the path without a trailing .zs or .mc, into `buf`.
+- `restbl_get()`: 1 with `*size` when `key` has an entry.
+- `restbl_raise()`: the entry of `key` raised to `size` (added when missing); 1 when the table changed.
+- `restbl_merge()`: every entry of `shipped` larger than `base`'s (or missing from `base`) raised in `t`; the number
+  of entries raised.
+- `restbl_take()`: each entry of `from` whose key one of `keys[0..n)` names, raised in `t`; the number raised.
+- `restbl_write()`: the table as a decompressed RESTBL (malloc'd); NULL when out of memory.
+- `restbl_estimate()`: the entry a file of the key's type and decompressed size needs when the game has none for it;
+  0 for a type the table never lists (streamed sound and video).
+- `restbl_grow()`: the entry of a file the game lists with `entry` for its own copy of `old` bytes, now `new_size`
+  bytes: raised by the growth times the type's factor, never lowered. `scaled`: the sizes are compressed ones (a mesh
+  codec .mc file), whose entry grows in proportion.
+- `restbl_fit()`: the entry of `key` raised for a file whose decompressed size grows from `was` to `now`:
+  `restbl_grow()` on the entry the table has (a mod's merged entry above the game's stays above it),
+  `restbl_estimate()` when it has none. 1 with `*from` (0 when the table had no entry) and `*to`; 0 when the key's type
+  has no entries (streamed sound and video).
+
+## `runtime/hle/restbl.c`
+
+The resource size table (`runtime/hle/restbl.h`). The layout of a decompressed RESTBL, little-endian:
+
+```
+"RESTBL", u32 version (1), u32 name length (160), u32 hashed count, u32 named count
+hashed entries {u32 crc32 of the key, u32 size}, sorted by the hash
+named entries {char key[name length], u32 size}: the keys whose hash collides with another key's
+```
+
+A key is a RomFS path without .zs or .mc. The estimates come from the 1.4.3 table against its own files: most types
+need the decompressed size plus at most 8 KiB (headers, alignment); a few need a multiple of it (bfres 1.5, bkres
+2.05, bgyml 3.85, asb 1.4, bstar 1.2, bphsc 1.1). A type the table does not list takes 1.5 times its size plus 8 KiB.
+
+`Restbl.named` holds the named entries as in the file: the key (name_len bytes, NUL padded) then a u32 size.
+
+### `named_of()` `hashed_at()` `raise_hash()`
+
+`named_of()`: the named entry of `key`, or NULL. `hashed_at()`: the position of `hash` in the hashed entries, or where
+it would go. `raise_hash()`: the hashed entry of `hash` raised to `size` (added when missing); 1 when the table
+changed.
+
+### `type_factor()`
+
+The factor a type's entry needs over its decompressed size (1000 = 1.0); 0 for a type the table never lists.
+
+## `runtime/hle/save_zip.h`
+
+The zip file of a shared save (`runtime/hle/save_share.c`; the launcher writes and reads the same file,
+`launcher/saves.py` `export_save()`): a zip in memory with stored or deflated members, its members read back with
+their CRC-32 checked, raw deflate both ways, and the top-level keys of its `manifest.json`. Plain C on the C library
+alone, so `tests/save_zip_check.py` builds it by itself and checks it against Python's zipfile and zlib.
+
+- `sz_crc32()`: the zip CRC-32; crc 0 to start, the last result to go on.
+- `sz_deflate()`: raw deflate (RFC 1951) of `src[0..n)`: one block of the fixed Huffman codes over LZ77 matches. A
+  malloc'd buffer of `*out_n` bytes, NULL when out of memory.
+- `sz_inflate()`: raw deflate data `src[0..n)` into exactly `dst_n` bytes at `dst`: stored, fixed and dynamic blocks.
+  0 on success, -1 when the data is damaged, ends early or holds another number of bytes.
+- Writing: the members go into one buffer as they come, then the central directory after them. `SzWriter.failed`:
+  out of memory, or past the 4 GiB a zip without its 64-bit extension holds.
+  - `sz_writer_init()`: every member gets this local time (the zip's DOS time stamp, two-second steps).
+  - `sz_writer_add()`: a member: its name relative with '/' separators, its bytes deflated when that makes them
+    smaller, else stored.
+  - `sz_writer_finish()`: the whole archive (`*n` bytes; the caller frees it), NULL when any add failed. It frees the
+    writer's own memory either way.
+- Reading. `SzEntry`: `name` as stored, with '/' separators; `data` the offset of its bytes in the zip; `is_dir` a
+  folder entry (its name ends in '/'); `is_link` a symbolic link (a Unix mode in its attributes).
+  - `sz_read_dir()`: the members of the zip `zip[0..n)` from its central directory: a malloc'd array in `*out` (the
+    caller frees it) and its length in `*count`. `SZ_OK` or why not: not a zip, damaged, or what this reader leaves
+    out (encryption, a 64-bit zip, a method but stored and deflate, a name of 256 bytes or more).
+  - `sz_extract()`: the bytes of member `e`, checked against its CRC-32: malloc'd with a NUL after them (the caller
+    frees them), NULL with `*err` set to the `SZ_E_*` reason.
+- The manifest: a JSON object whose values the reader needs are strings and integers at its top level.
+  - `sz_json_str()`: the string value of `key` into `out` (cut to `cap` - 1 bytes; \u escapes outside ASCII become
+    '?'). 1 when found.
+  - `sz_json_int()`: the integer value of `key`. 1 when found and an integer.
+  - `sz_json_escape()`: `s` as the inside of a JSON string ('"', '\' and control characters escaped) into `out`, cut
+    to fit `cap`. It returns `out`.
+
+## `runtime/hle/save_zip.c`
+
+The zip file of a shared save (`runtime/hle/save_zip.h`). Little-endian fields as the zip format (PKWARE APPNOTE) lays
+them out; deflate as RFC 1951 defines it.
+
+### `sz_crc32()`
+
+CRC-32 with the zip polynomial, reflected; one table built on first use. Two threads may build it at once: they write
+the same values.
+
+### Inflate
+
+`len_base` and the tables beside it are the deflate tables shared by both directions: length codes 257..285 and
+distance codes 0..29.
+
+- `get_bits()`: `need` (0..16) bits, the first read in the lowest bit; past the end of the input: 0 and `bad` set.
+- `Huff` is a canonical Huffman code: how many codes of each length, and the symbols in code order.
+- `huff_build()`: the code of `lengths[0..n)` (0: the symbol is unused). 0 when usable: no length is over-subscribed
+  (an incomplete code is allowed, as a stream with a single distance code has one; a code it lacks then reads as
+  damaged).
+- `huff_decode()`: the next symbol of code `h`, the bits read one at a time (Huffman codes are packed from their first
+  bit); -1 damaged.
+- `inflate_codes()`: the symbols of one block until its end code. A match's copy overlaps on purpose.
+- `inflate_stored()` drops the rest of the current byte first.
+- `inflate_fixed()`: two threads may build the fixed codes at once: they write the same values.
+- `inflate_dynamic()`: the code lengths' own code is built in `lit` for the time being. A block without its end code
+  (no length for symbol 256) is damaged.
+
+### `sz_deflate()`
+
+Deflate: greedy LZ77 over a 32 KiB window (hash chains of 3-byte keys), the fixed Huffman codes.
+
+- `put_code()`: a Huffman code goes out from its first bit: reversed into the LSB-first stream. `put_literal()` writes
+  a literal/length symbol in the fixed code.
+- `CHAIN` (48) is the candidates tried per position: logs repeat a lot, saves little.
+- The output's capacity is n + n / 8 + 64: a literal takes at most 9 bits. The header bits are 1 (the last block) and
+  1 in two bits (fixed Huffman codes).
+- In the match search only a longer match can win; a chain ends at an older entry overwritten by a newer one. Every
+  position a match covers goes into the chains. The stream is padded out to the byte.
+- The overflow check at the end cannot happen with the bound above; it is kept as the guard `put_bits()` relies on.
+
+### `room()` `sz_writer_add()` `sz_writer_finish()`
+
+Writing a zip. Offsets and sizes are 32-bit without the 64-bit extension, so `room()` fails past 0xffffffff. A member
+is stored when deflate does not help. Local header: version needed 20 (deflate). Central directory: made by 20
+(MS-DOS attributes, version 2.0); the extra, comment, disk, internal attributes and external attributes fields are 0.
+
+### `sz_read_dir()`
+
+Reading a zip. The end record: its signature within the last 22 bytes plus the longest comment (0xffff). A spanned
+archive and the 64-bit zip (0xffff entries, or a directory size or offset of 0xffffffff) are unsupported; so is a
+member that is encrypted, uses another method, has a long name or is a 64-bit member. A link is a Unix entry whose
+mode is S_IFLNK (made-by host 3, mode & 0170000 == 0120000).
+
+### `json_string()` `json_skip()` `json_find()`
+
+The manifest's JSON. `json_string()`: the string at `p` (its opening quote) into `out` (NULL: skipped); `*cut` set
+when it did not fit. It returns the byte after its closing quote, NULL when it is not a string. `json_skip()`: past
+one value: a string, an object or array (nested), or a number or literal. `json_find()`: the value of `key` at the top
+level of the object `json`, NULL when it has none.
+
+## `runtime/hle/save_share.h`
+
+Sharing a save (`runtime/hle/save_share.c`): the menu's Export writes the save the game would load next into one zip,
+for a bug report or another player, and its Import checks such a zip and leaves its save for the game's next start
+(`runtime/hle/fs_host.c` `import_pending()`). The launcher writes and reads the same zip (`launcher/saves.py`
+`export_save()` and `import_zip()`).
+
+| Result | When |
+|---|---|
+| `SAVE_SHARE_NO_SAVE` | export: the game has not saved yet |
+| `SAVE_SHARE_READ_FAILED` | export: a save file could not be read; import: the zip could not be read |
+| `SAVE_SHARE_WRITE_FAILED` | export: the zip could not be written; import: its save could not be put in place |
+| `SAVE_SHARE_NOT_A_SAVE` | import: not a zip of an NX2Saria save (no manifest, another format, no save files) |
+| `SAVE_SHARE_OTHER_GAME` | import: the manifest names another game |
+| `SAVE_SHARE_NEWER` | import: a newer NX2Saria made it, in a format this one does not know |
+| `SAVE_SHARE_DAMAGED` | import: a member's data or CRC is wrong |
+| `SAVE_SHARE_UNSAFE` | import: a path outside the save, a link, or far more than a save |
+
+- `save_share_export()` writes `NX2Saria-save-<local date>_<time>[-bug-report].zip` into `dir` (made when missing);
+  `bug_report` adds this run's log and `nx2saria.ini` (or an existing `nx2navi.ini`). `path` gets the zip's path.
+  Never a key file.
+- `save_share_import()` checks the zip at `zip_path` (manifest, game, paths, sizes, CRCs) and stages its save for the
+  next start. `detail` gets "<NX2Saria version>, <export date>" from its manifest ("?" for what it lacks).
+- `save_share_pending()`: 1 while an import waits for the next start. `save_share_cancel()` drops the waiting import;
+  0 on success.
+- `save_share_default_dir()`: where Export writes and Import's file dialog opens: the player's Downloads folder, else
+  the game folder. 0 when neither is known.
+- `save_share_backup_dir()`: a new folder name `<game folder>/saves/backup <local date> <time>` (with " (2)" and up
+  when taken), the saves folder made; the folder itself is not. Where the launcher keeps the backups of its imports.
+  0 when it cannot be named.
+
+## `runtime/hle/save_share.c`
+
+Sharing a save (`runtime/hle/save_share.h`). The zip, as the launcher's `launcher/saves.py` `export_save()` writes
+it:
+
+| Member | What |
+|---|---|
+| `manifest.json` | {"format": "nx2navi-save", "format_version": 1, "game", "title_id", "game_version", "nx2navi", "exported" (UTC), "exported_by", "files", "bug_report"} |
+| `save/...` | the save's files as the game keeps them (`account.sav`, `option.sav`, `slot_00/progress.sav`, ...) |
+| `bug-report/...` | with a bug report: this run's log and settings; an import leaves them out |
+
+An import accepts a zip whose manifest has this format, a version up to `FORMAT_VERSION` (1) and the game's title id,
+whose save/ paths stay inside the save, with no links, at most `MAX_FILES` (4000) files and `MAX_BYTES` (256 MiB),
+among them a file of this game's save (`save_file()`). Every member's CRC-32 is checked before anything is written.
+
+`TITLE_ID` ("0400486024dec000") is the game's title id (`NX2SARIA_APPLICATION_ID` of `runtime/hle/fs_host.c`).
+
+### `exe_dir()` `same_text()` `key_file()` `save_file()` `safe_rel()`
+
+- `exe_dir()`: the executable's folder, where `nx2saria.ini` (or a legacy `nx2navi.ini`), logs and saves are. 0 when
+  unknown.
+- `same_text()` compares ASCII in any case.
+- `key_file()`: key files (a name ending in `.keys` or `.keys.txt`) never go into a zip or out of one, wherever a
+  stray copy sits in a save folder.
+- `save_file()`: a file only this game's save has: what makes the zip's save this game's.
+- `safe_rel()`: a relative path that stays inside the save: '/' separators, no empty, "." or ".." part, no drive or
+  backslash.
+
+### `add_settings_file()`
+
+The settings file for a bug report: as it is, except that the values of the private settings
+(`runtime/cfg/cfg_private.h`) read "(set, not shown)". A report goes to people the player does not know. A folder in
+the account's home is written short as well (`runtime/log_privacy.c`), as in the log beside it:
+[log-privacy.md](../log-privacy.md).
+
+### `save_share_export()`
+
+Two exports in one second: the second is named with "(2)" (up to 99), as the launcher names them.
+
+### `check_manifest()` `save_share_import()`
+
+`check_manifest()` gives the manifest's verdict on the zip; `detail` gets its NX2Saria version and export date. In
+`save_share_import()` the save's members are all checked before any is extracted.
