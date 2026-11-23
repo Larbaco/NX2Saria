@@ -32,6 +32,7 @@
 
 static ModInfo *mods;
 static int nmods;
+static int scanned;   // the scan ended: mods_in_use may read the list from any thread
 static char dir[2048];
 static char start_order[MAX_MODS][256];   // names in the scan's order, for mods_changed
 
@@ -408,6 +409,18 @@ void mods_scan(void) {
                m->note[0] ? ": " : "", m->note);
     }
     rt_log("mods: %d folders in %s", nmods, dir);
+    __atomic_store_n(&scanned, 1, __ATOMIC_RELEASE);
+}
+
+int mods_in_use(int *count, int *code) {
+    if (!__atomic_load_n(&scanned, __ATOMIC_ACQUIRE)) return 0;
+    *count = *code = 0;
+    for (int i = 0; i < nmods; i++) {
+        if (!mods[i].start_enabled || mods[i].problem != MOD_OK) continue;
+        ++*count;
+        if (mods[i].kind & MOD_EXEFS) ++*code;
+    }
+    return 1;
 }
 
 void mods_exefs_switch(void) {

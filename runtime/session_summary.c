@@ -24,6 +24,8 @@ __attribute__((weak)) int gfx_shader_prewarm_stats(int64_t *ms, int64_t *transla
 __attribute__((weak)) int vk_pipeline_boot_stats(int64_t *built, int64_t *ms) { (void)built, (void)ms; return 0; }
 // Builds without the widescreen sets' code (the tools) have no picture of their own.
 __attribute__((weak)) int wide_picture_known(unsigned *w, unsigned *h) { (void)w, (void)h; return 0; }
+__attribute__((weak)) int rt_patches_on(const char **names, int cap) { (void)names, (void)cap; return -1; }
+__attribute__((weak)) int mods_in_use(int *count, int *code) { (void)count, (void)code; return 0; }
 
 #define FILE_NAME "session-summary.json"
 
@@ -104,6 +106,7 @@ static void write_summary(const char *end, const char *fatal_line) {
     static char out_v[40], scale_v[40], aspect_v[40], picture_v[40], up_v[40], taa_v[40], dlss_v[40], fg_v[40],
         fps_v[40], present_v[40];
     static SsGpu gpu;
+    static const char *patch_names[96];
     SessionSummary s = {
         .version = version, .game_version = game_version,
 #ifdef _WIN32
@@ -114,7 +117,12 @@ static void write_summary(const char *end, const char *fatal_line) {
         .wine = wine, .cpu_threads = cpu_threads, .ram_mb = ram_mb, .end = end,
         .gpu_vendor = -1, .gpu_device = -1, .vram_mb = -1, .fps_limit = -1,
         .shader_prewarm_ms = -1, .shaders_translated = -1, .pipelines_built = -1, .pipeline_build_ms = -1,
+        .n_patches = -1, .mods_count = -1, .mods_code = -1,
     };
+    s.patches = patch_names;
+    s.n_patches = rt_patches_on(patch_names, (int)(sizeof patch_names / sizeof *patch_names));
+    int mods_n, mods_c;
+    if (mods_in_use(&mods_n, &mods_c)) s.mods_count = mods_n, s.mods_code = mods_c;
     s.os_name = priv(os_name, os_p, sizeof os_p);
     s.cpu_name = priv(cpu_name, cpu_p, sizeof cpu_p);
     if (vk_caps_gpu(&gpu)) {

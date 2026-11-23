@@ -34,6 +34,11 @@ typedef struct {
     double fps_mean, fps_low_1pct, worst_ms;
     int64_t over_25ms, over_100ms;
     int64_t shader_prewarm_ms, shaders_translated, pipelines_built, pipeline_build_ms;
+    // The port's patch sets that are on (patches.c), by name: n_patches of them, below 0 for null. A name that is not
+    // 1 to 32 of [a-z0-9_] is left out, and no more than 96 are written.
+    const char *const *patches;
+    int n_patches;
+    int64_t mods_count, mods_code;     // mods in use, and those of them that change the game's code (mods.c)
     const char *fatal;                 // the FATAL line without "FATAL: ", personal folders already short
 } SessionSummary;
 
@@ -74,6 +79,13 @@ int vk_pipeline_boot_stats(int64_t *built, int64_t *ms);
 // The picture widescreen.c wide_init set up: 1 and its size once wide_init has decided, 0 before (no computing: the
 // fatal end may call it on any thread).
 int wide_picture_known(unsigned *w, unsigned *h);
+// The port's own patch sets that are on (patches.c): up to cap of their names into names (pointers valid for the
+// process), not the sets a mod's ExeFS patches were built into (mod_<hash>). Their number, or -1 before
+// rt_patches_init.
+int rt_patches_on(const char **names, int cap);
+// The mods in use this run (mods.c: on at the scan and without a problem) and how many of them change the game's code
+// with ExeFS patches. 1 once the scan ended; never scans.
+int mods_in_use(int *count, int *code);
 
 // ---- the game's side (session_summary.c)
 // main.c main_run, a game run only, after the log is open: notes the start, the OS, CPU and RAM, and removes a summary

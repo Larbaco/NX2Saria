@@ -229,6 +229,28 @@ int ss_format(const SessionSummary *s, char *out, size_t cap) {
     put_int(&b, s->pipelines_built, 0);
     put(&b, ", \"pipeline_build_ms\": ");
     put_int(&b, s->pipeline_build_ms, 0);
+    put(&b, "},\n  \"patches\": ");
+    if (s->n_patches < 0 || !s->patches) {
+        put(&b, "null");
+    } else {
+        put(&b, "[");
+        for (int i = 0, n = 0; i < s->n_patches && n < 96; i++) {
+            const char *name = s->patches[i];
+            size_t len = name ? strlen(name) : 0;
+            int ok = len >= 1 && len <= 32;
+            for (size_t k = 0; ok && k < len; k++)
+                ok = (name[k] >= 'a' && name[k] <= 'z') || (name[k] >= '0' && name[k] <= '9') || name[k] == '_';
+            if (!ok) continue;
+            put(&b, n++ ? ", \"" : "\"");
+            put(&b, name);
+            put(&b, "\"");
+        }
+        put(&b, "]");
+    }
+    put(&b, ",\n  \"mods\": {\"count\": ");
+    put_int(&b, s->mods_count, 512);
+    put(&b, ", \"code\": ");
+    put_int(&b, s->mods_code, 512);
     put(&b, "},\n  \"fatal\": ");
     put_text(&b, s->fatal, 300);
     put(&b, "\n}\n");

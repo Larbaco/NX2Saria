@@ -46,6 +46,8 @@ SCHEMA = {
                   'over_25ms': ('int', None), 'over_100ms': ('int', None)},
     'startup': {'shader_prewarm_ms': ('int', None), 'shaders_translated': ('int', None),
                 'pipelines_built': ('int', None), 'pipeline_build_ms': ('int', None)},
+    'patches': 'names',
+    'mods': {'count': ('int', 512), 'code': ('int', 512)},
     'fatal': ('text', 300),
 }
 NOT_NULL = {'schema', 'version', 'game_version', 'session.end'}
@@ -67,6 +69,10 @@ def check_leaf(path, kind, v, raw):
         return [] if isinstance(v, bool) else [f'{path}: {v!r} is not a bool']
     if kind == 'hex':
         return [] if isinstance(v, str) and re.fullmatch(r'0x[0-9a-f]{4}', v) else [f'{path}: {v!r}']
+    if kind == 'names':
+        ok = (isinstance(v, list) and len(v) <= 96 and len(set(v)) == len(v)
+              and all(isinstance(n, str) and re.fullmatch(r'[a-z0-9_]{1,32}', n) for n in v))
+        return [] if ok else [f'{path}: {v!r} is not a list of patch set names']
     if kind == 'token':
         return [] if isinstance(v, str) and TOKEN.fullmatch(v) else [f'{path}: {v!r} is not a token']
     if kind == 'text':
@@ -125,8 +131,11 @@ def expect(name, s):
         if s['display'] != {'output': '2560x1440', 'render_scale': 'game', 'fullscreen': True, 'game_aspect': '16:10',
                             'picture': '2304x1440'}:
             bad.append(f'full: display {s["display"]}')
+        # the names that are not a patch set's (spaces, empty, a mod's set is still a name) are left out
+        if s['patches'] != ['fps60', 'wide_hud', 'mod_1a2b3c4d', 'zstd'] or s['mods'] != {'count': 2, 'code': 1}:
+            bad.append(f'full: patches {s["patches"]}, mods {s["mods"]}')
     elif name == 'all_null':
-        leaves = [v for k, o in s.items() if isinstance(o, dict) for v in o.values()] + [s['ram_mb'], s['fatal']]
+        leaves = [v for k, o in s.items() if isinstance(o, dict) for v in o.values()] + [s['ram_mb'], s['patches'], s['fatal']]
         if s['session']['end'] != 'crash' or sum(v is not None for v in leaves) != 1 or not all(v is None for v in s['frametime'].values()):
             bad.append(f'all_null: something besides session.end is set: {s}')
     elif name == 'hostile':

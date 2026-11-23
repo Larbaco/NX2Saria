@@ -37,6 +37,8 @@ static void write_case(const char *name, const SessionSummary *s) {
     fclose(f);
 }
 
+static const char *const full_patches[] = {"fps60", "wide_hud", "Not A Set", "", "mod_1a2b3c4d", "zstd"};
+
 static SessionSummary full(void) {
     return (SessionSummary){
         .version = "0.19.0-rc.2", .game_version = "1.1.1",
@@ -50,6 +52,7 @@ static SessionSummary full(void) {
         .duration_s = 1834, .frames = 109800, .end = "normal",
         .has_frametime = 1, .fps_mean = 59.94, .fps_low_1pct = 52.06, .worst_ms = 88.44, .over_25ms = 14, .over_100ms = 0,
         .shader_prewarm_ms = 5400, .shaders_translated = 120, .pipelines_built = 900, .pipeline_build_ms = 3100,
+        .patches = full_patches, .n_patches = 6, .mods_count = 2, .mods_code = 1,
         .fatal = NULL,
     };
 }
@@ -60,6 +63,7 @@ static SessionSummary all_null(void) {
         .cpu_threads = -1, .ram_mb = -1, .gpu_vendor = -1, .gpu_device = -1, .vram_mb = -1, .fps_limit = -1,
         .duration_s = -1, .frames = -1, .over_25ms = -1, .over_100ms = -1,
         .shader_prewarm_ms = -1, .shaders_translated = -1, .pipelines_built = -1, .pipeline_build_ms = -1,
+        .n_patches = -1, .mods_count = -1, .mods_code = -1,
     };
 }
 
