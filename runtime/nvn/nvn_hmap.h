@@ -1,16 +1,10 @@
 // Contains code Copyright (c) 2026 jhaizhou (MIT; see THIRD_PARTY_NOTICES.md).
-//
-// Open-addressing hash table from fixed-length byte keys -> pointers (linear probing + backward shift on deletion, no
-// tombstones). The replay hot path uses it instead of a boxed dictionary: keys are not boxed, no allocation, a lookup
-// does only one hash + memcmp.
-// No locking: callers protect it with their own locks. Ownership of values belongs to the caller (put / del return the
-// replaced / deleted old value).
 #pragma once
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { uint8_t *keys; void **vals; uint32_t klen, cap, n; } nvn_hmap;   // vals[i] == NULL means an empty slot
+typedef struct { uint8_t *keys; void **vals; uint32_t klen, cap, n; } nvn_hmap;
 
 static inline uint64_t nvn_hm_hash(const void *k, uint32_t len) {
     const uint8_t *p = k; uint64_t h = 0x9e3779b97f4a7c15ull ^ len;
@@ -36,17 +30,14 @@ static inline void nvn_hm_grow(nvn_hmap *m) {
     for (uint32_t i = 0; i < o.cap; i++) if (o.vals[i]) nvn_hm_put(m, o.keys + (size_t)i * o.klen, o.vals[i]);
     free(o.keys); free(o.vals);
 }
-// v must not be NULL; returns the old value for the same key (NULL if none)
 static inline void *nvn_hm_put(nvn_hmap *m, const void *k, void *v) {
-    if ((m->n + 1) * 4 > m->cap * 3) nvn_hm_grow(m);   // Load factor <= 3/4
+    if ((m->n + 1) * 4 > m->cap * 3) nvn_hm_grow(m);
     for (uint32_t i = (uint32_t)nvn_hm_hash(k, m->klen) & (m->cap - 1);; i = (i + 1) & (m->cap - 1)) {
         uint8_t *ki = m->keys + (size_t)i * m->klen;
         if (!m->vals[i]) { memcpy(ki, k, m->klen); m->vals[i] = v; m->n++; return NULL; }
         if (!memcmp(ki, k, m->klen)) { void *old = m->vals[i]; m->vals[i] = v; return old; }
     }
 }
-// After deletion, shift back later entries on the same probe chain to fill the hole, so that a lookup can stop at the
-// first empty slot
 static inline void *nvn_hm_del(nvn_hmap *m, const void *k) {
     if (!m->n) return NULL;
     uint32_t mask = m->cap - 1, i = (uint32_t)nvn_hm_hash(k, m->klen) & mask;
@@ -61,14 +52,13 @@ static inline void *nvn_hm_del(nvn_hmap *m, const void *k) {
             j = (j + 1) & mask;
             if (!m->vals[j]) { m->n--; return old; }
             uint32_t h = (uint32_t)nvn_hm_hash(m->keys + (size_t)j * m->klen, m->klen) & mask;
-            if (i <= j ? (i < h && h <= j) : (i < h || h <= j)) continue;   // Ideal position is within (i, j]: cannot move forward
+            if (i <= j ? (i < h && h <= j) : (i < h || h <= j)) continue;
             break;
         }
         memcpy(m->keys + (size_t)i * m->klen, m->keys + (size_t)j * m->klen, m->klen); m->vals[i] = m->vals[j];
         i = j;
     }
 }
-// Clear; when rel is non-null, call it once for each value (releasing ownership)
 static inline void nvn_hm_clear(nvn_hmap *m, void (*rel)(void *)) {
     for (uint32_t i = 0; i < m->cap; i++) if (m->vals[i]) { if (rel) rel(m->vals[i]); m->vals[i] = NULL; }
     m->n = 0;

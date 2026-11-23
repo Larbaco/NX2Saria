@@ -1,7 +1,3 @@
-// NVN proc table. Every name the game's proc loader asks for gets a synthetic host
-// address through hostfn_register before hostfn_seal; nvnBootstrapLoader and nvnDeviceGetProcAddress hand them out.
-// nvnp_<name> is the implementation of one proc: the weak definitions here stop with the proc's name, nvn_api_*.c
-// and nvn_ext.c define the strong ones. The name list is runtime/nvn_procs.inc (tools/gen_nvn_procs.py).
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +8,6 @@
 #include "host.h"
 #include "platform/platform.h"
 
-// The strong nvnp_nvnDeviceGetProcAddress below replaces the stand-in generated for the same row.
 #define nvnp_nvnDeviceGetProcAddress nvnp_stub_nvnDeviceGetProcAddress
 
 #define NVN_PROC(n) void nvnp_##n(Cpu *c);
@@ -40,10 +35,6 @@ enum { PROC_COUNT = 0
 static Proc procs[PROC_COUNT];
 static int nprocs;
 
-// Unknown procs (NVN2 names the NVN1-era table lacks): a NVN2 driver has every name the game asks for, so a NULL
-// answer crashes the game at the first call (main+0xc31484 called one). Each unknown name is bound on demand to one
-// of TRAP_COUNT pre-registered traps (the hostfn table is sealed after boot). A trap logs its name and caller on the
-// first call and returns 0 -- a no-op for the setters most of these are; NX2SARIA_NVN_TRAP=fatal stops instead.
 #define TRAP_COUNT 512
 static char trap_name[TRAP_COUNT][96];
 static uint64_t trap_addr[TRAP_COUNT];
@@ -60,7 +51,6 @@ static void nvn_trap(Cpu *c, int i) {
     }
     ret_x(c, 0);
 }
-// trap_0 .. trap_511, one per pool slot
 static void trap_0(Cpu *c) { nvn_trap(c, 0); }
 static void trap_1(Cpu *c) { nvn_trap(c, 1); }
 static void trap_2(Cpu *c) { nvn_trap(c, 2); }
@@ -659,7 +649,6 @@ uint64_t nvn_proc_address(const char *name) {
     if (!name) return 0;
     const Proc *p = bsearch(&(Proc){name, 0}, procs, (size_t)nprocs, sizeof *procs, by_name);
     if (p) return p->addr;
-    // Unknown names get a trap (see nvn_trap), one per distinct name; NULL once the pool is used up.
     static PlatMutex lock = PLAT_MUTEX_INIT;
     plat_mutex_lock(&lock);
     int i;
@@ -674,7 +663,6 @@ uint64_t nvn_proc_address(const char *name) {
     return a;
 }
 
-// PFNNVNGENERICFUNC nvnDeviceGetProcAddress(const NVNdevice *device, const char *name)
 void nvnp_nvnDeviceGetProcAddress(Cpu *c) {
     const char *name = arg_p(c, 1);
     ret_x(c, nvn_proc_address(name));

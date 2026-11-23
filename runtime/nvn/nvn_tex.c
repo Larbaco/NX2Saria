@@ -1,4 +1,3 @@
-// NVN texture storage size / alignment / per-level offsets (Tegra X1 block-linear layout).
 // Contains altered code Copyright (C) 2018-2020 fincs (zlib, license text below; see THIRD_PARTY_NOTICES.md).
 //
 // Copyright (C) 2018-2020 fincs
@@ -20,23 +19,18 @@
 // 3. This notice may not be removed or altered from any source
 //    distribution.
 //
-// Storage size / alignment / per-level offsets of NVN textures (Tegra X1 block-linear layout).
-// Automatic tile height uses NVN SDK integer rounding:
-//   one GOB = 64 bytes × 8 rows = 512 bytes; the block height (tileH, in GOBs) is picked by 'height×1.5'; levels are accumulated with block alignment.
-// The game's packaged textures (SetPackagedTextureLayout) carry 8 bytes of layout parameters: byte 0 = log2 of the block height (derived by comparing 16 cases from the real game,
-// 4 of which differ from the automatic algorithm); when present it takes precedence.
 #include "cfg.h"
 #include "nvn_tex.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { uint8_t bpb, bw, bh; } fmt_t;   // Bytes per block, block width, block height (for uncompressed formats block width and height = 1)
+typedef struct { uint8_t bpb, bw, bh; } fmt_t;
 
 static fmt_t fmt_of(int f) {
     static const uint8_t astc[14][2] = {{4,4},{5,4},{5,5},{6,5},{6,6},{8,5},{8,6},{8,8},{10,5},{10,6},{10,8},{10,10},{12,10},{12,12}};
     if (f >= 0x79 && f <= 0x94) { int k = (f - 0x79) % 14; return (fmt_t){16, astc[k][0], astc[k][1]}; }
-    if (f >= 0x41 && f <= 0x50) {                         // DXT / RGTC / BPTC: 4×4 blocks
+    if (f >= 0x41 && f <= 0x50) {
         int b8 = (f <= 0x42) || (f == 0x45 || f == 0x46) || (f == 0x49 || f == 0x4A);
         return (fmt_t){b8 ? 8 : 16, 4, 4};
     }
@@ -55,8 +49,6 @@ static fmt_t fmt_of(int f) {
 
 int nvn_fmt_bpb(int f, int *bw, int *bh) { fmt_t t = fmt_of(f); if (bw) *bw = t.bw; if (bh) *bh = t.bh; return t.bpb; }
 
-// Sizes in 64 bits: a descriptor's width or height times its samples or bytes per block can pass 2^32 (a texture
-// garbled or not yet set up), which in 32 bits wrapped to a small size and a small allocation.
 static uint64_t mip(uint64_t s, unsigned l) { s >>= l; return s ? s : 1; }
 static uint64_t blk(uint64_t s, uint64_t b) { return (s + b - 1) / b; }
 static unsigned pick_tile(uint64_t gobs) { return gobs >= 16 ? 4 : gobs >= 8 ? 3 : gobs >= 4 ? 2 : gobs >= 2 ? 1 : 0; }
@@ -67,17 +59,16 @@ static unsigned adj_tile(unsigned shift, uint64_t unit, uint64_t dim) {
     return shift;
 }
 
-// target: NVNtextureTarget; the number of dims and whether it is layered are determined by target
 static void shape(const nvn_texdesc *d, unsigned *dpl, int *layered, uint32_t *w, uint32_t *h, uint32_t *z) {
     *w = d->width; *h = d->height; *z = d->depth; *layered = 0;
     switch (d->target) {
-        case 0: *dpl = 1; *h = 1; *z = 1; break;                       // 1D
-        case 3: *dpl = 1; *z = d->height; *h = 1; *layered = 1; break; // 1D_ARRAY (layer count is in height)
-        case 2: *dpl = 3; break;                                        // 3D
-        case 4: case 6: *dpl = 2; *layered = 1; break;                  // 2D_ARRAY / MS_ARRAY
-        case 8: *dpl = 2; *z = 6; *layered = 1; break;                  // CUBEMAP
-        case 9: *dpl = 2; *layered = 1; break;                          // CUBEMAP_ARRAY: depth already counts layer-faces
-        default: *dpl = 2; *z = 1; break;                               // 2D / MS / RECTANGLE
+        case 0: *dpl = 1; *h = 1; *z = 1; break;
+        case 3: *dpl = 1; *z = d->height; *h = 1; *layered = 1; break;
+        case 2: *dpl = 3; break;
+        case 4: case 6: *dpl = 2; *layered = 1; break;
+        case 8: *dpl = 2; *z = 6; *layered = 1; break;
+        case 9: *dpl = 2; *layered = 1; break;
+        default: *dpl = 2; *z = 1; break;
     }
     if (*z == 0) *z = 1;
 }
@@ -104,10 +95,6 @@ static uint64_t level_offset(const nvn_texdesc *d, unsigned level, unsigned dpl,
     return off;
 }
 
-/* NVN v55 sdk+0x4429c8 compares the default footprint against one-GOB tiles
-   for MINIMAL_LAYOUT. Keep the default if equal; otherwise use tile H=D=0.
-   Packaged layouts override this choice. Layout cannot be switched on live
-   resources: the startup-only knob is a negative control for fresh sessions. */
 static int minimal_layout_on(void) {
     static _Atomic int enabled = -1;
     int value = atomic_load(&enabled);
@@ -134,21 +121,18 @@ void nvn_tex_layout(const nvn_texdesc *d, nvn_texlayout *o) {
     uint32_t sx, sy; samples_xy(d->samples, &sx, &sy);
     o->bpb = t.bpb; o->tileH = o->tileD = 0; o->layers = layered ? z : 1;
     if (!t.bpb) { o->size = 0; o->align = 512; o->layer_size = 0; return; }
-    if (d->target == 10) {                                            // BUFFER
+    if (d->target == 10) {
         o->layer_size = o->size = (uint64_t)t.bpb * d->width;
         o->align = t.bpb == 12 ? 4 : t.bpb; return;
     }
-    if (nvn_tex_is_linear(d)) {                                            // Pitch storage: explicit stride, otherwise 32-byte (LINEAR) / 128-byte (LINEAR_RENDER_TARGET) alignment
+    if (nvn_tex_is_linear(d)) {
         o->align = (d->flags & 0x40) ? 128 : 32;
         uint32_t stride = nvn_tex_linear_stride(d);
-        o->layer_size = o->size = (uint64_t)stride * h;              // the driver counts pixel rows, also for block-compressed formats
+        o->layer_size = o->size = (uint64_t)stride * h;
         return;
     }
     unsigned tileH = 0, tileD = 0;
-    /* NVN truncates height*1.5 to whole GOB rows before choosing the power of
-       two. Rounding up here changes e.g. 40 BC rows from H2 to H3 even when
-       the total allocation size is unchanged, so padding becomes black texels. */
-    if (d->pkg_block_h) {                                             // packaged byte 0: low nibble block height, high nibble block depth
+    if (d->pkg_block_h) {
         unsigned pl = (unsigned)(d->pkg_block_h - 1) & 0xFF;
         if (dpl >= 2) tileH = pl & 0xF;
         if (dpl == 3) tileD = pl >> 4;

@@ -29,7 +29,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 5 | `runtime/pacing/` | [pacing.md](pacing.md) | extracted |
 | 6 | `runtime/input/` | [input.md](input.md) | extracted |
 | 7 | `runtime/platform/` | [platform.md](platform.md) | extracted |
-| 8 | `runtime/nvn/` | `nvn.md` | not yet extracted |
+| 8 | `runtime/nvn/` | [nvn.md](nvn.md) | extracted |
 | 9 | `runtime/patches/` | [patches.md](patches.md) | started: the unbuilt mod code and the cheats' switches in `cheats.c`; the rest not yet extracted |
 | 10 | `runtime/diag/` | `diag.md` | not yet extracted |
 | 11 | `launcher/` | `launcher.md` | not yet extracted |
@@ -119,7 +119,8 @@ What it reads: the files git tracks (and new files not ignored) under the source
 Python. A comment line is a line that holds any part of a comment; a line of code with a comment after it counts.
 
 Not read: `tools/vendor/` and `runtime/third_party/` (others' code, unmodified), `runtime/shaders/ffx/` and
-`runtime/shaders/ffx3/` (AMD FidelityFX, unmodified), `recomp/patches-*.txt` (data that `recomp/patches.py` reads),
+`runtime/shaders/ffx3/` (AMD FidelityFX, unmodified), `runtime/nvn/nvn.h` (the NVN type definitions, another project's
+header, unmodified), `recomp/patches-*.txt` (data that `recomp/patches.py` reads),
 `generated/`, `build/`, the `*_spv.h` shader headers, any file with the `GENERATED_MARKER`, and `tools/xlate/`, the
 shader translator, whose comments go with its next identity change: its identity, `tools/build_xlate.py` `identity()`, reads the patch
 files byte for byte, and a new identity makes every player prepare the shaders again.

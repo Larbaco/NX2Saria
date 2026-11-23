@@ -1,10 +1,4 @@
-// NVN front end, second slice: descriptor pools, textures, samplers, programs,
-// windows with present pacing, and the state objects. Back-end calls go to gfx_backend() (gfx.h).
 // Contains code Copyright (c) 2026 jhaizhou (MIT; see THIRD_PARTY_NOTICES.md).
-//
-// Objects are stored in place in the NVN object memory the game provides (nvn_obj.h); every argument is read from the
-// AAPCS64 registers (host.h arg_x / arg_s / arg_p) and every result returned with ret_x. Command-buffer procs are in
-// nvn_api_cmd.c, the NX2NAVI extension procs in nvn_ext.c.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,35 +13,26 @@
 #include "prof.h"
 #include "platform/platform.h"
 
-// ---------- Descriptor pools
-// NVNboolean nvnTexturePoolInitialize(NVNtexturePool *tp, const NVNmemoryPool *p, ptrdiff_t offset, int n)
 NVN_API(nvnTexturePoolInitialize) {
     *(dpool_t *)arg_p(c, 0) = (dpool_t){arg_p(c, 1), (int64_t)arg_x(c, 2), (int32_t)arg_x(c, 3)};
     NVN_LOG("TexturePool n=%d", (int)arg_x(c, 3));
     ret_x(c, 1);
 }
-// void nvnTexturePoolFinalize(NVNtexturePool *tp)
 NVN_API(nvnTexturePoolFinalize) { (void)c; }
-// void nvnTexturePoolRegisterTexture(const NVNtexturePool *tp, int id, const NVNtexture *t, const NVNtextureView *v)
 NVN_API(nvnTexturePoolRegisterTexture) {
     gfx_backend()->texture_register((int)arg_x(c, 1), arg_p(c, 2), arg_p(c, 3));
 }
-// NVNboolean nvnSamplerPoolInitialize(NVNsamplerPool *sp, const NVNmemoryPool *p, ptrdiff_t offset, int n)
 NVN_API(nvnSamplerPoolInitialize) {
     *(dpool_t *)arg_p(c, 0) = (dpool_t){arg_p(c, 1), (int64_t)arg_x(c, 2), (int32_t)arg_x(c, 3)};
     NVN_LOG("SamplerPool n=%d", (int)arg_x(c, 3));
     ret_x(c, 1);
 }
-// void nvnSamplerPoolFinalize(NVNsamplerPool *sp)
 NVN_API(nvnSamplerPoolFinalize) { (void)c; }
-// void nvnSamplerPoolRegisterSampler(const NVNsamplerPool *sp, int id, const NVNsampler *s)
 NVN_API(nvnSamplerPoolRegisterSampler) {
     gfx_backend()->sampler_register((int)arg_x(c, 1), &((const samp_t *)arg_p(c, 2))->p);
 }
 
-// ---------- Texture builder
 #define TB(c) ((tex_builder_t *)arg_p(c, 0))
-// void nvnTextureBuilderSetDefaults(NVNtextureBuilder *b): keeps the device
 NVN_API(nvnTextureBuilderSetDefaults) {
     tex_builder_t *b = TB(c);
     NVNdevice *dev = b->dev;
@@ -76,7 +61,7 @@ NVN_API(nvnTextureBuilderSetSize2D) {
     b->d.width = (uint32_t)arg_x(c, 1);
     b->d.height = (uint32_t)arg_x(c, 2);
     b->d.depth = 1;
-    static int diag = -1, n;   // NX2SARIA_LOG_RT_SIZES=1 (diagnosis): who sizes textures in the 16:9 output's family
+    static int diag = -1, n;
     if (diag < 0) diag = cfg_get("NX2SARIA_LOG_RT_SIZES") != NULL;
     if (diag && n < 200 && b->d.width * 9 == b->d.height * 16 && b->d.width >= 320) {
         char at[160], up[160];
@@ -93,7 +78,6 @@ NVN_API(nvnTextureBuilderSetSize3D) {
 }
 NVN_API(nvnTextureBuilderSetLevels) { TB(c)->d.levels = (uint32_t)arg_x(c, 1); }
 NVN_API(nvnTextureBuilderSetFormat) { TB(c)->d.format = (int)arg_x(c, 1); }
-// The back end samples the depth plane; stencil-plane sampling stops.
 NVN_API(nvnTextureBuilderSetDepthStencilMode) {
     if ((uint32_t)arg_x(c, 1) != NVN_TEXTURE_DEPTH_STENCIL_MODE_DEPTH)
         rt_fatal("nvn: stencil-plane texture sampling is not implemented");
@@ -110,13 +94,11 @@ NVN_API(nvnTextureBuilderSetSwizzle) {
 }
 NVN_API(nvnTextureBuilderSetSamples) { TB(c)->d.samples = (int)arg_x(c, 1); }
 NVN_API(nvnTextureBuilderSetStride) { TB(c)->d.stride = (uint32_t)arg_x(c, 1); }
-// void nvnTextureBuilderSetStorage(NVNtextureBuilder *b, NVNmemoryPool *p, ptrdiff_t offset)
 NVN_API(nvnTextureBuilderSetStorage) {
     tex_builder_t *b = TB(c);
     b->pool = arg_p(c, 1);
     b->off = (int64_t)arg_x(c, 2);
 }
-// void nvnTextureBuilderSetPackagedTextureLayout(NVNtextureBuilder *b, const NVNpackagedTextureLayout *l)
 NVN_API(nvnTextureBuilderSetPackagedTextureLayout) {
     tex_builder_t *b = TB(c);
     const NVNpackagedTextureLayout *l = arg_p(c, 1);
@@ -124,16 +106,11 @@ NVN_API(nvnTextureBuilderSetPackagedTextureLayout) {
     if (l) memcpy(b->layout, l->layout, 8);
     b->d.pkg_block_h = l ? l->layout[0] + 1 : 0;
 }
-// void nvnTextureBuilderSetPackagedTextureData(NVNtextureBuilder *b, const void *data): packaged (already GPU-laid-out)
-// data, copied into the texture's pool storage at Initialize
 NVN_API(nvnTextureBuilderSetPackagedTextureData) { TB(c)->pkg_data = arg_p(c, 1); }
 NVN_API(nvnTextureBuilderGetPackagedTextureData) { ret_x(c, (uintptr_t)TB(c)->pkg_data); }
-// Storage classes are opaque compatibility identifiers: all texture storage lives in byte-addressed pools and is decoded
-// per texture description, so class 1 names that convention; buffer textures use class 0. Not a Tegra memory kind.
 static uint64_t storage_class(const nvn_texdesc *d) { return d->target == NVN_TEXTURE_TARGET_BUFFER ? 0 : 1; }
 NVN_API(nvnTextureBuilderGetStorageClass) { ret_x(c, storage_class(&TB(c)->d)); }
 NVN_API(nvnTextureBuilderGetFlags) { ret_x(c, (uint32_t)TB(c)->d.flags); }
-// size_t nvnTextureBuilderGetStorageSize(const NVNtextureBuilder *b)
 NVN_API(nvnTextureBuilderGetStorageSize) {
     if (nvn_no_object(c, "nvnTextureBuilderGetStorageSize")) return;
     nvn_texlayout L;
@@ -141,7 +118,6 @@ NVN_API(nvnTextureBuilderGetStorageSize) {
     if (!L.bpb) rt_log("nvn: TextureBuilderGetStorageSize: unknown format %#x", TB(c)->d.format);
     ret_x(c, L.size);
 }
-// size_t nvnTextureBuilderGetStorageAlignment(const NVNtextureBuilder *b)
 NVN_API(nvnTextureBuilderGetStorageAlignment) {
     if (nvn_no_object(c, "nvnTextureBuilderGetStorageAlignment")) return;
     nvn_texlayout L;
@@ -149,10 +125,6 @@ NVN_API(nvnTextureBuilderGetStorageAlignment) {
     ret_x(c, L.align);
 }
 
-// ---------- Textures
-// The game re-initializes transient textures (G-buffer and the like) every frame at the same pool memory without
-// registering the descriptor again, as an NVN descriptor refers to memory and stays valid on hardware. The table maps
-// storage address -> a copy of the live texture so the back end can redirect a registration whose serial was finalized.
 static nvn_hmap live = {.klen = 8};
 static PlatMutex live_lock = PLAT_MUTEX_INIT;
 
@@ -189,24 +161,22 @@ int nvn_tex_live_at(const void *mem, tex_t *out) {
     return cur != NULL;
 }
 
-// Releases the back end's texture and the live entry of an initialized texture object.
 static void tex_release(tex_t *o) {
     live_del(o);
     gfx_backend()->texture_release(o);
 }
 
-// NVNboolean nvnTextureInitialize(NVNtexture *t, const NVNtextureBuilder *b)
 NVN_API(nvnTextureInitialize) {
     tex_t *o = arg_p(c, 0);
     const tex_builder_t *s = arg_p(c, 1);
-    if (cfg_get("NX2SARIA_LOG_TEX_FLAGS")) {   // diagnosis: each distinct (flags, format) pair once
+    if (cfg_get("NX2SARIA_LOG_TEX_FLAGS")) {
         static uint64_t seen[256]; static int n;
         uint64_t key = (uint64_t)(uint32_t)s->d.flags << 32 | (uint32_t)s->d.format;
         int known = 0;
         for (int i = 0; i < n; i++) known |= seen[i] == key;
         if (!known && n < 256) { seen[n++] = key; rt_log("nvn: texture flags %#x format %#x %ux%u", s->d.flags, s->d.format, s->d.width, s->d.height); }
     }
-    if (o->magic == NVN_TEX_MAGIC && o->serial) {   // initialized again without Finalize: release the old serial
+    if (o->magic == NVN_TEX_MAGIC && o->serial) {
         NVN_LOG("texture %p initialized again without Finalize (serial %llu released)", (void *)o,
                 (unsigned long long)o->serial);
         tex_release(o);
@@ -224,8 +194,6 @@ NVN_API(nvnTextureInitialize) {
     if (s->pkg_data) {
         if (!o->mem || nvn_gpu_only((uintptr_t)o->mem))
             rt_fatal("nvn: packaged texture data without CPU-visible storage");
-        // the layout's size from the game's descriptor, against the pool it is copied into (its host storage may span
-        // more than its size): a heap overrun otherwise
         uint64_t room = s->pool->span > s->pool->size ? s->pool->span : s->pool->size;
         if (s->off < 0 || (uint64_t)s->off > room || o->L.size > room - (uint64_t)s->off)
             rt_fatal("nvn: packaged texture data of %#llx bytes at %#llx does not fit its pool (%#llx bytes)",
@@ -239,7 +207,6 @@ NVN_API(nvnTextureInitialize) {
             o->d.depth, o->d.levels, o->d.format, o->d.target, o->d.flags, (unsigned long long)o->L.size);
     ret_x(c, 1);
 }
-// void nvnTextureFinalize(NVNtexture *t)
 NVN_API(nvnTextureFinalize) {
     tex_t *o = arg_p(c, 0);
     if (o->magic == NVN_TEX_MAGIC && o->serial) tex_release(o);
@@ -252,16 +219,12 @@ NVN_API(nvnTextureGetWidth) { ret_x(c, CTX(c)->d.width); }
 NVN_API(nvnTextureGetHeight) { ret_x(c, CTX(c)->d.height); }
 NVN_API(nvnTextureGetDepth) { ret_x(c, CTX(c)->d.depth); }
 NVN_API(nvnTextureGetStorageSize) { ret_x(c, (uint32_t)(int)CTX(c)->L.size); }
-// NVNboolean nvnTextureCompare(const NVNtexture *a, const NVNtexture *b)
 NVN_API(nvnTextureCompare) {
     const tex_t *x = arg_p(c, 0), *y = arg_p(c, 1);
     ret_x(c, !memcmp(&x->d, &y->d, sizeof x->d) && x->mem == y->mem);
 }
-// int nvnTextureGetRawStorageClass(const NVNtexture *t): no prototype in nvn.h. Call sites compare the result with 1
-// and set a status bit when it differs; the meaning is unverified, so 1.
 NVN_API(nvnTextureGetRawStorageClass) { ret_x(c, 1); }
 
-// ---------- Texture views
 #define VW(c) ((view_t *)arg_p(c, 0))
 NVN_API(nvnTextureViewSetDefaults) { memset(arg_p(c, 0), 0, sizeof(view_t)); }
 NVN_API(nvnTextureViewSetLevels) {
@@ -294,7 +257,6 @@ NVN_API(nvnTextureViewSetTarget) {
     v->set_target = 1;
     v->target = (uint8_t)t;
 }
-// NVNboolean nvnTextureViewGetLayers(const NVNtextureView *v, int *min, int *n)
 NVN_API(nvnTextureViewGetLayers) {
     const view_t *v = arg_p(c, 0);
     *(int *)arg_p(c, 1) = v->min_layer;
@@ -308,11 +270,8 @@ uint64_t nvn_tex_view_offset(const tex_t *t, const view_t *v) {
     if (v->set_layers) off += (uint64_t)v->min_layer * t->L.layer_size;
     return off;
 }
-// ptrdiff_t nvnTextureGetViewOffset(const NVNtexture *t, const NVNtextureView *v)
 NVN_API(nvnTextureGetViewOffset) { ret_x(c, nvn_tex_view_offset(arg_p(c, 0), arg_p(c, 1))); }
 
-// ---------- Texel access: the back end decodes the view's level and layer
-// row / img: 0 means tightly packed
 static void texel_strides(const tex_t *o, const NVNcopyRegion *r, uint64_t *row, uint64_t *img, const char *what) {
     int bw, bh, bpb = nvn_fmt_bpb(o->d.format, &bw, &bh);
     if (!bpb) rt_fatal("nvn: %s: unknown format %#x", what, o->d.format);
@@ -321,8 +280,6 @@ static void texel_strides(const tex_t *o, const NVNcopyRegion *r, uint64_t *row,
     if (!*img) *img = *row * hb;
     if (*row < wb || *img < *row * hb) rt_fatal("nvn: %s: stride smaller than the region", what);
 }
-// void nvnTextureReadTexels[Strided](const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r, void *dst
-// [, ptrdiff_t row, ptrdiff_t img])
 static void read_texels(Cpu *c, int strided) {
     const tex_t *o = arg_p(c, 0);
     const NVNcopyRegion *r = arg_p(c, 2);
@@ -331,8 +288,6 @@ static void read_texels(Cpu *c, int strided) {
     NVN_BLOCKING();
     gfx_backend()->read_texels(o, arg_p(c, 1), r, arg_p(c, 3), row, img);
 }
-// void nvnTextureWriteTexels[Strided](const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r, const void
-// *src[, ptrdiff_t row, ptrdiff_t img])
 static void write_texels(Cpu *c, int strided) {
     const tex_t *o = arg_p(c, 0);
     const view_t *v = arg_p(c, 1);
@@ -347,17 +302,13 @@ NVN_API(nvnTextureReadTexels) { read_texels(c, 0); }
 NVN_API(nvnTextureReadTexelsStrided) { read_texels(c, 1); }
 NVN_API(nvnTextureWriteTexels) { write_texels(c, 0); }
 NVN_API(nvnTextureWriteTexelsStrided) { write_texels(c, 1); }
-// void nvnTexture{Flush,Invalidate}Texels(const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r): texel
-// access is coherent; flush marks the storage as written for re-upload
 NVN_API(nvnTextureFlushTexels) {
     const tex_t *t = arg_p(c, 0);
     if (t && t->mem && !nvn_gpu_only((uintptr_t)t->mem)) nvn_guest_written((uintptr_t)t->mem, t->L.size);
 }
 NVN_API(nvnTextureInvalidateTexels) { (void)c; }
 
-// ---------- Samplers
 #define SB(c) (&((samp_builder_t *)arg_p(c, 0))->p)
-// void nvnSamplerBuilderSetDefaults(NVNsamplerBuilder *b): keeps the device; GL defaults
 NVN_API(nvnSamplerBuilderSetDefaults) {
     samp_builder_t *b = arg_p(c, 0);
     NVNdevice *dev = b->dev;
@@ -384,7 +335,6 @@ NVN_API(nvnSamplerBuilderSetWrapMode) {
     p->wt = (uint8_t)arg_x(c, 2);
     p->wr = (uint8_t)arg_x(c, 3);
 }
-// void nvnSamplerBuilderSetLodClamp(NVNsamplerBuilder *b, float min, float max): the floats arrive in v0, v1
 NVN_API(nvnSamplerBuilderSetLodClamp) {
     samp_par *p = SB(c);
     p->lod_min = arg_s(c, 0);
@@ -398,14 +348,12 @@ NVN_API(nvnSamplerBuilderSetCompare) {
 }
 NVN_API(nvnSamplerBuilderSetBorderColor) { memcpy(SB(c)->border, arg_p(c, 1), 16); }
 NVN_API(nvnSamplerBuilderSetMaxAnisotropy) { SB(c)->aniso = arg_s(c, 0); }
-NVN_API(nvnSamplerBuilderSetLodSnap) { SB(c)->lod_snap = arg_s(c, 0); }   // stored for queries; no host equivalent
-// void nvnSamplerBuilderGetMinMagFilter(const NVNsamplerBuilder *b, NVNminFilter *min, NVNmagFilter *mag)
+NVN_API(nvnSamplerBuilderSetLodSnap) { SB(c)->lod_snap = arg_s(c, 0); }
 NVN_API(nvnSamplerBuilderGetMinMagFilter) {
     const samp_par *p = SB(c);
     *(uint32_t *)arg_p(c, 1) = p->minf;
     *(uint32_t *)arg_p(c, 2) = p->magf;
 }
-// void nvnSamplerBuilderGetWrapMode(const NVNsamplerBuilder *b, NVNwrapMode *s, NVNwrapMode *t, NVNwrapMode *r)
 NVN_API(nvnSamplerBuilderGetWrapMode) {
     const samp_par *p = SB(c);
     *(uint32_t *)arg_p(c, 1) = p->ws;
@@ -419,7 +367,6 @@ NVN_API(nvnSamplerBuilderSetReductionFilter) {
 }
 NVN_API(nvnSamplerBuilderGetReductionFilter) { ret_x(c, SB(c)->reduction); }
 NVN_API(nvnSamplerGetReductionFilter) { ret_x(c, ((const samp_t *)arg_p(c, 0))->p.reduction); }
-// NVNboolean nvnSamplerInitialize(NVNsampler *s, const NVNsamplerBuilder *b)
 NVN_API(nvnSamplerInitialize) {
     samp_t *o = arg_p(c, 0);
     o->magic = NVN_SAMP_MAGIC;
@@ -428,8 +375,6 @@ NVN_API(nvnSamplerInitialize) {
 }
 NVN_API(nvnSamplerFinalize) { ((samp_t *)arg_p(c, 0))->magic = 0; }
 
-// ---------- Programs
-// NVNboolean nvnProgramInitialize(NVNprogram *p, NVNdevice *d)
 NVN_API(nvnProgramInitialize) {
     prog_t *o = arg_p(c, 0);
     memset(o, 0, sizeof *o);
@@ -440,14 +385,11 @@ static void prog_release(prog_t *o) {
     if (o->serial) gfx_backend()->program_release(o);
     o->serial = 0;
 }
-// void nvnProgramFinalize(NVNprogram *p)
 NVN_API(nvnProgramFinalize) {
     prog_t *o = arg_p(c, 0);
     prog_release(o);
     o->magic = 0;
 }
-// NX2SARIA_PROG_LEAD=1 (diagnostics): when each program was made, by serial (direct-mapped; a serial that lost its
-// slot reads 0). vk_exec_draw.c prog_lead compares it with the program's first draw.
 #define PROG_MADE_N 16384
 static uint64_t prog_made_serial[PROG_MADE_N], prog_made_at[PROG_MADE_N];
 uint64_t nvn_prog_made_ns(uint64_t serial) {
@@ -474,16 +416,13 @@ static int prog_set_shaders(prog_t *o, int n, const NVNshaderData *sd) {
     NVN_LOG("ProgramSetShaders %p n=%d data0=%#llx", (void *)o, n, n ? (unsigned long long)sd[0].data : 0ull);
     return 1;
 }
-// NVNboolean nvnProgramSetShaders(NVNprogram *p, int n, const NVNshaderData *sd)
 static void shader_dump(const prog_t *o, int n, const NVNshaderData *sd);
 NVN_API(nvnProgramSetShaders) {
     NVN_BLOCKING();
     int ok = prog_set_shaders(arg_p(c, 0), (int)arg_x(c, 1), arg_p(c, 2));
-    shader_dump(arg_p(c, 0), (int)arg_x(c, 1), arg_p(c, 2));   // after: the files carry the program's serial
+    shader_dump(arg_p(c, 0), (int)arg_x(c, 1), arg_p(c, 2));
     ret_x(c, ok);
 }
-// NVNboolean nvnProgramSetShadersExt(NVNprogram *p, int n, const NVNshaderDataExt *sd): no prototype in nvn.h; the
-// entries are {data, control, reserved} (0x18 bytes, reserved observed 0)
 typedef struct { NVNbufferAddress data; const void *control; uint64_t reserved; } shader_data_ext;
 _Static_assert(sizeof(shader_data_ext) == 0x18, "NVNshaderDataExt stride");
 NVN_API(nvnProgramSetShadersExt) {
@@ -507,17 +446,10 @@ NVN_API(nvnProgramSetShadersExt) {
     ret_x(c, ok);
 }
 
-// ---------- NVN2 program builder (Switch 2): SetDefaults / SetDevice / SetShaders on a builder, then
-// nvnProgramInitializeFromBuilder(program, builder). No driver reference is available (the NVN2 driver is not in the
-// title's modules), so the signatures are taken to mirror nvnProgramSetShaders: SetShaders(builder, n, shader data).
-// The builder keeps the caller's array pointer, as NVN builders reference their inputs until the object is made.
-// NX2SARIA_SHADER_DUMP=<dir> writes each stage's control section and code there for studying the NVN2 layout, named by the
-// program's serial (p<serial>_s<stage>), the number frame dumps print as "prog N" (vk_dump.c).
 typedef struct { uint32_t magic; int32_t n; NVNdevice *dev; const NVNshaderData *sd; } prog_builder_t;
-#define NVN_PROG_BUILDER_MAGIC 0x50524742u   // "BGRP"
+#define NVN_PROG_BUILDER_MAGIC 0x50524742u
 
 static void shader_dump(const prog_t *o, int n, const NVNshaderData *sd) {
-    // Every distinct NVN2 stage number, once (mesh and task programs: which numbers the title uses)
     for (int i = 0; sd && i < n && i < 8; i++) {
         static uint32_t seen;
         const uint8_t *ctl = (const uint8_t *)sd[i].control;
@@ -532,7 +464,7 @@ static void shader_dump(const prog_t *o, int n, const NVNshaderData *sd) {
     if (!dir || !*dir) return;
     static volatile int32_t count;
     int k = __atomic_fetch_add(&count, 1, __ATOMIC_RELAXED);
-    if (k >= 20000) return;   // the gameplay programs too (mesh and task ones, and many draws, come late)
+    if (k >= 20000) return;
     if (k == 0) {
         const uint64_t *raw = (const uint64_t *)sd;
         rt_log("nvn: shader dump: first program %p, %d stages, raw shader data %#llx %#llx %#llx %#llx %#llx %#llx",
@@ -553,19 +485,15 @@ static void shader_dump(const prog_t *o, int n, const NVNshaderData *sd) {
     }
 }
 
-// void nvnProgramBuilderSetDefaults(NVNprogramBuilder *b)
 NVN_API(nvnProgramBuilderSetDefaults) {
     *(prog_builder_t *)arg_p(c, 0) = (prog_builder_t){NVN_PROG_BUILDER_MAGIC, 0, NULL, NULL};
 }
-// void nvnProgramBuilderSetDevice(NVNprogramBuilder *b, NVNdevice *d)
 NVN_API(nvnProgramBuilderSetDevice) { ((prog_builder_t *)arg_p(c, 0))->dev = arg_p(c, 1); }
-// void nvnProgramBuilderSetShaders(NVNprogramBuilder *b, int n, const NVNshaderData *sd)
 NVN_API(nvnProgramBuilderSetShaders) {
     prog_builder_t *b = arg_p(c, 0);
     b->n = (int32_t)arg_x(c, 1);
     b->sd = arg_p(c, 2);
 }
-// NVNboolean nvnProgramInitializeFromBuilder(NVNprogram *p, const NVNprogramBuilder *b)
 NVN_API(nvnProgramInitializeFromBuilder) {
     NVN_BLOCKING();
     prog_t *o = arg_p(c, 0);
@@ -575,7 +503,7 @@ NVN_API(nvnProgramInitializeFromBuilder) {
         ret_x(c, 0);
         return;
     }
-    const char *mode = cfg_get("NX2SARIA_NVN2_PROGRAMS");   // =off: refuse every program (diagnosis)
+    const char *mode = cfg_get("NX2SARIA_NVN2_PROGRAMS");
     if (mode && !strcmp(mode, "off")) {
         ret_x(c, 0);
         return;
@@ -587,7 +515,6 @@ NVN_API(nvnProgramInitializeFromBuilder) {
     ret_x(c, ok);
 }
 
-// ---------- State objects: packed in place (nvn_obj.h)
 #define ST(T, c) ((T *)arg_p(c, 0))
 NVN_API(nvnBlendStateSetDefaults) {
     *ST(blend_st, c) = (blend_st){0, NVN_BLEND_FUNC_ONE, NVN_BLEND_FUNC_ZERO, NVN_BLEND_FUNC_ONE, NVN_BLEND_FUNC_ZERO,
@@ -607,7 +534,6 @@ NVN_API(nvnBlendStateSetBlendEquation) {
     o->eq_a = (uint32_t)arg_x(c, 2);
 }
 NVN_API(nvnColorStateSetDefaults) { *ST(color_st, c) = (color_st){0, NVN_LOGIC_OP_COPY, NVN_ALPHA_FUNC_ALWAYS}; }
-// void nvnColorStateSetBlendEnable(NVNcolorState *s, int index, NVNboolean enable)
 NVN_API(nvnColorStateSetBlendEnable) {
     color_st *o = ST(color_st, c);
     int i = (int)arg_x(c, 1);
@@ -615,7 +541,6 @@ NVN_API(nvnColorStateSetBlendEnable) {
     o->blend_en = nvn_arg_bool(c, 2) ? (o->blend_en | 1u << i) : (o->blend_en & ~(1u << i));
 }
 NVN_API(nvnChannelMaskStateSetDefaults) { ST(chmask_st, c)->mask = 0xffffffffu; }
-// void nvnChannelMaskStateSetChannelMask(NVNchannelMaskState *s, int index, NVNboolean r, g, b, a)
 NVN_API(nvnChannelMaskStateSetChannelMask) {
     int i = (int)arg_x(c, 1);
     if (i < 0 || i > 7) return;
@@ -632,8 +557,6 @@ NVN_API(nvnMultisampleStateSetMultisampleEnable) { ST(ms_st, c)->enable = nvn_ar
 NVN_API(nvnMultisampleStateSetSamples) { ST(ms_st, c)->samples = (uint8_t)arg_x(c, 1); }
 NVN_API(nvnMultisampleStateSetAlphaToCoverageEnable) { ST(ms_st, c)->a2c = nvn_arg_bool(c, 1) != 0; }
 NVN_API(nvnMultisampleStateSetSampleLocationsEnable) { ST(ms_st, c)->sl_en = nvn_arg_bool(c, 1) != 0; }
-// void nvnMultisampleStateSetSampleLocations(NVNmultisampleState *s, int start, int n, const float *v): programmable
-// sample positions are not replayed
 NVN_API(nvnMultisampleStateSetSampleLocations) { (void)c; }
 NVN_API(nvnPolygonStateSetDefaults) {
     *ST(poly_st, c) = (poly_st){NVN_FACE_NONE, NVN_FRONT_FACE_CCW, NVN_POLYGON_MODE_FILL, 0};
@@ -651,14 +574,12 @@ NVN_API(nvnDepthStencilStateSetDepthTestEnable) { ST(ds_st, c)->dt = nvn_arg_boo
 NVN_API(nvnDepthStencilStateSetDepthWriteEnable) { ST(ds_st, c)->dw = nvn_arg_bool(c, 1) != 0; }
 NVN_API(nvnDepthStencilStateSetDepthFunc) { ST(ds_st, c)->df = (uint32_t)arg_x(c, 1); }
 NVN_API(nvnDepthStencilStateSetStencilTestEnable) { ST(ds_st, c)->st = nvn_arg_bool(c, 1) != 0; }
-// void nvnDepthStencilStateSetStencilFunc(NVNdepthStencilState *s, NVNface face, NVNstencilFunc func)
 NVN_API(nvnDepthStencilStateSetStencilFunc) {
     ds_st *o = ST(ds_st, c);
     uint32_t face = (uint32_t)arg_x(c, 1), fn = (uint32_t)arg_x(c, 2);
     if (face & NVN_FACE_FRONT) o->sf_f = fn;
     if (face & NVN_FACE_BACK) o->sf_b = fn;
 }
-// void nvnDepthStencilStateSetStencilOp(NVNdepthStencilState *s, NVNface face, NVNstencilOp fail, zfail, zpass)
 NVN_API(nvnDepthStencilStateSetStencilOp) {
     ds_st *o = ST(ds_st, c);
     uint32_t face = (uint32_t)arg_x(c, 1), fail = (uint32_t)arg_x(c, 2), zfail = (uint32_t)arg_x(c, 3),
@@ -667,7 +588,6 @@ NVN_API(nvnDepthStencilStateSetStencilOp) {
     if (face & NVN_FACE_BACK) { o->fail_b = fail; o->zfail_b = zfail; o->zpass_b = zpass; }
 }
 NVN_API(nvnVertexAttribStateSetDefaults) { *ST(va_st, c) = (va_st){0, 0, 0}; }
-// void nvnVertexAttribStateSetFormat(NVNvertexAttribState *s, NVNformat format, ptrdiff_t offset)
 NVN_API(nvnVertexAttribStateSetFormat) {
     int64_t off = (int64_t)arg_x(c, 2);
     if (off < 0 || off >= (1 << 19)) rt_fatal("nvn: vertex attribute offset %lld outside the packed range", (long long)off);
@@ -680,7 +600,6 @@ NVN_API(nvnVertexStreamStateSetDefaults) { *ST(vs_st, c) = (vs_st){0, 0}; }
 NVN_API(nvnVertexStreamStateSetStride) { ST(vs_st, c)->stride = (uint32_t)arg_x(c, 1); }
 NVN_API(nvnVertexStreamStateSetDivisor) { ST(vs_st, c)->divisor = (uint32_t)arg_x(c, 1); }
 
-// ---------- Windows
 #define WB(c) ((win_builder_t *)arg_p(c, 0))
 #define WN(c) ((win_t *)arg_p(c, 0))
 NVN_API(nvnWindowBuilderSetDefaults) {
@@ -692,7 +611,6 @@ NVN_API(nvnWindowBuilderSetDefaults) {
 }
 NVN_API(nvnWindowBuilderSetDevice) { WB(c)->dev = arg_p(c, 1); }
 NVN_API(nvnWindowBuilderSetNativeWindow) { WB(c)->native = arg_p(c, 1); }
-// void nvnWindowBuilderSetTextures(NVNwindowBuilder *b, int n, NVNtexture *const *textures)
 NVN_API(nvnWindowBuilderSetTextures) {
     win_builder_t *b = WB(c);
     int n = (int)arg_x(c, 1);
@@ -701,7 +619,6 @@ NVN_API(nvnWindowBuilderSetTextures) {
     b->ntex = n;
     for (int i = 0; i < n; i++) b->tex[i] = t[i];
 }
-// NX2NAVI sets two active images; the limit bounds what WindowAcquireTexture hands out. No prototype in nvn.h.
 NVN_API(nvnWindowBuilderSetNumActiveTextures) {
     int n = (int)arg_x(c, 1);
     if (n < 2 || n > 4) rt_fatal("nvn: unsupported active texture count %d", n);
@@ -722,7 +639,6 @@ NVN_API(nvnWindowGetNumActiveTextures) {
     ret_x(c, (uint32_t)(w->active ? w->active : w->ntex));
 }
 NVN_API(nvnWindowBuilderSetPresentInterval) { WB(c)->interval = (int)arg_x(c, 1); }
-// NVNboolean nvnWindowInitialize(NVNwindow *w, const NVNwindowBuilder *b)
 NVN_API(nvnWindowInitialize) {
     win_t *o = arg_p(c, 0);
     const win_builder_t *s = arg_p(c, 1);
@@ -743,7 +659,6 @@ NVN_API(nvnWindowInitialize) {
             t0 ? t0->d.width : 0, t0 ? t0->d.height : 0, t0 ? t0->d.format : 0);
     ret_x(c, 1);
 }
-// void nvnWindowFinalize(NVNwindow *w): nothing to release
 NVN_API(nvnWindowFinalize) { (void)c; }
 NVN_API(nvnWindowSetPresentInterval) {
     win_t *o = WN(c);
@@ -751,7 +666,6 @@ NVN_API(nvnWindowSetPresentInterval) {
     if (o->interval != v) NVN_LOG("present interval %d -> %d", o->interval, v);
     o->interval = v;
 }
-// void nvnWindowSetCrop(NVNwindow *w, int x, int y, int w, int h)
 NVN_API(nvnWindowSetCrop) {
     win_t *o = WN(c);
     int v[4] = {(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), (int)arg_x(c, 4)};
@@ -759,29 +673,15 @@ NVN_API(nvnWindowSetCrop) {
     memcpy(o->crop, v, sizeof v);
 }
 
-// ---------- Present pacing
-// The vsync thread ticks at a fixed 60 Hz whatever the monitor does, so one game frame lasts `interval` ticks. With
-// the real-time frame step (frame_rate.c) game speed does not depend on the interval, so a frame is shown when it is
-// ready, at most at the frame limit (NX2SARIA_FPS_LIMIT: 30 to 240 per second or the monitor's rate): holding it to the
-// 2nd or 3rd tick would only add latency and 50 ms frames.
 #define VSYNC_HZ 60ull
 static uint64_t present_period(const win_t *o) {
-    if (frame_step_realtime() || frame_free_running()) return frame_step_cap_ns();   // frame_rate.c: the limit alone
-    static int pace_hz = -1;   // NX2SARIA_PACE_HZ=<n> (test runs): present at n per second whatever the game's interval
+    if (frame_step_realtime() || frame_free_running()) return frame_step_cap_ns();
+    static int pace_hz = -1;
     if (pace_hz < 0) pace_hz = cfg_get("NX2SARIA_PACE_HZ") ? atoi(cfg_get("NX2SARIA_PACE_HZ")) : 0;
     if (pace_hz > 0) return 1000000000ull / (uint64_t)pace_hz;
     return (o->interval > 0 ? (uint64_t)o->interval : 1ull) * 1000000000ull / VSYNC_HZ;
 }
 
-// The present slot is the previous slot plus one period. Early: wait for the slot. Late by
-// less than a period: present at once and keep the phase. Behind by a period or more: restart from now, no catch-up
-// burst, except while a movie plays (frame_step_movie_hz): then the slots are kept through a lateness up to
-// MOVIE_CATCHUP_NS and the frames after a late one go at once until the game is back on them. A movie shows one
-// picture per game update and its sound plays by the clock (frame_rate.c ocarina_step), so every period dropped here
-// was a picture the movie fell behind for good: with a 70 ms frame every two seconds (NX2SARIA_TEST_HITCH=120:70) the
-// updates averaged 58.9 a second and the Triforce movie's picture fell 190 ms behind its sound every ten seconds, 2.2 s
-// by the end of its 117 s, at every frame limit from 60 to unlimited; with the slots kept it stayed within 22 ms. A
-// stall of a second or more (a load) restarts the slots as before. Returns the ns to wait.
 #define MOVIE_CATCHUP_NS 1000000000ull
 static uint64_t pace(uint64_t *target, uint64_t now, uint64_t period) {
     if (!period || !*target) { *target = now; return 0; }
@@ -797,17 +697,13 @@ static void sleep_until(uint64_t deadline) {
         uint64_t now = kern_now_ns();
         if (now >= deadline) return;
         uint64_t d = deadline - now;
-        // The high-resolution wait never returns early and at most PLAT_WAIT_LATE_NS late, so it takes the wait up to
-        // that margin before the deadline and only the rest is spent yielding. The coarse sleep that stood here left
-        // 1 to 2 ms of every paced frame to the yield loop.
         if (d > PLAT_WAIT_LATE_NS + 100000) plat_wait_ns(d - PLAT_WAIT_LATE_NS - 100000);
         else plat_yield();
     }
 }
 
-// The submit fence of each window image's newest present (win_t has no room: a side table for the first windows).
 static struct { const win_t *w; uint64_t fence[4]; } img_fence[4];
-static uint64_t last_present_fence;   // the submit fence at the newest present of any window
+static uint64_t last_present_fence;
 
 static uint64_t *img_fence_of(const win_t *o, int idx) {
     if (idx < 0 || idx >= 4) return NULL;
@@ -818,9 +714,6 @@ static uint64_t *img_fence_of(const win_t *o, int idx) {
     return NULL;
 }
 
-// NVNwindowAcquireTextureResult nvnWindowAcquireTexture(NVNwindow *w, NVNsync *s, int *index): blocks here, not in the
-// present, until the image's previous present plus one period has passed (the game often presents with a lock held).
-// That is the time the next frame goes to the display, so the image is free as soon as that time is reached.
 NVN_API(nvnWindowAcquireTexture) {
     win_t *o = arg_p(c, 0);
     sync_t *s = arg_p(c, 1);
@@ -828,8 +721,6 @@ NVN_API(nvnWindowAcquireTexture) {
     NVN_BLOCKING();
     int idx = o->active ? o->next++ % o->active : 0;
     *out = idx;
-    // The frame timing's waits count on the presenting thread (perf.c perf_end); a game may acquire on another, whose
-    // wait here perf_end_any adds to the next present. One line names both threads once the first present is known.
     static volatile int32_t named;
     if (prof_render_tid && !named && !plat_xchg32(&named, 1)) {
         uint32_t tid = plat_thread_id();
@@ -842,26 +733,18 @@ NVN_API(nvnWindowAcquireTexture) {
         sleep_until(at);
         perf_end_any(PERF_PACE, p0);
     }
-    // On the Switch the image comes back only after the display has shown it, which needs the GPU to have finished the
-    // frame drawn into it, so the CPU never runs more than the swapchain's depth ahead of the GPU. Here the pacer frees
-    // images by the clock alone, so the acquire also waits for the GPU to finish the image's newest present. With the
-    // GPU slowed (frame dump logging), this alone cut Ocarina's NaN frames from 56 to 23 of 61; the wait after a frame's
-    // first submission (nvn_api_core.c nvnQueueSubmitCommands) removes the rest. NX2SARIA_ACQUIRE_WAIT=0 leaves it to the
-    // clock; =2 waits for the newest present of any image (one frame in flight at most).
     static int acq_wait = -1;
-    if (acq_wait < 0) {   // a number: the on/off reader took every value but 0 for 1, so 2 could not be chosen
+    if (acq_wait < 0) {
         const char *e = cfg_get("NX2SARIA_ACQUIRE_WAIT");
         acq_wait = e && (*e == '0' || *e == '2') && !e[1] ? *e - '0' : 1;
     }
     uint64_t *fe = img_fence_of(o, idx), want = fe ? *fe : 0;
     if (acq_wait == 2) want = last_present_fence;
-    if (acq_wait && want) {   // the back end's wait counts it as a fence wait (vk_sync.c vk_sync_fence_wait), not pacing
+    if (acq_wait && want) {
         const GfxBackend *b = gfx_backend();
         if (b->fence_done() < want) b->fence_wait(want, UINT64_MAX);
     }
-    if (gfx_backend()->frame_start) gfx_backend()->frame_start();   // the frame's work starts here
-    // The sync means "the display no longer reads this image". Presents are copies queued in submit order, so it is
-    // already satisfied: fenced = 3 with fence 0.
+    if (gfx_backend()->frame_start) gfx_backend()->frame_start();
     if (s) {
         s->fenced = 3;
         s->fence = 0;
@@ -869,16 +752,12 @@ NVN_API(nvnWindowAcquireTexture) {
     ret_x(c, NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS);
 }
 
-// void nvnQueuePresentTexture(NVNqueue *q, NVNwindow *w, int index): queues the copy and returns at once. The display
-// time comes from the pacer: the back end's present thread holds the host present until then (back-edge pacing, as the
-// Switch's display flips at vblank), so the present cadence does not follow the replay time; one period later the
-// image is free for the next acquire. Added latency: the slack of the frame (period minus its work), as on the Switch.
 NVN_API(nvnQueuePresentTexture) {
     win_t *o = arg_p(c, 1);
     int idx = (int)arg_x(c, 2);
-    movie_tick(c);   // ov_movie.c: hand over decoded movie frames that are due; needs the core, so before the wait
-    res_present(c);  // resolution.c: a DLSS mode change sets the game's render size again, between frames
-    wide_present();  // widescreen.c: Ocarina's DLSS render scale
+    movie_tick(c);
+    res_present(c);
+    wide_present();
     NVN_BLOCKING();
     if (o->magic != NVN_WIN_MAGIC || idx < 0 || idx >= o->ntex || idx >= 4 || !o->tex[idx])
         rt_fatal("nvn: QueuePresentTexture of image %d on window %p", idx, (void *)o);
@@ -886,7 +765,7 @@ NVN_API(nvnQueuePresentTexture) {
     o->presents++;
     __atomic_store_n(&nvn_submits_in_frame, 0, __ATOMIC_RELAXED);
     const tex_t *t = (const tex_t *)o->tex[idx];
-    static int hitch_every = -1, hitch_ms;   // NX2SARIA_TEST_HITCH=<every>:<ms>: a late frame every so many presents
+    static int hitch_every = -1, hitch_ms;
     if (hitch_every < 0) {
         const char *e = cfg_get("NX2SARIA_TEST_HITCH");
         int every = 0, ms = 0;
@@ -896,12 +775,6 @@ NVN_API(nvnQueuePresentTexture) {
     }
     if (hitch_every && o->presents % (uint64_t)hitch_every == 0) plat_wait_ns((uint64_t)hitch_ms * 1000000);
     uint64_t period = present_period(o), now = kern_now_ns();
-    // A driver's low-latency sleep (vk_lowlat.c) or Reflex with DLSS Frame Generation (vk_dlssg.c) holds the next frame
-    // to the period where the frame starts, before its pad read, so this pacer holds at most the game's ceiling: the
-    // present goes out as soon as it is drawn and the image is free again at once, or a ceiling's period after its
-    // slot. A wait here as well would be a second one, after the picture is drawn. Not while a movie plays: its slots
-    // are kept through a late frame (pace), which only this pacer does, so the back end is told there is no period and
-    // the pacer keeps the movie's.
     if (gfx_backend()->frame_paced) {
         int movie = frame_step_movie_hz() > 0;
         uint64_t held = gfx_backend()->frame_paced(movie ? 0 : period);
@@ -912,9 +785,9 @@ NVN_API(nvnQueuePresentTexture) {
     o->ticket[idx] = o->presents;
     o->avail[idx] = slot + period;
     uint64_t *fe = img_fence_of(o, idx);
-    if (fe) *fe = nvn_fence_last();   // the frame drawn into it (nvnWindowAcquireTexture waits for it)
+    if (fe) *fe = nvn_fence_last();
     last_present_fence = nvn_fence_last();
-    frame_step_present(slot, o->interval);   // frame_rate.c: the real-time step follows the display times
+    frame_step_present(slot, o->interval);
     rt_frame_presented(t, o->presents);
     nvn_call_note(1, (uintptr_t)arg_p(c, 0), 0);
 }
