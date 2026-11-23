@@ -23,7 +23,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 
 | Order | Area | Page | Status |
 |---|---|---|---|
-| 1 | `runtime/dlssg/`, `runtime/audio/` | `dlssg.md`, `audio.md` | not yet extracted |
+| 1 | `runtime/dlssg/`, `runtime/audio/` | [dlssg.md](dlssg.md), [audio.md](audio.md) | extracted |
 | 2 | `installer/` | `installer.md` | not yet extracted |
 | 3 | `recomp/` | `recomp.md` | not yet extracted |
 | 4 | `runtime/cfg/` | `cfg.md` | not yet extracted |
