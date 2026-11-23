@@ -20,11 +20,6 @@ struct AudioEffectDsp {
 };
 static int channel_ok(unsigned n) { return n==1 || n==2 || n==4 || n==6; }
 static unsigned sample_count(unsigned rate, float ms) { return (unsigned)nearbyintf(rate*ms); }
-/* The ring has `count` slots. The reference DelayLine wraps its cursor at
-   CurrentSampleCount-1 while its taps index modulo CurrentSampleCount, so once
-   per turn every tap reads a slot that is never written (a one-sample dropout
-   per tap, audible as grain). The cursor and the taps share one ring length here;
-   each delay is one sample longer than the reference. */
 static void line_set(DelayLine *d, unsigned n) { d->count=n<d->max?n:d->max; d->at=0; }
 static void line_init(DelayLine *d, unsigned rate, float ms) {
     d->max=sample_count(rate,ms); d->data=calloc((size_t)d->max+1,sizeof(float));
@@ -45,8 +40,6 @@ static float line_tap(const DelayLine *d,unsigned sample,int offset) {
 static float gain10(float x) { return x>=0?1:x<=-5.3f?0:powf(10,x); }
 static const float fdn_time[4][4]={{53.953247f,79.192566f,116.238770f,130.615295f},{53.953247f,79.192566f,116.238770f,170.615295f},{5,10,5,10},{47.03f,71,103,170}};
 static const float decay_time[4][4]={{7,9,13,17},{7,9,13,17},{1,1,1,1},{7,7,13,9}};
-/* Early reflections are indexed by EarlyMode: five tables, one per mode, rather
-   than the first row for every mode. */
 static const float early_time[5][10]={
     {0,3.5f,2.8f,3.9f,2.7f,13.4f,7.9f,8.4f,9.9f,12},
     {0,11.8f,5.5f,11.2f,10.4f,38.1f,22.2f,29.6f,21.2f,24.8f},
@@ -62,9 +55,6 @@ static const float early_gain[5][10]={
     {0}
 };
 static const float pre_time[5]={12.5f,40,50,50,0};
-/* What makes a delay, reverb or compressor block unusable for the DSP below, or NULL. The game sends these blocks, so
-   audio_mixer.c audio_mixer_update_effects asks audio_effect_invalid before it creates or updates a DSP and passes
-   the effect's sound through instead; the validate_* checks in create and update are then invariants. */
 static const char *delay_invalid(const AudrenDelayParam *p) {
     unsigned rate=(p->sample_rate>>14)/1000;
     if(!channel_ok(p->channels))return "channel count not 1, 2, 4 or 6";
@@ -131,9 +121,6 @@ AudioEffectDsp *audio_effect_create(unsigned type,const void *param,unsigned rev
     return s;
 }
 void audio_effect_free(AudioEffectDsp *s) { if(s){for(int i=0;i<10;i++)free(s->line[i].data);free(s);} }
-/* The "requires reset" checks are invariants too: audio_mixer_update_effects frees the DSP whenever the channels, the
-   rate or the longest delay differ from the block of the update before, which is the one this DSP was made or last
-   updated from. */
 void audio_effect_update(AudioEffectDsp *s,const void *param) {
     if(s->type==3){
         AudrenDelayParam p;memcpy(&p,param,sizeof p);validate_delay(&p);

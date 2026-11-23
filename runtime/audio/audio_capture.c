@@ -22,8 +22,6 @@ int mic_device_count(void) {
     return n;
 }
 
-/* The SDL stream lock serializes the callback and every ring operation.
-   Discard the oldest frames on overflow, so a paused game cannot grow RAM. */
 static void SDLCALL received(void *userdata, SDL_AudioStream *stream, int added, int total) {
     (void)added;
     (void)total;
@@ -125,7 +123,7 @@ int mic_start(MicCapture *m) {
 }
 void mic_stop(MicCapture *m) {
     if (m && m->device) {
-        SDL_CloseAudioDevice(m->device); /* unbinds the stream; unread frames remain in the ring */
+        SDL_CloseAudioDevice(m->device);
         m->device = 0;
     }
 }

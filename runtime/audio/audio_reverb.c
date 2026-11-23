@@ -31,8 +31,6 @@ static float delay_tap(const Delay *d, unsigned at) { int i = (int)d->write - (i
 static float allpass(Delay *d, float x, float gain) { float v = x - gain * d->data[d->read]; return delay_update(d, v) + gain * v; }
 static float gain10(float x) { return x >= 0 ? 1 : x <= -5.3f ? 0 : powf(10, x); }
 static float radians(float x) { return x * 3.14159265358979323846f / 180; }
-/* audio_mixer.c asks this before the game's block reaches create or update (and passes the sound through instead), so
-   validate's fatal is an invariant. */
 const char *audio_reverb_invalid(const Reverb3dParam *p) {
     if (p->channels != 1 && p->channels != 2 && p->channels != 4 && p->channels != 6)
         return "channel count not 1, 2, 4 or 6";
@@ -73,7 +71,6 @@ void audio_reverb_update(Reverb3d *s, const Reverb3dParam *p) {
 void audio_reverb_process(Reverb3d *s, float *const input[6], float *const output[6], int frames) {
     static const unsigned stereo[20]={0,0,0,1,1,1,1,0,0,0,1,1,1,0,0,0,0,1,1,1};
     static const unsigned quad[20]={0,0,0,1,1,1,1,2,2,2,1,1,1,0,0,0,0,3,3,3};
-    /* Preserve the reference's legacy surround channel ordering (L,R,BL,BR,C,LFE). */
     static const unsigned surround[20]={4,5,0,5,0,5,1,5,1,5,1,5,1,5,2,5,2,5,2,5};
     const int channels=s->p.channels;
     for (int k=0;k<frames;k++) {
