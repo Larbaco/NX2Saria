@@ -1,8 +1,4 @@
-// nx2saria.exe --probe-nvn-tex: texture storage size, block height, alignment and mip offsets of nvn_tex.c.
 // Contains code Copyright (c) 2026 jhaizhou (MIT; see THIRD_PARTY_NOTICES.md).
-// The 40 size and block-height goldens are original-SDK CPU queries for uncompressed and BC3-sRGB boundary cases; no game bytes.
-// The old rounded-up heuristic mismatches 16 of them, including the 160x160 case. Block-linear address checks
-// belong to the deswizzler and are not part of this probe.
 #include <stdint.h>
 #include <stdio.h>
 #include "host.h"
@@ -52,7 +48,6 @@ static const LayoutCase layout_cases[] = {
     {0x48, 160, 516, 10, 4, 222208},
 };
 
-// Hand-derived from the layout rules: RGBA8 40x128, 8 levels, block height 16 GOBs shrinking per level.
 static const uint64_t mip_offsets_rgba8_40x128[9] = {0, 24576, 32768, 34816, 35840, 36352, 36864, 37376, 37888};
 
 static int fail(const char *what, unsigned i, unsigned format, unsigned w, unsigned h, unsigned long long got, unsigned long long want) {
@@ -89,7 +84,6 @@ int probe_nvn_tex(void) {
         n++;
     }
 
-    // Pitch storage: LINEAR_RENDER_TARGET (0x40) aligns the stride to 128 bytes, LINEAR (0x10) to 32.
     nvn_texdesc lin = {.target = 1, .format = 0x25, .flags = 0x40, .samples = 1, .width = 40, .height = 4, .depth = 1, .levels = 1};
     nvn_texlayout l;
     nvn_tex_layout(&lin, &l);
@@ -99,9 +93,6 @@ int probe_nvn_tex(void) {
     if (l.size != 160ull * 4 || l.align != 32) return fail("linear", 0, 0x25, 40, 4, l.size, 640);
     n += 2;
 
-    // A width past 2^30 (a garbled descriptor): its size in 64 bits, never wrapped to a small one. RGBA8 2^30 + 64
-    // texels by 8 rows is one GOB row of (2^32 + 256)-byte rows: 2^26 + 4 GOBs of 512 bytes, 2^35 + 2048 bytes (in
-    // 32 bits the row wrapped to 256 bytes and the texture to 2048).
     nvn_texdesc wide = {.target = 1, .format = 0x25, .samples = 1, .width = (1u << 30) + 64, .height = 8, .depth = 1, .levels = 1};
     nvn_tex_layout(&wide, &l);
     if (l.size != (1ull << 35) + 2048) return fail("width past 2^30", 0, 0x25, wide.width, 8, l.size, (1ull << 35) + 2048);
