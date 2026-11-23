@@ -6,6 +6,26 @@ extracted ([README.md](README.md#areas)). What ships with which licence is in
 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md); `tests/shipped_notices_check.py` keeps it in step with the
 scripts ([tests.md](tests.md)).
 
+## `tools/build_game.py`
+
+The developer build of a game version from its generated C (`docs/building.md`). The notes of its code that changed
+since the comments rule are here; the rest of the file still has its comments.
+
+### `runtime_compiles()`
+
+The runtime files a build compiles: every runtime source but those `--skip-runtime` names, and the `modules.c` the
+build writes. There is no split into a prebuilt library and per-install sources any more: that existed for the setup
+that installed the game from a release folder, which is gone; the launcher's prebuilt runtime is
+`tools/make_game.py` `make_runtime_lib()`.
+
+### `ninja_file()`
+
+The `build.ninja` text and the object lists per module. With `prebuilt` the generated objects already exist in
+`out/obj` and are link inputs without a compile edge. Off Windows the runtime's flags take `-fdeclspec`:
+`runtime/third_party/ffx_api/ffx_api.h` declares its entry points `__declspec(dllexport)` without a condition, so
+`runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_fg.cpp` do not compile on Linux without it (`tools/make_game.py`
+`runtime_cmd()` adds the same flag).
+
 ## `tools/make_appimage.py`
 
 `KIT_DIRS` holds `licenses/`: the licence texts `THIRD_PARTY_NOTICES.md` names that are not beside their code (the

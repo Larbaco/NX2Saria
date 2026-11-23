@@ -152,7 +152,7 @@ private paths, and never upload game files or keys.
 | Playing | [Install and update](docs/install.md) · [Controls](docs/controls.md) · [Settings](nx2saria.ini.example) · [Amiibo](docs/amiibo.md) · [Known issues](docs/known-issues.md) |
 | Trackers | [Tracker API](docs/tracker-api.md) · [Ocarina Atlas](docs/ocarina-atlas.md) · [hyrule-tracker](docs/hyrule-tracker.md) |
 | Releases | [Release notes](docs/releases/) · [Changelogs](docs/changelog/) |
-| Building | [Build kit](docs/README-BuildKit.md) · [From source](docs/building.md) · [Launcher](docs/launcher.md) · [Installer](docs/installer.md) |
+| Building | [Build kit](docs/README-BuildKit.md) · [From source](docs/building.md) · [Launcher](docs/launcher.md) |
 | Testing | [Performance](docs/performance.md) · [Boot to a map](docs/boot-to-map.md) |
 | Contributing | [Contribution guide](CONTRIBUTING.md) · [Architecture](docs/architecture.md) · [Maxwell renderer notes](docs/maxwell.md) |
 

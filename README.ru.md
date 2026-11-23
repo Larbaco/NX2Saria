@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
+<!-- translation: lang=ru source=README.md source-hash=4a6230d5353d680f817462a90a98992372906345 reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -167,7 +167,7 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 | Игра | [Установка и обновление](docs/ru/install.md) · [Управление](docs/ru/controls.md) · [Настройки](nx2saria.ini.example) (на английском) · [Amiibo](docs/ru/amiibo.md) · [Известные проблемы](docs/ru/known-issues.md) |
 | Трекеры | [API трекеров](docs/tracker-api.md) (на английском) · [Ocarina Atlas](docs/ocarina-atlas.md) (на английском) · [hyrule-tracker](docs/hyrule-tracker.md) (на английском) |
 | Выпуски | [Примечания к выпускам](docs/releases/) (на английском) · [Списки изменений](docs/changelog/) (на английском) |
-| Сборка | [Набор для сборки](docs/README-BuildKit.md) (на английском) · [Из исходного кода](docs/building.md) (на английском) · [Лаунчер](docs/launcher.md) (на английском) · [Установщик](docs/installer.md) (на английском) |
+| Сборка | [Набор для сборки](docs/README-BuildKit.md) (на английском) · [Из исходного кода](docs/building.md) (на английском) · [Лаунчер](docs/launcher.md) (на английском) |
 | Тестирование | [Производительность](docs/performance.md) (на английском) · [Загрузка сразу на карту](docs/boot-to-map.md) (на английском) |
 | Участие в разработке | [Руководство для участников](CONTRIBUTING.md) (на английском) · [Архитектура](docs/architecture.md) (на английском) · [Заметки о рендерере Maxwell](docs/maxwell.md) (на английском) |
 

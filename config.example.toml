@@ -10,7 +10,6 @@ updates = ['C:\Games\NX2Saria\update-1.1.1.nsp']
 keys = 'C:\Switch\prod.keys'
 # Optional: a firmware NCA directory (an unpacked firmware, or an emulator's installed registered/ directory).
 # tools/extract_fonts.py takes the system shared fonts from it; the game needs them only with Chinese or Korean text.
-# The installer asks for the same folder (--firmware) when the language needs those fonts.
 # firmware = 'C:\Switch\firmware'
 
 [work]

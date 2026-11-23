@@ -50,7 +50,6 @@ Quote every label exactly as the player sees it in the translation's language:
 - **Settings menu and overlay:** `runtime/ui/ui_text.c`, the arrays `text_pt_br`, `text_ru` and `text_zh_hans`. Find the
   English label in `text_en`, then the same `UI_...` id in the language's array. When the language has no entry for
   that id, the menu shows the English text: quote it in English.
-- **Setup (installer):** `installer/text/<lang>.json`, by the same key as in `en.json`.
 - **Launcher:** English only; quote its labels in English.
 
 A label is set in italics or bold as in the English page.

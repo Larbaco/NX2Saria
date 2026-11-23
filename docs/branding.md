@@ -65,7 +65,6 @@ after updating can recompile the runtime to apply its new title and icon; saves 
 | The `GENERATED_MARKER` value in `tools/check_content.py`, which starts with the legacy `NX2NAVI_` prefix | Marker that generated files carry | A stable marker: files generated before the rename stay recognised |
 | `nx2navi-save` | Save archive format identifier (`launcher/saves.py`) | Archives exported by NX2navi still import |
 | `nx2navi` manifest and capture keys | Port-version metadata in save manifests and `capture.txt` | Earlier readers keep understanding the records |
-| `nx2navi-install.json` | Install state (`installer/state.py`) | Existing installs keep their record and can be updated |
 | `shortcuts.vdf.nx2navi-backup` | Backup of Steam's shortcut file (`launcher/steam.py`) | The launcher writes its backup under this name, and earlier backups already carry it |
 | `NX2NSPRP` | Magic of `shader-prepared.bin` (`runtime/gfx/prp_file.h`) | File magic: changing it makes existing files unreadable |
 | `NX2NAVIRFS-PROOF-1` | Magic of the RomFS verification proof (`runtime/hle/romfs.c`) | File magic, as above |

@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=README.md source-hash=4823e615f6a0a1f8278fe07a864a20e9aef77d6b reviewed=no -->
+<!-- translation: lang=zh-Hans source=README.md source-hash=4a6230d5353d680f817462a90a98992372906345 reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -111,7 +111,7 @@ python3 -I tools/make_game.py --nup "/path/to/your-game.nup" --out "$HOME/Games/
 | 游玩 | [安装与更新](docs/zh-Hans/install.md) · [操作](docs/zh-Hans/controls.md) · [设置](nx2saria.ini.example)（英文） · [amiibo](docs/zh-Hans/amiibo.md) · [已知问题](docs/zh-Hans/known-issues.md) |
 | 追踪器 | [追踪器 API](docs/tracker-api.md)（英文） · [Ocarina Atlas](docs/ocarina-atlas.md)（英文） · [hyrule-tracker](docs/hyrule-tracker.md)（英文） |
 | 发布 | [发布说明](docs/releases/)（英文） · [更新日志](docs/changelog/)（英文） |
-| 构建 | [构建套件](docs/README-BuildKit.md)（英文） · [从源码构建](docs/building.md)（英文） · [启动器](docs/launcher.md)（英文） · [安装程序](docs/installer.md)（英文） |
+| 构建 | [构建套件](docs/README-BuildKit.md)（英文） · [从源码构建](docs/building.md)（英文） · [启动器](docs/launcher.md)（英文） |
 | 测试 | [性能](docs/performance.md)（英文） · [直接启动到地图](docs/boot-to-map.md)（英文） |
 | 参与贡献 | [贡献指南](CONTRIBUTING.md)（英文） · [架构](docs/architecture.md)（英文） · [Maxwell 渲染器说明](docs/maxwell.md)（英文） |
 

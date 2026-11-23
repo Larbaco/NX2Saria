@@ -54,15 +54,10 @@ object again. Under SCCACHE the compiles run in sccache's server, out of the wra
 the wrapper out and the gate is off. Each phase also reports its wall time and the peak memory of its processes
 (Windows job object accounting: committed private bytes).
 
---ninja PATH names the Ninja to run; without MSYS2 the bin/ninja.exe of a setup release folder (docs/installer.md) is used.
 --toolchain DIR builds with an llvm-mingw tree (DIR/bin/clang.exe) instead of MSYS2 UCRT64 clang. Ninja still comes
 from MSYS2. The libraries and headers MSYS2 supplies (Vulkan, SDL3, Opus, dav1d, libvpx, VMA) then come from --deps DIR
 (default toolchain/deps-mingw: include/, lib/ with the import libraries, libdav1d.a and libvpx.a, bin/ with the DLLs), and the C++
 runtime is libc++ from llvm-mingw. Such a build never reuses another build's generated objects.
-
-Split build. --make-runtime-lib compiles only runtime/ into <out>/libnx2navirt.a (what CI prebuilds). --runtime-lib PATH
-then compiles only the generated C and the install-time files (modules.c and INSTALL_SIDE, which bake the player's
-game hashes and version in) and links them with that library. The library holds no game-derived data.
 
 Standard library only.
 """
@@ -235,15 +230,6 @@ def vulkan_include(clang=None, env=None):
 LLVM_LINK_LIBS = ['-lpsapi', '-lbcrypt', '-lws2_32', '-luser32', '-lgdi32', '-ldwmapi', '-limm32', '-lwinmm', '-lole32', '-lshell32', '-luuid', '-lvulkan-1', '-lSDL3', '-lopus',
                   '-l:libdav1d.a', '-l:libvpx.a', '-l:libzstd.a', '-l:libc++.a', '-l:libc++abi.a', '-l:libunwind.a', '-l:libwinpthread.a']
 DEFAULT_DEPS = ROOT / 'toolchain' / 'deps-mingw'
-# Runtime sources compiled per install, not in the library: romfs.c includes romfs_config.h, patches.c and ov_zstd.c
-# the patches.h of the player's game version (its patch page is the page after that version's main; ov_zstd.c's host
-# functions sit on it, and patches.c registers the debug menu's free camera there). mouse_direct.c, sprint.c and heap_retry.c also
-# register host callbacks relative to that version's patch page.
-# Paths below runtime/.
-INSTALL_SIDE = {'hle/romfs.c', 'patches/patches.c', 'hle/ov_zstd.c', 'input/mouse_direct.c', 'patches/sprint.c',
-                'patches/heap_retry.c'}
-LIB_NAME = 'libnx2navirt.a'
-AR = UCRT / 'llvm-ar.exe' if WIN else on_path('llvm-ar')
 WINDRES = UCRT / 'windres.exe'   # runtime/nx2saria.rc: the manifest of nx2saria.exe
 # GNU windres runs its preprocessor through cmd.exe, and left to find it names the gcc beside it by full path: once that
 # path and the .rc's both hold a space, cmd.exe drops the outer quotes and splits the command at the first space. gcc by
@@ -386,12 +372,6 @@ def runtime_include_dirs(rt=None):
     return [rt] + [rt / d for d in RUNTIME_DIRS]
 
 
-def install_side(p):
-    """Whether the runtime source p is compiled per install (INSTALL_SIDE)."""
-    p = Path(p)
-    return p.is_relative_to(RUNTIME) and p.relative_to(RUNTIME).as_posix() in INSTALL_SIDE
-
-
 def runtime_object(out, src):
     """obj/runtime/<path below runtime>.o, so platform/win32.c cannot collide with a top-level win32.c."""
     src = Path(src)
@@ -474,23 +454,12 @@ def gate_command(out):
     return f'{interpreter()} {cmd_path(MEMGATE)} wrap --state {cmd_path(out / GATE_DIR)} --name $out -- '
 
 
-def runtime_compiles(out, skip=(), runtime_lib=None, make_lib=False):
-    """[(source, object)] of the runtime files the build compiles (see ninja_file): every runtime source but skip;
-    make_lib: without INSTALL_SIDE; runtime_lib: only INSTALL_SIDE; modules.c except for make_lib."""
-    sources = runtime_sources(skip)
-    if make_lib:
-        sources = [p for p in sources if not install_side(p)]
-    elif runtime_lib:
-        sources = [p for p in sources if install_side(p)] + [out / 'modules.c']
-    else:
-        sources += [out / 'modules.c']
+def runtime_compiles(out, skip=()):
+    sources = runtime_sources(skip) + [out / 'modules.c']
     return [(src, runtime_object(out, src)) for src in sources]
 
 
-def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=None, make_lib=False):
-    """build.ninja text, and the object lists per module. With prebuilt the generated objects already exist in
-    out/obj and are link inputs without a compile edge. runtime_lib: a prebuilt library replaces the runtime objects
-    except INSTALL_SIDE. make_lib: build only that library, from the runtime objects except INSTALL_SIDE."""
+def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False):
     inc = f'-I {cmd_path(RUNTIME)} -I {cmd_path(gen)}'
     vma = f'{cmd_path(DEPS / "include")} -I {cmd_path(DEPS / "include" / "vma")}' if DEPS else cmd_path(vma_include())
     imgui = cmd_path(RUNTIME / 'third_party' / 'imgui')
@@ -510,7 +479,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
         f'builddir = {ninja_path(out)}',
         f'cc = {cache}{cmd_arg(CLANG.as_posix())}',
         f'genflags = {" ".join(GEN_FLAGS)} {inc}',
-        f'rtflags = {" ".join(RT_FLAGS)} {rt_inc}',
+        f'rtflags = {" ".join(RT_FLAGS + ([] if WIN else ['-fdeclspec']))} {rt_inc}',
         f'ldflags = {" ".join(LINK_FLAGS)}',
         f'libs = {" ".join(libs)}',
         '',
@@ -552,7 +521,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
                 lines.append('  pool = gen')
             objs[mod].append(o)
     rt = []
-    for src, o in runtime_compiles(out, skip, runtime_lib, make_lib):
+    for src, o in runtime_compiles(out, skip):
         if src.suffix == '.rc':   # windres writes no depfile: the files nx2saria.rc embeds are listed by hand
             lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "nx2saria.manifest")} '
                          f'{ninja_path(RUNTIME / "nx2saria.ico")}')
@@ -562,21 +531,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=
     objs['runtime'] = rt
     every = [o for v in objs.values() for o in v]
     exe = out / EXE
-    if make_lib:
-        exe = out / LIB_NAME
-        lines += ['', 'rule ar', f'  command = {cmd_arg(AR.as_posix())} rcs $out $in', '  description = AR $out', '', f'build {ninja_path(exe)}: ar ' + ' '.join(ninja_path(o) for o in every),
-                  'build objects: phony ' + ' '.join(ninja_path(o) for o in every), f'default {ninja_path(exe)}', '']
-        return '\n'.join(lines), objs, exe
-    rule = 'link'
-    if runtime_lib:
-        # Whole archive: the runtime's weak defaults (nvn_procs.c, nvn_api_core.c, vk_sync.c) would otherwise satisfy
-        # references before the linker pulls the members with the strong definitions, which would stay out of nx2saria.exe.
-        rule = 'link_lib'
-        lines += ['', 'rule link_lib',
-                  f'  command = $cc $ldflags @$out.rsp -Wl,--whole-archive {cmd_path(runtime_lib)} -Wl,--no-whole-archive $libs -o $out',
-                  '  rspfile = $out.rsp', '  rspfile_content = $in_newline', '  description = LINK $out']
-    lines += ['', f'build {ninja_path(exe)}: {rule} ' + ' '.join(ninja_path(o) for o in every) +
-              (f' | {ninja_path(runtime_lib)}' if runtime_lib else ''),
+    lines += ['', f'build {ninja_path(exe)}: link ' + ' '.join(ninja_path(o) for o in every),
               'build objects: phony ' + ' '.join(ninja_path(o) for o in every), f'default {ninja_path(exe)}', '']
     return '\n'.join(lines), objs, exe
 
@@ -1087,16 +1042,9 @@ def main():
     ap.add_argument('--toolchain', type=Path, help='llvm-mingw directory (with bin/clang.exe) to build with instead of '
                                                    'MSYS2 UCRT64 clang; on Linux an LLVM directory (bin/clang, '
                                                    'bin/llvm-ar) instead of the clang on PATH')
-    ap.add_argument('--ninja', type=Path, help='ninja.exe to build with (default: MSYS2 UCRT64, else bin/ninja.exe of the '
-                                               'release folder)')
-    ap.add_argument('--sysroot', type=Path, help='Linux: the glibc headers and libraries to compile and link against '
-                                                 'instead of the host\'s (the release\'s llvm/sysroot)')
+    ap.add_argument('--ninja', type=Path, help='ninja.exe to build with (default: MSYS2 UCRT64)')
     ap.add_argument('--deps', type=Path, help=f'with --toolchain: include/, lib/ and bin/ of Vulkan, SDL3, Opus, libvpx '
                                               f'and VMA (default {DEFAULT_DEPS.relative_to(ROOT).as_posix()})')
-    ap.add_argument('--make-runtime-lib', action='store_true',
-                    help=f'build only <out>/{LIB_NAME} from runtime/ (no generated C, no nx2saria.exe)')
-    ap.add_argument('--runtime-lib', type=Path, help=f'link against this {LIB_NAME} instead of compiling runtime/ '
-                                                    f'({", ".join(sorted(INSTALL_SIDE))} and modules.c still compile)')
     ap.add_argument('--pgo', metavar='gen|FILE',
                     help='profile-guided optimisation, generated code at -O2: gen builds an instrumented nx2saria.exe '
                          '(needs --toolchain on Windows: MSYS2 clang ships no profile runtime); FILE builds with that '
@@ -1120,7 +1068,7 @@ def main():
              'profile': (args.profile or ROOT / 'build' / ('profile' if args.version == 'v121'
                                                            else f'profile-{args.version}')).resolve()}
     has_romfs = (paths['romfs'] / 'index.json').is_file()
-    if not (has_romfs or args.no_romfs or args.make_runtime_lib or args.compile_only):
+    if not (has_romfs or args.no_romfs or args.compile_only):
         sys.exit(f'{paths["romfs"] / "index.json"} not found: without the RomFS the game stops at start. Run '
                  'tools/extract.py (it writes extracted/<version> into the [work] dir of config.local.toml), pass '
                  '--romfs DIR, or --no-romfs to build without it')
@@ -1130,17 +1078,14 @@ def main():
             sys.exit(f'no expected hashes known for {args.version}; pass --expected')
         expected = ROOT / 'tools' / 'data' / f'expected-v{DISPLAY_VERSIONS[args.version]}.json'
     hashes = json.loads(Path(expected).read_text())['exefs_sha256']
-    global CLANG, AR, WINDRES, NINJA, TOOLCHAIN_BIN, DEPS
+    global CLANG, WINDRES, NINJA, TOOLCHAIN_BIN, DEPS
     if args.ninja:
         NINJA = args.ninja.resolve()
-    elif not NINJA.is_file() and (ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))).is_file():
-        NINJA = ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))   # a setup release folder (docs/installer.md)
     dlls = SDL3_DLLS
     suffix = '.exe' if WIN else ''
     if args.toolchain:
         TOOLCHAIN_BIN = (args.toolchain / 'bin').resolve()
         CLANG = TOOLCHAIN_BIN / f'clang{suffix}'
-        AR = TOOLCHAIN_BIN / f'llvm-ar{suffix}'
         WINDRES = TOOLCHAIN_BIN / 'llvm-windres.exe'
     if args.toolchain and WIN or args.deps and (args.toolchain or not WIN):   # Linux: --deps only, never deps-mingw
         DEPS = (args.deps or DEFAULT_DEPS).resolve()
@@ -1150,12 +1095,6 @@ def main():
         # Vulkan and the libSDL3.so.0 beside it
         for lib in ('opus', 'dav1d', 'vpx', 'zstd'):
             LINK_LIBS[LINK_LIBS.index(f'-l{lib}')] = f'-l:lib{lib}.a'
-    if args.sysroot and not WIN:
-        # Every compile and the link: the game then needs no newer glibc than the sysroot's (the Steam Runtime's)
-        sysroot = ['--target=x86_64-linux-gnu', f'--sysroot={cmd_path(args.sysroot.resolve())}']
-        GEN_FLAGS[:0] = sysroot
-        RT_FLAGS[:0] = sysroot
-        LINK_FLAGS[:0] = sysroot
     for tool in (CLANG, NINJA):
         if not tool.is_file():
             sys.exit(f'{tool} not found: install ' + ('MSYS2 UCRT64 clang, lld and ninja' if WIN else 'clang, lld and ninja')
@@ -1170,8 +1109,7 @@ def main():
     if unknown:
         sys.exit(f'unknown modules {unknown}; the layout has {names}')
     linked = [m for m in names if m in wanted]
-    # --make-runtime-lib builds runtime/ only, so it never reads the generated chunks
-    mods = {} if args.make_runtime_lib else {m: chunk_files(gen, m) for m in linked}
+    mods = {m: chunk_files(gen, m) for m in linked}
 
     jobs = max(1, args.jobs or os.cpu_count() or 1)
     missing = [n for n in names if n not in hashes]
@@ -1191,9 +1129,7 @@ def main():
     skip = {s for s in args.skip_runtime.split(',') if s}
     main_out = (ROOT / 'build' / args.version).resolve()
     pairs = None
-    if args.make_runtime_lib:
-        mods, linked, why = {}, [], ''
-    elif args.full_build:
+    if args.full_build:
         why = '--full-build'
     elif args.toolchain:
         why = f'--toolchain {flag_path(args.toolchain)}'
@@ -1209,22 +1145,12 @@ def main():
             unlink_shared(out, mods)
         if why:
             print(f'build_game: compiling all generated C: {why}')
-    runtime_lib = args.runtime_lib.resolve() if args.runtime_lib else None
-    if runtime_lib and not runtime_lib.is_file():
-        sys.exit(f'{runtime_lib} not found: build it with --make-runtime-lib')
-    # The library leaves INSTALL_SIDE out, so a release that ships without one of them links with undefined symbols.
-    missing = sorted(n for n in INSTALL_SIDE if Path(n).name not in skip and not (RUNTIME / n).is_file())
-    if runtime_lib and missing:
-        sys.exit(f'build_game: {", ".join(missing)} missing from {flag_path(RUNTIME)}: the release must ship every '
-                 f'INSTALL_SIDE source beside {runtime_lib.name}')
-    text, objs, exe = ninja_file(gen, out, mods, jobs, skip, pairs is not None, runtime_lib,
-                                 args.make_runtime_lib)
+    text, objs, exe = ninja_file(gen, out, mods, jobs, skip, pairs is not None)
     write_if_changed(out / 'build.ninja', text)
     gate_dir = out / GATE_DIR
     gate_settings = memgate.settings(args)
     estimates = memgate.Estimates.load(gate_dir / ESTIMATES)
-    todo = gate_compiles(gen, out, mods, pairs is not None, runtime_compiles(out, skip, runtime_lib,
-                                                                             args.make_runtime_lib))
+    todo = gate_compiles(gen, out, mods, pairs is not None, runtime_compiles(out, skip))
     gated = not sccache()
     hows = collections.Counter()
     if gated:
@@ -1269,17 +1195,12 @@ def main():
             sys.exit(f'build_game: {fail}')
     if args.compile_only:
         return
-    if args.make_runtime_lib:
-        exe.unlink(missing_ok=True)   # ar rcs would keep members of deleted sources
     code, dt, peak_one, _ = run_measured(base + [flag_path(exe)], env)
     print(f'link: {dt:.1f} s, peak {mib(peak_one)}')
     if code:
         print(f'build_game: link failed, {flag_path(exe)} is the old one (a running nx2saria.exe from this dir locks it)',
               file=sys.stderr)
         sys.exit(code)
-    if args.make_runtime_lib:
-        print(f'{below_root(exe)}: {mib(exe.stat().st_size)}')
-        return
     for dll in dlls:   # dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL), found next to nx2saria.exe
         shutil.copy2(dll, exe.parent / dll.name)
     sections, image = pe_sections(exe) if WIN else elf_sections(exe)

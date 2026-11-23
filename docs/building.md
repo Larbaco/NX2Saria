@@ -479,7 +479,7 @@ skipped with the reason, the known failures, the time. It exits 1 when a test fa
 .venv/bin/python tests/run.py                  # all of them, at most 8 at once (--jobs N)
 .venv/bin/python tests/run.py vk cfg_rows      # the tests whose name holds vk or cfg_rows
 .venv/bin/python tests/run.py --list           # each test, what it needs, and why it would be skipped here
-.venv-py314/bin/python tests/run.py --needs py:compression.zstd   # the installer's tests, on Python 3.14
+.venv-py314/bin/python tests/run.py --needs py:compression.zstd   # the tests that need Python 3.14
 .venv/bin/python tests/run.py --exe build/<ver>/nx2saria.exe      # also the tests that run the game's executable
 ```
 
@@ -935,7 +935,7 @@ a constant is refused; a save gets the area, position, heading, dungeon room, ag
 and a save without one of the values asked for is refused; the file menu's dates order the slots; the heading, the time
 and the age of an area name. No GPU, no game files.
 
-A change to what writes `nx2saria.ini` outside the game (`launcher/gameini.py`, `installer/ini.py`, `tools/make_game.py`,
+A change to what writes `nx2saria.ini` outside the game (`launcher/gameini.py`, `tools/make_game.py`,
 `launcher/updater.py`) passes the settings-file tests of `tests\launcher_test.py` (`PlayerIniTest`, and the tests named
 `..._settings_file` of `BackgroundUpdateTest` and `MakeGameTest`): a player's file with lines that are no settings of
 the game comes through an update and a rebuild byte for byte. The game's own writer, the settings menu, is checked by

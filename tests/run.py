@@ -82,9 +82,6 @@ LOG_DIR = ROOT / 'build' / 'test-runs'
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 XLATE = ROOT / 'build' / 'xlate' / ('nx2navi_xlate.exe' if os.name == 'nt' else 'nx2navi_xlate')
 
-# Tests whose names do not end in _check or _test. Left out: tests/installer_e2e.py, a dev-mode install with the game
-# files into a folder it is given, which reports steps rather than passing or failing; tests/maxwell_warp_emu.py, the
-# emulator the tensor checks use.
 EXTRA = ('excl_mt.py', 'maxwell_warp_emu_selftest.py', 'diff/simd.py', 'diff/atomic.py', 'diff/lift.py',
          'diff/func.py')
 
