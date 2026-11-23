@@ -1,3 +1,3 @@
-/* The icon of NX2Saria-Setup.exe: runtime/nx2saria.ico, the icon of nx2saria.exe. tools/make_release.py compiles this file with
-   llvm-windres -I runtime and links it with launcher.c. */
+/* The icon of NX2Saria-Setup.exe: runtime/nx2saria.ico, the icon of nx2saria.exe. The release script compiled this file with
+   llvm-windres -I runtime and linked it with launcher.c. */
 1 ICON "nx2saria.ico"

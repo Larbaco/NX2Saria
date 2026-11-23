@@ -54,7 +54,7 @@ object again. Under SCCACHE the compiles run in sccache's server, out of the wra
 the wrapper out and the gate is off. Each phase also reports its wall time and the peak memory of its processes
 (Windows job object accounting: committed private bytes).
 
---ninja PATH names the Ninja to run; without MSYS2 the bin/ninja.exe of the release folder (tools/make_release.py) is used.
+--ninja PATH names the Ninja to run; without MSYS2 the bin/ninja.exe of a setup release folder (docs/installer.md) is used.
 --toolchain DIR builds with an llvm-mingw tree (DIR/bin/clang.exe) instead of MSYS2 UCRT64 clang. Ninja still comes
 from MSYS2. The libraries and headers MSYS2 supplies (Vulkan, SDL3, Opus, dav1d, libvpx, VMA) then come from --deps DIR
 (default toolchain/deps-mingw: include/, lib/ with the import libraries, libdav1d.a and libvpx.a, bin/ with the DLLs), and the C++
@@ -171,7 +171,7 @@ else:
                   '-Xlinker', '"-Map=$builddir/nx2navi.map"']
     LINK_LIBS = ['-lvulkan', '-lSDL3', '-lopus', '-ldav1d', '-lvpx', '-lzstd', '-l:libstdc++.a', '-lm', '-lpthread', '-ldl']
     VMA_INCLUDE = Path('/usr/include')   # vk_mem_alloc.h; Arch (AUR) vulkan-memory-allocator, Debian libvulkan-memory-allocator-dev
-# Without a system vk_mem_alloc.h, the header the Windows release pins (tools/make_release.py, VMA 3.4.0) is fetched once
+# Without a system vk_mem_alloc.h, the header pinned here (VMA 3.4.0, the version MSYS2 packages) is fetched once
 # into toolchain/vma: one MIT header (THIRD_PARTY_NOTICES.md), checked against its hash.
 VMA_FETCH = ('https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.4.0/include/vk_mem_alloc.h',
              '8487b7995ad3b263eb73bc5b9a77d71aa69b6bef5d58a715c02d2663afd81f1a')
@@ -433,8 +433,7 @@ def module_glue(layout, linked, hashes, paths, version):
 
 
 def port_version():
-    """VERSION at the root: the repository's semver, or in a release folder the release string (make_release.py
-    version)."""
+    """VERSION at the root: the repository's semver, or in a release folder the release string."""
     path = ROOT / 'VERSION'
     return path.read_text(encoding='utf-8').strip() if path.is_file() else 'unknown'
 
@@ -1135,7 +1134,7 @@ def main():
     if args.ninja:
         NINJA = args.ninja.resolve()
     elif not NINJA.is_file() and (ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))).is_file():
-        NINJA = ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))   # the release folder (tools/make_release.py)
+        NINJA = ROOT / 'bin' / ('ninja' + ('.exe' if WIN else ''))   # a setup release folder (docs/installer.md)
     dlls = SDL3_DLLS
     suffix = '.exe' if WIN else ''
     if args.toolchain:

@@ -88,7 +88,7 @@ RETRIES = 3
 
 BUNDLED_LIST = ROOT / 'tools' / 'data' / 'shader_list.tsv'   # the installer archive carries a copy (no git, no refs/)
 if not BUNDLED_LIST.is_file():
-    BUNDLED_LIST = ROOT / 'data' / 'shader_list.tsv'          # release folder layout (tools/make_release.py)
+    BUNDLED_LIST = ROOT / 'data' / 'shader_list.tsv'          # a setup release folder's layout (docs/installer.md)
 
 
 BUNDLED_PIPELINES = ROOT / 'tools' / 'data' / 'pipeline_list.bin'   # as BUNDLED_LIST: out of the repository

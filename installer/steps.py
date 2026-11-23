@@ -125,8 +125,8 @@ def linux_glibc():
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
-# The bundled clang, lld and the cryptography wheel are built against glibc 2.34 (tools/make_release_linux.py
-# GLIBC_FLOOR); on an older one they cannot start
+# The bundled clang, lld and the cryptography wheel are built against glibc 2.34 (the Linux setup's GLIBC_FLOOR);
+# on an older one they cannot start
 GLIBC_NEEDED = (2, 34)
 
 

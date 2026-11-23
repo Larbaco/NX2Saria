@@ -78,7 +78,7 @@ of them.
    .venv-py314\Scripts\python tools\extract.py
    ```
 
-4. Shader translator (no game files; again after a change to its sources, and `tools\make_release.py` stops on an older
+4. Shader translator (no game files; again after a change to its sources, and the packaging scripts stop on an older
    one). This publishes `build\xlate\nx2navi_xlate.exe`:
 
    ```powershell
@@ -207,9 +207,8 @@ of them.
    list as known pipelines beside the folder's own and builds them before play, from those caches (`keys_open_seed`;
    `pipe_seed = 0` in `nx2saria.ini` leaves the list out). `--warm-shaders` builds them again, and
    `nx2saria.exe --prepare-pipelines` does that step alone. The list is
-   derived from game data: it is not in the repository (`tools/check_content.py` refuses it), and a kit, a launcher
-   release or an installer release takes one with `--pipeline-list` (`tools/make_kit.py`, `make_launcher.py`,
-   `make_release.py`). A list belongs to the record layout of the runtime that wrote it; another runtime says so and
+   derived from game data: it is not in the repository (`tools/check_content.py` refuses it), and a kit or a launcher
+   release takes one with `--pipeline-list` (`tools/make_kit.py`, `make_launcher.py`). A list belongs to the record layout of the runtime that wrote it; another runtime says so and
    builds nothing from it. `python tests\pipeline_list_test.py` checks the tool on made-up folders.
 
    What a game folder's shader cache holds can be checked without the game:
@@ -343,9 +342,7 @@ profile, for a record of another tree and for a profile the compiler refuses, wi
 
 The other game versions build with `tools/build_game.py`: `--pgo gen` with an llvm-mingw toolchain makes the
 instrumented `nx2saria.exe`, which writes `<out>\pgo\*.profraw`; `tools\pgo.py merge <out> --version <ver>` merges
-them, and `--pgo build\pgo\pgo-<ver>.profdata` compiles with the result. `make_release.py` ships every profile of
-`build\pgo` in `data\`, where the installer's build takes the one of its update, and warns when a record names
-another `recomp/` tree than the one released.
+them, and `--pgo build\pgo\pgo-<ver>.profdata` compiles with the result.
 
 ## Linux (in progress)
 
@@ -1216,7 +1213,7 @@ A change to the SM86 tensor lowering (`tools/xlate/AmpereLowering.cs` Hmma, Ldsm
 vector file and what is checked). `tests\maxwell_warp_emu_selftest.py` checks the emulator itself. No game files.
 
 A change to how the packaging scripts check the translator they ship (`tools/build_xlate.py` `source_identity`,
-`check_built`; `make_launcher.py`, `make_release.py`, `make_appimage.py`, `make_kit.py`; `tools/xlate_smoke.py`
+`check_built`; `make_launcher.py`, `make_appimage.py`, `make_kit.py`; `tools/xlate_smoke.py`
 `pool_check`) passes `python tests\xlate_package_check.py`: a folder whose `nx2navi_xlate.id` names this checkout's
 sources passes, a missing file, another identity and a folder built before a patch changed are refused,
 `build_xlate.py` writes no `.id` without a build, each script stops before its slow steps, and on Windows

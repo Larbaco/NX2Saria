@@ -1,6 +1,6 @@
 """Where the installer finds what it runs: the one place that maps the release folder and a repository checkout.
 
-Release (docs/installer.md "Release layout"), root = the unpacked folder:
+Release, root = the unpacked folder:
 
     python/python.exe       runs every tool (numpy, lz4, cryptography, compression.zstd); its ._pth puts .., ../tools
                             and ../recomp on sys.path, so `python -m installer` imports from the release folder
@@ -18,7 +18,7 @@ Release (docs/installer.md "Release layout"), root = the unpacked folder:
     VERSION                 the release version, one line
     temp/                   the default temp folder (created)
 
-Linux release (the AppImage's folder, docs/installer.md "Linux release"): python/bin/python3 (python-build-standalone,
+Linux release (the AppImage's folder): python/bin/python3 (python-build-standalone,
 with tkinter), llvm/ with clang, lld and llvm-ar plus llvm/sysroot (the glibc headers and libraries the game links
 against), runtime/deps/ with include/ and the static Opus, libvpx and zstd, bin/ without .exe and with libSDL3.so.0.
 
