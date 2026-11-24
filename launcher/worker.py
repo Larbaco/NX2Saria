@@ -60,13 +60,16 @@ def read_request():
     return request
 
 
-def read_requests(requests):
+def read_requests(requests, input_closed):
     while True:
         try:
             request = read_request()
         except (ValueError, UnicodeError, RecursionError):
+            input_closed.set()
             requests.put(('invalid', None))
             return
+        if request is None:
+            input_closed.set()
         requests.put(('request', request))
         if request is None:
             return
@@ -143,9 +146,11 @@ def main(argv=None):
                                               'capabilities': ['inspect', 'play'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
-        threading.Thread(target=read_requests, args=(requests,), daemon=True).start()
+        input_closed = threading.Event()
+        threading.Thread(target=read_requests, args=(requests, input_closed), daemon=True).start()
         run = None
         job = None
+        job_revision = -1
         failed_mods = []
         session = 0
         attempt = 0
@@ -161,12 +166,21 @@ def main(argv=None):
                 if not run and not job:
                     ctx.log('worker: output disconnected idle')
                     return 0
+            if job and job.finished is None and not job.cancelled() and job.steps and job.rev != job_revision and not disconnected:
+                with job._lock:
+                    job_revision = job.rev
+                    fraction = job.overall()
+                    step = job.current().id
+                sequence += 1
+                emit({'event': 'job_progress', 'sequence': sequence, 'session': session,
+                      'fraction': fraction, 'step': step})
             if job and job.finished is not None:
                 winsys.keep_awake(False, ctx.log)
                 outcome, failed_mods = mods_job.finish_mods_job(ctx, job, failed_mods, require_finished=True)
                 ctx.log(f'job {job.kind}: {job.result} {job.error}')
                 action_log(ctx, counts, 'job', f'result={job.result}')
                 result = job.result
+                job_game_dir = job.game_dir
                 job = None
                 if disconnected and not run:
                     return shutdown_status
@@ -174,6 +188,36 @@ def main(argv=None):
                     sequence += 1
                     emit({'event': 'job_ended', 'sequence': sequence, 'session': session, 'result': result,
                           'outcome': outcome})
+                    if _output_disconnected or input_closed.is_set():
+                        return shutdown_status
+                    if outcome == 'resume':
+                        prepared = play.prepare(ctx, ctx.settings, job_game_dir, run, failed_mods, built=True)
+                        action_log(ctx, counts, 'play', f'status={prepared.status}')
+                        if prepared.status == 'memory':
+                            attempt += 1
+                            pending = (attempt, prepared, job_game_dir)
+                            memory = prepared.memory
+                            sequence += 1
+                            emit({'event': 'memory_required', 'sequence': sequence, 'session': session,
+                                  'decision': {'status': 'memory', 'attempt': attempt,
+                                               'memory': {'remaining': memory.remaining, 'need': memory.need,
+                                                          'unbounded': memory.unbounded}}})
+                        elif prepared.status == 'ready':
+                            run, failure = play.start(ctx, prepared, job_game_dir)
+                            if failure:
+                                action_log(ctx, counts, 'spawn', 'failed')
+                                sequence += 1
+                                emit({'event': 'play_failed', 'sequence': sequence, 'session': session,
+                                      'reason': 'start_failed'})
+                            else:
+                                action_log(ctx, counts, 'spawn', 'started')
+                                session += 1
+                                sequence += 1
+                                emit({'event': 'game_started', 'sequence': sequence, 'session': session})
+                        else:
+                            sequence += 1
+                            emit({'event': 'play_failed', 'sequence': sequence, 'session': session,
+                                  'reason': prepared.status})
             if run and not run.running():
                 end = game_session.finish_game(run, ctx.log)
                 code = None if run.proc is None else run.proc.returncode
@@ -235,6 +279,7 @@ def main(argv=None):
                     action_log(ctx, counts, 'play', f'status={prepared.status}')
                     if prepared.status == 'rebuild':
                         job = jobs.ModsRebuildJob(ctx, game_dir)
+                        job_revision = -1
                         job.waiting = prepared.waiting
                         winsys.keep_awake(True, ctx.log)
                         job.start()

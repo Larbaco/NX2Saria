@@ -17,6 +17,7 @@ test('worker stays open for inspection and releases its lock on close', async ()
     worker = await openWorker(root, process.platform === 'win32' ? 'python' : 'python3', path.resolve(__dirname, '../..'));
     assert.equal(worker.handshake.lock, 'held');
     assert.equal(parseInspection(await worker.request('inspect')).status, 'not_configured');
+    await assert.rejects(openWorker(root, process.platform === 'win32' ? 'python' : 'python3', path.resolve(__dirname, '../..')), error => error.code === 'busy');
     await worker.close();
     worker = await openWorker(root, process.platform === 'win32' ? 'python' : 'python3', path.resolve(__dirname, '../..'));
     assert.equal(worker.handshake.lock, 'held');
@@ -56,4 +57,27 @@ test('a timed-out request disables all further requests', async () => {
     await assert.rejects(worker.request('play'), /timed out/);
     await assert.rejects(worker.request('inspect'), /disconnected/);
   } finally { await worker.close(); }
+});
+
+test('accepts a completed job followed by a game session', async () => {
+  const { spawn } = require('node:child_process');
+  const { once } = require('node:events');
+  const { WorkerClient } = require('../dist/worker-client.js');
+  const frames = [
+    { event: 'job_started', sequence: 1, session: 1 },
+    { event: 'job_ended', sequence: 2, session: 1, result: 'ok', outcome: 'resume' },
+    { event: 'game_started', sequence: 3, session: 2 },
+    { event: 'game_ended', sequence: 4, session: 2, code: 0, alarm: false, update_waiting: false }
+  ];
+  const script = `setTimeout(() => { for (const f of ${JSON.stringify(frames)}) process.stdout.write(JSON.stringify(f)+'\\n'); }, 20); process.stdin.resume()`;
+  const worker = new WorkerClient(spawn(process.execPath, ['-e', script]));
+  const seen = [];
+  worker.on('event', frame => seen.push(frame.event));
+  await new Promise((resolve, reject) => {
+    worker.on('event', frame => { if (frame.event === 'game_ended') resolve(); });
+    worker.once('disconnect', () => reject(new Error('Unexpected disconnect')));
+    setTimeout(() => reject(new Error('Events timed out')), 3000).unref();
+  });
+  assert.deepEqual(seen, ['job_started', 'job_ended', 'game_started', 'game_ended']);
+  await worker.close();
 });

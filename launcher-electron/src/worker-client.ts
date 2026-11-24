@@ -2,6 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { parseHandshake, PROTOCOL_VERSION, type WorkerHandshake } from './worker-protocol';
 
+export class WorkerRequestError extends Error {
+  constructor(readonly code: 'busy' | 'request_failed') { super('Worker request failed'); }
+}
+
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
 export class WorkerClient extends EventEmitter {
@@ -9,6 +13,7 @@ export class WorkerClient extends EventEmitter {
   private nextId = 1;
   private lastSequence = 0;
   private activeSession: number | null = null;
+  private activeJob: number | null = null;
   private buffer = '';
   private pending = new Map<number, Pending>();
   private ended = false;
@@ -49,19 +54,31 @@ export class WorkerClient extends EventEmitter {
           const pending = this.pending.get(frame.id)!;
           this.pending.delete(frame.id);
           clearTimeout(pending.timer);
-          if (frame.error) pending.reject(new Error('Worker request failed'));
+          if (frame.error) pending.reject(new WorkerRequestError(frame.error.code === 'busy' ? 'busy' : 'request_failed'));
           else if ('result' in frame) pending.resolve(frame.result);
           else throw new Error();
         } else if (typeof frame.event === 'string') {
-          if (!['game_started', 'game_ended'].includes(frame.event) ||
+          if (!['game_started', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed'].includes(frame.event) ||
               !Number.isSafeInteger(frame.sequence) || frame.sequence !== this.lastSequence + 1 ||
-              !Number.isSafeInteger(frame.session) || frame.session < 1 ||
-              (frame.event === 'game_started' && this.activeSession !== null) ||
-              (frame.event === 'game_ended' && (typeof frame.update_waiting !== 'boolean' ||
-                                                typeof frame.alarm !== 'boolean' ||
-                                                !(frame.code === null || Number.isSafeInteger(frame.code)) ||
-                                                this.activeSession !== frame.session))) throw new Error();
-          this.activeSession = frame.event === 'game_started' ? frame.session : null;
+              !Number.isSafeInteger(frame.session) || frame.session < 1) throw new Error();
+          if (frame.event === 'job_started') {
+            if (this.activeJob !== null || this.activeSession !== null) throw new Error();
+            this.activeJob = frame.session;
+          } else if (frame.event === 'job_progress') {
+            if (this.activeJob !== frame.session || typeof frame.fraction !== 'number' || !Number.isFinite(frame.fraction) ||
+                frame.fraction < 0 || frame.fraction > 1 || typeof frame.step !== 'string' || !/^[a-z_]{1,32}$/.test(frame.step)) throw new Error();
+          } else if (frame.event === 'job_ended') {
+            if (this.activeJob !== frame.session || !['ok', 'failed', 'cancelled'].includes(frame.result) ||
+                !['resume', 'failed', 'cancelled'].includes(frame.outcome)) throw new Error();
+            this.activeJob = null;
+          } else if (frame.event === 'game_started') {
+            if (this.activeSession !== null || this.activeJob !== null) throw new Error();
+            this.activeSession = frame.session;
+          } else if (frame.event === 'game_ended') {
+            if (this.activeSession !== frame.session || typeof frame.update_waiting !== 'boolean' ||
+                typeof frame.alarm !== 'boolean' || !(frame.code === null || Number.isSafeInteger(frame.code))) throw new Error();
+            this.activeSession = null;
+          } else if (this.activeJob !== null || this.activeSession !== null) throw new Error();
           this.lastSequence = frame.sequence;
           this.emit('event', frame);
         }

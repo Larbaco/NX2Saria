@@ -767,6 +767,176 @@ class WorkerTest(unittest.TestCase):
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
+    def test_mod_rebuild_success_resumes_play_after_finished(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys\n"
+                  "from types import SimpleNamespace\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,mods,build,saves,commit,play,game_session,winsys\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
+                  " def run(self): pass\n"
+                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None), "
+                  "mock.patch.object(play,'start',return_value=(run,None)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(winsys,'keep_awake'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        frames = [json.loads(worker.stdout.readline()) for _ in range(4)]
+        self.assertEqual([frame['event'] for frame in frames],
+                         ['job_started', 'job_ended', 'game_started', 'game_ended'])
+        self.assertEqual(frames[1]['outcome'], 'resume')
+        self.assertFalse((self.root / 'data' / 'job-running.json').exists())
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+
+    def test_mod_rebuild_requests_memory_decision_before_play(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys\n"
+                  "from types import SimpleNamespace\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,mods,build,saves,commit,play,game_session,winsys\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
+                  " def run(self): pass\n"
+                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=commit.MemoryRequest(100,200,False)), "
+                  "mock.patch.object(play,'start',return_value=(run,None)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(winsys,'keep_awake'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        frames = [json.loads(worker.stdout.readline()) for _ in range(3)]
+        self.assertEqual([frame['event'] for frame in frames], ['job_started', 'job_ended', 'memory_required'])
+        attempt = frames[2]['decision']['attempt']
+        worker.stdin.write(json.dumps({'id': 3, 'method': 'memory_response', 'attempt': attempt, 'accept': False}) + '\n')
+        worker.stdin.flush()
+        self.assertEqual(json.loads(worker.stdout.readline())['result']['status'], 'declined')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertNotIn('worker: spawn started', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
+
+    def test_failed_mod_rebuild_allows_next_play_without_rebuild(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys\n"
+                  "from types import SimpleNamespace\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,mods,build,saves,commit,play,game_session,winsys\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
+                  " def run(self): raise OSError(\"synthetic failure\")\n"
+                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None), "
+                  "mock.patch.object(play,'start',return_value=(run,None)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(winsys,'keep_awake'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'job_started')
+        ended = json.loads(worker.stdout.readline())
+        self.assertEqual((ended['result'], ended['outcome']), ('failed', 'failed'))
+        self.assertFalse((self.root / 'data' / 'job-running.json').exists())
+        worker.stdin.write(json.dumps({'id': 3, 'method': 'play'}) + '\n')
+        worker.stdin.flush()
+        self.assertEqual(json.loads(worker.stdout.readline())['result']['status'], 'started')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'game_started')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'game_ended')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('whose build did not finish', log)
+
+    def test_mod_job_does_not_start_game_after_output_disconnect(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys,time\n"
+                  "from types import SimpleNamespace\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,mods,build,saves,commit,play,game_session,winsys\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
+                  " def run(self): time.sleep(.4)\n"
+                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None), "
+                  "mock.patch.object(play,'start',side_effect=lambda ctx,*a: ((ctx.layout.data/'unexpected-start').touch(),(run,None))[1]), "
+                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(winsys,'keep_awake'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'job_started')
+        worker.stdout.close()
+        self.assertEqual(worker.wait(timeout=10), 0)
+        self.assertFalse((self.root / 'data' / 'unexpected-start').exists())
+        self.assertFalse((self.root / 'data' / 'job-running.json').exists())
+
     def test_mod_rebuild_cancel_waits_for_cleanup(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()
@@ -805,6 +975,86 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((self.root / 'data' / 'job-running.json').exists())
         worker.stdin.close()
         self.assertEqual(worker.wait(timeout=15), 0)
+
+    def test_mod_job_emits_sanitized_progress(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys,time\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,net,mods,build,saves\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,['compile']); self.game_dir=game; self.after='play'\n"
+                  " def run(self):\n"
+                  "  self.begin(\"compile\")\n"
+                  "  while not self.cancelled(): time.sleep(.02)\n"
+                  "  raise net.Cancelled()\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'job_started')
+        progress = json.loads(worker.stdout.readline())
+        self.assertEqual(progress['event'], 'job_progress')
+        self.assertEqual(progress['step'], 'compile')
+        self.assertGreaterEqual(progress['fraction'], 0)
+        self.assertLessEqual(progress['fraction'], 1)
+        worker.stdin.write(json.dumps({'id': 3, 'method': 'cancel_job'}) + '\n')
+        worker.stdin.flush()
+        self.assertEqual(json.loads(worker.stdout.readline())['result']['status'], 'cancelling')
+        ended = json.loads(worker.stdout.readline())
+        self.assertEqual((ended['event'], ended['result']), ('job_ended', 'cancelled'))
+        self.assertFalse((self.root / 'data' / 'job-running.json').exists())
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+
+    def test_eof_cancels_mod_job_and_waits_for_cleanup(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys,time\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,net,mods,build,saves\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
+                  " def run(self):\n"
+                  "  while not self.cancelled(): time.sleep(.02)\n"
+                  "  raise net.Cancelled()\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'job_started')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertFalse((self.root / 'data' / 'job-running.json').exists())
+        self.assertIn('worker: job result=cancelled', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
 
     def test_protocol_frames_use_lf_without_carriage_return(self):
         result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],

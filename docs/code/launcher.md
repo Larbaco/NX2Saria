@@ -115,8 +115,7 @@ not launch a game, manage jobs, send reports or connect the Electron window to t
 The in-progress Play worker records bounded action outcomes under `worker:` in addition to the existing `play:` and
 `play memory:` lines. It tracks a memory decision by attempt number, rejects stale replies and rechecks for a game
 before spawning. Game events are emitted after spawn and after `GameRun` reports completion. The input reader uses a
-bounded queue; the main loop remains responsible for following the game after EOF or an output failure. Mod rebuild
-jobs and the complete Electron handover remain unfinished.
+bounded queue; the main loop remains responsible for following the game after EOF or an output failure. The mod rebuild uses the shared completion policy and waits for `finished` before emitting an end or resuming Play; EOF requests cancellation and still waits for cleanup. The complete Electron handover remains unfinished.
 
 ### `mods_job.py`: mod rebuild completion
 
