@@ -2247,3 +2247,293 @@ include folders: `tex.h` includes headers from several.
 ### `sheets()`
 
 Contact sheets over a mid brown, so white masks and dark art both show.
+
+## `tools/ultrawide_layout.py`
+
+The game's UI layouts for a canvas of another shape than 16:9 (`output_res = 3440x1440` or `1280x800` in
+`nx2saria.ini`, or in an existing `nx2navi.ini`), edited in place in the decompressed
+`UI/LayoutArchive/Common.Product.*.blarc`. `tools/make_romfs_patches.py --aspect` uses it;
+[wide-hud.md](../wide-hud.md) has the feature. The notice at its top is that of what it holds from another project and
+stays ([THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)): the pane list and the distances, which are values
+only, no code.
+
+The game lays its UI out on a 1920x1080 grid and maps that grid onto the canvas, so on a 21:9 canvas every layout
+comes out 34% too wide and on a 16:10 one 11% too tall. Here each layout's root pane is scaled back to 16:9 on the
+stretched axis (scale x = 16/9 over the aspect when wider, scale y = the aspect over 16/9 when narrower), backgrounds
+that must cover the whole screen are stretched back, and the HUD's parts move out to the screen's corners (wider) or
+its top and bottom edges (narrower). The implementation is checked against 1.2.1's `Common.Product.110` and 1.4.3's
+`Common.Product.140`: every pane is found by name and every pane field and animation key holds the value the edit
+expects before it is written.
+
+- `PANE_MAGICS`: BFLYT pane sections (`pan1`, `pic1`, `txt1`, ...): name at +12 (24 bytes), translate x and y at +44
+  and +48, scale x and y at +68 and +72.
+- `KEEP_ROOT`: full-screen layouts whose root pane stays as wide as the canvas.
+- `MARKER_ROOT`: layouts whose markers the game places over a point in the world (the lock-on arrow, the name of the
+  item or character in front of Link, enemy life bars and notices, speech balloons): the code moves a pane under the
+  root to the target's projected position in the 1920x1080 grid, which spans the whole canvas. Under a scaled root
+  that position would be scaled too, so the marker lands short of its target, toward the middle of the screen (at half
+  the distance on 32:9). Their root keeps scale 1 and the scale goes one level down instead, to the panes listed
+  there: ones the code does not move and no animation scales, so the markers keep their 16:9 proportions. In
+  `AttentionBalloon_00`, `N_PosRoot_00` moves and `N_InOut_00` animates y and alpha; in `AttentionLockOn_00`,
+  `N_PosRoot_00` moves and `N_Offset_00` animates y; in `EnemyInfo_00` the parts move and `N_EnemyLifeArea_*` stay
+  screen-sized; `BalloonMessage_00` lists none, as its speech balloon part is pooled and its scale goes inside
+  (`BALLOON_PART`).
+- `BALLOON_PART`: speech balloons are pooled: the game clones `Pa_BalloonMessage_00` into `Pa_BalloonMessage_%02d` at
+  run time, and the clones do not keep a scale set on the template part pane, so they drew at full canvas width. The
+  scale goes on the part layout's top panes instead (their offset scaled with them, so they sit where a scaled root
+  would put them); its animations only key alpha, visibility and `N_Loop_00`'s y. The entries are pane, x and y as
+  shipped.
+- `FLPA_Y`, `FLTS_SY`: BFLAN animation targets: FLPA (pane SRT) translate y, FLTS (texture SRT) scale y.
+
+### `edits()`
+
+Layout, pane, field and value for the aspect: `k` = 16/9 over the aspect (the root's scale), `w` = how far a
+1920-wide layout's edge moves out in its own units (`960 * (1 / k - 1)`). `OFF` moves a pane out of sight. Menus
+framed by two side decorations, a header and a background keep the frame at the screen's edges. With `hud_corner` the
+HUD goes to the screen's corners instead of the middle 16:9.
+
+### `tall_edits()`
+
+The same for a canvas narrower than 16:9: `k` = the aspect over 16/9 (the root's scale y), `h` = how far a 1080-high
+layout's edge moves out in its own units (`540 * (1 / k - 1)`). The HUD goes to the screen's top and bottom edges
+instead of the middle 16:9.
+
+### `anim_keys()`
+
+The absolute offsets of each key (frame, value, slope: 12 bytes) of the hermite curves of one pane, animation tag
+(`b'FLPA'`, `b'FLTS'`) and target in the BFLAN at `blarc[lo:]`, one list per curve. Found by walking the `pai1`
+section, so they hold in any version whose animation has that curve.
+
+### `tall_anim()`
+
+The animation keys that hold positions or zooms on the screen's height, for a canvas narrower than 16:9:
+
+- The minimap's four cut panes slide in on straight lines from 0 at frame 0 to y -360, the bottom of a 16:9 layout
+  (hermite keys: the first one's slope is the end point); the end point moves with the screen's edge.
+- The large place name of a discovery holds its height (285, then 260) in flat keys; they move to the top edge.
+- The dragon's tears map icon zooms its picture to 1.08 and 1.28 in flat keys; on the stretched axis by `1 / k` more.
+
+### `anim_edits()`
+
+Animation, byte offset, the value the game ships and the new value: floats inside BFLAN key tables. With `hud_corner`:
+the minimap's slide-in keys end at x 765, the right edge of a 16:9 layout.
+
+### `panes()`, `find_pane()`
+
+`panes()`: pane name to absolute section offset, first occurrence, for the BFLYT at `blarc[lo:hi]`. `find_pane()`:
+the pane of that exact name; a version that renamed it stops the script.
+
+### `apply()`
+
+Edits `blarc` (a bytearray) in place for a `width` x `height` canvas of another shape than 16:9 and returns the
+members it changed. `hud_corner` (wider canvases): the HUD goes to the screen's corners; a narrower one always has it
+at the top and bottom edges. For a layout of `MARKER_ROOT` the root stays at 1 and its listed panes take the scale.
+
+Every edit's value at k = 1 is the value the game ships (a scale of 1, the 16:9 position): it is checked before
+writing, so a version with other numbers stops there instead of getting wrong positions. `OFF` moves a pane away and
+is not checked.
+
+## `tools/validate_shader_cache.py`
+
+Checks the translated shaders an install's shader cache holds, offline: every `<key>.spv` with its `<key>.res.json`,
+from `<cache>/shader-cache.pack` and from the loose files (a loose file stands for its packed copy, as the game reads
+them). That sentence is the `--help` description, the string `DESCRIPTION`. [building.md](../building.md) has the
+step.
+
+```
+python tools\validate_shader_cache.py <install folder>\shader-cache [--every N] [--jobs N] [--no-val] [--out FILE]
+```
+
+The game checks little of a cached shader when it loads one (`runtime/gfx/gfx_shader.c` `disk_load_from()`: the
+reflection is one JSON object that names its stage, the SPIR-V has its magic and whole instructions) and hands the
+module to the driver as it is. A module the driver then compiles wrongly, or crashes on, shows as a missing draw or a
+crash in play, far from its cause. This tool puts the question to the whole cache at once:
+
+1. the game's own checks, so the count says how many entries the game would translate again;
+2. spirv-val on each module that passes them (`--target-env vulkan1.3`, as `tools/shader_census.py` validates fresh
+   translations), unless `--no-val` is given or spirv-val is not found.
+
+The modules are the translator's output; the pipeline code rewrites a copy of each before the driver sees it
+(`runtime/vk/vk_pipeline.c` `make_module()`), and that copy is not what is checked here.
+`tools/shader_census.py --translate` validates translations made now from the game files; this validates what a
+folder already holds, which is also what earlier translators wrote and what an interrupted write left.
+
+`--every N` checks every N-th shader (by key order), for a quick look at a large cache; `--out` writes one line per
+failed shader (key, origin, what failed). Exit code 0 when every checked entry passed, 1 otherwise, 2 for a folder
+that is not a shader cache. The game may be running: nothing is written to the cache.
+
+`STAGES` are the stage names `runtime/gfx/gfx_shader.c` `reflection_valid()` takes. The import of
+`tools/pack_shader_cache.py` carries `# noqa: E402`, which stays.
+
+### `find_spirv_val()`
+
+The path of spirv-val, or `None`: MSYS2 UCRT64's on Windows, else the one on PATH.
+
+### `spirv_problem()`, `reflection_problem()`
+
+`spirv_problem()`: what `runtime/gfx/gfx_shader.c` `disk_load_from()` refuses in a module (`''` when it takes it):
+size, magic, and every instruction after the five header words having a word count that ends inside the module
+(`spirv_complete()` of that file). `reflection_problem()`: what `reflection_valid()` of that file refuses in a
+`.res.json` (`''` when it takes it).
+
+### `Cache`
+
+The `.spv` and `.res.json` entries of a shader cache folder: loose files, then the pack. `Cache.keys()`: every key
+with a `.spv` or a `.res.json`, sorted. `Cache.read()`: the data (or `None`) of one entry and where it came from,
+`'loose'`, `'pack'` or `''`.
+
+### `pread()`
+
+`os.pread` where the platform has none (Windows): callers hold one descriptor per thread.
+
+### `check_one()`, `group_of()`
+
+`check_one()`: key in hex, origin and problem; the problem is `''` when the entry passed every check asked for.
+`group_of()`: a problem with its numbers and ids taken out, so the same fault in many shaders counts as one group.
+
+### `validate()`
+
+Checks the cache at `folder`; returns the number checked and the failures, a list of (key, origin, problem). Each
+task opens one descriptor of the pack: positioned reads without a shared file position.
+
+## `tools/vulkan_pin.py`
+
+The Vulkan headers the runtime is compiled against where the system's are older
+([building.md](../building.md), [README-BuildKit.md](../README-BuildKit.md)).
+
+```
+python tools/vulkan_pin.py [--dest toolchain/vulkan-headers]     fetch and unpack the pinned headers
+```
+
+The runtime names structures and constants of Vulkan extensions as they come out (`runtime/vk/vk_device.c` asks for
+VK_KHR_pipeline_binary, VK_KHR_dynamic_rendering_local_read and VK_KHR_shader_maximal_reconvergence when the driver
+has them), so it needs headers at least as new as the ones it was written against. On Windows MSYS2 supplies them. A
+build with the system's own compiler and headers (the kit of `tools/make_appimage.py`, a source checkout) met
+distributions whose packaged headers are years older: every file that names a newer extension then fails to compile.
+Such a build takes the headers from here instead: the release the others use, from Khronos's Vulkan-Headers
+repository, checked against its SHA-256.
+
+Only the C headers are kept (`include/vulkan/*.h` and `include/vk_video/*.h`, which `vulkan_core.h` includes) with the
+repository's licence note. The headers are Apache-2.0 OR MIT ([THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)).
+Standard library only: the build kit's Python runs this.
+
+- `HEADER_VERSION` (363): `VK_HEADER_VERSION` of that release; the numbers only grow, across 1.3 and 1.4 alike.
+- `SOURCE`: address and SHA-256 of the archive GitHub makes of the release's tag. `TOP`: the archive's top folder.
+- `FOLDER`: below a checkout's or a kit's root: `include/` and `LICENSE.md`. `STAMP`: in the folder, the release it
+  holds, written last.
+
+### `have()`
+
+True when the folder holds the pinned headers, complete (the stamp is written after the last file).
+
+### `unpack()`
+
+The C headers and the licence note of the release's archive (bytes) into the folder, replacing what is there. A name
+the `KEEP` pattern takes has no `..` and no other folder.
+
+### `resolve()`
+
+The folder holding the pinned headers (default `<root>/toolchain/vulkan-headers`), fetched and unpacked there when it
+does not hold them yet. `archive`: the release's archive on disk instead of the download; it must be the pinned file
+either way. Returns the folder; its `include/` goes on the include path.
+
+### `header_version()`
+
+`VK_HEADER_VERSION` as `vulkan_core.h` defines it in `text`, 0 when it does not.
+
+## `tools/worktree.py`
+
+Git worktrees for tasks: `.worktrees/<tag>` on branch `task/<tag>`, linked to the main checkout's ignored data.
+Standard library only. Its `--help` text, with the three commands, is the string `DESCRIPTION`.
+
+A worktree holds tracked files only. The folders of `LINK_DIRS` of the main checkout appear in it as directory
+junctions, the files of `LINK_FILES` as hard links. Nothing is copied. `remove` deletes the links first (`os.rmdir`
+and `os.unlink` never follow a junction), checks that none is left, and only then lets git delete the worktree.
+
+### `main_checkout()`
+
+The main checkout: the parent of the shared `.git` directory, whichever worktree `start` is in.
+
+### `is_link()`, `drop_link()`
+
+`is_link()`: true for a junction or symlink. `drop_link()` removes one link without touching what it points at. A
+real directory or file is left alone.
+
+### `unlink_data()`
+
+Removes the links of a worktree. A file link goes by `os.unlink`: a hard link looks like a plain file, and unlinking
+it only drops one name of the data, which survives under the main checkout's name.
+
+## `tools/xlate_smoke.py`
+
+Smoke test for the shader translator, `build/xlate/nx2navi_xlate(.exe)`: no game files needed
+([building.md](../building.md)).
+
+```
+python tools/xlate_smoke.py [--exe <nx2navi_xlate>]
+```
+
+It sends one hand-assembled Maxwell fragment shader (writes the constant colour 1.0, 0.5, 0.25, 1.0 to render target
+0) through `--serve`, checks the reply, then sends a malformed line and checks the service survives and still answers.
+Two hand-assembled compute shaders follow. One loads a texel from a float image and stores it back: the translator
+declares such an image without a format, and its read needs StorageImageReadWithoutFormat. The other reads only the
+layer count of texture handle 0x10, for which the translator has no type answer: the texture must be declared as an
+array, or the count reads as 1 (the expected texture type is 0x103: SamplerType Texture2D, 3, with Array, 0x100).
+Every module is validated with spirv-val.
+
+Last, `pool_check()` sends a fragment shader that queries a texture whose handle it reads from an input, which the
+translator reads from the texture pool array: the array must have as many entries as `TexturePoolLength` of
+`tools/xlate/Program.cs` and the handle must be clamped to the last of them. A translator older than its sources
+(0.10.0 and 0.10.1 shipped one whose pool had 32768 entries) fails it. `tools/make_launcher.py` `check_xlate()` runs
+`pool_check()` on the translator it ships.
+
+The words of the hand-assembled code:
+
+- `PT` (`7 << 16`): the predicate "always". `SCHED`: the scheduling control word; the decoder skips it.
+- `IMAGE0` (`0x120 // 4`): the first NVN image handle in c[2] (`ImgSlot` of `tools/xlate/Program.cs`): image slot 0.
+- The shader program header of `fragment_code()` and `pool_query_code()`: word 0 is SPH type 2, version 3, stage
+  fragment; word 18 is OMAP: render target 0, components xyzw.
+- `SULD_P`, `SUST_P`: opcode bits 51-63 of SULD.P and SUST.P. `TXQ`: those of TXQ (bound handle). `TXQ_B`: those of
+  TXQ.B (handle in a register). `IPA`: IPA, pass mode.
+
+### `surface_p()`
+
+SULD.P or SUST.P, 1D RGBA: the data registers from `data` on, the coordinate register, the image handle (TidB). For
+SULD the second destination predicate is PT: none written.
+
+### `image_read_code()`, `layer_count_code()`
+
+`image_read_code()`, compute code: R0-R3 = image 0 at x 0 (SULD.P), stored back there (SUST.P).
+`layer_count_code()`, compute code: R0 = the layer count (component 2 of the dimension query) of texture handle 0x10,
+stored to image 0. Its TXQ is TexHeaderDimension, mask z, LOD RZ; its SUST.P is 1D R of R0 at x 0.
+
+### `pool_query_code()`
+
+Fragment code: R4 = user attribute 0.x (IPA of a[0x80]), R0 = the width of the texture whose handle is R4 (TXQ.B of
+the dimension, mask x), R1-R3 constants; render target 0 = R0-R3.
+
+### `spirv_clamps()`
+
+The lengths of a module's OpTypeArray types and the 32-bit constants its GLSL.std.450 UMin instructions take. It
+walks the instructions after the five header words: OpExtInstImport (11) of "GLSL.std.450", OpConstant (43: type, id,
+value), OpTypeArray (28: id, element type, length), and OpExtInst (12) of UMin (38).
+
+### `pool_check()`
+
+`None` when the exe declares the texture pool array with as many entries as `TexturePoolLength` of
+`tools/xlate/Program.cs` and clamps a pool handle to the last of them; otherwise why not.
+
+## `tools/zstd_compat.py`
+
+The part of Python 3.14's `compression.zstd` the shader tools use, on older Pythons through the zstandard package:
+`decompress(data, zstd_dict=None)`, `ZstdDict(raw)` with `.dict_id`, and `get_frame_info(data)` with
+`.decompressed_size` (`None` when the frame does not say) and `.dictionary_id` (0 for none). On 3.14 the standard
+module itself is used; that import carries `# noqa: F401`, which stays.
+
+`LIMIT` is the largest output a frame without a content size may decompress to.
+
+### `decompress()`
+
+One frame of a known size, the common case, is decompressed in one call: the streaming path is several times slower
+on the shader archives' hundreds of megabytes. When that call fails there is more than one frame, and the streaming
+path takes one frame after another, as `compression.zstd` decompresses concatenated frames.
