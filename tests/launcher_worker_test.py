@@ -135,6 +135,73 @@ class WorkerTest(unittest.TestCase):
         worker.stdin.close()
         self.assertEqual(worker.wait(timeout=15), 0)
 
+    def test_play_refuses_external_game(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,subprocess,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys,saves,mods,build,commit\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(winsys,'start_game',side_effect=lambda exe: "
+                  "subprocess.Popen([sys.executable,'-c','import time; time.sleep(0.5)'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)), "
+                  "mock.patch.object(saves,'game_running',return_value=True), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=False), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        worker.stdin.write(json.dumps({'id': 1, 'method': 'hello', 'protocol': 1}) + '\n')
+        worker.stdin.flush()
+        self.assertEqual(json.loads(worker.stdout.readline())['id'], 1)
+        worker.stdin.write(json.dumps({'id': 2, 'method': 'play'}) + '\n')
+        worker.stdin.flush()
+        response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'external_game')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertNotIn('worker: spawn started', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
+
+    def test_second_play_is_refused_while_game_is_running(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,subprocess,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys,saves,mods,build,commit\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(winsys,'start_game',side_effect=lambda exe: "
+                  "subprocess.Popen([sys.executable,'-c','import time; time.sleep(2)'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=False), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        worker.stdin.write(json.dumps({'id': 1, 'method': 'hello', 'protocol': 1}) + '\n')
+        worker.stdin.flush()
+        self.assertEqual(json.loads(worker.stdout.readline())['id'], 1)
+        worker.stdin.write(json.dumps({'id': 2, 'method': 'play'}) + '\n')
+        worker.stdin.flush()
+        response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'started')
+        started = json.loads(worker.stdout.readline())
+        self.assertEqual(started['event'], 'game_started')
+        worker.stdin.write(json.dumps({'id': 3, 'method': 'play'}) + '\n')
+        worker.stdin.flush()
+        self.assertEqual(json.loads(worker.stdout.readline())['result']['status'], 'own_game')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'game_ended')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertEqual(log.count('worker: spawn started'), 1)
+
     def test_session_summary_is_preserved_without_network(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()
