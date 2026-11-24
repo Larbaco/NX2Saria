@@ -2822,3 +2822,746 @@ input stream, as the game saw before. The feature: [audio-input.md](../audio-inp
 `BAD_INPUT` (0x70899) is `nn::audio`'s invalid-argument result (module 153, description 900), as in
 `runtime/audio/audio_mixer.c`. `input_name` ("DefaultMicrophone") is the name the game is given for the default
 device.
+
+## `runtime/hle/ov_zstd.c`
+
+The game's zstd decoder on the host's libzstd. Most RomFS files of the game (1.4.3) are zstd frames, many with a
+dictionary from `Pack/ZsDic.pack.zs`; the decoder is BSD zstd linked into main. The patch set "zstd"
+(`recomp/patches-v143.txt`) sends every call of ZSTD_decompressMultiFrame (`main+0x3a1f0`) and of
+ZSTD_decompress_usingDDict (`main+0x3a1e0`) to the two host functions of this file, on the patch page. Lifted, the
+decoder ran its literal and match copies as chains of small functions with the registers in `Cpu`; here the same
+frames decode in native code.
+
+- Results match the guest's: libzstd decodes the same format, and every result that is an error goes to the guest
+  decoder again (it writes its own error code; a frame libzstd rejects may still be one the game's version accepts).
+- A guest ZSTD_DDict (zstd's struct: dictBuffer, dictContent, dictSize first) becomes a host ZSTD_DDict made from a
+  copy of its content, cached by guest address, content address, size and a fingerprint of the content.
+- Inputs of at least `AWAY_BYTES` give the virtual core up while they decode (other guest threads run on it).
+
+`NX2SARIA_ZSTD_NATIVE=0` keeps the guest decoder (the patch set switch); `NX2SARIA_ZSTD_CHECK=1` decodes each call
+both ways, keeps the guest's result and logs every call where the two differ.
+
+Ocarina of Time 1.1.1 has the same decoder at other addresses (`recomp/patches-v111.txt`: three calls of
+ZSTD_decompressMultiFrame, `main+0xeb380`). Its loading threads decode most data through the game's stream feed
+(`main+0xf5c80`): `host_stream()`. The host decodes there by default since a check run (`zstd_check = 1`) over a
+village and a field: 3,072 streams, 31.7 GiB of output, compared byte for byte with the game decoder's, none
+different. Until then an unset key sent every call on to the game's decoder, which took about a fifth of the running
+time of the game's threads in a village and a second of each area load. `zstd_native = 0` keeps the game's.
+
+- `GUEST_MULTIFRAME` is ZSTD_decompressMultiFrame: 0x70000eb380 on 1.1.1, 0x700003a1f0 on 1.4.3.
+  `GUEST_USING_DDICT` (0x700003a1e0) is 1.4.3 main's ZSTD_decompress_usingDDict (1.1.1 has no site for it).
+  `GUEST_STREAM` is 0x70000f5c80.
+
+### `fingerprint()` `dict_for()`
+
+`fingerprint()`: size, both ends and a sample of the middle: what tells a new dictionary at a reused address from the
+old one. `dict_for()`: the host dictionary for a guest ZSTD_DDict or raw dictionary bytes (`guest` == 0); NULL when
+its fields look wrong. The host dictionary is made from a copy: the guest may free or reuse its buffer. Entries are
+never freed (another thread may be decoding with one); a full table sends further dictionaries to the guest decoder.
+Another thread may have made the same one meanwhile, which is then used.
+
+### `dctx_thread_end()` `host_decode()` `tracked_decode()`
+
+`dctx` is a thread's one-shot decoder context (`host_decode()`), freed when the thread ends
+(`plat_thread_end_hook`): the game makes and ends threads all through play, and each that had decoded left its context
+behind, about 100 KiB.
+
+`host_decode()` decodes on this thread's host context. It returns libzstd's result; `*ok` is 0 when the inputs cannot
+be taken (a guest destination is checked by `decode()`). A ZSTD_DDict is read as its first three fields: dictBuffer,
+dictContent, dictSize. `tracked_decode()` makes the host call inside the thread's host depth, as `runtime/hostfn.c`
+counts it for asynchronous preemption.
+
+### `trusted()`
+
+Whether this build's sites may decode on the host: unless `zstd_native = 0` says the game's own decoder (the patch
+set's switch already leaves the sites alone then on the other builds; 1.1.1 reads the key here as well), or in the
+check.
+
+### `decode()`
+
+x0 dctx, x1 dst, x2 capacity, x3 src, x4 size, then (dict, dict size, ddict) as the entry has them. `guest`: the
+guest function with the same arguments, `n` of them.
+
+In place (the input inside the output buffer): the result depends on how the decoder's writes overtake its reads,
+which libzstd does not promise to do as the game's version does, and a host decode that failed half way would leave
+the guest decoder a damaged input. Such calls stay in the guest. On an error or inputs that cannot be taken, the guest
+decoder decides (and writes its own error code).
+
+### The stream feed
+
+The stream feed of Ocarina of Time 1.1.1 (`main+0xf5c80`), which decodes most of what the loading threads read. The
+game's decode job (`main+0xf5bf0`) hands each chunk it read to feed(S, src, int size, ddict) and looks only at the
+result: 0 the stream is done, bit 31 set an error, anything else go on. The feed drives zstd's bufferless decoder:
+
+| Offset | Field |
+|---|---|
+| S+0x00 u8 | phase: 1 begin, 2 running, 3 failed, 4 done |
+| S+0x08 u64 | where the next output goes |
+| S+0x10 i32 | output room left |
+| S+0x14 u32 | content left |
+| S+0x18 u64 | the DCtx workspace |
+| S+0x20 u64, +0x28 i32, +0x2c i32 | carry buffer, its size, its fill |
+| S+0x30 u64 | the DCtx (set at begin) |
+
+Begin reads the frame header from the first chunk: a header that is not complete in it, a content size that is not in
+it, or a begin that fails gives phase 3 and 0xffffffff. Then each feed decodes what its input completes, moves +0x08,
++0x10 and +0x14 by the bytes it wrote and returns +0x14; when the frame ends it sets phase 4. Input after the frame's
+end gives phase 3 and 0xfffffffd, a decode error phase 3 and 0xfffffffe (the output is too small) or 0xffffffff. A
+feed in phase 3 returns 0xffffffff and in phase 4 0xfffffffd.
+
+`host_stream()` owns a stream from its begin or not at all: the guest DCtx never sees the blocks a host stream
+decoded, so there is no falling back half way. It takes a stream whose first chunk holds a whole header of a plain
+frame with its content size, whose output has room for all of that content and does not overlap the chunk, whose
+dictionary (if any) the host can take, and for which a slot is free; every other stream, and every feed of a stream it
+did not begin, goes to the game's feed. For its own streams it keeps the guest's fields and results as above, decoding
+with ZSTD_decompressStream straight into the game's output. That output is one buffer for the whole frame
+(ZSTD_d_stableOutBuffer): the decoder keeps no window of its own and reads earlier output where the game has it, and
+a feed that finds the output anywhere but where the last one left it fails the stream.
+
+The game's job stops feeding at a result of 0, which a frame gives once its content is out even when its last bytes
+(the checksum) are still to come: such a stream keeps its slot for those bytes but is marked spent, and a new stream
+takes a spent slot when no free one is left.
+
+With `NX2SARIA_ZSTD_CHECK=1` the game's feed decodes every stream as before, the host decodes the same chunks into a
+buffer of its own, and the two outputs are compared when the game ends the stream or has all its content out ("zstd
+check: stream ..."). The check also reports a game output that did not advance through one buffer. `--probe-zstd`
+(`probe_zstd()`) runs host streams on frames it makes itself.
+
+`Stream`: `s` is the guest stream state's address (0: free); `dctx` stays with the slot from stream to stream;
+`shadow` is, in check mode, the host's output; `content` the frame's size and `pos` the bytes the host wrote; `dst0`
+and `cap0` the game's output at the begin: every feed writes on into this one buffer; `in` the compressed bytes fed;
+`spent`: all the content is out, the game feeds no more, and the slot may be taken; `done`, `bad` and `moved` are
+check mode's: the host reached the frame's end or failed; the game's output moved.
+
+### `stream_take()` `stream_drop_of()`
+
+`stream_take()`: the slot of `s`, or a free one for it, or one whose stream is spent; NULL when there is none (that
+stream decodes in the game). `stream_drop_of()` drops the slot of stream state `s`, if it has one. It is found and
+cleared under one hold of the lock: between a `stream_find()` and a `stream_drop()` another thread can take a spent
+slot for its own stream (`stream_take()`), and the drop then cleared that thread's slot, which a third thread took as
+free and reset the decoder context in use.
+
+### `stream_dctx()` `stream_run()`
+
+`stream_dctx()`: a context for streams: the output is one buffer for the whole frame, so the decoder allocates no
+window (a window of its own would be as large as the frame's, and a frame may name one as large as its content), and
+it takes any window size, as the game's decoder does. `stream_run()` feeds `in` to the stream's context until the
+input is used up, the frame ends (0), an error, or nothing moves. Inside the thread's host depth and with the core
+given up for large chunks, as `tracked_decode()`.
+
+### `stream_begin()`
+
+A stream at its begin (phase 1): its slot, the host context ready for the frame, or NULL when the game's feed is to
+decode it (see above). In check mode the guest's state is left alone. An output without room for the content fails
+part way in the game, with what fits written: that is left to the game. So is an in-place stream. Outside check mode
+it writes what the game's begin leaves in its state.
+
+### `stream_feed()`
+
+A feed of a host stream: the guest's fields and result as the game's feed leaves them. With nothing to feed it
+returns the content left, as the game. Input after the frame's end, and nothing moved with input left, both fail the
+stream (phase 3).
+
+### `stream_check()`
+
+Check mode: the host decodes the chunk into its own buffer, the game's feed runs as always and its result stands;
+when the game ends the stream, or has all its content out, the two outputs are compared.
+
+- A spent stream was compared already: the game was not expected to feed on after a result of 0.
+- `done` is 2 for input after the frame's end.
+- A host stream writes into the buffer the stream began with: the game's output has to advance through it alone
+  (`moved`).
+- "All out" is phase 2 with a result of 0: the job feeds no more, with or without the frame's last bytes. Such a
+  stream keeps the slot in case the game does feed on; nothing more is compared.
+- When the game failed, the host must not have a clean frame.
+
+### `host_stream()`
+
+A slot left for a stream state that begins again is dropped first: a stream the game gave up without ending it.
+
+### `probe_feed()` `probe_stream()` `probe_zstd()`
+
+`--probe-zstd`: host streams on frames made here, fed through `stream_begin()` and `stream_feed()` with a stream
+state laid out as the game's. It checks the output and the state's fields after every feed, the frame's end, the
+streams that are left to the game, input after the end, a damaged frame, a moved output and the slots. It needs no
+game files.
+
+- `probe_feed()`: one feed as `host_stream()` runs it outside check mode: the result, or 1 << 32 when the stream is
+  the game's.
+- `probe_stream()` feeds `frame[0, n)` in chunks of `chunk` bytes after a first one of `first`.
+- The test data is random runs and repeats of earlier bytes from up to 2 MiB back: matches that reach far into earlier
+  output. A stream with its content out and its checksum unread is spent: the next stream takes its slot when none is
+  free.
+
+### `zstd_sizes()`
+
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): host dictionaries (never freed) and stream slots taken.
+
+## `runtime/hle/movie.h`
+
+What `runtime/hle/ov_movie.c` (the host `movie::Decoder`) and `runtime/hle/movie_probe.c` share. The game reaches the
+decoder through the `HOST_OVERRIDE` entries named in `movie_symbols`; the probe calls the same entries with a `Cpu` of
+its own and stand-ins for the guest functions the decoder calls. Its first line is a licence notice.
+
+- The `MOVIE_*` entries are in the order of `movie_symbols[]`: the imported constructor, then the 19 slots of the
+  vtable for `movie::Decoder` (`subsdk0+0x560700`..`0x560790`, each an ABS64 relocation by name).
+- `MovieGuest`: the guest addresses of the functions the decoder calls with `rt_call`: `nn::os::SignalEvent`,
+  `movie::Buffer` and `movie::MediaData` methods, the vtable address the constructor stores (vtable + 0x10), and the
+  original code of every entry for decoders left to the library. Filled from the loaded modules at the first entry
+  call, or by the probe.
+- `MOVIE_EV_*` index DecoderEvents: an `EventType *` per event.
+- `movie_set_guest()` (probe): stand-ins instead of the modules. `movie_set_clock()` (probe): a fake clock (ns) for
+  the pacing; NULL is the real one. `movie_set_pace()` (probe): 0 hands every decoded frame over at the next tick.
+  `movie_stats()`: the counters of the decoder at guest object `obj`; 0 if none. `movie_quiet()`: 1 when its worker is
+  idle and cannot take more input now.
+
+## `runtime/hle/ov_movie.c`
+
+`movie::Decoder` for VP9 on the host with libvpx (BSD-3-Clause, linked statically). Its first line is a licence
+notice.
+
+The Switch 1 title's pre-rendered movies (`Event/Movie/*.webm`, 28 files: VP9 profile 0, 1920x1080, 30 fps, video
+only) play through the SDK movie library in subsdk0, Android's MediaCodec over NVIDIA NvMM. Its decoder opens NVDEC
+through NvRm, whose first NvOsDrvOpen (`sdk+0x3f9050`) aborts with "Use of nv::InitializeGraphics is required."
+because `runtime/hle/ov_gfx.c` takes `nv::InitializeGraphics` over; nvdrv and `mm:u` are not served either. The game's
+own demuxer (`movie::Extractor`) runs as guest code; only the decoder is replaced.
+
+main imports the constructor and calls the decoder through the vtable for `movie::Decoder`, whose slots are ABS64
+relocations by name: the `HOST_OVERRIDE` entries replace them. A VP9 buffer-mode decoder (type 3, mode 1) is a host
+object, +0 the library's vtable, +8 the host `Movie` (where the library keeps its DecoderImpl); any other decoder runs
+the original code. Behaviour follows DecoderImpl:
+
+- output format 4 is packed NV12 (Y plane, then interleaved UV; stride = width), copied into the client's Buffer;
+- input and output buffers are indices handed out FIFO, as MediaCodec does; input flag 4 / output flag 4 = end of
+  stream;
+- client events {input available, output available, format changed, error} (DecoderEvents, 4 EventType pointers) are
+  signalled with `nn::os::SignalEvent` on a guest thread.
+
+Decoding runs on one host worker thread per decoder (libvpx adds its own tile threads), never on the game's threads:
+SendInputBufferForDecode queues the input and returns. Events the worker owes (input free, format changed, error) are
+signalled at the next entry call or present, whichever comes first.
+
+Pacing: the game shows one decoded frame per game frame, which plays a 30 fps movie at 30 fps only at 30 fps. So
+decoded frames are handed over when their presentation time is due, counted from the first frame (`movie_tick()`, at
+every present on the presenting guest thread), at most one per present. When the game falls behind, a frame more than
+1.5 periods late is dropped if the next one is due too, so the picture keeps time with the movie's sound.
+`NX2SARIA_MOVIE_PACE=0` hands every decoded frame over at the next present; `NX2SARIA_MOVIE_HOST=0` leaves every
+decoder to the library (which aborts at the first movie).
+
+`Movie`: `guest` is the `movie::Decoder` object; `events` the guest `DecoderEvents *` (an `EventType *` per
+`MOVIE_EV_*`); `in[]` are in the kernel region: the game writes the compressed frames there; `pending[]` is sent, not
+decoded yet (the worker takes them in order); `out[]` holds NV12 frames; `decoded[]` is decoded, not due yet;
+`ready[]` is handed over: AcquireOutputBufferIndex returns these; `owed` the events to signal on the next guest thread
+(a bit per `MOVIE_EV_*`); `t0` the host time of the first frame handed over (pacing) and `pts0` its presentation time
+(us); `gen` is bumped by Flush, Stop, Reset and destruction: a decode in flight is dropped. `g_count` counts the live
+host decoders: `movie_tick()` returns at once when it is 0. Lock order: `g_lock`, then `Movie.mu`.
+
+### `guest_init()` `pass()`
+
+`guest_init()` resolves the guest functions the first time any entry runs (the modules are loaded and relocated by
+then). `pass()` runs the original code of an entry with the caller's arguments; its result stays in x0.
+
+### `collect()` `fire()`
+
+Events are signalled after the locks are released: the woken game thread calls straight back in. `collect()` runs
+with `m->mu` held.
+
+### `to_nv12()`
+
+I420 (libvpx) -> packed NV12: Y rows, then rows of interleaved U, V.
+
+### `worker()`
+
+The worker takes inputs in order, decodes them outside the lock into a reserved output slot, and publishes the frame.
+A reserved slot is in no queue, so the game cannot release it. A decode whose generation changed meanwhile (flushed,
+stopped or reset: the queues were reset after it) is dropped.
+
+### `quiesce()` `release_codec()`
+
+`quiesce()`, with `m->mu` held: invalidates a decode in flight and waits for the worker to leave it. It returns
+whether the calling guest thread gave its core up; the caller calls `kern_core_back` after releasing `m->mu`.
+`release_codec()` runs with `m->mu` held and the worker quiesced.
+
+### `due_at()` `release_due()`
+
+`due_at()`: the host time a decoded frame is due (ns); end of stream is due as soon as it is first in line.
+`release_due()`: one present: drop leading frames more than 1.5 periods late while the next one is due too, then hand
+over at most one due frame (end of stream right after the last frame).
+
+### The entries
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_ctor()` | `Decoder(DecoderType type, DecoderOutputFormat format, DecoderMode mode, int priority)` | |
+| `destroy()` | | leaves the object as the library's destructor does (the vtable, no DecoderImpl) |
+| `ov_d0()` | the deleting destructor | frees the host state, then the library's deleting destructor frees the object (impl now 0) |
+| `ov_d2()` | the base-object destructor (D2) | 1.4.3's vtable and a PLT call name the complete-object destructor (D1); without virtual bases it is D2 |
+| `ov_configure()` | `Status Configure(MediaData *format)` | |
+| `ov_register_events()` | `Status RegisterClientEvents(DecoderEvents *events)` | |
+| `ov_get_output_format()` | `Status GetOutputFormat(MediaData *format)` | `set_format()` sets "color-format" 21, COLOR_FormatYUV420SemiPlanar |
+| `ov_flush()` | | drops queued work; the next input starts a new decode (after a seek: a key frame) |
+| `ov_acquire_input()` | `Status AcquireInputBufferIndex(int *index, int *remaining)` | |
+| `ov_get_input()` | `Status GetInputBuffer(int index, Buffer *buffer)` | |
+| `ov_send_input()` | `Status SendInputBufferForDecode(int index, int offset, int size, long time, unsigned flags)` | after end of stream the buffer is handed back |
+| `ov_acquire_output()` | `Status AcquireOutputBufferIndex(int *index, long *time, unsigned *flags, int *remaining)` | paced frames become ready only at presents (`movie_tick()`) |
+| `ov_get_output()` | `Status GetOutputBuffer(int index, Buffer *buffer)` | |
+| `ov_get_output_size()` | `Status GetOutputBufferSize(int *size, int *count)` | |
+| `ov_release_output()` | `Status ReleaseOutputBufferIndex(int index)` | |
+| `ov_get_output_buffer_format()` | `Status GetOutputBufferFormat(int index, MediaData *format)` | |
+| `ov_get_output_md()` | `Status GetOutputBuffer(int index, Buffer *buffer, MediaData *format)` | |
+
+## `runtime/hle/ov_movie2.c`
+
+Switch 2 movie playback: `movie::VideoDecoder` (subsdk0) answered by the host with dav1d.
+
+The title's movies are WebM with AV1 video only (`Event/Movie/*.webm`, 1920x1080 60 fps, 8-bit 4:2:0, limited range
+BT.709); their sound is a separate stream the game plays alongside (`Sound/Resource/Stream/<movie>.bwav`), so a movie
+that runs for its real length is also what makes the title sequence audible. The SDK's `nn::movie::MediaExtractor`
+demuxes as it is; subsdk0's VideoDecoder sits on `nn::codec::video` (a video server this host does not have), so the
+public VideoDecoder methods the game imports are replaced here. VideoFrame stays subsdk0's own object; its layout
+(subsdk0 `VideoFrame::SetBuffer` / `SetPixelPlaneData` / `SetTimeStamp` / `SetEndOfStreamState`, sizeof 0x90):
+
+| Offset | Field |
+|---|---|
+| +0x08 + 8 i | plane i data (plane 0 = the buffer of SetBuffer) |
+| +0x28 + 8 i | plane i filled size |
+| +0x48 | buffer capacity |
+| +0x78 | time stamp (TimeSpan, ns) |
+| +0x80 | pixel format |
+| +0x84 | pixel storage type |
+| +0x88 | end of stream (byte) |
+
+`nn::movie::Buffer` (sdk): +0x00 data, +0x08 capacity, +0x10 filled size, +0x18 time stamp, +0x20 flags (8 = end of
+stream, as the game sets it at `main+0x3b60014`).
+
+Decoding is asynchronous, as on the hardware: DecodeAsync queues a copy of the sample and returns; one host thread
+per decoder runs dav1d and converts each picture to NV12 (the game's frame format: it sizes each frame buffer width *
+height * 3 / 2 and reads two planes) and to RGBA for the window. Decoding on the caller's thread stalled the game's
+movie loop (it also acquires frames) by up to 90 ms on heavy frames: visible stutter.
+
+Back-pressure: while `QREADY` samples or pictures wait, DecodeAsync answers `R_BUSY` and the input-ready event is
+clear; the game's decode step (`main+0x3b5e600`) treats any non-zero result as "try again" on that event.
+AcquireVideoFrame answers 0x7b when nothing is ready (subsdk0 `VideoDecoder::AcquireVideoFrame`'s own result).
+
+The game draws the frame with its own shaders (a YUV compute pass). Each frame is debanded first (flat areas averaged
+with sub-level precision), so the encoder's flattened gradients (skies, clouds) do not show as hard bands, and written
+back to NV12 with a 4x4 ordered dither. With `NX2SARIA_MOVIE_OVERLAY=1` the host instead shows the frame over the game
+image (`gfx_movie_frame_own` of `runtime/gfx/gfx_present.c`), converted here: BT.709 limited range, bilinear chroma,
+the same dither. `NX2SARIA_MOVIE_DEBAND=0` turns the deband off.
+
+`NX2SARIA_MOVIES=off` skips movies instead (`runtime/hle/romfs.c` `movie_skipped()`); this title then quits, so for
+testing use `NX2SARIA_MOVIE_SKIP=<seconds>`: a movie ends as if it had played to its end once its samples reach that
+time (the next sample becomes the end-of-stream marker, later ones are dropped), and the game goes on as after a whole
+movie.
+
+- `R_BUSY` (0x7d): DecodeAsync while the queues are full: the game retries on its input-ready event.
+  `BUFFER_FLAG_EOS` is 0x8.
+- `QMAX` (8): decoded pictures held at most. `INMAX` (8): samples waiting for the decoder thread at most. `QREADY`
+  (4): input-ready while fewer than this many samples and pictures wait. `NFRAMES` (16): registered VideoFrames.
+  `CQMAX` (2): decoded pictures waiting for the convert thread at most.
+- `Decoded` is a picture for the convert thread.
+
+### `Video`
+
+- `lock` guards the queues, frames and flags; `codec` guards dav1d: the decoder thread while it decodes, Flush and
+  Finalize. `work` is signalled when a sample arrived, or on quit.
+- `run_index`: which movie of the run this is, counted from 1 as decoders come up (for the log); `movies_started`
+  counts the decoders that came up this run.
+- `convert` and `conv` (a decoded picture arrived, a slot freed, or quit): the convert thread debands and converts
+  what dav1d decoded while the decoder thread decodes the next picture: one after the other on the decoder thread the
+  two took longer than the 16.7 ms a 60 fps movie frame has.
+- `y16`, `u16`, `v16`: the convert thread's deband planes (16-bit Y, U and V, `plane_room` samples of luma), kept from
+  picture to picture and made again only for a larger one: made per picture they were 6.2 MB of fresh pages each at
+  1080p, 60 times a second. `finalize()` frees them once the convert thread is joined.
+- `in_ev` and `out_ev` (0x40 bytes each) are an `nn::os::SystemEventType` each.
+- `generation` is bumped by Flush: pictures of an older one are dropped.
+- `live`: counted in `movies_live`: from Initialize, or a sample after a Flush, to the end-of-stream picture, Finalize
+  or the destructor.
+- `ts0` and `shown0_ns`: the first shown picture's time stamp and when it was shown, for the pacing report's distance
+  between the picture and real time; `clock_on`: they hold (cleared by Flush and Initialize).
+- `rel_lag` and `rel_lag0`: the game fetches pictures ahead into a list of its own (`main+0x3b61df0`) and lets go of
+  each when the next one takes its place on screen (ReleaseVideoFrame), so the distance to real time is measured there
+  too: the newest released picture's, and how far it moved since the first released one (the drift), in ns.
+
+### `ov_movie_live()` `set_live()`
+
+`movies_live` counts the decoders playing (`Video.live`); `movie_cap_hz` of `runtime/pacing/frame_rate.c` holds the
+frame rate meanwhile. In `set_live()` the guest's decode and acquire threads may race, so the flag is exchanged.
+
+`t_wait_ns`, `t_send_ns`, `t_get_ns` and `t_make_ns` are the time summed for the pacing report (one movie plays at a
+time): on the decoder thread waiting for the game's next sample, `dav1d_send_data` and `dav1d_get_picture`; on the
+convert thread `make_picture()` (deband and conversion). `n_made` is the pictures converted.
+
+### `update_events()` `clear_queues()`
+
+Both run under `v->lock`.
+
+### `deband_table()` `deband_edge()` `deband()`
+
+Deband (the approach of mpv's deband filter, our own code): the movies' flat gradients (skies, clouds) are encoded as
+blocks of one level with hard contours between them. For each sample, four neighbours at a pseudo-random offset of
+4..16 samples (rotated per pixel, so no pattern repeats) are compared with it; when all lie within `DEBAND_THRESH` (3)
+levels the area is flat and the sample becomes their mean with 4 bits of fraction, else it keeps its value. Edges and
+texture differ by more than that and stay as they are. Output: plane * 16.
+
+The deband taps are radii 4..16 at golden-angle rotations, so every tap of a sample at least `DEBAND_REACH` (16) away
+from each edge lies inside the plane. `deband_edge()` handles one sample near an edge: a tap outside the plane keeps
+the sample as it is; otherwise it returns the mean, * 16.
+
+`deband()`: each sample becomes the mean of four taps around it (a rotated pair of mirrored offsets) when all four
+lie within `DEBAND_THRESH` of it, else stays as it is; the result is * 16, keeping the mean's fraction. Samples away
+from the edges, nearly all of them, skip the bounds tests and choose without a branch: 28 ms on one thread for a 1080p
+frame became 16 ms, and in play the stripes no longer overran the 16.7 ms a 60 fps movie frame has. Each offset is
+kept as a distance in the plane: (+dx, +dy) and (-dy, +dx); their mirrors negate.
+
+### `to_rgba()`
+
+Debanded planes (* 16) -> RGBA, BT.709 limited range. Chroma is interpolated bilinearly between the 4:2:0 samples
+(centred between luma rows, co-sited with even columns); a 4x4 Bayer threshold is added before the final rounding to 8
+bits, which turns the remaining sub-level steps into fine noise instead of bands.
+
+The two chroma rows around a luma row are weighted 3:1 toward the nearer one. An even column is on the chroma sample,
+an odd one halfway. Chroma is * 16 * 16 (plane * 16, weights summing to 16), shifted right by 4 to * 16. The luma term
+is (Y - 16 * 16) * 298, in * 16 * 256; the dither is under one output step in the * 4096 unit.
+
+### `to_nv12()` `stripe_run()`
+
+The overlay conversion runs in `NSTRIPES` (6) horizontal stripes on short-lived threads, in two phases (deband every
+plane, then convert), since the convert reads chroma rows of the neighbouring stripe. One thread took 27 ms per 1080p
+frame: too slow for 60 fps. `Stripe.py`, `pu`, `pv`, `ys` and `cs` are phase 2's: the decoder's 8-bit planes and their
+strides (luma, chroma).
+
+`to_nv12()` writes the debanded planes back into the NV12 frame (the game converts it itself), with a 4x4 ordered
+dither: the 4 fraction bits become texel-sized noise instead of bands. Phase 2 of `stripe_run()` debands straight
+from the decoder's planes, so the NV12 rows can be written at once.
+
+### `stripe_worker()` `run_stripes()`
+
+The `NSTRIPES` - 1 helper threads are made once and kept. Made per call (two calls per picture, 30-60 pictures a
+second) they were about 300 new threads a second for as long as a movie played, and every DLL in the process (the GPU
+driver's, overlays and audio hooks) sets itself up for each new thread: a cost per thread, and with an AMD driver on an
+RX 580 the process commit grew by about 300 MB a second during the title movie until the system ran out (FATAL "movie:
+out of memory for a 1920x1080 frame" at 45.7 GB). One caller at a time (`call_lock`); a worker that could not be
+started leaves its stripe to the caller.
+
+`SP`: `call_lock` allows one `run_stripes()` at a time (several decoders may exist); `lock` guards the other fields;
+`gen` is bumped per batch; `pending` is the helper stripes of the batch not finished; `nworkers` the started helpers
+(stripes 1..nworkers), -1 when not tried yet. The stripe height is even, so chroma rows split at the same places. The
+stripes of helpers that could not start run on the caller.
+
+### `movie_oom_log()` `planes_for()`
+
+`movie_oom_log()`: out of memory for a decoded frame: the frame is dropped (the game shows the previous one a little
+longer) and the first drop of a run is logged. The game used to stop here; on a PC whose commit charge reached its
+limit for a moment, that ended a run that the next second would have had memory for. `planes_for()`: the Video's
+deband planes for a w x h picture (convert thread). 0: no memory for them; the frame is then dropped as for any
+allocation of a picture, and no planes are kept.
+
+### `make_picture()`
+
+One dav1d picture (8- or 10-bit 4:2:0) -> NV12 with 8-bit samples, and its RGBA; convert thread.
+
+- The host overlay (`NX2SARIA_MOVIE_OVERLAY=1`) takes an RGBA frame; without it the game converts the NV12 frame
+  itself. A frame the PC has no memory for is dropped, not the game.
+- `NX2SARIA_MOVIE_DEBAND=0` keeps the decoded planes.
+- The usual case (8-bit, debanded, the game converts the frame): one pass per stripe debands the decoder's own planes
+  and writes the dithered NV12 rows. Reading the decoder's planes instead of an NV12 copy of them gives the same
+  samples, and nothing reads the frame while it is written, so each stripe finishes its rows alone: one round of
+  threads per frame instead of two, and no single-threaded copy before it.
+- Otherwise: debanded planes (`NX2SARIA_MOVIE_DEBAND=0` keeps the decoded ones), then the overlay's RGBA or the
+  dithered NV12.
+
+### `deliver()` `hand_over()` `clear_converts()`
+
+- `deliver()` queues a decoded picture, waiting while the queue is full (the game acquires at the movie's pace);
+  decoder thread.
+- `hand_over()` queues a decoded picture (or the end-of-stream marker) for the convert thread, waiting while it has
+  `CQMAX`; decoder thread. On quit the picture is released here.
+- `clear_converts()` releases the pictures still waiting for the convert thread; under `v->lock`.
+
+### `decoder_thread()` `stop_thread()` `finalize()`
+
+In `decoder_thread()`, a flush (`ov_flush()`) between taking the sample and the codec means the sample belongs to the
+stream before it, and fed into the flushed decoder its picture would come out after the seek, so it is dropped. The
+end-of-stream marker goes after the last picture, through the same queue. `stop_thread()` clears the converts before
+`dav1d_close`: the pictures are the decoder's. `finalize()` frees the deband planes: the convert thread, their only
+user, has been joined.
+
+### The entries
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_ctor()`, `ov_dtor()` | `VideoDecoder()` / `~VideoDecoder()` | the object's first 8 bytes hold the host record |
+| `ov_initialize()` | `Result Initialize(void *memory, size_t size, MediaMimeType mime, VideoDecoderOutputFormat format, VideoCodecMode)` | |
+| `ov_ok()` | `Result Configure(const MediaProperty *, const void *configuration, size_t)` | the AV1 sequence header also comes in band with the first key frame, which dav1d reads |
+| `ov_finalize()` | `Result Finalize()` | |
+| `ov_register()` | `Result RegisterVideoFrame(VideoFrame **frames, int count)` | |
+| `get_event()` | `Result GetInputReadyEvent(SystemEventType **out)` / `GetOutputReadyEvent(SystemEventType **out)` | |
+| `ov_flush()` | `Result Flush()` | samples and pictures not yet acquired are dropped (a seek or a restart follows) |
+| `ov_decode()` | `Result DecodeAsync(const nn::movie::Buffer *sample)` | queued for the decoder thread |
+| `ov_acquire()` | `Result AcquireVideoFrame(VideoFrame **out)` | the oldest decoded picture in a free registered frame |
+| `ov_release()` | `Result ReleaseVideoFrame(VideoFrame *)` | |
+
+Skipping movies (`NX2SARIA_MOVIES=off`) leaves the subsdk0 decoder in place: the movie never opens, so it is not
+called.
+
+- `ov_dtor()`: the decoder and convert threads are joined, so nothing signals the events now: they are destroyed and
+  leave the kernel's table of system events before their memory goes (`runtime/hle/kernel.c`
+  `kern_unbind_system_event()`). Kept, each decoder left two dead entries and their kernel handles, and a long session
+  filled the table.
+- `vk_dump_movie_frame` is `runtime/vk/vk_dump.c`'s (`NX2SARIA_DUMP_MOVIE`).
+- `ov_initialize()`: frame threading is on (8 threads; dav1d picks the delay): heavy stretches of the title movie took
+  longer than a frame to decode one picture at a time (max_frame_delay 1) and the game's loop waited up to 94 ms for
+  them. The delay costs nothing here, as decoding runs ahead on its own thread; end of stream drains the delayed
+  pictures.
+- `ov_register()`: each frame buffer starts as NV12 black (Y 16, UV 128 in its last third). The game converts a frame
+  it holds before a picture arrives; zeros there are YUV (0, 0, 0), green, in stripes where rows were partly written.
+- `ov_flush()`: the generation is bumped, so the decoder and convert threads drop what they are making; `clock_on`
+  and `rel_on` are cleared: after a seek the report's real-time reference starts again from the next picture.
+- `ov_decode()`: `skip_ns` is `NX2SARIA_MOVIE_SKIP` (-1 off). Finalize on another thread may have closed the decoder
+  since the first test. `finalize()` takes `v->lock` after it clears `v->dav1d`, so read under `v->lock` it is either
+  still set (the sample is queued before `finalize()`'s `clear_queues()`, which drops it, and `ov_finalize()` or the
+  destructor then clears `live`) or already NULL: no sample makes a finalized decoder live again, which would hold the
+  movie frame rate cap (`movie_cap_hz` of `runtime/pacing/frame_rate.c`). After the early end, what the demuxer still
+  sends is dropped; the early end itself is the first sample at or past the skip time. With no memory for the sample
+  the game is told to try again, as with a full queue. A sample that is not the end, with no end queued, makes the
+  decoder live: playing again after its end (a Flush clears `eos_queued`).
+- `ov_acquire()`: the game's YUV pass reads the frame buffer on the GPU. A host write into pool storage is one the
+  page write tracking may not see in time (a mirror or texture over it kept its older or still-empty bytes: frames
+  with stripes of zeros, which NV12 shows as green), so the back end is told directly (`nvn_guest_written`). The
+  pacing report comes every 600 frames (10 s): the gaps between acquisitions and their time stamps, and how far the
+  picture is behind the time since the first one (positive: the picture is late). The overlay takes the RGBA buffer.
+  At the end of stream the log says how the movie kept time: the picture on screen against the clock, at its start and
+  its end.
+
+## `runtime/hle/movie_probe.c`
+
+`--probe-movie`: the host movie decoder on one of the game's movies from the RomFS. A small Matroska/WebM demuxer
+reads the video frames of `Event/Movie/<name>.webm` (the smallest one, or the first whose path contains
+`NX2SARIA_PROBE_MOVIE`). The probe then drives the decoder through the same `HOST_OVERRIDE` entries the game calls,
+with a `Cpu` of its own; the guest functions the decoder calls (`nn::os::SignalEvent`, `movie::Buffer`,
+`movie::MediaData`) are host stand-ins registered as host functions, so `rt_call` reaches them as it reaches the SDK's.
+
+VP9 (`movie::Decoder`, `runtime/hle/ov_movie.c`):
+
+1. unpaced: every frame in, every frame out: frame count, size, output format, PTS order, events, decode cost;
+2. paced at 60 presents per second (fake clock): at most one frame per present, one frame per 2 presents, no drops;
+3. paced at 15 presents per second: late frames are dropped, the frame handed over is the one due.
+
+AV1 (`movie::VideoDecoder`, `runtime/hle/ov_movie2.c`), in real time, played as the game plays a movie
+(`av1_paced()`):
+
+1. 30 updates a second: every picture is shown, one per update, in time-stamp order, the end of stream after the last,
+   and the picture ends seconds behind real time (the slow motion of a slow game);
+2. 60 updates a second: every picture is shown within 50 ms of real time.
+
+Without the RomFS (no game data) it prints why and exits 0. `NX2SARIA_PROBE_MOVIE_SHOT=<file.ppm>` saves the middle
+frame of a VP9 movie.
+
+### `vint()` `demux()`
+
+WebM: the VP9 track's frames (`Frame.pts` is in microseconds). `vint()` reads an EBML variable-length integer: an
+element ID keeps its length marker, a size drops it (all ones = unknown size). `demux()` walks the file linearly,
+entering the master elements on the way to the frames and skipping the rest:
+
+| Id | Element |
+|---|---|
+| 0x18538067, 0x1549A966, 0x1654AE6B, 0xAE, 0xE0, 0xA0 | Segment, Info, Tracks, TrackEntry, Video, BlockGroup (entered) |
+| 0x1F43B675 | Cluster (entered) |
+| 0x2AD7B1 | TimecodeScale (ns) |
+| 0xD7 | TrackNumber |
+| 0x86 | CodecID |
+| 0xB0, 0xBA | PixelWidth, PixelHeight |
+| 0xE7 | Cluster Timecode |
+| 0xA3, 0xA1 | SimpleBlock, Block |
+
+### The stand-ins
+
+`PBuf` stands in for `movie::Buffer` and `PMd` for `movie::MediaData`. `s_orig_d0()` is the library's deleting
+destructor. `call()` drives the entries as the game does.
+
+### `save_ppm()`
+
+`NX2SARIA_PROBE_MOVIE_SHOT=<file.ppm>`: the middle frame as RGB (BT.709, limited range), to look at the NV12 output.
+
+### `paced()`
+
+A paced run over the first `limit` frames with a present every `period` ns of fake time; it returns 0 on success and
+fills the per-present counts. The lag is how late the frame is shown (us).
+
+### `av1_feed()` `av1_paced()`
+
+AV1: this title's movies (`runtime/hle/ov_movie2.c`), played as the game plays them. The game's VideoFrame (0x90
+bytes: +0x08 its buffer, +0x48 the buffer's capacity, +0x78 time stamp, +0x88 end of stream) and its samples
+(`nn::movie::Buffer`: +0x00 data, +0x10 size, +0x18 time stamp in ns, +0x20 flags, 8 = end of stream).
+
+`AV1_NO_FRAME` is 0x7b and `AV1_BUSY` 0x7d. `AV1_HELD` (2): the frames the probe registers, so the pictures it holds
+at most, two as the game registers for its movies. `Av1Run`: pictures shown; updates; updates that began more than
+4 ms after their time; how far behind real time the last and the worst picture shown were; the last one's time stamp
+(ns).
+
+`av1_feed()`: samples until the decoder answers busy, then the end of stream after the first `limit` frames.
+
+`av1_paced()`: the first `limit` frames played as the game plays a movie (its decode step `main+0x3b5e600`, its
+update `main+0x3b5ca60`): samples go in whenever the decoder takes them; an update every `period` ns of real time
+takes every picture there is a free frame for, shows the oldest picture it holds and gives that frame back. The
+movie's time starts with its first picture; the run ends with the end-of-stream marker. While the movie plays the
+decoder is fed until the next update is due. A decoder that loses a picture or the end-of-stream marker must fail the
+probe, not hang it (100000 updates at most). Before the first picture, with nothing decoded yet, the probe waits for
+it (5 s at most).
+
+### `probe_av1()`
+
+1. a game at 30 updates a second (240 frames at most): every picture, one per update, in order, the end of stream
+   last; slow motion;
+2. a game at 60 updates a second (180 frames at most): every picture in time.
+
+### `probe_movie()`
+
+Stand-ins and entries: the vtable the constructor stores is a host address nothing calls.
+
+1. unpaced: every 30th frame's mean luma of a centre row band is checked: a decoded picture, not a blank buffer;
+2. paced at 60 presents per second (150 frames at most): one frame every second present; the span is the presents
+   the frames span at 60 per second;
+3. paced at 15 presents per second (120 frames at most): about every second frame is dropped, the shown one stays in
+   time.
+
+## `runtime/hle/ov_probe.c`
+
+`--probe-services`: every override of `runtime/hle/ov_system.c`, `runtime/hle/ov_input.c`, `runtime/hle/ov_media.c`,
+`runtime/hle/swkbd.c` and `runtime/hle/ov_gfx.c` called the way guest code calls it: by its synthetic address through
+`rt_call` / `rt_dispatch`, with AAPCS64 arguments, on the guest main thread. It checks that each one matches a
+relocation of the loaded modules, then the values: language, operation mode, notification messages, account, time
+round trips, controllers, codec state, graphics records, the system events behind nfp and vi, the software keyboard
+with arguments built by the guest SDK (answers from `NX2SARIA_SWKBD_ANSWER`, then the window pressed by
+`NX2SARIA_SWKBD_TEST`) and the shared fonts when `tools/extract_fonts.py` has written them. The named fatal stubs, and
+the account UID of a second run, are checked in child processes (this executable again,
+`NX2SARIA_PROBE_SERVICES_CHILD=<case>`).
+
+The override table is grouped by owner: `ov_system.c`'s `nn::oe`; applet, am and oe; the SDK-internal ones; account;
+time; pl; `ov_input.c`; `ov_media.c`; `ov_gfx.c`. The fatal stubs each run in their own child process: the case name,
+the override, what its FATAL line must say and an environment variable the child runs with (for the shared fonts a
+font directory that does not exist, `NO_FONTS`). `gc` is the guest thread the calls run on.
+
+### `call8()`
+
+The override called through its synthetic address with x0..x7 = a[0..7]; caller-saved registers hold garbage, the
+callee-saved ones a pattern that must survive. It returns x0.
+
+### `set_env()`
+
+It is `cfg_setenv`; a NULL value removes the variable.
+
+### `event_works()` `event_set()`
+
+`event_works()`: a system event bound by an override: not signalled, then signalled through the kernel, then
+(auto-clear) cleared. `event_set()`: a manual-clear system event an override signalled when binding it: set, and still
+set on a second wait.
+
+### `probe_app_area()`
+
+The application area on the made-up figure `probe_applet()` loaded, through the overrides as the game calls them: the
+results without an area and for another access id, create, open, set, flush and get, the write counter in CommonInfo,
+the figure's data saved in the profile and read back from there by a second load, recreate, the three settings applets
+and the menu's erase. 1 when every check held.
+
+ApplicationAreaCreateInfo is u32 access id, u32 initial data size, u64 initial data address. Saved in the profile: a
+second load of the dump reads the figure back from the .dat. The settings applets answer at once with the reader's
+handle.
+
+### `probe_applet()`
+
+- The emulated reader is there from the start (`runtime/hle/amiibo.c`), so the availability event is set when it is
+  attached.
+- The application area calls without a mounted figure answer device not found as well.
+- The game attaches again before each detection: DestroySystemEvent on the attached event, then Attach* on the same
+  SystemEventType. Both events must work again afterwards.
+- The test figure. An amiibo's NTAG215 header: the UID with its two check bytes, static lock 0F E0, capability
+  container F1 10 FF EE. The loader takes it and refuses the same file with a plain NDEF container (E1). The id is
+  Link (Archer): character 0x0100, variant 0, figure type 0, model number 0x0353, series 9, format 02. The figure's
+  data of this made-up UID goes to `<profile>/amiibo/04112233445566.dat` (`runtime/hle/amiibo.c` `dat_paths()`): gone
+  before the test, so the figure starts new, and after it. No real figure has this UID.
+- TagInfo carries the 7-byte UID without its check byte; ModelInfo has the series at 3, the model number little-endian
+  at 4 and the figure type at 6.
+
+### `probe_time()`
+
+951782400 is 2000-02-29 00:00:00 UTC (the leap day). Month 13 carries into the next year (2023-13-01 is 1704067200).
+The steady clock's source id is at ClockSnapshot +0x98 (+0x90: value): a span across sources answers 0x18074.
+
+### `probe_feedback()`
+
+Vibration and six-axis handles, values and states with no gamepad motion (the sensor is stopped before the reads that
+check the rest state), the SDL -> Switch axis mapping and the sensor fusion on a private instance. `STD_GRAVITY`
+(9.80665) is SDL_STANDARD_GRAVITY.
+
+- `NX2SARIA_MOTION` is live: the handle stays (the sensor reads at rest while it is 0).
+- Values with no amplitude: a connected gamepad stays still.
+- SDL axes: lying flat (push +y) is Switch gravity -z, standing on the bottom edge is -y; yaw about SDL +y is +z.
+- Fusion: flat, then 90 degrees a second about z for 1 s: a quarter turn, x axis now along y.
+- StartSixAxisSensor again in the middle of the turn (the bow drawn again): the states from before it are gone, and
+  the first one after it starts a fresh angle in a fresh frame; sampling numbers go on.
+
+### `probe_swkbd()`
+
+The software keyboard (`runtime/hle/swkbd.c`): a ShowKeyboardArg built by the SDK's own setters, as the horse naming
+does. `ARG_WORK` is 0x518 on 1.4.3 and 0x4d0 otherwise: SDK 20.5 grew KeyboardConfig. `u16()` makes a NUL-terminated
+UTF-16 copy of UTF-8 in guest memory. The SDK setters write where `swkbd.c` reads. The cases:
+
+| Case | What |
+|---|---|
+| "Epona" -> "Epona" | the game's horse naming (`main+0x1ecbf64`) |
+| "ABCDEFGHIJKL" -> "ABCDEFGHI" | at most 9 |
+| "a@b%c\d e/f" -> "abcd e/f" | '@', '%' and '\' disabled |
+| "<cancel>" | cancelled |
+| "<initial>" -> the default name | no initial text |
+| "<initial>" -> "Zelda" | initial text from the work buffer |
+| two CJK characters and "Ab" | UTF-8 out |
+| two CJK characters and an emoji, at most 3 | no half surrogate pair |
+| "a1b2c3" -> "123" | number pad |
+| "ab", minimum 3 | shorter than the minimum: cancelled |
+| the window, "ok" | OK pressed |
+| the window, "cancel" | Cancel pressed |
+
+After the window the game reads nothing until everything is released; with nothing held one read lifts that.
+
+### `probe_menu_gate()`
+
+The menu's input gate: Minus+Plus is consumed, a menu that is open leaves the game a neutral pad. In order: Minus
+alone, a frame before Plus, reaches the guest unchanged; both down: the guest sees neither, the menu toggles once;
+still held with the menu open: no second toggle, a neutral pad; the menu is open and the pad is neutral whatever is
+pressed; released, then pressed again toggles again; Plus released first while Minus is still down: Minus must not
+leak, and a new Minus press after both are up passes.
+
+### `probe_fonts()`
+
+Shared fonts: the extracted files when present (the missing case is a fatal child).
+
+### `probe_menu_text()`
+
+The host catalog (`runtime/ui/ui_text.c`): every menu id has its own English, Russian, Brazilian Portuguese and
+Simplified Chinese text, the software keyboard keeps its game-language rows, and `menu_text` follows
+`NX2SARIA_MENU_LANG`.
+
+- The description pane keeps the whole text and a note after it (`desc_set` of `runtime/ui/option_rows.cpp`).
+- The Saves group's lines are formats of one path or detail (`rows_saves` of `runtime/ui/menu.cpp`): at most one
+  "%s", nothing else.
+- Other languages fall back to English for the menu, and keep their own keyboard texts.
+- Language names: the same string in every row.
+- The game language list: pt-BR only where the build ships USpt; the Switch variants are entries of their own.
+- The overlay formats keep their conversions.
+- A Brazilian game language gets the Brazilian keyboard row, Portugal's Portuguese keeps its own.
+- `menu_text` follows the setting live.
+
+### `run_child()` `probe_children()`
+
+`run_child()` runs this executable again with the same command line and `NX2SARIA_PROBE_SERVICES_CHILD=<mode>`, its
+stdout and stderr into `out`. It returns the exit code. In the "nvn" child `nvnBootstrapLoader` returns the synthetic
+address of a proc (`runtime/nvn/nvn_procs.c`), 0 for an unknown name.
+
+### `probe_services()`
+
+Names bound by the loader: each override and observer probed here must match a relocation (1.2.1 lists no add-on
+content, so `aoc.ListAddOnContent` may be unbound there). Every linked override is either probed here or belongs to
+another probe or owner (`nn::fs`: the fs probe; fibers: the kernel probe; `movie::Decoder`: `--probe-movie`; memcpy:
+the graphics write-back in `runtime/nvn/nvn_api_core.c`).
