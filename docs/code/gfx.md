@@ -216,8 +216,8 @@ The back end (`runtime/gfx/gfx_null.c` and the `vk_*.c` files), called by the NV
 - `rt_frame_presented()` is `boot.c`'s: `--frames N` ends the run after the Nth present (and saves `--shot` first,
   through `read_texels`).
 - The movie overlay (`runtime/hle/ov_movie2.c` to `gfx_present.c`): `gfx_movie_frame()` hands the latest decoded movie
-  frame, RGBA8, shown over the game image while frames keep coming (see `gfx_movie_frame()` under `gfx_present.c` below for when
-  the overlay is on). `gfx_movie_frame_own()` is the same but takes the malloc'd buffer, freed later.
+  frame, RGBA8, shown over the game image while frames keep coming (see `gfx_movie_frame()` under `gfx_present.c`
+  below for when the overlay is on). `gfx_movie_frame_own()` is the same but takes the malloc'd buffer, freed later.
 - `gfx_submit_queue`: the game's queue (the NVNqueue address) of the submission this thread is handing to
   `GfxBackend.submit`, 0 when none (probes). nvnQueueSubmitCommands sets it around the call; `runtime/vk/vk_exec.c`
   orders queues by their events with it.
@@ -1584,8 +1584,8 @@ The movie overlay (`runtime/hle/ov_movie2.c`): the latest decoded movie frame go
 window with black bars, while frames keep coming (`GFX_MOVIE_HOLD_NS`, 400 ms, after the last one it disappears). It
 made movies visible before the game's own shaders translated; now the game draws them itself (its YUV compute pass,
 then the upscaler fallback of `runtime/vk/vk_exec_draw.c`), under its menus, so the overlay is off unless
-`NX2SARIA_MOVIE_OVERLAY=1`. One staging buffer per frame in flight: the CPU writes slot i only after that slot's fence (the present waits it
-before recording), the GPU copies it into one RGBA8 image.
+`NX2SARIA_MOVIE_OVERLAY=1`. One staging buffer per frame in flight: the CPU writes slot i only after that slot's fence
+(the present waits it before recording), the GPU copies it into one RGBA8 image.
 
 `movie_overlay()` records the overlay into `cb` for swapchain image `dst` (in TRANSFER_DST_OPTIMAL, left so); 1 when
 drawn. The game image's blit wrote `dst`: black bars first, then the frame.
