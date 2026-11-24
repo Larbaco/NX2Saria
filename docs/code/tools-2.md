@@ -1030,3 +1030,454 @@ and the manifest `runtime/hle/romfs.c` `overlay_load()` checks: path, size, SHA-
 ### `default_binds()`
 
 The current settings file, or an existing older one (`nx2navi.ini`) when that is all the folder has.
+
+## `tools/perf_summary.py`
+
+Condenses the `NX2SARIA_TRACE=perf` and `NX2SARIA_TRACE=sched` lines of a game log over a frame window:
+
+```
+python tools/perf_summary.py build/v121/logs/fight.log 1560 2600
+```
+
+`mem: dirty` lines (the dirty census of `runtime/vk/vk_memory.c`) are summarised per pool class (CPU_CACHED,
+CPU_UNCACHED, other): what a device-local mirror of buffer-bound pools would upload per frame and per submit,
+FlushMappedRange use, mirror size.
+
+The present side (`runtime/vk/vk_backend.c` `present_main()`): the `present:` lines of `NX2SARIA_TRACE=present` give
+percentiles of the host present's interval, its paced wait, how far past its target it went, the present call and the
+presenting thread's hand-off wait (the last two only in logs that have them), and the `perf: present thread` lines of
+`NX2SARIA_TRACE=perf` the present thread's averages per window. The render thread's hand-off share is read from the
+perf lines that have it.
+
+The text above, as the tool prints it when run without a log, is the string `USAGE`.
+
+### `dirty_fields()`, `pct()`
+
+`dirty_fields()`: the `key a/b/c` and `key x` pairs of a `mem: dirty frame` line, as key to list of floats. `pct()`:
+the q quantile of the values (nearest rank below), 0 for none.
+
+### `present_summary()`
+
+`pres`: field to milliseconds of the window's `present:` lines; `wins`: the fields of the `perf: present thread`
+lines. Its `avg()` is the present-weighted mean of a window average.
+
+### `dirty_summary()`
+
+`lines`: frame and fields of the window's lines; `frames`: per-frame eager KiB triples. Its `avg()` is the
+frame-weighted mean of a per-frame value.
+
+## `tools/pgo.py`
+
+Merges the raw profiles of an instrumented build into the execution profile a build compiles with
+([building.md](../building.md), "Profile-guided build").
+
+```
+python tools/pgo.py merge <game folder> --version v111 --toolchain C:\msys64\ucrt64
+python tools/pgo.py merge build/v143-pgogen --version v143 [--out build/pgo/pgo-v143.profdata]
+```
+
+An instrumented build (`tools/make_game.py --pgo gen` for game 1.1.1, `tools/build_game.py --pgo gen` for the other
+versions) writes `<build>/pgo/default_<id>.profraw` while the game runs (every minute and at exit); successive runs of
+the same exe add to that file. llvm-profdata must come from the toolchain the instrumented build was compiled with
+(`--toolchain DIR`, its `bin/llvm-profdata`): the raw format is tied to the compiler's version. The merged file is
+read by the compilers of the builds that use it; one of the same LLVM release reads it, an older one may refuse it,
+which `tools/make_game.py` finds out with a trial compile before it uses the file (`pgo_trial()`).
+
+Beside the profile goes `<out>.json`, the training record: the game version, `recomp/` at the merge as its git tree
+(`recomp_tree()`) and by content (`recomp_digest()`, which a kit without git compares: `tools/make_game.py`
+`pgo_record()`), and the tool that merged. The profile matches the generated C of that generator, since functions are
+matched by name and control-flow hash and a regenerated function silently loses its counts. `tools/make_game.py`
+therefore compiles with a profile only while `recomp/` is the recorded one, and `tools/make_launcher.py --pgo` says so
+when it is not. Merge right after the training runs, from the commit they were built at: a game folder made by
+`make_game.py --pgo gen` names the `recomp/` it was built from (`pgo/training.json`), and the merge stops when the
+checkout holds another.
+
+`DEFAULT_DIR` is where `tools/make_game.py` and `tools/make_launcher.py` look.
+
+### `llvm_profdata()`
+
+llvm-profdata of `--toolchain`; without one the newest llvm-mingw under `toolchain/`, else MSYS2 UCRT64's, else the
+one on PATH.
+
+### `recomp_tree()`, `recomp_digest()`
+
+`recomp_tree()`: the git tree id of `recomp/` at HEAD; `None` when `recomp/` has uncommitted changes.
+`recomp_digest()`: `recomp/` by content, as a kit without git works it out too: the lifter's code and the version's
+patch table (for v111, `tools/make_game.py` `recomp_digest()`).
+
+### `training()`
+
+What the instrumented game in `build` was made from (`pgo/training.json`, `tools/make_game.py` `pgo_gen_record()`),
+`{}` for a build that wrote none (`tools/build_game.py`). A game built from another `recomp/` than this checkout's, or
+for another game version, stops the merge: the record would name a generator the counts were not gathered on.
+
+### `llvm_release()`
+
+The LLVM release a `--version` line names, `''` when it names none.
+
+### `fitting()`
+
+The record beside a profile, for a release from this checkout. A profile whose record does not name this checkout's
+`recomp/` stops the release: the builds made from it would leave the profile out (`tools/make_game.py`
+`pgo_record()`), and the release would carry it for nothing.
+
+### `place()`
+
+Copies a profile and its record into a release's `data/` as `pgo-<version>.profdata` and `.json`, where the builds
+made from that release look for them (`tools/make_game.py` `pgo_file()`). Returns the path of the profile's copy.
+
+## `tools/pipeline_list.py`
+
+The shared pipeline list: graphics pipelines players met, for an install to build before play
+([building.md](../building.md) has the steps).
+
+```
+python tools/pipeline_list.py merge OUT.bin GAME_DIR_OR_LIST [GAME_DIR_OR_LIST ...] [--mesh-only]
+python tools/pipeline_list.py info FILE_OR_GAME_DIR [...]
+```
+
+A game folder records every graphics pipeline a run builds in `pipeline-keys.bin` (`runtime/vk/vk_pipeline.c`, its
+pipeline keys: the pipeline state with its shaders named by input id) and every shader variant in `shader-answers.bin`
+(`runtime/gfx/gfx_shader.c`, its answers met in play: stage, code hash, input id, translator answers). The next start
+of that folder builds its recorded pipelines ahead of play; another install, or the same one after its caches were
+removed, meets each of them in play first. A mesh pipeline met that way is compiled then, 0.2 to 1.1 s with its draws
+left out of the picture: all of it where mesh pipelines have no stage libraries, and otherwise the library of its task
+and mesh stages, which is most of it and which only a pipeline record names (`runtime/vk/vk_pipeline.c`, the mesh
+pipelines' stage libraries ahead of their draws).
+
+This tool folds the two files of any number of game folders into one list file; a list file made before can stand in
+for a folder, so a list grows by the folders played since. Beside the shader variants the pipelines name, the list
+takes the compute variants each folder dispatched: no pipeline record names a compute shader, and a variant with other
+answers than the shader list's default one was translated in the middle of play, 30 to 40 ms on the frame that first
+dispatched it. `tools/prepare_shaders.py` reads the list beside the shared shader list: the shader variants it names go
+into the seed, so the preparation translates them, and its pipeline records go next to the game as
+`seed-pipeline-keys.bin`, which every start of the game counts as recorded pipelines beside its own
+(`runtime/vk/vk_pipeline.c` `keys_open_seed()`), so a new install builds them before play, and which
+`nx2saria.exe --prepare-shaders` (and `--prepare-pipelines` on a folder that is prepared already) builds once into the
+pipeline cache and the graphics driver's own.
+
+What a record depends on. Its shaders are named by input id, a hash of the game's shader code and the answers, which
+no translator, GPU or driver changes: a record made on one machine names the same shaders on another with the same
+game version. Its state is the game's (formats, blend, depth and stencil, topology, sample count) and a few choices of
+the runtime's settings (a culled foliage shadow pass, the depth range); everything that depends on the GPU is derived
+from it when the pipeline is built. A record whose state this install never reaches costs one pipeline in the caches,
+and one whose shader this game version lacks is left out by the preparation. The record layout belongs to the runtime
+that wrote it (`KEYS_VERSION` and the record size, in the file's header): a list is made again for a runtime that
+changes either, and the runtime ignores one that does not match.
+
+The list is derived from game data: it stays out of the repository (`tools/check_content.py` refuses it) and travels
+with the installer archive as `data/pipeline_list.bin`, as the shader list does.
+
+File: `"NX2NPLST"`, version u32, answers bytes u32, keys bytes u32, then a `shader-answers.bin` image (header, the
+records the keys name and the compute variants', input id kept) and a `pipeline-keys.bin` image (header and records).
+
+`ANS_REC` is the answers record of `runtime/gfx/gfx_shader.c`: stage, code hash, input id, answers, pad.
+`STAGE_NAMES` follows `GFX_STAGE_*` of `runtime/gfx/gfx.h`.
+
+### `read_answers()`, `read_keys()`, `key_ids()`, `read_dir()`
+
+`read_answers()`: a `shader-answers.bin` image to its records (bytes each); `[]` for another magic or record size.
+`read_keys()`: a `pipeline-keys.bin` image to magic, version, record size and records; records `[]` for a file too
+short. `key_ids()`: the input ids a key record names: vertex (or mesh), then fragment and task when it has them.
+`read_dir()`: a game folder's recorded keys and answers; a missing file gives no records. A list file gives what it
+holds.
+
+### `merge()`
+
+One list from the folders' files (or earlier lists): each key record once, the answers record of every shader they
+name and, unless `mesh_only`, of every compute variant a folder dispatched. A key naming a shader the folder's answers
+do not name is counted as lacking and left out: another install could not translate it.
+
+### `unpack()`
+
+A list file to its answers records and its `pipeline-keys.bin` image; `None` when it is not one.
+
+## `tools/prepare_shaders.py`
+
+Prepares the default variant of every game shader and the variants of the shared shader list for a build, once, before
+play ([building.md](../building.md)). `tools/make_game.py` `step_key()` puts this file's SHA-256 into the key of its
+shaders step.
+
+```
+.venv-py314\Scripts\python tools\prepare_shaders.py build\v121 [--version v121] [--list <tsv>] [--no-run]
+                                                 [--romfs DIR --exefs DIR]   # instead of build\extracted\<version>
+```
+
+The list (`tools/shader_list.py`) names shader variants players met: a shader key (SHA-256 of the NVN control section
+and code, as `tools/shader_census.py` names shaders) and the translator answers it was translated for. This tool reads
+the shaders from the extracted RomFS and ExeFS (`tools/shader_census.py` `inventory()`), keeps the list's variants
+whose shader is in this game version, adds each shader's default variant (every texture slot a 2D texture, float
+vertex inputs and colour outputs: the default bind state), and writes them next to the build's `nx2saria.exe` in the
+record layouts of `runtime/gfx/gfx_shader.c` (its answers met in play):
+
+```
+seed-programs.bin  "NX2NSPRG": stage, length, c1 length, runtime code hash, control section, code, c1
+seed-answers.bin   "NX2NSANS": stage, code hash, input id (zero: the runtime computes it), answers, priority
+```
+
+Priority (the pad byte): 0 shaders the list's warm rows flag as title/menu (t), 1 other warm rows (S, C, R), 2 the
+rest; a default variant takes its shader's priority and sets `DEFAULT_FLAG` (bit 7). The runtime reads a flagged
+record's first translation and translates it again with better answers where it reads other ones
+(`runtime/gfx/gfx_shader_guess.c`): integer vertex inputs, and the texture and image types a compute shader's
+translation declares, for which a compute default variant goes without texture answers. Then it runs
+`nx2saria.exe --prepare-shaders`, which translates every record into the build's shader cache, writes
+`shader-prepared.bin` (one record per variant, in priority order) and builds every variant's stage library or compute
+pipeline once, so the GPU driver's own disk cache holds them (`runtime/vk/vk_pipeline.c`, the stage library prebuild).
+The seed files can be deleted afterwards.
+
+The shared pipeline list (`tools/pipeline_list.py`: graphics pipelines players met, with the shader variants they
+name) is read beside the shader list when there is one: `tools/data/pipeline_list.bin` (`BUNDLED_PIPELINES`; out of the
+repository, as `BUNDLED_LIST`), `data/pipeline_list.bin` in a release folder, or `--pipeline-list`. Its variants of
+shaders this game version has join the seed with priority `LIST_PRIORITY` (with the warm-up rows), and its key records
+are written as `seed-pipeline-keys.bin`, which `--prepare-shaders` builds into the pipeline caches once the seed is
+translated (`runtime/vk/vk_pipeline.c`, the shared pipeline list; mesh pipelines by default). That file stays in the
+build directory: `nx2saria.exe --warm-shaders` and `--prepare-pipelines` build from it again after an update or a new
+driver. A `seed-pipeline-keys.bin` of a list this build no longer has is removed.
+
+A driver whose shader compiler crashes on a variant crashes on it in every run (NVIDIA 615.78.08 on an RTX 5080, issue
+#30). The translations and `shader-prepared.bin` are written by then, and the journal the run leaves (`JOURNAL`: a
+64-byte slot per worker, input id first) names the variants the driver was building (`runtime/vk/vk_pipeline.c`
+`skip_init()`), so only the driver step runs again (`nx2saria.exe --warm-shaders`), up to `RETRIES` times, and skips
+them.
+
+Game-derived output stays in the build directory (ignored). The list is read at preparation time from
+`shader_list.tsv` in the tools' `data` folder when that file exists (`BUNDLED_LIST`: the installer archive bundles a copy, which has no
+git and no `refs/`; it stays out of the repository), else from `refs/` through git with the rows its history dropped
+(`tools/shader_list.py`); nothing of it is copied into the repository. It needs Python 3.14 (`compression.zstd`), so
+it runs in `.venv-py314` or the embeddable 3.14. The three imports after the `sys.path` line carry `# noqa: E402`,
+which stays.
+
+The constants: `STAGES` follows `GFX_STAGE_*` of `runtime/gfx/gfx.h`; the format names are `fmt_names` of
+`runtime/gfx/gfx_shader.c`; in `DEFAULT`, answers outside a shader's use mask are dropped.
+
+`SLOW_UNUSED` (source suffix, code bytes above which) names the default variants left out unless `--all-shaders`: the
+larger compute programs of two of the game's three NDSR upscaler packages. The translator turns their 20-47 KB of code
+into 3-12.6 MB of SPIR-V, which the GPU driver took 34 s to 44 min each to build (RTX 5090, driver 621.01): 35
+programs, the 24 that translate took 19,400 of the 21,750 s every compute variant together took. Play sessions met
+none of them that was slow to build (one 20.8 KB program built in 0.2 s), while all five `agl_ndsr_vr_light.pck`
+programs play met took 77-153 s each, so that package stays whole. A program play does meet here is translated and
+built at its first use, as before the NDSR packages were read at all.
+
+### `read_pipeline_list()`
+
+Answers records and `pipeline-keys.bin` image of the pipeline list at `path`, or of the bundled one; `None` without a
+list. A file that is not a list stops the run: a release that names one must not go on without it.
+
+### `list_variants()`
+
+Seed records for the pipeline list's shader variants: those whose shader (runtime code hash) is in `have` and whose
+(hash, answers) the seed does not hold yet. The input id is left zero, as for every seed record: the runtime finds it,
+and finds the id the list's key records name, since it depends on the code and the answers alone.
+
+### `pipeline_variants()`
+
+The vertex and fragment variant names of an R/B row's pipeline key. Since its revision of 2026-10-28 the list keeps
+keys packed, `<vs variant>:<fs variant>:<the rest in hex>`; older revisions and contribution files hold the whole key
+in hex, `<vs variant>\0<fs variant>\0` and a Metal descriptor.
+
+### `parse_list()`
+
+V rows as (key, deps); priority per shader key from the warm rows (variant names start with the key).
+
+### `answers()`
+
+`GfxShaderAnswers` in the layout of `runtime/gfx/gfx_shader.c` `pack_answers()` (147 bytes) from the list's deps JSON.
+A texture answer `*` is any kind, translated as the plain 2D it stands for. The local size is zero for vertex and
+fragment programs, as `runtime/vk/vk_exec_draw.c` `answers_for()` has it (they are in the input id). For compute, task
+and mesh it is the three words at the control section's local size (NVN2 at +0x58), 0 read as 1, each cut to 16 bits
+as `answers_for()` stores them (task and mesh programs keep other fields there).
+
+### `nvn2()`
+
+An NVN2 (Switch 2) control section as `tools/shader_census.py` `nvn2_stages()` keeps it: 0xe0 bytes, zeros to 0x880.
+
+### `bounds()`
+
+The c1 offset and the length as `runtime/gfx/gfx_shader.c` `req_init()` takes them. NVN2: play hands `req_init()` the
+code size of `runtime/vk/vk_exec_draw.c` `ctl_stage_len()`, which reaches the end of the c1 constants only when there
+are some (+0x40 below +0x44). With an empty c1 range past the code the length is the code size alone; cutting at the
+range's end (as `tools/shader_census.py` does) seeded most of the game's vertex programs under keys play never asks
+for.
+
+### `code_hash()`
+
+As `runtime/gfx/gfx_shader.c` `build_code_hash()`.
+
+### `driver_crashed()`
+
+The game died while the graphics driver built variants: the journal it left names at least one.
+
+### `main()`
+
+A missing list row says nothing about the walk: the list covers several versions, and 1.1.0 holds 17,587 of its
+41,414 rows, so most rows are absent because the game does not have them, not because the walk missed them. A walk
+that found next to nothing does say something: the shader directories have moved. So when fewer than 64 shaders, or
+a twentieth of the listed variants, were found, every RomFS file is read instead.
+
+A default variant that equals a list row of the default bind state is not written twice. The records are sorted by
+priority with a stable sort: list order within a priority.
+
+## `tools/private_paths.py`
+
+Personal folders written short in the text players share: the launcher's log and `crash.log`, the "Copy Report" text,
+the AppImage's `build.log` and the game log a bug-report zip carries. The rules are the game's own log's
+(`runtime/log_privacy.c`, `runtime/log_privacy_core.h`) and are in [log-privacy.md](../log-privacy.md): the folders and
+their markers, whole-folder matching with the longest folder first, the computer's and the account's name,
+case-less Windows paths with either separator and with a run of separators for one (an escaped path in an error's
+text), a `.` or `-` right after a folder ending it when no name character follows, and the names too common to be
+looked for alone. `NX2SARIA_LOG_SHORT_PATHS=0` in the environment writes everything in full (for debugging on one's
+own machine), as `log_short_paths = 0` in `nx2saria.ini` does for the game.
+
+`COMMON` is `priv_common` of `runtime/log_privacy_core.h` and `COMMON_HOSTS` its `priv_common_host`. `_WORD` is a
+letter (any script), a digit or `_`; `_PATH` is that or `.` and `-`: what continues a folder's name. Run as a script it
+is a filter: `python tools/private_paths.py < in > out`.
+
+### `_strip()`
+
+A root or a drive's root gives `''`: it would write every path short.
+
+### `_short_path()`
+
+The Windows 8.3 form of a folder, or `''`.
+
+### `rules()`
+
+The folders to write short as (folder, marker), longest first, the account's name with its marker, the computer's
+names as (name, marker), and whether the rules are Windows'. `env` and `windows` default to this process's environment
+and system. Under Wine the Unix environment is passed on: `HOME` is a Unix path, which a Windows build sees on drive
+`Z:`.
+
+### `Shortener`
+
+The computer's names match as a word of their own anywhere, without case. `Shortener._in_path()`: a `/` or `\` in the
+run of non-blank characters around `s[a:b]`; it reads that run alone, not the text before it (a bug report's log can
+be 64 MiB).
+
+### `shorten()`, `describe()`
+
+`shorten()`: the text with the personal folders written short, or as it is when `NX2SARIA_LOG_SHORT_PATHS=0`.
+`describe()`: for the start of a log, whether paths are written short.
+
+## `tools/prof_report.py`
+
+Report for a `NX2SARIA_PROFILE` sampling profile (`runtime/diag/prof_win.c`): top functions and the split between
+guest, runtime and outside.
+
+```
+prof_report.py <profile> <nx2navi.map | nm -n output> [--top 40] [--chains 30]
+```
+
+The map is the one from the link (`build/<version>/nx2navi.map` from lld, whose addresses are RVAs, or a GNU ld map
+such as the launcher's `build-cache/ocarina.map`, whose addresses include the image base); the profile header carries
+the runtime image base, so ASLR does not matter. Symbols in the map are labels without sizes: a Rip belongs to the
+nearest symbol at or below it. A map lists global symbols only, so a static function's time lands on the global
+function before it: the output of `nm -n <exe>` in the map's place names the static functions too.
+
+A profile taken with `NX2SARIA_PROFILE_RENDER=1` or `NX2SARIA_PROFILE_CHAINS=1` also has call chains: the report then
+adds the inclusive time per function (a function counted once per chain), and for each module outside the exe the exe
+functions that call into it and the longest common chains down to it.
+
+The three patterns: `SYM` is an lld map line whose In column is empty (object lines have a `path:(section)` there);
+`SYM_LD` a GNU ld map line: the address, then the name, no size; `SYM_NM` a line of `nm -n` of the exe: code symbols,
+static ones too. `load_map()` leaves out the `.text` section nm lists for each object.
+
+### `report_chains()`
+
+Where running threads are: the innermost exe frame of each chain that does not end in a wait. A chain whose leaf is in
+ntdll, win32u or KERNELBASE is taken as blocked, which also drops the few running samples inside them (clock reads); a
+leaf in another module (the driver, the C library) is charged to the exe function that called it. Then, per outside
+module, the innermost exe frame of each chain whose leaf is in that module.
+
+### `main()`
+
+The map's addresses include the image base (0x140000000 for an x64 exe); a runtime Rip is an offset from wherever the
+loader put the image. The lowest map address aligned down recovers that base, so a Rip becomes a map address by adding
+it back. The comment said the address is aligned down to 64 KiB; the mask in the code, `~0xFFFFF`, aligns it down to
+1 MiB.
+
+Flat samples are named by `sym_at()` as the call chains are: right for a map with or without the image base. The
+samples outside in ntdll, win32u and KERNELBASE are waits and message loops, threads not running, and count as idle.
+
+## `tools/projective_recipe.py`
+
+An opt-in source recipe for locally held modules; the file contains no game shader
+([water-projective.md](../water-projective.md)). Only the identified input hashes are accepted. Generated SPIR-V is
+private build output and must not be attached to an issue or committed to the repository. The recipe implements the
+tested coordinate representation, not its recorder. That text is what `--help` prints, the string `DESCRIPTION`.
+
+`PAIRS` holds the known translator outputs: vertex, fragment, and the fragment with descriptor set 1. `ABSORPTION`
+holds the exact material profiles: the original, its descriptor-set-1 form, and the distance pointer and value.
+
+### `fragment()`
+
+Only the original accesses are redirected. The raw input load added afterwards must remain an input load.
+
+### `absorption()`
+
+The store becomes `NMax(distance, 0)`: negative optical distance must not amplify attenuation. It targets the distance
+expression, never a red colour or other material.
+
+## `tools/prompt_art.py`
+
+The button art `tools/pad_prompts.py` draws the button prompts from: the pictures of each pad style (`STYLES`), the
+keyboard and mouse folders (`KM`), and `art_files()`, the files a release carries so the build can draw the prompts on
+the player's PC (`tools/make_launcher.py` and `tools/make_kit.py` with `--prompt-art`, the prompts step of
+`tools/make_game.py`). Standard library only, so the release tools need no imaging packages. As with
+`tools/pad_prompts.py`, the digest `PROMPT_TOOLS` records takes this file's code lines as written, so its three
+comments at the end of code lines stay for now.
+
+The art is 128x128 PNGs in the folders of button prompt art packs: `XGamepad/Default` and `/Light`,
+`P5Gamepad/Default` and `/Light`, `Keyboard_Mouse/Dark`, `/White` and `/Blanks`. The repository holds the pictures it
+needs in its `prompt-art` folder (`REPO_ART`), from a pack whose licence is CC0 1.0: `SOURCE.md` there names the pack,
+its version, where it came from and its licence, and `SHA256SUMS` lists every picture (`tools/check_content.py` refuses
+a picture that is not in it, or differs). A release copies the art from `REPO_ART`, or from the folders `--prompt-art`
+names, into its `prompt-art` folder, which `tools/make_game.py` passes to `tools/pad_prompts.py` as `--art`.
+
+- `ART_SETS`: the art folders, each named as in the art packs; `--art` holds all three.
+- `FOLDER`: the folder of a release that holds the art (`app/<version>/prompt-art`, the build kit's `prompt-art`), and
+  of the repository. `REPO_ART`: the art in the repository, which a release carries unless another is named.
+- `SOURCE`: the file beside the art that says where it came from; `SOURCE_LINE` is its line that the build and the
+  game log.
+- `STYLES`, per style: `glyph`, the dark pictures the button font and the action prompt's letter are drawn from (by
+  Switch button, the face buttons by their place on the pad); `note`, the light ones the ocarina's note buttons are
+  drawn from. A value of `OPTIONS` is drawn by `tools/pad_prompts.py` `options_art()` from `SHARE`: the art shows
+  PlayStation's Options button as its word over a small pill, which is unreadable at text size, so the prompt is the
+  Create button's pill with three bars, as on the pad. On the Xbox pad Plus and Minus are Menu (three bars) and View;
+  on the PlayStation pad Minus is a share pill.
+- `steamdeck`: the Steam Deck's own labels, from the two pads' pictures (the packs have no Deck style): A B X Y where
+  an Xbox pad has them, in white as the Deck prints them; L1 R1 L2 R2 and L3 R3 as a PlayStation pad names them; Menu
+  (three bars) and View.
+- `KM`, the keyboard and mouse: a key in each shade (`Dark`: a dark key with a white label, the button font and the
+  action prompt; `White`: the other way round, the ocarina's notes), and the blank key (`BLANKS`) a key the art has no
+  picture of gets its name written on (`tools/pad_prompts.py` `label_art()`).
+- `OVERLAYS`: every folder `tools/pad_prompts.py` writes without `--style` and `--layout`.
+
+### `_sticks()`
+
+The stick pictures of one style: `<stick>_<direction>` for L and R.
+
+### `overlay_folder()`
+
+The game folder's overlay folder of a style (`pc` for the keyboard and mouse) and pad layout (`position` or `label`),
+as `runtime/input/input_map.c` `input_prompts_folder()` names it.
+
+### `art_roots()`
+
+`ART_SETS` name to the folder that holds it, from folders that each hold some of `ART_SETS` or are one of them (for
+art spread over several packs). A set named itself wins over one found in a folder that holds it, so a pack's `Source`
+folder and another pack's `Keyboard_Mouse` take the latter's keys: `ranked` holds the sets named themselves, then the
+sets found inside a folder. Exits naming a set that is missing, or found twice at the same rank.
+
+### `art_files()`
+
+Relative path (as `tools/pad_prompts.py --art` reads it) to source file, for every picture that tool can read: the
+pictures of `STYLES`, `SHARE`, the blank keys, and every PNG of `Keyboard_Mouse/Dark` and `/White`, as a player may
+bind any key. Exits naming the pictures that are missing.
+
+### `release_art()`, `source_of()`, `copy_art()`
+
+`release_art()`: the art a release takes: the folders `--prompt-art` named, else `REPO_ART`; `None` with
+`--no-prompt-art`. `source_of()`: the `SOURCE_LINE` of the art's `SOURCE` file without its label (the pack, its
+version and licence), or a phrase that says the folder has none. `copy_art()` copies `art_files()` of the folders into
+`dest` (a release's `prompt-art` folder, emptied first), with the `SOURCE` file of the first folder that has one;
+returns files and bytes.
