@@ -666,3 +666,367 @@ An 8-bit RGBA PNG of the raw pixels.
 
 The textures of `kNames` in `runtime/ui/menu_art.cpp` as `out/art/NN.art` for `tools/menu_preview.cpp`; returns that
 folder.
+
+## `tools/mod_files.py`
+
+The player's mods folder as the game reads it (`runtime/patches/mods.c`): where each mod keeps its parts, and the
+files of the mods that change the game's code. Standard library only: the launcher imports it from the kit's tools
+folder.
+
+One folder per mod (a symbolic link or junction to a folder counts). A part (`romfs`, `romfslite`, `exefs`, `cheats`)
+is the first of `<mod>/<part>`, `<mod>/atmosphere/contents/<title>/<part>`, `<mod>/contents/<title>/<part>` and
+`<mod>/<title>/<part>` that is a folder (`PLACES`; `runtime/patches/mods.c` `find_root()`). `TITLE` is the game's title
+id: a mod's Atmosphere folders are named after it.
+
+The files that change the game's code are a mod's Atmosphere cheat file for main's build (`<cheats>/<build id>.txt`,
+the name in any case) and the ExeFS patch files (`.ips`, `.pchtxt`) of its `exefs` part and of
+`<mod>/atmosphere/exefs_patches/<name>/`. The lifted game cannot be patched while it runs, so the build turns them into
+patch sets (`tools/cheats.py`, `tools/exefs_patches.py`) and the runtime switches those on with their mod; a file the
+build did not see waits for the next one. `tools/make_game.py` builds them in and records what it built
+(`build-cache/mod-code.json`, `code_record()`); the launcher compares that record with the folder (`launcher/mods.py`)
+to rebuild the game before it starts when a mod brought new ones.
+
+### `mod_folders()`, `part()`
+
+`mod_folders()`: the mod folders of the mods folder, by name (as the setup's tools list them: Python's order of the
+names). `part()`: the folder of a mod's part, the first of its places that is a folder, or `None`.
+
+### `cheat_files()`, `patch_files()`, `main_build_id()`
+
+`cheat_files()`: mod folder name and cheat file for the folders of `mods`, by name: `<cheats>/<bid>.txt`, the name in
+any case. `bid` is the first 8 bytes of main's build id in hex, as cheat files name themselves (`tools/cheats.py`
+`build_id()`). `patch_files()`: mod folder name, path in the mod and file: the `.ips` and `.pchtxt` files of the
+`exefs` part and of `atmosphere/exefs_patches/<name>/`. `main_build_id()`: the first 8 bytes of main's build id in
+upper-case hex (the cheat files' name), `''` when main cannot be read.
+
+### `code_files()`, `code_record()`
+
+`code_files()`: mod folder name, path in the mod and file for every file of the mods folder that changes the game's
+code: the cheat files for `bid`, then the ExeFS patch files. `code_record()`: `{"<mod>/<path in the mod>": sha256 of
+its bytes}` of `code_files()`: what a build that lifts them in takes. A file that cannot be read is left out (the tools
+would fail on it too, and the next build tries again).
+
+## `tools/nup.py`
+
+Reader for the `.nup` game container (little endian, nothing encrypted). Standard library plus zstandard. Each thread
+reads through its own handle (`Nup._handle()`): seeks on one shared handle race.
+
+```
+0x00  superblock, 0x80 bytes: "NUP\x01", u16 0x80, u16 1, u64 toc offset, u64 toc size, sha256(toc),
+      u64 blob offset, u64 file size, u32 package count, u32 0, 16-byte unique id, 32 zero bytes
+TOC:  u32 "TOC\x01", u32 packages, u64 dirs, u64 files, u64 name pool offset (from the TOC), u64 pool length, u64 0
+      packages, 0x40 each: u64 title id, u32 root dir, u32 exefs dir, u32 romfs dir, u32 version, u8 kind
+                           (0 base, 1 update, 2 dlc), u8 flags, u16, u32, u64 meta offset, u32 meta length, 20 bytes
+      dirs,     0x18 each: u32 name offset, u32 name length, u32 first child, u32 child count, u64
+      files,    0x50 each: u32 name offset, u32 name length, u64 size, u64 data offset (absolute), u64 stored size,
+                           sha256 of the file's bytes, u8 codec (0 stored, 1 one zstd frame), padding
+      children: u32 each, a directory below the dir count, else dir count + file index
+      names:    the pool
+```
+
+`Nup.__init__()` reads no more of the table of contents than the file holds, whatever the header says. The SHA-256
+only says the table is what the file's writer wrote: counts and offsets that do not fit it end in a `NupError`, which
+the callers report, not in `struct.error` or `IndexError`.
+
+### `Nup.tree()`
+
+Path relative to the directory and file index, for every file below it. A directory met twice (one listed as its own
+child or ancestor) is a `NupError`, where it went round for good.
+
+### `Nup.chunks()`
+
+The file's bytes in pieces, checked against its SHA-256 at the end (`NupError` when they differ).
+
+## `tools/package_build.py`
+
+Packages a built `nx2saria.exe` into a folder that runs from anywhere: `build/<version>-portable` by default.
+
+```
+.venv/Scripts/python tools/package_build.py [--version v121] [--build build/v121] [--exe PATH/nx2saria.exe]
+                                            [--out build/v121-portable] [--with-romfs] [--no-shader-cache]
+```
+
+The folder holds the exe, its DLLs, the shader translator (NativeAOT: no .NET), the RomFS index and patches, the
+extracted ExeFS (the game code the exe loads), the shared fonts, the prepared shader and pipeline files. There is no
+config file: `nx2saria.exe` finds the `exefs`, `romfs`, `profile` and `shared-fonts` folders next to itself. Without
+`--with-romfs` the 16 GB RomFS image stays out; copy `build/extracted/<version>/romfs/romfs.bin` to `<folder>/romfs/`
+or set `NX2SARIA_ROMFS` (a path, relative ones to the exe's folder). Saves go to `<folder>/profile`.
+
+The folder contains game code and data derived from the game: for your own machines only, never publish or share it.
+
+- `DLLS` is empty off Windows: a Linux source build links the system's SDL3, Opus and libvpx, so the other machine
+  needs them installed.
+- `STATE` is the prepared state next to the exe: translator answers, programs, the prepared list, pipeline cache and
+  its keys, and the variant lists `nx2saria.exe --prepare-shaders` reads (the driver keys its library cache by exe
+  path, so each copy runs it).
+- `romfs-patches-xbox` and `romfs-patches-xbox-label` are copied when there, for `prompts = xbox`
+  (`tools/make_romfs_patches.py --prompts`).
+
+## `tools/package_launcher_linux.py`
+
+Packages the launcher app and the relocatable Python runtime for a Linux release. [tools.md](tools.md) has what
+`main()` carries.
+
+## `tools/pack_shader_cache.py`
+
+Folds the loose files of a shader cache into `<cache>/shader-cache.pack` and deletes them.
+
+```
+python tools\pack_shader_cache.py <install folder>\shader-cache [--keep]
+```
+
+The translator writes four files per shader into the cache (`runtime/gfx/gfx_shader.c`): `<key>.spv`,
+`<key>.res.json`, `<name>.use` and `in/<input id>.in`, about 117,000 files after an install, which are slow to copy,
+back up, scan and sync. `nx2saria.exe` reads the pack first and the loose files after it, and keeps writing new
+translations as loose files, so this tool can run again at any time the game is closed: it merges the existing pack
+with the loose files (a loose file wins over a packed one of the same name) and writes the pack anew. The installer
+runs it after preparing the shaders. `--keep` leaves the loose files in place. Close the game first: a running
+`nx2saria.exe` has read the old pack's index.
+
+Layout, little-endian (`runtime/gfx/gfx_shader.c`, its cache pack part): `b'TKSPACK1'`, u32 count, u32 0, then count
+entries of 48 bytes sorted by (kind, name): name (the 32 bytes the file name's 64 hex digits spell), u32 kind (1
+`.spv`, 2 `.res.json`, 3 `.use`, 4 `in/*.in`), u32 size, u64 offset; then the data.
+
+`USE_SIZE` (20) is what `runtime/gfx/gfx_shader.c` `use_store()` writes: magic, version, three masks.
+
+Loose files are read on `READERS` threads, at most `WINDOW` ahead of the one being written. On Windows the time goes
+into opening each file (about 3 ms the first time, against 0.04 ms once the system has seen it), which threads
+overlap: read one at a time, the 175,000 files of a launcher's cache took minutes.
+
+### `loose_files()`, `read_pack()`
+
+`loose_files()`: `{(kind, name): path}` of the cache's loose files; `*.in` only in `in/`. `read_pack()`:
+`{(kind, name): (offset, size)}` of an existing pack; `{}` when there is none or it fails a check.
+
+### `pack()`
+
+With no loose file there is nothing to fold in: every file of the cache is already in the pack, so writing it again
+would copy the same bytes over the same entries (1.37 GiB on the bench, 2.6 s, and a file system that then has the old
+pack's blocks to release as well). The installer runs this after every prepare, so it returns at once.
+
+The header and index are written once the offsets are known: zeros hold their place first. For each key the data is a
+valid loose file, else the packed copy, else nothing. The `in` folder is removed afterwards only when empty.
+
+## `tools/pad_prompts.py`
+
+Xbox, PlayStation, Steam Deck and keyboard-and-mouse button prompts, drawn from button art on the player's machine.
+[controls.md](../controls.md) has the player's side. `tools/make_game.py` holds a recorded digest of this file's code
+in `PROMPT_TOOLS` and `tests/launcher_test.py` compares it; that digest takes every code line as written, with a
+comment at its end, so the comments at the end of code lines stay in this file until the digest is next changed for
+another reason. Their notes are here all the same.
+
+```
+python tools/pad_prompts.py --art FOLDER --game FOLDER [--style xbox|playstation|steamdeck|pc]
+                            [--layout position|label]
+                            [--binds nx2saria.ini]
+```
+
+`--art` is a folder of button art with the file names of `STYLES` (`tools/prompt_art.py`) and `KEY_ART`: the `Source`
+folder of a button prompt art pack, which holds `XGamepad/Default`, `XGamepad/Light`, `P5Gamepad/Default`,
+`P5Gamepad/Light`, `Keyboard_Mouse/Dark` and `Keyboard_Mouse/White` (128x128 PNGs: a dark button or key with a white
+label, or a light one with a dark or coloured label), or a release's `prompt-art` folder, which holds the same files
+(`tools/make_game.py` runs this tool on it): by default the repository's `prompt-art` folder (`tools/prompt_art.py`,
+`REPO_ART`; CC0 pictures whose `SOURCE.md` says where they came from). The art is read where it lies.
+
+`--game` is the folder of the port's exe and `romfs-index.bin`. The RomFS is read from its `romfs` folder
+(`index.json` and `romfs.bin`, as the setup writes them); `--romfs` names another, which may also be a folder of
+extracted files. Each pad style and layout becomes the overlay folder `<game>/romfs-patches-<style>` (layout
+`position`) or `<game>/romfs-patches-<style>-label` (layout `label`), and the keyboard and mouse
+`<game>/romfs-patches-pc`, each with a `manifest.tsv`: `runtime/hle/romfs.c` `overlay_init()` loads it in place of the
+game's files when `nx2saria.ini` (or an older `nx2navi.ini`) has `prompts = xbox`, `playstation`, `steamdeck` or `pc`
+(`runtime/input/input_map.c` `input_prompts_folder()`). Without `--style` or `--layout`, every style or layout. The
+Steam Deck style has no art of its own: its buttons are named as an Xbox pad's face buttons and a PlayStation pad's
+shoulders and stick clicks, so it is drawn from those two pads' pictures (`STYLES`). `--out` writes a single style and
+layout elsewhere.
+
+The two pad layouts follow `pad_layout` (`runtime/input/input_map.c`). `position`, for `pad_layout = nintendo`: a pad
+is played by position, so Switch A is the right face button, labelled B on an Xbox pad and circle on a PlayStation
+pad; the prompts for A show that button (A as B or circle, B as A or cross, X as Y or triangle, Y as X or square).
+`label`, for `pad_layout = xbox`, `playstation` and `auto`: Switch A is the bottom face button, so A shows A or cross,
+B shows B or circle, X shows X or square and Y shows Y or triangle. `FACE` is the face button that does each Switch
+face button, by its place on the pad.
+
+`pc` shows the first key each button has (`PC_KEYS`, the defaults, with the `bind_` lines of `--binds` over them; by
+default `<game>/nx2saria.ini`, else an existing `<game>/nx2navi.ini`), the mouse buttons as a mouse, and for the right
+stick the mouse moving. A key bound later shows after the tool runs again. The keyboard follows no pad layout: one
+folder, `romfs-patches-pc`.
+
+What changes, the rest of each file staying as it is:
+
+- `Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs`, the button font every prompt in text uses (dialogue, the button
+  guides, the controls screen): the glyphs of the buttons (U+E040 A, B, X, Y, L, R, ZL, ZR, the d-pad, Plus, Minus,
+  and the sticks and d-pad with their directions) become outlines traced from the art (`trace()`), at the size of the
+  game's own face buttons; Power, Home, the console and the arrows stay. A `.bfotf` is a CFF OpenType font behind an
+  8-byte header and an XOR (`tools/button_icons.py` `bfotf_decode()`); fontTools writes it again.
+- `UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs`, the shared interface textures:
+  `KeyTexFontA/B/X/Y_00`, the letter of the action prompt (`DoCommand_00`; 64x64 BC4 masks the layout tints), and
+  `OcarinaButtonA/B/X/Y/L/R_00`, the ocarina's note buttons (`PaOcarinaSingleNote_00`; 93x93 ASTC 4x4 sRGB, a white
+  button with a dark letter). They are painted again in place, in their own format, size and block-linear layout, so
+  the archive keeps its size. `MASKS` and `NOTES` name them by Switch button.
+- The resource size table (`System/Resource/ResourceSizeTable.Product.<n>...rsizetable.zs`): the font grows, and the
+  game sizes the buffer it loads a file into from the table, so the font's entry is raised by as much
+  (`tools/button_icons.py` `grow_restbl()`).
+
+It needs fontTools, Pillow and zstandard (`tools/requirements-py314.txt`; the launcher's Python has them,
+`tools/requirements-launcher.txt`). The two imports after the `sys.path` line carry `# noqa: E402` with what is taken
+from each module (`bfotf_decode`, `bfotf_encode`, `redraw_font`, `grow_restbl`; the art and the folders), which stays.
+
+The tables:
+
+- `GLYPHS`: the Switch button each code point of the button font shows (the stick and d-pad glyphs name their
+  directions). U+E06A is the d-pad with three directions lit; the art has no such picture, so it shows the whole d-pad.
+- `PC_KEYS`, for `prompts = pc`: every button shows the first key its bindings give it. The defaults are
+  `DEFAULT_KEYS` of `runtime/input/input_map.c`; `--binds` takes the `bind_` lines of a settings file over them. The
+  right stick is the camera, which the mouse turns, so its prompts show the mouse moving (its arrow keys, a second
+  source, do not show).
+- `KEY_ART`: the art's name of each key (settings-file key names, `key_names` of `runtime/input/input_map.c`); letters,
+  digits and F keys are their own. The art spells Ctrl as Crtl.
+- `KEY_LABELS`: what a blank key shows for a key the art has no picture of (`label_art()`); any other shows its name.
+- `PIECE`: how much of a packed file `unpack()` gives the decompressor at a time.
+- `LIT_AREA`, `LIT_RING`: pixels of the art.
+- `NOTE_BOXES`: where the game's own note buttons are opaque in their 93x93 textures (1.1.1), which the new ones fill:
+  the face buttons a disc, L and R a wider shape. Measured once with the runtime's ASTC decoder
+  (`tools/ui_textures.py`), so this tool needs none.
+
+### `pad_pictures()`, `pc_keys()`, `key_picture()`, `pc_pictures()`
+
+`pad_pictures()`: glyph and note pictures for a pad style, Switch button to picture, the face buttons through `FACE`.
+
+`pc_keys()`: `PC_KEYS` with the first key of each `bind_<button>` line of a settings file over it. A line without a
+key entry, or with `key:default` first, keeps the default (the prompt then shows a key the line took away).
+
+`key_picture()`: the art of a key or mouse button in `shade` (`Dark`: a dark key with a white label; `White`: the
+other way round), or a blank key with its name drawn on it when the art has none. The art names its dark 4 key
+`T_3_Key_Dark-1`.
+
+`pc_pictures()`: glyph and note pictures for the keyboard and mouse, by the key each button has. A d-pad or a stick
+with several directions shows their keys in a grid, as they sit on the keyboard.
+
+### `Romfs`
+
+The RomFS: `index.json` and `romfs.bin` (each file's offset and size), or a folder of extracted files.
+`Romfs.load()` gives the contents and the dictionary (or `None`) of a RomFS file, a `.zs` file decompressed with the
+dictionary its frame names.
+
+### `unpack()`
+
+The contents of a zstd frame, with the dictionary it was packed with; bytes after the frame are left out.
+
+The file goes to the decompressor in pieces of `PIECE` bytes and the pieces' outputs are joined once. Given the whole
+file in one call, the library returns one bytes object that it grows by copying as the output comes: made-up data of
+the size of the interface texture archive, 69 MB packed and 244 MB unpacked, took 21 s that way on a fast PC against
+0.3 s in pieces. Players' builds waited 44 to 52 s before this tool's first folder, most of its minute.
+
+### `sarc_members()`, `compress()`
+
+`sarc_members()`: name to absolute start and end of every member of a SARC archive. `compress()`: a zstd frame of
+`contents` with the dictionary the original used, so the game reads it the same way.
+
+### `load_art()`, `grid_art()`, `label_art()`, `options_art()`
+
+The art is a button as coverage, traced into outlines. `load_art()`: a picture as RGBA: a file under `art`, or one
+drawn from several (`OPTIONS`, `('grid', cells)`, `('label', key, shade)`). `grid_art()`: keys side by side; cells are
+(picture, column, row), row 0 on top, each centred in a cell as large as the largest key, with a small gap between
+cells. `label_art()`: a key the art has no picture of, as its blank key with the key's name written on it.
+`options_art()`: PlayStation's Options button as the art draws its Create button's neighbour on the pad: the dark pill
+of the share picture with three white bars, drawn four times larger and scaled down for smooth edges.
+
+### `ink()`
+
+Coverage 0..1 per pixel (rows of floats) of a button drawn as a dark body with white symbols, for one-colour glyphs:
+the body counts, and so does white outside it (a stick's direction arrows, which touch the transparent background);
+white inside it (letters, symbols) is a hole. `lit`: a d-pad with its pressed directions in white. The art draws them
+as a white arm in a hairline outline (Xbox) or as a white arm the others' colour reversed (PlayStation); at text size
+the one vanishes and the other looks like the rest, so each white part of `LIT_AREA` pixels or more becomes a hollow
+arm, a `LIT_RING`-pixel band along its edge.
+
+### `symbol()`
+
+Coverage of the white letter or symbol inside a dark button (the action prompt's letter), as an L image: the white
+inside the body, the body's own grey left out.
+
+### `_parts()`
+
+Alpha and luminance (0..1) per pixel, whether each pixel is white outside the body or its soft edge, and the white
+parts (lists of (x, y)). The background is the transparent pixels reachable from the edge. Each white part is outside
+the body when a quarter of its edge touches the background: a stick's arrows touch it all round; a lit d-pad direction
+inside a thin dark outline touches it only where the outline thins at a rounded corner, and stays a hole. The soft
+edge of an outside part (antialiased pixels next to it) counts with it.
+
+### `trace()`
+
+Closed outlines (lists of (x, y) in pixels, y down) where `field` crosses `level`, by marching squares with the
+crossings placed linearly along the cell edges. Each outline has the covered side on its left once y points up (as in
+a font): outer outlines run counter-clockwise and holes clockwise, as a CFF font wants them.
+
+- `v()` puts one pixel of zero around the field, so every outline closes; `cross()` returns its point back in field
+  coordinates.
+- `starts` maps an edge to the start point, end edge and end point of the segment leaving the cell through it. A
+  cell's corners are taken clockwise with y down.
+- `hits` are the crossings met going round the cell clockwise: edge key, point, and whether it enters the covered
+  part. Each segment joins the crossing entering a covered part to the one leaving it, so that going round the cell
+  clockwise (y down) the covered part lies between them.
+- Four crossings are a saddle: the middle decides whether the covered corners join. The crossings are put in the order
+  enter, leave, enter, leave first.
+
+### `simplify()`, `outlines_of()`
+
+`simplify()`: a closed outline with the points that stray less than `tolerance` from a straight line dropped
+(Douglas-Peucker on the two halves between the first point and the one farthest from it). `outlines_of()`: the traced,
+simplified outlines of a dark-style button picture, specks dropped (`lit`: as `ink()`).
+
+### `draw_font()`
+
+The button font with the glyphs of `GLYPHS` drawn from `glyph` (Switch button to picture). Every picture is scaled as
+A's picture is to the game's A (both fill their square the same way; the game's A is a round button), centred in its
+advance and placed at the height of the art's own square, so the arrows of a stick reach out as they do in the art. A
+grid of keys is made no taller than the game's A and centred on it. A wider picture widens its glyph; `side` is the
+room the game's A has on either side. `lit_dpad`: the d-pad directions are lit pad pictures (`ink()` with `lit`).
+
+### `bntx_textures()`, `level_tiles()`, `block_linear()`
+
+BNTX textures are block-linear in the Switch 2 GOB layout (`runtime/gfx/tex_deswizzle.c`, `nvn_bl_offset`).
+`bntx_textures()`: name to format, width, height, block height (log2 GOBs), level offset and level size of every
+one-level 2D texture of a BNTX. `level_tiles()`: the block height of a level `rows` block-rows high
+(`runtime/nvn/nvn_tex.c`, `adj_tile`): halved while it is too tall. `block_linear()`: the offset of each 16-byte piece
+(row, piece) of a level, in the Switch 2 GOB order.
+
+### `bc4_encode()`
+
+BC4 blocks of an L image: each block's lowest and highest value as the ends, every pixel the nearest of the eight
+levels between them.
+
+### `astc_block()`
+
+One 128-bit block of 16 RGBA texels: the two ends of the colours' main direction, every texel its nearest of the four
+steps between them.
+
+The block is ASTC 4x4, one partition, endpoint mode 12 (RGBA, direct), 8-bit endpoints and a 4x4 grid of 2-bit weights
+(`ASTC_WEIGHTS`): 11 bits of block mode (0x042: weights 0..3, grid 4x4), 2 of partition count, 4 of endpoint mode, then
+the eight endpoint bytes from bit 17 (r0 r1 g0 g1 b0 b1 a0 a1) and the 32 weight bits from bit 127 down. The 79 bits
+left after the mode and the weights hold eight values of 0..255 exactly, so the decoder reads the endpoints as plain
+bytes. The ends are swapped when the second is the darker in RGB: the decoder would read them the other way (blue
+contraction).
+
+### `fit()`, `bleed()`, `mask_of()`
+
+`fit()`: the image's opaque part scaled to fit `box` (x0, y0, x1, y1) and centred in it, on a transparent canvas of
+`size`; resampled with premultiplied alpha, so the edges keep their colour. `bleed()`: the colour of the nearest
+covered pixel spread under transparent ones, so a compressed block that holds both (covered and transparent pixels) ends in the button's own colour
+rather than in black. `mask_of()`: the action prompt's mask of a dark picture: the white letter or symbol inside it,
+or for a mouse, whose white is the pressed button rather than a label, the mouse itself with that button cut out.
+
+### `draw_textures()`
+
+Paints the action prompt's letters (from `glyph`) and the ocarina's note buttons (from `note`; both Switch button to
+picture) into the BNTX data (a bytearray) in place. A new letter takes the height and centre of the game's own letter
+in that mask (a wider one may use a little more width); a note button fills `NOTE_BOXES`.
+
+### `write_overlay()`
+
+`outputs`: RomFS path to new file bytes; `originals`: RomFS path to the original's bytes. Writes each file under `out`
+and the manifest `runtime/hle/romfs.c` `overlay_load()` checks: path, size, SHA-256, the original's SHA-256.
+
+### `default_binds()`
+
+The current settings file, or an existing older one (`nx2navi.ini`) when that is all the folder has.
