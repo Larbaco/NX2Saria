@@ -1,33 +1,9 @@
-"""Static check of runtime/cfg/cfg.c's settings tables against what the runtime reads. Standard library only, so the
-content guard workflow runs it beside tools/check_content.py.
-
-It fails on:
-- a row or name after a // on a line of known[], metas[], sections[] or DECK[]: it is not compiled, and a
-  hidden metas[] row ends every start with "FATAL: cfg: NX2SARIA_<X> has no row in the settings table" (this shipped
-  in two test builds); a /* inside those tables, which this check does not read;
-- a name twice in known[], or two metas[] rows for one key in one #if branch (the first branch stands for the table,
-  later ones repeat its keys);
-- a metas[] row whose key is not in known[];
-- a read with cfg_value, cfg_int, cfg_bool or cfg_double of "NX2SARIA_<KEY>" (directly, or through one level of a
-  function that passes its const char * parameter on to one of them) whose key has no metas[] row, unless the same
-  function asked cfg_get, cfg_is_set or cfg_meta about that key before it;
-- a name the runtime reads that is not in known[] and does not start with CHEAT_ (cfg.c is_known): cfg_get, cfg_is_set
-  and cfg_meta of "NX2SARIA_<KEY>", rt_knob("<KEY>", ...), one level of functions whose const char * parameter reaches
-  cfg_get or a "NX2SARIA_%s" of it, and the `set <name> NX2SARIA_<KEY>` lines of recomp/patches-v111.txt. Such a key set
-  in nx2navi.ini logs "unknown key" and is listed as unknown in the menu.
-
-Names read only with getenv, plat_setenv or cfg_setenv are environment-only and not checked. runtime/cfg/cfg_probe.c asks
-for an unknown key on purpose and is left out, as are third_party/ and the generated *_spv.h headers.
-
-Usage: python tests/cfg_rows_check.py [repo]          one line per problem with file:line; exit 1 if any
-       python tests/cfg_rows_check.py --self-test     inject each kind of fault into copies and check each is caught
-"""
 import re
 import sys
 from pathlib import Path
 
 KEY = r'[A-Z][A-Z0-9_]*'
-TABLES = {   # declaration, what a row looks like on a line
+TABLES = {
     'known[]': ('static const char *const known[]', r'"(' + KEY + r')"'),
     'metas[]': ('static const CfgMeta metas[]', r'\{\s*"(' + KEY + r')"'),
     'sections[]': ('sections[] = {', r'\{\s*"(' + KEY + r')"'),
@@ -39,7 +15,6 @@ LIT = r'"NX2SARIA_(' + KEY + r')"'
 
 
 def matching(src, open_at):
-    """The index of the bracket that closes the one at open_at (brackets in string literals and comments left out)."""
     pair = {'{': '}', '(': ')'}[src[open_at]]
     depth, k, n = 0, open_at, len(src)
     while k < n:
@@ -68,7 +43,6 @@ def matching(src, open_at):
 
 
 def split_comment(line):
-    """(code, comment) of one line: the comment starts at the first // outside a string literal."""
     i, n, quote = 0, len(line), None
     while i < n:
         c = line[i]
@@ -87,7 +61,6 @@ def split_comment(line):
 
 
 def strip_comments(src):
-    """C source with its comments blanked out, line numbers and string literals kept."""
     out, i, n = [], 0, len(src)
     while i < n:
         c = src[i]
@@ -116,7 +89,6 @@ def line_of(src, pos):
 
 
 def tables(cfg, problems):
-    """The names of each table, the first #if branch of each line only, with the problems of hidden rows."""
     out = {}
     for name, (decl, row) in TABLES.items():
         i = cfg.find(decl)
@@ -148,7 +120,7 @@ def tables(cfg, problems):
             if hidden:
                 problems.append(f'runtime/cfg/cfg.c:{line0 + n}: {name} rows after // are not compiled: {", ".join(hidden)}')
             if branch and branch[-1] > 0:
-                continue   # a later branch repeats the first one's keys
+                continue
             for k in re.findall(row, code):
                 names.append((k, line0 + n))
         out[name] = names
@@ -156,7 +128,6 @@ def tables(cfg, problems):
 
 
 def functions(src):
-    """(name, parameters, body start, body end) of every function definition in comment-stripped source."""
     out = []
     for m in re.finditer(r'\b([A-Za-z_]\w*)\s*\(([^;{}()]*)\)\s*(?:const\s*)?\{', src):
         name = m.group(1)
@@ -168,7 +139,6 @@ def functions(src):
 
 
 def call_args(src, open_at):
-    """The arguments of the call whose ( is at open_at, as text."""
     end = matching(src, open_at)
     args, depth, cur, k = [], 0, '', open_at + 1
     while k < end:
@@ -196,7 +166,6 @@ def call_args(src, open_at):
 
 
 def check(cfg_text, sources, patches):
-    """The problems, one line each. sources: {path as reported: text}; cfg_text is also among them as runtime/cfg/cfg.c."""
     problems = []
     tabs = tables(cfg_text, problems)
     known = [k for k, _ in tabs['known[]']]
@@ -214,8 +183,7 @@ def check(cfg_text, sources, patches):
             problems.append(f'runtime/cfg/cfg.c:{n}: metas[] row {k} is not in known[]')
 
     stripped = {p: strip_comments(t) for p, t in sources.items()}
-    # one level of wrappers: a const char * parameter passed on to a value read, or to cfg_get / "NX2SARIA_%s"
-    wrappers = {}   # name -> (argument index, 'value' | 'name', the literal carries the prefix)
+    wrappers = {}
     for p, s in stripped.items():
         for fname, params, b, e in functions(s):
             if fname in VALUE_FNS or fname in GUARD_FNS or fname == 'rt_knob':
@@ -233,7 +201,7 @@ def check(cfg_text, sources, patches):
                 elif re.search(r'"NX2SARIA_%%s"\s*,\s*%s\b' % v, body):
                     wrappers.setdefault(fname, (idx, 'name', False))
 
-    value_sites, name_sites = [], []   # (key, file, position, how)
+    value_sites, name_sites = [], []
     for p, s in stripped.items():
         start = s.index('static int is_known') if p.endswith('runtime/cfg/cfg.c') and 'static int is_known' in s else 0
         for m in re.finditer(r'\b(%s)\s*\(\s*' % '|'.join(VALUE_FNS) + LIT, s):
@@ -268,7 +236,7 @@ def check(cfg_text, sources, patches):
         body = next(((b, e) for _, _, b, e in bodies[p] if b < pos < e), None)
         text = stripped[p][body[0]:pos] if body else ''
         if re.search(r'\b(?:%s)\s*\(\s*"NX2SARIA_%s"' % ('|'.join(GUARD_FNS), k), text):
-            continue   # the function asked whether the key is set first (kernel.c SPIN, vk_headroom.c)
+            continue
         problems.append(f'{where(p, pos)}: {how}("NX2SARIA_{k}") has no metas[] row and no cfg_get guard before it: '
                         f'the game would end with "has no row in the settings table"')
     missing = {}
@@ -291,7 +259,6 @@ def read_repo(repo):
 
 
 def self_test(repo):
-    """Each kind of fault, put into a copy of the tables or a made-up source file, must be reported."""
     cfg, sources, patches = read_repo(repo)
     base, *_ = check(cfg, sources, patches)
     bad = 0
@@ -313,7 +280,6 @@ def self_test(repo):
                 print('   ', p)
 
     def add_line(table_decl, line):
-        """cfg.c with line put in as the table's first line."""
         i = cfg.index(table_decl)
         j = cfg.index('\n', cfg.index('{', i + len(table_decl) - 1)) + 1
         return cfg[:j] + '    ' + line + '\n' + cfg[j:]
@@ -330,7 +296,6 @@ def self_test(repo):
          add_line(TABLES['metas[]'][0], '{"FULLSCREEN", "0", "0|1", LIVE},'))
     case('a metas[] row not in known[]', r'metas\[\] row ROW_NOT_KNOWN is not in known\[\]',
          add_line(TABLES['metas[]'][0], '{"ROW_NOT_KNOWN", "0", "0|1", LIVE},'))
-    # a row the game reads, hidden behind a // put before it on its line: its readers are left without a row
     at = cfg.index('{"FULLSCREEN"', cfg.index(TABLES['metas[]'][0]))
     case('a value read on a row hidden by // (FULLSCREEN)', r'FULLSCREEN"\) has no metas\[\] row',
          cfg[:at] + '// ' + cfg[at:])
@@ -358,9 +323,6 @@ void fake(void) {
     case('a name read through a cfg_get wrapper', r'ENV_NOT_KNOWN is read', extra=extra)
     case('a patch set\'s name not in known[]', r'PATCH_SET_NOT_KNOWN is read',
          patch_text=patches + '\nset some_patch NX2SARIA_PATCH_SET_NOT_KNOWN 1\n')
-    # G42: a key the game reads with cfg_bool (or another typed read: they all take cfg_value's row default) that is
-    # in known[] but has no metas[] row. The game ends at start with "FATAL: cfg: ... has no row in the settings table"
-    # whenever neither the environment nor the settings file sets the key.
     typed = {'runtime/fake_typed.c': '''
 void fake_typed(void) {
     int a = cfg_bool("NX2SARIA_G42_BOOL");

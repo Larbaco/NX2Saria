@@ -1,19 +1,4 @@
 # needs: clang
-"""Check runtime/gfx/gfx_shader.c's carry refusal: a previous translator's translation whose texture pool array has the
-earlier length (32768, vk.h VK_POOL_TEX_CARRIED) is not served while the current translator may translate the shader,
-because its clamp draws every texture numbered from 32768 up with slot 32767. The check cuts pool_short, carry_usable,
-carry_load, carry_find, carry_find_iid and carry_last out of gfx_shader.c, compiles them against stand-ins for the disk
-and memory caches, and walks the lookups: a refused entry is freed and the lookup goes on to the next previous identity,
-the owned branch (gfx_shader_load_private) frees it as well, and entries with the current length, the sampler pool or no
-pool are served as before. carry_last, which runs once the current translator has failed the shader, serves the refused
-translation after all and puts it in the memory cache, where the memory lookup finds it. pool_short_note, which counts
-the shaders of the earlier length that enter the memory cache for vk_texture.c's warning, counts those only, and logs
-only one that is not carried. gfx_shader.c's POOL_TEX_SHORT must equal vk.h's VK_POOL_TEX_CARRIED.
-
-No GPU, no game files, any Python.
-
-Usage: carry_pool_check.py
-"""
 import os
 import re
 import shutil
@@ -27,7 +12,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -221,7 +205,6 @@ def cut(source, start, end):
 
 
 def define(source, name):
-    """The decimal value of `#define name <n>` in source."""
     m = re.search(r'^#define ' + name + r' (\d+)\b', source, re.M)
     if not m:
         raise SystemExit(f'carry pool check: no #define {name}')
@@ -230,7 +213,6 @@ def define(source, name):
 
 def main():
     src = (ROOT / 'runtime' / 'gfx' / 'gfx_shader.c').read_text(encoding='utf-8')
-    # gfx_shader.c does not include vk.h, so it states the earlier length itself: the two must stay equal.
     short = define(src, 'POOL_TEX_SHORT')
     carried = define((ROOT / 'runtime' / 'vk' / 'vk.h').read_text(encoding='utf-8'), 'VK_POOL_TEX_CARRIED')
     if short != carried:
