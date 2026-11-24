@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/fg_reset_check.c: runtime/vk/vk_fg_reset.h, which frames FSR 3.1 frame generation's callback is
-told are camera cuts.
-
-No GPU, no game files, any Python.
-
-Usage: fg_reset_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
