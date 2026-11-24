@@ -48,7 +48,7 @@ All entries below are **not yet implemented or verified in Electron**. For each,
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
 - [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings.
-- [ ] Reports: current consent, timeout, choices, preview and comments, including behavior when reporting is unavailable. Do not change consent behavior.
+- [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. Do not change consent behavior.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
 - [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages.
 - [ ] CLI, locks and diagnostics: retain existing supported command-line use, concurrent-job rules, crash/interruption reporting and log privacy; explicitly evaluate how the new UI shares these resources.
