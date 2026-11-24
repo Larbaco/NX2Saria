@@ -3076,8 +3076,8 @@ leaves room for a note.
 
 The ids come in groups, in this order: the software keyboard; the menu's window, tabs and bottom row; Screen; Game;
 Sound; Controls; the Controls tab's remapping rows; the Amiibo tab; the Game tab's Discord row and Testing rows; the
-language names; the Cancel of the confirmation boxes; the performance overlay; the Cheats tab; the Saves group; the capture note; the boot screen;
-the Picture rows.
+language names; the Cancel of the confirmation boxes; the performance overlay; the Cheats tab; the Saves group; the
+capture note; the boot screen; the Picture rows.
 `UI_MENU_FIRST` to `UI_MENU_LAST_ID` carry English, Russian, Brazilian Portuguese and Simplified Chinese texts.
 
 For a translator, what a text is for and what its printf arguments take:
@@ -3099,8 +3099,6 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_GRAPHICS` | group heading over the resolution rows |
 | `UI_MENU_WIDE_HUD`, `UI_MENU_WIDE_MENUS` and their `_DESC`, `_CENTER`, `_EDGES`, `_FULL` | where the HUD and the menus go on a picture wider than 16:9 (`NX2SARIA_WIDE_HUD`, `NX2SARIA_WIDE_MENUS`) |
 | `UI_MENU_TEX_DETAIL_AUTO` | "Automatic: %s", `%s` the level it picks on this card |
-| `UI_MENU_COLOR` | group heading over the colour rows |
-| `UI_MENU_HDR_GROUP` | group heading over the HDR rows |
 | `UI_MENU_AA_TAA_FSR4` | "TAA (%s)": FSR 4's name as the Upscaling row gives it ("AMD FSR 4.1") |
 | `UI_MENU_FPS_DISPLAY`, `UI_MENU_FPS_DISPLAY_HZ` | the monitor's refresh rate; the second is a printf format with the rate in Hz, used when it is known |
 | `UI_MENU_FPS_RTSS`, `UI_MENU_FPS_RTSS_READONLY` | notes under the frame rate value: RivaTuner Statistics Server (`runtime/pacing/rtss_limit.c`) limits the game, or cannot |

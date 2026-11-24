@@ -44,9 +44,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
 
     [UI_MENU_FULLSCREEN] = "Fullscreen", [UI_MENU_FULLSCREEN_DESC] = "Play in fullscreen. F11 switches it.",
     [UI_MENU_WINDOW_SIZE] = "Window size", [UI_MENU_WINDOW_SIZE_DESC] = "Window size outside fullscreen.",
-    [UI_MENU_WINDOW_SIZE_CUSTOM] = "Custom",
     [UI_MENU_PRESENT_DESC] = "Stops screen tearing. Off lowers input delay slightly.",
-    [UI_MENU_PRESENT_MAILBOX] = "Mailbox", [UI_MENU_PRESENT_VSYNC] = "VSync", [UI_MENU_PRESENT_IMMEDIATE] = "Immediate",
+    [UI_MENU_PRESENT_VSYNC] = "VSync", [UI_MENU_PRESENT_IMMEDIATE] = "Immediate",
     [UI_MENU_PRESENT_IN_USE] = "in use: %s",
     [UI_MENU_LOW_LATENCY] = "Low latency",
     [UI_MENU_LOW_LATENCY_DESC] = "The graphics driver holds each frame's start, so the controller is read as late as "
@@ -69,10 +68,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE] = "3D render scale",
     [UI_MENU_RENDER_SCALE_DESC] = "Size of the 3D scene. Higher is sharper but slower.",
     [UI_MENU_RENDER_SCALE_GAME] = "Game (83 %)",
-    [UI_MENU_UPSCALER] = "Scaling to the window",
-    [UI_MENU_UPSCALER_DESC] = "How the game's picture is fitted to the window. Larger window: FSR keeps edges and detail "
-                              "sharper than bilinear. Smaller window (Ocarina draws 2560 x 1440): the picture is shrunk "
-                              "and FSR sharpens it by the strength below.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
     [UI_MENU_UPSCALING_NATIVE] = "Native (100%)",
     [UI_MENU_GAME_ASPECT] = "Game aspect",
@@ -105,22 +100,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SHARPNESS] = "FSR sharpness",
     [UI_MENU_SHARPNESS_DESC] = "How sharp FSR makes the picture. 0 turns it off.",
     [UI_MENU_SHARPNESS_NEEDS_FSR] = "only with AMD FSR 1 or FSR 3.1",
-    [UI_MENU_COLOR] = "Colour",
-    [UI_MENU_COLOR_PRESET] = "Colour profile",
-    [UI_MENU_COLOR_PRESET_DESC] = "Sets the four values below. Vivid: more contrast and saturation, shadows opened a "
-                                  "little (made for OLED screens). Clarity: a little more contrast, saturation and "
-                                  "brightness. Moving a value makes the profile Custom. The HUD changes with the picture; "
-                                  "this menu does not.",
-    [UI_MENU_COLOR_DEFAULT] = "Game's own", [UI_MENU_COLOR_VIVID] = "Vivid (OLED)", [UI_MENU_COLOR_CLARITY] = "Clarity",
-    [UI_MENU_COLOR_CUSTOM] = "Custom",
-    [UI_MENU_COLOR_BRIGHTNESS] = "Brightness", [UI_MENU_COLOR_BRIGHTNESS_DESC] = "Added to every colour; 0 leaves it.",
-    [UI_MENU_COLOR_CONTRAST] = "Contrast",
-    [UI_MENU_COLOR_CONTRAST_DESC] = "Spreads colours away from mid-grey (above 100 %) or towards it; 100 % leaves them.",
-    [UI_MENU_COLOR_SATURATION] = "Saturation",
-    [UI_MENU_COLOR_SATURATION_DESC] = "Colour strength against grey; 100 % leaves it.",
-    [UI_MENU_COLOR_GAMMA] = "Gamma",
-    [UI_MENU_COLOR_GAMMA_DESC] = "Below 1 brightens dark and middle tones, above 1 darkens them; 1 leaves them.",
-    [UI_MENU_HDR_GROUP] = "HDR",
     [UI_MENU_HDR] = "HDR output",
     [UI_MENU_HDR_DESC] = "Brighter highlights on an HDR display. Turn on HDR in Windows first.",
     [UI_MENU_HDR_PEAK] = "Peak brightness",
@@ -169,39 +148,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                   "towards yellow and white. 0 keeps their hue.",
     [UI_MENU_SHADOW_SCALE] = "Shadow resolution",
     [UI_MENU_SHADOW_SCALE_DESC] = "Sharper shadows. Higher costs more GPU power.",
-    [UI_MENU_PCSS] = "Soft shadows",
-    [UI_MENU_PCSS_DESC] = "Sun shadows sharp where an object meets the ground and softer the further the shadow falls "
-                          "(PCSS). 0 keeps the game's filter. Takes effect at the next start.",
-    [UI_MENU_CONTACT_SHADOWS] = "Contact shadows",
-    [UI_MENU_CONTACT_SHADOWS_DESC] = "Small sun shadows the shadow maps miss: at feet, under stones, in grass and creases. "
-                                     "Traced on the screen after lighting. Takes effect at the next start.",
     [UI_MENU_SHADOW_RANGE] = "Shadow cascade range",
     [UI_MENU_SHADOW_RANGE_DESC] = "Keeps shadows sharp further away.",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
-    [UI_MENU_DLAA_DESC] = "NVIDIA DLSS for the 3D scene (NVIDIA RTX GPUs; " DLSS_FILE " next to " EXE_FILE "): smoother "
-                          "edges and less shimmer. The HUD is not touched. The mode below sets the resolution it works "
-                          "from. Takes effect after a restart.",
-    [UI_MENU_DLSS_PRESET] = "DLSS model",
-    [UI_MENU_DLSS_PRESET_DESC] = "Which DLSS model runs. Automatic follows NVIDIA's advice per mode: K for DLAA, Quality "
-                                 "and Balanced, M for Performance, L for Ultra Performance. J: slightly less ghosting "
-                                 "behind moving characters, a little more flicker. K: the sharpest model in every mode. "
-                                 "Applies at once.",
-    [UI_MENU_DLSS_PRESET_DEFAULT] = "Automatic", [UI_MENU_DLSS_PRESET_K] = "K (sharpest)",
-    [UI_MENU_DLSS_PRESET_J] = "J (less ghosting)",
-    [UI_MENU_DLSS_CHARS] = "DLSS character trails",
-    [UI_MENU_DLSS_CHARS_DESC] = "Reduces the faint trails behind moving characters, animals and what they hold: DLSS takes "
-                                "less of the previous frames there. Stronger removes more of the trails and leaves those "
-                                "edges a little less smooth. Applies at once.",
-    [UI_MENU_DLSS_CHARS_OFF] = "Off", [UI_MENU_DLSS_CHARS_LIGHT] = "Light", [UI_MENU_DLSS_CHARS_MEDIUM] = "Medium",
-    [UI_MENU_DLSS_CHARS_FULL] = "Full",
-    [UI_MENU_DLSS] = "DLSS mode",
-    [UI_MENU_DLSS_DESC] = "DLAA draws the 3D scene at full resolution. Quality, Balanced, Performance and Ultra "
-                          "Performance draw it at 67, 58, 50 and 33 % and let DLSS scale it up, which saves GPU time; "
-                          "they replace the 3D render scale. Takes effect at once.",
     [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_FSR3_NATIVE] = "Native AA", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
     [UI_MENU_DLSS_PERFORMANCE] = "Performance", [UI_MENU_DLSS_ULTRA] = "Ultra Performance",
-    [UI_MENU_FXAA] = "Game anti-aliasing (FXAA)",
-    [UI_MENU_FXAA_DESC] = "The game's own FXAA edge smoothing. It blurs fine detail a little; with DLAA on it is not needed.",
     [UI_MENU_AA] = "Anti-aliasing",
     [UI_MENU_AA_DESC] = "How the edges of the 3D picture are smoothed. Game SMAA is the game's own, as on the console. Off "
                         "leaves the edges as drawn. FXAA is quick and a little soft. SMAA finds more of the edges than the "
@@ -218,20 +168,12 @@ static const char *const text_en[UI_TEXT_COUNT] = {
 
     [UI_MENU_FPS_LIMIT] = "Frame rate limit",
     [UI_MENU_FPS_LIMIT_DESC] = "The highest frame rate the game draws at. Frame generation adds its frames on top.",
-    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
     [UI_MENU_FPS_DISPLAY] = "Monitor rate", [UI_MENU_FPS_DISPLAY_HZ] = "Monitor rate (%.0f Hz)",
     [UI_MENU_FPS_UNLIMITED] = "Unlimited",
     [UI_MENU_FPS_RTSS] = "limited by RivaTuner Statistics Server",
     [UI_MENU_FPS_RTSS_READONLY] = "RivaTuner needs the game run as administrator",
     [UI_MENU_FPS_RTSS_IGNORED] = "RivaTuner does not limit this game; the game does",
     [UI_MENU_FPS_RTSS_TWO] = "RivaTuner's own limit also applies: two limiters",
-    [UI_MENU_REALTIME] = "Game speed follows the clock",
-    [UI_MENU_REALTIME_DESC] = "Steps the game by real time, so a slow frame does not slow the game down.",
-    [UI_MENU_CLOTH_REALTIME] = "Cloth on the clock",
-    [UI_MENU_CLOTH_REALTIME_DESC] = "Steps cloth and hair by real time as well.",
-    [UI_MENU_HIGHFPS_FIX] = "High frame rate fixes",
-    [UI_MENU_HIGHFPS_FIX_DESC] = "Corrects physics that misbehave above 30 frames per second, and objects that stay see-through or invisible above 60.",
     [UI_MENU_GAME_LANG] = "Game language", [UI_MENU_GAME_LANG_DESC] = "Language of the game's text and voices.",
     [UI_MENU_GAME_LANG_AUTO] = "Automatic",
     [UI_MENU_OPERATION_MODE] = "Console mode",
@@ -726,9 +668,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
 
     [UI_MENU_FULLSCREEN] = "Полный экран", [UI_MENU_FULLSCREEN_DESC] = "Игра на весь экран. F11 переключает.",
     [UI_MENU_WINDOW_SIZE] = "Размер окна", [UI_MENU_WINDOW_SIZE_DESC] = "Размер окна вне полноэкранного режима.",
-    [UI_MENU_WINDOW_SIZE_CUSTOM] = "Другой",
     [UI_MENU_PRESENT_DESC] = "Убирает разрывы изображения. Выкл. немного снижает задержку.",
-    [UI_MENU_PRESENT_MAILBOX] = "Mailbox", [UI_MENU_PRESENT_VSYNC] = "Вертикальная синхронизация",
+    [UI_MENU_PRESENT_VSYNC] = "Вертикальная синхронизация",
     [UI_MENU_PRESENT_IMMEDIATE] = "Без ожидания",
     [UI_MENU_PRESENT_IN_USE] = "сейчас: %s",
     [UI_MENU_LOW_LATENCY] = "Низкая задержка",
@@ -759,10 +700,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE] = "Масштаб 3D-отрисовки",
     [UI_MENU_RENDER_SCALE_DESC] = "Размер 3D-сцены. Выше — чётче, но медленнее.",
     [UI_MENU_RENDER_SCALE_GAME] = "Как в игре (83 %)",
-    [UI_MENU_UPSCALER] = "Масштабирование под окно",
-    [UI_MENU_UPSCALER_DESC] = "Как картинка игры вписывается в окно. Окно больше: FSR сохраняет края и детали чётче "
-                              "билинейного. Окно меньше (Ocarina рисует 2560 × 1440): картинка уменьшается, и FSR "
-                              "повышает её резкость на величину ниже.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Билинейное",
     [UI_MENU_UPSCALING_NATIVE] = "Родное (100%)",
     [UI_MENU_UPSCALING_DESC] = "Как картинка сглаживается и масштабируется под окно. «Родное» рисует 3D-сцену в "
@@ -807,23 +744,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SHARPNESS] = "Резкость FSR",
     [UI_MENU_SHARPNESS_DESC] = "Насколько FSR повышает резкость. 0 отключает.",
     [UI_MENU_SHARPNESS_NEEDS_FSR] = "только с AMD FSR 1",
-    [UI_MENU_COLOR] = "Цвет",
-    [UI_MENU_COLOR_PRESET] = "Цветовой профиль",
-    [UI_MENU_COLOR_PRESET_DESC] = "Задаёт четыре значения ниже. «Яркий»: больше контраста и насыщенности, тени немного "
-                                  "светлее (для OLED-экранов). «Чёткость»: немного больше контраста, насыщенности и "
-                                  "яркости. Изменение любого значения делает профиль «Своим». Интерфейс игры меняется "
-                                  "вместе с картинкой, это меню — нет.",
-    [UI_MENU_COLOR_DEFAULT] = "Как в игре", [UI_MENU_COLOR_VIVID] = "Яркий (OLED)", [UI_MENU_COLOR_CLARITY] = "Чёткость",
-    [UI_MENU_COLOR_CUSTOM] = "Свой",
-    [UI_MENU_COLOR_BRIGHTNESS] = "Яркость", [UI_MENU_COLOR_BRIGHTNESS_DESC] = "Прибавляется к каждому цвету; 0 — без изменений.",
-    [UI_MENU_COLOR_CONTRAST] = "Контраст",
-    [UI_MENU_COLOR_CONTRAST_DESC] = "Отдаляет цвета от среднего серого (выше 100 %) или приближает к нему; 100 % — без "
-                                    "изменений.",
-    [UI_MENU_COLOR_SATURATION] = "Насыщенность",
-    [UI_MENU_COLOR_SATURATION_DESC] = "Сила цвета относительно серого; 100 % — без изменений.",
-    [UI_MENU_COLOR_GAMMA] = "Гамма",
-    [UI_MENU_COLOR_GAMMA_DESC] = "Ниже 1 осветляет тёмные и средние тона, выше 1 затемняет их; 1 — без изменений.",
-    [UI_MENU_HDR_GROUP] = "HDR",
     [UI_MENU_HDR] = "Вывод HDR",
     [UI_MENU_HDR_DESC] = "Более яркие блики на HDR-экране. Сначала включите HDR в Windows.",
     [UI_MENU_HDR_PEAK] = "Пиковая яркость",
@@ -872,39 +792,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                   "жёлтому и белому. 0 сохраняет их оттенок.",
     [UI_MENU_SHADOW_SCALE] = "Разрешение теней",
     [UI_MENU_SHADOW_SCALE_DESC] = "Более чёткие тени. Выше — больше нагрузка на видеокарту.",
-    [UI_MENU_PCSS] = "Мягкие тени",
-    [UI_MENU_PCSS_DESC] = "Тени от солнца резкие там, где предмет касается земли, и мягче, чем дальше падает тень "
-                          "(PCSS). 0 оставляет фильтр игры. Действует после перезапуска.",
-    [UI_MENU_CONTACT_SHADOWS] = "Контактные тени",
-    [UI_MENU_CONTACT_SHADOWS_DESC] = "Мелкие тени от солнца, которых нет на картах теней: у ног, под камнями, в траве и "
-                                     "складках. Считаются по экрану после освещения. Действует после перезапуска.",
     [UI_MENU_SHADOW_RANGE] = "Дальность каскадов теней",
     [UI_MENU_SHADOW_RANGE_DESC] = "Сохраняет чёткие тени на большем расстоянии.",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
-    [UI_MENU_DLAA_DESC] = "NVIDIA DLSS для 3D-сцены (видеокарты NVIDIA RTX; " DLSS_FILE " рядом с " EXE_FILE "): ровнее "
-                          "края и меньше мерцания. Интерфейс не затрагивается. Режим ниже задаёт разрешение, с которым он "
-                          "работает. Действует после перезапуска.",
-    [UI_MENU_DLSS_PRESET] = "Модель DLSS",
-    [UI_MENU_DLSS_PRESET_DESC] = "Какая модель DLSS работает. «Автоматически» следует совету NVIDIA для каждого режима: K "
-                                 "для DLAA, «Качества» и «Баланса», M для «Производительности», L для «Макс. "
-                                 "производительности». J: чуть меньше шлейфов за движущимися персонажами, немного больше "
-                                 "мерцания. K: самая чёткая модель во всех режимах. Действует сразу.",
-    [UI_MENU_DLSS_PRESET_DEFAULT] = "Автоматически", [UI_MENU_DLSS_PRESET_K] = "K (самая чёткая)",
-    [UI_MENU_DLSS_PRESET_J] = "J (меньше шлейфов)",
-    [UI_MENU_DLSS_CHARS] = "Шлейфы персонажей в DLSS",
-    [UI_MENU_DLSS_CHARS_DESC] = "Убирает слабые шлейфы за движущимися персонажами, животными и тем, что они держат: DLSS "
-                                "берёт там меньше от прошлых кадров. Чем сильнее, тем меньше шлейфов и тем чуть менее "
-                                "гладкие края. Действует сразу.",
-    [UI_MENU_DLSS_CHARS_OFF] = "Выкл.", [UI_MENU_DLSS_CHARS_LIGHT] = "Слабо", [UI_MENU_DLSS_CHARS_MEDIUM] = "Средне",
-    [UI_MENU_DLSS_CHARS_FULL] = "Полностью",
-    [UI_MENU_DLSS] = "Режим DLSS",
-    [UI_MENU_DLSS_DESC] = "DLAA рисует 3D-сцену в полном разрешении. «Качество», «Баланс», «Производительность» и "
-                          "«Макс. производительность» рисуют её в 67, 58, 50 и 33 % и масштабируют через DLSS, что "
-                          "экономит время видеокарты; они заменяют масштаб 3D-отрисовки. Действует сразу.",
     [UI_MENU_DLSS_DLAA] = "DLAA (родное)", [UI_MENU_DLSS_QUALITY] = "Качество", [UI_MENU_DLSS_BALANCED] = "Баланс",
     [UI_MENU_DLSS_PERFORMANCE] = "Производительность", [UI_MENU_DLSS_ULTRA] = "Макс. производительность",
-    [UI_MENU_FXAA] = "Сглаживание игры (FXAA)",
-    [UI_MENU_FXAA_DESC] = "Собственное сглаживание FXAA. Слегка размывает мелкие детали; с DLAA оно не нужно.",
     [UI_MENU_AA] = "Сглаживание",
     [UI_MENU_AA_DESC] = "Как сглаживаются края 3D-картинки. SMAA игры — собственное, как на консоли. «Выкл.» оставляет края "
                         "как есть. FXAA быстрое и слегка мягкое. SMAA находит больше краёв, чем игровое, и сохраняет "
@@ -921,20 +812,12 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
 
     [UI_MENU_FPS_LIMIT] = "Ограничение частоты кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "Максимальная частота кадров, которые рисует игра. Генерация кадров добавляет свои сверх неё.",
-    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
     [UI_MENU_FPS_DISPLAY] = "Как у монитора", [UI_MENU_FPS_DISPLAY_HZ] = "Как у монитора (%.0f Гц)",
     [UI_MENU_FPS_UNLIMITED] = "Без ограничения",
     [UI_MENU_FPS_RTSS] = "ограничивает RivaTuner Statistics Server",
     [UI_MENU_FPS_RTSS_READONLY] = "RivaTuner нужен запуск игры от администратора",
     [UI_MENU_FPS_RTSS_IGNORED] = "RivaTuner не ограничивает эту игру; ограничивает игра",
     [UI_MENU_FPS_RTSS_TWO] = "действует и ограничение самого RivaTuner: два ограничителя",
-    [UI_MENU_REALTIME] = "Скорость игры по часам",
-    [UI_MENU_REALTIME_DESC] = "Игра идёт по реальному времени, медленный кадр её не замедляет.",
-    [UI_MENU_CLOTH_REALTIME] = "Ткань по часам",
-    [UI_MENU_CLOTH_REALTIME_DESC] = "Ткань и волосы тоже идут по реальному времени.",
-    [UI_MENU_HIGHFPS_FIX] = "Исправления для высокого FPS",
-    [UI_MENU_HIGHFPS_FIX_DESC] = "Исправляет физику, которая ломается при частоте выше 30 кадров в секунду, и объекты, которые выше 60 остаются полупрозрачными или невидимыми.",
     [UI_MENU_GAME_LANG] = "Язык игры", [UI_MENU_GAME_LANG_DESC] = "Язык текста и озвучки игры.",
     [UI_MENU_GAME_LANG_AUTO] = "Автоматически",
     [UI_MENU_OPERATION_MODE] = "Режим консоли",
@@ -1331,9 +1214,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_FULLSCREEN] = "Tela cheia", [UI_MENU_FULLSCREEN_DESC] = "Jogar em tela cheia. F11 alterna.",
     [UI_MENU_WINDOW_SIZE] = "Tamanho da janela",
     [UI_MENU_WINDOW_SIZE_DESC] = "Tamanho da janela fora da tela cheia.",
-    [UI_MENU_WINDOW_SIZE_CUSTOM] = "Personalizado",
     [UI_MENU_PRESENT_DESC] = "Evita cortes na imagem. Desligado reduz um pouco o atraso.",
-    [UI_MENU_PRESENT_MAILBOX] = "Mailbox", [UI_MENU_PRESENT_VSYNC] = "VSync", [UI_MENU_PRESENT_IMMEDIATE] = "Imediato",
+    [UI_MENU_PRESENT_VSYNC] = "VSync", [UI_MENU_PRESENT_IMMEDIATE] = "Imediato",
     [UI_MENU_PRESENT_IN_USE] = "em uso: %s",
     [UI_MENU_LOW_LATENCY] = "Baixa latência",
     [UI_MENU_LOW_LATENCY_DESC] = "O driver de vídeo segura o início de cada quadro, para ler o controle o mais tarde "
@@ -1374,10 +1256,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE] = "Escala da renderização 3D",
     [UI_MENU_RENDER_SCALE_DESC] = "Tamanho da cena 3D. Maior fica mais nítido, porém mais pesado.",
     [UI_MENU_RENDER_SCALE_GAME] = "Jogo (83 %)",
-    [UI_MENU_UPSCALER] = "Escala para a janela",
-    [UI_MENU_UPSCALER_DESC] = "Como a imagem do jogo se ajusta à janela. Janela maior: o FSR mantém bordas e detalhes "
-                              "mais nítidos que o bilinear. Janela menor (Ocarina desenha 2560 x 1440): a imagem é "
-                              "reduzida e o FSR aumenta a nitidez com a intensidade abaixo.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
     [UI_MENU_UPSCALING_NATIVE] = "Nativo (100%)",
     [UI_MENU_UPSCALING_DESC] = "Como a imagem é suavizada e ajustada à janela. Nativo desenha a cena 3D no tamanho "
@@ -1410,8 +1288,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
 
     [UI_MENU_FPS_LIMIT] = "Limite de quadros",
     [UI_MENU_FPS_LIMIT_DESC] = "A taxa máxima de quadros que o jogo desenha. A geração de quadros soma os dela por cima.",
-    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
     [UI_MENU_ASSUME_FOCUS] = "Continuar rodando fora de foco",
     [UI_MENU_ASSUME_FOCUS_DESC] = "Mantém o jogo rodando quando você troca de janela.",
     [UI_MENU_TEXT_SPEED] = "Velocidade do texto",
@@ -1426,12 +1302,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_FPS_RTSS_READONLY] = "o RivaTuner pede o jogo como administrador",
     [UI_MENU_FPS_RTSS_IGNORED] = "o RivaTuner não limita este jogo; o jogo limita",
     [UI_MENU_FPS_RTSS_TWO] = "o limite do próprio RivaTuner também vale: dois limitadores",
-    [UI_MENU_REALTIME] = "Velocidade do jogo pelo relógio",
-    [UI_MENU_REALTIME_DESC] = "Avança o jogo pelo tempo real, para que um quadro lento não deixe o jogo mais lento.",
-    [UI_MENU_CLOTH_REALTIME] = "Tecidos pelo relógio",
-    [UI_MENU_CLOTH_REALTIME_DESC] = "Avança tecidos e cabelos pelo tempo real também.",
-    [UI_MENU_HIGHFPS_FIX] = "Correções para alta taxa de quadros",
-    [UI_MENU_HIGHFPS_FIX_DESC] = "Corrige a física que se comporta mal acima de 30 quadros por segundo e objetos que ficam transparentes ou invisíveis acima de 60.",
     [UI_MENU_GAME_LANG] = "Idioma do jogo", [UI_MENU_GAME_LANG_DESC] = "Idioma dos textos e das vozes do jogo.",
     [UI_MENU_GAME_LANG_AUTO] = "Automático",
     [UI_MENU_OPERATION_MODE] = "Modo do console",
@@ -1662,27 +1532,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                 "da placa.",
     [UI_MENU_TEX_DETAIL_AUTO] = "Automático: %s",
     [UI_MENU_TEX_DETAIL_FULL] = "Completo", [UI_MENU_TEX_DETAIL_REDUCED] = "Reduzido", [UI_MENU_TEX_DETAIL_LOW] = "Baixo",
-    [UI_MENU_COLOR] = "Cor",
-    [UI_MENU_COLOR_PRESET] = "Perfil de cor",
-    [UI_MENU_COLOR_PRESET_DESC] = "Define os quatro valores abaixo. Vívido: mais contraste e saturação, sombras um "
-                                  "pouco mais abertas (feito para telas OLED). Clareza: um pouco mais de contraste, "
-                                  "saturação e brilho. Mexer em um valor torna o perfil Personalizado. O HUD muda com "
-                                  "a imagem; este menu não.",
-    [UI_MENU_COLOR_DEFAULT] = "Do jogo",
-    [UI_MENU_COLOR_VIVID] = "Vívido (OLED)",
-    [UI_MENU_COLOR_CLARITY] = "Clareza",
-    [UI_MENU_COLOR_CUSTOM] = "Personalizado",
-    [UI_MENU_COLOR_BRIGHTNESS] = "Brilho",
-    [UI_MENU_COLOR_BRIGHTNESS_DESC] = "Somado a todas as cores; 0 não muda nada.",
-    [UI_MENU_COLOR_CONTRAST] = "Contraste",
-    [UI_MENU_COLOR_CONTRAST_DESC] = "Afasta as cores do cinza médio (acima de 100 %) ou as aproxima dele; 100 % não "
-                                    "muda nada.",
-    [UI_MENU_COLOR_SATURATION] = "Saturação",
-    [UI_MENU_COLOR_SATURATION_DESC] = "Força da cor em relação ao cinza; 100 % não muda nada.",
-    [UI_MENU_COLOR_GAMMA] = "Gama",
-    [UI_MENU_COLOR_GAMMA_DESC] = "Abaixo de 1 clareia os tons escuros e médios, acima de 1 os escurece; 1 não muda "
-                                 "nada.",
-    [UI_MENU_HDR_GROUP] = "HDR",
     [UI_MENU_HDR] = "Saída HDR",
     [UI_MENU_HDR_DESC] = "Realces mais brilhantes em telas HDR. Ative o HDR no Windows antes.",
     [UI_MENU_HDR_PEAK] = "Brilho máximo",
@@ -1798,41 +1647,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_SCALE_DESC] = "Sombras mais nítidas. Mais alto exige mais da placa de vídeo.",
     [UI_MENU_SHADOW_RANGE] = "Alcance das cascatas de sombra",
     [UI_MENU_SHADOW_RANGE_DESC] = "Mantém as sombras nítidas a distâncias maiores.",
-    [UI_MENU_CONTACT_SHADOWS] = "Sombras de contato",
-    [UI_MENU_CONTACT_SHADOWS_DESC] = "Pequenas sombras do sol que os mapas de sombra não pegam: nos pés, sob pedras, "
-                                     "na grama e em dobras. Traçadas na tela depois da iluminação. Vale no próximo "
-                                     "início.",
-    [UI_MENU_PCSS] = "Sombras suaves",
-    [UI_MENU_PCSS_DESC] = "Sombras do sol nítidas onde um objeto toca o chão e mais suaves quanto mais longe a sombra "
-                          "cai (PCSS). 0 mantém o filtro do jogo. Vale no próximo início.",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
-    [UI_MENU_DLAA_DESC] = "NVIDIA DLSS para a cena 3D (placas NVIDIA RTX; nvngx_dlss.dll ao lado do nx2saria.exe): bordas "
-                          "mais suaves e menos cintilação. O HUD não é afetado. O modo abaixo define a resolução de "
-                          "onde ele parte. Vale após reiniciar.",
-    [UI_MENU_DLSS] = "Modo do DLSS",
-    [UI_MENU_DLSS_DESC] = "DLAA desenha a cena 3D na resolução cheia. Qualidade, Equilibrado, Desempenho e Ultra "
-                          "Desempenho a desenham em 67, 58, 50 e 33 % e deixam o DLSS ampliá-la, o que poupa tempo da "
-                          "GPU; eles substituem a escala 3D. Vale na hora.",
     [UI_MENU_DLSS_DLAA] = "DLAA (nativo)",
     [UI_MENU_DLSS_QUALITY] = "Qualidade",
     [UI_MENU_DLSS_BALANCED] = "Equilibrado",
     [UI_MENU_DLSS_PERFORMANCE] = "Desempenho", [UI_MENU_DLSS_ULTRA] = "Ultra Desempenho",
-    [UI_MENU_DLSS_PRESET] = "Modelo do DLSS",
-    [UI_MENU_DLSS_PRESET_DESC] = "Qual modelo do DLSS roda. Automático segue a recomendação da NVIDIA para cada modo: K "
-                                 "para DLAA, Qualidade e Equilibrado, M para Desempenho, L para Ultra Desempenho. J: um "
-                                 "pouco menos de rastro atrás de personagens em movimento, um pouco mais de cintilação. K: "
-                                 "o modelo mais nítido em todos os modos. Vale na hora.",
-    [UI_MENU_DLSS_PRESET_DEFAULT] = "Automático", [UI_MENU_DLSS_PRESET_K] = "K (mais nítido)",
-    [UI_MENU_DLSS_PRESET_J] = "J (menos rastro)",
-    [UI_MENU_DLSS_CHARS] = "Rastros de personagens no DLSS",
-    [UI_MENU_DLSS_CHARS_DESC] = "Reduz os rastros fracos atrás de personagens, animais e do que eles seguram em movimento: "
-                                "ali o DLSS usa menos dos quadros anteriores. Mais forte remove mais rastros e deixa essas "
-                                "bordas um pouco menos suaves. Vale na hora.",
-    [UI_MENU_DLSS_CHARS_OFF] = "Desligado", [UI_MENU_DLSS_CHARS_LIGHT] = "Leve", [UI_MENU_DLSS_CHARS_MEDIUM] = "Médio",
-    [UI_MENU_DLSS_CHARS_FULL] = "Total",
-    [UI_MENU_FXAA] = "Antisserrilhado do jogo (FXAA)",
-    [UI_MENU_FXAA_DESC] = "A suavização de bordas FXAA do próprio jogo. Borra um pouco os detalhes finos; com o DLAA "
-                          "ligado não é necessária.",
     [UI_MENU_AA] = "Antisserrilhado",
     [UI_MENU_AA_DESC] = "Como as bordas da imagem 3D são suavizadas. SMAA do jogo é o próprio, como no console. Desligado "
                         "deixa as bordas como desenhadas. FXAA é rápido e um pouco suave. SMAA encontra mais bordas que o do "
@@ -1984,9 +1802,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_FULLSCREEN_DESC] = "全屏运行。按 F11 切换。",
     [UI_MENU_WINDOW_SIZE] = "窗口大小",
     [UI_MENU_WINDOW_SIZE_DESC] = "非全屏时的窗口大小。",
-    [UI_MENU_WINDOW_SIZE_CUSTOM] = "自定义",
     [UI_MENU_PRESENT_DESC] = "防止画面撕裂。关闭可略微降低延迟。",
-    [UI_MENU_PRESENT_MAILBOX] = "Mailbox",
     [UI_MENU_PRESENT_VSYNC] = "垂直同步",
     [UI_MENU_PRESENT_IMMEDIATE] = "立即",
     [UI_MENU_PRESENT_IN_USE] = "使用中：%s",
@@ -2019,9 +1835,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE] = "3D 渲染比例",
     [UI_MENU_RENDER_SCALE_DESC] = "3D 场景的大小。越高越清晰，但更慢。",
     [UI_MENU_RENDER_SCALE_GAME] = "游戏（83%）",
-    [UI_MENU_UPSCALER] = "放大到窗口",
-    [UI_MENU_UPSCALER_DESC] = "游戏画面适配窗口的方式。窗口更大时：FSR 比双线性更能保留边缘和细节。"
-                              "窗口更小时（Ocarina 绘制 2560 × 1440）：画面被缩小，FSR 按下方强度锐化。",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1",
     [UI_MENU_UPSCALER_BILINEAR] = "双线性",
     [UI_MENU_UPSCALING_NATIVE] = "原生（100%）",
@@ -2054,31 +1867,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SHARPNESS] = "FSR 锐度",
     [UI_MENU_SHARPNESS_DESC] = "FSR 的锐化强度。0 为关闭。",
     [UI_MENU_SHARPNESS_NEEDS_FSR] = "仅限 AMD FSR 1",
-    [UI_MENU_COLOR] = "色彩",
-    [UI_MENU_COLOR_PRESET] = "色彩配置",
-    [UI_MENU_COLOR_PRESET_DESC] = "同时设置下面四项。鲜艳：对比度和饱和度更高，暗部略微提亮（为 OLED 屏幕调校）。"
-                                  "清晰：对比度、饱和度和亮度都略高。改动任一项后，配置变为自定义。"
-                                  "HUD 随画面一起变化，本菜单不随之变化。",
-    [UI_MENU_COLOR_DEFAULT] = "游戏原样", [UI_MENU_COLOR_VIVID] = "鲜艳（OLED）",
-    [UI_MENU_COLOR_CLARITY] = "清晰", [UI_MENU_COLOR_CUSTOM] = "自定义",
-    [UI_MENU_COLOR_BRIGHTNESS] = "亮度",
-    [UI_MENU_COLOR_BRIGHTNESS_DESC] = "叠加到每种颜色上；0 表示不调整。",
-    [UI_MENU_COLOR_CONTRAST] = "对比度",
-    [UI_MENU_COLOR_CONTRAST_DESC] = "把颜色从中灰向外拉开（高于 100%）或向中灰收拢；"
-                                     "100% 表示不调整。",
-    [UI_MENU_COLOR_SATURATION] = "饱和度",
-    [UI_MENU_COLOR_SATURATION_DESC] = "颜色相对灰色的强度；100% 表示不调整。",
-    [UI_MENU_COLOR_GAMMA] = "伽马",
-    [UI_MENU_COLOR_GAMMA_DESC] = "小于 1 提亮暗部与中间调，大于 1 压暗；1 表示不调整。",
     [UI_MENU_FPS_LIMIT] = "帧率上限",
     [UI_MENU_FPS_LIMIT_DESC] = "游戏绘制的最高帧率。帧生成的帧在此之上另算。",
-    [UI_MENU_FPS_30] = "30 FPS",
-    [UI_MENU_FPS_40] = "40 FPS",
-    [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS",
-    [UI_MENU_FPS_90] = "90 FPS",
-    [UI_MENU_FPS_120] = "120 FPS",
-    [UI_MENU_FPS_144] = "144 FPS",
     [UI_MENU_FPS_DISPLAY] = "显示器刷新率",
     [UI_MENU_FPS_DISPLAY_HZ] = "显示器刷新率（%.0f Hz）",
     [UI_MENU_FPS_UNLIMITED] = "不限制",
@@ -2086,13 +1876,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_FPS_RTSS_READONLY] = "RivaTuner 需要以管理员身份运行游戏",
     [UI_MENU_FPS_RTSS_IGNORED] = "RivaTuner 未限制本游戏；由游戏自行限制",
     [UI_MENU_FPS_RTSS_TWO] = "RivaTuner 自身的限制也在生效：两个限制器",
-    [UI_MENU_REALTIME] = "游戏速度跟随时钟",
-    [UI_MENU_REALTIME_DESC] = "按真实时间推进游戏，帧率低时游戏速度也不会变慢。",
-    [UI_MENU_CLOTH_REALTIME] = "布料跟随时钟",
-    [UI_MENU_CLOTH_REALTIME_DESC] = "布料和头发也按真实时间推进。",
-    [UI_MENU_HIGHFPS_FIX] = "高帧率修正",
-    [UI_MENU_HIGHFPS_FIX_DESC] = "修正帧率高于 30 时出现异常的物理效果，"
-                                 "以及帧率高于 60 时一直半透明或不可见的物体。",
     [UI_MENU_GAME_LANG] = "游戏语言",
     [UI_MENU_GAME_LANG_DESC] = "游戏文本和语音的语言。",
     [UI_MENU_GAME_LANG_AUTO] = "自动",
@@ -2387,7 +2170,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_TEX_DETAIL_DESC] = "大型表面纹理的清晰度。“降低”和“低”不加载它们最大的版本，使一个区域能放进 6 GB 和 8 GB 显卡的显存；只有近处的表面看起来略微柔和。“自动”根据显卡的显存选择。",
     [UI_MENU_TEX_DETAIL_AUTO] = "自动：%s",
     [UI_MENU_TEX_DETAIL_FULL] = "完整", [UI_MENU_TEX_DETAIL_REDUCED] = "降低", [UI_MENU_TEX_DETAIL_LOW] = "低",
-    [UI_MENU_HDR_GROUP] = "HDR",
     [UI_MENU_HDR] = "HDR 输出",
     [UI_MENU_HDR_DESC] = "在 HDR 显示器上呈现更亮的高光。请先在 Windows 中开启 HDR。",
     [UI_MENU_HDR_PEAK] = "峰值亮度",
@@ -2473,32 +2255,11 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_SCALE_DESC] = "让阴影更清晰。越高越吃显卡。",
     [UI_MENU_SHADOW_RANGE] = "阴影级联范围",
     [UI_MENU_SHADOW_RANGE_DESC] = "让远处的阴影保持清晰。",
-    [UI_MENU_CONTACT_SHADOWS] = "接触阴影",
-    [UI_MENU_CONTACT_SHADOWS_DESC] = "阴影贴图遗漏的细小太阳阴影：脚下、石头下、草丛和褶皱中。在光照之后于屏幕空间追踪。下次启动时生效。",
-    [UI_MENU_PCSS] = "柔和阴影",
-    [UI_MENU_PCSS_DESC] = "物体接触地面处的太阳阴影锐利，阴影投得越远越柔和（PCSS）。0 保留游戏自身的过滤。下次启动时生效。",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
-    [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 nx2saria.exe 旁）：边缘更平滑，闪烁更少。HUD "
-                          "不受影响。下方的模式决定它的工作分辨率。重启后生效。",
-    [UI_MENU_DLSS] = "DLSS 模式",
-    [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡、性能和超级性能分别以 67%、58%、50% 和 33% 绘制，再由 DLSS 放大，以节省 GPU 时间；它们会取代 3D 渲染比例。立即生效。",
     [UI_MENU_DLSS_DLAA] = "DLAA（原生）",
     [UI_MENU_DLSS_QUALITY] = "质量",
     [UI_MENU_DLSS_BALANCED] = "平衡",
     [UI_MENU_DLSS_PERFORMANCE] = "性能",
     [UI_MENU_DLSS_ULTRA] = "超级性能",
-    [UI_MENU_DLSS_PRESET] = "DLSS 模型",
-    [UI_MENU_DLSS_PRESET_DESC] = "运行哪个 DLSS 模型。自动按 NVIDIA 对各模式的建议：DLAA、质量和平衡用 K，性能用 M，超级性能用 L。"
-                                 "J：移动角色身后的拖影略少，闪烁略多。K：所有模式都用最清晰的模型。立即生效。",
-    [UI_MENU_DLSS_PRESET_DEFAULT] = "自动", [UI_MENU_DLSS_PRESET_K] = "K（最清晰）",
-    [UI_MENU_DLSS_PRESET_J] = "J（拖影更少）",
-    [UI_MENU_DLSS_CHARS] = "DLSS 角色拖影",
-    [UI_MENU_DLSS_CHARS_DESC] = "减少移动中的角色、动物及其手持物品身后的淡淡拖影：DLSS 在这些位置少用之前的帧。越强拖影越少，"
-                                "这些边缘也略欠平滑。立即生效。",
-    [UI_MENU_DLSS_CHARS_OFF] = "关", [UI_MENU_DLSS_CHARS_LIGHT] = "弱", [UI_MENU_DLSS_CHARS_MEDIUM] = "中",
-    [UI_MENU_DLSS_CHARS_FULL] = "强",
-    [UI_MENU_FXAA] = "游戏抗锯齿（FXAA）",
-    [UI_MENU_FXAA_DESC] = "游戏自身的 FXAA 边缘平滑。会让细节略微模糊；开启 DLAA 时不需要。",
     [UI_MENU_AA] = "抗锯齿",
     [UI_MENU_AA_DESC] = "3D 画面边缘的平滑方式。游戏 SMAA 是游戏自带的，与主机相同。关闭则保留原始边缘。FXAA 快速，略显柔和。SMAA 比游戏自带的找到更多边缘，并保持细节清晰。TAA 即全尺寸的 DLSS 或 "
                         "FSR：运动中边缘最稳定；它会设置放大方式。在 Upscaling 中选择 DLSS 或 FSR 时，它们的 TAA 始终运行，"
