@@ -1,27 +1,4 @@
 # Copyright (c) 2026 seedds (MIT; see THIRD_PARTY_NOTICES.md): the spin wait search
-# ("Spin waits": spin_rw, spin_kind, spin_rmw, spin_lock, spin_store, spin_quick, spin_region, spin_region1).
-"""Find the spin waits of the ExeFS modules and print them as `spin` lines of a patch table (recomp/patches.py).
-
-Usage: spin_waits.py --exefs build/extracted/v143/exefs --patches recomp/patches-v143.txt [--modules main,subsdk0,sdk]
-
-A guest loop that polls memory until another thread changes it fills only its own core on the Switch, where a better
-thread pinned there preempts it. Here it holds one of the six virtual cores (runtime/hle/kernel.c) and a host core, and
-when the poll takes and releases a lock on every pass, two pollers hand the lock's cache line between their cores so
-that the thread whose item it is rarely wins its exclusive store (a job queue
-polled this way gave CPU frames of 30-210 ms every 1-10 s). The generator sends the back-edges of such loops through
-rt_spin_gate (runtime/hle/kernel.c kern_spin_gate), which slows the poll down and hands the virtual core to a waiting
-thread once the loop has polled for a while.
-
-A loop counts only when it provably cannot leave by itself. From its head T every path back to T (the region R,
-within SPIN_WIN bytes after T) runs loads, register and flag arithmetic, direct branches and barriers; no call, SVC,
-system register or event wait; nothing live at T is written in R. Allowed besides: an exclusive add of a constant
-that every path back to T undoes on the same address, a spin lock taken and released on the same address on every
-path, a test loop on a word inside R, and at most SPIN_STORES stores of registers R never writes (fixed values to
-fixed addresses, so the passes repeat after a few). Sites of the patch table are kept out of regions.
-
-Runs on the development machine (capstone); the table it prints is checked in, so the installer's generator needs
-no disassembler.
-"""
 import argparse
 import re
 import struct
@@ -38,16 +15,15 @@ import patches  # noqa: E402
 from layout import layout  # noqa: E402
 from nso import Nso  # noqa: E402
 
-SPIN_WIN = 512   # bytes from a backward branch back to its target
-SPIN_TOPS = {0x16, 0x17, 0x54, 0x34, 0x35, 0xB4, 0xB5, 0x36, 0x37, 0xB6, 0xB7}   # b, b.cond, cbz/cbnz, tbz/tbnz
-SPIN_PATHS, SPIN_STEPS, SPIN_STORES = 256, 4096, 4   # complete paths back to T; search steps; stores in a region
+DESCRIPTION = ('Find the spin waits of the ExeFS modules and print them as `spin` lines of a patch table '
+               '(recomp/patches.py).')
+SPIN_WIN = 512
+SPIN_TOPS = {0x16, 0x17, 0x54, 0x34, 0x35, 0xB4, 0xB5, 0x36, 0x37, 0xB6, 0xB7}
+SPIN_PATHS, SPIN_STEPS, SPIN_STORES = 256, 4096, 4
 SPIN_LSE = ('ldadd', 'ldclr', 'ldeor', 'ldset', 'ldsmax', 'ldsmin', 'ldumax', 'ldumin')
 SPIN_BAD = {'bl', 'blr', 'br', 'ret', 'eret', 'svc', 'hvc', 'smc', 'brk', 'hlt', 'udf', 'mrs', 'msr', 'sys', 'sysl',
             'wfe', 'wfi', 'sev', 'sevl', 'clrex', 'dc', 'ic', 'at', 'tlbi', 'drps', 'dcps1', 'dcps2', 'dcps3', 'blraa',
             'blrab', 'blraaz', 'blrabz', 'braa', 'brab', 'braaz', 'brabz', 'retaa', 'retab', 'eretaa', 'eretab'}
-# Words that end every path through them by their encoding alone: bl; br / blr / ret; svc / brk; stores (immediate,
-# unscaled, pre / post-index, register offset, vector); stp / stnp; LSE atomics. Exclusive stores and pre / post-index
-# loads are left to the full check.
 SPIN_STOP = ((0xFC000000, 0x94000000), (0xFE000000, 0xD6000000), (0xFF000000, 0xD4000000), (0x3FC00000, 0x39000000),
              (0x3FC00000, 0x3D000000), (0x3FC00000, 0x3D800000), (0x3FE00000, 0x38000000), (0x3FE00C00, 0x38200800),
              (0x3FE00000, 0x3C000000), (0x3FE00000, 0x3C800000), (0x3A400000, 0x28000000), (0x3F200C00, 0x38200000))
@@ -58,7 +34,6 @@ class SpinNo(Exception):
 
 
 def norm(n):
-    """w / x views as x<n>, vector views as v<n>, zero registers as None."""
     n = {'fp': 'x29', 'lr': 'x30', 'wsp': 'sp'}.get(n, n)
     if n in ('wzr', 'xzr'):
         return None
@@ -70,8 +45,6 @@ def norm(n):
 
 
 class Search:
-    """The spin waits of one module image. touched: image offsets no region may contain (patch sites)."""
-
     def __init__(self, img, text_end, touched):
         self.img, self.text_end, self.touched = img, text_end, touched
         self.md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
@@ -87,7 +60,6 @@ class Search:
         return struct.unpack_from('<I', self.img, a)[0]
 
     def candidates(self):
-        """{loop head: [backward branches to it]}, branches at most SPIN_WIN bytes back."""
         cand = {}
         for o in range(0, self.text_end, 4):
             w = self.word(o)
@@ -108,9 +80,6 @@ class Search:
 
     @staticmethod
     def rw(ins):
-        """(registers read, registers written). Capstone lists a compare's first operand as written and the flags as
-        read by cbz / tbz, and leaves out the destination of adds, so every register operand counts as well: operand 0
-        written and the others read, or for a load all of them written."""
         m = ins.mnemonic
         regs = [norm(ins.reg_name(o.reg)) for o in ins.operands if o.type == ARM64_OP_REG]
         ops = set(regs) - {None}
@@ -133,7 +102,6 @@ class Search:
 
     @staticmethod
     def kind(ins):
-        """'br' direct branch, 'pc' adr / adrp, 'ok' a load or register / flag arithmetic, None anything else."""
         if ins is None:
             return None
         m = ins.mnemonic
@@ -145,12 +113,10 @@ class Search:
             return None
         mem = any(o.type == ARM64_OP_MEM for o in ins.operands)
         if m.startswith(('ld', 'prfm', 'prfum')):
-            return 'ok' if mem else None   # no memory operand: a pc-relative literal load
+            return 'ok' if mem else None
         return None if mem else 'ok'
 
     def rmw(self, a):
-        """ld(a)xr wA,[xN]; add|sub wB,wA,#k; st(l)xr wS,wB,[xN]; cbnz wS,<the load> at a -> (xN, +-k, registers
-        written, the four instructions), or None."""
         l = [self.ins(a + 4 * i) for i in range(4)]
         if (None in l or l[0].mnemonic not in ('ldxr', 'ldaxr') or l[1].mnemonic not in ('add', 'sub')
                 or l[2].mnemonic not in ('stxr', 'stlxr') or l[3].mnemonic != 'cbnz'):
@@ -167,12 +133,6 @@ class Search:
         return norm(l[0].reg_name(base.base)), k, {norm(r(l[0], 0)), norm(r(l[1], 0)), norm(r(l[2], 0))} - {None}, l
 
     def lock(self, a):
-        """An exclusive spin lock sequence or a test loop entered at a -> (kind, xN, its instructions, how many come
-        before a, how many from a on, registers read, registers written):
-          'acq'  ld(a)xr wA,[xN]; cbz wA,+16; clrex; b <the load>; st(l)xr wS,wK,[xN]; cbnz wS,<the load>
-          'rel'  clrex; ld(a)xr wA,[xN]; cmp wA,#k; b.ne <the clrex>; st(l)xr wS,wzr,[xN]; cbnz wS,<the load>
-                 (entered at the load), or stlr wzr,[xN]
-          'tst'  ldr|ldrb|ldrh wA,[xN{,#imm}]; cmp wA,#k; b.eq|b.ne <the load>"""
         l = [self.ins(a + 4 * i) for i in range(6)]
         if l[0] is None:
             return None
@@ -207,8 +167,6 @@ class Search:
 
     @staticmethod
     def store(ins):
-        """str / strb / strh / stur / sturb / sturh of a w register or zr to [xN{,#imm}] (no writeback, no register
-        offset) -> (value register or None for zr, base register), or None."""
         if (ins is None or ins.mnemonic not in ('str', 'strb', 'strh', 'stur', 'sturb', 'sturh') or ins.writeback
                 or len(ins.operands) != 2):
             return None
@@ -221,8 +179,6 @@ class Search:
         return norm(vn), norm(ins.reg_name(o.mem.base))
 
     def quick(self, T, hi):
-        """A back-edge to T can be reached from T without passing a word of SPIN_STOP (only such heads get the full
-        check, which decodes)."""
         seen, todo = set(), [T]
         while todo:
             a = todo.pop()
@@ -240,7 +196,7 @@ class Search:
             elif any(w & m == v for m, v in SPIN_STOP) and not (
                     w & 0xBFC00000 in (0xB9000000, 0x39000000, 0x79000000)
                     or w & 0xBFE00C00 in (0xB8000000, 0x38000000, 0x78000000)):
-                continue   # str / strb / strh (immediate, unscaled) may store the same on every pass
+                continue
             else:
                 succ = (a + 4,)
             if T in succ:
@@ -249,9 +205,6 @@ class Search:
         return False
 
     def region(self, T, bes):
-        """The spin wait with head T (bes: the backward branches to T) -> dict, or None. A store whose value or
-        address a pass changes is no part of a region: the paths through it are dropped and the region is found again
-        without them. The region without stores is taken instead when the wider one does not cover its back-edges."""
         ban, g = set(), None
         for _ in range(8):
             g = self.region1(T, bes, ban, True)
@@ -274,10 +227,10 @@ class Search:
             if a in ban:
                 bad.add(a)
                 continue
-            rmw = self.rmw(a) if a + 12 <= hi and self.word(a) & 0x3FE00000 == 0x08400000 else None   # ldxr / ldaxr
+            rmw = self.rmw(a) if a + 12 <= hi and self.word(a) & 0x3FE00000 == 0x08400000 else None
             lk = None if rmw else self.lock(a)
             if lk and lk[0] == 'tst' and a == T:
-                lk = None   # the region's own test loop
+                lk = None
             if rmw:
                 n = {'kind': 'rmw', 'base': rmw[0], 'k': rmw[1], 'ins': rmw[3], 'uses': {rmw[0]}, 'defs': rmw[2],
                      'succ': [a + 16]}
@@ -332,8 +285,6 @@ class Search:
         for a in R:
             if 'uses' not in nodes[a]:
                 nodes[a]['uses'], nodes[a]['defs'] = self.rw(nodes[a]['ins'][0])
-        # Every path from T to a back-edge: no inner cycle, and the exclusive adds on each address (a register between
-        # two writes to it) sum to 0; a lock is taken at most once and released after it.
         bad_back, cnt = set(), [0, 0]
 
         def walk(a, onpath, ver, delta):
@@ -370,7 +321,6 @@ class Search:
         if not valid:
             return None
         R = prune(valid)
-        # No state carried from one pass to the next: nothing live at T is written in R.
         live, more = {a: set() for a in R}, True
         while more:
             more = False
@@ -389,7 +339,7 @@ class Search:
         if any(nodes[a]['kind'] == 'stc' for a in R) and not any(
                 nodes[a]['kind'] in ('rmw', 'acq', 'rel', 'tst') or nodes[a]['ins'][0].mnemonic.startswith('ld')
                 for a in R):
-            return None   # stores and nothing polled
+            return None
         vary = {a for a in R if nodes[a]['kind'] == 'stc' and nodes[a]['uses'] & defs}
         if vary:
             return vary
@@ -405,7 +355,7 @@ class Search:
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--exefs', type=Path, required=True)
     ap.add_argument('--patches', type=Path, help='patch table whose sites stay out of regions')
     ap.add_argument('--modules', default='main,subsdk0,sdk')

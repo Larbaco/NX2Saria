@@ -1,20 +1,3 @@
-"""The stutter map of a play session, from its log (runtime/diag/stutter_map.c, NX2SARIA_STUTTER_MAP=1; the old
-NX2NAVI_STUTTER_MAP spelling still works), and what a game
-folder recorded that a pipeline list lacks.
-
-    python tools/stutter_map.py report LOG [LOG ...] [--out FILE.md]
-    python tools/stutter_map.py missing GAME_DIR LIST_FILE
-
-report: each log's last "stutter map" block (the one written at exit, or the last periodic one when the game did not
-exit cleanly) gives the areas ranked by their hitches with the causes, and the pipelines draws met missing that cost
-the most; the "stutter:" lines add how the hitches spread over the session. Several logs (one session's rotated files,
-or several sessions) are reported one after the other, then summed by area.
-
-missing: the pipeline records of GAME_DIR's pipeline-keys.bin and the shader variants of its shader-answers.bin that
-LIST_FILE (tools/pipeline_list.py merge) does not hold: what `pipeline_list.py merge NEW LIST_FILE GAME_DIR` would
-add, so the next installs build them before play instead of meeting them in it. The files are derived from game data;
-the list stays out of the repository.
-"""
 import argparse
 import re
 import sys
@@ -23,12 +6,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pipeline_list  # noqa: E402
 
+DESCRIPTION = ('The stutter map of a play session, from its log (runtime/diag/stutter_map.c, NX2SARIA_STUTTER_MAP=1; '
+               'the old')
 HEAD = re.compile(r'stutter map \(([^)]*)\): ([\d.]+) min of play in (\d+) areas; (\d+) hitches in play and (\d+) after '
                   r'area loads; (?:(\d+) long frames were a change of pace.*?not hitches; )?in play by cause:(.*)$')
 AREA = re.compile(r'stutter map:   (.+?): ([\d.]+) min at (\d+) fps; hitches (\d+) \(([\d.]+) a minute(.*?)\), worst '
                   r'([\d.]+) ms \(frame (\d+)\); over 25 ms (\d+); after its loads (\d+); draws that met a pipeline '
                   r'missing (\d+), a shader (\d+), ([\d.]+) ms on the replay thread')
-CAUSE = re.compile(r'; ([\w-]+) (\d+), ([\d.]+) ms avg')   # hand-off has a hyphen
+CAUSE = re.compile(r'; ([\w-]+) (\d+), ([\d.]+) ms avg')
 PIPES = re.compile(r'stutter map: (\d+) pipelines draws met missing: (\d+) that this install had recorded before .*?, '
                    r'(\d+) new to it, (\d+) with a shader translated in play, (\d+) still translating when met')
 PIPE = re.compile(r'stutter map:   (mesh|vertex) (\S+)/(\S+) first met in (.+?): (\d+) draws met it missing, (\d+) its '
@@ -38,7 +23,6 @@ HITCH = re.compile(r'stutter: frame (\d+) at ([\d.]+) s, ([\d.]+) ms \(frames ab
 
 
 def read_log(path):
-    """(the last map block as (head, areas, pipes summary, pipes), hitch lines) of one log."""
     block, cur, hitches = None, None, []
     for line in open(path, encoding='utf-8', errors='replace'):
         m = HEAD.search(line)
@@ -165,7 +149,7 @@ def missing(game_dir, list_file):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('report', help='the stutter map of one or more logs, as Markdown')
     r.add_argument('logs', nargs='+', type=Path)

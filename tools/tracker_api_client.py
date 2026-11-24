@@ -1,29 +1,4 @@
 #!/usr/bin/env python3
-"""Asks a running game for what a map tracker reads through the tracker API (tracker_api = 1, runtime/diag/tracker_api.c),
-the way a tracker does, and says whether each step works on this build. Standard library only; it reads, never writes.
-
-What it checks, in order:
-1. status: the game answers, its title, build and versions.
-2. nx2saria.state: the area and Link's position as the port itself reads them, and where the heap is: a tracker takes
-   heap pointers below 0x1000000000 for none, so with the heap below that it finds no game data.
-3. main by its MOD0 header (search_memory), first in the range a tracker tries first, then everywhere, and the header's
-   two words a tracker checks.
-4. Link's position by the tracker's chain (a .bss slot of main, the player object, its 37th part) and by the port's own
-   chain (runtime/diag/debug_tools.c player), which have to agree; the scene's file name from the player object.
-5. The game-data manager by the tracker's slot, the same object as the port's own (debug_tools.c gmd), and the Gold
-   Skulltula token count from its Int flags.
-6. nx2saria.game_data, as an item tracker reads it: each kind's values by their names' hashes, and with --save the
-   values compared with the newest progress.sav under that folder (save in the game first: right after a save, every
-   Bool, Enum and placed object agrees, and of the Ints only the counters that run on, such as play time, differ).
---watch N then repeats the position and scene once a second for N seconds and reports the answer times; while Link
-moves it prints his heading from the port's rotation (nx2saria.state) beside the direction he moves in by the
-tracker's chain, so the axis a tracker takes for his heading can be checked.
-
-The offsets are facts of game version 1.1.1's main (build e0f3ccfa); docs/ocarina-atlas.md lists where each comes
-from.
-
-Usage: python tools/tracker_api_client.py [--host 127.0.0.1] [--port 6545] [--watch SECONDS] [--save FOLDER]
-"""
 import argparse
 import json
 import math
@@ -33,16 +8,16 @@ import sys
 import time
 from pathlib import Path
 
-MOD0_PATTERN = '4d4f44305467030124fb0f016c342501'   # "MOD0" and its three offsets in 1.1.1's main
+DESCRIPTION = ('Asks a running game for what a map tracker reads through the tracker API (tracker_api = 1, '
+               'runtime/diag/tracker_api.c),')
+MOD0_PATTERN = '4d4f44305467030124fb0f016c342501'
 MOD0_OFFSET = 0x3c4705c
 HEAP_POINTER_FLOOR = 0x1000000000
-# a tracker's slots and checks in main (1.1.1)
 PLAYER_SLOTS = (0x4e6c7a8, 0x4e6c938)
 PLAYER_OBJECT_VTABLE = 0x4ba27c8
 GAME_DATA_SLOT = 0x4e90ce8
 GAME_DATA_VTABLE = 0x4c58270
-SKULLTULA_TOKENS = 0x04735978   # the Int flag of the token count; its entry's tag is 0x20
-# the port's own (runtime/diag/debug_tools.c)
+SKULLTULA_TOKENS = 0x04735978
 PORT_PLAYER_MANAGER = 0x4e371d0
 PORT_GAME_DATA_SLOT = 0x4c7e180
 
@@ -98,8 +73,6 @@ def floats(b):
 
 
 def tracker_player(api, main, direction=False):
-    """The tracker's chain: [main+slot]+0x10 the player object, its 37th part at +0x1c x, y, z (and at +0x28 and
-    +0x30 the direction Link moves in on the ground, with direction=True)."""
     for slot in PLAYER_SLOTS:
         single = api.u64(main + slot)
         obj = api.u64(single + 0x10) if single >= HEAP_POINTER_FLOOR else 0
@@ -119,7 +92,6 @@ def tracker_player(api, main, direction=False):
 
 
 def port_player(api, main):
-    """runtime/diag/debug_tools.c player: [[main+0x4e371d0]+0x480], named "Player", its position at +0x31c."""
     manager = api.u64(main + PORT_PLAYER_MANAGER)
     actor = api.u64(manager + 0x480) if manager else 0
     name = api.u64(actor + 0x20) if actor else 0
@@ -129,7 +101,6 @@ def port_player(api, main):
 
 
 def int_flag(api, section, h):
-    """An Int flag of the game data by its hash: the section's {hash, index} table probed from hash % size."""
     count, entries, table, size = api.u32(section + 0x10), api.u64(section + 0x18), api.u64(section + 0x20), \
         api.u32(section + 0x2c)
     if not count or not entries or not table or not size or size > 100000:
@@ -153,15 +124,10 @@ def int_flag(api, section, h):
 
 
 GAME_DATA_KINDS = {'Bool': 8, 'Int': 8, 'Enum': 8, 'String64': 68, 'String64Array': 0, 'Int64': 12, 'Bool64bitKey': 16}
-SAVE_KINDS = {0: 'Bool', 2: 'Int', 6: 'Enum'}   # the save's inline kinds this check compares; 32 is Bool64bitKey
+SAVE_KINDS = {0: 'Bool', 2: 'Int', 6: 'Enum'}
 
 
 def save_values(folder):
-    """The newest progress.sav under folder (or folder itself, a file): {kind: {hash: value}} for the inline kinds,
-    the set placed-object keys, and the file. The save container: magic 0x01020304, the data's start (u32) at +8, and
-    from +0x28 8-byte {u32 hash, u32 value} records grouped by kind; a record of hash 0 starts a kind (its value is the
-    kind's number; the first kind, Bool, has none). The placed-object keys (kind 32) are an offset to sorted u64 keys
-    that run to the file's end (0: none)."""
     p = Path(folder)
     files = [p] if p.is_file() else sorted(p.rglob('progress.sav'), key=lambda f: f.stat().st_mtime)
     if not files:
@@ -182,13 +148,12 @@ def save_values(folder):
 
 
 def live_values(res):
-    """An nx2saria.game_data answer of an inline kind as {hash: value}."""
     raw = bytes.fromhex(res.get('records', ''))
     fmt = '<i' if res['kind'] == 'Int' else '<I'
     return {struct.unpack_from('<I', raw, o)[0]: struct.unpack_from(fmt, raw, o + 4)[0] for o in range(0, len(raw), 8)}
 
 
-MANAGER_VTABLES = (0x4c1f120, 0x4c1f140)   # main+: the manager's own and its Bool section's (read in main, not yet live)
+MANAGER_VTABLES = (0x4c1f120, 0x4c1f140)
 
 
 def check_game_data(api, save, main):
@@ -254,7 +219,7 @@ def check_game_data(api, save, main):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=6545)
     ap.add_argument('--watch', type=float, default=0, help='seconds to follow Link once a second')
