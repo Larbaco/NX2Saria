@@ -37,7 +37,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 13 | `runtime/` top level | [runtime.md](runtime.md) | extracted; `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h` keep their comments until a change next rebuilds the lifted code ([The checks](#the-checks)) |
 | 14 | `runtime/gfx/` | [gfx.md](gfx.md) | extracted |
 | 15 | `runtime/hle/` | [hle.md](hle.md) | extracted |
-| 16 | `tools/` | [tools.md](tools.md) | started: the licence parts of the release scripts; the rest not yet extracted |
+| 16 | `tools/` | [tools.md](tools.md) | extracted; `tools/cheats.py`, `tools/exefs_patches.py` and `tools/mod_files.py` keep their comments until a change next alters the lift key of a game folder with mod code ([The checks](#the-checks)) |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | extracted |
 | 18 | `runtime/shaders/` (not `ffx/`, `ffx3/` and `smaa.glsl`) | [shaders.md](shaders.md) | extracted |
 | 19-22 | `runtime/vk/` | `vk-pipeline.md`, `vk-exec.md`, `vk-memory.md`, `vk-texture.md`, `vk-upscalers.md` | not yet extracted |
@@ -132,6 +132,11 @@ their comments are owed: every lifted object depends on them and `tools/make_gam
 dependencies by SHA-256, so one changed byte makes every player's PC recompile the lifted code. The exception ends when
 those files are next changed for another reason, in a change that rebuilds the lifted code anyway; their notes are
 already on [runtime.md](runtime.md).
+
+The same holds for `tools/cheats.py`, `tools/exefs_patches.py` and `tools/mod_files.py`, in a second line of that
+kind: `tools/make_game.py` `mod_digest()` hashes their bytes into the lift key of a game folder that has mod code, so
+one changed byte makes the PC of every player with code cheats or ExeFS patches lift the game again. That exception
+ends with the next change that alters that key; their notes are already on [tools.md](tools.md).
 
 Kept in the files it reads:
 

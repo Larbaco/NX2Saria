@@ -61,6 +61,11 @@ OWED = (
      'every lifted object depends on them and tools/make_game.py compares an object\'s dependencies by SHA-256, so '
      'one changed byte makes every player\'s PC recompile the lifted code',
      'they leave with the next change that rebuilds the lifted code'),
+    (('tools/cheats.py', 'tools/exefs_patches.py', 'tools/mod_files.py'), '2026-11-25',
+     'inputs of the lift key of a game folder with mod code',
+     'tools/make_game.py mod_digest() hashes their bytes into that key, so one changed byte makes the PC of every '
+     'player with code cheats or ExeFS patches lift the game again',
+     'they leave with the next change that alters that key'),
 )
 
 KEPT_REASONS = {
