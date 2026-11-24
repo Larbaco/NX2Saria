@@ -993,15 +993,16 @@ compressed and the decodes, those on the drawing threads apart (`gfx_shader_ram(
 `sm86` marks an NVN2 program (lowered to Maxwell by the translator); `key` is the cache key, or the provisional one with
 `final` 0; `iid` the input id with `final` 1.
 
-NVN2 (Switch 2) programs: a 0xe0-byte control section (magic 0x98761234, the version at +4, the code size including the
-0x80-byte shader program header at +0x38, the register count at +0x4c) and SM86 code (128-bit Volta+ instructions after
-a Turing-style 0x80-byte header; compute programs have no header). The translator lowers them to Maxwell
-(`tools/xlate/AmpereLowering.cs`, job "sm86"); the code is sent from its first byte (the comment at this point also said it has
-no c1 part, which the code under it does not do: see the layout below). The control section is the first 0xe0 bytes only (`NVN2_CONTROL_SIZE`): `nvn2_control()` copies them into a zeroed
-`CONTROL_SIZE` buffer at the entry points, so the bytes after it (other guest data) stay out of the hashes, stored
-inputs and jobs. The layout of an NVN2 program: the code (its size at control +0x38), alignment padding, then the c1
-constants (jump tables of BRX, compiler constants) from the offset at +0x40 to the one at +0x44. They are hashed and
-sent with the code; when those two offsets do not fit the program, the length is the code size and c1 is empty.
+NVN2 (Switch 2) programs: a 0xe0-byte control section (magic 0x98761234, the version at +4, the code size including
+the 0x80-byte shader program header at +0x38, the register count at +0x4c) and SM86 code (128-bit Volta+ instructions
+after a Turing-style 0x80-byte header; compute programs have no header). The translator lowers them to Maxwell
+(`tools/xlate/AmpereLowering.cs`, job "sm86"); the code is sent from its first byte (the comment at this point also
+said it has no c1 part, which the code under it does not do: see the layout below). The control section is the first
+0xe0 bytes only (`NVN2_CONTROL_SIZE`): `nvn2_control()` copies them into a zeroed `CONTROL_SIZE` buffer at the entry
+points, so the bytes after it (other guest data) stay out of the hashes, stored inputs and jobs. The layout of an NVN2
+program: the code (its size at control +0x38), alignment padding, then the c1 constants (jump tables of BRX, compiler
+constants) from the offset at +0x40 to the one at +0x44. They are hashed and sent with the code; when those two
+offsets do not fit the program, the length is the code size and c1 is empty.
 
 `gfx_shader_sm86_refused()` counts the NVN2 programs the translator refused.
 
@@ -2884,3 +2885,562 @@ translations over (the carry of `gfx_shader.c`). `tests/prp_file_check.py` check
   file that is no prepared list or has no whole record. `*has_from`: 1 with `*from` filled for a version 2 file, 0 for
   a version 1 file.
 - `gfx_shader_prepared_read()` is declared here and defined in `gfx_shader.c`.
+
+## `runtime/gfx/tex.h`
+
+CPU-side texture code: block-linear to linear copies and back, the ASTC decode, the NVN format to VkFormat mapping.
+Vulkan memory and the texture objects are in `runtime/vk/vk_memory.c` and `runtime/vk/vk_texture.c`.
+
+From `runtime/gfx/tex_deswizzle.c`:
+
+- `nvn_deswizzle()` and `nvn_swizzle()`: block-linear to linear and back for one level and layer of a texture. The
+  linear side is laid out by block rows: `dst_pitch` bytes per row (at least the row bytes of the level), compressed
+  formats one block row per row, 3D textures slice k at `dst + k * dst_pitch * block rows`. LINEAR and
+  LINEAR_RENDER_TARGET storage is copied by pitch. Multisampled and BUFFER textures return -1; success returns 0.
+- `nvn_deswizzle_mt()`: `nvn_deswizzle` with a large level's block-linear copy split over the `par_jobs` pool
+  (`tex_bl_copy_mt()`): the same bytes. For the texture upload, which runs on a drawing thread; the caller keeps the
+  storage mapped until it returns.
+- `nvn_texels_box()`: one box of a level and layer, [x, x + wb) bytes by [y, y + h) block rows of slice z (3D
+  textures), between the storage and caller rows of `pitch` bytes, touching nothing else of the level: ReadTexels and
+  WriteTexels of a region cost the region, not the level. The same textures as `nvn_deswizzle`; -1 for others and for a
+  box outside the level.
+- `nvn_bl_offset()`: the byte offset of (x byte, y block row, z slice) inside one level of block height 2^th and block
+  depth 2^td GOBs.
+- `nvn_deswizzle_geom()`: the geometry of a level as the two functions above use it; -1 for textures they reject.
+- `tex_bl_copy()`: the copy loop on its own, for callers that know the level geometry (`bl` points at the level's first
+  byte). `tex_bl_copy_mt()`: the same with a level of 1 MiB or more split into bands of rows over the `par_jobs` pool;
+  the same bytes.
+
+From `runtime/gfx/tex_astc.c` and `runtime/gfx/tex_astc_mt.c`:
+
+- `astc_decode_ldr()`: ASTC LDR 2D to RGBA8, bit-exact with astcenc's 8-bit decode. `blocks`: row-major 16-byte blocks
+  covering ceil(width/bw) x ceil(height/bh); `rgba_out`: width*height*4 bytes. `srgb` only selects the sRGB endpoint
+  expansion. Error blocks and HDR content decode to magenta.
+- `astc_block_opaque()`: whether the block decodes to alpha 255 in every texel; mostly from its header, blocks of the
+  endpoint modes with alpha by a decode (counted in `*decoded`).
+- `astc_blocks_opaque()`: the first of the `n` blocks (16 bytes each) that is not opaque, or that took `*decoded` past
+  `max_decoded`; `n` when none is. `dst` (optional): all `n` blocks are copied there too, as by memcpy, the rest also
+  after a block that is not opaque.
+- `astc_blocks_opaque_mt()` (`tex_astc_mt.c`): `astc_blocks_opaque` with the blocks of a large texture spread over the
+  decode workers, each also copying its part to `dst` when given; whether every block is opaque (and `*decoded` stayed
+  within `max_decoded`, summed over the workers).
+- `astc_decode_ldr_mt()` (`tex_astc_mt.c`): the same bytes as `astc_decode_ldr`, large images split by block rows over
+  a worker pool.
+
+From `runtime/vk/vk_formats.c`, the fields of `TexVkFormat`:
+
+| Field | Meaning |
+|---|---|
+| `vk` | the format of the image created on this GPU |
+| `ideal` | the format the NVN format maps to by itself; differs from `vk` after a fallback |
+| `need` | optimal-tiling features `vk` must report for sampling and upload |
+| `expand_rgb` | a 3-component format: the upload expands each texel to 4 components (alpha, or integer 1) |
+| `alpha_one` | an "X" format: sample alpha as 1 (view swizzle) |
+| `chan` | nonzero `chan[0]`: `vk` stands in with another component order; `chan[i]` is the NVN_TEXTURE_SWIZZLE_R..A selector of the image component holding R, G, B, A |
+| `astc_bw`, `astc_bh` | nonzero: ASTC decoded into `vk` (RGBA8, same colour space) by `vk_astc.c` or `tex_astc.c`; zero for native ASTC (`vk == ideal`, raw blocks as for BC) |
+| `astc_bc` | ASTC decoded and then encoded on the GPU (`vk_astc.c`): 1 BC3 (`NX2SARIA_ASTC_BC`), 2 BC1 for a texture whose every block decodes opaque ("ASTC as BC1" in `vk_texture.c`) |
+| `depth`, `stencil` | aspect flags of depth and stencil formats |
+| `note` | why a fallback or an expansion was chosen; NULL when the mapping is direct |
+| `reason` | unmapped formats only: why there is no Vulkan format |
+
+- `tex_vk_format()`: 1 when `nvn_format` (an NVNformat value) has a Vulkan mapping, 0 otherwise (`out->reason` says
+  why). The mapping is fixed per device: ASTC decodes to RGBA8 unless `vk_astc_native` (`NX2SARIA_ASTC`) takes the
+  format as it is, D24S8 is D32S8, DEPTH24 is D32. Whether the GPU reports the features is a separate question
+  (`tex_vk_format_supported()`).
+- `tex_vk_format_supported()`: 1 when `vk_ctx()->phys` reports every bit of `f->need` for `f->vk` in optimal tiling. It
+  needs `vk_init()`.
+
+## `runtime/gfx/tex_astc.c`
+
+The ASTC LDR decoder, 2D only (Khronos Data Format specification, the ASTC chapter). It matches ARM astcenc's 8-bit
+decode bit for bit (the `decode_unorm8` path its command line uses for `-dl` and `-ds` into 8-bit images): the
+endpoints expand to 16 bits (linear: v * 257; sRGB: v << 8 | 0x80, all four channels), a texel is
+`(e0 * (64 - w) + e1 * w + 32) >> 6`, and the output is its top 8 bits. Error blocks (illegal encodings, HDR void
+extents) give magenta; HDR endpoint modes give magenta endpoints for that partition only (as astcenc and the
+specification's LDR profile do).
+
+The file's first line is a licence notice and stays in the code. The file is also compiled outside the game build, by
+`launcher/gameart.py`, `tools/ui_textures.py`, `tools/layout_textures.py` and `tools/menu_preview.py`, so it has to keep
+compiling alone.
+
+The tables:
+
+- `q_bits`, `q_trits` and `q_quints`: the quantization levels QUANT_2 .. QUANT_256 (index 0..20): bits, trits and
+  quints per level.
+- `wunq_data` and `cunq_data`: the unquantization tables indexed by the raw ISE value (trit or quint << bits | bits),
+  generated from the specification's formulas. Weights: QUANT_2..QUANT_32 give 0..64. Colours: QUANT_6..QUANT_256 give
+  0..255. The rows of `cunq_data` are, in order, those of 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160 and
+  192 levels (`cunq_off`: 0, 6, 14, 24, 36, 52, 72, 96, 128, 168, 216, 280, 360, 456, 584, 744); QUANT_256 is the
+  identity and has no row. The two tables are 142 and 936 bytes (a static assertion).
+
+### `rbits()` `ise_decode()` `part_of()`
+
+`rbits()`: n (at most 32) bits at `pos`; bits past 127 read as zero. `ise_decode()` decodes `count` raw ISE values (tq
+<< bits | bits) starting at bit `pos`. In `part_of()` z is 0 for 2D, so seeds 9..12 drop out.
+
+### `unpack_endpoints()`
+
+`e0[0..3]` is endpoint 0 and `e1[0..3]` endpoint 1, 8-bit (the comment called them `e[0..3]` and `e[4..7]`). It returns
+false for an HDR mode. The modes:
+
+| Mode | Meaning |
+|---|---|
+| 0 | L direct |
+| 1 | L delta |
+| 4 | LA direct |
+| 5 | LA delta (an arithmetic shift of the signed deltas) |
+| 6, 10 | RGB scale; 10 with two alphas |
+| 8, 12 | RGB(A) direct; blue contraction: swap and uncontract |
+| 9, 13 | RGB(A) base + delta; a negative sum: swap and uncontract |
+| 2, 3, 7, 11, 14, 15 | HDR |
+
+### `astc_decode_block()`
+
+- A footprint below 4 or above 12 a side is not an ASTC 2D footprint.
+- A void extent (`(mode & 0x1FF) == 0x1FC`): with bit 0x200 it is an HDR (fp16) constant, an error in LDR; the reserved
+  bits (10 and 11) must be 3. The colour is the top 8 bits of the UNORM16s (bytes 9, 11, 13, 15).
+- The weights are read backwards from the top of the block. Then the colour endpoint modes; the endpoints, expanded to
+  16 bits; the weight grid to texel weights (bilinear infill), per axis.
+- The interpolation shifts by 14: `>> 6`, then the top 8 bits.
+
+### `block_opaque()` `astc_block_opaque()`
+
+Whether `astc_decode_block()` gives every texel of the block alpha 255. The header tells for a void extent (its
+constant's alpha), an error block (magenta, alpha 255) and colour endpoint modes without alpha (0 to 3, 6 to 9, 11, 14
+and 15; the HDR ones decode to magenta in this LDR decoder). The modes with alpha (4, 5, 10, 12, 13; `cem_alpha()`) can
+still decode to 255 everywhere, so such a block is decoded and counted in `*decoded`. The CEM fields are read as in
+`astc_decode_block()`; a block whose one mode has no alpha is opaque whether its block mode is legal or an error, so
+only partitions of different modes need the weight bits that place the rest of their CEM field. With one partition, or
+partitions that share a mode, there is one mode for the whole block. An error found while decoding fills magenta, alpha
+255.
+
+### `quick_opaque()` `astc_blocks_opaque()`
+
+The checks run 4 KiB at a time (`OPAQUE_RUN`, 256 blocks), each run copied to `dst` after its check, while the bytes
+are in the cache: the copy costs what memcpy would, and the check little more than the read memcpy makes anyway.
+
+`quick_opaque()`: the first 32 bits of a block settle almost every block: not a void extent, and one endpoint mode for
+the whole block (one partition, or partitions that share it) that carries no alpha (`CEM_ALPHA_MASK`: bits 4, 5, 10, 12
+and 13). The others go through `block_opaque()`. The word is read little-endian, as `load64()` reads it.
+
+### `astc_decode_ldr()`
+
+A block is decoded in place when its rows are contiguous in the output.
+
+## `runtime/gfx/tex_astc_mt.c`
+
+`astc_decode_ldr_mt()`: `astc_decode_ldr` with the block rows of one image spread over a persistent worker pool. Each
+block goes through `astc_decode_block` and lands where `astc_decode_ldr` puts it, so the output is the same bytes. The
+caller takes part and returns when every row is done. One image at a time: a second caller while the pool is busy, or
+an image under `MT_MIN_BLOCKS`, decodes on its own thread.
+
+`astc_blocks_opaque_mt()`: the same pool runs the opaque check of a large texture ("ASTC as BC1" in
+`runtime/vk/vk_texture.c`), `SCAN_CHUNK` blocks at a time, and with `dst` also its copy into staging, which the render
+thread did alone before. Once a worker finds a block that is not opaque, the chunks left are copied without the check,
+or not read at all without `dst`.
+
+- `MT_MIN_BLOCKS` (1024): below this, waking the pool costs about as much as the decode. `MT_MAX_THREADS` is 8.
+  `SCAN_CHUNK` (16384) is the blocks a worker checks at a time (256 KiB); `MT_MIN_SCAN` is 4 of them.
+- The pool `P`: `busy` is held by the caller for the whole image; `threads` are the workers, the caller not counted;
+  `gen` is bumped per image, and a worker joins each generation once; `active`, the workers that have not finished the
+  current generation; the current image is written under `lock` before `gen` is bumped; `next`, the first block row (in
+  a scan: chunk) not yet claimed; `scan`, the current job: 0 a decode, 1 an opaque check; `sn`, `sdst`, `smax` and the
+  result: a scan's blocks, where they go, the most decodes.
+- `decode_rows()`: block rows [j0, j1) of the current image, as `astc_decode_ldr`'s loop does them.
+- `claim_scan()`: chunks of the current scan, until they run out; without `dst`, also once a block that is not opaque
+  was found.
+- `pool_init()`: hardware threads minus 2 (the render and the main guest thread), 1 to `MT_MAX_THREADS`; the caller is
+  one of them.
+- In `astc_decode_ldr_mt()` the rows are cut into (threads + 1) * 4 parts: a few chunks per thread evens out uneven
+  blocks.
+
+## `runtime/gfx/tex_deswizzle.c`
+
+Tegra X1 block-linear to linear copies and back. The licence notice in its second and third lines stays in the code.
+
+The layout (from public descriptions):
+
+- a GOB is 64 bytes x 8 rows = 512 bytes; the offset of (x byte, y row) within a GOB is
+  `(x%64/32)*256 + (y%8/2)*64 + (x%32/16)*32 + (y%2)*16 + x%16`;
+- a block is 1 GOB wide x 2^th GOBs high x 2^td GOBs deep, ordered y first then z inside a block; blocks fill the level
+  in x, y, z row-major order.
+
+Level and layer start offsets and the block height and depth of a level come from `runtime/nvn/nvn_tex.c`; this file
+only does the addressing inside a level and the copy.
+
+Switch 2 (NVN2 titles, NVN API major version 200 and up) stores the 16-byte pieces of a GOB in another order:
+`(x%64/32)*256 + (y%8/4)*128 + (x%32/16)*64 + (y%4)*16 + x%16` (four rows of one 16-byte column before the next
+column). Found on Ocarina's packaged textures: with it the ASTC 4x4 title logo and BC4 masks decode without seams (an
+edge-continuity search over all 120 orders of the five address bits picks it for both; round 18 of the bring-up notes,
+which are not in this repository). Block and level arithmetic are unchanged.
+
+### `nvn_bl_offset()`
+
+The terms of the sum: 512 * bh * bd is the bytes in one block; then which block layer (along depth), which block row,
+which block column, which GOB within the block, and the offset inside the GOB.
+
+### `nvn_deswizzle_geom()`
+
+The geometry of one level: bytes per row of blocks, block rows, slices, where the level and layer start in the storage,
+and the level's block height and depth. -1 for textures the copy does not handle: targets 5, 6 and 10 (multisampled and
+BUFFER), LINEAR storage and more than one sample.
+
+### `bl_copy_rows()`
+
+`nvn_bl_offset` per row instead of per 16 bytes: within a row, GOB column k starts k blocks further, and the four
+16-byte segments of a GOB row (x % 64 = 0, 16, 32, 48) sit at 0, 32, 256 and 288 of it (Switch 2: 0, 64, 256, 320).
+Rows [r0, r1) of the slices come one after the other (row z * rows + y): each row finds its own place in the
+block-linear storage, so any range of rows copies on its own, and `tex_bl_copy_mt()` hands ranges to several threads. A
+row may end in a partial GOB.
+
+### `tex_bl_copy_mt()`
+
+`tex_bl_copy()` over the `par_jobs` pool: a level of `BL_MT_MIN` (1 MiB) bytes or more (smaller ones gained nothing:
+0.5 MiB took 0.01 ms either way, 2 MiB went 3.3 times faster, 16 MiB 2.5 times) goes as bands of rows, about
+`BL_MT_BAND` (128 KiB) bytes each, so a large texture's copy out of the game's memory (the upload's storage copy, 75%
+of its CPU time in an area's streaming) does not run on the drawing thread alone. The bytes written are those of
+`tex_bl_copy()`.
+
+### `nvn_texels_box()`
+
+A run of bytes is contiguous up to the end of its 16-byte segment, so the box is copied in such runs.
+
+## `runtime/gfx/tex_probe.c`
+
+`nx2saria.exe --probe-vkmem`: texture memory checks. The CPU part: block-linear copies against an independent
+reference, ASTC void-extent blocks, and the NVN to VkFormat table against GPU0. The GPU part: the guest heap imported
+as a VkBuffer, the write watch against CPU, GPU and ReadFile writes, the virtual-pool page table, and textures uploaded
+from block-linear storage and read back, among them ASTC textures at the texture detail in effect
+(`NX2SARIA_TEXTURE_DETAIL=reduced` or `low` to check the levels left out). The reference swizzler walks the GOBs in
+storage order and places each byte by bit operations, so it shares no addressing code with `nvn_bl_offset`.
+
+### The block-linear checks
+
+- `gob_bits()`: the byte offset inside a 64 x 8 GOB from the bit layout: x[3:0] to bits 0-3, y[0] to 4, x[4] to 5,
+  y[2:1] to 6-7, x[5] to 8. Bit by bit, independent of `tex_deswizzle.c`'s arithmetic: Tegra X1, or Switch 2 for NVN2
+  titles (the order `tex_deswizzle.c` describes).
+- `ref_swizzle()`: `lin` is slices * rows * row_bytes (tight); `bl` the block-linear storage, pre-filled with a marker.
+  The GOBs of a block go y fastest, then z.
+- `test_deswizzle()`: a level 61 rows high that spans several blocks in x and y; one block; 3D with depth 5 against
+  block depths 2, 4 and 8; levels of 256 KiB and more (1000 * 4 by 300, and 97 * 16 by 70 by 9). Then through a
+  descriptor: RGBA8 (format 0x25) 2D 200x150 with 4 mip levels, level 1 and 2, layer 0, against the reference on the
+  same geometry. Bytes where both fills agree were written by the reference; the untouched storage must hold the same.
+  Swizzling the linear copy back leaves the storage unchanged.
+- `check_box()`: `nvn_texels_box` against the whole-level path on random boxes: a box read equals the box cut from the
+  deswizzled level, and a box write leaves the storage as deswizzle, overwrite the box, swizzle does (nothing outside
+  the box changes).
+- `test_box()`: one format per block size: 1, 8 and 16 bytes per texel, 8 and 16 bytes per 4x4 block.
+
+### `void_block()` `test_astc()`
+
+`void_block()` starts from 0xFFFFFFFFFFFFFDFC: the 0x1FC mode, LDR, reserved bits 11, an extent of all ones; 0x200
+makes it HDR.
+
+- A 3x2 grid of void-extent blocks cropped to a size that cuts the last column and row. UNORM16 = c * 257 gives back c
+  in the top 8 bits, plus noise in the low byte that must be dropped.
+- An HDR void extent is an error block in LDR: magenta, and `astc_decode_block` reports it.
+- An sRGB void extent: the colour is the stored top byte as well (no transfer curve for constant blocks).
+- The worker-pool decode gives the same bytes: random blocks (every mode, error blocks included), cropped edges, at
+  1021 x 517 for each of the 14 footprints.
+
+### `test_formats()`
+
+The GPU-side promises of the fallbacks: RGBA8 and D32S8 must be usable, otherwise the fallback is empty.
+
+### `test_import()`
+
+A CPU-visible pool over the guest heap: GPU writes land in guest memory, CPU writes are read by the GPU, the write
+watch reports the CPU writes and the explicit ones. GPU writes are noted and reported as the replay does
+(`vk_mem_gpu_pending`, `vk_gpu_written` at the fence), and a GPU read follows `vk_mem_shadow_sync` as a submit does:
+with shadow storage that is what moves the bytes; with an import they are already in place.
+
+- What the CPU wrote before the pool existed is still reported once its pages are imported (or copied into a shadow):
+  making the pool must not take the write watch's record of those writes, which the first sync of a mirror and the
+  texture checks read afterwards. Every page is touched first, so that the count printed tells what making the pool
+  marks by itself.
+- As a submit does: a new write-watch epoch (the copy-in reads each region's snapshot once per submission, so a second
+  sync in the same epoch would not see the CPU writes made since the first), then the part's CPU inputs go in before
+  its GPU work.
+- CPU writes (0x4000 bytes at 0x30000) are reported exactly, and the GPU reads them through the same buffer.
+- A GPU write noted for the part being submitted must not keep the part's CPU inputs out: a buffer the shaders add to
+  and the CPU resets (the game's lighting accumulators) depends on the reset reaching the GPU first.
+- Generations: written after `since` gives 1, then 0; an explicit host write gives 1.
+
+### `test_snap_runs()`
+
+The write-watch snapshot of many ranges at once (`vk_mem_snap_note_locked` and `vk_mem_snap_noted_locked` in
+`runtime/vk/vk_memory.c`), as the texture pool's freshness check asks for it: ranges in three adjacent 2 MiB regions of
+the heap and in one apart (the offsets 0xe10000, 0xa80000, 0x603000 and 0x9f0000: regions at 14, 10, 6 and 8 MiB),
+noted in no address order, take one query per run of adjacent regions; afterwards every region has the epoch's
+snapshot, the regions with a CPU write since `since` say so, the one without does not, and the pages are exact. The
+bytes written are the ones already there, so the tests after this one find their memory as it was. The first query
+clears what was written before this test; a region noted twice is asked once.
+
+### `test_remade()`
+
+A GPU write is noted on a pool, and the pool is finalized and made again at its address before the write is reported:
+the report must leave alone what the CPU has written to the new pool since. With shadow storage the new pool's shadow
+is a copy of guest memory from before those writes and holds no byte of the old write (`shadow_write_back` in
+`vk_memory.c`); with an import the report copies nothing. The steps: the submission being recorded writes the pool's
+first two pages; the pool is made again; the CPU writes the first page of the new pool; the old submission's fence
+reports the write.
+
+### `test_table_mirror()`
+
+A pool in the device address table gets its VRAM mirror while a guest submission is recorded, as on a draw's first use
+of it as a buffer (`mirror_create` in `vk_memory.c`). The table takes the mirror up by a store the GPU runs after the
+mirror's first copy (`vk_gpa_flip_cmd` in `runtime/vk/vk_gpa.c`), so nothing is changed when the mirror is made; read
+from the table's own memory once the submission is done, the pool's page reads the mirror and writes guest memory as
+well, and the mirror holds the pool's bytes. A read while the submission may still be in flight gives the table as the
+CPU left it when the mirror was made; without the late store (`vk_mem_gpa_late`) the table changes when the mirror is
+made, as up to 0.9.2.
+
+### `table_part_record()` `table_part_of()`
+
+For `test_table_sync()` and `test_table_store()`: a guest submission of one part that records nothing. `bound`: its
+record binds the device address table, as the replay of a draw whose shader reads through the table does (`ssbo_info`
+in `runtime/vk/vk_exec_draw.c`), so its prologue brings every shadow of the table up to date (`vk_mem_shadow_sync`).
+Its completion callbacks have run when the fence wait returns.
+
+### `test_table_sync()`
+
+Shadow storage: a pool that no part ever binds or resolves, as the pools a shader reaches only through a pointer it
+read from another buffer. Its shadow, which the device address table names, starts with the bytes guest memory held
+when the pool was made; a CPU write reaches it at the next guest submission whose record binds the table, and not at
+one that does not (nothing else brings it there, which is what left the foliage's instances stale). The shadow is read
+back with a GPU copy out of the buffer a lookup names, which does not touch the pool.
+
+The values: 0x13579BDF before `vk_pool_init` (a shadow starts with the bytes an import would show); 0x2468ACE0, a plain
+CPU write: nothing resolves, uses or flushes the pool; 0x0F1E2D3C, again, a guest submission later.
+
+### `test_table_store()`
+
+Shadow storage: what a shader stores through the device address table lands in the pool's shadow copy and nothing
+notes it ("Pages a shader stores into" in `vk_memory.c`). A GPU copy into the shadow buffer that is not noted stands in
+for the store. Word X of a page takes the stores, the CPU rewrites word Y of the same page before every part:
+
+- the store made after the page's first whole copy-in is overwritten by the second, which finds it (nothing can keep
+  it);
+- every later store stays in the shadow through the copy-ins that bring Y, and is in guest memory after the fence;
+- a CPU write of X after that reaches the shadow.
+
+The parts in order: the page's first whole copy-in (its mark); a store of 0xAAAA0001 and a part that finds the store,
+overwrites it, and leaves the page a base copy; a part that brings Y and keeps X, whose fence writes X back; the CPU
+resets the stored word; and a store after the reset (0xAAAA0003) comes back as well.
+
+### `test_readfile()` `test_virtual()`
+
+`test_readfile()`: ReadFile into a watched page, buffered and unbuffered: timed, and whether the write watch saw the
+kernel's write. `test_virtual()`: a physical pool, a virtual pool mapping 64 KiB pages of it, resolution and unmapping;
+the GPU writes through a virtual address and the bytes are read through the physical one.
+
+### `make_tex()` `fill_storage()` `image_is_color()` `image_bytes()`
+
+- `make_tex()` sets `pool_flags` as nvnTextureInitialize records them: `tex_mirrored` (`vk_texture.c`) reads them, not
+  the pool object.
+- `fill_storage()` fills every level of `t`'s storage with random texels through the reference swizzler; `lin[lv]`
+  keeps them tight.
+- `image_is_color()`: level 0 of `image` (w x h RGBA8) read through a staging buffer after everything recorded so far
+  has run: whether every texel is `want`, the way a draw sampling the image would see it.
+- `image_bytes()`: level 0 of `image` (w x h RGBA8) read into `out` the same way.
+
+### Texture detail
+
+An ASTC texture made without its top mip levels (the texture detail of `runtime/vk/vk_texture.c`).
+
+- `detail_color()` and `detail_fill()`: every level and layer of `t`'s storage becomes ASTC void-extent blocks of one
+  colour, each channel 0 or 255 so that the RGBA8 decode and its BC3 encoding both hold it exactly. The colour says
+  which level and layer it is; it is never black (k from 1 to 7).
+- `detail_readable()`: the image formats of an ASTC texture whose levels `detail_level_is()` can read: the RGBA8
+  decode, its BC3 encoding, and the BC1 one an opaque texture gets (`astc_reformat` in `vk_texture.c`; these cases'
+  blocks are opaque). An image in the ASTC format itself, where the device samples it, is not read here.
+- `detail_level_is()`: whether level `lv`, layer `ly` of the image (RGBA8, BC3 or BC1, w x h at that level) is `want`
+  in every texel. BC3: two 5:6:5 endpoints at bytes 8 to 11; both are the colour, so every texel is. BC1: the endpoints
+  at bytes 0 to 3, then 2 bits a texel; with equal endpoints the selectors 0 to 2 all give the colour, and 3 is black
+  in this format, so none may be 3.
+- `detail_case()`: the image of an ASTC texture (format 0x80, ASTC 8x8) has the game's levels from the skip the setting
+  gives it: its size is that level's, and each of its levels and layers holds that level's blocks, after the upload and
+  after a rewrite of the storage. A native ASTC image is not checked.
+- `detail_retry()`: an ASTC upload whose GPU decode gets no scratch memory (`scratch_get` in `runtime/vk/vk_astc.c`, as
+  when the video memory is used up; forced here through `vk_astc_scratch_fail`) does not count as done: the texture
+  stays "not uploaded", is left alone for the frames of the wait, and the first lookup after them uploads it, after
+  which the image holds the storage's blocks. Skipped (0) where ASTC is not decoded on the GPU: there is no scratch
+  buffer then. The case is a 128x128 ASTC 8x8 texture; a lookup inside the wait leaves it alone; the frame counter is
+  moved on by 30 (`UP_RETRY_FRAMES` of `vk_texture.c`); once uploaded, a further lookup does nothing more.
+- `test_detail()`: 1024x1024 with 6 levels (two levels less at low), a 256x256 array of 3 layers (one less below full),
+  and the ones the rule leaves whole: 128x128, and 512x512 without smaller levels. Then the sampler of a texture made
+  without levels: an open LOD clamp is the slot's sampler, a closed one moves down.
+
+### `test_textures()`
+
+- Block-linear RGBA8 (0x25), 200x120 with 3 levels, in a CPU-visible pool: uploaded through the GPU, read back from the
+  image.
+- CPU writes to the storage: the write watch, then a re-upload on the next use, and every mip the GPU sees has the new
+  bytes. The exact count of re-uploads is checked on Windows only: elsewhere an import's pinning can mark pages written
+  again without a CPU write.
+- The same bytes written again, so that every page of the storage shows a write. The texture is over 64 KiB: with
+  `NX2SARIA_TEX_SAME_BIG` (the default) it is compared by content and left as it is, with 0 it is uploaded again. Other
+  bytes upload either way, and the image holds them. After two comparisons in a row that found other bytes its uploads
+  take no hash any more, so the same bytes written again then upload with the switch too.
+- BC1 (0x42), 64x48: blocks uploaded as they are, read back from the image.
+- RGBA8 64x64 in a physical pool: it aliases the pool memory; WriteTexels then ReadTexels through the image.
+- A finalized CPU-backed slot must not revive its stale bytes or follow a new, unrendered CPU texture.
+- Registration is the lifetime boundary that makes the descriptor current again, even after its image was evicted.
+- A release finalizes only the slots of its own texture object: another texture initialized at the same storage with
+  the same parameters before the finalize keeps its slot (`vk_texture_release`, terrain heightmaps).
+- Its own slot 5 is finalized. The texture's image still holds the texture (slot 6's texture keeps it current), so with
+  the kept-stale rule the slot shows that image (`test_stale_kept()`, `stale_kept` in `vk_texture.c`); without the rule
+  it resolves to nothing.
+- Once the live texture at its storage holds GPU content the storage bytes lack, the finalized CPU slot follows it.
+  The live texture (16x12) is cleared on the GPU, to (0, 1, 1, 1), and noted as rendered into, as a draw into it would
+  be (`vk_texture_gpu_written`: the clear is its content, not the storage); the slot's image must then show the clear
+  (00 FF FF FF), which neither the storage bytes nor a recreated image of the slot's own descriptor hold.
+- GPU-owned slots do follow the live image at their storage, even when its descriptor has changed, but only one of
+  their own size (`follow_size_ok` in `vk_texture.c`): the game's render targets share storage, and the live one at an
+  address is often a target of another size that a frame laid out there. The 64x64 slot gets the image of a 64x64
+  texture of another format; once that one is released and a 32x32 one is live there, the slot gets an image of its own
+  descriptor. (In the other order the slot's own entry is live again after the second step, and a slot whose own entry
+  is live keeps it.)
+
+### `test_stale_kept()`
+
+The kept-stale rule (`stale_kept` and `slot_resolve` in `vk_texture.c`; `NX2SARIA_TEX_STALE_KEPT`, default on). The
+slot of a texture the CPU writes, finalized with its texture, goes on showing that texture's own image while the image
+still holds the texture: the game finalizes ahead of the replay of the frames it recorded before. The image is sampled
+as it is, so bytes the storage gets after the finalize do not reach it and nothing is uploaded. With the switch off the
+slot resolves to nothing, which a draw shows as the stand-in. Either way a registration makes the descriptor current
+again, with the storage's bytes as they are then. That another descriptor made at the storage ends the rule is the
+"stale CPU slot" case of `test_textures()`.
+
+The second fill is what the game puts into the storage next. The registration is checked in a later submission: an
+entry's storage is checked for writes once per submission (`vk_texture_by_id_locked`), and this one's was at the first
+lookup.
+
+### `split_case()` `test_split()`
+
+Two descriptors on one CPU-written storage (the split fill of `vk_texture.c`, `start_at`). D1 is a texture the CPU
+writes. D2 names the same storage with a texture flag for which the cache does not take the content from the CPU
+(COMPRESSIBLE here), so a slot of D2 shows D1's image for as long as D1 has a live entry. What the slot shows once D1's
+entry is gone, in the two orders a game can let go of them:
+
+- keep: D2's slot stays registered while D1 is released and registered again (a texture made again in place);
+- both: D1 and D2 are released, the slot of D2 is looked up all the same (the texture pool refresh looks at every
+  registered slot), then the storage gets new bytes and both are registered again (the next texture in that memory).
+
+`recorded`: the lookup that makes D2's entry runs while a submission is recorded, as a draw of a replay makes it, so a
+copy from D1's image can be recorded there (`split_record()`, the frame of a recorded submission, as
+`gpa_read_record`); otherwise outside any recording, where only the storage can fill it. `*what`: 0 the slot's image is
+all zero, 1 it holds the storage's bytes as they are at the end, 2 the bytes the storage held when D2's entry was made
+(the same as 1 in "keep", where the storage is not rewritten), 3 none of these. The textures are 32x32 (`SPLIT_W`,
+`SPLIT_H`). At the end a shader "sampled" the slot: with `NX2SARIA_TRACE=perf` the log names an entry that never had
+content.
+
+`test_split()` runs the three cases (keep, both, keep with the lookup recorded) with split fill off (`tex_split_fill =
+0`), on (1) and filling once (2). Off, the slot shows an image nothing filled, which is what the setting is for (zeros
+with `NX2SARIA_FIX_ZERO`, the default; else whatever the memory held); on, the storage's bytes, copied from D1's image
+where a submission was being recorded and uploaded from the storage elsewhere; filling once, the bytes of the texture
+that was in the memory before when both descriptors were let go of. `vk_texture_split_fill_set(-1)` lets the setting
+decide again. The copy from D1's image in a recorded submission is checked on Windows only: elsewhere an import's
+pinning can mark pages written without a CPU write, and the storage is uploaded.
+
+## `runtime/gfx/astc_probe.c`
+
+`--probe-astc`: the compute ASTC decoder (`runtime/vk/vk_astc.c`, `runtime/shaders/astc_decode.comp`) against
+`astc_decode_ldr`, bit for bit, for every block footprint, linear and sRGB. Synthetic blocks only (no game files):
+valid void extents, invalid and HDR void extents, random blocks kept by what they exercise (1-4 partitions, dual plane
+with 1-3 partitions, every weight grid and quantization the random modes reach), then plain random blocks (mostly
+error blocks, HDR endpoint modes among them). Each case decodes two regions into two mip levels of an RGBA8 image with
+cropped edges, and compares both the decoder's texels (readback) and what the image holds afterwards. The same regions
+also go through the BC3 encoder (`NX2SARIA_ASTC_BC`) into a BC3 image, whose blocks are decoded here and held to error
+bounds (`bc_check()`). Then cut-out foliage at every footprint (`cutout_case()`): full mip chains of transparent and
+opaque patches with sharp alpha edges, through the encoder, where alpha 0 and 255 must stay exact and alpha tests keep
+their outline (`cut_check()`). Every block of both is also put to `astc_block_opaque` of `tex_astc.c`, which must say
+what a decode says (`opaque_check()`), and with `NX2SARIA_ASTC_BC1` the regions are encoded to BC1 as well: each BC1
+block must be the colour half of the BC3 block made from the same texels (`bc1_check()`), the four-colour block BC1
+decodes alike. It also times one 2048x2048 texture on the CPU (`astc_decode_ldr_mt`) and on the GPU (wall time of the
+upload batch).
+
+### The blocks
+
+- The buckets of valid blocks (`NB` 7, `PER_BUCKET` 48 each): partitions 1-4 single plane, then dual plane with 1-3
+  partitions. `g_bc_db` is the lowest BC3 PSNR of all cases.
+- `dual_bit()`: the 6..10 x 6..10 modes have no dual plane.
+- `void_block()`: kind 0 a valid LDR extent (random coordinates s0 < s1, t0 < t1), 1 an all-ones extent, 2 s0 >= s1
+  (an error), 3 HDR (an error), 4 reserved bits not 11 (an error).
+- `make_blocks()`: `n` blocks for footprint `bw` x `bh`: the buckets first, void extents, then random.
+
+### `gpu_decode_ar()` `gpu_decode()` `test_bl()`
+
+- `gpu_decode_ar()` decodes the two regions `ar` (w0 x h0 at level 0, w1 x h1 at level 1) of the `src_bytes` at `src`
+  on the GPU; `out_rb`: the decoder's texels, `out_img`: the image's two levels read back. 0 on a Vulkan failure.
+- `gpu_decode()`: the two regions as tight blocks: `n0` blocks of level 0, then `n1` of level 1.
+- `test_bl()`: the same blocks tiled as the game stores them (`tex_bl_copy`, the CPU deswizzle's own copy), level 0 in
+  blocks of 4 GOBs and level 1 in blocks of 2, decoded in place (`VkAstcRegion.bl`, `bl_block` in `astc_decode.comp`):
+  the decoder's texels must be `want`'s. It checks the GPU's block-linear addressing against the CPU's.
+
+### `gpu_bc()` `bc3_decode()` `bc_check()`
+
+`MAX_LEVELS` (13) is a mip chain of up to 4096 texels a side.
+
+- `gpu_bc()`: mip levels 0 .. levels-1 (`w[i]` x `h[i]` texels from the `n[i]` blocks that follow the previous level's
+  in `blk`) decoded and encoded to BC3 (`bc` 1, `NX2SARIA_ASTC_BC`) or BC1 (`bc` 2) by one `vk_astc_record` call into an
+  image of that format; `out`: its blocks read back level after level, rows of 4x4 blocks. 0 on a Vulkan failure or
+  when nothing was recorded.
+- `bc3_decode()`: one BC3 block to 16 RGBA8 texels, as the format defines it (565 endpoints widened by bit replication;
+  the colour block always in four-colour mode). `pos`: each texel's place on the line from endpoint 0 (0) to endpoint 1
+  (3).
+- `bc_check()`: BC3 is lossy, so these are bounds, not bit-exactness. In every block: alpha within a fourteenth of the
+  block's alpha range (the eight-value mode's half step); each texel on the palette entry nearest its projection onto
+  the endpoint line (within rounding, when the endpoints are apart); a block of one colour within the 565 rounding,
+  alpha exact. Per level, a PSNR floor against `astc_decode_ldr` for gross damage (`BC_MIN_DB`, 15): the random blocks
+  are noise, so it is low (19 dB at worst for 5x5 level 1 on an RX 9070). `*db`: the level's PSNR. The projection is
+  checked for endpoint lines of squared length 64 or more: on shorter lines rounding alone can move a texel to the next
+  entry. A texel more than 0.75 from its projection fails: a wrong code mapping is a whole place off.
+
+### `opaque_check()` `opaque_mt_case()` `bc1_check()` `bc1_case()`
+
+- `opaque_check()`: `astc_block_opaque` against a decode of each of the `n` blocks: opaque exactly when every texel has
+  alpha 255. Then the loop over them (`astc_blocks_opaque`, also copying) and the worker-pool scan
+  (`astc_blocks_opaque_mt`) must give the first block that is not opaque, the same bytes, and the same answer. Opaque
+  4x4 blocks are kept for `opaque_mt_case()` (`OP_POOL`, 4096).
+- `opaque_mt_case()`: the worker-pool scan of a texture of 300,000 opaque 4x4 blocks (opaque blocks of the cases,
+  repeated), alone and copying: opaque, every byte copied; then with one block that is not opaque at 250,000: not
+  opaque, every byte still copied, and the loop names that block.
+- `bc1_check()`: the BC1 blocks (8 bytes each) of a level against its BC3 blocks: each the second half of its BC3
+  block. `bc1_case()`: the regions of one case encoded to BC1 too (`vk_astc_bc1`), held to `bc1_check()` against their
+  BC3 blocks.
+
+### `test_case()`
+
+Level 0 is 37 x 23 blocks, cropped by 1-3 texels; level 1 half of that, with other blocks.
+
+### Cut-outs
+
+Alpha-tested foliage through the BC3 encoder: mip chains whose ASTC blocks are, by a hash of their place, fully
+transparent (alpha 0 over whatever colour, as an encoder leaves the colour under a cut-out), fully opaque leaf green,
+or a block whose alpha jumps from transparent to opaque between two neighbouring texels. The edges between blocks lie
+on the footprint's grid, so along a side of 5, 6 or 10 texels they cut through BC3's 4x4 blocks at every offset; the
+levels shrink to odd sizes down to 1x1. `g_cut_db` is the lowest BC3 PSNR of the cut-out levels.
+
+- `sharp_blocks()`: valid blocks (not void extents) whose alpha runs from at most 16 to at least 240 with a step of 192
+  or more between two neighbouring texels; the number found, up to `SHARP_POOL` (96).
+- `void_rgba()`: a void-extent block of one colour (UNORM16 channels, the 8-bit value in both bytes).
+- `cut_blocks()`: the `n` blocks of one level, `bx` to a row: opaque and transparent in patches of 2x2 blocks, one
+  block in five from the sharp-edged pool. A transparent block takes any colour.
+- `cut_check()`: what an alpha test sees of the cut-outs. A texel the ASTC image holds fully transparent or fully
+  opaque stays exactly 0 or 255 (a BC3 alpha block's endpoints are its 4x4 block's least and greatest alpha), and every
+  texel keeps its side of an alpha test at a quarter, a half and three quarters (64, 128, 192) unless it lies within
+  the block's alpha step of the threshold (the margin is `bc_check()`'s alpha bound, the range / 14 + 1). `*edges`: the
+  4x4 blocks whose alpha runs from at most 16 to at least 240.
+- `cutout_case()`: one cut-out mip chain of w0 x h0 texels at footprint `bw` x `bh`: every level held to `bc_check()`'s
+  bounds and `cut_check()`.
+
+### `timing()` `probe_astc()`
+
+`timing()`: one 2048 x 2048 texture of valid blocks: the CPU worker-pool decode against the GPU time of the dispatches
+alone (the timestamps of `vk_astc.c`, `NX2SARIA_ASTC_TIME`) and the wall time of the upload batch. It makes 4096 valid,
+non-constant blocks: error blocks would flatter the GPU.
+
+`probe_astc()` sets `NX2SARIA_ASTC_BC` to 1, which also builds the BC3 encoder; the RGBA8 cases pass `bc` 0 and do not
+use it. The cut-outs run at every footprint (14), then as two chains large enough that level 0 is a scratch chunk of
+its own.
