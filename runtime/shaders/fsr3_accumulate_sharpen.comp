@@ -20,14 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// Modified: compiled by tools/build_shaders.py into runtime/fsr3_accumulate_sharpen_spv.h for runtime/vk_fsr3.c,
-// with the options of fsr3_options.h and sharpening on.
-
 #version 450
 
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_samplerless_texture_functions : require
-// Needed for rw_upscaled_output declaration
 #extension GL_EXT_shader_image_load_formatted : require
 
 #define FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING 1
@@ -63,16 +59,16 @@
 
 #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH
 #define FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH 8
-#endif // #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH
+#endif
 #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT
 #define FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT 8
-#endif // FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT
+#endif
 #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH
 #define FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH 1
-#endif // #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH
+#endif
 #ifndef FFX_FSR3UPSCALER_NUM_THREADS
 #define FFX_FSR3UPSCALER_NUM_THREADS layout (local_size_x = FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH, local_size_y = FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT, local_size_z = FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH) in;
-#endif // #ifndef FFX_FSR3UPSCALER_NUM_THREADS
+#endif
 
 FFX_FSR3UPSCALER_NUM_THREADS
 void main()

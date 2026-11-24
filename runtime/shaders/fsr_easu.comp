@@ -1,8 +1,4 @@
-// AMD FidelityFX Super Resolution 1 edge-adaptive upscale (EASU) of the game's output to the swapchain size
-// (runtime/vk_fsr.c), and of the scene to the picture's size where the game's own upscaler ran (runtime/vk_tonemap.c,
-// with SQUARE set). ffx/ffx_a.h and ffx/ffx_fsr1.h are AMD's headers, unmodified (MIT, ffx/LICENSE.txt). Each
-// invocation writes four pixels of a 16x16 tile, as AMD's sample does; the constants come from FsrEasuConOffset, so the
-// game's crop rectangle can start anywhere in its image.
+// ffx/ffx_a.h and ffx/ffx_fsr1.h are AMD's headers, unmodified (MIT, ffx/LICENSE.txt).
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
@@ -12,14 +8,10 @@ layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dst;
 
 layout(push_constant) uniform Params {
-    vec4 view;   // crop width, crop height, source image width, source image height
-    vec4 out_;   // output width, output height, crop x, crop y
+    vec4 view;
+    vec4 out_;
 } pc;
 
-// Specialization constant 0, which only vk_tonemap.c sets: its source holds the square root of each linear value (the
-// game's post pass stores the picture so) and its output is linear, so what the filter gives is squared. The filter
-// runs on the stored values either way: square roots are the perceptual encoding it is made for, and the game's own
-// upscaler filters them too. Unset (the present): the filtered value as it is.
 layout(constant_id = 0) const bool SQUARE = false;
 
 #define A_GPU 1

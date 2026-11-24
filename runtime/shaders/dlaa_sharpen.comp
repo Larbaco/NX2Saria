@@ -1,8 +1,4 @@
-// A second pass of AMD's robust contrast-adaptive sharpening (RCAS) over FSR 3.1's picture in its scaling modes
-// (runtime/vk_dlaa.c fsr3_sharpen). ffx/ffx_a.h and ffx/ffx_fsr1.h are AMD's headers, unmodified (MIT,
-// ffx/LICENSE.txt). The picture is linear scene light without an upper bound, and RCAS limits its sharpening by each
-// channel's distance from 0 and from 1: every texel is taken through c / (1 + max(c)) on the way in, which keeps hue
-// and maps any light into 0..1, and through the inverse on the way out.
+// ffx/ffx_a.h and ffx/ffx_fsr1.h are AMD's headers, unmodified (MIT, ffx/LICENSE.txt).
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
@@ -12,7 +8,7 @@ layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dst;
 
 layout(push_constant) uniform Params {
-    vec4 size;   // width, height, sharpness in stops (0 = most), unused
+    vec4 size;
 } pc;
 
 #define A_GPU 1
@@ -33,7 +29,7 @@ void put(AU2 p, AU4 con) {
     AF3 c;
     FsrRcasF(c.r, c.g, c.b, p, con);
     c = clamp(c, vec3(0.0), vec3(1.0));
-    c /= max(1.0 - max(c.r, max(c.g, c.b)), 1.0 / 16384.0);   // light up to 16,383 comes back as it went in
+    c /= max(1.0 - max(c.r, max(c.g, c.b)), 1.0 / 16384.0);
     imageStore(dst, ivec2(p), vec4(c, 1.0));
 }
 

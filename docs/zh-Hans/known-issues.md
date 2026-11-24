@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=4679f2a7b22fdeb015100f0d6f0303e6eab365f1 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=69d8ac02a603b9a406b2e78a4032d4e57ec8257a reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · [Русский](../ru/known-issues.md) · **简体中文**
 
@@ -14,6 +14,7 @@
 
 - **AMD FSR 3.1 和 FSR 4 在 Windows 上可能出现画面瑕疵**：当场景以小于画面的尺寸渲染时，镜头或 Link 移动时会出现黑色或暗色的斑块和闪烁，移动的角色身后也会出现拖影。使用双线性超分辨率，或者以窗口大小渲染场景且不使用超分辨率器，可以避免这些斑块。已作为 tangerineturtle1/NX2navi#794、tangerineturtle1/NX2navi#475 和 tangerineturtle1/NX2navi#736 报告给原项目。
 - **Radeon RX 6000（RDNA 2）上的 FSR 4**：AMD 的驱动程序在这些显卡上提供 FSR 4，它也能运行，但消耗的 GPU 时间比在较新的显卡上多得多（在 RX 6750 XT 上 1440p 下每帧约 12 ms）。在这些显卡上，FSR 3.1 是更轻量的选择。
+- **在使用 Mesa 26 的 Linux 上，部分 AMD 显卡可能以“the GPU device was lost”结束游戏。** 会话报告显示，使用 Mesa 26.2 和 26.3 的 Radeon RX 480、RX 580 和 RX 6800S 会在会话开始后几秒或几分钟出现此问题；使用 Mesa 25.2 的报告中没有出现。原因尚不清楚。如果您遇到此问题，请提交 issue，并附上 `logs/nx2saria.log` 和崩溃后的内核日志行（`journalctl -k -b`）。
 
 ## 帧生成
 
