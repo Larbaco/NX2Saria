@@ -1,5 +1,4 @@
 # needs: py:tkinter
-"""Fast checks for Linux platform services; no display, game data or build tools required."""
 import ctypes
 import hashlib
 import json
@@ -15,7 +14,7 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # launcher/, when run as python tests/platform_linux_test.py
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from launcher.platform import linux  # noqa: E402
 from launcher import winsys  # noqa: E402
 from launcher import build  # noqa: E402
@@ -778,9 +777,6 @@ class LinuxPlatformTest(unittest.TestCase):
 
 
 class UserDirsTest(unittest.TestCase):
-    """The desktop's own Downloads, Desktop and Documents folders (user-dirs.dirs), which a desktop set up in another
-    language translates: the dump search and Export Save look there too (launcher/winsys.py known_folder)."""
-
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='nx2saria-userdirs-'))
         self.addCleanup(__import__('shutil').rmtree, self.home, True)
@@ -797,11 +793,11 @@ class UserDirsTest(unittest.TestCase):
         self.assertEqual(linux.user_dir('desktop', env, self.home), self.home / 'Área de Trabalho')
         self.assertEqual(linux.user_dir('downloads', env, self.home), self.home / 'Transferências')
         self.assertEqual(linux.user_dir('documents', env, self.home), Path('/mnt/dados/Documentos'))
-        self.assertIsNone(linux.user_dir('pictures', env, self.home))   # set to the home folder: turned off
+        self.assertIsNone(linux.user_dir('pictures', env, self.home))
         self.assertIsNone(linux.user_dir('music', env, self.home))
         other = self.home / 'cfg'
         other.mkdir()
-        self.assertIsNone(linux.user_dir('desktop', {'XDG_CONFIG_HOME': str(other)}, self.home))   # no file there
+        self.assertIsNone(linux.user_dir('desktop', {'XDG_CONFIG_HOME': str(other)}, self.home))
 
     def test_the_dump_search_looks_in_them(self):
         from launcher import gamefiles
@@ -826,23 +822,20 @@ class UserDirsTest(unittest.TestCase):
 
 
 class OtherDrivesTest(unittest.TestCase):
-    """The dump search also looks on the disks mounted under /mnt and /media (a partition shared with Windows), and
-    the dump and folder rows open the desktop's chooser, which reaches them."""
-
     def test_only_local_disks_mounted_now(self):
         with tempfile.TemporaryDirectory() as tmp:
             mounts = Path(tmp) / 'mounts'
             mounts.write_text(
                 '/dev/nvme0n1p2 / ext4 rw 0 0\n'
-                'systemd-1 /mnt/dados autofs rw 0 0\n'            # the placeholder: listing it would mount the disk
-                '/dev/sda1 /mnt/dados fuseblk rw 0 0\n'           # the disk itself, mounted
-                'systemd-1 /mnt/backup autofs rw 0 0\n'           # not mounted now: left alone
-                'server:/share /mnt/rede nfs4 rw 0 0\n'           # a network share: left alone
+                'systemd-1 /mnt/dados autofs rw 0 0\n'
+                '/dev/sda1 /mnt/dados fuseblk rw 0 0\n'
+                'systemd-1 /mnt/backup autofs rw 0 0\n'
+                'server:/share /mnt/rede nfs4 rw 0 0\n'
                 '/dev/sdb1 /media/ana/Disco\\040Externo exfat rw 0 0\n'
-                '/dev/sdc1 /media/bia/Pendrive vfat rw 0 0\n'     # another account's
+                '/dev/sdc1 /media/bia/Pendrive vfat rw 0 0\n'
                 'tmpfs /mnt/tmp tmpfs rw 0 0\n'
-                '/dev/mmcblk0p1 /run/media/mmcblk0p1 ext4 rw 0 0\n'   # SteamOS's SD card
-                '/dev/sdd1 /mnt ext4 rw 0 0\n')                   # /mnt itself is no drive below it
+                '/dev/mmcblk0p1 /run/media/mmcblk0p1 ext4 rw 0 0\n'
+                '/dev/sdd1 /mnt ext4 rw 0 0\n')
             self.assertEqual(linux.mounted_drives(mounts, 'ana'),
                              [Path('/mnt/dados'), Path('/media/ana/Disco Externo'), Path('/run/media/mmcblk0p1')])
             self.assertEqual(linux.mounted_drives(Path(tmp) / 'none', 'ana'), [])
@@ -854,7 +847,7 @@ class OtherDrivesTest(unittest.TestCase):
             (drive / 'Jogos' / 'Switch').mkdir(parents=True)
             (drive / 'Jogos' / 'Switch' / 'game.nup').write_bytes(b'x')
             (drive / 'Jogos' / 'a' / 'b').mkdir(parents=True)
-            (drive / 'Jogos' / 'a' / 'b' / 'deep.nup').write_bytes(b'x')   # three levels: not looked at
+            (drive / 'Jogos' / 'a' / 'b' / 'deep.nup').write_bytes(b'x')
             home = Path(tmp) / 'home'
             home.mkdir()
             with mock.patch.object(gamefiles, 'is_game_nup', lambda layout, f: True), \
@@ -863,7 +856,7 @@ class OtherDrivesTest(unittest.TestCase):
                 report = {}
                 found = gamefiles.find_dumps(None, drives=[drive], report=report)
                 self.assertEqual(found, [drive / 'Jogos' / 'Switch' / 'game.nup'])
-                self.assertEqual(report, {'folders': 1 + 1 + 1 + 2, 'stopped': False})   # home; drive, Jogos, 2 below
+                self.assertEqual(report, {'folders': 1 + 1 + 1 + 2, 'stopped': False})
                 with mock.patch.object(gamefiles, 'DRIVES_SECONDS', -1):
                     report = {}
                     self.assertEqual(gamefiles.find_dumps(None, drives=[drive], report=report), [])
@@ -882,18 +875,18 @@ class OtherDrivesTest(unittest.TestCase):
         which = lambda tool: f'/usr/bin/{tool}'
         calls, run = self.run_as({'zenity': (0, b'/mnt/dados/Jogos/game\xff.nup\n'), 'kdialog': (0, '')})
         got = linux.pick_path('file', 'Choose', '/home/ana', [('Game dump', '*.nup')], which, run, env={})
-        self.assertEqual(got, ('zenity', os.fsdecode(b'/mnt/dados/Jogos/game\xff.nup')))   # a name that is no UTF-8
+        self.assertEqual(got, ('zenity', os.fsdecode(b'/mnt/dados/Jogos/game\xff.nup')))
         self.assertEqual(calls[0], ['zenity', '--file-selection', '--title', 'Choose', '--filename', '/home/ana/',
                                     '--file-filter=Game dump | *.nup'])
-        calls, run = self.run_as({'zenity': (1, ''), 'kdialog': (0, '/x')})   # cancelled: kdialog is not asked too
+        calls, run = self.run_as({'zenity': (1, ''), 'kdialog': (0, '/x')})
         self.assertEqual(linux.pick_path('folder', 'Choose', '/home/ana', (), which, run, env={}), ('zenity', ''))
         self.assertIn('--directory', calls[0])
         self.assertEqual(len(calls), 1)
-        calls, run = self.run_as({'kdialog': (0, '/mnt/dados/NX2Saria\n')})   # KDE: its own first
+        calls, run = self.run_as({'kdialog': (0, '/mnt/dados/NX2Saria\n')})
         self.assertEqual(linux.pick_path('folder', 'Choose', '/home/ana', (), which, run,
                                          env={'XDG_CURRENT_DESKTOP': 'KDE'}), ('kdialog', '/mnt/dados/NX2Saria'))
         self.assertEqual(calls[0], ['kdialog', '--title', 'Choose', '--getexistingdirectory', '/home/ana'])
-        calls, run = self.run_as({'zenity': (255, ''), 'kdialog': (0, '/a.nup')})   # zenity broken: kdialog
+        calls, run = self.run_as({'zenity': (255, ''), 'kdialog': (0, '/a.nup')})
         self.assertEqual(linux.pick_path('file', 'C', '/', [('D', '*.nup')], which, run, env={}), ('kdialog', '/a.nup'))
         self.assertEqual(calls[1][-1], '*.nup|D')
         self.assertEqual(linux.pick_path('file', 'C', '/', (), lambda t: None, run, env={}), (None, ''))
@@ -908,7 +901,6 @@ class OtherDrivesTest(unittest.TestCase):
         with mock.patch.object(winsys.sys, 'platform', 'linux'), \
                 mock.patch.object(linux, 'pick_path', lambda *a: ('kdialog', '')):
             self.assertEqual(winsys.pick(None, 'folder', 'Choose the folder', '/home/ana', log=lines.append), '')
-        # "All files" stays: the desktop's patterns are case-sensitive, and GAME.NUP would not match *.nup
         self.assertEqual(asked[0][3], [('Game dump', '*.nup'), ('All files', '*')])
         self.assertEqual(lines, ['file chooser (zenity): Choose your dump: /mnt/dados/Jogos/game.nup',
                                  'file chooser (kdialog): Choose the folder: cancelled'])
