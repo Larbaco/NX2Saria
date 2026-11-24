@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,9 +12,19 @@ from launcher.ui import app
 
 
 class ModsJobCharacterizationTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='nx2-mods-job-')
+        self.addCleanup(self.temp.cleanup)
+
     def make_window(self, result, keep_cache):
         window = mock.MagicMock()
-        window.settings = {'keep_cache': keep_cache}
+        game = Path(self.temp.name) / 'game'
+        cache = game / 'build-cache' / 'lift'
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / 'item').write_text('synthetic')
+        window.settings = {'keep_cache': keep_cache, 'game_dir': str(game)}
+        window.ctx.settings = window.settings
+        window.drop_build_cache.side_effect = lambda: app.App.drop_build_cache(window)
         window.mods_failed = ['earlier']
         window.message = 'old message'
         window.job_return = 'home'
@@ -38,12 +49,15 @@ class ModsJobCharacterizationTest(unittest.TestCase):
     def test_success_drops_cache_then_resumes_play_when_cache_disabled(self):
         window = self.make_window('ok', False)
         events = []
-        window.drop_build_cache.side_effect = lambda: events.append('cache')
-        window.show.side_effect = lambda *args: events.append(('show', *args))
+        cache = Path(window.settings['game_dir']) / 'build-cache' / 'lift'
+        def show(*args):
+            self.assertFalse(cache.exists())
+            events.append(('show', *args))
+        window.show.side_effect = show
         window.play.side_effect = lambda **kwargs: events.append(('play', kwargs))
         with mock.patch.object(app.winsys, 'keep_awake'):
             app.App.job_finished(window)
-        self.assertEqual(events, ['cache', ('show', 'home', 5), ('play', {'built': True})])
+        self.assertEqual(events, [('show', 'home', 5), ('play', {'built': True})])
         self.assertEqual(window.mods_failed, [])
         self.assertEqual(window.message, '')
         window.ctx.log.assert_called_once_with('job rebuild: ok ')
