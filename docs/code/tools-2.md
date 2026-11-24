@@ -1856,3 +1856,394 @@ it yet. `debs`: the two packages on disk instead of the download, in any order, 
 ### `header_version()`
 
 Major, minor and micro as `SDL_version.h` defines them in `text`, `None` when it does not.
+
+## `tools/shader_census.py`
+
+Census of every Maxwell shader in the extracted RomFS and ExeFS, and an offline translation pass. The notice at its
+top is that of the code it holds from another project and stays
+([THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)): the inventory, the bnsh, sharcb and sarc readers and the
+package walk. Unlike where those came from, this pass reads no shared shader list, runs no spirv-cross and makes no
+bind-state variants; the module scan reads the NSO files under `exefs/` directly; and a control section must start
+with `CONTROL_MAGIC` (`sharcb_shaders()` says why).
+
+It reads `build/extracted/<version>/` (the RomFS image plus `index.json` as `tools/romfs_index.py` reads them, and
+`exefs/`) and writes under `build/<version>/shaders/` only:
+
+| File | What |
+|---|---|
+| `code/<key>.code` | translator input (graphics: SPH and instructions, compute: instructions) |
+| `jobs.json` | key to job, source path, origin (`bnsh`, `sharcb`, `ndsr` or `main`) |
+| `spv/<key>.spv` | with `--translate` |
+| `failures.txt` | with `--translate`, when something failed: groups by message |
+
+The key is `sha256(control[:0x880] + code)`, the shared shader list's key. It needs Python 3.14
+(`compression.zstd`), so it runs in `.venv-py314`:
+
+```
+.venv-py314\Scripts\python tools\shader_census.py --version v121 --translate
+```
+
+- `zstd` is `tools/zstd_compat.py`: `compression.zstd` on 3.14, the zstandard package before.
+- `CONTROL_MAGIC`: the NVN program control section magic, u32 0x98761234.
+- `NVN2_STAGES`: the stage number in bits 16 and up of control +0x54. `NVN2_CONTROL` (0xe0): the part of an NVN2
+  control section the runtime keeps (`runtime/gfx/gfx_shader.c`, its NVN2 part). `NVN2_SLOTS`: program slots that may
+  point at a stage record: fragment +40, task +64, mesh +72 seen.
+- `SHADER_DIRS`: the RomFS directories that can hold shaders: the agl and gsys packages, the effects, terrain, the UI
+  layout archives and the game's own shader packs. Every shader of 1.1.0 (27,576) comes from these six; they are 1,996
+  entries and 147 MiB, 0.9% of a RomFS whose every file the walk used to read and decompress first (65 s against
+  2.8 s). The Switch 2 game keeps its UI layout shaders (MergeShader) in `Layout2Shader/`.
+
+### `sarc()`
+
+Names only key the members here, nothing is written under them: an odd or repeated one is skipped.
+
+### `nvn2_record()`, `nvn2_stages()`
+
+`nvn2_record()`: control and code of the stage record at `offset` when it is an NVN2 one: `{u64, control offset, code
+offset, u32 code size, u32 control size}`, the control shorter than NVN1's 0x880 and starting with the magic. Else
+`None`. `nvn2_stages()`: the stages of an NVN2 (Switch 2) program as the runtime keys them: the control section's
+first 0xe0 bytes in a zeroed 0x880 one, and the code from its first byte up to the end of its c1 constants (+0x40 to
++0x44, after the code of +0x38 bytes), the c1 part included.
+
+### `bnsh_shaders()`
+
+BNSH absolute offsets are relative to each embedded BNSH, not BFSHA. The SDK utility BNSH uses an older, shorter
+control layout and is skipped. A control is cut to 0x880: some are 0x88c; NVN and the runtime's key read 0x880.
+
+### `sharcb_shaders()`
+
+agl shader packages (`.sharcb`, magic BAHS): records `<u64 code offset in the pool, u32 control size (0x880 or 0x88c),
+i32 offset of the control from the record>`; a record may reuse an earlier record's control. NVN2 (Switch 2) packages
+hold the same records with a 0xe0-byte control section.
+
+The scan finds records by their size word, so it also meets 16-byte groups that only look like one. Without the magic
+check, 1.2.1 yields 87 such keys: each has control offset 0 (the "control" starts at the record itself, so its first 8
+bytes are the code offset) and no `CONTROL_MAGIC`. The game hands NVN real control sections and the runtime key hashes
+those, so no draw can ever produce these keys. Their code is cut from the wrong place: they were all 67 translation
+failures of 1.2.1 (IndexOutOfRange in ShaderHeader.ctor and ArgumentOutOfRange in Decoder.FillBlock, on 0 to 4,718
+bytes of code). A scan without the magic check keeps them; the 7 that translate are V rows in the shared shader list
+only because that list's producer folds the seed's own `.variants` files back in. A candidate without `CONTROL_MAGIC`
+is skipped and counted in `rejected[0]`.
+
+### `ndsr_shaders()`
+
+NDSR packages (`Lib/agl/agl_ndsr*.pck`: compute programs). Items of 8 bytes, `<u32 offset, u32 size << 4 | kind>`: an
+NVN2 control section is kind 6 with size 0xe0 and the item after it, kind 7, is its code.
+
+### `nvn2_sharcb_record()`
+
+Key, stage, control and code of an NVN2 `.sharcb` record, as `nvn2_stages()` cuts them, or `None`. A size word of 0xe0
+is common, so a candidate counts only with the control magic and a known stage.
+
+### `nso_image()`
+
+The decompressed text, rodata and data segments of an NSO, concatenated (enough to find embedded BNSH files).
+
+### `startup_package()`
+
+The RomFS files the shared shader list's startup shaders come from; effects and UI layouts carry more.
+
+### `inventory()`
+
+Every unique shader: key to `dict(stage, control, code, source, origin, startup)`. As in the shared shader list, a
+shader is a startup shader when it comes from an agl package, a game module, or a `startup_package()` RomFS file; the
+others come from effect and UI layout resources, which the list covers only for bind states players have met. It also
+returns the number of `.sharcb` record candidates rejected for a missing control magic (`sharcb_shaders()`). BFSHA and
+BNSH files, effect and layout resources are searched for complete, independently addressed BNSH files.
+
+### `write_shaders()`, `worker()`
+
+`write_shaders()` writes the code files and `jobs.json`; returns key to `dict(job, source, origin)`. `worker()`: one
+`--serve` process of the translator for a slice of keys; returns the number translated, failures (key to message) and
+errors (key to message).
+
+## `tools/shader_list.py`
+
+The shared shader list, another project's file (`games/<game>/assets/shader_list.tsv` in its checkout under `refs/`;
+its licence is in [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)), as our tools read it: every row of one
+revision, plus the V rows of every older revision that it dropped.
+
+The list drops V rows its producer's runtime no longer needs: default variants, which that runtime translates for
+every shader (dropped 2026-10-22 to 2026-10-25), and variants that differ only in vertex input or colour output types
+(2026-10-26). Our answers (`runtime/gfx/gfx_shader.c`) still tell those apart, so a dropped row names a variant our
+play meets: at 1340bee the list alone has 134 rows of 1.4.3 shaders, its history 24,839, and of 1.2.1 6,771 and
+25,238. A row no draw asks for costs one translation. No copy of the list goes into the repository.
+
+`TAIL` is the list's path under the checkout's game folder (`list_path()`).
+
+### `list_path()`
+
+The shader list's path at `rev`: the one `games/<game>/assets/shader_list.tsv` of the checkout.
+
+### `history()`
+
+`rev`'s list, then each V row of an older revision that no newer one has, newest first. A shallow clone has `rev`'s
+list only: preparing from it skips most variants and shows only as stutter in play, so it stops and names
+`tools/fetch_refs.sh`.
+
+## `tools/spin_waits.py`
+
+Finds the spin waits of the ExeFS modules and prints them as `spin` lines of a patch table (`recomp/patches.py`). The
+notice at its top is that of the spin wait search, which came with a licence
+([THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)): the part of this file that is `Search.rw()`,
+`Search.kind()`, `Search.rmw()`, `Search.lock()`, `Search.store()`, `Search.quick()`, `Search.region()` and
+`Search.region1()` (in its source `spin_rw`, `spin_kind`, `spin_rmw`, `spin_lock`, `spin_store`, `spin_quick`,
+`spin_region`, `spin_region1`, under "Spin waits").
+
+```
+spin_waits.py --exefs build/extracted/v143/exefs --patches recomp/patches-v143.txt [--modules main,subsdk0,sdk]
+```
+
+A guest loop that polls memory until another thread changes it fills only its own core on the Switch, where a better
+thread pinned there preempts it. Here it holds one of the six virtual cores (`runtime/hle/kernel.c`) and a host core,
+and when the poll takes and releases a lock on every pass, two pollers hand the lock's cache line between their cores
+so that the thread whose item it is rarely wins its exclusive store (a job queue polled this way gave CPU frames of
+30-210 ms every 1-10 s). The generator sends the back-edges of such loops through
+`runtime/hle/kernel.c` `rt_spin_gate()`, which slows the poll down and hands the virtual core to a waiting thread
+once the loop has polled for a while.
+
+A loop counts only when it provably cannot leave by itself. From its head T every path back to T (the region R,
+within `SPIN_WIN` bytes after T) runs loads, register and flag arithmetic, direct branches and barriers; no call, SVC,
+system register or event wait; nothing live at T is written in R. Allowed besides: an exclusive add of a constant that
+every path back to T undoes on the same address, a spin lock taken and released on the same address on every path, a
+test loop on a word inside R, and at most `SPIN_STORES` stores of registers R never writes (fixed values to fixed
+addresses, so the passes repeat after a few). Sites of the patch table are kept out of regions.
+
+It runs on the development machine (capstone); the table it prints is checked in, so the installer's generator needs
+no disassembler. The three imports after the `sys.path` lines carry `# noqa: E402`, which stays.
+
+- `SPIN_WIN` (512): bytes from a backward branch back to its target. `SPIN_TOPS`: the top bytes of b, b.cond, cbz and
+  cbnz, tbz and tbnz. `SPIN_PATHS`, `SPIN_STEPS`, `SPIN_STORES`: complete paths back to T; search steps; stores in a
+  region.
+- `SPIN_STOP`: words that end every path through them by their encoding alone: bl; br, blr and ret; svc and brk;
+  stores (immediate, unscaled, pre and post-index, register offset, vector); stp and stnp; LSE atomics. Exclusive
+  stores and pre and post-index loads are left to the full check.
+
+### `norm()`
+
+w and x views as `x<n>`, vector views as `v<n>`, zero registers as `None`.
+
+### `Search`
+
+The spin waits of one module image. `touched`: image offsets no region may contain (patch sites).
+
+### `Search.candidates()`
+
+Loop head to the backward branches to it, branches at most `SPIN_WIN` bytes back.
+
+### `Search.rw()`, `Search.kind()`
+
+`rw()`: registers read and registers written. Capstone lists a compare's first operand as written and the flags as
+read by cbz and tbz, and leaves out the destination of adds, so every register operand counts as well: operand 0
+written and the others read, or for a load all of them written. `kind()`: `'br'` a direct branch, `'pc'` adr or adrp,
+`'ok'` a load or register and flag arithmetic, `None` anything else. A load without a memory operand is a pc-relative
+literal load and is `'ok'`.
+
+### `Search.rmw()`
+
+`ld(a)xr wA,[xN]; add|sub wB,wA,#k; st(l)xr wS,wB,[xN]; cbnz wS,<the load>` at `a` gives xN, plus or minus k, the
+registers written and the four instructions, or `None`.
+
+### `Search.lock()`
+
+An exclusive spin lock sequence or a test loop entered at `a`, as kind, xN, its instructions, how many come before
+`a`, how many from `a` on, registers read and registers written:
+
+```
+'acq'  ld(a)xr wA,[xN]; cbz wA,+16; clrex; b <the load>; st(l)xr wS,wK,[xN]; cbnz wS,<the load>
+'rel'  clrex; ld(a)xr wA,[xN]; cmp wA,#k; b.ne <the clrex>; st(l)xr wS,wzr,[xN]; cbnz wS,<the load>
+       (entered at the load), or stlr wzr,[xN]
+'tst'  ldr|ldrb|ldrh wA,[xN{,#imm}]; cmp wA,#k; b.eq|b.ne <the load>
+```
+
+### `Search.store()`
+
+str, strb, strh, stur, sturb or sturh of a w register or zr to `[xN{,#imm}]` (no writeback, no register offset) gives
+the value register (`None` for zr) and the base register, or `None`.
+
+### `Search.quick()`
+
+A back-edge to T can be reached from T without passing a word of `SPIN_STOP` (only such heads get the full check,
+which decodes). str, strb and strh (immediate, unscaled) do not stop it: they may store the same on every pass.
+
+### `Search.region()`
+
+The spin wait with head T (`bes`: the backward branches to T) as a dict, or `None`. A store whose value or address a
+pass changes is no part of a region: the paths through it are dropped and the region is found again without them. The
+region without stores is taken instead when the wider one does not cover its back-edges.
+
+### `Search.region1()`
+
+An `ldxr` or `ldaxr` word is tried as a read-modify-write first (`rmw()`), then as a lock (`lock()`); a test loop that
+is the region's own is not a lock. Every path from T to a back-edge is walked: no inner cycle, and the exclusive adds
+on each address (a register between two writes to it) sum to 0; a lock is taken at most once and released after it.
+No state is carried from one pass to the next: nothing live at T is written in R. A region of stores with nothing
+polled is none.
+
+## `tools/streamline_pin.py`
+
+NVIDIA Streamline's runtime for DLSS Frame Generation (`runtime/vk/vk_dlssg.c`): `tools/make_launcher.py` and
+`tools/make_kit.py` put it in the release's or the kit's `bin/dlssg/` beside `nx2navi_dlssg.dll`
+(`tools/build_dlssg.py`), and `tools/make_game.py` `place_dlssg()` copies the whole set beside the game.
+
+The files are NVIDIA's own builds from the Streamline SDK release at a pinned version, unmodified: the SDK archive is
+downloaded once, checked against its size and SHA-256, and only the files the game loads are kept, each checked
+against its own SHA-256. The `sl.*.dll` files are under Streamline's MIT licence; `nvngx_dlssg.dll` is under the NVIDIA
+RTX SDKs License, which licenses it only for use on systems with NVIDIA GPUs. The notice written beside them names the
+version and each file's SHA-256.
+
+- `DLL`: this repository's `runtime/dlssg/`, built by `tools/build_dlssg.py`.
+- `FILES`: the set `DLSSG_FILES` of `tools/make_game.py` names: without all of it the game leaves DLSS Frame
+  Generation off.
+- `SDK_FILES`: the SDK's files the set takes, by their path in the SDK, with their SHA-256. `TEXTS`: the licence texts
+  beside the DLLs, by the SDK file each is copied from.
+
+### `wrong_files()`
+
+The pinned SDK files that are missing from `sdk` or differ from the pin.
+
+### `resolve()`
+
+A folder laid out as the SDK is that holds the pinned files: `sdk` when given (its files must be the pinned ones),
+else `cache_dir/streamline-<version>`, filled from the SDK archive when missing (downloaded with `launcher/net.py`:
+resumed, checked against the size and SHA-256, and deleted once its files are out).
+
+### `extract()`
+
+The pinned files out of the SDK archive into `dest`, each checked against its SHA-256.
+
+### `place()`
+
+DLSS Frame Generation into `dest` (a release's or the kit's `bin/dlssg/`): `nx2navi_dlssg.dll`, Streamline's
+interposer and the plugins it loads, and NGX's `nvngx_dlssg.dll` from the SDK folder `resolve()` returned, the two
+licence texts, and a notice naming each file's SHA-256.
+
+## `tools/stutter_map.py`
+
+The stutter map of a play session, from its log (`runtime/diag/stutter_map.c`, `NX2SARIA_STUTTER_MAP=1`; the older
+spelling of the name still works), and what a game folder recorded that a pipeline list lacks
+([performance.md](../performance.md)).
+
+```
+python tools/stutter_map.py report LOG [LOG ...] [--out FILE.md]
+python tools/stutter_map.py missing GAME_DIR LIST_FILE
+```
+
+`report`: each log's last "stutter map" block (the one written at exit, or the last periodic one when the game did not
+exit cleanly) gives the areas ranked by their hitches with the causes, and the pipelines draws met missing that cost
+the most; the "stutter:" lines add how the hitches spread over the session. Several logs (one session's rotated
+files, or several sessions) are reported one after the other, then summed by area.
+
+`missing`: the pipeline records of GAME_DIR's `pipeline-keys.bin` and the shader variants of its `shader-answers.bin`
+that LIST_FILE (`tools/pipeline_list.py merge`) does not hold: what `pipeline_list.py merge NEW LIST_FILE GAME_DIR`
+would add, so the next installs build them before play instead of meeting them in it. The files are derived from game
+data; the list stays out of the repository.
+
+In `CAUSE` the name takes a hyphen: hand-off has one. The import of `tools/pipeline_list.py` carries `# noqa: E402`,
+which stays.
+
+### `read_log()`
+
+The last map block of one log, as head, areas, pipes summary and pipes, and its hitch lines.
+
+## `tools/tracker_api_client.py`
+
+Asks a running game for what a map tracker reads through the tracker API (`tracker_api = 1`,
+`runtime/diag/tracker_api.c`), the way a tracker does, and says whether each step works on this build
+([tracker-api.md](../tracker-api.md)). Standard library only; it reads, never writes.
+
+```
+python tools/tracker_api_client.py [--host 127.0.0.1] [--port 6545] [--watch SECONDS] [--save FOLDER]
+```
+
+What it checks, in order:
+
+1. status: the game answers, its title, build and versions.
+2. `nx2saria.state`: the area and Link's position as the port itself reads them, and where the heap is: a tracker
+   takes heap pointers below 0x1000000000 for none, so with the heap below that it finds no game data.
+3. main by its MOD0 header (`search_memory`), first in the range a tracker tries first, then everywhere, and the
+   header's two words a tracker checks.
+4. Link's position by the tracker's chain (a `.bss` slot of main, the player object, its 37th part) and by the port's
+   own chain (`player` of `runtime/diag/debug_tools.c`), which have to agree; the scene's file name from the player
+   object.
+5. The game-data manager by the tracker's slot, the same object as the port's own (`gmd` of
+   `runtime/diag/debug_tools.c`), and the Gold Skulltula token count from its Int flags.
+6. `nx2saria.game_data`, as an item tracker reads it: each kind's values by their names' hashes, and with `--save` the
+   values compared with the newest `progress.sav` under that folder (save in the game first: right after a save, every
+   Bool, Enum and placed object agrees, and of the Ints only the counters that run on, such as play time, differ).
+
+`--watch N` then repeats the position and scene once a second for N seconds and reports the answer times; while Link
+moves it prints his heading from the port's rotation (`nx2saria.state`) beside the direction he moves in by the
+tracker's chain, so the axis a tracker takes for his heading can be checked.
+
+The offsets are facts of game version 1.1.1's main (build e0f3ccfa); [ocarina-atlas.md](../ocarina-atlas.md) lists
+where each comes from.
+
+- `MOD0_PATTERN`: "MOD0" and its three offsets in 1.1.1's main.
+- `PLAYER_SLOTS` and the constants after it: a tracker's slots and checks in main (1.1.1). `SKULLTULA_TOKENS`: the
+  Int flag of the token count; its entry's tag is 0x20.
+- `PORT_PLAYER_MANAGER` and the constants after it: the port's own (`runtime/diag/debug_tools.c`).
+- `SAVE_KINDS`: the save's inline kinds this check compares; 32 is Bool64bitKey.
+- `MANAGER_VTABLES`: offsets in main of the manager's own vtable and its Bool section's (read in main, not yet live).
+
+### `tracker_player()`, `port_player()`
+
+`tracker_player()`, the tracker's chain: `[main+slot]+0x10` is the player object, its 37th part has x, y, z at +0x1c
+(and at +0x28 and +0x30 the direction Link moves in on the ground, with `direction=True`). `port_player()`, as
+`player` of `runtime/diag/debug_tools.c`: `[[main+0x4e371d0]+0x480]`, named "Player", its position at +0x31c.
+
+### `int_flag()`
+
+An Int flag of the game data by its hash: the section's `{hash, index}` table probed from `hash % size`.
+
+### `save_values()`
+
+The newest `progress.sav` under the folder (or the folder itself, a file): `{kind: {hash: value}}` for the inline
+kinds, the set of placed-object keys, and the file. The save container: magic 0x01020304, the data's start (u32) at
++8, and from +0x28 8-byte `{u32 hash, u32 value}` records grouped by kind; a record of hash 0 starts a kind (its value
+is the kind's number; the first kind, Bool, has none). The placed-object keys (kind 32) are an offset to sorted u64
+keys that run to the file's end (0: none).
+
+### `live_values()`
+
+An `nx2saria.game_data` answer of an inline kind as `{hash: value}`.
+
+## `tools/ui_textures.py`
+
+Lists and dumps the game's interface textures, for choosing the art the settings menu draws
+(`runtime/ui/menu_art.cpp`; [building.md](../building.md)).
+
+```
+python tools/ui_textures.py ROMFS [--out build/ui-textures] [--archive Common] [--match REGEX] [--sheet]
+```
+
+ROMFS is an extracted RomFS folder. Without `--match` it only lists; with it the matching textures become PNGs under
+`--out`, and `--sheet` also writes contact sheets of them (numbered; `sheet.txt` says which number is which). It reads
+files the way `runtime/ui/menu_assets.c` does, and decodes ASTC with the runtime's own decoder
+(`runtime/gfx/tex_astc.c`, built into `--out`). Everything written is game data and stays under `build/`. It needs
+Python 3.14 (`compression.zstd`) and numpy.
+
+`KINDS` is keyed by the second byte of a BNTX format: name, block size, bytes per block.
+
+### `sarc_members()`, `bntx_textures()`
+
+`sarc_members()`: the members of a SARC archive as a name to bytes dictionary. `bntx_textures()`: each texture of a
+BNTX file: name, format, size, block height, data offset and size.
+
+### `deswizzle()`
+
+The first level as tightly packed rows, in the Switch 2 GOB layout (`runtime/gfx/tex_deswizzle.c` `tex_bl_copy()`).
+
+### `bc4()`
+
+White with the mask as alpha (`runtime/ui/menu_assets.c` `bc4_decode()`).
+
+### `astc_library()`
+
+The runtime's ASTC decoder as a library, built once into `out`. The compiler's `include/vma` is put on the path:
+`tex.h` reaches the Vulkan allocator's header. `tools/build_game.py` `runtime_include_dirs()` gives the runtime's
+include folders: `tex.h` includes headers from several.
+
+### `sheets()`
+
+Contact sheets over a mid brown, so white masks and dark art both show.
