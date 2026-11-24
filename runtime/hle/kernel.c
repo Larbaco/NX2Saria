@@ -1,11 +1,5 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors, Copyright (c) 2026 jhaizhou, Copyright (c) 2026 Peiikai (MIT;
 // see THIRD_PARTY_NOTICES.md).
-// Threads, synchronization, virtual cores and fibers of the Horizon kernel.
-//
-// One guest thread = one Windows thread with a 256 MiB reserved host stack (every guest BL is a host call) and its own
-// Cpu. The SDK's nn::os runs as lifted code; only the kernel under it is the host. Every wait hangs on one global lock
-// G with one condition variable per thread; wake order is the kernel's: lower priority value first, then first come.
-// Semantics follow the public Horizon kernel (KConditionVariable, KAddressArbiter, KSynchronization).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,22 +16,20 @@
 #define R_BAD_HANDLE KERN_R_BAD_HANDLE
 #define R_BAD_STATE KERN_R_BAD_STATE
 #define R_INVALID_ENUM KERN_R_INVALID_ENUM
-#define R_INVALID_ADDRESS 0xCC01u   // InvalidAddress (misaligned)
+#define R_INVALID_ADDRESS 0xCC01u
 #define WAITERS_BIT KERN_WAITERS_BIT
 #define H_CUR_THREAD KERN_H_CURRENT_THREAD
 
 #define MAX_H 4096
-// Application cores: Switch 2 titles get cores 0-5 (this title's NPDM ThreadInfo capability: core min 0, max 5);
-// a Switch 1 title uses 0-2 and never names 3-5, so 6 virtual cores serve both.
 #define NCORE 6
 #define CORE_MASK_ALL ((1ull << NCORE) - 1)
-#define HOST_STACK (256ull << 20)        // reserved, committed on demand
+#define HOST_STACK (256ull << 20)
 #define TLR_SIZE 0x200
-#define THREAD_OBJ_SIZE 0x400            // "current thread object" at TLR+0x1F8
+#define THREAD_OBJ_SIZE 0x400
 #define TLS_SIZE 0x2000
-#define MAIN_STACK (1ull << 20)          // main.npdm META+0x1C
-#define MAIN_PRIO 44                     // META+0xE
-#define MAIN_CORE 0                      // META+0xF
+#define MAIN_STACK (1ull << 20)
+#define MAIN_PRIO 44
+#define MAIN_CORE 0
 #define FIBER_MAX 1024
 
 enum { O_FREE, O_THREAD, O_EVENT_R, O_EVENT_W, O_SESSION = KERN_SESSION, O_TMEM = KERN_TMEM };
@@ -45,78 +37,66 @@ _Static_assert(O_EVENT_W < O_SESSION, "handle kinds");
 enum { W_NONE = KERN_WAIT_NONE, W_LOCK = KERN_WAIT_LOCK, W_CONDVAR = KERN_WAIT_CONDVAR, W_ADDRESS = KERN_WAIT_ADDRESS,
        W_SYNC = KERN_WAIT_SYNC };
 
-// Scheduler accounting states (NX2SARIA_TRACE=sched).
 enum { S_OFF, S_RUN, S_CORE, S_HOST, S_SLEEP, S_SYNC, S_CV, S_LOCK, S_ADDR, S_N };
 static const char *const s_name[S_N] = {"off", "run", "core", "host", "sleep", "sync", "cv", "lock", "addr"};
 
-// serial: a number no other Event of the run gets (set holding G), so a kept writable handle can be checked to still
-// name the Event it named when it was kept (kern_bind_system_event, system_event_set).
 typedef struct Event { int signaled, refs; uint64_t serial; } Event;
 typedef struct Fiber Fiber;
 
 struct RtThread {
-    int preempt;               // first member: rt_dispatch reads it (host.h kern_preempt_pending)
-    int host_depth;            // second member: host calls and SVCs in progress, while kern_host_track (host.h)
+    int preempt;
+    int host_depth;
     uint32_t handle;
     uint64_t id;
-    Cpu *cpu;                  // the thread's own context
-    Cpu *cur;                  // the context running now: cpu, or the current fiber's
+    Cpu *cpu;
+    Cpu *cur;
     uint64_t entry, arg, stack_top;
     int prio, core;
     uint64_t mask;
     int started, exited, closed, cancel, is_main;
     PlatCond cv;
-    // current wait
     int wkind, woke;
     uint64_t waddr, wkey;
     uint32_t wtag, wres;
-    uint64_t wseq;             // registration order: equal priority wakes first come first
-    RtThread *next;            // wait list
-    RtThread *all;             // every thread
-    // virtual core
-    int cur_core;              // atomic: core held while running guest code, -1 while blocked
+    uint64_t wseq;
+    RtThread *next;
+    RtThread *all;
+    int cur_core;
     uint64_t cseq;
     RtThread *cnext;
     uint8_t *tlr, *tls;
-    PlatJmp exit_jmp;          // the thread start; ExitThread jumps back to it
-    // fibers
-    PlatFiber *base_fiber;     // the host thread as a host fiber, after the first switch
-    Fiber *fiber;              // current guest fiber, NULL on the thread's own context
-    Fiber *leaving;            // fiber just switched away from, released by whoever resumes next
-    int exit_pending;          // ExitThread on a fiber: unwind once back on the thread's own context
-    // NX2SARIA_TRACE=sched accounting (holding G)
-    uint32_t tid;              // host thread id
-    int st;                    // S_* state since st_since
+    PlatJmp exit_jmp;
+    PlatFiber *base_fiber;
+    Fiber *fiber;
+    Fiber *leaving;
+    int exit_pending;
+    uint32_t tid;
+    int st;
     uint64_t st_since, st_ns[S_N], nblk, npre, pre_since, cpu_last;
-    uint64_t wobj;             // what the current wait is on: owner handle, key, address or first handle
-    const uint32_t *whs;       // a WaitSynchronization that blocks: its handles, in the waiter's own memory (holding G)
+    uint64_t wobj;
+    const uint32_t *whs;
     int wn;
-    uint32_t waker;            // the thread whose signal ended the last wait (0: a host thread or a timeout)
-    uint64_t blk_since;        // when the current blocking wait began, 0 while not blocked (holding G; wait_watch)
-    int blk_told;              // wait_watch logged the current wait
-    uint64_t wake_at, grant_at;   // when a wait was signalled and a core granted, until the thread runs again
-    uint64_t lw_ns, lw_n, lw_max, lg_ns, lg_n, lg_max, sl_n, sl_req, sl_act;   // those latencies; SleepThread asked/took
-    uint64_t sp_n, sp_ho, sp_site;   // spin wait passes and core handoffs, the last loop head (the thread writes them)
-    RtThread *target;          // as a core waiter: the owner core_kick asked to give its core up for it (holding G)
-    // NX2SARIA_ASYNC_PREEMPT (holding G)
-    PlatIntr *hthr;            // the host thread, for plat_intr_stop / resume; open while it may own a core
-    uint64_t ap_rip;           // the interrupted host rip kern_ap_stub returns to
-    uint64_t ap_last;          // the last redirect attempt on this owner
-    int ap_pending;            // redirected to kern_ap_stub, which has not reached kern_ap_yield yet
-    // NX2SARIA_CORE_DIAG (holding G, except dg_host_end, which only the thread itself writes)
-    uint64_t dg_since;         // as a waiter: core wait start
-    int dg_cls;                // as a waiter: DG_* class at the start of the wait
-    uint64_t dg_kick;          // as an owner: the preempt request
-    uint64_t dg_host_end;      // as an owner: the return from the host call or SVC it was in at the request
-    uint64_t dg_pc, dg_lr;     // as an owner: guest pc and lr at the checkpoint that gave the core up
-    int dg_host_kick;          // as an owner: in a host call or SVC at the request
-    uint32_t dg_svc;           // the thread's latest SVC (NX2SARIA_CORE_DIAG: what an owner in a host call is in)
-    struct DgRel { uint64_t kick, host_end, pc, lr; int host, pre, prio; uint32_t h; } dg_rel;   // as a waiter: the
-                                                                                                 // owner that released
+    uint32_t waker;
+    uint64_t blk_since;
+    int blk_told;
+    uint64_t wake_at, grant_at;
+    uint64_t lw_ns, lw_n, lw_max, lg_ns, lg_n, lg_max, sl_n, sl_req, sl_act;
+    uint64_t sp_n, sp_ho, sp_site;
+    RtThread *target;
+    PlatIntr *hthr;
+    uint64_t ap_rip;
+    uint64_t ap_last;
+    int ap_pending;
+    uint64_t dg_since;
+    int dg_cls;
+    uint64_t dg_kick;
+    uint64_t dg_host_end;
+    uint64_t dg_pc, dg_lr;
+    int dg_host_kick;
+    uint32_t dg_svc;
+    struct DgRel { uint64_t kick, host_end, pc, lr; int host, pre, prio; uint32_t h; } dg_rel;
 };
 
-// G serializes core ownership and the queue. The waiter may also poll cur_core outside G: every access is atomic,
-// core_grant publishes the assignment with release and that poll uses acquire; G protects the other ownership fields.
 static int core_current(const RtThread *t) { return __atomic_load_n(&t->cur_core, __ATOMIC_RELAXED); }
 static int core_current_unlocked(const RtThread *t) { return __atomic_load_n(&t->cur_core, __ATOMIC_ACQUIRE); }
 
@@ -124,15 +104,12 @@ static PlatMutex G = PLAT_MUTEX_INIT;
 static struct { int type; void *obj; } g_h[MAX_H];
 static _Thread_local RtThread *tcur;
 
-// The current thread, read again on every call. Guest fibers migrate between OS threads (Switch 2 titles' job
-// systems resume any fiber on any worker): code that resumes after plat_fiber_switch may be on another OS thread, and
-// the compiler takes a thread-local address to be the same throughout a function, so such code calls this instead.
 __attribute__((noinline)) static RtThread *tcur_now(void) { return tcur; }
 _Static_assert(offsetof(RtThread, preempt) == 0, "host.h kern_preempt_pending reads the first int");
 _Static_assert(offsetof(RtThread, host_depth) == sizeof(int), "host.h kern_host_depth reads the second int");
 static RtThread *g_all, *g_wait, *g_main;
 static uint64_t g_next_id = 0x51, g_wseq, g_created;
-static uint64_t g_ev_serial;   // the last Event's serial number (holding G)
+static uint64_t g_ev_serial;
 static uint64_t g_main_stack;
 
 static void lock(void) { plat_mutex_lock(&G); }
@@ -140,32 +117,26 @@ static void unlock(void) { plat_mutex_unlock(&G); }
 
 uint64_t kern_now_ns(void) { return plat_now_ns(); }
 
-// ---- NX2SARIA_CRIT=<first>-<last frame> with NX2SARIA_TRACE=sched: every state change and wake of the guest threads and
-// every present over those frames, written to NX2SARIA_CRIT_OUT (default crit.bin) at the last one, for
-// tools/crit_path.py, which walks the chain of waits back from each present (holding G). NX2SARIA_CRIT=w<lo>-<hi> takes
-// world-clock seconds instead (frame_step_world_us): from the first present at or after lo to the first after hi, so a
-// session covers the same game time at any frame rate.
 typedef struct { uint64_t ts, obj; uint32_t a, b; uint16_t kind, st; uint32_t pad; } CritEv;
-enum { CRIT_STATE, CRIT_WAKE, CRIT_FRAME };   // a: thread; b: its waker (STATE), the waker (WAKE); st: new S_* state
-#define CRIT_N (1u << 22)                // 128 MiB, about 2000 fight frames
+enum { CRIT_STATE, CRIT_WAKE, CRIT_FRAME };
+#define CRIT_N (1u << 22)
 static CritEv *g_crit;
 static uint32_t g_crit_n;
 static int g_crit_on;
-static uint64_t g_crit_lo, g_crit_hi;   // frames; UINT64_MAX in world mode until the world clock fixes them
-static int64_t g_crit_wlo, g_crit_whi;  // world mode: the window in microseconds of world clock, else 0
+static uint64_t g_crit_lo, g_crit_hi;
+static int64_t g_crit_wlo, g_crit_whi;
 
 static void crit_add(int kind, uint32_t a, uint32_t b, int st, uint64_t obj, uint64_t ts) {
     if (g_crit_n < CRIT_N) g_crit[g_crit_n++] = (CritEv){ts, obj, a, b, (uint16_t)kind, (uint16_t)st, 0};
 }
 
-// ---- NX2SARIA_TRACE=sched accounting (holding G)
 #define RW_N 32
-static RtThread *g_render;                               // the thread that presents (sched trace, core diag)
+static RtThread *g_render;
 typedef struct { int st; uint32_t waker; uint64_t obj, ns; } WaitRec;
-static WaitRec g_rw[RW_N], g_mw[RW_N];                   // the render and main thread's waits by object and waker
-static uint64_t g_pre_req, g_pre_n, g_pre_ns, g_pre_max, g_pre_stale;  // preempt requests; releases after one and their latency
-static uint64_t g_sync_calls, g_sync_blocks;              // WaitSynchronization calls and the blocks inside them
-static uint64_t g_sync_woken, g_sync_spared;              // such waits a signal woke, and those it left asleep
+static WaitRec g_rw[RW_N], g_mw[RW_N];
+static uint64_t g_pre_req, g_pre_n, g_pre_ns, g_pre_max, g_pre_stale;
+static uint64_t g_sync_calls, g_sync_blocks;
+static uint64_t g_sync_woken, g_sync_spared;
 
 static void wait_add(WaitRec *w, int st, uint64_t obj, uint32_t waker, uint64_t ns) {
     for (int i = 0; i < RW_N; i++)
@@ -178,7 +149,6 @@ static void wait_add(WaitRec *w, int st, uint64_t obj, uint32_t waker, uint64_t 
         }
 }
 
-// Close the current state's interval and enter st.
 static void acct(RtThread *t, int st) {
     if (!(rt_trace & RT_TRACE_SCHED)) return;
     uint64_t now = kern_now_ns();
@@ -198,7 +168,6 @@ static int st_of(int kind) {
     return kind == W_LOCK ? S_LOCK : kind == W_CONDVAR ? S_CV : kind == W_ADDRESS ? S_ADDR : S_SYNC;
 }
 
-// ---- handles (caller holds G)
 static uint32_t h_new(int type, void *obj) {
     for (int i = 1; i < MAX_H; i++)
         if (!g_h[i].type) {
@@ -227,7 +196,6 @@ static RtThread *cur(uint32_t svc) {
     return tcur;
 }
 
-// ---- wait primitives (holding G)
 static void wait_unlink(RtThread *t) {
     for (RtThread **p = &g_wait; *p; p = &(*p)->next)
         if (*p == t) {
@@ -237,8 +205,6 @@ static void wait_unlink(RtThread *t) {
     t->next = NULL;
 }
 
-// The waiter to wake in kernel order. Lock waits match by lock address, condvar waits by key, arbiter waits by
-// address.
 static RtThread *pick(int kind, uint64_t a) {
     RtThread *b = NULL;
     for (RtThread *t = g_wait; t; t = t->next) {
@@ -259,7 +225,6 @@ static void wake(RtThread *t, uint32_t res) {
     plat_cond_signal(&t->cv);
 }
 
-// 1 when one of the handles w waits on names obj, an event (either a readable handle of it) or a thread.
 static int sync_watches(const RtThread *w, const void *obj) {
     for (int i = 0; i < w->wn; i++) {
         unsigned k = w->whs[i] - 0x1000;
@@ -268,12 +233,6 @@ static int sync_watches(const RtThread *w, const void *obj) {
     return 0;
 }
 
-// obj became signalled: an event (its Event) or a thread that exited. The WaitSynchronization waits that hold a handle
-// of it are woken to look again. Every other such wait stays asleep: woken, it took a virtual core (block: core_take,
-// which asks a running thread of lower priority for its core when every core is held), found nothing signalled and
-// blocked again, and the audio renderer alone signals its event 200 times a second, each time waking every thread
-// that waits for a message, a timer or the end of another thread. NX2SARIA_SYNC_WAKE_ALL=1 wakes them all, as before
-// ("ab": in the B blocks of NX2SARIA_AB); the sched line counts the waits woken and left asleep.
 static void wake_sync_waiters(const void *obj) {
     static int mode = -1;
     if (mode < 0) mode = rt_knob("SYNC_WAKE_ALL", "0");
@@ -288,8 +247,6 @@ static void wake_sync_waiters(const void *obj) {
     }
 }
 
-// SleepConditionVariableSRW counts milliseconds: round up (late is legal, early is not) and re-check the deadline
-// against the performance counter, because the wait may also end early.
 static uint32_t block_inner(RtThread *t, int kind, int64_t ns) {
     t->wkind = kind;
     t->woke = 0;
@@ -301,7 +258,7 @@ static uint32_t block_inner(RtThread *t, int kind, int64_t ns) {
         t->wkind = W_NONE;
         return R_TIMEOUT;
     }
-    uint64_t now = ns < 0 ? 0 : kern_now_ns();   // a wait without a timeout reads no clock (G is held here)
+    uint64_t now = ns < 0 ? 0 : kern_now_ns();
     int forever = ns < 0 || (uint64_t)ns > UINT64_MAX - now;
     uint64_t deadline = forever ? 0 : now + (uint64_t)ns;
     while (!t->woke) {
@@ -328,32 +285,17 @@ static uint32_t block_inner(RtThread *t, int kind, int64_t ns) {
     return t->wres;
 }
 
-// ---- virtual cores
-// Horizon runs at most one thread per core, and NX2Saria keys per-core data (allocators, job queues) by the current core
-// number without locks. A guest thread therefore holds one of the three application cores while it runs guest code
-// and gives it up only where Horizon would switch threads (waits, sleep, yield, exit, blocking host calls); a free
-// core goes to the best waiting thread. A waiter better than a holder asks one holder to give its core up (core_kick),
-// which it does at its next SVC or indirect call (kern_checkpoint, rt_dispatch), as Horizon runs the better thread at
-// once; guest code without either keeps the core until it reaches one.
-//
-// free_cores = 1 (NX2SARIA_FREE_CORES) turns the gate off, for experiments only: the game does not run that way. A thread
-// that holds no core reports its ideal core to GetCurrentProcessorNumber, so the game's job workers all report core 0
-// and run its per-core code at once: on 1.2.1 two of them add the same per-core NVN control memory, which retires the
-// command handle the other just recorded, and CallCommands finds no recording at start (#212); 1.4.3 corrupts a heap
-// in main+0x82e00 or hangs at the title menu. The start log and every crash report say so (kern_free_cores_note).
 static RtThread *g_core_owner[NCORE], *g_core_wait;
-// G protects the list; this atomic hint is updated under G after each insertion or removal. Readers outside G only
-// test whether the list might be nonempty and take G before inspecting it; a missed waiter is seen on a later pass.
 static int g_core_waiting;
 static int g_cores_on = -1, g_held_max;
-static int g_active_cores = NCORE;   // NX2SARIA_CORES (core_allowed)
+static int g_active_cores = NCORE;
 
 static void diag_init(void);
 static void ap_init(void);
 
 static int cores_enabled(void) {
     if (g_cores_on < 0) {
-        g_cores_on = !cfg_bool("NX2SARIA_FREE_CORES");   // "0" keeps the gate, like unset
+        g_cores_on = !cfg_bool("NX2SARIA_FREE_CORES");
         const char *n = cfg_get("NX2SARIA_CORES");
         if (n && atoi(n) >= 1 && atoi(n) <= NCORE) {
             g_active_cores = atoi(n);
@@ -375,9 +317,6 @@ void kern_free_cores_note(void) {
                "nx2saria.ini (or an existing nx2navi.ini) before reporting this crash");
 }
 
-// NX2SARIA_CORES = 1..NCORE: how many virtual cores run threads (default all NCORE). A core at or above the count is
-// folded onto core (c mod count): a thread pinned to core 5 with NX2SARIA_CORES=3 runs on core 2, one thread per core
-// at a time as always (diagnosis of races that more parallel cores expose; the Steam Deck profile's four).
 static int core_allowed(const RtThread *t, int c) {
     if (c >= g_active_cores) return 0;
     for (int j = c; j < NCORE; j += g_active_cores)
@@ -385,13 +324,6 @@ static int core_allowed(const RtThread *t, int c) {
     return 0;
 }
 
-// The core number a thread sees (GetCurrentProcessorNumber) while it holds virtual core c. With all NCORE cores that
-// is c. With fewer it is one of the thread's own cores that fold onto c, its ideal core first: the game keys per-core
-// data by this number without locks, so a thread pinned to core 5 must go on using core 5's data when it takes
-// turns with core 1's threads on one virtual core. Seeing 1 there, it used core 1's data in turn with core 1's own
-// threads, and the game died in its draw set-up within seconds of the first frame in play (issue #445; with
-// NX2SARIA_CORES=4 on any machine). No two threads that run guest code see the same number: they hold different
-// virtual cores, and the numbers that fold onto different virtual cores differ.
 static int core_seen(const RtThread *t, int c) {
     if (g_active_cores >= NCORE) return c;
     if (t->core >= 0 && t->core < NCORE && t->core % g_active_cores == c && ((t->mask >> t->core) & 1)) return t->core;
@@ -400,38 +332,17 @@ static int core_seen(const RtThread *t, int c) {
     return c;
 }
 
-// ---- asynchronous preemption (NX2SARIA_ASYNC_PREEMPT, on unless 0)
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// Horizon gives a core to a strictly better thread the moment that thread is ready.
-// Here a better waiter only marks the owner, which gives the core up at its next SVC or indirect call; an owner in a
-// stretch of game code with neither keeps it (NX2SARIA_CORE_DIAG: 0.5-1.1 ms of thread-time per frame, waits to 16 ms and
-// more). With it on, three parts, all of them necessary:
-// - The waiter interrupts the owner (plat_intr_stop) when it has waited AP_FIRST_NS, then every
-//   millisecond: if the owner's host rip is in the lifted modules' code (g_gen_lo..g_gen_hi) and its host depth is 0
-//   (not in a host call or SVC, nor in game code a host call made), it holds no host lock, so its rip is moved to
-//   kern_ap_stub, which saves every volatile register, gives the core up like a checkpoint (kern_ap_yield) and jumps
-//   back. Otherwise it is only marked, as before.
-// - Priority inheritance (eff_prio): a thread owning a guest mutex counts at the priority of the best thread blocked on
-//   it, for granting, kicking, preempting and yielding. Without it the game stopped at its first
-//   "Continue" (a better thread took the core of the low-priority owner of a mutex it then waited for).
-// - Horizon's preemption disable: the SDK's spin locks (1.2.1 sdk f_70051242a8, f_7005124360 and siblings) count
-//   TLR+0x100 (disable_count) while they try or hold the lock, and after clearing it call SVC 0x36 when TLR+0x102
-//   (interrupt_flag) is set. Such an owner is not preempted, at a checkpoint either: interrupt_flag is set and the
-//   switch happens at that SVC. Preempting it anyway hung the game at "Continue" (the lock holder lost its
-//   core to a thread that then spun on that lock).
-// NX2SARIA_ASYNC_PREEMPT=0 keeps the old scheduling exactly: raw priorities, no interruption, no disable_count; =2 keeps
-// inheritance and the preemption disable without interrupting owners.
-#define AP_FIRST_NS 250000ull   // the waiter spins this long before the first interruption (most waits end sooner)
-#define AP_GAP_NS 1000000ull    // and interrupts the same owner at most this often
-static int g_ap = -1, g_ap_int;   // g_ap_int: interrupt owners (NX2SARIA_ASYNC_PREEMPT=2: inheritance and disable only)
-static int g_ap_log;              // redirects logged so far (AP_LOG_N)
+#define AP_FIRST_NS 250000ull
+#define AP_GAP_NS 1000000ull
+static int g_ap = -1, g_ap_int;
+static int g_ap_log;
 #define AP_LOG_N 40
-static uintptr_t g_gen_lo, g_gen_hi;   // host code of the lifted modules: first and last function start
+static uintptr_t g_gen_lo, g_gen_hi;
 static uint64_t g_ap_sent, g_ap_taken, g_ap_host, g_ap_pc, g_ap_deferred, g_ap_fail, g_ap_spin_ok;
 void kern_ap_stub_ymm(void), kern_ap_stub_xmm(void);
-static void (*ap_stub)(void) = kern_ap_stub_xmm;   // the stub for this processor (ap_init)
+static void (*ap_stub)(void) = kern_ap_stub_xmm;
 
-// The processor has AVX and the system saves YMM state across thread switches (OSXSAVE, XCR0 bits 1 and 2).
 static int cpu_keeps_ymm(void) {
     unsigned a = 1, b, c = 0, d;
     __asm__("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
@@ -478,8 +389,6 @@ static void ap_init(void) {
            (unsigned long long)(g_gen_hi ? g_gen_hi - plat_exe_base() : 0), ap_stub == kern_ap_stub_ymm ? "YMM" : "XMM");
 }
 
-// Horizon's priority inheritance: o counts at the priority of the best thread blocked on a guest mutex it owns (the
-// owner is read from the mutex word, so it follows hand-offs). Holding G.
 static int eff_prio(const RtThread *o) {
     int p = o->prio;
     for (const RtThread *w = g_wait; w; w = w->next)
@@ -489,24 +398,11 @@ static int eff_prio(const RtThread *o) {
     return p;
 }
 
-// The priority the virtual cores go by: raw with NX2SARIA_ASYNC_PREEMPT=0, as before.
 static int prio_of(const RtThread *t) { return g_ap > 0 ? eff_prio(t) : t->prio; }
 
-// TLR+0x100 disable_count, +0x102 interrupt_flag (any thread may read them; the flag is set from outside as the
-// kernel does).
 static volatile uint16_t *ap_tlr(const RtThread *t) { return (volatile uint16_t *)(t->tlr + 0x100); }
 static int ap_disabled(const RtThread *t) { return g_ap > 0 && ap_tlr(t)[0]; }
 
-// kern_ap_stub: entered in place of the interrupted instruction of top-level game code. It keeps every register the
-// game code may have live (volatile GPRs, flags, YMM0-15, MXCSR; the C calls preserve the rest), gives the core up
-// in kern_ap_yield and jumps back to kern_ap_rip(), whose value it first stores in the return slot it reserved at
-// entry, so a stack walk sees the interrupted function as its caller. No ret: the jump keeps call/return pairs
-// balanced. The waiter never writes the owner's stack.
-// Two bodies of the stub (kernel_ap_stub.h): kern_ap_stub_ymm saves YMM0-15 and is the one used wherever the processor
-// and the system keep YMM state (ap_stub, chosen by ap_init). The lifted code of such a PC is compiled with AVX2 and
-// keeps data in the upper halves, which every function the stub calls is free to clear, whatever the runtime itself was
-// compiled for. kern_ap_stub_xmm saves XMM0-15 with SSE moves: code on a processor without AVX has nothing in the upper
-// halves, and a VEX move there is an illegal instruction.
 #define AP_NAME "kern_ap_stub_ymm"
 #define AP_VMOV "vmovdqa"
 #define AP_V "%ymm"
@@ -524,8 +420,6 @@ static int ap_disabled(const RtThread *t) { return g_ap > 0 && ap_tlr(t)[0]; }
 
 enum { AP_NONE, AP_RETRY, AP_SENT };
 
-// The waiter w interrupts its target owner if that runs top-level game code (holding G; the owner is stopped only
-// between plat_intr_stop and plat_intr_resume, during which nothing here takes a lock).
 static int ap_try(RtThread *w) {
     RtThread *o = w->target;
     if (!o || core_current(o) < 0 || !o->preempt) return AP_NONE;
@@ -535,7 +429,7 @@ static int ap_try(RtThread *w) {
         g_ap_host++;
         return AP_RETRY;
     }
-    if (tl[0]) {   // preemption disabled: SVC 0x36 switches
+    if (tl[0]) {
         tl[1] = 1;
         g_ap_deferred++;
         return AP_RETRY;
@@ -577,16 +471,9 @@ static int ap_try(RtThread *w) {
     return r;
 }
 
-// ---- NX2SARIA_CORE_DIAG=1: why ready threads wait for a virtual core, and for how long
-// Each core wait is split into classes: the owner asked to give the core up ran game code (DG_GAME, the part an
-// asynchronous preemption would remove), was in a host call or SVC that kept the core (DG_HOST), every owner the waiter
-// may displace was of better or equal priority (DG_EQ: Horizon waits too), or the worse owners were claimed by better
-// waiters (DG_NOCORE). Per 60 presents: time per frame and a wait-length histogram per class, the owners that cost
-// most; a line per present over 25 ms; a line per wait with over 2 ms of DG_GAME (where the owner reached its
-// checkpoint), and one host RIP sample of the owner per such wait (exe RVA, for nx2navi.map).
 enum { DG_GAME, DG_HOST, DG_EQ, DG_NOCORE, DG_N };
 static const char *const dg_name[DG_N] = {"game", "host", "eq", "nocore"};
-#define DG_NB 8   // wait lengths: < 0.05, 0.25, 1, 2, 4, 8, 16 ms, longer
+#define DG_NB 8
 static const uint64_t dg_edge[DG_NB - 1] = {50000, 250000, 1000000, 2000000, 4000000, 8000000, 16000000};
 #define DG_LONG_LINES 400
 #define DG_SAMPLES 600
@@ -594,12 +481,12 @@ static const uint64_t dg_edge[DG_NB - 1] = {50000, 250000, 1000000, 2000000, 400
 int kern_host_track;
 static int g_diag = -1;
 typedef struct {
-    uint64_t ns[DG_N], n[DG_N], hist[DG_N][DG_NB];                    // this window
-    struct { uint32_t h; int prio, cls; uint64_t ns; } own[DG_OWN];   // this window: owners by class
+    uint64_t ns[DG_N], n[DG_N], hist[DG_N][DG_NB];
+    struct { uint32_t h; int prio, cls; uint64_t ns; } own[DG_OWN];
     uint64_t long_frames, long_game_frames;
 } DgWindow;
 static DgWindow g_dgw;
-static uint64_t g_dgf[DG_N], g_dgfr[DG_N];   // this frame: all threads, the render thread
+static uint64_t g_dgf[DG_N], g_dgfr[DG_N];
 static uint64_t g_dg_samples, g_dg_lines, g_sync36, g_sync36_flag;
 
 static void diag_init(void) {
@@ -614,7 +501,6 @@ static void diag_init(void) {
 
 int kern_core_diag_on(void) { return g_diag > 0; }
 
-// A tracked host call or SVC returned to depth 0 with a preempt request pending (host.h); on the thread itself.
 void kern_host_left(void *thread) {
     RtThread *t = thread;
     if (g_diag > 0 && t->dg_kick && t->dg_host_kick && !t->dg_host_end) t->dg_host_end = kern_now_ns();
@@ -638,7 +524,6 @@ static void dg_add(const RtThread *w, int cls, uint64_t ns, uint32_t oh, int opr
     g_dgw.own[i].ns += ns;
 }
 
-// The waiter's class at the start of its wait, after core_kick claimed (or did not claim) an owner for it.
 static int dg_class0(const RtThread *t) {
     if (t->target) return dg_in_host(t->target) ? DG_HOST : DG_GAME;
     for (int i = 0; i < NCORE; i++)
@@ -646,7 +531,6 @@ static int dg_class0(const RtThread *t) {
     return DG_EQ;
 }
 
-// The waiter got a core: split [dg_since, now] by what the owner that released it did after its preempt request.
 static void dg_done(RtThread *t) {
     uint64_t now = kern_now_ns(), t0 = t->dg_since, w = now - t0;
     t->dg_since = 0;
@@ -689,8 +573,6 @@ static void dg_done(RtThread *t) {
     memset(&t->dg_rel, 0, sizeof t->dg_rel);
 }
 
-// Once per long DG_GAME or DG_HOST wait: where the owner's host thread runs (module and offset), its latest SVC and
-// its guest lr. Holding G; the owner is resumed before anything that could take a lock it holds.
 static void dg_sample(RtThread *t) {
     RtThread *o = t->target;
     if (!o || core_current(o) < 0 || !o->hthr || g_dg_samples >= DG_SAMPLES) return;
@@ -710,9 +592,8 @@ static void dg_sample(RtThread *t) {
 }
 
 
-// perf_present, every present: a line for a present over 25 ms, the 60-present summary.
 void kern_core_diag_frame(uint64_t frame, uint64_t interval_ns) {
-    if (g_ap > 0 && frame && frame % 600 == 0) {   // NX2SARIA_ASYNC_PREEMPT counters since the start
+    if (g_ap > 0 && frame && frame % 600 == 0) {
         lock();
         uint64_t v[8] = {g_ap_sent, g_ap_taken, g_ap_host, g_ap_pc, g_ap_deferred, g_ap_fail, g_ap_spin_ok, g_sync36};
         unlock();
@@ -782,7 +663,7 @@ static void core_count(void) {
     if (n > g_held_max) g_held_max = n;
 }
 
-static struct DgRel g_dg_rel;   // NX2SARIA_CORE_DIAG: the owner core_put is releasing, for core_grant
+static struct DgRel g_dg_rel;
 
 static void core_grant(int c) {
     RtThread *b = NULL, **bp = NULL;
@@ -811,7 +692,7 @@ static void core_grant(int c) {
 static void core_put(RtThread *t) {
     int c = core_current(t);
     if (c < 0) return;
-    if (t->preempt && t->pre_since) {   // sched trace: time from the preempt request to this release
+    if (t->preempt && t->pre_since) {
         uint64_t d = kern_now_ns() - t->pre_since;
         g_pre_n++;
         g_pre_ns += d;
@@ -828,14 +709,11 @@ static void core_put(RtThread *t) {
     __atomic_store_n(&t->cur_core, -1, __ATOMIC_RELAXED);
     t->preempt = 0;
     g_core_owner[c] = NULL;
-    // Waiters that were to interrupt t (core_kick) forget it: t owns no core now, and once it exits and its handle
-    // closes (thr_free), a waiter's next ap_try would read and interrupt freed memory.
     for (RtThread *w = g_core_wait; w; w = w->cnext)
         if (w->target == t) w->target = NULL;
     core_grant(c);
 }
 
-// Whether a waiter better than t may run on core c.
 static int core_better_waiter(const RtThread *t, int c) {
     int tp = prio_of(t);
     for (const RtThread *w = g_core_wait; w; w = w->cnext)
@@ -843,10 +721,6 @@ static int core_better_waiter(const RtThread *t, int c) {
     return 0;
 }
 
-// Asks holders to give their cores up, one holder per waiter: waiters best first, each claims the worst holder worse
-// than itself on a core it may run on that no better waiter claimed (a request already pending is reused). Asking
-// every worse holder made several drop their cores for one waiter; the spare cores went to worse waiters, which asked
-// again.
 static void core_kick(void) {
     RtThread *w[64];
     int wp[64], op[NCORE], n = 0, claimed = 0;
@@ -916,7 +790,7 @@ static void core_take(RtThread *t) {
     }
     core_kick();
     if (g_diag > 0) t->dg_cls = dg_class0(t);
-    if (g_ap_int && t->target && core_current(t) < 0) {   // most waits end within microseconds: spin before interrupting
+    if (g_ap_int && t->target && core_current(t) < 0) {
         uint64_t end = kern_now_ns() + AP_FIRST_NS;
         unlock();
         while (__atomic_load_n(&t->cur_core, __ATOMIC_ACQUIRE) < 0 && kern_now_ns() < end) plat_pause();
@@ -925,8 +799,8 @@ static void core_take(RtThread *t) {
     }
     int sampled = 0;
     while (core_current(t) < 0) {
-        uint32_t ms = 0;   // 0: until signalled
-        if (g_ap_int && ap_try(t) != AP_NONE) ms = 1;   // the owner keeps its core: again in a millisecond
+        uint32_t ms = 0;
+        if (g_ap_int && ap_try(t) != AP_NONE) ms = 1;
         int sample = g_diag > 0 && !sampled && (t->dg_cls == DG_GAME || t->dg_cls == DG_HOST);
         if (sample && !ms) ms = 2;
         if (ms) plat_cond_wait_ms(&t->cv, &G, ms);
@@ -961,11 +835,6 @@ static uint32_t block(RtThread *t, int kind, int64_t ns) {
     return r;
 }
 
-// ---- long waits (a freeze's first clue)
-// A guest thread that waits NX2SARIA_WAIT_WATCH_S seconds for a lock, or for another thread to end, is logged once per
-// wait with the thread it waits for and what that one is doing: a game that stops with nothing in its log then names
-// the chain. Waits on condition variables, events and addresses are left out: idle worker threads wait on them for
-// good. Off by default (0), as its thread takes the kernel lock every 2 s; 10 is a good value for a hang report.
 #define WAIT_WATCH_LINES 24
 
 static void wait_watch_holder(char *out, size_t cap, const RtThread *h) {
@@ -978,13 +847,7 @@ static void wait_watch_holder(char *out, size_t cap, const RtThread *h) {
              (kern_now_ns() - h->blk_since) / 1e9, kinds[k], (unsigned long long)h->wobj);
 }
 
-// One walk over the guest threads, G held: each one that has waited `limit` ns or longer for a lock or for another
-// thread's end gets a line, at most max of them. mark: a wait gets its line once (wait_watch); the hang watch's report
-// (kern_wait_report) lists every such wait as it stands. The lines go into out, each ending in a newline, and the
-// caller logs them once G is released (wait_lines_log): a log call can wait for room in the log queue (logq.c), and a
-// log thread stuck in a write, one of the stalls the hang watch reports, would then hold G and every guest thread with
-// it. Returns the lines written.
-#define WAIT_LINE_CAP 384   // a line: its fixed words, two numbers and wait_watch_holder's 160 bytes
+#define WAIT_LINE_CAP 384
 static int wait_pass(uint64_t limit, int max, int mark, char *out, size_t cap) {
     int lines = 0;
     size_t used = 0;
@@ -994,7 +857,7 @@ static int wait_pass(uint64_t limit, int max, int mark, char *out, size_t cap) {
         if (!t->blk_since || (mark && t->blk_told) || now - t->blk_since < limit) continue;
         char who[160], line[WAIT_LINE_CAP];
         int n;
-        if (t->wkind == W_LOCK) {   // the lock word's owner field is the holder's handle
+        if (t->wkind == W_LOCK) {
             wait_watch_holder(who, sizeof who, h_peek((uint32_t)t->wobj, O_THREAD));
             n = snprintf(line, sizeof line, "kernel: thread %#x (priority %d) has waited %.0f s for the lock at %#llx held "
                          "by %s\n", t->handle, t->prio, (now - t->blk_since) / 1e9, (unsigned long long)t->waddr, who);
@@ -1008,7 +871,7 @@ static int wait_pass(uint64_t limit, int max, int mark, char *out, size_t cap) {
         } else {
             continue;
         }
-        if (n <= 0 || (size_t)n >= sizeof line || used + (size_t)n >= cap) break;   // no room: a later pass has it
+        if (n <= 0 || (size_t)n >= sizeof line || used + (size_t)n >= cap) break;
         memcpy(out + used, line, (size_t)n + 1);
         used += (size_t)n;
         if (mark) t->blk_told = 1;
@@ -1017,7 +880,7 @@ static int wait_pass(uint64_t limit, int max, int mark, char *out, size_t cap) {
     return lines;
 }
 
-static void wait_lines_log(const char *p) {   // wait_pass's lines, G released
+static void wait_lines_log(const char *p) {
     for (const char *e; *p && (e = strchr(p, '\n')); p = e + 1) rt_log("%.*s", (int)(e - p), p);
 }
 
@@ -1037,8 +900,6 @@ static void wait_watch(void *arg) {
     rt_log("kernel: %d long waits logged: no more", lines);
 }
 
-// The hang watch's report (hang_watch.c): the guest threads' lock and thread-end waits as they stand. G is only tried,
-// ten times 10 ms apart: its holder may be the thread that hangs, and the watch adds no wait of its own.
 void kern_wait_report(void) {
     int got = 0;
     for (int i = 0; i < 10 && !(got = plat_mutex_trylock(&G)); i++) plat_sleep_ms(10);
@@ -1059,7 +920,7 @@ int kern_core_away(void) {
     lock();
     core_put(t);
     acct(t, S_HOST);
-    if (rt_trace & RT_TRACE_SCHED)   // the caller as an exe RVA (nx2navi.map)
+    if (rt_trace & RT_TRACE_SCHED)
         t->wobj = (uintptr_t)__builtin_return_address(0) - plat_exe_base();
     unlock();
     return 1;
@@ -1074,17 +935,8 @@ void kern_core_back(int *away) {
     *away = 0;
 }
 
-// ---- spin waits (recomp/patches.py `spin` lines, found by tools/spin_waits.py)
 // Contains code Copyright (c) 2026 MacNativeGames contributors, Copyright (c) 2026 seedds (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// A pass of a guest loop that polls memory until another thread changes it. On the Switch it fills only its own core,
-// where a better thread pinned there preempts it; here it holds a virtual core and a host core, and pollers that take a
-// lock on every pass hand its cache line between their host cores so the thread whose item it is rarely gets it
-// (a job queue's pollers do this). Every pass pauses the host core once. A wait is a run of
-// passes through the same loop at most SPIN_GAP_NS apart; once one has lasted NX2SARIA_SPIN_HANDOFF_US (default 50) and a
-// thread waits for a virtual core, each pass gives the core to the waiter, whatever its priority, yields the host CPU
-// and takes a core again. Shorter waits keep the core: a lock held for a moment would otherwise make the next pass wait
-// for another thread's next SVC. NX2SARIA_SPIN=0 keeps the core always (the gate's own cost only).
 #define SPIN_GAP_NS 20000ull
 static int g_spin_on = -1;
 static uint64_t g_spin_handoff_ns;
@@ -1098,20 +950,19 @@ void rt_spin_gate(Cpu *c, uint64_t head) {
     if (g_spin_on < 0) {
         const char *e = cfg_get("NX2SARIA_SPIN_HANDOFF_US");
         g_spin_handoff_ns = (uint64_t)(e && *e ? atoll(e) : 50) * 1000;
-        // an empty value is unset: cfg_bool of a key without a settings row would stop the game on it
         const char *spin = cfg_get("NX2SARIA_SPIN");
         g_spin_on = !(spin && *spin && !cfg_bool("NX2SARIA_SPIN"));
     }
     t->sp_n++;
     t->sp_site = head;
     uint64_t now = kern_now_ns();
-    if (head != sw_head || now - sw_last > SPIN_GAP_NS) {   // a new wait
+    if (head != sw_head || now - sw_last > SPIN_GAP_NS) {
         sw_head = head;
         sw_t0 = now;
     }
     sw_last = now;
     if (!g_spin_on || core_current_unlocked(t) < 0 || now - sw_t0 < g_spin_handoff_ns ||
-        !__atomic_load_n(&g_core_waiting, __ATOMIC_ACQUIRE))   // a waiter missed now is seen at the next pass
+        !__atomic_load_n(&g_core_waiting, __ATOMIC_ACQUIRE))
         return;
     t->sp_ho++;
     int away = kern_core_away();
@@ -1120,8 +971,6 @@ void rt_spin_gate(Cpu *c, uint64_t head) {
     sw_last = kern_now_ns();
 }
 
-// A pending preempt request, at an SVC or an indirect call. The core goes over only if a better thread still waits
-// for it, so core_put grants it to a waiter better than t; a stale request (that waiter got another core) is dropped.
 void kern_checkpoint(void) {
     RtThread *t = tcur;
     if (!t || !__atomic_load_n(&t->preempt, __ATOMIC_RELAXED)) return;
@@ -1132,12 +981,12 @@ void kern_checkpoint(void) {
     }
     int core = core_current(t);
     int better = core >= 0 && core_better_waiter(t, core);
-    if (better && ap_disabled(t)) {   // preemption disabled: the switch comes at SVC 0x36
+    if (better && ap_disabled(t)) {
         ap_tlr(t)[1] = 1;
         t->preempt = 0;
         g_ap_deferred++;
     } else if (better) {
-        core_put(t);   // clears preempt (after the sched trace reads it)
+        core_put(t);
         core_take(t);
     } else {
         t->preempt = 0;
@@ -1149,7 +998,6 @@ void kern_checkpoint(void) {
     unlock();
 }
 
-// kern_ap_stub, on the interrupted owner: where to jump back to, then the core given up as at a checkpoint.
 uint64_t kern_ap_rip(void) { return tcur->ap_rip; }
 
 void kern_ap_yield(void) {
@@ -1169,7 +1017,6 @@ void kern_ap_yield(void) {
     unlock();
 }
 
-// SVC 0x36 SynchronizePreemptionState: a preemption deferred by disable_count happens here.
 static void ap_sync(RtThread *t) {
     lock();
     int core = core_current(t);
@@ -1198,13 +1045,7 @@ void kern_core_stats_reset(void) {
     unlock();
 }
 
-// NX2SARIA_TRACE=sched: every 120 presents, the time split of the busiest threads (running, waiting for a core, host
-// calls) and of the render thread, the render and the main thread's longest waits by object and by the thread whose
-// signal ended them, and the preemption latency.
 #define REP_N 8
-// At each present (holding G): starts recording at NX2SARIA_CRIT's first frame, stops and writes the file at its last.
-// File: "CRIT", thread count, event count (u32 each); per thread handle, priority, flags (1 main, 2 presents), host
-// tid (u32 each); then the CritEv records.
 static void crit_frame(RtThread *self, uint64_t frame) {
     static int parsed;
     if (!parsed) {
@@ -1223,7 +1064,7 @@ static void crit_frame(RtThread *self, uint64_t frame) {
             rt_log("crit: recording frames %llu-%llu", lo, hi);
         }
     }
-    if (g_crit && g_crit_whi && g_crit_hi == UINT64_MAX) {   // world mode: fix the frames as the clock passes lo and hi
+    if (g_crit && g_crit_whi && g_crit_hi == UINT64_MAX) {
         int64_t w = frame_step_world_us();
         if (g_crit_lo == UINT64_MAX) {
             if (w < g_crit_wlo) return;
@@ -1266,7 +1107,7 @@ void kern_sched_report(uint64_t frame) {
         uint64_t sp_n, sp_ho, sp_site;
     } Row;
     Row rows[REP_N + 1];
-    WaitRec rw[2][4] = {0};   // the render and the main thread's longest waits
+    WaitRec rw[2][4] = {0};
     int nr = 0;
     RtThread *self = tcur;
     lock();
@@ -1284,7 +1125,7 @@ void kern_sched_report(uint64_t frame) {
     RtThread *top[REP_N + 1] = {0};
     uint64_t busy[REP_N + 1] = {0}, all_run = 0, all_core = 0;
     for (RtThread *t = g_all; t; t = t->all) {
-        acct(t, t->st);   // close the open interval
+        acct(t, t->st);
         uint64_t b = t->st_ns[S_RUN] + t->st_ns[S_CORE] + t->st_ns[S_HOST];
         all_run += t->st_ns[S_RUN];
         all_core += t->st_ns[S_CORE];
@@ -1298,7 +1139,7 @@ void kern_sched_report(uint64_t frame) {
                 break;
             }
     }
-    if (self) {   // the render thread first
+    if (self) {
         memmove(top + 1, top, REP_N * sizeof *top);
         top[0] = self;
     }
@@ -1340,7 +1181,7 @@ void kern_sched_report(uint64_t frame) {
         memset(t->st_ns, 0, sizeof t->st_ns);
         t->nblk = t->npre = 0;
         t->lw_ns = t->lw_n = t->lw_max = t->lg_ns = t->lg_n = t->lg_max = t->sl_n = t->sl_req = t->sl_act = 0;
-        t->sp_n = t->sp_ho = 0;   // racy against the thread's own increments: a few passes may be lost
+        t->sp_n = t->sp_ho = 0;
     }
     memset(g_rw, 0, sizeof g_rw);
     memset(g_mw, 0, sizeof g_mw);
@@ -1385,14 +1226,12 @@ void kern_sched_report(uint64_t frame) {
         }
 }
 
-// ---- locks: tag word = owner handle | WAITERS_BIT
 static inline uint32_t ld32(uint64_t a) { return __atomic_load_n((uint32_t *)(uintptr_t)a, __ATOMIC_SEQ_CST); }
 static inline void st32(uint64_t a, uint32_t v) { __atomic_store_n((uint32_t *)(uintptr_t)a, v, __ATOMIC_SEQ_CST); }
 static inline int cas32(uint64_t a, uint32_t *exp, uint32_t v) {
     return __atomic_compare_exchange_n((uint32_t *)(uintptr_t)a, exp, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-// Release the lock at addr: hand it to the best waiter, or clear it.
 static void lock_handoff(uint64_t addr) {
     RtThread *w = pick(W_LOCK, addr);
     int more = 0;
@@ -1409,7 +1248,6 @@ static void lock_handoff(uint64_t addr) {
     wake(w, 0);
 }
 
-// A condvar waiter takes its lock: directly if free (and wakes), else it becomes a lock waiter behind the others.
 static void lock_acquire_for(RtThread *t, uint64_t addr, uint32_t tag) {
     uint32_t v = ld32(addr);
     for (;;) {
@@ -1430,7 +1268,6 @@ static void lock_acquire_for(RtThread *t, uint64_t addr, uint32_t tag) {
     t->wseq = ++g_wseq;
 }
 
-// ---- threads
 static RtThread *thr_new(int prio, int core, uint64_t mask) {
     RtThread *t = calloc(1, sizeof *t);
     Cpu *c = plat_aligned_alloc(sizeof(Cpu), 64);
@@ -1441,11 +1278,10 @@ static RtThread *thr_new(int prio, int core, uint64_t mask) {
     t->core = core;
     t->mask = mask;
     __atomic_store_n(&t->cur_core, -1, __ATOMIC_RELAXED);
-    // TLR (0x200) and the "current thread object" the SDK reads through TLR+0x1F8, in one guest-visible block.
     t->tlr = mem_kernel_alloc(TLR_SIZE + THREAD_OBJ_SIZE, TLR_SIZE);
     *(uint64_t *)(t->tlr + 0x1F8) = (uint64_t)(uintptr_t)(t->tlr + TLR_SIZE);
     t->tls = mem_kernel_alloc(TLS_SIZE, 16);
-    *(uint64_t *)(t->tlr + 0x1F0) = (uint64_t)(uintptr_t)t->tls;   // the SDK reads the TLS pointer here and makes it TPIDR_EL0
+    *(uint64_t *)(t->tlr + 0x1F0) = (uint64_t)(uintptr_t)t->tls;
     c->tpidrro = (uint64_t)(uintptr_t)t->tlr;
     c->tpidr = (uint64_t)(uintptr_t)t->tls;
     c->excl_addr = ~0ull;
@@ -1454,18 +1290,16 @@ static RtThread *thr_new(int prio, int core, uint64_t mask) {
     return t;
 }
 
-static void thr_link(RtThread *t) {   // holding G
+static void thr_link(RtThread *t) {
     t->handle = h_new(O_THREAD, t);
     t->id = g_next_id++;
     t->all = g_all;
     g_all = t;
     g_created++;
-    // Horizon publishes the running thread's handle at TLR+0x110; nn::os::SdkMutexType::IsLockedByCurrentThread
-    // compares it with a mutex's owner word, so without it every unlocked mutex reads as held by this thread.
     if (t->tlr) *(uint32_t *)(t->tlr + 0x110) = t->handle;
 }
 
-static void thr_free(RtThread *t) {   // holding G; t has exited and its handle is closed
+static void thr_free(RtThread *t) {
     for (RtThread **p = &g_all; *p; p = &(*p)->all)
         if (*p == t) {
             *p = t->all;
@@ -1477,8 +1311,6 @@ static void thr_free(RtThread *t) {   // holding G; t has exited and its handle 
     free(t);
 }
 
-// The end of every guest thread, on its own host context after the unwind: give the core up, signal the thread
-// object, free it if its handle is already closed. t is not touched after the unlock.
 static void thread_finish(RtThread *t) {
     if (t->base_fiber) plat_fiber_unself();
     t->base_fiber = NULL;
@@ -1486,7 +1318,7 @@ static void thread_finish(RtThread *t) {
     lock();
     core_put(t);
     acct(t, S_OFF);
-    if (t->hthr) plat_intr_free(t->hthr);   // no waiter interrupts a thread without a core
+    if (t->hthr) plat_intr_free(t->hthr);
     t->hthr = NULL;
     t->exited = 1;
     wake_sync_waiters(t);
@@ -1494,12 +1326,8 @@ static void thread_finish(RtThread *t) {
     unlock();
 }
 
-// ExitThread: back to the thread start with plat_jmp_go, which unwinds nothing: no SEH unwinding through lifted
-// frames. (__builtin_setjmp is not usable: on Win64 LLVM saves the frame address, which is not rbp when the frame
-// register is offset, and the landing code then reads its locals through the wrong base.)
 static __attribute__((noreturn)) void exit_now(RtThread *t) { plat_jmp_go(&t->exit_jmp); }
 
-// The calling host thread, for ap_try (NX2SARIA_ASYNC_PREEMPT) and dg_sample (NX2SARIA_CORE_DIAG).
 static PlatIntr *ap_open_self(void) {
     if (!cores_enabled() || (!g_ap_int && g_diag <= 0)) return NULL;
     PlatIntr *h = plat_intr_self();
@@ -1603,9 +1431,6 @@ void kern_run_on_guest_main(void (*fn)(Cpu *c)) {
     plat_thread_join(h);
 }
 
-// The OS timer ends a wait late by up to PLAT_WAIT_LATE_NS (Windows' high-resolution waitable timer: 0.3-0.5 ms; the
-// SDK's 20 us polling sleeps, main thread and job workers, about 1.5 per frame each, took 460-515 us). Sleeps up to
-// twice that spin on the clock instead (1 ms on Windows, 120 us on Linux); the virtual core is already given up.
 #define SLEEP_SPIN_NS (2 * PLAT_WAIT_LATE_NS)
 static void sleep_ns(RtThread *t, int64_t ns) {
     (void)t;
@@ -1617,8 +1442,7 @@ static void sleep_ns(RtThread *t, int64_t ns) {
     plat_wait_ns((uint64_t)ns);
 }
 
-// ---- synchronization objects
-static int sig_obj(uint32_t h, int *bad) {   // 1 = signaled (holding G)
+static int sig_obj(uint32_t h, int *bad) {
     unsigned i = h - 0x1000;
     if (h == H_CUR_THREAD) return 0;
     if (i == 0 || i >= MAX_H) {
@@ -1640,7 +1464,6 @@ int kern_thread_state(uint32_t h) {
     return r;
 }
 
-// CloseHandle: an event goes with its last end; a thread object once it has also exited.
 static uint32_t handle_close(uint32_t h) {
     unsigned i = h - 0x1000;
     int ok = 0, kind = 0;
@@ -1677,7 +1500,6 @@ void kern_handle_close(uint32_t h) {
     if (handle_close(h)) rt_fatal("kern_handle_close(%#x): bad handle", h);
 }
 
-// Hooks of the probe's condvar negative control.
 volatile int kern_test_cv_old_order;
 void (*volatile kern_test_cv_hook)(void);
 
@@ -1690,7 +1512,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
     uint64_t *x = c->x;
     if (g_diag > 0 && tcur) tcur->dg_svc = imm;
     switch (imm) {
-    case 0x08: {   // CreateThread(-> w1 handle; x1 entry, x2 arg, x3 stack top, w4 priority, w5 core)
+    case 0x08: {
         int prio = (int)x[4], core = (int)x[5];
         if (!x[1] || !x[3] || prio < 28 || prio > 59 || core < -3 || core >= NCORE) {
             x[0] = R_BAD_STATE;
@@ -1713,7 +1535,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[1] = t->handle;
         return 1;
     }
-    case 0x09: {   // StartThread(w0)
+    case 0x09: {
         lock();
         RtThread *t = h_get((uint32_t)x[0], O_THREAD);
         if (t) {
@@ -1724,9 +1546,9 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[0] = t ? R_OK : R_BAD_HANDLE;
         return 1;
     }
-    case 0x0A: {   // ExitThread
+    case 0x0A: {
         RtThread *t = cur(imm);
-        if (t->fiber) {   // on a guest fiber: unwind from the thread's own context (kern_fiber_switch resumes it)
+        if (t->fiber) {
             t->exit_pending = 1;
             t->leaving = t->fiber;
             t->fiber = NULL;
@@ -1736,7 +1558,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         }
         exit_now(t);
     }
-    case 0x0B: {   // SleepThread(x0 ns); 0, -1, -2 yield
+    case 0x0B: {
         int64_t ns = (int64_t)x[0];
         RtThread *t = cur(imm);
         if (ns > 0) {
@@ -1757,10 +1579,6 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
             unlock();
             return 1;
         }
-        // Yield: hand the core to a waiting thread of equal or better priority. Most yields find nobody waiting for a
-        // core: those take neither G nor the priority scan over every blocked thread (prio_of), which the game's yield
-        // loops paid thousands of times a second. Like rt_spin_gate, a thread that queues after this check is found by
-        // the next yield, and kicks the owner itself in core_take meanwhile.
         if (!__atomic_load_n(&g_core_waiting, __ATOMIC_ACQUIRE)) {
             plat_yield();
             return 1;
@@ -1769,7 +1587,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         int give = 0, tp = -1, core = core_current(t);
         for (RtThread *w = g_core_wait; w && !give; w = w->cnext)
             if (core >= 0 && core_allowed(w, core)) {
-                if (tp < 0) tp = prio_of(t);   // only once a waiter may run on this core
+                if (tp < 0) tp = prio_of(t);
                 give = prio_of(w) <= tp;
             }
         if (give) {
@@ -1780,7 +1598,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         if (!give) plat_yield();
         return 1;
     }
-    case 0x0C: {   // GetThreadPriority(w1 handle -> w1)
+    case 0x0C: {
         lock();
         RtThread *t = h_get((uint32_t)x[1], O_THREAD);
         x[0] = t ? R_OK : R_BAD_HANDLE;
@@ -1788,7 +1606,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         unlock();
         return 1;
     }
-    case 0x0D: {   // SetThreadPriority(w0 handle, w1 priority)
+    case 0x0D: {
         if ((uint32_t)x[1] < 28 || (uint32_t)x[1] > 59) {
             x[0] = R_BAD_STATE;
             return 1;
@@ -1800,7 +1618,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         unlock();
         return 1;
     }
-    case 0x0E: {   // GetThreadCoreMask(w2 handle -> w1 core, x2 mask)
+    case 0x0E: {
         lock();
         RtThread *t = h_get((uint32_t)x[2], O_THREAD);
         x[0] = t ? R_OK : R_BAD_HANDLE;
@@ -1811,14 +1629,12 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         unlock();
         return 1;
     }
-    case 0x0F: {   // SetThreadCoreMask(w0 handle, w1 ideal core, x2 mask): -1 process default, -2/-3 keep the ideal core
+    case 0x0F: {
         lock();
         RtThread *t = h_get((uint32_t)x[0], O_THREAD);
         if (t) {
             int core = (int)x[1];
             uint64_t mask = x[2] & CORE_MASK_ALL;
-            // Out-of-range cores and mask bits are clamped (Horizon refuses them, and the SDK aborts on that): an
-            // ideal core of NCORE or more would reach GetCurrentProcessorNumber and the game's per-core arrays.
             if (core >= NCORE || (x[2] & ~CORE_MASK_ALL)) {
                 static int logged;
                 if (logged++ < 4)
@@ -1830,7 +1646,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
             else if (core == -1) t->core = MAIN_CORE;
             if (mask) t->mask = mask;
             int current_core = core_current(t);
-            if (t == tcur && current_core >= 0 && !core_allowed(t, current_core)) {   // move off a forbidden core
+            if (t == tcur && current_core >= 0 && !core_allowed(t, current_core)) {
                 core_put(t);
                 core_take(t);
             }
@@ -1839,14 +1655,13 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         unlock();
         return 1;
     }
-    case 0x10: {   // GetCurrentProcessorNumber: the core seen on the virtual core held (core_seen)
+    case 0x10: {
         RtThread *t = cur(imm);
         int core = core_current(t);
         x[0] = (uint64_t)(uint32_t)(core >= 0 ? core_seen(t, core) : t->core);
         return 1;
     }
-    case 0x36: {   // SynchronizePreemptionState: the SDK's spin locks call it after clearing TLR+0x100 (disable_count)
-                   // when TLR+0x102 (interrupt_flag) is set; rt_svc's checkpoint has already honoured a pending preempt
+    case 0x36: {
         RtThread *t = cur(imm);
         volatile uint16_t *flag = (volatile uint16_t *)(t->tlr + 0x102);
         __atomic_fetch_add(&g_sync36, 1, __ATOMIC_RELAXED);
@@ -1856,7 +1671,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[0] = R_OK;
         return 1;
     }
-    case 0x25: {   // GetThreadId(w1 handle -> x1)
+    case 0x25: {
         lock();
         RtThread *t = h_get((uint32_t)x[1], O_THREAD);
         x[0] = t ? R_OK : R_BAD_HANDLE;
@@ -1865,7 +1680,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         return 1;
     }
 
-    case 0x1A: {   // ArbitrateLock(w0 owner handle, x1 address, w2 tag)
+    case 0x1A: {
         RtThread *t = cur(imm);
         uint64_t addr = x[1];
         uint32_t r = R_OK;
@@ -1880,17 +1695,13 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[0] = r;
         return 1;
     }
-    case 0x1B:   // ArbitrateUnlock(x0 address)
+    case 0x1B:
         lock();
         lock_handoff(x[0]);
         unlock();
         x[0] = R_OK;
         return 1;
-    case 0x1C: {   // WaitProcessWideKeyAtomic(x0 lock, x1 key, w2 tag, x3 timeout)
-        // The key is set before the lock is released. The SDK's Signal reads the key in user mode and skips svc 0x1D
-        // when it is 0, and user mode takes the lock without G: releasing first lets another thread take the lock,
-        // change the condition, read key 0 and wake nobody, after which this thread waits forever.
-        // Linking into the wait list happens in block, still holding G, so svc 0x1D cannot come between.
+    case 0x1C: {
         RtThread *t = cur(imm);
         uint64_t addr = x[0], key = x[1];
         lock();
@@ -1901,7 +1712,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
             t->wtag = (uint32_t)x[2];
             lock_handoff(addr);
             cv_hook();
-        } else {   // the probe's negative control: the old order (release, then set the key)
+        } else {
             lock_handoff(addr);
             cv_hook();
             st32(key, 1);
@@ -1910,12 +1721,12 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
             t->wtag = (uint32_t)x[2];
         }
         t->wobj = key;
-        uint32_t r = block(t, W_CONDVAR, (int64_t)x[3]);   // on timeout user mode takes the lock itself
+        uint32_t r = block(t, W_CONDVAR, (int64_t)x[3]);
         unlock();
         x[0] = r;
         return 1;
     }
-    case 0x1D: {   // SignalProcessWideKey(x0 key, w1 count; <= 0 all)
+    case 0x1D: {
         uint64_t key = x[0];
         int cnt = (int)x[1], n = 0;
         lock();
@@ -1928,9 +1739,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         return 1;
     }
 
-    case 0x34: {   // WaitForAddress(x0 address, w1 type, x2 value, x3 timeout): 0 if less, 1 decrement if less,
-                   // 2 if equal, 3 if equal 64 (19.0.0+ WaitIfEqual64: the whole 64-bit word against x2; libc++'s
-                   // std::atomic::wait on Switch 2 uses it through nn::os::WaitForAddress)
+    case 0x34: {
         RtThread *t = cur(imm);
         uint64_t addr = x[0];
         int type = (int)x[1];
@@ -1959,8 +1768,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[0] = r;
         return 1;
     }
-    case 0x35: {   // SignalToAddress(x0 address, w1 type, w2 value, w3 count): 0 wake, 1 increment if equal,
-                   // 2 if equal modify by the number of waiters
+    case 0x35: {
         uint64_t addr = x[0];
         int type = (int)x[1], cnt = (int)x[3];
         int32_t val = (int32_t)x[2];
@@ -1975,8 +1783,6 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         if (type != 0) {
             int32_t nv = val + 1;
             if (type == 2) {
-                // Waking all (count <= 0) with waiters subtracts 2, not 1 (Horizon's
-                // KAddressArbiter::SignalAndModifyByWaitingCountIfEqual).
                 if (cnt <= 0) nv = nw > 0 ? val - 2 : val + 1;
                 else nv = nw == 0 ? val + 1 : nw <= cnt ? val - 1 : val;
             }
@@ -1994,7 +1800,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         return 1;
     }
 
-    case 0x45: {   // CreateEvent(-> w1 writable, w2 readable)
+    case 0x45: {
         Event *e = calloc(1, sizeof *e);
         if (!e) rt_fatal("kernel: event allocation");
         e->refs = 2;
@@ -2007,7 +1813,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[2] = hr;
         return 1;
     }
-    case 0x11: case 0x12: case 0x17: {   // SignalEvent(writable), ClearEvent(either end), ResetSignal(readable)
+    case 0x11: case 0x12: case 0x17: {
         uint32_t h = (uint32_t)x[0];
         uint32_t r = R_OK;
         lock();
@@ -2028,7 +1834,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[0] = r;
         return 1;
     }
-    case 0x18: {   // WaitSynchronization(-> w1 index; x1 handles, w2 count, x3 timeout)
+    case 0x18: {
         RtThread *t = cur(imm);
         const uint32_t *hs = (const uint32_t *)(uintptr_t)x[1];
         int n = (int)x[2];
@@ -2042,10 +1848,6 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         int idx = -1;
         lock();
         g_sync_calls++;
-        // Horizon's order (KSynchronizationObject::Wait): a signalled object, then timeout 0, then a pending
-        // CancelSynchronization. The cancel is for the next wait that would block: a poll or a wait on a signalled
-        // object leaves it pending. A cancel that wakes this wait (CancelSynchronization wakes it with R_CANCELLED; a
-        // signal wakes it with -1 to look again) ends it cancelled, signalled objects or not.
         uint32_t woke = 0;
         for (;;) {
             if (woke == R_CANCELLED) {
@@ -2064,9 +1866,6 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
                 break;
             }
             if (idx >= 0) {
-                // Horizon does not clear an event on a wait: the SDK clears auto-clear events itself (ResetSignal),
-                // and a server clears its own event when there is nothing left to report (the applet message
-                // queue in ipc.c does). An earlier auto-clear here hid the applet server never clearing.
                 r = R_OK;
                 break;
             }
@@ -2112,7 +1911,7 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[1] = idx >= 0 ? (uint64_t)idx : 0;
         return 1;
     }
-    case 0x19: {   // CancelSynchronization(w0 thread)
+    case 0x19: {
         lock();
         RtThread *t = h_get((uint32_t)x[0], O_THREAD);
         if (t) {
@@ -2123,14 +1922,13 @@ static int kern_svc_inner(Cpu *c, uint32_t imm) {
         x[0] = t ? R_OK : R_BAD_HANDLE;
         return 1;
     }
-    case 0x16:   // CloseHandle(w0)
+    case 0x16:
         x[0] = handle_close((uint32_t)x[0]);
         return 1;
     }
     return 0;
 }
 
-// ---- handles and events for host services (ipc.c and the service overrides)
 uint32_t kern_handle_new(int kind, void *obj) {
     if (kind != KERN_SESSION && kind != KERN_TMEM) rt_fatal("kern_handle_new: kind %d", kind);
     lock();
@@ -2146,8 +1944,6 @@ void *kern_handle_get(uint32_t h, int kind) {
     return o;
 }
 
-// kern_handle_get that also runs hold(obj) holding G, so the caller can take a reference before a CloseHandle on
-// another thread drops the handle's own: handle_close clears the slot holding G and only then calls ipc_handle_closed.
 void *kern_handle_hold(uint32_t h, int kind, void (*hold)(void *obj)) {
     lock();
     void *o = h_peek(h, kind);
@@ -2156,8 +1952,6 @@ void *kern_handle_hold(uint32_t h, int kind, void (*hold)(void *obj)) {
     return o;
 }
 
-// Copies n bytes of a handle's object holding G, for objects without a reference count (KERN_TMEM, freed by its
-// CloseHandle): 1 when h is a handle of that kind, else 0 and nothing copied.
 int kern_handle_copy(uint32_t h, int kind, void *out, size_t n) {
     lock();
     const void *o = h_peek(h, kind);
@@ -2177,7 +1971,6 @@ uint32_t kern_event_new(void) {
     return hw;
 }
 
-// Copy-handle transfer of the readable end: each call gives the client its own handle to the same event.
 uint32_t kern_event_readable(uint32_t hw) {
     lock();
     Event *e = h_peek(hw, O_EVENT_W);
@@ -2205,19 +1998,6 @@ void kern_event_clear(uint32_t hw) {
     unlock();
 }
 
-// System events of host services: the SDK's own nn::os::CreateSystemEvent creates the kernel event (SVC 0x45) on a
-// guest thread; the writable handle is kept, so any thread (host audio tick included) can signal it later.
-// The guest may destroy such an event and attach the same SystemEventType again: the game does that with the nfp
-// activate and deactivate events before each detection. nn::os::DestroySystemEvent zeroes the state byte at +0x28
-// (0 not initialised, 1 event, 2 inter-process event; nn::os::TryWaitSystemEvent aborts on 0) and closes both
-// handles, so a kept handle counts only while that byte is nonzero.
-// Each entry also keeps the serial number of the Event its handle named at bind time (h_new hands a closed number to
-// the next new object at once, so the number alone does not say it is still that event), and whether the object lies
-// in guest memory: host services keep some in their own allocations (ov_movie2.c Video.in_ev/out_ev, net_offline.c
-// HostTask.event), which mem_readable does not know and the game never destroys. A service that frees such an object
-// gives its entry back first (kern_unbind_system_event, from ov_movie2.c ov_dtor).
-// Lock order: G before g_se_lock (system_event_set); kern_bind_system_event and kern_unbind_system_event never hold
-// both.
 #define SE_STATE 0x28
 static struct { uint64_t ev, serial; uint32_t wh; uint8_t guest; } g_se[512];
 static int g_nse;
@@ -2227,7 +2007,6 @@ static int se_live(uint64_t ev) {
     return __atomic_load_n((const uint8_t *)(uintptr_t)(ev + SE_STATE), __ATOMIC_RELAXED) != 0;
 }
 
-// The entry's writable handle, 0 when ev is not bound; *serial (when not NULL) gets the Event's serial number.
 static uint32_t se_find(uint64_t ev, uint64_t *serial) {
     plat_mutex_lock_shared(&g_se_lock);
     uint32_t wh = 0;
@@ -2241,7 +2020,6 @@ static uint32_t se_find(uint64_t ev, uint64_t *serial) {
     return wh;
 }
 
-// A bound event the guest destroyed since is created again and its table entry takes the new writable handle.
 void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear) {
     if (se_find(ev, NULL) && se_live(ev)) return;
     if (!tcur || !c) rt_fatal("kern_bind_system_event(%#llx) on a host thread", (unsigned long long)ev);
@@ -2256,18 +2034,13 @@ void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear) {
     uint32_t wh = (uint32_t)rt_call(c, getw, 1, ev);
     lock();
     Event *e = h_peek(wh, O_EVENT_W);
-    uint64_t serial = e ? e->serial : 0;   // 0 matches no Event: such an entry is never signalled
+    uint64_t serial = e ? e->serial : 0;
     unlock();
     uint8_t guest = (uint8_t)mem_readable(ev + SE_STATE, 1);
     plat_mutex_lock(&g_se_lock);
     int i = 0;
     while (i < g_nse && g_se[i].ev != ev) i++;
     if (i == g_nse && g_nse == (int)(sizeof g_se / sizeof *g_se)) {
-        // Full: entries in guest memory are never removed, and a long session binds events at new addresses (two per
-        // reload of a save). An entry in guest memory whose event the guest destroyed (its state byte is 0, or its
-        // memory is gone) gives its slot. Entries in host memory count as live: the game never destroys them, their
-        // services remove them before freeing them (kern_unbind_system_event), and taking a live one would make the
-        // service's next signal bind again on a host thread, which is fatal.
         i = 0;
         while (i < g_nse && (!g_se[i].guest || (mem_readable(g_se[i].ev + SE_STATE, 1) && se_live(g_se[i].ev)))) i++;
         if (i == g_nse) rt_fatal("kern_bind_system_event: table full (%d live system events)", g_nse);
@@ -2281,10 +2054,6 @@ void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear) {
     plat_mutex_unlock(&g_se_lock);
 }
 
-// Sets (set 1, waking its waiters) or clears a bound event, holding G from reading the entry to the change. It acts
-// only while the entry's writable handle still names the Event the binder saw: DestroySystemEvent closes both handles
-// under G, and the closed number goes to the next new object at once, so a stale entry would otherwise end the process
-// (kern_event_signal's fatal on a closed handle) or set an unrelated event. A stale entry is skipped and logged once.
 static void system_event_set(uint64_t ev, int set) {
     static int told;
     int tell = 0;
@@ -2304,8 +2073,6 @@ static void system_event_set(uint64_t ev, int set) {
                (unsigned long long)ev, wh, set ? "signal" : "clear");
 }
 
-// An event not bound yet is bound on the spot with manual clear, which needs a guest thread. A bound event the guest
-// destroyed is not signalled: its handles are closed and the kernel hands their numbers to new objects.
 void kern_signal_system_event(uint64_t ev) {
     uint32_t wh = se_find(ev, NULL);
     if (wh && !se_live(ev)) return;
@@ -2313,21 +2080,14 @@ void kern_signal_system_event(uint64_t ev) {
     system_event_set(ev, 1);
 }
 
-// Clears a bound event (one never bound or since destroyed is left alone).
 void kern_clear_system_event(uint64_t ev) {
     if (se_find(ev, NULL) && se_live(ev)) system_event_set(ev, 0);
 }
 
-// For a service about to free a SystemEventType it bound in its own memory (ov_movie2.c ov_dtor), with nothing left to
-// signal it: on a guest thread the SDK's DestroySystemEvent zeroes the state byte and closes both kernel handles, which
-// would otherwise stay open for the rest of the run; then the table entry goes, and its slot is free for the next bind.
-// The destroy comes first, so a signal still in flight finds the event destroyed (kern_signal_system_event) or its
-// handle no longer naming it (system_event_set) and skips it, rather than finding no entry and binding again. Off a
-// guest thread, or when the SDK lacks the function, only the entry goes.
 void kern_unbind_system_event(Cpu *c, uint64_t ev) {
     if (!se_find(ev, NULL)) return;
     if (c && tcur && se_live(ev)) {
-        static uint64_t destroy;   // 1: looked up and not loaded
+        static uint64_t destroy;
         uint64_t fn = __atomic_load_n(&destroy, __ATOMIC_RELAXED);
         if (!fn) {
             fn = ldr_symbol("_ZN2nn2os18DestroySystemEventEPNS0_15SystemEventTypeE");
@@ -2346,15 +2106,8 @@ void kern_unbind_system_event(Cpu *c, uint64_t ev) {
     plat_mutex_unlock(&g_se_lock);
 }
 
-// A SystemEventType that still holds an event: mapped guest memory with its state byte nonzero. For services that keep
-// their own lists of bound events and reuse the slots of destroyed ones (gfx_present.c gfx_vsync_bind).
 int kern_system_event_live(uint64_t ev) { return mem_readable(ev + SE_STATE, 1) && se_live(ev); }
 
-// ---- fibers
-// The SDK switches fibers by swapping register context, which breaks "RET = C return". Each guest fiber gets a host
-// fiber (own 256 MiB reserved host stack) and its own Cpu, so a suspended fiber's registers and host frames stay
-// untouched while others run, and a fiber may resume on another thread. A switch carries the thread state (TLR, TLS
-// pointer, FPCR/FPSR) over to the target's Cpu and clears the exclusive monitor.
 enum { F_NEW, F_STARTED, F_DONE };
 struct Fiber {
     uint64_t addr, func, arg, stack, size;
@@ -2377,10 +2130,9 @@ static Fiber *fiber_find(uint64_t addr) {
 
 static void fiber_switch_to(RtThread *t, const Cpu *from, Fiber *to);
 
-// After a host fiber switch: release the context left behind, and finish an ExitThread issued on a fiber.
 __attribute__((noinline)) static void fiber_resumed(void) {
     RtThread *t = tcur_now();
-    rt_fpcr_sync(t->cur);   // the host fiber resumes with its own MXCSR (platform.h fibers switch it)
+    rt_fpcr_sync(t->cur);
     if (t->leaving) {
         __atomic_store_n(&t->leaving->running, 0, __ATOMIC_RELEASE);
         t->leaving = NULL;
@@ -2392,14 +2144,14 @@ static void fiber_main(void *p) {
     Fiber *f = p;
     fiber_resumed();
     Cpu *c = f->cpu;
-    tcur_now()->host_depth = 0;   // a new fiber starts at the top level; each context restores its own depth on resume
+    tcur_now()->host_depth = 0;
     uint64_t next = rt_call(c, f->func, 1, f->arg);
     f->state = F_DONE;
     Fiber *n = NULL;
     if (next && !(n = fiber_find(next)))
         rt_fatal("fiber %#llx returned %#llx, which is not an initialized fiber", (unsigned long long)f->addr,
                  (unsigned long long)next);
-    fiber_switch_to(tcur_now(), c, n);   // NULL: back to the thread's own context (of the thread now running it)
+    fiber_switch_to(tcur_now(), c, n);
     rt_fatal("fiber %#llx resumed after it finished", (unsigned long long)f->addr);
 }
 
@@ -2428,15 +2180,12 @@ static void fiber_switch_to(RtThread *t, const Cpu *from, Fiber *to) {
     t->leaving = t->fiber;
     t->fiber = to;
     t->cur = dst;
-    int depth = t->host_depth;   // this context's host frames
+    int depth = t->host_depth;
     plat_fiber_switch(to ? to->host : t->base_fiber);
-    // Resumed, maybe on another OS thread: this context's frames are now that thread's (t is the thread that
-    // suspended it, which runs something else meanwhile)
     tcur_now()->host_depth = depth;
     fiber_resumed();
 }
 
-// InitializeFiber(x0 FiberType*, x1 function, x2 argument, x3 stack, x4 stack size, w5 flags)
 void kern_fiber_initialize(Cpu *c) {
     uint64_t addr = c->x[0];
     Fiber *f = fiber_find(addr);
@@ -2474,7 +2223,6 @@ void kern_fiber_initialize(Cpu *c) {
     if (!f->host) rt_fatal("kernel: cannot create a host fiber");
 }
 
-// FinalizeFiber(x0 FiberType*)
 void kern_fiber_finalize(Cpu *c) {
     uint64_t addr = c->x[0];
     plat_mutex_lock(&g_fiber_lock);
@@ -2492,12 +2240,9 @@ void kern_fiber_finalize(Cpu *c) {
     free(f);
 }
 
-// SwitchToFiber(x0 FiberType*)
 void kern_fiber_switch(Cpu *c) {
     RtThread *t = tcur;
     if (!t) rt_fatal("SwitchToFiber on a host thread");
-    // SwitchToFiber(nullptr) returns to the thread's own context (the SDK's sdk+0x1693c0 takes the thread's
-    // original fiber for a null argument); Switch 2 titles use it to leave a fiber.
     if (!c->x[0]) {
         static int logged;
         if (logged++ < 3)
@@ -2512,7 +2257,6 @@ void kern_fiber_switch(Cpu *c) {
     fiber_switch_to(t, c, to);
 }
 
-// GetCurrentFiber() -> x0, NULL on the thread's own context
 void kern_fiber_current(Cpu *c) {
     RtThread *t = tcur;
     c->x[0] = t && t->fiber ? t->fiber->addr : 0;
@@ -2523,13 +2267,6 @@ HOST_OVERRIDE(KERN_SYM_FINALIZE_FIBER, kern_fiber_finalize);
 HOST_OVERRIDE(KERN_SYM_SWITCH_TO_FIBER, kern_fiber_switch);
 HOST_OVERRIDE(KERN_SYM_GET_CURRENT_FIBER, kern_fiber_current);
 
-// NX2SARIA_SVC_SLOW_MS (default 0, off): logs each kernel service that blocks longer than that, with the service number.
-// A stalled frame shows up as time in the replay; this says whether the guest was waiting in a service, and which one,
-// instead of leaving it to a sampler to find.
-// NX2SARIA_SVC_WAITS=1 (diagnosis, default 0): the guest main thread's time in each kernel service, per service and the
-// guest call chain that made it (the lr and up to three callers from the guest's frame records), logged every 10 s as
-// milliseconds per second with the chain named (ldr_describe: the SDK's symbols). What the game's main thread waits for
-// between frames: standing in Hyrule Field on an RX 580 it spent about a fifth of its time blocked in one service call.
 #define SW_N 256
 #define SW_DEPTH 4
 static struct { uint64_t key, lr[SW_DEPTH], ns, n; uint32_t imm; } svw[SW_N];
@@ -2569,14 +2306,14 @@ static void svc_wait_note(const Cpu *c, uint32_t imm, uint64_t ns) {
         rt_log("kernel: main thread in service %#x: %.1f ms/s over %llu calls (%.2f ms each) from %s < %s < %s < %s",
                svw[best].imm, svw[best].ns / 1e6 / secs, (unsigned long long)svw[best].n, svw[best].ns / 1e6 / (double)svw[best].n,
                d[0], d[1], d[2], d[3]);
-        svw[best].ns = 0;   // listed: out of this round
+        svw[best].ns = 0;
     }
     memset(svw, 0, sizeof svw);
 }
 
 int kern_svc(Cpu *c, uint32_t imm) {
     static int waits = -1;
-    if (waits < 0) {   // no settings row: cfg_bool only on a set value (an unset key is fatal there)
+    if (waits < 0) {
         const char *v = cfg_get("NX2SARIA_SVC_WAITS");
         waits = v && *v && cfg_bool("NX2SARIA_SVC_WAITS");
     }
@@ -2600,9 +2337,6 @@ int kern_svc(Cpu *c, uint32_t imm) {
     return r;
 }
 
-// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): guest threads, the handle table, the system-event table and fibers, each
-// against its fixed size (the tables are fatal when full). Beside the guest's handles, the OS handles of the process
-// (platform.h plat_handle_count): they grew at every area load of a session while the guest's stayed flat.
 void kern_sizes(PerfSizes *s) {
     uint64_t threads = 0, handles = 0, fibers = 0, ses;
     plat_mutex_lock_shared(&G);

@@ -1,17 +1,4 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// System service overrides: nn::oe, applet, am, prepo, nfp, err, aoc, pctl, diag,
-// account, time and pl, and the six observers. Nothing here talks to a Horizon service; each call is answered by the
-// host. Stub rule: queries and initialisation succeed with neutral values, data paths stop with a named fatal.
-//
-// Environment:
-//   NX2SARIA_LANG=<Switch language code>   the game's language as given ("ja", "en-GB", "zh-Hant", ...)
-//   NX2SARIA_LOCALE=<BCP 47 tag>           else the language for this locale ("pt-BR"), else the Windows user locale;
-//                                      a language the game does not ship becomes en-US
-//   NX2SARIA_OPERATION_MODE=docked|handheld   operation and performance mode reported to the game (default docked)
-//   NX2SARIA_ASSUME_FOCUS=1|0              1 (default, the Game tab's row): GetCurrentFocusState always reports in focus,
-//                                      whatever the window says; 0: out of focus while the window is, as on a Switch
-//   NX2SARIA_SHARED_FONTS=<dir>            nn::pl shared fonts (tools/extract_fonts.py output), default
-//                                      <romfs>/../../firmware/shared-fonts
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,8 +12,8 @@
 #include "ov.h"
 #include "platform/platform.h"
 
-#define NFP_R_DEVICE_NOT_FOUND 0x8073u     // nfp: no NFC reader on the host
-#define ACCOUNT_R_INVALID 0x7c67u          // the result for an unknown user handle or uid
+#define NFP_R_DEVICE_NOT_FOUND 0x8073u
+#define ACCOUNT_R_INVALID 0x7c67u
 #define TIME_R_INVALID 0x74u
 #define TIME_R_SOURCE_MISMATCH 0x18074u
 
@@ -36,9 +23,6 @@ static void need(int ok, const char *what) {
 
 static const char *caller(Cpu *c, char *buf, int n) { return ldr_describe(c->x[30] - 4, buf, n); }
 
-// ==== nn::oe (services.c)
-// NX2SARIA_OPERATION_MODE: 1 handheld (OperationMode 0, PerformanceMode Normal 0), 0 docked (1, Boost 1). It follows the
-// setting; the game is told of a change as the console tells it (ov_operation_mode_live).
 int ov_handheld(void) {
     const char *e = cfg_value("NX2SARIA_OPERATION_MODE");
     if (!strcmp(e, "docked")) return 0;
@@ -46,8 +30,6 @@ int ov_handheld(void) {
     rt_fatal("NX2SARIA_OPERATION_MODE must be docked or handheld, not '%s'", e);
 }
 
-// After a settings change (gfx_present.c window_settings_live): a new mode reaches the game through the applet messages
-// OperationModeChanged and PerformanceModeChanged, which make it read the mode again.
 void ov_operation_mode_live(void) {
     static int was = -1;
     int h = ov_handheld();
@@ -58,7 +40,6 @@ void ov_operation_mode_live(void) {
     }
 }
 
-// The Switch language for a BCP 47 tag; en-US for a language the game does not ship.
 static const char *switch_language(const char *tag) {
     char lang[8] = "", region[4] = "", script[8] = "";
     size_t n = strcspn(tag, "-_");
@@ -71,7 +52,7 @@ static const char *switch_language(const char *tag) {
             region[0] = (char)toupper((unsigned char)p[0]);
             region[1] = (char)toupper((unsigned char)p[1]);
         } else if (k == 3 && isdigit((unsigned char)p[0])) {
-            memcpy(region, p, 3);   // UN M.49 area, e.g. es-419
+            memcpy(region, p, 3);
         } else if (k == 4 && !*script) {
             for (size_t i = 0; i < 4; i++) script[i] = (char)(i ? tolower((unsigned char)p[i]) : toupper((unsigned char)p[i]));
         }
@@ -81,7 +62,6 @@ static const char *switch_language(const char *tag) {
         !strcmp(lang, "ru") || !strcmp(lang, "ko") || !strcmp(lang, "pl"))
         return !strcmp(lang, "ja") ? "ja" : !strcmp(lang, "de") ? "de" : !strcmp(lang, "it") ? "it"
              : !strcmp(lang, "nl") ? "nl" : !strcmp(lang, "ru") ? "ru" : !strcmp(lang, "ko") ? "ko" : "pl";
-    // Brazil's Portuguese is a language of its own on the Switch (pt-BR, Mals/USpt); Portugal's is pt
     if (!strcmp(lang, "pt")) return !strcmp(region, "BR") ? "pt-BR" : "pt";
     if (!strcmp(lang, "fr")) return !strcmp(region, "CA") ? "fr-CA" : "fr";
     if (!strcmp(lang, "es")) return *region && strcmp(region, "ES") ? "es-419" : "es";
@@ -94,13 +74,10 @@ static const char *switch_language(const char *tag) {
     return "en-US";
 }
 
-// The game's language as a Switch language code (NX2SARIA_LANG, else NX2SARIA_LOCALE, else the Windows user locale). NX2Saria
-// accepts "zh-Hans" and "zh-Hant" for Chinese and falls back to Japanese for "zh-CN" and "zh-TW", so those two
-// spellings, which older nx2navi.ini files and menus wrote, are mapped to them.
 const char *ov_language(void) {
     static const char *const codes[] = {"ja", "en-US", "fr", "de", "it", "es", "ko", "nl", "pt", "ru",
                                         "en-GB", "fr-CA", "es-419", "zh-Hans", "zh-Hant", "pt-BR", "pl"};
-    const char *code = cfg_get("NX2SARIA_LANG");   // no fixed default: NX2SARIA_LOCALE or the Windows user locale decides when unset
+    const char *code = cfg_get("NX2SARIA_LANG");
     if (code && *code) {
         if (!strcmp(code, "zh-CN")) return "zh-Hans";
         if (!strcmp(code, "zh-TW")) return "zh-Hant";
@@ -117,7 +94,6 @@ const char *ov_language(void) {
     return switch_language(tag);
 }
 
-// LanguageCode GetDesiredLanguage(): char[8] in x0
 static void ov_desired_language(Cpu *c) {
     const char *code = ov_language();
     uint64_t v = 0;
@@ -125,31 +101,21 @@ static void ov_desired_language(Cpu *c) {
     ret_x(c, v);
 }
 
-// nn::oe::Initialize opens the appletOE service (served by ipc.c now that domains are supported) and builds the
-// module's own service object, which the oe wrappers the game calls internally dereference. It must run: observe
-// it and call the guest definition instead of replacing it.
 static void ov_oe_initialize(Cpu *c) {
     rt_original(c);
     rt_log("oe: application environment: a local host process");
 }
 HOST_OBSERVER("_ZN2nn2oe10InitializeEv", ov_oe_initialize);
 
-// void SetGraphicsScaleChangedNotificationEnabled(bool): a thin wrapper over the appletOE service object, which
-// the overridden Initialize never builds; the notification is a no-op on a desktop window.
 static void ov_oe_graphics_scale(Cpu *c) { (void)c; }
 HOST_OVERRIDE("_ZN2nn2oe42SetGraphicsScaleChangedNotificationEnabledEb", ov_oe_graphics_scale);
 
-// GraphicsScalingParameters GetGraphicsScalingParameters(): 12 bytes returned in x0 (words 0-1) and w1 (word 2).
-// Word 0 is a scale *mode*, not a float: the SDK's own caller (sdk+0x59a690) maps 10 -> 0, 20 -> 1, 30 -> 2 and
-// aborts on anything else (an earlier {1.0f, 1.0f} here hit that abort). 10 is the console's default (the graphics
-// scale controller's current scale); the other two words are zero.
 static void ov_oe_scaling_parameters(Cpu *c) {
     ret_x(c, 10);
     c->x[1] = 0;
 }
 HOST_OVERRIDE("_ZN2nn2oe28GetGraphicsScalingParametersEv", ov_oe_scaling_parameters);
 
-// void SetPerformanceConfiguration(PerformanceMode mode, int config)
 static void ov_performance_config(Cpu *c) {
     int64_t mode = (int32_t)arg_x(c, 0);
     if (mode < 0 || mode > 1) rt_fatal("nn::oe::SetPerformanceConfiguration: invalid mode %lld", (long long)mode);
@@ -157,7 +123,6 @@ static void ov_performance_config(Cpu *c) {
            (uint32_t)arg_x(c, 1));
 }
 
-// void SetCpuBoostMode(CpuBoostMode mode)
 static void ov_cpu_boost(Cpu *c) {
     int64_t mode = (int32_t)arg_x(c, 0);
     if (mode < 0 || mode > 2) rt_fatal("nn::oe::SetCpuBoostMode: unknown mode %lld", (long long)mode);
@@ -166,7 +131,6 @@ static void ov_cpu_boost(Cpu *c) {
 static void ov_operation_mode(Cpu *c) { ret_x(c, ov_handheld() ? 0 : 1); }
 static void ov_performance_mode(Cpu *c) { ret_x(c, ov_handheld() ? 0 : 1); }
 
-// void SetFocusHandlingMode(FocusHandlingMode mode): the nnMain checkpoint of --boot
 static volatile int32_t focus_mode;
 static void ov_focus_mode(Cpu *c) {
     int64_t mode = (int32_t)arg_x(c, 0);
@@ -180,16 +144,6 @@ static void ov_focus_mode(Cpu *c) {
     }
 }
 
-// FocusState GetCurrentFocusState(): 1 in focus, 2 out of focus (nn::oe::FocusState). The game sets focus handling
-// mode 2: on a Switch the system then suspends the whole process while it is out of focus and sends Resume when it
-// returns. Here only the game's main thread stops (it waits in PopNotificationMessage for the next message) while its
-// loader threads, audio and clocks run on, and a load interrupted that way was seen to never finish (Linux, 1.4.3).
-// So NX2SARIA_ASSUME_FOCUS=1, the default, keeps it at 1; with 0 it follows the window through
-// oe_set_focus. The caller of oe_set_focus also pushes OE_MSG_FOCUS_STATE_CHANGED.
-//
-// The setting is read on every focus change rather than once at start: a focus change is rare, the lookup is a short
-// walk of the loaded ini entries, and the Game tab's row then takes effect the next time the window is left, without
-// a restart.
 static volatile int32_t focus_state = 1;
 void oe_set_focus(int in_focus) {
     plat_xchg32(&focus_state, in_focus || atoi(cfg_value("NX2SARIA_ASSUME_FOCUS")) ? 1 : 2);
@@ -201,7 +155,6 @@ static void ov_resume_enabled(Cpu *c) { plat_xchg32(&notify_resume, (int32_t)(ar
 static void ov_operation_enabled(Cpu *c) { plat_xchg32(&notify_operation, (int32_t)(arg_x(c, 0) & 0xff)); }
 static void ov_performance_enabled(Cpu *c) { plat_xchg32(&notify_performance, (int32_t)(arg_x(c, 0) & 0xff)); }
 
-// ==== nn::oe, applet, am, prepo, nfp, err (applet_host.c)
 static PlatMutex lock = PLAT_MUTEX_INIT;
 static PlatCond message_cv = PLAT_COND_INIT;
 static uint32_t messages[32];
@@ -219,7 +172,6 @@ void oe_push_message(uint32_t message) {
     plat_mutex_unlock(&lock);
 }
 
-// void GetExpectedVolumeBalance(float *left, float *right)
 static void ov_get_balance(Cpu *c) {
     float *l = arg_p(c, 0), *r = arg_p(c, 1);
     plat_mutex_lock_shared(&lock);
@@ -228,7 +180,6 @@ static void ov_get_balance(Cpu *c) {
     plat_mutex_unlock_shared(&lock);
 }
 
-// void SetExpectedVolumeBalance(float left, float right)
 static void ov_set_balance(Cpu *c) {
     float l = arg_s(c, 0), r = arg_s(c, 1);
     if (!(l >= 0 && l <= 1 && r >= 0 && r <= 1))
@@ -239,25 +190,20 @@ static void ov_set_balance(Cpu *c) {
     plat_mutex_unlock(&lock);
 }
 
-// TimeSpan GetProgramTotalActiveTime(): nanoseconds since the process started (19.2 MHz ticks * 625 / 12)
 static void ov_active_time(Cpu *c) {
     ret_x(c, (uint64_t)((unsigned __int128)(rt_ticks() - start_ticks) * 625 / 12));
 }
 
-// void SetUserInactivityDetectionTimeExtended[Unsafe](bool): the host never puts the console to sleep
 static void ov_inactivity_extended(Cpu *c) { (void)c; }
 
-// void FinishStartupLogo(): no system logo is drawn on the host
 static void ov_finish_logo(Cpu *c) { (void)c; rt_log("oe: the game finished its startup logo"); }
 
-// bool TryPopLaunchParameter(size_t *size, void *buffer, size_t capacity): launched directly, no parameter
 static void ov_launch_parameter(Cpu *c) {
     uint64_t *size = arg_p(c, 0);
     if (size) *size = 0;
     ret_x(c, 0);
 }
 
-// bool TryPopNotificationMessage(Message *out)
 static void ov_try_pop(Cpu *c) {
     uint32_t *out = arg_p(c, 0);
     plat_mutex_lock(&lock);
@@ -270,7 +216,6 @@ static void ov_try_pop(Cpu *c) {
     ret_x(c, (uint64_t)ok);
 }
 
-// Message PopNotificationMessage(): blocks like a Horizon wait, so the thread gives its virtual core up meanwhile
 static void ov_pop(Cpu *c) {
     int away = kern_core_away();
     plat_mutex_lock(&lock);
@@ -281,22 +226,16 @@ static void ov_pop(Cpu *c) {
     ret_x(c, m);
 }
 
-// int applet::GetPreviousProgramIndex(): started directly, not from an ExecuteProgram chain
 static void ov_previous_program(Cpu *c) { ret_x(c, (uint64_t)(int64_t)-1); }
-// AppletResourceUserId applet:: / am::GetAppletResourceUserId(): one application, one stable non-zero id
 static void ov_aruid(Cpu *c) { ret_x(c, 1); }
 
-// nn::prepo: play reports stay local (no Nintendo servers)
 static volatile int64_t reports;
-static void ov_report_save(Cpu *c) {   // Result PlayReport::Save() and Save(const account::Uid &)
+static void ov_report_save(Cpu *c) {
     int64_t n = plat_inc64(&reports);
     if (n % 100 == 1) rt_log("prepo: play report kept local (not sent), %lld so far", (long long)n);
     ret_x(c, 0);
 }
-static void ov_result_ok(Cpu *c) { ret_x(c, 0); }   // RequestImmediateTransmission, AddInternetConnectionStatus
-// Switch 2: Result PlayReport::Send(const account::Uid &) replaces Save (kept local like it);
-// Result AsyncContext::GetCompletionEvent(SystemEvent *out): out becomes a signalled event; AsyncContext::GetResult();
-// SystemEvent *GetOverSaveFrequencyLimitEvent(): an event that never fires (no save limit here)
+static void ov_result_ok(Cpu *c) { ret_x(c, 0); }
 static void ov_report_event(Cpu *c) {
     void *out = arg_p(c, 1);
     if (out) {
@@ -306,16 +245,14 @@ static void ov_report_event(Cpu *c) {
     ret_x(c, 0);
 }
 static void ov_report_limit_event(Cpu *c) {
-    static uint8_t ev[0x40];   // an nn::os::SystemEventType
+    static uint8_t ev[0x40];
     static volatile int32_t bound;
     if (!plat_xchg32(&bound, 1)) kern_bind_system_event(c, (uint64_t)(uintptr_t)ev, 0);
     ret_x(c, (uint64_t)(uintptr_t)ev);
 }
 static void ov_nothing(Cpu *c) { (void)c; }
 
-// nn::nfp: NFC reader & amiibo support. Every nn::nfp import of the game has an override here, so the SDK's own nfp
-// code (whose session Initialize never opens) is not reached. amiibo.c keeps the figure's data and application area.
-static const uint8_t nfp_device[8] = { 1, 0, 0, 0, 0, 0, 0, 0 };   // the DeviceHandle of the one emulated reader
+static const uint8_t nfp_device[8] = { 1, 0, 0, 0, 0, 0, 0, 0 };
 static volatile int32_t nfp_state;
 static void ov_nfp_initialize(Cpu *c) { plat_xchg32(&nfp_state, 1); ret_x(c, 0); }
 static void ov_nfp_finalize(Cpu *c) {
@@ -326,7 +263,6 @@ static void ov_nfp_finalize(Cpu *c) {
 }
 static void ov_nfp_state(Cpu *c) { ret_x(c, (uint64_t)nfp_state); }
 
-// Result ListDevices(DeviceHandle *out, int *count, int max)
 static void ov_nfp_list(Cpu *c) {
     void *out = arg_p(c, 0);
     int32_t *count = arg_p(c, 1);
@@ -341,7 +277,6 @@ static void ov_nfp_list(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result AttachAvailabilityChangeEvent(os::SystemEventType *event)
 static void ov_nfp_availability(Cpu *c) {
     uint64_t ev = arg_x(c, 0);
     if (!ev) rt_fatal("nn::nfp::AttachAvailabilityChangeEvent: null event");
@@ -350,13 +285,11 @@ static void ov_nfp_availability(Cpu *c) {
     ret_x(c, 0);
 }
 
-// DeviceState GetDeviceState(const DeviceHandle &)
 static void ov_nfp_device_state(Cpu *c) {
     (void)c;
     ret_x(c, (uint64_t)amiibo_get_device_state());
 }
 
-// Result Mount(const DeviceHandle &, ModelType, MountTarget)
 static void ov_nfp_mount(Cpu *c) {
     (void)c;
     if (!amiibo_has_tag()) {
@@ -367,14 +300,12 @@ static void ov_nfp_mount(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result GetNpadId(u32 *npad_id, const DeviceHandle &)
 static void ov_nfp_get_npad_id(Cpu *c) {
     uint32_t *npad = arg_p(c, 0);
-    if (npad) *npad = 0; // Handheld / Player 1
+    if (npad) *npad = 0;
     ret_x(c, 0);
 }
 
-// Result AttachActivateEvent(os::SystemEventType *event, const DeviceHandle &)
 static void ov_nfp_attach_activate(Cpu *c) {
     uint64_t ev = arg_x(c, 0);
     if (ev) {
@@ -384,7 +315,6 @@ static void ov_nfp_attach_activate(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result AttachDeactivateEvent(os::SystemEventType *event, const DeviceHandle &)
 static void ov_nfp_attach_deactivate(Cpu *c) {
     uint64_t ev = arg_x(c, 0);
     if (ev) {
@@ -393,21 +323,18 @@ static void ov_nfp_attach_deactivate(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result StartDetection(const DeviceHandle &)
 static void ov_nfp_start_detection(Cpu *c) {
     (void)c;
     amiibo_start_detection();
     ret_x(c, 0);
 }
 
-// Result StopDetection(const DeviceHandle &)
 static void ov_nfp_stop_detection(Cpu *c) {
     (void)c;
     amiibo_stop_detection();
     ret_x(c, 0);
 }
 
-// Result GetTagInfo(TagInfo *out, const DeviceHandle &)
 static void ov_nfp_get_tag_info(Cpu *c) {
     void *out = arg_p(c, 0);
     if (!amiibo_has_tag() && !amiibo_is_mounted()) {
@@ -418,7 +345,6 @@ static void ov_nfp_get_tag_info(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result GetModelInfo(ModelInfo *out, const DeviceHandle &)
 static void ov_nfp_get_model_info(Cpu *c) {
     void *out = arg_p(c, 0);
     if (!amiibo_is_mounted() && !amiibo_has_tag()) {
@@ -429,7 +355,6 @@ static void ov_nfp_get_model_info(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result GetRegisterInfo(RegisterInfo *out, const DeviceHandle &)
 static void ov_nfp_get_register_info(Cpu *c) {
     void *out = arg_p(c, 0);
     if (!amiibo_is_mounted()) {
@@ -440,7 +365,6 @@ static void ov_nfp_get_register_info(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result GetCommonInfo(CommonInfo *out, const DeviceHandle &)
 static void ov_nfp_get_common_info(Cpu *c) {
     void *out = arg_p(c, 0);
     if (!amiibo_is_mounted()) {
@@ -451,10 +375,8 @@ static void ov_nfp_get_common_info(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result OpenApplicationArea(const DeviceHandle &, u32 access_id)
 static void ov_nfp_open_app_area(Cpu *c) { ret_x(c, amiibo_open_app_area((uint32_t)arg_x(c, 1))); }
 
-// Result GetApplicationArea(void *out, size_t *out_size, const DeviceHandle &, size_t size)
 static void ov_nfp_get_app_area(Cpu *c) {
     void *out = arg_p(c, 0);
     uint64_t *out_size = arg_p(c, 1);
@@ -464,15 +386,10 @@ static void ov_nfp_get_app_area(Cpu *c) {
     ret_x(c, r);
 }
 
-// Result SetApplicationArea(const DeviceHandle &, const void *data, size_t size)
 static void ov_nfp_set_app_area(Cpu *c) { ret_x(c, amiibo_set_app_area(arg_p(c, 1), arg_x(c, 2))); }
 
-// Result Flush(const DeviceHandle &)
 static void ov_nfp_flush(Cpu *c) { ret_x(c, amiibo_flush_figure()); }
 
-// Result CreateApplicationArea / RecreateApplicationArea(const DeviceHandle &, const ApplicationAreaCreateInfo &).
-// ApplicationAreaCreateInfo: u32 access id at 0, u32 initial data size at 4, u64 initial data address at 8 (size and
-// address 0 without initial data).
 static uint32_t nfp_create_app_area(Cpu *c, bool recreate) {
     const uint8_t *info = arg_p(c, 1);
     if (!info) rt_fatal("nn::nfp::%sApplicationArea: null create info", recreate ? "Recreate" : "Create");
@@ -486,10 +403,6 @@ static uint32_t nfp_create_app_area(Cpu *c, bool recreate) {
 static void ov_nfp_create_app_area(Cpu *c) { ret_x(c, nfp_create_app_area(c, false)); }
 static void ov_nfp_recreate_app_area(Cpu *c) { ret_x(c, nfp_create_app_area(c, true)); }
 
-// The amiibo settings applets: no window, the answer the applet gives when the player confirms at once, with the
-// reader's DeviceHandle in the first argument.
-// Result StartNicknameAndOwnerSettings(DeviceHandle *out, bool *registered, RegisterInfo *out_info,
-//                                      const AmiiboSettingsStartParam &, const TagInfo &[, const RegisterInfo &])
 static void ov_nfp_owner_settings(Cpu *c) {
     void *handle = arg_p(c, 0);
     uint8_t *registered = arg_p(c, 1);
@@ -500,16 +413,12 @@ static void ov_nfp_owner_settings(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result StartRestorer(DeviceHandle *out, const AmiiboSettingsStartParam &, const TagInfo &): a figure here is never
-// damaged, so there is nothing to restore.
 static void ov_nfp_restorer(Cpu *c) {
     void *handle = arg_p(c, 0);
     if (handle) memcpy(handle, nfp_device, sizeof nfp_device);
     ret_x(c, 0);
 }
 
-// Result StartGameDataEraser(DeviceHandle *out, const AmiiboSettingsStartParam &, const TagInfo &): drops the loaded
-// figure's application area.
 static void ov_nfp_game_data_eraser(Cpu *c) {
     void *handle = arg_p(c, 0);
     if (handle) memcpy(handle, nfp_device, sizeof nfp_device);
@@ -517,7 +426,6 @@ static void ov_nfp_game_data_eraser(Cpu *c) {
     ret_x(c, 0);
 }
 
-// void err::ShowError(Result): the game's error dialog, logged
 static void ov_show_error(Cpu *c) {
     uint32_t r = (uint32_t)arg_x(c, 0);
     char lr[96];
@@ -525,32 +433,24 @@ static void ov_show_error(Cpu *c) {
            caller(c, lr, sizeof lr));
 }
 
-// ==== SDK-internal initialisation (services.c)
 static void ov_diag_startup(Cpu *c) { (void)c; rt_log("diag: host diagnostics"); }
 static void ov_aoc_initialize(Cpu *c) { (void)c; rt_log("aoc: no add-on content"); }
-// 1.4.3's main lists add-on content: there is none.
-// int ListAddOnContent(AddOnContentIndex *out, int offset, int count)
 static void ov_aoc_list(Cpu *c) {
     int offset = (int)arg_x(c, 1), count = (int)arg_x(c, 2);
     if (offset < 0 || count < 0) rt_fatal("aoc: ListAddOnContent range %d+%d", offset, count);
     ret_x(c, 0);
 }
-// ==== nn::nifm: this build is offline. Initialize succeeds without the nifm:u session, the network is never
-// available, a request completes at once (unaccepted), and the calls that report its error return
-// NetworkCommunicationDisabled (nifm module 110, description 1111).
 #define NIFM_R_COMMUNICATION_DISABLED 0x8ae6eu
 static void ov_nifm_initialize(Cpu *c) { rt_log("nifm: offline, no network"); ret_x(c, 0); }
 static void ov_nifm_available(Cpu *c) { ret_x(c, 0); }
 static void ov_nifm_request(Cpu *c) { (void)c; }
 static void ov_nifm_error(Cpu *c) { ret_x(c, NIFM_R_COMMUNICATION_DISABLED); }
 
-// int CountAddOnContent(): the SDK's own reads the aoc service object the overridden Initialize never opens.
 static void ov_aoc_count(Cpu *c) { ret_x(c, 0); }
 static void ov_err_context(Cpu *c) { (void)c; rt_log("err: error contexts stay local"); }
 static void ov_pctl_initialize(Cpu *c) { (void)c; rt_log("pctl: no parental controls"); }
 static void ov_abort_observer(Cpu *c) { (void)c; rt_log("diag: the host crash reporter observes aborts"); }
 
-// ==== observers (services.c): log, then the guest definition
 static void observe(Cpu *c, const char *name) {
     rt_log("ENTER %s", name);
     rt_original(c);
@@ -561,16 +461,14 @@ static void obs_sdk_initialize(Cpu *c) { observe(c, "nninitInitializeSdkModule")
 static void obs_startup(Cpu *c) { observe(c, "nninitStartup"); }
 static void obs_main(Cpu *c) { observe(c, "nnMain"); }
 
-// Result os::AllocateAddressRegion(uintptr_t *out, size_t size)
 static void obs_address_region(Cpu *c) {
     uint64_t *out = arg_p(c, 0), size = arg_x(c, 1);
     uint32_t r = (uint32_t)rt_original(c);
-    if (rt_trace & RT_TRACE_HOSTCALL)   // 20,000 lines a session otherwise, each a write on a game thread
+    if (rt_trace & RT_TRACE_HOSTCALL)
         rt_log("AllocateAddressRegion size %#llx result %#x address %#llx", (unsigned long long)size, r,
            (unsigned long long)(r || !out ? 0 : *out));
 }
 
-// Result os::AllocateMemoryPages(uintptr_t address, size_t size)
 static void obs_memory_pages(Cpu *c) {
     uint64_t a = arg_x(c, 0), size = arg_x(c, 1);
     uint32_t r = (uint32_t)rt_original(c);
@@ -578,7 +476,6 @@ static void obs_memory_pages(Cpu *c) {
         rt_log("AllocateMemoryPages address %#llx size %#llx result %#x", (unsigned long long)a, (unsigned long long)size, r);
 }
 
-// ==== nn::account (account.c): one offline local user whose Uid survives restarts in <profile>/account.uid
 typedef struct { uint64_t lo, hi; } Uid;
 typedef struct { Uid uid; uint64_t token; } UserHandle;
 static PlatMutex account_lock = PLAT_MUTEX_INIT;
@@ -590,8 +487,6 @@ static void make_dirs(const char *dir) {
     if (!plat_dir_exists(dir)) rt_fatal("account: cannot create %s", dir);
 }
 
-// Holding account_lock. 1 when <profile>/save holds exactly one folder named as fs_host.c names an account's
-// (<uid hi><uid lo>, 32 hex digits); local is then that account.
 static int local_adopted;
 typedef struct { int n; uint64_t hi, lo; } AdoptScan;
 static int adopt_cb(const char *name, int kind, uint64_t size, void *ctx) {
@@ -618,7 +513,6 @@ static int adopt_save_uid(const char *profile) {
     return 1;
 }
 
-// Holding account_lock.
 static void load_uid(void) {
     if (local.lo || local.hi) return;
     const char *dir = rt_config()->profile;
@@ -626,11 +520,8 @@ static void load_uid(void) {
     make_dirs(dir);
     need(snprintf(path, sizeof path, "%s/account.uid", dir) < (int)sizeof path, "account: path too long");
     int64_t size = plat_file_size(path);
-    // a file that is there but cannot be asked for its size is no reason for a new account: its saves would vanish
     if (size < 0 && plat_fs_kind(path) != PLAT_FS_MISSING) rt_fatal("account: cannot read %s", path);
     if (size <= 0) {
-        // account.uid lost (a profile copied without it, or the save folder alone put in place): the one account
-        // folder in save/ is the player's, and taking its name keeps that save; otherwise a new account
         if (!adopt_save_uid(dir)) {
             do need(plat_random(&local, sizeof local), "account: random uid");
             while (!local.lo && !local.hi);
@@ -647,7 +538,6 @@ static void load_uid(void) {
     }
 }
 
-// host.h: the save directory of fs_host.c is named after this Uid.
 void account_uid(uint64_t out[2]) {
     plat_mutex_lock(&account_lock);
     load_uid();
@@ -658,7 +548,6 @@ void account_uid(uint64_t out[2]) {
 
 static int same_uid(const Uid *u) { return u && u->lo == local.lo && u->hi == local.hi; }
 
-// Holding account_lock.
 static int valid_handle(const UserHandle *h) {
     if (!h || !same_uid(&h->uid)) return 0;
     for (int i = 0; i < 64; i++)
@@ -666,14 +555,12 @@ static int valid_handle(const UserHandle *h) {
     return 0;
 }
 
-// void Initialize()
 static void ov_account_initialize(Cpu *c) {
     uint64_t uid[2];
     (void)c;
     account_uid(uid);
 }
 
-// bool TryOpenPreselectedUser(UserHandle *out)
 static void ov_open_user(Cpu *c) {
     UserHandle *out = arg_p(c, 0);
     if (!out) rt_fatal("nn::account::TryOpenPreselectedUser: null handle");
@@ -690,7 +577,6 @@ static void ov_open_user(Cpu *c) {
     ret_x(c, (uint64_t)ok);
 }
 
-// void CloseUser(const UserHandle &)
 static void ov_close_user(Cpu *c) {
     const UserHandle *h = arg_p(c, 0);
     plat_mutex_lock(&account_lock);
@@ -700,7 +586,6 @@ static void ov_close_user(Cpu *c) {
     plat_mutex_unlock(&account_lock);
 }
 
-// Result GetUserId(Uid *out, const UserHandle &)
 static void ov_user_id(Cpu *c) {
     Uid *out = arg_p(c, 0);
     plat_mutex_lock_shared(&account_lock);
@@ -710,7 +595,6 @@ static void ov_user_id(Cpu *c) {
     ret_x(c, ok ? 0 : ACCOUNT_R_INVALID);
 }
 
-// Result GetUserExistence(bool *out, const Uid &)
 static void ov_user_existence(Cpu *c) {
     uint8_t *out = arg_p(c, 0);
     const Uid *u = arg_p(c, 1);
@@ -722,7 +606,6 @@ static void ov_user_existence(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result GetNickname(Nickname *out, const Uid &): 33 bytes, NUL-terminated UTF-8
 static void ov_nickname(Cpu *c) {
     char *out = arg_p(c, 0);
     plat_mutex_lock(&account_lock);
@@ -736,9 +619,6 @@ static void ov_nickname(Cpu *c) {
     ret_x(c, ok ? 0 : ACCOUNT_R_INVALID);
 }
 
-// ==== nn::time (time_host.c): the host clock and time zone. User and network clocks follow the host wall clock; the
-// steady clock counts seconds since Windows started, with one random source id per process. ClockSnapshot has the
-// public 0xD0-byte layout, because game code reads its fields through inline accessors.
 typedef struct { int64_t value; uint8_t source[16]; } SteadyClockTimePoint;
 typedef struct { int64_t offset; SteadyClockTimePoint point; } SystemClockContext;
 typedef struct { int16_t year; int8_t month, day, hour, minute, second, pad; } CalendarTime;
@@ -763,7 +643,7 @@ static PlatOnce source_once = PLAT_ONCE_INIT;
 static void make_source(void *param) {
     (void)param;
     need(plat_random(source_id, sizeof source_id), "time: source id");
-    plat_tz_west();   // reads the zone once, before the first localtime
+    plat_tz_west();
     return;
 }
 
@@ -776,7 +656,6 @@ static SteadyClockTimePoint steady_now(void) {
 
 static int64_t posix_now(void) { return (int64_t)time(NULL); }
 
-// Days since 1970-01-01 of a proleptic Gregorian date, and back (H. Hinnant's civil calendar algorithms).
 static int64_t days_from_civil(int64_t y, unsigned m, unsigned d) {
     y -= m <= 2;
     int64_t era = (y >= 0 ? y : y - 399) / 400;
@@ -800,7 +679,6 @@ static void civil_from_days(int64_t z, int64_t *y, unsigned *m, unsigned *d) {
 
 static int64_t floor_div(int64_t a, int64_t b) { return a / b - (a % b != 0 && (a < 0) != (b < 0)); }
 
-// UTC calendar fields of a POSIX time. 0 if the year does not fit CalendarTime.
 static int utc_calendar(int64_t t, CalendarTime *c, CalendarInfo *info) {
     int64_t days = floor_div(t, 86400), sec = t - days * 86400, y;
     unsigned m, d;
@@ -809,15 +687,13 @@ static int utc_calendar(int64_t t, CalendarTime *c, CalendarInfo *info) {
                         (int8_t)(sec % 60), 0};
     if (info) {
         memset(info, 0, sizeof *info);
-        info->day_of_week = (int32_t)(days + 4 - floor_div(days + 4, 7) * 7);   // 1970-01-01 was a Thursday
+        info->day_of_week = (int32_t)(days + 4 - floor_div(days + 4, 7) * 7);
         info->day_of_year = (int32_t)(days - days_from_civil(y, 1, 1));
         memcpy(info->name, "UTC", 3);
     }
     return y >= -32768 && y <= 32767;
 }
 
-// Local calendar fields of a POSIX time in the Windows time zone. The zone name is "UTC" or the UTC offset ("+03",
-// "-0330"), as tzdata names zones without an abbreviation; Windows has no abbreviations. 0 outside localtime's range.
 static int local_calendar(int64_t t, CalendarTime *c, CalendarInfo *info) {
     plat_once(&source_once, make_source, NULL);
     struct tm tm;
@@ -841,7 +717,6 @@ static int local_calendar(int64_t t, CalendarTime *c, CalendarInfo *info) {
     return 1;
 }
 
-// IANA name of the standard offset: Etc/GMT+5 is UTC-5 (POSIX sign); "UTC" for a zone off whole hours.
 static void location_name(char out[0x24]) {
     long west = plat_tz_west();
     memset(out, 0, 0x24);
@@ -857,7 +732,6 @@ static void ov_time_initialize(Cpu *c) {
 static void ov_time_finalize(Cpu *c) { plat_xchg32(&time_ready, 0); ret_x(c, 0); }
 static void ov_time_ready(Cpu *c) { ret_x(c, (uint64_t)time_ready); }
 
-// Result StandardUserSystemClock / StandardNetworkSystemClock::GetCurrentTime(PosixTime *out)
 static void ov_current_time(Cpu *c) {
     int64_t *out = arg_p(c, 0);
     if (!out) { ret_x(c, TIME_R_INVALID); return; }
@@ -865,14 +739,8 @@ static void ov_current_time(Cpu *c) {
     ret_x(c, 0);
 }
 
-// time_point StandardSteadyClock::now(): the int64 seconds in x0 only. The SDK caller (sdk+0x3d1d88) reads x0;
-// returning the 0x18-byte struct through x8 would write through a stale pointer (time_host.c).
 static void ov_steady_now(Cpu *c) { ret_x(c, (uint64_t)steady_now().value); }
 
-// Result GetStandardSteadyClockCurrentTimespec(timespec *) / GetStandardUserSystemClockCurrentTimespec(timespec *):
-// the SDK libc's clock_gettime(CLOCK_MONOTONIC / CLOCK_REALTIME) once a title selects the nn::time clocks
-// (sdk+0xaf0f8 mode 3; Switch 2 titles do, via std::chrono::steady_clock). The SDK's own versions need the time
-// service state the overridden Initialize never builds, fail, and libc++ then throws std::system_error.
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 static void ov_steady_timespec(Cpu *c) {
     GuestTimespec *out = arg_p(c, 0);
@@ -893,7 +761,6 @@ static void ov_user_timespec(Cpu *c) {
 HOST_OVERRIDE("_ZN2nn4time37GetStandardSteadyClockCurrentTimespecEP8timespec", ov_steady_timespec);
 HOST_OVERRIDE("_ZN2nn4time41GetStandardUserSystemClockCurrentTimespecEP8timespec", ov_user_timespec);
 
-// Result ToCalendarTime(CalendarTime *out, CalendarAdditionalInfo *info, const PosixTime &t): local time
 static void ov_to_calendar(Cpu *c) {
     CalendarTime *out = arg_p(c, 0);
     CalendarInfo *info = arg_p(c, 1);
@@ -907,7 +774,6 @@ static void ov_to_calendar(Cpu *c) {
     ret_x(c, 0);
 }
 
-// CalendarTime ToCalendarTimeInUtc(const PosixTime &t): 8 bytes in x0
 static void ov_to_calendar_utc(Cpu *c) {
     const int64_t *t = arg_p(c, 0);
     CalendarTime ct;
@@ -917,7 +783,6 @@ static void ov_to_calendar_utc(Cpu *c) {
     ret_x(c, v);
 }
 
-// PosixTime ToPosixTimeFromUtc(const CalendarTime &c): months out of 1..12 carry into the year, like timegm
 static void ov_to_posix_utc(Cpu *c) {
     const CalendarTime *ct = arg_p(c, 0);
     if (!ct) rt_fatal("nn::time::ToPosixTimeFromUtc: null calendar time");
@@ -928,13 +793,11 @@ static void ov_to_posix_utc(Cpu *c) {
     ret_x(c, (uint64_t)t);
 }
 
-// ClockSnapshot::ClockSnapshot()
 static void ov_snapshot_init(Cpu *c) {
     ClockSnapshot *s = arg_p(c, 0);
     if (s) memset(s, 0, sizeof *s);
 }
 
-// static Result ClockSnapshot::CreateWithStandardSystemClock(ClockSnapshot *out)
 static void ov_snapshot_create(Cpu *c) {
     ClockSnapshot *s = arg_p(c, 0);
     if (!s) { ret_x(c, TIME_R_INVALID); return; }
@@ -954,7 +817,6 @@ static void ov_snapshot_create(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result CalculateSpanBetween(TimeSpan *out, const ClockSnapshot &a, const ClockSnapshot &b): nanoseconds
 static void ov_span_between(Cpu *c) {
     int64_t *out = arg_p(c, 0);
     const ClockSnapshot *a = arg_p(c, 1), *b = arg_p(c, 2);
@@ -964,8 +826,6 @@ static void ov_span_between(Cpu *c) {
     ret_x(c, 0);
 }
 
-// TimeSpan CalculateStandardUserSystemClockDifferenceByUser(const ClockSnapshot &a, const ClockSnapshot &b): the
-// change of the user clock offset between the snapshots (manual adjustments) in nanoseconds
 static void ov_user_difference(Cpu *c) {
     const ClockSnapshot *a = arg_p(c, 0), *b = arg_p(c, 1);
     if (!a || !b) rt_fatal("nn::time::CalculateStandardUserSystemClockDifferenceByUser: null snapshot");
@@ -973,12 +833,6 @@ static void ov_user_difference(Cpu *c) {
     ret_x(c, (uint64_t)((b->user.offset - a->user.offset) * 1000000000ll));
 }
 
-// ==== nn::pl shared fonts (shared_font.c). NX2Saria asks for them only from its font loader, only with Simplified Chinese,
-// Korean or Traditional Chinese text, and only for type 0; tools/extract_fonts.py writes
-// them from the user's firmware. Each type is read on first use into guest-visible memory as the BFTTF file the pl
-// shared memory holds; Address is 8 bytes past the file start (after the BFTTF header) and Size the decoded font size.
-// The load state is always Loaded: the game spins until it is, so missing files stop with a named fatal at
-// Address/Size instead of a hang. NX2SARIA_SHARED_FONTS=<dir> overrides <romfs>/../../firmware/shared-fonts.
 #define SHARED_FONT_TYPES 6
 #define BFTTF_MAGIC 0x7f9a0218u
 static const char *const font_files[SHARED_FONT_TYPES] = {
@@ -990,7 +844,7 @@ const char *ov_shared_font_dir(char *buf, size_t n) {
     const char *e = cfg_get("NX2SARIA_SHARED_FONTS");
     if (e && *e) snprintf(buf, n, "%s", e);
     else {
-        char exe[PLAT_PATH_MAX], probe[PLAT_PATH_MAX + 40];   // shared-fonts next to nx2saria.exe (tools/package_build.py), else the repo's
+        char exe[PLAT_PATH_MAX], probe[PLAT_PATH_MAX + 40];
         int len = plat_exe_path(exe, sizeof exe);
         char *cut = len && len < sizeof exe ? plat_last_sep(exe) : NULL;
         if (cut) *cut = 0;
@@ -1003,8 +857,6 @@ const char *ov_shared_font_dir(char *buf, size_t n) {
 
 static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 
-// The decoded font size of a BFTTF image, 0 if it is not one: big-endian words XORed with key = word0 ^ BFTTF_MAGIC,
-// word1 = font size, then an sfnt (TrueType or OpenType) font.
 uint64_t ov_bfttf_size(const uint8_t *p, uint64_t len) {
     if (len < 12) return 0;
     uint32_t key = be32(p) ^ BFTTF_MAGIC, size = be32(p + 4) ^ key, first = be32(p + 8) ^ key;
@@ -1020,7 +872,6 @@ static int64_t font_type(Cpu *c, const char *fn) {
 }
 static void ov_font_state(Cpu *c) { font_type(c, "GetSharedFontLoadState"); ret_x(c, 1); }
 
-// The font of type t, read and checked on first use; a named fatal when it is missing or damaged.
 static const uint8_t *font_data(Cpu *c, const char *fn, int64_t t) {
     plat_mutex_lock(&fonts.lock);
     if (!fonts.file[t]) {
@@ -1059,8 +910,6 @@ static void ov_font_size(Cpu *c) {
     ret_x(c, fonts.size[t]);
 }
 
-// ==== registration
-/* installed as HOST_OBSERVER above */
 HOST_OVERRIDE("_ZN2nn2oe18GetDesiredLanguageEv", ov_desired_language);
 HOST_OVERRIDE("_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi", ov_performance_config);
 HOST_OVERRIDE("_ZN2nn2oe15SetCpuBoostModeENS0_12CpuBoostModeE", ov_cpu_boost);

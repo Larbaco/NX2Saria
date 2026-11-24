@@ -1,13 +1,5 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors, Copyright (c) Ryujinx Team and Contributors (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// audren:u. The SDK's nn::audio client builds RequestUpdate input unchanged; this
-// service validates every section against the header, keeps server-side voice state, advances it in real time (one
-// frame of sample_count / sample_rate seconds per render tick, signalling the renderer's event) and writes the output
-// status the client expects. The mixer behind it is audio_mixer.c.
-// A value in the game's RequestUpdate is not a reason to end the process (audio_bad): an update whose sections do not
-// match the renderer is refused whole with AUDREN_R_INVALID_UPDATE, and a record, effect or sink whose values the
-// renderer cannot use is left out of an update that is otherwise applied. NX2SARIA_AUDIO_STRICT=1 ends the process there
-// instead. OpenAudioRenderer's parameters (need) and the request's buffer descriptors (ipc.c ipc_guest) still end it.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -23,49 +15,30 @@
 
 static volatile int32_t g_live;
 
-extern GfxStats gfx_counters;   // frames: the game frame a stats line names, to match the frametime lines
+extern GfxStats gfx_counters;
 
-// ---- NX2SARIA_AUDIO_STATS (default 0; 1 on): where a crackle comes from
-// A gap in the sound has one of two sources here. The output device took a period and the ring held less (an underrun:
-// silence until the prefill is queued again), because the render thread came late: a long gap between two of its
-// passes, or a long wait for the renderer lock, which the game's audio thread holds while its RequestUpdate is read.
-// Or the game's audio thread came late: on the console it sends RequestUpdate after each render pass and keeps every
-// streamed voice's queue filled; a voice whose queue runs out before its end of stream ("dry") plays silence until its
-// next buffer arrives ("late", counted when that comes within AS_LATE_PASSES passes, by how many passes it missed).
-// One line per AS_WINDOW_NS in which something went wrong (and once a minute regardless), plus a line for each of the
-// first AS_EVENTS underruns and late game updates, with the game frame (the frame numbers of the frametime lines).
 #define AS_WINDOW_NS 10000000000ull
 #define AS_EVENTS 48
-#define AS_LATE_PASSES 40            // 200 ms: a buffer later than that is taken for a new sound, not a late one
-#define AS_GAP_NS 15000000ull        // a render pass more than this after the one before (a 10 ms device period + 5)
-#define AS_LOCK_NS 2000000ull        // a wait for the renderer lock longer than this
-#define AS_UPDATE_NS 20000000ull     // a game update more than this after the one before (four passes)
+#define AS_LATE_PASSES 40
+#define AS_GAP_NS 15000000ull
+#define AS_LOCK_NS 2000000ull
+#define AS_UPDATE_NS 20000000ull
 #define AS_UPDATE_EVENT_NS 30000000ull
 typedef struct AudrenStats {
     uint64_t window_ns, windows;
-    // render thread (under the lock): passes, gaps between them, lock waits, the ring's level when a pass began
     uint64_t passes, last_pass_ns, gap_max_ns, gaps_over, lock_max_ns, locks_over, queue_min, pull_gap_max_ns;
-    uint64_t out_underruns, out_missing, out_skipped, out_overruns;   // the output's counters at the window's start
-    uint64_t seen_underruns;                                          // the last count an event line was written for
-    // the game's RequestUpdate (under the lock)
+    uint64_t out_underruns, out_missing, out_skipped, out_overruns;
+    uint64_t seen_underruns;
     uint64_t upd_last_ns, upd_n, upd_gap_max_ns, upd_gap_frame, upd_gaps_over, upd_pass_last, upd_passes_max,
         upd_hold_max_ns;
-    // voices (under the lock)
-    uint64_t dry, late[3], late_max;   // next buffer late by 1-2 passes, 3-8, 9-AS_LATE_PASSES
-    uint64_t ramp_passes, ramps;       // the mixer's volume ramp counts at the window's start (audio_mixer_ramp_stats)
-    // catch-up (render_thread, under the lock): frames rendered and dropped; gaps over AUDIO_CATCHUP_MAX_MS, which
-    // are left as they are
+    uint64_t dry, late[3], late_max;
+    uint64_t ramp_passes, ramps;
     uint64_t caught_up, gave_up;
     int events;
-    uint64_t voices_ns;                // the game's update (under the lock): the last voice census line
-    int voices_most;                   // the most voices in use a census found
+    uint64_t voices_ns;
+    int voices_most;
 } AudrenStats;
 
-// NX2SARIA_AUDIO_GAME_PRIO (default 0): the host priority of the game's thread that sends RequestUpdate. 0 leaves it
-// alone. 1 raises it to the highest while the update is read, so the render thread (highest priority) never waits for
-// the renderer lock behind a game thread the host has preempted for busier threads. 2 also keeps that thread above
-// normal from its first update on, so it is not queued behind the shader and pipeline workers when it wakes for the
-// next render pass.
 static int g_game_prio;
 
 static uint64_t game_frame(void) { return __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED); }
@@ -76,22 +49,20 @@ static int revision_number(uint32_t rev) { return (int)(rev >> 24) - '0'; }
 
 void audio_bad(AudioRenderer *r, int kind, const char *fmt, ...) {
     uint64_t n = __atomic_add_fetch(&r->bad_count, 1, __ATOMIC_RELAXED);
-    if (!r->strict && __atomic_exchange_n(&r->bad_seen[kind], 1, __ATOMIC_RELAXED)) return;   // formats only once
+    if (!r->strict && __atomic_exchange_n(&r->bad_seen[kind], 1, __ATOMIC_RELAXED)) return;
     char what[384];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(what, sizeof what, fmt, ap);
     va_end(ap);
     if (r->strict) {
-        ipc_backtrace();   // the game's frame chain when the game's update thread is here; nothing on the render thread
+        ipc_backtrace();
         rt_fatal("audio: %s; NX2SARIA_AUDIO_STRICT=1 ends the process here instead", what);
     }
     rt_log("audio: %s; game frame %llu, %llu times so far for all kinds together; logged once per kind", what,
            (unsigned long long)game_frame(), (unsigned long long)n);
 }
 
-// OpenAudioRenderer's and GetWorkBufferSize's parameters, and host allocations: once per renderer, the SDK's fixed
-// values, not the game's updates.
 static void need(int ok, const char *what) {
     if (ok) return;
     ipc_backtrace();
@@ -117,7 +88,7 @@ static AudioRenderer *renderer_new(const AudrenParameter *p) {
     need(r->voices && r->pools && r->mixes && r->sinks && r->effects && r->channels, "renderer tables");
     plat_mutex_init(&r->lock);
     r->event = kern_event_new();
-    r->state = 1;   // stopped
+    r->state = 1;
     return r;
 }
 
@@ -132,10 +103,8 @@ static void renderer_free(AudioRenderer *r) {
     free(r);
 }
 
-// ---- RequestUpdate
 typedef struct { const uint8_t *p, *end; } Reader;
 
-// The next `n` bytes, or NULL when they run past the header's total (update_check refuses the update).
 static const uint8_t *take(Reader *in, uint32_t n) {
     if ((size_t)(in->end - in->p) < n) return NULL;
     const uint8_t *p = in->p;
@@ -157,22 +126,19 @@ static void voice_reset(ServerVoice *v) {
     memset(&v->adpcm, 0, sizeof v->adpcm);
     memset(v->biquad_state, 0, sizeof v->biquad_state);
     v->dry_pass = 0;
-    v->ramp_pass = 0;   // a new voice starts at its volumes: no ramp from what the slot's last voice was mixed with
+    v->ramp_pass = 0;
 }
 
-// request_update has checked the id against the voice count and, for a voice in use, its wave buffer index.
 static void update_voice(AudioRenderer *r, const AudrenVoiceIn *in) {
     ServerVoice *v = &r->voices[in->id];
     if (in->is_new || !in->in_use) voice_reset(v);
     v->in = *in;
     v->use_float_biquads = 0;
     if (!in->in_use) return;
-    // The play state as the DSP keeps it: Stop on a voice that is not stopped
-    // becomes Stopping, which the next render frame turns into Stopped after giving back every queued buffer.
     if (in->play_state == PLAY_STARTED) v->state = SV_STARTED;
     else if (in->play_state == PLAY_PAUSED) v->state = SV_PAUSED;
     else if (v->state != SV_STOPPED) v->state = SV_STOPPING;
-    for (unsigned i = 0; i < 4; i++) {   // a new buffer waits until a render frame finds the voice playing
+    for (unsigned i = 0; i < 4; i++) {
         const AudrenWaveBuffer *w = &in->wave_buffers[i];
         if (!w->sent) {
             v->buffers[i] = *w;
@@ -184,14 +150,12 @@ static void update_voice(AudioRenderer *r, const AudrenVoiceIn *in) {
     if (in->clear_voice_drop) v->drops = 0;
 }
 
-// No samples (no memory, no size or an empty range): the DSP counts the buffer as played when it reaches it, so a
-// stream's empty last buffer does not hold up the buffers queued behind it.
 int audio_buffer_empty(const AudrenWaveBuffer *b) { return !b->address || !b->size || b->end <= b->start; }
 
 static void skip_empty(AudioRenderer *r, ServerVoice *v) {
     while (v->valid[v->index] && audio_buffer_empty(&v->buffers[v->index])) {
         const AudrenWaveBuffer *b = &v->buffers[v->index];
-        if (b->loop && b->loop_count < 0) break;   // an endless empty loop starves the voice, as on the DSP
+        if (b->loop && b->loop_count < 0) break;
         v->valid[v->index] = 0;
         v->consumed++;
         v->offset = 0;
@@ -205,12 +169,11 @@ static void skip_empty(AudioRenderer *r, ServerVoice *v) {
     }
 }
 
-// Each render frame, before mixing: flush, stop, start.
 static void voices_prepare(AudioRenderer *r) {
     for (int k = 0; k < r->param.voice_count; k++) {
         ServerVoice *v = &r->voices[k];
         if (!v->in.in_use) continue;
-        if (v->flush) {   // FlushWaveBuffers: from the client's current buffer, the queued ones count as played
+        if (v->flush) {
             unsigned i = v->flush_from & 3;
             for (uint32_t n = v->flush; n; n--, i = (i + 1) & 3) {
                 v->pending[i] = 0;
@@ -225,7 +188,7 @@ static void voices_prepare(AudioRenderer *r) {
             }
             v->flush = 0;
         }
-        if (v->state == SV_STOPPING) {   // every queued buffer counts as played; unsent ones are dropped
+        if (v->state == SV_STOPPING) {
             for (int i = 0; i < 4; i++) {
                 if (v->valid[i]) {
                     v->consumed++;
@@ -252,7 +215,7 @@ static void voices_prepare(AudioRenderer *r) {
                         v->offset = 0;
                         v->loops_done = 0;
                     }
-                    if (v->dry_pass) {   // NX2SARIA_AUDIO_STATS: the buffer a dry voice waited for
+                    if (v->dry_pass) {
                         uint64_t missed = r->elapsed_frames + 1 - v->dry_pass;
                         if (r->stats && missed <= AS_LATE_PASSES) {
                             AudrenStats *st = r->stats;
@@ -269,8 +232,6 @@ static void voices_prepare(AudioRenderer *r) {
 
 static uint32_t effect_out_bytes(uint32_t revision) { return revision_number(revision) >= 9 ? 0x90u : 0x10u; }
 
-// The output header of an update in the layout of `revision`, section by section: the SDK reads every section back and
-// aborts when a size differs from the one it expects.
 static AudrenHeader output_header(const AudioRenderer *r, uint32_t revision) {
     const uint32_t npools = (uint32_t)r->param.effect_count + 4u * (uint32_t)r->param.voice_count;
     AudrenHeader o = {0};
@@ -287,7 +248,6 @@ static AudrenHeader output_header(const AudioRenderer *r, uint32_t revision) {
     return o;
 }
 
-// An update's sections as update_check found them, and the output header it checked against the output buffer.
 typedef struct {
     AudrenHeader h, out;
     const uint8_t *behavior, *voices, *splitters, *mixes;
@@ -299,10 +259,6 @@ typedef struct {
     int float_voices;
 } UpdateIn;
 
-// Every check of an update's framing, before anything of it is applied, in the order the sections come; without the
-// renderer lock (it reads the renderer's fixed counts and the game's input). The SDK builds each section from the
-// renderer's own counts, so a mismatch means this host reads another layout than the one the game wrote (a revision),
-// not a value the game chose. 0, or AUDREN_R_INVALID_UPDATE after one audio_bad line.
 static uint32_t update_check(AudioRenderer *r, const uint8_t *input, uint64_t in_size, uint64_t out_size, UpdateIn *u) {
     if (in_size < sizeof(AudrenHeader))
         return AUDIO_REFUSE(r, AB_UPD_SMALL, "the input is %#llx bytes, shorter than its %#x-byte header",
@@ -316,7 +272,6 @@ static uint32_t update_check(AudioRenderer *r, const uint8_t *input, uint64_t in
     const uint32_t npools = (uint32_t)ec + 4u * (uint32_t)vc;
     Reader in = {input + sizeof *h, input + h->total};
     const uint8_t *skip;
-    // the next section, or the update refused when it runs past the header's total
 #define TAKE(dst, type, bytes, name)                                                                                   \
     if (!((dst) = (type)take(&in, (bytes))))                                                                           \
         return AUDIO_REFUSE(r, AB_UPD_OVERRUN,                                                                         \
@@ -369,9 +324,6 @@ static uint32_t update_check(AudioRenderer *r, const uint8_t *input, uint64_t in
                                      r->param.submix_count + 1);
 }
 
-// A refused update, on the thread that sends RequestUpdate only (the SDK sends from one; a second sender would only
-// race these diagnostic counts). The game ignores the result and goes on; while refusals go on, its sounds stop
-// following it.
 static void note_refused(AudioRenderer *r) {
     r->refused++;
     if (++r->refused_run == 1000)
@@ -379,10 +331,9 @@ static void note_refused(AudioRenderer *r) {
                "no longer follow it");
 }
 
-// 0, or AUDREN_R_INVALID_UPDATE with nothing of the update applied and nothing written to `output`.
 static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t in_size, uint8_t *output,
                                uint64_t out_size, uint64_t perf_size) {
-    if (!r->logged && in_size >= sizeof(AudrenHeader)) {   // the first update's sizes, also when it is refused
+    if (!r->logged && in_size >= sizeof(AudrenHeader)) {
         AudrenHeader h;
         memcpy(&h, input, sizeof h);
         r->logged = 1;
@@ -404,7 +355,6 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
     const uint32_t npools = (uint32_t)ec + 4u * (uint32_t)vc;
     plat_mutex_lock(&r->lock);
     const uint64_t locked_ns = r->stats ? kern_now_ns() : 0;
-    // the one check that needs the mixes as they are: under the lock, before the first write
     refused = audio_mixer_mix_layout_check(r, u.mixes, h.mixes, mc);
     if (refused) {
         plat_mutex_unlock(&r->lock);
@@ -419,7 +369,6 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
     const AudrenEffectIn *effects = u.effects;
     const AudrenSinkIn *sinks = u.sinks;
 
-    // From here on a value the renderer cannot use leaves its one record out (audio_bad); the rest is applied.
     for (uint32_t i = 0; i < h.voice_resources / sizeof(AudrenChannelIn); i++) {
         const uint32_t id = chans[i].id;
         if (id >= (uint32_t)vc * 6) {
@@ -452,7 +401,6 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
             }
         } else
             memcpy(&v, u.voices + i * u.voice_stride, sizeof v);
-        // An unused slot can have a zero id. Release its own voice and leave voice zero playing.
         if (!v.in_use) v.id = (uint32_t)i;
         if (v.id >= (uint32_t)vc) {
             audio_bad(r, AB_VOICE_ID, "voice slot %d names voice %u of %d: that record is left out", i, v.id, vc);
@@ -473,7 +421,6 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
     audio_mixer_update_routing(r, u.splitters, h.splitters, u.mixes, h.mixes, mc);
     for (int i = 0; i < sc; i++) r->sinks[i] = sinks[i];
 
-    // ---- output: update_check has checked its size against the output buffer
     const uint32_t eo = effect_out_bytes(h.revision);
     const AudrenHeader o = u.out;
     memset(output, 0, out_size);
@@ -495,7 +442,7 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
         memcpy(w, &vo, sizeof vo);
         w += sizeof vo;
     }
-    for (int i = 0; i < ec; i++) {   // EffectStatus Enabled 3 / Disabled 4
+    for (int i = 0; i < ec; i++) {
         w[0] = effects[i].enabled ? 3 : 4;
         if (eo > 16) audio_mixer_effect_result(r, i, w + 16, eo - 16);
         w += eo;
@@ -506,13 +453,13 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
         memcpy(w, &so, sizeof so);
         w += sizeof so;
     }
-    w += 0x10;                    // performance: nothing written
-    w += AUDREN_BEHAVIOR_OUT;     // behavior: no errors
+    w += 0x10;
+    w += AUDREN_BEHAVIOR_OUT;
     memcpy(w, &r->elapsed_frames, 8);
     AudrenStats *st = r->stats;
     uint64_t late_gap = 0, late_passes = 0;
     int voices_line = 0, voices_used = 0, voices_playing = 0, voices_most = 0;
-    if (st) {   // NX2SARIA_AUDIO_STATS: the game's cadence and how long its update held the lock
+    if (st) {
         uint64_t now = kern_now_ns(), gap = st->upd_last_ns ? now - st->upd_last_ns : 0,
                  passes = st->upd_last_ns ? r->elapsed_frames - st->upd_pass_last : 0;
         if (now - locked_ns > st->upd_hold_max_ns) st->upd_hold_max_ns = now - locked_ns;
@@ -522,8 +469,6 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
         if (gap > AS_UPDATE_EVENT_NS && r->state == 0 && st->events < AS_EVENTS)
             st->events++, late_gap = gap, late_passes = passes;
         st->upd_last_ns = now, st->upd_pass_last = r->elapsed_frames, st->upd_n++;
-        // The voices the game holds: its sound engine takes one per sound from a budget of the renderer's voice count,
-        // so sounds that are never let go show as a count that climbs from area to area until new sounds are refused.
         if (now - st->voices_ns >= AS_WINDOW_NS) {
             int used = 0, playing = 0;
             for (int k = 0; k < r->param.voice_count; k++)
@@ -543,17 +488,13 @@ static uint32_t request_update(AudioRenderer *r, const uint8_t *input, uint64_t 
     return 0;
 }
 
-// ---- render tick: one frame each time the output device has taken the ring below its target (audio_mixer_pace_ns),
-// or every sample_count / sample_rate seconds of the host clock without a device, while stopped or while it stalls;
-// after a stall the frames that are owed are rendered and dropped (render_thread, "Catch-up")
 static void advance_voice(AudioRenderer *r, ServerVoice *v) {
     if (!v->in.in_use || v->state != SV_STARTED || !v->in.sample_rate) return;
     uint64_t samples = audio_voice_consumed(r, v, (int)r->param.sample_count);
     const int had = v->valid[v->index];
     while (samples && v->valid[v->index]) {
         AudrenWaveBuffer *b = &v->buffers[v->index];
-        if (audio_buffer_empty(b)) break;   // an endless empty loop skip_empty kept: it starves the voice, and its
-                                            // zero length would make the loop below go round for good
+        if (audio_buffer_empty(b)) break;
         uint64_t length = (uint64_t)(b->end - b->start), left = length - v->offset;
         uint64_t step = samples < left ? samples : left;
         v->offset += step;
@@ -576,15 +517,12 @@ static void advance_voice(AudioRenderer *r, ServerVoice *v) {
         }
         skip_empty(r, v);
     }
-    // NX2SARIA_AUDIO_STATS: the queue ran out within this pass, not at an end of stream (which zeroes played)
     if (r->stats && samples && had && !v->valid[v->index] && v->played && !v->dry_pass) {
         v->dry_pass = r->elapsed_frames + 1;
         r->stats->dry++;
     }
 }
 
-// NX2SARIA_AUDIO_STATS, render thread: the pass that begins at `now` (lock held after waiting `lock_ns` for it).
-// `paced`: the device paces this pass (the timer's passes, without a device or in a stall, keep their own cadence).
 static void stats_pass(AudioRenderer *r, uint64_t now, uint64_t lock_ns, int paced) {
     AudrenStats *st = r->stats;
     AudioOutStats o;
@@ -603,7 +541,6 @@ static void stats_pass(AudioRenderer *r, uint64_t now, uint64_t lock_ns, int pac
     }
 }
 
-// NX2SARIA_AUDIO_STATS, render thread after a pass, lock not held: the event lines and the window line.
 static void stats_report(AudioRenderer *r, uint64_t now, uint64_t lock_ns, uint64_t gap_ns) {
     AudrenStats *st = r->stats, snap;
     AudioOutStats o = {0};
@@ -643,7 +580,7 @@ static void stats_report(AudioRenderer *r, uint64_t now, uint64_t lock_ns, uint6
         st->out_underruns = o.underruns, st->out_missing = o.missing_frames, st->out_skipped = o.skipped_frames;
         st->out_overruns = o.overruns;
         st->ramp_passes = ramp_passes, st->ramps = ramps;
-        st->upd_n = 0;   // upd_last_ns and upd_pass_last stay: the next gap is measured from the last update
+        st->upd_n = 0;
         st->upd_gap_max_ns = st->upd_gap_frame = st->upd_gaps_over = st->upd_passes_max = st->upd_hold_max_ns = 0;
         st->dry = st->late[0] = st->late[1] = st->late[2] = st->late_max = 0;
         st->caught_up = st->gave_up = 0;
@@ -683,29 +620,11 @@ static void render_thread(void *p) {
     plat_thread_priority(PLAT_PRIO_HIGHEST);
     const uint64_t frame_ns = (uint64_t)r->param.sample_count * 1000000000ull / (uint64_t)r->param.sample_rate;
     const double frame = (double)r->param.sample_count / r->param.sample_rate;
-    // When the device pulls a period (1024 samples on PipeWire, 4-5 frames) the ring drops below its target
-    // and the frames would otherwise render back to back. On hardware the DSP renders one frame every 5 ms and
-    // the game's audio thread works in between; AUX effects need that time to fill the return ring, or mix_aux
-    // reads stale samples and the frame clicks at its seams. Device-paced frames stay at least 4/5 of a frame
-    // apart, which still refills a period well before the device drains it. Linux only: on Windows SDL pulls
-    // 480-sample periods, and a sink dump (NX2SARIA_AUDIO_DUMP) of the bursts there showed no more seam spikes than
-    // chance, so a wait on this thread buys nothing.
 #ifdef __linux__
     const uint64_t gap_ns = frame_ns * 4 / 5;
 #else
     const uint64_t gap_ns = 0;
 #endif
-    // Catch-up (NX2SARIA_AUDIO_CATCHUP, default 1). The console's audio hardware takes a frame every 5 ms whatever the
-    // rest of the system does, so the game's sound keeps its place against the picture. Here a frame that is not
-    // rendered when it is due is time the sound loses for good: the device plays silence meanwhile, rendering goes on
-    // where it stopped, and everything after the gap is heard that much later than the picture it belongs to. So after
-    // a stall the frames that are owed are rendered and dropped: mixed in full, which moves the voices, the effects
-    // and what the game reads back on as if they had been heard, and not queued for the device, whose queue is then
-    // filled as before. While the device paces, it says what is owed: the silence it played for want of frames
-    // (audio_mixer_owed), asked before anything is waited for or queued, so the dropped frames come right after the
-    // gap. On the timer a frame is owed when its deadline passed a whole frame ago. A gap of more than
-    // AUDIO_CATCHUP_MAX_MS (a debugger, the PC asleep) is not caught up: the sound goes on from now. With the setting
-    // off nothing is dropped, and the timer queues frames up to 100 ms late back to back and skips a longer gap.
     const int catchup = cfg_bool("NX2SARIA_AUDIO_CATCHUP");
     const uint64_t late_max_ns = catchup ? AUDIO_CATCHUP_MAX_MS * 1000000ull : 100000000ull;
     uint64_t next = kern_now_ns(), last = 0, gave_up = 0;
@@ -727,10 +646,10 @@ static void render_thread(void *p) {
             continue;
         }
         if (pace >= 0) {
-            next = now + frame_ns;   // where the timer goes on if the device stops pacing
+            next = now + frame_ns;
         } else {
             if (next > now) plat_wait_ns(next - now);
-            else if (now - next > late_max_ns) next = now, gave_up += catchup;   // fell far behind: resynchronise
+            else if (now - next > late_max_ns) next = now, gave_up += catchup;
             else if (catchup && now - next >= frame_ns) drop = 1;
             next += frame_ns;
         }
@@ -763,22 +682,21 @@ static void render_thread(void *p) {
     }
 }
 
-// ---- IAudioRenderer
 static IpcBuffer pick(const IpcBuffer *a, unsigned na, const IpcBuffer *b, unsigned nb, unsigned i) {
     IpcBuffer x = i < na ? a[i] : (IpcBuffer){0}, y = i < nb ? b[i] : (IpcBuffer){0};
     return x.size ? x : y;
 }
 
-static uint32_t voice_drop_bits = 0x3f800000u;   // SetVoiceDropParameter's float (1.0 until set)
+static uint32_t voice_drop_bits = 0x3f800000u;
 
 static void renderer_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     AudioRenderer *r = s->state;
     switch (rq->cmd) {
-    case 0: { int32_t v = r->param.sample_rate; IPC_OUT(rs, v); return; }       // GetSampleRate
-    case 1: { int32_t v = r->param.sample_count; IPC_OUT(rs, v); return; }      // GetSampleCount
-    case 2: { int32_t v = r->param.mix_buffer_count; IPC_OUT(rs, v); return; }  // GetMixBufferCount
-    case 3: { uint32_t v = r->state; IPC_OUT(rs, v); return; }                  // GetState
-    case 4: case 10: {   // RequestUpdate(Auto): out(output), out(performance), in(input)
+    case 0: { int32_t v = r->param.sample_rate; IPC_OUT(rs, v); return; }
+    case 1: { int32_t v = r->param.sample_count; IPC_OUT(rs, v); return; }
+    case 2: { int32_t v = r->param.mix_buffer_count; IPC_OUT(rs, v); return; }
+    case 3: { uint32_t v = r->state; IPC_OUT(rs, v); return; }
+    case 4: case 10: {
         IpcBuffer in = pick(rq->a, rq->na, rq->x, rq->nx, 0);
         IpcBuffer out = pick(rq->b, rq->nb, rq->c, rq->nc, 0), perf = pick(rq->b, rq->nb, rq->c, rq->nc, 1);
         if (!r->logged)
@@ -793,33 +711,31 @@ static void renderer_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *r
             return;
         }
         int prio = 0;
-        if (g_game_prio) prio = plat_thread_priority_get(), plat_thread_priority(PLAT_PRIO_HIGHEST);   // AUDIO_GAME_PRIO
+        if (g_game_prio) prio = plat_thread_priority_get(), plat_thread_priority(PLAT_PRIO_HIGHEST);
         rs->result =
             request_update(r, ipc_guest(in.addr, in.size), in.size, ipc_guest(out.addr, out.size), out.size, perf.size);
         if (g_game_prio)
             plat_thread_priority(g_game_prio >= 2 && prio < PLAT_PRIO_ABOVE_NORMAL ? PLAT_PRIO_ABOVE_NORMAL : prio);
-        for (unsigned i = 0; i < rq->nc && rq->cmd == 10 && !rs->result; i++)   // the SDK reads no output of a refusal
+        for (unsigned i = 0; i < rq->nc && rq->cmd == 10 && !rs->result; i++)
             if (rq->c[i].size && (i >= rq->nb || !rq->b[i].size))
                 rs->xout[rs->nxout++] = (IpcBuffer){rq->c[i].addr, rq->c[i].size, i};
         return;
     }
-    case 5:   // Start
+    case 5:
         plat_mutex_lock(&r->lock);
         r->state = 0;
         audio_mixer_set_running(r, 1);
         plat_mutex_unlock(&r->lock);
         return;
-    case 6:   // Stop
+    case 6:
         plat_mutex_lock(&r->lock);
         r->state = 1;
         audio_mixer_set_running(r, 0);
         plat_mutex_unlock(&r->lock);
         return;
-    case 7: rs->copy[rs->ncopy++] = kern_event_readable(r->event); return;   // QuerySystemEvent
-    case 8: r->time_limit = IPC_ARG(rq, uint32_t, 0); return;                // SetRenderingTimeLimit
-    case 9: { uint32_t v = r->time_limit ? r->time_limit : 100; IPC_OUT(rs, v); return; }   // GetRenderingTimeLimit
-    // 15.0.0+ Set/GetVoiceDropParameter (the system's audio renderer service): the factor the DSP uses to drop
-    // voices when a frame overruns its time. The host mixer renders every voice, so the value is only kept.
+    case 7: rs->copy[rs->ncopy++] = kern_event_readable(r->event); return;
+    case 8: r->time_limit = IPC_ARG(rq, uint32_t, 0); return;
+    case 9: { uint32_t v = r->time_limit ? r->time_limit : 100; IPC_OUT(rs, v); return; }
     case 12: {
         float v = IPC_ARG(rq, float, 0);
         __atomic_store_n(&voice_drop_bits, isfinite(v) ? *(uint32_t *)&v : 0x3f800000u, __ATOMIC_RELAXED);
@@ -855,14 +771,12 @@ static void renderer_close(void *p) {
     renderer_free(r);
 }
 
-// ---- IAudioRendererManager
 void audren_manager_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     switch (rq->cmd) {
-    case 0: {   // OpenAudioRenderer(param, pad, work size, aruid; copy tmem, process; pid)
+    case 0: {
         AudrenParameter p = IPC_ARG(rq, AudrenParameter, 0);
         uint64_t work = IPC_ARG(rq, uint64_t, 0x38);
         need(rq->ncopy >= 1, "OpenAudioRenderer without a transfer memory handle");
-        // A copy made under the kernel lock: a CloseHandle of the transfer memory on another thread frees the object.
         IpcTransferMemory tm;
         int have_tm = kern_handle_copy(rq->copy[0], KERN_TMEM, &tm, sizeof tm);
         need(have_tm && tm.size >= work, "OpenAudioRenderer work buffer is not a transfer memory of the stated size");
@@ -897,14 +811,14 @@ void audren_manager_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs
         rs->move[rs->nmove++] = ipc_session_new("IAudioRenderer", renderer_handler, r, renderer_close);
         return;
     }
-    case 1: {   // GetWorkBufferSize(param) -> u64
+    case 1: {
         AudrenParameter p = IPC_ARG(rq, AudrenParameter, 0);
         need(p.sample_rate == 48000 || p.sample_rate == 32000, "GetWorkBufferSize: unsupported output rate");
         uint64_t v = AUDREN_WORK_BUFFER_BYTES;
         IPC_OUT(rs, v);
         return;
     }
-    case 2: case 4:   // GetAudioDeviceService(aruid), GetAudioDeviceServiceWithRevisionInfo(revision, aruid)
+    case 2: case 4:
         rs->move[rs->nmove++] = ipc_session_new("IAudioDevice", audio_device_handler, NULL, NULL);
         return;
     default: ipc_unimplemented(s, rq);

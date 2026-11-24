@@ -1,6 +1,3 @@
-// The body of kern_ap_stub (kernel.c, "asynchronous preemption"), included once per register width with AP_NAME the
-// function's name, AP_VMOV and AP_V the move and the register prefix that save the vector registers, and AP_VZEROUPPER
-// the instruction that ends the use of the upper halves (or nothing). No include guard: kernel.c includes it twice.
 #ifdef _WIN32
 __asm__(".text\n"
         ".globl " AP_NAME "\n"
@@ -8,7 +5,7 @@ __asm__(".text\n"
         ".p2align 4\n"
         AP_NAME ":\n"
         ".seh_proc " AP_NAME "\n"
-        "    leaq -8(%rsp), %rsp\n"   // not sub: the flags are still the interrupted code's until pushfq
+        "    leaq -8(%rsp), %rsp\n"
         ".seh_stackalloc 8\n"
         "    pushfq\n"
         ".seh_stackalloc 8\n"
@@ -32,7 +29,7 @@ __asm__(".text\n"
         ".seh_setframe %rbp, 0\n"
         ".seh_endprologue\n"
         "    andq $-32, %rsp\n"
-        "    subq $576, %rsp\n"   // 0: shadow space, 32: MXCSR saved, 36: MXCSR default, 64: YMM0-15 (XMM0-15 without AVX)
+        "    subq $576, %rsp\n"
         "    " AP_VMOV " " AP_V "0, 64(%rsp)\n"
         "    " AP_VMOV " " AP_V "1, 96(%rsp)\n"
         "    " AP_VMOV " " AP_V "2, 128(%rsp)\n"
@@ -55,7 +52,7 @@ __asm__(".text\n"
         "    cld\n"
         AP_VZEROUPPER
         "    call kern_ap_rip\n"
-        "    movq %rax, 72(%rbp)\n"   // the return slot: rbp + 8 pushes + pushfq
+        "    movq %rax, 72(%rbp)\n"
         "    call kern_ap_yield\n"
         "    ldmxcsr 32(%rsp)\n"
         "    " AP_VMOV " 64(%rsp), " AP_V "0\n"
@@ -88,16 +85,13 @@ __asm__(".text\n"
         "    jmpq *-8(%rsp)\n"
         ".seh_endproc\n");
 #else
-// The System V version: rsi and rdi are volatile there too, and the interrupted code may keep data in the 128 bytes
-// below its stack pointer (the red zone), so the return slot and the saves go below that. Without a red zone in the
-// way the slot is at entry - 136; the exit restores rsp to the entry value and jumps through the slot.
 __asm__(".text\n"
         ".globl " AP_NAME "\n"
         ".type " AP_NAME ", @function\n"
         ".p2align 4\n"
         AP_NAME ":\n"
         "    .cfi_startproc\n"
-        "    leaq -136(%rsp), %rsp\n"   // not sub: the flags are still the interrupted code's until pushfq
+        "    leaq -136(%rsp), %rsp\n"
         "    pushfq\n"
         "    pushq %rax\n"
         "    pushq %rcx\n"
@@ -111,7 +105,7 @@ __asm__(".text\n"
         "    pushq %rbp\n"
         "    movq %rsp, %rbp\n"
         "    andq $-32, %rsp\n"
-        "    subq $576, %rsp\n"   // 32: MXCSR saved, 36: MXCSR default, 64: YMM0-15 (XMM0-15 without AVX)
+        "    subq $576, %rsp\n"
         "    " AP_VMOV " " AP_V "0, 64(%rsp)\n"
         "    " AP_VMOV " " AP_V "1, 96(%rsp)\n"
         "    " AP_VMOV " " AP_V "2, 128(%rsp)\n"
@@ -134,7 +128,7 @@ __asm__(".text\n"
         "    cld\n"
         AP_VZEROUPPER
         "    call kern_ap_rip\n"
-        "    movq %rax, 88(%rbp)\n"   // the return slot: rbp + 10 pushes + pushfq
+        "    movq %rax, 88(%rbp)\n"
         "    call kern_ap_yield\n"
         "    ldmxcsr 32(%rsp)\n"
         "    " AP_VMOV " 64(%rsp), " AP_V "0\n"

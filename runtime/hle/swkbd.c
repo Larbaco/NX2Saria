@@ -1,21 +1,4 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// The text entry is a window of the host (swkbd.h text_entry_run: swkbd_win.c with Win32, swkbd_sdl.c with SDL).
-//
-// nn::swkbd::ShowKeyboard: text entry for the game. On the Switch the call starts the keyboard library applet, which
-// takes the screen until the player confirms or cancels. NX2Saria calls it in one place, naming a horse at a stable
-// (main+0x1ecbf64 -> main+0x1b2b3a0: UserName preset, at most 9 characters, '@' '%' '\' disabled, UTF-16 out, no
-// header, guide or initial text; an empty answer counts as not named).
-//
-// Front end: text_entry_run (swkbd.h), run on the guest thread that called (the call blocks, as on the Switch). The thread gives its virtual core up meanwhile, so the other guest threads keep running; it holds no
-// lock across the wait. The text starts as the game's initial text, else a default name from the catalog (ui_text.c),
-// selected, so a controller can confirm it: A = OK, B = cancel (each after it was seen released); Enter / Esc and the
-// buttons work too. While the window is open, and after it closes until everything is released, the game reads no
-// input (input_block). text_entry_run is the only front-end seam: an overlay (ImGui) can replace it.
-//
-// Environment:
-//   NX2SARIA_SWKBD_ANSWER=<text>|<cancel>|<initial>   answer without a window (probes, scripted runs); <initial> keeps the
-//                                                 starting text (the game's, else the default name)
-//   NX2SARIA_SWKBD_TEST=ok|cancel                     open the window, then press OK / Cancel on the first timer tick
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,9 +11,6 @@
 #include "swkbd.h"
 #include "platform/platform.h"
 
-// KeyboardConfig then the work buffer {pointer, size}: offsets read from the SDK setters and checked against
-// the SDK by --probe-services. SDK 20.5 (1.4.3) put a text-check callback at +0x4c8 and grew KeyboardConfig from
-// 0x4d0 to 0x518 bytes (SetInitialText, SetUserWordList read the work buffer there); the fields below +0x3d8 stay.
 #define ARG_WORK (RT_V143 ? 0x518 : 0x4d0)
 #define ARG_WORK_SIZE (ARG_WORK + 8)
 enum {
@@ -43,7 +23,6 @@ static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v;
 static uint64_t rd64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 static size_t u16_len(const uint16_t *s, size_t max) { size_t n = 0; while (n < max && s[n]) n++; return n; }
 
-// UTF-16 (n units) -> NUL-terminated UTF-8 in cap bytes, cut at a character boundary. Returns the bytes written.
 size_t swkbd_utf16_to_utf8(const uint16_t *s, size_t n, char *out, size_t cap) {
     size_t o = 0;
     if (!cap) return 0;
@@ -66,7 +45,6 @@ size_t swkbd_utf16_to_utf8(const uint16_t *s, size_t n, char *out, size_t cap) {
     return o;
 }
 
-// UTF-8 -> UTF-16, at most cap units (a character that does not fit whole is dropped); bad bytes become U+FFFD.
 size_t swkbd_utf8_to_utf16(const char *s, uint16_t *out, size_t cap) {
     const unsigned char *p = (const unsigned char *)s;
     size_t n = 0;
@@ -96,8 +74,6 @@ size_t swkbd_utf8_to_utf16(const char *s, uint16_t *out, size_t cap) {
     return n;
 }
 
-// Whether the applet would let this character through (single UTF-16 units; pairs are always allowed). Disabled-key
-// bits as the applet's: 1 space, 2 '@', 3 '%', 4 '/', 5 '\', 6 digits.
 int swkbd_allowed(uint16_t c, uint32_t disabled, int digits_only) {
     int digit = c >= '0' && c <= '9';
     if (digits_only && !digit) return 0;
@@ -107,7 +83,6 @@ int swkbd_allowed(uint16_t c, uint32_t disabled, int digits_only) {
     return 1;
 }
 
-// Drop disallowed characters and keep at most max units without splitting a surrogate pair.
 static size_t clean(uint16_t *t, size_t n, size_t max, uint32_t disabled, int digits_only) {
     size_t o = 0;
     for (size_t i = 0; i < n; i++) {
@@ -121,7 +96,6 @@ static size_t clean(uint16_t *t, size_t n, size_t max, uint32_t disabled, int di
     return o;
 }
 
-// ---- nn::swkbd::ShowKeyboard
 static void request_from(const uint8_t *arg, SwkbdRequest *r) {
     memset(r, 0, sizeof *r);
     int32_t max_len = (int32_t)rd32(arg + KB_MAX_LEN), min_len = (int32_t)rd32(arg + KB_MIN_LEN);
@@ -151,13 +125,12 @@ static void request_from(const uint8_t *arg, SwkbdRequest *r) {
     r->initial[n] = 0;
 }
 
-// Result ShowKeyboard(String *out, const ShowKeyboardArg &arg); String = {pointer, byte size}
 static void ov_show_keyboard(Cpu *c) {
     uint64_t *str = arg_p(c, 0);
     const uint8_t *arg = arg_p(c, 1);
     char lr[96];
     if (!str || !arg) rt_fatal("nn::swkbd::ShowKeyboard from %s: null argument", ldr_describe(c->x[30] - 4, lr, sizeof lr));
-    static SwkbdRequest req;   // one keyboard at a time (the applet is modal too)
+    static SwkbdRequest req;
     static PlatMutex one = PLAT_MUTEX_INIT;
     int utf8 = arg[KB_UTF8] != 0;
     uint16_t u[KB_LIMIT * 2 + 1];
@@ -182,7 +155,7 @@ static void ov_show_keyboard(Cpu *c) {
     if (buf && size) {
         if (utf8) swkbd_utf16_to_utf8(u, n, (char *)(uintptr_t)buf, size);
         else {
-            size_t units = size / 2;   // one kept for the terminator
+            size_t units = size / 2;
             if (units) {
                 if (n > units - 1) { n = units - 1; if (n && u[n - 1] >= 0xd800 && u[n - 1] < 0xdc00) n--; }
                 memcpy((void *)(uintptr_t)buf, u, n * 2);
