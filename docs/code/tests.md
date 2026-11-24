@@ -1,7 +1,9 @@
 # tests
 
-One line per test, for what [building.md](../building.md#checks) does not already say. This page is started: the rest of
-`tests/` keeps its comments until the area is extracted ([README.md](README.md#areas)).
+One section per test, for what [building.md](../building.md#checks) does not already say: a few tests first, then
+those from `tests/action_prompt_check.py` to `tests/log_trace_check.py` in the order of the file names, a test's C
+program under its Python file. The tests after those keep their comments until their part of the area is extracted
+([README.md](README.md#areas)).
 
 ## `tests/run.py`
 
@@ -2525,3 +2527,353 @@ code in (`tools/make_game.py`, `tools/mod_files.py`).
 - `recomp/layout.py` alone decides the modules' bases: `tools/cheats.py` decodes main's pc-relative code at the base
   the layout gives main, the first module of its order, and follows it when it changes.
 - The mods' code is in the lift key and not the shaders key; files of the game's data make no build.
+
+## `tests/layout_tools_check.py`
+
+Checks `tools/layout_dump.py` and `tools/layout_preview.py` on a layout archive the test makes itself. No game files;
+it is run as `python3 -I tests/layout_tools_check.py`. With NumPy it also checks pixels and clipping.
+
+The archive is a SARC with two BFFH layouts: Main (a group pane that is scaled and moved, a picture in it, a text with
+a left origin anchored to its parent's right edge, a part that instantiates Sub) and Sub (one picture). Main has one
+animation with a curve of the group's translate x and a constant of the picture's scale x. `Bffh` is the writer: the
+records the reader follows, at offsets it finds through the header; `Bffh.curve()` takes keys as (frame, value,
+slope), `Bffh.animation()` tracks as (pane, group, prop, [(component, keys)], [(component, value)]).
+
+- The tables, panes, parts and tracks read back. The panes' extents on the grid: the group at x 100 scaled 2; the
+  picture 50 in it, 40 wide; the text anchored to the group's right edge (100 in its space) with a left origin. The
+  curve's value between keys.
+- The command line: the dump's text, JSON and `--find-animated` output.
+- Edits at 21:9 (out 640): each edit operation of a spec and the span of a curve whose keys move; a spec whose
+  expected value differs is refused and changes nothing.
+- The preview: the before and after SVG files and the index; a refused spec stops it. A damaged file is a format
+  error, not a crash.
+- A separate layout (`textured_layout()`, `check_textures()`) checks picture bindings, UV transforms, default alpha
+  and texture patterns.
+- `split_layout()` and `check_split()`: RootPane, `N_Strip` (a group), `P_Bg` (a 1000-wide picture at x 500 in it,
+  made like the game's: its record with the colour and corner lists inside it, a material with one texture map),
+  `P_After` (a group after it, whose x an animation keys), and the two sections' headers, so that the split moves what
+  follows `P_Bg`. The pieces: the left part (source 0 to 400), moved by out; a seam (390 to 410, placed at 400) over
+  the gap the next piece's move opens; the rest (400 to 1000). The split refuses a pane with children, a rotated or
+  scaled picture, and a piece outside the picture. The names' hash, CityHash64, is checked on names of the game's
+  layouts, both of its short-name branches and the 17-32 one: `RootPane` gives `0x55a7ab4a9d264968`, `N_All_00`
+  `0x7b2f820ba988bfbc`.
+
+## `tests/lazy_fetch_check.py`
+
+Builds and runs `tests/lazy_fetch_check.c`: the lazy write-back of `runtime/memory.c` and its ranges in flight, with
+the Windows platform layer and its real fault handler, the rest of the runtime stubbed. Windows only (the fault
+handler is); no game files, no GPU; the module layout the runtime includes is a stand-in written to the test's build
+folder. Each scenario (`SCENARIOS`: name, scenario argument, extra environment) runs as its own process, so an access
+violation passed to the crash handler shows as its exit code; any exit code other than 0, or a scenario that does not
+end within 120 s, fails. `CHECK_CHUNK` in the environment sets `NX2SARIA_WB_LAZY_CHUNK=1`, `CHECK_LOCKED`
+`NX2SARIA_WB_LAZY_UNLOCKED=0`.
+
+The back end's fetch is a stand-in that waits (the GPU copy and the wait for it) and then writes a marker over the
+first 64 bytes of each copy, opening the page for it, as the GPU's copy writes past the pages' protection; the back
+end's clean test may wait too (GetWriteWatch can, while the driver pins memory). `arm_buf()` arms a range of the heap
+as written back from a buffer into the heap's own; `stale()` says the replay left its writes to a range in a mirror,
+so the armed parts there are stale and a touch fetches them; `fetch_end()` gives the end of the fetch that copied a
+range, 0 when none did; `logged()` the number after a word in the last log line. The touching threads stand for the
+game's CPU code; `armer()` for the completion thread's arm (`vk_gpu_written_back` of `vk_memory.c`) of 64 KiB written
+back from buffer 1; `thawer()` for a file read's thaw of a page (`fs_host.c`, `romfs.c`: before the kernel writes the
+buffer).
+
+It checks that a fetch holds up nothing but the touches of its range, that those wait for it, and that arms, thaws,
+mapping changes, freezes and releases see it:
+
+- A thread reads a page over and over while the completion thread's arm makes its range inaccessible and a release
+  gives it back: no read may reach the crash handler. The slow variant has the clean test take 100 ms, with the pages
+  inaccessible all along.
+- During a 300 ms fetch on another thread nothing else waits for it, and the range counts as one a read would fault
+  on.
+- B reads the range A is fetching, and with the fetch outside `frz_lock` the test's thread holds that lock all along:
+  both finish after one fetch, B after it, and the report line counts B's wait. With `NX2SARIA_WB_LAZY_UNLOCKED=0`
+  the fetch holds the lock.
+- B writes the range A is fetching: one fetch, B waits for it alone, and the region's other range stays armed (B went
+  to `thaw_fault` before, which released every armed range of the region).
+- B writes a range whose flight starts and ends while B waits for `frz_lock` in `lazy_fault` (the test's thread holds
+  the lock and runs a release's flight under it, as a thaw does): B finds the page given back and writes again, and
+  the region's other range stays armed.
+- Two threads touch two ranges at once: their fetches run at the same time.
+- A thaw (a file read into the buffer) of a page in a region with a range in flight returns once that range's pages
+  are back, and fetches nothing again. A thaw of a range armed with stale bytes fetches them before it takes
+  `frz_lock` (`lazy_release_regions`): a freeze of another region meanwhile does not wait for the copy. With
+  `NX2SARIA_WB_LAZY_UNLOCKED=0` the thaw fetches under the lock, and the freeze waits.
+- A mapping change (a commit, decommit or protect: `thaw_range_locked` under `frz_lock`) in a region with a range in
+  flight and another armed: the armed one is fetched under the lock, the flight ends first, both are given back.
+- A release of one buffer's ranges (a mirror eviction): one fetch of its two armed stale segments, and it returns
+  after the fetch another thread runs of its third; the other buffer's range stays armed. With
+  `NX2SARIA_WB_LAZY_UNLOCKED=0` each segment is fetched on its own, as in 0.10.1. A thread that writes a range a
+  release is fetching waits for that fetch, its write survives, and there is one fetch in all.
+- An arm of a range in flight (its region's hold cleared, as when the range was released, not touched) leaves it
+  alone: its pages are given back by the flight, and a later arm takes it again.
+- A range in flight (a release, so no hold) in a region ends while an arm of another range in that region is in its
+  clean test: the region keeps its mark (`lz_arm_r`), so a read of the arming range that faults after that end waits
+  for the arm instead of reaching the crash handler.
+- A write by the replay to a range armed for another buffer (a mirror gone since) gives it back without a fetch: that
+  buffer may be gone.
+- `NX2SARIA_WB_LAZY_CHUNK=1`: `lz_lock` is free during a piece's fetch; the rest of the range stays armed.
+- The report line gives the longest fetch since the last line, and the longest wait of a fault for `frz_lock` (another
+  thread's thaw, freeze or arm, 60 ms long); the next line starts from nothing.
+- More threads than entries (80) touch a range each at once: those past `LZ_FLY` wait for room, and all end.
+- A region with a range in flight is not frozen.
+
+## `tests/legacy_names_check.py`
+
+No setting name in the code is spelled with the older `NX2NAVI_` prefix (`tools/rename_legacy_names.py --check`). The
+game, the launcher and the build tools read every setting under both prefixes, `NX2SARIA_` first, so an older
+spelling still works; this check keeps the code on the current one. A branch made before the rename, or a line copied
+from an old file, brings an older name back: `python tools/rename_legacy_names.py` spells it the current way.
+
+Before the tree is checked, planted lines go through the script's rule (`rename_line()`), so a rule that stopped
+renaming or started renaming the fallback is caught too (`rule_cases()`):
+
+- `RENAMED` (file name, line, the line the rule must give): names the code reads, writes or tests (a `cfg_bool` of an
+  older name, a patch table's `set` line, a format with the older prefix and `%s`) must be renamed;
+- `KEPT` (file name, line): the fallback must stay: a line that also names `NX2SARIA_`, a line that calls the name
+  older, legacy or an alias, the bare older prefix that prefix strips compare with, the PGO compile-time flag and a
+  `KEEP` line of the script;
+- the files under `tools/xlate/`, `tools/vendor/` and `runtime/third_party/` are never read.
+
+`check_tree()` runs the script's `--check` on a root and gives the exit code and output. With `--self-test`,
+`planted_repo()` also plants an older name in a scratch git repository holding the script and one file, and wants
+`--check` to fail there.
+
+## `tests/lib_origin_check.py`
+
+Builds and runs `tests/lib_origin_check.c` on `runtime/lib_origin.c`, the game log's `libs:` line: which SDL the game
+loaded, from beside the game or from the system, and the SHA-256 form. It is built as this platform builds it and, off
+Windows, also with `-D_WIN32`, where the paths take either separator and compare without case. No game files.
+
+The cases: an SDL beside the game, one elsewhere, one not found among the loaded modules and an unknown executable
+path; folders that share a prefix are not the game's (one folder's name the start of the other's); case matters on
+Linux; a name without a folder is never taken for the game's folder, and the root folder is one like any other;
+versions apart; the SHA-256 form; a buffer too small is cut, terminated, and the whole length returned.
+
+## `tests/library_path_check.py`
+
+Builds and runs `tests/library_path_check.c` (Linux): `runtime/platform/linux.c` `plat_library_path()`, which the game
+log's `libs:` line (`runtime/main.c` `log_libs()`) names the loaded SDL with, and `runtime/lib_origin.c`, against the
+system's loader. No game files.
+
+A library with a soname is built beside a program linked as the game is (`-no-pie`, runpath `$ORIGIN`); the library's
+one function keeps it a `DT_NEEDED` entry. The program prints what `plat_library_path()` found for its argument and
+the `libs:` line it would make of it. The line must say "beside the game" with the folder's real path when the program
+runs from that folder, through a symbolic link to it, and when an empty `LD_LIBRARY_PATH` entry (the current folder)
+found the library, and "not beside the game" for a copy an `LD_LIBRARY_PATH` folder supplies; a library preloaded
+under its full file name (`libprobe.so.0.9`, as a distribution installs it) still answers for its soname, and a name
+nothing loaded gives nothing.
+
+`linux.c` includes SDL3's headers: `sdl3_include()` gives nothing when the compiler finds them itself, else `-I` and
+the first folder that has them: the folder of the headers of `tools/sdl3_pin.py` (`toolchain/sdl3/include`) or
+`SDL3_INCLUDE`.
+
+## `tests/lift_compare_test.py`
+
+`tools/lift_compare.py` on made-up lift trees: the same functions grouped into other chunks compare equal; one changed
+byte, a whitespace or line-ending change, a lost function, a function defined twice, a call with no prototype, a line
+`recomp/gen.py` does not write, a table that does not list the definitions and a module without a table are
+differences. No game files; standard library only.
+
+`FNS` holds function bodies as the `Emitter` of `gen.py` writes them: `f_200` has an all-label fallback, so its text
+starts with the fallback's declaration and holds a second C function. `chunk()` gives a chunk's text as `chunk_text`
+of `gen.py` joins it (header, includes, prototypes, then the bodies); `table()` a function table as `table_text`
+writes it (the parts `lift_compare` reads); `tree()` a lift folder with one module, `mod`, whose chunks hold the
+function groups and whose table lists every function of the groups unless told otherwise.
+`LiftCompareTest.run_compare()` gives the differences and the output of old against new, after an optional edit of
+the new lift.
+
+## `tests/log_cap_check.py`
+
+The log file's cap and the end of the run (`runtime/main.c` `log_sink()`): past the cap ordinary lines are dropped,
+with one line that says so; once the process is ending (`rt_log_ending()`, which a fatal error and the crash report
+call before `rt_log_sync()`) its lines are still written, after one line that says the end follows, up to a reserve of
+their own, however much was dropped before. `rt_log_sync()` alone (a bug capture in play, `write_log_tail` of
+`runtime/diag/bugcap.c`) does not open the reserve. The test builds `log_sink()` with a small cap and reserve against
+stand-ins for the file and stderr, and `static_checks()` checks that every end that syncs the log marks the process as
+ending first, so its lines reach the file past the cap. No game files; it takes the path to clang as an optional
+argument.
+
+## `tests/log_prefixes_check.py`
+
+Static check of the log prefixes the runtime writes against the table in [logging.md](../logging.md). Standard
+library only.
+
+Every line of `logs/nx2saria.log` starts with a word or a few that say which part of the game wrote it ("vk:", "frame
+rate:", "boot map:"). The check finds the prefix of each log call in `runtime/` and fails on a prefix that has no row
+in the doc, so a new prefix comes with its row and a reader of a player's log can look it up. A row of the main table
+that no call uses any more is a warning: the table is behind, the code is not wrong. It prints one line per problem
+and exits 1 if any; `--unseen` also lists the calls whose prefix the check cannot read; `--self-test` puts each kind
+of fault into a copy of the doc or a made-up source file and checks that it is caught.
+
+What a log call is:
+
+- `rt_log(fmt, ...)` and `rt_logf(fmt, ...)` of `runtime/host.h`;
+- a macro whose body calls one of them with `__VA_ARGS__` as the format, after string literals or none (`LOG_ONCE` of
+  `vk_pipeline.c`, `NVN_LOG` of `nvn_api.h` with its "nvn: ", `BAD` of `romfs.c`);
+- a function with a `const char *` parameter that it passes on as the format (`once` of `ov_input.c`).
+
+A macro or function defined in a `.c` or `.cpp` file counts in that file only; one in a header counts everywhere
+(`wrappers()`; the wrapper's own call, whose format is its parameter, is skipped).
+
+The prefix of a format string (`prefix_of()`: the prefix, an empty string for a continuation, None for a format that
+starts with a conversion):
+
+- the text before the first colon that ends a word (a colon followed by a space, a `\n` or the end), when that text is
+  one to four words of letters, digits and `_ . : / + -` ("vk:", "host save import:", "aud:u:", "nn::codec:");
+- otherwise the format's first word, without a colon ("frame %llu: submits ..." gives "frame"); the table writes it
+  without a colon too;
+- a format that starts with white space continues the line before it (a block such as the crash report's registers)
+  and has no prefix of its own;
+- an `rt_logf` format, written as it is with no "[host] " and no newline, is a prefix only when it has the colon form
+  above: the others are pieces of a line another `rt_logf` started ("outside every module)", " %08x");
+- a format chosen by `?:` gives one prefix for each of its string literals.
+
+A format that starts with a conversion ("%s", "%s: ...") takes its prefix from the text put in its place, which the
+check reads only when the first argument is a plain name that the same function filled before the call with
+`snprintf(name, size, "...")` or `sprintf(name, "...")`, or set with `name = "..."` (`filled_with()`). Every other
+such call, and a call whose format is not a string literal, is counted as not seen. The doc lists the prefixes those
+lines are known to carry in a table of their own, which is not checked for use.
+
+Not read: `rt_fatal` and `rt_fatal_code` (their line is "FATAL: <message>", `fatal_end` of `dispatch.c`), the
+"[host] " every `rt_log` line starts with, `runtime/third_party/` and the generated `*_spv.h` headers. Code under
+`#if 0` and in every `#ifdef` branch is read like the rest.
+
+`literal_text()` gives the text of adjacent string literals, escapes left as written. `scan()` gives the prefixes the
+runtime writes as ({prefix: [file:line, ...]}, the unseen calls, counts). `table()` reads the doc: the prefixes of the
+main table and of the table of lines the check cannot see, each with its line, and the problems; a row's prefixes are
+the code spans of its first cell, and a row may name several. `check()` gives the problems, the warnings, the used
+prefixes, the unseen calls and the counts.
+
+## `tests/log_privacy_check.py`
+
+Builds and runs `tests/log_privacy_check.c` and `tests/log_privacy_env_check.c`: the personal folders the game writes
+short in its log, the bug capture and the crash report (`runtime/log_privacy.c`, `runtime/log_privacy_core.h`). No
+game files.
+
+- `tests/log_privacy_check.c`, any system, with Windows and Linux tables: `%LOCALAPPDATA%` before `%USERPROFILE%` (the
+  longest folder wins), Windows paths without case and with either separator, the 8.3 form, the `\\?\` prefix, a
+  profile on a network share, an account whose folder starts the same (`C:\Users\Ana Souza2`) left alone, a home with
+  an accent and a space, the resolved home (`/var/home`), the account name alone inside a path but not inside another
+  word (ana in banana, anabel, ana_x, anaé) nor in text without a path, the computer's name as a word anywhere (a UNC
+  path, a network line) without case, common account and computer names (user, deck, localhost) not looked for alone,
+  roots and short names refused, and the same text when the rewrite runs in small pieces (a caller's buffer that
+  fills). It prints "case: ok" or "case: FAIL ..." per case and "log_privacy_check: ok|FAILED" at the end.
+- `tests/log_privacy_env_check.c`, Linux only: `runtime/log_privacy.c` with the environment of this run, and stand-ins
+  for the log, the settings and the environment: `HOME` through a symbolic link to a folder with an accent and a space
+  (both forms written `~`), `USER`, the start line with the switch on and off (`log_short_paths = 0` writes everything
+  in full), the computer's name from `HOSTNAME` with and without its domain, `log_privacy_str` and `log_privacy_dup`,
+  and the count the exit line gives. For each argument it prints "str: <text short>" and "dup: <text short or
+  (none)>", with "log: <line>" for each log line, then "count: <n>".
+
+## `tests/logq_check.py`
+
+Builds and runs `tests/logq_check.c`: the queue that hands log lines to the log thread (`runtime/logq.c`), with the
+platform layer linked (what it calls outside itself as stand-ins, `tests/platform_stand_ins.py`) and a destination of
+the test's own. No game files: the module layout the runtime includes is a stand-in written to the test's build
+folder.
+
+The sink of the C file keeps everything written, in the order it arrived; each call can take `sink_ms`, or wait while
+`held` is set. Producer thread t writes lines `t <t> <seq> <padding>`. `settle()` waits until everything queued so far
+is written: the queue is empty while no write of it is under way (its io lock). `check_lines()` checks that every line
+of the output is whole and that each thread's lines come in their order. The line about slow writes (`say_slow()` of
+`logq.c`) comes when a write happened to take 2 ms, which on a busy machine is any write; the checks count bytes and
+writes, so `slow_line()` takes the flag `say_slow()` tries, and no such line is written until the test gives the flag
+back (taking it waits for a line that is being said).
+
+1. Before the queue is on, a line is written by the thread that logs it, before `logq_write()` returns.
+2. With the queue: eight threads, 20,000 lines each; every line arrives whole and each thread's in order.
+3. A thread that finds the queue's lock taken waits for it, so its line does not pass a line queued before it. The
+   test takes both locks itself: the first line stays queued, and the second thread finds the lock taken.
+4. A slow destination (30 ms a write) does not hold the threads that log: 100 lines, a millisecond apart. A thread
+   that waited for the writes would take 30 ms for most lines; on a busy machine the scheduler alone can hold a few
+   that long, so the check is how many did.
+5. The line about slow writes: one after the first slow write, and no second one within ten seconds of it. The log
+   thread says its line after the write, with no lock held.
+6. A destination that stops while more is logged than the queue holds (8 x 2000 lines of 260 bytes, four times the
+   queue): the threads wait, nothing is lost.
+7. The log thread gathers: lines logged together are written together, `LOGQ_GATHER_NS` after the first of them and
+   not before. The clock says whether the test's thread logged its lines and looked at the output within half that
+   time; on a machine too busy for that, the two checks that need it are left out.
+8. A queue that is half full is written at once, not when the gathering time is up, so a burst that filled one half
+   has the other for what it logs next. Each try logs over half the queue's size together (2100 lines of 260 bytes:
+   546,000 of 1,048,576) and sees how soon a write came; on a busy machine the log thread may get its processor late,
+   so one try in three has to show it.
+9. `logq_flush()`: what is queued is written before it returns, inside the gathering time, and the queue stays on.
+   With the log thread stuck in a write (the test holds its io lock) it gives up within its bound and writes nothing,
+   and the line is written once the write is over. `logq_nudge()` (a focus loss): the log thread writes what it
+   gathers at once, not when the gathering time is up; on a machine too busy to log and look within half that time
+   the timing check is left out.
+10. `logq_sync()`: what is queued is written before it returns, and later lines are written by their own thread. The
+    lines are logged together just before it, so the log thread is still gathering them: the batch a fatal error, a
+    crash or the end of the process finds queued. A second call does nothing.
+
+After its checks the program is run twice more (`ends()`), as `logq_check exit <file>` and `logq_check fatal <file>`:
+a process that logs `END_LINES` (200) lines together, through the queue and into the file, and ends at once, while the
+log thread is still gathering them: `exit` as a run ends (`plat_exit`, whose hook is `logq_sync()`, as `log_open` of
+`main.c` sets it), `fatal` as a fatal error ends one (`fatal_end` of `dispatch.c`: `logq_sync()`, then its own line,
+then the end). The exit code is the one the process ended with, and each file has to hold every line it logged, the
+fatal line last.
+
+## `tests/log_stall_check.py`
+
+Builds and runs `tests/log_stall_check.c`: `runtime/log_stall.c` (the local time of the lines that mark an event, the
+counts of the events whose own lines are limited, the memory and I/O pressure line) and
+`runtime/platform/proc_pressure.h` (the readers of `/proc/pressure/*` and `/proc/meminfo`), with the platform's
+clocks, zone and pressure readings replaced by stand-ins. No game files, no GPU, any Python.
+
+`static_checks()` then checks that each place that writes one of those lines goes through them: the worst frame of a
+frame-time window, the presenter's failed acquires and watchdog, the physical memory map's refusals, a slow pipeline
+cache save, a fatal error, a crash report and a lost device, and the dma-buf spans at the end of the run. `source()`
+gives a runtime file without its comments, so a name in a comment is not a call.
+
+- The stand-in zone is UTC-3 (10800 seconds west); the zone's wall clock is UTC shifted, so the stand-in reads it as
+  UTC. The times: 1795276795, 2026-11-21 15:59:55 UTC, a Saturday, which is 12:59:55 in UTC-3; and 1795230001,
+  00:00:01 in UTC-3 (03:00:01 UTC), for the stamp across midnight. Only differences of the monotonic clock count.
+- The readers of the pressure files: a line that is not there or not whole leaves the values alone; the second line is
+  found past the first, and the kind must start a line; a locale whose decimal separator is a comma (where `strtod`
+  would stop at the point) reads the same.
+- `log_stamp()`: the moment of now gives 12:59:55; 4.5 s ago 12:59:50; a frame of a window that began a minute ago (65
+  s) 12:58:50; a moment ahead of the clock (a race) reads as now. A zone the platform cannot name; a buffer too small,
+  and none at all (nothing written); another zone, UTC+5:30, with its half-hour offset.
+- The lines of an event are written up to its limit and the count goes on. When the window moves on with nothing new,
+  nothing is written; then the next count and the run's totals, as in "presenter acquire failed 10 (only the first 5
+  logged)" and "frame generation watchdog fired 1 (5 in all, only the first 3 logged)". The whole run's text leaves
+  the window alone. A text is cut to the buffer. An event that has not passed its limit says nothing about lines: the
+  count alone in its first window, then "in all". Any thread counts: 8 threads, 20000 each, give exactly as many lines
+  as the limit, and every count is in the total.
+- The pressure line: with no earlier sample, the averages and the memory alone; a total that went down (a sample from
+  another boot, a wrap) counts as no stall; a kernel without PSI still gives the memory figures, and the line says why
+  there is no pressure; PSI for memory but not for io (a kernel booted with its io accounting off); Windows has no
+  stall counters and gives the memory available and the commit; nothing at all gives no line.
+- The sampling through the platform: the baseline, then the next line against it. A busy sampling lock is not waited
+  for, and takes no sample.
+
+## `tests/log_trace_check.py`
+
+The log lines of the pipeline cache stamp, the play gate of the background builds and the presentation and sampler
+failures, as the runtime's own code writes them: each function is cut from its source file by its text (`function()`:
+from its signature through the closing brace at the start of a line), built with stand-ins for what it calls (real
+files in a scratch folder for the stamp, a clock the harness moves for the play gate, a `vkCreateSampler` that fails
+on request), and run through a session's events. What its `rt_log` calls write goes to
+`build/test/log_trace/nx2saria-sample.log`, and each line a player's log is read by must be there with the numbers the
+events give. No game files, no GPU (Vulkan headers only; the pinned ones of `tools/build_game.py` under
+`toolchain/vulkan-headers/include` when they were fetched).
+
+- `runtime/vk/vk_pipeline.c` `cache_stamp_check()` over the starts of an update and a preparation under yet another
+  translator: "vk: pipeline cache stamp <id> none|matches|differs: <action>, <MB>", the files deleted or kept as the
+  line says. The starts: none; matches; differs, kept for the carry; differs, read while a file is held open; differs,
+  deleted (650 MB, both files); matches with the file still due (its run ended before its exit); matches once
+  written; a preparation's deletion (it writes the file itself); off. Only a start in play without
+  `pipeline-cache.bin` says that its exit writes it (which saves write it: `tests/cache_stamp_check.c`). The files
+  are kept while one is held open (start 4) and gone at start 5.
+- The play gate (the part of `vk_pipeline.c` from "the play gate" to `vk_pipeline_probe_buildgate`): the start's line,
+  then frames shown while builders rest, and "vk: background builds paused in play: N frames, M builds deferred" with
+  those counts; with the setting at 0 the start's "off" line and no other. In the test the gate is on at 600 and rests
+  only in play; of the 120 heavy frames the first came before the builders began their rest, so 119 count; five builds
+  are held back, each counted once though two builders rested.
+- `runtime/gfx/gfx_present.c` `swapchain_unusable()` failing 20 times: "gfx: vkGetSwapchainImagesKHR failed (5), N
+  times: ..." for N = 1 to 8 and 16 only.
+- `runtime/vk/vk_texture.c` `make_sampler()`: a failed `vkCreateSampler` that the plain retry makes, and one it does
+  not (it falls back), each "gfx: vkCreateSampler failed (-1), N times: ..." with what stood in; four calls, two of
+  them plain.
