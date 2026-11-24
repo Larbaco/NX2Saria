@@ -162,3 +162,7 @@ before the Play decision logic is extracted. Mod preparation errors and an infin
 
 The memory preflight test checks that an infinite estimate becomes a JSON-safe request and still produces the existing
 warning text. The existing Linux Play refusal test simulates the same declined response at the separated memory boundary.
+
+The test's `mods_before_play` stand-in forwards to the `App` method only in the pre-extraction implementation; the new
+implementation no longer calls that method. It remains in the fixture so the same characterization file exercises the
+old code and the extracted preflight without changing its observed outcomes or logs.

@@ -45,14 +45,42 @@ are shown with their known meanings. Requested Linux termination signals do not 
 excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
 the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
 
-### `play.py` and `commit.py` Play preflight
+### `launcher/play.py`: Play preflight
 
-`play.prepare()` keeps the existing order: executable, a session already followed, another running game, mod
-preparation and rebuild, then the memory sample. It returns an outcome and any mod notices for the window to present;
-the existing rebuild job still belongs to the window. After a memory answer, `play.start()` starts the game and creates
-`GameRun`, or records the same refusal or start error. The Tk adapter owns the dialog, sound, visibility and watch timer.
+`prepare()` decides in the old window's order: whether the executable exists, whether this launcher already follows
+an active game, whether the game executable is already running outside this launcher, mod preparation and any needed
+rebuild, then the Windows memory check. The external game can have come from another launcher, a shortcut or a test run;
+its session is not owned by this window. Refused starts and decisions keep their existing `play:` and `mods:` log lines.
 
-`commit.play_memory_request()` keeps the existing probe, policy and log, and returns numeric information only when the
-player must decide. An unbounded estimate uses `need=None` and `unbounded=True` so the request has no non-finite JSON
-number; `play_memory_warning()` reconstructs the existing wording. `confirm_play_memory()` retains the headless entry
-point and its existing behavior, including continuing when the probe or dialog is unavailable.
+The returned `PlayPreparation.status` tells the caller what to do:
+
+- `not_built`: show that the game has not been built and render the screen.
+- `own_game`: return without changing the screen; this launcher is already watching its own game.
+- `external_game`: show that the game is already running and render the screen.
+- `rebuild`: start `ModsRebuildJob` with `waiting`, show its message and return. A mod's code cheats or ExeFS patches
+  must be lifted into the game before launch. `built=True` means that rebuild just ended: skip mod preparation and do
+  not ask to rebuild again. If the same mod list already failed to build, start without its code instead; otherwise a
+  build that cannot finish would prevent the player from playing at all.
+- `memory`: ask the player using the structured `memory` request, then pass the answer immediately to `start()`.
+- `ready`: call `start()` without a memory question.
+
+During mod preparation, `mod_message` is the last line returned by `mods.prepare()` and `home_message` is the last
+line saying a mod was not unpacked. The window copies each non-`None` value to its matching message so that the latter
+is still shown when the launcher returns home. Preparation and waiting-list read errors retain their existing log and
+continue without blocking Play.
+
+`start()` returns `(GameRun, None)` after a successful spawn, `(None, error)` when the spawn raises `OSError`, or
+`(None, None)` when the player declines the memory warning. It logs the existing start, refusal or failure line. The
+Tk adapter owns the prompt, starting the existing rebuild job, select sound, window visibility and watch timer.
+
+### `launcher/commit.py`: memory decision
+
+`play_memory_request()` samples Windows commit and the page-file mode, logs the existing values and policy, and returns
+`None` when the sample is unavailable or no question is due: enough memory, the warning disabled, a system-managed or
+unknown page-file mode, or an estimate that disables the check. Otherwise it returns the remaining memory and game
+estimate. `need=None` with `unbounded=True` represents an infinite estimate without a non-finite JSON number.
+
+`play_memory_warning()` recreates the existing warning from the request, including the infinite estimate.
+`play_memory_response()` logs the player's answer and returns it; an unavailable dialog is logged and permits Play.
+`confirm_play_memory()` retains the synchronous entry point used by Steam and combines these functions with the
+existing native dialog, including the fallback that permits Play if the probe or dialog is unavailable.
