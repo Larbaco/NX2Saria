@@ -93,8 +93,9 @@ The server adds the time the report arrived, and nothing about where it came fro
   not want to send.
 - The report of your last session, as above, when there is one, unless **Session Reports** is *Off*.
 - If you tick *Attach the Last Log Lines*: the last 200 lines of `logs/nx2saria.log`, at most 24 KB, with your home
-  folder, account name and computer name written short as in the log ([log privacy](log-privacy.md)). Other folder
-  names in those lines, such as where the game is installed, stay as they are.
+  folder, account name and computer name written short as in the log ([log privacy](log-privacy.md)), also when you
+  turned that off for your own log. Other folder names in those lines, such as where the game is installed, stay as
+  they are.
 - The `launcher_version` and the time, as with a report. No id of your installation.
 
 A comment is sent only when you press *Send* on it, whether session reports are on or off.
@@ -138,8 +139,8 @@ that one comes first.
 - **After a short session these two parts are the whole log.** When the log has no more lines than that, every line of
   it is sent, each one once. The question and *See What Is Sent* say how many lines go.
 - In those lines your home folder, account name and computer name are written short as in the log ([log
-  privacy](log-privacy.md)). Other folder names, such as where the game is installed, stay as they are, and so
-  do the names of the mods in use, which the log lists.
+  privacy](log-privacy.md)), also when you turned that off for your own log. Other folder names, such as where the
+  game is installed, stay as they are, and so do the names of the mods in use, which the log lists.
 - The report of that session, as above, when there is one, unless **Session Reports** is *Off*.
 - The `launcher_version` and the time, as with a report. No id of your installation, and no text of yours.
 ## What is not sent or not kept

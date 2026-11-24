@@ -28,6 +28,11 @@ write the account's folders short, and keep the rest of each path, which still s
   `launcher/start.pyw` (`crash.log` and its message box), `launcher/saves.py` (the bug report zip's log and settings,
   also when the log came from an older version or a run with the switch off), `tools/appimage_gui.py` (the AppImage's
   `build.log`) and `tools/make_game.py` (`button-prompts.txt`).
+- What the launcher sends to the project's server is written short whatever the switch says
+  (`tools/private_paths.py` `shorten_always()`, as the game's `log_privacy_str_always()` does for the session
+  report's error line): the log lines of a comment and of a crash log, and the error line of the report the launcher
+  makes after a hard crash. Whoever turns the switch off wants to read their own log in full, not to send the
+  account's name. The log on disk is not changed.
 
 ## What is not changed
 

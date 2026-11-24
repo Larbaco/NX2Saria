@@ -87,6 +87,10 @@ server that records requests, the made-up player's folders and the window. No te
 - `RequestTest`, `AnswerTest`: the body's keys, the report of that session and never an earlier one's or one the
   player said no to, the body trimmed when JSON escapes grow it, and each answer of the server (201, 400, 410, 503, no
   connection) with its log line and the counts. A comment still has its four keys and its 24 KB.
+- `AlwaysShortTest`, `ShortNoteTest`: with `NX2SARIA_LOG_SHORT_PATHS=0` in the environment the launcher's own lines
+  stay in full, while the crash log's body, a comment's attached lines and the made-up summary's error line are
+  written short, the log file's bytes are unchanged and one line counts the lines changed; a log already short adds
+  no line, and lines trimmed from the body are not counted.
 - `OfferWindowTest`: the question with Send the Log focused, the bytes *See What Is Sent* shows being the bytes sent,
   each way of not sending, the first second that takes no input, *Write a Comment*, the question about session
   reports coming first, the places it never opens, the setting, a 400 that ends the offers of the run, the counts, and

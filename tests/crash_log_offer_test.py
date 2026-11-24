@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests'))
 
 from launcher import crash_offer, game_session, telemetry  # noqa: E402
+import private_paths  # noqa: E402
 from telemetry_launcher_test import Base, VERSION, WindowBase, summary, window_toolkit  # noqa: E402
 
 HEAD = ['[host] cfg: read /home/ana/Games/NX2Saria/nx2saria.ini: 19 keys',
@@ -347,6 +348,80 @@ class RequestTest(LogBase):
         sent = json.loads(self.server.hits[0][3])
         self.assertEqual(set(sent), {'launcher_version', 'text', 'summary', 'log_tail'})
         self.assertLessEqual(len(sent['log_tail'].encode('utf-8')), telemetry.TAIL_LIMIT)
+
+
+class AlwaysShortTest(LogBase):
+    def setUp(self):
+        super().setUp()
+        off = mock.patch.dict(os.environ, {private_paths.SWITCH: '0'})
+        off.start()
+        self.addCleanup(off.stop)
+        self.crash_log()
+        self.on_disk = (self.game / 'logs' / 'nx2saria.log').read_bytes()
+
+    def test_the_switch_is_off_for_the_launcher_s_own_lines(self):
+        self.assertEqual(private_paths.shorten('/home/ana/Games'), '/home/ana/Games')
+
+    def test_a_crash_log_is_written_short_all_the_same(self):
+        reporter = self.reporter()
+        sending = crash_offer.prepare(reporter, self.game)
+        text = sending.request.data.decode('utf-8')
+        self.assertIn('~/Games/NX2Saria/nx2saria.ini', text)
+        for private in ('/home/ana', 'maria-pc'):
+            self.assertNotIn(private, text)
+        self.assertEqual((self.game / 'logs' / 'nx2saria.log').read_bytes(), self.on_disk)
+        self.assertIn(b'/home/ana', self.on_disk)
+        crash_offer.finish(reporter, crash_offer.Offers(), sending, reporter.post(sending.request))
+        self.assertEqual(self.server.hits[0][3], sending.request.data)
+        self.assertIn('telemetry: personal folders written short in 2 of 205 log lines for sending; the log on disk '
+                      'is not changed (NX2SARIA_LOG_SHORT_PATHS=0 leaves them in full there)', self.lines)
+        self.assertFalse(any('ana' in ln.split() or '/home/ana' in ln for ln in self.lines))
+
+    def test_a_comment_s_log_lines_are_written_short_all_the_same(self):
+        self.write_log(HEAD + [FATAL, NOTE])
+        on_disk = (self.game / 'logs' / 'nx2saria.log').read_bytes()
+        got = self.reporter().send_feedback('It fell in the Forest Temple.', True, self.game)
+        self.assertTrue(got.ok, got.reason)
+        sent = json.loads(self.server.hits[0][3])
+        self.assertIn('~/Games/NX2Saria/nx2saria.ini', sent['log_tail'])
+        for private in ('/home/ana', 'maria-pc'):
+            self.assertNotIn(private, sent['log_tail'])
+        self.assertEqual((self.game / 'logs' / 'nx2saria.log').read_bytes(), on_disk)
+        self.assertIn('telemetry: personal folders written short in 2 of 7 log lines for sending; the log on disk '
+                      'is not changed (NX2SARIA_LOG_SHORT_PATHS=0 leaves them in full there)', self.lines)
+
+    def test_a_comment_without_the_log_says_nothing_of_it(self):
+        self.assertTrue(self.reporter().send_feedback('No log.', False, self.game).ok)
+        self.assertFalse(any('written short' in ln for ln in self.lines))
+
+    def test_the_crash_summary_s_fatal_line_is_written_short_all_the_same(self):
+        self.write_log(['[host] version: NX2Saria ' + VERSION + ', game 1.1.1',
+                        'FATAL: crash at /home/ana/Games/NX2Saria/ocarina on maria-pc'])
+        made = telemetry.synthesize_crash(self.game)
+        self.assertEqual(made['fatal'], 'crash at ~/Games/NX2Saria/ocarina on %COMPUTERNAME%')
+
+
+class ShortNoteTest(LogBase):
+    def test_a_log_already_short_adds_no_line(self):
+        self.write_log([ln.replace('/home/ana', '~') for ln in HEAD] + play_lines(30) + [NOTE])
+        reporter = self.reporter()
+        sending = crash_offer.prepare(reporter, self.game)
+        self.assertEqual(sending.shortened, '')
+        crash_offer.finish(reporter, crash_offer.Offers(), sending, reporter.post(sending.request))
+        self.assertFalse(any('written short' in ln for ln in self.lines))
+
+    def test_a_log_the_game_wrote_in_full_is_counted(self):
+        self.crash_log()
+        sending = crash_offer.prepare(self.reporter(), self.game)
+        self.assertEqual(sending.shortened, 'telemetry: personal folders written short in 2 of 205 log lines for '
+                                            'sending; the log on disk is not changed (the log had them in full)')
+
+    def test_lines_trimmed_from_the_body_are_not_counted(self):
+        self.write_log(HEAD + ['[host] /home/ana/x ' + '\\' * 270 for i in range(400)] + [NOTE])
+        sending = crash_offer.prepare(self.reporter(), self.game)
+        self.assertLess(sending.tail_lines, crash_offer.TAIL_LINES)
+        lines = sending.head_lines + sending.tail_lines
+        self.assertIn(f'written short in {lines - 4 - 1} of {lines} log lines', sending.shortened)
 
 
 class AnswerTest(LogBase):

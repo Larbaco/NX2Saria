@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=0a2dc86226c63f7941da1f0d9d9f6e64d9d47d22 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=baf06a9bb81854476201b7f24149b01ad959ef8f reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -77,7 +77,7 @@ O servidor acrescenta a hora em que o relatório chegou, e nada sobre de onde el
 
 - O seu texto, com até 4000 caracteres, **exatamente como você o escreveu**. Não inclua o seu e-mail, nome nem nada mais que você não queira enviar.
 - O relatório da sua última sessão, como acima, quando houver um, a menos que **Session Reports** esteja em *Off*.
-- Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com a sua pasta pessoal, o nome da conta e o nome do computador escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta nessas linhas, como o local onde o jogo está instalado, ficam como estão.
+- Se você marcar *Attach the Last Log Lines*: as últimas 200 linhas de `logs/nx2saria.log`, com no máximo 24 KB, com a sua pasta pessoal, o nome da conta e o nome do computador escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), também quando você desligou isso para o seu próprio log. Outros nomes de pasta nessas linhas, como o local onde o jogo está instalado, ficam como estão.
 - O `launcher_version` e a hora, como num relatório. Nenhum id da sua instalação.
 
 Um comentário só é enviado quando você aperta *Send* nele, com os relatórios de sessão ligados ou desligados.
@@ -102,7 +102,7 @@ Quando o jogo foi iniciado sem a janela do launcher (Play na Steam, um atalho), 
 - **O começo do log do jogo:** da primeira linha até a linha `patches:`, com no máximo 100 linhas e 16 KB. Essas linhas dizem o seu sistema, a placa de vídeo e o driver, as opções em uso e os patches ligados; nos logs medidos elas são cerca de 84 linhas e 12 KB.
 - **O fim do log do jogo:** as últimas 200 linhas, com no máximo 56 KB. 200 linhas pesam cerca de 46 KB, então as 200 linhas são o limite que normalmente vale; quando as linhas são mais longas que o normal, os 56 KB cortam antes e vão menos linhas, mantidas as últimas.
 - **Depois de uma sessão curta, essas duas partes são o log inteiro.** Quando o log não tem mais linhas do que isso, todas as linhas dele são enviadas, cada uma uma vez. A pergunta e *See What Is Sent* dizem quantas linhas vão.
-- Nessas linhas, a sua pasta pessoal, o nome da conta e o nome do computador são escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta, como o local onde o jogo está instalado, ficam como estão, assim como os nomes dos mods em uso, que o log lista.
+- Nessas linhas, a sua pasta pessoal, o nome da conta e o nome do computador são escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), também quando você desligou isso para o seu próprio log. Outros nomes de pasta, como o local onde o jogo está instalado, ficam como estão, assim como os nomes dos mods em uso, que o log lista.
 - O relatório daquela sessão, como acima, quando existe, a não ser que **Session Reports** esteja em *Off*.
 - O `launcher_version` e a hora, como num relatório. Nenhum id da sua instalação e nenhum texto seu.
 

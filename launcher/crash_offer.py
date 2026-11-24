@@ -6,7 +6,6 @@ from pathlib import Path
 
 from . import telemetry
 from .build import game_log_path
-from .context import shorten
 
 OFFER = 'crash-offer.json'
 SETTING = 'crash_log_offer'
@@ -20,7 +19,7 @@ HEAD_READ = 128 << 10
 TAIL_READ = 512 << 10
 GUARD_SECONDS = 1.0
 
-CrashLog = collections.namedtuple('CrashLog', 'request head_lines tail_lines log_bytes whole summary')
+CrashLog = collections.namedtuple('CrashLog', 'request head_lines tail_lines log_bytes whole summary shortened')
 
 
 class Offers:
@@ -120,7 +119,7 @@ def pending(game_dir, settings, log):
 
 
 def clean(raw):
-    return telemetry.printable(shorten(raw.decode('utf-8', 'replace').rstrip('\r\n')), '\t')
+    return telemetry.sent_line(raw.decode('utf-8', 'replace').rstrip('\r\n'))
 
 
 def ends_head(line):
@@ -203,7 +202,7 @@ def build(reporter, head, tail, whole, summary):
         return telemetry.Result(False, 'the log is too big')
     size = len((data['log_head'] or '').encode('utf-8')) + len(data['log_tail'].encode('utf-8'))
     return CrashLog(telemetry.Request('crash', 'POST', '/v1/feedback', raw), len(head), len(tail), size, whole,
-                    summary is not None)
+                    summary is not None, telemetry.shortened_note(head + tail))
 
 
 def prepare(reporter, game_dir):
@@ -247,6 +246,8 @@ def what_goes(sending):
 def finish(reporter, offers, sending, answer):
     status, error = answer
     req = sending.request
+    if sending.shortened:
+        reporter.log(sending.shortened)
     if status in (200, 201):
         offers.sent += 1
         reporter.log(f'telemetry: crash log sent (HTTP {status}, {sending.head_lines} + {sending.tail_lines} lines, '

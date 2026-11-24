@@ -125,6 +125,22 @@ The start and the end of the game's log as lists of lines, and whether together 
 - Lines are split on line feeds only, as the server counts them, and each is written short and stripped of control
   characters as a comment's log lines are.
 
+### `clean()` and the lines sent
+
+Every log line that leaves the PC goes through `launcher/telemetry.py` `sent_line()`, which writes the personal
+folders short with `tools/private_paths.py` `shorten_always()`: `NX2SARIA_LOG_SHORT_PATHS=0` in the launcher's
+environment does not turn it off, and a log the game wrote in full (`log_short_paths = 0`) is written short on the
+way out. The same holds for a comment's attached lines (`log_tail_lines()`) and for the error line of the summary
+made after a hard crash (`synthesize_crash()`). The file on disk is only read. *See What Is Sent* shows the body, so
+it shows the short form.
+
+`sent_line()` returns a `Line`, a string that remembers whether the shortening changed it. `shortened_note()` makes
+one line for `launcher.log` from the lines that are really sent (after the body's trimming), logged once per send,
+by `finish()` here and by `Reporter.finish_feedback()`: `telemetry: personal folders written short in N of M log
+lines for sending; the log on disk is not changed (<why>)`. It is written when the switch is off in the launcher's
+environment, or when any line changed (the game's log had the folders in full). A log that was already short adds
+no line. The line holds counts only.
+
 ### `session_summary()`
 
 The session report that goes with the crash log: the pending one, else the one already sent or declined, but only
