@@ -1,8 +1,12 @@
 """Windows commit preflight for Play, kept independent of the launcher's window and graphics dependencies."""
 import math
+from collections import namedtuple
 import os
 
 from . import gameini, winsys
+
+MemoryRequest = namedtuple('MemoryRequest', 'remaining need unbounded')
+
 
 DEFAULT_MEM_NEED_MB = 24576   # runtime/mem_need.h MEM_NEED_DEFAULT_MB
 
@@ -58,15 +62,15 @@ def set_warning_enabled(settings, enabled, log):
     log(f'launcher setting: warn_low_commit = {int(bool(enabled))}')
 
 
-def confirm_play_memory(game_dir, log, root=None, settings=None):
-    """Sample Windows commit just before launch. An unavailable check or dialog still allows Play."""
+def play_memory_request(game_dir, log, settings=None):
+    """Sample Windows commit and return the numbers needed for a warning, or None."""
     try:
         info = winsys.system_commit_info()
     except (AttributeError, OSError) as e:
         log(f'play memory: commit check unavailable ({e}); continuing')
-        return True
+        return None
     if info is None:
-        return True
+        return None
     used, limit, ram = info
     remaining = max(0, limit - used)
     need = game_commit_need(game_dir)
@@ -93,11 +97,29 @@ def confirm_play_memory(game_dir, log, root=None, settings=None):
         f'{"system-managed" if page_file_managed is True else "fixed or off" if page_file_managed is False else "unknown"} '
         f'({status})')
     if not should_warn:
-        return True
-    try:
-        play = winsys.confirm_play(warning, root)
-    except (AttributeError, OSError) as e:
-        log(f'play memory: warning dialog unavailable ({e}); continuing')
+        return None
+    return MemoryRequest(remaining, None if math.isinf(need) else need, math.isinf(need))
+
+
+def play_memory_warning(request):
+    return commit_warning(request.remaining, float('inf') if request.unbounded else request.need)
+
+
+def play_memory_response(log, play=None, error=None):
+    if error is not None:
+        log(f'play memory: warning dialog unavailable ({error}); continuing')
         return True
     log('play memory: player chose to play anyway' if play else 'play memory: player cancelled')
     return play
+
+
+def confirm_play_memory(game_dir, log, root=None, settings=None):
+    """Sample Windows commit just before launch. An unavailable check or dialog still allows Play."""
+    request = play_memory_request(game_dir, log, settings)
+    if request is None:
+        return True
+    try:
+        play = winsys.confirm_play(play_memory_warning(request), root)
+    except (AttributeError, OSError) as e:
+        return play_memory_response(log, error=e)
+    return play_memory_response(log, play=play)

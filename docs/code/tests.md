@@ -54,6 +54,21 @@ every `MEM_BUDGET_PERIOD_MS`. No GPU, no game files.
 - The session's notices come due one gap apart; after the last, never again, and a later stretch is reported as spent
   once, at the hold.
 - The settings named for each combination in use.
+- What a due notice waits for: a line at each change of the reason, none while it lasts, at most four per notice.
+
+## `tests/vram_fit_check.py`
+
+Builds and runs `tests/vram_fit_check.c` on `runtime/vram_fit.h`. No GPU, no game files.
+
+- The modes' order; what a draft makes heavier, each setting alone; the upscaler turned on below full size is not
+  heavier and at full size is; a smaller picture with frame generation turned on names frame generation only.
+- The tier the video memory alone gives: 6017 MiB Medium, 4096 Low, none from 8 GiB (7700 MiB rounds to 8) and for an
+  unknown card.
+- The measured note: tight or critical now, or a notice shown this session, with something heavier, on any card, and
+  before the preset's; none for a lighter or unchanged draft.
+- The preset's note: DLAA over the Medium tier's quality on a 6 GiB card with DLSS, quality over the Low tier's
+  performance at 4 GiB, never frame generation, only what the draft made heavier, nothing for a card the preset gives
+  no upscaler, for 8 GiB or for an unknown card.
 
 ## `tests/telemetry_launcher_test.py`
 
@@ -153,3 +168,24 @@ Runs the actual launcher window on Linux with a virtual display, isolated tempor
 - While the window has an active job and the marker, the mutating CLI command is refused and Steam Play reports the active job without starting the game. With the window idle and no job marker, Steam Play starts the synthetic game even though the window holds the launcher lock.
 
 The tests describe the existing window's behavior, not the proposed worker's EOF or recovery behavior. They leave no game process running after the test.
+
+## `tests/launcher_play_characterization_test.py`
+
+Characterizes the existing Tk Play entry point using temporary game folders and stubbed process and system APIs; it
+never opens a real game. It records the observable refusal, rebuild, memory decision, spawn, visibility and log behavior
+before the Play decision logic is extracted. Mod preparation errors and an infinite memory estimate are covered.
+
+The memory preflight test checks that an infinite estimate becomes a JSON-safe request and still produces the existing
+warning text. The existing Linux Play refusal test simulates the same declined response at the separated memory boundary.
+
+The test's `mods_before_play` stand-in forwards to the `App` method only in the pre-extraction implementation; the new
+implementation no longer calls that method. It remains in the fixture so the same characterization file exercises the
+old code and the extracted preflight without changing its observed outcomes or logs.
+
+## `tests/launcher_game_end_characterization_test.py`
+
+Exercises the existing Tk `watch_game()` adapter with a synthetic session, a temporary game log and stubbed collaborators. The tests preserve
+the order of window restoration, end logging, crash-summary synthesis, game-log annotation, staged-update check,
+reports and the home screen. They cover a game that is still running, an absent session, disabled reports, an empty
+note, a focus error and both update and reports short-circuits. Existing `launcher_test.py` cases exercise the actual
+`GameRun` restart and fatal-end behavior with synthetic files and processes.

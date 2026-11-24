@@ -20,6 +20,7 @@ static struct {
     volatile int32_t level[MEM_SIDES];
     volatile int32_t known[MEM_SIDES];
     volatile uint32_t free_pm[MEM_SIDES];
+    volatile uint64_t vram_used_mb, vram_limit_mb;
 } B = {PLAT_ONCE_INIT, PLAT_MUTEX_INIT, 0, {0, 0}, {MEM_NORMAL, MEM_NORMAL}, {0, 0}, {0, 0}};
 
 static const char *const side_name[MEM_SIDES] = {"video memory", "system memory"};
@@ -88,6 +89,10 @@ static void budget_main(void *arg) {
                 rt_log("mem_budget: %s %s, %.1f%% free (%s%s)", side_name[side], mem_level_name[now], r.free_pm / 10.0,
                        what, from);
             }
+            if (side == MEM_VRAM) {
+                __atomic_store_n(&B.vram_used_mb, used_mb, __ATOMIC_RELAXED);
+                __atomic_store_n(&B.vram_limit_mb, limit_mb, __ATOMIC_RELAXED);
+            }
             if (side == MEM_VRAM) vram_warn_sample(now == MEM_CRITICAL, used_mb, limit_mb, r.free_pm);
         }
         plat_sleep_ms(MEM_BUDGET_PERIOD_MS);
@@ -117,6 +122,13 @@ void mem_budget_vram(int on) {
 int mem_budget_level(int side) {
     if (side < 0 || side >= MEM_SIDES) return MEM_NORMAL;
     return __atomic_load_n(&B.level[side], __ATOMIC_RELAXED);
+}
+
+int mem_budget_vram_mb(uint64_t *used_mb, uint64_t *limit_mb) {
+    if (!__atomic_load_n(&B.known[MEM_VRAM], __ATOMIC_ACQUIRE)) return 0;
+    *used_mb = __atomic_load_n(&B.vram_used_mb, __ATOMIC_RELAXED);
+    *limit_mb = __atomic_load_n(&B.vram_limit_mb, __ATOMIC_RELAXED);
+    return *limit_mb != 0;
 }
 
 void mem_budget_text(char *out, unsigned cap) {

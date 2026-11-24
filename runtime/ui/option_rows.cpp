@@ -532,6 +532,11 @@ const char *opt_get(const char *key) {
     return cfg_get(key);
 }
 
+const char *opt_before(const char *key) {
+    Change *c = find_change(norm_key(key));
+    return c ? c->orig_eff.c_str() : cfg_value(key);
+}
+
 const char *opt_default(const char *key) { return default_of(norm_key(key)); }
 
 int opt_preset_tier(void) { return staged_tier(); }

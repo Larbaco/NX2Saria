@@ -11,8 +11,11 @@ extern "C" {
 #define VRAM_WARN_MAX 3
 #define VRAM_WARN_SHOW_MS 12000
 #define VRAM_WARN_LINES 24
+#define VRAM_WARN_WAIT_LINES 4
 
 enum { VRAM_WARN_NONE, VRAM_WARN_DUE, VRAM_WARN_SPENT, VRAM_WARN_OVER };
+enum { VRAM_WAIT_NONE, VRAM_WAIT_SETTINGS, VRAM_WAIT_MOVIE, VRAM_WAIT_TITLE, VRAM_WAIT_PAUSE, VRAM_WAIT_LOADING,
+       VRAM_WAIT_NOTICE, VRAM_WAIT_REASONS };
 enum { VRAM_SUGGEST_RES = 1, VRAM_SUGGEST_MODE = 2, VRAM_SUGGEST_FRAMEGEN = 4, VRAM_SUGGEST_PRESET = 8 };
 
 typedef struct {
@@ -64,10 +67,24 @@ static inline unsigned vram_warn_suggest(int res_above, int full_mode, int frame
     return what ? what : VRAM_SUGGEST_PRESET;
 }
 
+typedef struct {
+    int reason;
+    int lines;
+} VramWait;
+
+static inline int vram_warn_wait_step(VramWait *w, int reason) {
+    if (reason == w->reason) return 0;
+    w->reason = reason;
+    if (reason == VRAM_WAIT_NONE || w->lines >= VRAM_WARN_WAIT_LINES) return 0;
+    w->lines++;
+    return 1;
+}
+
 void vram_warn_start(void);
 void vram_warn_sample(int critical, uint64_t used_mb, uint64_t limit_mb, uint32_t free_pm);
 int vram_warn_due(void);
-void vram_warn_waits(const char *why);
+void vram_warn_waits(int reason);
+int vram_warn_shown_count(void);
 void vram_warn_shown(const char *suggested);
 
 #ifdef __cplusplus
