@@ -1,10 +1,4 @@
 # needs: clang
-"""Build and run tests/text_speed_check.c: the text_speed setting (runtime/patches/text_speed.c) and the replacement words of
-the patch set text_speed (recomp/patches-v111.txt), lifted by recomp/lifter.py as the generator lifts them, against a
-stand-in message window and typewriter. No game files: the lifted words go to the test's build folder.
-
-Usage: text_speed_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -32,7 +26,6 @@ def compiler():
 
 
 def site_words(table, site, original):
-    """The set's replacement words at a site, after checking the site has only them and the original word."""
     alternatives = table.sites['main'][site]
     assert len(alternatives) == 1, hex(site)
     key, words, have = alternatives[0]
@@ -42,8 +35,6 @@ def site_words(table, site, original):
 
 
 def lifted(name, site, words, page_reg, last_branch):
-    """A C function running the words at the site: the adrp of the patch page is left to the caller, who puts the
-    page's address in that register, and a last conditional branch is left to the caller too, who reads its register."""
     body = []
     for j, word in enumerate(words):
         if isinstance(word, tuple):
@@ -51,7 +42,7 @@ def lifted(name, site, words, page_reg, last_branch):
             continue
         insn = Lifter(0, simd='c').lift(word, MAIN + site)
         if j == len(words) - 1 and last_branch:
-            assert insn.kind != 'op' and word == 0x36000069, hex(word)   # tbz w9, #0, the original's target
+            assert insn.kind != 'op' and word == 0x36000069, hex(word)
             continue
         assert insn.kind == 'op', (hex(site), hex(word), insn.kind)
         body.append('    ' + insn.code)
@@ -60,8 +51,8 @@ def lifted(name, site, words, page_reg, last_branch):
 
 def main():
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', MAIN, 0x4ea0000)])
-    skip = site_words(table, SKIP_SITE, 0x36000074)     # tbz w20, #0, #0x774b80
-    speed = site_words(table, SPEED_SITE, 0xbd404e61)   # ldr s1, [x19, #0x4c]
+    skip = site_words(table, SKIP_SITE, 0x36000074)
+    speed = site_words(table, SPEED_SITE, 0xbd404e61)
     work = ROOT / 'build' / 'test' / 'text_speed'
     work.mkdir(parents=True, exist_ok=True)
     sites = work / 'sites.c'

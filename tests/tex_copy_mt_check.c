@@ -1,6 +1,3 @@
-// tests/tex_copy_mt_check.py builds this with runtime/gfx/tex_deswizzle.c, runtime/par_jobs.c and the platform layer:
-// tex_bl_copy_mt and par_memcpy write exactly the bytes tex_bl_copy and memcpy do, in both directions, for levels
-// under and over the split size, with partial GOBs, block heights and depths, and slices.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +6,6 @@
 #include "par_jobs.h"
 #include "tex.h"
 
-// what tex_deswizzle.c and par_jobs.c need from the rest of the runtime
 const int rt_nvn_api_version[2] = {200, 0};
 int cfg_bool(const char *name) { (void)name; return 1; }
 void rt_log(const char *fmt, ...) {
@@ -54,14 +50,14 @@ static void one(uint32_t row_bytes, uint32_t rows, uint32_t slices, unsigned th,
 
 int main(void) {
     printf("pool: %d threads\n", par_threads());
-    one(4096, 1024, 1, 4, 0);   // 4 MiB, split
-    one(1000, 1300, 1, 3, 0);   // partial GOBs, split (1.2 MiB)
-    one(1000, 700, 1, 3, 0);    // partial GOBs, under the split size
-    one(16384, 512, 1, 5, 0);   // 8 MiB, wide
-    one(256, 64, 8, 1, 2);      // a 3D level under the split size
-    one(2048, 128, 16, 2, 1);   // 3D, split
-    one(64, 8, 1, 0, 0);        // one GOB
-    one(48, 3, 1, 0, 0);        // less than a GOB
+    one(4096, 1024, 1, 4, 0);
+    one(1000, 1300, 1, 3, 0);
+    one(1000, 700, 1, 3, 0);
+    one(16384, 512, 1, 5, 0);
+    one(256, 64, 8, 1, 2);
+    one(2048, 128, 16, 2, 1);
+    one(64, 8, 1, 0, 0);
+    one(48, 3, 1, 0, 0);
     for (size_t n = 0; n < (8u << 20); n = n * 3 + 1001) {
         uint8_t *s = malloc(n + 1), *d1 = malloc(n + 1), *d2 = malloc(n + 1);
         for (size_t i = 0; i < n; i++) s[i] = rnd8();
