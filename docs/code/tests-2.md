@@ -2029,3 +2029,365 @@ and without it, and whether only the steady rule made it per-frame.
   a pass with no target at all.
 - The table keeps the steady targets through an area's first frame: 400 per-frame targets, a pause, then 600 targets
   made new are rendered before the old ones come round again.
+
+## `tests/telemetry_launcher_test.py`
+
+`launcher/telemetry.py` and the session reports' screens of the window (`launcher/ui/app.py`): consent before anything
+is sent, the exact bytes sent and shown, the server's 410, silent network errors, no id of the installation, the crash
+summary made from a FATAL line, the log lines a comment carries. The window tests need tkinter, numpy and a display:
+on Linux under `xvfb-run`, so that no window opens on the desktop. The first part's page has the update-start cases;
+the rest:
+
+- `Server` is a local stand-in for the reports server: it records each request (method, path, headers, body) and
+  answers with `status`, changeable between requests. `Base.setUp()` uses the account's folders of a made-up player,
+  whatever this machine's are.
+- `ConsentTest`. Not asked yet ('') and Off send nothing, also when `send_session` is called directly: the check is
+  in `telemetry.py`, not only in the window; the summary is still waiting afterwards. On sends exactly the payload's
+  bytes, with the keys `launcher_version` and `summary` only (no id of the installation); the summary is then not
+  offered again and nothing is left to send. An earlier version's id is removed from the settings file, the other
+  settings stay, and a second removal finds nothing and logs no line. A build without a server (`TELEMETRY_URL` '')
+  sends nothing and says so once; the address comes from the environment, where `none` means no server at all,
+  whatever is built in. Off in Settings is this version's answer, and the next version asks. The question is due once
+  a version while reports are not on: not asked yet; not twice in one version; Don't Send in 0.24 is asked again in
+  0.25; on: never asked; no server: no question. The notice of reports turned on is told once and not again.
+- `ServerAnswerTest`. A 410 stops reports until the next launcher version: the same version sends nothing, the next
+  one sends again. A network error (nothing listens at the address any more) is silent and logs at most five lines;
+  the summary is tried again on the next start. A refused report is not offered again, but a busy server's 429 keeps
+  it for later. Pressing Send on a comment is its own consent: it goes before the question was answered, with the last
+  summary and the log lines asked for; a comment does not use the summary up; a comment of blanks sends nothing; with
+  reports turned Off the comment still goes, never with the report the player said no to.
+- `CrashSummaryTest`. A hard crash gets a summary from its FATAL line; the same crash is not made into a second
+  summary, also after the first was sent. No summary when the game wrote its own for this run, when the log has no
+  version line or no FATAL line, or when the launcher already noted the end. A summary of the run before (older than
+  `nx2saria.1.log`) does not stop it.
+- `LogTailTest`: the last lines within the caps, the last ones kept.
+- `WindowBase`. The window is made with `--selftest` (no sounds, no updates), without the search of this PC's folders
+  for dumps, and with a server for the whole test in the environment. `WindowBase.close_window()` cancels the window's
+  timers, which would run on a closed window, and clears the app's attributes so its pictures go at once, on this
+  thread, not on one a later test starts. `WindowBase.logged()` says whether a line of `launcher.log` ends with a
+  text.
+- `WindowTest`. The view shows the bytes that are sent (once something was sent, an example now). The first start of a
+  version asks with Send focused (the default: Enter sends); nothing goes at once and the waiting summary never does;
+  the next session's is sent by itself; once on, it is never asked again, not by a new version either. Don't Send
+  keeps reports off (the declined summary is not offered again, the same version does not ask again, a game played
+  asks and sends nothing) and the next version asks again. "See what is sent" from the question scrolls the JSON and
+  goes back to the question, still open. The countdown turns reports on after 30 s without input (the first report is
+  the next session's) and the next start says so once. The question's text is whole inside its panel: the title and
+  the countdown's line start below the screen's heading (`X(112)`) and the last line ends above the window's foot
+  (`X(H - 30)`), top to bottom, counting and stopped (the longer line), whichever row is focused. Any input stops the
+  countdown. Closing the question (Esc or B) turns reports on; so does closing the window over it (Alt+F4), also with
+  the countdown stopped, and the next start tells. A signal that ends the launcher is no answer: the next start asks
+  again. Closing the window elsewhere changes nothing. No question over the first-run screen (no game yet) or in a
+  preview (`--screen consent`). The Settings switch from not asked yet: asked again by the next version only. The
+  reports screen and the comment are walked with keys: the box takes the keyboard, the text is cut at `TEXT_LIMIT`, B
+  or Esc leaves the box only, a comment is no consent to reports, and with nothing to delete only Back is offered.
+
+## `tests/telemetry_patch_sets_check.py`
+
+`telemetry/src/patch_sets.ts` lists the port's patch sets a session report may name (`telemetry/src/validate.ts` drops
+any other name). It must hold exactly the names of the `set` lines of `recomp/patches-v*.txt`: a set added there and
+not here would be dropped from every report by the server.
+
+## `tests/tensor_lowering_check.py`
+
+Checks the lowered SM86 tensor instructions against results captured on an NVIDIA GPU, in one command
+(`python tests/tensor_lowering_check.py [vectors.json] [--xlate EXE] [--case NAME] [-v]`; the `--help` description is
+the string `DESCRIPTION`).
+
+`tools/xlate/AmpereLowering.cs` rewrites the SM86 instructions of the game's neural-network passes as Maxwell code:
+`Lowerer.Hmma` (HMMA.1688 / HMMA.16816, .F16 and .F32), `Lowerer.Ldsm` (LDSM.16.M88 / MT88 .1/.2/.4), `Lowerer.Movm`
+(MOVM.16.MT88) and `Lowerer.Half` (HFMA2, HFMA2.RELU). The script lowers every case of the vector file with
+`nx2navi_xlate --lower`, runs the Maxwell words on `tests/maxwell_warp_emu.py` (which executes them as the shader
+translator does) and compares with the registers the GPU wrote. Exit status 1 on any failure. The vector file names
+the GPU that produced it ("device"). So far that is an RTX 5090 running the compute_86 PTX through the driver's JIT,
+as no SM86 part was at hand: the results follow the PTX semantics but need not show SM86's internal precision.
+
+Defaults: the vector file is `work/tensor-gt/vectors.json` of the workspace (a generator beside it writes it: each
+case is one SM86 instruction in inline PTX, run on one warp) and the translator is the workspace's
+`build/xlate/nx2navi_xlate.exe` (`python tools/build_xlate.py` builds it); the workspace is the directory two levels
+above this repository. numpy is needed.
+
+Every case runs several times and must pass each run:
+
+- with the registers the vectors do not set first 0, then 0x7fc0dead, so a read of a register the lowering never wrote
+  shows;
+- then under @P0 (the guard field of the SM86 word, bits 12-15, set to P0 = 0) with P0 false in every third lane
+  (`guard_lanes()`: lanes 1, 4, 7, ..., so every quad and row group mixes both): lanes with P0 get the GPU's result,
+  the others keep their old destination values. The other lanes still supply their fragments, rows and addresses,
+  which works only if the shuffles run in every lane and just the destination writes take the guard, the rule
+  `AmpereLowering.cs` follows.
+
+Each run (`check_run()`, which appends what is wrong to `out.problems`) checks:
+
+- destination registers bit for bit, except that a NaN matches any NaN in a float result (`tests/maxwell_warp_emu.py`
+  `same_value()`: SPIR-V leaves NaN payloads to the host, the GPU writes 0x7fff). HMMA gets no tolerance: the GPU
+  rounds every element once (f16 or f32 of the exact A*B+C), and so does the lowering for these values, whose sums are
+  exact in F32; the largest difference in ulp is reported;
+- every other register R0-R236 (guest and uniform registers; `GUEST_REGS` is 237, and R237 up is the lowering's own)
+  and P0-P6 keep their values, shared memory is untouched, and the emulator has nothing to report (a shuffle reading a
+  lane its guard left out, a PRMT the translator drops);
+- urbase, the register the lowering mapped UR0 to, is the highest register the instruction names plus two, rounded
+  down to even: `AmpereLowering` `HighestGpr` counted every register of the instruction's fragments and quads.
+
+Read off the lowered words, for both lowerings (`guard_rule_problems()`): every write to a guest register (below R237)
+carries the SM86 instruction's guard (the Maxwell guard field), and no SHFL is guarded: a shuffle runs in every lane.
+The table beside it lists the Maxwell instructions of `maxwell_warp_emu.TABLE` without a destination register in bits
+0-7.
+
+Derived cases (`derived_cases()`), beyond the hardware vectors, for forms the game uses: reference models of
+HFMA2(.RELU) and LDSM, each first checked against every hardware case of its instruction (`model_problems()`, exact
+bits: the models write 0x7fff for NaN), give the expected values of HFMA2.RELU with an immediate B (opcode 0x831, as
+in the game's HFMA2.RELU Rd, Ra, 1, 1, Rc; the immediates 0x3C003C00, (1, 1) as the game's networks use it, and
+0x4000BC00, (-1, 2)) and LDSM .M88.4 / .MT88.4 with an offset. MUFU.F16 (LG2 and EX2 of either half, with abs and neg,
+on the halves of the HFMA2 case's A register, as the upscaler's colour decode uses it) is checked against a model of
+the lowering: no hardware vectors, as PTX has no lg2.f16; the instruction forms were confirmed with nvdisasm.
+
+- `EXIT` (0xE30000000007000F) is Maxwell EXIT: it runs no code and gives the emulator's initial state.
+- `operands()`: (destination registers, source registers) one SM86 instruction names, from its fields (the same fields
+  `AmpereLowering.cs` decodes). Opcode 0x23C is HMMA (shape bit 75, .F32 bit 76), 0x83B LDSM (count 1 << bits 72-73),
+  0x23A MOVM, 0x231 and 0x831 HFMA2 (B a register or an immediate), 0x308 MUFU in register form (the operand is B).
+- `shared_memory()`: the case's shared memory as `maxwell_warp_emu.run_case` places it: smem at smem_base, 64 KiB at
+  least. `consistency()`: problems of the case itself: regs_out not exactly the destinations, LDSM addresses that
+  disagree.
+- `half_value()`: an F16 bit pattern as ("nan"), ("inf", sign) or ("num", Fraction, sign). `round_half()`: x (not
+  zero) rounded to F16, to nearest even; beyond the range infinity. `fma_half()`: F16 a * b + c rounded once (IEEE 754
+  fusedMultiplyAdd, round to nearest even); a NaN result is 0x7fff; an exact zero is -0 only when both terms are -0.
+  `hfma2_model()`: HFMA2 (.RELU) on both halves (H1_H0 operands): RELU makes negative numbers and -0 +0, keeps NaN as
+  0x7fff. `ldsm_model()`: LDSM by its fragment layouts: out[lane][m] is lane's value of Rd + m.
+  `mufu_f16_model()`: MUFU.F16 as `AmpereLowering.cs` `Mufu` lowers it: the half widened to F32 with abs and neg, the
+  function in F32 (EX2 2, LG2 3), rounded to a half in the low 16 bits, the high 16 bits clear.
+- In `main()` one broken case does not stop the run.
+
+## `tests/tex_compact_check.py`
+
+Builds and runs `tests/tex_compact_check.c` on `runtime/vk/vk_tex_compact.h`: from a table of what lies in the
+allocator's blocks, how much of them is holes and could go back to the driver, and which blocks a texture compaction
+empties. No GPU, no game files, any Python.
+
+- `random_tables()`: whatever the plan chooses must hold to the rules, in the order the header gives. The tables keep
+  the higher blocks emptier and sometimes hold memory of another kind the table does not list. Checked: the room held
+  at each step, so it holds for the whole plan; nothing cheaper was left out for no reason (a block that needs no move
+  and is emptiable is always taken while the plan has places left and reached its gain).
+- The sums of a block (an allocation that names no block is left out).
+- Which blocks count: exactly half; one byte over; a small allocation that stays; listed fuller than its size; a block
+  of no size.
+- A plan: the cheapest block first, the one with a staying allocation never. The same table asked for more than it can
+  give; one block at most; moved bytes bounded; a held block.
+- Room: what moves must fit outside the chosen blocks. 40 MiB free in a block that is not in the table (it holds no
+  texture); with all of the free bytes allowed, and 20 MiB more, both go.
+- A block of dropped textures alone needs no room, also when the allocator reports nothing free (memory of another kind
+  fills the holes). Of two blocks alike, the larger first.
+- The session the statistic was written for: 110 blocks of 64 MiB, a quarter of them nearly empty (6 MiB of idle
+  textures; every fourth of them with a VRAM mirror too).
+
+## `tests/tex_copy_mt_check.py`
+
+Builds `tests/tex_copy_mt_check.c` with `runtime/gfx/tex_deswizzle.c`, `runtime/par_jobs.c` and the platform layer
+(with `stand_ins()` of `tests/platform_stand_ins.py`): the split texture copy `tex_bl_copy_mt` and `par_memcpy` write
+exactly the bytes `tex_bl_copy` and `memcpy` do, in both directions, for levels under and over the split size, with
+partial GOBs, block heights and depths, and slices. No GPU, no game files, any Python. `vma_include()` is needed
+because `tex.h` includes `vk.h`, which needs `vk_mem_alloc.h` (found as `tests/gpa_check.py` finds it). The C file's
+stand-ins are what `tex_deswizzle.c` and `par_jobs.c` need from the rest of the runtime.
+
+The levels: 4096 x 1024 (4 MiB, split); 1000 x 1300 (partial GOBs, split, 1.2 MiB); 1000 x 700 (partial GOBs, under
+the split size); 16384 x 512 (8 MiB, wide); 256 x 64 x 8 (a 3D level under the split size); 2048 x 128 x 16 (3D,
+split); 64 x 8 (one GOB); 48 x 3 (less than a GOB).
+
+## `tests/tex_detail_check.py`
+
+Builds and runs `tests/tex_detail_check.c` on `runtime/vk/vk_tex_detail.h`: the level `texture_detail` = auto picks
+for a video memory budget, on a card with memory of its own and on an integrated GPU (`runtime/vk/vk_texture.c`
+`vk_texture_detail_auto()`), for the cards and budgets players reported. No GPU, no game files, any Python.
+
+- The budgets in players' logs of 0.10.1.
+- Between the old 8,192 MiB and the new 10,240: the cards of 10 GiB. Low under 6,144 MiB, as before.
+- An integrated GPU never gets full, and follows the budget below that.
+- No budget reported: full, as before, also on an integrated GPU.
+- Uncompressed ASTC textures: one step lower under 20,480 MiB.
+
+## `tests/tex_release_check.py`
+
+Builds and runs `tests/tex_release_check.c` on `runtime/vk/vk_tex_release.h`: how long a released texture is kept, the
+bytes the released ones may hold past the size bound, and the clock that turns presents into seconds. The program also
+prints a table of the simulated sessions, shaped by the take-back figures of players' logs, against the old and new
+defaults. No GPU, no game files, any Python.
+
+The simulation follows `runtime/vk/vk_texture.c` `sweep_pressure()`: once a second (the cache checks every 8
+submissions) take-backs that fall due find their entry or make it again, `drop_aged` takes the entries past their
+hold, and `drop_stale` takes the oldest entries released 2 s ago or earlier while the released bytes are above
+`trl_keep`. The streams are shaped by the figures of three sessions' logs on an RTX 5090 (`vk_tex_release.h`).
+
+- `clock_checks()`: presents at a rate that changes every few seconds (60 to 240 a second), a tick each second, as
+  `rate_tick` makes; the age of a present just after a tick is the real one. The hold in seconds does not depend on
+  the rate: 180 s at 60 or at 240 presents a second, within the ticks kept (the last `TRL_CLOCK_N` seconds). A run
+  shorter than the ring, and an empty clock.
+- `rate_checks()`, the rate the short waits go by (`trl_rate_sample`, `trl_rate`, `trl_presents`): the highest of the
+  samples; one not taken yet counts as 60, so a run's first seconds never go below it; an area load is one second with
+  two presents. 120 presents at 60 a second are 2 s at every rate from 15 a second up (`STALE_FRAMES`, the wait after
+  a release); under 15 a second the wait is 15 a second's: 30 presents, longer than 2 s. A tester's log
+  (`vk_tex_release.h`): 21 presents a second, where 120 presents were 5.7 s before. The longer waits scale the same
+  way: `GPU_STALE_FRAMES` (1800 presents at 60, 30 s).
+- `rule_checks()`: the Balanced session's line at frame 7200: 11786 MiB in use of about 31 GiB, 27.3 GB of 71 GB
+  commit free. An 8 GiB card in play: 6.3 of 7.5 GiB in use. The default bound by the card's budget (MiB): a
+  thirty-second of it, 384 MiB to 1 GiB. What the released textures may hold at their fullest: under 2 GiB on a 32 GiB
+  card with room (8 GiB by the rule before, a quarter of the budget and twice that), 384 MiB on an 8 GiB card in play
+  (1.9 GiB before).
+- `taken_back_checks()`, the take-backs of the logs against the hold. The "vk: released textures frame N" lines of two
+  sessions (2026-11-12): take-backs by the time released, in the buckets under 2 s, 2-10 s, 10-60 s, 1-5 min, longer,
+  with each bucket's upper edge in seconds (the last open). The run through Hyrule Field that set the bound
+  (2026-11-14, the rule before: 180 s, 4008 MiB and twice that with room): MiB and textures taken back by the time
+  released, 2-10 s, 10-60 s, later; and the textures loaded anew meanwhile. Nothing those logs took back would have
+  gone past the hold: every take-back came before 60 s. In the field run what came back later than the hold is under a
+  hundredth of what came back at all, and everything the cache gave back in three minutes is a twenty-fifth of what
+  the game loaded anew in that time.
+- The simulated sessions. An entry has `rel` (the second of the release) and `back` (the second the game takes it
+  back; 0: never); a rule has `cap` (bytes) and `hold` (s); `backs` holds the entries the game takes back, by the
+  second it does. A stream is `burst_s` seconds of area changes at `burst_mbs` MiB/s of releases the game keeps
+  released, then calm play to `end_s` at `calm_mbs`. Sizes are 0.1 to 1.9 MiB (the Balanced session held 3946 MiB in
+  7754 entries, half a MiB each); a tenth hold content only the GPU made. A share `back_pct` per thousand comes back,
+  after a time drawn from the logs' buckets past 2 s (2-10 s and 10-60 s about as often); `late` adds take-backs
+  `late_s` after the release. `run()` keeps `next` (the first entry not released yet), `head` (the oldest that may
+  still be held) and the next take-back; `drop_aged` stops at the first entry younger than the hold, since they are in
+  release order; `drop_stale` goes oldest first.
+- `session_checks()`: an RTX 5090 with a 31 GiB budget (until 0.11.0 a quarter of it, 4008 MiB, the logs' figure, and
+  180 s; now `trl_cap_mb`) and an 8 GiB card with no room in play. The streams: the Balanced session's second line
+  (3.2 GiB released and kept within 35 s, then 10 minutes in one area); a long session (an area change every few
+  minutes, shown as a slower stream throughout); a teleport tour (4 minutes at the burst rate); the run through Hyrule
+  Field (the game lets go of about 130 MiB a second for three minutes). What the cache holds at its fullest is what
+  the session costs in video memory: never more than what it may keep and what two seconds release (`drop_stale`
+  leaves the entries of the last two seconds), on either card, and never more than the rule before held; where that
+  one filled up, less than half of it. What it holds once play is calm is what the last hold released. A take-back
+  within ten seconds of the release (turning round) finds its texture wherever ten seconds of releases fit in what the
+  cache may keep; on the 32 GiB card that is every scenario here. What it makes again is never more than what the game
+  takes back at all (a fiftieth of the stream here). A game that takes textures back late, in calm play where the
+  bound is far: at 50 s nothing goes before (the hold is 60 s), at 90 s the hold has dropped them.
+- `hard_checks()`, past the hard count (`trl_hard_class`, `trl_hard_pick`): at the session's end the release order
+  mixes render targets (GPU), intact entries and a few overwritten ones, and the render targets are the oldest; the
+  rule before took them first. With only render targets and sampled ones the render targets go, in release order;
+  with none unsampled, nothing.
+
+## `tests/text_speed_check.py`
+
+Builds and runs `tests/text_speed_check.c`: the `text_speed` setting (`runtime/patches/text_speed.c`) and the
+replacement words of the patch set `text_speed` (`recomp/patches-v111.txt`), lifted by `recomp/lifter.py` as the
+generator lifts them into `sites.c`, against a stand-in message window and typewriter. No game files: the lifted words
+go to the test's build folder.
+
+In the Python file `site_words()` returns the set's replacement words at a site, after checking the site has only them
+and the original word: `tbz w20, #0, #0x774b80` (0x36000074) at the skip site and `ldr s1, [x19, #0x4c]` (0xbd404e61)
+at the speed site. `lifted()` writes a C function running the words at the site: the `adrp` of the patch page is left
+to the caller, who puts the page's address in that register, and a last conditional branch (`tbz w9, #0`, 0x36000069,
+with the original's target) is left to the caller too, who reads its register.
+
+In the C file `site_skip` is main+0x774b74 without its `adrp` (x9 = the page) and its last `tbz w9, #0`; `site_speed`
+is main+0xafe1d8 without its `adrp` (x22 = the page). `set_on` is the patch set, on at the start as its default. The
+message window has +0x34a = 1 when its message may not be skipped; a typewriter has its speed at +0x4c. `run_skip()`
+runs the skip site for the window and its typewriter, returns the decide bit the site's `tbz` tests, and checks that
+only x9, x10 and the page's typewriter word changed. `run_speed()` runs the speed site for a typewriter, returns the
+speed it loads into s1, and checks that only x27, s1, s2 and s8 changed.
+
+- normal: the set goes off, the page holds no factor and no skip. An unknown value reads as normal.
+- fast: the set on, the factor less one on the page, no skip. A message the player may skip: the window's typewriter
+  goes on the page and types faster; the decide bit is the player's own. Any other typewriter keeps its speed. A
+  message the window does not let the player skip: no typewriter on the page, the game's speed.
+- instant: the set on, no factor, the decide bit set for the skip test (whose +0x34a test is the game's own).
+- Back to normal: the set off again (the sites run the original instructions), the page cleared.
+- With the argument `kept-off` the set starts off (`NX2SARIA_TEXT_SPEED_PATCH=0` or a mod on its sites), and no
+  setting may switch it on or touch the page.
+
+## `tests/thread_end_check.py`
+
+Builds and runs `tests/thread_end_check.c` (with `stand_ins()` of `tests/platform_stand_ins.py`): what a thread keeps
+for itself is given back when its function returns (`runtime/platform/win32.c` `thread_main()`,
+`runtime/platform/platform.h` `plat_thread_end_hook`). 416 threads sleep through `plat_wait_ns` (1.2 ms, over a
+millisecond: the thread's own timer), read a file and end, half joined and half detached; the end hook must run once
+on each, and on Windows the process must not hold more handles afterwards than a few threads' worth (each thread made
+a timer and a read event: left open, 400 threads would hold 800 more handles). Off Windows there is no handle per
+thread and the hook is what is checked. A failed read is counted as a failure; the wait for the end sleeps 100 ms more
+so the last threads leave their start function and the system lets go of them. `rt_log()` takes the platform layer's
+lines. No game files, no GPU.
+
+## `tests/tracker_api_check.py`
+
+Builds `tests/tracker_api_check.c` (`runtime/diag/tracker_api.c` over the real platform layer, with a guest memory of
+its own at the game's addresses) and talks to it as a map tracker does: newline-delimited JSON requests, one at a
+time, each answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are
+stand-ins written to the test's build folder. `TRACKER_API_CHECK_LOG=1` prints the server's log on success too.
+
+It checks the answers a tracker relies on (status, read_memory, search_memory, the port's own `nx2saria.state` and
+`nx2saria.game_data`, over a stand-in game-data manager: every kind, keys, digests, and each way of the stand-in's to
+spoil a read, refused instead of answered with made-up values), what is refused (bad parameters, memory the game
+cannot read, the host's own memory beside the game's, unknown and writing methods), what closes a connection (a first
+byte that is not '{', such as a web page's HTTP request or TLS handshake, JSON that is not one object, numbers JSON
+does not spell that way, an overlong id, a line of 4096 bytes, a request left unfinished), that searches never make a
+page of the heap resident, the searches' minute of bytes, the client limit, and the log lines the bench reads (the
+start line, client lines, first answers and first refusals).
+
+In the Python file: `HOST` (0x2000000000) is the host's own memory in the C file; `SEARCH_MIB_PER_MIN` (512) is the
+searches' minute in this build (`runtime/diag/tracker_api.c`, `SEARCH_BYTES_PER_MIN`). `Client` is a tracker's
+connection: one request in flight, answers read line by line; `Client.closed()` is 1 when the server closed the
+connection (EOF within the timeout). `records()` gives a game_data answer's records as (hash, the record's bytes after
+the hash); `none_open()` reads the server's log until a client's closing line says no client is left open, False at
+its end. In `run_checks()`: main is found by its MOD0 header, as a tracker finds it (a range below the module window
+first, no hit, then all regions); ids: a string comes back as sent, no id gets an answer without one, two requests in
+one write get two answers; four clients at once and a fifth refused, after the server has let an earlier one go (on a
+busy machine its thread could still count it); a tracker checking whether the port is taken (connect, close, no
+request), three of which log one line; what closes a connection at once when the first byte tells; a request that
+keeps getting a blank now and then is still unfinished; the searches' minute: main's 64 MiB a search, until a search
+stops short. `run_game_data_checks()`: `nx2saria.game_data` is refused before the game data is there, then each kind
+as a tracker reads it, then each way the game data can fail to read: refused, never answered with made-up values,
+nothing of the host read. `main()` waits half a second at the end for the client threads to log their closing lines.
+
+The C program's guest memory: main's window at 0x7000000000 with a MOD0 header where 1.1.1's main has it (`MOD0_AT`,
+main+0x3c4705c; main+0 holds 1 and main+4 the MOD0 offset; `MAIN_COMMIT`, main's first 64 MiB, holds it), and a heap
+of 16 MiB at 0x1030000000 (the stack and heap block of a run with the tracker API on) with a hole the lazy heap never
+committed (`HOLE_AT`: [4 MiB, 5 MiB), reserved, never committed), a page nobody may read (`DARK_AT`, one committed
+page) and pages never written. Beside them, at 0x2000000000 (`HOST_AT`, outside every guest region), memory of the
+host's own holding a secret: the game's memory map answers for it as taken memory the game can read, as
+`runtime/memory.c` `query_locked()` does for every host allocation below 2^39 (`mem_query()` here: main read-only, the
+heap read-write, the rest taken by the host). The search needles: one inside one piece of the heap, one across the end
+of a search's first copy, and one that runs into the dark page, never a hit. The save folder is as a Windows profile
+under an accented user name has it: backslashes, a quote, UTF-8. `dbg_player_rot()` answers a quarter turn about the
+vertical. `rt_log()` writes one whole line at a time, as the runtime's log writes it (stdio locks the stream for the
+call).
+
+The program prints "READY <port> <resident heap pages>" once it listens, logs every `rt_log` line to stdout, and
+prints "RESIDENT <resident heap pages>" (the heap's pages that hold memory now, by the platform's own answer) and ends
+when stdin closes. The game data is not there at first, as before the game makes it. A line "LOAD" on stdin puts a
+game-data manager in the heap where version 1.1.1 has one (`**[main+DBG_GAME_DATA_SLOT]`), with a few values of each
+kind the API answers, and prints "LOADED"; "EMPTY" before it puts the manager there with its sections still empty, as
+the game has it before it loads a save (EMPTIED). Then each line spoils one thing and prints its answer word: "POINT"
+turns the String64 and String64Array text pointers to the host's own memory (POINTED), "MANY" gives the String64Array
+value 65 texts (MANIED), "DUPHASH" gives Int's second pair the first one's hash (DUPHASHED), "DUP" gives it back its
+hash and the first one's index (DUPPED), "UNSORT" swaps two placed objects' keys (UNSORTED), "ZERO" clears the Enum
+entry's vtable, as an entry the game is still making has it (ZEROED), and "BREAK" gives the Bool kind's middle entry
+another vtable, as a section read at the wrong stride would have (BROKEN).
+
+The stand-in game data is 1.1.1's manager, each kind's section at its number times 0x60; `GD_AT` (heap + 0xc00000)
+holds the slot's target, then the manager, then the kinds' entries and tables, and is made resident at the start so
+LOAD changes no count of resident pages. The kinds' vtables: Bool's and Int's are 1.1.1's (`tracker_api.c` `gd_kinds`
+checks them), the others any in main. A kind's section has n entries of `stride` bytes, each starting with the kind's
+vtable, and a {hash, index} table of 2n pairs, each placed as the game places it: from hash % size on, at the first
+empty pair (Int's table, after its 2 entries: 4 pairs at hash % 4, 0x04735978's first, index 0, 0xfbe01da1's second).
+In `gd_load()` some entries carry other bits that are not the value, the save index and other bytes are left out of
+the answer, a u32 count has other bytes after it, and the slot at main+`DBG_GAME_DATA_SLOT` is written last: the game
+data is there from then on.
+
+## `tests/tsan_build_test.py`
+
+Checks the bench sanitizer compile and cache boundaries without game data.
+
+## `tests/up_defer_check.py`
+
+Builds and runs `tests/up_defer_check.c` on `runtime/vk/vk_up_defer.h`, the list of what the upscalers let go of while
+the GPU may still use it (`runtime/vk/vk_dlaa.c`, `runtime/vk/vk_ffx.cpp`, `runtime/vk/vk_ffx4.cpp`): it is released
+only once the GPU timeline has passed its last submission and, for what a present can read, once enough presents went
+by. Built as C, and as C++ since the two FSR files include the header from C++. No GPU, no game files, any Python.
+
+- A DLSS feature last evaluated in submission 10, a context last dispatched in 12, a never-used one (fence 0).
+- An image a present may read: the fence alone does not free it, the present count must pass too. Both gates: the
+  later one decides.
+- Order: the ready ones in the order put, the rest kept in order.
+- `take_all`: the device is idle, everything goes whatever its gates.
+- Full: the caller is told, and nothing is overwritten.
+- A callback may put another entry (a release that lets go of something else): the new entry waits for the next take.
