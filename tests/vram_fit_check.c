@@ -27,6 +27,14 @@ int main(void) {
     CHECK(vram_fit_heavier(&now, &trade) == VRAM_SUGGEST_RES, "a larger picture with a lighter mode: the picture is named");
     CHECK(vram_fit_heavier(&all, &now) == 0, "frame generation turned off, a smaller picture: nothing");
 
+    VramLoad off = {1080, VRAM_MODE_OFF, 0}, off_fg = {1440, VRAM_MODE_OFF, 0}, lower_fg = {1080, VRAM_MODE_OFF, 1};
+    CHECK(vram_fit_heavier(&off, &now) == 0 && vram_fit_heavier(&off, &lighter) == 0,
+          "the upscaler turned on in a mode below full size renders a smaller scene: not heavier");
+    CHECK(vram_fit_heavier(&off, &dlaa) == VRAM_SUGGEST_MODE, "turned on at full size: the same scene and one more context, heavier");
+    CHECK(vram_fit_heavier(&dlaa, &off) == 0 && vram_fit_heavier(&now, &off) == 0, "turned off: not heavier");
+    CHECK(vram_fit_heavier(&off_fg, &lower_fg) == VRAM_SUGGEST_FRAMEGEN,
+          "a smaller picture and frame generation turned on: only frame generation is named");
+
     PresetHw six = card(6017, 1), four = card(4096, 1), eight = card(8100, 1), six_plain = card(6017, 0), none = {0};
     CHECK(vram_fit_tier(6017) == PRESET_MEDIUM && vram_fit_tier(4096) == PRESET_LOW && vram_fit_tier(8100) == -1 &&
           vram_fit_tier(7700) == -1 && vram_fit_tier(0) == -1, "the tier the video memory alone gives; none from 8 GiB and for an unknown card");

@@ -28,8 +28,13 @@ static inline int vram_fit_mode(int taa_on, const char *dlss) {
     return VRAM_MODE_FULL;
 }
 
+static inline int vram_fit_mode_heavier(int now, int draft) {
+    return now == VRAM_MODE_OFF ? draft == VRAM_MODE_FULL : draft > now;
+}
+
 static inline unsigned vram_fit_heavier(const VramLoad *now, const VramLoad *draft) {
-    return (draft->res_h > now->res_h ? VRAM_SUGGEST_RES : 0u) | (draft->mode > now->mode ? VRAM_SUGGEST_MODE : 0u) |
+    return (draft->res_h > now->res_h ? VRAM_SUGGEST_RES : 0u) |
+           (vram_fit_mode_heavier(now->mode, draft->mode) ? VRAM_SUGGEST_MODE : 0u) |
            (draft->framegen && !now->framegen ? VRAM_SUGGEST_FRAMEGEN : 0u);
 }
 
