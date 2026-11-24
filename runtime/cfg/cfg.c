@@ -94,6 +94,7 @@ static const char *const known[] = {
     "PRESET_PROBE",
     "NVIDIA_CACHE_DIR",
     "MEM_BUDGET_TEST_VRAM_MB", "MEM_BUDGET_TEST_RAM_MB",
+    "VRAM_WARNING",
     "TEX_COMPACT", "TEX_COMPACT_MIN_MB", "TEX_COMPACT_FRAME_MB",
     "STANDIN_FILTER",
     "AUDIO_DUMP", "DEFER_STAMP", "DEPTH_TWIN", "DLAA_ZFIT", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "EVENT_ORDER",
@@ -202,6 +203,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"GEN_SEED", "diagnostics"},
     {"COPY_RETIRE", "diagnostics"},
     {"MEM_BUDGET_TEST_VRAM_MB", "diagnostics"}, {"MEM_BUDGET_TEST_RAM_MB", "diagnostics"},
+    {"VRAM_WARNING", "display"},
     {"TEX_COMPACT", "performance"}, {"TEX_COMPACT_MIN_MB", "performance"}, {"TEX_COMPACT_FRAME_MB", "performance"},
 };
 
@@ -450,6 +452,7 @@ static const CfgMeta metas[] = {
     {"GEN_SEED", "0", "0..4611686018427387904", RESTART},
     {"MEM_BUDGET_TEST_VRAM_MB", "0", "0..1048576", RESTART},
     {"MEM_BUDGET_TEST_RAM_MB", "0", "0..1048576", RESTART},
+    {"VRAM_WARNING", "1", "0|1", RESTART},
     {"DEVICE_LOST_AT", "0", "0..1000000000", RESTART},
     {"COPY_RETIRE", "0", "0|1", RESTART},
     {"INPUT_RECORD", "", NULL, RESTART},

@@ -10,6 +10,7 @@
 #include "mem_budget.h"
 #include "platform/platform.h"
 #include "vk.h"
+#include "vram_warn.h"
 
 static struct {
     PlatOnce once;
@@ -25,7 +26,7 @@ static const char *const side_name[MEM_SIDES] = {"video memory", "system memory"
 
 // The video memory's room: the driver's budget (at most MEM_BUDGET_TEST_VRAM_MB) less this process's use. 0 while the
 // device is not up or the driver gives no figure.
-static int sample_vram(MemRoom *r, char *what, size_t cap) {
+static int sample_vram(MemRoom *r, char *what, size_t cap, uint64_t *used_mb, uint64_t *limit_mb) {
     uint64_t used = 0, budget = 0;
     int exact = 0, ok = 0;
     plat_mutex_lock(&B.vram_lock);
@@ -35,6 +36,7 @@ static int sample_vram(MemRoom *r, char *what, size_t cap) {
     uint64_t u = used >> 20, l = budget >> 20, t = B.test_mb[MEM_VRAM];
     if (t && t < l) l = t;
     *r = mem_room(u, l);
+    *used_mb = u, *limit_mb = l;
     snprintf(what, cap, "%llu of %llu MiB in use%s%s", (unsigned long long)u, (unsigned long long)l,
              exact ? "" : ", the allocator's own estimate", t ? ", MEM_BUDGET_TEST_VRAM_MB" : "");
     return 1;
@@ -71,7 +73,10 @@ static void budget_main(void *arg) {
         for (int side = 0; side < MEM_SIDES; side++) {
             MemRoom r;
             char what[200];
-            if (!(side == MEM_VRAM ? sample_vram(&r, what, sizeof what) : sample_ram(&r, what, sizeof what))) continue;
+            uint64_t used_mb = 0, limit_mb = 0;
+            if (!(side == MEM_VRAM ? sample_vram(&r, what, sizeof what, &used_mb, &limit_mb)
+                                   : sample_ram(&r, what, sizeof what)))
+                continue;
             int known = __atomic_load_n(&B.known[side], __ATOMIC_RELAXED), was = B.level[side];
             int now = mem_level_next(known ? was : MEM_ROOMY, r);   // the first sample: its level as it is
             __atomic_store_n(&B.free_pm[side], r.free_pm, __ATOMIC_RELAXED);
@@ -83,6 +88,7 @@ static void budget_main(void *arg) {
                 rt_log("mem_budget: %s %s, %.1f%% free (%s%s)", side_name[side], mem_level_name[now], r.free_pm / 10.0,
                        what, from);
             }
+            if (side == MEM_VRAM) vram_warn_sample(now == MEM_CRITICAL, used_mb, limit_mb, r.free_pm);
         }
         plat_sleep_ms(MEM_BUDGET_PERIOD_MS);
     }
@@ -96,6 +102,7 @@ static void budget_start(void *arg) {
         rt_log("mem_budget: a test pretends a smaller budget (video memory %llu MiB, system memory %llu MiB; 0: as it is): "
                "the levels follow it, the texture cache's own rules do not", (unsigned long long)B.test_mb[MEM_VRAM],
                (unsigned long long)B.test_mb[MEM_RAM]);
+    vram_warn_start();
     if (!plat_thread_spawn(budget_main, NULL, "mem budget", 0))
         rt_log("mem_budget: cannot start its thread; every level stays normal");
 }

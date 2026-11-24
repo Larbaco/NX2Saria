@@ -45,6 +45,7 @@ Cfg_reload_file: the file's lines as a list of (key, value), a repeated key keep
 - `TEXUP_LOG_MS`, `DYN_RES`, `DYN_RES_TARGET`, `DYN_RES_STEP`, `DYN_RES_MIN`, `TEXTURE_DETAIL`, `VRAM_USE`: vram_use: the removed Video memory use row, read by nothing
 - `PRESET`: the quality preset (`cfg.c` "quality presets", `preset_pick.h`)
 - `PRESET_PROBE`: the quality preset's hardware probe at start (`hw_detect.c`); no menu row
+- `VRAM_WARNING`: the on-screen notice of full video memory (`vram_warn.c`); no menu row
 - `NVIDIA_CACHE_DIR`: NVIDIA's shader disk cache in a folder beside the exe (`vk_device.c` nvidia_cache_beside_exe); no menu row
 - `TEX_COMPACT`, `TEX_COMPACT_MIN_MB`, `TEX_COMPACT_FRAME_MB`: texture compaction (`vk_texture.c`); no menu row
 - `STANDIN_FILTER`: the filter of the scene upscaler's stand-in (`vk_tonemap.c`); no menu row
@@ -236,6 +237,7 @@ The lazy write-back (`memory.c` "Lazy write-back") is on where it has run: its f
 - `STAGING_FAIL_AT`: `vk_memory.c` staging_fail_now: a test of give_back
 - `VRAM_BALLAST_MB`: `vk_memory.c` vk_mem_ballast: a test of a smaller card
 - `GEN_SEED`: `vk_memory.c` gen_seed: a test that starts the page write generations at this value (at most 2^62)
+- `VRAM_WARNING`: `vram_warn.c` vram_warn_start: 0: no notice on screen when the video memory stays critical; the `vram_warn:` log lines of a notice then do not come either
 - `MEM_BUDGET_TEST_VRAM_MB`: `mem_budget.h`: a test that pretends the video memory or the system memory is that many MiB, for the levels the owners that give memory back go by; 0 as it is
 - `DEVICE_LOST_AT`: `vk_sync.c` lost_at_due: a test of the lost device's end
 - `COPY_RETIRE`: `nvn_api_cmd.c` retire_pass: counts the recording copies whose control memory the game reused; frees nothing

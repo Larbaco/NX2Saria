@@ -698,6 +698,17 @@ screens' guest addresses, 0 for a free entry.
 left as it is (the site's next instruction reads x8, which the site loaded before the call). A screen set up again is
 already watched; an entry whose screen was destroyed since is taken over.
 
+Without the bars (`bars_on` 0: a 16:9 picture, where the same site belongs to the set `fov_menu`) the menus'
+backgrounds and the loading fade are still watched, for `wide_menu_open()` and `wide_loading_open()`; the event fade
+is not, since nothing asks for it there.
+
+### `wide_menu_open()`, `wide_loading_open()`
+
+1 while a watched screen of that kind is in states 1 to 3: the game's pause, map or system menu, and the loading
+screen. Read by the field of view (`runtime/diag/debug_tools.c`), which leaves the menus alone, and by the notice of
+full video memory (`runtime/ui/menu.cpp` `vram_warn_tick()`), which waits for both. 0 when neither `wide_bars` nor
+`fov_menu` is on: no screen is handed over then.
+
 ### `wide_bars_init()`, `wide_menu_bars()`
 
 `wide_bars_init()` is `wide_init()`'s call: centre the screens, with margins on the axis that differs from 16:9.

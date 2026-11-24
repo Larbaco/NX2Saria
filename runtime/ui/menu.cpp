@@ -53,6 +53,7 @@ extern "C" {
 #include "ui_text.h"
 #include "vk_dlssg.h"
 #include "vk_lowlat.h"
+#include "vram_warn.h"
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void vk_queue_lock(void);
 void vk_queue_unlock(void);
@@ -61,6 +62,10 @@ int res_adjustable(void);
 int wide_available(void);
 int wide_scene_settable(void);
 void wide_picture(unsigned *w, unsigned *h);
+int ov_movie_live(void);
+int wide_menu_open(void);
+int wide_loading_open(void);
+int64_t frame_step_world_us(void);
 double wide_scene_share(void);
 double wide_scene_wanted(void);
 int wide_scene_restart(void);
@@ -2267,6 +2272,54 @@ static void preset_notice_tick(bool busy) {
     cfg_preset_notice_done();
 }
 
+static void vram_warn_tick(const MenuTarget *t, bool busy) {
+    if (!vram_warn_due()) return;
+    const char *why = g_open.load(std::memory_order_relaxed) ? "the settings menu is open"
+                      : ov_movie_live() ? "a movie plays"
+                      : frame_step_world_us() < 0 ? "the game is not in play yet (title screen or file menu)"
+                      : wide_menu_open() ? "the game's pause or system menu is open"
+                      : wide_loading_open() ? "a loading screen is up"
+                      : busy || g_notice_until_ns ? "another notice is up" : nullptr;
+    if (why) return vram_warn_waits(why);
+    unsigned pw = 0, ph = 0;
+    wide_picture(&pw, &ph);
+    const bool fsr = !strcmp(cfg_value("NX2SARIA_TAA"), "fsr3");
+    const bool full = cfg_bool("NX2SARIA_DLAA") && (!fsr || vk_ffx_available()) && !strcmp(cfg_value("NX2SARIA_DLSS"), "dlaa");
+    const char *fg = cfg_value("NX2SARIA_FRAMEGEN");
+    const bool gen = (!strcmp(fg, "fsr3") && vk_ffx_framegen_available()) || (!strcmp(fg, "dlss") && vk_dlssg_active());
+    const unsigned what = vram_warn_suggest(wide_available() && ph > t->height + t->height / 50, full, gen);
+    char text[sizeof g_notice], said[240] = "", part[160];
+    size_t n = (size_t)snprintf(text, sizeof text, "%s", menu_text(UI_MENU_VRAM_WARN));
+    auto line = [&](UiTextId id, UiTextId row, const char *mode) {
+        if (n + 1 >= sizeof text) return;
+        text[n++] = '\n';
+        int m = snprintf(text + n, sizeof text - n, menu_text(id), menu_text(row), mode);
+        n = m < 0 || n + (size_t)m >= sizeof text ? sizeof text - 1 : n + (size_t)m;
+        size_t k = strlen(said);
+        snprintf(said + k, sizeof said - k, "%s%s", k ? ", " : "", part);
+    };
+    if (what & VRAM_SUGGEST_RES) {
+        snprintf(part, sizeof part, "resolution (a %ux%u picture on a %ux%u window)", pw, ph, t->width, t->height);
+        line(UI_MENU_VRAM_WARN_RES, UI_MENU_GAME_RES, "");
+    }
+    if (what & VRAM_SUGGEST_MODE) {
+        snprintf(part, sizeof part, "upscaling mode (%s at full size)", fsr ? "fsr3" : "dlss");
+        line(UI_MENU_VRAM_WARN_MODE, UI_MENU_UPSCALING, menu_text(fsr ? UI_MENU_FSR3_NATIVE : UI_MENU_DLSS_DLAA));
+    }
+    if (what & VRAM_SUGGEST_FRAMEGEN) {
+        snprintf(part, sizeof part, "frame generation (%s) off", fg);
+        line(UI_MENU_VRAM_WARN_FRAMEGEN, UI_MENU_FRAMEGEN, "");
+    }
+    if (what & VRAM_SUGGEST_PRESET) {
+        snprintf(part, sizeof part, "a lower quality preset (the picture fits the window, no full-size upscaling mode, "
+                                    "no frame generation)");
+        line(UI_MENU_VRAM_WARN_PRESET, UI_MENU_PRESET, "");
+    }
+    notice(text);
+    g_notice_until_ns = plat_now_ns() + VRAM_WARN_SHOW_MS * 1000000ull;
+    vram_warn_shown(said);
+}
+
 static void cfg_reload_tick(void) {
     if (!g_cfg_reload.exchange(0)) return;
     if (opt_draft_any() || opt_display_pending() || g_post != POST_NONE || (g_open.load() && (g_apply_ask || g_modal))) {
@@ -2472,6 +2525,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     const bool capture_shows = bugcap_note(&cap_number, &cap_ok, cap_name) != 0;
     if (g_booting.load(std::memory_order_relaxed)) g_booting.store(0, std::memory_order_release);
     preset_notice_tick(capture_shows || g_open.load(std::memory_order_relaxed));
+    vram_warn_tick(t, capture_shows || amiibo_note_shows());
     bool open = g_open.load(std::memory_order_relaxed);
     static bool was_open;
     bool opened = open && !was_open;

@@ -815,6 +815,11 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_DYN_RES_MIN_OFF] = "only with Dynamic resolution on",
     [UI_MENU_DYN_RES_NO_ROOM] = "nothing to lower: Scene resolution is at or under the minimum",
     [UI_MENU_DYN_RES_NATIVE] = "nothing to lower at DLAA or Native AA",
+    [UI_MENU_VRAM_WARN] = "Video memory is full, so the game runs slowly. In Settings > Screen:",
+    [UI_MENU_VRAM_WARN_RES] = "- %s: choose a lower one",
+    [UI_MENU_VRAM_WARN_MODE] = "- %s: choose a lighter mode than %s",
+    [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s: turn it off",
+    [UI_MENU_VRAM_WARN_PRESET] = "- %s: choose a lower one",
 };
 
 static const char *const text_ru[UI_TEXT_COUNT] = {
@@ -1526,6 +1531,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DYN_RES_MIN_OFF] = "только с включённым динамическим разрешением",
     [UI_MENU_DYN_RES_NO_ROOM] = "нечего снижать: разрешение сцены уже на минимуме или ниже",
     [UI_MENU_DYN_RES_NATIVE] = "нечего снижать при DLAA или Native AA",
+    [UI_MENU_VRAM_WARN] = "Видеопамять заполнена, поэтому игра идёт медленно. В меню «Настройки > Экран»:",
+    [UI_MENU_VRAM_WARN_RES] = "- %s: выберите ниже",
+    [UI_MENU_VRAM_WARN_MODE] = "- %s: выберите режим легче, чем %s",
+    [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s: отключите",
+    [UI_MENU_VRAM_WARN_PRESET] = "- %s: выберите ниже",
 };
 
 static const char *const text_pt_br[UI_TEXT_COUNT] = {
@@ -2283,6 +2293,11 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DYN_RES_MIN_OFF] = "só com a Resolução dinâmica ligada",
     [UI_MENU_DYN_RES_NO_ROOM] = "nada a baixar: a Resolução da cena já está no mínimo ou abaixo",
     [UI_MENU_DYN_RES_NATIVE] = "nada a baixar com DLAA ou Native AA",
+    [UI_MENU_VRAM_WARN] = "A memória de vídeo acabou, e por isso o jogo está lento. Em Configurações > Tela:",
+    [UI_MENU_VRAM_WARN_RES] = "- %s: escolha uma menor",
+    [UI_MENU_VRAM_WARN_MODE] = "- %s: escolha um modo mais leve que %s",
+    [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s: desligue",
+    [UI_MENU_VRAM_WARN_PRESET] = "- %s: escolha um mais baixo",
 };
 
 static const char *const text_zh_hans[UI_TEXT_COUNT] = {
@@ -3067,6 +3082,11 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DYN_RES_MIN_OFF] = "仅在开启动态分辨率时可用",
     [UI_MENU_DYN_RES_NO_ROOM] = "无可降低：场景分辨率已等于或低于最低值",
     [UI_MENU_DYN_RES_NATIVE] = "在 DLAA 或 Native AA 下无可降低",
+    [UI_MENU_VRAM_WARN] = "显存已满，游戏因此变慢。请在“设置 > 显示”中：",
+    [UI_MENU_VRAM_WARN_RES] = "- %s：调低",
+    [UI_MENU_VRAM_WARN_MODE] = "- %s：选择比 %s 更轻的模式",
+    [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s：关闭",
+    [UI_MENU_VRAM_WARN_PRESET] = "- %s：选择更低的一档",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}
