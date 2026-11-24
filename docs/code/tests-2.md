@@ -473,3 +473,284 @@ game's memory has them (0x59220f600 and 0x26d876000).
 - The present count's 24 bits wrap (77 hours at 60 fps): the hold counts across the wrap. The highest address the
   game's memory has keeps its bits above the count.
 - Every index is inside the table, and a field of records (256 records of 12 bytes) spreads over it.
+
+## `tests/mesh_invariant_check.py`
+
+Mesh positions made Invariant (`runtime/vk/vk_pipeline.c` `spirv_mesh_invariant()`): builds the function, cut from
+`vk_pipeline.c` by its text, and runs it on modules made in the test. No game files. Its `--help` text is the string
+`DESCRIPTION`.
+
+- A mesh shader whose position is a member of the per-vertex block (glslang's `gl_MeshVerticesEXT`); one whose position
+  is an array variable of its own, as `tools/xlate/MeshSpirv.cs` declares it (an Output variable of vec4[max vertices]
+  decorated BuiltIn Position), assembled; the same block mesh shader with the position already invariant; a vertex
+  shader.
+- The two mesh shaders get one Invariant decoration on the position (`OpMemberDecorate` on the block member,
+  `OpDecorate` on the variable), the rewritten modules pass spirv-val, a second pass changes nothing, and the
+  already-invariant mesh shader and the vertex shader are left alone.
+- `invariants()` gives (`OpDecorate` Invariant count, `OpMemberDecorate` Invariant count) of a module; the table in
+  `main()` maps a name to (changed, the Invariant decorations wanted after the rewrite as that pair).
+
+## `tests/mesh_path_check.py`
+
+Builds and runs `tests/mesh_path_check.c` on `runtime/vk/vk_mesh_path.h`: how the game's task and mesh programs are
+drawn (`runtime/vk/vk_device.c` `create_device()`): natively, through the mesh fallback, the mesh emulation or not at
+all, for each device kind and setting. No GPU, no game files, any Python.
+
+- The default (auto, emulation off) by device.
+- Intel's cards with mesh shaders take the fallback on every Intel driver: holes in the fog on Arc B390 and B580 with
+  the native path (issue #13), which 0.18.2's 32-lane task stage and invariant positions did not mend.
+- `mesh_fallback` = 0 gives an RX 6000 card native mesh pipelines back, as 0.10.1 drew them; `mesh_fallback` = 1 on
+  every device.
+- The mesh emulation acts only without mesh shaders, and then before the fallback. An NVIDIA card never takes the
+  emulation, which ended the game inside its driver (GTX 10 cards in the low-end GPU mode of 0.10.1, which set
+  `mesh_emulation` = 1).
+- A value the settings table does not list reads as auto. The reason names the driver default, and how to turn it off.
+- `mesh_fallback_batch` = auto batches where the fallback is the device's default (where `mesh_fallback` = auto would
+  choose it).
+
+## `tests/mesh_pipeline_check.c`
+
+Injects cache-key results into the reporting guard used by `mesh_prepared_check` (`runtime/vk/vk_exec_draw.c`).
+
+## `tests/mfb_batch_check.py`
+
+Builds and runs `tests/mfb_batch_check.c` on `runtime/gfx/mfb_batch.h`, the rule of the mesh fallback's batch
+(`runtime/vk/vk_exec_draw.c` `mfb_draw()`, `NX2SARIA_MESH_FALLBACK_BATCH`): which draws are batched and which go one
+by one (the way back), the parts of the buffers they take, and a program's history. No GPU, no game files, any Python.
+
+`tests/mfb_batch_check.c` `sim_draw_ex()` is the draw path's order as `mfb_draw()` has it, without Vulkan:
+`mfb_batch_need`, then `mfb_batch_steps` (the same function `mfb_draw()` calls) with the cut, the pre-pass command
+buffer and the part as calls on the simulation, and `mfb_count`. A draw one by one after parts were taken closes them
+(`runtime/vk/vk_mesh_fb.c`, `closed`; `vk_meshfb_one_by_one`): the next batched draw cuts. A draw one by one ends its
+pass (`vk_exec_barrier`). The end of a pre-pass command buffer (a cut, or `pre_end`) starts the parts over. `FS` (100)
+is the parts' floor in these checks (`mfb_floor`).
+
+- The reasons, in their order.
+- The parts' sizes. The floor is 1/`MFB_FLOOR_DIV` of the buffer, in the program's workgroups, never under the least.
+  The case seen in Kokiri Forest: a program that had asked for 32 at most asked for 454.
+- The cut: at a pass's first batched draw, and again whenever the pass it served ended.
+- The parts: in turn, aligned, never past the buffers, and nothing taken when one does not fit.
+- The history grows from the records read back. A history is taken once it has settled: `MFB_MIN_CALM` records in a
+  row without a jump (more than twice the most). A batched draw short of its part excludes the program, which is taken
+  back after `MFB_READMIT` calm records, until `MFB_MAX_SHORTS`. The draws already in flight come back short together:
+  one exclusion counts once.
+- A pass as `mfb_draw()` sees it: the way back to one by one, its reasons and the cuts. Closed with the pass still open
+  (a draw one by one that did not end it): the next batched draw cuts too. A stage that reads a texture or image goes
+  one by one, without a cut. When the cut fails the draw goes one by one (no pre-pass), and the draws after it are
+  tried again. When the buffers fill, the draw that does not fit cuts and starts the parts over; a part larger than
+  the buffers goes one by one. A batched draw whose stages failed to record is not batched, and its cut was for
+  nothing.
+- The task overflow (`runtime/shaders/meshfb_clamp.comp` keeps the count asked for): a batched draw short of its task
+  part excludes.
+
+## `tests/mods_romfs_check.py`
+
+The mods folder served as RomFS overlays (`runtime/hle/romfs.c`, `runtime/patches/mods.c`): load order, added files,
+case, Unicode. Run as `python tests/mods_romfs_check.py --exe build/v121-<tag>/nx2saria.exe --version v121`; it needs
+the extracted RomFS of the version. The `--help` description is the string `DESCRIPTION`.
+
+It builds a mods folder in a temporary directory with files of its own bytes at real RomFS paths (from
+`build/extracted/<version>/romfs/index.json`), runs `nx2saria.exe --probe-fs` on it and reads the `mods:` lines of the
+log. `--probe-fs` compares the bytes it reads through the RomFS with every overlay file, so a wrong winner fails it
+too. `run()` gives the probe a profile of its own beside `mods`, since the merged resource size table is written
+there. In `main()` one planted file is of another game version's (no RomFS has a `Product.999` table: counted, never
+served) and one sits in a mod manager's `romfslite` folder.
+
+`restbl_case()` uses a second folder for the merged resource size table the start writes to the profile
+(`runtime/hle/romfs.c` `restbl_overlay()`): a grown file's entry, an added file's, a shipped table's and another
+version's table's (a file smaller than the original: only its table raises it). The table's layout (RESTBL): "RESTBL",
+u32 version, u32 name length, u32 hashed count, u32 named count, {u32 crc32, u32 size} sorted, then {char[name length],
+u32 size}. `restbl_pack()` returns a table with the sizes of its hashed entries set from `entries` (crc32 -> size,
+existing hashes only).
+
+## `tests/motion_fusion_check.py`
+
+Builds and runs `tests/motion_fusion_check.c`: `runtime/input/motion_fusion.c` on made-up sensor samples, 4 ms apart,
+with a stand-in for the log (printed, and the lines kept for the checks) and no settings from the platform layer. The
+program prints a PASS or FAIL line per case. `static_checks()` also checks that `motion_fusion.c` makes no log call
+between taking the instance's lock and the last unlock in the functions that log. No game files, no GPU.
+
+Build notes: `runtime/platform/linux.c`'s clipboard calls SDL3; the check never uses the clipboard, so a stand-in keeps
+it from needing SDL3's headers and library. The platform files are the runtime's, built as the runtime builds them;
+the strict warnings are for `motion_fusion.c` and the driver. `runtime/simd_fp.h` `FOK` ors two compares on purpose,
+and clang 18 warns on it.
+
+The simulated controller (`Sim`) has a true orientation T (controller -> world, z up), rotated by the true rate; its
+sensors add `bias` (rad/s), `gyro_noise` (rad/s RMS per axis) and `acc_noise` (G RMS per axis). `sim_pitch()` sets the
+true pose turned about the controller's x by a number of degrees from flat; `sim_run()` gives n samples turning at the
+true rate w (rad/s, controller axes), the accelerometer reading gravity in controller axes. The error measured is the
+angle between the reported up (the reference z in controller axes) and the true one, in degrees. `RAW` is no
+calibration and no dead zone: the sensor's own rate.
+
+1. Lying still with a bias and a little noise (5 s): learned within 1.5 s of being still, then the reported rate is
+   none and the angle stops, with one log line per still period.
+2. No calibration: the bias goes through without a dead zone; each dead zone level zeroes a rate just under it and
+   passes one just over it unchanged.
+3. Known rotations from lying flat: a quarter turn about up, a quarter pitch and back.
+4. Held in the hand (35 s, 2 deg/s RMS of gyro noise in all, 0.01 G): tremor and a slow pan are never still, and
+   nothing is learned.
+5. Re-learning: still with a bias, held, then still with a bias 0.3 deg/s off it. In 3 s the controller is still from
+   about 0.8 s, so the period learns for the 1 s that logs it; over 6 s, past 2 s learned in all, the bias follows with
+   a 3 s time constant.
+6. The bias of each controller comes back with it; five more sources push the oldest out of the four kept.
+7. The turn and tilt factors scale the rate, the angle and the direction. With 1 and 1 the reported rate is the input's
+   and the direction the filter's, bit for bit; back to 1/1 snaps to it.
+8. The integral term: a constant bias about a horizontal axis that is never learned (calibration off), tilted 30 deg,
+   over 60 s, against the proportional term alone.
+9. The aggregate line after 60 s.
+10. The quarter turn and restart that `runtime/hle/ov_probe.c` `probe_feedback()` checks.
+
+Further cases: (a) larger biases lying still are learned too (the step rule waits until the bias has been learned for 2
+s); (b) held pitched for 120 s with a bias about the controller's z, long enough for the integral to take part of it
+up, then set down flat in 2 s and left still for 10 s and 50 s more: once the bias is learned, the integral no longer
+turns the heading of the still controller (`heading_deg()` is the x axis' heading); (c) turn and tilt factors over
+closed and non-commuting paths (`loops()`: five loops of 30 deg turns about the controller's x and y; a 45 deg/s turn
+about the world's up): the reported orientation stays tied to the filter's; (d) a known limit: a smooth slow turn with
+little noise looks like a still controller with a bias; (e) samples with values that are not finite move nothing and
+poison nothing; (f) a wrong bias (a smooth pan of 3.5 s learned as one) is learned again once the controller lies
+truly still (60 s, no bias).
+
+## `tests/mouse_direct_check.py`
+
+Checks the direct camera hook's register contract and raw-count routing without game data
+(`python tests/mouse_direct_check.py --cc <clang>`; the `--help` text is the string `DESCRIPTION`). One block of
+stand-ins for the rest of the runtime serves both harnesses. The sites are Ocarina 1.1.1's
+(`recomp/patches-v111.txt`, set `mouse_direct`): the two sites of `camera_input_oot` and `camera_activity_oot`.
+
+## `tests/mouse_stick_check.c`
+
+The mouse camera in stick mode (`runtime/input/input_map.c` `input_mouse_stick()`): raw counts to a right-stick
+deflection with the camera speed taken out of it. The game multiplies the right stick's turn rates by the camera
+speed, so the deflection is divided by it, and the division comes before the limit to full tilt: a slow movement turns
+as far as at camera speed 1, and a fast flick reaches full tilt, which the game turns into its top speed with the
+factor in it. `tests/mouse_stick_check.py` builds and runs it with `runtime/input/input_map.c`; the stand-ins are what
+`input_map.c` needs from the rest of the runtime, none of it reached from `input_mouse_stick()`. No game files.
+
+- A slow movement: the deflection is the one at camera speed 1 divided by the factor (while that is below full tilt),
+  so the game's multiplication gives the same turn. Full tilt is at 3000 counts a second.
+- A fast flick reaches full tilt at every camera speed, in each direction. The case that was wrong: at camera speed 1.5
+  a flick stopped at two thirds of full tilt, the top speed of camera speed 1.
+- Nothing to divide by: no deflection.
+
+## `tests/movie_timeline_check.py`
+
+Compares both movie timestamp patches with Unicorn and their lifted C. It needs Unicorn and a C compiler (`--cc` or
+`CC`), no game files and no GPU; the generated harness files stay in `build/test/movie_timeline`. The `--help` text is
+the string `DESCRIPTION`. `main()` builds one synthetic layer -> controller -> player -> video surface chain for both
+engines. The samples are the selected 60 Hz video's millisecond-rounded PTS at different redraw rates: pauses,
+repeated pictures and skipped pictures must follow PTS, never the redraw count; the last ones hold a picture and then
+start a new movie.
+
+## `tests/nvidia_cache_check.py`
+
+Builds and runs `tests/nvidia_cache_check.c` on `runtime/vk/nvidia_cache.h`: what the game puts into the environment
+for NVIDIA's shader disk cache (a folder beside the exe, a limit of 8 GiB and, on Windows, the cleanup off; the
+player's own values stand), how it counts the folder and the lines the logs say about both. It needs a C compiler
+only: no driver, no GPU and no game files.
+
+`wiring()` finds in the sources what the runtime does with the header (`runtime/vk/vk_device.c`
+`nvidia_cache_beside_exe()`, `runtime/vk/vk_pipeline.c` `lw_say_cache_folder()`, the setting's rows in
+`runtime/cfg/cfg.c`), so a change of that wiring shows in this check even where the Windows-only code does not run; it
+returns 0 when the runtime applies the header where it says. Its table holds (file, what it must hold, a pattern);
+`squeeze()` reads adjacent string literals as one.
+
+In `tests/nvidia_cache_check.c` the lister answers from a planted tree: `empties` are folders that are there and hold
+nothing, `denied` folders the system refuses (`fake_list()` answers 5, `PLAT_FS_ERROR` of `runtime/platform/platform.h`),
+`listed` counts the lister's calls, and a folder some entry sits in below it exists too. `deaf_list()` goes on after
+the callback says stop; `deep_deaf_list()` gives a folder and a file in each, whatever the callback says; `deep_list()`
+one folder inside each one, for ever. `measure()` plants a sentinel past `cap`: the walk never writes past it.
+
+- The plan: scenarios written out by hand (`in_of(windows, enabled, driver, path_set, size_set, skip_set, folder_ok)`),
+  then what holds for every combination of the seven inputs: where the folder's state is not asked (`nvc_need_folder`)
+  it changes nothing, and Linux never differs from what it did before: the folder, then the limit.
+- The variables a restart inherits: the game names what it set, and a start takes those for the game's. `nvc_stale`:
+  what the game set before and does not set now is taken out of the environment.
+- The lines. Linux: the words the log has always had, built in the check with the old format. Windows: the three
+  variables, with their values and whose they are. The lines when nothing is set, and when the environment refuses a
+  variable. A buffer too short takes what fits, ends with a NUL and is not passed.
+- `nvc_commas` (1234567 into a short buffer is cut, never overrun) and `nvc_size_text` (1739461181 bytes is 1.62 GiB).
+- `nvc_measure`. Windows paths join with a backslash, the root's own kind. The path buffer: a folder whose path does
+  not fit is said, the rest counted ("/a/bb" needs 6 bytes with its NUL; with 2 the root alone does not fit; with 3
+  the root fits to the last byte and "/a/bb" does not). The entry limit; a lister that goes on after the callback said
+  stop is not counted past the limit. The depth limit: a folder inside every folder, for ever, and nothing is counted
+  after it, whatever the lister does with the callback's answer.
+
+## `tests/ocarina_log_check.py`
+
+Builds `runtime/pacing/frame_rate.c`'s ocarina log (`ocarina_log_init`, `ocarina_watch`, `ocarina_end`, cut out of the
+file) with stand-ins for the patch sets, the patch page and the log, and plays it the page words the sets `orecord`
+(+264) and `ostaff` (+776) write. A stretch of ocarina use gives one line after two quiet seconds, with its presents,
+the presents the recorder clock moved on and the notes the staff moved (rises of its signal), and nothing comes while
+neither word changes. Without the sets the log watches nothing and says so at the start. No GPU, no game files, any
+Python. `cut()` takes `frame_rate.c` from the ocarina log's first `#define` to the end of `ocarina_watch`;
+`compiler()` here takes `$CC`, else MSYS2 UCRT64's clang, else the clang on `PATH`.
+
+## `tests/ocarina_timing_check.py`
+
+Checks the set `orecord` of `recomp/patches-v111.txt`: the ocarina recorder's clock carries each update's fraction of
+a 60 Hz frame on the patch page's +264 (`FRACTION`) instead of cutting it. It needs Unicorn, numpy and a C compiler
+(`--cc` or `CC`), no game files; harness files stay in `build/test/ocarina_timing`. The `--help` text is the string
+`DESCRIPTION`. `SIZE` (0x4ea0000) is a stand-in main size: the patch page lands at main+0x4ea0000, as on 1.1.1.
+`GAME` (0x1e390008) is the game's word, `fcvtzu w8, s0`.
+
+1. `check_table()`, the table: the set's switch and default, its four sites, their original word and the nine
+   replacement words, the page word resolved to `adrp x8` of the patch page at each site, and no other set's word
+   loading or storing the fraction's bytes through an unsigned offset. The set is found by its name: sets added after
+   it go after it in the table.
+2. `check_lifted()`, the lifted words (`recomp/lifter.py`, as the generator lifts them) against the game's word and a
+   float32 model. `fcvtzu()` is `fcvtzu w, s`: toward zero, NaN and negatives to 0, saturated at 2^32 - 1; `model()`
+   is the words in float32 with round to nearest: (w8, the new fraction's bits). Whole steps of one and two frames
+   give the game's count, and the fraction stays +0.0. The steps of the 40 to 240 fps limits count 3600 frames a
+   minute, each update the floor or the ceiling of the step; at 144 Hz it is 5 in every 12 updates, and the float step
+   is a little under 5/12, so the first 12 count 4. A carried fraction: 0.75 + 0.5 gives one frame and leaves 0.25.
+   Steps the game never gives (NaN, negative, infinite, huge): the game's count, a fraction in [0, 1), and the next
+   whole step counts one. v0 keeps the step, its upper lanes too.
+3. `check_unicorn()`: the nine words, the `adrp` included, run from the site's address at each site (FP and SIMD on:
+   `CPACR_EL1` = 0x300000) against the lifted C, where x8 is set to the page buffer as the `adrp` sets it to the page,
+   over random steps and fractions: registers and the page agree bit for bit.
+
+`build()`: each function sets the host's floating-point mode from `c->fpcr` as the runtime does on entry to guest code
+(`runtime/cpu.h` `rt_fpcr_sync()`) and puts Python's back after the words; x8 is the page, set by the caller as the
+`adrp` would. `Harness` is a Cpu and a page buffer for the lifted words; `Harness.run()` makes one call and returns
+w8. The Cpu changes only in x8, v16-v18 and FPSR, and the page only at +264.
+
+## `tests/oq_hold_check.py`
+
+Builds and runs `tests/oq_hold_check.c` on `runtime/vk/vk_oq_hold.h`: the count a samples-passed report writes when
+the full occlusion query ring left some of its draws uncounted (`runtime/vk/vk_exec_xfer.c` `oq_report_count()`,
+`NX2SARIA_OQ_HOLD`): the larger of what was counted and the record's last complete count. No GPU, no game files, any
+Python.
+
+- Nothing remembered: the old rule, what was counted and at least 1.
+- A record reported complete, then a frame that missed draws: the last count holds. What was counted is a lower bound:
+  above the held count it wins.
+- A newer complete report replaces the held count, an occluded one too.
+- Other records keep their own counts; a record next to it is another one. A record that shares a slot with another
+  forgets the older count, never takes the other's.
+- A report with no CPU-visible record (address 0) is neither remembered nor held.
+- The 1024 records of a frame's queries spread over the table: few collisions among consecutive records.
+
+## `tests/pack_shader_cache_test.py`
+
+`tools/pack_shader_cache.py` on a fake shader cache: the pack layout `runtime/gfx/gfx_shader.c` reads (sorted index,
+bounds, data), loose files folded in and deleted, a second run merging new loose files, a loose file winning over its
+packed copy, malformed files skipped and `--keep`. No game files; stdlib only.
+
+`USE` is a use record as `gfx_shader.c` `use_store()` writes it; `read_pack()` returns {(kind, name hex): bytes},
+checking what `gfx_shader.c` `pack_open()` checks. `PackTest.shader()` makes `in/` again, as `in_store` does after a
+pack removed it: `in/` is removed when empty. A bad loose copy leaves the packed one in place; a bad file that is
+nowhere else is skipped, and never deleted unless packed.
+
+## `tests/part_file_check.py`
+
+Builds `tests/part_file_check.c` with the platform layer and runs it: `runtime/part_file.h`, a file written piece by
+piece gets its name only when it is complete. `part_file_check <folder>` runs the checks in that folder;
+`part_file_check <folder> hang` writes half of `<folder>/killed.tsv`, prints "writing" and sleeps: the Python side
+kills it there, as a closed game ends the thread that writes a dump. `rt_log()` in the C file takes the platform
+layer's lines.
+
+- A new file: nothing under its name while it is written, the whole file after.
+- Over an older file: the old one stays whole until the new one is complete.
+- Given up (the writer met an error): the older file stays, the part goes.
+- A folder that is not there: nothing opens, and closing nothing is no success. A name that does not fit the path
+  buffers.
