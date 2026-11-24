@@ -9,7 +9,7 @@ This is an initial inspection slice. Running-game detection, interrupted-job rep
 `inspect_installation()` reports the presence of a job marker independently of the installation status. A marker alone cannot distinguish active work from an interrupted job, so the interface must not claim that it does. On Linux, an observed executable in `/proc` confirms that the game is running; no match leaves the result unknown because process visibility may be restricted. On Windows, `launcher/platform/windows.py` `game_running()` reads a process snapshot and process image paths without changing the executable; a match is confirmed only when the path and, when supplied, owner ancestry match. Failure to observe a match remains unknown.
 
 `launcher-electron/src/worker-client.ts` starts a persistent worker, validates its handshake, serializes requests and
-tracks replies and sequenced game events. Invalid frames or timed-out requests disconnect it and do not replay a
+tracks replies and sequenced game events. On Windows the worker is started detached so the Electron process can exit while the worker finishes supervising a game. Invalid frames or timed-out requests disconnect it and do not replay a
 mutation. `main.ts` validates inspection and Play responses and uses the worker to supervise the game. The worker
 owns the launcher lock, reports waiting updates without applying them and continues following a game after the window
 closes. The mod rebuild path and full platform validation remain incomplete.

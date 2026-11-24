@@ -94,7 +94,7 @@ export class WorkerClient extends EventEmitter {
 }
 
 export async function openWorker(root: string, python: string, source: string): Promise<WorkerClient> {
-  const worker = new WorkerClient(spawn(python, ['-m', 'launcher.worker', '--root', root], { cwd: source }));
+  const worker = new WorkerClient(spawn(python, ['-m', 'launcher.worker', '--root', root], { cwd: source, detached: process.platform === 'win32' }));
   try {
     worker.handshake = parseHandshake(await worker.request('hello', { protocol: PROTOCOL_VERSION }));
     return worker;

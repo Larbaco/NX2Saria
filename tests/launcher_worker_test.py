@@ -555,6 +555,38 @@ class WorkerTest(unittest.TestCase):
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
+    @unittest.skipUnless(sys.platform == 'win32' and os.environ.get('NX2_TEST_FAKE_GAME'), 'needs synthetic Windows executable')
+    def test_windows_native_game_finishes_after_all_pipes_close(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        shutil.copyfile(os.environ['NX2_TEST_FAKE_GAME'], game / 'ocarina.exe')
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,subprocess,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys,saves,mods,build,commit\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=False), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            self.assertIn('result', json.loads(worker.stdout.readline()))
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'game_started')
+        worker.stdout.close()
+        worker.stderr.close()
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertEqual((game / 'game-finished').read_text(), 'done')
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: eof game running', log)
+        self.assertIn('worker: game ended', log)
+
     def test_broken_output_keeps_worker_and_lock_until_game_ends(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()
