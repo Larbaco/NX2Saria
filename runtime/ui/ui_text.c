@@ -495,8 +495,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "On, as in the game: a figure gives its items once a day, and after that the "
                                         "game says you cannot use it again today. Off: it gives items every time it is "
                                         "tapped. The two figures that give a mask have no limit either way.",
-    [UI_MENU_MENU_LANG] = "Menu language", [UI_MENU_MENU_LANG_DESC] = "Language of this menu and the overlay.",
-    [UI_MENU_MENU_LANG_AUTO] = "Automatic (from Windows)",
     [UI_MENU_REPLAY_WORKERS] = "CPU helper threads (experimental)",
     [UI_MENU_REPLAY_WORKERS_DESC] = "Uses more of your CPU's cores to prepare each frame for the graphics card. Automatic "
                                     "picks the number for your CPU: half its cores less one, none on four cores or fewer "
@@ -1251,8 +1249,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "Вкл., как в игре: фигурка даёт предметы раз в день, после чего игра пишет, "
                                         "что сегодня её больше использовать нельзя. Выкл.: предметы при каждом "
                                         "прикладывании. Две фигурки, которые дают маску, не ограничены в любом случае.",
-    [UI_MENU_MENU_LANG] = "Язык меню", [UI_MENU_MENU_LANG_DESC] = "Язык этого меню и индикатора.",
-    [UI_MENU_MENU_LANG_AUTO] = "Автоматически (из Windows)",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
     [UI_MENU_DISCORD_RPC_DESC] = "Отправляет активность и время игры в Discord. Сначала укажите свой discord_app_id "
                                  "в nx2saria.ini или NX2SARIA_DISCORD_APP_ID; Discord показывает имя, зарегистрированное "
@@ -1779,8 +1775,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                         "jogo diz \"Não é possível usar este amiibo novamente hoje\". Desligado: ele "
                                         "dá itens toda vez que é encostado. Os dois amiibos que dão máscara não têm "
                                         "limite de nenhum jeito.",
-    [UI_MENU_MENU_LANG] = "Idioma do menu", [UI_MENU_MENU_LANG_DESC] = "Idioma deste menu e do indicador.",
-    [UI_MENU_MENU_LANG_AUTO] = "Automático (do Windows)",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
     [UI_MENU_DISCORD_RPC_DESC] = "Envia uma atividade e o tempo de jogo ao Discord. Primeiro informe seu próprio "
                                  "discord_app_id no nx2saria.ini ou NX2SARIA_DISCORD_APP_ID; o Discord mostra o nome "
@@ -2576,9 +2570,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_AMIIBO_DAILY_LIMIT] = "amiibo 每日限制",
     [UI_MENU_AMIIBO_DAILY_LIMIT_DESC] = "开（与游戏相同）：每个 amiibo 每天只给一次道具，之后游戏会提示今天无法再使用该 amiibo。关：每次放上都会给道具。给予面具的两个 amiibo "
                                         "本来就没有限制。",
-    [UI_MENU_MENU_LANG] = "菜单语言",
-    [UI_MENU_MENU_LANG_DESC] = "本菜单和性能浮层的语言。",
-    [UI_MENU_MENU_LANG_AUTO] = "自动（跟随 Windows）",
     [UI_MENU_DISCORD_RPC] = "Discord Rich Presence",
     [UI_MENU_DISCORD_RPC_DESC] = "向 Discord 发送活动和游戏时长。请先在 nx2saria.ini 或 NX2SARIA_DISCORD_APP_ID "
                                  "中设置自己的应用 ID；Discord 会显示该 ID 注册的名称。",

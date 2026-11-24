@@ -3075,7 +3075,7 @@ leaves room for a note.
 ### `UiTextId`: what each text is for
 
 The ids come in groups, in this order: the software keyboard; the menu's window, tabs and bottom row; Screen; Game;
-Sound; Controls; the Controls tab's remapping rows; the Amiibo tab; the Menu tab; the Game tab's Testing rows; the
+Sound; Controls; the Controls tab's remapping rows; the Amiibo tab; the Game tab's Discord row and Testing rows; the
 language names; Advanced; the performance overlay; the Cheats tab; the Saves group; the capture note; the boot screen;
 the Picture rows.
 `UI_MENU_FIRST` to `UI_MENU_LAST_ID` carry English, Russian, Brazilian Portuguese and Simplified Chinese texts.
@@ -3132,7 +3132,7 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_AMIIBO_DAILY_LIMIT`, `UI_MENU_AMIIBO_DAILY_LIMIT_DESC` | the Game tab's switch for the game's once-a-day amiibo limit (`NX2SARIA_AMIIBO_DAILY_LIMIT`) |
 | `UI_MENU_REPLAY_WORKERS` and the ids after it | the Game tab's Testing rows (`runtime/ui/menu.cpp` `tab_game()`), English only |
 | `UI_MENU_NEEDS_WORKERS`, `UI_MENU_NEEDS_PIPE` | why a row is greyed out |
-| `UI_MENU_LANGNAME_*` | language names, each in its own language and the same in every row (game language and menu language lists) |
+| `UI_MENU_LANGNAME_*` | language names, each in its own language and the same in every row (the game language list) |
 | `UI_MENU_ACTION_FAILED` | beside a button whose action did not work (no clipboard, no folder) |
 | `UI_MENU_OV_FPS_LABEL`, `UI_MENU_OV_FG_LABEL`, `UI_PERF_LINE_FPS_FG`, `UI_MENU_OV_FRAME_LABEL`, `UI_MENU_OV_FMT_FPS` | the overlay's frame rows: their labels, the rate |
 | `UI_MENU_OV_LOW1`, `UI_MENU_OV_LOW01` | printf: the fps of the slowest 1% / 0.1% of the frames, no unit (the overlay column stays narrow) |
