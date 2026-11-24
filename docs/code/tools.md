@@ -650,6 +650,394 @@ The disassembler for `tools/check_isa.py`: llvm-objdump of `--toolchain`, else M
   attributes and intrinsics pass `-march=x86-64-v2` by, and one `vmovdqa` of a YMM register stops a CPU without AVX.
 - The DLLs copied beside `nx2saria.exe` are the dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL).
 
+## `tools/build_hactool.py`
+
+Builds hactool: `toolchain/hactool/hactool.exe`, hactool at a pinned commit plus `tools/hactool/*.patch`
+([building.md](../building.md)).
+
+```
+python tools/build_hactool.py [--src DIR] [--out DIR]
+```
+
+It fetches the pinned commit into `toolchain/src/hactool`, resets it (local changes and build output there are
+discarded), applies the patches of `PATCHES` (`portable.patch`: title keys and BKTR fixes; `unicode.patch`: a UTF-8
+manifest; `mbedtls-asm-clobbers.patch`) and builds a static exe with MSYS2 UCRT64 gcc; mbedtls comes with hactool's
+tree. The exe and hactool's `LICENSE` go to `toolchain/hactool`, where `tools/extract.py` takes them. Run with `.venv`.
+On Linux the system's cc and make build `toolchain/hactool/hactool` (`unicode.patch` only adds a Windows manifest,
+under `EXEEXT` `.exe`).
+
+### `fetch()`
+
+Afterwards `src` holds `COMMIT` with no local changes or untracked files.
+
+### `main()`
+
+- On Linux `--cc` goes to make as `CC=` on the command line: the bundled mbedtls's own make reads it too.
+- hactool reads `~/.switch/prod.keys` before it prints the banner and exits on a malformed key there, so the check of
+  the built exe runs with an empty home (`HOME` and `USERPROFILE`): it tests the binary, not the builder's keys.
+
+## `tools/build_shaders.py`
+
+Builds the runtime's own shaders into C headers of SPIR-V words, and the files it embeds into headers of bytes.
+
+```
+python tools/build_shaders.py [--check] [--all] [--runtime DIR]
+```
+
+The repository holds the shaders as source only. Each becomes `runtime/<name>_spv.h`, which declares
+`static const uint32_t <name>_spv[]`; the headers are build outputs (ignored by git) and `tools/build_game.py` builds
+the missing and the stale ones before it compiles the runtime. Three kinds of source:
+
+| Source | What |
+|---|---|
+| `runtime/shaders/<name>.comp`, `.vert`, `.frag` | GLSL, compiled with glslc (one name per shader) and checked with spirv-val; an `#include` is looked for beside the file that has it, then in `runtime/shaders/ffx3` (the FSR 3.1 passes' headers) |
+| `runtime/shaders/<name>.mesh`, `.task` | the same for the mesh fallback probe's mesh and task shaders (SPIR-V 1.5) |
+| `runtime/shaders/<name>.spvasm` | SPIR-V assembly, assembled with spirv-as and checked with spirv-val |
+| `tools/make_dlaa_mask.py`, `tools/make_mvobj_fs.py` | shaders assembled in Python (`ASSEMBLED`); they need no other tool |
+
+One more kind of header is no shader: a file the runtime embeds (`EMBEDDED`: the menu's font, the SMAA lookup
+textures) as a list of its bytes, for a compiler without `#embed` (`runtime/ui/menu.cpp` and `runtime/vk/vk_aa.c`
+include them). It needs no tool.
+
+A compiled or assembled header records the SHA-256 of its source (with the files a GLSL source includes, from its
+folder or `runtime/shaders/ffx3`) and is stale when that no longer matches; a Python one is stale when its text is not
+what its script gives. glslc, spirv-as and spirv-val come from MSYS2 UCRT64 on Windows (packages
+`mingw-w64-ucrt-x86_64-shaderc` and `mingw-w64-ucrt-x86_64-spirv-tools`) and from `PATH` elsewhere (shaderc,
+spirv-tools). A folder that carries its headers ready-made (the build kit, `tools/make_kit.py`) needs none of them:
+nothing there is stale.
+
+- `BIN` is the MSYS2 folder on Windows; elsewhere, and without MSYS2 there, the tools come from `PATH`.
+- `MESH_TARGET` is `vulkan1.2`: mesh and task shaders need SPIR-V 1.4 or later.
+- `ASSEMBLED`: header name to the script beside this one that assembles it; the script's `HEADER` is the header's
+  text.
+- `EMBEDDED`: a file below `runtime/` the runtime embeds, to the header of its bytes, below `runtime/` too (git ignores
+  it).
+- `INCLUDE_DIRS`: the folders of `runtime/shaders` that glslc searches for an `#include` after the including file's
+  own folder (`-I`).
+
+### `embedded()`
+
+True for a file of `EMBEDDED`: a binary file, read as it is.
+
+### `included()`
+
+The files a GLSL source includes (`#include "name"`), found as glslc finds them: beside the including file, then in
+`INCLUDE_DIRS`; and theirs, in order of first use. The source is read as Latin-1: the SMAA source is not UTF-8.
+
+### `source_hash()`
+
+For a GLSL source the hash covers the files it includes too, so a header goes stale with them. Text is hashed with
+CRLF turned into LF, so the hash is the same on a CRLF checkout.
+
+### `bytes_header()`
+
+The header of an embedded file: its bytes as decimal numbers, to include inside an array's braces.
+
+### `sources()`
+
+Every shader source with the header it becomes: the files of `runtime/shaders` and the scripts of `ASSEMBLED` that are
+there (a folder without them carries the headers ready-made).
+
+### `stale()`
+
+The shader sources whose header is missing or no longer comes from them.
+
+### `tool()`
+
+The path of glslc, spirv-as or spirv-val; ends the run with the packages to install when it is not there.
+
+### `words_of()`
+
+`// build_shaders: keep functions` in a source turns glslc's optimisation (`-O`) off, so its functions stay functions:
+the HDR tonemap, which `runtime/vk/vk_hdr.c` splices into the game's shader by function.
+
+### `build()`
+
+Writes the headers of the sources in `only` (default: the stale ones) and returns how many it wrote. Each is written
+as a `.part` file and renamed: whole or not at all, as another build may be reading the folder.
+
+## `tools/build_xlate.py`
+
+Builds the shader translator: `build/xlate/nx2navi_xlate.exe` (the vendored translator 1.3.2 plus patches, NativeAOT,
+SPIR-V for Vulkan).
+
+```
+python tools/build_xlate.py [--out DIR]
+```
+
+It copies `tools/vendor/ryujinx` to `build/xlate/ryujinx`, applies `tools/xlate/patches/*.patch` there (`tools/vendor`
+stays byte-identical), then runs `dotnet publish`. It needs the .NET 10 SDK, the MSVC build tools and `vswhere.exe`
+([building.md](../building.md)). Run with `.venv`. On Linux it builds `build/xlate/nx2navi_xlate` for linux-x64, which
+NativeAOT links with the system's clang (no MSVC); NativeAOT builds for the OS it runs on only. `--out` builds into
+`DIR` instead of `build/xlate` (a task build dir: `nx2saria.exe` takes the translator next to it).
+
+Next to the exe it writes `nx2navi_xlate.id`: the translator identity, a SHA-256 over what the translator is built
+from (`identity()`). `runtime/gfx/gfx_shader.c` puts it into every shader cache key, so a translator change re-keys
+the cache without a hand-made `KEY_VERSION` bump. Only a build writes it: the packaging scripts
+(`tools/make_launcher.py`, `tools/make_appimage.py`, `tools/make_kit.py`) take a translator whose `.id` names this
+checkout's sources for one built from them (`check_built()`), so no option writes an `.id` beside an exe it did not
+build.
+
+`BUILD_SETTINGS` is what the identity covers besides the sources: the publish settings in `main()`. Change it with
+them.
+
+### `tree_hashes()`
+
+Hashes every source file; `src/*/obj` and `src/*/bin` are build output (an IDE restore writes them, the vendor
+`.gitignore` ignores them and `prepare_sources()` drops them), so they are left out.
+
+### `mng_pin()`
+
+The commit `tools/fetch_refs.sh` pins for the reference checkout the vendor tree is compared with. A `fetch` line of
+that script may have a fifth word, which asks for the history; the commit is the fourth.
+
+### `pinned_blobs()`
+
+Git blob ids of `vendor/ryujinx` in the `refs/` checkout at the pinned commit. The checkout itself may be newer than
+the pin or carry CRLF line ends (`core.autocrlf`), so its files are not compared.
+
+### `blob_ids()`
+
+Git blob ids of the source files `tree_hashes()` hashes.
+
+### `verify_vendor()`
+
+`tools/vendor/ryujinx` must be byte-identical to the `refs/` checkout's copy at the pinned commit (when present).
+
+### `prepare_sources()`
+
+`build/xlate` is inside this checkout, and git inside a repository reads a "diff --git" patch's paths from the
+repository's top: those hunks fall outside the directory handed to `--directory`, git skips every file of the patch
+and still exits 0. `GIT_CEILING_DIRECTORIES` stops git from walking up to the checkout, so it reads each patch as it
+would outside a repository, and a "Skipped patch" line fails the build (including 0021's PRMT implementation). The
+build expects exactly 40 patches.
+
+### `strip_code()`
+
+C# (or MSBuild XML) without its comments, trailing spaces and blank lines, string and character literals kept: what
+the compiler sees, so that a comment-only edit keeps the identity (and so every shader cache key).
+
+### `code_digest()`
+
+SHA-256 of a file, comments left out of C# and MSBuild files (`strip_code()`).
+
+### `identity()`
+
+SHA-256 over what the translator is built from, comments left out: the patched tree as the build compiles it
+(`build/xlate/ryujinx` from `prepare_sources()`), `tools/xlate`'s own sources (`Program.cs`, `AmpereLowering.cs`,
+`MeshSpirv.cs`, `nx2navi_xlate.csproj`) and the publish settings. Without a prepared tree, the vendor tree and the
+patch files as they are, byte for byte. This script's own bytes are not part of it.
+
+### `source_identity()`
+
+The identity a translator built from this checkout's sources gets: the vendor tree copied and patched in a temporary
+folder (`prepare_sources()`) and hashed as the build hashes it (`identity()`). `identity()` over a build folder hashes
+the tree its last build prepared, so a patch or vendor change made since then would not show. Nothing is compiled; it
+takes a few seconds and needs git on `PATH` (`prepare_sources()` applies the patches with it).
+
+### `check_built()`
+
+`None` when the folder holds the translator exe and an `nx2navi_xlate.id` naming this checkout's sources
+(`source_identity()`); otherwise why not. The packaging scripts stop on the reason: 0.10.0 and 0.10.1 shipped the
+0.9.2 translator (identity `4d051299`) after `tools/xlate/Program.cs` had raised the texture pool to 40960 slots, so
+their translations still clamped every pool handle to slot 32767 and the ground went see-through after some area
+loads. `exe` is the file name on the release's OS (`EXE` is this machine's).
+
+## `tools/button_icons.py`
+
+Xbox and keyboard-and-mouse button icons for the game's prompts, drawn on the player's machine for
+`tools/make_romfs_patches.py --prompts`. The outlines are our own shapes with letters cut out of them in the game's
+own text fonts: nothing of the game is in the repository. Needs fontTools (`tools/requirements-py314.txt`).
+
+Every prompt except the button guide in play is text in the button font, `scft/External.bfotf` of each
+`Font/Font*.Nin_NX_NVN.bfarc.zs`: private-use code points from U+E040 (A, B, X, Y, then L, R, ZL, ZR, the d-pad, Plus
+and Minus, the sticks). A `.bfotf` is an OpenType (CFF) font after an 8-byte header; from offset 4 on, every byte is
+XORed with a 4-byte key, which the size in the header's second word gives away (`bfotf_decode()`). `redraw_font()`
+draws the shoulder buttons, the triggers, Plus, Minus and the d-pad as an Xbox controller names them (LB RB, LT RT,
+Menu and View, a cross), or every button as the key or mouse button the keyboard presses it with (`pc_icons()`), can
+swap the glyphs of the face buttons (A with B, X with Y), and has fontTools write the font again. The archive then
+grows by a kilobyte or two, more than the game's resource size table allows it: `grow_restbl()` raises those entries
+(without it the game stops at start).
+
+The button guide in play (bottom right) draws its buttons, L and ZL among them, from images of the common layout
+archive instead (`timg/__Combined.bntx`, `Nt_KeyTexL_00` and `Nt_KeyTexZL_00`): `bntx_redraw()` paints the same icons
+into them, the size unchanged. The Xbox prompts redraw L and ZL, the keyboard and mouse ones every image
+(`PC_HUD_TEXTURES`: A, B, X, Y, L, ZL and the stick's two). Prompts drawn as fixed images (some tutorial animations)
+keep the Switch icons.
+
+The file's logic is pinned: `tools/make_game.py` `PROMPT_TOOLS` and the digest `tests/launcher_test.py` records for
+this file (lines without their full-line comments, docstrings and blank lines) decide whether installs draw their
+prompts again. A comment after code on the same line is part of that digest, so the 14 such comments stay in the file
+until its logic next changes; their notes are here already.
+
+- `TEXT_ARCHIVE`, `TEXT_FONTS`: the letters on the keys come from the text fonts of the default archive; the regional
+  archives lack them.
+- `HUD_TEXTURES`: the button guide's images and the glyph each one shows.
+- Drawing is in units of the font's 1000-unit em; the round A/B/X/Y icons fill y 20..585. `K = 0.5523` is the control
+  point distance of a quarter circle drawn with one cubic curve, per unit of radius.
+- Keyboard and mouse prompts (`--prompts pc`): every button the keyboard drives, drawn as the key or mouse button bound
+  to it, in the same filled-shape style. Each glyph keeps the advance of the game's own (a wider glyph runs into the
+  text of a right-aligned guide).
+- `PC_BINDS`: the keyboard defaults of `runtime/input/input_map.c` `input_map_reset()` (the `bind_` lines of
+  `nx2navi.ini` apply on top, `pc_binds()`). The right stick is the camera, which the mouse drives; `SHAKE` is the key
+  that shakes it (the mouse never does).
+- `PC_LABELS`: what a key shows: its letter, a symbol or a short name (key names as in `nx2navi.ini`; the rest show
+  their name).
+- `PC_LETTER_LABELS`: the one-letter panes around the action prompt (`T_A_00` ...) are in the Normal font (Rodin B and
+  Symbol): one character of it per key.
+- `PC_HUD_TEXTURES`: the button guide's images in the pc style: every symbol mask of the action prompt. In the 1.4.3
+  Common archive `LSt_00` shows the left stick tilted up (as U+E052) and `LSt_01` the left stick (as U+E05E).
+- The button guide's images are square `R8_UNORM` masks (white key, black letter), one mip, block-linear, 72x72 up to
+  1.2.1 and 108x108 in 1.4.3. Each is drawn from the icon of the same Switch button, fitted into the square.
+- The resource size table is `System/Resource/ResourceSizeTable.Product.<n>.Nin_NX_NVN.rsizetable.zs`, a RESTBL whose
+  entries are keyed by the CRC32 of the RomFS path without `.zs`. The game sizes the buffer it loads a file into from
+  its entry, so an archive that grew needs its entry raised by as much.
+
+### `xor()`
+
+The data with byte i XORed with `key[i % 4]`.
+
+### `bfotf_decode()`
+
+(OpenType font, key) of a `.bfotf`. The font fills the rest of the file.
+
+### `bfotf_encode()`
+
+The `.bfotf` of `otf`: `head` (the original's first word) and the size, the rest XORed with `key` as `bfotf_decode()`
+reads it. The size field holds the whole font, so its length has to be a multiple of 4 (fontTools pads its tables).
+
+### `Glyphs`
+
+Outlines of letters from the game's own text fonts, drawn as holes in a shape. `Glyphs.hole()` draws the text centred
+on (`cx`, `cy`), at most `cap` high and `max_width` wide, its contours reversed so they cut holes.
+
+### `text_glyphs()`
+
+`Glyphs` over the text fonts in `blobs` (`.bfotf` files), the first that has a letter giving it.
+
+### `rounded()`
+
+A counter-clockwise rounded rectangle (bottom and top corner radii).
+
+### `xbox_icons()`
+
+Code point to (advance, `draw(pen)`) for the buttons an Xbox controller names differently from a Switch: L R = LB RB,
+ZL ZR = LT RT, Plus and Minus = Menu and View, the d-pad as a cross. `g` is the `Glyphs` for the letters. The face
+buttons keep the game's own glyphs (`redraw_font()` swaps them for the Nintendo layout). `menu` draws three bars, as
+on the Menu button; `view` two overlapping windows, as on the View button; `dpad` a cross with an arrow cut into each
+direction the prompt means (`m`, `t`, `h` are the arm centre, the half base and the height of the arrow; the arrow
+heads are already clockwise, so each is a hole).
+
+### `pc_binds()`
+
+`PC_BINDS` with the first key of each `bind_<action>` line of a `nx2navi.ini` text over it (a line without a key
+entry, or with `key:default`, keeps the default).
+
+### `font_advances()`
+
+Code point to advance of every glyph of the button font (a `.bfotf`).
+
+### `pc_letter()`
+
+The one character the panes around the action prompt show for a key.
+
+### `pc_icons()`
+
+Code point to (advance, `draw(pen)`) for every button glyph but Home and Capture, drawn as the key or mouse button
+`binds` puts on it. `g` is the `Glyphs` for the key labels; `adv` the game's advance of each glyph
+(`font_advances()`), which each drawing keeps.
+
+- `mouse_body`: a mouse seen from above; `lit` (`'l'`, `'r'`, `'m'` or `None`) is its pressed button, filled, the
+  others hollow. The holes go through a reversing pen; they never overlap each other or leave the body. With a side
+  button lit, the seams around the pressed button are cut; a hollow left button has its outer top corner following the
+  body; the wheel (`'m'`) is filled over the gap between the hollow buttons.
+- `key_cap`: a key, a rounded square with its label cut out; a mouse button draws the mouse. Space is an open bracket
+  lying on its back.
+- `arrow`: a filled arrowhead pointing `d`, `s` its half size.
+- `grid`: small keys in a grid: `cells = [(key, column, row)]`, row 0 on top.
+- `mouse_move`: the mouse, no button pressed, with an arrow for each direction the prompt means.
+- The d-pad is its four keys as a cross (up on top), or the keys of the directions the prompt means; the left stick its
+  keys (W A S D); the right stick the mouse; the right stick shaken the shake key.
+
+### `redraw_font()`
+
+The OpenType font `otf` with the glyphs of each (code point, code point) pair of `swaps` trading places (outlines and
+horizontal metrics), then every code point of `icons` (code point to (advance, draw)) drawn anew, written again by
+fontTools. The timestamps stay, so the same input gives the same bytes. A CID-keyed CFF is refused (the assert on
+`ROS`): its glyphs can use different private dictionaries. The width operand of a charstring is relative to
+`nominalWidthX`, hence `advance - nominal`.
+
+### `gob_offset()`
+
+Byte offset of (x, y) in a Tegra block-linear surface of 1 byte per pixel (GOBs of 64 bytes x 8 rows).
+
+### `PolygonPen`
+
+Outlines flattened to closed polygons.
+
+### `rasterize()`
+
+A `size` x `size` coverage mask (0..255, rows top down) of `draw`'s outline, fitted into the square, nonzero winding.
+The transform turns the font's y up into rows down.
+
+### `bntx_redraw()`
+
+Paints the icon of each texture of `textures` (name without the `^` suffix to code point; `icons`: code point to
+(advance, draw)) over its image in the BNTX at `data[base:]` (a bytearray), in place. Returns the names painted.
+
+### `restbl_offsets()`
+
+CRC32 of a path to the offset of its size in the RESTBL table.
+
+### `grow_restbl()`
+
+The table with the entry of each RomFS path of `growth` (path to bytes it grew) raised by that much.
+
+## `tools/capture_run.py`
+
+Starts a test run from a bug capture (`runtime/diag/bugcap.c`, [bug-capture.md](../bug-capture.md)).
+
+```
+python tools/capture_run.py <capture folder or number> [--game DIR] [--set KEY=VALUE ...]
+```
+
+The game starts on a throwaway profile holding the capture's save, with the capture's settings in place of the
+player's settings file (`NX2SARIA_CAPTURE_REPLAY`), in a window of the capture's size that does not take the focus. It
+loads the save, goes to the capture's area, walks Link to where he stood, puts the camera where it was and takes a
+capture of its own; this script then closes the game and prints both captures side by side: the positions, the
+distance between them, and how much the two pictures differ. The player's settings file and save are not written.
+
+One game at a time: the script refuses to start while a game is running.
+
+### `read_capture()`
+
+`capture.txt` as a dict of its "key = value" lines (the first of a key wins).
+
+### `game_pids()`
+
+The ids of the processes running the game's executable, by its file name.
+
+### `make_profile()`
+
+A profile whose save is the capture's: the game's own profile without its saves, and the capture's save zip as a
+waiting import (`runtime/hle/fs_host.c` `import_pending()`), which the game makes the save at its start.
+
+### `close_game()`
+
+Asks the game's windows to close (`WM_CLOSE`, message 0x10), as the window's own button does (it then writes its exit
+lines); by force when that does not end it. The game may be a child of the process this script started: at its start
+it runs itself again when Windows has put something where its memory must go (`runtime/platform/win32.c`
+`plat_reexec()`), and the first process only waits for the second. No other game ran when this one started (`main()`
+checks), so every process of the executable is this run's.
+
+### `read_png()`
+
+(width, height, bytes per pixel, rows) of an 8-bit RGB or RGBA PNG without interlacing, as the game writes.
+
+### `picture_difference()`
+
+The mean difference of the colour channels (0 to 255) over every `step`-th pixel of two pictures of one size.
+
 ## `tools/make_appimage.py`
 
 `KIT_DIRS` holds `licenses/`: the licence texts `THIRD_PARTY_NOTICES.md` names that are not beside their code (the
