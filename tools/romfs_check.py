@@ -1,4 +1,3 @@
-"""Checks every file of a player's packed game data, and stands in for the damaged textures it can."""
 import argparse
 import concurrent.futures
 import json
@@ -11,6 +10,8 @@ import threading
 from pathlib import Path
 
 import zstandard
+
+DESCRIPTION = "Checks every file of a player's packed game data, and stands in for the damaged textures it can."
 
 STANDIN_MOD = 'Damaged file stand-ins'
 DICTIONARIES = 'Pack/ZsDic.pack.zs'
@@ -85,7 +86,7 @@ def problem(image, entry):
         size = 0
         for at in range(0, len(data), PIECE):
             size += len(out.decompress(data[at:at + PIECE]))
-            if out.eof:   # the frame is whole: bytes after it are not the frame's, whichever piece they fall in
+            if out.eof:
                 break
     except zstandard.ZstdError as e:
         return f'does not decompress ({e})'
@@ -120,7 +121,7 @@ def stand_in(image, damaged, path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--game', type=Path, required=True, help='the game folder')
     ap.add_argument('--romfs', type=Path, help='the folder of index.json and romfs.bin (default <game>/romfs)')
     ap.add_argument('--mods', type=Path, help='the mods folder (default <game>/mods)')

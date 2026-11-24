@@ -3591,7 +3591,7 @@ def logic_digest(path):
 
 
 SCAN_LOGIC = ('55ea0c150aaf9dac93a2e6fd3b4ca11e1c572b5eee8b6bd74960535964384634',
-              '758faaaaca013ed78f21359270cb92196e7f3ffd3aa30a2d06a9edfa0de1a502')
+              '4075d94d4975c2e9f249a5082bac53bee82840b7819e18da6ed1271df173ff12')
 
 
 class FakeImage:
@@ -3754,9 +3754,9 @@ class FileCheckTest(Tmp):
 
 
 PROMPT_LOGIC = ('ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249',
-                {'pad_prompts.py': '9692b7632e4570df0814149a3d70f729645835f74eab1a9b34b6d963d81efca0',
-                 'prompt_art.py': '07f536b3d6f79199010f5c7bcf0ee1d3281ec56fd7f7a6def9cf1282a824eb30',
-                 'button_icons.py': '3804e371a030965bc9eb4226f333b611651f25efaa67ee523b404edc3257818a'})
+                {'pad_prompts.py': '9bea69a5e0b9d7ec6250fe332176a9b485ecb11bcd718401e16b9045f8b5d3d5',
+                 'prompt_art.py': '043ecee5411d3b060b6f1b1c9d12708559df3ab5b618743cda929c4af867ca96',
+                 'button_icons.py': '79a5b9d99c36d227838777e1338f0ffc7b2231fb5350a059a996b61b724319b9'})
 
 
 def load_pad_prompts():

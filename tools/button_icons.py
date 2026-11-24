@@ -36,7 +36,7 @@ def bfotf_encode(otf, key, head):
 
 Y0, Y1 = 20, 585
 CY, R = (Y0 + Y1) / 2, (Y1 - Y0) / 2
-K = 0.5523   # control point distance of a quarter circle drawn with one cubic curve, per unit of radius
+K = 0.5523
 
 
 class Glyphs:
@@ -109,33 +109,33 @@ def xbox_icons(g):
             rounded(pen, 60, Y0, advance - 60, Y1, 60, 230); g.hole(pen, label, advance / 2, CY - 20, 230, advance - 220)
         return advance, draw
 
-    def menu(advance=640):   # three bars, as on the Menu button
+    def menu(advance=640):
         def draw(pen):
             circle(pen, advance / 2, CY, R); reverse = ReverseContourPen(pen)
             for dy in (-115, 0, 115):
                 rounded(reverse, advance / 2 - 150, CY + dy - 38, advance / 2 + 150, CY + dy + 38, 38)
         return advance, draw
 
-    def view(advance=640):   # two overlapping windows, as on the View button
+    def view(advance=640):
         def draw(pen):
             circle(pen, advance / 2, CY, R); reverse = ReverseContourPen(pen); s = 150
             rounded(reverse, advance / 2 - s - 15, CY + 15, advance / 2 - 15, CY + s + 15, 16)
             rounded(reverse, advance / 2 + 15, CY - s - 15, advance / 2 + s + 15, CY - 15, 16)
         return advance, draw
 
-    def dpad(*lit, advance=640):   # a cross with an arrow cut into each direction the prompt means
+    def dpad(*lit, advance=640):
         def draw(pen):
             cx, length, arm = advance / 2, R, R * 0.40
             polygon(pen, [(cx + length, CY - arm), (cx + length, CY + arm), (cx + arm, CY + arm), (cx + arm, CY + length),
                           (cx - arm, CY + length), (cx - arm, CY + arm), (cx - length, CY + arm), (cx - length, CY - arm),
                           (cx - arm, CY - arm), (cx - arm, CY - length), (cx + arm, CY - length), (cx + arm, CY - arm)])
-            m, t, h = (length + arm) / 2, arm * 0.72, arm * 0.80   # arm centre, half base and height of the arrow
+            m, t, h = (length + arm) / 2, arm * 0.72, arm * 0.80
             heads = {'up': [(cx - t, CY + m - h / 2), (cx, CY + m + h / 2), (cx + t, CY + m - h / 2)],
                      'down': [(cx + t, CY - m + h / 2), (cx, CY - m - h / 2), (cx - t, CY - m + h / 2)],
                      'left': [(cx - m + h / 2, CY - t), (cx - m - h / 2, CY), (cx - m + h / 2, CY + t)],
                      'right': [(cx + m - h / 2, CY + t), (cx + m + h / 2, CY), (cx + m - h / 2, CY - t)]}
             for d in lit:
-                polygon(pen, heads[d])   # already clockwise: a hole
+                polygon(pen, heads[d])
         return advance, draw
 
     return {
@@ -197,13 +197,13 @@ def pc_icons(g, adv, binds=PC_BINDS):
         h = y1 - y0; r = h * 0.33; t = h * 0.07; gap = h * 0.035
         x0, x1, mid = cx - r, cx + r, y0 + h * 0.52
         rounded(pen, x0, y0, x1, y1, r * 0.9, r)
-        reverse = ReverseContourPen(pen)   # holes; they never overlap each other or leave the body
+        reverse = ReverseContourPen(pen)
         ri = r - t
-        if lit in ('l', 'r'):   # the seams around the pressed button
+        if lit in ('l', 'r'):
             sx0, sx1 = (x0 + t, cx - gap) if lit == 'l' else (cx + gap, x1 - t)
             polygon(reverse, [(sx0, mid - gap), (sx1, mid - gap), (sx1, mid + gap), (sx0, mid + gap)])
             polygon(reverse, [(cx - gap, mid + gap), (cx + gap, mid + gap), (cx + gap, y1 - t), (cx - gap, y1 - t)])
-        if lit != 'l':   # hollow left button, its outer top corner following the body
+        if lit != 'l':
             ix0, ix1 = x0 + t, cx - gap
             reverse.moveTo((ix1, mid + gap)); reverse.lineTo((ix1, y1 - t)); reverse.lineTo((ix0 + ri, y1 - t))
             reverse.curveTo((ix0 + ri - K * ri, y1 - t), (ix0, y1 - t - ri + K * ri), (ix0, y1 - t - ri))
@@ -213,7 +213,7 @@ def pc_icons(g, adv, binds=PC_BINDS):
             reverse.moveTo((ix0, mid + gap)); reverse.lineTo((ix1, mid + gap)); reverse.lineTo((ix1, y1 - t - ri))
             reverse.curveTo((ix1, y1 - t - ri + K * ri), (ix1 - ri + K * ri, y1 - t), (ix1 - ri, y1 - t))
             reverse.lineTo((ix0, y1 - t)); reverse.closePath()
-        if lit == 'm':   # the wheel, filled over the gap between the hollow buttons
+        if lit == 'm':
             rounded(pen, cx - h * 0.06, mid + h * 0.12, cx + h * 0.06, mid + h * 0.36, h * 0.06)
 
     def key_cap(pen, x0, y0, x1, y1, key):
@@ -222,7 +222,7 @@ def pc_icons(g, adv, binds=PC_BINDS):
             return
         w, h = x1 - x0, y1 - y0
         rounded(pen, x0, y0, x1, y1, min(w, h) * 0.18)
-        if key == 'space':   # an open bracket lying on its back
+        if key == 'space':
             t = h * 0.09
             bx0, bx1, by0, by1 = x0 + w * 0.22, x1 - w * 0.22, y0 + h * 0.36, y0 + h * 0.60
             polygon(ReverseContourPen(pen), [(bx0, by0), (bx1, by0), (bx1, by1), (bx1 - t, by1), (bx1 - t, by0 + t),
@@ -293,7 +293,7 @@ def redraw_font(otf, icons, swaps=()):
     assert font['head'].unitsPerEm == 1000, f'em of {font["head"].unitsPerEm} units, the drawings assume 1000'
     cff = font['CFF '].cff
     top = cff.topDictIndex[0]
-    assert not hasattr(top, 'ROS'), 'CID-keyed CFF'   # its glyphs can use different private dictionaries
+    assert not hasattr(top, 'ROS'), 'CID-keyed CFF'
     charstrings, private, hmtx, cmap = top.CharStrings, top.Private, font['hmtx'], font.getBestCmap()
     nominal = getattr(private, 'nominalWidthX', 0)
     for a, b in swaps:
@@ -302,7 +302,7 @@ def redraw_font(otf, icons, swaps=()):
         charstrings[ga], charstrings[gb] = outline_b, outline_a
         hmtx[ga], hmtx[gb] = hmtx[gb], hmtx[ga]
     for cp, (advance, draw) in icons.items():
-        pen = T2CharStringPen(advance - nominal, None); draw(pen)   # the width operand is relative to nominalWidthX
+        pen = T2CharStringPen(advance - nominal, None); draw(pen)
         charstrings[cmap[cp]] = pen.getCharString(private=private, globalSubrs=cff.GlobalSubrs)
     glyphs = font.getGlyphSet()
     for cp, (advance, _) in icons.items():
@@ -351,7 +351,7 @@ def rasterize(draw, size):
     inner = size - 2 * HUD_MARGIN; scale = inner / max(x1 - x0, y1 - y0)
     ox = HUD_MARGIN + (inner - (x1 - x0) * scale) / 2 - x0 * scale
     oy = HUD_MARGIN + (inner - (y1 - y0) * scale) / 2 - y0 * scale
-    flat = PolygonPen(); rec.replay(TransformPen(flat, (scale, 0, 0, -scale, ox, size - oy)))   # font y up -> rows down
+    flat = PolygonPen(); rec.replay(TransformPen(flat, (scale, 0, 0, -scale, ox, size - oy)))
     edges = [(a, b) for poly in flat.polygons for a, b in zip(poly, poly[1:] + poly[:1]) if a[1] != b[1]]
     n = size * SUPERSAMPLE; cover = [0] * (size * size)
     for row in range(n):

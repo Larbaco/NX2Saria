@@ -1,4 +1,3 @@
-"""Xbox, PlayStation, Steam Deck and keyboard-and-mouse button prompts for Ocarina of Time (Switch 2), drawn from button"""
 import argparse
 import hashlib
 import io
@@ -11,6 +10,8 @@ import zstandard
 from PIL import Image, ImageDraw, ImageFont
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
+
+DESCRIPTION = 'Xbox, PlayStation, Steam Deck and keyboard-and-mouse button prompts for Ocarina of Time (Switch 2), drawn from button'
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import button_icons  # noqa: E402  (bfotf_decode, bfotf_encode, redraw_font, grow_restbl)
@@ -241,7 +242,7 @@ def options_art(art):
     return big.convert('RGBa').resize(share.size, Image.LANCZOS).convert('RGBA')
 
 
-LIT_AREA, LIT_RING = 200, 6   # pixels of the art
+LIT_AREA, LIT_RING = 200, 6
 
 
 def ink(img, lit=False):
@@ -324,19 +325,19 @@ def _parts(img):
 def trace(field, level=0.5):
     h, w = len(field), len(field[0])
 
-    def v(x, y):   # one pixel of zero around the field, so every outline closes
+    def v(x, y):
         return field[y - 1][x - 1] if 1 <= x <= w and 1 <= y <= h else 0.0
 
     def cross(p, q):
         (x0, y0), (x1, y1) = p, q
         a, b = v(x0, y0), v(x1, y1)
         t = (level - a) / (b - a)
-        return (x0 + (x1 - x0) * t - 1, y0 + (y1 - y0) * t - 1)   # back to field coordinates
+        return (x0 + (x1 - x0) * t - 1, y0 + (y1 - y0) * t - 1)
 
-    starts = {}   # edge -> (start point, end edge, end point) of the segment leaving the cell through it
+    starts = {}
     for y in range(h + 1):
         for x in range(w + 1):
-            corners = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)]   # clockwise with y down
+            corners = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)]
             inside = [v(*c) >= level for c in corners]
             if all(inside) or not any(inside):
                 continue
@@ -348,8 +349,8 @@ def trace(field, level=0.5):
             if len(hits) == 2:
                 enter, leave = (hits[0], hits[1]) if hits[0][2] else (hits[1], hits[0])
                 pairs = [(enter, leave)]
-            else:   # a saddle: the middle decides whether the covered corners join
-                order = hits if hits[0][2] else hits[1:] + hits[:1]   # enter, leave, enter, leave
+            else:
+                order = hits if hits[0][2] else hits[1:] + hits[:1]
                 e1, l1, e2, l2 = order
                 joined = (v(x, y) + v(x + 1, y) + v(x + 1, y + 1) + v(x, y + 1)) / 4 >= level
                 pairs = [(e2, l1), (e1, l2)] if joined else [(e1, l1), (e2, l2)]
@@ -409,11 +410,11 @@ def draw_font(otf, glyph, traced, lit_dpad):
     glyphs, cmap, hmtx = font.getGlyphSet(), font.getBestCmap(), font['hmtx']
     box = BoundsPen(glyphs)
     glyphs[cmap[0xE040]].draw(box)
-    gx0, gy0, gx1, gy1 = box.bounds   # the game's A: a round button
+    gx0, gy0, gx1, gy1 = box.bounds
     rx0, ry0, rx1, ry1 = bounds(traced(glyph['A']))
     scale = (gy1 - gy0) / (ry1 - ry0)
     mid_y_px, mid_y = (ry0 + ry1) / 2, (gy0 + gy1) / 2
-    side = gx0   # the game's A has this much room on either side
+    side = gx0
     drawn = {}
     for cp, button in GLYPHS.items():
         pic = glyph[button]
@@ -547,7 +548,7 @@ def astc_block(texels):
     lo, hi = min(proj), max(proj)
     e0 = [max(0, min(255, round(mean[c] + lo * axis[c]))) for c in range(4)]
     e1 = [max(0, min(255, round(mean[c] + hi * axis[c]))) for c in range(4)]
-    if sum(e1[:3]) < sum(e0[:3]):   # the decoder would read the ends the other way (blue contraction)
+    if sum(e1[:3]) < sum(e0[:3]):
         e0, e1 = e1, e0
     span = [e1[c] - e0[c] for c in range(4)]
     length = sum(v * v for v in span)
@@ -668,7 +669,7 @@ def default_binds(game):
     return current if current.is_file() else legacy if legacy.is_file() else None
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--art', type=Path, required=True,
                     help='the art pack\'s Source folder (XGamepad, P5Gamepad, Keyboard_Mouse)')
     ap.add_argument('--game', type=Path, help='the folder of the exe and romfs-index.bin; the overlays go there')

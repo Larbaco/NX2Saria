@@ -34,7 +34,7 @@ STYLES = {
     'xbox': {
         'glyph': {'south': f'{X}A_White.png', 'east': f'{X}B_White.png', 'west': f'{X}X_White.png',
                   'north': f'{X}Y_White.png', 'L': f'{X}LB.png', 'R': f'{X}RB.png', 'ZL': f'{X}LT.png',
-                  'ZR': f'{X}RT.png', 'PLUS': f'{X}X.png', 'MINUS': f'{X}Share.png',   # Menu (three bars), View
+                  'ZR': f'{X}RT.png', 'PLUS': f'{X}X.png', 'MINUS': f'{X}Share.png',
                   **_dpad(X, 'Dpad', 'Up'), **_sticks(X, ('L', 'R'), ('Left_Stick_Click.png', 'Right_Stick_Click.png'),
                                                       'R_2D.png')},
         'note': {'south': f'{XL}A_Color_Light.png', 'east': f'{XL}B_Color_Light.png', 'west': f'{XL}X_Color_Light.png',
@@ -43,7 +43,7 @@ STYLES = {
     'playstation': {
         'glyph': {'south': f'{P}Cross.png', 'east': f'{P}Circle.png', 'west': f'{P}Square.png',
                   'north': f'{P}Triangle.png', 'L': f'{P}L1.png', 'R': f'{P}R1.png', 'ZL': f'{P}L2.png',
-                  'ZR': f'{P}R2.png', 'PLUS': OPTIONS, 'MINUS': SHARE,   # a share pill
+                  'ZR': f'{P}R2.png', 'PLUS': OPTIONS, 'MINUS': SHARE,
                   **_dpad(P, 'Dpad', 'UP'), **_sticks(P, ('L', 'R'), ('L3.png', 'R3.png'), 'R_2D.png')},
         'note': {'south': f'{PL}Cross_Color_Light.png', 'east': f'{PL}Circle_Color_Light.png',
                  'west': f'{PL}Square_Color_Light.png', 'north': f'{PL}Triangle_Color_Light.png',
@@ -75,7 +75,7 @@ OVERLAYS = tuple(overlay_folder(s, layout) for s in sorted(STYLES) for layout in
 
 
 def art_roots(folders):
-    ranked = ({}, {})   # sets named themselves, sets found inside a folder
+    ranked = ({}, {})
     for f in map(Path, folders):
         if not f.is_dir():
             sys.exit(f'{f}: no such folder')
