@@ -1,45 +1,3 @@
-"""Prepare the default variant of every game shader and the variants of the shared shader list for a
-build, once, before play.
-
-The list (tools/shader_list.py) names shader variants
-players met: a shader key (sha256 of the NVN control section and code, as tools/shader_census.py names shaders) and
-the translator answers it was translated for. This tool reads the shaders from the extracted RomFS and ExeFS
-(tools/shader_census.py inventory), keeps the list's variants whose shader is in this game version, adds each shader's
-default variant (every texture slot a 2D texture, float vertex inputs and colour outputs: the
-default bind state), and writes them next to the
-build's nx2saria.exe in the record layouts of runtime/gfx/gfx_shader.c ("answers met in play"):
-
-    seed-programs.bin  "NX2NSPRG": stage, length, c1 length, runtime code hash, control section, code, c1
-    seed-answers.bin   "NX2NSANS": stage, code hash, input id (zero: the runtime computes it), answers, priority
-
-Priority (the pad byte): 0 shaders the list's warm rows flag as title/menu (t), 1 other warm rows (S, C, R), 2 the
-rest; a default variant takes its shader's priority and sets DEFAULT_FLAG (bit 7). The runtime reads a flagged
-record's first translation and translates it again with better answers where it reads other ones
-(runtime/gfx/gfx_shader_guess.c): integer vertex inputs, and the texture and image types a compute shader's translation
-declares, for which a compute default variant goes without texture answers. Then it runs `nx2saria.exe --prepare-shaders`, which translates every record into the build's shader cache, writes
-shader-prepared.bin (one record per variant, in priority order) and builds every variant's stage library or compute
-pipeline once, so the GPU driver's own disk cache holds them (vk_pipeline.c "stage library prebuild"). The seed files
-can be deleted afterwards.
-
-The shared pipeline list (tools/pipeline_list.py: graphics pipelines players met, with the shader variants they name)
-is read beside the shader list when there is one: tools/data/pipeline_list.bin, data/pipeline_list.bin in a release
-folder, or --pipeline-list. Its variants of shaders this game version has join the seed, and its key records are
-written as seed-pipeline-keys.bin, which --prepare-shaders builds into the pipeline caches once the seed is translated
-(vk_pipeline.c "the shared pipeline list"; mesh pipelines by default). That file stays in the build directory:
-`nx2saria.exe --warm-shaders` and `--prepare-pipelines` build from it again after an update or a new driver.
-
-A driver whose shader compiler crashes on a variant crashes on it in every run (NVIDIA 615.78.08 on an RTX 5080, issue
-#30). The translations and shader-prepared.bin are written by then, and the journal the run leaves names the variants
-the driver was building (vk_pipeline.c skip_init), so only the driver step runs again (`nx2saria.exe --warm-shaders`), up to
-RETRIES times, and skips them.
-
-Game-derived output stays in the build directory (ignored). The list is read at preparation time from tools/data/shader_list.tsv when that file exists (the installer archive
-bundles it; it stays out of the repository), else from refs/ through git with the rows its history dropped
-(tools/shader_list.py); nothing of it is copied into the repository. Needs Python 3.14 (compression.zstd), so run it in .venv-py314 or the embeddable 3.14:
-
-    .venv-py314\\Scripts\\python tools\\prepare_shaders.py build\\v121 [--version v121] [--list <tsv>] [--no-run]
-                                                     [--romfs DIR --exefs DIR]   # instead of build\\extracted\\<version>
-"""
 import argparse
 import hashlib
 import json
@@ -58,47 +16,40 @@ import pipeline_list  # noqa: E402
 import shader_list  # noqa: E402
 from shader_census import inventory  # noqa: E402
 
-STAGES = {'vs': 0, 'ps': 4, 'cs': 5, 'ts': 6, 'ms': 7}     # runtime/gfx/gfx.h GFX_STAGE_*
+DESCRIPTION = 'Prepare the default variant of every game shader and the variants of the shared shader list for a'
+STAGES = {'vs': 0, 'ps': 4, 'cs': 5, 'ts': 6, 'ms': 7}
 TEX = [None, '1d', '1darray', 'buffer', '2d', '2darray', '2dms', '2dmsarray', '3d', 'cube', 'cubearray']
 FMT = [None, 'R8Unorm', 'R8Snorm', 'R8Uint', 'R8Sint', 'R16Float', 'R16Unorm', 'R16Snorm', 'R16Uint', 'R16Sint',
        'R32Float', 'R32Uint', 'R32Sint', 'R8G8Unorm', 'R8G8Snorm', 'R8G8Uint', 'R8G8Sint', 'R16G16Float', 'R16G16Unorm',
        'R16G16Snorm', 'R16G16Uint', 'R16G16Sint', 'R32G32Float', 'R32G32Uint', 'R32G32Sint', 'R8G8B8A8Unorm',
        'R8G8B8A8Snorm', 'R8G8B8A8Uint', 'R8G8B8A8Sint', 'R16G16B16A16Float', 'R16G16B16A16Unorm', 'R16G16B16A16Snorm',
        'R16G16B16A16Uint', 'R16G16B16A16Sint', 'R32G32B32A32Float', 'R32G32B32A32Uint', 'R32G32B32A32Sint',
-       'R10G10B10A2Unorm', 'R10G10B10A2Uint', 'R11G11B10Float']   # gfx_shader.c fmt_names
+       'R10G10B10A2Unorm', 'R10G10B10A2Uint', 'R11G11B10Float']
 TYPES = {'float': 0, 'sint': 1, 'uint': 2}
-DEFAULT = {'tex': {str(slot): '2d' for slot in range(32)}}   # answers outside a shader's use mask are dropped
+DEFAULT = {'tex': {str(slot): '2d' for slot in range(32)}}
 CONTROL = 0x880
 ANS_REC = 4 + 32 + 32 + 147 + 1
-DEFAULT_FLAG = 0x80   # pad byte: a default variant, its answers refined from its first translation (gfx_shader_guess.c)
-# Default variants left out unless --all-shaders: the larger compute programs of two of Ocarina's three NDSR upscaler
-# packages. The translator turns their 20-47 KB of code into 3-12.6 MB of SPIR-V, which the GPU driver took 34 s to
-# 44 min each to build (RTX 5090, driver 621.01): 35 programs, the 24 that translate took 19,400 of the 21,750 s
-# every compute variant together took. Play sessions met none of them that was slow to build (one 20.8 KB program built in 0.2 s), while all five
-# agl_ndsr_vr_light.pck programs play met took 77-153 s each, so that package stays whole. A program play does meet
-# here is translated and built at its first use, as before the NDSR packages were read at all.
-SLOW_UNUSED = (('/agl_ndsr.pck', 16 << 10), ('/agl_ndsr_vr.pck', 16 << 10))   # (source suffix, code bytes above which)
+DEFAULT_FLAG = 0x80
+SLOW_UNUSED = (('/agl_ndsr.pck', 16 << 10), ('/agl_ndsr_vr.pck', 16 << 10))
 
 
 def slow_unused(s):
     return any(s['source'].endswith(suffix) and len(s['code']) > limit for suffix, limit in SLOW_UNUSED)
-JOURNAL = 'shader-prepare-journal.bin'   # vk_pipeline.c skip_init: a 64-byte slot per worker, input id first
+JOURNAL = 'shader-prepare-journal.bin'
 RETRIES = 3
 
 
-BUNDLED_LIST = ROOT / 'tools' / 'data' / 'shader_list.tsv'   # the installer archive carries a copy (no git, no refs/)
+BUNDLED_LIST = ROOT / 'tools' / 'data' / 'shader_list.tsv'
 
 
-BUNDLED_PIPELINES = ROOT / 'tools' / 'data' / 'pipeline_list.bin'   # as BUNDLED_LIST: out of the repository
+BUNDLED_PIPELINES = ROOT / 'tools' / 'data' / 'pipeline_list.bin'
 if not BUNDLED_PIPELINES.is_file():
     BUNDLED_PIPELINES = ROOT / 'data' / 'pipeline_list.bin'
 SEED_KEYS = 'seed-pipeline-keys.bin'
-LIST_PRIORITY = 1   # a pipeline list variant's seed priority: with the warm-up rows
+LIST_PRIORITY = 1
 
 
 def read_pipeline_list(path):
-    """(answers records, pipeline-keys.bin image) of the pipeline list at path, or of the bundled one; None without
-    a list. A file that is not a list stops the run: a release that names one must not go on without it."""
     p = Path(path) if path else BUNDLED_PIPELINES
     if not p.is_file():
         if path:
@@ -111,9 +62,6 @@ def read_pipeline_list(path):
 
 
 def list_variants(answers_recs, have, seen):
-    """Seed records for the pipeline list's shader variants: those whose shader (runtime code hash) is in `have` and
-    whose (hash, answers) the seed does not hold yet. The input id is left zero, as for every seed record: the runtime
-    finds it, and finds the id the list's key records name, since it depends on the code and the answers alone."""
     out, absent = [], 0
     for a in answers_recs:
         h, packed = a[4:36], a[68:68 + 147]
@@ -136,16 +84,12 @@ def read_list(path):
 
 
 def pipeline_variants(key):
-    """The vertex and fragment variant names of an R/B row's pipeline key. Since its revision of 2026-10-28 the
-    list keeps keys packed, "<vs variant>:<fs variant>:<the rest in hex>"; older revisions and contribution files
-    hold the whole key in hex, "<vs variant>\\0<fs variant>\\0" + a Metal descriptor."""
     if ':' in key:
         return key.split(':', 2)[:2]
     return [n.decode('ascii', 'replace') for n in bytes.fromhex(key).split(b'\0')[:2]]
 
 
 def parse_list(text):
-    """V rows as (key, deps); priority per shader key from the warm rows (variant names start with the key)."""
     variants, prio = [], {}
 
     def warm(key, flags):
@@ -168,11 +112,10 @@ def parse_list(text):
 
 
 def answers(deps, stage, control):
-    """GfxShaderAnswers in gfx_shader.c pack_answers layout (147 bytes) from the list's deps JSON."""
     tex, img, fmt, attr, fout = bytearray(32), bytearray(32), bytearray(32), bytearray(32), bytearray(8)
     for slot, t in deps.get('tex', {}).items():
         t = t.removesuffix('_depth')
-        tex[int(slot)] = TEX.index('2d' if t == '*' else t)   # "*": any kind, translated as the plain 2D it stands for
+        tex[int(slot)] = TEX.index('2d' if t == '*' else t)
     for slot, o in deps.get('img', {}).items():
         img[int(slot)] = TEX.index(o['type'])
         fmt[int(slot)] = FMT.index(o['fmt']) if o.get('fmt') in FMT else 0
@@ -180,10 +123,8 @@ def answers(deps, stage, control):
         attr[int(loc)] = TYPES[t]
     for idx, t in deps.get('fout', {}).items():
         fout[int(idx)] = TYPES[t]
-    local = [0, 0, 0]   # vk_exec_draw.c answers_for: zero for vertex and fragment programs (they are in the input id)
+    local = [0, 0, 0]
     if stage not in (STAGES['vs'], STAGES['ps']):
-        # compute, task and mesh: the three words at the control section's local size (NVN2 at +0x58), 0 read as 1,
-        # each cut to 16 bits as answers_for stores them (task and mesh programs keep other fields there)
         local = struct.unpack_from('<III', control, 0x58 if nvn2(control) else 0x748)
         local = [(v or 1) & 0xffff for v in local]
     packed = bytes(tex + img + fmt + attr + fout) + struct.pack('<HHHIB', *local, 0, 0)
@@ -192,17 +133,10 @@ def answers(deps, stage, control):
 
 
 def nvn2(control):
-    """An NVN2 (Switch 2) control section as shader_census.nvn2_stages keeps it: 0xe0 bytes, zeros to 0x880."""
     return control[:4] == bytes.fromhex('34127698') and not any(control[0xe0:0x880])
 
 
 def bounds(control, code):
-    """(c1 offset, length) as runtime/gfx/gfx_shader.c req_init takes them.
-
-    NVN2: play hands req_init the code size of runtime/vk/vk_exec_draw.c ctl_stage_len, which reaches the end of the c1
-    constants only when there are some (+0x40 below +0x44). With an empty c1 range past the code the length is the code
-    size alone; cutting at the range's end (as shader_census does) seeded most of Ocarina's vertex programs under keys
-    play never asks for."""
     if nvn2(control):
         size, c1_start, c1_end = struct.unpack_from('<III', control, 0x38)[0], *struct.unpack_from('<II', control, 0x40)
         code_size = c1_end if c1_start >= size and c1_end > c1_start and c1_end - size < 1 << 20 else size
@@ -213,20 +147,18 @@ def bounds(control, code):
 
 
 def code_hash(stage, control, code, length, c1):
-    """gfx_shader.c build_code_hash."""
     return hashlib.sha256(struct.pack('<I', stage) + control + struct.pack('<Q', length) + code[:length] +
                           struct.pack('<I', len(c1)) + c1).digest()
 
 
 def driver_crashed(out):
-    """nx2navi died while the graphics driver built variants: the journal it left names at least one."""
     p = out / JOURNAL
     data = p.read_bytes() if p.is_file() else b''
     return any(any(data[i:i + 32]) for i in range(0, len(data), 64))
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('build', type=Path, help='build directory holding nx2saria.exe (build\\v121)')
     ap.add_argument('--version', default='v121', help='build/extracted/<version>')
     ap.add_argument('--romfs', type=Path, help='RomFS directory (default build/extracted/<version>/romfs)')
@@ -246,9 +178,6 @@ def main():
     extracted = ROOT / 'build' / 'extracted' / a.version
     listed = len(variants)
     shaders, _ = inventory(a.romfs or extracted / 'romfs', a.exefs or extracted / 'exefs', everything=False)
-    # A missing list row says nothing about the walk: the list covers several versions, and 1.1.0 holds 17,587 of its
-    # 41,414 rows, so most rows are absent because the game does not have them, not because the walk missed them. A walk
-    # that found next to nothing does say something: the shader directories have moved.
     if len(shaders) < max(64, listed // 20):
         print(f'only {len(shaders)} shaders found of the {listed} listed variants: reading every RomFS file instead',
               flush=True)
@@ -275,7 +204,7 @@ def main():
         h = progs[key][0]
         default = deps is DEFAULT
         packed = answers({} if default and stage == STAGES['cs'] else deps, stage, control)
-        if (h, packed) in seen:   # a list row of the default bind state
+        if (h, packed) in seen:
             continue
         seen.add((h, packed))
         rec = struct.pack('<I', stage) + h + bytes(32) + packed + bytes([prio.get(key, 2) | (DEFAULT_FLAG if default else 0)])
@@ -283,7 +212,7 @@ def main():
         recs.append((prio.get(key, 2), rec))
     out = a.build.resolve()
     plist = None if a.no_pipeline_list else read_pipeline_list(a.pipeline_list)
-    (out / SEED_KEYS).unlink(missing_ok=True)   # a list this build no longer has
+    (out / SEED_KEYS).unlink(missing_ok=True)
     if plist:
         extra, absent = list_variants(plist[0], {h for h, _ in progs.values()}, seen)
         recs += [(LIST_PRIORITY, r) for r in extra]
@@ -292,7 +221,7 @@ def main():
         print(f'pipeline list: {n_keys} pipelines; of its {len(plist[0])} shader variants (the ones they name and the '
               f'compute variants), {len(extra)} join the seed, {absent} are of shaders {a.version} does not have, the '
               'others are in it already', flush=True)
-    recs.sort(key=lambda r: r[0])   # stable: list order within a priority
+    recs.sort(key=lambda r: r[0])
     with open(out / 'seed-programs.bin', 'wb') as f:
         f.write(b'NX2NSPRG' + struct.pack('<II', 1, 0))
         for _, body in progs.values():
