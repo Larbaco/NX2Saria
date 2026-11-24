@@ -1453,3 +1453,319 @@ The scenarios:
   RTSS's profile keeps it with no write, while the game's pacer holds the movie at its rate; RTSS holds the game again
   at its end. Under a limit of 40 the profile has no limit while the movie plays, so RTSS cannot space out the frames
   the pacer sends at once after a late one, and gets 40 back at its end.
+
+## `tests/rumble_hd_check.py`
+
+HD rumble for controllers with linear actuators (`runtime/input/rumble_hd.c`): builds it with
+`tests/rumble_hd_check.c` and runs it; no game files, no SDL, no controller
+(`python tests/rumble_hd_check.py [--cc <clang>]`; the `--help` text is the string `DESCRIPTION`). The C program
+checks a vibration value as the bytes of a linear actuator's rumble report, a report's data from the two sides, and
+which reports are written when the game sends a batch; with `--sweep` it prints values and their bytes, one per line,
+for the script to decode with formulae of its own.
+
+- Known values. The neutral value, as the game sends it and as the controller expects it. Both bands at 150 Hz and
+  amplitude 0.9: frequency step 125 (low 0x3d, high 0x74), amplitude step 95. Full amplitude at the neutral
+  frequencies: amplitude step 100, the last one. Amplitude 0.5 is step 68; one band alone leaves the other at step 0.
+  An odd amplitude step puts its low bit on top of the low frequency byte: 0.245 is step 35.
+- The clamps. Frequencies outside a band go to its ends: low 1..0x7f, high 4..0x1fc. Amplitudes above 1, by themselves
+  or through the strength, stop at step 100; the strength scales below it. No amplitude is the neutral value whatever
+  the frequencies say: negative, NaN, too small, strength 0.
+- The amplitude scale.
+- A report's data from the two sides, for two actuators and for one: one actuator takes the stronger side (the right
+  one, 0.9) in both halves, and the side that is not at rest when the stronger one is. The output report's layout.
+- From a batch to the reports written, with a tick every 5 ms and 15 ms between reports. Three values in one batch:
+  the newest is written, at once. A value that comes 5 ms after the first report is too soon to write, and one that
+  replaces it before it was written is the one written (at 16 ms); it is stale 250 ms later, and written every 30 ms
+  until then. Once the game stops the neutral value is written three times, then nothing. The path turned off while
+  the game sends: the neutral value, whatever the game's data; back on with the game's data still fresh: it is written
+  again. Another controller: what was written is forgotten, the game's value is due at once.
+
+The Python side then decodes the sweep with formulae of its own (the script's, not the C file's): each frequency comes
+back within half a step of the clamped input, each amplitude as the step nearest to it, and no amplitude step is above
+100. `LOW` (40.875885, 626.286133) and `HIGH` (81.75177, 1252.572266) are the ends of the low and the high band in
+Hz. `step_amp()` is the amplitude of step k, from the published table's rule: step 1 alone, then quarter, sixteenth
+and thirty-second octaves. `decode()` turns four report bytes into (amp_low step, freq_low Hz, amp_high step,
+freq_high Hz). In `check_sweep()` the tolerance is half a frequency step (2^(1/64)) and the rounding of a float
+(1.0005), and at a boundary between two steps either neighbour is the nearest.
+
+## `tests/run.py`
+
+Runs the checks under `tests/` in parallel and prints one summary ([building.md](../building.md#checks) has the
+commands). What its header said beyond that, and beyond the section of this file on the first part's page:
+
+Each test is a script that exits 0 when it passes. The runner finds every `tests/*_check.py` and `tests/*_test.py` and
+the few others `EXTRA` lists, and runs each with the interpreter the runner runs with, from the repository's root. Run
+it with the Python the tests need: `.venv` (Python 3.12, `tools/requirements.txt`) for most, `.venv-py314` for the
+ones that need `compression.zstd` (`--needs py:compression.zstd` picks those).
+
+A test says what it cannot run without in comment lines of its own file, each at the start of a line (`markers()`
+reads them and returns (requirements, args template)):
+
+```
+# needs: windows
+# needs: sdl3, py:unicorn
+# args: --cc {cc}
+```
+
+`needs` takes one or more requirements, comma separated; `has()` gives (present, the reason to skip when it is not)
+of one:
+
+| Requirement | Present when |
+|---|---|
+| `windows`, `linux` | the operating system |
+| `game` | the game's files are extracted under `build/extracted` (`tools/extract.py`) |
+| `exe` | the game's executable is given to the runner with `--exe` |
+| `xlate` | the shader translator is there, `build/xlate/nx2navi_xlate` (`tools/build_xlate.py`) |
+| `gpu` | a Vulkan device: on Linux a `/dev/dri/renderD*` node or `/dev/nvidia0`; on Windows taken as present |
+| `display` | a desktop to open a window on: on Linux `$DISPLAY` or `$WAYLAND_DISPLAY` (`xvfb-run` gives one) |
+| `sdl3` | SDL3's development files: the C compiler finds `<SDL3/SDL.h>` and links `-lSDL3` |
+| `vulkan` | Vulkan headers of 1.4 or later where the C compiler looks (`CPATH` counts; Ubuntu 24.04's are 1.3; `tools/vulkan_pin.py` fetches the build's into `toolchain/vulkan-headers/include`) |
+| `vma` | `vk_mem_alloc.h` where the tests look: `$VMA_INCLUDE`, MSYS2 UCRT64's `include/vma`, `toolchain/vma` (`tools/build_game.py` `vma_include()` fetches it there) or `/usr/include` |
+| `pkg:<name>` | a library pkg-config knows (`pkg:sdl3`) |
+| `py:<module>` | a Python module the runner's interpreter imports (`py:unicorn`, `py:compression.zstd`) |
+| `file:<path>` | a file or folder, relative to the repository's root |
+| `clang` | a C compiler: `$CC`, else clang on `PATH` (on Windows MSYS2 UCRT64's, `C:\msys64\ucrt64\bin`) |
+| `<program>` | anything else: a program on `PATH` (git, objdump), MSYS2 UCRT64's on Windows too |
+| `linux:<req>`, `windows:<req>` | `<req>`, on that operating system only (`linux:sdl3`: the Linux build of the test links SDL3, the Windows one does not) |
+
+A test whose requirement is missing is skipped, with the requirement as the reason. `--with REQ` takes a requirement
+as present and `--without REQ` as missing, whatever the machine has. `builds()` says whether the C compiler builds a
+program (and links it with flags).
+
+`args` gives the test's command line. `{exe}` is the `--exe` path, `{xlate}` the translator, `{cc}` the C compiler
+(`$CC`, else MSYS2 UCRT64's clang on Windows, else clang) and `{root}` the repository's root.
+
+`tests/known_failures.txt` lists the tests that fail on main today, each with its reason, optionally only on some
+operating systems, and the tests that fail only now and then (flaky):
+
+```
+name: reason
+name [linux]: reason
+name [flaky]: reason
+name [flaky:case, flaky:other_case]: reason
+```
+
+A known failure still runs. It is counted apart and does not fail the run; one that passes is reported, so its line
+can go (and fails the run with `--strict`). A flaky test counts as passed when it passes; when it fails it is reported
+as flaky and does not fail the run. With cases named, only a failure of those unittest cases is flaky (the `FAIL:` and
+`ERROR:` lines of the test's output, which `FAILED_CASE` matches); a failure of any other case is a failure.
+`read_known()` returns {name: (reason, systems or None, flaky)}, flaky None for a known failure, () for a flaky test
+and the case names for flaky cases; `#` comments and blank lines of the file are left out. `flaky_failure()` says
+whether a failed run of a flaky test is the flakiness listed: any failure when no case is named, else one in which
+every case that failed is named.
+
+```
+python tests/run.py [filters...] [--jobs N] [--timeout S] [--list] [--show-output] [--needs REQ]
+                    [--with REQ] [--without REQ] [--exe PATH] [--strict]
+```
+
+A filter keeps the tests whose name holds it (`vk`, `cfg_rows`, `diff/`); with several, a test that holds any of them.
+Each test's output goes to `build/test-runs/<name>.log`, and the last lines of each failure are printed after the
+summary (all of it with `--show-output`). Exit code 0 when every test that ran passed or failed as known, 1 when one
+failed or timed out, 2 for a bad command line.
+
+`discover()` returns every test as (name, path): the name is the path under `tests/` without `.py`, with `/` between
+folders. `Runner.run()` returns (state, seconds, log path), the state 'pass', 'fail' or 'timeout'; after a timeout it
+kills what the test left running in its process group. In `main()` the results are name -> (status, seconds, log path
+or skip reason). The `--help` description is the string `DESCRIPTION`.
+
+## `tests/runtime_dirs_check.py`
+
+`NOT_SOURCES` (`platform`, `shaders`, `third_party`, `dlssg`) are the folders compiled apart, or not part of the game's
+compile.
+
+## `tests/runtime_include.py`
+
+Not a test: the include flags of the runtime's sources for the tests that compile them, `runtime/` and its folders by
+subsystem (`tools/build_game.py` `RUNTIME_DIRS`), as the build puts them on the path, since the sources include one
+another's headers by name. `flags()` returns `['-I', <rt>, '-I', <rt>/audio, ...]`, where `rt` is a `runtime/` folder,
+this checkout's by default.
+
+## `tests/save_retry_check.py`
+
+Builds and runs `tests/save_retry_check.c` on `runtime/vk/vk_save_retry.h`: when the autosave thread saves the
+pipeline caches and when it tries again after a save that did not happen (no copy of the data, a file that cannot be
+written; `runtime/vk/vk_pipeline.c` `autosave_once()`). Without the differential tests' packages it makes the same
+compiler choice without them. Times are ms since the machine started, as the thread's clock gives them.
+
+- Nothing built, nothing owed: no save, however long the run.
+- A new pipeline: a save, and after it none until the next one; never two within the interval.
+- A save that did not happen is tried again at the interval with nothing new built, `SAVE_RETRIES` times; the last of
+  them says so, and then nothing is tried until a new pipeline. A retry that saves ends the row: nothing more until
+  something new.
+- A save owed from the start (the play file folded in) is tried with nothing built, and bounded the same way.
+
+## `tests/save_share_check.py`
+
+Builds and runs `tests/save_share_check.c`: the game's side of a shared save without the game, `runtime/hle/fs_host.c`,
+`runtime/hle/save_share.c` and `runtime/hle/save_zip.c` with the rest of the runtime stubbed. Each run of the program
+is one start of the game on a profile folder the test makes: the first storage use (`fs_save_export`) runs
+`storage_init`, which makes a waiting import the save (`fs_host.c` `import_pending`). Python 3.12 or later; no game
+files.
+
+The program's modes: `export PROFILE DIR [bug]` (`save_share_export` into DIR; prints "result N path P"),
+`import PROFILE ZIP` (`save_share_import`; prints "result N detail D waiting W"), `start PROFILE` (a start and nothing
+else; prints "done D waiting W"), `cancel PROFILE` (`save_share_cancel`; prints "result N waiting W"). Backups go to
+`saves/` beside the program (`save_share_backup_dir`), as the game's go beside the game.
+
+The stubs are for the runtime around `fs_host.c` (`host.h` and the files that define these in the game); only what the
+save paths call does anything, and `fs.h`'s own declarations of some would clash with stubs that only have to link.
+`rt_config` returns NULL (`fs_host_set_profile` names the profile first). RomFS, the host function registry, guest
+memory and the probes are never reached on the save paths (`perf_size` is `fs_host_sizes`': only the perf trace's size
+lines call it). `mem_probing` answers 0: `write_file` asks before each write, and there is no probe and no lazy heap
+here. No boot map is pending (`runtime/patches/boot_map.c`), so a save file is read as it is; `log_short_paths` is off
+(`runtime/log_privacy.c`), so the text is shown as it is. `ACCOUNT` in the Python file is the C file's `account_uid`,
+as `fs_host.c` names it.
+
+- Export: nothing saved yet is refused; then the zip holds the save the game would load next (a finished commit
+  waiting in `save-tx` before the committed save; the start moved the finished commit in, `swap_in`, before the export
+  read it), its manifest as the launcher writes it (`launcher/saves.py` `check_manifest()` takes it), no key file (a
+  stray `prod.keys` in a save folder never goes into a zip); with a bug report the log and `nx2saria.ini` (reading an
+  existing `nx2navi.ini`).
+- Import: zips the launcher exports, from another game folder, wait in `profile/save-import`; at the next start the
+  save the game would load goes to `saves/backup <time>` beside the program, the import becomes the save, and the
+  start says where the old save went; a second start changes nothing. A finished commit made after the import (the
+  game saved before the restart) is backed up and replaced too.
+- Refusals (no manifest, another game, a newer format, a path outside the save, a damaged member, no save files):
+  nothing waits and the save stays; Cancel drops a waiting import.
+
+## `tests/save_zip_check.py`
+
+Builds and runs `tests/save_zip_check.c`: `runtime/hle/save_zip.c`, the zip of a shared save as the game's menu writes
+and reads it (`runtime/hle/save_share.c`), against Python's zlib and zipfile, which the launcher uses for the same zip
+(`launcher/saves.py`). No game files. The program's modes:
+
+- `selftest`: the manifest's JSON keys, round trips in memory, damaged and cut input. The codec case uses text with
+  repeats, then bytes of every value: literals of both fixed code lengths, long and far matches. Damaged data is
+  refused, by inflate or by the CRC; for a stored member's byte only the CRC tells; every prefix of the zip is
+  refused, never read past its end.
+- `inflate IN SIZE OUT`: raw deflate IN (zlib's) into SIZE bytes at OUT; exit 3 when refused. The streams zlib makes at
+  every level and strategy (stored, fixed and dynamic blocks) inflate to the same bytes, and a damaged one (a flipped
+  bit in a dynamic block, and one cut short) is refused.
+- `deflate IN OUT`: raw deflate of IN into OUT, which zlib inflates to the same bytes.
+- `zip OUT NAME FILE [NAME FILE]`: a zip of the files under those names; it passes zipfile's `testzip` with the same
+  members.
+- `unzip ZIP DIR`: every member into `DIR/<index>`, a line "name|crc|size|dir|link" each; exit 3 with the `SZ_E_*`
+  code when a member or the zip is refused. Zips zipfile makes (stored, deflated, with data descriptors, the
+  launcher's export) unzip in C to the same members with their CRCs; a link member, as a Unix zip tool stores one, is
+  marked; a damaged member is refused by CRC or inflate. `NoSeek` is a write-only stream zipfile cannot seek in: it
+  writes data descriptors after the members.
+
+Last, the launcher imports a zip the C writer made (`launcher/saves.py` `import_zip()`).
+
+## `tests/scratch_lru_check.py`
+
+Builds and runs `tests/scratch_lru_check.c` on `runtime/vk/vk_scratch_lru.h`: which entry of the upscaler stand-in's
+scratch image cache serves a request (`runtime/vk/vk_exec_draw.c` `fallback_scratch()`): a free one, else the one used
+longest ago. The old cache kept its first eight sizes and refused the ninth: the sizes in the check are those a run
+walks through when the window and the DLSS mode change a few times. No GPU, no game files, any Python.
+
+The C file's request helper works as `fallback_scratch()` does: a hit returns its entry, a miss fills the entry it was
+given (after freeing the evicted image); it returns the entry, and the hit and eviction as `scr_pick` said.
+
+- Empty: free entries in order, nothing evicted.
+- A match is a hit and refreshes its frame. Same size, another format: not a match.
+- The ninth size: the one used longest ago goes (entry 0, frame 1), not the full cache refusing it. The refreshed entry
+  3 (frame 100) outlives the untouched ones.
+- Two images in one frame never evict each other while older entries remain (g8 then g8s of one dispatch).
+- A freed entry (an image that failed to be made stays not live) is taken before any eviction.
+
+## `tests/sdl3_pin_test.py`
+
+`tools/sdl3_pin.py`, the SDL3 a Linux build kit carries for systems that have none (issue #11: Ubuntu 24.04 and Linux
+Mint 22 package no SDL3). No network, no game files: the packages and the sysroot are made in the test (`ar()` writes
+an ar archive, a Debian package, of (name, bytes) members; `tar_bytes()` a tar archive of {name: bytes} regular files,
+(name, target) symbolic links and (name, target) hard links). The sysroot holds the same files where the packages
+install them, beside others, the copyright file a hard link to the development package's.
+`Sdl3PinTest.resolve()` runs `sdl3_pin.resolve` quietly and returns (folder or None, the message it stopped with,
+what it printed); `Sdl3PinTest.urlopen()` serves {url: bytes} and answers 404 for any other address.
+
+- The pinned packages give the headers, the library and its copyright file and nothing else: the library's file
+  itself under its soname, not the package's link. A folder there already is not fetched or unpacked again; one cut
+  short while it was written (no stamp), or with a stamp that is not ASCII, is.
+- Another package, a package without what it should hold or with other files is refused.
+- When the packages are gone from the pool the same files come from the dated sysroot, checked against its SHA-256:
+  the first 404 ends the pool's turn; the library taken is the 64-bit one. The same archive from disk works; another
+  archive is refused, and a sysroot that cannot be fetched says what to do. A download cut short after the archive's
+  end marker is told from another file (the pinned file is 100 bytes longer than the local one).
+- Only what an earlier unpack wrote is replaced, in a folder that holds other things too.
+- A damaged package is an error with a reason, not a crash; members of odd sizes are padded.
+
+## `tests/session_summary_check.py`
+
+Builds and runs `tests/session_summary_check.c`: `runtime/session_summary_fmt.c`, the JSON text of
+`logs/session-summary.json` (`runtime/session_summary.c` writes it at the game's end). The C side writes each case's
+JSON to `<dir>/<case>.json`; the Python side parses it. Each sample summary (all fields, all null, hostile strings and
+numbers past the limits, a device-lost end) must parse as JSON with exactly the summary's keys, each value of its type
+and within its limits: strings printable and capped, settings and display values in `[A-Za-z0-9_.:x+-]` or "other",
+vendor and device as 0x and 4 hex digits, numbers with at most one decimal. It also checks statically that the two
+ends call the writer where they should (`runtime/gfx/gfx_present.c` `rt_exit_steps()`, `runtime/dispatch.c`
+`fatal_end()`) and that the hard crash (`runtime/main.c` `crash_handler()`) writes none. No game files.
+
+In the Python file the schema table holds the summary's keys and the types of their leaves: str, int, float (an int or
+a number with one decimal), bool, 'hex' (0x and 4 hex digits) and 'token' (a display or settings value); None in a
+tuple means the leaf may be null. `check_leaf()` returns the problems with one leaf, as a list of strings;
+`check_obj()` never accepts a null group: the server refuses one (`telemetry/src/validate.ts`), its leaves are null
+instead. `expect()` is what each case must hold beyond the schema; the names that are not a patch set's (spaces,
+empty; a mod's set is still a name) are left out. The files are read as strict UTF-8, so invalid UTF-8 fails there.
+
+In the C file:
+
+- Hostile strings: quotes, backslashes, line ends and other controls, invalid UTF-8, non-ASCII text, a C1 control, a
+  surrogate's encoding, over-long names and fatal lines, tokens outside the charset, and numbers past the limits.
+- A fatal line from a path in a home folder, already short (`log_privacy_str` runs before), and the device-lost end.
+- `ss_format` refuses a buffer too small, and writes a terminated string anyway.
+- `ss_setting`: the list's spelling, ranges, "other", free text, NULL. `ss_os_name`.
+- `ss_frametime`: `perf.c`'s 0.25 ms bins. 1000 frames: 985 at 16.6 ms (bin 66), 10 at 33 ms (bin 132), 5 at 120 ms
+  (bin 480). The slowest 1% is 10 frames: the 5 of bin 480 and 5 of bin 132, so the 1% low is 1e9 / 33.25 ms. Under
+  100 frames the slowest one alone is the 1%; a frame past the last bin lands in it.
+
+## `tests/sha256_paths_check.py`
+
+Builds and runs `tests/sha256_paths_check.c` with every clang this machine has: `runtime/sha256.c`'s portable C and
+SHA-NI block functions give the FIPS 180-4 hashes and the same hash of every message, and its CPUID check finds the
+SHA extensions exactly where the processor reports them (`/proc/cpuinfo`'s `sha_ni` on Linux;
+`__builtin_cpu_supports` where the compiler takes "sha", clang 19 and later). The compilers are the one the build
+uses (`CC`, MSYS2 UCRT64's clang on Windows, else clang on `PATH`) and, on Linux, each `/usr/lib/llvm-*/bin/clang`,
+so that a distribution's older default (Ubuntu 24.04's clang 18) is covered beside a newer one; each builds the file
+generic (as `tools/make_game.py` builds the runtime), for x86-64-v2 (`tools/build_game.py --cpu v2`) and, where this
+CPU runs it, x86-64-v3. No game files. `compilers()` returns (label, path) of each distinct clang to try, the build's
+own first; a `CC` that does not resolve fails; on Windows only a MinGW clang builds the runtime (an MSVC-targeting
+one lacks its headers here). `cpu_flags()` gives the processor's feature flags from `/proc/cpuinfo`, None where there
+is none to read.
+
+The C program runs the FIPS 180-4 vectors (the examples, the 448-bit two-block one, a million 'a') and HMAC-SHA256
+test case 2 of RFC 4231 through the public calls, once in portable C and once on the SHA extensions when the CPU has
+them, and both forms against each other: whole messages of every length from 0 to 300 bytes and some long ones, each
+in one call and in pieces that cut the 64-byte blocks in different places, and the two block functions on the same
+state and blocks, without the padding the public calls add. Every SHA-NI round instruction the hashes run is counted
+(`rounds`: the `sha256rnds2` instructions `blocks_ni` has run), so a run that was meant for one form and ran the other
+fails instead of comparing portable C with itself: `rounds` grows with SHA-NI and stays put in portable C. It prints
+"cpuid sha_ni=<0|1>" (what `sha256_ni` found), on clang 19 and later and GCC also "builtin sha_ni=<0|1>" (a second
+opinion), then "compared ni=<0|1> ..." (whether the SHA-NI form ran) and one line per failure.
+
+## `tests/skin_pair_check.py`
+
+Builds and runs `tests/skin_pair_check.c` on `runtime/vk/skin_pair.h`: which draw of last frame a skinned draw
+continues, for the motion vectors of skinned characters. No GPU, no game files, any Python (`compiler()` as
+`tests/fg_reset_check.py` picks it).
+
+A character of the scene (`Actor` in the C file) is its mesh and program (the key), its place in the frame's command
+stream, and the two copies of its palette block, which the game writes in turn. The frame helper draws the actors as
+frame number f (reached by the replay's threads in the order of `reached`, NULL: as given), pairs them with the frame
+before when `consecutive`, and returns the frame's entries; the entry of an actor is found by tag, and another helper
+gives the actor the paired entry of last frame belongs to, -1 when the entry is not paired.
+
+- One character whose palette copies take turns: nothing in its first frame, its place's address is not known in the
+  second, paired from the third on. A frame without a list in between: last frame's list is not of the frame before;
+  its two addresses are still known, so the frame after the gap is paired.
+- Written every second frame only: the copy it stays on and the one it moves to are both its own. A block the game
+  does not write again keeps its address: paired in the second frame.
+- Two characters of one model: the same key twice in a frame. The numbers follow the command stream, whatever order
+  the replay's threads reached the draws in. They change places in the draw order: each place now holds the other's
+  palette, at an address the place never had, for two frames; then both are paired with themselves again.
+- A third one of the model appears: every draw of the key is in doubt that frame, and the old two are paired again
+  once the count has held for a frame. One of them leaves. The last one leaves in the frame another one of the model
+  comes: one draw as before, but not the same character.
+- The palette changes size. A key that was not drawn, and one in an empty list.
+- `skin_near`: every bone's translation within the limit; a turned bone at the same place.
