@@ -1,4 +1,5 @@
 """The launcher commit warning's pure threshold and message, with the system probe and dialog stubbed."""
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -71,6 +72,18 @@ class CommitWarningTest(unittest.TestCase):
         self.assertIn('32768 MB', dialog.call_args.args[0])
         self.assertEqual(dialog.call_args.args[1], 'root')
         self.assertEqual(lines[-1], 'play memory: player cancelled')
+
+    def test_unbounded_memory_request_is_json_safe_and_keeps_warning(self):
+        lines = []
+        with mock.patch.object(commit.winsys, 'system_commit_info', return_value=(18000, 27000, 16000)), \
+                mock.patch.object(commit.winsys, 'page_file_is_system_managed', return_value=False), \
+                mock.patch.object(commit, 'game_commit_need', return_value=float('inf')):
+            request = commit.play_memory_request('game', lines.append)
+        self.assertEqual(request.remaining, 9000)
+        self.assertIsNone(request.need)
+        self.assertTrue(request.unbounded)
+        json.dumps(request._asdict(), allow_nan=False)
+        self.assertIn('needs about inf MiB', commit.play_memory_warning(request))
 
     def test_enough_commit_logs_the_sample_and_does_not_open_dialog(self):
         lines = []
