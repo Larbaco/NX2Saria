@@ -698,3 +698,298 @@ fract(52.9829189 * fract(dot(px, (0.06711056, 0.00583715)))).
 - The darkening stands for the sunlight the pixel loses; the sky's and the bounced light stay, so even a full hit at
   full strength keeps part of the colour: `MAX_DARK` is 0.6. It fades out between 40 and 80 of distance.
 - A factor of 0.999 and more writes nothing.
+
+## `runtime/shaders/astc_decode.comp`
+
+ASTC LDR 2D decode to RGBA8 on the GPU, one invocation per texel; `runtime/vk/vk_astc.c` records the dispatch. Its
+first two lines are a licence notice, which stays in the code. It follows the CPU decoder, `runtime/gfx/tex_astc.c`,
+so the output is the same bytes as `astc_decode_ldr()` there and as astcenc's 8-bit decode: endpoints expand to 16
+bits (linear v * 257, sRGB v << 8 | 0x80), texel = (e0 * (64 - w) + e1 * w + 32) >> 6, top 8 bits (in the shader one
+shift by 14). Error blocks are magenta (`MAGENTA`, 0xFFFF00FF); HDR endpoint modes give magenta endpoints for their
+partition. `--probe-astc` (`runtime/gfx/astc_probe.c`) compares the two decoders bit for bit. The ASTC paths as a
+feature: [architecture.md](../architecture.md); the decoder's notes: [gfx.md](gfx.md).
+
+A workgroup of 64 lanes takes up to four blocks of one block row (`main()`): every lane decodes its block's header,
+the block's lanes share the integer-sequence decode of its weights and colour values through shared memory, and each
+lane then interpolates its own texels.
+
+Bindings (set 0, std430): 0 `Blocks`, `uvec4 blk[]`, one entry a 16-byte block; 1 `Texels`, `uint px[]`; 2 `Tables`,
+`uint tab[]`: uint 0..11 are the byte offsets of the weight unquantization rows (QUANT_2..QUANT_32), 12..27 those of
+the colour rows (QUANT_6 up to the level before QUANT_256); the bytes follow. `runtime/vk/vk_astc.c` `fill_tables()`
+writes them.
+
+Push constants (`Params`; `Push` in `runtime/vk/vk_astc.c`):
+
+| Field | Meaning |
+|---|---|
+| `uint in_base` | first block of slice 0 (uvec4 index into `blk`) |
+| `uint out_base` | first texel of slice 0 (index into `px`) |
+| `uint width, height` | the level's size in texels |
+| `uint bw, bh` | block footprint |
+| `uint bx` | blocks per row |
+| `uint bslice` | blocks per slice |
+| `uint srgb` | not 0: the sRGB endpoint expansion |
+| `uint bl` | 1: `blk` holds the level's block-linear storage from `in_base` (`bl_block()`), 0: tight rows |
+| `uint th, td` | its block height and depth in GOBs, log2 |
+| `uint nvn2` | Switch 2 order of the 16-byte pieces in a GOB |
+
+### `gob_off()`, `bl_block()`
+
+`bl_block()`: the uvec4 index, from `in_base`, of block (bxi, byi) of slice z in block-linear storage: GOBs of 64 bytes
+x 8 block rows, in blocks of 2^th GOBs high and 2^td deep, blocks in x, then y, then z order
+(`runtime/gfx/tex_deswizzle.c` `nvn_bl_offset()`, with x the block's byte offset in its row and y its block row). A
+GOB is 512 bytes; `gob_off()` is the offset inside one, in either console's order.
+
+### `rbits()`
+
+n (<= 32) bits at `pos`; bits past 127 read as zero.
+
+### `q_bits()`, `q_trit()`, `q_quint()`
+
+Quantization levels QUANT_2 .. QUANT_256 (0..20): the bits, trits and quints of the tables `q_bits`, `q_trits` and
+`q_quints` in `runtime/gfx/tex_astc.c`, worked out instead of looked up.
+
+### `ise_at()`
+
+The raw ISE value `idx` (trit or quint << bits | bits) of a sequence of `count` values at bit `start`.
+`runtime/gfx/tex_astc.c` `ise_decode()` reads the sequence front to back; this reads one value's group only. Bits of
+values past `count` are not read.
+
+- Trits: value k of a group has nb bits at k * nb + ts[k], then tb[k] trit bits; ts = {0, 2, 4, 5, 7}, tb = {2, 2, 1,
+  2, 1}. A group is 5 values, 5 * nb + 8 bits.
+- Quints: qs = {0, 3, 5}, qb = {3, 2, 2}. A group is 3 values, 3 * nb + 7 bits.
+
+### `unpack_endpoints()`
+
+`v`: the partition's unquantized colour values. False for an HDR mode.
+
+### `header()`
+
+`Hdr` is what every texel of a block needs from its header (`runtime/gfx/tex_astc.c` `astc_decode_block()` up to the
+weight infill). `konst` is the colour of a void-extent or error block; `solid` says `konst` is the whole block.
+
+- A void extent is a block mode whose low 9 bits are 0x1FC.
+- The block mode follows `runtime/gfx/tex_astc.c` `block_mode_2d()`.
+- Then the colour endpoint modes. A block whose colour values would be quantized below QUANT_6 (level 4) is an error
+  block.
+
+### `main()`
+
+A workgroup decodes `bpw` blocks of one block row when a block has 64 texels or fewer (64 / texels of them), else one
+block: `S` lanes per block (its texels, at most 64). The lanes of a block decode its weights and colour values into
+shared memory, the first `pcount` lanes then unpack the endpoints, and each lane writes its texels.
+`runtime/vk/vk_astc.c` works out the same blocks per workgroup for its dispatch.
+
+| Shared | Holds |
+|---|---|
+| `MAXB` = 4 | blocks a workgroup takes at most: at 4x4, 4 blocks of 16 lanes |
+| `s_w[MAXB][64]` | unquantized weights 0..64 (dual plane: interleaved as in the bit stream) |
+| `s_cv[MAXB][18]` | unquantized colour values |
+| `s_e0[MAXB][4]`, `s_e1[MAXB][4]` | 16-bit endpoints, two channels per uint |
+
+## `runtime/shaders/bc3_encode.comp`
+
+RGBA8 texels to BC3 blocks on the GPU, one invocation per 4x4 block: the second pass of the ASTC decode when
+`NX2SARIA_ASTC_BC` is on (`runtime/vk/vk_astc.c`, which records the dispatch), so a decoded ASTC texture takes 8 bits
+per texel in video memory instead of 32. Texels past the right or bottom edge repeat the last column or row.
+
+Colour: the BC1 four-colour block of the box around the block's colours, its diagonal turned to the sign of the
+colours' covariance and inset by 1/16 of the range (the bounding-box method), then each texel takes the nearest of the
+four palette entries along that axis. Alpha: the eight-value BC3 alpha block between the block's smallest and largest
+alpha. The bytes are what the texels hold, so an sRGB image keeps sRGB-encoded values, as BC3_SRGB expects.
+
+The texel bytes are read as integers, so the alpha endpoints are exactly the block's least and greatest alpha: a texel
+that is fully transparent or fully opaque keeps 0 or 255, wherever the source's own block edges fall inside the 4x4
+block, and an alpha test keeps the outline of cut-out foliage. Through `unpackUnorm4x8` an opaque 255 could come back
+as 254.99 on a GPU whose division is not exact and be cut to 254 by the conversion to uint.
+
+With the specialization constant `BC1` (id 0) true (a pipeline of its own, `runtime/vk/vk_astc.c` `bc1_on()`) the
+blocks are BC1, for a texture whose every texel is opaque ("ASTC as BC1" in `runtime/vk/vk_texture.c`): the colour
+half alone, as BC1 reads the same four-colour block when c0 > c1, and when c0 == c1 every index is 0 (c0 in BC1's
+three-colour mode too). The texels are the same as the BC3 block's, at half the size.
+
+Bindings (set 0, std430): 0 `Texels`, `uint px[]`; 1 `Blocks`, `uint blk[]`: 4 words a BC3 block, 2 a BC1 one.
+Workgroups of 8x8. Push constants (`Params`; `BcPush` in `runtime/vk/vk_astc.c`):
+
+| Field | Meaning |
+|---|---|
+| `uint in_base` | first texel of slice 0 (index into `px`) |
+| `uint out_base` | first block of slice 0 |
+| `uint width, height` | the level's size in texels |
+| `uint bx` | blocks per row |
+| `uint bslice` | blocks per slice |
+
+### `main()`
+
+- Alpha: a0 > a1 selects the eight-value mode; index 0 is a0, 1 is a1, 2..7 the six steps from a0 to a1. The step `s`
+  runs 0 = a0 .. 7 = a1. The 48 index bits start at bit 16 of the first word and run into the second.
+- Colour: the box diagonal along the covariance of red and blue with green: where red (or blue) falls as green rises,
+  that channel's ends are swapped.
+- c0 > c1 is the four-colour mode, so the two are swapped when c0 < c1. The step `s` runs 0 = e0 .. 3 = e1; the
+  palette order is e0, e1, 2/3 e0 + 1/3 e1, 1/3 e0 + 2/3 e1.
+
+## `runtime/shaders/meshfb_scan.comp`
+
+The mesh fallback's pass between a draw's task dispatch and its mesh dispatch (`runtime/vk/vk_mesh_fb.c`
+`vk_meshfb_scan()`, `runtime/gfx/mesh_fb.c`): every task workgroup wrote how many mesh workgroups it starts into its
+payload (word 1). This lists them in task order, so that mesh workgroup g finds its task and its index among that
+task's in list entry g (the task in the low 24 bits, the index above them), and writes the draw's record: how many
+mesh workgroups to dispatch and how many instances to draw. The fallback as a feature: "4. Graphics" in
+[architecture.md](../architecture.md); its C side: [gfx.md](gfx.md).
+
+One thread walks the tasks (a workgroup of 1): the order of the list is the order the primitives are drawn in, which
+has to be the same in every frame and in the depth and colour passes of one frame.
+
+The record: words 0-2 the task dispatch (x written before this pass), 4-6 the mesh dispatch, 8-11 the draw (vertices,
+instances, first vertex, first instance), 12 the mesh workgroups the tasks asked for, 13 the task workgroups.
+
+Bindings (set 0): 0 `Rec`, the record buffer; 1 `Task`, the task buffer; 2 `List`; 3 `Mesh`, the mesh buffer, read
+for its size alone. Push constants (`Params`):
+
+| Field | Meaning |
+|---|---|
+| `uint rec` | the record's first word in the record buffer |
+| `uint task_words` | words of a task workgroup's payload in the task buffer |
+| `uint fan` | mesh workgroups a task workgroup starts at most; bit 31: the clamp wrote word 13 (the task workgroups asked for before it cut the dispatch, `runtime/shaders/meshfb_clamp.comp`), which stays |
+| `uint slot_words` | words of a mesh workgroup's output in the mesh buffer |
+| `uint verts` | vertices drawn per mesh workgroup |
+| `uint max_groups` | workgroups one dispatch may have (`maxComputeWorkGroupCount`) |
+
+### `main()`
+
+The tasks walked are the count asked for, cut to what the task buffer holds and to 2^24. The room is what the mesh
+buffer and the list hold, at most `max_groups`. A task starts at most min(`fan`, 255) mesh workgroups. Word 12 gets
+what the tasks asked for, words 4 and 9 what fits.
+
+## `runtime/shaders/meshfb_clamp.comp`
+
+The mesh fallback's pass between a draw's record and its first dispatch, for a draw whose workgroup count the GPU wrote
+(`runtime/vk/vk_mesh_fb.c` `vk_meshfb_clamp()`, `runtime/vk/vk_exec_draw.c` `mfb_draw()`). The record's copies put
+that count into the first dispatch and, without a task stage, into the draw's instances as it is; a garbage count (the
+game's culling pass reading memory nothing wrote) would launch up to millions of workgroups that write nothing and
+instances that draw nothing, past the buffers' end, and keep the GPU busy past the driver's timeout. The count is cut
+to what the buffers hold, which changes nothing that is drawn; the record's report word keeps the count asked for, so
+the log names such a draw (`runtime/vk/vk_mesh_fb.c` `record_check()`). For a task count that word (13) is written
+here, before the cut: the scan would read the count already cut (`runtime/shaders/meshfb_scan.comp` leaves it to this
+pass then), and a batched draw short of its task part would never be seen (`runtime/vk/vk_mesh_fb.c`
+`record_check()`, `runtime/gfx/mfb_batch.h` `mfb_hist_note()`).
+
+The record is the one of `runtime/shaders/meshfb_scan.comp`: words 0-2 the task dispatch, 4-6 the mesh dispatch, 8-11
+the draw (vertices, instances, first vertex, first instance), 12 the mesh workgroups asked for, 13 the task
+workgroups.
+
+Binding 0 (set 0): `Rec`, the record buffer. A workgroup of 1. Push constants (`Params`):
+
+| Field | Meaning |
+|---|---|
+| `uint rec` | the record's first word in the record buffer |
+| `uint task` | 1: the count is the task dispatch's (word 0); 0: the mesh dispatch's and the draw's instances (4, 9) |
+| `uint room` | workgroups the buffers hold, at most what one dispatch may have |
+
+## The mesh fallback probe's programs
+
+The four shaders of `--probe-meshfb` (`runtime/gfx/mesh_fb_probe.c`). The three programs keep the line
+`// build_shaders: keep functions`: they are in the shape the translator gives a program (`tools/xlate/MeshSpirv.cs`),
+and `runtime/gfx/mesh_fb.c` makes its compute module from each, as it does from a translated program.
+
+### `runtime/shaders/meshfb_probe_m.mesh`
+
+A mesh program without a task stage: the program itself is a function (`program()`) that writes its stage buffer into
+shared memory, and the entry function calls it once and hands the buffer to the mesh pipeline. The layout is that of
+`MeshInfo` in `tools/xlate/AmpereLowering.cs` for 64 vertices, 32 triangles and 8 output components (position, generic
+vector 0): vertex v's component l is word ((v >> 5) * 8 + l) * 32 + (v & 31) (`VWORD`), the primitive count word 512
+(`COUNT_WORD`), the index bytes from byte 2052 (`INDEX_BYTE`). The shared memory is 540 words.
+
+Workgroup g draws cell g of a grid: nine vertices (28 to 36, across the two vertex groups) and up to eight triangles,
+none in every fifth cell. One thread writes the index bytes: they share words.
+
+Binding 1 (set 0): `Params`, `vec4 tint; uvec4 grid`, with the grid's columns and rows.
+
+### `runtime/shaders/meshfb_probe_tm.mesh`
+
+The mesh program that `runtime/shaders/meshfb_probe_t.task` feeds, in the same shape. Its shared memory (612 words)
+holds the task payload behind the stage buffer, from word 540 (`PAYLOAD`). The workgroup id is its index among its
+task's mesh workgroups: payload word 4 + id names the cell it draws, and the mark in the last payload word (71) names
+its task, which the colour shows when either is wrong (magenta). As in the other mesh program, one thread writes the
+index bytes, which share words; `Params` is the same block.
+
+### `runtime/shaders/meshfb_probe_t.task`
+
+A task program in the same shape: the program writes its payload into shared memory, and the entry function copies
+that out and starts the mesh workgroups the program counted into word 1. The payload is 288 bytes (72 words): the
+header, then the program's data from word 4.
+
+Task workgroup t starts 0 to 4 mesh workgroups (the uniform block's `shift` moves which tasks start how many: (3 t +
+shift) mod 5) and tells each the grid cell it draws (4 t + its index); the last payload word carries a mark the mesh
+program checks, 0x600df00d + t.
+
+### `runtime/shaders/meshfb_probe_f.frag`
+
+The fragment stage of the probe's mesh programs: the interpolated generic vector 0.
+
+## `runtime/shaders/wb_merge.comp`
+
+Write-back merge of a VRAM mirror (`runtime/vk/vk_memory.c` `wb_merge_record()`): copies a 32-bit word of what the
+GPU left in the mirror into the pool's imported buffer (guest memory) only where it differs from the snapshot taken
+before the submission's GPU work, so words the GPU did not change keep what the CPU wrote meanwhile. The memory model
+it serves: [maxwell.md](../maxwell.md).
+
+One invocation per word of the listed ranges (workgroups of 64); ranges are sorted by their first invocation, and an
+invocation finds its range by bisection. A range: x the word offset in the mirror and imported bindings, y the word
+offset in the snapshot binding, z the words, w the first invocation.
+
+With `track` set (shadow storage) a word that changed also marks its 4 KiB page of guest memory in `Pages`: `page0` is
+the bindings' start within its page, so the CPU's write-back at the fence reads only the marked pages of the shadow
+(`runtime/vk/vk_memory.c` `shadow_wb_cb()`).
+
+Bindings (set 0, std430): 0 `Post`, the mirror; 1 `Pre`, the snapshot; 2 `Dst`, the imported buffer; 3 `Ranges`,
+`uvec4 rng[]`; 4 `Pages`. Push constants: `nranges`, `total` (invocations with a word), `page0`, `track`.
+
+## `runtime/shaders/wb_mergelist.comp`
+
+Write-back merge into a list (`runtime/vk/vk_memory.c` `wb_merge_record()` with `NX2SARIA_MERGE_CPU`): as
+`runtime/shaders/wb_merge.comp`, a word the GPU left different from the snapshot taken before the submission's GPU
+work goes back to guest memory, but as an entry (its place among the submission's list words: `gbase` + invocation,
+the value) in a device-local list, which `runtime/shaders/wb_listcopy.comp` copies to host memory in whole lines and
+the completion thread stores (`runtime/vk/vk_memory.c` `merge_apply()`) before the fence counts as done.
+
+Why: `wb_merge.comp`'s word-sized writes into host memory across PCIe cost the memory controller a read-modify-write
+of their line each: 0.9-1.0 ms of GPU a frame in Kokiri Forest for 0.6 MiB of scattered words.
+
+Past the list's room (`pc.cap`) a word is written directly, as `wb_merge.comp` does. With `pc.check` set
+(`NX2SARIA_MERGE_CPU_CHECK`) the GPU writes the listed words too.
+
+One invocation per word of the listed ranges (workgroups of 64); the ranges are those of `wb_merge.comp` (x: word
+offset in the mirror and imported bindings, y: word offset in the snapshot binding, z: words, w: first invocation).
+It needs `GL_KHR_shader_subgroup_basic` and `GL_KHR_shader_subgroup_ballot`: a subgroup counts its changed words with
+a ballot, one of its invocations takes that many entries from the list's counter, and each changed word takes its
+place among them. The count is the same in every invocation of the subgroup, so a subgroup without a changed word
+leaves together.
+
+Bindings (set 0, std430): 0 `Post`, 1 `Pre`, 2 `Dst`, 3 `Ranges`, as the merge's; 4 `List`: `uint n` and three pad
+words, then `uvec2 ent[]`. Push constants: `nranges`, `total`, `gbase`, `cap`, `check`.
+
+## `runtime/shaders/wb_listcopy.comp`
+
+Copies a merge list (`runtime/shaders/wb_mergelist.comp`: a 16-byte header with the count, then 8-byte entries) from
+device-local memory to host memory for the completion thread (`runtime/vk/vk_memory.c` `merge_apply()`): 16 bytes an
+invocation, the invocations of a subgroup consecutive, so the writes across PCIe go out in whole lines.
+
+Bindings (set 0, std430): 0 `Src`, 1 `Dst`, both `uvec4[]`. Workgroups of 256. Push constant: `cap`, the list's room.
+The 16-byte chunks copied are 1 + (n + 1) / 2: the header and n entries.
+
+## `runtime/shaders/wb_diffcopy.comp`
+
+Write-back by difference of a VRAM mirror's large written ranges (`runtime/vk/vk_memory.c` `wb_merge_record()` with
+`NX2SARIA_WB_DIFF`). 16 invocations cover a 64-byte line of consecutive words; when the GPU changed any word of it
+against the snapshot taken before the submission's GPU work, they copy the whole line, else nothing. Whole lines keep
+the writes into guest memory across PCIe in full packets and spare the memory controller a read-modify-write (the
+merge's word-sized writes cost it); a line the GPU left alone keeps what the CPU wrote meanwhile.
+
+One invocation per word (workgroups of 256); ranges sorted by their first invocation (x: word offset in the mirror and
+imported bindings, y: word offset in the snapshot binding, z: words, w: first invocation, w = x mod 32 so that the
+clusters of 16 line up with the 64-byte lines of the 128-byte aligned bindings; the invocations before a range's w are
+idle). An invocation past its range's words (the padding before the next one) is idle too. It needs
+`GL_KHR_shader_subgroup_basic` and `GL_KHR_shader_subgroup_clustered`.
+
+Bindings (set 0, std430): 0 `Post`, 1 `Pre`, 2 `Dst`, 3 `Ranges`, as the merge's. Push constants: `nranges`, `total`.

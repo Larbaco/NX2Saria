@@ -39,7 +39,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 15 | `runtime/hle/` | [hle.md](hle.md) | extracted |
 | 16 | `tools/` | [tools.md](tools.md) | started: the licence parts of the release scripts; the rest not yet extracted |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | started: `tests/shipped_notices_check.py`; the rest not yet extracted |
-| 18 | `runtime/shaders/` (not `ffx/` and `ffx3/`) | `shaders.md` | not yet extracted |
+| 18 | `runtime/shaders/` (not `ffx/`, `ffx3/` and `smaa.glsl`) | [shaders.md](shaders.md) | extracted |
 | 19-22 | `runtime/vk/` | `vk-pipeline.md`, `vk-exec.md`, `vk-memory.md`, `vk-texture.md`, `vk-upscalers.md` | not yet extracted |
 
 When an area is done, its row gets a link to the page and the status "extracted".
