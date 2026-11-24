@@ -1,5 +1,4 @@
 # needs: clang
-"""Check the 1.1.1 single-frame animation patch table and run its host against stand-in animation entries."""
 import os
 from pathlib import Path
 import subprocess

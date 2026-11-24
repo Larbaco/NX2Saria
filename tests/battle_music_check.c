@@ -1,4 +1,3 @@
-// The sound gate and its battle-music reads, with a stand-in battle manager and replaceable flags.
 #include <assert.h>
 #include <stdio.h>
 
@@ -58,9 +57,9 @@ int main(void) {
     assert(read_flags(2, 0x80) == 0x80);
     assert(read_flags(3, 0) == 0x40);
     assert(logs == 3);
-    assert(read_flags(0, 0x20) == 0x20 && logs == 3);  // the guest already saw this bit
+    assert(read_flags(0, 0x20) == 0x20 && logs == 3);
     for (int i = 0; i < 20; i++) assert(read_flags(0, 0) == 0x20);
-    assert(logs == 8);  // multiple sound objects see the same pulse in one frame
+    assert(logs == 8);
     battle_music_gate(1);
     assert(read_flags(0, 0) == 0 && read_flags(3, 0) == 0);
 
@@ -73,7 +72,7 @@ int main(void) {
     assert(read_flags(0, 0) == 0 && read_flags(2, 0) == 0x04);
 
     flags = 0x20;
-    battle_music_gate(0);  // phases between two sound updates must not see the old pulse
+    battle_music_gate(0);
     assert(read_flags(2, 0) == 0);
     manager += 0x10000;
     battle_music_gate(1);

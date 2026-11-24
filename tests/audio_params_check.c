@@ -1,17 +1,3 @@
-/* What the audio renderer does with values the game sends that it cannot use (runtime/hle/audren.c update_check,
-   request_update, audio_bad; runtime/audio/audio_mixer.c splitters_walk, audio_mixer_routing_check,
-   audio_mixer_mix_layout_check, audio_mixer_update_effects and the render-pass effects), with the rest of the runtime
-   stubbed and the real effect DSPs (runtime/audio/audio_effects.c, runtime/audio/audio_reverb.c) linked. No game data and no audio
-   device: NX2SARIA_AUDIO=none mixes without one.
-
-   Every RequestUpdate goes through renderer_handler with a hand-built input. A refused update must answer 0x5299 (the
-   SDK hands that result to the game, which ignores it; the SDK aborts on any result but 0x5299, 0x5499 and 0x5699),
-   write no output and change no renderer state. A record, effect or sink the renderer cannot use is left out of an update that is
-   otherwise applied, or passed through or skipped in the render pass. Each kind is logged once per renderer. rt_fatal
-   prints "FATAL:" and exits with 2, so a value that still ends the process fails the run.
-
-   audio_params_check [-v]                              every check below (-v prints the log lines)
-   audio_params_check strict-effect | strict-update     NX2SARIA_AUDIO_STRICT=1: must end with "FATAL: audio:" */
 #include "../runtime/hle/audren.c"
 #include "../runtime/audio/audio_mixer.c"
 
@@ -28,11 +14,10 @@ static int fails;
         }                                                                                                              \
     } while (0)
 
-/* ---- the runtime around the renderer ---- */
 GfxStats gfx_counters;
 unsigned rt_trace;
 static int strict_setting, verbose;
-static int once_lines;                 /* log lines that end with "logged once per kind" */
+static int once_lines;
 static char last_once[512];
 void rt_log(const char *fmt, ...) {
     char line[1024];
@@ -64,7 +49,6 @@ void kern_handle_close(uint32_t h) { (void)h; }
 int kern_handle_copy(uint32_t h, int kind, void *out, size_t n) { (void)h, (void)kind, (void)out, (void)n; return 0; }
 int kern_core_away(void) { return 0; }
 void kern_core_back(int *away) { (void)away; }
-/* the guest address check of ipc.c ipc_guest, ending the process as it does */
 void *ipc_guest(uint64_t addr, uint64_t size) {
     if ((!addr && size) || addr + size < addr || addr + size > RT_ADDRESS_LIMIT)
         rt_fatal("ipc: client buffer %#llx+%#llx", (unsigned long long)addr, (unsigned long long)size);
@@ -80,8 +64,6 @@ const void *ipc_arg(const IpcRequest *rq, uint32_t off, uint32_t n) { (void)rq, 
 void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) {
     (void)out, (void)frames, (void)channels, (void)rate;
 }
-/* a setting's key without its prefix: the runtime asks for NX2SARIA_<KEY>, and NX2NAVI_<KEY> is the older name
-   runtime/cfg/cfg.c still answers to */
 static const char *setting(const char *name) {
     if (!strncmp(name, "NX2SARIA_", 9)) return name + 9;
     if (!strncmp(name, "NX2NAVI_", 8)) return name + 8;
@@ -97,7 +79,6 @@ int cfg_bool(const char *name) {
 }
 double cfg_double(const char *name) { (void)name; return 100; }
 unsigned cfg_version(void) { return 1; }
-/* platform: one thread and no render thread (the checks render by hand) */
 void plat_mutex_init(PlatMutex *m) { (void)m; }
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
@@ -116,12 +97,11 @@ __declspec(dllimport) void *__stdcall VirtualAlloc(void *address, size_t size, u
 #else
 #include <sys/mman.h>
 #endif
-/* `n` bytes of zeroed memory below RT_ADDRESS_LIMIT */
 static void *low_alloc(size_t n) {
     for (uint64_t at = 1ull << 32; at + n <= RT_ADDRESS_LIMIT; at += 1ull << 30) {
 #ifdef _WIN32
-        void *p = VirtualAlloc((void *)(uintptr_t)at, n, 0x3000 /* MEM_COMMIT | MEM_RESERVE */,
-                               0x04 /* PAGE_READWRITE */);
+        void *p = VirtualAlloc((void *)(uintptr_t)at, n, 0x3000 ,
+                               0x04 );
 #else
         void *p = mmap((void *)(uintptr_t)at, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (p == MAP_FAILED) p = NULL;
@@ -133,10 +113,6 @@ static void *low_alloc(size_t n) {
     exit(3);
 }
 
-/* ---- a renderer: 2 voices, 2 effect slots, 1 sink, the final mix (2 buffers, the mixer's 0-1) and 1 submix (2
-   buffers, 2-3), 1 splitter with 2 destinations, 8 mix buffers. Voice 0 plays a wave buffer of one constant sample
-   (0.5) into final mix buffer 0, so an effect from buffer 0 to buffer 1 shows in buffer 1: 0.5 when it passes the sound
-   through, 0 when it is skipped. ---- */
 #define FRAME 240
 #define VOICES 2
 #define EFFECTS 2
@@ -158,7 +134,6 @@ static void close_renderer(AudioRenderer *r) {
     audio_mixer_close(r);
     renderer_free(r);
 }
-/* One render pass as audren.c render_thread makes it; the voices are not advanced (every sample is the same). */
 static void pass(AudioRenderer *r) {
     voices_prepare(r);
     audio_mixer_render(r, (double)FRAME / 48000, 0);
@@ -176,25 +151,23 @@ static int finite_buffers(AudioRenderer *r) {
         if (!isfinite(m->buf[i])) return 0;
     return 1;
 }
-/* how many kinds audio_bad has logged for this renderer */
 static int kinds_seen(const AudioRenderer *r) {
     int n = 0;
     for (int k = 0; k < AB_KINDS; k++) n += r->bad_seen[k] != 0;
     return n;
 }
 
-/* ---- an update ---- */
 typedef struct {
-    int rev;                              /* 11 or 15 */
+    int rev;
     AudrenChannelIn chan[2];
     uint32_t nchan;
-    AudrenVoiceIn voice[VOICES];          /* REV11 layout; at REV15 vfilter holds the voices' filters */
+    AudrenVoiceIn voice[VOICES];
     AudrenBiquadFloat vfilter[VOICES][2];
     AudrenEffectIn effect[EFFECTS];
     uint8_t split[1024];
     uint32_t split_bytes;
     AudrenMixIn mix[2];
-    uint8_t mix_raw[0x20 + 3 * sizeof(AudrenMixIn)];   /* when mix_raw_bytes: the mix section, not the two mixes */
+    uint8_t mix_raw[0x20 + 3 * sizeof(AudrenMixIn)];
     uint32_t mix_raw_bytes;
     AudrenSinkIn sink;
 } Update;
@@ -219,7 +192,6 @@ static void update_default(Update *u, int rev) {
     u->mix[1].mix[0][0] = u->mix[1].mix[1][1] = 1;
     u->sink = (AudrenSinkIn){.type = SINK_DEVICE, .in_use = 1, .input_count = 2, .inputs = {0, 1}};
 }
-/* voice 1 like voice 0, into `mix` through channel resource 6 (when splitter is SPLITTER_UNUSED) or into `splitter` */
 static void voice1_on(Update *u, int32_t mix, uint32_t splitter) {
     u->voice[1] = u->voice[0];
     u->voice[1].id = 1, u->voice[1].mix_id = mix, u->voice[1].splitter_id = splitter, u->voice[1].channel_ids[0] = 6;
@@ -228,16 +200,12 @@ static void voice1_on(Update *u, int32_t mix, uint32_t splitter) {
     u->nchan = 2;
 }
 
-/* Where build put each section, for the checks that change the input afterwards. */
 static struct { uint32_t total, chans, voices, effects, splitters, mixes, sinks; } L;
-/* The game's buffers: the input, the output, the auxiliary and capture rings and the circular sink's buffer. Guest
-   memory lies below RT_ADDRESS_LIMIT, and ipc_guest and the mixer's ring checks hold the game's addresses to it; this
-   process's own data lies above it, so main takes these from memory below the limit (low_alloc). */
 #define IN_BYTES 0x8000u
 #define OUT_BYTES 0x2000u
 #define SINK_SAMPLES 4096u
 static uint8_t *in, *out;
-static int32_t *ring_send, *ring_ret;   /* 0x80-byte headers, then 4096 samples */
+static int32_t *ring_send, *ring_ret;
 static int16_t *sink_data;
 
 static uint32_t build(const Update *u) {
@@ -284,7 +252,6 @@ static uint32_t build(const Update *u) {
 }
 static AudrenHeader *header(void) { return (AudrenHeader *)in; }
 
-/* A RequestUpdate (cmd 4; 10 takes the output in C buffers) of `size` input bytes into an output of `out_size`. */
 static IpcResponse request(AudioRenderer *r, unsigned cmd, uint64_t size, uint64_t out_size) {
     IpcSession s = {.state = r};
     IpcRequest rq = {.cmd = cmd};
@@ -297,13 +264,10 @@ static IpcResponse request(AudioRenderer *r, unsigned cmd, uint64_t size, uint64
 }
 static uint32_t apply(AudioRenderer *r, const Update *u) { return request(r, 4, build(u), OUT_BYTES).result; }
 
-/* ---- the splitter section ---- */
 typedef struct { uint32_t id; int32_t mix; int buffer; float volume; uint8_t used; AudrenBiquadFloat filter[2]; } Dest;
 static const int32_t both_ids[2] = {0, 1};
 static const Dest both_dests[2] = {{.id = 0, .mix = 0, .buffer = 0, .volume = 1, .used = 1},
                                    {.id = 1, .mix = 0, .buffer = 1, .volume = 1, .used = 1}};
-/* splitter `splitter` with destination ids `ids` (`nids` of them; -1: no info record), then `ndest` destination
-   records, padded to 16 bytes */
 static uint32_t splitter_section(uint8_t *p, int rev, uint32_t splitter, int nids, const int32_t *ids, int ndest,
                                  const Dest *d) {
     const uint32_t stride = rev >= 15 ? 0xa8 : rev >= 12 ? 0x90 : 0x70;
@@ -334,7 +298,6 @@ static int split_is(AudioRenderer *r, int32_t a, int32_t b) {
     return s->ndest == 2 && s->ids && s->ids[0] == a && s->ids[1] == b;
 }
 
-/* ---- the state a refused update must leave as it was ---- */
 typedef struct {
     ServerVoice voices[VOICES];
     AudrenEffectIn effects[EFFECTS];
@@ -367,7 +330,6 @@ static int out_untouched(void) {
     return 1;
 }
 
-/* 1. Valid updates answer 0, and the output's total is the sum of its sections (the SDK aborts on a mismatch). */
 static void valid_update(void) {
     for (int rev = 11; rev <= 15; rev += 4) {
         AudioRenderer *r = open_renderer();
@@ -394,7 +356,6 @@ static void valid_update(void) {
     }
 }
 
-/* 2. Updates whose framing does not match the renderer: refused whole. */
 enum {
     R_BUFFERS, R_SMALL, R_TOTAL_BIG, R_TOTAL_SMALL, R_BEHAVIOR, R_POOLS, R_CHANNELS, R_VOICES, R_VOICES_AUTO, R_EFFECTS,
     R_SINKS, R_OVERRUN, R_UNCONSUMED, R_OUTPUT, R_SPL_HEADER, R_SPL_MAGIC, R_SPL_INFO_OVERRUN, R_SPL_INFO, R_SPL_WRAP,
@@ -433,20 +394,20 @@ static const struct { const char *name; int kind; } refuse_rows[R_ROWS] = {
 static IpcResponse refused_request(AudioRenderer *r, int row) {
     Update u;
     update_default(&u, 11);
-    u.split_bytes = splitter_section(u.split, 11, 0, 2, both_ids, 2, both_dests);   /* 0x130 bytes, records to 0x124 */
+    u.split_bytes = splitter_section(u.split, 11, 0, 2, both_ids, 2, both_dests);
     unsigned cmd = row == R_VOICES_AUTO ? 10 : 4;
     uint64_t out_size = OUT_BYTES;
     uint32_t word;
     switch (row) {
     case R_SPL_HEADER: u.split_bytes = 0x10; break;
     case R_SPL_MAGIC: u.split[0] = 'X'; break;
-    case R_SPL_INFO_OVERRUN:   /* one info record announced, 8 bytes of it in the section */
+    case R_SPL_INFO_OVERRUN:
         splitter_section(u.split, 11, 0, 0, NULL, 0, NULL);
         u.split_bytes = 0x28;
         break;
     case R_SPL_INFO: u.split[0x20] = 'X'; break;
     case R_SPL_WRAP: word = 0x40000000u, memcpy(u.split + 0x2c, &word, 4); break;
-    case R_SPL_PADDING:   /* the id fits, 4 of its 12 reserved bytes do */
+    case R_SPL_PADDING:
         splitter_section(u.split, 11, 0, 1, both_ids, 0, NULL);
         u.split_bytes = 0x38;
         break;
@@ -521,7 +482,6 @@ static void refused_updates(void) {
     }
 }
 
-/* 3. One record the renderer cannot use: left out, the rest of the update applied. */
 static int left_out(AudioRenderer *r, int lines, int kind) {
     return once_lines - lines == 1 && r->bad_seen[kind] && kinds_seen(r) == 1 && r->refused == 0;
 }
@@ -529,7 +489,7 @@ static void left_out_records(void) {
     Update u;
     int lines;
 
-    AudioRenderer *r = open_renderer();   /* channel resource id 12 of 12 next to a valid record */
+    AudioRenderer *r = open_renderer();
     update_default(&u, 11);
     apply(r, &u);
     lines = once_lines;
@@ -538,7 +498,7 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_CHANNEL_ID), "channel resource id 12 is logged once (%s)", last_once);
     close_renderer(r);
 
-    r = open_renderer();   /* an in-use voice with id 7 of 2 next to a valid voice */
+    r = open_renderer();
     update_default(&u, 11);
     apply(r, &u);
     pass(r);
@@ -554,7 +514,7 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_VOICE_ID), "voice id 7 is logged once (%s)", last_once);
     close_renderer(r);
 
-    r = open_renderer();   /* a new voice whose current wave buffer is 4 of 4 */
+    r = open_renderer();
     update_default(&u, 11);
     apply(r, &u);
     pass(r);
@@ -565,7 +525,7 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_WAVE_INDEX), "wave buffer index 4 is logged once (%s)", last_once);
     close_renderer(r);
 
-    r = open_renderer();   /* REV15: a voice filter with a NaN coefficient, next to a valid one */
+    r = open_renderer();
     update_default(&u, 15);
     apply(r, &u);
     lines = once_lines;
@@ -580,7 +540,7 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_VOICE_FILTER), "the NaN filter is logged once (%s)", last_once);
     close_renderer(r);
 
-    r = open_renderer();   /* splitter info naming splitter 3 of 1 */
+    r = open_renderer();
     update_default(&u, 11);
     u.split_bytes = splitter_section(u.split, 11, 0, 2, both_ids, 2, both_dests);
     apply(r, &u);
@@ -590,10 +550,6 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_SPL_ID), "splitter 3 is logged once (%s)", last_once);
     close_renderer(r);
 
-    /* a splitter listing destination 5 of 2: stored as -1, which both render loops skip. Destination 0 would put the
-       sound into the submix's first buffer (the mixer's 2), destination 1 goes to final mix buffer 1. The destination
-       table gets a guard entry in front of it, used and into the final mix at full volume, so a loop that reads id -1
-       puts the sound into buffers 0 and 1 a second time. */
     static SplitDest guarded[1 + 2];
     for (int via_mix = 0; via_mix < 2; via_mix++) {
         r = open_renderer();
@@ -608,10 +564,10 @@ static void left_out_records(void) {
         lines = once_lines;
         const int32_t ids[2] = {5, 1};
         Dest d[2] = {both_dests[0], both_dests[1]};
-        if (via_mix) {   /* voice 1 into the submix (buffers 2-3), the submix through the splitter */
+        if (via_mix) {
             voice1_on(&u, 1, SPLITTER_UNUSED);
             u.mix[1].dest_mix_id = -1, u.mix[1].dest_splitter_id = 0;
-        } else {         /* voice 1 through the splitter */
+        } else {
             voice1_on(&u, 0, 0);
             d[0].mix = 1;
         }
@@ -623,11 +579,11 @@ static void left_out_records(void) {
               via_mix ? "a submix" : "a voice", buf(r, 0)[0], buf(r, 1)[0]);
         if (!via_mix) CHECK(flat(buf(r, 2), 0), "a voice: nothing through the destination left out (%g)", buf(r, 2)[0]);
         CHECK(left_out(r, lines, AB_SPL_DEST_REF), "destination 5 is logged once (%s)", last_once);
-        m->dest = table;   /* the mixer frees its own table */
+        m->dest = table;
         close_renderer(r);
     }
 
-    r = open_renderer();   /* a destination record naming destination 9 of 2, next to a valid one */
+    r = open_renderer();
     update_default(&u, 11);
     u.split_bytes = splitter_section(u.split, 11, 0, 2, both_ids, 2, both_dests);
     apply(r, &u);
@@ -641,7 +597,7 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_DEST_ID), "destination 9 is logged once (%s)", last_once);
     close_renderer(r);
 
-    r = open_renderer();   /* REV15: a destination filter with an infinite denominator */
+    r = open_renderer();
     update_default(&u, 15);
     apply(r, &u);
     lines = once_lines;
@@ -658,7 +614,7 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_DEST_FILTER), "the infinite filter is logged once (%s)", last_once);
     close_renderer(r);
 
-    r = open_renderer();   /* a changed-mix record for mix 5 of 2 next to a valid one */
+    r = open_renderer();
     update_default(&u, 11);
     apply(r, &u);
     lines = once_lines;
@@ -675,11 +631,6 @@ static void left_out_records(void) {
     CHECK(left_out(r, lines, AB_MIX_ID), "mix 5 is logged once (%s)", last_once);
     close_renderer(r);
 
-    /* A splitter section whose framing breaks between audio_mixer_routing_check's walk and the apply walk (the game
-       rewriting its input during its own RequestUpdate): audio_mixer_update_routing is called directly, as
-       audren.c request_update calls it once the update was taken. The splitter info before the fault and the mix
-       section after it are applied, the destination record at the fault is not, and the log says the rest of the
-       splitter section is left out, not that the update was refused. */
     r = open_renderer();
     update_default(&u, 11);
     u.split_bytes = splitter_section(u.split, 11, 0, 2, both_ids, 2, both_dests);
@@ -690,7 +641,7 @@ static void left_out_records(void) {
     Dest dq[2] = {both_dests[0], both_dests[1]};
     dq[0].volume = 0.25f;
     u.split_bytes = splitter_section(u.split, 11, 0, 2, swapped, 2, dq);
-    u.split[0x44] = 'X';   /* the first destination record's magic, after the splitter info and its 2 ids */
+    u.split[0x44] = 'X';
     u.mix[1].volume = 0.5f;
     build(&u);
     audio_mixer_update_routing(r, in + L.splitters, u.split_bytes, in + L.mixes, 2 * sizeof(AudrenMixIn), 2);
@@ -704,7 +655,6 @@ static void left_out_records(void) {
     close_renderer(r);
 }
 
-/* 4. Effects and sinks the renderer cannot use: passed through or skipped in each render pass. */
 static void rings_fill(void) {
     memset(ring_send, 0, 128), memset(ring_ret, 0, 128);
     for (int i = 32; i < 32 + 4096; i++) ring_send[i] = ring_ret[i] = 0x1234;
@@ -720,8 +670,8 @@ static int rings_untouched(void) {
     return 1;
 }
 
-enum { PASS, SKIP };               /* what the render does with it: buffer 1 holds buffer 0's 0.5, or stays 0 */
-enum { AT_UPDATE, EVERY_PASS };    /* where it is found: once per update, or in each render pass */
+enum { PASS, SKIP };
+enum { AT_UPDATE, EVERY_PASS };
 enum { E_NONE, E_BAD, E_NO_DSP, E_NO_DELAY, E_NO_REVERB };
 typedef struct { const char *name; uint8_t type; int kind, render, found, state; } EffectRow;
 static const EffectRow effect_rows[] = {
@@ -766,7 +716,6 @@ static const EffectRow effect_rows[] = {
 };
 #define EFFECT_ROWS ((int)(sizeof effect_rows / sizeof *effect_rows))
 
-/* Effect slot 0 on the final mix from buffer 0 to buffer 1 (type 0: the sink instead), valid or as row `row` has it. */
 static void effect_set(Update *u, int row, int bad) {
     const char *n = effect_rows[row].name;
     const uint8_t type = effect_rows[row].type;
@@ -836,7 +785,7 @@ static void effect_set(Update *u, int row, int bad) {
         if (IS("aux ring at 1 << 40") || IS("capture ring at 1 << 40")) p.send_info = p.return_info = 1ull << 40;
         if (IS("aux input 9") || IS("capture input 9")) p.input[0] = 9;
         memcpy(e->specific, &p, sizeof p);
-    } else {   /* the circular sink in sink slot 0, instead of the device sink */
+    } else {
         *e = (AudrenEffectIn){0};
         CircularSinkParam p = {.address = (uintptr_t)sink_data, .size = 2 * SINK_SAMPLES, .channels = 1,
                                .format = FMT_PCM16, .input = {0}};
@@ -851,7 +800,6 @@ static void effect_set(Update *u, int row, int bad) {
 #undef IS
 }
 
-/* What a valid effect of row `row`'s type leaves after a pass: its DSP, delay line or reverb, or its output. */
 static int effect_runs(AudioRenderer *r, int row) {
     const EffectState *s = &((Mixer *)r->mixer)->effect[0];
     switch (effect_rows[row].type) {
@@ -885,7 +833,6 @@ static void effects_left_out(void) {
         CHECK(x->state != E_NO_DSP || (s->bad && !s->dsp), "%s: marked bad, no DSP", x->name);
         CHECK(x->state != E_NO_DELAY || !s->delay, "%s: no delay line", x->name);
         CHECK(x->state != E_NO_REVERB || !s->reverb, "%s: no reverb", x->name);
-        /* the values found at the update mark the effect bad; those found in a pass leave it as it is */
         CHECK(s->bad == (x->found == AT_UPDATE), "%s: bad is %d", x->name, s->bad);
         CHECK(once_lines - lines == 1 && r->bad_seen[x->kind] && kinds_seen(r) == 1,
               "%s: %d lines over the update and 10 passes, kind %d seen %d, %d kinds (%s)", x->name, once_lines - lines,
@@ -893,7 +840,6 @@ static void effects_left_out(void) {
         CHECK(r->bad_count == (x->found == AT_UPDATE ? 1u : 10u), "%s: %llu values counted", x->name,
               (unsigned long long)r->bad_count);
         CHECK(finite_buffers(r), "%s: every mix buffer finite", x->name);
-        /* the same slot with usable values: the effect runs again */
         const uint64_t counted = r->bad_count;
         rings_fill();
         effect_set(&u, row, 0);
@@ -906,9 +852,8 @@ static void effects_left_out(void) {
     }
 }
 
-/* 5. Valid effects and sinks over 20 passes: nothing left out, every buffer finite. */
 static void in_range_quiet(void) {
-    uint8_t done[16] = {0};   /* by type: one valid block of each */
+    uint8_t done[16] = {0};
     for (int row = 0; row < EFFECT_ROWS; row++) {
         if (done[effect_rows[row].type]) continue;
         done[effect_rows[row].type] = 1;
@@ -925,15 +870,13 @@ static void in_range_quiet(void) {
     }
 }
 
-/* 6. NX2SARIA_AUDIO_STRICT=1: such a value ends the process, as most did before 0.11.0 (tests/audio_params_check.py
-   runs these in their own processes and expects exit 2). */
 static int strict(const char *what) {
     strict_setting = 1;
     AudioRenderer *r = open_renderer();
     Update u;
     update_default(&u, 11);
     if (!strcmp(what, "strict-effect")) {
-        effect_set(&u, 0, 1);   /* limiter attack 2 */
+        effect_set(&u, 0, 1);
         apply(r, &u);
         pass(r);
     } else {

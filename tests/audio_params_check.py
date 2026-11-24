@@ -1,13 +1,4 @@
 # needs: clang, linux:pkg:sdl3
-"""Build and run tests/audio_params_check.c: runtime/hle/audren.c and runtime/audio/audio_mixer.c with the rest of the runtime
-stubbed and the real effect DSPs (runtime/audio/audio_effects.c, runtime/audio/audio_reverb.c) linked. It sends RequestUpdates the
-renderer cannot use: refused ones must answer 0x5299 and change nothing, records, effects and sinks are left out of
-updates that are otherwise applied, each kind is logged once, and with NX2SARIA_AUDIO_STRICT=1 such a value ends the
-process (two runs of their own, which must exit 2 with "FATAL: audio:"). No game files and no audio device.
-
-Windows: python tests\\audio_params_check.py [--toolchain C:/msys64/ucrt64] [-v]
-Linux: python tests/audio_params_check.py (clang and SDL3 development files via pkg-config)
-"""
 import argparse
 import os
 import shlex
@@ -17,12 +8,21 @@ import sys
 from pathlib import Path
 import runtime_include
 
+DESCRIPTION = """Build and run tests/audio_params_check.c: runtime/hle/audren.c and runtime/audio/audio_mixer.c with the rest of the runtime
+stubbed and the real effect DSPs (runtime/audio/audio_effects.c, runtime/audio/audio_reverb.c) linked. It sends RequestUpdates the
+renderer cannot use: refused ones must answer 0x5299 and change nothing, records, effects and sinks are left out of
+updates that are otherwise applied, each kind is logged once, and with NX2SARIA_AUDIO_STRICT=1 such a value ends the
+process (two runs of their own, which must exit 2 with "FATAL: audio:"). No game files and no audio device.
+
+Windows: python tests\\audio_params_check.py [--toolchain C:/msys64/ucrt64] [-v]
+Linux: python tests/audio_params_check.py (clang and SDL3 development files via pkg-config)
+"""
 ROOT = Path(__file__).resolve().parents[1]
 MSYS = Path(r'C:\msys64\ucrt64')
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--toolchain', type=Path, default=MSYS if os.name == 'nt' and MSYS.exists() else None)
     ap.add_argument('-v', action='store_true', help='print the log lines of the checks')
     a = ap.parse_args()
@@ -37,7 +37,6 @@ def main():
         cc = os.environ.get('CC') or shutil.which('clang') or 'cc'
         sdl = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'sdl3'], text=True))
     exe = work / ('audio_params_check.exe' if os.name == 'nt' else 'audio_params_check')
-    # three translation units: both effect files have a static gain10; the default build's target (x86-64-v3)
     subprocess.check_call([cc, '-std=gnu11', '-O2', '-fno-strict-aliasing', '-march=x86-64-v3', '-Wall',
                            '-Wno-unused-function', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'audio_params_check.c'), str(ROOT / 'runtime' / 'audio' / 'audio_effects.c'),
