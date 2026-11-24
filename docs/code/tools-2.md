@@ -326,3 +326,343 @@ and returns the labels changed. The game sets a layout's text panes from the mes
 
 The SARC data with the members named in `new` (name to bytes) replaced. The header, SFAT and SFNT stay; the members
 are laid out again in their old order, each at an offset with at least the alignment its old one had.
+
+## `tools/memgate.py`
+
+A memory gate for parallel compiles, standard library only. The design, the measurements behind the numbers and the
+build log's lines are in [build-memory.md](../build-memory.md); the notes here are those of the code.
+
+The builds start each compile only when the memory free right now holds it. Each object's need is estimated from its
+peak resident memory in earlier builds (`Estimates`), or from a size model before it has been built once. The gate
+(`Gate` in-process, `wrap()` across processes for Ninja) admits a compile when the free memory, less what the running
+compiles may still take and less a reserve kept for the rest of the machine, covers that need. The command line is the
+rule command of each compile in a Ninja build:
+
+```
+python tools/memgate.py wrap --state DIR --name OBJ -- <compiler command...>
+```
+
+`hostmem` is imported a second time with the script's folder on `sys.path` when the first import fails: the script was
+started with an isolated `sys.path`.
+
+The constants:
+
+- `MARGIN` (1.15) covers the variation of one object's peak between builds (different compiler flags, a slightly
+  changed source). `FLOOR` (64 MiB) is a compile's smallest believable need: the compiler's own code and data.
+- The model, for an object not built before, is a straight line in two sizes of its C source: all its bytes
+  (`MODEL_PER_BYTE`, 50 MiB per million bytes of C, over `MODEL_BASE`), and the bytes of its largest function holding a
+  jump-table branch (`switch_fn`, from the lift's manifest; `MODEL_PER_SWITCH_BYTE`, 150 MiB per million bytes), whose
+  switch makes the optimiser's memory grow much faster than ordinary code does. Peaks measured with clang 20 at `-O1`:
+  a 0.01 MB chunk 119 MiB (the compiler alone); ordinary 3 to 3.9 MB chunks 270 to 340 MiB; a chunk whose largest
+  function is 2.5 MB without a switch 276 MiB; chunks whose largest function has a switch and is 1.8 MB 465 MiB, 2.8 MB
+  663 MiB, 3.9 MB 922 MiB; `main_table.c`, 14.5 MB of tables, 582 MiB (the line over-estimates such data-only sources).
+  The learned scale (`Estimates.scale()`) corrects the line per machine and compiler once enough objects have been
+  recorded.
+- `LEARN_TOLERANCE`: a recorded peak still applies while the source size is within 20 % of the recorded one, and its
+  `switch_fn` too, unless both the recorded and the new one are below `SWITCH_SMALL`.
+- `SCALE_MIN_SAMPLES`: recorded objects with a cost needed before the model's scale is learned. `SCALE_RANGE`: the
+  learned scale is kept within it, so a few odd objects cannot run away with it.
+- `RESERVE_MIN`, `RESERVE_SHARE`: the memory kept free for the rest of the machine is at least 1.5 GiB, or 10 % of the
+  total RAM.
+- `STDERR_TAIL`: characters of a compile's stderr that `run()` keeps. `PIPE_GRACE`: seconds `run()` still reads a
+  compile's output after it ended (a descendant left running may hold the pipes open; the build does not wait for it).
+  `HOLD_LOG_EVERY`: seconds between two "holding" lines. `POLL`: seconds between two looks at the free memory while a
+  compile is held. `WAIT_NOTE`: seconds a wrapper waits before it says so on stderr. `LOCK_POLL`: seconds between two
+  tries for the state folder's lock on Windows. `REPLACE_TRIES`: pauses between renames refused on Windows (a reader
+  has the file open).
+
+`Result.peak_bytes` is the peak memory of the process: resident (and on POSIX its waited-for descendants'), on Windows
+the larger of the working set and the private commit; 0 when unknown. `Result.peak_commit` is the peak private commit
+on Windows (already counted in `peak_bytes`), 0 elsewhere. `_Counters` is `PROCESS_MEMORY_COUNTERS_EX` and
+`_ProcessEntry` is `PROCESSENTRY32W`; `_counters()` gives the memory counters of an open process handle or `None`, and
+`_children_map()` the child pids of every parent pid now, from a process snapshot.
+
+### `_pump()`
+
+Reads a pipe to its end; writes each chunk to `sink` (a binary stream) when given; keeps the chunks when `keep` is a
+list, trimmed to the last `STDERR_TAIL * 4` bytes as it goes, enough for `STDERR_TAIL` characters. A pipe closed under
+it by `run()` ends the reading.
+
+### `run()`
+
+Runs a compile and measures it: its exit code, the last `STDERR_TAIL` characters of its stderr, its exact peak
+resident memory and its wall time. stdout is read and dropped. `on_start(popen)` is called once the process runs (the
+gate reads its resident memory by pid while it compiles). With `echo`, stdout and stderr are also passed through to
+this process's own, as they arrive.
+
+- The pipes are unbuffered objects: closing one while its reader thread waits in `read()` then needs no lock the
+  reader holds.
+- Where `os.wait4` exists the child is reaped here rather than through `Popen`, for its resource usage: `ru_maxrss` is
+  the peak resident set of the child and of the descendants it waited for (bytes on macOS, KiB elsewhere). Setting
+  `returncode` keeps `Popen` from reaping it again. A `ChildProcessError` means SIGCHLD is ignored, so the system
+  reaped it already: `Popen.wait()` gives what it can, without a peak.
+- On Windows the process object stays readable while `Popen` holds its handle, after the process has ended. Commit is
+  what runs out on Windows (the page file backs it), so the peak is the larger of the two.
+
+### `_proc_children()`, `rss_now()`, `_rss_reader()`
+
+`_proc_children()`: the child pids of a Linux process, from the children lists of its threads. `rss_now()`: bytes
+resident right now in a process and all its descendants; 0 when it cannot be read (a process that has ended, a system
+without `/proc`). On Windows, `children` is a process snapshot (`_children_map()`) to reuse for several processes;
+without it one is taken. `_rss_reader()` gives the reader for one admission decision: on Windows the default reader
+then shares one process snapshot.
+
+### `total_ram()`, `_cgroup_limit()`
+
+`total_ram()`: bytes of memory the build may use: the physical memory, on Linux no more than the cgroup limit it runs
+under; `None` when unknown. `_cgroup_limit()`: the tightest `memory.max` of this process's cgroup and the cgroups above
+it (cgroup v2), or `None`. A build run under such a limit can use no more than it, so the reserve and the rule for
+unknown free memory go by it.
+
+### `_commit_left()`, `available()`
+
+`_commit_left()`, Windows: bytes the system can still commit (`ullAvailPageFile` of `GlobalMemoryStatusEx`: RAM and
+page file together, less what is committed), or `None`. A compile that cannot commit fails however much RAM is free.
+`available()` is the free memory the gate goes by: `tools/hostmem.py` `available_ram()`, and on Windows no more than
+the commit left, which runs out first on a PC with a small page file. `None` when neither can be read.
+
+### `default_reserve()`
+
+The memory kept free while compiles run: `RESERVE_MIN`, or `RESERVE_SHARE` of the total RAM when that is more.
+
+### `start_time()`, `_alive()`
+
+`start_time()`: when a process started, as a number that differs between two processes given the same pid one after
+the other (Linux: clock ticks since boot, field 22 of `/proc/<pid>/stat`, read after the closing parenthesis of the
+name, where the fields start at field 3; Windows: its creation time). `None` where unknown. `_alive()`: whether a
+process with this pid exists; when `started` is given, also that it is the process that started then, not a later one
+given the same pid.
+
+### `model()`
+
+The model's peak for a source of `src_bytes` whose largest function with a jump-table branch has `switch_fn` bytes,
+before scale and margin.
+
+### `Estimates`
+
+Per-object peaks of earlier builds, kept as JSON: `{"version": 1, "objects": {name: {"peak": bytes, "seconds": float,
+"src_bytes": int, "cost": int, "switch_fn": int}}}`. `cost` is the bytes of ordinary C the compile's time is worth (the
+callers order compiles by it); `src_bytes` and `switch_fn` feed the size model; a lifted chunk has a cost above 0,
+other sources 0. Safe to use from several threads. `_estimated` maps a name to how this build estimated it and the
+bytes, `_ratios` to the recorded peak over this build's estimate.
+
+### `Estimates.load()`, `Estimates.save()`
+
+`load()`: the estimates stored at `path`; empty when the file is missing or unreadable. It never raises: an entry
+whose number overflows `int()` (1e400 as a peak) is skipped, and so is deeply nested JSON from a damaged file
+(`RecursionError`). `save()` writes the file atomically: a temporary file next to it, then a rename over it. A rename
+Windows keeps refusing (another process has the file open) is retried a few times, then skipped: the estimates are
+only a help, the next save writes them. True when written.
+
+### `Estimates.record()`
+
+Keeps a successful compile's peak (callers record only those). `keep_higher`: the compile ran while the free memory
+was below the gate's reserve (`Lease.pressed`), where the system swaps or compresses pages and the measured peak can
+come out low; a higher peak recorded before for the same object then stays.
+
+### `Estimates.scale()`
+
+How far real peaks are from the model: the median of peak over `model()` for the recorded lifted chunks (the objects
+with a cost), kept within `SCALE_RANGE`; 1.0 until `SCALE_MIN_SAMPLES` of them are recorded.
+
+### `Estimates.need()`
+
+Bytes and how, for a compile. `learned`: the recorded peak, while the source size is close to the recorded one and so
+is its `switch_fn` (each within `LEARN_TOLERANCE`, or both `switch_fn` below `SWITCH_SMALL`): after the lift groups its
+functions anew, a chunk of the same name and size can hold other code. Otherwise `default` when the caller gives one
+(sources the size model does not describe), else `model`. `cost` is not used here; it is the caller's order of
+compiles and is kept with the record.
+
+### `Estimates.stats()`
+
+How this build's estimates were made, and how good they were: for each object both estimated and recorded, peak over
+estimate (above 1: the compile took more than estimated).
+
+### `owed()`, `admit()`
+
+`owed()`: memory the running compiles may still take: for each, its need less what it already holds (all of its need
+while its process is not known yet, rss `None`).
+
+`admit()`: whether a compile needing `need` bytes may start now, with `running` compiles running whose need and rss
+are in `running_needs_and_rss`. Fewer than `min_jobs` running: always (a build always progresses). `max_jobs` running:
+never. Otherwise the estimated needs together stay under the ceiling, and the free memory (`avail`) less what the
+running compiles still owe and less the reserve covers the need. When the free memory cannot be read (`avail` `None`),
+the needs together with the reserve must fit in the machine's RAM (`total`); with that unknown too, only the
+`min_jobs` compiles run.
+
+### `Lease`
+
+One admitted compile. `started()` gives the gate its process; it is released through the gate (or by leaving its
+`with` block) once the compile has ended. `order` is 1 for the first compile the gate admitted, 2 for the next;
+`held` the seconds the gate held it for memory; `sampled_peak` the highest resident memory the gate's sampler saw it
+use; `lowest_avail` the least free memory the gate saw while it ran (at its admission and sampling). `Lease.pressed`:
+whether the free memory fell below the gate's reserve while it ran; its measured peak may be low then.
+
+### `Gate`
+
+Admits compiles by the memory free now (`admit()`). Waiters are served in the order they asked; a waiter never passes
+the one before it, so a large compile held for memory is not starved by small ones. When the free memory falls below
+the reserve the gate only stops starting compiles; it never ends running ones. `total` is the RAM and decides only
+when `avail()` is `None`; `_last_avail` is the free memory the last admission decision read. `_state()` gives need and
+rss of each running compile, rss `None` for one whose process is not known yet.
+
+### `Gate.acquire()`
+
+Blocks until a compile of this need may start and returns the `Lease` to hand back to `release()`. `cancel` is called
+while the compile waits; once it returns true the wait ends and `acquire()` returns `None` (nothing to release).
+
+### `Gate._sample()`, `Gate.close()`
+
+`_sample()`: every `poll` seconds while compiles run, the least free memory and the most resident memory of all the
+running compiles together, for the summary. A reading that fails only loses one sample. `close()` stops the sampler.
+
+### `gate_on()`, `settings()`
+
+`gate_on()`: false when `--no-mem-gate` (`args`, which may be `None`) or the environment (`ENV_GATE` off, 0, no or
+false) turns the gate off. `settings()`: the gate's settings from the options, else the environment, else the
+defaults: `min_jobs`, `reserve` (bytes), `ceiling` (bytes or `None`), `enabled`.
+
+### `prepare_state()`, `read_peaks()`
+
+`prepare_state()` writes a state folder for `wrap()`: `config.json` from `settings()` and the job cap, `needs.json`
+(object to bytes), and an empty ledger. Earlier `peaks.jsonl` lines are dropped. `read_peaks()`: the lines of
+`peaks.jsonl`, skipping any that do not parse.
+
+### `_Locked`
+
+An exclusive lock on the state folder's `gate.lock`, held only while the ledger is read, decided on and written. On
+Windows a refused try means another wrapper has it; it holds it only for a moment.
+
+### `_replace()`, `_write_json()`
+
+`_replace()`: `os.replace`, retried while Windows refuses it because another process has the file open; false when it
+kept refusing. `_write_json()` writes a JSON file atomically; false when it could not be written.
+
+### `_load_ledger()`
+
+The ledger: `{'next': the next waiter's number, 'running': [entry], 'waiting': [entry]}`, each entry `{pid, start (the
+wrapper's process start time), need, name, ticket}`, without the entries whose wrapper has ended. The second value
+says whether any were dropped. A ledger that is a list is one of running entries only.
+
+### `wrap()`
+
+Waits for the gate, runs the compile, records its peak; returns the compile's exit code, a signal's number as a shell
+reports it. Wrappers wait in the order they arrived: each takes a number in the ledger's waiting list, and only the
+live waiter with the lowest number may be admitted, so a large compile held for memory is not passed by the small ones
+Ninja keeps starting. A wrapper adds itself to the waiting list at its first look, and again when an earlier write was
+lost; a lost write of its admission only leaves this compile uncounted.
+
+### `_leave()`
+
+Takes a wrapper out of the ledger. A failure is reported, never raised: the compile's exit code matters more, and the
+next wrapper drops the entry anyway once this process has ended.
+
+## `tools/menu_preview.cpp`
+
+Draws the in-game settings menu and the performance overlay without the game, for looking at their design: the menu's
+own row code (`runtime/ui/option_rows.cpp`), its shapes (`runtime/ui/menu_skin.cpp`), the overlay panel
+(`runtime/ui/perf_panel.cpp`) and the text catalog (`runtime/ui/ui_text.c`), with the few runtime calls they make
+answered here, laid out as `runtime/ui/menu.cpp` `layout_menu()` lays out the window. Dear ImGui's draw lists are
+rasterised on the CPU into an RGBA image. Without an art folder the window has its plain border in place of the game's
+ornamented frame and every box is plain shapes; with one (`tools/menu_preview.py --romfs`) the boxes use the game's
+textures as in the game. The given font stands in for the game's either way.
+
+`tools/menu_preview.py` builds and runs it:
+
+```
+menu_preview <font.ttf> <scene: menu | overlay | boot> <width> <height> <out.rgba> [art folder]
+```
+
+Settings come from `NX2SARIA_` environment variables over the few set here (`kSet`; `tools/menu_preview.py --lang` and
+`--set` write them), and `MENU_PREVIEW_FOCUS` names the row that takes the cursor (`--focus`).
+
+What the rows and the catalog ask of the runtime is answered with a few settings that have the menu's values and
+defaults (`kMeta`):
+
+- `strip()` gives the key without `NX2SARIA_` or the earlier prefix.
+- `cfg_get()` reads the environment first, as the game does. `cfg_default()` has no device profile here: it is the
+  row's own default.
+- `cfg_pending()` is 0: nothing changed since the start, so no "after restart" notes. `cfg_supported()` is 1: every
+  row is shown.
+- The menu's draft (`cfg_state()`, `cfg_hold()`, `cfg_revert()`): nothing is applied or saved here.
+- The quality presets: this PC gets medium (`cfg_preset_recommended()`), which sets nothing here, so
+  `cfg_preset_differs()` is 0.
+
+The game's art comes from files `tools/menu_preview.py` decoded: `NN.art`, a width and a height (32-bit) and the RGBA
+pixels of the `MenuArt` NN, with the smaller levels the game uploads (`art_load()`). Texture ids in the draw lists: 1
+is the font atlas, 2 and up the art (`menu_art()`).
+
+### `backdrop()`
+
+A dim field and sky, as the game shows behind the menu; then the menu's own dimming (`runtime/ui/menu.cpp`
+`layout_menu()`).
+
+### `scene_menu()`
+
+The frame is drawn as `runtime/ui/menu.cpp` `layout_menu()` draws it. The first row takes the cursor as the menu
+opens; a row named by `MENU_PREVIEW_FOCUS` takes it a frame later, as a key does in the game, once ImGui has given the
+new window its first item. The rows are the Screen tab's first rows as `runtime/ui/menu.cpp` `tab_screen()` shows them
+(the GPU row with a long name), the Quality preset row as `row_preset()` of that file shows a tier with keys set by
+hand (custom), the Scene resolution row as its `row_scene_res()` shows the game's own share, and the Dynamic
+resolution rows as its `row_dyn_res()` shows them without an upscaler.
+
+### `scene_overlay()`
+
+The numbers are those of the screenshot the overlay was redesigned from.
+
+### `scene_boot()`
+
+The boot screen's box over the black the window shows then (`runtime/ui/menu.cpp` `menu_boot_frame()`), half way
+through the pipelines.
+
+### `edge()`
+
+Twice the signed area of (e0, e1, p), computed with the edge's ends in one fixed order, so the two triangles that
+share an edge get exactly opposite values for a pixel and none is shaded twice or left out along it.
+
+### `sample()`, `sample_art()`
+
+`sample()`: the atlas at (u, v), bilinear, clamped to its edges; 0..1. `sample_art()`: the art at (u, v) at level of
+detail `lod`, trilinear between its levels, as the game's sampler reads it.
+
+### `raster()`
+
+The rasteriser: every triangle of the draw lists, its colour times the font atlas (or the art), blended over the
+image, whose pixels are straight RGBA, 0..1. It follows the top-left rule: a pixel centre on an edge two triangles
+share is shaded by one of them only (edge k is the one opposite vertex k, run in the triangle's own winding). The
+level of detail of an art texture is the texels per screen pixel along the steeper axis. The atlas is sampled
+filtered, as the GPU samples the atlas's baked lines.
+
+### `main()`
+
+The scale is as `runtime/ui/menu.cpp` `menu_scale()` gives it at 100 % display scale. A few frames are drawn: sizes
+settle and the first row takes the cursor.
+
+## `tools/menu_preview.py`
+
+Draws the in-game settings menu and the performance overlay without the game (`tools/menu_preview.cpp`).
+
+```
+python tools/menu_preview.py [--out build/menu-preview] [--font FILE] [--size 1920x1080] [--romfs FOLDER]
+                             [--lang pt-BR] [--set KEY=VALUE ...] [--focus NX2SARIA_KEY] [--scene menu]
+```
+
+Builds `tools/menu_preview.cpp` with the menu's own row, shape, overlay and text code and Dear ImGui (host clang++,
+into `build/menu-preview`), runs it for each scene and writes `menu.png`, `overlay.png` and `boot.png`. Without
+`--romfs` no game files are read: the window has its plain border in place of the game's ornamented frame and the
+boxes are plain shapes. With `--romfs`, an extracted RomFS folder, the textures listed in `runtime/ui/menu_art.cpp` are
+decoded into `--out` and the boxes look as they do in the game (needs what `tools/ui_textures.py` needs). The font
+given (default: DejaVu Sans, else the first TrueType font found) stands in for the game's either way. `--lang` picks
+the menu language (`menu_lang`'s codes), `--set` gives a setting the rows read (`dyn_res=1`), `--focus` puts the cursor
+on the row of a key so its description shows, and `--scene` draws one scene alone.
+
+`RUNTIME_INC` is `runtime/` and its folders by subsystem: the sources include headers by name.
+
+### `png()`
+
+An 8-bit RGBA PNG of the raw pixels.
+
+### `decode_art()`
+
+The textures of `kNames` in `runtime/ui/menu_art.cpp` as `out/art/NN.art` for `tools/menu_preview.cpp`; returns that
+folder.
