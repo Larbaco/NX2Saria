@@ -1788,3 +1788,461 @@ inside the driver.
 For the hang watch's report (`hang_watch.c`; [performance.md](../performance.md#the-hang-watch)): who holds the
 present, queue and window-start locks now, read without taking them (0: free). The fields may be caught mid-change; the
 report only names them.
+
+## `runtime/gfx/gfx_window_sdl.c`
+
+The SDL3 back end of the window (`runtime/gfx/gfx_wsys.h`), for hosts without Win32: the window on a thread of its own
+that also runs SDL's event loop, F11 fullscreen (borderless, the desktop's mode), the settings `NX2SARIA_WINDOW_SIZE`,
+`NX2SARIA_FULLSCREEN` and `NX2SARIA_MONITOR`, the display's refresh rate, focus, the Vulkan surface. The swapchain and
+the present are `gfx_present.c`'s. Keyboard and mouse events go to `input_sdl.c` and to the menu
+(`runtime/ui/menu_sdl.cpp`).
+
+SDL wants its video calls on the thread that initialised video, so this thread does them all: the others hand it work
+through `run_on_window()` (a user event and a wait) or post a user event. Video is initialised before the window
+exists: the Vulkan instance asks for SDL's surface extensions first (`gfx_window_vk_extensions()`), the window comes
+with `gfx_window_start` (`wsys_open()`).
+
+`NX2SARIA_WINDOW_SIZE` is in pixels. On a display that scales windows (Wayland, HiDPI) the window asks for its pixels
+in the display's units (`SDL_GetWindowDisplayScale`), and SDL reports mouse positions in those units: `input_sdl.c` and
+the menu scale them back (`gfx_window_sdl_density()`).
+
+State: `g_ev_base` is what `SDL_RegisterEvents` gave for the user events (`EV_RUN`, `EV_SETTINGS`, `EV_CLOSE`,
+`EV_TEXT_ON`, `EV_TEXT_OFF`, `EV_PASTE`); `g_video_ready` is a manual-reset event: SDL video is up (or failed);
+`g_window_tid` is the window thread, which runs the video calls; `g_density_milli` the pixels per window unit, times
+1000.
+
+### `gfx_window_dpi()` `set_pixel_size()` `set_fullscreen()`
+
+`gfx_window_dpi()`: the display scale as a DPI, 96 at 100% (the menu's text size floor); 96 before the window exists.
+`set_pixel_size()` sets the window's size in its units for `w` x `h` pixels. `set_fullscreen()` uses the desktop's
+mode: borderless over the display.
+
+### `apply_settings()`
+
+Window thread: the window takes the size and fullscreen state of the settings when they changed. A window resized by
+hand keeps its size when another setting changes.
+
+### `gfx_window_text_input()` `gfx_window_paste()`
+
+SDL sends `SDL_EVENT_TEXT_INPUT` between `SDL_StartTextInput` and `SDL_StopTextInput` only (and shows an on-screen
+keyboard there where the system has one, as Steam's on a handheld); the window thread makes the calls. SDL's clipboard
+belongs to the window thread: the text is read there and handed to the menu.
+
+### `report_placement()` `handle()`
+
+`g_place_pending` is `NX2SARIA_MONITOR`'s display while a Wayland compositor has yet to place the fullscreen window
+(`open_window()`): SDL learns the output a Wayland window is on later, with a display, scale or mode change (Hyprland
+sends only the latter two).
+
+In `handle()`, F11 does not act with a modifier held: overlays and capture tools take Ctrl, Shift or Alt+F11 for their
+own. It writes `NX2SARIA_FULLSCREEN` and saves: the menu shows it, and the next start keeps it.
+
+### `window_main()`
+
+`SDL_HINT_APP_ID` is "nx2saria", Wayland's app id: the desktop file and the taskbar match it. SDL's Vulkan queries need
+its Vulkan loader, which a window would load at creation: the instance and the device are made before the window, so
+the loader is loaded here. After each event batch `input_sdl_idle` handles a cursor change requested from another
+thread meanwhile.
+
+### Monitor choice
+
+`NX2SARIA_MONITOR`, `--monitor`, `--list-monitors`. The monitors come in `SDL_GetDisplays` order, which is the index
+the setting counts in (1-based) and `--list-monitors` prints. The video driver sets that order, which need not match
+the desktop's own list of monitors: it holds while the same monitors stay connected, but a monitor that appears or goes
+away can move the ones after it. SDL has one name per monitor: make and model, with the connector (such as DP-2) on
+Wayland and X11. The name pins one monitor more firmly than its index. These calls belong to the thread that
+initialised video: the window thread, or the main thread in `--list-monitors`. `MON_MAX` is 32.
+
+`MonInfo`: `rc` is the monitor's pixels, at its position in the desktop's coordinates; `dpi` the display scale as a
+DPI, 96 at 100%; `name` is `SDL_GetDisplayName`, empty when SDL has none.
+
+- `enum_monitors()`: a scaled desktop (Wayland at 125%) counts its coordinates in scaled units: the pixel density turns
+  the size back into the monitor's pixels, and the content scale and the density together are the display scale
+  (`SDL_GetWindowDisplayScale` gives a window the same product). The position stays in the desktop's units.
+- `monitor_line()`: `2  "HP Inc. HP E243 CNK0161ZY2 (DP-3)"  1920x1080 at 3456,756  dpi 120 (125%)`: one monitor, for
+  the log and `--list-monitors`, with "  primary" after the rectangle on the primary one.
+- `resolve_monitor()`: which monitor of the list a `NX2SARIA_MONITOR` value (not empty, not auto) names, as a 0-based
+  index; -1 when none. Rules, in this order: "primary"; all digits, a 1-based index; any other text, a
+  case-insensitive substring of a monitor's name (the first monitor in list order when several match). `why` gets the
+  rule that matched, or the reason nothing did. The same rules as `resolve_monitor()` of
+  `runtime/gfx/gfx_window_win.c`, which also matches the GDI device name.
+- `chosen_monitor()`: the monitor `NX2SARIA_MONITOR` picks, copied to `*out`; 0 when it is unset or auto (the system
+  places the window), or when it matches nothing now (the monitors present are logged, and the default placement
+  applies). `log`: say what was decided and why. The window thread asks with `log` set; the size query, which
+  `widescreen.c` makes before the window exists, stays quiet. Window thread.
+- `list_monitors()`: `--list-monitors` (`main.c`): one line per monitor, then what the current `NX2SARIA_MONITOR` would
+  pick. No game files. It runs on the main thread before any window thread exists, so that thread initialises video
+  here and shuts it down again.
+- `gfx_window_monitor_size()`: the pixels of the monitor the window is on; 0 when unknown. Before the window exists
+  (`wide_init` of `widescreen.c` at start) a fullscreen window opens on the monitor `NX2SARIA_MONITOR` picks, so that
+  one's size; without a choice the system decides where the window goes, which is not known yet.
+
+### `open_window()`
+
+- `NX2SARIA_MONITOR`: the window is created centred on the chosen monitor; without a choice the system places it.
+- `set_pixel_size()`: `w` x `h` were window units; the setting is in pixels.
+- The window is centred again at the size it ended up with. SDL also takes this position as the display the fullscreen
+  covers: a Wayland window cannot be moved, and this is how its fullscreen still opens on the chosen output.
+- On Wayland a line says that the compositor places a windowed window, so `NX2SARIA_MONITOR` only decides the
+  fullscreen one; `open_window()` runs once, so this is logged once.
+- A Wayland compositor places the fullscreen window after `SDL_SyncWindow` returns; `handle()` reports it once the
+  window is on the chosen monitor.
+
+### `wsys_probe_click()`
+
+The probe's synthetic events go through the event handler, on the window thread. SDL reports no activation by a title
+bar click: only the client click exists.
+
+## `runtime/gfx/gfx_window_win.c`
+
+The Win32 back end of the window (`runtime/gfx/gfx_wsys.h`): the window and its message loop on a thread of their own,
+F11 fullscreen, the settings `NX2SARIA_WINDOW_SIZE`, `NX2SARIA_FULLSCREEN` and `NX2SARIA_MONITOR`, the monitor's
+refresh rate, focus, the Vulkan surface. The swapchain and the present are `gfx_present.c`'s. The in-game menu's
+keyboard and mouse come from the window procedure (`runtime/ui/menu_win.cpp`), and so do the game's (`input_win.c`).
+Only the Windows build compiles this file.
+
+The process is per-monitor DPI aware (`nx2saria.manifest`): every size here is physical pixels, `NX2SARIA_WINDOW_SIZE`
+included, and the swapchain matches the screen pixel for pixel. A window moved to a monitor at another display scale
+keeps its client size (WM_GETDPISCALEDSIZE); the menu takes its text size floor from the window's DPI
+(`gfx_window_dpi()`).
+
+State: `g_wnd_ready` is a manual-reset event: the window thread made the window or gave up. `g_background` is
+`NX2SARIA_BACKGROUND_WINDOW`: the window stays behind the user's windows. `g_fs_pending` (window thread):
+`NX2SARIA_FULLSCREEN` did not apply before the first show and is retried at the first activation. `g_dpi` is the
+window's DPI, set by the window thread. `g_saved_place` is the window behind fullscreen (window thread). The messages:
+`WM_APP_FULLSCREEN` (WM_APP + 2), the fullscreen setting retried at the first activation; `WM_APP_TEXT_INPUT` (WM_APP +
+3), the menu's text field takes text (wParam 1) or no longer (0); `WM_APP_PASTE` (WM_APP + 4), the menu's Paste: the
+clipboard's text, read on the window thread.
+
+### `outer_size_at()` `outer_size()` `fit_work_area()`
+
+`outer_size_at()`: the outer size of a framed window whose client area is `cw` x `ch`, with the frame measured at
+`dpi`. `outer_size()`: the same at the window's DPI, or the system DPI before the window exists: plain
+`AdjustWindowRect` always takes the system DPI, which is wrong on a monitor at another display scale.
+
+`fit_work_area()`: the client size `cw` x `ch` scaled down, in its own proportions, so the whole window fits a work
+area: the chosen monitor's (`work`, with the frame measured at `dpi`) or, with `work` NULL, the primary monitor's,
+where CW_USEDEFAULT opens it. The default 1920x1080 on a 1080p laptop put the bottom of the picture (the HUD) under the
+taskbar and past the screen. The setting itself stays; the menu's size list offers what fits.
+
+### `keep_awake()`
+
+Windows turns the display off and sleeps after the idle timeout, and gamepad input does not count as activity. While
+the window is up and not minimized it holds the display and the system on, as other games do. The state belongs to the
+calling thread, so only the window thread (`window_main()` and `wnd_proc()`) calls this; the process exit releases it.
+
+### `toggle_fullscreen()` `fullscreen_before_show()`
+
+F11: a borderless window over the whole monitor, and back to the saved window. The swapchain follows through WM_SIZE.
+Not Alt+Enter: Enter is the Plus button (`input_win.c`). A background window (test runs) keeps its place behind the
+user's windows and takes no focus.
+
+`fullscreen_before_show()` (window thread, before the window is first shown) gives the window the outer size `ow` x
+`oh` (the windowed size F11 returns to) and then makes it fullscreen on the monitor it was created on, so the first
+thing on screen is the fullscreen window. `toggle_fullscreen()` saves the placement of a window that was never visible,
+which is its normal rectangle as just set. The window stays hidden here; the caller shows it. It returns whether the
+window is fullscreen now. `showCmd` is set to SW_SHOWNORMAL: a hidden window may report SW_HIDE, which F11 would
+restore as hidden.
+
+### `apply_settings()`
+
+`g_applied_size` and `g_applied_fs` are the window size and fullscreen state last taken from the settings (window
+thread). `apply_settings()` acts on a change of either value only, so a window resized by hand keeps its size when
+another setting changes. Window thread: the window takes the size and fullscreen state of the settings when they
+changed. In fullscreen the size goes into the placement restored when fullscreen ends.
+
+### `gfx_window_text_input()`
+
+The menu's text field lives in this window, which has no IME (detached at creation): while the field takes text the
+window gets the default one, so a player can type a name in Chinese, Japanese or Korean (Windows hands the composed
+characters over as WM_CHAR, which `menu_window_msg` passes on), and it is detached again after. Posted to the window
+thread, which owns the window's input context.
+
+### `monitor_rate_hz()` `refresh_rate_update()`
+
+The refresh rate of the window's monitor (`NX2SARIA_FPS_LIMIT=display`), measured when the window opens, lands on
+another monitor or the display mode changes (`gfx_window_set_refresh` keeps it). `QueryDisplayConfig` gives the exact
+rational rate (59.94, 143.998); `EnumDisplaySettings`' whole hertz is the fallback, where 0 and 1 mean the hardware
+default. `refresh_rate_update()` runs on the window thread; `force`: the display mode changed, measure even on the same
+monitor.
+
+### Monitor choice
+
+`NX2SARIA_MONITOR`, `--monitor`, `--list-monitors`. The monitors come in `EnumDisplayMonitors` order, which is the
+index the setting counts in (1-based) and `--list-monitors` prints. The order follows the display driver's adapter and
+output order, so it holds while the same monitors stay attached and enabled, but a monitor that appears or goes away (a
+virtual display) can move the ones after it: the GDI device name or the monitor's name pins one monitor more firmly
+than its index. `MON_MAX` is 32.
+
+`MonInfo`: `rc` and `work` are the monitor's rectangle and its work area (without the taskbar), in desktop pixels;
+`dpi` the effective DPI of the monitor, 96 at 100% display scale; `device` the GDI device name, such as
+`\\.\DISPLAY3`; `name` the monitor's friendly name from the display configuration, empty when it has none.
+
+- `monitor_dpi()`: `GetDpiForMonitor` lives in `shcore.dll`, which the build does not link; 0 when it is missing. The
+  library is loaded once and kept: the monitor list asks for every monitor's DPI each time it is built. The DPI type
+  passed is 0, MDT_EFFECTIVE_DPI.
+- `fill_monitor_names()` fills `MonInfo.name`: an active display path ties a GDI device (the source) to the monitor
+  attached to it (the target), and the target knows the monitor's name. Cloned monitors share a source, and the first
+  path with a name wins. The query is tried 3 times: the topology can change between the size query and the query.
+- `monitor_line()`: `2  \\.\DISPLAY3  "Name"  1920x1080 at 2560,0  primary  dpi 144 (150%)`: one monitor, for the log
+  and `--list-monitors`.
+- `contains_nocase()`: whether `text` contains `needle_lower`, which is already lower-cased; the comparison ignores
+  case.
+- `resolve_monitor()`: which monitor of the list a `NX2SARIA_MONITOR` value (not empty, not auto) names, as a 0-based
+  index; -1 when none. Rules, in this order: "primary"; all digits, a 1-based index; any other text, a
+  case-insensitive substring of a monitor's GDI device name or friendly name (the first monitor in list order when
+  several match). `why` gets the rule that matched, or the reason nothing did.
+- `chosen_monitor()`: as in the SDL back end: the monitor `NX2SARIA_MONITOR` picks, copied to `*out`; 0 when it is
+  unset or auto (the system places the window), or when it matches nothing now (the monitors present are logged, and
+  the default placement applies). `log`: say what was decided and why. The window thread asks with `log` set; the size
+  query, which `widescreen.c` makes before the window exists, stays quiet.
+- `list_monitors()`: `--list-monitors` (`main.c`): one line per monitor, then what the current `NX2SARIA_MONITOR` would
+  pick. No game files.
+- `center_in()`: the top-left that centres an `ow` x `oh` window in `work`; a window larger than the work area keeps
+  its corner at the work area's corner, so its title bar stays reachable.
+- `gfx_window_monitor_size()`: before the window exists (`wide_init` of `widescreen.c` at start), the monitor a
+  fullscreen window opens on: the one `NX2SARIA_MONITOR` picks (`window_main()` places the window there), else the
+  primary monitor.
+
+### `exit_main()` `exit_start()`
+
+The window's close runs on a thread of its own: `gfx_window_closed` saves the settings, the caches and the saves and
+ends the process, which takes seconds while pipeline builds run (`vk_pipeline_save_exit` waits up to 5 s for them). On
+the window thread the window stopped answering meanwhile; after 5 s Windows showed it as not responding, and an "End
+task" there killed the process in the middle of its saves. The window is hidden as the end starts, so a window that
+still answers does not invite a second close (one would find the end under way: `runtime/gfx/gfx_present.c`
+`rt_exit_begin()`).
+
+`exit_start()` returns the end's thread, NULL when the end had started already or runs here (no thread could be made).
+
+### `wnd_proc()`
+
+- WM_KEYDOWN, F11: bit 30 of lParam is auto-repeat. Not with Ctrl or Shift held: overlays and capture tools take such
+  F11 shortcuts for their own (Alt+F11 comes as WM_SYSKEYDOWN). The setting is written and saved: the menu shows it,
+  and the next start keeps it. `note_applied()` records what `cfg_get` reads now (the environment may still override
+  it).
+- WM_EXITSIZEMOVE: the window was dragged onto another monitor, so the refresh rate is measured.
+- WM_DISPLAYCHANGE: a resolution, layout or HDR change of the desktop. A fullscreen window keeps covering the monitor
+  at its new size (a same size sends no WM_SIZE). The swapchain is made again: its size, and its colour space after an
+  HDR switch.
+- WM_GETDPISCALEDSIZE: a framed window keeps its client size in pixels on a monitor at another scale. For a fullscreen
+  or maximized one `DefWindowProc` runs: Windows scales the size with the DPI.
+- WM_DPICHANGED: the display scale changed, or the window reached a monitor at another scale. A fullscreen window keeps
+  covering the monitor the suggested rectangle lies on.
+- WM_ACTIVATEAPP: the end's own hide (`exit_start()`, which sets `g_exit_started` first on this thread) deactivates the
+  window: no player's focus loss. Taken as one, the present thread's next present wrote the session's report for the
+  whole run and started a new period (`perf_focus_lost` in `perf.c`), so "frametime: exit" covered only the frames
+  since.
+- WM_ENDSESSION: Windows is shutting down, restarting or logging off: it ends the process once this message returns,
+  without a WM_CLOSE, so the close's end runs (the settings menu's pending save, RTSS's profile, a save Commit in
+  flight) and this thread waits for it here; the end does not return. When a close had started the end already, the
+  thread sleeps for good.
+
+### `raise_window()`
+
+Brings the game window to the front. Windows refuses `SetForegroundWindow` to a process that was not the last to get
+input, which is the case for a game started by a frontend; attaching this thread's input queue to the foreground
+window's thread for the call is the documented way around it. The window is not left topmost. If it is still refused, a
+topmost toggle puts it above the others without keeping it there.
+
+### `in_tri()` `pointer_cursor()`
+
+The window's pointer: a gold arrowhead in the menu's colours, its tip the hotspot at the top left, the half towards
+the tip's right edge a lighter facet, with a dark outline; sized for the system DPI (32 px at 96 DPI) and drawn with
+4x4 samples per pixel into a 32-bit cursor with alpha. The arrow when anything fails. The arrowhead: the tip (ax, ay),
+the right wing (bx, by), the lower wing (cx, cy), the notch (mx, my) between them. The pixels are premultiplied by
+alpha, as 32-bit cursors want.
+
+### `window_main()`
+
+- The window class takes icon resource 1 of `nx2saria.rc` (`runtime/nx2saria.ico`): the title bar, the taskbar button
+  and Alt+Tab.
+- `NX2SARIA_MONITOR`: the window is created centred in the chosen monitor's work area, with its frame measured at that
+  monitor's DPI, so it opens there at the scale it will have. Without a choice the system places it. Either way the
+  size is scaled down first if it does not fit the work area it opens in.
+- The window opens behind the user's windows first and is then raised (`raise_window()`): a game started by a frontend
+  has no other way to reach it. The game counts itself in focus until the first WM_ACTIVATEAPP, so loading goes on, and
+  keyboard input waits for the foreground (`input_win.c`). If Windows still refuses the foreground, the taskbar button
+  flashes. With `NX2SARIA_FULLSCREEN` the window is made fullscreen on the monitor it was created on before it is first
+  shown (`fullscreen_before_show()`), so no framed window appears; the windowed rectangle stays in `g_saved_place` for
+  F11. If that fails, `g_fs_pending` retries at the first activation (`wnd_proc()`, WM_ACTIVATEAPP).
+  `NX2SARIA_BACKGROUND_WINDOW=1` (test runs): no flashing, never fullscreen at start, and F11 keeps the window's place.
+- An IME switched on over the game attaches to this window and then shows its candidate window and eats the keys it
+  composes, although there is nothing here to type into (a Chinese IME takes Shift, the B button by default). Detaching
+  the game's window (`ImmAssociateContext` with NULL) leaves the software keyboard alone: its edit box sits in a window
+  of its own (`runtime/hle/swkbd_win.c`) and gets the IME it needs. The menu's text field attaches one while it takes
+  text (`gfx_window_text_input()`).
+- The frame was measured at the system DPI (or the chosen monitor's); the window may have opened on a monitor at
+  another scale. When the size changes on a chosen monitor, the window is centred again in its work area; otherwise it
+  keeps the place it was created at.
+- The fullscreen setting: the window turns fullscreen on the monitor it is on before it is shown, and keeps that place
+  and size; the windowed size stays for F11.
+- `g_fs_pending` is set before the raise: the activation the raise gets is the first WM_ACTIVATEAPP, which takes the
+  fullscreen setting; set after it, fullscreen waited for the next activation and the game started in a window. Only a
+  window that did not become fullscreen before it was shown still needs that retry. The raise matters because a
+  frontend's player may have no way to reach a window left behind.
+
+### `wsys_open()` `wsys_surface()`
+
+`wsys_open()` makes the window on its thread and waits until it is there. `wsys_surface()` creates the surface through
+Streamline when DLSS Frame Generation is loaded: it maps swapchains to windows from this call.
+
+## `runtime/gfx/resolution.c`
+
+The game resolution: the size the game composes its frame in (its output: canvas, UI and swapchain) and the size of
+its 3D scene, above the shipped 1920x1080 and 1600x900. The game does the rendering itself: the patch sets `output` and
+`scene` (`recomp/patches-v121.txt`, `recomp/patches-v143.txt`) make the game read both sizes from the patch page, and
+the texture heap that holds the output- and scene-sized render targets grows with them. The licence notice in its
+fifth and sixth lines stays in the code. What the player sets and what it costs:
+[presets.md](../presets.md#rendering-the-3d-scene-below-the-pictures-size).
+
+Settings, read at start: `NX2SARIA_OUTPUT_RES = <w>x<h>` (default 1920x1080, the game's own; taken within 1280x720 to
+7680x4320, each side made even) and `NX2SARIA_RENDER_SCALE`, the scene's size relative to the output: "game" (the
+default, 5/6, the game's 1600x900 at 1080p) or a percentage (25 to 400); above 100 the game supersamples its scene,
+which smooths edges (anti-aliasing) at the cost of GPU time. The game's own final pass (FSR 1 EASU) scales the scene to
+the output; the present scales the output to the window (`runtime/vk/vk_fsr.c`).
+
+The patch page:
+
+| Offset | Holds |
+|---|---|
+| +16 | the scene size {w, h} as floats |
+| +32 | the output size as {w, h} in one 64-bit word |
+| +40 | the renderer (1.2.1) or the display configuration (1.4.3) the patched code stores there |
+| +48 | the swapchain size as {w, h} in one 64-bit word |
+| +56 | the camera's aspect ratio as a float when the output is not 16:9 (set `aspect`) |
+| +60 | the field-of-view factor (set `fov`, `res_fov_live()`) |
+| +92 | the fixed sun shadow map size (set `shadow`) |
+
+1.4.3 scales the scene it reads by output width / 1920 (a 2560x1440 output renders its 1600x900 scene at 2128x1200),
+so its page holds the wanted size divided by that factor and the game's 5/6 needs no scene patch. 1.2.1 renders the
+size it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and the scene set is on whenever the
+output differs from 1920x1080.
+
+The heap: agl's DynamicTextureAllocator is one fixed heap, "DynamicTextureAllocatorMem" in
+`System/HeapSize/Product.Nin_NX_NVN.HeapDef.byml.zs` (113664 KiB, `DTA_KIB`, carved from "Graphics", 201728 KiB). At
+2560x1440 the shipped size runs out at the title screen. Both heaps grow by the same amount: the shipped size times
+the output's pixel ratio above 1920x1080 plus the scene's above 1600x900 (measured: a 3440x1440 canvas with a
+4620x1935 scene crashed at +258 MiB and loaded at +400 MiB; this formula gives +750 MiB there). `runtime/hle/romfs.c`
+serves the rewritten table (`res_heapdef_build()`) in place of the original; `runtime/memory.c` adds the amount to the
+application pool, so no other heap shrinks. Without the rewritten table (a RomFS that lacks it, a format this code does
+not know) the patch sets stay off and the game keeps its own sizes.
+
+`SCENE_MAX` (4096) is per side. `SHADOW_BASE` (960) is the sun shadow map's base size (its cascades: a D16 array of 4
+layers).
+
+The fields of `R`: `ow`, `oh`, `sw`, `sh` the output and the scene; `scene_set`, the scene differs from the game's 5/6
+of the output; `heapdef_ok`, `romfs.c` serves the grown HeapDef; `on`, `res_init()` switched the patch sets on;
+`shadow`, the fixed sun shadow map size (`NX2SARIA_SHADOW_RES`, 256 to 4096 in multiples of 8), 0 the game's own;
+`dlss_k`, for `NX2SARIA_DLSS` quality, balanced, performance or ultra_performance, the scene's share of the output,
+else 0; `base_k`, the scene's share without a DLSS mode (render_scale, or the game's 5/6); `hw`, `hh`, the largest
+scene a DLSS mode change can ask for (the heap is sized for it); `live`, 1.4.3 with DLSS able to run: the DLSS mode can
+change while the game runs.
+
+### `dlss_dll()`
+
+The scene size is decided before the device exists, so NGX cannot be asked yet. NGX loads DLSS from `nvngx_dlss.dll`
+next to `nx2saria.exe` on Windows, `libnvidia-ngx-dlss.so.<version>` beside the game executable on Linux
+(`vk_dlaa_init` in `runtime/vk/vk_dlaa.c`): without that file DLSS never runs, and a DLSS mode would leave the game's
+plain scaling at 50..67 % of the output.
+
+### `scene_for()` `dlss_share()`
+
+`scene_for()`: the scene size for a share `k` of the output, within `SCENE_MAX` per side.
+
+`dlss_share()`: the scene's share of the output for a `NX2SARIA_DLSS` mode (quality 2/3, balanced 0.58, performance
+0.5, ultra_performance 1/3); 0 for dlaa (the scene keeps `base_k`), while DLSS/DLAA is off (the mode the menu still
+holds would shrink the scene for the plain upscaler) and where DLSS cannot run (`dlss_dll()`). Ocarina's builds have no
+scene patch set: its DLSS render scale is `widescreen.c`'s (the `dlss_share` there), and the driver's NGX supplies the
+model where the file is missing, so there is nothing to report for it.
+
+### `decide()`
+
+A DLSS mode other than dlaa sets the scene size instead of the render scale. On 1.4.3 with DLSS able to run (DLAA on,
+the DLL there) the mode can change while the game runs (`res_dlss_mode()`): the scene patch is then always on and the
+heap is sized for the largest scene the modes ask for. Everyone else keeps the game's own scene size and its dynamic
+resolution unless render_scale or a DLSS mode asks for another, and a heap sized for that scene alone.
+
+### `shadow_kib()` `res_adjustable()` `res_heap_extra_kib()`
+
+`shadow_kib()`: the texture heap for a sun shadow map above the base size: the four layers of 2 bytes, three maps in
+flight (the engine makes the array anew each frame).
+
+`res_adjustable()`: the generated C carries the output and scene patch sets for the builds that have them. Without
+them (Ocarina) the game draws at its own sizes whatever these settings say; its heap grows for its widescreen picture
+instead (`wide_heap_extra_kib` of `widescreen.c`), which is what `res_heap_extra_kib()` returns there. Otherwise the
+amount is rounded to whole MiB.
+
+### `key_name()` `field()` `res_heapdef_build()`
+
+The HeapDef table is BYML version 2..7, little endian ("YB"): a hash node is {u8 0xC1, u24 count} and count entries
+{u24 key index, u8 type, u32 value}; an int (type 0xD1) is stored in the entry, so a size changes in place.
+
+`key_name()` checks its offsets in `size_t`: a mod's table offset near 2^32 would wrap a 32-bit sum below `n`.
+`field()`: the offset of the value of hash node `node`'s entry `name`, which must have type `type`; 0 when there is
+none.
+
+### `shadow_init()`
+
+The sun shadow map size: each frame the engine sizes its shadow cascades to the area they cover, down to about 400
+near the ground, which draws foliage shadows blocky, and each change of size moves the shadow texels, so leaf shadows
+jump. A fixed size (the `shadow` set, `recomp/patches-v121.txt`) keeps them still and sharper. Page +92.
+
+### `res_shadow_range()`
+
+`NX2SARIA_SHADOW_RANGE` (percent, 50 to 400; 100 = the game's): the sun's shadow cascades end at 20, 40, 80 and 160 m.
+Other values multiply those distances through the `cascade` patch set (`recomp/patches-v143.txt`), so the sharp first
+cascade reaches further and the visible steps between cascades move away from the player, at the cost of shadow texels
+per metre (`NX2SARIA_SHADOW_SCALE` pays that back).
+
+### `res_init()`
+
+- `fs_init()` first: `romfs.c` serves the grown HeapDef from there on (`res_heapdef_served()`). Sizes at or below the
+  shipped ones fit the shipped heaps; a larger one without the grown table leaves the game its own resolution.
+- `k` is 1.4.3's own scaling of the scene with the output width.
+- With `R.live`, `g_fnprof` is set until the game sets its render size: `res_fn_hit()`, or `res_present()` gives up.
+- Another shape than 16:9 (more than 1% off): the camera takes the output's ratio (`recomp/patches-v121.txt` and
+  `recomp/patches-v143.txt`, set `aspect`), so a 21:9 output shows more of the world at the sides instead of a
+  stretched 16:9 view. The HUD's layouts for that shape come from `romfs-patches-<w>x<h>` (`overlay_init` in
+  `runtime/hle/romfs.c`, `tools/make_romfs_patches.py --aspect`). At 16:9 the set is switched off: the page holds no
+  ratio.
+
+### `res_dlss_lod_bias()`
+
+DLSS upscaling: textures are sampled for the output's resolution, not the scene's (NVIDIA's DLSS guide: a mip bias of
+log2(render / output), and -1 more with the jitter, which `dlss_mode` in `runtime/vk/vk_dlaa.c` adds), so their detail
+survives the scaling. 0 without a DLSS mode. Without the output and scene patch sets (Ocarina) the scene's share is
+`widescreen.c`'s (`wide_dlss_share`: the mode's share of the picture, 1 for DLAA, 0 off), which follows the mode and
+the upscaler while the game runs; `R.dlss_k` stays the mode at start there (`res_dlss_mode()` moves it only once
+`res_init()` has switched the sets on). `dlss_mode` asks again at every mode change.
+
+### `res_is_16x9()` `res_wants_wide_overlay()`
+
+`res_is_16x9()`: 16:9 within 1% (1366x768 counts): the shape the game's own layouts and camera are made for.
+`res_wants_wide_overlay()`: the game resolution asks for a `romfs-patches-<w>x<h>` overlay: it is not 16:9 and the game
+version has the camera aspect patch (set `aspect`); the UI layouts of another shape only fit a camera that follows the
+same shape.
+
+### `res_fov_factor()` `res_fov_live()`
+
+Field of view (`NX2SARIA_FOV`, percent of the game's own, 70..140, `FOV_MIN` and `FOV_MAX`, live): the camera's
+vertical view angle times the factor. The 1.1.1 callback reads it here (`res_fov_factor()`) and 1.4.3 reads it from
+page +60. The horizontal angle follows through the aspect ratio. 100 switches the set off. `tests/fov_check.py` reads
+the log line of `res_fov_live()` from this file.
+
+### `res_fn_hit()` `res_present()` `res_dlss_mode()`
+
+A `NX2SARIA_DLSS` change while the game runs (`runtime/vk/vk_dlaa.c`, at a present): the new scene size goes to the
+patch page, where the game reads it when it sets its render size (`main+0x585e48`). 1.4.3 does that once, at start: its
+renderer setup (at 0x7000e67028) calls `main+0x585bd0`(renderer, force), which picks the console mode's sizes and flags
+the render targets for re-creation (`SET_RENDER_SIZE`, 0x7000585bd0). The setup call is caught through the
+function-entry hook (`res_fn_hit()`, on only until then), and the next nvnQueuePresentTexture on the game's thread
+calls it again with force set (`res_present()`), between frames as at start. The heap was sized for the largest scene
+a mode asks for. `res_dlss_mode()` returns 1 when the size changed.
+
+`renderer` is x0 of the game's own call of `SET_RENDER_SIZE`; `size_pending` says the page holds a size the game has
+not set yet.
+
+In `res_present()`: the hook runs on every guest function entry while it waits: should the game set its render size
+before `res_init()` or never, it stops after 1800 presents (half a minute at 60 fps) and modes change at the next
+start. The guest's registers are kept as at the present call and put back: the setup runs as if it never happened.
