@@ -1,11 +1,10 @@
-"""Memory the machine can still give to new processes, for sizing worker pools (stdlib only)."""
 import ctypes
 import ctypes.wintypes as wt
 import sys
 from pathlib import Path
 
 PROC = Path('/proc')
-CGROUP = Path('/sys/fs/cgroup')   # where the unified (v2) cgroup hierarchy is mounted
+CGROUP = Path('/sys/fs/cgroup')
 
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 LIMIT_PROCESS_MEMORY = 0x100
@@ -29,11 +28,9 @@ class _JobLimits(ctypes.Structure):
 
 
 def _job_headroom():
-    """Bytes left under the memory limit of the job object this process runs in, or None without such a limit."""
     k32 = ctypes.WinDLL('kernel32', use_last_error=True)
     k32.QueryInformationJobObject.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.DWORD, ctypes.c_void_p]
     info = _JobLimits()
-    # A null handle asks about the job of the calling process.
     if not k32.QueryInformationJobObject(None, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
                                          ctypes.sizeof(info), None):
         return None
@@ -45,25 +42,19 @@ def _job_headroom():
 
 
 def _meminfo_available():
-    """MemAvailable of /proc/meminfo in bytes: what new processes can use without swapping (free memory plus the page
-    cache and slab the kernel gives back). None when it cannot be read."""
     try:
         for line in (PROC / 'meminfo').read_text(encoding='ascii', errors='replace').splitlines():
             if line.startswith('MemAvailable:'):
-                return int(line.split()[1]) * 1024   # the file says kB but means KiB
+                return int(line.split()[1]) * 1024
     except (OSError, ValueError, IndexError):
         pass
     return None
 
 
 def cgroup_limits():
-    """Yields (folder, the text of its memory.max, stripped) for this process's cgroup (cgroup v2) and each cgroup
-    above it, nearest first, up to the root; a folder without a readable memory.max is left out, and a system without
-    cgroup v2 yields nothing. '.' and '..' parts of the cgroup path (a cgroup outside this namespace reads as '/..')
-    are skipped, so every folder lies under CGROUP."""
     try:
         line = next(l for l in (PROC / 'self' / 'cgroup').read_text(encoding='ascii', errors='replace').splitlines()
-                    if l.startswith('0::'))   # the v2 entry; a v1 system has none
+                    if l.startswith('0::'))
     except (OSError, StopIteration):
         return
     parts = [p for p in line[3:].split('/') if p and p not in ('.', '..')]
@@ -77,8 +68,6 @@ def cgroup_limits():
 
 
 def _cgroup_headroom():
-    """Bytes left under the tightest memory limit of this process's cgroup and the cgroups above it (cgroup v2:
-    memory.max less memory.current), or None without such a limit."""
     headroom = None
     for folder, limit in cgroup_limits():
         if limit == 'max':
@@ -92,8 +81,6 @@ def _cgroup_headroom():
 
 
 def available_ram():
-    """Physical memory not in use right now, capped by the memory limit this process runs under if there is one (the
-    job object's on Windows, the cgroup's on Linux). None where it cannot be read."""
     if sys.platform != 'win32':
         avail = _meminfo_available()
         if avail is None:

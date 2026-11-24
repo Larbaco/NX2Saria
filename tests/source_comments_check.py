@@ -61,6 +61,11 @@ OWED = (
      'every lifted object depends on them and tools/make_game.py compares an object\'s dependencies by SHA-256, so '
      'one changed byte makes every player\'s PC recompile the lifted code',
      'they leave with the next change that rebuilds the lifted code'),
+    (('tools/cheats.py', 'tools/exefs_patches.py', 'tools/mod_files.py'), '2026-11-24',
+     'inputs of the lift key of a game folder with mod code',
+     'tools/make_game.py mod_digest() hashes their bytes into that key, so one changed byte makes the PC of every '
+     'player with code cheats or ExeFS patches lift the game again',
+     'they leave with the next change that alters that key'),
 )
 
 KEPT_REASONS = {
@@ -85,7 +90,7 @@ LICENSE_FULL = re.compile(
     r'This file is part of the FidelityFX SDK|provided .as-is.|must not be misrepresented|Altered source versions|'
     r'This notice may not be removed', re.I)
 COPYRIGHT = re.compile(r'Copyright\s*(?:\([cC]\)|©|\d)')
-SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES|\.\)?\s*$')
+SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES(?:\.md\b)?(?!\.md)\)?(?:\.|\s*$)|\.\)?\s*$')
 NOTICE_START = re.compile(r'^[#/*;\s]*(?:Contains code|Portions|Copyright)\b')
 LICENSE_FILE = re.compile(r'\((?:MIT|BSD[-\w ]*|Apache[-\w. ]*|zlib|ISC|MPL[-\w. ]*),\s*'
                           r'((?:[\w.-]+/)*(?:LICEN[SC]E|COPYING)(?:\.txt|\.md)?)\)')

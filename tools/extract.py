@@ -1,18 +1,3 @@
-"""Extract the game named in config.local.toml into build/ and verify it against known hashes.
-
-Steps, each skipped when its verified output already exists:
-
-1. ExeFS (code modules) of the base game and of the update.
-2. Base RomFS, verified through all six IVFC levels.
-3. Update RomFS: hactool merges the base Program NCA with the update's BKTR section.
-
-Steps 1 and 3 run for every file in `input.updates`. Each update's version is identified by the SHA-256 of its `main`,
-not by its file name. Output: build/extracted/v0/{exefs,romfs} and build/extracted/v<version>/{exefs,romfs}.
-
---base, --update, --keys and --work name the files and the output directory instead of the config (the installer
-imports the functions instead). Runs under .venv-py314. Key values are read by the tools from the keys file and never
-printed.
-"""
 import argparse
 import hashlib
 import json
@@ -27,32 +12,40 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / 'tools' / 'vendor' / 'macnativegames'
-# The vendored scripts import each other by bare module name, so their directory goes on the path before importing them.
 sys.path.insert(0, str(VENDOR))
 from extract_exefs import (common_tickets, container_entries, load_keys, nca_inventory, program_nca,  # noqa: E402
                            record_offset, require)
 from extract_romfs import index_romfs  # noqa: E402
 from extract_update_romfs import copy_range, hactool_prod_keys  # noqa: E402
 
+DESCRIPTION = """Extract the game named in config.local.toml into build/ and verify it against known hashes.
+
+Steps, each skipped when its verified output already exists:
+
+1. ExeFS (code modules) of the base game and of the update.
+2. Base RomFS, verified through all six IVFC levels.
+3. Update RomFS: hactool merges the base Program NCA with the update's BKTR section.
+
+Steps 1 and 3 run for every file in `input.updates`. Each update's version is identified by the SHA-256 of its `main`,
+not by its file name. Output: build/extracted/v0/{exefs,romfs} and build/extracted/v<version>/{exefs,romfs}.
+
+--base, --update, --keys and --work name the files and the output directory instead of the config (the installer
+imports the functions instead). Runs under .venv-py314. Key values are read by the tools from the keys file and never
+printed.
+"""
+
 DATA = ROOT / 'tools' / 'data'
 EXEFS_CODE = ('main', 'sdk', 'subsdk0', 'rtld')
 LONG_HEX = re.compile(r'[0-9A-Fa-f]{32,}')
-# hactool checks two signatures with Nintendo public keys it does not ship, so these two lines always read (FAIL) and
-# say nothing about the data. The IVFC levels and the image hash decide.
 UNSIGNED = re.compile(r'\s*(?:Fixed-Key Signature|NPDM Signature) \(FAIL\)')
 HACTOOL_ERROR = re.compile(r'\(FAIL\)|\(INVALID\)|Failed to|Error:')
-# hactool lines of a hash check that failed: a RomFS level, a section's superblock or its hash table.
 HACTOOL_HASH_FAIL = re.compile(r'^\s*(?:Level \d|Superblock Hash|Hash Table) \(FAIL\)', re.M)
-# Errors of the vendored extractors (tools/vendor/macnativegames) that mean a game file's data does not match its own
-# hashes or ends early: the file is damaged or was not copied completely. DAMAGE finds them in a script's log.
 DAMAGE_TEXT = re.compile(r'hash mismatch|hash-table mismatch|FS header hash|IVFC level \d+ block \d+ failed|Truncated|'
                          r'out of bounds|Section bounds')
 DAMAGE = re.compile(rf'^\w*Error: (.*(?:{DAMAGE_TEXT.pattern}).*)$', re.M)
 
 
 class DamagedFile(ValueError):
-    """A game file whose data fails its hash checks or ends early. path: that file; detail: the check that failed."""
-
     def __init__(self, path, detail):
         self.path, self.detail = Path(path), detail
         super().__init__(f'{self.path} is damaged or incomplete ({detail}). Copy that file again from its source '
@@ -64,7 +57,6 @@ def say(message):
 
 
 def shown(path):
-    """path relative to the repository when it is below it (log lines), else as given."""
     return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
 
 
@@ -85,17 +77,13 @@ def version_dir(expected):
     return 'v0' if expected['version'] == 0 else 'v' + expected['display_version'].replace('.', '')
 
 
-# The embeddable Python (a ._pth file) does not put a script's directory on sys.path, so a vendored script that imports
-# its siblings fails when started by path. This stub adds the directory, then runs the script as __main__.
 RUN_SCRIPT = ('import os, runpy, sys; p = sys.argv[1]; sys.path.insert(0, os.path.dirname(p)); sys.argv = sys.argv[1:]; '
               "runpy.run_path(p, run_name='__main__')")
 
 
 def run_logged(command, log, source=None):
-    """Run a vendored script with its output in log. source: the game file it reads; a failed hash check or a short
-    read of that file raises DamagedFile."""
     args = [str(c) for c in command]
-    env = dict(os.environ, PYTHONIOENCODING='utf-8')   # its messages may name non-ASCII paths
+    env = dict(os.environ, PYTHONIOENCODING='utf-8')
     with log.open('wb') as out:
         code = subprocess.run([args[0], '-c', RUN_SCRIPT, *args[1:]], stdout=out, stderr=subprocess.STDOUT,
                               env=env).returncode
@@ -107,7 +95,6 @@ def run_logged(command, log, source=None):
 
 
 def exefs_problems(exefs, expected):
-    """Code modules must match byte for byte. main.npdm differs between dumps that a repacking tool re-signed."""
     problems = []
     for name in EXEFS_CODE:
         path = exefs / name
@@ -145,7 +132,7 @@ def romfs_verified(romfs, expected):
         return False
     try:
         report = json.loads(index.read_text())
-    except ValueError:   # damaged on disk (a flipped bit made it unreadable): extract again instead of failing the setup
+    except ValueError:
         return False
     return report.get('romfs_sha256') == expected['romfs']['sha256'] and report.get('romfs_size') == expected['romfs']['size']
 
@@ -168,8 +155,6 @@ def extract_base_romfs(out, keys, logs, base=None):
 
 
 def program_ncas(base, update, keys_path):
-    """(tickets, [(source, record, header)] of the base and the update Program NCA). Raises ValueError for a file
-    that is no NX2Saria base game or update, or keys that cannot open it."""
     keys = load_keys(keys_path)
     tickets = {}
     inputs = []
@@ -188,7 +173,6 @@ def program_ncas(base, update, keys_path):
 
 
 def merge_space(base, update, keys_path):
-    """Bytes merge_update_romfs needs free next to its output, beyond the merged image itself: the two Program NCAs."""
     _, inputs = program_ncas(base, update, keys_path)
     return inputs[0][1]['size'] + inputs[1][1]['size']
 
@@ -199,15 +183,11 @@ MERGE_PHASES = {'copy': '  copying the base and update Program NCAs', 'merge': '
 
 
 def run_hactool(command, environment):
-    """(exit code, stdout and stderr with long hex strings removed). hactool prints UTF-8 (its manifest)."""
     completed = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', errors='replace')
     return completed.returncode, LONG_HEX.sub('<hex removed>', completed.stdout + completed.stderr)
 
 
 def damaged_merge_input(hactool, hactool_keys, environment, base, update, base_nca, log_path):
-    """The DamagedFile for a merge whose hash checks failed. The merged RomFS mixes data of both files, so hactool
-    verifies the base Program NCA alone: if it fails, the base game file is damaged, else the update file is. The
-    output is appended to log_path."""
     code, log = run_hactool([str(hactool), '-y', '--disablekeywarns', '--suppresskeys', '-k', str(hactool_keys),
                              str(base_nca)], environment)
     with log_path.open('a', encoding='utf-8') as f:
@@ -222,11 +202,6 @@ def damaged_merge_input(hactool, hactool_keys, environment, base, update, base_n
 
 
 def merge_update_romfs(base, update, keys_path, hactool, output, logs, phase=lambda name: say(MERGE_PHASES[name])):
-    """extract_update_romfs.merge() without its Darwin-only bounded view of the base: the base Program NCA is copied out.
-
-    Needs room for both Program NCAs (about 17 GB together) and the merged image (about 17 GB). phase(name) is called
-    as each part of MERGE_PHASES starts.
-    """
     if output.exists():
         shutil.rmtree(output)
     tickets, inputs = program_ncas(base, update, keys_path)
@@ -249,7 +224,7 @@ def merge_update_romfs(base, update, keys_path, hactool, output, logs, phase=lam
         for (source, record, _), target in zip(inputs, (base_nca, update_nca)):
             try:
                 copy_range(source, record_offset(record), record['size'], target)
-            except ValueError as e:   # the file ends inside its Program NCA
+            except ValueError as e:
                 raise DamagedFile(source, str(e)) from None
         result = tmp / 'result'
         result.mkdir()
@@ -275,7 +250,7 @@ def merge_update_romfs(base, update, keys_path, hactool, output, logs, phase=lam
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--config', type=Path, default=ROOT / 'config.local.toml')
     parser.add_argument('--hactool', type=Path,
                         default=ROOT / 'toolchain' / 'hactool' / ('hactool.exe' if os.name == 'nt' else 'hactool'))

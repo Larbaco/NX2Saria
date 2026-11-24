@@ -1,4 +1,3 @@
-"""Install or repair the Python launcher from the AppImage, then start the installed copy."""
 import json
 import os
 import shutil
@@ -98,7 +97,6 @@ def _install(bundle, root):
     old_python = root / 'python.old'
     data_home = _xdg('XDG_DATA_HOME', Path.home() / '.local' / 'share')
     apps = data_home / 'applications'
-    # An older AppImage can repair the desktop entry, but cannot replace a newer working installation.
     try:
         current_version = (root / 'app' / 'current.txt').read_text(encoding='utf-8').strip()
         installed = root / 'app' / current_version
@@ -178,7 +176,6 @@ def _install(bundle, root):
         if launcher_settings.exists():
             launcher_settings.replace(launcher_settings.with_suffix('.json.bad'))
         settings = {}
-    # The old AppImage's `out` is the user's existing game folder. Adopt it in place.
     legacy_dump = cfg.get('nup', cfg.get('dump', ''))
     settings.setdefault('dump', legacy_dump)
     settings.setdefault('game_dir', cfg.get('out', ''))

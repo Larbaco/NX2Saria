@@ -1,4 +1,3 @@
-"""Package the launcher app and relocatable Python runtime for a Linux release."""
 import argparse
 import hashlib
 import json

@@ -1,13 +1,3 @@
-"""NVIDIA Streamline's runtime for DLSS Frame Generation (runtime/vk/vk_dlssg.c): tools/make_launcher.py and
-tools/make_kit.py put it in the release's or the kit's bin/dlssg/ beside nx2navi_dlssg.dll (tools/build_dlssg.py), and
-tools/make_game.py place_dlssg copies the whole set beside the game.
-
-The files are NVIDIA's own builds from the Streamline SDK release at a pinned version, unmodified: the SDK archive is
-downloaded once, checked against its size and SHA-256, and only the files the game loads are kept, each checked
-against its own SHA-256. The sl.*.dll files are under Streamline's MIT licence; nvngx_dlssg.dll is under the NVIDIA RTX
-SDKs License, which licenses it only for use on systems with NVIDIA GPUs. The notice written beside them names the
-version and each file's sha256.
-"""
 import shutil
 import sys
 import zipfile
@@ -18,11 +8,9 @@ URL = f'https://github.com/NVIDIA-RTX/Streamline/releases/download/v{VERSION}/st
 SIZE = 276016170
 SHA256 = '32041e51db0cab709a271b72a352281b690c2abbd669a827809401a5dd23956b'
 
-DLL = 'nx2navi_dlssg.dll'   # this repository's runtime/dlssg/, built by tools/build_dlssg.py
-# The set tools/make_game.py DLSSG_FILES names: without all of it the game leaves DLSS Frame Generation off.
+DLL = 'nx2navi_dlssg.dll'
 FILES = (DLL, 'sl.interposer.dll', 'sl.common.dll', 'sl.dlss_g.dll', 'sl.pcl.dll', 'sl.reflex.dll', 'nvngx_dlssg.dll')
 NOTICE = 'dlssg-NOTICE.txt'
-# The SDK's files the set takes, by their path in the SDK, with their sha256.
 SDK_FILES = {
     'bin/x64/sl.interposer.dll': 'b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf',
     'bin/x64/sl.common.dll': '38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75',
@@ -33,7 +21,6 @@ SDK_FILES = {
     'license.txt': '7b6f23e7d6f3ad6292f9308d2b42cdc3d82ae4e9b2abb55f230279d83bedd43d',
     'bin/x64/nvngx_dlss.license.txt': '3027f23ca5a46dd9cb8183fbd522983a86f64d7daac5982912bf9f214671f294',
 }
-# The licence texts beside the DLLs, by the SDK file each is copied from.
 TEXTS = {'streamline-LICENSE.txt': 'license.txt', 'nvidia-rtx-sdks-LICENSE.txt': 'bin/x64/nvngx_dlss.license.txt'}
 
 
@@ -47,15 +34,11 @@ def sha256_file(path):
 
 
 def wrong_files(sdk):
-    """The pinned SDK files that are missing from sdk or differ from the pin."""
     sdk = Path(sdk)
     return [n for n, h in SDK_FILES.items() if not (sdk / n).is_file() or sha256_file(sdk / n) != h]
 
 
 def resolve(sdk, cache_dir):
-    """A folder laid out as the SDK is that holds the pinned files: sdk when given (its files must be the pinned
-    ones), else cache_dir/streamline-<version>, filled from the SDK archive when missing (downloaded with
-    launcher/net.py: resumed, checked against the size and SHA-256, and deleted once its files are out)."""
     if sdk:
         sdk = Path(sdk)
         if not sdk.is_dir():
@@ -81,7 +64,6 @@ def resolve(sdk, cache_dir):
 
 
 def extract(archive, dest):
-    """The pinned files out of the SDK archive into dest, each checked against its sha256."""
     import hashlib
     with zipfile.ZipFile(archive) as z:
         names = {n.replace('\\', '/'): n for n in z.namelist()}
@@ -96,9 +78,6 @@ def extract(archive, dest):
 
 
 def place(dll, sdk, dest):
-    """DLSS Frame Generation into dest (a release's or the kit's bin/dlssg/): nx2navi_dlssg.dll, Streamline's
-    interposer and the plugins it loads, and NGX's nvngx_dlssg.dll from the SDK folder resolve returned, the two
-    licence texts, and a notice naming each file's sha256."""
     dll, sdk, dest = Path(dll), Path(sdk), Path(dest)
     if not dll.is_file():
         raise SystemExit(f'{dll} does not exist')

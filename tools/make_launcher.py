@@ -1,62 +1,3 @@
-"""Build a release of the NX2Saria launcher (docs/launcher.md, "Releases").
-
-    python tools/make_launcher.py --xlate build/xlate [--ffx amd_fidelityfx_vk.dll] [--dlss nvngx_dlss.dll | --no-dlss]
-                                  [--ffx4 FOLDER]
-                                  [--prompt-art FOLDER [FOLDER ...] | --no-prompt-art] [--out build/launcher-release]
-                                  [--pgo build/pgo/pgo-v111.profdata] [--feed owner/name]
-                                  [--notes notes.md] [--publish]
-
-Needs Python 3.14 (tarfile and zstd for the MSYS2 packages), uv on PATH, network access on the first run, and
-either Windows (msiexec, and the C compiler of MSYS2 it downloads itself) or Linux with clang, lld and llvm-windres
-(it cross-compiles against the same MSYS2 packages) plus msitools. Downloads are cached in toolchain/launcher-dl/ and
-checked against the sha256 in PINS.
-
-The release folder (--out) holds:
-
-    NX2Saria/                      the launcher folder exactly as NX2Saria-Setup.exe installs it:
-      NX2Saria.exe                 launcher/native/nx2saria.c with the leaf sprig icon (launcher/ui/art.py)
-      python/                     python.org's embeddable Python 3.14.9, tkinter and Tcl/Tk 9.0 from its tcltk.msi,
-                                  the packages of tools/requirements-launcher.txt, runtime-id.txt
-      app/current.txt, app/<version>/   launcher/ (without native/), runtime/, recomp/, the tools make_game.py uses,
-                                  bin/nx2navi_xlate.exe and .id (and amd_fidelityfx_vk.dll with --ffx, AMD's two
-                                  FSR 4 libraries with --ffx4),
-                                  bin/nvngx_dlss.dll and its notice (NVIDIA DLSS at the version tools/dlss_pin.py
-                                  pins, downloaded from NVIDIA's DLSS SDK repository and checked, or --dlss; not with
-                                  --no-dlss),
-                                  bin/dlssg/ with --dlssg (DLSS Frame Generation: nx2navi_dlssg.dll, Streamline's
-                                  runtime DLLs and nvngx_dlssg.dll at the version tools/streamline_pin.py pins,
-                                  downloaded from NVIDIA's Streamline SDK release and checked, or --streamline; their
-                                  licences and a notice; the release stops first on a DLL that lacks an export
-                                  runtime/dlssg/nx2_sl.h declares, tools/build_dlssg.py check),
-                                  lib/libnx2navirt.a (the runtime, prebuilt with the release's compiler),
-                                  data/pgo-v111.profdata and .json with --pgo (the execution profile make_game.py
-                                  compiles the lifted code and the runtime with, the prebuilt runtime included, and
-                                  its record: tools/pgo.py merge),
-                                  prompt-art/ (the button art make_game.py draws the Xbox, PlayStation, Steam Deck
-                                  and keyboard and mouse prompts from, tools/prompt_art.py art_files, with its
-                                  SOURCE.md),
-                                  toolchain.lock.json (the MSYS2 packages of today, pinned), feed.json, VERSION, the
-                                  licence files
-    NX2Saria-Setup-<version>.exe   launcher/native/setup.c with the folder above appended as a zip: the one file
-                                  players download
-    NX2Saria-app-<version>.zip     app/<version> alone: what the launcher downloads to update itself
-    NX2Saria-runtime-<id>.zip      python/ alone: downloaded only when a release changes the Python
-    NX2Saria-update.json           the manifest the launcher reads (launcher/feed.py)
-
-The button art is the repository's prompt-art folder (CC0 pictures; its SOURCE.md says where they came from), or the
-folders --prompt-art names: folders that hold XGamepad, P5Gamepad and Keyboard_Mouse, or those three folders
-themselves. Only the pictures tools/pad_prompts.py reads are copied. With --no-prompt-art the release has no
-prompt-art folder: the game keeps its own prompts and the Controls menu says the other prompts' files are missing.
-
---pgo names the execution profile of a play session (docs/building.md, "Profile-guided build"). It is derived from
-the game's code and stays out of the repository; its record must name this checkout's recomp/, or the release stops
-(tools/pgo.py fitting). Without it the release builds the game as before, the lifted code at -O1. The profile is
-part of NX2Saria-app-<version>.zip, so an update brings it and the launcher's next build of the game compiles with it.
-
---publish uploads the four files and the legacy update-manifest alias as GitHub release v<version> of the --feed
-repository with the gh CLI (a draft
-first is wiser: add --draft). check_content runs over everything before it is packed: the release holds no game data.
-"""
 import argparse
 import hashlib
 import json
@@ -80,14 +21,14 @@ import streamline_pin  # noqa: E402
 from launcher import toolchain  # noqa: E402
 from launcher.paths import Layout  # noqa: E402
 
-MAIN_ROOT = (ROOT / 'build').resolve().parent   # build/ and toolchain/ are junctions in a worktree
+DESCRIPTION = 'Build a release of the NX2Saria launcher (docs/launcher.md, "Releases").'
+MAIN_ROOT = (ROOT / 'build').resolve().parent
 DL = MAIN_ROOT / 'toolchain' / 'launcher-dl'
 WORK = MAIN_ROOT / 'toolchain' / 'launcher-work'
 PY_VERSION = '3.14.9'
 PINS = {
     'python-embed': (f'https://www.python.org/ftp/python/{PY_VERSION}/python-{PY_VERSION}-embed-amd64.zip',
                      '3c01d7cfc666f746a6f064f60fb2156ab0ec464d3d738ab796371a46a9bb24a2'),
-    # the installer's own Tcl/Tk and tkinter component, published beside it
     'tcltk': (f'https://www.python.org/ftp/python/{PY_VERSION}/amd64/tcltk.msi',
               'ac87609db3f715404dd41a989c2f1706ea1512f3d86217f938d11c63af8eb505'),
 }
@@ -98,7 +39,7 @@ TOP = ('LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.e
 SKIP_DIRS = {'__pycache__', '.pytest_cache', 'native'}
 SKIP_SUFFIXES = {'.o', '.obj', '.pyc', '.exe', '.dll', '.a', '.lib'}
 TCLTK_FILES = ('_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll', 'zlib1.dll', 'libtommath.dll')
-DEFAULT_FEED = 'Larbaco/NX2Saria'   # this fork's repository and its releases (launcher/feed.py DEFAULT)
+DEFAULT_FEED = 'Larbaco/NX2Saria'
 
 
 def say(msg):
@@ -144,11 +85,7 @@ def version():
     return v, f'{v}+{r.stdout.strip()}' if r.returncode == 0 and r.stdout.strip() else v
 
 
-# ---------------------------------------------------------------- python/
-
 def tcltk_files():
-    """The Tcl/Tk files of the pinned msi, unpacked into WORK/tcltk once. The stamp names the msi they came from and
-    is written last: an unpack from an older pin, or one stopped after _tkinter.pyd was written, is done again."""
     dest = WORK / 'tcltk'
     msi = fetch('tcltk')
     stamp, want = dest / '.unpacked-from', f'{msi.name} {msi.stat().st_size}'
@@ -156,7 +93,7 @@ def tcltk_files():
         return dest
     shutil.rmtree(dest, ignore_errors=True)
     dest.mkdir(parents=True)
-    if os.name == 'nt':   # an administrative image: copies the files, installs nothing
+    if os.name == 'nt':
         run(['msiexec', '/a', msi, '/qn', f'TARGETDIR={dest}'])
     else:
         run(['msiextract', '-C', dest, msi], stdout=subprocess.DEVNULL)
@@ -174,7 +111,6 @@ def runtime_id():
 def build_python(py):
     with zipfile.ZipFile(fetch('python-embed')) as z:
         z.extractall(py)
-    # The embeddable Python's sys.path is exactly this list; ../pydeps holds zbic (launcher/toolchain.py).
     (py / 'python314._pth').write_text('python314.zip\n.\nLib/site-packages\n../pydeps\n', encoding='utf-8')
     env = dict(os.environ, UV_CACHE_DIR=str(MAIN_ROOT / 'toolchain' / 'uv-cache'))
     run(['uv', 'pip', 'install', '--target', py / 'Lib' / 'site-packages', '--python', sys.executable,
@@ -206,16 +142,7 @@ def python_texts(folder, ver):
     say(f'Python licence texts: {len(python_licences.WINDOWS_TEXTS)} libraries, {python_licences.CPYTHON_TEXT}')
 
 
-# ---------------------------------------------------------------- app/<version>/
-
 def check_xlate(xlate):
-    """A release carries the translator of its own sources. 0.10.0 and 0.10.1 shipped the 0.9.2 translator (identity
-    4d051299) after tools/xlate/Program.cs had raised the texture pool to 40960 slots, so their translations still
-    clamped every pool handle to slot 32767 and the ground went see-through after some area loads (issues #569 and
-    #824). A missing translator, or one whose nx2navi_xlate.id differs from this checkout's sources
-    (build_xlate.check_built), stops the build; main runs this before anything is resolved, downloaded or deleted.
-    On Windows the exe itself is asked too, as the .id says nothing of the exe beside it: a translator that declares
-    the texture pool with another length than its sources, or does not run, stops the build (xlate_smoke.pool_check)."""
     import build_xlate
     reason = build_xlate.check_built(xlate, 'nx2navi_xlate.exe')
     if reason:
@@ -230,11 +157,6 @@ def check_xlate(xlate):
 
 
 def check_dlssg(dll):
-    """A release carries an nx2navi_dlssg.dll that exports every function runtime/dlssg/nx2_sl.h declares. The runtime
-    takes a missing optional export (nx2sl_reflex2, nx2sl_frames_max) for an older DLL and leaves that feature out
-    with one log line, so a DLL built from older sources would ship without an error: with the DLL of 0.8.0, which
-    lacks nx2sl_reflex2, Reflex would never hold the frame limit. Such a DLL, or a missing one, stops the build
-    (build_dlssg.check); main runs this before anything is resolved, downloaded or deleted."""
     import build_dlssg
     build_dlssg.check(dll)
     print(f'{dll}: exports the {len(build_dlssg.declared_exports())} functions runtime/dlssg/nx2_sl.h declares')
@@ -242,8 +164,6 @@ def check_dlssg(dll):
 
 def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, dlssg=None, pipelines=None, ffx4=None,
               pgo_profile=None):
-    # The runtime's own shaders are source in the repository and SPIR-V headers in a release: a player's PC compiles
-    # runtime/ (make_game.py) and has no shader compiler. Build the missing and the stale ones before the copy.
     build_shaders.build(ROOT / 'runtime')
     copy_tree(ROOT / 'launcher', app / 'launcher')
     for d in ('runtime', 'recomp', 'licenses'):
@@ -256,29 +176,29 @@ def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, d
             shutil.copy2(ROOT / t, app / t)
     (app / 'VERSION').write_text(ver + '\n', encoding='utf-8')
     (app / 'bin').mkdir()
-    for n in ('nx2navi_xlate.exe', 'nx2navi_xlate.id'):   # main checked them first (check_xlate)
+    for n in ('nx2navi_xlate.exe', 'nx2navi_xlate.id'):
         shutil.copy2(xlate / n, app / 'bin' / n)
-    if ffx:   # FSR 3.1 loads it from beside the game (runtime/vk/vk_ffx.cpp); make_game.py copies it there
+    if ffx:
         shutil.copy2(ffx, app / 'bin' / 'amd_fidelityfx_vk.dll')
-    if ffx4:   # FSR 4 loads them from beside the game (runtime/vk/vk_ffx4.cpp); make_game.py copies them there
+    if ffx4:
         for n in ('amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_upscaler_vk.dll'):
             shutil.copy2(ffx4 / n, app / 'bin' / n)
-        if (ffx4 / 'amd_fidelityfx_framegeneration_vk.dll').is_file():   # its frame generation (runtime/vk/vk_fg4.cpp)
+        if (ffx4 / 'amd_fidelityfx_framegeneration_vk.dll').is_file():
             shutil.copy2(ffx4 / 'amd_fidelityfx_framegeneration_vk.dll', app / 'bin' / 'amd_fidelityfx_framegeneration_vk.dll')
-    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk/vk_dlaa.c); make_game.py copies it there
+    if dlss:
         dlss_pin.place(dlss, app / 'bin')
-    if dlssg:   # DLSS Frame Generation (runtime/vk/vk_dlssg.c): make_game.py place_dlssg copies it beside the game
+    if dlssg:
         streamline_pin.place(dlssg[0], dlssg[1], app / 'bin' / 'dlssg')
-    if art:   # make_game.py draws the button prompts from it (its prompts step)
+    if art:
         n, size = prompt_art.copy_art(art, app / prompt_art.FOLDER)
         say(f'button art: {n} pictures, {size / 1e6:.1f} MB, {prompt_art.source_of(app / prompt_art.FOLDER)}')
     else:
         say('button art: none (--no-prompt-art): the game will keep its own prompts')
-    if pipelines:   # prepare_shaders.py reads it there (BUNDLED_PIPELINES)
+    if pipelines:
         (app / 'tools' / 'data').mkdir(parents=True, exist_ok=True)
         shutil.copy2(pipelines, app / 'tools' / 'data' / 'pipeline_list.bin')
         say(f'pipeline list: {pipelines.stat().st_size / 1e6:.1f} MB')
-    if pgo_profile:   # make_game.py compiles with it (pgo_file); here before the prebuilt runtime is built with it
+    if pgo_profile:
         placed = pgo.place(pgo_profile, app / 'data')
         say(f'execution profile: {placed.stat().st_size / 1e6:.1f} MB')
     else:
@@ -287,11 +207,7 @@ def build_app(app, ver, xlate, feed_repo, lock, ffx=None, dlss=None, art=None, d
     (app / 'feed.json').write_text(json.dumps({'type': 'github', 'repo': feed_repo}, indent=1), encoding='utf-8')
 
 
-# ---------------------------------------------------------------- the native programs
-
 def native_compiler(lock):
-    """(cc argv prefix, windres argv prefix) for x86_64 Windows: MSYS2's own clang on Windows, else the host's clang
-    against the same MSYS2 packages as a sysroot."""
     lay = Layout(root=MAIN_ROOT / 'toolchain' / 'launcher-msys')
     if not toolchain.is_current(lay, lock):
         say('MSYS2 packages for the native programs')
@@ -310,10 +226,6 @@ def native_compiler(lock):
 
 
 def build_runtime_lib(folder, ver, out, wine):
-    """app/<version>/lib/libnx2navirt.a: the runtime compiled once here with the release's MSYS2 clang, so players
-    compile only the few runtime files that include per-install headers (tools/make_game.py --make-runtime-lib). It
-    needs MSYS2's own clang.exe: native on Windows, through Wine with --wine elsewhere; without either players compile
-    runtime/ themselves."""
     msys = Layout(root=MAIN_ROOT / 'toolchain' / 'launcher-msys').msys
     app = folder / 'app' / ver
     args = ['--make-runtime-lib', app / 'lib', '--obj', out / 'native' / 'runtime-obj', '--msys', msys]
@@ -330,8 +242,6 @@ def build_runtime_lib(folder, ver, out, wine):
         return
     if not (app / 'lib' / 'libnx2navirt.a').is_file():
         sys.exit('the prebuilt runtime was not written')
-    # The release's compiler is the one players build with (toolchain.lock.json): a profile it left out of the
-    # runtime (make_game.py pgo_profile says why in the lines above) their builds would leave out too
     built = json.loads((app / 'lib' / 'runtime-lib.json').read_text(encoding='utf-8'))
     if (app / 'data' / 'pgo-v111.profdata').is_file() and not built.get('pgo'):
         sys.exit('the prebuilt runtime was compiled without the release\'s execution profile (the build above says '
@@ -345,10 +255,6 @@ def build_native(work, cc, windres):
     shutil.copy2(ROOT / 'launcher' / 'native' / 'app.manifest', work / 'app.manifest')
     shutil.copy2(ROOT / 'launcher' / 'native' / 'res.rc', work / 'res.rc')
     res = (work / 'res.o').resolve()
-    # MSYS2's GNU windres runs its preprocessor through cmd.exe and, left to find it, names the gcc beside it by full
-    # path, which cmd.exe splits at a space once the .rc's path holds one too. So gcc by bare name, found on PATH (the
-    # toolchain's own bin first; no MSYS2 shell sets it), and the .rc by its name in the work folder, where windres runs.
-    # llvm-windres (Linux) starts its preprocessor without a shell.
     pp = [] if 'llvm' in Path(windres[0]).name else [
         '--preprocessor=gcc', '--preprocessor-arg=-E', '--preprocessor-arg=-xc', '--preprocessor-arg=-DRC_INVOKED']
     env = dict(os.environ, PATH=str(Path(windres[0]).parent) + os.pathsep + os.environ.get('PATH', ''))
@@ -362,8 +268,6 @@ def build_native(work, cc, windres):
     return stub, setup
 
 
-# ---------------------------------------------------------------- packing
-
 def zip_dir(src, dest, prefix=''):
     with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for p in sorted(src.rglob('*')):
@@ -373,7 +277,6 @@ def zip_dir(src, dest, prefix=''):
 
 
 def make_setup(stub, payload, dest, ver):
-    """setup-stub.exe + the payload zip + the 48-byte trailer launcher/native/setup.c reads."""
     data = stub.read_bytes()
     off = len(data)
     z = payload.read_bytes()
@@ -395,7 +298,6 @@ def entry(path):
 
 
 def write_update_manifests(out, manifest):
-    """Both launcher generations discover the same verified payloads during the branding transition."""
     paths = tuple(Path(out) / name for name in ('NX2Saria-update.json', 'NX2navi-update.json'))
     data = json.dumps(manifest, indent=1)
     for path in paths:
@@ -404,7 +306,7 @@ def write_update_manifests(out, manifest):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--xlate', type=Path, required=True, help='folder with nx2navi_xlate.exe and nx2navi_xlate.id')
     ap.add_argument('--ffx', type=Path, help="AMD's signed amd_fidelityfx_vk.dll (FidelityFX SDK 1.1.4, MIT) for FSR 3.1")
     ap.add_argument('--ffx4', type=Path, help="the folder with AMD's signed amd_fidelityfx_loader_vk.dll and "
@@ -440,8 +342,6 @@ def main():
     ap.add_argument('--draft', action='store_true', help='with --publish: as a draft')
     a = ap.parse_args()
     if a.publish and a.feed.lower() == DEFAULT_FEED.lower():
-        # NX2Saria's own releases are built, attested and uploaded by GitHub Actions only (docs/releases/README.md
-        # "How a release is made"), so that players can check no file of them passed through anyone's PC
         sys.exit(f'--publish uploads from this PC: {DEFAULT_FEED} releases are made by .github/workflows/release.yml '
                  'when a tag is pushed. --publish is for a feed of your own (--feed owner/name)')
     if sys.version_info < (3, 14):
@@ -451,12 +351,12 @@ def main():
         ver, build = a.version, a.version + build[len(ver):]
     a.prompt_art = prompt_art.release_art(a.prompt_art, a.no_prompt_art)
     if a.prompt_art:
-        prompt_art.art_files(a.prompt_art)   # the art is all there before anything is downloaded or built
+        prompt_art.art_files(a.prompt_art)
     if a.pgo:
-        pgo.fitting(a.pgo)   # the profile fits this checkout's recomp/ before anything is downloaded or built
-    check_xlate(a.xlate)   # the translator is this checkout's before anything is downloaded, built or deleted
+        pgo.fitting(a.pgo)
+    check_xlate(a.xlate)
     if a.dlssg:
-        check_dlssg(a.dlssg)   # and so is nx2navi_dlssg.dll
+        check_dlssg(a.dlssg)
     out = a.out
     shutil.rmtree(out, ignore_errors=True)
     folder = out / 'NX2Saria'

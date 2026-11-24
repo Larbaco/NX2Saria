@@ -1,24 +1,3 @@
-"""Merge the raw profiles of an instrumented build into the execution profile a build compiles with.
-
-    python tools/pgo.py merge <game folder> --version v111 --toolchain C:\\msys64\\ucrt64
-    python tools/pgo.py merge build/v143-pgogen --version v143 [--out build/pgo/pgo-v143.profdata]
-
-An instrumented build (tools/make_game.py --pgo gen for game 1.1.1, tools/build_game.py --pgo gen for the other
-versions) writes <build>/pgo/default_<id>.profraw while the game runs (every minute and at exit); successive runs of
-the same exe add to that file. llvm-profdata must come from the toolchain the instrumented build was compiled with
-(--toolchain DIR, its bin/llvm-profdata): the raw format is tied to the compiler's version. The merged file is read
-by the compilers of the builds that use it; one of the same LLVM release reads it, an older one may refuse it, which
-tools/make_game.py finds out with a trial compile before it uses the file (pgo_trial).
-
-Beside the profile goes <out>.json, the training record: the game version, recomp/ at the merge as its git tree
-(recomp_tree) and by content (recomp_digest, which a kit without git compares: tools/make_game.py pgo_record), and
-the tool that merged. The profile matches the generated C of that generator, since functions are matched by name and
-control-flow hash and a regenerated function silently loses its counts. tools/make_game.py therefore compiles with a
-profile only while recomp/ is the recorded one, and tools/make_launcher.py --pgo says so
-when it is not. Merge right after the training runs, from the commit they were built at: a game folder made by
-make_game.py --pgo gen names the recomp/ it was built from (pgo/training.json), and the merge stops when the
-checkout holds another.
-"""
 import argparse
 import datetime
 import json
@@ -28,15 +7,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+DESCRIPTION = 'Merge the raw profiles of an instrumented build into the execution profile a build compiles with.'
 ROOT = Path(__file__).resolve().parent.parent
 EXE = '.exe' if sys.platform == 'win32' else ''
-DEFAULT_DIR = ROOT / 'build' / 'pgo'   # make_game.py and make_launcher.py look here
+DEFAULT_DIR = ROOT / 'build' / 'pgo'
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def llvm_profdata(toolchain):
-    """llvm-profdata of --toolchain; without one the newest llvm-mingw under toolchain/, else MSYS2 UCRT64's, else
-    the one on PATH."""
     if toolchain:
         tool = toolchain / 'bin' / f'llvm-profdata{EXE}'
     else:
@@ -51,7 +29,6 @@ def llvm_profdata(toolchain):
 
 
 def recomp_tree():
-    """The git tree id of recomp/ at HEAD; None when recomp/ has uncommitted changes."""
     dirty = subprocess.run(['git', '-C', str(ROOT), 'status', '--porcelain', '--', 'recomp'], capture_output=True,
                            text=True).stdout.strip()
     if dirty:
@@ -61,17 +38,12 @@ def recomp_tree():
 
 
 def recomp_digest(version, root=ROOT):
-    """recomp/ by content, as a kit without git works it out too: the lifter's code and the version's patch table
-    (for v111, tools/make_game.py recomp_digest)."""
     sys.path.insert(0, str(ROOT / 'tools'))
     import make_game
     return make_game.tree_digest(Path(root) / 'recomp', ('*.py', f'patches-{version}.txt'))
 
 
 def training(build, version):
-    """What the instrumented game in build was made from (pgo/training.json, tools/make_game.py pgo_gen_record), {}
-    for a build that wrote none (tools/build_game.py). A game built from another recomp/ than this checkout's, or for
-    another game version, stops the merge: the record would name a generator the counts were not gathered on."""
     try:
         made = json.loads((build / 'pgo' / 'training.json').read_text(encoding='utf-8'))
     except OSError:
@@ -87,7 +59,6 @@ def training(build, version):
 
 
 def llvm_release(text):
-    """The LLVM release a --version line names, '' when it names none."""
     m = re.search(r'version (\d+\.\d+\.\d+)', text or '')
     return m.group(1) if m else ''
 
@@ -124,9 +95,6 @@ def merge(build, out, version, toolchain):
 
 
 def fitting(profile, version='v111'):
-    """The record beside a profile, for a release from this checkout. A profile whose record does not name this
-    checkout's recomp/ stops the release: the builds made from it would leave the profile out (tools/make_game.py
-    pgo_record), and the release would carry it for nothing."""
     profile = Path(profile)
     rec = profile.with_suffix('.json')
     if not profile.is_file():
@@ -145,8 +113,6 @@ def fitting(profile, version='v111'):
 
 
 def place(profile, data, version='v111'):
-    """Copy a profile and its record into a release's data/ as pgo-<version>.profdata and .json, where the builds
-    made from that release look for them (tools/make_game.py pgo_file). The path of the profile's copy."""
     fitting(profile, version)
     data = Path(data)
     data.mkdir(parents=True, exist_ok=True)
@@ -156,7 +122,7 @@ def place(profile, data, version='v111'):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     sub = ap.add_subparsers(dest='cmd', required=True)
     m = sub.add_parser('merge', help='merge <build>/pgo/*.profraw into one .profdata and its training record')
     m.add_argument('build', type=Path, help='the instrumented build: the game folder of make_game.py --pgo gen, or '

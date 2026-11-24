@@ -1,23 +1,3 @@
-"""The checks and the page text of a release that GitHub Actions builds and publishes (.github/workflows/release.yml).
-Standard library only: it runs with the runner's own Python, before anything is installed.
-
-    python tools/release_files.py tag   --tag v0.19.0-rc.1 [--root .]
-        The tag names VERSION's version (vX.Y.Z or vX.Y.Z-rc.N), docs/releases/<tag>.md exists, and the notes of a
-        version without a suffix have no pre-release line: the manifest carries those notes for good, and the
-        version is stable once promoted (docs/releases/README.md).
-    python tools/release_files.py files --tag T --notes docs/releases/T.md --dir dist
-        dist holds exactly nine payload/manifest files, then writes SHA256SUMS.txt for ten published files total.
-        Windows manifests remain identical; each platform manifest names its own files, version, notes, real sizes
-        and sha256.
-    python tools/release_files.py body  --tag T --notes docs/releases/T.md --state prerelease|stable [--repo o/n]
-        The text of the GitHub release page: the notes, a pre-release line on top while it is one (unless the notes of
-        a release candidate have their own), and the line that tells players how to verify their download. It is page
-        text only; no file of the release changes with it.
-    python tools/release_files.py promote --tag T [--stable TAG ...]
-        T may become the stable release: it has no suffix, and no stable release among the tags given is as new.
-
-Each command prints what it found, one line per finding, and exits 1 on a problem.
-"""
 import argparse
 import hashlib
 import json
@@ -25,10 +5,9 @@ import re
 import sys
 from pathlib import Path
 
+DESCRIPTION = ('The checks and the page text of a release that GitHub Actions builds and publishes '
+               '(.github/workflows/release.yml).')
 TAG = re.compile(r'v(\d+)\.(\d+)\.(\d+)(-rc\.([1-9]\d*))?')
-# The pre-release line of the notes (docs/releases/README.md "The notes"): a line that starts with it. A sentence
-# that only mentions earlier pre-releases ("This update includes 0.18.2 to 0.18.5, which came out as pre-releases.")
-# is not one.
 PRERELEASE_LINE = re.compile(r'^[\W_]*pre[-\s\u2010\u2011]?release', re.IGNORECASE)
 MANIFESTS = ('NX2Saria-update.json', 'NX2navi-update.json')
 LINUX_MANIFEST = 'NX2Saria-update-linux.json'
@@ -41,7 +20,6 @@ class Problem(Exception):
 
 
 def text(path):
-    """A text file's content with LF line ends, as git checks it out on Linux (.gitattributes: eol=lf)."""
     return Path(path).read_text(encoding='utf-8').replace('\r\n', '\n')
 
 
@@ -53,7 +31,6 @@ def version_of(tag):
 
 
 def version_key(tag):
-    """The order of release tags as semver orders their versions: v0.19.0-rc.1 < v0.19.0-rc.10 < v0.19.0."""
     m = TAG.fullmatch(tag)
     if not m:
         raise Problem(f'{tag!r} is not a release tag (vX.Y.Z or vX.Y.Z-rc.N)')
@@ -62,8 +39,6 @@ def version_key(tag):
 
 
 def check_promote(tag, stable):
-    """[finding] when tag may be made the stable release beside the stable releases' tags; raises Problem otherwise.
-    Tags that are not release tags (none so far) are left out."""
     if version_of(tag)[1]:
         raise Problem(f'{tag} is a release candidate: candidates stay pre-releases')
     newest = max((t for t in stable if TAG.fullmatch(t)), key=version_key, default='')
@@ -73,7 +48,6 @@ def check_promote(tag, stable):
 
 
 def check_tag(tag, root):
-    """[finding] for a tag; raises Problem when it may not be released."""
     ver, rc = version_of(tag)
     root = Path(root)
     found = (root / 'VERSION').read_text(encoding='utf-8').strip()
@@ -106,7 +80,6 @@ def sha256(path):
 
 
 def check_files(tag, notes, folder):
-    """[finding] for the built files in folder; raises Problem on the first that is wrong. Writes SHA256SUMS.txt."""
     ver, _ = version_of(tag)
     folder = Path(folder)
     for name in MANIFESTS:
@@ -215,7 +188,7 @@ def body(tag, notes, state, repo=DEFAULT_REPO):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     sub = ap.add_subparsers(dest='cmd', required=True)
     t = sub.add_parser('tag')
     t.add_argument('--tag', required=True)

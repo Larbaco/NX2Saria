@@ -1,15 +1,3 @@
-// Draws the in-game settings menu and the performance overlay without the game, for looking at their design: the
-// menu's own row code (runtime/ui/option_rows.cpp), its shapes (ui/menu_skin.cpp), the overlay panel
-// (ui/perf_panel.cpp) and the text catalog (ui_text.c), with the few runtime calls they make answered here, laid out as
-// menu.cpp layout_menu lays out the window. Dear ImGui's draw lists are rasterised on the CPU into an RGBA image.
-// Without an art folder the window has its plain border in place of the game's ornamented frame and every box is plain
-// shapes; with one (tools/menu_preview.py --romfs) the boxes use the game's textures as in the game. The given font
-// stands in for the game's either way.
-//
-// tools/menu_preview.py builds and runs it:
-//   menu_preview <font.ttf> <scene: menu | overlay | boot> <width> <height> <out.rgba> [art folder]
-// Settings come from NX2SARIA_ environment variables over the few set here (menu_preview.py --lang and --set write
-// them), and MENU_PREVIEW_FOCUS names the row that takes the cursor (--focus).
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -34,8 +22,6 @@ extern "C" {
 #include "ui_text.h"
 }
 
-// ---- what the rows and the catalog ask of the runtime: a few settings with the menu's values and defaults
-
 static const CfgMeta kMeta[] = {
     {"FULLSCREEN", "1", "0|1", 1},       {"WINDOW_SIZE", "", NULL, 1},  {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", 1},
     {"GPU_INDEX", "", NULL, 0},          {"PERF_OVERLAY", "off", "off|fps|full", 1},
@@ -48,7 +34,7 @@ static const CfgMeta kMeta[] = {
 };
 static const struct { const char *key, *value; } kSet[] = {{"VK_PRESENT", "mailbox"}, {"PERF_OVERLAY", "full"}};
 
-static const char *strip(const char *name) {   // the key without NX2SARIA_ or the earlier NX2NAVI_
+static const char *strip(const char *name) {
     return !strncmp(name, "NX2SARIA_", 9) ? name + 9 : !strncmp(name, "NX2NAVI_", 8) ? name + 8 : name;
 }
 
@@ -59,7 +45,7 @@ const CfgMeta *cfg_meta(const char *key) {
     return NULL;
 }
 const CfgMeta *cfg_meta_at(int i) { return i >= 0 && i < (int)(sizeof kMeta / sizeof *kMeta) ? &kMeta[i] : NULL; }
-const char *cfg_get(const char *name) {   // the environment first, as the game reads it
+const char *cfg_get(const char *name) {
     char env[96];
     snprintf(env, sizeof env, "NX2SARIA_%s", strip(name));
     if (const char *v = getenv(env)) return v;
@@ -72,7 +58,7 @@ const char *cfg_value(const char *name) {
     const CfgMeta *m = cfg_meta(name);
     return v ? v : m ? m->def : "";
 }
-const char *cfg_default(const char *key) {   // no device profile here: the row's own default
+const char *cfg_default(const char *key) {
     const CfgMeta *m = cfg_meta(key);
     return m ? m->def : NULL;
 }
@@ -83,16 +69,14 @@ int cfg_from_env(const char *) { return 0; }
 void cfg_set(const char *, const char *) {}
 int cfg_save(void) { return 1; }
 int cfg_reset(const char *const *, int) { return 0; }
-int cfg_pending(const char *) { return 0; }   // nothing changed since the start: no "after restart" notes
+int cfg_pending(const char *) { return 0; }
 int cfg_pending_for(const char *, const char *) { return 0; }
-int cfg_supported(const char *) { return 1; }   // every row shown
-// the menu's draft: nothing is applied or saved here
+int cfg_supported(const char *) { return 1; }
 int cfg_state(const char *, const char **value) { *value = NULL; return 0; }
 void cfg_hold(const char *, int) {}
 void cfg_revert(const char *, const char *, int) {}
 int cfg_last_save_ok(void) { return 1; }
 int cfg_is_set(const char *name) { return cfg_get(name) != NULL; }
-// the quality presets: this PC gets medium, which sets nothing here
 const char *cfg_default_tier(const char *key, int) { return cfg_default(key); }
 const char *cfg_preset_name(int tier) {
     static const char *const names[] = {"low", "medium", "high", "ultra"};
@@ -110,7 +94,7 @@ const char *const *cfg_preset_keys(int *n) {
 int cfg_preset_hw_changed(void) { return 0; }
 void cfg_preset_use_from(int, const char *const *) {}
 void cfg_preset_chosen(void) {}
-int cfg_preset_differs(int, const char *, const char *) { return 0; }   // sets nothing: nothing differs
+int cfg_preset_differs(int, const char *, const char *) { return 0; }
 int vk_dlaa_needs_restart(void) { return 0; }
 int vk_hdr_restart_for(const char *) { return 0; }
 int vk_dlssg_wanted(void) { return 0; }
@@ -127,9 +111,6 @@ uint64_t plat_now_ns(void) {
 }
 void rt_log(const char *, ...) {}
 }
-
-// ---- the game's art, from files menu_preview.py decoded: NN.art, a width and a height (32-bit) and the RGBA pixels of
-// the MenuArt NN, with the smaller levels the game uploads
 
 struct Level {
     int w, h;
@@ -162,7 +143,6 @@ static void art_load(const char *dir) {
     }
 }
 
-// Texture ids in the draw lists: 1 is the font atlas, 2 and up the art.
 extern "C" int menu_art(MenuArt id, ImTextureID *tex, float *w, float *h) {
     if ((unsigned)id >= MENU_ART_COUNT || g_art[id].empty()) return 0;
     *tex = (ImTextureID)(intptr_t)(2 + id);
@@ -171,10 +151,7 @@ extern "C" int menu_art(MenuArt id, ImTextureID *tex, float *w, float *h) {
     return 1;
 }
 
-// ---- the scenes
-
 static void backdrop(float w, float h) {
-    // a dim field and sky, as the game shows behind the menu; then the menu's own dimming (menu.cpp layout_menu)
     ImDrawList *bg = ImGui::GetBackgroundDrawList();
     bg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h * 0.55f), IM_COL32(62, 70, 74, 255), IM_COL32(70, 76, 78, 255),
                                 IM_COL32(52, 64, 52, 255), IM_COL32(48, 60, 50, 255));
@@ -202,7 +179,7 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
     ImGui::Begin("##menu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     if (framed) ImGui::PopStyleVar();
     const ImVec2 win_p = ImGui::GetWindowPos(), win_s = ImGui::GetWindowSize();
-    if (framed) {   // as menu.cpp layout_menu draws it
+    if (framed) {
         ImDrawList *fdl = ImGui::GetWindowDrawList();
         const float ox = 15 * scale, oy = 30 * scale;
         fdl->PushClipRectFullScreen();
@@ -242,12 +219,9 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
             if (!shown) continue;
             ImGui::Spacing();
             opt_reserve_bottom(bottom);
-            // the first row takes the cursor as the menu opens; a row named by MENU_PREVIEW_FOCUS takes it a frame
-            // later, as a key does in the game, once ImGui has given the new window its first item
             const char *focus = getenv("MENU_PREVIEW_FOCUS");
             if (frame == 0) opt_focus_first();
             if (frame == 1 && focus && *focus) opt_focus_key(focus);
-            // the Screen tab's first rows, as menu.cpp tab_screen shows them
             opt_begin("##screen", scale);
             opt_toggle("NX2SARIA_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
             static const char *const sizes[] = {"", "1920x1080"};
@@ -255,12 +229,11 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
             opt_choice_list("NX2SARIA_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, sizes, size_names, 2, UI_MENU_WINDOW_SIZE_DESC, 0);
             opt_toggle_value("NX2SARIA_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate");
             static const char *const gpus[] = {""};
-            static const char *const gpu_names[] = {"NVIDIA GeForce RTX 3050 Ti Laptop GPU"};   // a long name
+            static const char *const gpu_names[] = {"NVIDIA GeForce RTX 3050 Ti Laptop GPU"};
             opt_choice_list("NX2SARIA_GPU_INDEX", UI_MENU_GPU, gpus, gpu_names, 1, UI_MENU_GPU_DESC, 0);
             static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
             opt_choice("NX2SARIA_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
             opt_group(UI_MENU_GRAPHICS);
-            // the Quality preset row as menu.cpp row_preset shows a tier with keys set by hand (custom)
             char rec[96], custom[96], note[96];
             snprintf(rec, sizeof rec, menu_text(UI_MENU_PRESET_RECOMMENDED), menu_text(UI_MENU_PRESET_MEDIUM));
             snprintf(custom, sizeof custom, menu_text(UI_MENU_PRESET_CUSTOM), menu_text(UI_MENU_PRESET_LOW));
@@ -268,13 +241,11 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
             const char *presets[] = {rec, custom, menu_text(UI_MENU_PRESET_MEDIUM), menu_text(UI_MENU_PRESET_HIGH),
                                      menu_text(UI_MENU_PRESET_ULTRA)};
             opt_choice_index("NX2SARIA_PRESET", UI_MENU_PRESET, presets, 5, 1, 0, UI_MENU_PRESET_DESC, note);
-            // the Scene resolution row as menu.cpp row_scene_res shows the game's own share
             char game[48], native[48];
             snprintf(game, sizeof game, menu_text(UI_MENU_SCENE_RES_GAME), "75 %");
             snprintf(native, sizeof native, menu_text(UI_MENU_SCENE_RES_NATIVE), "100 %");
             const char *shares[] = {"33 %", "40 %", "50 %", "58 %", "67 %", game, native};
             opt_choice_index("NX2SARIA_SCENE_SHARE", UI_MENU_SCENE_RES, shares, 7, 5, 5, UI_MENU_SCENE_RES_DESC);
-            // the Dynamic resolution rows as menu.cpp row_dyn_res shows them without an upscaler
             opt_toggle("NX2SARIA_DYN_RES", UI_MENU_DYN_RES, UI_MENU_DYN_RES_DESC);
             static const char *const mins[] = {"0.33", "0.4", "0.5", "0.58", "0.67", "0.75", "1"};
             static const char *const min_names[] = {"33 %", "40 %", "50 %", "58 %", "67 %", "75 %", "100 %"};
@@ -314,7 +285,7 @@ static void scene_menu(float w, float h, float scale, ImFont *title, int frame) 
 
 static void scene_overlay(float w, float h, float scale) {
     backdrop(w, h);
-    static PerfPanel p;   // the numbers of the screenshot the overlay was redesigned from
+    static PerfPanel p;
     PerfStats &s = p.s;
     s.fps = 60, s.frame_ms_avg = 16.7f, s.frame_ms_max = 20.2f, s.low1_fps = 47, s.low01_fps = 8;
     for (int i = 0; i < PERF_HISTORY; i++) s.frame_ms[i] = 16.7f + 1.4f * sinf(i * 0.7f) + (i % 17 == 0 ? 3.5f : 0);
@@ -341,8 +312,6 @@ static void scene_overlay(float w, float h, float scale) {
 }
 
 static void scene_boot(float w, float h, float scale, ImFont *title) {
-    // the boot screen's box over the black the window shows then (menu.cpp menu_boot_frame), half way through the
-    // pipelines
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 255));
     char step[160];
     snprintf(step, sizeof step, ui_text(UI_BOOT_PIPELINES), 1603LL, 3235LL);
@@ -350,15 +319,11 @@ static void scene_boot(float w, float h, float scale, ImFont *title) {
                     ui_text(UI_BOOT_TITLE), step, 1603.0f / 3235.0f, 0, w, h, scale);
 }
 
-// ---- the rasteriser: every triangle of the draw lists, its colour times the font atlas, blended over the image
-
 struct Image {
     int w, h;
-    std::vector<float> px;   // straight RGBA, 0..1
+    std::vector<float> px;
 };
 
-// Twice the signed area of (e0, e1, p), computed with the edge's ends in one fixed order, so the two triangles that share
-// an edge get exactly opposite values for a pixel and none is shaded twice or left out along it.
 static float edge(ImVec2 e0, ImVec2 e1, float px, float py) {
     bool swap = e0.x > e1.x || (e0.x == e1.x && e0.y > e1.y);
     if (swap) {
@@ -369,7 +334,6 @@ static float edge(ImVec2 e0, ImVec2 e1, float px, float py) {
     return swap ? -v : v;
 }
 
-// The atlas at (u, v), bilinear, clamped to its edges; 0..1.
 static void sample(const uint8_t *atlas, int aw, int ah, float u, float v, float out[4]) {
     float x = u * aw - 0.5f, y = v * ah - 0.5f;
     int x0 = (int)floorf(x), y0 = (int)floorf(y);
@@ -384,7 +348,6 @@ static void sample(const uint8_t *atlas, int aw, int ah, float u, float v, float
         }
 }
 
-// The art at (u, v) at level of detail lod, trilinear between its levels, as the game's sampler reads it.
 static void sample_art(const std::vector<Level> &levels, float u, float v, float lod, float out[4]) {
     const float top = (float)levels.size() - 1;
     lod = lod < 0 ? 0 : lod > top ? top : lod;
@@ -411,8 +374,6 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
                                  &c = vb[cmd.VtxOffset + ib[cmd.IdxOffset + i + 2]];
                 float area = (b.pos.x - a.pos.x) * (c.pos.y - a.pos.y) - (b.pos.y - a.pos.y) * (c.pos.x - a.pos.x);
                 if (fabsf(area) < 1e-6f) continue;
-                // the top-left rule: a pixel centre on an edge two triangles share is shaded by one of them only
-                // (edge k is the one opposite vertex k, run in the triangle's own winding)
                 const ImVec2 *vtx[3] = {&a.pos, &b.pos, &c.pos};
                 bool top_left[3];
                 for (int k = 0; k < 3; k++) {
@@ -425,7 +386,7 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
                 int y0 = (int)fmaxf((float)cy0, floorf(fminf(a.pos.y, fminf(b.pos.y, c.pos.y))));
                 int y1 = (int)fminf((float)cy1, ceilf(fmaxf(a.pos.y, fmaxf(b.pos.y, c.pos.y))));
                 float lod = 0;
-                if (art && !art->empty()) {   // texels per screen pixel along the steeper axis
+                if (art && !art->empty()) {
                     const float tw = (float)(*art)[0].w, th = (float)(*art)[0].h;
                     const float e1x = b.pos.x - a.pos.x, e1y = b.pos.y - a.pos.y, e2x = c.pos.x - a.pos.x, e2y = c.pos.y - a.pos.y;
                     const float du1 = (b.uv.x - a.uv.x) * tw, dv1 = (b.uv.y - a.uv.y) * th, du2 = (c.uv.x - a.uv.x) * tw, dv2 = (c.uv.y - a.uv.y) * th;
@@ -449,7 +410,7 @@ static void raster(const ImDrawData *dd, Image &img, const uint8_t *atlas, int a
                         }
                         float t[4];
                         if (art && !art->empty()) sample_art(*art, u, v, lod, t);
-                        else sample(atlas, aw, ah, u, v, t);   // filtered, as the GPU samples the atlas's baked lines
+                        else sample(atlas, aw, ah, u, v, t);
                         for (int k = 0; k < 4; k++) col[k] *= t[k];
                         float *d = &img.px[4 * ((size_t)y * img.w + x)], sa = col[3];
                         for (int k = 0; k < 3; k++) d[k] = col[k] * sa + d[k] * (1 - sa);
@@ -468,7 +429,7 @@ int main(int argc, char **argv) {
     const char *font = argv[1], *scene = argv[2], *out = argv[5];
     if (argc == 7) art_load(argv[6]);
     int w = atoi(argv[3]), h = atoi(argv[4]);
-    float scale = fmaxf(fminf((float)h, w * 0.68f), 720.0f) / 1080.0f;   // as menu.cpp menu_scale at 100 % display scale
+    float scale = fmaxf(fminf((float)h, w * 0.68f), 720.0f) / 1080.0f;
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
@@ -487,7 +448,7 @@ int main(int argc, char **argv) {
     skin_style(st);
     st.ScaleAllSizes(scale);
     ImGui::SetCurrentFont(io.Fonts->Fonts[0]);
-    for (int frame = 0; frame < 4; frame++) {   // a few frames: sizes settle and the first row takes the cursor
+    for (int frame = 0; frame < 4; frame++) {
         ImGui::NewFrame();
         if (!strcmp(scene, "menu")) scene_menu((float)w, (float)h, scale, title, frame);
         else if (!strcmp(scene, "boot")) scene_boot((float)w, (float)h, scale, title);

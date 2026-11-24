@@ -1,17 +1,3 @@
-"""Draw the in-game settings menu and the performance overlay without the game (tools/menu_preview.cpp).
-
-    python tools/menu_preview.py [--out build/menu-preview] [--font FILE] [--size 1920x1080] [--romfs FOLDER]
-                                 [--lang pt-BR] [--set KEY=VALUE ...] [--focus NX2SARIA_KEY] [--scene menu]
-
-Builds tools/menu_preview.cpp with the menu's own row, shape, overlay and text code and Dear ImGui (host clang++, into
-build/menu-preview), runs it for each scene and writes menu.png, overlay.png and boot.png. Without --romfs no game
-files are read: the window has its plain border in place of the game's ornamented frame and the boxes are plain
-shapes. With --romfs, an extracted RomFS folder, the textures listed in runtime/ui/menu_art.cpp are decoded into --out
-and the boxes look as they do in the game (needs what tools/ui_textures.py needs). The font given (default: DejaVu
-Sans, else the first TrueType font found) stands in for the game's either way. --lang picks the menu language
-(menu_lang's codes), --set gives a setting the rows read (dyn_res=1), --focus puts the cursor on the row of a key so
-its description shows, and --scene draws one scene alone.
-"""
 import argparse
 import os
 import re
@@ -26,14 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 RT = ROOT / 'runtime'
 sys.path.insert(0, str(ROOT / 'tools'))
 from build_game import runtime_include_dirs  # noqa: E402
-RUNTIME_INC = runtime_include_dirs(RT)   # runtime/ and its folders by subsystem: the sources include headers by name
+DESCRIPTION = 'Draw the in-game settings menu and the performance overlay without the game (tools/menu_preview.cpp).'
+RUNTIME_INC = runtime_include_dirs(RT)
 SOURCES = [ROOT / 'tools' / 'menu_preview.cpp', RT / 'ui' / 'option_rows.cpp', RT / 'ui' / 'menu_skin.cpp',
            RT / 'ui' / 'perf_panel.cpp', RT / 'ui' / 'ui_text.c'] + sorted((RT / 'third_party' / 'imgui').glob('imgui*.cpp'))
 FONTS = ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/arial.ttf']
 
 
 def png(path, w, h, rgba):
-    """An 8-bit RGBA PNG of the raw pixels."""
     rows = b''.join(b'\0' + rgba[y * w * 4:(y + 1) * w * 4] for y in range(h))
 
     def chunk(kind, data):
@@ -64,7 +50,6 @@ def build(out):
 
 
 def decode_art(romfs, out):
-    """The textures of runtime/ui/menu_art.cpp kNames as out/art/NN.art for menu_preview.cpp; that folder."""
     sys.path.insert(0, str(ROOT / 'tools'))
     import ui_textures
     source = (RT / 'ui' / 'menu_art.cpp').read_text(encoding='utf-8')
@@ -81,7 +66,7 @@ def decode_art(romfs, out):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--out', type=Path, default=ROOT / 'build' / 'menu-preview')
     ap.add_argument('--font', help='a TrueType font for the text')
     ap.add_argument('--size', default='1920x1080')
