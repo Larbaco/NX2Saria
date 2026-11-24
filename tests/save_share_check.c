@@ -1,12 +1,3 @@
-// runtime/hle/fs_host.c, save_share.c and save_zip.c without the game, driven by tests/save_share_check.py. Each run of
-// this program is one start of the game on the profile folder it is given: the first storage use runs storage_init,
-// which makes a waiting import the save (fs_host.c import_pending). The rest of the runtime is stubbed below: only what
-// the save paths call does anything.
-//   save_share_check export PROFILE DIR [bug]   save_share_export into DIR; prints "result N path P"
-//   save_share_check import PROFILE ZIP         save_share_import; prints "result N detail D waiting W"
-//   save_share_check start PROFILE              a start and nothing else; prints "done D waiting W"
-//   save_share_check cancel PROFILE             save_share_cancel; prints "result N waiting W"
-// Backups go to saves/ beside this program (save_share_backup_dir), as the game's go beside the game.
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,7 +8,6 @@
 #include "log_privacy.h"
 #include "save_share.h"
 
-// fs.h's own declarations of these would clash with the stubs below, which only have to link
 void fs_host_set_profile(const char *dir);
 const char *fs_save_import_done(void);
 int fs_save_export(int (*visit)(void *ctx, const char *rel, const uint8_t *data, size_t n), void *ctx);
@@ -27,7 +17,6 @@ static int count_file(void *ctx, const char *rel, const uint8_t *data, size_t n)
     return 1;
 }
 
-// ---- stubs for the runtime around fs_host.c (host.h and the files that define these in the game)
 const int rt_game_version = 111;
 const char rt_port_version[] = "9.9.9-check";
 
@@ -51,26 +40,23 @@ void rt_fatal(const char *fmt, ...) {
 }
 
 const char *rt_log_path(void) { return getenv("SAVE_SHARE_CHECK_LOG"); }
-void *rt_config(void) { return NULL; }   // fs_host_set_profile names the profile first
+void *rt_config(void) { return NULL; }
 void account_uid(uint64_t uid[2]) { uid[0] = 0x1111222233334444ull, uid[1] = 0x5555666677778888ull; }
 int folder_downloads(char *out, size_t cap) { (void)out, (void)cap; return 0; }
 
-// never reached on the save paths: RomFS, the host function registry, guest memory, the probes
 #define NEVER(name) \
     void name(void) { rt_fatal(#name " called"); }
 NEVER(fs_init) NEVER(hostfn_override) NEVER(hostfn_register) NEVER(mem_kernel_alloc) NEVER(mem_kernel_free)
 NEVER(mem_thaw) NEVER(romfs_close) NEVER(romfs_entry) NEVER(romfs_entry_type) NEVER(romfs_file_count)
 NEVER(romfs_handle) NEVER(romfs_image_path) NEVER(romfs_list) NEVER(romfs_open) NEVER(romfs_overlay)
 NEVER(romfs_overlay_count) NEVER(romfs_read) NEVER(romfs_size) NEVER(rt_call)
-NEVER(perf_size)   // fs_host_sizes: only the perf trace's size lines call it
+NEVER(perf_size)
 int romfs_owns(const char *path) { (void)path; return 0; }
-int mem_probing(void) { return 0; }   // write_file asks before each write: no probe, no lazy heap here
+int mem_probing(void) { return 0; }
 void mem_kernel_access(uint64_t a, uint64_t n) { (void)a, (void)n; }
 void fs_trace(const char *what, const char *path) { (void)what, (void)path; }
-// no boot map is pending (runtime/patches/boot_map.c): a save file is read as it is
 int boot_map_save_open(const char *path, PlatFile *f) { (void)path, (void)f; return 0; }
 void boot_map_save_read(uint64_t offset, void *buf, uint64_t n) { (void)offset, (void)buf, (void)n; }
-// log_short_paths off (runtime/log_privacy.c): the text is shown as it is
 char *log_privacy_dup(const char *p, size_t n, size_t *out_n) { (void)p, (void)n, (void)out_n; return NULL; }
 
 int main(int argc, char **argv) {
@@ -86,7 +72,7 @@ int main(int argc, char **argv) {
         SaveShareResult r = save_share_import(argv[3], detail, sizeof detail);
         printf("result %d detail %s waiting %d\n", (int)r, detail, save_share_pending());
     } else if (!strcmp(mode, "start")) {
-        fs_save_export(count_file, NULL);   // the first storage use: storage_init and its import_pending
+        fs_save_export(count_file, NULL);
         printf("done %s waiting %d\n", fs_save_import_done(), save_share_pending());
     } else if (!strcmp(mode, "cancel")) {
         int r = save_share_cancel();
