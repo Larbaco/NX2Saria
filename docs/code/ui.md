@@ -3075,9 +3075,9 @@ leaves room for a note.
 ### `UiTextId`: what each text is for
 
 The ids come in groups, in this order: the software keyboard; the menu's window, tabs and bottom row; Screen; Game;
-Mods (the port's own patches and the player's mods folder, `runtime/patches/mods.c`); Sound; Controls; the Controls
-tab's remapping rows; the Amiibo tab; the Menu tab; the Game tab's Testing rows; the language names; Advanced; the
-performance overlay; the Cheats tab; the Saves group; the capture note; the boot screen; the Picture rows.
+Sound; Controls; the Controls tab's remapping rows; the Amiibo tab; the Menu tab; the Game tab's Testing rows; the
+language names; Advanced; the performance overlay; the Cheats tab; the Saves group; the capture note; the boot screen;
+the Picture rows.
 `UI_MENU_FIRST` to `UI_MENU_LAST_ID` carry English, Russian, Brazilian Portuguese and Simplified Chinese texts.
 
 For a translator, what a text is for and what its printf arguments take:
@@ -3104,16 +3104,6 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_AA_TAA_FSR4` | "TAA (%s)": FSR 4's name as the Upscaling row gives it ("AMD FSR 4.1") |
 | `UI_MENU_FPS_DISPLAY`, `UI_MENU_FPS_DISPLAY_HZ` | the monitor's refresh rate; the second is a printf format with the rate in Hz, used when it is known |
 | `UI_MENU_FPS_RTSS`, `UI_MENU_FPS_RTSS_READONLY` | notes under the frame rate value: RivaTuner Statistics Server (`runtime/pacing/rtss_limit.c`) limits the game, or cannot |
-| `UI_MENU_MODS_NONE` | no mod folder yet: where to unpack one |
-| `UI_MENU_MODS_ROW_DESC` | printf: files it replaces, files it adds (as of this start) |
-| `UI_MENU_MODS_OVERRIDDEN` | printf: files a higher mod serves instead, that mod's name |
-| `UI_MENU_MODS_EXEFS_UNSUPPORTED` | printf: the file and why |
-| `UI_MENU_MODS_EXEFS_ON` | printf: its ExeFS patch files in use |
-| `UI_MENU_MODS_REPLACES_BUILTIN` | printf: its ExeFS patch files in use, the port's own patch sets they turn off |
-| `UI_MENU_MODS_OTHER_VERSION` | printf: files made for another game version, left out |
-| `UI_MENU_MODS_UNUSED` | under the switch of a mod the port cannot use |
-| `UI_MENU_MODS_CHEATS` | printf: its cheats as read at start |
-| `UI_MENU_MODS_CHEATS_FILE` | printf: `<build id>.txt`, when none were read |
 | `UI_MENU_RUMBLE_HD`, `UI_MENU_RUMBLE_HD_DESC`, `UI_MENU_RUMBLE_HD_NEEDS` | HD rumble, and the note on its row while the gamepad in use cannot take it (`runtime/input/input.h` `input_rumble_hd_available()`) |
 | `UI_MENU_GROUP_GYRO`, `UI_MENU_GYRO_*` | the Gyro group (`runtime/ui/menu.cpp` `rows_gyro()`): its heading, rows and dead zone levels, and the note on its rows while motion controls are off |
 | `UI_MENU_PROMPTS_MISSING`, `UI_MENU_PROMPTS_FAILED`, `UI_MENU_PROMPTS_RESTART`, `UI_MENU_PROMPTS_OFF_SHAPE`, `UI_MENU_PROMPTS_OFF_MODS`, `UI_MENU_PROMPTS_OFF_PATCHES` | the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off |
