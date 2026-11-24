@@ -1,4 +1,3 @@
-"""The launcher commit warning's pure threshold and message, with the system probe and dialog stubbed."""
 import json
 import sys
 import unittest
@@ -140,11 +139,11 @@ class CommitWarningTest(unittest.TestCase):
 
     def test_yes_is_the_default_confirmation_button(self):
         user32 = mock.MagicMock()
-        user32.MessageBoxW.return_value = 6   # IDYES
+        user32.MessageBoxW.return_value = 6
         with mock.patch.object(winsys.ctypes, 'WinDLL', return_value=user32, create=True):
             self.assertTrue(winsys.confirm_play('warning'))
         flags = user32.MessageBoxW.call_args.args[3]
-        self.assertEqual(flags & 0x300, 0)   # neither MB_DEFBUTTON2 nor MB_DEFBUTTON3
+        self.assertEqual(flags & 0x300, 0)
         self.assertTrue(settings.DEFAULTS['warn_low_commit'])
 
 
