@@ -1481,3 +1481,378 @@ bind any key. Exits naming the pictures that are missing.
 version and licence), or a phrase that says the folder has none. `copy_art()` copies `art_files()` of the folders into
 `dest` (a release's `prompt-art` folder, emptied first), with the `SOURCE` file of the first folder that has one;
 returns files and bytes.
+
+## `tools/release_files.py`
+
+The checks and the page text of a release that GitHub Actions builds and publishes (`.github/workflows/release.yml`;
+[releases/README.md](../releases/README.md)). Standard library only: it runs with the runner's own Python, before
+anything is installed. Each command prints what it found, one line per finding, and exits 1 on a problem.
+
+- `python tools/release_files.py tag --tag v0.19.0-rc.1 [--root .]`: the tag names `VERSION`'s version (`vX.Y.Z` or
+  `vX.Y.Z-rc.N`), `docs/releases/<tag>.md` exists, and the notes of a version without a suffix have no pre-release
+  line: the manifest carries those notes for good, and the version is stable once promoted.
+- `python tools/release_files.py files --tag T --notes docs/releases/T.md --dir dist`: `dist` holds exactly nine
+  payload and manifest files; it then writes `SHA256SUMS.txt`, for ten published files in all. The Windows manifests
+  remain identical; each platform manifest names its own files, version, notes, real sizes and SHA-256.
+- `python tools/release_files.py body --tag T --notes docs/releases/T.md --state prerelease|stable [--repo o/n]`: the
+  text of the GitHub release page: the notes, a pre-release line on top while it is one (unless the notes of a release
+  candidate have their own), and the line that tells players how to verify their download. It is page text only; no
+  file of the release changes with it.
+- `python tools/release_files.py promote --tag T [--stable TAG ...]`: T may become the stable release: it has no
+  suffix, and no stable release among the tags given is as new.
+
+`PRERELEASE_LINE` is the pre-release line of the notes ([releases/README.md](../releases/README.md), "The notes"): a
+line that starts with it. A sentence that only mentions earlier pre-releases ("This update includes 0.18.2 to 0.18.5,
+which came out as pre-releases.") is not one.
+
+### `text()`
+
+A text file's content with LF line ends, as git checks it out on Linux (`.gitattributes`: `eol=lf`).
+
+### `version_key()`
+
+The order of release tags as semver orders their versions: v0.19.0-rc.1 < v0.19.0-rc.10 < v0.19.0.
+
+### `check_promote()`, `check_tag()`, `check_files()`
+
+Each returns its findings and raises `Problem` otherwise. `check_promote()`: when the tag may be made the stable
+release beside the stable releases' tags; tags that are not release tags (none so far) are left out. `check_tag()`:
+for a tag, a `Problem` when it may not be released. `check_files()`: for the built files in the folder, a `Problem` on
+the first that is wrong; it writes `SHA256SUMS.txt`.
+
+## `tools/rename_legacy_names.py`
+
+Renames the `NX2NAVI_*` setting names still written in the code to their current `NX2SARIA_*` spelling
+([branding.md](../branding.md)).
+
+```
+python tools/rename_legacy_names.py           rewrite the files; one line per file changed
+python tools/rename_legacy_names.py --check   print what would change; exit 1 when anything would
+```
+
+The game, the launcher and the build tools read every setting under both names, `NX2SARIA_*` first
+(`runtime/cfg/cfg.c` `cfg_env()`, `launcher/gameini.py`, `tools/make_game.py` `setting_env()`, `recomp/gen.py`
+`setting_env()`). This script changes how the code spells the names it reads, writes and tests, so that a reader of the
+code sees the current name. It is mechanical and can be run again: on a branch made before the rename, or after a
+rebase that brought new code.
+
+It rewrites the files git tracks under `runtime/`, `launcher/`, `tools/`, `recomp/` and `tests/`, and leaves alone:
+
+- `tools/vendor/` (kept byte-identical to its source) and `runtime/third_party/`;
+- itself and `tests/legacy_names_check.py`, whose planted lines spell the older names on purpose (`SELF`);
+- `tools/xlate/`: its files make the shader translator's identity (`tools/build_xlate.py` `identity()`), which keys
+  every player's shader cache, so a change there would make every player translate and prepare their shaders again;
+- a line that also holds an `NX2SARIA_` name, or that says the `NX2NAVI_` one is the older, legacy, alias or earlier
+  spelling (`SAYS_OLDER`): that is the fallback itself, its description or its test. With the comments gone from the
+  code, a line whose comment said so is on `KEEP` instead;
+- the bare prefix `NX2NAVI_` (followed by a quote, a blank, `*` or the end of the line): the code that strips or
+  matches either prefix, and the `GENERATED_MARKER` of `tools/check_content.py`;
+- `NX2NAVI_PGO_GEN`, the compile-time flag still accepted beside `NX2SARIA_PGO_GEN`;
+- the lines of `KEEP`: file name and text on the line, for tests of the older spelling whose line does not say so.
+  They are matched by file name, not path, so that a file moved to another folder keeps its entry.
+
+### `rename_line()`
+
+The line with its `NX2NAVI_` setting names in the current spelling; the line itself when it is kept.
+
+## `tools/romfs_check.py`
+
+Checks every file of a player's packed game data, and stands in for the damaged textures it can
+([launcher.md](../launcher.md), "Check the Game Files"). `tools/make_game.py` records a digest of this file's code as
+`SCAN_TOOL`, and `tests/launcher_test.py` compares it; the digest takes each code line as written, so the one comment
+at the end of a code line stays in this file until the digest is next changed for another reason.
+
+```
+python tools/romfs_check.py --game FOLDER [--romfs FOLDER] [--mods FOLDER] [--jobs N]
+```
+
+A dump can hold files whose first pages are zeros, with a container checksum that still passes because the damage was
+packed along with them. The game then cannot decompress such a file, opens it over and over and gives up on everything
+that needs it: one damaged normal map left a whole room without walls. Nothing during play looks for this, so the game
+build runs this once for each copy of the game data (`tools/make_game.py` `step_scan()`).
+
+Every `.zs` file of `<game>/romfs` (`index.json` and `romfs.bin`, as `tools/make_game.py` writes them; `--romfs` names
+another) is decompressed in full, with the dictionary its frame names from `Pack/ZsDic.pack.zs`. A file of any other
+kind that is nothing but zeros is reported too. The result goes to `<game>/romfs-check.json`.
+
+A damaged `Tex/<name>.bntx.zs` is replaced by a stand-in: an undamaged texture of the same kind, the closest name with
+the same length, with the name inside it changed, so the game loads it and what uses it appears. It is another
+texture, not the original, and only a clean dump restores the original. The stand-ins are an ordinary mod folder
+(`--mods`, default `<game>/mods`) named `STANDIN_MOD` that the Mods menu can turn off; it is removed again when nothing
+is damaged. They are built from the player's own files on the player's machine and never enter the repository.
+
+It needs zstandard (`tools/requirements-launcher.txt`).
+
+`PIECE` is how much of a file the decompressor is given at a time. Each call returns its output as one bytes object,
+which the library grows as the output comes: with 4 MiB of input a call's output is tens of MiB, grown by copying, and
+the copying holds the interpreter's lock, so the worker threads wait on each other. Measured on 32 MiB frames with 12
+threads: about 120 MB/s of packed data with 4 MiB pieces, about 2,500 MB/s with 64 KiB pieces; files smaller than a
+piece are the same either way.
+
+### `sarc_members()`
+
+Name to start and end of the files of a SARC archive.
+
+### `Image`
+
+The packed game data; each thread reads through its own handle. `Image.decompressor()`: one per thread and
+dictionary, as a decompressor is not for two threads at once.
+
+### `problem()`
+
+Why the file is damaged, or `None`. A frame naming a dictionary the game does not have cannot be judged: `None`. Once
+the decompressor reports the end of the frame, the frame is whole: bytes after it are not the frame's, whichever piece
+they fall in.
+
+### `donors()`, `stand_in()`
+
+`donors()`: undamaged textures whose names have this one's length, most alike first; the same last word is worth
+most. `stand_in()`: a compressed stand-in for the damaged texture at `path`, or `None` when no undamaged texture can
+be renamed to it.
+
+## `tools/romfs_index.py`
+
+Builds the RomFS index the runtime binary-searches (`runtime/hle/romfs.c`) and its `romfs_config.h`. Standard library
+only. The notice at its top is that of the code it holds from another project and stays
+([THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)).
+
+```
+.venv\Scripts\python tools\romfs_index.py --romfs build\extracted\v121\romfs --out build\v121
+```
+
+Input: `<romfs>/index.json` (`{status, romfs_size, romfs_sha256, files: [{path, offset, size}]}`) as
+`tools/extract.py` writes it, and `<romfs>/romfs.bin`, whose size must match. Output, both in the build directory
+(never in the repository):
+
+| File | What |
+|---|---|
+| `romfs-index.bin` | `NX2NRFS1` layout: header `<8sQQ` (magic, count, strings offset), count 24-byte rows `<QQII` (offset, size, name offset, name length including the NUL), then the NUL-terminated names; rows sorted by the UTF-8 bytes of the path, which is the order `strcmp` sees |
+| `romfs_config.h` | `ROMFS_IMAGE_SIZE`, `ROMFS_IMAGE_SHA256`, `ROMFS_INDEX_SHA256`, `ROMFS_FILE_COUNT` |
+
+Both are rewritten only when their bytes change, so Ninja does not rebuild `romfs.c` for nothing.
+
+### `build_index()`, `write()`
+
+`build_index()`: the index bytes for an `index.json` manifest; exits on a malformed one. `write()` writes
+`romfs-index.bin` and `romfs_config.h` into `out` and returns file count, index bytes and seconds.
+
+### `write_placeholder()`
+
+`romfs_config.h` without a RomFS (no extracted game on this machine): the game builds, and `fs_init` stops with a
+named fatal.
+
+## `tools/run_game.py`
+
+Runs a build of the game unattended on a copy of the user's profile with a backed-up save and scripted input
+([performance.md](../performance.md), [controls.md](../controls.md), [boot-to-map.md](../boot-to-map.md)).
+
+The profile is never written: each run copies it to `<exe dir>/prof-<tag>`, swaps in the save backup, and deletes the
+copy afterwards. It is the game folder's own profile when there is one (`<exe dir>/profile`, a folder
+`tools/make_game.py` built), else `build/profile`. The log records how many other copies of the game and of Ninja ran,
+because timings taken next to them are not comparable.
+
+```
+python tools/run_game.py build/v143 --save <backup> --seconds 15 --tag idle --env NX2SARIA_TRACE=perf
+python tools/run_game.py build/v143 --save <backup> --script <input.txt> --seconds 18 --tag fight --quiet \
+    --env NX2SARIA_TRACE=perf,sched
+python3 tools/run_game.py <game folder> --save <report.zip> --seconds 600 --wall 90 \
+    --env NX2SARIA_SHOT_DIR=shots --env NX2SARIA_SHOT_AFTER=40 --env NX2SARIA_SHOT_EVERY=10
+```
+
+`<backup>` is a folder of `build/save-backup` or of the profile's `save-backup` (the game keeps its last three saves
+there), or a save folder or `.zip` from elsewhere, such as a crash report's zipped profile folder; `--script` defaults
+to `tools/input/load_save.txt` (title screen to the first save slot), and a recording made with
+`NX2SARIA_INPUT_RECORD` replays the same way. `--wall` ends a run whose script never reaches the world clock;
+`NX2SARIA_SHOT_EVERY` takes its pictures by wall time.
+
+`--boot-map <area>[:<start position>]` starts the game in that area from the save without the title screen or the file
+menu (`runtime/patches/boot_map.c`), with `--boot-map-slot`, `--boot-map-age` and `--boot-map-time` beside it. Its
+input script defaults to `tools/input/boot_map.txt`, which presses nothing. The run fails (exit code 3) when the log
+has no "boot map: arrived in" line for the area asked for; the boot map's lines are printed at the end.
+
+```
+python3 tools/run_game.py <game folder> --save <backup> --boot-map HyruleField_Child:HyruleField_FrontOfMarket \
+    --boot-map-time 21:00 --seconds 10 --wall 180 --tag field-night
+```
+
+- The import of `launcher/saves.py` carries `# noqa: E402` with its reason (Import Saves' search, for a save from
+  elsewhere), which stays.
+- `LOCK_OFFSET`: the Windows byte-range lock sits past the holder text, so other processes can still read it.
+- `MAX_RUNS` (3, or `NX2SARIA_MAX_RUNS`): more parallel runs exhaust device memory (16 GB RX 9070).
+- `GAME_EXES`: the game's executable as each tool names it: `tools/build_game.py`, `tools/make_game.py` on Windows,
+  `tools/make_game.py` on Linux, `tools/build_game.py` on Linux.
+
+### `count()`
+
+Running processes of this executable name. On Linux it reads `/proc/<pid>/comm`, the process name cut to 15
+characters; a process that ended while the list was read is skipped.
+
+### `keep_in_background()`
+
+Pushes the game window behind the user's windows as soon as it appears, for builds older than
+`NX2SARIA_BACKGROUND_WINDOW`: `SetWindowPos` with `HWND_BOTTOM` and `NOSIZE | NOMOVE | NOACTIVATE`.
+
+### `take_slot()`, `try_lock()`
+
+`take_slot()` blocks until one of `MAX_RUNS` run slots is free and holds it (a locked file) until this process exits.
+`try_lock()` takes an exclusive OS lock on the open file without blocking; false if another process holds it.
+
+### `take_gpu_lock()`
+
+Blocks until this process holds the machine-wide measured-run lock (`build/.gpu-run.lock`) and returns the open file.
+The OS drops the lock when the process exits or dies, so a stale file never blocks. The file text names the holder
+(pid and build path) for the waiters.
+
+### `save_source()`
+
+Folder, slot and names to leave out, of the save to run. A backup named in `build/save-backup` or the profile's
+`save-backup` is a whole save: a bare name is a backup's name, a path is searched. A folder or `.zip` from elsewhere
+(a crash report's zipped profile folder, a game folder, an emulator's save) is searched as the launcher's Import Saves
+searches it; `slot` names the one slot it holds, `None` for a whole save. `zipfile` leaves out absolute paths and `..`
+parts when the zip is unpacked.
+
+### `profile_copy()`
+
+`save-tx` is removed from the copy: a finished or interrupted commit there would be loaded in place of the save
+swapped in (`runtime/hle/fs_host.c`).
+
+### `boot_map_report()`
+
+Prints the boot map's lines of the run's log; returns 3 in place of a clean exit when Link did not arrive in the area
+asked for (`runtime/patches/boot_map.c` `boot_map_tick()` writes the line).
+
+### `main()`
+
+Without `--show` on Windows the game gets `NX2SARIA_BACKGROUND_WINDOW=1`: SDL windows open in front either way.
+
+## `tools/runtime_folders.py`
+
+The runtime's files by subsystem folder: which file of `runtime/` moved from the top level into which folder, and the
+script that made the move and rewrote the paths that name the files ([architecture.md](../architecture.md)).
+
+```
+python tools/runtime_folders.py move              # git mv every file of FOLDERS from runtime/ into its folder
+python tools/runtime_folders.py rewrite [FILE...]  # runtime/<name> -> runtime/<folder>/<name> in those files
+python tools/runtime_folders.py where NAME...      # the path below runtime/ a file has now
+python tools/runtime_folders.py table              # the table as Markdown
+```
+
+`rewrite` without files takes every tracked file outside `runtime/`, `tools/xlate/` and `tools/vendor/` that names one
+(git grep) and changes `runtime/<name>` and `runtime\<name>` in any text, and in Python a path joined from a runtime
+folder, such as `ROOT / 'runtime' / '<name>'` or `rt / '<name>'`. A branch made before the move takes a rebase as
+usual (git follows the renames); a file it adds that names a moved one is brought up to date with `rewrite <file>`,
+and a C file it adds at the top of `runtime/` still builds there, as the top level is compiled as before.
+
+The files that stay at the top of `runtime/`: the entry point, the guest's core (`cpu.h`, `simd.h`, `simd_fp.h`,
+`dispatch.h`, `host.h`: the lifted C includes them, and its compile has only `runtime/` on its path), the loader,
+guest memory, the log, `cfg.h` (`runtime/platform/win32.c` includes it as `../cfg.h`), the small shared helpers and
+the Windows resource files.
+
+- `VK_EXTRA`: the rest of `vk_*`, and the headers of the Vulkan back end that carry another name. `FOLDERS['vk']` is
+  `vk/` as it was on the day of the move (the `vk_*` files then); a `vk_*` file added later stays where it is put.
+- `TEXT` matches `runtime/<name>` and `runtime\<name>` as a whole name (not `vk_fsr.c` inside `vk_fsr.cpp`; a full
+  stop after it may end a sentence). `JOIN` matches a Python path join that ends in a
+  moved name, from a runtime folder: `... / 'runtime' / 'name'`, `rt / 'name'`.
+
+### `move()`
+
+git mv of each file of `FOLDERS` from the top of `runtime/` into its folder.
+
+### `rewrite()`
+
+The translator's sources are left as they are (`tools/build_xlate.py` hashes them into the translator's identity), as
+is the vendored code.
+
+## `tools/sdl3_pin.py`
+
+SDL3 for a Linux build on a system that has none: the headers and `libSDL3.so.0` a build kit carries
+([README-BuildKit.md](../README-BuildKit.md)). Standard library only: the build kit's Python runs this.
+
+```
+python tools/sdl3_pin.py [--dest toolchain/sdl3] [--deb FILE FILE | --sysroot FILE]
+```
+
+The runtime's window, input and audio are SDL 3. Ubuntu 24.04 LTS and the distributions built on it (Linux Mint 22 and
+others on the noble base) package no SDL3 at all, so a build with the system's compiler there found no `SDL3/SDL.h`
+(issue #11). This is the SDL3 a kit carries for them, in `toolchain/sdl3`. `tools/make_game.py` takes it where the
+compiler finds no SDL3 headers of the system's (`sdl3_choice()`): the runtime is compiled and the game linked against
+it, `libSDL3.so.0` goes beside the game (`place_sdl3()`), and the preflight runs a program linked against it, so that
+a library it needs and the system lacks stops the build, by name, before the long steps.
+
+It is SDL 3.4.18 as the Steam Runtime 3 builds it, the build the Steam Runtime 3 "sniper" SDK sysroot holds. Built for
+the Steam Runtime's glibc (its newest symbol version is GLIBC_2.29), it runs on any distribution at least that new. It
+links the desktop's client libraries directly instead of loading them when it starts: libX11, libXext, libXcursor,
+libXi, libXfixes, libXrandr, libXss, libXtst, libxkbcommon, libwayland-client, -cursor and -egl, libdecor-0, libpulse,
+libasound and libfribidi, all of which a desktop install of Ubuntu or Mint has.
+
+The files come from one of two places, checked either way:
+
+- the runtime's apt pool: the packages libsdl3-0 (the library) and libsdl3-dev (the headers), 2.7 MB, each checked
+  against its SHA-256 (`DEBS`: package to address and SHA-256). The pool keeps the current version of a package only,
+  so these go once the Steam Runtime moves on;
+- then the dated snapshot of the sniper SDK sysroot that holds the same build (`SYSROOT`: the snapshot with libsdl3-0
+  and libsdl3-dev `DEB_VERSION` installed), 1.2 GB, read as it downloads and checked against its SHA-256 at the end,
+  nothing of it written to disk but the files below.
+
+Both must give exactly the files `CONTENT_SHA256` names (`content_digest()` of the kept files, `pinned.txt` aside: the
+86 headers, the library and the copyright file), so the kit's SDL3 is the same from either.
+
+Kept: `include/SDL3/*.h`, `lib/libSDL3.so.0` (the library's file under its soname), the package's copyright file
+(`SDL3-copyright.txt`: SDL is zlib, and the file names the licences of the parts it contains) and `pinned.txt`.
+
+- `VERSION`: SDL's own version, as `SDL_version.h` defines it. `DEB_VERSION`: the packages' version in the Steam
+  Runtime 3 apt pool.
+- `FOLDER`: below a checkout's or a kit's root: `include/`, `lib/`, the copyright file. `STAMP`: in the folder, the
+  packages' version, written last. `LIB`: the soname the game is linked against and finds beside itself.
+- `HEADER` and the patterns beside it: members of a package's data archive or of the sysroot that are kept; `HEADER`'s
+  file name part takes no `..` and no folder, so nothing is written outside the folder. `NEAR`: files a kept member
+  may be a hard link to: SDL3's own, a few MB, held while an archive is read.
+
+### `have()`
+
+True when the folder holds the pinned SDL3, complete (the stamp is written after the last file). A stamp that is not
+ASCII (`ValueError`) is no stamp.
+
+### `kept_name()`, `take()`
+
+`kept_name()`: where a member of the packages or the sysroot goes in the folder, `None` when it is not kept. `take()`:
+the kept members of an open tar archive into `kept` (folder path to bytes). A kept member that is a hard link to one
+of SDL3's files read earlier (`NEAR`) takes that file's bytes; symbolic links are not followed (the library is taken
+by its own file name).
+
+### `deb_data()`, `deb_files()`
+
+`deb_data()`: name and bytes of the data archive of a Debian package: an ar archive whose `data.tar.*` member holds
+the files. Members start on even offsets. `deb_files()`: the kept files of a Debian package (bytes) into `kept`; the
+pinned packages are xz, as the Steam Runtime's dpkg writes them.
+
+### `content_digest()`
+
+One SHA-256 over the kept files' paths and SHA-256s: equal for two sources that gave the same files.
+
+### `clear()`, `write()`, `unpack()`
+
+`clear()` removes what an earlier unpack wrote into the folder, and nothing else of it. `write()` puts the kept files
+into the folder, after they are checked: complete and exactly the pinned ones. `unpack()`: the headers, the library
+and its copyright file of the two packages (name to bytes) into the folder.
+
+### `HashingReader`, `sysroot_files()`
+
+`HashingReader`: a file object over a download that hashes what is read through it and counts it. `sysroot_files()`:
+the kept files of the sysroot archive read from `f` (a download or a file), checked against `SYSROOT`'s SHA-256 once
+all of it is read; what follows the archive's end marker is read too, for the hash.
+
+### `download()`
+
+The bytes at `url`, `None` when the server or the network does not give them.
+
+### `resolve()`
+
+The folder holding the pinned SDL3 (default `<root>/toolchain/sdl3`), fetched and unpacked there when it does not hold
+it yet. `debs`: the two packages on disk instead of the download, in any order, each one of the pinned files;
+`sysroot`: the sniper SDK sysroot archive on disk. Returns the folder: `include/` goes on the include path,
+`lib/libSDL3.so.0` into the link.
+
+### `header_version()`
+
+Major, minor and micro as `SDL_version.h` defines them in `text`, `None` when it does not.
