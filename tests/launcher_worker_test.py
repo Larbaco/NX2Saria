@@ -976,6 +976,53 @@ class WorkerTest(unittest.TestCase):
         worker.stdin.close()
         self.assertEqual(worker.wait(timeout=15), 0)
 
+    def test_killed_mod_job_leaves_recoverable_marker(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        script = ("import runpy,sys,time\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,net,mods,build,saves\n"
+                  "class Fake(jobs.Job):\n"
+                  " claims=('game',); kind='rebuild'\n"
+                  " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
+                  " def run(self):\n"
+                  "  while not self.cancelled(): time.sleep(.02)\n"
+                  "  raise net.Cancelled()\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=True), "
+                  "mock.patch.object(mods,'code_waiting',return_value=['Example']):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        for request in ({'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'play'}):
+            worker.stdin.write(json.dumps(request) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+        self.assertEqual(response['result']['status'], 'building')
+        self.assertEqual(json.loads(worker.stdout.readline())['event'], 'job_started')
+        marker = self.root / 'data' / 'job-running.json'
+        deadline = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(marker.exists())
+        worker.kill()
+        worker.wait(timeout=15)
+        self.assertTrue(marker.exists())
+        successor, hello = self.start_worker()
+        self.assertEqual(hello['result']['lock'], 'held')
+        successor.stdin.write(json.dumps({'id': 2, 'method': 'inspect'}) + '\n')
+        successor.stdin.flush()
+        self.assertTrue(json.loads(successor.stdout.readline())['result']['job_marker_present'])
+        successor.stdin.close()
+        self.assertEqual(successor.wait(timeout=15), 0)
+        self.assertTrue(marker.exists())
+
     def test_mod_job_emits_sanitized_progress(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()
