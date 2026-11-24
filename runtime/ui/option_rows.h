@@ -47,6 +47,7 @@ int opt_bind_row(const char *key, const char *label, const char *action, UiTextI
 
 const char *opt_value(const char *key);
 const char *opt_get(const char *key);
+const char *opt_before(const char *key);
 int opt_preset_tier(void);
 const char *opt_default(const char *key);
 bool opt_is_set(const char *key);

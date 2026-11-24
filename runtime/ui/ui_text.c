@@ -820,6 +820,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_WARN_MODE] = "- %s: choose a lighter mode than %s",
     [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s: turn it off",
     [UI_MENU_VRAM_WARN_PRESET] = "- %s: choose a lower one",
+    [UI_MENU_VRAM_FIT_MEASURED] = "Video memory is already %d%% in use (%llu of %llu MiB). These use more video memory: %s.",
+    [UI_MENU_VRAM_FIT_NOTICED] = "Video memory ran out earlier in this session (now %d%% in use, %llu of %llu MiB). These use more video memory: %s.",
+    [UI_MENU_VRAM_FIT_PRESET] = "This card has %u GiB of video memory. The recommended preset for it uses: %s.",
 };
 
 static const char *const text_ru[UI_TEXT_COUNT] = {
@@ -1536,6 +1539,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_WARN_MODE] = "- %s: выберите режим легче, чем %s",
     [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s: отключите",
     [UI_MENU_VRAM_WARN_PRESET] = "- %s: выберите ниже",
+    [UI_MENU_VRAM_FIT_MEASURED] = "Видеопамять уже занята на %d%% (%llu из %llu МиБ). Больше видеопамяти требуют: %s.",
+    [UI_MENU_VRAM_FIT_NOTICED] = "В этой сессии видеопамять уже заканчивалась (сейчас занято %d%%, %llu из %llu МиБ). Больше видеопамяти требуют: %s.",
+    [UI_MENU_VRAM_FIT_PRESET] = "У этой видеокарты %u ГиБ видеопамяти. Рекомендуемый пресет для неё использует: %s.",
 };
 
 static const char *const text_pt_br[UI_TEXT_COUNT] = {
@@ -2298,6 +2304,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_WARN_MODE] = "- %s: escolha um modo mais leve que %s",
     [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s: desligue",
     [UI_MENU_VRAM_WARN_PRESET] = "- %s: escolha um mais baixo",
+    [UI_MENU_VRAM_FIT_MEASURED] = "A memória de vídeo já está em %d%% (%llu de %llu MiB). Usam mais memória de vídeo: %s.",
+    [UI_MENU_VRAM_FIT_NOTICED] = "A memória de vídeo acabou mais cedo nesta sessão (agora em %d%%, %llu de %llu MiB). Usam mais memória de vídeo: %s.",
+    [UI_MENU_VRAM_FIT_PRESET] = "Esta placa tem %u GiB de memória de vídeo. O preset recomendado para ela usa: %s.",
 };
 
 static const char *const text_zh_hans[UI_TEXT_COUNT] = {
@@ -3087,6 +3096,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_WARN_MODE] = "- %s：选择比 %s 更轻的模式",
     [UI_MENU_VRAM_WARN_FRAMEGEN] = "- %s：关闭",
     [UI_MENU_VRAM_WARN_PRESET] = "- %s：选择更低的一档",
+    [UI_MENU_VRAM_FIT_MEASURED] = "显存已使用 %d%%（%llu / %llu MiB）。以下设置会占用更多显存：%s。",
+    [UI_MENU_VRAM_FIT_NOTICED] = "本次游戏中显存曾经用尽（当前已使用 %d%%，%llu / %llu MiB）。以下设置会占用更多显存：%s。",
+    [UI_MENU_VRAM_FIT_PRESET] = "这块显卡有 %u GiB 显存。为它推荐的预设使用：%s。",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}
