@@ -1,77 +1,97 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import path from 'node:path';
-import { inspect } from './inspection';
-import { startPlay } from './play';
-import { createMonitor } from './monitor';
+import { parseInspection, type Inspection } from './inspection';
+import { openWorker, type WorkerClient } from './worker-client';
+import { parsePlayResult } from './worker-protocol';
 import { defaultRoots, findDefaultRoot } from './discovery';
 import { runtimePaths } from './runtime-paths';
-import { createDevelopmentLog, type DevelopmentLog } from './dev-log';
 
 const { source, python } = runtimePaths(app.isPackaged, process.resourcesPath, __dirname, process.env, process.platform);
 app.whenReady().then(() => {
   const window = new BrowserWindow({ width: 1040, height: 720, minWidth: 720, minHeight: 500, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
-  let selectedRoot: string | null = null;
+  let worker: WorkerClient | null = null;
+  let state: Inspection | null = null;
   let playing = false;
-  let log: DevelopmentLog | null = null;
-  async function selectRoot(root: string, origin: 'default' | 'manual') {
-    const basename = path.basename(root).toLowerCase();
-    const brand = basename === 'nx2saria' ? 'NX2Saria' : basename === 'nx2navi' ? 'NX2navi' : 'other';
-    log = findDefaultRoot([root]) ? await createDevelopmentLog(root, origin, brand, app.getVersion(), process.platform) : null;
-    const result = await inspect(root, python, source);
-    selectedRoot = result.status === 'ready' ? root : null;
-    await log?.write('inspection', result.status);
-    return result;
+  let hidden = false;
+  async function selectRoot(root: string) {
+    const previous = worker;
+    worker = null;
+    if (previous) await previous.close();
+    let current: WorkerClient | null = null;
+    try {
+      current = await openWorker(root, python, source);
+      if (!current.handshake.capabilities.includes('inspect') || !current.handshake.capabilities.includes('play')) throw new Error('Unsupported worker');
+      const active = current;
+      worker = active;
+      active.on('disconnect', () => {
+        if (worker !== active) return;
+        worker = null;
+        playing = false;
+        if (!window.isDestroyed() && hidden) { window.show(); window.focus(); }
+        hidden = false;
+        if (!window.isDestroyed()) window.webContents.send('play-ended', { error: 'worker_disconnected' });
+      });
+      active.on('event', async frame => {
+        if (worker !== active) return;
+        if (frame.event === 'game_started') {
+          if (state?.hide_while_playing && !window.isDestroyed() && window.isVisible() && !window.isMinimized()) { window.hide(); hidden = true; }
+        } else if (frame.event === 'game_ended') {
+          if (!window.isDestroyed() && hidden) { window.show(); window.focus(); }
+          hidden = false;
+          playing = false;
+          try { state = parseInspection(await active.request('inspect')); } catch { state = null; }
+          if (!window.isDestroyed()) window.webContents.send('play-ended', { state, code: frame.code, error: frame.alarm ? 'game_failed' : undefined, update_waiting: frame.update_waiting });
+          if (frame.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
+        }
+      });
+      state = parseInspection(await active.request('inspect'));
+      if (active.handshake.lock === 'unavailable' && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'warning', message: 'Não foi possível bloquear a instalação. Evite abrir outro launcher ao mesmo tempo.' });
+      if (active.handshake.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
+      return state;
+    } catch {
+      if (current) await current.close();
+      if (worker === current) worker = null;
+      return { status: 'inspection_error', reason: 'worker_failed' };
+    }
   }
   ipcMain.handle('discover-installation', async event => {
     if (event.sender !== window.webContents || playing) throw new Error('Unavailable');
     const root = findDefaultRoot(defaultRoots(process.platform, app.getPath('home'), process.env));
-    if (!root) return null;
-    return selectRoot(root, 'default');
+    return root ? selectRoot(root) : null;
   });
   ipcMain.handle('select-installation', async event => {
     if (event.sender !== window.webContents || playing) throw new Error('Unavailable');
-    selectedRoot = null;
-    await log?.write('inspection', 'selection requested');
+    const previous = worker;
+    worker = null;
+    state = null;
+    if (previous) await previous.close();
     const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Select NX2Saria launcher folder' });
-    if (chosen.canceled || !chosen.filePaths[0]) { await log?.write('inspection', 'selection cancelled'); log = null; return null; }
-    return selectRoot(chosen.filePaths[0], 'manual');
+    return chosen.canceled || !chosen.filePaths[0] ? null : selectRoot(chosen.filePaths[0]);
   });
   ipcMain.handle('play', async event => {
-    if (event.sender !== window.webContents || !selectedRoot || playing) return { error: 'unavailable' };
+    if (event.sender !== window.webContents || !worker || playing) return { error: 'unavailable' };
+    const active = worker;
     playing = true;
-    const root = selectedRoot;
-    await log?.write('play', 'requested');
-    const result = await inspect(root, python, source);
-    if (result.status !== 'ready' || result.job_marker_present || result.game_running) { playing = false; await log?.write('play', 'refused'); return { error: 'not_ready' }; }
-    const session = startPlay(root);
-    const started = await session.started;
-    if ('error' in started) { playing = false; await log?.write('play', 'start failed'); return started; }
-    await log?.write('play', 'started');
-    const monitor = createMonitor(
-      () => inspect(root, python, source, session.pid),
-      () => {
-        if (window.isDestroyed() || !window.isVisible() || window.isMinimized()) return false;
-        window.hide();
-        void log?.write('window', 'hidden');
-        return true;
+    try {
+      state = parseInspection(await active.request('inspect'));
+      if (state.status !== 'ready' || state.job_marker_present || state.game_running) throw new Error('Not ready');
+      let result = parsePlayResult(await active.request('play'));
+      if (result.status === 'memory') {
+        const memory = result.memory;
+        const estimate = memory.unbounded ? 'ilimitada' : `${memory.need} MiB`;
+        let answer: { accept: boolean } | { dialog_error: true };
+        try {
+          const response = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Cancelar', 'Jogar'], defaultId: 1, cancelId: 0,
+            message: 'A memória disponível pode ser insuficiente.', detail: `Disponível: ${Math.trunc(memory.remaining)} MiB de memória comprometida (RAM e arquivo de paginação). Estimativa do jogo: ${estimate}. Feche programas que usam muita memória e ative ou aumente o arquivo de paginação do Windows. Para 16 GB de RAM, use 32 GB fixos (32768 MB) e reinicie o Windows. Para não mostrar este aviso novamente, desative a opção de memória no launcher instalado ou ajuste mem_need_mb = 0 em nx2saria.ini.` });
+          answer = { accept: response.response === 1 };
+        } catch { answer = { dialog_error: true }; }
+        result = parsePlayResult(await active.request('memory_response', { attempt: result.attempt, ...answer }));
       }
-    );
-    const timer = (process.platform === 'linux' || process.platform === 'win32') && session.pid !== undefined
-      ? setInterval(() => { void monitor.check(); }, 300) : null;
-    if (timer) void monitor.check();
-    void session.done.then(async end => {
-      if (timer) clearInterval(timer);
-      const hidden = monitor.stop();
-      await log?.write('play', 'error' in end ? 'start failed' : end.signal ? `ended signal=${end.signal}` : `ended code=${end.code ?? 'unknown'}`);
-      if (!window.isDestroyed() && hidden) { window.show(); window.focus(); await log?.write('window', 'restored'); }
-      const state = await inspect(root, python, source);
-      await log?.write('inspection', state.status);
-      selectedRoot = state.status === 'ready' ? root : null;
-      playing = false;
-      if (!window.isDestroyed()) window.webContents.send('play-ended', { ...end, state });
-    });
-    return started;
+      if (result.status !== 'started') { playing = false; return { error: result.status }; }
+      return { started: true };
+    } catch { playing = false; return { error: 'unavailable' }; }
   });
+  window.on('closed', () => { if (worker) void worker.close(); });
   window.loadFile(path.join(__dirname, 'index.html'));
 });
 app.on('window-all-closed', () => app.quit());

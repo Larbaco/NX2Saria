@@ -111,3 +111,9 @@ logging is available. Repeated inspection and unknown-method log entries are lim
 suppression line. EOF while idle closes the log and releases the lock. Frames have a 64 KiB limit, IDs are integers or
 strings, and malformed frames or a protocol mismatch are rejected without opening the installation. This slice does
 not launch a game, manage jobs, send reports or connect the Electron window to the worker.
+
+The in-progress Play worker records bounded action outcomes under `worker:` in addition to the existing `play:` and
+`play memory:` lines. It tracks a memory decision by attempt number, rejects stale replies and rechecks for a game
+before spawning. Game events are emitted after spawn and after `GameRun` reports completion. The input reader uses a
+bounded queue; the main loop remains responsible for following the game after EOF or an output failure. Mod rebuild
+jobs and the complete Electron handover remain unfinished.

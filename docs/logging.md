@@ -169,7 +169,7 @@ Files are under `runtime/` unless stated otherwise; the first three by number of
 | `dlaa times:` | GPU times of the DLAA passes | `vk_dlaa.c` |
 | `dlssg:` | DLSS Frame Generation through Streamline | `vk_dlssg.c` |
 | `ENTER` | Trace of a host override being entered (ov_system), no colon | `ov_system.c` |
-| `worker:` | Persistent launcher worker: startup, lock, waiting update, inspection and protocol outcomes | `launcher/worker.py` (outside `runtime/`) |
+| `worker:` | Persistent launcher worker: startup, lock, waiting update, inspection, Play, memory, spawn and protocol outcomes | `launcher/worker.py` (outside `runtime/`) |
 | `electron:` | Development Electron launcher: startup, selection, inspection, Play and window visibility; no paths | `launcher-electron/src/dev-log.ts` (outside `runtime/`) |
 | `err:` | Game error dialog | `ov_system.c` |
 | `evo:` | Changes of draw order over frames (vk_exec, debug) | `vk_exec.c` |

@@ -35,3 +35,13 @@ test('validates a real worker handshake using the Electron protocol version', ()
     assert.equal(parseHandshake(JSON.parse(result.stdout).result).protocol, PROTOCOL_VERSION);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('validates play results and memory estimates without passing extra fields', () => {
+  const { parsePlayResult } = require('../dist/worker-protocol.js');
+  assert.deepEqual(parsePlayResult({status:'memory', attempt:1, memory:{remaining:100, need:null, unbounded:true}, secret:'hidden'}),
+    {status:'memory', attempt:1, memory:{remaining:100, need:null, unbounded:true}});
+  assert.deepEqual(parsePlayResult({status:'started', secret:'hidden'}), {status:'started'});
+  for (const bad of [{status:'unknown'}, {status:'memory',attempt:0,memory:{remaining:1,need:2,unbounded:false}},
+    {status:'memory',attempt:1,memory:{remaining:1,need:null,unbounded:false}},
+    {status:'memory',attempt:1,memory:{remaining:NaN,need:2,unbounded:false}}]) assert.throws(() => parsePlayResult(bad));
+});
