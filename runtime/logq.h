@@ -1,14 +1,13 @@
-// Log writes on a thread of their own (logq.c). main.c owns the log's destinations and hands every line here.
 #pragma once
 #include <stddef.h>
 
-typedef void (*LogqSink)(const char *p, size_t n);   // writes the bytes to the log's destinations; may block
+typedef void (*LogqSink)(const char *p, size_t n);
 
-void logq_init(LogqSink sink);              // before the first logq_write; lines are written by the thread that logs them
-int logq_async(void);                       // from now on the log thread writes them; 0 when it could not be started
-void logq_write(const char *p, size_t n);   // queues the bytes, or writes them when the queue is off or has no room
-void logq_sync(void);                       // writes what is queued, on the calling thread, and turns the queue off
-void logq_flush(void);                      // writes what is queued, on the calling thread, and leaves the queue on
-void logq_nudge(void);                      // the log thread writes what it gathers now (a focus loss)
-void logq_peek(const char **p, size_t *n);  // what is queued as it stands, no lock (the end nobody asked for)
-size_t logq_bytes(void);                    // the queue's buffers, for the memory report (vk_memory.c system_log)
+void logq_init(LogqSink sink);
+int logq_async(void);
+void logq_write(const char *p, size_t n);
+void logq_sync(void);
+void logq_flush(void);
+void logq_nudge(void);
+void logq_peek(const char **p, size_t *n);
+size_t logq_bytes(void);

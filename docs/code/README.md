@@ -34,7 +34,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
 | 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports; the rest not yet extracted |
 | 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
-| 13 | `runtime/` top level | [runtime.md](runtime.md) | started: `vram_warn.h`, `vram_warn.c`, `vram_fit.h` and what they need of `mem_budget.c`; the rest not yet extracted |
+| 13 | `runtime/` top level | [runtime.md](runtime.md) | extracted; `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h` keep their comments until a change next rebuilds the lifted code ([The checks](#the-checks)) |
 | 14 | `runtime/gfx/` | [gfx.md](gfx.md) | extracted |
 | 15 | `runtime/hle/` | [hle.md](hle.md) | extracted |
 | 16 | `tools/` | [tools.md](tools.md) | started: the licence parts of the release scripts; the rest not yet extracted |
@@ -126,6 +126,13 @@ header, unmodified), `runtime/shaders/smaa.glsl` (the SMAA reference implementat
 shader translator, whose comments go with its next identity change: its identity, `tools/build_xlate.py` `identity()`, reads the patch
 files byte for byte, and a new identity makes every player prepare the shaders again.
 
+Kept with their comments for now, and counted and named in a line of their own at every run (`kept with comments: 3
+files, ...`), outside their area's count: `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h`. They are ours and
+their comments are owed: every lifted object depends on them and `tools/make_game.py` compares an object's
+dependencies by SHA-256, so one changed byte makes every player's PC recompile the lifted code. The exception ends when
+those files are next changed for another reason, in a change that rebuilds the lifted code anyway; their notes are
+already on [runtime.md](runtime.md).
+
 Kept in the files it reads:
 
 | Kept | Why |
@@ -139,6 +146,12 @@ Kept in the files it reads:
 Every other Python docstring counts as a comment: a function's, a class's, a string on a line of its own. Preprocessor
 directives (`#pragma`, `#version`, `#extension`) are code. `//`, `/*` and `#` inside a string or character literal,
 a raw string or an `#include <...>` are not comments.
+
+#### `owed()`
+
+The entry of `OWED` that names a file: the files, the date the exception began, what they are, why a changed byte
+costs, and when their comments leave. `scan()` keeps such a file's comment lines out of its area and in the report's
+`owed` count, which the table's `kept with comments` line and `--exceptions` print.
 
 #### `c_comments()`
 
@@ -173,8 +186,9 @@ Sorts each comment line of one file into counted or kept, with the reason.
 #### `self_test()`
 
 Planted files in a scratch folder: each kind of line kept, a plain comment and a trailing block counted, comment-like
-text in strings and URLs left alone, a run-time `__doc__` kept and the rest of it counted, each folder not read, and
-`--strict` failing on the planted area and passing on one with only directives.
+text in strings and URLs left alone, a run-time `__doc__` kept and the rest of it counted, each folder not read, a file
+kept with its comments counted on the line of its own and not in its area while a plain comment in the file beside it
+still fails, and `--strict` failing on the planted area and passing on one with only directives.
 
 ### `tests/code_docs_check.py`
 
