@@ -1827,3 +1827,701 @@ hoisted base is not verified, or a PLT stub counts as computed.
   gives the resolver's targets.
 - `plt_stubs()` gives the addresses of `br x17` in `adrp x16; ldr x17, [x16, #o]; add x16, x16, #o; br x17` stubs.
   `window()` is the code before the br, and the bounds check that branches into its block if it sits elsewhere.
+
+## `tests/launcher_test.py`
+
+`launcher/` and the bookkeeping of `tools/make_game.py`, without game files or Windows. It wants Python 3.14 for the
+zstd tests; the window test needs tkinter, numpy and a display. No test here reaches the session reports' server or
+opens their question over a screen (`launcher/telemetry.py` `server_url()`); `TelemetryHiddenTest` sets its own.
+`GAME_EXE` is the built game's file name on this system (`ocarina.exe` on Windows, `ocarina` elsewhere).
+
+What it covers, in the order of the file:
+
+- versions and settings;
+- the toolchain: the package database, dependency resolution and an install from a local fake repository;
+- net: downloads that resume, check their sha256 and stop on cancel; the certificate checks against a local HTTPS
+  server with certificates the openssl command makes (an expired one, an unknown one), the clock comparison;
+- the feed: GitHub releases (stable, preview, private with a token) and a plain manifest URL, served locally;
+- the updater: staging a release, switching, rollback, pruning, refusing unsafe archives;
+- background updates: a release staged beside the running version without switching to it, the ready marker, a staged
+  release found and installed after a restart, no install while the game runs, the install once it exited, nothing by
+  itself with Install Updates Automatically off, a failed staging tried again after the next check;
+- gamefiles: the `.bfotf` font wrapping and zstd dictionaries, on a font of this system made into a fake RomFS;
+- the button art of a release: the files `tools/prompt_art.py` copies, and the packages and tools the prompts need;
+- `make_game.py`: a synthetic `.nup` through the check, exefs and romfs steps with `--events`, skipped steps on a
+  second run, `--rebuild` without the game files, the shaders key following the translator the build uses (the kit's
+  `bin/` or a source checkout's `build/xlate/`), the prompts step with a stand-in prompt tool, the object cache of the
+  compile step with the system's C compiler, and its windres call under folders with spaces (a script in windres's
+  place);
+- jobs: an install driven by a fake `make_game.py`, with and without the prompts row;
+- Play on Linux: the game started in its own session from its folder, its Restart's copy adopted and followed, a line
+  in `launcher.log` for every Play that does not start, and the window hidden while a fake game runs (xvfb-run);
+- Add to Steam: the binary shortcuts file read and written back unchanged, a shortcut added and updated in place,
+  Linux native and Flatpak roots, sandbox fallback, safe backups, process detection and refusal while Steam is open;
+- the look: the colour schemes with the Custom one, its colour square and a typed hex code, the background picture's
+  fitting below the title band and kept copy, the sound effects (low by default, only the game's own select and back
+  sounds, decoded from a made-up `.bwav`);
+- the window: `--selftest` draws every screen (skipped without a display).
+
+### The helpers
+
+- `Server`: a local HTTP server for a folder, with extra routes (path -> (status, headers, body)) and Range support;
+  HTTPS with `cert` (a PEM file holding the certificate and its key). HEAD answers a redirect to https, as a server
+  that serves only HTTPS does. A client that stops reading (the cancel test) is not an error of the server.
+- `make_cert()`: a self-signed certificate for 127.0.0.1 valid from `start` to `end` (epoch seconds), with its key, as
+  one PEM file in a new folder; made by the openssl command (its `ca` command takes any dates, its `req` command none
+  in the past). `CountingContext` is a client `SSLContext` that counts its handshakes.
+- `tar_bytes()`: a tar (zstd-compressed when the standard library has zstd, else gzip) of {name: bytes}.
+- `fake_repo()`: a pacman repository with the ten root packages (each holding one of `make_game.py`'s required
+  files), one dependency and one name provided by another package. `fake_fast_repo()`: the CLANG64 packages
+  `toolchain.FAST_PACKAGES` names, in `folder/clang64`.
+- `compiled_sleeper()`: an executable compiled from a C program that sleeps for a number of milliseconds and exits
+  with a code, with the ucrt64 clang or a clang on `PATH`; False without one. It stands in for the game under a name
+  that no game runner watches.
+- `PLAYER_INI`: a player's settings file as a report showed it (an AMD card, 0.7.1): what the game's menu wrote, three
+  lines added by hand that are no settings of the game (`async_compute`, `vram_safe_mode`, `exception_handler`: the
+  player took the first for the fix of a crash and asked for it as a default, because "the configuration file gets
+  overwritten on updates"), and a comment. It is saved as an editor on Windows saves it: CRLF line ends, no line end
+  after the last line. Nothing in an update may change a byte of it; `PlayerIniTest`, `BackgroundUpdateTest` and
+  `MakeGameTest` each run their part of one.
+- `write_nup()`: a `.nup` (the format of `tools/nup.py`) with one base package: exefs {name: bytes}, romfs {path:
+  bytes}. `made_up_game()`: a game folder as `tools/make_game.py` leaves it, made up without game files: an ExeFS
+  whose main is a header with the game's build id, a RomFS image of zeros, the executable unless told not to, and a
+  `state.json` in which the game-file steps are current and every other step named has the key of an earlier kit.
+- `FAKE_WINDRES` stands in for `windres.exe`: it records its arguments, working directory and temporary folder, opens
+  the `.rc` and the files it names from the working directory as windres does, and leaves two temporary files behind
+  as windres does. `FAKE_PAD_PROMPTS` stands in for `tools/pad_prompts.py`: it counts its runs in the game folder and
+  writes every overlay folder's manifest, printing the line the real tool prints for each and its closing report.
+- `prepared_list()`: a version 2 `shader-prepared.bin` (`runtime/gfx/prp_file.h`): the head, what it was prepared
+  from, then records.
+
+### Versions, settings, uninstall
+
+- `VersionTest`: release candidates compare as the release notes' rules say ("Version numbers"): numbers compare as
+  numbers.
+- `GameIniTest`: the game settings the launcher switches (`launcher/gameini.py`), read as `runtime/cfg/cfg.c` reads
+  the settings file. Only the key's line changes: the byte order mark, the line ends and a line that is not UTF-8 stay
+  as they were, and quotes, prefix and case are read as the game reads them. As in `cfg.c`, `key =` leaves the setting
+  as it was, so the game keeps the earlier value and a change goes to that earlier line. A settings path that is
+  there but cannot be read (a folder) is not rewritten.
+- `PlayerIniTest`: the launcher's setting adds one line to `PLAYER_INI`; a hand-added line reads like any line, and
+  the game ignores it. A comment after a value is read as the game reads it (`cut_comment()` of `cfg.c`): for a key
+  whose row has a set of values (`choices=True`), a blank followed by `;` or `#` starts a comment, `key = ; note` has
+  no value, and a value in double quotes keeps its text; free text (the mods folder and the lists the launcher writes)
+  keeps the whole value. `tests/cfg_parse_check.py` has the same lines for the game. A key's line that has only a
+  comment has no value as the game reads it, so the change goes on the line before; a changed line is written again
+  whole, as the game's menu writes it.
+- `RebuildArgsTest`: Rebuild the Game compiles the game's code for this processor's level (`--retune`); an update
+  keeps the level its objects were compiled for, so that it compiles only what changed (`tools/make_game.py`
+  `lifted_level()`).
+- `SettingsTest`: the Settings page of a new install, and what Default Settings goes back to: updates checked at
+  start, the launcher hidden while playing, the build cache kept (an update recompiles only what changed), Stable. A
+  player's own choices stay across starts and updates. A file saved by an editor with a BOM reads as written; one with
+  a typo keeps a copy before a save replaces it.
+- `SettingChangesTest`: every saved change of a setting leaves `setting: <key> <before> -> <after>` in `launcher.log`,
+  whichever row made it, once (a save with nothing changed logs nothing; the next start compares with the file): a
+  log that showed only the start of a window that ran a minute and a half said nothing of what the player did in it.
+  The update check's bookkeeping is not logged, and the GitHub token only as set or empty.
+- `UninstallTest`: the plan keeps the game and what is not ours; the toolchain moved to `C:\NX2Saria`, and that folder
+  goes only when nothing else is left in it. The Windows script is tried under a root with spaces and a character
+  outside ASCII.
+- `LinuxUninstallTest`: uninstall of the AppImage's install (`launcher/platform/linux.py` `uninstall_plan()`,
+  `uninstall_command()`): what `tools/appimage_install.py` put in the launcher's folder and its menu entry go once the
+  window has closed; the game folder, its saves, the launcher's logs and what is not ours stay. Its `install()` makes
+  an AppImage install in a folder whose name holds a space, a quote, a dollar and a percent sign, its menu entry as
+  the AppImage writes it (quoted as `_write_desktop` of `tools/appimage_install.py` quotes it), another install's
+  entry, a game folder inside it and a file of the player's. A menu entry write the AppImage left half done
+  (`nx2saria.desktop.new`) goes too; another install's entry does not. A "game folder" that holds the launcher or the
+  home folder, or a drive's root, stays; `XDG_DATA_HOME` outside the home folder and the same folder through a link
+  are covered. The game folder when it stays and the dump are kept even inside a folder Uninstall deletes: a game
+  folder in `data/` or `toolchain/`, a dump inside the game folder being removed. The script waits for the launcher (a
+  `sleep 1` stands in for its process) and then deletes. `winsys.uninstall` from a process that then exits, as the
+  window's Uninstall does: the delete starts on its own, and with Remove the Built Game the game goes too; the logs
+  stay and say what happened.
+
+### Toolchain, net, feed, updater
+
+- `ToolchainTest`: a Python without `compression.zstd` and `zstandard` is named at startup, with the pip line for a
+  checkout, the Python's path written short in the log. Resolution takes a dependency with a version constraint and
+  resolves `vulkan` to its provider once; the install leaves documentation out; with cached package files a second
+  install downloads nothing. CLANG64's clang goes into `msys64/clang64` when its version matches UCRT64's:
+  `clang.exe`, the DLLs and its headers only.
+- `NetTest`:
+  - A connection reset (WinError 10054 during Gather Build Tools) or a server error is tried again; a 404 is not.
+    When every try failed the last error goes up.
+  - A download resumes from a part file left by a cut connection and checks its sha256.
+  - `progress` gets the whole file's size as its total: the expected size, else the length the server names plus what
+    the part file holds, else the bytes so far. A resumed answer without a length gave the part file's size as the
+    total, so the bar passed 100%.
+  - A part file is resumed only for the file it was begun for (`f.bin.part.of` names it by the expected sha256). One
+    begun for other bytes under the same name, as when a release is published again, is deleted with a log line and
+    the download starts from the beginning; resumed, it ended in a sha256 error that read as a damaged download. The
+    same file from another server, and a part without a note (left by a launcher that wrote none), are resumed.
+    Nothing stays beside the finished file; a cut download says what its part is of; `updater.prune` clears away a
+    note left behind.
+  - The free space is asked before a download: one whose rest does not fit the disk stops before a byte is written
+    (with a known expected size no request is made; else the server's length is taken), says how much is needed and
+    how much is free, and keeps its part file for when there is room. A disk that fills in the middle is named as full
+    at once instead of being tried four times. A disk that cannot be asked refuses nothing. The same before an unpack:
+    asked before the first download, nothing unpacked, "(91 MB needed, 2 MB free)" for 5 + 50 MiB and the margin.
+  - Plain HTTP is refused before any connection; the Authorization header is not sent on to another host (the same
+    server under another host name); more than the expected size is refused.
+  - `net.server_clock` takes the Date of the redirect to https, which is not followed.
+- `CertificateTest`: an expired certificate in the trust store gives the player's "certificate has expired" at once,
+  not retried (the answer would be the same), with the advice the server's clock calls for; the clock is asked over
+  plain HTTP and no request gets through. A certificate the first check refuses and the second accepts downloads, and
+  the second goes first for that host from then on.
+- `FeedTest`: the GitHub channels (a release that lacks a manifest is passed over: stable gives 0.3.11 while 0.3.12
+  has none). GitHub's answer to a request over the hourly allowance carries the time the allowance is whole again: the
+  message names it, in each of the header's forms, the log gets one line for the failed check, not two tracebacks, and
+  a refusal without the headers keeps the old advice. A URL feed and an update, with a rollback that finds nothing
+  further back. Unsafe or wrong archives: an archive that says 1.0.1 under a manifest for 1.0.2.
+- `BackgroundUpdateTest`: an update fetched while the launcher runs (`updater.stage`, `jobs.StageJob`,
+  `jobs.BackgroundUpdate`): staged beside the running version without switching to it, and installed only when the
+  game is not running, by itself only with Install Updates Automatically on. The releases come from the local server
+  through a URL feed. Its helpers: `installed()` makes an installed launcher's folder (not a checkout) running a
+  version on the Python `py-1`; `publish()` a release on the local server, with the id of the Python it brings, or
+  damaged (its manifest gives the wrong sha256 for the app archive); `context()` the launcher starting (again) in the
+  installed folder, with its settings and its log; `stage()` calls `poll()` as the window's timer does, waits for the
+  staging and returns how it ended. `self.running` is what `build.game_running` answers: a copy of the game the
+  launcher did not start.
+  - The release is unpacked beside the running version, its Python in its own folder rather than `python.next` (which
+    the stub would swap in at the next start, under the running version), and nothing is switched or restarted. It is
+    staged once per check; the next check finds it staged and downloads nothing; one the feed no longer offers is not
+    installed; an update's cleanup keeps a newer staged release.
+  - Only a release whose staging finished (`staged.json`, written last) and that is still whole installs: not one
+    unpacked as an interrupted staging leaves it, not the version that failed to start, not one whose Python is gone,
+    not one whose marker is cut short. A pre-release counts only on the Preview channel; staging it removes the staged
+    release it supersedes.
+  - A staged release outlives the launcher: the next start finds it without a check and installs it: its Python to
+    `python.next` for the stub, `current.txt`, and the restart that finishes in `ContinueUpdateJob`. One the stub
+    rolled back from is neither staged nor installed by itself again.
+  - The launcher's part of an update (the release staged beside the running version, the switch to it, the cleanup
+    after the rebuild, which is what `ContinueUpdateJob` ends with) changes nothing in the game folder, also in its
+    default place inside the launcher's folder: the player's settings file is the same bytes afterwards, and an
+    uninstall that keeps the game does not name it.
+  - A copy of the game started elsewhere, the copy the launcher started, and a download under way each hold the
+    install back, also one the player asked for.
+  - Install Updates Automatically on (the default): a release staged during play installs once the game has exited.
+    Off: the release is still staged in the background, and only selecting Updates installs it (also once selected
+    during the download).
+  - A staging that fails is logged, never raised, leaves nothing to install, and is tried again only after the next
+    update check.
+
+### Game files and the button art
+
+- `FontTest`: registered as a font, Windows keeps the file open: decoding it again must not fail on the unchanged
+  file, and once the registration is given up a file that went bad is replaced.
+- `PromptArtTest`: `make_art()` makes every picture `tools/prompt_art.py` names, the pads in one pack's folder and the
+  keys in another's, with two keys and two pictures the tool never reads.
+  - A release takes the pictures `pad_prompts.py` reads and every key, from folders that hold the art's sets or are
+    those sets; a set named itself wins over one inside a folder named; the same set twice at one rank, a set missing
+    or a picture missing stops it.
+  - The repository's `prompt-art` holds every picture `pad_prompts.py` reads and nothing else but `SOURCE.md` and
+    `SHA256SUMS`, each picture as `SHA256SUMS` lists it, and `SOURCE.md` names the pack, its licence as its page
+    states it, the download's SHA-256 and an archived copy of the page. A release takes this art unless told otherwise
+    (the folders named, or none with `--no-prompt-art`), with `SOURCE.md`, whose Source line is what the build records
+    (issue #15: releases without art); art without a `SOURCE.md`, or without its Source line, says so.
+  - `tools/check_content.py` lets a picture of `prompt-art` in only as `SHA256SUMS` lists it: one not listed, or
+    changed, is refused; `SOURCE.md`, `SHA256SUMS` and pictures elsewhere are not its business.
+  - The release's Python has every package `tools/pad_prompts.py` imports, and the launcher release and the build kit
+    carry every tool it imports. Every tool `make_game.py` imports is in the launcher release and the build kit,
+    unless the import sits in a try that catches `ImportError` (`build_shaders`: a source checkout's step the
+    release's prebuilt headers do not need) or only runs on Linux (`build_game`, whose kit carries it). An import that
+    is neither stopped every player's update at its compile step.
+
+### `MakeGameTest`
+
+`tools/make_game.py` on a synthetic game. The made-up build tools of the fixture are empty files, so a build in this
+process does not try them (the test of the build tools does, with a stand-in compiler), and the count of the graphics
+drivers' cache folders (`say_driver_caches`) is switched off, so that a PC's real caches are not scanned twice by
+every step of these tests (the tests of the driver cache folders use the real function). `main_with()` runs
+`make_game.main()` in this process with given step functions in place of the real lift and compile (they need real
+modules and clang), up to the compile step (the shaders step needs the shader translator), and returns the SystemExit
+code or 0; `main_rebuild()` does the same for `--rebuild` and also returns what it printed. `fake_compiles()` makes a
+number of sources of growing size and a stand-in for the compiler process (`subprocess.run` in `make_game.py`) that
+writes the object and its dependency file; one named source's compile can be made to wait for an event.
+
+The steps and their keys:
+
+- A second run with the same input skips the exefs and romfs steps; `--rebuild` needs no game files, checks the
+  unpacked ExeFS and keeps both steps; the exefs and romfs keys do not depend on the kit, the lift key does. The lift
+  reads nothing of the RomFS step, so it does not follow it.
+- Cleaning the cache alone does not require a compile; a lift that was interrupted (the layout is there again, but the
+  lift did not finish) is run again.
+- A first build packs the RomFS image while the lift and the compile run; the compile gets the running step and waits
+  for it only for the RomFS index. A RomFS step that fails while the lift runs stops the build.
+- An install cut short while the RomFS image was packed, its lift already done: the next run packs the image again
+  and compiles, but keeps the lift, which reads only the unpacked ExeFS (the lifted code is there, `lift_gone`). The
+  ExeFS step still makes the lift run again: the lift reads what it writes.
+- An update whose lift ran again drops the compile step's record before the compile runs. When the compile then stops,
+  the folder still holds the executable of the build before and the unpacked game files: the launcher counts it as
+  installed (`build.installed`), not as a folder to install into with the dump, with no finished build on record; the
+  shaders' record stays as the lift left it, since the step's key names what it depends on (`UNAFFECTED`). A first
+  install that stopped there has nothing to play.
+- Before its first long step the build adds up what its steps will write into the game folder and stops when the disk
+  cannot hold it, naming each part and how much is missing; it used to look at the RomFS image's space only, and only
+  when that step began. A shader cache that was begun is not asked for the whole preparation's space again; nothing to
+  write asks nothing; what a cut run left of the image is the RomFS step's to remove and counts as free.
+- The RomFS step removes the `romfs.bin.part` of a run that was cut short before it measures the free space: on a disk
+  with just enough room for the image (the image, the margin the step asks for, and 1 MB to spare), the retry passes
+  the check as the first run did; a disk that is too small even so still stops the step, and says by how much.
+- A dump whose table of contents is whole but one data byte differs (a copy that went wrong): the RomFS step ends with
+  an error that names the file by its path, not by the dump's own number for it, which the launcher's job shows as its
+  error, and leaves no partial image.
+- An exception `make_game.py` does not report itself ends the build as `fail()` ends it: an error event with the
+  exception's message, not only a traceback and "the build stopped (exit code 1)"; the log still has the traceback.
+- On Windows a build whose compile step will run first compiles and links an empty program with the installed tools,
+  linked against what the game links; tools that do not work stop it there with what is wrong and how to mend it. It
+  is not called for a build that only draws prompts or has nothing to compile.
+- The check of a Linux build runs the compile step's own command with `-fsyntax-only` on each source, then links a
+  program against the game's libraries as the game is linked, with the game's runpath, and runs it. When files fail it
+  stops with every one of them named (the compile step named three of four), no link is tried, a missing header is
+  told from an old one, and the text says where the Vulkan headers came from.
+
+The compile step:
+
+- The launcher keeps each version in its own folder: a kit at a new place reuses every object, and a header the new
+  version changed recompiles what includes it. An entry under a key an earlier version gave the same compile is
+  re-recorded under the new key when its files read as they did (not for a key it does not know); a header in the
+  earlier kit's folder is read in this kit's (that folder may be gone); a header that changed since is compiled again.
+- The object cache goes to disk every `CACHE_SAVE_EVERY` objects while the compile runs, so a compile that ends in the
+  middle (Cancel ends the process) keeps what it finished; it used to be written only at the end. Cut at the 40th
+  object of 60: nothing on disk before the 25th, then 25, and the next run compiles only the 35 not saved. The largest
+  file starts first and can compile for minutes: the objects that finish meanwhile are recorded and saved, not held
+  back until the largest one is done.
+- Without `--jobs` there is at most one compile per processor; the memory gate, not the job count, keeps the compiles
+  within the free memory. `main()` without `--jobs` takes `default_jobs` and says so; `--jobs` is taken as given.
+- Most of the runtime can come prebuilt (the runtime split). The compiler's id leaves its file time out (a tool update
+  that puts the same compiler back keeps every object; the form up to 0.6.0 had it), and the key leaves `--sysroot`
+  out (the fast compiler's objects are the UCRT64 compiler's).
+- The folder of the pinned Vulkan headers goes ahead of every other include folder for the runtime's sources, so that
+  no folder that also is a system one answers for `<vulkan/vulkan.h>`; the lifted code's command, which is part of its
+  objects' keys, is the one it was. `tools/vulkan_pin.py` keeps the C headers and the licence note of the pinned
+  archive and nothing else, takes no other archive, fetches nothing when the folder is there, and says the folder
+  holds them only once the last file is written (a folder cut short while it was written has no stamp).
+- `tools/build_shaders.py` writes a file's bytes as a header for compilers without `#embed` (the menu font, and the
+  SMAA lookup textures of the anti-aliasing setting, `runtime/vk/vk_aa.c`): the numbers are the file's bytes, and the
+  header is stale once the file changes.
+- `lifted_level()`: a build from the game files takes this processor's level; an update with nothing recorded and no
+  old cache too; the cache of 0.5.0 was compiled for no level (0), but 0.5.0's runtime objects left in a cache whose
+  lifted code a later version compiled are not an old cache; otherwise the level recorded, never above this
+  processor's. `retune_due()` is true with nothing recorded and for generic objects on a v3 processor.
+- `copy_if_changed`: Windows has no POSIX executable mode and cannot replace read-only destinations, and build
+  artifacts can share a normalized modification time. A network share can refuse the owner-only folder
+  `TemporaryDirectory` makes: the copy needs a file only, and leaves nothing behind, also when the copy fails (the
+  installed file is as it was).
+- A share that stops answering for a moment: the source's folder is not there either, and the size is asked again
+  (each look at the folder is one try; said once, not at every try). A share that never comes back stops the build
+  after `SOURCE_WAIT` and names the drive; a folder that answers without the file ends the build at once.
+- Windows: `--out` is made absolute without `resolve()`, which would turn a mapped drive into its UNC name.
+- The Windows resources, with the toolchain, the kit and the game under folders with spaces, as under
+  `C:\Users\Ali Sayed`: windres must start gcc itself (`--use-temp-file`) on a line that names no path but gcc's, the
+  `.rc` by its bare name from `runtime/`, no `-I`, `-D` or `-U`. The temporary files go to a folder of the build
+  cache, which is gone afterwards with the two files windres left there. The same resource again keeps the object's
+  time, so the link key does not change and nothing relinks. A failing windres stops the build with its message.
+- `modules.c` holds the game folder's paths as C strings. A character outside the Basic Multilingual Plane (an emoji,
+  a rare Han character) is written as itself in UTF-8, not as the two surrogate escapes JSON's default makes of it,
+  which C refuses. The test compiles the strings alone, which any C compiler takes, and, with clang, the file as the
+  build compiles it, with the runtime's headers; the path's own bytes are in the object. `tools/check_content.py`
+  refuses that file in a commit as generated from game code.
+
+The shaders step:
+
+- The shaders key follows the translator the build uses. A source checkout has its translator in `build/xlate/`
+  (`tools/build_xlate.py`), not in the kit's `bin/`: the key follows its identity, so a rebuilt translator prepares
+  the shaders again. A kit's `bin/` comes first when both exist. A kit with no translator has a key that says so (the
+  keys are worked out before the steps run, `steps_to_run`), and the build refuses it with the way to build one when
+  it needs the translator.
+- The step turns the game executable's counts into progress (translation the first half of the bar, the driver build
+  the second), sends one every few seconds while nothing is printed (heartbeats while the build waits), says when the
+  counts stop moving, and passes its other lines on to the log. The driver cache warm-up after an update only builds:
+  its count runs from 0 to 100% of the bar (`warm_driver_cache` runs the game's executable that way; a stand-in prints
+  the counts the game prints).
+- The game executable stops waiting for builds the driver holds past `NX2SARIA_PREPARE_STALL_S` (`prep_stalled` of
+  `vk_pipeline.c`), says so and ends with code 0: the build log says the rest continues in the game, not that the step
+  failed, and a later run that leaves nothing says the plain line again.
+- The graphics drivers' cache folders the step reports (`driver_cache_folders`): on Windows every folder with "cache"
+  in its name under the vendor's folder in `LOCALAPPDATA`, and Windows' own; on both systems the game's own
+  `nvidia-cache` beside its executable, first (the game makes it for NVIDIA's driver, and on Linux `mesa-cache` too,
+  which Windows does not get); on both the folder `__GL_SHADER_DISK_CACHE_PATH` names, last, and only when it is
+  there; each once (a folder that is a link to one already listed is listed once). A count says what it missed: the
+  time ran out ("the count stopped"), or the system refused something. A count with nothing left to count is complete
+  whatever the time: only a folder still to read is cut off. A folder the system refuses is not an empty one, and
+  neither is a file it refuses. A link inside the folder is not followed, so a loop ends; the link is one more file,
+  of the size of the link itself.
+- The step says the size of the driver cache folders when it begins and when it ends, with the step's own lines
+  between, also when it fails (the failure is not hidden), so that a log tells whether the prepared shaders were still
+  on disk when an update began; a count that raises, whatever it raises, is said and the step goes on. No folders, no
+  lines. The folders of one line share the time: each is given what is left of it, none when it is spent. The step
+  hands on whether it is an update.
+- After the preparation the step folds the loose files of the shader cache into `shader-cache.pack`
+  (`tools/pack_shader_cache.py`), as the installer did; a kit without the tool leaves the cache as it is. An update
+  that carries the shaders over packs the cache once it holds `PACK_LOOSE_MIN` loose translations, and leaves fewer
+  loose.
+- An update that carries the shaders over runs the game's `--warm-shaders`, in the game folder; a run that fails is
+  said and does not stop the build (the game warms the cache itself), and without a built game or a preparation
+  nothing runs.
+- `shader-prepared.bin` carries the digests of the two seed files and the translator from version 2 on
+  (`runtime/gfx/prp_file.h`); a version 1 list, or a file cut short, says nothing, and no file is None. An update
+  keeps the shaders prepared before only when their list was prepared from the seed this kit writes: the seed is
+  written first (`--no-run`, as `tools/prepare_shaders.py` writes it) and compared with the list's head. Another seed
+  (one byte of the seed's programs, or a change to the answers alone), or a list that does not say what it came from,
+  runs the whole preparation; the same seed with another translator carries over as before, the game carrying the
+  translations over; a preparation that then records this seed is kept by the next update; and the seed files do not
+  stay in the game folder either way.
+- An update leaves the shaders to the game (`shader_carry`) only when they were prepared and the cache names the
+  translator they were made with: without that the game has nothing to carry them over by. `shader_carry` reads
+  `NX2SARIA_SHADER_CARRY` as `runtime/cfg/cfg.c` does: 0, off, false and no in any case are off, a comment after a
+  blank is cut unless the value is in double quotes, the file's last line with a value wins and the environment wins
+  over the file. A line the game reads as off and this as on would skip a preparation the game does not make up for.
+- `guest_opt_ini` takes `guest_opt` from the settings file by itself. Up to 0.10.1 it needed `low_end_gpu` on in the
+  file; that mode is gone, and a `low_end_gpu` line of any value changes nothing. Without a `guest_opt` line nothing
+  is set, and the environment's value wins over the file.
+- Before a new translator goes beside the game, a shader cache with no `identities.txt` gets one naming the translator
+  still there, in the form `runtime/gfx/gfx_shader.c` reads (`ids_parse`): `#` lines, then 64 hex digits. No cache:
+  nothing to name. A file the game keeps is never written over.
+
+The prompts step, the settings file and what goes beside the game:
+
+- With button art in the kit, the last step draws the button prompts (a fake `tools/pad_prompts.py`), one progress
+  event per folder (two folders per pad style and the keyboard and mouse one). It runs again only when the art, the
+  `bind_` lines or a folder changed, and then no other step runs; a step before it that runs does not make it run (the
+  lift running again makes the compile run, not the shaders, whose key names the lift and the compile they depend on,
+  nor the prompts); a kit without art skips it, the folders an earlier build drew stay, and the record says there is
+  no art. The game folder's record of where the prompts came from ("drawn from Test pack 2 (CC0 1.0)"), which the
+  game's log repeats, is written again when the step is skipped. A setting that is no key binding changes nothing.
+  When the tool fails the build fails and the record says why there are no new prompts.
+- The rebuild an update ends with (`make_game.py --rebuild` under a newer kit, with another lifter and another
+  version: the lift, the compile, the shaders step and the button prompts all run again) leaves the game folder's
+  settings file as the player has it, byte for byte, with no copy, backup or temporary file beside it. The build reads
+  the file (the `bind_` lines for the prompts, `shader_carry` for the shaders step) and never writes it, nor makes one
+  (the game's menu does); so does a second rebuild that finds nothing to do, and one from the game files again into
+  the same folder (Rebuild the Game without a build to start from). The lift and the compile are stand-ins there; the
+  check, the ExeFS and RomFS steps, the shaders step and the prompts step are the real ones.
+- The kit's `nvngx_dlss.dll` and its notice go beside the game; a newer kit replaces the copy an earlier build placed,
+  and a DLSS the player put there is kept; a kit without DLSS places nothing. The notice the release scripts write is
+  the one `make_game.py` reads. On Linux the kit's `libnvidia-ngx-dlss.so.<version>` and its notice go beside the
+  game: the name carries the DLSS version, so a kit with another version replaces the file an earlier build placed
+  under its old name, and a library the player put there, of any version (also the same version with other bytes, or
+  beside a library an earlier build placed), is kept, the kit's not placed beside it. Each platform places only its
+  own library.
+- The Linux library is pinned beside the Windows DLL (`tools/dlss_pin.py`), at the same DLSS version with its own size
+  and sha256; the default pin is still the Windows DLL, and its pin does not accept the Linux file. A file on disk
+  must be the pinned one, a missing one is downloaded into the cache under its own name, and the notice names the
+  library and carries the sha256 line `make_game.py` reads; the notice's name does not start with the prefix the
+  runtime takes for the library.
+- DLSS Frame Generation's files go beside the game only as a whole set, with the licence texts (with
+  `nvngx_dlssg.dll` missing nothing is placed); the release script (`tools/make_launcher.py`) and the build agree on
+  the set. The Streamline files come out of the SDK archive checked one by one; the archive goes once they are out and
+  a filled cache needs no download; an SDK folder on disk must hold the pinned files, and an archive whose file
+  differs is refused; `bin/dlssg/` gets the set `make_game.py` places, the two licence texts and a notice with every
+  file's sha256.
+
+### The check of the game files
+
+`logic_digest()` is the sha256 of a Python file's code without what cannot change what it does: docstrings, comment
+lines, blank lines and trailing spaces. It is the same on every Python version, as it reads only where the docstrings
+are. `SCAN_LOGIC` records `make_game.SCAN_TOOL` and the `logic_digest()` of `tools/romfs_check.py` when that value
+was last looked at. A change to the script's logic fails
+`FileCheckTest.test_the_file_checks_logic_is_the_recorded_one`, which asks: can the change alter what the check finds
+or writes for some game file? If it can, `SCAN_TOOL` gets a new value (every install then checks its game files
+again, about four minutes) and both are recorded here. If it cannot, only the new digest is recorded.
+
+`FakeImage` holds in memory what `tools/romfs_check.py` `problem()` reads of the packed game data: files by path, and
+the game's dictionaries by id. `FileCheckTest`: `romfs_check.py` reads each file in pieces of `PIECE` bytes, and the
+piece size is a matter of speed only: what the check says of a file is the same with the 4 MiB pieces of 0.7.1
+(`FileCheckTest.old_problem()`, which also took no look at whether the frame had ended) and the 64 KiB pieces of now.
+`FileCheckTest.cases()` makes up the files: frames of about 8 MiB packed, which span several pieces at either size,
+and small ones, from bytes of 12 values (which pack to about half). `SOME` means the check must find the file damaged,
+whatever its words; `SAME` only that both piece sizes say the same (a few changed bytes inside a block can decompress
+to other bytes of the same length). The cases run with the game's dictionaries there and without; a frame naming a
+dictionary the game lacks is not judged.
+
+- More of `FileCheckTest`: an index that says more bytes than the image holds. A whole frame with other bytes after
+  it (past the next 64 KiB piece, past the next 4 MiB piece, or a second frame): the check stops at the frame's end at
+  either piece size. As 0.7.1 made it, such a file passed when the frame ended in the file's last piece and failed
+  when another piece followed, so the answer hung on the piece size; the game data has no such file (the check reports
+  the same four files on every copy, none for this reason). The scan step's key no longer follows the script's bytes:
+  it is what 0.7.0 and 0.7.1 wrote into `state.json` (the sha256 of 0.7.1's script,
+  `55ea0c150aaf9dac93a2e6fd3b4ca11e1c572b5eee8b6bd74960535964384634`), so an install that passed the check does not
+  run it again because the script was edited. The recorded digest follows the code, not its comments, docstrings or
+  blank lines.
+- `PROMPT_LOGIC` records `make_game.PROMPT_TOOLS` and the `logic_digest()` of the three scripts that draw the button
+  prompts when that value was last looked at, as `SCAN_LOGIC` does for the file check: a change to their logic fails
+  `PromptToolsTest.test_the_prompt_tools_logic_is_the_recorded_one`. If the change can alter what the tools write,
+  `PROMPT_TOOLS` gets a new value (every install then draws its prompts again) and both are recorded; if it cannot,
+  only the new digests. Two changes recorded that way: the NX2Saria filename fallback changes no rendering for the
+  same effective bindings, and `step_key` already includes those bindings, so the rename recorded the digest without
+  forcing all prompts to redraw; and `REPO_ART`, `release_art`, `source_of` and the `SOURCE.md` copy of
+  `tools/prompt_art.py` (issue #15) choose and record the art, while the pictures it names, which the step's key
+  holds, are the same, so the prompts drawn from them are too.
+- `load_pad_prompts()` loads `tools/pad_prompts.py` as a module. Where fontTools is not installed, the names the tool
+  and `tools/button_icons.py` import from it get empty stand-ins for the import: the tests use the tool's reading of
+  the game files only, which needs none of them. The module is not left in `sys.modules`.
+- `PromptToolsTest`: `tools/pad_prompts.py` reads the game's files in pieces: the same bytes as in one call (on 24 MiB
+  that pack to several pieces), without the minutes one call took on the 244 MB texture archive; its reader of
+  extracted game files takes plain files, packed ones, and one packed with a dictionary of the game's dictionary
+  archive. The prompts step's key no longer follows the scripts' bytes: it is the one installs have (the scripts of
+  0.7.1, `ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249`).
+
+### Jobs and locks
+
+- `JobTest`: an install driven by `FAKE_MAKE_GAME`. The rows end as skipped for the tools, done for the steps up to
+  the shaders, skipped for the scan (the fake build has no such step) and done for ready; a version without button
+  art draws no prompts and has no such row, one with button art shows the prompts step as a row of its own, after the
+  shaders. `scan_job()` is an install whose fake build ran (mode `ok --scan`) or kept (mode `ok`) the check of the
+  game files, with a report as the `romfs-check.json` the check left in the game folder.
+  - What the check of the game files found reaches the player: the count in the scan row, a sentence for the home
+    screen and a line in the log. The files flagged on every copy are told as expected, with nothing to do; nothing
+    tells the player to dump again. A clean check says nothing on home, nor does one an earlier build did (the row has
+    the count).
+  - `build.Run` starts the build below normal priority (`0x4000`, `BELOW_NORMAL_PRIORITY_CLASS`), and the processes
+    the build starts (the compilers) get that class from it, so a build on every processor leaves the PC usable.
+  - A line handler that raises (the log on a full disk) must not end the thread that reads the build's output: the
+    build would stop at a full pipe and never exit. Every line is counted as dropped (20002: every line, the `@@` line
+    that is no event, and the event). A log that cannot be written loses only the line.
+  - Begin Installation into a folder whose game files an earlier run unpacked builds on from them (`--rebuild` for
+    this processor's level), so a moved or deleted dump is not asked for; without them (the image gone) it reads the
+    dump.
+  - The worker, the build's reader thread and the window change a job while the window reads it. Under `job.locked()`
+    a step's state comes with the value and fraction that belong to it, every change counts in `rev` (the window draws
+    again when `rev` changed, and learns from it that the job ended; no change of 80000 is lost), and the output's
+    last lines can be copied while lines arrive. The job screen's rows from a real job have one divider, after the
+    game data, and end with Cancel.
+- `LockTest`: `launcher/locks.py`: one process works in a launcher folder at a time, and in it one job on the same
+  thing. `HOLDER` is another launcher process: it takes the lock file as what it is told, says so and holds it until
+  its input closes; `holder()` starts one, holding the layout's lock until the test ends or it is killed.
+  - A second launcher is refused and told who holds the folder, with no second window.
+  - The lock goes when its process dies (no clean exit: the operating system lets go of it). The window's own jobs
+    share its lock, and it stays the window's until the window lets go of it; letting go twice lets go once.
+  - A job does not run while another process holds the folder (nothing of it ran); a job that changes no file (the
+    update check) runs beside it; once the other process ends the job runs and lets go of the folder when it ended.
+  - Two jobs on one folder: another kind of job on the same folder fails; what the background download claims is the
+    app folder, not the game; the first job lets go when it ended.
+  - A job that writes into the game folder leaves `data/job-running.json` while it runs. Ended, also by an error, it
+    removes it; a launcher stopped in the middle leaves it, and the next start says which job did not finish, once. A
+    job that writes nothing there leaves none; a marker cut while it was written is read as none. The window says
+    which job did not finish (an install that was stopped leads to the first run screen), and the next start has
+    nothing to tell.
+  - The command line takes the folder's lock: held while the command runs and let go of after; refused while another
+    holds it (neither command ran and no setting was written), except the update check, which changes nothing.
+    `update` rebuilds the game after it switched versions: started while the game runs, it would leave the new version
+    with the old build, so it refuses before it downloads anything, as the window's Updates row does.
+
+### Saves
+
+- `SavesTest`: `launcher/saves.py`: where the game keeps its save, the save folders it recognises, and the import.
+  - The account folder is named as the game names it (`storage_init` of `runtime/hle/fs_host.c`: the two halves as 16
+    hex digits each); for a game that never ran the account is made.
+  - An import backs up the save the game would have loaded and clears the journal, so the game loads the imported
+    save; a picked folder is left as it was. One slot replaces only that slot (the slot is replaced, not mixed, and
+    the game reads its files only inside a slot); a slot under another name is the first slot. From the saves folder:
+    `README.txt` alone is no save, a save is not imported twice, and files put straight into `saves/` count. Picking
+    the saves folder takes what waits there, not `README.txt` or a backup.
+  - An interrupted commit is backed up: as `save_recover` of `fs_host.c` has it, with no account folder and no
+    finished commit `save-tx/new` is the save, and without it `save-tx/old`; the import keeps that only copy.
+  - A failed swap keeps the old save (the imported save going into place while antivirus holds a file). When the
+    account folder cannot be moved aside (a file in it held open), the newer finished commit stays in `save-tx`, where
+    the game loads it first, instead of going into the backup.
+  - A running executable refuses a write open with a sharing violation (32); access denied (5) on an executable that
+    is not read-only (an access list, Controlled Folder Access) is no running game, and is logged when asked. A
+    read-only one is cleared, then the open is tried again. The real call is tried on a file nothing holds and on a
+    running sleeper.
+  - Read-only files import writable, and a read-only save being replaced is deleted after the swap all the same. The
+    refusals (the game's own save among them) change nothing.
+  - The import takes the game's own profile lock for the time it replaces the save (`game_lock()` takes it as the
+    game does, `plat_lock_file` of the platform layer: Windows opens the file without sharing, elsewhere flock): a
+    running game refuses it with nothing changed (no backup made, nothing staged), and a game that starts in the
+    middle of an import (during the backup's copy) is turned away by the lock instead of mounting a save that is half
+    replaced. After the import the game starts as ever.
+- `SaveShareTest`: `export_save` and `import_zip` of `launcher/saves.py`: one zip with the save and a manifest, for a
+  bug report or another player, and the checks an import makes before it replaces the save. `zip_of()` makes a zip
+  with given members and a manifest (the keys of `export_save` unless given, or none).
+  - The export writes one zip of the newest save (the finished commit the game would load), leaves no `.part` behind,
+    and gives a second export in the same second a name of its own. Without a save there is no export, and the export
+    makes no account.
+  - The private settings' values (a room's secret, a relay and a name that an earlier version's co-op left in the
+    file) are not in the settings file a bug report carries; every other byte of the file is. A game that stops before
+    its first save: the bug report export writes its log and settings alone (nothing when there is no log either),
+    under a name of the form `NX2Saria-log-...-bug-report.zip`; an import of it says it is nobody's save and changes
+    nothing.
+  - A shared save replaces the save, every slot of it, and keeps a backup; the bug report files stay out; a picked zip
+    is left where it was. A zip in the saves folder is taken first, not copied in as a file, and moved out so that it
+    is not imported twice; a loose file waits on its own. A damaged zip changes nothing.
+  - The zip of the game's menu imports: `runtime/hle/save_share.c` writes the same layout with stored and deflated
+    members, and Python's reader takes both.
+
+### The icon, the look, Steam
+
+- `IconTest`: the icon's entries are bitmap entries (a 40-byte header, 16x32), not PNG.
+- `LookTest`: Customize Launcher: the colour schemes, the background picture and the sounds.
+  - Every scheme has every colour; the first scheme (`forest`) is the colours as written, and the one taken when
+    `launcher.json` has no key. A warning stays a warning in every scheme.
+  - The Custom scheme: with nothing picked yet, the first scheme's colours; the picked colours exactly where they
+    stand in; Button Color changes the buttons and the orange choices (in the picked hue, lighter) and nothing else,
+    not the panels, the title band or the backdrop; light text on dark buttons and dark text on light ones, the
+    description box's text following its panel. The colour square: the full colour top right, black along the bottom,
+    grey at the left; the hue bar has green a third of the way and blue at two thirds.
+  - A picture is cut to the window's shape: the middle of a wide picture fills most of the result, and a large one is
+    shrunk by averaging. The kept background is shown darkened by the dimming, solid everywhere, with the corners'
+    shade reaching in a little. The picture starts below the title band and is never stretched: a copy an older
+    launcher kept for the whole window is cut to the new shape, not squeezed (a circle stays a circle).
+  - The game's interface sounds, from a made-up `.bwav` (`bwav()`: the header, 0x4c bytes a channel, the data): one
+    PCM16 channel in the middle goes to both sides at 0.707; two DSP-ADPCM channels are left and right, where a
+    frame's header byte (coefficient pair 0, shift 8) and its four-bit samples 1, -1, 7 make 256, -256, 1792. They are
+    decoded from a dump folder into `data/cache/sounds` and from there into the effects. Only the game's sounds play:
+    nothing before the game has been read, low when no level is given (as a new `launcher.json` has it), nothing when
+    the player turned them off, the default for a level the file cannot hold, and no sound for the cursor.
+  - The look settings survive, and values of the wrong kind fall back to the defaults.
+- `SteamTest`: `launcher/steam.py` on made-up Steam files: the binary shortcuts file read and written back unchanged,
+  our shortcut added beside another (which stays byte for byte) and updated in place (a moved launcher is the same
+  shortcut), its id as Steam computes it, the accounts that signed in. A shortcut under the earlier name is renamed in
+  place and keeps its id, so that Steam's per-app data stays. `LinuxSteamTest` edits Linux Steam shortcuts in an
+  isolated `HOME`, with all native and Flatpak accounts.
+
+### While the game runs
+
+`mock_app()` gives `launcher.ui.app.App` and a stand-in for its instance, for calling one of its methods without a
+window: the settings name the game folder, the context and layout are real ones in the test's folder, nothing is
+staged, no check has run and no message is set; it skips the test without the window toolkit. `MemorySettings` is the
+launcher's settings without their file.
+
+- `WhilePlayingTest`: its `ended()` runs `watch_game` after the game ended with a code, its log holding given text;
+  `play_from_steam()` runs `play_only` (`--play`, the Steam shortcut) for a game that ends with a code, with the
+  launcher folder's lock held by another process or not, and a stand-in for the message box.
+  - The game's Restart ends the process the launcher started with code 0 and starts the executable again: that does
+    not bring the launcher back; the launcher follows the copy (`winsys.game_copy`) and reports the code it ends with,
+    and its FATAL line, read from the copy's own log. A copy the launcher could not find (it ended before the next
+    look) has a code that is not known, so neither `launcher.log` nor the game's log says code 0, and its FATAL line
+    is still shown.
+  - `winsys.game_copy` finds a running process by its image file, not by its name (the same name in another folder is
+    another install; Windows paths ignore case), and reads the code it ended with after it ended.
+  - The game writes its settings file when a menu setting changes, so the launcher's Discord Status switch (the one
+    setting of that file the Settings screen has) changes nothing while the game runs and says why, still showing what
+    the file says; the mods' switches refuse the same way (`switch_mod`).
+  - Exit codes 70 and 71 follow a FATAL line in the game's log: the home screen and `launcher.log` name it, the
+    launcher's log with the whole line when it is longer than the home screen shows. A log that still ends with an
+    earlier run's end has no FATAL line of this run; any other exit code reads no FATAL line; no log at all is no
+    error. Exit code 72 (`vk_device_lost_check` of `runtime/vk/vk_device.c`) follows a FATAL line as 70 and 71 do;
+    when its watchdog ended the run before that line, the code's own text says what happened.
+  - No process of the game writes a FATAL line and exits with 0: after code 0 such a line is a copy's that the game's
+    Restart started and that ended before the launcher saw it, and the player is told. A log older than the start is
+    an earlier run's and tells nothing. A log that reached its 64 MiB cap (`log_sink` of `runtime/main.c`) wrote its
+    end lines to stderr only: it is not taken for a run without its own end.
+  - A run ended with code 0 goes into `launcher.log`; when the game's log has no line of the game's own end (the
+    window's close, its ExitProcess, a FATAL line), the end is noted in that log too, and the note ends the search for
+    the next run. With no log the end is logged with code 0 and nothing is noted.
+  - The Steam shortcut does not start the game while the window or a command runs a job in the game folder (another
+    process holds the launcher folder's lock, and the job's marker is there): the game would be the build the job
+    replaces. A marker that a stopped launcher left, with the lock free, stops nothing, nor does the window open
+    without a job. The Steam shortcut's game ends as Play's does: `launcher.log` and the game's log say how, and an
+    end worth it (a FATAL line, 70, 71 or 72, a Windows status) gets a message box, as no window shows it; an end with
+    code 1 (Task Manager's End task) gets none.
+- `LinuxPlayTest`: Play on Linux: the game is the folder's `ocarina` (`game_executable` of `launcher/platform`),
+  started in its own session (`start_new_session`: its own session and process group), followed until it ends, its
+  Restart's copy too, with a line in `launcher.log` for each outcome. `fake_linux_game()` puts a shell script in the
+  place of the built game: it notes the folder it runs in and its session, sleeps and exits with a code.
+  `RESTARTING_GAME_C` is the game's Restart on Linux (`plat_restart` of `runtime/platform/linux.c`): the first run
+  spawns the same file again as its child and exits with 0 0.3 s later; the copy runs `FAKE_COPY_MS` milliseconds
+  (3000 by default) and exits with `FAKE_COPY_CODE` (3 by default). `play()` calls `App.play`, then `App.watch_game`
+  once every 0.1 s until the run ended.
+  - Play starts the game with the window hidden (Hide Launcher While Playing) and logs its end ("the game ended with
+    code 0" when there is no game log to tell more from); Windows' commit check has nothing to sample there. Every
+    Play that does not start says why.
+  - The game's Restart spawns its copy as its own child and exits with 0: the launcher, a child subreaper since it
+    started the game (and no longer one once the run ended), becomes the copy's parent, finds it by its file
+    (`/proc/<pid>/exe`) and reads the code it ends with. A copy that ends before the launcher's next look (once a
+    second) is never seen running: it is a zombie the launcher adopted, waited for when the run is over
+    (`winsys.game_finished`), and its code is the end's. Only this process's zombies named `ocarina` are waited for. A
+    copy is found by its executable file, also when that was replaced on disk; one that is not this process's child
+    has ended once its process id no longer runs the game (gone, or used again).
+  - subprocess gives -N for a process signal N ended: the line names the signal, and only a crash's signal is worth a
+    box where no window shows the end (`play_only`).
+  - The whole window: Play on home starts the fake game with the window hidden, the window comes back when it ends,
+    and `launcher.log` has the start and the end. It runs with `NX2SARIA_TELEMETRY_URL=none`: with session reports
+    their question would open over home.
+
+### The window
+
+- `BeginInstallTest`: Begin Installation removes the `romfs.bin.part` an install that was cut short left before it
+  measures the free space, so the 34 GB it asks for are not short by the part's size (40 GB free without the part, 20
+  GB with it). Windows and the build tools stop at 260 characters for a file's whole path, and the game folder's own
+  files need 128 below it: a deeper folder is refused at Begin Installation and by the install job, before the build
+  tools are fetched, with the lengths, where the build stopped in the middle with a file "not found". No limit
+  elsewhere.
+- `UpdateTextTest`: an update's rebuild took players 24 to 45 minutes: the Updates row says what it depends on instead
+  of "in a few minutes".
+- `ForcedCheckTest`: selecting the Updates row (or F5) again within a minute of the last check starts no request: 25
+  of them in 90 seconds used up GitHub's hourly allowance for a player. The launcher's own checks (at start, every
+  hour) are not held back by it.
+- `StartScriptTest`: `launcher/start.pyw` when the version cannot be imported: with a version to go back to it ends
+  with code 86 at once and shows no message box, so the stub's six-second wait sees the code and rolls back (a message
+  box would wait for a click: the test's timeout shows there is none). The version the stub goes back to: none without
+  `previous.txt`, or when it names a folder that is not there, or this version itself; the file is read as the stub
+  reads it (a byte order mark, blanks, CRLF). No quiet exit once the stub no longer waits (5.5 s), nor with `--play`
+  (Steam started it: no stub to roll back).
+- `UnfinishedUpdateTest`: a game whose last update stopped in the compile (`state.json` without the compile step, the
+  executable of the build before still there): the window opens on home and says how to finish, and an update goes on
+  with the game (its game folder is the game's, not empty, which would skip the rebuild with "No game yet"). An
+  install that never finished, with nothing to play, asks for the dump.
+- `LauncherLogTest`: what `launcher.log` says about the window beyond its start (`launcher/errors.py`,
+  `launcher/context.py`, `App.on_close`, `App.log_first_run`): a player's log that ends after the start line must
+  tell a closed window from one that died.
+  - Tk reports an exception in a callback (a click, a key, a timer) only on stderr, which is nowhere under
+    `pythonw.exe`: `report_callback_exception` writes a line into `launcher.log` and the traceback into `crash.log`.
+  - Errors in threads and fatal faults are kept. On Windows there is no faulthandler. A fault in native code makes
+    faulthandler write the stacks into `crash.log`; the test does not show that with a real fault, which leaves a core
+    dump in the system's crash records that reads like a launcher crash.
+  - faulthandler keeps `crash.log` open; a window that ended without a fault removes the empty file, which a player
+    would otherwise attach as if it said why something failed. One with something in it stays.
+  - Closing the window is logged once, also with a signal while the window is closing.
+  - The whole window on a first run with no dump around: the lines a player's log should show, ending with the reason
+    the window went. The drives this machine has mounted are left out: a dump on one would be found and decoded. The
+    test waits for the two lines the signal needs, not for a time: the window's, which `main()` writes once the
+    handler and its wakeup are in (`errors.on_end_signals`, `errors.wake_for_signals`), and the dump search's, which a
+    thread the window starts writes; the time limit only ends a start that hangs.
+  - `idle_window_ended()` measures, for a window with nothing to do, the seconds from SIGTERM to its end, with the
+    signal's handler and `errors.wake_for_signals` as `main()` puts them in; idle means its main thread asleep, which
+    for a Tk window is waiting in Tcl for an event (Linux: `/proc` state S). Python runs a signal's handler only when
+    it runs Python again, and an idle Tk window waits in Tcl: with no other event the window used never to act on
+    SIGTERM. The socket wakes it (POSIX). The timer Windows takes, where Tk cannot listen to a socket, is tried too:
+    the signal is acted on at its next check, every 0.25 s. Tk on Windows has no `createfilehandler`:
+    `wake_for_signals` runs a timer there, and on a Tk without one elsewhere, and leaves the signal module's wakeup
+    alone; the timer goes on until undone.
+- `RefocusTest`: a focus change by the mouse or the keys draws only the two rows, the cursor and the description
+  again (`App.refocus`): what it leaves on the canvas is what drawing the whole screen leaves (with animations off the
+  cursor stands on its row at once). A click on a row whose action draws nothing (Open Logs Folder), or a cancelled
+  chooser, moves the focus without drawing it: the next move must not leave the row drawn lit before it lit too.
+  Nothing piles up: after 20 moves there are as many items as a whole drawing of the same focus leaves.
+- `TelemetryHiddenTest`: with no telemetry server (`TELEMETRY_URL` of `launcher/telemetry.py` empty, no
+  `NX2SARIA_TELEMETRY_URL`) the window shows nothing of session reports: no question at its start (also with a summary
+  waiting and nothing asked), no Session Reports row, no `--screen` of them. The environment override turns all of it
+  on. The window's pictures are let go when the test closes it, on that thread: collected later on a thread a
+  following test starts, Tk ends the process ("main thread is not in main loop").
+
+### Mods
+
+`ModsTest`: the mods folder as the launcher puts it in order for the game (`launcher/mods.py`) and the build takes its
+code in (`tools/make_game.py`, `tools/mod_files.py`).
+
+- Downloads are put where the game looks, once: a zip holding the mod's own folder, a mod wrapped twice with a readme
+  on each level, a mod's `romfs` straight in the mods folder, an Atmosphere layout (a mod as it is), and a download
+  with options, which is left alone.
+- The switches and the order are the game's settings: the mods sort as `strcmp` sorts them, and the disabled list is
+  quoted as `runtime/cfg/cfg.c` quotes.
+- A file of a mod's archive called after a device (`CON.pchtxt`), ending in a dot or a space, or holding a colon
+  cannot be kept under its name on Windows: unpacked anyway it is lost, renamed or a hidden stream of another file,
+  and the game misses it without a word. The archive is refused with the file's name, nothing of it unpacked, by Add a
+  Mod too; on Linux, whose game reads such names, it passes. Leaving the folder is refused everywhere.
+- A picked archive or folder is added; the player's download stays where it was and nothing stays beside the mods
+  folder. A copy that stops halfway (a full disk, the launcher closed) or an archive that cannot be unpacked leaves no
+  folder in the mods folder, which the game would load as a mod, and none beside it; the same mod goes in whole
+  afterwards. While a mod is copied the mods folder does not hold it (it is put together beside it); it moves in under
+  a name that is free then (`Late 2` when a folder `Late` came meanwhile); and what a stopped launcher left beside the
+  mods folder long ago is removed, while another add still at work is left.
+- A mod's code waits for a build that saw it: a mod switched off waits for nothing, one the last build took up
+  neither, one edited since does.
+- `recomp/layout.py` alone decides the modules' bases: `tools/cheats.py` decodes main's pc-relative code at the base
+  the layout gives main, the first module of its order, and follows it when it changes.
+- The mods' code is in the lift key and not the shaders key; files of the game's data make no build.
