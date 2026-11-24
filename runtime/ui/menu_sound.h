@@ -1,4 +1,3 @@
-// The settings menu's sounds, from the game's own interface sounds (menu_sound.c).
 #pragma once
 #include <stdint.h>
 
@@ -17,9 +16,8 @@ typedef enum {
     MENU_SOUND_COUNT
 } MenuSound;
 
-void menu_sound_play(MenuSound id);       // menu thread
-void menu_sound_preload(void);            // decodes the sounds now (the first play does it otherwise)
-// Audio thread: adds the playing sounds to frames of interleaved float output (channels 0 and 1 get them).
+void menu_sound_play(MenuSound id);
+void menu_sound_preload(void);
 void menu_sound_mix(float *out, uint32_t frames, int channels, int rate);
 
 #ifdef __cplusplus

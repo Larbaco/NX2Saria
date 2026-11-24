@@ -33,7 +33,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 9 | `runtime/patches/` | [patches.md](patches.md) | extracted |
 | 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
 | 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports; the rest not yet extracted |
-| 12 | `runtime/ui/` | [ui.md](ui.md) | started: `cheats_tab.cpp` and what the Cheats tab needs of `menu.cpp` and `option_rows.cpp`; the rest not yet extracted |
+| 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
 | 13 | `runtime/` top level | `runtime.md` | not yet extracted |
 | 14 | `runtime/gfx/` | `gfx.md` | not yet extracted |
 | 15 | `runtime/hle/` | `hle.md` | not yet extracted |

@@ -1,17 +1,3 @@
-// The settings menu's sounds: the game's own interface sounds (Sound/Resource/Stream/SE_Sys_*.bwav in the user's RomFS:
-// cursor, decide, cancel, the Plus menu's open and close, the tab moves), decoded once and mixed over the game's output
-// in the audio device callback (audio_mixer.c sdl_pull). Nothing is shipped: a RomFS without them stays silent.
-//
-// BWAV: "BWAV", byte order mark, version, CRC32, a prefetch flag (u16) and the channel count (u16), then 0x4C bytes per
-// channel: codec (u16, 0 PCM16, 1 DSP-ADPCM), pan (u16, 0 left, 1 right, 2 middle), sample rate, sample count (u32),
-// the count again, 16 DSP coefficients (s16), the absolute offset of the samples (u32), ... The interface sounds are
-// 48 kHz DSP-ADPCM: 8-byte frames of a header (coefficient pair index, scale exponent) and 14 four-bit samples.
-//
-// Menu thread: menu_sound_play starts a voice (a free one, else the oldest). Audio thread: menu_sound_mix adds the
-// voices to a block. A voice is free while its position is negative; the menu thread sets its sound first and its
-// position last (release), the audio thread reads them in the other order (acquire).
-//
-// NX2SARIA_MENU_SOUND_VOLUME (menu_sound_volume, 0 to 100, default 80; 0 is silent): the level, under the output volume.
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -24,7 +10,7 @@
 #include "platform/platform.h"
 
 typedef struct {
-    float *pcm;          // interleaved stereo at 48 kHz
+    float *pcm;
     uint32_t frames;
 } Sound;
 
@@ -39,11 +25,11 @@ static const char *const kFiles[MENU_SOUND_COUNT] = {
 };
 
 static Sound sounds[MENU_SOUND_COUNT];
-static atomic_int loaded;   // 0 not yet, 1 loading or done (sounds[] written before the release store of 2), 2 ready
+static atomic_int loaded;
 
 #define VOICES 8
 static struct {
-    atomic_int pos;      // frame, -1 free
+    atomic_int pos;
     atomic_int sound;
     uint64_t started;
 } voices[VOICES];
@@ -54,7 +40,6 @@ static uint32_t u32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] <
 
 static int16_t clamp16(int32_t v) { return (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v); }
 
-// One channel into dst[2 * i + ch] (ch 0 or 1; mono pan writes both). 0 when the data does not fit the file.
 static int decode_channel(const uint8_t *b, uint64_t size, const uint8_t *info, float *dst, uint32_t frames) {
     uint16_t codec = u16(info), pan = u16(info + 2);
     uint32_t count = u32(info + 8), off = u32(info + 0x30);
@@ -62,7 +47,7 @@ static int decode_channel(const uint8_t *b, uint64_t size, const uint8_t *info, 
     int16_t coef[16];
     for (int i = 0; i < 16; i++) coef[i] = (int16_t)u16(info + 0x10 + 2 * i);
     float scale = 1.0f / 32768.0f;
-    if (codec == 0) {   // PCM16
+    if (codec == 0) {
         if ((uint64_t)off + (uint64_t)count * 2 > size) return 0;
         for (uint32_t i = 0; i < count; i++) {
             float v = (int16_t)u16(b + off + 2 * i) * scale;
@@ -98,7 +83,7 @@ static void load_one(int id) {
     uint16_t nch = u16(b + 0x0e);
     if (!nch || nch > 2 || 0x10 + (uint64_t)nch * 0x4c > size) { free(b); return; }
     uint32_t rate = u32(b + 0x10 + 4), frames = u32(b + 0x10 + 8);
-    if (rate != 48000 || !frames || frames > 48000 * 10) {   // the interface sounds are 48 kHz and short
+    if (rate != 48000 || !frames || frames > 48000 * 10) {
         rt_log("menu_sound: %s: %u Hz, %u samples: not played", kFiles[id], rate, frames);
         free(b);
         return;
@@ -108,7 +93,7 @@ static void load_one(int id) {
     for (uint16_t c = 0; ok && c < nch; c++) ok = decode_channel(b, size, b + 0x10 + c * 0x4c, pcm, frames);
     free(b);
     if (!ok) { free(pcm); return; }
-    if (nch == 1) for (uint32_t i = 0; i < frames * 2; i++) pcm[i] *= 0.7071f;   // a middle-panned mono sound in both
+    if (nch == 1) for (uint32_t i = 0; i < frames * 2; i++) pcm[i] *= 0.7071f;
     sounds[id] = (Sound){pcm, frames};
 }
 
@@ -125,7 +110,6 @@ static void load_all(void) {
     atomic_store_explicit(&loaded, 2, memory_order_release);
 }
 
-// The menu's level times the output volume (NX2SARIA_VOLUME, as the game's sound has it).
 static float volume(void) {
     const char *v = cfg_value("NX2SARIA_MENU_SOUND_VOLUME");
     int n = v && *v ? atoi(v) : 80;
@@ -137,11 +121,8 @@ static float volume(void) {
 
 static _Atomic uint64_t last_start_ns;
 
-// The least time between a cursor tick and the sound before it. Moving down a list or changing a value asks for a tick
-// at every step, about 20 a second while a direction is held, and the focus moving with a press or a tab change is part
-// of that sound: at most five ticks a second are heard.
 #define CURSOR_GAP_NS 180000000ull
-#define CURSOR_GAIN 0.6f   // the tick under the sounds of a decision
+#define CURSOR_GAIN 0.6f
 
 void menu_sound_play(MenuSound id) {
     if ((unsigned)id >= MENU_SOUND_COUNT || volume() <= 0) return;
@@ -156,12 +137,10 @@ void menu_sound_play(MenuSound id) {
         if (atomic_load_explicit(&voices[i].pos, memory_order_acquire) < 0) { pick = i; break; }
         if (voices[i].started < oldest) oldest = voices[i].started, pick = i;
     }
-    // A sound that replaces itself restarts instead of stacking up, and a decision replaces the tick of the same press
-    // (a row changes its value in the frame the press is seen).
     for (int i = 0; i < VOICES; i++)
         if (atomic_load_explicit(&voices[i].pos, memory_order_acquire) >= 0 &&
             (atomic_load(&voices[i].sound) == (int)id || atomic_load(&voices[i].sound) == MENU_SOUND_CURSOR) &&
-            atomic_load(&voices[i].pos) < 2400) {   // started under 50 ms ago
+            atomic_load(&voices[i].pos) < 2400) {
             pick = i;
             break;
         }
@@ -179,8 +158,6 @@ void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) {
         if (pos < 0) continue;
         int which = atomic_load_explicit(&voices[v].sound, memory_order_acquire);
         const Sound *s = &sounds[which];
-        // menu_sound_play may restart the voice between the two loads: pos would then belong to the old sound, past
-        // the end of a shorter new one; such a voice is mixed from the next call on
         if (atomic_load_explicit(&voices[v].pos, memory_order_acquire) != pos || (uint32_t)pos >= s->frames) continue;
         if (g < 0) g = volume();
         float vg = which == MENU_SOUND_CURSOR ? g * CURSOR_GAIN : g;
@@ -191,7 +168,6 @@ void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) {
             out[(size_t)i * channels + 1] += src[2 * i + 1] * vg;
         }
         int next = pos + (int)n;
-        // Only advance if the menu thread did not restart the voice meanwhile.
         atomic_compare_exchange_strong(&voices[v].pos, &pos, next >= (int)s->frames ? -1 : next);
     }
 }

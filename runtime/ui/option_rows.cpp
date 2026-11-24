@@ -1,9 +1,5 @@
-// Two-pane settings pages (option_rows.h): rows on the left, the selected or hovered row's description on the right.
-//
 // Contains code Copyright (c) 2026 Revivedx and the Savage Wind Recomp contributors, Copyright (c) 2026 Peiikai (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// The rows read and write cfg keys, take their text from the menu catalog (menu_text), and show the default, "after
-// restart" and environment notes.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +10,7 @@
 #include <vector>
 
 #include "imgui.h"
-#include "imgui_internal.h"   // SetKeyOwner, SetFocusID, NavCursorVisible
+#include "imgui_internal.h"
 
 #include "ui/menu_skin.h"
 #include "ui/option_rows.h"
@@ -24,34 +20,26 @@ extern "C" {
 #include "platform/platform.h"
 #include "ui_text.h"
 #include "menu_sound.h"
-// host.h pulls in cpu.h, which is C only: the one function needed from it, as declared there.
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 }
 
 static const ImU32 kGrey = IM_COL32(110, 110, 102, 255);
 
 static float g_scale = 1;
-static bool g_focus_req, g_take_first;   // opt_focus_first: requested / this page's first row takes it
-static char g_focus_key[64];             // opt_focus_key: the row that takes the cursor when it is next drawn
-static bool g_held;                      // the last row's left / right has been held a while (steppers go faster)
-static float g_bottom;                   // opt_reserve_bottom: kept free under the panes
-static bool g_disable_next;              // opt_disable_next: the next row is greyed out with g_disable_note
+static bool g_focus_req, g_take_first;
+static char g_focus_key[64];
+static bool g_held;
+static float g_bottom;
+static bool g_disable_next;
 static const char *g_disable_note;
 
-// The rows' cursor, drawn once all rows are (opt_end), its glow in the layer under the rows and its frame in the one
-// over them: the selected row's box, else the hovered one's (alpha: fainter for a hovered row, and for one the
-// environment fixes).
 static struct { bool on; ImVec2 a, b; float alpha; } g_cursor;
-// Room left on each side of a row for its cursor, which is drawn outside the row's box.
 static float row_margin(void) { return ceilf(skin_cursor_reach(g_scale) * 0.85f); }
 
-// The description pane: this frame's hovered and selected rows, the page's first row, and the last one shown (of the
-// page g_page: another page starts from its first row's, however it was opened).
 struct Desc { char text[UI_DESC_BYTES]; };
 static Desc g_hover, g_focus, g_first, g_shown;
 static ImGuiID g_page;
 
-// disabled: the note of a row opt_disable_next greyed out, else NULL.
 static void desc_set(Desc &d, const char *desc, const char *key, const CfgMeta *m, const char *disabled) {
     int n = snprintf(d.text, sizeof d.text, "%s", desc);
     if (n < 0 || n >= (int)sizeof d.text) return;
@@ -87,24 +75,22 @@ void opt_begin(const char *id, float scale) {
     g_scale = scale;
     g_take_first = g_focus_req;
     g_focus_req = false;
-    if (g_take_first) ImGui::NavMoveRequestCancel();   // this frame's move goes to the first row instead
+    if (g_take_first) ImGui::NavMoveRequestCancel();
     g_hover.text[0] = g_focus.text[0] = g_first.text[0] = 0;
     if (ImGuiID page = ImGui::GetID(id); page != g_page) g_page = page, g_shown.text[0] = 0;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     avail.y -= g_bottom;
     ImGui::PushID(id);
     ImGui::BeginChild("##rows", ImVec2(avail.x * 0.58f, avail.y), ImGuiChildFlags_NavFlattened);
-    // the rows sit far enough apart that the selected row's cursor frame clears its neighbours' boxes
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 9 * scale));
-    ImGui::Dummy(ImVec2(0, row_margin()));   // and the first row's cursor stays inside the pane
+    ImGui::Dummy(ImVec2(0, row_margin()));
     g_cursor.on = false;
-    // three layers: the cursor's glow under the rows, the rows, the cursor's frame over them (opt_end draws the cursor)
     ImGui::GetWindowDrawList()->ChannelsSplit(3);
     ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
 }
 
 void opt_end(void) {
-    ImGui::Dummy(ImVec2(0, row_margin()));   // the last row's cursor stays inside the pane
+    ImGui::Dummy(ImVec2(0, row_margin()));
     ImDrawList *dl = ImGui::GetWindowDrawList();
     if (g_cursor.on) {
         dl->ChannelsSetCurrent(0);
@@ -115,7 +101,6 @@ void opt_end(void) {
     dl->ChannelsMerge();
     ImGui::PopStyleVar();
     ImGui::EndChild();
-    // the hovered row (mouse) wins, else the selected one (controller), else the last shown, else the first row
     if (g_hover.text[0]) g_shown = g_hover;
     else if (g_focus.text[0]) g_shown = g_focus;
     else if (!g_shown.text[0]) g_shown = g_first;
@@ -123,7 +108,6 @@ void opt_end(void) {
     ImVec2 p = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     avail.y -= g_bottom;
     float gap = 24 * g_scale;
-    // the description on a dark panel framed like the rows' buttons
     skin_panel(ImGui::GetWindowDrawList(), ImVec2(p.x + gap * 0.5f, p.y), ImVec2(p.x + avail.x, p.y + avail.y), g_scale);
     ImGui::SetCursorScreenPos(ImVec2(p.x + gap, p.y));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22 * g_scale, 20 * g_scale));
@@ -136,19 +120,16 @@ void opt_end(void) {
     ImGui::PopID();
 }
 
-// What a row shows besides its label.
 struct RowView {
-    const char *value;   // right side; "" for none
-    bool is_default;     // the value is the setting's default: the "default" mark, the value not highlighted
-    bool arrows;         // a stepper: [<] value [>]; the mouse changes the value on the two framed arrows only
-    const char *note;    // under the value instead of the "default" mark; NULL for none
-    float col;           // the width of the widest value the row can show (value_width); 0: this value's
-    bool end_l, end_r;   // the value is the first / last one: that arrow is drawn faint and does nothing
-    const char *subtitle = nullptr;   // under the label, before any status note
+    const char *value;
+    bool is_default;
+    bool arrows;
+    const char *note;
+    float col;
+    bool end_l, end_r;
+    const char *subtitle = nullptr;
 };
 
-// The width of the widest of n values at the current font size: a stepper's left arrow stands that far from the right
-// one whatever value shows, so it stays under the pointer while it is clicked through the values.
 static float value_width(const char *const *names, int n) {
     ImFont *font = ImGui::GetFont();
     float fs = ImGui::GetFontSize(), w = 0;
@@ -157,9 +138,6 @@ static float value_width(const char *const *names, int n) {
     return w;
 }
 
-// One framed arrow of a stepper over [a, b]: a white frame with the arrow in its middle, filled a little while the
-// pointer is on it and more while it is pressed; faint when it does nothing (dim: the row is greyed out or the value
-// is at this end).
 static void arrow_box(ImDrawList *dl, ImVec2 a, ImVec2 b, bool left, bool hot, bool down, bool dim, float s) {
     const int al = dim ? 70 : hot ? 255 : 215;
     const ImU32 white = IM_COL32(255, 255, 255, al);
@@ -170,12 +148,6 @@ static void arrow_box(ImDrawList *dl, ImVec2 a, ImVec2 b, bool left, bool hot, b
     dl->AddTriangleFilled(ImVec2(cx + tip, cy), ImVec2(cx + back, cy - ah), ImVec2(cx + back, cy + ah), white);
 }
 
-// ---- test hook. NX2SARIA_MENU_TEST_CLICK=<key>:<part>[,<key>:<part>...], with NX2SARIA_MENU_TEST opening the menu on the
-// page that has the rows (menu.cpp): mouse clicks on steppers by their setting's name (without NX2SARIA_), part l (the
-// left arrow), r (the right arrow) or b (the row's body, on its label). One click after another, each over a dozen
-// frames: the pointer goes there, the button goes down and up, and the log says what the setting is then. So a run
-// checks that the arrows step a setting and that an arrow at its end and a click on the body do not, with the fonts
-// and sizes of the game.
 static struct ClickTest { int parsed, n, at, frame; struct { char key[56]; char part; } c[24]; } g_click;
 
 static void click_test(const char *key, ImVec2 la, ImVec2 lb, ImVec2 ra, ImVec2 rb, ImVec2 label) {
@@ -211,54 +183,39 @@ static void click_test(const char *key, ImVec2 la, ImVec2 lb, ImVec2 ra, ImVec2 
     }
 }
 
-// One row: draws it, handles A / click and left / right while selected. Returns 2 (A, or a click on a row without
-// arrows), -1 / +1 (left / right, or the mouse on a stepper's framed arrow), 3 / 4 (move up / down, movable rows only)
-// or 0; always 0 for a row the environment fixes (greyed out, still selectable so its description shows). movable: the
-// top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it.
-// A stepper takes the mouse on its two framed arrows only: a click anywhere else on the row selects it and changes
-// nothing. A click on the row used to step to the next value, and the left arrow stood left of the value's text, so
-// it moved when a value of another width came up and the next click at the same place landed on the row instead.
 static int row_text(const char *key, const char *label, const char *desc, const RowView &v, bool movable) {
     const CfgMeta *m = cfg_meta(key);
     const char *disabled = g_disable_next ? g_disable_note : NULL;
     g_disable_next = false;
     bool off = disabled || cfg_from_env(key) != 0;
     ImGui::PushID(key);
-    // the row's box, inset from the pane's sides by the room its cursor needs
     const float margin = row_margin();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + margin);
     ImVec2 p = ImGui::GetCursorScreenPos();
-    // h whole pixels: ImGui truncates cursor positions, which rounds a fractional height the other way above the window's
-    // top (negative y), so the page grew a pixel per row scrolled out and a row scrolled to the bottom was cut off
-    // at least a pixel wide: InvisibleButton asserts on a zero size (a narrow window), and ImGui reads a negative one as
-    // "up to that far before the right edge", away from the box drawn
     float fs = ImGui::GetFontSize(), w = fmaxf(ImGui::GetContentRegionAvail().x - margin, 1.0f), h = floorf(fs * 2.2f);
-    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));   // the row's own border shows the selection
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     bool clicked = ImGui::InvisibleButton("##row", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleColor();
     bool to_key = g_focus_key[0] && !strcmp(key, g_focus_key);
     if (g_take_first || to_key) {
         ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
         ImGui::SetNavCursorVisible(true);
-        if (g_take_first) ImGui::SetScrollY(0);   // the page's top: text and a heading above the first row show
-        else ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);   // as a cursor move would (the last row whole)
+        if (g_take_first) ImGui::SetScrollY(0);
+        else ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
         g_take_first = false;
         if (to_key) g_focus_key[0] = 0;
     }
     bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible;
     int step = clicked && !off ? 2 : 0;
-    // a click of the mouse, not A / Enter / Space: only a click picks an arrow by where the pointer is
     const bool by_mouse = clicked && hov && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
     g_held = false;
     if (foc && !off) {
-        // the left stick arrives as the D-pad (menu.cpp pad_events)
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) step = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = 1;
         static const ImGuiKey steps[] = {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_LeftArrow,
                                          ImGuiKey_RightArrow};
         for (ImGuiKey k : steps) {
             if (ImGui::GetKeyData(k)->DownDuration > 1.0f) g_held = true;
-            // left and right belong to the row (navigation would otherwise move sideways into the description pane)
             ImGui::SetKeyOwner(k, ImGui::GetItemID());
         }
         if (movable) {
@@ -276,30 +233,25 @@ static int row_text(const char *key, const char *label, const char *desc, const 
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImFont *font = ImGui::GetFont();
     float pad = 20 * g_scale, small = fs * 0.72f;
-    // the save menu's brown button, brighter while selected or hovered; the white cursor goes round it in opt_end
     skin_button(dl, p, ImVec2(p.x + w, p.y + h), g_scale, foc ? 1.0f : hov ? 0.6f : 0.0f, off);
     if (foc || (hov && !g_cursor.on)) {
         g_cursor.on = true, g_cursor.a = p, g_cursor.b = ImVec2(p.x + w, p.y + h);
         g_cursor.alpha = (foc ? 1.0f : 0.55f) * (off ? 0.5f : 1.0f);
     }
-    float ty = p.y + fs * 0.25f, ny = p.y + fs * 1.3f;   // the label line and the note line under it
-    float right = p.x + w - pad;                         // the value's right edge
+    float ty = p.y + fs * 0.25f, ny = p.y + fs * 1.3f;
+    float right = p.x + w - pad;
     float value_left = right;
-    // The value and its note take at most 60 % of the row: a longer value (a graphics card's full name) is drawn smaller,
-    // down to 75 % of the font size, then clipped, so the label keeps room and nothing reaches past the box.
     const float cap = fmaxf((w - pad * 2) * 0.6f, 0.0f);
     float vfs = fs, tv = v.value[0] ? font->CalcTextSizeA(fs, FLT_MAX, 0, v.value).x : 0;
     if (tv > cap) {
         vfs = fmaxf(fs * cap / tv, fs * 0.75f);
         tv = fminf(font->CalcTextSizeA(vfs, FLT_MAX, 0, v.value).x, cap);
     }
-    float value_mid = -1;   // a stepper's value and its note are centred here, between the arrows
-    if (v.arrows) {         // [<] value [>]: the arrows are drawn (the font has no arrow glyphs), each in a white frame
-        // The frames stand in fixed places: the right one at the row's right edge, the left one the width of the row's
-        // widest value before it. They fit over the note line, in the label line's height.
+    float value_mid = -1;
+    if (v.arrows) {
         const float bw = floorf(fs * 1.3f), bh = floorf(fs * 1.02f), gap = floorf(fs * 0.4f), cy = floorf(ty + fs * 0.52f);
         float col = fminf(fmaxf(v.col, tv), fmaxf(cap - 2 * (bw + gap), fs));
-        if (tv > col) {   // a value wider than the room between the arrows: smaller, then clipped
+        if (tv > col) {
             vfs = fmaxf(fs * col / font->CalcTextSizeA(fs, FLT_MAX, 0, v.value).x, fs * 0.75f);
             tv = fminf(font->CalcTextSizeA(vfs, FLT_MAX, 0, v.value).x, col);
         }
@@ -307,15 +259,12 @@ static int row_text(const char *key, const char *label, const char *desc, const 
         const ImVec2 la(ra.x - gap - col - gap - bw, ra.y), lb(ra.x - gap - col - gap, rb.y);
         if (!g_click.parsed || g_click.at < g_click.n) click_test(key, la, lb, ra, rb, ImVec2(p.x + w * 0.25f, p.y + h * 0.5f));
         const ImVec2 mp = ImGui::GetIO().MousePos;
-        // the pointer on an arrow: its frame and two pixels around it, so a click on the frame's own line counts
         const float slop = 2 * g_scale;
         auto on = [&](ImVec2 a, ImVec2 b) {
             return hov && mp.x >= a.x - slop && mp.x < b.x + slop && mp.y >= a.y - slop && mp.y < b.y + slop;
         };
         const bool hl = on(la, lb), hr = on(ra, rb), down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        if (by_mouse) step = 0;   // a click on the row itself only selects it
-        // The press steps, and a held button repeats as a held key does; after a second it also goes ten steps at a
-        // time over a long range (opt_slider), as held left / right do.
+        if (by_mouse) step = 0;
         if (!off && ((hl && !v.end_l) || (hr && !v.end_r)) && ImGui::IsMouseClicked(ImGuiMouseButton_Left, true)) {
             step = hl ? -1 : 1;
             if (ImGui::GetIO().MouseDownDuration[ImGuiMouseButton_Left] > 1.0f) g_held = true;
@@ -326,8 +275,7 @@ static int row_text(const char *key, const char *label, const char *desc, const 
         right = ra.x - gap;
         value_left = la.x;
     }
-    if (movable) {   // up and down arrows left of the value; a click on one moves the row
-        // a fixed value column (On / Off differ in width) keeps the arrows of the rows in one line
+    if (movable) {
         float aw = fs * 0.42f, gap = fs * 0.55f;
         float cx = right - fmaxf(tv, fs * 2.8f) - gap * 2 - aw;
         float uy = ty + fs * 0.12f, dy = ty + fs * 0.92f;
@@ -348,19 +296,15 @@ static int row_text(const char *key, const char *label, const char *desc, const 
                     0, &vclip);
         if (!v.arrows && !movable) value_left = vx;
     }
-    float note_right = p.x + w - pad;   // where the label's own note stops: short of the value's note, when there is one
-    if (v.note || v.is_default) {   // under the value, right-aligned with it; its start shows when it is too long
+    float note_right = p.x + w - pad;
+    if (v.note || v.is_default) {
         const char *t = v.note ? v.note : menu_text(UI_MENU_DEFAULT_MARK);
         float tw = fminf(font->CalcTextSizeA(small, FLT_MAX, 0, t).x, cap);
-        // a stepper's note is centred under its value, as far as the row's right edge lets it
         float nx = value_mid >= 0 ? fminf(floorf(value_mid - tw * 0.5f), p.x + w - pad - tw) : right - tw;
         ImVec4 nclip(nx, p.y, nx + tw, p.y + h);
         dl->AddText(font, small, ImVec2(nx, ny), v.note ? IM_COL32(250, 206, 130, 255) : SKIN_TEXT_DIM, t, NULL, 0, &nclip);
         if (tw > 0) note_right = nx - fs * 0.6f;
     }
-    // the label and its note, clipped before the value. A restart-only setting says "after restart" while the value
-    // the row shows (the draft's, before Apply) differs from the one the game started with (cfg_pending_for), so the
-    // note marks what a restart would change; the description says it whatever the value (desc_set)
     ImVec4 clip(p.x, p.y, value_left - fs * 0.6f, p.y + h);
     dl->AddText(font, fs, ImVec2(p.x + pad, ty), off ? kGrey : SKIN_TEXT, label, NULL, 0, &clip);
     const char *note = disabled                                               ? disabled
@@ -385,7 +329,7 @@ static int row_text(const char *key, const char *label, const char *desc, const 
 }
 
 static int row(const char *key, UiTextId label, UiTextId desc, const RowView &v) {
-    if (!cfg_supported(key)) {   // nothing on this game version reads it: no row, and no grey-out left for the next
+    if (!cfg_supported(key)) {
         g_disable_next = false;
         return 0;
     }
@@ -398,15 +342,6 @@ int opt_text_row(const char *id, const char *label, const char *value, const cha
     return row_text(id, label, desc, v, movable);
 }
 
-// ---- the draft: what the player changed since the menu opened and has not applied
-//
-// A change is one of two kinds (is_staged). A preview change is written with cfg_set at once, so the effect shows (a volume
-// slider, the sharpness, the bindings), while its first original is kept: Discard puts it back (cfg_revert), and the entry
-// is held (cfg_hold) so no save made meanwhile writes it. A staged change only waits in the draft, the row shows it
-// (opt_value), and Apply is what writes it. Nothing reaches nx2navi.ini before Apply.
-//
-// The player sees one line per group: the row (or the binding) that made the changes, from what it showed to what it
-// shows. A row that sets several keys (the upscaler) is one group of several changes.
 namespace {
 
 struct Group {
@@ -416,28 +351,25 @@ struct Group {
     std::string label_str, from, to;
 };
 
-constexpr size_t KEY_PREFIX = sizeof "NX2SARIA_" - 1;   // Change::key starts with it; the log names the key after it
+constexpr size_t KEY_PREFIX = sizeof "NX2SARIA_" - 1;
 
 struct Change {
-    std::string key;       // NX2SARIA_ + upper case
-    std::string gid;       // the group
-    std::string new_val;   // as the row wrote it; "" is the key unset
-    std::string orig_eff;  // the value in effect before the first change
-    const char *orig_val;  // cfg_state's, for cfg_revert
+    std::string key;
+    std::string gid;
+    std::string new_val;
+    std::string orig_eff;
+    const char *orig_val;
     int orig_state;
     bool staged;
-    bool orig_set;         // the player had set the key (cfg_is_set) before the first change
+    bool orig_set;
 };
 
 std::vector<Group> g_groups;
 std::vector<Change> g_changes;
-std::atomic<int> g_draft_n;   // g_changes.size(), for any thread (menu_toggle)
+std::atomic<int> g_draft_n;
 unsigned g_sync_ver;
-// The row opt_choice_index answered for, which the opt_apply calls that follow belong to.
 struct { bool valid; std::string gid, from, to; UiTextId label; } g_ctx;
 
-// The draft's spelling of a setting's name: NX2SARIA_ and the key in upper case, from the key with that prefix, with
-// the earlier NX2NAVI_ or with none.
 std::string norm_key(const char *key) {
     std::string k = key;
     for (char &c : k) c = (char)toupper((unsigned char)c);
@@ -446,12 +378,6 @@ std::string norm_key(const char *key) {
     return "NX2SARIA_" + k;
 }
 
-// Keys that are live in the table but stay in the draft until Apply: the window, the present mode, HDR and the frame
-// limit change the whole picture or the pacing at once (HDR makes the swapchain again in another format; step 4 puts a
-// "keep these?" timer on all but the frame limit), a pad layout
-// or walk key swaps what the buttons do under the player's hands, and motion starts or stops a device. The quality
-// preset switches its layer of defaults only at Apply (opt_draft_apply, cfg_preset_use_from). Every key the
-// table marks as read at start is staged too.
 bool is_staged(const std::string &key) {
     static const char *const forced[] = {"FPS_LIMIT", "VK_PRESENT", "HDR", "PAD_LAYOUT", "WALK_KEY", "MOTION",
                                         "FULLSCREEN", "WINDOW_SIZE", "FOV", "PRESET"};
@@ -463,9 +389,6 @@ bool is_staged(const std::string &key) {
     return false;
 }
 
-// The applied value of key, and what a value written for it comes to once "" (unset) is its default. The quality
-// preset chosen on other hardware (cfg_preset_hw_changed) reads as a value of its own, as the recommended tier is in
-// use in its place: choosing the same tier again, or Recommended, is a change that Apply makes (cfg_preset_chosen).
 std::string eff_now(const std::string &key) {
     if (key == "NX2SARIA_PRESET" && cfg_preset_hw_changed()) return std::string(cfg_value(key.c_str())) + " (other hardware)";
     if (cfg_meta(key.c_str())) return cfg_value(key.c_str());
@@ -479,7 +402,6 @@ Change *find_change(const std::string &key) {
     return nullptr;
 }
 
-// The tier of a value of the preset key: "" and recommended are the tier this PC gets.
 int preset_tier_of(const std::string &v) {
     std::string low = v;
     for (char &ch : low) ch = (char)tolower((unsigned char)ch);
@@ -488,7 +410,6 @@ int preset_tier_of(const std::string &v) {
     return cfg_preset_recommended(nullptr);
 }
 
-// The tier the draft stages for the preset key, -1 while it stages none.
 int staged_tier(void) {
     Change *c = find_change("NX2SARIA_PRESET");
     return c ? preset_tier_of(c->new_val) : -1;
@@ -502,7 +423,6 @@ bool is_preset_key(const std::string &key) {
     return false;
 }
 
-// What "" (unset) comes to: the default of the tier the draft stages, else cfg_default (the tier in use).
 const char *default_of(const std::string &key) {
     const int t = staged_tier();
     return t >= 0 ? cfg_default_tier(key.c_str(), t) : cfg_default(key.c_str());
@@ -514,7 +434,6 @@ std::string eff_of(const std::string &key, const std::string &value) {
     return d ? d : "";
 }
 
-// What a preview key written as value is in effect now: the tier in use gives "", whatever tier the draft stages.
 std::string eff_written(const std::string &key, const std::string &value) {
     if (!value.empty()) return value;
     const char *d = cfg_default(key.c_str());
@@ -530,7 +449,7 @@ Group *find_group(const std::string &id) {
 void write_key(const std::string &key, const std::string &value) {
     if (!value.empty()) {
         cfg_set(key.c_str(), value.c_str());
-    } else {   // the automatic choice: the key unset, its line removed from nx2navi.ini
+    } else {
         const char *k = key.c_str();
         cfg_reset(&k, 1);
     }
@@ -550,19 +469,10 @@ void erase_change(size_t i) {
     g_draft_n.store((int)g_changes.size());
 }
 
-// A change that leaves the key at the value it had. A key set back to "" (unset) stays in the draft so when a tier
-// staged after it gives the value it had, as does one a preset choice handed back (record's "handed"): game_res = 1080
-// in the file, Ultra chosen (it hands GAME_RES back for its "window"), then Low, whose 1080 is the value the key had.
-// Apply still writes it, so a line the player had leaves the settings file and a later tier sets the key, but it is no
-// change: Apply does not count it or list it as one, and it adds no restart (opt_draft_item).
 bool no_effect(const Change &c) { return eff_of(c.key, c.new_val) == c.orig_eff; }
 
-// A value as the log shows it: quoted, or (default) for an unset key.
 std::string shown(const std::string &v) { return v.empty() ? "(default)" : "'" + v + "'"; }
 
-// Puts key at value in the draft. A change back to the value the key had when the draft began leaves the draft. The log
-// names a key when it enters the draft and when it leaves it (a slider dragged through many values is not every step);
-// Apply and Discard list the values they settle on.
 void record(const std::string &key, const char *value, const std::string &gid, bool has_id, UiTextId label,
             const char *label_str, const char *from, const char *to) {
     Change *c = find_change(key);
@@ -587,10 +497,8 @@ void record(const std::string &key, const char *value, const std::string &gid, b
     }
     c->new_val = value;
     if (!c->staged) write_key(key, c->new_val);
-    // A key the player set that a preset choice hands back to the preset (menu.cpp row_preset) stays in the draft though
-    // the preset gives it the same value: its line leaves the settings file, so a later tier sets it again.
     const bool handed = c->new_val.empty() && c->orig_set && is_preset_key(key) && staged_tier() >= 0;
-    if (!handed && eff_of(key, c->new_val) == c->orig_eff) {   // back where it began
+    if (!handed && eff_of(key, c->new_val) == c->orig_eff) {
         rt_log("menu: draft - %s: back to %s", key.c_str() + KEY_PREFIX, shown(c->orig_eff).c_str());
         if (!c->staged) cfg_revert(key.c_str(), c->orig_val, c->orig_state);
         erase_change((size_t)(c - g_changes.data()));
@@ -598,7 +506,7 @@ void record(const std::string &key, const char *value, const std::string &gid, b
     g_draft_n.store((int)g_changes.size());
 }
 
-}  // namespace
+}
 
 const char *opt_value(const char *key) {
     const std::string k = norm_key(key);
@@ -608,7 +516,6 @@ const char *opt_value(const char *key) {
         const char *d = default_of(k);
         return d ? d : "";
     }
-    // a staged preset: a key the player leaves unset (a preview reset included) shows the staged tier's value
     if (staged_tier() >= 0 && !(c ? !c->new_val.empty() : cfg_is_set(k.c_str())))
         if (const char *d = default_of(k)) return d;
     return cfg_value(key);
@@ -618,7 +525,6 @@ const char *opt_get(const char *key) {
     const std::string k = norm_key(key);
     Change *c = find_change(k);
     if (c && c->staged) return c->new_val.empty() ? nullptr : c->new_val.c_str();
-    // a staged preset whose tier changes the key's default: that default, as cfg_get gives a layer's value
     if (const int t = staged_tier(); t >= 0 && !(c ? !c->new_val.empty() : cfg_is_set(k.c_str()))) {
         const char *now = cfg_default(k.c_str()), *want = cfg_default_tier(k.c_str(), t);
         if (want && (!now || strcmp(now, want))) return want;
@@ -650,7 +556,7 @@ int opt_int(const char *key) {
     const char *v = opt_value(key);
     char *end;
     long l = strtol(v, &end, 10);
-    return end == v || *end ? cfg_int(key) : (int)l;   // a value that does not parse: the default's number
+    return end == v || *end ? cfg_int(key) : (int)l;
 }
 
 double opt_double(const char *key) {
@@ -670,23 +576,17 @@ void opt_change(const char *key, const char *value, const char *label, const cha
 
 int opt_draft_any(void) { return g_draft_n.load(std::memory_order_relaxed); }
 
-// The lines the player is shown: the groups whose text changed (an upscaler picked and picked back leaves keys written
-// but nothing to say).
 int opt_draft_count(void) {
     int n = 0;
     for (const Group &g : g_groups) n += g.from != g.to;
     return n;
 }
 
-// Live settings that still wait for a restart in some states (the rows' own "after restart" notes in menu.cpp): the upscaler
-// cannot start in this run (vk_dlaa_needs_restart), NVIDIA frame generation is set up with the device (vk_dlssg_wanted)
-// or, through NGX (every build but the Windows one), needs NGX up since the start (vk_ngxfg_wanted; menu.cpp
-// framegen_restart), and HDR to or from the game's own, or on in a run started without the HDR path (vk_hdr_restart_for).
 extern "C" int vk_dlaa_needs_restart(void);
 extern "C" int vk_hdr_restart_for(const char *value);
 extern "C" int vk_dlssg_wanted(void);
 extern "C" int vk_ngxfg_wanted(void);
-extern "C" int menu_lowlat_restart_for(const char *value);   // menu.cpp: low latency on in a run started with it off
+extern "C" int menu_lowlat_restart_for(const char *value);
 static bool live_needs_restart(const Change &c) {
     if (c.key == "NX2SARIA_LOW_LATENCY") return menu_lowlat_restart_for(eff_of(c.key, c.new_val).c_str()) != 0;
     if (c.key == "NX2SARIA_FRAMEGEN") {
@@ -702,8 +602,6 @@ static bool live_needs_restart(const Change &c) {
     return false;
 }
 
-// The display keys the "keep these?" timer watches after an Apply (opt_draft_apply): HDR only between off and the tone
-// mapper, as to or from the game's own it waits for a restart (live_needs_restart).
 static bool is_timed(const Change &c) {
     static const char *const timed[] = {"NX2SARIA_FULLSCREEN", "NX2SARIA_WINDOW_SIZE", "NX2SARIA_VK_PRESENT",
                                         "NX2SARIA_HDR"};
@@ -713,9 +611,6 @@ static bool is_timed(const Change &c) {
     return false;
 }
 
-// A row that changed a timed key and others with it is kept or reverted as one: the Resolution row (menu.cpp
-// row_resolution) sets the window's size and the game resolution together, so a Revert that put the window back and
-// kept the new resolution for the next start would leave the two apart again.
 static bool group_timed(const std::string &gid) {
     for (const Change &c : g_changes)
         if (c.gid == gid && is_timed(c)) return true;
@@ -745,9 +640,6 @@ bool opt_draft_item(int i, OptDraftItem *out) {
             const CfgMeta *m = cfg_meta(c.key.c_str());
             if (c.staged) out->restart |= m && !m->live && cfg_pending_for(c.key.c_str(), eff_of(c.key, c.new_val).c_str());
             out->restart |= live_needs_restart(c);
-            // a preset choice also changes the restart-only keys the player leaves to it (GAME_RES, FOLIAGE,
-            // SHADOW_PCF): its line waits for a restart when one of them, as the staged tier gives it, differs
-            // from the start's value
             if (c.key == "NX2SARIA_PRESET") {
                 int nk = 0;
                 const char *const *keys = cfg_preset_keys(&nk);
@@ -763,8 +655,6 @@ bool opt_draft_item(int i, OptDraftItem *out) {
     return false;
 }
 
-// Something else changed a key of the draft (F11 toggled the fullscreen the draft also changes, F10 the overlay): the
-// change that came from outside stays and that key leaves the draft.
 void opt_draft_sync(void) {
     if (g_changes.empty() || cfg_version() == g_sync_ver) return;
     g_sync_ver = cfg_version();
@@ -800,22 +690,14 @@ void opt_save_now(void) {
     }
 }
 
-// ---- the display keys a "keep these?" timer watches (menu.cpp keep_confirm)
-//
-// An Apply with timed set writes FULLSCREEN, WINDOW_SIZE, VK_PRESENT and HDR (is_timed), and the other staged keys of a
-// row that changed one of them (group_timed: the Resolution row's GAME_RES), but keeps them held (cfg_hold), so no save
-// made while the timer runs (F10, a cheat, the window closing) writes them; opt_display_keep saves them,
-// opt_display_revert puts the values from before the Apply back. They are the live keys that change the window or the
-// swapchain and so can leave the player without a usable picture. HDR to or from the game's own and GPU_INDEX wait for
-// a restart and are not here, nor are the other live keys.
 namespace {
 struct Pending {
-    std::string key, applied;   // applied: the value in effect right after the Apply
+    std::string key, applied;
     const char *orig_val;
     int orig_state;
 };
 std::vector<Pending> g_display;
-}  // namespace
+}
 
 bool opt_draft_apply(bool timed) {
     g_display.clear();
@@ -826,8 +708,6 @@ bool opt_draft_apply(bool timed) {
                (int)g_changes.size() - same, timed ? "" : " (for a restart)", same);
     else
         rt_log("menu: draft applied: %d change(s)%s", (int)g_changes.size(), timed ? "" : " (for a restart)");
-    // A preset choice (menu.cpp row_preset): its layer switches after the draft's writes, and its log lines start from
-    // the values the keys had before the draft (a key handed back to the preset was reset, a preview one already)
     const int tier = staged_tier();
     int n_keys = 0;
     const char *const *keys = cfg_preset_keys(&n_keys);
@@ -857,7 +737,7 @@ bool opt_draft_apply(bool timed) {
                live_needs_restart(c) || (c.staged && cfg_meta(c.key.c_str()) && !cfg_meta(c.key.c_str())->live)
                    ? ", takes effect after a restart" : "");
         if (held) {
-            cfg_hold(c.key.c_str(), 1);   // before the write: no save in between can take the new value
+            cfg_hold(c.key.c_str(), 1);
             write_key(c.key, c.new_val);
             g_display.push_back({c.key, eff_of(c.key, c.new_val), c.orig_val, c.orig_state});
         } else if (c.staged) {
@@ -875,7 +755,7 @@ bool opt_draft_apply(bool timed) {
         cfg_preset_use_from(tier, before_p.data());
         cfg_preset_chosen();
     }
-    opt_save_now();   // the held display keys stay out of it
+    opt_save_now();
     rt_log("menu: draft: settings file %s%s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)",
            g_display.empty() ? "" : "; display settings wait for Keep or Revert");
     return cfg_last_save_ok() != 0;
@@ -883,7 +763,6 @@ bool opt_draft_apply(bool timed) {
 
 int opt_display_pending(void) { return (int)g_display.size(); }
 
-// F11 changed FULLSCREEN (or anything else set a pending key) after the Apply.
 int opt_display_external(void) {
     for (const Pending &p : g_display)
         if (eff_now(p.key) != p.applied) return 1;
@@ -902,7 +781,7 @@ bool opt_display_keep(void) {
 }
 
 bool opt_display_revert(void) {
-    if (opt_display_external()) {   // the player took control with F11: what is on screen now stays
+    if (opt_display_external()) {
         rt_log("menu: display: changed outside the menu (F11) during the countdown: kept instead of reverted");
         opt_display_keep();
         return false;
@@ -915,7 +794,6 @@ bool opt_display_revert(void) {
     return true;
 }
 
-// What a row writes: the draft takes it (a preview key is written too), the cursor sound plays.
 static void apply(const char *key, const char *value, UiTextId label, const char *from, const char *to) {
     std::string k = norm_key(key);
     g_ctx.valid = false;
@@ -923,9 +801,6 @@ static void apply(const char *key, const char *value, UiTextId label, const char
     menu_sound_play(MENU_SOUND_CURSOR);
 }
 
-// ---- rows
-
-// An on / off row is a stepper too: either arrow, A, left or right flips it.
 static float on_off_width(void) {
     const char *const names[] = {menu_text(UI_MENU_ON), menu_text(UI_MENU_OFF)};
     return value_width(names, 2);
@@ -934,38 +809,34 @@ static float on_off_width(void) {
 bool opt_toggle(const char *key, UiTextId label, UiTextId desc, bool inverted, const char *subtitle) {
     const char *d = opt_default(key);
     bool set = opt_bool(key), def = d && *d && strcmp(d, "0") != 0;
-    bool on = set != inverted;   // what the row shows
+    bool on = set != inverted;
     RowView v = {menu_text(on ? UI_MENU_ON : UI_MENU_OFF), set == def, true, NULL, on_off_width()};
     v.subtitle = subtitle;
-    if (!row(key, label, desc, v)) return false;   // any step flips it
+    if (!row(key, label, desc, v)) return false;
     apply(key, set ? "0" : "1", label, v.value, menu_text(on ? UI_MENU_OFF : UI_MENU_ON));
     return true;
 }
 
 bool opt_toggle_value(const char *key, UiTextId label, UiTextId desc, const char *on_value, const char *off_value, const char *note) {
-    // the default as the player's profile has it (cfg_default: the Steam Deck's fifo), which is also what "on" writes
-    // when it is an on value, so turning the switch off and on again puts the profile's own value back
     const char *d = opt_default(key);
     bool on = strcmp(opt_value(key), off_value) != 0, def = d && strcmp(d, off_value) != 0;
     RowView v = {menu_text(on ? UI_MENU_ON : UI_MENU_OFF), on == def, true, note, on_off_width()};
-    if (!row(key, label, desc, v)) return false;   // any step flips it
+    if (!row(key, label, desc, v)) return false;
     apply(key, on ? off_value : def && *d ? d : on_value, label, v.value, menu_text(on ? UI_MENU_OFF : UI_MENU_ON));
     return true;
 }
 
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value) {
     RowView v = {value ? value : "", false, false, NULL};
-    return row(id, label, desc, v) == 2;   // A or a click; left and right do nothing
+    return row(id, label, desc, v) == 2;
 }
 
 bool opt_toggle_text(const char *id, const char *label, const char *desc, bool on, const char *value) {
-    // off is the plain state: its value drawn dim, without the "default" mark
     RowView v = {value ? value : menu_text(on ? UI_MENU_ON : UI_MENU_OFF), !on, true, on ? NULL : "",
                  value ? 0 : on_off_width()};
-    return row_text(id, label, desc, v, false) != 0;   // any step flips it
+    return row_text(id, label, desc, v, false) != 0;
 }
 
-// A group heading: the game's divider ornament across the pane, then the title in the accent colour.
 static void group_divider(void) {
     float fh = skin_filigree_height(g_scale);
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -975,8 +846,6 @@ static void group_divider(void) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + m);
 }
 
-// Text across the rows' column, inset from its sides as the rows' boxes are and wrapped before their right edge. The
-// cursor already stands at the inset when indented is true (after group_divider).
 static void column_text(const char *text, const ImVec4 *col, bool indented) {
     const float m = row_margin();
     if (!indented) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + m);
@@ -1017,9 +886,9 @@ bool opt_choice_list(const char *key, UiTextId label, const char *const *values,
     int step = row(key, label, desc, v);
     if (!step || n <= 0) return false;
     int nv;
-    if (cur < 0) nv = step < 0 ? n - 1 : 0;   // a value not in the list: left from the end, right / A from the start
-    else if (step == 2) nv = (cur + 1) % n;               // A / click: the next value, round to the first
-    else nv = cur + step < 0 ? 0 : cur + step >= n ? n - 1 : cur + step;   // left / right stop at the ends
+    if (cur < 0) nv = step < 0 ? n - 1 : 0;
+    else if (step == 2) nv = (cur + 1) % n;
+    else nv = cur + step < 0 ? 0 : cur + step >= n ? n - 1 : cur + step;
     if (nv == cur) return false;
     apply(key, values[nv], label, v.value, names[nv]);
     return true;
@@ -1042,10 +911,10 @@ void opt_context(const char *key, UiTextId label, const char *from, const char *
     g_ctx = {true, norm_key(key), from, to, label};
 }
 
-void opt_apply(const char *key, const char *value) {   // as apply, without its sound: a row writing several keys
+void opt_apply(const char *key, const char *value) {
     std::string k = norm_key(key);
     if (g_ctx.valid) record(k, value, g_ctx.gid, true, g_ctx.label, nullptr, g_ctx.from.c_str(), g_ctx.to.c_str());
-    else record(k, value, k, false, UI_MENU_CONTINUE, key, "", value);   // not under a row: named by its key
+    else record(k, value, k, false, UI_MENU_CONTINUE, key, "", value);
 }
 
 bool opt_choice(const char *key, UiTextId label, const UiTextId *names, int n, UiTextId desc, const char *note) {
@@ -1054,7 +923,7 @@ bool opt_choice(const char *key, UiTextId label, const UiTextId *names, int n, U
     const char *values[MAX], *shown[MAX];
     char buf[256];
     int k = 0;
-    if (m && !m->def[0]) values[k++] = "";   // the automatic choice
+    if (m && !m->def[0]) values[k++] = "";
     snprintf(buf, sizeof buf, "%s", m && m->values ? m->values : "");
     for (char *s = buf, *e; *s && k < MAX; s = e) {
         e = strchr(s, '|');
@@ -1070,10 +939,8 @@ bool opt_choice(const char *key, UiTextId label, const UiTextId *names, int n, U
 bool opt_slider(const char *key, UiTextId label, float lo, float hi, UiTextId desc, float step, const char *fmt,
                 const char *note, const char *fallback) {
     const char *set = opt_get(key);
-    const char *src = fallback && !(set && *set) ? fallback : key;   // unset: show the value in effect, the fallback's
+    const char *src = fallback && !(set && *set) ? fallback : key;
     const char *d = opt_default(src);
-    // A key without a default of its own (the per-stick dead zones) defaults to its fallback: the "default" mark
-    // follows the fallback's default, not 0, even once the key is set.
     if (fallback && !(d && *d)) d = opt_default(fallback);
     double v = opt_double(src), def = d && *d ? strtod(d, NULL) : lo;
     char shown[48], ends[2][48];
@@ -1085,15 +952,14 @@ bool opt_slider(const char *key, UiTextId label, float lo, float hi, UiTextId de
                   v >= hi - step * 0.01};
     int s = row(key, label, desc, rv);
     if (!s) return false;
-    int steps = g_held && (hi - lo) > 40 * step ? 10 : 1;   // held: ten steps at a time over a long range
+    int steps = g_held && (hi - lo) > 40 * step ? 10 : 1;
     double n = round(v / step) * step + (s == 2 ? step : s * step * steps);
-    if (s == 2 && n > hi + step * 0.01) n = lo;   // A / click past the top goes round; left / right stop at the ends
+    if (s == 2 && n > hi + step * 0.01) n = lo;
     n = n < lo ? lo : n > hi ? hi : n;
     if (fabs(n - v) < step * 0.01) return false;
     char out[32];
     if (step >= 1) snprintf(out, sizeof out, "%d", (int)lround(n));
     else snprintf(out, sizeof out, "%g", round(n / step) * step);
-    // Landing on the fallback's value unsets the key (its line leaves nx2navi.ini), so the row follows the fallback again.
     const bool unset = fallback && fabs(n - opt_double(fallback)) < step * 0.01;
     char to[48];
     snprintf(to, sizeof to, fmt, unset ? opt_double(fallback) : n);
@@ -1101,12 +967,6 @@ bool opt_slider(const char *key, UiTextId label, float lo, float hi, UiTextId de
     return true;
 }
 
-// A whole-number slider from lo to hi that goes on into named stops past hi (the frame limit's monitor rate and
-// unlimited). Positions are lo..hi and then hi + 1 + k for stop k. Left and right step one; held for a second over a
-// long range they step ten through the numbers, and stop at hi before the first named stop, so a quick sweep up does
-// not run past the last number. A / a click steps one and goes round to lo after the last stop. cur: the value in
-// effect (NULL: opt_value(key), the draft's value); a value that is neither a stop nor a number shows the default's
-// position.
 bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId desc, const char *fmt,
                       const char *const *stop_values, const char *const *stop_names, int stops, const char *cur,
                       const char *note) {
@@ -1133,12 +993,11 @@ bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId 
     int s = row(key, label, desc, rv);
     if (!s) return false;
     int n;
-    if (s == 2) n = pos >= top ? lo : pos + 1;   // A / click: one up, round to the first after the last
+    if (s == 2) n = pos >= top ? lo : pos + 1;
     else {
-        // ten at a time among the numbers only: from hi, right goes one into the named stops (never past the first)
         int steps = g_held && hi - lo > 40 && (s < 0 ? pos <= hi : pos < hi) ? 10 : 1;
         n = pos + s * steps;
-        if (pos < hi && n > hi) n = hi;   // a fast sweep stops on the last number before the named stops
+        if (pos < hi && n > hi) n = hi;
         n = n < lo ? lo : n > top ? top : n;
     }
     if (n == pos) return false;
@@ -1154,10 +1013,6 @@ bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId 
     return true;
 }
 
-// ---- binding rows (the remapping rows of the Controls tab): a label and three cells, each its own nav item
-
-// Text centred (left-aligned when centred is false) in [x0, x1] on a row from y to y + h, at the font size or smaller so
-// a long name ("Нажатие правого стика", "Стрелка вправо") fits; under 65 % it is clipped instead.
 static void fit_text(ImDrawList *dl, float x0, float x1, float y, float h, ImU32 col, const char *t, bool centred,
                      bool ellipsis = false) {
     ImFont *font = ImGui::GetFont();
@@ -1184,15 +1039,13 @@ static void fit_text(ImDrawList *dl, float x0, float x1, float y, float h, ImU32
     dl->AddText(font, fs, ImVec2(x, y + (h - fs) * 0.5f), col, t, NULL, 0, &clip);
 }
 
-// The label column and the three cells of a binding row of width w.
 static void bind_columns(float x, float w, float cx[3], float *cw) {
     float lw = floorf(w * 0.34f), gap = floorf(8 * g_scale);
-    *cw = fmaxf(floorf((w - lw - gap * 3) / 3), 1.0f);   // a pixel at least: InvisibleButton asserts on a zero width
+    *cw = fmaxf(floorf((w - lw - gap * 3) / 3), 1.0f);
     for (int c = 0; c < 3; c++) cx[c] = x + lw + gap + c * (*cw + gap);
 }
 
 void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2) {
-    // over the cells of the binding rows: the same inset (opt_bind_row) and the same columns
     const float margin = row_margin();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = fmaxf(ImGui::GetContentRegionAvail().x - margin * 2, 1.0f), cx[3], cw, fs = ImGui::GetFontSize() * 0.8f;
@@ -1210,7 +1063,7 @@ void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2) {
 int opt_bind_row(const char *key, const char *label, const char *action, UiTextId desc, const char *const cells[3],
                  const bool enabled[3], const char *note) {
     ImGui::PushID(key);
-    const float margin = row_margin();   // room for the cursor, as the option rows leave
+    const float margin = row_margin();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + margin);
     ImVec2 p = ImGui::GetCursorScreenPos();
     float fs = ImGui::GetFontSize(), w = ImGui::GetContentRegionAvail().x - margin, h = floorf(fs * 1.9f), cx[3], cw;
@@ -1228,14 +1081,14 @@ int opt_bind_row(const char *key, const char *label, const char *action, UiTextI
     for (int c = 0; c < 3; c++) {
         ImVec2 a(cx[c], p.y), b(cx[c] + cw, p.y + h);
         const char *t = cells[c] && cells[c][0] ? cells[c] : "-";
-        if (!enabled[c]) {   // not a nav item: the cursor skips it
+        if (!enabled[c]) {
             skin_button(dl, a, b, g_scale, 0, true);
             fit_text(dl, a.x + pad, b.x - pad, a.y, h, kGrey, t, true);
             continue;
         }
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(c);
-        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));   // the cell's own border shows the selection
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
         bool clicked = ImGui::InvisibleButton("##cell", ImVec2(cw, h), ImGuiButtonFlags_EnableNav);
         ImGui::PopStyleColor();
         char id[80];
@@ -1256,7 +1109,7 @@ int opt_bind_row(const char *key, const char *label, const char *action, UiTextI
         if (foc && (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false) ||
                     ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)))
             result = 10 + c;
-        skin_button(dl, a, b, g_scale, foc ? 1.0f : hov ? 0.6f : 0.0f, false);   // a small brown button per cell
+        skin_button(dl, a, b, g_scale, foc ? 1.0f : hov ? 0.6f : 0.0f, false);
         if (foc || (hov && !g_cursor.on)) g_cursor.on = true, g_cursor.a = a, g_cursor.b = b, g_cursor.alpha = foc ? 1.0f : 0.55f;
         fit_text(dl, a.x + pad, b.x - pad, a.y, h, SKIN_TEXT, t, true);
         ImGui::PopID();
@@ -1267,7 +1120,7 @@ int opt_bind_row(const char *key, const char *label, const char *action, UiTextI
     if (row_foc) desc_set(g_focus, description, k, NULL, NULL);
     if (row_hov) desc_set(g_hover, description, k, NULL, NULL);
     if (!g_first.text[0]) desc_set(g_first, description, k, NULL, NULL);
-    if (note && (row_foc || row_hov)) {   // e.g. what moved here, after the description
+    if (note && (row_foc || row_hov)) {
         Desc &d = row_hov ? g_hover : g_focus;
         size_t n = strlen(d.text);
         snprintf(d.text + n, sizeof d.text - n, "\n\n%s", note);

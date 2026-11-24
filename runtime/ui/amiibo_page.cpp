@@ -1,7 +1,3 @@
-// Amiibo / NFC menu page (Dear ImGui). The tab: the dumps of the amiibo folder on the left (A or a click taps one), the
-// reader and the figure on it on the right, and under "Advanced" the folder, the reader's options, the figure's details,
-// the keys file and write-back. The picker: the same list on its own over the game, opened when the game starts waiting
-// for an amiibo (ui/menu.cpp, NX2SARIA_AMIIBO_POPUP).
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
@@ -15,7 +11,7 @@
 #include <vector>
 
 #include "imgui.h"
-#include "imgui_internal.h"   // SetFocusID, ScrollToItem
+#include "imgui_internal.h"
 #include "ui/amiibo_page.h"
 #include "ui/menu_skin.h"
 #include "ui/option_rows.h"
@@ -36,17 +32,16 @@ static const ImVec4 kRed(0.9f, 0.3f, 0.3f, 1.0f);
 static const ImVec4 kGreen(0.3f, 0.9f, 0.3f, 1.0f);
 static const ImVec4 kCyan(0.2f, 0.9f, 1.0f, 1.0f);
 
-// ---- the dumps of the amiibo folder and its subfolders, as one list
 struct Dump {
-    std::string path;    // as amiibo_load_file takes it, and as AmiiboInfo.path then holds it
-    std::string label;   // the path under the amiibo folder without the extension: "Young Link", "Zelda/Young Link"
-    std::string key;     // label in lower case, for sorting and the search field
+    std::string path;
+    std::string label;
+    std::string key;
 };
 
 static const char kDefaultAmiiboDir[] = "./amiibo";
-static const int kMaxDepth = 3;        // subfolders listed below the amiibo folder
+static const int kMaxDepth = 3;
 static const size_t kMaxDumps = 2000;
-static std::string g_root = kDefaultAmiiboDir;   // the folder read last
+static std::string g_root = kDefaultAmiiboDir;
 static std::vector<Dump> g_dumps;
 static bool g_scanned, g_root_missing;
 static char g_filter[64];
@@ -62,12 +57,9 @@ static bool is_dump(const fs::directory_entry &e) {
     if (!e.is_regular_file(ec) || ec) return false;
     std::string ext = lower(e.path().extension().string());
     if (ext != ".bin" && ext != ".nfc") return false;
-    // amiibo_load_file takes whole 540-byte dumps only, so other files of that name (the keys file key_retail.bin among
-    // them) stay out of the list
     return e.file_size(ec) == (uintmax_t)AMIIBO_DUMP_SIZE && !ec;
 }
 
-// Reads the amiibo folder (NX2SARIA_AMIIBO_DIR, else ./amiibo) again. A missing folder lists nothing and says so.
 static void scan_dumps(void) {
     const char *dir = cfg_get("NX2SARIA_AMIIBO_DIR");
     g_root = dir && *dir ? dir : kDefaultAmiiboDir;
@@ -77,7 +69,7 @@ static void scan_dumps(void) {
     const fs::path root(g_root);
     g_root_missing = !fs::is_directory(root, ec);
     if (g_root_missing) return;
-    try {   // a name the narrow encoding cannot hold throws from string(); the dumps read before it stay listed
+    try {
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
         for (; !ec && it != end && g_dumps.size() < kMaxDumps; it.increment(ec)) {
             if (it.depth() >= kMaxDepth - 1) it.disable_recursion_pending();
@@ -93,13 +85,11 @@ static void scan_dumps(void) {
     std::sort(g_dumps.begin(), g_dumps.end(), [](const Dump &a, const Dump &b) { return a.key < b.key; });
 }
 
-// The folder a player set: saved like a row's change; "" goes back to the default.
 static void set_root(const std::string &path) {
     opt_apply("NX2SARIA_AMIIBO_DIR", path.c_str());
     scan_dumps();
 }
 
-// ---- the last action: a catalog id and the figure or file it names, formatted when drawn (the language can change)
 static UiTextId g_status_id = UI_MENU_AMIIBO_READY;
 static std::string g_status_arg;
 
@@ -108,19 +98,16 @@ static void set_status(UiTextId id, const std::string &arg = std::string()) {
     g_status_arg = arg;
 }
 
-// Erase game data asks twice: the first press arms the button, a second one within kEraseConfirmS seconds erases.
 static const double kEraseConfirmS = 3.0;
-static double g_erase_armed_at = -1.0;   // ImGui::GetTime() of the first press; negative while not armed
+static double g_erase_armed_at = -1.0;
 
-// Loads a dump and puts it on the reader. True when it is on the reader.
 static bool tap(const Dump &d) {
-    g_erase_armed_at = -1.0;   // a press armed for the previous figure does not erase this one
+    g_erase_armed_at = -1.0;
     const bool ok = amiibo_scan_and_tap(d.path.c_str());
     set_status(ok ? UI_MENU_AMIIBO_TAPPED : UI_MENU_AMIIBO_LOAD_FAILED, d.label);
     return ok;
 }
 
-// The loaded figure's name as the list shows it: its file name without the extension.
 static std::string figure_name(const AmiiboInfo *info) {
     std::string name = info->filename;
     size_t dot = name.find_last_of('.');
@@ -128,7 +115,6 @@ static std::string figure_name(const AmiiboInfo *info) {
     return name;
 }
 
-// A catalog format and its arguments, wrapped to the pane (a path or a long translation does not fit one line).
 static void text_wrapped_fmt(const char *fmt, ...) {
     char buf[768];
     va_list ap;
@@ -144,7 +130,6 @@ static void text_disabled_wrapped(const char *text) {
     ImGui::PopStyleColor();
 }
 
-// The list is empty: the folder is missing or holds no dumps.
 static void empty_note(void) {
     char note[768];
     snprintf(note, sizeof note, menu_text(g_root_missing ? UI_MENU_AMIIBO_NO_DIR : UI_MENU_AMIIBO_NONE_FOUND),
@@ -152,14 +137,8 @@ static void empty_note(void) {
     text_disabled_wrapped(note);
 }
 
-// The dump the list's cursor was last on (moved there, clicked or tapped), in the tab or the picker, for this run: the
-// list opens on it again.
 static std::string g_cursor_path;
 
-// The dumps as one selectable line each; A, Enter or a click taps one. The loaded figure is marked: a cyan dot while it
-// is on the reader, a gold one after it left. focus: the cursor goes to the line it was last on (g_cursor_path), else
-// the loaded figure, else the first line. filter: only the lines holding g_filter. Returns the dump tapped this frame,
-// or NULL.
 static const Dump *dump_list(bool focus, bool filter) {
     const Dump *tapped = nullptr;
     const AmiiboInfo *info = amiibo_get_current_info();
@@ -185,7 +164,6 @@ static const Dump *dump_list(bool focus, bool filter) {
         if (!needle.empty() && d.key.find(needle) == std::string::npos) continue;
         const bool loaded = loaded_any && d.path == info->path;
         ImGui::PushID((int)i);
-        // the label is drawn by hand: a "#" in a file name would otherwise be read as part of the item's id
         if (ImGui::Selectable("##dump", loaded, ImGuiSelectableFlags_None, ImVec2(0, line_h))) {
             if (tap(d)) tapped = &d;
         }
@@ -198,8 +176,6 @@ static const Dump *dump_list(bool focus, bool filter) {
                                                                            : ImGui::GetStyleColorVec4(ImGuiCol_Text)),
                     d.label.c_str());
         if ((int)i == focus_at) {
-            // a window that appears (the picker, each time it opens) gives the cursor to its first row a frame later
-            // unless a row says it is the default
             ImGui::SetItemDefaultFocus();
             ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
             ImGui::SetNavCursorVisible(true);
@@ -212,7 +188,6 @@ static const Dump *dump_list(bool focus, bool filter) {
     return tapped;
 }
 
-// ---- the folder dialog (folder_pick.h) answers on its own thread; the page takes the answer when it draws
 static PlatMutex g_pick_lock = PLAT_MUTEX_INIT;
 static bool g_pick_open;
 static bool g_pick_ready;
@@ -227,7 +202,6 @@ static void on_folder_picked(const char *path, void *ctx) {
     plat_mutex_unlock(&g_pick_lock);
 }
 
-// ---- the figure on the right: its name, whether it is on the reader, its nickname and game data, Lift
 static void draw_figure(void) {
     AmiiboFigureData fd;
     if (!amiibo_get_figure_data(&fd)) {
@@ -251,7 +225,6 @@ static void draw_figure(void) {
     ImGui::EndDisabled();
 }
 
-// ---- "Advanced"
 static void draw_folder(bool picking) {
     ImGui::TextUnformatted(menu_text(UI_MENU_AMIIBO_DIR));
     text_disabled_wrapped(g_root.c_str());
@@ -281,14 +254,13 @@ static void draw_reader_options(void) {
     if (ImGui::Checkbox(menu_text(UI_MENU_AMIIBO_AUTO_REMOVE), &auto_remove)) amiibo_set_auto_remove(auto_remove);
     if (auto_remove) {
         float delay = amiibo_get_auto_remove_delay_s();
-        ImGui::TextUnformatted(menu_text(UI_MENU_AMIIBO_HOLD));   // above the slider: beside it the text is cut off
+        ImGui::TextUnformatted(menu_text(UI_MENU_AMIIBO_HOLD));
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::SliderFloat("##amiibo_hold", &delay, 1.0f, 6.0f, menu_text(UI_MENU_AMIIBO_SECONDS)))
             amiibo_set_auto_remove_delay_s(delay);
     }
 }
 
-// The loaded figure's identity and stored data, and the button that erases its game data.
 static void draw_figure_details(void) {
     AmiiboFigureData fd;
     if (!amiibo_get_figure_data(&fd)) {
@@ -316,8 +288,6 @@ static void draw_figure_details(void) {
     else
         ImGui::TextWrapped("%s", menu_text(UI_MENU_AMIIBO_NO_GAME_DATA));
 
-    // The game data goes for good (the port's copy in the profile too), so the button asks for a second press. "###"
-    // keeps one id under both labels: the controller's cursor stays on the button when its label changes.
     const double now = ImGui::GetTime();
     if (!fd.has_app_area || now - g_erase_armed_at >= kEraseConfirmS) g_erase_armed_at = -1.0;
     const bool armed = g_erase_armed_at >= 0.0;
@@ -336,8 +306,6 @@ static void draw_figure_details(void) {
     }
 }
 
-// The keys file amiibo_reload_keys reads: NX2SARIA_AMIIBO_KEYS, else key_retail.bin in the amiibo folder
-// (NX2SARIA_AMIIBO_DIR, else ./amiibo).
 static std::string keys_path(void) {
     const char *keys = cfg_get("NX2SARIA_AMIIBO_KEYS");
     if (keys && *keys) return keys;
@@ -347,8 +315,6 @@ static std::string keys_path(void) {
     return path + "key_retail.bin";
 }
 
-// The keys: loaded or not, the file in effect, Reload keys; and the write-back setting (NX2SARIA_AMIIBO_WRITEBACK, a live
-// setting), saved like a row's change (option_rows.h opt_apply).
 static void draw_keys(void) {
     const bool loaded = amiibo_keys_loaded();
     ImGui::TextUnformatted(menu_text(UI_MENU_AMIIBO_KEYS));
@@ -390,7 +356,6 @@ static void draw_reader_state(void) {
     ImGui::TextColored(state_col, "%s", menu_text(state_id));
 }
 
-// The last action, under the reader's state; nothing until there is one.
 static void draw_status(void) {
     if (g_status_id == UI_MENU_AMIIBO_READY) return;
     char status[768];
@@ -404,9 +369,7 @@ static void draw_status(void) {
 }
 
 void tab_amiibo(float scale) {
-    (void)scale;   // the widgets take ImGui's own sizes, already scaled with the font
-    // amiibo.c reads the keys with the first dump; the tab's first draw reads them too, so its keys line is right before
-    // any tap
+    (void)scale;
     static bool keys_read;
     if (!keys_read) {
         keys_read = true;
@@ -421,17 +384,14 @@ void tab_amiibo(float scale) {
     plat_mutex_unlock(&g_pick_lock);
     if (!picked.empty()) set_root(picked);
 
-    // the menu opened or the tab was switched to: the folder is read again (dumps added since show) and the cursor goes
-    // to the list
     const bool focus = opt_focus_take();
     if (focus || !g_scanned) scan_dumps();
 
     const ImGuiStyle &st = ImGui::GetStyle();
-    const float content_h = ImGui::GetContentRegionAvail().y - opt_bottom();   // Continue and Quit stay visible
+    const float content_h = ImGui::GetContentRegionAvail().y - opt_bottom();
     const float left_w = ImGui::GetContentRegionAvail().x * 0.5f;
     const float right_w = ImGui::GetContentRegionAvail().x - left_w - st.ItemSpacing.x;
 
-    // ---- left: the dumps
     ImGui::BeginChild("##amiibo_dumps_pane", ImVec2(left_w, content_h), ImGuiChildFlags_Borders);
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##amiibo_filter", menu_text(UI_MENU_AMIIBO_FILTER), g_filter, sizeof g_filter);
@@ -446,7 +406,6 @@ void tab_amiibo(float scale) {
 
     ImGui::SameLine();
 
-    // ---- right: the reader, the figure, Advanced
     ImGui::BeginChild("##amiibo_side", ImVec2(right_w, content_h), ImGuiChildFlags_Borders);
     ImGui::TextColored(kGold, "%s", menu_text(UI_MENU_AMIIBO_READER));
     ImGui::Separator();
@@ -479,13 +438,10 @@ void tab_amiibo(float scale) {
     ImGui::EndChild();
 }
 
-// ---- the picker
-
 static bool g_was_waiting;
 static bool g_picker_focus;
 
 bool amiibo_picker_wanted(void) {
-    // amiibo_get_reader_state holds "searching" across the game's many restarts of detection while it waits
     const bool waiting = amiibo_get_reader_state() == AMIIBO_DEV_STATE_SEARCHING;
     const bool started = waiting && !g_was_waiting;
     g_was_waiting = waiting;
@@ -498,7 +454,6 @@ void amiibo_picker_begin(void) {
     set_status(UI_MENU_AMIIBO_READY);
 }
 
-// "Tapped: <figure>" after a tap from the picker, until g_note_until (plat_now_ns)
 static uint64_t g_note_until;
 static std::string g_note_label;
 static const uint64_t kNoteNs = 2500000000ull;
@@ -519,7 +474,6 @@ void amiibo_note_draw(uint32_t w, float scale) {
 }
 
 bool amiibo_picker_layout(uint32_t w, uint32_t h, float scale) {
-    // the game gave up waiting (its own time-out, a cut scene): nothing left to tap for
     if (amiibo_get_reader_state() != AMIIBO_DEV_STATE_SEARCHING) return false;
 
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImVec2((float)w, (float)h), IM_COL32(10, 6, 2, 110));
@@ -531,7 +485,6 @@ bool amiibo_picker_layout(uint32_t w, uint32_t h, float scale) {
     ImGui::TextColored(kGold, "%s", menu_text(UI_MENU_AMIIBO_POPUP_TITLE));
     ImGui::Separator();
     const ImGuiStyle &st = ImGui::GetStyle();
-    // under the list: the hint, and a failed load's line
     const bool failed = g_status_id == UI_MENU_AMIIBO_LOAD_FAILED;
     const float below = ImGui::GetTextLineHeightWithSpacing() * (failed ? 3 : 1) + st.ItemSpacing.y;
     ImGui::BeginChild("##amiibo_picker_list", ImVec2(0, -below), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);

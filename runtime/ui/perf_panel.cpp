@@ -1,12 +1,9 @@
-// The full performance overlay's panel (ui/perf_panel.h) in the settings menu's look: the menu's framed dark panel
-// (ui/menu_skin.cpp), the numbers in tables with gold labels and parchment values, the game's divider between the
-// machine, the frames, the per-frame waits and the picture, and the frame times as a gold line.
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
 
 #include "imgui.h"
-#include "imgui_internal.h"   // the window's draw cursor (the plot does not widen the panel)
+#include "imgui_internal.h"
 
 #include "ui/menu_skin.h"
 #include "ui/perf_panel.h"
@@ -17,8 +14,8 @@ extern "C" {
 
 namespace {
 
-const ImVec4 kLabel(236 / 255.0f, 196 / 255.0f, 104 / 255.0f, 1);   // SKIN_GOLD
-const ImVec4 kValue(244 / 255.0f, 236 / 255.0f, 214 / 255.0f, 1);   // SKIN_TEXT
+const ImVec4 kLabel(236 / 255.0f, 196 / 255.0f, 104 / 255.0f, 1);
+const ImVec4 kValue(244 / 255.0f, 236 / 255.0f, 214 / 255.0f, 1);
 const ImVec4 kDimText(170 / 255.0f, 152 / 255.0f, 120 / 255.0f, 1);
 
 struct PerfCol { UiTextId fmt; float sample; };
@@ -29,9 +26,6 @@ float text_w(UiTextId fmt, float v) {
     return ImGui::CalcTextSize(b).x;
 }
 
-// The panel keeps its width while the numbers change: every column is as wide as the widest text it can show, measured
-// on samples of 8s (the menu fonts' digits share one width), and the numbers are right-aligned in it.
-// A fixed column as wide as the widest of the formats (with their samples) and labels given.
 void column(const char *id, const PerfCol *cols, int n, const UiTextId *labels = nullptr, int nl = 0) {
     float w = ImGui::CalcTextSize(menu_text(UI_MENU_OV_NONE)).x;
     for (int i = 0; i < n; i++) w = fmaxf(w, text_w(cols[i].fmt, cols[i].sample));
@@ -45,7 +39,6 @@ void right(const char *s, bool dim) {
     ImGui::TextColored(dim ? kDimText : kValue, "%s", s);
 }
 
-// One cell: fmt (a catalog format, one number) with v, or "-" when the machine gives none.
 void cell(UiTextId fmt, float v) {
     ImGui::TableNextColumn();
     if (v < 0) return right(menu_text(UI_MENU_OV_NONE), true);
@@ -61,7 +54,6 @@ void label(UiTextId id) {
 
 float gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
 
-// The game's divider across the panel between two sections, smaller than the menu's.
 void divider(float scale) {
     float s = scale * 0.72f, h = skin_filigree_height(s);
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -93,7 +85,6 @@ void machine_and_frames(const PerfPanel *p, float scale) {
     label(UI_MENU_OV_VRAM);
     cell(UI_MENU_OV_FMT_GB, gb(s.vram_used_mb));
     cell(UI_MENU_OV_FMT_GB_OF, gb(s.vram_total_mb));
-    // the card's figure counts every program on it: this game's own share beside it, the clock where that is unknown
     if (s.vram_game_mb >= 0) cell(UI_MENU_OV_GAME_GB, gb(s.vram_game_mb));
     else cell(UI_MENU_OV_FMT_MHZ, s.gpu_clock_mhz);
     label(UI_MENU_OV_CPU);
@@ -111,12 +102,11 @@ void machine_and_frames(const PerfPanel *p, float scale) {
     column("##f1", c1, 4);
     column("##f2", c2, 4);
     column("##f3", c3, 5);
-    // the frames: the rate over the last second with the lows over the last ten seconds, then the frame times
     label(UI_MENU_OV_FPS_LABEL);
     cell(UI_MENU_OV_FMT_FPS, s.fps);
     cell(UI_MENU_OV_LOW1, s.low1_fps);
     cell(UI_MENU_OV_LOW01, s.low01_fps);
-    if (p->fg_fps > 0) {   // frame generation: what the display gets, generated frames included
+    if (p->fg_fps > 0) {
         label(UI_MENU_OV_FG_LABEL);
         cell(UI_MENU_OV_FMT_FPS, p->fg_fps);
         ImGui::TableNextColumn();
@@ -129,8 +119,6 @@ void machine_and_frames(const PerfPanel *p, float scale) {
     ImGui::EndTable();
 }
 
-// The frame times of the last PERF_HISTORY frames as a gold line over a dark band, as wide as the tables made the panel
-// (the plot does not count toward that width, so the panel can still shrink).
 void frame_plot(const PerfStats &s, float scale) {
     float top = s.frame_ms_max > 50 ? s.frame_ms_max : 50;
     ImGuiWindow *win = ImGui::GetCurrentWindow();
@@ -144,8 +132,6 @@ void frame_plot(const PerfStats &s, float scale) {
     win->DC.CursorMaxPos.x = max_x;
 }
 
-// Per frame, averaged over the last half second; the labels' column stretches, so the numbers end at the panel's right
-// edge, and the table still asks for no more than its widest label and number.
 void waits(const PerfStats &s) {
     if (!ImGui::BeginTable("##perfw", 2, ImGuiTableFlags_SizingFixedFit)) return;
     static const PerfCol c1[] = {{UI_MENU_OV_FMT_MS, 888.88f}, {UI_MENU_OV_PER_FRAME, 888.8f}};
@@ -168,7 +154,6 @@ void picture(const PerfPanel *p) {
     static const UiTextId labels[12] = {UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE, UI_MENU_UPSCALING, UI_MENU_AA,
                                         UI_MENU_OV_LIMIT, UI_MENU_PRESENT_VSYNC, UI_MENU_GAME_ASPECT, UI_MENU_GAME_RES, UI_MENU_HDR,
                                         UI_MENU_FRAMEGEN, UI_MENU_PRESET};
-    // the order of the lines: the preset first among the settings, as the Graphics group starts with it
     static const int order[12] = {0, 1, 2, 11, 3, 4, 5, 6, 7, 8, 9, 10};
     if (!ImGui::BeginTable("##perfp", 2, ImGuiTableFlags_SizingFixedFit)) return;
     float vw = 0;
@@ -184,12 +169,12 @@ void picture(const PerfPanel *p) {
     ImGui::EndTable();
 }
 
-}  // namespace
+}
 
 void perf_panel_draw(const PerfPanel *p, float width, float scale) {
     const float m = 12 * scale;
     ImGui::SetNextWindowPos(ImVec2(width - m, m), ImGuiCond_Always, ImVec2(1, 0));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));   // the panel below is the background
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * scale, 20 * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(7 * scale, 1.5f * scale));
@@ -198,14 +183,12 @@ void perf_panel_draw(const PerfPanel *p, float width, float scale) {
                                         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
-    // under the menu while it is open (the settings stay readable), else over everything
     if (p->under_menu) ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
     else ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    dl->ChannelsSplit(2);   // the panel goes under the text, drawn once the window's size is known
+    dl->ChannelsSplit(2);
     dl->ChannelsSetCurrent(1);
     ImGui::SetWindowFontScale(0.72f);
-    // the port version and the game update first, so a screenshot in a bug report carries both
     ImGui::TextColored(kDimText, "%s", p->version);
     divider(scale);
     machine_and_frames(p, scale);
