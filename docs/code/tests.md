@@ -122,3 +122,13 @@ Given a Python folder, it also reports a removed module that would be packaged t
 
 A planted package that neither table names must fail the check; a planted Python folder holding `_dbm` must be found by
 `tools/make_appimage.py` `removed_modules()`, and must fail the check when the removal list drops it.
+
+## `tests/launcher_lifecycle_test.py`
+
+Runs the actual launcher window on Linux with a virtual display, isolated temporary launcher and game folders, a synthetic game executable and a synthetic cancellable job. No game data is needed. The external control files only drive the test; the launcher uses its normal window, Play, job, lock, CLI and Steam paths.
+
+- Closing or killing the launcher process while its synthetic game runs leaves the game running; the test releases it afterwards and observes its completion.
+- Closing the window with a synthetic job requests its cancellation. Killing the process during the job does not request cancellation and leaves the interrupted-job marker. The clean-close test does not assert that the marker was removed: the job runs on a daemon thread and process exit can race its cleanup.
+- While the window has an active job and the marker, the mutating CLI command is refused and Steam Play reports the active job without starting the game. With the window idle and no job marker, Steam Play starts the synthetic game even though the window holds the launcher lock.
+
+The tests describe the existing window's behavior, not the proposed worker's EOF or recovery behavior. They leave no game process running after the test.
