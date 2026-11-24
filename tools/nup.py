@@ -1,18 +1,3 @@
-"""Reader for the .nup game container (little endian, nothing encrypted).
-
-    0x00  superblock, 0x80 bytes: "NUP\\x01", u16 0x80, u16 1, u64 toc offset, u64 toc size, sha256(toc),
-          u64 blob offset, u64 file size, u32 package count, u32 0, 16-byte unique id, 32 zero bytes
-    TOC:  u32 "TOC\\x01", u32 packages, u64 dirs, u64 files, u64 name pool offset (from the TOC), u64 pool length, u64 0
-          packages, 0x40 each: u64 title id, u32 root dir, u32 exefs dir, u32 romfs dir, u32 version, u8 kind
-                               (0 base, 1 update, 2 dlc), u8 flags, u16, u32, u64 meta offset, u32 meta length, 20 bytes
-          dirs,     0x18 each: u32 name offset, u32 name length, u32 first child, u32 child count, u64
-          files,    0x50 each: u32 name offset, u32 name length, u64 size, u64 data offset (absolute), u64 stored size,
-                               sha256 of the file's bytes, u8 codec (0 stored, 1 one zstd frame), padding
-          children: u32 each, a directory below the dir count, else dir count + file index
-          names:    the pool
-
-Each thread reads through its own handle: seeks on one shared handle race. Standard library plus zstandard.
-"""
 import hashlib
 import struct
 import threading
@@ -40,14 +25,12 @@ class Nup:
             if magic != b'NUP\x01':
                 raise NupError(f'not a .nup file (magic {magic!r})')
             end = f.seek(0, 2)
-            if toc_off > end or toc_size > end - toc_off:   # read no more than the file holds, whatever the header says
+            if toc_off > end or toc_size > end - toc_off:
                 raise NupError('the table of contents is damaged (it lies past the end of the file)')
             f.seek(toc_off)
             toc = f.read(toc_size)
         if len(toc) != toc_size or hashlib.sha256(toc).digest() != toc_sha:
             raise NupError('the table of contents is damaged (its sha256 does not match)')
-        # The sha256 only says the table is what the file's writer wrote: counts and offsets that do not fit it end in
-        # a NupError, which the callers report, not in struct.error or IndexError
         try:
             self._parse(toc)
         except (struct.error, IndexError, ValueError, OverflowError, MemoryError) as e:
@@ -83,8 +66,6 @@ class Nup:
             raise NupError(f'a name in the table of contents is not UTF-8 (at {off:#x})') from None
 
     def tree(self, dir_index):
-        """(path relative to the directory, file index) for every file below it. A directory met twice (one listed
-        as its own child or ancestor) is a NupError, where it went round for good."""
         stack = [(dir_index, '')]
         seen = set()
         while stack:
@@ -115,7 +96,6 @@ class Nup:
         return f
 
     def chunks(self, fi):
-        """The file's bytes in pieces, checked against its sha256 at the end (NupError when they differ)."""
         _no, _nl, size, off, stored, sha, codec, *_ = self.files[fi]
         f = self._handle()
         f.seek(off)

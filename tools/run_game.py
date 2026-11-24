@@ -1,30 +1,3 @@
-"""Run a build of the game unattended on a copy of the user's profile with a backed-up save and scripted input.
-
-The profile is never written: each run copies it to <exe dir>/prof-<tag>, swaps in the save backup, and deletes the copy
-afterwards. It is the game folder's own profile when there is one (<exe dir>/profile, a folder make_game.py built), else
-build/profile. The log records how many other copies of the game and of Ninja ran, because timings taken next to them
-are not comparable.
-
-    python tools/run_game.py build/v143 --save <backup> --seconds 15 --tag idle --env NX2SARIA_TRACE=perf
-    python tools/run_game.py build/v143 --save <backup> --script <input.txt> --seconds 18 --tag fight --quiet \
-        --env NX2SARIA_TRACE=perf,sched
-    python3 tools/run_game.py ~/Games/Ocarina --save <report.zip> --seconds 600 --wall 90 \
-        --env NX2SARIA_SHOT_DIR=shots --env NX2SARIA_SHOT_AFTER=40 --env NX2SARIA_SHOT_EVERY=10
-
-<backup> is a folder of build/save-backup or of the profile's save-backup (the game keeps its last three saves there),
-or a save folder or .zip from elsewhere, such as a crash report's zipped profile folder; --script defaults to
-tools/input/load_save.txt (title screen to the first save slot), and a recording made with NX2SARIA_INPUT_RECORD replays
-the same way. --wall ends a run whose script never reaches the world clock; NX2SARIA_SHOT_EVERY takes its pictures by
-wall time.
-
---boot-map <area>[:<start position>] starts the game in that area from the save without the title screen or the file
-menu (runtime/patches/boot_map.c, docs/boot-to-map.md), with --boot-map-slot, --boot-map-age and --boot-map-time beside it. Its
-input script defaults to tools/input/boot_map.txt, which presses nothing. The run fails (exit code 3) when the log has
-no "boot map: arrived in" line for the area asked for; the boot map's lines are printed at the end.
-
-    python3 tools/run_game.py <game folder> --save <backup> --boot-map HyruleField_Child:HyruleField_FrontOfMarket \
-        --boot-map-time 21:00 --seconds 10 --wall 180 --tag field-night
-"""
 import argparse
 import ctypes
 import os
@@ -46,28 +19,27 @@ else:
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from launcher import saves   # noqa: E402  (Import Saves' search, for a save from elsewhere)
+DESCRIPTION = ("Run a build of the game unattended on a copy of the user's profile with a backed-up save and "
+               'scripted input.')
 PROFILE = ROOT / 'build' / 'profile'
 SAVES = ROOT / 'build' / 'save-backup'
 SLOTS = ROOT / 'build' / 'run-slots'
 GPU_LOCK = ROOT / 'build' / '.gpu-run.lock'
-LOCK_OFFSET = 1 << 16   # Windows byte-range lock sits past the holder text, so other processes can still read it
-MAX_RUNS = int(os.environ.get('NX2SARIA_MAX_RUNS', os.environ.get('NX2NAVI_MAX_RUNS', '3')))   # more parallel runs exhaust device memory (16 GB RX 9070)
-# The game's executable as each tool names it: build_game.py, make_game.py on Windows, make_game.py on Linux,
-# build_game.py on Linux
+LOCK_OFFSET = 1 << 16
+MAX_RUNS = int(os.environ.get('NX2SARIA_MAX_RUNS', os.environ.get('NX2NAVI_MAX_RUNS', '3')))
 GAME_EXES = ('nx2saria.exe', 'ocarina.exe', 'ocarina', 'nx2navi.exe', 'nx2navi')
 NINJA = 'ninja.exe' if os.name == 'nt' else 'ninja'
 
 
 def count(image):
-    """Running processes of this executable name."""
     if os.name == 'nt':
         out = subprocess.run(['tasklist', '/FI', f'IMAGENAME eq {image}', '/NH'], capture_output=True, text=True).stdout
         return sum(line.lower().startswith(image) for line in out.splitlines())
     n = 0
-    for comm in Path('/proc').glob('[0-9]*/comm'):   # the process name, cut to 15 characters
+    for comm in Path('/proc').glob('[0-9]*/comm'):
         try:
             n += comm.read_text().strip() == image[:15]
-        except OSError:   # the process ended while the list was read
+        except OSError:
             pass
     return n
 
@@ -84,8 +56,6 @@ def game_exe(exe_dir):
 
 
 def keep_in_background(proc):
-    """Push the game window behind the user's windows as soon as it appears, for builds older than
-    NX2SARIA_BACKGROUND_WINDOW."""
     user32 = ctypes.windll.user32
     user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
     user32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -105,11 +75,10 @@ def keep_in_background(proc):
         user32.EnumWindows(callback, 0)
         time.sleep(0.05)
     for hwnd in found:
-        user32.SetWindowPos(hwnd, 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)   # HWND_BOTTOM; NOSIZE | NOMOVE | NOACTIVATE
+        user32.SetWindowPos(hwnd, 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
 
 
 def take_slot():
-    """Block until one of MAX_RUNS run slots is free and hold it (a locked file) until this process exits."""
     SLOTS.mkdir(parents=True, exist_ok=True)
     while True:
         for i in range(MAX_RUNS):
@@ -121,7 +90,6 @@ def take_slot():
 
 
 def try_lock(f):
-    """Take an exclusive OS lock on the open file without blocking; False if another process holds it."""
     try:
         if os.name == 'nt':
             f.seek(LOCK_OFFSET)
@@ -141,9 +109,6 @@ def holder_of(path):
 
 
 def take_gpu_lock(exe_dir, poll=2.0):
-    """Block until this process holds the machine-wide measured-run lock (build/.gpu-run.lock) and return the open
-    file. The OS drops the lock when the process exits or dies, so a stale file never blocks. The file text names the
-    holder (pid and build path) for the waiters."""
     GPU_LOCK.parent.mkdir(parents=True, exist_ok=True)
     f = open(GPU_LOCK, 'a+b')
     waiting = False
@@ -174,11 +139,7 @@ def release_gpu_lock(f):
 
 
 def save_source(save, profile, scratch):
-    """(folder, slot, names to leave out) of the save to run. A backup named in build/save-backup or the profile's
-    save-backup is a whole save. A folder or .zip from elsewhere (a crash report's zipped profile folder, a game folder,
-    an emulator's save) is searched as the launcher's Import Saves searches it; slot names the one slot it holds, None
-    for a whole save."""
-    if Path(save).name == save:   # a backup's name; a path is searched below
+    if Path(save).name == save:
         for d in (SAVES / save, profile / 'save-backup' / save):
             if d.is_dir():
                 return d, None, ()
@@ -187,7 +148,7 @@ def save_source(save, profile, scratch):
         with zipfile.ZipFile(path) as z:
             if sum(i.file_size for i in z.infolist()) > saves.MAX_BYTES:
                 sys.exit(f'run_game: {path} unpacks to more than a save holds')
-            z.extractall(scratch)   # zipfile leaves out absolute paths and '..' parts
+            z.extractall(scratch)
         path = scratch
     found, skip = saves.find_save(path)
     if found is None:
@@ -206,13 +167,10 @@ def profile_copy(dest, src, save=None, slot=None, skip=()):
         target = users[0] / slot if slot else users[0]
         shutil.rmtree(target, ignore_errors=True)
         shutil.copytree(save, target, ignore=lambda d, names: [n for n in names if Path(d) == Path(save) and n in skip])
-        # a finished or interrupted commit in save-tx would be loaded in place of the save swapped in (fs_host.c)
         shutil.rmtree(dest / 'save-tx', ignore_errors=True)
 
 
 def boot_map_report(log, asked, rc):
-    """Prints the boot map's lines of the run's log; 3 in place of a clean exit when Link did not arrive in the area
-    asked for (runtime/patches/boot_map.c boot_map_tick writes the line)."""
     area = asked.split(':', 1)[0]
     text = log.read_text(encoding='utf-8', errors='replace')
     lines = [l.split('] ', 1)[-1] for l in text.splitlines() if 'boot map: ' in l]
@@ -225,7 +183,7 @@ def boot_map_report(log, asked, rc):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('exe_dir', type=Path, help='build directory or game folder holding ' + ', '.join(GAME_EXES))
     ap.add_argument('--save', help="the save to run: a backup's name in build/save-backup or the profile's save-backup, "
                                    "or a save folder or .zip from elsewhere (a crash report's zipped profile folder); "
@@ -269,7 +227,7 @@ def main():
         shutil.rmtree(scratch, ignore_errors=True)
 
         env = dict(os.environ, NX2SARIA_ASSUME_FOCUS='1', NX2SARIA_INPUT='none', NX2SARIA_INPUT_SCRIPT=str(a.script.resolve()))
-        if not a.show and os.name == 'nt':   # SDL windows open in front either way
+        if not a.show and os.name == 'nt':
             env['NX2SARIA_BACKGROUND_WINDOW'] = '1'
         for key, value in (('BOOT_MAP', a.boot_map), ('BOOT_MAP_SLOT', a.boot_map_slot),
                            ('BOOT_MAP_AGE', a.boot_map_age), ('BOOT_MAP_TIME', a.boot_map_time)):

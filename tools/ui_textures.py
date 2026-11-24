@@ -1,12 +1,3 @@
-"""List and dump the game's interface textures, for choosing the art the settings menu draws (runtime/ui/menu_art.cpp).
-
-    python tools/ui_textures.py ROMFS [--out build/ui-textures] [--archive Common] [--match REGEX] [--sheet]
-
-ROMFS is an extracted RomFS folder. Without --match it only lists; with it the matching textures become PNGs under
---out, and --sheet also writes contact sheets of them (numbered; sheet.txt says which number is which). Reads files the
-way runtime/ui/menu_assets.c does, and decodes ASTC with the runtime's own decoder (runtime/gfx/tex_astc.c, built into --out).
-Everything written is game data and stays under build/. Needs Python 3.14 (compression.zstd) and numpy.
-"""
 import argparse
 import ctypes
 import re
@@ -20,9 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
+DESCRIPTION = ("List and dump the game's interface textures, for choosing the art the settings menu draws "
+               '(runtime/ui/menu_art.cpp).')
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVES = 'UI/Layout2Archive'
-# the second byte of a BNTX format: name, block size, bytes per block
 KINDS = {0x0b: ('RGBA8', 1, 4), 0x1a: ('BC1', 4, 8), 0x1b: ('BC2', 4, 16), 0x1c: ('BC3', 4, 16), 0x1d: ('BC4', 4, 8),
          0x1e: ('BC5', 4, 16), 0x20: ('BC7', 4, 16), 0x2d: ('ASTC4x4', 4, 16)}
 
@@ -33,7 +25,6 @@ def u64(b, at): return struct.unpack_from('<Q', b, at)[0]
 
 
 def sarc_members(p):
-    """The members of a SARC archive as a name -> bytes dictionary."""
     hl, data = u16(p, 4), u32(p, 0xc)
     count, ents = u16(p, hl + 6), hl + 0xc
     names = ents + 16 * count + 8
@@ -71,7 +62,6 @@ class Romfs:
 
 
 def bntx_textures(b):
-    """Each texture of a BNTX file: name, format, size, block height, data offset and size."""
     out = []
     count, arr = u32(b, 0x24), u64(b, 0x28)
     for i in range(count):
@@ -86,7 +76,6 @@ def bntx_textures(b):
 
 
 def deswizzle(t, b, row, rows):
-    """The first level as tightly packed rows, in the Switch 2 GOB layout (runtime/gfx/tex_deswizzle.c tex_bl_copy)."""
     th = t['th']
     gobs, unit, block = (row + 63) // 64, 8 << th, 512 << th
     need = gobs * ((rows + unit - 1) // unit) * block
@@ -104,7 +93,6 @@ def deswizzle(t, b, row, rows):
 
 
 def bc4(lin, wb, hb, w, h):
-    """White with the mask as alpha (runtime/ui/menu_assets.c bc4_decode)."""
     blocks = lin.reshape(hb, wb, 8).astype(np.uint32)
     a, b = blocks[..., 0], blocks[..., 1]
     pal = np.zeros((hb, wb, 8), dtype=np.uint32)
@@ -129,13 +117,12 @@ def bc4(lin, wb, hb, w, h):
 
 
 def astc_library(out):
-    """The runtime's ASTC decoder as a library, built once into out."""
     dll = out / 'astc.dll'
     src = ROOT / 'runtime' / 'gfx' / 'tex_astc.c'
     if not dll.is_file() or dll.stat().st_mtime < src.stat().st_mtime:
         cc = shutil.which('clang') or r'C:\msys64\ucrt64\bin\clang.exe'
-        vma = Path(cc).resolve().parents[1] / 'include' / 'vma'   # tex.h reaches the Vulkan allocator's header
-        import build_game   # the runtime's include folders: tex.h includes headers from several
+        vma = Path(cc).resolve().parents[1] / 'include' / 'vma'
+        import build_game
         inc = [a for d in build_game.runtime_include_dirs() for a in ('-I', str(d))]
         if subprocess.run([cc, '-shared', '-O2', '-static', '-w', *inc, '-I', str(vma), str(src), '-o',
                            str(dll)]).returncode:
@@ -188,7 +175,6 @@ def label(sheet, x, y, n):
 
 
 def sheets(out, items, cell=220, cols=7, per=35):
-    """Contact sheets over a mid brown, so white masks and dark art both show."""
     lines = []
     for s in range(0, len(items), per):
         page = items[s:s + per]
@@ -209,7 +195,7 @@ def sheets(out, items, cell=220, cols=7, per=35):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('romfs', type=Path)
     ap.add_argument('--out', type=Path, default=ROOT / 'build' / 'ui-textures')
     ap.add_argument('--archive', default='', help='only archives whose name contains this')
