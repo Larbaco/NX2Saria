@@ -1,10 +1,3 @@
-// Stand-ins for what runtime/cfg/cfg.c links against, for the quality preset tests: tests/preset_check.c (C) and
-// tests/preset_draft_check.cpp (C++, with runtime/ui/option_rows.cpp). Defines them: include it in one file of a
-// program, after cfg.h, hw_detect.h and platform/platform.h.
-//
-// rt_log prints "log: <line>"; plat_file_write_atomic prints "write: <path>" and writes the file in place; a thread
-// (plat_thread_spawn) runs its function at once on the caller's, so a test sees what it wrote when the call returns.
-// hw_detect gives the made-up hardware of NX2SARIA_TEST_HW (below).
 #pragma once
 #include <stdarg.h>
 #include <stdint.h>
@@ -83,11 +76,6 @@ int plat_thread_spawn(PlatThreadFn fn, void *arg, const char *name, size_t stack
     return 1;
 }
 
-// hw_detect.c: the hardware NX2SARIA_TEST_HW describes, "field=value" between commas: name, vendor, device, driver,
-// type (discrete, integrated, cpu, other), vram (MiB), mesh, cores, threads, ram (MiB), hand (a handheld's name), skip
-// (the probe does not run: the GPU fields stay empty for cfg.c to fill from the state file), win (FSR 4 counts), crash
-// (the probe "crashes": the process ends with code 9 right after before_probe, as a driver's crash would end it). Without
-// a name, no GPU. A no_probe reason from cfg.c skips the probe as the real one does; else before_probe runs first.
 void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), char *skipped, size_t skipped_cap,
                char *note, size_t note_cap, double *probe_ms) {
     memset(hw, 0, sizeof *hw);
@@ -120,7 +108,7 @@ void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), c
         else if (!strcmp(f, "crash")) crash = atoi(v);
     }
     if (no_probe && *no_probe) snprintf(skipped, skipped_cap, "%s", no_probe);
-    if (skipped[0]) {   // what the real hw_detect leaves for cfg.c: no GPU fields
+    if (skipped[0]) {
         PresetHw keep = *hw;
         memset(hw, 0, sizeof *hw);
         hw->cores = keep.cores, hw->threads = keep.threads, hw->ram_mib = keep.ram_mib;

@@ -1,13 +1,4 @@
 # needs: clang
-"""Build and run runtime/diag/perf.c's rt_knob (cut out of the file with its warning table) with stand-ins for the settings and
-the log: 0, 1 and ab read as before and log nothing; false, off and no in any case read as 0 and true, on and yes as 1,
-without a line; any other value, such as "0 ; a note" from the environment (nx2navi.ini's loader cuts that comment) or
-"enabled", reads as 1 and is logged once per switch, however often the switch is read.
-
-No GPU, no game files, any Python.
-
-Usage: rt_knob_check.py
-"""
 import os
 import re
 import shutil
@@ -88,7 +79,6 @@ int main(void) {
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -97,7 +87,6 @@ def compiler():
 
 
 def cut():
-    """perf.c from the warning table's #define to the end of rt_knob."""
     src = (ROOT / 'runtime' / 'diag' / 'perf.c').read_text(encoding='utf-8')
     m = re.search(r'#define KNOB_WARNED .*?\nint rt_knob\(const char \*name, const char \*def\) \{\n.*?\n\}\n', src, re.S)
     assert m, 'runtime/diag/perf.c: the rt_knob block (KNOB_WARNED ... rt_knob) was not found'

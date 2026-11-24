@@ -1,13 +1,3 @@
-"""tools/private_paths.py: the account's folders written short in what the launcher and the build tools write for
-people (launcher.log, crash.log, Copy Report, the AppImage's build.log, the bug report zip), with the same rules as
-the game's log (runtime/log_privacy_core.h, tests/log_privacy_check.py).
-
-Windows and Linux rules on any system (an environment and a system given to Shortener), accents and spaces in the
-account's name, an account whose folder starts the same, the name alone inside a path but not inside another word nor in
-text without a path, the switch NX2SARIA_LOG_SHORT_PATHS=0, and the launcher's log and bug report zip.
-
-Usage: python tests/private_paths_test.py
-"""
 import os
 import shutil
 import sys
@@ -59,7 +49,7 @@ class WindowsTest(unittest.TestCase):
                          "No such file: '%LOCALAPPDATA%\\\\x'")
         self.assertEqual(s(repr(r'C:\Users\Ana Souza\Games')), repr(r'%USERPROFILE%\Games'))
         self.assertEqual(s('saved in C:\\Users\\Ana Souza.'), 'saved in %USERPROFILE%.')
-        self.assertEqual(s('C:\\Users\\Ana Souza.CORP\\x'), 'C:\\Users\\%USERNAME%.CORP\\x')   # a domain profile
+        self.assertEqual(s('C:\\Users\\Ana Souza.CORP\\x'), 'C:\\Users\\%USERNAME%.CORP\\x')
 
     def test_name_in_a_path(self):
         self.assertEqual(self.s(r'D:\Jogos\Ana Souza\oot'), r'D:\Jogos\%USERNAME%\oot')
@@ -101,7 +91,6 @@ class LinuxTest(unittest.TestCase):
         self.assertEqual(s('/home/user/x /run/user/1000'), '~/x /run/user/1000')
 
     def test_long_text(self):
-        """Many names in a long text: each one reads only the run around it (a bug report's 64 MiB log)."""
         import time
         s = Shortener({'HOME': '/home/ana', 'USER': 'ana'}, windows=False, real=lambda p: p)
         text = ('x' * 100 + ' /run/media/ana/disk\n') * 20000

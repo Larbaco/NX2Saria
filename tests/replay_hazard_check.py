@@ -1,19 +1,4 @@
 # needs: clang, vma, file:runtime/wb_merge_spv.h
-"""Build and run the replay hazard probes on the real runtime sources, on Linux, without game files or a GPU.
-
-- tests/usnap_order_check.c (vk_usnap.c): the order of uniform snapshot drops between replay chunks. Barriers force a
-  drop to run after a later chunk's lookup (stale) or before an earlier chunk's lookup (early); each forced order must
-  read the wrong value and each control the right one. With --tsan it is also built with ThreadSanitizer, which reports
-  nothing there: the barriers order every access, and the fault is the order itself.
-- tests/vkmem_lifetime_check.c (vk_memory.c, AddressSanitizer): a pool record used across the pool's finalize, and
-  mirrors used while idle ones are evicted. The protocol as it is must hold; its controls, with the protection taken
-  out, must fail (a use after free, a use without a buffer).
-
-vk_memory.c includes the runtime's shader headers: build them first (python tools/build_shaders.py, into runtime/) or
-pass a build's folder that has them with --spv-include. The bench uses Clang 20; pass its path with --cc if needed.
-
-    python tests/replay_hazard_check.py --vma-include <vma-dir> --work <scratch-dir> [--tsan]
-"""
 import argparse
 import os
 import shutil
@@ -21,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 import runtime_include
+
+DESCRIPTION = 'Build and run the replay hazard probes on the real runtime sources, on Linux, without game files or a GPU.'
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,7 +19,7 @@ def build(cc, src, exe, flags, includes):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', default=shutil.which('clang-20') or shutil.which('clang') or 'clang')
     ap.add_argument('--vma-include', type=Path, default=Path(os.environ.get('VMA_INCLUDE', ROOT / 'toolchain' / 'vma')))
     ap.add_argument('--vulkan-include', type=Path, help='Vulkan headers, when not provided by the system')
