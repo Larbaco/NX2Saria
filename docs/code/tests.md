@@ -760,3 +760,272 @@ constructor (main+0xd12c00) lays it out.
 `tools/build_game.py --cpu v2` builds the runtime (`-march=x86-64-v2`) and as players' builds do (no `-march`), they pass, and a function with
 such an instruction and no entry in `DISPATCHED` still fails. The flags are `RT_FLAGS` of `tools/build_game.py` without
 its warnings. It needs the MSYS2 UCRT64 clang and an objdump and is skipped without them; no game files.
+
+## `tests/check_platform_test.py`
+
+`tools/check_platform.py` on made-up `runtime/` trees: a Win32 use behind a Windows-only preprocessor branch passes,
+an unguarded one fails, and the repository's own `runtime/` passes. A use behind `#if defined(_WIN32) && X` is
+scanned, never let through. `CheckPlatformTest.check()` gives the exit code and the output of `check_platform.py` on a `runtime/` folder
+holding the given files, or on a given folder. No game files; standard library only.
+
+## `tests/child_timeout_check.py`
+
+How a translator child that stops answering is handled (`runtime/platform/win32.c` `plat_child_read()`,
+`runtime/gfx/gfx_shader.c` `child_exchange_raw()` and `svc_request()`). The check cuts the child functions out of
+`win32.c` and the request functions out of `gfx_shader.c` (`extract()` takes the text from a head through its
+brace-balanced body), builds them with `PLAT_CHILD_READ_MS` at 300 ms (`platform.h` lets a build set it) and runs
+three children through them. Windows only (the child functions are those of `win32.c`). No GPU, no game files, any
+Python.
+
+- A child that keeps its pipe open and never writes: `plat_child_read()` gives -2 after the timeout, and
+  `svc_request()` gives -1 having started one child, so a stuck translator holds its caller one timeout, not two.
+- A child that exits at once: the read fails with a broken pipe (0 or -1) at once, and `svc_request()` restarts it
+  once and gives 0.
+- A child that answers one line: `svc_request()` gives 1 and the line without its line end.
+
+## `tests/compute_prebuild_queue_check.py`
+
+Stresses the production recent-first prebuild queue: changing the concurrency must not omit or repeat any job.
+
+## `tests/compute_warm_reuse_check.py`
+
+Exercises the production compute creation with a fake driver: reuse must never suppress a required live pipeline.
+
+## `tests/crash_stack_check.py`
+
+Builds and runs `tests/crash_stack_check.c`: a stack overflow on a thread and on a fiber made by the platform layer
+(`runtime/platform/win32.c` `thread_main()`, `fiber_start()`, `plat_stack_guarantee()`) still gets its whole crash
+report, a file write and three 2 KiB log lines, and ends with the report's code 71. Without the stack kept back the
+report faulted again and the process ended with an access violation and no line. No game files.
+
+The program (`crash_stack_check thread <file>` or `crash_stack_check fiber <file>`) links the platform layer: a thread
+made by `plat_thread_spawn()`, or a fiber made by `plat_fiber_new()`, recurses until its stack runs out, and the crash
+handler then writes its lines as `crash_handler()` of `runtime/main.c` does: 2 KiB log buffers on the stack with
+`vsnprintf` as `rt_log()` has them, a file write first, as `vk_pipeline_crash_note()` makes during the boot's builds,
+and a frame walk. A volatile keeps the recursion from looking endless to the compiler. The script wants every line;
+the thread's name in the report (`plat_thread_name()`) is the spawned thread's name, and "(unnamed)" for the fiber,
+which runs on the main thread, one the platform layer did not make.
+
+## `tests/diff/atomic.py`
+
+Differential test of exclusives and atomics against Unicorn with the max CPU model, which has the ARMv8.1 LSE atomics.
+Needs no game files. Single steps cannot cover these: a store exclusive only succeeds after a load exclusive, and the
+A57 model rejects LSE. So the test enumerates every variant and runs short sequences (16 bytes of code per test,
+`SLOT`), with the monitor cleared before each case:
+
+- LDXR/LDAXR then STXR/STLXR to the same address (succeeds), all sizes;
+- LDXP/LDAXP then STXP/STLXP to the same address (succeeds) or 16 bytes further (fails; Rn is advanced between the two
+  by an `add xn, xn, #16`), W and X pairs;
+- STXR and STXP alone (fail without a monitor);
+- LDADD, LDCLR, LDEOR, LDSET, LDSMAX, LDSMIN, LDUMAX, LDUMIN and SWP, every size and ordering;
+- CAS and CASP, every size and ordering, with the compare value equal to memory in half of the cases. For CASP, Rs is
+  picked so that Rs+1 is XZR or away from Rn.
+
+`tests()` returns `(words, rn, kind)`, where the kinds `cas` and `casp` mark compare-and-swap tests (the state gets a
+matching compare value). `unicorn_wrong()` names LDSMAX and LDSMIN on bytes, halfwords and words: Unicorn 2.1 (QEMU
+5.0) compares them unsigned, so `model_signed_minmax()` gives the reference for those words from the ARM pseudocode
+(the expected state and memory CRC).
+
+## `tests/diff/common.py`
+
+Shared parts of the differential tests: the Unicorn reference, the operand generators, and the build and run of
+`tests/diff/harness.c`. `IN_FMT` and `OUT_FMT` are the record layouts of `struct In` and `struct Out` in `harness.c`.
+
+- `rand_lane()` gives a random interesting integer lane of `8 << sz` bits; `rand_v()` leaves the upper half zero in
+  15% of the values, like most 64-bit results; `rand_fpcr()` sets DN (bit 25), FZ (bit 24), RMode (bits 23:22) and AHP
+  (bit 26) at random.
+- `Emu` is Unicorn as a Cortex-A57, the Switch's CPU, unless another model is given (LSE atomics need
+  `UC_CPU_ARM64_MAX`), with FP/SIMD enabled through `CPACR_EL1`. Images are (base, bytes) pairs mapped at their guest
+  address. `Emu.run()` runs `count` instructions from pc and returns (x[31], sp, nzcv, pc, v[32]).
+- `build_harness()` compiles one C function per test body plus `harness.c` into `work/harness[.exe]`. It links
+  `runtime/fma.c`: a `--cflags=-march=x86-64-v2` run must exercise the software fma the v2 build links, not the C
+  runtime's. It links with lld when the toolchain has it beside the compiler and with its default linker otherwise (an
+  MSYS2 install without the lld package stopped every differential test at "invalid linker name").
+- `write_cases()` takes cases of (k, fpcr, x[31], sp, nzcv, v[32], memchk); with `stubs`, calls go to the call stub of
+  `harness.c` (`rt_stub()`). `run_harness()` runs the lifted tests and returns the records and the stderr tail or
+  None; its images are (base, path) pairs. `diff_state()` compares a harness record with (x, sp, nzcv, pc, v, mem) and
+  returns the list of mismatches.
+
+## `tests/diff/func.py`
+
+Differential test of whole emitted functions: the C of `recomp/gen.py` for a guest function against Unicorn running
+the same function from its entry until it returns.
+
+It picks functions from the ExeFS modules: no branches out of the function, no SVC, BRK, system register, exclusive or
+atomic instructions; with conditional branches, and loops, jump tables, SIMD and calls where the module has them. It
+emits them with the generator's own `Emitter`, compiles them with `tests/diff/harness.c` (and `runtime/fma.c`, for the
+reason given under `tests/diff/common.py`), and runs each from random states: x0-x7 point into the scratch buffer (or
+hold small integers), the buffer holds pointers into itself and random data, SP sits near the buffer's top and LR is a
+sentinel address (`SENTINEL`, never executed). Unicorn (Cortex-A57) stops when PC reaches the sentinel. A case is
+skipped when Unicorn faults, writes outside the scratch buffer (module images are mapped read-only), leaves the
+function, or runs longer than `--steps` instructions. It compares X0-X30, SP, V0-V31 and the scratch buffer. NZCV is
+not compared: generated functions keep it in a local (`recomp/flags.py`) and leave `c->nzcv` as it was, so flags only
+count where the function reads them, which the registers and memory show.
+
+Every BL and BLR goes to one stub on both sides (`rt_stub()` in `harness.c`, `Runner.stub()` here) instead of its
+callee. The stub folds the guest state at the call into a digest and sets the caller-saved registers from it, so the
+test sees whether the emitted code had every register in the `Cpu` at the call and reads them back after it. Callers
+of another picked function are dropped, as the C side would run that function instead of the stub.
+
+With `--patches`, the spin waits of the table (`recomp/patches.py`, `spin`) are emitted with their gates, and
+functions that hold one come first (a quarter of the picks at most); a case whose loop does not leave runs into
+`--steps`.
+
+- `forbidden_mask()`: the words a picked function must not contain. `0xD4000000` under mask `0xFF000000`: SVC, HVC,
+  SMC, BRK, HLT, DCPS. `0xD5000000` under `0xFFC00000`: system instructions (MRS, MSR, SYS as DC ZVA, hints, barriers),
+  of which hints and barriers are let through. `0x08000000` under `0x3F000000`: exclusives, load-acquire and
+  store-release, CAS. `0x38200000` under `0x3F200C00`: LSE atomics. `call_mask()` is BL and BLR.
+- `pick_functions()` returns `(entry, end, tags)` of up to `count` functions of a module, plus the `Emitter` that will
+  emit them; `spins` maps a spin wait's back-edge to its head, emitted with gates. Functions with a spin wait come
+  first, then those with a `br` (jump tables, fallbacks), at most a quarter of the picks each; then functions with
+  calls, at most half.
+- `call_sites()` gives the addresses of the BL and BLR instructions of a function; `callees()` the function starts its
+  emitted C calls directly (`f_<addr>(c)`, not through `rt_dispatch`); `check_function()` the tags of a function the
+  test can run in isolation, or None; `build()` compiles the emitted functions with `harness.c` into
+  `work/func[.exe]`, `tests[k]` being `emitted[k]`.
+- `Runner` is Unicorn with the module images read-only, a block hook that stops when execution leaves the function,
+  and a code hook on every call site of the picked functions that stops before the call, for the stub. There is one
+  hook per call site, all added before anything is translated, so no cached block lacks one. `Runner.stub()` is
+  `rt_stub()` for a call Unicorn has not executed yet and returns the address to resume at. `Runner.run()` returns (x,
+  sp, nzcv, pc, v, crc of the buffer), or None if the case is skipped.
+
+## `tests/diff/harness.c`
+
+Runs lifted tests and writes the resulting CPU state per case. Shared by `tests/diff/lift.py`, `tests/diff/simd.py`,
+`tests/diff/atomic.py` and `tests/diff/func.py`; the expected state comes from Unicorn on the Python side. Its
+arguments are `buf.bin cases.bin out.bin image base [image base ...]`: each image is mapped at its guest address
+(guest == host), the scratch buffer at `BUF`. `struct In` and `struct Out` match `IN_FMT` and `OUT_FMT` in
+`tests/diff/common.py`. The output is flushed per case so a crash leaves the completed cases readable.
+
+### `rt_stub()`
+
+The callee of every call in a function under `tests/diff/func.py`; `Runner.stub()` there is the same function on the
+Unicorn side. It folds the target, X0-X30, SP and V0-V7 into a digest, so a register the caller left unwritten at the
+call changes it, then sets X0-X18, NZCV and V0-V7 from the digest, so a caller reading a register it held across the
+call sees a value the callee could have left. X0-X7 mostly get pointers into the scratch buffer. The digest and the
+call count go to the top of the scratch buffer, which the memory check covers.
+
+## `tests/diff/lift.py`
+
+Differential test of the lifter on the game's own instructions: lifted C against Unicorn, one instruction at a time.
+
+It samples distinct instruction words from the `.text` of each ExeFS module, one per opcode signature first, lifts
+each with the portable FP/SIMD lowering, runs it from random register state, and compares X0-X30, SP, NZCV, PC (for
+branches), V0-V31 and the scratch buffer (for loads and stores) with Unicorn as a Cortex-A57. Skipped: system
+instructions and exceptions, whose single step cannot be compared, and exclusives and ARMv8.1 atomics, which
+`tests/diff/atomic.py` covers. Encodings the lifter rejects are counted per module and mnemonic; `--coverage` lifts
+every distinct word instead of testing. The test load addresses (`BASES`) are below 2^39 and clear of `BUF`.
+
+- `classify()` gives `skip` for: system instructions (`0xD5000000` under `0xFFC00000`: hints, barriers, MRS/MSR, cache
+  maintenance); exclusives, which need a paired load, and CAS, which is ARMv8.1; LSE atomics (`0x38200000` under
+  `0x3F200C00`); SVC, BRK and HLT (`0xD4000000` under `0xFF000000`); UDF (the upper 16 bits zero).
+- `class_keys()` is the opcode signature per word: the register fields (Rd, Rn, Rm) cleared, mask `0xFFE0FC00`.
+- `pick_module()` returns `(word, pc, body)` for the distinct words of `.text`, one per opcode signature first,
+  lifted. `coverage()` lifts every distinct word and returns, per mnemonic, the distinct words and occurrences of those
+  the lifter rejects (`Unsupported`) or turns into an undefined-instruction trap (`rt_udf`).
+
+## `tests/diff/simd.py`
+
+Differential test of the portable FP/SIMD lowering (lifter `simd='c'`) against Unicorn as a Cortex-A57. Needs no game
+files.
+
+It enumerates every opcode bit pattern of the FP/SIMD data-processing space (bits 27..25 = 111), the FP/SIMD
+load/store space and CRC32 with random register fields (`candidates()`), and compares which encodings the lifter and
+Unicorn accept (`validity()`: word -> (lifter accepts, Unicorn accepts), the words placed at `CODE + 4i`). Then a
+stratified sample of encodings both accept, one per opcode signature first (`class_key()`: the register fields
+cleared), is compiled and run with random interesting operands (NaNs, infinities, denormals, +-0, saturation edges,
+random FPCR.DN/FZ/RMode/AHP): X0-X30, SP, NZCV, V0-V31 and, for stores, memory must match. FPSR is not compared; the
+lowering does not model the cumulative exception bits or QC. Literal loads get an offset into the code region.
+`is_store()` reads the L bit (bit 22), which is in the same position for structures, pairs and single registers; a
+literal load (`0x18000000` under `0x3B000000`) is never a store.
+
+## `tests/dlssg_device_check.py`
+
+Builds and runs `tests/dlssg_device_check.c` on `runtime/vk/vk_dlssg_device.h`: which card counts as usable while DLSS
+Frame Generation's interposer is in use, and how the device is made when the interposer cannot make it
+(`runtime/vk/vk_device.c` `pick_device()`, `runtime/vk/vk_dlssg.c` `vk_dlssg_create_device()`). The interposer and the
+loader are stand-ins that answer as the real ones did in a player's log; `EXT_NOT_PRESENT` (-7,
+`VK_ERROR_EXTENSION_NOT_PRESENT`) is what the interposer answered on Intel graphics. `create_0101()` is 0.10.1's
+creation, for comparison: the interposer alone whenever it is in use. No GPU, no game files, any Python.
+
+- The laptop of the report: an RTX 3050 (gpu 0) and Intel Iris Xe (gpu 1), `framegen = dlss`, `gpu_index = 1`.
+- No NVIDIA card at all (`framegen = dlss` left in the settings file): the device is made without frame generation.
+- An NVIDIA card the interposer refuses (an old driver): once through it, then the loader; when the loader fails too,
+  its result is the one reported.
+- Frame generation off: the loader, whatever the card, and a chosen card of any vendor stands.
+
+## `tests/dlssg_exports_check.py`
+
+The export check of `tools/build_dlssg.py`: it reads the exports `runtime/dlssg/nx2_sl.h` declares and the ones a DLL
+has, and names those the DLL lacks. A DLL built from older sources would otherwise ship: the runtime takes a missing
+optional export (`nx2sl_reflex2`, `nx2sl_frames_max`) for an older DLL and leaves its feature out without an error.
+
+The test builds a small DLL with two of three declared exports with MSYS2 UCRT64's clang (no MSVC, no Streamline SDK,
+no game files) and checks that the third is the one reported; then that the declarations of `nx2_sl.h` itself are read
+in full (the header names its version and log types too, which are no exports of their own). The release gate:
+`tools/build_dlssg.py` `check()` stops on that DLL (`nx2_sl.h` lists `nx2sl_reflex2`), on a missing file and on files
+that are no DLL, naming why, and passes a DLL built with every export `nx2_sl.h` declares. `check_dlssg` of
+`tools/make_launcher.py` is that check, and both `tools/make_launcher.py` and `tools/make_kit.py` run it on their
+`--dlssg` DLL before they resolve the Streamline files (a download) or delete their output folder: a release that
+shipped the DLL of 0.8.0 would never let Reflex hold the frame limit. `refused()` gives the message a call exits with,
+None when it returns.
+
+## `tests/dlssg_pace_check.py`
+
+Builds and runs `tests/dlssg_pace_check.c` on `runtime/pacing/dlssg_pace.h`: whether Reflex or the game's own pacer
+holds the frame limit with DLSS Frame Generation (`runtime/vk/vk_dlssg.c` `vk_dlssg_pace()`), and its checks of the
+frames Reflex held, driven with made-up present times. It needs a C compiler only: no Vulkan headers, no GPU, no game
+files. The build traps on undefined behaviour and on unsigned wrap-around: every period and time in `dlssg_pace.h` is
+a `uint64_t`, which `-fsanitize=undefined` alone lets wrap, so an overflow in that arithmetic fails the check instead
+of passing by chance.
+
+`run()` in the C file is a run of n presents d ns apart, each followed by a host present 1 ms later; the present thread
+takes every limit asked for at once (applied follows want, before the next game present). It returns how many presents
+Reflex held and the last window result that was not `SAME`. `P60` is 16666667 ns, `frame_step_cap_ns` at 60.
+
+- Who holds: before the first host present, the pacer. With a host present 5 ms ago Reflex is asked for the drawn
+  period (16667 us) and the pacer holds until Streamline took it. A movie (period 0): no limit for Reflex, the pacer
+  holds. The setting off, or an older DLL: the pacer. No host present for 200 ms (minimised): the pacer; 199 ms is
+  still Reflex.
+- Reflex holds the limit and presents come a period apart: no verdict over many windows. A GPU slower than the limit
+  at 1x gives frames 2 periods apart, never taken for the shown count.
+- Nothing holds the game: 31 of 60 presents too soon give the limit to the pacer for the run; 30 of 60 is not enough.
+  The present right after a limit was asked and then held is the first that counts.
+- The driver counts the frames on screen: at 2x the drawn frames come two periods apart, so Reflex is switched to
+  shown units; then they come a period apart and Reflex keeps it. At 4x the limit is the period over 4; with the
+  generation paused (the menu, 1x) the period itself.
+- Shown units guessed wrong (the driver counts drawn frames): the frames come too soon, so the pacer. The same slow
+  band twice (a GPU that only manages the limit over the multiplier): the pacer. Hitches (a load: 10 periods) are
+  neither.
+- A change of the period or the multiplier starts the window again: 40 too soon at one limit and 40 at the next give
+  no verdict. Presents the pacer held are not counted (the limit never applied).
+- The longest limit Reflex takes is 30 fps, 33333 us; a period too long for it is the pacer's. The clock going back (a
+  host present stamped after the game's present read the clock) holds nothing up.
+
+## `tests/draft_key_check.py`
+
+The settings menu's draft names each setting `NX2SARIA_` and its key (`runtime/ui/option_rows.cpp` `norm_key()`), and
+every comparison of a name with the `NX2SARIA_` or `NX2NAVI_` prefix uses the prefix's own length. No GPU, no game
+files, any Python.
+
+1. `norm_key()`, cut out of `option_rows.cpp` with `KEY_PREFIX` (`cut()`) and built with a small harness, gives
+   `NX2SARIA_HDR` for `HDR`, `hdr`, `NX2SARIA_HDR`, `nx2saria_hdr` and the earlier `NX2NAVI_HDR`, and the log's
+   spelling (the name after `KEY_PREFIX` characters) is `HDR`. When the prefix became `NX2SARIA_` (9 characters) but a
+   length of 8 was kept here, the draft wrote `NX2SARIA_NX2SARIA_HDR`, a name no setting has: no change in the menu
+   took effect.
+2. No `strncmp`, `strncasecmp`, `_strnicmp`, `memcmp` or `std::string` compare (`s.compare(0, n, "lit")`) in
+   `runtime/`, `launcher/native/` or `tools/` compares a literal starting with NX2 (any case) over a length other than
+   the literal's (`lengths()`), and `option_rows.cpp` cuts the prefix from a key only through `KEY_PREFIX`.
+
+## `tests/ds3_check.py`
+
+Builds and runs `tests/ds3_check.c`: `runtime/input/input_ds3.c`, the DualShock 3 input report decoded to inputs by
+position, and the output report's layout.
+
+- A report at rest has id 1, the sticks centred and nothing pressed. Every button of bytes 2 and 3 alone lights
+  exactly its own input; the PS button (byte 4) is not a Switch button.
+- Sticks: 0 and 255 reach the ends, and y is turned so that up is positive.
+- Triggers: the pressure decides when the report has it, the switch when the pressure reads 0; in a short report (12
+  bytes) the switch alone.
+- Other reports are refused and leave the outputs alone. An output buffer too short for the layout (20 bytes) gets
+  zeros.
