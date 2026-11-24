@@ -2,7 +2,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { csvCell, median, normalizeFatal, quantile } from "../src/admin";
-import { BASE, OLD_RELEASE, RELEASE, adminGet, call, crashSummary, feedbackBody, postJson, resetDb, sessionBody, validSummary } from "./helpers";
+import { BASE, OLD_RELEASE, RELEASE, adminGet, call, crashLogBody, crashSummary, feedbackBody, postJson, resetDb, sessionBody, validSummary } from "./helpers";
 
 beforeEach(resetDb);
 
@@ -135,8 +135,44 @@ describe("CSV", () => {
     expect(text).toContain(`"'@cmd, with comma\nand line"`);
     expect(text).toContain(`"<script>alert(""x"")</script> & =SUM(A1)"`);
     expect(text.split("\r\n")[0]).toBe(
-      '"id","received_at","launcher_version","version","gpu_name","gpu_vendor","os_family","text","has_log","summary_json"',
+      '"id","received_at","kind","launcher_version","version","gpu_name","gpu_vendor","os_family","text","has_log","summary_json"',
     );
+  });
+
+  it("keeps crash logs apart from the comments", async () => {
+    await seed();
+    await postJson("/v1/feedback", crashLogBody({ summary: crashSummary() }));
+    await postJson("/v1/feedback", crashLogBody({ log_tail: "<i>end</i>\n" }));
+    const html = await (await adminGet("/v1/admin")).text();
+    expect(html).toContain('<b id="comments">1</b>');
+    expect(html).toContain('<b id="crash-logs">2</b>');
+    const crashSection = html.slice(html.indexOf("<h2>Recent crash logs</h2>"));
+    expect(crashSection).toContain("access violation at 0x00007ff6a1b2c3d4 in module main+0x1234");
+    expect(crashSection).toContain("<td>crash</td>");
+    expect(crashSection).toContain("log (4 lines)");
+    expect(crashSection).toContain("log (3 lines)");
+    expect(crashSection).not.toContain("&lt;script&gt;");
+    const commentSection = html.slice(html.indexOf("<h2>Recent comments</h2>"), html.indexOf("<h2>Recent crash logs</h2>"));
+    expect(commentSection).toContain("&lt;script&gt;");
+    expect(commentSection).not.toContain("access violation");
+    expect(commentSection.match(/\/log"/g)).toHaveLength(1);
+  });
+
+  it("filters feedback.csv by kind", async () => {
+    await seed();
+    await postJson("/v1/feedback", crashLogBody());
+    const rowsOf = async (query: string) => (await (await adminGet(`/v1/admin/feedback.csv${query}`)).text()).trimEnd().split("\r\n").slice(1);
+    const all = await rowsOf("");
+    expect(all).toHaveLength(2);
+    expect(all.filter((l) => l.includes(',"crash",'))).toHaveLength(1);
+    expect(all.filter((l) => l.includes(',"comment",'))).toHaveLength(1);
+    const crash = await rowsOf("?kind=crash");
+    expect(crash).toHaveLength(1);
+    expect(crash[0]).toContain(',"crash",');
+    const comment = await rowsOf("?kind=comment");
+    expect(comment).toHaveLength(1);
+    expect(comment[0]).toContain(',"comment",');
+    expect(await rowsOf("?kind=other")).toHaveLength(2);
   });
 
   it("csvCell", () => {
@@ -158,6 +194,20 @@ describe("log view", () => {
     expect(response.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(await response.text()).toBe("<b>log</b>\nsecond\n");
+  });
+
+  it("serves a crash log's start and end under their titles", async () => {
+    await postJson("/v1/feedback", crashLogBody({ log_head: "<b>first</b>\n", log_tail: "last\n" }));
+    const row = await env.DB.prepare("SELECT id FROM feedback LIMIT 1").first<{ id: number }>();
+    const response = await adminGet(`/v1/admin/feedback/${row!.id}/log`);
+    expect(response.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(await response.text()).toBe("==== the start of the log ====\n<b>first</b>\n\n==== the end of the log ====\nlast\n");
+  });
+
+  it("serves a crash log without a start as its end alone", async () => {
+    await postJson("/v1/feedback", crashLogBody({ log_head: null, log_tail: "last\n" }));
+    const row = await env.DB.prepare("SELECT id FROM feedback LIMIT 1").first<{ id: number }>();
+    expect(await (await adminGet(`/v1/admin/feedback/${row!.id}/log`)).text()).toBe("last\n");
   });
 
   it("404 for a comment without a log or an unknown id", async () => {
