@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=283a097caac10d3c4752d5cdfdca6d539829ee84 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/telemetry.md source-hash=23820731561527f89a4553078efae3ca474e2048 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · [Русский](../ru/telemetry.md) · **简体中文**
 
@@ -58,9 +58,11 @@
 | `session.duration_s`、`session.frames`、`session.end` | 游戏运行了多长时间，显示了多少帧，以何种方式结束：`normal`、`fatal`、`device_lost` 或 `crash` | `1834`、`109800`、`normal` |
 | `frametime.fps_mean`、`frametime.fps_low_1pct`、`frametime.worst_ms`、`frametime.over_25ms`、`frametime.over_100ms` | 整个会话的平均帧率、其 1% low、最慢的一帧，以及有多少帧耗时超过 25 ms 和超过 100 ms | `59.9`、`52.1`、`88.4`、`14`、`0` |
 | `startup.shader_prewarm_ms`、`startup.shaders_translated`、`startup.pipelines_built`、`startup.pipeline_build_ms` | 启动时准备着色器和管线所花的时间（如果有的话） | `5400`、`120`、`900`、`3100` |
-| `patches` | 处于开启状态的移植版自带补丁的名称，取自游戏日志中 `patches:` 一行的列表。服务器只保存它认识的名称 | `["fps60", "ostep", "zstd"]` |
+| `patches` | 处于开启状态的移植版自带补丁的名称，取自游戏日志中 `patches:` 一行的列表。服务器只保存它认识的名称。由模组的代码补丁生成的补丁集从不列出 | `["fps60", "ostep", "zstd"]` |
 | `mods.count`、`mods.code` | 正在使用的模组数量，以及其中修改游戏代码的模组数量。绝不包含模组的名称 | `1`、`0` |
-| `fatal` | 会话因错误结束时游戏的错误行，其中你的文件夹像日志中一样以简写形式写出（[日志隐私](../log-privacy.md)（英文）），最多 300 个字符 | `null` |
+| `fatal` | 会话因错误结束时游戏的错误行，其中你的文件夹像日志中一样以简写形式写出（[日志隐私](../log-privacy.md)（英文）），即使你为自己的日志关闭了该功能也是如此，最多 300 个字符 | `null` |
+
+名称在 64 个字符处截断（系统、处理器、显卡和驱动程序的名称），控制字符会被丢弃，`version` 是不带构建后缀的发行版本。
 
 游戏不知道的字段为 `null`。如果游戏崩溃得太严重而无法写入报告，启动器会根据日志中的错误行生成一份：只有 `version`、`game_version`、`os.family`、`session.end`（`crash`）和 `fatal`，其他所有字段都为 `null`。
 

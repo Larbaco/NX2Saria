@@ -66,9 +66,12 @@ is sent. A report has these fields and nothing else; the server refuses a report
 | `session.duration_s`, `session.frames`, `session.end` | How long the game ran, how many frames it showed, how it ended: `normal`, `fatal`, `device_lost` or `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | The average frame rate of the whole session, its 1% low, the slowest frame, and how many frames took over 25 ms and over 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | The time spent preparing shaders and pipelines at the start, when there was any | `5400`, `120`, `900`, `3100` |
-| `patches` | The names of the port's own patches that were on, from the list in the game's log line `patches:`. The server keeps only names it knows | `["fps60", "ostep", "zstd"]` |
+| `patches` | The names of the port's own patches that were on, from the list in the game's log line `patches:`. The server keeps only names it knows. A patch set built from a mod's code patches is never listed | `["fps60", "ostep", "zstd"]` |
 | `mods.count`, `mods.code` | How many mods were in use, and how many of them change the game's code. Never their names | `1`, `0` |
-| `fatal` | The game's error line, when the session ended with one, with your folders written short as in the log ([log privacy](log-privacy.md)), at most 300 characters | `null` |
+| `fatal` | The game's error line, when the session ended with one, with your folders written short as in the log ([log privacy](log-privacy.md)), also when you turned that off for your own log, at most 300 characters | `null` |
+
+Names are cut at 64 characters (the system's, the processor's, the graphics card's and the driver's), control
+characters are dropped, and `version` is the release without its build suffix.
 
 A field the game does not know is `null`. When the game crashed so hard that it could not write the report, the
 launcher makes one from the error line in the log: only `version`, `game_version`, `os.family`, `session.end`

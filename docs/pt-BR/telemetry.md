@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=283a097caac10d3c4752d5cdfdca6d539829ee84 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=23820731561527f89a4553078efae3ca474e2048 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -58,9 +58,11 @@ O jogo o grava em `logs/session-summary.json` na pasta do jogo quando termina, p
 | `session.duration_s`, `session.frames`, `session.end` | Quanto tempo o jogo rodou, quantos quadros mostrou, como terminou: `normal`, `fatal`, `device_lost` ou `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | A taxa de quadros média da sessão inteira, o 1% low dela, o quadro mais lento e quantos quadros levaram mais de 25 ms e mais de 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | O tempo gasto preparando shaders e pipelines no início, quando houve algum | `5400`, `120`, `900`, `3100` |
-| `patches` | Os nomes dos patches do próprio port que estavam ligados, da lista na linha `patches:` do log do jogo. O servidor guarda só os nomes que conhece | `["fps60", "ostep", "zstd"]` |
+| `patches` | Os nomes dos patches do próprio port que estavam ligados, da lista na linha `patches:` do log do jogo. O servidor guarda só os nomes que conhece. Um conjunto de patches montado a partir dos patches de código de um mod nunca entra na lista | `["fps60", "ostep", "zstd"]` |
 | `mods.count`, `mods.code` | Quantos mods estavam em uso, e quantos deles mudam o código do jogo. Nunca os nomes deles | `1`, `0` |
-| `fatal` | A linha de erro do jogo, quando a sessão terminou com uma, com as suas pastas escritas de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), com no máximo 300 caracteres | `null` |
+| `fatal` | A linha de erro do jogo, quando a sessão terminou com uma, com as suas pastas escritas de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), também quando você desligou isso para o seu próprio log, com no máximo 300 caracteres | `null` |
+
+Os nomes são cortados em 64 caracteres (o do sistema, o do processador, o da placa de vídeo e o do driver), os caracteres de controle são descartados, e `version` é a versão lançada, sem o sufixo da compilação.
 
 Um campo que o jogo não conhece é `null`. Quando o jogo travou de forma tão grave que não conseguiu gravar o relatório, o launcher monta um a partir da linha de erro no log: só `version`, `game_version`, `os.family`, `session.end` (`crash`) e `fatal`, com todos os outros campos `null`.
 
