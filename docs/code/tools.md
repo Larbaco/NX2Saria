@@ -1416,6 +1416,223 @@ is.
 The link to the English page is looked for in the text without the language block: the block links to the other
 languages on purpose.
 
+## `tools/exefs_patches.py`
+
+ExeFS patches of the mods folder to code patch sets: IPS, IPS32 and IPSwitch (`.pchtxt`) files for the game's main.
+Standard library, `recomp/`, `tools/cheats.py` and `tools/mod_files.py` only.
+
+Lifted code cannot be byte-patched when the game runs, so a patch file's writes into main's code become `site` lines
+(`recomp/patches.py`), one patch set per file, which the runtime switches on while its mod is on
+(`runtime/patches/mods.c`). The writes go through the same rules as the mods' code cheats (`tools/cheats.py`
+`convert()`): an instruction replaced in place, a branch into a code cave the file writes into main's zero padding
+inlined at the branch.
+
+```
+python tools/exefs_patches.py --exefs <dir> --mods <mods folder> --patches <patch file> --out <patch file> --status <file>
+```
+
+The files are `<mod>/exefs/*.ips` and `*.pchtxt` (or the Atmosphere places of the exefs folder, as
+`runtime/patches/mods.c` finds them) and `<mod>/atmosphere/exefs_patches/<name>/*.ips`. A file is for main when its
+build id matches main's: an IPS file's name, a pchtxt file's `@nsobid` line (trailing zeros may be left out). Offsets
+are as emulators read them: IPS offsets count the NSO header (0x100 bytes) before main's image; a pchtxt offset adds
+its `@flag offset_shift` first. A pchtxt patch line applies between `@enabled` and `@disabled`; `@stop` ends the file.
+
+`--out` gets the `--patches` file followed by one set per usable file (`mod_<hash>`, switch
+`NX2SARIA_MODPATCH_<HASH>`, default off) and its sites. `--status` gets one line per file, mods by name, tab
+separated:
+
+```
+<file hash> <content hash> <kind> <built-in sets> <note>
+```
+
+The file hash is FNV-1a 32 of "<mod folder name>/<path in the mod>" (forward slashes); the content hash is the same
+over the file's bytes, so the runtime sees a file that changed after the build. The kinds:
+
+| Kind | What |
+|---|---|
+| `code` | a set of sites |
+| `other` | for another game version or module: not used |
+| `empty` | no write into main for this version (or only the game's own words) |
+| `unsupported` | `<note>` says why: a write into main's data, a write the site rules cannot express |
+
+Built-in sets: the port's own sets (the `--patches` file's sets that are no cheats) with a site this file patches too,
+comma separated, or "-": the runtime switches them off while the mod is on, so the mod's code runs
+([heap-retry.md](../heap-retry.md) has an example).
+
+A file the rules cannot express is unsupported as a whole: half of a patch is worse than none.
+
+The parsers give `{offset in main's image: byte}`. The imports of `cheats` and `mod_files` carry `# noqa: E402`, which
+stays.
+
+### `same_build()`
+
+1 when `name` (hex, any case, trailing zeros left out or not) is main's build id (hex of its 32 bytes).
+
+### `parse_ips()`
+
+IPS (`PATCH` ... `EOF`, 3-byte offsets) or IPS32 (`IPS32` ... `EEOF`, 4-byte offsets); `ValueError` when it is
+neither. A record of length 0 is a run: a 2-byte length, then 1 byte to repeat.
+
+### `pchtxt_value()`
+
+The bytes of a pchtxt value: hex digits in byte order, or a quoted string with C escapes.
+
+### `parse_pchtxt()`
+
+(build id or `None`, `{offset in main's image: byte}`) of an IPSwitch file. A line that is no patch line (a title in
+brackets or a line of text) is skipped.
+
+### `word_writes()`
+
+`{offset: word}` of byte writes into main's code (`.text` and its padding), each word with the bytes the file does not
+write kept; `ValueError` for a write into main's data.
+
+### `builtin_sites()`
+
+`{offset in main: [set name]}` of the patch file's sets that are no cheats or mod patches.
+
+## `tools/extract_fonts.py`
+
+Extracts the Switch system shared fonts from the user's firmware into `build/extracted/firmware/shared-fonts`; its
+`--help` prints the full description (`DESCRIPTION`).
+
+- The vendored scripts import each other by bare module name, so their directory goes on the path before
+  `extract_shared_fonts` is imported (with `# noqa: E402`, which stays).
+- `main()` sets `sys.argv` to the vendored script's own command line and calls its `main()`; the keys path goes in,
+  the key values stay in that process.
+
+## `tools/extract.py`
+
+Extracts the game named in `config.local.toml` into `build/` and verifies it against known hashes; its `--help` prints
+the steps and options (`DESCRIPTION`).
+
+- The vendored scripts import each other by bare module name, so their directory goes on the path before they are
+  imported (with `# noqa: E402`, which stays).
+- `UNSIGNED`: hactool checks two signatures with Nintendo public keys it does not ship, so these two lines always read
+  `(FAIL)` and say nothing about the data. The IVFC levels and the image hash decide.
+- `HACTOOL_HASH_FAIL`: hactool lines of a hash check that failed: a RomFS level, a section's superblock or its hash
+  table.
+- `DAMAGE_TEXT`: errors of the vendored extractors (`tools/vendor/macnativegames/`) that mean a game file's data does
+  not match its own hashes or ends early: the file is damaged or was not copied completely. `DAMAGE` finds them in a
+  script's log.
+- `RUN_SCRIPT`: the embeddable Python (a `._pth` file) does not put a script's directory on `sys.path`, so a vendored
+  script that imports its siblings fails when started by path. This stub adds the directory, then runs the script as
+  `__main__`.
+
+### `DamagedFile`
+
+A game file whose data fails its hash checks or ends early. `path`: that file; `detail`: the check that failed.
+
+### `shown()`
+
+The path relative to the repository when it is below it (log lines), else as given.
+
+### `run_logged()`
+
+Runs a vendored script with its output in `log`. `source`: the game file it reads; a failed hash check or a short read
+of that file raises `DamagedFile`. The script runs with `PYTHONIOENCODING=utf-8`: its messages may name non-ASCII
+paths.
+
+### `exefs_problems()`
+
+Code modules must match byte for byte. `main.npdm` differs between dumps that a repacking tool re-signed.
+
+### `romfs_verified()`
+
+An `index.json` that does not parse is a RomFS damaged on disk (a flipped bit made it unreadable): it counts as not
+verified, so the RomFS is extracted again instead of failing the setup.
+
+### `program_ncas()`
+
+(tickets, `[(source, record, header)]` of the base and the update Program NCA). Raises `ValueError` for a file that is
+no base game or update of this game, or keys that cannot open it.
+
+### `merge_space()`
+
+Bytes `merge_update_romfs()` needs free next to its output, beyond the merged image itself: the two Program NCAs.
+
+### `run_hactool()`
+
+(exit code, stdout and stderr with long hex strings removed). hactool prints UTF-8 (its manifest).
+
+### `damaged_merge_input()`
+
+The `DamagedFile` for a merge whose hash checks failed. The merged RomFS mixes data of both files, so hactool verifies
+the base Program NCA alone: if it fails, the base game file is damaged, else the update file is. The output is
+appended to `log_path`.
+
+### `merge_update_romfs()`
+
+The vendored `extract_update_romfs.merge()` without its Darwin-only bounded view of the base: the base Program NCA is
+copied out. It needs room for both Program NCAs (about 17 GB together) and the merged image (about 17 GB).
+`phase(name)` is called as each part of `MERGE_PHASES` starts. A `ValueError` while a Program NCA is copied out means
+the file ends inside its Program NCA: a `DamagedFile`.
+
+## `tools/flight_view.py`
+
+Reads a `NX2SARIA_FLIGHT` dump (`runtime/diag/flight.c`); its `--help` prints what it shows and where the contact
+sheet goes (`DESCRIPTION`).
+
+- `RARE`: counts that are 0 in a steady frame: any non-zero value is listed.
+- `LEVEL`: counts with a steady level: frames off the median by more than a quarter are listed.
+
+### `describe()`
+
+One line per frame: interval, blocked times over 1 ms, then every non-zero rare count.
+
+## `tools/gen_nvn_procs.py`
+
+Writes `runtime/nvn/nvn_procs.inc`: the NVN proc names the game's 1.2.1 loads. The source names come from `NVN_DIR`
+in `refs/`: `names.txt` plus the `NVN_EXTRA` definitions of `nx2navi_nvn_ext.c`, minus the two names 1.2.1 does not
+load (`NOT_LOADED`). No game data is read. The file's first line is the notice of those names
+(`THIRD_PARTY_NOTICES.md`) and stays.
+
+```
+python tools/gen_nvn_procs.py     (run with .venv)
+```
+
+- `NVN_DIR`: the game folder of the refs checkout that holds the NVN front end.
+- `SUBSDK0`: section 0.1, the names asked by the movie library through `nvnDeviceGetProcAddress`.
+- `NVN2`: NVN2 (Switch 2) procs this host implements; the rest of the NVN2 names get traps
+  (`runtime/nvn/nvn_procs.c` `nvn_trap()`).
+
+### `main()`
+
+`nvnDeviceGetProcAddress` is in both lists (main's and `SUBSDK0`); one row per name is kept.
+
+## `tools/hostmem.py`
+
+Memory the machine can still give to new processes, for sizing worker pools (standard library only;
+[build-memory.md](../build-memory.md)). `CGROUP` is where the unified (v2) cgroup hierarchy is mounted.
+
+### `_job_headroom()`
+
+Bytes left under the memory limit of the job object this process runs in, or `None` without such a limit. A null
+handle asks about the job of the calling process.
+
+### `_meminfo_available()`
+
+`MemAvailable` of `/proc/meminfo` in bytes: what new processes can use without swapping (free memory plus the page
+cache and slab the kernel gives back). `None` when it cannot be read. The file says kB but means KiB.
+
+### `cgroup_limits()`
+
+Yields (folder, the text of its `memory.max`, stripped) for this process's cgroup (cgroup v2) and each cgroup above
+it, nearest first, up to the root; a folder without a readable `memory.max` is left out, and a system without cgroup
+v2 yields nothing. `.` and `..` parts of the cgroup path (a cgroup outside this namespace reads as `/..`) are skipped,
+so every folder lies under `CGROUP`. The cgroup is read from the `0::` line of `/proc/self/cgroup`, the v2 entry; a v1
+system has none.
+
+### `_cgroup_headroom()`
+
+Bytes left under the tightest memory limit of this process's cgroup and the cgroups above it (cgroup v2: `memory.max`
+less `memory.current`), or `None` without such a limit.
+
+### `available_ram()`
+
+Physical memory not in use right now, capped by the memory limit this process runs under if there is one (the job
+object's on Windows, the cgroup's on Linux). `None` where it cannot be read.
+
 ## `tools/make_appimage.py`
 
 `KIT_DIRS` holds `licenses/`: the licence texts `THIRD_PARTY_NOTICES.md` names that are not beside their code (the
