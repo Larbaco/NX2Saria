@@ -844,6 +844,17 @@ window thread follows `FULLSCREEN` / `WINDOW_SIZE`, and `VK_PRESENT` follows at 
 
 - With no lines left, something else (F11) took every change away while the box was open.
 - A line reads `<label>: <from> -> <to>`, with `->` because the font has no arrow glyphs.
+- The list is as wide as the three buttons at least (640 scaled pixels or 70% of the view when that is more), so it
+  and the video memory note use the box's width: the box is sized by its widest part, and at a small window that was
+  the buttons, with the list wrapping in two thirds of it.
+- The list is laid out in rows of one height. Each line is cut into rows here (`CalcWordWrapPositionA`), not by the
+  text item's own wrapping, and the list is a whole number of rows tall (at most 40% of the view), scrolled a whole
+  row at a time: no row shows cut in half, and the edge of a scrolled list falls between rows. Held up / down moves
+  `scroll` smoothly and the list shows it rounded to a row; the wheel and the scrollbar are taken as they come and
+  rounded the same way.
+- The "(after restart)" mark is one piece: it follows the line's last row when it fits there whole, else it gets a
+  row of its own. It was a text item on the same line before, wrapped in what room was left, which broke it inside a
+  word in the languages where it is long.
 - Continue editing has the cursor first.
 - The restart lines are read before Apply empties the draft.
 - A failed write keeps the menu (its bottom row says so), unless display keys wait for their answer.
@@ -1007,7 +1018,8 @@ FSR 3.1 only where it loads), frame generation as set (FSR's only where it can l
 
 The text, in the menu language: `UI_MENU_VRAM_FIT_MEASURED` while the level is tight or critical and
 `UI_MENU_VRAM_FIT_NOTICED` when only an earlier notice of this session makes the rule hold (printf formats: the share
-in use, at most 100, the use and the budget in MiB, then the rows' own labels of what got heavier), drawn in the
+in use, the use and the budget in MiB, then the rows' own labels of what got heavier), and `UI_MENU_VRAM_FIT_FULL`
+when the use has reached the budget (no share: "100% in use (1102 of 1024 MiB)" read as a mistake), drawn in the
 colour of the "after restart" marks; `UI_MENU_VRAM_FIT_PRESET` (the card's GiB, then each row's label with the value
 the preset gives it: `Resolution 1080`, `Upscaling Quality`), drawn dim as information. It sits between the list and
 the buttons, wrapped to the list's width. The buttons do not change: the note never blocks Apply.
