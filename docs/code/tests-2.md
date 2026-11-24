@@ -1769,3 +1769,263 @@ gives the actor the paired entry of last frame belongs to, -1 when the entry is 
   comes: one draw as before, but not the same character.
 - The palette changes size. A key that was not drawn, and one in an empty list.
 - `skin_near`: every bone's translation within the limit; a turned bone at the same place.
+
+## `tests/spin_waits_test.py`
+
+`tools/spin_waits.py` on hand-assembled AArch64 loops, without game files (`python tests/spin_waits_test.py`). The
+main sample is a job queue poll: take the queue's spin lock, look whether the wait is over, release the lock, again.
+
+```
+0x00 T:  cbz x20, X                 0x2c     str w12, [x20, #0x100]     0x50     ldr w13, [x21, #0x90]
+0x04     str w11, [x20, #0x100]     0x30     ldrb w14, [x21, #0x98]     0x54     sub w8, w13, w25
+0x08 L0: ldr w14, [x9]              0x34     cmp w0, #0                 0x58     add w15, w8, w25
+0x0c     cmp w14, #1                0x38     ccmp w14, #0, #4, ne       0x5c     str w15, [x21, #0x94]
+0x10     b.eq L0                    0x3c     ldr w25, [x21, #0x94]      0x60     cset w13, hs
+0x14 L1: ldaxr w14, [x9]            0x40     ccmp w25, #0, #0, ne       0x64     b U
+0x18     cbz w14, L2                0x44     cset w14, gt               0x68 C:  clrex
+0x1c     clrex                      0x48     cmp w14, #1                0x6c U:  ldxr w15, [x9] / cmp w15, #1 / b.ne C
+0x20     b L1                       0x4c     b.ne U                     0x78     stlxr w15, wzr, [x9] / cbnz w15, U
+0x24 L2: stxr w14, w10, [x9] / cbnz w14, L1                             0x80     cbz w14, T          0x84 X: ret
+```
+
+0x50-0x64: the wait is over, take an item, store the new cursor, release and leave.
+
+- The lock poll is a wait; the path that takes an item stores a new cursor (0x5c), so it is not part of the wait.
+- A site of the patch table in the region keeps it out.
+- Not waits: the wait path stores w14, which the pass writes (a store of a changing value); the wait path skips the
+  release (`b.ne U` turned into `b.ne` to the back-edge: the lock is not released); `str xzr, [x8]; b back` (stores of
+  a constant and no load: nothing polled); `ldr w8, [x0]; cbz w8, back` (a plain test loop);
+  `ldr w8, [x0]; subs w1, w1, #1; b.ne back` (a counter: it leaves by itself).
+
+## `tests/sprint_check.py`
+
+Builds and runs `tests/sprint_check.c`: the sprint button (`runtime/patches/sprint.c`) against a stand-in Link, with
+the rest of the runtime stubbed. No game files: the module layout and patch page the runtime includes (`layout.h`,
+`patches.h`) are stand-ins written to the test's build folder. The C file checks the presses and the button the game
+gets from each controller poll (`sprint_pad`), and the dash input the patch set's two host functions put into Link's
+flags, frame by frame, for toggle and hold, each button, Link's states and a Link the player does not control.
+
+The stand-ins: `test_main_base` is `layout.h`'s `MOD_MAIN_BASE`, a buffer standing in for main's image; `set_on` is the
+patch set `sprint`, on at the start as its default; `step` is `frame_step_frames`, the 60 Hz frames of one update of
+Link; `log_lines` counts the lines `sprint.c` writes through `rt_log` (a press an event takes is named). Link is a
+vtable, +0x18 -> owner whose +0x270 -> a with +0x188 -> b with +0x1c0 -> the state, id at +0x28. `frame()` is one
+frame: a controller poll with the given buttons, then Link's update (other flag bits, 0x40, stay; the sites call in
+only while the set is on); it returns what the game got from the poll. `reset()` runs 12 cutscene frames: the settings
+change and every sprint ends.
+
+- Off at the start (`NX2SARIA_SPRINT_BUTTON_PATCH=0`, or a mod patching its sites): no rows, never switched on, and the
+  button always reaches the game.
+- The actor manager names the controlled Link (the one whose +0x18 is owner); another object of Link's class
+  (main+0x4b4dfc0) has another owner.
+- Off: nothing changes, the button reaches the game, and the set's sites stop calling in. A button chosen: the set
+  runs again.
+- Toggle on L3: a press while walking starts it; the button never reaches the game during play. Held is no second
+  press; it stays on through a jump and a roll and after it; the next press ends it. Standing still ends it after 4
+  frames once it has moved; a press while standing waits up to 90 frames for Link to move. An attack, targeting or a
+  cutscene ends it at once (ZL reaches the game and targets); a press during an attack does not start it.
+- Link's class without the player's control: no dash input, and the controlled Link keeps his sprint.
+- A menu or a load: Link's update stops running, and after 8 polls the button reaches the game again; the next update
+  takes the press made meanwhile.
+- Toggle on the bottom button: a press while not moving (put the weapon away) reaches the game and starts nothing;
+  once Link moves, from the next poll the button is the sprint's; not moving, the button keeps its own job.
+- Hold on L3: sprint while held; L3 never reaches the game during play, other buttons do. A button the setting no
+  longer offers is off.
+- Hold on the bottom button: starts only while moving, keeps going while held. A press begun while standing stays the
+  game's for its whole length, also once Link moves: no sprint, no strip. A press begun while moving stays the
+  sprint's when Link stops: the game gets no B from it.
+- A press made in a menu (no update of Link for more than 8 polls) starts nothing when play goes on: it was the menu's.
+- A conversation: Link's update goes on, but an event runs (the word at +0x68 of the event object), so L3 (hide the
+  text box) is the game's and starts nothing; the log names the press ("while an event runs"); when the event ends the
+  button is the sprint's again.
+- The stand-still timings count 60 Hz frames: at 240 fps (a quarter frame an update) a stop of four updates goes on.
+- Switched off with the sprint on, and on again: it does not come back by itself.
+
+## `tests/spv_store_check.py`
+
+Builds and runs `tests/spv_store_check.c` against the platform layer (with `stand_ins()` of
+`tests/platform_stand_ins.py`) and libzstd: `runtime/gfx/spv_store.h`, which keeps a shader's SPIR-V zstd-compressed
+while nobody reads it (`runtime/gfx/gfx_shader.c`, "SPIR-V at rest"). No GPU, no game files, any Python.
+
+- The single-thread checks walk one store through its states: plain, pinned, packed (the frame made, checked and the
+  plain copy freed), decoded back by a pin bit for bit, idle again (only the plain copy goes, the frame stays), and its
+  FNV-1a read from a compressed store without a decode. A reader that arrives while the packer encodes keeps the plain
+  copy.
+- The stress check runs reader threads that pin random stores and compare every word against the original (holding
+  some pins across a time slice), while a packer thread packs every store as soon as nobody holds it; no reader may
+  ever see other words, every pin must be given back, and the final state still gives back the original.
+- The test data are SPIR-V-like words: the header, then instructions with small opcodes, word counts and ids. They are
+  more random than the translator's modules (a frame keeps about 65% of them, against 26% of real SPIR-V), which only
+  makes the encoder's work larger.
+
+## `tests/stutter_hitch_check.py`
+
+Builds and runs `tests/stutter_hitch_check.c`: `runtime/diag/stutter_map.c`'s hitch rule on made-up frame times, with
+the few runtime functions it calls stubbed. A steady change of pace (the game drawing at 60 fps after 200) counts no
+hitch; isolated long frames each count one; a frame over `SM_HITCH_SURE_NS` counts whatever follows it; frames right
+after an area load count as the load's. No GPU, no game files, any Python. `runtime/simd_fp.h` `FOK` ors two compares
+on purpose, and clang 18 warns on it.
+
+The C file keeps the last report's first line (`head`), lists `perf.c`'s causes in its order (`FT_C_*`; the frames are
+charged to the last, unattributed), and reads the hitches in play the exit's report prints and the ones the areas hold
+(what a report counts so far). The clock starts well past any area load.
+
+- 300 frames of the game's menus at 60 fps: none. Five isolated spikes of 30 ms among 7 ms frames: five.
+- Two long frames in a row (150 ms each): one episode of 300 ms. A double spike of 40 ms: one episode.
+- Three long frames, each followed by one as long, as after an area load in a session of 2026-11-13 (87, 91 and 96
+  ms): one episode, not three changes of pace.
+- A change to 30 fps from 140: a run of long frames longer than `SM_EPISODE_MAX`, a change of pace.
+- `stutter_area("Kakariko")`, a load: what follows within `SM_LOAD_NS` is the load's. `stutter_load()` is the texture
+  pool's load of an area, without the game's.
+- At 30 fps every frame is over `SM_HITCH_ANY_NS` and so a candidate: a hitch followed by the steady frames ends at
+  itself, not at the end of the slow run (an episode of 301 frames, 10 s long, before). The end of the slow run stands
+  out from the frames after it: one more. A steady 30 fps with a 120 ms hitch every 60 frames: each counts.
+- The exit's report counts a hitch in the last frames, which only the next frames would have decided: a frame over the
+  sure line followed by 0, 1 or 2 frames (a waiting candidate, then an open episode), two such frames in a row (one
+  episode) and three long frames ending the run (one episode); each time what the run counts once it goes on.
+
+## `tests/stutter_map_check.py`
+
+`tools/stutter_map.py` reads the lines `runtime/diag/stutter_map.c` writes: lines made with the runtime's format
+strings parse into the areas, causes and pipelines they hold. The format strings are copied into the test and must be
+kept in step with `stutter_frame` and `stutter_report` in `stutter_map.c`; the test first checks that the ones the
+parser depends on are still in the runtime. `c_fmt()` turns a C printf format with `%llu`, `%u` and `%d` into
+Python's `%d`. The samples include an episode of three frames, whose head carries their summed time, and a cause with
+a hyphen in its name.
+
+## `tests/submit_clone_check.py`
+
+Builds and runs `tests/submit_clone_check.c` (with `stand_ins()` of `tests/platform_stand_ins.py`):
+`runtime/nvn/nvn_submit_guard.h`, a synchronous submission's deferred binds when another guest thread may be replaying
+the same recording copy (`runtime/nvn/nvn_api_cmd.c` `nvn_submit_prepare()`, `nvn_submit_done()`). No GPU, no game
+files, any Python.
+
+- Four threads submit two hand-built copies 200,000 times each, a quarter of the calls giving their copy twice, while a
+  "game" thread rewrites the handle arrays their deferred binds read. A replay must see its copy's handles unchanged
+  from its resolve to its end (it reads the binds at its start and at its end, where a held continuation would copy
+  them), the in-flight count must be back to 0, the in-place, the given-again and the clone path must all run, and a
+  copy given twice in one call must stay in place when its first occurrence does. The submitter follows
+  `nvn_submit_prepare()`, the replay, `nvn_submit_done()`; handles are copy numbers + 1, a clone's `out` is 0.
+- `nvn_copy_again` with `nvn_copy_enter` as `nvn_submit_prepare()` uses them, one thread: occurrence i of handles h
+  stays in place (1) or is cloned (0); a clone's `out` is 0 and leaves its count at once. A copy given twice in one
+  call with nothing else in flight: both in place, two counts, both left after the replay. Another thread's submission
+  in flight: both occurrences cloned, the count back to that one's.
+- `nvn_resolve_binds`, one thread: an array whose handles differ from the game's is read and written (copied in and
+  counted); one made equal is read, not counted as changed; an immediate bind (no `src`), one with n 0 and one with n
+  over 32 stay untouched; a bind reached through `OP_CALL` is resolved; `OP_CALL` is followed 16 deep and the 17th call
+  stops it; a corrupt record (a size not a multiple of 8) is reported where it is.
+- The argument `old` resolves in place without the guard (0.10.1) and only prints what it sees, to show that the
+  harness catches the race.
+
+## `tests/surface_formats_check.py`
+
+Checks the runtime's surface-format enumeration with mocked Vulkan queries, without game files or a GPU
+(`python tests/surface_formats_check.py [--sanitize]`; `CC` selects a C compiler, otherwise clang, or MSYS2 UCRT64's
+clang on Windows; the `--help` text is the string `DESCRIPTION`). It compiles the actual helper, not a duplicate of
+its implementation: the rest of the presenter needs a window, a Vulkan device and generated game headers, none of
+which this API-enumeration regression needs. In `tests/surface_formats_check.c` the mocked
+`vkGetPhysicalDeviceSurfaceFormatsKHR()` puts a usable HDR10 pair beyond the former 64-entry cutoff.
+
+## `tests/sync_hw_check.py`
+
+Builds and runs `tests/sync_hw_check.c` on `runtime/vk/vk_sync_hw.h`: the newest value each of the replay's timelines
+may reach, and the test that takes a value read above it as a lost device (`runtime/vk/vk_sync.c`, "a lost device in
+the timelines' values"). No GPU, no game files, any Python.
+
+- A note only rises.
+- What a live device can read, and what it cannot: with submissions 1..11 noted, the timeline at any of them, or not
+  yet at the first, is a live reading. After a timeout reset Windows releases the waiters of a timeline with the
+  largest value. A note at the largest value (nothing above it can be read) never counts a reading as lost.
+- The restart of `vk_sync_start`: the note is raised to the value signalled before the signal, so the completion
+  thread's first reading after it is a live one (a new device: its timeline at 3, the front end's values at 500).
+- Four threads raise one note with interleaved values, as the submitting thread, the present and the probes may:
+  concurrent raises end at the largest value any thread gave.
+
+## `tests/sync_wake_check.py`
+
+Builds and runs `tests/sync_wake_check.c`: which WaitSynchronization waits a signalled event or an ended thread wakes
+(`runtime/hle/kernel.c` `wake_sync_waiters()`), on guest threads whose entries are host functions, with the platform
+layer linked (and `stand_ins()` of `tests/platform_stand_ins.py`) and the rest of the runtime stubbed. No game files:
+the module layout the runtime includes is a stand-in written to the test's build folder. With the argument `all` the
+program runs with `NX2SARIA_SYNC_WAKE_ALL=1` and checks that every wait is woken and blocks again.
+
+The stubs for what `kernel.c` reaches: `mem_readable` answers 0 (`NX2SARIA_SVC_WAITS` walks guest frames: off here);
+`cfg_value` answers "0" (no asynchronous preemption, no slow-service log); `perf_size` does nothing (`kern_sizes` is
+not called); `mem_commit_checked` of `runtime/memory.c` is there because `kernel.c` commits the main thread's stack
+with it, which these tests never start. A guest entry is a host function taking the thread's Cpu, with its argument
+in x0. A waiter has `loop` (clear the event, SVC 0x12 ClearEvent on the readable end, and wait again after each wake,
+counting in `wakes`) and `hold` (1: the thread does not end after its wait until the test sets it to 0). A thread that
+has ended: `kernel.c` `thread_finish` marks it exited and wakes its waiters in one hold of the kernel lock. The count
+of waits blocked now tells that those woken for nothing are back in their wait.
+
+1. A waits on a, B on b, C on b and c. A signal of a wakes A; B and C stay in their waits. A's thread ends only once B
+   and C are back in their waits (with `NX2SARIA_SYNC_WAKE_ALL` the signal woke them too), so that its end finds them
+   there; the counts are taken after it ended and they blocked again. Two wakes pass B and C by: the signal of a, and
+   the end of A's thread.
+2. A wait on several handles is woken by its second one and reports its index.
+3. A thread that ends wakes the wait on its handle: E waits for B's thread, and b ends B.
+4. A timed wait keeps its time across other events' signals; a wait without handles is a sleep.
+5. CancelSynchronization ends a wait whatever it waits on.
+6. No signal is lost: eight threads each wait on their own event in a loop; every signal is seen by its thread. To end
+   them, the last wake is not followed by another wait.
+
+## `tests/system_event_check.py`
+
+Builds and runs `tests/system_event_check.c`: the system-event table of `runtime/hle/kernel.c`
+(`kern_bind_system_event`, `kern_signal_system_event`, `kern_clear_system_event`, `kern_unbind_system_event`), with
+the platform layer linked (and `stand_ins()` of `tests/platform_stand_ins.py`) and the rest of the runtime stubbed. No
+game files: the module layout the runtime includes is a stand-in written to the test's build folder.
+
+Without an argument the program checks:
+
+- A kept handle the guest closed (DestroySystemEvent) is neither signalled nor cleared, also when its number went to
+  an unrelated event or the state byte reads nonzero again. With state byte 0 the signal is skipped before the kernel
+  lock. When the byte reads nonzero again with the handles closed (the memory reused, or the SDK made the event again
+  without the binder), the signal must neither end the process nor reach anything. The closed number goes to the next
+  new event at once: the stale entry must not set or clear it. Bound again after the destroy (state byte 0 first, as
+  the guest leaves it), it signals again.
+- A host thread signalling in a loop while a guest thread destroys the event and binds it again (the override called
+  again after a DestroySystemEvent), as `runtime/gfx/gfx_present.c` `vsync_main()` does with a vsync event, never ends
+  the process.
+- With the table full, a new bind takes a destroyed guest-memory entry and keeps the entries in host memory, which a
+  host thread then still signals (`runtime/hle/ov_movie2.c` `update_events()` on a movie decoder thread). The case
+  fills the rest of the table with live events and the movie's two, which live in host memory, and makes the two
+  destroyed guest entries again, so every entry is live.
+- `kern_system_event_live` tells live guest events from destroyed ones.
+- `kern_unbind_system_event` destroys a host-memory event and frees its entry, as `runtime/hle/ov_movie2.c`
+  `ov_dtor()` does with the table full of live guest events and the movie's two host-memory events: each unbound event
+  is destroyed (its handles closed) and leaves the table, the other keeps its entry, a second unbind finds nothing and
+  leaves the table alone, and once the last host entry is gone a new guest bind finds room (the full-table scan keeps
+  host entries, so it would otherwise end with "table full").
+
+With the argument `full` every entry is live and the next bind ends the process with "table full"; the script checks
+the exit code (`rt_fatal`'s stub exits 3) and the text.
+
+The stubs: guest memory is one block; anything else (the "host-memory" events) is not, as `memory.c` answers. The
+SDK's functions the table calls are 1 CreateSystemEvent, 2 GetWritableHandleOfSystemEvent (`kern_bind_system_event`)
+and 3 DestroySystemEvent (`kern_unbind_system_event`). CreateSystemEvent(ev, mode, ipc) makes a kernel event, keeps
+its writable handle at +0 of the `SystemEventType` and its readable one at +4, and sets the state byte;
+GetWritableHandleOfSystemEvent(ev) reads +0; `nn::os::DestroySystemEvent` clears the state byte first, then closes both
+handles (SVC 0x16). The main thread plays a guest thread for the binds. `perf_size` and `mem_commit_checked` are
+stubbed as in `tests/sync_wake_check.c`.
+
+## `tests/target_frames_check.py`
+
+Builds and runs `tests/target_frames_check.c` on `runtime/vk/vk_target_frames.h`: which render passes count as
+rendered frame after frame, so that a draw into them is skipped while its pipeline builds instead of holding the
+replay thread. No GPU, no game files, any Python. The C file's verdict helper gives the verdict with the steady rule
+and without it, and whether only the steady rule made it per-frame.
+
+- The area change of a player's log: an area change after 238 frames of loading screen, where every pass read as
+  one-shot and six mesh draws waited 52 to 660 ms each. The targets: the scene and its depth (drawn every frame), a
+  probe and its depth (every second frame), a layer of the probe drawn every 15th frame, the half-resolution buffers.
+  The frame after, a pass is per-frame by being recent, with or without the rule. 238 frames of loading screen later
+  (its own targets are other images) only the steady rule makes them per-frame. The 960x540 pass of the log: one colour
+  target made new, one steady, the depth target drawn earlier this frame (the pass begins: its targets are noted); the
+  next frame all of it is recent again.
+- What stays one-shot: a lookup table with a second pass into it in the same frame, generated again at each area load,
+  far apart (fewer than `TFR_STEADY` times); a volume generated a few slices per frame (each slice is its own target
+  and is rendered once); the item icon capture (a new colour target with the per-frame depth buffer, once); an image
+  handed on to a texture at other storage starts again (the per-frame history of its handle is not the new texture's);
+  a pass with no target at all.
+- The table keeps the steady targets through an area's first frame: 400 per-frame targets, a pause, then 600 targets
+  made new are rendered before the old ones come round again.
