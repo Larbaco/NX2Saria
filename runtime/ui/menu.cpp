@@ -53,6 +53,8 @@ extern "C" {
 #include "ui_text.h"
 #include "vk_dlssg.h"
 #include "vk_lowlat.h"
+#include "hw_detect.h"
+#include "vram_fit.h"
 #include "vram_warn.h"
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void vk_queue_lock(void);
@@ -1753,6 +1755,89 @@ static void post_next(bool from_keep) {
     }
 }
 
+static struct {
+    int kind;
+    char text[640];
+} g_fit;
+
+static VramLoad vram_load(const char *(*get)(const char *), unsigned window_h) {
+    VramLoad l = {0, VRAM_MODE_OFF, 0};
+    if (wide_available()) {
+        const char *res = get("NX2SARIA_GAME_RES");
+        l.res_h = !strcmp(res, "window") ? window_h : (unsigned)atoi(res);
+    }
+    const bool fsr = !strcmp(get("NX2SARIA_TAA"), "fsr3");
+    l.mode = vram_fit_mode(atoi(get("NX2SARIA_DLAA")) != 0 && (!fsr || vk_ffx_available()), get("NX2SARIA_DLSS"));
+    const char *fg = get("NX2SARIA_FRAMEGEN");
+    l.framegen = !strcmp(fg, "dlss") || (!strcmp(fg, "fsr3") && vk_ffx_framegen_available());
+    return l;
+}
+
+static void vram_fit_make(void) {
+    static const char *const mode_log[] = {"off", "ultra performance", "performance", "balanced", "quality", "full size"};
+    static const UiTextId mode_text[] = {UI_MENU_FRAMEGEN_OFF, UI_MENU_DLSS_ULTRA, UI_MENU_DLSS_PERFORMANCE,
+                                         UI_MENU_DLSS_BALANCED, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_DLAA};
+    static const PresetHw unknown = {};
+    const unsigned window_h = (unsigned)ImGui::GetIO().DisplaySize.y;
+    const VramLoad now = vram_load(opt_before, window_h), draft = vram_load(opt_value, window_h);
+    const PresetHw *hw = cfg_preset_hw();
+    if (!hw) hw = &unknown;
+    uint64_t used = 0, limit = 0;
+    const bool have = mem_budget_vram_mb(&used, &limit) != 0;
+    const int level = have ? mem_budget_level(MEM_VRAM) : MEM_NORMAL, noticed = have ? vram_warn_shown_count() : 0;
+    unsigned what = 0, preset_res = 0;
+    int preset_mode = VRAM_MODE_OFF;
+    g_fit.kind = vram_fit_note(level, noticed, &now, &draft, hw, &what, &preset_res, &preset_mode);
+    g_fit.text[0] = 0;
+    char items[200] = "", said[240] = "", part[120];
+    auto add = [](char *to, size_t cap, const char *piece) {
+        const size_t k = strlen(to);
+        snprintf(to + k, cap - k, "%s%s", k ? ", " : "", piece);
+    };
+    if (what & VRAM_SUGGEST_RES) {
+        snprintf(part, sizeof part, "resolution %u -> %u", now.res_h, draft.res_h);
+        add(said, sizeof said, part);
+        snprintf(part, sizeof part, "%s", menu_text(UI_MENU_GAME_RES));
+        if (g_fit.kind == VRAM_FIT_PRESET) snprintf(part, sizeof part, "%s %u", menu_text(UI_MENU_GAME_RES), preset_res);
+        add(items, sizeof items, part);
+    }
+    if (what & VRAM_SUGGEST_MODE) {
+        snprintf(part, sizeof part, "upscaling mode %s -> %s", mode_log[now.mode], mode_log[draft.mode]);
+        add(said, sizeof said, part);
+        snprintf(part, sizeof part, "%s", menu_text(UI_MENU_UPSCALING));
+        if (g_fit.kind == VRAM_FIT_PRESET)
+            snprintf(part, sizeof part, "%s %s", menu_text(UI_MENU_UPSCALING), menu_text(mode_text[preset_mode]));
+        add(items, sizeof items, part);
+    }
+    if (what & VRAM_SUGGEST_FRAMEGEN) {
+        add(said, sizeof said, "frame generation off -> on");
+        add(items, sizeof items, menu_text(UI_MENU_FRAMEGEN));
+    }
+    const int pct = limit ? (int)(used >= limit ? 100 : used * 100 / limit) : 0;
+    if (g_fit.kind == VRAM_FIT_MEASURED) {
+        snprintf(g_fit.text, sizeof g_fit.text, menu_text(level >= MEM_TIGHT ? UI_MENU_VRAM_FIT_MEASURED : UI_MENU_VRAM_FIT_NOTICED),
+                 pct, (unsigned long long)used, (unsigned long long)limit, items);
+        rt_log("menu: box   vram note: measured (video memory %s, %llu of %llu MiB in use, %d notice(s) shown this session): %s",
+               mem_level_name[level], (unsigned long long)used, (unsigned long long)limit, noticed, said);
+    } else if (g_fit.kind == VRAM_FIT_PRESET) {
+        snprintf(g_fit.text, sizeof g_fit.text, menu_text(UI_MENU_VRAM_FIT_PRESET), preset_gib(hw->vram_mib), items);
+        char limits[96] = "";
+        if (preset_res) snprintf(limits, sizeof limits, "resolution %u", preset_res);
+        if (preset_mode != VRAM_MODE_OFF) {
+            snprintf(part, sizeof part, "upscaling mode %s", mode_log[preset_mode]);
+            add(limits, sizeof limits, part);
+        }
+        rt_log("menu: box   vram note: preset (%u GiB of video memory, tier %s gives %s; video memory %s): %s",
+               preset_gib(hw->vram_mib), preset_tier_names[vram_fit_tier(hw->vram_mib)], limits, mem_level_name[level], said);
+    } else {
+        const bool heavier = vram_fit_heavier(&now, &draft) != 0;
+        rt_log("menu: box   vram note: none (%s; video memory %s, %llu of %llu MiB in use, %u GiB card)",
+               heavier ? "what the draft makes heavier is within the room and the preset" : "nothing the draft changes uses more",
+               mem_level_name[level], (unsigned long long)used, (unsigned long long)limit,
+               hw->have_gpu ? preset_gib(hw->vram_mib) : 0);
+    }
+}
+
 static void apply_confirm(float scale) {
     if (g_apply_ask) {
         g_apply_ask = false;
@@ -1764,6 +1849,7 @@ static void apply_confirm(float scale) {
             if (opt_draft_item(i, &it))
                 rt_log("menu: box   %s: %s -> %s%s", it.label, it.from, it.to, it.restart ? " (after restart)" : "");
         }
+        vram_fit_make();
     }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 0);
@@ -1805,6 +1891,15 @@ static void apply_confirm(float scale) {
         if (dy != 0) ImGui::SetScrollY(ImGui::GetScrollY() + dy * 700 * scale * ImGui::GetIO().DeltaTime);
         ImGui::EndChild();
         ImGui::Spacing();
+        if (g_fit.kind != VRAM_FIT_NONE && g_fit.text[0]) {
+            ImGui::PushStyleColor(ImGuiCol_Text, g_fit.kind == VRAM_FIT_MEASURED ? ImVec4(0.95f, 0.66f, 0.40f, 1)
+                                                                             : ImGui::ColorConvertU32ToFloat4(SKIN_TEXT_DIM));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + list_w);
+            ImGui::TextUnformatted(g_fit.text);
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+        }
         const char *yes = menu_text(UI_MENU_DRAFT_APPLY), *no = menu_text(UI_MENU_DRAFT_DISCARD),
                    *back = menu_text(UI_MENU_DRAFT_KEEP);
         float bw = fmaxf(fmaxf(ImGui::CalcTextSize(yes).x, ImGui::CalcTextSize(no).x), ImGui::CalcTextSize(back).x) +
@@ -2274,13 +2369,13 @@ static void preset_notice_tick(bool busy) {
 
 static void vram_warn_tick(const MenuTarget *t, bool busy) {
     if (!vram_warn_due()) return;
-    const char *why = g_open.load(std::memory_order_relaxed) ? "the settings menu is open"
-                      : ov_movie_live() ? "a movie plays"
-                      : frame_step_world_us() < 0 ? "the game is not in play yet (title screen or file menu)"
-                      : wide_menu_open() ? "the game's pause or system menu is open"
-                      : wide_loading_open() ? "a loading screen is up"
-                      : busy || g_notice_until_ns ? "another notice is up" : nullptr;
-    if (why) return vram_warn_waits(why);
+    const int why = g_open.load(std::memory_order_relaxed) ? VRAM_WAIT_SETTINGS
+                    : ov_movie_live() ? VRAM_WAIT_MOVIE
+                    : frame_step_world_us() < 0 ? VRAM_WAIT_TITLE
+                    : wide_menu_open() ? VRAM_WAIT_PAUSE
+                    : wide_loading_open() ? VRAM_WAIT_LOADING
+                    : busy || g_notice_until_ns ? VRAM_WAIT_NOTICE : VRAM_WAIT_NONE;
+    if (why != VRAM_WAIT_NONE) return vram_warn_waits(why);
     unsigned pw = 0, ph = 0;
     wide_picture(&pw, &ph);
     const bool fsr = !strcmp(cfg_value("NX2SARIA_TAA"), "fsr3");

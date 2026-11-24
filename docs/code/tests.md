@@ -54,6 +54,21 @@ every `MEM_BUDGET_PERIOD_MS`. No GPU, no game files.
 - The session's notices come due one gap apart; after the last, never again, and a later stretch is reported as spent
   once, at the hold.
 - The settings named for each combination in use.
+- What a due notice waits for: a line at each change of the reason, none while it lasts, at most four per notice.
+
+## `tests/vram_fit_check.py`
+
+Builds and runs `tests/vram_fit_check.c` on `runtime/vram_fit.h`. No GPU, no game files.
+
+- The modes' order; what a draft makes heavier, each setting alone; the upscaler turned on below full size is not
+  heavier and at full size is; a smaller picture with frame generation turned on names frame generation only.
+- The tier the video memory alone gives: 6017 MiB Medium, 4096 Low, none from 8 GiB (7700 MiB rounds to 8) and for an
+  unknown card.
+- The measured note: tight or critical now, or a notice shown this session, with something heavier, on any card, and
+  before the preset's; none for a lighter or unchanged draft.
+- The preset's note: DLAA over the Medium tier's quality on a 6 GiB card with DLSS, quality over the Low tier's
+  performance at 4 GiB, never frame generation, only what the draft made heavier, nothing for a card the preset gives
+  no upscaler, for 8 GiB or for an unknown card.
 
 ## `tests/telemetry_launcher_test.py`
 

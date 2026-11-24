@@ -15,9 +15,13 @@ static struct {
     volatile int32_t due;
     uint64_t used_mb, limit_mb, peak_mb;
     uint32_t free_pm;
-    int waits_told;
+    VramWait wait;
     int lines;
 } V = {.lock = PLAT_MUTEX_INIT};
+
+static const char *const wait_names[VRAM_WAIT_REASONS] = {
+    "", "the settings menu is open", "a movie plays", "the game is not in play yet (title screen or file menu)",
+    "the game's pause or system menu is open", "a loading screen is up", "another notice is up"};
 
 static const char *line_take(void) {
     if (V.lines >= VRAM_WARN_LINES) return NULL;
@@ -45,7 +49,7 @@ void vram_warn_sample(int critical, uint64_t used_mb, uint64_t limit_mb, uint32_
     __atomic_store_n(&V.due, V.w.due, __ATOMIC_RELEASE);
     const char *last;
     if (ev == VRAM_WARN_OVER) {
-        V.waits_told = 0;
+        V.wait = (VramWait){0};
         if ((last = line_take()))
             rt_log("vram_warn: video memory not critical for %d s (now %llu of %llu MiB in use): the stretch lasted "
                    "%llu s, %d s of them critical, at most %llu of %llu MiB in use; %d of %d notices shown this "
@@ -70,15 +74,15 @@ int vram_warn_due(void) {
     return due;
 }
 
-void vram_warn_waits(const char *why) {
+void vram_warn_waits(int reason) {
+    if (reason <= VRAM_WAIT_NONE || reason >= VRAM_WAIT_REASONS) return;
     plat_mutex_lock(&V.lock);
     const char *last;
-    if (V.w.due && !V.waits_told && (last = line_take())) {
-        V.waits_told = 1;
+    if (V.w.due && vram_warn_wait_step(&V.wait, reason) && (last = line_take())) {
         rt_log("vram_warn: notice %d of %d due (video memory critical for %d of the last %d s, %llu of %llu MiB in "
                "use), waits: %s%s",
                V.w.shown + 1, VRAM_WARN_MAX, SAMPLE_S(vram_warn_count(&V.w)), SAMPLE_S(VRAM_WARN_WINDOW),
-               (unsigned long long)V.used_mb, (unsigned long long)V.limit_mb, why, last);
+               (unsigned long long)V.used_mb, (unsigned long long)V.limit_mb, wait_names[reason], last);
     }
     plat_mutex_unlock(&V.lock);
 }
@@ -88,7 +92,7 @@ void vram_warn_shown(const char *suggested) {
     plat_mutex_lock(&V.lock);
     if (V.w.due) {
         vram_warn_mark(&V.w, now);
-        V.waits_told = 0;
+        V.wait = (VramWait){0};
         __atomic_store_n(&V.due, 0, __ATOMIC_RELEASE);
         rt_log("vram_warn: notice %d of %d shown: video memory critical for %d of the last %d s (%llu of %llu MiB in "
                "use, %.1f%% free); suggested: %s",
@@ -96,4 +100,11 @@ void vram_warn_shown(const char *suggested) {
                (unsigned long long)V.used_mb, (unsigned long long)V.limit_mb, V.free_pm / 10.0, suggested);
     }
     plat_mutex_unlock(&V.lock);
+}
+
+int vram_warn_shown_count(void) {
+    plat_mutex_lock(&V.lock);
+    int n = V.w.shown;
+    plat_mutex_unlock(&V.lock);
+    return n;
 }

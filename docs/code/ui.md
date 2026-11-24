@@ -971,7 +971,7 @@ amiibo list (`g_open`), a movie (`runtime/hle/ov_movie2.c` `ov_movie_live()`), t
 (the loaded save's world clock has not started: `runtime/pacing/frame_rate.c` `frame_step_world_us()` below 0), the
 game's own pause or system menu and a loading screen (`runtime/patches/wide_bars.c` `wide_menu_open()` and
 `wide_loading_open()`) or another notice (the panel's own, the note after F8, the amiibo note): the notice stays due,
-`vram_warn_waits()` logs the first reason once, and it is shown at the first frame that is free, unless a whole minute
+`vram_warn_waits()` logs the reason at each change of it (`runtime/vram_warn.h` `vram_warn_wait_step()`), and it is shown at the first frame that is free, unless a whole minute
 without a critical sample ended the stretch meanwhile. While the game starts and while an area loads the memory is
 still filling and the renderer has not yet given back what the last area left, so a notice there would name settings
 for a shortage that may be gone once the area is up; the samples of that time still count, and the notice comes with
@@ -992,6 +992,29 @@ The text is `UI_MENU_VRAM_WARN` and one line per setting (`UI_MENU_VRAM_WARN_RES
 each a printf format whose first `%s` is the menu's own label of the row, so the notice says the name the player will
 look for; `_MODE` has a second `%s`, the mode in use. English, Russian, Brazilian Portuguese and Simplified Chinese.
 `vram_warn_shown()` gets the same choices in English for the log.
+
+### `vram_load()`, `vram_fit_make()`
+
+The line of the *Apply your changes?* box that says the draft may not fit the video memory
+([runtime.md](runtime.md), `runtime/vram_fit.h`). `vram_fit_make()` runs once when the box opens (`apply_confirm()`),
+after the draft's lines are logged, and keeps the kind and the text in `g_fit` for the frames the box is up.
+
+`vram_load()` reads one combination through the getter it is given: `runtime/ui/option_rows.cpp` `opt_before()` for
+the settings as they were before the draft, `opt_value()` for the draft's (a staged quality preset's values
+included). The picture's height is `NX2SARIA_GAME_RES` (`window`: the window's height; 0 without the widescreen sets,
+where the menu has no Resolution row), the mode `NX2SARIA_DLSS` while the temporal upscaler is on (`NX2SARIA_DLAA`,
+FSR 3.1 only where it loads), frame generation as set (FSR's only where it can load).
+
+The text, in the menu language: `UI_MENU_VRAM_FIT_MEASURED` while the level is tight or critical and
+`UI_MENU_VRAM_FIT_NOTICED` when only an earlier notice of this session makes the rule hold (printf formats: the share
+in use, at most 100, the use and the budget in MiB, then the rows' own labels of what got heavier), drawn in the
+colour of the "after restart" marks; `UI_MENU_VRAM_FIT_PRESET` (the card's GiB, then each row's label with the value
+the preset gives it: `Resolution 1080`, `Upscaling Quality`), drawn dim as information. It sits between the list and
+the buttons, wrapped to the list's width. The buttons do not change: the note never blocks Apply.
+
+The log gets one `menu: box   vram note:` line each time the box opens: `measured (...)` or `preset (...)` with the
+figures and what was named (`resolution 1080 -> 1440`, `upscaling mode quality -> full size`, `frame generation off
+-> on`), or `none (...)` with why.
 
 ### `notice_draw()`
 
@@ -1228,6 +1251,11 @@ reads `cfg_value`.
 
 `opt_value()`: the draft's value of a staged key, else `cfg_value`. `opt_get()`: as `opt_value()`, else `cfg_get`
 (NULL for a key not set).
+
+### `opt_before()`
+
+The value `key` had in effect before the draft's first change of it (a `Change`'s `orig_eff`), else `cfg_value`: what
+the game ran with when the menu opened, whether the key is previewed (already written) or staged.
 
 ### `opt_preset_tier()`, `opt_default()`, `opt_is_set()`
 

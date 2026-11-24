@@ -63,4 +63,5 @@ static inline int mem_level_next(int level, MemRoom r) {
 void mem_budget_vram(int on);      // vk_device.c: 1 once the device is up (the first call starts the thread), 0 before
                                    // it goes (waits for a sample under way)
 int mem_budget_level(int side);    // MEM_ROOMY .. MEM_CRITICAL of MEM_VRAM or MEM_RAM; MEM_NORMAL before its first sample
+int mem_budget_vram_mb(uint64_t *used_mb, uint64_t *limit_mb);
 void mem_budget_text(char *out, unsigned cap);   // "video memory normal (31.2% free), system memory roomy (55.0% free)"

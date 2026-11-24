@@ -40,6 +40,7 @@ room is 0% free), so both reports above are covered by the one condition.
   minutes later while the stretch lasts, and at most three times in a session. A notice counts when the screen showed
   it, not when it came due.
 - `VRAM_WARN_SHOW_MS`, 12 s: how long the notice stays up. It is up to four lines, longer than the other notices.
+- `VRAM_WARN_WAIT_LINES`, 4: the lines one notice writes about what it waits for.
 - `VRAM_WARN_LINES`, 24: the log lines a session writes besides the start line and the notices themselves (a notice
   that waits, a critical stretch that ended, one that got no notice). The 24th says it is the last.
 
@@ -64,6 +65,48 @@ Upscaling when its mode renders the scene at the picture's full size (DLAA, or F
 it runs. Every one that applies is named, since the game cannot tell which of them the player would rather give up.
 With none of the three in use, the Quality preset.
 
+### `vram_warn_wait_step()`
+
+What a due notice waits for, as one of `VRAM_WAIT_*`: 1 when the reason differs from the last one given, so the log
+gets a line at each change (a movie, then the title screen, then a loading screen) and none while one reason lasts.
+At most `VRAM_WARN_WAIT_LINES` per notice: a player who opens and closes the pause menu while a notice is due does
+not fill the log. `runtime/vram_warn.c` starts the count over when the notice is shown or its stretch ends.
+
+## `runtime/vram_fit.h`
+
+Whether the changes waiting in the settings menu's draft may not fit the video memory, for the line the *Apply your
+changes?* box shows (`runtime/ui/menu.cpp` `vram_fit_make()`). Arithmetic alone, which `tests/vram_fit_check.c` runs.
+
+It does not estimate MiB. Nothing the game measures tells what a combination that is not running would take: the
+budget and the use are totals (`runtime/vk/vk_memory.c` `vk_mem_vram()`), DLSS reports its memory for the mode in use
+only, the frame generator's is known once it is made, another game resolution needs a restart, and the texture cache
+gives memory back under pressure, so the use now plus a difference would be wrong both ways. So the two rules compare
+instead of adding:
+
+- `VRAM_FIT_MEASURED`: the level is tight or critical now, or a notice of full video memory was shown this session,
+  and the draft makes something heavier. It names what got heavier and gives the figures; it does not say the total
+  grows, since the same draft may make another setting lighter.
+- `VRAM_FIT_PRESET`, only when the first does not hold: the card's video memory alone puts it below the High tier
+  (`vram_fit_tier()`: under 6 GiB Low, under 8 GiB Medium, the thresholds of `runtime/cfg/preset_pick.h`), and
+  something the draft makes heavier is above what that tier's rows give this card for it (`preset_value()` for
+  `GAME_RES` and `DLSS`). A hint, not a warning. A setting that was above the preset already and that the draft does
+  not touch is not named; frame generation never is, the preset does not set it; a card the preset gives no upscaler
+  (no DLSS, no FSR 4) has no mode to compare with; 8 GiB or more never gets it.
+
+Neither blocks Apply.
+
+### `vram_fit_mode()`, `vram_fit_mode_heavier()`
+
+The upscaler's mode as a rank by the size of the scene it renders: off, ultra performance, performance, balanced,
+quality, full size (DLAA, FSR Native AA). Between modes a higher rank is heavier. From off, only full size is: it
+renders the scene the game rendered plus one more context, while a mode below it renders a smaller scene than before,
+and a note that called it heavier would send a player short of memory back from the change that may help.
+
+### `vram_fit_heavier()`
+
+The settings the draft makes heavier: a taller picture, a heavier mode, frame generation turned on. Each axis alone:
+a taller picture with a lighter mode names the picture, since there is no measure to weigh one against the other.
+
 ## `runtime/vram_warn.c`
 
 The state behind one lock: `vram_warn_sample()` runs on the "mem budget" thread, the other three on the present thread.
@@ -76,8 +119,9 @@ The lines, all `vram_warn:`:
 - `notice N of 3 shown: video memory critical for S of the last 60 s (U of B MiB in use, F% free); suggested: ...`:
   what the screen showed, with the figures of the last critical sample and the settings named and why (the picture's
   and the window's sizes, the upscaler, the frame generator).
-- `notice N of 3 due (...), waits: ...`: due while the settings menu is open, a movie plays or another notice is up;
-  once per notice.
+- `notice N of 3 due (...), waits: ...`: due while the settings menu is open, a movie plays, the game is not in play
+  yet, its pause menu or a loading screen is up or another notice shows; one line at each change of the reason, at
+  most four per notice (`vram_warn_wait_step()`).
 - `video memory not critical for 60 s (...): the stretch lasted S s, C s of them critical, at most U of B MiB in use;
   N of 3 notices shown this session`: the end of a stretch.
 - `video memory critical for S of the last 60 s again (...): no notice, the session's 3 were shown`.
@@ -92,7 +136,16 @@ with the budget's own first lines and not in a run that never brings a device up
 The figures of the last critical sample are kept for the notice, and the highest use of the stretch for the line of
 its end.
 
+### `vram_warn_shown_count()`
+
+The notices shown this session, for `runtime/vram_fit.h`.
+
 ## `runtime/mem_budget.c`
+
+### `mem_budget_vram_mb()`
+
+The use and the budget of the last video memory sample, the figures its level was made from; 0 before the first
+sample. Read by the settings menu for the line of the *Apply your changes?* box.
 
 ### `sample_vram()`
 

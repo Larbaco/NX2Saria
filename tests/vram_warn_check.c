@@ -111,6 +111,18 @@ int main(void) {
     CHECK(vram_warn_suggest(0, 1, 1) == (VRAM_SUGGEST_MODE | VRAM_SUGGEST_FRAMEGEN), "full-size mode and frame generation");
     CHECK(vram_warn_suggest(1, 0, 0) == VRAM_SUGGEST_RES, "the picture larger than the window alone");
     CHECK(vram_warn_suggest(0, 0, 0) == VRAM_SUGGEST_PRESET, "none of the three: the preset");
+    VramWait wait = {0};
+    CHECK(vram_warn_wait_step(&wait, VRAM_WAIT_MOVIE) == 1 && vram_warn_wait_step(&wait, VRAM_WAIT_MOVIE) == 0,
+          "a reason to wait is said once while it lasts");
+    CHECK(vram_warn_wait_step(&wait, VRAM_WAIT_TITLE) == 1 && vram_warn_wait_step(&wait, VRAM_WAIT_LOADING) == 1,
+          "each change of the reason is said: a movie, then the title, then a loading screen");
+    CHECK(vram_warn_wait_step(&wait, VRAM_WAIT_NONE) == 0 && vram_warn_wait_step(&wait, VRAM_WAIT_LOADING) == 1,
+          "no reason says nothing, and the same reason after it counts as a change");
+    CHECK(wait.lines == VRAM_WARN_WAIT_LINES && vram_warn_wait_step(&wait, VRAM_WAIT_PAUSE) == 0 &&
+          vram_warn_wait_step(&wait, VRAM_WAIT_SETTINGS) == 0, "after %d lines a notice's later reasons are not said", VRAM_WARN_WAIT_LINES);
+    wait = (VramWait){0};
+    CHECK(vram_warn_wait_step(&wait, VRAM_WAIT_PAUSE) == 1, "the next notice starts over");
+
     CHECK(WINDOW_MS == 60000 && VRAM_WARN_HOLD * PERIOD == 20000, "the window is a minute and the hold 20 s of it");
 
     if (fails) return printf("vram_warn_check: %d checks failed\n", fails), 1;
