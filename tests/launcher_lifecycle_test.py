@@ -1,10 +1,12 @@
 # needs: linux, display
+import http.server
 import json
 import os
 import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -172,6 +174,62 @@ class LauncherLifecycleTest(unittest.TestCase):
         self.assertIn('busy with synthetic job', steam.stdout)
         self.assertFalse((self.game / 'game-started').exists())
         self.finish_window(process, False)
+
+    def reports_server(self):
+        hits = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                hits.append(self.path)
+                self.send_response(201)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+
+        httpd = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.env['NX2SARIA_TELEMETRY_URL'] = f'http://127.0.0.1:{httpd.server_address[1]}'
+        return hits
+
+    def steam_run(self, last_line):
+        self.exe.write_text('#!/bin/sh\nmkdir -p logs\n'
+                            "printf '%s\\n' '[host] version: NX2Saria 0.24.0, game 1.1.1' "
+                            "'[host] patches: fps60 on' > logs/nx2saria.log\n" + last_line + '\n')
+        steam = subprocess.run([sys.executable, '-c', STEAM, str(self.root)], cwd=ROOT, env=self.env,
+                               capture_output=True, text=True, timeout=60)
+        self.assertEqual(steam.returncode, 0, steam.stderr)
+        return (self.root / 'data' / 'logs' / 'launcher.log').read_text(errors='replace')
+
+    def test_a_crash_from_steam_leaves_the_offer_waiting_and_sends_nothing(self):
+        hits = self.reports_server()
+        log = self.steam_run("echo 'FATAL: vk: the graphics device was lost' >> logs/nx2saria.log\nexit 72")
+        offer = json.loads((self.game / 'logs' / 'crash-offer.json').read_text())
+        self.assertEqual(offer['kind'], 'device_lost')
+        self.assertIn('the graphics device was lost', offer['message'])
+        stat = (self.game / 'logs' / 'nx2saria.log').stat()
+        self.assertEqual(offer['log'], [stat.st_size, stat.st_mtime_ns])
+        self.assertIn("telemetry: crash log offer: waits for the launcher's main screen (end: device_lost)", log)
+        self.assertEqual(hits, [])
+
+    def test_a_game_steam_stopped_leaves_no_offer(self):
+        hits = self.reports_server()
+        log = self.steam_run('kill -TERM $$\nsleep 5')
+        self.assertFalse((self.game / 'logs' / 'crash-offer.json').exists())
+        self.assertIn('telemetry: crash log offer: not made: the game was asked to close '
+                      '(end: code -15 (ended by SIGTERM))', log)
+        self.assertEqual(hits, [])
+
+    def test_a_normal_end_from_steam_leaves_no_offer(self):
+        hits = self.reports_server()
+        log = self.steam_run("echo '[host] gfx: window closed; exiting' >> logs/nx2saria.log\nexit 0")
+        self.assertFalse((self.game / 'logs' / 'crash-offer.json').exists())
+        self.assertNotIn('crash log offer: waits', log)
+        self.assertNotIn('crash log offer: not made', log)
+        self.assertEqual(hits, [])
 
     def test_steam_can_play_while_window_is_idle(self):
         window = self.start('idle')

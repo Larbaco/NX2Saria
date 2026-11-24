@@ -717,7 +717,8 @@ class WindowTest(WindowBase):
         self.app.back()
         self.assertEqual(self.app.screen, 'reports')
         self.assertEqual([r.label for r in self.app.rows if r.label],
-                         ['Session Reports', 'See What Is Sent', 'Send a Comment', 'Back'])   # nothing to delete by
+                         ['Session Reports', 'See What Is Sent', 'Send a Comment', 'Ask After a Crash',
+                          'Back'])   # nothing to delete by
         self.assertEqual([h[0] for h in self.server.hits], ['POST'])
 
     def test_screen_option_opens_a_screen(self):

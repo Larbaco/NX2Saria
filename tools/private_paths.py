@@ -201,6 +201,15 @@ def shorten(text):
     return _default(text)
 
 
+def shorten_always(text):
+    global _default
+    if not isinstance(text, str):
+        return text
+    if _default is None:
+        _default = Shortener()
+    return _default(text)
+
+
 def describe(env=None):
     """For the start of a log: whether paths are written short."""
     if not on(env):
