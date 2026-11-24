@@ -1,3 +1,37 @@
+"""Cheat files to code patch sets: the code cheats of the mods' Atmosphere cheat files become patch sets of the lifted
+game.
+
+Lifted code cannot be written to while the game runs, so a cheat that writes instructions into main's .text is turned
+into `site` lines (recomp/patches.py) when the game is lifted; the runtime (runtime/patches/cheats.c) switches each cheat's set
+from the in-game menu. A cheat that only writes data (heap, main's data, pointer chains, button conditions) needs no
+patch: runtime/patches/cheats.c runs it in its cheat VM.
+
+  python tools/cheats.py --exefs <dir> --mods <mods folder> --patches <patch file> --out <patch file> --status <file>
+
+The cheat files are <mod>/cheats/<build id>.txt in each folder of --mods (or the Atmosphere places of that folder,
+as runtime/patches/mods.c finds them; the name's case does not matter), the build id the first 8 bytes of main's. Every mod's
+file is built, switched on or off: the runtime decides which run. --out gets the --patches file followed by one set
+per convertible cheat (`cheat_<hash>`, switch NX2SARIA_CHEAT_<HASH>, default off) and its sites. --status gets one line
+per cheat, mods by name, cheats in file order, tab separated:
+
+  <name hash> <content hash> <kind> <buttons> <note>
+
+name hash: FNV-1a 32 of "<mod folder name>/<cheat name>" in UTF-8 (a name repeated in one file: name + "#2", "#3" ...),
+8 upper-case hex digits, so two mods' cheats of one name are apart; content
+hash: the same over the cheat's words, so the runtime sees an edited cheat that was not rebuilt. kind:
+  code       instruction writes, a patch set
+  key        instruction writes while buttons are held (8 mask / writes / 21 else / the original words / 20): a patch
+             set the runtime switches on while the cheat is on and <buttons> (hex HidNpadButton mask) are held
+  master     a {master} cheat with instruction writes: a set that is always on
+  restore    writes only the original instructions (switching a cheat off restores them): nothing to do
+  heading    no opcodes (a title or a group label)
+  data       no instruction writes: the runtime's cheat VM
+  unsupported <note> says why
+A code cheat that calls or jumps into a code cave it writes (words where main has zeros) gets the cave's body inlined
+at the call site; a conditional skip of one store in the body (cbz wN, +8; str wN, ...) is dropped.
+
+Standard library, recomp/ and tools/mod_files.py only.
+"""
 import argparse
 import struct
 import sys
@@ -11,10 +45,7 @@ from lifter import Lifter, Unsupported  # noqa: E402
 from nso import Nso  # noqa: E402
 from mod_files import cheat_files  # noqa: E402
 
-DESCRIPTION = ("Cheat files to code patch sets: the code cheats of the mods' Atmosphere cheat files become "
-               'patch sets of the lifted')
-
-BASE = FIRST_BASE
+BASE = FIRST_BASE   # main's base: recomp/layout.py lays main out first (ORDER); only pc-relative decoding sees it
 NOP = 0xD503201F
 RET = 0xD65F03C0
 
@@ -27,18 +58,22 @@ def fnv(data):
 
 
 def build_id(main):
+    """The first 8 bytes of the NSO build id, as cheat files name themselves."""
     return Path(main).read_bytes()[0x40:0x48].hex().upper()
 
+
+# ---- parsing
 
 class Cheat:
     def __init__(self, name, master, line):
         self.name, self.master, self.line, self.words = name, master, line, []
         self.key = self.kind = self.note = ''
         self.buttons = 0
-        self.sites = {}
+        self.sites = {}   # {offset: [words]}
 
 
 def parse(text, mod):
+    """Cheats in file order, keyed under the mod folder name; words that are not 8 hex digits are skipped."""
     out = []
     for no, raw in enumerate(text.splitlines(), 1):
         s = raw.strip()
@@ -59,6 +94,8 @@ def parse(text, mod):
 
 
 def ops(words):
+    """[(type, [words])] of a cheat; type is the opcode nibble, 0xC0.. for the extended ones. ValueError when the last
+    opcode is cut short."""
     out, i = [], 0
     while i < len(words):
         w = words[i]
@@ -92,6 +129,7 @@ VM_TYPES = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xA}
 
 
 def vm_ok(o):
+    """None when runtime/patches/cheats.c runs the opcode, else why not."""
     t, w = o
     if t not in VM_TYPES:
         return f'opcode {w[0]:08X} is not supported'
@@ -104,12 +142,14 @@ def vm_ok(o):
     return None
 
 
+# ---- instruction writes
+
 class Main:
     def __init__(self, path):
         n = Nso(str(path))
         self.image = bytes(n.image)
-        self.text = n.text
-        self.code_end = n.rodata[0]
+        self.text = n.text   # (offset, size)
+        self.code_end = n.rodata[0]   # .text and its padding up to .rodata, where code caves go
         self.lifter = Lifter(BASE, 'c')
 
     def in_text(self, off):
@@ -134,6 +174,8 @@ class Main:
 
 
 def code_writes(main, o):
+    """{offset: word} of an opcode 0 into main's code (.text and its padding; 4 or 8 bytes, no offset register in
+    use), None for any other opcode; ValueError for a write into the code the patch cannot express."""
     t, w = o
     if t != 0 or (w[0] >> 20) & 0xF != 0:
         return None
@@ -149,26 +191,31 @@ def code_writes(main, o):
 
 
 def branch(w, off):
+    """(kind, target offset) of a b / bl word at off, else None."""
     if w & 0x7C000000 == 0x14000000:
         return ('bl' if w >> 31 else 'b', off + ((((w & 0x3FFFFFF) ^ 0x2000000) - 0x2000000) << 2))
     return None
 
 
 def pc_relative(w):
+    """adr / adrp, a literal load, or any branch: wrong once moved to another address."""
     return (w & 0x1F000000 == 0x10000000 or w & 0x3B000000 == 0x18000000 or w & 0x7C000000 == 0x14000000
             or w & 0xFE000000 in (0x54000000, 0x34000000, 0x36000000, 0xB4000000, 0xB6000000)
             or w & 0xFE000000 == 0xD6000000)
 
 
 def skip_store(body, i):
+    """body[i] is cbz / cbnz wN / xN, +8 and body[i + 1] a str of that register: the skip can go (the cheat stores
+    only when the value is non-zero)."""
     w = body[i]
     if w & 0x7E000000 != 0x34000000 or (w >> 5) & 0x7FFFF != 2 or i + 1 >= len(body):
         return False
     s = body[i + 1]
-    return s & 0x3B400000 == 0x39000000 and s & 0x1F == w & 0x1F
+    return s & 0x3B400000 == 0x39000000 and s & 0x1F == w & 0x1F   # str (unsigned offset), same Rt
 
 
 def cave_body(writes, caves, start, back, call):
+    """The cave's words from start up to its ret (call) or its b to back."""
     body, a = [], start
     while True:
         if a not in caves:
@@ -186,6 +233,9 @@ def cave_body(writes, caves, start, back, call):
 
 
 def convert(main, writes):
+    """{offset: [replacement words]} of a set of instruction writes; ValueError when it cannot. An instruction the
+    lifter cannot take (an FP16 operation in a code cave) is a ValueError too: it makes this cheat or patch file
+    unsupported, where the lifter's own exception stopped the tool, and every cheat and patch of the build with it."""
     try:
         return _convert(main, writes)
     except Unsupported as e:
@@ -220,12 +270,15 @@ def _convert(main, writes):
         last = main.lift(repl[-1], a).kind
         if last not in ('op', 'bl', 'b', 'bcond', 'ret'):
             raise ValueError(f'main+{a:X} gets a {last}')
+        # the generator takes only plain instructions before the last one (recomp/gen.py replacements): a trap or a
+        # system instruction in the middle of a code cave failed the whole lift there
         mid = next((k for k in (main.lift(x, a).kind for x in repl[:-1]) if k != 'op'), None)
         if mid:
             raise ValueError(f'main+{a:X}: its code cave holds a {mid} before its last instruction')
         want = main.effect(orig, a)[1]
         got = [e[1] for e in (main.effect(x, a) for x in repl) if e[1]]
         if (got[0] if got else None) != want or len(got) > 1:
+            # a nop over adds / subs Rd, Rd, #imm: subtract 0 instead, the flags still written and Rd unchanged
             if repl == [NOP] and orig & 0x1F000000 == 0x11000000 and orig & 0x20000000 and \
                     orig & 0x1F == (orig >> 5) & 0x1F:
                 repl = [orig & ~0x003FFC00]
@@ -241,7 +294,7 @@ def classify(main, c):
     except ValueError as e:
         c.kind, c.note = 'unsupported', str(e)
         return
-    os_ = [o for o in os_ if not (o[0] == 2 and len(os_) == 1)]
+    os_ = [o for o in os_ if not (o[0] == 2 and len(os_) == 1)]   # [Link] 20000000: a label
     if not os_:
         c.kind = 'heading'
         return
@@ -262,6 +315,7 @@ def classify(main, c):
                 return
             c.sites, c.kind = convert(main, writes), 'master' if c.master else 'code'
             return
+        # 8 mask, writes, 21000000, the original words, 20000000
         t = [o[0] for o in os_]
         els = next((i for i, o in enumerate(os_) if o[0] == 2 and (o[1][0] >> 24) & 0xF == 1), -1)
         if (t[0] == 8 and t[-1] == 2 and (os_[-1][1][0] >> 24) & 0xF == 0 and els > 1
@@ -277,14 +331,14 @@ def classify(main, c):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=DESCRIPTION)
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--exefs', type=Path, required=True)
     ap.add_argument('--mods', type=Path, required=True, help='the mods folder next to nx2saria.exe')
     ap.add_argument('--patches', type=Path, required=True, help='the game version\'s patch file')
     ap.add_argument('--out', type=Path, required=True, help='the patch file with the cheats added')
     ap.add_argument('--status', type=Path, required=True)
     args = ap.parse_args()
-    sys.stdout.reconfigure(errors='replace')
+    sys.stdout.reconfigure(errors='replace')   # cheat names in a console without their characters
     m = Main(args.exefs / 'main')
     text = args.patches.read_text()
     files = cheat_files(args.mods, build_id(args.exefs / 'main'))
@@ -294,7 +348,7 @@ def main():
         classify(m, c)
         if c.sites:
             name = f'cheat_{c.key.lower()}'
-            label = c.name.encode('ascii', 'replace').decode()
+            label = c.name.encode('ascii', 'replace').decode()   # recomp/patches.py reads the file as ASCII
             sets.append(f'set {name} NX2SARIA_CHEAT_{c.key} {1 if c.kind == "master" else 0}   # {label}')
             for a, repl in sorted(c.sites.items()):
                 sites.append(f'site {name} main {a:x} {m.word(a):08x} {" ".join(f"{w:08x}" for w in repl)}')
