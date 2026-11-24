@@ -45,7 +45,7 @@ are shown with their known meanings. Requested Linux termination signals do not 
 excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
 the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
 
-### `game_session.finish_game()`
+### `launcher/game_session.py`: the game's end
 
 Once `GameRun.running()` has confirmed that the followed game and any Restart copies have ended, `finish_game()`
 asks the run for its `GameEnd`, writes its end line to the launcher log, synthesizes a crash summary if session reports
