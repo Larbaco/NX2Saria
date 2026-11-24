@@ -153,3 +153,9 @@ Runs the actual launcher window on Linux with a virtual display, isolated tempor
 - While the window has an active job and the marker, the mutating CLI command is refused and Steam Play reports the active job without starting the game. With the window idle and no job marker, Steam Play starts the synthetic game even though the window holds the launcher lock.
 
 The tests describe the existing window's behavior, not the proposed worker's EOF or recovery behavior. They leave no game process running after the test.
+
+## `tests/launcher_play_characterization_test.py`
+
+Characterizes the existing Tk Play entry point using temporary game folders and stubbed process and system APIs; it
+never opens a real game. It records the observable refusal, rebuild, memory decision, spawn, visibility and log behavior
+before the Play decision logic is extracted. Mod preparation errors and an infinite memory estimate are covered.
