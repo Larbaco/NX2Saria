@@ -189,3 +189,9 @@ the order of window restoration, end logging, crash-summary synthesis, game-log 
 reports and the home screen. They cover a game that is still running, an absent session, disabled reports, an empty
 note, a focus error and both update and reports short-circuits. Existing `launcher_test.py` cases exercise the actual
 `GameRun` restart and fatal-end behavior with synthetic files and processes.
+
+## `tests/launcher_mods_job_characterization_test.py`
+
+Characterizes the Tk adapter's existing handling of a mod rebuild result: success with cache kept or dropped, the
+ordered return to Play, and the separate cancelled and failed paths that retain the pending mod names. The test invokes
+`App.job_finished` with synthetic jobs and does not run a build or launch a game.
