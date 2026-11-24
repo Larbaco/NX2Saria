@@ -1038,6 +1038,384 @@ checks), so every process of the executable is this run's.
 
 The mean difference of the colour channels (0 to 255) over every `step`-th pixel of two pictures of one size.
 
+## `tools/cheats.py`
+
+Cheat files to code patch sets: the code cheats of the mods' Atmosphere cheat files become patch sets of the lifted
+game. Standard library, `recomp/` and `tools/mod_files.py` only.
+
+Lifted code cannot be written to while the game runs, so a cheat that writes instructions into main's `.text` is
+turned into `site` lines (`recomp/patches.py`) when the game is lifted; the runtime (`runtime/patches/cheats.c`)
+switches each cheat's set from the in-game menu. A cheat that only writes data (heap, main's data, pointer chains,
+button conditions) needs no patch: `runtime/patches/cheats.c` runs it in its cheat VM.
+
+```
+python tools/cheats.py --exefs <dir> --mods <mods folder> --patches <patch file> --out <patch file> --status <file>
+```
+
+The cheat files are `<mod>/cheats/<build id>.txt` in each folder of `--mods` (or the Atmosphere places of that folder,
+as `runtime/patches/mods.c` finds them; the name's case does not matter), the build id the first 8 bytes of main's.
+Every mod's file is built, switched on or off: the runtime decides which run. `--out` gets the `--patches` file
+followed by one set per convertible cheat (`cheat_<hash>`, switch `NX2SARIA_CHEAT_<HASH>`, default off) and its sites.
+`--status` gets one line per cheat, mods by name, cheats in file order, tab separated:
+
+```
+<name hash> <content hash> <kind> <buttons> <note>
+```
+
+The name hash is FNV-1a 32 of "<mod folder name>/<cheat name>" in UTF-8 (a name repeated in one file: name + "#2",
+"#3" ...), 8 upper-case hex digits, so two mods' cheats of one name are apart; the content hash is the same over the
+cheat's words, so the runtime sees an edited cheat that was not rebuilt. The kinds:
+
+| Kind | What |
+|---|---|
+| `code` | instruction writes, a patch set |
+| `key` | instruction writes while buttons are held (8 mask / writes / 21 else / the original words / 20): a patch set the runtime switches on while the cheat is on and `<buttons>` (hex HidNpadButton mask) are held |
+| `master` | a `{master}` cheat with instruction writes: a set that is always on |
+| `restore` | writes only the original instructions (switching a cheat off restores them): nothing to do |
+| `heading` | no opcodes (a title or a group label) |
+| `data` | no instruction writes: the runtime's cheat VM |
+| `unsupported` | `<note>` says why |
+
+A code cheat that calls or jumps into a code cave it writes (words where main has zeros) gets the cave's body inlined
+at the call site; a conditional skip of one store in the body (`cbz wN, +8; str wN, ...`) is dropped.
+
+`BASE` is main's base: `recomp/layout.py` lays main out first (`ORDER`); only pc-relative decoding sees it. The
+imports from `recomp/` and of `mod_files` carry `# noqa: E402`, which stays.
+
+### `build_id()`
+
+The first 8 bytes of the NSO build id, as cheat files name themselves.
+
+### `Cheat`
+
+`sites` is `{offset: [words]}`.
+
+### `parse()`
+
+Cheats in file order, keyed under the mod folder name; words that are not 8 hex digits are skipped.
+
+### `ops()`
+
+`[(type, [words])]` of a cheat; the type is the opcode nibble, 0xC0.. for the extended ones. `ValueError` when the
+last opcode is cut short.
+
+### `vm_ok()`
+
+`None` when `runtime/patches/cheats.c` runs the opcode, else why not.
+
+### `Main`
+
+`text` is (offset, size) of `.text`; `code_end` is where `.rodata` starts: `.text` and its padding up to `.rodata`,
+where code caves go.
+
+### `code_writes()`
+
+`{offset: word}` of an opcode 0 into main's code (`.text` and its padding; 4 or 8 bytes, no offset register in use),
+`None` for any other opcode; `ValueError` for a write into the code the patch cannot express.
+
+### `branch()`
+
+(kind, target offset) of a `b` / `bl` word at `off`, else `None`.
+
+### `pc_relative()`
+
+`adr` / `adrp`, a literal load, or any branch: wrong once moved to another address.
+
+### `skip_store()`
+
+`body[i]` is `cbz` / `cbnz wN / xN, +8` and `body[i + 1]` a `str` of that register (unsigned offset form, same Rt):
+the skip can go (the cheat stores only when the value is non-zero).
+
+### `cave_body()`
+
+The cave's words from `start` up to its `ret` (call) or its `b` to `back`.
+
+### `convert()`
+
+`{offset: [replacement words]}` of a set of instruction writes; `ValueError` when it cannot. An instruction the lifter
+cannot take (an FP16 operation in a code cave) is a `ValueError` too: it makes this cheat or patch file unsupported,
+where the lifter's own exception stopped the tool, and every cheat and patch of the build with it.
+
+### `_convert()`
+
+- The generator takes only plain instructions before the last one of a replacement (`recomp/gen.py`): a trap or a
+  system instruction in the middle of a code cave failed the whole lift there, so such a cave is refused here.
+- A nop over `adds` / `subs Rd, Rd, #imm` becomes the same instruction subtracting 0: the flags are still written and
+  `Rd` is unchanged.
+
+### `classify()`
+
+A lone opcode 2 (`[Link] 20000000`) is a label, so such a cheat is a heading. The `key` form is: 8 mask, the writes,
+`21000000`, the original words, `20000000`.
+
+### `main()`
+
+- Standard output is reconfigured with `errors='replace'`: cheat names in a console without their characters.
+- A set's label is the cheat's name in ASCII with replacements: `recomp/patches.py` reads the file as ASCII.
+
+## `tools/check_content.py`
+
+Refuses files that look like game content, keys, generated game code or compiled shaders, and art that is not listed.
+It runs in CI on every push and pull request, and locally as the pre-commit hook (`.githooks/pre-commit`). With no
+arguments it checks every tracked file; with `--staged` it checks the files staged for the next commit. Standard
+library only, so it runs before any environment is set up.
+
+- `BLOCKED_SUFFIXES`: Switch containers, executables and game data formats.
+- `BLOCKED_NAMES`: ExeFS modules carry no extension.
+- `GENERATED_MARKER`: written by the code generator into every file it emits.
+- `KEY_LINE`: a `prod.keys` / `title.keys` line: a name containing key, kek or seed, then hex.
+- The patterns of `recorded_in_play()` are what a game folder records in play and what `tools/pipeline_list.py` folds
+  from it: the game's shader code, the answers it was translated for, the pipelines it drew. All of it is derived from
+  game data.
+- `ART_FOLDER` is the button art in the repository: pictures from a pack with a clear free licence (CC0), which
+  `SOURCE.md` names. Every other file of the folder is a picture listed in `SHA256SUMS` with its SHA-256, so a picture
+  of unknown origin, or one changed by hand, is refused.
+
+### `list_files()`
+
+Tracked files plus untracked ones that are not ignored: everything a commit could pick up.
+
+### `staged_bytes()`
+
+The content of a path as staged for the next commit (the index), not the working copy, which may differ.
+
+### `problems_for()`
+
+`allow_large`: files over `MAX_BYTES` (toolchain binaries in a release folder) are checked for the generated marker
+only, not refused. `data`: the content to check in place of the file on disk (the staged one, for `--staged`).
+
+### `compiled_shader()`
+
+A SPIR-V binary or a header of SPIR-V words. The repository holds its shaders as source (`runtime/shaders/`, the
+`tools/make_*.py` assemblers) and `tools/build_shaders.py` builds `runtime/<name>_spv.h` from them when the game is
+built. A build kit carries the headers, so `tools/make_kit.py`, which calls `problems_for()`, is not held to this.
+
+### `recorded_in_play()`
+
+A `shader-programs.bin`, `shader-answers.bin`, `pipeline-keys.bin` or a pipeline list, by its first bytes. A build kit
+may carry a pipeline list (`data/pipeline_list.bin`), so `tools/make_kit.py`, which calls `problems_for()`, is not held
+to this.
+
+### `execution_profile()`
+
+The counts an instrumented game wrote (`.profraw`) or their merged profile (`.profdata`, `tools/pgo.py`): they name
+the lifted functions and count their branches, so they are derived from the game's code. A launcher release may carry a
+profile (`data/pgo-<version>.profdata`), so `tools/make_launcher.py`, which calls `problems_for()`, is not held to this.
+
+### `art_sums()`
+
+`ART_FOLDER`'s `SHA256SUMS` (the staged one for `--staged`): picture path inside the folder to SHA-256.
+
+### `art_problem()`
+
+Why a file of `ART_FOLDER` may not be committed, or `None`: it is `SOURCE.md` or `SHA256SUMS`, or a picture listed in
+`SHA256SUMS` with its SHA-256.
+
+### `main()`
+
+`--staged` checks what the commit takes, the staged content: a marker staged and then removed from the working copy
+alone passed when the file on disk was read.
+
+## `tools/check_isa.py`
+
+Refuses instructions above x86-64-v2 in objects built for `--cpu v2`. Standard library only.
+
+```
+python tools/check_isa.py [--objdump PATH] FILE...   (objects, archives or executables)
+```
+
+The v2 build is for CPUs without AVX, AVX2, FMA, BMI1/2, F16C, LZCNT and MOVBE (a Pentium Gold G6400, an older Core
+i7). The compiler keeps generated code inside that set by `-march=x86-64-v2`, but inline assembly, target attributes
+and intrinsics pass through: `kern_ap_stub` (`runtime/hle/kernel.c`) saved YMM registers with `vmovdqa` in the v2
+library of 0.3.1 and crashed such a CPU with an illegal instruction the first time a core was interrupted.
+`tools/build_game.py --cpu v2` runs this over every runtime object before it links or archives them.
+
+- `NON_V2`: mnemonics outside x86-64-v2 that are not VEX/EVEX encoded, or VEX encoded but without a `v` prefix
+  (BMI1/2). `lzcnt` and `tzcnt` decode as `bsr` and `bsf` on older CPUs and give other results; `tzcnt` is left out
+  because the compiler emits it on any x86-64 level where `bsf` would do (a nonzero input, or one it checks first).
+- `DISPATCHED`: function to the runtime check that keeps it off CPUs without the instructions. A function that holds
+  such an instruction behind a runtime CPU check goes there with that check named.
+
+### `find_objdump()`
+
+llvm-objdump next to the compiler in use, else on `PATH`, else GNU objdump; `None` when there is none.
+
+### `mnemonic()`
+
+The mnemonic of one disassembly line (llvm-objdump or GNU objdump, AT&T syntax), or `None`.
+
+### `is_non_v2()`
+
+A mnemonic with a `v` prefix is VEX or EVEX (AVX, AVX2, FMA, F16C, AVX-512); a `%k` operand is an AVX-512 mask
+register.
+
+### `scan_one()`
+
+`{(file, function): Counter of mnemonics}` of one file.
+
+### `scan()`
+
+The same for every function outside `DISPATCHED` with a non-v2 instruction.
+
+### `check_objects()`
+
+Scans the objects changed since the last clean scan (their sizes and mtimes in the JSON file `record`); returns the
+failure text, or `None`. Without an objdump it warns and passes: the check guards the build, it is no part of it.
+
+## `tools/check_platform.py`
+
+Fails when runtime code outside `runtime/platform/` uses the Win32 API directly. Its shebang line stays.
+
+```
+python tools/check_platform.py [--root DIR]   (DIR holds runtime/; default: the repository root)
+```
+
+Runtime code goes through `runtime/platform/platform.h`. The Win32 back ends of the window system are Win32 by design
+and are not scanned: files named `*_win.c` / `*_win.cpp` (`runtime/` and `runtime/ui/`), whose SDL counterparts
+(`*_sdl.*`) serve other hosts. Nor are the branches of a shared file that only a Windows build compiles
+(`windows_only_lines()`): a file with a portable path of its own may reach a Windows-only library there (the
+upscalers' DLLs, RivaTuner's shared memory). Any other file that still uses Win32 goes into `ALLOWED` with the reason;
+a file in `ALLOWED` that no longer matches is noted, so the entry gets removed. `ALLOWED` is the per-file allowlist of
+shared files that still use Win32; empty means every shared file is portable.
+
+### `strip()`
+
+Blanks comments and string literals, keeping line numbers.
+
+### `windows_only_lines()`
+
+The numbers (from 0) of the lines of code (comments blanked: `strip()`) that only a Windows build compiles: the branch
+of `#ifdef _WIN32`, `#if defined(_WIN32)` or `#if _WIN32` up to its `#else`, `#elif` or `#endif`, the `#else` branch
+of `#ifndef _WIN32` or `#if !defined(_WIN32)`, and whatever a conditional inside such a branch holds. The directives
+themselves are not among them. Any other branch counts as compiled everywhere, `#elif defined(_WIN32)` and
+`#if defined(_WIN32) && X` too: such a branch is scanned, which can fail the check but never lets a use through. The
+stack holds, per open conditional, its kind (`'win'`, `'notwin'`, `'other'`) and whether its open branch is
+Windows-only.
+
+### `scan()`
+
+The stripped code has the same lines as the raw text. An include's match can begin on the line before it (`^\s*`
+takes that line's newline), so the line asked about is the one its end is on.
+
+## `tools/crit_path.py`
+
+The critical path of each frame from a `NX2SARIA_CRIT` recording (`runtime/hle/kernel.c` `crit_frame()`).
+
+```
+crit_path.py <crit.bin> [--top N]
+```
+
+It walks back from every present on the presenting thread to the previous one. While the thread runs, waits for a
+virtual core, sits in a host call or sleeps, the time goes to that thread and state. When it waits on a guest object,
+the wake that ended the wait names the waker: the time from that signal to the end of the wait is wake latency, and
+the walk goes on on the waker at the moment it signalled. A wait no guest thread ended (a timeout, a host signal)
+counts whole. The sums per frame add up to the frame interval.
+
+### `main()`
+
+`seg` holds, per thread, the starts, the states and the wakers at each start; `wakes`, per thread, the signal times
+and the wakers. For a wait from `starts[i]` to the next state change, the last signal for the thread inside it is the
+one that ended it.
+
+## `tools/dlss_pin.py`
+
+NVIDIA's DLSS library for the releases: `nvngx_dlss.dll` for Windows, `libnvidia-ngx-dlss.so.<version>` for Linux.
+`tools/make_launcher.py` and `tools/make_kit.py` put the DLL in the release's `bin/` beside AMD's FSR 3.1 library,
+`tools/make_appimage.py` puts the Linux library in the AppImage's kit `bin/`, and `tools/make_game.py` copies either
+beside the game, where NGX loads it (`runtime/vk/vk_dlaa.c`). Without it DLSS runs only where the NVIDIA driver
+supplies the model itself (Windows), and on Linux not at all (`runtime/gfx/resolution.c` `dlss_dll()`).
+
+The file is NVIDIA's own build from the DLSS SDK repository at a pinned tag, unmodified and checked against its size
+and SHA-256. NVIDIA's RTX SDKs License lets an application ship it in object form; the notice written beside it names
+the version and the licence that covers it. Both platforms' files are published under the one licence file of that
+tag.
+
+- `NOTICE` and `LINUX_NOTICE` are written beside the DLL and beside the Linux library; `tools/make_game.py` reads
+  their `sha256` line.
+- `LINUX_NAME` is the Linux library of the same release. Its name ends in the DLSS version; NGX finds it by that name
+  beside the executable (`runtime/gfx/resolution.c` `dlss_dll()` looks for the prefix).
+
+### `pin()`
+
+The pinned file of a platform.
+
+### `resolve()`
+
+The pinned library: `local` when given (it must be the pinned file), else the copy in `cache_dir`, downloaded when
+missing (`launcher/net.py`: resumed, checked against the size and SHA-256). `linux`: the Linux library, else the DLL.
+
+### `place()`
+
+The library and its notice into a release's or the kit's `bin/`.
+
+## `tools/docs_i18n.py`
+
+Checks the repository's Markdown links and keeps the translated player docs in step with their English sources.
+[translating.md](../translating.md) describes the layout. Standard library only, so it runs before any environment is
+set up.
+
+In short: English is the source; `README.md` has translations at the root as `README.<lang>.md`, and `docs/<name>.md`
+has them as `docs/<lang>/<name>.md`. Each translation starts with a header line
+
+```
+<!-- translation: lang=pt-BR source=docs/install.md source-hash=<sha1> reviewed=no -->
+```
+
+where `source-hash` is the SHA-1 of the English file the translation was made from, with that file's language block
+left out (adding a language changes the block, not what there is to translate). Every page of a translated set (the
+source and its translations) carries a language block between `<!-- languages -->` and `<!-- /languages -->`, written
+by this tool: the links to the other languages and, in a translation, the notice that the English version prevails.
+
+| Command | What |
+|---|---|
+| `check [--strict]` | fail on a broken relative link or anchor in any Markdown file, a bad translation header, a language block that differs from the generated one, or a translation that links to the English page of a doc it has in its own language; warn when a translation is older than its source (`--strict` fails then too). The content guard workflow runs it |
+| `status` | each translated source and language: ok, stale or missing, and whether it was reviewed |
+| `diff <translation>` | what changed in the English source since the translation was made (looks for the recorded version in the source's git history) |
+| `stamp <translation>...` | record the source's current hash in the header after the translation was brought up to date; `--reviewed` also marks it reviewed by a speaker of its language |
+| `bars [--write]` | show (or write) the language blocks that differ from the generated ones |
+
+- `LANGS`: the language codes are `menu_lang`'s (`runtime/cfg/cfg.c`); the names are those the menu shows
+  (`runtime/ui/ui_text.c`, `LANG_NAMES`).
+- `NOTICE`, `UNREVIEWED`: the notices of a translation's language block. `{src}` is the relative link to the English
+  page.
+- `SKIP_PREFIXES`: Markdown that is not ours: pinned checkouts, vendored and third-party code.
+- `LINK_RES`: `[text](target)` and `![alt](target)`; HTML links and images (`href`, `src`); reference definitions.
+
+### `without_block()`
+
+The text with its language block and the blank lines after it left out: the text before the block existed.
+
+### `source_hash()`
+
+What a translation records of its source: the SHA-1 of the source without its language block.
+
+### `slug()`
+
+GitHub's anchor for a heading: the rendered text lower-cased, with everything but letters, marks, numbers, connector
+punctuation, spaces and hyphens taken out, and spaces turned into hyphens. A link keeps its text; HTML tags go.
+
+### `links()`
+
+Code spans are taken out before the links are looked for.
+
+### `translation_path()`
+
+Where the translation of an English page into a language lives.
+
+### `page_language()`
+
+The language a path names as a translation (`README.<lang>.md`, `docs/<lang>/x.md`), or `None` for English.
+
+### `language_block()`
+
+The text between the language markers of a page of a translated set. The READMEs centre it in HTML, as their header
+is.
+
+### `cmd_check()`
+
+The link to the English page is looked for in the text without the language block: the block links to the other
+languages on purpose.
+
 ## `tools/make_appimage.py`
 
 `KIT_DIRS` holds `licenses/`: the licence texts `THIRD_PARTY_NOTICES.md` names that are not beside their code (the
