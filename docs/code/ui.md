@@ -899,12 +899,6 @@ there. The dead zone's names follow the values in their order in `runtime/cfg/cf
 - The keyboard's sticks are all or nothing: the walk key scales them to the walk scale (0.2 to 0.9) while it is held
   (`runtime/input/input.c` `walk_get()`).
 
-### `go_to()`
-
-`g_tab` is the tab shown; `g_tab_request` selects a tab at the next layout (-1 none); `g_focus_page`: this tab's first
-row takes the cursor once it is shown (-1 none). `go_to()` is for a row of another tab: that tab opens with the row
-under the cursor.
-
 ### `menu_sounds_frame()`
 
 The game's interface sounds (`runtime/ui/menu_sound.c`) for what the frame did: a press or click on an item, the
@@ -914,6 +908,9 @@ cursor going to the first row is part of it. `g_sound_fresh` marks that frame, a
 nothing was laid out while the menu was closed.
 
 ### `layout_menu()`
+
+`g_tab` is the tab shown; `g_tab_request` selects a tab at the next layout (-1 none); `g_focus_page`: this tab's first
+row takes the cursor once it is shown (-1 none).
 
 - `opt_draft_sync()` runs first: a key something else changed (F11) leaves the draft.
 - With the game's frame art, the window's own border is 0: the game's frame is the border.
@@ -1209,12 +1206,6 @@ box opened by the row): `key` the row's setting, `from` and `to` its shown value
 A row that runs an action: true on A or a click. `id`: unique on the page and not a setting (`##copy_info`); `value`:
 shown on the right (`""` none).
 
-### `opt_text_row()`
-
-A row whose label, value, note (under the value) and description are text, not catalog ids: a mod's folder name.
-Returns 2 (A / click), -1 / +1 (left / right), 3 / 4 (move up / down: the top / left face buttons, Ctrl+Up /
-Ctrl+Down, the drawn arrows; movable rows only) or 0.
-
 ### `opt_toggle_text()`, `opt_group_text()`, `opt_text_str()`
 
 Rows and text that are not settings of the settings table: a label and description of the caller's own (the cheats of
@@ -1406,7 +1397,8 @@ the body do not, with the fonts and sizes of the game. At most 24 clicks.
 One row: draws it, handles A / click and left / right while selected. Returns 2 (A, or a click on a row without
 arrows), -1 / +1 (left / right, or the mouse on a stepper's framed arrow), 3 / 4 (move up / down, movable rows only)
 or 0; always 0 for a row the environment fixes (greyed out, still selectable so its description shows). `movable`: the
-top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it.
+top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it. No row is movable now: the row that was, a
+mod's folder in the Mods tab, is gone, and every caller passes `false`.
 
 A stepper takes the mouse on its two framed arrows only: a click anywhere else on the row selects it and changes
 nothing. A click on the row used to step to the next value, and the left arrow stood left of the value's text, so it

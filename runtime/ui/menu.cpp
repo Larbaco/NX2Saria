@@ -674,28 +674,6 @@ static void row_output_res(void) {
     opt_choice_list("NX2SARIA_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, N, UI_MENU_OUTPUT_RES_DESC);
 }
 
-static void row_render_scale(void) {
-    static const char *const vals[] = {"game", "50", "67", "75", "100", "125", "150", "200"};
-    enum { N = sizeof vals / sizeof *vals };
-    char shown[N][32];
-    const char *names[N];
-    names[0] = menu_text(UI_MENU_RENDER_SCALE_GAME);
-    for (int i = 1; i < N; i++) {
-        snprintf(shown[i], sizeof shown[i], "%s %%", vals[i]);
-        names[i] = shown[i];
-    }
-    opt_choice_list("NX2SARIA_RENDER_SCALE", UI_MENU_RENDER_SCALE, vals, names, N, UI_MENU_RENDER_SCALE_DESC);
-}
-
-static void row_shadow_res(void) {
-    static const char *const vals[] = {"game", "256", "512", "768", "1024", "1536", "2048"};
-    enum { N = sizeof vals / sizeof *vals };
-    const char *names[N];
-    names[0] = menu_text(UI_MENU_SHADOW_RES_GAME);
-    for (int i = 1; i < N; i++) names[i] = vals[i];
-    opt_choice_list("NX2SARIA_SHADOW_RES", UI_MENU_SHADOW_RES, vals, names, N, UI_MENU_SHADOW_RES_DESC);
-}
-
 static void row_texture_detail(void) {
     static const char *const vals[] = {"auto", "full", "reduced", "low"};
     static const UiTextId level[] = {UI_MENU_TEX_DETAIL_FULL, UI_MENU_TEX_DETAIL_REDUCED, UI_MENU_TEX_DETAIL_LOW};
@@ -704,18 +682,6 @@ static void row_texture_detail(void) {
     snprintf(picked, sizeof picked, menu_text(UI_MENU_TEX_DETAIL_AUTO), menu_text(level[a < 0 || a > 2 ? 0 : a]));
     const char *names[] = {picked, menu_text(level[0]), menu_text(level[1]), menu_text(level[2])};
     opt_choice_list("NX2SARIA_TEXTURE_DETAIL", UI_MENU_TEX_DETAIL, vals, names, 4, UI_MENU_TEX_DETAIL_DESC);
-}
-
-static void row_shadow_scale(void) {
-    static const char *const vals[] = {"1", "2", "3", "4"};
-    static const char *const names[] = {"960 (1x)", "1920 (2x)", "2880 (3x)", "3840 (4x)"};
-    opt_choice_list("NX2SARIA_SHADOW_SCALE", UI_MENU_SHADOW_SCALE, vals, names, 4, UI_MENU_SHADOW_SCALE_DESC);
-}
-
-static void row_shadow_range(void) {
-    static const char *const vals[] = {"100", "150", "200", "300"};
-    static const char *const names[] = {"160 m (1x)", "240 m (1.5x)", "320 m (2x)", "480 m (3x)"};
-    opt_choice_list("NX2SARIA_SHADOW_RANGE", UI_MENU_SHADOW_RANGE, vals, names, 4, UI_MENU_SHADOW_RANGE_DESC);
 }
 
 static void row_gpu(void) {
@@ -2182,11 +2148,6 @@ static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GA
 static int g_tab;
 static int g_tab_request = -1;
 static int g_focus_page = -1;
-
-static void go_to(int tab, const char *key) {
-    g_tab_request = tab;
-    opt_focus_key(key);
-}
 
 static bool g_sound_fresh;
 static int g_tab_sounded = -1;
