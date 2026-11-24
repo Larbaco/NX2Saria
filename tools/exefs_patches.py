@@ -1,36 +1,3 @@
-"""ExeFS patches of the mods folder to code patch sets: IPS, IPS32 and IPSwitch (.pchtxt) files for the game's main.
-
-Lifted code cannot be byte-patched when the game runs, so a patch file's writes into main's code become `site` lines
-(recomp/patches.py), one patch set per file, which the runtime switches on while its mod is on (runtime/patches/mods.c). The
-writes go through the same rules as the mods' code cheats (tools/cheats.py convert): an instruction replaced in place,
-a branch into a code cave the file writes into main's zero padding inlined at the branch.
-
-  python tools/exefs_patches.py --exefs <dir> --mods <mods folder> --patches <patch file> --out <patch file> --status <file>
-
-The files are <mod>/exefs/*.ips and *.pchtxt (or the Atmosphere places of the exefs folder, as runtime/patches/mods.c finds
-them) and <mod>/atmosphere/exefs_patches/<name>/*.ips. A file is for main when its build id matches main's: an IPS
-file's name, a pchtxt file's @nsobid line (trailing zeros may be left out). Offsets are as emulators read them: IPS
-offsets count the NSO header (0x100 bytes) before main's image; a pchtxt offset adds its `@flag offset_shift` first.
-A pchtxt patch line applies between @enabled and @disabled; @stop ends the file.
-
---out gets the --patches file followed by one set per usable file (`mod_<hash>`, switch NX2SARIA_MODPATCH_<HASH>, default
-off) and its sites. --status gets one line per file, mods by name, tab separated:
-
-  <file hash> <content hash> <kind> <built-in sets> <note>
-
-file hash: FNV-1a 32 of "<mod folder name>/<path in the mod>" (forward slashes); content hash: the same over the file's
-bytes, so the runtime sees a file that changed after the build. kind:
-  code         a set of sites
-  other        for another game version or module: not used
-  empty        no write into main for this version (or only the game's own words)
-  unsupported  <note> says why: a write into main's data, a write the site rules cannot express
-built-in sets: the port's own sets (the --patches file's sets that are no cheats) with a site this file patches too,
-comma separated, or "-": the runtime switches them off while the mod is on, so the mod's code runs.
-
-A file the rules cannot express is unsupported as a whole: half of a patch is worse than none.
-
-Standard library, recomp/, tools/cheats.py and tools/mod_files.py only.
-"""
 import argparse
 import re
 import struct
@@ -41,19 +8,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cheats import Main, convert, fnv  # noqa: E402
 from mod_files import patch_files  # noqa: E402
 
+DESCRIPTION = ('ExeFS patches of the mods folder to code patch sets: IPS, IPS32 and IPSwitch (.pchtxt) files '
+               "for the game's main.")
+
 NSO_HEADER = 0x100
 
 
 def same_build(name, build_id):
-    """1 when name (hex, any case, trailing zeros left out or not) is main's build id (hex of its 32 bytes)."""
     name = name.lower()
     return bool(re.fullmatch(r'[0-9a-f]{1,64}', name)) and name.ljust(64, '0') == build_id.ljust(64, '0')
 
 
-# ---- the formats: {offset in main's image: byte}
-
 def parse_ips(data):
-    """IPS (PATCH ... EOF, 3-byte offsets) or IPS32 (IPS32 ... EEOF, 4-byte offsets); ValueError when it is neither."""
     if data[:5] == b'PATCH':
         width, end, at = 3, b'EOF', 5
     elif data[:5] == b'IPS32':
@@ -72,7 +38,7 @@ def parse_ips(data):
         if size:
             body = data[at:at + size]
             at += size
-        else:   # a run: 2-byte length, 1 byte
+        else:
             run = int.from_bytes(data[at:at + 2], 'big')
             body = data[at + 2:at + 3] * run
             at += 3
@@ -83,7 +49,6 @@ def parse_ips(data):
 
 
 def pchtxt_value(token):
-    """The bytes of a pchtxt value: hex digits in byte order, or a quoted string with C escapes."""
     if token.startswith('"'):
         if not token.endswith('"') or len(token) < 2:
             raise ValueError(f'a string without its closing quote: {token}')
@@ -94,7 +59,6 @@ def pchtxt_value(token):
 
 
 def parse_pchtxt(text):
-    """(build id or None, {offset in main's image: byte}) of an IPSwitch file."""
     bid, shift, enabled, writes = None, 0, False, {}
     for raw in text.splitlines():
         line = raw.split('//', 1)[0].strip()
@@ -117,18 +81,14 @@ def parse_pchtxt(text):
         else:
             m = re.fullmatch(r'([0-9A-Fa-f]+)\s+(".*"|\S+)', line)
             if not m:
-                continue   # a title in brackets or a line of text
+                continue
             off = int(m.group(1), 16) + shift - NSO_HEADER
             for i, b in enumerate(pchtxt_value(m.group(2))):
                 writes[off + i] = b
     return bid, writes
 
 
-# ---- writes to sites
-
 def word_writes(main, writes):
-    """{offset: word} of byte writes into main's code (.text and its padding), each word with the bytes the file does
-    not write kept; ValueError for a write into main's data."""
     words = {}
     for off in sorted(writes):
         if not main.in_code(off - off % 4):
@@ -141,7 +101,6 @@ def word_writes(main, writes):
 
 
 def builtin_sites(text):
-    """{offset in main: [set name]} of the patch file's sets that are no cheats or mod patches."""
     out = {}
     for line in text.splitlines():
         f = line.split('#', 1)[0].split()
@@ -151,7 +110,7 @@ def builtin_sites(text):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--exefs', type=Path, required=True)
     ap.add_argument('--mods', type=Path, required=True, help='the mods folder next to nx2saria.exe')
     ap.add_argument('--patches', type=Path, required=True, help='the patch file so far')
