@@ -2357,3 +2357,468 @@ IAudioRendererManager:
 
 OpenAudioRenderer takes a copy of the transfer memory made under the kernel lock: a CloseHandle of the transfer memory
 on another thread frees the object.
+
+## `runtime/hle/ov.h`
+
+Shared by the system overrides, `runtime/hle/ov_system.c`, `runtime/hle/ov_input.c`, `runtime/hle/ov_media.c` and
+`runtime/hle/ov_gfx.c`, and their probe. `oe_push_message`, `oe_set_focus` and `ov_nv_state` are in
+`runtime/gfx/gfx.h` (the window posts focus messages, the NVN layer allocates through the recorded callbacks).
+
+- `ov_operation_mode_live()`: a changed `NX2SARIA_OPERATION_MODE` goes to the game.
+- `ov_handheld()`: `NX2SARIA_OPERATION_MODE=handheld` (default docked); fatal on another value.
+- `ov_language()`: the game's language, a Switch language code ("en-US", "zh-Hans", ...).
+- `ov_shared_font_dir()`: `NX2SARIA_SHARED_FONTS`, else `<romfs>/../../firmware/shared-fonts`.
+- `ov_bfttf_size()`: the decoded font size of a BFTTF image, 0 if it is not one.
+
+## `runtime/hle/ov_system.c`
+
+System service overrides: `nn::oe`, applet, am, prepo, nfp, err, aoc, pctl, diag, account, time and pl, and the six
+observers. Nothing here talks to a Horizon service; each call is answered by the host. The stub rule: queries and
+initialisation succeed with neutral values, data paths stop with a named fatal. Its first line is a licence notice.
+
+Environment:
+
+| Setting | What |
+|---|---|
+| `NX2SARIA_LANG=<Switch language code>` | the game's language as given ("ja", "en-GB", "zh-Hant", ...) |
+| `NX2SARIA_LOCALE=<BCP 47 tag>` | else the language for this locale ("pt-BR"), else the host's user locale; a language the game does not ship becomes en-US |
+| `NX2SARIA_OPERATION_MODE=docked\|handheld` | operation and performance mode reported to the game (default docked) |
+| `NX2SARIA_ASSUME_FOCUS=1\|0` | 1 (default, the Game tab's row): GetCurrentFocusState always reports in focus, whatever the window says; 0: out of focus while the window is, as on a Switch |
+| `NX2SARIA_SHARED_FONTS=<dir>` | `nn::pl` shared fonts (`tools/extract_fonts.py` output), default `<romfs>/../../firmware/shared-fonts` |
+
+Results: `NFP_R_DEVICE_NOT_FOUND` (0x8073) is nfp's "no NFC reader on the host"; `ACCOUNT_R_INVALID` (0x7c67) the
+result for an unknown user handle or uid.
+
+### `ov_handheld()` `ov_operation_mode_live()`
+
+`NX2SARIA_OPERATION_MODE`: 1 handheld (OperationMode 0, PerformanceMode Normal 0), 0 docked (1, Boost 1). It follows
+the setting; the game is told of a change as the console tells it (`ov_operation_mode_live()`).
+`ov_operation_mode_live()` runs after a settings change (`window_settings_live` of `runtime/gfx/gfx_present.c`): a new
+mode reaches the game through the applet messages OperationModeChanged and PerformanceModeChanged, which make it read
+the mode again.
+
+### `switch_language()` `ov_language()`
+
+`switch_language()`: the Switch language for a BCP 47 tag; en-US for a language the game does not ship. A three-digit
+region is a UN M.49 area (es-419). Brazil's Portuguese is a language of its own on the Switch (pt-BR, Mals/USpt);
+Portugal's is pt.
+
+`ov_language()`: the game's language as a Switch language code (`NX2SARIA_LANG`, else `NX2SARIA_LOCALE`, else the
+host's user locale, `plat_user_locale`). The game accepts "zh-Hans" and "zh-Hant" for Chinese and falls back to
+Japanese for "zh-CN" and "zh-TW", so those two spellings, which older `nx2navi.ini` files and menus wrote, are mapped
+to them. `NX2SARIA_LANG` has no fixed default: `NX2SARIA_LOCALE` or the user locale decides when it is unset.
+
+### `ov_desired_language()`
+
+`LanguageCode GetDesiredLanguage()`: a char[8] in x0.
+
+### `ov_oe_initialize()`
+
+`nn::oe::Initialize` opens the `appletOE` service (served by `runtime/hle/ipc.c`, which supports domains) and builds
+the module's own service object, which the oe wrappers the game calls internally dereference. It must run: it is
+observed (`HOST_OBSERVER`), and the guest definition is called instead of being replaced.
+
+### `ov_oe_graphics_scale()` `ov_oe_scaling_parameters()`
+
+`void SetGraphicsScaleChangedNotificationEnabled(bool)`: a thin wrapper over the appletOE service object; the
+notification is a no-op on a desktop window.
+
+`GraphicsScalingParameters GetGraphicsScalingParameters()`: 12 bytes returned in x0 (words 0-1) and w1 (word 2). Word
+0 is a scale *mode*, not a float: the SDK's own caller (`sdk+0x59a690`) maps 10 -> 0, 20 -> 1, 30 -> 2 and aborts on
+anything else (an earlier {1.0f, 1.0f} here hit that abort). 10 is the console's default (the graphics scale
+controller's current scale); the other two words are zero.
+
+### `ov_performance_config()` `ov_cpu_boost()` `ov_focus_mode()`
+
+`void SetPerformanceConfiguration(PerformanceMode mode, int config)`; `void SetCpuBoostMode(CpuBoostMode mode)`;
+`void SetFocusHandlingMode(FocusHandlingMode mode)`, which is the nnMain checkpoint of `--boot`.
+
+### `oe_set_focus()` `ov_focus_state()`
+
+`FocusState GetCurrentFocusState()`: 1 in focus, 2 out of focus (`nn::oe::FocusState`). The game sets focus handling
+mode 2: on a Switch the system then suspends the whole process while it is out of focus and sends Resume when it
+returns. Here only the game's main thread stops (it waits in PopNotificationMessage for the next message) while its
+loader threads, audio and clocks run on, and a load interrupted that way was seen to never finish (Linux, 1.4.3). So
+`NX2SARIA_ASSUME_FOCUS=1`, the default, keeps it at 1; with 0 it follows the window through `oe_set_focus()`. The
+caller of `oe_set_focus()` also pushes `OE_MSG_FOCUS_STATE_CHANGED`.
+
+The setting is read on every focus change rather than once at start: a focus change is rare, the lookup is a short
+walk of the loaded ini entries, and the Game tab's row then takes effect the next time the window is left, without a
+restart.
+
+### The oe, applet, am, prepo and err calls
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_get_balance()` | `void GetExpectedVolumeBalance(float *left, float *right)` | |
+| `ov_set_balance()` | `void SetExpectedVolumeBalance(float left, float right)` | |
+| `ov_active_time()` | `TimeSpan GetProgramTotalActiveTime()` | nanoseconds since the process started (19.2 MHz ticks * 625 / 12) |
+| `ov_inactivity_extended()` | `void SetUserInactivityDetectionTimeExtended[Unsafe](bool)` | the host never puts the console to sleep |
+| `ov_finish_logo()` | `void FinishStartupLogo()` | no system logo is drawn on the host |
+| `ov_launch_parameter()` | `bool TryPopLaunchParameter(size_t *size, void *buffer, size_t capacity)` | launched directly, no parameter |
+| `ov_try_pop()` | `bool TryPopNotificationMessage(Message *out)` | |
+| `ov_pop()` | `Message PopNotificationMessage()` | blocks like a Horizon wait, so the thread gives its virtual core up meanwhile |
+| `ov_previous_program()` | `int applet::GetPreviousProgramIndex()` | started directly, not from an ExecuteProgram chain: -1 |
+| `ov_aruid()` | `AppletResourceUserId applet::` / `am::GetAppletResourceUserId()` | one application, one stable non-zero id (1) |
+| `ov_report_save()` | `Result PlayReport::Save()` and `Save(const account::Uid &)` | `nn::prepo`: play reports stay local (no Nintendo servers) |
+| `ov_result_ok()` | RequestImmediateTransmission, AddInternetConnectionStatus | |
+| `ov_report_event()` | `Result AsyncContext::GetCompletionEvent(SystemEvent *out)` | Switch 2: `Result PlayReport::Send(const account::Uid &)` replaces Save (kept local like it); `out` becomes a signalled event; `AsyncContext::GetResult()` |
+| `ov_report_limit_event()` | `SystemEvent *GetOverSaveFrequencyLimitEvent()` | an event that never fires (no save limit here); the static `ev[0x40]` is an `nn::os::SystemEventType` |
+| `ov_show_error()` | `void err::ShowError(Result)` | the game's error dialog, logged |
+
+### The nfp calls
+
+`nn::nfp`: NFC reader and amiibo support. Every `nn::nfp` import of the game has an override here, so the SDK's own
+nfp code (whose session Initialize never opens) is not reached. `runtime/hle/amiibo.c` keeps the figure's data and
+application area. `nfp_device` ({1, 0, 0, 0, 0, 0, 0, 0}) is the DeviceHandle of the one emulated reader. The feature:
+[amiibo.md](../amiibo.md).
+
+| Function | SDK call |
+|---|---|
+| `ov_nfp_list()` | `Result ListDevices(DeviceHandle *out, int *count, int max)` |
+| `ov_nfp_availability()` | `Result AttachAvailabilityChangeEvent(os::SystemEventType *event)` |
+| `ov_nfp_device_state()` | `DeviceState GetDeviceState(const DeviceHandle &)` |
+| `ov_nfp_mount()` | `Result Mount(const DeviceHandle &, ModelType, MountTarget)` |
+| `ov_nfp_get_npad_id()` | `Result GetNpadId(u32 *npad_id, const DeviceHandle &)`: 0, Handheld / Player 1 |
+| `ov_nfp_attach_activate()` | `Result AttachActivateEvent(os::SystemEventType *event, const DeviceHandle &)` |
+| `ov_nfp_attach_deactivate()` | `Result AttachDeactivateEvent(os::SystemEventType *event, const DeviceHandle &)` |
+| `ov_nfp_start_detection()` | `Result StartDetection(const DeviceHandle &)` |
+| `ov_nfp_stop_detection()` | `Result StopDetection(const DeviceHandle &)` |
+| `ov_nfp_get_tag_info()` | `Result GetTagInfo(TagInfo *out, const DeviceHandle &)` |
+| `ov_nfp_get_model_info()` | `Result GetModelInfo(ModelInfo *out, const DeviceHandle &)` |
+| `ov_nfp_get_register_info()` | `Result GetRegisterInfo(RegisterInfo *out, const DeviceHandle &)` |
+| `ov_nfp_get_common_info()` | `Result GetCommonInfo(CommonInfo *out, const DeviceHandle &)` |
+| `ov_nfp_open_app_area()` | `Result OpenApplicationArea(const DeviceHandle &, u32 access_id)` |
+| `ov_nfp_get_app_area()` | `Result GetApplicationArea(void *out, size_t *out_size, const DeviceHandle &, size_t size)` |
+| `ov_nfp_set_app_area()` | `Result SetApplicationArea(const DeviceHandle &, const void *data, size_t size)` |
+| `ov_nfp_flush()` | `Result Flush(const DeviceHandle &)` |
+| `nfp_create_app_area()` | `Result CreateApplicationArea` / `RecreateApplicationArea(const DeviceHandle &, const ApplicationAreaCreateInfo &)`. ApplicationAreaCreateInfo: u32 access id at 0, u32 initial data size at 4, u64 initial data address at 8 (size and address 0 without initial data) |
+
+The amiibo settings applets have no window: each gives the answer the applet gives when the player confirms at once,
+with the reader's DeviceHandle in the first argument.
+
+- `ov_nfp_owner_settings()`: `Result StartNicknameAndOwnerSettings(DeviceHandle *out, bool *registered, RegisterInfo
+  *out_info, const AmiiboSettingsStartParam &, const TagInfo &[, const RegisterInfo &])`.
+- `ov_nfp_restorer()`: `Result StartRestorer(DeviceHandle *out, const AmiiboSettingsStartParam &, const TagInfo &)`:
+  a figure here is never damaged, so there is nothing to restore.
+- `ov_nfp_game_data_eraser()`: `Result StartGameDataEraser(DeviceHandle *out, const AmiiboSettingsStartParam &, const
+  TagInfo &)`: drops the loaded figure's application area.
+
+### `ov_aoc_list()` `ov_aoc_count()`
+
+SDK-internal initialisation. 1.4.3's main lists add-on content: there is none
+(`int ListAddOnContent(AddOnContentIndex *out, int offset, int count)`). `int CountAddOnContent()`: the SDK's own reads
+the aoc service object the overridden Initialize never opens.
+
+### `ov_nifm_initialize()` `ov_nifm_available()` `ov_nifm_request()` `ov_nifm_error()`
+
+`nn::nifm`: this build is offline. Initialize succeeds without the `nifm:u` session, the network is never available, a
+request completes at once (unaccepted), and the calls that report its error return NetworkCommunicationDisabled (nifm
+module 110, description 1111: `NIFM_R_COMMUNICATION_DISABLED`, 0x8ae6e).
+
+### `observe()` `obs_address_region()` `obs_memory_pages()`
+
+The observers log, then run the guest definition. `obs_address_region()`:
+`Result os::AllocateAddressRegion(uintptr_t *out, size_t size)`; its line is logged only with the host-call trace
+(20,000 lines a session otherwise, each a write on a game thread). `obs_memory_pages()`:
+`Result os::AllocateMemoryPages(uintptr_t address, size_t size)`.
+
+### The account
+
+`nn::account`: one offline local user whose Uid survives restarts in `<profile>/account.uid`.
+
+- `adopt_cb()` and `adopt_save_uid()` (holding `account_lock`): 1 when `<profile>/save` holds exactly one folder named
+  as `runtime/hle/fs_host.c` names an account's (<uid hi><uid lo>, 32 hex digits); `local` is then that account.
+- `load_uid()` (holding `account_lock`): a file that is there but cannot be asked for its size is no reason for a new
+  account: its saves would vanish, so that is fatal. With `account.uid` lost (a profile copied without it, or the save
+  folder alone put in place) the one account folder in save/ is the player's, and taking its name keeps that save;
+  otherwise a new account is made.
+- `account_uid()` (`runtime/host.h`): the save directory of `fs_host.c` is named after this Uid.
+- `valid_handle()` holds `account_lock`.
+
+| Function | SDK call |
+|---|---|
+| `ov_account_initialize()` | `void Initialize()` |
+| `ov_open_user()` | `bool TryOpenPreselectedUser(UserHandle *out)` |
+| `ov_close_user()` | `void CloseUser(const UserHandle &)` |
+| `ov_user_id()` | `Result GetUserId(Uid *out, const UserHandle &)` |
+| `ov_user_existence()` | `Result GetUserExistence(bool *out, const Uid &)` |
+| `ov_nickname()` | `Result GetNickname(Nickname *out, const Uid &)`: 33 bytes, NUL-terminated UTF-8 |
+
+### The clocks
+
+`nn::time`: the host clock and time zone. User and network clocks follow the host wall clock; the steady clock counts
+seconds of the host's millisecond clock (`plat_now_ms`), with one random source id per process. ClockSnapshot has the
+public 0xD0-byte layout, because game code reads its fields through inline accessors.
+
+- `make_source()` reads the time zone once (`plat_tz_west`), before the first localtime.
+- `days_from_civil()` and `civil_from_days()`: days since 1970-01-01 of a proleptic Gregorian date, and back (H.
+  Hinnant's civil calendar algorithms).
+- `utc_calendar()`: the UTC calendar fields of a POSIX time. 0 if the year does not fit CalendarTime. 1970-01-01 was a
+  Thursday.
+- `local_calendar()`: the local calendar fields of a POSIX time in the host's time zone. The zone name is "UTC" or the
+  UTC offset ("+03", "-0330"), as tzdata names zones without an abbreviation; Windows has no abbreviations. 0 outside
+  localtime's range.
+- `location_name()`: the IANA name of the standard offset: Etc/GMT+5 is UTC-5 (POSIX sign); "UTC" for a zone off whole
+  hours.
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_current_time()` | `Result StandardUserSystemClock` / `StandardNetworkSystemClock::GetCurrentTime(PosixTime *out)` | |
+| `ov_steady_now()` | `time_point StandardSteadyClock::now()` | the int64 seconds in x0 only. The SDK caller (`sdk+0x3d1d88`) reads x0; returning the 0x18-byte struct through x8 would write through a stale pointer |
+| `ov_steady_timespec()`, `ov_user_timespec()` | `Result GetStandardSteadyClockCurrentTimespec(timespec *)` / `GetStandardUserSystemClockCurrentTimespec(timespec *)` | the SDK libc's `clock_gettime(CLOCK_MONOTONIC / CLOCK_REALTIME)` once a title selects the `nn::time` clocks (`sdk+0xaf0f8` mode 3; Switch 2 titles do, via `std::chrono::steady_clock`). The SDK's own versions need the time service state the overridden Initialize never builds, fail, and libc++ then throws `std::system_error` |
+| `ov_to_calendar()` | `Result ToCalendarTime(CalendarTime *out, CalendarAdditionalInfo *info, const PosixTime &t)` | local time |
+| `ov_to_calendar_utc()` | `CalendarTime ToCalendarTimeInUtc(const PosixTime &t)` | 8 bytes in x0 |
+| `ov_to_posix_utc()` | `PosixTime ToPosixTimeFromUtc(const CalendarTime &c)` | months out of 1..12 carry into the year, like timegm |
+| `ov_snapshot_init()` | `ClockSnapshot::ClockSnapshot()` | |
+| `ov_snapshot_create()` | `static Result ClockSnapshot::CreateWithStandardSystemClock(ClockSnapshot *out)` | |
+| `ov_span_between()` | `Result CalculateSpanBetween(TimeSpan *out, const ClockSnapshot &a, const ClockSnapshot &b)` | nanoseconds |
+| `ov_user_difference()` | `TimeSpan CalculateStandardUserSystemClockDifferenceByUser(const ClockSnapshot &a, const ClockSnapshot &b)` | the change of the user clock offset between the snapshots (manual adjustments) in nanoseconds |
+
+### The shared fonts
+
+`nn::pl` shared fonts. The game asks for them only from its font loader, only with Simplified Chinese, Korean or
+Traditional Chinese text, and only for type 0; `tools/extract_fonts.py` writes them from the user's firmware. Each type
+(`SHARED_FONT_TYPES`, 6) is read on first use into guest-visible memory as the BFTTF file the pl shared memory holds;
+Address is 8 bytes past the file start (after the BFTTF header) and Size the decoded font size. The load state is
+always Loaded: the game spins until it is, so missing files stop with a named fatal at Address/Size instead of a hang.
+`NX2SARIA_SHARED_FONTS=<dir>` overrides `<romfs>/../../firmware/shared-fonts`.
+
+- `ov_shared_font_dir()` looks for shared-fonts next to the executable (`tools/package_build.py`), else the
+  repository's.
+- `ov_bfttf_size()`: the decoded font size of a BFTTF image, 0 if it is not one: big-endian words XORed with key =
+  word0 ^ `BFTTF_MAGIC`, word1 = font size, then an sfnt (TrueType or OpenType) font.
+- `font_data()`: the font of type t, read and checked on first use; a named fatal when it is missing or damaged.
+
+## `runtime/hle/ov_input.c`
+
+`nn::hid` overrides: one connected controller fed by `input_poll` (gamepad and keyboard, `runtime/input/input_win.c`;
+nothing pressed with `NX2SARIA_INPUT=none`). Docked (default) it is a full-key controller as player 1 (id 0, style bit
+0); with `NX2SARIA_OPERATION_MODE=handheld` it is the handheld controller (id 0x20, style bit 1) and player 1 is not
+connected, which is the controller the game reads in that mode. Mouse and keyboard report no input. The controller has
+two vibration devices (left, right), played on the gamepad's motors or, with `NX2SARIA_RUMBLE_HD=1`, as they are on a
+Switch controller's linear actuators (`NX2SARIA_RUMBLE=0`: no devices), and a six-axis sensor fed by the gamepad's gyro
+and accelerometer (`NX2SARIA_MOTION=0`, live: reads at rest). State layouts follow the HID shared-memory format. Its
+first line is a licence notice. The player's side: [controls.md](../controls.md), [gyro.md](../gyro.md).
+
+### The npad calls
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_initialize_npad()` | `void InitializeNpad()` | |
+| `ov_supported_ids()` | `void SetSupportedNpadIdType(const NpadIdType *ids, size_t count)` | |
+| `ov_supported_styles()` | `void SetSupportedNpadStyleSet(NpadStyleSet styles)` | |
+| `ov_style_set()` | `NpadStyleSet GetNpadStyleSet(const NpadIdType &id)` | |
+| `npad_states()` | `int GetNpadStates(<State> *out, int count, const NpadIdType &id)` | the newest state only. `want`: the style of the overload, 0 for the Joy-Con overloads (never connected) |
+| `ov_hold_type()` | `void SetNpadJoyHoldType(NpadJoyHoldType type)` | |
+| `ov_disconnect()` | `void DisconnectNpad(const NpadIdType &id)` | only the controller in use (handheld mode disconnects player 1) |
+| `ov_controller_support()` | `Result ShowControllerSupport(ControllerSupportResultInfo *out, const ControllerSupportArg &arg)` | the one controller is already connected, so the applet returns at once with one player on it |
+| `ov_mouse_states()` | `int GetMouseStates(MouseState *out, int count)` | a mouse that is not connected |
+| `ov_keyboard_state()` | `void GetKeyboardState(KeyboardState *out)` | a keyboard with no key down |
+
+### `npad_states()`
+
+A frame's first pad read is where a driver's low-latency sleep belongs (`runtime/pacing/vk_lowlat.c`
+`vk_lowlat_frame_start()`): the wait comes before the input is sampled, so the frame is drawn from the newest input.
+Nothing happens while that is off. After the state is read:
+
+- `boot_map_tick`: a boot map ends once Link is in the world (`runtime/patches/boot_map.c`);
+- `dbg_tick`: the debug menu's changes to the game, between two of its frames (`runtime/diag/debug_tools.c`);
+  `dbg_pad`: its free camera takes the sticks while it flies;
+- `sprint_pad`: the sprint button's presses, kept from the game during gameplay (`runtime/patches/sprint.c`);
+- `text_speed_poll`: the `text_speed` setting onto the patch page (`runtime/patches/text_speed.c`);
+- `amiibo_daily_poll`: the `amiibo_daily_limit` setting onto its patch set (`runtime/patches/amiibo_daily.c`).
+
+### Vibration and the six-axis sensor
+
+Handles are the SDK's (`nn::hid::utility`, `sdk+0x4a6e00` and `sdk+0x4a6ab0`): byte 0 the style index (3 full-key, 4
+handheld), byte 1 the controller id, byte 2 the device (vibration 0 left / 1 right, six-axis 2). Every call under the
+public functions goes through `nn::hid::detail` (sdk's PLT), answered here instead of by the hid service, including
+the batches VibrationTarget queues through `detail::EnqueueVibrationValue` into `detail::SendVibrationValues`.
+
+`VibrationValue` is {amplitude low, frequency low, amplitude high, frequency high}: 0..1 and Hz, neutral 0/160/0/320.
+`VibrationDeviceInfo`: type 1 is a linear resonant actuator; position 1 left, 2 right.
+
+- `RUMBLE_STALE_NS` (250 ms): a side the game has not updated for 250 ms is silent.
+- `RUMBLE_REFRESH_NS` (50 ms): an unchanged value is sent again every 50 ms (its 250 ms start over).
+- `RUMBLE_MIN_GAP_NS` (10 ms): a changed value goes out at most every 10 ms (the game streams every few ms).
+- `vib_last`, `vib_at`, `sent_at`, `sent_low`, `sent_high` and `vib_allowed` (PermitVibration) are under `vib_lock`.
+  `six_running` is set from StartSixAxisSensor to StopSixAxisSensor.
+
+### `rumble_cfg()`
+
+`NX2SARIA_RUMBLE_STRENGTH` (percent, 0..300, default 130; 0 = off) and `NX2SARIA_RUMBLE_CURVE` (exponent on the
+amplitude, 0.2..1.5, default 0.6). HD rumble is strong at low amplitude, an ERM motor hardly turns there, so weak
+values are lifted by the curve (0.1 -> 0.25) and the strength scales the result (saturating at 65535; 0.66 and up
+reach full drive at 130 %). Both are live settings (the menu): read again whenever `cfg_version` changes.
+`RUMBLE_STRENGTH_DEFAULT` (1.3) is the default of `RUMBLE_STRENGTH` in `runtime/cfg/cfg.c`, as a factor.
+
+### `handle_id()`
+
+The SDK's id check (the utility functions): players 1-8, other (0x10) and handheld (0x20); the public functions abort
+on another id.
+
+### `ov_vibration_handles()` `ov_six_axis_handles()`
+
+`int GetVibrationDeviceHandles(VibrationDeviceHandle *out, int count, const NpadIdType &id, NpadStyleSet style)`:
+`utility::GetVibrationDeviceHandles`' table, the first style bit in its order; none with `NX2SARIA_RUMBLE=0`. A
+strength of 0 keeps the devices (silent), so the menu can turn rumble up again.
+
+`int GetSixAxisSensorHandles(SixAxisSensorHandle *out, int count, const NpadIdType &id, NpadStyleSet style)`:
+`utility::GetSixAxisSensorHandle`'s order (one sensor per style, two for the Joy-Con pair). Also with
+`NX2SARIA_MOTION=0`: the sensor then reads at rest (`six_fill()`), so the menu can turn motion on while the game runs.
+
+### `vibration_side()`
+
+The vibration device (0 left, 1 right) a handle names on the connected controller, or -1 (logged once).
+
+### `clamp01()` `light_share()`
+
+`clamp01()` turns NaN into 0. `light_share()`: the share of a band at f Hz that goes to the light (high-frequency,
+right) motor: none at 160 Hz and below (the low band's neutral frequency), all at 320 Hz and above (the high band's),
+log scale between.
+
+### `hd_update()`
+
+Switch HD rumble as it is, for a gamepad whose actuators take it (`input_rumble_hd_on` of `runtime/input/input.h`;
+`NX2SARIA_RUMBLE_HD`): each side's newest value goes on with both bands' frequency and amplitude, the amplitude scaled
+by the rumble strength over its default alone: the default strength is above 100 % to make up for what two motors
+lose, and an actuator that plays the value itself needs none of that, so at the default it gets the game's amplitude
+exactly and the setting makes it weaker or stronger from there (the curve is for motors). A side the game has not
+updated for 250 ms, or any side while vibration is not permitted, is at rest. `runtime/input/input.c` writes the
+reports and no longer drives that gamepad's motors, so `rumble_update()`'s own call reaches only the DualShock 3
+reader then. Under `vib_lock`.
+
+### `rumble_update()`
+
+Switch HD rumble -> `SDL_RumbleGamepad`. Each side's two bands split by frequency between the heavy (low) and the
+light (high) motor (`light_share()`) and add up as energy per motor (root of the summed squares); the stronger side
+drives each motor. A side the game has not updated for 250 ms is silent. Each send lasts 250 ms and is renewed every
+50 ms while the game streams, so the pad stops by itself when the game stops sending (pause, freeze). Under
+`vib_lock`.
+
+### The detail calls
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_vib_init()` | `Result detail::InitializeVibrationDevice(const VibrationDeviceHandle &)` | |
+| `ov_vib_send()` | `Result detail::SendVibrationValue(const VibrationDeviceHandle &, const VibrationValue &)` | |
+| `ov_vib_send_many()` | `Result detail::SendVibrationValues(const VibrationDeviceHandle *, const VibrationValue *, int count)` | |
+| `ov_vib_actual()` | `Result detail::GetActualVibrationValue(VibrationValue *out, const VibrationDeviceHandle &)` | the last value sent |
+| `ov_vib_info()` | `Result detail::GetVibrationDeviceInfo(VibrationDeviceInfo *out, const VibrationDeviceHandle &)` | |
+| `ov_vib_mounted()` | `Result detail::IsVibrationDeviceMounted(bool *out, const VibrationDeviceHandle &)` | |
+| `ov_vib_permitted()` | `Result detail::IsVibrationPermitted(bool *out)` | |
+| `ov_vib_permit()` | `Result detail::PermitVibration(bool)` | off silences the gamepad at once |
+| `ov_six_start()` | `Result detail::StartSixAxisSensor(const SixAxisSensorHandle &)` | angle and direction start over |
+| `ov_six_stop()` | `Result detail::StopSixAxisSensor(const SixAxisSensorHandle &)` | |
+| `ov_six_states()` | `Result detail::GetSixAxisSensorStates(int *count, SixAxisSensorState *out, int max, const SixAxisSensorHandle &)` | |
+| `ov_six_state()` | `Result detail::GetSixAxisSensorState(SixAxisSensorState *out, const SixAxisSensorHandle &)` | |
+
+### `six_fill()`
+
+All `max` entries, newest first: the game reads all 16 it asks for and ignores the count (`main+0x2a268e0`). A short
+history repeats its oldest sample. No motion (sensor not started, no gamepad, one without a gyro,
+`NX2SARIA_MOTION=0`): a controller lying still, not marked connected.
+
+### The public wrappers
+
+The public wrappers a Switch 2 title imports. The Switch 1 title imports `nn::hid::detail::*`; Switch 2 titles import
+the public functions, whose direct calls into `detail::` no override reaches, so each public one is answered here with
+the detail implementation above. Joy-Con 2 mouse (Nmouse), Jcms and sensor fusion have no host device: no handles,
+starts that do nothing.
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_pub_six_start()` | `void StartSixAxisSensor(const SixAxisSensorHandle &)` / `void StopSixAxisSensor(...)` | |
+| `ov_pub_six_states()` | `int GetSixAxisSensorStates(SixAxisSensorState *out, int count, const SixAxisSensorHandle &)` | the count filled |
+| `ov_pub_zero_drift()` | `void SetGyroscopeZeroDriftMode(const SixAxisSensorHandle &, const GyroscopeZeroDriftMode &)` | the sensor is left as it is. The dead zone the mode would pick is the player's `gyro_deadzone` setting instead (`motion_options_refresh` of `runtime/input/input.c`, applied by `runtime/input/motion_fusion.c`); the mode the game asks for is only logged, the first call and each change of mode, 8 lines at most. The line names the level in force: `motion_options_refresh` takes any other `gyro_deadzone` value as low |
+| `ov_pub_nothing()` | `void FinalizeSensorFusion()`, `FinalizeNmouse()`, the Jcms functions | nothing to do |
+| `ov_pub_vib_init()`, `ov_pub_vib_send()` | `void InitializeVibrationDevice(const VibrationDeviceHandle &)` / `void SendVibrationValue(handle, value)` | |
+| `ov_pub_vib_ounce_mounted()` | `bool IsOunceVibrationDeviceMounted(const VibrationDeviceHandle &)` | Ounce is the Switch 2's own actuator; the host's rumble devices count as mounted |
+| `ov_pub_no_handles()` | `int GetSensorFusionHandles(...)` / `int GetNmouseHandles(NmouseHandle *, int, uint32_t)` | none |
+| `ov_pub_nmouse_types()` | `void GetNmouseTypeSet(BitFlagSet<32, NmouseType> *out, NmouseHandle)` | empty |
+
+## `runtime/hle/ov_gfx.c`
+
+Graphics bring-up. Its first line is a licence notice.
+
+- `nv::*`: record the game's allocator callbacks and graphics work memory (guest addresses) for the NVN layer.
+- `nn::vi::*`: display, layer and native window identities; the vsync event is bound here.
+- `nvnBootstrapLoader`: the end of `--boot` (`rt_boot_event` "nvn"); otherwise the synthetic address of an NVN proc
+  (`runtime/nvn/nvn_procs.c`). The `nvnBootstrapLoader` stop is the entry to the NVN layer.
+
+`VI_R_INVALID` (0xf601) is the result for a call on an unknown display or layer.
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_graphics_allocator()` | `void nv::SetGraphicsAllocator(AllocateFunction, FreeFunction, ReallocateFunction, void *user)` | |
+| `ov_devtools_allocator()` | `void nv::SetGraphicsDevtoolsAllocator(AllocateFunction, FreeFunction, ReallocateFunction, void *user)` | |
+| `ov_initialize_graphics()` | `void nv::InitializeGraphics(void *memory, size_t size)` | Switch 2 titles pass (nullptr, 0): that SDK also has `nv::InitializeGraphics()` and the driver takes its memory from the allocator `nv::SetGraphicsAllocator` installed. Only a half-given region is an error |
+| `ov_vi_initialize()` | `void nn::vi::Initialize()` | the identities are small zeroed blocks in the guest-visible kernel region, in case SDK code reads them |
+| `ov_open_display()` | `Result nn::vi::OpenDefaultDisplay(Display **out)` | |
+| `ov_create_layer()` | `Result nn::vi::CreateLayer(Layer **out, Display *display)` | |
+| `ov_native_window()` | `Result nn::vi::GetNativeWindow(void **out, Layer *layer)` | a placeholder the NVN layer recognises |
+| `ov_vsync_event()` | `Result nn::vi::GetDisplayVsyncEvent(os::SystemEventType *event, Display *display)` | an auto-clear system event |
+| `ov_nvn_bootstrap()` | `void *nvnBootstrapLoader(const char *name)` | the first NVN call. With `--boot`, the first one ends the boot (`rt_boot_event`), which returns when `--seconds` goes on |
+
+### `ov_nvn_procs_register()`
+
+The NVN procs need their synthetic addresses before `hostfn_seal`; the loader seals at the end of `rt_boot`, so the
+registration runs at start-up (a constructor) instead of through `runtime/boot.c`.
+
+### The Switch 2 display queries
+
+The SDK versions reach the display and layer objects through the vi service; the overridden OpenDefaultDisplay and
+CreateLayer hand out host stand-ins, so the SDK code would call through them (`main+0x4dc1e0` hit a null virtual in
+ClearLayerExtendedSwapInterval). A desktop window is SDR, fixed 60 Hz, without VRR; HDR metadata and swap-interval
+changes are accepted and dropped.
+
+- `vi_hdr_meta()`: the game's HDR content metadata (native HDR): the swapchain's comes from the settings.
+- `ov_vi_hdr_status()`: `Result QueryDisplayHdrStatus(bool *enabled, HdrOutputFormat *format, uint16_t *peak, const
+  Display *)`. With native HDR (`runtime/vk/vk_hdr.c` `vk_hdr_native()`): an HDR10 display (format 1, which makes the
+  game present PQ in 10 bits) of the settings' peak; otherwise SDR, as a desktop window is.
+- `ov_vi_paper_white()`: `Result QueryDisplayHdrPaperWhite(uint16_t *nits, const Display *)`: the SDR reference white
+  (203); with native HDR the paper white of the settings (`NX2SARIA_HDR_GAME_NITS`).
+- `ov_vi_refresh_rate()`: `Result QueryDisplayCurrentRefreshRate(RefreshRate *rate, bool *variable, const Display *)`:
+  RefreshRate is taken to be a 32-bit Hz value (a guess: no reference describes it); 60, not variable.
+- `ov_vi_vrr_supported()`: `Result QueryDisplayVrrSupported(bool *supported, const Display *)`.
+
+### `ov_nv_init_check()`
+
+`void nv::InitCheck()`: the SDK's checks its own "graphics initialised" state, which the overridden InitializeGraphics
+never sets, and aborts (subsdk0's `movie::VideoDecoder::Initialize` calls it). The host's record answers instead.
+
+## `runtime/hle/ov_media.c`
+
+The hardware Opus decoder (`nn::codec`), decoded with libopus on the host. The software keyboard (`nn::swkbd`) is in
+`runtime/hle/swkbd.c`. Its first line is a licence notice.
+
+`CODEC_R_INVALID` (0x1fcd1) is the "invalid argument" result for `nn::codec`. `OPUS_WORK_SIZE` (0x9000) is what the
+game is told to reserve: libopus stereo decoder state (about 26 KiB) plus 4 KiB.
+
+`Decoder` is one record per initialised decoder object (the guest's HardwareOpusDecoderType). The registry lock only
+guards the list; a decoder's own lock serialises its libopus state, so different streams decode in parallel. Lock
+order: registry, then decoder (a caller takes the decoder lock before it drops the registry lock, so Finalize cannot
+free a decoder another thread is using). `acquire()` returns the decoder with its use lock held.
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_work_size()` | `size_t GetHardwareOpusDecoderWorkBufferSize(int rate, int channels, int option)` | |
+| `ov_initialize()` | `Result InitializeHardwareOpusDecoder(HardwareOpusDecoderType *d, int rate, int channels, void *work, size_t size, int option)` | the state lives in libopus on the host; the guest's work buffer is reserved but unused. Initialising the same object again without Finalize replaces its decoder, after waiting for a decode in flight |
+| `ov_finalize()` | `void FinalizeHardwareOpusDecoder(HardwareOpusDecoderType *d)` | a decode in flight finishes first; the registry lock keeps new ones out |
+| `ov_sample_rate()`, `ov_channel_count()` | `int GetHardwareOpusDecoderSampleRate` / `GetHardwareOpusDecoderChannelCount(const HardwareOpusDecoderType *d)` | |
+| `ov_reset()` | `Result ResetHardwareOpusDecoder(HardwareOpusDecoderType *d)` | |
+| `ov_decode()` | `Result DecodeOpusInterleavedWithHardware(HardwareOpusDecoderType *d, size_t *consumed, int *samples, int16_t *out, size_t out_size, const void *in, size_t in_size)` | the input is Nintendo's frame: an 8-byte big-endian header {payload size, final range} and the Opus packet. A header range of 0 is not a recorded value (some encoders write 0 into every packet), so it is not checked. A range mismatch is logged once and the samples are kept |
+
+## `runtime/hle/ov_audio_input.c`
+
+Audio input for the `nn::audio` input-stream calls the game imports (the Ocarina can be played into a microphone):
+each stream reads the default recording device through `runtime/audio/audio_capture.c`, which SDL converts to the
+format the game asks for. The calls are overridden in the game (`HOST_OVERRIDE`) because the audio service refuses
+input streams. A stream that failed to open is unknown to every call here, so purging or closing it is safe; before,
+the game purged a stream that never opened and crashed. `NX2SARIA_MICROPHONE=0` (default 1, `mic_on()`) refuses every
+input stream, as the game saw before. The feature: [audio-input.md](../audio-input.md).
+
+`BAD_INPUT` (0x70899) is `nn::audio`'s invalid-argument result (module 153, description 900), as in
+`runtime/audio/audio_mixer.c`. `input_name` ("DefaultMicrophone") is the name the game is given for the default
+device.
