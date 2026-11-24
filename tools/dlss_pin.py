@@ -1,26 +1,14 @@
-"""NVIDIA's DLSS library for the releases: nvngx_dlss.dll for Windows, libnvidia-ngx-dlss.so.<version> for Linux.
-tools/make_launcher.py and tools/make_kit.py put the DLL in the release's bin/ beside AMD's FSR 3.1 library,
-tools/make_appimage.py puts the Linux library in the AppImage's kit bin/, and tools/make_game.py copies either beside
-the game, where NGX loads it (runtime/vk/vk_dlaa.c). Without it DLSS runs only where the NVIDIA driver supplies the model
-itself (Windows), and on Linux not at all (runtime/gfx/resolution.c dlss_dll).
-
-The file is NVIDIA's own build from the DLSS SDK repository at a pinned tag, unmodified and checked against its size
-and SHA-256. NVIDIA's RTX SDKs License lets an application ship it in object form; the notice written beside it names
-the version and the licence that covers it. Both platforms' files are published under the one licence file of that tag.
-"""
 from pathlib import Path
 from typing import NamedTuple
 
 NAME = 'nvngx_dlss.dll'
-NOTICE = 'nvngx_dlss-NOTICE.txt'   # beside the DLL; make_game.py reads its sha256 line
+NOTICE = 'nvngx_dlss-NOTICE.txt'
 VERSION = '310.9.1'
 URL = f'https://raw.githubusercontent.com/NVIDIA/DLSS/v{VERSION}/lib/Windows_x86_64/rel/{NAME}'
 SIZE = 58956912
 SHA256 = '3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983'
-# The Linux library of the same release. Its name ends in the DLSS version; NGX finds it by that name beside the
-# executable (runtime/gfx/resolution.c dlss_dll looks for the prefix).
 LINUX_NAME = f'libnvidia-ngx-dlss.so.{VERSION}'
-LINUX_NOTICE = 'libnvidia-ngx-dlss-NOTICE.txt'   # beside the library; make_game.py reads its sha256 line
+LINUX_NOTICE = 'libnvidia-ngx-dlss-NOTICE.txt'
 LINUX_URL = f'https://raw.githubusercontent.com/NVIDIA/DLSS/v{VERSION}/lib/Linux_x86_64/rel/{LINUX_NAME}'
 LINUX_SIZE = 59481944
 LINUX_SHA256 = '7561f16cab74e2b7ccf791bf44bb9cc43abb44bcf78f33c5663520ad4e857e02'
@@ -36,7 +24,6 @@ class Pin(NamedTuple):
 
 
 def pin(linux=False):
-    """The pinned file of a platform."""
     if linux:
         return Pin(LINUX_NAME, LINUX_NOTICE, LINUX_URL, LINUX_SIZE, LINUX_SHA256)
     return Pin(NAME, NOTICE, URL, SIZE, SHA256)
@@ -64,8 +51,6 @@ def sha256_file(path):
 
 
 def resolve(local, cache_dir, linux=False):
-    """The pinned library: local when given (it must be the pinned file), else the copy in cache_dir, downloaded when
-    missing (launcher/net.py: resumed, checked against the size and SHA-256). linux: the Linux library, else the DLL."""
     p = pin(linux)
     if local:
         local = Path(local)
@@ -86,7 +71,6 @@ def resolve(local, cache_dir, linux=False):
 
 
 def place(src, bin_dir, linux=False):
-    """The library and its notice into a release's or the kit's bin/."""
     import shutil
     p, bin_dir = pin(linux), Path(bin_dir)
     shutil.copy2(src, bin_dir / p.name)
