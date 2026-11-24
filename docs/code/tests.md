@@ -51,6 +51,10 @@ calls `launcher/ui/app.py` `App.job_finished()` itself instead of waiting for th
   reports turned on is kept for a later start because the update's message is on screen.
 - `FailedUpdateStartTest`: a job that fails leaves its own screen without the question and without an answer recorded;
   Try Again asks when it ends well.
+- `test_the_first_start_of_a_version_asks_with_send_focused` reads the countdown line after it has set the deadline
+  again itself: the line shows whole seconds left, so a test that takes over a second between opening the question and
+  reading the line would see 29 where it expects 30, as a loaded machine once did. Before that it checks that the start
+  had set a deadline within the question's 30 seconds.
 
 ## `tests/runtime_dirs_check.py`
 
