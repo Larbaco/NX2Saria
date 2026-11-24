@@ -1950,7 +1950,116 @@ pixels.
 
 A window with more than one texture is not drawn: multi-texture windows use a shader to combine their fills and edges.
 
+## `tools/lift_compare.py`
+
+Checks that two lifts hold the same game code, however `recomp/gen.py` grouped the functions into chunks
+([build-memory.md](../build-memory.md), [building.md](../building.md)).
+
+```
+python tools/lift_compare.py OLD_LIFT NEW_LIFT
+```
+
+Each argument is a lift folder as `recomp/gen.py` writes it (`layout.h`, `layout.json`, `patches.h` and one folder per
+module with `<mod>_NNNN.c` chunks and `<mod>_table.c`). For every module it splits each chunk into its function
+definitions and compares the two lifts: the same functions defined, each exactly once, with the same text byte for
+byte. The function tables, `layout.h`, `layout.json` and `patches.h` must be identical. Within each lift:
+
+- the functions the chunks define are exactly the addresses of `<mod>_fn_addrs[]` in `<mod>_table.c`;
+- before a chunk's first definition there are only `#include` lines, comments, blank lines, prototypes and the
+  declaration of `rt_patch_on`;
+- every function a definition calls is declared before it (`recomp/gen.py` `chunk_text()` prototypes every referenced
+  function; the compile proves this too).
+
+Which chunk a function lands in, the chunk numbering and the prototype blocks may differ. It prints a summary per
+module and exits 1 on any difference. Standard library only; files are read a line at a time.
+
+### `split_chunk()`
+
+(definitions, prototypes, problems) of one chunk: definitions is `[(name, sha256 of its text, names it calls)]` in
+file order, prototypes the names the chunk declares before its first definition.
+
+A definition runs from its `void f_<hex>(Cpu *c) {` line (or the `static void fb_<hex>(Cpu *c);` line just before it,
+which declares its all-label fallback) to the line before the next definition. The generator joins definitions with
+one blank line: that one line, exactly `'\n'`, is not part of a definition; every other line, blank or not, is hashed
+as it is. A line the generator does not write before the first definition, or a fallback declaration that is not
+followed by its definition, is a problem.
+
+`pending` is a fallback declaration line not yet known to start a definition. `blank` counts the `'\n'` lines held
+back: one separates two definitions, any more belong to the definition.
+
+### `table_addrs()`
+
+The addresses of `<mod>_fn_addrs[]` in a function table, as function names, or `None` if there is no such array.
+
+### `scan_module()`
+
+(`{function: sha256}`, `{function: [chunk file, ...]}` for functions defined more than once, chunk count,
+`[problems]`): the problems are undeclared calls, lines the generator does not write and a definition set that is not
+the table's.
+
+### `modules()`
+
+Module folders of a lift: those with a function table or a chunk.
+
+### `same_file()`
+
+True if both files exist and have the same bytes.
+
+### `compare()`
+
+Number of differences between the lifts `old` and `new`, with a summary printed to `out` (default stdout).
+
+## `tools/linux_runtime.py`
+
+The runtime identity shared by the Linux AppImage and the Linux release package (`runtime_id()`: the Python's version
+and a digest of the pins it is given).
+
 ## `tools/make_appimage.py`
+
+Builds `NX2Saria-Linux-<version>-x86_64.AppImage`: the Linux build kit as one file, which builds Ocarina of Time on
+the player's PC from their own dump with `tools/make_game.py`, as `NX2Saria-Setup.exe` does on Windows. Started without
+arguments on a desktop it opens a window to install, update and play (`tools/appimage_gui.py`, which runs AppRun with
+`--events` and reads its progress lines).
+
+```
+python3 tools/make_appimage.py --python <standalone CPython 3.14> --appimagetool <appimagetool> [--out dist]
+                               [--dlss libnvidia-ngx-dlss.so.<version> | --no-dlss]
+```
+
+The AppImage holds no game files. It holds:
+
+- the kit's `tools/`, `recomp/`, `runtime/` and docs;
+- the shader translator built by `tools/build_xlate.py` from this checkout's sources (`bin/nx2navi_xlate`; the script
+  stops first on another, `tools/build_xlate.py` `check_built()`);
+- NVIDIA's DLSS library with its notice (`bin/`, `tools/dlss_pin.py`: downloaded from NVIDIA's DLSS SDK repository and
+  checked, or `--dlss`; not with `--no-dlss`: an AppImage made without the library downloads it after a build on
+  machines with NVIDIA's driver, AppRun's `get_dlss`);
+- the pinned Vulkan Memory Allocator header;
+- the pinned Vulkan headers (`toolchain/vulkan-headers`, `tools/vulkan_pin.py`: the runtime names Vulkan extensions
+  newer than the headers many distributions package);
+- the pinned SDL3 (`toolchain/sdl3`, `tools/sdl3_pin.py`: its headers and `libSDL3.so.0`, for the distributions that
+  package no SDL3, Ubuntu 24.04 and Linux Mint 22 among them; `tools/make_game.py` `sdl3_choice()` takes the system's
+  where the compiler finds it);
+- a relocatable CPython 3.14 (python-build-standalone, as `uv python install 3.14` puts in
+  `~/.local/share/uv/python`) with numpy, lz4, zstandard, fonttools and pillow;
+- the button art `make_game.py`'s prompts step draws from (as `tools/make_kit.py` takes it: the repository's
+  `prompt-art` folder or the folders `--prompt-art` names, the pictures `tools/prompt_art.py` `art_files()` names with
+  its `SOURCE.md`, into the kit's `prompt-art` folder; with `--no-prompt-art` that step is skipped and the game keeps
+  the Switch prompts).
+
+zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with pip into
+`~/.local/share/nx2saria/pydeps` the first time it runs. An existing `~/.local/share/nx2navi/pydeps` is reused in
+place.
+
+The compiler and the other libraries come from the system ([README-BuildKit.md](../README-BuildKit.md), "Linux"):
+before a build the AppImage checks for clang, clang++ and lld, asks that compiler for the libraries' headers (so
+headers it finds through its own folders or `CPATH` count), and names the packages for Arch, Fedora and Debian, Ubuntu
+and Mint; `--check`, which reads the dump only, needs none of them. Whether they are new enough is found out by trying
+them: `tools/make_game.py` checks the runtime's sources with that compiler, and links and runs a program against those
+libraries, before the build's long steps (preflight).
+
+`TOOLS_SKIP` leaves `vendor` and `xlate` out of the kit's `tools/`: the translator ships built (`bin/`); its sources
+stay out.
 
 `KIT_DIRS` holds `licenses/`: the licence texts `THIRD_PARTY_NOTICES.md` names that are not beside their code (the
 shader translator's, MacNativeGames', the AppImage runtime's). They go into the kit, `usr/kit/licenses/`.
@@ -1968,12 +2077,72 @@ the modules taken out, so that a change of either brings the launcher a new runt
 
 The files of a Python folder's `PYTHON_REMOVED` modules, in `lib/python3*/lib-dynload/`.
 
+### `carry_sdl3()`
+
+The pinned SDL3 (`tools/sdl3_pin.py`) into the kit's `toolchain/sdl3`, fetched and checked into this checkout's
+`toolchain/sdl3` first when it is not there yet: `tools/make_game.py` builds against it on a system without SDL3. The
+copy is checked file by file against the pinned files' digest, so a checkout's folder changed since its fetch does not
+go into a release.
+
 ### `main()`
 
 Before anything is built, `tools/python_licences.py` `check_build()` stops on a Python that is not the build its
 licence texts are pinned for. After the packages are installed, the removed modules are deleted, and
 `pbs_licences()` and `cpython_license()` of that file put the texts of what python-build-standalone links into the
 Python, and CPython's incorporated software, into `usr/kit/licenses/python/`.
+
+In the order of the function:
+
+- `tools/prompt_art.py` `art_files()` is called first, so the art is all there before anything is built.
+- `tools/build_xlate.py` `check_built()` wants the translator of this checkout's sources, or none.
+- `tools/build_shaders.py` `build()` runs: the image carries the runtime's shaders compiled (`runtime/*_spv.h`).
+- The DLSS notice goes into the kit's `docs/`: it is the notice AppRun's `get_dlss` writes beside a library it
+  downloads; its `sha256` line is the one `make_game.py` reads.
+- The DLSS library goes into `bin/`: NGX loads it from beside the game (`runtime/vk/vk_dlaa.c`), and `make_game.py`
+  copies it there.
+- The Vulkan headers the runtime is written against go into the kit, ahead of the system's on the player's machine
+  (`tools/build_game.py` `vulkan_include()` finds them in the kit): fetched and checked here when not there yet.
+- The `EXTERNALLY-MANAGED` markers of the copied Python are deleted: uv marks its Pythons; this copy is the AppImage's
+  own.
+- Pillow turns the window icon of `runtime/nx2saria.ico` into the AppImage's PNG.
+
+## `tools/make_dlaa_mask.py`
+
+The SPIR-V of DLSS's reactive mask pass (`runtime/vk/vk_dlaa.c` `mask_pass()`) as `runtime/dlaa_mask_spv.h`, assembled
+here like `tools/make_mvobj_fs.py`. `tools/build_shaders.py` writes the header from `HEADER` when the game is built;
+run on its own (`python tools/make_dlaa_mask.py`), this script writes it too.
+
+The shader, as GLSL:
+
+```glsl
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D before;   // the light target when the transparents start
+layout(binding = 1) uniform sampler2D after;    // the light target when DLSS runs
+layout(binding = 2, r8) uniform writeonly image2D mask;
+layout(push_constant) uniform P { vec4 p; };    // render size xy, threshold z, gain w
+void main() {
+    vec2 g = vec2(gl_GlobalInvocationID.xy);
+    if (g.x < p.x && g.y < p.y) {
+        ivec2 c = ivec2(gl_GlobalInvocationID.xy);
+        vec3 b = texelFetch(before, c, 0).rgb, a = texelFetch(after, c, 0).rgb;
+        vec3 d = abs(a - b);
+        float dm = max(max(d.r, d.g), d.b);
+        float m = max(max(max(a.r, a.g), a.b), max(max(b.r, b.g), b.b));
+        float r = dm / max(m, 1e-4);
+        imageStore(mask, c, vec4(clamp((r - p.z) * p.w, 0.0, 1.0)));
+    }
+}
+```
+
+The mask is the share of a pixel's colour the transparents changed (particles, smoke, sparks: what has no motion
+vectors of its own), 0 where nothing was drawn over the solid scene.
+
+The numbers in the assembly: `FAbs`, `FMax`, `FClamp` (4, 40, 43) are instructions of `GLSL.std.450`; the
+capabilities are 1 (Shader) and 49 (StorageImageExtendedFormats, for r8); the memory model is 0, 1 (Logical, GLSL450);
+the entry point's execution model is 5 (GLCompute) and its execution mode 17 (LocalSize) with 8, 8, 1; the sampled
+image type is 2D, sampled, format unknown, the mask's 2D, storage, format 15 (R8); `fetch()` reads with the image
+operand 2 (Lod) at level 0.
 
 ## `tools/make_launcher.py`
 
