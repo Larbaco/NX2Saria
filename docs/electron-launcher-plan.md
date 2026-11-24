@@ -204,6 +204,15 @@ The coordinator approved the persistent-worker direction: line-delimited UTF-8 J
 - A job is terminal only when `finished` is set after marker cleanup and release of claims and its nested lock; `result` alone is insufficient. A `FileLock` with `key is None` means the lock could not be opened: proceed as today, log it and report it in the handshake.
 - After a delayed memory decision, the worker rechecks the current attempt identity, its own game session and any external game before spawning. Stale answers are ignored; an occupied state receives the same refusal as the initial check. This additional recheck is for the asynchronous worker, not the modal Tk extraction. Include a synthetic race test.
 
+### Worker implementation: handshake and inspection
+
+The first worker slice implements a bounded JSON-lines handshake with exact protocol version 1, validates the selected
+launcher root and protocol before writing, acquires the existing lock before `Context`, reports held or unavailable
+lock state and detects a complete waiting update without installing it. It supports inspection, structured protocol
+errors and idle EOF cleanup. Synthetic Python tests exercise two workers, CLI and Steam contention, malformed input,
+the lock-open fallback and staged-file preservation; the TypeScript protocol parser is tested against a real worker
+handshake. The eleven synthetic worker tests also pass on a Windows host with Python 3.11; they use temporary roots and a fake Steam process and do not use a real game. The Electron window is not yet connected to the worker. Worker Play, jobs, post-game behavior and owner real-game evidence remain outstanding.
+
 ## Development logging and dependency inventory
 
 The current development Electron writes `data/logs/launcher-electron.log` only for a recognized installation whose logs directory already exists; it does not create that directory during inspection. It logs startup version/platform, selection kind and recognized brand (no paths), inspection and Play outcomes, and window visibility. Existing files over 1 MiB are reset on opening; logging failure does not prevent the application from working. A persistent worker will later use the existing privacy-aware launcher logger. See `docs/electron-launcher-notices.md` for the preliminary runtime and development-dependency license inventory; it is not release clearance.

@@ -97,3 +97,14 @@ estimate. `need=None` with `unbounded=True` represents an infinite estimate with
 `play_memory_response()` logs the player's answer and returns it; an unavailable dialog is logged and permits Play.
 `confirm_play_memory()` retains the synchronous entry point used by Steam and combines these functions with the
 existing native dialog, including the fallback that permits Play if the probe or dialog is unavailable.
+
+### `worker.py`: first persistent-worker slice
+
+The worker accepts a newline-delimited UTF-8 JSON handshake with the exact integer protocol version before inspecting or
+writing the selected root. A root must be an existing launcher with `app/current.txt` and a data directory; a read-only inspection rejects invalid settings before `Context` can create a recovery copy. It then
+constructs `Layout`, takes the existing `FileLock` before `Context`, and reports whether the lock was acquired or could
+not be opened. A busy lock fails visibly. The worker reports its version, capabilities and whether a complete staged
+update is waiting; detecting it does not modify it. It answers `inspect` using the existing read-only inspection and
+logs the result. Repeated inspection and unknown-method log entries are limited to ten per action, followed by one suppression line. EOF while idle closes the log and releases the lock. Frames have a 64 KiB limit, IDs are integers or
+strings, and malformed frames or a protocol mismatch are rejected without opening the installation. This slice does
+not launch a game, manage jobs, send reports or connect the Electron window to the worker.
