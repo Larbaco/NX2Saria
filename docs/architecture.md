@@ -96,11 +96,11 @@ for `vk/`), by file and function: the source code itself has no comments
 
 #### Threads and cores
 
-Every guest thread is a host thread. The game assumes Horizon's scheduler: three application cores, a thread runs
+Every guest thread is a host thread. The game assumes Horizon's scheduler: six application cores, a thread runs
 only on a core in its affinity mask, and a higher-priority thread takes a core from a lower-priority one. The game
 keeps per-core data without locks and relies on that, so the host models it (`runtime/hle/kernel.c`):
 
-- Three virtual cores. A guest thread runs guest code only while it holds a core; the others wait in a
+- Six virtual cores (`NCORE`). A guest thread runs guest code only while it holds a core; the others wait in a
   priority-ordered list.
 - Preemption. When a waiting thread has a better priority than a holder on a core it may use, exactly one holder is
   flagged. The holder checks the flag at its next SVC and at every indirect call (`rt_dispatch`), checks again under
