@@ -1,17 +1,3 @@
-// nx2saria.exe --probe-meshfb: the mesh shader fallback (mesh_fb.c, vk_mesh_fb.c, vk_exec_draw.c "mesh fallback").
-//
-// Draw part, no game files: two mesh programs of the runtime's own in the shape the translator gives one
-// (shaders/meshfb_probe_*.mesh, .task), one without a task stage and one fed by a task program, drawn through the
-// replay into an RGBA8 target with direct and with indirect workgroup counts, and both in one pass after each other.
-// Each picture is drawn twice, through VK_EXT_mesh_shader and through the fallback, and the two are compared texel by
-// texel; without mesh shaders on the device only the fallback draws, and the probe says that nothing was compared.
-//
-// Module part, with NX2SARIA_PROBE_MESHFB_DIR=<dir>: every "<name>" of <dir>/list.txt names <dir>/<name>.in (a stored
-// shader input, gfx_shader.c in_store: control section and code) and <dir>/<name>.spv (its translation). The compute
-// module and, for a mesh program, a vertex module are written to <dir>/out/<name>.cs.spv and .vs.spv for spirv-val
-// (work the caller does; tests of game shaders stay outside the repository). Where <dir>/<name>.res.json (the
-// translation's reflection) is there too, the compute pipeline of the module is built on this device, as its first
-// draw would build it.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,12 +31,10 @@
         }                                                                                                              \
     } while (0)
 
-void vk_exec_probe_shader(const uint8_t *ctl, const GfxShader *s);   // vk_exec_draw.c
-void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts);        // vk_exec_draw.c: mfb_batch.h MfbCount
+void vk_exec_probe_shader(const uint8_t *ctl, const GfxShader *s);
+void vk_exec_mfb_batch_counts(uint64_t *why, uint64_t *cuts);
 void vk_exec_draw_shutdown(void);
 void vk_exec_xfer_shutdown(void);
-
-// ---- module part
 
 static uint8_t *read_all(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
@@ -91,7 +75,7 @@ static int modules_part(const char *dir) {
         uint8_t *in = read_all(path, &in_n);
         snprintf(path, sizeof path, "%s/%s.spv", dir, name);
         uint8_t *spv = read_all(path, &spv_n);
-        uint32_t h[6];   // magic, version, stage, code length, c1 length, size of the answers (gfx_shader.c InHeader)
+        uint32_t h[6];
         if (!in || !spv || in_n < sizeof h) {
             printf("probe-meshfb: %s: input or translation missing\n", name), n_fail++;
             free(in), free(spv);
@@ -99,7 +83,7 @@ static int modules_part(const char *dir) {
         }
         memcpy(h, in, sizeof h);
         const uint8_t *control = in + sizeof h + h[5], *code = control + 0x880;
-        int stage = (int)h[2];   // GFX_STAGE_TS / GFX_STAGE_MS are the NVN stage numbers 6 and 7
+        int stage = (int)h[2];
         char err[200] = "";
         MeshFbInfo m;
         uint64_t on = 0, vn = 0;
@@ -121,7 +105,7 @@ static int modules_part(const char *dir) {
                 uint32_t mask = 0;
                 for (uint32_t l = 0; l < m.nlines; l++)
                     if (m.lines[l] >= 0x80) mask |= 1u << (m.lines[l] - 0x80) / 16;
-                for (int g = 0; g < 32; g++) type[g] = (uint8_t)(g % 3);   // every output type gets made somewhere
+                for (int g = 0; g < 32; g++) type[g] = (uint8_t)(g % 3);
                 vs = meshfb_vs(&m, mask, type, &vn);
                 if (!vs) snprintf(err, sizeof err, "no vertex module");
             }
@@ -136,8 +120,8 @@ static int modules_part(const char *dir) {
             size_t res_n = 0;
             snprintf(path, sizeof path, "%s/%s.res.json", dir, name);
             char *res = (char *)read_all(path, &res_n);
-            if (res) {   // the pipeline, with the layout the reflection gives
-                if (!device) {   // the first pool brings the device up
+            if (res) {
+                if (!device) {
                     uint64_t heap = 0;
                     CHECK(mem_set_heap_size(16ull << 20, &heap) == 0 && heap, "SetHeapSize 16 MiB");
                     pool.mem = pool.game_mem = (uint8_t *)(uintptr_t)heap + 0x100000, pool.size = 0x100000;
@@ -183,7 +167,7 @@ static int modules_part(const char *dir) {
                "words), %d not built\n", n_pipe, n_pipe ? pipe_ms / n_pipe : 0.0, pipe_worst, (unsigned long long)pipe_worst_words,
                n_pipe_fail);
         b->pool_fini(&pool);
-        b->submit(NULL, 0);   // the pool's buffers go when a submission after their release has completed
+        b->submit(NULL, 0);
         b->finish();
         vk_pipeline_shutdown();
         vk_exec_draw_shutdown();
@@ -193,8 +177,6 @@ static int modules_part(const char *dir) {
     return n_fail != 0 || n_pipe_fail != 0;
 }
 
-// ---- draw part
-
 static uint8_t *put(uint8_t *p, uint32_t op, const void *payload, uint32_t n) {
     op_hdr h = {op, (uint32_t)((sizeof h + n + 7) & ~7u)};
     memset(p, 0, h.size);
@@ -203,14 +185,12 @@ static uint8_t *put(uint8_t *p, uint32_t op, const void *payload, uint32_t n) {
     return p + h.size;
 }
 
-// An NVN2 control section of a task (6), mesh (7) or fragment (1) stage as vk_exec_draw.c and mesh_fb.c read it, and
-// a code block whose header maps the outputs: position and generic vector 0.
 static void fake_stage(NVNshaderData *sd, uint32_t stage, int fed_by_task) {
     uint8_t *ctl = calloc(1, 0x880), *code = calloc(1, 0x100);
     uint32_t magic = 0x98761234u, len = 0x100, st = stage << 16;
-    uint32_t w58 = 32u | 1u << 24;                           // 32 threads, a payload of one 256-byte unit
-    uint32_t w5c = 3u << 24 | (fed_by_task ? 1u << 16 : 0);   // triangles
-    uint32_t w60 = 64u | 32u << 16;                           // 64 vertices, 32 primitives
+    uint32_t w58 = 32u | 1u << 24;
+    uint32_t w5c = 3u << 24 | (fed_by_task ? 1u << 16 : 0);
+    uint32_t w60 = 64u | 32u << 16;
     memcpy(ctl, &magic, 4), memcpy(ctl + 0x38, &len, 4), memcpy(ctl + 0x54, &st, 4);
     if (stage >= 6) memcpy(ctl + 0x58, &w58, 4);
     if (stage == 7) memcpy(ctl + 0x5c, &w5c, 4), memcpy(ctl + 0x60, &w60, 4), code[0x35] = 0xf0, code[0x36] = 0x0f;
@@ -224,7 +204,6 @@ static const char RES_TS[] = "{\"key\":\"probe\",\"stage\":\"ts\",\"notes\":[],\
 static const char RES_FS[] = "{\"key\":\"probe\",\"stage\":\"ps\",\"notes\":[],\"cbufs\":[],\"sbufs\":[],\"textures\":[],"
                              "\"images\":[]}";
 
-// The program of a mesh stage, its task stage if any, and the fragment stage.
 static prog_t *make_prog(const GfxShader *ms, const GfxShader *ts, const GfxShader *fs) {
     static uint64_t serial = 0x9000;
     prog_t *p = calloc(1, sizeof *p);
@@ -237,8 +216,6 @@ static prog_t *make_prog(const GfxShader *ms, const GfxShader *ts, const GfxShad
 
 typedef struct { prog_t *prog; uint32_t count; int indirect; uint32_t grid[2]; float tint[4]; } MeshDraw;
 
-// Uniform data in the pool, 0x1000 apart per draw: the mesh stage's block at 0x90000, the task stage's at 0x98000; the
-// indirect records at 0xa0000.
 static int draw_picture(const GfxBackend *b, pool_t *pool, tex_t *color, const MeshDraw *d, int n, uint32_t *px) {
     static _Alignas(8) uint8_t stream[16384];
     uint8_t *q = put(stream, OP_BEGIN, NULL, 0);
@@ -285,11 +262,10 @@ static int draw_picture(const GfxBackend *b, pool_t *pool, tex_t *color, const M
 
 static int drawn_texels(const uint32_t *px) {
     int n = 0;
-    for (int i = 0; i < TEX_W * TEX_H; i++) n += px[i] != px[0];   // texel 0 is in the margin no cell covers
+    for (int i = 0; i < TEX_W * TEX_H; i++) n += px[i] != px[0];
     return n;
 }
 
-// Texels of a and b that differ, and the largest difference of a channel.
 static int differing(const uint32_t *a, const uint32_t *b, int *worst) {
     int n = 0;
     *worst = 0;
@@ -327,8 +303,6 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     CHECK(fs && ms && ts && tm, "a probe shader is malformed");
     prog_t *plain = make_prog(ms, NULL, fs), *tasked = make_prog(tm, ts, fs);
 
-    // 24 cells of a 6 x 4 grid by 24 mesh workgroups; 40 cells of an 8 x 5 grid by 10 task workgroups that start 0 to
-    // 4 mesh workgroups each
     const MeshDraw cases[][2] = {
         {{plain, 24, 0, {6, 4}, {1, 1, 1, 1}}},
         {{plain, 24, 1, {6, 4}, {1, 1, 1, 1}}},
@@ -366,12 +340,8 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     int w01, w23;
     CHECK(!differing(px[1][0], px[1][1], &w01) && !differing(px[1][2], px[1][3], &w23),
           "the fallback's direct and indirect pictures differ");
-    // the draws that did not fit: one by one (vk_meshfb_short) and batched short of their part (vk_meshfb_batch_short;
-    // vk_meshfb_short reads every record back first)
 #define SHORT() (vk_meshfb_short() + vk_meshfb_batch_short())
     CHECK(!SHORT(), "%llu of the draws above did not fit the fallback's buffers", (unsigned long long)SHORT());
-    // More workgroups than the mesh buffer has slots for: what fits is drawn, the rest is dropped and counted. The
-    // cells past the grid are outside the picture, so it is the 24-cell picture again.
     uint32_t slots = (uint32_t)(vk_meshfb_mesh_words() / 540), over = slots + 1000;
     const MeshDraw big = {plain, over, 1, {6, 4}, {1, 1, 1, 1}};
     static uint32_t bpx[TEX_W * TEX_H];
@@ -387,12 +357,9 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
           (unsigned long long)SHORT());
     printf("probe-meshfb: a draw of %u workgroups with room for %u: the picture of the first 24 is whole, the draw was counted\n",
            over, slots);
-    // A GPU-written task count past what the task buffer holds: the clamp cuts the dispatch and keeps the count asked
-    // for in the record (meshfb_clamp.comp), so the draw is counted; until 2026-11-22 the scan read the count already
-    // cut and such a draw was never seen. The tasks past the 10 of the grid draw outside the picture.
     uint64_t cap_task, cap_mesh;
     vk_meshfb_caps(&cap_task, &cap_mesh);
-    uint32_t tover = (uint32_t)(cap_task / 4 + 1000);   // past the room of any payload size
+    uint32_t tover = (uint32_t)(cap_task / 4 + 1000);
     const MeshDraw tbig = {tasked, tover, 1, {8, 5}, {1, 1, 1, 1}};
     c->mesh_fallback = 1;
     bad = draw_picture(b, &pool, &color, &tbig, 1, bpx);
@@ -405,9 +372,6 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
           "2 expected)", tover, (unsigned long long)SHORT());
     printf("probe-meshfb: a task draw of %u workgroups, past the task buffer: the 40-cell picture is whole, the draw was "
            "counted\n", tover);
-    // As the game runs it: pipelines built in the background, and a program's modules made on the fallback's own
-    // thread. New shader objects of the same programs are drawn until the picture is whole: the draws before that are
-    // skipped, and none may leave a partial picture behind for good.
     const GfxShader *fs2 = gfx_shader_own(meshfb_probe_f_spv, sizeof meshfb_probe_f_spv / 4, RES_FS);
     const GfxShader *ms2 = gfx_shader_own(meshfb_probe_m_spv, sizeof meshfb_probe_m_spv / 4, RES_MS);
     const GfxShader *ts2 = gfx_shader_own(meshfb_probe_t_spv, sizeof meshfb_probe_t_spv / 4, RES_TS);
@@ -427,13 +391,7 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
     CHECK(!left, "with background builds the picture still differs in %d texels after %d submissions", left, tries);
     printf("probe-meshfb: with background builds the picture was whole at submission %d (the earlier ones skipped their draws)\n",
            tries);
-    // With NX2SARIA_MESH_FALLBACK_BATCH=1 the pictures above were drawn through mfb_draw's batch and its way back (the
-    // pictures are the same as the mesh pipeline's and as one by one, checked above): the draws batched, those one by
-    // one for want of history (a task program's first draws), and the cuts at each pass and after a draw one by one.
     if (rt_knob("MESH_FALLBACK_BATCH", "1")) {
-        // More draws of programs with history, so that task draws are batched too. A batched draw's stages use compute
-        // pipelines of their own, built in the background: the draws before they are ready are skipped, as above, and
-        // once the picture is whole it stays whole.
         int whole = -1, k;
         c->mesh_fallback = 1;
         for (k = 0; k < 500 && (whole < 0 || k < whole + 20); k++) {
@@ -468,8 +426,6 @@ static int draw_part(const GfxBackend *b, uint8_t *guest) {
 int probe_meshfb(void) {
     const char *dir = cfg_get("NX2SARIA_PROBE_MESHFB_DIR");
     if (dir && *dir) return modules_part(dir);
-    // No game is loaded: Link's own motion vectors (motion_owner.c, selective_motion) would read the player's actor in
-    // guest memory at every submission (vk_usnap_begin) and fault. The probe draws no game, so they are off.
     cfg_setenv("NX2SARIA_SELECTIVE_MOTION", "0");
     vk_hdr_off();
     const GfxBackend *b = &gfx_vulkan_backend;

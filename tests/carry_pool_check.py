@@ -236,7 +236,7 @@ def main():
     if short != carried:
         print(f'carry pool check: gfx_shader.c POOL_TEX_SHORT is {short}, vk.h VK_POOL_TEX_CARRIED is {carried}')
         return 1
-    production = cut(src, '#define POOL_TEX_SHORT', '// Whether the cache holds a previous translator\'s entry of input iid.')
+    production = cut(src, '#define POOL_TEX_SHORT', 'static int carry_has_iid(')
     work = ROOT / 'build' / 'test' / 'carry_pool'
     work.mkdir(parents=True, exist_ok=True)
     c = work / 'check.c'

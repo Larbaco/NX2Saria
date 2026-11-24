@@ -1,25 +1,3 @@
-// The mesh shader fallback's modules, for a GPU without VK_EXT_mesh_shader (vk_exec_draw.c "mesh fallback" draws with
-// them; docs/architecture.md, "Mesh fallback").
-//
-// The translator turns a task or mesh program into a compute module whose shared memory is the program's stage buffer
-// and wraps it in a TaskEXT or MeshEXT entry function (tools/xlate/MeshSpirv.cs). The wrapping is undone here and
-// replaced: the translator's main function stays as it is, the entry function that hands the stage buffer to the mesh
-// pipeline goes, and a compute entry function copies the stage buffer into a storage buffer instead.
-//   task:  main; the payload area into the task buffer at the workgroup's place.
-//   mesh:  [the payload from the task buffer into the payload area] main; the vertex lines and the primitive area into
-//          the workgroup's slot of the mesh buffer.
-//   draw:  a vertex module made here reads a slot per instance: vertex index / indices per primitive is the
-//          primitive, its index byte names the vertex, and the vertex's lines are the outputs.
-// The module is made from the translation the shader cache already holds, so the translator and with it every cache
-// key stay as they are: a card with mesh shaders never sees these modules, and one without needs no other cache.
-//
-// Mesh workgroups after a task stage. A task workgroup starts up to `threads` mesh workgroups, and how many is known
-// only on the GPU. A pass between the two dispatches (shaders/meshfb_scan.comp) lists them in task order: entry g of
-// the list names the task workgroup and the index the mesh program sees as its workgroup id. That id comes from the
-// WorkgroupId built-in in the translated code; here the built-in counts list entries, so main reads a private
-// variable the entry function fills from the list.
-//
-// Opcode and enum numbers are the SPIR-V 1.6 specification's and SPV_EXT_mesh_shader's.
 #include "mesh_fb.h"
 
 #include <stdarg.h>
@@ -47,8 +25,6 @@ enum { BiPosition = 0, BiPointSize = 1, BiWorkgroupId = 26, BiLocalInvocationInd
 enum { CapShader = 1, CapMeshShading = 5283, ModelVertex = 0, ModelGLCompute = 5, ModelTask = 5364, ModelMesh = 5365,
        ModeLocalSize = 17 };
 
-// ---- the program's layout
-
 static void fail(char *err, size_t cap, const char *fmt, ...) {
     if (!err || !cap) return;
     va_list ap;
@@ -68,8 +44,6 @@ int meshfb_info(const uint8_t *control, const uint8_t *header, int stage, MeshFb
     uint32_t topo = w5c >> 24;
     m->ipp = topo == 1 ? 1 : topo == 2 ? 2 : 3;
     m->has_task = stage == 7 && (w5c >> 16 & 0xff) != 0;
-    // The payload as the translator sizes it (tools/xlate/Program.cs Translate): a size of 0 is one 256-byte unit, and
-    // the header of 0x20 bytes comes on top.
     if (stage == 6 || m->has_task) m->payload_bytes = (m->payload_bytes ? m->payload_bytes : 256) + 0x20;
     if (stage == 6) {
         m->pay = 0, m->shared_bytes = m->payload_bytes;
@@ -77,8 +51,6 @@ int meshfb_info(const uint8_t *control, const uint8_t *header, int stage, MeshFb
     }
     if (stage != 7) return fail(err, cap, "stage %d is neither task nor mesh", stage), 0;
     if (!m->maxv || !m->maxp || m->maxv > 256) return fail(err, cap, "limits of %u vertices and %u primitives", m->maxv, m->maxp), 0;
-    // The output map of the program header: system values B at byte 0x35, one bit per component from 0x60; generic
-    // vectors from byte 0x36, a nibble each. System values A and C never appear in the game's mesh programs.
     if (header[0x34] || header[0x48] || header[0x49]) return fail(err, cap, "output map with system values A or C"), 0;
     for (int b = 0; b < 8; b++)
         if (header[0x35] >> b & 1) m->lines[m->nlines++] = (uint16_t)(0x60 + 4 * b);
@@ -92,8 +64,6 @@ int meshfb_info(const uint8_t *control, const uint8_t *header, int stage, MeshFb
     m->shared_bytes = m->pay + (m->has_task ? m->payload_bytes : 0);
     return 1;
 }
-
-// ---- a growing list of SPIR-V words
 
 typedef struct { uint32_t *w; size_t n, cap; int oom; } Wb;
 
@@ -115,11 +85,10 @@ static void wb_ins(Wb *b, uint32_t op, const uint32_t *operands, size_t n) {
 }
 #define INS(b, op, ...) wb_ins(b, op, (const uint32_t[]){__VA_ARGS__}, sizeof((const uint32_t[]){__VA_ARGS__}) / 4)
 
-// What a module under construction adds: decorations, then types, constants and variables, then one function.
 typedef struct {
     uint32_t bound;
     Wb deco, glob, fn;
-    uint32_t t_void, t_bool, t_uint, t_fnvoid, t_v3uint;   // existing or new
+    uint32_t t_void, t_bool, t_uint, t_fnvoid, t_v3uint;
     uint32_t p_fn_uint, p_sb_uint;
     struct { uint32_t v, id; } k[96];
     int nk;
@@ -127,7 +96,7 @@ typedef struct {
 
 static uint32_t nid(Cx *c) { return c->bound++; }
 
-static uint32_t K(Cx *c, uint32_t v) {   // a 32-bit unsigned constant
+static uint32_t K(Cx *c, uint32_t v) {
     for (int i = 0; i < c->nk; i++)
         if (c->k[i].v == v) return c->k[i].id;
     uint32_t id = nid(c);
@@ -136,7 +105,7 @@ static uint32_t K(Cx *c, uint32_t v) {   // a 32-bit unsigned constant
     return id;
 }
 
-static uint32_t E_(Cx *c, uint32_t op, uint32_t type, const uint32_t *operands, size_t n) {   // an instruction with a result
+static uint32_t E_(Cx *c, uint32_t op, uint32_t type, const uint32_t *operands, size_t n) {
     uint32_t id = nid(c), head[3] = {(uint32_t)((n + 3) << 16) | op, type, id};
     wb_put(&c->fn, head, 3);
     wb_put(&c->fn, operands, n);
@@ -151,7 +120,6 @@ static uint32_t umin(Cx *c, uint32_t a, uint32_t b) {
     return E(c, OpSelect, c->t_uint, E(c, OpULessThan, c->t_bool, a, b), a, b);
 }
 
-// if (cond) { ...the instructions emitted until if_end }
 static uint32_t if_begin(Cx *c, uint32_t cond) {
     uint32_t then = nid(c), merge = nid(c);
     DO(c, OpSelectionMerge, merge, 0);
@@ -164,7 +132,6 @@ static void if_end(Cx *c, uint32_t merge) {
     DO(c, OpLabel, merge);
 }
 
-// for (i = start; i < limit; i += step) { ...the instructions emitted until loop_end }; counter: a Function variable
 typedef struct { uint32_t head, cont, merge, i, counter, step; } Loop;
 static Loop loop_begin(Cx *c, uint32_t counter, uint32_t start, uint32_t limit, uint32_t step) {
     Loop l = {nid(c), nid(c), nid(c), 0, counter, step};
@@ -188,7 +155,6 @@ static void loop_end(Cx *c, const Loop *l) {
     DO(c, OpLabel, l->merge);
 }
 
-// A storage buffer of 32-bit words at (set 0, binding): its variable. readonly: the module only reads it.
 static uint32_t word_buffer(Cx *c, uint32_t binding, int readonly) {
     uint32_t arr = nid(c), st = nid(c), ptr = nid(c), var = nid(c);
     INS(&c->glob, OpTypeRuntimeArray, arr, c->t_uint);
@@ -206,9 +172,7 @@ static uint32_t word_buffer(Cx *c, uint32_t binding, int readonly) {
 static uint32_t buf_ptr(Cx *c, uint32_t var, uint32_t index) { return E(c, OpAccessChain, c->p_sb_uint, var, K(c, 0), index); }
 static uint32_t buf_load(Cx *c, uint32_t var, uint32_t index) { return E(c, OpLoad, c->t_uint, buf_ptr(c, var, index)); }
 
-// ---- a translated task or mesh module to its compute module
-
-typedef struct { uint32_t at, op, len; } In;   // an instruction: its first word's index, opcode, word count
+typedef struct { uint32_t at, op, len; } In;
 
 static int id_in(const uint32_t *set, int n, uint32_t id) {
     for (int i = 0; i < n; i++)
@@ -216,7 +180,7 @@ static int id_in(const uint32_t *set, int n, uint32_t id) {
     return 0;
 }
 
-static int is_decl(uint32_t op) {   // a type, constant or global variable declaration
+static int is_decl(uint32_t op) {
     return (op >= OpTypeVoid && op <= 39) || (op >= 41 && op <= 52) || op == OpVariable || op == 1;
 }
 
@@ -247,7 +211,6 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
     removed = malloc((n + 1) * 4), gvars = malloc((n + 16) * 4);
     if (!removed || !gvars) FAIL("out of memory");
     uint32_t old_entry = 0, model = 0, shared_var = 0, shared_type = 0, wg_var = 0, lii_var = 0, first_fn = 0, first_decl = 0;
-    // pass 1: what the module has
     for (size_t i = 0; i < n; i++) {
         const uint32_t *a = w + in[i].at + 1;
         uint32_t op = in[i].op, len = in[i].len;
@@ -268,7 +231,7 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
     if (n_entry != 1 || model != (uint32_t)(mesh ? ModelMesh : ModelTask)) FAIL("the entry point is not a %s one", mesh ? "mesh" : "task");
     if (n_shared != 1) FAIL("%d workgroup variables (one shared memory array expected)", n_shared);
     if (!c.t_void || !c.t_bool || !c.t_uint || !c.t_fnvoid || !first_fn || !first_decl) FAIL("a basic type or the functions are missing");
-    {   // the shared memory array holds the layout this module is asked to copy
+    {
         uint32_t arr = 0, len_id = 0, len = 0;
         for (size_t i = 0; i < n; i++) {
             const uint32_t *a = w + in[i].at + 1;
@@ -290,7 +253,6 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         if (a[2] == BiWorkgroupId) wg_var = a[0];
         if (a[2] == BiLocalInvocationIndex) lii_var = a[0];
     }
-    // the old entry function, and the function it calls: the translator's main
     size_t e0 = 0, e1 = 0;
     uint32_t main_fn = 0, n_calls = 0;
     for (size_t i = first_fn; i < n; i++)
@@ -302,7 +264,6 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         }
     if (!e0 || e1 >= n || n_calls != 1) FAIL("the entry function calls %u functions (one expected)", n_calls);
 
-    // ---- new types, variables and the entry function
     if (!c.t_v3uint) c.t_v3uint = nid(&c), INS(&c.glob, OpTypeVector, c.t_v3uint, c.t_uint, 3);
     c.p_fn_uint = nid(&c), INS(&c.glob, OpTypePointer, c.p_fn_uint, ScFunction, c.t_uint);
     c.p_sb_uint = nid(&c), INS(&c.glob, OpTypePointer, c.p_sb_uint, ScStorageBuffer, c.t_uint);
@@ -325,7 +286,7 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         gvars[n_gvars++] = wg_var;
     }
     uint32_t fake_wg = 0, p_priv_uint = 0;
-    if (mesh) {   // the workgroup id main sees (see the top)
+    if (mesh) {
         uint32_t pt = nid(&c);
         fake_wg = nid(&c), p_priv_uint = nid(&c);
         INS(&c.glob, OpTypePointer, pt, ScPrivate, c.t_v3uint);
@@ -346,14 +307,13 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
     DO(&c, OpVariable, c.p_fn_uint, counter, ScFunction);
     uint32_t tid = E(&c, OpLoad, c.t_uint, lii_var);
     uint32_t g = E(&c, OpCompositeExtract, c.t_uint, E(&c, OpLoad, c.t_v3uint, wg_var), 0);
-    uint32_t first = E(&c, OpULessThan, c.t_bool, tid, k1);   // the workgroup's first thread
+    uint32_t first = E(&c, OpULessThan, c.t_bool, tid, k1);
 #define SHARED(index) E(&c, OpAccessChain, p_shared, shared_var, index)
-#define BARRIER() DO(&c, OpControlBarrier, K(&c, 2), K(&c, 2), K(&c, 0x108))   /* Workgroup, AcquireRelease | WorkgroupMemory */
+#define BARRIER() DO(&c, OpControlBarrier, K(&c, 2), K(&c, 2), K(&c, 0x108))
     if (!mesh) {
         uint32_t pw = m->payload_bytes / 4;
         uint32_t at = mul(&c, g, K(&c, pw));
         uint32_t room = E(&c, OpULessThanEqual, c.t_bool, add(&c, at, K(&c, pw)), E(&c, OpArrayLength, c.t_uint, task_buf, 0));
-        // the mesh workgroup count starts at 0: a task that culls everything never writes it
         uint32_t mg = if_begin(&c, first);
         DO(&c, OpStore, SHARED(K(&c, (m->pay + 4) / 4)), k0);
         if_end(&c, mg);
@@ -376,10 +336,6 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         DO(&c, OpStore, fake_wg, E(&c, OpCompositeConstruct, c.t_v3uint, j, k0, k0));
         uint32_t at = mul(&c, g, K(&c, slot_words));
         uint32_t room = E(&c, OpULessThanEqual, c.t_bool, add(&c, at, K(&c, slot_words)), E(&c, OpArrayLength, c.t_uint, mesh_buf, 0));
-        // The whole stage buffer starts at 0: the vertex lines, the primitive count and the vertex indices. Workgroup
-        // memory is undefined at the start, a mesh program need not write every vertex it has room for or every index
-        // byte (nor its count when it emits nothing), and the slot below is copied whole and drawn: what an earlier
-        // workgroup left there became vertices and primitives. The payload area after it is copied in next.
         Loop z = loop_begin(&c, counter, tid, K(&c, slot_words), threads);
         DO(&c, OpStore, SHARED(z.i), k0);
         loop_end(&c, &z);
@@ -396,7 +352,7 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         BARRIER();
         uint32_t count = E(&c, OpLoad, c.t_uint, SHARED(count_word));
         mg = if_begin(&c, room);
-        {   // a slot without primitives gets its count alone
+        {
             uint32_t some = E(&c, OpINotEqual, c.t_bool, count, k0), then = nid(&c), other = nid(&c), merge = nid(&c);
             DO(&c, OpSelectionMerge, merge, 0);
             DO(&c, OpBranchConditional, some, then, other);
@@ -417,7 +373,6 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
     wb_ins(&c.fn, OpReturn, NULL, 0);
     wb_ins(&c.fn, OpFunctionEnd, NULL, 0);
 
-    // ---- pass 2: the module again
     uint32_t head[5] = {w[0], w[1], w[2], 0, 0};
     wb_put(&out, head, 5);
     for (size_t i = 0; i < n; i++) {
@@ -425,14 +380,14 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         uint32_t op = in[i].op, len = in[i].len;
         if (i == first_decl) wb_put(&out, c.deco.w, c.deco.n);
         if (i == first_fn) wb_put(&out, c.glob.w, c.glob.n);
-        if (i >= e0 && i <= e1) continue;   // the old entry function
+        if (i >= e0 && i <= e1) continue;
         if (op == OpCapability && a[0] == CapMeshShading) continue;
         if (op == OpExtension && len >= 6 && !memcmp(a, "SPV_EXT_mesh_shader", 20)) continue;
         if (op == OpExecutionMode && a[1] != ModeLocalSize) continue;
         if ((op == OpName || op == OpDecorate || op == OpDecorateId || op == OpDecorateString) && id_in(removed, n_removed, a[0])) continue;
         if ((op == OpTypePointer && id_in(removed, n_removed, a[0])) || (op == OpVariable && id_in(removed, n_removed, a[1]))) continue;
-        if (op == OpEntryPoint) {   // every global variable is its interface (SPIR-V 1.4)
-            uint32_t ep[4] = {(uint32_t)((n_gvars + 5) << 16) | OpEntryPoint, ModelGLCompute, entry, 0x6e69616d /* "main" */};
+        if (op == OpEntryPoint) {
+            uint32_t ep[4] = {(uint32_t)((n_gvars + 5) << 16) | OpEntryPoint, ModelGLCompute, entry, 0x6e69616d};
             uint32_t zero = 0;
             wb_put(&out, ep, 4), wb_put(&out, &zero, 1);
             wb_put(&out, gvars, (size_t)n_gvars);
@@ -443,7 +398,7 @@ static uint32_t *convert(const uint32_t *w, uint64_t words, const MeshFbInfo *m,
         if (out.oom) break;
         uint32_t *o = out.w + at + 1;
         if (op == OpExecutionMode) o[0] = entry;
-        if (mesh && i > first_fn) {   // main and what it calls read the workgroup id from the private variable
+        if (mesh && i > first_fn) {
             if ((op == OpAccessChain || op == OpInBoundsAccessChain) && a[2] == wg_var) {
                 uint32_t pointee = 0;
                 for (size_t t = first_decl; t < first_fn; t++)
@@ -488,8 +443,6 @@ uint32_t *meshfb_mesh_cs(const uint32_t *spirv, uint64_t words, const MeshFbInfo
     return convert(spirv, words, m, binding, task_payload_words, out_words, err, cap);
 }
 
-// ---- the vertex module
-
 uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_type[32], uint64_t *out_words) {
     Cx c = {.bound = 1};
     Wb out = {0};
@@ -497,7 +450,7 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     c.t_void = nid(&c), INS(&c.glob, OpTypeVoid, c.t_void);
     c.t_bool = nid(&c), INS(&c.glob, OpTypeBool, c.t_bool);
     c.t_uint = nid(&c), INS(&c.glob, OpTypeInt, c.t_uint, 32, 0);
-    uint32_t t_int = nid(&c), t_float = nid(&c), t_v4[3], p_out[3], t_scalar[3];   // by GFX_TYPE_*: float, sint, uint
+    uint32_t t_int = nid(&c), t_float = nid(&c), t_v4[3], p_out[3], t_scalar[3];
     INS(&c.glob, OpTypeInt, t_int, 32, 1);
     INS(&c.glob, OpTypeFloat, t_float, 32);
     t_scalar[0] = t_float, t_scalar[1] = t_int, t_scalar[2] = c.t_uint;
@@ -519,7 +472,7 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     INS(&c.deco, OpDecorate, pos_var, DecBuiltIn, BiPosition);
     INS(&c.deco, OpDecorate, pos_var, DecInvariant);
     iface[n_iface++] = vi_var, iface[n_iface++] = ii_var, iface[n_iface++] = pos_var;
-    if (m->ipp == 1) {   // a point list needs its size written
+    if (m->ipp == 1) {
         size_var = nid(&c);
         INS(&c.glob, OpVariable, p_out_float, size_var, ScOutput);
         INS(&c.deco, OpDecorate, size_var, DecBuiltIn, BiPointSize);
@@ -538,7 +491,7 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     uint32_t f0 = nid(&c), f1 = nid(&c), fout = nid(&c), null_v4[3], away = nid(&c);
     INS(&c.glob, OpConstant, t_float, f0, 0);
     INS(&c.glob, OpConstant, t_float, f1, 0x3f800000);
-    INS(&c.glob, OpConstant, t_float, fout, 0xc1800000);   // -16: outside the clip volume, for a point of no primitive
+    INS(&c.glob, OpConstant, t_float, fout, 0xc1800000);
     for (int t = 0; t < 3; t++) null_v4[t] = nid(&c), INS(&c.glob, OpConstantNull, t_v4[t], null_v4[t]);
     INS(&c.glob, OpConstantComposite, t_v4[0], away, fout, fout, f0, f1);
 
@@ -550,7 +503,6 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     uint32_t prim = m->ipp == 1 ? vi : E(&c, OpUDiv, c.t_uint, vi, K(&c, m->ipp));
     uint32_t corner = m->ipp == 1 ? k0 : E(&c, OpISub, c.t_uint, vi, mul(&c, prim, K(&c, m->ipp)));
     uint32_t base = mul(&c, slot, K(&c, slot_words));
-    // a slot past the buffer (more workgroups than it has room for) draws nothing
     uint32_t valid = E(&c, OpULessThanEqual, c.t_bool, add(&c, base, K(&c, slot_words)), E(&c, OpArrayLength, c.t_uint, buf, 0));
     uint32_t cw = buf_load(&c, buf, E(&c, OpSelect, c.t_uint, valid, add(&c, base, K(&c, m->map / 4)), k0));
     uint32_t count = E(&c, OpSelect, c.t_uint, valid, umin(&c, cw, K(&c, m->maxp)), k0);
@@ -559,12 +511,10 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     DO(&c, OpBranchConditional, live, then, other);
     DO(&c, OpLabel, then);
     {
-        // byte map + 4 + ipp * prim + corner of the slot is the vertex
         uint32_t b = add(&c, add(&c, mul(&c, prim, K(&c, m->ipp)), corner), K(&c, m->map + 4));
         uint32_t word = buf_load(&c, buf, add(&c, base, E(&c, OpShiftRightLogical, c.t_uint, b, K(&c, 2))));
         uint32_t shift = mul(&c, E(&c, OpBitwiseAnd, c.t_uint, b, K(&c, 3)), K(&c, 8));
         uint32_t v = umin(&c, E(&c, OpBitwiseAnd, c.t_uint, E(&c, OpShiftRightLogical, c.t_uint, word, shift), K(&c, 0xff)), K(&c, m->maxv - 1));
-        // word ((v >> 5) * lines + line) * 32 + (v & 31) of the vertex area
         uint32_t at = add(&c, add(&c, mul(&c, E(&c, OpShiftRightLogical, c.t_uint, v, K(&c, 5)), K(&c, m->nlines * 32)),
                                   E(&c, OpBitwiseAnd, c.t_uint, v, K(&c, 31))), add(&c, base, K(&c, m->attr / 4)));
         uint32_t pos[4] = {f0, f0, f0, f1}, size = f1, gen[32][4];
@@ -572,7 +522,7 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
         for (uint32_t l = 0; l < m->nlines; l++) {
             uint32_t a = m->lines[l];
             int g = a >= 0x80 ? (int)(a - 0x80) / 16 : -1;
-            if (a < 0x6c || (g >= 0 && !loc_var[g])) continue;   // layer and viewport index are not carried; an output nothing reads
+            if (a < 0x6c || (g >= 0 && !loc_var[g])) continue;
             uint32_t word_l = buf_load(&c, buf, l ? add(&c, at, K(&c, l * 32)) : at);
             if (g >= 0) gen[g][(a - 0x80) % 16 / 4] = word_l;
             else if (a == 0x6c) size = E(&c, OpBitcast, t_float, word_l);
@@ -583,8 +533,6 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
         for (int g = 0; g < 32; g++) {
             if (!loc_var[g]) continue;
             int t = out_type[g] < 3 ? out_type[g] : 0;
-            // A component outside the program's output map reads as Maxwell gives an unwritten one: (0, 0, 0, 1), the w
-            // as the bits of 1.0f whatever the type, as vk_pipeline.c spirv_add_outputs pads a missing output.
             uint32_t comp[4];
             for (int k = 0; k < 4; k++) {
                 uint32_t word_k = gen[g][k] ? gen[g][k] : k == 3 ? K(&c, 0x3f800000) : k0;
@@ -607,8 +555,8 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     uint32_t head[5] = {0x07230203, 0x00010400, 0, c.bound, 0};
     wb_put(&out, head, 5);
     INS(&out, OpCapability, CapShader);
-    INS(&out, OpMemoryModel, 0, 1);   // Logical, GLSL450
-    uint32_t ep[5] = {(n_iface + 5) << 16 | OpEntryPoint, ModelVertex, entry, 0x6e69616d /* "main" */, 0};
+    INS(&out, OpMemoryModel, 0, 1);
+    uint32_t ep[5] = {(n_iface + 5) << 16 | OpEntryPoint, ModelVertex, entry, 0x6e69616d, 0};
     wb_put(&out, ep, 5);
     wb_put(&out, iface, n_iface);
     wb_put(&out, c.deco.w, c.deco.n);
@@ -620,8 +568,6 @@ uint32_t *meshfb_vs(const MeshFbInfo *m, uint32_t out_mask, const uint8_t out_ty
     *out_words = out.n;
     return out.w;
 }
-
-// ---- reflection text
 
 char *meshfb_res_json(const char *res, uint32_t binding, const int *cb_slots, int n) {
     size_t len = strlen(res);
