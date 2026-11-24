@@ -1,21 +1,3 @@
-// setjmp / longjmp for lifted code.
-//
-// The guest's longjmp restores x19-x30, sp and d8-d15 and returns to the setjmp call's return address, which in lifted
-// code is the middle of a host function: rt_dispatch has no function there and the run ends ("not a function start").
-// Ocarina's font rasterizer reaches it whenever a large glyph's cells overflow its pool: main+0x166215c longjmps back
-// to main+0x1661670, which reports the overflow, and the caller renders the glyph again in smaller bands. Text at a
-// 2160-high picture does it in normal play.
-//
-// The overrides keep both halves on the host:
-//   setjmp(env): the guest registers longjmp restores, kept for env, and the host state of the lifted function that
-//     made the call as it will be when that call returns (platform.h plat_frame_capture: the host stack unwound up to
-//     the frame running the guest function that contains the call), so a jump can make the call return again.
-//     Returns 0.
-//   longjmp(env, val): the guest registers back, x0 = val (1 for 0), and that host state resumed: the lifted caller
-//     continues after its setjmp call, reads x0 from the Cpu and takes the "returned again" path.
-// Host locals the caller keeps in callee-saved registers come back as they were at setjmp, the ones in its stack frame
-// as last written; C allows only the unmodified ones to be relied on after a longjmp, and the guest code was compiled
-// under the same rule. A longjmp to a buffer this file did not fill (or after the setjmp's function returned) is fatal.
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,23 +5,22 @@
 #include "host.h"
 #include "platform/platform.h"
 
-#define MAX_MODULES 16   // as dispatch.c
+#define MAX_MODULES 16
 
 typedef struct {
-    uint64_t env;                    // guest jmp_buf address, 0 free
-    void *thread;                    // Cpu.thread of the setjmp
-    uint64_t x[12], sp;              // x19-x30, sp
-    __uint128_t d[8];                // d8-d15 (the low halves are what the ABI keeps)
+    uint64_t env;
+    void *thread;
+    uint64_t x[12], sp;
+    __uint128_t d[8];
     PlatJmp frame;
-    uint64_t seq;                    // jt_seq at its last setjmp: the smallest is the entry filled longest ago
+    uint64_t seq;
 } JmpEnt;
 
 #define JMP_N 1024
 static JmpEnt jt[JMP_N];
 static PlatMutex jt_lock = PLAT_MUTEX_INIT;
-static uint64_t jt_seq;              // jt_lock
+static uint64_t jt_seq;
 
-// Host function starts of the lifted code, sorted, with their guest starts: the guest function a host address runs.
 typedef struct { uintptr_t host; uint64_t guest; } Rev;
 static Rev *rev;
 static uint64_t nrev;
@@ -67,7 +48,6 @@ static void rev_init(void) {
     plat_mutex_unlock(&jt_lock);
 }
 
-// The guest start of the lifted function whose host code contains rip; 0 outside (or above the last start).
 static uint64_t guest_of_host(uintptr_t rip) {
     if (!nrev || rip < rev[0].host || rip > rev[nrev - 1].host) return 0;
     uint64_t lo = 0, hi = nrev;
@@ -79,7 +59,6 @@ static uint64_t guest_of_host(uintptr_t rip) {
     return rev[lo].guest;
 }
 
-// The guest start of the lifted function containing guest address a, 0 for none.
 static uint64_t guest_function_of(uint64_t a) {
     static RtModule mods[MAX_MODULES];
     static int n = -1;
@@ -101,7 +80,7 @@ static uint64_t guest_function_of(uint64_t a) {
 static int is_caller(uintptr_t rip, void *arg) { return guest_of_host(rip) == *(const uint64_t *)arg; }
 
 static JmpEnt *slot_of(uint64_t env, int make) {
-    uint64_t h = (env * 0x9E3779B97F4A7C15ull) >> 54;   // 10 bits
+    uint64_t h = (env * 0x9E3779B97F4A7C15ull) >> 54;
     for (int k = 0; k < JMP_N; k++) {
         JmpEnt *e = &jt[(h + k) % JMP_N];
         if (e->env == env) return e;
@@ -117,7 +96,7 @@ static JmpEnt *slot_of(uint64_t env, int make) {
 static void ov_setjmp(Cpu *c) {
     if (!__atomic_load_n(&rev_ready, __ATOMIC_ACQUIRE)) rev_init();
     uint64_t env = c->x[0];
-    uint64_t caller = guest_function_of(c->x[30] - 4);   // the BL to setjmp sits just before the return address
+    uint64_t caller = guest_function_of(c->x[30] - 4);
     JmpEnt e = {env, c->thread, {0}, c->sp, {0}, {0}};
     for (int i = 0; i < 12; i++) e.x[i] = c->x[19 + i];
     for (int i = 0; i < 8; i++) e.d[i] = c->v[8 + i];
@@ -128,10 +107,6 @@ static void ov_setjmp(Cpu *c) {
     JmpEnt *s = slot_of(env, 1);
     int replaced = 0;
     if (!s) {
-        // Every slot holds a buffer (entries are never removed, and a long session keeps meeting new buffer
-        // addresses): the one filled longest ago gives its slot. With no free slot left a lookup walks the whole
-        // table, so the new buffer is found wherever it sits. A longjmp to the replaced buffer ends the process as
-        // one to an unknown buffer does (ov_longjmp); before, the 1025th buffer itself ended it.
         s = &jt[0];
         for (int k = 1; k < JMP_N; k++)
             if (jt[k].seq < s->seq) s = &jt[k];
@@ -149,7 +124,7 @@ static void ov_setjmp(Cpu *c) {
 
 static void ov_longjmp(Cpu *c) {
     uint64_t env = c->x[0], val = (uint32_t)c->x[1];
-    static _Thread_local JmpEnt e;   // the frame is resumed from here: not on the stack being abandoned
+    static _Thread_local JmpEnt e;
     plat_mutex_lock(&jt_lock);
     JmpEnt *s = slot_of(env, 0);
     if (s) e = *s;
@@ -163,8 +138,6 @@ static void ov_longjmp(Cpu *c) {
         char at[160];
         rt_log("longjmp to buffer %#llx from %s: back into the guest function that called setjmp",
                (unsigned long long)env, ldr_describe(c->x[30], at, sizeof at));
-        // the guest frames that led here (the frame-pointer chain), to name what failed
-        // (from the setjmp's caller: its return address, then the frame-pointer chain of x29 as setjmp saw it)
         rt_log("  setjmp called from %s", ldr_describe(e.x[11], at, sizeof at));
         uint64_t fp = e.x[10];
         for (int k = 0; k < 10 && fp && mem_readable(fp, 16); k++) {
@@ -184,7 +157,6 @@ static void ov_longjmp(Cpu *c) {
 HOST_OVERRIDE("setjmp", ov_setjmp);
 HOST_OVERRIDE("longjmp", ov_longjmp);
 
-// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): the jmp_buf table's entries (entries are never removed; fatal when full).
 void setjmp_sizes(PerfSizes *s) {
     uint64_t n = 0;
     plat_mutex_lock(&jt_lock);

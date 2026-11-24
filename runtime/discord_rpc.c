@@ -1,23 +1,3 @@
-// Discord Rich Presence: an activity with elapsed play time in the player's Discord status, through
-// the local IPC of a running Discord client (platform.h's plat_ipc_*). Nothing leaves the machine but the activity
-// itself, and nothing is sent while NX2SARIA_DISCORD_RPC is off (it is on by default, and does nothing without a
-// Discord client running on the same PC). NX2SARIA_DISCORD_APP_ID names the player's application whose registered
-// name and artwork Discord shows; NX2SARIA_DISCORD_IMAGE is its uploaded art key. Both may also be set in either
-// nx2saria.ini or a legacy nx2navi.ini. No app ID is built in. With no ID the thread stays idle and logs that once.
-//
-// One host thread owns the connection and never holds a virtual core (kernel.c: host work runs without one). It
-// re-reads the settings when cfg_version changes (a menu change reaches it within half a second), connects to the
-// first of Discord's discord-ipc-0..9 pipes that answers, and writes the activity again every 60 s: that write is
-// the keep-alive, and one that fails closes the connection and tries again 15 s later. Discord clears the status by
-// itself when the process ends and the pipe closes, so there is no shutdown path. Every answer frame is read and
-// discarded: unread, they would fill the pipe's buffer and block the client's writes.
-//
-// The protocol is the documented IPC one (discord-rpc's src/rpc_connection.h): a frame is <opcode u32 little
-// endian><length u32><length bytes of JSON>, with Handshake 0, Frame 1, Close 2, Ping 3 and Pong 4. The handshake
-// (opcode 0) carries {"v":1,"client_id":...} and is answered by a Ready frame (opcode 1); every command,
-// SET_ACTIVITY here, is a frame (opcode 1) answered by one, and a Ping the client sends is echoed as a Pong. A
-// client that speaks another numbering (an early arRPC did) answers the handshake with a Close. --probe-discord
-// runs the same exchange once, without the game and without the setting being on.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,12 +9,10 @@
 
 enum { OP_HANDSHAKE = 0, OP_FRAME = 1, OP_CLOSE = 2, OP_PING = 3, OP_PONG = 4 };
 
-#define APP_ID_CAP 24    // a Discord snowflake: at most 20 digits
+#define APP_ID_CAP 24
 #define IMAGE_KEY_CAP 64
-#define ANSWER_CAP 8192  // the Ready frame carries the client's config; a few KiB
+#define ANSWER_CAP 8192
 
-// A settings value that fits the JSON below without escaping: the app id is digits, an asset key letters, digits,
-// '_' and '-' (what Discord's developer portal accepts for an asset key).
 static int valid_app_id(const char *s) {
     size_t n = strlen(s);
     if (!n || n > 20) return 0;
@@ -52,9 +30,6 @@ static int valid_image_key(const char *s) {
     return 1;
 }
 
-// The setting's value, or its default when the value does not fit the protocol (logged: the player sees why their
-// own app does not show), or "" when the default does not fit either. Called on the presence thread and by the probe,
-// after cfg_version changed or once.
 static void read_setting(const char *name, char *out, size_t cap, int (*valid)(const char *)) {
     const char *v = cfg_value(name), *def = cfg_meta(name)->def;
     if (valid(v)) {
@@ -83,9 +58,6 @@ static int write_frame(PlatIpc *p, uint32_t op, const char *json) {
     return plat_ipc_write(p, head, sizeof head) && plat_ipc_write(p, json, strlen(json));
 }
 
-// One frame off the wire, its 8-byte header in as many reads as the peer made, then its payload; a payload longer
-// than cap-1 fills buf with its first cap-1 bytes and the rest is still consumed. *op gets the opcode; buf is
-// NUL-terminated. 1 on a whole frame, 0 when the deadline passed, -1 when the connection broke.
 static int read_one_frame(PlatIpc *p, uint32_t *op, char *buf, size_t cap, uint64_t deadline) {
     uint8_t head[8];
     size_t got = 0;
@@ -117,9 +89,6 @@ static int read_one_frame(PlatIpc *p, uint32_t *op, char *buf, size_t cap, uint6
     return 1;
 }
 
-// The next frame that is not a Ping: a Ping the client sent to see we are alive is echoed as a Pong with its own
-// payload, a Close (the client told us it is done) counts as a broken connection so the caller connects again
-// later. Same return values as read_one_frame; the deadline covers the whole exchange.
 static int read_frame(PlatIpc *p, uint32_t *op, char *buf, size_t cap, uint32_t ms) {
     uint64_t deadline = plat_now_ms() + ms;
     for (;;) {
@@ -138,8 +107,6 @@ static int read_frame(PlatIpc *p, uint32_t *op, char *buf, size_t cap, uint32_t 
     }
 }
 
-// The first of Discord's pipes that completes a handshake. NULL when no client is running or none answered in time;
-// the caller tries again later.
 static PlatIpc *connect_client(const char *app_id) {
     for (int i = 0; i < 10; i++) {
         char name[32], json[160];
@@ -153,8 +120,8 @@ static PlatIpc *connect_client(const char *app_id) {
         }
         uint32_t op = 0;
         char answer[ANSWER_CAP];
-        if (read_frame(p, &op, answer, sizeof answer, 2000) == 1 && op == OP_FRAME) return p;   // the Ready event
-        plat_ipc_close(p);   // this pipe answered but not with a Ready frame in 2 s: the next may belong to a client
+        if (read_frame(p, &op, answer, sizeof answer, 2000) == 1 && op == OP_FRAME) return p;
+        plat_ipc_close(p);
     }
     return NULL;
 }
@@ -164,11 +131,6 @@ static uint32_t next_nonce(void) {
     return (uint32_t)plat_inc32(&n);
 }
 
-// The activity as one SET_ACTIVITY frame: the game update and the port version as the details line ("Game 1.1.1 ·
-// Recomp 0.3.7": the port version without its +commit suffix, the art's hover text keeps the full one; the dot goes
-// as a JSON escape), the process's start as the timestamp Discord counts the elapsed time from, and the application's
-// art asset. 1 when the client answered (a slow answer that ran out of the 2 s read is fine: the next drain takes
-// it), 0 when the connection broke.
 static int send_activity(PlatIpc *p, const char *image) {
     char json[512];
     int v = rt_game_version;
@@ -186,8 +148,6 @@ static int send_activity(PlatIpc *p, const char *image) {
     return read_frame(p, &op, answer, sizeof answer, 2000) >= 0;
 }
 
-// ---- the presence thread
-
 static void discord_main(void *arg) {
     (void)arg;
     unsigned seen = 0;
@@ -199,11 +159,8 @@ static void discord_main(void *arg) {
     int said_no_client = 0, said_no_app = 0;
     for (;;) {
         unsigned v = cfg_version();
-        if (v != seen) {   // the settings changed (the menu writes them): pick the new ones up at once
+        if (v != seen) {
             seen = v;
-            // any setting bumps the version (a slider step, a cheat): only a new app id needs a new handshake, and
-            // a new image only a resend; reconnecting on every change made the status blink and could hit Discord's
-            // rate limit while a slider was held
             char was_id[APP_ID_CAP], was_image[IMAGE_KEY_CAP];
             memcpy(was_id, app_id, sizeof was_id);
             memcpy(was_image, image, sizeof was_image);
@@ -222,7 +179,7 @@ static void discord_main(void *arg) {
             plat_sleep_ms(500);
             continue;
         }
-        if (!app_id[0]) {   // on, but no application to show it under: wait for a settings change
+        if (!app_id[0]) {
             if (!said_no_app) log_no_app_id();
             said_no_app = 1;
             plat_sleep_ms(500);
@@ -258,8 +215,6 @@ static void discord_main(void *arg) {
 void discord_init(void) {
     if (!plat_thread_spawn(discord_main, NULL, "discord", 0)) rt_log("discord: cannot start the presence thread");
 }
-
-// ---- --probe-discord: the exchange above without the game and the setting; needs no game files
 
 int probe_discord(void) {
     static int fails;

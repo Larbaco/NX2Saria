@@ -1,6 +1,3 @@
-// SHA-256 (FIPS 180-4). The block function has two forms: one on the x86 SHA extensions (SHA-NI: Intel since Ice Lake
-// and Goldmont, AMD since Zen), which hashes the RomFS image at about the speed of a disk read, and portable C for CPUs
-// without them. tests/sha256_paths_check.py checks both against the FIPS 180-4 vectors and against each other.
 #include "sha256.h"
 
 #include <string.h>
@@ -44,15 +41,12 @@ static void blocks_c(uint32_t h[8], const uint8_t *p, size_t n) {
 }
 
 #if defined(__x86_64__)
-// The state lives in two registers as the SHA instructions want it: ABEF and CDGH. Each group of four rounds adds the
-// round constants to four message words and runs sha256rnds2 twice; the message schedule for words 16..63 is
-// msg2(msg1(W[t-16..], W[t-12..]) + W[t-7..], W[t-4..]).
 __attribute__((target("sha,sse4.1"))) static void blocks_ni(uint32_t h[8], const uint8_t *p, size_t n) {
     const __m128i bswap = _mm_set_epi64x(0x0c0d0e0f08090a0bull, 0x0405060700010203ull);
-    __m128i t = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&h[0]), 0xb1);   // CDAB
-    __m128i s1 = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&h[4]), 0x1b);  // EFGH
-    __m128i s0 = _mm_alignr_epi8(t, s1, 8);                                          // ABEF
-    s1 = _mm_blend_epi16(s1, t, 0xf0);                                               // CDGH
+    __m128i t = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&h[0]), 0xb1);
+    __m128i s1 = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&h[4]), 0x1b);
+    __m128i s0 = _mm_alignr_epi8(t, s1, 8);
+    s1 = _mm_blend_epi16(s1, t, 0xf0);
     for (; n; n--, p += 64) {
         __m128i a0 = s0, c0 = s1, m[4];
         for (int g = 0; g < 16; g++) {
@@ -69,24 +63,20 @@ __attribute__((target("sha,sse4.1"))) static void blocks_ni(uint32_t h[8], const
         s0 = _mm_add_epi32(s0, a0);
         s1 = _mm_add_epi32(s1, c0);
     }
-    t = _mm_shuffle_epi32(s0, 0x1b);                  // FEBA
-    s1 = _mm_shuffle_epi32(s1, 0xb1);                 // DCHG
-    _mm_storeu_si128((__m128i *)&h[0], _mm_blend_epi16(t, s1, 0xf0));   // DCBA
-    _mm_storeu_si128((__m128i *)&h[4], _mm_alignr_epi8(s1, t, 8));      // HGFE
+    t = _mm_shuffle_epi32(s0, 0x1b);
+    s1 = _mm_shuffle_epi32(s1, 0xb1);
+    _mm_storeu_si128((__m128i *)&h[0], _mm_blend_epi16(t, s1, 0xf0));
+    _mm_storeu_si128((__m128i *)&h[4], _mm_alignr_epi8(s1, t, 8));
 }
 #endif
 
-// blocks_ni runs where CPUID reports the SHA extensions (leaf 7, subleaf 0, EBX bit 29), SSE4.1 (leaf 1, ECX bit 19)
-// and SSSE3 (leaf 1, ECX bit 9: the byte shuffle and the byte align). CPUID is read directly rather than through
-// __builtin_cpu_supports("sha"): clang before 19 rejects that feature name and stops the compile (Ubuntu 24.04's
-// clang 18). -1 until the first hash asks; tests/sha256_paths_check.c sets it to run one form or the other.
 static int g_ni = -1;
 
 #if defined(__x86_64__)
 static int cpu_has_sha_ni(void) {
     unsigned a, b, c, d;
     if (!__get_cpuid(1, &a, &b, &c, &d) || (c & (bit_SSSE3 | bit_SSE4_1)) != (bit_SSSE3 | bit_SSE4_1)) return 0;
-    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;   // a CPU without leaf 7 has no SHA either
+    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;
     return (b & bit_SHA) != 0;
 }
 #endif
@@ -94,13 +84,13 @@ static int cpu_has_sha_ni(void) {
 int sha256_ni(void) {
 #if defined(__x86_64__)
     int ni = __atomic_load_n(&g_ni, __ATOMIC_RELAXED);
-    if (ni < 0) {   // threads that race here all store the same answer
+    if (ni < 0) {
         ni = cpu_has_sha_ni();
         __atomic_store_n(&g_ni, ni, __ATOMIC_RELAXED);
     }
     return ni;
 #else
-    (void)g_ni;   // the portable C form is the only one off x86-64
+    (void)g_ni;
     return 0;
 #endif
 }
@@ -162,8 +152,6 @@ static void hmac_wipe(void *p, size_t n) {
     while (n--) *v++ = 0;
 }
 
-// SHA-256((K ^ opad) || SHA-256((K ^ ipad) || msg)), K the key padded with zeros to the 64-byte block. The padded key
-// and the inner hash are wiped afterwards: they are key material (amiibo_crypto.c derives its keys with this).
 void hmac_sha256(const void *key, size_t key_len, const void *msg, size_t msg_len, uint8_t out[32]) {
     uint8_t k[64] = {0}, pad[64], inner[32];
     Sha256 s;

@@ -1,27 +1,3 @@
-// Log writes on a thread of their own.
-//
-// A log line was written by the thread that logged it: to the log file and to stderr (main.c log_sink). A write can
-// stall: a console that scrolls, a pipe whose reader is busy, a virus scanner, a disk that flushes; hundreds of
-// milliseconds at worst. The render thread logs too, and a frame it spends in such a write is a hitch with nothing
-// else to show for it.
-//
-// With the queue on (logq_async) a line is copied into a buffer under a lock that is held for the copy alone, and the
-// "log" thread writes the buffer out, so lines keep the order they were queued in. A line that finds no room is written
-// by its own thread, after everything queued before it (put). logq_sync writes what is queued on the calling thread
-// and turns the queue off for the rest of the run: a fatal error, the crash report and the end of the process call it
-// (rt_log_sync), so no line is lost to an exit and their own lines are written as they are made.
-//
-// The log thread gathers before it writes (log_main): from the first line it finds it waits LOGQ_GATHER_NS, or until
-// the queue is half full (LOGQ_GATHER_BYTES), and then writes everything queued by then in one write. It used to
-// write as soon as it woke, which outside a burst is once for every line: the thread that logged woke the log thread
-// for each, and each was a write of its own to every destination. The price is that the log file and the console are
-// up to LOGQ_GATHER_NS behind the game. The lines being gathered are in the queue like any others, so logq_sync
-// writes them too, and a fatal error, a crash report and an exit still lose none. A process that is ended from
-// outside runs no code of ours and loses what was gathered at that moment; it used to lose only the lines the log
-// thread had not reached yet.
-//
-// Every write is timed. One that took LOGQ_SLOW_NS or longer is counted, and a line says so at most every ten
-// seconds: with the queue that time was the log thread's, without it (NX2SARIA_LOG_ASYNC=0) the logging thread's.
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,28 +6,26 @@
 #include "platform/platform.h"
 
 #define LOGQ_CAP (1u << 20)
-#define LOGQ_GATHER_NS 250000000ull        // log_main: a batch is written this long after its first line was found ...
-#define LOGQ_GATHER_BYTES (LOGQ_CAP / 2)   // ... or as soon as this much is queued
+#define LOGQ_GATHER_NS 250000000ull
+#define LOGQ_GATHER_BYTES (LOGQ_CAP / 2)
 #define LOGQ_SLOW_NS 2000000ll
 #define LOGQ_SAY_NS 10000000000ull
 
 static struct {
-    PlatMutex q, io;                 // q: buf and n; io: the queue's writes and out. io is taken first
+    PlatMutex q, io;
     PlatCond more;
-    char *buf, *out;                 // LOGQ_CAP bytes each: the queue, and what the log thread is writing
+    char *buf, *out;
     size_t n;
     LogqSink sink;
-    volatile int32_t on, saying, now;   // now: logq_nudge asked for the gathered lines at once
-    volatile int64_t slow, said, worst_ns, full;   // slow writes, those reported, the longest; lines that found no room
+    volatile int32_t on, saying, now;
+    volatile int64_t slow, said, worst_ns, full;
     volatile uint64_t said_at;
 } Q = {.q = PLAT_MUTEX_INIT, .io = PLAT_MUTEX_INIT, .more = PLAT_COND_INIT};
 
 void logq_init(LogqSink sink) { Q.sink = sink; }
 
-// The queue's two buffers, made once when the log thread starts (logq_async) and kept: the memory report's figure.
 size_t logq_bytes(void) { return __atomic_load_n(&Q.buf, __ATOMIC_RELAXED) ? 2 * (size_t)LOGQ_CAP : 0; }
 
-// The write itself, timed.
 static void put_out(const char *p, size_t n) {
     uint64_t t0 = plat_now_ns();
     Q.sink(p, n);
@@ -62,8 +36,6 @@ static void put_out(const char *p, size_t n) {
     while (d > w && !__atomic_compare_exchange_n(&Q.worst_ns, &w, d, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
 }
 
-// The line about slow writes, when there are new ones and the last line is ten seconds old. Called with no lock held:
-// the line goes through logq_write like any other.
 static void say_slow(void) {
     int64_t slow = __atomic_load_n(&Q.slow, __ATOMIC_RELAXED);
     if (slow == __atomic_load_n(&Q.said, __ATOMIC_RELAXED)) return;
@@ -79,7 +51,6 @@ static void say_slow(void) {
     plat_xchg32(&Q.saying, 0);
 }
 
-// Writes out what is queued, in order. Any thread.
 static void drain(void) {
     plat_mutex_lock(&Q.io);
     plat_mutex_lock(&Q.q);
@@ -91,19 +62,11 @@ static void drain(void) {
     plat_mutex_unlock(&Q.io);
 }
 
-// 1 when the bytes were queued, 0 when the caller is to write them: the queue is off, or it had no room, and then
-// what it held has been written first (drain). So a thread's lines reach the log in the order it logged them.
-//
-// The queue's lock is waited for. A thread that wrote its line itself because the lock was taken would put that line
-// before the lines it queued earlier, and on a busy machine the lock is taken for a whole time slice whenever its
-// holder loses the processor inside the copy. Waiting cannot hang: the lock is held for the copy alone, the runtime
-// stops a thread only for moments in which it takes no lock and logs nothing (kernel.c ap_try and dg_sample,
-// prof_win.c), and a fatal error or a crash turns the queue off before it logs (logq_sync, which only tries the locks).
 static int put(const char *p, size_t n) {
     if (!__atomic_load_n(&Q.on, __ATOMIC_ACQUIRE)) return 0;
     plat_mutex_lock(&Q.q);
     int on = __atomic_load_n(&Q.on, __ATOMIC_ACQUIRE);
-    if (!on || Q.n + n > LOGQ_CAP) {   // no room: the log thread is held up in a write, or the line is larger than the queue
+    if (!on || Q.n + n > LOGQ_CAP) {
         plat_mutex_unlock(&Q.q);
         if (on) {
             __atomic_add_fetch(&Q.full, 1, __ATOMIC_RELAXED);
@@ -111,7 +74,6 @@ static int put(const char *p, size_t n) {
         }
         return 0;
     }
-    // the log thread sleeps until the first line of a batch, and then until the batch fills half the queue (log_main)
     int wake = !Q.n || (Q.n < LOGQ_GATHER_BYTES && Q.n + n >= LOGQ_GATHER_BYTES);
     memcpy(Q.buf + Q.n, p, n);
     Q.n += n;
@@ -126,10 +88,6 @@ void logq_write(const char *p, size_t n) {
     say_slow();
 }
 
-// The log thread: it sleeps until a line is queued, gathers, and writes the batch (drain). While it gathers it holds
-// no lock, so neither the threads that log nor logq_sync wait for it. The gathering ends when its time is up, when
-// the queue is half full (put signals that), and when the queue is empty again because another thread wrote it: a
-// line that found no room (put), or logq_sync, after which nothing is queued any more and this thread sleeps for good.
 static void log_main(void *arg) {
     (void)arg;
     for (;;) {
@@ -153,10 +111,6 @@ int logq_async(void) {
     return 1;
 }
 
-// What is queued, written now on the calling thread, with the queue left on: a point the log is to have reached on the
-// disk before something slow comes (the orderly end before its pipeline save, gfx_present.c rt_exit_steps). Each lock
-// is tried for at most 100 ms: the log thread may be stuck in a write and hold io. Without both locks nothing is
-// written here, since other threads still queue and write, and the log thread writes the lines when it can.
 void logq_flush(void) {
     if (!__atomic_load_n(&Q.on, __ATOMIC_ACQUIRE)) return;
     int io = 0, q = 0;
@@ -175,8 +129,6 @@ void logq_flush(void) {
     plat_mutex_unlock(&Q.io);
 }
 
-// The log thread writes what it gathers now instead of when the gathering time is up: a focus loss, after which the
-// process may be ended from outside (main.c rt_log_focus_lost); such an end loses what was being gathered.
 void logq_nudge(void) {
     if (!__atomic_load_n(&Q.on, __ATOMIC_ACQUIRE)) return;
     plat_mutex_lock(&Q.q);
@@ -185,8 +137,6 @@ void logq_nudge(void) {
     plat_cond_signal(&Q.more);
 }
 
-// What is queued, as it stands, with no lock: for the note of an end nobody asked for, written with every other thread
-// stopped (platform.h plat_exit_note_setup). Nothing once the queue is off.
 void logq_peek(const char **p, size_t *n) {
     size_t k = __atomic_load_n(&Q.n, __ATOMIC_RELAXED);
     *p = __atomic_load_n(&Q.buf, __ATOMIC_RELAXED);
@@ -195,8 +145,6 @@ void logq_peek(const char **p, size_t *n) {
 
 void logq_sync(void) {
     if (!plat_xchg32(&Q.on, 0)) return;
-    // Each lock is tried for half a second: the thread that holds it may be the one that crashed, or be stuck in the
-    // write this call is there to get past. Without the lock the queue is written as it stands.
     int io = 0, q = 0;
     for (int i = 0; i < 500 && !(io = plat_mutex_trylock(&Q.io)); i++) plat_sleep_ms(1);
     for (int i = 0; i < 500 && !(q = plat_mutex_trylock(&Q.q)); i++) plat_sleep_ms(1);
