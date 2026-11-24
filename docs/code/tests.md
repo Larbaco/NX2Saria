@@ -166,3 +166,11 @@ warning text. The existing Linux Play refusal test simulates the same declined r
 The test's `mods_before_play` stand-in forwards to the `App` method only in the pre-extraction implementation; the new
 implementation no longer calls that method. It remains in the fixture so the same characterization file exercises the
 old code and the extracted preflight without changing its observed outcomes or logs.
+
+## `tests/launcher_game_end_characterization_test.py`
+
+Exercises the existing Tk `watch_game()` adapter with a synthetic session, a temporary game log and stubbed collaborators. The tests preserve
+the order of window restoration, end logging, crash-summary synthesis, game-log annotation, staged-update check,
+reports and the home screen. They cover a game that is still running, an absent session, disabled reports, an empty
+note, a focus error and both update and reports short-circuits. Existing `launcher_test.py` cases exercise the actual
+`GameRun` restart and fatal-end behavior with synthetic files and processes.
