@@ -1637,3 +1637,193 @@ reads and calls. No game files, no GPU.
   the log queue, and a stalled log thread would then hold every guest thread.
 
 The platform layer is linked with what it calls outside itself as stand-ins (`tests/platform_stand_ins.py`).
+
+## `tests/heap_lazy_copy_check.py`
+
+Builds and runs `tests/heap_lazy_copy_check.c`: `runtime/memory.c` `mem_copy_readable()` with the lazy heap
+(`NX2SARIA_HEAP_LAZY=1`), where a heap page nothing touched yet is still reserved. The copy holds `frz_lock`, which
+the fault on such a page (`heap_lazy_fault()`) waits for on the same thread. Windows only (the lazy heap is):
+`memory.c` is built with the Windows platform layer and its real fault handler, the rest of the runtime stubbed. No
+game files: the module layout the runtime includes is a stand-in written to the test's build folder.
+
+Each copy runs on a worker the main thread gives 3 s, as the replay (`mirror_capture` of `vk_memory.c`) or a present
+(`frame_rate.c`) makes it: before the fix the first one hung there. The program exits 1 on a failed check and 4 when a
+copy never returns.
+
+- A page nothing touched is copied as zeros, and left reserved.
+- A range from touched pages (a 64 KiB run committed by a host access, then written) into untouched ones: the written
+  bytes, then zeros.
+- Past the heap's end the pages are not the heap's: left out, without a fault.
+- Several ranges in one call, as `frame_rate.c` batches them.
+
+## `tests/heap_retry_check.py`
+
+The model heaps' retry: the patch set `heap_retry` (`recomp/patches-v111.txt`) and `runtime/patches/heap_retry.c`. No
+game files: the module layout and the patch page are stand-ins written to the test's build folder.
+
+The set's four sites are lifted by `recomp/lifter.py` as the generator lifts them (`SITES`: the original word and the
+words of the replacement, a kept original or the page slot called). main+0x436910 (`0xa90d577f`,
+`stp xzr, x21, [x27, #0xd0]`) and main+0x436db4 (`0xa90b5b7f`, `stp xzr, x22, [x27, #0xb0]`) keep their stp, a store
+that writes no flags and calls nothing, and then call the patch page's +0xed0. main+0x436f18 (`0x94032c4e`) and
+main+0x437094 (`0x94032bef`) call the page's +0xec0 in place of the game's `bl main+0x502050`, which the replacement
+takes over. The page's place is checked against another set's call of it: `wide_bars` calls its +0xef0 from
+main+0x774068. No other site of any set calls the two slots, and only `heap_retry.c` registers them, naming them
+through `HOST_CPU` and `HOST_GPU`.
+
+`tests/heap_retry_check.c` builds `heap_retry.c` with the rest of the runtime stubbed and calls the two host functions
+as the lifted sites call them, over a chain of stand-in heaps (a model's full heap, its parents, the root) whose
+tryAlloc and the game's GPU memory allocation give memory while a heap has room. Its modes: `main`, `test` (the test
+refusals), `shipped` (the refusals left as shipped), `off` (the set switched off), `mismatch` (a main whose word at a
+site is not 1.1.1's: a nop, `0xd503201f`, where 1.1.1 has the call of main+0x502050 at main+0x437094) and `no-set` (a
+build without the set).
+
+The stand-ins: the test's main base is a buffer standing in for main's image up to the sites, with 1.1.1's words at
+the four sites, which `heap_retry_start()` compares. A heap has its vtable at +0, name at +0x20, memory at +0x28, its
+size at +0x30 and its parent at +0x38; tryAlloc is the vtable's +0x30. The chain is `RootHeap` (1 GiB at
+`0x100000000`), `ResourceHeap` (16 MiB inside it, at `0x110000000`), `Model/Npc_Test.bfres` (64 KiB inside that, at
+`0x110800000`), and `Elsewhere`, which no parent holds. `mem_readable` reads the stand-in stack frame and requests as
+unreadable, as the game thread's stack once did in a run. The stand-in GPU allocation takes the request's +8 heap (the
+default heap for none) and count * size of one bytes, and returns 1 on success, 0 leaving nothing allocated; a GPU
+request has its count at +0, heap at +8 and what it is for at +0x20. The stack of main+0x4366e0 holds its x1 at +0x38,
+and that x1 has the heap at +8. A call gives up the caller-saved registers (x0-x18 are overwritten); the
+callee-saved registers, x30 and sp must be kept.
+
+- A block the model's heap gave: nothing changes, nothing is logged. The model's heap full, its parent full, the root
+  has room: the root's block, two levels up. The other CPU site has its size in x22. A return address that is not a
+  site is left alone.
+- GPU memory: the game's call fails in the model's heap and its parent gives it; with no parent having room the game's
+  default heap gives it. The request's heap is put back afterwards. Success at once, a request without a heap (the
+  game's own check comes after the call) and a zero count: one call each, nothing logged.
+- No heap has room: a fatal error naming the heap, in place of the write to guest address 0x8, with the request's heap
+  put back before it too. A parent whose memory does not hold the child's ends the climb there (one line, said once),
+  then the fatal error; an unreadable parent pointer ends the climb as the root does.
+- The log budget: 32 retry lines in all, then a total every 64th block of a site ("model buffer at main+0x43690c: 192
+  blocks" after the 64th, 128th and 192nd).
+- The test switches: the model's heap gave the block and the test refuses it, so the parent gives another (the first
+  stays allocated); with the refusals used up the next block is the game's. The GPU memory's refusal: the game's call
+  is not made for the model's heap, the parent's is.
+- The start and end lines.
+
+## `tests/host_probes_test.py`
+
+The build's host probes on Linux, over fake `/proc` and cgroup files and a fake `systemd-inhibit`. No game files;
+standard library only (the worker count test also needs numpy, as the lifter does).
+
+- `AvailableRamTest`: `tools/hostmem.py` `available_ram()` is `MemAvailable`, capped by the cgroup v2 memory limits
+  (`limit()` writes the `memory.max` and `memory.current` of a cgroup, by its path relative to the mount). Unlimited
+  cgroups are not a cap; the root cgroup has no `memory.max`. A cgroup outside this namespace reads as `/..`: its `..`
+  parts are skipped, never followed above the mount (a `memory.max` beside the mount must not be read). Of nested
+  limits the tightest counts: 9 GiB with 6 in use (3 left) under 30 GiB with 2 in use (28 left) gives 3 GiB. In a
+  cgroup namespace the process is at `/` and the mount is its own cgroup. Without `MemAvailable` (a kernel before
+  3.14) the answer is None.
+- The lift's worker count follows it (`recomp/gen.py` `pick_jobs()`): a 32-processor machine under an 8 GiB cgroup
+  gets 4 workers (8 GiB x 0.8 / 1.5 GiB, which leaves more than the 1.5 GiB reserve of an 8 GiB machine), not 32.
+- `CpuTagTest`: `tools/make_game.py` `cpu_tag()`, the compile key's processor part, reads the same three features as
+  its Windows branch: SSE4.2, AVX2 and AVX-512F; a `/proc/cpuinfo` that is not x86 gives `any`. The same lift, runtime
+  and kit compile again on a processor without AVX2.
+- `KeepAwakeTest`: `keep_awake()`, the sleep lock, with a `systemd-inhibit` stand-in first on `PATH`. It asks for
+  `--what=sleep` (not idle: the screen may still blank and lock, as on Windows) with `--mode=block`; the lock is still
+  held afterwards and does not end by itself; a second call takes no second lock; and closing its stdin, which is what
+  the end of this process does, releases it.
+
+## `tests/index_rewrite_check.py`
+
+Builds and runs `tests/index_rewrite_check.c` on `runtime/vk/vk_index_rewrite.h`: the index lists an indexed quad list
+or line loop is drawn with (`op_draw_idx` of `vk_exec_draw.c`, `NX2SARIA_QUAD_INDEX`). No GPU, no game files, any
+Python.
+
+- 16-bit quads: two triangles per quad, from the quad's own indices, the same split as the non-indexed rewrite. A
+  trailing partial quad is not drawn.
+- Byte and 32-bit indices are read at their own size. An unaligned source (a byte offset into a pool) is read without
+  alignment assumptions.
+- A line loop comes back to its first index.
+
+## `tests/ipc_session_check.py`
+
+Builds and runs `tests/ipc_session_check.c`: `runtime/hle/ipc.c` with `runtime/hle/kernel.c` linked, the platform
+layer linked (with what it calls outside itself as stand-ins, `tests/platform_stand_ins.py`) and the rest of the
+runtime stubbed. No game files: the module layout the runtime includes is a stand-in written to the test's build
+folder. The stub of `mem_commit_checked()` stands for that of `runtime/memory.c`, with which `kernel.c` commits the
+main thread's stack, which these tests never start.
+
+| Mode | What it checks |
+|---|---|
+| `session` | a request whose handler (a service whose command 7 blocks until released) is still running while another thread closes the session's only handle: the session's close callback, which frees the service's state, runs once, after the handler returned, never while it runs. A request on an open session leaves it open; the CloseHandle afterwards frees it |
+| `tmem` | `kern_handle_copy()` hands out the transfer memory's fields while the handle is open, and 0 after its close |
+| `domain` | appletOE as a domain: 100 rounds of a getter (the common state getter) and its CloseVirtualHandle reuse one id; a closed id is answered with a bad-handle result; the domain's own id (1) is never closed; an object with a handle of its own (CopyFromCurrentDomain) keeps the domain after the client closes it, and the last handle frees all; a domain whose client closes it with objects that have no handle of their own frees all of them at once |
+
+`dom_call()` makes a CMIF domain request on a handle: domain command 1 (send) or 2 (close) to an object, with a
+command. The result and the id (the reply's first data word) are filled for a send; a close has no answer. The
+request's size counts the alignment pad, the domain header and the CMIF header; these answers hold no handles, so the
+reply's words are at 8 and its payload at 16.
+
+## `tests/jumptables_check.py`
+
+Checks `recomp/jumptables.py` on every `br` in the game's modules against an emulation oracle.
+
+The oracle (`Oracle`) is an emulated jump-table resolver: it finds `cmp #N; b.hi/b.hs` before the br (or a
+`b.ls/b.lo` to the dispatch block), replays ADRP/ADR/ADD-imm from the function entry, then single-steps Unicorn from
+the bounds check to the br once per index. Functions are [seed, next seed) over the module's seeds plus BL targets
+(`function_starts()`).
+
+It reports per module: br sites, resolved by the resolver and by the oracle, agreement, `is_computed` sites left
+unresolved, tables whose targets leave the function, an independent check of hoisted table bases (`hoisted_base()`),
+PLT stubs (`br x17` after the GOT load) that must stay a plain call, and resolver time. A disagreement is counted as
+"oracle wrong" only with independent evidence (`oracle_wrong()`). Samples of every disagreement, unverified base and
+unresolved computed site are printed with disassembly. Output also goes to `build/logs/jumptables-check.log`, and one
+row per table-like br to `build/logs/jumptables-<module>.tsv`. It exits with 1 if any disagreement is unexplained, a
+hoisted base is not verified, or a PLT stub counts as computed.
+
+- `Oracle` keeps, per table: `start` and `cmp`, the first instruction of the bounds-check block and the bounds cmp;
+  `guard`, for `Oracle._taken()`, the `b.ls/b.lo` into the dispatch block; `count`, the indices the bounds check lets
+  through; `exclude`, the indices the emulation skips (those `oracle_wrong()` found excluded on every way in); `watch`
+  and `seen`, an (address, register) pair whose register is recorded when the emulation reaches the address.
+  `Oracle.jump_table()` returns the targets or None, and leaves the index set point and the registers set there in
+  `set_at` and `regs`. `Oracle._index_regs()` follows the index back through AND (imm) (`0x12000000` under
+  `0x7F800000`), MOV as ORR with zr (`0x2A0003E0` under `0x7FE0FFE0`) and UBFM/SBFM.
+- `_regno()` gives the X register number of a capstone register name (w and x views), 31 for sp and zr, None for
+  others. `_writes()` gives the X register numbers an instruction writes, by capstone (w and x views folded), plus the
+  call clobbers; for cmp, cmn, tst, ccmp and ccmn it gives none, since capstone lists the first operand of these
+  aliases as written.
+- `Reaching` holds the reaching definitions of single registers over the resolver's blocks, with capstone's write
+  sets. `Reaching.at_blocks()` maps a block start to the definitions of a register reaching it, `entry` standing for a
+  value from outside the function; `Reaching.at()` gives the definitions reaching an instruction; `Reaching.values()`
+  the constants a register holds at an address, following adrp/add/adr and register copies, or None if one is not
+  constant (a definition already being evaluated, a cycle of copies, adds no value of its own).
+- `FunctionCheck` is the resolver's final tables and blocks for one function, with reaching definitions on demand.
+  `table_load()` is the last register-offset load in [s, br): the table read of a dispatch block.
+- `hoisted_base()` returns the base register, its single constant at the dispatch block or None, and a verdict:
+  `local` when the dispatch block writes the base; `verified` when every definition reaching the block (over the
+  resolver's blocks and table edges, with capstone's write sets, through register copies) is an adrp/add or adr of one
+  and the same constant and the resolver's fact does not name another; else a reason.
+- `_branch_target()` is the target of a direct b, b.cond, cbz/cbnz or tbz/tbnz. `_ways_in()` gives the direct branches
+  of the function into a range, or None when the range is entered otherwise too: by falling through into its start, at
+  the function entry, or as a target of another table. `_Ways` holds the direct branches and fall-throughs of one
+  function, with the addresses control may enter from elsewhere; `_Ways.preds()` gives (branch or last instruction,
+  insn, taken) for every way into a block.
+- `_edge_holds()`: whether the way out of a block over the branch at its end can be taken with x<reg> = k there. It is
+  False only when the branch condition is a function of x<reg> alone (its slice, back to the last write of x<reg>, is
+  plain arithmetic and flag setting on x<reg>), evaluated by Unicorn; True otherwise. The instructions an index slice
+  may hold are integer arithmetic that reads only general registers and writes the flags at most (`_FLAG_SETTERS`; the
+  flags-reading forms adc, sbc, csel, ccmp and the like stay out). Its reads leave zr out and give up when sp or a
+  non-general register is read; for cmp, cmn and tst the first operand is added, as capstone lists it as written, not
+  read.
+- `_way_live()`: whether the way over a branch can carry x<reg> = k: its edge holds and its block either writes
+  x<reg> or is entered with k (`_reaches()`, over at most `_DEPTH`, 4, predecessor blocks above the dispatch region).
+- `excluded_indices()`: the indices below the count that cannot reach the br, because no way into the dispatch region
+  [`oracle.start`, br] (its first instruction and every branch target inside it) can carry them. The index is the
+  register of the oracle's bounds cmp, which no instruction from such an entry to the br may write. Ways in are the
+  module's direct branches and fall-throughs by capstone; the function entry, exception landing pads and every
+  resolver table target count as entries from anywhere. Branch conditions are evaluated only where they depend on the
+  index alone. The region falls through from its start to the br (`Oracle._fallthrough()`), or is the bounds-check
+  block whose `b.ls/b.lo` is the only way into the dispatch block (`Oracle._taken()`); in the second case that branch
+  must be the block's only way in. Conditions inside the region are ignored.
+- `oracle_wrong()`: why the oracle's targets for a br are not the table's, from evidence independent of the resolver,
+  or None. The index the table is read with does not depend on the registers the oracle sets (it comes from another
+  register or is reloaded from memory, which the oracle leaves at its scratch value); or the table base the oracle
+  uses (its replay of ADRP/ADR/ADD-imm from the entry) is not the one constant that every reaching definition gives;
+  or the oracle enumerates an index that no way into the dispatch region lets through (a case peeled off before the
+  table by `cmp wI, #k; b.ne`, `cbnz wI` or a range check on wI, possibly some blocks up), and without it the oracle
+  gives the resolver's targets.
+- `plt_stubs()` gives the addresses of `br x17` in `adrp x16; ldr x17, [x16, #o]; add x16, x16, #o; br x17` stubs.
+  `window()` is the code before the br, and the bounds check that branches into its block if it sits elsewhere.
