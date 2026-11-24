@@ -1,27 +1,11 @@
-"""The runtime's files by subsystem folder: which file of runtime/ moved from the top level into which folder, and the
-script that made the move and rewrote the paths that name the files.
-
-    python tools/runtime_folders.py move              # git mv every file of FOLDERS from runtime/ into its folder
-    python tools/runtime_folders.py rewrite [FILE...]  # runtime/<name> -> runtime/<folder>/<name> in those files
-    python tools/runtime_folders.py where NAME...      # the path below runtime/ a file has now
-    python tools/runtime_folders.py table              # the table as Markdown
-
-`rewrite` without files takes every tracked file outside runtime/, tools/xlate/ and tools/vendor/ that names one (git
-grep) and changes `runtime/<name>` and `runtime\\<name>` in any text, and in Python a path joined from a runtime
-folder, such as `ROOT / 'runtime' / '<name>'` or `rt / '<name>'`. A branch made before the move takes a rebase as
-usual (git follows the renames); a file it adds that names a moved one is brought up to date with `rewrite <file>`, and
-a C file it adds at the top of runtime/ still builds there, as the top level is compiled as before.
-
-The files that stay at the top of runtime/: the entry point, the guest's core (cpu.h, simd.h, simd_fp.h, dispatch.h,
-host.h: the lifted C includes them, and its compile has only runtime/ on its path), the loader, guest memory, the log,
-cfg.h (platform/win32.c includes it as ../cfg.h), the small shared helpers and the Windows resource files.
-"""
 import argparse
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+DESCRIPTION = ("The runtime's files by subsystem folder: which file of runtime/ moved from the top level into which "
+               'folder, and the')
 ROOT = Path(__file__).resolve().parents[1]
 RT = ROOT / 'runtime'
 
@@ -82,10 +66,8 @@ FOLDERS = {
         'ui_text.h',
     ],
 }
-# The rest of vk_*, and the headers of the Vulkan back end that carry another name.
 VK_EXTRA = ['boot_warm.h', 'fsr3_probe.c', 'fsr3fg_probe.c', 'gpu_choice.h', 'nvidia_cache.h', 'skin_pair.h', 'vk.h']
 VK_ELSEWHERE = set(FOLDERS['pacing'])
-# vk/ as it was on the day of the move (the vk_* files then); a vk_* file added later stays where it is put.
 FOLDERS['vk'] = sorted(VK_EXTRA + [
     'vk_aa.c', 'vk_astc.c', 'vk_backend.c', 'vk_build_gate.h', 'vk_cache_file.h', 'vk_cache_stamp.h', 'vk_caps.c',
     'vk_color.c', 'vk_contact.c', 'vk_crumbs.c', 'vk_device.c', 'vk_dlaa.c', 'vk_dlaa.h', 'vk_dlssg.c',
@@ -112,7 +94,6 @@ def git(*args, **kw):
 
 
 def move():
-    """git mv each file of FOLDERS from the top of runtime/ into its folder."""
     missing = [n for n in WHERE if not (RT / n).is_file()]
     if missing:
         sys.exit(f'not at the top of runtime/: {", ".join(missing)}')
@@ -123,10 +104,7 @@ def move():
 
 
 NAMES = '|'.join(re.escape(n) for n in sorted(WHERE, key=len, reverse=True))
-# runtime/<name> and runtime\<name>, as a whole name (not runtime/vk_fsr.c inside runtime/vk_fsr.cpp; a full stop
-# after it may end a sentence)
 TEXT = re.compile(r'(runtime([/\\]))(' + NAMES + r')(?!\w|\.\w)')
-# a Python path join that ends in a moved name, from a runtime folder: ... / 'runtime' / 'name', rt / 'name'
 JOIN = re.compile(r"""((?:'runtime'|"runtime"|\b(?:rt|RT|RUNTIME|runtime|rt_dir|RT_DIR))\s*/\s*)(['"])(""" + NAMES +
                   r')\2')
 
@@ -146,8 +124,6 @@ def rewrite(files):
     if not files:
         names = git('grep', '-lE', r'runtime[/\\]|\b(rt|RT|RUNTIME|runtime|rt_dir|RT_DIR)[\'"]?\s*/', '--', '.',
                     ':!runtime').split()
-        # the translator's sources are left as they are (tools/build_xlate.py hashes them into the translator's
-        # identity), as is the vendored code
         files = [n for n in names if n != 'tools/runtime_folders.py' and not n.startswith(KEEP)]
     changed = 0
     for f in files:
@@ -172,7 +148,7 @@ def table():
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     sub = ap.add_subparsers(dest='cmd', required=True)
     sub.add_parser('move')
     r = sub.add_parser('rewrite')
