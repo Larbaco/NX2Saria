@@ -1,7 +1,3 @@
-// Exercise the real uniform snapshot drop, lookup and diagnostic paths concurrently without a GPU. The replay
-// stream position, pool lookup, hit accounting and platform lock are stand-ins; this does not test replay order or GPU fences.
-// Phase barriers make both threads progress between blocks without ordering their accesses within each block. They do
-// not force individual operations to interleave: an empty TSan report is not a proof of every schedule.
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -13,9 +9,8 @@
 static pthread_mutex_t test_drop_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_barrier_t start;
 static _Atomic int failures;
-static _Thread_local uint64_t test_pos = 64;   // the caller's place in the stream (vk_exec_stream_pos)
+static _Thread_local uint64_t test_pos = 64;
 
-// vk_usnap.c takes only drop_lock along the exercised paths. The other runtime boundaries do not need a device.
 void plat_mutex_lock(PlatMutex *m) { (void)m; pthread_mutex_lock(&test_drop_lock); }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; pthread_mutex_unlock(&test_drop_lock); }
 int vk_exec_shared(void) { return 1; }
@@ -52,10 +47,9 @@ static void *reader(void *arg) {
             uint64_t addr = BASE + (uint64_t)i * STEP;
             int why = vk_usnap_why(addr, 1);
             if (why != VK_USNAP_FOUND && why != VK_USNAP_DROPPED) atomic_fetch_add(&failures, 1);
-            // This range is outside all regions and writes, so why scans the list while the other thread grows it.
             if (vk_usnap_why(0x100000000ull, 1) != VK_USNAP_NOT_CPU) atomic_fetch_add(&failures, 1);
             VkDescriptorBufferInfo info;
-            (void)vk_usnap_find(addr, 1, 1, &info);   // dropped can change between the two separate calls
+            (void)vk_usnap_find(addr, 1, 1, &info);
         }
         pthread_barrier_wait(&start);
         if (vk_usnap_gen() != (uint64_t)(phase + 1) * PER_PHASE) atomic_fetch_add(&failures, 1);
@@ -84,8 +78,6 @@ int main(void) {
     if (vk_usnap_gen() != REGIONS || U.nwr != REGIONS || vk_usnap_why(BASE, 1) != VK_USNAP_DROPPED ||
         vk_usnap_why(BASE + (REGIONS - 1) * STEP, 1) != VK_USNAP_DROPPED || vk_usnap_find(BASE, 1, 1, &info))
         atomic_fetch_add(&failures, 1);
-    // A lookup before the drop's place in the stream may use the snapshot; at or after it, it may not. why keeps its
-    // existing diagnostic behaviour and reports any drop, including one later in the stream than the caller.
     test_pos = 63;
     if (!vk_usnap_find(BASE, 1, 1, &info) || vk_usnap_why(BASE, 1) != VK_USNAP_DROPPED)
         atomic_fetch_add(&failures, 1);

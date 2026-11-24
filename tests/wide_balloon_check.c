@@ -1,4 +1,3 @@
-// Run with tests/wide_balloon_check.py.
 #include <assert.h>
 #include <math.h>
 #include <stdarg.h>

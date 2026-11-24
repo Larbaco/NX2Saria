@@ -1,13 +1,4 @@
 # needs: windows
-"""tools/worktree.py against a scratch repo whose "main checkout" holds dummy ignored data. No game files needed.
-
-Proves that marker files in the linked directories and in the linked file survive:
-  1. tools/worktree.py remove,
-  2. git worktree remove --force with the junctions still in place,
-  3. git worktree prune after the worktree directory is deleted with its junctions in place.
-Also checks that git status in a worktree shows no untracked or typechanged entry for the links.
-Run with the repo's Python: tests/worktree_test.py
-"""
 import os
 import shutil
 import subprocess
@@ -58,7 +49,7 @@ def make_repo(base):
     git(main, 'commit', '-m', 'init')
     for d in worktree.LINK_DIRS:
         if d == 'game':
-            continue    # absent in a real checkout too: link only what exists
+            continue
         (main / d / 'deep').mkdir(parents=True)
         (main / d / 'deep' / 'marker.txt').write_text('keep')
     for f in worktree.LINK_FILES:
@@ -72,7 +63,6 @@ def main():
         main_dir = make_repo(base)
         check(main_dir, 'setup')
 
-        # tools/worktree.py new / status / remove
         wt = Path(tool(main_dir, 'new', 'a').strip())
         assert wt.resolve() == (main_dir / '.worktrees' / 'a').resolve(), wt
         for d in worktree.LINK_DIRS:
@@ -95,7 +85,6 @@ def main():
         assert not wt.exists()
         check(main_dir, 'tools/worktree.py remove')
 
-        # unmerged branch: --delete-branch refuses, --force deletes
         wt = Path(tool(main_dir, 'new', 'b').strip())
         (wt / 'f.txt').write_text('x')
         git(wt, 'add', 'f.txt')
@@ -108,19 +97,16 @@ def main():
         assert 'task/b' not in git(main_dir, 'branch', '--list')
         check(main_dir, 'remove --delete-branch after merge')
 
-        # raw git: worktree remove --force with the links in place
         wt = Path(tool(main_dir, 'new', 'c').strip())
         git(main_dir, 'worktree', 'remove', '--force', str(wt))
         check(main_dir, 'raw git worktree remove --force')
 
-        # raw: delete the worktree directory with the junctions in place, then prune
         wt = Path(tool(main_dir, 'new', 'e').strip())
         shutil.rmtree(wt)
         git(main_dir, 'worktree', 'prune')
         check(main_dir, 'rmtree of a linked worktree, then git worktree prune')
         print('PASS')
     finally:
-        # never follow a junction while cleaning up
         for w in (base / 'main' / '.worktrees').glob('*'):
             for d in worktree.LINK_DIRS:
                 worktree.drop_link(w / d)
