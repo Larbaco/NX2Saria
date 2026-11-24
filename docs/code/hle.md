@@ -3975,3 +3975,162 @@ The application area calls share `runtime/hle/amiibo.c`'s backend with the `nn::
 
 The handler for `nn::nfp::detail::IUserManager` (`nfp:user`). Command 0 is CreateUserInterface() -> a move handle to
 IUser. The availability event is signalled immediately, so the game detects the reader.
+
+## `runtime/hle/swkbd.h`
+
+`nn::swkbd::ShowKeyboard` (`runtime/hle/swkbd.c`) and its front end, the window that takes the text
+(`runtime/hle/swkbd_win.c` with Win32, `runtime/hle/swkbd_sdl.c` with SDL).
+
+- `KB_LIMIT` (500) is the applet's longest text.
+- `SwkbdRequest` is the request, front-end independent: `prompt[0x101]` is the header, else the guide, else the sub
+  text (UTF-16, NUL-terminated; may be empty); `initial` the starting text (the game's, else the catalog's default
+  name); `game_initial` says the starting text is the game's.
+- `text_entry_run()` shows the text entry and waits for the answer, on the guest thread that called (its virtual core
+  given up, the game's input blocked). It returns 1 with the text in `out` (`n` units), 0 when cancelled.
+- `swkbd_utf16_to_utf8()`: UTF-16 (`n` units) -> NUL-terminated UTF-8 in `cap` bytes, cut at a character boundary; it
+  returns the bytes written.
+- `swkbd_utf8_to_utf16()`: UTF-8 -> UTF-16, at most `cap` units (a character that does not fit whole is dropped); bad
+  bytes become U+FFFD.
+- `swkbd_allowed()`: whether the applet would let this character through (single UTF-16 units; pairs are always
+  allowed). Disabled-key bits as the applet's: 1 space, 2 '@', 3 '%', 4 '/', 5 '\', 6 digits.
+
+## `runtime/hle/swkbd.c`
+
+`nn::swkbd::ShowKeyboard`: text entry for the game. Its first line is a licence notice. On the Switch the call starts
+the keyboard library applet, which takes the screen until the player confirms or cancels. The game calls it in one
+place, naming a horse at a stable (`main+0x1ecbf64` -> `main+0x1b2b3a0`: UserName preset, at most 9 characters, '@',
+'%' and '\' disabled, UTF-16 out, no header, guide or initial text; an empty answer counts as not named).
+
+The text entry is a window of the host. Front end: `text_entry_run()` (`runtime/hle/swkbd.h`; `swkbd_win.c` with
+Win32, `swkbd_sdl.c` with SDL), run on the guest thread that called (the call blocks, as on the Switch). The thread
+gives its virtual core up meanwhile, so the other guest threads keep running; it holds no lock across the wait. The
+text starts as the game's initial text, else a default name from the catalog (`runtime/ui/ui_text.c`), selected, so a
+controller can confirm it: A = OK, B = cancel (each after it was seen released); Enter / Esc and the buttons work too.
+While the window is open, and after it closes until everything is released, the game reads no input (`input_block`).
+`text_entry_run()` is the only front-end seam: an overlay (ImGui) can replace it.
+
+Environment:
+
+| Setting | What |
+|---|---|
+| `NX2SARIA_SWKBD_ANSWER=<text>\|<cancel>\|<initial>` | answer without a window (probes, scripted runs); `<initial>` keeps the starting text (the game's, else the default name) |
+| `NX2SARIA_SWKBD_TEST=ok\|cancel` | open the window, then press OK / Cancel on the first timer tick |
+
+`ARG_WORK`: the argument is KeyboardConfig then the work buffer {pointer, size}: the offsets are read from the SDK
+setters and checked against the SDK by `--probe-services`. SDK 20.5 (1.4.3) put a text-check callback at +0x4c8 and
+grew KeyboardConfig from 0x4d0 to 0x518 bytes (SetInitialText and SetUserWordList read the work buffer there); the
+fields below +0x3d8 stay.
+
+### `clean()`
+
+Drops disallowed characters and keeps at most `max` units without splitting a surrogate pair.
+
+### `ov_show_keyboard()`
+
+`Result ShowKeyboard(String *out, const ShowKeyboardArg &arg)`; String = {pointer, byte size}. One keyboard at a
+time (the applet is modal too). Of the output's units one is kept for the terminator.
+
+## `runtime/hle/swkbd_win.c`
+
+The Win32 front end of the software keyboard (`runtime/hle/swkbd.h`): a modal window owned by the game window, run
+on the guest thread that called. The text starts as the game's initial text, else a default name from the catalog
+(`runtime/ui/ui_text.c`), selected, so a controller can confirm it: A = OK, B = cancel (each after it was seen
+released); Enter / Esc and the buttons work too. `NX2SARIA_SWKBD_TEST=ok|cancel` opens the window, then presses OK /
+Cancel on the first timer tick. Only the Windows build compiles this file.
+
+`B_A` (0), `B_B` (1) and `B_PLUS` (10) are the bits of `runtime/input/input.h`. `Entry`: `result` is 0 open, 1 OK, -1
+cancelled; `armed` the buttons seen released since the window opened; `test` is `NX2SARIA_SWKBD_TEST`: 1 press OK, -1
+press Cancel.
+
+### `entry_proc()`
+
+A button counts as pressed when it is down now and was up at the previous tick.
+
+### `text_entry_run()`
+
+Shows the window and waits for the answer. It returns 1 with the text in `out` (`n` units), 0 when cancelled.
+
+- The process is per-monitor DPI aware: the font and the layout are measured at the game window's DPI, the monitor the
+  dialog opens on, not at the system DPI that plain SystemParametersInfo and AdjustWindowRectEx use.
+- Enter on the Cancel button cancels; elsewhere it confirms.
+- The owner is enabled again before the window goes, so activation returns to the game window.
+
+## `runtime/hle/swkbd_sdl.c`
+
+The software keyboard's front end for SDL windows (`runtime/hle/swkbd.h`). Until the in-game text field exists (an
+ImGui entry in the menu overlay, which SDL_StartTextInput can pair with the Steam Deck's on-screen keyboard), the text
+entry takes the starting text at once, as `NX2SARIA_SWKBD_ANSWER=<initial>` does: the game's initial text, else the
+default name from the catalog. The game asks only for a horse's name. `NX2SARIA_SWKBD_TEST=cancel` stands for Cancel
+pressed, as in the Win32 window.
+
+## `runtime/hle/net_offline.c`
+
+The offline network: `nn::socket` and the `nnsocket*` C API for a title that brings its network stack up at boot
+(Switch 2 titles start it on a worker thread and abort if `nn::socket::Initialize` fails). This build has no network:
+Initialize succeeds, no socket can be made (ENETDOWN), name lookups fail (EAI_NONAME), and every other call on a
+descriptor that is not an eventfd fails with EBADF. eventfd is real: the stack's worker threads wake each other through
+it and through nnsocketPoll, so there is a counter with a kernel event each, and waits are made with
+WaitSynchronization on the calling guest thread (SVC 0x18 through `kern_svc`, as the SDK's own wait would). errno
+values are the BSD ones the SDK uses (`nn::socket::Errno`).
+
+- `NIFM_R_COMMUNICATION_DISABLED_NET` (0x8ae6e) is nifm module 110, description 1111.
+- `EFD_BASE` (0x4000): eventfd descriptors are above anything a guest socket table would hand out.
+- `spare[]`: the kernel events of closed eventfds, reused by the next EventFd. They are never closed: a thread can
+  still be blocked on one (EventFdRead, nnsocketPoll) when another closes the descriptor, and a freed handle number is
+  soon reused by another kernel object, which corrupted that thread's wait (round 15 crashes).
+- `last_errno` is one value for all threads: nothing here succeeds partially.
+
+### `guest_wait()`
+
+WaitSynchronization(handles, n, ns) on the calling guest thread. It returns the result; `*index` is the signalled
+one.
+
+### The socket calls
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_initialize()`, `ov_finalize()`, `ov_is_initialized()` | `Result Initialize(const Config &)` / `Result Finalize()` / `bool IsInitialized()` | |
+| `ov_eventfd()` | `int EventFd(uint64_t initval, EventFdFlags flags)` | |
+| `ov_eventfd_write()` | `int EventFdWrite(int fd, uint64_t value)` | |
+| `ov_eventfd_read()` | `int EventFdRead(int fd, uint64_t *value)` | blocks while the counter is 0 (no nonblocking flag is honoured yet) |
+| `ov_badf()` | `int SetSockOpt(int, Level, Option, const void *, uint32_t)` | EBADF |
+| `ov_close()` | nnsocketClose | the closed eventfd's event is signalled to wake its waiters: they find the descriptor gone (EBADF) or look again |
+| `ov_poll()` | `int nnsocketPoll(pollfd *fds, nfds_t n, int timeout_ms)` | eventfds report POLLIN while their counter is nonzero; any other descriptor reports POLLNVAL. With nothing to wait on and a timeout it sleeps (SVC 0x0B, SleepThread); with nothing to wait on, forever, it reports none instead of hanging |
+| `ov_getaddrinfo()` | `int nnsocketGetAddrInfo(...)` / `...WithOptions(...)` | no name resolves offline |
+
+### The ssl calls
+
+`nn::ssl`: initialised, never used (no socket connects). Contexts are created and accept imports; the built-in CA
+list is empty: GetBuiltInCertificateBufSize asks for room for one zeroed (terminating) record (`SSL_EMPTY_LIST`, 0x40)
+and GetBuiltInCertificates hands back that zeroed record.
+
+- `ov_ssl_ca_size()`: `Result BuiltInManager::GetBuiltInCertificateBufSize(uint32_t *out, CaCertificateId *ids,
+  uint32_t count)`.
+- `ov_ssl_ca_list()`: `Result BuiltInManager::GetBuiltInCertificates(BuiltInCertificateInfoBase **out, uint8_t *buf,
+  uint32_t size, CaCertificateId *ids, uint32_t count)`.
+- `ov_ssl_import()`: `Result Context::Import{ClientPki,ServerPki,Crl}(uint64_t *id, ...)`: an id for the caller to
+  keep.
+
+### `ov_nsd_environment()` `ov_nsd_resolve()`
+
+`nn::nsd`: the server environment is production ("lp1", as the console answers); `ResolveEx(Fqdn *out, const Fqdn
+&in)` copies the 0x100-byte name (nothing resolves offline anyway).
+
+### The asynchronous tasks
+
+`nn::time::AsyncEnsureNetworkClockAvailabilityTask` and the `nn::account` asynchronous NSA calls. The SDK versions run
+as `nn::async` tasks over the time and account service objects, which the host never creates (it overrides
+`nn::time::Initialize` and `nn::account::Initialize`); on the executor thread that corrupted memory at random (round
+15 crashes). Here a task completes at once and reports the network as unavailable. The object's first 8 bytes hold the
+host record (the task's real size is unknown; every SDK object is larger than a pointer).
+
+`ACCOUNT_R_NSA_UNAVAILABLE` (0x1907c) is account module 124, description 200: a failure the caller handles.
+`HostTask.event` (0x40 bytes reserved) is an `nn::os::SystemEventType` (0x30 bytes).
+
+| Function | SDK call | Note |
+|---|---|---|
+| `ov_clock_task_ctor()`, `ov_task_dtor()` | `AsyncEnsureNetworkClockAvailabilityTask()` (C1) and its destructor | the record. The event lives in the record: its entry in the system-event table goes back before the record is freed, or the table would count it live for the rest of the run (`runtime/hle/kernel.c` `kern_unbind_system_event()`) |
+| `ov_clock_task_init()`, `ov_clock_task_start()` | `Result Initialize(EventClearMode)` / `Result StartTask()` | done at once |
+| `ov_clock_task_event()` | `SystemEvent *GetFinishEvent()` | `nn::os::SystemEvent` holds its SystemEventType at offset 0 |
+| `ov_account_async()`, `ov_account_event()`, `ov_account_result()` | `AsyncContext()` / `~AsyncContext()`; `Result EnsureNetworkServiceAccountIdTokenCacheAsync(AsyncContext *, const UserHandle &)`; `Result AsyncContext::GetSystemEvent(SystemEvent *out)`; `Result AsyncContext::GetResult()` | `out` becomes a signalled event |
+| `ov_account_nsa()` | `Result EnsureNetworkServiceAccountAvailable(const UserHandle &)`, `GetNetworkServiceAccountId(NsaId *, handle)`, `LoadNetworkServiceAccountIdTokenCache(size_t *, char *, size_t, handle)` | no network service account offline |
