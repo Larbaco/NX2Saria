@@ -192,7 +192,9 @@ note, a focus error and both update and reports short-circuits. Existing `launch
 
 ## `tests/launcher_worker_test.py`
 
-Uses temporary launcher roots and child workers to check pre-validation without writes, including malformed settings, the versioned handshake,
-inspection, idle EOF, lock refusal and release, the unopenable-lock fallback, CLI contention and both Steam behaviors
-while the worker owns the lock. The Steam test replaces process creation with a fake. A synthetic staged update is
-reported without changing its files, malformed frames and unknown methods are rejected, and repeated action logs are bounded.
+Uses temporary launcher roots and child workers to check pre-validation without writes, including malformed settings,
+the versioned handshake, inspection, idle EOF, lock refusal and release, the unopenable-lock fallback, sanitized startup
+and inspection failures, CLI contention and both Steam behaviors while the worker owns the lock. The Steam test replaces
+process creation with a fake. A synthetic staged update is reported without changing its files, malformed frames and
+unknown methods are rejected, and repeated action logs are bounded. The cyclic-symlink case is skipped on Windows,
+where creating a symlink can require privileges.

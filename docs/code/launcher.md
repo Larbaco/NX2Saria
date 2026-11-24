@@ -101,10 +101,13 @@ existing native dialog, including the fallback that permits Play if the probe or
 ### `worker.py`: first persistent-worker slice
 
 The worker accepts a newline-delimited UTF-8 JSON handshake with the exact integer protocol version before inspecting or
-writing the selected root. A root must be an existing launcher with `app/current.txt` and a data directory; a read-only inspection rejects invalid settings before `Context` can create a recovery copy. It then
-constructs `Layout`, takes the existing `FileLock` before `Context`, and reports whether the lock was acquired or could
-not be opened. A busy lock fails visibly. The worker reports its version, capabilities and whether a complete staged
-update is waiting; detecting it does not modify it. It answers `inspect` using the existing read-only inspection and
-logs the result. Repeated inspection and unknown-method log entries are limited to ten per action, followed by one suppression line. EOF while idle closes the log and releases the lock. Frames have a 64 KiB limit, IDs are integers or
+writing the selected root. A root must be an existing launcher with `app/current.txt` and a data directory. A read-only
+inspection rejects invalid settings before `Context` can create a recovery copy. The worker then constructs `Layout`,
+takes the existing `FileLock` before `Context`, and reports whether the lock was acquired or could not be opened. A busy
+lock fails visibly. It reports its version, capabilities and whether a complete staged update is waiting; detecting it
+does not modify it. It answers `inspect` using the existing read-only inspection and logs the result. Inspection and
+startup failures return generic errors without exception details. Startup failures release the lock and are logged when
+logging is available. Repeated inspection and unknown-method log entries are limited to ten per action, followed by one
+suppression line. EOF while idle closes the log and releases the lock. Frames have a 64 KiB limit, IDs are integers or
 strings, and malformed frames or a protocol mismatch are rejected without opening the installation. This slice does
 not launch a game, manage jobs, send reports or connect the Electron window to the worker.

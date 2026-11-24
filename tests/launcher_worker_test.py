@@ -75,6 +75,15 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['error']['code'], 'invalid_installation')
         self.assertEqual(self.tree(), before)
 
+    @unittest.skipIf(sys.platform == 'win32', 'creating symlinks may require Windows privileges')
+    def test_cyclic_root_is_rejected_without_a_traceback(self):
+        loop = Path(self.tmp.name) / 'loop'
+        loop.symlink_to(loop)
+        result = self.run_worker({'id': 1, 'method': 'hello', 'protocol': 1}, root=loop)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'invalid_root')
+        self.assertNotIn('Traceback', result.stderr)
+
     def test_unrecognized_root_is_not_changed(self):
         (self.root / 'app' / 'current.txt').unlink()
         before = self.tree()
@@ -116,6 +125,38 @@ class WorkerTest(unittest.TestCase):
         worker.stdin.close()
         self.assertEqual(worker.wait(timeout=15), 0)
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
+        self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
+
+    def test_startup_failure_is_sanitized_and_releases_the_lock(self):
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch('launcher.context.Context',side_effect=OSError('private-sentinel')):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        result = subprocess.run([sys.executable, '-c', script, str(self.root)],
+                                input=json.dumps({'id': 1, 'method': 'hello', 'protocol': 1}) + '\n',
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'startup_failed')
+        self.assertNotIn('private-sentinel', result.stdout + result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        successor = self.run_worker({'id': 2, 'method': 'hello', 'protocol': 1})
+        self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
+
+    def test_waiting_update_read_failure_is_sanitized_and_logged(self):
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch('launcher.updater.staged',side_effect=OSError('private-sentinel')):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        result = subprocess.run([sys.executable, '-c', script, str(self.root)],
+                                input=json.dumps({'id': 1, 'method': 'hello', 'protocol': 1}) + '\n',
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'startup_failed')
+        self.assertNotIn('private-sentinel', result.stdout + result.stderr)
+        self.assertIn('worker: startup failed', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
+        successor = self.run_worker({'id': 2, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
     def test_unopenable_lock_is_visible_and_logged(self):
@@ -205,6 +246,28 @@ class WorkerTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(json.loads(result.stdout)['error']['code'], ('invalid_request', 'protocol_mismatch'))
                 self.assertEqual(self.tree(), before)
+
+    def test_inspection_failure_is_sanitized_and_does_not_abort_the_worker(self):
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher.inspect_installation import inspect_installation\n"
+                  "root=sys.argv[1]\n"
+                  "initial=inspect_installation(root)\n"
+                  "sys.argv=['launcher.worker','--root',root]\n"
+                  "with mock.patch('launcher.inspect_installation.inspect_installation',"
+                  "side_effect=[initial,OSError('private-sentinel')]):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        frames = [{'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'inspect'}]
+        result = subprocess.run([sys.executable, '-c', script, str(self.root)],
+                                input=''.join(json.dumps(frame) + '\n' for frame in frames),
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hello, failure = map(json.loads, result.stdout.splitlines())
+        self.assertEqual(hello['result']['protocol'], 1)
+        self.assertEqual(failure, {'id': 2, 'error': {'code': 'inspection_failed'}})
+        self.assertNotIn('private-sentinel', result.stdout + result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertIn('worker: inspect failed', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
 
     def test_unknown_method_returns_structured_error(self):
         worker, hello = self.start_worker()

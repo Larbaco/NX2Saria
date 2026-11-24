@@ -64,11 +64,19 @@ def main(argv=None):
     if type(request.get('protocol')) is not int or request['protocol'] != PROTOCOL:
         error(request['id'], 'protocol_mismatch')
         return 1
-    root = Path(args.root).resolve()
+    try:
+        root = Path(args.root).resolve()
+    except (OSError, RuntimeError):
+        error(request['id'], 'invalid_root')
+        return 1
     if not root.is_dir() or not (root / 'app' / 'current.txt').is_file() or not (root / 'data').is_dir():
         error(request['id'], 'invalid_root')
         return 1
-    if inspect_installation(root)['status'] == 'inspection_error':
+    try:
+        valid = inspect_installation(root)['status'] != 'inspection_error'
+    except (OSError, ValueError, RuntimeError):
+        valid = False
+    if not valid:
         error(request['id'], 'invalid_installation')
         return 1
     layout = Layout(root=root)
@@ -79,10 +87,16 @@ def main(argv=None):
         return 1
     ctx = None
     try:
-        ctx = Context(layout)
+        try:
+            ctx = Context(layout)
+            waiting = bool(updater.staged(layout, channel=ctx.settings.get('channel', 'stable'),
+                                          skip=ctx.settings.get('rolled_back', '')))
+        except Exception:
+            if ctx:
+                ctx.log('worker: startup failed')
+            error(request['id'], 'startup_failed')
+            return 1
         lock_state = 'held' if held.key is not None else 'unavailable'
-        waiting = bool(updater.staged(layout, channel=ctx.settings.get('channel', 'stable'),
-                                      skip=ctx.settings.get('rolled_back', '')))
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
                                               'capabilities': ['inspect'], 'update_waiting': waiting}})
@@ -98,7 +112,12 @@ def main(argv=None):
                 ctx.log('worker: eof idle')
                 return 0
             if request.get('method') == 'inspect':
-                result = inspect_installation(root)
+                try:
+                    result = inspect_installation(root)
+                except (OSError, ValueError, RuntimeError):
+                    action_log(ctx, counts, 'inspect', 'failed')
+                    error(request['id'], 'inspection_failed')
+                    continue
                 action_log(ctx, counts, 'inspect', f'status={result["status"]}')
                 emit({'id': request['id'], 'result': result})
             else:

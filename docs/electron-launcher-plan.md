@@ -211,7 +211,7 @@ launcher root and protocol before writing, acquires the existing lock before `Co
 lock state and detects a complete waiting update without installing it. It supports inspection, structured protocol
 errors and idle EOF cleanup. Synthetic Python tests exercise two workers, CLI and Steam contention, malformed input,
 the lock-open fallback and staged-file preservation; the TypeScript protocol parser is tested against a real worker
-handshake. The eleven synthetic worker tests also pass on a Windows host with Python 3.11; they use temporary roots and a fake Steam process and do not use a real game. The Electron window is not yet connected to the worker. Worker Play, jobs, post-game behavior and owner real-game evidence remain outstanding.
+handshake. The synthetic worker tests run on Windows with Python 3.11; they use temporary roots and a fake Steam process and do not use a real game. The Electron window is not yet connected to the worker. Worker Play, jobs, post-game behavior and owner real-game evidence remain outstanding.
 
 ## Development logging and dependency inventory
 
