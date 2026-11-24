@@ -1,27 +1,26 @@
 # needs: clang
-"""Check the runtime's surface-format enumeration with mocked Vulkan queries, without game files or a GPU.
-
-Usage: python tests/surface_formats_check.py [--sanitize]
-CC selects a C compiler; otherwise use clang, or MSYS2 UCRT64 clang on Windows.
-"""
 import argparse
 import os
 from pathlib import Path
 import shutil
 import subprocess
 
+DESCRIPTION = """Check the runtime's surface-format enumeration with mocked Vulkan queries, without game files or a GPU.
+
+Usage: python tests/surface_formats_check.py [--sanitize]
+CC selects a C compiler; otherwise use clang, or MSYS2 UCRT64 clang on Windows.
+"""
+
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument('--sanitize', action='store_true')
     args = parser.parse_args()
     work = ROOT / 'build' / 'test' / 'surface_formats'
     work.mkdir(parents=True, exist_ok=True)
-    # Compile the actual helper, not a duplicate of its implementation. The rest of the presenter needs a window,
-    # a Vulkan device and generated game headers, none of which this API-enumeration regression needs.
     source = (ROOT / 'runtime' / 'gfx' / 'gfx_present.c').read_text()
     start = source.index('static VkSurfaceFormatKHR *surface_formats(')
     end = source.index('\n}\n', start) + 3
