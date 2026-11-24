@@ -1,8 +1,10 @@
 # tools
 
-The build, packaging and release tools. This page is started: it holds the notes of the code that has had no comments
-from the start, the licence parts of the two release scripts. The rest of `tools/` keeps its comments until the area is
-extracted ([README.md](README.md#areas)). What ships with which licence is in
+The build, packaging, release, check and diagnosis tools, one section per file in the order of the file names. Three
+files keep comments for now, because their bytes or lines feed a key on every player's PC, and their sections say so:
+`tools/cheats.py` and `tools/exefs_patches.py` (all of them) and `tools/button_icons.py` (the comments that follow
+code on a line). `tools/vendor/` and `tools/xlate/` are not part of the area ([README.md](README.md#the-checks)). A
+tool's `--help` text is the string `DESCRIPTION` in its file. What ships with which licence is in
 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md); `tests/shipped_notices_check.py` keeps it in step with the
 scripts ([tests.md](tests.md)).
 
