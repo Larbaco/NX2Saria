@@ -1,15 +1,10 @@
 #version 460
 #extension GL_EXT_mesh_shader : require
 // build_shaders: keep functions
-//
-// --probe-meshfb (mesh_fb_probe.c): the mesh program that meshfb_probe_t.task feeds, in the translator's shape
-// (meshfb_probe_m.mesh says which). Its shared memory holds the task payload behind the stage buffer, from word 540.
-// The workgroup id is its index among its task's mesh workgroups: payload word 4 + id names the cell it draws, and
-// the mark in the last payload word names its task, which the colour shows when either is wrong.
 layout(local_size_x = 32) in;
 layout(triangles, max_vertices = 64, max_primitives = 32) out;
 layout(location = 0) out vec4 o_color[];
-layout(set = 0, binding = 1) uniform Params { vec4 tint; uvec4 grid; } u;   // grid: columns, rows
+layout(set = 0, binding = 1) uniform Params { vec4 tint; uvec4 grid; } u;
 shared uint mem[612];
 taskPayloadSharedEXT uint payload[72];
 
@@ -34,7 +29,7 @@ void program() {
         mem[VWORD(v, 6u)] = floatBitsToUint(c.z);
         mem[VWORD(v, 7u)] = floatBitsToUint(c.w);
     }
-    if (tid == 0u) {   // one thread writes the index bytes: they share words
+    if (tid == 0u) {
         uint count = 2u + cell % 7u;
         for (uint t = 0u; t < count; t++) {
             uint q = t / 2u, a = (q / 2u) * 3u + q % 2u + 28u;

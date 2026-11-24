@@ -1,19 +1,3 @@
-; Scale and decode for the untranslatable scene upscaler (runtime/vk_exec_draw.c untranslated_dispatch_fallback).
-; Its input is the post pass's picture with each channel stored as the square root of its linear value (prog 102 packs
-; sqrt(composite) into RGB9E5), and its output is linear (the HUD is drawn over it, the frame's last pass encodes to
-; sRGB). So: filter in the stored (sqrt) values, as the game's upscaler does, then square. The pass replaced a
-; decode with the sRGB curve, which darkened mid-tones and lifted the darkest values.
-; Written in SPIR-V assembly (spirv-as; no GLSL compiler in the build). As GLSL:
-;   layout(local_size_x = 8, local_size_y = 8) in;
-;   layout(binding = 0) uniform sampler2D src;              // the stored picture (linear filtering)
-;   layout(binding = 1, rgba16f) uniform writeonly image2D dst;   // the pass output (vk_tonemap.c), blitted into the target
-;   layout(push_constant) uniform P { vec2 inv; float unused; float pad; ivec2 size; } pc;
-;   void main() {
-;       ivec2 p = ivec2(gl_GlobalInvocationID.xy);
-;       if (p.x >= pc.size.x || p.y >= pc.size.y) return;
-;       vec3 s = textureLod(src, (vec2(p) + 0.5) * pc.inv, 0.0).rgb;
-;       imageStore(dst, p, vec4(s * s, 1.0));
-;   }
                OpCapability Shader
                OpMemoryModel Logical GLSL450
                OpEntryPoint GLCompute %main "main" %gid %src %dst %pc

@@ -45,6 +45,7 @@ EXCLUDED = (
     ('runtime/shaders/ffx3/*', 'AMD FidelityFX SDK headers, unmodified (MIT, THIRD_PARTY_NOTICES.md)'),
     ('runtime/nvn/nvn.h', 'the NVN type definitions, another project\'s header, unmodified (MIT, '
                           'THIRD_PARTY_NOTICES.md)'),
+    ('runtime/shaders/smaa.glsl', 'the SMAA reference implementation, unmodified (MIT, THIRD_PARTY_NOTICES.md)'),
     ('tools/xlate/*', 'the shader translator: its identity (tools/build_xlate.py identity()) reads the patch files '
                       'byte for byte, and a new identity makes every player prepare the shaders again; its comments '
                       'go with the shader translator\'s next identity change'),
@@ -78,6 +79,8 @@ LICENSE_FULL = re.compile(
 COPYRIGHT = re.compile(r'Copyright\s*(?:\([cC]\)|©|\d)')
 SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES|\.\)?\s*$')
 NOTICE_START = re.compile(r'^[#/*;\s]*(?:Contains code|Portions|Copyright)\b')
+LICENSE_FILE = re.compile(r'\((?:MIT|BSD[-\w ]*|Apache[-\w. ]*|zlib|ISC|MPL[-\w. ]*),\s*'
+                          r'((?:[\w.-]+/)*(?:LICEN[SC]E|COPYING)(?:\.txt|\.md)?)\)')
 
 PY_DIRECTIVE = re.compile(r'#\s*(?:noqa\b|type:\s*ignore\b|pragma\b|fmt:\s*(?:off|on|skip)\b|isort:|pylint:|mypy:|'
                           r'pyright:|nosec\b)')
@@ -366,7 +369,14 @@ def license_lines(lines):
     return kept
 
 
-def classify(rel, text):
+def names_license_file(content, rel, root):
+    m = LICENSE_FILE.search(content)
+    if not m or root is None:
+        return False
+    return any((base / m.group(1)).is_file() for base in ((root / rel).parent, root))
+
+
+def classify(rel, text, root=None):
     suffix = Path(rel).suffix.lower()
     kept = {}
     counted = {}
@@ -404,7 +414,7 @@ def classify(rel, text):
     else:
         return counted, kept, True
     lines = comment_lines(text, spans)
-    lic = license_lines(lines)
+    lic = license_lines(lines) | {ln for ln, content in lines.items() if names_license_file(content, rel, root)}
     for ln, content in lines.items():
         if C_DIRECTIVE.search(content):
             kept[ln] = ('directive', content)
@@ -447,7 +457,7 @@ def scan(root):
             text = (root / rel).read_text(encoding='utf-8-sig', errors='replace')
         except OSError:
             continue
-        counted, kept, parsed = classify(rel, text)
+        counted, kept, parsed = classify(rel, text, root)
         if ex:
             entry = report['excluded'].setdefault(ex[0], [0, 0])
             entry[0] += 1
@@ -537,7 +547,12 @@ def self_test():
             'int g;\n'
             '// ---- a heading, counted\n'
             '// Contains code Copyright (c) 2021 Ana Souza (MIT; see THIRD_PARTY_NOTICES.md).\n'
-            'int h;\n'),
+            'int h;\n'
+            '// lib/a.h is another project\'s header, unmodified (MIT, lib/LICENSE.txt).\n'
+            '// lib/b.h is said to be one too (MIT, lib/MISSING.txt), counted\n'
+            '// gone/c.h names a licence file that is not there (MIT, gone/LICENSE.txt), counted\n'
+            'int k;\n'),
+        'runtime/diag/lib/LICENSE.txt': 'the licence text\n',
         'runtime/shaders/plant.frag': (
             '#version 450\n'
             '// build_shaders: keep functions\n'
@@ -585,11 +600,12 @@ def self_test():
         'runtime/third_party/lib/plant.h': '// third party, not read\n',
         'runtime/shaders/ffx/plant.h': '// AMD, not read\n',
         'runtime/nvn/nvn.h': '// the NVN types, not read\n',
+        'runtime/shaders/smaa.glsl': '// the SMAA reference implementation, not read\n',
         'runtime/gen_plant.c': '// ' + GENERATED_MARKER + '\n// a generated file, not counted\n',
     }
     want_counted = {
         'runtime/audio/plant.c': {3, 12, 17, 18, 19, 20},
-        'runtime/diag/plant.c': {1, 5},
+        'runtime/diag/plant.c': {1, 5, 9, 10},
         'runtime/shaders/plant.frag': {10},
         'runtime/plant.spvasm': {1},
         'tools/plant.py': {4, 5, 6, 8, 14},
@@ -602,7 +618,7 @@ def self_test():
         ('runtime/audio/plant.c', 11): 'directive', ('runtime/audio/plant.c', 14): 'directive',
         ('runtime/audio/plant.c', 15): 'directive',
         ('runtime/diag/plant.c', 2): 'license', ('runtime/diag/plant.c', 3): 'license',
-        ('runtime/diag/plant.c', 6): 'license',
+        ('runtime/diag/plant.c', 6): 'license', ('runtime/diag/plant.c', 8): 'license',
         ('runtime/shaders/plant.frag', 2): 'directive', ('runtime/shaders/plant.frag', 3): 'license',
         ('runtime/shaders/plant.frag', 4): 'license', ('runtime/shaders/plant.frag', 9): 'license',
         ('runtime/shaders/plant.frag', 6): 'license', ('runtime/shaders/plant.frag', 8): 'license',
@@ -631,7 +647,7 @@ def self_test():
             print(f'self-test: {key[0]}:{key[1]} kept as {reason}: {"ok" if ok else f"WRONG ({kept.get(key)})"}')
             bad += not ok
         for rel in ('tools/vendor/lib/plant.c', 'tools/xlate/Plant.cs', 'runtime/third_party/lib/plant.h',
-                    'runtime/shaders/ffx/plant.h', 'runtime/nvn/nvn.h'):
+                    'runtime/shaders/ffx/plant.h', 'runtime/nvn/nvn.h', 'runtime/shaders/smaa.glsl'):
             ok = rel not in report['files'] and excluded(rel) is not None
             print(f'self-test: {rel} not read: {"ok" if ok else "WRONG"}')
             bad += not ok
