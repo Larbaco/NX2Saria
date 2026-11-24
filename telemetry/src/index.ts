@@ -67,10 +67,12 @@ async function postFeedback(request: Request, env: Env): Promise<Response> {
   const body = validateFeedbackBody(text, parseGameVersions(env.GAME_VERSIONS));
   await checkVersions(env, body.summary === null ? [body.launcher_version] : [body.launcher_version, body.summary.version]);
   await insertFeedback(env.DB, {
+    kind: body.kind,
     launcherVersion: body.launcher_version,
     text: body.text,
     summary: body.summary,
     logTail: body.log_tail,
+    logHead: body.log_head,
     now: nowSeconds(),
   }).run();
   return json(201, { ok: true });
