@@ -224,8 +224,7 @@ void main() {
 
 The vector is last frame's window position minus this frame's, in render pixels, as `runtime/shaders/dlaa_mv.comp`
 writes it. Its descriptor set and binding are renumbered by `runtime/vk/vk_pipeline.c` like a translated shader's:
-binding 1 is the fragment stage's slot 3, its parameters (`runtime/vk/vk_exec_draw.c`). The docstring said the
-`.res.json` text of that code names it so; no such text is in the runtime now.
+binding 1 is the fragment stage's slot 3, its parameters (`runtime/vk/vk_exec_draw.c`).
 
 In the assembly, capability 1 is Shader, the memory model `0, 1` is Logical GLSL450, the entry point's model 4 is
 Fragment and execution mode 7 is OriginUpperLeft. `Asm.loc_word` is the index of the patched Location literal in the
@@ -672,6 +671,11 @@ folder.
 The player's mods folder as the game reads it (`runtime/patches/mods.c`): where each mod keeps its parts, and the
 files of the mods that change the game's code. Standard library only: the launcher imports it from the kit's tools
 folder.
+
+`tools/make_game.py` `mod_digest()` puts the SHA-256 of this file's bytes (with those of `tools/cheats.py` and
+`tools/exefs_patches.py`) into the key of the lift for a game folder that has mod code, so one changed byte here makes
+those players' PCs lift the game again. Its comments and docstrings are therefore still in the file, and leave with
+the next change that alters that key anyway; their notes are here already.
 
 One folder per mod (a symbolic link or junction to a folder counts). A part (`romfs`, `romfslite`, `exefs`, `cheats`)
 is the first of `<mod>/<part>`, `<mod>/atmosphere/contents/<title>/<part>`, `<mod>/contents/<title>/<part>` and
@@ -1392,8 +1396,7 @@ module, the innermost exe frame of each chain whose leaf is in that module.
 
 The map's addresses include the image base (0x140000000 for an x64 exe); a runtime Rip is an offset from wherever the
 loader put the image. The lowest map address aligned down recovers that base, so a Rip becomes a map address by adding
-it back. The comment said the address is aligned down to 64 KiB; the mask in the code, `~0xFFFFF`, aligns it down to
-1 MiB.
+it back. The mask in the code, `~0xFFFFF`, aligns it down to 1 MiB.
 
 Flat samples are named by `sym_at()` as the call chains are: right for a map with or without the image base. The
 samples outside in ntdll, win32u and KERNELBASE are waits and message loops, threads not running, and count as idle.
