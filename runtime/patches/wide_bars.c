@@ -52,7 +52,7 @@ static void screen_log(const char *fmt, ...) {
 void wide_bars_screen_host(Cpu *c) {
     uint64_t s = c->x[19];
     int kind = kind_of(s);
-    if (!kind || (!bars_on && kind != KIND_MENU)) return;
+    if (!kind || (!bars_on && kind == KIND_EVENT_FADE)) return;
     for (int i = 0; i < BARS_SCREENS; i++)
         if (__atomic_load_n(&screens[i], __ATOMIC_RELAXED) == s) return;
     for (int i = 0; i < BARS_SCREENS; i++) {
@@ -72,14 +72,18 @@ void wide_bars_screen_host(Cpu *c) {
                (unsigned long long)s);
 }
 
-int wide_menu_open(void) {
+static int kind_open(int kind) {
     for (int i = 0; i < BARS_SCREENS; i++) {
         uint64_t s = __atomic_load_n(&screens[i], __ATOMIC_ACQUIRE);
-        int state = kind_of(s) == KIND_MENU ? ld8(s + SCREEN_STATE) : -1;
+        int state = kind_of(s) == kind ? ld8(s + SCREEN_STATE) : -1;
         if (state >= 1 && state <= 3) return 1;
     }
     return 0;
 }
+
+int wide_menu_open(void) { return kind_open(KIND_MENU); }
+
+int wide_loading_open(void) { return kind_open(KIND_LOADING); }
 
 void wide_bars_init(double x_margin, double y_margin) {
     int set = rt_patch_set("wide_bars");

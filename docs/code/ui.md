@@ -962,6 +962,37 @@ gets another tier than the game as shipped is told once, at the first frame the 
 which preset is in use and where it is set. The state file keeps it shown (`cfg_preset_notice_done`). It stays 8
 seconds, longer than other notices: it says how to go back as well.
 
+### `vram_warn_tick()`
+
+Puts the notice of full video memory on screen ([runtime.md](runtime.md)): each overlay frame it asks
+`runtime/vram_warn.c` `vram_warn_due()`, and shows the notice through `notice()`, the panel at the top centre the
+Ctrl+F5 and quality preset notices use, for `VRAM_WARN_SHOW_MS`. It is never drawn over the settings menu or the
+amiibo list (`g_open`), a movie (`runtime/hle/ov_movie2.c` `ov_movie_live()`), the title screen and the file menu
+(the loaded save's world clock has not started: `runtime/pacing/frame_rate.c` `frame_step_world_us()` below 0), the
+game's own pause or system menu and a loading screen (`runtime/patches/wide_bars.c` `wide_menu_open()` and
+`wide_loading_open()`) or another notice (the panel's own, the note after F8, the amiibo note): the notice stays due,
+`vram_warn_waits()` logs the first reason once, and it is shown at the first frame that is free, unless a whole minute
+without a critical sample ended the stretch meanwhile. While the game starts and while an area loads the memory is
+still filling and the renderer has not yet given back what the last area left, so a notice there would name settings
+for a shortage that may be gone once the area is up; the samples of that time still count, and the notice comes with
+the game in the scene if the level stayed critical. The two screens are known only while the patch sets `wide_bars`
+or `fov_menu` are on (`fov_menu` is by default); without them the pause menu and the loading screen do not hold the
+notice back.
+
+What it names is read from the settings in effect, as `perf_picture()` reads them for the overlay:
+
+- Resolution: the widescreen patch sets are there (`wide_available()`, else the menu has no Resolution row) and the
+  picture (`wide_picture()`) is more than 2% taller than the swapchain image.
+- Upscaling: the temporal upscaler runs (`NX2SARIA_DLAA`, and FSR 3.1 only where it loads) in the mode that renders
+  the whole picture (`NX2SARIA_DLSS` = `dlaa`). The line names the mode as the row does: `UI_MENU_DLSS_DLAA` or
+  `UI_MENU_FSR3_NATIVE`.
+- Frame generation: FSR's where it can load, DLSS's where it is active.
+
+The text is `UI_MENU_VRAM_WARN` and one line per setting (`UI_MENU_VRAM_WARN_RES`, `_MODE`, `_FRAMEGEN`, `_PRESET`),
+each a printf format whose first `%s` is the menu's own label of the row, so the notice says the name the player will
+look for; `_MODE` has a second `%s`, the mode in use. English, Russian, Brazilian Portuguese and Simplified Chinese.
+`vram_warn_shown()` gets the same choices in English for the log.
+
 ### `notice_draw()`
 
 The notice is wrapped within 90 % of the window: a long notice (the quality preset's, a translation) stays on screen

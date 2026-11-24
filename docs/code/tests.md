@@ -38,6 +38,23 @@ draft. No GPU, no game files.
   at once, then none within a minute nor without a new write or refusal, and the wording of the `so far` and
   `this session` lines. Dear ImGui's objects are kept in `build/test/cheats-tab-imgui` between runs.
 
+## `tests/vram_warn_check.py`
+
+Builds and runs `tests/vram_warn_check.c` on `runtime/vram_warn.h` with the levels of `runtime/mem_budget.h`, a sample
+every `MEM_BUDGET_PERIOD_MS`. No GPU, no game files.
+
+- 5406 of 5249 MiB in use, the figures of a player's log: due once, at the tenth sample; due stays until the screen
+  takes it; after it is shown, not due again inside the gap and due again after it.
+- A peak one sample shorter than the hold gives nothing, nor does a second one more than a window later; a third right
+  after the second comes due at its first sample, the window holding both.
+- Ten minutes of 6 s critical and 8 s tight in turn (9060 and 8040 of 9323 MiB, the figures of a bench session): due
+  once, never over.
+- Use that hovers between 0% and 10% free stays critical by the level's hysteresis; at 14% free the notice stays due
+  for less than a window and the stretch is over after a whole one, the notice then not counted.
+- The session's notices come due one gap apart; after the last, never again, and a later stretch is reported as spent
+  once, at the hold.
+- The settings named for each combination in use.
+
 ## `tests/telemetry_launcher_test.py`
 
 `UpdateStartBase` opens the window as the start after an update does (`--continue-update`, without `--selftest`) over a

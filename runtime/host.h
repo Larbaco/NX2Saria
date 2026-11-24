@@ -436,6 +436,7 @@ int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init w
 void wide_bars_init(double x_margin, double y_margin);       // wide_init: center UI letterbox margins on either axis
 void wide_bars_screen_host(Cpu *c);                        // the set wide_bars' site (patch page +0xef0, patches.c)
 int wide_menu_open(void);                                  // the game's pause/map or system menu background is active
+int wide_loading_open(void);
 void menu_mouse_screen_host(Cpu *c);                       // the set menu_mouse's site (patch page +0xee0, patches.c)
 void wide_menu_bars(double *x, double *y);                 // gfx_present.c, each present: margins outside the middle 16:9
 int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set
