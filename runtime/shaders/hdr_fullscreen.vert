@@ -1,5 +1,4 @@
 #version 450
-// One triangle over the whole target, for hdr_ui.frag (runtime/vk_hdr.c vk_hdr_ui_compose).
 layout(location = 0) out vec2 uv;
 
 void main() {

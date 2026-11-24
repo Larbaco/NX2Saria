@@ -20,9 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// Modified: compiled by tools/build_shaders.py into runtime/fsr3_luma_instability_spv.h for runtime/vk_fsr3.c,
-// with the options of fsr3_options.h; the luma history it writes is declared here (below) as rgba16f.
-
 #version 450
 
 #extension GL_GOOGLE_include_directive : require
@@ -44,8 +41,6 @@
 
 #include "fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h"
 
-// The luma history at binding 7, declared here instead of by the callbacks header, which names it rgba8: the image
-// (vk_fsr3.c IMG, I_LH0 and I_LH1) is RGBA16F and holds luma above 1 in HDR, which an rgba8 store would clamp.
 layout (set = 0, binding = 7, rgba16f) uniform image2D rw_luma_history;
 
 void StoreLumaHistory(FfxInt32x2 iPxPos, FfxFloat32x4 fLumaHistory)
@@ -58,16 +53,16 @@ void StoreLumaHistory(FfxInt32x2 iPxPos, FfxFloat32x4 fLumaHistory)
 
 #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH
 #define FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH 8
-#endif // #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH
+#endif
 #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT
 #define FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT 8
-#endif // FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT
+#endif
 #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH
 #define FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH 1
-#endif // #ifndef FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH
+#endif
 #ifndef FFX_FSR3UPSCALER_NUM_THREADS
 #define FFX_FSR3UPSCALER_NUM_THREADS layout (local_size_x = FFX_FSR3UPSCALER_THREAD_GROUP_WIDTH, local_size_y = FFX_FSR3UPSCALER_THREAD_GROUP_HEIGHT, local_size_z = FFX_FSR3UPSCALER_THREAD_GROUP_DEPTH) in;
-#endif // #ifndef FFX_FSR3UPSCALER_NUM_THREADS
+#endif
 
 FFX_FSR3UPSCALER_NUM_THREADS
 void main()

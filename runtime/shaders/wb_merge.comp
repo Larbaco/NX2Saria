@@ -1,12 +1,4 @@
 #version 450
-// Write-back merge of a VRAM mirror (vk_memory.c, wb_merge_record): copies a 32-bit word of what the GPU left in the
-// mirror into the pool's imported buffer (guest memory) only where it differs from the snapshot taken before the
-// submission's GPU work, so words the GPU did not change keep what the CPU wrote meanwhile.
-// One invocation per word of the listed ranges; ranges are sorted by their first invocation (x: word offset in the
-// mirror and imported bindings, y: word offset in the snapshot binding, z: words, w: first invocation).
-// With track set (shadow storage) a word that changed also marks its 4 KiB page of guest memory in Pages: page0 is the
-// bindings' start within its page, so the CPU's write-back at the fence reads only the marked pages of the shadow
-// (vk_memory.c, shadow_wb_cb).
 layout(local_size_x = 64) in;
 layout(std430, set = 0, binding = 0) readonly buffer Post { uint post[]; };
 layout(std430, set = 0, binding = 1) readonly buffer Pre { uint pre[]; };

@@ -1,9 +1,4 @@
 #version 450
-// The in-game menu on an HDR10 swapchain (runtime/vk_hdr.c vk_hdr_ui_compose): ImGui drew it into an RGBA8 image,
-// premultiplied sRGB colour over a clear 0; this turns each pixel back into its colour (with the picture's gamma
-// correction p.y: 0 none, 1: 2.2, 2: 2.4, as shaders/hdr_encode.comp applies it), puts its white at p.x nits and
-// writes the PQ code with its coverage, which the pipeline blends over the picture (in PQ code values, as the menu
-// blends in sRGB code values on an SDR swapchain). PQ: SMPTE ST 2084; Rec. 709 to Rec. 2020: ITU-R BT.2087.
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 color;
 layout(binding = 0) uniform sampler2D ui;

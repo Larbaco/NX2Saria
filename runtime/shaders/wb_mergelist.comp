@@ -1,15 +1,6 @@
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_ballot : require
-// Write-back merge into a list (vk_memory.c wb_merge_record with NX2SARIA_MERGE_CPU): as shaders/wb_merge.comp, a word
-// the GPU left different from the snapshot taken before the submission's GPU work goes back to guest memory, but as an
-// entry (its place among the submission's list words: gbase + invocation, the value) in a device-local list, which
-// shaders/wb_listcopy.comp copies to host memory in whole lines and the completion thread stores (merge_apply) before
-// the fence counts as done. wb_merge.comp's word-sized writes into host memory across PCIe cost the memory controller a
-// read-modify-write of their line each: 0.9-1.0 ms of GPU a frame in Kokiri Forest for 0.6 MiB of scattered words.
-// Past the list's room (pc.cap) a word is written directly, as wb_merge.comp does.
-// One invocation per word of the listed ranges; ranges sorted by their first invocation (x: word offset in the mirror and
-// imported bindings, y: word offset in the snapshot binding, z: words, w: first invocation).
 layout(local_size_x = 64) in;
 layout(std430, set = 0, binding = 0) readonly buffer Post { uint post[]; };
 layout(std430, set = 0, binding = 1) readonly buffer Pre { uint pre[]; };
@@ -37,12 +28,12 @@ void main() {
     }
     uvec4 b = subgroupBallot(ch);
     uint cnt = subgroupBallotBitCount(b);
-    if (cnt == 0u) return;   // the same in every invocation of the subgroup
+    if (cnt == 0u) return;
     uint base = 0u;
     if (subgroupElect()) base = atomicAdd(lst.n, cnt);
     base = subgroupBroadcastFirst(base);
     if (!ch) return;
     uint idx = base + subgroupBallotExclusiveBitCount(b);
     if (idx < pc.cap) lst.ent[idx] = uvec2(pc.gbase + i, v);
-    if (idx >= pc.cap || pc.check != 0u) dst[w] = v;   // NX2SARIA_MERGE_CPU_CHECK: the GPU writes them too
+    if (idx >= pc.cap || pc.check != 0u) dst[w] = v;
 }
