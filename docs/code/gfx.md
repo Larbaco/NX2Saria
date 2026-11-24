@@ -166,8 +166,7 @@ cache. The fields of `GfxShaderRes`:
   (`pool_short_note` in `gfx_shader.c`; the warning of `vk_texture_register`).
 - `gfx_shader_slot_mask()`: the texture and image slots whose type its translation read.
 - `gfx_shader_inputs()`: the Input Locations (vertex attributes, fragment varyings) as a mask.
-  `gfx_shader_outputs()`: the Output Locations (vertex varyings, fragment colour targets); the comment that said so
-  sat at the end of the line of `gfx_shader_mvprev_banks()`.
+  `gfx_shader_outputs()`: the Output Locations (vertex varyings, fragment colour targets).
 - `gfx_shader_omap()` (fragment): the colour components it writes, 4 bits per target (the shader header's omap); 0
   unknown. `gfx_shader_mvprev_banks()`: for a last-frame variant, the banks (bit n: `cn`) its position reads.
 - `gfx_shader_palette()` (vertex): the matrix palette its skinning reads (`reflect_palette` in `gfx_shader.c` states
@@ -217,8 +216,8 @@ The back end (`runtime/gfx/gfx_null.c` and the `vk_*.c` files), called by the NV
 - `rt_frame_presented()` is `boot.c`'s: `--frames N` ends the run after the Nth present (and saves `--shot` first,
   through `read_texels`).
 - The movie overlay (`runtime/hle/ov_movie2.c` to `gfx_present.c`): `gfx_movie_frame()` hands the latest decoded movie
-  frame, RGBA8, shown over the game image while frames keep coming (the game draws movies with its own shaders, which
-  do not translate yet). `gfx_movie_frame_own()` is the same but takes the malloc'd buffer, freed later.
+  frame, RGBA8, shown over the game image while frames keep coming (see `gfx_movie_frame()` under `gfx_present.c` below for when
+  the overlay is on). `gfx_movie_frame_own()` is the same but takes the malloc'd buffer, freed later.
 - `gfx_submit_queue`: the game's queue (the NVNqueue address) of the submission this thread is handing to
   `GfxBackend.submit`, 0 when none (probes). nvnQueueSubmitCommands sets it around the call; `runtime/vk/vk_exec.c`
   orders queues by their events with it.
@@ -296,7 +295,7 @@ What `gfx_present.c` provides the back end:
 The null graphics back end: no GPU. Every submit completes at once and advances the fence value, pools always
 initialise, presents are only counted, texel reads return zeros. A submit performs the CPU-visible side effects of its
 op streams in order: event signals, counter reports (timestamp ticks, counter 0), buffer-to-buffer copies, buffer fills
-(`OP_CLEAR_BUF`, which the comment at the top did not list) and uniform updates. It is the CPU-side gate for the NVN
+(`OP_CLEAR_BUF`) and uniform updates. It is the CPU-side gate for the NVN
 front end. The file also holds the back-end choice (`gfx_backend()`) and the statistics (`gfx_stats()`).
 
 ### `gfx_backend()`
@@ -996,8 +995,7 @@ compressed and the decodes, those on the drawing threads apart (`gfx_shader_ram(
 NVN2 (Switch 2) programs: a 0xe0-byte control section (magic 0x98761234, the version at +4, the code size including
 the 0x80-byte shader program header at +0x38, the register count at +0x4c) and SM86 code (128-bit Volta+ instructions
 after a Turing-style 0x80-byte header; compute programs have no header). The translator lowers them to Maxwell
-(`tools/xlate/AmpereLowering.cs`, job "sm86"); the code is sent from its first byte (the comment at this point also
-said it has no c1 part, which the code under it does not do: see the layout below). The control section is the first
+(`tools/xlate/AmpereLowering.cs`, job "sm86"); the code is sent from its first byte. The control section is the first
 0xe0 bytes only (`NVN2_CONTROL_SIZE`): `nvn2_control()` copies them into a zeroed `CONTROL_SIZE` buffer at the entry
 points, so the bytes after it (other guest data) stay out of the hashes, stored inputs and jobs. The layout of an NVN2
 program: the code (its size at control +0x38), alignment padding, then the c1 constants (jump tables of BRX, compiler
@@ -1350,8 +1348,7 @@ in flight is finished, RivaTuner Statistics Server's profile and the controller'
 the boot prebuild's marker, the frame-time summary and the memory ranking are written, and the log reaches the disk
 before the pipeline save starts. The final save flush comes last: the game's threads run until `plat_exit`, and a
 Commit the game starts during the pipeline save is still taken and waited for. `RT_EXIT_SETTINGS`: the settings file
-gets the menu's changes (not in a scripted `--seconds` run, whose end is no player's); the comment named the file
-`nx2navi.ini`, and it is `nx2saria.ini` now.
+gets the menu's changes (not in a scripted `--seconds` run, whose end is no player's). The file is `nx2saria.ini`.
 
 The steps:
 
@@ -1576,8 +1573,7 @@ then the pixels as the swapchain holds them.
 whole image with `NX2SARIA_ASPECT=stretch`, else (fit, the default) the largest one of the picture's own aspect ratio,
 centred (a 16:9 picture on the Steam Deck's 1280x800 screen gets bars of 40 rows above and below; a 16:9 picture in a
 21:9 window, bars at the sides). A window wider than the picture gets a pillarbox, a taller one a letterbox. A side
-takes the window's parity, which keeps the two bars equal; a picture one pixel short of the window fills it. (This
-comment stood above `gfx_picture_rect()`, with that function's own comment after it.)
+takes the window's parity, which keeps the two bars equal; a picture one pixel short of the window fills it.
 
 `gfx_picture_rect()`: where the last present put the picture, as fractions of the swapchain (x, y, w, h; `g_pic`), for
 the pointer of `menu_cursor.c`.
@@ -1588,8 +1584,7 @@ The movie overlay (`runtime/hle/ov_movie2.c`): the latest decoded movie frame go
 window with black bars, while frames keep coming (`GFX_MOVIE_HOLD_NS`, 400 ms, after the last one it disappears). It
 made movies visible before the game's own shaders translated; now the game draws them itself (its YUV compute pass,
 then the upscaler fallback of `runtime/vk/vk_exec_draw.c`), under its menus, so the overlay is off unless
-`NX2SARIA_MOVIE_OVERLAY=1`. (The comment in `runtime/gfx/gfx.h` still says the game's movie shaders do not translate
-yet.) One staging buffer per frame in flight: the CPU writes slot i only after that slot's fence (the present waits it
+`NX2SARIA_MOVIE_OVERLAY=1`. One staging buffer per frame in flight: the CPU writes slot i only after that slot's fence (the present waits it
 before recording), the GPU copies it into one RGBA8 image.
 
 `movie_overlay()` records the overlay into `cb` for swapchain image `dst` (in TRANSFER_DST_OPTIMAL, left so); 1 when
@@ -2565,8 +2560,7 @@ fit.
   slots, as `types[l]` (0 float, 1 signed, 2 unsigned) with `comps[l]` components for every location l in `need` (the
   fragment stage's inputs); a location the mesh stage does not write is zero. malloc'd, `*out_n` words. `fsw` is the
   fragment shader's SPIR-V; its input variables are matched one for one (Location, Component, type, Flat), else (NULL,
-  or a declaration the parser does not take) one vector per location of `need`. (The first half of this comment stood
-  above `mesh_emu_prim()`.)
+  or a declaration the parser does not take) one vector per location of `need`.
 
 ## `runtime/gfx/mesh_emu_spirv.c`
 
@@ -2861,8 +2855,7 @@ Header-only so that `tests/spv_store_check.c` runs it against the platform layer
 
 The layout of `shader-prepared.bin`, the list of shader variants a preparation translated and built ahead of play
 (`runtime/gfx/gfx_shader.c` `gfx_shader_prepare_seed()` writes it; `gfx_shader_warm_list()` and `lw_start` and
-`lb_warm_prepared` of `runtime/vk/vk_pipeline.c` read it; `prepared_from` in `tools/make_game.py` reads its head). The
-comment gave both C files without their folders.
+`lb_warm_prepared` of `runtime/vk/vk_pipeline.c` read it; `prepared_from` in `tools/make_game.py` reads its head).
 
 - "NX2NSPRP" (`PRP_MAGIC`), version (u32, `PRP_VERSION` 2), record size (u32, 36, `PRP_REC`): `PRP_HEAD`, 16 bytes.
 - Version 2 only: what the list was prepared from, 96 bytes (`PRP_FROM_SIZE`, `PrpFrom`): the sha256 of
@@ -2980,7 +2973,7 @@ The tables:
 
 ### `unpack_endpoints()`
 
-`e0[0..3]` is endpoint 0 and `e1[0..3]` endpoint 1, 8-bit (the comment called them `e[0..3]` and `e[4..7]`). It returns
+`e0[0..3]` is endpoint 0 and `e1[0..3]` endpoint 1, 8-bit. It returns
 false for an HDR mode. The modes:
 
 | Mode | Meaning |
