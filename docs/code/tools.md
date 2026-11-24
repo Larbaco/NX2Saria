@@ -1633,6 +1633,323 @@ less `memory.current`), or `None` without such a limit.
 Physical memory not in use right now, capped by the memory limit this process runs under if there is one (the job
 object's on Windows, the cgroup's on Linux). `None` where it cannot be read.
 
+## `tools/layout_dump.py`
+
+Reads the game's interface layouts (BFFH files in a SARC layout archive) and prints them as text or JSON.
+`tools/layout_preview.py` and `tests/layout_tools_check.py` import this file; it uses the standard library only.
+
+```
+layout_dump.py <archive.blarc | romfs folder> [--layout NAME ...] [--json]
+layout_dump.py <archive.blarc | romfs folder> --find-animated [--layout NAME ...]
+layout_dump.py <archive.blarc | romfs folder> --codes
+```
+
+The archive is a decompressed layout archive (a SARC whose members are `<Layout>.buil`), or a RomFS folder with
+`romfs.bin` and its `index.json`, from which
+`UI/Layout2Archive/{Common,Title}.Product.100.Nin_Ounce_NVN2.blarc.zs` are read at the index's offsets and decompressed
+with the zstd command and the dictionary `Pack/ZsDic.pack.zs` names, in a temporary folder under `build/` that is
+removed afterwards. Nothing is written to the RomFS folder.
+
+For each layout: its canvas, its panes as a tree (kind, translate, size, scale, rotation, origin, anchor on the parent
+and the pane's extent on the grid, with every ancestor's translate, scale and anchor applied), the layouts its part
+panes instantiate, and every animation with each track decoded (pane, property, component, keys as frame:value,
+constants). `--find-animated` lists every pane whose translate x, scale x or size an animation keys, which a menu edit
+has to take into account. `--codes` counts the track target codes the archive uses.
+
+The format ([wide-hud.md](../wide-hud.md), "The layout format (BFFH)"): records point at each other by 64-bit offsets
+from the file's start. The header has a slot of 0x20 bytes per table (+0x00 the list of name offsets, +0x08 the list
+of record offsets, +0x18 the count), and the canvas size as two floats at 0x2f8. The grid's origin is the canvas's
+centre, y up.
+
+A picture (table 0x158) has a material index (u16) at +0x10 and an optional window record offset at +0x08. The
+material (table 0x138) has an array of texture-map offsets at +0x00 with the count at +0x08. Each map starts with an
+optional list of texture-name offsets and a count at +0x08. These names are the alternatives for a texture pattern. Its
+UV scale, translation and rotation in radians start at +0x10, +0x18 and +0x20. An ordinary picture generates
+unit-square UVs (top-left = 0,0), which the map transforms in normalized texture space. The picture's +0x20 list of
+four pointers is a separate set of corner parameters (normally all four pairs are 2.0, 16.0). The material's u32 at
++0x14 indexes the render-material offset array (header 0x228, count at 0x230). Each render material starts with a
+sampler offset array and count at +0x08. A sampler has U/V wrap bytes at +0/+1 and the default texture-name offset at
++0x08. A pane's u32 at +0x24 indexes the parameter offset array (header 0x2e0, count 0x2e8), where +0x10 is its default
+alpha. The material's u32 at +0x28 indexes the RGBA float palette (header 0x2c0, count 0x2c8).
+
+A part's initial animation states are an offset array at +0x28 (count at +0x30). Each entry names the child animation
+by string offset at +0x00 and gives its initial frame as a float at +0x08. A texture-pattern track (target 0, property
+group 1 and code 28) addresses a pane's material. Its first code byte selects the texture map and component 0 selects a
+name from that map's alternatives.
+
+The constants:
+
+- A pane record is 0x44 bytes (`PANE_SIZE`), parents before children.
+- `KINDS`: bits 7-10 of the flags; the names' prefixes agree (`N_`, `P_`/`W_`, `T_`, `A_`, `S_`, `C_`, `Pa_`/`L_`,
+  `N_SlideList`).
+- `H_CODES`, `V_CODES`: the origin (where on its own box a pane's position is) and the anchor (the point of the
+  parent's box its translate counts from) use the same codes: horizontal 1 left, 2 centre, 3 right; vertical 4 top,
+  5 centre, 6 bottom. The vertical value is the fraction of the box below the point (y up): a top origin has the whole
+  box below its position.
+- `BODY_TRACKS` and the four after it: the animation body, as (list offset, count offset) for tracks, curves, curve
+  components, constants, constant components.
+- `ANIM_LENGTH` (0x28), in the animation record: its length in frames (the name's offset follows at +0x30).
+- `TARGET_PANE` (7): bits 8-10 of a track's code for a pane's property (0 for a material's).
+- `PROPERTIES`: (bit 22, byte 3) of a pane track's code. Text and material values are reported by number.
+- `SAME` is 1e-3: the game stores some zeros as -2.8e-14.
+- The byte readers (`u32()`, `u64()`, `f32()`, `cstr()` and the others) check every offset.
+- For the "split" edit, a picture drawn in pieces, each a pane of its own: `PICTURE_BLOB` (0x88) is a picture record
+  without a window, with its colour and corner lists; `PICTURE_POINTERS` its offsets that point inside it;
+  `SECTION_POOL` (0xd0) the second BFSI section (StringPool), with its size at +0x08; `MATERIAL_EXTRA` (0x300) a u32
+  array, one per material (+0x08 its count, +0x0c its stride, 4); `PART_PANE` and `CAPTURE_PANE` the u32 pane index a
+  part's and a capture's record hold.
+
+### `sarc_members()`
+
+Every member of a SARC as (name, start, end) in the order of its entries; one name may come several times.
+
+### `frame_dict_id()`
+
+The dictionary id a zstd frame names (0: none). Single segment frames have no window byte, so the id starts one byte
+earlier. Decompression goes through the zstd command: Python 3.12 has no zstd module.
+
+### `unpack_zs()`
+
+A `.zs` file's bytes: decompressed with the dictionary its frame names, taken from `Pack/ZsDic.pack.zs`'s bytes.
+
+### `read_archives()`
+
+`[(archive label, SARC bytes)]` for an archive file or a RomFS folder.
+
+### `Pane`, `Curve`, `Constant`, `Track`
+
+`Pane.at` is the record's offset. `Curve.at` is the curve record, `values_at` the values record (+0 its span),
+`keys_at` the floats, (value, slope) pairs, and `values` those pairs. `Constant.at` is the float's offset. `Track`:
+`target` is bits 8-10 of the code, `pane` the index the code names (a pane's when `target` is `TARGET_PANE`), `group`
+bit 22 and `prop` byte 3.
+
+### `Layout`
+
+A part record starts with the offset of the name of the layout it instantiates; the parts table's own names are the
+part panes' names.
+
+### `Layout.pictures()`
+
+Picture records by pane name, with their texture bindings and UV transforms.
+
+### `Layout.tracks_of()`
+
+`[(animation, track)]` of a pane's properties (`prop`: a `PROPERTIES` key, `None` for all).
+
+### `evaluate()`
+
+A curve's value at a frame: Hermite interpolation of its (value, slope) keys, held before and after them. Two keys on
+one frame make a step; on that frame the later one holds (pattern animations pick a state by frame).
+
+### `animated_state()`
+
+Pane properties at a frame, or material properties by (texture map, property, component).
+
+### `Box`
+
+A pane on the grid: the point its position names, the scale its children inherit, its box. `w` and `h` are the pane's
+own size (an animation may change it).
+
+### `pane_geometry()`
+
+Animated translate, scale, size and Z rotation, in the parent's coordinates.
+
+### `anchor_offset()`
+
+The child's anchor point on the parent's box, relative to the parent's origin.
+
+### `place()`
+
+Every pane's `Box` on the grid. A child's position is its parent's position plus the parent's scale times (the
+anchor's point on the parent's box plus the child's translate); its box spans its size times its scale on the grid
+around its origin. Rotation is not applied (`Box.rotated` says a pane or an ancestor is turned). `state`: overrides
+from `animated_state()`.
+
+### `load()`
+
+`{layout name: Layout}` of an archive or a RomFS folder; the first copy of a name, with the count of copies.
+
+### `out_units()`
+
+How far a side of the picture lies beyond the middle 16:9, in grid units: 0 at 16:9, 640 at 21:9. The edits of
+`tools/layout_preview.py --spec` count in it.
+
+### `parse_aspect()`
+
+A picture's width over its height from `21:9`, `3440x1440` or `2.39`. `21:9` names the 2560x1080 picture (64:27).
+
+### `name_hash()`
+
+The 64-bit hash each table keeps beside a name, which the game's lookup by name compares: CityHash64 of the name's
+bytes (names up to 32 bytes; every layout name is shorter).
+
+### `split_picture()`
+
+The layout's bytes with picture pane `op['pane']` drawn in pieces, and a line per piece. Each piece
+`{"src": [a, b], "at": [x0, x1], "f": [f0, f1]}` shows the picture's texture from a to b (x in the pane's parent, the
+picture unrotated at scale 1 with its centre origin) between x0 + f0 * out and x1 + f1 * out. The first piece is the
+pane itself; the others are copies inserted right after it in pane order, each with a copy of the picture record and
+of the material, whose texture map gets the piece's UV window. New lists of names, records and hashes replace the
+pane, picture and material tables' (the old ones are left unused); everything new is appended past the end of the
+file, which the string pool section grows to cover. Every pane index past the pane's (parents, subtree ends, the
+animation track codes) moves by the number of copies.
+
+- What follows the pane is renumbered in place, before anything is appended. The subtrees of its ancestors and of
+  later panes end further on, so their end index moves too; the pane's own does not.
+- The pane itself shows the first piece.
+- Per further piece: the material (the record, its one-entry map list and the map, internal pointers moved with them),
+  then the picture record pointing at the new material, then the pane record.
+- The per-material u32 array (`MATERIAL_EXTRA`) grows with the materials: each new one takes the piece's source
+  material's value.
+
+### `apply_ops()`
+
+Applies a list of edit operations to a layout's bytes (a bytearray) and returns the reparsed layout and a line per
+operation. Raises `SpecError`, leaving `layout` untouched, when an operation names what the layout does not hold or a
+value it expects differs. After a `keys` operation each curve's span (its last value less its first) is written again
+to follow its keys.
+
+### `find_animated()`
+
+`[(pane, what, [animations])]` for panes whose translate x, scale x or size an animation keys.
+
+## `tools/layout_preview.py`
+
+Draws the game's interface layouts as SVG boxes or textured PNGs for one or more picture shapes
+([wide-hud.md](../wide-hud.md)).
+
+```
+layout_preview.py <archive.blarc | romfs folder> --layout PlusMenu_00 [--layout ...] --aspect 21:9
+                  [--aspect 32:9 ...] [--spec spec.json] [--anim [LAYOUT[/PART...]/]NAME:FRAME ...] [--hud] [--png]
+                  --out build/wide-menus/preview/
+```
+
+Each pane is a rectangle at its place on the 3840 x 2160 grid (every ancestor's translate, scale and anchor applied),
+coloured by kind and labelled with its name; a part pane holds the layout it instantiates, drawn at the part's place
+and scale. Panes hidden by their own flag or by `--anim` are drawn faint. The picture is 2160 * aspect grid units wide
+around the grid's centre (3840 at 16:9, 5120 at 21:9, 7680 at 32:9); its outline is solid, the middle 16:9 (x = +-1920)
+dashed, and what lies outside the picture is shaded.
+
+`--anim` applies an animation at a frame (Hermite interpolation of its keys), e.g. `EquipToItem:28` to show the pause
+menu scrolled to the item page. `LAYOUT/` limits it to one layout. `LAYOUT/PART/.../` addresses one part instance.
+
+`--spec` applies edit operations first and draws "before | after" side by side. The spec is JSON,
+`{"<Layout>": [operation, ...]}`, where out = 1080 * aspect - 1920 grid units (0 at 16:9, 640 at 21:9, 1920 at 32:9):
+
+```
+{"op": "move",   "pane": P, "f": F}     translate x += F * out
+{"op": "grow",   "pane": P, "g": G}     width += 2 * G * out
+{"op": "widen",  "pane": P, "g": G}     scale x *= 1 + G * out / 1920
+{"op": "narrow", "pane": P}             scale x *= 1920 / (1920 + out)
+{"op": "keys", "anim": A, "pane": P, "prop": "translate" | "scale" | "size", ["component": "x" | "y",]
+ "map": [{"value": V, "f": F}, ...]}    the track's keys and constants equal to V become V + F * out
+{"op": "split", "pane": P, "pieces": [{"src": [A, B], "at": [X0, X1], "f": [F0, F1]}, ...]}
+                                        picture P drawn in pieces: each shows its texture from A to B between
+                                        X0 + F0 * out and X1 + F1 * out (layout_dump.py split_picture adds a pane,
+                                        picture and material for each piece after the first)
+```
+
+Each operation may state the value it expects ("x", "y", "w", "h", "sx", "sy" of the pane): the tool stops with an
+error when the layout holds another, as an edit of the game's files would. A spec may edit a part's layout too (the
+part is drawn edited in "after").
+
+`--hud` outlines, over each "after" panel, the layout as the game draws it today (no edit), to compare. Layouts the
+game keeps over the whole picture (`FULL_WIDTH`: the keep list of `runtime/patches/widescreen.c` `wide_init()`) are
+drawn stretched to it, as the game does.
+
+It writes `<out>/<Layout>_<aspect>.svg` for each layout and shape, and `<out>/index.html` linking them; `--png` also
+renders each SVG to PNG with rsvg-convert or ImageMagick's convert, whichever exists. SVG uses the standard library.
+
+`--stack A,B` draws the named layouts together, from back to front. `--textures` draws directly to an RGBA PNG using
+the textures from the RomFS folder (`--romfs` is required if the layout source is an archive). Each panel is clipped to
+the picture. `--scale` gives the fraction of the 2160-pixel picture height (default 0.25), and `--boxes` adds pane
+outlines and, with Pillow, labels. Text is shown as faint outlines. Pictures use the first available static texture of
+their material, including single-texture window fills. Multi-texture windows and live captures are omitted. Custom
+material effects and live layout state are approximated by the stored textures and animation tracks. Use
+`--dump-texture LAYOUT/PANE` for a pane's source texture at its native size.
+
+Texture mode needs NumPy and zstd. Pillow is optional. For uncached ASTC textures it builds the standalone CPU decoder
+with a C compiler and the runtime headers. Set `NX2SARIA_VMA_INCLUDE` if `vk_mem_alloc.h` is outside the usual
+toolchain include paths. Textured output and the decoded texture cache stay under `build/`.
+
+In grid units: `MARGIN` (480) is shown beyond each side of the picture, `TITLE` (150) above the panels for their
+titles, `GAP` (240) between panels, and `LABEL` (30) is the label size. The import of `layout_dump` carries
+`# noqa: E402`, which stays.
+
+### `rgba()`
+
+A colour with its opacity in one value: renderers that ignore `fill-opacity` (ImageMagick's own) read `rgba()`.
+
+### `Panel`
+
+`x0` is the panel's left edge in the SVG.
+
+### `clip()`
+
+The box limited to the panel, or `None` when none of it is in.
+
+### `hidden_of()`
+
+`{pane index}` hidden by its flag (bit 0 clear), a visibility key at 0 or an alpha at 0, or by an ancestor.
+
+### `draw_layout()`
+
+Adds a layout's panes to the panel; part panes recurse into their layouts (to `max_depth`; panes deeper than
+`label_depth` go unlabelled). `outline`: draw only outlines in that colour (the `--hud` overlay). `stretch`: the x
+factor of a layout drawn over the whole picture. `mark`: pane names an edit names, drawn in red at any depth.
+
+### `render_png()`
+
+With ImageMagick's convert, the SVG's width attribute is a quarter of its grid units; the density given makes a PNG
+about 2400 pixels wide.
+
+### `build()`
+
+Writes previews and `index.html`; returns `[(layout or stack, aspect text, image path, edit lines)]`.
+
+## `tools/layout_textures.py`
+
+Decodes and composites the static art used by the layout preview (`tools/layout_preview.py --textures`).
+
+### `decoder()`
+
+Imports the BNTX decoder (`tools/ui_textures.py`) independently of the extracted-RomFS reader's Python 3.14
+dependency: when the `compression` module is missing, a stand-in with `zstd = None` is registered and the import is
+tried again. The preview supplies decompressed bytes through `tools/layout_dump.py` `unpack_zs()`; only that module's
+`Romfs` uses the import.
+
+### `astc_library()`
+
+Builds the standalone CPU decoder on demand, without building or loading the game. It imports `build_game` for the
+runtime's include folders: `tex.h` includes headers from several.
+
+### `TextureStore.decode()`
+
+The archive's own textures are tried first, then `Common`'s: a loose `.blarc` can be renamed, and Common also supplies
+shared art used by other archives.
+
+### `uv_of()`
+
+Maps quad coordinates to texture coordinates around the texture centre.
+
+### `sample()`
+
+Bilinear filtering in texel-centre coordinates, with the sampler's wrap modes.
+
+### `blend()`
+
+Source-over for straight RGBA bytes.
+
+### `paint()`
+
+Draws only the part of the quad inside the active scissor and output picture. Palette RGB values are linear; decoded
+colour textures and the output PNG are display encoded, so the tint is converted to sRGB before it multiplies the
+pixels.
+
+### `Renderer.draw_picture()`
+
+A window with more than one texture is not drawn: multi-texture windows use a shader to combine their fills and edges.
+
 ## `tools/make_appimage.py`
 
 `KIT_DIRS` holds `licenses/`: the licence texts `THIRD_PARTY_NOTICES.md` names that are not beside their code (the
