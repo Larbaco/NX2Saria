@@ -195,3 +195,9 @@ note, a focus error and both update and reports short-circuits. Existing `launch
 Characterizes the Tk adapter's existing handling of a mod rebuild result: success with cache kept or dropped, the
 ordered return to Play, and the separate cancelled and failed paths that retain the pending mod names. It also records that Tk can observe a result before `finished` is set, without asserting that the worker should do the same. The test invokes
 `App.job_finished` with synthetic jobs and does not run a build or launch a game.
+
+## `tests/launcher_mods_job_core_test.py`
+
+Checks that the worker-facing completion policy keeps a synthetic cache intact while `finished` is unset, then removes
+it and allows Play only after the job is fully finished. Tk's existing earlier observation of `result` is separately
+characterized and unchanged.

@@ -44,7 +44,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 
-from .. import (NAME, build, commit, feed, gameini, gamefiles, game_session, jobs, locks, mods, saves, steam, telemetry, versions,
+from .. import (NAME, build, commit, feed, gameini, gamefiles, game_session, jobs, locks, mods, mods_job, saves, steam, telemetry, versions,
                winsys, play as play_core)
 from ..build import FATAL_TAIL, game_log_path, last_fatal  # noqa: F401 (FATAL_TAIL: tests)
 from ..context import Context, shorten
@@ -2744,6 +2744,7 @@ class App:
         self.ctx.log(f'job {j.kind}: {j.result} {j.error}')
         if j.result in ('ok', 'failed'):
             self.sounds.play('select' if j.result == 'ok' else 'back')
+        mod_outcome = mods_job.finish_mods_job(self.ctx, j, self.mods_failed) if j.after == 'play' else None
         if j.result == 'ok':
             if j.after == 'restart':
                 if winsys.restart(self.layout, ['--continue-update', versions.display(self.layout.version)]):
@@ -2753,9 +2754,7 @@ class App:
             elif j.after == 'staged':
                 self.message = 'The update was downloaded; a checkout keeps running from the repository.'
             elif j.after == 'play':   # the mods' code is built in (play): the game starts
-                if not self.settings.get('keep_cache'):
-                    self.drop_build_cache()
-                self.message, self.mods_failed = '', []
+                self.message, self.mods_failed = '', mod_outcome[1]
                 self.show('home', self.home_row('Play'))
                 self.play(built=True)
                 return
@@ -2777,24 +2776,14 @@ class App:
                 self.check_now()
             self.home_reports(j.doing())
         elif j.result == 'cancelled':
-            self.mods_failed = getattr(j, 'waiting', self.mods_failed)
+            self.mods_failed = mod_outcome[1] if mod_outcome else getattr(j, 'waiting', self.mods_failed)
             self.show(self.job_back)
             self.home_reports(j.doing())
         else:
-            self.mods_failed = getattr(j, 'waiting', self.mods_failed)
+            self.mods_failed = mod_outcome[1] if mod_outcome else getattr(j, 'waiting', self.mods_failed)
             self.show('job')
 
-    def drop_build_cache(self):
-        """Keep Build Cache off: delete the lifted C and the objects (about 1.5 GB) but keep state.json, which an
-        update needs to rebuild without the dump; the next build then lifts and compiles everything again."""
-        gd = self.settings.get('game_dir')
-        if not gd:
-            return
-        cache = Path(gd) / 'build-cache'
-        for name in ('lift', 'obj', 'gen'):
-            shutil.rmtree(cache / name, ignore_errors=True)
-        for name in ('link.rsp', 'link.key'):
-            (cache / name).unlink(missing_ok=True)
+    drop_build_cache = mods_job.drop_build_cache
 
     def reload_fonts_if_new(self):
         if not self.game_fonts and gamefiles.cached_fonts(self.layout):
