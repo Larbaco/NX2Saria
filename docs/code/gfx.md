@@ -2246,3 +2246,641 @@ not set yet.
 In `res_present()`: the hook runs on every guest function entry while it waits: should the game set its render size
 before `res_init()` or never, it stops after 1800 presents (half a minute at 60 fps) and modes change at the next
 start. The guest's registers are kept as at the present call and put back: the setup runs as if it never happened.
+
+## `runtime/gfx/mesh_fb.h`
+
+The mesh shader fallback's modules (`runtime/gfx/mesh_fb.c`): what a task or mesh program computes, as compute modules
+that write it into storage buffers, and the vertex stage that draws from those buffers. No Vulkan calls here. Where the
+fallback sits: the bullet "Mesh fallback" in [architecture.md](../architecture.md).
+
+`MESHFB_MAX_LINES` (136) is 8 system value components and 32 generic vectors of 4.
+
+`MeshFbInfo` is a task or mesh program's stage buffer, as `MeshInfo` of `tools/xlate/AmpereLowering.cs` lays it out in
+the shared memory of the translated module:
+
+| Field | Meaning |
+|---|---|
+| `stage` | 6 task, 7 mesh |
+| `threads` | the workgroup size |
+| `maxv`, `maxp` | mesh: the vertex and primitive limits |
+| `ipp` | mesh: indices per primitive (1 points, 2 lines, 3 triangles) |
+| `payload_bytes` | the task payload (task, or a mesh program a task feeds), with its header |
+| `has_task` | mesh: a task stage feeds it |
+| `nlines` | mesh: output components per vertex |
+| `lines` | their attribute addresses: 0x6c point size, 0x70.. position, 0x80 + 16 g + 4 c |
+| `attr`, `map`, `pay`, `shared_bytes` | byte offsets in shared memory, and its size |
+
+- `MESHFB_CB_TASK` (0x41), `MESHFB_CB_MESH` (0x42) and `MESHFB_CB_LIST` (0x43): where a module's extra storage buffers
+  are bound: the `.res.json` "cb_slot" of their entries (`ssbo_info` in `runtime/vk/vk_exec_draw.c`).
+- `MESHFB_LIST_TASK_BITS` (24): a list entry holds the task workgroup in bits 0-23 and the mesh workgroup's index among
+  that task's in bits 24-31.
+- `meshfb_info()`: from the program's control section and the first 0x80 bytes of its code (the header with the output
+  map). 0 with `err` filled when the program uses what the fallback does not carry.
+- `meshfb_slot_words()`: the words one mesh workgroup's output takes in the mesh buffer: its vertex lines and its
+  primitive area.
+- `meshfb_task_cs()`: the compute module of a TaskEXT module (`spirv`, as the translator wrote it): the same program,
+  then the payload of workgroup t into words [t * payload_bytes / 4, ..) of the task buffer, a storage buffer at
+  `binding`. malloc'd; NULL with `err` filled.
+- `meshfb_mesh_cs()`: the compute module of a MeshEXT module. Workgroup g writes its stage buffer
+  (`meshfb_slot_words()`) into slot g of the mesh buffer at `binding` + 1. After a task stage (`m->has_task`) entry g
+  of the list at `binding` + 2 names its task workgroup and its index among that task's mesh workgroups, and the
+  payload comes from the task buffer at `binding`, `task_payload_words` apart.
+- `meshfb_vs()`: the vertex module that draws the mesh buffer (binding 1): instance = slot, `maxp * ipp` vertices an
+  instance; vertex index / ipp is the primitive, and a primitive past the slot's count is degenerate. Outputs:
+  position, point size for points, and a 4-component vector at every Location of `out_mask`, of `out_type[location]`
+  (`GFX_TYPE_*`).
+- `meshfb_res_json()`: a copy of the translator's `.res.json` text `res` for a compute module made above: its stage is
+  "cs" and its storage buffers gain the entries of the extra buffers (`n` of them from `binding` on, `cb_slots[i]`
+  each). malloc'd.
+
+## `runtime/gfx/mesh_fb.c`
+
+The mesh shader fallback's modules, for a GPU without VK_EXT_mesh_shader (the "mesh fallback" draws of
+`runtime/vk/vk_exec_draw.c` use them).
+
+The translator turns a task or mesh program into a compute module whose shared memory is the program's stage buffer
+and wraps it in a TaskEXT or MeshEXT entry function (`tools/xlate/MeshSpirv.cs`). The wrapping is undone here and
+replaced: the translator's main function stays as it is, the entry function that hands the stage buffer to the mesh
+pipeline goes, and a compute entry function copies the stage buffer into a storage buffer instead.
+
+- task: main; the payload area into the task buffer at the workgroup's place.
+- mesh: [the payload from the task buffer into the payload area] main; the vertex lines and the primitive area into the
+  workgroup's slot of the mesh buffer.
+- draw: a vertex module made here reads a slot per instance: vertex index / indices per primitive is the primitive, its
+  index byte names the vertex, and the vertex's lines are the outputs.
+
+The module is made from the translation the shader cache already holds, so the translator and with it every cache key
+stay as they are: a card with mesh shaders never sees these modules, and one without needs no other cache.
+
+Mesh workgroups after a task stage: a task workgroup starts up to `threads` mesh workgroups, and how many is known
+only on the GPU. A pass between the two dispatches (`runtime/shaders/meshfb_scan.comp`) lists them in task order: entry
+g of the list names the task workgroup and the index the mesh program sees as its workgroup id. That id comes from the
+WorkgroupId built-in in the translated code; here the built-in counts list entries, so main reads a private variable
+the entry function fills from the list.
+
+Opcode and enum numbers are the SPIR-V 1.6 specification's and SPV_EXT_mesh_shader's.
+
+### `meshfb_info()`
+
+The payload as the translator sizes it (`Translate` in `tools/xlate/Program.cs`): a size of 0 is one 256-byte unit, and
+the header of 0x20 bytes comes on top.
+
+The output map of the program header: system values B at byte 0x35, one bit per component from 0x60; generic vectors
+from byte 0x36, a nibble each. System values A and C never appear in the game's mesh programs (bytes 0x34, 0x48 and
+0x49 must be 0).
+
+### The word list and the emit helpers
+
+`Cx` is what a module under construction adds: decorations, then types, constants and variables, then one function;
+`t_void`, `t_bool`, `t_uint`, `t_fnvoid` and `t_v3uint` are existing ids or new ones.
+
+- `K()`: a 32-bit unsigned constant. `E_()`: an instruction with a result.
+- `if_begin()` and `if_end()`: `if (cond) { ...the instructions emitted until if_end }`.
+- `loop_begin()` and `loop_end()`: `for (i = start; i < limit; i += step) { ... }`; `counter` is a Function variable.
+- `word_buffer()`: a storage buffer of 32-bit words at (set 0, `binding`): its variable. `readonly`: the module only
+  reads it.
+
+### `convert()`
+
+A translated task or mesh module to its compute module. `In` is an instruction: its first word's index, opcode and
+word count. `is_decl()` says an opcode is a type, constant or global variable declaration.
+
+- Pass 1 finds what the module has. The shared memory array must hold the layout this module is asked to copy. Then
+  the old entry function, and the function it calls: the translator's main.
+- New types, variables and the entry function. For a mesh module, the workgroup id main sees is a private variable (see
+  above). `first` marks the workgroup's first thread. The barrier is OpControlBarrier with execution scope 2
+  (Workgroup), memory scope 2 and semantics 0x108 (AcquireRelease | WorkgroupMemory).
+- Task: the mesh workgroup count starts at 0: a task that culls everything never writes it.
+- Mesh: the whole stage buffer starts at 0: the vertex lines, the primitive count and the vertex indices. Workgroup
+  memory is undefined at the start, a mesh program need not write every vertex it has room for or every index byte (nor
+  its count when it emits nothing), and the slot is copied whole and drawn: what an earlier workgroup left there became
+  vertices and primitives. The payload area after it is copied in next. A slot without primitives gets its count alone.
+- Pass 2 writes the module again without the old entry function, the MeshShading capability and the
+  SPV_EXT_mesh_shader extension. In the OpEntryPoint every global variable is its interface (SPIR-V 1.4); the name is
+  "main" (0x6e69616d). In a mesh module, main and what it calls read the workgroup id from the private variable.
+
+### `meshfb_vs()`
+
+- The types are kept by `GFX_TYPE_*`: float, sint, uint.
+- A point list (`ipp` 1) needs its size written.
+- The constant 0xc1800000 is -16: outside the clip volume, for a point of no primitive.
+- A slot past the buffer (more workgroups than it has room for) draws nothing.
+- Byte `map + 4 + ipp * prim + corner` of the slot is the vertex.
+- A vertex's line is word `((v >> 5) * lines + line) * 32 + (v & 31)` of the vertex area.
+- Lines below 0x6c (layer and viewport index) are not carried, nor an output nothing reads.
+- A component outside the program's output map reads as Maxwell gives an unwritten one: (0, 0, 0, 1), the w as the
+  bits of 1.0f whatever the type, as `spirv_add_outputs` in `runtime/vk/vk_pipeline.c` pads a missing output.
+- The memory model is Logical, GLSL450 (0, 1); the entry point is "main" (0x6e69616d).
+
+## `runtime/gfx/mesh_fb_hold.h`
+
+The mesh fallback's depth hold ("a list's depth-only draw is held" in `runtime/vk/vk_exec_draw.c`): which lists'
+colour draws were skipped lately. Header only, so that `tests/mesh_fb_hold_check.c` checks the table without a device.
+
+A list is its indirect record's address in the game's memory (below 2^39). One word per slot: the address above
+`MFB_HOLD_BITS` (24) bits of the present count. The colour draw stamps its list with the present it was skipped in and
+clears the stamp when it is drawn; the list is held while the stamp is at most `MFB_HOLD_PRESENTS` (2) presents old.
+Read and written by the replay's threads without a lock: a lost update costs a list one frame of the hold, and two
+lists in one slot (`MFB_HOLD_SLOTS`, 1024, of them, by a hash of the address) hold only the one stamped last.
+
+- `mfb_hold_mark()`: the list's colour draw was skipped for its modules or pipeline (`waits` 1) at this present, or was
+  drawn (0).
+- `mfb_hold_test()`: whether the list's depth-only draw is held at this present.
+
+## `runtime/gfx/mfb_batch.h`
+
+The mesh fallback's batch (`mfb_draw` in `runtime/vk/vk_exec_draw.c`, `NX2SARIA_MESH_FALLBACK_BATCH`): the rule, apart
+from Vulkan so that `tests/mfb_batch_check.c` runs it.
+
+A mesh draw through the fallback runs its program's stages as compute dispatches that write the fallback's buffers,
+and an ordinary draw reads them. One by one, each draw ends its pass for its dispatches (a full barrier between every
+two steps) and the draw after it begins the pass again. Batched, the draws of one pass have their dispatches in the
+part's pre-pass command buffer (`vk_sync_pre`), which the queue runs before the part, and the pass stays whole: every
+draw of the batch needs a part of the buffers of its own, since all the dispatches run before all the draws.
+
+A draw's part (`mfb_batch_need()`):
+
+- its mesh workgroups: the count itself for a draw the CPU knows the count of and that has no task stage; else
+  `MFB_HEADROOM` times the most the program asked for in a draw so far (its history, read back from the records, from
+  `MFB_MIN_SEEN` of them), and at least a floor: what 1/`MFB_FLOOR_DIV` of the buffer holds (`mfb_floor()`). A history
+  of a few records undersizes: in Kokiri Forest programs that had asked for 32 workgroups at most asked for 72, 81 and
+  454 a moment later (a batch at twice the history, 2026-11-22);
+- its task workgroups, with a task stage: the count itself for a direct draw, else the same rule.
+
+A draw goes one by one, as before (the way back), when (`mfb_batch_need()`, `mfb_batch_steps()`): batching is off; one
+of its stages writes memory (a later draw of the pass could read it); its program once asked for more than its part
+held in a batch (excluded for the session); its program has no history yet where the part would come from it; its task
+or mesh stage reads a texture or image (its bind may record an image's first fill, which needs the part's pass); its
+part does not fit even a pre-pass command buffer of its own; there is no pre-pass command buffer, or the part could not
+be cut.
+
+The cut (`mfb_batch_steps()`): a batched draw cuts the part, so that its stages go to a new pre-pass command buffer
+that runs after everything the part recorded before, when
+
+- the pass the pre-pass command buffer serves ended since (`mfb_need_cut()`);
+- a draw went one by one since the parts began (`closed` in `runtime/vk/vk_mesh_fb.c`): it wrote the buffers from their
+  start, over the parts. A draw one by one ends its pass, so this is the case above; the flag keeps it so if that
+  changes. Until 2026-11-22 every later draw went one by one instead (`MFB_ONE_CLOSED`), which lost about half the
+  batching in Kokiri Forest;
+- its part does not fit what the parts left: they start over in the new pre-pass command buffer.
+
+A task overflow: `runtime/shaders/meshfb_clamp.comp` keeps the task workgroups asked for in the record's report word
+(13) before it cuts the dispatch to the part's room, so a batched draw short of its task part excludes its program like
+one short of its mesh part (until 2026-11-22 the scan read the count already cut, and such a draw was never seen).
+
+The constants:
+
+| Name | Value | Meaning |
+|---|---|---|
+| `MFB_MIN_SLOTS` | 64 | the floor's own floor, for programs whose workgroups are large |
+| `MFB_MIN_TASKS` | 16 | the same for task workgroups |
+| `MFB_MIN_SEEN` | 8 | records read back before a part comes from the history |
+| `MFB_MIN_CALM` | 32 | and records in a row since its last jump (`mfb_hist_note()`): the history has settled |
+| `MFB_READMIT` | 256 | records in a row without a jump that take an excluded program back into batches |
+| `MFB_MAX_SHORTS` | 3 | the batched draws short of their part after which a program stays one by one |
+| `MFB_HEADROOM` | 4 | the factor on the history |
+| `MFB_FLOOR_DIV` | 32 | a part holds at least 1/32 of a buffer: 32 such parts fit a pre-pass command buffer (a longer run of draws cuts for room). At 1/64 (483 workgroups of 3.8 KB) one draw of a program with a settled history of 120 asked for 577 in every Kokiri Forest start |
+
+The reasons a draw goes one by one:
+
+| Reason | Meaning |
+|---|---|
+| `MFB_ONE_OFF` | `NX2SARIA_MESH_FALLBACK_BATCH=0` |
+| `MFB_ONE_WRITES` | a stage writes memory |
+| `MFB_ONE_HISTORY` | too little history for a part the GPU sizes |
+| `MFB_ONE_EXCLUDED` | the program overflowed its part once |
+| `MFB_ONE_ROOM` | the part does not fit a pre-pass command buffer of its own |
+| `MFB_ONE_PRE` | no pre-pass command buffer, or the part could not be cut |
+| `MFB_ONE_TEXTURES` | a task or mesh stage reads a texture or image (`mfb_draw`: its bind may record an image's first fill or an alias copy, `vk_exec_inline_begin`, which needs the part's pass) |
+| `MFB_ONE_LOADING` | an area's textures are loading (`vk_exec_pool_loading`): its frames are not shown, and the programs' histories have not settled yet (every short part seen on the bench was there) |
+
+`MfbHist` is a program's history (`MfbCs.hist`), updated where `runtime/vk/vk_mesh_fb.c` reads a record back
+(`record_check`). The parts of a program whose draws GPU-written counts size come from its history. In the bench's
+sessions every batched draw short of its part came in the first seconds (the loading after the start, before Link
+arrived), from a history of a few records still growing: parts of 141 to 483 workgroups for draws of 498 to 1581
+(2026-11-22). A history is taken only once it has settled: `MFB_MIN_CALM` records in a row without a jump (a record
+more than twice the most so far, or the first). A batched draw short of its part excludes the program (its draws one
+by one, which draw whole); `MFB_READMIT` calm records later, with the history now holding what it asked for, it is
+batched again, and after `MFB_MAX_SHORTS` such draws it stays one by one for the session. Its fields: `slots` and
+`tasks`, the most mesh and task workgroups one of its draws asked for; `seen`, its records read back; `excluded`, a
+batched draw of it asked for more than its part held (until it is taken back); `calm`, records in a row since the last
+jump; `shorts`, its batched draws short of their part, this session.
+
+- `mfb_floor()`: the workgroups of 1/`MFB_FLOOR_DIV` of a buffer of `cap` bytes, each of `unit` bytes; at least
+  `least`.
+- `mfb_twice()`: `MFB_HEADROOM` times `v`, at least `least` (the name says twice; the factor is 4).
+- `mfb_batch_need()`: the workgroups a batched draw's part holds, or a reason it goes one by one. `direct`: the CPU
+  knows `count`. `floor_slots` and `floor_tasks` are the parts' floors (`mfb_floor()`). With a task stage, the mesh
+  workgroups the tasks start are known only on the GPU.
+- `mfb_part_bytes()`: the bytes of a part of `slots` mesh and `tasks` task workgroups: the task payloads, the list (a
+  word per mesh workgroup, with a task stage only) and the mesh outputs (`slot_words` per mesh workgroup).
+- `MfbSpan` and `MfbPart`: the part's buffers, filled from the start for each pre-pass command buffer
+  (`mfb_part_reset` at its end).
+- `mfb_need_cut()`: whether a batched draw cuts the part first (`vk_exec_split_now`): unless the pass the pre-pass
+  command buffer serves (`pre_pass`, set after the cut's draw began it) is still the open one. `pass_serial` goes up
+  only where a pass begins, so a pass ended since (a uniform update's copy, a game dispatch, a draw one by one) leaves
+  it equal: what the part recorded after that end would run after the pre-pass command buffer that the draw's stages
+  go to.
+- `mfb_parts_taken()`: parts taken since the buffers' use started over: a draw one by one then closes them (a cut
+  before the next batched one).
+- `mfb_part_take()`: the next part of `task_b`, `list_b` and `mesh_b` bytes (each rounded up to `align`, the storage
+  offset alignment) from `used` within `cap`; 0 when one does not fit (`used` is left as it was). A part of 0 bytes
+  still takes `align`, so its binding has a size.
+- `mfb_hist_note()` (`MFB_NOTE_SHORT` 1, `MFB_NOTE_READMIT` 2): what a record read back says (`record_check`): the
+  program's history grows, and a batched draw that asked for more than its part held excludes the program from batches.
+  It returns `MFB_NOTE_SHORT` when that draw was short, `MFB_NOTE_READMIT` when the program is taken back into batches,
+  else 0. A draw one by one that asked for more than the whole buffers hold (a garbage count the GPU wrote,
+  `meshfb_clamp.comp`) raises the history only to what they held: a part from it fits them still (else every later draw
+  of the program would be one by one, or cut for nothing). The draws of the program already in flight come back short
+  together: one exclusion counts once.
+- `MfbSteps` and `mfb_batch_steps()`: `mfb_draw`'s steps after `mfb_batch_need()`, with the cut, the pre-pass command
+  buffer and the part as calls (`vk_exec_split_now`, `vk_sync_pre`, `vk_meshfb_part_take`), so that
+  `tests/mfb_batch_check.c` runs the same order. `cut`: the part ends here, 0 when it could not be cut; `pre`: the
+  pre-pass command buffer, 0 none; `take`: the draw's part of the buffers, 0 when it does not fit what is left.
+  `*cut` is `MFB_CUT_NONE`, `MFB_CUT_PASS` (at the pass or closed) or `MFB_CUT_ROOM` (for room). `why` is
+  `mfb_batch_need()`'s answer; `images`, a task or mesh stage reads a texture or image; `need_cut`, `mfb_need_cut()`,
+  or a draw went one by one since the parts began. It returns `MFB_BATCHED` (the part taken) or why the draw goes one
+  by one; `*cut` says whether and why the part was cut on the way (a cut for a draw then one by one was for nothing).
+  When the part does not fit right after a cut, the buffers' use started over with that cut: the part is too large for
+  them.
+- `MfbCount` and `mfb_count()`: the counts of the log line (`mfb_batch_line` in `runtime/vk/vk_exec_draw.c`). `ok`: a
+  batched draw's stages were recorded; otherwise it was batched and its stages' pipeline failed: the draw was skipped.
+
+## `runtime/gfx/mesh_emu_spirv.h`
+
+Mesh shader emulation for GPUs without VK_EXT_mesh_shader (`NX2SARIA_MESH_EMULATION`, `runtime/vk/vk_pipeline.c` and
+`runtime/vk/vk_exec_draw.c`): the translator's TaskEXT and MeshEXT modules (`tools/xlate/MeshSpirv.cs`) become
+GLCompute modules that write their vertices, triangles and task payloads into one GPU buffer (the arena), and a
+generated vertex shader reads the vertices back for the game's fragment shader. Plain C over SPIR-V words; no Vulkan
+types.
+
+The arena is one buffer, its address in the push constants of every emulation stage:
+
+- words 0-3: vertex slots used, indices reserved, task records reserved, overflows (the replay zeroes them per
+  submission);
+- `MESH_EMU_DOFF` (256): draw records (`MESH_EMU_DRECS`, 4096 of them), `MESH_EMU_DWORDS` (16) words each:
+  DrawIndexedIndirect {indexCount, instanceCount, firstIndex, vertexOffset, firstInstance}, the mesh dispatch {x, y,
+  z}, the task base, then the `MESH_EMU_R_*` words; the replay fills them, and the allocation shader
+  (`mesh_emu_alloc_spirv()`) reserves each draw's task records and index range, so that the stages of many draws can
+  run together: a draw's indices are one range (its DrawIndexedIndirect) whatever the order its mesh workgroups run in;
+- `MESH_EMU_TOFF`: task records, `MESH_EMU_TWORDS` words each: the mesh workgroup count, then the payload;
+- the index area (uint32 indices) and the vertex area (16-byte slots: position, then each generic output), at offsets
+  the replay passes in the push constants.
+
+| Word | Value | Meaning |
+|---|---|---|
+| `MESH_EMU_R_GROUPS` | 9 | mesh workgroups with output: the task stage adds the counts it emits |
+| `MESH_EMU_R_FIRST` | 10 | the first stage's workgroups (the replay: the count, or a copy of the indirect one) |
+| `MESH_EMU_R_ICUR` | 11 | indices taken from the draw's range (the mesh stage's atomics) |
+| `MESH_EMU_R_ICAP` | 12 | the draw's range: indices reserved (they fit in the area) |
+| `MESH_EMU_R_PER` | 13 | indices one mesh workgroup may emit (OutputPrimitives x vertices per primitive) |
+| `MESH_EMU_R_TASK` | 14 | 1 with a task stage |
+
+`MESH_EMU_TWORDS` (780) is 1 + payloads of up to 776 words (3072 bytes and the 32 the translator adds for the payload
+header since 0.6.0), padded. There are as many task records as the push constants say (the replay sizes them,
+`NX2SARIA_MESH_EMU_TASKS`); the index area follows them.
+
+The push constants of every emulation stage (compute and the vertex shader), 32 bytes (`MESH_EMU_PC_BYTES`): u64 arena
+address; uint draw record (word index); uint index area (word index); uint index capacity; uint vertex area (16-byte
+slot index); uint vertex capacity (slots); uint task record capacity. Header words 0-2 count what the stages asked
+for, beyond the capacities too (the replay logs the most per submission); word 3 counts mesh workgroups that did not
+fit.
+
+- `mesh_emu_alloc_spirv()`: the allocation shader (GLCompute, one invocation): for the `n` draw records from ring
+  index `first`, mode 0 reserves the task records of draws with a task stage (`MESH_EMU_R_FIRST` of them, from word 2)
+  and the index ranges of draws without one (`MESH_EMU_R_FIRST` x `MESH_EMU_R_PER`, from word 1); mode 1, after the
+  task stages, the index ranges of draws with one (`MESH_EMU_R_GROUPS` x `MESH_EMU_R_PER`). Push constants, 32 bytes:
+  u64 arena address; uint first, n, mode, index capacity, task record capacity, unused. Static words, `*n` of them.
+- `MeshEmuInfo`: `task` 1 TaskEXT, 0 MeshEXT; `threads` LocalSize x; `max_v`, `max_p` (mesh) OutputVertices and
+  OutputPrimitivesEXT; `prim` (mesh) 3 triangles, 2 lines, 1 points (triangles and points are emulated); `psize_slot`
+  (mesh) the slot holding the point size (x), 0 without one; `payload_words` the task payload's size (mesh: what it
+  reads, 0 without a task stage); `max_mesh` (task) the most mesh workgroups one task workgroup launches (the dispatch
+  width); `slots` (mesh) 16-byte slots per vertex: position and each generic output; `n_generic` (mesh) generic
+  outputs, in slot order 1..n; `generic_loc` their locations.
+- `mesh_emu_compute()`: the compute module for a TaskEXT or MeshEXT module (malloc'd, `*out_n` words); NULL with `why`
+  set when the module is not one the converter knows (it then stays unemulated: its draws are skipped as before).
+- `mesh_emu_prim()`: a task or mesh module's output primitive: 3 triangles, 2 lines, 1 points, 0 not a mesh module.
+- `mesh_emu_vs()`: the vertex shader of an emulated mesh pipeline: position and the generic outputs from the vertex
+  slots, as `types[l]` (0 float, 1 signed, 2 unsigned) with `comps[l]` components for every location l in `need` (the
+  fragment stage's inputs); a location the mesh stage does not write is zero. malloc'd, `*out_n` words. `fsw` is the
+  fragment shader's SPIR-V; its input variables are matched one for one (Location, Component, type, Flat), else (NULL,
+  or a declaration the parser does not take) one vector per location of `need`. (The first half of this comment stood
+  above `mesh_emu_prim()`.)
+
+## `runtime/gfx/mesh_emu_spirv.c`
+
+Mesh shader emulation: the SPIR-V rewriting. The input is what `tools/xlate/MeshSpirv.cs` makes: the translator's
+compute main, called from an entry function that copies its shared-memory stage buffer into the mesh outputs after
+SetMeshOutputsEXT (mesh), or into the task payload before EmitMeshTasksEXT (task).
+
+- **Mesh to GLCompute:** the output arrays and the task payload move to Workgroup memory; SetMeshOutputsEXT is dropped
+  (its counts are kept); at the entry function's end thread 0 reserves vertex slots and indices in the arena with
+  atomics, and every thread copies vertices and triangles out (indices made absolute vertex slots, relative to the
+  vertex area). With a task stage mesh workgroup (x, y) is mesh group x of task record (task base + y): a prologue
+  returns when x is past the record's count, loads the payload, and the module's WorkgroupId reads become (x, 0, 0).
+- **Task to GLCompute:** the payload moves to Workgroup memory; EmitMeshTasksEXT becomes a store of the payload and the
+  mesh group count into the task record, and workgroup 0 writes the mesh dispatch {max_mesh, task workgroups, 1} into
+  the draw record.
+
+### The emit helpers
+
+- `word_load()` and `word_store()` use the memory operand Aligned (2) with 4.
+- `atomic()`: Device scope (1), relaxed semantics (0).
+- `barrier()`: OpControlBarrier with Workgroup (2), Workgroup (2) and 264 (AcquireRelease | WorkgroupMemory).
+- `OutVar.role`: 0 position, 1 generic, 2 indices, 3 point size.
+
+### `mesh_epilogue()`
+
+The mesh epilogue replaces the entry function's return.
+
+- Header word 6 counts the mesh workgroups that reached the output copy; word 7 the primitives they declared (for
+  diagnosis).
+- Indices come from the draw's own range (reserved by the allocation shader), vertex slots from the arena's. The index
+  base is made relative to the area, as firstIndex. An atomic add puts the count into the draw record's index count.
+- An output of role 3 is the point size, written in x.
+
+### `task_epilogue()`
+
+The task epilogue replaces EmitMeshTasksEXT x y z.
+
+- An atomic max into header word 2 counts the records asked for, past the capacity too.
+- The payload is copied in rounds of the workgroup's threads; the last round's threads past the payload idle.
+- The mesh group count is added to `MESH_EMU_R_GROUPS` of the draw record, for the index range.
+- Task records past the area are not written: their mesh groups are not dispatched (the subtraction is opcode 130,
+  OpISub).
+
+### `mesh_emu_compute()`
+
+- It first finds the output variables and the payload, then makes the new types, constants and variables.
+- Output and payload pointers become Workgroup pointers: in place when no such pointer exists yet, else mapped (a
+  mapped one is marked dropped with the storage class 0xffffffff, the other rewritten in place).
+- Then one pass over the module: types, constants and global variables, then the function code. In the check for an
+  unexpected WorkgroupId use only id operands are looked at: literals of these instructions may equal the id (OpExtInst
+  word 4; opcodes 81 and 82 and 79, OpCompositeExtract, OpCompositeInsert and OpVectorShuffle, from their literal
+  words; OpLoad from word 4, OpStore from word 3; 251, OpSwitch; OpSelectionMerge; 246, OpLoopMerge).
+- In the entry function the function variables stay first.
+- Header words 4 and 5 count the mesh workgroups started and past the prologue's check (diagnosis: `mesh.txt` of
+  `vk_dump`). The prologue's payload copy runs as `task_epilogue()`'s.
+- Assembling: the magic 0x07230203; the version is raised to 0x00010500, SPIR-V 1.5, where physical storage buffers are
+  core; the memory model is PhysicalStorageBuffer64 (5348), GLSL450 (1). The entry point lists every global variable;
+  the new ones are found by scanning the new types for OpVariable.
+
+### `fs_inputs()` `mesh_emu_vs()`
+
+The vertex shader of an emulated mesh pipeline. `fs_inputs()` reads the fragment shader's input variables as declared:
+Location, Component (decoration 31), scalar type and width, Flat (decoration 14). 0 when one is not a plain 32-bit
+scalar or vector (the caller then goes by the reflection's per-location summary).
+
+In `mesh_emu_vs()`:
+
+- Without declared inputs the per-location summary gives one vector per location.
+- `vecs[type][comps]` are the vector ids (comps 2..4), `vecs[type][1]` the scalar.
+- Outputs: one per fragment input, with the same Location, Component and type; Flat when the input is, or when the
+  type is an integer one.
+- The code: slot = vertex area + VertexIndex; each output comes from slot + its index. Slot 0 is the position (entry 32
+  of `slot_of`); the loop starts at -1 for the position.
+- An output the mesh stage does not write is zero.
+- A narrower output is cut out with OpVectorShuffle (79): components comp..comp+k-1.
+- The module header is 0x07230203, 0x00010500.
+
+### `mesh_emu_alloc_spirv()`
+
+The allocation shader, as static words (`alloc_words`): compiled with `glslangValidator -V -g0 --target-env vulkan1.2`,
+then `spirv-opt -O --strip-debug`, clean under `spirv-val`. A static assertion ties its constants to the header's
+(`MESH_EMU_DOFF / 4 == 64`, `MESH_EMU_DRECS == 4096`, `MESH_EMU_DWORDS == 16`, `MESH_EMU_R_GROUPS == 9` and the others).
+Its source:
+
+```glsl
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint w[]; };
+layout(push_constant) uniform PC { uvec2 addr; uint first; uint n; uint mode; uint icap; uint trecs; uint pad; } pc;
+void main() {
+    Words a = Words(pc.addr);
+    for (uint d = 0u; d < pc.n; d++) {
+        uint r = 64u + ((pc.first + d) % 4096u) * 16u;
+        bool task = a.w[r + 14u] != 0u;
+        if (pc.mode == 0u && task) {
+            uint tb = a.w[2], k = a.w[r + 10u];
+            a.w[r + 8u] = tb;
+            a.w[2] = k > pc.trecs ? pc.trecs + tb : tb + k;
+        } else if ((pc.mode == 0u) != task) {
+            uint g = pc.mode == 0u ? a.w[r + 10u] : a.w[r + 9u], per = a.w[r + 13u], ib = a.w[1];
+            uint ni = per != 0u && g > pc.icap / per ? pc.icap + 1u : g * per;
+            a.w[r + 2u] = ib;
+            a.w[r + 12u] = ib >= pc.icap ? 0u : min(ni, pc.icap - ib);
+            a.w[1] = min(ib + ni, 0x7fffffffu);
+        }
+    }
+}
+```
+
+## `runtime/gfx/mesh_pipeline_check.h`
+
+Reports a mesh draw's cache-key check without changing the draw; -1 means the cache entry was not found.
+`mesh_pipeline_check_start()` writes the start line: the check runs on the mesh emulation's draws only
+(`mesh_prepared_check` in `runtime/vk/vk_exec_draw.c`), and a run without a report line says nothing otherwise.
+
+## `runtime/gfx/mesh_fb_probe.c`
+
+`nx2saria.exe --probe-meshfb`: the mesh shader fallback (`runtime/gfx/mesh_fb.c`, `runtime/vk/vk_mesh_fb.c`, the "mesh
+fallback" of `runtime/vk/vk_exec_draw.c`).
+
+The draw part needs no game files: two mesh programs of the runtime's own in the shape the translator gives one
+(`runtime/shaders/meshfb_probe_*.mesh` and `.task`), one without a task stage and one fed by a task program, drawn
+through the replay into an RGBA8 target with direct and with indirect workgroup counts, and both in one pass after each
+other. Each picture is drawn twice, through VK_EXT_mesh_shader and through the fallback, and the two are compared texel
+by texel; without mesh shaders on the device only the fallback draws, and the probe says that nothing was compared.
+
+The module part runs with `NX2SARIA_PROBE_MESHFB_DIR=<dir>`: every "<name>" of `<dir>/list.txt` names `<dir>/<name>.in`
+(a stored shader input, `in_store` of `gfx_shader.c`: control section and code) and `<dir>/<name>.spv` (its
+translation). The compute module and, for a mesh program, a vertex module are written to `<dir>/out/<name>.cs.spv` and
+`.vs.spv` for spirv-val (work the caller does; tests of game shaders stay outside the repository). Where
+`<dir>/<name>.res.json` (the translation's reflection) is there too, the compute pipeline of the module is built on
+this device, as its first draw would build it.
+
+`vk_exec_probe_shader()` and `vk_exec_mfb_batch_counts()` are in `runtime/vk/vk_exec_draw.c`; the second fills the
+counts of `MfbCount` (`runtime/gfx/mfb_batch.h`).
+
+### `modules_part()`
+
+- `h` is the stored input's header: magic, version, stage, code length, c1 length, size of the answers (`InHeader` of
+  `gfx_shader.c`). `GFX_STAGE_TS` and `GFX_STAGE_MS` are the NVN stage numbers 6 and 7.
+- The vertex module is asked for with output types `g % 3`, so every output type gets made somewhere.
+- With a `.res.json`, the pipeline is built with the layout the reflection gives; the first pool brings the device up.
+- At the end an empty submit: the pool's buffers go when a submission after their release has completed.
+
+### `fake_stage()` `make_prog()`
+
+`fake_stage()` makes an NVN2 control section of a task (6), mesh (7) or fragment (1) stage as `vk_exec_draw.c` and
+`mesh_fb.c` read it, and a code block whose header maps the outputs: position and generic vector 0. Its words: +0x58
+is 32 threads and a payload of one 256-byte unit (`32 | 1 << 24`); +0x5c triangles (`3 << 24`, with `1 << 16` when a
+task feeds it); +0x60 64 vertices and 32 primitives (`64 | 32 << 16`). `make_prog()`: the program of a mesh stage, its
+task stage if any, and the fragment stage.
+
+### `draw_picture()` `drawn_texels()` `differing()`
+
+`draw_picture()`: the uniform data is in the pool, 0x1000 apart per draw: the mesh stage's block at 0x90000, the task
+stage's at 0x98000; the indirect records at 0xa0000. `drawn_texels()` counts texels unlike texel 0, which is in the
+margin no cell covers. `differing()`: the texels of `a` and `b` that differ, and the largest difference of a channel.
+
+### `draw_part()`
+
+- The cases: 24 cells of a 6 x 4 grid by 24 mesh workgroups; 40 cells of an 8 x 5 grid by 10 task workgroups that
+  start 0 to 4 mesh workgroups each.
+- `SHORT()` counts the draws that did not fit: one by one (`vk_meshfb_short`) and batched short of their part
+  (`vk_meshfb_batch_short`; `vk_meshfb_short` reads every record back first).
+- More workgroups than the mesh buffer has slots for (the slots are the buffer's words / 540, and the draw asks for
+  1000 more): what fits is drawn, the rest is dropped and counted. The cells past the grid are outside the picture, so
+  it is the 24-cell picture again.
+- A GPU-written task count past what the task buffer holds (its bytes / 4 + 1000, past the room of any payload size):
+  the clamp cuts the dispatch and keeps the count asked for in the record (`meshfb_clamp.comp`), so the draw is
+  counted; until 2026-11-22 the scan read the count already cut and such a draw was never seen. The tasks past the 10
+  of the grid draw outside the picture.
+- As the game runs it: pipelines built in the background, and a program's modules made on the fallback's own thread.
+  New shader objects of the same programs are drawn until the picture is whole: the draws before that are skipped, and
+  none may leave a partial picture behind for good.
+- With `NX2SARIA_MESH_FALLBACK_BATCH=1` the pictures were drawn through `mfb_draw`'s batch and its way back (the
+  pictures are the same as the mesh pipeline's and as one by one, checked before): the draws batched, those one by one
+  for want of history (a task program's first draws), and the cuts at each pass and after a draw one by one. Then more
+  draws of programs with history, so that task draws are batched too. A batched draw's stages use compute pipelines of
+  their own, built in the background: the draws before they are ready are skipped, as above, and once the picture is
+  whole it stays whole.
+
+### `probe_meshfb()`
+
+No game is loaded: Link's own motion vectors (`motion_owner.c`, selective_motion) would read the player's actor in
+guest memory at every submission (`vk_usnap_begin`) and fault. The probe draws no game, so
+`NX2SARIA_SELECTIVE_MOTION` is set to 0.
+
+## `runtime/gfx/spirv_water.h`
+
+The water corrections of [water-projective.md](../water-projective.md) as edits of a SPIR-V module in memory
+(`runtime/gfx/spirv_water.c`); the same edits `tools/projective_recipe.py` makes on files.
+`runtime/vk/vk_pipeline.c` applies them to the exact translations it knows.
+
+Each returns a new module (free it) with its word count in `*out_n`, or NULL when the module is not of the shape the
+edit expects; the caller then keeps the original.
+
+- `spirv_water_vertex()`: the location 0 output gets (clip x, clip y, clip w, 1) of the position the stage wrote,
+  before its return.
+- `spirv_water_fragment()`: the location 0 input loses NoPerspective and is read through a local holding (x / w * 0.5 +
+  0.5, y / w * -0.5 + 0.5, 0, 1), which is what the vertex stage wrote there before, now divided per fragment.
+- `spirv_water_absorption()`: the store of id `distance` through id `pointer` stores NMax(distance, 0) instead.
+
+## `runtime/gfx/spirv_water.c`
+
+The water corrections, made on a SPIR-V module in memory. Each edit follows `tools/projective_recipe.py` step for
+step, new ids and declarations in the same order, so the module it returns is the one that tool writes for the same
+input (`tests/water_projective_check.py` compares them on a made-up module).
+
+A module is taken apart into its instructions, edited as a list, and put together again. New types and constants are
+collected and placed before the module's one function; an existing type or constant of the same definition is used
+instead of a new one. Every edit refuses a module that is not of the shape it was written for: one entry point, one
+function, one return, and the interface or the store it looks for found exactly once.
+
+- `Ins`: `n` is the words after the first, `a` those words. `Mod`: `extra` holds the new types and constants, in the
+  order made (up to 24); `src` is the module's words, and the instructions' arguments point into this copy; `pool`
+  (256 words) the arguments of the instructions added; `bad`, an edit ran out of room and the module is refused.
+- `mod_parse()` leaves room for 64 more instructions: what the edits insert. `insert()` relies on it.
+- `type_of()`: the type or variable instruction that defines `id`, among the module's own and the new ones.
+- `type_id()`: the id of the type (`op`, `v[0..k)`), an existing one or a new one. `constant_id()`: the id of the 32-bit
+  constant `bits` of type `ty`, an existing one or a new one.
+- `location0()`: the one interface variable of the storage class at location 0, a four-component 32-bit float vector.
+- `glsl_import()`: the id of the GLSL.std.450 import when the module has exactly one.
+- `mod_finish()`: the edited module's words, the new declarations placed before the function; it frees `m`.
+- `spirv_water_vertex()` looks for the OpMemberDecorate BuiltIn with value 0, Position.
+- `spirv_water_fragment()`: the NoPerspective decoration goes; the stage's own reads of the input go to the local; the
+  new code is placed after the function's own variables.
+- `spirv_water_absorption()`: NMax(distance, 0): a negative distance through the water must not turn the dimming into a
+  gain.
+
+## `runtime/gfx/spv_store.h`
+
+A translated shader's SPIR-V that is kept zstd-compressed while nobody reads it ("SPIR-V at rest" in
+`runtime/gfx/gfx_shader.c`).
+
+A store holds the SPIR-V as a plain copy, as a zstd frame, or as both. Readers pin it (`spv_pin()`), which hands out
+the plain copy and decodes the frame first when the plain copy is gone, and unpin it when done (`spv_unpin()`). One
+thread, the packer, makes the frame of a store that has gone unused for a while and then frees the plain copy
+(`spv_pack_*`).
+
+Lock rules, which make a reader never see a buffer swapped or freed under it:
+
+- every store of one owner shares one lock (`PlatMutex`), held only for a few loads and stores: never across a decode,
+  an encode or a free, so a reader on the drawing thread waits for no codec;
+- `plain` changes under the lock only: a reader sets it from NULL to a buffer it decoded, the packer sets it back to
+  NULL, and only while `pins` is 0. A reader gets the pointer and counts its pin in the same locked section, so the
+  copy it holds cannot be freed before its unpin;
+- `z` is set once, by the packer, before any plain copy is dropped, and stays until `spv_store_free()`: a reader that
+  found `plain` NULL under the lock decodes `z` outside it;
+- one packer per owner at a time (the owner's own lock around its passes): `spv_pack_begin()` and `spv_pack_end()` of
+  one store pair up, and nothing else drops plain copies.
+
+Two readers that find the frame alone both decode it; the first one to come back installs its copy and the other frees
+its own. The frame is checked by decoding it before the plain copy may go (`spv_pack_encode()`), so a store never holds
+a frame that does not give back its SPIR-V bit for bit.
+
+Header-only so that `tests/spv_store_check.c` runs it against the platform layer and libzstd alone.
+
+- `SpvStore`: `plain`, the SPIR-V readers get, NULL while the frame alone holds it (changes under the lock); `words`,
+  its length in 32-bit words, fixed once the store is filled; `z`, its zstd frame, exactly `zsize` bytes, set once and
+  freed by `spv_store_free()` only; `pins`, readers between `spv_pin()` and `spv_unpin()` (under the lock); `used_ms`,
+  when the last reader let go, or when the store was filled (under the lock); `fnv`, FNV-1a (64-bit) over the SPIR-V
+  bytes once `fnv_ok` is 1.
+- `SpvPacker`: the packer's buffers, kept from one store to the next: the encoder's output before it is copied out at
+  its size, and the decode that checks it.
+- `spv_store_fill()`: the store takes `plain` (malloc'd, `words` long) as its plain copy, last used at `now_ms`.
+- `spv_pin()`: the plain SPIR-V, valid until the matching `spv_unpin()`. `*decode_ns`: the time spent decoding the
+  frame here, 0 when the plain copy was there. NULL only when the decode could not allocate its buffer or the frame did
+  not decode to the store's length (`spv_pack_encode()` checked it, so neither should happen). When another reader
+  decoded it meanwhile, its copy is used and this one goes.
+- `spv_fnv()`: the FNV-1a of the SPIR-V: worked out at the first call (pinning the store, so decoding it if it is
+  compressed) and kept. `spv_pack_encode()` works it out before it compresses, so asking a compressed store decodes
+  nothing. Racing callers store the same value.
+- `spv_idle_locked()`: whether the store has gone unused for `idle_ms` at `now_ms`: no pin, and its last use at least
+  that long ago (a use stamped after the packer read the clock counts as recent). The caller holds the lock.
+- `spv_pack_begin()`: the packer's first step on a store: `SPV_PACK_NONE` when there is nothing to do (no plain copy,
+  in use or used within `idle_ms`); `SPV_PACK_DROP` when the frame exists and the plain copy may go (`spv_pack_end()`);
+  `SPV_PACK_ENCODE` when the frame is to be made first: the plain copy is pinned for the packer, which encodes it
+  (`spv_pack_encode()`) and then calls `spv_pack_end()` in any case.
+- `spv_pack_encode()` encodes the plain copy the packer pinned (`spv_pack_begin()` gave `SPV_PACK_ENCODE`) at zstd
+  level `level` and checks the frame by decoding it. No lock is held: readers go on using the plain copy meanwhile
+  (pinned by `spv_pack_begin()`, it is neither swapped nor freed until `spv_pack_end()`). It returns the frame
+  (malloc'd, `*zsize` bytes) or NULL when the encoder failed or the check found a difference; the FNV is worked out
+  here too.
+- `spv_pack_end()`: the packer's last step on a store. After `SPV_PACK_ENCODE`, `z` is what `spv_pack_encode()` gave
+  (NULL: the store stays plain) and the packer's pin goes (with no use stamp: it is not a reader); then the plain copy
+  is freed if the store still has the frame and is still idle (a reader may have come meanwhile). It returns the bytes
+  freed. A frame another packer step installed first is freed (that does not happen with one packer per owner).
+
+## `runtime/gfx/prp_file.h`
+
+The layout of `shader-prepared.bin`, the list of shader variants a preparation translated and built ahead of play
+(`runtime/gfx/gfx_shader.c` `gfx_shader_prepare_seed()` writes it; `gfx_shader_warm_list()` and `lw_start` and
+`lb_warm_prepared` of `runtime/vk/vk_pipeline.c` read it; `prepared_from` in `tools/make_game.py` reads its head). The
+comment gave both C files without their folders.
+
+- "NX2NSPRP" (`PRP_MAGIC`), version (u32, `PRP_VERSION` 2), record size (u32, 36, `PRP_REC`): `PRP_HEAD`, 16 bytes.
+- Version 2 only: what the list was prepared from, 96 bytes (`PRP_FROM_SIZE`, `PrpFrom`): the sha256 of
+  `seed-programs.bin`, the sha256 of `seed-answers.bin` (each over the whole file), and the translator identity (the 32
+  bytes of `nx2navi_xlate.id`, before the host options are mixed in).
+- Records: stage, priority, 2 zero bytes, input id (32 bytes); in priority order, one per input id.
+
+A version 1 file has no such block: it does not say what it was prepared from. The seed decides which variants are in
+the list, and nothing else recorded it: a build that came with another seed (more shaders listed, another pipeline
+list) kept the old list, and the variants only the new seed names were translated when play first drew them. With the
+block the build compares it with the seed it has just written and prepares again when they differ (`step_shaders` in
+`tools/make_game.py`). The translator identity is recorded for the same comparison; a list prepared by another
+translator is not discarded for that alone, since input ids do not depend on the translator and the game carries the
+translations over (the carry of `gfx_shader.c`). `tests/prp_file_check.py` checks this header against the reader in
+`tools/make_game.py`.
+
+- `prp_head_write()`: the head of a version 2 file into `out` (`PRP_HEAD` + `PRP_FROM_SIZE` bytes); it returns that
+  size.
+- `prp_parse()`: the records of the file `f` of `size` bytes: a pointer into `f` and their count in `*n`; NULL for a
+  file that is no prepared list or has no whole record. `*has_from`: 1 with `*from` filled for a version 2 file, 0 for
+  a version 1 file.
+- `gfx_shader_prepared_read()` is declared here and defined in `gfx_shader.c`.
