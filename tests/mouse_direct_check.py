@@ -1,9 +1,5 @@
 # needs: clang
 # args: --cc {cc}
-"""Check the direct camera hook's register contract and raw-count routing without game data.
-
-Usage: python tests/mouse_direct_check.py --cc <clang.exe>
-"""
 import argparse
 import os
 from pathlib import Path
@@ -11,8 +7,12 @@ import subprocess
 import tempfile
 import runtime_include
 
+DESCRIPTION = """Check the direct camera hook's register contract and raw-count routing without game data.
+
+Usage: python tests/mouse_direct_check.py --cc <clang.exe>
+"""
+
 ROOT = Path(__file__).resolve().parents[1]
-# What both harnesses stand in for the rest of the runtime with.
 STUBS = r'''
 #include <assert.h>
 #include <stdio.h>
@@ -219,7 +219,6 @@ int main(void) {
 }
 '''
 
-# Ocarina 1.1.1 (recomp/patches-v111.txt, set mouse_direct): the two sites of camera_input_oot and camera_activity_oot.
 OOT_HARNESS = STUBS + r'''
 const int rt_game_version = 111;
 int main(void) {
@@ -377,7 +376,7 @@ int main(int argc,char **argv) {
 '''
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', required=True)
     ap.add_argument('--deps', type=Path, help='dependency include directory (SDL3/Vulkan), to also check input scripts')
     args = ap.parse_args()

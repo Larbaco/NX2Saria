@@ -1,5 +1,14 @@
 # needs: clang, glslangValidator, spirv-val, spirv-as
-"""Mesh positions made Invariant (runtime/vk/vk_pipeline.c spirv_mesh_invariant): builds the function, cut from
+import argparse
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DESCRIPTION = """Mesh positions made Invariant (runtime/vk/vk_pipeline.c spirv_mesh_invariant): builds the function, cut from
 vk_pipeline.c by its text, and runs it on modules made here:
 
   - a mesh shader whose position is a member of the per-vertex block (glslang's gl_MeshVerticesEXT);
@@ -12,14 +21,6 @@ the already-invariant mesh shader and the vertex shader are left alone. No game 
 
 Usage: python tests/mesh_invariant_check.py [--cc <clang>]
 """
-import argparse
-import os
-import shutil
-import struct
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -40,7 +41,6 @@ MESH_INVARIANT = MESH_BLOCK.replace('layout(triangles', 'out gl_MeshPerVertexEXT
 VERT = '''#version 460
 void main() { gl_Position = vec4(float(gl_VertexIndex), 0.0, 0.5, 1.0); }
 '''
-# A position array of its own (MeshSpirv.cs: an Output variable of vec4[max vertices] decorated BuiltIn Position)
 MESH_VARIABLE = '''OpCapability MeshShadingEXT
 OpExtension "SPV_EXT_mesh_shader"
 OpMemoryModel Logical GLSL450
@@ -121,7 +121,6 @@ int main(int argc, char **argv) {   // in.spv out.spv: prints "changed again" (1
 
 
 def invariants(spv):
-    """(OpDecorate Invariant count, OpMemberDecorate Invariant count) of a module."""
     w = struct.unpack('<%dI' % (len(spv) // 4), spv)
     dec = mem = 0
     i = 5
@@ -136,7 +135,7 @@ def invariants(spv):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'
@@ -161,7 +160,6 @@ def main():
         (t / 'check.c').write_text(HARNESS.replace('@BODY@', body), encoding='utf-8')
         exe = t / ('check.exe' if win else 'check')
         subprocess.check_call([cc, '-O2', '-Wall', '-Wextra', '-Werror', str(t / 'check.c'), '-o', str(exe)], env=env)
-        # name: (changed, the Invariant decorations wanted after the rewrite as (OpDecorate, OpMemberDecorate))
         cases = {'block': (1, (0, 1)), 'variable': (1, (1, 0)), 'invariant': (0, None), 'vert': (0, None)}
         for name, (want_changed, want_inv) in cases.items():
             src_spv = t / f'{name}.spv'

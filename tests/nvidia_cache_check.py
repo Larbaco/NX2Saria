@@ -1,16 +1,4 @@
 # needs: clang
-"""Build and run tests/nvidia_cache_check.c: runtime/vk/nvidia_cache.h, what the game puts into the environment for NVIDIA's
-shader disk cache (a folder beside the exe, a limit of 8 GiB and, on Windows, the cleanup off; the player's own values
-stand), how it counts the folder and the lines the logs say about both.
-
-What the runtime does with the header (vk_device.c nvidia_cache_beside_exe, vk_pipeline.c lw_say_cache_folder, the
-setting's rows in cfg.c) is found in the sources here, so a change of that wiring shows in this check even where the
-Windows-only code does not run.
-
-Needs a C compiler only: no driver, no GPU and no game files.
-
-Usage: nvidia_cache_check.py
-"""
 import os
 import re
 import shutil
@@ -24,7 +12,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -37,10 +24,9 @@ def read(rel):
 
 
 def squeeze(src):
-    return re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
+    return re.sub(r'"\s*\n\s*"', '', src)
 
 
-# (file, what it must hold, a pattern)
 WIRING = [
     ('runtime/vk/vk_device.c', 'vk_driver_cache_env calls nvidia_cache_beside_exe on Windows and Linux',
      r'mesa_submit_thread\(\);\s*#if defined\(_WIN32\) \|\| defined\(__linux__\)\s*nvidia_cache_beside_exe\(\);\s*#endif'),
@@ -82,7 +68,6 @@ WIRING = [
 
 
 def wiring():
-    """0 when the runtime applies the header where it says."""
     bad = 0
     for rel, what, pattern in WIRING:
         if not re.search(pattern, squeeze(read(rel)), re.S):

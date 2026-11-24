@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/mfb_batch_check.c: runtime/gfx/mfb_batch.h, the rule of the mesh fallback's batch (vk_exec_draw.c
-mfb_draw, NX2SARIA_MESH_FALLBACK_BATCH): which draws are batched and which go one by one (the way back), the parts of the
-buffers they take, and a program's history.
-
-No GPU, no game files, any Python.
-
-Usage: mfb_batch_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
