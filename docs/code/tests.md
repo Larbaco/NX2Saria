@@ -458,3 +458,305 @@ settings. No GPU, no game files, any Python. The compiler is `$CC`, else MSYS2 U
   without one.
 - The file menu's dates order the slots, in any order given; the heading, the time and the age of an area name read as
   the game has them.
+
+## `tests/boot_warm_check.py`
+
+Builds and runs `tests/boot_warm_check.c` on `runtime/vk/boot_warm.h`: whether a start does the whole warm on the boot
+screen after a driver change (`runtime/vk/vk_pipeline.c` `bf_decide()`). The decision alone; no GPU, no game files.
+The compiler comes from `tests/diff/common.py` when its packages are there, else by the same choice without them.
+
+- An ordinary start (no file, the pipeline cache is this driver's) owes no warm. The first start after a driver
+  update does the warm and the file gets 1. A start closed during the warm: the next one goes on with it and counts
+  up, whether the pipeline cache's file still has the earlier driver's header or not. After `BOOT_WARM_TRIES` starts
+  that began it and none that ended it: no more, with or without a foreign cache, and nothing to write.
+- Once the warm ended, the cache file keeps the earlier driver's header until the play cache is folded in: those
+  starts are ordinary ones, and so are the ones after. The file of an earlier driver is stale without a foreign cache
+  and a fresh count with one, whether that driver's warm was done or given up. A file that is not one counts as none.
+- The marker left by a start that ended while the boot built pipelines: a crash the handler saw skips the prebuild at
+  once, whatever the count. With no note the start was closed or stopped: it counts, and the builds are made again,
+  until `BOOT_QUIET_ENDS` in a row. A marker of 0.9.2 holds the GPU and driver alone and is the first of its row.
+  Another driver's marker says nothing about this one, crash note or not.
+
+## `tests/branding_package_check.py`
+
+Names and legacy paths for the portable and the Linux desktop packaging, without building or running the game.
+
+## `tests/build_game_gate_test.py`
+
+`tools/build_game.py` through the memory gate. No game files, no game build.
+
+- `build.ninja`'s compile rules run `tools/memgate.py` `wrap` and the link and rc rules stay as they were. Ninja runs
+  at most the job count, the pool of generated compiles too. The text is the same from one call to the next, so
+  `build.ninja` is rewritten only when it changes.
+- With sccache the commands are the ones before the gate: its server runs the compiles, out of the wrapper's reach.
+  A moved checkout keeps `build.ninja`: the venv's Python and `tools/memgate.py` are named from the root.
+- Each compile's need comes from the lift manifest's `chunk_info`, or the source's size (an object not in
+  `chunk_info`), or the runtime's default. The Windows resource object goes through windres, not the gate, and objects
+  reused from the main build are not compiled.
+- The peaks the wrappers record are learned and summed up; a failed compile's peak is not learned, nor a peak of 0 (no
+  reading). With the gate off the summary has no held line. A failed reading of the sampler loses that sample only.
+- Where ninja and clang are on `PATH`, three tiny C files are compiled by Ninja through the wrapper as `build.ninja`'s
+  `cc_gen` rule does: in a temporary folder (absolute `$out`) and in one below `build/` (relative `$out`, as a real
+  build's). `builddir` puts the Ninja log there, not in the repository, and `$out` is the name `needs.json` files a
+  peak under.
+
+## `tests/build_gate_check.py`
+
+Builds and runs `tests/build_gate_check.c` on `runtime/vk/vk_build_gate.h`, the memory gate of the background pipeline
+builds (`runtime/vk/vk_pipeline.c` `gate_enter()`): what it admits and refuses by the system's commit, and that the
+builds under way count through their reservations. With the game executable's path it also runs the executable's
+`--probe-buildgate` (`vk_pipeline_probe_buildgate()`: the gate as the builders call it, with this machine's commit; no
+device, no window, no build) three times: with the settings in effect, with `build_free_mb = 0`, where every build
+must be admitted, and with `build_free_mb` at a value no machine has free, where every build must be refused.
+
+The C cases use a machine with 73,154 MB of commit and 4,096 MB kept free, each build estimated at 64 MB.
+
+- Plenty of room: every one of 16 builders gets in, and each one's estimate is reserved.
+- The case the reservations are for: the commit in use does not move while the builders start (their compiles have
+  taken nothing yet), and the room above the kept part holds four estimates. A gate without reservations lets all
+  sixteen in; this one lets four in and refuses the rest. When one ends, exactly one more fits.
+- The boundary: exactly the kept part plus one estimate free is enough, one MB less is not.
+- The commit of the night this was written for, 66,000 of 73,154 MB in use: one ordinary build fits (7,154 MB free
+  against 4,160 needed); a large compute build estimated at 4,096 MB does not, and while one of those runs with 8,254
+  MB free (room for it, and then 4,158 MB for the rest), ordinary builds are refused too.
+- Above the limit already (the commit in use can pass a limit that shrank): refused, not a negative room taken for a
+  large one.
+- No check with the setting at 0 or on a platform that reports no limit (-1); reservations are still counted, so the
+  numbers a log line prints stay true. More leaves than enters never leave a negative reservation behind, which would
+  admit builds for nothing.
+
+## `tests/cache_exit_snapshot_check.py`
+
+Windows: the pipeline cache save at exit holds new builds back, waits for the running ones, and copies the cache only
+while no build runs; the autosave never holds a build back. It builds `runtime/vk/vk_pipeline.c` `cache_build_enter()`
+and `cache_save_one()` into a test program against stand-ins for the driver and the file system. It takes the path to
+clang as an optional argument.
+
+## `tests/cache_stamp_check.py`
+
+Builds and runs `tests/cache_stamp_check.c` on `runtime/vk/vk_cache_stamp.h`, the translator stamp of the pipeline
+cache files (`runtime/vk/vk_pipeline.c` `cache_stamp_check()`): how `pipeline-cache.id` is read and written, and what
+a start does with the files when the stamp names the current translator, another one whose shaders are still carried,
+another one that is not, or none.
+
+What the runtime does with the files (deleting them, writing the stamp) shows in a run's log, in the line
+`vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>`; `log_lines()` finds that line's format strings
+(`LOG_LINES`) in `vk_pipeline.c`, adjacent string literals read as one, so a change of its words shows here.
+`uses()` does the same for the header's two rules about `pipeline-cache.bin` in play (`USES`): where `cache_load()`,
+`cache_save()` and `cache_stamp_check()` apply them and the start's line that says so. One of those patterns is the
+rule that an empty cache counts as saved, so a run that took nothing does not write a header alone, which the next
+start would refuse while the file no longer counts as missing.
+
+- What the runtime writes is what it reads back: the identity's 64 lowercase hex digits and a line end, as
+  `tools/build_xlate.py` writes `<translator>.id`. The same digits in upper case with a CRLF line end (a file edited
+  on Windows) read the same. Text that names no identity is no stamp, and the start reads the files and stamps them.
+- Actions: the same translator reads; another one carried reads and keeps the stamp; another one not carried drops; no
+  stamp reads and stamps. Carry never changes what a matching or missing stamp does.
+- A preparation translates everything under the current translator and carries nothing: another translator's files go
+  even while the carry lists it, or the stamp would keep naming it and a later start would delete what the preparation
+  built. A matching stamp or none is read in a preparation as anywhere.
+- The sequence of an update: translator old wrote the files; the first start of the new one carries old's shaders
+  (read, stamp kept), and so does each start until the carry pass removed old's translations (in the test, during the
+  second start); the start after drops the files and stamps the new translator; the start after that matches.
+- The stamp's and the play file's paths beside the cache file, and a path without ".bin"; cut to the room given.
+- `pipeline-cache.bin` is written at the exit of a run that started without it, in play alone: never with the file
+  there, never in a preparation (which writes it at every save). An empty file is none. Which saves write it: every
+  save without a play cache; with one, a fold's, and the exit's of a run that started without the file, not that run's
+  autosaves, nor any save of a run that read the file.
+- Through the end of an update in play: the start that deletes the files is due to write `pipeline-cache.bin` and
+  ends before its exit (a crash); the next start finds none and is due again, and its exit writes it, once (its
+  autosave does not); the start after reads it and writes the play file alone.
+- The words of the log line.
+
+## `tests/camera_clearance_check.py`
+
+The camera's clearance on pictures that are not 16:9: the patch set `camera_clearance` (`recomp/patches-v111.txt`) and
+`runtime/patches/camera_clearance.c`. No game files: the module layout and the patch page are stand-ins.
+
+The set's two sites are lifted by `recomp/lifter.py` as the generator lifts them: main+0x71a844 (`0xbd451e6a`,
+`ldr s10, [x19, #0x51c]`) and main+0x71b624 (`0xbd451e6e`, `ldr s14, [x19, #0x51c]`) keep their load of the camera's
+ratio and then call the patch page's +0xe00. The generator's own check of a patched site (`recomp/gen.py`
+`Emitter.patched_effect()`) takes them: no alternative uses flags. Whether flags are live across the call depends on
+the whole function, which needs the game's main: with the game's files, the camera step's generated C with and without
+the set differs only in the sites' two lines. No other set calls the slot, and only `camera_clearance.c` registers it,
+naming it through `HOST_SLOT`.
+
+`tests/camera_clearance_check.c` then builds `camera_clearance.c` with the rest of the runtime stubbed and calls the
+host as the two lifted sites call it, with the page's ratios set as `widescreen.c` sets them. Its `load()` does the
+site's load (the value in the register's low lane, the rest zero) and then the host, returns the low lane as a float
+and checks the upper lanes stay zero. The test's main base is placed so that the start check reads the two words
+above at their offsets (the second site is 0xde0 bytes after the first).
+
+- 21:9: the picture's ratio becomes 16:9 at both sites, in the load's own register; a value within 0.1% of it too;
+  another value (0.5% off) stays, and so does a square view. 32:9 likewise.
+- A 16:9 picture: nothing changes, even a ratio that matches it. A call from elsewhere changes nothing.
+- The start lines for off, another main and no set (no set: no lines), and the session lines.
+
+## `tests/carry_pool_check.py`
+
+`runtime/gfx/gfx_shader.c`'s carry refusal: a previous translator's translation whose texture pool array has the
+earlier length (32768, `VK_POOL_TEX_CARRIED` of `runtime/vk/vk.h`) is not served while the current translator may
+translate the shader, because its clamp draws every texture numbered from 32768 up with slot 32767. No GPU, no game
+files, any Python.
+
+The check cuts `pool_short()`, `carry_usable()`, `carry_load()`, `carry_find()`, `carry_find_iid()` and `carry_last()`
+out of `gfx_shader.c`, compiles them against stand-ins for the disk and memory caches, and walks the lookups: a refused
+entry is freed and the lookup goes on to the next previous identity, the owned branch (`gfx_shader_load_private()`)
+frees it as well, and entries with the current length, the sampler pool or no pool are served as before.
+`carry_last()`, which runs once the current translator has failed the shader, serves the refused translation after all
+and puts it in the memory cache, where the memory lookup finds it. `pool_short_note()`, which counts the shaders of the
+earlier length that enter the memory cache for the warning of `vk_texture.c`, counts those only, and logs only one that
+is not carried. `gfx_shader.c` does not include `vk.h`, so it states the earlier length itself: its `POOL_TEX_SHORT`
+must equal `VK_POOL_TEX_CARRIED`.
+
+## `tests/census_charge_check.py`
+
+Builds and runs `tests/census_charge_check.c` on `runtime/diag/perf_census.h`, which charges the part of a frame that
+an address-space walk of `NX2SARIA_MEM_CENSUS` overlapped to the frame's census part (`runtime/diag/perf.c`
+`ft_frame()`): from the replay part first, then from the unattributed part, never more than the overlap and never
+past the frame. No GPU, no game files, any Python.
+
+- No walk seen, a walk that ended before the frame or started after it: nothing moves. A walk that ended 10 ms into
+  the frame takes 10 ms from the replay. A walk inside the frame, longer than the replay part: the replay's 15 ms,
+  then 10 ms of the 20 unattributed. A walk still running reaches now.
+- A torn read (the last walk's start, 10 s back, with the 0 stored before the next start) moves nothing; a walk
+  running for 1.9 s still counts, one running for just over 2 s (`CENSUS_WALK_MAX_NS`) does not.
+- The overlap caps the charge, and the parts cap it too (nothing is taken from the frame's other parts). Never past
+  the frame: when the walk of `census_check` itself already took 35 of the frame's 40 ms, only the rest moves.
+- Random frames (seed 7): the census part never passes the frame, the moved time is the overlap capped by the frame's
+  room and its replay and unattributed parts, and the sum of the three parts is kept.
+
+## `tests/cfg_parse_check.py`
+
+Builds and runs `tests/cfg_parse_check.c`: `runtime/cfg/cfg.c`'s reading of the settings file and the environment,
+against stand-ins for what it links with. No game files. `cfg_parse_check <case> <ini>` loads the file the script
+wrote and prints every line `cfg.c` logged (`log: ...`) and what the case reads back (`got: ...`).
+
+| Case | What it does |
+|---|---|
+| `load` | `cfg_load()` on the file; then the check of the environment by `cfg_init()` (the variables the script set) |
+| `full` | `cfg_load()` on the file, then two `cfg_set()` of keys the file does not have |
+| `read` | `cfg_load()` and `cfg_init()`; then what `cfg_get()`, `cfg_bool()` and `cfg_int()` give for a list of keys |
+| `lowend` | `cfg_load()` and `cfg_init()`; then what `cfg_bool()` gives for the switch of the low-end GPU mode, what two of the mode's keys read and the default of one of them |
+| `norow` | `cfg_int()` and `cfg_double()` of a key without a row whose value (the environment's) does not parse |
+| `older` | `cfg_load()` on the file twice, as a reload reads it again, and `cfg_init()`; then what `cfg_get()` gives for three keys: the older `NX2NAVI_` names in the file and the environment, and their log lines |
+| `testset` | a test hook's values through four saves: test values only, a player's change beside them, the player's `cfg_set()` of a test key, and `cfg_test_keep()` (`SAVE=1`); then the menu's draft over a test value, whose preview (`cfg_set()`) and revert put the test's value back as the test's |
+
+The stand-ins: `cfg_supported()` counts every key (no patch sets here); `plat_fs_rename()` refuses with
+`NX2SARIA_TEST_RENAME_FAIL=1`, as a file in use would be refused; `plat_file_write_atomic()` prints what a save would
+write (`write: <file's text>`) and writes nothing, so a case sees which keys reached the file; `hw_detect()` knows
+nothing of the hardware, so the recommended preset is high, which sets nothing. `cfg_init()` finds no settings file
+next to the stand-in executable and checks the environment's values.
+
+What the readers get and what the log says:
+
+- A comment after a value (`runtime/cfg/cfg.c` `cut_comment()`): cut at a blank followed by `;` or `#` for a key whose
+  row has a set of values, the line logged once with its line number, `key = ; note` left unset; kept whole in free
+  text (a row without a set, a key without a row), in a value in double quotes and in the environment, where the log
+  still says it is part of the value; at most 16 lines, then a count.
+- Switches written as words (`switch_word()`, `cfg_bool()`): false, off and no in any case read as 0 and true, on and
+  yes as 1 through `cfg_get()`, `cfg_bool()` and `cfg_int()`, from the file and from the environment, with no line
+  about them.
+- The switch of the low-end GPU mode, which is gone (`lowend_set()`): on, it turns none of the mode's keys on and
+  gives none another default, and the log says once that the line does nothing ("the low-end GPU mode was removed"),
+  taking the same words as `cfg_bool()`, from the file and from the environment. The mode's keys keep their own
+  defaults and are read by themselves, with or without the switch.
+- Values outside their rows' sets (`check_value()`): a 0|1 switch with another value, a number outside its range, a
+  word that is none of the menu's choices, each named with its line; none for a file whose values fit, nor for a list
+  with numbers in it (the menu's presets); at most 16 lines, then a count.
+- A full settings table (`CFG_MAX_KEYS`): one line at load naming the first key not read, one at the first menu change
+  not kept.
+- A number read of a key without a row whose set value does not parse gives 0 (`default_number()`), not a crash.
+- A test hook's values (`cfg_set_test()`, `NX2SARIA_MENU_TEST_SET` of `runtime/ui/menu.cpp`) are read like any other
+  but no save writes them, the one at exit included, with one log line each time their count changes; a player's
+  change beside them is written alone, a player's `cfg_set()` of a test key makes it the player's, and
+  `cfg_test_keep()` (the hook's `SAVE=1`) lets the next save write the rest.
+- The older `NX2NAVI_` names (`older_env()`, `older_file_key()`): an environment variable and a settings file key so
+  written still apply, the current `NX2SARIA_` variable wins over the older one deterministically, the older one still
+  supplies a value when it is alone, the environment wins over the file, and the log names each older name once
+  however often the file is read.
+- `cfg_init()` (`find_ini()`) chooses the adjacent `nx2saria.ini`, renames an existing install's `nx2navi.ini` to it
+  when there is none, keeps reading `nx2navi.ini` under its old name when the rename is refused, and selects
+  `nx2saria.ini` for a fresh install without either file.
+
+## `tests/cfg_rows_check.py`
+
+Static check of `runtime/cfg/cfg.c`'s settings tables against what the runtime reads. Standard library only, so the
+content guard workflow runs it beside `tools/check_content.py`. It prints one line per problem with file:line and
+exits 1 if any; `--self-test` puts each kind of fault into copies and checks that each is caught. It fails on:
+
+- a row or name after a `//` on a line of `known[]`, `metas[]`, `sections[]` or `DECK[]`: it is not compiled, and a
+  hidden `metas[]` row ends every start with "FATAL: cfg: NX2SARIA_<X> has no row in the settings table" (this shipped
+  in two test builds); a `/*` inside those tables, which this check does not read;
+- a name twice in `known[]`, or two `metas[]` rows for one key in one `#if` branch (the first branch stands for the
+  table, later ones repeat its keys);
+- a `metas[]` row whose key is not in `known[]`;
+- a read with `cfg_value`, `cfg_int`, `cfg_bool` or `cfg_double` of `"NX2SARIA_<KEY>"` (directly, or through one level
+  of a function that passes its `const char *` parameter on to one of them) whose key has no `metas[]` row, unless the
+  same function asked `cfg_get`, `cfg_is_set` or `cfg_meta` about that key before it (as `kernel.c`'s `SPIN` and
+  `vk_headroom.c` do);
+- a name the runtime reads that is not in `known[]` and does not start with `CHEAT_` (`runtime/cfg/cfg.c`
+  `is_known()`): `cfg_get`, `cfg_is_set` and `cfg_meta` of `"NX2SARIA_<KEY>"`, `rt_knob("<KEY>", ...)`, one level of
+  functions whose `const char *` parameter reaches `cfg_get` or a `"NX2SARIA_%s"` of it, and the
+  `set <name> NX2SARIA_<KEY>` lines of `recomp/patches-v111.txt`. Such a key set in the settings file logs "unknown
+  key" and is listed as unknown in the menu.
+
+Names read only with `getenv`, `plat_setenv` or `cfg_setenv` are environment-only and not checked.
+`runtime/cfg/cfg_probe.c` asks for an unknown key on purpose and is left out, as are `third_party/` and the generated
+`*_spv.h` headers.
+
+The helpers: `matching()` gives the index of the bracket that closes the one given, brackets in string literals and
+comments left out; `split_comment()` the code and the comment of one line, the comment starting at the first `//`
+outside a string literal; `strip_comments()` C source with its comments blanked out, line numbers and string literals
+kept; `tables()` the names of each table, the first `#if` branch of each line only, with the problems of hidden rows;
+`functions()` the name, parameters and body of every function definition in comment-stripped source; `check()` the
+problems, one line each, from `{path as reported: text}`. `self_test()` plants, among others, a row the game reads
+hidden behind a `//` put before it on its line (its readers are left without a row), and a key the game reads with
+`cfg_bool` (or another typed read: they all take the row default of `cfg_value`) that is in `known[]` but has no
+`metas[]` row: the game ends at start with "FATAL: cfg: ... has no row in the settings table" whenever neither the
+environment nor the settings file sets the key.
+
+## `tests/changebank_hold_check.py`
+
+The neighbouring map's hold: the patch set `changebank_hold` (`recomp/patches-v111.txt`) and
+`runtime/patches/changebank_hold.c` with `runtime/patches/changebank_hold.h`. No game files: the module layout and the
+patch page are stand-ins written to the test's build folder.
+
+The set's one site is lifted by `recomp/lifter.py` as the generator lifts it: main+0x3299d28 (`0x9100054a`, the loop's
+`add x10, x10, #1`) keeps the add and then calls the patch page's +0xe30. The generator's own check of a patched site
+(`recomp/gen.py` `Emitter.patched_effect()`) takes it: no alternative uses flags, which a patched call may not.
+Whether flags are live across the call depends on the whole function, which needs the game's main: with the game's
+files, the update's generated C with and without the set differs only in the site's line. The host writes w15 and
+reads x10, which `recomp/regs.py` does not count as callee-saved, so the lifted code has them in the `Cpu` around the
+call. No other set calls the slot, and only `changebank_hold.c` registers it, naming it through `HOST_SLOT`.
+
+`tests/changebank_hold_check.c` builds `changebank_hold.c` with the rest of the runtime stubbed, runs the rule over
+stand-in units, then calls the host as the lifted site calls it, over a stand-in manager laid out as 1.1.1's
+constructor (main+0xd12c00) lays it out.
+
+- The rule alone (`cb_step()`): the first choice is the game's. The castle chosen for 300 ms, then the field again:
+  held all along and absorbed, with no load cancelled (the field asked for all along). The castle for the whole hold:
+  taken at 2000 ms, not before, with one new load. Two units of one map (the choice moves from unit 2 to unit 3, both
+  the valley's): no hold, no load lost. A direct request is the game's at once. After a gap over half a second (a
+  loading screen) the choice is the game's; so it is for another manager (another area), for a held unit the game let
+  go (no longer in use) and for one whose unit holds another map now. A hold of 0: always the game's, the flips
+  counted. Away for two other maps in turn: the hold counts from the first update that left, so it ends all the same.
+  No map at all (Link left every radius): the held map stays for the hold, then none. Nothing held and nothing chosen
+  gives none. The hash (`cb_fnv1a()`) takes a path's bytes up to its end and is never 0.
+- The host: `update()` is one update as the lifted code runs it, the loop's 16 passes through the site (the add, then
+  the host), the last with the loop's w15 and w17, the earlier ones with mid-loop values the host must leave alone;
+  then, after the loop, `cmp w15, #0`, `ccmn w17, #1, #4, lt` and `csel w21, w17, w15, gt` (main+0x3299d90..0x3299d9c)
+  on the registers as the host left them. It returns w21. Checked: the castle held back and absorbed, taken after 2000
+  ms (125 updates), a direct request, the held map while the game names none (w15 and w17 -1) and while it asks for a
+  unit directly, a call from another place of the slot (changes nothing), registers that are not units (kept, logged
+  once), a manager that does not match (its updates keep the game's choice; one line), the minute line (once a minute
+  and only when the choice moved), and the start lines, with a main that differs at the site (`0xd503201f`) turning
+  the set off.
+
+## `tests/check_isa_test.py`
+
+`tools/check_isa.py` on the runtime files that hold instructions above x86-64-v2 behind a runtime CPU check
+(the assembly stub `kern_ap_stub_ymm` of `runtime/hle/kernel.c`, `runtime/sha256.c` `blocks_ni()`): built as
+`tools/build_game.py --cpu v2` builds the runtime (`-march=x86-64-v2`) and as players' builds do (no `-march`), they pass, and a function with
+such an instruction and no entry in `DISPATCHED` still fails. The flags are `RT_FLAGS` of `tools/build_game.py` without
+its warnings. It needs the MSYS2 UCRT64 clang and an objdump and is skipped without them; no game files.
