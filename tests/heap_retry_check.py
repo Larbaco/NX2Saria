@@ -1,15 +1,4 @@
 # needs: clang
-"""Check the model heaps' retry: the patch set heap_retry (recomp/patches-v111.txt) and runtime/patches/heap_retry.c.
-
-The set's four sites, lifted by recomp/lifter.py as the generator lifts them: main+0x436910 and main+0x436db4 keep
-their stp and then call the patch page's +0xed0; main+0x436f18 and main+0x437094 call the page's +0xec0 in place of
-main+0x502050. No other set calls those slots, and only heap_retry.c registers them. Then tests/heap_retry_check.c
-builds heap_retry.c with the rest of the runtime stubbed and calls its host functions over stand-in heaps, in six
-modes (main, test, shipped, off, mismatch, no-set). No game files: the module layout and patch page are stand-ins written to the
-test's build folder.
-
-Usage: heap_retry_check.py
-"""
 import os
 import re
 import shutil
@@ -26,12 +15,11 @@ import runtime_include
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 MAIN, PAGE = 0x7000000000, 0x4ea0000
 HOST_CPU, HOST_GPU = 0xed0, 0xec0
-# site: (original word, the words of the replacement as (kept original | page slot called))
 SITES = {
-    0x436910: (0xa90d577f, ('keep', HOST_CPU)),   # stp xzr, x21, [x27, #0xd0]
-    0x436db4: (0xa90b5b7f, ('keep', HOST_CPU)),   # stp xzr, x22, [x27, #0xb0]
-    0x436f18: (0x94032c4e, (HOST_GPU,)),          # bl main+0x502050
-    0x437094: (0x94032bef, (HOST_GPU,)),          # bl main+0x502050
+    0x436910: (0xa90d577f, ('keep', HOST_CPU)),
+    0x436db4: (0xa90b5b7f, ('keep', HOST_CPU)),
+    0x436f18: (0x94032c4e, (HOST_GPU,)),
+    0x437094: (0x94032bef, (HOST_GPU,)),
 }
 GPU_ALLOC = 0x502050
 
@@ -64,7 +52,6 @@ def check_sites():
     mine = sorted(off for off, alts in table.sites['main'].items() if any(k == key for k, _, _ in alts))
     assert mine == sorted(SITES), [hex(o) for o in mine]
     lifter = Lifter(0, simd='c')
-    # the page's place, checked against another set's call of it: wide_bars calls its +0xef0 from main+0x774068
     bars = table.sites['main'][0x774068][0][1][-1]
     assert lifter.lift(bars, MAIN + 0x774068).target == MAIN + PAGE + 0xef0, 'the patch page is not at main+0x4ea0000'
     for off, (original, want) in SITES.items():
@@ -74,9 +61,9 @@ def check_sites():
         assert orig == original, (hex(off), hex(orig))
         assert len(words) == len(want) and not any(isinstance(w, tuple) for w in words), (hex(off), words)
         first = lifter.lift(original, MAIN + off)
-        if original >> 26 == 0x25:   # the game's call of main+0x502050, which the replacement takes over
+        if original >> 26 == 0x25:
             assert first.kind == 'bl' and first.target == MAIN + GPU_ALLOC, (hex(off), first.kind)
-        else:   # a store that writes no flags and calls nothing, kept as the first word
+        else:
             assert first.kind == 'op' and 'ST64' in first.code and 'c->x[27]' in first.code, first.code
         for w, part in zip(words, want):
             insn = lifter.lift(w, MAIN + off)
@@ -85,7 +72,6 @@ def check_sites():
             else:
                 assert insn.kind == 'bl' and insn.target == MAIN + PAGE + part, \
                     (hex(off), insn.kind, insn.target and hex(insn.target))
-    # no other site of any set calls the two slots, and only heap_retry.c registers them
     for off, alts in table.sites['main'].items():
         for k, repl, _ in alts:
             if k == key:
@@ -99,7 +85,7 @@ def check_sites():
     for slot in (HOST_CPU, HOST_GPU):
         users = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c')
                        if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (slot, slot), p.read_text(encoding='utf-8', errors='replace'), re.I))
-        assert users == [], (hex(slot), users)   # heap_retry.c names them through HOST_CPU and HOST_GPU
+        assert users == [], (hex(slot), users)
     text = (ROOT / 'runtime' / 'patches' / 'heap_retry.c').read_text(encoding='utf-8')
     assert '#define HOST_CPU 0x%x' % HOST_CPU in text and '#define HOST_GPU 0x%x' % HOST_GPU in text
     others = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c') if p.name != 'heap_retry.c'

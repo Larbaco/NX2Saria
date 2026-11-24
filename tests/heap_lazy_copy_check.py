@@ -1,14 +1,3 @@
-"""Build and run tests/heap_lazy_copy_check.c: runtime/memory.c mem_copy_readable with the lazy heap
-(NX2SARIA_HEAP_LAZY=1), where a heap page nothing touched yet is still reserved. The copy holds frz_lock, which the
-fault on such a page waits for; the check needs every copy to return, untouched pages to read zero and stay reserved,
-and pages past the heap's end to be left out.
-
-Windows only (the lazy heap is): memory.c is built with the Windows platform layer and its fault handler, the rest of
-the runtime stubbed. No game files: the module layout the runtime includes is a stand-in written to the test's build
-folder.
-
-Usage: heap_lazy_copy_check.py
-"""
 import os
 import shutil
 import subprocess

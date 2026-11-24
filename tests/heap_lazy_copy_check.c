@@ -1,8 +1,3 @@
-// runtime/memory.c mem_copy_readable with the lazy heap (NX2SARIA_HEAP_LAZY=1): a heap page nothing touched yet is
-// still reserved, and the copy holds frz_lock, which the fault on such a page (heap_lazy_fault) waits for on the same
-// thread. Built and run by tests/heap_lazy_copy_check.py with the Windows platform layer and the real fault handler;
-// the rest of the runtime is stubbed. Prints each failed check and exits 1 on any, 4 when a copy never returns.
-// Each copy runs on a worker the main thread gives 3 s: before the fix the first one hung there.
 #include "memory.c"
 
 #include <stdarg.h>
@@ -10,7 +5,6 @@
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the runtime memory.c and the platform layer reach
 unsigned rt_trace;
 uint64_t rt_guest_start_ns;
 const unsigned long long rt_app_pool_bytes = 0xCD500000ull;
@@ -21,7 +15,7 @@ const char *cfg_value(const char *name) { (void)name; return "0"; }
 int cfg_bool(const char *name) { return !strcmp(name, "NX2SARIA_HEAP_LAZY"); }
 void cfg_init(void) {}
 void cfg_start(int game) { (void)game; }
-int tracker_api_on(void) { return 0; }   // mem_init asks where the stack and heap block goes
+int tracker_api_on(void) { return 0; }
 int cfg_setenv(const char *name, const char *value) { (void)name, (void)value; return 0; }
 int rt_knob(const char *name, const char *def) { (void)name; return strcmp(def, "0") != 0; }
 int ldr_count(void) { return 0; }
@@ -45,7 +39,6 @@ void rt_fatal(const char *fmt, ...) {
     _Exit(3);
 }
 
-// ---- one copy on a worker, as the replay (vk_memory.c mirror_capture) or a present (frame_rate.c) makes it
 static struct { uint64_t a, len; uint8_t *dst, ok; int got; volatile int done; } J;
 static void copier(void *arg) {
     (void)arg;
@@ -78,7 +71,6 @@ int main(void) {
     CHECK(heap_lazy, "the lazy heap is off");
     static uint8_t buf[0x30000];
 
-    // ---- a page nothing touched: copied as zeros, and left reserved
     uint64_t a = heap + 0x30000;
     CHECK(plat_mem_state(a, a + PAGE, &y) == PLAT_MEM_RESERVED, "the untouched page is not reserved");
     memset(buf, 0xAB, 64);
@@ -87,8 +79,7 @@ int main(void) {
           J.got, J.ok, buf[0]);
     CHECK(plat_mem_state(a, a + PAGE, &y) == PLAT_MEM_RESERVED, "the copy committed the untouched page");
 
-    // ---- a range from touched pages into untouched ones: the written bytes, then zeros
-    uint64_t t = heap + 0x100000;   // a 64 KiB run committed by a host access, then written
+    uint64_t t = heap + 0x100000;
     CHECK(mem_host_readable(t, 0x10000), "the heap page could not be made readable");
     memset((void *)(uintptr_t)t, 0x5A, 0x10000);
     CHECK(plat_mem_state(t + 0x10000, t + 0x10000 + PAGE, &y) == PLAT_MEM_RESERVED, "the next run is not reserved");
@@ -97,12 +88,10 @@ int main(void) {
     CHECK(J.got == 1 && J.ok == 1 && all(buf, 0x8000, 0x5A) && all(buf + 0x8000, 0x18000, 0),
           "touched then untouched heap pages: returned %d, ok %d, bytes %#x %#x", J.got, J.ok, buf[0], buf[0x8000]);
 
-    // ---- past the heap's end the pages are not the heap's: left out, without a fault
     memset(buf, 0xAB, 64);
     copy(heap + size - 32, 64, buf, "a range past the heap's end");
     CHECK(J.got == 0 && J.ok == 0 && all(buf, 64, 0xAB), "a range past the heap's end: returned %d, ok %d", J.got, J.ok);
 
-    // ---- several ranges in one call, as frame_rate.c batches them
     uint8_t d0[16], d1[16], d2[16], oks[3];
     uint8_t *dst[3] = {d0, d1, d2};
     uint64_t src[3][2] = {{t, 16}, {a + 0x100, 16}, {heap + size - 8, 16}};
