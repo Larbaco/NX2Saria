@@ -179,7 +179,8 @@ How the module uses `__doc__`, from the `ast`: as a whole, or only its first lin
 The licence lines of a run of comment lines (or of a docstring), by paragraph: a paragraph with licence text in it
 ("Permission is hereby granted", "THE SOFTWARE IS PROVIDED", an SPDX line, the zlib terms) is kept whole; a
 "Copyright (c) ..." notice is kept from the start of its sentence to the end of that sentence or the line that names
-`THIRD_PARTY_NOTICES.md`; the sentence may start on a line above, unless the notice's own line starts it ("Contains
+`THIRD_PARTY_NOTICES.md`, unless the sentence goes on after that name (as in "...; see THIRD_PARTY_NOTICES.md): the
+spin wait search", whose next line says what the notice covers); the sentence may start on a line above, unless the notice's own line starts it ("Contains
 code", "Portions", "Copyright"). A line that names a licence and that licence's file, as in "(MIT, ffx/LICENSE.txt)",
 is kept when the file is there, looked for beside the source and from the top of the repository; a path that leads
 nowhere keeps nothing. Empty comment lines next to a kept line are kept with it.

@@ -1,4 +1,5 @@
 # Copyright (c) 2026 seedds (MIT; see THIRD_PARTY_NOTICES.md): the spin wait search
+# ("Spin waits": spin_rw, spin_kind, spin_rmw, spin_lock, spin_store, spin_quick, spin_region, spin_region1).
 import argparse
 import re
 import struct

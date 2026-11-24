@@ -90,7 +90,7 @@ LICENSE_FULL = re.compile(
     r'This file is part of the FidelityFX SDK|provided .as-is.|must not be misrepresented|Altered source versions|'
     r'This notice may not be removed', re.I)
 COPYRIGHT = re.compile(r'Copyright\s*(?:\([cC]\)|©|\d)')
-SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES|\.\)?\s*$')
+SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES(?:\.md\b)?(?!\.md)\)?(?:\.|\s*$)|\.\)?\s*$')
 NOTICE_START = re.compile(r'^[#/*;\s]*(?:Contains code|Portions|Copyright)\b')
 LICENSE_FILE = re.compile(r'\((?:MIT|BSD[-\w ]*|Apache[-\w. ]*|zlib|ISC|MPL[-\w. ]*),\s*'
                           r'((?:[\w.-]+/)*(?:LICEN[SC]E|COPYING)(?:\.txt|\.md)?)\)')
