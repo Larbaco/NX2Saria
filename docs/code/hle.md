@@ -3565,3 +3565,413 @@ Names bound by the loader: each override and observer probed here must match a r
 content, so `aoc.ListAddOnContent` may be unbound there). Every linked override is either probed here or belongs to
 another probe or owner (`nn::fs`: the fs probe; fibers: the kernel probe; `movie::Decoder`: `--probe-movie`; memcpy:
 the graphics write-back in `runtime/nvn/nvn_api_core.c`).
+
+## `runtime/hle/amiibo.h`
+
+The amiibo loader and state management subsystem (540-byte NTAG215 binary dumps). What the player sees, the keys
+file, the write-back and the settings: [amiibo.md](../amiibo.md).
+
+- `AMIIBO_APP_AREA_SIZE` (0xD8) is the bytes of game data a figure holds.
+- `AmiiboDeviceState` corresponds to the DeviceState of `nn::nfp` / `nn::nfc`. `AmiiboInfo` is the figure's
+  identification.
+- The declarations are grouped: the subsystem's lifecycle (`amiibo_init()`); the device emulation's status
+  (`amiibo_set_device_present()`); tag detection and its lifecycle (`amiibo_start_detection()`); tag mounting
+  (`amiibo_mount()`); the state query; file loading and the actions that trigger a tap (`amiibo_load_file()`); the
+  timer tick called during menu and frame updates (`amiibo_tick()`); the options (`amiibo_set_auto_remove()`); tag
+  inspection (`amiibo_has_tag()`); and the extraction of the Horizon buffers, called by the nfp IPC service and the
+  overrides (`amiibo_get_tag_info()`).
+- `amiibo_get_reader_state()`: the state the menu shows: searching also within a second after a stop, since the game
+  restarts detection many times a second while it waits for a tag. The game reads `amiibo_get_device_state()`.
+
+The figure's own data: owner, nickname, write counts and the game's application area. It is kept per figure UID in
+`<profile>/amiibo/<uid>.dat`; seeded from the dump when the keys decrypt it, and written back into the dump file
+(encrypted and signed again) when `NX2SARIA_AMIIBO_WRITEBACK` is on and the keys read it.
+
+- `AmiiboDataSource`: `AMIIBO_SOURCE_NEW` (0): nothing stored yet: defaults (registered, nickname from the file name,
+  no area); `AMIIBO_SOURCE_SAVED` (1): `<profile>/amiibo/<uid>.dat`; `AMIIBO_SOURCE_DUMP` (2): the decrypted dump.
+- `AmiiboFigureData`: `decrypted`: the keys decrypted and verified this dump; `registered`: owner and nickname set;
+  `nickname[41]`: UTF-8, at most 10 characters; `app_area_size`: the bytes the game last wrote, at most
+  `AMIIBO_APP_AREA_SIZE`.
+- `amiibo_get_figure_data()`: a copy of the loaded figure's data. False without a loaded dump.
+- `amiibo_erase_app_area()`: the menu's "erase game data": drops the application area and saves the figure. False
+  without a loaded dump.
+- `amiibo_reload_keys()` loads (or reloads) the keys from `NX2SARIA_AMIIBO_KEYS`, or `<amiibo folder>/key_retail.bin`
+  when that is unset, and decrypts the loaded dump again. True when keys are loaded afterwards.
+
+The `nn::nfp` application area calls (the overrides of `runtime/hle/ov_system.c`, IUser of `runtime/hle/nfp.c`): each
+returns an `nn::nfp` result: 0 or one of these. Without a mounted figure every call returns
+`AMIIBO_R_DEVICE_NOT_FOUND`.
+
+| Result | Value | When |
+|---|---|---|
+| `AMIIBO_R_DEVICE_NOT_FOUND` | 0x8073 | no figure on the reader (module 115, description 64) |
+| `AMIIBO_R_AREA_NOT_CREATED` | 0x10073 | the figure has no application area yet (description 128) |
+| `AMIIBO_R_WRONG_ACCESS_ID` | 0x13073 | the application area belongs to another access id (description 152) |
+| `AMIIBO_R_AREA_EXISTS` | 0x15073 | CreateApplicationArea on a figure that has one (description 168) |
+
+- `amiibo_get_app_area()`: the application area cut to `cap` bytes into `out`; `*out_size` the bytes copied.
+- `amiibo_set_app_area()` changes the application area in memory only; `amiibo_flush_figure()` stores it.
+- `amiibo_create_app_area()`: create (`recreate` false: `AMIIBO_R_AREA_EXISTS` when there is one) or recreate an
+  application area for `access_id` with `size` bytes of initial data, then stores the figure as
+  `amiibo_flush_figure()` does.
+- `amiibo_flush_figure()` counts and dates a write, saves the figure's data and, with `NX2SARIA_AMIIBO_WRITEBACK` on
+  and a decrypted dump, writes it back into the dump file (encrypted and signed again; `<dump>.bak` first, once).
+
+## `runtime/hle/amiibo.c`
+
+The amiibo dump loader, the Horizon NFP state emulation and the figure's own data: owner, nickname, write counts and
+the game's application area (`runtime/hle/amiibo.h`).
+
+`AMIIBO_PROGRAM_ID` (0x0400486024dec000) is the game's title id, as `PROGRAM_ID` of `runtime/hle/svc.c` tells it.
+
+Two locks, always taken in this order: `g_amiibo_io_lock`, then `g_amiibo_lock`, never the other way round.
+`g_amiibo_lock` guards the state and is held for memory work only, so the menu thread's per-frame queries
+(`amiibo_has_tag()`, `amiibo_get_reader_state()`) never wait for a disk. `g_amiibo_io_lock` serialises the keys,
+decryption and encryption, loading a dump and the file writes of a commit, so two commits reach the disk in the order
+they were made. `g_dump`, `g_has_dump` and `g_info` change only while both are held, so holding `g_amiibo_io_lock`
+alone reads them.
+
+- `g_dump` is the 540-byte raw NTAG215 binary dump.
+- `g_fig` is the loaded figure's data (`amiibo_get_figure_data()`); `g_title_id` (the program that created the
+  application area) and `g_app_write_counter` (the writes of the application area) are what `AmiiboFigureData` does
+  not carry.
+- `g_plain` and `g_fields`, while `g_fig.decrypted`: the decrypted dump and its fields, which each commit brings up to
+  date with `g_fig` so that a write-back (`amiibo_flush_figure()`) stores the game's changes and keeps the rest of the
+  tag as it was.
+- `g_keys_tried` (under `g_amiibo_io_lock`): the keys file was read once (`keys_load_io()`).
+
+### `amiibo_validate_dump()`
+
+- The NTAG215 Capability Container (CC) at page 3 (offset 0x0C). An amiibo's is F1 10 FF EE, not the E1 of a plain
+  NDEF tag; the CC is not encrypted, so encrypted dumps carry it too.
+- UID sanity: the UID (bytes 0..2 and 4..7) cannot be all zeroes or all 0xFF.
+- The ISO 14443-3 / NTAG215 Bit Check Character (BCC) verification: page 0 byte 3 (BCC0) = 0x88 ^ UID[0] ^ UID[1] ^
+  UID[2]; page 2 byte 0 (BCC1) = UID[3] ^ UID[4] ^ UID[5] ^ UID[6].
+
+### `copy_uid()` `parse_dump_info()`
+
+`copy_uid()`: the 7-byte UID of an NTAG215 dump: bytes 0..2, then 4..7. Byte 3 is the check byte BCC0.
+`parse_dump_info()`: the amiibo ID at offset 0x54 (8 bytes, not encrypted): character ID and variant, figure type,
+model number (big-endian), series, format version 02.
+
+### `today()` `default_nickname()` `dat_paths()`
+
+- `today()`: today's date on the host clock, as the figure stores it; the year is kept to 2000..2127, the years a
+  figure's date field holds.
+- `default_nickname()`: the nickname of a figure without one: the dump's file name without its extension, at most 10
+  characters (UTF-8, cut on a character boundary: a character is its lead byte, then its continuation bytes) and 40
+  bytes.
+- `dat_paths()`: `<profile>/amiibo` and `<profile>/amiibo/<UID as 14 lower-case hex digits>.dat`. False without a
+  profile folder or when a path does not fit.
+
+### `dat_build()` `dat_parse()`
+
+The .dat file: one figure's data, little-endian (`DAT_VERSION` 1):
+
+| Offset | Field |
+|---|---|
+| 0x00 | "NXAD" |
+| 0x04 | u32 version (1) |
+| 0x08 | UID (7 bytes) |
+| 0x0F | flags: 1 registered, 2 application area |
+| 0x10 | u16 write counter |
+| 0x12 | setup date: u16 year, u8 month, u8 day |
+| 0x16 | last write date, the same layout |
+| 0x1A | u16 application area writes |
+| 0x1C | u32 access id |
+| 0x20 | u32 application area bytes written |
+| 0x24 | u32 0 |
+| 0x28 | u64 title id of the program that created the application area |
+| 0x30 | nickname, UTF-8, NUL-padded (48 bytes) |
+| 0x60 | application area (`AMIIBO_APP_AREA_SIZE` bytes) |
+
+`dat_build()` holds `g_amiibo_lock`. `dat_parse()`: a .dat file into `g_fig` (all but `source` and `decrypted`),
+`g_title_id` and `g_app_write_counter`. False, with nothing changed, when it is not a .dat of this version or belongs
+to another UID. Holding `g_amiibo_lock`.
+
+### `seed_from_fields()` `figure_load_locked()`
+
+`seed_from_fields()`: `g_fig` from the decrypted fields in `g_fields`. Holding `g_amiibo_lock`.
+`figure_load_locked()`: the loaded figure's data, in the order of `amiibo.h`: the .dat in the profile, else the
+decrypted dump, else defaults (registered, nickname from the file name, today's date, no application area). `g_dump`,
+`g_info` and, when `dec`, `g_plain` and `g_fields` are set. Holding `g_amiibo_lock`.
+
+### `writeback_on()` `keys_load_io()`
+
+`writeback_on()`: `NX2SARIA_AMIIBO_WRITEBACK`: "1" writes the game's changes back into the dump file. It is read
+through `cfg_get`, which needs no settings-table row and takes no lock.
+
+`keys_load_io()`: the keys file: `NX2SARIA_AMIIBO_KEYS`, else `<NX2SARIA_AMIIBO_DIR, or ./amiibo>/key_retail.bin`. The
+keys loaded before are dropped either way (`amiibo_keys_load`, which logs what it found). Holding
+`g_amiibo_io_lock`, not `g_amiibo_lock`.
+
+### `commit_prepare_locked()` `commit_write_io()`
+
+`AmiiboCommit` is what a commit writes, gathered under `g_amiibo_lock` and written after it is released: `dat` and
+the .dat's folder and path; `dump` and the encrypted dump, to `dump_path`.
+
+`commit_prepare_locked()`: a write to the figure (Flush, Create, Recreate, the erase): counts it, dates it, brings
+`g_fields` up to date and gathers the files: always the .dat; with writeback, when the keys read the dump, the dump
+encrypted again (`g_dump` takes it too). Holding both locks. `commit_write_io()` writes the files of a commit, holding
+`g_amiibo_io_lock`, not `g_amiibo_lock`. The dump as it is on disk goes to `<dump>.bak` once, before the first
+write-back changes it.
+
+### `amiibo_start_detection()` `amiibo_stop_detection()`
+
+While the game waits for a tag it stops and starts detection again several times a second (tens with the menu open),
+so the log names the first few and then a count every 200th start. It also stops detection whenever it finds the
+reader active (GetDeviceState 1 to 4: `main+0xeb8be0` and others), several times a frame, so stops are counted on
+their own and named at powers of two only: a state that kept the reader active once logged 2.2 million stops in
+seconds. `g_detect_stop_ns` is the last stop: the menu holds "searching" across the game's restarts.
+
+A new detection clears `g_mounted`: it finds a figure left on the reader again, and the game mounts it again.
+
+### `amiibo_get_device_state()`
+
+As `nn::nfp`: found and mounted only while detection runs; StopDetection leaves the reader Initialized with a figure
+still on it. The game stops detection after it read a figure and again each time it finds the reader in any other
+state, so a figure that stayed mounted after the stop kept a game thread stopping it until the figure left the reader
+(auto-remove, 2.5 s by default; for good with auto-remove off). The figure's data stays readable after the stop
+(`g_mounted` is cleared at the next start), as before.
+
+### `amiibo_load_file()`
+
+The figure's saved data is read after any commit of it has reached the disk. The first dump loads the keys: the
+settings are read by then. The static `plain` and `fields` are under `g_amiibo_io_lock`.
+
+### `amiibo_get_tag_info()` `amiibo_get_model_info()` `amiibo_get_common_info()` `amiibo_get_register_info()`
+
+- TagInfo: the UUID at offset 0x00 (10 bytes at most), its length (7) at 0x0A, the protocol at 0x20 (TypeA = 1), the
+  tag type at 0x24 (Type2 / NTAG215 = 2).
+- `nn::nfp::ModelInfo` from the amiibo ID at 0x54: character ID and variant in the tag's byte order (bytes 0-2),
+  series at 3, model number little-endian at 4 (big-endian on the tag), figure type at 6. The game tells figures of
+  one character apart by the model number.
+- `nn::nfp::CommonInfo` (0x40 bytes): last write date {u16 year, u8 month, u8 day} at 0, write counter u16 at 4,
+  figure format version at 6, application area size u32 at 8; little-endian.
+- `nn::nfp::RegisterInfo` (0x100 bytes): the owner's Mii as a CharInfo at 0 (0x58 bytes), the setup date {u16 year, u8
+  month, u8 day} at 0x58, the nickname UTF-8 NUL-terminated at 0x5C (up to 0x29 bytes), font region at 0x85. The Mii
+  is a minimal default CharInfo: the tag's own Mii is not converted. A figure without an owner reports the nickname a
+  new one gets (`default_nickname()`). An unregistered tag stores date 0 (2000-00-00), for which today's date is
+  given.
+
+### `amiibo_reload_keys()`
+
+`g_dump` and `g_has_dump` change only under `g_amiibo_io_lock`, which this holds, so it reads them without
+`g_amiibo_lock`. A figure with nothing of it stored yet (`AMIIBO_SOURCE_NEW`) is seeded with the tag's own data.
+
+### `amiibo_get_app_area()` `amiibo_set_app_area()`
+
+`amiibo_get_app_area()` gives the whole area, cut to the caller's buffer: the game checks that the size it gets is the
+size it asked for. In `amiibo_set_app_area()` the bytes past the new data read back as zero.
+
+## `runtime/hle/amiibo_crypto.h`
+
+Amiibo tag encryption: the keys file the player supplies, decrypting a 540-byte NTAG215 dump and checking its two
+signatures, and encrypting and signing it again after the game changed it (`runtime/hle/amiibo.c`
+`amiibo_flush_figure()`).
+
+- `AMIIBO_KEYS_SIZE` (160): two 80-byte master keys: the data key, then the tag key.
+- `amiibo_keys_load()` loads the keys file. False when it is missing, has another size or fails the format check; the
+  keys loaded before are dropped either way. Key bytes are never logged, printed or written anywhere.
+- `AmiiboPlain` is a decrypted dump. Its layout is private to `runtime/hle/amiibo_crypto.c`; it is read and changed
+  through `amiibo_plain_read()` and `amiibo_plain_write()`.
+- `amiibo_decrypt()` decrypts `tag` into `out` and checks both signatures. False without keys or when a signature
+  does not match: the figure is then used without its stored data (UID and model only).
+- `amiibo_encrypt()` encrypts and signs `plain` into `tag`. False without keys.
+- `AmiiboFields`: the fields of a decrypted figure that `nn::nfp` reports or the game writes: `flags` (`AMIIBO_FLAG_*`:
+  `AMIIBO_FLAG_REGISTERED` 0x10, owner and nickname set; `AMIIBO_FLAG_APP_AREA` 0x20, an application area exists);
+  `write_counter`, the figure's writes; the setup date (owner registration); the last write date; `nickname[41]`,
+  UTF-8 (at most 10 characters), NUL-terminated; `mii[0x60]`, the owner's Mii as the tag stores it; `title_id`, the
+  program that created the application area; `app_write_counter`, the writes of the application area; `access_id`,
+  the application area's owner.
+- `amiibo_plain_write()` stores every field of `in` (the nickname encoded again) and leaves the rest of `p` as it
+  was.
+- `amiibo_crypto_selftest()`: known-answer tests of AES-128, HMAC-SHA256 and a decrypt/encrypt round trip with
+  made-up keys. It logs the first failure and returns false. Called by `runtime/hle/ov_probe.c`.
+
+## `runtime/hle/amiibo_crypto.c`
+
+Amiibo tag encryption (`runtime/hle/amiibo_crypto.h`): the player's keys file, decrypting and verifying a 540-byte
+NTAG215 dump, and signing and encrypting it again after `runtime/hle/amiibo.c` changed the figure's data. The
+repository holds no key: the keys come from the file the player supplies ([amiibo.md](../amiibo.md#keys-file)).
+
+Two 80-byte master keys make the keys file: the data key, which encrypts and signs the figure's data, then the tag
+key, which signs the parts of the tag that never change. Neither is used directly. Each dump derives its own AES key,
+AES counter and HMAC key from each master key and from the tag's UID, salt and (for the data key) write counter, so
+the same figure data encrypts differently on every tag and after every write.
+
+An `AmiiboPlain` keeps the tag's own byte layout with the two encrypted regions decrypted in place: everything outside
+them, the two signatures included, sits where the tag has it. Encrypting a plain image that nobody changed gives back
+the dump it came from, byte for byte.
+
+Key bytes, derived keys and decrypted data never reach the log. Buffers that held them are wiped before they go out
+of scope (`wipe()`, which the compiler cannot drop as a dead store).
+
+### The layouts
+
+One master key, 80 bytes:
+
+| Offset | Field |
+|---|---|
+| 0x00 `MK_HMAC_KEY` | 16 bytes: the key of the derivation HMAC |
+| 0x10 `MK_TYPE` | 14 bytes: a NUL-terminated name; it and its NUL start every derivation seed |
+| 0x1E `MK_RESERVED` | 1 byte, unused |
+| 0x1F `MK_MAGIC_SIZE` | how many of the 16 magic bytes the seed takes, at most 16 |
+| 0x20 `MK_MAGIC` | 16 bytes |
+| 0x30 `MK_XOR_PAD` | 32 bytes, XORed with the tag's salt in the seed |
+
+The tag (and the plain image, which has the same layout):
+
+| Offset | Field |
+|---|---|
+| 0x000 `T_UID` | 8 bytes: UID bytes 0-2, check byte 0, UID bytes 3-6; signed and part of the seed |
+| 0x010 `T_HEADER` | 0xA5, not signed |
+| 0x011 `T_COUNTER` | u16 BE: writes of the figure. Seeds the data key, so each write re-keys the data |
+| 0x013 `T_VERSION` | format version, 0 |
+| 0x014 `T_SETTINGS` | the first encrypted region, 0x20 bytes: |
+| 0x014 `T_FLAGS` | `AMIIBO_FLAG_*` in bits 4-5, the font region in bits 0-3 |
+| 0x015 `T_COUNTRY` | country code of the console that registered the owner |
+| 0x016 `T_CRC_COUNTER` | u16 BE: changes of the console checksum below |
+| 0x018 `T_SETUP_DATE` | packed date, u16 BE: owner registration |
+| 0x01A `T_WRITE_DATE` | packed date, u16 BE: last write |
+| 0x01C `T_CONSOLE_CRC` | u32 BE checksum of the last console that wrote the figure |
+| 0x020 `T_NICKNAME` | 10 UTF-16 BE code units, NUL-padded, not terminated when all 10 are used |
+| 0x034 `T_TAG_HMAC` | 32 bytes: HMAC of the tag key over UID, model info and salt |
+| 0x054 `T_MODEL` | 8 bytes model info, then 4 more signed bytes; part of the static signed block |
+| 0x060 `T_SALT` | 32 bytes chosen at manufacture; seeds both keys |
+| 0x080 `T_DATA_HMAC` | 32 bytes: HMAC of the data key over the header, the plain data and the static block |
+| 0x0A0 `T_DATA` | the second encrypted region, 0x168 bytes, up to 0x208: |
+| 0x0A0 `T_MII` | 0x60 bytes: the owner's Mii and its checksum, kept raw |
+| 0x100 `T_TITLE_ID` | u64 BE: the program that created the application area |
+| 0x108 `T_APP_COUNTER` | u16 BE: writes of the application area |
+| 0x10A `T_ACCESS_ID` | u32 BE: the owner of the application area |
+| 0x130 `T_APP_AREA` | `AMIIBO_APP_AREA_SIZE` bytes of game data |
+| 0x208 `T_DATA_END` | dynamic lock bytes and the NTAG215 configuration follow, not signed |
+
+`STATIC_SIZE` is model info, 4 bytes and the salt: 0x2C. `TAG_SIGNED_SIZE` is 0x34. `DATA_SIGNED_SIZE` is 0x1DF.
+`g_keys_gen` is bumped by every change of the keys, so the self-test restores only what it replaced.
+
+### `same()`
+
+Equality without an early exit, so the time taken does not tell how many leading bytes of a signature matched.
+
+### `keys_copy()`
+
+A private copy of the keys, so the crypto runs outside the lock. False without keys.
+
+### `base_seed()` `derive()`
+
+`base_seed()`: 64 bytes that tie the derived keys to this tag: the write counter, 14 zero bytes, the UID page twice,
+the salt.
+
+`derive()`: the seed is the master key's type string with its NUL, the first 16 - magic size bytes of the base seed
+followed by the magic bytes (16 bytes together), base seed bytes 0x10-0x1F, and base seed bytes 0x20-0x3F XOR the pad.
+Two blocks of HMAC(master HMAC key, u16 BE block number || seed) give 64 bytes, of which the first 48 are the derived
+AES key, AES counter and HMAC key. A type string without its NUL or a magic size over 16 gives a zeroed key:
+`amiibo_keys_load()` refuses such keys; the test only keeps the copies in bounds.
+
+### `crypt_regions()` `sign_tag()` `sign_data()`
+
+- `crypt_regions()`: AES-128-CTR over both encrypted regions as one stream: the settings, then the data. Its own
+  inverse.
+- `sign_tag()`: the tag signature: UID page, then model info, the 4 bytes after it and the salt.
+- `sign_data()`: the data signature over the plain image: write counter, version and settings, the data, the tag
+  signature, then the tag-signed block (UID page, model info, salt).
+
+### `decrypt_with()` `encrypt_with()`
+
+`decrypt_with()` copies the tag before `out` is cleared: `out` may be the tag itself. `encrypt_with()`: the tag
+signature first, since the data signature covers it; both over the plain bytes; then the encryption.
+
+### `date_unpack()` `date_pack()`
+
+Packed date: years since 2000 in bits 9-15, month in bits 5-8, day in bits 0-4.
+
+### `utf8_put()` `utf8_get()` `nickname_decode()` `nickname_encode()`
+
+- `utf8_put()` appends `cp` as UTF-8 when it fits with room left for the NUL; it returns the new length (`n` when it
+  did not fit).
+- `utf8_get()`: one code point from the `n` bytes at `s` (n >= 1); it returns the bytes it took. Malformed input reads
+  as U+FFFD: a bad lead or continuation byte takes 1 byte, a well-formed overlong, surrogate or out-of-range sequence
+  takes all its bytes.
+- `nickname_decode()`: 10 UTF-16 BE code units, up to the first zero unit, as NUL-terminated UTF-8. A surrogate
+  without its partner reads as U+FFFD. `cap` >= 31 always holds the whole name (at most 3 bytes per unit).
+- `nickname_encode()`: UTF-8 (up to `cap` bytes or the NUL) as 10 UTF-16 BE code units, zero-padded. Characters past
+  the 10th unit are dropped, and a character needing a surrogate pair is dropped whole when only one unit is left.
+
+### `amiibo_plain_write()`
+
+In the flags byte the font region and other bits stay.
+
+### The self-test
+
+Every key in the self-test is made up from a constant pattern.
+
+- `selftest_primitives()`: FIPS-197 appendix C.1; SP 800-38A F.5.1, CTR-AES128 (the counter carries out of the last
+  byte between blocks 1 and 2); key 10 11 .. 1f, counter ff .. ff fe, plaintext 00 01 .. 27 (2.5 blocks): the counter
+  wraps through all 16 bytes to zero after the second block; RFC 4231 test cases 2 (short key) and 6 (131-byte key,
+  hashed first). The CTR test also runs in place, and is its own inverse.
+- `selftest_keys()`: two made-up master keys: a pattern, with type strings of two lengths and both magic sizes in use
+  (14 for the data key, so the write counter enters its seed; 16 for the tag key).
+- `selftest_fields()`: the nickname is ASCII, a 2-byte and a 4-byte character.
+- `field_byte()`: the bytes `amiibo_plain_write()` may change.
+- `selftest_plain()` plants a lone high surrogate, then 'A'.
+- `selftest_tag()`: the format with explicit keys: a known answer computed by an independent model of the format,
+  round trips, and single-byte changes that must break a signature: a byte in each of data (0x150), UID (0x003), tag
+  signature (0x040), write counter (0x011), salt (0x060), settings (0x014) and model info (0x055).
+- `keys_swap()` replaces the loaded keys with `k` (`have` false: none) unless another caller changed them since `*gen`
+  was taken; then `*gen` is the new generation. False when the keys changed meanwhile, and nothing is replaced.
+- `selftest_public()`: the public calls: without keys, then with the made-up keys, then the player's keys go back.
+  While the made-up keys are in place (well under a millisecond) a dump decrypted on another thread would fail and
+  load without its data; the caller, `runtime/hle/ov_probe.c` under `--probe-services`, runs no game code that loads
+  one.
+
+## `runtime/hle/nfp.h`
+
+The Nintendo Figurine Platform (`nfp:user`) IPC service emulation. `nfp_user_manager_handler()` is `sm:`'s handler for
+"nfp:user" (`nn::nfp::detail::IUserManager`).
+
+## `runtime/hle/nfp.c`
+
+The `nfp:user` IPC service (`nn::nfp::detail::IUserManager` and IUser). `g_device_handle` is the simulated NFC device
+handle: id 1. The three events of `NfpUserState` are writable handles.
+
+### `nfp_user_handler()`
+
+The handler for `nn::nfp::detail::IUser`:
+
+| Command | Call |
+|---|---|
+| 0 | InitializeNfp(u64 aruid, u64 m_pid, pid, buffer<unknown, 5>) |
+| 1 | FinalizeNfp() |
+| 2 | ListDevicesNfp() -> (s32 total_out, buffer<DeviceHandle, 0xa>) |
+| 3 | StartDetectionNfp(DeviceHandle) |
+| 4 | StopDetectionNfp(DeviceHandle) |
+| 5 | MountNfp(DeviceHandle, u32 ModelType, u32 MountTarget); 0x8073 (device or tag not found) without a tag |
+| 6 | UnmountNfp(DeviceHandle) |
+| 7 | OpenApplicationAreaNfp(DeviceHandle, u32 access_id) |
+| 8 | GetApplicationAreaNfp(DeviceHandle) -> (u32 size, buffer<data, 0x6>) |
+| 9 | SetApplicationAreaNfp(DeviceHandle, buffer<data, 0x5>) |
+| 10 | FlushNfp(DeviceHandle) |
+| 11 | RestoreNfp(DeviceHandle): a figure here is never damaged |
+| 12 | CreateApplicationAreaNfp(DeviceHandle, u32 access_id, buffer<initial data, 0x5>) |
+| 13 | GetTagInfoNfp(DeviceHandle) -> buffer<TagInfo, 0x1a> |
+| 14 | GetRegisterInfoNfp(DeviceHandle) -> buffer<RegisterInfo, 0x1a> |
+| 15 | GetCommonInfoNfp(DeviceHandle) -> buffer<CommonInfo, 0x1a> |
+| 16 | GetModelInfoNfp(DeviceHandle) -> buffer<ModelInfo, 0x1a> |
+| 17 | GetActivateEventHandleNfp(DeviceHandle) -> handle<copy> |
+| 18 | GetDeactivateEventHandleNfp(DeviceHandle) -> handle<copy> |
+| 19 | GetStateNfp() -> u32 state: 1, Initialized |
+| 20 | GetDeviceStateNfp(DeviceHandle) -> u32 device_state |
+| 21 | GetNpadIdNfp(DeviceHandle) -> u32 npad_id: 0, Handheld / Player 1 |
+| 22 | GetApplicationAreaSizeNfp(DeviceHandle) -> u32 size (0xD8) |
+| 23 | GetAvailabilityChangeEventHandleNfp() -> handle<copy> |
+| 24 | RecreateApplicationAreaNfp(DeviceHandle, u32 access_id, buffer<initial data, 0x5>) |
+
+The application area calls share `runtime/hle/amiibo.c`'s backend with the `nn::nfp` overrides
+(`runtime/hle/ov_system.c`).
+
+### `nfp_user_manager_handler()`
+
+The handler for `nn::nfp::detail::IUserManager` (`nfp:user`). Command 0 is CreateUserInterface() -> a move handle to
+IUser. The availability event is signalled immediately, so the game detects the reader.
