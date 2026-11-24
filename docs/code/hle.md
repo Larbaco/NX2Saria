@@ -758,7 +758,7 @@ GetInfo(w1 id, w2 handle, x3 sub id -> x1). What `mem_info` does not answer:
 | 18 | `PROGRAM_ID` | |
 | 20 | the user exception context | the SDK keeps for instance the dying message at +0x1C0 |
 | 23 | 1 | |
-| 29, 30 | 0 | a region the SDK records at `nnosInitialize` (address, then size) |
+| 29, 30 | 0 | a region the SDK records at `nnosInitialize`: its address (29), then what id 30 asks of it |
 | 33 | 0x1000 | VAMM control region size: mapped at 0x300000000 and made into a unit heap |
 
 ### `rt_svc()`
@@ -2592,7 +2592,7 @@ always Loaded: the game spins until it is, so missing files stop with a named fa
 
 ## `runtime/hle/ov_input.c`
 
-`nn::hid` overrides: one connected controller fed by `input_poll` (gamepad and keyboard, `runtime/input/input_win.c`;
+`nn::hid` overrides: one connected controller fed by `runtime/input/input.c` `input_poll()` (gamepad and keyboard;
 nothing pressed with `NX2SARIA_INPUT=none`). Docked (default) it is a full-key controller as player 1 (id 0, style bit
 0); with `NX2SARIA_OPERATION_MODE=handheld` it is the handheld controller (id 0x20, style bit 1) and player 1 is not
 connected, which is the controller the game reads in that mode. Mouse and keyboard report no input. The controller has
