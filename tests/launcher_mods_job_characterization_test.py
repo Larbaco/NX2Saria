@@ -23,6 +23,18 @@ class ModsJobCharacterizationTest(unittest.TestCase):
         window.home_row.return_value = 5
         return window
 
+    def test_tick_observes_result_even_before_finished_is_set(self):
+        window = self.make_window('ok', False)
+        window.job.rev = 1
+        window.job.finished = None
+        window.job_rev = 0
+        window.check = None
+        window.screen = 'job'
+        window.bg.poll.return_value = None
+        app.App.tick(window)
+        window.job_finished.assert_called_once_with()
+        self.assertIsNone(window.job.finished)
+
     def test_success_drops_cache_then_resumes_play_when_cache_disabled(self):
         window = self.make_window('ok', False)
         events = []
