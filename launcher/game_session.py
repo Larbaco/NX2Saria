@@ -3,7 +3,7 @@ import os
 import signal
 import time
 
-from . import commit, saves, winsys
+from . import commit, saves, telemetry, winsys
 from .build import FATAL_TAIL, game_log_path, last_fatal
 from .platform import game_executable
 
@@ -218,3 +218,13 @@ class GameRun:
         """game_end for this run, once running() said False."""
         return game_end(self.game_dir, None if self.proc is None else self.proc.returncode, self.started,
                         self.restarted)
+
+
+def finish_game(run, log):
+    end = run.end()
+    log(end.log)
+    if telemetry.enabled():
+        telemetry.synthesize_crash(run.game_dir, log)
+    if end.note:
+        note_exit_in_log(run.game_dir, end.note)
+    return end
