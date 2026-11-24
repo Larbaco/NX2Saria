@@ -34,12 +34,12 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
 | 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports, and the crash log offered after an abnormal end; the rest not yet extracted |
 | 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
-| 13 | `runtime/` top level | [runtime.md](runtime.md) | started: `vram_warn.h`, `vram_warn.c`, `vram_fit.h` and what they need of `mem_budget.c`; the rest not yet extracted |
+| 13 | `runtime/` top level | [runtime.md](runtime.md) | extracted; `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h` keep their comments until a change next rebuilds the lifted code ([The checks](#the-checks)) |
 | 14 | `runtime/gfx/` | [gfx.md](gfx.md) | extracted |
 | 15 | `runtime/hle/` | [hle.md](hle.md) | extracted |
 | 16 | `tools/` | [tools.md](tools.md) | started: the licence parts of the release scripts; the rest not yet extracted |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | started: `tests/shipped_notices_check.py`; the rest not yet extracted |
-| 18 | `runtime/shaders/` (not `ffx/` and `ffx3/`) | `shaders.md` | not yet extracted |
+| 18 | `runtime/shaders/` (not `ffx/`, `ffx3/` and `smaa.glsl`) | [shaders.md](shaders.md) | extracted |
 | 19-22 | `runtime/vk/` | `vk-pipeline.md`, `vk-exec.md`, `vk-memory.md`, `vk-texture.md`, `vk-upscalers.md` | not yet extracted |
 
 When an area is done, its row gets a link to the page and the status "extracted".
@@ -120,10 +120,18 @@ Python. A comment line is a line that holds any part of a comment; a line of cod
 
 Not read: `tools/vendor/` and `runtime/third_party/` (others' code, unmodified), `runtime/shaders/ffx/` and
 `runtime/shaders/ffx3/` (AMD FidelityFX, unmodified), `runtime/nvn/nvn.h` (the NVN type definitions, another project's
-header, unmodified), `recomp/patches-*.txt` (data that `recomp/patches.py` reads),
+header, unmodified), `runtime/shaders/smaa.glsl` (the SMAA reference implementation, unmodified),
+`recomp/patches-*.txt` (data that `recomp/patches.py` reads),
 `generated/`, `build/`, the `*_spv.h` shader headers, any file with the `GENERATED_MARKER`, and `tools/xlate/`, the
 shader translator, whose comments go with its next identity change: its identity, `tools/build_xlate.py` `identity()`, reads the patch
 files byte for byte, and a new identity makes every player prepare the shaders again.
+
+Kept with their comments for now, and counted and named in a line of their own at every run (`kept with comments: 3
+files, ...`), outside their area's count: `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h`. They are ours and
+their comments are owed: every lifted object depends on them and `tools/make_game.py` compares an object's
+dependencies by SHA-256, so one changed byte makes every player's PC recompile the lifted code. The exception ends when
+those files are next changed for another reason, in a change that rebuilds the lifted code anyway; their notes are
+already on [runtime.md](runtime.md).
 
 Kept in the files it reads:
 
@@ -138,6 +146,12 @@ Kept in the files it reads:
 Every other Python docstring counts as a comment: a function's, a class's, a string on a line of its own. Preprocessor
 directives (`#pragma`, `#version`, `#extension`) are code. `//`, `/*` and `#` inside a string or character literal,
 a raw string or an `#include <...>` are not comments.
+
+#### `owed()`
+
+The entry of `OWED` that names a file: the files, the date the exception began, what they are, why a changed byte
+costs, and when their comments leave. `scan()` keeps such a file's comment lines out of its area and in the report's
+`owed` count, which the table's `kept with comments` line and `--exceptions` print.
 
 #### `c_comments()`
 
@@ -161,7 +175,9 @@ The licence lines of a run of comment lines (or of a docstring), by paragraph: a
 ("Permission is hereby granted", "THE SOFTWARE IS PROVIDED", an SPDX line, the zlib terms) is kept whole; a
 "Copyright (c) ..." notice is kept from the start of its sentence to the end of that sentence or the line that names
 `THIRD_PARTY_NOTICES.md`; the sentence may start on a line above, unless the notice's own line starts it ("Contains
-code", "Portions", "Copyright"). Empty comment lines next to a kept line are kept with it.
+code", "Portions", "Copyright"). A line that names a licence and that licence's file, as in "(MIT, ffx/LICENSE.txt)",
+is kept when the file is there, looked for beside the source and from the top of the repository; a path that leads
+nowhere keeps nothing. Empty comment lines next to a kept line are kept with it.
 
 #### `classify()`
 
@@ -170,8 +186,9 @@ Sorts each comment line of one file into counted or kept, with the reason.
 #### `self_test()`
 
 Planted files in a scratch folder: each kind of line kept, a plain comment and a trailing block counted, comment-like
-text in strings and URLs left alone, a run-time `__doc__` kept and the rest of it counted, each folder not read, and
-`--strict` failing on the planted area and passing on one with only directives.
+text in strings and URLs left alone, a run-time `__doc__` kept and the rest of it counted, each folder not read, a file
+kept with its comments counted on the line of its own and not in its area while a plain comment in the file beside it
+still fails, and `--strict` failing on the planted area and passing on one with only directives.
 
 ### `tests/code_docs_check.py`
 

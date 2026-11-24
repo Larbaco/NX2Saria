@@ -57,6 +57,18 @@ export function feedbackBody(extra: Record<string, any> = {}): Record<string, an
   return { launcher_version: RELEASE, text: "Runs well on my PC.", summary: null, log_tail: null, ...extra };
 }
 
+export function crashLogBody(extra: Record<string, any> = {}): Record<string, any> {
+  return {
+    kind: "crash",
+    launcher_version: RELEASE,
+    text: "",
+    summary: null,
+    log_tail: "[host] vk: device lost\n[launcher] the game ended with code 72\n",
+    log_head: "[host] cfg: read ~/games/nx2saria/nx2saria.ini: 19 keys\n[host] patches: fps60 on\n",
+    ...extra,
+  };
+}
+
 export function testEnv(overrides: Partial<Env> = {}): Env {
   return { ...(env as unknown as Env), ...overrides };
 }

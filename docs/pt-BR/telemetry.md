@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=ff001c3db7c6d66f6c43de98596d11db1c254c6b reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/telemetry.md source-hash=0a2dc86226c63f7941da1f0d9d9f6e64d9d47d22 reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · **Português (Brasil)** · [Русский](../ru/telemetry.md) · [简体中文](../zh-Hans/telemetry.md)
 
@@ -59,9 +59,11 @@ O jogo o grava em `logs/session-summary.json` na pasta do jogo quando termina, p
 | `session.duration_s`, `session.frames`, `session.end` | Quanto tempo o jogo rodou, quantos quadros mostrou, como terminou: `normal`, `fatal`, `device_lost` ou `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | A taxa de quadros média da sessão inteira, o 1% low dela, o quadro mais lento e quantos quadros levaram mais de 25 ms e mais de 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | O tempo gasto preparando shaders e pipelines no início, quando houve algum | `5400`, `120`, `900`, `3100` |
-| `patches` | Os nomes dos patches do próprio port que estavam ligados, da lista na linha `patches:` do log do jogo. O servidor guarda só os nomes que conhece | `["fps60", "ostep", "zstd"]` |
+| `patches` | Os nomes dos patches do próprio port que estavam ligados, da lista na linha `patches:` do log do jogo. O servidor guarda só os nomes que conhece. Um conjunto de patches montado a partir dos patches de código de um mod nunca entra na lista | `["fps60", "ostep", "zstd"]` |
 | `mods.count`, `mods.code` | Quantos mods estavam em uso, e quantos deles mudam o código do jogo. Nunca os nomes deles | `1`, `0` |
-| `fatal` | A linha de erro do jogo, quando a sessão terminou com uma, com as suas pastas escritas de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), com no máximo 300 caracteres | `null` |
+| `fatal` | A linha de erro do jogo, quando a sessão terminou com uma, com as suas pastas escritas de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)), também quando você desligou isso para o seu próprio log, com no máximo 300 caracteres | `null` |
+
+Os nomes são cortados em 64 caracteres (o do sistema, o do processador, o da placa de vídeo e o do driver), os caracteres de controle são descartados, e `version` é a versão lançada, sem o sufixo da compilação.
 
 Um campo que o jogo não conhece é `null`. Quando o jogo travou de forma tão grave que não conseguiu gravar o relatório, o launcher monta um a partir da linha de erro no log: só `version`, `game_version`, `os.family`, `session.end` (`crash`) e `fatal`, com todos os outros campos `null`.
 
@@ -100,7 +102,7 @@ Quando o jogo foi iniciado sem a janela do launcher (Play na Steam, um atalho), 
 - **O começo do log do jogo:** da primeira linha até a linha `patches:`, com no máximo 100 linhas e 16 KB. Essas linhas dizem o seu sistema, a placa de vídeo e o driver, as opções em uso e os patches ligados; nos logs medidos elas são cerca de 84 linhas e 12 KB.
 - **O fim do log do jogo:** as últimas 200 linhas, com no máximo 56 KB. 200 linhas pesam cerca de 46 KB, então as 200 linhas são o limite que normalmente vale; quando as linhas são mais longas que o normal, os 56 KB cortam antes e vão menos linhas, mantidas as últimas.
 - **Depois de uma sessão curta, essas duas partes são o log inteiro.** Quando o log não tem mais linhas do que isso, todas as linhas dele são enviadas, cada uma uma vez. A pergunta e *See What Is Sent* dizem quantas linhas vão.
-- Nessas linhas, a sua pasta pessoal, o nome da conta e o nome do computador são escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta, como o local onde o jogo está instalado, ficam como estão.
+- Nessas linhas, a sua pasta pessoal, o nome da conta e o nome do computador são escritos de forma abreviada como no log ([privacidade do log](../log-privacy.md) (em inglês)). Outros nomes de pasta, como o local onde o jogo está instalado, ficam como estão, assim como os nomes dos mods em uso, que o log lista.
 - O relatório daquela sessão, como acima, quando existe, a não ser que **Session Reports** esteja em *Off*.
 - O `launcher_version` e a hora, como num relatório. Nenhum id da sua instalação e nenhum texto seu.
 
@@ -110,7 +112,7 @@ Quando o jogo foi iniciado sem a janela do launcher (Play na Steam, um atalho), 
 - Nenhum arquivo: nenhum save, nenhum arquivo de configurações, nenhum arquivo do jogo, nenhuma chave.
 - **Nenhuma linha do log vai sem que você aperte o botão que a envia:** *Send* num comentário com *Attach the Last Log Lines* marcado, ou *Send the Log* depois de uma queda. O log de queda de uma sessão curta pode ser o log inteiro, como descrito acima; um relatório de sessão nunca contém linhas do log além da linha de erro.
 - **Nenhum id da sua instalação.** O launcher não cria, não guarda e não envia nenhum.
-- Um relatório de sessão não contém nome de conta, nome de computador, nome de pasta, e-mail, número de série de hardware nem nome de mod: o servidor recusa um relatório com um campo que o formato não tem. Um comentário contém o que você escreve e, quando você as anexa, linhas do log como descrito acima. Um log de queda contém linhas do log, nas quais o jogo escreve como estão os nomes das pastas fora da sua pasta pessoal.
+- Um relatório de sessão não contém nome de conta, nome de computador, nome de pasta, e-mail, número de série de hardware nem nome de mod: o servidor recusa um relatório com um campo que o formato não tem. Um comentário contém o que você escreve e, quando você as anexa, linhas do log como descrito acima. Um log de queda contém linhas do log, nas quais o jogo escreve como estão os nomes das pastas fora da sua pasta pessoal e os nomes dos mods em uso.
 
 ## Por quanto tempo fica guardado
 

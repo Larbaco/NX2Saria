@@ -68,9 +68,12 @@ is sent. A report has these fields and nothing else; the server refuses a report
 | `session.duration_s`, `session.frames`, `session.end` | How long the game ran, how many frames it showed, how it ended: `normal`, `fatal`, `device_lost` or `crash` | `1834`, `109800`, `normal` |
 | `frametime.fps_mean`, `frametime.fps_low_1pct`, `frametime.worst_ms`, `frametime.over_25ms`, `frametime.over_100ms` | The average frame rate of the whole session, its 1% low, the slowest frame, and how many frames took over 25 ms and over 100 ms | `59.9`, `52.1`, `88.4`, `14`, `0` |
 | `startup.shader_prewarm_ms`, `startup.shaders_translated`, `startup.pipelines_built`, `startup.pipeline_build_ms` | The time spent preparing shaders and pipelines at the start, when there was any | `5400`, `120`, `900`, `3100` |
-| `patches` | The names of the port's own patches that were on, from the list in the game's log line `patches:`. The server keeps only names it knows | `["fps60", "ostep", "zstd"]` |
+| `patches` | The names of the port's own patches that were on, from the list in the game's log line `patches:`. The server keeps only names it knows. A patch set built from a mod's code patches is never listed | `["fps60", "ostep", "zstd"]` |
 | `mods.count`, `mods.code` | How many mods were in use, and how many of them change the game's code. Never their names | `1`, `0` |
-| `fatal` | The game's error line, when the session ended with one, with your folders written short as in the log ([log privacy](log-privacy.md)), at most 300 characters | `null` |
+| `fatal` | The game's error line, when the session ended with one, with your folders written short as in the log ([log privacy](log-privacy.md)), also when you turned that off for your own log, at most 300 characters | `null` |
+
+Names are cut at 64 characters (the system's, the processor's, the graphics card's and the driver's), control
+characters are dropped, and `version` is the release without its build suffix.
 
 A field the game does not know is `null`. When the game crashed so hard that it could not write the report, the
 launcher makes one from the error line in the log: only `version`, `game_version`, `os.family`, `session.end`
@@ -135,7 +138,8 @@ that one comes first.
 - **After a short session these two parts are the whole log.** When the log has no more lines than that, every line of
   it is sent, each one once. The question and *See What Is Sent* say how many lines go.
 - In those lines your home folder, account name and computer name are written short as in the log ([log
-  privacy](log-privacy.md)). Other folder names, such as where the game is installed, stay as they are.
+  privacy](log-privacy.md)). Other folder names, such as where the game is installed, stay as they are, and so
+  do the names of the mods in use, which the log lists.
 - The report of that session, as above, when there is one, unless **Session Reports** is *Off*.
 - The `launcher_version` and the time, as with a report. No id of your installation, and no text of yours.
 ## What is not sent or not kept
@@ -151,20 +155,20 @@ that one comes first.
 - A session report holds no account name, computer name, folder name, e-mail, hardware serial number or mod name:
   the server refuses a report with a field the format does not have. A comment holds what you write and, when you attach them,
   log lines as described above. A crash log holds log lines, in which the game writes the names of folders outside
-  your home folder as they are.
+  your home folder and the names of the mods in use as they are.
 
 ## How long it is kept
 
-Reports, comments and crash logs are deleted by a daily cleanup once they are 180 days old. Only the project's maintainer can read
-them, through a page protected by a secret key: counts by version, graphics card, system, options, patches and mods,
-frame rates, the most common errors, the comments and the crash logs.
+Reports, comments and crash logs are deleted by a daily cleanup once they are 180 days old. Only the project's
+maintainer can read them, through a page protected by a secret key: counts by version, graphics card, system, options,
+patches and mods, frame rates, the most common errors, the comments and the crash logs.
 
 ## Why nothing can be deleted on request
 
 A report has no id of your installation and the server keeps no IP address, so the server cannot tell which reports
-are yours: there is nothing it could look up and delete for you. Every report, comment and crash log is deleted
-when it is 180 days old. The database service keeps its own restore history for a limited time (up to 30 days at Cloudflare);
-deleted rows leave it as that history ages.
+are yours: there is nothing it could look up and delete for you. Every report, comment and crash log is deleted when
+it is 180 days old. The database service keeps its own restore history for a limited time (up to 30 days at
+Cloudflare); deleted rows leave it as that history ages.
 
 A comment is the one thing that holds what you choose to put in it. It is sent exactly as written, so leave out
 anything that says who you are.

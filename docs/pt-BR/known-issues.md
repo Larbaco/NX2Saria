@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=4679f2a7b22fdeb015100f0d6f0303e6eab365f1 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=69d8ac02a603b9a406b2e78a4032d4e57ec8257a reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -14,6 +14,7 @@ Problemas que conhecemos na versão atual e o que os evita. Quando um deles é c
 
 - **O AMD FSR 3.1 e o FSR 4 podem mostrar falhas visuais no Windows**: manchas pretas ou escuras e cintilação enquanto a câmera ou o Link se movem, quando a cena é renderizada menor que a imagem, e rastros atrás de personagens em movimento. O upscaling bilinear, ou a cena no tamanho da janela sem upscaler, evita as manchas. Relatado ao projeto original como tangerineturtle1/NX2navi#794, tangerineturtle1/NX2navi#475 e tangerineturtle1/NX2navi#736.
 - **FSR 4 em Radeon RX 6000 (RDNA 2)**: o driver da AMD oferece o FSR 4 nessas placas e ele funciona, mas custa muito mais tempo de GPU do que nas placas mais novas (cerca de 12 ms por quadro em 1440p em uma RX 6750 XT). O FSR 3.1 é a opção mais leve nelas.
+- **No Linux com Mesa 26, o jogo pode terminar com "the GPU device was lost" em algumas placas AMD.** Os relatórios de sessão mostram isso em Radeon RX 480, RX 580 e RX 6800S com Mesa 26.2 e 26.3, segundos ou minutos depois do início da sessão; os relatórios com Mesa 25.2 não mostram. A causa ainda não é conhecida. Se acontecer com você, abra uma issue com o `logs/nx2saria.log` e as linhas do kernel depois da queda (`journalctl -k -b`).
 
 ## Geração de quadros
 

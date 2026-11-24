@@ -1,11 +1,3 @@
-// Interface of the host runtime: guest memory, modules, kernel, IPC, file system and boot.
-//
-// Guest addresses are host addresses. Every guest-visible region lies below 2^39 (IPC buffer descriptors carry 39
-// address bits). Fixed parts of the guest address map:
-//   modules           MOD_<X>_BASE from layout.h, from 0x70_0000_0000
-//   kernel region     RT_KERNEL_BASE, 256 MiB: TLR, TLS blocks, host objects the guest reads (mem_kernel_alloc)
-//   host functions    RT_HOSTFN_BASE, 1 MiB, never accessible: synthetic addresses of host functions
-// The stack, heap and alias regions are placed at start-up (mem_layout).
 #pragma once
 #include <stdarg.h>
 #include <stddef.h>
@@ -15,174 +7,116 @@
 #include "cpu.h"
 #include "dispatch.h"
 
-// ---- logging and results
-void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));   // "[host] <msg>\n" to the log, one write
-// The log is stderr plus, in a game run whose stderr is not a file, logs\nx2saria.log next to nx2saria.exe (main.c log_open).
-// rt_logf and rt_log_raw write to both without the prefix and the newline: crash reports, fatal errors, guest output.
+void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_logf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_vlogf(const char *fmt, va_list ap);
 void rt_log_raw(const char *p, size_t n);
-const char *rt_log_path(void);                  // the log file, NULL when this run writes none
-void rt_log_sync(void);                         // writes the queued log lines now; later lines are written as they are made
-void rt_log_ending(void);                       // the process is ending: its lines reach the log file past its 64 MiB cap
-void rt_log_focus_lost(void);                   // main.c: the gathered lines written now, the module list noted again
-void hang_watch_start(void);                    // hang_watch.c: NX2SARIA_HANG_WATCH_S's thread, in a game run
-void kern_wait_report(void);                    // kernel.c: the guest threads' lock and thread-end waits, for a hang report
-void vk_sync_progress(uint64_t *issued, uint64_t *done);   // vk_sync.c: submissions issued and done, no lock or device call
+const char *rt_log_path(void);
+void rt_log_sync(void);
+void rt_log_ending(void);
+void rt_log_focus_lost(void);
+void hang_watch_start(void);
+void kern_wait_report(void);
+void vk_sync_progress(uint64_t *issued, uint64_t *done);
 enum { RT_TRACE_SVC = 1, RT_TRACE_HOSTCALL = 2, RT_TRACE_IPC = 4, RT_TRACE_FS = 8, RT_TRACE_GFX = 16, RT_TRACE_PERF = 32,
        RT_TRACE_SCHED = 64, RT_TRACE_AUDIO = 128, RT_TRACE_PRESENT = 256 };
-extern unsigned rt_trace;                       // from NX2SARIA_TRACE=svc,host,ipc,fs,gfx,perf,sched,audio,present (or all)
-// prof_win.c: NX2SARIA_PROFILE=<path> sampling profiler; NX2SARIA_TRACE=perf frame timing (waits of the render thread)
-// PERF_TEX: texture uploads on the render thread (deswizzle, decode, staging), PERF_ASTC included. PERF_HANDOFF: the
-// presenting thread's wait for the present thread to take the previous picture (vk_backend.c present_image), which is
-// where the present thread's own pacing and a slow present call (an overlay's frame limiter inside it) hold the game.
+extern unsigned rt_trace;
 enum { PERF_PACE, PERF_FENCE, PERF_DRAIN, PERF_PIPE, PERF_XLATE, PERF_TEX, PERF_ASTC, PERF_HANDOFF, PERF_N };
 void prof_start(void);
-void prof_write(void);                          // idempotent; boot.c calls it before _exit
-uint64_t perf_begin(void);                      // start time of a wait; pair with perf_end
-void perf_end(int kind, uint64_t t0);           // counts render-thread time only
-// The same for a wait that may run on any guest thread (the game's image acquire): the render and replay threads' as
-// perf_end, any other thread's added to the next present's frame (perf_present).
+void prof_write(void);
+uint64_t perf_begin(void);
+void perf_end(int kind, uint64_t t0);
 void perf_end_any(int kind, uint64_t t0);
-void perf_replay(uint64_t t0);                  // replay (NVN -> Vulkan recording) time on any thread, waits inside it included
-void perf_replay_thread(void);                  // the calling thread replays for the render thread: perf_end counts its waits
-void perf_main_thread(void);                    // the calling thread is the guest main thread (NX2SARIA_PROFILE_MAIN)
-// Events per 60-frame window: graphics pipelines finished by the background workers, draws skipped while pending,
-// first texture uploads and re-uploads after CPU writes, draws skipped while a shader translates in the background,
-// draws that waited for their pending pipeline and got it, draws into a target the previous frame did not render that
-// waited for their pending shader or pipeline instead of being skipped (vk_exec_draw.c prepare_draw). The rest feed only
-// the flight recorder (flight.c): graphics pipelines created on any thread, texture images created, images created at an
-// address where a live image of another descriptor already starts, write-backs done and skipped because the CPU
-// rewrote the storage after the GPU render (vk_texture.c vk_texture_write_back).
+void perf_replay(uint64_t t0);
+void perf_replay_thread(void);
+void perf_main_thread(void);
 enum { PERF_CNT_PIPE_ASYNC, PERF_CNT_PIPE_SKIP, PERF_CNT_TEX_UP, PERF_CNT_TEX_REUP, PERF_CNT_SHADER_SKIP,
        PERF_CNT_PIPE_WAIT, PERF_CNT_ONESHOT_WAIT, PERF_CNT_PIPE_BUILT, PERF_CNT_TEX_NEW, PERF_CNT_TEX_ALIAS,
        PERF_CNT_WB, PERF_CNT_WB_SKIP, PERF_CNT_N };
 void perf_count(int kind);
-// NX2SARIA_TRACE=perf: work on any thread that a frame can wait for besides the render thread's waits above, summed per
-// frame and per 60-frame window (perf.c perf_mark_add): RomFS reads, host zstd decodes, pipeline creates (vk_pipeline.c
-// pipe_create_in), guest memory maps (heap size, MapPhysicalMemory), NVN memory pool initialize and finalize
-// (vk_memory.c vk_pool_init, vk_pool_fini), device memory VMA allocates (blocks and dedicated memory, vk_device.c
-// timed_alloc), and DLSS and DLSS frame generation feature creates (vk_dlaa.c). perf_mark_begin returns 0 while the trace is off, so a normal run pays one branch per site.
-// UPWAIT: the upscalers' waits for the GPU before they free what they let go of (vk_dlaa.c vk_upscaler_device_idle,
-// and vk_upscaler_gpu_wait's timeline wait after a refused creation);
-// UPREL: their releases of DLSS features and FSR contexts (vk_dlaa.c, vk_ffx.cpp, vk_ffx4.cpp).
 enum { PERF_M_FILE, PERF_M_ZSTD, PERF_M_PIPE, PERF_M_GMEM, PERF_M_POOL, PERF_M_DEVMEM, PERF_M_NGX, PERF_M_UPWAIT,
        PERF_M_UPREL, PERF_M_N };
 uint64_t perf_mark_begin(void);
-void perf_mark_end(int kind, uint64_t t0, uint64_t bytes);   // nothing when t0 is 0
-void perf_mark_add(int kind, uint64_t ns, uint64_t bytes);   // nothing while the trace is off
-// NX2SARIA_TRACE=perf segments and scenes (perf.c): perf_segment ends the running segment of presents at the next present
-// with a line of its frame times (mean, 1% low, worst), the work marks above, process memory and VRAM, then the memory
-// snapshot, and starts one named name (the input script's MARK lines, input.c). perf_scene notes an area's load
-// (romfs.c, the area's static placement file) and takes the memory snapshot once no area has loaded for 10 s.
+void perf_mark_end(int kind, uint64_t t0, uint64_t bytes);
+void perf_mark_add(int kind, uint64_t ns, uint64_t bytes);
 void perf_segment(const char *name);
 void perf_scene(const char *name);
-uint64_t perf_area_load_ns(void);   // plat_now_ns of the last perf_scene (any trace setting), 0 before the first
-// NX2SARIA_TRACE=perf "mem: sizes" lines (perf.c sizes_log): the entries and bytes of the caches, pools and tables no
-// other line gives, every 600 presents and with each memory snapshot. Each subsystem's *_sizes function (weak no-ops
-// in perf.c) adds its own with perf_size, taking its locks briefly on the present thread. count or bytes UINT64_MAX:
-// not known; limit 0: none.
+uint64_t perf_area_load_ns(void);
 typedef struct { char line[1800]; int n; uint64_t frame; const char *group; } PerfSizes;
 void perf_size(PerfSizes *s, const char *name, uint64_t count, uint64_t limit, uint64_t bytes);
 #define PERF_SIZE_NONE UINT64_MAX
-void mem_sizes(PerfSizes *s);         // memory.c
-void kern_sizes(PerfSizes *s);        // kernel.c
-void setjmp_sizes(PerfSizes *s);      // guest_setjmp.c
-void fs_host_sizes(PerfSizes *s);     // fs_host.c
-void romfs_sizes(PerfSizes *s);       // romfs.c
-void zstd_sizes(PerfSizes *s);        // ov_zstd.c
-void cfg_sizes(PerfSizes *s);         // cfg.c
-void vk_mem_sizes(PerfSizes *s);      // vk_memory.c
-void vk_gpa_sizes(PerfSizes *s);      // vk_gpa.c
-void vk_texture_sizes(PerfSizes *s);  // vk_texture.c
-void vk_exec_sizes(PerfSizes *s);     // vk_exec_draw.c
-void vk_sync_sizes(PerfSizes *s);     // vk_sync.c
-void vk_usnap_sizes(PerfSizes *s);    // vk_usnap.c
-void nvn_cmd_sizes(PerfSizes *s);     // nvn_api_cmd.c
-void vk_pipeline_sizes(PerfSizes *s); // vk_pipeline.c
-void gfx_shader_sizes(PerfSizes *s);  // gfx_shader.c
-// NX2SARIA_REPLAY_TIME=1: how long the replay spends in each kind of op (perf.c perf_replay_op reports it with the
-// frame-time summary). Draws and dispatches include their bindings and the vkCmd calls they record; binds are the state
-// and resource binds between them; xfer is copies and clears.
+void mem_sizes(PerfSizes *s);
+void kern_sizes(PerfSizes *s);
+void setjmp_sizes(PerfSizes *s);
+void fs_host_sizes(PerfSizes *s);
+void romfs_sizes(PerfSizes *s);
+void zstd_sizes(PerfSizes *s);
+void cfg_sizes(PerfSizes *s);
+void vk_mem_sizes(PerfSizes *s);
+void vk_gpa_sizes(PerfSizes *s);
+void vk_texture_sizes(PerfSizes *s);
+void vk_exec_sizes(PerfSizes *s);
+void vk_sync_sizes(PerfSizes *s);
+void vk_usnap_sizes(PerfSizes *s);
+void nvn_cmd_sizes(PerfSizes *s);
+void vk_pipeline_sizes(PerfSizes *s);
+void gfx_shader_sizes(PerfSizes *s);
 enum { PERF_RP_DRAW, PERF_RP_BIND, PERF_RP_XFER, PERF_RP_OTHER, PERF_RP_N };
 void perf_replay_op(int cat, uint64_t ns);
 void perf_replay_op_at(int cat, uint32_t op, uint64_t ns);
-void perf_replay_cpu(uint64_t ns);   // the replaying thread's CPU time over one submission's replay (vk_sync.c)   // as perf_replay_op, also kept per frame for slow frames
+void perf_replay_cpu(uint64_t ns);
 void perf_lock_timing_here(void);
-int perf_lock_holds_on(void);                   // NX2SARIA_LOCK_TIME
-void perf_lock_hold(void *site, uint64_t ns);   // a lock held ns from site (vk_texture.c, holds over 1 ms)   // NX2SARIA_LOCK_TIME: this thread's lock waits go into the frame-time summary
-void perf_qlock_hold(void *site, uint64_t ns);  // the queue lock held ns from site (gfx_present.c, 5 ms or more)
-extern void (*perf_rec_waits)(uint64_t *full_ns, uint64_t *drain_ns);   // set by the back end (vk_rec.c totals)
+int perf_lock_holds_on(void);
+void perf_lock_hold(void *site, uint64_t ns);
+void perf_qlock_hold(void *site, uint64_t ns);
+extern void (*perf_rec_waits)(uint64_t *full_ns, uint64_t *drain_ns);
 void perf_present(uint64_t frame);
-void perf_cpu_start(void);   // the process's logical processors (NX2SARIA_CACHE_DIE, NX2SARIA_ONE_PER_CORE), at start
-int perf_cpu_on_cache_die(void);   // 1 while the process runs on the die with the largest L3 cache alone (perf.c cpu_placement)
-void perf_summary_flush(void);                  // prints the frame-time summary of the running period (exit); the 60 s lines come from perf_present
-void perf_summary_flush_try(void);              // the same at a fatal error, the stutter map only if its lock is free
-// The whole session's frame times (perf.c ft_frame keeps a histogram beside the 60 s period's), for the session summary
-// (session_summary.c): 0 before the first counted frame. Read after the frame-time summary's ft_stop (perf_summary_flush,
-// perf_summary_flush_try), when the present thread adds no more frames. No lock, no allocation.
+void perf_cpu_start(void);
+int perf_cpu_on_cache_die(void);
+void perf_summary_flush(void);
+void perf_summary_flush_try(void);
 typedef struct {
     uint64_t frames, over25, over100;
     double fps_mean, fps_low_1pct, worst_ms;
 } PerfSession;
 int perf_session_stats(PerfSession *out);
-void perf_focus_lost(void);                     // the window lost the focus: the session's reports at the next present, in play
-void gfx_exit_log(void);                        // back end's lines for the exit summary (weak no-op in prof_win.c)
-// gfx_present.c (gfx_wsys.h): the end of a closed window. It does not return, but for its own thread coming back
-// (gfx_present.c rt_exit_begin)
+void perf_focus_lost(void);
+void gfx_exit_log(void);
 void gfx_window_closed(void);
-// gfx_present.c: the orderly end every exit the game asks for shares (the window's close, svc.c ExitProcess, boot.c
-// --seconds). rt_exit_begin: 1 for the first caller; another thread waits there for good; 0 for that caller's own
-// thread again. rt_exit_steps: the saves and the put-backs, the slow pipeline save late and the final save flush last.
 int rt_exit_begin(void);
-int rt_exit_started(void);                      // an orderly end has begun (the hang watch stops judging presents)
-enum { RT_EXIT_SETTINGS = 1 };                  // rt_exit_steps also writes the menu's changes to the selected settings file
+int rt_exit_started(void);
+enum { RT_EXIT_SETTINGS = 1 };
 void rt_exit_steps(unsigned what);
-void perf_gpu_wait(uint64_t t0);                // a wait for a GPU fence ended (any thread; the render thread's also counts as PERF_FENCE)
-// GPU side of the 60-frame perf line, filled by the graphics back end when it set perf_gpu_stats. gpu_ns: GPU busy time
-// since the previous call (timestamp queries, overlaps counted once), have_gpu 0 when the device has no timestamps.
+void perf_gpu_wait(uint64_t t0);
 typedef struct {
     int have_gpu, have_vram, vram_exact;
-    uint64_t gpu_ns, gpu_parts, gpu_missed;     // busy time, submission parts timed, parts left untimed
+    uint64_t gpu_ns, gpu_parts, gpu_missed;
     uint64_t vram_used, vram_budget;
-    int have_idle;                              // calibrated timestamps: the idle split below is filled
-    uint64_t idle_ns, starved_ns, queued_ns;    // GPU idle between timed parts; of it, before the part was submitted; submit to start
-    uint64_t idle_gaps, max_gap_ns;             // gaps over 0.5 ms; the longest
-    uint64_t mirror_ns;                         // of gpu_ns, the copies into VRAM mirrors (vk_sync.c ts_submitted)
+    int have_idle;
+    uint64_t idle_ns, starved_ns, queued_ns;
+    uint64_t idle_gaps, max_gap_ns;
+    uint64_t mirror_ns;
 } PerfGpu;
 extern void (*perf_gpu_stats)(PerfGpu *out);
-// The write-combined memory of the process (device memory the driver maps into it) as a walk of the address space
-// counted it, with the driver's device-local figure at that time (NX2SARIA_MEM_CENSUS: vk_memory.c census_main, perf.c's
-// commit census). perf_wc_recent: the last such figure when it is at most max_age_ns old, else 0.
 void perf_note_wc(uint64_t wc, uint64_t vram_used);
 int perf_wc_recent(uint64_t max_age_ns, uint64_t *wc, uint64_t *vram_used);
-// The frame-time summary's "census" and "report" parts (perf.c ft_frame). perf_census_walk(1) and (0) bracket a walk of
-// the address space on another thread (vk_memory.c census_main): a frame that overlapped it has that much moved to
-// "census". perf_report_part adds the time the memory report took on the presenting thread (vk_memory.c
-// vk_mem_census), any thread, to the next present's "report". perf_census_walked_frame: the frame whose present walked
-// the address space itself (perf.c census_check), UINT64_MAX before any, so a report of that frame skips its own walk.
 void perf_census_walk(int begin);
 void perf_report_part(uint64_t ns);
 uint64_t perf_census_walked_frame(void);
-// The performance overlay (perfmon.c): mode 0 off, 1 fps, 2 full. While it is on, perf_present hands every frame to
-// perfmon_frame; full also takes the event counts (perf_count) and the GPU timestamps as NX2SARIA_TRACE=perf does.
 void perf_set_overlay(int mode);
-int perf_gpu_timing(void);                      // GPU timestamps wanted: NX2SARIA_TRACE=perf, the full overlay, or a
-                                                // feature that asked (perf_gpu_timing_want)
-void perf_gpu_timing_want(int on);              // dynres.c: GPU timestamps while dynamic resolution runs
-void perf_gpu_busy(uint64_t ns);                // GPU busy time of a timed submission part (vk_sync.c, any thread)
-uint64_t perf_gpu_busy_total(void);             // its running total (the overlay's GPU time per frame)
+int perf_gpu_timing(void);
+void perf_gpu_timing_want(int on);
+void perf_gpu_busy(uint64_t ns);
+uint64_t perf_gpu_busy_total(void);
 #define RT_RESULT(module, desc) ((uint32_t)(module) | ((uint32_t)(desc) << 9))
-void rt_sha256(const void *p, size_t n, uint8_t out[32]);   // BCrypt; fatal if the provider fails
+void rt_sha256(const void *p, size_t n, uint8_t out[32]);
 
-// ---- guest address map (fixed part)
 #define RT_ADDRESS_LIMIT (1ull << 39)
 #define RT_KERNEL_BASE 0x7010000000ull
 #define RT_KERNEL_SIZE 0x10000000ull
 #define RT_HOSTFN_BASE 0x7020000000ull
 #define RT_HOSTFN_SIZE 0x100000ull
 
-// ---- AAPCS64 argument access for host functions (section 2.2)
 static inline uint64_t arg_x(const Cpu *c, int i) { return i < 8 ? c->x[i] : LD64(c->sp + 8 * (uint64_t)(i - 8)); }
 static inline void *arg_p(const Cpu *c, int i) { return (void *)(uintptr_t)arg_x(c, i); }
 static inline float arg_s(const Cpu *c, int i) { uint32_t b = (uint32_t)c->v[i]; float f; memcpy(&f, &b, 4); return f; }
@@ -191,384 +125,280 @@ static inline void ret_x(Cpu *c, uint64_t v) { c->x[0] = v; }
 static inline void ret_s(Cpu *c, float f) { uint32_t b; memcpy(&b, &f, 4); c->v[0] = b; }
 static inline void ret_d(Cpu *c, double d) { uint64_t b; memcpy(&b, &d, 8); c->v[0] = b; }
 
-// ---- host functions (hostfn.c)
-// Every host function is a GuestFn at a synthetic address RT_HOSTFN_BASE + 16*i. It runs on the calling guest thread,
-// may clobber x0-x18, v0-v7, v16-v31, must preserve x19-x29, sp, v8-v15, tpidr, and returns to the guest BL site with
-// a C return. On entry c->pc holds the function's own synthetic address.
 typedef struct { const char *name; GuestFn fn; } RtHostEntry;
 #define RT_CAT2(a, b) a##b
 #define RT_CAT(a, b) RT_CAT2(a, b)
-// File-scope declarations; fn must be declared before. The loader binds them by symbol name. The entries of every
-// object file meet in one section per kind, which hostfn.c walks: on PE/COFF ".ovr$m", which the linker sorts between
-// hostfn.c's ".ovr$a" and ".ovr$z" markers; on ELF "nx2navi_ovr", which the linker brackets with __start_nx2navi_ovr and
-// __stop_nx2navi_ovr.
 #ifdef _WIN32
 #define RT_HOST_SECTION(kind) section("." #kind "$m")
 #else
 #define RT_HOST_SECTION(kind) section("nx2navi_" #kind)
 #endif
-#define HOST_OVERRIDE(sym, fn) /* replaces sym in every GOT/GLOB_DAT/ABS64 of every module */                  \
+#define HOST_OVERRIDE(sym, fn) \
     __attribute__((used, RT_HOST_SECTION(ovr))) static const RtHostEntry RT_CAT(rt_ovr_, __COUNTER__) = {sym, fn}
-#define HOST_OBSERVER(sym, fn) /* JUMP_SLOT only; fn calls rt_original(c) */                                    \
+#define HOST_OBSERVER(sym, fn) \
     __attribute__((used, RT_HOST_SECTION(obs))) static const RtHostEntry RT_CAT(rt_obs_, __COUNTER__) = {sym, fn}
-uint64_t hostfn_register(const char *name, GuestFn fn);    // synthetic address; before hostfn_seal only. The same
-                                                           // (name, fn) pair returns the same address
-GuestFn hostfn_override(const char *name);                 // NULL if none
-GuestFn hostfn_observer(const char *name);                 // NULL if none
-void hostfn_add_override(const char *name, GuestFn fn);    // an override outside the linker table (probes); before
-                                                           // ldr_load
-const char *hostfn_name(uint64_t addr);                    // name registered at a synthetic address, NULL if none
-void hostfn_seal(void);                                    // build the dispatch table (rt_dispatch_init over every
-                                                           // linked module); idempotent; registration ends here
-uint64_t hostfn_calls(void);                               // host-function calls so far, all threads
-void hostfn_report(void);                                  // call count per host function to stderr, busiest first
-int hostfn_table_size(int observers);                      // linked HOST_OVERRIDE (0) / HOST_OBSERVER (1) entries
-const char *hostfn_table_name(int observers, int i);       // symbol of linked entry i, NULL past the end
-uint64_t rt_original(Cpu *c);                              // inside an observer: call the guest definition with the
-                                                           // current x0..x7, return x0. Uses c->pc, so call it before
-                                                           // anything that changes c->pc (rt_call restores it)
-uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...);         // host -> guest, section 2.3. n <= 8 arguments, each read
-                                                           // as uint64_t: cast every argument. Seals the dispatch
-                                                           // table on first use. Sets x30 = RT_RET_HOST, restores
-                                                           // x30 and pc, returns x0. Does not touch sp
-#define RT_RET_HOST 0x70200ff000ull                        // x30 sentinel inside the host-function window; a jump to
-                                                           // it is a named fatal
+uint64_t hostfn_register(const char *name, GuestFn fn);
+GuestFn hostfn_override(const char *name);
+GuestFn hostfn_observer(const char *name);
+void hostfn_add_override(const char *name, GuestFn fn);
+const char *hostfn_name(uint64_t addr);
+void hostfn_seal(void);
+uint64_t hostfn_calls(void);
+void hostfn_report(void);
+int hostfn_table_size(int observers);
+const char *hostfn_table_name(int observers, int i);
+uint64_t rt_original(Cpu *c);
+uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...);
+#define RT_RET_HOST 0x70200ff000ull
 
-// ---- guest memory (memory.c)
 typedef struct { uint64_t base, size; } RtRange;
 typedef struct { RtRange aslr, stack, heap, alias, kernel, hostfn; uint64_t pool; } RtGuestLayout;
-typedef struct { uint64_t base, size; uint32_t state, attr, perm, ipc, device, pad; } RtMemoryInfo;   // Horizon layout
-void mem_init(int game);                                   // reserve every region; on a collision re-run the process
-                                                           // (up to 20 times, NX2SARIA_REEXEC), then fatal; reads the
-                                                           // settings (game: cfg.h cfg_start)
+typedef struct { uint64_t base, size; uint32_t state, attr, perm, ipc, device, pad; } RtMemoryInfo;
+void mem_init(int game);
 const RtGuestLayout *mem_layout(void);
-void mem_commit_checked(uint64_t addr, size_t size, const char *what); // commit or log native error, range and commit
-int mem_start_note(int probe);                             // a game's start: a warning line when the free commit is
-                                                           // below the game's need (mem_need.h); 1 when it is
-void mem_guest_census(uint64_t frame);   // NX2SARIA_TRACE=perf: committed bytes per guest region
-// The guest's ranges for a census, each with its name (the loaded modules one range each, all named "modules"), at most
-// max; mem_guest_census_log logs the bytes a walk found committed in each (committed[i] for range i).
+void mem_commit_checked(uint64_t addr, size_t size, const char *what);
+int mem_start_note(int probe);
+void mem_guest_census(uint64_t frame);
 int mem_guest_ranges(const char **name, RtRange *r, int max);
 void mem_guest_census_log(uint64_t frame, const char *const *name, const uint64_t *committed, int n);
-void mem_lazy_heap_census(uint64_t frame);   // the census's lazy heap line (NX2SARIA_HEAP_LAZY only)
-void mem_lazy_heap_report(uint64_t frame);   // NX2SARIA_TRACE=perf: the lazy heap's faults since the last line
-// The game's own memory for the memory report (vk_memory.c owner_log): its heap's size, the part of it committed (the
-// size itself unless the heap is lazy), and the physical memory it mapped. No lock: a log may read a figure late.
+void mem_lazy_heap_census(uint64_t frame);
+void mem_lazy_heap_report(uint64_t frame);
 void mem_guest_usage(uint64_t *heap, uint64_t *heap_committed, uint64_t *phys_maps);
-uint32_t mem_set_heap_size(uint64_t size, uint64_t *addr);                      // 0x01
-uint32_t mem_set_permission(uint64_t a, uint64_t n, uint32_t perm);             // 0x02
-uint32_t mem_set_attribute(uint64_t a, uint64_t n, uint32_t mask, uint32_t at); // 0x03
-uint32_t mem_map(uint64_t dst, uint64_t src, uint64_t n);                       // 0x04
-uint32_t mem_unmap(uint64_t dst, uint64_t src, uint64_t n);                     // 0x05
-uint32_t mem_query(uint64_t a, RtMemoryInfo *out);                              // 0x06
-int mem_readable(uint64_t a, uint64_t n);                                        // every page readable
-uint32_t mem_map_gen(void);   // changes with everything mem_readable answers from (mapping, heap, permissions)
-int mem_read_hold(uint64_t a, uint64_t n);   // mem_readable that keeps the range mapped until mem_read_release
+uint32_t mem_set_heap_size(uint64_t size, uint64_t *addr);
+uint32_t mem_set_permission(uint64_t a, uint64_t n, uint32_t perm);
+uint32_t mem_set_attribute(uint64_t a, uint64_t n, uint32_t mask, uint32_t at);
+uint32_t mem_map(uint64_t dst, uint64_t src, uint64_t n);
+uint32_t mem_unmap(uint64_t dst, uint64_t src, uint64_t n);
+uint32_t mem_query(uint64_t a, RtMemoryInfo *out);
+int mem_readable(uint64_t a, uint64_t n);
+uint32_t mem_map_gen(void);
+int mem_read_hold(uint64_t a, uint64_t n);
 void mem_read_release(void);
-uint32_t mem_map_physical(uint64_t a, uint64_t n);                              // 0x2C
-uint32_t mem_unmap_physical(uint64_t a, uint64_t n);                            // 0x2D
-int mem_info(uint32_t id, uint64_t *out);                  // GetInfo memory ids 2-7, 12-17, 21, 22, 28; 0 if not a memory id
-void *mem_kernel_alloc(uint64_t size, uint64_t align);     // zeroed, guest-visible, in the kernel region; align <= 64 KiB
+uint32_t mem_map_physical(uint64_t a, uint64_t n);
+uint32_t mem_unmap_physical(uint64_t a, uint64_t n);
+int mem_info(uint32_t id, uint64_t *out);
+void *mem_kernel_alloc(uint64_t size, uint64_t align);
 uint64_t mem_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, uint64_t max);
-                                                           // GetWriteWatch(RESET): fills pages[] (4 KiB addresses)
-                                                           // with the pages of [addr, addr+size) written since the
-                                                           // last call, returns their count (at most max; a page
-                                                           // past max stays reported next time). The range must lie
-                                                           // inside the stack/heap block or the alias region
-                                                           // (write watch); otherwise returns UINT64_MAX
 uint64_t mem_written_peek(uint64_t addr, uint64_t size, uint64_t *pages, uint64_t max);
-                                                           // the same without the reset: the bits stay for the next
-                                                           // mem_written_pages (verify checks only)
-int mem_watched(uint64_t addr, uint64_t size);             // [addr, addr+size) lies inside one of those two ranges, so
-                                                           // one mem_written_pages call can answer for all of it
-int mem_freeze(uint64_t a);                                // makes the 2 MiB region at a (2 MiB aligned, watched,
-                                                           // committed PAGE_READWRITE) read-only until a write or
-                                                           // mem_thaw thaws it; 1 frozen (or already), 0 refused
-int mem_frozen(uint64_t a);                                // the 2 MiB region of a is frozen: no page in it changed
-                                                           // since its freeze
-void mem_thaw(uint64_t a, uint64_t n);                     // makes the frozen regions over [a, a+n) writable again;
-                                                           // before a kernel write (file read) into guest memory;
-                                                           // also commits pages the lazy heap left reserved
-void mem_kernel_access(uint64_t a, uint64_t n);            // NX2SARIA_HEAP_LAZY: commits the reserved heap pages of
-                                                           // [a, a+n) before the kernel reads them (a file write)
-uint64_t mem_untouched_run(uint64_t a, uint64_t end);    // NX2SARIA_HEAP_LAZY: the end of the run of heap pages at a
-                                                           // that were never committed (a scan steps over it), else 0
-int mem_host_readable(uint64_t a, uint64_t n);             // plat_mem_readable that first commits the untouched
-                                                           // pages of the lazy heap in [a, a+n), which read zero
+int mem_watched(uint64_t addr, uint64_t size);
+int mem_freeze(uint64_t a);
+int mem_frozen(uint64_t a);
+void mem_thaw(uint64_t a, uint64_t n);
+void mem_kernel_access(uint64_t a, uint64_t n);
+uint64_t mem_untouched_run(uint64_t a, uint64_t end);
+int mem_host_readable(uint64_t a, uint64_t n);
 void mem_freeze_stats(uint64_t *frozen, uint64_t *freezes, uint64_t *fault_thaws, uint64_t *other_thaws,
-                      uint64_t *hot_holds);   // hot_holds: quick thaws that held their region thawed (memory.c "Hot regions")
-// NX2SARIA_WB_PROBE=1 (memory.c, "Probed regions"): who reads what the GPU wrote back into guest memory.
-// NX2SARIA_WB_LAZY (memory.c, "Lazy write-back"): pages the GPU wrote that come down only when the CPU touches them.
-typedef struct { uint64_t h0, h1, off, size; } MemLazyCopy;   // [off, off + size) of buffer h0 into buffer h1
-// fetch: the n copies after all the GPU work handed over so far, and a wait for them; called on several threads at once
+                      uint64_t *hot_holds);
+typedef struct { uint64_t h0, h1, off, size; } MemLazyCopy;
 int mem_lazy_enable(void (*fetch)(const MemLazyCopy *c, int n), int (*clean)(uint64_t lo, uint64_t hi, void *ctx));
 uint64_t mem_lazy_arm(uint64_t a, uint64_t n, uint64_t h0, uint64_t h1, uint64_t off, void *ctx);
 int mem_lazy_skip(uint64_t a, uint64_t n, uint64_t h0, int64_t delta, uint64_t out[][2], int max);
 int mem_lazy_armed(uint64_t a, uint64_t n);
-// Copies the ranges src[i] = {address, bytes} of guest memory whose pages read without a fault to dst[i], ok[i] set.
 int mem_copy_readable(uint8_t *const *dst, const uint64_t (*src)[2], int n, uint8_t *ok);
-int mem_lazy_touches(uint64_t a, uint64_t n);   // 0: the CPU can read [a, a + n) without a fault now
+int mem_lazy_touches(uint64_t a, uint64_t n);
 void mem_lazy_window(int open);
-void mem_lazy_release(const uint64_t (*rg)[3], int n);   // rg[i] = {lo, hi, buffer or 0 for any}: armed parts come down
+void mem_lazy_release(const uint64_t (*rg)[3], int n);
 void mem_lazy_report(uint64_t frame, uint64_t skipped);
-void mem_lazy_note(char *out, size_t n);                   // its state as a phrase, without a lock (a fatal error's line)
-int mem_lazy_pick(uint64_t *addr, int max);                // test: addresses of armed pages
-int mem_probe(uint64_t a, uint64_t n);                     // the 2 MiB regions inside [a, a+n) fault on their next access
-int mem_probing(void);                                     // the probe is on
-void mem_probe_report(uint64_t frame);                     // logs the accesses since the last report
-                                                           // regions frozen now; freezes and thaws since the last call
-void mem_kernel_free(void *p, uint64_t size);              // TLR/TLS reuse after thread exit
+void mem_lazy_note(char *out, size_t n);
+int mem_lazy_pick(uint64_t *addr, int max);
+int mem_probe(uint64_t a, uint64_t n);
+int mem_probing(void);
+void mem_probe_report(uint64_t frame);
+void mem_kernel_free(void *p, uint64_t size);
 
-// ---- modules (loader.c)
 typedef struct {
-    const char *name; uint64_t base, size, text_end, data_off;   // text_end, data_off: offsets from base
-    uint64_t init, init_array, init_array_size, ctor_flag;  // absolute guest addresses; init_array_size in bytes
+    const char *name; uint64_t base, size, text_end, data_off;
+    uint64_t init, init_array, init_array_size, ctor_flag;
 } RtLoaded;
-void ldr_load(const char *exefs_dir);                      // load, relocate (overrides applied), seal; once
+void ldr_load(const char *exefs_dir);
 int ldr_count(void);
-const RtLoaded *ldr_module(int i);                         // order: main, subsdk0, sdk
-uint64_t ldr_symbol(const char *name);                     // exported definition, 0 if none
-uint64_t ldr_plt_stub(const char *module, const char *name); // PLT stub whose GOT slot holds name, 0 if none
-const char *ldr_describe(uint64_t a, char *buf, int n);    // "main+0x1234 (symbol+0x10)", "host <name>", or the address
-uint8_t *ldr_read_verified(const char *dir, const char *file, size_t *len);   // whole file, SHA-256 checked against
-                                                           // modules.c (fatal on mismatch); free() it
+const RtLoaded *ldr_module(int i);
+uint64_t ldr_symbol(const char *name);
+uint64_t ldr_plt_stub(const char *module, const char *name);
+const char *ldr_describe(uint64_t a, char *buf, int n);
+uint8_t *ldr_read_verified(const char *dir, const char *file, size_t *len);
 
-// Written by tools/build_game.py into build/<version>/modules.c.
 typedef struct { const char *file, *sha256; } RtFileHash;
-extern const RtFileHash rt_exefs_sha256[];                 // tools/data/expected-<version>.json "exefs_sha256"
+extern const RtFileHash rt_exefs_sha256[];
 extern const int rt_exefs_sha256_count;
 extern const char rt_default_exefs[], rt_default_romfs[], rt_default_profile[];
-extern const unsigned long long rt_app_pool_bytes;        // the title's application memory pool (GetInfo 6)
-extern const int rt_nvn_api_version[2];                   // NVN_DEVICE_INFO_API_{MAJOR,MINOR}_VERSION the title requires
-extern const int rt_game_version;                          // the game build: 111 (1.1.1, make_game.py), 110 (1.1.0), 121 (1.2.1) or 143 (1.4.3)
-extern const char rt_port_version[];                       // VERSION at the build's root: 0.1.0, 0.1.0+973c626 in a release
-#define RT_V110 (rt_game_version == 110)                    // 1.1.0: its own boot constants and data slots
-#define RT_V111 (rt_game_version == 111)                    // 1.1.1: its own boot constants (boot.c)
+extern const unsigned long long rt_app_pool_bytes;
+extern const int rt_nvn_api_version[2];
+extern const int rt_game_version;
+extern const char rt_port_version[];
+#define RT_V110 (rt_game_version == 110)
+#define RT_V111 (rt_game_version == 111)
 #define RT_V143 (rt_game_version >= 143)
 
-// ---- kernel (kernel.c)
 typedef struct RtThread RtThread;
-Cpu *kern_cpu(void);                                       // current guest thread's Cpu, NULL on host threads
-void fs_save_crash_wait(void);                             // fs_host.c: the crash report's and rt_fatal's bounded wait for a save Commit under way
-void kern_free_cores_note(void);                           // for crash reports: logs that free_cores = 1 lifted the
-                                                           // virtual core gate, nothing when the gate is on
-uint32_t kern_main_thread(Cpu **cpu);                      // main thread object and Cpu for the calling host thread
-                                                           // (main.npdm: 1 MiB stack at the top of the stack region,
-                                                           // priority 44, core 0); on the main thread: its handle
-void kern_main_stack(uint64_t *base, uint64_t *size);      // the main thread's stack, size 0 before kern_main_thread;
-                                                           // svc.c reports it to QueryMemory, memory.c does not know it
-void kern_run_on_guest_main(void (*fn)(Cpu *c));           // start the guest main host thread, run fn there, join
-int kern_core_away(void);                                  // give the virtual core up around a blocking host wait
+Cpu *kern_cpu(void);
+void fs_save_crash_wait(void);
+void kern_free_cores_note(void);
+uint32_t kern_main_thread(Cpu **cpu);
+void kern_main_stack(uint64_t *base, uint64_t *size);
+void kern_run_on_guest_main(void (*fn)(Cpu *c));
+int kern_core_away(void);
 void kern_core_back(int *away);
-void kern_checkpoint(void);                                // preemption point, at every SVC and indirect call
-// A preempt request is pending for the thread (Cpu.thread): its RtThread starts with the flag (kernel.c).
+void kern_checkpoint(void);
 static inline int kern_preempt_pending(const void *thread) { return __atomic_load_n((const int *)thread, __ATOMIC_RELAXED); }
-// Set once before guest threads start (NX2SARIA_CORE_DIAG, NX2SARIA_ASYNC_PREEMPT): host calls (hostfn.c) and SVCs (svc.c) count their depth in
-// the thread's second int, so the kernel knows whether a core owner runs game code at the top level.
 extern int kern_host_track;
 static inline int *kern_host_depth(void *thread) { return (int *)thread + 1; }
-void kern_host_left(void *thread);                         // back at depth 0 with a preempt request pending
-int kern_core_diag_on(void);                               // NX2SARIA_CORE_DIAG
-void kern_core_diag_frame(uint64_t frame, uint64_t interval_ns);   // perf_present, every present (also logs the
-                                                           // asynchronous preemption counters)
-void kern_sched_report(uint64_t frame);                    // NX2SARIA_TRACE=sched: per-thread time split, on present
-uint32_t kern_handle_new(int kind, void *obj);             // kind: KERN_SESSION or KERN_TMEM (ipc.c)
+void kern_host_left(void *thread);
+int kern_core_diag_on(void);
+void kern_core_diag_frame(uint64_t frame, uint64_t interval_ns);
+void kern_sched_report(uint64_t frame);
+uint32_t kern_handle_new(int kind, void *obj);
 void *kern_handle_get(uint32_t h, int kind);
-void *kern_handle_hold(uint32_t h, int kind, void (*hold)(void *obj));   // kern_handle_get, hold(obj) run under the
-                                                                          // kernel lock (a reference the caller drops)
-int kern_handle_copy(uint32_t h, int kind, void *out, size_t n);         // a copy of the object, made under the
-                                                                          // kernel lock; 0 for a bad handle
-void kern_handle_close(uint32_t h);                        // CloseHandle from the host side, any thread; fatal on a
-                                                           // bad handle
+void *kern_handle_hold(uint32_t h, int kind, void (*hold)(void *obj));
+int kern_handle_copy(uint32_t h, int kind, void *out, size_t n);
+void kern_handle_close(uint32_t h);
 enum { KERN_SESSION = 4, KERN_TMEM = 5 };
-uint32_t kern_event_new(void);                             // writable handle
+uint32_t kern_event_new(void);
 uint32_t kern_event_readable(uint32_t writable);
 void kern_event_signal(uint32_t writable);
-void kern_event_clear(uint32_t writable);                  // server-side clear (e.g. a drained message queue)
-void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear);   // guest thread only
-void kern_signal_system_event(uint64_t ev);                // any thread
-void kern_clear_system_event(uint64_t ev);                 // any thread; a bound, live event only
-void kern_unbind_system_event(Cpu *c, uint64_t ev);        // before freeing a host-memory event nothing signals now;
-                                                           // destroys it on a guest thread (c set)
-int kern_system_event_live(uint64_t ev);                   // in mapped guest memory, its state byte nonzero
-int kern_svc(Cpu *c, uint32_t imm);                        // thread/sync SVCs; 1 if handled
+void kern_event_clear(uint32_t writable);
+void kern_bind_system_event(Cpu *c, uint64_t ev, int autoclear);
+void kern_signal_system_event(uint64_t ev);
+void kern_clear_system_event(uint64_t ev);
+void kern_unbind_system_event(Cpu *c, uint64_t ev);
+int kern_system_event_live(uint64_t ev);
+int kern_svc(Cpu *c, uint32_t imm);
 uint64_t kern_now_ns(void);
-extern uint64_t rt_guest_start_ns;   // kern_now_ns when the guest started (boot.c), 0 before
+extern uint64_t rt_guest_start_ns;
 typedef struct { uint64_t svcs, threads, host_calls; } RtStats;
-RtStats rt_stats(void);                                    // host_calls: hostfn_calls()
+RtStats rt_stats(void);
 
-// ---- IPC (ipc.c)
-int ipc_svc(Cpu *c, uint32_t imm);                         // 0x15, 0x1F, 0x21, 0x22; 1 if handled
-void ipc_handle_closed(int kind, void *obj);               // CloseHandle on a KERN_SESSION/KERN_TMEM handle
+int ipc_svc(Cpu *c, uint32_t imm);
+void ipc_handle_closed(int kind, void *obj);
 
-// ---- file system (romfs.c / fs_host.c)
-void fs_init(void);                                        // idempotent; paths from rt_config()
+void fs_init(void);
 
-// ---- account (ov_system.c)
-void account_uid(uint64_t out[2]);                         // the local user's nn::account::Uid {lo, hi}, persistent in
-                                                           // <profile>/account.uid; fs_host.c names save data after it
+void account_uid(uint64_t out[2]);
 
-// ---- movies (ov_movie.c)
-void movie_tick(Cpu *c);                                   // at every present, on the presenting guest thread: hands
-                                                           // decoded movie frames over when due, signals their events
-// ---- camera speed (camera_speed.c): NX2SARIA_STICK_SENS
-float cam_speed_wanted(void);                              // the factor NX2SARIA_STICK_SENS asks for, 0.1 to 3
-float cam_speed_applied(void);                             // the factor in effect: 1 until romfs.c serves the pack
+void movie_tick(Cpu *c);
+float cam_speed_wanted(void);
+float cam_speed_applied(void);
 int cam_pack_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, void **out, size_t *out_n);
-                                                           // Pack/Actor/PlayerCamera.pack.zs with the camera speeds
-                                                           // multiplied, malloc'd; 0 = factor 1 or cannot (logged)
-void cam_pack_opened(void);                                // romfs.c: the game opened the camera's pack
-void cam_speed_tick(void);                                 // every present: a changed setting goes into the game's memory
-void cam_pack_served(void);                                // romfs.c serves the multiplied pack
-// ---- game resolution (resolution.c): NX2SARIA_OUTPUT_RES, NX2SARIA_RENDER_SCALE
-uint64_t res_heap_extra_bytes(void);                       // added to the application pool (mem_init), 2 MiB steps
-uint64_t res_heap_extra_kib(void);                         // added to the HeapDef texture heap and its parent; 0 = none
-int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n);   // the HeapDef table (.byml.zs) with
-                                                           // the grown heaps, malloc'd; 0 = cannot (logged)
-void res_heapdef_served(void);                             // romfs.c serves the grown table
-int res_heapdef_ok(void);                                  // 1 once it does; 0 after fs_init: the game has the shipped heaps
+void cam_pack_opened(void);
+void cam_speed_tick(void);
+void cam_pack_served(void);
+uint64_t res_heap_extra_bytes(void);
+uint64_t res_heap_extra_kib(void);
+int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n);
+void res_heapdef_served(void);
+int res_heapdef_ok(void);
 void wide_init(void);
-void wide_present(void);                                    // each present: DLSS's render scale (res_fixed)                                      // after rt_patches_init: widescreen.c, NX2SARIA_GAME_ASPECT
-void wide_lens_host(Cpu *c);                               // the lens-load site shared by wide_aspect and fov, patch page +0xe40
-int wide_available(void);                                  // the generated C has the widescreen sets
-void wide_picture(unsigned *w, unsigned *h);               // the picture the game draws (its scene is never larger)
-int wide_start_picture(unsigned *w, unsigned *h);          // ... as wide_init will set it, asked before it (romfs.c); 0 16:9
-void wide_bars_init(double x_margin, double y_margin);       // wide_init: center UI letterbox margins on either axis
-void wide_bars_screen_host(Cpu *c);                        // the set wide_bars' site (patch page +0xef0, patches.c)
-int wide_menu_open(void);                                  // the game's pause/map or system menu background is active
+void wide_present(void);
+void wide_lens_host(Cpu *c);
+int wide_available(void);
+void wide_picture(unsigned *w, unsigned *h);
+int wide_start_picture(unsigned *w, unsigned *h);
+void wide_bars_init(double x_margin, double y_margin);
+void wide_bars_screen_host(Cpu *c);
+int wide_menu_open(void);
 int wide_loading_open(void);
-void menu_mouse_screen_host(Cpu *c);                       // the set menu_mouse's site (patch page +0xee0, patches.c)
-void wide_menu_bars(double *x, double *y);                 // gfx_present.c, each present: margins outside the middle 16:9
-int wide_scene_settable(void);                             // the generated C has res_fixed: the scene's share can be set
-double wide_scene_share(void);                             // the scene's share of the picture now (0: the game's own)
-double wide_scene_wanted(void);                            // ... what the settings ask for, before the heap's limit
-int wide_scene_restart(void);                              // a restart gives the larger scene the settings ask for
-double wide_dynres_base(void);                             // dynres.c: the scene share to step from, -1 an upscaler runs
-uint64_t wide_heap_extra_kib(void);                        // the texture heap's growth for the widescreen picture
-// The most res_heap_extra_kib may be (memory.c): with more the application pool passes the heap region and the
-// game's own SetHeapSize is refused. A whole number of 2 MiB.
+void menu_mouse_screen_host(Cpu *c);
+void wide_menu_bars(double *x, double *y);
+int wide_scene_settable(void);
+double wide_scene_share(void);
+double wide_scene_wanted(void);
+int wide_scene_restart(void);
+double wide_dynres_base(void);
+uint64_t wide_heap_extra_kib(void);
 uint64_t mem_heap_extra_max_kib(void);
-void res_init(void);                                       // after rt_patches_init: the patch page and the sets
-float res_dlss_lod_bias(void);                             // NX2SARIA_DLSS upscaling: texture LOD bias (<= 0)
-int res_dlss_mode(const char *mode);                       // NX2SARIA_DLSS changed while running: new scene size
-void dynres_frame(void);                                   // dynamic resolution: one presented frame (vk_backend.c)
-const char *dynres_override(void);                         // the DLSS mode dynamic resolution uses now, NULL: the setting's
-double dynres_share(void);                                 // the scene share it uses now without an upscaler, 0: the setting's
-void res_fn_hit(uint64_t addr, uint64_t x0);               // main.c fnprof_hit: catches the renderer at start
-void res_present(Cpu *c);                                  // nvnQueuePresentTexture: applies a pending scene size
-void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene sizes in effect (the game's own
-                                                           // until res_init switched the sets on)
-int res_adjustable(void);                                  // the build has the output and scene patch sets
-int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 (the test res_init and romfs.c share)
-int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
-void res_wanted(unsigned out[2]);                          // the output size NX2SARIA_OUTPUT_RES asks for
-void res_fov_live(void);                                   // NX2SARIA_FOV to the camera (set fov); on a settings change
-float res_fov_factor(void);                                // the 1.1.1 camera callback's multiplier
-// ---- code patches (patches.c) and the frame step (frame_rate.c)
-void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
-                                                           // page committed; logs the sets
-int rt_patch_set(const char *name);                        // index of a set of generated patches.h, -1 if absent
-int rt_patch_enabled(int set);                             // the set is on (0 for -1)
-void rt_patch_disable(int set);                            // before the guest starts: a set needs another that is off
-void rt_patch_switch(int set, int on);                     // at run time (live settings): each site takes the new code
-                                                           // the next time it runs
-void *rt_patch_page(void);                                 // the page the patched code reads (NULL without the table)
-void frame_step_init(void);                                // after rt_patches_init: the real-time step's first value
-int frame_step_realtime(void);                             // the real-time step is on: presents ignore the interval
-uint64_t frame_step_cap_ns(void);                          // with the real-time step: the shortest frame in ns
-int frame_step_movie_hz(void);                             // the movie rate frame_step_cap_ns paces at; 0: no movie
-uint64_t frame_step_ceiling_ns(void);                      // the shortest frame the game survives, whoever holds the limit
-int ov_movie_live(void);                                   // ov_movie2.c: a movie plays (frame_rate.c movie_cap_hz)
-int frame_limit_adjustable(void);                         // the frame limit setting changes the rate (always)
-int frame_free_running(void);                             // no fps60/realtime patch set: the game steps by the clock
-double frame_step_limit_hz(void);                         // the frame rate the limit gives (overlay); 0 unknown
-double frame_step_game_hz(void);                          // the rate the game draws at under the limit; 0 unknown
-void frame_rate_day_host(Cpu *c);                         // the time of day's seconds a frame (set ostep, page +0xf60)
-void frame_rate_water_host(Cpu *c);                       // the water's ripple steps a frame (set ostep, page +0xf50)
-void frame_rate_sim_host(Cpu *c);                         // water and floor surfaces' fixed steps (set owater, page +0xf20)
-void frame_rate_sound_gate_host(Cpu *c);                  // the sound job at whole steps (set osound, page +0xf10)
-void frame_rate_horse_jump_host(Cpu *c);                  // the horse's jump blend (set ohorse, page +0xea0)
-void frame_rate_gohma_turn_host(Cpu *c);                  // Gohma's turn-rate bounds (set ogohma, page +0xe80)
-uint32_t frame_rate_animation_frames(uint64_t entry, float step);   // whole clock frames for a single-pose loop
-void animation_loop_host(Cpu *c);                         // a single-frame animation loop (set ozora, page +0xe90)
-void battle_music_gate(int run);                          // phase 0's decision, under the sound gate lock
-void battle_music_flags_host(Cpu *c);                     // restore held battle music flags (set obgm, page +0xe70)
-void voice_language_host(Cpu *c);                          // refresh saved voice-language changes (set voice_language, page +0xe60)
-void wide_balloon_host(Cpu *c);                            // keep speech-balloon anchors with their speakers (set wide_balloon, page +0xe50)
-void frame_rate_sound_step_host(Cpu *c);                  // the step the sound job hands on (set osound, page +0xf00)
-float frame_step_frames(void);                            // the 60 Hz frames the game steps per update (set ostep), else 1
-void frame_step_flight(float *page, float *game, uint64_t *presents);   // flight.c: the step at a host present
-uint64_t frame_step_presents(void);                       // the game's presents so far: one per update of the game
-// rtss_limit.c: RivaTuner Statistics Server takes the frame limit where it runs
-void rtss_limit_want(int64_t mhz);                        // the pacer's limit in millihertz: >0, 0 none; or why RTSS is
-                                                           // kept out (rtss_decide.h RTSS_OUT_*)
-void rtss_limit_movie(int hz);                            // the rate of a movie that plays, 0 none: the pacer holds it
-int rtss_limit_active(void);                              // RTSS limits to the wanted rate: the pacer keeps the ceiling
-int rtss_limit_state(void);                               // menu: 1 RTSS limits, 2 its profile is read-only, 3 it let the
-                                                           // game run past its limit or never showed it holds it, 4
-                                                           // kept out while a limit set in RTSS holds the game too
-void rtss_limit_restore(void);                            // before the process ends: the profile's old limit back
-void rtss_limit_crash(void);                              // a crash or fatal error: no call into RTSS, the next start
-                                                           // puts the profile back (rtss-profile.txt)
-int64_t frame_step_world_us(void);                         // game time since the loaded save's first frame, -1 before
-                                                           // (NX2SARIA_FPS_LIMIT, live)
-uint64_t frame_step_ticks(void);                           // game time since the first present in 60 Hz ticks (input scripts)
-// In-launch A/B measurement: NX2SARIA_AB=<seconds> splits the world clock (frame_step_world_us) into blocks of that much
-// game time in the order A B B A (repeated); rt_ab() is 1 in the B blocks, 0 in A blocks, before the world clock and
-// without NX2SARIA_AB. rt_knob(name, def) reads the switch
-// NX2SARIA_<name> once per call (def when unset): 0 off, 2 for "ab" (on in the B blocks only), 1 for anything else;
-// callers keep it and test it with RT_KNOB_ON. The perf line counts the B frames of its window (tools/ab_summary.py
-// compares the windows that are wholly A or wholly B).
+void res_init(void);
+float res_dlss_lod_bias(void);
+int res_dlss_mode(const char *mode);
+void dynres_frame(void);
+const char *dynres_override(void);
+double dynres_share(void);
+void res_fn_hit(uint64_t addr, uint64_t x0);
+void res_present(Cpu *c);
+void res_sizes(unsigned out[2], unsigned scene[2]);
+int res_adjustable(void);
+int res_is_16x9(unsigned w, unsigned h);
+int res_wants_wide_overlay(const unsigned out[2]);
+void res_wanted(unsigned out[2]);
+void res_fov_live(void);
+float res_fov_factor(void);
+void rt_patches_init(void);
+int rt_patch_set(const char *name);
+int rt_patch_enabled(int set);
+void rt_patch_disable(int set);
+void rt_patch_switch(int set, int on);
+void *rt_patch_page(void);
+void frame_step_init(void);
+int frame_step_realtime(void);
+uint64_t frame_step_cap_ns(void);
+int frame_step_movie_hz(void);
+uint64_t frame_step_ceiling_ns(void);
+int ov_movie_live(void);
+int frame_limit_adjustable(void);
+int frame_free_running(void);
+double frame_step_limit_hz(void);
+double frame_step_game_hz(void);
+void frame_rate_day_host(Cpu *c);
+void frame_rate_water_host(Cpu *c);
+void frame_rate_sim_host(Cpu *c);
+void frame_rate_sound_gate_host(Cpu *c);
+void frame_rate_horse_jump_host(Cpu *c);
+void frame_rate_gohma_turn_host(Cpu *c);
+uint32_t frame_rate_animation_frames(uint64_t entry, float step);
+void animation_loop_host(Cpu *c);
+void battle_music_gate(int run);
+void battle_music_flags_host(Cpu *c);
+void voice_language_host(Cpu *c);
+void wide_balloon_host(Cpu *c);
+void frame_rate_sound_step_host(Cpu *c);
+float frame_step_frames(void);
+void frame_step_flight(float *page, float *game, uint64_t *presents);
+uint64_t frame_step_presents(void);
+void rtss_limit_want(int64_t mhz);
+void rtss_limit_movie(int hz);
+int rtss_limit_active(void);
+int rtss_limit_state(void);
+void rtss_limit_restore(void);
+void rtss_limit_crash(void);
+int64_t frame_step_world_us(void);
+uint64_t frame_step_ticks(void);
 int rt_ab(void);
 int rt_knob(const char *name, const char *def);
 #define RT_KNOB_ON(mode) ((mode) == 2 ? rt_ab() : (mode))
-void frame_step_present(uint64_t display_ns, int interval); // nvnQueuePresentTexture: the frame's display time and
-                                                           // present interval (60 Hz ticks)
-// ---- boot (boot.c, main.c)
+void frame_step_present(uint64_t display_ns, int interval);
 typedef struct { const char *exefs, *romfs, *profile; int boot; double seconds; const char *shot, *gpu; } RtConfig;
-                                                           // romfs: directory with romfs.bin and index.json;
-                                                           // frames: --frames N (0 = no limit); shot: --shot
-                                                           // PATH; gpu: NX2SARIA_GPU
 const RtConfig *rt_config(void);
-void rt_boot_event(const char *what, Cpu *c, const char *detail);   // checkpoint log; "nvn" ends --boot
-void rt_boot(void);                                        // boot.c
-// Modes of nx2saria.exe. main.c has run mem_init and parsed the paths; each mode calls ldr_load itself if it needs the
-// modules, registers its host functions, then seals (hostfn_seal, or implicitly at the first rt_call). Return the
-// process exit code.
-int list_audio_devices(void);                              // audio_mixer.c: --list-audio-devices (SDL3 on every window back end)
-int probe_cfg(void);                                       // cfg_probe.c
-int probe_dpi(void);                                       // dpi_probe_win.c (Windows only)
-int list_monitors(void);                                   // --list-monitors: gfx_window_win.c, gfx_window_sdl.c
-int probe_mods(void);                                      // mods_probe.c
-void discord_init(void);                                   // discord_rpc.c: the Rich Presence thread, game runs only
-void tracker_api_init(void);                               // tracker_api.c: the start line, and the listener when it is on
-int tracker_api_on(void);                                  // tracker_api.c: NX2SARIA_TRACKER_API is on (mem_init reads it)
-int probe_discord(void);                                   // discord_rpc.c
+void rt_boot_event(const char *what, Cpu *c, const char *detail);
+void rt_boot(void);
+int list_audio_devices(void);
+int probe_cfg(void);
+int probe_dpi(void);
+int list_monitors(void);
+int probe_mods(void);
+void discord_init(void);
+void tracker_api_init(void);
+int tracker_api_on(void);
+int probe_discord(void);
 int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_services(void), probe_fs(void);
-int probe_gfx_abi(void);                                   // gfx_abi_probe.c
-int probe_vkdevice(void);                                 // vk_device.c
-int vk_sync_probe_devlost(void);                          // vk_sync.c: --probe-devlost
-int probe_nvn(void), probe_nvn_tex(void);                  // nvn_probe.c, nvn_tex_probe.c
-int probe_window(void);                                    // gfx_window_probe.c
-int probe_shader(void);                                    // gfx_shader.c
-int probe_census_dir(char *dir, size_t n);                 // gfx_shader_probe.c: build/<version>/shaders for the probes
-int probe_vkmem(void), probe_vkexec(void), probe_astc(void);                 // tex_probe.c, vk_exec_probe.c, astc_probe.c
-int probe_meshfb(void);                                                      // mesh_fb_probe.c
-int probe_fsr3(void);                                                        // fsr3_probe.c
-int probe_fsr3fg(void);                                                      // fsr3fg_probe.c
-int probe_zstd(void);                                      // ov_zstd.c
-int probe_gamepad(void);                                   // input.c
-int probe_movie(void);                                     // movie_probe.c: the host movie decoders on one RomFS movie
-int vk_pipeline_prepare_shaders(void);                     // vk_pipeline.c: --prepare-shaders (tools/prepare_shaders.py)
-int vk_pipeline_warm_shaders(void);                        // vk_pipeline.c: --warm-shaders (tools/build_game.py)
-int vk_pipeline_prepare_pipelines(void);                   // vk_pipeline.c: --prepare-pipelines (the shared pipeline list)
-int vk_pipeline_probe_prewarm(void);                       // vk_pipeline.c: --probe-prewarm
-int vk_pipeline_probe_buildgate(void);                     // vk_pipeline.c: --probe-buildgate
-// main.c crash_handler: a fault while the boot builds pipelines or stage libraries leaves a note, which tells the
-// next start that the marker or journal it finds is a crash's and not a stopped start's (vk_pipeline.c pm_skipped).
+int probe_gfx_abi(void);
+int probe_vkdevice(void);
+int vk_sync_probe_devlost(void);
+int probe_nvn(void), probe_nvn_tex(void);
+int probe_window(void);
+int probe_shader(void);
+int probe_census_dir(char *dir, size_t n);
+int probe_vkmem(void), probe_vkexec(void), probe_astc(void);
+int probe_meshfb(void);
+int probe_fsr3(void);
+int probe_fsr3fg(void);
+int probe_zstd(void);
+int probe_gamepad(void);
+int probe_movie(void);
+int vk_pipeline_prepare_shaders(void);
+int vk_pipeline_warm_shaders(void);
+int vk_pipeline_prepare_pipelines(void);
+int vk_pipeline_probe_prewarm(void);
+int vk_pipeline_probe_buildgate(void);
 void vk_pipeline_crash_note(void);
-int vk_ffx_probe_cache(void);                              // vk_ffx.cpp: --probe-ffx-cache
-// vk_device.c: the drivers' own shader caches beside the exe (MESA_SHADER_CACHE_DIR, on NVIDIA's Linux driver
-// __GL_SHADER_DISK_CACHE_PATH and _SIZE) in the environment, once; before any thread can load a Vulkan driver
+int vk_ffx_probe_cache(void);
 void vk_driver_cache_env(void);
-int vk_pipeline_spirv_selftest(void);                      // vk_pipeline.c: --selftest, the SPIR-V rewrites without a device
+int vk_pipeline_spirv_selftest(void);

@@ -125,6 +125,11 @@ of them.
    retrying with M`), and with one worker the step fails with that message instead of waiting for ever.
 
    Lifting takes about 15 s, a clean compile about 200 s on 24 threads; later builds recompile only what changed.
+   On a player's PC `tools/make_game.py` keeps an object while its command, its source and every file its dependency
+   list names are the same, each compared by its SHA-256 (`ObjectCache`). `runtime/cpu.h`, `runtime/simd.h` and
+   `runtime/simd_fp.h` are inputs of the lifted code's object cache: every lifted object depends on them. Any changed
+   byte in them, a comment or a space included, makes every player's PC recompile all the lifted objects at the next
+   update, so a change there should be deliberate and batched.
    A compiler cache in front of clang shortens it further: with `SCCACHE` set to an sccache executable, `build_game.py`
    writes it into the ninja file ahead of `cc`, and every lift rewrites the generated chunks with the same contents, so
    a second build of the same version hits all of their objects:

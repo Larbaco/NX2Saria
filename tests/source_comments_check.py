@@ -45,6 +45,7 @@ EXCLUDED = (
     ('runtime/shaders/ffx3/*', 'AMD FidelityFX SDK headers, unmodified (MIT, THIRD_PARTY_NOTICES.md)'),
     ('runtime/nvn/nvn.h', 'the NVN type definitions, another project\'s header, unmodified (MIT, '
                           'THIRD_PARTY_NOTICES.md)'),
+    ('runtime/shaders/smaa.glsl', 'the SMAA reference implementation, unmodified (MIT, THIRD_PARTY_NOTICES.md)'),
     ('tools/xlate/*', 'the shader translator: its identity (tools/build_xlate.py identity()) reads the patch files '
                       'byte for byte, and a new identity makes every player prepare the shaders again; its comments '
                       'go with the shader translator\'s next identity change'),
@@ -52,6 +53,14 @@ EXCLUDED = (
     ('generated/*', 'generated from game code, never committed (AGENTS.md, "Game content boundary")'),
     ('build/*', 'build output, never committed'),
     ('*_spv.h', 'shader headers that tools/build_shaders.py writes, never committed'),
+)
+
+OWED = (
+    (('runtime/cpu.h', 'runtime/simd.h', 'runtime/simd_fp.h'), '2026-11-24',
+     'inputs of the lifted objects\' cache',
+     'every lifted object depends on them and tools/make_game.py compares an object\'s dependencies by SHA-256, so '
+     'one changed byte makes every player\'s PC recompile the lifted code',
+     'they leave with the next change that rebuilds the lifted code'),
 )
 
 KEPT_REASONS = {
@@ -78,6 +87,8 @@ LICENSE_FULL = re.compile(
 COPYRIGHT = re.compile(r'Copyright\s*(?:\([cC]\)|©|\d)')
 SENTENCE_END = re.compile(r'THIRD_PARTY_NOTICES|\.\)?\s*$')
 NOTICE_START = re.compile(r'^[#/*;\s]*(?:Contains code|Portions|Copyright)\b')
+LICENSE_FILE = re.compile(r'\((?:MIT|BSD[-\w ]*|Apache[-\w. ]*|zlib|ISC|MPL[-\w. ]*),\s*'
+                          r'((?:[\w.-]+/)*(?:LICEN[SC]E|COPYING)(?:\.txt|\.md)?)\)')
 
 PY_DIRECTIVE = re.compile(r'#\s*(?:noqa\b|type:\s*ignore\b|pragma\b|fmt:\s*(?:off|on|skip)\b|isort:|pylint:|mypy:|'
                           r'pyright:|nosec\b)')
@@ -97,6 +108,13 @@ def excluded(rel):
     for pattern, reason in EXCLUDED:
         if fnmatch.fnmatchcase(rel, pattern):
             return pattern, reason
+    return None
+
+
+def owed(rel):
+    for entry in OWED:
+        if rel in entry[0]:
+            return entry
     return None
 
 
@@ -366,7 +384,14 @@ def license_lines(lines):
     return kept
 
 
-def classify(rel, text):
+def names_license_file(content, rel, root):
+    m = LICENSE_FILE.search(content)
+    if not m or root is None:
+        return False
+    return any((base / m.group(1)).is_file() for base in ((root / rel).parent, root))
+
+
+def classify(rel, text, root=None):
     suffix = Path(rel).suffix.lower()
     kept = {}
     counted = {}
@@ -404,7 +429,7 @@ def classify(rel, text):
     else:
         return counted, kept, True
     lines = comment_lines(text, spans)
-    lic = license_lines(lines)
+    lic = license_lines(lines) | {ln for ln, content in lines.items() if names_license_file(content, rel, root)}
     for ln, content in lines.items():
         if C_DIRECTIVE.search(content):
             kept[ln] = ('directive', content)
@@ -434,7 +459,7 @@ def source_files(root):
 
 
 def scan(root):
-    report = {'areas': {}, 'kept': {}, 'excluded': {}, 'files': {}, 'unparsed': []}
+    report = {'areas': {}, 'kept': {}, 'excluded': {}, 'files': {}, 'unparsed': [], 'owed': {}}
     for rel in source_files(root):
         suffix = Path(rel).suffix.lower()
         ex = excluded(rel)
@@ -447,7 +472,7 @@ def scan(root):
             text = (root / rel).read_text(encoding='utf-8-sig', errors='replace')
         except OSError:
             continue
-        counted, kept, parsed = classify(rel, text)
+        counted, kept, parsed = classify(rel, text, root)
         if ex:
             entry = report['excluded'].setdefault(ex[0], [0, 0])
             entry[0] += 1
@@ -458,6 +483,9 @@ def scan(root):
         area = area_of(rel)
         a = report['areas'].setdefault(area, {'files': 0, 'with': 0, 'lines': 0})
         a['files'] += 1
+        if owed(rel):
+            report['owed'][rel] = len(counted)
+            counted = {}
         if counted:
             a['with'] += 1
             a['lines'] += len(counted)
@@ -492,6 +520,12 @@ def print_table(report):
     print('kept: ' + ', '.join(f'{reason} {len(kept.get(reason, ())):,}' for reason in KEPT_REASONS))
     print('not read: ' + ', '.join(f'{pattern} ({files} files, {lines:,} comment lines)'
                                    for pattern, (files, lines) in sorted(report['excluded'].items())))
+    for files, since, what, why, until in OWED:
+        there = [rel for rel in files if rel in report['owed']]
+        if there:
+            lines = sum(report['owed'][rel] for rel in there)
+            print(f'kept with comments: {len(there)} files, {lines:,} comment lines ({what}; {until}; since '
+                  f'{since}): {", ".join(there)}')
     if report['unparsed']:
         print(f'docstrings not read (the file does not parse): {", ".join(report["unparsed"])}')
     return total_lines
@@ -501,6 +535,9 @@ def print_exceptions():
     print('Files and folders not read:')
     for pattern, reason in EXCLUDED:
         print(f'  {pattern}: {reason}')
+    print('Files of ours kept with their comments for now, counted and named at every run:')
+    for files, since, what, why, until in OWED:
+        print(f'  {", ".join(files)} (since {since}): {what}: {why}; {until}')
     print('Lines kept in the files read:')
     for name, reason in KEPT_REASONS.items():
         print(f'  {name}: {reason}')
@@ -537,7 +574,12 @@ def self_test():
             'int g;\n'
             '// ---- a heading, counted\n'
             '// Contains code Copyright (c) 2021 Ana Souza (MIT; see THIRD_PARTY_NOTICES.md).\n'
-            'int h;\n'),
+            'int h;\n'
+            '// lib/a.h is another project\'s header, unmodified (MIT, lib/LICENSE.txt).\n'
+            '// lib/b.h is said to be one too (MIT, lib/MISSING.txt), counted\n'
+            '// gone/c.h names a licence file that is not there (MIT, gone/LICENSE.txt), counted\n'
+            'int k;\n'),
+        'runtime/diag/lib/LICENSE.txt': 'the licence text\n',
         'runtime/shaders/plant.frag': (
             '#version 450\n'
             '// build_shaders: keep functions\n'
@@ -585,24 +627,29 @@ def self_test():
         'runtime/third_party/lib/plant.h': '// third party, not read\n',
         'runtime/shaders/ffx/plant.h': '// AMD, not read\n',
         'runtime/nvn/nvn.h': '// the NVN types, not read\n',
+        'runtime/shaders/smaa.glsl': '// the SMAA reference implementation, not read\n',
         'runtime/gen_plant.c': '// ' + GENERATED_MARKER + '\n// a generated file, not counted\n',
+        'runtime/simd_fp.h': '// a plain comment in a file kept with its comments\nint x; // and another\n',
+        'runtime/plant_top.c': '// a plain comment beside it\n',
     }
     want_counted = {
         'runtime/audio/plant.c': {3, 12, 17, 18, 19, 20},
-        'runtime/diag/plant.c': {1, 5},
+        'runtime/diag/plant.c': {1, 5, 9, 10},
         'runtime/shaders/plant.frag': {10},
         'runtime/plant.spvasm': {1},
         'tools/plant.py': {4, 5, 6, 8, 14},
         'tools/whole.py': set(),
         'tests/plant_check.py': set(),
         'runtime/gen_plant.c': set(),
+        'runtime/simd_fp.h': set(),
+        'runtime/plant_top.c': {1},
     }
     want_kept = {
         ('runtime/audio/plant.c', 1): 'license', ('runtime/audio/plant.c', 2): 'license',
         ('runtime/audio/plant.c', 11): 'directive', ('runtime/audio/plant.c', 14): 'directive',
         ('runtime/audio/plant.c', 15): 'directive',
         ('runtime/diag/plant.c', 2): 'license', ('runtime/diag/plant.c', 3): 'license',
-        ('runtime/diag/plant.c', 6): 'license',
+        ('runtime/diag/plant.c', 6): 'license', ('runtime/diag/plant.c', 8): 'license',
         ('runtime/shaders/plant.frag', 2): 'directive', ('runtime/shaders/plant.frag', 3): 'license',
         ('runtime/shaders/plant.frag', 4): 'license', ('runtime/shaders/plant.frag', 9): 'license',
         ('runtime/shaders/plant.frag', 6): 'license', ('runtime/shaders/plant.frag', 8): 'license',
@@ -631,13 +678,25 @@ def self_test():
             print(f'self-test: {key[0]}:{key[1]} kept as {reason}: {"ok" if ok else f"WRONG ({kept.get(key)})"}')
             bad += not ok
         for rel in ('tools/vendor/lib/plant.c', 'tools/xlate/Plant.cs', 'runtime/third_party/lib/plant.h',
-                    'runtime/shaders/ffx/plant.h', 'runtime/nvn/nvn.h'):
+                    'runtime/shaders/ffx/plant.h', 'runtime/nvn/nvn.h', 'runtime/shaders/smaa.glsl'):
             ok = rel not in report['files'] and excluded(rel) is not None
             print(f'self-test: {rel} not read: {"ok" if ok else "WRONG"}')
             bad += not ok
         ok = excluded('recomp/patches-v999.txt') is not None and 'recomp/patches-v999.txt' not in report['files']
         print(f'self-test: recomp/patches-v999.txt not read: {"ok" if ok else "WRONG"}')
         bad += not ok
+        got = report['owed']
+        ok = got == {'runtime/simd_fp.h': 2}
+        print(f'self-test: runtime/simd_fp.h kept with its 2 comment lines, outside its area\'s count: '
+              f'{"ok" if ok else f"WRONG ({got})"}')
+        bad += not ok
+        strict = run_strict(report, ['runtime/simd_fp.h'])
+        print(f'self-test: --strict runtime/simd_fp.h passes: {"ok" if strict == 0 else "WRONG"}')
+        bad += strict != 0
+        strict = run_strict(report, ['runtime/plant_top.c'])
+        print(f'self-test: --strict runtime/plant_top.c fails on the plain comment beside it: '
+              f'{"ok" if strict == 1 else "WRONG"}')
+        bad += strict != 1
         strict = run_strict(report, ['runtime/audio'])
         print(f'self-test: --strict runtime/audio fails on the planted comment: {"ok" if strict == 1 else "WRONG"}')
         bad += strict != 1

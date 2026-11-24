@@ -1,15 +1,5 @@
 ﻿// Contains code Copyright (c) 2026 MacNativeGames contributors, Copyright (c) 2026 Peiikai (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// The boot driver: the guest main thread runs the game's own nn::init::Start
-// with three host callbacks, the second of which runs DT_INIT of main, subsdk0 and sdk; Start then calls nnMain.
-// --boot checks two checkpoints on the way and ends at the first nvnBootstrapLoader call, at the return address of
-// each in main (1.1.1; 1.1.0, 1.2.1, 1.4.3 in brackets):
-//   SetFocusHandlingMode   main+0x1202d44 (+0xeb8c14, +0xe7a954, +0xbdb48c) in nnMain, every module's constructor
-//                          flag reads 2. 1.1.1's SDK calls it first, from nn::oe::InitializeApplet before DT_INIT; a
-//                          call from outside main is not the checkpoint.
-//   nvnBootstrapLoader     main+0x346bf8c (+0xebcdec, +0xe7eb2c, +0xbe0360) in the graphics bring-up; logs the run
-//                          statistics, exits 0
-// With --seconds S the run continues past that call; rt_frame_presented ends it once the world clock passed S.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,14 +23,10 @@
 #include "platform/platform.h"
 
 #define SYM_INIT_START "_ZN2nn4init5StartEmmPFvvES2_S2_"
-// main: return addresses of nnMain's SetFocusHandlingMode call and of the first nvnBootstrapLoader call, per game
-// version (from the analysis of each build's main; 1.1.1's are the x30 both host functions see in a normal start).
 #define CHECKPOINT_RET (RT_V111 ? 0x1202d44ull : RT_V143 ? 0xbdb48cull : RT_V110 ? 0xeb8c14ull : 0xe7a954ull)
 #define NVN_RET (RT_V111 ? 0x346bf8cull : RT_V143 ? 0xbe0360ull : RT_V110 ? 0xebcdecull : 0xe7eb2cull)
-#define CTOR_DONE 2                      // a module's constructor flag after its DT_INIT ran the init_array
+#define CTOR_DONE 2
 
-// The init_array sizes (1.1.0 and 1.2.1: counted in the modules; 1.1.1 and 1.4.3: DT_INIT_ARRAYSZ).
-// The four tables carry the same rows, so cb_module_inits walks them by the size of one.
 typedef struct { const char *name; uint64_t entries; } InitCount;
 static const InitCount inits_110[] = {{"main", 10668}, {"subsdk0", 45}, {"sdk", 116}};
 static const InitCount inits_111[] = {{"main", 9783}, {"subsdk0", 0}, {"sdk", 96}};
@@ -57,14 +43,10 @@ static const RtLoaded *module_named(const char *name) {
     rt_fatal("boot: module %s is not loaded", name);
 }
 
-// The constructor flag is a NX2Saria symbol the loader resolves; a title without it (or with a different
-// name) reports "done" rather than dereferencing a null address.
 static uint32_t ctor_state(const RtLoaded *m) { return m->ctor_flag ? LD32(m->ctor_flag) : CTOR_DONE; }
 
 static const char *caller(const Cpu *c, char *buf, int n) { return ldr_describe(c->x[30] - 4, buf, n); }
 
-// main.npdm META: the main thread's priority (+0xE), core (+0xF) and stack size (+0x1C). kernel.c builds the main
-// thread with the 1.2.1 values; a different npdm means a different game build.
 static void check_npdm(void) {
     size_t n;
     uint8_t *npdm = ldr_read_verified(rt_config()->exefs, "main.npdm", &n);
@@ -78,17 +60,14 @@ static void check_npdm(void) {
                  core, stack);
 }
 
-// ---- the three callbacks of nn::init::Start (rtld's job on hardware)
 static void cb_loader_ready(Cpu *c) {
     (void)c;
     rt_log("boot: rtld callback: modules linked");
 }
 
-// DT_INIT registers the module with musl (__nnmusl_init_dso) and runs its init_array; the constructor flag reads 2
-// afterwards.
 static void cb_module_inits(Cpu *c) {
-    kern_seed_tls();   // the SDK clears the thread-local region during init; put the TLS back where it reads it
-    {   // where the sdk's lock thunks actually land once the loader has resolved them
+    kern_seed_tls();
+    {
         static const unsigned long long off[4] = {0xe8fd20ull, 0xe8dff8ull, 0xe8f538ull, 0xe91200ull};
         const unsigned char *sdkimg = (const unsigned char *)(uintptr_t)0x7005200000ull;
         for (int k = 0; k < 4; k++)
@@ -117,7 +96,6 @@ static void cb_module_finis(Cpu *c) {
     rt_fatal("boot: the game asked for module finalizers (from %s): the guest exited", caller(c, lr, sizeof lr));
 }
 
-// ---- checkpoints (host.h)
 static void stats_line(void) {
     RtStats s = rt_stats();
     rt_logf("boot: passed (%llu SVCs, %llu threads, %llu host calls)\n", (unsigned long long)s.svcs,
@@ -130,7 +108,7 @@ void rt_boot_event(const char *what, Cpu *c, const char *detail) {
     uint64_t ret = c->x[30];
     caller(c, at, sizeof at);
     if (!strcmp(what, "checkpoint")) {
-        if (ret - main_mod->base >= main_mod->size) {   // 1.1.1's SDK sets the mode in nn::oe::InitializeApplet
+        if (ret - main_mod->base >= main_mod->size) {
             rt_logf("boot: %s from %s, outside main: not the checkpoint\n", detail, at);
             return;
         }
@@ -154,19 +132,16 @@ void rt_boot_event(const char *what, Cpu *c, const char *detail) {
             rt_fatal("boot: first NVN call before the SetFocusHandlingMode checkpoint");
         rt_logf("boot: first NVN call nvnBootstrapLoader(\"%s\") from main+%#llx\n", detail,
                (unsigned long long)(ret - main_mod->base));
-        if (rt_config()->seconds) return;   // --seconds: the run goes on into the world
+        if (rt_config()->seconds) return;
         if (rt_trace & RT_TRACE_HOSTCALL) hostfn_report();
         stats_line();
         fflush(stdout);
         fflush(stderr);
-        plat_exit(0);   // other guest threads are still running; nothing of theirs needs an orderly end
+        plat_exit(0);
     }
     rt_fatal("boot: unknown boot event %s (%s) from %s", what, detail ? detail : "", at);
 }
 
-// ---- --seconds S
-// A PNG with stored (uncompressed) deflate blocks: no compression library, and the shot is only read by tools.
-// rt_write_png (declared in vk.h) is shared with the NX2SARIA_DUMP frame dump (vk_dump.c).
 static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n) {
     static uint32_t table[256];
     if (!table[1])
@@ -194,7 +169,7 @@ void rt_write_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h)
     uint8_t *raw = malloc(raw_n);
     if (!raw) rt_fatal("boot: out of memory for the shot");
     for (uint32_t y = 0; y < h; y++) {
-        raw[y * row] = 0;   // filter: none
+        raw[y * row] = 0;
         memcpy(raw + y * row + 1, rgba + 4ull * w * y, 4ull * w);
     }
     uint64_t blocks = (raw_n + 65534) / 65535;
@@ -238,7 +213,7 @@ static void save_shot(const tex_t *t, const char *path) {
     view_t view;
     memset(&view, 0, sizeof view);
     NVNcopyRegion r = {.width = (int)w, .height = (int)h, .depth = 1};
-    if (gfx_replay_async()) gfx_backend()->finish();   // the presented frame may still be queued for the replay
+    if (gfx_replay_async()) gfx_backend()->finish();
     gfx_backend()->read_texels(t, &view, &r, px, 4ull * w, 4ull * w * h);
     if (bgra)
         for (uint64_t i = 0; i < 4ull * w * h; i += 4) {
@@ -251,10 +226,6 @@ static void save_shot(const tex_t *t, const char *path) {
     rt_logf("boot: shot %s (%ux%u)\n", path, w, h);
 }
 
-// NX2SARIA_SHOTS=lo-hi:step [NX2SARIA_SHOTS_DIR=dir]: every step-th present in [lo, hi] saved as <dir>/f<n>.png (n the
-// present), box-filtered to 480x270; NX2SARIA_SHOTS=w<lo>-<hi>:<step> takes them by world-clock seconds instead, the first
-// present at or after each step (full size with NX2SARIA_SHOTS_FULL=1), for finding short glitches. Pipeline builds stay asynchronous, so the
-// pictures show what a player sees.
 static void series_shot(const tex_t *t, uint64_t n) {
     static int parsed;
     static unsigned long long lo, hi, step, next;
@@ -264,7 +235,7 @@ static void series_shot(const tex_t *t, uint64_t n) {
         full = cfg_get("NX2SARIA_SHOTS_FULL") != NULL;
         const char *e = cfg_get("NX2SARIA_SHOTS");
         double wl, wh, ws;
-        if (e && e[0] == 'w' && sscanf(e + 1, "%lf-%lf:%lf", &wl, &wh, &ws) == 3 && ws > 0)   // world-clock seconds
+        if (e && e[0] == 'w' && sscanf(e + 1, "%lf-%lf:%lf", &wl, &wh, &ws) == 3 && ws > 0)
             world = 1, lo = (unsigned long long)(wl * 1e6), hi = (unsigned long long)(wh * 1e6),
             step = (unsigned long long)(ws * 1e6), next = lo;
         else if (!e || sscanf(e, "%llu-%llu:%llu", &lo, &hi, &step) != 3 || !step) hi = 0;
@@ -272,7 +243,7 @@ static void series_shot(const tex_t *t, uint64_t n) {
         if (hi) plat_file_mkdir_p(dir);
         parsed = 1;
     }
-    if (world) {   // the first present at or after each step of the world clock
+    if (world) {
         int64_t w = frame_step_world_us();
         if (w < 0 || (unsigned long long)w < next || next > hi) return;
         while (next <= (unsigned long long)w) next += step;
@@ -288,7 +259,7 @@ static void series_shot(const tex_t *t, uint64_t n) {
     view_t view;
     memset(&view, 0, sizeof view);
     NVNcopyRegion r = {.width = (int)w, .height = (int)h, .depth = 1};
-    if (gfx_replay_async()) gfx_backend()->finish();   // the presented frame may still be queued for the replay
+    if (gfx_replay_async()) gfx_backend()->finish();
     gfx_backend()->read_texels(t, &view, &r, px, 4ull * w, 4ull * w * h);
     for (uint32_t y = 0; y < oh; y++)
         for (uint32_t x = 0; x < ow; x++) {
@@ -310,9 +281,6 @@ static void series_shot(const tex_t *t, uint64_t n) {
     free(px);
 }
 
-// A --seconds run ends at the first present after the world clock (game time since the save's first frame,
-// frame_step_world_us) passed S seconds, so a run covers the same game time at any frame rate; any other frame is
-// counted by the back end only.
 void rt_frame_presented(const tex_t *t, uint64_t n) {
     const RtConfig *cfg = rt_config();
     series_shot(t, n);
@@ -328,15 +296,12 @@ void rt_frame_presented(const tex_t *t, uint64_t n) {
     stats_line();
     fflush(stdout);
     fflush(stderr);
-    // the orderly end the window's close takes (gfx_present.c rt_exit_steps), without nx2navi.ini: a scripted run's
-    // end is no player's; a close already ending the process keeps this thread in rt_exit_begin
     if (!rt_exit_begin()) plat_exit(0);
     rt_exit_steps(0);
     fflush(stderr);
     plat_exit(0);
 }
 
-// ---- steps 9-14
 static uint64_t cb_addr[3];
 
 static void guest_main(Cpu *c) {
@@ -345,7 +310,6 @@ static void guest_main(Cpu *c) {
     if (!start) rt_fatal("boot: %s is not exported", SYM_INIT_START);
     char d[128];
     rt_log("boot: ENTER nn::init::Start at %s, main thread %#x", ldr_describe(start, d, sizeof d), handle);
-    // nn::init::Start(main thread handle, arguments region, loader_ready, module_inits, module_finis)
     rt_call(c, start, 5, (uint64_t)handle, (uint64_t)0, cb_addr[0], cb_addr[1], cb_addr[2]);
     rt_fatal("boot: nn::init::Start returned");
 }
@@ -353,22 +317,15 @@ static void guest_main(Cpu *c) {
 static void prewarm_main(void *arg) {
     (void)arg;
     vk_pipeline_prewarm();
-    const char *prep = cfg_get("NX2SARIA_TEST_PREPARE_SHADERS");   // Task 2.3 test hook; Task 2.6 builds the preparation
+    const char *prep = cfg_get("NX2SARIA_TEST_PREPARE_SHADERS");
     if (prep && !strcmp(prep, "1")) {
         int cpus = (int)plat_cpu_usable();
         gfx_shader_prepare_recorded(cpus, cpus / 2 > 16 ? 16 : cpus / 2 < 1 ? 1 : cpus / 2);
     }
-    // Translations of a previous translator are made again in the background from here on, after the boot's own
-    // translations. Not for a --shot image: which translation a shader gets would then depend on the pass's timing.
     if (!rt_config()->shot) gfx_shader_carry_start();
     return;
 }
 
-// rt_boot's wait for the prewarm, polled every 50 ms. A warm start is done in about half a second and shows nothing.
-// When the prewarm translates shaders (a new translator, GPU or driver, or an emptied cache) or runs past
-// BOOT_SCREEN_MS, the window shows the boot screen with its progress at 10 frames a second, and a black frame once it is
-// done. cap_ms (NX2SARIA_PREWARM_WAIT_MS) bounds the wait, 0 none. Without progress for BOOT_STALL_MS (a translator or
-// driver that hangs) the guest starts anyway; the prewarm then goes on in the background.
 #define BOOT_SCREEN_MS 1000
 #define BOOT_STALL_MS 60000
 static void boot_wait(PlatThread *warm, uint64_t cap_ms) {
@@ -399,7 +356,7 @@ static void boot_wait(PlatThread *warm, uint64_t cap_ms) {
             shown = now;
         }
     }
-    if (screen) {   // the window stays black, not on the last count, until the game's first frame
+    if (screen) {
         menu_boot_set(-1, 0, 0);
         gfx_present_boot();
     }
@@ -407,35 +364,27 @@ static void boot_wait(PlatThread *warm, uint64_t cap_ms) {
 
 void rt_boot(void) {
     check_npdm();
-    fs_host_lock_profile();   // a second copy of the game stops here, before the prewarm below
-    if (!rt_config()->shot) vk_pipeline_async_enable();   // a --shot image must not depend on build timing
-    // Shaders and pipelines recorded in earlier runs are made ready while the modules load; the guest waits for them.
+    fs_host_lock_profile();
+    if (!rt_config()->shot) vk_pipeline_async_enable();
     PlatThread *warm = plat_thread_new(prewarm_main, NULL, "prewarm");
     ldr_load(rt_config()->exefs);
     rt_patches_init();
-    mods_exefs_switch();   // after the patch sets' settings: an enabled mod's ExeFS patches on
-    heap_retry_start();   // after a mod that replaces the set heap_retry turned it off
-    changebank_hold_start();   // the same for the set changebank_hold
-    camera_clearance_start();   // the same for the set camera_clearance
+    mods_exefs_switch();
+    heap_retry_start();
+    changebank_hold_start();
+    camera_clearance_start();
     frame_step_init();
     res_init();
-    wide_init();   // Ocarina's widescreen sets (recomp/patches-v111.txt)
-    cfg_log_unsupported();   // the settings this build ignores
-    cheats_init();   // after the patch sets: a cheat's set follows its setting
-    boot_map_init();   // before the guest reads its first file: what it reads of the title and the save (boot_map.c)
+    wide_init();
+    cfg_log_unsupported();
+    cheats_init();
+    boot_map_init();
     cb_addr[0] = hostfn_register("<rtld loader_ready>", cb_loader_ready);
     cb_addr[1] = hostfn_register("<rtld module_inits>", cb_module_inits);
     cb_addr[2] = hostfn_register("<rtld module_finis>", cb_module_finis);
     ipc_applet_event_init();
     hostfn_seal();
     uint64_t held = plat_now_ms();
-    // The guest waits for all of the prewarm (boot_wait): a warm start is ready in about half a second; a cold one (a new
-    // translator, GPU or driver) translated 2,987 shaders in about 11 s and then builds the recorded pipelines, with the
-    // boot screen showing its progress; after a driver change also the compute pipelines and the driver's cache of
-    // stage libraries (vk_pipeline.c bf_decide). Started early instead, the game would meet those shaders in play and
-    // wait for each one there. NX2SARIA_PREWARM_WAIT_MS caps the wait (0, the default: none); past it the prewarm goes
-    // on in the background. A --shot image waits for all of it without the screen, so that it does not depend on build
-    // timing.
     const char *pw = cfg_get("NX2SARIA_PREWARM_WAIT_MS");
     uint64_t wait_ms = pw && *pw ? strtoull(pw, NULL, 10) : 0;
     if (warm && rt_config()->shot) plat_thread_join(warm);

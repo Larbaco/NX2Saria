@@ -1,20 +1,10 @@
 #version 460
 #extension GL_EXT_mesh_shader : require
 // build_shaders: keep functions
-//
-// --probe-meshfb (mesh_fb_probe.c): a mesh program without a task stage, in the shape the translator gives one
-// (tools/xlate/MeshSpirv.cs): the program itself is a function that writes its stage buffer into shared memory, and
-// the entry function calls it once and hands the buffer to the mesh pipeline. mesh_fb.c makes its compute module from
-// this one, as it does from a translated program. The layout is AmpereLowering.MeshInfo's for 64 vertices, 32
-// triangles and 8 output components (position, generic vector 0): vertex v's component l is word
-// ((v >> 5) * 8 + l) * 32 + (v & 31), the primitive count word 512, the index bytes from byte 2052.
-//
-// Workgroup g draws cell g of a grid: nine vertices (28 to 36, across the two vertex groups) and up to eight
-// triangles, none in every fifth cell.
 layout(local_size_x = 32) in;
 layout(triangles, max_vertices = 64, max_primitives = 32) out;
 layout(location = 0) out vec4 o_color[];
-layout(set = 0, binding = 1) uniform Params { vec4 tint; uvec4 grid; } u;   // grid: columns, rows
+layout(set = 0, binding = 1) uniform Params { vec4 tint; uvec4 grid; } u;
 shared uint mem[540];
 
 #define VWORD(v, l) ((((v) >> 5) * 8u + (l)) * 32u + ((v) & 31u))
@@ -36,7 +26,7 @@ void program() {
         mem[VWORD(v, 6u)] = floatBitsToUint(c.z);
         mem[VWORD(v, 7u)] = floatBitsToUint(c.w);
     }
-    if (tid == 0u) {   // one thread writes the index bytes: they share words
+    if (tid == 0u) {
         uint count = cell % 5u == 0u ? 0u : 2u + cell % 7u;
         for (uint t = 0u; t < count; t++) {
             uint q = t / 2u, a = (q / 2u) * 3u + q % 2u + 28u;

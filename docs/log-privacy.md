@@ -69,6 +69,10 @@ read per byte and is passed on as it is; the code allocates nothing and takes no
 paths in full, for debugging on one's own machine; the lines logged before the settings are read are short either way.
 The launcher and the build tools follow `NX2SARIA_LOG_SHORT_PATHS=0` in their environment.
 
+The switch is for one's own logs, never for what goes to a server: the error line of the session summary
+(`logs/session-summary.json`, which the launcher may send, [telemetry.md](telemetry.md)) has its folders written short
+with the switch off too (`runtime/log_privacy.h` `log_privacy_str_always()`).
+
 Log lines:
 
 ```
