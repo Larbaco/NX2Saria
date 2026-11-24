@@ -1,25 +1,10 @@
-"""Check that two lifts hold the same game code, however recomp/gen.py grouped the functions into chunks.
-
-Usage: python tools/lift_compare.py OLD_LIFT NEW_LIFT
-
-Each argument is a lift folder as recomp/gen.py writes it (layout.h, layout.json, patches.h and one folder per module
-with <mod>_NNNN.c chunks and <mod>_table.c). For every module it splits each chunk into its function definitions and
-compares the two lifts: the same functions defined, each exactly once, with the same text byte for byte. The function
-tables, layout.h, layout.json and patches.h must be identical. Within each lift:
-- the functions the chunks define are exactly the addresses of <mod>_fn_addrs[] in <mod>_table.c;
-- before a chunk's first definition there are only #include lines, comments, blank lines, prototypes and the
-  declaration of rt_patch_on;
-- every function a definition calls is declared before it (gen.py's chunk_text prototypes every referenced function;
-  the compile proves this too).
-Which chunk a function lands in, the chunk numbering and the prototype blocks may differ.
-
-Prints a summary per module and exits 1 on any difference. Standard library only; files are read a line at a time.
-"""
 import argparse
 import hashlib
 import re
 import sys
 from pathlib import Path
+
+DESCRIPTION = 'Check that two lifts hold the same game code, however recomp/gen.py grouped the functions into chunks.'
 
 DEF = re.compile(r'void (f_[0-9a-f]+)\(Cpu \*c\) \{\n')
 FALLBACK = re.compile(r'static void fb_([0-9a-f]+)\(Cpu \*c\);\n')
@@ -35,18 +20,10 @@ def chunk_re(mod):
 
 
 def split_chunk(path):
-    """(definitions, prototypes, problems) of one chunk: definitions is [(name, sha256 of its text, names it calls)]
-    in file order, prototypes the names the chunk declares before its first definition.
-
-    A definition runs from its `void f_<hex>(Cpu *c) {` line (or the `static void fb_<hex>(Cpu *c);` line just before
-    it, which declares its all-label fallback) to the line before the next definition. gen.py joins definitions with
-    one blank line: that one line, exactly '\\n', is not part of a definition; every other line, blank or not, is
-    hashed as it is. A line gen.py does not write before the first definition, or a fallback declaration that is not
-    followed by its definition, is a problem."""
     defs, protos, problems = [], set(), []
     name = h = calls = None
-    pending = None   # a fallback declaration line not yet known to start a definition
-    blank = 0        # '\n' lines held back: one separates two definitions, any more belong to the definition
+    pending = None
+    blank = 0
 
     def close(separator):
         if blank > separator:
@@ -105,7 +82,6 @@ def split_chunk(path):
 
 
 def table_addrs(path):
-    """The addresses of <mod>_fn_addrs[] in a function table, as function names, or None if there is no such array."""
     addrs, inside = [], False
     with open(path, encoding='utf-8', errors='surrogateescape', newline='') as f:
         for line in f:
@@ -120,9 +96,6 @@ def table_addrs(path):
 
 
 def scan_module(moddir, mod):
-    """({function: sha256}, {function: [chunk file, ...]} for functions defined more than once, chunk count,
-    [problems]): the problems are undeclared calls, lines gen.py does not write and a definition set that is not the
-    table's."""
     pat = chunk_re(mod)
     chunks = sorted((p for p in moddir.iterdir() if pat.fullmatch(p.name)), key=lambda p: int(pat.fullmatch(p.name)[1]))
     defs, where, problems = {}, {}, []
@@ -154,7 +127,6 @@ def scan_module(moddir, mod):
 
 
 def modules(lift):
-    """Module folders of a lift: those with a function table or a chunk."""
     out = set()
     for p in lift.iterdir():
         if p.is_dir() and ((p / f'{p.name}_table.c').is_file()
@@ -164,7 +136,6 @@ def modules(lift):
 
 
 def same_file(a, b):
-    """True if both files exist and have the same bytes."""
     if not a.is_file() or not b.is_file() or a.stat().st_size != b.stat().st_size:
         return False
     with open(a, 'rb') as fa, open(b, 'rb') as fb:
@@ -177,7 +148,6 @@ def same_file(a, b):
 
 
 def compare(old, new, out=None):
-    """Number of differences between the lifts old and new, with a summary printed to out (default stdout)."""
     out = out or sys.stdout
     problems = 0
     for name in TOP_FILES:
@@ -219,7 +189,7 @@ def compare(old, new, out=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('old', type=Path, help='lift folder (layout.json, <mod>/<mod>_NNNN.c, ...)')
     ap.add_argument('new', type=Path, help='lift folder to compare with it')
     args = ap.parse_args(argv)
