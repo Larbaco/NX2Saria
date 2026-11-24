@@ -1,4 +1,3 @@
-// Aspect calculations shared by the Ocarina wide-format runtime and its focused tests.
 #pragma once
 
 #include <math.h>

@@ -1,21 +1,3 @@
-// Player mods: the scan of the mods folder, its order and switches (mods.h).
-//
-// One subfolder per mod, as emulators take them. The RomFS root is the first of <mod>/romfs, <mod>/romfslite (a mod
-// manager's name for it when it bypasses Atmosphere's RomFS build), <mod>/atmosphere/contents/<title>/romfs,
-// <mod>/contents/<title>/romfs and <mod>/<title>/romfs that exists; the ExeFS and cheats folders likewise. A mod is
-// listed whatever it holds; what the port cannot use is its problem, shown in the menu and logged, and never stops the
-// start. romfs.c serves the RomFS files of the enabled mods, the top one winning a path.
-//
-// The order and the switches are nx2navi.ini keys (cfg.c): NX2SARIA_MODS_ORDER lists names top first, separated by '|' (a
-// Windows file name cannot hold '|'; a folder whose name does on Linux is listed as unusable); a folder it does not name
-// goes below the named ones, by name. NX2SARIA_MODS_DISABLED lists the switched-off names. The menu changes the list in
-// place and writes both keys; the scan's state is kept to tell the menu a restart is due.
-//
-// ExeFS patch files: an .ips or .pchtxt file in the exefs folder or in atmosphere/exefs_patches/<name>/ is for the game
-// when its build id is main's (an IPS file's name, a pchtxt file's @nsobid line); others are another version's and
-// counted. The setup builds every mod's files into patch sets and writes build-cache/exefs.status next to nx2saria.exe
-// (tools/exefs_patches.py has the format): a file whose line is missing or has another content hash waits for the
-// rebuild at start (cheats.c), and its mod stays off until then.
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,17 +9,15 @@
 #include "mods.h"
 #include "platform/platform.h"
 
-#define TITLE "0400486024DEC000"   // the game's title id, which names a mod's Atmosphere folders
+#define TITLE "0400486024DEC000"
 #define MAX_MODS 512
 
 static ModInfo *mods;
 static int nmods;
-static int scanned;   // the scan ended: mods_in_use may read the list from any thread
+static int scanned;
 static char dir[2048];
-static char start_order[MAX_MODS][256];   // names in the scan's order, for mods_changed
+static char start_order[MAX_MODS][256];
 
-// 1 when a file lies anywhere under path.
-// Folders nest at most MOD_DEPTH deep below it: each level costs a stack frame, and the RomFS has no deeper paths.
 #define MOD_DEPTH 32
 typedef struct { const char *path; int found, depth; } HasFile;
 static int has_file_cb(const char *name, int kind, uint64_t size, void *ctx);
@@ -59,7 +39,6 @@ static int has_file_cb(const char *name, int kind, uint64_t size, void *ctx) {
     return !c->found;
 }
 
-// The first of the emulator and Atmosphere places of <mod>/<part> that is a folder, into out ("" none).
 static void find_root(const char *mod, const char *part, char *out, size_t cap) {
     static const char *const forms[] = {"%s/%s", "%s/atmosphere/contents/" TITLE "/%s", "%s/contents/" TITLE "/%s",
                                         "%s/" TITLE "/%s"};
@@ -74,8 +53,6 @@ static int ends_with_ci(const char *s, const char *tail) {
     return n >= t && !strcasecmp(s + n - t, tail);
 }
 
-// What the ExeFS folder holds: MOD_EXEFS for patches (.ips, .pchtxt), MOD_SUBSDK for code modules (subsdk* plugins, a
-// replaced main). main.npdm alone is the process's metadata, not code: it counts as neither.
 static int exefs_cb(const char *name, int kind, uint64_t size, void *ctx) {
     (void)size;
     int *k = ctx;
@@ -85,14 +62,12 @@ static int exefs_cb(const char *name, int kind, uint64_t size, void *ctx) {
     return 1;
 }
 
-// MOD_CHEATS when the cheats folder holds an Atmosphere cheat file (<build id>.txt).
 static int cheats_cb(const char *name, int kind, uint64_t size, void *ctx) {
     (void)size;
     if (kind == PLAT_FS_FILE && ends_with_ci(name, ".txt")) *(int *)ctx |= MOD_CHEATS;
     return 1;
 }
 
-// 1 when name is one of the '|'-separated names of list.
 static int listed(const char *list, const char *name) {
     size_t n = strlen(name);
     for (const char *p = list; p && *p;) {
@@ -104,7 +79,6 @@ static int listed(const char *list, const char *name) {
     return 0;
 }
 
-// The position of name in the '|'-separated list, or -1.
 static int list_pos(const char *list, const char *name) {
     size_t n = strlen(name);
     int k = 0;
@@ -117,7 +91,7 @@ static int list_pos(const char *list, const char *name) {
     return -1;
 }
 
-static const char *order_list;   // NX2SARIA_MODS_ORDER while sorting
+static const char *order_list;
 static int by_order(const void *a, const void *b) {
     const ModInfo *x = a, *y = b;
     int px = list_pos(order_list, x->name), py = list_pos(order_list, y->name);
@@ -137,8 +111,6 @@ static const char *problem_name(ModProblem p) {
     default: return "ok";
     }
 }
-
-// ---- ExeFS patch files
 
 static uint32_t fnv(const void *p, size_t n) {
     uint32_t h = 0x811C9DC5u;
@@ -161,7 +133,6 @@ const char *mods_main_build_id(void) {
     return bid;
 }
 
-// 1 when hex (any case; trailing zeros left out or not) names main's build id; also when main's is unknown.
 static int same_build(const char *hex, size_t n) {
     const char *bid = mods_main_build_id();
     if (!*bid) return 1;
@@ -174,9 +145,6 @@ static int same_build(const char *hex, size_t n) {
     return 1;
 }
 
-// The build id of a pchtxt file as tools/exefs_patches.py parse_pchtxt reads it: the last "@nsobid-<hex>" line before
-// an "@stop" line, a UTF-8 BOM, blanks around it and a "//" comment after it left out. 1 when the file names one; *len
-// is 0 when that line holds anything but hex digits (no build id, so for no main).
 static int pchtxt_build(const char *data, size_t n, const char **id, size_t *len) {
     int found = 0;
     const char *p = data, *end = data + n;
@@ -201,7 +169,6 @@ static int pchtxt_build(const char *data, size_t n, const char **id, size_t *len
     return found;
 }
 
-// build-cache/exefs.status next to nx2saria.exe, read once; "" when there is none.
 static const char *exefs_status(void) {
     static char *text;
     if (text) return text;
@@ -217,7 +184,6 @@ static const char *exefs_status(void) {
     return text;
 }
 
-// The status line of key: its kind, built-in sets and note, NUL-terminated copies; 0 when none.
 static int status_line(const char *key, const char *content, char *kind, char *over, char *note) {
     char want[20];
     snprintf(want, sizeof want, "%s\t%s\t", key, content);
@@ -226,7 +192,7 @@ static int status_line(const char *key, const char *content, char *kind, char *o
         size_t len = end ? (size_t)(end - line) : strlen(line);
         if (len > 18 && !memcmp(line, want, 18)) {
             char copy[600];
-            size_t rest = len - 18;   // the line after the 18 bytes compared, not into the next line
+            size_t rest = len - 18;
             snprintf(copy, sizeof copy, "%.*s", (int)(rest < sizeof copy ? rest : sizeof copy - 1), line + 18);
             char *t1 = strchr(copy, '\t'), *t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
             if (!t1 || !t2) return 0;
@@ -245,11 +211,10 @@ static int status_line(const char *key, const char *content, char *kind, char *o
 
 typedef struct {
     ModInfo *m;
-    const char *folder, *rel;   // the folder listed and its path in the mod
+    const char *folder, *rel;
     int unsupported;
 } ExefsWalk;
 
-// One file of an exefs folder: its build, then its status line.
 static int exefs_file_cb(const char *leaf, int kind, uint64_t size, void *ctx) {
     (void)size;
     ExefsWalk *w = ctx;
@@ -301,7 +266,6 @@ static int exefs_file_cb(const char *leaf, int kind, uint64_t size, void *ctx) {
     return 1;
 }
 
-// atmosphere/exefs_patches/<name>/ of a mod: each <name> folder's files.
 static int exefs_patches_cb(const char *leaf, int kind, uint64_t size, void *ctx) {
     (void)size;
     ExefsWalk *w = ctx;
@@ -315,7 +279,6 @@ static int exefs_patches_cb(const char *leaf, int kind, uint64_t size, void *ctx
     return 1;
 }
 
-// The ExeFS patch files of mod m (folder path): 1 when one cannot be applied.
 static int exefs_check(ModInfo *m, const char *path) {
     ExefsWalk w = {m, m->exefs, m->exefs + strlen(path) + 1, 0};
     if (m->exefs[0]) plat_fs_list(m->exefs, exefs_file_cb, &w);
@@ -326,7 +289,6 @@ static int exefs_check(ModInfo *m, const char *path) {
     return w.unsupported || at.unsupported;
 }
 
-// One mod folder of the scan.
 static int scan_cb(const char *name, int kind, uint64_t size, void *ctx) {
     (void)size;
     const char *disabled = ctx;
@@ -343,7 +305,6 @@ static int scan_cb(const char *name, int kind, uint64_t size, void *ctx) {
         rt_log("mods: %s: name too long, left out", name);
         return 1;
     }
-    // a symbolic link or junction to a folder is a mod, as the setup's tools see it (tools/cheats.py cheat_files)
     if (kind == PLAT_FS_LINK && !plat_dir_exists(path)) return 1;
     find_root(path, "romfs", m->romfs, sizeof m->romfs);
     if (!m->romfs[0]) find_root(path, "romfslite", m->romfs, sizeof m->romfs);
@@ -353,7 +314,6 @@ static int scan_cb(const char *name, int kind, uint64_t size, void *ctx) {
     if (m->exefs[0]) plat_fs_list(m->exefs, exefs_cb, &m->kind);
     if (m->cheats[0]) plat_fs_list(m->cheats, cheats_cb, &m->kind);
     int unsupported = exefs_check(m, path);
-    // a mod whose code part the port cannot use is off as a whole: its RomFS files may expect that code
     m->problem = strchr(m->name, '|')                                ? MOD_BAD_NAME
                : m->kind & MOD_SUBSDK                                ? MOD_PLUGIN
                : unsupported                                         ? MOD_EXEFS_UNSUPPORTED
@@ -370,7 +330,6 @@ void mods_scan(void) {
     static int done;
     if (done) return;
     done = 1;
-    // a relative mods_dir is under the folder of nx2saria.exe, as the default is, whatever folder the game started in
     const char *d = cfg_get("NX2SARIA_MODS_DIR");
     if (!d || !*d) d = "mods";
     int absolute = d[0] == '/' || d[0] == '\\' || (d[0] && d[1] == ':');
@@ -460,8 +419,6 @@ const char *mods_dir(void) { return dir; }
 int mods_count(void) { return nmods; }
 ModInfo *mods_at(int i) { return i >= 0 && i < nmods ? &mods[i] : NULL; }
 
-// NX2SARIA_MODS_ORDER as every listed name top first; NX2SARIA_MODS_DISABLED as the switched-off names. A name holding '|'
-// would split into two; it is left out of both (its mod is unusable anyway).
 static void write_keys(void) {
     size_t cap = (size_t)nmods * 257 + 1;
     char *order = calloc(cap, 1), *off = calloc(cap, 1);

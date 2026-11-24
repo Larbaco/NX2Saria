@@ -1,14 +1,5 @@
-// Performance overlay numbers (runtime/perfmon.h). Frame times come from the game's presents (perf_present, only while
-// the overlay is on); the per-frame waits from the perf counters prof_win.c keeps. The machine's numbers are sampled
-// twice a second on a thread of their own (some calls take milliseconds), which runs only while the overlay is full.
-// The OS calls sit behind platform.h (plat_cpu_load, plat_mem_info, plat_gpu_load). Temperature, power and clock come
-// from the GPU vendor's driver library, loaded at run time: NVML on NVIDIA, ADL's PM log on AMD; on a machine without
-// either their numbers stay -1.
-//
 // Contains code Copyright (c) 2026 Revivedx and the Savage Wind Recomp contributors, Copyright (c) 2026 Peiikai (MIT; see
-// THIRD_PARTY_NOTICES.md). GPU load and video memory come from the system's counters for every vendor; the sampler
-// stops when the overlay leaves full.
-//
+// THIRD_PARTY_NOTICES.md).
 // The ADL declarations (AdapterInfo, ADLSingleSensorData, ADLPMLogDataOutput, the ADL_PMLOG_* sensor numbers and the
 // ADL2_* signatures) contain code Copyright (c) 2016 - 2022 Advanced Micro Devices, Inc. (MIT; see THIRD_PARTY_NOTICES.md).
 #include <stdio.h>
@@ -20,44 +11,34 @@
 #include "platform/platform.h"
 #include "sysinfo.h"
 
-static PlatMutex g_lock = PLAT_MUTEX_INIT;   // everything below
-static PerfStats g_stats;                    // the machine numbers the sampler wrote; the rest is made per snapshot
+static PlatMutex g_lock = PLAT_MUTEX_INIT;
+static PerfStats g_stats;
 
-// ---- frames
 static float g_ring[PERF_HISTORY];
-static uint64_t g_ring_at[PERF_HISTORY];   // when each frame ended
+static uint64_t g_ring_at[PERF_HISTORY];
 static int g_ring_n, g_ring_pos;
 
-// The lows: a histogram of the frame times (perf.c's 0.25 ms bins) over the last LOW_SLICES seconds, kept as one slice
-// per second so the oldest second drops out whole. Per frame: one increment. The percentiles are read twice a second.
 #define LOW_BINS 1024
 #define LOW_SLICES 10
 static uint16_t g_low_hist[LOW_SLICES][LOW_BINS];
 static int g_low_cur;
 static uint64_t g_low_t0;
 
-// The per-frame counters, summed since t0 (the overlay's lines are averages over half a second).
 static struct {
     uint64_t t0, frames, gpu0;
     double replay, pipe, xlate, tex;
     int64_t up0, up;
 } g_win;
 
-// The frame times the overlay shows (the rate, the lows, the graph) are those of the pictures as they go out: the
-// present thread reports each one (perfmon_shown). The game's present calls come at other times: with the replay on
-// the submitting thread, work held for an event is replayed in the next frame's first submission, so the calls came
-// 36 and 9 ms apart in turn in a village while the pictures went out every 17 to 27 ms, and the graph drew a sawtooth
-// the screen did not show. A frame held back (vk_backend.c frame_hold) is not shown and lengthens its interval.
-// Without a present thread reporting (another back end) the game's present calls are taken, as before.
-static uint64_t g_shown_last;      // when the last picture went out; 0: none yet
-static uint64_t g_shown_report;    // when perfmon_shown last ran: perfmon_frame leaves the intervals to it for a second
+static uint64_t g_shown_last;
+static uint64_t g_shown_report;
 
-static void interval_add(uint64_t now, uint64_t interval_ns) {   // (lock held)
+static void interval_add(uint64_t now, uint64_t interval_ns) {
     g_ring[g_ring_pos] = (float)(interval_ns / 1e6);
     g_ring_at[g_ring_pos] = now;
     g_ring_pos = (g_ring_pos + 1) % PERF_HISTORY;
     if (g_ring_n < PERF_HISTORY) g_ring_n++;
-    if (now - g_low_t0 >= 1000000000ull) {   // the next second: its slice starts empty
+    if (now - g_low_t0 >= 1000000000ull) {
         g_low_cur = (g_low_cur + 1) % LOW_SLICES;
         memset(g_low_hist[g_low_cur], 0, sizeof g_low_hist[0]);
         g_low_t0 = now;
@@ -69,7 +50,6 @@ static void interval_add(uint64_t now, uint64_t interval_ns) {   // (lock held)
 
 void perfmon_shown(uint64_t now) {
     plat_mutex_lock(&g_lock);
-    // a gap of a second or more is a load or a pause, not a frame time
     if (g_shown_last && now > g_shown_last && now - g_shown_last < 1000000000ull) interval_add(now, now - g_shown_last);
     g_shown_last = g_shown_report = now;
     plat_mutex_unlock(&g_lock);
@@ -78,13 +58,13 @@ void perfmon_shown(uint64_t now) {
 void perfmon_frame(uint64_t now, uint64_t interval_ns, const uint64_t *wait_ns, uint64_t replay_ns,
                    int64_t tex_uploads) {
     plat_mutex_lock(&g_lock);
-    if (g_shown_report && now - g_shown_report < 1000000000ull) interval_ns = 0;   // perfmon_shown has them
+    if (g_shown_report && now - g_shown_report < 1000000000ull) interval_ns = 0;
     if (interval_ns) {
         g_ring[g_ring_pos] = (float)(interval_ns / 1e6);
         g_ring_at[g_ring_pos] = now;
         g_ring_pos = (g_ring_pos + 1) % PERF_HISTORY;
         if (g_ring_n < PERF_HISTORY) g_ring_n++;
-        if (now - g_low_t0 >= 1000000000ull) {   // the next second: its slice starts empty
+        if (now - g_low_t0 >= 1000000000ull) {
             g_low_cur = (g_low_cur + 1) % LOW_SLICES;
             memset(g_low_hist[g_low_cur], 0, sizeof g_low_hist[0]);
             g_low_t0 = now;
@@ -102,12 +82,12 @@ void perfmon_frame(uint64_t now, uint64_t interval_ns, const uint64_t *wait_ns, 
     plat_mutex_unlock(&g_lock);
 }
 
-static void frames_summary(PerfStats *s, uint64_t now) {   // (lock held)
+static void frames_summary(PerfStats *s, uint64_t now) {
     double sum = 0, mx = 0;
     int n = 0;
     for (int i = 0; i < g_ring_n; i++) {
         int k = (g_ring_pos - 1 - i + PERF_HISTORY) % PERF_HISTORY;
-        if (now - g_ring_at[k] > 1000000000ull) break;   // the last second
+        if (now - g_ring_at[k] > 1000000000ull) break;
         sum += g_ring[k];
         if (g_ring[k] > mx) mx = g_ring[k];
         n++;
@@ -115,14 +95,12 @@ static void frames_summary(PerfStats *s, uint64_t now) {   // (lock held)
     s->fps = n && sum > 0 ? (float)(n * 1000.0 / sum) : 0;
     s->frame_ms_avg = n ? (float)(sum / n) : 0;
     s->frame_ms_max = (float)mx;
-    for (int i = 0; i < PERF_HISTORY; i++) {   // oldest first; frames not seen yet read 0
+    for (int i = 0; i < PERF_HISTORY; i++) {
         int age = PERF_HISTORY - 1 - i;
         s->frame_ms[i] = age < g_ring_n ? g_ring[(g_ring_pos - 1 - age + 2 * PERF_HISTORY) % PERF_HISTORY] : 0;
     }
 }
 
-// The fps of the slowest 1% and 0.1% of the frames in the window (the bin's upper edge, as perf.c's summary does); -1
-// when the window holds too few frames. (lock held)
 static void lows_summary(PerfStats *s) {
     uint32_t total = 0;
     for (int k = 0; k < LOW_SLICES; k++)
@@ -138,7 +116,6 @@ static void lows_summary(PerfStats *s) {
     }
 }
 
-// Every half second: the window's sums as per-frame averages into g_stats, and a new window. (lock held)
 static void counters_summary(uint64_t now) {
     if (now - g_win.t0 < 500000000ull) return;
     lows_summary(&g_stats);
@@ -150,7 +127,6 @@ static void counters_summary(uint64_t now) {
         g_stats.xlate_ms = (float)(g_win.xlate / n);
         g_stats.tex_ms = (float)(g_win.tex / n);
         g_stats.tex_uploads = (float)((g_win.up - g_win.up0) / n);
-        // no GPU time over a window of frames: no timestamps on this device (or not yet set up)
         g_stats.gpu_ms = gpu > g_win.gpu0 ? (float)((gpu - g_win.gpu0) / 1e6 / n) : -1;
     }
     g_win.t0 = now;
@@ -160,7 +136,6 @@ static void counters_summary(uint64_t now) {
     g_win.up0 = g_win.up;
 }
 
-// ---- NVML (NVIDIA): loaded once on the sampler thread, kept for the process
 typedef struct { unsigned gpu, memory; } NvmlUtil;
 typedef struct { unsigned long long total, free, used; } NvmlMem;
 static struct {
@@ -214,8 +189,6 @@ static void nvml_open(const char *hint) {
     if (!init || !count || !handle || init() != 0) return;
     unsigned n = 0;
     if (count(&n) != 0 || !n) return;
-    // the device Vulkan renders on (by name; an NVIDIA name only matches an NVIDIA GPU), else none: on a machine
-    // that renders on another vendor's GPU, NVML's numbers would belong to the wrong card
     for (unsigned i = 0; i < n && !nv.dev; i++) {
         void *d = NULL;
         char nm[96] = "";
@@ -231,19 +204,16 @@ static void nvml_sample(PerfStats *s) {
     NvmlUtil u;
     NvmlMem m;
     unsigned v;
-    if (s->gpu_pct < 0 && nv.util && nv.util(nv.dev, &u) == 0) s->gpu_pct = (float)u.gpu;   // the system's counters first
+    if (s->gpu_pct < 0 && nv.util && nv.util(nv.dev, &u) == 0) s->gpu_pct = (float)u.gpu;
     if (nv.mem && nv.mem(nv.dev, &m) == 0) {
         if (s->vram_used_mb < 0) s->vram_used_mb = (float)(m.used >> 20);
         s->vram_total_mb = (float)(m.total >> 20);
     }
-    if (nv.temp && nv.temp(nv.dev, 0 /* NVML_TEMPERATURE_GPU */, &v) == 0) s->gpu_temp_c = (float)v;
+    if (nv.temp && nv.temp(nv.dev, 0, &v) == 0) s->gpu_temp_c = (float)v;
     if (nv.power && nv.power(nv.dev, &v) == 0) s->gpu_power_w = v / 1000.0f;
-    if (nv.clock && nv.clock(nv.dev, 0 /* NVML_CLOCK_GRAPHICS */, &v) == 0) s->gpu_clock_mhz = (float)v;
+    if (nv.clock && nv.clock(nv.dev, 0, &v) == 0) s->gpu_clock_mhz = (float)v;
 }
 
-// ---- ADL (AMD): loaded once on the sampler thread, kept for the process. ADL2_New_QueryPMLogData_Get reads the PM log
-// the driver keeps for Radeon RX 5000 and later (the numbers Adrenalin's overlay shows); older GPUs answer with an
-// error and their numbers stay -1. Windows only: the Linux driver gives these through sysfs, which this does not read.
 #ifdef _WIN32
 #define ADL_MAX_PATH 256
 #define ADL_PMLOG_MAX_SENSORS 256
@@ -255,7 +225,7 @@ enum {
     ADL_PMLOG_TEMPERATURE_HOTSPOT = 27,
     ADL_PMLOG_BOARD_POWER = 73,
 };
-typedef struct {   // AdapterInfo, the Windows layout
+typedef struct {
     int iSize, iAdapterIndex;
     char strUDID[ADL_MAX_PATH];
     int iBusNumber, iDeviceNumber, iFunctionNumber, iVendorID;
@@ -272,13 +242,11 @@ static struct {
     int tried, ok, index;
     void *ctx;
     int (*pmlog)(void *, int, AdlPmLog *);
-    AdlPmLog log;   // the sampler thread's buffer
+    AdlPmLog log;
 } adl;
 
 static void *__stdcall adl_alloc(int n) { return malloc((size_t)n); }
 
-// The adapter Vulkan renders on: the PCI bus when the device gave one, else the name. ADL lists one index per display
-// output of a GPU; the first whose PM log answers is taken.
 static void adl_open(const char *hint, int bus) {
     adl.tried = 1;
     void *lib = plat_lib_open("atiadlxx.dll");
@@ -297,7 +265,7 @@ static void adl_open(const char *hint, int bus) {
         for (int i = 0; i < n; i++) a[i].iSize = sizeof *a;
         if (info(adl.ctx, a, n * (int)sizeof *a) == 0) {
             for (int i = 0; i < n && !adl.ok; i++) {
-                if (a[i].iVendorID != 1002) continue;   // ADL writes the PCI vendor id 0x1002 as decimal 1002
+                if (a[i].iVendorID != 1002) continue;
                 const char *nm = a[i].strAdapterName;
                 if (bus >= 0 ? a[i].iBusNumber != bus : !hint[0] || !nm[0] || !(strstr(hint, nm) || strstr(nm, hint)))
                     continue;
@@ -319,11 +287,10 @@ static void adl_sample(PerfStats *s) {
     adl.log.size = sizeof adl.log;
     if (adl.pmlog(adl.ctx, adl.index, &adl.log) != 0) return;
     const AdlSensor *v = adl.log.sensors;
-    if (s->gpu_pct < 0 && v[ADL_PMLOG_INFO_ACTIVITY_GFX].supported)   // the system's counters first
+    if (s->gpu_pct < 0 && v[ADL_PMLOG_INFO_ACTIVITY_GFX].supported)
         s->gpu_pct = (float)v[ADL_PMLOG_INFO_ACTIVITY_GFX].value;
     if (v[ADL_PMLOG_TEMPERATURE_EDGE].supported) s->gpu_temp_c = (float)v[ADL_PMLOG_TEMPERATURE_EDGE].value;
     else if (v[ADL_PMLOG_TEMPERATURE_HOTSPOT].supported) s->gpu_temp_c = (float)v[ADL_PMLOG_TEMPERATURE_HOTSPOT].value;
-    // the whole card's draw where the driver reports it (RDNA 4 reports no ASIC power), else the GPU chip's
     if (v[ADL_PMLOG_BOARD_POWER].supported) s->gpu_power_w = (float)v[ADL_PMLOG_BOARD_POWER].value;
     else if (v[ADL_PMLOG_ASIC_POWER].supported) s->gpu_power_w = (float)v[ADL_PMLOG_ASIC_POWER].value;
     if (v[ADL_PMLOG_CLK_GFXCLK].supported) s->gpu_clock_mhz = (float)v[ADL_PMLOG_CLK_GFXCLK].value;
@@ -334,7 +301,6 @@ static void adl_open(const char *hint, int bus) { (void)hint, (void)bus, adl.tri
 static void adl_sample(PerfStats *s) { (void)s; }
 #endif
 
-// ---- the machine sampler: runs while want is set, twice a second
 static struct {
     int want, alive;
     PlatCond cv;
@@ -389,7 +355,7 @@ static void sampler(void *arg) {
         machine_copy(&g_stats, &s);
         if (g_smp.want) plat_cond_wait_ns(&g_smp.cv, &g_lock, 500000000ull);
     }
-    g_smp.alive = 0;   // in the same locked section as the last want check: a new perfmon_mode(2) starts a new thread
+    g_smp.alive = 0;
     plat_mutex_unlock(&g_lock);
     plat_load_close(l);
 }
@@ -400,7 +366,7 @@ void perfmon_mode(int mode) {
     if (mode == 2) {
         g_smp.want = 1;
         if (!g_smp.alive) {
-            machine_clear(&g_stats);   // "-" until the first sample, not the numbers of the last time
+            machine_clear(&g_stats);
             PlatThread *t = plat_thread_new(sampler, NULL, "perfmon");
             g_smp.alive = t != NULL;
             if (t) plat_thread_detach(t);
@@ -410,7 +376,7 @@ void perfmon_mode(int mode) {
         g_smp.want = 0;
         plat_cond_signal(&g_smp.cv);
     }
-    if (!mode) {   // the next start begins a new graph and a new counter window
+    if (!mode) {
         g_ring_n = g_ring_pos = 0;
         memset(g_low_hist, 0, sizeof g_low_hist);
         g_low_t0 = 0;
@@ -420,8 +386,6 @@ void perfmon_mode(int mode) {
 }
 
 void perfmon_snapshot(PerfStats *out) {
-    // the time under the lock: a frame pushed between the two would be newer than now, and now - at wrapping would
-    // end the frame window at once (0 fps on the overlay)
     plat_mutex_lock(&g_lock);
     uint64_t now = plat_now_ns();
     frames_summary(&g_stats, now);

@@ -1,5 +1,3 @@
-// --probe-mods: the mods folder scan, its order and switches (mods.c). Builds a mods folder of its own next to nx2saria.exe,
-// scans it and removes it. Needs no game files.
 #include <stdio.h>
 #include <string.h>
 
@@ -16,7 +14,6 @@ static int fails;
 #define CHECK(c, what) do { if (!(c)) { fails++; fprintf(stderr, "FAIL mods: %s\n", what); } } while (0)
 #define EQ(a, b) ((a) && !strcmp((a), (b)))
 
-// root/rel as a file of a few bytes (rel ends in '/': a folder), with every folder above it.
 static void put(const char *root, const char *rel) {
     char p[2048];
     snprintf(p, sizeof p, "%s/%s", root, rel);
@@ -27,7 +24,6 @@ static void put(const char *root, const char *rel) {
     if (slash[1]) plat_file_write(p, "probe", 5);
 }
 
-// root/rel as a file holding text.
 static void put_text(const char *root, const char *rel, const char *text) {
     put(root, rel);
     char p[2048];
@@ -35,7 +31,6 @@ static void put_text(const char *root, const char *rel, const char *text) {
     plat_file_write(p, text, strlen(text));
 }
 
-// link (a path) as a symbolic link to the folder target; 0 when the system refuses (Windows without developer mode).
 static int dir_link(const char *target, const char *link) {
 #ifdef _WIN32
     wchar_t t[1024], l[1024];
@@ -58,11 +53,10 @@ static int remove_cb(const char *name, int kind, uint64_t size, void *ctx) {
     char sub[2048];
     snprintf(sub, sizeof sub, "%s/%s", (const char *)ctx, name);
     if (kind == PLAT_FS_DIR) remove_tree(sub);
-    else if (kind != PLAT_FS_LINK || plat_fs_rmdir(sub) != PLAT_FS_OK) plat_fs_unlink(sub);   // a link: never followed
+    else if (kind != PLAT_FS_LINK || plat_fs_rmdir(sub) != PLAT_FS_OK) plat_fs_unlink(sub);
     return 1;
 }
 
-// s ends in tail, either path separator matching either.
 static int ends_with(const char *s, const char *tail) {
     size_t n = strlen(s), t = strlen(tail);
     if (n < t) return 0;
@@ -92,12 +86,9 @@ int probe_mods(void) {
         "K/romfslite/k.bin", "L/romfs/l.bin", "L/cheats/0123456789ABCDEF.txt", "L/exefs/main.npdm",
     };
     for (size_t i = 0; i < sizeof files / sizeof *files; i++) put(root, files[i]);
-    // an IPS file for this game's main (any file counts as one when main cannot be read), in Atmosphere's layout
     char ips[160];
     snprintf(ips, sizeof ips, "M/atmosphere/exefs_patches/x/%s.ips", *mods_main_build_id() ? mods_main_build_id() : "0");
     put(root, ips);
-    // pchtxt files for main as tools/exefs_patches.py reads them: a BOM and an indented build id line (N); a build id
-    // line with more than hex on it (O) and one after @stop (P) name no build, so another version's
     const char *bid = *mods_main_build_id() ? mods_main_build_id() : "0";
     char text[256];
     snprintf(text, sizeof text, "\xEF\xBB\xBF// a title\r\n  @nsobid-%s   // main\r\n@enabled\r\n", bid);
@@ -106,7 +97,6 @@ int probe_mods(void) {
     put_text(root, "O/exefs/junk.pchtxt", text);
     snprintf(text, sizeof text, "@stop\n@nsobid-%s\n", bid);
     put_text(root, "P/exefs/stop.pchtxt", text);
-    // a link to a folder outside the mods folder is a mod (Q); left out when the system cannot make one
     char outside[1100], link[1100];
     snprintf(outside, sizeof outside, "%s-linked", root);
     remove_tree(outside);
@@ -115,7 +105,7 @@ int probe_mods(void) {
     int linked = dir_link(outside, link);
     if (!linked) printf("mods: no symbolic link made (developer mode off?); the linked folder check is skipped\n");
 
-    cfg_set("NX2SARIA_MODS_DIR", "mods-probe");   // relative: under the folder of nx2saria.exe
+    cfg_set("NX2SARIA_MODS_DIR", "mods-probe");
     cfg_set("NX2SARIA_MODS_ORDER", "B|A|Gone");
     cfg_set("NX2SARIA_MODS_DISABLED", "C");
     mods_scan();
@@ -124,7 +114,6 @@ int probe_mods(void) {
     static const char *const order[] = {"B", "A", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
                                         "Q", "Ultra \xD0\x96"};
     enum { N = sizeof order / sizeof *order };
-    // without the link Q is missing: the names after it move up one
     int n_want = linked ? N : N - 1, in_order = mods_count() == n_want;
     CHECK(in_order, linked ? "eighteen mod folders" : "seventeen mod folders");
     for (int i = 0, k = 0; in_order && i < N; i++) {
@@ -185,8 +174,6 @@ int probe_mods(void) {
         CHECK(EQ(cfg_get("NX2SARIA_MODS_DISABLED"), "A"), "switching A off writes it");
         CHECK(mods_changed(), "changes seen");
 
-        // the ExeFS patch files waiting for the rebuild follow the mods' start state, wherever the menu moved them:
-        // M and N wait (both on at the start); M moved onto C's place (off at the start) and switched off still waits
         uint32_t key = 0;
         CHECK(mods_exefs_pending(&key) == 2, "two ExeFS patch files wait for the rebuild");
         for (int i = 12; i > 2; i--) mods_move(i, -1);

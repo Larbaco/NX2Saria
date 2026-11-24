@@ -1,21 +1,3 @@
-// Cheats of the mods' Atmosphere cheat files (cheats.h). Each enabled mod the port can use (mods.h) may hold
-// <build id>.txt in its cheats folder, the build id the first 8 bytes of main's NSO build id, as Atmosphere and the
-// emulators name it; the file name's case does not matter. Each cheat's switch is the setting NX2SARIA_CHEAT_<hash>
-// (cheat_<hash> under [cheats] in nx2navi.ini), the hash FNV-1a 32 of "<mod folder name>/<cheat name>", so two mods'
-// cheats of one name keep their own switches.
-//
-// Code cheats (opcode 0 writes into main's code) cannot be applied here: the game's code is lifted C. tools/cheats.py
-// turns the code cheats of every mod into patch sets cheat_<hash> when the game is built and writes
-// build-cache\cheats.status next to nx2saria.exe, one line per cheat: name hash, content hash, kind, buttons, note
-// (tools/cheats.py has the format). A cheat whose status line is missing or has another content hash was added or
-// edited after the build: a data cheat runs anyway, a code cheat waits for the setup to run again.
-//
-// Data cheats run in a VM after Atmosphere's dmnt cheat VM (opcodes 0-A; the 0xC.. and 0xF.. extensions are not
-// supported), every presented frame while their switch is on, with registers cleared before each cheat. Memory is the
-// guest's, mapped at its own addresses: main's image is written with its pages made writable for the write (read-only
-// data included, as dmnt writes through the debugger), everything else after mem_query says the guest may read or write
-// it. Buttons are input_poll's HidNpadButton bits, the same as the cheat format's key masks; they read 0 while the menu
-// is open.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,19 +24,19 @@ typedef struct {
     CheatInfo info;
     uint32_t *words;
     int n;
-    int dup;              // 1 for the first cheat of its name in its file, 2 for the next ...
-    uint32_t content;     // FNV-1a 32 of its words as tools/cheats.py writes them
-    int set;              // patch set, -1 none
+    int dup;
+    uint32_t content;
+    int set;
     volatile int32_t on;
     CheatStats stats;
     char note[STATUS_MAX];
 } Cheat;
 
 static Cheat *g_cheats;
-static int g_n, g_cap, g_vm;   // g_vm: some cheat needs cheats_frame
-static char g_file[64];        // "<build id>.txt"
-static int g_files;            // mods whose file was read
-static uint64_t g_main, g_main_size, g_code_end;   // main's image; its code with the padding up to .rodata
+static int g_n, g_cap, g_vm;
+static char g_file[64];
+static int g_files;
+static uint64_t g_main, g_main_size, g_code_end;
 
 static uint32_t fnv(const char *s, size_t n) {
     uint32_t h = 0x811C9DC5u;
@@ -62,7 +44,6 @@ static uint32_t fnv(const char *s, size_t n) {
     return h;
 }
 
-// The folder of the executable, with a trailing separator.
 static int exe_dir(char *out, size_t n) {
     if (!plat_exe_path(out, n)) return 0;
     char *cut = plat_last_sep(out);
@@ -83,9 +64,6 @@ static int build_id(char out[17]) {
     return ok;
 }
 
-// ---- opcodes
-
-// Words of the opcode at w (left words remain), 0 when it is cut short.
 static int op_len(const uint32_t *w, int left) {
     uint32_t f = w[0];
     int t = f >> 28, width = (f >> 24) & 0xF, n;
@@ -102,7 +80,6 @@ static int op_len(const uint32_t *w, int left) {
     return n <= left ? n : 0;
 }
 
-// NULL when the VM runs the opcode, else why not (tools/cheats.py vm_ok).
 static const char *vm_unsupported(const uint32_t *w, char *buf, int n) {
     uint32_t f = w[0];
     int t = f >> 28, width = (f >> 24) & 0xF;
@@ -118,7 +95,6 @@ static const char *vm_unsupported(const uint32_t *w, char *buf, int n) {
     return NULL;
 }
 
-// The kind of a cheat the build did not see: heading, data, rebuild (it writes main's code) or unsupported.
 static CheatKind classify(Cheat *c) {
     int ops = 0, ends = 0;
     for (int i = 0; i < c->n;) {
@@ -140,8 +116,6 @@ static CheatKind classify(Cheat *c) {
     return ops == ends && ops <= 1 ? CHEAT_HEADING : CHEAT_DATA;
 }
 
-// ---- guest memory
-
 static uint64_t region(int m) {
     const RtGuestLayout *l = mem_layout();
     switch (m) {
@@ -153,7 +127,6 @@ static uint64_t region(int m) {
     }
 }
 
-// Without a + n: an address near 2^64 (a pointer chain that read -1) would wrap the sum and pass.
 static int in_main(uint64_t a, unsigned n) { return a >= g_main && n <= g_main_size && a - g_main <= g_main_size - n; }
 
 static int guest_ok(uint64_t a, unsigned n, uint32_t perm) {
@@ -171,7 +144,6 @@ static int rd(uint64_t a, int width, uint64_t *v) {
     return 1;
 }
 
-// Writes n bytes into main's image a page at a time: a read-only page is writable for its part of the copy only.
 static int wr_main(uint64_t a, const uint8_t *from, int n) {
     while (n > 0) {
         uint64_t page = a & ~0xFFFull, end;
@@ -224,7 +196,7 @@ static uint64_t arith(int op, uint64_t a, uint64_t b) {
     case 6: return a | b;
     case 7: return ~a;
     case 8: return a ^ b;
-    default: return a;   // 9: move
+    default: return a;
     }
 }
 
@@ -240,8 +212,6 @@ static int compare(int cond, uint64_t a, uint64_t b) {
     }
 }
 
-// From i (after a failed condition, or an else reached while running), the opcode to continue at: after the
-// matching else (else_ok) or end.
 static int skip(const uint32_t *w, int n, int i, int else_ok) {
     int depth = 0;
     while (i < n) {
@@ -271,22 +241,22 @@ static void run(const Cheat *c, uint64_t keys) {
         int t = f >> 28, width = (f >> 24) & 0xF, x = (f >> 20) & 0xF, y = (f >> 16) & 0xF, z = (f >> 12) & 0xF;
         uint64_t rel = ((uint64_t)(f & 0xFF) << 32) | (len > 1 ? w[i + 1] : 0), v;
         switch (t) {
-        case 0:   // 0TMR00AA AAAAAAAA V..: store a value at region M + A + register R
+        case 0:
             wr(region(x) + rel + r[y], width, width == 8 ? imm64(w + i + 2) : w[i + 2]);
             break;
-        case 1:   // 1TMC00AA AAAAAAAA V..: if (region M + A) <cond C> V
+        case 1:
             if (!rd(region(x) + rel, width, &v) || !compare(y, v, width == 8 ? imm64(w + i + 2) : w[i + 2])) {
                 i = skip(w, n, i + len, 1);
                 continue;
             }
             break;
-        case 2:   // 20000000 end, 21000000 else: an else reached while running skips to the end
+        case 2:
             if (width == 1) {
                 i = skip(w, n, i + len, 0);
                 continue;
             }
             break;
-        case 3:   // 300R0000 VVVVVVVV loop start, 310R0000 loop end
+        case 3:
             if (width == 0) {
                 r[y] = w[i + 1];
                 loop[y] = i + len;
@@ -295,34 +265,34 @@ static void run(const Cheat *c, uint64_t keys) {
                 continue;
             }
             break;
-        case 4:   // 400R0000 V V: register R = V
+        case 4:
             r[y] = imm64(w + i + 1);
             break;
-        case 5:   // 5TMRI0AA AAAAAAAA: R = (I ? R : region M) + A, read
-            if (!rd(z ? r[y] + rel : region(x) + rel, width, &v)) return;   // a broken pointer chain: nothing more
+        case 5:
+            if (!rd(z ? r[y] + rel : region(x) + rel, width, &v)) return;
             r[y] = v;
             break;
-        case 6: {   // 6T0RIor0 V V: store V at R (+ register r); I: R += width
+        case 6: {
             uint64_t a = r[y] + (((f >> 8) & 0xF) ? r[(f >> 4) & 0xF] : 0);
             wr(a, width, imm64(w + i + 1));
             if (z) r[y] += (uint64_t)width;
             break;
         }
-        case 7:   // 7T0RC000 VVVVVVVV: R = R <op C> V
+        case 7:
             r[y] = masked(width, arith(z, r[y], w[i + 1]));
             break;
-        case 8:   // 8kkkkkkk: if the buttons are held
+        case 8:
             if ((keys & (f & 0x0FFFFFFF)) != (f & 0x0FFFFFFF)) {
                 i = skip(w, n, i + len, 1);
                 continue;
             }
             break;
-        case 9: {   // 9TCRS0s0 / 9TCRS100 V..: R = S <op C> (s or V)
+        case 9: {
             uint64_t b = (f >> 8) & 0xF ? (width == 8 ? imm64(w + i + 1) : w[i + 1]) : r[(f >> 4) & 0xF];
             r[y] = masked(width, arith(x, r[z], b));
             break;
         }
-        case 0xA: {   // ATSRIOxa (aaaaaaaa): store register S at an address of type O
+        case 0xA: {
             int o = (f >> 8) & 0xF, m = (f >> 4) & 0xF;
             uint64_t imm = ((uint64_t)(f & 0xF) << 32) | (len > 1 ? w[i + 1] : 0), a;
             switch (o) {
@@ -344,12 +314,10 @@ static void run(const Cheat *c, uint64_t keys) {
     }
 }
 
-// ---- the file
-
 static char *read_text(const char *path) {
     uint64_t n = 0;
     char *s = (char *)plat_file_read(path, &n);
-    if (s && n >= 3 && !memcmp(s, "\xEF\xBB\xBF", 3)) memmove(s, s + 3, (size_t)n - 2);   // a UTF-8 BOM
+    if (s && n >= 3 && !memcmp(s, "\xEF\xBB\xBF", 3)) memmove(s, s + 3, (size_t)n - 2);
     return s;
 }
 
@@ -362,7 +330,6 @@ static void add_word(Cheat *c, uint32_t v, int *cap) {
     c->words[c->n++] = v;
 }
 
-// Appends the cheats of one mod's file; mod: the mod's folder name (kept).
 static void parse(char *s, const char *mod) {
     int first = g_n, wcap = 0;
     for (char *line = s; line && *line;) {
@@ -388,7 +355,7 @@ static void parse(char *s, const char *mod) {
             c->info.mod = mod;
             c->info.kind = line[0] == '{' ? CHEAT_MASTER : CHEAT_HEADING;
             c->set = -1;
-            c->dup = 1;   // a repeated name gets "#2", "#3" ... (tools/cheats.py parse)
+            c->dup = 1;
             for (int j = first; j < g_n - 1; j++) c->dup += !strcmp(g_cheats[j].info.name, c->info.name);
             wcap = 0;
         } else if (g_n > first) {
@@ -402,7 +369,6 @@ static void parse(char *s, const char *mod) {
     }
 }
 
-// The file g_file in folder, its name in any case, into out; 0 when there is none.
 typedef struct {
     const char *dir;
     char *out;
@@ -423,7 +389,6 @@ static int find_file(const char *folder, char *out, size_t cap) {
     return f.found;
 }
 
-// The status line of key, its fields split in place; 0 when none.
 static int status_of(char *status, const char *key, char **fields) {
     for (char *line = status; line && *line;) {
         char *end = strchr(line, '\n'), *next = end ? end + 1 : NULL;
@@ -446,7 +411,6 @@ static int status_of(char *status, const char *key, char **fields) {
     return 0;
 }
 
-// The menu's font has no numero sign (U+2116), which cheat names often start with: they show "No" instead.
 static void plain_name(char *s) {
     for (char *p; (p = strstr(s, "\xE2\x84\x96")) != NULL;) {
         p[0] = 'N', p[1] = 'o';
@@ -469,7 +433,7 @@ static void report_unbuilt(void) {
 
 void cheats_init(void) {
     const RtLoaded *m = ldr_count() ? ldr_module(0) : NULL;
-    char dir[PLAT_PATH_MAX], bid[17], path[2400];   // path: a mod's cheats folder (ModInfo.cheats) + the file
+    char dir[PLAT_PATH_MAX], bid[17], path[2400];
     if (!m || !exe_dir(dir, sizeof dir) || !build_id(bid)) return;
     g_main = m->base;
     g_main_size = m->size;
@@ -479,7 +443,7 @@ void cheats_init(void) {
         rt_log("cheats: mods_rebuild = %s does nothing now: Play from the launcher builds code cheats and ExeFS patches "
                "in", cfg_value("NX2SARIA_MODS_REBUILD"));
     mods_scan();
-    for (int k = 0; k < mods_count(); k++) {   // the Mods tab's order, top first
+    for (int k = 0; k < mods_count(); k++) {
         const ModInfo *mod = mods_at(k);
         if (!mod->enabled || mod->problem != MOD_OK || !mod->cheats[0] || !find_file(mod->cheats, path, sizeof path))
             continue;
@@ -535,18 +499,18 @@ void cheats_init(void) {
         } else {
             kind = classify(c);
         }
-        if (master && kind == CHEAT_DATA) kind = CHEAT_MASTER;   // a data master code: the VM, always on
+        if (master && kind == CHEAT_DATA) kind = CHEAT_MASTER;
         c->info.kind = kind;
         c->info.note = c->note;
         const char *v = cfg_get(c->info.key);
         c->on = kind == CHEAT_MASTER || (v && *v && strcmp(v, "0") != 0);
-        if (kind == CHEAT_KEY && c->set >= 0) rt_patch_switch(c->set, 0);   // on while the buttons are held
+        if (kind == CHEAT_KEY && c->set >= 0) rt_patch_switch(c->set, 0);
         if (kind == CHEAT_KEY || kind == CHEAT_DATA || (kind == CHEAT_MASTER && c->set < 0)) g_vm = 1;
         counts[kind]++;
     }
     free(status);
     report_unbuilt();
-    for (int i = 0; i < g_n; i++) plain_name((char *)g_cheats[i].info.name);   // the hashes above read the file's bytes
+    for (int i = 0; i < g_n; i++) plain_name((char *)g_cheats[i].info.name);
     int on = 0;
     for (int i = 0; i < g_n; i++) on += g_cheats[i].on && g_cheats[i].info.kind != CHEAT_HEADING;
     rt_log("cheats: %s in %d mod%s: %d cheat%s, %d on; %d code, %d while buttons are held, %d data, %d master, "
@@ -615,10 +579,10 @@ void cheats_exit_log(void) {
 
 void cheats_frame(uint64_t frame) {
     follow_settings();
-    if (!g_vm || frame < 60) return;   // the game polls its input (and starts SDL) before this
+    if (!g_vm || frame < 60) return;
     uint64_t keys = 0;
     int32_t lx, ly, rx, ry;
-    input_poll(&keys, &lx, &ly, &rx, &ry);   // 0 while the menu is open
+    input_poll(&keys, &lx, &ly, &rx, &ry);
     uint64_t now_ns = plat_now_ns();
     for (int i = 0; i < g_n; i++) {
         Cheat *c = &g_cheats[i];
