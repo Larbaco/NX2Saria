@@ -1,0 +1,475 @@
+# tests (second part)
+
+The tests from `tests/make_game_gate_test.py` on, in the order of their file names. A check that is a Python file and a
+C file of the same name has one section, under the Python file: the Python file builds the C file with the header or
+source it names and runs it; the C program prints each failed check with its line and exits 1 on any. Where such a
+check has a `compiler()`, it takes `$CC`, else MSYS2 UCRT64's clang, else the clang on `PATH`, as
+`tests/diff/common.py` picks it but without needing Unicorn. "No GPU, no game files" is said once per section where it
+holds.
+
+## `tests/make_game_gate_test.py`
+
+`tools/make_game.py`'s compiles through the memory gate (`tools/memgate.py`), with a stand-in script as the compiler
+(it writes the object and its dependency file after a short wait, so that compiles overlap). No network, no game files.
+
+- `compile_all` starts the compiles in the order of their cost (a lifted chunk's from the lift's manifest, another
+  source's size) or of the seconds an earlier build measured, and the gate admits them in that order. In the case
+  `big.c` is the largest file but the cheapest chunk and `rt.c` is not lifted, so its size is its cost; with no free
+  memory the first compile starts (`min_jobs`) and the next is held for memory. A source that is not a lifted chunk is
+  saved with cost 0, which keeps it out of the size model's scale.
+- A learned time orders before the cost: with `b.o` 1 s, `c.o` 2 s and `d.o` 10 s measured last time, their median rate
+  (`c.o`'s, 1 s per 1000 bytes of cost) puts `a.o`, not built before, at 4 s.
+- A stop ends the wait of a compile held for memory at once; neither it nor the one behind it compiles.
+- A peak measured while the free memory was below the 1 GiB reserve keeps a higher record (64 GiB planted, far above any
+  real peak); one measured without pressure replaces it.
+- Each successful compile's peak and time go into the estimates, which are saved; a compile the gate held shows in its
+  summary; the lines the build prints about the gate (the closing lines with one peak at half its estimate and one at
+  twice).
+- `chunk_costs` reads `cost` and `switch_fn` from a module's `manifest.json`, `bytes` from a manifest older than `cost`,
+  and a file's size when the manifest does not list it.
+- `LifterEnvTest`: `recomp/gen.py` `lift_gate()` keeps the compiles' reserve and follows `--no-mem-gate`; without
+  options the environment passes as it is.
+
+## `tests/make_game_sdl3_test.py`
+
+`tools/make_game.py` on Linux with or without the system's SDL3 (issue #11: Ubuntu 24.04 and Linux Mint 22 package
+none). No network, no game files. `stopped()` gives (the value, '') of a call, or (None, the error text
+`make_game.fail` printed).
+
+- `sdl3_choice` takes the system's SDL3 when the compiler finds its headers, so a distribution that packages SDL3
+  builds with the same commands as before (the link line of before, so nothing links again), else the build kit's
+  (`tools/sdl3_pin.py`). `NX2SARIA_SDL3` = `kit` or `system` decides instead (the older spelling `NX2NAVI_SDL3` is read
+  too), and a wrong value or a choice that cannot be met stops with the reason.
+- The kit's SDL3 goes ahead of the system's folders for the runtime's sources only, the link names the kit's library by
+  its path, and the check's program runs with the library beside it, as the game will. The link key names the kit by
+  its place in the kit, not by the folder an AppImage is mounted in this time; with the setting unset `sdl3_tag()` is
+  empty, the compile key of every game built so far.
+- The kit's `libSDL3.so.0` goes beside the game, and goes away again when the game is linked against the system's (the
+  runpath would load the kit's copy ahead of the system's); a copy with the kit's bytes is still the kit's after the
+  build cache was deleted; a `libSDL3.so.0` this build did not put there stays, with a line that says so.
+- `PreflightWithTheKitSdl3Test` runs `make_game.preflight` with every command recorded instead of run: the check's
+  program is built and run in the build cache, not in the system's temporary folder; a program that does not start for
+  want of a library the kit's SDL3 needs names it and the package that holds it; one ended by a signal leaves nothing
+  on its stderr; headers without a library point to the kit's, and there is no program to run without its link.
+- `Sdl3VersionTest` compiles `make_game.SDL3_PROBE` against headers that declare what it uses as `SDL3/SDL.h` does.
+- `KitsCarrySdl3PinTest`: `make_game.py` imports `sdl3_pin` inside a `try`, so a kit without it would fail only on a
+  Linux system without SDL3, asking for a package Ubuntu 24.04 does not have. The zip kit lists it, and the AppImage's
+  kit copies all of `tools/` (`tools/make_appimage.py`) and carries the files besides.
+- The build log's line names the compiler, its version and where SDL3 came from.
+
+## `tests/maxwell_warp_emu.py`
+
+A 32-lane Maxwell warp emulator for checking the SM86 tensor lowering on the CPU. It is not a test:
+`tests/tensor_lowering_check.py` runs the full check of the tensor lowering on top of it (guards, untouched registers,
+several initial fills) and `tests/maxwell_warp_emu_selftest.py` checks the emulator itself.
+
+`tools/xlate/AmpereLowering.cs` rewrites SM86 instructions as Maxwell (64-bit) instructions, and the patched shader
+translator turns those into SPIR-V. This file executes the Maxwell words the way that translator does: fields are
+decoded exactly as its `Decoders/InstDecoders.cs`, opcodes are matched with the bit patterns of
+`Decoders/InstTable.cs`, and each instruction does what its `Instructions/*.cs` emit for it, not what a real Maxwell
+GPU does where the two differ. With it, the result of one lowered SM86 instruction (HMMA, LDSM, MOVM, HFMA2.RELU, ...)
+can be compared with vectors captured on real hardware without running the game.
+
+State per lane: R0-R254 (RZ = R255 reads 0, writes are dropped), P0-P6 (PT = P7 is true, writes dropped), the lane id,
+local memory; per warp: shared memory. Every lane is active at the start; a guard (bits 16-19: predicate 16-18,
+inverted 19) masks the writes of one instruction, EXIT retires lanes. Branches must be uniform across the active lanes.
+
+Translator semantics it follows, and real hardware may not:
+
+- Half-precision arithmetic (HADD2, HMUL2, HFMA2) works in F32 on the unpacked halves and rounds to F16 once at the end
+  (`InstEmitFloatArithmetic` `EmitHadd2Hmul2` / `EmitHfma2`, `InstEmitHelper` `GetHalfPacked`: `PackHalf2x16`). HFMA2
+  is therefore an F32 fused multiply-add rounded to F32, then to F16.
+- That rounding is skipped when the packed value goes straight into another unpack: `Optimizer.PropagatePack` turns
+  `UnpackHalf2x16(PackHalf2x16(a, b))` into a (or b). So F2F.F16.F32 then F2F.F32.F16 of the same register, or HFMA2
+  feeding HFMA2, passes the F32 value on unrounded; an integer instruction (SHFL, LOP, ISCADD, ...) in between keeps
+  the rounding, a MOV does not. Modelled per register (`Warp.halves()`); a guarded write and a branch end it.
+- FTZ, FMZ and the rounding-mode fields of FFMA / FMUL / FADD / HFMA2 / HMUL2 are ignored, as the translator ignores
+  them. Denormals are kept (IEEE); saturation is clamp(x, 0, 1) with NaN giving 0 (GLSL `FClamp` as
+  min(max(x, 0), 1) on a GPU whose min/max return the non-NaN operand).
+- PRMT is not implemented in the translator (1.3.2): `InstEmit.PrmtR/PrmtI/PrmtC/PrmtRc` only log "not implemented",
+  so the destination keeps its old value. That is the default of the `prmt` argument; `prmt="maxwell"` gives the
+  hardware byte permute instead, to see what the lowering intended.
+- SHFL follows the translator's `HelperFunctionManager` `GenerateShuffle*` helpers (clamp and segment mask from operand
+  C, the lane's own value where the source lane is out of range).
+- LDS / LDL read the 32-bit word at (address >> 2) and extract a sub-word at (address & 3) * 8 (`InstEmitMemory`
+  `EmitLoad`); STS of 8 and 16 bits stores those bytes at the address.
+- Condition codes (.CC, .X) are not modelled: an instruction that writes or reads them raises.
+- NaN results carry numpy's payload and sign. Neither is defined in SPIR-V, so result comparisons (`same_value()`) let
+  a NaN match any NaN for float results.
+
+Library use: `run(words, regs_in, smem=None)` takes Maxwell 64-bit words and returns a (32, 256) uint32 array (row =
+lane); `run_warp(words, regs_in, smem=None)` returns the whole `Warp` (regs, preds, smem, warnings). Command line, for
+vectors written by the tensor ground-truth capture:
+`python tests/maxwell_warp_emu.py <vectors.json> [--xlate EXE] [--prmt ryujinx|maxwell] [--case NAME] [--trace] [--fill HEX] [--exact]`.
+In `main()` one broken case does not stop the run.
+
+`UnknownOpcode` is a Maxwell word the emulator has no decoder entry for; `Unsupported` a known instruction in a mode or
+form it does not implement.
+
+### Bit-level helpers
+
+- `u32()`: a lane vector (or broadcast scalar) as uint32, wrapping Python ints to 32 bits. `sext()`: sign-extends a
+  bits-wide field to a Python int.
+- `half_lo()` is `UnpackHalf2x16Low`: the low 16 bits as F16, widened to F32 (exact); `half_hi()` the high ones.
+  `pack_half()` is `PackHalf2x16`: each F32 rounded to F16 (round to nearest even, numpy's conversion), lo in bits
+  0-15.
+- `fma_f32()`: F32 fused multiply-add, rounded once (`FPFusedMultiplyAdd` -> GLSL.std.450 `Fma`, fused on the target
+  GPUs). a * b is exact in F64 (2 x 24 significant bits). The F64 sum s may be inexact; TwoSum gives its error e
+  exactly (s + e == a * b + c). Rounding s to F32 is then correct except when s lies exactly halfway between two F32
+  values, where the sign of e decides the direction: the code takes the F32 neighbour of r on the side of s when e
+  points towards it. F32 halfway points are F64 values, so no other case can double-round.
+- `saturate()` is `FPSaturate`: clamp to [0, 1], NaN to 0 (fmax/fmin return the non-NaN operand). `abs_neg()` is
+  `FPAbsNeg`: abs first, then negate (sign-bit operations in SPIR-V; numpy's abs/negative act on the sign too).
+
+### `Ins`
+
+One Maxwell word with the field accessors `InstDecoders.cs` uses, the fields shared by most decoders first.
+`Ins.imm20()` is `InstDecoders` `Imm20`: bits 20-38, bit 19 from bit 56. `Ins.imm20_sint()` is `InstEmitHelper`
+`Imm20ToSInt`; `Ins.imm20_float()` is `Imm20ToFloat`.
+
+### `Warp`
+
+Registers not given by the caller start as `fill` (SPIR-V locals are undefined unless the job zeroes them; a poison
+value such as 0x7fc0dead shows reads of registers the lowering never wrote).
+
+The translator's `Optimizer.PropagatePack` turns an `UnpackHalf2x16` of a `PackHalf2x16` result into the pack's F32
+operand, so that half is never rounded to F16. Kept per lane and register: the F32 halves of the pack that wrote the
+register (`sh_ok`), until the register is written otherwise. A write under a guard ends it in every lane: the
+translator puts the instruction in an if-block and merges old and new value in a phi, which is no pack. `unconditional`
+says the current instruction's guard is PT (`run_warp()` sets it).
+
+Register file access: `R(n)` reads a lane vector, `W(n, v, mask)` writes the lanes in mask. `halves`: the F32 values a
+`PackHalf2x16` rounded into v; `copy_from`: v is a copy of that register (MOV), pack and all. `Warp.halves()` gives
+`UnpackHalf2x16Low` / `High` of register n as F32, after PropagatePack (the pack's operand where one wrote n).
+`Warp.cbuf_word()` is c[slot][word_offset * 4] (`InstDecoders` `CbufOffset` counts words).
+
+### Instruction handlers
+
+Each handler takes (warp, ins, mask): mask = the active lanes whose guard holds. Lanes outside mask must not change.
+What each follows in the translator:
+
+| Handler | Follows |
+|---|---|
+| `op_mov_r()` | `InstEmitMove` `MovR`: SrcA in bits 20-27; a Copy, which PropagateCopy sees through |
+| `op_mov_i()` | `MovI`: `GetSrcImm(op.Imm20)`, the raw 20-bit field (not shifted or sign-extended) |
+| `_iadd()` | `InstEmitIntegerArithmetic` `EmitIadd`: AvgMode 1 negates B, 2 negates A |
+| `_iadd3()` | `EmitIadd3` `Extend`: HalfSelect 1 = low 16 bits, 2 = high 16 bits |
+| `_iscadd()` | `EmitIscadd`: (A << shift), then the AvgMode negations, then A + B |
+| `_shl()` | `InstEmitShift` `EmitShl`: .M masks the count to 5 bits, else counts >= 32 give 0 |
+| `_shr()` | `EmitShr`: .BREV (40) reverses A first, .S32 (48), .M (39) |
+| `_lop_pred()` | `EmitLopPredWrite` |
+| `_lop()` | `InstEmitIntegerLogical` `EmitLop` |
+| `op_lop32i()` | `Lop32i`: no predicate output (DestPred PT) |
+| `_lop3()` | the LOP3 truth table (`Lop3Expression.GetFromTruthTable`): bit (a << 2 \| b << 1 \| c) of lut, per bit |
+| `_prmt()` | `InstEmit.PrmtR` / `PrmtI`: "not implemented", nothing is emitted, the destination keeps its value |
+| `op_sel_r()` | `InstEmitMove` `EmitSel`: P ? A : B |
+| `_isetp()` | `InstEmitIntegerComparison` `EmitIsetp` (not extended) |
+| `_p2r()`, `op_p2r_i()` | `InstEmitPredicate` `EmitP2r`; `P2rI` takes the raw Imm20 as mask |
+| `_r2p()`, `op_r2p_i()` | `InstEmitMove` `EmitR2p`; `R2pI` takes `Imm20ToSInt` |
+| `op_s2r()` | `InstEmitMove` `S2r`: SR_LANEID; one warp, so TID.X is the lane and TID.Y/Z are 0 |
+| `op_shfl()` | `InstEmitWarp` `Shfl` + `HelperFunctionManager` `GenerateShuffle*` (subgroup size 32); modes 0 IDX, 1 UP (signed compare, `ICompareGreaterOrEqual`), 2 DOWN, 3 BFLY. A predicated SHFL becomes an if-block in SPIR-V: reading a lane outside it is undefined |
+| `_mem_load()` | `InstEmitMemory` `EmitLoad`: per word, the word at (address >> 2), sub-words extracted at (address & 3) * 8 |
+| `_mem_store()` | `EmitStore`: 32-bit words at (address >> 2); shared 8/16-bit stores write those bytes at the address, local ones insert into the word at (address & 3) * 8. Lanes store in lane order (the last lane wins a conflict) |
+| `op_f2f_r()` | `InstEmitConversion` `F2fR` / `EmitF2F`; the rounding field is `IntegerRound`: 4 round, 5 floor, 6 ceil, 7 trunc; an F16 result is `WriteFP`: `PackHalf2x16(x, 0)` |
+| `op_mufu()` | `InstEmitMultifunction` `Mufu`: `FPAbsNeg` of Ra, the function in F32, `FPSaturate` |
+| `_ffma()`, `op_ffma32i()` | `EmitFfma` (rounding mode and FMZ ignored); `Ffma32i`: C is the destination register |
+| `_fmul()` | `EmitFmul`: A times the scale first, then A * B |
+| `_fadd()` | `EmitFadd` |
+| `_hadd_hmul()` | `EmitHadd2Hmul2`: F32 add/multiply per half, saturate, pack |
+| `_hfma()` | `EmitHfma2`: F32 fused multiply-add per half, saturate, pack |
+| `op_hmul2_r()` | `Hmul2R`: the NegA bit (31) negates B |
+| `op_hfma2_r()` | `Hfma2R`: NegA (31) negates B, NegC (30) |
+| `op_hfma232i()` | `Hfma232i`: C is the destination register, H1_H0 |
+
+Half precision follows `InstEmitHelper` `GetHalfSrc` / `GetHalfUnpacked` / `GetHalfPacked`:
+
+- `half_src()`: the two F32 values of a packed-half register operand: swizzle 0 (H1_H0), 1 (F32: the register as one
+  F32 twice), 2 (H0_H0), 3 (H1_H1); then abs, neg. The halves come through `Warp.halves()` (PropagatePack).
+- `half_imm_pair()`: `GetHalfSrc(immH0, immH1)`: each 10-bit field shifted left 6 as an F16.
+- `half_pack()`: `GetHalfPacked`: 0 F16 pair, 1 F32 (lane 0's result), 2 MRG_H0 (high half kept), 3 MRG_H1 (low half
+  kept). Returns the register value and the F32 halves `PackHalf2x16` rounded (None for the F32 format). The old halves
+  are `GetHalfDest`: an `UnpackHalf2x16` of Rd.
+
+Control flow is handled by the executor: EXIT retires lanes, BRA moves the warp.
+
+### `decode()`
+
+(name, handler) of a Maxwell word. The patterns are written as the translator's `Decoders/InstTable.cs` writes them
+(bit 63 first, x = any). The most specific matching pattern wins, as `InstTable`'s XBits ordering does.
+
+### `slot_address()`
+
+Byte address of instruction k in a compute program as `AmpereLowering.Lower` lays it out (a scheduling word first in
+every 32 bytes; `--lower` prints the instruction words only).
+
+### `run_warp()`, `run()`
+
+`run_warp()` executes the Maxwell words on one warp and returns its final state; `regs_in` in any form `load_regs()`
+takes. Where control flow joins (branch targets) the translator merges registers in phis, and an `UnpackHalf2x16` of a
+phi is not folded: the PropagatePack state (`Warp.sh_ok`) is dropped there and at every BRA (conservative: a register
+no path writes needs no phi).
+
+### Vector files and the `--lower` bridge
+
+- `parse_int()`: an int, or a hex string (with or without 0x). `parse_reg()`: ("R", n) or ("P", n) for a register name:
+  an int, "R12", "12", "RZ", "UR3" (needs urbase), "P0", "PT".
+- `load_regs()` normalises register specs to {lane: {(kind, n): int}}. It accepts {lane: {reg: value}} with lane keys
+  as ints or strings (and "*" / "all" for every lane, applied first so per-lane entries override it), or a list with
+  one entry per lane; each lane entry a dict {reg: value} or a list of values indexed by register number; values ints
+  or hex strings. `_normalised()` passes `load_regs()` output through unchanged (keys (kind, n)) and loads anything
+  else.
+- `lower()` runs `nx2navi_xlate --lower` on SM86 instructions (a list of [w0, w1, w2, w3] or one such list) and returns
+  (Maxwell words, urbase, local bytes).
+- `_fmt()`: a register value as hex plus its F32 and half-pair readings.
+
+### Comparing results
+
+A float result is right when its bits are, except that any NaN matches any NaN: SPIR-V leaves the payload and sign of a
+NaN to the host (Vulkan spec, "Precision and Operation of SPIR-V Instructions"), and this emulator's numpy arithmetic
+picks its own, while SM86 hardware writes 0x7fff for every F16 NaN result. Whether a value is NaN is the lowering's
+doing; which NaN is not. Moves (LDSM, MOVM) and integer results compare bit for bit.
+
+- `result_kind()`: how the destination registers of an SM86 instruction compare: "f16x2" (two F16 values), "f32" or
+  "bits". `sm86` is [w0, w1, w2, w3] or a list of them (the last one decides). Opcode 0x23C is HMMA, with .F32 (bit 76)
+  or .F16 results; (op & 0x1FF) in 0x030, 0x031, 0x032 is HADD2 / HFMA2 / HMUL2, with F32 results when bit 78 is set.
+- `same_value()`: got matches want: equal bits, or for float kinds NaN where want is NaN.
+- `ulps()`: distance in units in the last place (the larger of the two halves for "f16x2"); 0 for matching NaNs, a
+  huge number for NaN against a number. +0 and -0 are 0 apart (`same_value()` still tells them apart).
+- `run_case()` lowers, runs and compares one vector case and returns (ok, lines of report). Float results compare with
+  `same_value()` unless exact. LDSM cases: "lane_addresses" hold Ra per lane when `regs_in` does not, relative to
+  "smem", which sits at shared address "smem_base". Shared memory is padded to 64 KiB so stray reads stay in range.
+
+## `tests/maxwell_warp_emu_selftest.py`
+
+Self-test of `tests/maxwell_warp_emu.py`: hand-encoded Maxwell sequences against hand-computed results. The encoders
+use the field positions of the translator's `Decoders/InstDecoders.cs`; `PT` is the guard field for predicate PT
+(7 << 16), and `isetp_i()` encodes ISETP.cmp Pd, PT, Ra, imm, PT (AND).
+
+`part1()` runs words encoded in the file:
+
+- IADD32I, MOV32I, IADD3 with a negated operand, ISCADD; S2R lane id, LOP32I, SHL/SHR, LOP3, SHR by register.
+- SHFL.IDX: the whole warp by a lane register ((lane + 1) % 32); a segment of 4 lanes (0x1C03: lane (t & ~3) | 1);
+  segments of 8 with clamp 3 (0x1803), where index 5 is invalid and index 2 valid; BFLY 1; DOWN 2 with clamp 0 and
+  with 0x1F; UP 1. Out of range lanes keep their own value.
+- STS / LDS: 32, 16 and 8 bits, sign extension, 64 and 128 bits, the immediate offset (word [0x100 + 4t] = t, then
+  R12-R15 = words 0..3 of the table).
+- F2F: F32 from either F16 half (exact), F16 from F32 (round to nearest even, high half zero): 1 + 2^-11 is a tie and
+  goes to even (1.0), 1 + 3 * 2^-11 to 1 + 2^-9, 70000.0 overflows to inf.
+- HFMA2: per half F32 FMA then F16; neg C; saturate. (1 + 2^-10)^2 = 1 + 2^-9 + 2^-20 -> F16 1 + 2^-9; 1 + 2^-11 is an
+  F16 tie -> 1.0.
+- `Optimizer.PropagatePack`: an F16 result unpacked again without an integer operation in between is the unrounded F32
+  value, directly or through a MOV; a LOP in between, or a guarded pack (P0 = lane < 32, true everywhere), keeps the
+  F16 rounding. HFMA2 feeding HFMA2: 40000 * 2 is inf as F16, times 0.5 again.
+- FFMA: rounded once. The exact a*b + c lies just below an F32 halfway point; F64 alone would round to the tie and then
+  to even (0x3f800002), the fused result is 0x3f800001.
+- PRMT: a no-op as the translator translates it, the Maxwell byte permute otherwise (0xbb99: sign of bytes 1 and 3).
+- Predicates: ISETP (P0 = lane < 16), a guarded write, an inverted guard, EXIT of some lanes (lanes >= 16), a uniform
+  BRA over one instruction (the skipped one would write 0xDEAD).
+- Unknown opcodes raise with the word.
+
+`part2()`, when `build/xlate/nx2navi_xlate.exe` exists, lowers SM86 instructions with `nx2navi_xlate --lower` and
+checks the emulated result against exactly representable reference values (small integers, so every F16 rounding is
+exact and only the fragment layout can be wrong). `tests/tensor_lowering_check.py` checks the same lowerings against
+hardware results.
+
+- `hmma_case()`: HMMA.{1688,16816}.F16 R4, R8, R12, R16 with small integers; returns (sm86, regs_in, expected D regs).
+- LDSM.16.M88.4 R4, [R1] and LDSM.16.MT88.1 R8, [R1]: matrix m row r at 0x200 * m + 0x20 * r (16 bytes used), element
+  (m, row, col) = 0x1000 * m + 0x100 * row + col. Transposed, a lane t holds column t/4 of rows 2(t%4) (low) and
+  2(t%4)+1 (high); else row t/4, columns 2(t%4) and 2(t%4)+1.
+- MOVM.16.MT88 R2, R1: element (row, col) = 8 * row + col at lane 4 row + col / 2, half col % 2.
+- HFMA2.RELU R0, R1, R2, R3 (PT) as the translator runs it, whatever the scratch registers held before: the translator
+  drops PRMT, so `tools/xlate/AmpereLowering.cs` `Half` builds the mask with integer operations. Negative sums become
+  +0, positive ones stay (sums -2.0 and -0.75; 4.0 and -0.75).
+
+## `tests/mem_budget_check.py`
+
+Builds and runs `tests/mem_budget_check.c` on `runtime/mem_budget.h`, which turns the free share of the video memory
+and of the system memory into a level (roomy, normal, tight, critical) with hysteresis, for the owners of memory that
+can be given back. No GPU, no game files, any Python.
+
+- The room itself: 8000 of 32000 free is 250 per mille; use past the limit and an unknown limit give no room;
+  `mem_room_min` takes the tighter share and the smaller amount.
+- Levels from a first sample, from roomy, as `runtime/mem_budget.c` starts (`room_pm()` is a share on a 32 GiB side):
+  the lines at 40%, 20% and 8% belong to the level below; a large share of a tiny side (600 per mille, 200 MB) is
+  critical, since less than `MEM_FLOOR_MB` free is critical at any share.
+- Down at once, up only past the line by `MEM_HYST_PM`; a share that hovers around the 20% line (18.5% to 21.5%)
+  changes the level once, not at every sample.
+
+## `tests/mem_commit_launcher_test.py`
+
+The launcher commit warning's pure threshold and message, with the system probe and the dialog stubbed. Yes is the
+default button: `MessageBoxW` returns 6 (IDYES) and the flags carry neither `MB_DEFBUTTON2` nor `MB_DEFBUTTON3`
+(`flags & 0x300` is 0).
+
+## `tests/mem_commit_message_check.py`
+
+Builds and runs `tests/mem_commit_message_check.c`, the pure Win32 commit-message selector; no Windows or game files
+are needed. The advice is given for 1455 (`ERROR_COMMITMENT_LIMIT`), 8 (`ERROR_NOT_ENOUGH_MEMORY`) and 1450
+(`ERROR_NO_SYSTEM_RESOURCES`), and not for 14 (`ERROR_OUTOFMEMORY`) or 487 (`ERROR_INVALID_ADDRESS`).
+
+## `tests/memgate_test.py`
+
+`tools/memgate.py`: the admission rule, the in-process `Gate` over fake free memory, resident sizes and clock (`Fake`:
+free memory, resident sizes by pid, a clock and a log the tests set), the `Estimates` file, `run()`'s exact peak on a
+real small child, and the `wrap` command line end to end with two wrappers at once. No game files; stdlib only; the
+children allocate at most about 50 MB each (`ALLOC`: 50 MB, written, so resident).
+
+- `AdmitTest`, the rule both gates share: owed is need less what is resident (2 GiB needed, 0.5 GiB resident: 1.5 GiB
+  still owed); a compile without a pid yet owes all its need.
+- `GateTest` (`GateTest.background()` acquires in a thread and appends the lease to `done` once admitted). Owed memory
+  holds until the compile is resident: with 1 GiB of a 2 GiB need resident and already counted in the free memory, 3
+  GiB free less 1 GiB still owed covers 2 GiB. Reserve and ceiling: a 5 GiB compile the memory holds is still over the
+  limit by the 1 MiB, and runs alone by `min_jobs`. Unknown free memory admits what the RAM holds (three compiles of 3
+  GiB: 9 GiB promised). Waiters are served in order: a small one that would fit does not pass a big one, and the order
+  is the one the gate gave out under its own lock. A compile held for memory leaves the gate at once when its `cancel`
+  turns true: `acquire` returns None (also when cancelled before it is even its turn), the waiters behind it move up,
+  and nothing is left to release. A lease knows the least free memory while it ran (the first admitted by `min_jobs`,
+  the second on 8 GiB free, then 1 GiB, below the 2 GiB reserve, while both run).
+- `EstimatesTest`. After a re-chunk a chunk of the same name and size can hold another switch: its `switch_fn` must be
+  within 20 % too, unless both are below `SWITCH_SMALL`. A peak measured while the memory was short (`keep_higher`)
+  does not lower the record; without pressure the new peak is taken. The model is checked against the peaks it was
+  drawn from (clang 20, -O1), within 15 %. A source with no cost is not part of the learned scale, and a scale far off
+  is clamped. An entry from before `switch_fn` reads it as 0; garbled files are empty.
+- `RunTest`: with SIGCHLD ignored `wait4` finds no child to wait for; the exit code comes from `Popen` and the peak is
+  unknown.
+- `AvailableTest`: on Windows the free memory is no more than what can still be committed (a small page file runs out
+  first).
+- `WrapTest`, wrappers at once over one state folder, as Ninja runs them (`WrapTest.finish()` gives (exit code, stdout,
+  stderr) of each; a wrapper still running after the timeout fails the test; the child script can wait for a file
+  another process makes). Gate off: each compile waits until the other has started, so both end well only if they ran
+  at the same time. A small compile arriving after a held big one waits behind it, though the memory would hold it
+  now; the big one, once running, owes all its need, so the third waits for it to end. Ended and reused entries are
+  dropped (the test plants its own pid, as a wrapper that started at another time would leave it).
+- `CgroupLimitTest`: `total_ram()` under a cgroup v2 limit is the tightest `memory.max` on the way up, so the reserve
+  and the rule for unknown free memory go by what the build may use; under 6 GiB the reserve is 1.5 GiB, since 10 % of
+  6 GiB is less than the minimum.
+
+## `tests/mem_growth_check.py`
+
+Builds and runs `tests/mem_growth_check.c` on `runtime/diag/mem_growth.h`, the memory report's growth bookkeeping:
+which of the report's figures grew since the previous report and since play began, and which only ever climbed. No
+GPU, no game files, any Python.
+
+The checks feed the book reports as `runtime/vk/vk_memory.c` `growth_take()` does, once a period: a boot and a title
+screen before the world clock runs, then play.
+
+- `basics()`: the first report has nothing to compare with. Before play only the previous report counts, and only more
+  than the step: +32, +64 and +64 are none past "more than 64", textures +65 is one. The base is the first figures in
+  play, with no growth since play yet; in play both lists are given; a later report with no change keeps the second
+  list and empties the first; when the world clock stops (title screen) it is still play.
+- `noise()`: changes under `MG_NOISE` are neither rises nor falls (just under a MiB up; a MiB up from there; a MiB
+  down); a fall of `MG_NOISE` ends "only climbs".
+- `falls_and_cut()`: falls are ranked largest first after the growth; a cut buffer stays terminated and the count is
+  still right (textures and other, twice).
+- `session()`: the 15-minute session of 2026-11-13 at 1440p, one report a minute, with the figures of the log's
+  `mem: by owner` and `mem: host` lines. Boot and title screen (the outside-VMA memory falls by 610 MiB when the boot's
+  compute pipelines go), then play, where the textures and the device-local memory jump by gigabytes at the first area
+  and then move with the areas, and the process's commit with them. The base is the first report in play, after the
+  jump: the textures grew by 850 MiB since, and came down twice. 12 reports name a growth: the base and every report
+  after it.
+
+## `tests/mem_heap_check.py`
+
+Builds and runs `tests/mem_heap_check.c` on `runtime/vk/vk_mem_heap.h`: when the memory report asks for the C runtime
+heap's summary (`runtime/vk/vk_memory.c` `system_log()`), which holds every allocation of the game while it runs. Never
+in play, where it held them for 54 to 70 ms at the first report of a session, unless `NX2SARIA_MEM_CENSUS`
+(`mem_census`) asks for it. No GPU, no game files, any Python.
+
+`tests/mem_heap_check.c` `session()` is a session as the report sees it: a report every 3600 presents, play from
+`play_at` on; the summary takes `ms` milliseconds each time and counts as slow past 2 ms (`vk_memory.c`
+`HEAP_SLOW_NS`), as `system_log()` notes it. It returns the summaries taken in play, and through `*before` those
+before it.
+
+- The sessions of 2026-11-14: play from the first seconds on, the first report at present 3600 in play, the summary 54
+  and 70 ms. The rule before asked there once (the hitch); now it asks never.
+- A long title screen: two reports before play, each fast there, then play: asked twice, both before play.
+- A slow summary before play (a heap that is large already at the title screen): once, and no more.
+- With the census switch every report asks, in play too, slow or not.
+
+## `tests/mem_need_check.py`
+
+Builds and runs `tests/mem_need_check.c` on `runtime/mem_need.h`: whether the machine has the commit the game needs
+(`runtime/memory.c` `mem_start_note()`). Without the differential tests' packages (an `ImportError`) it makes the same
+compiler choice without them.
+
+- The machine the need was measured on, before the game starts: 41,515 of 73,154 MB in use, the process at 369 MB;
+  32,008 MB for the game: enough.
+- The same machine with the game in play, 65,840 of 73,154 MB in use and 24,000 MB of them the game's: what the game
+  holds counts toward its need, so a check made late does not call a fitting game short.
+- A 32 GB machine with an 8 GB page file and 12 GB in use by other programs: 28 GB free, enough; with 20 GB in use, 20
+  GB free: short. A 16 GB machine with a 4 GB page file never fits.
+- The boundary: exactly the need is enough, one MB less is short.
+- Not asked (0), and a platform without a known limit (-1): never short. A process reading of -1 (unknown) adds nothing
+  to the room.
+
+With the game executable's path (`mem_need_check.py [PATH_TO_GAME_EXE]`), `probe()` also runs the executable's
+`--probe-memneed` (it reads this machine's commit, prints the answer and starts nothing) three times: with
+`mem_need_mb` = 0 (not checked), with 1 (any machine has it) and with a value no machine has, where the log's warning
+line must appear. It returns 0 when each answers as it must. Without a commit limit (a Linux machine with none) nothing
+is short: the forced case cannot be shown there.
+
+## `tests/menu_mouse_check.c`
+
+The arithmetic of the mouse in Ocarina of Time 1.1.1's menus (`runtime/ui/menu_mouse_geom.h`); `tests/menu_mouse_check.py`
+builds and runs it. No game files.
+
+- A button's box from its pane's fields as the game's focus frame takes them. The flags word holds the base position h
+  (0 left, 1 centre, 2 right) and v (0 top, 1 centre, 2 bottom). A centred pane 200 x 100 at (300, -50), scale 1; a
+  left-top base, where the translation is the left edge and the top edge (y up: the box hangs below it); a
+  right-bottom base with scale 2 and a mirrored scale (the size counts, not the sign); the extra size
+  (main+0x769930): bit 10 with bit 9 clear adds to the height, with bit 9 set to the width; no area, or not a number:
+  no box.
+- The layout units across the picture from the projection: 16:9 gives 3840 x 2160; 21:9 (64:27) is squeezed by 0.75,
+  so ±2560 = 1920 + u with u = 640, where `NX2SARIA_WIDE_MENUS` = `full` puts the menus' edge panes; 32:9 gives ±3840;
+  a 1280 x 720 layout ±640 x ±360; a matrix that is no projection gives the 16:9 values and 0.
+- The pointer in layout units and back. On 16:9 the picture's corners are the layout's; on 21:9 the layout's 3840 sit
+  in the middle 16:9 (from 1/8 to 7/8 of the width).
+- The box under a point is the smallest of those it is in (a slot inside its panel), -1 off them all; edges count as
+  in. A `wide_menus` = `full` button moved out to x 2250 on a 21:9 picture is reached by the pointer at 95% of the
+  width.
+- Movement: a pixel of a 4K picture is movement, less is not.
+- Clicks: a press counts once; a press given while no menu takes the mouse (synced there) is no click of the next
+  menu: between menus a quick second click lands on the fade.
+- The queue: A and B wait one at most, the wheel three; a turn the other way drops the rest; a drop empties it (four
+  quick right clicks on the pause menu queue one B; the queue is dropped when the menu goes because a B closed it). L
+  and R wait one at most, like A and B, and go with their menu.
+- The nearest box when the pointer is in none: the bombchu slot's narrow box (-1196..-1096, -413..-193 as the 16:9
+  pause menu has it) beside the bomb slot's, and a click on the middle of the bombchu's picture (-1225, -300).
+- The pause menu's tab row: the four pages' names and the L and R signs, off the row nothing; a tab's place in the
+  window and back, on 16:9 (the notebook) and on 21:9 with the menus over the whole picture; the page from its
+  layout's name, and the step toward a clicked tab. A walk to a clicked tab stops when the page goes the other way
+  (the player's own L or R), not on its own steps.
+
+## `tests/meshfb_batch_check.py`
+
+Runs the game executable's `--probe-meshfb` twice, with the mesh fallback's batch off and on
+(`NX2SARIA_MESH_FALLBACK_BATCH`, `runtime/vk/vk_exec_draw.c` `mfb_draw()`, `runtime/gfx/mfb_batch.h`), validation on
+in both runs. The probe (`runtime/gfx/mesh_fb_probe.c`) draws mesh programs of the runtime's own through the replay,
+with and without a task stage, with direct and GPU-written counts, one and two in one pass; it compares each picture
+of the fallback with the mesh pipeline's (where the device has mesh shaders), and checks that a draw past the mesh
+buffer and a task draw past the task buffer are drawn whole up to what fits and are counted. With the batch on, a
+task program's first draws (no history yet) go one by one in a pass whose other draws are batched, and the passes are
+cut; the probe's `batch:` line must show draws batched, some one by one for want of history, passes cut, and no draw
+without a pre-pass command buffer.
+
+`run()` reads the probe's output. The draws' checks: none failed, the last check of the draw part ran, and with
+batching on the batch line came. Validation errors while drawing count; those of the device's creation (extensions
+newer than the layer) and of its destruction (objects the probe's teardown leaves, such as the pre-pass command pool)
+are the probe's, not the batch's, and are only printed. So is how the process ended after the checks. The usage text
+the test prints is its `USAGE` string.
+
+## `tests/mesh_fb_hold_check.py`
+
+Builds and runs `tests/mesh_fb_hold_check.c` on `runtime/gfx/mesh_fb_hold.h`, the table behind the mesh fallback's
+depth hold (`runtime/vk/vk_exec_draw.c`): a list whose colour draw was skipped for its pipeline holds its depth-only
+draw for a few presents, and no longer. No GPU, no game files, any Python. The two lists are record addresses as the
+game's memory has them (0x59220f600 and 0x26d876000).
+
+- A frame's order is depth first, colour after: the stamp of one frame holds the depth draw of the next.
+- While the colour draw keeps waiting, each frame stamps again and the hold goes on; when it is drawn the stamp goes,
+  and the depth draw comes back in the next frame.
+- A colour draw that no longer comes (the list left the view): the hold lapses by itself.
+- A draw of one list does not clear another list's stamp, in whatever slot each lies.
+- The present count's 24 bits wrap (77 hours at 60 fps): the hold counts across the wrap. The highest address the
+  game's memory has keeps its bits above the count.
+- Every index is inside the table, and a field of records (256 records of 12 bytes) spreads over it.
