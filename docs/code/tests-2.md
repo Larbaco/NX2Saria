@@ -2391,3 +2391,504 @@ by. Built as C, and as C++ since the two FSR files include the header from C++. 
 - `take_all`: the device is idle, everything goes whatever its gates.
 - Full: the caller is told, and nothing is overwritten.
 - A callback may put another entry (a release that lets go of something else): the new entry waits for the next take.
+
+## `tests/upscaler_idle_check.py`
+
+Static checks of the upscalers' waits for the device (`runtime/vk/vk_dlaa.c`, "what the upscalers let go of while the
+GPU may still use it", `runtime/vk/vk_ffx.cpp`, `runtime/vk/vk_ffx4.cpp`, `runtime/vk/vk_fsr3.c`). No GPU, no game
+files, any Python (`upscaler_idle_check.py [repository root]`). It fails when:
+
+- `vkDeviceWaitIdle` is called in `vk_dlaa.c` outside `vk_upscaler_device_idle`, in `vk_ffx.cpp` outside
+  `vk_ffx_probe_cache` (the `--probe-ffx-cache` path), or anywhere in `vk_ffx4.cpp` or `vk_fsr3.c`: each such wait
+  stalls the replaying thread with the queue lock held (`WAIT_ALLOWED`);
+- `vk_upscaler_device_idle` is called outside `vk_upscaler_settle` and `vk_upscaler_gpu_wait` (`IDLE_ALLOWED`: the
+  rollback switch `NX2SARIA_UPSCALER_IDLE_WAIT=1`, a full list, a refused creation's failed wait);
+- one of the places that let something go (`LET_GO`: `vk_dlaa.c` `free_size`, `free_snap`, `stale_sizes`,
+  `release_kept`, `hudless_from`, `pb_images`, `retire_idle` and `evaluate`, `vk_ffx.cpp` and `vk_ffx4.cpp`
+  `context_for`, `vk_fsr3.c` `ctx_for`) does not call `vk_upscaler_let_go`, which frees what the GPU is past and which
+  the rollback switch turns into a wait for the device;
+- one of the places that create a DLSS feature or an FSR context (`REFUSED`: `vk_dlaa.c` `evaluate`, `vk_ffx.cpp` and
+  `vk_ffx4.cpp` `context_for`, `vk_fsr3.c` `ctx_for`) does not call `vk_upscaler_gpu_wait`: a creation refused while
+  what was let go of is still in flight then fails for want of its video memory, where the wait for the device of
+  0.10.1 had freed it first;
+- one of the places that let go of what the GPU may still use (`NO_FREE_NOW`: those above, the helpers that hand it to
+  the lists, `vk_dlaa.c` `retire_size`, `retire_feat`, `retire_snap`, `retire_hl` and `retire_pb`, `vk_ffx.cpp` and
+  `vk_ffx4.cpp` `retire_up`, `vk_fsr3.c` `retire_ctx` and `vk_fsr3_upscale`, and the FSR files' trims and
+  `release_idle` calls) frees something at once: a destroy that takes an idle device (teardown) or a half-made object
+  that no submission named yet (`FREE_NOW`: `vk_dlaa.c` `destroy_size`, `destroy_snap`, `hl_destroy`, `pb_destroy`,
+  `feat_release`, `N.release`, `vkDestroyImageView`, `vmaDestroyImage`; the library files' `A.destroy`; `vk_fsr3.c`
+  `free_ctx`, `vkDestroyImageView`, `vmaDestroyImage`), which on a GPU still running a frame is a use after free.
+  `vk_dlaa.c` `hudless_from`, `pb_images` and `snap_for` let go of the old images and then make new ones: they may
+  destroy only after their first `image2d` call, where the failure path destroys what of the new images was made and
+  never used;
+- a whole list is taken whatever its gates (`upd_take_all`) outside teardown (`vk_dlaa.c` `vk_dlaa_release`,
+  `vk_ffx.cpp` `vk_ffx_release`, `vk_ffx4.cpp` `vk_ffx4_release`, `vk_fsr3.c` `vk_fsr3_release`) and a full list's
+  fallback (`vk_dlaa.c` `dead_put`, the library files' `retire_up`, `vk_fsr3.c` `retire_ctx`), or there before
+  `vk_upscaler_settle`'s wait for the device;
+- `NX2SARIA_UPSCALER_IDLE_WAIT` has no `sections[]` entry in `cfg.c` or no line in `nx2saria.ini.example` (its
+  `known[]` name and its `metas[]` row, and a `//` that would hide them, are `tests/cfg_rows_check.py`'s);
+- `perf.c`'s `mark_name` has another count of names than `host.h` has `PERF_M_*` kinds: a kind without a name prints a
+  null string on a slow frame's line;
+- `vk_dlaa.c` `pb_images` does not note `PB.used` after the last call that clears `PB`: `idle_release` then took the
+  images it had just made for 600 presents unused and freed them while the frame that used them could be in flight.
+
+How it reads the sources: `blank_comments()` gives the source with comments and string literals replaced by spaces
+(newlines kept), so offsets stay and only code is read. A function definition is found at column 0: a return type,
+the name, the parameters and the body's brace (the runtime's style); declarations end with ';' before any '{'; in the
+blanked code `extern "C"` reads as `extern " "`. `functions()` returns [(name, body start, body end)] of each function
+defined; `calls()` [(line, enclosing function)] of each call of a callee, its definition's own head and declarations
+left out; `call_offsets()` the offsets of each call of a callee between two places.
+
+## `tests/usnap_concurrency_check.py`
+
+Builds the real `runtime/vk/vk_usnap.c` concurrency probe (`tests/usnap_concurrency_check.c`) on Linux, with optional
+ThreadSanitizer; the `--help` description is the string `DESCRIPTION`:
+
+```sh
+python tests/usnap_concurrency_check.py --vma-include <vma-dir> --work <scratch-dir>
+python tests/usnap_concurrency_check.py --cc /path/to/clang-20 --vma-include <vma-dir> --work <scratch-dir> --tsan
+```
+
+No game files or GPU are needed. The probe exercises the real uniform snapshot drop, lookup and diagnostic paths
+concurrently. The replay stream position (`test_pos`, the caller's place in the stream, `vk_exec_stream_pos`), the
+pool lookup, the hit accounting and the platform lock are stand-ins, so it checks the actual snapshot data structure's
+concurrent drop, find and why operations, not replay order, GPU synchronization or fences. `vk_usnap.c` takes only
+`drop_lock` along the exercised paths; the other runtime boundaries do not need a device. The Vulkan and VMA headers
+are needed to compile the runtime's types. Phase barriers make both threads progress between blocks without ordering
+their accesses within each block; they do not force individual operations to interleave: an empty TSan report is not
+a proof of every schedule. The bench uses Clang 20; pass its path with `--cc` if needed.
+
+In `reader()` the range asked about is outside all regions and writes, so `why` scans the list while the other thread
+grows it, and `dropped` can change between the two separate calls. In `main()`: a lookup before the drop's place in
+the stream may use the snapshot; at or after it, it may not. `why` keeps its existing diagnostic behaviour and reports
+any drop, including one later in the stream than the caller.
+
+## `tests/usnap_order_check.c`
+
+The order of uniform snapshot drops between replay chunks, on the real `runtime/vk/vk_usnap.c`, without a GPU;
+`tests/replay_hazard_check.py` builds and runs it.
+
+A draw that writes guest memory as storage drops the snapshot regions it touches (`vk_usnap_drop`) from its place in
+the stream on (`vk_exec_stream_pos`: its group and chunk), and a later uniform binding of that memory then reads the
+live bytes, which hold the GPU's result when the draw runs. The chunks of a group, and with `NX2SARIA_REPLAY_PIPE` the
+chunks of the groups after it, record at the same time. Two orders are forced with barriers:
+
+- early: a later chunk of the same group has dropped the region already when an earlier chunk looks it up. The earlier
+  draw must still bind the snapshot: live memory holds what the game wrote after the submit. In the case the writer is
+  chunk 1 of group 5 and the reader chunk 0 of the same group; the reader's draw runs before the write, and the right
+  value is the snapshot.
+- stale: an earlier chunk's drop has not run yet when a later chunk looks the region up, so the later draw binds the
+  snapshot and reads the bytes as of the submit instead of the earlier draw's result (the right value is `NEW`). This
+  one is known and left open ([thread-sanitizer.md](../thread-sanitizer.md), "Replay hazards"): the runtime counts
+  the chunks' drops into copied ranges, its precondition, and none happened in the scenes measured. The probe expects
+  the wrong read, so a change that fixes it shows here. The controls run the drop first.
+
+Each case also runs in the stream's own order (the control, which must read the right value). The value a draw reads
+is the snapshot's bytes when `vk_usnap_find` hands out the copy, else what live memory holds when the GPU runs the
+draw, in stream order. The chunks' drops into copied ranges are counted; the submitting thread's are not.
+
+The values: `OLD` (0x11111111) is guest memory at the submit, the snapshot's copy; `LATE` (0x22222222) what the game
+wrote into the block after the submit, before the GPU ran the draws; `NEW` (0x33333333) what the storage-writing draw
+stores. `test_pos` is the thread's place in the stream, group << 5 | chunk; `SUBMITTER(groups_out)` is the submitting
+thread past that many groups (chunk 31). A step has `writes` (the draw writes the block as storage and drops it, else
+binds it as uniforms), `first` (takes its step before the other thread's: 1, or after: 0), `live_at_gpu` (live memory
+when the GPU runs this draw, in stream order) and `read` (the value the draw reads); the uniform binding reads
+`vk_usnap_bytes`: the snapshot, or live memory. The case helper takes the writer's and the reader's stream places and
+who steps first, and returns the value the reader's draw read; with `expect_right` the read must be the stream
+order's value, else the case is the known open one and must read wrong.
+
+## `tests/validate_shader_cache_test.py`
+
+`tools/validate_shader_cache.py` on a fake shader cache: the entries the game would refuse (a cut or zero-filled
+module, another magic number, a reflection that is not one JSON object naming its stage, a missing half of a pair) are
+named, packed and loose entries are both read with the loose one standing for its packed copy (a newer translation
+beside the pack's bad copy), `--every` samples, and, where spirv-val is installed, a whole module that is not valid
+SPIR-V is refused by it, while the game's checks alone take it. No game files.
+
+`module()` is a compute shader that does nothing, SPIR-V 1.3: ids 1 main, 2 void, 3 the function type, 4 the label;
+its instructions are OpCapability Shader (17), OpMemoryModel Logical GLSL450 (14), OpEntryPoint GLCompute %1 "main"
+(15), OpExecutionMode %1 LocalSize 1 1 1 (16), OpTypeVoid (19), OpTypeFunction (33), OpFunction (54), OpLabel (248),
+OpReturn (253), OpFunctionEnd (56). `cut_module()` is a module whose last instruction says three words and has one:
+what a write cut short leaves. The cut cases: not a whole number of words, and a last instruction that runs past the
+end.
+
+## `tests/vkmem_lifetime_check.c`
+
+The lifetime of pool records and VRAM mirrors against a reader on another thread, on the real
+`runtime/vk/vk_memory.c`, without a GPU; `tests/replay_hazard_check.py` builds and runs it. Each case runs in a child
+process built with AddressSanitizer, so a use after free ends that child with a report instead of passing unseen (a
+sanitizer report ends the child with 66, a wrong state with 1).
+
+- fini: the replay resolved an address of a pool (`vk_mem_resolve`) and uses the record after the game's thread
+  finalized the pool (`vk_pool_fini`) in between. A resolved pool is marked used, and `pool_fini` then keeps the record
+  until the submission being recorded completes. The control clears the mark first, as if the protocol did not hold:
+  the record goes at once and the reader's use is a use after free. In the case the replay holds the record while the
+  game finalizes the pool; the reader then does the rest of the binding, as `bind_range` does after its resolve (the
+  mirror use and the twin), and a new resolve finds that the index no longer has it. The record must still be there
+  then, and go once the submission being recorded completes.
+- evict: a replay worker uses mirrors while another evicts the idle ones (`mirror_evict`, under `use_lock` as
+  `mirror_create` calls it while chunks record). A mirror the submission used is not idle, and the lock serializes the
+  rest, so a use never gets a mirror half taken down. The control breaks both (any mirror may go, `min_idle` 0, and the
+  use takes the unlocked path; its "submission" never ends): a use that passed the state check then reads the buffer
+  the eviction just cleared. The case runs submissions one after another (`msub` moves on by 200 between them, with no
+  chunk recording, as at `vk_mem_mirror_begin`). In each, a worker uses pool A at every draw and pool B in every other
+  submission, through `vk_mem_use` as a chunk does (`use_lock` on the slow path), while the other worker makes 200
+  evictions under `use_lock`. An evicted pool's next use makes its mirror again (the real `mirror_create`). Every use
+  must get a buffer that is not destroyed while its submission records. The submission then goes to the GPU and
+  completes; the next submission's copies are none in this harness. The case must evict for its result to mean
+  anything (else it returns 2).
+
+The runtime around `vk_memory.c` is stubbed: `tid_self` is nonzero per thread for the recursive lock; the timeline is
+`tl_issued` and `tl_done` (submissions issued, and done on the "GPU"), and completions run when the harness moves
+`tl_done` on (`complete_to`: the GPU reaches a value, the completions up to it run, then a collect frees what they
+retired); `shared_here` is `vk_exec_shared` (this thread records a chunk beside others). `BASE` (0x200000000) is
+inside the guest address range the write watch covers (`SNAP_REGIONS`). The mirror state is set as `mirror_create`
+leaves it, without its copies: on the list, synced at a given submission.
+
+## `tests/voice_language_check.py`
+
+Checks the 1.1.1 voice language patch's lifted call and callback against stubbed game-data reads;
+`tests/voice_language_check.c` is the voice resource's update with the guest option calls stubbed. Its cases: the
+saved option is not ready; a successful read of zero still has a value; the stock write triggers the refresh and
+advances our observation; a new saved value without a write notification; an unavailable lookup leaves the stock write
+result intact; a temporarily missing value does not repeat the refresh.
+
+## `tests/warm_hint_check.py`
+
+Builds and runs `tests/warm_hint_check.c` on `runtime/vk/vk_warm_hint.h`: what the library warm's log adds when the
+driver's cache of stage libraries is cold (`runtime/vk/vk_pipeline.c` `lw_main()`), by GPU vendor, by platform and by
+why it is cold. Both platforms' text is checked through `lw_cold_hint`'s `windows` argument; `LW_ON_WINDOWS` on the one
+built for (the game passes the platform it was built for).
+
+- Windows, cold at a start with no finished warm before it (a driver update, or the build's preparation step, which
+  writes no `shader-warm.txt`): on NVIDIA the driver's Shader Cache Size limit is named as another cause, with the
+  setting.
+- Windows, cold right after a finished warm on the same driver: on NVIDIA that is the cache size limit, said plainly.
+- Warming given up after two cold starts in a row: every vendor, on every platform, is told how to warm again once the
+  cache can hold the libraries; NVIDIA on Windows also names the setting that lets it.
+- Elsewhere there is no NVIDIA app and no Shader Cache Size setting: the driver's cache is set otherwise there, so no
+  case names them.
+- A warm `lib_warm` = force started on a cache that is not cold: no cause to name, on any vendor or platform.
+
+## `tests/water_projective_check.py`
+
+The water corrections the runtime makes in memory (`runtime/gfx/spirv_water.c`) against the same steps of
+`tools/projective_recipe.py`, on two made-up modules: a vertex stage that writes a position and a location 0 output,
+and a fragment stage that reads a location 0 input without perspective. Each side's result must be the same words, and
+valid SPIR-V. A module of another shape must be refused, and each edit refuses the other stage's module. It needs
+spirv-as and spirv-val (MSYS2 UCRT64 spirv-tools); `python tests/water_projective_check.py [--cc CLANG]`.
+
+## `tests/wb_lazy_check.py`
+
+Builds and runs `tests/wb_lazy_check.c` on `runtime/wb_lazy_choice.h`: whether the lazy write-back runs, by the
+player's setting, the platform and the GPU driver (`runtime/vk/vk_memory.c` `vk_mem_lazy_decide()`). It needs a C
+compiler only: no Vulkan headers (the `VkDriverId` values of `vulkan_core.h` are copied), no GPU and no game files.
+Every platform's and driver's choice is checked through `wb_lazy_choice`'s arguments; `WBL_ON_WINDOWS` on the one
+built for (the game passes the platform it was built for).
+
+- Nothing set, Windows: on, except on AMD's own driver (both of its branches report this id). Nothing set, elsewhere:
+  off on every driver.
+- An empty value is no value (`cfg.c` `add`: "key =" leaves the setting at its default).
+- What the player sets wins on every platform and driver, and the reason says it was set. Any value but 0 counts as
+  on, as `cfg_bool` reads it for `memory.c` `mem_init`.
+- The exception is the driver, not the vendor: another driver for AMD cards follows its platform's default.
+
+## `tests/wide_balloon_check.py`
+
+Checks the 1.1.1 speech balloon patch and its horizontal anchor on synthetic inputs; it builds and runs
+`tests/wide_balloon_check.c`.
+
+## `tests/wide_bars_check.py`
+
+Checks the menus' black bars: the patch set `wide_bars` (`recomp/patches-v111.txt`) and
+`runtime/patches/wide_bars.c`. No game files: the module layout is a stand-in written to the test's build folder.
+
+The set's one site, lifted by `recomp/lifter.py` as the generator lifts it: the screen setup's load of the vtable at
+main+0x774068 (`SITE`; `ORIGINAL` 0xf9400268, `ldr x8, [x19]`), kept, then a call of the patch page's +0xef0 (`HOST`,
+the page's host slot), which `patches.c` registers for `wide_bars_screen_host` and no other set or host function
+takes. In `check_site()` the FOV set watches the same screen setup even when the bars are disabled.
+
+Then `tests/wide_bars_check.c` builds `wide_bars.c` with the rest of the runtime stubbed and plays presents against
+stand-in interface screens; the argument `no-set` runs a start whose generated C lacks the set. `test_main_base`
+(0x7000000000) is `layout.h`'s `MOD_MAIN_BASE`: the vtables are numbers compared, never read. `SCREEN_BASE`
+(0x4bec998) is what a destroyed screen's vtable becomes (its destructor's base class). `full_lines` counts the log
+lines about a screen left out of a full table. The site is called with the screen in x19 and x8 just loaded from it;
+every register must be the same afterwards.
+
+- Before `wide_init`: nothing to black out, whatever is up.
+- The screens the game sets up: the two menu backgrounds and the loading fade are watched, the others not; a screen
+  set up again is still watched once. In play every watched screen is closed: no bars.
+- The pause menu: black from its opening to its close. The system menu's background is the other screen of the class.
+- The wide loading fade only needs side bars while fully open. An event fade also keeps its margins black; other
+  screens do not.
+- A movie, also under a menu; the sides come back once both are gone.
+- A screen the game destroys: its vtable becomes the base class's, its state no longer counts and its entry frees;
+  another menu background set up at the same address is watched again.
+- A full table: one line, and the screens already watched still count; a destroyed screen's slot goes to the next
+  screen set up.
+- A tall picture watches fades and movies without clearing their full-height image margins.
+- The lines about the sides stop after `BARS_TOLD`.
+
+## `tests/wide_hud_check.py`
+
+Builds and runs `tests/wide_hud_check.c`: `runtime/patches/wide_hud.c`, the HUD's edge elements moved out to the sides
+of a picture wider than 16:9 (`NX2SARIA_WIDE_HUD` = edges), and the menus laid out over the whole picture, on layout
+files and archives the test makes itself. No game files. The `--help` description is the string `DESCRIPTION`.
+
+With `--romfs DIR`, also on the game's own archive: the folder holds `romfs.bin` and its `index.json`, and the program
+reads the archive, `Pack/ZsDic.pack.zs` and the resource size table from `romfs.bin` at the offsets the index gives
+(`game_args()`), edits the archive for several shapes of picture and after the action prompt's edit of the same
+archive, prints the log lines of the 3440x1440 and 21:9 edits, and raises the table's entry for the archive the menus'
+redesign makes larger. The pause menu's backdrop drawn in pieces (`runtime/patches/wide_hud.c` `split_layout()`) is
+compared byte for byte with `tools/layout_dump.py` `split_picture()`, the reference, at u 640 and 1920:
+`reference_splits()` reads the game's first `PlusMenu_00.buil` (the zstd command unpacks the archive), splits it with
+the same pieces (the table in the script is `wide_hud.c` `menu_bg_pieces`: `P_MenuBg_00` of `PlusMenu_00` in pieces,
+as `split_picture` takes them) and writes the results to `build/test/wide_hud/` for the program. Nothing else is
+written.
+
+The program is built with the undefined-behaviour sanitizer (traps), with locals that start as a pattern rather than
+whatever the stack held, and with AddressSanitizer where the toolchain has it (not MSYS2's). `runtime/simd_fp.h` `FOK`
+ors two compares on purpose, and clang 18 warns on it.
+
+### `tests/wide_hud_check.c`
+
+The layout files are made by the test from the format as the notes of `runtime/patches/wide_hud.c` describe it, with
+the panes, values and animation curves the game's 1.1.1 `PlayerStatus_00`, `MapMenu_00`, `NumDisplay_00`,
+`LoadingFade_00`, `PlusMenu_00`, `MenuOverlay_00`, `PaShortCutSlideList_00` and `PaItemMenu_00` hold, so the reader is
+checked against a writer of its own; the archives and zstd dictionaries are made in the test too. It prints each
+failed check and exits 1 on any.
+
+The writer:
+
+- The tables of panes and curves leave their trailing fields out where they are 0 (a pane's width, a curve's slopes),
+  as most of the game's panes and curves have them. `Z` (-2.842171e-14f) is how the game stores some zeros. A pane has
+  `parent` (an index in the same table, -1 for the root) and `w` (the width, written when not 0; the record keeps its
+  fill pattern there otherwise). A curve is of one component (0 x, 4 y) of a pane's property (0 scale, 1 translate, 4
+  alpha): its keys' values and slopes (0 when not given); a constant is of a component of a pane's property. A shift
+  is of the HUD alone (out units), of the loading icon alone (squeeze q), or both.
+- What `wide_hud.c` and `action_prompt.c` reach in the runtime is stubbed, and every log line is kept; a helper gives
+  the kept line that starts with a prefix, NULL when none does.
+- `make_layout()` writes a BFFH layout from `top` = 0x310, past the header, whose last slot (the per-material array,
+  `plus_records()`) ends at 0x310; one track per (pane, property) in the order the curves and then the constants name
+  them; the 6-byte target code of a pane's own property is as the game's files have it. It records where it put
+  things in the last file it made: each pane's record, and each curve's values block.
+- `plus_records()` appends the records `PlusMenu_00` holds past its panes and animations, as the game's 1.1.1 file has
+  them where the backdrop's split reads them (`wide_hud.c` `split_layout()`): each pane's subtree end and kind, a hash
+  beside each name (`wide_hud_name_hash`), the pictures and materials of `P_InfoBg_00` and `P_MenuBg_00` (a picture
+  record with its lists inside its own 0x88 bytes, a material with one texture map right after it), the per-material
+  array at 0x300 (`P_MenuBg_00`'s entry 7, to see the new ones take it), the four pages' parts (their pane at +0x40)
+  and the two captures (at +0x04) with their panes' indices, and the string pool section reaching the end of the
+  file. It returns the file's new size.
+- The game's layouts, as far as the edit reads them; among them the pause menu's map and the world map, which the
+  menus over the whole picture lay out wider (`P_PicField_00` has its own scale, 0.75: a move in its parent's space
+  all the same).
+- `make_sarc`: a SARC of one other member, then the given members in order; `member_at` is where each member starts in
+  the last archive made. A helper points a member's SFAT entry at another range of the archive. Each layout's file is
+  kept as `make_layout()` makes it for the archives; the archive of the layouts holds a number of copies of each (the
+  game has four).
+
+The checks on files the test makes:
+
+- `check_out()`: the shift for pictures such as 5120x1440, 3840x1080, 3840x1600 and 2580x1440 (within 1% of 16:9:
+  none).
+- `check_layouts()`. `PlayerStatus_00`: the four panes out to their sides, nothing else; moved already: nothing more;
+  by another distance: refused, unchanged. `MapMenu_00`: the minimap's panes and the keys at its place; the pause
+  map's pane and keys stay. `NumDisplay_00`: both rows to the right; the part's own slide keys stay. `LoadingFade_00`:
+  its icon squeezed into the middle 16:9's corner, for the menus' shift alone. A member edges mode does not edit, and
+  no distance: nothing. Not a BFFH file.
+- `check_refusals()`: each fault on a copy of the layout's file is refused with a why that holds the expected text,
+  the file as it was: the pane's name no longer the one the edit looks for (`f_name()`); an animation of
+  `PlayerStatus_00` that keys `N_ScaleR_00`'s x (made as a fourth curve of HeartPos); a pane's record offset in the
+  pane table pointed at another record or a place inside one; `N_EventEndIn_01` and `N_MiniMap_00` on one record (two
+  moves of one value); layouts whose animations differ from the game's in one way each (`MapMenu_00` with another set
+  of animations). A moved value that lies on what leads to another field: `N_MiniMapCap_00`'s record laid over
+  `N_MiniMap_00`'s so that its parent index is `N_MiniMap_00`'s x (0, the root; a zero whose bits are 0) and its x
+  `N_MiniMap_00`'s scale; moving `N_MiniMap_00` makes that parent index a float's bits, which the reading after the
+  write finds, and every byte goes back. More panes than a track's index can name. A pane's x keyed by an animation,
+  by a curve and by a constant. Every prefix of each layout: refused, never a read past it (the sanitizers watch).
+- `check_archive()`: the edit of the archive; again: nothing more, no line. One bad copy of one layout: nothing changes
+  in any layout. An archive without one of the layouts. The menus' shift too: `LoadingFade_00`'s two copies, one line
+  of its own; the menus' alone: only those. More than 16 copies of a layout. Copies of one layout that share some of
+  their bytes, and two layouts that share bytes (a copy of `NumDisplay_00` over `MapMenu_00`'s first). Copies that are
+  the same bytes are moved once. One copy moved already, the other not: the line says what the other moved. Nothing at
+  out 0. Damaged: a SARC cut short.
+- A zstd dictionary is made with a given id, its content and samples taken from a source buffer (size 0 when it
+  cannot be made); `Pack/ZsDic.pack.zs` is made as the game's: a SARC of the dictionaries, compressed without one.
+
+The menus over the whole picture (`NX2SARIA_WIDE_MENUS` = full, `check_menus`): the operations of group `G_FULL` in
+`wide_hud.c`'s plan, on layouts with the panes, values and animation curves (slopes too) the game's 1.1.1
+`PlusMenu_00`, `MenuOverlay_00`, `PaShortCutSlideList_00` and `PaItemMenu_00` hold as far as the edit reads them, with
+`MapMenu_00`'s pause map panes and `LoadingFade_00`. No plan uses `OP_MOVE_IN` or `OP_WIDEN`, so they are not reached.
+
+- The fixtures: the page strip's moves, each a curve of both `N_MenuChange` panes with three keys (value, slope);
+  another animation that holds a value of the strip the plan moves, and one of the strip's curves with a fourth key;
+  turned and scaled panes beside the moved ones, none of them an ancestor of one; the panes the game's animations key
+  by constants and curves, none of them moved; a moved pane's x keyed by an animation the plan has no key operation
+  for; `N_Arrow_00`'s x, moved, keyed by Loop at two values of the plan's map (two keys at -1850, one at -1858), and
+  Loop with one key at -1850, Loop as a constant, Loop with another animation keying the arrow, and no Loop at all;
+  `MapMenu_00`'s pause map with one of the panes the menus move keyed by an animation.
+- The helpers: a made layout's bytes and where its panes' records and curves' values are; key k's value or slope of
+  curve c of animation a (its span is at key -3); a file edited by the shift with a given count of fields changed,
+  where a second edit of the edited file (the reading back the game's next start would make of a file served so)
+  changes nothing and reports nothing; a copy with one fault that the shift refuses with a why and leaves every byte;
+  each pane's field (`AT_X`, `AT_W`, `AT_SX`) holding a value.
+- `check_menu_counts()`: the HUD's counts leave the menus' operations of the same layout out (`MapMenu_00`).
+- `check_plus_menu()`: u = 660 and F = 1 + 2 * u / 4280 (the pages are 4280 units apart, each 2 * u further from the
+  one before). 17 pane fields; per curve the keys at the plan's values, both nonzero slopes and the span:
+  (5 + 6 * 4 + 5) * 2. `P_MenuBg_00` stays: the split draws it in pieces. What the plan leaves: the strip's own panes,
+  the first page, a grown pane's x, a moved pane's scale. Every key, slope and span of the strip's twelve curves grows
+  by one factor: the motion keeps its shape; the y curve of another pane stays, slopes and all. The HUD's shift and
+  the menus in the middle 16:9 leave it; another distance over the edited file is refused. 32:9 (u 1920): the strip's
+  pages twice as far apart. Refusals, each leaving the file as it was: a pane's x, a width, a key, a span, a curve's
+  length, another animation at a value the strip moves (SystemToItem ending where it starts: two keys at -12840).
+  Every prefix of what the edit reads (the panes and animations, before the records the split reads): refused, never a
+  read past it.
+- `check_split()`, the pause menu's backdrop drawn in pieces (`split_layout()`) on `PlusMenu_00` with the records of
+  `plus_records()`: the pieces come after `P_MenuBg_00`, every later pane six further on, its parent and subtree end
+  with it. The page strip's tracks: `N_MenuChange_00` stays 10, `N_MenuChange_01` moves from 21 to 27, `N_InOut_00`
+  stays 9. The parts' panes are past the split, the captures' before it. Each piece is where it moves at u 660, with a
+  picture and a material of its own showing its window: the seams the picture's plain stretch from 1880 to 2010 (of
+  -320 to 8880), the others their own part of it. The tables of pictures and materials and the per-material array
+  grow by six, each new entry `P_MenuBg_00`'s 7; the file's size and the string pool's reach its new end. Split so
+  already: nothing to do; the in-place edit of the split file is that of the game's; that file split again: the split
+  finds its pieces; another distance does not. 32:9: the gaps three times as wide. The HUD's shift, the squeeze,
+  another layout: nothing. What the split refuses, each time making nothing (among them a second picture named
+  `P_InfoBg_00` and no list of hashes); every prefix: refused, never a read past it.
+- `check_menu_overlay()`: refused for a moved pane inside a scaled or a turned pane (an `OP_MOVE`, not an
+  `OP_MOVE_IN`), or keyed by an animation of its own, or not at the game's x.
+- `check_slide_list()`: a scissor and the list it clips grow on both sides; their x, their scale and the arrows'
+  animation stay. `OP_GROW` looks at the pane's own width alone: a scaled ancestor does not refuse it (the width grows
+  in the pane's own space). That is what the edit does today, not a property the plan's layouts need: theirs have
+  scale 1.
+- `check_item_menu()`: a moved pane whose x an animation keys, with that animation's keys moved with it: both values
+  of the map.
+- `check_loading_pin()`: the loading icon stretched with its canvas over the whole picture: its width the game's, as
+  far from the right side of the grid as the game's at that scale. Pinned, then squeezed: refused, as the pinned icon
+  is not at the game's x. Both groups at once (no setting asks for that: `wide_menus` is one or the other): two writes
+  to one field. The HUD's shift alone leaves it.
+- `check_map_full()`: both groups: the minimap and its keys for the HUD, the pause and world maps for the menus. The
+  menus alone: the minimap's panes and the keys of the HUD's key operations as the game has them. The HUD alone: the
+  pause map as the game has it. The HUD's edit first, then both: the menus' operations find the game's values but the
+  HUD's do not, and `lay_out` takes a layout whole, so the file stays (`wide_hud_archive` keeps the menus' part of
+  it). A pause map's pane keyed by an animation: refused for the menus, the HUD's edit of the same layout goes ahead.
+- `check_menus_archive()`: `wide_hud_archive` on a buffer the archive may grow in; the archive holds the four HUD
+  layouts and the four menus' layouts, one copy each (every other layout of the redesign is missing from it). The
+  counts: `PlayerStatus` 4, `MapMenu` 27 + 11, `NumDisplay` 2, `LoadingFade` 2, `PlusMenu` 85 and its 6 new panes,
+  `MenuOverlay` 8, the slide list 2, `PaItemMenu` 5. Again: nothing more. A menus' operation of a layout the HUD edits
+  too that does not fit: that layout keeps the game's menu layout, its HUD's edit and every other layout go ahead.
+  `MapMenu_00` moved for the HUD already, not for the menus: the HUD's part is found moved, the menus' part kept. A
+  layout of the menus alone that does not fit: it keeps the game's, the line without the HUD's part. A HUD's layout
+  that does not fit: the whole archive as it is. The HUD's part of `MapMenu_00` not fitting: the whole archive as it
+  is too; the menus' line written on the way says the HUD's edit goes ahead, which it does not (`wide_hud_archive`
+  logs before it knows). When the HUD's part fails too, the archive stays as it is and no line says the HUD's edit
+  goes ahead. The menus alone over an archive without the HUD's layouts: the menus' layouts there edited.
+- `check_split_archive()`, the split in an archive: four copies of `PlusMenu_00` and one of `MenuOverlay_00`. The
+  archive is laid out again around the grown copies, each in a range of its own at its old alignment; what the split
+  refuses, or an archive that may not grow, leaves `PlusMenu_00` with the game's menu layout and the archive its size.
+  What each copy becomes: the game's file edited in place, then split; `MenuOverlay_00` edited in place. Every entry's
+  bytes are in a range of its own after the one before, at its old start's alignment. Again: nothing more. The archive
+  as served: the frame records the grown size, the line says so. Two entries of one range: each split copy in a range
+  of its own. One copy the split refuses (two texture maps), and an archive that may not grow (no room in the resource
+  size table): `PlusMenu_00` keeps the game's menu layout, the archive its size. The rebuild alone: nothing replaced
+  gives the archive back; ranges that overlap, or a damaged archive, nothing.
+- `check_restbl()`, the resource size table's entry raised for a larger archive (`runtime/hle/restbl.c`
+  `restbl_fit()`, `runtime/hle/romfs.c` `restbl_room()`), the entries sorted by their hash: the game's entry, 4175
+  bytes over the archive's 9927489, raised by the split's growth keeps the room; a mod's merged entry above the game's
+  stays above it; no entry: the estimate for its type; a type the table never lists: nothing.
+
+`game_archive()`, the game's own archive read from `romfs.bin`. Its arguments are `romfs.bin`, the offset and size of
+the layout archive, of `Pack/ZsDic.pack.zs` and of the resource size table in it, then (argc 10) the files
+`tools/layout_dump.py` `split_picture()` made of the archive's first `PlusMenu_00.buil` at u 640 and 1920. Helpers
+count the 4-byte words that differ between two archives and how many of them lie outside the members named, and, for
+an archive laid out again after a member grew, the words that differ between the members and the entries that differ
+outside the named ones or change size other than `PlusMenu_00.buil`.
+
+- The shapes the settings give (21:9 at 1080 and 1440 lines, 32:9) and windows (3440x1440, 2880x1200, and a 3440x1080
+  one wider than 3:1): moved, and only the expected words: four copies of 4 + 27 + 2 fields; MapType's span stays 0.
+- The menus' shift with the HUD's (a 3440x1440 picture): the loading icon's x and scale x in its four copies too.
+- The menus over the whole picture with the HUD's edges (21:9, 32:9 and a 3440x1440 window): every layout of the
+  redesign takes its edit (no "keeps the game's" line), nothing outside them changes, and a second pass on the edited
+  archive finds nothing to do. Each copy of `PlusMenu_00` is the game's edited in place, then split.
+- After the action prompt's edit of the same archive (`romfs.c` serves it first): both edits, nothing else.
+- The split of the game's `PlusMenu_00` at 21:9 and 32:9: byte for byte what `split_picture()` makes.
+- The resource size table's entry for the archive: the game's leaves 4175 bytes of room; raised for the archive at
+  21:9 it keeps at least that room.
+
+## `tests/wide_hud_projection_check.py`
+
+Checks the full-height exceptions in the 1.1.1 `wide_hud` projection patch.
+
+- The projection match builds v17. The screen lookup then removes the four full-picture vtables from that mask,
+  duplicates it across lanes, and only then may the Y row use the vertical squeeze factor.
+- After `ldr d16, [x16]` (0xfd400210) x16 holds the canvas or its screen, no longer the patch page: every 128-bit load
+  of a page value from there on (LDR immediate with unsigned offset, `w & 0xffc00000 == 0x3dc00000`) reads through
+  x17, which the site sets to the page again. Reading the vertical squeeze through x16 (0.20.0-rc.1) took a word of
+  the screen object and hid the whole HUD.
+- 16:9 and wider ratios supply 1.0 in page +128, so the extra Y path leaves those screens unchanged.
+
+## `tests/wide_hud_title_check.py`
+
+Builds and runs `tests/wide_hud_title_check.c`: `runtime/patches/wide_hud.c`'s second archive, the title screen's
+layouts (`UI/Layout2Archive/Title.Product.*`) with `TitleMenuBG_00`'s backdrop over the whole picture
+(`NX2SARIA_WIDE_MENUS` = full), on layout files and archives the test makes itself. No game files. The `--help`
+description is the string `DESCRIPTION`. With `--romfs DIR`, also on the game's own title archive: the folder holds
+`romfs.bin` and its `index.json`, and the program reads the archive and `Pack/ZsDic.pack.zs` from `romfs.bin` at the
+offsets the index gives (`game_args()`), edits it for four shapes of picture (21:9, 32:9 and two windows) and prints
+the log lines of each. Nothing is written. The program is built with the same sanitizers as
+`tests/wide_hud_check.c`; `runtime/simd_fp.h` `FOK` ors two compares on purpose, and clang 18 warns on it.
+
+In the C file the layouts and archives are made from the format as the notes of `wide_hud.c` describe it, with the
+panes and widths the game's 1.1.1 `TitleMenuBG_00` holds, so the reader is checked against a writer of its own: a BFFH
+layout with panes in the order given (parents first) and an empty table of animations (`pane_at` is where each pane's
+record was put); the 1.1.1 layouts of the title archive as far as the edit reads them; a SARC of one other member,
+then the members in order; the title archive as the game's holds it: `PaCommonBtnTitle_00`, `TitleMenuBG_00` and
+`Title_00`, each a number of times (members 3 * c .. 3 * c + 2 for copy c), with `width_at` the three width fields
+within `TitleMenuBG_00` (`C_Capture_00`, `P_Capture_00`, `P_Noise_00`). A shift is the menus' alone (a layout's grid
+units wider on each side) or the HUD's alone. What `wide_hud.c` reaches in the runtime is stubbed and every log line
+kept. A zstd dictionary is made with a given id, its content and samples taken from a source buffer.
+
+- `check_synthetic()`, with the menus' shift 640 (21:9: 1080 * 2560 / 1080 - 1920): the Common archive's edit leaves
+  the Title archive alone; the HUD's edges alone change nothing in the Title archive; the menus' shift changes three
+  widths in each of two copies, with one log line; again: nothing to change, no line. An archive that holds a layout
+  with another width keeps the game's, and says why; the rest is untouched. A title archive without the layout, or a
+  damaged one: the menus keep the game's, nothing else.
+- `check_build()`: a shift with the HUD's edges and the loading icon asks nothing of this archive: it is not even
+  read.
+- `game_archive()`, the game's own archive read from `romfs.bin`: 21:9 at 1080 lines, 32:9 at 1440 lines, a 3440x1440
+  window: the menus' shift is `wide_hud_out` of the picture. 16:9: a shift of none edits nothing and reads nothing.
+
+## `tests/widescreen_math_check.py`
+
+Compiles and runs the aspect, scene, heap and Vert+ formulas without game data.
+
+## `tests/worktree_test.py`
+
+`tools/worktree.py` against a scratch repository whose "main checkout" holds dummy ignored data. No game files. It
+proves that marker files in the linked directories and in the linked file survive `tools/worktree.py remove`,
+`git worktree remove --force` with the junctions still in place, and `git worktree prune` after the worktree directory
+is deleted with its junctions in place; and that `git status` in a worktree shows no untracked or typechanged entry
+for the links. `make_repo()` links only what exists, as a real checkout may lack some of the data too. `main()` walks
+`tools/worktree.py` new / status / remove; an unmerged branch, which `--delete-branch` refuses and `--force` deletes;
+the two raw git cases; and it never follows a junction while cleaning up.
+
+## `tests/xlate_package_check.py`
+
+Checks the shader translator guard of the packaging scripts (`tools/build_xlate.py` `source_identity()` and
+`check_built()`, used by `tools/make_launcher.py` `check_xlate()`, `tools/make_kit.py` and `tools/make_appimage.py`).
+It needs git on `PATH` (`prepare_sources` applies the patches with it) and `tools/vendor`. No game files; any Python
+3.10+.
+
+- A folder whose `nx2navi_xlate.id` names this checkout's sources passes; a missing exe or `.id` is refused.
+- A folder built before a patch changed is refused, although `identity()` over its own prepared tree equals its `.id`:
+  its prepared tree differs from a fresh one by one file, and its `.id` is `identity()` over that tree, as
+  `build_xlate.main` wrote it then.
+- `build_xlate.py` has no option that writes an `.id` beside an exe it did not build: `--id-only` is gone, the option
+  is refused and writes nothing.
+- `make_launcher.check_xlate` and `make_kit` stop on a foreign translator, `make_kit` before it downloads or deletes
+  anything; `make_launcher` and `make_appimage` run the check before their slow steps. The fresh identity is computed
+  once for the packaging scripts; `xlate_smoke.pool_check` is replaced there, since the stand-in exes do not run.
+- `tools/xlate_smoke.py` `pool_check()`, which `make_launcher.check_xlate` runs on the exe on Windows:
+  `spirv_clamps` reads the array lengths and the UMin clamps of a module made in the test (`spirv()` writes a SPIR-V
+  module of the given instructions, each (opcode, operand words...), after a five-word header), `pool_check` refuses
+  an exe that does not run, `check_xlate` refuses such an exe beside a matching `.id`, and a translator built here
+  (`build/xlate`) passes when there is one.
