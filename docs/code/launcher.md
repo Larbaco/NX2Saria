@@ -33,3 +33,14 @@ job with a question due.
 The notice of reports turned on (`launcher/telemetry.py` `Reporter.take_notice()`) is taken only when no message is on
 screen. After a job the home screen always carries the job's message ("NX2Saria is now ..."), and taking the notice
 there would clear it and log it as told without showing it; it stays for the next start with a free message line.
+
+### `game_session.py`
+
+The game session tracks restarted copies, interprets exit codes and reads or annotates the game log.
+The Tk module continues to expose the moved session names for existing callers. Exit code meanings,
+normal end markers, log truncation and requested termination signals retain their existing rules.
+
+Exit codes 70, 71 and 72 describe a fatal error, crash report and lost graphics device; Windows status codes
+are shown with their known meanings. Requested Linux termination signals do not raise an alarm; SIGKILL is
+excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
+the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
