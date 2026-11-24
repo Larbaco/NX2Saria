@@ -1029,3 +1029,247 @@ position, and the output report's layout.
   bytes) the switch alone.
 - Other reports are refused and leave the outputs alone. An output buffer too short for the layout (20 bytes) gets
   zeros.
+
+## `tests/evo_peek_check.py`
+
+Builds and runs `tests/evo_peek_check.c` on `runtime/vk/vk_evo_peek.h`: the copy of each event-ordered queue's first
+held wait that `runtime/vk/vk_exec.c` `vk_exec_held_ready()` reads without the submission lock, and the decision it
+makes from that copy. No GPU, no game files, any Python.
+
+- The decision that `cont_ready()` of `vk_exec.c` makes, taken from a copy, with a stand-in for `vk_exec_event_met`
+  that answers from the wait's value.
+- A publish is read back whole; a fresh one reads as nothing held. A reader never waits for a publish that does not
+  end: it gives up after `EVO_PEEK_TRIES` tries.
+- The race: one writer republishes changing waits 1,000,000 times while three readers copy them, as the submitting
+  thread (`evo_resume()`, `cont_push()`) and the presenting threads (`held_resume()` and `submit_sync()` of
+  `runtime/vk/vk_backend.c`) do. Every field of publish i is derived from i, so a mixed copy shows: no reader may take
+  a copy mixed from two publishes (the all-zero state before the first publish aside), and none may wait for the
+  writer.
+
+## `tests/excl_mt.py`
+
+Multithreaded test of the exclusive monitor helpers in `runtime/cpu.h` (`ldxN`/`stxN`, `ldxp128`/`stxp128`). Needs no
+game files.
+
+- A changed value: thread A loads X exclusively, thread B changes X to Y with its own exclusive pair, then A's store
+  exclusive must fail. Checked for the 32-bit, 64-bit and 128-bit pair forms, plus a control where B touches nothing.
+- A value changed and changed back (ABA): B changes X to Y and back to X, and A's store exclusive succeeds. The
+  monitor is a compare-and-swap of the value loaded, so it does not see this case, where the console's monitor would
+  fail the store; the check holds the helpers to what they are.
+- Contention: N threads increment one counter with load/store-exclusive retry loops; the total must be exact.
+
+## `tests/exit_order_check.py`
+
+The orderly end of the process (`runtime/gfx/gfx_present.c` `rt_exit_begin()` and `rt_exit_steps()`): the steps run in
+one order, with what a kill of the process must not lose (a save Commit in flight, RivaTuner Statistics Server's
+profile, the controller's rumble, the settings, the frame-time summary) before the slow pipeline save, and the final
+save flush last; it runs once, and a second caller on another thread stays where it is. The frame-time summary of the
+exit (`runtime/diag/perf.c` `ft_stop()`) waits for a present thread's update under way and keeps later ones out. The
+test builds those functions into a test program against stand-ins, and checks statically that every orderly end goes
+through them. No game files; it takes the path to clang as an optional argument.
+
+`calls_in_order()` gives the position of each name's first call in a body, comments left out, or None for a name that
+is missing. Among the static checks:
+
+- The guest's exit line comes after the guard: a thread the guard parks (a close already ending) logs no exit.
+- The window's close (`runtime/gfx/gfx_window_win.c`) runs the end on a thread of its own, and the session's end
+  waits for it.
+- The focus loss of the window's hide is the end's, not a player's: it must not reach `perf_focus_lost()` of
+  `perf.c`, whose session report would take the exit summary's frames.
+- The presents during the pipeline save do not undo the restore of RTSS's limit: `runtime/pacing/rtss_limit.c`
+  `rtss_limit_restore()` marks the run closed before anything else (an exit before RTSS was ever asked included), and
+  `rtss_limit_want()` returns on it before it changes the want or starts the worker. `tests/rtss_worker_check.c` runs
+  that file against a fake RTSS.
+
+## `tests/exit_tls_check.py`
+
+Builds and runs `tests/exit_tls_check.c`: an ExitProcess or `exit()` that none of the game's own ends asked for leaves
+the log queue's lines and one note in the log file, naming the calls that led to it by module and offset
+(`runtime/platform/win32.c` `exit_note_tls()`, `plat_exit_note_setup()`). Windows only; no game files.
+
+The program links the platform layer and `runtime/logq.c`. It logs a line through the log queue, which the log thread
+is still gathering (for `LOGQ_GATHER_NS`), and ends in the way its mode says; the script reads the log file each mode
+leaves (`CASES`: the mode, whether the queued line is in the file, whether a note is).
+
+| Mode | End | In the file |
+|---|---|---|
+| `exitprocess` | ExitProcess from a function of this program | the queued line, then the note naming this program |
+| `exit` | `exit()`: the C runtime's ExitProcess | the same note |
+| `terminate` | TerminateProcess | no note; the queued line may or may not have been written, the kill came while it gathered |
+| `platexit` | `plat_exit()` | the queued line (its hook writes the queue), no note |
+| `return` | main returns after `plat_exit_orderly()`, as `runtime/main.c` does after a tool mode | no note |
+
+## `tests/fatal_exit_check.py`
+
+Builds and runs `tests/fatal_exit_check.c`: the end of a fatal error (`runtime/dispatch.c` `fatal_end()`) with the
+platform layer linked and the rest of the runtime as stand-ins that write straight to stdout. The process ends with
+its own code and its FATAL line, and without the libraries' detach calls that ExitProcess makes (a driver's detach
+that faulted there turned the end into a crash report with another code). No game files, no GPU.
+
+A fatal error stops HD rumble on a thread of its own and waits for it 300 ms at most (`rt_rumble_stop_bounded()`), so
+a stop that hangs on SDL's lock does not hold the end. RivaTuner's profile is left to the next start
+(`runtime/pacing/rtss_limit.c` `rtss_limit_crash()`), which on RTSS's own thread ("rtss"), whose lock that thread may
+hold, makes no call into RTSS's library and takes no lock. Two failures at once end once: two threads that fault, a
+fault while a fatal error is reported and a fatal error while a crash is: the first report is written whole, the
+process ends with its code, and the second adds no line (`rt_ending_enter()`, which `crash_handler()` of
+`runtime/main.c` calls first).
+
+The executable has a TLS callback that prints a line ("detach:") when the process's libraries get their detach call,
+which ExitProcess (and `_Exit`, which is ExitProcess in the C runtime) makes and TerminateProcess does not; a
+`__thread` variable with `_tls_used` gives the image its TLS directory, so the callback is called. Its crash handler
+is a stand-in for `crash_handler()` with its first line, `if (!rt_ending_enter(71)) plat_exit(71);`: it writes three
+report lines 100 ms apart and ends with `plat_exit(71)`. The summary of `perf.c` at a fatal error and the stop of
+`input.c`, which `dispatch.c` calls through weak symbols, are stand-ins that say they ran; the rumble one can hang as
+when SDL's lock is held. A fatal note that takes a while stands for the card's and the memory settings' notes.
+
+| Mode | What happens | Expected |
+|---|---|---|
+| `fatal` | `rt_fatal()` | exit code 70, the FATAL line, the frame-time summary, the rumble stop, no detach line |
+| `crash_crash` | two threads fault at once | one whole crash report, the second thread waits, exit code 71 |
+| `fatal_crash` | a fault on another thread while `rt_fatal()` reports | its FATAL line and notes whole, no crash report, exit code 70 |
+| `crash_fatal` | `rt_fatal()` on another thread while a crash is reported | the whole report, exit code 71 |
+| `fatal_rumble` | `rt_fatal()` while the HD rumble stop hangs (SDL's lock held by a thread that crashed) | the end goes on after 300 ms, exit code 70 |
+| `fatal_rtss` | `rt_fatal()` on RTSS's thread, named as `plat_thread_spawn()` names the worker of `rtss_limit.c` | exit code 70, through `rtss_limit_crash()` too, which takes no lock there |
+
+`static_checks()`:
+
+- No runtime file outside the platform layer ends the process with `_Exit`: the platform layer alone ends it
+  (`plat_exit`, `plat_terminate`). The fatal error's end and the lost device's (`runtime/vk/vk_device.c`
+  `lost_wait_exit()`) end with `plat_terminate`.
+- The crash handler's guard in `main.c` is the one the stand-in runs.
+- The fatal error's summary (`perf_summary_flush_try()`) leaves out what the failure may have left half made, and only
+  tries the map's lock.
+- Both failed ends stop HD rumble through the bounded stop, after RivaTuner's profile is left to the next start.
+- A first report that hangs: the thread that waits for it ends the process after 30 s with that report's code, and
+  `fatal_end()` hands its own code to the guard (a hung FATAL must not read as a crash to the launcher).
+- The fatal error's frame-time summary comes after RTSS's end and the rumble stop, as in the orderly end.
+
+## `tests/ffx_cache_check.py`
+
+Runs the game executable's `--probe-ffx-cache` twice on pipeline cache files of the test's own
+(`runtime/vk/vk_ffx.cpp` `vk_ffx_probe_cache()`: one FSR 3.1 upscaling context, without a window or the game). FSR
+3.1's library creates its pipelines itself and names no pipeline cache; the runtime hands it pipeline creates that go
+through the pipeline caches kept across runs (`runtime/vk/vk_pipeline.c` `vk_pipeline_create_foreign()`). Checked:
+
+- the library's pipelines come through those creates (the first run counts them);
+- a second run, which reads what the first one saved, compiles none of them: each comes from the caches;
+- with `ffx_pipe_cache = 0` none comes through the runtime.
+
+The executable needs `amd_fidelityfx_vk.dll` beside it and a Vulkan device; without either the probe says SKIP and so
+does the test. The pipeline cache files go to `build/test/ffx_cache`, never beside the executable. `run()` is one
+probe run and returns the exit code, the last probe line and the counts or None. The text the test prints when it is
+called without the executable's path is the string `USAGE`.
+
+## `tests/fg_reset_check.py`
+
+Builds and runs `tests/fg_reset_check.c` on `runtime/vk/vk_fg_reset.h`: which frames FSR 3.1 frame generation's
+callback is told are camera cuts, by frame id. No GPU, no game files, any Python.
+
+- Nothing noted: every id is a cut, id 0 and ids past the range too.
+- A run of frames with a cut at 40: the callback for each id gets that frame's answer.
+- The callback fell behind by more than the ring: its frame's slot holds a later one, so it is a cut.
+- The id and its cut are one word: a slot rewritten on another thread (frame 3, a cut, and frame 3 + `FGR_SLOTS`,
+  none, over and over) never answers frame 3 with the next one's "no cut".
+
+## `tests/fg_stats_check.py`
+
+Builds and runs `tests/fg_stats_check.c` on `runtime/vk/vk_fg_stats.h`: how frame generation's log line sorts the
+game's frames (gameplay, the menu, no scene) and when it writes one. No GPU, no game files, any Python.
+
+- The order of the reasons: the menu comes first, whatever the frame had.
+- Nothing is due before a period's worth of frames. A long stretch without a scene (a movie) still reports, after
+  `FGS_IDLE` frames.
+- A session as the 0.12.1 Windows log had it: 4600 frames of title, movie and file menu, then gameplay at 60 fps,
+  every frame generated (two presents each), with the settings menu open for 300 frames in between. The run's share
+  is the gameplay's; the title and the menu are counted apart.
+- A long session: every line up to `FGS_LINES`, then one period in `FGS_EVERY`, the counts carried in the totals.
+- A new swapchain counts its presents from 0: the period's presents and time start again there, not at 0.
+- GPU times out of range are not taken.
+
+## `tests/flags_check.py`
+
+Builds and runs `tests/flags_check.c`: the function-local flag helpers of `runtime/cpu.h` (`Flags`, `fc_*`, `fnz_*`,
+`nz_*`, `adc*f`) against its packed helpers (`subs64()` and friends, `COND_xx`), which `tests/diff/lift.py` checks
+against Unicorn. It prints the first mismatches and exits 1 on any. The condition argument of its `CHECK` is not
+constant, so the switch default paths are covered too. The operands are random, with equal operands, neighbours and
+small values (both under `0xff`) mixed in.
+
+## `tests/flight_flash_check.py`
+
+Builds and runs `tests/flight_flash_check.c` on `runtime/diag/flight_flash.h`: which frames the flight recorder takes
+for a one-frame flash. Pictures of the thumbnails' size are drawn by the test, turned into cell means
+(`flash_cells()`) and judged three at a time (`flash_test()`), or handed in frame by frame as the present thread does
+(`flash_note()`). No GPU, no game files, any Python. It is built as the runtime is (`-O2`, x86-64-v3 on x86-64), so
+the run with the argument `time` measures what the present thread pays for one `flash_cells()` and one `flash_test()`
+(on a picture the compiler cannot take as known).
+
+The pictures are 640x360 (`FLIGHT_THUMB_W` x `FLIGHT_THUMB_H` of `flight.h`): cells of 40x40 pixels. `DIFF` 24 and
+`MIN_CELLS` 3 are the defaults of `NX2SARIA_FLIGHT_FLASH_DIFF` and `NX2SARIA_FLIGHT_FLASH_CELLS` (`cfg.c`). `scene()`
+draws something in every cell: bands of brightness that differ from cell to cell, shifted by (dx, dy) pixels.
+
+- `flash_cells()`: the cells are where they should be, and the byte order does not matter (the first byte full and the
+  third none gives the same as the other order).
+- A flash: one frame with a bright patch (3x2 cells turned white) over a steady scene, the frames around it alike;
+  also with a little change between the neighbours, as a scene with slow motion has.
+- No flash: too small (a patch of 2 cells), too weak (cells that differ by the threshold itself, not by more), or not
+  there for one frame only (a patch that appears and stays, one that was there and goes, three frames alike).
+- A camera cut: two different scenes, the cut before the frame or after it. Three unrelated pictures (a cut on both
+  sides, a fast turn): the neighbours disagree and nothing is judged. A fade: every cell lies between its neighbours.
+- Steady motion: the whole scene pans, slowly and fast (1 to 64 pixels a frame). A bright bar as wide as a cell and
+  five cells high crosses a flat picture, at every speed and every phase, sideways and down: in the frame in which it
+  fills its cells they are brighter than in the frame before and the frame after, which are alike there, and only the
+  cells beside them, which the bar leaves and enters, tell this from a flash. The bar where it stands for one frame
+  only is a flash: nothing beside it changed. Three squares as large as a cell move diagonally: what leaves a square's
+  cell is shared between three cells beside it, so none of those changes by as much as a flash does, and only the
+  cells around a cell, compared with what that cell differs by, tell these from three cells that flash.
+- The rules cell by cell, on a row of three cells 60 brighter for one frame: a cell diagonally beside the first one 15
+  apart between the neighbours (a quarter of 60) hides nothing, and at 16 the first cell no longer counts, and two are
+  too few. A cell far from the flash that is as far apart as allowed (`DIFF`) keeps the frame judged; one more
+  (`DIFF + 1`, further than a flash must differ by) and the frame is not judged. Neighbours a little apart (more than
+  a quarter of the threshold) in the lower rows: `FLASH_MOVING` cells leave the frame judged, one more does not.
+  Darker than one neighbour and brighter than the other is no flash, however the thresholds are set.
+- Frame by frame, with thumbnails missing: frames 1..9 steady with 5 the flash, found when 6 arrives, as frame 5. The
+  flash at 12 with the frame after it without a thumbnail is not judged, at 13 (missing), 14 or later; nor with the
+  frame before it missing, nor when the flash frame itself has none and its neighbours are four frames apart from
+  older ones in the slots. When only every other frame has a thumbnail and they alternate, no three are in a row and
+  nothing is judged. The first frames of a run, and frame 0, which names no frame.
+
+## `tests/foreign_hook_check.py`
+
+The crash report's test for a module another program put into the game (`runtime/main.c` `foreign_hook()`): the
+Vulkan layers, hooks and overlays of recorders, overlays and capture tools are named as theirs; the game's own
+libraries and the drivers are not, nor the validation layer the game loads itself (`NX2SARIA_VK_VALIDATION`). A fault
+on the thread that sets RivaTuner Statistics Server's limit gets the RTSS note whatever the module
+(`crash_module_note()`). It builds those functions, cut out of `main.c`, into a test program. No game files; it takes
+the path to clang as an optional argument.
+
+## `tests/fov_check.py`
+
+Checks the 1.1.1 lens patch through the normal lifter and code emitter.
+
+## `tests/frame_owed_check.py`
+
+Builds and runs `tests/frame_owed_check.c` on `runtime/vk/vk_frame_owed.h`: a frame's bookkeeping at its present, in
+replay order (`runtime/vk/vk_sync.c` `submit()`, and the present path of `runtime/vk/vk_backend.c`). No GPU, no game
+files, any Python. The platform layer is linked with what it calls outside itself as stand-ins
+(`tests/platform_stand_ins.py`).
+
+The program has one presenting thread, three replaying threads that hold the lock for their replays, a few of them
+for 40 ms (`HOLD_MS`), and a present thread that takes each presented frame from the presenting thread (one in waiting
+at most, as `present_image()` of `vk_backend.c` hands it over), blits it and then submits under the lock
+(`present_main()`), over 20,000 frames. Every frame's bookkeeping must run once and in frame order, never during a
+replay, before the body of any replay that took the lock after the frame was presented, and before the present
+thread's blit of the frame (`present_frame_closed()`); and no present takes 20 ms (`PRESENT_MAX_NS`: a present that
+waited for a long hold would take up to `HOLD_MS`), so the presenting thread never waits for a replay.
+
+Step by step, on one thread first: a present with the lock free runs its own frame's bookkeeping; two presents with
+the lock held elsewhere leave both frames to the next holder, which runs them in order; an older frame number runs
+nothing again; and the present thread takes the lock only for a frame still owed. `frame_owed_check old` leaves out
+the present thread's `fo_close()`, as the change first had it, to show that the blit check sees a blit before its
+frame's bookkeeping: it then fails.
+
+The stand-ins in the C file: `frame_end()` for that of `vk_backend.c`, run with the lock held; `try_run()` for
+`vk_sync_try_locked()` of `vk_sync.c` with `fo_here()` of `vk_backend.c`; `replayer()` for `submit()` (the lock, the
+owed frames through `vk_present_frames_owed()`, then the replay's body); `run_locked()` for `fo_blit_locked()` (the
+lock, waiting for it, and what is owed); `present_thread()` for `present_main()`. `slot` holds the frame handed to the
+present thread shifted left by one, with the low bit set when it was left owed (`PresentJob.owed`), 0 for none.
