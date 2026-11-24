@@ -1273,3 +1273,367 @@ The stand-ins in the C file: `frame_end()` for that of `vk_backend.c`, run with 
 owed frames through `vk_present_frames_owed()`, then the replay's body); `run_locked()` for `fo_blit_locked()` (the
 lock, waiting for it, and what is owed); `present_thread()` for `present_main()`. `slot` holds the frame handed to the
 present thread shifted left by one, with the low bit set when it was left owed (`PresentJob.owed`), 0 for none.
+
+## `tests/frame_step_check.py`
+
+Builds and runs `tests/frame_step_check.c`: the step `runtime/pacing/frame_rate.c` gives Ocarina (`ocarina_step()`),
+driven through `frame_step_cap_ns()` and `frame_step_present()` with made-up display times and the rest of the
+runtime stubbed. No game files: the module layout the runtime includes is a stand-in written to the test's build
+folder. With the argument `mean` the program runs with `NX2SARIA_STEP_STEADY=0` and checks the mean of the last five
+intervals (the comparison setting: 5 and 30 ms in turn give 15 and 20 ms in turn).
+
+What the Python file checks against `recomp/patches-v111.txt` and lifts for the program (`PAGE` is the patch page of
+1.1.1, main+0x4ea0000):
+
+- `check_sites()`: each site that calls a host of `frame_rate.c` (`HOST_SITES`: set, module offset, the original
+  word, the words before the bl, which are the original's own where the host comes after it, and the page offset the
+  bl reaches) is its listed words and one bl to its page slot, over its original word. `FDIV` is `0x1e201900`,
+  `fdiv s0, s8, s0`.
+- `solver_functions()`: the solver step count's words at the step setup's first copy (main+0x38aebe4..0x38aebf4; the
+  second copy at main+0x38afd10 has the same words): the original's, the set `osolver`'s and the set `osolverfull`'s,
+  lifted as the generator lifts them into one C function each, with the `scvtf s1, s1` between them (`0x5e21d821` at
+  main+0x38aebec) that every variant keeps.
+- `check_follow()` and `follow_functions()`: the floor-carry gate of the three follow-surface modules (set `ofollow`,
+  sites main+0x13d704, main+0x13a064 and main+0x389ac20): `mov w8, #0x42c80000` (100.0, `0x52a85908`) and
+  `fmov s1, w8` (`0x1e270101`) before the game's `fcmp s0, s1` (`0x1e212000`; s0 is the physics' inverse step) and the
+  b.gt to the tenth of the floor's velocity. The set makes the two words `adrp x8, page` and `ldr s1, [x8, #260]`
+  (`0xbd410501`); the test lifts the load and the fcmp with x8 set to its page.
+- `check_staff()` and `staff_functions()`: the playback staff's note gate (set `ostaff`): after the read of the
+  melody's note signal (main+0x3297b50, 0 or 1 in w0) at main+0x3292c84 and main+0x3292ed4, the set keeps the signal
+  on the page (+776, through x9 = the page) and clears w0 when the signal was already set the update before. The gate
+  is `ldr w10, [x9, #0x308]` (`0xb943092a`), `str w0, [x9, #0x308]` (`0xb9030920`), `bic w0, w0, w10` (`0x0a2a0000`),
+  after the set's adrp to the page in x9. The first site keeps its `ldr w3` ahead of the gate, the second its tbz
+  behind it.
+- `lift_ops()` gives C for contiguous non-branch guest instructions in a fixture.
+
+The stand-ins of the C file: a refresh rate of 144 Hz; a movie switch (`movie_cap_hz()` of `frame_rate.c`); the debug
+menu's game speed at normal; frame generation's multiplier (frames on screen per game frame); the newest want and
+movie rate RTSS was told of, and whether RTSS holds the game to the want (`runtime/pacing/rtss_limit.c`); the kernel's
+clock and its time at the newest host present (0: none yet); one thread, so the mutexes do nothing; the floor probe,
+scan and watch off. The battle-music flag latch has its own test (`tests/battle_music_check.py`). The time manager the
+patch hosts read their step from (`game_frame_step()`) is made up as the game has it: `[main+0x4c7e890]` holds the
+slot, the slot the manager, the manager +0x10 the step; nothing else is read. `present()` is one present: the pacer
+asks for the period, then reports the display time; it returns the step in 60 Hz frames. A gap of 1 s starts the
+filter again.
+
+The patch sites that cut the step to a whole number are called as the lifted code calls them, the value in s0, the
+object in its register, the whole number back in the register the cut wrote (all 64 bits of it): `water()` is
+`frame_rate_water_host()` with x21 and w9, `day()` is `frame_rate_day_host()` with x19 and w8. `sim()` is
+`frame_rate_sim_host()` as the surfaces' sites call it (set `owater`): after the site's division
+(`fdiv s0, s8, s0`, the literal being 1/60 as a float), the update's seconds over 1/60 s are in s0, the lanes above it
+zeroed, and the object in x19; then the game's own cut of s0 (fcvtzs) gives the steps. Only s0's low lane may change:
+every general register, the other lanes and vector registers and the flags stay as they were. The solver functions
+run on the frames per update in s0 and the count (4) in s1 as the game loads them, x8 pointing at the literal 0.001
+the original loads, and return w1, the steps. The follow gate returns 1 when its b.gt is taken, which keeps a tenth of
+the floor's velocity. The staff gate takes the melody's note signal of this update in w0 and returns whether the staff
+moves on; the last signal stays on the page (+776) between calls.
+
+- The pacer's period while Reflex holds the limit (`vk_dlssg_pace()` of `vk_dlssg.c`): 240 fps, 4166666 ns, for a
+  game stepping by the clock.
+- A 60 fps limit with a late frame and the short one after it every 37 frames: one frame exactly, every frame. The
+  240 cap with late frames: never under a quarter frame (the game's own solver step count is 0 there). Unlimited, 5
+  and 30 ms in turn: one step, and the clock kept. 200 fps and one 60 ms frame: the step rises by a tenth at most and
+  the 55 ms are paid back. A real change of rate, 240 to 120 fps, arrives within 12 frames.
+- A movie started at 240 fps: exactly one frame from its first update, late and short frames included, as the game
+  shows one picture per update; at its end the step follows the frame limit again within 12 frames.
+- A frame longer than 1/15 s slows the game down; the step never leaves 1/480..1/15 s (900 fps, as a quick menu
+  without the pacer would run, still gives an eighth of a frame).
+- The limit counts the frames the game draws: frame generation's multiplier leaves the pace of a numeric limit and of
+  unlimited alone, and divides only the monitor's rate (144 Hz here), which is a rate on the screen.
+- RivaTuner Statistics Server holds the limit: the pacer keeps the 240 ceiling while host presents go out, and the
+  limit's own period before the first host present and once none went out for 200 ms (a minimised window, a frame
+  hold), when RTSS has nothing to hold. A movie while RTSS holds 144: RTSS keeps the play limit (no rewrite of its
+  profile at the movie's start and end) and the pacer holds the movie's 60 with its slots; at 40 the want stays 40
+  too (`rtss_target` of `rtss_decide.h` decides what the profile gets).
+- The water's ripples at 144 fps, a step of 60/144 frame: 64 water objects asked once a frame each run 600 steps in
+  1440 frames (the cut gave none), and the day's seconds asked between them keep their own fraction. A step of one
+  frame, and of two, is what the game computes, also after a fraction was left; a quarter frame gives one step every
+  fourth frame, and what fcvtzs cuts to nothing or saturates leaves the remainder alone.
+- The water managers and the floors (set `owater`): at 120, 144 and 240 fps each runs 60 fixed steps a second (the
+  cut gave none above 60), beside 64 water objects; at 60 and 30 fps one and two steps an update, as the game counts
+  them. A place with many interactive floors, 2 water managers and 30 floors each asking once an update at 144 fps:
+  all keep their own remainder and run 60 fixed steps a second (with 8 slots they took each other's and ran none).
+- The sound job (set `osound`), over 10 s at each rate: at 60 and 30 fps every phase of every frame runs with the
+  game's step; at 144 and 240 fps it runs 60 times a second with a step of one, phases 1 and 2 with phase 0; a skipped
+  phase gets 3 in w2. Owed fractions survive a whole step, and a step that is not positive runs and clears them.
+- The solver step count: at 60 and 30 fps all three variants give the game's 4 and 8 (also with the steady step a
+  little off them); above 60 fps the game's count falls to 1 and to 0, `osolver`'s rounds up (2 at 144 fps, 1 at 240),
+  and `osolverfull`'s keeps every update at the 60 Hz frame's 4. Steps a second at 144 and 240 fps: `osolver` 288 and
+  240, `osolverfull` 576 and 960.
+- The floor carry (set `ofollow`): the physics' inverse step is 60 / (frames per update * time scale); the game cuts
+  a floor's velocity to a tenth above 100, which at 60 fps is a time scale under 0.6 and above 100 fps every update.
+  With the page's 100 / frames per update the set cuts exactly where the game cuts at 60 fps at any rate above 60; at
+  60 and 30 fps the page holds 100 and the set cuts where the game's own words do.
+- The playback staff (set `ostaff`): a note signal set over several updates in a row moves the staff once, a signal
+  set for one update (every note at 60 fps) moves it as the game does, and a clear signal never does.
+- The horse's jump (`check_horse_jump()`), by render step, manager step and jump step: a normal jump at 120 fps and a
+  jump allowed to advance more quickly are taken by the patched compare only; an update slowed within a short frame,
+  slow motion at the nominal display rate, a time manager that uses a whole step and one whose step is unusable (NaN)
+  by neither; a normal jump at 60 fps by both. In the Gohma clamp case, the caller's already restored value in v10 is
+  unrelated to the turn.
+
+## `tests/freeze_hold_check.py`
+
+Builds and runs `tests/freeze_hold_check.c` on `runtime/freeze_hold.h`: when the freezing of idle guest regions waits.
+No GPU, no game files, any Python.
+
+- The backoff after slow freezes keeps doubling while slow ones come within the quiet time, fast freezes between them
+  included, and starts over after the quiet time. Slow freezes 300 ms apart with fast ones between, as after a load in
+  Kakariko: the holds double up to 2 s, a fast freeze after the hold keeps the backoff (250 ms there), and one 6 s
+  after the last slow one, with a quiet time of 5 s, starts over.
+- With quiet 0 a fast freeze starts the doubling over (the rule of 0.10.1).
+- The backoff holds the passes until `hold_until`.
+- An area load holds the passes while the texture pool loads, and the hold lasts after it ends; an area's load
+  (`perf_scene`) 1 s ago holds, one 4 s ago does not (a hold of 3 s). A hold of 0 never holds for loads.
+
+## `tests/fs_file_use_check.py`
+
+A save file's handle and a CloseFile on another thread (`runtime/hle/fs_host.c` `file_of()`, `file_release()`,
+`close_file()`): a call under way keeps its host file open, the close happens once when the last call is out, the
+guest's handle value is not handed out again before that, and a call after the close gets `FS_R_INVALID_ARGUMENT`. A
+call with no close pending takes no exclusive lock, so it ends while another thread holds the lock shared (a Commit's
+fsync loop). The host files of the test are stand-ins that hand a closed file's value to the next one opened, as
+Windows does with a HANDLE: a read that went on through a closed handle would read the other file. It builds the file
+functions of `fs_host.c` into a test program. No game files; it takes the path to clang as an optional argument.
+
+## `tests/gen_emit_gate_test.py`
+
+The emission of `recomp/gen.py` under the memory rule of the compile gate, with a fake pool and a fake free memory
+reading; no game files. It needs numpy (the `.venv`).
+
+- `lift_gate()` follows the gate's settings: off gives a reserve of 0, a malformed reserve the default, with a
+  warning.
+- `pick_jobs()` sizes the pool by the free memory less the reserve. With 19 GiB free, 80% (15.2) is less than free
+  less a 3 GiB reserve (16): 10 workers of 1.5 GiB. With 8 GiB free, 80% is 6.4 GiB and free less a 3 GiB reserve 5
+  GiB: 3 workers; with a reserve of 0, 80% of 8 GiB gives 4. A job count given is kept.
+- `dispatch()` submits a chunk only while the free memory stays at or above the reserve, keeps one chunk outstanding
+  whatever the memory, never more than the pool's workers, raises a task's error and gives up on a worker that died
+  with its task. With 10 free, 3 per task and a reserve of 4: 0, 1 and 2 outstanding leave 10, 7 and 4 (submit), a
+  third would leave 1 (hold). Below the reserve from the start: one chunk at a time, never none. With the reserve 0
+  that `lift_gate()` gives when off, even no free memory at all lets every worker have a chunk.
+- `emit_all()` retries with half the workers (4, then 2) after a `MemoryError` or a lost worker, on exactly the
+  chunks without a result: each chunk's result comes once and no chunk runs twice in the second pool.
+
+`FakePool.apply_async()` runs the task on a timer thread after `delay` seconds; the free memory the pool reports
+(`FakePool.avail()`) falls by `per` for each task outstanding; the tasks in `never` are those whose worker dies (no
+result, no error, and the pool replaces it, which the test shows as a changed set of worker pids). `run_dispatch()`
+gives the sorted results and the `GateStats` of `dispatch()` over tasks on a pool, with the pool's own free memory
+reading. `EmitAllTest.lost()` gives the results, the pools and stderr of `emit_all()` over 12 chunks where the first
+pool's worker dies with each chunk of `never`.
+
+## `tests/gen_partition_test.py`
+
+The chunking of `recomp/gen.py` on made-up numbers: `estimate_costs()`, `partition()` (own files for costly functions,
+the chunk cost and function count limits, a `--limit` slice, every function in exactly one chunk), the per-function
+sizes and switch flags `chunk_text()` reports, and the chunk names of `remove_stale()`. No game files; it needs numpy
+(the `.venv`).
+
+- At `COST_Q` a switch doubles a function's cost. Large values do not overflow.
+- A cost equal to `big_fn` stays in a chunk; one above gets its own file. Reaching the chunk cost limit is allowed.
+- `covers()` is true if the `[i0, i1)` ranges are contiguous, non-empty and cover `[0, n)` exactly once.
+- `FakeEmitter` has what `chunk_text()` uses of an `Emitter`: `function()` returns (lines, referenced starts) and
+  counts its switches in `stats` as the real one does (`jump_tables` per resolved table, `all_label_fallbacks` per
+  unresolved computed br); two tables in one function count once. The `sizes` argument of `chunk_text()` is optional.
+
+## `tests/gen_width_check.py`
+
+No 64-to-32-bit narrowing in the files that hold page write generations: `runtime/vk/vk_memory.c`,
+`runtime/vk/vk_texture.c` and `runtime/gfx/tex_probe.c`, compiled with the build's flags (`RT_FLAGS` with
+`-DRT_CPU_LEVEL=3`, as the build adds it) plus `-Wshorten-64-to-32`, `-Wformat` and `-Wincompatible-pointer-types` as
+errors (`clang -fsyntax-only`). The generations are 64 bits; one local, field or format left at 32 bits would bring
+the wrap of 2^32 back without a word, and the normal build sees a narrowing only as a silent conversion. The baseline
+is zero such diagnostics in the whole of the three files: a narrowing elsewhere in them takes an explicit cast, which
+also says it is meant.
+
+Only what is written in the file itself counts (`in_file()`): a header it includes is not one of the files that hold
+generations (`simd_directed` of `simd.h` returns the long of `__builtin_expect`, 0 or 1, as an int, which Linux's
+64-bit long flags). It needs clang, the Vulkan headers, VMA and the shader headers of `tools/build_shaders.py`
+(`runtime/*_spv.h`). No GPU, no game files, any Python.
+
+## `tests/gen_wrap_check.py`
+
+Builds and runs `tests/gen_wrap_check.c`: the page write generations of `runtime/vk/vk_memory.c` across 2^32, 2^40 and
+2^63. No GPU, no game files, any Python.
+
+`extract()` takes from `vk_memory.c`, verbatim, into `build/test/gen_wrap/gen_section.inc`: the declarations of
+`PoolRec`'s `mgen` and `sgen` (the generations a VRAM mirror and a shadow copy hold), so the stand-in `PoolRec` has
+their real width; the section from the "page write generations" banner to the "dirty census" banner; and the readers
+of the tables outside that section, `cpu_wrote_since()`, `shadow_pool_clean()`, `lazy_clean()` and `page_dirty()`
+(`definition()` takes a definition, not a prototype, up to its closing brace at column 0).
+
+The program starts the generations just below each seed's boundary and runs across it: every compare the texture
+checks, the snapshot path, the region check, the VRAM mirrors' lazy fetch, the shadow storage and the verify mode make
+must answer as it does below the boundary. The seeds (`SEEDS`): 2^32 - 8, where 32-bit generations wrapped; 2^40 - 8,
+where the low 32 bits pass through 0 again, so a truncation to 32 bits anywhere fails there too; and 2^63 - 8.
+`gen_next()` must log one line when the count reaches 2^32, and no other.
+
+With `--cfg` the counter starts at 0 and the seed comes from `NX2SARIA_GEN_SEED` (`gen_seed()`), which the first
+generation reads: the run must go on from the start expected of that value (parsed as 64 bits, capped at 2^62, a value
+that is no number ignored), with the seed's log line expected of it ("-": none). `CFG_SEEDS` has decimal and 0x
+hexadecimal values past 32 bits (`0xfffffffff8`, where `strtoul` would stop at 2^32 - 1), one past the cap
+(`0x7ffffffffffffff8` starts at 4611686018427387904), values that are no number, 0 and none.
+
+The stubs: no-op locks; a write watch that reports the pages a check marks as written by the CPU (pages the CPU wrote
+since the last query over them: `mem_written_pages` resets them, `mem_written_peek` does not); nothing frozen; no pools
+in the index (the pool lookup of `snap_widen`). Of the log, the page generation and `NX2SARIA_GEN_SEED` lines are kept
+and the others dropped. `gen_t` is the width the source gives the generations (`__typeof__(gen_now)`). The addresses:
+`TEX` `0x100000000`, a texture of 4 pages in one 2 MiB region; `OTHER` `0x100200000`, a second one in the next region;
+`SPIN` `0x200000000`, an unrelated range other checks hand out generations for; `LONE` `0x100400000`, a page written
+exactly at the boundary. The clock is an hour in and the frame count 216000, as at 60 fps. Every `*now` handed back
+must grow.
+
+- Before the boundary both textures are loaded (written) and checked. The first write takes the first generation,
+  which goes on from the seed; when the generations cannot reach the boundary nothing below can run and the program
+  ends there.
+- Other checks hand out generations up to edge - 1, and the page written next is stamped exactly at the edge (the
+  boundary under test, seed + 8: 2^32 for the first seed).
+- After the boundary: a CPU write found by the write watch and one by a host path are both seen. A texture nobody
+  wrote since before the boundary stays unchanged, check after check.
+- The snapshot path (draw bindings and the texture pool's check) and the region check (`reg_max`). The CPU-side tables
+  (what `mirror_sync`, `lazy_clean` and `cpu_wrote_since` read) hold the same stamps.
+- A VRAM mirror and a shadow copy synced before the boundary, `TEX` written after it: not clean. Synced again now:
+  nothing is newer.
+- The log: one line where the count reached 2^32, none at any other boundary; with `--cfg`, the seed's line.
+
+## `tests/gfx_guard_check.py`
+
+Builds and runs `tests/gfx_guard_check.c` on `runtime/gfx/gfx_guard.h`, the checks of the presentation path that must
+not trust what they are given: the game's crop cut to the image without int overflow (`runtime/gfx/gfx_present.c`
+`present_image()`), the swapchain image list taken whole or not at all (`create_swapchain()`), and how often a
+repeating failure is logged. Where the compiler has it, the harness is built with the signed overflow sanitizer, so a
+sum that overflows traps. No game files, no GPU.
+
+- `crop_model()` in the C file has the same rules in 64-bit arithmetic, where no int sum overflows: the reference the
+  header must agree with. Whatever the crop, the rectangle presented lies inside the image and is not empty.
+- No crop, or one with an extent of 0 or less: the whole image, as the game's own convention (even with a negative
+  origin in the fields not used). The game's usual crop, the 1280x720 it renders inside a larger image, is used as it
+  is. Past the edge: cut there; a negative origin moves to 0 with its extent kept. Outside: the whole image.
+- The values that overflowed `cx + cw`: an origin and an extent near `INT_MAX`, which the sanitizer build traps on.
+  Every crop around the edges of a small image, and random guest values on the usual sizes. `gfx_rect_inside` with
+  values whose sum overflows an int.
+- The swapchain image list: the count, then that many images, all of it or nothing.
+- The log of a failure that repeats: the first 8, then at 16, 32, 64 and so on: 8 + 28 lines at most in 2^32
+  failures.
+
+`scan()` then reads `runtime/gfx/gfx_present.c` and `runtime/vk/vk_texture.c`: no swapchain image query, semaphore,
+fence, command pool, command buffer or sampler create there may drop its result (a call that starts a statement), and
+a failed `vkCreateSampler` may not end the game (`rt_fatal` in the call's statement or the one after it). It gives the
+problems as `file:line: text`. `strip_comments()` blanks comments and string literals and keeps line breaks, so
+positions still name their lines. `statement_level()` is 1 when the expression at a position starts a statement or
+follows a comma operator outside any parentheses, so that what it returns is dropped: it walks back over whitespace to
+the nearest significant character, then over a comma's left side to the statement's start, keeping count of brackets
+(inside an argument list or a condition it is 0). `self_test()` shows that the scan catches each kind of fault in a
+made-up file and passes its fixed form: six finds (the semaphore, the fence, the image query, the pool after a comma,
+two fatal samplers) and nothing in the good file. `log_lines()` finds the format strings of the log lines
+(`LOG_LINES`) in the runtime's source, adjacent string literals read as one.
+
+## `tests/gpa_check.py`
+
+Builds and runs `tests/gpa_check.c`: the device address table of `runtime/vk/vk_gpa.c` against a model of what a
+shader reads through it, with blocks given back and taken again. The allocator, the device and the completion queue
+are stand-ins. It needs the Vulkan headers and `vk_mem_alloc.h`, no GPU and no game files.
+
+The stand-ins: `vk_vma_create_buffer()` and its destroy, the wrappers of `vk_vma_budget.c` that `vk.h` sends
+`vmaCreateBuffer` and `vmaDestroyBuffer` to; `table` is the first buffer `vk_gpa.c` creates; a buffer's device address
+is its handle far above the GPU addresses the tests map (`dev_of()`, the handle shifted left by 28); the completion
+queue runs a callback once the GPU is past its submission (`gpu_done()`: the submission being recorded is issued and
+finishes); a store the GPU runs in queue order (`vk_gpa_flip_cmd`) is kept until `gpu_runs_stores()`, as a command
+buffer keeps it until the GPU reaches it. `read_through()` reads the table as a shader does (the layout at the top of
+`vk_gpa.c`: `L1_WORD` 16, `L1_N` 65536, `L2_N` 4096, 1024 blocks) and gives the device address an address resolves to,
+0 for the zero buffer. `expect()` checks that every page of a range reads a buffer, or the zero buffer when there is
+none.
+
+- A buffer over three 16 MiB ranges, not aligned to them.
+- A mirror takes the pages with the imported buffer as twin, and gives them back. A new mirror takes the pool's record
+  over by a store the GPU runs after the mirror's first copy (`mirror_create` and `vk_mem_mirror_prologue` of
+  `vk_memory.c`): what is queued before the store reads and writes the imported buffer alone, what comes after it
+  reads the mirror and writes both. Evicted, the pages go back to the imported buffer alone, on a record of their own.
+  A mirror without a twin: the store names it twice.
+- An unmapped range reads the zero buffer at once, and its blocks serve no other range while the GPU may still read
+  the old L1 entries. The same range mapped again before the GPU is done takes its block back, and the callbacks of
+  the first release then find the blocks in use. Released, taken back and released within one submission, 3000 times:
+  one block, whatever the callbacks pending.
+- Addresses that climb through 64 GiB, as the game's allocator hands them out: 20 MiB pools 48 MiB apart, eight alive
+  at a time, 1300 pools, far more ranges than there are blocks.
+- Overlapping imports: the pages of the one that goes return to the other, and their block stays.
+- Every block in use at once: the next range is left out and said so once, the ranges after it and the mapped ones
+  are untouched, and a block given back serves the range that was left out.
+
+## `tests/gpu_choice_check.py`
+
+Builds and runs `tests/gpu_choice_check.c` on `runtime/vk/gpu_choice.h`: which graphics card `gpu_index` and
+`gpu_name` pick when the cards are listed in another order than when the settings were written (a `gpu_index` alone
+that lists a card that is not a discrete one gives way to Auto), and the log lines about the choice, the shader
+preparation's among them (`runtime/vk/vk_device.c` `pick_device()`, `probe_gpu` of `hw_detect.c`, `row_gpu` of
+`runtime/ui/menu.cpp`). It needs a C compiler only: no Vulkan headers, no GPU, no game files. The header is built as
+C++ too, as the menu includes it.
+
+The cards are a laptop's: an RTX 3050 and Intel UHD Graphics, which the loader lists twice. `day1` is the order of one
+day, in which the NVIDIA card is gpu 1 (where a menu's `gpu_index = 1` was written), and `day2` the order of the
+next, with it first.
+
+- `gpuc_has`: the match of `gpu_name` is a part of the name, upper and lower case alike.
+- `gpuc_index`: the position goes unchanged while one of the two settings is unset (an older version's file). With
+  the settings the menu writes, the position and the card's name, the position holds while it lists that card, and the
+  name decides when it does not. A position equal to the count lists no card, and the card after the list (a sentinel
+  that has the name) is never read; a name that only the card after the list has is had by no card listed. The first
+  card with the name is the one named, also when it is gpu 0 and another follows.
+- `gpuc_shown`: the menu's row shows the card the settings pick, which the game picks too. The menu reads an unset
+  `gpu_name` as an empty string, not NULL, and an empty name is no name. Position 0 is a position.
+- `gpuc_legacy_alt`: a `gpu_index` alone that lists a card that is not a discrete one gives way to the discrete card:
+  a position written while the NVIDIA card was gpu 1 or gpu 0 names the Intel graphics in the other order. A discrete
+  card the game cannot use is no card to give way to; the first usable one is. Nothing gives way with no discrete card
+  at all, or for a discrete card chosen over another discrete card. A software renderer chosen by position beside a
+  card gives way; a virtual GPU and a GPU of no known kind are no discrete cards either.
+- `gpuc_resolve`: the position of `gpuc_index`, or Auto when the position gives way. The device choice and the
+  preset's probe both call it, so a preset is chosen for the card the game takes.
+- The lines: the dropped position's. The warning for `gpu_index = 1` on the Intel graphics while the NVIDIA card is
+  listed first (the log of the day it was found had no such line, and said nothing of why the game ran on the Intel
+  graphics); the same for the environment's `gpu_index = 0` on the Intel graphics listed first. Nothing to say when
+  the position lists the NVIDIA card, for Auto whatever it picked, for a `gpu_name` (alone or beside the position the
+  menu wrote with it: the player's own choice of the card, so no warning at each start, nor the advice to set the
+  `gpu_name` that is already set), with no usable discrete card, with two discrete cards and a choice of one of them,
+  and with one card. A software renderer picked by position beside a card is warned about.
+- The card choice line at each start: what the settings hold, agreeing or not; the first position past the list reads
+  `vk: card choice: gpu_index = 3 alone, which lists no card (3 are listed)`. The line for a position alone that gives
+  way to Auto: the position and what it listed, the card taken instead, and how to run on the Intel graphics on
+  purpose.
+- The shader preparation's line: which card its driver cache is built for, and by what. The cases are the ones the
+  laptop's log shows in the update (an index alone that lists the NVIDIA card) and those that would not be: a card
+  that is not a discrete one while a discrete one the game can use is listed (the Intel graphics by its name, kept on
+  purpose, and an index from the environment); a software renderer by its name while two discrete cards the game can
+  use are listed, where the note names the first, as it does for two usable discrete cards with the first at gpu 0; a
+  card picked past the list, or before it, gives no line; no usable discrete card, one the game cannot use, and two
+  discrete cards leave nothing more to say.
+- The laptop's runs, replayed through `gpuc_resolve` and then through a model of the score the pick gives
+  (`pick_device()`: the chosen position 100, discrete 3, integrated 2, other 1; the first of the best), which the test
+  does not share with them: `gpu_index = 1` alone while the NVIDIA card is gpu 0 gives Auto and the NVIDIA card;
+  `gpu_index = 0` alone in the same order stays as written; the same file once the order has the Intel graphics first
+  gives Auto and the NVIDIA card; an empty settings file gives Auto; the Intel graphics chosen in the menu (the name)
+  is kept.
+- A line longer than the buffer is cut, not overrun.
+
+## `tests/handle_census_check.py`
+
+Builds and runs `tests/handle_census_check.c`: the census of the process's handles by kind (`plat_handle_census()` of
+`runtime/platform/win32.c`) sees the handles it is asked about. A census, then 20 events and 5 sections made, a census
+again (Event +20, Section +5, its total within 2 of the process's handle count), the handles closed and a third census
+back at the first figures. Windows only (elsewhere the program says it skipped): the Linux census groups file
+descriptors, which this check does not make. No game files, no GPU.
+
+## `tests/hang_watch_check.py`
+
+Builds and runs `tests/hang_watch_check.c`: the decisions of `runtime/diag/hang_watch.c` on made-up readings a second
+apart (the time, the frames shown so far, focus, and the GPU's issued and done values), with stand-ins for what it
+reads and calls. No game files, no GPU.
+
+- No report while the frames and the GPU move, while the window is not in front or minimized, or while the process
+  ends. One report for a stall of the frames with the window in front, another after progress and a new stall. One
+  for GPU submissions not done, whatever the focus; none for an idle GPU (nothing outstanding), also on a fresh watch.
+  At most three a run.
+- A report writes the log out with `logq_flush` and never with `logq_sync`, which would turn the log thread off.
+- `static_checks()`: `runtime/hle/kernel.c` logs the guest threads' waits (`kern_wait_report()`, `wait_watch()`) only
+  after it released the kernel lock, in the wait report's walk and its two callers: a log call can wait for room in
+  the log queue, and a stalled log thread would then hold every guest thread.
+
+The platform layer is linked with what it calls outside itself as stand-ins (`tests/platform_stand_ins.py`).
