@@ -272,8 +272,241 @@ downloaded or built.
 
 ## `tools/build_game.py`
 
-The developer build of a game version from its generated C (`docs/building.md`). The notes of its code that changed
-since the comments rule are here; the rest of the file still has its comments.
+The developer build of a game version from its generated C ([building.md](../building.md)): it compiles the generated
+C for one game version and links it with the runtime into `build/<version>/nx2saria.exe`. It writes
+`build/<version>/build.ninja` and runs MSYS2 UCRT64 Ninja on it. Ninja keeps the build incremental: a chunk is
+recompiled only when it, a header it includes or its flags change. Standard library only.
+
+On Linux the same steps make `build/<version>/nx2saria` with the clang, lld and ninja on `PATH` (or the clang and lld
+in `--toolchain DIR/bin`): the runtime's `*_sdl.*` and `platform/linux.c` take the place of its `*_win.*`,
+`platform/win32.c` and `nx2saria.rc`, the libraries are the system's (Vulkan, SDL3, Opus, dav1d, libvpx, zstd;
+libstdc++ static), and the executable finds a `libSDL3.so.0` beside it first (rpath `$ORIGIN`). building.md lists the
+packages.
+
+```
+.venv\Scripts\python tools\build_game.py                     # generated/v121 -> build/v121/nx2saria.exe
+.venv\Scripts\python tools\build_game.py --modules subsdk0   # one module (links if it has no calls into others)
+.venv\Scripts\python tools\build_game.py --jobs 8
+.venv\Scripts\python tools\build_game.py --out build/v121-t2   # a separate build directory
+.venv\Scripts\python tools\build_game.py --toolchain toolchain/llvm-mingw-<version>/llvm-mingw-<version>-ucrt-x86_64 \
+    --out build/v121-llvmmingw                                    # llvm-mingw instead of MSYS2 UCRT64
+```
+
+Every runtime source is compiled. `build/<version>/modules.c` carries the layout, the linked function tables, the
+expected SHA-256 of each ExeFS file (`tools/data/expected-<display version>.json`) and the default game paths
+(`--exefs`, `--romfs`, `--profile`), which `nx2saria.exe` uses unless its own command line names others. `--exefs` and
+`--romfs` default to `extracted/<version>` in the work folder: the `[work]` `dir` of `config.local.toml`, where
+`tools/extract.py` writes them, else `build/`. `tools/romfs_index.py` writes `build/<version>/romfs-index.bin` and
+`romfs_config.h` from the RomFS directory's `index.json` (`runtime/hle/romfs.c` reads the index next to
+`nx2saria.exe`). Without that `index.json` the build stops: the exe would stop at start. `--no-romfs` builds it anyway.
+
+**Private builds reuse the main build's objects.** When `--out` differs from `build/<version>`, the main build's
+generated objects are up to date (checked with a dry run of its `build.ninja`) and every header they include from
+`runtime/` is byte-identical in `--runtime` (the list comes from the main build's Ninja deps log), `build_game.py`
+hardlinks those objects into `<out>/obj` and compiles only the runtime. A hardlink is a snapshot: clang and Ninja
+replace an object by renaming a new file over it, so a later main rebuild leaves the linked copies alone. Otherwise (a
+header differs, a main object is missing or stale, another `--gen`) it compiles everything and prints one line saying
+why. `--full-build` skips the check.
+
+**Object manifest.** A flipped bit in an object written by an earlier build stays forever, because Ninja rebuilds an
+object only when its inputs change, and forks hardlink the object into every private build. So each build dir keeps
+`obj/objects.sha256` (SHA-256, size and mtime of every object it compiled). After Ninja finishes and before the link,
+`build_game.py` hashes the objects, compares each one whose size and mtime match its manifest entry, and records the
+objects Ninja just rebuilt (new mtime). A mismatch deletes the object, Ninja recompiles it, and the build prints the
+summary line. A fork checks the hardlinked generated objects against `build/<version>/obj/objects.sha256` (read-only;
+a bad shared object stops the fork and asks for a main build run, which recompiles it and breaks the shared inode).
+
+**Memory** ([build-memory.md](../build-memory.md)). Ninja runs up to `--jobs` compiles at once (default one per
+processor), and each compile goes through the memory gate (`tools/memgate.py` `wrap`): it starts only when the free
+memory, less what the running compiles may still take and less a reserve, holds that compile's estimated peak. The
+estimates live in `<out>/memgate/estimates.json`: each object's peak measured in earlier builds, else a size model
+from the lift manifest's `chunk_info`, else 400 MiB (C) or 1 GiB (C++) for a runtime source. Before Ninja,
+`build_game.py` writes the gate's settings and every object's need into `<out>/memgate`; after the compile phase it
+reads the peaks the wrappers recorded, learns them and prints a summary (held compiles, the largest peaks, the peak of
+all compiles together, the least free memory, how close the estimates came). `--no-mem-gate` (or
+`NX2SARIA_BUILD_MEM_GATE=off`) starts compiles by the job count alone, and then nothing limits the compiles by memory;
+the wrappers still measure. Each build folder has its own gate, so two builds running at once see each other only
+through the free memory. The wrapper's command names this Python and `tools/memgate.py` (relative to the root where
+they lie below it): a build with another Python, and the first build after the wrapper was introduced, compile every
+object again. Under `SCCACHE` the compiles run in sccache's server, out of the wrapper's reach, so `build.ninja`
+leaves the wrapper out and the gate is off. Each phase also reports its wall time and the peak memory of its processes
+(Windows job object accounting: committed private bytes).
+
+**`--toolchain DIR`** builds with an llvm-mingw tree (`DIR/bin/clang.exe`) instead of MSYS2 UCRT64 clang. Ninja still
+comes from MSYS2. The libraries and headers MSYS2 supplies (Vulkan, SDL3, Opus, dav1d, libvpx, VMA) then come from
+`--deps DIR` (default `toolchain/deps-mingw`: `include/`, `lib/` with the import libraries, `libdav1d.a` and
+`libvpx.a`, `bin/` with the DLLs), and the C++ runtime is libc++ from llvm-mingw. Such a build never reuses another
+build's generated objects.
+
+The module's constants and what their values are for:
+
+- `ctypes.wintypes` is imported on every OS for the job-object structures (`run_measured()`); importing it works
+  everywhere.
+- `MAIN_ROOT`: in a git worktree (`tools/worktree.py`) `build/` and `generated/` are junctions into the main checkout,
+  and `resolve()` follows them. `MAIN_ROOT` is where they land, so resolved paths still print and compare relative to
+  a root.
+- `GEN_FLAGS` are the flags for generated code, plus `-march` for the FP/SIMD lowering. `--cpu v2` replaces the level
+  for CPUs without AVX2/FMA; `runtime/fma.c` then supplies the correctly rounded fma the lowering needs
+  (`runtime/simd.h`).
+- `PGO_NAMES`: profile-guided optimisation (`--pgo`). Both modes compile the generated code at `-O2`, the level the
+  profile's inlining and hot/cold layout work at. A static function's profile name carries its source path by default;
+  the base name alone keeps the names equal between the training build and a build from another tree (a worktree, an
+  install). `PGO_INPUT` is the `.profdata` of `--pgo FILE`: every compile depends on it, so a new profile rebuilds
+  them.
+- Windows flags. `-D_WIN32_WINNT=0x0A00` is Windows 10, the port's minimum: MSYS2's headers default to it,
+  llvm-mingw's (the release toolchain) to Windows 7, which hides the per-monitor DPI functions
+  `runtime/gfx/gfx_window_win.c` and `runtime/diag/dpi_probe_win.c` call. `-Xlinker` passes the map path as one
+  argument; `-Wl,` would split it at any comma in the build dir path. The map (`nx2navi.map`) feeds
+  `tools/prof_report.py`. `LINK_LIBS`: the Vulkan back end; libvpx and libdav1d static (movies); libzstd static
+  (`runtime/gfx/resolution.c`). `VMA_INCLUDE` holds `vk_mem_alloc.h`, MSYS2 package `vulkan-memory-allocator`.
+- Linux flags. `-no-pie`: the lifted modules' function tables (hundreds of thousands of pointers) need no load-time
+  relocation. `$ORIGIN`: a `libSDL3.so.0` next to the executable comes before the system's (the release's portable
+  folder). `-Xlinker` for the map path as on Windows. `VMA_INCLUDE` is `/usr/include`: Arch (AUR)
+  `vulkan-memory-allocator`, Debian `libvulkan-memory-allocator-dev`.
+- `VMA_FETCH`: without a system `vk_mem_alloc.h`, the header pinned here (VMA 3.4.0, the version MSYS2 packages) is
+  fetched once into `toolchain/vma`: one MIT header (`THIRD_PARTY_NOTICES.md`), checked against its hash.
+- `LLVM_LINK_LIBS`: `--toolchain`, an llvm-mingw tree. The libraries, headers and DLLs MSYS2 supplies come from the
+  deps directory instead. `TOOLCHAIN_BIN` is the llvm-mingw `bin` directory, set by `main()` for `--toolchain`; `DEPS`
+  the deps directory of an llvm-mingw build.
+- `WINDRES` compiles `runtime/nx2saria.rc`, the manifest of `nx2saria.exe`. `WINDRES_PP`: GNU windres runs its
+  preprocessor through `cmd.exe`, and left to find it names the gcc beside it by full path: once that path and the
+  `.rc`'s both hold a space, `cmd.exe` drops the outer quotes and splits the command at the first space. gcc by bare
+  name (Ninja's `PATH` starts with UCRT) and the `.rc` by its path below `MAIN_ROOT` keep the command line free of
+  spaces. llvm-windres (`--toolchain`) starts its preprocessor without a shell and keeps its own.
+- `DISPLAY_VERSIONS`: `tools/data/expected-<display version>.json` for each build version name.
+- `RUNTIME`: `--runtime`, a copy of `runtime/`, lets a task build without touching the shared tree.
+- `RUNTIME_DIRS`: the runtime's folders by subsystem ([architecture.md](../architecture.md), "Runtime folders"): their
+  sources compile as the top level's do, and each is on the include path of the runtime's sources, which include one
+  another's headers by name. The lifted C includes only headers at the top of `runtime/`, so its command (`genflags`)
+  does not name them. `tools/make_game.py` has the same list (`tests/runtime_dirs_check.py`).
+- `GATE_DIR`: `<out>/memgate`, the gate's state folder (`tools/memgate.py` `prepare_state()`) and `estimates.json`.
+  `DEFAULT_NEED_C` (400 MiB) is a runtime source's need until its peak has been measured once. `NINJA_GRACE` is the
+  seconds Ninja gets to stop its compiles after Ctrl+C before it is killed.
+
+### `on_path()`
+
+The name on `PATH`, else a path that does not exist (the tool check in `main()` then names it).
+
+### `set_cpu()`
+
+Targets x86-64-v3 (the default) or x86-64-v2. `RT_CPU_LEVEL` lets `runtime/main.c`'s self-test check the same
+instruction set the build was compiled for.
+
+### `set_pgo()`
+
+`--pgo gen`: instrument the generated code and the runtime; `nx2saria.exe` adds its counts to
+`out/pgo/default_<id>.profraw` every minute and at exit (`runtime/platform/win32.c`), across runs. `--pgo FILE`:
+compile with that merged profile (`tools/pgo.py` `merge`). Functions the profile never saw run are optimised for size.
+
+- The profile folder is given as an absolute path: the instrumented exe resolves the directory against its own working
+  directory.
+- `-fprofile-generate` on the link line links `clang_rt.profile`.
+- The warnings turned off with a profile: `unprofiled` is chunks the training never entered; `out-of-date` and
+  `backend-plugin` are functions whose code changed since the training, which then compile without a profile.
+
+### `vma_include()`
+
+The directory holding `vk_mem_alloc.h`: the system's, else `toolchain/vma`, fetched there on first use.
+
+### `system_vulkan_version()`
+
+`VK_HEADER_VERSION` of the `<vulkan/vulkan_core.h>` this compiler finds by itself (its own search path, `CPATH`
+included), 0 when it finds none.
+
+### `vulkan_include()`
+
+A build with the system's own headers (Linux without `--deps`): the folder to put ahead of them for
+`<vulkan/vulkan.h>`, or `None` when the system's serve. The runtime names Vulkan extensions newer than the headers
+many distributions package, and every file that does fails to compile there (`tools/vulkan_pin.py`). So:
+`toolchain/vulkan-headers` when it holds the pinned release (a kit carries it; a checkout once it was fetched), else
+nothing when the system's headers are at least that release, else the pinned release, fetched there once. Windows
+takes MSYS2's headers and returns `None`.
+
+### `below_root()`
+
+Resolved `p` relative to `ROOT`, else to `MAIN_ROOT` (the same relative path through the worktree's junctions), else
+absolute.
+
+### `ninja_path()`
+
+A path for a build line: relative to the repository root where possible, forward slashes, Ninja-escaped.
+
+### `cmd_arg()`
+
+`s` for a Ninja command line: Ninja-escaped, and quoted when it holds a space (a user or folder name), as clang and
+lld split their Windows command line at unquoted spaces.
+
+### `read_layout()`
+
+`[(name, base, size)]` from `layout.json` (same format as `recomp/layout.py` `read()`, without its NSO dependency).
+
+### `chunk_files()`
+
+The C files of one module: the chunks listed in `<mod>/manifest.json`, then `<mod>_table.c`.
+
+### `write_if_changed()`
+
+Keeps the mtime of an unchanged file so Ninja does not rebuild from it. The text is written as UTF-8 with `\n` line
+ends: Ninja and clang read UTF-8, and paths may be non-ASCII.
+
+### `copy_romfs_patches()`
+
+`nx2saria.exe` loads `romfs-patches` beside `romfs-index.bin` (`runtime/hle/romfs.c` `overlay_init()`).
+`tools/make_romfs_patches.py` writes them into `build/<version>` only, so a build in another directory ran without the
+60 fps overlay (the quick menus' captured background turned black). This copies them when their manifest differs;
+`romfs-patches-xbox`, `romfs-patches-xbox-label` and `romfs-patches-pc` (the same with Xbox or keyboard and mouse
+button prompts, `make_romfs_patches.py --prompts`) the same way when they were made.
+
+### `work_dir()`
+
+The work folder: the `[work]` `dir` of `config.local.toml` (relative to the checkout), where `tools/extract.py` writes
+`extracted/`; `build/` without the file or the key.
+
+### `other_os()`
+
+A runtime file for another OS: Win32 ones (`*_win.*`, `platform/win32.c`, `nx2saria.rc`) off Windows, the SDL
+window's (`*_sdl.*`) and `platform/linux.c` on Windows.
+
+### `runtime_sources()`
+
+Every `runtime/*.c`, `*.cpp`, `platform/*.c`, `*.rc`, the `*.c` and `*.cpp` of each `RUNTIME_DIRS` folder and Dear
+ImGui of this OS except the names in `skip`, so a task adds a file without editing this script.
+
+### `runtime_include_dirs()`
+
+The include folders of the runtime's sources: `runtime/` and each `RUNTIME_DIRS` folder of `rt` (default `RUNTIME`).
+
+### `runtime_object()`
+
+`obj/runtime/<path below runtime>.o`, so `platform/win32.c` cannot collide with a top-level `win32.c`.
+
+### `module_glue()`
+
+C for `build/<version>/modules.c`: the layout table, the linked modules' function tables (`dispatch.h`), the expected
+ExeFS hashes, the game version and the default game paths (`host.h`). The version number is the display version
+without its dots (1.4.3 becomes 143). `rt_app_pool_bytes = 0xCD500000` is the Switch 1 retail application pool.
+`rt_nvn_api_version = {55, 15}` is NVN1: the game's `main` requires major 55, minor >= 15.
+
+### `port_version()`
+
+`VERSION` at the root: the repository's semver, or in a release folder the release string.
+
+### `sccache()`
+
+Whether a compiler cache fronts clang (`SCCACHE`). Its server runs the compiles, out of the wrapper's process tree, so
+the gate can neither measure nor pace them: `build.ninja` then leaves the wrapper out.
+
+### `interpreter()`
+
+This Python for a Ninja command: relative to the root when it lies below it (the usual `.venv`), else absolute. Not
+resolved: a venv's python is a link whose own path selects the venv.
+
+### `gate_command()`
+
+The memory gate's wrapper ahead of a compile command in `build.ninja`: this Python running `tools/memgate.py` `wrap`
+with the state folder `<out>/memgate` and the object (`$out`) as the name its need is filed under; `''` under
+`SCCACHE`. It holds nothing that changes between runs, and its paths are relative to the root where they can be;
+another Python still changes it, and with it every compile command.
 
 ### `runtime_compiles()`
 
@@ -289,6 +522,133 @@ The `build.ninja` text and the object lists per module. With `prebuilt` the gene
 `runtime/third_party/ffx_api/ffx_api.h` declares its entry points `__declspec(dllexport)` without a condition, so
 `runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_fg.cpp` do not compile on Linux without it (`tools/make_game.py`
 `runtime_cmd()` adds the same flag).
+
+- The runtime's include path ends with the build folder (`romfs_config.h`), the folder of `vk_mem_alloc.h` (with the
+  deps headers in an llvm-mingw build) and Dear ImGui's (`imgui.h`).
+- `vulkan_include()` is not asked when `DEPS` is set: the deps carry the Vulkan headers themselves. Its folder goes
+  first on the path, so that no other folder answers for `<vulkan/vulkan.h>` (VMA's may be `/usr/include`).
+- A compiler cache (sccache) may front clang: every lift rewrites the generated chunks with the same contents, so the
+  cached objects save the compile step on the next build.
+- windres writes no depfile: the files `nx2saria.rc` embeds are listed by hand on its build line.
+
+### `main_objects()`
+
+(`{relative object path: the main build's object}`, `''`) when the main build's generated objects can stand in for
+ours, else (`None`, why). That holds when the main `build.ninja` compiles the same sources with the same flags, its
+objects are up to date, and every header they include from `runtime/` is byte-identical in `rt_dir`. Ninja's dry run
+runs in the main checkout: the main `build.ninja` is relative to it, and the worktree's `runtime/` files carry newer
+mtimes that would make every object look stale. Header equality is checked byte for byte afterwards.
+
+### `link_objects()`
+
+Hardlinks the main build's objects into `out`. Clang and Ninja replace an object by renaming a new file over it, so a
+link keeps the old bytes after a main rebuild. Copies where linking fails.
+
+### `unlink_shared()`
+
+Drops generated objects still hardlinked to another build, so the next compile writes a new file. `main()` calls it
+only for a fork: forks hold hardlinks to the main build's objects; the main build keeps its own.
+
+### `read_manifest()`
+
+`{object path below obj/: (sha256, size, mtime_ns)}`; empty when the file is missing.
+
+### `check_objects()`
+
+Compares objects with the manifest `man`. An object whose size and mtime match its entry is hashed and must equal it;
+any other object was just (re)built, so with `record` its hash enters `man`. Returns (verified, bad, unrecorded): the
+objects with a wrong hash, and with `record` false the ones without a current entry.
+
+### `verify_objects()`
+
+Verifies every object before the link, as "Object manifest" above describes. `borrowed`: the hardlinked generated
+objects of `main_out` (checked against its manifest, never recorded); the others belong to `out`.
+
+### `chunk_costs()`
+
+The memory gate works on what each compile needs, before Ninja, and what it took, after. This is
+`{file name: (cost, switch_fn)}` of one module's generated C, from its manifest's `chunk_info` (`recomp/gen.py`):
+"cost" (the bytes of ordinary C the compile is worth) and "switch_fn" (the bytes of the largest function with a
+jump-table branch, which drives the compiler's peak) when given, else "bytes" and 0. Files it does not list are absent
+(the caller takes their size).
+
+### `Compile`
+
+One compile through the gate: its source, the source's size, its cost and `switch_fn` (the size model's inputs; 0 for
+a runtime source) and the need to take until it has been measured (`None`: the size model's).
+
+### `gate_compiles()`
+
+`{object name as the wrapper sees $out: Compile}` of every compile `build.ninja` runs through the gate. `mods`: the
+generated C per module (compiled unless prebuilt); `runtime`: `runtime_compiles()` (the `.rc` goes to windres, not the
+gate).
+
+### `gate_needs()`
+
+(`{name: bytes}` for `needs.json`, `Counter` of how each need was estimated).
+
+### `gate_off_why()`
+
+Why the gate is off (`--no-mem-gate` or the environment variable's setting), `''` when it is on.
+
+### `gate_start_line()`
+
+The line before Ninja on the memory gate.
+
+### `learn_peaks()`
+
+Records in `estimates` the peak of each successful compile in `peaks` (`tools/memgate.py` `read_peaks()` lines) whose
+object is in `todo`. Returns `[(name, peak, seconds)]` of those.
+
+### `gate_summary_lines()`
+
+The compile phase's closing lines on memory, from the wrappers' `peaks.jsonl` lines (`peaks`), the compiles recorded
+from them (`measured`: `learn_peaks()`), the estimates and the `TreeSampler` that watched the phase. `stats()` gives
+peak / estimate; the line says estimate / peak, so the lowest is the worst under-estimate.
+
+### `TreeSampler`
+
+Every `poll` seconds between `start(pid)` and `stop()`: the most memory resident in the process tree under `pid`
+(Ninja, the gate's wrappers and the compilers) and the least free memory, for the compile phase's summary. A reading
+that fails (any exception in `TreeSampler.sample()`) only loses one sample.
+
+### `run_measured()`
+
+Runs `cmd` in its own Windows job object, which gives the peak memory of a process tree. Returns (exit code, seconds,
+peak bytes of one process, peak bytes of all). Off Windows: the largest resident set of one child process
+(`ru_maxrss`, KiB on Linux), and 0 for all of them (no job accounting). `on_start(pid)` is called once the process
+runs.
+
+- Ctrl+C reached Ninja too (same process group); anything else asks it to stop the same way. Ninja then ends its
+  compiles; it is killed if it has not stopped within `NINJA_GRACE`.
+- The job has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so Ctrl+C stops every compile.
+- The process starts suspended until it is in the job, so the compilers it starts are counted from the first one.
+
+### `pe_sections()`
+
+`{section name: virtual size}` and `SizeOfImage` of a PE32+ file.
+
+### `elf_sections()`
+
+`{section name: size}` of the allocated sections (`SHF_ALLOC`, flag 2) of an ELF64 file, and the extent they span in
+memory.
+
+### `objdump_tool()`
+
+The disassembler for `tools/check_isa.py`: llvm-objdump of `--toolchain`, else MSYS2's or the one on `PATH`.
+
+### `main()`
+
+- `DEPS` is set for `--toolchain` on Windows (default `toolchain/deps-mingw`) and for `--deps` on Linux; Linux takes
+  `--deps` only, never `deps-mingw`.
+- A Linux build with `--deps` is a release: Opus, dav1d, libvpx and zstd go into the executable (`-l:lib<name>.a`), so
+  it needs no more than libc, Vulkan and the `libSDL3.so.0` beside it.
+- `tools/build_shaders.py` `build()` runs first for the runtime's own shaders: the headers the sources include, when
+  missing or stale.
+- The estimates only help the next build: a file that cannot be written must not stop this one.
+- With `--cpu v2` the runtime's objects go through `tools/check_isa.py` `check_objects()`: inline assembly, target
+  attributes and intrinsics pass `-march=x86-64-v2` by, and one `vmovdqa` of a YMM register stops a CPU without AVX.
+- The DLLs copied beside `nx2saria.exe` are the dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL).
 
 ## `tools/make_appimage.py`
 
