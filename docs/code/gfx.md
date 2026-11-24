@@ -1278,3 +1278,513 @@ changes meanwhile is counted as it was or as it is.
 compressed, `gfx_shader_ram()`) and reflection bytes (kept for the life of the process), the remembered failures, the
 translation and load queues, and the translator processes. `cache_lock` is held shared: lookups go on, a translator's
 insert waits for the walk.
+
+## `runtime/gfx/gfx_present.c`
+
+The Vulkan surface and swapchain, the present blit, the 60 Hz vsync thread and the focus: the half of the window that
+knows no window system (the other half is `gfx_window_win.c` with Win32 or `gfx_window_sdl.c` with SDL, through
+`runtime/gfx/gfx_wsys.h`). The file also holds the queue lock, the steps of an orderly end, the movie overlay and the
+frame generation presenter. The licence notice in its third and fourth lines stays in the code.
+
+Threads: the window thread (the back end's) owns the window and never runs guest code. The vsync thread signals the
+bound system events. Presents come from any host thread (the back end's present worker) and take `g_pl`; every queue
+submission takes the recursive queue lock (`vk_queue_lock()`). The swapchain is rebuilt lazily: a resize only marks it
+dirty (`gfx_window_mark_dirty()`), the next present (or `gfx_window_resize()`) rebuilds it.
+
+The in-game menu (`runtime/ui/menu.h`) draws over the game image in the present's command buffer, after the blit. The
+window's size and fullscreen state are the settings `NX2SARIA_WINDOW_SIZE` and `NX2SARIA_FULLSCREEN`, which the back
+end applies at start and whenever a `cfg_set` changes them (`window_settings_live()`, then
+`gfx_window_apply_settings`). The window keys: [controls.md](../controls.md#window-keys).
+
+`NG_MAX` (5) is the most generated frames per rendered one (DLSS Frame Generation through NGX, 6x).
+
+### `vk_queue_lock()` `vk_queue_lock_raw()` `vk_queue_trylock_raw()` `vk_queue_unlock()`
+
+Taking the queue lock hands the replay's held submissions to the queue first (`runtime/vk/vk_sync.c`, submit
+batching), so whatever the holder submits or waits for comes after them in queue order.
+
+`NX2SARIA_LOCK_TIME` also names who holds it: a hold of `QL_HOLD_NS` (5 ms) or more goes into the frame-time summary
+under the site that took the lock (`perf_qlock_hold` in `perf.c`), beside the waits for it. A present had waited 48 ms
+for the lock with no holder named anywhere. The taking functions are not inlined, so that their return address is the
+caller's site, which is also the site the waits are reported under (`plat_rmutex_lock_at`). `ql_site` and `ql_t0` are
+written by the holder only, at the outermost take and release.
+
+### Window state shared with the back end
+
+`g_dirty`: the window was resized and the swapchain is stale. `g_restart`: `gfx_window_request_restart()`, closing the
+window starts the game again. `g_start_lock` guards `gfx_window_start()` and the vsync start.
+
+### `gfx_window_focus_changed()`
+
+The window gained or lost the focus: the game hears it as `nn::oe`'s focus state and a notification message
+(`oe_set_focus` is pinned to 1 by `NX2SARIA_ASSUME_FOCUS` inside). The line carries the local wall time with its date,
+the first in the log: when a GPU hang takes the whole system down, the log ends without an error, and this time set
+against the driver's entry in the Windows event log (nvlddmkm 153, Display 4101) tells whether an alt-tab or an overlay
+came before the hang or followed it. The lines that mark a stall carry the time of day alone (`log_stamp` in
+`log_stall.c`); the date is this line's.
+
+On a loss of focus the session's reports and the log are written now (`perf_focus_lost` in `perf.c`,
+`rt_log_focus_lost` in `main.c`), should the process be ended from outside next.
+
+### `rt_exit_begin()` `rt_exit_started()`
+
+The orderly end: the window's close (`gfx_window_closed()`), the guest's ExitProcess (`runtime/hle/svc.c`) and the end
+of a `--seconds` run (`rt_frame_presented` in `runtime/boot.c`). Once per process, whichever comes first. The window's
+close and the console's (`console_closed` in `main.c`) can come together, or the guest's ExitProcess beside either:
+each ran its own sequence, so two pipeline saves and two frame-time summaries were written while both raced.
+`rt_exit_begin()` returns 1 for the first caller; a caller on another thread waits there for good while the first ends
+the process; 0 for the first caller's own thread coming back, which goes on with the sequence it is in. The window's
+close runs on a thread of its own (`exit_start` in `runtime/gfx/gfx_window_win.c`); the window thread runs the sequence
+itself, and may handle a message inside it, only when that thread could not be made.
+
+`exit_tid` is the thread that runs the orderly end, 0 before one started. The first caller calls `rt_log_ending`: the
+end's lines reach the log file past its cap (`log_sink` in `main.c`).
+
+### `rt_exit_steps()`
+
+What every orderly end saves and puts back, in this order. What a kill of the process must not lose and what is quick
+comes first: Windows ends a closed console about 5 s after the close, a session's end and an "End task" sooner, and the
+pipeline save alone can take that long (`vk_pipeline_save_exit` waits up to 5 s for the builds that run). So a Commit
+in flight is finished, RivaTuner Statistics Server's profile and the controller's rumble are put back, the settings,
+the boot prebuild's marker, the frame-time summary and the memory ranking are written, and the log reaches the disk
+before the pipeline save starts. The final save flush comes last: the game's threads run until `plat_exit`, and a
+Commit the game starts during the pipeline save is still taken and waited for. `RT_EXIT_SETTINGS`: the settings file
+gets the menu's changes (not in a scripted `--seconds` run, whose end is no player's); the comment named the file
+`nx2navi.ini`, and it is `nx2saria.ini` now.
+
+The steps:
+
+1. `fs_save_wait`: a Commit already under way is finished, nothing refused.
+2. `rtss_limit_restore`: the game's frame limit out of the profile; `rtss_limit.c` keeps it out while frames go on
+   during the pipeline save.
+3. `input_rumble_hd_stop`: a controller on HD rumble gets the neutral value; nothing renews or stops it after the
+   exit.
+4. `cfg_save`, with `RT_EXIT_SETTINGS`: a menu change saves 400 ms later on the render thread (`option_rows.cpp`).
+5. `vk_pipeline_prewarm_marker_clear`: the game ended while the boot still built its pipelines, which is not the
+   driver crash the marker is there to catch. Left in place, the next start took it for one and every later start
+   skipped the prebuild (`pm_skipped` in `runtime/vk/vk_pipeline.c`).
+6. `prof_write`: "frametime: exit" and the stutter map; `plat_exit` runs no atexit handlers.
+7. `session_summary_exit`: `logs/session-summary.json`, from the session's frame times `prof_write` closed.
+8. `vk_mem_exit_log`: the memory report's ranking of the session.
+9. `heap_retry_exit_log`: the model heaps' retries of the session.
+10. `changebank_hold_exit_log`: the neighbouring map preloads held.
+11. `camera_clearance_exit_log`: what the camera's clearance loaded.
+12. `cheats_exit_log`.
+13. `vk_exec_mfb_batch_exit_log`: the mesh fallback batch's totals (`runtime/vk/vk_exec_draw.c`), with it on.
+14. `logq_flush`: the lines so far on the disk before the slow part; the queue stays on.
+15. `vk_pipeline_save_exit`.
+16. `fs_save_flush`, last: a Commit started since `fs_save_wait` finishes, and one after this is refused.
+
+### `gfx_window_closed()`
+
+The window was closed: the process ends with it, once a save Commit still running in the background is done. After
+`gfx_window_request_restart()` the executable then starts again with the same command line and environment
+(`plat_restart`), and the new process waits until this one is gone (`main.c`) before it moves the log and opens the
+RomFS and the saves. `NX2SARIA_REEXEC` is cleared for it: the new process counts its own address-space retries
+(`runtime/memory.c`).
+
+### `gfx_cfg_fullscreen()` `gfx_cfg_window_size()`
+
+`NX2SARIA_FULLSCREEN=1`: a borderless window over the monitor. `NX2SARIA_WINDOW_SIZE=<w>x<h>`: the client area of the
+window (the swapchain follows the window; the game image is scaled to it). A value that cannot be parsed or is out of
+range gives the setting's default (1920x1080 when that cannot be read either).
+
+### `gfx_window_set_refresh()` `gfx_window_refresh_hz()`
+
+The refresh rate of the window's monitor (`NX2SARIA_FPS_LIMIT=display`), measured by the back end's window thread when
+the window opens, lands on another monitor or the display mode changes; readers take the stored value. `g_rate_mhz`
+holds it in millihertz, 0 unknown.
+
+### Swapchain and present state
+
+All under `g_pl`.
+
+- `g_sc_hdr`: HDR10 (`NX2SARIA_HDR`, `runtime/vk/vk_hdr.c`): PQ code values in Rec. 2020.
+- `g_scaler`, the last present: 0 the game image 1:1, 1 scaled by the blit, 2 by FSR, 3 shrunk by the blit and
+  sharpened by RCAS.
+- `g_sc_view`: the colour attachment views for the menu overlay.
+- `g_flip_on`: `vk_present_blit()` submitted the blit of swapchain image `g_flip_idx`, and `vk_present_flip()`
+  presents it; `g_flip_frame` is that blit's game frame, when a driver's low latency follows it (`vk_lowlat.c`), else
+  0.
+- `g_pic` is what `gfx_picture_rect()` returns.
+
+### `pts_begin()` `pts_end()` `pts_read()`
+
+The GPU timeline (`NX2SARIA_TRACE=perf`, `vk_gtl_note` in `runtime/vk/vk.h`): a timestamp pair per present slot around
+the present's command buffer, read once the slot's fence is waited for again (`pts_read()`: then its last present is
+done). The gap before it shows a wait for the acquired image (the submission waits on the acquire semaphore) as idle
+time with work queued before presents. `pts_state` is 0 not set up, 1 on, -1 off; `pts_on` says the slot's pair was
+written by its last present; `pts_sub` when that present went to the queue.
+
+### The flight recorder's thumbnails
+
+`NX2SARIA_FLIGHT` (`flight.c`; under `g_pl`): each present also blits the swapchain image down into slot
+`frame % g_th_n` of a host-visible ring. A slot's tag names the frame it holds complete; recording a new frame clears
+the tag first, and the tag is set once the fence of that present has signalled. `g_th_frame` is the frame of the next
+`vk_present_image()` call (`vk_thumbs_frame()`); `g_th_tag` is per ring slot; `g_th_pending`, per fence slot, the
+frame whose thumbnail its submission writes.
+
+- `ensure_thumbs()`: the ring and the blit target in the swapchain's format; allocated on the first present, the image
+  again when the swapchain format changes. A failure turns the thumbnails off for the session. An HDR10 swapchain blits
+  into RGBA8: its PQ codes, flat-looking but readable as bytes. The old image can be destroyed at once: the previous
+  present's fence was waited for, so it is idle.
+- `record_thumb()`: `dst` (TRANSFER_SRC, the swapchain image just written) to the thumbnail image to the ring slot of
+  `g_th_frame`. The slot's tag is cleared under `g_pl`, so `vk_thumbs_read()` no longer hands the slot out.
+- `thumb_cells()`: the flight recorder's flash trigger (`flight_cells` in `flight.c`) gets the cell means of the
+  frame's thumbnail, which has just completed in its ring slot (`g_pl` held). `flash_cells` reads a quarter of the
+  slot's pixels, about 15 us measured on ordinary memory (`tests/flight_flash_check.py time`); the ring is mapped host
+  memory allocated for random access (`ensure_thumbs()`), which is cached memory where the device has it, as
+  `vk_thumbs_read()`'s copy of a whole slot relies on.
+
+### `vsync_main()` `gfx_vsync_bind()`
+
+In `vsync_main()`, when the process stalled (more than 100 ms past a tick's due time) the schedule restarts, with no
+catch-up burst.
+
+`gfx_vsync_bind()` lists a vsync event the vsync thread signals. With the list full, an event the game destroyed since
+(`kern_system_event_live` 0: its state byte is 0 or its memory is gone) gives its slot, which also stops the vsync
+thread signalling it; the list ends the process only when all 16 are live. Each new listing is logged, so a long
+session's log shows how often the game asks for a vsync event at a new address.
+
+### `window_settings_live()`
+
+On the present path (`g_pl` held): a settings change (`cfg_version`) reaches the window thread, which applies a changed
+size or fullscreen; a changed `NX2SARIA_VK_PRESENT` or `NX2SARIA_HDR` rebuilds the swapchain at this present.
+`g_sc_hdr_wanted` is `vk_hdr_wanted` when the swapchain was made (`create_swapchain()`), `g_sc_ll_wanted` is
+`vk_lowlat_swapchain_wanted` then, and `present` the `NX2SARIA_VK_PRESENT` the swapchain was made with.
+
+- Frame generation that failed (`fail` in `runtime/vk/vk_fg.cpp` makes `vk_fg_wanted` 0 with no setting changed): its
+  swapchain and both contexts go at the next present, not when some other setting moves. Only this way round at every
+  present: a frame generation swapchain wanted and not made is tried again at a settings change, not at every frame.
+- Frame generation switched: its own swapchain.
+- HDR switched in the menu: a swapchain of the other format. Compared with what the swapchain was made for, not with
+  what it got: on a display without HDR10 the setting stays on and the swapchain SDR, and that is settled.
+- NVIDIA's low latency switched in the menu (`vk_lowlat.c`): its mode is asked for when the swapchain is made.
+
+### `pick_present_mode()` `gfx_window_present_mode()`
+
+`g_present_got` is the `NX2SARIA_VK_PRESENT` value of the mode the swapchain got; "" before one.
+
+Mailbox missing (several AMD drivers): plain FIFO holds a frame that misses a refresh to the next one, and the game,
+paced at 60 on a 60 Hz display, drops to 30 at every slow frame. Relaxed FIFO shows a late frame at once (a tear that
+once) and waits for the refresh otherwise; immediate where that is missing too. The mode last logged is kept, so a
+change from the menu shows in the log.
+
+### `gfx_window_hosted_ns()`
+
+`kern_now_ns` when the newest host present returned with its picture taken (`flip_locked()`); 0 before the first. A
+minimised window and a frame hold present nothing, so it ages: RTSS, which holds the frames inside the host present,
+then holds none, and the game's pacer takes the limit back (`rtss_pace_period` in `rtss_decide.h`).
+
+### `flip_locked()`
+
+Queues the present of a blit `vk_present_blit()` left waiting (`g_pl` held). A swapchain rebuild and the next blit
+flush it first; the device release drops it.
+
+A driver's low latency (`vk_lowlat.c`): its present stage or marker right before the present of a game frame it
+follows, the frame's number on the present where the plain swapchain takes one, and the end marker after it. Nothing
+for any other present (the boot screen, a frame the mode did not start, the mode off).
+
+### `drop_swapchain_locked()`
+
+Destroys `g_sc` (when there is one: the frame generation paths destroy theirs themselves) with its image views and its
+images' render-done semaphores; the caller holds the queue lock and the device is idle. The swapchain goes before the
+semaphores: a present it still holds may wait on one of them.
+
+### `swapchain_unusable()`
+
+The swapchain `create_swapchain()` just made cannot be used: its image list (`runtime/gfx/gfx_guard.h`
+`gfx_sc_images_ok()`) or a semaphore for one of its images failed. A present with it would name images or semaphores
+that are not there, so it goes with what was made for it, and the next present makes one again (`g_dirty`). `call`
+names the step that failed, `r` its result, `detail` the counts; `*count` is that step's failures, logged as
+`gfx_fail_log_due()` allows: "gfx: <call> failed (<r>), <n> times: <detail>". The caller holds the queue lock, which
+this releases. It returns 0, `create_swapchain()`'s failure. AMD's swapchain has its own destroy.
+
+### `surface_formats()`
+
+Surface-format lists can exceed 64 entries when a compositor advertises several colour spaces. The query is made again
+on VK_INCOMPLETE: the available list may grow between the count and data calls.
+
+### `create_swapchain()`
+
+Returns 1 with a usable swapchain, 0 when the window has no area (minimised) or the create failed, which leaves
+`g_dirty` set so the next present tries again. Called with `g_pl` held. `g_dirty` is cleared before the window's size
+is read: a resize that arrives while the swapchain is being made (AMD's frame generation swapchain takes tens of ms)
+sets it again, where clearing it at the end lost that resize and kept a swapchain of the old size, whose acquires then
+timed out frame after frame behind AMD's presenter (the picture stopped).
+
+- First `flip_locked()`, so the acquired image goes out before its swapchain is replaced, and `ng_drain()`, for what
+  the NGX frame generation presenter still holds (nothing unless it runs).
+- The surface format list's size is logged once per change of it, not at each rebuild (a resize, a mode change).
+- The format is UNORM (B8G8R8A8 with the sRGB non-linear colour space): the blit writes the bytes the game wrote (no
+  sRGB encode). `NX2SARIA_HDR`: HDR10 when the surface offers it. With HDR off, or not on this display, what its encode
+  made goes (`vk_hdr_images_release`).
+- NGX frame generation's presenter holds the generated frames' images too, and the rendered frame waits for it: room
+  for both (`minImageCount + 1`, plus 2 + `NG_MAX` with NGX; at most 12 with it and 8 without).
+- A rebuild holds the queue lock across the device's idle wait and the create, and every submission waits behind it:
+  the made swapchain's line says how long (the first 16 and each doubling of the count).
+- NVIDIA's low-latency calls name the swapchain: none while it is replaced (`vk_lowlat_swapchain`).
+- The image usage includes COLOR_ATTACHMENT: every surface supports it (the menu overlay draws into it).
+- Frame generation (`runtime/vk/vk_fg.cpp`): AMD's swapchain in this one's place. Its swapchain is replaced only after
+  the old one is gone; a first creation that fails leaves the plain swapchain. Switched off in the menu, AMD's
+  swapchain and contexts go and the plain one follows. Once AMD's swapchain context exists every swapchain call goes
+  through it: a plain swapchain in its place would get AMD's acquire and present, so a failed create is tried again at
+  the next present instead (after the old swapchain's views and semaphores are dropped).
+- NVIDIA's low latency (`vk_lowlat.c`): the plain swapchain is made with the latency mode while the setting is on, the
+  only structure in its chain. A frame generation's swapchain is not: the calls cannot name it. With DLSS Frame
+  Generation active the create goes through Streamline's hook (`vk_dlssg_create_swapchain`). Three creates in a row
+  that fail with the latency mode asked for: the next is made without it.
+- A create with `oldSwapchain` retires the old swapchain even when it fails: it can no longer acquire or be an
+  `oldSwapchain` again. It goes now (the device is idle), and the next present creates one from nothing. `g_sc` is set
+  to the old one for the drop, NULL when a frame generation path destroyed it already: its views and semaphores still
+  go.
+- The log says when a later swapchain is of the other kind, HDR10 or SDR (the menu's HDR row).
+- `vk_lowlat_swapchain(..., 1)`: the sleep mode is set on the swapchain; none when it is not one for that path.
+- The image list, the count first and then that many images, on every path (AMD's swapchain does not cut a larger
+  capacity down to its count). An acquire returns an index below the count, and every array here has `MAX_IMAGES` (16)
+  slots: a list that did not come whole (an error, VK_INCOMPLETE, fewer images than counted, more than the arrays hold)
+  leaves the swapchain unused rather than presenting with images that are not there. A null image in a list that came
+  whole is a broken list: an acquire may name it, or one past it.
+- Each image's render-done semaphore: the present of that image waits on it, so an image without one cannot be shown at
+  all (the handles not made are null, which `drop_swapchain_locked()` skips).
+
+### `vk_present_swapchain_mem()`
+
+The memory report's swapchain (`outside_log` in `runtime/vk/vk_memory.c`): its images and their size; the bytes are the
+pixels alone, 8 a pixel for a half-float format and 4 for the others (the driver's padding and compression data are not
+known). Read without `g_pl`: the figures of a swapchain made again meanwhile are a report late. The images of a frame
+generation's swapchain are the ones counted (`create_swapchain()` takes them from it).
+
+### `vk_present_grab()` `grab_deliver()`
+
+`vk_present_grab()` (`runtime/vk/vk.h`): one presented frame's pixels for a bug capture. The request is taken by the
+next present (`g_pl` held), which copies the read-back buffer and calls back; the PNG is made by the caller's own
+thread. `grab_deliver()` runs in the present that took the request: the read-back buffer holds this frame (`g_cap_ptr`,
+the fence waited for). The callback gets NULL when there is no memory for the copy.
+
+### `save_capture()`
+
+The captured swapchain image as a PNG (the menu's test hook), RGBA with opaque alpha. From an HDR10 swapchain the log
+also gets the luminance in nits of the picture's rectangle (`vk_hdr_luminance_stats`: the black floor of a dark scene,
+for one), and `<path>.pq10` keeps the raw pixels: "PQ10" (0x30315150), width, height, 1 when A2R10G10B10 (u32 each),
+then the pixels as the swapchain holds them.
+
+### `gfx_fit_rect()` `gfx_picture_rect()`
+
+`gfx_fit_rect()`: the rectangle {x, y, w, h} of a `dw` x `dh` swapchain image the `cw` x `ch` picture goes into: the
+whole image with `NX2SARIA_ASPECT=stretch`, else (fit, the default) the largest one of the picture's own aspect ratio,
+centred (a 16:9 picture on the Steam Deck's 1280x800 screen gets bars of 40 rows above and below; a 16:9 picture in a
+21:9 window, bars at the sides). A window wider than the picture gets a pillarbox, a taller one a letterbox. A side
+takes the window's parity, which keeps the two bars equal; a picture one pixel short of the window fills it. (This
+comment stood above `gfx_picture_rect()`, with that function's own comment after it.)
+
+`gfx_picture_rect()`: where the last present put the picture, as fractions of the swapchain (x, y, w, h; `g_pic`), for
+the pointer of `menu_cursor.c`.
+
+### `gfx_movie_frame()` `movie_overlay()`
+
+The movie overlay (`runtime/hle/ov_movie2.c`): the latest decoded movie frame goes over the game image, fit to the
+window with black bars, while frames keep coming (`GFX_MOVIE_HOLD_NS`, 400 ms, after the last one it disappears). It
+made movies visible before the game's own shaders translated; now the game draws them itself (its YUV compute pass,
+then the upscaler fallback of `runtime/vk/vk_exec_draw.c`), under its menus, so the overlay is off unless
+`NX2SARIA_MOVIE_OVERLAY=1`. (The comment in `runtime/gfx/gfx.h` still says the game's movie shaders do not translate
+yet.) One staging buffer per frame in flight: the CPU writes slot i only after that slot's fence (the present waits it
+before recording), the GPU copies it into one RGBA8 image.
+
+`movie_overlay()` records the overlay into `cb` for swapchain image `dst` (in TRANSFER_DST_OPTIMAL, left so); 1 when
+drawn. The game image's blit wrote `dst`: black bars first, then the frame.
+
+### `put_picture()`
+
+The game image's crop into `dst` at `to`: colour adjustment (or the HDR10 encode), then FSR or the bilinear blit; `dst`
+in TRANSFER_DST_OPTIMAL. It returns `vk_fsr_record`'s result (0: the blit scaled it).
+
+- Colour adjustment (`NX2SARIA_COLOR_*`, `runtime/vk/vk_color.c`), or on an HDR10 swapchain the PQ encode
+  (`runtime/vk/vk_hdr.c`; the adjustment is for SDR): a copy of the crop takes the game image's place.
+- FSR (`NX2SARIA_UPSCALER`): EASU when the picture's rectangle is larger than the crop, the shrink and RCAS when it is
+  smaller; else the bilinear blit.
+- For a GENERAL source (the images of `runtime/vk/vk_texture.c`) a barrier makes earlier submissions' writes visible to
+  the blit, and one after it makes later submissions that write the source wait for the blit's read.
+
+### `output_rate()` `gfx_output_fps()`
+
+The display's frame rate with frame generation: the frames the display got (generated ones included: `vk_fg_presents`
+of `runtime/vk/vk_fg.cpp`, `vk_dlssg_shown` of `runtime/vk/vk_dlssg.c`) over half a second, sampled at each of the
+game's presents. `ng_presented()` gives the frames the NGX frame generation presenter showed (0: it does not run) and
+`ng_running()` says that presenter is in use.
+
+### `hudless_record()`
+
+`g_hl` is frame generation's HUD-less picture at the swapchain's size.
+
+The upscaler's output can be smaller than the presented picture: the scene is 75% of it in handheld mode
+(`widescreen.c`, 1440x810 in a 1920x1080 picture) and the game's last passes scale it up with the HUD. Taken only at
+the same size, as before, that frame had no HUD-less picture and was not generated: 5 of 3600 frames generated in
+handheld mode on an RX 580 (2026-11-11). The crop is taken at the same place of the smaller picture.
+
+The steps' work images were just read for the presented picture: they are written again only after that. The steps'
+per-slot views of their source get a slot of their own (`slot + FRAMES`; the presented picture's views stay valid for
+this command buffer); with HDR the PQ encode runs as for the presented float picture.
+
+### The frame generation presenter
+
+How many frames get a generated one, and what was wrong before: [frame-generation.md](../frame-generation.md).
+
+Two generators run through it, in every build but the Windows one (none of this is reached there): DLSS Frame
+Generation through NGX (`vk_ngxfg_*`, `NX2SARIA_FRAMEGEN = dlss` where Streamline does not run) and AMD FSR 3.1's frame
+generation through the runtime's own passes (`runtime/vk/vk_fsr3fg.c`, `NX2SARIA_FRAMEGEN = fsr3`; one generated frame
+per rendered frame, at the middle). `ng.src` names the one in use; the log lines carry its name (ngxfg, fsr3fg). Each
+frame is composed into an image of its own (`ng.bb`) instead of a swapchain image. At the end of the frame's command
+buffer DLSS Frame Generation makes the generated frames from it (`vk_ngxfg_evaluate`, the multiplier less one) and the
+picture is copied aside. The presenter thread then shows them in order, each copied into a swapchain image it acquires
+itself, and the rendered frame last, spaced evenly over the time between two rendered frames, as NVIDIA's frame
+generation guide paces them. Two sets of images take turns: a set is written again two frames later, after the
+presenter's copies from it are done (the timeline `ng.copied`). Every frame goes through the presenter while it runs,
+so the timelines advance in order.
+
+Three things froze the picture while this was written, and the code keeps away from each:
+
+- a frame's own command buffer never waits for a swapchain acquire: on Wayland an acquire's semaphore can signal only
+  after a later present, and every later present would come from that command buffer;
+- a timeline wait is never submitted ahead of its signal on the same queue (`ng_wait_signaled()`);
+- an acquire never blocks while it holds the queue lock the presenter presents with (`ng_acquire()`).
+
+The fields of `ng`: `tried` 0 nothing made, 1 the objects exist, 2 it cannot run here; `thread_up`, the presenter
+thread runs (started once, kept over a release); `rendered` and `copied`, the timelines (frame n's command buffer
+submitted or done; the presenter done with frame n); `n`, the frames handed to the presenter; `cb[2][NG_MAX + 1]`, per
+shown frame, the generated ones and then the rendered one; `signaled`, the last value of `ng.copied` the presenter
+submitted a signal for (under `ng.m`); `last_t` and `interval`, the average time between rendered frames (ns);
+`presents`, the frames presented while it runs, generated ones included; `src`, the generator in use (`NG_DLSS`,
+`NG_FSR3`), 0 none; and the pacing, on the presenter thread: the time of the last present, and the gaps between
+presents against the even spacing the presenter aims at (the time between rendered frames over the frames shown for
+each).
+
+- `ng_acquire()`: an acquire that never blocks while it holds the queue lock: the swapchain is shared by the game
+  thread and the presenter (both acquire, the presenter presents), and an image is freed only by a present, which needs
+  that lock. A blocking acquire under the lock waited for the present it held off: the picture froze (1 s acquire
+  timeouts).
+- `ng_drain()` waits until the presenter has shown everything handed to it.
+- `ng_pace()`: one present's gap from the one before against the even spacing (`ideal_ns`); a gap over 100 ms (a pause,
+  a load) is not counted. A gap longer than 1.5 times the spacing is a pacing drop: the eye sees that frame held.
+- `ng_signal_copied()` signals after everything submitted before it (frame v's copies included).
+- `ng_wait_signaled()`: a frame's submission waits for `ng.copied >= n - 2` on the GPU. That signal must be submitted
+  first: one queue runs its submissions in order, and a wait queued ahead of its signal stopped the queue for good (the
+  picture froze).
+- `ng_show()` acquires a swapchain image, copies `img` (GENERAL, the swapchain's size and format) into it once frame
+  n's command buffer is done (`ng.rendered`), and presents it. Only the presenter acquires while it runs: the frame's
+  own command buffer never waits for an acquire, whose image the compositor may give back only after a later present.
+  A failed acquire has a line with the time the first few times; the frame-time summary counts them all
+  (`log_stall.c`).
+- `ng_run()`: with n > 2 it first waits for the last use of this set's command buffers and acquire semaphores (frame
+  n - 2) to be over. The first generated frame is shown at once (the least latency), the others at even steps, and the
+  rendered frame last; then `ng_signal_copied(n)`, after the copies out of this set. The line it logs (at 60 jobs and
+  every 1200) carries the most of each period for the largest gap, and for FSR 3.1 the generator's own counts, read
+  there on the presenter thread: a few frames old.
+- `ng_thread()`: with nothing for 1.5 s it logs where the GPU stands (the two timelines' values). The first few have a
+  line; the frame-time summary counts them all.
+- `fsr3fg_state_line()`: one line at the first present and at each change: whether AMD FSR 3.1's frame generation
+  through the runtime's passes runs, at what multiplier, or why not (the setting, an HDR swapchain, a device that
+  cannot run the passes, a failure).
+- `ng_ready()`: the presenter and the images for the current swapchain (`g_pl` held). 0: frames go out the plain way.
+  The Windows build has neither generator here (AMD's library and Streamline make their own swapchains there); NGX's
+  needs a run that started with DLSS upscaling (`vk_ngxfg_wanted`), FSR 3.1's the device's passes (`vk_fsr3fg_init`).
+  `vk_dlaa_hudless_wanted` is set for the HUD-less picture both tell the HUD apart by. Switched off live in the menu,
+  what the presenter holds goes out first. When the menu switched from one generator to the other, each starts anew,
+  and the images are made again for the new generator's count of generated frames. The presenter's semaphores, command
+  pool and command buffers: one that is not made turns frame generation off for the run, as the checks before it do,
+  with what was made released: the presenter would otherwise wait on or submit null handles. That is logged once a run
+  (`ng.tried = 2`), counted all the same. The command pool takes its command buffers with it. FSR 3.1 generates one
+  frame per rendered frame: one image a set, where DLSS Frame Generation may need `NG_MAX`.
+- `ng_multiplier()`: `NX2SARIA_FG_MULT`: 2 to 6, or dynamic: only the frames needed to reach the display's refresh rate
+  at the rendered frame rate (240 Hz at 60 fps: 4x), between 2x and what the GPU allows, as NVIDIA describes its
+  dynamic multi frame generation; a new multiplier must hold for 30 frames before it is taken, so it does not flicker.
+  `fit` is the shown frames per rendered one that fit.
+- `ng_record()` records the copy of the frame's picture and the generator's frames (the end of `present_image()`'s
+  command buffer, `dst` in layout `*last`; `pic`: the picture's rectangle in it). It returns the number of generated
+  frames, -1 when the frame goes out the plain way. With `ng.fresh`, every image goes to GENERAL, once (FSR 3.1's sets
+  have one output image). The frame's picture is in `dst` (`ng.bb`): to GENERAL for DLSS-G and the copy into this set's
+  rendered-frame image. Generation pauses while the menu is open. The rendered frame is copied for the presenter
+  (`ng.bb` is drawn again by the next frame).
+- `ng_release()` (`gfx_window_release_vk()`, the device idle): the presenter shows what it holds, then its images,
+  semaphores and command buffers go with the device. The thread stays and waits; a later device makes the objects again
+  (`ng_ready()`). The device is waited idle for what the presenter submitted while it drained; new timelines start at
+  0.
+- `ng_hand()` hands the submitted frame to the presenter (it shows `count` generated frames, then swapchain image
+  `idx`).
+
+### `present_image()`
+
+- The presented image's format is logged when it changes (an HDR picture comes in another one).
+- With the device lost the run is ending (`vk_device_lost_check` in `runtime/vk/vk_device.c`): nothing touches the
+  device.
+- The present slot's fence wait: a lost device ends the run here as anywhere else; a hung GPU times out at every
+  present, so the line is kept to the first 8 and each doubling.
+- `pts_read()`: the GPU timeline, this slot's last present is done.
+- NGX frame generation: the frame is composed into `ng.bb` and the presenter shows it (`ng_show()`); no acquire here.
+  The presenter presents several times a frame, so a driver's low latency steps aside (`vk_lowlat_fg_presents`).
+- Not ready: the frame is skipped. Acquires that keep timing out (1 s each) mean a swapchain nothing will free an image
+  of again: three in a row rebuild it, where the picture used to stop for good. An error (the surface lost, say) is
+  logged once per code.
+- With HDR, a changed peak or white goes to the display (`vk_hdr_metadata`).
+- A pending thumbnail whose fence has signalled is complete, and its tag is set.
+- The game's crop (nvnWindowSetCrop, guest values) is cut to the image without overflow (`gfx_crop_clip()` of
+  `gfx_guard.h`); a crop outside the image is the whole image, not an inverted blit rectangle. A crop that had to be
+  cut or replaced is logged with its values, as `gfx_fail_log_due()` allows.
+- The menu overlay is laid out before recording (its first frame starts the ImGui back end and uploads the font).
+  Without a source image (`gfx_present_boot()`): a black frame with the boot screen.
+- `NX2SARIA_SHOT_EVERY=<s>` with `NX2SARIA_SHOT_DIR=<dir>`: the presented frame as `shot_<n>.png` every s seconds (a
+  check of what the window shows, for runs nobody watches). `NX2SARIA_SHOT_AFTER`: seconds after the start before the
+  first shot.
+- `grab`: a bug capture asked for this frame (`vk_present_grab()`).
+- `to` is where the picture goes in the swapchain image, {x, y, w, h}; black bars beside or above and below it are
+  cleared when it does not fill the image.
+- Frame generation without the HUD in its generated frames: the picture as it would be without the HUD
+  (`runtime/vk/vk_dlaa.c`, DLSS's or FSR 3.1's output before the HUD was drawn over it) goes through the same steps
+  into an image of the swapchain's size, which frame generation compares with the presented one to find the HUD and
+  leave it unwarped. `NX2SARIA_FG_HUDLESS_SHOW=1` (a test) puts the HUD-less picture on screen instead.
+- A movie frame goes over the game image on SDR swapchains.
+- `last`, `last_stage` and `last_write`: the image's layout, and the stage and access of its last write, as each step
+  leaves it.
+- Centered UI and wide movies and fades use the middle 16:9 ([wide-hud.md](../wide-hud.md)). The outside margins are
+  cleared after composition, leaving the HUD-less frame-generation source and the menu pointer (`g_pic`) at the whole
+  picture's coordinates. Tall screens fill the height.
+- HDR10: the menu goes into `vk_hdr.c`'s RGBA8 image, which is then blended onto the swapchain image at the HUD's
+  white.
+- `vk_fg_frame`: frame generation, this frame's preparation. `vk_dlssg_frame`: DLSS Frame Generation's constants and
+  tags (`runtime/vk/vk_dlssg.c`). Through the presenter the picture stays in `ng.bb`, and DLSS Frame Generation's
+  frames and the copy for the presenter are recorded; otherwise the swapchain image is ready to present.
+- A driver's low latency (`vk_lowlat.c`): the game frame this blit shows, and NVIDIA's tag with its number.
+- Through the presenter (`ng_n` is this frame's number on its timelines) there is no acquire to wait for. The frame
+  writes one of the presenter's two image sets: it waits on the GPU until the presenter is done with the frame before
+  last, which used that set, and that signal is submitted first (`ng_wait_signaled()`). It signals the timeline the
+  presenter's copies wait for instead of a render-done semaphore. The presenter then shows the generated frames, then
+  this one.
+- When the submit failed: the fence was reset after the acquire and the acquire's semaphore is signalled: left so,
+  this slot's fence wait would time out (5 s) at every later present and the picture stop for good. An empty batch
+  takes the semaphore and signals the fence; the acquired image goes back with the swapchain, made again next frame.
+  (Through the presenter nothing was acquired: the batch only signals the fence.)
+- When the wait for a captured frame failed, the read-back buffer may not hold this frame yet: nothing reads it. With
+  no read-back buffer a grab request ends without pixels.
+
+### `gfx_present_boot()`
+
+The boot screen on a black frame (`menu_boot_frame`), without a game image: `present_image()`'s paths that read a
+source are skipped. The size (1920x1080) only places the picture rectangle, which a frame without a picture leaves as
+it was.
+
+### `gfx_window_release_vk()` `gfx_window_start()`
+
+`gfx_window_release_vk()` is called by `vk_shutdown` before the device goes away; the window and its thread stay. A
+waiting flip is dropped: its blit is done (the device is idle) and the swapchain goes away unpresented. NGX frame
+generation's presenter shows nothing more, and its images go before the device; FSR 3.1 frame generation's passes and
+images go too, made again for a later device. The next `gfx_window_start()` makes a new surface.
+
+`gfx_window_start()` makes the frame slots' command pool, command buffers, fences and acquire semaphores: every present
+uses them, so one that is not made ends the start with its call and result, where a null handle used to fail later
+inside the driver.
+
+### `gfx_lock_holders()`
+
+For the hang watch's report (`hang_watch.c`; [performance.md](../performance.md#the-hang-watch)): who holds the
+present, queue and window-start locks now, read without taking them (0: free). The fields may be caught mid-change; the
+report only names them.
