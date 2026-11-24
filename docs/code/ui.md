@@ -3105,7 +3105,7 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_RUMBLE_HD`, `UI_MENU_RUMBLE_HD_DESC`, `UI_MENU_RUMBLE_HD_NEEDS` | HD rumble, and the note on its row while the gamepad in use cannot take it (`runtime/input/input.h` `input_rumble_hd_available()`) |
 | `UI_MENU_GROUP_GYRO`, `UI_MENU_GYRO_*` | the Gyro group (`runtime/ui/menu.cpp` `rows_gyro()`): its heading, rows and dead zone levels, and the note on its rows while motion controls are off |
 | `UI_MENU_PROMPTS_MISSING`, `UI_MENU_PROMPTS_FAILED`, `UI_MENU_PROMPTS_RESTART`, `UI_MENU_PROMPTS_OFF_SHAPE`, `UI_MENU_PROMPTS_OFF_MODS`, `UI_MENU_PROMPTS_OFF_PATCHES` | the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off |
-| `UI_MENU_RESTART`, `UI_MENU_RESTART_DESC`, `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | "Restart now" under the prompts while they change after restart, and its confirmation (its Cancel is `UI_MENU_RESET_NO`) |
+| `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | the confirmation of the bar's Restart and Quit (its Cancel is `UI_MENU_RESET_NO`) |
 | `UI_MENU_RESTART_COUNT` | the bar's Restart with the count of settings waiting for it (printf: `%d`) |
 | `UI_MENU_DRAFT_TITLE`, `UI_MENU_DRAFT_APPLY`, `UI_MENU_DRAFT_DISCARD`, `UI_MENU_DRAFT_KEEP`, `UI_MENU_DRAFT_RESTART_NOTE`, `UI_MENU_DRAFT_QUIT_NOTE` | the box that asks about the changes made in the menu when it is left (`runtime/ui/menu.cpp` `apply_confirm()`), and the lines restarting and quitting add to their confirmation while there are such changes |
 | `UI_MENU_KEEP_TITLE`, `UI_MENU_KEEP_COUNTDOWN`, `UI_MENU_KEEP_YES`, `UI_MENU_KEEP_REVERT`, `UI_MENU_RESTART_NOW_TITLE`, `UI_MENU_RESTART_NOW`, `UI_MENU_RESTART_LATER` | after Apply: the "keep these display settings?" box with its countdown (`UI_MENU_KEEP_COUNTDOWN`, a printf format with one `%d`), and the "restart now / later" box for settings read at start |
@@ -3134,12 +3134,10 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_OV_FPS_LABEL`, `UI_MENU_OV_FG_LABEL`, `UI_PERF_LINE_FPS_FG`, `UI_MENU_OV_FRAME_LABEL`, `UI_MENU_OV_FMT_FPS` | the overlay's frame rows: their labels, the rate |
 | `UI_MENU_OV_LOW1`, `UI_MENU_OV_LOW01` | printf: the fps of the slowest 1% / 0.1% of the frames, no unit (the overlay column stays narrow) |
 | `UI_MENU_OV_FMT_PCT`, `UI_MENU_OV_FMT_TEMP`, `UI_MENU_OV_FMT_POWER`, `UI_MENU_OV_FMT_MHZ`, `UI_MENU_OV_FMT_GB`, `UI_MENU_OV_FMT_GB_OF`, `UI_MENU_OV_GAME_GB`, `UI_MENU_OV_FMT_MS`, `UI_MENU_OV_PER_FRAME` | number formats of the overlay's cells (printf, one number each) |
-| `UI_MENU_OV_WINDOW`, `UI_MENU_OV_OUTPUT`, `UI_MENU_OV_SCENE`, `UI_MENU_OV_SCALING`, `UI_MENU_OV_LIMIT`, `UI_MENU_OV_PRESENT` | the picture lines: window, game image and 3D scene sizes, the scaling to the window, frame limit and presentation |
+| `UI_MENU_OV_WINDOW`, `UI_MENU_OV_OUTPUT`, `UI_MENU_OV_SCENE`, `UI_MENU_OV_LIMIT` | the picture lines: window, game image and 3D scene sizes, and the frame limit |
 | `UI_MENU_OV_FMT_SIZE` | "%ux%u" |
 | `UI_MENU_OV_FMT_SCENE` | "%ux%u, %.0f%%": the scene and its share of the game image's width |
 | `UI_MENU_OV_FMT_FSR` | "AMD FSR 1, sharpness %d%%" |
-| `UI_MENU_OV_FMT_SHRINK` | the image is larger than the window: "bilinear + FSR sharpening %d%%" |
-| `UI_MENU_OV_SCALE_DOWN` | FSR is selected but the image is larger than the window: FSR only enlarges |
 | `UI_MENU_TAB_CHEATS` and the ids after it | the Cheats tab (`runtime/patches/cheats.c`): the file, the kinds of cheat and why one cannot be switched |
 | `UI_MENU_CHEATS_NONE` | `%s`: `<build id>.txt` |
 | `UI_MENU_CHEAT_KEY_DESC` | `%s`: the buttons |
@@ -3156,12 +3154,12 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_BOOT_TITLE`, `UI_BOOT_STARTING` | the boot screen while the boot prewarm prepares shaders and pipelines (`runtime/boot.c`, `runtime/ui/menu.cpp` `menu_boot_frame()`) |
 | `UI_BOOT_SHADERS`, `UI_BOOT_PIPELINES` | printf: `%lld` done, `%lld` total |
 | `UI_BOOT_COMPUTE`, `UI_BOOT_DRIVER_CACHE` | after a driver change (`runtime/vk/vk_pipeline.c` `bf_decide()`): the compute pipelines, then the prepared shader variants built into the driver's own cache; printf as above |
-| `UI_MENU_UPSCALING`, `UI_MENU_UPSCALING_DESC`, `UI_MENU_FRAMEGEN`, `UI_MENU_FRAMEGEN_DESC`, `UI_MENU_FRAMEGEN_OFF`, `UI_MENU_FRAMEGEN_NOTE`, `UI_MENU_FRAMEGEN_NEEDS`, `UI_MENU_HDR_TONEMAPPED`, `UI_MENU_HDR_NATIVE` | the settings menu's Picture rows for this game (`runtime/ui/menu.cpp` `tab_screen()`): one upscaling choice (bilinear, FSR 1 or a DLSS mode) and the picture's resolution |
-| `UI_MENU_UPSCALING_DESC_FSR`, `UI_MENU_FRAMEGEN_DESC_FSR`, `UI_MENU_FRAMEGEN_NOTE_FSR`, `UI_MENU_FRAMEGEN_NEEDS_FSR` | the same rows' texts on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there |
+| `UI_MENU_UPSCALING`, `UI_MENU_UPSCALING_DESC`, `UI_MENU_FRAMEGEN`, `UI_MENU_FRAMEGEN_OFF`, `UI_MENU_FRAMEGEN_NOTE`, `UI_MENU_HDR_TONEMAPPED`, `UI_MENU_HDR_NATIVE` | the settings menu's Picture rows for this game (`runtime/ui/menu.cpp` `tab_screen()`): one upscaling choice (bilinear, FSR 1 or a DLSS mode) and the picture's resolution |
+| `UI_MENU_UPSCALING_DESC_FSR` | the Upscaling row's description on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there |
 | `UI_MENU_UPSCALING_DESC_NO_FSR` | where FSR 3.1 cannot run (`vk_ffx_available`: on Windows `amd_fidelityfx_vk.dll` does not load, elsewhere the runtime's own passes cannot run on the device, `runtime/vk/vk_fsr3.c`): the menu leaves it out there, and this text says so. Its English text differs by platform: off Windows there is no library to load, and the game's own passes (`runtime/vk/vk_fsr3.c` `vk_fsr3_init()`) found the device cannot run them |
 | `UI_MENU_FSR3_OFF` | FSR 3.1 is still set but cannot run: "in use: off" and why |
 | `UI_MENU_UPSCALING_NATIVE` | the scene at the picture's own size, no upscaler (`runtime/ui/menu.cpp` `share_native()`) |
-| `UI_MENU_FRAMEGEN_DESC_DLSS`, `UI_MENU_FRAMEGEN_NOTE_DLSS`, `UI_MENU_FRAMEGEN_NEEDS_DLSS` | DLSS only |
+| `UI_MENU_FRAMEGEN_NEEDS_DLSS` | DLSS only |
 | `UI_MENU_FRAMEGEN_DESC_NONE`, `UI_MENU_FRAMEGEN_NEEDS_NONE` | neither runs |
 | `UI_MENU_FRAMEGEN_DESC_FSR_WIN`, `UI_MENU_FRAMEGEN_NEEDS_FSR_WIN`, `UI_MENU_FRAMEGEN_OFF_FSR_WIN` | no DLSS, and FSR 3.1 upscales through the runtime's own passes while its frame generation needs AMD's library, which only the Windows build loads (`runtime/ui/menu.cpp` `row_framegen()`, `fsr_win_only`): the row says that, not that FSR 3.1 does not run. `OFF`: frame generation is still set to FSR 3.1 there |
 | `UI_MENU_FRAMEGEN_FSR3_NATIVE`, `UI_MENU_FRAMEGEN_OFF_HDR` | FSR 3.1's frame generation through the runtime's own passes (every build but the Windows one, `runtime/vk/vk_fsr3fg.c`): the row's note while it is chosen, and why it is off while HDR is on (it generates SDR pictures only) |
