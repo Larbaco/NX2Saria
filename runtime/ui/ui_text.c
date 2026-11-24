@@ -823,6 +823,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_FIT_MEASURED] = "Video memory is already %d%% in use (%llu of %llu MiB). These use more video memory: %s.",
     [UI_MENU_VRAM_FIT_NOTICED] = "Video memory ran out earlier in this session (now %d%% in use, %llu of %llu MiB). These use more video memory: %s.",
     [UI_MENU_VRAM_FIT_PRESET] = "This card has %u GiB of video memory. The recommended preset for it uses: %s.",
+    [UI_MENU_VRAM_FIT_FULL] = "Video memory is already full (%llu of %llu MiB). These use more video memory: %s.",
 };
 
 static const char *const text_ru[UI_TEXT_COUNT] = {
@@ -1542,6 +1543,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_FIT_MEASURED] = "Видеопамять уже занята на %d%% (%llu из %llu МиБ). Больше видеопамяти требуют: %s.",
     [UI_MENU_VRAM_FIT_NOTICED] = "В этой сессии видеопамять уже заканчивалась (сейчас занято %d%%, %llu из %llu МиБ). Больше видеопамяти требуют: %s.",
     [UI_MENU_VRAM_FIT_PRESET] = "У этой видеокарты %u ГиБ видеопамяти. Рекомендуемый пресет для неё использует: %s.",
+    [UI_MENU_VRAM_FIT_FULL] = "Видеопамять уже заполнена (%llu из %llu МиБ). Больше видеопамяти требуют: %s.",
 };
 
 static const char *const text_pt_br[UI_TEXT_COUNT] = {
@@ -2307,6 +2309,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_FIT_MEASURED] = "A memória de vídeo já está em %d%% (%llu de %llu MiB). Usam mais memória de vídeo: %s.",
     [UI_MENU_VRAM_FIT_NOTICED] = "A memória de vídeo acabou mais cedo nesta sessão (agora em %d%%, %llu de %llu MiB). Usam mais memória de vídeo: %s.",
     [UI_MENU_VRAM_FIT_PRESET] = "Esta placa tem %u GiB de memória de vídeo. O preset recomendado para ela usa: %s.",
+    [UI_MENU_VRAM_FIT_FULL] = "A memória de vídeo já está cheia (%llu de %llu MiB). Usam mais memória de vídeo: %s.",
 };
 
 static const char *const text_zh_hans[UI_TEXT_COUNT] = {
@@ -3099,6 +3102,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_VRAM_FIT_MEASURED] = "显存已使用 %d%%（%llu / %llu MiB）。以下设置会占用更多显存：%s。",
     [UI_MENU_VRAM_FIT_NOTICED] = "本次游戏中显存曾经用尽（当前已使用 %d%%，%llu / %llu MiB）。以下设置会占用更多显存：%s。",
     [UI_MENU_VRAM_FIT_PRESET] = "这块显卡有 %u GiB 显存。为它推荐的预设使用：%s。",
+    [UI_MENU_VRAM_FIT_FULL] = "显存已满（%llu / %llu MiB）。以下设置会占用更多显存：%s。",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

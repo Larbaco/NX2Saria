@@ -1813,10 +1813,14 @@ static void vram_fit_make(void) {
         add(said, sizeof said, "frame generation off -> on");
         add(items, sizeof items, menu_text(UI_MENU_FRAMEGEN));
     }
-    const int pct = limit ? (int)(used >= limit ? 100 : used * 100 / limit) : 0;
+    const int pct = limit ? (int)(used * 100 / limit) : 0;
     if (g_fit.kind == VRAM_FIT_MEASURED) {
-        snprintf(g_fit.text, sizeof g_fit.text, menu_text(level >= MEM_TIGHT ? UI_MENU_VRAM_FIT_MEASURED : UI_MENU_VRAM_FIT_NOTICED),
-                 pct, (unsigned long long)used, (unsigned long long)limit, items);
+        if (used >= limit)
+            snprintf(g_fit.text, sizeof g_fit.text, menu_text(UI_MENU_VRAM_FIT_FULL), (unsigned long long)used,
+                     (unsigned long long)limit, items);
+        else
+            snprintf(g_fit.text, sizeof g_fit.text, menu_text(level >= MEM_TIGHT ? UI_MENU_VRAM_FIT_MEASURED : UI_MENU_VRAM_FIT_NOTICED),
+                     pct, (unsigned long long)used, (unsigned long long)limit, items);
         rt_log("menu: box   vram note: measured (video memory %s, %llu of %llu MiB in use, %d notice(s) shown this session): %s",
                mem_level_name[level], (unsigned long long)used, (unsigned long long)limit, noticed, said);
     } else if (g_fit.kind == VRAM_FIT_PRESET) {
@@ -1869,26 +1873,53 @@ static void apply_confirm(float scale) {
     } else {
         ImGui::TextUnformatted(menu_text(UI_MENU_DRAFT_TITLE));
         ImGui::Spacing();
-        const float list_w = fminf(640 * scale, view.x * 0.7f);
+        const char *yes = menu_text(UI_MENU_DRAFT_APPLY), *no = menu_text(UI_MENU_DRAFT_DISCARD),
+                   *back = menu_text(UI_MENU_DRAFT_KEEP);
+        float bw = fmaxf(fmaxf(ImGui::CalcTextSize(yes).x, ImGui::CalcTextSize(no).x), ImGui::CalcTextSize(back).x) +
+                   st.FramePadding.x * 4;
+        const float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
+        const float list_w = fmaxf(fminf(640 * scale, view.x * 0.7f), bw * 3 + gap * 2);
         const float line = ImGui::GetTextLineHeightWithSpacing();
-        const float list_h = fminf(n * line * 1.1f + st.WindowPadding.y, view.y * 0.4f);
-        ImGui::BeginChild("##draftlist", ImVec2(list_w, list_h), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav);
-        ImGui::PushTextWrapPos(list_w - st.ScrollbarSize - st.ItemSpacing.x);
+        const float text_w = list_w - st.ScrollbarSize - st.ItemSpacing.x;
+        char mark[96];
+        snprintf(mark, sizeof mark, "(%s)", menu_text(UI_MENU_AFTER_RESTART));
+        const float mark_w = ImGui::CalcTextSize(mark).x, space_w = ImGui::CalcTextSize(" ").x;
+        struct Row { std::string text; bool mark, mark_alone; };
+        std::vector<Row> rows;
         for (int i = 0; i < n; i++) {
             OptDraftItem it;
             if (!opt_draft_item(i, &it)) break;
             char text[320];
             snprintf(text, sizeof text, "%s: %s -> %s", it.label, it.from, it.to);
-            ImGui::TextUnformatted(text);
-            if (it.restart) {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.95f, 0.66f, 0.40f, 1), "(%s)", menu_text(UI_MENU_AFTER_RESTART));
+            const size_t first = rows.size();
+            for (const char *s = text, *end = text + strlen(text); s < end;) {
+                const char *e = ImGui::GetFont()->CalcWordWrapPositionA(ImGui::GetFontSize() / ImGui::GetFont()->FontSize, s, end, text_w);
+                if (e == s)
+                    for (e = s + 1; e < end && (*e & 0xc0) == 0x80;) e++;
+                rows.push_back({std::string(s, e), false, false});
+                for (s = e; s < end && *s == ' ';) s++;
             }
+            if (rows.size() == first) rows.push_back({"", false, false});
+            if (!it.restart) continue;
+            if (ImGui::CalcTextSize(rows.back().text.c_str()).x + space_w + mark_w <= text_w) rows.back().mark = true;
+            else rows.push_back({"", true, true});
         }
-        ImGui::PopTextWrapPos();
+        const int most = (int)fmaxf(floorf(view.y * 0.4f / line), 1);
+        const int shown = (int)rows.size() < most ? (int)rows.size() : most;
+        static float scroll;
+        if (ImGui::IsWindowAppearing()) scroll = 0;
+        ImGui::BeginChild("##draftlist", ImVec2(list_w, shown * line), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav);
+        for (const Row &r : rows) {
+            if (!r.mark_alone) ImGui::TextUnformatted(r.text.c_str());
+            if (r.mark && !r.mark_alone) ImGui::SameLine(0, space_w);
+            if (r.mark) ImGui::TextColored(ImVec4(0.95f, 0.66f, 0.40f, 1), "%s", mark);
+        }
         const float dy = (float)(ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown) + ImGui::IsKeyDown(ImGuiKey_DownArrow) -
                                  ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp) - ImGui::IsKeyDown(ImGuiKey_UpArrow));
-        if (dy != 0) ImGui::SetScrollY(ImGui::GetScrollY() + dy * 700 * scale * ImGui::GetIO().DeltaTime);
+        const float scroll_most = ((int)rows.size() - shown) * line;
+        if (dy == 0) scroll = ImGui::GetScrollY();
+        scroll = fminf(fmaxf(scroll + dy * 700 * scale * ImGui::GetIO().DeltaTime, 0), scroll_most);
+        ImGui::SetScrollY(roundf(scroll / line) * line);
         ImGui::EndChild();
         ImGui::Spacing();
         if (g_fit.kind != VRAM_FIT_NONE && g_fit.text[0]) {
@@ -1900,11 +1931,6 @@ static void apply_confirm(float scale) {
             ImGui::PopStyleColor();
             ImGui::Spacing();
         }
-        const char *yes = menu_text(UI_MENU_DRAFT_APPLY), *no = menu_text(UI_MENU_DRAFT_DISCARD),
-                   *back = menu_text(UI_MENU_DRAFT_KEEP);
-        float bw = fmaxf(fmaxf(ImGui::CalcTextSize(yes).x, ImGui::CalcTextSize(no).x), ImGui::CalcTextSize(back).x) +
-                   st.FramePadding.x * 4;
-        const float gap = st.ItemSpacing.x + skin_cursor_reach(scale);
         apply = skin_widget_button(yes, ImVec2(bw, 0), scale);
         ImGui::SameLine(0, gap);
         discard = skin_widget_button(no, ImVec2(bw, 0), scale);
