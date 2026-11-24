@@ -44,3 +44,15 @@ Exit codes 70, 71 and 72 describe a fatal error, crash report and lost graphics 
 are shown with their known meanings. Requested Linux termination signals do not raise an alarm; SIGKILL is
 excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
 the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
+
+### `play.py` and `commit.py` Play preflight
+
+`play.prepare()` keeps the existing order: executable, a session already followed, another running game, mod
+preparation and rebuild, then the memory sample. It returns an outcome and any mod notices for the window to present;
+the existing rebuild job still belongs to the window. After a memory answer, `play.start()` starts the game and creates
+`GameRun`, or records the same refusal or start error. The Tk adapter owns the dialog, sound, visibility and watch timer.
+
+`commit.play_memory_request()` keeps the existing probe, policy and log, and returns numeric information only when the
+player must decide. An unbounded estimate uses `need=None` and `unbounded=True` so the request has no non-finite JSON
+number; `play_memory_warning()` reconstructs the existing wording. `confirm_play_memory()` retains the headless entry
+point and its existing behavior, including continuing when the probe or dialog is unavailable.

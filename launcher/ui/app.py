@@ -45,7 +45,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 
 from .. import (NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, telemetry, versions,
-               winsys)
+               winsys, play as play_core)
 from ..build import FATAL_TAIL, game_log_path, last_fatal  # noqa: F401 (FATAL_TAIL: tests)
 from ..context import Context, shorten
 from ..game_session import (ASKED_SIGNALS, EXIT_CODES, FATAL_CODES, FATAL_SHOWN, GameEnd, GameRun, LOG_CUT_LINE,
@@ -1923,22 +1923,6 @@ class App:
         self.mods_page = at // ORDER_PAGE
         self.show('mod_order', at % ORDER_PAGE)
 
-    def mods_before_play(self, gd):
-        """Put the mods folder in order (mods.prepare) and say whether the game must be built again for a mod's code
-        first: the mods that wait for it, [] when none do."""
-        try:
-            for line in mods.prepare(gd, log=self.ctx.log):
-                self.mods_message = line
-                if 'was not unpacked' in line:   # on the home screen too, when the launcher comes back
-                    self.message = line
-        except OSError as e:
-            self.ctx.log(f'mods: the mods folder could not be put in order: {e}')
-        try:
-            return mods.code_waiting(gd) if build.can_rebuild(gd) else []
-        except OSError as e:
-            self.ctx.log(f'mods: {e}')
-            return []
-
     def update_desc(self):
         r = self.release
         nv, mine = versions.display(r.version), versions.display(self.layout.version)
@@ -2018,52 +2002,44 @@ class App:
             self.show('home', self.focus)
 
     def play(self, built=False):
-        """built: the build for the mods' code (ModsRebuildJob) just ended, so the game starts without asking again."""
         gd = self.settings.get('game_dir')
-        exe = game_executable(gd) if gd else None
-        searched = str(exe) if exe else 'no game folder is selected'
-
-        def not_started(reason):
-            self.ctx.log(f'play: not started: {reason[:160]} ({searched})')
-
-        if not exe or not exe.is_file():
-            not_started('the game is not built')
+        prepared = play_core.prepare(self.ctx, self.settings, gd, self.game_run, self.mods_failed, built)
+        if prepared.mod_message is not None:
+            self.mods_message = prepared.mod_message
+        if prepared.home_message is not None:
+            self.message = prepared.home_message
+        if prepared.status == 'not_built':
             self.message = 'The game is not built yet.'
             self.render()
             return
-        if self.game_run and self.game_run.alive():
-            not_started('this launcher is already watching a game')
+        if prepared.status == 'own_game':
             return
-        if saves.game_running(gd):   # a copy this launcher did not start (another launcher, a shortcut, a test run)
-            not_started('the game is already running')
+        if prepared.status == 'external_game':
             self.message = 'The game is already running.'
             self.render()
             return
-        waiting = [] if built else self.mods_before_play(gd)
-        if waiting and waiting != self.mods_failed:
-            # a mod's code cheats or ExeFS patches the game was not built with: built in first (tools/make_game.py
-            # lift), then the game starts (job_finished). After a build that failed for the same mods the game
-            # starts without them, so that a build that cannot finish never keeps the player from the game.
-            self.ctx.log(f'play: the game is built again first for the code of {", ".join(waiting)}')
+        if prepared.status == 'rebuild':
             job = jobs.ModsRebuildJob(self.ctx, gd)
-            job.waiting = waiting
+            job.waiting = prepared.waiting
             self.run_job(job, 'home')
-            self.message = f'Building the game with the code of {", ".join(waiting)}; it starts after.'
+            self.message = f'Building the game with the code of {", ".join(prepared.waiting)}; it starts after.'
             return
-        if waiting:
-            self.ctx.log(f'play: without the code of {", ".join(waiting)}, whose build did not finish')
-        if not commit.confirm_play_memory(gd, self.ctx.log, self.root, self.ctx.settings):
-            not_started('the memory warning was declined')
-            return
-        started = time.time()
-        try:
-            self.game_run = GameRun(winsys.start_game(exe), gd, started)
-        except OSError as e:
-            not_started(f'could not start the game: {(str(e).splitlines() or [type(e).__name__])[0]}')
-            self.message = f'The game could not start: {e}'
+        accepted = True
+        if prepared.memory is not None:
+            try:
+                answer = winsys.confirm_play(commit.play_memory_warning(prepared.memory), self.root)
+            except (AttributeError, OSError) as e:
+                accepted = commit.play_memory_response(self.ctx.log, error=e)
+            else:
+                accepted = commit.play_memory_response(self.ctx.log, play=answer)
+        run, error = play_core.start(self.ctx, prepared, gd, accepted)
+        if error is not None:
+            self.message = f'The game could not start: {error}'
             self.render()
             return
-        self.ctx.log(f'play: {exe}')
+        if run is None:
+            return
+        self.game_run = run
         self.sounds.play('select')
         if self.settings.get('hide_while_playing'):
             self.root.withdraw()

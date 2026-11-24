@@ -58,7 +58,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 # server_url); TelemetryHiddenTest sets its own.
 os.environ['NX2SARIA_TELEMETRY_URL'] = 'none'
 
-from launcher import build, feed, gameini, gamefiles, jobs, locks, net, saves, settings, toolchain, updater, versions, winsys  # noqa: E402
+from launcher import build, commit, feed, gameini, gamefiles, jobs, locks, net, saves, settings, toolchain, updater, versions, winsys  # noqa: E402
 from launcher.context import Context, shorten  # noqa: E402
 from launcher.paths import Layout  # noqa: E402
 from launcher.platform import game_executable  # noqa: E402
@@ -6423,7 +6423,6 @@ class LinuxPlayTest(Tmp):
         exe = fake_linux_game(game)
         App, a = mock_app(self, game)
         a.game_run = None
-        a.mods_before_play.return_value = []
         a.settings['hide_while_playing'] = True
         real, started = subprocess.Popen, []
 
@@ -6476,8 +6475,8 @@ class LinuxPlayTest(Tmp):
         with mock.patch('launcher.ui.app.saves.game_running', return_value=True):
             App.play(a)
         self.assertIn(f'play: not started: the game is already running ({exe})\n', self.log(a))
-        a.mods_before_play.return_value = []
-        with mock.patch('launcher.ui.app.commit.confirm_play_memory', return_value=False):
+        with mock.patch('launcher.ui.app.commit.play_memory_request', return_value=commit.MemoryRequest(1, 2, False)), \
+                mock.patch('launcher.ui.app.winsys.confirm_play', return_value=False):
             App.play(a)
         self.assertIn(f'play: not started: the memory warning was declined ({exe})\n', self.log(a))
         with mock.patch('launcher.ui.app.winsys.start_game', side_effect=PermissionError(13, 'Permission denied')):
@@ -6500,7 +6499,6 @@ class LinuxPlayTest(Tmp):
         subprocess.run([cc, '-O1', '-o', str(exe), str(src)], check=True, capture_output=True, timeout=120)
         App, a = mock_app(self, game)
         a.game_run = None
-        a.mods_before_play.return_value = []
         keep = {k: v for k, v in os.environ.items() if not k.startswith('FAKE_')}
         with mock.patch.dict(os.environ, {**keep, **env}, clear=True):
             self.play(a)

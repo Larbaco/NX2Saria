@@ -159,3 +159,6 @@ The tests describe the existing window's behavior, not the proposed worker's EOF
 Characterizes the existing Tk Play entry point using temporary game folders and stubbed process and system APIs; it
 never opens a real game. It records the observable refusal, rebuild, memory decision, spawn, visibility and log behavior
 before the Play decision logic is extracted. Mod preparation errors and an infinite memory estimate are covered.
+
+The memory preflight test checks that an infinite estimate becomes a JSON-safe request and still produces the existing
+warning text. The existing Linux Play refusal test simulates the same declined response at the separated memory boundary.
