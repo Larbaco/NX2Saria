@@ -1,12 +1,3 @@
-// astc_decode_ldr_mt: astc_decode_ldr with the block rows of one image spread over a persistent worker pool. Each block
-// goes through astc_decode_block and lands where astc_decode_ldr puts it, so the output is the same bytes. The caller
-// takes part and returns when every row is done. One image at a time: a second caller while the pool is busy, or an
-// image under MT_MIN_BLOCKS, decodes on its own thread.
-//
-// astc_blocks_opaque_mt: the same pool runs the opaque check of a large texture (vk_texture.c "ASTC as BC1"),
-// SCAN_CHUNK blocks at a time, and with dst also its copy into staging, which the render thread did alone before. Once
-// a worker finds a block that is not opaque, the chunks left are copied without the check, or not read at all without
-// dst.
 #include <string.h>
 
 #include "host.h"
@@ -14,33 +5,31 @@
 #include "tex.h"
 #include "platform/platform.h"
 
-#define MT_MIN_BLOCKS 1024   // below this, waking the pool costs about as much as the decode
+#define MT_MIN_BLOCKS 1024
 #define MT_MAX_THREADS 8
-#define SCAN_CHUNK 16384      // blocks a worker checks at a time (256 KiB)
+#define SCAN_CHUNK 16384
 #define MT_MIN_SCAN (4 * SCAN_CHUNK)
 
 static struct {
     PlatOnce once;
-    PlatMutex busy;                    // held by the caller for the whole image
+    PlatMutex busy;
     PlatMutex lock;
     PlatCond work, done;
-    int threads;                             // workers, the caller not counted
-    uint64_t gen;                            // bumped per image; a worker joins each generation once
-    int active;                              // workers that have not finished the current generation
-    // the current image (written under lock before gen is bumped)
+    int threads;
+    uint64_t gen;
+    int active;
     const uint8_t *blocks;
     uint8_t *out;
     uint32_t width, height, bw, bh, bx, by, chunk;
     bool srgb;
-    volatile int32_t next;                      // first block row (a scan: chunk) not yet claimed
-    int scan;                                // the current job: 0 a decode, 1 an opaque check
-    uint64_t sn;                             // a scan: its blocks, where they go, the most decodes, the result
+    volatile int32_t next;
+    int scan;
+    uint64_t sn;
     uint8_t *sdst;
     uint32_t smax;
     volatile int32_t sbad, sdecoded;
 } P = {PLAT_ONCE_INIT, .lock = PLAT_MUTEX_INIT, .work = PLAT_COND_INIT, .done = PLAT_COND_INIT};
 
-// Block rows [j0, j1) of the current image, as astc_decode_ldr's loop does them.
 static void decode_rows(uint32_t j0, uint32_t j1) {
     uint32_t bw = P.bw, bh = P.bh, width = P.width, height = P.height;
     uint8_t tmp[12 * 12 * 4];
@@ -67,7 +56,6 @@ static void claim_rows(void) {
     }
 }
 
-// Chunks of the current scan, until they run out; without dst, also once a block that is not opaque was found.
 static void claim_scan(void) {
     for (;;) {
         int found = __atomic_load_n(&P.sbad, __ATOMIC_RELAXED);
@@ -102,7 +90,6 @@ static void worker(void *arg) {
     return;
 }
 
-// Hardware threads minus 2 (the render and the main guest thread), 1 to MT_MAX_THREADS; the caller is one of them.
 static void pool_init(void *param) {
     (void)param;
     int cpus = (int)plat_cpu_usable() - 2;
@@ -131,7 +118,7 @@ void astc_decode_ldr_mt(const uint8_t *blocks, uint32_t width, uint32_t height, 
     plat_mutex_lock(&P.lock);
     P.blocks = blocks, P.out = rgba_out, P.width = width, P.height = height, P.bw = bw, P.bh = bh, P.bx = bx, P.by = by;
     P.srgb = srgb, P.scan = 0;
-    uint32_t parts = (uint32_t)(P.threads + 1) * 4;   // a few chunks per thread evens out uneven blocks
+    uint32_t parts = (uint32_t)(P.threads + 1) * 4;
     P.chunk = by / parts ? by / parts : 1;
     P.next = 0;
     P.active = P.threads;

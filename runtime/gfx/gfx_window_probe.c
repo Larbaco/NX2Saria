@@ -1,7 +1,3 @@
-// --probe-window: presents 300 frames of a cycling clear colour through vk_present_image, reads the swapchain image back
-// and compares every pixel, measures the vsync rate, flips the focus state and drives the cursor release with synthetic
-// window events (the window back end's wsys_probe_*, gfx_wsys.h) and resizes the window. Run with NX2SARIA_VK_VALIDATION=1
-// to count validation errors.
 #include <stdio.h>
 #include <string.h>
 
@@ -65,8 +61,6 @@ static void source_destroy(Source *s) {
     if (s->img) vmaDestroyImage(c->vma, s->img, s->alloc);
 }
 
-// Clears the source to rgba and leaves it in TRANSFER_SRC_OPTIMAL; the GPU work is waited for here, which is stricter
-// than the vk_present_image contract needs.
 static int source_clear(Source *s, int first, const float rgba[4]) {
     VkCtx *c = vk_ctx();
     vkResetCommandBuffer(s->cb, 0);
@@ -97,7 +91,6 @@ static int source_clear(Source *s, int first, const float rgba[4]) {
 
 static uint8_t to_byte(float f) { return (uint8_t)(f * 255.0f + 0.5f); }
 
-// Presents one colour and checks every pixel of the readback. Returns 0 when it matches.
 static int present_and_check(Source *s, int first, int i, int *w_out, int *h_out) {
     float rgba[4] = {(float)((i * 7) & 255) / 255.0f, (float)((i * 13) & 255) / 255.0f, (float)((i * 29) & 255) / 255.0f, 1.0f};
     if (!source_clear(s, first, rgba)) return 1;
@@ -112,9 +105,9 @@ static int present_and_check(Source *s, int first, int i, int *w_out, int *h_out
     else if (fmt == VK_FORMAT_R8G8B8A8_UNORM) { want[0] = rgb[0]; want[1] = rgb[1]; want[2] = rgb[2]; }
     else { printf("probe-window: swapchain format %d is not UNORM RGBA/BGRA\n", (int)fmt); return 3; }
     want[3] = 255;
-    uint32_t wv, black = 0xff000000u;   // opaque black in both byte orders
+    uint32_t wv, black = 0xff000000u;
     memcpy(&wv, want, 4);
-    int r[4];   // the picture's rectangle; bars of black around it when the window's shape differs
+    int r[4];
     gfx_fit_rect(SRC_W, SRC_H, w, h, r);
     const uint32_t *p = (const uint32_t *)px;
     for (long k = 0, n = (long)w * h; k < n; k++) {
@@ -131,7 +124,7 @@ static int present_and_check(Source *s, int first, int i, int *w_out, int *h_out
 }
 
 int probe_window(void) {
-    vk_hdr_off();   // the checks read 8-bit swapchain pixels
+    vk_hdr_off();
     if (!menu_font_check()) return fail("the menu's font check takes a damaged font or refuses a good one");
     gfx_window_start();
     VkCtx *c = vk_ctx();
@@ -145,7 +138,6 @@ int probe_window(void) {
         if (present_and_check(&s, i == 0, i, &w, &h)) return fail("presented pixels differ");
     printf("probe-window: %d presents, readback %dx%d exact\n", FRAMES, w, h);
 
-    // Focus: synthetic focus loss and gain, delivered synchronously on the window thread.
     unsigned m0 = gfx_window_focus_messages();
     wsys_probe_focus(0);
     int off = gfx_window_focused();
@@ -158,8 +150,6 @@ int probe_window(void) {
     }
     printf("probe-window: focus off/on pushed 2 messages (15)\n");
 
-    // Cursor release: Esc releases, a client click recaptures, a title bar activation releases (where the window system
-    // reports one). The probe window may not be the foreground window, so this checks the release flag, not the capture.
     wsys_probe_escape();
     int esc = input_cursor_released();
     wsys_probe_click(0);
@@ -170,14 +160,13 @@ int probe_window(void) {
     wsys_probe_focus(0);
     wsys_probe_focus(1);
     int back = input_cursor_released();
-    if (menu_is_open()) menu_toggle();   // Esc opened the menu: the presents below compare the bare game image
+    if (menu_is_open()) menu_toggle();
     if (!esc || click || client || !caption || back) {
         printf("probe-window: released esc=%d click=%d client=%d caption=%d reactivated=%d\n", esc, click, client, caption, back);
         return fail("cursor release");
     }
     printf("probe-window: cursor released by Esc and title bar activation, recaptured by a click\n");
 
-    // Resize: the client area changes, the swapchain follows, presenting still reads back exact.
     gfx_window_resize(1280, 720);
     int cw = 0, ch = 0;
     wsys_client_size(&cw, &ch);
@@ -190,7 +179,6 @@ int probe_window(void) {
     printf("probe-window: resized to %dx%d, presents still exact\n", w, h);
     vk_present_capture(0);
 
-    // Vsync: count ticks between two tick edges about 5 s apart.
     static volatile int32_t ticks;
     gfx_vsync_bind_counter(&ticks);
     long a = ticks;

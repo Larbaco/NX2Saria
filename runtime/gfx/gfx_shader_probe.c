@@ -1,8 +1,3 @@
-// --probe-shader: the shader service client (gfx_shader.c) against 32 census shaders. Needs build/xlate/nx2navi_xlate.exe and
-// a census, build/<version>/shaders/ (tools/shader_census.py, probe_census_dir); uses a throwaway cache directory.
-//   1. Translate 32 shaders (mixed stages) through gfx_shader_get; each SPIR-V starts with the magic 0x07230203.
-//   2. Drop the memory cache and ask again: 32 hits from disk, 0 service requests. A third pass returns the same pointers.
-//   3. Send a malformed line straight to the service: it answers with an error line and still serves a valid request.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +30,6 @@ static char *slurp(const char *path, size_t *size) {
     return b;
 }
 
-// Value of `"name": "` inside [from, to), NULL when absent; *len is the value length.
 static const char *str_field(const char *from, const char *to, const char *name, size_t *len) {
     char pat[32];
     snprintf(pat, sizeof pat, "\"%s\": \"", name);
@@ -50,9 +44,6 @@ static const char *str_field(const char *from, const char *to, const char *name,
 
 static int hexval(char c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; }
 
-// The shader census the probes translate (tools/shader_census.py --version <ver>): build/<ver>/shaders in the nearest
-// parent of nx2saria.exe that has one with a jobs.json, the running game version's first, then the others' (any census
-// serves a probe). 1 with that folder in dir.
 int probe_census_dir(char *dir, size_t n) {
     const char *const versions[3] = {RT_V110 ? "v110" : RT_V143 ? "v143" : "v121",
                                      RT_V110 ? "v121" : RT_V143 ? "v121" : "v143",
@@ -92,7 +83,6 @@ static int pick_entries(const char *jobs, Entry *out) {
         per_stage[e->stage == GFX_STAGE_VS ? 0 : e->stage == GFX_STAGE_FS ? 1 : 2]++;
         n++;
     }
-    // 11 vertex, 11 fragment, 10 compute shaders, spread evenly over each stage's list
     int want[3] = {11, 11, 10}, taken[3] = {0, 0, 0}, seen[3] = {0, 0, 0}, got = 0;
     for (int i = 0; i < n; i++) {
         int s = all[i].stage == GFX_STAGE_VS ? 0 : all[i].stage == GFX_STAGE_FS ? 1 : 2;
@@ -104,9 +94,8 @@ static int pick_entries(const char *jobs, Entry *out) {
     return got;
 }
 
-static char root[PLAT_PATH_MAX * 2];   // the census folder (probe_census_dir)
+static char root[PLAT_PATH_MAX * 2];
 
-// Builds the program the game would hand NVN for a census entry and translates it.
 static const GfxShader *translate(const Entry *e, int *err) {
     char path[PLAT_PATH_MAX * 2 + 64];
     uint8_t c1[8192], control[0x880] = {0};
@@ -163,7 +152,6 @@ int probe_shader(void) {
     snprintf(dir, sizeof dir, "%s/nx2navi-shader-probe-%u", tmp, plat_process_id());
     CHECK(cfg_setenv("NX2SARIA_SHADER_CACHE", dir), "cannot set NX2SARIA_SHADER_CACHE");
 
-    // pass 1: translate through the service
     const GfxShader *first[WANT];
     uint64_t req0 = gfx_shader_requests();
     for (int i = 0; i < WANT; i++) {
@@ -179,7 +167,6 @@ int probe_shader(void) {
     FAIL_IF(gfx_shader_requests() - req0 != WANT, "pass 1 sent %llu requests, expected %d",
             (unsigned long long)(gfx_shader_requests() - req0), WANT);
 
-    // pass 2: memory cache dropped, so every answer comes from the disk cache
     gfx_shader_drop_memory();
     req0 = gfx_shader_requests();
     uint64_t hits0 = gfx_shader_cache_hits();
@@ -198,7 +185,6 @@ int probe_shader(void) {
     FAIL_IF(gfx_shader_requests() != req0, "pass 2 contacted the service");
     FAIL_IF(hits != WANT, "pass 2 had %d cache hits", hits);
 
-    // pass 3: memory hits return the same pointer
     for (int i = 0; i < WANT; i++) {
         int err = 0;
         FAIL_IF(translate(&entries[i], &err) != second[i], "repeat call for %s returned another pointer", entries[i].key);
@@ -206,7 +192,6 @@ int probe_shader(void) {
     FAIL_IF(gfx_shader_requests() != req0, "pass 3 contacted the service");
     FAIL_IF(gfx_shader_failures() != 0, "%llu translation failures", (unsigned long long)gfx_shader_failures());
 
-    // the service survives a malformed line and still translates a valid one
     char reply[4096];
     FAIL_IF(!gfx_shader_raw_request("this is not json", reply, sizeof reply), "service gone after the malformed line");
     FAIL_IF(strncmp(reply, "fail ", 5), "malformed line answered with \"%s\"", reply);

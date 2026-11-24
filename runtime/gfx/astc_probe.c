@@ -1,16 +1,3 @@
-// --probe-astc: the compute ASTC decoder (vk_astc.c, shaders/astc_decode.comp) against astc_decode_ldr, bit for bit,
-// for every block footprint, linear and sRGB. Synthetic blocks only (no game files): valid void extents, invalid and
-// HDR void extents, random blocks kept by what they exercise (1-4 partitions, dual plane with 1-3 partitions, every
-// weight grid and quantization the random modes reach), then plain random blocks (mostly error blocks, HDR endpoint
-// modes among them). Each case decodes two regions into two mip levels of an RGBA8 image with cropped edges, and
-// compares both the decoder's texels (readback) and what the image holds afterwards. The same regions also go through
-// the BC3 encoder (NX2SARIA_ASTC_BC) into a BC3 image, whose blocks are decoded here and held to error bounds (bc_check).
-// Then cut-out foliage at every footprint (cutout_case): full mip chains of transparent and opaque patches with sharp
-// alpha edges, through the encoder, where alpha 0 and 255 must stay exact and alpha tests keep their outline (cut_check).
-// Every block of both is also put to tex_astc.c astc_block_opaque, which must say what a decode says (opaque_check),
-// and with NX2SARIA_ASTC_BC1 the regions are encoded to BC1 as well: each BC1 block must be the colour half of the BC3
-// block made from the same texels (bc1_check), the four-colour block BC1 decodes alike.
-// Also times one 2048x2048 texture on the CPU (astc_decode_ldr_mt) and on the GPU (wall time of the upload batch).
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,20 +18,17 @@ static uint64_t rnd64(void) {
 static const uint8_t dims[14][2] = {{4, 4}, {5, 4}, {5, 5}, {6, 5}, {6, 6}, {8, 5}, {8, 6},
                                     {8, 8}, {10, 5}, {10, 6}, {10, 8}, {10, 10}, {12, 10}, {12, 12}};
 
-// Buckets of valid blocks: partitions 1-4 single plane, then dual plane with 1-3 partitions.
 enum { NB = 7, PER_BUCKET = 48 };
 static const char *const bucket_name[NB] = {"1p", "2p", "3p", "4p", "dual 1p", "dual 2p", "dual 3p"};
 static uint64_t g_bucket[NB], g_void, g_err, g_blocks, g_texels, g_bc_cases;
-static double g_bc_db = 99;   // the lowest BC3 PSNR of all cases
+static double g_bc_db = 99;
 
 static int dual_bit(uint32_t m) {
-    if (!(m & 3) && (m >> 7 & 3) == 2) return 0;   // the 6..10 x 6..10 modes have no dual plane
+    if (!(m & 3) && (m >> 7 & 3) == 2) return 0;
     return (int)(m >> 10 & 1);
 }
 
 static void void_block(uint8_t b[16], int kind) {
-    // kind 0: valid LDR extent (random coordinates s0 < s1, t0 < t1), 1: all-ones extent, 2: s0 >= s1 (error),
-    // 3: HDR (error), 4: reserved bits not 11 (error)
     uint64_t lo = 0x1FC | 3ull << 10, s0 = rnd64() & 0xFFF, s1 = s0 + 1 + (rnd64() & 0xFFF), t0 = rnd64() & 0xFFF,
              t1 = t0 + 1 + (rnd64() & 0xFFF);
     if (s1 > 0x1FFF) s1 = 0x1FFF;
@@ -58,7 +42,6 @@ static void void_block(uint8_t b[16], int kind) {
     memcpy(b, &lo, 8), memcpy(b + 8, &hi, 8);
 }
 
-// n blocks for footprint bw x bh: the buckets first, void extents, then random.
 static void make_blocks(uint8_t *blk, size_t n, uint32_t bw, uint32_t bh) {
     size_t k = 0;
     uint8_t tmp[12 * 12 * 4];
@@ -120,8 +103,6 @@ static void to_general(VkCommandBuffer cb, VkImage img) {
 
 static double now_ms(void) { return (double)plat_now_ns() / 1e6; }
 
-// Decodes the two regions ar (w0 x h0 at level 0, w1 x h1 at level 1) of the src_bytes at src on the GPU; out_rb: the
-// decoder's texels, out_img: the image's two levels read back. 0 on a Vulkan failure.
 static int gpu_decode_ar(VkCtx *c, const uint8_t *src, size_t src_bytes, const VkAstcRegion ar[2], uint32_t bw,
                          uint32_t bh, int srgb, uint8_t *out_rb, uint8_t *out_img, double *ms) {
     uint32_t w0 = ar[0].w, h0 = ar[0].h, w1 = ar[1].w, h1 = ar[1].h;
@@ -156,7 +137,6 @@ static int gpu_decode_ar(VkCtx *c, const uint8_t *src, size_t src_bytes, const V
     return ok > 0;
 }
 
-// The two regions as tight blocks: n0 blocks of level 0, then n1 of level 1.
 static int gpu_decode(VkCtx *c, const uint8_t *blk, size_t n0, size_t n1, uint32_t w0, uint32_t h0, uint32_t w1,
                       uint32_t h1, uint32_t bw, uint32_t bh, int srgb, uint8_t *out_rb, uint8_t *out_img, double *ms) {
     VkAstcRegion ar[2] = {{.src = 0, .w = w0, .h = h0, .slices = 1, .level = 0},
@@ -166,9 +146,6 @@ static int gpu_decode(VkCtx *c, const uint8_t *blk, size_t n0, size_t n1, uint32
 
 static int first_diff(const uint8_t *a, const uint8_t *b, size_t texels, size_t *at);
 
-// The same blocks tiled as the game stores them (tex_bl_copy, the CPU deswizzle's own copy), level 0 in blocks of 4 GOBs
-// and level 1 in blocks of 2, decoded in place (VkAstcRegion.bl, astc_decode.comp bl_block): the decoder's texels must be
-// want's. Checks the GPU's block-linear addressing against the CPU's.
 static int test_bl(VkCtx *c, const uint8_t *blk, size_t n0, uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1,
                    uint32_t bw, uint32_t bh, int srgb, const uint8_t *want) {
     const unsigned th[2] = {2, 1};
@@ -204,12 +181,9 @@ static int test_bl(VkCtx *c, const uint8_t *blk, size_t n0, uint32_t w0, uint32_
     return bad;
 }
 
-enum { MAX_LEVELS = 13 };   // a mip chain of up to 4096 texels a side
+enum { MAX_LEVELS = 13 };
 static size_t bc_bytes(uint32_t w, uint32_t h) { return (size_t)((w + 3) / 4) * ((h + 3) / 4) * 16; }
 
-// Mip levels 0 .. levels-1 (w[i] x h[i] texels from the n[i] blocks that follow the previous level's in blk) decoded and
-// encoded to BC3 (bc 1, NX2SARIA_ASTC_BC) or BC1 (bc 2) by one vk_astc_record call into an image of that format; out:
-// its blocks read back level after level, rows of 4x4 blocks. 0 on a Vulkan failure or when nothing was recorded.
 static int gpu_bc(VkCtx *c, const uint8_t *blk, const size_t *n, const uint32_t *w, const uint32_t *h, int levels,
                   uint32_t bw, uint32_t bh, int srgb, int bc, uint8_t *out) {
     Img im;
@@ -246,8 +220,6 @@ static int gpu_bc(VkCtx *c, const uint8_t *blk, const size_t *n, const uint32_t 
     return ok > 0;
 }
 
-// One BC3 block to 16 RGBA8 texels, as the format defines it (565 endpoints widened by bit replication; the colour
-// block always in four-colour mode). pos: each texel's place on the line from endpoint 0 (0) to endpoint 1 (3).
 static void bc3_decode(const uint8_t b[16], uint8_t t[16][4], uint8_t ep[2][3], int pos[16]) {
     uint8_t a[8] = {b[0], b[1]}, p[4][3];
     if (a[0] > a[1])
@@ -274,11 +246,6 @@ static void bc3_decode(const uint8_t b[16], uint8_t t[16][4], uint8_t ep[2][3], 
     memcpy(ep, p, 6);
 }
 
-// BC3 is lossy, so these are bounds, not bit-exactness. In every block: alpha within a fourteenth of the block's alpha
-// range (the eight-value mode's half step); each texel on the palette entry nearest its projection onto the endpoint
-// line (within rounding, when the endpoints are apart); a block of one colour within the 565 rounding, alpha exact.
-// Per level, a PSNR floor against astc_decode_ldr for gross damage: the random blocks are noise, so it is low (19 dB
-// at worst for 5x5 level 1 on an RX 9070). *db: the level's PSNR.
 enum { BC_MIN_DB = 15 };
 static int bc_check(const uint8_t *want, const uint8_t *blocks, uint32_t w, uint32_t h, const char *what, double *db) {
     uint32_t bx = (w + 3) / 4, by = (h + 3) / 4;
@@ -300,12 +267,12 @@ static int bc_check(const uint8_t *want, const uint8_t *blocks, uint32_t w, uint
                         continue;
                     }
                     int flat = !memcmp(lo, hi, 4), lim[4] = {5, 3, 5, 0};
-                    if (len2 >= 64) {   // shorter lines: rounding alone can move a texel to the next entry
+                    if (len2 >= 64) {
                         double proj = 0;
                         for (int ch = 0; ch < 3; ch++) proj += ((double)s[ch] - ep[0][ch]) * axis[ch];
                         proj = proj / len2 * 3;
                         proj = proj < 0 ? 0 : proj > 3 ? 3 : proj;
-                        if (fabs(pos[i] - proj) > 0.75) {   // a wrong code mapping is a whole place off
+                        if (fabs(pos[i] - proj) > 0.75) {
                             printf("probe-astc: FAIL BC3 %s: texel (%u,%u) on palette place %d, its projection is %.2f\n",
                                    what, x, y, pos[i], proj);
                             return 1;
@@ -337,9 +304,6 @@ static int first_diff(const uint8_t *a, const uint8_t *b, size_t texels, size_t 
     return 0;
 }
 
-// astc_block_opaque against a decode of each of the n blocks: opaque exactly when every texel has alpha 255. Then the
-// loop over them (astc_blocks_opaque, also copying) and the worker-pool scan (astc_blocks_opaque_mt) must give the
-// first block that is not opaque, the same bytes, and the same answer. Opaque 4x4 blocks are kept for opaque_mt_case.
 enum { OP_POOL = 4096 };
 static uint64_t g_op_blocks, g_op_opaque, g_op_decoded, g_bc1_blocks;
 static uint8_t g_op_pool[OP_POOL * 16], g_alpha_block[16];
@@ -377,9 +341,6 @@ static int opaque_check(const uint8_t *blk, size_t n, uint32_t bw, uint32_t bh, 
     return bad;
 }
 
-// The worker-pool scan of a texture of 300,000 opaque 4x4 blocks (opaque blocks of the cases, repeated), alone and
-// copying: opaque, every byte copied; then with one block that is not opaque at 250,000: not opaque, every byte still
-// copied, and the loop names that block.
 static int opaque_mt_case(void) {
     if (g_op_pool_n < 64 || !g_have_alpha) {
         printf("probe-astc: FAIL opaque check: too few opaque (%zu) or no alpha 4x4 blocks to build the large case\n",
@@ -404,7 +365,6 @@ static int opaque_mt_case(void) {
     return bad;
 }
 
-// The BC1 blocks (8 bytes each) of a level against its BC3 blocks: each the second half of its BC3 block.
 static int bc1_check(const uint8_t *bc3, const uint8_t *bc1, uint32_t w, uint32_t h, const char *what) {
     size_t n = bc_bytes(w, h) / 16;
     for (size_t k = 0; k < n; k++)
@@ -416,7 +376,6 @@ static int bc1_check(const uint8_t *bc3, const uint8_t *bc1, uint32_t w, uint32_
     return 0;
 }
 
-// The regions of one case encoded to BC1 too (vk_astc_bc1), held to bc1_check against their BC3 blocks.
 static int bc1_case(VkCtx *c, const uint8_t *blk, const size_t *n, const uint32_t *w, const uint32_t *h, int levels,
                     uint32_t bw, uint32_t bh, int srgb, const uint8_t *bc3, const char *what) {
     if (!vk_astc_bc1()) return 0;
@@ -436,7 +395,6 @@ static int bc1_case(VkCtx *c, const uint8_t *blk, const size_t *n, const uint32_
 }
 
 static int test_case(VkCtx *c, uint32_t bw, uint32_t bh, int srgb) {
-    // level 0: 37 x 23 blocks, cropped by 1-3 texels; level 1 half of that, other blocks
     uint32_t w0 = 37 * bw - 1 - (bw > 5), h0 = 23 * bh - 2, w1 = w0 > 1 ? w0 >> 1 : 1, h1 = h0 > 1 ? h0 >> 1 : 1;
     size_t n0 = (size_t)((w0 + bw - 1) / bw) * ((h0 + bh - 1) / bh), n1 = (size_t)((w1 + bw - 1) / bw) * ((h1 + bh - 1) / bh);
     uint8_t *blk = malloc((n0 + n1) * 16);
@@ -493,17 +451,10 @@ static int test_case(VkCtx *c, uint32_t bw, uint32_t bh, int srgb) {
     return bad;
 }
 
-// ---- cut-outs: alpha-tested foliage through the BC3 encoder
-// Mip chains whose ASTC blocks are, by a hash of their place, fully transparent (alpha 0 over whatever colour, as an
-// encoder leaves the colour under a cut-out), fully opaque leaf green, or a block whose alpha jumps from transparent to
-// opaque between two neighbouring texels. The edges between blocks lie on the footprint's grid, so along a side of 5, 6
-// or 10 texels they cut through BC3's 4x4 blocks at every offset; the levels shrink to odd sizes down to 1x1.
 enum { SHARP_POOL = 96 };
 static uint64_t g_cut_cases, g_cut_texels, g_cut_edges, g_cut_sharp;
-static double g_cut_db = 99;   // the lowest BC3 PSNR of the cut-out levels
+static double g_cut_db = 99;
 
-// Valid blocks (not void extents) whose alpha runs from at most 16 to at least 240 with a step of 192 or more between
-// two neighbouring texels; the number found, up to SHARP_POOL.
 static size_t sharp_blocks(uint8_t *pool, uint32_t bw, uint32_t bh) {
     uint8_t t[12 * 12 * 4];
     size_t k = 0;
@@ -523,15 +474,12 @@ static size_t sharp_blocks(uint8_t *pool, uint32_t bw, uint32_t bh) {
     return k;
 }
 
-// A void-extent block of one colour (UNORM16 channels, the 8-bit value in both bytes).
 static void void_rgba(uint8_t b[16], const uint8_t c[4]) {
     uint64_t lo = 0x1FC | 3ull << 10 | 0x1FFFull << 12 | 0x1FFFull << 25 | 0x1FFFull << 38 | 0x1FFFull << 51, hi = 0;
     for (int ch = 0; ch < 4; ch++) hi |= (uint64_t)(c[ch] * 257u) << 16 * ch;
     memcpy(b, &lo, 8), memcpy(b + 8, &hi, 8);
 }
 
-// The n blocks of one level, bx to a row: opaque and transparent in patches of 2x2 blocks, one block in five from the
-// sharp-edged pool.
 static void cut_blocks(uint8_t *blk, size_t n, uint32_t bx, int level, const uint8_t *pool, size_t npool) {
     for (size_t k = 0; k < n; k++) {
         uint32_t x = (uint32_t)(k % bx), y = (uint32_t)(k / bx);
@@ -543,7 +491,7 @@ static void cut_blocks(uint8_t *blk, size_t n, uint32_t bx, int level, const uin
             continue;
         }
         uint64_t r = rnd64();
-        uint8_t col[4] = {(uint8_t)r, (uint8_t)(r >> 8), (uint8_t)(r >> 16), 0};   // transparent: any colour
+        uint8_t col[4] = {(uint8_t)r, (uint8_t)(r >> 8), (uint8_t)(r >> 16), 0};
         if (patch % 2)
             col[0] = (uint8_t)(40 + r % 60), col[1] = (uint8_t)(120 + (r >> 8) % 80), col[2] = (uint8_t)(20 + (r >> 16) % 40),
             col[3] = 255;
@@ -551,10 +499,6 @@ static void cut_blocks(uint8_t *blk, size_t n, uint32_t bx, int level, const uin
     }
 }
 
-// What an alpha test sees of the cut-outs. A texel the ASTC image holds fully transparent or fully opaque stays
-// exactly 0 or 255 (a BC3 alpha block's endpoints are its 4x4 block's least and greatest alpha), and every texel keeps
-// its side of an alpha test at a quarter, a half and three quarters unless it lies within the block's alpha step of
-// the threshold. *edges: the 4x4 blocks whose alpha runs from at most 16 to at least 240.
 static int cut_check(const uint8_t *want, const uint8_t *blocks, uint32_t w, uint32_t h, const char *what, uint64_t *edges) {
     static const int thr[3] = {64, 128, 192};
     uint32_t bx = (w + 3) / 4, by = (h + 3) / 4;
@@ -572,7 +516,7 @@ static int cut_check(const uint8_t *want, const uint8_t *blocks, uint32_t w, uin
                         lo = a < lo ? a : lo, hi = a > hi ? a : hi;
                         continue;
                     }
-                    int margin = (hi - lo) / 14 + 1;   // bc_check's alpha bound
+                    int margin = (hi - lo) / 14 + 1;
                     if ((a == 0 || a == 255) && b != a) {
                         printf("probe-astc: FAIL BC3 cut-out %s: texel (%u,%u) alpha %d came out %d\n", what, x, y, a, b);
                         return 1;
@@ -589,7 +533,6 @@ static int cut_check(const uint8_t *want, const uint8_t *blocks, uint32_t w, uin
     return 0;
 }
 
-// One cut-out mip chain of w0 x h0 texels at footprint bw x bh: every level held to bc_check's bounds and cut_check.
 static int cutout_case(VkCtx *c, uint32_t bw, uint32_t bh, int srgb, uint32_t w0, uint32_t h0) {
     uint8_t pool[SHARP_POOL * 16];
     size_t npool = sharp_blocks(pool, bw, bh);
@@ -640,13 +583,11 @@ static int cutout_case(VkCtx *c, uint32_t bw, uint32_t bh, int srgb, uint32_t w0
     return bad;
 }
 
-// One 2048 x 2048 texture of valid blocks: the CPU worker-pool decode against the GPU time of the dispatches alone
-// (vk_astc.c timestamps, NX2SARIA_ASTC_TIME) and the wall time of the upload batch.
 static void timing(VkCtx *c, uint32_t bw, uint32_t bh) {
     uint32_t w = 2048, h = 2048;
     size_t n = (size_t)((w + bw - 1) / bw) * ((h + bh - 1) / bh);
     uint8_t *blk = malloc(n * 16), *out = malloc((size_t)w * h * 4), tmp[12 * 12 * 4];
-    for (size_t k = 0; k < 4096;) {   // valid, non-constant blocks: error blocks would flatter the GPU
+    for (size_t k = 0; k < 4096;) {
         uint64_t v[2] = {rnd64(), rnd64()};
         if ((v[0] & 0x1FF) != 0x1FC && astc_decode_block((uint8_t *)v, bw, bh, false, tmp)) memcpy(blk + 16 * k++, v, 16);
     }
@@ -669,7 +610,7 @@ static void timing(VkCtx *c, uint32_t bw, uint32_t bh) {
 }
 
 int probe_astc(void) {
-    cfg_setenv("NX2SARIA_ASTC_BC", "1");   // also builds the BC3 encoder; the RGBA8 cases pass bc 0 and do not use it
+    cfg_setenv("NX2SARIA_ASTC_BC", "1");
     if (!vk_init()) { printf("probe-astc: FAIL vk_init\n"); return 1; }
     VkCtx *c = vk_ctx();
     printf("probe-astc: GPU %s, textureCompressionASTC_LDR %d, mode %d\n", c->props.deviceName, c->has_astc_ldr,
@@ -687,7 +628,6 @@ int probe_astc(void) {
     else if (!bad) {
         printf("probe-astc: BC3 encode: %llu cases within the bounds, lowest PSNR %.1f dB (floor %d)\n",
                (unsigned long long)g_bc_cases, g_bc_db, BC_MIN_DB);
-        // cut-outs: every footprint, then two chains large enough that level 0 is a scratch chunk of its own
         for (int i = 0; i < 14 && !bad; i++)
             for (int s = 0; s < 2 && !bad; s++)
                 bad = cutout_case(c, dims[i][0], dims[i][1], s, 53u * dims[i][0] - 3, 41u * dims[i][1] - 1);

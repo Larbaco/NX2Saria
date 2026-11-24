@@ -1,8 +1,3 @@
-// The null graphics back end: no GPU. Every submit completes at
-// once and advances the fence value, pools always initialise, presents are only counted, texel reads return zeros.
-// A submit performs the CPU-visible side effects of its op streams in order: event signals, counter reports (timestamp
-// ticks, counter 0), buffer-to-buffer copies and uniform updates.
-// It is the CPU-side gate for the NVN front end. Also the back-end choice (gfx_backend) and the statistics (gfx_stats).
 #include <stdint.h>
 #include <string.h>
 
@@ -24,7 +19,6 @@ GfxStats gfx_stats(void) {
     return s;
 }
 
-// NX2SARIA_GPU=null|vulkan, default vulkan (rt_config); chosen once.
 const GfxBackend *gfx_backend(void) {
     static const GfxBackend *chosen;
     const GfxBackend *b = __atomic_load_n(&chosen, __ATOMIC_ACQUIRE);
@@ -45,9 +39,6 @@ static void null_sampler_register(int id, const samp_par *s) { (void)id, (void)s
 static void null_texture_release(const tex_t *t) { (void)t; }
 static void null_program_release(const prog_t *p) { (void)p; }
 
-// The CPU-visible side effects of one op stream, in stream order.
-// Everything else (draws, dispatches, clears, texture copies) has no effect here.
-// Addresses of CPU-invisible pools (the GPU window) hold no host memory, so those writes are dropped.
 static void *null_cpu_addr(uint64_t addr, uint64_t size, const char *what) {
     if (nvn_gpu_only(addr)) return NULL;
     if (!nvn_pool_find(addr, size ? size : 1)) rt_fatal("gfx: null back end: %s at %#llx (%llu bytes) is in no memory pool", what,
@@ -55,8 +46,6 @@ static void *null_cpu_addr(uint64_t addr, uint64_t size, const char *what) {
     return (void *)(uintptr_t)addr;
 }
 
-// NVNcounterData = {counter, timestamp}. Timestamps are Tegra 19.2 MHz ticks, the base of GetSystemTick; every counter
-// type the null GPU cannot measure (all but the timestamps, samples passed included) reports 0.
 static void null_report(uint64_t addr) {
     NVNcounterData *d = null_cpu_addr(addr, sizeof *d, "counter report");
     if (!d) return;
@@ -100,14 +89,14 @@ static void null_replay(uint64_t handle) {
 }
 
 static uint64_t null_submit(const uint64_t *handles, int n) {
-    nvn_pins_sweep(nvn_submit_count(), NULL, 0);   // no replay state outlives a submission here
+    nvn_pins_sweep(nvn_submit_count(), NULL, 0);
     for (int i = 0; i < n; i++) null_replay(handles[i]);
     return __atomic_add_fetch(&fence, 1, __ATOMIC_ACQ_REL);
 }
 
 static int null_fence_wait(uint64_t value, uint64_t timeout_ns) {
     (void)timeout_ns;
-    return value <= __atomic_load_n(&fence, __ATOMIC_ACQUIRE);   // a value never submitted is never reached
+    return value <= __atomic_load_n(&fence, __ATOMIC_ACQUIRE);
 }
 
 static uint64_t null_fence_done(void) { return __atomic_load_n(&fence, __ATOMIC_ACQUIRE); }
