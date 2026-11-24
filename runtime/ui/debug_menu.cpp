@@ -1,9 +1,3 @@
-// The debug menu's panel (F9 with debug_menu = 1; ui/menu.cpp lays it out in the settings menu's place while it is
-// open, so its input, its sounds and the game's blocked pad are the menu's own): on the left edge, in the performance
-// overlay's look, with the game in view beside it. What it does to the game is in
-// debug_tools.c: the game's on/off flags by name, teleporting to the game's own start positions, starting its events,
-// the game's speed, Link's position, a free camera, and a search of the game's memory with values to set and to hold. Plain Dear ImGui with English text: a tool for testing, not part of the game's
-// interface. Present thread only.
 #include <algorithm>
 #include <ctype.h>
 #include <stdio.h>
@@ -22,14 +16,13 @@ extern "C" void rt_log(const char *fmt, ...);
 
 namespace {
 
-int g_tab = -1;   // a tab asked for by the test hook (debug_menu_tab), -1 none
+int g_tab = -1;
 
-// ---- flags
 char f_filter[64];
 bool f_only_on, f_only_named;
-int *f_rows;          // the flags that pass the filter
+int *f_rows;
 int f_rows_n, f_count;
-int f_age = 1000;     // frames since the values were read
+int f_age = 1000;
 bool f_dirty = true;
 struct Change { uint32_t hash; int on; char name[72]; } f_log[6];
 int f_log_n;
@@ -59,14 +52,13 @@ void flags_filter(void) {
         }
         f_rows[f_rows_n++] = i;
     }
-    // the named ones first, by name; the rest by hash, as the back end lists them
     std::stable_sort(f_rows, f_rows + f_rows_n, [](int a, int b) {
         const char *x = dbg_flag_name(a), *y = dbg_flag_name(b);
         if (!x || !y) return x && !y;
         return strcmp(x, y) < 0;
     });
     f_dirty = false;
-    if (cfg_env("NX2SARIA_DBG_TEST")) rt_log("debug: filter \"%s\": %d flags shown", f_filter, f_rows_n);   // test runs
+    if (cfg_env("NX2SARIA_DBG_TEST")) rt_log("debug: filter \"%s\": %d flags shown", f_filter, f_rows_n);
 }
 
 void tab_flags(void) {
@@ -74,7 +66,7 @@ void tab_flags(void) {
         int n = dbg_flags_refresh();
         if (n != f_count) f_count = n, f_dirty = true;
         f_age = 0;
-        if (f_only_on) f_dirty = true;   // values moved
+        if (f_only_on) f_dirty = true;
     }
     if (!f_count) {
         ImGui::TextWrapped("The game's flags appear once a save is loaded.");
@@ -108,7 +100,7 @@ void tab_flags(void) {
                 else snprintf(label, sizeof label, "(no name) %08x##%08x", hash, hash);
                 if (ImGui::Checkbox(label, &on)) {
                     dbg_flag_set(hash, on);
-                    f_age = 15;   // read again in a few frames: the game applies the change at its next update
+                    f_age = 15;
                     for (int k = f_log_n < 6 ? f_log_n : 5; k > 0; k--) f_log[k] = f_log[k - 1];
                     f_log[0].hash = hash, f_log[0].on = on;
                     snprintf(f_log[0].name, sizeof f_log[0].name, "%s", name ? name : "(no name)");
@@ -131,9 +123,8 @@ void tab_flags(void) {
     }
 }
 
-// ---- teleport and cutscenes
 char t_filter[64], e_filter[64];
-int t_group;          // 0 all, 1 the warp songs' pads, 2 the two sides of the loading zones, 3 boss rooms
+int t_group;
 int *t_rows, t_rows_n, t_count = -1, t_group_was = -1;
 int *e_rows, e_rows_n, e_count = -1;
 char t_filter_was[64] = "\x01", e_filter_was[64] = "\x01";
@@ -143,8 +134,6 @@ bool ends_with(const char *s, const char *end) {
     return n >= m && !strcmp(s + n - m, end);
 }
 
-// The groups go by the words the game's own names use: a warp song's pad is named after its song, a loading zone's
-// far side after where it leads, and a boss's room is an area of its own whose name ends in Stage.
 bool in_group(int group, const char *area, const char *pos) {
     static const char *const songs[] = {"Minuet", "Bolero", "Serenade", "Requiem", "Nocturne", "Prelude"};
     static const char *const doors[] = {"From", "Side", "Entrance", "Front"};
@@ -162,14 +151,12 @@ bool in_group(int group, const char *area, const char *pos) {
     return true;
 }
 
-// The last thing the teleport or an event start did, and whether one is under way.
 void status_line(void) {
     char status[160];
     dbg_status(status);
     if (status[0]) ImGui::TextWrapped("%s", status);
 }
 
-// The lists come with the flag names, from the game's files: reading them starts once the game's flags are there.
 bool lists_ready(const char *what) {
     dbg_flags_refresh();
     if (dbg_names(NULL) == 2) return true;
@@ -268,7 +255,6 @@ void tab_events(void) {
                        "another area, as it does in the game: keep a copy of the save.");
 }
 
-// ---- world
 void tab_world(void) {
     float p[3];
     if (dbg_player_pos(p)) ImGui::Text("Link is at  x %.2f   y %.2f   z %.2f  (metres; y is up)", p[0], p[1], p[2]);
@@ -322,8 +308,7 @@ void tab_world(void) {
                        "meanwhile and draws what the camera sees; the game speed above slows it down.");
 }
 
-// ---- memory
-int m_type;           // 0: 4 bytes, 1: 2 bytes, 2: 1 byte, 3: float
+int m_type;
 char m_value[32] = "0";
 char m_set[32];
 char m_note[160];
@@ -381,7 +366,7 @@ void tab_memory(void) {
     } else {
         static const char *const modes[] = {"equals the value", "changed", "unchanged", "went up", "went down"};
         for (int m = 0; m < 5; m++) {
-            if (m && m != 3) ImGui::SameLine();   // two rows: the panel is narrow
+            if (m && m != 3) ImGui::SameLine();
             if (m == 0 && !ok) ImGui::BeginDisabled();
             if (ImGui::Button(modes[m])) snprintf(m_note, sizeof m_note, "%d places left.", dbg_search_next(m, v));
             if (m == 0 && !ok) ImGui::EndDisabled();
@@ -428,12 +413,10 @@ void tab_memory(void) {
     ImGui::EndChild();
 }
 
-}  // namespace
+}
 
 extern "C" void debug_menu_tab(int tab) { g_tab = tab; }
 
-// A panel on the left edge in the performance overlay's dress (the game's panel art, gold labels, the smaller text),
-// as tall as the window: the game stays in view beside it while a flag or a value is changed.
 extern "C" void debug_menu_layout(uint32_t w, uint32_t h, float scale) {
     const float m = 12 * scale;
     const ImVec4 gold(236 / 255.0f, 196 / 255.0f, 104 / 255.0f, 1), dim(0.72f, 0.69f, 0.62f, 1);
@@ -441,7 +424,7 @@ extern "C" void debug_menu_layout(uint32_t w, uint32_t h, float scale) {
     if (width < min_width) width = min_width < (float)w - 2 * m ? min_width : (float)w - 2 * m;
     ImGui::SetNextWindowPos(ImVec2(m, m), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(width, (float)h - 2 * m), ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));   // the panel below is the background
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * scale, 20 * scale));
     bool shown = ImGui::Begin("##debug", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);

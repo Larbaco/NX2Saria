@@ -1,16 +1,3 @@
-// Settings pages in two panes (ui/option_rows.cpp): option rows on the left, the selected (controller) or hovered (mouse)
-// row's description on the right. Each row shows a setting of the cfg table (cfg.h) and changes it through the draft
-// (below; live settings are cfg_set at once, the others wait for Apply): A steps it (toggle, next value), left and right
-// step it, and the mouse steps it on the two framed arrows beside its value and nowhere else on the row (a click on the
-// row selects it; held on an arrow it repeats). A row marks the default value, says "after restart" while the value it
-// shows (the draft's, else the setting's) differs from the one the game started with (cfg_pending_for), and is greyed
-// out with a note when an environment variable fixes it.
-//
-//   opt_begin("##screen", scale);
-//   opt_toggle("NX2SARIA_FULLSCREEN", UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC);
-//   opt_end();
-//
-// key: the setting's NX2SARIA_ name, which must have a cfg_meta row. Present path only (ImGui).
 #pragma once
 #include "imgui.h"
 
@@ -20,141 +7,68 @@ extern "C" {
 
 void opt_begin(const char *id, float scale);
 void opt_end(void);
-// The height the next pages leave free under their panes (the menu's bottom row).
 void opt_reserve_bottom(float h);
-// The height opt_reserve_bottom keeps free, for a tab that lays out its own panes (ui/amiibo_page.cpp).
 float opt_bottom(void);
-// The next page's first row takes the controller's cursor (opening the menu, switching tabs).
 void opt_focus_first(void);
-// A page that lays out its own widgets (ui/amiibo_page.cpp): true once when its first item should take the cursor, as
-// opt_focus_first asked; the request is used up.
 bool opt_focus_take(void);
-// The row of key (or button id) takes the cursor, scrolled into view, when it is next drawn.
 void opt_focus_key(const char *key);
-// The next row is greyed out like one the environment fixes, with note under its label and in its description.
 void opt_disable_next(UiTextId note);
-void opt_disable_next_text(const char *note);   // note must outlive the frame
+void opt_disable_next_text(const char *note);
 
-// Page text that is not a row: a group heading in the accent colour, a wrapped paragraph (warn: the warning colour).
 void opt_group(UiTextId title);
 void opt_text(UiTextId text, bool warn = false);
 
-// The return value of every row: true when it changed the setting this frame.
-// inverted: the row shows "on" while the key is 0 (a setting whose key names the opposite).
-// subtitle: a short line below the name, shown even when the value is off.
 bool opt_toggle(const char *key, UiTextId label, UiTextId desc, bool inverted = false, const char *subtitle = nullptr);
-// An on/off row over a key with named values: off while the key holds off_value and on for any other, so a value the
-// row does not write itself still reads as on. Flipping it writes on_value or off_value. note: as for opt_choice.
 bool opt_toggle_value(const char *key, UiTextId label, UiTextId desc, const char *on_value, const char *off_value,
                       const char *note = nullptr);
-// One name per value of the key's cfg_meta values list, in its order. When the key has no fixed default (an empty
-// def), names[0] is the automatic choice (the key unset) and names[1..] follow the values. note: a short line under
-// the value in place of the "default" mark (NULL: none).
 bool opt_choice(const char *key, UiTextId label, const UiTextId *names, int n, UiTextId desc,
                 const char *note = nullptr);
-// A choice over a list the caller builds (devices, window sizes): values[i] is written, names[i] shown; "" means the key
-// unset. cur: the index in effect, -1 to find cfg_value(key) in values (no match: the value shown as it is).
 bool opt_choice_list(const char *key, UiTextId label, const char *const *values, const char *const *names, int n,
                      UiTextId desc, int cur = -1, const char *note = nullptr);
-// A choice whose value is spread over several settings: the caller gives the index in effect and the default's and
-// writes the settings itself (opt_apply) when this returns the new index; -1 while unchanged. key: the setting the row
-// stands for (its restart mark and the environment check). again: the value shown at cur is in effect without being
-// the setting's own (the quality preset's Recommended while a tier chosen on other hardware gives way to it), so
-// choosing it is a change: a step past either end (left on the first value, right on the last) returns cur.
 int opt_choice_index(const char *key, UiTextId label, const char *const *names, int n, int cur, int def, UiTextId desc,
                      const char *note = nullptr, bool again = false);
-void opt_apply(const char *key, const char *value);   // what a row writes: "" unsets the key; joins the draft below
-// The row the opt_apply calls that follow belong to, as opt_choice_index sets it, for a choice made later (in a box
-// opened by the row): key the row's setting, from and to its shown values.
+void opt_apply(const char *key, const char *value);
 void opt_context(const char *key, UiTextId label, const char *from, const char *to);
-// A row that runs an action: true on A or a click. id: unique on the page and not a setting ("##copy_info"); value:
-// shown on the right ("" none).
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value = "");
-// A row whose label, value, note (under the value) and description are text, not catalog ids: a mod's folder name.
-// Returns 2 (A / click), -1 / +1 (left / right), 3 / 4 (move up / down: the top / left face buttons, Ctrl+Up /
-// Ctrl+Down, the drawn arrows; movable rows only) or 0.
 int opt_text_row(const char *id, const char *label, const char *value, const char *note, const char *desc,
                  bool movable);
-// Rows and text that are not settings of the cfg table: a label and description of the caller's own (the cheats of
-// the cheat files). opt_toggle_text shows on / off (value: shown instead, NULL for On / Off) and returns true on A, a
-// click, left or right; the caller changes its state. id: unique on the page, the environment check uses it.
 bool opt_toggle_text(const char *id, const char *label, const char *desc, bool on, const char *value = nullptr);
 void opt_group_text(const char *title);
 void opt_text_str(const char *text, bool warn = false);
-// lo..hi in steps of step (left and right held for a second go ten times as fast); fmt formats the value ("%.0f %%").
-// note: a short line under the value in place of the "default" mark (NULL: none). fallback: the setting that applies
-// while key is unset; the row shows its value then, and a change sets key. A key with no table default of its own takes
-// the "default" mark from the fallback's default, and a step onto the fallback's value unsets key again.
 bool opt_slider(const char *key, UiTextId label, float lo, float hi, UiTextId desc, float step = 1,
                 const char *fmt = "%g", const char *note = nullptr, const char *fallback = nullptr);
-// Whole numbers lo..hi that go on into named stops past hi (stop_values[k] written, stop_names[k] shown): left and
-// right step one, held they step ten through the numbers and stop at hi before the stops; A goes round. fmt formats a
-// number ("%d FPS"). cur: the value in effect when it differs from cfg_value(key) (NULL: cfg_value). note: as above.
 bool opt_slider_stops(const char *key, UiTextId label, int lo, int hi, UiTextId desc, const char *fmt,
                       const char *const *stop_values, const char *const *stop_names, int stops,
                       const char *cur = nullptr, const char *note = nullptr);
 
-// Binding rows (remapping on the Controls tab): a label and three cells, each selectable on its own (left / right move between them).
-// opt_bind_header: the column titles above them. opt_bind_row: key is the setting's name without NX2SARIA_ (BIND_A; the
-// description names it when the environment sets it); a disabled cell shows its text greyed and takes no cursor; note
-// (NULL none) follows the description. Returns the cell A / Enter / a click activated (0..2), 10 + the cell Delete,
-// Backspace or X cleared, or -1. opt_focus_key("<key>#<cell>") puts the cursor on a cell.
 void opt_bind_header(UiTextId c0, UiTextId c1, UiTextId c2);
 int opt_bind_row(const char *key, const char *label, const char *action, UiTextId desc, const char *const cells[3],
                  const bool enabled[3], const char *note = nullptr);
 
-// ---- the draft. Changes made in the menu are not saved as they are made: they wait in a draft until the player applies
-// them (menu.cpp asks when the menu is about to close).
-//  - A preview key (a live setting that is cheap to show: volume, sharpness, the brightness, the bindings) is written at
-//    once with cfg_set so the effect shows; the first original is kept and Discard puts it back.
-//  - A staged key (every setting read at start, and FPS_LIMIT, VK_PRESENT, PAD_LAYOUT, WALK_KEY, MOTION, FULLSCREEN and
-//    WINDOW_SIZE, which would swap the picture, the pacing or the buttons under the player; is_staged in option_rows.cpp)
-//    only waits; Apply writes it.
-// Nothing is written to nx2navi.ini before Apply (opt_draft_apply). A change back to the original value leaves the draft.
-// Rows read their setting through opt_value & co. so a staged change shows; anything else reads cfg_value.
-const char *opt_value(const char *key);   // the draft's value of a staged key, else cfg_value
-const char *opt_get(const char *key);     // as opt_value, else cfg_get (NULL for a key not set)
-// The quality preset in the draft (menu.cpp row_preset): while the preset key is staged, a key the player leaves unset
-// (or the draft hands back to the preset with "") reads the staged tier's value (cfg_default_tier) in opt_value,
-// opt_get and the rows' "default" marks, and Apply switches the layer to it after the draft's writes
-// (cfg_preset_use_from, cfg_preset_chosen). Discard leaves the layer alone.
-int opt_preset_tier(void);                // the tier the draft stages, -1 while it stages none
-const char *opt_default(const char *key); // what key reads unset: the staged tier's default, else cfg_default
-bool opt_is_set(const char *key);         // the player sets key, as the draft has it (a staged "" is unset)
-// The keys choosing tier in the menu hands back to the preset (menu.cpp row_preset): of cfg_preset_keys, those tier
-// sets that the player sets, as the draft has them, to another value than the key reads unset with tier in use
-// (cfg_preset_differs); not the ones the environment fixes. Fills names (NX2SARIA_ + key) and returns how many.
+const char *opt_value(const char *key);
+const char *opt_get(const char *key);
+int opt_preset_tier(void);
+const char *opt_default(const char *key);
+bool opt_is_set(const char *key);
 int opt_preset_handback(int tier, char (*names)[64], int max);
-// cfg_pending_count over the values the rows show: the restart-only settings whose draft or setting differs from the
-// value the game started with (the Restart button applies the draft first, so its count takes the draft in).
 int opt_pending_count(void);
 int opt_int(const char *key);
 double opt_double(const char *key);
 bool opt_bool(const char *key);
-// A change made outside a row (a binding): key (with or without NX2SARIA_) to value ("" unsets it), named label in the
-// list, which shows from -> to.
 void opt_change(const char *key, const char *value, const char *label, const char *from, const char *to);
-int opt_draft_any(void);     // changes in the draft, hidden ones included; any thread
-int opt_draft_count(void);   // lines the player is shown
+int opt_draft_any(void);
+int opt_draft_count(void);
 struct OptDraftItem {
     char label[96], from[96], to[96];
-    bool restart;   // some key of it is read at start only
-    bool display;   // a timed Apply holds it for the "keep these display settings?" box, and its Revert puts it back
+    bool restart;
+    bool display;
 };
-bool opt_draft_item(int i, OptDraftItem *out);   // the i-th line, 0-based; false past the last
-void opt_draft_sync(void);                        // once a frame: a key something else changed leaves the draft
-// Writes the staged keys, releases the previews and saves; false if the write failed. timed: FULLSCREEN, WINDOW_SIZE,
-// VK_PRESENT and HDR (not to or from the game's own), with the other staged keys of the row that changed them (the
-// Resolution row's GAME_RES), are written but stay held out of every save until opt_display_keep (the "keep these?"
-// timer); the caller then wakes the window (gfx_window_apply_settings) and runs the timer. Without it every key is
-// saved (Restart).
+bool opt_draft_item(int i, OptDraftItem *out);
+void opt_draft_sync(void);
 bool opt_draft_apply(bool timed = false);
-int opt_display_pending(void);     // display keys written by a timed apply and not yet kept or reverted; present thread
-int opt_display_external(void);    // 1 when something else changed one of them since (F11): the player has control
-bool opt_display_keep(void);       // releases them and saves nx2navi.ini; false if the write failed
-// Puts the values from before the apply back (the caller wakes the window again) and returns true, or, when
-// opt_display_external, keeps what is on screen instead and returns false.
+int opt_display_pending(void);
+int opt_display_external(void);
+bool opt_display_keep(void);
 bool opt_display_revert(void);
-void opt_draft_discard(void);                     // puts the previews back, drops the staged keys
-// Writes nx2navi.ini now.
+void opt_draft_discard(void);
 void opt_save_now(void);

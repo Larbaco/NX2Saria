@@ -1,16 +1,3 @@
-// The settings menu's look from the game's own files in the user's RomFS, read at the first use (menu_assets.h): its
-// interface fonts (Font2/Scalable) and the shared interface textures (UI/Layout2Archive/Common...bntx). Nothing is
-// shipped; a RomFS without them leaves the menu as it was.
-//
-// - .zs files are zstd frames, most with one of the dictionaries of Pack/ZsDic.pack.zs (a SARC compressed without one;
-//   the frame names its dictionary by id).
-// - A .bfotf / .bfttf font is an OpenType / TrueType file behind an 8-byte header, every big-endian 32-bit word XORed
-//   with one key: the first word is 0x7f9a0218 under it, the second the payload size.
-// - BNTX: the platform block at 0x20 ("NX  ", or "Ounc" on Switch 2) counts the textures (+4) and points at their BRTI records (+8); a BRTI holds the
-//   format (+0x1c), width and height (+0x24, +0x28), the block height of the block-linear layout as log2 of GOBs
-//   (+0x34), the level size (+0x50), the name (+0x60, a u16-length string) and the level offsets (+0x70). The levels
-//   are block linear in the Switch 2 GOB layout (tex_deswizzle.c tex_bl_copy). BC4 masks become white with the mask as
-//   alpha (the menu tints them), ASTC 4x4 goes through the runtime's decoder.
 #include <stdlib.h>
 #include <string.h>
 
@@ -57,9 +44,6 @@ static void dicts_read(void *unused) {
     free(z);
 }
 
-// Once, whichever thread asks first (the "menu-art" thread and the present path both do in the first frames); the
-// others wait for it. Checking ndicts < 0 instead let a second caller see the 0 set at the start of the read, take it
-// for "no dictionaries" and fail its asset: the menu then kept its fallback fonts for the whole run.
 static void dicts_load(void) {
     static PlatOnce once = PLAT_ONCE_INIT;
     plat_once(&once, dicts_read, NULL);
@@ -75,7 +59,7 @@ uint8_t *menu_asset_load(const char *rel, size_t *n_out) {
     }
     unsigned long long rn = ZSTD_getFrameContentSize(b, (size_t)n);
     unsigned id = ZSTD_getDictID_fromFrame(b, (size_t)n);
-    if (rn == ZSTD_CONTENTSIZE_UNKNOWN) {   // a frame that does not say its size: streamed into a growing buffer
+    if (rn == ZSTD_CONTENTSIZE_UNKNOWN) {
         ZSTD_DDict *d = NULL;
         if (id) {
             dicts_load();
@@ -148,7 +132,6 @@ uint8_t *menu_asset_font(const char *rel, size_t *n_out) {
         memcpy(out + i, o, k);
     }
     free(b);
-    // OpenType with CFF ("OTTO") or TrueType outlines (0x00010000)
     if (memcmp(out, "OTTO", 4) && be32(out) != 0x00010000u) { free(out); return NULL; }
     if (n_out) *n_out = size;
     return out;
@@ -178,7 +161,6 @@ static void bc4_decode(const uint8_t *blocks, uint32_t wb, uint32_t hb, uint32_t
 }
 
 int menu_asset_texture(const uint8_t *bntx, size_t n, const char *name, uint8_t **rgba_out, uint32_t *w_out, uint32_t *h_out) {
-    // the platform block at 0x20 is "NX  " on Switch, "Ounc" in Switch 2 archives; its layout is the same
     if (!bntx || n < 0x40 || memcmp(bntx, "BNTX", 4)) return 0;
     uint32_t count = le32(bntx + 0x24);
     if (!count || count > 65536) return 0;
@@ -198,15 +180,14 @@ int menu_asset_texture(const uint8_t *bntx, size_t n, const char *name, uint8_t 
         uint64_t data = le64(bntx + mips);
         if (data + size > n) return 0;
         uint32_t kind = fmt >> 8, bpb, bw = 4, bh = 4;
-        if (kind == 0x1d) bpb = 8;                       // BC4
-        else if (kind == 0x2d) bpb = 16;                 // ASTC 4x4
-        else if (kind == 0x0b) bpb = 4, bw = bh = 1;     // R8G8B8A8
+        if (kind == 0x1d) bpb = 8;
+        else if (kind == 0x2d) bpb = 16;
+        else if (kind == 0x0b) bpb = 4, bw = bh = 1;
         else {
             rt_log("menu: interface texture %s has format %#x, not read", name, fmt);
             return 0;
         }
         uint32_t wb = (w + bw - 1) / bw, hb = (h + bh - 1) / bh, row = wb * bpb;
-        // The block-linear source padded out to whole GOB columns and block-height units (tex_bl_copy reads them).
         uint64_t gob_cols = (row + 63) / 64, unit_rows = 8ull << th, units = (hb + unit_rows - 1) / unit_rows;
         uint64_t need = gob_cols * units * (512ull << th);
         uint8_t *bl = calloc(1, need > size ? need : size), *lin = malloc((size_t)row * hb), *rgba = malloc((size_t)w * h * 4);

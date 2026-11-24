@@ -1,20 +1,3 @@
-// The in-game menu (ui/menu.cpp, Dear ImGui) and its seams to the platform side: the window and its input (ui/menu_win.cpp
-// on Windows, ui/menu_sdl.cpp with SDL), the gamepad (input_pad_read, input.h) and the present path
-// (gfx_present.c). The menu core calls no window system: events come in through menu_event_*, the drawing happens in the
-// present path's command buffer.
-//
-// F1 or Esc on the keyboard and Minus and Plus held together (consumed in poll_merged, input_menu_gate in input.h) open it;
-// F1, Esc, B or "Continue" close it; with changes not applied yet (option_rows.h, the draft) they open "Apply changes?" first.
-// menu_toggle on another thread then only raises a request that the present thread answers. While it is open the game gets no input (input_menu, input.h) and keeps running; the
-// cursor is released from the mouse camera. Tabs Screen, Game, Mods, Sound, Controls and Menu (L / R or Q / E switch
-// them) hold option rows (ui/option_rows.h) over the cfg settings and the mods folder (mods.h); the bottom row has
-// "Continue" and "Quit game".
-// Test hooks (ui/menu.cpp): NX2SARIA_MENU_TEST=<frame>[:<frames per page>] opens the menu at that presented frame and saves
-// one swapchain shot per tab into NX2SARIA_MENU_TEST_DIR; NX2SARIA_MENU_TEST_SET=<frame>:<key>=<value>[,...][;...] sets settings
-// at given frames without input (SAVE=1 writes nx2navi.ini, FOCUS=<key> puts the cursor on that setting's row).
-//
-// Threads: the event functions are called by the window thread, menu_toggle by whichever thread polls the pad, the
-// overlay functions by the present path under its lock. ImGui itself runs on the present path only.
 #pragma once
 #include <stdint.h>
 #include <vulkan/vulkan.h>
@@ -23,74 +6,51 @@
 extern "C" {
 #endif
 
-// ---- state, any thread
 int menu_is_open(void);
-void menu_toggle(void);                   // F1 / Esc on the keyboard, Minus+Plus on the pad; not before the game's first frame
-void menu_cfg_reload(void);               // Ctrl+F5: nx2navi.ini is read again on the present thread, with a short notice
-void menu_perf_cycle(void);               // F10: the performance overlay off, fps, full
+void menu_toggle(void);
+void menu_cfg_reload(void);
+void menu_perf_cycle(void);
 
-// ---- events from the window adapter, used only while the menu is open. key: an ImGuiKey; coordinates in pixels of the
-// window's client area, which is the swapchain image.
 void menu_event_key(int key, int down);
-int menu_debug_enabled(void);            // NX2SARIA_DEBUG_MENU: F9 belongs to the debug menu (ui/debug_menu.cpp)
-void menu_debug_toggle(void);            // F9
+int menu_debug_enabled(void);
+void menu_debug_toggle(void);
 void menu_event_mouse_pos(float x, float y);
-void menu_event_mouse_button(int button, int down);   // 0 left, 1 right, 2 middle
+void menu_event_mouse_button(int button, int down);
 void menu_event_wheel(float dx, float dy);
 void menu_event_focus(int focused);
-void menu_event_char(unsigned c);         // a character typed, a Unicode code point (a text field takes it)
-void menu_event_paste(const char *utf8);  // the clipboard's text gfx_window_paste read ("" none), on the window thread
-// The text the last gfx_window_paste brought, once: 1 and the text in out (cap bytes), 0 while none has arrived.
+void menu_event_char(unsigned c);
+void menu_event_paste(const char *utf8);
 int menu_paste_take(char *out, size_t cap);
 
-// ---- the overlay, drawn into the swapchain image after the game image (gfx_present.c, present lock held)
 typedef struct {
     VkInstance instance;
     VkPhysicalDevice phys;
     VkDevice device;
     uint32_t queue_family;
-    VkQueue queue;                        // submissions take vk_queue_lock
-    VkFormat format;                      // of the swapchain image, a colour attachment
+    VkQueue queue;
+    VkFormat format;
     uint32_t width, height;
-    int image_w, image_h;                 // the game image this present shows (its crop)
-    int scaler;                           // how the last present scaled it to the window: 0 not, 1 bilinear blit, 2 FSR 1,
-                                          // 3 bilinear shrink + FSR sharpening (RCAS)
+    int image_w, image_h;
+    int scaler;
 } MenuTarget;
-// Lays out this frame's overlay; 1 when there is something to draw. frame: the presented frame (0 unknown). *shot: a
-// path when the test hook wants this frame's swapchain image saved, else NULL. The first open starts ImGui's Vulkan
-// back end and uploads the font. With the menu closed it costs two loads and a compare.
 int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot);
-// Records the frame menu_overlay_frame laid out into cb, which is inside dynamic rendering on the image.
 void menu_overlay_draw(VkCommandBuffer cb);
-// The boot screen while boot.c waits for the prewarm: phase as VkPrewarmProgress.phase (0 starting, 1 shaders,
-// 2 pipelines, 3 compute pipelines, 4 the driver's cache) with its count. menu_boot_frame lays out the screen for t
-// like menu_overlay_frame (1: draw it with menu_overlay_draw); only before the guest runs, from the thread that
-// presents then.
 void menu_boot_set(int phase, long long done, long long total);
 int menu_boot_frame(const MenuTarget *t);
-void menu_vk_release(void);               // before the device goes away (gfx_window_release_vk)
-// The check the font atlas runs on a system font, on the embedded font and damaged copies of it: 1 when it takes the
-// whole font and refuses a cut-off one, one without a character map and one with an unknown tag (--probe-window).
+void menu_vk_release(void);
 int menu_font_check(void);
-// The window's text input follows the menu's text fields (ui/menu_text_input.cpp): menu_overlay_frame calls this on
-// each of its frames, those of a closed menu too, with whether the open menu has a field taking typing, and it calls
-// gfx_window_text_input when that changes.
 void menu_text_input_follow(int want);
 
-// ---- what the menu asks of the platform side (gfx_window_win.c, gfx_window_sdl.c)
-void gfx_window_apply_settings(void);     // NX2SARIA_FULLSCREEN or NX2SARIA_WINDOW_SIZE changed: the window follows
-void gfx_window_request_close(void);      // as the window's close button: the process ends
-void gfx_window_request_restart(void);    // the same, then nx2saria.exe starts again with the same command line
-void gfx_window_text_input(int on);       // a menu text field is active (on) or no longer: the window delivers typed
-                                          // characters to menu_event_char meanwhile, and a handheld shows its keyboard
-void gfx_window_paste(void);              // reads the clipboard on the window thread and hands it to menu_event_paste
-int gfx_window_monitor_size(int *w, int *h);   // pixels of the monitor the window is on; 0 when unknown
-double gfx_window_refresh_hz(void);            // its refresh rate (NX2SARIA_FPS_LIMIT=display); 0 when unknown
-unsigned gfx_window_dpi(void);                 // the window's DPI (96 at 100% display scale); any thread
-// The present mode the swapchain got, as a NX2SARIA_VK_PRESENT value ("fifo" when mailbox is missing); "" before the first
-// swapchain. Any thread.
+void gfx_window_apply_settings(void);
+void gfx_window_request_close(void);
+void gfx_window_request_restart(void);
+void gfx_window_text_input(int on);
+void gfx_window_paste(void);
+int gfx_window_monitor_size(int *w, int *h);
+double gfx_window_refresh_hz(void);
+unsigned gfx_window_dpi(void);
 const char *gfx_window_present_mode(void);
-double gfx_output_fps(void);   // frames the display gets per second with frame generation (generated ones too); 0 when off
+double gfx_output_fps(void);
 
 #ifdef __cplusplus
 }

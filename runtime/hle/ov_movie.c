@@ -1,27 +1,4 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// movie::Decoder for VP9 on the host with libvpx (BSD-3-Clause, linked statically).
-// NX2Saria's pre-rendered movies (Event/Movie/*.webm, 28 files: VP9 profile 0, 1920x1080, 30 fps, video only) play through
-// the SDK movie library in subsdk0, Android's MediaCodec over NVIDIA NvMM. Its decoder opens NVDEC through NvRm, whose
-// first NvOsDrvOpen (sdk+0x3f9050) aborts with "Use of nv::InitializeGraphics is required." because ov_gfx.c takes
-// nv::InitializeGraphics over; nvdrv and mm:u are not served either. The game's own demuxer (movie::Extractor) runs as
-// guest code; only the decoder is replaced.
-// main imports the constructor and calls the decoder through the vtable for movie::Decoder, whose slots are ABS64
-// relocations by name: the HOST_OVERRIDE entries below replace them. A VP9 buffer-mode decoder (type 3, mode 1) is a host
-// object, +0 the library's vtable, +8 the host Movie (where the library keeps its DecoderImpl); any other decoder runs
-// the original code. Behaviour follows DecoderImpl:
-// - output format 4 is packed NV12 (Y plane, then interleaved UV; stride = width), copied into the client's Buffer;
-// - input and output buffers are indices handed out FIFO, as MediaCodec does; input flag 4 / output flag 4 = end of stream;
-// - client events {input available, output available, format changed, error} (DecoderEvents, 4 EventType pointers) are
-//   signalled with nn::os::SignalEvent on a guest thread.
-// Decoding runs on one host worker thread per decoder (libvpx adds its own tile threads), never on the game's threads:
-// SendInputBufferForDecode queues the input and returns. Events the worker owes (input free, format changed, error) are
-// signalled at the next entry call or present, whichever comes first.
-// Pacing: the game shows one decoded frame per game frame, which plays a 30 fps movie at 30 fps only at 30 fps. So
-// decoded frames are handed over when their presentation time is due, counted from the first frame (movie_tick, at every
-// present on the presenting guest thread), at most one per present. When the game falls behind, a frame more than 1.5
-// periods late is dropped if the next one is due too, so the picture keeps time with the movie's sound.
-// NX2SARIA_MOVIE_PACE=0 hands every decoded frame over at the next present; NX2SARIA_MOVIE_HOST=0 leaves every decoder to the
-// library (which aborts at the first movie).
 #include <emmintrin.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -54,38 +31,38 @@ const char *const movie_symbols[MOVIE_ENTRIES] = {
 typedef struct { int index; unsigned flags; int64_t time; } Ready;
 typedef struct { int index, offset, size; int64_t time; unsigned flags; } Pending;
 typedef struct {
-    uint64_t guest;                          // the movie::Decoder object
+    uint64_t guest;
     int format, configured, started, w, h, eos_in, format_sent, last_error;
-    uint64_t events;                         // guest DecoderEvents *: EventType * per MOVIE_EV_*
+    uint64_t events;
     vpx_codec_ctx_t vpx;
     int vpx_live;
-    uint8_t *in[IN_BUFS];                    // kernel region: the game writes the compressed frames here
+    uint8_t *in[IN_BUFS];
     int in_free[IN_BUFS], nin_free;
-    Pending pending[IN_BUFS];                // sent, not decoded yet (the worker takes them in order)
+    Pending pending[IN_BUFS];
     int npending;
-    uint8_t *out[OUT_BUFS];                  // NV12 frames
+    uint8_t *out[OUT_BUFS];
     int out_bytes[OUT_BUFS], out_held[OUT_BUFS];
-    Ready decoded[OUT_BUFS];                 // decoded, not due yet
+    Ready decoded[OUT_BUFS];
     int ndecoded;
-    Ready ready[OUT_BUFS];                   // handed over: AcquireOutputBufferIndex returns these
+    Ready ready[OUT_BUFS];
     int nready;
-    unsigned owed;                           // events to signal on the next guest thread (bit per MOVIE_EV_*)
-    uint64_t t0;                             // host time of the first frame handed over (pacing)
-    int64_t pts0;                            // its presentation time (us)
+    unsigned owed;
+    uint64_t t0;
+    int64_t pts0;
     MovieStats st;
     PlatMutex mu;
     PlatCond work, idle;
     PlatThread *thread;
     int busy, quit;
-    uint64_t gen;                            // bumped by Flush, Stop, Reset, destruction: a decode in flight is dropped
+    uint64_t gen;
 } Movie;
 
 static MovieGuest G;
 static volatile int32_t g_ready;
 static PlatMutex g_init = PLAT_MUTEX_INIT;
 static Movie *g_movies[MAX_MOVIES];
-static volatile int32_t g_count;                // live host decoders: movie_tick returns at once when 0
-static PlatMutex g_lock = PLAT_MUTEX_INIT;        // lock order: g_lock, then Movie.mu
+static volatile int32_t g_count;
+static PlatMutex g_lock = PLAT_MUTEX_INIT;
 static uint64_t (*g_clock)(void) = kern_now_ns;
 static int g_pace = -1;
 
@@ -113,7 +90,6 @@ static uint64_t need(const char *name) {
     return a;
 }
 
-// The guest functions, resolved the first time any entry runs (the modules are loaded and relocated by then).
 static void guest_init(void) {
     if (g_ready) return;
     plat_mutex_lock(&g_init);
@@ -150,7 +126,6 @@ static int md_find_int32(Cpu *c, uint64_t md, const char *k, int *v) {
 }
 static void md_set_int32(Cpu *c, uint64_t md, const char *k, int v) { rt_call(c, G.md_set_int32, 3, md, U(k), (uint64_t)(uint32_t)v); }
 
-// The original code of an entry with the caller's arguments; its result stays in x0.
 static void pass(Cpu *c, int which) {
     uint64_t a[8];
     memcpy(a, c->x, sizeof a);
@@ -167,9 +142,8 @@ static Movie *find(uint64_t guest) {
     return m;
 }
 
-// Events are signalled after the locks are released: the woken game thread calls straight back in.
 typedef struct { uint64_t ev[4 * MAX_MOVIES]; int n; } Signals;
-static void collect(Movie *m, Signals *s) {   // m->mu held
+static void collect(Movie *m, Signals *s) {
     for (int k = 0; k < 4; k++)
         if (m->owed & (1u << k) && m->events && s->n < (int)(sizeof s->ev / sizeof *s->ev)) {
             uint64_t ev = LD64(m->events + 8 * (uint64_t)k);
@@ -183,7 +157,6 @@ static void fire(Cpu *c, const Signals *s) {
 
 static int frame_bytes(const Movie *m) { return m->w * m->h + (m->w / 2) * (m->h / 2) * 2; }
 
-// I420 (libvpx) -> packed NV12: Y rows, then rows of interleaved U, V.
 static void to_nv12(const vpx_image_t *img, uint8_t *dst, int w, int h) {
     for (int y = 0; y < h; y++)
         memcpy(dst + (size_t)y * w, img->planes[VPX_PLANE_Y] + (size_t)y * img->stride[VPX_PLANE_Y], (size_t)w);
@@ -234,7 +207,6 @@ static int vpx_open(Movie *m) {
     return 1;
 }
 
-// The worker: takes inputs in order, decodes them outside the lock into a reserved output slot, publishes the frame.
 static void worker(void *arg) {
     Movie *m = arg;
     plat_mutex_lock(&m->mu);
@@ -247,7 +219,7 @@ static void worker(void *arg) {
         int slot = -1;
         if (p.size > 0) {
             slot = free_out(m);
-            m->out_held[slot] = 1;   // reserved: in no queue, so the game cannot release it
+            m->out_held[slot] = 1;
         }
         uint64_t gen = m->gen, dt = 0;
         int got = 0, w = m->w, h = m->h;
@@ -273,7 +245,7 @@ static void worker(void *arg) {
         plat_mutex_lock(&m->mu);
         m->busy = 0;
         plat_cond_broadcast(&m->idle);
-        if (m->gen != gen) continue;   // flushed, stopped or reset meanwhile: the queues were reset after this
+        if (m->gen != gen) continue;
         m->in_free[m->nin_free++] = p.index;
         m->owed |= 1u << MOVIE_EV_INPUT;
         if (p.size > 0) {
@@ -317,8 +289,6 @@ static void worker(void *arg) {
     return;
 }
 
-// With m->mu held: invalidate a decode in flight and wait for the worker to leave it. Returns whether the calling guest
-// thread gave its core up; the caller calls kern_core_back after releasing m->mu.
 static int quiesce(Movie *m) {
     int away = 0;
     m->gen++;
@@ -341,7 +311,7 @@ static void reset_queues(Movie *m) {
     m->eos_in = 0;
     m->t0 = 0;
 }
-static void release_codec(Movie *m) {   // m->mu held, worker quiesced
+static void release_codec(Movie *m) {
     if (m->vpx_live) {
         vpx_codec_destroy(&m->vpx);
         m->vpx_live = 0;
@@ -358,14 +328,11 @@ static void release_codec(Movie *m) {   // m->mu held, worker quiesced
     reset_queues(m);
 }
 
-// Host time a decoded frame is due (ns); end of stream is due as soon as it is first in line.
 static uint64_t due_at(const Movie *m, const Ready *d) {
     int64_t ahead = d->time - m->pts0;
     if (ahead < 0) ahead = 0;
     return m->t0 + (uint64_t)ahead * 1000;
 }
-// One present: drop leading frames more than 1.5 periods late while the next one is due too, then hand over at most one
-// due frame (end of stream right after the last frame).
 static void release_due(Movie *m, uint64_t now) {
     if (!m->ndecoded) return;
     if (!pace_on()) {
@@ -432,8 +399,6 @@ int movie_quiet(uint64_t obj) {
     return q;
 }
 
-// ---- entries
-// Decoder(DecoderType type, DecoderOutputFormat format, DecoderMode mode, int priority)
 static void ov_ctor(Cpu *c) {
     uint64_t obj = arg_x(c, 0);
     int type = (int)arg_x(c, 1), format = (int)arg_x(c, 2), mode = (int)arg_x(c, 3);
@@ -491,7 +456,7 @@ static void destroy(Cpu *c, uint64_t obj) {
            (unsigned long long)m->st.frames, (unsigned long long)m->st.dropped);
     release_codec(m);
     free(m);
-    ST64(obj, G.vptr);   // what the library's destructor leaves (no DecoderImpl)
+    ST64(obj, G.vptr);
     ST64(obj + 8, 0);
 }
 
@@ -500,14 +465,12 @@ static void ov_d2(Cpu *c) {
     if (!find(obj)) { pass(c, MOVIE_D2); return; }
     destroy(c, obj);
 }
-// Deleting destructor: free the host state, then the library's deleting destructor frees the object (impl now 0).
 static void ov_d0(Cpu *c) {
     uint64_t obj = arg_x(c, 0);
     if (find(obj)) destroy(c, obj);
     pass(c, MOVIE_D0);
 }
 
-// Status Configure(MediaData *format)
 static void ov_configure(Cpu *c) {
     uint64_t obj = arg_x(c, 0), md = arg_x(c, 1);
     Movie *m = find(obj);
@@ -548,7 +511,6 @@ static void ov_configure(Cpu *c) {
     ret_x(c, ST_OK);
 }
 
-// Status RegisterClientEvents(DecoderEvents *events)
 static void ov_register_events(Cpu *c) {
     Movie *m = find(arg_x(c, 0));
     if (!m) { pass(c, MOVIE_REGISTER_EVENTS); return; }
@@ -564,7 +526,7 @@ static void set_format(Cpu *c, int w, int h, uint64_t md) {
     md_set_int32(c, md, "height", h);
     md_set_int32(c, md, "stride", w);
     md_set_int32(c, md, "slice-height", h);
-    md_set_int32(c, md, "color-format", 21);   // COLOR_FormatYUV420SemiPlanar
+    md_set_int32(c, md, "color-format", 21);
     rt_call(c, G.md_set_rect, 6, md, U("crop"), (uint64_t)0, (uint64_t)0, (uint64_t)(uint32_t)(w - 1),
             (uint64_t)(uint32_t)(h - 1));
     md_set_int32(c, md, "crop-width", w);
@@ -575,7 +537,6 @@ static void set_format(Cpu *c, int w, int h, uint64_t md) {
     md_set_int32(c, md, "nv12-uv-offset", w * h);
 }
 
-// Status GetOutputFormat(MediaData *format)
 static void ov_get_output_format(Cpu *c) {
     uint64_t md = arg_x(c, 1);
     Movie *m = find(arg_x(c, 0));
@@ -631,7 +592,6 @@ static void ov_reset(Cpu *c) {
     ret_x(c, ST_OK);
 }
 
-// Drop queued work; the next input starts a new decode (after a seek: a key frame).
 static void ov_flush(Cpu *c) {
     Movie *m = find(arg_x(c, 0));
     if (!m) { pass(c, MOVIE_FLUSH); return; }
@@ -647,7 +607,6 @@ static void ov_flush(Cpu *c) {
     ret_x(c, ST_OK);
 }
 
-// Status AcquireInputBufferIndex(int *index, int *remaining)
 static void ov_acquire_input(Cpu *c) {
     int *index = arg_p(c, 1), *remaining = arg_p(c, 2);
     Movie *m = find(arg_x(c, 0));
@@ -670,7 +629,6 @@ static void ov_acquire_input(Cpu *c) {
     ret_x(c, (uint32_t)st);
 }
 
-// Status GetInputBuffer(int index, Buffer *buffer)
 static void ov_get_input(Cpu *c) {
     int index = (int)arg_x(c, 1);
     uint64_t buf = arg_x(c, 2);
@@ -685,7 +643,6 @@ static void ov_get_input(Cpu *c) {
     ret_x(c, p ? ST_OK : ST_ERROR);
 }
 
-// Status SendInputBufferForDecode(int index, int offset, int size, long time, unsigned flags)
 static void ov_send_input(Cpu *c) {
     int index = (int)arg_x(c, 1), offset = (int)arg_x(c, 2), size = (int)arg_x(c, 3);
     int64_t time = (int64_t)arg_x(c, 4);
@@ -700,7 +657,7 @@ static void ov_send_input(Cpu *c) {
     plat_mutex_lock(&m->mu);
     int st = ST_OK;
     if (!m->started || m->npending == IN_BUFS) st = ST_ERROR;
-    else if (m->eos_in) {   // after end of stream: hand the buffer back
+    else if (m->eos_in) {
         m->in_free[m->nin_free++] = index;
         m->owed |= 1u << MOVIE_EV_INPUT;
     } else {
@@ -713,7 +670,6 @@ static void ov_send_input(Cpu *c) {
     ret_x(c, (uint32_t)st);
 }
 
-// Status AcquireOutputBufferIndex(int *index, long *time, unsigned *flags, int *remaining)
 static void ov_acquire_output(Cpu *c) {
     int *index = arg_p(c, 1), *remaining = arg_p(c, 4);
     int64_t *time = arg_p(c, 2);
@@ -722,7 +678,7 @@ static void ov_acquire_output(Cpu *c) {
     if (!m) { pass(c, MOVIE_ACQUIRE_OUTPUT); return; }
     if (!index || !time || !flags || !remaining) { ret_x(c, ST_NULL); return; }
     Signals s = {0};
-    plat_mutex_lock(&m->mu);   // paced frames become ready only at presents (movie_tick)
+    plat_mutex_lock(&m->mu);
     *index = -1;
     *time = 0;
     *flags = 0;
@@ -765,7 +721,6 @@ static int get_output(Cpu *c, Movie *m, int index, uint64_t buf) {
     return st;
 }
 
-// Status GetOutputBuffer(int index, Buffer *buffer)
 static void ov_get_output(Cpu *c) {
     int index = (int)arg_x(c, 1);
     uint64_t buf = arg_x(c, 2);
@@ -774,7 +729,6 @@ static void ov_get_output(Cpu *c) {
     ret_x(c, buf ? (uint32_t)get_output(c, m, index, buf) : ST_NULL);
 }
 
-// Status GetOutputBufferSize(int *size, int *count)
 static void ov_get_output_size(Cpu *c) {
     int *size = arg_p(c, 1), *count = arg_p(c, 2);
     Movie *m = find(arg_x(c, 0));
@@ -787,7 +741,6 @@ static void ov_get_output_size(Cpu *c) {
     ret_x(c, ST_OK);
 }
 
-// Status ReleaseOutputBufferIndex(int index)
 static void ov_release_output(Cpu *c) {
     int index = (int)arg_x(c, 1);
     Movie *m = find(arg_x(c, 0));
@@ -829,7 +782,6 @@ static int output_format(Cpu *c, Movie *m, int index, uint64_t md) {
     return ST_OK;
 }
 
-// Status GetOutputBufferFormat(int index, MediaData *format)
 static void ov_get_output_buffer_format(Cpu *c) {
     int index = (int)arg_x(c, 1);
     uint64_t md = arg_x(c, 2);
@@ -838,7 +790,6 @@ static void ov_get_output_buffer_format(Cpu *c) {
     ret_x(c, md ? (uint32_t)output_format(c, m, index, md) : ST_NULL);
 }
 
-// Status GetOutputBuffer(int index, Buffer *buffer, MediaData *format)
 static void ov_get_output_md(Cpu *c) {
     int index = (int)arg_x(c, 1);
     uint64_t buf = arg_x(c, 2), md = arg_x(c, 3);
@@ -852,7 +803,6 @@ static void ov_get_output_md(Cpu *c) {
 
 HOST_OVERRIDE("_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", ov_ctor);
 HOST_OVERRIDE("_ZN5movie7DecoderD2Ev", ov_d2);
-// 1.4.3's vtable and a PLT call name the complete-object destructor; without virtual bases it is D2.
 HOST_OVERRIDE("_ZN5movie7DecoderD1Ev", ov_d2);
 HOST_OVERRIDE("_ZN5movie7DecoderD0Ev", ov_d0);
 HOST_OVERRIDE("_ZN5movie7Decoder9ConfigureEPNS_9MediaDataE", ov_configure);

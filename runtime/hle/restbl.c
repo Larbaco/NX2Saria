@@ -1,12 +1,3 @@
-// The resource size table (restbl.h). Layout of a decompressed RESTBL, little-endian:
-//
-//   "RESTBL", u32 version (1), u32 name length (160), u32 hashed count, u32 named count
-//   hashed entries {u32 crc32 of the key, u32 size}, sorted by the hash
-//   named entries {char key[name length], u32 size}: the keys whose hash collides with another key's
-//
-// A key is a RomFS path without .zs or .mc. The estimates come from the 1.4.3 table against its own files: most types
-// need the decompressed size plus at most 8 KiB (headers, alignment); a few need a multiple of it (bfres 1.5, bkres
-// 2.05, bgyml 3.85, asb 1.4, bstar 1.2, bphsc 1.1). A type the table does not list takes 1.5 times its size plus 8 KiB.
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,7 +9,7 @@ struct Restbl {
     uint32_t version, name_len;
     Hashed *hashed;
     size_t nhashed, hashed_cap;
-    uint8_t *named;            // named entries as in the file: key (name_len bytes, NUL padded) then u32 size
+    uint8_t *named;
     size_t nnamed;
 };
 
@@ -73,7 +64,6 @@ const char *restbl_key(const char *path, char *buf, size_t n) {
     return buf;
 }
 
-// The named entry of key, or NULL.
 static uint8_t *named_of(const Restbl *t, const char *key) {
     size_t len = strlen(key);
     if (len >= t->name_len) return NULL;
@@ -84,7 +74,6 @@ static uint8_t *named_of(const Restbl *t, const char *key) {
     return NULL;
 }
 
-// The position of hash in the hashed entries, or where it would go.
 static size_t hashed_at(const Restbl *t, uint32_t hash) {
     size_t lo = 0, hi = t->nhashed;
     while (lo < hi) {
@@ -110,7 +99,6 @@ int restbl_get(const Restbl *t, const char *key, uint32_t *size) {
     return 0;
 }
 
-// The hashed entry of hash raised to size (added when missing); 1 when the table changed.
 static int raise_hash(Restbl *t, uint32_t h, uint32_t size) {
     size_t i = hashed_at(t, h);
     if (i < t->nhashed && t->hashed[i].hash == h) {
@@ -196,9 +184,6 @@ uint8_t *restbl_write(const Restbl *t, size_t *n) {
     return out;
 }
 
-// ---- estimates
-
-// The factor a type's entry needs over its decompressed size (1000 = 1.0); 0 for a type the table never lists.
 static unsigned type_factor(const char *key) {
     static const struct { const char *ext; unsigned f; } types[] = {
         {"bfres", 1500}, {"bkres", 2050}, {"bgyml", 3850}, {"asb", 1400}, {"bstar", 1200}, {"bphsc", 1100},

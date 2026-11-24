@@ -1,6 +1,3 @@
-// The Cheats tab of the in-game menu: the cheats of the mods' cheat files (cheats.c), a heading per mod in the Mods
-// tab's order, then a row per cheat in file order and a line per group label of the file; a cheat that cannot be
-// switched here is greyed out with the reason.
 #include <stdio.h>
 #include <string.h>
 
@@ -47,7 +44,7 @@ extern "C" void tab_cheats(float scale) {
         UiTextId text = UI_MENU_CHEAT_CODE_DESC;
         switch (c->kind) {
         case CHEAT_HEADING:
-            if (!strstr(c->name, "TID=")) opt_text_str(c->name);   // the file's title line only names the game
+            if (!strstr(c->name, "TID=")) opt_text_str(c->name);
             continue;
         case CHEAT_CODE: break;
         case CHEAT_KEY: text = UI_MENU_CHEAT_KEY_DESC; break;

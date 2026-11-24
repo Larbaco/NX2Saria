@@ -33,10 +33,10 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 9 | `runtime/patches/` | [patches.md](patches.md) | extracted |
 | 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
 | 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports; the rest not yet extracted |
-| 12 | `runtime/ui/` | [ui.md](ui.md) | started: `cheats_tab.cpp` and what the Cheats tab needs of `menu.cpp` and `option_rows.cpp`; the rest not yet extracted |
-| 13 | `runtime/` top level | `runtime.md` | not yet extracted |
+| 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
+| 13 | `runtime/` top level | [runtime.md](runtime.md) | started: `vram_warn.h`, `vram_warn.c` and what they need of `mem_budget.c`; the rest not yet extracted |
 | 14 | `runtime/gfx/` | `gfx.md` | not yet extracted |
-| 15 | `runtime/hle/` | `hle.md` | not yet extracted |
+| 15 | `runtime/hle/` | [hle.md](hle.md) | extracted |
 | 16 | `tools/` | [tools.md](tools.md) | started: the licence parts of the release scripts; the rest not yet extracted |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | started: `tests/shipped_notices_check.py`; the rest not yet extracted |
 | 18 | `runtime/shaders/` (not `ffx/` and `ffx3/`) | `shaders.md` | not yet extracted |

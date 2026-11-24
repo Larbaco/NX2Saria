@@ -1,18 +1,3 @@
-// nx2saria.exe --probe-movie: the host movie decoder on one NX2Saria movie from the RomFS.
-// A small Matroska/WebM demuxer reads the video frames of Event/Movie/<name>.webm (the smallest one, or the first whose
-// path contains NX2SARIA_PROBE_MOVIE). The probe then drives the decoder through the same HOST_OVERRIDE entries the game
-// calls, with a Cpu of its own; the guest functions the decoder calls (nn::os::SignalEvent, movie::Buffer,
-// movie::MediaData) are host stand-ins registered as host functions, so rt_call reaches them as it reaches the SDK's.
-// VP9 (movie::Decoder, ov_movie.c):
-//   1. unpaced: every frame in, every frame out: frame count, size, output format, PTS order, events, decode cost;
-//   2. paced at 60 presents per second (fake clock): at most one frame per present, one frame per 2 presents, no drops;
-//   3. paced at 15 presents per second: late frames are dropped, the frame handed over is the one due.
-// AV1 (movie::VideoDecoder, ov_movie2.c), in real time, played as the game plays a movie (av1_paced):
-//   1. 30 updates a second: every picture is shown, one per update, in time-stamp order, the end of stream after the
-//      last, and the picture ends seconds behind real time (the slow motion of a slow game);
-//   2. 60 updates a second: every picture is shown within 50 ms of real time.
-// Without the RomFS (no game data) it prints why and exits 0. NX2SARIA_PROBE_MOVIE_SHOT=<file.ppm> saves the middle frame
-// of a VP9 movie.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,15 +20,13 @@
     } while (0)
 #define U(x) ((uint64_t)(uintptr_t)(x))
 
-// ---- WebM: the VP9 track's frames
-typedef struct { uint32_t off, size; int64_t pts; } Frame;   // pts in microseconds
+typedef struct { uint32_t off, size; int64_t pts; } Frame;
 typedef struct {
     Frame *f;
     int n, cap, w, h;
     char codec[32];
 } Track;
 
-// EBML variable-length integer: an element ID keeps its length marker, a size drops it (all ones = unknown size).
 static int vint(const uint8_t *p, const uint8_t *end, int id, uint64_t *v, int *len, int *unknown) {
     if (p >= end) return 0;
     int n = 1;
@@ -63,7 +46,6 @@ static uint64_t be_uint(const uint8_t *p, uint64_t n) {
     return x;
 }
 
-// Walks the file linearly, entering the master elements on the way to the frames and skipping the rest.
 static const char *demux(const uint8_t *d, size_t size, Track *t) {
     const uint8_t *end = d + size, *p = d;
     uint64_t scale = 1000000, cluster = 0, cur_track = 0, vtrack = 0;
@@ -74,26 +56,26 @@ static const char *demux(const uint8_t *d, size_t size, Track *t) {
         if (!vint(p, end, 1, &id, &il, NULL) || !vint(p + il, end, 0, &n, &sl, &unknown)) return "bad element header";
         const uint8_t *body = p + il + sl;
         switch (id) {
-        case 0x18538067: case 0x1549A966: case 0x1654AE6B: case 0xAE: case 0xE0: case 0xA0:   // Segment, Info, Tracks,
-            p = body;                                                                         // TrackEntry, Video,
-            continue;                                                                         // BlockGroup
-        case 0x1F43B675: p = body; have_cluster = 1; continue;                               // Cluster
+        case 0x18538067: case 0x1549A966: case 0x1654AE6B: case 0xAE: case 0xE0: case 0xA0:
+            p = body;
+            continue;
+        case 0x1F43B675: p = body; have_cluster = 1; continue;
         }
         if (unknown || n > (uint64_t)(end - body)) return "element past the end of the file";
         switch (id) {
-        case 0x2AD7B1: scale = be_uint(body, n); break;                                      // TimecodeScale (ns)
-        case 0xD7: cur_track = be_uint(body, n); break;                                      // TrackNumber
-        case 0x86:                                                                           // CodecID
+        case 0x2AD7B1: scale = be_uint(body, n); break;
+        case 0xD7: cur_track = be_uint(body, n); break;
+        case 0x86:
             if (n < sizeof t->codec && !t->codec[0]) {
                 memcpy(t->codec, body, n);
                 t->codec[n] = 0;
                 vtrack = cur_track;
             }
             break;
-        case 0xB0: t->w = (int)be_uint(body, n); break;                                      // PixelWidth
-        case 0xBA: t->h = (int)be_uint(body, n); break;                                      // PixelHeight
-        case 0xE7: cluster = be_uint(body, n); break;                                        // Cluster Timecode
-        case 0xA3: case 0xA1: {                                                              // SimpleBlock, Block
+        case 0xB0: t->w = (int)be_uint(body, n); break;
+        case 0xBA: t->h = (int)be_uint(body, n); break;
+        case 0xE7: cluster = be_uint(body, n); break;
+        case 0xA3: case 0xA1: {
             uint64_t track;
             int tl;
             if (!have_cluster || !vint(body, body + n, 0, &track, &tl, NULL) || n < (uint64_t)tl + 3) return "bad block";
@@ -114,12 +96,11 @@ static const char *demux(const uint8_t *d, size_t size, Track *t) {
     return NULL;
 }
 
-// ---- stand-ins for the guest functions
-typedef struct { uint64_t base, cap; int off, size; } PBuf;    // movie::Buffer
+typedef struct { uint64_t base, cap; int off, size; } PBuf;
 typedef struct {
     int n;
     struct { char key[32]; int kind; int i; int r[4]; char s[64]; } e[32];
-} PMd;                                                         // movie::MediaData
+} PMd;
 enum { K_INT = 1, K_STR, K_RECT };
 
 static void *md_slot(PMd *m, const char *k, int create) {
@@ -167,11 +148,10 @@ static void s_set_string(Cpu *c) {
     }
 }
 static volatile int32_t g_d0, g_d2;
-static void s_orig_d0(Cpu *c) { (void)c; plat_inc32(&g_d0); }   // the library's deleting destructor
+static void s_orig_d0(Cpu *c) { (void)c; plat_inc32(&g_d0); }
 static void s_orig_d2(Cpu *c) { (void)c; plat_inc32(&g_d2); }
 static void s_vtable(Cpu *c) { (void)c; rt_fatal("probe-movie: the decoder vtable was called"); }
 
-// ---- driving the entries as the game does
 static GuestFn E[MOVIE_ENTRIES];
 static Cpu *C;
 static uint64_t call(int which, int n, ...) {
@@ -189,7 +169,6 @@ static int md_int(PMd *m, const char *k) {
     return e && MDE(e)->kind == K_INT ? MDE(e)->i : -1;
 }
 
-// NX2SARIA_PROBE_MOVIE_SHOT=<file.ppm>: the middle frame as RGB (BT.709, limited range), to look at the NV12 output.
 static void save_ppm(const char *path, const uint8_t *nv12, int w, int h) {
     FILE *f = fopen(path, "wb");
     if (!f) { printf("probe-movie: cannot write %s\n", path); return; }
@@ -235,8 +214,6 @@ static int feed(uint64_t obj, const uint8_t *data, const Track *t, int *sent, in
     return 0;
 }
 
-// Paced run over the first `limit` frames with a present every `period` ns of fake time; returns 0 on success and
-// fills the per-present counts.
 static int paced(uint64_t obj, const uint8_t *data, const Track *t, int limit, uint64_t period, int *got, int *ticks,
                  int *max_per_tick, int64_t *worst_lag_us) {
     CHECK((uint32_t)call(MOVIE_FLUSH, 1, obj) == 0, "Flush");
@@ -260,7 +237,7 @@ static int paced(uint64_t obj, const uint8_t *data, const Track *t, int limit, u
             if (flags & MOVIE_FLAG_EOS) eos = 1;
             else {
                 if (!*got) { pts0 = time; t0 = fake_now; }
-                int64_t lag = (int64_t)(fake_now - t0) / 1000 - (time - pts0);   // how late the frame is shown (us)
+                int64_t lag = (int64_t)(fake_now - t0) / 1000 - (time - pts0);
                 if (lag > *worst_lag_us) *worst_lag_us = lag;
                 CHECK(lag >= 0, "frame at %lld us handed over %lld us early", (long long)time, (long long)-lag);
                 ++*got;
@@ -273,9 +250,6 @@ static int paced(uint64_t obj, const uint8_t *data, const Track *t, int limit, u
     return 0;
 }
 
-// ---- AV1: this title's movies (ov_movie2.c), played as the game plays them. The game's VideoFrame (0x90 bytes: +0x08
-// its buffer, +0x48 the buffer's capacity, +0x78 time stamp, +0x88 end of stream) and its samples (nn::movie::Buffer:
-// +0x00 data, +0x10 size, +0x18 time stamp in ns, +0x20 flags, 8 = end of stream).
 #define AV1(n) "_ZN5movie12VideoDecoder" n
 enum { A_CTOR, A_DTOR, A_INIT, A_FINALIZE, A_REGISTER, A_FLUSH, A_DECODE, A_ACQUIRE, A_RELEASE, A_ENTRIES };
 static const char *const av1_symbols[A_ENTRIES] = {
@@ -285,7 +259,6 @@ static const char *const av1_symbols[A_ENTRIES] = {
     AV1("11DecodeAsyncEPKN2nn5movie6BufferE"), AV1("17AcquireVideoFrameEPPNS_10VideoFrameE"),
     AV1("17ReleaseVideoFrameEPNS_10VideoFrameE")};
 #undef AV1
-// AV1_HELD: the frames the probe registers, so the pictures it holds at most, two as the game registers for its movies
 enum { AV1_NO_FRAME = 0x7b, AV1_BUSY = 0x7d, AV1_HELD = 2 };
 static GuestFn A[A_ENTRIES];
 static uint64_t acall(int which, int n, ...) {
@@ -298,11 +271,10 @@ static uint64_t acall(int which, int n, ...) {
 }
 
 typedef struct {
-    int shown, updates, late;   // pictures shown; updates; updates that began more than 4 ms after their time
-    int64_t last_lag_us, worst_lag_us, last_ts;   // how far behind real time the last and the worst picture shown
-} Av1Run;                                         // were; the last one's time stamp (ns)
+    int shown, updates, late;
+    int64_t last_lag_us, worst_lag_us, last_ts;
+} Av1Run;
 
-// Samples until the decoder answers busy, then the end of stream after the first `limit` frames
 static int av1_feed(uint64_t obj, const uint8_t *data, const Track *t, int limit, int *sent, int *eos_sent) {
     while (!*eos_sent) {
         int end = *sent == limit;
@@ -320,10 +292,6 @@ static int av1_feed(uint64_t obj, const uint8_t *data, const Track *t, int limit
     return 0;
 }
 
-// The first `limit` frames played as the game plays a movie (its decode step main+0x3b5e600, its update
-// main+0x3b5ca60): samples go in whenever the decoder takes them; an update every `period` ns of real time takes every
-// picture there is a free frame for, shows the oldest picture it holds and gives that frame back. The movie's time
-// starts with its first picture; the run ends with the end-of-stream marker.
 static int av1_paced(uint64_t obj, const uint8_t *data, const Track *t, int limit, uint64_t period, Av1Run *r) {
     CHECK((uint32_t)acall(A_FLUSH, 1, obj) == 0, "AV1: Flush");
     memset(r, 0, sizeof *r);
@@ -333,7 +301,7 @@ static int av1_paced(uint64_t obj, const uint8_t *data, const Track *t, int limi
     while (!eos) {
         if (av1_feed(obj, data, t, limit, &sent, &eos_sent)) return 1;
         uint64_t now = plat_now_ns();
-        if (next && now < next) {   // the movie plays: the decoder is fed until the next update is due
+        if (next && now < next) {
             plat_sleep_ms(1);
             continue;
         }
@@ -341,7 +309,6 @@ static int av1_paced(uint64_t obj, const uint8_t *data, const Track *t, int limi
             r->late += now > next + 4000000;
             next += period;
             r->updates++;
-            // a decoder that loses a picture or the end-of-stream marker must fail the probe, not hang it
             CHECK(r->updates < 100000, "AV1: no end of stream after %d updates (%d samples in, %d pictures shown)",
                   r->updates, sent, r->shown);
         }
@@ -352,7 +319,7 @@ static int av1_paced(uint64_t obj, const uint8_t *data, const Track *t, int limi
             CHECK(res == 0 && fr, "AV1: AcquireVideoFrame answered %#x", res);
             hold[held++] = fr;
         }
-        if (!held) {   // nothing decoded yet: before the first picture, the probe waits for it
+        if (!held) {
             CHECK(next || ++waited < 5000, "AV1: no picture within 5 s of the start (%d samples in)", sent);
             if (!next) plat_sleep_ms(1);
             continue;
@@ -405,7 +372,6 @@ static int probe_av1(const uint8_t *data, const Track *t) {
     }
     CHECK((uint32_t)acall(A_REGISTER, 3, obj, U(frames), (uint64_t)AV1_HELD) == 0, "AV1: RegisterVideoFrame");
 
-    // 1. a game at 30 updates a second: every picture, one per update, in order, the end of stream last; slow motion
     int limit = t->n < 240 ? t->n : 240;
     double movie_s = (t->f[limit - 1].pts - t->f[0].pts) / 1e6;
     Av1Run r;
@@ -415,7 +381,6 @@ static int probe_av1(const uint8_t *data, const Track *t) {
           "AV1 at 30 Hz: %d of %d shown, the last at %lld ns and %.0f ms behind (a %.1f s movie)", r.shown, limit,
           (long long)r.last_ts, r.last_lag_us / 1000.0, movie_s);
 
-    // 2. a game at 60 updates a second: every picture in time
     limit = t->n < 180 ? t->n : 180;
     if (av1_paced(obj, data, t, limit, 1000000000ull / 60, &r)) return 1;
     av1_print("at 60 updates a second", limit, &r);
@@ -488,7 +453,6 @@ int probe_movie(void) {
         return rc;
     }
 
-    // Stand-ins and entries. The vtable the constructor stores is a host address nothing calls.
     MovieGuest g = {
         .signal_event = hostfn_register("probe nn::os::SignalEvent", s_signal),
         .buf_set_range = hostfn_register("probe movie::Buffer::SetRange", s_set_range),
@@ -544,7 +508,6 @@ int probe_movie(void) {
           md_int(&fmt, "stride"), md_int(&fmt, "color-format"));
     CHECK((uint32_t)call(MOVIE_START, 1, obj) == 0, "Start");
 
-    // 1. unpaced
     movie_set_pace(0);
     uint8_t *frame = malloc((size_t)fb);
     CHECK(frame, "frame buffer");
@@ -576,7 +539,7 @@ int probe_movie(void) {
                       (long long)t.f[got].pts);
                 prev = time;
                 if (got == t.n / 2 && cfg_get("NX2SARIA_PROBE_MOVIE_SHOT")) save_ppm(cfg_get("NX2SARIA_PROBE_MOVIE_SHOT"), frame, t.w, t.h);
-                if (got % 30 == 0) {   // mean luma of a centre row band: a decoded picture, not a blank buffer
+                if (got % 30 == 0) {
                     uint64_t sum = 0;
                     for (int y = t.h / 2 - 8; y < t.h / 2 + 8; y++)
                         for (int x = 0; x < t.w; x++) sum += frame[(size_t)y * t.w + x];
@@ -611,7 +574,6 @@ int probe_movie(void) {
            st.max_ns / 1e6, got / wall);
     CHECK(avg < 33.0, "decoding is slower than 30 fps (%.2f ms per frame)", avg);
 
-    // 2. paced at 60 presents per second: one frame every second present
     int limit = t.n < 150 ? t.n : 150, n, ticks, maxn;
     int64_t lag;
     movie_set_clock(fake_clock);
@@ -619,7 +581,7 @@ int probe_movie(void) {
     MovieStats s0 = st;
     if (paced(obj, data, &t, limit, 1000000000ull / 60, &n, &ticks, &maxn, &lag)) return 1;
     CHECK(movie_stats(obj, &st), "stats");
-    double span = (t.f[limit - 1].pts - t.f[0].pts) / 1e6 * 60.0;   // presents the frames span at 60 per second
+    double span = (t.f[limit - 1].pts - t.f[0].pts) / 1e6 * 60.0;
     CHECK(n == limit && maxn == 1 && st.dropped == s0.dropped, "60 Hz: %d of %d frames, up to %d per present, %llu dropped",
           n, limit, maxn, (unsigned long long)(st.dropped - s0.dropped));
     CHECK(ticks >= span - 1 && ticks <= span + 4, "60 Hz: %d presents for %.1f presents of movie", ticks, span);
@@ -627,7 +589,6 @@ int probe_movie(void) {
     printf("probe-movie: paced at 60 Hz: %d frames in %d presents (movie spans %.1f), at most 1 per present, worst lag "
            "%.1f ms, none dropped\n", n, ticks, span, lag / 1000.0);
 
-    // 3. paced at 15 presents per second: about every second frame is dropped, the shown one stays in time
     limit = t.n < 120 ? t.n : 120;
     s0 = st;
     if (paced(obj, data, &t, limit, 1000000000ull / 15, &n, &ticks, &maxn, &lag)) return 1;

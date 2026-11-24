@@ -1,11 +1,4 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// nn::hid overrides: one connected controller fed by input_poll (gamepad and keyboard,
-// runtime/input_win.c; nothing pressed with NX2SARIA_INPUT=none). Docked (default) it is a full-key controller as player 1 (id 0, style bit 0); with
-// NX2SARIA_OPERATION_MODE=handheld it is the handheld controller (id 0x20, style bit 1) and player 1 is not connected,
-// which is the controller the game reads in that mode. Mouse and keyboard report no input. The controller has two
-// vibration devices (left, right), played on the gamepad's motors or, with NX2SARIA_RUMBLE_HD=1, as they are on a Switch
-// controller's linear actuators (NX2SARIA_RUMBLE=0: no devices), and a six-axis sensor fed by
-// the gamepad's gyro and accelerometer (NX2SARIA_MOTION=0, live: reads at rest). State layouts follow the HID shared-memory format.
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -46,7 +39,6 @@ static const uint32_t *need_id(Cpu *c, int i, const char *fn) {
     return id;
 }
 
-// void InitializeNpad()
 static void ov_initialize_npad(Cpu *c) {
     (void)c;
     plat_mutex_lock(&lock);
@@ -56,7 +48,6 @@ static void ov_initialize_npad(Cpu *c) {
            ov_handheld() ? "handheld" : "full-key");
 }
 
-// void SetSupportedNpadIdType(const NpadIdType *ids, size_t count)
 static void ov_supported_ids(Cpu *c) {
     const uint32_t *ids = arg_p(c, 0);
     uint64_t n = arg_x(c, 1);
@@ -68,14 +59,12 @@ static void ov_supported_ids(Cpu *c) {
     plat_mutex_unlock(&lock);
 }
 
-// void SetSupportedNpadStyleSet(NpadStyleSet styles)
 static void ov_supported_styles(Cpu *c) {
     plat_mutex_lock(&lock);
     styles = (uint32_t)arg_x(c, 0);
     plat_mutex_unlock(&lock);
 }
 
-// NpadStyleSet GetNpadStyleSet(const NpadIdType &id)
 static void ov_style_set(Cpu *c) {
     uint32_t id = *need_id(c, 0, "GetNpadStyleSet");
     plat_mutex_lock_shared(&lock);
@@ -84,8 +73,6 @@ static void ov_style_set(Cpu *c) {
     ret_x(c, v);
 }
 
-// int GetNpadStates(<State> *out, int count, const NpadIdType &id): the newest state only. want: the style of the
-// overload, 0 for the Joy-Con overloads (never connected).
 static void npad_states(Cpu *c, uint32_t want) {
     NpadState *out = arg_p(c, 0);
     int max = (int)arg_x(c, 1);
@@ -96,19 +83,17 @@ static void npad_states(Cpu *c, uint32_t want) {
     NpadState s = {.sampling = ++sample};
     int live = want && enabled && allowed && id == pad_id() && want == pad_style() && (styles & want);
     plat_mutex_unlock(&lock);
-    // A frame's first pad read is where a driver's low-latency sleep belongs (vk_lowlat.c vk_lowlat_frame_start): the
-    // wait comes before the input is sampled, so the frame is drawn from the newest input. Nothing while that is off.
     if (gfx_backend()->input_read) gfx_backend()->input_read();
     if (live) {
         s.attributes = ATTR_CONNECTED;
         input_poll(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);
     }
-    boot_map_tick();   // a boot map ends once Link is in the world (boot_map.c)
-    dbg_tick(c);   // the debug menu's changes to the game, between two of its frames (debug_tools.c)
-    if (live) dbg_pad(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);   // its free camera takes the sticks while it flies
-    if (live) sprint_pad(&s.buttons);   // the sprint button's presses, kept from the game during gameplay (sprint.c)
-    if (live) text_speed_poll();   // the text_speed setting onto the patch page (text_speed.c)
-    amiibo_daily_poll();           // the amiibo_daily_limit setting onto its patch set (amiibo_daily.c)
+    boot_map_tick();
+    dbg_tick(c);
+    if (live) dbg_pad(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);
+    if (live) sprint_pad(&s.buttons);
+    if (live) text_speed_poll();
+    amiibo_daily_poll();
     *out = s;
     ret_x(c, 1);
 }
@@ -116,13 +101,11 @@ static void ov_states_full_key(Cpu *c) { npad_states(c, STYLE_FULL_KEY); }
 static void ov_states_handheld(Cpu *c) { npad_states(c, STYLE_HANDHELD); }
 static void ov_states_joycon(Cpu *c) { npad_states(c, 0); }
 
-// void SetNpadJoyHoldType(NpadJoyHoldType type)
 static void ov_hold_type(Cpu *c) {
     int64_t t = (int32_t)arg_x(c, 0);
     if (t < 0 || t > 1) rt_fatal("nn::hid::SetNpadJoyHoldType: invalid hold type %lld", (long long)t);
 }
 
-// void DisconnectNpad(const NpadIdType &id): only the controller in use (handheld mode disconnects player 1)
 static void ov_disconnect(Cpu *c) {
     uint32_t id = *need_id(c, 0, "DisconnectNpad");
     if (id != pad_id()) return;
@@ -131,8 +114,6 @@ static void ov_disconnect(Cpu *c) {
     plat_mutex_unlock(&lock);
 }
 
-// Result ShowControllerSupport(ControllerSupportResultInfo *out, const ControllerSupportArg &arg): the one controller
-// is already connected, so the applet returns at once with one player on it.
 static void ov_controller_support(Cpu *c) {
     ControllerSupportResult *out = arg_p(c, 0);
     if (out) *out = (ControllerSupportResult){.players = 1, .selected = pad_id()};
@@ -153,7 +134,6 @@ static void ov_initialize_keyboard(Cpu *c) {
     plat_mutex_unlock(&lock);
 }
 
-// int GetMouseStates(MouseState *out, int count): a mouse that is not connected
 static void ov_mouse_states(Cpu *c) {
     MouseState *out = arg_p(c, 0);
     int max = (int)arg_x(c, 1);
@@ -166,7 +146,6 @@ static void ov_mouse_states(Cpu *c) {
     ret_x(c, 1);
 }
 
-// void GetKeyboardState(KeyboardState *out): a keyboard with no key down
 static void ov_keyboard_state(Cpu *c) {
     KeyboardState *out = arg_p(c, 0);
     if (!out) rt_fatal("nn::hid::GetKeyboardState: null output");
@@ -176,20 +155,14 @@ static void ov_keyboard_state(Cpu *c) {
     plat_mutex_unlock(&lock);
 }
 
-// ---- vibration and six-axis sensor
-// Handles are the SDK's (nn::hid::utility, sdk+0x4a6e00 and sdk+0x4a6ab0): byte 0 the style index (3 full-key,
-// 4 handheld), byte 1 the controller id, byte 2 the device (vibration 0 left / 1 right, six-axis 2). Every call under
-// the public functions goes through nn::hid::detail (sdk's PLT), answered here instead of by the hid service, including
-// the batches VibrationTarget queues through detail::EnqueueVibrationValue into detail::SendVibrationValues.
-// VibrationValue {amplitude low, frequency low, amplitude high, frequency high}: 0..1 and Hz, neutral 0/160/0/320.
 typedef struct { float amp_low, freq_low, amp_high, freq_high; } VibrationValue;
-typedef struct { uint32_t type, position; } VibrationDeviceInfo;   // type 1 linear resonant actuator; position 1 left, 2 right
+typedef struct { uint32_t type, position; } VibrationDeviceInfo;
 _Static_assert(sizeof(VibrationValue) == 16 && sizeof(VibrationDeviceInfo) == 8, "vibration ABI");
 
 enum { STYLE_INDEX_FULL_KEY = 3, STYLE_INDEX_HANDHELD = 4, SIX_AXIS_DEVICE = 2, RUMBLE_MS = 250 };
-#define RUMBLE_STALE_NS 250000000ull     // a side the game has not updated for 250 ms is silent
-#define RUMBLE_REFRESH_NS 50000000ull    // an unchanged value is sent again every 50 ms (its 250 ms start over)
-#define RUMBLE_MIN_GAP_NS 10000000ull    // a changed value at most every 10 ms (the game streams every few ms)
+#define RUMBLE_STALE_NS 250000000ull
+#define RUMBLE_REFRESH_NS 50000000ull
+#define RUMBLE_MIN_GAP_NS 10000000ull
 static const VibrationValue vib_neutral = {0, 160, 0, 320};
 
 static int env_zero(const char *name) {
@@ -201,11 +174,7 @@ static void once(volatile int32_t *flag, const char *fmt, uint32_t v) {
     if (!plat_xchg32(flag, 1)) rt_log(fmt, v);
 }
 
-// NX2SARIA_RUMBLE_STRENGTH (percent, 0..300, default 130; 0 = off) and NX2SARIA_RUMBLE_CURVE (exponent on the amplitude, 0.2..1.5,
-// default 0.6). HD rumble is strong at low amplitude, an ERM motor hardly turns there, so weak values are lifted by the
-// curve (0.1 -> 0.25) and the strength scales the result (saturating at 65535; 0.66 and up reach full drive at 130 %).
-// Both are live settings (the menu): read again whenever cfg_version changes.
-#define RUMBLE_STRENGTH_DEFAULT 1.3f   // cfg.c RUMBLE_STRENGTH's default, as a factor
+#define RUMBLE_STRENGTH_DEFAULT 1.3f
 static float rumble_strength = RUMBLE_STRENGTH_DEFAULT, rumble_curve = 0.6f;
 static volatile int32_t rumble_cfg_logged;
 static unsigned rumble_cfg_seen = ~0u;
@@ -227,16 +196,12 @@ static uint16_t motor(float a) { return rumble_motor(a, rumble_curve, rumble_str
 
 static uint32_t pad_style_index(void) { return ov_handheld() ? STYLE_INDEX_HANDHELD : STYLE_INDEX_FULL_KEY; }
 
-// The SDK's id check (utility functions): players 1-8, other (0x10) and handheld (0x20); the public functions abort
-// on another id.
 static uint32_t handle_id(Cpu *c, const char *fn) {
     uint32_t id = *need_id(c, 2, fn);
     if (id >= 8 && id != 0x10 && id != 0x20) rt_fatal("nn::hid::%s: invalid controller id %#x", fn, id);
     return id;
 }
 
-// int GetVibrationDeviceHandles(VibrationDeviceHandle *out, int count, const NpadIdType &id, NpadStyleSet style):
-// utility::GetVibrationDeviceHandles' table, the first style bit in its order; none with NX2SARIA_RUMBLE=0.
 static void ov_vibration_handles(Cpu *c) {
     uint32_t *out = arg_p(c, 0), style = (uint32_t)arg_x(c, 3);
     int max = (int)arg_x(c, 1);
@@ -245,7 +210,6 @@ static void ov_vibration_handles(Cpu *c) {
         rt_fatal("nn::hid::GetVibrationDeviceHandles: invalid arguments (count %d, styles %#x)", max, style);
     static volatile int32_t asked;
     rumble_cfg();
-    // strength 0 keeps the devices (silent), so the menu can turn rumble up again
     if (env_zero("NX2SARIA_RUMBLE")) { once(&asked, "hid: no vibration devices (NX2SARIA_RUMBLE=%u)", 0); ret_x(c, 0); return; }
     static const struct { uint8_t bit, n; uint32_t base; } t[] = {
         {0, 2, 0x3}, {1, 2, 0x4}, {2, 2, 0x5}, {3, 1, 0x6}, {4, 1, 0x10007}, {5, 1, 0x8}, {10, 1, 0xd}, {8, 2, 0x4},
@@ -260,9 +224,6 @@ static void ov_vibration_handles(Cpu *c) {
     ret_x(c, (uint64_t)n);
 }
 
-// int GetSixAxisSensorHandles(SixAxisSensorHandle *out, int count, const NpadIdType &id, NpadStyleSet style):
-// utility::GetSixAxisSensorHandle's order (one sensor per style, two for the Joy-Con pair). Also with NX2SARIA_MOTION=0: the
-// sensor then reads at rest (six_fill), so the menu can turn motion on while the game runs.
 static void ov_six_axis_handles(Cpu *c) {
     uint32_t *out = arg_p(c, 0), style = (uint32_t)arg_x(c, 3);
     int max = (int)arg_x(c, 1);
@@ -291,7 +252,6 @@ static const uint32_t *need_handle(const void *p, const char *fn) {
     return p;
 }
 
-// The vibration device (0 left, 1 right) a handle names on the connected controller, or -1 (logged once).
 static int vibration_side(const uint32_t *h, const char *fn) {
     uint32_t v = *need_handle(h, fn), dev = v >> 16 & 0xff;
     if ((v & 0xff) == pad_style_index() && (v >> 8 & 0xff) == pad_id() && dev < 2) return (int)dev;
@@ -301,23 +261,14 @@ static int vibration_side(const uint32_t *h, const char *fn) {
 }
 
 static PlatMutex vib_lock = PLAT_MUTEX_INIT;
-static VibrationValue vib_last[2] = {{0, 160, 0, 320}, {0, 160, 0, 320}};   // vib_lock
-static uint64_t vib_at[2], sent_at;                                          // vib_lock
-static uint16_t sent_low, sent_high;                                         // vib_lock
-static int vib_allowed = 1;                                                  // vib_lock: PermitVibration
+static VibrationValue vib_last[2] = {{0, 160, 0, 320}, {0, 160, 0, 320}};
+static uint64_t vib_at[2], sent_at;
+static uint16_t sent_low, sent_high;
+static int vib_allowed = 1;
 
-static float clamp01(float v) { return v > 0 ? (v < 1 ? v : 1) : 0; }   // NaN -> 0
-// Share of a band at f Hz that goes to the light (high-frequency, right) motor: none at 160 Hz and below (the low band's
-// neutral frequency), all at 320 Hz and above (the high band's), log scale between.
+static float clamp01(float v) { return v > 0 ? (v < 1 ? v : 1) : 0; }
 static float light_share(float f) { return f > 160 ? (f < 320 ? log2f(f / 160) : 1) : 0; }
 
-// Switch HD rumble as it is, for a gamepad whose actuators take it (input.h input_rumble_hd_on; NX2SARIA_RUMBLE_HD):
-// each side's newest value goes on with both bands' frequency and amplitude, the amplitude scaled by the rumble
-// strength over its default alone: the default strength is above 100 % to make up for what two motors lose, and an
-// actuator that plays the value itself needs none of that, so at the default it gets the game's amplitude exactly and
-// the setting makes it weaker or stronger from there (the curve is for motors). A side the game has not updated for 250 ms,
-// or any side while vibration is not permitted, is at rest. input.c writes the reports and no longer drives that
-// gamepad's motors, so rumble_update's own call below reaches only the DualShock 3 reader then. Under vib_lock.
 static void hd_update(uint64_t now) {
     if (!input_rumble_hd_on()) return;
     RumbleHdValue v[2];
@@ -329,10 +280,6 @@ static void hd_update(uint64_t now) {
     input_rumble_hd(v, live, rumble_strength / RUMBLE_STRENGTH_DEFAULT);
 }
 
-// Switch HD rumble -> SDL_RumbleGamepad. Each side's two bands split by frequency between the heavy (low) and the light
-// (high) motor (light_share) and add up as energy per motor (root of the summed squares); the stronger side drives each
-// motor. A side the game has not updated for 250 ms is silent. Each send lasts 250 ms and is renewed every 50 ms while
-// the game streams, so the pad stops by itself when the game stops sending (pause, freeze). Under vib_lock.
 static void rumble_update(uint64_t now) {
     float heavy = 0, light = 0;
     rumble_cfg();
@@ -373,7 +320,6 @@ static void play(int side, const VibrationValue *v) {
     plat_mutex_unlock(&vib_lock);
 }
 
-// Result detail::InitializeVibrationDevice(const VibrationDeviceHandle &)
 static void ov_vib_init(Cpu *c) {
     static volatile int32_t logged;
     const uint32_t *h = arg_p(c, 0);
@@ -382,13 +328,11 @@ static void ov_vib_init(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::SendVibrationValue(const VibrationDeviceHandle &, const VibrationValue &)
 static void ov_vib_send(Cpu *c) {
     play(vibration_side(arg_p(c, 0), "SendVibrationValue"), arg_p(c, 1));
     ret_x(c, 0);
 }
 
-// Result detail::SendVibrationValues(const VibrationDeviceHandle *, const VibrationValue *, int count)
 static void ov_vib_send_many(Cpu *c) {
     const uint32_t *h = arg_p(c, 0);
     const VibrationValue *v = arg_p(c, 1);
@@ -398,7 +342,6 @@ static void ov_vib_send_many(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::GetActualVibrationValue(VibrationValue *out, const VibrationDeviceHandle &): the last value sent
 static void ov_vib_actual(Cpu *c) {
     VibrationValue *out = arg_p(c, 0);
     if (!out) rt_fatal("nn::hid::detail::GetActualVibrationValue: null output");
@@ -411,7 +354,6 @@ static void ov_vib_actual(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::GetVibrationDeviceInfo(VibrationDeviceInfo *out, const VibrationDeviceHandle &)
 static void ov_vib_info(Cpu *c) {
     VibrationDeviceInfo *out = arg_p(c, 0);
     if (!out) rt_fatal("nn::hid::detail::GetVibrationDeviceInfo: null output");
@@ -420,7 +362,6 @@ static void ov_vib_info(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::IsVibrationDeviceMounted(bool *out, const VibrationDeviceHandle &)
 static void ov_vib_mounted(Cpu *c) {
     uint8_t *out = arg_p(c, 0);
     if (!out) rt_fatal("nn::hid::detail::IsVibrationDeviceMounted: null output");
@@ -428,7 +369,6 @@ static void ov_vib_mounted(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::IsVibrationPermitted(bool *out)
 static void ov_vib_permitted(Cpu *c) {
     uint8_t *out = arg_p(c, 0);
     if (!out) rt_fatal("nn::hid::detail::IsVibrationPermitted: null output");
@@ -438,7 +378,6 @@ static void ov_vib_permitted(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::PermitVibration(bool): off silences the gamepad at once
 static void ov_vib_permit(Cpu *c) {
     int on = (arg_x(c, 0) & 0xff) != 0;
     plat_mutex_lock(&vib_lock);
@@ -448,7 +387,7 @@ static void ov_vib_permit(Cpu *c) {
     ret_x(c, 0);
 }
 
-static volatile int32_t six_running;   // StartSixAxisSensor .. StopSixAxisSensor
+static volatile int32_t six_running;
 
 static int six_axis_ours(const uint32_t *h, const char *fn) {
     uint32_t v = *need_handle(h, fn);
@@ -458,7 +397,6 @@ static int six_axis_ours(const uint32_t *h, const char *fn) {
     return 0;
 }
 
-// Result detail::StartSixAxisSensor(const SixAxisSensorHandle &): angle and direction start over
 static void ov_six_start(Cpu *c) {
     const uint32_t *h = arg_p(c, 0);
     if (six_axis_ours(h, "StartSixAxisSensor")) {
@@ -471,15 +409,11 @@ static void ov_six_start(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::StopSixAxisSensor(const SixAxisSensorHandle &)
 static void ov_six_stop(Cpu *c) {
     if (six_axis_ours(arg_p(c, 0), "StopSixAxisSensor")) plat_xchg32(&six_running, 0);
     ret_x(c, 0);
 }
 
-// All max entries, newest first: the game reads all 16 it asks for and ignores the count (main+0x2a268e0). A short
-// history repeats its oldest sample. No motion (sensor not started, no gamepad, one without a gyro, NX2SARIA_MOTION=0):
-// a controller lying still, not marked connected.
 static int six_fill(MotionState *s, int max, const uint32_t *h, const char *fn) {
     if (max <= 0) return 0;
     if (!s) rt_fatal("nn::hid::detail::%s: null output", fn);
@@ -496,7 +430,6 @@ static int six_fill(MotionState *s, int max, const uint32_t *h, const char *fn) 
     return max;
 }
 
-// Result detail::GetSixAxisSensorStates(int *count, SixAxisSensorState *out, int max, const SixAxisSensorHandle &)
 static void ov_six_states(Cpu *c) {
     int32_t *count = arg_p(c, 0);
     if (!count) rt_fatal("nn::hid::detail::GetSixAxisSensorStates: null count");
@@ -504,7 +437,6 @@ static void ov_six_states(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result detail::GetSixAxisSensorState(SixAxisSensorState *out, const SixAxisSensorHandle &)
 static void ov_six_state(Cpu *c) {
     six_fill(arg_p(c, 0), 1, arg_p(c, 1), "GetSixAxisSensorState");
     ret_x(c, 0);
@@ -549,20 +481,10 @@ HOST_OVERRIDE("_ZN2nn3hid6detail22GetSixAxisSensorStatesEPiPNS0_18SixAxisSensorS
 HOST_OVERRIDE("_ZN2nn3hid6detail21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE",
               ov_six_state);
 
-// ---- the public wrappers a Switch 2 title imports. NX2NAVI imports nn::hid::detail::*; Switch 2 titles import the
-// public functions, whose direct calls into detail:: no override reaches, so each public one is answered here with
-// the detail implementation above. Joy-Con 2 mouse (Nmouse), Jcms and sensor fusion have no host device: no
-// handles, starts that do nothing.
-// void StartSixAxisSensor(const SixAxisSensorHandle &) / void StopSixAxisSensor(...)
 static void ov_pub_six_start(Cpu *c) { ov_six_start(c); }
-// int GetSixAxisSensorStates(SixAxisSensorState *out, int count, const SixAxisSensorHandle &): the count filled
 static void ov_pub_six_states(Cpu *c) {
     ret_x(c, (uint64_t)(int64_t)six_fill(arg_p(c, 0), (int)arg_x(c, 1), arg_p(c, 2), "GetSixAxisSensorStates"));
 }
-// void SetGyroscopeZeroDriftMode(const SixAxisSensorHandle &, const GyroscopeZeroDriftMode &): the sensor is left as
-// it is. The dead zone the mode would pick is the player's gyro_deadzone setting instead (input.c
-// motion_options_refresh, applied by motion_fusion.c); the mode the game asks for is only logged, the first call and
-// each change of mode, 8 lines at most.
 static void ov_pub_zero_drift(Cpu *c) {
     static const char *const names[] = {"loose", "standard", "tight"};
     static volatile int32_t lines, last = -1;
@@ -571,7 +493,6 @@ static void ov_pub_zero_drift(Cpu *c) {
     if (!mode) rt_fatal("nn::hid::SetGyroscopeZeroDriftMode: null mode");
     uint32_t m = *mode;
     if (plat_xchg32(&last, (int32_t)m) != (int32_t)m && plat_xadd32(&lines, 1) < 8) {
-        // the level in force: input.c motion_options_refresh takes any other gyro_deadzone value as low
         const char *dz = cfg_value("NX2SARIA_GYRO_DEADZONE");
         if (!dz || (strcmp(dz, "off") && strcmp(dz, "low") && strcmp(dz, "standard") && strcmp(dz, "high"))) dz = "low";
         rt_log("hid: the game sets the gyroscope zero-drift mode %s (%u) on handle %#x; the gyro dead zone setting "
@@ -579,19 +500,13 @@ static void ov_pub_zero_drift(Cpu *c) {
     }
     ret_x(c, 0);
 }
-// void FinalizeSensorFusion(), FinalizeNmouse(), the Jcms functions: nothing to do
 static void ov_pub_nothing(Cpu *c) { ret_x(c, 0); }
-// void InitializeVibrationDevice(const VibrationDeviceHandle &) / void SendVibrationValue(handle, value)
 static void ov_pub_vib_init(Cpu *c) { ov_vib_init(c); }
 static void ov_pub_vib_send(Cpu *c) { ov_vib_send(c); }
-// bool IsOunceVibrationDeviceMounted(const VibrationDeviceHandle &): Ounce is the Switch 2's own actuator; the
-// host's rumble devices count as mounted
 static void ov_pub_vib_ounce_mounted(Cpu *c) {
     ret_x(c, vibration_side(arg_p(c, 0), "IsOunceVibrationDeviceMounted") >= 0);
 }
-// int GetSensorFusionHandles(...) / int GetNmouseHandles(NmouseHandle *, int, uint32_t): none
 static void ov_pub_no_handles(Cpu *c) { ret_x(c, 0); }
-// void GetNmouseTypeSet(BitFlagSet<32, NmouseType> *out, NmouseHandle): empty
 static void ov_pub_nmouse_types(Cpu *c) {
     uint32_t *out = arg_p(c, 0);
     if (out) *out = 0;

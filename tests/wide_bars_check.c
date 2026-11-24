@@ -113,12 +113,18 @@ int main(int argc, char **argv) {
     // before wide_init: nothing to black out, whatever is up
     setup((uintptr_t)&menu);
     setup((uintptr_t)&loading);
-    assert(watched() == 1 && !wide_menu_open());
+    setup((uintptr_t)&event);
+    assert(watched() == 2 && !wide_menu_open() && !wide_loading_open());
     menu.b[0x1a6] = 2;
-    assert(wide_menu_open());
+    assert(wide_menu_open() && !wide_loading_open());
     expect(0, NULL);
     menu.b[0x1a6] = 0;
     assert(!wide_menu_open());
+    loading.b[0x1a6] = 1;
+    assert(wide_loading_open() && !wide_menu_open());
+    expect(0, NULL);
+    loading.b[0x1a6] = 0;
+    assert(!wide_loading_open());
 
     wide_bars_init(MARGIN, 0);
     assert(set_on);

@@ -11,6 +11,7 @@ HEADER = (ROOT / "runtime/ui/ui_text.h").read_text(encoding="utf-8")
 BIND_PAGE = (ROOT / "runtime/ui/binds_page.cpp").read_text(encoding="utf-8")
 ROWS = (ROOT / "runtime/ui/option_rows.cpp").read_text(encoding="utf-8")
 MENU = (ROOT / "runtime/ui/menu.cpp").read_text(encoding="utf-8")
+HOOK_NOTES = (ROOT / "docs/code/ui.md").read_text(encoding="utf-8")
 
 
 def require(ok, message):
@@ -18,7 +19,7 @@ def require(ok, message):
         raise SystemExit(f"bind labels: FAIL: {message}")
 
 
-names = re.findall(r"\b(UI_BIND_ACTION_[A-Z]+)\b", HEADER[HEADER.index("// Short action labels"):])
+names = re.findall(r"\b(UI_BIND_ACTION_[A-Z]+)\b", HEADER[HEADER.index("UI_BIND_ACTION_A,"):])
 names = list(dict.fromkeys(names))
 require(names == [
     "UI_BIND_ACTION_A", "UI_BIND_ACTION_B", "UI_BIND_ACTION_X", "UI_BIND_ACTION_Y",
@@ -95,7 +96,7 @@ require('在游戏选项中开启“交换跳跃按键”时' in TEXT,
         "Chinese B/X help should name the option location")
 require("binds_action_row_count())" in MENU and "default B/X; Swap Jump Controls not read" in MENU,
         "the startup log does not state the default label state")
-require('!strncmp(t.value, "BIND_", 5)' in MENU and "BIND_<action>#<cell>" in MENU,
+require('!strncmp(t.value, "BIND_", 5)' in MENU and "BIND_<action>#<cell>" in HOOK_NOTES,
         "the headless menu hook cannot focus a bind cell for a row capture")
 
 print("bind labels: 24 rows, all 18 labels pass capture-calibrated 1280x720 limits in 4 languages: ok")

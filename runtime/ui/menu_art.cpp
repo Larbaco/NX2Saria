@@ -1,8 +1,3 @@
-// The settings menu's art from the game's own interface textures (menu_assets.c reads them from the user's RomFS):
-// the frame's corner ornaments, the control guide's bar, and the layers of the buttons, cursor, panels and divider that
-// ui/menu_skin.cpp puts together. A worker decodes them into RGBA once at start (the archive unpacks to about 240 MB and
-// takes a moment); the window thread uploads each to the GPU with its smaller levels the first time the menu asks for
-// it, and registers it with Dear ImGui's Vulkan back end. Without the files the menu draws its plain shapes.
 #include <atomic>
 #include <math.h>
 #include <stdlib.h>
@@ -22,15 +17,12 @@ extern "C" {
 
 #define COMMON_BNTX "UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs"
 
-// in the order of MenuArt (tools/menu_preview.py reads this list too)
 static const char *const kNames[MENU_ART_COUNT] = {
     "LocationDeco_00", "CtrlGuideBG_00", "MessageWindowCommonBase_00",
     "BtnThinBase_01", "BtnThinBase_00", "BtnThinBase_05", "BtnThinBase_04", "BtnThinBase_02",
     "OptionBtnThinCursorGlow_00", "OptionBtnThinCursorLine_00", "SystemCaptionBg_00",
     "OptionSeparateMark_00", "SystemLine_03", "MenuHeaderSelect_00",
 };
-// Levels uploaded for each art: the buttons draw it at about half size and smaller, where a line one or two texels wide
-// would break up if sampled from the full image alone.
 enum { MAX_LEVELS = 6 };
 
 static struct Art {
@@ -42,7 +34,7 @@ static struct Art {
     VkDescriptorSet ds;
     int failed;
 } g_art[MENU_ART_COUNT];
-static std::atomic<int> g_state;   // 0 not started, 1 decoding, 2 decoded, 3 nothing to show
+static std::atomic<int> g_state;
 static VkSampler g_sampler;
 
 static void decode_all(void *) {
@@ -66,7 +58,6 @@ extern "C" void menu_art_start(void) {
     if (!plat_thread_spawn(decode_all, nullptr, "menu-art", 0)) decode_all(nullptr);
 }
 
-// Frees what upload_rgba made for a (none of it in use: the caller waited for the queue or never drew with it).
 static void art_free(Art &a) {
     VkCtx *c = vk_ctx();
     if (a.ds) ImGui_ImplVulkan_RemoveTexture(a.ds);
@@ -75,8 +66,6 @@ static void art_free(Art &a) {
     a.ds = VK_NULL_HANDLE, a.view = VK_NULL_HANDLE, a.img = VK_NULL_HANDLE, a.alloc = nullptr;
 }
 
-// rgba (w x h) as a sampled image of up to max_levels levels, each halved from the one before, with its view and Dear
-// ImGui descriptor set in a; 1 when all of it is there, else 0 with nothing left allocated.
 static int upload_rgba(Art &a, const uint8_t *rgba, uint32_t w, uint32_t h, uint32_t max_levels) {
     VkCtx *c = vk_ctx();
     if (!c || !rgba) return 0;
@@ -115,8 +104,6 @@ static int upload_rgba(Art &a, const uint8_t *rgba, uint32_t w, uint32_t h, uint
     VmaAllocation sa;
     uint8_t *map = (uint8_t *)vk_staging(bytes, &sb, &sa);
     if (!map) return art_free(a), 0;
-    // the levels one after the other in a plain allocation, each halved from the one before (the staging memory may be
-    // slow to read back)
     uint8_t *chain = (uint8_t *)malloc((size_t)bytes);
     if (!chain) {
         vmaDestroyBuffer(c->vma, sb, sa);
@@ -134,7 +121,6 @@ static int upload_rgba(Art &a, const uint8_t *rgba, uint32_t w, uint32_t h, uint
     }
     memcpy(map, chain, (size_t)bytes);
     free(chain);
-    // The batch flushes its own staging buffers. This one is caller-owned and can be noncoherent.
     if (vmaFlushAllocation(c->vma, sa, 0, bytes) != VK_SUCCESS) {
         vmaDestroyBuffer(c->vma, sb, sa);
         return art_free(a), 0;
@@ -175,21 +161,15 @@ static int upload_rgba(Art &a, const uint8_t *rgba, uint32_t w, uint32_t h, uint
     }
     int errs = menu_vk_errors();
     a.ds = ImGui_ImplVulkan_AddTexture(g_sampler, a.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (menu_vk_errors() != errs) a.ds = VK_NULL_HANDLE;   // the descriptor set was not allocated (menu_vk_check logged it)
+    if (menu_vk_errors() != errs) a.ds = VK_NULL_HANDLE;
     if (!a.ds) return art_free(a), 0;
     return 1;
 }
 
 static int upload(Art &a) {
-    return upload_rgba(a, a.rgba, a.w, a.h, MAX_LEVELS);   // the pixels stay (a few MB): the back end may start again
+    return upload_rgba(a, a.rgba, a.w, a.h, MAX_LEVELS);
 }
 
-// The menu's font atlas (ui/menu.cpp fonts_up), uploaded as the art is: through the runtime's upload batch, which
-// submits under the queue lock, into memory VMA picks (device-local, else what is left), every step checked. Dear
-// ImGui's own upload (ImGui_ImplVulkan_CreateFontsTexture) checked no result, so with the video memory full its copy
-// went to an image without memory and the GPU wrote to address 0 (issue #165); and run from ImGui_ImplVulkan_NewFrame,
-// its submit and queue wait took no lock and could meet the game's submissions on the same queue. The previous atlas
-// goes once the new one is on the GPU and the queue has finished the frames that drew with it.
 static Art g_font;
 
 extern "C" int menu_font_upload(const unsigned char *rgba, int w, int h, ImTextureID *tex) {
@@ -227,9 +207,9 @@ extern "C" void menu_art_release(void) {
     if (!c) return;
     for (Art &a : g_art) {
         art_free(a);
-        a.failed = 0;   // uploaded again at the next use
+        a.failed = 0;
     }
-    art_free(g_font);   // the menu makes its atlas again after the back end starts again (fonts_up)
+    art_free(g_font);
     ImGui::GetIO().Fonts->SetTexID(0);
     if (g_sampler) vkDestroySampler(c->device, g_sampler, nullptr), g_sampler = VK_NULL_HANDLE;
 }

@@ -1,8 +1,3 @@
-// --probe-kernel: the kernel's waits, wake orders, virtual cores, fibers and
-// ExitThread on guest threads whose entries are host functions, then real lifted code on four guest threads: main's
-// PLT stub for nn::os::GetSystemTick, through the lifted sdk function, to rt_ticks.
-//
-// Every probe thread is created with SVC 0x08 and drives the kernel through rt_svc, the entry the lifted code uses.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +23,6 @@ static uint64_t a_lock_waiter, a_cv_waiter, a_cv_order_waiter, a_arb_waiter, a_e
     a_exit_entry, a_exit_nested, a_fiber_fn, a_fiber_exit_thread, a_fiber_exit_fn, a_tick_worker;
 static uint64_t a_fib_init, a_fib_fin, a_fib_switch, a_fib_cur, tick_stub;
 
-// ---- helpers: SVCs through rt_svc, thread start and join
 static uint32_t sv(Cpu *c, uint32_t imm, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3) {
     c->x[0] = a0;
     c->x[1] = a1;
@@ -70,7 +64,6 @@ static void join(Cpu *c, uint32_t h) {
     CHECK(sv(c, 0x16, h, 0, 0, 0) == 0, "CloseHandle(thread %#x)", h);
 }
 
-// Poll (sleeping, so the virtual core is free) until the thread reaches a state; 5 s at most.
 static int wait_state(Cpu *c, uint32_t h, int want) {
     for (int i = 0; i < 5000; i++) {
         if (kern_thread_state(h) == want) return 1;
@@ -82,7 +75,6 @@ static int wait_state(Cpu *c, uint32_t h, int want) {
 
 static double ms_since(uint64_t t0) { return (double)(kern_now_ns() - t0) / 1e6; }
 
-// ---- user-mode lock of the SDK: tag word = owner handle | waiters bit
 static uint32_t ld(volatile uint32_t *a) { return __atomic_load_n(a, __ATOMIC_SEQ_CST); }
 static int cas(volatile uint32_t *a, uint32_t *e, uint32_t v) {
     return __atomic_compare_exchange_n(a, e, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
@@ -107,7 +99,6 @@ static void user_unlock(Cpu *c, volatile uint32_t *a, uint32_t tag) {
     sv(c, 0x1B, ga(a), 0, 0, 0);
 }
 
-// ---- lock handoff order
 typedef struct { volatile uint32_t *lock, *key; uint32_t tag, r; int idx, held; } LockJob;
 static volatile uint32_t g_lockw __attribute__((aligned(8))), g_keyw __attribute__((aligned(8)));
 static volatile int32_t g_order_n;
@@ -157,8 +148,7 @@ static void test_lock(Cpu *c, uint32_t me) {
     CHECK(ld(&g_lockw) == 0, "lock word %#x after the last unlock", ld(&g_lockw));
 }
 
-// ---- condition variables
-static void cv_waiter(Cpu *c) {   // waits forever; woken holding the lock
+static void cv_waiter(Cpu *c) {
     LockJob *j = arg_p(c, 0);
     user_lock(c, j->lock, j->tag);
     j->r = sv(c, 0x1C, ga(j->lock), ga(j->key), j->tag, (uint64_t)-1);
@@ -194,8 +184,6 @@ static void test_cv_wake_order(Cpu *c) {
     CHECK(ld(&g_keyw) == 0 && ld(&g_lockw) == 0, "key %u lock %#x after the last waiter", ld(&g_keyw), ld(&g_lockw));
 }
 
-// Another thread's user-mode critical section and Signal, run inside the waiter's svc 0x1C right after the lock
-// release: take the lock, read the key (the SDK's Signal skips svc 0x1D on 0), release.
 static volatile int g_seen_key;
 static void cv_signaller(void) {
     uint32_t e = 0;
@@ -225,7 +213,7 @@ static uint32_t cv_order_case(Cpu *c, int old) {
     j.tag = h;
     start(c, h);
     while (kern_thread_state(h) != KERN_WAIT_CONDVAR && kern_thread_state(h) != KERN_THREAD_EXITED) sleep_ms(c, 1);
-    if (g_seen_key != 0) sv(c, 0x1D, ga(&g_keyw), 1, 0, 0);   // what the SDK's Signal does
+    if (g_seen_key != 0) sv(c, 0x1D, ga(&g_keyw), 1, 0, 0);
     join(c, h);
     kern_test_cv_old_order = 0;
     kern_test_cv_hook = NULL;
@@ -247,7 +235,6 @@ static void test_cv_key_order(Cpu *c) {
     CHECK(lost, "the old-order negative control did not lose the wakeup");
 }
 
-// ---- address arbiter
 typedef struct { int type, value, idx; int64_t timeout; uint32_t r; } ArbJob;
 static volatile uint32_t g_arb __attribute__((aligned(8)));
 
@@ -271,7 +258,6 @@ static uint32_t sig(Cpu *c, int type, int value, int count) {
 static void test_arbiter(Cpu *c) {
     int before = failures;
     uint64_t arb = ga(&g_arb);
-    // wait type 0, if less than
     g_arb = 0;
     CHECK(sv(c, 0x34, arb, 0, 0, (uint64_t)-1) == KERN_R_BAD_STATE, "wait type 0 with value not less");
     CHECK(sv(c, 0x34, arb, 0, 1, 0) == KERN_R_TIMEOUT, "wait type 0 with timeout 0");
@@ -280,7 +266,6 @@ static void test_arbiter(Cpu *c) {
     CHECK(sig(c, 0, 0, 1) == 0, "signal type 0");
     join(c, h);
     CHECK(j0.r == 0, "wait type 0 woken by signal type 0: %#x", j0.r);
-    // wait type 1, decrement if less than; signal type 1, increment if equal
     g_arb = 0;
     ArbJob j1 = {.type = 1, .value = 1, .timeout = -1};
     h = arb_spawn(c, &j1);
@@ -290,7 +275,6 @@ static void test_arbiter(Cpu *c) {
     CHECK(sig(c, 1, -1, 1) == 0 && g_arb == 0, "signal type 1 did not increment (%d)", (int32_t)g_arb);
     join(c, h);
     CHECK(j1.r == 0, "wait type 1 woken by signal type 1: %#x", j1.r);
-    // wait type 2, if equal; signal type 2, modify by the number of waiters if equal
     g_arb = 5;
     CHECK(sv(c, 0x34, arb, 2, 6, (uint64_t)-1) == KERN_R_BAD_STATE, "wait type 2 with a different value");
     ArbJob ja = {.type = 2, .value = 5, .timeout = -1}, jb = ja;
@@ -305,7 +289,6 @@ static void test_arbiter(Cpu *c) {
     CHECK(sig(c, 2, 5, 0) == 0 && g_arb == 6, "signal type 2, no waiter, count 0: value %d (want 6)", (int32_t)g_arb);
     ArbJob jc = {.type = 2, .value = 6, .timeout = -1};
     h = arb_spawn(c, &jc);
-    // Waking all (count <= 0) with waiters subtracts 2 (Horizon's KAddressArbiter::SignalAndModifyByWaitingCountIfEqual).
     CHECK(sig(c, 2, 6, -1) == 0 && g_arb == 4, "signal type 2, 1 waiter, count -1: value %d (want 4)", (int32_t)g_arb);
     join(c, h);
     g_arb = 6;
@@ -318,12 +301,10 @@ static void test_arbiter(Cpu *c) {
           jb.r, jc.r, jd.r, je.r);
     g_arb = 5;
     CHECK(sig(c, 2, 7, 1) == KERN_R_BAD_STATE, "signal type 2 with a different value");
-    // timeout, invalid type
     uint64_t t0 = kern_now_ns();
     uint32_t r = sv(c, 0x34, arb, 2, 5, 5000000);
     double ms = ms_since(t0);
     CHECK(r == KERN_R_TIMEOUT && ms >= 5.0, "wait type 2 with a 5 ms timeout: %#x after %.2f ms", r, ms);
-    // wait type 3: the whole 64-bit word against x2 (kernel.c case 0x34); an address off 8 bytes is refused
     static volatile uint64_t arb64 = 0x100000005ull;
     uint64_t a64 = ga(&arb64);
     t0 = kern_now_ns();
@@ -338,8 +319,6 @@ static void test_arbiter(Cpu *c) {
            "increment, modify by waiters), 5 ms timeout after %.2f ms: %s\n", ms, failures == before ? "ok" : "FAIL");
 }
 
-// ---- events
-// pre: a first wait on h0 with timeout t0 (result r0, index idx0) before the wait on h.
 typedef struct { uint32_t h, r, idx, h0, r0, idx0; int64_t timeout, t0; volatile int delay, go; int pre; } EvJob;
 
 static void event_waiter(Cpu *c) {
@@ -400,10 +379,6 @@ static void test_events(Cpu *c) {
     join(c, h);
     CHECK(g.r == KERN_R_CANCELLED, "wait after a cancel: %#x", g.r);
 
-    // A pending cancel is for the next WaitSynchronization that would block (Horizon's KSynchronizationObject::Wait:
-    // signalled objects first, then timeout 0, then the cancel): a poll times out and a wait on a signalled object
-    // succeeds, both leaving it pending; the next blocking wait ends cancelled. The blocking waits have a 500 ms
-    // timeout, so a cancel used up too early shows as a timeout instead of a hang.
     CHECK(sv(c, 0x11, hw2, 0, 0, 0) == 0, "SignalEvent of the second event");
     EvJob p = {.h = hr, .timeout = 500000000, .delay = 1, .pre = 1, .h0 = hr, .t0 = 0};
     EvJob q = {.h = hr, .timeout = 500000000, .delay = 1, .pre = 1, .h0 = hr2, .t0 = -1};
@@ -432,14 +407,13 @@ static void test_events(Cpu *c) {
            "timeout after %.2f ms: %s\n", ms, failures == before ? "ok" : "FAIL");
 }
 
-// ---- virtual cores: count the threads running guest code at once, and that no two of them share a core number
-#define PROBE_CORES 8   // at least kernel.c NCORE
+#define PROBE_CORES 8
 static volatile int32_t g_running, g_run_max, g_core_use[PROBE_CORES], g_core_clash;
 
 static void core_worker(Cpu *c) {
     for (int i = 0; i < CORE_RUNS; i++) {
         uint32_t core = sv(c, 0x10, 0, 0, 0, 0);
-        int known = core < (uint32_t)kern_cores() && core < PROBE_CORES;   // a number past the cores is a clash too
+        int known = core < (uint32_t)kern_cores() && core < PROBE_CORES;
         if (!known || plat_inc32(&g_core_use[core]) != 1) plat_inc32(&g_core_clash);
         long n = plat_inc32(&g_running), m;
         while (n > (m = g_run_max) && plat_cas32(&g_run_max, n, m) != m) {}
@@ -464,9 +438,8 @@ static void test_cores(Cpu *c) {
     int now, held_max;
     kern_core_stats(&now, &held_max);
     uint32_t cpus = plat_cpu_usable();
-    int gate = !cfg_bool("NX2SARIA_FREE_CORES");   // the kernel's own switch
-    int ncore = kern_cores();   // as many threads run guest code at once as there are virtual cores, where the host
-                                // has more CPUs than that
+    int gate = !cfg_bool("NX2SARIA_FREE_CORES");
+    int ncore = kern_cores();
     int ok = g_run_max <= ncore && held_max <= ncore && !g_core_clash && ((int)cpus <= ncore || g_run_max == ncore);
     printf("virtual cores: %d threads x %d runs on %u host CPUs: at most %d running guest code at once, at most %d "
            "core holders (kernel count), %d core-number clashes: %s\n", CORE_WORKERS, CORE_RUNS, cpus, g_run_max,
@@ -474,10 +447,7 @@ static void test_cores(Cpu *c) {
     CHECK(ok || !gate, "virtual cores");
 }
 
-// ---- pinned threads: each sees the number of the core it is pinned to, also where NX2SARIA_CORES folds that core
-// onto another one (kernel.c core_seen), and no two that run guest code at once see the same number. Run the probe
-// with NX2SARIA_CORES=4 (the Steam Deck profile's value) to check the folded case; with all cores it holds trivially.
-#define PIN_CORES 6   // kernel.c NCORE
+#define PIN_CORES 6
 static volatile int32_t g_pin_wrong, g_pin_clash, g_pin_use[PROBE_CORES];
 static uint64_t a_pin_worker;
 
@@ -500,7 +470,7 @@ static void test_pinned_cores(Cpu *c) {
     static uint32_t own[2 * PIN_CORES];
     uint32_t h[2 * PIN_CORES];
     g_pin_wrong = g_pin_clash = 0;
-    for (int i = 0; i < 2 * PIN_CORES; i++) {   // two threads per core, so each core's own threads take turns too
+    for (int i = 0; i < 2 * PIN_CORES; i++) {
         own[i] = (uint32_t)(i % PIN_CORES);
         h[i] = create(c, a_pin_worker, &own[i], 44, i % PIN_CORES);
         start(c, h[i]);
@@ -514,7 +484,6 @@ static void test_pinned_cores(Cpu *c) {
     CHECK(ok || !gate, "pinned cores");
 }
 
-// ---- fibers: two fibers switch to each other; each checks its callee-saved registers, sp and tpidr survive
 typedef struct { uint64_t self, other; int id; } FiberJob;
 static volatile int32_t g_switches, g_runs[3];
 static volatile int g_last_fiber;
@@ -541,7 +510,7 @@ static void fiber_fn(Cpu *c) {
     for (;;) {
         long n = g_switches;
         if (n >= FIBER_SWITCHES) {
-            ret_x(c, 0);   // back to the thread
+            ret_x(c, 0);
             return;
         }
         g_switches = n + 1;
@@ -550,7 +519,7 @@ static void fiber_fn(Cpu *c) {
         uint64_t sp = c->sp, tp = c->tpidr, tlr = c->tpidrro;
         g_last_fiber = j->id;
         rt_call(c, a_fib_switch, 1, j->other);
-        if (g_last_fiber != 3 - j->id) g_fiber_turns++;   // the other fiber did not run in between
+        if (g_last_fiber != 3 - j->id) g_fiber_turns++;
         if (!same_regs(c, save, vsave) || c->sp != sp || c->tpidr != tp || c->tpidrro != tlr) g_fiber_bad++;
         if (rt_call(c, a_fib_cur, 0) != j->self) g_fiber_bad++;
     }
@@ -583,7 +552,6 @@ static void test_fibers(Cpu *c) {
     CHECK(ok, "fiber ping-pong");
 }
 
-// ---- ExitThread unwinding: from three nested host calls deep, and from a fiber
 typedef struct { int stage, depth, bad; uint64_t fiber, stack; } ExitJob;
 
 static void exit_nested(Cpu *c) {
@@ -638,7 +606,6 @@ static void test_exit(Cpu *c) {
     CHECK(ok, "ExitThread unwinding (bad %d %d)", a.bad, b.bad);
 }
 
-// ---- lifted code: main's PLT stub for nn::os::GetSystemTick -> lifted sdk -> rt_ticks
 typedef struct { uint64_t first, last; long bad; } TickJob;
 
 static void tick_worker(Cpu *c) {
@@ -672,7 +639,6 @@ static void test_lifted_ticks(Cpu *c) {
                (unsigned long long)j[i].first, (unsigned long long)j[i].last, j[i].bad, in ? "yes" : "NO");
         ok &= !j[i].bad && in;
     }
-    // Host functions entered by dispatch meanwhile: only the four thread entries, so no call reached a host override.
     int lifted = calls == TICK_THREADS;
     printf("  monotonic per thread: %s; host-function calls meanwhile %llu (the %d thread entries): %s\n",
            ok ? "ok" : "FAIL", (unsigned long long)calls, TICK_THREADS, lifted ? "all ticks came from lifted code"
@@ -680,8 +646,6 @@ static void test_lifted_ticks(Cpu *c) {
     CHECK(ok && lifted, "lifted GetSystemTick");
 }
 
-// svc 0x07 ExitProcess: the path up to the final ExitProcess (logged, pipeline cache saved, logs flushed) runs with the
-// test hook in its place, which must see exit code 0; the SVC then returns to the probe.
 static volatile int32_t exit_calls;
 static volatile unsigned exit_code = 99;
 static void exit_hook(unsigned code) { exit_code = code, exit_calls++; }
@@ -717,8 +681,6 @@ static void probe_main(Cpu *c) {
     test_exit_process(c);
 }
 
-// ---- platform layer (platform/win32.c): a thread handing values over a condition variable, and plat_sleep_ns(1 ms)
-// overshoot (median of 21 under 0.5 ms; frame pacing depends on it).
 static PlatMutex g_pm = PLAT_MUTEX_INIT;
 static PlatCond g_pc = PLAT_COND_INIT;
 static int g_pv;
@@ -788,7 +750,7 @@ int probe_kernel(void) {
     a_fiber_exit_thread = hostfn_register("probe-kernel fiber exit thread", fiber_exit_thread);
     a_fiber_exit_fn = hostfn_register("probe-kernel fiber exit", fiber_exit_fn);
     a_tick_worker = hostfn_register("probe-kernel tick worker", tick_worker);
-    a_fib_init = hostfn_register(KERN_SYM_INITIALIZE_FIBER, kern_fiber_initialize);   // the loader's addresses
+    a_fib_init = hostfn_register(KERN_SYM_INITIALIZE_FIBER, kern_fiber_initialize);
     a_fib_fin = hostfn_register(KERN_SYM_FINALIZE_FIBER, kern_fiber_finalize);
     a_fib_switch = hostfn_register(KERN_SYM_SWITCH_TO_FIBER, kern_fiber_switch);
     a_fib_cur = hostfn_register(KERN_SYM_GET_CURRENT_FIBER, kern_fiber_current);

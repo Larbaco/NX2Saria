@@ -96,7 +96,7 @@ listed as they are; search for all of a group when you look at one subsystem:
 - Frame rate and timing: `frame rate:`, `frame step:`, `frame` (per-frame GPU counts), `frametime:`, `fps:`,
   `present:`, `perf:`, `segment:`, `scene:`, `stutter:`, `stutter map:`, `stutter` (the map's lines), `time`.
 - Floors: `floor probe:`, `floor scan:`, `floor watch:`.
-- Memory: `mem:`, `mem_budget:`, `MapPhysicalMemory`, `UnMapPhysicalMemory`, `heap retry:`, `platform:`.
+- Memory: `mem:`, `mem_budget:`, `vram_warn:`, `MapPhysicalMemory`, `UnMapPhysicalMemory`, `heap retry:`, `platform:`.
 - RomFS and files: `RomFS:`, `RomFS` (the image and index checks), `RomFS overlay:`, `RomFS ready:`, `fs:`, `fs`
   (mounts and the RomFS trace), `fs commit save:`, `host save import:`, `host save recovery:`, `host save storage:`,
   `host save working copy:`, `save share:`, `mods:`.
@@ -304,6 +304,7 @@ Files are under `runtime/` unless stated otherwise; the first three by number of
 | `vk_pipeline:` | Vulkan pipelines: building, caches, formats | `vk_pipeline.c` |
 | `vk_rec:` | Vulkan recorder thread | `vk_rec.c` |
 | `vk_usnap:` | Uniform snapshots of a submission | `vk_usnap.c` |
+| `vram_warn:` | The on-screen notice of full video memory: on or off at start, each notice with its numbers | `vram_warn.c` |
 | `voice language:` | Voice language option | `voice_language.c` |
 | `wide hud:` | Widescreen HUD layout (docs/wide-hud.md) | `wide_hud.c`, `romfs.c` |
 | `wide menus:` | Widescreen menus | `wide_hud.c`, `romfs.c` |

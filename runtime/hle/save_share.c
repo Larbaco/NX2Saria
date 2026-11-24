@@ -1,13 +1,3 @@
-// Sharing a save (save_share.h). The zip, as the launcher's launcher/saves.py export_save writes it:
-//
-//   manifest.json   {"format": "nx2navi-save", "format_version": 1, "game", "title_id", "game_version", "nx2navi",
-//                    "exported" (UTC), "exported_by", "files", "bug_report"}
-//   save/...        the save's files as the game keeps them (account.sav, option.sav, slot_00/progress.sav, ...)
-//   bug-report/...  with a bug report: this run's log and settings; an import leaves them out
-//
-// An import accepts a zip whose manifest has this format, a version up to FORMAT_VERSION and the game's title id, whose
-// save/ paths stay inside the save, with no links, at most MAX_FILES files and MAX_BYTES, among them a file of this
-// game's save (save_file). Every member's CRC-32 is checked before anything is written.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,14 +14,13 @@
 
 #define FORMAT "nx2navi-save"
 #define FORMAT_VERSION 1
-#define TITLE_ID "0400486024dec000"   // the game's title id (fs_host.c NX2SARIA_APPLICATION_ID)
+#define TITLE_ID "0400486024dec000"
 #define GAME "The Legend of Zelda: Ocarina of Time"
 #define MAX_FILES 4000
 #define MAX_BYTES (256ull << 20)
 #define MAX_ZIP (512ll << 20)
 #define MANIFEST_MAX 65536
 
-// The executable's folder, where nx2saria.ini (or a legacy nx2navi.ini), logs and saves are. 0 when unknown.
 static int exe_dir(char *out, size_t cap) {
     if (!plat_exe_path(out, cap)) return 0;
     char *cut = plat_last_sep(out), *slash = strrchr(out, '/');
@@ -43,7 +32,7 @@ static int exe_dir(char *out, size_t cap) {
 
 static int lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 
-static int same_text(const char *a, const char *b) {   // ASCII, any case
+static int same_text(const char *a, const char *b) {
     while (*a && lower((unsigned char)*a) == lower((unsigned char)*b)) a++, b++;
     return !*a && !*b;
 }
@@ -53,17 +42,14 @@ static int ends_with(const char *s, const char *tail) {
     return n >= k && same_text(s + n - k, tail);
 }
 
-// Key files never go into a zip or out of one, wherever a stray copy sits in a save folder.
 static int key_file(const char *rel) { return ends_with(rel, ".keys") || ends_with(rel, ".keys.txt"); }
 
-// A file only this game's save has: what makes the zip's save this game's.
 static int save_file(const char *rel) {
     if (!strcmp(rel, "account.sav") || !strcmp(rel, "option.sav")) return 1;
     return !strncmp(rel, "slot_", 5) && rel[5] >= '0' && rel[5] <= '9' && rel[6] >= '0' && rel[6] <= '9' &&
            !strcmp(rel + 7, "/progress.sav");
 }
 
-// A relative path that stays inside the save: '/' separators, no empty, "." or ".." part, no drive or backslash.
 static int safe_rel(const char *rel) {
     if (!*rel || *rel == '/' || strchr(rel, '\\') || strchr(rel, ':')) return 0;
     for (const char *p = rel;;) {
@@ -97,7 +83,6 @@ int save_share_backup_dir(char *out, size_t cap) {
     return 0;
 }
 
-// ---- export
 typedef struct {
     SzWriter w;
     int files;
@@ -120,14 +105,12 @@ static void add_file(Export *e, const char *name, const char *path) {
     free(data);
 }
 
-// The settings file for a bug report: as it is, except that the values of the private settings (cfg_private.h) read
-// "(set, not shown)". A report goes to people the player does not know.
 static void add_settings_file(Export *e, const char *name, const char *path) {
     uint64_t n = 0;
     uint8_t *data = plat_file_read(path, &n);
     size_t sn = 0;
     char *scrubbed = data ? cfg_ini_scrub((const char *)data, (size_t)n, &sn) : NULL;
-    size_t pn = 0;   // and a folder in the account's home written short (log_privacy.c), as in the log beside it
+    size_t pn = 0;
     char *shown = scrubbed ? log_privacy_dup(scrubbed, sn, &pn) : NULL;
     if (shown) sz_writer_add(&e->w, name, shown, pn);
     else if (scrubbed) sz_writer_add(&e->w, name, scrubbed, sn);
@@ -183,7 +166,7 @@ SaveShareResult save_share_export(const char *dir, int bug_report, char *path, s
     snprintf(stem, sizeof stem, "NX2Saria-save-%04d-%02d-%02d_%02d-%02d-%02d%s", t.tm_year + 1900, t.tm_mon + 1,
              t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, bug_report ? "-bug-report" : "");
     int ok = 0;
-    for (int k = 1; k < 100 && !ok; k++) {   // two exports in one second: "(2)" as the launcher names them
+    for (int k = 1; k < 100 && !ok; k++) {
         int len = k == 1 ? snprintf(path, cap, "%s/%s.zip", dir, stem) : snprintf(path, cap, "%s/%s (%d).zip", dir, stem, k);
         if (len < 0 || (size_t)len >= cap) break;
         if (plat_fs_kind(path) != PLAT_FS_MISSING) continue;
@@ -201,14 +184,12 @@ SaveShareResult save_share_export(const char *dir, int bug_report, char *path, s
     return SAVE_SHARE_OK;
 }
 
-// ---- import
 static const SzEntry *find_member(const SzEntry *e, int count, const char *name) {
     for (int i = 0; i < count; i++)
         if (!strcmp(e[i].name, name)) return &e[i];
     return NULL;
 }
 
-// The manifest's verdict on the zip; detail gets its NX2Saria version and export date.
 static SaveShareResult check_manifest(const uint8_t *zip, size_t n, const SzEntry *e, int count, char *detail,
                                       size_t cap) {
     const SzEntry *m = find_member(e, count, "manifest.json");
@@ -247,7 +228,6 @@ SaveShareResult save_share_import(const char *zip_path, char *detail, size_t cap
                         : zr == SZ_E_NOT_ZIP ? SAVE_SHARE_NOT_A_SAVE
                         : zr == SZ_E_MEMORY  ? SAVE_SHARE_READ_FAILED
                                              : SAVE_SHARE_DAMAGED;
-    // the save's members: checked all before any is extracted
     int files = 0, has_save = 0;
     uint64_t bytes = 0;
     for (int i = 0; r == SAVE_SHARE_OK && i < count; i++) {

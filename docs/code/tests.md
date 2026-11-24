@@ -38,6 +38,23 @@ draft. No GPU, no game files.
   at once, then none within a minute nor without a new write or refusal, and the wording of the `so far` and
   `this session` lines. Dear ImGui's objects are kept in `build/test/cheats-tab-imgui` between runs.
 
+## `tests/vram_warn_check.py`
+
+Builds and runs `tests/vram_warn_check.c` on `runtime/vram_warn.h` with the levels of `runtime/mem_budget.h`, a sample
+every `MEM_BUDGET_PERIOD_MS`. No GPU, no game files.
+
+- 5406 of 5249 MiB in use, the figures of a player's log: due once, at the tenth sample; due stays until the screen
+  takes it; after it is shown, not due again inside the gap and due again after it.
+- A peak one sample shorter than the hold gives nothing, nor does a second one more than a window later; a third right
+  after the second comes due at its first sample, the window holding both.
+- Ten minutes of 6 s critical and 8 s tight in turn (9060 and 8040 of 9323 MiB, the figures of a bench session): due
+  once, never over.
+- Use that hovers between 0% and 10% free stays critical by the level's hysteresis; at 14% free the notice stays due
+  for less than a window and the stretch is over after a whole one, the notice then not counted.
+- The session's notices come due one gap apart; after the last, never again, and a later stretch is reported as spent
+  once, at the hold.
+- The settings named for each combination in use.
+
 ## `tests/telemetry_launcher_test.py`
 
 `UpdateStartBase` opens the window as the start after an update does (`--continue-update`, without `--selftest`) over a
@@ -51,6 +68,10 @@ calls `launcher/ui/app.py` `App.job_finished()` itself instead of waiting for th
   reports turned on is kept for a later start because the update's message is on screen.
 - `FailedUpdateStartTest`: a job that fails leaves its own screen without the question and without an answer recorded;
   Try Again asks when it ends well.
+- `test_the_first_start_of_a_version_asks_with_send_focused` reads the countdown line after it has set the deadline
+  again itself: the line shows whole seconds left, so a test that takes over a second between opening the question and
+  reading the line would see 29 where it expects 30, as a loaded machine once did. Before that it checks that the start
+  had set a deadline within the question's 30 seconds.
 
 ## `tests/runtime_dirs_check.py`
 
@@ -122,3 +143,13 @@ Given a Python folder, it also reports a removed module that would be packaged t
 
 A planted package that neither table names must fail the check; a planted Python folder holding `_dbm` must be found by
 `tools/make_appimage.py` `removed_modules()`, and must fail the check when the removal list drops it.
+
+## `tests/launcher_lifecycle_test.py`
+
+Runs the actual launcher window on Linux with a virtual display, isolated temporary launcher and game folders, a synthetic game executable and a synthetic cancellable job. No game data is needed. The external control files only drive the test; the launcher uses its normal window, Play, job, lock, CLI and Steam paths.
+
+- Closing or killing the launcher process while its synthetic game runs leaves the game running; the test releases it afterwards and observes its completion.
+- Closing the window with a synthetic job requests its cancellation. Killing the process during the job does not request cancellation and leaves the interrupted-job marker. The clean-close test does not assert that the marker was removed: the job runs on a daemon thread and process exit can race its cleanup.
+- While the window has an active job and the marker, the mutating CLI command is refused and Steam Play reports the active job without starting the game. With the window idle and no job marker, Steam Play starts the synthetic game even though the window holds the launcher lock.
+
+The tests describe the existing window's behavior, not the proposed worker's EOF or recovery behavior. They leave no game process running after the test.

@@ -1,11 +1,3 @@
-// --probe-services: every override of ov_system.c, ov_input.c, ov_media.c, swkbd.c and
-// ov_gfx.c called the way guest code calls it: by its synthetic address through rt_call / rt_dispatch, with AAPCS64
-// arguments, on the guest main thread. Checks that each one matches a relocation of the loaded modules, then the
-// values: language, operation mode, notification messages, account, time round trips, controllers, codec state,
-// graphics records, the system events behind nfp and vi, the software keyboard with arguments built by the guest SDK
-// (answers from NX2SARIA_SWKBD_ANSWER, then the window pressed by NX2SARIA_SWKBD_TEST) and the shared fonts when
-// tools/extract_fonts.py has written them. The named fatal stubs, and the account UID of a second run, are checked in
-// child processes (this executable again, NX2SARIA_PROBE_SERVICES_CHILD=<case>).
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +23,6 @@
 
 typedef struct { const char *key, *name; int fatal; uint64_t addr; int bound, calls; } Ov;
 static Ov ovs[] = {
-    // ov_system.c: nn::oe
     {"oe.Initialize", "_ZN2nn2oe10InitializeEv"},
     {"oe.GetDesiredLanguage", "_ZN2nn2oe18GetDesiredLanguageEv"},
     {"oe.SetPerformanceConfiguration", "_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi"},
@@ -43,7 +34,6 @@ static Ov ovs[] = {
     {"oe.SetResumeNotificationEnabled", "_ZN2nn2oe28SetResumeNotificationEnabledEb"},
     {"oe.SetOperationModeChangedNotificationEnabled", "_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb"},
     {"oe.SetPerformanceModeChangedNotificationEnabled", "_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb"},
-    // applet, am, oe (applet_host.c)
     {"applet.GetPreviousProgramIndex", "_ZN2nn6applet23GetPreviousProgramIndexEv"},
     {"applet.GetAppletResourceUserId", "_ZN2nn6applet23GetAppletResourceUserIdEv"},
     {"am.GetAppletResourceUserId", "_ZN2nn2am23GetAppletResourceUserIdEv"},
@@ -95,21 +85,18 @@ static Ov ovs[] = {
     {"nfp.StartGameDataEraser",
      "_ZN2nn3nfp19StartGameDataEraserEPNS0_12DeviceHandleERKNS0_24AmiiboSettingsStartParamERKNS0_7TagInfoE"},
     {"err.ShowError", "_ZN2nn3err9ShowErrorENS_6ResultE"},
-    // SDK-internal (section 5.2)
     {"nndiagStartup", "nndiagStartup"},
     {"aoc.Initialize", "_ZN2nn3aoc10InitializeEv"},
     {"aoc.ListAddOnContent", "_ZN2nn3aoc16ListAddOnContentEPiii"},
     {"err.InitializeContextWriterApi", "_ZN2nn3err26InitializeContextWriterApiEv"},
     {"pctl.Initialize", "_ZN2nn4pctl10InitializeEv"},
     {"diag.InitializeApplicationAbortObserver", "_ZN2nn4diag34InitializeApplicationAbortObserverEv"},
-    // account
     {"account.Initialize", "_ZN2nn7account10InitializeEv"},
     {"account.TryOpenPreselectedUser", "_ZN2nn7account22TryOpenPreselectedUserEPNS0_10UserHandleE"},
     {"account.CloseUser", "_ZN2nn7account9CloseUserERKNS0_10UserHandleE"},
     {"account.GetUserId", "_ZN2nn7account9GetUserIdEPNS0_3UidERKNS0_10UserHandleE"},
     {"account.GetUserExistence", "_ZN2nn7account16GetUserExistenceEPbRKNS0_3UidE"},
     {"account.GetNickname", "_ZN2nn7account11GetNicknameEPNS0_8NicknameERKNS0_3UidE"},
-    // time
     {"time.Initialize", "_ZN2nn4time10InitializeEv"},
     {"time.Finalize", "_ZN2nn4time8FinalizeEv"},
     {"time.IsInitialized", "_ZN2nn4time13IsInitializedEv"},
@@ -125,11 +112,9 @@ static Ov ovs[] = {
     {"time.CalculateSpanBetween", "_ZN2nn4time20CalculateSpanBetweenEPNS_8TimeSpanERKNS0_13ClockSnapshotES5_"},
     {"time.UserDifference",
      "_ZN2nn4time48CalculateStandardUserSystemClockDifferenceByUserERKNS0_13ClockSnapshotES3_"},
-    // pl
     {"pl.GetSharedFontLoadState", "_ZN2nn2pl22GetSharedFontLoadStateENS0_14SharedFontTypeE"},
     {"pl.GetSharedFontAddress", "_ZN2nn2pl20GetSharedFontAddressENS0_14SharedFontTypeE", 1},
     {"pl.GetSharedFontSize", "_ZN2nn2pl17GetSharedFontSizeENS0_14SharedFontTypeE", 1},
-    // ov_input.c
     {"hid.InitializeNpad", "_ZN2nn3hid14InitializeNpadEv"},
     {"hid.SetSupportedNpadIdType", "_ZN2nn3hid22SetSupportedNpadIdTypeEPKjm"},
     {"hid.SetSupportedNpadStyleSet",
@@ -172,7 +157,6 @@ static Ov ovs[] = {
      "_ZN2nn3hid6detail22GetSixAxisSensorStatesEPiPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE"},
     {"hid.GetSixAxisSensorState",
      "_ZN2nn3hid6detail21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE"},
-    // ov_media.c
     {"codec.GetWorkBufferSize", "_ZN2nn5codec36GetHardwareOpusDecoderWorkBufferSizeEiii"},
     {"codec.Initialize", "_ZN2nn5codec29InitializeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeEiiPvmi"},
     {"codec.Finalize", "_ZN2nn5codec27FinalizeHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE"},
@@ -181,7 +165,6 @@ static Ov ovs[] = {
     {"codec.Reset", "_ZN2nn5codec24ResetHardwareOpusDecoderEPNS0_23HardwareOpusDecoderTypeE"},
     {"codec.Decode", "_ZN2nn5codec33DecodeOpusInterleavedWithHardwareEPNS0_23HardwareOpusDecoderTypeEPmPiPsmPKvm", 1},
     {"swkbd.ShowKeyboard", "_ZN2nn5swkbd12ShowKeyboardEPNS0_6StringERKNS0_15ShowKeyboardArgE", 1},
-    // ov_gfx.c
     {"nv.SetGraphicsAllocator", "_ZN2nv20SetGraphicsAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_"},
     {"nv.InitializeGraphics", "_ZN2nv18InitializeGraphicsEPvm"},
     {"nv.SetGraphicsDevtoolsAllocator", "_ZN2nv28SetGraphicsDevtoolsAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_"},
@@ -198,8 +181,6 @@ static const char *const observers[] = {"_ZN2nn2os21AllocateAddressRegionEPmm", 
                                         "nnosInitialize", "nninitInitializeSdkModule", "nninitStartup", "nnMain"};
 #define NOBS ((int)(sizeof observers / sizeof *observers))
 
-// Fatal stubs, each in its own child process: the case name, the override, what its FATAL line must say and an
-// environment variable the child runs with (the shared fonts: a font directory that does not exist).
 #define NO_FONTS "NX2SARIA_SHARED_FONTS=:probe-services:no-such-dir"
 static const struct { const char *child, *key, *fatal, *env; } fatals[] = {
     {"opus", "codec.Decode", "FATAL: nn::codec::DecodeOpusInterleavedWithHardware"},
@@ -212,7 +193,7 @@ static int failures, checks;
 #define CHECK(cond, ...) \
     do { checks++; if (!(cond)) { failures++; printf("  FAIL: " __VA_ARGS__); putchar('\n'); } } while (0)
 
-static Cpu *gc;            // the guest thread the calls run on
+static Cpu *gc;
 static uint64_t probe_uid[2];
 
 static Ov *ov(const char *key) {
@@ -223,8 +204,6 @@ static Ov *ov(const char *key) {
 
 static uint64_t U(const void *p) { return (uint64_t)(uintptr_t)p; }
 
-// The override called through its synthetic address with x0..x7 = a[0..7]; caller-saved registers hold garbage, the
-// callee-saved ones a pattern that must survive. Returns x0.
 static uint64_t call8(const char *key, const uint64_t a[8]) {
     Ov *o = ov(key);
     for (int r = 8; r < 19; r++) gc->x[r] = 0xdead0000u + r;
@@ -255,7 +234,6 @@ static void bind_addresses(void) {
 
 static void *guest_alloc(uint64_t n) { return mem_kernel_alloc(n, 16); }
 
-// ---- the guest-thread part
 static char *lang(void) {
     static char s[9];
     uint64_t v = CALL("oe.GetDesiredLanguage", 0);
@@ -264,7 +242,7 @@ static char *lang(void) {
     return s;
 }
 
-static void set_env(const char *name, const char *value) { cfg_setenv(name, value); }   // NULL removes it
+static void set_env(const char *name, const char *value) { cfg_setenv(name, value); }
 
 static void probe_oe(void) {
     char *keep_lang = cfg_get("NX2SARIA_LANG") ? strdup(cfg_get("NX2SARIA_LANG")) : NULL;
@@ -360,7 +338,6 @@ static void probe_messages(void) {
            (unsigned long long)(waited / 1000000), late == 0x21 ? "ok" : "FAILED");
 }
 
-// A system event bound by an override: not signalled, then signalled through the kernel, then (auto-clear) cleared.
 static int event_works(uint64_t ev, int autoclear) {
     static uint64_t try_wait;
     if (!try_wait && !(try_wait = ldr_symbol(TRY_WAIT_SYSTEM_EVENT))) rt_fatal("probe-services: no %s", TRY_WAIT_SYSTEM_EVENT);
@@ -371,17 +348,12 @@ static int event_works(uint64_t ev, int autoclear) {
     return !before && after && again == !autoclear;
 }
 
-// A manual-clear system event an override signalled when binding it: set, and still set on a second wait.
 static int event_set(uint64_t ev) {
     static uint64_t try_wait;
     if (!try_wait && !(try_wait = ldr_symbol(TRY_WAIT_SYSTEM_EVENT))) rt_fatal("probe-services: no %s", TRY_WAIT_SYSTEM_EVENT);
     return (uint8_t)rt_call(gc, try_wait, 1, ev) && (uint8_t)rt_call(gc, try_wait, 1, ev);
 }
 
-// The application area on the made-up figure probe_applet loaded, through the overrides as the game calls them: the
-// results without an area and for another access id, create, open, set, flush and get, the write counter in
-// CommonInfo, the figure's data saved in the profile and read back from there by a second load, recreate, the three
-// settings applets and the menu's erase. 1 when every check held.
 static int probe_app_area(const uint8_t *handles, const char *dump_path, const char *dat_path) {
     int before = failures;
     amiibo_tap_tag();
@@ -406,7 +378,6 @@ static int probe_app_area(const uint8_t *handles, const char *dump_path, const c
     r = (uint32_t)CALL("nfp.GetApplicationArea", U(area), U(&n), U(handles), sizeof area);
     CHECK(r == 0x10073, "GetApplicationArea without an area: %#x, not 0x10073", r);
 
-    // ApplicationAreaCreateInfo: u32 access id, u32 initial data size, u64 initial data address
     static const uint8_t init[4] = {'i', 'n', 'i', 't'};
     uint8_t ci[16];
     uint32_t init_size = sizeof init;
@@ -442,7 +413,6 @@ static int probe_app_area(const uint8_t *handles, const char *dump_path, const c
     CHECK(r == 0 && n == sizeof area && !memcmp(area, mine, sizeof mine),
           "GetApplicationArea after flush: %#x, %llu bytes", r, (unsigned long long)n);
 
-    // Saved in the profile: a second load of the dump reads the figure back from the .dat
     CHECK(plat_file_exists(dat_path), "the figure's data was not saved to %s", dat_path);
     AmiiboFigureData fd;
     memset(&fd, 0, sizeof fd);
@@ -465,7 +435,6 @@ static int probe_app_area(const uint8_t *handles, const char *dump_path, const c
           "RecreateApplicationArea: %#x, then open with the old access id %#x and the new one %#x, area empty %d", r,
           r_old, r_new, zero);
 
-    // The settings applets answer at once with the reader's handle
     uint8_t dev[8], param[0x40] = {0}, ti[0x58], reg2[0x100];
     uint8_t registered = 0;
     amiibo_get_tag_info(ti);
@@ -508,7 +477,6 @@ static void probe_applet(void) {
     CHECK((uint32_t)CALL("nfp.ListDevices", U(handles), U(&count), 4) == 0 && count == 1, "nfp ListDevices");
     uint64_t ev = U(guest_alloc(0x100));
     CHECK(CALL("nfp.AttachAvailabilityChangeEvent", ev) == 0, "AttachAvailabilityChangeEvent");
-    // The emulated reader is there from the start (amiibo.c), so the availability event is set when it is attached.
     int nfp_event = event_set(ev);
     CHECK(nfp_event, "the nfp availability event is not set for the emulated reader, or clears itself");
     CHECK((uint32_t)CALL("nfp.GetDeviceState", U(handles)) == 0, "nfp device state");
@@ -520,8 +488,7 @@ static void probe_applet(void) {
         uint64_t r = first_is_handle ? CALL(none[i], U(handles), 0, 0) : CALL(none[i], U(out), U(handles));
         CHECK((uint32_t)r == 0x8073, "%s: %#x, not device-not-found", none[i], (uint32_t)r);
     }
-    // The application area calls without a mounted figure: device not found as well
-    uint8_t create_info[16] = {0};   // ApplicationAreaCreateInfo: access id, initial size, initial data address
+    uint8_t create_info[16] = {0};
     uint64_t area_size = 0;
     uint32_t r_open = (uint32_t)CALL("nfp.OpenApplicationArea", U(handles), 1);
     uint32_t r_create = (uint32_t)CALL("nfp.CreateApplicationArea", U(handles), U(create_info));
@@ -539,8 +506,6 @@ static void probe_applet(void) {
     CHECK(event_works(activate, 0), "the nfp activate event is set without an amiibo on the reader");
     CHECK((uint32_t)CALL("nfp.StartDetection", U(handles)) == 0, "nfp StartDetection");
     CHECK((uint32_t)CALL("nfp.StopDetection", U(handles)) == 0, "nfp StopDetection");
-    // The game attaches again before each detection: DestroySystemEvent on the attached event, then Attach* on the
-    // same SystemEventType. Both events must work again afterwards.
     static uint64_t destroy;
     if (!destroy && !(destroy = ldr_symbol(DESTROY_SYSTEM_EVENT))) rt_fatal("probe-services: no %s", DESTROY_SYSTEM_EVENT);
     rt_call(gc, destroy, 1, activate);
@@ -550,25 +515,18 @@ static void probe_applet(void) {
     int reattached = event_works(activate, 0) && event_works(deactivate, 0);
     CHECK(reattached, "the nfp events do not work after DestroySystemEvent and a second Attach");
     CHECK((uint32_t)CALL("nfp.StartDetection", U(handles)) == 0, "nfp StartDetection again");
-    // An amiibo's NTAG215 header: UID with its two check bytes, static lock 0F E0, capability container F1 10 FF EE.
-    // The loader takes it and refuses the same file with a plain NDEF container (E1).
     static const uint8_t head[16] = {0x04, 0x11, 0x22, 0x88 ^ 0x04 ^ 0x11 ^ 0x22, 0x33, 0x44, 0x55, 0x66,
                                      0x33 ^ 0x44 ^ 0x55 ^ 0x66, 0x48, 0x0F, 0xE0, 0xF1, 0x10, 0xFF, 0xEE};
     uint8_t dump[AMIIBO_DUMP_SIZE] = {0};
     memcpy(dump, head, sizeof head);
-    // Link (Archer): character 0x0100, variant 0, figure type 0, model number 0x0353, series 9, format 02
     static const uint8_t id[8] = {0x01, 0x00, 0x00, 0x00, 0x03, 0x53, 0x09, 0x02};
     memcpy(dump + 0x54, id, sizeof id);
     const char *dump_path = "probe-amiibo.bin";
-    // The figure's data of this made-up UID goes to <profile>/amiibo/04112233445566.dat (amiibo.c dat_paths): gone
-    // before the test, so the figure starts new, and after it. No real figure has this UID.
     char dat_path[1200], bak_path[64];
     snprintf(dat_path, sizeof dat_path, "%s/amiibo/04112233445566.dat", rt_config()->profile);
     snprintf(bak_path, sizeof bak_path, "%s.bak", dump_path);
     plat_fs_unlink(dat_path);
     int amiibo_ok = plat_file_write(dump_path, dump, sizeof dump) && amiibo_load_file(dump_path);
-    // TagInfo carries the 7-byte UID without its check byte; ModelInfo has the series at 3, the model number
-    // little-endian at 4 and the figure type at 6
     uint8_t ti[0x58], mi[0x40];
     amiibo_get_tag_info(ti);
     amiibo_get_model_info(mi);
@@ -645,10 +603,10 @@ static void probe_time(void) {
         Cal c = utc_of(ts[i]);
         if (posix_of(&c) != ts[i]) rt_bad++;
     }
-    Cal leap = utc_of(951782400);   // 2000-02-29 00:00:00 UTC
+    Cal leap = utc_of(951782400);
     CHECK(leap.year == 2000 && leap.month == 2 && leap.day == 29 && !leap.hour && !leap.minute && !leap.second,
           "951782400 is %d-%d-%d", leap.year, leap.month, leap.day);
-    Cal carry = {2023, 13, 1, 0, 0, 0, 0};   // month 13 carries into the next year
+    Cal carry = {2023, 13, 1, 0, 0, 0, 0};
     CHECK(posix_of(&carry) == 1704067200, "ToPosixTimeFromUtc does not carry month 13");
     CHECK(!rt_bad, "%d of %d UTC round trips failed", rt_bad, (int)(sizeof ts / sizeof *ts));
 
@@ -673,7 +631,7 @@ static void probe_time(void) {
     int64_t span = -1;
     CHECK(CALL("time.CalculateSpanBetween", U(&span), U(a), U(b)) == 0 && span >= 0, "span between snapshots");
     CHECK(CALL("time.UserDifference", U(a), U(b)) == 0, "user clock difference");
-    b[0x98] ^= 1;   // the steady clock's source id (ClockSnapshot +0x90: value, +0x98: source)
+    b[0x98] ^= 1;
     CHECK((uint32_t)CALL("time.CalculateSpanBetween", U(&span), U(a), U(b)) == 0x18074u, "span across sources");
     CHECK(CALL("time.Finalize", 0) == 0 && (uint8_t)CALL("time.IsInitialized", 0) == 0, "time finalize");
     printf("time: ToCalendarTimeInUtc/ToPosixTimeFromUtc round trip %d values %s; local %04d-%02d-%02d %02d:%02d zone %s "
@@ -681,7 +639,7 @@ static void probe_time(void) {
            local.month, local.day, local.hour, local.minute, info.name, info.utc_offset, (const char *)(a + 0xa8));
 }
 
-#define STD_GRAVITY 9.80665f   // SDL_STANDARD_GRAVITY
+#define STD_GRAVITY 9.80665f
 
 static int near3(const float *v, double x, double y, double z, double tol) {
     return fabs(v[0] - x) <= tol && fabs(v[1] - y) <= tol && fabs(v[2] - z) <= tol;
@@ -691,8 +649,6 @@ static int at_rest(const MotionState *s) {
            near3(s->dir, 1, 0, 0, 0) && near3(s->dir + 3, 0, 1, 0, 0) && near3(s->dir + 6, 0, 0, 1, 0);
 }
 
-// Vibration and six-axis handles, values and states with no gamepad motion (the sensor is stopped before the reads that
-// check the rest state), the SDL -> Switch axis mapping and the sensor fusion on a private instance.
 static void probe_feedback(uint32_t pid, uint32_t style) {
     uint32_t six = ov_handheld() ? 4 : 3, vh[2] = {0}, sh[2] = {0}, dual[2] = {0}, zero = 0;
     CHECK((int32_t)CALL("hid.GetVibrationDeviceHandles", U(vh), 2, U(&pid), style) == 2 && vh[0] == (six | pid << 8) &&
@@ -708,7 +664,6 @@ static void probe_feedback(uint32_t pid, uint32_t style) {
     uint32_t none[2] = {0xdead, 0xdead}, six_off[2] = {0};
     CHECK((int32_t)CALL("hid.GetVibrationDeviceHandles", U(none), 2, U(&pid), style) == 0 && none[0] == 0xdead,
           "NX2SARIA_RUMBLE=0 still reports vibration handles");
-    // NX2SARIA_MOTION is live: the handle stays (the sensor reads at rest while it is 0)
     CHECK((int32_t)CALL("hid.GetSixAxisSensorHandles", U(six_off), 2, U(&pid), style) == 1 && six_off[0] == sh[0],
           "NX2SARIA_MOTION=0 drops the six-axis handle %#x", six_off[0]);
     set_env("NX2SARIA_RUMBLE", keep_r);
@@ -716,7 +671,6 @@ static void probe_feedback(uint32_t pid, uint32_t style) {
     free(keep_r);
     free(keep_m);
 
-    // Values with no amplitude: a connected gamepad stays still
     float v[2][4] = {{0, 100, 0, 400}, {0, 150, 0, 300}}, got[4] = {0};
     uint32_t info[2] = {9, 9};
     uint8_t flag = 0;
@@ -747,7 +701,6 @@ static void probe_feedback(uint32_t pid, uint32_t style) {
     memset(st, 0xa5, sizeof *st);
     CHECK(CALL("hid.GetSixAxisSensorState", U(st), U(&dual[0])) == 0 && at_rest(st), "a foreign handle reads at rest");
 
-    // SDL axes: lying flat (push +y) is Switch gravity -z, standing on the bottom edge is -y; yaw about SDL +y is +z.
     double acc[3], gyro[3];
     input_motion_axes((const float[3]){0, STD_GRAVITY, 0}, (const float[3]){0, 1, 0}, acc, gyro);
     int flat = fabs(acc[0]) < 1e-6 && fabs(acc[1]) < 1e-6 && fabs(acc[2] + 1) < 1e-6 && gyro[2] == 1 && !gyro[0] && !gyro[1];
@@ -755,7 +708,6 @@ static void probe_feedback(uint32_t pid, uint32_t style) {
     int upright = fabs(acc[1] + 1) < 1e-6 && gyro[1] == -1;
     CHECK(flat && upright, "SDL -> Switch axes (flat %d, upright %d)", flat, upright);
 
-    // Fusion: flat, then 90 degrees a second about z for 1 s: a quarter turn, x axis now along y
     MotionFusion *m = motion_new();
     uint64_t t = 1000000000ull;
     const double down[3] = {0, 0, -1}, still[3] = {0, 0, 0}, turn[3] = {0, 0, M_PI / 2};
@@ -770,8 +722,6 @@ static void probe_feedback(uint32_t pid, uint32_t style) {
           (long long)ms[0].sampling, (double)ms[0].angle[2], (double)ms[0].dir[0], (double)ms[0].dir[1], (double)ms[0].dir[2]);
     double quarter = ms[0].angle[2];
     CHECK(motion_read(m, ms, 16, t + 300000000ull) == 0, "fusion states 300 ms after the last sample");
-    // StartSixAxisSensor again in the middle of the turn (the bow drawn again): the states from before it are gone, and
-    // the first one after it starts a fresh angle in a fresh frame; sampling numbers go on.
     for (int i = 0; i < 250; i++) motion_feed(m, down, turn, t += 4000000);
     motion_restart(m);
     int same = motion_read(m, ms, 16, t + 1000000);
@@ -860,10 +810,9 @@ static void probe_media_gfx(void) {
            "vsync event %s\n", display, layer, window, vsync ? "bound (auto-clear)" : "FAILED");
 }
 
-// ---- software keyboard (swkbd.c): ShowKeyboardArg built by the SDK's own setters, as the horse naming does
 enum { KB_TYPE = 0x00, KB_DISABLED = 0x1c, KB_HEADER = 0x24, KB_GUIDE = 0x1a8, KB_MAX_LEN = 0x3ac, KB_MIN_LEN = 0x3b0,
        KB_UTF8 = 0x3bd, KB_INIT_LEN = 0x3c4, STRING_SIZE = 0x7d4, SWKBD_CANCELED = 0x29f };
-#define ARG_WORK (RT_V143 ? 0x518 : 0x4d0)   // SDK 20.5 grew KeyboardConfig (swkbd.c)
+#define ARG_WORK (RT_V143 ? 0x518 : 0x4d0)
 #define ARG_WORK_SIZE (ARG_WORK + 8)
 #define ARG_SIZE (RT_V143 ? 0x548 : 0x500)
 
@@ -873,7 +822,6 @@ static uint64_t sdk(const char *name) {
     return a;
 }
 
-// NUL-terminated UTF-16 copy of utf8 in guest memory
 static uint16_t *u16(const char *utf8) {
     uint16_t *g = guest_alloc(0x200);
     utf8_to_utf16(utf8, g, 128);
@@ -911,7 +859,6 @@ static void probe_swkbd(void) {
     str[0] = U(out), str[1] = STRING_SIZE;
     uint64_t w = U(work), ws = 0x1000;
 
-    // the SDK setters write where swkbd.c reads
     rt_call(gc, make, 2, U(arg), 2);
     rt_call(gc, header, 2, U(arg), U(u16("Hdr")));
     rt_call(gc, guide, 2, U(arg), U(u16("Gd")));
@@ -924,18 +871,18 @@ static void probe_swkbd(void) {
 
     const char *def = ui_text(UI_SWKBD_DEFAULT_NAME);
     const KbCase cases[] = {
-        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "Epona", "Epona", 0},                  // NX2Saria's horse naming (main+0x1ecbf64)
-        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "ABCDEFGHIJKL", "ABCDEFGHI", 0},        // at most 9
-        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "a@b%c\\d e/f", "abcd e/f", 0},         // '@' '%' '\' disabled
+        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "Epona", "Epona", 0},
+        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "ABCDEFGHIJKL", "ABCDEFGHI", 0},
+        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "a@b%c\\d e/f", "abcd e/f", 0},
         {2, 8, 9, 0, 0x2c, 0, 0, NULL, "<cancel>", "", SWKBD_CANCELED},
-        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "<initial>", def, 0},                   // no initial text: the default name
-        {0, 2, 0, 0, 0, 0, 0, "Zelda", "<initial>", "Zelda", 0},                // initial text from the work buffer
-        {0, 2, 0, 0, 0, 1, 0, NULL, "\xe5\xb0\x8f\xe9\xa9\xac" "Ab", "\xe5\xb0\x8f\xe9\xa9\xac" "Ab", 0},   // UTF-8 out
-        {0, 2, 3, 0, 0, 0, 0, NULL, "\xe5\xb0\x8f\xe9\xa9\xac\xf0\x9f\x90\xb4", "\xe5\xb0\x8f\xe9\xa9\xac", 0},   // no half pair
-        {0, 1, 0, 0, 0, 0, 0, NULL, "a1b2c3", "123", 0},                       // number pad
-        {0, 2, 9, 3, 0, 0, 0, NULL, "ab", "", SWKBD_CANCELED},                  // shorter than the minimum
-        {2, 8, 9, 0, 0x2c, 0, 1, NULL, "ok", def, 0},                          // the window, OK pressed
-        {2, 8, 9, 0, 0x2c, 0, 1, NULL, "cancel", "", SWKBD_CANCELED},          // the window, Cancel pressed
+        {2, 8, 9, 0, 0x2c, 0, 0, NULL, "<initial>", def, 0},
+        {0, 2, 0, 0, 0, 0, 0, "Zelda", "<initial>", "Zelda", 0},
+        {0, 2, 0, 0, 0, 1, 0, NULL, "\xe5\xb0\x8f\xe9\xa9\xac" "Ab", "\xe5\xb0\x8f\xe9\xa9\xac" "Ab", 0},
+        {0, 2, 3, 0, 0, 0, 0, NULL, "\xe5\xb0\x8f\xe9\xa9\xac\xf0\x9f\x90\xb4", "\xe5\xb0\x8f\xe9\xa9\xac", 0},
+        {0, 1, 0, 0, 0, 0, 0, NULL, "a1b2c3", "123", 0},
+        {0, 2, 9, 3, 0, 0, 0, NULL, "ab", "", SWKBD_CANCELED},
+        {2, 8, 9, 0, 0x2c, 0, 1, NULL, "ok", def, 0},
+        {2, 8, 9, 0, 0x2c, 0, 1, NULL, "cancel", "", SWKBD_CANCELED},
     };
     int bad = 0, n = (int)(sizeof cases / sizeof *cases);
     for (int i = 0; i < n; i++) {
@@ -955,7 +902,6 @@ static void probe_swkbd(void) {
         if (!ok) bad++, printf("  FAIL: swkbd case %d (%s%s): result %#x\n", i, k->window ? "window " : "", k->answer, r);
     }
     failures += bad;
-    // after the window the game reads nothing until everything is released; with nothing held one read lifts that
     uint64_t b;
     int32_t lx, ly, rx, ry;
     input_poll_ui(&b, &lx, &ly, &rx, &ry);
@@ -965,30 +911,28 @@ static void probe_swkbd(void) {
            "minimum length, the Win32 window with OK and Cancel)\n", n - bad, n, def);
 }
 
-// ---- the menu's input gate: Minus+Plus is consumed, a menu that is open leaves the game a neutral pad
 static void probe_menu_gate(void) {
     const uint64_t minus = 1ull << 11, plus = 1ull << 10, a = 1ull;
     int held = 0;
     int32_t st[4] = {100, -200, 300, -400};
-    uint64_t b = minus | a;   // Minus alone, a frame before Plus: reaches the guest unchanged
+    uint64_t b = minus | a;
     int t1 = input_menu_gate(&held, 0, &b, st);
     CHECK(!t1 && b == (minus | a) && st[0] == 100 && st[3] == -400 && !held, "Minus alone changed: toggle %d buttons %#llx", t1,
           (unsigned long long)b);
-    b = minus | plus | a;     // both down: the guest sees neither, the menu toggles once
+    b = minus | plus | a;
     int t2 = input_menu_gate(&held, 0, &b, st);
     CHECK(t2 == 1 && b == a && held, "Minus+Plus: toggle %d buttons %#llx", t2, (unsigned long long)b);
-    b = minus | plus;         // still held with the menu open: no second toggle, a neutral pad
+    b = minus | plus;
     int t3 = input_menu_gate(&held, 1, &b, st);
     CHECK(!t3 && b == 0 && st[0] == 0 && st[1] == 0 && st[2] == 0 && st[3] == 0, "menu open: toggle %d buttons %#llx", t3,
           (unsigned long long)b);
-    b = a | plus; st[0] = 5;  // the menu is open and the pad is neutral whatever is pressed
+    b = a | plus; st[0] = 5;
     input_menu_gate(&held, 1, &b, st);
     CHECK(b == 0 && st[0] == 0, "an open menu left buttons %#llx", (unsigned long long)b);
-    b = 0;                    // released, then pressed again toggles again
+    b = 0;
     input_menu_gate(&held, 0, &b, st);
     b = minus | plus;
     CHECK(input_menu_gate(&held, 0, &b, st) == 1, "the second hold did not toggle");
-    // Plus released first while Minus is still down: Minus must not leak; a new Minus press after both are up passes
     held = 0;
     b = minus | plus;
     input_menu_gate(&held, 0, &b, st);
@@ -1003,7 +947,6 @@ static void probe_menu_gate(void) {
     printf("menu gate: Minus alone passes, Minus+Plus is consumed and toggles once per hold, an open menu gives a neutral pad\n");
 }
 
-// ---- shared fonts: the extracted files when present (the missing case is a fatal child)
 static void probe_fonts(void) {
     char dir[PLAT_PATH_MAX], path[PLAT_PATH_MAX + 32];
     snprintf(path, sizeof path, "%s/0-standard.bfttf", ov_shared_font_dir(dir, sizeof dir));
@@ -1028,8 +971,6 @@ static void probe_fonts(void) {
            (unsigned long long)size, path);
 }
 
-// The host catalog (ui_text.c): every menu id has its own English, Russian, Brazilian Portuguese and Simplified
-// Chinese text, the software keyboard keeps its game-language rows, and menu_text follows NX2SARIA_MENU_LANG.
 static void probe_menu_text(void) {
     static const char *const langs[] = {"en", "ja", "fr", "de", "it", "es", "nl", "pt", "ru", "zh-Hans", "zh-Hant", "ko",
                                         "pt-BR"};
@@ -1038,7 +979,6 @@ static void probe_menu_text(void) {
               ui_text_defined("pt-BR", (UiTextId)id), "menu text id %d lacks en, ru or pt-BR", id);
         CHECK(*ui_text_in("en", (UiTextId)id) && *ui_text_in("ru", (UiTextId)id) && *ui_text_in("pt-BR", (UiTextId)id),
               "menu text id %d is empty", id);
-        // the description pane keeps the whole text and a note after it (option_rows.cpp desc_set)
         CHECK(strlen(ui_text_in("en", (UiTextId)id)) + 256 < UI_DESC_BYTES &&
               strlen(ui_text_in("ru", (UiTextId)id)) + 256 < UI_DESC_BYTES &&
               strlen(ui_text_in("pt-BR", (UiTextId)id)) + 256 < UI_DESC_BYTES &&
@@ -1047,7 +987,6 @@ static void probe_menu_text(void) {
         CHECK(ui_text_defined("zh-Hans", (UiTextId)id), "menu text id %d lacks Simplified Chinese", id);
     }
     CHECK(!ui_text_defined("en", UI_TEXT_COUNT) && !*ui_text_in("ru", UI_TEXT_COUNT), "an id past the catalog gives text");
-    // the Saves group's lines are formats of one path or detail (ui/menu.cpp rows_saves): at most one "%s", nothing else
     for (int id = UI_MENU_SAVES; id <= UI_MENU_SAVE_E_UNSAFE; id++)
         for (size_t i = 0; i < 4; i++) {
             static const char *const menu_langs[] = {"en", "ru", "pt-BR", "zh-Hans"};
@@ -1061,16 +1000,13 @@ static void probe_menu_text(void) {
             CHECK(conv <= 1 && !other, "saves text %d in %s has %d %%s and %d other conversions", id, menu_langs[i],
                   conv, other);
         }
-    // other languages fall back to English for the menu, and keep their own keyboard texts
     CHECK(!strcmp(ui_text_in("ja", UI_MENU_CONTINUE), ui_text_in("en", UI_MENU_CONTINUE)), "ja menu text is not English");
     CHECK(!strcmp(ui_text_in("ru", UI_SWKBD_OK), "ОК") && !strcmp(ui_text_in("de", UI_SWKBD_CANCEL), "Abbrechen") &&
           !strcmp(ui_text_in("en", UI_SWKBD_OK), "OK"), "keyboard texts changed");
-    // language names: the same string in every row
     for (int id = UI_MENU_LANGNAME_EN; id <= UI_MENU_LANGNAME_ES_419; id++)
         for (size_t i = 1; i < sizeof langs / sizeof *langs; i++)
             CHECK(!strcmp(ui_text_in(langs[i], (UiTextId)id), ui_text_in("en", (UiTextId)id)), "language name %d differs in %s", id, langs[i]);
     CHECK(!strcmp(ui_text_in("en", UI_MENU_LANGNAME_RU), "Русский"), "Russian is not shown as Russian");
-    // game language list: pt-BR only where the build ships USpt; the Switch variants are entries of their own
     {
         UiGameLang gl[16];
         int n121 = ui_text_game_langs(121, gl, 16), has[16] = {0};
@@ -1086,17 +1022,14 @@ static void probe_menu_text(void) {
             for (int i = 0; i < n143; i++) has[w] |= !strcmp(gl[i].code, want[w]);
         CHECK(has[0] && has[1] && has[2], "game language list lacks en-GB, fr-CA or es-419");
     }
-    // the overlay formats keep their conversions
     CHECK(strstr(ui_text_in("ru", UI_MENU_OV_GAME_PCT), "%.0f%%") && strstr(ui_text_in("ru", UI_MENU_OV_MAX_MS), "%.1f") &&
           strstr(ui_text_in("ru", UI_MENU_OV_LOW1), "%.0f") && strstr(ui_text_in("ru", UI_MENU_OV_LOW01), "%.0f"),
           "overlay format lost its conversion");
     CHECK(strstr(ui_text_in("pt-BR", UI_MENU_OV_GAME_PCT), "%.0f%%") &&
           strstr(ui_text_in("pt-BR", UI_MENU_OV_MAX_MS), "%.1f") &&
           strstr(ui_text_in("pt-BR", UI_MENU_OV_LOW1), "%.0f") && strstr(ui_text_in("zh-Hans", UI_MENU_OV_LOW01), "%.0f"), "pt-BR overlay format lost its conversion");
-    // a Brazilian game language gets the Brazilian keyboard row, Portugal's Portuguese keeps its own
     CHECK(!strcmp(ui_text_lang("pt-BR"), "pt-BR") && !strcmp(ui_text_lang("pt"), "pt") &&
           strcmp(ui_text_in("pt-BR", UI_SWKBD_PROMPT), ui_text_in("pt", UI_SWKBD_PROMPT)), "pt-BR keyboard row not used");
-    // menu_text follows the setting live
     cfg_set("NX2SARIA_MENU_LANG", "ru");
     CHECK(menu_text(UI_MENU_CONTINUE) == ui_text_in("ru", UI_MENU_CONTINUE), "menu_text ignores MENU_LANG=ru");
     cfg_set("NX2SARIA_MENU_LANG", "pt-BR");
@@ -1127,9 +1060,6 @@ static void probe_main(Cpu *c) {
     probe_fonts();
 }
 
-// ---- child processes
-// Runs this executable again with the same command line and NX2SARIA_PROBE_SERVICES_CHILD=<mode>; its stdout and stderr
-// into out. Returns the exit code.
 static uint32_t run_child(const char *mode, const char *env, char *out, size_t cap) {
     char name[64] = "";
     const char *eq = env ? strchr(env, '=') : NULL;
@@ -1187,7 +1117,6 @@ static void probe_children(void) {
     printf("account: UID %016llx%016llx in %s/account.uid, the same in a second run: %s\n",
            (unsigned long long)probe_uid[1], (unsigned long long)probe_uid[0], rt_config()->profile, same ? "yes" : "NO");
 
-    // nvnBootstrapLoader returns the synthetic address of a proc (nvn_procs.c), 0 for an unknown name
     code = run_child("nvn", NULL, out, sizeof out);
     unsigned long long known = 0, expected = 0, unknown = 1;
     p = strstr(out, "child nvn: ");
@@ -1214,7 +1143,6 @@ int probe_services(void) {
     if (child && *child) return run_as_child(child);
     ldr_load(rt_config()->exefs);
 
-    // Names bound by the loader: each override and observer probed here must match a relocation.
     int bound = 0, obs_bound = 0;
     for (int i = 0; i < 4096; i++) {
         const char *n = hostfn_name(RT_HOSTFN_BASE + 16ull * (uint64_t)i);
@@ -1224,14 +1152,12 @@ int probe_services(void) {
         for (int k = 0; k < NOBS; k++)
             if (!strcmp(observers[k], n)) obs_bound++;
     }
-    for (int k = 0; k < NOV; k++)   // 1.2.1 lists no add-on content
+    for (int k = 0; k < NOV; k++)
         CHECK(ovs[k].bound || (!RT_V143 && !strcmp(ovs[k].key, "aoc.ListAddOnContent")), "override %s matches no relocation",
               ovs[k].name);
     for (int k = 0; k < NOBS; k++) CHECK(hostfn_observer(observers[k]), "observer %s is not linked", observers[k]);
     CHECK(obs_bound == NOBS, "%d of %d observers match a JUMP_SLOT", obs_bound, NOBS);
 
-    // Every linked override is either probed here or belongs to another probe or owner (nn::fs: fs probe, fibers: kernel probe,
-    // movie::Decoder: --probe-movie, memcpy: the graphics write-back in nvn_api_core.c).
     int linked = hostfn_table_size(0), others = 0;
     for (int i = 0; i < linked; i++) {
         const char *n = hostfn_table_name(0, i);
