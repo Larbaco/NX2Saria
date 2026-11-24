@@ -1,11 +1,3 @@
-// The water corrections of docs/water-projective.md, made on a SPIR-V module in memory. Each edit follows
-// tools/projective_recipe.py step for step, new ids and declarations in the same order, so the module it returns is the
-// one that tool writes for the same input (tests/water_projective_check.py compares them on a made-up module).
-//
-// A module is taken apart into its instructions, edited as a list, and put together again. New types and constants
-// are collected and placed before the module's one function; an existing type or constant of the same definition is
-// used instead of a new one. Every edit refuses a module that is not of the shape it was written for: one entry
-// point, one function, one return, and the interface or the store it looks for found exactly once.
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,18 +11,18 @@ enum { OP_EXT_INST_IMPORT = 11, OP_EXT_INST = 12, OP_ENTRY_POINT = 15, OP_TYPE_I
 enum { DEC_BUILTIN = 11, DEC_NOPERSPECTIVE = 13, DEC_LOCATION = 30, SC_INPUT = 1, SC_OUTPUT = 3, SC_FUNCTION = 7,
        GLSL_FMA = 50, GLSL_NMAX = 80 };
 
-typedef struct { uint32_t op, n; uint32_t *a; } Ins;   // n: words after the first; a: those words
+typedef struct { uint32_t op, n; uint32_t *a; } Ins;
 typedef struct {
     uint32_t hdr[5];
     Ins *ops;
     size_t nops, cap;
-    Ins extra[24];          // new types and constants, in the order made
+    Ins extra[24];
     size_t nextra;
-    uint32_t *src;          // the module's words: the instructions' arguments point into this copy
-    uint32_t pool[256];     // the arguments of the instructions added
+    uint32_t *src;
+    uint32_t pool[256];
     size_t np;
     uint32_t model;
-    int bad;                // an edit ran out of room: the module is refused
+    int bad;
 } Mod;
 
 static void mod_free(Mod *m) { free(m->ops), free(m->src); }
@@ -47,7 +39,7 @@ static int mod_parse(Mod *m, const uint32_t *w, uint64_t n) {
     for (uint64_t at = 5; at < n;) {
         uint32_t len = m->src[at] >> 16, op = m->src[at] & 65535;
         if (!len || at + len > n) return mod_free(m), 0;
-        if (m->nops + 64 > m->cap) {   // 64: room for what the edits insert
+        if (m->nops + 64 > m->cap) {
             Ins *t = realloc(m->ops, (m->cap *= 2) * sizeof *t);
             if (!t) return mod_free(m), 0;
             m->ops = t;
@@ -81,7 +73,6 @@ static void add_extra(Mod *m, Ins i) {
 
 static int is_type(uint32_t op) { return op >= 19 && op <= 33; }
 
-// The type or variable instruction that defines id, among the module's own and the new ones.
 static const Ins *type_of(const Mod *m, uint32_t id) {
     for (size_t i = 0; i < m->nops; i++)
         if (is_type(m->ops[i].op) && m->ops[i].n >= 1 && m->ops[i].a[0] == id) return &m->ops[i];
@@ -96,7 +87,6 @@ static const Ins *variable_of(const Mod *m, uint32_t id) {
     return NULL;
 }
 
-// The id of the type (op, v[0..k)), an existing one or a new one.
 static uint32_t type_id(Mod *m, uint32_t op, uint32_t k, const uint32_t *v) {
     for (size_t i = 0; i < m->nops; i++)
         if (m->ops[i].op == op && m->ops[i].n == k + 1 && !memcmp(m->ops[i].a + 1, v, k * 4)) return m->ops[i].a[0];
@@ -109,7 +99,6 @@ static uint32_t type_id(Mod *m, uint32_t op, uint32_t k, const uint32_t *v) {
 }
 #define TYPE(m, op, ...) type_id(m, op, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__})
 
-// The id of the 32-bit constant `bits` of type ty, an existing one or a new one.
 static uint32_t constant_id(Mod *m, uint32_t ty, uint32_t bits) {
     for (size_t i = 0; i < m->nops; i++)
         if (m->ops[i].op == OP_CONSTANT && m->ops[i].n == 3 && m->ops[i].a[0] == ty && m->ops[i].a[2] == bits)
@@ -121,7 +110,6 @@ static uint32_t constant_id(Mod *m, uint32_t ty, uint32_t bits) {
     return id;
 }
 
-// The one interface variable of the storage class at location 0, a four-component 32-bit float vector.
 static int location0(const Mod *m, uint32_t storage, uint32_t *var, uint32_t *vec, uint32_t *scalar) {
     unsigned found = 0;
     for (size_t i = 0; i < m->nops; i++) {
@@ -141,7 +129,6 @@ static int location0(const Mod *m, uint32_t storage, uint32_t *var, uint32_t *ve
     return 1;
 }
 
-// The id of the GLSL.std.450 import when the module has exactly one.
 static int glsl_import(const Mod *m, uint32_t *id) {
     unsigned found = 0;
     for (size_t i = 0; i < m->nops; i++) {
@@ -153,7 +140,7 @@ static int glsl_import(const Mod *m, uint32_t *id) {
     return found == 1;
 }
 
-static void insert(Mod *m, size_t at, const Ins *list, size_t k) {   // mod_parse left room for the edits' instructions
+static void insert(Mod *m, size_t at, const Ins *list, size_t k) {
     if (m->nops + k > m->cap) { m->bad = 1; return; }
     memmove(m->ops + at + k, m->ops + at, (m->nops - at) * sizeof *m->ops);
     memcpy(m->ops + at, list, k * sizeof *list);
@@ -166,7 +153,6 @@ static size_t first(const Mod *m, uint32_t op) {
     return m->nops;
 }
 
-// The edited module's words, the new declarations placed before the function; frees m.
 static uint32_t *mod_finish(Mod *m, uint64_t *out_n) {
     insert(m, first(m, OP_FUNCTION), m->extra, m->nextra);
     uint64_t n = 5;
@@ -194,7 +180,7 @@ uint32_t *spirv_water_vertex(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     if (m.model != 0 || !location0(&m, SC_OUTPUT, &varying, &vec, &scalar)) return mod_free(&m), NULL;
     for (size_t i = 0; i < m.nops; i++) {
         const Ins *d = &m.ops[i];
-        if (d->op == OP_MEMBER_DECORATE && d->n == 4 && d->a[2] == DEC_BUILTIN && d->a[3] == 0)   // BuiltIn Position
+        if (d->op == OP_MEMBER_DECORATE && d->n == 4 && d->a[2] == DEC_BUILTIN && d->a[3] == 0)
             structure = d->a[0], member = d->a[1], positions++;
     }
     if (positions != 1) return mod_free(&m), NULL;
@@ -234,11 +220,11 @@ uint32_t *spirv_water_fragment(const uint32_t *w, uint64_t n, uint64_t *out_n) {
         if (m.ops[i].op == OP_DECORATE && m.ops[i].n == 2 && m.ops[i].a[0] == varying && m.ops[i].a[1] == DEC_NOPERSPECTIVE)
             flat = i, flats++;
     if (flats != 1) return mod_free(&m), NULL;
-    memmove(m.ops + flat, m.ops + flat + 1, (m.nops - flat - 1) * sizeof *m.ops);   // the NoPerspective goes
+    memmove(m.ops + flat, m.ops + flat + 1, (m.nops - flat - 1) * sizeof *m.ops);
     m.nops--;
     if (!glsl_import(&m, &glsl)) return mod_free(&m), NULL;
     uint32_t local_pointer = TYPE(&m, OP_TYPE_POINTER, SC_FUNCTION, vec), local = new_id(&m);
-    unsigned count = 0;   // the stage's own reads of the input go to the local
+    unsigned count = 0;
     for (size_t i = 0; i < m.nops; i++) {
         Ins *o = &m.ops[i];
         if ((o->op == OP_ACCESS_CHAIN || o->op == OP_IN_BOUNDS_ACCESS_CHAIN) && o->n >= 3 && o->a[2] == varying) {
@@ -266,7 +252,7 @@ uint32_t *spirv_water_fragment(const uint32_t *w, uint64_t n, uint64_t *out_n) {
                   INS(&m, OP_EXT_INST, scalar, v, glsl, GLSL_FMA, ny, nhalf, half),
                   INS(&m, OP_COMPOSITE_CONSTRUCT, vec, dec, u, v, zero, one),
                   INS(&m, OP_STORE, local, dec)};
-    size_t at = first(&m, OP_LABEL) + 1;   // after the function's own variables
+    size_t at = first(&m, OP_LABEL) + 1;
     while (at < m.nops && m.ops[at].op == OP_VARIABLE) at++;
     if (at > m.nops) return mod_free(&m), NULL;
     insert(&m, at, code, sizeof code / sizeof *code);
@@ -289,7 +275,6 @@ uint32_t *spirv_water_absorption(const uint32_t *w, uint64_t n, uint32_t pointer
     if (stores != 1 || !s || s->op != OP_TYPE_FLOAT || s->n != 2 || s->a[1] != 32 || !glsl_import(&m, &glsl))
         return mod_free(&m), NULL;
     uint32_t zero = constant_id(&m, scalar, 0), guarded = new_id(&m);
-    // NMax(distance, 0): a negative distance through the water must not turn the dimming into a gain
     Ins guard = INS(&m, OP_EXT_INST, scalar, guarded, glsl, GLSL_NMAX, distance, zero);
     m.ops[store] = INS(&m, OP_STORE, pointer, guarded);
     insert(&m, store, &guard, 1);

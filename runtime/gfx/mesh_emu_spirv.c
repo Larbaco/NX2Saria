@@ -1,15 +1,3 @@
-// Mesh shader emulation: SPIR-V rewriting (mesh_emu_spirv.h). The input is what tools/xlate/MeshSpirv.cs makes: the
-// translator's compute main, called from an entry function that copies its shared-memory stage buffer into the mesh
-// outputs after SetMeshOutputsEXT (mesh), or into the task payload before EmitMeshTasksEXT (task).
-//
-// Mesh -> GLCompute: the output arrays and the task payload move to Workgroup memory; SetMeshOutputsEXT is dropped (its
-// counts are kept); at the entry function's end thread 0 reserves vertex slots and indices in the arena with atomics,
-// and every thread copies vertices and triangles out (indices made absolute vertex slots, relative to the vertex area).
-// With a task stage mesh workgroup (x, y) is mesh group x of task record (task base + y): a prologue returns when x is
-// past the record's count, loads the payload, and the module's WorkgroupId reads become (x, 0, 0).
-// Task -> GLCompute: the payload moves to Workgroup memory; EmitMeshTasksEXT becomes a store of the payload and the
-// mesh group count into the task record, and workgroup 0 writes the mesh dispatch {max_mesh, task workgroups, 1}
-// into the draw record.
 #include "mesh_emu_spirv.h"
 
 #include <stdarg.h>
@@ -73,7 +61,6 @@ static void op_str(Buf *b, uint32_t opc, const uint32_t *pre, int npre, const ch
     for (int i = 0; i < npost; i++) put(b, post[i]);
 }
 
-// ---- the module
 typedef struct {
     const uint32_t *w;
     size_t n;
@@ -179,7 +166,6 @@ static int parse(Mod *m, const uint32_t *w, size_t n, const char **why) {
     return 1;
 }
 
-// ---- emission over new ids
 typedef struct {
     Mod *m;
     Buf *types, *annot, *code;
@@ -212,16 +198,16 @@ static uint32_t words_base(Em *e) { return E1(e, OpConvertUToPtr, e->p_words, pc
 static uint32_t word_ptr(Em *e, uint32_t base, uint32_t idx) { return E3(e, OpAccessChain, e->p_u32_psb, base, cu(e, 0), idx); }
 static uint32_t word_load(Em *e, uint32_t base, uint32_t idx) {
     uint32_t p = word_ptr(e, base, idx), r = nid(e->m);
-    op(e->code, OpLoad, 5, e->m->t_u32, r, p, 2u, 4u);   // Aligned 4
+    op(e->code, OpLoad, 5, e->m->t_u32, r, p, 2u, 4u);
     return r;
 }
 static void word_store(Em *e, uint32_t base, uint32_t idx, uint32_t v) { op(e->code, OpStore, 4, word_ptr(e, base, idx), v, 2u, 4u); }
 static uint32_t atomic(Em *e, uint32_t o, uint32_t base, uint32_t idx, uint32_t v) {
     uint32_t p = word_ptr(e, base, idx), r = nid(e->m);
-    op(e->code, o, 6, e->m->t_u32, r, p, cu(e, 1), cu(e, 0), v);   // Device scope, relaxed
+    op(e->code, o, 6, e->m->t_u32, r, p, cu(e, 1), cu(e, 0), v);
     return r;
 }
-static void barrier(Em *e) { op(e->code, OpControlBarrier, 3, cu(e, 2), cu(e, 2), cu(e, 264)); }   // Workgroup, AcqRel|WorkgroupMemory
+static void barrier(Em *e) { op(e->code, OpControlBarrier, 3, cu(e, 2), cu(e, 2), cu(e, 264)); }
 static void if_begin(Em *e, uint32_t cond, uint32_t *merge) {
     uint32_t t = nid(e->m);
     *merge = nid(e->m);
@@ -234,9 +220,8 @@ static void if_end(Em *e, uint32_t merge) {
     op(e->code, OpLabel, 1, merge);
 }
 
-typedef struct { uint32_t var, len, role, loc, slot; } OutVar;   // role 0 position, 1 generic, 2 indices, 3 point size
+typedef struct { uint32_t var, len, role, loc, slot; } OutVar;
 
-// The mesh epilogue (replaces the entry function's return)
 static void mesh_epilogue(Em *e, const MeshEmuInfo *info, const OutVar *ov, int nov, uint32_t vcount, uint32_t pcount,
                           uint32_t sh_vb, uint32_t sh_ib, uint32_t p_wg_v4f, uint32_t p_wg_v3u, uint32_t p_wg_f32,
                           uint32_t p_wg_u32) {
@@ -245,7 +230,6 @@ static void mesh_epilogue(Em *e, const MeshEmuInfo *info, const OutVar *ov, int 
     barrier(e);
     uint32_t lid = ld(e, m->t_u32, m->lii), base = words_base(e);
     uint32_t isz = mul(e, pcount, cu(e, K)), vsz = mul(e, vcount, cu(e, S));
-    // header word 6: mesh workgroups that reached the output copy; word 7: the primitives they declared (diagnosis)
     {
         uint32_t l0 = E2(e, OpIEqual, m->t_bool, lid, cu(e, 0));
         atomic(e, OpAtomicIAdd, base, cu(e, 6), E3(e, OpSelect, m->t_u32, l0, cu(e, 1), cu(e, 0)));
@@ -254,17 +238,16 @@ static void mesh_epilogue(Em *e, const MeshEmuInfo *info, const OutVar *ov, int 
     uint32_t mz;
     if_begin(e, E2(e, OpIEqual, m->t_bool, lid, cu(e, 0)), &mz);
     {
-        // indices from the draw's own range (reserved by the allocation shader), vertex slots from the arena's
         uint32_t drw = pc_u32(e, 1), vcap = pc_u32(e, 5);
         uint32_t icap = word_load(e, base, add(e, drw, cu(e, MESH_EMU_R_ICAP)));
         uint32_t ib = atomic(e, OpAtomicIAdd, base, add(e, drw, cu(e, MESH_EMU_R_ICUR)), isz);
         uint32_t vb = atomic(e, OpAtomicIAdd, base, cu(e, 0), vsz);
         uint32_t iok = E2(e, OpULessThanEqual, m->t_bool, add(e, ib, isz), icap);
-        ib = add(e, word_load(e, base, add(e, drw, cu(e, 2))), ib);   // relative to the area, as firstIndex
+        ib = add(e, word_load(e, base, add(e, drw, cu(e, 2))), ib);
         uint32_t vok = E2(e, OpULessThanEqual, m->t_bool, add(e, vb, vsz), vcap);
         uint32_t mi;
         if_begin(e, iok, &mi);
-        atomic(e, OpAtomicIAdd, base, drw, isz);   // the draw record's index count
+        atomic(e, OpAtomicIAdd, base, drw, isz);
         if_end(e, mi);
         uint32_t all = E2(e, OpLogicalAnd, m->t_bool, iok, vok);
         atomic(e, OpAtomicIAdd, base, cu(e, 3), E3(e, OpSelect, m->t_u32, all, cu(e, 0), cu(e, 1)));
@@ -291,7 +274,7 @@ static void mesh_epilogue(Em *e, const MeshEmuInfo *info, const OutVar *ov, int 
                 for (int k = 0; k < nov; k++) {
                     if (ov[k].role == 2) continue;
                     uint32_t bits;
-                    if (ov[k].role == 3) {   // the point size, in x
+                    if (ov[k].role == 3) {
                         uint32_t ps = ld(e, m->t_f32, E2(e, OpAccessChain, p_wg_f32, ov[k].var, v));
                         uint32_t pb = E1(e, OpBitcast, m->t_u32, ps);
                         bits = nid(m);
@@ -328,7 +311,6 @@ static void mesh_epilogue(Em *e, const MeshEmuInfo *info, const OutVar *ov, int 
     op(e->code, OpReturn, 0);
 }
 
-// The task epilogue (replaces EmitMeshTasksEXT x y z)
 static void task_epilogue(Em *e, const MeshEmuInfo *info, uint32_t payload, uint32_t p_wg_u32, uint32_t nwg,
                           uint32_t ex, uint32_t ey, uint32_t ez) {
     Mod *m = e->m;
@@ -348,12 +330,12 @@ static void task_epilogue(Em *e, const MeshEmuInfo *info, uint32_t payload, uint
     uint32_t trecs = pc_u32(e, 6), slot = add(e, tb, t), m1;
     uint32_t mz;
     if_begin(e, E2(e, OpIEqual, m->t_bool, lid, cu(e, 0)), &mz);
-    atomic(e, OpAtomicUMax, base, cu(e, 2), add(e, slot, cu(e, 1)));   // records asked for, past the capacity too
+    atomic(e, OpAtomicUMax, base, cu(e, 2), add(e, slot, cu(e, 1)));
     if_end(e, mz);
     if_begin(e, ult(e, slot, trecs), &m1);
     {
         uint32_t recw = add(e, cu(e, MESH_EMU_TOFF / 4), mul(e, slot, cu(e, MESH_EMU_TWORDS)));
-        for (uint32_t r = 0; r * T < info->payload_words; r++) {   // the last round's threads past the payload idle
+        for (uint32_t r = 0; r * T < info->payload_words; r++) {
             uint32_t k = add(e, lid, cu(e, r * T)), mk = 0;
             if ((r + 1) * T > info->payload_words) if_begin(e, ult(e, k, cu(e, info->payload_words)), &mk);
             uint32_t v = ld(e, m->t_u32, E2(e, OpAccessChain, p_wg_u32, payload, k));
@@ -363,7 +345,7 @@ static void task_epilogue(Em *e, const MeshEmuInfo *info, uint32_t payload, uint
         uint32_t m2;
         if_begin(e, E2(e, OpIEqual, m->t_bool, lid, cu(e, 0)), &m2);
         word_store(e, base, recw, nc);
-        atomic(e, OpAtomicIAdd, base, add(e, drw, cu(e, MESH_EMU_R_GROUPS)), nc);   // for the index range
+        atomic(e, OpAtomicIAdd, base, add(e, drw, cu(e, MESH_EMU_R_GROUPS)), nc);
         if_end(e, m2);
     }
     if_end(e, m1);
@@ -373,8 +355,7 @@ static void task_epilogue(Em *e, const MeshEmuInfo *info, uint32_t payload, uint
     if_begin(e, first, &m3);
     {
         uint32_t total = mul(e, nxy, nz);
-        // task records past the area are not written: their mesh groups are not dispatched
-        uint32_t room = E3(e, OpSelect, m->t_u32, ult(e, tb, trecs), E2(e, 130 /* OpISub */, m->t_u32, trecs, tb), cu(e, 0));
+        uint32_t room = E3(e, OpSelect, m->t_u32, ult(e, tb, trecs), E2(e, 130, m->t_u32, trecs, tb), cu(e, 0));
         uint32_t ty = E3(e, OpSelect, m->t_u32, ult(e, total, room), total, room);
         word_store(e, base, add(e, drw, cu(e, 5)), cu(e, info->max_mesh));
         word_store(e, base, add(e, drw, cu(e, 6)), ty);
@@ -415,7 +396,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
     if (mesh && info->prim != 3 && info->prim != 1) { *why = "only triangle and point meshes are emulated"; goto done; }
     if (!m->t_f32 || (mesh && !m->t_v4f)) { *why = "no float types"; goto done; }
 
-    // output variables and the payload
     OutVar ov[40];
     int nov = 0;
     uint32_t payload = 0, payload_len = 0;
@@ -495,7 +475,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
         }
     }
 
-    // ---- new types, constants and variables
     Em e = {.m = m, .types = &ntypes, .annot = &nannot, .code = &code};
     if (!m->t_bool) m->t_bool = nid(m), op(&ntypes, OpTypeBool, 1, m->t_bool);
     if (!m->t_u64) m->t_u64 = nid(m), op(&ntypes, OpTypeInt, 3, m->t_u64, 64u, 0u);
@@ -528,7 +507,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
     op(&nannot, OpDecorate, 2, pc_struct, (uint32_t)DecBlock);
     for (uint32_t k = 0; k < 7; k++) op(&nannot, OpMemberDecorate, 4, pc_struct, k, (uint32_t)DecOffset, k ? 4 + 4 * k : 0u);
 
-    // Output and payload pointers become Workgroup pointers: in place when no such pointer exists yet, else mapped
     struct { uint32_t from, to; } pmap[512];
     int npmap = 0;
     for (int i = 0; i < m->nptr; i++) {
@@ -537,9 +515,9 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
         if (have) {
             if (npmap == 512) { *why = "too many pointer types"; goto done; }
             pmap[npmap].from = m->ptr[i].id, pmap[npmap++].to = have;
-            m->ptr[i].sc = 0xffffffffu;   // dropped
+            m->ptr[i].sc = 0xffffffffu;
         } else {
-            m->ptr[i].sc = ScWorkgroup;   // rewritten in place below
+            m->ptr[i].sc = ScWorkgroup;
         }
     }
     uint32_t p_wg_u32, p_wg_v4f = 0, p_wg_v3u = 0;
@@ -566,7 +544,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
     }
 #undef NEED_PTR
 
-    // ---- one pass over the module
     uint32_t moved[48];
     int nmoved = 0;
     for (int i = 0; i < nov; i++) moved[nmoved++] = ov[i].var;
@@ -592,7 +569,7 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
                 int drop = 0;
                 for (int k = 0; k < nmoved; k++) drop |= o == OpDecorate && a[0] == moved[k];
                 if (!drop) putn(&annot, ins, len);
-            } else {   // types, constants, global variables
+            } else {
                 int drop = 0;
                 if (o == OpTypePointer) {
                     for (int k = 0; k < npmap; k++) drop |= pmap[k].from == a[0];
@@ -611,7 +588,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
             i += len;
             continue;
         }
-        // function code
         if (len >= 2)
             for (int q = 0; q < npmap; q++)
                 if (ins[1] == pmap[q].from) ins[1] = pmap[q].to;
@@ -622,17 +598,17 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
                 ins[1] = p_priv_u32;
             }
         } else if (remap_wg) {
-            for (uint32_t k = 1; k < len; k++) {   // id operands only: literals of these instructions may equal the id
+            for (uint32_t k = 1; k < len; k++) {
                 int lit = (o == OpExtInst && k == 4) || (o == 81 && k >= 4) || (o == 82 && k >= 5) || (o == 79 && k >= 5) ||
-                          (o == OpLoad && k >= 4) || (o == OpStore && k >= 3) || o == 251 /* OpSwitch */ || o == OpSelectionMerge ||
-                          o == 246 /* OpLoopMerge */;
+                          (o == OpLoad && k >= 4) || (o == OpStore && k >= 3) || o == 251 || o == OpSelectionMerge ||
+                          o == 246;
                 if (!lit && ins[k] == m->wgid) { *why = "an unexpected WorkgroupId use"; goto done; }
             }
         }
         if (o == OpFunctionEnd) in_fn = 0, in_ep = 0;
         if (in_ep && o == OpLabel && !ep_started) {
             putn(&code, ins, len);
-            size_t j = i + len;   // function variables stay first
+            size_t j = i + len;
             while (j < n && (w[j] & 0xffff) == OpVariable) putn(&code, w + j, w[j] >> 16), j += w[j] >> 16;
             ep_started = 1;
             i = j;
@@ -646,7 +622,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
                 uint32_t recw = add(&e, cu(&e, MESH_EMU_TOFF / 4), mul(&e, slotc, cu(&e, MESH_EMU_TWORDS)));
                 uint32_t cnt = word_load(&e, base, recw);
                 uint32_t act = E2(&e, OpLogicalAnd, m->t_bool, ok, ult(&e, x, cnt));
-                // header words 4 and 5: mesh workgroups started and past this check (diagnosis: vk_dump mesh.txt)
                 uint32_t l0 = E2(&e, OpIEqual, m->t_bool, lid, cu(&e, 0));
                 atomic(&e, OpAtomicIAdd, base, cu(&e, 4), E3(&e, OpSelect, m->t_u32, l0, cu(&e, 1), cu(&e, 0)));
                 atomic(&e, OpAtomicIAdd, base, cu(&e, 5),
@@ -660,7 +635,7 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
                 uint32_t v3 = nid(m);
                 op(&code, OpCompositeConstruct, 5, m->t_v3u, v3, x, cu(&e, 0), cu(&e, 0));
                 op(&code, OpStore, 2, wgemu, v3);
-                for (uint32_t r = 0; r * info->threads < payload_len; r++) {   // as task_epilogue's copy
+                for (uint32_t r = 0; r * info->threads < payload_len; r++) {
                     uint32_t k = add(&e, lid, cu(&e, r * info->threads)), mk = 0;
                     if ((r + 1) * info->threads > payload_len) if_begin(&e, ult(&e, k, cu(&e, payload_len)), &mk);
                     uint32_t v = word_load(&e, base, add(&e, add(&e, recw, cu(&e, 1)), k));
@@ -694,9 +669,8 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
     }
     if (!ep_done) { *why = "the entry function's end was not found"; goto done; }
 
-    // ---- assemble
     put(&out, 0x07230203);
-    put(&out, w[1] < 0x00010500 ? 0x00010500 : w[1]);   // SPIR-V 1.5: physical storage buffers are core
+    put(&out, w[1] < 0x00010500 ? 0x00010500 : w[1]);
     put(&out, w[2]);
     put(&out, m->bound);
     put(&out, 0);
@@ -705,8 +679,8 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
     if (!m->has_psb) op(&out, OpCapability, 1, (uint32_t)CapPSBAddresses);
     putn(&out, exts.w, exts.n);
     putn(&out, imps.w, imps.n);
-    op(&out, OpMemoryModel, 2, 5348u, 1u);   // PhysicalStorageBuffer64, GLSL450
-    {   // entry point: every global variable
+    op(&out, OpMemoryModel, 2, 5348u, 1u);
+    {
         Buf ep = {0};
         uint32_t pre[2] = {ModelGLCompute, m->ep_fn};
         uint32_t ifc[2048 + 16];
@@ -715,7 +689,6 @@ uint32_t *mesh_emu_compute(const uint32_t *w, size_t n, MeshEmuInfo *info, size_
             int dropped = 0;
             if (!dropped && m->var[i].sc != ScFunction) ifc[ni++] = m->var[i].id;
         }
-        // the new ones: scan ntypes for OpVariable
         for (size_t i = 0; i < ntypes.n;) {
             uint32_t o = ntypes.w[i] & 0xffff, len = ntypes.w[i] >> 16;
             if (o == OpVariable && ni < 2048 + 16) ifc[ni++] = ntypes.w[i + 2];
@@ -759,9 +732,6 @@ int mesh_emu_prim(const uint32_t *w, size_t n) {
     return 0;
 }
 
-// ---- the vertex shader of an emulated mesh pipeline
-// The fragment shader's input variables as declared: Location, Component, scalar type and width, Flat. 0 when one
-// is not a plain 32-bit scalar or vector (the caller then goes by the reflection's per-location summary).
 typedef struct { uint32_t loc, comp, type, comps, flat; } FsIn;
 static int fs_inputs(const uint32_t *w, size_t n, FsIn *o, int max) {
     if (!w || n < 5 || w[0] != 0x07230203) return 0;
@@ -776,8 +746,8 @@ static int fs_inputs(const uint32_t *w, size_t n, FsIn *o, int max) {
         if (!len || i + len > n || o2 == OpFunction) break;
         if (o2 == OpDecorate && len >= 3 && a[0] < bound) {
             if (a[1] == DecLocation && len >= 4) loc[a[0]] = a[2], hl[a[0]] = 1;
-            if (a[1] == 31 && len >= 4) comp[a[0]] = a[2];   // Component
-            if (a[1] == 14) flat[a[0]] = 1;                 // Flat
+            if (a[1] == 31 && len >= 4) comp[a[0]] = a[2];
+            if (a[1] == 14) flat[a[0]] = 1;
             if (a[1] == DecBuiltIn) bi[a[0]] = 1;
         }
         if (o2 == OpTypeFloat && len >= 3 && a[0] < bound && a[1] == 32) ty[a[0]] = 1, cn[a[0]] = 1;
@@ -800,7 +770,7 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
     Buf b = {0}, t = {0}, an = {0}, c = {0};
     FsIn in[64];
     int nin = fs_inputs(fsw, fsn, in, 64);
-    if (!nin)   // the per-location summary: one vector per location
+    if (!nin)
         for (uint32_t l = 0; l < 32; l++)
             if (need >> l & 1)
                 in[nin++] = (FsIn){l, 0, types[l] <= 2 ? types[l] : 0, comps[l] >= 1 && comps[l] <= 4 ? comps[l] : 4, types[l] == 1 || types[l] == 2};
@@ -811,7 +781,7 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
              pc_struct = N(), p_pc = N(), pc_var = N(), p_pc_u64 = N(), p_pc_u32 = N(), p_in_i32 = N(),
              vidx = N(), p_out_v4f = N(), pos = N(), c0 = N(), c4 = N(), c16 = N(), p_out_f32 = N(), psz = N();
     (void)glsl;
-    uint32_t vecs[3][5] = {{0}};   // [type][comps] vector ids (comps 2..4), [type][1] the scalar
+    uint32_t vecs[3][5] = {{0}};
     vecs[0][1] = t_f32, vecs[1][1] = t_i32, vecs[2][1] = t_u32, vecs[0][4] = t_v4f, vecs[1][4] = t_v4i, vecs[2][4] = t_v4u;
     op(&t, OpTypeVoid, 1, t_void);
     op(&t, OpTypeFunction, 2, t_fn, t_void);
@@ -858,7 +828,6 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
     uint32_t ifc[80], ni = 0;
     ifc[ni++] = pc_var, ifc[ni++] = vidx, ifc[ni++] = pos;
     if (mi->psize_slot) ifc[ni++] = psz;
-    // outputs: one per fragment input, same Location, Component and type
     uint32_t outv[64] = {0}, outt[64] = {0};
     for (int q = 0; q < nin; q++) {
         int ty = in[q].type <= 2 ? (int)in[q].type : 0, k = in[q].comps >= 1 && in[q].comps <= 4 ? (int)in[q].comps : 4;
@@ -869,12 +838,11 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
         op(&t, OpTypePointer, 3, p, (uint32_t)ScOutput, outt[q]);
         op(&t, OpVariable, 3, p, v, (uint32_t)ScOutput);
         op(&an, OpDecorate, 3, v, (uint32_t)DecLocation, in[q].loc);
-        if (in[q].comp) op(&an, OpDecorate, 3, v, 31u, in[q].comp);   // Component
-        if (in[q].flat || ty) op(&an, OpDecorate, 2, v, 14u);           // Flat
+        if (in[q].comp) op(&an, OpDecorate, 3, v, 31u, in[q].comp);
+        if (in[q].flat || ty) op(&an, OpDecorate, 2, v, 14u);
         outv[q] = v;
         ifc[ni++] = v;
     }
-    // code: slot = vertex area + VertexIndex; each output from slot + its index
     uint32_t lab = N();
     op(&c, OpFunction, 4, t_void, fn, 0u, t_fn);
     op(&c, OpLabel, 1, lab);
@@ -901,9 +869,9 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
     }
     uint32_t slot_of[33];
     for (int k = 0; k < 33; k++) slot_of[k] = 0xffffffffu;
-    slot_of[32] = 0;   // position
+    slot_of[32] = 0;
     for (uint32_t g = 0; g < mi->n_generic; g++) slot_of[mi->generic_loc[g]] = 1 + g;
-    for (int q = -1; q < nin; q++) {   // -1: the position
+    for (int q = -1; q < nin; q++) {
         uint32_t l = q < 0 ? 32 : in[q].loc;
         uint32_t val;
         if (slot_of[l] == 0xffffffffu) {
@@ -923,7 +891,7 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
         }
         int ty = (int)in[q].type, k = (int)in[q].comps;
         uint32_t v4t = vecs[ty][4], r, c0i = in[q].comp;
-        if (!val) {   // not written by the mesh stage: zero
+        if (!val) {
             uint32_t z = N();
             r = N();
             op(&t, OpConstantNull, 2, outt[q], z);
@@ -935,7 +903,7 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
             else if (k == 1) r = N(), op(&c, OpCompositeExtract, 4, outt[q], r, cv, c0i);
             else {
                 r = N();
-                put(&c, (uint32_t)(5 + k) << 16 | 79u);   // OpVectorShuffle: components comp..comp+k-1
+                put(&c, (uint32_t)(5 + k) << 16 | 79u);
                 put(&c, outt[q]), put(&c, r), put(&c, cv), put(&c, cv);
                 for (int z = 0; z < k; z++) put(&c, c0i + (uint32_t)z);
             }
@@ -944,7 +912,6 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
     }
     op(&c, OpReturn, 0);
     op(&c, OpFunctionEnd, 0);
-    // assemble
     put(&b, 0x07230203), put(&b, 0x00010500), put(&b, 0), put(&b, id), put(&b, 0);
     op(&b, OpCapability, 1, (uint32_t)CapShader);
     op(&b, OpCapability, 1, (uint32_t)CapInt64);
@@ -964,32 +931,6 @@ uint32_t *mesh_emu_vs(const MeshEmuInfo *mi, uint32_t need, const uint8_t types[
 #undef N
 }
 
-// The allocation shader (mesh_emu_spirv.h): glslangValidator -V -g0 --target-env vulkan1.2, spirv-opt -O --strip-debug,
-// spirv-val clean. Its source:
-//   #version 460
-//   #extension GL_EXT_buffer_reference : require
-//   #extension GL_EXT_buffer_reference_uvec2 : require
-//   layout(local_size_x = 1) in;
-//   layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint w[]; };
-//   layout(push_constant) uniform PC { uvec2 addr; uint first; uint n; uint mode; uint icap; uint trecs; uint pad; } pc;
-//   void main() {
-//       Words a = Words(pc.addr);
-//       for (uint d = 0u; d < pc.n; d++) {
-//           uint r = 64u + ((pc.first + d) % 4096u) * 16u;
-//           bool task = a.w[r + 14u] != 0u;
-//           if (pc.mode == 0u && task) {
-//               uint tb = a.w[2], k = a.w[r + 10u];
-//               a.w[r + 8u] = tb;
-//               a.w[2] = k > pc.trecs ? pc.trecs + tb : tb + k;
-//           } else if ((pc.mode == 0u) != task) {
-//               uint g = pc.mode == 0u ? a.w[r + 10u] : a.w[r + 9u], per = a.w[r + 13u], ib = a.w[1];
-//               uint ni = per != 0u && g > pc.icap / per ? pc.icap + 1u : g * per;
-//               a.w[r + 2u] = ib;
-//               a.w[r + 12u] = ib >= pc.icap ? 0u : min(ni, pc.icap - ib);
-//               a.w[1] = min(ib + ni, 0x7fffffffu);
-//           }
-//       }
-//   }
 static const uint32_t alloc_words[] = {
     0x07230203, 0x00010500, 0x0008000b, 0x000000df, 0x00000000, 0x00020011, 0x00000001, 0x00020011,
     0x000014e3, 0x0006000b, 0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e, 0x00000000, 0x0003000e,

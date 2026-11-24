@@ -45,7 +45,7 @@ are shown with their known meanings. Requested Linux termination signals do not 
 excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
 the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
 
-### `game_session.finish_game()`
+### `launcher/game_session.py`: the game's end
 
 Once `GameRun.running()` has confirmed that the followed game and any Restart copies have ended, `finish_game()`
 asks the run for its `GameEnd`, writes its end line to the launcher log, synthesizes a crash summary if session reports
@@ -117,3 +117,12 @@ The in-progress Play worker records bounded action outcomes under `worker:` in a
 before spawning. Game events are emitted after spawn and after `GameRun` reports completion. The input reader uses a
 bounded queue; the main loop remains responsible for following the game after EOF or an output failure. Mod rebuild
 jobs and the complete Electron handover remain unfinished.
+
+### `mods_job.py`: mod rebuild completion
+
+`drop_build_cache()` removes the lifted sources and objects when the player does not keep the build cache, while
+preserving build state needed for update. Its body is the former Tk method; `App` continues to expose it for other
+jobs. `finish_mods_job()` applies this policy after a successful mod rebuild and returns `resume` with cleared failed
+mods. A cancelled or failed rebuild retains the waiting mod names and returns its result for the caller to choose the
+screen or retry. Tk preserves its existing result timing. A worker calls with `require_finished=True`, which returns
+`pending` without cleanup until the job has completed marker, claim and lock cleanup.

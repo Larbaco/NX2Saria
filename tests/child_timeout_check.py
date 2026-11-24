@@ -34,6 +34,11 @@ def compiler():
     return shutil.which('clang') or 'clang'
 
 
+def struct_named(src, name):
+    end = src.index('} ' + name + ';')
+    return src[src.rindex('typedef struct {', 0, end):end] + '} ' + name + ';\n'
+
+
 def extract(src, head, tail=''):
     """The text from head through its brace-balanced body (plus tail)."""
     i = src.index(head)
@@ -144,7 +149,7 @@ def main():
         extract(win, 'void plat_child_stop('),
         extract(win, 'int plat_child_write('),
         extract(win, 'long plat_child_read('),
-        extract(gfx, 'typedef struct {                                           // one translator child', ' Svc;'),
+        struct_named(gfx, 'Svc'),
         'static int child_start(Svc *v);\n',
         extract(gfx, 'static void child_stop('),
         extract(gfx, 'static int child_exchange_raw('),
