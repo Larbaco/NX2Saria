@@ -1000,7 +1000,7 @@ start line, and the listener when it is on) and `tracker_api_on()` there (`NX2SA
 reads it); `runtime/gfx/gfx_abi_probe.c` `probe_gfx_abi()`; `runtime/vk/vk_device.c` `probe_vkdevice()`;
 `runtime/vk/vk_sync.c` `vk_sync_probe_devlost()` (`--probe-devlost`); `runtime/nvn/nvn_probe.c` `probe_nvn()` and
 `runtime/nvn/nvn_tex_probe.c` `probe_nvn_tex()`; `runtime/gfx/gfx_window_probe.c` `probe_window()`;
-`runtime/gfx/gfx_shader.c` `probe_shader()`; `runtime/gfx/gfx_shader_probe.c` `probe_census_dir()`
+`runtime/gfx/gfx_shader_probe.c` `probe_shader()`; `runtime/gfx/gfx_shader_probe.c` `probe_census_dir()`
 (`build/<version>/shaders` for the probes); `runtime/gfx/tex_probe.c` `probe_vkmem()`, `runtime/vk/vk_exec_probe.c`
 `probe_vkexec()` and `runtime/gfx/astc_probe.c` `probe_astc()`; `runtime/gfx/mesh_fb_probe.c` `probe_meshfb()`;
 `runtime/vk/fsr3_probe.c` `probe_fsr3()`; `runtime/vk/fsr3fg_probe.c` `probe_fsr3fg()`; `runtime/hle/ov_zstd.c`
@@ -1979,6 +1979,491 @@ most steps when it is full. Where the OS has a walk of the whole address space (
 
 `NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): the guest heap and physical maps, the kernel region's bump
 and commit, the moved stacks, and the lazily written ranges with their array's room.
+
+## `runtime/cfg.h`
+
+Settings: `NX2SARIA_*` environment variables and `nx2saria.ini`; existing `NX2NAVI_*` variables and `nx2navi.ini` remain
+supported. The header is included by most of the runtime, and by `runtime/platform/win32.c` as `../cfg.h`. The code
+behind it and its notes: `runtime/cfg/cfg.c` and [cfg.md](cfg.md).
+
+- `cfg_env()`: the environment lookup for a setting name: `NX2SARIA_*` takes precedence over `NX2NAVI_*` even when
+  empty. It accepts either prefixed spelling; non-setting names are passed directly to getenv. Used by the early
+  platform probes too.
+- `cfg_get()`: getenv for a setting: the environment variable when set, else the settings-file key (the name without
+  either prefix, any case), else the device profile's default (`runtime/cfg/cfg.c`: the Steam Deck), else the quality
+  preset's (`cfg_preset_*`), else NULL. The same string semantics as getenv; the pointer stays valid for the process (a
+  value `cfg_set()` replaces is kept). A name without either prefix goes to getenv unchanged. Safe from any thread once
+  `cfg_start()` has returned.
+- `cfg_init()`: reads the selected settings file once, from `mem_init()` after the fixed windows are claimed and before
+  any setting is read. Logs the file, its key count, unknown keys and environment overrides. `cfg_start()` follows it.
+- `cfg_start()`: the rest of the settings' start, from `mem_init()` once the whole guest address space is claimed (the
+  quality preset's probe loads the Vulkan drivers, whose libraries and allocations must not land in the stack and heap
+  block or the alias region): the quality preset in use (the "quality presets" part of `runtime/cfg/cfg.c`) and then the
+  restart-only settings' values (`cfg_pending()`). `game`: 1 for the game itself (`runtime/main.c`: no tool mode), which
+  probes the GPU (`runtime/cfg/hw_detect.c`) and keeps the state file `preset-state.txt`; 0 for a tool mode, which goes
+  by the state file's last probe and writes nothing.
+- `cfg_load()`: replaces the loaded keys with those of the file at `path` (tests). 1 when the file was read, 0 when
+  missing. Not thread-safe: nothing else may call `cfg_get()` meanwhile.
+- `cfg_reload_file()` and `CfgReloadResult`: reads the selected settings file again (Ctrl+F5, `runtime/ui/menu.cpp`) and
+  applies what changed since it was loaded, without a restart: a line changed, added or removed (the key then falls back
+  to its default). Each line is read as `cfg_load()` reads it (a comment after a value cut) and each new value is
+  checked first (`runtime/cfg/cfg.c` `value_ok()`: the check `cfg_load()` logs at start for values outside their rows'
+  sets, and rules for the consumers that take more or stop the game on a bad one); a value that does not fit is rejected
+  and the current one stays. Kept as they are, and logged: keys the environment sets, and keys changed in the menu and
+  not saved yet or held by its draft (`cfg_hold()`). Applied keys are not marked for `cfg_save()` and `cfg_version()` is
+  bumped once. Every key is logged ("cfg: reload ..."). Fills `*r` (may be NULL): `changed` counts the keys that now
+  read the new value on this game build, `restart` those of them read at start only. Returns 0 when the file cannot be
+  read, and in a run that replays a bug capture's settings (`NX2SARIA_CAPTURE_REPLAY`), which reads no player settings
+  file. Any thread.
+- `cfg_set()`: live settings (the in-game menu). It stores `value` as the settings-file value of `name` (`NX2SARIA_`
+  prefixed), marks it for `cfg_save()` and bumps `cfg_version()`. `cfg_get()` returns it unless the environment sets
+  `name`. Any thread.
+- `cfg_version()`: bumped by every `cfg_set()`. A consumer that keeps a parsed value compares this with the number it
+  last saw (one atomic load) and parses again when it changed.
+- `cfg_setenv()`: `plat_setenv()` for an `NX2SARIA_` variable the process reads back: it also bumps `cfg_version()`, so
+  lookups see the new value.
+- The menu's draft (`runtime/ui/option_rows.cpp`): a live setting is previewed with `cfg_set()`, and Discard puts it
+  back. `cfg_state()` reads what `cfg_revert()` needs of `name` before the first change: the stored value (NULL when
+  none; the pointer stays valid) and the `CFG_*` flags of its entry (`CFG_DIRTY` an unsaved change, `CFG_REMOVED` a line
+  to remove at the next save, `CFG_TEST` a test hook's value, `cfg_set_test()`). `cfg_hold(name, 1)` keeps the entry out
+  of every `cfg_save()` / `cfg_save_to()` until `cfg_hold(name, 0)` (Apply), so an F10 / F11 / window-close save made
+  while the draft is open does not write a previewed value. `cfg_revert()` restores the value and flags `cfg_state()`
+  gave, releases the hold and bumps `cfg_version()`. Any thread.
+- A test hook's settings (`NX2SARIA_MENU_TEST_SET` of `runtime/ui/menu.cpp`): `cfg_set_test()` sets `name` as
+  `cfg_set()` does, and marks the value as the test's, which no `cfg_save()` / `cfg_save_to()` writes, the save at exit
+  included ("cfg: menu test values not saved: <n> key(s): ..." in the log), until a `cfg_set()` of the same key makes it
+  the player's. `cfg_test_keep()` makes every test value a plain one, which the next save writes (the hook's `SAVE=1`),
+  and returns how many it released. Any thread.
+- `cfg_from_env()`: 1 when the environment sets `name`: `cfg_set()` cannot change what `cfg_get()` returns (the menu
+  greys the setting out).
+- `cfg_is_set()`: 1 when the player set `name` (the environment or settings file), 0 when `cfg_get()` gives a device
+  profile's default or NULL.
+- `cfg_unknown_keys()`: the keys of the file's lines that are no settings of this version, lower-case with ", " between
+  them ("" when there are none; a list too long to keep ends early), and how many there are. Such a line does nothing:
+  the log says so at start and the settings menu shows it (`runtime/ui/menu.cpp`), so that nobody takes one for the
+  cause of what they see.
+- `cfg_device_profile()`: the device profile in use, "deck" or "desktop" (`NX2SARIA_DEVICE_PROFILE`, else what the
+  machine is).
+- `cfg_save()`: writes the keys `cfg_set()` changed since the last save into the selected settings file beside the game
+  executable (`cfg_save_to()`: the file at `path`). Only those lines change: the last line of a changed key gets the new
+  value, a missing key goes under its section (after the commented example line of the key when the section has one; the
+  section is added at the end of the file when missing), comments and every other line stay byte for byte. 1 on success
+  or with nothing to write.
+- `cfg_reset()`: the menu's "Reset all settings to defaults". Removes the active line of each key (names without
+  `NX2SARIA_`, any case) from the selected settings file at the next `cfg_save()` and its value from memory, so the
+  consumer's own default applies again; the commented example lines stay. Keys the environment sets are skipped. Bumps
+  `cfg_version()`. Returns how many it reset.
+- `cfg_last_save_ok()`: 0 when the last `cfg_save()` / `cfg_save_to()` failed to write (the values stay set in memory,
+  the next save tries again).
+- `cfg_each_active()`: every setting with a value, for a bug report ("Copy system info"): the settings file and
+  `cfg_set()` keys (name without either prefix, upper case; `from_env` 0), then the known `NX2SARIA_` variables the
+  environment sets (`from_env` 1).
+- `CfgMeta`: what the menu knows about a setting. `key`: without `NX2SARIA_`, upper case. `def`: what the consumer uses
+  when the key is unset ("" means no fixed default, the consumer picks per machine). `values`: "0|1",
+  "mailbox|fifo|immediate", a range "0..300", or NULL for free text. `live`: applies at once; the others are read at
+  start.
+- `cfg_supported()`: whether `key` (prefix and case ignored) does anything on the running game build
+  (`runtime/cfg/cfg_support.c`): 0 for a setting whose patch set the build lacks or that only another game reads. The
+  menu hides such rows; 1 for every other key. Call it after `rt_patches_init()`.
+- `cfg_has_section()`: 1 when `key` has a settings-file section of its own in `runtime/cfg/cfg.c` (`cfg_save()` writes
+  any other key under [misc]).
+- `cfg_log_unsupported()`: logs "cfg: KEY has no effect on this game version" for each key the settings file or
+  environment sets that is not supported.
+- `cfg_meta()`: the row of `key` (prefix and case ignored); NULL for a key the menu does not show. `cfg_meta_at()`: the
+  i-th row (0-based, table order); NULL past the last.
+- `cfg_default()`: what `key` reads when the player has not set it: the device profile's value (the Steam Deck's), else
+  the quality preset's in use, else the row's default; NULL for a key without a row. The menu's "default" mark follows
+  it.
+- `cfg_pending()`: a restart-only setting (`live` 0) whose value differs from the one `cfg_start()` kept at start, which
+  the running game still uses: 1 while a restart would change it, 0 otherwise and for a live key or one without a row
+  (the menu's "after restart" note). `cfg_pending_count()`: how many restart-only settings differ. `cfg_pending_for()`:
+  `cfg_pending()` for `value` instead of the key's own (the settings menu's draft, `runtime/ui/option_rows.cpp`
+  `opt_pending_count()`).
+- `cfg_value()`: the setting's value for consumers: the environment or settings-file value, else the `CfgMeta` default.
+  `name` has the `NX2SARIA_` prefix, like `cfg_get()`; a name without a row is a bug (`rt_fatal()`). A row with an empty
+  default has no fixed value: its consumer reads `cfg_get()` and keeps its own "unset" branch. An empty value counts as
+  unset.
+- `cfg_int()`, `cfg_double()`, `cfg_bool()`: `cfg_value()` parsed. A set value that does not parse (int: the whole
+  string; double: strtod) gives the default's number. `cfg_bool()`: "0" is false, anything else true.
+
+### Quality presets
+
+The "quality presets" part of `runtime/cfg/cfg.c`; the tiers and their values are in `runtime/cfg/preset_pick.h`. A tier
+is 0 low, 1 medium, 2 high (the game as shipped: sets nothing), 3 ultra. Its values are defaults: a key the player sets
+wins, then the device profile, then the preset in use, then the row's default. The `preset` key holds the player's
+choice (`recommended`, `low`, `medium`, `high` or `ultra`); `cfg_start()` resolves it once per start. All of these: any
+thread once `cfg_start()` has returned.
+
+- `cfg_preset_name()`: "low", "medium", "high", "ultra"; "recommended" for any other number.
+- `cfg_preset_in_use()`: the tier whose values are in effect now; -1 before `cfg_start()`.
+- `cfg_preset_recommended()`: the tier this PC gets (`runtime/cfg/preset_pick.h` `preset_pick()`) and, in `*why` when
+  not NULL, why in a few English words.
+- `cfg_preset_custom()`: 1 when a key the preset in use sets is set by the player to another value than it reads unset
+  (`cfg_preset_differs()`): the menu shows the preset as custom. A key the tier leaves alone never counts.
+- `cfg_preset_value()`: the value `tier` gives `key` (prefix and case ignored) on this PC; NULL when the tier leaves it
+  alone.
+- `cfg_preset_keys()`: every key some tier sets on some hardware (upper case, no prefix), `*n` of them; the array lives
+  for the process.
+- `cfg_preset_hw_changed()`: 1 when the player's tier was chosen on other hardware and this run uses the recommended
+  tier instead; it stays so at every start until the player picks a tier again (`cfg_preset_chosen()`).
+- `cfg_preset_chosen()`: the player picked a tier in the menu: records this PC as the one it was chosen on (the state
+  file `preset-state.txt` beside the game; never `nx2saria.ini`) and clears `cfg_preset_hw_changed()`. The menu writes
+  the preset key itself.
+- `cfg_preset_use()`: puts `tier`'s values in effect now (the menu's switch; the restart-only ones wait for a restart,
+  `cfg_pending()`), bumps `cfg_version()` and logs each setting whose value changes ("preset: <old> -> <new>: <KEY>
+  <before> -> <after>"). Keys the player set keep their values: the menu resets those it means to hand to the preset.
+- `cfg_preset_use_from()`: `cfg_preset_use()` for the menu's Apply, which resets the keys it hands to the preset before
+  the switch: `from_values` (NULL: the values in effect now) holds the value each key of `cfg_preset_keys()` had before
+  the draft's writes, in that order (an entry NULL: its value now), so the log's before -> after lines start from what
+  the player saw. With `from_values` the lines are logged also when `tier` is the one in use.
+- `cfg_default_tier()`: what `key` reads while the player has not set it if `tier` were in use: the device profile's
+  value, else `tier`'s, else the row's default (`cfg_default()` for a tier out of range); NULL for a key without a row.
+  The menu's draft shows a staged preset's values and default marks through it.
+- `cfg_preset_differs()`: 1 when `tier` sets `key` and `value`, set by the player for `key`, differs from what `key`
+  reads unset with `tier` in use (`cfg_default_tier()`): the key makes that tier custom, and choosing `tier` in the menu
+  hands it back. 0 for NULL or "", and for a key `tier` leaves alone.
+- `cfg_preset_notice_due()` and `cfg_preset_notice_done()`: the one-time notice of the recommended preset
+  (`runtime/ui/menu.cpp` `preset_notice_tick()`): 1 while the player has not set the preset key, the recommended tier is
+  not high, is in use, and the state file does not record a notice of that tier yet; 0 in a tool mode and a replay.
+  `cfg_preset_notice_done()` records it (`noticed = <tier>` in `preset-state.txt`; never `nx2saria.ini`) and logs
+  "preset: notice shown: recommended <tier> in use"; the file is written by a thread of its own, so the present thread
+  that shows the notice does not wait for the disk.
+- `cfg_preset_device_started()`: called by `runtime/cfg/hw_detect.c` `hw_detect_device_check()`, once the game has
+  chosen its own Vulkan device: its instance made and the devices listed, as far as the probe goes, so the drivers load.
+  A probing mark the state file kept from an earlier start (`runtime/cfg/cfg.c` `preset_init()`) is taken out, and the
+  next start probes again. Logs "preset: the game's Vulkan device is chosen: ..." when it does; nothing without the
+  mark.
+
+## `runtime/logq.h`
+
+Log writes on a thread of their own (`runtime/logq.c`). `runtime/main.c` owns the log's destinations and hands every
+line here. The feature's description: "The log thread" in [logging.md](../logging.md#the-log-thread).
+
+- `LogqSink` writes the bytes to the log's destinations; it may block.
+- `logq_init()`: before the first `logq_write()`; lines are written by the thread that logs them.
+- `logq_async()`: from now on the log thread writes them; 0 when it could not be started.
+- `logq_write()`: queues the bytes, or writes them when the queue is off or has no room.
+- `logq_sync()`: writes what is queued, on the calling thread, and turns the queue off.
+- `logq_flush()`: writes what is queued, on the calling thread, and leaves the queue on.
+- `logq_nudge()`: the log thread writes what it gathers now (a focus loss).
+- `logq_peek()`: what is queued as it stands, no lock (the end nobody asked for).
+- `logq_bytes()`: the queue's buffers, for the memory report (`runtime/vk/vk_memory.c` `system_log()`).
+
+## `runtime/logq.c`
+
+Log writes on a thread of their own.
+
+A log line was written by the thread that logged it: to the log file and to stderr (`runtime/main.c` `log_sink()`). A
+write can stall: a console that scrolls, a pipe whose reader is busy, a virus scanner, a disk that flushes; hundreds of
+milliseconds at worst. The render thread logs too, and a frame it spends in such a write is a hitch with nothing else to
+show for it.
+
+With the queue on (`logq_async()`) a line is copied into a buffer under a lock that is held for the copy alone, and the
+"log" thread writes the buffer out, so lines keep the order they were queued in. A line that finds no room is written by
+its own thread, after everything queued before it (`put()`). `logq_sync()` writes what is queued on the calling thread
+and turns the queue off for the rest of the run: a fatal error, the crash report and the end of the process call it
+(`rt_log_sync()`), so no line is lost to an exit and their own lines are written as they are made.
+
+The log thread gathers before it writes (`log_main()`): from the first line it finds it waits `LOGQ_GATHER_NS`
+(250000000, a quarter of a second), or until the queue is half full (`LOGQ_GATHER_BYTES`, `LOGQ_CAP / 2`), and then
+writes everything queued by then in one write. It used to write as soon as it woke, which outside a burst is once for
+every line: the thread that logged woke the log thread for each, and each was a write of its own to every destination.
+The price is that the log file and the console are up to `LOGQ_GATHER_NS` behind the game. The lines being gathered are
+in the queue like any others, so `logq_sync()` writes them too, and a fatal error, a crash report and an exit still lose
+none. A process that is ended from outside runs no code of ours and loses what was gathered at that moment; it used to
+lose only the lines the log thread had not reached yet.
+
+Every write is timed. One that took `LOGQ_SLOW_NS` (2000000, 2 ms) or longer is counted, and a line says so at most
+every ten seconds (`LOGQ_SAY_NS`, 10000000000): with the queue that time was the log thread's, without it
+(`NX2SARIA_LOG_ASYNC=0`) the logging thread's.
+
+The state `Q`: the lock `q` guards `buf` and `n`; `io` guards the queue's writes and `out`; `io` is taken first. `buf`
+and `out` are `LOGQ_CAP` bytes each: the queue, and what the log thread is writing. `now`: `logq_nudge()` asked for the
+gathered lines at once. `slow`, `said`, `worst_ns` and `full`: slow writes, those reported, the longest; and the lines
+that found no room.
+
+### `logq_bytes()`
+
+The queue's two buffers, made once when the log thread starts (`logq_async()`) and kept: the memory report's figure.
+
+### `put_out()`
+
+The write itself, timed.
+
+### `say_slow()`
+
+The line about slow writes, when there are new ones and the last line is ten seconds old. Called with no lock held: the
+line goes through `logq_write()` like any other.
+
+### `drain()`
+
+Writes out what is queued, in order. Any thread.
+
+### `put()`
+
+1 when the bytes were queued, 0 when the caller is to write them: the queue is off, or it had no room (the log thread is
+held up in a write, or the line is larger than the queue), and then what it held has been written first (`drain()`). So
+a thread's lines reach the log in the order it logged them.
+
+The queue's lock is waited for. A thread that wrote its line itself because the lock was taken would put that line
+before the lines it queued earlier, and on a busy machine the lock is taken for a whole time slice whenever its holder
+loses the processor inside the copy. Waiting cannot hang: the lock is held for the copy alone, the runtime stops a
+thread only for moments in which it takes no lock and logs nothing (`runtime/hle/kernel.c` `ap_try()` and `dg_sample()`,
+`runtime/diag/prof_win.c`), and a fatal error or a crash turns the queue off before it logs (`logq_sync()`, which only
+tries the locks).
+
+The log thread sleeps until the first line of a batch, and then until the batch fills half the queue (`log_main()`):
+those are the two moments `put()` wakes it.
+
+### `log_main()`
+
+The log thread: it sleeps until a line is queued, gathers, and writes the batch (`drain()`). While it gathers it holds
+no lock, so neither the threads that log nor `logq_sync()` wait for it. The gathering ends when its time is up, when the
+queue is half full (`put()` signals that), and when the queue is empty again because another thread wrote it: a line
+that found no room (`put()`), or `logq_sync()`, after which nothing is queued any more and this thread sleeps for good.
+
+### `logq_flush()`
+
+What is queued, written now on the calling thread, with the queue left on: a point the log is to have reached on the
+disk before something slow comes (the orderly end before its pipeline save, `runtime/gfx/gfx_present.c`
+`rt_exit_steps()`). Each lock is tried for at most 100 ms: the log thread may be stuck in a write and hold `io`. Without
+both locks nothing is written here, since other threads still queue and write, and the log thread writes the lines when
+it can.
+
+### `logq_nudge()`
+
+The log thread writes what it gathers now instead of when the gathering time is up: a focus loss, after which the
+process may be ended from outside (`runtime/main.c` `rt_log_focus_lost()`); such an end loses what was being gathered.
+
+### `logq_peek()`
+
+What is queued, as it stands, with no lock: for the note of an end nobody asked for, written with every other thread
+stopped (`runtime/platform/platform.h` `plat_exit_note_setup()`). Nothing once the queue is off.
+
+### `logq_sync()`
+
+Each lock is tried for half a second: the thread that holds it may be the one that crashed, or be stuck in the write
+this call is there to get past. Without the lock the queue is written as it stands.
+
+## `runtime/log_stall.h`
+
+What the log keeps so that a stall, a freeze or a lost device can be traced to the minute afterwards
+(`runtime/log_stall.c`; "Tracing a stall in the log" in [performance.md](../performance.md#tracing-a-stall-in-the-log)):
+the local time of the lines that mark an event, counts for the events whose own lines are limited, and the machine's
+memory and I/O pressure once a minute.
+
+- `log_stamp()`: the local time as "hh:mm:ss", the clock the system's journal and the kernel log use, of a moment on
+  `plat_now_ns()`'s clock (0: now). "--:--:--" when the zone cannot say.
+- `LsEvent`: the events whose own lines the log limits or leaves out, counted for the frame-time summary's "events"
+  line.
+- `log_event()`: counts one (any thread, no lock). 1 while the event's own line is to be written: its first few times (5
+  acquire failures, 3 watchdog firings, the first MapPhysicalMemory and UnmapPhysicalMemory failure), 0 after them.
+- `log_events_text()`: the events as the text of one line: those counted since the previous call without `whole`, each
+  with its total and the limit of its own lines ("presenter acquire failed 2 (7 in all, only the first 5 logged)");
+  `whole`: every event of the run, the previous call's moment left alone. 0 (and an empty string) when there is none.
+- `log_pressure_text()`: the machine's memory and I/O pressure as the text of one line, against the sample of the
+  previous call (the baseline, or the line before it), so the stall time of the minute is a difference of the system's
+  totals. 0 and an empty string when the platform gives nothing or the sampling is busy on another thread (never waited
+  for). `log_pressure_baseline()` takes the sample the first line is made against: the start of the first minute.
+- The stand-ins at the end of the header: a program that compiles a file of the runtime without `runtime/log_stall.c`
+  (the unit checks in `tests/` do, with stand-ins for the rest) links these: no time ("--:--:--"), every event has its
+  line, no counts, no pressure. `runtime/log_stall.c` replaces them as it defines `LOG_STALL_IMPL` first; the game's
+  link takes the whole runtime library, so its definitions win.
+
+## `runtime/log_stall.c`
+
+The log had one wall-clock line, the window's focus change with its date (`runtime/gfx/gfx_present.c`). A report of a
+stall, or of a GPU that stopped, was matched against the system's journal and kernel log by an estimate (about 2 s off
+at best), and three things hid how often an event happened: the lines of the presenter's failed acquires and of its
+watchdog stop after 5 and 3, and the physical memory map's refusals (a session had 132 of them) wrote one line each.
+Nothing said whether the machine was short of memory or waiting for its disk while the frames stopped. This file gives
+each of those one place:
+
+- `log_stamp()`: the local time, "hh:mm:ss", of a line that marks an event;
+- `log_event()` and `log_events_text()`: a count for each limited event, and the one line the frame-time summary writes
+  with the counts of its minute and, at the end of the run, of the whole run;
+- `log_pressure_text()`: the memory and I/O stall times of the minute (Linux pressure stall information), the memory
+  available and the swap free, or on Windows the memory available and the commit.
+
+The file defines `LOG_STALL_IMPL` before it includes its header: it defines what the header's stand-ins stand for.
+`ev_total[]` holds every count of the run and `ev_seen[]` the totals the previous window line counted from. `pr_prev`
+(under `pr_lock`) is the sample the next line is made against.
+
+### `put()`
+
+Appends to `out` at `*n`, never past `cap`.
+
+### `psi_text()`
+
+One resource's text: the average of the last 10 s and, with a sample to compare (`prev`), what the totals gained since
+it.
+
+### `pressure_format()`
+
+The text from a sample, the sample before it (NULL: none) and the seconds between them; `hms` is the time of the sample.
+Linux: PSI memory and io, MemAvailable and SwapFree. Windows (the branch on `avail_mb`): the memory available and the
+commit.
+
+## `runtime/log_privacy.h`
+
+Personal folders written short in what players share (`runtime/log_privacy.c`): the game log, stderr, the bug capture's
+files and the crash report. `C:\Users\<name>\AppData\Local\NX2Saria\game` becomes `%LOCALAPPDATA%\NX2Saria\game`,
+`/home/<name>/Games` becomes `~/Games`, the account's name alone inside a path becomes `%USERNAME%` or `$USER`, and the
+computer's name `%COMPUTERNAME%`. On by default; `log_short_paths = 0` writes them in full. Paths handed to other
+programs (the tracker API's `save_dir`, the files the game opens) are never changed: only the text written for people to
+read. The feature's rules for the player: [log-privacy.md](../log-privacy.md).
+
+- `log_privacy_init()`: called by `runtime/main.c` `main_run()`, first: the folders from the environment; no allocation.
+- `log_privacy_start()`: after the settings are read (`mem_init()`): the switch, the folders' resolved forms, a line.
+- `log_privacy_find()`: where the first personal folder starts in `p` (`n` bytes), or `n` when it holds none or the
+  switch is off. Counts the texts that hold one (`log_privacy_count()`).
+- `log_privacy_rewrite()`: `p` (`n` bytes) from `*at` on into `out` (`cap` >= 64 bytes) with each folder short; the
+  bytes written. `*at` moves past the bytes read: a caller loops until `*at == n` (`runtime/log_privacy_core.h`
+  `priv_rewrite()`).
+- `log_privacy_str()`: a whole string short into `out` (`cap` bytes), for one value in a file the game writes for people
+  (the bug capture); returns `out`, or `s` itself when it has nothing to shorten or the switch is off. Cut at `cap - 1`
+  bytes.
+- `log_privacy_str_always()`: the same with the switch off too, for text that leaves the PC
+  (`runtime/session_summary.c`: the session summary the launcher may send): `log_short_paths = 0` is for one's own logs,
+  never for what goes to a server.
+- `log_privacy_dup()`: a malloc'd copy of `p` (`n` bytes) with each folder short, `*out_n` its length; NULL when it has
+  nothing to shorten, the switch is off or memory runs out (the caller keeps `p`). Not for the crash report: it
+  allocates.
+- `log_privacy_count()`: the lines and values written short so far.
+
+## `runtime/log_privacy.c`
+
+Personal folders written short in what players share: the game log (`runtime/main.c` `rt_log_raw()`, so the log file,
+stderr, the queue the exit note reads and the crash report alike), and the values the bug capture writes
+(`runtime/diag/bugcap.c`). Players attach `logs/nx2saria.log` and the F8 capture's `log-tail.txt` to public issues, and
+the log named files under the account's folder: `C:\Users\<name>\AppData\Local\Programs\NX2Saria\game\SDL3.dll`,
+`/home/<name>/Games/...`
+
+The folders come from the environment once (`log_privacy_init()`, before the first line), and the matching is
+`runtime/log_privacy_core.h`: a table read in one pass, with no allocation and no lock, so the crash report goes through
+it too.
+
+- Windows: `LOCALAPPDATA`, `APPDATA`, `USERPROFILE`, `HOMEDRIVE` + `HOMEPATH`, `HOMESHARE` (a profile on a network
+  share), `OneDrive`, `TEMP` and `TMP` (often written in the 8.3 form, `C:\Users\ANASOU~1\...`), the 8.3 forms of
+  `USERPROFILE` and `LOCALAPPDATA`, and under Wine the Unix home (`HOME`, `Z:\home\<name>`, `WINEHOMEDIR`); the name is
+  `USERNAME`, the computer `COMPUTERNAME` and `USERDOMAIN` (the computer's own name on a PC outside a domain), and under
+  Wine also the Linux host name (`HOSTNAME`).
+- Linux: `HOME` and the folder it resolves to (realpath: `/var/home/<name>` on systems where `/home` is a link); the
+  name is `USER` or `LOGNAME`, the computer gethostname (and its first label) and `HOSTNAME`.
+
+Computer names often hold the owner's name ("maria-pc"); they are written `%COMPUTERNAME%` (`%USERDOMAIN%` for a
+domain's name) as a word of their own anywhere in a line. The markers are the ones a player can type back
+(`%LOCALAPPDATA%`, `~`). A line with no personal folder costs one table read per byte (`log_privacy_find()`) and is
+passed on as it is.
+
+`log_short_paths = 0` (`NX2SARIA_LOG_SHORT_PATHS=0`) writes everything in full, for debugging on one's own machine. The
+lines before the settings are read are written short either way.
+
+`rt_log()` is declared in this file alone, not through `runtime/host.h`: that header brings the CPU emulation's headers,
+which `tests/log_privacy_env_check.c` leaves out.
+
+### `add_host()`
+
+A host name, and its first label when it has a domain (maria-pc.lan: maria-pc too).
+
+### `add_short()`
+
+The 8.3 form of an existing folder (`C:\Users\ANASOU~1`), which `TEMP` and paths from older programs use.
+
+### `log_privacy_init()`
+
+- Wine hands the Unix environment on: the Unix home, also as the Windows path `Z:\home\<name>`.
+- `USERDOMAIN` is the computer's own name on a PC outside a domain, else the domain's.
+- `HOSTNAME` on Windows: Wine hands the Linux environment on.
+- On Linux the host name comes from gethostname (uname: a system call, no allocation).
+
+### `log_privacy_find()`
+
+The count goes up for every text that holds a folder: every caller rewrites what it finds.
+
+### `log_privacy_dup()`
+
+The buffer doubles when the rest did not fit.
+
+## `runtime/log_privacy_core.h`
+
+Personal folders written short (`runtime/log_privacy.c`): the part that makes no system call, so that
+`tests/log_privacy_check.c` builds it on any system with Windows and Linux tables alike.
+
+A table holds the folders to write short (prefixes, such as `C:\Users\<name>\AppData\Local`) and the account's name.
+`priv_find()` says whether a text holds any of them; `priv_rewrite()` copies the text with each one replaced by its
+marker (`%LOCALAPPDATA%`, `%USERPROFILE%`, `~`, `%USERNAME%`). The rest of each path is kept: it tells where a file was.
+
+Matching, in one pass over the bytes (`first[]` marks the bytes a pattern can start with, so most bytes cost one table
+read):
+
+- A prefix matches where the byte before it is not part of a name (a letter, digit, '_', '.', '-' or a byte of a UTF-8
+  sequence) and the byte after it is not either: `/home/ana` does not match in `/home/anabel` nor in `/var/home/ana`,
+  and `\\?\C:\Users\ana\x` matches. The longest prefix that matches at a place wins (`%LOCALAPPDATA%` before
+  `%USERPROFILE%`).
+- The account's name, three bytes or longer, matches as a word of its own (no letter, digit, '_' or UTF-8 byte on either
+  side) inside a path: the run of non-blank bytes around it holds a '/' or '\'. "Steam Deck" stays as it is for the
+  account `deck`; `/tmp/run-deck/x` and `D:\deck\saves` become `/tmp/run-%USERNAME%/x` and `D:\%USERNAME%\saves`.
+- A table with `fold` = 1 (Windows) compares letters without case (ASCII), takes '/' and '\' as the same byte, and a run
+  of separators as one (`C:\\Users\\ana`, a path as an escaped string writes it).
+- A '.' or '-' right after a folder ends it when no name byte follows (the end of a sentence: "saved in /home/ana.").
+- The computer's name, three bytes or longer, matches as a word of its own anywhere (no path needed: a UNC path
+  `\\<host>\share`, a network line), without case on every system (host names have none). `maria-pc.local` becomes
+  `%COMPUTERNAME%.local`; names a fresh install gives every machine (`localhost`, `steamdeck`, ...;
+  `priv_common_host()`) are not looked for.
+- Names too common to be the account's alone (`user`, `admin`, `deck`, ...; `priv_common()`) are not looked for alone: a
+  path under their home still matches as a folder, and `/run/user/1000` stays as it is.
+
+No allocation and no lock: the crash report writes its lines through here.
+
+- `PRIV_MAX`, 24: the patterns in a table.
+- `PRIV_PAT_MAX`, 520: the bytes of one pattern (a Windows path of MAX_PATH UTF-16 units is up to 3x that; longer
+  folders are skipped, see `priv_add()`).
+- `PRIV_MARK_MAX`, 16: the bytes of one marker.
+- `PRIV_NAME_MIN`, 3: an account name shorter than this is not looked for alone.
+- `PrivPat.pat` is folded when the table folds (lower case, '/' for '\'). `PrivTable.fold` is 1 for Windows paths (no
+  case, either separator); `first[256]` is 1 where a pattern can start with that byte (both cases when folding).
+
+### `priv_name_byte()`, `priv_path_byte()`
+
+A byte that continues a word (a digit, a letter, '_', or 0x80 and above); a byte that continues a folder's name (those,
+and '.' and '-').
+
+### `priv_common()`
+
+Account names that are words of their own in paths that are not the account's (`/run/user`, "User Data").
+
+### `priv_common_host()`
+
+Computer names a system gives every machine of its kind: not the person's.
+
+### `priv_add()`
+
+Adds a pattern. A prefix loses its trailing separators; one that is empty, a root ("/", "C:\", "\\") or too long is not
+added, nor a name shorter than `PRIV_NAME_MIN`, nor a pattern the table holds already. Kept longest first, so the
+longest match at a place is found first. 1 when added. A root, or a drive's root ("C:"), would write every path short.
+
+### `priv_folder_end()`
+
+The byte after a folder ends it: none, a byte that is not part of a name, or a '.' or '-' with none after it.
+
+### `priv_match()`
+
+The pattern that matches at `s[i]` (`s` holds `n` bytes), or NULL; `*len` gets the bytes of `s` it covers (more than the
+pattern's when a folded table took a run of separators for one, as in `C:\\Users`). For a name, `path` says whether the
+non-blank run around the name holds a separator.
+
+### `priv_find()`
+
+Where the first pattern starts in `s`, or `n` when `s` holds none.
+
+### `priv_rewrite()`
+
+Copies `s` (`n` bytes) from `*at` on into `out` (`cap` bytes) with each pattern replaced by its marker, and returns the
+bytes written; `*at` moves past the bytes read. It stops before a piece that would not fit, so a caller with more to
+copy writes out and calls again; with `cap` >= `PRIV_MARK_MAX` every call reads at least one byte. The whole text is
+passed each time so that the byte before `*at` still counts for the match there. `*hits`, when given, is increased by
+the patterns replaced.
 
 ## `runtime/vram_warn.h`
 
