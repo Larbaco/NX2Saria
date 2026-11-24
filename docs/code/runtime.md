@@ -12,6 +12,13 @@ address in the game's main module, `sdk+0x...` one in its SDK module. "Horizon" 
 "the SDK" the game's own copy of the `nn::` libraries, which runs as lifted code. A file whose first lines are a licence
 notice keeps them in the code; the rows of `THIRD_PARTY_NOTICES.md` say what each notice covers.
 
+**Three headers still carry their comments.** `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h` are inputs of
+the lifted code's object cache: every lifted object depends on them, and the build compares each dependency by its
+SHA-256 (`tools/make_game.py` `ObjectCache.current()`). Any changed byte in them, a comment or a space included, makes
+every player's PC recompile all the lifted objects at the next update, so a change there should be deliberate and
+batched. Their notes are on this page under their own headings, and their comments leave the code with the next change
+that rebuilds the lifted code anyway.
+
 ## `runtime/main.c`
 
 The shared game entry point: the standalone build names it `nx2saria.exe`; the launcher build retains `ocarina.exe`. It
@@ -1237,6 +1244,225 @@ frame-pointer chain of x29 as setjmp saw it.
 
 `NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): the jmp_buf table's entries. Entries are never removed; a
 full table replaces the entry filled longest ago (`ov_setjmp()`).
+
+## `runtime/cpu.h`
+
+The guest CPU state and the helpers used by recompiled code. The file's first line is a licence notice.
+
+**The comments of this header are still in the file.** `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h` are
+inputs of the lifted code's object cache: every lifted object lists them in its dependency file, and
+`tools/make_game.py` `ObjectCache.current()` compares each dependency by its SHA-256. Any changed byte in them, a
+comment or a space included, makes every player's PC recompile all the lifted objects at the next update, so a change
+there should be deliberate and batched. Their comments leave with the next change that rebuilds the lifted code anyway;
+until then the notes below repeat them.
+
+- `Cpu`: `x[32]` is x0-x30 (`x[31]` is unused; `sp` is separate). The offsets: `sp` 256, `pc` 264 (the target for
+  indirect dispatch), `nzcv` 272 (flags in bits 31..28), `tpidr` 280, `tpidrro` 288, `excl_addr` 296, `excl_val` 304,
+  `thread` 312 (the runtime thread object), `fpcr` 320 (the guest FPCR/FPSR, for the portable FP/SIMD lowering only; the
+  asm path uses the host's), `fpsr` 328, `excl_val_hi` 336 (the upper half of a 128-bit exclusive pair, LDXP/LDAXP of
+  two X registers), padding up to 512, and `v[32]` at 512.
+- The runtime services, defined in the `.c` files of the runtime: `rt_dispatch()` calls the function at `c->pc`;
+  `rt_spin_gate()` is a pass of a spin wait loop (`runtime/hle/kernel.c`, the `spin` patches of `recomp/patches.py`);
+  `rt_svc()` is the SVC entry.
+- Memory: guest addresses are host addresses, so `LD64` and the other load and store macros read and write through
+  unaligned, aliasing types.
+- The function-entry profiler: `g_fnprof` (defined in `runtime/main.c`) costs one predictable branch per call when off.
+- The exclusive monitor is emulated with compare-and-swap (`EXCL`).
+- The LSE atomics (ARMv8.1; the A57 lacks them, the SDK carries them behind a CPU feature check): add, clear, xor, set
+  and swap map to `__atomic` builtins in the lifter; min/max need a CAS loop (`ATOMIC_MINMAX`). They return the old
+  value.
+- The flags are packed NZCV in bits 31..28 (`FLAG_N` and the others).
+- The last lines include `runtime/simd.h`: the portable FP/SIMD helpers for code lifted with `--simd=c` (the default off
+  AArch64; `recomp/gen.py` includes `simd.h` itself in that mode, so AArch64 hosts can build it too).
+
+### `rt_get_fpcr()`
+
+In the first of the two variants the host FP state is not the guest's: code lifted with `--simd=c` keeps FPCR/FPSR in
+`Cpu` (`c->fpcr`, zeroed with the `Cpu`), so the host-side reset in thread start-up has nothing to do.
+
+### `rt_fpcr_sync()`
+
+The MXCSR of a host thread running guest code mirrors `c->fpcr`: FTZ|DAZ = FPCR.FZ, RC = nearest (FPCR.RMode takes the
+slow paths of `runtime/simd.h`, which switch RC around one operation). The FP helpers rely on it without checking, so it
+is set wherever FPCR or the host FP context changes: MSR FPCR (`recomp/lifter.py`), `rt_call()` (thread and fiber entry,
+host code calling guest code), fiber resume (`runtime/hle/kernel.c` `fiber_resumed()`; fibers keep their own MXCSR). The
+bits: FTZ 0x8000, DAZ 0x40, RC 0x6000 (the mask 0xE040, the value 0x8040 when FPCR bit 24 is set).
+
+### `ldxp128()`, `stxp128()`
+
+An exclusive pair of two X registers: one 16-byte-aligned 128-bit access (cmpxchg16b; x86-64-v2 has CX16). A pair of two
+W registers is a 64-bit exclusive and uses `ldx64`/`stx64`.
+
+### `Flags`
+
+The function-local flags (`recomp/flags.py`). Generated functions keep NZCV in a local `Flags F`, never in `c->nzcv`. A
+definition of a known kind stores its operands (a - b, a + b, or a logic result in `a`); `fc_<kind>(&F, CC_xx)` computes
+a condition from them, so a compare and its branch become one host compare. `F.nz` holds the packed form for definitions
+only known packed (CCMP, FCMP, MSR, ADCS) and for readers that several kinds of definition reach. Every helper is always
+inlined with a constant condition, so `F` stays in registers and only the condition's own arithmetic remains.
+
+- `FL_SUB`: subtract (SUBS, CMP): conditions as host compares of the operands.
+- `FL_ADD`: add (ADDS, CMN) and logic results (ANDS, TST, BICS): conditions from N, Z, C, V.
+- `fc_nz()` and `fnz_nz()`: packed flags.
+- `FL_ADC`: ADC, SBC, ADCS, SBCS with the carry in from `F`.
+
+## `runtime/simd.h`
+
+The portable C lowering of AArch64 FP / AdvSIMD / crypto / CRC32 (`recomp/simd_c.py` emits calls with constant fields;
+everything is always_inline so the size/lane/op switches fold at -O1). The file's first line is a licence notice.
+
+**The comments of this header are still in the file**, for the reason given under `runtime/cpu.h`: it is an input of the
+lifted code's object cache, and any changed byte in it, a comment or a space included, makes every player's PC recompile
+all the lifted objects at the next update, so a change there should be deliberate and batched.
+
+Semantics follow the ARM pseudocode, not the host: NaN propagation (first signalling NaN quietened, then first quiet
+NaN), FPCR.DN default NaN, FPCR.FZ flushing (inputs and pre-rounding-tiny results), FPCR.RMode for arithmetic /
+conversions / FRINTX/I, saturating FP to int conversions, fused multiply-add, ARM estimate tables. Not modelled: FPSR
+cumulative exception bits and QC, FPCR trap enables, FP16 arithmetic (ARMv8.2). FPCR.AHP is honoured by the
+half-precision conversions. Host assumptions: IEEE binary32/64, MXCSR in round-to-nearest outside the slow paths, with
+FTZ|DAZ equal to FPCR.FZ (`runtime/cpu.h` `rt_fpcr_sync()` keeps it so); fma must be correctly rounded:
+`-march=x86-64-v3` has the FMA instruction, and the v2 build links `runtime/fma.c` for it.
+
+### Registers
+
+`VREG` is the whole V register as a vector type; `VQ` a source with the upper half cleared when Q=0; `VW` a write,
+zeroing the upper half when Q=0. Scalar views of lane 0: `VS8` to `VS64`, `VSF32`/`VSF64`.
+
+A write is one 16-byte store, also where the instruction sets a scalar (the bits above it become zero) or a single lane
+(the other lanes stay): a V register written as two 8-byte halves or as one lane makes the next 16-byte load of it wait
+until those stores have left the store buffer, because the processor forwards a store to a load only when the one store
+covers the load. Assigning a zero-extended u128 to `c->v[d]` compiles to the two halves, so the writes go through a
+vector type: `VSET` is a scalar of at most 64 bits in the low bits, zero above; `VSET128` all 128 bits of an integer
+value; `VINS` lane i replaced by x, the other lanes kept.
+
+### `simd_whole()`
+
+Returns `v` with where it came from hidden from the compiler: a load of a V register, a change of one lane and a store
+of the 16 bytes would otherwise be compiled as a store of that lane alone.
+
+### `simd_rm_enter()`, `simd_rm_rz()`, `simd_rm_leave()`, `simd_directed()`
+
+The MXCSR rounding control (bits 13-14, `SIMD_RC_MASK` 0x6000) is set without fesetround's x87 + SSE double write;
+ldmxcsr only on change. `simd_rm_enter()` sets MXCSR RC from FPCR.RMode (RN 00, RP 10, RM 01, RZ 11) and returns the
+previous MXCSR. `simd_rm_rz()` forces toward-zero (0x6000). `simd_rm_leave()` restores the MXCSR saved by
+`simd_rm_enter()`, only if it changed.
+
+The thread's MXCSR mirrors the guest FPCR.FZ with RC = nearest whenever guest code runs (`runtime/cpu.h`
+`rt_fpcr_sync()`), so plain host FP gives the ARM result unless FPCR.RMode asks for directed rounding, which the slow
+paths handle: `simd_directed()` is that test.
+
+### Precision conversions
+
+FCVT, FCVTL/N, FCVTXN; FZ flushes single/double inputs, never halves.
+
+- `simd_d2s()`: under FZ, a result tiny before rounding (below 0x1p-126) is flushed here, since host FTZ would keep a
+  result rounded up to the smallest normal.
+- `simd_d2s_odd()`: round to odd (FCVTXN).
+- `simd_d2h()`: double (the exact image of the single/double source, NaN payload left-aligned) to half, with FPCR
+  rounding.
+
+### Scalar FP instructions
+
+The FP data processing group. The FMADD family (`fp_fma_s()`, `fp_fma_d()`): `neg_a` / `neg_n` negate the addend / the
+first factor before the fused op.
+
+### Integer lanes
+
+Complex ops run lane by lane; constant sizes fold to plain loads and stores.
+
+- `lshr_s()`, `lshr_u()`: a right shift by s >= 1 with optional rounding, as an infinite-precision value.
+- `pmul64()` is carry-less.
+- The `LOP_*` ops: `LOP_SHL`, `LOP_RSHL`, `LOP_QSHL` and `LOP_QRSHL` are register shifts (b is a signed byte), where U
+  selects unsigned; the long ops (`LOP_ADDL` and the others) have result lanes of size sz+1; for the narrow ops
+  (`LOP_XTN` and the others) sz is the destination lane size and a/b are sz+1; `LOP_SHLLI` is SSHLL/USHLL: extend, shift
+  (long). `LOP_U`, 256, is the unsigned variant flag.
+- `lop()`: `xa` and `xb` are the extended operands. For the narrowing ops a (and b for xHN) are 2*es wide.
+- `sl_gen()`: the generic lane loop: `ne` lanes; result lane i (size `szd`) goes to lane `offd+i` of d (other lanes kept
+  when `keep`, else zero); a is n's lane `offn+i` (size `szn`), b is m's lane `offm+i` (size `szm`), or lane `bidx` of m
+  when `bidx` >= 0, or the constant `bimm` when m < 0; the accumulator is d's old lane `offd+i`.
+- `sl_addlp()`: SADDLP/UADDLP/SADALP/UADALP.
+- `sl_across()`: ADDV, SADDLV/UADDLV, SMAXV/UMAXV, SMINV/UMINV (op 0..3; u is unsigned).
+- `sl_pmull64()`: PMULL2/PMULL 1Q (64x64 to 128, carry-less).
+
+### FP vector helpers
+
+Lanes of the 64-bit form are computed on a zero upper half.
+
+- `sv_fred_s()`: FMAXV/FMINV/FMAXNMV/FMINNMV (4S): a pairwise tree.
+- `vtoint_s()` and its siblings: lane-wise FP conversions.
+- `sv_fcvtl()`, `sv_fcvtn()`: FCVTL/FCVTL2 (h to s, s to d), FCVTN/FCVTN2 (s to h, d to s), FCVTXN/FCVTXN2.
+- `sv_tbl()`: TBL / TBX with len+1 table registers.
+
+### CRC32, crypto, loads and stores
+
+- `simd_crc()`: CRC32 / CRC32C (bytes = 1, 2, 4, 8).
+- Crypto (AES, SHA1, SHA256): `aes_mul()` takes k in {9, 11, 13, 14}; `sv_aes()` op 0 AESE, 1 AESD, 2 AESMC, 3 AESIMC;
+  `sv_sha1hash()` op 0 SHA1C, 1 SHA1P, 2 SHA1M; `sv_sha256hash()` is SHA256H (`part1`) or SHA256H2; `sv_sha_misc()` op 0
+  SHA1SU0, 1 SHA1SU1, 2 SHA256SU0, 3 SHA256SU1, 4 SHA1H.
+- Loads and stores of lanes: `sl_ldm()`, `sl_stm()` are LDn/STn (multiple structures): `selem` interleaved registers,
+  `rpt` repeats (LD1 with 2-4 registers). `sl_lds()` is the single structure form: lane `idx` of `selem` registers; LDnR
+  replicates into every lane.
+
+## `runtime/simd_fp.h`
+
+The FP helpers for one precision; included twice by `runtime/simd.h` (F = s/float, d/double). It has no include guard.
+Scalar entry points take and return `T`, vector ones `VT` (all lanes; callers zero the unused half for Q=0). The file's
+first line is a licence notice.
+
+**The comments of this header are still in the file**, for the reason given under `runtime/cpu.h`: it is an input of the
+lifted code's object cache, and any changed byte in it, a comment or a space included, makes every player's PC recompile
+all the lifted objects at the next update, so a change there should be deliberate and batched.
+
+The names below are the arguments of the `FN` macro, which adds the precision's suffix.
+
+- `MINN` is the smallest normal.
+- `FN(flush)`: the asm hides the float origin of `u`: LLVM turns the bit test into an FP class compare otherwise, and
+  with MXCSR.DAZ set (FPCR.FZ) the host compare sees a denormal as zero. The same in `FN(vflush)`.
+- `FN(fz)`: the FPCR.FZ input flush for helpers that run host FP.
+- `FN(nan1)` and its siblings: FPProcessNaN(s): the first signalling NaN (quietened), else the first quiet NaN, else
+  (invalid op) the default NaN.
+- The FMA flavours. `FMA_S` / `FMA_V`: fast paths, host MXCSR is round-to-nearest there (`simd_directed()` is checked
+  first). `FMA_X`: scalar FMA for the slow paths, any host rounding mode. Without hardware FMA (Ivy Bridge, no `-mfma`)
+  clang turns `__builtin_elementwise_fma` into a call to the C runtime's fmaf/fma for every lane, which is very slow and
+  keeps the thread outside generated code. For float the product of two floats is exact in a double (24 x 24 = 48 bits),
+  so the fused op is done in double. A plain `(float)(x * y + z)` rounds twice and can differ by one ulp; rounding the
+  double sum to odd first (Boldo-Melquiond) makes the final float rounding exact: TwoSum gives the error e of s = fl(p +
+  z), and when e != 0 and s has an even last bit, s is moved one ulp toward the exact value (the odd neighbour). Inf/NaN
+  lanes are left alone (e is NaN there, so the ordered compares are false). Double has no wider type: it keeps the C
+  runtime's fma.
+- `fma_rn_s()`: TwoSum: s + e == p + zd exactly. `fma_rn_v()`: +1 toward the exact value, that is +1 if e and s share a
+  sign, else -1.
+- `fma_any_s()`: any rounding mode: directed modes are exact with a plain double (same-direction double rounding is
+  harmless).
+- `FCALC`: the arithmetic itself, for scalars (KK = K) and vectors (KK = VK). MADD: a + b*d (a is the addend).
+  RECPS/RSQRTS get their first operand already negated (FPNeg happens before NaN processing).
+- `FBAD`: the lanes whose fast result needs fixing: NaN results (a NaN operand or an invalid op), RSQRTS overflow.
+- `FN(rsqrts)`: (3 + a*b) / 2 with one rounding (a already negated): it halves a normal operand first, so a product
+  beyond the format's range (which the fast path rounds to inf, or to the largest normal when rounding down) is exact.
+- `FN(fix)`: the ARM result for a lane flagged by `FBAD` (operands already flushed). For `FOP_SQRT`: NaN in, or
+  negative, gives the default NaN.
+- `FN(minmax)`: FMAX/FMIN/FMAXNM/FMINNM (operands already flushed).
+- `FN(slow)`: the FPCR.FZ / RMode path: flush inputs, round in the FPCR mode, flush tiny results (tininess is detected
+  before rounding on ARM: a result rounded up to the smallest normal is recomputed toward zero).
+- `FREDO`: the fast-path results that need a second look: `FBAD` lanes, and +-smallest normal. Under FZ the host runs
+  with FTZ|DAZ, which flushes denormal inputs and tiny results like ARM, but x86 detects tininess after rounding: an
+  exact result just below the smallest normal that rounds up to it is flushed on ARM only. The slow path decides both
+  cases with the operands flushed.
+- `FOK`: the complement of `FREDO` for every op but RSQRTS, as one compare: |r| ordered and not the smallest normal
+  (LLVM folds it to fcmp one, a single ucomiss + jne for scalars and one vcmpps for vectors).
+- `FN(op)`: the scalar FP op (a constant op folds the selection). RMode = nearest runs on the host, with or without FZ.
+- `FN(vop)`: the vector FP op: native lanes; any lane `FREDO` flags (or FPCR.RMode) reruns all lanes through the scalar
+  path.
+- Compares: `FN(cmp)` is FCMP's NZCV; `FN(vcmp)` is FCMEQ/FCMGE/FCMGT/FACGE/FACGT (op 0..4).
+- Rounding to integral (FRINT*), `FN(rnd)`: rm 0 N, 1 P, 2 M, 3 Z, 4 A; 5 X / 6 I = the FPCR mode (rint is ties-to-even:
+  the host stays in round-to-nearest outside the slow paths; there is no roundeven in MinGW's CRT).
+- FP to integer (FCVT[NPMZA][SU], fixed point), `FN(toint)`: saturating, NaN gives 0. `ib` is 32 or 64.
+- Integer to FP (SCVTF/UCVTF, fixed point), `FN(fromint_slow)`: rounded in the FPCR mode.
+- Reciprocal estimates (bit-exact ARMv8.0 pseudocode), `FN(recpe)`: with |x| < 2^(emin - 2) the result overflows (the
+  rounding mode is FPCR bits 22-23); under FZ a result that would be tiny (the exponent at or above (1 << EB) - 3) is a
+  signed zero; the table entry (`simd_recip_tab[scaled - 256]`) has 8 fraction bits. `FN(rsqrte)`: the result exponent
+  is (380 - e) / 2 for float and (3068 - e) / 2 for double, from 3 * ((1 << (EB - 1)) - 1) - 1; the table is
+  `simd_rsqrt_tab[scaled - 128]`.
 
 ## `runtime/memory.c`
 
@@ -2465,6 +2691,657 @@ copy writes out and calls again; with `cap` >= `PRIV_MARK_MAX` every call reads 
 passed each time so that the byte before `*at` still counts for the match there. `*hits`, when given, is increased by
 the patterns replaced.
 
+## `runtime/session_summary.h`
+
+The session summary: `logs/session-summary.json`, written once at the game's end (`runtime/session_summary.c`) for the
+launcher, which sends it while session reports are on ([telemetry.md](../telemetry.md)). The game sends nothing itself.
+What the comments of these three files say about what leaves the player's machine is given here in full; the player's
+side of the same rules is in [telemetry.md](../telemetry.md#what-a-session-report-holds).
+
+Two parts. `runtime/session_summary_fmt.c` turns a `SessionSummary` into the JSON text and needs nothing of the runtime
+(the unit check `tests/session_summary_check.py` builds it alone). `runtime/session_summary.c` gathers the values and
+writes the file.
+
+### `SessionSummary`
+
+The values, as the formatter takes them. A string NULL, an integer below 0 and a number below 0 are written as null.
+`version`, `game_version` and `end` are always written (an empty string when NULL).
+
+- `os_family` is "windows" or "linux". `wine` is 1, 0, or -1 for null.
+- `gpu_vendor` and `gpu_device` above 0xffff are written as null.
+- Tokens: the display's and the settings' values (`output`, `render_scale`, `game_aspect`, `picture`, `preset`,
+  `upscaler`, `taa`, `dlss`, `framegen`, `vk_present`). A value with a character outside `[A-Za-z0-9_.:x+-]` or longer
+  than 32 is written as "other"; `ss_setting()` maps a value outside the setting's own list to "other" before. `picture`
+  is the size of the picture the game draws, "2560x1440" or a widescreen one (`runtime/patches/widescreen.c`), as "WxH".
+- `fullscreen` is 1, 0, or -1 for null.
+- `end` is "normal", "fatal" or "device_lost".
+- `has_frametime` 0 writes "frametime" with every number null.
+- `patches`: the port's patch sets that are on (`runtime/patches/patches.c`), by name: `n_patches` of them, below 0 for
+  null. A name that is not 1 to 32 of `[a-z0-9_]` is left out, and no more than 96 are written.
+- `mods_count` and `mods_code`: the mods in use, and those of them that change the game's code
+  (`runtime/patches/mods.c`). Never their names.
+- `fatal`: the FATAL line without "FATAL: ", personal folders already short.
+
+### `ss_format()`
+
+The JSON text into `out` (`cap` bytes, NUL-terminated); its length, or -1 when it does not fit. It escapes every string,
+drops control characters and invalid UTF-8, cuts `os.name`, `cpu.name`, `gpu.name` and `gpu.driver` at 64 characters and
+`fatal` at 300, and writes the three frame-time numbers with at most one decimal. No allocation.
+
+### `ss_setting()`
+
+A value as the summary writes a setting: the list's own spelling when `value` (any case) is one of `allowed`'s items
+("a|b|c"; an item "lo..hi" takes a whole number in that range), "other" when it is not; `value` itself when `allowed` is
+NULL (free text). NULL for a NULL or empty value. The result is `value`, an item copied into `out` (`cap` bytes), or a
+static string.
+
+### `ss_os_name()`
+
+The OS line of `runtime/platform/platform.h` `plat_os_version()` as the summary names the OS: "Windows 10.0.26100.1234"
+becomes "Windows 11 (build 26100)" (build 22000 and later are Windows 11), "Ubuntu 24.04.1 LTS (Linux 6.8.0)" loses the
+kernel part. Anything else is copied. `out` gets `cap` bytes.
+
+### `ss_frametime()`
+
+The session's frame times from a histogram of `bins` bins of `bin_ns` each (the last also takes every slower frame), as
+`runtime/diag/perf.c` `ft_report()` computes them: mean fps over the summed intervals, the 1% low as the upper edge of
+the bin where the slowest 1% of frames begins, the slowest frame in ms. All 0 when `frames` or `sum_ns` is 0.
+
+### What the back end hands over
+
+Strong definitions are in `runtime/vk/vk_caps.c`, `runtime/gfx/gfx_shader.c` and `runtime/vk/vk_pipeline.c`;
+`runtime/session_summary.c` has weak ones returning 0, for builds without the Vulkan back end.
+
+- `SsGpu.vram_mb` is the largest device-local heap. `vk_caps_gpu()`: 1 once `vk_caps_init()` ran; it reads values stored
+  then, with no driver call. Any thread.
+- `gfx_shader_prewarm_stats()`: the boot's shader prewarm (`runtime/gfx/gfx_shader.c` `gfx_shader_prewarm()`): its time
+  and the shaders it translated. 1 once it ended.
+- `vk_pipeline_boot_stats()`: the boot's pipeline prewarm (`runtime/vk/vk_pipeline.c`): the pipelines it built and the
+  time of its pipeline stage. 1 once it ended.
+- `wide_picture_known()`: the picture `runtime/patches/widescreen.c` `wide_init()` set up: 1 and its size once
+  `wide_init()` has decided, 0 before (no computing: the fatal end may call it on any thread).
+- `rt_patches_on()`: the port's own patch sets that are on (`runtime/patches/patches.c`): up to `cap` of their names
+  into `names` (pointers valid for the process), not the sets a mod's ExeFS patches were built into (`mod_<hash>`).
+  Their number, or -1 before `rt_patches_init()`.
+- `mods_in_use()`: the mods in use this run (`runtime/patches/mods.c`: on at the scan and without a problem) and how
+  many of them change the game's code with ExeFS patches. 1 once the scan ended; never scans.
+
+### The game's side
+
+- `session_summary_start()`: called by `runtime/main.c` `main_run()`, a game run only, after the log is open: notes the
+  start, the OS, CPU and RAM, and removes a summary an earlier run left, so that the launcher never takes it for this
+  run's. Before this the other calls do nothing.
+- `session_summary_exit()`: the orderly end (`runtime/gfx/gfx_present.c` `rt_exit_steps()`), after the frame-time
+  summary: end "normal".
+- `session_summary_fatal()`: a fatal error's end (`runtime/dispatch.c` `fatal_end()`), after its frame-time summary, on
+  the failing thread: end "fatal", or "device_lost" for code 72 (`RT_LOST_EXIT` of `runtime/dispatch.h`). `line` is the
+  FATAL line's text. Static buffers, no allocation.
+
+## `runtime/session_summary.c`
+
+The session summary's gatherer (`runtime/session_summary.h`): what the game knows about the run at its end, written once
+to `logs/session-summary.json` beside `logs/nx2saria.log`. The launcher reads it after the process ends; the game sends
+nothing. A hard crash writes none (`runtime/main.c` `crash_handler()`): the launcher builds that one from the log.
+
+What cannot change during the run (the OS, CPU and RAM, the version) is read at the start, on the main thread. The rest
+is read at the end: the GPU from values `runtime/vk/vk_caps.c` stored when the device was made (no driver call, which a
+lost device could hang), the settings through `cfg_value()` (the live values: a change made in the menu counts), the
+frame times from the session histogram of `runtime/diag/perf.c` after its `ft_stop()`, and the boot's prewarm numbers
+from their stores. All into static buffers: the fatal end runs this on a failing thread that may hold any lock, where
+allocation is not safe.
+
+The weak `vk_caps_gpu()`, `gfx_shader_prewarm_stats()` and `vk_pipeline_boot_stats()`: builds without the Vulkan back
+end (the null renderer's tools) have no device and no boot prewarm. The weak `wide_picture_known()`: builds without the
+widescreen sets' code (the tools) have no picture of their own.
+
+The FATAL line goes through `log_privacy_str_always()`: its personal folders are written short even with
+`log_short_paths = 0`, since that switch is for one's own logs, never for what goes to a server
+([log-privacy.md](../log-privacy.md#the-switch)).
+
+### `session_summary_start()`
+
+- The file goes beside the log file; a run whose log goes to a redirected stderr (`tools/run_game.py`, a script) has
+  none, and its summary goes to `logs/` beside the executable, where the launcher looks (`runtime/main.c` `log_open()`
+  makes the same folder). The path is cut at the end of ".../logs", at its separator before the file's name.
+- An earlier run's summary goes now: a crash writes none, and the launcher must not read the old one as this run's.
+- A release's version carries its commit after a "+" (`rt_port_version` of `runtime/host.h`); the summary keeps the
+  release.
+- `cfg_preset_custom()`'s first call makes its key list under a lock: made here, on the main thread, the fatal end's
+  call takes none (`cfg_start()` chose the tier before this, `runtime/memory.c` `mem_init()`).
+
+### `setting()`
+
+A setting's value as the summary writes it (`runtime/session_summary.h` `ss_setting()`); NULL for a key without a row in
+`runtime/cfg/cfg.c`, which `cfg_value()` would end the process on.
+
+### `write_summary()`
+
+- The quality preset in use (the "quality presets" part of `runtime/cfg/cfg.c`): the tier's name, the one "recommended"
+  stands for included, or "custom" when the player changed a setting the tier sets, as the menu shows it; null before
+  `cfg_start()` chose one.
+- `fps_limit` is a number of frames per second; "display" and "unlimited" have none, and "other" is not one.
+
+## `runtime/session_summary_fmt.c`
+
+The session summary's JSON text (`runtime/session_summary.h` `ss_format()`) and the small value rules it shares with the
+gatherer (`ss_setting()`, `ss_os_name()`, `ss_frametime()`). Plain C with no runtime calls:
+`tests/session_summary_check.c` builds this file alone. No allocation and no locale-dependent formatting, since
+`runtime/session_summary.c` runs it on a failing thread at a fatal error. `Buf.full` says something did not fit.
+
+### `put_int()`
+
+Whole numbers through snprintf's `%lld`, which no locale changes; a value below 0 is null, above `max` is `max`.
+
+### `put_dec1()`
+
+One decimal, rounded, made from whole numbers: printf's `%f` takes the decimal separator of the C locale, and a library
+that sets another one would write "59,9". NaN and values below 0 are null, values above `max` are `max`.
+
+### `utf8_len()`
+
+The length of the UTF-8 sequence at `s` (`n` bytes left) when it is a valid one and not a C1 control (U+0080-U+009F); 0
+otherwise. Overlong forms, surrogates and code points above U+10FFFF are invalid. The second-byte tests: after 0xC2
+below 0xA0 is a C1 control; after 0xE0 below 0xA0 is overlong; after 0xED 0xA0 and above is a surrogate; after 0xF0
+below 0x90 is overlong; after 0xF4 0x90 and above is past U+10FFFF.
+
+### `put_text()`
+
+A free-text string as a JSON string of at most `max` characters (code points): quotes and backslashes escaped, tabs and
+line ends as one space, other control characters and invalid UTF-8 dropped, spaces at both ends left out (spaces are
+held back until a character follows them).
+
+### `put_token()`
+
+A display or settings value: 1 to 32 characters of `[A-Za-z0-9_.:x+-]`, else "other"; NULL is null.
+
+### `put_required()`
+
+The fixed values (schema, versions, end): the token rules, with "" for NULL instead of null.
+
+### `ss_format()`
+
+With no frame counted, "frametime" is an object of nulls, as every other group; the server takes no null group.
+
+### `whole()`
+
+A whole number of at most 9 digits, else -1.
+
+### `ss_setting()`
+
+For an item "lo..hi": the value as a whole number, written without leading zeros or sign.
+
+### `ss_os_name()`
+
+`runtime/platform/linux.c` `plat_os_version()` adds the kernel's release after the name, as " (Linux ...)", which is cut
+here.
+
+### `ss_frametime()`
+
+The cut is the slowest 1% of frames, `(frames + 99) / 100`; the 1% low is the upper edge of the bin where it begins.
+
+## `runtime/discord_app.h`
+
+Discord Rich Presence can only use an application ID registered by its owner. No NX2Saria Discord application has been
+verified, so the defaults stay empty. A player may provide their own ID as `NX2SARIA_DISCORD_APP_ID` (or the legacy
+`NX2NAVI_DISCORD_APP_ID`) or `discord_app_id` in `nx2saria.ini` / `nx2navi.ini`. Discord displays the name and art
+registered to that ID; the game does not claim or supply an NX2Saria application.
+
+## `runtime/discord_rpc.c`
+
+Discord Rich Presence: an activity with elapsed play time in the player's Discord status, through the local IPC of a
+running Discord client (the `plat_ipc_*` calls of `runtime/platform/platform.h`). Nothing leaves the machine but the
+activity itself, and nothing is sent while `NX2SARIA_DISCORD_RPC` is off (it is on by default, and does nothing without
+a Discord client running on the same PC). `NX2SARIA_DISCORD_APP_ID` names the player's application whose registered name
+and artwork Discord shows; `NX2SARIA_DISCORD_IMAGE` is its uploaded art key. Both may also be set in either
+`nx2saria.ini` or a legacy `nx2navi.ini`. No app ID is built in. With no ID the thread stays idle and logs that once.
+
+One host thread owns the connection and never holds a virtual core (`runtime/hle/kernel.c`: host work runs without one).
+It re-reads the settings when `cfg_version()` changes (a menu change reaches it within half a second), connects to the
+first of Discord's `discord-ipc-0` to `discord-ipc-9` pipes that answers, and writes the activity again every 60 s: that
+write is the keep-alive, and one that fails closes the connection and tries again 15 s later. Discord clears the status
+by itself when the process ends and the pipe closes, so there is no shutdown path. Every answer frame is read and
+discarded: unread, they would fill the pipe's buffer and block the client's writes.
+
+The protocol is the documented IPC one: a frame is <opcode u32 little endian><length u32><length bytes of JSON>, with
+Handshake 0, Frame 1, Close 2, Ping 3 and Pong 4. The handshake (opcode 0) carries `{"v":1,"client_id":...}` and is
+answered by a Ready frame (opcode 1); every command, SET_ACTIVITY here, is a frame (opcode 1) answered by one, and a
+Ping the client sends is echoed as a Pong. A client that speaks another numbering (an early alternative client did)
+answers the handshake with a Close. `--probe-discord` runs the same exchange once, without the game and without the
+setting being on; it needs no game files.
+
+- `APP_ID_CAP`, 24: a Discord snowflake is at most 20 digits.
+- `ANSWER_CAP`, 8192: the Ready frame carries the client's config; a few KiB.
+
+### `valid_app_id()`, `valid_image_key()`
+
+A settings value that fits the JSON without escaping: the app id is digits, an asset key letters, digits, '_' and '-'
+(what Discord's developer portal accepts for an asset key).
+
+### `read_setting()`
+
+The setting's value, or its default when the value does not fit the protocol (logged: the player sees why their own app
+does not show), or "" when the default does not fit either. Called on the presence thread and by the probe, after
+`cfg_version()` changed or once.
+
+### `read_one_frame()`
+
+One frame off the wire, its 8-byte header in as many reads as the peer made, then its payload; a payload longer than
+`cap-1` fills `buf` with its first `cap-1` bytes and the rest is still consumed. `*op` gets the opcode; `buf` is
+NUL-terminated. 1 on a whole frame, 0 when the deadline passed, -1 when the connection broke.
+
+### `read_frame()`
+
+The next frame that is not a Ping: a Ping the client sent to see we are alive is echoed as a Pong with its own payload,
+a Close (the client told us it is done) counts as a broken connection so the caller connects again later. The same
+return values as `read_one_frame()`; the deadline covers the whole exchange.
+
+### `connect_client()`
+
+The first of Discord's pipes that completes a handshake. NULL when no client is running or none answered in time; the
+caller tries again later. The answer wanted is the Ready event; a pipe that answered but not with a Ready frame in 2 s
+(2000 ms) is closed: the next may belong to a client.
+
+### `send_activity()`
+
+The activity as one SET_ACTIVITY frame: the game update and the port version as the details line ("Game 1.1.1 · Recomp
+0.3.7": the port version without its +commit suffix, the art's hover text keeps the full one; the dot goes as a JSON
+escape), the process's start as the timestamp Discord counts the elapsed time from, and the application's art asset. 1
+when the client answered (a slow answer that ran out of the 2 s read is fine: the next drain takes it), 0 when the
+connection broke.
+
+### `discord_main()`
+
+The presence thread. When the settings changed (the menu writes them) it picks the new ones up at once. Any setting
+bumps the version (a slider step, a cheat): only a new app id needs a new handshake, and a new image only a resend;
+reconnecting on every change made the status blink and could hit Discord's rate limit while a slider was held. On, but
+with no application to show it under, it waits for a settings change.
+
+## `runtime/mem_budget.h`
+
+How much room the card and the system have, as one level per side (`runtime/mem_budget.c`): roomy, normal, tight or
+critical. Owners of memory that can be given back read the level and give back earlier when room is short; what they
+keep while there is room is theirs to decide. The header-only part is the arithmetic, which `tests/mem_budget_check.c`
+runs.
+
+A side's room is its free share in per mille: for the video memory the driver's budget less this process's use of the
+device-local heaps (`runtime/vk/vk_memory.c` `vk_mem_vram()`); for the system the lower of the commit's headroom (the
+commit limit less the system's commit in use: an allocation fails at the limit) and the physical memory free
+(`plat_commit_info()`, `plat_mem_info()`). The levels begin at fixed shares going down, and a side climbs back to a
+better level only once its share is `MEM_HYST_PM` above the line it fell through, so a share that hovers at a line does
+not flip the level at every sample. Below `MEM_FLOOR_MB` free a side is critical whatever its share.
+
+- `mem_level_line[]`, {400, 200, 80}: the free share (per mille) above which a level holds, from the best down: roomy
+  above 400 (40% free), normal above 200, tight above 80; critical at 80 or less. The 20% line is where the VRAM
+  pressure rule of `runtime/vk/vk_texture.c` (`tex_vram_pressure()`, 80% of the budget in use) starts to act on released
+  textures.
+- `MEM_HYST_PM`, 50: a level is left for a better one 5 points above the line it fell through.
+- `MEM_FLOOR_MB`, 256: less free than this is critical at any share.
+- `MemRoom`: `free_pm` is the free share of the limit, per mille; `free_mb` the free MiB.
+
+The declarations of `runtime/mem_budget.c`: the levels, sampled every `MEM_BUDGET_PERIOD_MS` (2000) on a thread of their
+own, off the drawing threads. Each change of a side's level is logged with its figures. `MEM_BUDGET_TEST_VRAM_MB` and
+`MEM_BUDGET_TEST_RAM_MB` (0: off) pretend a side is that small, for testing what gives memory back on a large machine:
+the video memory budget becomes at most that many MiB against this process's use, and the system's room becomes that
+many MiB less this process's commit. They change the levels only, never the texture cache's own rules.
+
+- `mem_budget_vram()`: called by `runtime/vk/vk_device.c`: 1 once the device is up (the first call starts the thread), 0
+  before it goes (waits for a sample under way).
+- `mem_budget_level()`: `MEM_ROOMY` to `MEM_CRITICAL` of `MEM_VRAM` or `MEM_RAM`; `MEM_NORMAL` before its first sample.
+- `mem_budget_text()`: "video memory normal (31.2% free), system memory roomy (55.0% free)".
+
+### `mem_room()`
+
+The room of a side with `used` of `limit` in use (any one unit, here MiB); none when `used` reaches the limit.
+
+### `mem_room_min()`
+
+The tighter of two measures of one side: the lower share, and the lower free amount.
+
+### `mem_level_next()`
+
+The level a side moves to from `level` at room `r`: down to a worse level at once, up only past the hysteresis. It
+climbs one level at a time while the share clears the line above with room to spare.
+
+## `runtime/wb_lazy_choice.h`
+
+Whether the lazy write-back runs ("Lazy write-back" in the notes of `runtime/memory.c`, `runtime/vk/vk_memory.c`
+`vk_mem_lazy_decide()`), from the player's setting, the platform and the GPU driver, with the reason the log gives. It
+is a header of its own so that `tests/wb_lazy_check.c` checks it without Vulkan.
+
+The lazy write-back makes pages of guest memory inaccessible while a host-pointer import of them is bound to a buffer
+the GPU writes, and copies their bytes down from inside the access-fault handler of whichever thread touched them. A
+driver is free to handle both differently, so the default is on only where it has been played:
+
+- Windows, AMD's own driver: off. In the days after 0.7.1 turned it on for every card on Windows, two reports from AMD
+  cards had the game end in play. An RX 6600 lost its device 3.5 minutes in with it on (146 fetches in the 1,200 frames
+  before; the GPU's last mark was inside a draw pass, not a fetch). A player whose game ended in fights, on a card they
+  did not name, then played for hours with a settings file that turns it off. Neither proves it the cause: the player
+  changed several settings at once, cards with 8 GB lost their device the same way on NVIDIA before it existed, and no
+  failure path was found in the code. But fights are where it is busiest (shaders write, the CPU reads back, every read
+  faults and fetches), and nobody has played one on an AMD card under our eyes: builds with the default on were measured
+  on an RX 7900 XT (driver 26.10.1) standing in Hyrule Field and walking through a village (`runtime/vk/vk_exec_xfer.c`
+  `oq_take()`, `runtime/vk/vk_exec_draw.c`), which says nothing about a fight, and none of us has a card of the driver
+  branch for RDNA 1 and 2. Since the second report's card is unknown, the default is off on both of AMD's branches until
+  a card of each has played fights with it on and a log to show. The cost is the frame rate in open areas, back to what
+  it was before 0.7.1 (about 65 fps against 90 standing in Hyrule Field on an RTX 5090; not measured on AMD).
+- Windows, any other driver: on, as 0.7.1 shipped it. Measured and played on NVIDIA's; no report from Intel's.
+- Elsewhere: off, as before. The fetch inside the fault handler has only run on Windows.
+
+A value the player sets wins everywhere: `wb_lazy = 1` turns it on for an AMD card, `wb_lazy = 0` off for any.
+
+- `WBL_DRIVER_AMD`, 1: the `VkDriverId` of AMD's own driver, `VK_DRIVER_ID_AMD_PROPRIETARY` (`runtime/vk/vk_memory.c`
+  asserts the value).
+- `WblChoice.why` is the end of the log line "mem: lazy write-back on|off: ".
+
+### `wb_lazy_choice()`
+
+`set`: the value the player gave `NX2SARIA_WB_LAZY` (the environment or the settings file), NULL or "" when they gave
+none. `windows`: the game runs on Windows (`WBL_ON_WINDOWS`). `driver_id`: the device's `VkDriverId`.
+
+## `runtime/freeze_hold.h`
+
+When the freezing of idle guest regions waits, the part without the OS: `runtime/vk/vk_memory.c` `freeze_pass()` makes
+the freezes (`runtime/memory.c` `mem_freeze()`) and asks these functions whether a pass may run;
+`tests/freeze_hold_check.py` runs this file alone.
+
+A freeze is a VirtualQuery and a VirtualProtect of 2 MiB, some microseconds as a rule, and it only saves later
+write-watch queries (about a microsecond per MiB per submission), so it can wait. Around an area load it is slow: in the
+second after it, while the loaders write and the driver imports and locks new memory, freezes took 4 to 32 ms. Two rules
+hold the passes back:
+
+- A freeze of `FRZ_SLOW_NS` or more holds them for `FRZ_BACKOFF_NS`, doubled for each further slow one up to
+  `FRZ_BACKOFF_MAX_NS`. The doubling starts over once `quiet_ns` pass without a slow freeze (`quiet_ns` 0: at the first
+  fast freeze, the rule of 0.10.1, under which a slow freeze came every 250 ms for seconds after a load, fast ones
+  between them).
+- While the texture pool makes an area's textures, and for `load_hold_ns` after that or after an area's load, no pass
+  runs (`load_hold_ns` 0: no such hold).
+
+`FrzHold`: `hold_until`, the backoff holds the passes until then; `backoff`, the last hold's length, 0 for none since
+the doubling started over; `last_slow`, when the last slow freeze ended, 0 for none yet; `load_until`, an area load
+holds the passes until then.
+
+### `frz_freeze_done()`
+
+A freeze ended at `t1` after taking `took` ns.
+
+### `frz_load_hold()`
+
+Whether an area load holds the passes at `now`: `loading`, the texture pool is making an area's textures; `area_at`,
+when the last area load began (0: none).
+
+### `frz_may_run()`
+
+Whether a pass may run at `now` (the backoff, then the load).
+
+## `runtime/mem_need.h`
+
+Whether the machine has the memory the game needs, asked once at the start (`runtime/memory.c` `mem_start_note()`). It
+is a header of its own so that `tests/mem_need_check.c` checks it alone.
+
+What counts is commit: memory the system has promised to programs, out of RAM plus page file (on Linux the tightest of
+the limits `runtime/platform/platform.h` `plat_commit_info()` reads). An allocation fails when the commit in use reaches
+the limit, however much RAM is free, and on Windows the video driver charges the game's video memory to it too. Measured
+in play (RTX 5090, 3840x2160, three sessions of 19,000 to 50,000 frames on 2026-11-11): this process held 23,910 to
+24,429 MB of commit, flat over the session, and the system stood at 65,777 to 65,914 of 73,154 MB with the other
+programs' 41,500 MB. A machine that cannot give the game that much pages, drops textures to make room
+(`runtime/vk/vk_texture.c` `commit_is_low()`) or loses the device.
+
+`MEM_NEED_DEFAULT_MB`, 24576.0: the default of `NX2SARIA_MEM_NEED_MB`: the commit the game took in the sessions above,
+as 24 GiB.
+
+### `mem_need_room()`
+
+The commit in MB the game can still get: what is free, and what this process already holds of its need.
+
+### `mem_need_short()`
+
+1 when the game's need does not fit. `need_mb` 0 or less: not asked. A limit below 0 is an unknown one: not short.
+
+## `runtime/par_jobs.h`
+
+`runtime/par_jobs.c`: a small pool of persistent threads for CPU work the drawing threads would otherwise do alone, such
+as a large texture's copy out of the game's memory (`runtime/gfx/tex_deswizzle.c` `tex_bl_copy_mt()`). One job at a
+time; the caller takes part and returns when every piece is done.
+
+- `par_run()`: runs `fn(arg, i)` for every i in [0, n) on the pool's threads and the caller's, in no set order, and
+  returns once all have returned. A second caller while the pool runs a job, a pool that could not start,
+  `NX2SARIA_PAR_JOBS=0` or `n` 1 run every piece on the calling thread instead. `fn` must not call `par_run()` itself
+  (it would run its pieces alone).
+- `par_threads()`: the threads a job can spread over, the caller counted; 1 when the pool is off.
+- `par_memcpy()`: memcpy with large copies (`PAR_MEMCPY_MIN` and up) split over the pool.
+
+## `runtime/par_jobs.c`
+
+A pool of persistent threads that runs one job at a time (`runtime/par_jobs.h`). The threads sleep on a condition
+variable between jobs and cost nothing while the game does not use them. A job is `n` pieces claimed one by one from an
+atomic counter by the caller and the workers alike, so a slow piece or a busy core evens out. One caller at a time: the
+pool's busy lock is only tried, never waited for, so a second caller (or a piece that calls `par_run()`) runs alone
+rather than waiting, and no caller can wait for a pool that waits for it.
+
+Size: the usable hardware threads less two (the drawing thread and the game's main thread), at most `PAR_MAX_THREADS` in
+all, the caller counted. `NX2SARIA_PAR_JOBS=0` runs every job on its caller (`runtime/cfg/cfg.c`).
+
+- `PAR_MEMCPY_MIN`, 1 << 20: below this, waking the pool costs about what the copy does.
+- The state `J`: `busy` is held by the caller for its whole job; `threads` is the workers, the caller not counted; `gen`
+  is bumped per job, and a worker takes part in each job once; `active` is the workers that have not finished the
+  current job; `fn` is the current job (written under `lock` before `gen` is bumped); `next` is the first piece not yet
+  claimed.
+
+## `runtime/part_file.h`
+
+A file written piece by piece on a thread nobody waits for when the process ends.
+
+The window's close ends the process with `plat_exit()` while the detached threads still run (`runtime/gfx/gfx_present.c`
+`gfx_window_closed()`), and a kill or a crash ends it anywhere. A file such a thread was in the middle of then stays cut
+short under its own name, and whoever opens it later takes it for a whole one. So the file is written as `<path>.part`
+and gets its name with one rename once it is complete: a reader finds the whole file or none, and a `.part` file says
+what it is. A file made in memory first goes through `plat_file_write_cached()` or `plat_file_write_atomic()` instead,
+which do the same in one call.
+
+### `part_file_name()`
+
+`<path>.part` into `out`; 0 when it does not fit.
+
+### `part_file_open()`
+
+Opens `<path>.part` for writing (`mode`: "w" or "wb"). NULL when it cannot be made.
+
+### `part_file_close()`
+
+Closes `f`, the file `part_file_open(path)` gave, and renames it to `path`, over an older file of that name. With `ok`
+0, after a write error on `f` or when the close or the rename fails, the part is deleted and `path` stays as it was. 1
+when `path` now holds the whole new file.
+
+## `runtime/sha256.h`
+
+SHA-256 (FIPS 180-4), streaming. It uses the x86 SHA extensions when the CPU has them, portable C otherwise.
+
+- `Sha256`: `bytes` is the message bytes so far; `buf[64]` a partial block.
+- `sha256()`: init, update and final in one call.
+- `sha256_ni()`: 1 when the hashes run on the x86 SHA extensions (SHA-NI), 0 when they run in portable C.
+- `hmac_sha256()`: HMAC-SHA256 (RFC 2104) of `msg` under `key`, any key length (a key over 64 bytes is hashed first).
+  `out` may be the same buffer as `msg`.
+
+## `runtime/sha256.c`
+
+SHA-256 (FIPS 180-4). The block function has two forms: one on the x86 SHA extensions (SHA-NI: Intel since Ice Lake and
+Goldmont, AMD since Zen), which hashes the RomFS image at about the speed of a disk read, and portable C for CPUs
+without them. `tests/sha256_paths_check.py` checks both against the FIPS 180-4 vectors and against each other. The file
+is the project's own code and carries no licence notice.
+
+### `blocks_ni()`
+
+The state lives in two registers as the SHA instructions want it: ABEF and CDGH. Each group of four rounds adds the
+round constants to four message words and runs `sha256rnds2` twice; the message schedule for words 16..63 is
+`msg2(msg1(W[t-16..], W[t-12..]) + W[t-7..], W[t-4..])`.
+
+Loading the state: the shuffle 0xb1 of `h[0..3]` gives CDAB, the shuffle 0x1b of `h[4..7]` gives EFGH, the align by 8
+gives ABEF and the blend 0xf0 gives CDGH. Storing it back: the shuffle 0x1b of ABEF gives FEBA, the shuffle 0xb1 of CDGH
+gives DCHG, the blend 0xf0 gives DCBA for `h[0..3]` and the align by 8 gives HGFE for `h[4..7]`.
+
+### `cpu_has_sha_ni()`, `sha256_ni()`
+
+`blocks_ni()` runs where CPUID reports the SHA extensions (leaf 7, subleaf 0, EBX bit 29), SSE4.1 (leaf 1, ECX bit 19)
+and SSSE3 (leaf 1, ECX bit 9: the byte shuffle and the byte align). CPUID is read directly rather than through
+`__builtin_cpu_supports("sha")`: clang before 19 rejects that feature name and stops the compile (Ubuntu 24.04's clang
+18). `g_ni` is -1 until the first hash asks; `tests/sha256_paths_check.c` sets it to run one form or the other.
+
+A CPU without leaf 7 has no SHA either. Threads that race at the first ask all store the same answer. Off x86-64 the
+portable C form is the only one.
+
+### `hmac_sha256()`
+
+SHA-256((K ^ opad) || SHA-256((K ^ ipad) || msg)), K the key padded with zeros to the 64-byte block. The padded key and
+the inner hash are wiped afterwards: they are key material (`runtime/hle/amiibo_crypto.c` derives its keys with this).
+
+## `runtime/aes128.h`
+
+AES-128 encryption (FIPS-197) and counter mode (SP 800-38A) with a 128-bit big-endian counter. Portable C; the amiibo
+tag cipher (`runtime/hle/amiibo_crypto.c`) is its only user. Decryption is not needed: counter mode only encrypts.
+
+- `Aes128.rk[176]`: the 11 round keys, 16 bytes each.
+- `aes128_encrypt_block()`: `in` and `out` may be the same.
+- `aes128_ctr()`: `out` = `in` XOR the key stream of the counter blocks iv, iv + 1, ... (the whole 16 bytes as one
+  big-endian number, wrapping at 2^128). `n` need not be a multiple of 16; `in` and `out` may be the same buffer.
+
+## `runtime/aes128.c`
+
+AES-128 encryption on bytes: the state is 16 bytes in column order (byte r + 4c is row r of column c), as the standard
+lays it out. The S-box is a table indexed by secret bytes, so the timing depends on the key and the data; that is
+acceptable here because the only data is the player's own amiibo dumps, read locally. The file is the project's own code
+and carries no licence notice.
+
+### `xtime()`
+
+Multiplication by x (that is 2) in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1 (the 0x1b).
+
+### `aes128_init()`
+
+The key schedule, bytes 16 to 175: each 4-byte word is the word 16 bytes back XOR the previous word; at the start of
+each round key the previous word is first rotated by one byte, run through the S-box and its first byte XORed with the
+round constant.
+
+### `aes128_encrypt_block()`
+
+SubBytes and ShiftRows together: row r moves r columns to the left. MixColumns (not in the last round, so only for
+rounds below 10): b0 = 2a0 ^ 3a1 ^ a2 ^ a3 and its rotations, written as a0 ^ (a0 ^ a1 ^ a2 ^ a3) ^ 2(a0 ^ a1).
+
+### `aes128_ctr()`
+
+The counter goes up by 1, carrying from the last byte (index 15) towards the first.
+
+## `runtime/fma.c`
+
+Correctly rounded `fma`/`fmaf` for x86-64 builds without FMA3: the `-march=x86-64-v2` build
+([building.md](../building.md)). The file carries a licence notice in its head, which stays in the code.
+
+`runtime/simd.h` lowers AArch64 FMADD/FMSUB and the RECPS/RSQRTS helpers to `__builtin_elementwise_fma`, which clang
+turns into a call to `fma`/`fmaf` when the target has no FMA instruction. The C runtime is not a substitute: on CPUs
+without FMA3 the UCRT's software fallback is documented as rounding incorrectly by up to half an ulp, while the FP
+lowering needs the single rounding the ARM instruction gives. This file supplies it.
+
+The result is rounded in the MXCSR rounding mode the caller set (`runtime/simd.h` `simd_rm_enter()`), and MXCSR FTZ and
+DAZ are honoured as the hardware FMA would, so the fast paths of `runtime/simd.h` keep their assumptions: denormal
+inputs read as zero and denormal results as zero under FPCR.FZ, without a trip through the slow path.
+
+The definitions exist only where the compiler would emit the calls. A `-march=x86-64-v3` build defines `__FMA__` and
+emits vfmadd instead, so this file contributes nothing there.
+
+### `fmaf()`
+
+Float: the exact product fits in a double, so one extra term and a round-to-odd step decide the float rounding. Halfway
+and tiny results are the only ones where rounding the double first can change the float result. `xy` is exact. `r+t` is
+the exact sum in nearest rounding; otherwise `t` keeps its sign and whether it is zero, which is all the round-to-odd
+step needs. An odd sticky bit makes the final conversion round once, in whichever mode MXCSR asks for.
+
+### `fma_scalbn()`
+
+scalbn: the fma's final scaling, kept here so the result does not depend on the C runtime's version. Its multiplications
+honour MXCSR like any other host FP operation. For a large negative `n` it makes sure the final n < -53 (the step
+multiplies by 0x1p-1022 * 0x1p53), so the subnormal range rounds only once.
+
+### `fma()`
+
+Double: the significands are multiplied and aligned as integers, then converted back with one rounding.
+
+- With `z` == 0 (its exponent above `ZEROINFNAN`) the result is `x * y`.
+- The exponents are aligned: `z` is shifted left by `kz` and `r` right by `kr` with `kz + kr == d`.
+- The top 63 bits are kept in `rhi`; the last bit is sticky. A zero result is `x * y + z`, an exact +-0.
+- `r` converted to double has |r| in [0x1p62, 0x1p63].
+- The result is subnormal before rounding when `e` is below -1022 - 62. At `e == -1022 - 63`, the smallest normal after
+  rounding: whether it underflows depends on the architecture, and a double to float conversion (with 0x0.ffffff8p-63)
+  imitates the before-rounding rule the guest has.
+- One bit is lost when scaled: another top bit is added so the conversion rounds only once if inexact (the test is `rhi
+  << 53`). Underflow is raised portably, so the compiler cannot optimize the expression away.
+- Otherwise `d` is 10, so that scaling rounds only once.
+
+## `runtime/lib_origin.h`
+
+The game log's "libs:" line (`runtime/main.c` `log_libs()`), near its top: the form SHA-256 runs in, the SDL the process
+loaded and which file it came from: one beside the game (the runpath `$ORIGIN` takes it ahead of the system's) or
+another, so the log of a player's session says which one their game runs with.
+
+`lib_origin_line()`: the line without its "libs: " prefix into `out`. `loaded` and `built`: `SDL_VERSIONNUM` values (the
+library's `SDL_GetVersion`, the headers' `SDL_VERSION`); `sdl_path`: the loaded library's file (`plat_library_path()`),
+"" when it was not found among the loaded modules; `exe_path`: the running executable (`plat_exe_path()`), "" when
+unknown; `sha_ni`: `sha256_ni()`. Returns the whole line's length as snprintf counts it (`out` holds at most `cap - 1`
+of it), -1 on an encoding error.
+
+## `runtime/lib_origin.c`
+
+The game log's "libs:" line (`runtime/lib_origin.h`). Only formatting: `runtime/main.c` `log_libs()` gathers the
+versions and paths.
+
+### `dir_len()`
+
+The length of `path` up to its last separator, -1 without one. Windows paths take either separator.
+
+### `same_dir()`
+
+Whether the two files sit in one folder. Windows compares without case, as its file system does.
+
+### `lib_origin_line()`
+
+`SDL_VERSIONNUM` is major * 1000000 + minor * 1000 + micro. The path goes last: a log line that is too long loses its
+end (`runtime/main.c` `rt_log()`), and the path is the only part of unbounded length.
+
+## `runtime/utf16.h`
+
+UTF-8 to UTF-16 conversion and back for the strings the guest keeps in UTF-16 (software keyboard, probes). Portable C,
+no OS calls; malformed UTF-8 bytes and unpaired surrogates become U+FFFD.
+
+### `utf8_to_utf16()`
+
+`utf8` into `out` as NUL-terminated UTF-16, at most `cap` units with the NUL; returns the units written before the NUL.
+
+### `utf16_to_utf8()`
+
+NUL-terminated (or `n` units, whichever comes first) UTF-16 into `out` as NUL-terminated UTF-8, at most `cap` bytes with
+the NUL; returns the bytes written before the NUL.
+
+## `runtime/nx2saria.rc`
+
+The resource script: the application manifest of `nx2saria.exe` (`runtime/nx2saria.manifest`) and its icon
+(`runtime/nx2saria.ico`, also the icon of `NX2Saria-Setup.exe` and of the installer window). `tools/build_game.py`
+compiles it with the runtime objects, so it is also a member of `libnx2navirt.a`, which the release links with
+`--whole-archive`.
+
+## `runtime/nx2saria.manifest`
+
+Embedded by `runtime/nx2saria.rc`. The comment check does not read XML; the file's one comment moved here by the same
+rule.
+
+- `activeCodePage` makes UTF-8 the process code page (Windows 10 1903 and later): the narrow file functions (fopen,
+  CreateFileA, GetModuleFileNameA) and getenv then carry UTF-8, the same encoding `runtime/platform/win32.c` and
+  `runtime/hle/fs_host.c` convert with, so an install folder or user profile with a non-ASCII name works.
+- `dpiAwareness` PerMonitorV2 (`dpiAware` true/pm on Windows 10 before 1607): window, monitor and cursor sizes are
+  physical pixels and the swapchain matches the screen. A DPI-unaware process gets them divided by the display scale and
+  its image stretched back up by Windows, so 4K at 150% presented a 2560x1440 image, blurred.
+  `runtime/gfx/gfx_window_win.c` follows a change of the window's DPI (WM_GETDPISCALEDSIZE, WM_DPICHANGED).
+- `longPathAware` lets the wide file functions of `runtime/platform/win32.c` take paths longer than 260 characters (a
+  mod's files deep in a long game folder) where Windows has long paths switched on (LongPathsEnabled); elsewhere it does
+  nothing.
+
 ## `runtime/vram_warn.h`
 
 The notice the player gets on screen when the chosen graphics settings do not fit the card's video memory. The game
@@ -2604,6 +3481,15 @@ The notices shown this session, for `runtime/vram_fit.h`.
 
 ## `runtime/mem_budget.c`
 
+The room the card and the system have, as a level per side (`runtime/mem_budget.h`): sampled every
+`MEM_BUDGET_PERIOD_MS` on the "mem budget" thread, logged when a level changes, read by the owners of memory that can be
+given back (the "SPIR-V at rest" part of `runtime/gfx/gfx_shader.c` compresses sooner when the system is tight) and
+shown in the memory report (`runtime/vk/vk_memory.c` `system_log()`). A sample is one driver query (`vk_mem_vram()`) and
+two system calls (`plat_commit_info()`, `plat_mem_info()`): well under a millisecond, never on a drawing thread.
+
+The state `B`: `vram_lock` is held over a video memory sample, and `mem_budget_vram(0)` waits for it; `vram_on` says the
+device is up (under `vram_lock`); `test_mb[]` holds `MEM_BUDGET_TEST_VRAM_MB` and `MEM_BUDGET_TEST_RAM_MB`, 0 off.
+
 ### `mem_budget_vram_mb()`
 
 The use and the budget of the last video memory sample, the figures its level was made from; 0 before the first
@@ -2614,9 +3500,19 @@ sample. Read by the settings menu for the line of the *Apply your changes?* box.
 Also gives the use and the budget in MiB as it measured them, for `runtime/vram_warn.c` `vram_warn_sample()`: the
 figures the notice logs are the ones the level was made from, `NX2SARIA_MEM_BUDGET_TEST_VRAM_MB` included.
 
+The video memory's room is the driver's budget (at most `MEM_BUDGET_TEST_VRAM_MB`) less this process's use. It returns 0
+while the device is not up or the driver gives no figure.
+
+### `sample_ram()`
+
+The system's room: the lower of the commit's headroom and the physical memory free; with `MEM_BUDGET_TEST_RAM_MB` that
+many MiB less this process's commit.
+
 ### `budget_main()`
 
 After each video memory sample the level goes to `vram_warn_sample()`: critical or not, with the sample's figures.
+
+The first sample of a side gives its level as it is, without the hysteresis: `mem_level_next()` starts from `MEM_ROOMY`.
 
 ## Forcing the condition on a large card
 
