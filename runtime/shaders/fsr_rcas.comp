@@ -1,3 +1,4 @@
+// ffx/ffx_a.h and ffx/ffx_fsr1.h are AMD's headers, unmodified (MIT, ffx/LICENSE.txt).
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
