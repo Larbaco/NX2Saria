@@ -44,7 +44,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 
-from .. import (NAME, build, commit, feed, gameini, gamefiles, jobs, locks, mods, saves, steam, telemetry, versions,
+from .. import (NAME, build, commit, feed, gameini, gamefiles, game_session, jobs, locks, mods, saves, steam, telemetry, versions,
                winsys, play as play_core)
 from ..build import FATAL_TAIL, game_log_path, last_fatal  # noqa: F401 (FATAL_TAIL: tests)
 from ..context import Context, shorten
@@ -2061,14 +2061,7 @@ class App:
         except tk.TclError:
             pass
         if run:
-            end = run.end()
-            self.ctx.log(end.log)
-            # a hard crash writes no session summary: one is made from its FATAL line, before the note below ends
-            # the log's run (telemetry.synthesize_crash)
-            if telemetry.enabled():
-                telemetry.synthesize_crash(run.game_dir, self.ctx.log)
-            if end.note:
-                note_exit_in_log(run.game_dir, end.note)
+            end = game_session.finish_game(run, self.ctx.log)
             if end.message:
                 self.message = end.message
         if self.install_staged('the game exited'):

@@ -45,6 +45,19 @@ are shown with their known meanings. Requested Linux termination signals do not 
 excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
 the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
 
+### `game_session.finish_game()`
+
+Once `GameRun.running()` has confirmed that the followed game and any Restart copies have ended, `finish_game()`
+asks the run for its `GameEnd`, writes its end line to the launcher log, synthesizes a crash summary if session reports
+are enabled, then appends the exit note to the game log if one is due. A hard crash may not leave a session summary;
+the summary must be made from the fatal line before the launcher note marks the end of that log's run. The function
+returns the `GameEnd`, including its optional message, without a Tk dependency.
+
+`App.watch_game()` still schedules the next check while the run is active. After it ends, the adapter restores, raises
+and focuses the window before calling `finish_game()`, then shows any returned message, checks a waiting staged update,
+handles after-game reports and finally shows home. A staged update or report action that takes over still short-circuits
+the later steps. The consent and report policy are unchanged; the extraction only moves the end processing.
+
 ### `launcher/play.py`: Play preflight
 
 `prepare()` decides in the old window's order: whether the executable exists, whether this launcher already follows
