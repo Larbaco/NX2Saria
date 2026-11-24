@@ -1,16 +1,3 @@
-"""Check tools/build_dlssg.py's export check: it reads the exports runtime/dlssg/nx2_sl.h declares and the ones a DLL
-has, and names those the DLL lacks. A DLL built from older sources would otherwise ship: the runtime takes a missing
-optional export (nx2sl_reflex2, nx2sl_frames_max) for an older DLL and leaves its feature out without an error.
-
-Builds a small DLL with two of three declared exports with MSYS2 UCRT64's clang (no MSVC, no Streamline SDK, no game
-files) and checks that the third is the one reported; then that nx2_sl.h's own declarations are read in full. The
-release gate: build_dlssg.check stops on that DLL (nx2_sl.h lists nx2sl_reflex2), on a missing file and on files that
-are no DLL, and passes a DLL built with every export nx2_sl.h declares; tools/make_launcher.py and tools/make_kit.py
-run it on their --dlssg DLL before they resolve, download or delete anything (a release that shipped the DLL of 0.8.0
-would never let Reflex hold the frame limit).
-
-Usage: dlssg_exports_check.py
-"""
 import contextlib
 import inspect
 import io
@@ -36,7 +23,6 @@ int nx2sl_not_exported(void) { return 0; }
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/wb_lazy_check.py picks it)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -45,7 +31,6 @@ def compiler():
 
 
 def refused(fn, *args):
-    """The message fn(*args) exits with, None when it returns."""
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             fn(*args)
@@ -82,11 +67,8 @@ def main():
     declared = build_dlssg.declared_exports()
     for name in ('nx2sl_version', 'nx2sl_init', 'nx2sl_reflex', 'nx2sl_reflex2', 'nx2sl_frames_max', 'nx2sl_shutdown'):
         expect(f'{name} declared in nx2_sl.h', name in declared, True)
-    # the header names its version and log types too, which are no exports of their own
     expect('types that are no functions', {'nx2sl_' + t for t in ('Image', 'Camera', 'Log')} & declared, set())
 
-    # The release gate. A DLL with every export nx2_sl.h declares passes; the two-export one, a missing file and files
-    # that are no DLL stop it, naming why.
     (work / 'all.c').write_text(''.join(f'__declspec(dllexport) void {n}(void) {{}}\n' for n in sorted(declared)),
                                 encoding='utf-8')
     full = work / 'all.dll'
@@ -100,8 +82,6 @@ def main():
     for name in ('two.c', 'tiny.dll'):
         expect(f'check of {name}, no DLL', 'no DLL' in (refused(build_dlssg.check, work / name) or ''), True)
 
-    # make_launcher.py's check_dlssg is that check, and both packaging scripts make it before they resolve the
-    # Streamline files (a download) or delete their output folder.
     import make_kit
     import make_launcher
     expect('make_launcher.check_dlssg passes the full DLL', refused(make_launcher.check_dlssg, full), None)

@@ -1,10 +1,3 @@
-"""Build and run tests/crash_stack_check.c: a stack overflow on a thread and on a fiber made by the platform layer
-(runtime/platform/win32.c thread_main, fiber_start, plat_stack_guarantee) still gets its whole crash report, a file
-write and three 2 KiB log lines, and ends with the report's code 71. Without the stack kept back the report faulted
-again and the process ended with an access violation and no line. No game files.
-
-Usage: crash_stack_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -55,8 +48,6 @@ def main():
                            timeout=60)
         lines = [f'report line {i}' for i in (1, 2, 3)]
         missing = [x for x in lines if x not in p.stdout]
-        # platform.h plat_thread_name, which the crash report reads: the spawned thread's name; the fiber runs on the
-        # main thread, which the platform layer did not make
         named = ('on thread deep' if mode == 'thread' else 'on thread (unnamed)') in p.stdout
         ok = p.returncode == 71 and not missing and 'stack overflow' in p.stdout and 'the file written: 1' in p.stdout and named
         print(f'a stack overflow on a {mode}: exit code {p.returncode & 0xffffffff:#x} (want 0x47), '

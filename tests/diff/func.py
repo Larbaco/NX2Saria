@@ -1,27 +1,4 @@
 # needs: game, clang, py:capstone, py:unicorn, py:numpy, py:lz4
-"""Differential test of whole emitted functions: recomp/gen.py's C for a guest function against Unicorn running the
-same function from its entry until it returns.
-
-Picks functions from the ExeFS modules: no branches out of the function, no SVC, BRK, system register, exclusive or
-atomic instructions; with conditional branches, and loops, jump tables, SIMD and calls where the module has them.
-Emits them with the generator's own Emitter, compiles them with tests/diff/harness.c, and runs each from random
-states: x0-x7 point into the scratch buffer (or hold small integers), the buffer holds pointers into itself and random
-data, SP sits near the buffer's top and LR is a sentinel address. Unicorn (Cortex-A57) stops when PC reaches the
-sentinel. A case is skipped when Unicorn faults, writes outside the scratch buffer (module images are mapped
-read-only), leaves the function, or runs longer than --steps instructions. Compares X0-X30, SP, V0-V31 and the
-scratch buffer; NZCV is local to a generated function (recomp/flags.py).
-
-Every BL and BLR goes to one stub on both sides (rt_stub in harness.c, Runner.stub here) instead of its callee. The
-stub folds the guest state at the call into a digest and sets the caller-saved registers from it, so the test sees
-whether the emitted code had every register in the Cpu at the call and reads them back after it. Callers of another
-picked function are dropped, as the C side would run that function instead of the stub.
-
-With --patches, the spin waits of the table (recomp/patches.py `spin`) are emitted with their gates, and functions
-that hold one come first (a quarter of the picks at most); a case whose loop does not leave runs into --steps.
-
-Usage: func.py [--exefs DIR] [--modules main,subsdk0,sdk] [--functions N] [--cases K] [--seed S] [--jobs J]
-               [--patches FILE]
-"""
 import argparse
 import os
 import platform
@@ -43,7 +20,9 @@ import patches
 from layout import layout
 from module import Module
 
-SENTINEL = 0x7210000000  # LR on entry; never executed
+DESCRIPTION = ("Differential test of whole emitted functions: recomp/gen.py's C for a guest function against Unicorn "
+               'running the')
+SENTINEL = 0x7210000000
 PTR_LO, PTR_HI = BUF + 0x8000, BUF + 0x28000
 STACK_TOP = BUF + 0x3F000
 MIN_INSNS, MAX_INSNS = 6, 600
@@ -61,17 +40,16 @@ def splitmix(z):
 
 
 def call_mask(w):
-    return ((w & 0xFC000000) == 0x94000000) | ((w & 0xFFFFFC1F) == 0xD63F0000)   # BL, BLR
+    return ((w & 0xFC000000) == 0x94000000) | ((w & 0xFFFFFC1F) == 0xD63F0000)
 
 
 def forbidden_mask(w):
-    """Words a picked function must not contain."""
-    m = (w & 0xFF000000) == 0xD4000000                    # SVC, HVC, SMC, BRK, HLT, DCPS
-    sysi = (w & 0xFFC00000) == 0xD5000000                 # system: MRS, MSR, SYS (DC ZVA), hints, barriers
+    m = (w & 0xFF000000) == 0xD4000000
+    sysi = (w & 0xFFC00000) == 0xD5000000
     hint_or_barrier = ((w & 0xFFFFF000) == 0xD5032000) | ((w & 0xFFFFF000) == 0xD5033000)
     m |= sysi & ~hint_or_barrier
-    m |= (w & 0x3F000000) == 0x08000000                   # exclusives, load-acquire / store-release, CAS
-    m |= (w & 0x3F200C00) == 0x38200000                   # LSE atomics
+    m |= (w & 0x3F000000) == 0x08000000
+    m |= (w & 0x3F200C00) == 0x38200000
     return m
 
 
@@ -85,8 +63,6 @@ def simd_mask(w):
 
 
 def pick_functions(name, mod, count, r, spins=None):
-    """[(entry, end, tags)] of up to count functions of mod, plus the Emitter that will emit them. spins: {spin wait
-    back-edge: head}, emitted with gates."""
     starts, _ = gen.discover(mod)
     w = mod.words
     ends = np.append(starts[1:], len(w))
@@ -110,8 +86,6 @@ def pick_functions(name, mod, count, r, spins=None):
         r.shuffle(pool)
     emitter = gen.Emitter(mod, set((mod.lo + starts * 4).tolist()), spins=spins)
     picks, tags_seen = [], Counter()
-    # Functions with a spin wait first, then with a br (jump tables, fallbacks), at most a quarter of the picks each;
-    # then functions with calls, at most half.
     for pool, quota in ((with_spin, count // 4), (with_br, count // 4), (with_call, count // 2), (rest, count)):
         taken = 0
         for i in pool:
@@ -137,19 +111,16 @@ def pick_functions(name, mod, count, r, spins=None):
 
 
 def call_sites(mod, entry, end):
-    """Addresses of the BL and BLR instructions of [entry, end)."""
     return [a for a in range(entry, end, 4) if mod.lift(a).kind in ('bl', 'blr')]
 
 
 def callees(emitter, entry, end):
-    """Function starts the emitted C of [entry, end) calls directly (`f_<addr>(c)`, not through rt_dispatch)."""
     mod = emitter.mod
     return {mod.lift(a).target for a in call_sites(mod, entry, end)
             if mod.lift(a).kind == 'bl' and mod.lift(a).target in emitter.starts}
 
 
 def check_function(emitter, entry, end):
-    """Tags of a function the test can run in isolation, or None."""
     mod = emitter.mod
     insns = [mod.lift(a) for a in range(entry, end, 4)]
     if insns[-1].kind not in gen.TERMINATORS or not any(i.kind == 'ret' for i in insns):
@@ -178,7 +149,6 @@ def check_function(emitter, entry, end):
 
 
 def build(work, emitted, jobs, cflags):
-    """Compile the emitted functions with harness.c into work/func[.exe]; tests[k] is emitted[k]."""
     cc = compiler()
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
@@ -205,7 +175,6 @@ def build(work, emitted, jobs, cflags):
                      f'int ntests = {len(emitted)};\n' + 'void rt_stub_call(Cpu *c, uint64_t target);\n' +
                      ''.join(f'void {gen.fname(t)}(Cpu *c) {{ rt_stub_call(c, {hex(t)}ull); }}\n'
                              for t in sorted(called)))
-    # fma.c: a --cflags=-march=x86-64-v2 run must exercise the software fma the v2 build links, not the C runtime's.
     srcs += [table, ROOT / 'tests' / 'diff' / 'harness.c', ROOT / 'runtime' / 'fma.c']
     objs, procs = [], []
     for s in srcs:
@@ -247,9 +216,6 @@ def make_case(r):
 
 
 class Runner:
-    """Unicorn with the module images read-only, a block hook that stops when execution leaves the function, and a
-    code hook on every call site of the picked functions that stops before the call, for the stub."""
-
     MAX_CALLS = 1000
 
     def __init__(self, images, buf0, sites):
@@ -264,7 +230,6 @@ class Runner:
         self.left = False
         self.at_call = None
         mu.hook_add(uc.UC_HOOK_BLOCK, self._block)
-        # One hook per call site, all added before anything is translated, so no cached block lacks one.
         for a in sorted(sites):
             mu.hook_add(uc.UC_HOOK_CODE, self._call, begin=a, end=a)
 
@@ -279,13 +244,12 @@ class Runner:
             mu.emu_stop()
 
     def stub(self, a):
-        """harness.c rt_stub for the call at a, which Unicorn has not executed yet. Returns the address to resume at."""
         e, mu = self.emu, self.emu.mu
         w = int.from_bytes(mu.mem_read(a, 4), 'little')
-        if (w & 0xFC000000) == 0x94000000:   # BL
+        if (w & 0xFC000000) == 0x94000000:
             imm = w & 0x03FFFFFF
             target = (a + ((imm - (1 << 26) if imm >> 25 else imm) << 2)) & M64
-        else:                                 # BLR
+        else:
             target = mu.reg_read(e.xregs[(w >> 5) & 31])
         mu.reg_write(A.UC_ARM64_REG_X30, a + 4)
         h = ((self.h ^ target) * FNV) & M64
@@ -309,7 +273,6 @@ class Runner:
         return a + 4
 
     def run(self, entry, end, case, steps):
-        """(x, sp, nzcv, pc, v, crc of the buffer) or None if the case is skipped."""
         fpcr, x, sp, nzcv, v = case
         e, mu = self.emu, self.emu.mu
         self.lo, self.hi, self.left, self.h = entry, end, False, 0
@@ -336,7 +299,7 @@ class Runner:
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--exefs', type=Path, default=ROOT / 'build' / 'extracted' / 'v121' / 'exefs')
     ap.add_argument('--modules', default='main,subsdk0,sdk')
     ap.add_argument('--functions', type=int, default=400, help='per module')
@@ -405,8 +368,6 @@ def main():
 
     fails, nfail = {}, 0
     for case, want_state, got in zip(cases, expect, recs):
-        # Generated functions keep NZCV in a local (recomp/flags.py) and leave c->nzcv as it was: flags only count
-        # where the function reads them, which the registers and memory show.
         d = diff_state(got, want_state, check_pc=False, check_mem=True, check_nzcv=False)
         if d:
             nfail += 1

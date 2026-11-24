@@ -1,9 +1,3 @@
-// A stack overflow's crash report (runtime/platform/win32.c plat_stack_guarantee) with the platform layer linked: a
-// thread made by plat_thread_spawn, or a fiber made by plat_fiber_new, recurses until its stack runs out, and the crash
-// handler then writes its lines as main.c crash_handler does (2 KiB log buffers, a file write first, as during the
-// boot's builds, and a frame walk). Built and run by tests/crash_stack_check.py, which wants every line and code 71.
-//   crash_stack_check thread <file>   the overflow on a thread
-//   crash_stack_check fiber <file>    the overflow on a fiber
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -18,7 +12,6 @@ static void out(const char *s) {
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), s, (DWORD)strlen(s), &w, NULL);
 }
 
-// main.c rt_log: a 2 KiB buffer on the stack and vsnprintf
 __attribute__((noinline)) static void log2k(const char *fmt, ...) {
     char buf[2048];
     va_list ap;
@@ -31,7 +24,6 @@ __attribute__((noinline)) static void log2k(const char *fmt, ...) {
 static const char *file;
 
 static void crash(const PlatCrash *x) {
-    // main.c crash_handler's first call while the boot builds pipelines: vk_pipeline_crash_note writes a file
     static const char text[] = "the process faulted while the boot built pipelines\n";
     int wrote = plat_file_write(file, text, sizeof text - 1);
     log2k("report line 1: %s (%#x) on thread %s, the file written: %d\n", x->what, x->code,
@@ -43,7 +35,7 @@ static void crash(const PlatCrash *x) {
     TerminateProcess(GetCurrentProcess(), 71);
 }
 
-static volatile int never;   // keeps the recursion from looking endless to the compiler
+static volatile int never;
 __attribute__((noinline)) static int recurse(int d) {
     if (never) return 0;
     volatile char pad[1024];
