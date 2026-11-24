@@ -1,70 +1,7 @@
-"""Compile the generated C for one game version and link it with the runtime into build/<version>/nx2saria.exe.
-
-Writes build/<version>/build.ninja and runs MSYS2 UCRT64 Ninja on it. Ninja keeps the build incremental: a chunk is
-recompiled only when it, a header it includes or its flags change.
-
-On Linux the same steps make build/<version>/nx2saria with the clang, lld and ninja on PATH (or the clang and lld in --toolchain DIR/bin): the
-runtime's *_sdl.* and platform/linux.c take the place of its *_win.*, platform/win32.c and nx2saria.rc, the libraries are
-the system's (Vulkan, SDL3, Opus, dav1d, libvpx, zstd; libstdc++ static), and the executable finds a libSDL3.so.0 beside it
-first (rpath $ORIGIN). docs/building.md lists the packages.
-
-    .venv\\Scripts\\python tools\\build_game.py                     # generated/v121 -> build/v121/nx2saria.exe
-    .venv\\Scripts\\python tools\\build_game.py --modules subsdk0   # one module (links if it has no calls into others)
-    .venv\\Scripts\\python tools\\build_game.py --jobs 8
-    .venv\\Scripts\\python tools\\build_game.py --out build/v121-t2   # a separate build directory
-    .venv\\Scripts\\python tools\\build_game.py --toolchain toolchain/llvm-mingw-<version>/llvm-mingw-<version>-ucrt-x86_64 \\
-        --out build/v121-llvmmingw                                    # llvm-mingw instead of MSYS2 UCRT64
-
-Every runtime source is compiled. build/<version>/modules.c carries the layout, the linked function tables, the
-expected SHA-256 of each ExeFS file (tools/data/expected-<display version>.json) and the default game paths
-(--exefs, --romfs, --profile), which nx2saria.exe uses unless its own command line names others. --exefs and --romfs
-default to extracted/<version> in the work folder: the [work] dir of config.local.toml, where tools/extract.py writes
-them, else build/. tools/romfs_index.py writes build/<version>/romfs-index.bin and romfs_config.h from the RomFS
-directory's index.json (runtime/hle/romfs.c reads the index next to nx2saria.exe). Without that index.json the build stops:
-the exe would stop at start. --no-romfs builds it anyway.
-
-Private builds reuse the main build's objects. When --out differs from build/<version>, the main build's generated
-objects are up to date (checked with a dry run of its build.ninja) and every header they include from runtime/ is
-byte-identical in --runtime (the list comes from the main build's Ninja deps log), build_game.py hardlinks those
-objects into <out>/obj and compiles only the runtime. A hardlink is a snapshot: clang and Ninja replace an object by
-renaming a new file over it, so a later main rebuild leaves the linked copies alone. Otherwise (a header differs, a
-main object is missing or stale, another --gen) it compiles everything and prints one line saying why. --full-build
-skips the check.
-
-Object manifest. A flipped bit in an object written by an earlier build stays forever, because Ninja rebuilds an object
-only when its inputs change, and forks hardlink the object into every private build. So each build dir keeps
-obj/objects.sha256 (SHA-256, size and mtime of every object it compiled). After Ninja finishes and before the link,
-build_game.py hashes the objects, compares each one whose size and mtime match its manifest entry, and records the
-objects Ninja just rebuilt (new mtime). A mismatch deletes the object, Ninja recompiles it, and the build prints the
-summary line. A fork checks the hardlinked generated objects against build/<version>/obj/objects.sha256 (read-only; a
-bad shared object stops the fork and asks for a main build run, which recompiles it and breaks the shared inode).
-
-Memory. Ninja runs up to --jobs compiles at once (default one per processor), and each compile goes through the memory
-gate (tools/memgate.py wrap): it starts only when the free memory, less what the running compiles may still take and
-less a reserve, holds that compile's estimated peak. The estimates live in <out>/memgate/estimates.json: each object's
-peak measured in earlier builds, else a size model from the lift manifest's chunk_info, else 400 MiB (C) or 1 GiB (C++)
-for a runtime source. Before Ninja, build_game.py writes the gate's settings and every object's need into
-<out>/memgate; after the compile phase it reads the peaks the wrappers recorded, learns them and prints a summary (held
-compiles, the largest peaks, the peak of all compiles together, the least free memory, how close the estimates came).
---no-mem-gate (or NX2SARIA_BUILD_MEM_GATE=off) starts compiles by the job count alone, and then nothing limits the
-compiles by memory; the wrappers still measure. Each build folder has its own gate, so two builds running at once see
-each other only through the free memory. The wrapper's command names this Python and tools/memgate.py (relative to the
-root where they lie below it): a build with another Python, and the first build after this change, compile every
-object again. Under SCCACHE the compiles run in sccache's server, out of the wrapper's reach, so build.ninja leaves
-the wrapper out and the gate is off. Each phase also reports its wall time and the peak memory of its processes
-(Windows job object accounting: committed private bytes).
-
---toolchain DIR builds with an llvm-mingw tree (DIR/bin/clang.exe) instead of MSYS2 UCRT64 clang. Ninja still comes
-from MSYS2. The libraries and headers MSYS2 supplies (Vulkan, SDL3, Opus, dav1d, libvpx, VMA) then come from --deps DIR
-(default toolchain/deps-mingw: include/, lib/ with the import libraries, libdav1d.a and libvpx.a, bin/ with the DLLs), and the C++
-runtime is libc++ from llvm-mingw. Such a build never reuses another build's generated objects.
-
-Standard library only.
-"""
 import argparse
 import collections
 import ctypes
-import ctypes.wintypes as wt   # the job-object structures below; importing it works on every OS
+import ctypes.wintypes as wt
 import hashlib
 import json
 import os
@@ -84,19 +21,19 @@ import build_shaders
 import memgate
 from check_content import GENERATED_MARKER
 
+DESCRIPTION = ('Compile the generated C for one game version and link it with the runtime into '
+               'build/<version>/nx2saria.exe.')
+
 WIN = os.name == 'nt'
 if not WIN:
     import resource
 ROOT = Path(__file__).resolve().parent.parent
-# In a git worktree (tools/worktree.py) build/ and generated/ are junctions into the main checkout, and resolve() follows
-# them. MAIN_ROOT is where they land, so resolved paths still print and compare relative to a root.
 MAIN_ROOT = (ROOT / 'build').resolve().parent
 UCRT = Path(r'C:\msys64\ucrt64\bin')
 EXE = 'nx2saria.exe' if WIN else 'nx2saria'
 
 
 def on_path(name):
-    """name on PATH, else a path that does not exist (the tool check below names it)."""
     found = shutil.which(name)
     return Path(found) if found else Path('/usr/bin') / name
 
@@ -105,76 +42,53 @@ CLANG = UCRT / 'clang.exe' if WIN else on_path('clang')
 NINJA = UCRT / 'ninja.exe' if WIN else on_path('ninja')
 SDL3_DLLS = [UCRT / 'SDL3.dll', UCRT / 'libiconv-2.dll', UCRT / 'libopus-0.dll'] if WIN else []
 
-# Flags for generated code, plus -march for the FP/SIMD lowering.
-# --cpu v2 replaces the level for CPUs without AVX2/FMA; runtime/fma.c then supplies the correctly rounded fma the
-# lowering needs (runtime/simd.h).
 GEN_FLAGS = ['-O1', '-fno-strict-aliasing', '-Wno-return-type', '-Wno-unused-label', '-fvisibility=hidden',
              '-march=x86-64-v3']
 RT_FLAGS = ['-O2', '-g', '-Wall', '-fno-strict-aliasing', '-march=x86-64-v3']
 
 
 def set_cpu(cpu):
-    """Target x86-64-v3 (the default) or x86-64-v2. RT_CPU_LEVEL lets runtime/main.c's self-test check the same
-    instruction set the build was compiled for."""
     march = f'-march=x86-64-{cpu}'
     GEN_FLAGS[GEN_FLAGS.index('-march=x86-64-v3')] = march
     RT_FLAGS[RT_FLAGS.index('-march=x86-64-v3')] = march
     RT_FLAGS.append(f'-DRT_CPU_LEVEL={3 if cpu == "v3" else 2}')
 
 
-# Profile-guided optimisation (--pgo). Both modes compile the generated code at -O2, the level the profile's inlining and
-# hot/cold layout work at. A static function's profile name carries its source path by default; the base name alone
-# keeps the names equal between the training build and a build from another tree (a worktree, an install).
 PGO_NAMES = ['-mllvm', '-static-func-full-module-prefix=false']
-PGO_INPUT = None   # the .profdata of --pgo FILE: every compile depends on it, so a new profile rebuilds them
+PGO_INPUT = None
 
 
 def set_pgo(pgo, out):
-    """--pgo gen: instrument the generated code and the runtime; nx2saria.exe adds its counts to
-    out/pgo/default_<id>.profraw every minute and at exit (runtime/platform win32.c), across runs. --pgo FILE: compile
-    with that merged profile (tools/pgo.py merge). Functions the profile never saw run are optimised for size."""
     global PGO_INPUT
     GEN_FLAGS[GEN_FLAGS.index('-O1')] = '-O2'
     if pgo == 'gen':
-        # absolute: the instrumented exe resolves the directory against its own working directory
         flags = [f'-fprofile-generate={cmd_arg((out / "pgo").resolve().as_posix())}']
         RT_FLAGS.append('-DNX2SARIA_PGO_GEN')
-        LINK_FLAGS.append('-fprofile-generate')   # links clang_rt.profile
+        LINK_FLAGS.append('-fprofile-generate')
     else:
         PGO_INPUT = Path(pgo).resolve()
         if not PGO_INPUT.is_file():
             sys.exit(f'--pgo {pgo}: no such profile')
-        # unprofiled: chunks the training never entered; out-of-date and backend-plugin: functions whose code changed
-        # since the training, which then compile without a profile
         flags = [f'-fprofile-use={cmd_path(PGO_INPUT)}', '-Wno-profile-instr-unprofiled',
                  '-Wno-profile-instr-out-of-date', '-Wno-backend-plugin']
     GEN_FLAGS.extend(flags + PGO_NAMES)
     RT_FLAGS.extend(flags + PGO_NAMES)
 if WIN:
-    # _WIN32_WINNT: Windows 10, the port's minimum. MSYS2's headers default to it, llvm-mingw's (the release toolchain)
-    # to Windows 7, which hides the per-monitor DPI functions gfx_window_win.c and dpi_probe_win.c call.
     RT_FLAGS.append('-D_WIN32_WINNT=0x0A00')
-    # -Xlinker passes the map path as one argument; -Wl, would split it at any comma in the build dir path
-    LINK_FLAGS = ['-fuse-ld=lld', '-Wl,--stack,16777216', '-Xlinker', '"--Map=$builddir/nx2navi.map"']   # the map feeds tools/prof_report.py
-    LINK_LIBS = ['-lpsapi', '-lbcrypt', '-lws2_32', '-lvulkan-1', '-luser32', '-lgdi32', '-ldwmapi', '-limm32', '-lwinmm', '-lole32', '-lshell32', '-luuid', '-lSDL3', '-lopus', '-l:libdav1d.a', '-l:libvpx.a', '-l:libzstd.a', '-l:libstdc++.a', '-l:libwinpthread.a']   # Vulkan back end; libvpx and libdav1d static (movies); libzstd static (resolution.c)
-    VMA_INCLUDE = UCRT.parent / 'include' / 'vma'   # vk_mem_alloc.h; MSYS2 package vulkan-memory-allocator
+    LINK_FLAGS = ['-fuse-ld=lld', '-Wl,--stack,16777216', '-Xlinker', '"--Map=$builddir/nx2navi.map"']
+    LINK_LIBS = ['-lpsapi', '-lbcrypt', '-lws2_32', '-lvulkan-1', '-luser32', '-lgdi32', '-ldwmapi', '-limm32', '-lwinmm', '-lole32', '-lshell32', '-luuid', '-lSDL3', '-lopus', '-l:libdav1d.a', '-l:libvpx.a', '-l:libzstd.a', '-l:libstdc++.a', '-l:libwinpthread.a']
+    VMA_INCLUDE = UCRT.parent / 'include' / 'vma'
 else:
-    # -no-pie: the lifted modules' function tables (hundreds of thousands of pointers) need no load-time relocation.
-    # $ORIGIN: a libSDL3.so.0 next to nx2navi comes before the system's (the release's portable folder).
-    # -Xlinker for the map path, as on Windows above: -Wl, would split it at any comma in the build dir path.
     LINK_FLAGS = ['-fuse-ld=lld', '-no-pie', '-Wl,-z,noexecstack', "'-Wl,-rpath,$$ORIGIN'",
                   '-Xlinker', '"-Map=$builddir/nx2navi.map"']
     LINK_LIBS = ['-lvulkan', '-lSDL3', '-lopus', '-ldav1d', '-lvpx', '-lzstd', '-l:libstdc++.a', '-lm', '-lpthread', '-ldl']
-    VMA_INCLUDE = Path('/usr/include')   # vk_mem_alloc.h; Arch (AUR) vulkan-memory-allocator, Debian libvulkan-memory-allocator-dev
-# Without a system vk_mem_alloc.h, the header pinned here (VMA 3.4.0, the version MSYS2 packages) is fetched once
-# into toolchain/vma: one MIT header (THIRD_PARTY_NOTICES.md), checked against its hash.
+    VMA_INCLUDE = Path('/usr/include')
 VMA_FETCH = ('https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.4.0/include/vk_mem_alloc.h',
              '8487b7995ad3b263eb73bc5b9a77d71aa69b6bef5d58a715c02d2663afd81f1a')
 VMA_LOCAL = ROOT / 'toolchain' / 'vma'
 
 
 def vma_include():
-    """The directory holding vk_mem_alloc.h: the system's, else toolchain/vma, fetched there on first use."""
     if (VMA_INCLUDE / 'vk_mem_alloc.h').is_file():
         return VMA_INCLUDE
     dst = VMA_LOCAL / 'vk_mem_alloc.h'
@@ -193,8 +107,6 @@ def vma_include():
 
 
 def system_vulkan_version(clang, env=None):
-    """VK_HEADER_VERSION of the <vulkan/vulkan_core.h> this compiler finds by itself (its own search path, CPATH
-    included), 0 when it finds none."""
     probe = '#include <vulkan/vulkan_core.h>\nnx2navi_vulkan_headers VK_HEADER_VERSION\n'
     try:
         p = subprocess.run([str(clang), '-E', '-P', '-x', 'c', '-'], input=probe, capture_output=True, text=True,
@@ -206,12 +118,6 @@ def system_vulkan_version(clang, env=None):
 
 
 def vulkan_include(clang=None, env=None):
-    """A build with the system's own headers (Linux without --deps): the folder to put ahead of them for
-    <vulkan/vulkan.h>, or None when the system's serve. The runtime names Vulkan extensions newer than the headers
-    many distributions package, and every file that does fails to compile there (tools/vulkan_pin.py). So:
-    toolchain/vulkan-headers when it holds the pinned release (a kit carries it; a checkout once it was fetched), else
-    nothing when the system's headers are at least that release, else the pinned release, fetched there once.
-    Windows takes MSYS2's headers and returns None."""
     if WIN:
         return None
     import vulkan_pin
@@ -226,27 +132,19 @@ def vulkan_include(clang=None, env=None):
     return vulkan_pin.resolve(local) / 'include'
 
 
-# --toolchain: an llvm-mingw tree. The libraries, headers and DLLs MSYS2 supplies come from the deps directory instead.
 LLVM_LINK_LIBS = ['-lpsapi', '-lbcrypt', '-lws2_32', '-luser32', '-lgdi32', '-ldwmapi', '-limm32', '-lwinmm', '-lole32', '-lshell32', '-luuid', '-lvulkan-1', '-lSDL3', '-lopus',
                   '-l:libdav1d.a', '-l:libvpx.a', '-l:libzstd.a', '-l:libc++.a', '-l:libc++abi.a', '-l:libunwind.a', '-l:libwinpthread.a']
 DEFAULT_DEPS = ROOT / 'toolchain' / 'deps-mingw'
-WINDRES = UCRT / 'windres.exe'   # runtime/nx2saria.rc: the manifest of nx2saria.exe
-# GNU windres runs its preprocessor through cmd.exe, and left to find it names the gcc beside it by full path: once that
-# path and the .rc's both hold a space, cmd.exe drops the outer quotes and splits the command at the first space. gcc by
-# bare name (Ninja's PATH starts with UCRT) and the .rc by its path below MAIN_ROOT keep the command line free of
-# spaces. llvm-windres (--toolchain) starts its preprocessor without a shell and keeps its own.
+WINDRES = UCRT / 'windres.exe'
 WINDRES_PP = '--preprocessor=gcc --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED'
-TOOLCHAIN_BIN = None   # llvm-mingw bin directory, set by main() for --toolchain
-DEPS = None            # the deps directory of an llvm-mingw build
-# tools/data/expected-<display version>.json for each build version name.
+TOOLCHAIN_BIN = None
+DEPS = None
 DISPLAY_VERSIONS = {'v0': '1.0.0', 'v110': '1.1.0', 'v112': '1.1.2', 'v121': '1.2.1', 'v143': '1.4.3'}
 
 GiB = 1 << 30
 
 
 def below_root(p):
-    """Resolved p relative to ROOT, else to MAIN_ROOT (the same relative path through the worktree's junctions), else
-    absolute."""
     p = Path(p).resolve()
     for root in (ROOT, MAIN_ROOT):
         if p.is_relative_to(root):
@@ -255,7 +153,6 @@ def below_root(p):
 
 
 def ninja_path(p):
-    """A path for a build line: relative to the repo root where possible, forward slashes, Ninja-escaped."""
     return below_root(p).as_posix().replace('$', '$$').replace(' ', '$ ').replace(':', '$:')
 
 
@@ -264,8 +161,6 @@ def flag_path(p):
 
 
 def cmd_arg(s):
-    """s for a Ninja command line: Ninja-escaped, and quoted when it holds a space (a user or folder name), as clang and
-    lld split their Windows command line at unquoted spaces."""
     s = s.replace('$', '$$')
     return f'"{s}"' if ' ' in s else s
 
@@ -275,13 +170,11 @@ def cmd_path(p):
 
 
 def read_layout(gen):
-    """[(name, base, size)] from layout.json (same format as recomp/layout.py read(), without its NSO dependency)."""
     data = json.loads((gen / 'layout.json').read_text())
     return [(m['name'], int(m['base'], 16), int(m['size'], 16)) for m in data]
 
 
 def chunk_files(gen, mod):
-    """The C files of one module: the chunks listed in <mod>/manifest.json, then <mod>_table.c."""
     d = gen / mod
     data = json.loads((d / 'manifest.json').read_text())
     entries = data if isinstance(data, list) else data.get('chunks', data.get('files'))
@@ -302,19 +195,13 @@ def chunk_files(gen, mod):
 
 
 def write_if_changed(path, text):
-    """Keep the mtime of an unchanged file so Ninja does not rebuild from it."""
     if path.exists() and path.read_text(encoding='utf-8', errors='replace') == text:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding='utf-8', newline='\n')   # Ninja and clang read UTF-8; paths may be non-ASCII
+    path.write_text(text, encoding='utf-8', newline='\n')
 
 
 def copy_romfs_patches(version, out):
-    """nx2saria.exe loads romfs-patches beside romfs-index.bin (runtime/hle/romfs.c overlay_init). tools/make_romfs_patches.py
-    writes them into build/<version> only, so a build in another directory ran without the 60 fps overlay (the quick
-    menus' captured background turned black). Copies them when their manifest differs; romfs-patches-xbox,
-    romfs-patches-xbox-label and romfs-patches-pc (the same with Xbox or keyboard and mouse button prompts,
-    make_romfs_patches.py --prompts) the same way when they were made."""
     for name in ('romfs-patches', 'romfs-patches-xbox', 'romfs-patches-xbox-label', 'romfs-patches-pc'):
         src = ROOT / 'build' / version / name
         dst = out / name
@@ -328,8 +215,6 @@ def copy_romfs_patches(version, out):
 
 
 def work_dir():
-    """The work folder: the [work] dir of config.local.toml (relative to the checkout), where tools/extract.py writes
-    extracted/; build/ without the file or the key."""
     cfg = ROOT / 'config.local.toml'
     if not cfg.is_file():
         return ROOT / 'build'
@@ -341,17 +226,11 @@ def c_string(s):
     return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-RUNTIME = ROOT / 'runtime'   # --runtime: a copy of runtime/ lets a task build without touching the shared tree
-# The runtime's folders by subsystem (docs/architecture.md, "Runtime folders"): their sources compile as the top level's
-# do, and each is on the include path of the runtime's sources, which include one another's headers by name. The lifted
-# C includes only headers at the top of runtime/, so its command (genflags) does not name them. tools/make_game.py has
-# the same list (tests/runtime_dirs_check.py).
+RUNTIME = ROOT / 'runtime'
 RUNTIME_DIRS = ('audio', 'cfg', 'diag', 'gfx', 'hle', 'input', 'nvn', 'pacing', 'patches', 'ui', 'vk')
 
 
 def other_os(name):
-    """A runtime file for another OS: Win32 ones (*_win.*, platform/win32.c, nx2saria.rc) off Windows, the SDL window's
-    (*_sdl.*) and platform/linux.c on Windows."""
     stem = name.rsplit('.', 1)[0]
     if WIN:
         return stem.endswith('_sdl') or name == 'linux.c'
@@ -359,29 +238,23 @@ def other_os(name):
 
 
 def runtime_sources(skip=()):
-    """Every runtime/*.c, *.cpp, platform/*.c, *.rc, the *.c and *.cpp of each RUNTIME_DIRS folder and Dear ImGui of
-    this OS except the names in skip, so a task adds a file without editing this script."""
     pats = ('*.c', '*.cpp', 'platform/*.c', '*.rc', *(f'{d}/*.{x}' for d in RUNTIME_DIRS for x in ('c', 'cpp')),
             'third_party/imgui/*.cpp', 'third_party/imgui/backends/*.cpp')
     return sorted(p for pat in pats for p in RUNTIME.glob(pat) if p.name not in skip and not other_os(p.name))
 
 
 def runtime_include_dirs(rt=None):
-    """The include folders of the runtime's sources: runtime/ and each RUNTIME_DIRS folder of rt (default RUNTIME)."""
     rt = Path(rt) if rt else RUNTIME
     return [rt] + [rt / d for d in RUNTIME_DIRS]
 
 
 def runtime_object(out, src):
-    """obj/runtime/<path below runtime>.o, so platform/win32.c cannot collide with a top-level win32.c."""
     src = Path(src)
     rel = src.relative_to(RUNTIME) if src.is_relative_to(RUNTIME) else Path(src.name)
     return out / 'obj' / 'runtime' / rel.with_suffix('.o')
 
 
 def module_glue(layout, linked, hashes, paths, version):
-    """C for build/<version>/modules.c: the layout table, the linked modules' function tables (dispatch.h), the
-    expected ExeFS hashes, the game version and the default game paths (host.h)."""
     out = [f'// Module glue written by tools/build_game.py; do not edit. {GENERATED_MARKER}',
            '#include "dispatch.h"', '#include "host.h"', '#include "layout.h"', '']
     for name, base, size in layout:
@@ -405,38 +278,33 @@ def module_glue(layout, linked, hashes, paths, version):
     out += ['};', f'const int rt_exefs_sha256_count = {len(hashes)};', '']
     for name in ('exefs', 'romfs', 'profile'):
         out.append(f'const char rt_default_{name}[] = {c_string(paths[name].as_posix())};')
-    number = int(DISPLAY_VERSIONS[version].replace('.', '')) if version in DISPLAY_VERSIONS else 0   # 1.4.3 -> 143
-    out += ['const unsigned long long rt_app_pool_bytes = 0xCD500000ull;',   # Switch 1 retail application pool
-            'const int rt_nvn_api_version[2] = {55, 15};',   # NVN1: NX2NAVI main requires major 55, minor >= 15
+    number = int(DISPLAY_VERSIONS[version].replace('.', '')) if version in DISPLAY_VERSIONS else 0
+    out += ['const unsigned long long rt_app_pool_bytes = 0xCD500000ull;',
+            'const int rt_nvn_api_version[2] = {55, 15};',
             f'const int rt_game_version = {number};', f'const char rt_port_version[] = {c_string(port_version())};', '']
     return '\n'.join(out)
 
 
 def port_version():
-    """VERSION at the root: the repository's semver, or in a release folder the release string."""
     path = ROOT / 'VERSION'
     return path.read_text(encoding='utf-8').strip() if path.is_file() else 'unknown'
 
 
 MEMGATE = Path(__file__).resolve().parent / 'memgate.py'
-GATE_DIR = 'memgate'                # <out>/memgate: the gate's state folder (memgate.prepare_state) and estimates.json
+GATE_DIR = 'memgate'
 ESTIMATES = 'estimates.json'
-DEFAULT_NEED_C = 400 << 20          # a runtime source's need until its peak has been measured once
+DEFAULT_NEED_C = 400 << 20
 DEFAULT_NEED_CXX = 1 << 30
 CXX_SUFFIXES = {'.cpp'}
 LARGEST_SHOWN = 5
-NINJA_GRACE = 5.0                   # seconds Ninja gets to stop its compiles after Ctrl+C before it is killed
+NINJA_GRACE = 5.0
 
 
 def sccache():
-    """Whether a compiler cache fronts clang (SCCACHE). Its server runs the compiles, out of the wrapper's process tree,
-    so the gate can neither measure nor pace them: build.ninja then leaves the wrapper out."""
     return bool(os.environ.get('SCCACHE'))
 
 
 def interpreter():
-    """This Python for a Ninja command: relative to the root when it lies below it (the usual .venv), else absolute.
-    Not resolved: a venv's python is a link whose own path selects the venv."""
     exe = Path(os.path.abspath(sys.executable))
     for root in (ROOT, MAIN_ROOT):
         if exe.is_relative_to(root):
@@ -445,10 +313,6 @@ def interpreter():
 
 
 def gate_command(out):
-    """The memory gate's wrapper ahead of a compile command in build.ninja: this Python running tools/memgate.py wrap
-    with the state folder <out>/memgate and the object ($out) as the name its need is filed under; '' under SCCACHE.
-    It holds nothing that changes between runs, and its paths are relative to the root where they can be; another
-    Python still changes it, and with it every compile command."""
     if sccache():
         return ''
     return f'{interpreter()} {cmd_path(MEMGATE)} wrap --state {cmd_path(out / GATE_DIR)} --name $out -- '
@@ -464,13 +328,11 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False):
     vma = f'{cmd_path(DEPS / "include")} -I {cmd_path(DEPS / "include" / "vma")}' if DEPS else cmd_path(vma_include())
     imgui = cmd_path(RUNTIME / 'third_party' / 'imgui')
     dirs = ' '.join(f'-I {cmd_path(d)}' for d in runtime_include_dirs()[1:])
-    rt_inc = f'{inc} {dirs} -I {cmd_path(out)} -I {vma} -I {imgui}'   # romfs_config.h, vk_mem_alloc.h (+ deps headers), imgui.h
-    vulkan = None if DEPS else vulkan_include()   # deps carries the Vulkan headers itself
-    if vulkan:   # first, so that no other folder on the path answers for <vulkan/vulkan.h> (VMA's may be /usr/include)
+    rt_inc = f'{inc} {dirs} -I {cmd_path(out)} -I {vma} -I {imgui}'
+    vulkan = None if DEPS else vulkan_include()
+    if vulkan:
         rt_inc = f'-I {cmd_path(vulkan)} {rt_inc}'
     libs = [f'-L {cmd_path(DEPS / "lib")}'] + (LLVM_LINK_LIBS if WIN else LINK_LIBS) if DEPS else LINK_LIBS
-    # A compiler cache (sccache) may front clang: every lift rewrites the generated chunks with the same contents, so
-    # the cached objects save the compile step on the next build.
     cache = f'{cmd_arg(os.environ["SCCACHE"])} ' if os.environ.get('SCCACHE') else ''
     gate = gate_command(out)
     lines = [
@@ -522,7 +384,7 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False):
             objs[mod].append(o)
     rt = []
     for src, o in runtime_compiles(out, skip):
-        if src.suffix == '.rc':   # windres writes no depfile: the files nx2saria.rc embeds are listed by hand
+        if src.suffix == '.rc':
             lines.append(f'build {ninja_path(o)}: rc {ninja_path(src)} | {ninja_path(RUNTIME / "nx2saria.manifest")} '
                          f'{ninja_path(RUNTIME / "nx2saria.ico")}')
         else:
@@ -537,9 +399,6 @@ def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False):
 
 
 def main_objects(gen, main_out, rt_dir, mods):
-    """({relative object path: the main build's object}, '') when the main build's generated objects can stand in for
-    ours, else (None, why). That holds when the main build.ninja compiles the same sources with the same flags, its
-    objects are up to date, and every header they include from runtime/ is byte-identical in rt_dir."""
     main_ninja = main_out / 'build.ninja'
     if not main_ninja.is_file():
         return None, f'{flag_path(main_ninja)} not found'
@@ -560,8 +419,6 @@ def main_objects(gen, main_out, rt_dir, mods):
             if not theirs.is_file():
                 return None, f'main object {flag_path(theirs)} is missing'
             pairs[o] = theirs
-    # Ninja runs in the main checkout: the main build.ninja is relative to it, and the worktree's runtime/ files carry newer
-    # mtimes that would make every object look stale. Header equality is checked byte for byte below.
     env = dict(os.environ, PATH=str(UCRT) + os.pathsep + os.environ.get('PATH', '')) if WIN else dict(os.environ)
     targets = [ninja_path(t) for t in pairs.values()]
     for i in range(0, len(targets), 200):
@@ -593,8 +450,6 @@ def main_objects(gen, main_out, rt_dir, mods):
 
 
 def link_objects(out, pairs):
-    """Hardlink the main build's objects into out. Clang and Ninja replace an object by renaming a new file over it,
-    so a link keeps the old bytes after a main rebuild. Copies where linking fails."""
     for o, theirs in pairs.items():
         dst = out / o
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -609,7 +464,6 @@ def link_objects(out, pairs):
 
 
 def unlink_shared(out, mods):
-    """Drop generated objects still hardlinked to another build, so the next compile writes a new file."""
     for mod, files in mods.items():
         for f in files:
             o = out / 'obj' / mod / (f.stem + '.o')
@@ -630,7 +484,6 @@ def file_sha256(path):
 
 
 def read_manifest(path):
-    """{object path below obj/: (sha256, size, mtime_ns)}; empty when the file is missing."""
     man = {}
     if path.is_file():
         for line in path.read_text(encoding='utf-8').splitlines():
@@ -644,9 +497,6 @@ def write_manifest(path, man):
 
 
 def check_objects(out, objects, man, record):
-    """Compare objects with the manifest man. An object whose size and mtime match its entry is hashed and must equal
-    it; any other object was just (re)built, so with record its hash enters man. Returns (verified, bad, unrecorded):
-    the objects with a wrong hash, and with record False the ones without a current entry."""
     verified, bad, unrecorded = 0, [], []
     for o in objects:
         rel = o.relative_to(out / 'obj').as_posix()
@@ -673,8 +523,6 @@ def ninja_build(base, targets, env):
 
 
 def verify_objects(out, objs, borrowed, main_out, pairs, base, env):
-    """Verify every object before the link; see the module docstring. borrowed: the hardlinked generated objects of
-    main_out (checked against its manifest, never recorded); the others belong to out."""
     t0 = time.monotonic()
     owned = [o for mod, v in objs.items() for o in v if not (borrowed and mod != 'runtime')]
     shared = [o for mod, v in objs.items() for o in v if borrowed and mod != 'runtime']
@@ -707,13 +555,7 @@ def verify_objects(out, objs, borrowed, main_out, pairs, base, env):
     print(f'objects verified: {verified}, recompiled after a hash mismatch: {recompiled} ({time.monotonic() - t0:.1f} s)')
 
 
-# ---- The memory gate: what each compile needs, before Ninja; what it took, after
-
 def chunk_costs(gen, mod):
-    """{file name: (cost, switch_fn)} of one module's generated C, from its manifest's chunk_info (recomp/gen.py):
-    "cost" (the bytes of ordinary C the compile is worth) and "switch_fn" (the bytes of the largest function with a
-    jump-table branch, which drives the compiler's peak) when given, else "bytes" and 0. Files it does not list are
-    absent (the caller takes their size)."""
     try:
         data = json.loads((gen / mod / 'manifest.json').read_text(encoding='utf-8'))
         entries = (data.get('chunk_info') or []) if isinstance(data, dict) else []
@@ -732,14 +574,10 @@ def chunk_costs(gen, mod):
 
 
 class Compile(collections.namedtuple('Compile', 'src src_bytes cost switch_fn default')):
-    """One compile through the gate: its source, the source's size, its cost and switch_fn (the size model's inputs; 0
-    for a runtime source) and the need to take until it has been measured (None: the size model's)."""
+    pass
 
 
 def gate_compiles(gen, out, mods, prebuilt, runtime):
-    """{object name as the wrapper sees $out: Compile} of every compile build.ninja runs through the gate. mods: the
-    generated C per module (compiled unless prebuilt); runtime: runtime_compiles() (the .rc goes to windres, not the
-    gate)."""
     todo = {}
     if not prebuilt:
         for mod, files in mods.items():
@@ -758,7 +596,6 @@ def gate_compiles(gen, out, mods, prebuilt, runtime):
 
 
 def gate_needs(estimates, todo):
-    """({name: bytes} for needs.json, Counter of how each need was estimated)."""
     needs, hows = {}, collections.Counter()
     for name, c in todo.items():
         need, how = estimates.need(name, c.src_bytes, c.cost, c.switch_fn, default=c.default)
@@ -768,7 +605,6 @@ def gate_needs(estimates, todo):
 
 
 def gate_off_why(args):
-    """Why the gate is off ('--no-mem-gate' or the environment variable's setting), '' when it is on."""
     if getattr(args, 'no_mem_gate', False):
         return '--no-mem-gate'
     value = os.environ.get(memgate.ENV_GATE, '').strip()
@@ -776,7 +612,6 @@ def gate_off_why(args):
 
 
 def gate_start_line(settings, jobs, hows, off):
-    """The line before Ninja on the memory gate."""
     if sccache():
         return (f'memory gate: off: the compiles run in sccache\'s server (SCCACHE), out of its reach; up to {jobs} '
                 'compiles at once')
@@ -793,8 +628,6 @@ def gate_start_line(settings, jobs, hows, off):
 
 
 def learn_peaks(estimates, todo, peaks):
-    """Record in estimates the peak of each successful compile in peaks (memgate.read_peaks lines) whose object is in
-    todo. [(name, peak, seconds)] of those."""
     measured = []
     for p in peaks:
         name, c = p.get('name'), todo.get(p.get('name'))
@@ -808,8 +641,6 @@ def learn_peaks(estimates, todo, peaks):
 
 
 def gate_summary_lines(peaks, measured, estimates, sampler, enabled):
-    """The compile phase's closing lines on memory, from the wrappers' peaks.jsonl lines (peaks), the compiles
-    recorded from them (measured: learn_peaks), the estimates and the TreeSampler that watched the phase."""
     failed = sum(1 for p in peaks if p.get('rc') != 0)
     lines = [f'memory gate: {len(peaks)} compiles ran' + (f', {failed} failed' if failed else '')]
     if enabled:
@@ -835,16 +666,12 @@ def gate_summary_lines(peaks, measured, estimates, sampler, enabled):
                                                       for name, peak, seconds in top))
     st = estimates.stats()
     if st['measured'] and st['median'] and st['worst']:
-        # stats() gives peak / estimate; the line says estimate / peak, so the lowest is the worst under-estimate
         lines.append(f'estimates against the measured peaks: median {1 / st["median"]:.2f}x, lowest '
                      f'{1 / st["worst"]:.2f}x ({st["worst_name"]})')
     return lines
 
 
 class TreeSampler:
-    """Every poll seconds between start(pid) and stop(): the most memory resident in the process tree under pid
-    (Ninja, the gate's wrappers and the compilers) and the least free memory, for the compile phase's summary."""
-
     def __init__(self, rss=memgate.rss_now, avail=memgate.available, poll=memgate.POLL,
                  clock=time.monotonic):
         self._rss, self._avail, self.poll, self._clock = rss, avail, poll, clock
@@ -861,7 +688,7 @@ class TreeSampler:
     def sample(self, pid):
         try:
             rss, avail = self._rss(pid), self._avail()
-        except Exception:   # a reading that fails only loses one sample
+        except Exception:
             return
         if rss > self.peak:
             self.peak, self.peak_at = rss, self._clock() - self._t0
@@ -878,7 +705,6 @@ class TreeSampler:
             self._thread.join()
 
 
-# ---- Windows job object: peak memory of a process tree
 class IoCounters(ctypes.Structure):
     _fields_ = [(n, ctypes.c_ulonglong) for n in ('r_ops', 'w_ops', 'o_ops', 'r_bytes', 'w_bytes', 'o_bytes')]
 
@@ -902,9 +728,6 @@ CREATE_SUSPENDED = 0x4
 
 
 def run_measured(cmd, env, on_start=None):
-    """Run cmd in its own job object. Returns (exit code, seconds, peak bytes of one process, peak bytes of all).
-    Off Windows: the largest resident set of one child process, and 0 for all of them (no job accounting).
-    on_start(pid) is called once the process runs."""
     if not WIN:
         t0 = time.monotonic()
         proc = subprocess.Popen(cmd, cwd=ROOT, env=env)
@@ -913,8 +736,6 @@ def run_measured(cmd, env, on_start=None):
                 on_start(proc.pid)
             code = proc.wait()
         except BaseException as e:
-            # Ctrl+C reached Ninja too (same process group); anything else asks it to stop the same way. Ninja then
-            # ends its compiles; it is killed if it has not stopped within NINJA_GRACE.
             if not isinstance(e, KeyboardInterrupt):
                 proc.send_signal(signal.SIGINT)
             try:
@@ -923,7 +744,7 @@ def run_measured(cmd, env, on_start=None):
                 proc.kill()
                 proc.wait()
             raise
-        peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024   # KiB on Linux
+        peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024
         return code, time.monotonic() - t0, peak, 0
     k32 = ctypes.WinDLL('kernel32', use_last_error=True)
     k32.CreateJobObjectW.restype = wt.HANDLE
@@ -937,10 +758,9 @@ def run_measured(cmd, env, on_start=None):
 
     job = k32.CreateJobObjectW(None, None)
     info = ExtendedLimits()
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE   # Ctrl+C stops every compile
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     k32.SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info))
     t0 = time.monotonic()
-    # Suspended until it is in the job, so the compilers it starts are counted from the first one.
     proc = subprocess.Popen(cmd, cwd=ROOT, env=env, creationflags=CREATE_SUSPENDED)
     if not k32.AssignProcessToJobObject(job, int(proc._handle)):
         print(f'build_game: cannot track memory (error {ctypes.get_last_error()})', file=sys.stderr)
@@ -960,7 +780,6 @@ def run_measured(cmd, env, on_start=None):
 
 
 def pe_sections(path):
-    """{section name: virtual size} and SizeOfImage of a PE32+ file."""
     data = path.read_bytes()[:4096]
     pe = int.from_bytes(data[0x3C:0x40], 'little')
     nsec = int.from_bytes(data[pe + 6:pe + 8], 'little')
@@ -975,7 +794,6 @@ def pe_sections(path):
 
 
 def elf_sections(path):
-    """{section name: size} of the allocated sections of an ELF64 file, and the extent they span in memory."""
     with open(path, 'rb') as f:
         head = f.read(64)
         shoff = int.from_bytes(head[0x28:0x30], 'little')
@@ -989,7 +807,7 @@ def elf_sections(path):
     for s in sh:
         flags = int.from_bytes(s[0x08:0x10], 'little')
         addr, size = int.from_bytes(s[0x10:0x18], 'little'), int.from_bytes(s[0x20:0x28], 'little')
-        if not flags & 2 or not size:   # SHF_ALLOC
+        if not flags & 2 or not size:
             continue
         name = names[int.from_bytes(s[0:4], 'little'):].split(b'\0', 1)[0].decode(errors='replace')
         out[name] = out.get(name, 0) + size
@@ -999,7 +817,6 @@ def elf_sections(path):
 
 
 def objdump_tool():
-    """The disassembler for tools/check_isa.py: llvm-objdump of --toolchain, else MSYS2's or the one on PATH."""
     suffix = '.exe' if WIN else ''
     for d in (TOOLCHAIN_BIN, UCRT if WIN else None):
         for name in ('llvm-objdump', 'objdump'):
@@ -1013,7 +830,7 @@ def mib(n):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--version', default='v121', help='game version (default v121)')
     ap.add_argument('--cpu', choices=('v2', 'v3'), default='v3',
                     help='target CPU level: v3 (AVX2/FMA, default) or v2 (SSE4.2, for older CPUs; slower)')
@@ -1087,12 +904,10 @@ def main():
         TOOLCHAIN_BIN = (args.toolchain / 'bin').resolve()
         CLANG = TOOLCHAIN_BIN / f'clang{suffix}'
         WINDRES = TOOLCHAIN_BIN / 'llvm-windres.exe'
-    if args.toolchain and WIN or args.deps and (args.toolchain or not WIN):   # Linux: --deps only, never deps-mingw
+    if args.toolchain and WIN or args.deps and (args.toolchain or not WIN):
         DEPS = (args.deps or DEFAULT_DEPS).resolve()
         dlls = sorted((DEPS / 'bin').glob('*.dll')) if WIN else []
     if DEPS and not WIN:
-        # A release (--deps): Opus, dav1d, libvpx and zstd go into the executable, so it needs no more than libc,
-        # Vulkan and the libSDL3.so.0 beside it
         for lib in ('opus', 'dav1d', 'vpx', 'zstd'):
             LINK_LIBS[LINK_LIBS.index(f'-l{lib}')] = f'-l:lib{lib}.a'
     for tool in (CLANG, NINJA):
@@ -1125,7 +940,7 @@ def main():
     copy_romfs_patches(args.version, out)
     global RUNTIME
     RUNTIME = (args.runtime or RUNTIME).resolve()
-    build_shaders.build(RUNTIME)   # the runtime's own shaders: the headers the sources below include, when missing or stale
+    build_shaders.build(RUNTIME)
     skip = {s for s in args.skip_runtime.split(',') if s}
     main_out = (ROOT / 'build' / args.version).resolve()
     pairs = None
@@ -1141,7 +956,7 @@ def main():
         link_objects(out, pairs)
         print(f'build_game: reusing {len(pairs)} generated objects of {flag_path(main_out)} (hardlinks)')
     else:
-        if out != main_out:   # forks hold hardlinks to the main build's objects; the main build keeps its own
+        if out != main_out:
             unlink_shared(out, mods)
         if why:
             print(f'build_game: compiling all generated C: {why}')
@@ -1174,7 +989,7 @@ def main():
     peaks = memgate.read_peaks(gate_dir) if gated else []
     measured = learn_peaks(estimates, todo, peaks)
     if measured:
-        try:   # the estimates only help the next build: a file that cannot be written must not stop this one
+        try:
             estimates.save()
         except OSError as e:
             print(f'memory gate: the compile estimates were not saved ({e}); the next build estimates from the sizes')
@@ -1188,8 +1003,6 @@ def main():
         print(f'  {mod:8} {len(files):5} objects {mib(size):>14}')
     verify_objects(out, objs, pairs is not None, main_out, pairs, base, env)
     if args.cpu == 'v2':
-        # Inline assembly, target attributes and intrinsics pass -march=x86-64-v2 by; one vmovdqa of a YMM register
-        # stops a CPU without AVX (tools/check_isa.py)
         fail = check_isa.check_objects(objs['runtime'], objdump_tool(), out / 'obj' / 'runtime' / 'isa-v2.json')
         if fail:
             sys.exit(f'build_game: {fail}')
@@ -1201,7 +1014,7 @@ def main():
         print(f'build_game: link failed, {flag_path(exe)} is the old one (a running nx2saria.exe from this dir locks it)',
               file=sys.stderr)
         sys.exit(code)
-    for dll in dlls:   # dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL), found next to nx2saria.exe
+    for dll in dlls:
         shutil.copy2(dll, exe.parent / dll.name)
     sections, image = pe_sections(exe) if WIN else elf_sections(exe)
     print(f'{below_root(exe)}: file {mib(exe.stat().st_size)}, '
