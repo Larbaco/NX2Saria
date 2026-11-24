@@ -1,17 +1,4 @@
 # needs: clang, vulkan
-"""Check how pipeline-binaries.bin keeps its whole records (runtime/vk/vk_pipeline.c pb_index and pb_keep,
-NX2SARIA_PIPE_BINARIES=1). pb_init keeps the whole records of a file that ends inside one (the process ended during an
-append, or a disk filled) or holds a malformed one, and cuts the file back to them; the walk must say where the last
-whole record ends, and pb_keep must cut the file there. The check cuts the file's record layout and pb_hash, pb_find,
-pb_insert, pb_index and pb_keep out of vk_pipeline.c, writes files of whole records, one with a torn last record and
-one with a malformed record in the middle, and checks the offset and the index the walk gives, the length pb_keep
-leaves on the disk, that a second walk reaches the end of the cut file, and that a record appended after the cut is
-read back. plat_file_truncate is a stand-in that cuts the file with the C library.
-
-No GPU, no game files, any Python. Needs the Vulkan headers of MSYS2 UCRT64 (vulkan/vulkan.h).
-
-Usage: pb_torn_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -24,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

@@ -1,4 +1,3 @@
-// Inject cache-key results into the reporting guard used by mesh_prepared_check (vk_exec_draw.c).
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>

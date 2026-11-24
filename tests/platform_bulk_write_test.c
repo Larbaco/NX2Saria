@@ -1,9 +1,3 @@
-// plat_mem_prepare_write on Linux (runtime/platform/linux.c): every page of a prepared range counts as written, a
-// reset leaves it clean, and a later store to one page is still seen. No game files. Build and run from the
-// repository root:
-//   clang -O2 -ffunction-sections -fdata-sections -Iruntime -c runtime/platform/linux.c -o /tmp/plat.o
-//   clang -O2 -Wall -Iruntime tests/platform_bulk_write_test.c /tmp/plat.o -Wl,--gc-sections -lpthread -ldl -o /tmp/bulk
-//   /tmp/bulk      (exit 77: the write watch is not available on this kernel)
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

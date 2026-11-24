@@ -1,10 +1,3 @@
-// runtime/hle/save_zip.c on its own, driven by tests/save_zip_check.py:
-//   save_zip_check selftest                       the manifest's JSON keys, round trips in memory, damaged input
-//   save_zip_check inflate IN SIZE OUT            raw deflate IN (zlib's) into SIZE bytes at OUT; exit 3 when refused
-//   save_zip_check deflate IN OUT                 raw deflate of IN into OUT, for zlib to read back
-//   save_zip_check zip OUT NAME FILE [NAME FILE]  a zip of the files under those names
-//   save_zip_check unzip ZIP DIR                  every member into DIR/<index>, a line "name|crc|size|dir|link" each;
-//                                                 exit 3 with the SZ_E_* code when a member or the zip is refused
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,7 +59,6 @@ static void selftest_json(void) {
 }
 
 static void selftest_codec(void) {
-    // text with repeats, then bytes of every value: literals of both fixed code lengths, long and far matches
     size_t n = 200000;
     uint8_t *src = malloc(n), *back = malloc(n);
     for (size_t i = 0; i < n; i++) src[i] = i < 120000 ? "fs commit save: 14 files, 2 changed\n"[i % 36] : (uint8_t)(i * 2654435761u >> 13);
@@ -102,18 +94,18 @@ static void selftest_codec(void) {
         got = sz_extract(zip, zn, &e[2], &err);
         CHECK(got && got[0] == 0 && e[2].usize == 0, "empty member");
         free(got);
-        zip[e[1].data + 100] ^= 0x55;   // damaged data: refused, by inflate or by the CRC
+        zip[e[1].data + 100] ^= 0x55;
         got = sz_extract(zip, zn, &e[1], &err);
         CHECK(!got && err == SZ_E_DAMAGED, "damaged member read");
         free(got);
         zip[e[1].data + 100] ^= 0x55;
-        zip[e[0].data] ^= 1;   // a stored member's byte: only the CRC tells
+        zip[e[0].data] ^= 1;
         got = sz_extract(zip, zn, &e[0], &err);
         CHECK(!got && err == SZ_E_DAMAGED, "damaged stored member read");
         free(got);
     }
     free(e);
-    for (size_t cut = 0; zip && cut < zn; cut += 997) {   // every prefix is refused, never read past its end
+    for (size_t cut = 0; zip && cut < zn; cut += 997) {
         uint8_t *part = malloc(cut ? cut : 1);
         memcpy(part, zip, cut);
         CHECK(sz_read_dir(part, cut, &e, &count) != SZ_OK, "a zip cut at %zu read", cut);

@@ -1,15 +1,3 @@
-// The lifetime of pool records and VRAM mirrors against a reader on another thread, on the real vk_memory.c, without
-// a GPU. Each case runs in a child process built with AddressSanitizer, so a use after free ends that child with a
-// report instead of passing unseen.
-//
-// - fini: the replay resolved an address of a pool (vk_mem_resolve) and uses the record after the game's thread
-//   finalized the pool (vk_pool_fini) in between. A resolved pool is marked used, and pool_fini then keeps the record
-//   until the submission being recorded completes. The control clears the mark first, as if the protocol did not hold:
-//   the record goes at once and the reader's use is a use after free.
-// - evict: a replay worker uses mirrors while another evicts the idle ones (mirror_evict, under use_lock as
-//   mirror_create calls it while chunks record). A mirror the submission used is not idle, and the lock serializes the
-//   rest, so a use never gets a mirror half taken down. The control breaks both (any mirror may go, the use takes the
-//   unlocked path): a use that passed the state check then reads the buffer the eviction just cleared.
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -21,10 +9,8 @@
 
 #include "../runtime/vk/vk_memory.c"
 
-// A sanitizer report ends the child with 66, a wrong state with 1.
 const char *__asan_default_options(void) { return "exitcode=66"; }
 
-// ---- the runtime around vk_memory.c
 static uint64_t now_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -47,7 +33,7 @@ void plat_mutex_lock(PlatMutex *m) { pthread_rwlock_wrlock(rw_of(m)); }
 void plat_mutex_unlock(PlatMutex *m) { pthread_rwlock_unlock(rw_of(m)); }
 void plat_mutex_lock_shared(PlatMutex *m) { pthread_rwlock_rdlock(rw_of(m)); }
 void plat_mutex_unlock_shared(PlatMutex *m) { pthread_rwlock_unlock(rw_of(m)); }
-static _Thread_local int tid_self = 1;   // nonzero per thread for the recursive lock
+static _Thread_local int tid_self = 1;
 static int tid_next = 1;
 static uint32_t tid(void) {
     if (tid_self == 1) tid_self = 1 + __atomic_add_fetch(&tid_next, 1, __ATOMIC_RELAXED);
@@ -125,11 +111,10 @@ void vk_gtl_note(int kind, uint64_t sub_ns, uint64_t start_tick, uint64_t end_ti
 uint64_t vk_headroom_release(void) { return 0; }
 void vk_queue_lock(void) {}
 void vk_queue_unlock(void) {}
-static uint64_t tl_issued = 10, tl_done = 10;   // the timeline: submissions issued, and done on the "GPU"
+static uint64_t tl_issued = 10, tl_done = 10;
 uint64_t vk_sync_issued(void) { return __atomic_load_n(&tl_issued, __ATOMIC_ACQUIRE); }
 uint64_t vk_sync_fence_done(void) { return __atomic_load_n(&tl_done, __ATOMIC_ACQUIRE); }
 int vk_sync_fence_wait(uint64_t value, uint64_t timeout_ns) { (void)timeout_ns; return value <= vk_sync_fence_done(); }
-// completions run when the harness moves tl_done on (complete_to)
 typedef struct { uint64_t fence; void (*fn)(void *); void *arg; } Comp;
 static Comp comps[256];
 static int ncomps;
@@ -233,10 +218,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice d, uint32_t n, const VkF
 }
 static VkCtx ctx;
 VkCtx *vk_ctx(void) { return &ctx; }
-static _Thread_local int shared_here;   // vk_exec_shared: this thread records a chunk beside others
+static _Thread_local int shared_here;
 int vk_exec_shared(void) { return shared_here; }
 
-// The GPU reaches value v: the completions up to it run, then a collect frees what they retired.
 static void complete_to(uint64_t v) {
     __atomic_store_n(&tl_done, v, __ATOMIC_RELEASE);
     for (;;) {
@@ -251,8 +235,7 @@ static void complete_to(uint64_t v) {
     vk_mem_collect();
 }
 
-// ---- the cases
-#define BASE 0x200000000ull   // inside the guest address range the write watch covers (SNAP_REGIONS)
+#define BASE 0x200000000ull
 #define SIZE 0x200000ull
 
 static PoolRec *make_pool(pool_t *key, uint64_t lo) {
@@ -266,7 +249,6 @@ static PoolRec *make_pool(pool_t *key, uint64_t lo) {
     return r;
 }
 
-// Mirror state as mirror_create leaves it, without its copies: on the list, synced at submission `at`.
 static void give_mirror(PoolRec *r, uint32_t at) {
     plat_mutex_lock(&pool_lock);
     r->mbuf = new_handle(), r->malloc_ = (VmaAllocation)(uintptr_t)1, r->twin = 1;
@@ -284,30 +266,28 @@ static VkMemSpan fini_sp;
 static void *fini_reader(void *arg) {
     (void)arg;
     if (!vk_mem_resolve(BASE + 0x100, 64, &fini_sp) || !fini_sp.pool) rt_fatal("the pool did not resolve");
-    pthread_barrier_wait(&bar);   // the replay holds the record; the game finalizes the pool
     pthread_barrier_wait(&bar);
-    // the rest of the binding, as bind_range does after its resolve: the mirror use and the twin
+    pthread_barrier_wait(&bar);
     VK_MEM_USE(fini_sp);
     volatile VkBuffer twin = vk_mem_guest_twin(&fini_sp);
     (void)twin;
     VkMemSpan again;
-    return (void *)(intptr_t)vk_mem_resolve(BASE + 0x100, 64, &again);   // the index no longer has it
+    return (void *)(intptr_t)vk_mem_resolve(BASE + 0x100, 64, &again);
 }
 
 static int case_fini(int clear_used) {
-    vk_mirror_on = 1;   // the use reads the record's mirror state
+    vk_mirror_on = 1;
     PoolRec *r = make_pool(&fini_key, BASE);
     fini_clear_used = clear_used;
     pthread_barrier_init(&bar, NULL, 2);
     pthread_t t;
     pthread_create(&t, NULL, fini_reader, NULL);
     pthread_barrier_wait(&bar);
-    if (clear_used) r->used = 0;   // the control: a record held without the used mark
+    if (clear_used) r->used = 0;
     vk_pool_fini(&fini_key);
     pthread_barrier_wait(&bar);
     void *found;
     pthread_join(t, &found);
-    // the record must still be there now, and go once the submission being recorded completes
     int gone_early = was_destroyed((uint64_t)(uintptr_t)fini_sp.buffer);
     complete_to(vk_sync_issued() + 1);
     int gone_after = was_destroyed((uint64_t)(uintptr_t)fini_sp.buffer);
@@ -316,12 +296,6 @@ static int case_fini(int clear_used) {
     return !found && !gone_early && gone_after ? 0 : 1;
 }
 
-// evict: submissions one after another (msub moves on by 200 between them, with no chunk recording, as at
-// vk_mem_mirror_begin). In each, a worker uses pool A at every draw and pool B in every other submission, through
-// vk_mem_use as a chunk does (use_lock on the slow path), while the other worker evicts the idle mirrors under
-// use_lock (mirror_create's call). An evicted pool's next use makes its mirror again (the real mirror_create). Every
-// use must get a buffer that is not destroyed while its submission records. The control: any mirror may go
-// (min_idle 0) and the uses take the unlocked path; the "submission" then never ends.
 static PoolRec *ev_a, *ev_b;
 static volatile int ev_stop;
 static uint64_t ev_uses, ev_null, ev_dead;
@@ -343,13 +317,13 @@ static void *ev_user(void *arg) {
         return NULL;
     }
     for (;;) {
-        pthread_barrier_wait(&bar);   // a submission begins
+        pthread_barrier_wait(&bar);
         if (__atomic_load_n(&ev_stop, __ATOMIC_ACQUIRE)) return NULL;
         for (int i = 0; i < 20000; i++) {
             ev_use(ev_a);
             if (ev_phase_b && i % 64 == 32) ev_use(ev_b);
         }
-        pthread_barrier_wait(&bar);   // its chunks are done
+        pthread_barrier_wait(&bar);
     }
 }
 
@@ -380,19 +354,19 @@ static int case_evict(int control) {
         }
     } else {
         for (int k = 0; k < 400; k++, subs++) {
-            msub += 200;   // between submissions: no chunk records
+            msub += 200;
             ev_phase_b = k & 1;
             pthread_barrier_wait(&bar);
-            for (int j = 0; j < 200; j++) {   // evictions while the chunks record
+            for (int j = 0; j < 200; j++) {
                 plat_mutex_lock(&use_lock);
                 if (mirror_evict(2 * SIZE, MIRROR_IDLE, "test")) evicted++;
                 plat_mutex_unlock(&use_lock);
                 rounds++;
             }
             pthread_barrier_wait(&bar);
-            __atomic_add_fetch(&tl_issued, 1, __ATOMIC_RELEASE);   // the submission goes to the GPU and completes
+            __atomic_add_fetch(&tl_issued, 1, __ATOMIC_RELEASE);
             complete_to(vk_sync_issued() + 1);
-            plat_mutex_lock(&pool_lock);   // the next submission's copies: none in this harness
+            plat_mutex_lock(&pool_lock);
             npend = 0;
             plat_mutex_unlock(&pool_lock);
         }
@@ -404,7 +378,7 @@ static int case_evict(int control) {
            "%llu, a destroyed one %llu\n", control ? " (control)" : "", (unsigned long long)subs,
            (unsigned long long)rounds, (unsigned long long)evicted, (unsigned long long)ev_uses,
            (unsigned long long)ev_null, (unsigned long long)ev_dead);
-    if (!control && !evicted) return 2;   // the case must evict for its result to mean anything
+    if (!control && !evicted) return 2;
     return ev_null || ev_dead ? 1 : 0;
 }
 

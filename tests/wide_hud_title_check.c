@@ -1,9 +1,3 @@
-// runtime/patches/wide_hud.c's second archive: the title screen's UI/Layout2Archive/Title.Product.* with TitleMenuBG_00's backdrop
-// over the whole picture (wide_menus = full). The layouts and archives here are made by the test from the format as
-// wide_hud.c's header comment describes it, with the panes and widths the game's 1.1.1 TitleMenuBG_00 holds, so the
-// reader is checked against a writer of its own. Given romfs.bin and the offsets and sizes of the Title archive and of
-// Pack/ZsDic.pack.zs in it, it also edits the game's own archive for 21:9, 32:9 and a 3440x1440 window. Built and run by
-// tests/wide_hud_title_check.py; prints each failed check and exits 1 on any.
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -17,7 +11,6 @@
 #include "sarc.h"
 #include "wide_hud.h"
 
-// The menus' shift alone (a layout's grid units wider on each side), or the HUD's alone.
 #define MENUS(m) (&(WideHudShift){0, 1.0f, (m), 0})
 #define HUD(o) (&(WideHudShift){(o), 1.0f, 0, 0})
 
@@ -32,7 +25,6 @@ static int fails;
         }                                                                                                              \
     } while (0)
 
-// ---- what wide_hud.c reaches in the runtime: every log line is kept
 enum { LOG_LINES = 64 };
 static char log_lines[LOG_LINES][1024];
 static int nlog;
@@ -51,7 +43,6 @@ static const char *log_find(const char *prefix) {
     return NULL;
 }
 
-// ---- a BFFH layout with panes and no animations
 enum { SIZE = 0x4000, PANE_REC = 0x44 };
 static uint8_t file[SIZE];
 static size_t top;
@@ -79,9 +70,8 @@ typedef struct {
     int parent;
     float x, y, w, h;
 } PaneDef;
-static uint64_t pane_at[16];   // where make_layout put each pane's record
+static uint64_t pane_at[16];
 
-// panes in the order given (parents first), and an empty table of animations
 static size_t make_layout(const PaneDef *d, int npanes) {
     memset(file, 0, sizeof file);
     top = 0x300;
@@ -102,7 +92,6 @@ static size_t make_layout(const PaneDef *d, int npanes) {
     return top;
 }
 
-// The 1.1.1 layouts of the title archive, as far as the edit reads them (docs: the dump of Title.blarc).
 static const PaneDef menu_bg[] = {
     {"RootPane", -1, 0, 0, 0, 0},         {"N_In_00", 0, 0, 0, 90, 120},          {"N_Base_00", 1, 0, 0, 90, 120},
     {"C_Capture_00", 2, 0, 0, 3840, 2160}, {"P_Capture_00", 2, 0, 0, 3840, 2160}, {"P_Noise_00", 2, 0, 0, 3840, 2160}};
@@ -112,7 +101,6 @@ static const PaneDef title[] = {{"RootPane", -1, 0, 0, 0, 0},
                                 {"Pa_Button_00", 2, 0, -65, 4060, 210}};
 static const PaneDef button[] = {{"RootPane", -1, 0, 0, 0, 0}, {"W_Bg_00", 0, 0, 0, 1880, 160}};
 
-// ---- a SARC: one other member, then members[i] (bytes[i], sizes[i]) in order
 enum { MAX_MEMBERS = 32 };
 static size_t member_at[MAX_MEMBERS];
 static size_t make_sarc(uint8_t *out, size_t cap, const char *const *names, const uint8_t *const *bytes,
@@ -153,11 +141,9 @@ static size_t make_sarc(uint8_t *out, size_t cap, const char *const *names, cons
     return total;
 }
 
-// The title archive as the game's holds it: PaCommonBtnTitle_00, TitleMenuBG_00 and Title_00, each `copies` times
-// (members 3 * c .. 3 * c + 2 for copy c). pane widths: where TitleMenuBG_00's three widths are, for each copy.
 static uint8_t *made[3];
 static size_t made_n[3];
-static uint64_t width_at[3];   // within TitleMenuBG_00: C_Capture_00, P_Capture_00, P_Noise_00 width fields
+static uint64_t width_at[3];
 static void make_members(void) {
     static const PaneDef *defs[3] = {button, menu_bg, title};
     static const int counts[3] = {2, 6, 4};
@@ -181,7 +167,6 @@ static size_t archive(uint8_t *out, size_t cap, int copies) {
     return make_sarc(out, cap, all_names, all_bytes, all_sizes, 3 * copies);
 }
 
-// the member's field in each of its copies
 static float width_of(const uint8_t *p, size_t n, const char *member, int copy, int pane) {
     unsigned next = 0;
     size_t at, size;
@@ -190,7 +175,6 @@ static float width_of(const uint8_t *p, size_t n, const char *member, int copy, 
     return -1;
 }
 
-// wide_hud_archive_in on b[0..n), which nothing here makes larger: the archive edited in b.
 static int archive_in(int archive, uint8_t *b, size_t n, const WideHudShift *s, char *why, size_t why_n) {
     uint8_t *p = malloc(n ? n : 1);
     size_t m = n;
@@ -202,24 +186,20 @@ static int archive_in(int archive, uint8_t *b, size_t n, const WideHudShift *s, 
     return r;
 }
 
-// ---- checks on the made archive
 static void check_synthetic(void) {
     enum { CAP = 1 << 18 };
     uint8_t *a = malloc(CAP), *b = malloc(CAP);
     size_t n = archive(a, CAP, 2);
     char why[240] = "";
-    float menus = 640;   // 21:9: 1080 * 2560 / 1080 - 1920
-    // the Common archive's edit leaves the Title archive alone
+    float menus = 640;
     memcpy(b, a, n);
     nlog = 0;
     CHECK(archive_in(WIDE_HUD_COMMON, b, n, MENUS(menus), why, sizeof why) == 0 && !memcmp(a, b, n),
           "the Common archive's edit of the title archive: %s", why);
     CHECK(!log_find("wide menus: TitleMenuBG_00"), "the Common archive's edit named TitleMenuBG_00");
-    // HUD's edges alone: nothing in the Title archive
     nlog = 0;
     CHECK(archive_in(WIDE_HUD_TITLE, b, n, HUD(660), why, sizeof why) == 0 && !memcmp(a, b, n) && nlog == 0,
           "the HUD's edit of the title archive: %d lines", nlog);
-    // the menus' shift: three widths in each of two copies, one log line
     nlog = 0;
     int r = archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why);
     CHECK(r == 6, "title archive: %d fields (%s)", r, why);
@@ -242,11 +222,9 @@ static void check_synthetic(void) {
               log_find("wide menus: TitleMenuBG_00 (2 copies, 6 fields): C_Capture_00 width 3840 -> 5120, "
                        "P_Capture_00 width 3840 -> 5120, P_Noise_00 width 3840 -> 5120"),
           "title archive: %d lines, the first: %s", nlog, nlog ? log_lines[0] : "");
-    // again: nothing to change, no line
     nlog = 0;
     CHECK(archive_in(WIDE_HUD_TITLE, b, n, MENUS(menus), why, sizeof why) == 0 && nlog == 0,
           "the title archive edited twice: %d lines", nlog);
-    // an archive that holds a layout with another width keeps the game's, and says why; the rest is untouched
     memcpy(b, a, n);
     float other = 3000;
     memcpy(b + member_at[1] + width_at[1], &other, 4);
@@ -258,7 +236,6 @@ static void check_synthetic(void) {
           "a title archive with another width: %d (%s)", r, last_log());
     CHECK(log_find("wide menus: TitleMenuBG_00 P_Capture_00") && strstr(last_log(), "TitleMenuBG_00 keeps the game's menu layout"),
           "a title archive with another width: no line that the game's layout stays");
-    // a title archive without the layout: the menus keep the game's, nothing else
     {
         const char *names[] = {"Title_00.buil"};
         const uint8_t *bytes[] = {made[2]};
@@ -271,7 +248,6 @@ static void check_synthetic(void) {
               "a title archive without TitleMenuBG_00: %d (%s)", r, last_log());
         free(c3);
     }
-    // a damaged archive: the menus keep the game's, as for a layout that is not there
     nlog = 0;
     CHECK(archive_in(WIDE_HUD_TITLE, a, 40, MENUS(menus), why, sizeof why) == 0 &&
               strstr(last_log(), "the layout archive is damaged; TitleMenuBG_00 stays as the game lays it out"),
@@ -285,7 +261,6 @@ static void check_synthetic(void) {
     free(b);
 }
 
-// A zstd dictionary with the id `id`, its content and samples taken from src[0..n).
 static size_t make_dict(uint8_t *out, size_t cap, unsigned id, const uint8_t *src, size_t n) {
     enum { SAMPLES = 32 };
     size_t sizes[SAMPLES];
@@ -340,7 +315,6 @@ static void check_build(void) {
         free(raw);
         free(expect);
     }
-    // a shift with the HUD's edges and the loading icon asks nothing of this archive: it is not even read
     nlog = 0;
     CHECK(wide_hud_build_in(WIDE_HUD_TITLE, z, zn / 2, zdic, zdn, &(WideHudShift){660, 0.75f, 0, 0}, &again, &again_n) == 0 &&
               !again && nlog == 0,
@@ -357,7 +331,6 @@ static void check_build(void) {
     free(z);
 }
 
-// ---- the game's own archive, read from romfs.bin
 static uint8_t *read_part(const char *path, const char *off, const char *size, size_t *n) {
     long long at = strtoll(off, NULL, 10);
     *n = (size_t)strtoull(size, NULL, 10);
@@ -417,7 +390,6 @@ static void game_archive(char **argv) {
         next = 0;
         CHECK(sarc_next(raw, rn, *m, &next, &at, &size) == 1, "game: no %s in the title archive", *m);
     }
-    // 21:9 at 1080 lines, 32:9 at 1440 lines, a 3440x1440 window: the menus' shift is wide_hud_out of the picture
     static const struct { unsigned w, h; } shapes[] = {{2560, 1080}, {3416, 1440}, {5120, 1440}, {3440, 1440}};
     for (size_t s = 0; s < sizeof shapes / sizeof *shapes; s++) {
         float out = wide_hud_out(shapes[s].w, shapes[s].h);
@@ -453,7 +425,6 @@ static void game_archive(char **argv) {
         free(got);
         free(z);
     }
-    // 16:9: a shift of none edits nothing and reads nothing
     {
         void *z = NULL;
         size_t zn = 0;

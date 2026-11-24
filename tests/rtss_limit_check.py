@@ -1,16 +1,4 @@
 # needs: clang
-"""Build and run the checks of runtime/pacing/rtss_limit.c, RivaTuner Statistics Server as the frame limiter.
-
-tests/rtss_limit_check.c builds runtime/pacing/rtss_decide.h alone, the parts that make no system call. tests/rtss_worker_check.c
-(Windows only, skipped elsewhere) compiles the real rtss_limit.c against a fake RTSS and runs each of its scenarios in a
-process of its own. Checks statically that a crash and a fatal error (runtime/main.c crash_handler, runtime/dispatch.c
-fatal_end) leave RTSS's profile to the next start through rtss_limit_crash, which calls into RTSS's library only
-through the orderly restore and only when the state file holds no line of the run.
-
-No GPU, no game files, no RTSS, any Python.
-
-Usage: rtss_limit_check.py
-"""
 import os
 import re
 import shutil
@@ -24,7 +12,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

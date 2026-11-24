@@ -1,14 +1,4 @@
 # needs: clang, vma
-"""Build the real vk_usnap.c concurrency probe on Linux, with optional ThreadSanitizer.
-
-No game files or GPU are needed. The platform lock and replay stream position are test stand-ins, so this checks the actual
-snapshot data structure's concurrent drop, find and why operations, not GPU synchronization or chunk stream order.
-The Vulkan and VMA headers are needed to compile the runtime's types. Phase barriers require both test threads to
-advance, but do not force a particular interleaving. The bench uses Clang 20; pass its path with --cc if needed.
-
-    python tests/usnap_concurrency_check.py --vma-include <vma-dir> --work <scratch-dir>
-    python tests/usnap_concurrency_check.py --cc /path/to/clang-20 --vma-include <vma-dir> --work <scratch-dir> --tsan
-"""
 import argparse
 import os
 import shutil
@@ -17,11 +7,13 @@ import sys
 from pathlib import Path
 import runtime_include
 
+DESCRIPTION = 'Build the real vk_usnap.c concurrency probe on Linux, with optional ThreadSanitizer.'
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', default=shutil.which('clang') or 'clang')
     ap.add_argument('--vma-include', type=Path, default=Path(os.environ.get('VMA_INCLUDE', ROOT / 'toolchain' / 'vma')))
     ap.add_argument('--vulkan-include', type=Path, help='Vulkan headers, when not provided by the system')

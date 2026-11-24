@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/perf_bound_check.c: runtime/diag/perf_bound.h, which side holds the frame back in the
-60-frame window line of the perf trace (pace, gpu, serial or cpu).
-
-Needs a C compiler only: no Vulkan headers, no GPU and no game files.
-
-Usage: perf_bound_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

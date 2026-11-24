@@ -1,19 +1,4 @@
 # needs: clang
-"""Build and run tests/save_share_check.c: the game's side of a shared save without the game. runtime/hle/fs_host.c,
-save_share.c and save_zip.c with the rest of the runtime stubbed, each run of the program one start of the game on a
-profile folder made here:
-
-- export: the zip holds the save the game would load next (a finished commit waiting in save-tx before the committed
-  save), its manifest as the launcher writes it (launcher/saves.py check_manifest takes it), no key file; with a bug
-  report the log and nx2saria.ini (reading an existing nx2navi.ini); nothing saved yet is refused
-- import: zips the launcher exports wait in profile/save-import; at the next start the save the game would load goes
-  to saves/backup <time> beside the program, the import becomes the save (the finished commit it replaces too), and
-  the start says where the old save went; a second start changes nothing
-- refusals (no manifest, another game, a newer format, a path outside the save, a damaged member, no save files):
-  nothing waits and the save stays; Cancel drops a waiting import
-
-Usage: save_share_check.py   (Python 3.12 or later; no game files)
-"""
 import json
 import os
 import re
@@ -28,14 +13,13 @@ from platform_stand_ins import stand_ins
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
-ACCOUNT = '5555666677778888' + '1111222233334444'   # tests/save_share_check.c account_uid, as fs_host.c names it
+ACCOUNT = '5555666677778888' + '1111222233334444'
 
 from launcher import saves  # noqa: E402
 import runtime_include  # noqa: E402
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -87,7 +71,6 @@ def main():
             'slot_00/caption.sav': b'c0'}
     newer = {'account.sav': b'newer a', 'option.sav': b'newer o', 'slot_01/progress.sav': b'newer 1' * 300}
 
-    # export: nothing yet, then the finished commit before the committed save
     out = work / 'out'
     check(run('export', profile, out).startswith('result 1 '), 'export with no save refused')
     for name, data in mine.items():
@@ -97,7 +80,7 @@ def main():
     for name, data in newer.items():
         (ready / name).parent.mkdir(parents=True, exist_ok=True)
         (ready / name).write_bytes(data)
-    (ready / 'prod.keys').write_bytes(b'secret')   # a stray key file in a save folder never goes into a zip
+    (ready / 'prod.keys').write_bytes(b'secret')
     (work / 'nx2navi.ini').write_bytes(b'[graphics]\nfps_limit = 60\n')
     (work / 'game.log').write_bytes(b'version: NX2Saria 9.9.9-check\n')
     line = run('export', profile, out, 'bug', log=work / 'game.log')
@@ -110,7 +93,6 @@ def main():
         with zipfile.ZipFile(path) as z:
             check(z.testzip() is None, 'export zip CRCs')
             got = {n[len('save/'):]: z.read(n) for n in z.namelist() if n.startswith('save/')}
-            # the start moved the finished commit in (swap_in) before the export read it
             check(got == newer, f'export holds the newest save: {sorted(got)}')
             check(z.read('bug-report/nx2saria.log').startswith(b'version: NX2Saria') and
                   z.read('bug-report/nx2saria.ini').startswith(b'[graphics]'),
@@ -130,7 +112,6 @@ def main():
     check(tree(acct) == dict(newer, **{'prod.keys': b'secret'}), 'the start swapped the finished commit in')
     check([tree(d) for d in (profile / 'save-backup').iterdir()] == [mine], 'and kept the save it replaced')
 
-    # import: a zip the launcher exports, from another game folder
     other = work / 'other-game'
     oacct = saves.account_dir(other)
     shared_save = {'account.sav': b'theirs a', 'option.sav': b'theirs o', 'slot_02/progress.sav': b'theirs 2' * 999,
@@ -144,7 +125,6 @@ def main():
     check(re.match(r'result 0 detail 0\.6\.2, \d{4}-\d\d-\d\d waiting 1$', line) is not None, f'import: {line}')
     check(tree(acct) == before, 'the save is unchanged until the next start')
     check(tree(profile / 'save-import') == shared_save, 'the import waits complete in profile/save-import')
-    # a finished commit made after the import (the game saved before the restart) is backed up and replaced too
     late = profile / 'save-tx' / 'ready-0000000009'
     (late / 'option.sav').parent.mkdir(parents=True, exist_ok=True)
     (late / 'option.sav').write_bytes(b'saved after the import')
@@ -162,7 +142,6 @@ def main():
     check(run('start', profile) == 'done  waiting 0', 'a second start imports nothing')
     check(tree(acct) == shared_save, 'and keeps the imported save')
 
-    # refusals and Cancel
     def zip_of(name, members, manifest=True):
         path = work / name
         with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:

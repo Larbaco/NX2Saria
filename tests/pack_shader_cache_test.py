@@ -1,9 +1,3 @@
-"""tools/pack_shader_cache.py on a fake shader cache: the pack layout gfx_shader.c reads (sorted index, bounds, data),
-loose files folded in and deleted, a second run merging new loose files, a loose file winning over its packed copy,
-malformed files skipped and --keep. No game files; stdlib only.
-
-Run: python tests/pack_shader_cache_test.py
-"""
 import hashlib
 import struct
 import sys
@@ -15,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 import pack_shader_cache as psc  # noqa: E402
 
-USE = struct.pack('<5I', 0x4d554b54, 1, 3, 0, 1)   # gfx_shader.c use_store
+USE = struct.pack('<5I', 0x4d554b54, 1, 3, 0, 1)
 
 
 def name(seed):
@@ -23,7 +17,6 @@ def name(seed):
 
 
 def read_pack(path):
-    """{(kind, name hex): bytes}, checking what gfx_shader.c pack_open checks."""
     b = path.read_bytes()
     assert b[:8] == psc.MAGIC
     count = struct.unpack_from('<I', b, 8)[0]
@@ -51,7 +44,7 @@ class PackTest(unittest.TestCase):
         (self.cache / f'{k}.spv').write_bytes(spv + seed.encode())
         (self.cache / f'{k}.res.json').write_bytes(res)
         (self.cache / f'{name("use" + seed)}.use').write_bytes(USE)
-        (self.cache / 'in').mkdir(exist_ok=True)   # in_store makes it again after a pack removed it
+        (self.cache / 'in').mkdir(exist_ok=True)
         (self.cache / 'in' / f'{name("in" + seed)}.in').write_bytes(b'TKSI' + seed.encode())
         return k
 
@@ -67,7 +60,7 @@ class PackTest(unittest.TestCase):
         self.assertEqual(got[(3, name('use3'))], USE)
         self.assertEqual(got[(4, name('in3'))], b'TKSI3')
         left = sorted(p.name for p in self.cache.iterdir())
-        self.assertEqual(left, sorted([psc.PACK, 'notes.txt', f'{keys[0]}.code']))   # in/ removed when empty
+        self.assertEqual(left, sorted([psc.PACK, 'notes.txt', f'{keys[0]}.code']))
 
     def test_second_run_merges_new_loose_files_and_loose_wins(self):
         a = self.shader('a')
@@ -84,15 +77,15 @@ class PackTest(unittest.TestCase):
     def test_malformed_files_are_skipped_or_replaced_by_the_packed_copy(self):
         a = self.shader('a')
         psc.pack(self.cache)
-        (self.cache / f'{name("usea")}.use').write_bytes(b'short')   # bad loose copy: the packed one stays
-        (self.cache / f'{name("bad")}.use').write_bytes(b'short')    # bad and nowhere else: skipped
+        (self.cache / f'{name("usea")}.use').write_bytes(b'short')
+        (self.cache / f'{name("bad")}.use').write_bytes(b'short')
         (self.cache / f'{name("empty")}.spv').write_bytes(b'')
         n, _, skipped, _ = psc.pack(self.cache)
         got = read_pack(self.cache / psc.PACK)
         self.assertEqual(got[(3, name('usea'))], USE)
         self.assertNotIn((3, name('bad')), got)
         self.assertEqual((n, skipped), (4, 2))
-        self.assertTrue((self.cache / f'{name("bad")}.use').exists())   # never deleted unless packed
+        self.assertTrue((self.cache / f'{name("bad")}.use').exists())
 
     def test_keep_leaves_the_loose_files(self):
         k = self.shader('a')

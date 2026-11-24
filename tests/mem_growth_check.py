@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/mem_growth_check.c: runtime/diag/mem_growth.h, the memory report's growth bookkeeping (which of the
-report's figures grew since the previous report and since play began, and which only ever climbed). The check also
-feeds it a session shaped by the 15-minute log of 2026-11-13.
-
-No GPU, no game files, any Python.
-
-Usage: mem_growth_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

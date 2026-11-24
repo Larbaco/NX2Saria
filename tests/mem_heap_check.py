@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/mem_heap_check.c: runtime/vk/vk_mem_heap.h, when the memory report asks for the C runtime heap's
-summary (vk_memory.c system_log): never in play, where it held every allocation of the game for 54 to 70 ms at the
-first report of a session, unless mem_census asks for it.
-
-No GPU, no game files, any Python.
-
-Usage: mem_heap_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

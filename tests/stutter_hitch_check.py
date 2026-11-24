@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/stutter_hitch_check.c: runtime/diag/stutter_map.c's hitch rule on made-up frame times. A steady
-change of pace is no hitch, isolated long frames are, and frames right after an area load count as the load's.
-
-No GPU, no game files, any Python.
-
-Usage: stutter_hitch_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -33,7 +25,6 @@ def main():
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-Wall', '-Werror',
                            '-Wno-bitwise-instead-of-logical', *runtime_include.flags(),
                            str(ROOT / 'tests' / 'stutter_hitch_check.c'), '-o', str(exe)], env=env)
