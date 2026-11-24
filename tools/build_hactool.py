@@ -1,14 +1,3 @@
-"""Build hactool: toolchain/hactool/hactool.exe (hactool at a pinned commit + tools/hactool/*.patch).
-
-Fetches the pinned commit into toolchain/src/hactool, resets it (local changes and build output there are discarded),
-applies portable.patch (title keys and BKTR fixes) and unicode.patch (a UTF-8 manifest), and builds a static exe
-with MSYS2 UCRT64 gcc; mbedtls comes with hactool's tree. The exe and hactool's LICENSE go to toolchain/hactool, where
-tools/extract.py takes them. Run with .venv. On Linux: the system's cc and make build
-toolchain/hactool/hactool (unicode.patch only adds a Windows manifest, under EXEEXT .exe).
-
-  python tools/build_hactool.py [--src DIR] [--out DIR]
-"""
-
 import argparse
 import os
 import shutil
@@ -16,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+DESCRIPTION = 'Build hactool: toolchain/hactool/hactool.exe (hactool at a pinned commit + tools/hactool/*.patch).'
 
 ROOT = Path(__file__).resolve().parent.parent
 URL = 'https://github.com/SciresM/hactool.git'
@@ -35,7 +26,6 @@ def git(src, *args):
 
 
 def fetch(src):
-    """src holds COMMIT with no local changes or untracked files."""
     if not (src / '.git').is_dir():
         src.mkdir(parents=True, exist_ok=True)
         git(src, 'init', '-q')
@@ -48,7 +38,7 @@ def fetch(src):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--src', type=Path, default=ROOT / 'toolchain' / 'src' / 'hactool', help='source checkout')
     ap.add_argument('--out', type=Path, default=ROOT / 'toolchain' / 'hactool', help='where hactool(.exe) goes')
     ap.add_argument('--cc', help='Linux: the C compiler command for hactool and its bundled mbedtls, for example '
@@ -72,7 +62,7 @@ def main():
         r = subprocess.run([str(MSYS_BASH), '-lc', f'make {jobs}'], cwd=src, env=env, capture_output=True, text=True)
     else:
         r = subprocess.run(['make', jobs, *([f'CC={args.cc}'] if args.cc else [])], cwd=src, capture_output=True,
-                           text=True)   # CC= on the command line: the bundled mbedtls's own make reads it too
+                           text=True)
     (src / 'build.log').write_text(r.stdout + r.stderr, encoding='utf-8')
     if r.returncode:
         sys.exit(f'make failed ({r.returncode}); log: {src / "build.log"}')
@@ -80,8 +70,6 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src / EXE, out / EXE)
     shutil.copy2(src / 'LICENSE', out / 'LICENSE')
-    # hactool reads ~/.switch/prod.keys before it prints the banner and exits on a malformed key there, so the check
-    # runs with an empty home: it tests the binary, not the builder's keys.
     with tempfile.TemporaryDirectory() as home:
         env = dict(os.environ, HOME=home, USERPROFILE=home)
         banner = subprocess.run([str(out / EXE)], capture_output=True, text=True, env=env)

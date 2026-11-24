@@ -1,26 +1,4 @@
 # Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-"""Xbox and keyboard-and-mouse button icons for the game's prompts, drawn on the player's machine for
-tools/make_romfs_patches.py --prompts.
-The outlines are our own shapes with letters cut out of them in the game's own text fonts: nothing of the game is in
-the repository.
-
-Every prompt except the button guide in play is text in the button font, scft/External.bfotf of each
-Font/Font*.Nin_NX_NVN.bfarc.zs: private-use code points from U+E040 (A, B, X, Y, then L, R, ZL, ZR, the d-pad, Plus and
-Minus, the sticks). A .bfotf is an OpenType (CFF) font after an 8-byte header; from offset 4 on, every byte is XORed
-with a 4-byte key, which the size in the header's second word gives away (bfotf_decode). redraw_font draws the shoulder
-buttons, the triggers, Plus, Minus and the d-pad as an Xbox controller names them (LB RB, LT RT, Menu and View, a
-cross), or every button as the key or mouse button the keyboard presses it with (pc_icons), can swap the glyphs of
-the face buttons (A with B, X with Y), and has fontTools write the font again. The archive then grows by a kilobyte or
-two, more than the game's resource size table allows it: grow_restbl raises those entries (without it the game stops at
-start).
-
-The button guide in play (bottom right) draws its buttons, L and ZL among them, from images of the common layout
-archive instead (timg/__Combined.bntx, Nt_KeyTexL_00 and Nt_KeyTexZL_00): bntx_redraw paints the same icons into them,
-the size unchanged. The Xbox prompts redraw L and ZL, the keyboard and mouse ones every image (PC_HUD_TEXTURES: A, B, X,
-Y, L, ZL and the stick's two). Prompts drawn as fixed images (some tutorial animations) keep the Switch icons.
-
-Needs fontTools (tools/requirements-py314.txt).
-"""
 import io
 import struct
 import zlib
@@ -34,21 +12,17 @@ from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
 FONT = 'scft/External.bfotf'
-# The letters on the keys come from the text fonts of the default archive; the regional archives lack them.
 TEXT_ARCHIVE = 'Font/Font.Nin_NX_NVN.bfarc.zs'
 TEXT_FONTS = ('scft/ninP_RodinNTLG-B_DH_003_subset.bfotf', 'scft/nintendo_NTLG-DB_DH_002.bfotf')
-# The button guide's images and the glyph each one shows.
 HUD_TEXTURES = {'Nt_KeyTexL_00': 0xE044, 'Nt_KeyTexZL_00': 0xE046}
 
 
 def xor(data, key):
-    """data with byte i XORed with key[i % 4]."""
     pad = (key * (len(data) // 4 + 1))[:len(data)]
     return (int.from_bytes(data, 'little') ^ int.from_bytes(pad, 'little')).to_bytes(len(data), 'little')
 
 
 def bfotf_decode(blob):
-    """(OpenType font, key) of a .bfotf (the module docstring). The font fills the rest of the file."""
     key = xor(blob[4:8], struct.pack('>I', len(blob) - 8))
     otf = xor(blob[8:], key)
     assert otf[:4] == b'OTTO', 'not a CFF OpenType font'
@@ -56,20 +30,16 @@ def bfotf_decode(blob):
 
 
 def bfotf_encode(otf, key, head):
-    """The .bfotf of otf: head (the original's first word) and the size, the rest XORed with key as bfotf_decode reads
-    it. The size field holds the whole font, so its length has to be a multiple of 4 (fontTools pads its tables)."""
     assert len(otf) % 4 == 0, len(otf)
     return head[:4] + xor(struct.pack('>I', len(otf)) + otf, key)
 
 
-# ---- drawing, in units of the font's 1000-unit em; the round A/B/X/Y icons fill y 20..585
 Y0, Y1 = 20, 585
 CY, R = (Y0 + Y1) / 2, (Y1 - Y0) / 2
 K = 0.5523   # control point distance of a quarter circle drawn with one cubic curve, per unit of radius
 
 
 class Glyphs:
-    """Outlines of letters from the game's own text fonts, drawn as holes in a shape."""
     def __init__(self, fonts):
         self.fonts = fonts
 
@@ -83,7 +53,6 @@ class Glyphs:
         raise KeyError(f'no text font has {ch!r}')
 
     def hole(self, pen, text, cx, cy, cap, max_width):
-        """text centred on (cx, cy), at most cap high and max_width wide, its contours reversed so they cut holes."""
         parts, x, ink = [], 0.0, [1e9, 1e9, -1e9, -1e9]
         for ch in text:
             rec, b, upm, advance = self.outline(ch); k = 1000 / upm
@@ -99,7 +68,6 @@ class Glyphs:
 
 
 def text_glyphs(blobs):
-    """Glyphs over the text fonts in blobs (.bfotf files), the first that has a letter giving it."""
     return Glyphs([TTFont(io.BytesIO(bfotf_decode(blob)[0])) for blob in blobs])
 
 
@@ -114,7 +82,6 @@ def circle(pen, cx, cy, r):
 
 
 def rounded(pen, x0, y0, x1, y1, bottom, top=None):
-    """Counter-clockwise rounded rectangle (bottom and top corner radii)."""
     top = bottom if top is None else top
     kb, kt = K * bottom, K * top
     pen.moveTo((x0 + bottom, y0)); pen.lineTo((x1 - bottom, y0))
@@ -132,9 +99,6 @@ def polygon(pen, points):
 
 
 def xbox_icons(g):
-    """Code point -> (advance, draw(pen)) for the buttons an Xbox controller names differently from a Switch: L R = LB
-    RB, ZL ZR = LT RT, Plus and Minus = Menu and View, the d-pad as a cross. g: Glyphs for the letters. The face
-    buttons keep the game's own glyphs (redraw_font swaps them for the Nintendo layout)."""
     def bumper(label, advance=820):
         def draw(pen):
             rounded(pen, 40, Y0 + 70, advance - 40, Y1 - 70, 70, 150); g.hole(pen, label, advance / 2, CY, 230, advance - 200)
@@ -182,17 +146,11 @@ def xbox_icons(g):
     }
 
 
-# ---- keyboard and mouse prompts (--prompts pc): every button the keyboard drives, drawn as the key or mouse button
-# bound to it, in the same filled-shape style. Each glyph keeps the advance of the game's own (a wider glyph runs into
-# the text of a right-aligned guide).
-# The keyboard defaults of runtime/input/input_map.c (input_map_reset; the nx2navi.ini bind_ lines apply on top, pc_binds). The
-# right stick is the camera, which the mouse drives; SHAKE is the key that shakes it (the mouse never does).
 PC_BINDS = {
     'A': 'e', 'B': 'lshift', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',
     'PLUS': 'tab', 'MINUS': 'm', 'LEFT': '1', 'UP': '2', 'RIGHT': '3', 'DOWN': '4', 'LCLICK': 'lctrl', 'RCLICK': 'c',
     'LSTICK_UP': 'w', 'LSTICK_LEFT': 'a', 'LSTICK_DOWN': 's', 'LSTICK_RIGHT': 'd', 'SHAKE': 'g',
 }
-# What a key shows: its letter, a symbol or a short name (key names as in nx2navi.ini; the rest show their name).
 PC_LABELS = {
     'lshift': '⇧', 'rshift': '⇧', 'lctrl': 'CTRL', 'rctrl': 'CTRL', 'lalt': 'ALT', 'tab': 'TAB',
     'enter': 'ENT', 'backspace': 'BKSP', 'capslock': 'CAPS', 'insert': 'INS', 'delete': 'DEL', 'home': 'HOME',
@@ -201,12 +159,8 @@ PC_LABELS = {
     'minus': '-', 'equals': '=', 'lbracket': '[', 'rbracket': ']', 'semicolon': ';', 'apostrophe': "'", 'comma': ',',
     'period': '.', 'slash': '/', 'backslash': '\\', 'grave': '`', 'mouse_x1': 'M4', 'mouse_x2': 'M5',
 }
-# The one-letter panes around the action prompt (T_A_00 ...) are in the Normal font (Rodin B and Symbol): one character
-# of it per key.
 PC_LETTER_LABELS = {'lshift': '↑', 'rshift': '↑', 'space': '▬', 'mouse_l': 'L', 'mouse_r': 'R',
                     'mouse_m': 'M', 'lctrl': 'C', 'rctrl': 'C', 'tab': 'T'}
-# The button guide's images in the pc style: every symbol mask of the action prompt. In the 1.4.3 Common archive
-# LSt_00 shows the left stick tilted up (as U+E052) and LSt_01 the left stick (as U+E05E).
 PC_HUD_TEXTURES = {'Nt_KeyTexA_00': 0xE040, 'Nt_KeyTexB_00': 0xE041, 'Nt_KeyTexX_00': 0xE042, 'Nt_KeyTexY_00': 0xE043,
                    'Nt_KeyTexL_00': 0xE044, 'Nt_KeyTexZL_00': 0xE046, 'Nt_KeyTexLSt_00': 0xE052,
                    'Nt_KeyTexLSt_01': 0xE05E}
@@ -214,8 +168,6 @@ PC_MOUSE = ('mouse_l', 'mouse_r', 'mouse_m')
 
 
 def pc_binds(ini_text=None):
-    """PC_BINDS with the first key of each bind_<action> line of a nx2navi.ini text over it (a line without a key entry,
-    or with key:default, keeps the default)."""
     binds = dict(PC_BINDS)
     for line in (ini_text or '').splitlines():
         line = line.split('#')[0].split(';')[0].strip()
@@ -230,24 +182,18 @@ def pc_binds(ini_text=None):
 
 
 def font_advances(blob):
-    """Code point -> advance of every glyph of the button font (a .bfotf)."""
     font = TTFont(io.BytesIO(bfotf_decode(blob)[0]))
     return {cp: font['hmtx'][name][0] for cp, name in font.getBestCmap().items()}
 
 
 def pc_letter(key):
-    """The one character the panes around the action prompt show for key."""
     if key in PC_LETTER_LABELS:
         return PC_LETTER_LABELS[key]
     return PC_LABELS.get(key, key.upper())[0]
 
 
 def pc_icons(g, adv, binds=PC_BINDS):
-    """Code point -> (advance, draw(pen)) for every button glyph but Home and Capture, drawn as the key or mouse button
-    binds puts on it. g: Glyphs for the key labels; adv: the game's advance of each glyph (font_advances), which each
-    drawing keeps."""
     def mouse_body(pen, cx, y0, y1, lit=None):
-        """A mouse seen from above; lit ('l', 'r', 'm' or None) its pressed button, filled, the others hollow."""
         h = y1 - y0; r = h * 0.33; t = h * 0.07; gap = h * 0.035
         x0, x1, mid = cx - r, cx + r, y0 + h * 0.52
         rounded(pen, x0, y0, x1, y1, r * 0.9, r)
@@ -271,7 +217,6 @@ def pc_icons(g, adv, binds=PC_BINDS):
             rounded(pen, cx - h * 0.06, mid + h * 0.12, cx + h * 0.06, mid + h * 0.36, h * 0.06)
 
     def key_cap(pen, x0, y0, x1, y1, key):
-        """A key: a rounded square with its label cut out; a mouse button draws the mouse."""
         if key in PC_MOUSE:
             mouse_body(pen, (x0 + x1) / 2, y0, y1, key[6:])
             return
@@ -288,7 +233,6 @@ def pc_icons(g, adv, binds=PC_BINDS):
         g.hole(pen, label, (x0 + x1) / 2, (y0 + y1) / 2, cap, w * 0.74)
 
     def arrow(pen, cx, cy, d, s):
-        """A filled arrowhead pointing d, s its half size."""
         polygon(pen, {'up': [(cx - s, cy - s * 0.6), (cx + s, cy - s * 0.6), (cx, cy + s * 0.8)],
                       'down': [(cx + s, cy + s * 0.6), (cx - s, cy + s * 0.6), (cx, cy - s * 0.8)],
                       'left': [(cx + s * 0.6, cy - s), (cx + s * 0.6, cy + s), (cx - s * 0.8, cy)],
@@ -301,7 +245,6 @@ def pc_icons(g, adv, binds=PC_BINDS):
         return advance, draw
 
     def grid(cells, advance):
-        """Small keys in a grid: cells = [(key, column, row)], row 0 on top."""
         def draw(pen):
             cols, rows = max(c for _, c, _ in cells) + 1, max(r for _, _, r in cells) + 1
             gap = 24; size = min((advance - 60 - gap * (cols - 1)) / cols, (Y1 - Y0 - gap * (rows - 1)) / rows)
@@ -312,7 +255,6 @@ def pc_icons(g, adv, binds=PC_BINDS):
         return advance, draw
 
     def mouse_move(advance, *dirs):
-        """The mouse, no button pressed, with an arrow for each direction the prompt means."""
         def draw(pen):
             mouse_body(pen, advance / 2, Y0 + 30, Y1 - 30)
             off = (Y1 - Y0 - 60) * 0.33 + 70
@@ -330,30 +272,23 @@ def pc_icons(g, adv, binds=PC_BINDS):
                                                       (0xE044, 'L'), (0xE045, 'R'), (0xE046, 'ZL'), (0xE047, 'ZR'),
                                                       (0xE04B, 'PLUS'), (0xE04C, 'MINUS'), (0xE056, 'LCLICK'),
                                                       (0xE057, 'RCLICK'))},
-        # the d-pad: its four keys as a cross (up on top), or the keys of the directions the prompt means
         0xE049: grid([(du, 1, 0), (dl, 0, 1), (dd, 1, 1), (dr, 2, 1)], adv[0xE049]),
         0xE060: one(du, adv[0xE060]), 0xE061: one(dd, adv[0xE061]), 0xE062: one(dl, adv[0xE062]),
         0xE063: one(dr, adv[0xE063]), 0xE064: grid([(du, 0, 0), (dd, 0, 1)], adv[0xE064]),
         0xE065: grid([(dl, 0, 0), (dr, 1, 0)], adv[0xE065]),
-        # the left stick: its keys (W A S D)
         0xE05E: grid([(up, 1, 0), (left, 0, 1), (down, 1, 1), (right, 2, 1)], adv[0xE05E]),
         0xE052: one(up, adv[0xE052]), 0xE050: one(down, adv[0xE050]), 0xE05A: one(left, adv[0xE05A]),
         0xE058: one(right, adv[0xE058]), 0xE05C: grid([(up, 0, 0), (down, 0, 1)], adv[0xE05C]),
         0xE054: grid([(left, 0, 0), (right, 1, 0)], adv[0xE054]),
-        # the right stick: the mouse
         0xE05F: mouse_move(adv[0xE05F]), 0xE053: mouse_move(adv[0xE053], 'up'),
         0xE051: mouse_move(adv[0xE051], 'down'), 0xE05B: mouse_move(adv[0xE05B], 'left'),
         0xE059: mouse_move(adv[0xE059], 'right'), 0xE05D: mouse_move(adv[0xE05D], 'up', 'down'),
         0xE055: mouse_move(adv[0xE055], 'left', 'right'),
-        # the right stick shaken: the shake key
         0xE068: one(b['SHAKE'], adv[0xE068]),
     }
 
 
 def redraw_font(otf, icons, swaps=()):
-    """The OpenType font otf with the glyphs of each (code point, code point) pair of swaps trading places (outlines and
-    horizontal metrics), then every code point of icons (code point -> (advance, draw)) drawn anew, written again by
-    fontTools. The timestamps stay, so the same input gives the same bytes."""
     font = TTFont(io.BytesIO(otf), recalcTimestamp=False)
     assert font['head'].unitsPerEm == 1000, f'em of {font["head"].unitsPerEm} units, the drawings assume 1000'
     cff = font['CFF '].cff
@@ -377,20 +312,16 @@ def redraw_font(otf, icons, swaps=()):
     return out.getvalue()
 
 
-# ---- the button guide's images: square R8_UNORM masks (white key, black letter), one mip, block-linear, 72x72 up to
-# 1.2.1 and 108x108 in 1.4.3. Each is drawn from the icon of the same Switch button, fitted into the square.
 R8_UNORM, HUD_MARGIN, SUPERSAMPLE = 0x201, 4, 4
 
 
 def gob_offset(x, y, width_gobs, block_height):
-    """Byte offset of (x, y) in a Tegra block-linear surface of 1 byte per pixel (GOBs of 64 bytes x 8 rows)."""
     return ((y // (8 * block_height)) * 512 * block_height * width_gobs + (x // 64) * 512 * block_height
             + ((y % (8 * block_height)) // 8) * 512 + ((x % 64) // 32) * 256 + ((y % 8) // 2) * 64
             + ((x % 32) // 16) * 32 + (y % 2) * 16 + (x % 16))
 
 
 class PolygonPen(BasePen):
-    """Outlines flattened to closed polygons."""
     def __init__(self):
         super().__init__(None); self.polygons = []
 
@@ -415,7 +346,6 @@ class PolygonPen(BasePen):
 
 
 def rasterize(draw, size):
-    """A size x size coverage mask (0..255, rows top down) of draw's outline, fitted into the square, nonzero winding."""
     rec = RecordingPen(); draw(rec)
     box = BoundsPen(None); rec.replay(box); x0, y0, x1, y1 = box.bounds
     inner = size - 2 * HUD_MARGIN; scale = inner / max(x1 - x0, y1 - y0)
@@ -440,8 +370,6 @@ def rasterize(draw, size):
 
 
 def bntx_redraw(data, base, textures, icons):
-    """Paint the icon of each texture of textures (name without the ^ suffix -> code point; icons: code point ->
-    (advance, draw)) over its image in the BNTX at data[base:] (a bytearray), in place. Returns the names painted."""
     assert data[base:base + 4] == b'BNTX' and data[base + 0x20:base + 0x24] == b'NX  '
     count, table = struct.unpack_from('<IQ', data, base + 0x24)
     done = []
@@ -469,18 +397,13 @@ def bntx_redraw(data, base, textures, icons):
     return done
 
 
-# ---- the resource size table: System/Resource/ResourceSizeTable.Product.<n>.Nin_NX_NVN.rsizetable.zs, a RESTBL whose
-# entries are keyed by the CRC32 of the RomFS path without .zs. The game sizes the buffer it loads a file into from its
-# entry, so an archive that grew needs its entry raised by as much.
 def restbl_offsets(table):
-    """CRC32 of a path -> offset of its size in the RESTBL table."""
     assert table[:6] == b'RESTBL', 'not a RESTBL'
     count = struct.unpack_from('<I', table, 14)[0]
     return {struct.unpack_from('<I', table, 22 + i * 8)[0]: 22 + i * 8 + 4 for i in range(count)}
 
 
 def grow_restbl(table, growth):
-    """table with the entry of each RomFS path of growth (path -> bytes it grew) raised by that much."""
     at, out = restbl_offsets(table), bytearray(table)
     for path, extra in growth.items():
         h = zlib.crc32(path.removesuffix('.zs').encode())
