@@ -1,19 +1,4 @@
 # needs: clang
-"""The settings menu's draft names each setting NX2SARIA_ and its key (runtime/ui/option_rows.cpp norm_key), and every
-comparison of a name with the NX2SARIA_ or NX2NAVI_ prefix uses the prefix's own length.
-
-1. norm_key, cut out of option_rows.cpp with KEY_PREFIX and built with a small harness, gives NX2SARIA_HDR for HDR,
-   hdr, NX2SARIA_HDR, nx2saria_hdr and the earlier NX2NAVI_HDR, and the log's spelling (the name after KEY_PREFIX
-   characters) is HDR. When the rebrand made the prefix NX2SARIA_ (9 characters) but kept a length of 8 here, the draft
-   wrote NX2SARIA_NX2SARIA_HDR, a name no setting has: no change in the menu took effect.
-2. No strncmp, strncasecmp, memcmp or std::string compare in runtime/, launcher/native/ or tools/ compares a literal
-   starting with NX2 (any case) over a length other than the literal's, and option_rows.cpp cuts the prefix from a key
-   only through KEY_PREFIX.
-
-No GPU, no game files, any Python.
-
-Usage: draft_key_check.py
-"""
 import os
 import re
 import shutil
@@ -53,13 +38,11 @@ int main() {
 }
 '''
 
-# strncmp(a, "lit", n), strncasecmp(a, "lit", n), memcmp(a, "lit", n), and s.compare(0, n, "lit")
 CALL = re.compile(r'\b(?:strncmp|strncasecmp|_strnicmp|memcmp)\s*\([^;"]*?"((?i:nx2)[^"\\]*)"\s*,\s*(\d+)\s*\)')
 COMPARE = re.compile(r'\.compare\s*\(\s*0\s*,\s*(\d+)\s*,\s*"((?i:nx2)[^"\\]*)"\s*\)')
 
 
 def compiler():
-    """$CXX, else MSYS2 UCRT64's clang++, else clang++ on PATH."""
     if os.environ.get('CXX'):
         return os.environ['CXX']
     if os.name == 'nt' and (MSYS_BIN / 'clang++.exe').exists():
@@ -68,7 +51,6 @@ def compiler():
 
 
 def cut(src):
-    """option_rows.cpp's KEY_PREFIX line and norm_key."""
     prefix = re.search(r'^constexpr size_t KEY_PREFIX = .*\n', src, re.M)
     fn = re.search(r'^std::string norm_key\(const char \*key\) \{\n.*?\n\}\n', src, re.M | re.S)
     assert prefix and fn, 'runtime/ui/option_rows.cpp: KEY_PREFIX or norm_key was not found'
@@ -76,7 +58,6 @@ def cut(src):
 
 
 def lengths():
-    """Every prefix comparison with a literal starting NX2 whose length is not the literal's."""
     bad = []
     files = [p for d in ('runtime', 'launcher/native', 'tools') for p in (ROOT / d).rglob('*')
              if p.suffix in ('.c', '.cpp', '.h') and 'third_party' not in p.parts and 'vendor' not in p.parts]

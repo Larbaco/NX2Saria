@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/tex_detail_check.c: runtime/vk/vk_tex_detail.h, the level texture_detail = auto picks for a video
-memory budget, on a card with memory of its own and on an integrated GPU (vk_texture.c vk_texture_detail_auto).
-
-No GPU, no game files, any Python.
-
-Usage: tex_detail_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

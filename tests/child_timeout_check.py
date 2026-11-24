@@ -1,19 +1,4 @@
 # needs: windows
-"""Check how a translator child that stops answering is handled (runtime/platform/win32.c plat_child_read,
-runtime/gfx/gfx_shader.c child_exchange_raw and svc_request). The check cuts the child functions out of win32.c and the
-request functions out of gfx_shader.c, builds them with PLAT_CHILD_READ_MS at 300 ms (platform.h lets a build set it)
-and runs three children through them:
-
-- a child that keeps its pipe open and never writes: plat_child_read gives -2 after the timeout, and svc_request
-  gives -1 having started one child, so a stuck translator holds its caller one timeout, not two;
-- a child that exits at once: the read fails with a broken pipe (0 or -1) at once, and svc_request restarts it once
-  and gives 0;
-- a child that answers one line: svc_request gives 1 and the line without its line end.
-
-Windows only (the child functions are win32.c's). No GPU, no game files, any Python.
-
-Usage: child_timeout_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -26,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -40,7 +24,6 @@ def struct_named(src, name):
 
 
 def extract(src, head, tail=''):
-    """The text from head through its brace-balanced body (plus tail)."""
     i = src.index(head)
     j = src.index('{', i)
     depth = 0

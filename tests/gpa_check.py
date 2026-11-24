@@ -1,10 +1,4 @@
 # needs: clang, vma
-"""Build and run tests/gpa_check.c: runtime/vk/vk_gpa.c's device address table, with blocks given back and taken again.
-
-Needs the Vulkan headers and vk_mem_alloc.h (docs/building.md), no GPU and no game files.
-
-Usage: gpa_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -17,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

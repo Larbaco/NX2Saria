@@ -1,30 +1,4 @@
 # needs: clang
-"""Build and run tests/cfg_parse_check.c: runtime/cfg/cfg.c's reading of the settings file and environment, against stand-ins
-for what it links with. What the readers get and what the log says about the values:
-
-- a comment after a value (cfg.c cut_comment): cut at a blank followed by ';' or '#' for a key whose row has a set of
-  values, the line logged once with its line number, "key = ; note" left unset; kept whole in free text (a row
-  without a set, a key without a row), in a value in double quotes and in the environment, where the log still says
-  it is part of the value; at most 16 lines, then a count;
-- switches written as words (cfg.c switch_word, cfg_bool): false, off and no in any case read as 0 and true, on and
-  yes as 1 through cfg_get, cfg_bool and cfg_int, from the file and from the environment, with no line about them;
-  the switch of the low-end GPU mode, which is gone (cfg.c lowend_set), takes the same words for its one log line
-  and turns nothing on: the mode's keys keep their own defaults and are read by themselves;
-- values outside their rows' sets (cfg.c check_value): a 0|1 switch with another value, a number outside its range, a
-  word that is none of the menu's choices, each named with its line; none for a file whose values fit, nor for a list
-  with numbers in it (the menu's presets); at most 16 lines, then a count;
-- a full settings table (cfg.c CFG_MAX_KEYS): one line at load naming the first key not read, one at the first menu
-  change not kept;
-- a number read of a key without a row whose set value does not parse gives 0 (cfg.c default_number), not a crash.
-- a test hook's values (cfg.c cfg_set_test, ui/menu.cpp NX2SARIA_MENU_TEST_SET) are read like any other but no save
-  writes them, the one at exit included, with one log line each time their count changes; a player's change beside
-  them is written alone, a player's cfg_set of a test key makes it the player's, and cfg_test_keep (the hook's SAVE=1)
-  lets the next save write the rest.
-
-No game files.
-
-Usage: cfg_parse_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -121,13 +95,10 @@ def main():
             bad += 1
             print(out)
 
-    # values that fit: no line about them
     rc, out = run(exe, env, 'load', CLEAN, work)
     lines = [l for l in out.splitlines() if l.startswith('log: cfg:') and '=' in l and 'line' in l]
     check(rc == 0 and not lines, 'a file whose values fit logs nothing about them', out)
 
-    # values that do not: one line each, with the line number; a comment after a value of a row with a set: cut, and
-    # one line
     rc, out = run(exe, env, 'load', BAD, work, {'NX2SARIA_SHARPNESS': '500', 'NX2SARIA_VK_PRESENT': 'fifo'})
     want = [
         "line 2: pace_smooth = '0', and '; off' after it is a comment",
@@ -151,7 +122,6 @@ def main():
     check('NX2SARIA_VK_PRESENT' not in out, 'an environment value that fits is not logged', out)
     check("got: pace_smooth '0'" in out, 'the value is read without its comment', out)
 
-    # what the readers get: switches written as words, cut comments, free text kept whole, the environment as written
     rc, out = run(exe, env, 'read', READ, work, {'NX2SARIA_DYN_RES': 'TRUE', 'NX2SARIA_SHADOW_PCF': '0 ; env note'})
     got = {l.split()[1]: l.split(' ', 2)[2] for l in out.splitlines() if l.startswith('got: ')}
     want = {'PACE_SMOOTH': "'0' bool 0 int 0", 'FULLSCREEN': "'0' bool 0 int 0", 'RTSS': "'0' bool 0 int 0",
@@ -169,7 +139,6 @@ def main():
     check("the environment's NX2SARIA_SHADOW_PCF = '0 ; env note' is not 0, 1, on, off, true, false, yes or no; a ';' "
           "or '#' after the value is part of it" in out, "the environment's comment stays in its value", out)
 
-    # at most 16 lines, then a count
     many = '\n'.join(f'sharpness = {200 + i}' if i % 2 else f'fullscreen = no{i}' for i in range(2)) + '\n'
     many = ''.join(f'[s{i}]\nsharpness = {200 + i}\n' for i in range(1)) + ''.join(
         f'{k} = 7\n' for k in ('fullscreen', 'pace_smooth', 'vk_present', 'sharpness', 'color_gamma', 'perf_overlay',
@@ -184,7 +153,6 @@ def main():
     listed = sum(1 for l in out.splitlines() if 'after it is a comment' in l)
     check(rc == 0 and listed == 16 and '4 more comments after a value are not listed' in out,
           f'20 comments after values: {listed} lines and a count', out)
-    # more keys than the table holds: one line at load, one for the menu's changes
     full = ''.join(f'cheat_{0x1000 + i:08x} = 1\n' for i in range(600)) + 'low_latency = 1\n'
     rc, out = run(exe, env, 'full', full, work)
     load_lines = [l for l in out.splitlines() if 'has more than 512 keys' in l]
@@ -193,9 +161,6 @@ def main():
           'a file with 601 keys: one line at load from line 513 on', out)
     check(rc == 0 and len(set_lines) == 1 and 'VK_PRESENT is not kept' in set_lines[0],
           'two menu changes past a full table: one line', out)
-    # the switch of the low-end GPU mode, which is gone (cfg.c lowend_set): on, it turns none of the mode's keys on and
-    # gives none another default, and the log says once that the line does nothing; the same words as cfg_bool, from
-    # the file and from the environment. The mode's keys are read by themselves, with or without the switch.
     gone = 'the low-end GPU mode was removed'
     unset = "mesh_emulation '(unset)' vram_reserve_mb '(unset)' default '0'"
     for text, extra, want, said in (
@@ -216,7 +181,6 @@ def main():
     rc, out = run(exe, env, 'norow', CLEAN, work, {'NX2SARIA_NO_ROW_CHECK': 'abc'})
     check(rc == 0 and 'got: cfg_int 0 cfg_double 0' in out, 'cfg_int of a set, unparsable key without a row: 0', out)
 
-    # a test hook's values stay out of the settings file until SAVE=1 (cfg_set_test, cfg_test_keep)
     rc, out = run(exe, env, 'testset', '[display]\nfullscreen = 0\n', work)
     seg = dict(zip(['start', '1', '2', '3', '4', '5', '6', '7'], out.split('--- save ')))
     writes = {k: [l for l in v.splitlines() if l.startswith('write: ')] for k, v in seg.items()}
@@ -243,7 +207,6 @@ def main():
     check(rc == 0 and 'vsync = 0' in text.get('7', ''),
           "a test value equal to the player's unsaved change leaves that change the player's", out)
 
-    # The new environment spelling wins deterministically; the legacy spelling still supplies a value when it is alone.
     rc, out = run(exe, env, 'read', READ, work,
                   {'NX2SARIA_FULLSCREEN': '1', 'NX2NAVI_FULLSCREEN': '0'})
     check(rc == 0 and "got: FULLSCREEN '1' bool 1 int 1" in out,
@@ -256,9 +219,6 @@ def main():
     check(rc == 0 and "got: FULLSCREEN '1' bool 1 int 1" in out,
           'legacy NX2NAVI_ environment spelling remains supported', out)
 
-    # The older NX2NAVI_ names: an environment variable and a settings file key so written still apply, the current
-    # NX2SARIA_ variable wins over the older one, the environment over the file, and the log names each older name once
-    # (cfg.c older_env, older_file_key), however often the file is read.
     OLDER = '[display]\nNX2NAVI_SHARPNESS = 70\nfps_limit = 90\n'
     env_line = 'log: cfg: NX2NAVI_FULLSCREEN read under its older name; NX2SARIA_FULLSCREEN is the current one'
     file_line = 'log: cfg: settings file line 2: NX2NAVI_SHARPNESS read under its older name; sharpness is the current one'
@@ -276,9 +236,6 @@ def main():
     check(rc == 0 and "got: SHARPNESS '70'" in out and 'older name' not in out and 'is not read' not in out,
           'the current names give no older-name line', out)
 
-    # cfg_init (find_ini) chooses the adjacent nx2saria.ini, renames an existing install's nx2navi.ini to it when there is
-    # none, keeps reading nx2navi.ini under its old name when the rename is refused, and selects nx2saria.ini for a fresh
-    # install without either file.
     game = work / 'nearby-game'
     game.mkdir(exist_ok=True)
     for old in game.glob('*.ini'):

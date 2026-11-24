@@ -1,19 +1,3 @@
-// The order of uniform snapshot drops between replay chunks, on the real vk_usnap.c, without a GPU.
-//
-// A draw that writes guest memory as storage drops the snapshot regions it touches (vk_usnap_drop) from its place in
-// the stream on (vk_exec_stream_pos: its group and chunk), and a later uniform binding of that memory then reads the
-// live bytes, which hold the GPU's result when the draw runs. The chunks of a group, and with NX2SARIA_REPLAY_PIPE the
-// chunks of the groups after it, record at the same time. Two orders are forced here with barriers:
-// - early: a later chunk of the same group has dropped the region already when an earlier chunk looks it up. The
-//   earlier draw must still bind the snapshot: live memory holds what the game wrote after the submit.
-// - stale: an earlier chunk's drop has not run yet when a later chunk looks the region up, so the later draw binds the
-//   snapshot and reads the bytes as of the submit instead of the earlier draw's result. This one is known and left
-//   open (docs/thread-sanitizer.md "Replay hazards"): the runtime counts the chunks' drops into copied ranges, its
-//   precondition, and none happened in the scenes measured. The probe expects the wrong read, so a change that fixes
-//   it shows here.
-// Each case also runs in the stream's own order (the control, which must read the right value). The value a draw reads
-// is the snapshot's bytes when vk_usnap_find hands out the copy, else what live memory holds when the GPU runs the
-// draw, in stream order.
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -23,7 +7,7 @@
 #include "../runtime/vk/vk_usnap.c"
 
 static pthread_mutex_t test_lock = PTHREAD_MUTEX_INITIALIZER;
-static _Thread_local uint64_t test_pos;   // the thread's place in the stream: group << 5 | chunk (vk_exec_stream_pos)
+static _Thread_local uint64_t test_pos;
 static _Thread_local int test_chunk;
 
 void plat_mutex_lock(PlatMutex *m) { (void)m; pthread_mutex_lock(&test_lock); }
@@ -39,11 +23,11 @@ void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_fatal(const char *fmt, ...) { (void)fmt; abort(); }
 
 #define BASE 0x100000ull
-#define OLD 0x11111111u    // guest memory at the submit: the snapshot's copy
-#define LATE 0x22222222u   // what the game wrote into the block after the submit, before the GPU ran the draws
-#define NEW 0x33333333u    // what the storage-writing draw stores
+#define OLD 0x11111111u
+#define LATE 0x22222222u
+#define NEW 0x33333333u
 #define POS(group, chunk) ((uint64_t)(group) << 5 | (uint64_t)(chunk))
-#define SUBMITTER(groups_out) POS(groups_out, 31)   // the submitting thread past that many groups
+#define SUBMITTER(groups_out) POS(groups_out, 31)
 
 static uint8_t arena_bytes[256];
 static Arena arena;
@@ -61,10 +45,10 @@ static void fresh(void) {
 
 typedef struct {
     uint64_t pos;
-    int writes;              // the draw writes the block as storage (drops it), else binds it as uniforms
-    int first;               // takes its step before the other thread's: 1, or after: 0
-    uint32_t live_at_gpu;    // live memory when the GPU runs this draw (stream order)
-    uint32_t read;           // the value the draw reads
+    int writes;
+    int first;
+    uint32_t live_at_gpu;
+    uint32_t read;
     pthread_barrier_t *b;
 } Step;
 
@@ -75,7 +59,7 @@ static void *step_main(void *arg) {
     if (c->writes) {
         vk_usnap_drop(BASE, 0x100);
     } else {
-        const uint8_t *s = vk_usnap_bytes(BASE + 0x40, 4);   // the uniform binding: the snapshot, or live memory
+        const uint8_t *s = vk_usnap_bytes(BASE + 0x40, 4);
         if (s) memcpy(&c->read, s, 4);
         else c->read = c->live_at_gpu;
     }
@@ -83,8 +67,6 @@ static void *step_main(void *arg) {
     return NULL;
 }
 
-// The writer at stream place wpos and the reader at rpos; reader_first chooses who takes its step first. Returns the
-// value the reader's draw read.
 static uint32_t run(uint64_t wpos, uint64_t rpos, int reader_first, uint32_t live) {
     fresh();
     pthread_barrier_t b;
@@ -101,7 +83,6 @@ static uint32_t run(uint64_t wpos, uint64_t rpos, int reader_first, uint32_t liv
 
 static int failures;
 
-// expect_right: the read must be the stream order's value; else the case is the known open one and must read wrong.
 static void check(const char *name, uint32_t got, uint32_t want, int expect_right) {
     int right = got == want;
     int ok = right == expect_right;
@@ -111,21 +92,16 @@ static void check(const char *name, uint32_t got, uint32_t want, int expect_righ
 }
 
 int main(void) {
-    // early: the writer is later in the stream (chunk 1 of group 5, the reader chunk 0 of the same group); the reader's
-    // draw runs before the write, and live memory then holds the game's later bytes: the right value is the snapshot.
     check("early, same group: control (read ran first)", run(POS(5, 1), POS(5, 0), 1, LATE), OLD, 1);
     check("early, same group: later chunk's drop ran first", run(POS(5, 1), POS(5, 0), 0, LATE), OLD, 1);
     check("early, later group's drop ran first", run(POS(6, 0), POS(5, 0), 0, LATE), OLD, 1);
     check("early, the submitting thread's drop past the group", run(SUBMITTER(5), POS(5, 3), 0, LATE), OLD, 1);
-    // stale: the writer is earlier in the stream; the reader's draw runs after the write on the GPU, so the right
-    // value is NEW. The controls run the drop first; the forced orders are the known open case.
     check("stale, same group: control (write ran first)", run(POS(5, 0), POS(5, 1), 0, NEW), NEW, 1);
     check("stale, next group (REPLAY_PIPE): control", run(POS(5, 0), POS(6, 0), 0, NEW), NEW, 1);
     check("stale, submitting thread behind a group: control", run(POS(5, 0), SUBMITTER(5), 0, NEW), NEW, 1);
     check("stale, same group: earlier chunk's drop not run yet", run(POS(5, 0), POS(5, 1), 1, NEW), NEW, 0);
     check("stale, next group: earlier group's drop not run yet", run(POS(5, 0), POS(6, 0), 1, NEW), NEW, 0);
     check("stale, submitting thread behind: drop not run yet", run(POS(5, 0), SUBMITTER(5), 1, NEW), NEW, 0);
-    // the chunks' drops into copied ranges are counted (the stale case's precondition); the submitting thread's are not
     run(POS(5, 0), POS(5, 1), 0, NEW);
     int counted = (int)U.chunk_drops;
     run(SUBMITTER(5), POS(6, 0), 0, NEW);

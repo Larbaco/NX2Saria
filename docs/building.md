@@ -495,7 +495,7 @@ On Windows the interpreters are `.venv\Scripts\python` and `.venv-py314\Scripts\
 A test says what it needs in a comment line of its own file, `# needs: windows`, `# needs: clang, py:unicorn`, and the
 runner skips it, with that reason, where it is missing: the operating system, the game's extracted files (`game`) or
 executable (`exe`), the shader translator (`xlate`), a GPU, a display, clang, SDL3's development files, VMA, Vulkan
-headers of 1.4 or later, a Python module, a file. The top of `tests/run.py` lists them. `--with` and `--without`
+headers of 1.4 or later, a Python module, a file. [code/tests.md](code/tests.md) lists them, under `tests/run.py`. `--with` and `--without`
 take a requirement as present or missing. A test that needs command-line arguments gives them in an `# args:` line.
 A new test needs nothing more than its name: the runner finds it.
 

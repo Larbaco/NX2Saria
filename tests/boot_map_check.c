@@ -1,10 +1,3 @@
-// runtime/patches/boot_map_core.h: the byte changes of a boot map, on made-up files. Built and run by tests/boot_map_check.py;
-// prints each failed check and exits 1 on any failure.
-//
-// The title's graph gets its command Root moved to the Sequential of a Simultaneous and TitleToMainWithLoadSave.module,
-// and refuses a graph without exactly that; the slot's graph gets both Index inputs made the slot; a save gets the
-// area, position, heading, dungeon room, age and clock, whichever way its reads are cut; the file menu's dates order
-// the slots; the heading, the time and the age of an area name read as the game has them.
 #include "boot_map_core.h"
 
 static int fails;
@@ -13,7 +6,6 @@ static int fails;
 static void put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
 static void put16(uint8_t *p, uint16_t v) { memcpy(p, &v, 2); }
 
-// ---- a made-up AINB 0x408: one command, nodes with names, children and int inputs
 typedef struct {
     int type;
     const char *name;
@@ -34,7 +26,6 @@ static uint32_t pool_add(char *pool, uint32_t *pn, const char *s) {
     return at;
 }
 
-// Lays out the graph: header, the command, the nodes, their bodies and links, the int inputs, the pool.
 static void build(const TNode *t, int n, int root, const char *cmd, uint32_t version) {
     char pool[2048];
     uint32_t pn = 0;
@@ -48,7 +39,7 @@ static void build(const TNode *t, int n, int root, const char *cmd, uint32_t ver
     size_t nodes = 0x8c, at = nodes + 0x3c * (size_t)n, inputs_total = 0;
     for (int i = 0; i < n; i++) inputs_total += (size_t)t[i].nin;
     size_t bodies = at;
-    for (int i = 0; i < n; i++) at += 0xa4 + 4 * (size_t)t[i].nchild + 4 * (size_t)t[i].nchild;   // body, offsets, links
+    for (int i = 0; i < n; i++) at += 0xa4 + 4 * (size_t)t[i].nchild + 4 * (size_t)t[i].nchild;
     size_t io = at, in_at = io + 48;
     put32(g + 0x34, (uint32_t)io);
     put32(g + io, (uint32_t)in_at), put32(g + io + 4, (uint32_t)(in_at + 0x10 * inputs_total));
@@ -60,7 +51,7 @@ static void build(const TNode *t, int n, int root, const char *cmd, uint32_t ver
         put32(nd + 8, pool_add(pool, &pn, t[i].name));
         put32(nd + 0x14, (uint32_t)b);
         put32(g + b + 0x30, (uint32_t)in_first), put32(g + b + 0x34, (uint32_t)t[i].nin);
-        g[b + 0x90 + 4] = (uint8_t)t[i].nchild, g[b + 0x90 + 5] = 0;   // kind 2: count, first
+        g[b + 0x90 + 4] = (uint8_t)t[i].nchild, g[b + 0x90 + 5] = 0;
         for (int j = 0; j < t[i].nchild; j++) {
             size_t link = b + 0xa4 + 4 * (size_t)t[i].nchild + 4 * (size_t)j;
             put32(g + b + 0xa4 + 4 * j, (uint32_t)link);
@@ -85,10 +76,10 @@ static void build(const TNode *t, int n, int root, const char *cmd, uint32_t ver
 static void title_checks(void) {
     TNode t[5] = {
         {0, "TitleToMainWithLoadSave.module", {0}, 0, {{0}}, 0},
-        {3, "", {0}, 0, {{0}}, 0},           // what Root starts: the title
-        {3, "", {0}, 0, {{0}}, 0},           // the scene transition's pause
-        {2, "", {2, 0}, 2, {{0}}, 0},        // Continue, Yes
-        {2, "", {1}, 1, {{0}}, 0},           // another Sequential
+        {3, "", {0}, 0, {{0}}, 0},
+        {3, "", {0}, 0, {{0}}, 0},
+        {2, "", {2, 0}, 2, {{0}}, 0},
+        {2, "", {1}, 1, {{0}}, 0},
     };
     BmEdit e;
     char why[160] = "";
@@ -107,7 +98,7 @@ static void title_checks(void) {
     two[5] = (TNode){2, "", {2, 0}, 2, {{0}}, 0};
     build(two, 6, 1, "Root", 0x408);
     CHECK(!bm_ainb_title_edit(g, g_n, &e, why, sizeof why), "two Sequentials of the load are refused");
-    t[3].children[0] = 4;   // its first child no Simultaneous
+    t[3].children[0] = 4;
     build(t, 5, 1, "Root", 0x408);
     CHECK(!bm_ainb_title_edit(g, g_n, &e, why, sizeof why), "a Sequential whose first child is no Simultaneous is not taken");
     build(t, 5, 1, "Root", 0x408);
@@ -148,7 +139,6 @@ static void slot_checks(void) {
     CHECK(!bm_ainb_slot_edits(g, g_n, 4, e, why, sizeof why), "a missing node is refused");
 }
 
-// ---- a made-up save: the header, the pairs by type, the data area
 static size_t make_save(uint8_t *s, const char *area, int with_clock) {
     memset(s, 0, 1024);
     put32(s, 0x01020304), put32(s + 4, 0x2d80eb);
@@ -179,7 +169,6 @@ static void save_checks(void) {
     char why[160] = "";
     int k = bm_save_edits(s, n, &p, e, why, sizeof why);
     CHECK(k == 6, "six edits: %d (%s)", k, why);
-    // reads cut at every size from 1 to 64 bytes give the same file
     for (size_t step = 1; step <= 64; step++) {
         for (size_t at = 0; at < n; at += step) {
             size_t len = at + step < n ? step : n - at;
@@ -203,7 +192,6 @@ static void save_checks(void) {
               "reads of %zu bytes: area %d pos %g %g %g yaw %g room %d child %u clock %u day %u", step, area_ok, pos[0],
               pos[1], pos[2], yaw, (int32_t)room, child, secs, bm_u32(read + v + 4));
     }
-    // the same file gives the same edits, whatever the unused bytes of the lists hold; another place does not
     {
         BmEdit a[8], b[8];
         memset(a, 0x11, sizeof a), memset(b, 0x77, sizeof b);
@@ -214,11 +202,9 @@ static void save_checks(void) {
         nb = bm_save_edits(s, n, &q, b, why, sizeof why);
         CHECK(!bm_edits_same(a, na, b, nb), "another position does not match");
     }
-    // the save's own area, no age and no time asked: the area, position, heading and dungeon room
     p.area = "WaterTemple", p.child = -1, p.day_seconds = -1;
     k = bm_save_edits(s, n, &p, e, why, sizeof why);
     CHECK(k == 4, "the save's area, nothing else: %d", k);
-    // a save without the clock refuses a time, and is fine without one
     n = make_save(s, "WaterTemple", 0);
     p.day_seconds = 3600;
     CHECK(!bm_save_edits(s, n, &p, e, why, sizeof why), "a time without a clock in the save is refused");
@@ -236,7 +222,7 @@ static size_t make_caption(uint8_t *s, int y, int mo, int d, int h, int mi, int 
     const char *names[6] = {"CaptionData.Date.Year", "CaptionData.Date.Month", "CaptionData.Date.Day",
                             "CaptionData.Date.Hour", "CaptionData.Date.Minute", "CaptionData.Date.Second"};
     int v[6] = {y, mo, d, h, mi, se};
-    for (int k = 5; k >= 0; k--) put32(s + o, bm_hash(names[k])), put32(s + o + 4, (uint32_t)v[k]), o += 8;   // any order
+    for (int k = 5; k >= 0; k--) put32(s + o, bm_hash(names[k])), put32(s + o + 4, (uint32_t)v[k]), o += 8;
     put32(s + 8, o);
     return o;
 }

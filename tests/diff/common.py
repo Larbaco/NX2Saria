@@ -1,7 +1,4 @@
-"""Shared parts of the differential tests: Unicorn reference, operand generators, build and run of harness.c.
-
-Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-"""
+# Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
 import os
 import shutil
 import struct
@@ -19,7 +16,6 @@ sys.path.insert(0, str(ROOT / 'recomp'))
 BUF, BUF_SIZE = 0x7200000000, 0x40000
 UC_INVALID = (uc.UC_ERR_INSN_INVALID, uc.UC_ERR_EXCEPTION)
 
-# Record layouts of struct In / struct Out in harness.c.
 IN_FMT = '<QQ32QQQ'
 IN_TAIL = '<QQ'
 OUT_SIZE = 32 * 8 + 4 * 8 + 32 * 16
@@ -60,7 +56,6 @@ def mnemonic(w):
 
 
 def rand_lane(r, sz):
-    """Random interesting integer lane of 8 << sz bits."""
     bits_ = 8 << sz
     k = r.random()
     if k < 0.35:
@@ -117,7 +112,7 @@ def rand_v(r):
             out |= rand_lane(r, sz) << ((8 << sz) * i)
     else:
         out = r.getrandbits(128)
-    if r.random() < 0.15:  # upper half zero, like most 64-bit results
+    if r.random() < 0.15:
         out &= (1 << 64) - 1
     return out
 
@@ -145,20 +140,17 @@ def rand_fpcr(r):
         return 0
     v = 0
     if r.random() < 0.4:
-        v |= 1 << 25  # DN
+        v |= 1 << 25
     if r.random() < 0.4:
-        v |= 1 << 24  # FZ
+        v |= 1 << 24
     if r.random() < 0.4:
-        v |= r.randrange(4) << 22  # RMode
+        v |= r.randrange(4) << 22
     if r.random() < 0.15:
-        v |= 1 << 26  # AHP
+        v |= 1 << 26
     return v
 
 
 class Emu:
-    """Unicorn as a Cortex-A57, the Switch's CPU, unless another model is given (LSE atomics need
-    UC_CPU_ARM64_MAX). Images are (base, bytes) pairs mapped at their guest address."""
-
     def __init__(self, images, model=A.UC_CPU_ARM64_A57):
         mu = uc.Uc(uc.UC_ARCH_ARM64, uc.UC_MODE_ARM)
         mu.ctl_set_cpu_model(model)
@@ -166,14 +158,13 @@ class Emu:
         for base, data in images:
             mu.mem_map(base, (len(data) + 0xFFFF) & ~0xFFFF)
             mu.mem_write(base, bytes(data))
-        mu.reg_write(A.UC_ARM64_REG_CPACR_EL1, 0x300000)  # enable FP/SIMD
+        mu.reg_write(A.UC_ARM64_REG_CPACR_EL1, 0x300000)
         self.mu = mu
         self.xregs = [A.UC_ARM64_REG_X0 + i for i in range(29)] + [A.UC_ARM64_REG_X29, A.UC_ARM64_REG_X30]
         self.qregs = [A.UC_ARM64_REG_Q0 + i for i in range(32)]
         self.out_regs = self.xregs + [A.UC_ARM64_REG_SP, A.UC_ARM64_REG_NZCV, A.UC_ARM64_REG_PC] + self.qregs
 
     def run(self, pc, fpcr, x, sp, nzcv, v, count=1):
-        """Run count instructions from pc. Returns (x[31], sp, nzcv, pc, v[32])."""
         mu = self.mu
         mu.reg_write_batch(list(zip(self.xregs, x[:31])) + list(zip(self.qregs, v)) +
                            [(A.UC_ARM64_REG_SP, sp), (A.UC_ARM64_REG_NZCV, nzcv), (A.UC_ARM64_REG_FPCR, fpcr)])
@@ -192,7 +183,6 @@ def compiler():
 
 
 def build_harness(work, bodies, jobs, cflags):
-    """Compile one C function per test body plus harness.c into work/harness[.exe]."""
     cc = compiler()
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
@@ -213,7 +203,6 @@ def build_harness(work, bodies, jobs, cflags):
         f.write(''.join(f'void t{k}(Cpu *c);\n' for k in range(len(bodies))))
         f.write('GuestFn tests[] = {' + ','.join(f't{k}' for k in range(len(bodies))) + '};\n')
         f.write(f'int ntests = {len(bodies)};\n')
-    # fma.c: a --cflags=-march=x86-64-v2 run must exercise the software fma the v2 build links, not the C runtime's.
     srcs += [work / 'table.c', ROOT / 'tests' / 'diff' / 'harness.c', ROOT / 'runtime' / 'fma.c']
     objs, procs = [], []
     for s in srcs:
@@ -223,8 +212,6 @@ def build_harness(work, bodies, jobs, cflags):
     if any(p.wait() for p in procs):
         raise SystemExit('compile failed')
     exe = work / ('harness.exe' if os.name == 'nt' else 'harness')
-    # lld when the toolchain has it beside the compiler; its default linker otherwise (an MSYS2 install without the lld
-    # package stopped every differential test at "invalid linker name")
     cc_dir = os.path.dirname(shutil.which(cc, path=env.get('PATH')) or cc)
     lld = ['-fuse-ld=lld'] if any(os.path.isfile(os.path.join(cc_dir, n)) for n in ('ld.lld', 'ld.lld.exe')) else []
     subprocess.check_call([cc, *lld, '-o', str(exe)] + [str(o) for o in objs], env=env)
@@ -232,7 +219,6 @@ def build_harness(work, bodies, jobs, cflags):
 
 
 def write_cases(path, cases, stubs=False):
-    """cases: (k, fpcr, x[31], sp, nzcv, v[32], memchk). stubs: calls go to harness.c's call stub (rt_stub)."""
     with open(path, 'wb') as f:
         for k, fpcr, x, sp, nzcv, v, memchk in cases:
             f.write(struct.pack(IN_FMT, k, fpcr, *(list(x[:31]) + [0]), sp, nzcv))
@@ -242,7 +228,6 @@ def write_cases(path, cases, stubs=False):
 
 
 def run_harness(exe, work, buf0, cases, images, stubs=False):
-    """Run the lifted tests. Returns (records, stderr tail or None). images: (base, path) pairs."""
     with open(work / 'buf.bin', 'wb') as f:
         f.write(buf0)
     write_cases(work / 'cases.bin', cases, stubs)
@@ -264,7 +249,6 @@ def run_harness(exe, work, buf0, cases, images, stubs=False):
 
 
 def diff_state(got, want, check_pc, check_mem, check_nzcv=True):
-    """got: harness record; want: (x, sp, nzcv, pc, v, mem). Returns a list of mismatches."""
     hx, hsp, hnz, hpc, hmem, hv = got
     ex, esp, enz, epc, ev, emem = want
     d = [f'x{j}: got {hx[j]:x} want {ex[j]:x}' for j in range(31) if hx[j] != ex[j]]

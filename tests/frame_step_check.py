@@ -1,9 +1,4 @@
 # needs: clang
-"""Build and run tests/frame_step_check.c: the step runtime/pacing/frame_rate.c gives Ocarina, with the rest of the runtime
-stubbed. No game files: the module layout the runtime includes is a stand-in written to the test's build folder.
-
-Usage: frame_step_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,10 +13,8 @@ from patches import load  # noqa: E402
 from tools.check_content import GENERATED_MARKER  # noqa: E402
 import runtime_include
 
-PAGE = 0x4ea0000   # the patch page of 1.1.1, main+0x4ea0000
-# The sites that call frame_rate.c's hosts, as recomp/patches-v111.txt has them: set, module offset, the original word,
-# the words before the bl (the original's own, where the host comes after it), the page offset the bl reaches.
-FDIV = 0x1e201900   # fdiv s0, s8, s0
+PAGE = 0x4ea0000
+FDIV = 0x1e201900
 HOST_SITES = [('ostep', 0x3cdfc0, 0x1e380008, [], 0xf60), ('ostep', 0x475f8, 0x1e380009, [], 0xf50),
               ('owater', 0x3876014, FDIV, [FDIV], 0xf20), ('owater', 0x38827f8, FDIV, [FDIV], 0xf20),
               ('owater', 0x632cfc, FDIV, [FDIV], 0xf20),
@@ -45,7 +38,6 @@ LAYOUT = '''// A stand-in for the generated layout.h (tests/frame_step_check.py)
 
 
 def check_sites():
-    """Each host site is its listed words and one bl to its page slot, over its original word."""
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', 0x7000000000, PAGE)])
     bad = 0
     for name, site, original, before, slot in HOST_SITES:
@@ -60,12 +52,9 @@ def check_sites():
     return bad
 
 
-# The solver step count's words at the step setup's first copy (main+0x38aebe4..0x38aebf4; the second copy at
-# main+0x38afd10 has the same words): the original's, the set osolver's and the set osolverfull's, lifted as the
-# generator lifts them into one C function each, with the scvtf between them (main+0x38aebec) that every variant keeps.
 SOLVER_SITES = (0x38aebe4, 0x38aebf0, 0x38aebf4)
 SOLVER_COPY = (0x38afd10, 0x38afd1c, 0x38afd20)
-SCVTF = 0x5e21d821   # scvtf s1, s1
+SCVTF = 0x5e21d821
 
 
 def solver_functions():
@@ -96,17 +85,13 @@ def solver_functions():
     return '\n'.join(out)
 
 
-# The floor-carry gate of the three follow-surface modules (set ofollow): mov w8, #100.0 and fmov s1, w8 before the
-# game's fcmp s0, s1 (s0 the physics' inverse step) and the b.gt to the tenth of the floor's velocity. The set makes the
-# two words adrp x8, page and ldr s1, [x8, #260]; the test lifts the load and the fcmp with x8 set to its page.
 FOLLOW_SITES = (0x13d704, 0x13a064, 0x389ac20)
-FOLLOW_GAME = (0x52a85908, 0x1e270101)   # mov w8, #0x42c80000; fmov s1, w8
-FOLLOW_LOAD = 0xbd410501                 # ldr s1, [x8, #260]
-FCMP = 0x1e212000                        # fcmp s0, s1
+FOLLOW_GAME = (0x52a85908, 0x1e270101)
+FOLLOW_LOAD = 0xbd410501
+FCMP = 0x1e212000
 
 
 def check_follow():
-    """Each gate's two words are the set ofollow's adrp to the page in x8 and its load of +260, over the game's."""
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', 0x7000000000, PAGE)])
     names = {i: t[0] for i, t in enumerate(table.sets)}
     bad = 0
@@ -133,17 +118,12 @@ def follow_functions():
     return '\n'.join(out)
 
 
-# The playback staff's note gate (set ostaff): after the read of the melody's note signal (main+0x3297b50, 0 or 1 in
-# w0) at main+0x3292c84 and main+0x3292ed4, the set keeps the signal on the page (+776, through x9 = the page) and
-# clears w0 when the signal was already set the update before. Site words: the first keeps its ldr w3 ahead of the
-# gate, the second its tbz behind it.
-STAFF_GATE = [0xb943092a, 0xb9030920, 0x0a2a0000]   # ldr w10, [x9, #0x308]; str w0, [x9, #0x308]; bic w0, w0, w10
+STAFF_GATE = [0xb943092a, 0xb9030920, 0x0a2a0000]
 STAFF_SITES = ((0x3292c84, 0xb94286c3, [0xb94286c3, ('page', 9)] + STAFF_GATE),
                (0x3292ed4, 0x36000b80, [('page', 9)] + STAFF_GATE + [0x36000b80]))
 
 
 def check_staff():
-    """Each staff gate is the set ostaff's adrp to the page in x9 and the three words of the gate, over the game's."""
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', 0x7000000000, PAGE)])
     names = {i: t[0] for i, t in enumerate(table.sets)}
     bad = 0
@@ -166,7 +146,6 @@ def staff_functions():
 
 
 def lift_ops(lift, offset, words):
-    """C for contiguous non-branch guest instructions in a fixture."""
     body = []
     for i, word in enumerate(words):
         insn = lift.lift(word, 0x7000000000 + offset + i * 4)

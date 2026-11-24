@@ -1,9 +1,3 @@
-// runtime/vk/vk_evo_peek.h: the copy of each event-ordered queue's first held wait that vk_exec.c vk_exec_held_ready
-// reads without the submission lock, and the decision it makes from that copy. Built and run by
-// tests/evo_peek_check.py; prints each failed check and exits 1 on any.
-// One writer republishes changing waits while three readers copy them, as the submitting thread (vk_exec.c evo_resume,
-// cont_push) and the presenting threads (vk_backend.c held_resume, submit_sync) do: no reader may take a copy mixed
-// from two publishes, and none may wait for the writer.
 #include <stdint.h>
 #include <stdio.h>
 
@@ -19,14 +13,12 @@
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the decision, with a stand-in for vk_exec_event_met that answers from the wait's value
 static int met_calls;
 static int met_stub(const void *wait) {
     met_calls++;
     return ((const EvoWait *)wait)->value == 1;
 }
 
-// ---- the race: every field of publish i is derived from i, so a mixed copy shows
 enum { READERS = 3, PUBLISHES = 1000000 };
 static EvoPeek shared;
 static volatile int writer_done;
@@ -74,7 +66,7 @@ static void *reader(void *arg) {
         }
         n++;
         if (c.has) t += !consistent(&c);
-        else t += c.has_at || c.since || c.w.val || c.w.mode || c.w.value;   // the all-zero state before the first
+        else t += c.has_at || c.since || c.w.val || c.w.mode || c.w.value;
     }
     __atomic_add_fetch(&torn, t, __ATOMIC_RELAXED);
     __atomic_add_fetch(&copies, n, __ATOMIC_RELAXED);
@@ -83,7 +75,6 @@ static void *reader(void *arg) {
 }
 
 int main(void) {
-    // ---- the decision vk_exec.c cont_ready makes, from a copy
     EvoPeekCopy c = {0};
     CHECK(!evo_peek_ready(&c, met_stub, 100, 36), "a queue with nothing held was ready");
     c.has = 1;
@@ -96,7 +87,6 @@ int main(void) {
     CHECK(!evo_peek_ready(&c, met_stub, 90 + 36, 36), "held work that waited exactly the limit was ready");
     CHECK(evo_peek_ready(&c, met_stub, 90 + 37, 36), "held work past the limit was not ready");
 
-    // ---- a publish is read back whole; a fresh one reads as nothing held
     EvoPeek p = {0};
     EvoPeekCopy out;
     CHECK(evo_peek_read(&p, &out) && !out.has, "a fresh copy did not read as nothing held");
@@ -105,12 +95,10 @@ int main(void) {
     CHECK(evo_peek_read(&p, &out) && consistent(&out) && ~out.w.value == 12345u, "a publish was not read back whole");
     CHECK(p.seq == 2, "one publish left the sequence at %u, not 2", p.seq);
 
-    // ---- a reader never waits for a publish that does not end: it gives up after EVO_PEEK_TRIES tries
     p.seq = 3;
     CHECK(!evo_peek_read(&p, &out), "a read during a publish returned a copy");
     p.seq = 4;
 
-    // ---- one writer, three readers
 #ifdef _WIN32
     HANDLE t[READERS + 1];
     for (int k = 0; k < READERS; k++) t[k] = CreateThread(NULL, 0, reader, NULL, 0, NULL);

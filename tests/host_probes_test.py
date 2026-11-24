@@ -1,10 +1,3 @@
-"""The build's host probes on Linux, over fake /proc and cgroup files and a fake systemd-inhibit: tools/hostmem.py's
-available_ram (MemAvailable, capped by the cgroup v2 memory limits), the lift's worker count that follows it
-(recomp/gen.py pick_jobs), tools/make_game.py's cpu_tag (the compile key's processor part) and keep_awake (the sleep
-lock). No game files; stdlib only (the worker count test also needs numpy, as the lifter does).
-
-Run: python tests/host_probes_test.py
-"""
 import os
 import signal
 import stat
@@ -41,8 +34,6 @@ class Tmp(unittest.TestCase):
 
 @LINUX
 class AvailableRamTest(Tmp):
-    """available_ram on a fake /proc and a fake cgroup v2 mount."""
-
     def setUp(self):
         super().setUp()
         self.proc, self.cgroup = self.tmp / 'proc', self.tmp / 'cgroup'
@@ -62,7 +53,6 @@ class AvailableRamTest(Tmp):
         (self.proc / 'self' / 'cgroup').write_text(f'0::{path}\n')
 
     def limit(self, path, maximum, current):
-        """memory.max and memory.current of the cgroup at path (relative to the mount)."""
         folder = self.cgroup / path
         folder.mkdir(parents=True, exist_ok=True)
         (folder / 'memory.max').write_text(f'{maximum}\n')
@@ -71,14 +61,14 @@ class AvailableRamTest(Tmp):
     def test_without_a_limit_it_is_mem_available(self):
         self.meminfo(10 * GIB // 1024)
         self.member_of('/user.slice/app.scope')
-        self.limit('', 'max', 0)   # unlimited cgroups are not a cap
+        self.limit('', 'max', 0)
         self.limit('user.slice', 'max', 3 * GIB)
         self.limit('user.slice/app.scope', 'max', GIB)
         self.assertEqual(hostmem.available_ram(), 10 * GIB)
 
     def test_a_cgroup_without_memory_files_is_no_cap(self):
         self.meminfo(10 * GIB // 1024)
-        self.member_of('/user.slice/app.scope')   # the root cgroup has no memory.max, and here nothing else has
+        self.member_of('/user.slice/app.scope')
         self.assertEqual(hostmem.available_ram(), 10 * GIB)
 
     def test_the_cgroup_limit_less_its_use_caps_it(self):
@@ -88,12 +78,10 @@ class AvailableRamTest(Tmp):
         self.assertEqual(hostmem.available_ram(), 7 * GIB)
 
     def test_dot_dot_parts_stay_under_the_mount(self):
-        """A cgroup outside this namespace reads as '/..': its '..' parts are skipped, never followed above the
-        mount."""
         self.meminfo(40 * GIB // 1024)
         self.member_of('/../app.scope')
         self.limit('app.scope', 12 * GIB, 5 * GIB)
-        (self.tmp / 'memory.max').write_text(f'{GIB}\n')   # beside the mount: must not be read
+        (self.tmp / 'memory.max').write_text(f'{GIB}\n')
         (self.tmp / 'memory.current').write_text('0\n')
         self.assertEqual([(f.relative_to(self.cgroup).as_posix(), t) for f, t in hostmem.cgroup_limits()],
                          [('app.scope', str(12 * GIB))])
@@ -109,14 +97,14 @@ class AvailableRamTest(Tmp):
         self.meminfo(40 * GIB // 1024)
         self.member_of('/user.slice/user-1000.slice/app.scope')
         self.limit('user.slice/user-1000.slice/app.scope', 'max', GIB)
-        self.limit('user.slice/user-1000.slice', 9 * GIB, 6 * GIB)   # 3 GiB left
-        self.limit('user.slice', 30 * GIB, 2 * GIB)                  # 28 GiB left
+        self.limit('user.slice/user-1000.slice', 9 * GIB, 6 * GIB)
+        self.limit('user.slice', 30 * GIB, 2 * GIB)
         self.assertEqual(hostmem.available_ram(), 3 * GIB)
 
     def test_a_leaf_limit_tighter_than_its_parents(self):
         self.meminfo(40 * GIB // 1024)
         self.member_of('/a/b')
-        self.limit('a/b', 4 * GIB, 3 * GIB)   # 1 GiB left
+        self.limit('a/b', 4 * GIB, 3 * GIB)
         self.limit('a', 20 * GIB, GIB)
         self.assertEqual(hostmem.available_ram(), GIB)
 
@@ -127,7 +115,6 @@ class AvailableRamTest(Tmp):
         self.assertEqual(hostmem.available_ram(), 0)
 
     def test_a_container_sees_its_own_limit_at_the_mount(self):
-        # In a cgroup namespace the process is at "/" and the mount is its own cgroup.
         self.meminfo(40 * GIB // 1024)
         self.member_of('/')
         self.limit('', 8 * GIB, 2 * GIB)
@@ -143,13 +130,11 @@ class AvailableRamTest(Tmp):
         self.member_of('/app.scope')
         self.limit('app.scope', 2 * GIB, 0)
         self.assertIsNone(hostmem.available_ram())
-        (self.proc / 'meminfo').write_text('MemTotal: 1 kB\n')   # no MemAvailable (a kernel before 3.14)
+        (self.proc / 'meminfo').write_text('MemTotal: 1 kB\n')
         self.assertIsNone(hostmem.available_ram())
 
     @unittest.skipIf(gen is None, 'recomp/gen.py needs numpy')
     def test_the_lift_sizes_its_workers_by_the_limit(self):
-        """A 32-processor machine under an 8 GiB cgroup gets 4 workers (8 GiB x 0.8 / 1.5 GiB, which leaves more than
-        the 1.5 GiB reserve of an 8 GiB machine), not 32."""
         self.meminfo(80 * GIB // 1024)
         self.member_of('/app.scope')
         self.limit('app.scope', 8 * GIB, 0)
@@ -174,7 +159,6 @@ class AvailableRamTest(Tmp):
 
 
 def cpuinfo(*flag_lists):
-    """A /proc/cpuinfo with one processor entry per flags list."""
     return ''.join(f'processor\t: {i}\nvendor_id\t: GenuineIntel\nmodel name\t: Fake CPU\n'
                    f'flags\t\t: {flags}\nbogomips\t: 5990.40\n\n' for i, flags in enumerate(flag_lists))
 
@@ -186,8 +170,6 @@ V4 = V3 + ' avx512f avx512bw avx512vl'
 
 @LINUX
 class CpuTagTest(Tmp):
-    """cpu_tag reads the same three features as its Windows branch: SSE4.2, AVX2 and AVX-512F."""
-
     def tag(self, text):
         path = self.tmp / 'cpuinfo'
         path.write_text(text)
@@ -214,10 +196,9 @@ class CpuTagTest(Tmp):
         with mock.patch.object(make_game, 'CPUINFO', self.tmp / 'missing'):
             self.assertEqual(make_game.cpu_tag(), 'any')
         self.assertEqual(self.tag(''), 'any')
-        self.assertEqual(self.tag('processor\t: 0\nFeatures\t: fp asimd evtstrm\n\n'), 'any')   # not x86
+        self.assertEqual(self.tag('processor\t: 0\nFeatures\t: fp asimd evtstrm\n\n'), 'any')
 
     def test_the_compile_key_follows_the_processor(self):
-        """The same lift, runtime and kit compile again on a processor without AVX2."""
         def key(flags):
             path = self.tmp / 'cpuinfo'
             path.write_text(cpuinfo(flags))
@@ -242,7 +223,6 @@ echo released > "{log}/state"
 
 
 def wait_for(path, text, seconds=10):
-    """True once the file's content is text."""
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         try:
@@ -256,8 +236,6 @@ def wait_for(path, text, seconds=10):
 
 @LINUX
 class KeepAwakeTest(Tmp):
-    """keep_awake with a systemd-inhibit stand-in first on PATH."""
-
     def setUp(self):
         super().setUp()
         self.bin, self.log = self.tmp / 'bin', self.tmp / 'log'
@@ -288,15 +266,15 @@ class KeepAwakeTest(Tmp):
         self.assertTrue(wait_for(self.state, 'held'))
         args = (self.log / 'args').read_text().split()
         what = next(a for a in args if a.startswith('--what='))
-        self.assertEqual(what, '--what=sleep')   # not idle: the screen may still blank and lock, as on Windows
+        self.assertEqual(what, '--what=sleep')
         self.assertIn('--mode=block', args)
         time.sleep(0.3)
-        self.assertIsNone(make_game.AWAKE.poll())   # still held: it does not end by itself
+        self.assertIsNone(make_game.AWAKE.poll())
         self.assertEqual(self.state.read_text().strip(), 'held')
         first = make_game.AWAKE
-        make_game.keep_awake()   # a second call takes no second lock
+        make_game.keep_awake()
         self.assertIs(make_game.AWAKE, first)
-        first.stdin.close()   # what the end of this process does
+        first.stdin.close()
         first.wait(timeout=10)
         self.assertEqual(self.state.read_text().strip(), 'released')
 

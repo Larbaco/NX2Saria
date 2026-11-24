@@ -1,12 +1,3 @@
-"""The orderly end of the process (runtime/gfx/gfx_present.c rt_exit_begin and rt_exit_steps): the steps run in one order,
-with what a kill of the process must not lose (a save Commit in flight, RivaTuner Statistics Server's profile, the
-controller's rumble, the settings, the frame-time summary) before the slow pipeline save and the final save flush
-last; it runs once, and a second caller on another thread stays where it is. The frame-time summary of the exit
-(runtime/diag/perf.c ft_stop) waits for a present thread's update under way and keeps later ones out. Builds those
-functions into a test program against stand-ins, and checks statically that every orderly end goes through them.
-No game files.
-
-Usage: python tests/exit_order_check.py [path to clang]"""
 import os
 import re
 import shutil
@@ -44,7 +35,6 @@ def function(source, signature):
 
 
 def calls_in_order(body, names):
-    """The position of each name's first call in body (comments left out), or None for a name that is missing."""
     code = strip_comments(body)
     return [m.start() if (m := re.search(r'\b' + re.escape(n) + r'\s*\(', code)) else None for n in names]
 
@@ -151,12 +141,10 @@ def static_checks():
         print(f'{name}: {"rt_exit_begin, then " + steps + ", then plat_exit" if ok else "FAIL"}'
               + (f'; calls exit steps of its own: {", ".join(own)}' if own else ''), flush=True)
         bad += not ok
-    # the guest's exit line comes after the guard: a thread the guard parks (a close already ending) logs no exit
     code = strip_comments(exit07)
     ok = 0 <= code.find('rt_exit_begin()') < code.find('rt_log(')
     print(f'svc.c ExitProcess (0x07): its exit line after rt_exit_begin: {"ok" if ok else "FAIL"}', flush=True)
     bad += not ok
-    # the window's close runs the end on a thread of its own, and the session's end waits for it
     win = strip_comments((RT / 'gfx' / 'gfx_window_win.c').read_text(encoding='utf-8'))
     proc = function(win, 'static LRESULT CALLBACK wnd_proc(')
     close = proc[proc.index('case WM_CLOSE:'):]
@@ -167,8 +155,6 @@ def static_checks():
     print(f'gfx_window_win.c: WM_CLOSE and WM_ENDSESSION start the end on its own thread and hide the window: '
           f'{"ok" if ok else "FAIL"}', flush=True)
     bad += not ok
-    # the hide's focus loss is the end's, not a player's: it must not reach perf.c perf_focus_lost, whose session report
-    # would take the exit summary's frames
     act = proc[proc.index('case WM_ACTIVATEAPP:'):proc.index('case WM_ENDSESSION:')]
     start = function(win, 'static PlatThread *exit_start(')
     guard, focus = act.find('g_exit_started'), act.find('gfx_window_focus_changed(')
@@ -182,9 +168,6 @@ def static_checks():
     ok = None not in pos and pos[0] < pos[1]
     print(f'rt_exit_steps: RivaTuner\'s profile put back before the pipeline save: {"ok" if ok else "FAIL"}')
     bad += not ok
-    # the presents during the pipeline save do not undo that restore: rtss_limit_restore marks the run closed before
-    # anything else (an exit before RTSS was ever asked included), and rtss_limit_want returns on it before it changes
-    # the want or starts the worker (runtime/pacing/rtss_limit.c; tests/rtss_worker_check.c runs it against a fake RTSS)
     rl = strip_comments((RT / 'pacing' / 'rtss_limit.c').read_text(encoding='utf-8'))
     restore = function(rl, 'void rtss_limit_restore(void) {')
     want = function(rl, 'void rtss_limit_want(int64_t mhz) {')

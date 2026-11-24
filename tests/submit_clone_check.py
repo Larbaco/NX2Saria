@@ -1,19 +1,4 @@
 # needs: clang
-"""Build and run tests/submit_clone_check.c: runtime/nvn/nvn_submit_guard.h, a synchronous submission's deferred binds when
-another guest thread may be replaying the same recording copy (nvn_api_cmd.c nvn_submit_prepare, nvn_submit_done).
-Four threads submit two hand-built copies 200,000 times each, a quarter of the calls giving their copy twice, while a
-"game" thread rewrites the arrays their deferred binds read: no replay sees its copy's handles change between its
-resolve and its end, the in-flight counts end at 0, and the in-place, the given-again and the clone path run.
-nvn_copy_again step by step: a copy given twice in one call stays in place both times, and is cloned both times when
-another submission has it in flight. nvn_resolve_binds step by step: a changed array is copied in and counted,
-an unchanged one is not counted, binds without src, with n 0 or over 32 stay untouched, OP_CALL is followed 16 deep and
-refused at 17, and a corrupt record is reported where it is. Then the unguarded 0.10.1 shape runs through the same
-harness and only prints what it saw, to show that the harness catches the race.
-
-No GPU, no game files, any Python.
-
-Usage: submit_clone_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -28,7 +13,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -46,7 +30,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
-    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
+    plat += stand_ins(work)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',

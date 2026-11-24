@@ -1,12 +1,3 @@
-// runtime/gfx/spv_store.h: a shader's SPIR-V kept zstd-compressed while unused (gfx_shader.c "SPIR-V at rest"). Built and
-// run by tests/spv_store_check.py against the platform layer and libzstd.
-//
-// The single-thread checks walk one store through its states: plain, pinned, packed (the frame made, checked and the
-// plain copy freed), decoded back by a pin bit for bit, idle again (only the plain copy goes, the frame stays), and
-// its FNV-1a read from a compressed store without a decode. A reader that arrives while the packer encodes keeps the
-// plain copy. The stress check runs reader threads that pin random stores and compare every word against the
-// original, while a packer thread packs every store as soon as nobody holds it; no reader may ever see other words,
-// and every pin must be given back.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +8,7 @@
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-void rt_log(const char *fmt, ...) {   // the platform layer's lines
+void rt_log(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
@@ -31,9 +22,6 @@ static uint32_t rnd(void) {
     return (uint32_t)(rng >> 32);
 }
 
-// SPIR-V-like words: the header, then instructions with small opcodes, word counts and ids. They are more random than
-// the translator's modules (a frame keeps about 65% of them, against 26% of real SPIR-V), which only makes the
-// encoder's work larger.
 static uint32_t *make_module(uint64_t words) {
     uint32_t *w = malloc(words * 4);
     w[0] = 0x07230203, w[1] = 0x00010300, w[2] = 0, w[3] = 4096, w[4] = 0;
@@ -91,7 +79,6 @@ static void single_checks(void) {
     freed = spv_pack_end(&s, &lk, step, NULL, 0, 3000, 1000);
     CHECK(freed == words * 4 && !s.plain && s.z == z, "the frame made before stays");
 
-    // a reader that comes while the packer encodes keeps the plain copy
     SpvStore t;
     uint32_t *p2 = malloc(words * 4);
     memcpy(p2, orig, words * 4);
@@ -111,7 +98,6 @@ static void single_checks(void) {
     free(orig);
 }
 
-// ---- stress: readers and one packer on shared stores
 #define STORES 64
 #define READERS 4
 static SpvStore st[STORES];
@@ -129,7 +115,7 @@ static void reader(void *arg) {
         const uint32_t *w = spv_pin(&st[i], &lk, &ns);
         if (!w || memcmp(w, orig_of[i], words * 4)) plat_inc64(&mismatches);
         if (ns) plat_inc64(&decodes);
-        if (r & 1) plat_yield();   // hold some pins across a time slice
+        if (r & 1) plat_yield();
         if (!w || w[0] != 0x07230203 || w[words - 1] != orig_of[i][words - 1]) plat_inc64(&mismatches);
         spv_unpin(&st[i], &lk, plat_now_ms());
         plat_inc64(&reads);
@@ -176,7 +162,7 @@ static void stress(void) {
     CHECK(packed == STORES && frames == STORES, "every store got exactly one frame (%lld made)", (long long)packed);
     CHECK(decodes > 100 && dropped > 100, "the readers and the packer met (%lld decodes, %lld drops)", (long long)decodes,
           (long long)dropped);
-    for (int i = 0; i < STORES; i++) {   // the final state still gives back the original
+    for (int i = 0; i < STORES; i++) {
         uint64_t ns;
         const uint32_t *w = spv_pin(&st[i], &lk, &ns);
         CHECK(w && !memcmp(w, orig_of[i], st[i].words * 4), "store %d after the stress", i);

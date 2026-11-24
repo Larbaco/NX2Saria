@@ -1,14 +1,4 @@
 # needs: clang
-"""Build and run tests/log_stall_check.c: runtime/log_stall.c (the local time of the lines that mark an event, the counts
-of the events whose own lines are limited, the memory and I/O pressure line) and runtime/platform/proc_pressure.h (the
-readers of /proc/pressure/* and /proc/meminfo), with the platform's clocks, zone and readings replaced by stand-ins.
-Then checks statically that each place that writes one of those lines goes through them: the worst frame of a
-frame-time window, the presenter's failed acquires and watchdog, the physical memory map's refusals, a slow pipeline
-cache save, a fatal error, a crash report and a lost device, and the dma-buf spans at the end of the run.
-No game files, no GPU, any Python.
-
-Usage: log_stall_check.py
-"""
 import os
 import re
 import shutil
@@ -23,7 +13,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -32,7 +21,6 @@ def compiler():
 
 
 def source(name):
-    """A runtime file without its comments, so a name in a comment is not a call."""
     text = (RT / name).read_text(encoding='utf-8')
     return re.sub(r'//[^\n]*', '', re.sub(r'/\*.*?\*/', '', text, flags=re.S))
 

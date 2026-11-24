@@ -1,23 +1,5 @@
 # needs: git
 # args: --self-test
-"""No setting name in the code is spelled with the older NX2NAVI_ prefix (tools/rename_legacy_names.py --check).
-
-The game, the launcher and the build tools read every setting under both prefixes, NX2SARIA_ first, so an older
-spelling still works; this check keeps the code on the current one. A branch made before the rename, or a line copied
-from an old file, brings NX2NAVI_<KEY> back: `python tools/rename_legacy_names.py` spells it the current way.
-
-Before the tree is checked, planted lines go through the script's rule (rename_line), so a rule that stopped renaming
-or started renaming the fallback is caught too:
-- names the code reads, writes or tests (cfg_bool("NX2NAVI_FPS60"), a patch table's `set` line, "NX2NAVI_%s") must
-  be renamed;
-- the fallback must stay: a line that also names NX2SARIA_, a line that calls the name older, legacy or an alias, the
-  bare prefix "NX2NAVI_" that prefix strips compare with, NX2NAVI_PGO_GEN and a KEEP line of the script;
-- the files under tools/xlate/, tools/vendor/ and runtime/third_party/ are never read.
-With --self-test it also plants an older name in a scratch copy of the repository's layout and wants --check to fail
-there.
-
-Usage: legacy_names_check.py [--self-test]
-"""
 import os
 import shutil
 import subprocess
@@ -30,7 +12,7 @@ SCRIPT = ROOT / 'tools' / 'rename_legacy_names.py'
 sys.path.insert(0, str(ROOT / 'tools'))
 import rename_legacy_names as rl  # noqa: E402
 
-RENAMED = (   # (file name, line, the line the rule must give)
+RENAMED = (
     ('kernel.c', '    int on = cfg_bool("NX2NAVI_FPS60");\n', '    int on = cfg_bool("NX2SARIA_FPS60");\n'),
     ('patches-v111.txt', 'set fps60    NX2NAVI_FPS60          1\n', 'set fps60    NX2SARIA_FPS60          1\n'),
     ('sync_wake_check.c', '    snprintf(key, sizeof key, "NX2NAVI_%s", name);\n',
@@ -38,7 +20,7 @@ RENAMED = (   # (file name, line, the line the rule must give)
     ('run_game.py', '    --env NX2NAVI_TRACE=perf --env NX2NAVI_SHOT_DIR=shots\n',
      '    --env NX2SARIA_TRACE=perf --env NX2SARIA_SHOT_DIR=shots\n'),
 )
-KEPT = (   # (file name, line): the fallback, its description and its tests
+KEPT = (
     ('cfg.c', '    return e ? e : getenv(legacy);   // NX2SARIA_FPS60 first, then NX2NAVI_FPS60\n'),
     ('gameini.py', "PREFIXES = ('NX2SARIA_', 'NX2NAVI_')\n"),
     ('discord_rpc.c', '"(legacy NX2NAVI_DISCORD_APP_ID is also accepted)"\n'),
@@ -72,14 +54,12 @@ def rule_cases():
 
 
 def check_tree(root, script):
-    """rename_legacy_names.py --check on root: (exit code, output)."""
     p = subprocess.run([sys.executable, str(script), '--check'], cwd=root, capture_output=True, text=True,
                        errors='replace', timeout=300)
     return p.returncode, p.stdout + p.stderr
 
 
 def planted_repo():
-    """--check on a scratch git repository holding the script and one file with an older name: it must fail."""
     with tempfile.TemporaryDirectory(prefix='legacy-names-') as d:
         d = Path(d)
         (d / 'tools').mkdir()

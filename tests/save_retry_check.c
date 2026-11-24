@@ -1,6 +1,3 @@
-// runtime/vk/vk_save_retry.h: when the autosave thread saves the pipeline caches and when it tries again after a save
-// that did not happen (runtime/vk/vk_pipeline.c autosave_once). Built and run by tests/save_retry_check.py; prints each
-// failed check and exits 1 on any.
 #include <stdio.h>
 
 #include "vk_save_retry.h"
@@ -9,14 +6,12 @@ static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 int main(void) {
-    uint64_t t = 1000000;   // ms since the machine started, as the thread's clock gives them
+    uint64_t t = 1000000;
 
-    // Nothing built, nothing owed: no save, however long the run.
     SaveRetry s = {0};
     CHECK(!save_due(&s, 0, t, 0), "a save with nothing new in the caches");
     CHECK(!save_due(&s, 0, t + 3600000, 0), "a save after an hour with nothing new");
 
-    // A new pipeline: a save, and after it none until the next one; never two within the interval.
     CHECK(save_due(&s, 1, t, 0), "no save for a new pipeline");
     CHECK(!save_tried(&s, 1, t, 1), "a good save counted as the last try");
     CHECK(!save_due(&s, 2, t + SAVE_EVERY_MS - 1, 0), "two saves within the interval");
@@ -24,8 +19,6 @@ int main(void) {
     save_tried(&s, 2, t + SAVE_EVERY_MS, 1);
     CHECK(!save_due(&s, 2, t + 10 * SAVE_EVERY_MS, 0), "a save again with nothing new after a good one");
 
-    // A save that did not happen is tried again at the interval with nothing new built, SAVE_RETRIES times; the
-    // last of them says so, and then nothing is tried until a new pipeline.
     s = (SaveRetry){0};
     uint64_t now = t;
     CHECK(save_due(&s, 5, now, 0), "no first save");
@@ -45,14 +38,12 @@ int main(void) {
     CHECK(!save_tried(&s, 6, now + SAVE_EVERY_MS, 0), "new content did not start a row of its own");
     CHECK(save_due(&s, 6, now + 2 * SAVE_EVERY_MS, 0), "no retry in the new row");
 
-    // A retry that saves ends the row: nothing more until something new.
     s = (SaveRetry){0};
     save_tried(&s, 3, t, 0);
     CHECK(save_due(&s, 3, t + SAVE_EVERY_MS, 0), "no retry after one failed save");
     CHECK(!save_tried(&s, 3, t + SAVE_EVERY_MS, 1), "a good retry counted as the last try");
     CHECK(!save_due(&s, 3, t + 2 * SAVE_EVERY_MS, 0), "a save again after a good retry");
 
-    // A save owed from the start (the play file folded in) is tried with nothing built, and bounded the same way.
     s = (SaveRetry){0};
     CHECK(save_due(&s, 0, t, 1), "no save for the one owed from the start");
     now = t, tries = 1;

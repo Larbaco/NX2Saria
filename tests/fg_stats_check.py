@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/fg_stats_check.c: runtime/vk/vk_fg_stats.h, how frame generation's log line sorts the game's frames
-and when it writes one.
-
-No GPU, no game files, any Python.
-
-Usage: fg_stats_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

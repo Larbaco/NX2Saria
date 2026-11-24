@@ -1,6 +1,4 @@
 # needs: py:zstandard
-"""tools/romfs_check.py on a small made-up game: damaged files are found, a damaged texture gets a stand-in with its own
-name inside, and a clean copy leaves nothing behind. No game data."""
 import json
 import struct
 import subprocess
@@ -15,7 +13,6 @@ TOOL = Path(__file__).resolve().parent.parent / 'tools' / 'romfs_check.py'
 
 
 def sarc(files):
-    """A SARC archive: little endian, the file table, then the names, then the data."""
     names, data, nodes = b'', b'', b''
     for name, body in files.items():
         nodes += struct.pack('<IIII', 0, 0x01000000 | len(names) // 4, len(data), len(data) + len(body))

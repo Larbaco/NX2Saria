@@ -1,13 +1,4 @@
 # needs: clang
-"""Build and run tests/spv_store_check.c: runtime/gfx/spv_store.h, which keeps a shader's SPIR-V zstd-compressed while
-nobody reads it (runtime/gfx/gfx_shader.c "SPIR-V at rest"). The check walks one store through pin, pack, decode and idle
-again, and runs reader threads against a packer that compresses every store as soon as it is free: no reader may see
-other words than the original, and every pin must be given back. Linked with the platform layer and libzstd.
-
-No GPU, no game files, any Python.
-
-Usage: spv_store_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -22,7 +13,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -40,7 +30,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
-    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
+    plat += stand_ins(work)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',

@@ -1,23 +1,5 @@
 # needs: game, py:capstone, py:unicorn, py:numpy, py:lz4
-"""Check of recomp/jumptables.py on every `br` in the game's modules against an emulation oracle.
-
-The oracle is an emulated jump-table resolver: find `cmp #N; b.hi/b.hs` before the br (or a `b.ls/b.lo` to the
-dispatch block), replay ADRP/ADR/ADD-imm from the function entry, then single-step Unicorn from the bounds check to
-the br once per index. Functions are [seed, next seed) over the module's seeds plus BL targets.
-
-Reports per module: br sites, resolved by the resolver / by the oracle, agreement, `is_computed` sites left
-unresolved, tables whose targets leave the function, an independent check of hoisted table bases (hoisted_base),
-PLT stubs (`br x17` after the GOT load) that must stay a plain call, and resolver time. A disagreement is counted
-as 'oracle wrong' only with independent evidence (oracle_wrong). Samples of every disagreement, unverified base and
-unresolved computed site are printed with disassembly. Output also goes to build/logs/jumptables-check.log, and one
-row per table-like br to build/logs/jumptables-<module>.tsv.
-
-The oracle: Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-
-Exits with 1 if any disagreement is unexplained, a hoisted base is not verified, or a PLT stub counts as computed.
-
-Usage: jumptables_check.py [--exefs DIR] [--modules main,sdk,subsdk0] [--samples N] [--no-oracle]
-"""
+# The oracle: Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
 import argparse
 import bisect
 import sys
@@ -45,8 +27,6 @@ _md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
 
 
 class Oracle:
-    """The Unicorn jump-table resolver: bounds check, table base replay and one single-step run per index."""
-
     def __init__(self, mod):
         self.m = mod
         mu = uc.Uc(uc.UC_ARCH_ARM64, uc.UC_MODE_ARM)
@@ -56,11 +36,11 @@ class Oracle:
         mu.reg_write(A.UC_ARM64_REG_CPACR_EL1, 0x300000)
         self.mu = mu
         self.set_at = self.regs = None
-        self.start = self.cmp = None   # the first instruction of the bounds-check block, the bounds cmp
-        self.guard = None              # _taken: the b.ls/b.lo into the dispatch block (set_at)
-        self.count = None              # indices the bounds check lets through
-        self.exclude = frozenset()     # indices the emulation skips (oracle_wrong: excluded on every way in)
-        self.watch = self.seen = None  # (address, register): record the register when the emulation reaches address
+        self.start = self.cmp = None
+        self.guard = None
+        self.count = None
+        self.exclude = frozenset()
+        self.watch = self.seen = None
 
     def word(self, a):
         return self.m.word(a)
@@ -69,7 +49,6 @@ class Oracle:
         return self.m.lift(a).kind
 
     def jump_table(self, br_pc, entry, end):
-        """Targets, or None. Leaves the index set point and the registers set there in self.set_at, self.regs."""
         self.set_at = self.regs = self.start = self.cmp = self.guard = self.count = None
         r = self._fallthrough(br_pc, entry, end)
         if r is None:
@@ -78,11 +57,11 @@ class Oracle:
 
     def _index_regs(self, start, at, idx):
         def copy_src(w):
-            if (w & 0x7F800000) == 0x12000000:  # AND (imm)
+            if (w & 0x7F800000) == 0x12000000:
                 return bits(w, 5, 5)
-            if (w & 0x7FE0FFE0) == 0x2A0003E0:  # MOV (ORR with zr)
+            if (w & 0x7FE0FFE0) == 0x2A0003E0:
                 return bits(w, 16, 5)
-            if (w & 0x7F800000) in (0x53000000, 0x13000000):  # UBFM/SBFM
+            if (w & 0x7F800000) in (0x53000000, 0x13000000):
                 return bits(w, 5, 5)
             return None
         regs = {idx}
@@ -241,7 +220,6 @@ def _insn(mod, a):
 
 
 def _regno(name):
-    """X register number of a capstone register name (w and x views), 31 for sp/zr, None for others."""
     if name in ('fp', 'x29', 'w29'):
         return 29
     if name in ('lr', 'x30', 'w30'):
@@ -252,11 +230,10 @@ def _regno(name):
 
 
 def _writes(ins):
-    """X register numbers an instruction writes, by capstone (w and x views folded), plus the call clobbers."""
     if ins is None:
         return set(range(31))
     if ins.mnemonic in ('cmp', 'cmn', 'tst', 'ccmp', 'ccmn'):
-        return set()  # capstone lists the first operand of these aliases as written
+        return set()
     try:
         _, w = ins.regs_access()
     except capstone.CsError:
@@ -272,8 +249,6 @@ def _writes(ins):
 
 
 class Reaching:
-    """Reaching definitions of single registers over the resolver's blocks, with capstone's write sets."""
-
     def __init__(self, mod, cfg):
         self.mod, self.cfg, self.cache = mod, cfg, {}
         self.writes = {}
@@ -282,7 +257,6 @@ class Reaching:
                 self.writes[x] = _writes(_insn(mod, x))
 
     def at_blocks(self, reg):
-        """{block start: definitions of reg reaching it}; 'entry' for a value from outside the function."""
         if reg in self.cache:
             return self.cache[reg]
         cfg = self.cfg
@@ -304,16 +278,11 @@ class Reaching:
         return ins
 
     def at(self, reg, a):
-        """Definitions of reg reaching instruction a."""
         b = self.cfg.block(a)
         last = next((x for x in range(a - 4, b - 4, -4) if reg in self.writes[x]), None)
         return {last} if last is not None else self.at_blocks(reg)[b]
 
     def values(self, reg, a, active=None):
-        """Constants reg holds at a, following adrp/add/adr and register copies; None if one is not constant.
-
-        A definition already being evaluated (a cycle of copies) adds no value of its own.
-        """
         active = set() if active is None else active
         out = set()
         for d in self.at(reg, a):
@@ -345,8 +314,6 @@ class Reaching:
 
 
 class FunctionCheck:
-    """The resolver's final tables and blocks for one function, with reaching definitions on demand."""
-
     def __init__(self, mod, entry, end):
         self.mod, self.entry, self.end = mod, entry, end
         self.tables = {a: t for a, t in jumptables._function(mod, entry, end).items() if t is not None}
@@ -367,7 +334,6 @@ class FunctionCheck:
 
 
 def table_load(mod, s, br):
-    """Last register-offset load in [s, br): the table read of a dispatch block."""
     a = br
     while a > s:
         a -= 4
@@ -379,12 +345,6 @@ def table_load(mod, s, br):
 
 
 def hoisted_base(fc, br):
-    """(base register, its single constant at the dispatch block or None, verdict) of the table read before br.
-
-    The verdict is 'local' when the dispatch block writes the base, 'verified' when every definition reaching the
-    block (over the resolver's blocks and table edges, with capstone's write sets, through register copies) is an
-    adrp/add or adr of one and the same constant and the resolver's fact does not name another, else a reason.
-    """
     mod, s = fc.mod, fc.cfg.block(br)
     load = table_load(mod, s, br)
     if load is None:
@@ -411,7 +371,6 @@ def _reads(ins):
 
 
 def _branch_target(ins):
-    """Target of a direct b, b.cond, cbz/cbnz or tbz/tbnz, else None."""
     if ins is None or not ins.operands or not (ins.mnemonic in ('b', 'cbz', 'cbnz', 'tbz', 'tbnz')
                                                or ins.mnemonic.startswith('b.')):
         return None
@@ -420,8 +379,6 @@ def _branch_target(ins):
 
 
 def _ways_in(fc, lo, hi, tables):
-    """Direct branches of the function into [lo, hi], or None when the range is entered otherwise too: by falling
-    through into lo, at the function entry, or as a target of another table."""
     mod = fc.mod
     if lo <= fc.entry or any(lo <= t <= hi for ts in tables.values() if ts != 'all' for t in ts):
         return None
@@ -437,13 +394,11 @@ def _ways_in(fc, lo, hi, tables):
     return out
 
 
-# Instructions an index slice may hold: integer arithmetic that reads only general registers and writes the flags at
-# most (the flags-reading forms adc/sbc/csel/ccmp/... stay out).
 _FLAG_SETTERS = {'cmp', 'cmn', 'tst', 'ands', 'bics', 'adds', 'subs', 'negs'}
 _PURE_ALU = {'mov', 'movz', 'movn', 'movk', 'add', 'sub', 'and', 'orr', 'eor', 'bic', 'orn', 'eon', 'lsl', 'lsr',
              'asr', 'ror', 'ubfx', 'sbfx', 'ubfiz', 'sbfiz', 'bfi', 'bfxil', 'uxtb', 'uxth', 'uxtw', 'sxtb', 'sxth',
              'sxtw', 'neg', 'mvn', 'mul', 'madd', 'msub', 'udiv', 'sdiv', 'ubfm', 'sbfm', 'bfm'} | _FLAG_SETTERS
-_DEPTH = 4   # predecessor blocks above the dispatch region
+_DEPTH = 4
 
 
 def _ends_block(ins):
@@ -451,8 +406,6 @@ def _ends_block(ins):
 
 
 class _Ways:
-    """Direct branches and fall-throughs of one function, with the addresses control may enter from elsewhere."""
-
     def __init__(self, fc, tables):
         mod = self.mod = fc.mod
         self.entry, self.into = fc.entry, {}
@@ -472,7 +425,6 @@ class _Ways:
         return s
 
     def preds(self, s):
-        """(branch or last instruction, insn, taken) for every way into s."""
         out = [(a, ins, True) for a, ins in self.into.get(s, ())]
         if s > self.entry:
             p = _insn(self.mod, s - 4)
@@ -482,19 +434,16 @@ class _Ways:
 
 
 def _edge_holds(oracle, ways, start, src, ins, taken, reg, k):
-    """Whether the way out of the block [start, src] over the branch at src can be taken with x<reg> = k at src:
-    False only when the branch condition is a function of x<reg> alone (its slice, back to the last write of x<reg>,
-    is plain arithmetic and flag setting on x<reg>), evaluated by Unicorn; True otherwise."""
     if _branch_target(ins) is None or ins.mnemonic == 'b':
         return True
     mod = ways.mod
 
-    def gp_reads(i):   # general registers read, zr dropped; None when sp or a non-general register is read
+    def gp_reads(i):
         try:
             r, _ = i.regs_access()
         except capstone.CsError:
             return None
-        if i.mnemonic in ('cmp', 'cmn', 'tst'):   # capstone lists their first operand as written, not read
+        if i.mnemonic in ('cmp', 'cmn', 'tst'):
             r = list(r) + [op.reg for op in i.operands if op.type == capstone.arm64.ARM64_OP_REG]
         out = set()
         for x in r:
@@ -526,7 +475,7 @@ def _edge_holds(oracle, ways, start, src, ins, taken, reg, k):
         i = _insn(mod, x)
         w = _writes(i)
         if reg in w:
-            break   # x<reg> is k from here on
+            break
         if not w & need:
             continue
         r = gp_reads(i)
@@ -551,8 +500,6 @@ def _edge_holds(oracle, ways, start, src, ins, taken, reg, k):
 
 
 def _way_live(oracle, ways, src, ins, taken, reg, k, depth, seen):
-    """Whether the way over src can carry x<reg> = k: its edge holds (_edge_holds) and its block either writes x<reg>
-    or is entered with k (_reaches)."""
     start = ways.block_start(src)
     if not _edge_holds(oracle, ways, start, src, ins, taken, reg, k):
         return False
@@ -562,7 +509,6 @@ def _way_live(oracle, ways, src, ins, taken, reg, k, depth, seen):
 
 
 def _reaches(oracle, ways, s, reg, k, depth, seen):
-    """Whether control can enter s with x<reg> = k, over at most `depth` predecessor blocks."""
     if s in ways.roots or depth == 0 or s in seen:
         return True
     seen = seen | {s}
@@ -571,12 +517,6 @@ def _reaches(oracle, ways, s, reg, k, depth, seen):
 
 
 def excluded_indices(fc, br, oracle, tables, count):
-    """Indices < count that cannot reach br: no way into the dispatch region [oracle.start, br] (its first instruction
-    and every branch target inside it) can carry them. The index is the register of the oracle's bounds cmp, which no
-    instruction from such an entry to br may write. Ways in are the module's direct branches and fall-throughs by
-    capstone; the function entry, exception landing pads and every resolver table target count as entries from
-    anywhere. Branch conditions are evaluated only where they depend on the index alone (_edge_holds). When the
-    oracle enters the dispatch block by the taken bounds branch (_taken), that branch must be its only way in."""
     mod, lo = fc.mod, oracle.start
     if lo is None:
         return frozenset()
@@ -586,8 +526,6 @@ def excluded_indices(fc, br, oracle, tables, count):
             return frozenset()
     reg = bits(oracle.word(oracle.cmp), 5, 5)
     ways = _Ways(fc, tables)
-    # The region falls through from lo to br (_fallthrough), or is the bounds-check block whose b.ls/b.lo is the only
-    # way into the dispatch block (_taken).
     hi = br if oracle.guard is None else oracle.cmp
     if oracle.guard is not None and any(reg in _writes(_insn(mod, x)) for x in range(oracle.set_at, br, 4)):
         return frozenset()
@@ -601,7 +539,7 @@ def excluded_indices(fc, br, oracle, tables, count):
         for e in entries:
             for src, ins, taken in ways.preds(e):
                 if lo <= src < hi:
-                    continue   # inside the region: its own conditions are ignored
+                    continue
                 if _way_live(oracle, ways, src, ins, taken, reg, k, _DEPTH, frozenset()):
                     live = True
                     break
@@ -613,16 +551,6 @@ def excluded_indices(fc, br, oracle, tables, count):
 
 
 def oracle_wrong(fc, br, oracle, ours=None):
-    """Why the oracle's targets for br are not the table's, from evidence independent of the resolver; or None.
-
-    - the index the table is read with does not depend on the registers the oracle sets (it comes from another
-      register or is reloaded from memory, which the oracle leaves at its scratch value);
-    - the table base the oracle uses (its replay of ADRP/ADR/ADD-imm from the entry) is not the one constant that
-      every reaching definition gives;
-    - the oracle enumerates an index that no way into the dispatch region lets through (excluded_indices: a case
-      peeled off before the table by `cmp wI, #k; b.ne`, `cbnz wI` or a range check on wI, possibly some blocks up),
-      and without it the oracle gives the resolver's targets.
-    """
     mod = fc.mod
     s = fc.cfg.block(br)
     load = table_load(mod, s, br)
@@ -660,7 +588,6 @@ def oracle_wrong(fc, br, oracle, ours=None):
 
 
 def plt_stubs(mod):
-    """Addresses of `br x17` in `adrp x16; ldr x17, [x16, #o]; add x16, x16, #o; br x17` stubs."""
     w = mod.words
     m = ((w[3:] == 0xD61F0220) & ((w[:-3] & 0x9F00001F) == 0x90000010) & ((w[1:-2] & 0xFFC003FF) == 0xF9400211)
          & ((w[2:-1] & 0xFFC003FF) == 0x91000210))
@@ -668,7 +595,6 @@ def plt_stubs(mod):
 
 
 def function_starts(mod):
-    """Seeds plus BL targets in .text."""
     w = mod.words.astype(np.int64)
     pc = mod.lo + 4 * np.arange(len(w), dtype=np.int64)
     bl = (w & 0xFC000000) == 0x94000000
@@ -686,7 +612,6 @@ def disasm(mod, lo, hi, marks=()):
 
 
 def window(mod, br, entry, n=24):
-    """Code before the br, and the bounds check that branches into its block if it sits elsewhere."""
     lo = max(entry, br - 4 * n)
     lines = disasm(mod, lo, br + 4, {br})
     labels = jumptables.branch_sources(mod, lo, br + 4)

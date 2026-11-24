@@ -1,16 +1,4 @@
 # needs: clang, file:runtime/wb_merge_spv.h
-"""No 64-to-32-bit narrowing in the files that hold page write generations: runtime/vk/vk_memory.c, runtime/vk/vk_texture.c
-and runtime/gfx/tex_probe.c, compiled with the build's flags plus -Wshorten-64-to-32, -Wformat and
--Wincompatible-pointer-types as errors (clang -fsyntax-only). The generations are 64 bits (vk_memory.c "page write
-generations"); one local, field or format left at 32 bits would bring the wrap of 2^32 back without a word, and the
-normal build sees a narrowing only as a silent conversion. The baseline is zero such diagnostics in the whole of the
-three files: a narrowing elsewhere in them takes an explicit cast, which also says it is meant.
-
-Needs clang, the Vulkan headers, VMA and the shader headers of tools/build_shaders.py (runtime/*_spv.h). No GPU, no
-game files, any Python.
-
-Usage: gen_width_check.py [--cc <clang>]
-"""
 import argparse
 import os
 import re
@@ -25,14 +13,12 @@ import runtime_include  # noqa: E402
 
 FILES = ['vk/vk_memory.c', 'vk/vk_texture.c', 'gfx/tex_probe.c']
 STRICT = ['-Werror=shorten-64-to-32', '-Werror=format', '-Werror=incompatible-pointer-types']
-# the diagnostics this check is about, by the flag clang names at the end of the line
 WATCHED = re.compile(r'^(?P<where>[^\n]*?:\d+:\d+): (?:error|warning): (?P<what>[^\n]*?)'
                      r'\[(?:-Werror,)?(?P<flag>-Wshorten-64-to-32|-Wformat[\w-]*|-Wincompatible[\w-]*pointer-types)\]',
                      re.M)
 
 
 def in_file(where, src):
-    """Whether a diagnostic's file:line:column is in src."""
     path = where.rsplit(':', 2)[0]
     try:
         return Path(path).resolve() == src.resolve()
@@ -48,7 +34,7 @@ def main():
         print('gen_width_check: FAIL: runtime/wb_merge_spv.h is missing: run tools/build_shaders.py first')
         return 1
     cc = args.cc or os.environ.get('CC') or str(build_game.CLANG)
-    build_game.set_cpu('v3')   # adds -DRT_CPU_LEVEL=3, as the build does
+    build_game.set_cpu('v3')
     flags = [f for f in build_game.RT_FLAGS if f != '-g']
     inc = [*runtime_include.flags(), '-I', str(build_game.vma_include())]
     vk = build_game.vulkan_include(cc)
@@ -63,8 +49,6 @@ def main():
         p = subprocess.run([cc, '-fsyntax-only', '-std=gnu11'] + flags + STRICT + inc + [str(src)], capture_output=True,
                            text=True, errors='replace', env=env)
         watched = list(WATCHED.finditer(p.stderr))
-        # only what is written in the file itself: a header it includes is not one of the files that hold generations
-        # (simd.h's simd_directed returns __builtin_expect's long, 0 or 1, as an int, which Linux's 64-bit long flags)
         hits = [m for m in watched if in_file(m.group('where'), src)]
         for m in hits:
             print(f'gen_width_check: FAIL: {m.group("where")}: {m.group("what").strip()} [{m.group("flag")}]')

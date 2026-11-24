@@ -1,10 +1,4 @@
 # needs: clang
-"""Build and run tests/pipeline_cache_file_check.c: runtime/vk/vk_cache_file.h, the read of pipeline-cache.bin with 64-bit
-sizes. The test makes a sparse file just over 2 GB in build/test/pipeline_cache_file (it takes no disk space, and about
-2 GB of memory for the seconds the read lasts) and removes it.
-
-Usage: pipeline_cache_file_check.py
-"""
 import os
 import shutil
 import subprocess

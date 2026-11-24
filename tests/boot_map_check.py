@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/boot_map_check.c: runtime/patches/boot_map_core.h, the bytes a boot map changes in what the game reads
-(the title's and the slot's sequence graphs, the save), on made-up files, and the values of its settings.
-
-No GPU, no game files, any Python.
-
-Usage: boot_map_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

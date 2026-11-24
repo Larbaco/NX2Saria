@@ -1,15 +1,3 @@
-// The quality presets: runtime/cfg/preset_pick.h (the tier made-up hardware gets, the handheld names, what each tier sets)
-// and runtime/cfg/cfg.c's preset layer (cfg_start's choice, the state file, the menu's calls), with stand-ins for what cfg.c
-// links against. Built and run by tests/preset_check.py.
-//   pure            preset_pick.h alone: prints "ok:" or "FAIL:" per check
-//   values <dir>    every value any tier gives any key on any hardware, read by cfg.c as the settings file's and as a
-//                   Ctrl+F5 reload's: prints "FAIL:" for a value outside its setting's choices
-//   run <dir> ...   cfg_init and cfg_start with the settings file and state file in <dir> and the hardware in
-//                   NX2SARIA_TEST_HW (a tool mode's start with NX2SARIA_TEST_TOOL set); then
-//                   the actions after it (use=<tier>, chosen, set=<KEY>=<value>, save, ini=<text>,
-//                   reload, notice, handoff=<tier>); prints every line cfg.c logs ("log: ...") and what the
-//                   readers get ("got: ...")
-// The stand-ins for what cfg.c links against are in preset_check_stubs.h.
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,7 +11,6 @@
 
 #include "preset_check_stubs.h"
 
-// ---- pure: preset_pick.h
 static int fails;
 
 static void check(int ok, const char *fmt, ...) {
@@ -70,7 +57,6 @@ static void handheld_is(const char *what, const char *v, const char *p, const ch
 #define INTEL 0x8086
 
 static void pure(void) {
-    // ---- the tier
     tier_is("bench PC: RX 6700 10 GB, 16 threads, 32 GB", gpu("AMD Radeon RX 6700 (RADV NAVI22)", AMD, D, 10224, 1, 8, 16, 31900, NULL, 0), PRESET_HIGH);
     tier_is("RTX 4090 24 GB: high, ultra by choice only", gpu("NVIDIA GeForce RTX 4090", NV, D, 24564, 1, 16, 32, 64000, NULL, 1), PRESET_HIGH);
     tier_is("RTX 3060 12 GB", gpu("NVIDIA GeForce RTX 3060", NV, D, 12288, 1, 6, 12, 32000, NULL, 1), PRESET_HIGH);
@@ -89,14 +75,11 @@ static void pure(void) {
     tier_is("RX 7900 XTX 24 GB", gpu("AMD Radeon RX 7900 XTX", AMD, D, 24560, 1, 16, 32, 64000, NULL, 1), PRESET_HIGH);
     tier_is("llvmpipe: a software renderer", gpu("llvmpipe (LLVM 19.1.7, 256 bits)", 0x10005, PRESET_GPU_CPU, 31900, 1, 8, 16, 31900, NULL, 0), PRESET_LOW);
     tier_is("GTX 1080 Ti 11 GB, no mesh shaders", gpu("NVIDIA GeForce GTX 1080 Ti", NV, D, 11264, 0, 8, 16, 32000, NULL, 1), PRESET_LOW);
-    // the three PCs docs/presets.md names: the bench, the owner's laptop (its log: 6017 MiB, RAM 16087 MiB) and a
-    // player's RX 6650 XT with a Ryzen 5 4650G, whose integrated graphics keep part of the 16 GB
     tier_is("the bench: RX 6700 10 GB, 16 threads, 31 GiB", gpu("AMD Radeon RX 6700 (RADV NAVI22)", 0x1002, D, 10224, 1, 8, 16, 31932, NULL, 0), PRESET_HIGH);
     tier_is("the owner's RTX 3050 6GB Laptop GPU, 16 GB", gpu("NVIDIA GeForce RTX 3050 6GB Laptop GPU", NV, D, 6017, 1, 8, 16, 16087, NULL, 1), PRESET_MEDIUM);
     tier_is("RX 6650 XT 8 GB, Ryzen 5 4650G, 16 GB (15.3 GiB)", gpu("AMD Radeon RX 6650 XT", 0x1002, D, 8176, 1, 6, 12, 15667, NULL, 0), PRESET_HIGH);
     tier_is("no data", gpu(NULL, 0, 0, 0, 0, 0, 0, 0, NULL, 0), PRESET_HIGH);
     tier_is("no GPU data, a handheld", gpu(NULL, 0, 0, 0, 0, 4, 8, 14800, "Steam Deck", 0), PRESET_LOW);
-    // ultra is never recommended: any type, mesh shaders or not, up to 96 GiB of video memory, any RAM and processors
     int ultra = 0, tried = 0;
     static const int types[] = {PRESET_GPU_OTHER, PRESET_GPU_INTEGRATED, PRESET_GPU_DISCRETE, PRESET_GPU_CPU};
     for (int ty = 0; ty < 4; ty++)
@@ -111,7 +94,6 @@ static void pure(void) {
                     }
     check(!ultra, "no hardware is recommended ultra (%d of %d made-up PCs)", ultra, tried);
 
-    // ---- what the GPU runs
     PresetHw h = gpu("NVIDIA GeForce RTX 4060", NV, D, 8188, 1, 8, 16, 32000, NULL, 0);
     check(h.dlss && !h.fsr4, "an RTX card runs DLSS");
     h = gpu("NVIDIA GeForce GTX 1660 SUPER", NV, D, 6144, 1, 8, 16, 32000, NULL, 1);
@@ -125,7 +107,6 @@ static void pure(void) {
     h = gpu("NVIDIA RTX 9000 (made up)", AMD, D, 24560, 1, 8, 16, 32000, NULL, 1);
     check(!h.dlss, "an AMD vendor ID with RTX in the name does not run DLSS");
 
-    // ---- handheld names, as Linux's DMI tables and Windows' registry give them
     handheld_is("Steam Deck LCD (DMI)", "Valve", "Jupiter", "Aerith", "Valve", "Jupiter", "Steam Deck");
     handheld_is("Steam Deck OLED (DMI)", "Valve", "Galileo", "Sephiroth", "Valve", "Galileo", "Steam Deck");
     handheld_is("ROG Ally (DMI)", "ASUSTeK COMPUTER INC.", "ROG Ally RC71L_RC71L", "ROG Ally", "ASUSTeK COMPUTER INC.", "RC71L", "ROG Ally");
@@ -143,7 +124,6 @@ static void pure(void) {
     handheld_is("Valve Index host (not a Deck)", "Valve", "Something", "", "Valve", "Other", NULL);
     handheld_is("nothing known", NULL, NULL, NULL, NULL, NULL, NULL);
 
-    // ---- what each tier sets, over a spread of hardware
     static const struct { const char *name; uint32_t vendor; int type; uint32_t vram; const char *hand; int win; } kinds[] = {
         {"NVIDIA GeForce RTX 4090", NV, D, 24564, NULL, 1}, {"NVIDIA GeForce RTX 3060", NV, D, 12288, NULL, 0},
         {"NVIDIA GeForce GTX 1650", NV, D, 4096, NULL, 1}, {"AMD Radeon RX 9070 XT", AMD, D, 16304, NULL, 1},
@@ -227,7 +207,6 @@ static void pure(void) {
               (v = preset_value(PRESET_LOW, &no_mesh, "STANDIN_FILTER")) && !strcmp(v, "bilinear"),
           "low on a card without mesh shaders: the smaller scene and the plain filter");
 
-    // ---- fingerprints
     char a[160], b[160];
     PresetHw x = rtx;
     preset_fingerprint(&x, a, sizeof a);
@@ -260,7 +239,6 @@ static void pure(void) {
     check(!preset_same_hardware(a, "10de:1234:100:8188:16:31"), "a cut fingerprint is not the same");
 }
 
-// ---- values: every value cfg.c reads as the file's and as a reload's
 static void values(const char *dir) {
     snprintf(exe_path, sizeof exe_path, "%s/nx2saria", dir);
     char ini[1100];
@@ -270,7 +248,7 @@ static void values(const char *dir) {
     cfg_init();
     cfg_start(1);
     int n = 0;
-    for (size_t r = 0; r < PRESET_ROW_COUNT; r++) {   // the values do not depend on the hardware, only whether a row applies
+    for (size_t r = 0; r < PRESET_ROW_COUNT; r++) {
         const char *key = PRESET_ROWS[r].key, *v = PRESET_ROWS[r].value;
         if (!cfg_meta(key)) {
             printf("FAIL: %s has no row in the settings table\n", key);
@@ -280,8 +258,8 @@ static void values(const char *dir) {
         fprintf(f, "%s = %s\n", key, v);
         fclose(f);
         printf("value: %s = %s\n", key, v);
-        if (!cfg_load(ini)) printf("FAIL: cannot read %s\n", ini);   // logs a value outside its choices
-        f = fopen(ini, "w");   // a reload of a file without it, then with it: what a reload accepts (cfg.c value_ok)
+        if (!cfg_load(ini)) printf("FAIL: cannot read %s\n", ini);
+        f = fopen(ini, "w");
         fclose(f);
         CfgReloadResult res;
         cfg_reload_file(&res);
@@ -307,8 +285,6 @@ static void report(void) {
     printf("got: notice_due %d\n", cfg_preset_notice_due());
     int n;
     const char *const *keys = cfg_preset_keys(&n);
-    // the keys choosing the tier in use in the menu hands back (runtime/ui/option_rows.cpp opt_preset_handback, outside
-    // a draft): the keys it sets that the player sets to another value, the environment's aside
     printf("got: handback");
     for (int i = 0, first = 1; i < n; i++) {
         char name[80];
@@ -357,7 +333,7 @@ int main(int argc, char **argv) {
     if (argc >= 3 && !strcmp(argv[1], "run")) {
         snprintf(exe_path, sizeof exe_path, "%s/nx2saria", argv[2]);
         cfg_init();
-        cfg_start(!getenv("NX2SARIA_TEST_TOOL"));   // NX2SARIA_TEST_TOOL: as a tool mode starts (main.c game_run)
+        cfg_start(!getenv("NX2SARIA_TEST_TOOL"));
         report();
         for (int i = 3; i < argc; i++) {
             if (!strncmp(argv[i], "use=", 4)) {
@@ -369,22 +345,21 @@ int main(int argc, char **argv) {
                 printf("got: version bumped %d\n", cfg_version() != before);
             } else if (!strcmp(argv[i], "chosen")) {
                 cfg_preset_chosen();
-            } else if (!strncmp(argv[i], "set=", 4)) {   // set=<KEY>=<value>: cfg_set, as the menu's Apply does
+            } else if (!strncmp(argv[i], "set=", 4)) {
                 char name[160];
                 snprintf(name, sizeof name, "NX2SARIA_%s", argv[i] + 4);
                 char *eq = strchr(name, '=');
                 if (eq) *eq = 0, cfg_set(name, eq + 1);
-            } else if (!strcmp(argv[i], "save")) {   // the menu's save after its Apply
+            } else if (!strcmp(argv[i], "save")) {
                 cfg_save();
-            } else if (!strncmp(argv[i], "ini=", 4)) {   // the settings file's new text, for a reload after it
+            } else if (!strncmp(argv[i], "ini=", 4)) {
                 char ini[1100];
                 snprintf(ini, sizeof ini, "%s/nx2saria.ini", argv[2]);
                 FILE *f = fopen(ini, "w");
                 if (f) fprintf(f, "%s\n", argv[i] + 4), fclose(f);
-            } else if (!strcmp(argv[i], "notice")) {   // the menu shows the notice when it is due
+            } else if (!strcmp(argv[i], "notice")) {
                 if (cfg_preset_notice_due()) cfg_preset_notice_done();
             } else if (!strncmp(argv[i], "handoff=", 8)) {
-                // the menu's Apply of a preset choice: the values before, the keys set by hand reset, the switch
                 int t = -1, n;
                 for (int k = 0; k < PRESET_TIERS; k++)
                     if (!strcmp(argv[i] + 8, cfg_preset_name(k))) t = k;
@@ -405,7 +380,7 @@ int main(int argc, char **argv) {
             } else if (!strcmp(argv[i], "reload")) {
                 CfgReloadResult r;
                 cfg_reload_file(&r);
-            } else if (!strcmp(argv[i], "device")) {   // the game has chosen its Vulkan device (hw_detect_device_check)
+            } else if (!strcmp(argv[i], "device")) {
                 cfg_preset_device_started();
             }
             printf("--- after %s\n", argv[i]);

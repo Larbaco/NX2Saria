@@ -1,14 +1,4 @@
 # needs: clang
-"""Build runtime/pacing/frame_rate.c's ocarina log (ocarina_log_init, ocarina_watch, ocarina_end, cut out of the file) with
-stand-ins for the patch sets, the patch page and the log, and play it the page words the sets orecord (+264) and ostaff
-(+776) write: a stretch of ocarina use gives one line after two quiet seconds, with its presents, the presents the
-recorder clock moved on and the notes the staff moved (rises of its signal), and nothing comes while neither word
-changes. Without the sets the log watches nothing and says so at the start.
-
-No GPU, no game files, any Python.
-
-Usage: ocarina_log_check.py
-"""
 import os
 import re
 import shutil
@@ -81,7 +71,6 @@ int main(void) {
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -90,7 +79,6 @@ def compiler():
 
 
 def cut():
-    """frame_rate.c from the ocarina log's first #define to the end of ocarina_watch."""
     src = (ROOT / 'runtime' / 'pacing' / 'frame_rate.c').read_text(encoding='utf-8')
     m = re.search(r'#define OCARINA_QUIET_NS .*?\nstatic void ocarina_watch\(uint64_t now_ns\) \{\n.*?\n\}\n', src, re.S)
     assert m, 'runtime/pacing/frame_rate.c: the ocarina log (OCARINA_QUIET_NS ... ocarina_watch) was not found'

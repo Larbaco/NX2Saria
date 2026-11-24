@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/oq_hold_check.c: runtime/vk/vk_oq_hold.h, the count a samples-passed report writes when the full
-occlusion query ring left some of its draws uncounted (vk_exec_xfer.c oq_report_count, NX2SARIA_OQ_HOLD): the larger of
-what was counted and the record's last complete count.
-
-No GPU, no game files, any Python.
-
-Usage: oq_hold_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

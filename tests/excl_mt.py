@@ -1,15 +1,4 @@
 # needs: clang, py:capstone, py:unicorn
-"""Multithreaded test of the exclusive monitor helpers in cpu.h (ldxN/stxN, ldxp128/stxp128).
-
-- A changed value: thread A loads X exclusively, thread B changes X to Y with its own exclusive pair, then A's store
-  exclusive must fail. Checked for the 32-bit, 64-bit and 128-bit pair forms, plus a control where B touches nothing.
-- A value changed and changed back (ABA): B changes X to Y and back to X, and A's store exclusive succeeds. The monitor
-  is a compare-and-swap of the value loaded (runtime/cpu.h, "exclusive monitor"), so it does not see this case, where
-  the console's monitor would fail the store; the check holds the helpers to what they are.
-- Contention: N threads increment one counter with load/store-exclusive retry loops; the total must be exact.
-
-Needs no game files. Usage: excl_mt.py [--runtime DIR] [--threads N] [--iters K]
-"""
 import argparse
 import os
 import subprocess

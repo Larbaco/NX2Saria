@@ -1,15 +1,4 @@
 # needs: clang
-"""Check the menus' black bars: the patch set wide_bars (recomp/patches-v111.txt) and runtime/patches/wide_bars.c.
-
-The set's one site, lifted by recomp/lifter.py as the generator lifts it: the screen setup's load of the vtable at
-main+0x774068, kept, then a call of the patch page's +0xef0, which patches.c registers for wide_bars_screen_host and no
-other set or host function takes. Then tests/wide_bars_check.c builds wide_bars.c with the rest of the runtime stubbed
-and plays presents against stand-in screens (menu backgrounds, loading fades, other screens): the sides each state
-gives, the log lines, screens destroyed and set up again, a full table, the registers the host function leaves, and a
-start without the set. No game files: the module layout is a stand-in written to the test's build folder.
-
-Usage: wide_bars_check.py
-"""
 import os
 import re
 import shutil
@@ -25,7 +14,7 @@ import runtime_include
 
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 MAIN, PAGE = 0x7000000000, 0x4ea0000
-SITE, ORIGINAL, HOST = 0x774068, 0xf9400268, 0xef0   # ldr x8, [x19]; the page's host slot
+SITE, ORIGINAL, HOST = 0x774068, 0xf9400268, 0xef0
 
 LAYOUT = '''// A stand-in for the generated layout.h (tests/wide_bars_check.py): main's image is a buffer of the test.
 #pragma once
@@ -62,7 +51,6 @@ def check_site():
     first, call = lifter.lift(words[0], MAIN + SITE), lifter.lift(words[1], MAIN + SITE)
     assert words[0] == ORIGINAL and first.kind == 'op' and 'c->x[8]' in first.code and 'c->x[19]' in first.code, first.code
     assert call.kind == 'bl' and call.target == MAIN + PAGE + HOST, (call.kind, call.target and hex(call.target))
-    # FOV watches the same screen setup even when the bars are disabled.
     for off, alts in table.sites['main'].items():
         for k, repl, _ in alts:
             for w in repl:

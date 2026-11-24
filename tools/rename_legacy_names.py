@@ -43,6 +43,7 @@ KEEP = (
     ('cfg_parse_check.py', "{'NX2NAVI_FULLSCREEN': '1'}"),
     ('host_probes_test.py', 'NX2NAVI_LIFT_JOBS'),
     ('host_probes_test.py', 'NX2NAVI_LIFT_TEST_OOM_ABOVE'),
+    ('make_game_sdl3_test.py', "os.environ['NX2NAVI_SDL3'] = 'kit'"),
     ('pgo_build_test.py', "{'NX2NAVI_PGO': 'gen'}"),
     ('pgo_build_test.py', "{'NX2NAVI_GUEST_OPT': '2'}"),
 )

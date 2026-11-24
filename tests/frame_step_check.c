@@ -1,13 +1,8 @@
-// runtime/pacing/frame_rate.c: the step Ocarina is given (ocarina_step), driven through frame_step_cap_ns and
-// frame_step_present with made-up display times and the rest of the runtime stubbed. Built and run by
-// tests/frame_step_check.py; prints each failed check and exits 1 on any. With the argument "mean" it runs with
-// NX2SARIA_STEP_STEADY=0 and checks the mean of the last five intervals.
 #include "frame_rate.c"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the runtime frame_rate.c reaches
 static uint8_t page[4096];
 static const char *limit = "60", *steady = "1";
 static unsigned version = 1;
@@ -27,29 +22,27 @@ void rt_patch_disable(int set) { (void)set; }
 void rt_patch_switch(int set, int on) { (void)set, (void)on; }
 void *rt_patch_page(void) { return page; }
 void rt_log(const char *fmt, ...) { (void)fmt; }
-void battle_music_gate(int run) { (void)run; }   // the flag latch has its own test (battle_music_check.py)
+void battle_music_gate(int run) { (void)run; }
 double gfx_window_refresh_hz(void) { return 144; }
-static int movie;   // a movie plays (frame_rate.c movie_cap_hz)
+static int movie;
 int ov_movie_live(void) { return movie; }
 int vk_fg_generating(void) { return 0; }
 int vk_fsr3fg_generating(void) { return 0; }
-float dbg_speed_factor(void) { return 1.0f; }   // the debug menu's game speed: normal
+float dbg_speed_factor(void) { return 1.0f; }
 int vk_fg_active(void) { return 0; }
 int vk_fg_wanted(void) { return 0; }
-static int fg_mult = 1;   // frames on screen per game frame
+static int fg_mult = 1;
 int vk_dlssg_multiplier(void) { return fg_mult; }
 int vk_dlssg_active(void) { return fg_mult > 1; }
 int vk_lowlat_on(void) { return 0; }
-static int64_t rtss_want;          // the newest want (rtss_limit.c)
-static int rtss_movie;             // the newest movie rate RTSS was told of
+static int64_t rtss_want;
+static int rtss_movie;
 void rtss_limit_want(int64_t millihz) { rtss_want = millihz; }
 void rtss_limit_movie(int hz) { rtss_movie = hz; }
-static int rtss_holds;              // RivaTuner Statistics Server holds the game to the want (rtss_limit.c)
-static uint64_t kern_ns, hosted;    // kern_now_ns, and its time at the newest host present (0: none yet)
+static int rtss_holds;
+static uint64_t kern_ns, hosted;
 int rtss_limit_active(void) { return rtss_holds; }
 uint64_t gfx_window_hosted_ns(void) { return hosted; }
-// The time manager the patch hosts read their step from (frame_rate.c game_frame_step):
-// [main+0x4c7e890] holds the slot, the slot the manager, the manager +0x10 the step. Nothing else reads.
 static int fake_manager;
 static float fake_step = 1.0f;
 int plat_mem_read(uint64_t a, void *out, size_t n) {
@@ -63,8 +56,7 @@ int plat_mem_read(uint64_t a, void *out, size_t n) {
 int plat_mem_readable(uint64_t a, size_t n) { (void)a, (void)n; return 0; }
 void mem_kernel_access(uint64_t a, uint64_t n) { (void)a, (void)n; }
 int mem_host_readable(uint64_t a, uint64_t n) { (void)a, (void)n; return 0; }
-int mem_info(uint32_t id, uint64_t *out) { (void)id, (void)out; return 0; }   // the floor probe (off here)
-// the floor scan (off here)
+int mem_info(uint32_t id, uint64_t *out) { (void)id, (void)out; return 0; }
 static RtGuestLayout layout_stub;
 const RtGuestLayout *mem_layout(void) { return &layout_stub; }
 uint32_t mem_query(uint64_t a, RtMemoryInfo *out) { (void)a, memset(out, 0, sizeof *out); return 1; }
@@ -76,7 +68,6 @@ int mem_copy_readable(uint8_t *const *dst, const uint64_t (*src)[2], int n, uint
     return 0;
 }
 uint64_t kern_now_ns(void) { return kern_ns; }
-// the floor watch (off here)
 int floor_watch_wanted(void) { return 0; }
 int floor_watch_found(const uint64_t *addr, const float *val, const int *unit, int n, const float link[3]) {
     (void)addr, (void)val, (void)unit, (void)n, (void)link;
@@ -86,10 +77,9 @@ int floor_watch_present(const float link[3], int link_ok, float frames) {
     (void)link, (void)link_ok, (void)frames;
     return 0;
 }
-void plat_mutex_lock(PlatMutex *m) { (void)m; }     // one thread here
+void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 
-// ---- one present: the pacer asks for the period, then reports the display time. Returns the step in 60 Hz frames.
 static uint64_t now_ns = 1000000000ull;
 uint64_t plat_now_ns(void) { return now_ns; }
 static double wall_s, game_s;
@@ -106,14 +96,12 @@ static float present(double interval_s) {
 static void set_limit(const char *l) {
     limit = l;
     version++;
-    present(1.0);   // a gap: the filter starts again
+    present(1.0);
     wall_s = game_s = 0;
 }
 
-// ---- the patch sites that cut the step to a whole number, called as the lifted code calls them: the value in s0, the
-// object in its register, the whole number back in the register the cut wrote (all 64 bits of it).
 static Cpu cpu;
-static uint32_t water(uint64_t object, float step) {   // frame_rate_water_host: x21, w9
+static uint32_t water(uint64_t object, float step) {
     uint32_t bits;
     memcpy(&bits, &step, 4);
     cpu.v[0] = bits, cpu.x[21] = object, cpu.x[9] = ~0ull;
@@ -121,35 +109,29 @@ static uint32_t water(uint64_t object, float step) {   // frame_rate_water_host:
     CHECK(cpu.x[9] >> 32 == 0, "the water's steps leave x9's upper half %#llx", (unsigned long long)cpu.x[9]);
     return (uint32_t)cpu.x[9];
 }
-static uint32_t day(uint64_t object, float secs) {   // frame_rate_day_host: x19, w8
+static uint32_t day(uint64_t object, float secs) {
     uint32_t bits;
     memcpy(&bits, &secs, 4);
     cpu.v[0] = bits, cpu.x[19] = object, cpu.x[8] = ~0ull;
     frame_rate_day_host(&cpu);
     return (uint32_t)cpu.x[8];
 }
-// frame_rate_sim_host as the surfaces' sites call it (set owater): after the site's division, the update's seconds over
-// 1/60 s in s0 and the object in x19; then the game's own cut of s0 (fcvtzs) gives the steps. Only s0's low lane may
-// change: every general register, the other lanes and vector registers and the flags stay as they were.
 static uint32_t sim(uint64_t object, float seconds) {
     Cpu c, before;
     uint8_t *p = (uint8_t *)&c;
     for (size_t i = 0; i < sizeof c; i++) p[i] = (uint8_t)(i * 37u + 11u);
-    float quotient = seconds / (1.0f / 60.0f);   // the site's fdiv s0, s8, s0 (the literal is 1/60 as a float)
+    float quotient = seconds / (1.0f / 60.0f);
     uint32_t bits;
     memcpy(&bits, &quotient, 4);
-    c.v[0] = bits, c.x[19] = object;   // the division wrote s0 and zeroed the lanes above it
+    c.v[0] = bits, c.x[19] = object;
     before = c;
     frame_rate_sim_host(&c);
     int same = c.nzcv == before.nzcv && c.sp == before.sp && !memcmp(&c.v[1], &before.v[1], sizeof c.v - sizeof c.v[0]) &&
                c.v[0] >> 32 == 0 && !memcmp(c.x, before.x, sizeof c.x);
     CHECK(same, "the surfaces' site changed something besides s0's low lane");
     memcpy(&quotient, &c.v[0], 4);
-    return cut_fcvtzs(quotient);   // the game's fcvtzs after the site
+    return cut_fcvtzs(quotient);
 }
-// The physics solver step count (patches-v111.txt osolver and osolverfull, lifted by frame_step_check.py): the step
-// setup's words from the literal load to the cut, run on the frames per update in s0 and the count (4) in s1 as the
-// game loads them, x8 pointing at the literal 0.001 the original loads. Returns w1, the steps.
 void solver_game(Cpu *c);
 void solver_osolver(Cpu *c);
 void solver_osolverfull(Cpu *c);
@@ -166,8 +148,6 @@ static uint32_t solver_steps(void (*fn)(Cpu *), float frames) {
     return (uint32_t)c.x[1];
 }
 
-// The floor-carry gate (set ofollow): 1 when its b.gt is taken, which keeps a tenth of the floor's velocity. s0 is the
-// physics' inverse step; the set's load reads the page through x8.
 void follow_game(Cpu *c);
 void follow_ofollow(Cpu *c);
 static int follow_cut(void (*fn)(Cpu *), float inverse) {
@@ -177,11 +157,9 @@ static int follow_cut(void (*fn)(Cpu *), float inverse) {
     memcpy(&bits, &inverse, 4);
     c.v[0] = bits, c.x[8] = (uint64_t)(uintptr_t)page;
     fn(&c);
-    return !FLAG_Z(&c) && FLAG_N(&c) == FLAG_V(&c);   // gt
+    return !FLAG_Z(&c) && FLAG_N(&c) == FLAG_V(&c);
 }
 
-// The playback staff's note gate (set ostaff): w0 in is the melody's note signal of this update, w0 out whether the
-// staff moves on; the last signal stays on the page (+776) between calls.
 void staff_ostaff(Cpu *c);
 static int staff_gate(int signal) {
     Cpu c;
@@ -206,13 +184,13 @@ static void check_horse_jump(void) {
         float render_step, manager_step, jump_step;
         int vanilla, patched;
     } cases[] = {
-        {0.5f, 0.5f, 0.5f, 0, 1},    // a normal jump at 120 fps
-        {0.5f, 0.5f, 0.25f, 0, 0},   // an update slowed within a short frame
-        {0.5f, 0.5f, 0.75f, 0, 1},   // a jump allowed to advance more quickly
-        {1.0f, 0.5f, 0.5f, 0, 0},    // slow motion at the nominal display rate
-        {1.0f, 1.0f, 1.0f, 1, 1},    // a normal jump at 60 fps
-        {0.5f, 1.0f, 0.5f, 0, 0},    // the time manager uses a whole step
-        {0.5f, NAN, 0.5f, 0, 0},     // the time manager's step is unusable
+        {0.5f, 0.5f, 0.5f, 0, 1},
+        {0.5f, 0.5f, 0.25f, 0, 0},
+        {0.5f, 0.5f, 0.75f, 0, 1},
+        {1.0f, 0.5f, 0.5f, 0, 0},
+        {1.0f, 1.0f, 1.0f, 1, 1},
+        {0.5f, 1.0f, 0.5f, 0, 0},
+        {0.5f, NAN, 0.5f, 0, 0},
     };
     for (unsigned i = 0; i < sizeof cases / sizeof *cases; i++) {
         atomic_store(ostep_page, scalar_bits(cases[i].render_step));
@@ -253,7 +231,7 @@ static void check_gohma_turn(void) {
             c.v[1] = scalar_bits(-cases[i].steering_step);
             c.v[2] = scalar_bits(cases[i].rate);
             c.v[8] = scalar_bits(cases[i].steering_step);
-            c.v[10] = scalar_bits(-9.0f);   // the already restored caller value is unrelated to the turn
+            c.v[10] = scalar_bits(-9.0f);
             gohma_clamp(&c, on);
             CHECK(c.v[0] == scalar_bits(on ? cases[i].patched : cases[i].vanilla),
                   "Gohma steering case %u, patch %d did not clamp the rate", i, on);
@@ -268,7 +246,6 @@ int main(int argc, char **argv) {
     int mean = argc > 1 && !strcmp(argv[1], "mean");
     if (mean) steady = "0";
     frame_step_init();
-    // the pacer's period while Reflex holds the limit (vk_dlssg.c vk_dlssg_pace): 240 fps for a game stepping by the clock
     CHECK(frame_step_ceiling_ns() == 4166666, "the ceiling of a game that steps by the clock: %llu ns",
           (unsigned long long)frame_step_ceiling_ns());
     float one, cut0;
@@ -278,7 +255,7 @@ int main(int argc, char **argv) {
     CHECK(cut0 == 100.0f, "the floor carry's cut is the game's 100 before the first present, not %g", cut0);
     const double p60 = 16666667e-9, p240 = 4166667e-9;
 
-    if (mean) {   // the comparison setting: 5 and 30 ms in turn give 15 and 20 ms in turn
+    if (mean) {
         set_limit("unlimited");
         float lo = 9, hi = 0;
         for (int i = 0; i < 200; i++) {
@@ -293,7 +270,6 @@ int main(int argc, char **argv) {
     check_horse_jump();
     check_gohma_turn();
 
-    // A 60 fps limit with a late frame and the short one after it every 37 frames: one frame exactly, every frame.
     set_limit("60");
     for (int i = 0; i < 600; i++) {
         float f = present(i % 37 == 5 ? p60 + 0.004 : i % 37 == 6 ? p60 - 0.004 : p60);
@@ -301,7 +277,6 @@ int main(int argc, char **argv) {
     }
     CHECK(fabs(game_s - wall_s) < 0.001, "60 fps limit: %.4f s stepped in %.4f s", game_s, wall_s);
 
-    // The 240 cap with late frames: never under a quarter frame (the game's own solver step count is 0 there).
     set_limit("240");
     for (int i = 0; i < 1200; i++) {
         double late = 0.0005 + 0.0025 * ((i * 7919) % 100) / 100.0;
@@ -310,7 +285,6 @@ int main(int argc, char **argv) {
     }
     CHECK(fabs(game_s - wall_s) < 0.003, "240 cap: %.4f s stepped in %.4f s", game_s, wall_s);
 
-    // Unlimited, 5 and 30 ms in turn: one step, and the clock kept.
     set_limit("unlimited");
     float prev = 0;
     for (int i = 0; i < 600; i++) {
@@ -320,7 +294,6 @@ int main(int argc, char **argv) {
     }
     CHECK(fabs(game_s / wall_s - 1) < 0.005, "5/30 ms: %.4f s stepped in %.4f s", game_s, wall_s);
 
-    // 200 fps and one 60 ms frame: the step rises by a tenth at most and the 55 ms are paid back.
     set_limit("unlimited");
     for (int i = 0; i < 1000; i++) {
         float f = present(i == 300 ? 0.060 : 0.005);
@@ -329,15 +302,12 @@ int main(int argc, char **argv) {
     }
     CHECK(fabs(game_s - wall_s) < 0.004, "hitch: %.4f s stepped in %.4f s", game_s, wall_s);
 
-    // A real change of rate, 240 to 120 fps, arrives within 12 frames.
     set_limit("unlimited");
     for (int i = 0; i < 300; i++) present(p240);
     float f = 0;
     for (int i = 0; i < 12; i++) f = present(2 * p240);
     CHECK(f > 0.49f, "240 -> 120 fps: %.4f frames after 12", f);
 
-    // A movie started at 240 fps: exactly one frame from its first update, late and short frames included, as the game
-    // shows one picture per update; at its end the step follows the frame limit again within 12 frames.
     set_limit("unlimited");
     for (int i = 0; i < 300; i++) present(p240);
     movie = 1;
@@ -351,7 +321,6 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 12; i++) after = present(p240);
     CHECK(fabsf(after - 0.25f) < 0.002f, "after the movie: %.4f frames", after);
 
-    // A frame longer than 1/15 s slows the game down; the step never leaves 1/480..1/15 s.
     set_limit("unlimited");
     for (int i = 0; i < 100; i++) {
         float g = present(0.2);
@@ -359,11 +328,9 @@ int main(int argc, char **argv) {
     }
     set_limit("unlimited");
     for (int i = 0; i < 100; i++) {
-        float g = present(0.0011);   // 900 fps, as a quick menu without the pacer would run
+        float g = present(0.0011);
         CHECK(g >= 0.125f, "short frames: %.4f frames", g);
     }
-    // The limit counts the frames the game draws: frame generation's multiplier leaves the pace of a numeric limit and
-    // of unlimited alone, and divides only the monitor's rate (144 Hz here), which is a rate on the screen.
     static const struct { const char *l; int gen; double hz, game_hz; } caps[] = {
         {"60", 1, 60, 60},        {"60", 4, 60, 60},      {"120", 2, 120, 120},     {"240", 4, 240, 240},
         {"display", 1, 144, 144}, {"display", 4, 36, 36}, {"unlimited", 1, 240, 0}, {"unlimited", 4, 240, 0}};
@@ -378,9 +345,6 @@ int main(int argc, char **argv) {
     }
     fg_mult = 1;
 
-    // RivaTuner Statistics Server holds the limit: the pacer keeps the 240 ceiling while host presents go out, and the
-    // limit's own period before the first host present and once none went out for 200 ms (a minimised window, a frame
-    // hold), when RTSS has nothing to hold.
     {
         static const struct { const char *l; int holds; uint64_t hosted_ago; double hz; const char *what; } cases[] = {
             {"60", 1, 10000000, 240, "RTSS holds, a host present 10 ms ago: the ceiling alone"},
@@ -398,9 +362,6 @@ int main(int argc, char **argv) {
             double hz = 1e9 / (double)frame_step_cap_ns();
             CHECK(fabs(hz - cases[i].hz) < 0.01, "%s: paces at %.3f fps, not %.0f", cases[i].what, hz, cases[i].hz);
         }
-        // A movie while RTSS holds 144: RTSS keeps the play limit (no rewrite of its profile at the movie's start and
-        // end) and the pacer holds the movie's 60 with its slots; at 40 the want stays 40 too (rtss_decide.h rtss_target
-        // decides what the profile gets).
         hosted = kern_ns - 10000000;
         static const struct { const char *l; int64_t want; } movies[] = {{"144", 144000}, {"40", 40000}};
         for (unsigned i = 0; i < 2; i++) {
@@ -419,8 +380,6 @@ int main(int argc, char **argv) {
         rtss_holds = 0, hosted = kern_ns = 0;
     }
 
-    // The water's ripples at 144 fps, a step of 60/144 frame: 64 water objects asked once a frame each run 600 steps
-    // in 1440 frames (the cut gave none), and the day's seconds asked between them keep their own fraction.
     {
         const float step = 60.0f / 144.0f;
         const uint64_t first = 0x7100000000ull, clock = 0x7200000000ull;
@@ -433,8 +392,6 @@ int main(int argc, char **argv) {
             CHECK(steps[k] >= 599 && steps[k] <= 600, "water object %d of 64 at 144 fps: %u steps in 1440 frames", k, steps[k]);
         CHECK(secs >= 1199 && secs <= 1200, "the day beside 64 water objects: %u seconds in 1440 frames", secs);
     }
-    // A step of one frame, and of two, is what the game computes, also after a fraction was left; a quarter frame
-    // gives one step every fourth frame, and what fcvtzs cuts to nothing or saturates leaves the remainder alone.
     {
         const uint64_t pond = 0x7300000000ull;
         for (int i = 0; i < 3; i++) CHECK(water(pond, 0.25f) == 0, "a quarter frame, call %d", i);
@@ -446,8 +403,6 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 30; i++) CHECK(water(pond, 2.0f) == 2, "two frames, call %d", i);
         CHECK(water(pond, 0.5f) == 1, "the half frame kept through the whole ones");
     }
-    // The water managers and the floors (set owater): at 120, 144 and 240 fps each runs 60 fixed steps a second (the cut
-    // gave none above 60), beside 64 water objects; at 60 and 30 fps one and two steps an update, as the game counts them.
     {
         const uint64_t interactive = 0x7400000000ull, responsive = 0x7400001000ull, floor = 0x7400002000ull,
                        first = 0x7500000000ull;
@@ -472,8 +427,6 @@ int main(int argc, char **argv) {
                   sim(interactive, NAN) == 0, "no time, negative time and NaN are cut as fcvtzs cuts");
         CHECK(sim(interactive, 1.0f / 15.0f) == 4, "four steps for a 15 fps update (the game's clamp to 3 follows)");
     }
-    // A place with many interactive floors: 2 water managers and 30 floors, each asking once an update at 144 fps, all
-    // keep their own remainder and run 60 fixed steps a second (with 8 slots they took each other's and ran none).
     {
         const uint64_t first = 0x7600000000ull;
         uint32_t steps[32] = {0};
@@ -482,12 +435,10 @@ int main(int argc, char **argv) {
         for (int k = 0; k < 32; k++)
             CHECK(steps[k] >= 599 && steps[k] <= 600, "surface %d of 32 at 144 fps: %u steps in 10 s", k, steps[k]);
     }
-    // The sound job (set osound). At 60 and 30 fps every phase of every frame runs with the game's step; at 144 and 240
-    // fps it runs 60 times a second with a step of one, phases 1 and 2 with phase 0; a skipped phase gets 3 in w2.
     {
         fake_manager = 1;
         const float steps[] = {1.0f, 2.0f, 60.0f / 144.0f, 0.25f};
-        const int frames[] = {600, 300, 1440, 2400};   // 10 s each
+        const int frames[] = {600, 300, 1440, 2400};
         for (int r = 0; r < 4; r++) {
             fake_step = steps[r];
             int ran[3] = {0}, odd = 0;
@@ -498,7 +449,7 @@ int main(int argc, char **argv) {
                     frame_rate_sound_gate_host(&cpu);
                     if (cpu.x[2] == phase) ran[phase]++;
                     else odd += cpu.x[2] != 3;
-                    if (phase == 0 && cpu.x[2] == 0) {   // phase 0 runs on to its load of the step
+                    if (phase == 0 && cpu.x[2] == 0) {
                         uint32_t bits;
                         memcpy(&bits, &fake_step, 4);
                         cpu.v[0] = bits;
@@ -516,7 +467,6 @@ int main(int argc, char **argv) {
                   want);
             CHECK(fed >= 599.0f && fed <= 600.5f, "step %.3f: the sound system was fed %.2f frames in 10 s", steps[r], fed);
         }
-        // Owed fractions survive a whole step, and a step that is not positive runs and clears them.
         SoundGate g = {0.0f, 1};
         CHECK(!sound_gate_take(&g, 0, 0.5f) && !sound_gate_take(&g, 1, 1.0f), "half a frame: the job and its phase 1 wait");
         CHECK(sound_gate_take(&g, 0, 1.0f) && sound_gate_take(&g, 2, 1.0f) && g.owed == 0.5f, "a whole frame runs, the half kept");
@@ -525,9 +475,6 @@ int main(int argc, char **argv) {
                   sound_gate_take(&g, 0, 0.0f), "NaN and 0 run as the game has them and clear what is owed");
         fake_manager = 0;
     }
-    // The solver step count: at 60 and 30 fps all three give the game's 4 and 8 (also with the steady step a little
-    // off them); above 60 fps the game's count falls to 1 and to 0, osolver's rounds up (2 at 144 fps, 1 at 240), and
-    // osolverfull's keeps every update at the 60 Hz frame's 4.
     {
         const struct { float frames; uint32_t game, up, full; } want[] = {
             {1.0f, 4, 4, 4}, {2.0f, 8, 8, 8}, {0.98f, 3, 4, 4}, {1.02f, 4, 4, 4}, {60.0f / 144.0f, 1, 2, 4},
@@ -539,15 +486,10 @@ int main(int argc, char **argv) {
                   "%.4f frames an update: solver steps %u / %u / %u, not %u / %u / %u", want[i].frames, g, u, f,
                   want[i].game, want[i].up, want[i].full);
         }
-        // steps a second at 144 and 240 fps: osolver 288 and 240, osolverfull 576 and 960
         printf("frame_step_check: solver steps a second at 144 / 240 fps: physics_steps 1 %u / %u, 2 %u / %u\n",
                144 * solver_steps(solver_osolver, 60.0f / 144.0f), 240 * solver_steps(solver_osolver, 0.25f),
                144 * solver_steps(solver_osolverfull, 60.0f / 144.0f), 240 * solver_steps(solver_osolverfull, 0.25f));
     }
-    // The floor carry (set ofollow). The physics' inverse step is 60 / (frames per update * time scale); the game cuts
-    // a floor's velocity to a tenth above 100, which at 60 fps is a time scale under 0.6 and above 100 fps every
-    // update. With the page's 100 / frames per update the set cuts exactly where the game cuts at 60 fps at any rate
-    // above 60; at 60 and 30 fps the page holds 100 and the set cuts where the game's own words do.
     {
         const char *limits[] = {"60", "30", "90", "120", "144", "240"};
         const int hz[] = {60, 30, 90, 120, 144, 240};
@@ -570,8 +512,6 @@ int main(int argc, char **argv) {
                   hz[r] > 100 ? "do not cut" : "cut");
         }
     }
-    // The playback staff (set ostaff): a note signal set over several updates in a row moves the staff once, a signal
-    // set for one update (every note at 60 fps) moves it as the game does, and a clear signal never does.
     {
         const int in[] = {0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0}, out[] = {0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0};
         memset(page + 776, 0, 4);

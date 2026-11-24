@@ -1,13 +1,3 @@
-"""A save file's handle and a CloseFile on another thread (runtime/hle/fs_host.c file_of, file_release, close_file): a
-call under way keeps its host file open, the close happens once when the last call is out, the guest's handle value
-is not handed out again before that, and a call after the close gets FS_R_INVALID_ARGUMENT. A call with no close
-pending takes no exclusive lock, so it ends while another thread holds the lock shared (a Commit's fsync loop). The
-host files here are
-stand-ins that hand a closed file's value to the next one opened, as Windows does with a HANDLE: a read that went on
-through a closed handle would read the other file. Builds fs_host.c's file functions into a test program. No game
-files.
-
-Usage: python tests/fs_file_use_check.py [path to clang]"""
 import os
 import re
 import shutil

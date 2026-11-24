@@ -1,18 +1,3 @@
-"""The profile-guided build of tools/make_game.py and tools/pgo.py, with a stand-in for the compiler process.
-
-Which flags a build compiles with: a kit without an execution profile (the flags and keys it always had), a kit with one
-that fits (the lifted code at -O2 and every compile with the profile), a record that names another recomp/, a record
-that is missing or names none, a profile the compiler refuses in the trial compile, NX2SARIA_PGO=off, and an
-instrumented build (NX2SARIA_PGO=gen). The object keys: the same profile in a kit at another place keeps them, another
-profile changes them. tools/pgo.py: the record a merge writes names the recomp/ a kit compares, a game built from
-another recomp/ stops the merge, and a release refuses a profile of another tree. tools/check_content.py refuses
-profiles in a commit.
-
-The last test uses the real compiler when MSYS2 UCRT64's clang is installed (and an llvm-profdata, when one is
-found): a file that is no profile is refused by the trial compile, a real one is taken. No game files.
-
-Run: python tests/pgo_build_test.py
-"""
 import contextlib
 import io
 import json
@@ -36,9 +21,6 @@ REFUSAL = ('clang: error: Error in reading profile pgo-v111.profdata: unsupporte
 
 
 class Compiler:
-    """Stands in for subprocess.run in make_game.py: records every command, answers --version, writes the object
-    and the dependency file of a compile, and refuses a command with -fprofile-use= when refuse is set."""
-
     def __init__(self, refuse=''):
         self.refuse = refuse
         self.cmds = []
@@ -86,8 +68,6 @@ class PgoBuildTest(unittest.TestCase):
         return kit
 
     def add_profile(self, kit=None, folder='data', content=b'\xfflprofi\x81 counts', record='fits'):
-        """A profile in the kit's data/ with a record that names the kit's recomp/ ('fits'), another one ('other'),
-        none ('empty'), or without a record (None)."""
         kit = kit or self.kit
         d = kit.joinpath(*folder.split('/'))
         d.mkdir(parents=True, exist_ok=True)
@@ -102,11 +82,10 @@ class PgoBuildTest(unittest.TestCase):
             return mg.pgo_profile(self.clang, {}, self.tmp / 'trial', fast, self.tmp / 'msys')
 
     def commands(self, pgo=()):
-        """(the lifted code's command, a runtime file's) with the flags pgo, without the compiler and the paths."""
         cmd_for = mg.runtime_cmd(self.clang, self.clangxx, self.inc, level=3, pgo=pgo)
         guest = cmd_for(self.tmp / 'main_0001.c', self.tmp / 'main_main_0001.o')
         runtime = cmd_for(self.kit / 'runtime' / 'diag' / 'perf.c', self.tmp / 'rt_perf.o')
-        return guest[1:-5], runtime[1:-5]   # up to -I <runtime> -o <object> <source>
+        return guest[1:-5], runtime[1:-5]
 
     PLAIN = (['-c', '-std=gnu11', '-O1', '-march=x86-64-v3', '-fno-strict-aliasing', '-w'],
              ['-c', '-std=gnu11', '-O2', '-fno-strict-aliasing', '-w'])
@@ -115,10 +94,10 @@ class PgoBuildTest(unittest.TestCase):
         profile, why = self.choose()
         self.assertIsNone(profile)
         self.assertIn('no execution profile', why)
-        self.assertEqual(self.cc.cmds, [])                       # nothing to try
+        self.assertEqual(self.cc.cmds, [])
         self.assertEqual(self.commands(), self.PLAIN)
-        self.assertEqual(mg.pgo_tag(), '')                       # the compile step's key is what it was
-        self.assertEqual(mg.pgo_salt('compiler', None), 'compiler')   # and so are the object keys
+        self.assertEqual(mg.pgo_tag(), '')
+        self.assertEqual(mg.pgo_salt('compiler', None), 'compiler')
         with mock.patch.dict(os.environ, {'NX2SARIA_PGO': 'off'}):
             self.assertEqual(mg.pgo_tag(), '')
 
@@ -127,7 +106,6 @@ class PgoBuildTest(unittest.TestCase):
         fast = self.tmp / 'msys' / 'clang64' / 'bin' / 'clang.exe'
         profile, why = self.choose(fast)
         self.assertEqual((profile, why), (path, ''))
-        # one trial compile by each compiler that will read the file, the fast one with its sysroot
         trials = self.cc.trials()
         self.assertEqual([t[0] for t in trials], [str(self.clang), str(fast)])
         self.assertEqual(trials[1][1], f'--sysroot={self.tmp / "msys"}')
@@ -143,7 +121,7 @@ class PgoBuildTest(unittest.TestCase):
     def test_a_source_checkout_takes_the_profile_from_build_pgo(self):
         path = self.add_profile(folder='build/pgo')
         self.assertEqual(self.choose(), (path, ''))
-        release = self.add_profile()   # a release's data/ comes first
+        release = self.add_profile()
         self.assertEqual(self.choose(), (release, ''))
 
     def test_a_record_of_another_tree_leaves_the_profile_out(self):
@@ -151,9 +129,8 @@ class PgoBuildTest(unittest.TestCase):
         profile, why = self.choose()
         self.assertIsNone(profile)
         self.assertIn('trained on another recomp/', why)
-        self.assertEqual(self.cc.cmds, [])   # decided before any compiler runs
+        self.assertEqual(self.cc.cmds, [])
         self.assertEqual(self.commands(), self.PLAIN)
-        # the same record fits once the kit's recomp/ is the one it names, and not after the lifter changed again
         self.add_profile(record='fits')
         self.assertIsNotNone(self.choose()[0])
         (self.kit / 'recomp' / 'gen.py').write_text('def lift(): return 2\n')
@@ -179,9 +156,8 @@ class PgoBuildTest(unittest.TestCase):
         self.assertIsNone(profile)
         self.assertIn('the compiler cannot read it', why)
         self.assertIn('unsupported instrumentation profile format version', why)
-        self.assertEqual(len(self.cc.trials()), 1)   # one compile says so, not every compile of the build
+        self.assertEqual(len(self.cc.trials()), 1)
         self.assertEqual(self.commands(), self.PLAIN)
-        # the second compiler's refusal counts too
         fast = self.tmp / 'msys' / 'clang64' / 'bin' / 'clang.exe'
 
         class OnlyFast(Compiler):
@@ -210,10 +186,10 @@ class PgoBuildTest(unittest.TestCase):
                 self.assertIsNone(profile)
                 self.assertIn('NX2SARIA_PGO=off', why)
                 self.assertEqual(mg.pgo_tag(), '|pgo off')
-        with mock.patch.object(mg, 'PGO_MODE', 'off'):   # --pgo off
+        with mock.patch.object(mg, 'PGO_MODE', 'off'):
             self.assertIsNone(self.choose()[0])
         self.assertEqual(self.cc.cmds, [])
-        with mock.patch.dict(os.environ, {'NX2SARIA_PGO': 'something'}):   # no mode: as without it
+        with mock.patch.dict(os.environ, {'NX2SARIA_PGO': 'something'}):
             self.assertIsNotNone(self.choose()[0])
 
     def test_current_environment_names_win_and_legacy_aliases_still_work(self):
@@ -244,7 +220,6 @@ class PgoBuildTest(unittest.TestCase):
         guest, runtime = self.commands(flags)
         self.assertEqual(guest, ['-c', '-std=gnu11', '-O2', '-march=x86-64-v3', '-fno-strict-aliasing', '-w', *flags])
         self.assertEqual(runtime, [*self.PLAIN[1], *flags])
-        # what the game was built from goes beside the counts, and tools/pgo.py reads it back
         self.make_real_recomp()
         with mock.patch.object(mg.subprocess, 'run', self.cc):
             mg.pgo_gen_record(out, self.clang, {})
@@ -254,8 +229,6 @@ class PgoBuildTest(unittest.TestCase):
         self.assertEqual(pgo.training(out, 'v111'), made)
 
     def make_real_recomp(self):
-        """The test kit's recomp/ becomes this checkout's, so that what make_game.py records in the kit is what
-        tools/pgo.py, which reads the checkout, compares it with."""
         shutil.rmtree(self.kit / 'recomp')
         (self.kit / 'recomp').mkdir()
         for p in (ROOT / 'recomp').iterdir():
@@ -275,12 +248,10 @@ class PgoBuildTest(unittest.TestCase):
         self.assertIn('mingw-w64-ucrt-x86_64-compiler-rt', err.getvalue())
         self.assertIn('cannot find libclang_rt.profile.a', err.getvalue())
         self.assertFalse((self.tmp / 'trial').exists())
-        with mock.patch.object(mg.subprocess, 'run', self.cc):   # with the runtime: nothing to say
+        with mock.patch.object(mg.subprocess, 'run', self.cc):
             mg.pgo_gen_check(self.clangxx, {}, self.tmp / 'trial', msys, [])
 
     def test_the_object_keys_follow_the_profile_and_not_the_kits_folder(self):
-        """A launcher update puts the kit into another folder: the same profile there keeps every object. Another
-        profile, or a build that leaves it out, compiles again."""
         src = self.tmp / 'lift' / 'main_0001.c'
         src.parent.mkdir()
         src.write_text('int f;\n')
@@ -301,7 +272,6 @@ class PgoBuildTest(unittest.TestCase):
         self.assertNotEqual(key(self.kit, here), key(self.kit, None))
         other = self.add_profile(moved, content=b'\xfflprofi\x81 other counts')
         self.assertNotEqual(key(self.kit, here), key(moved, other))
-        # without a profile the key is the one a kit before profiles gave: the flags and the compiler's id alone
         cache = mg.ObjectCache(obj / 'objects.json', {'<kit>': self.kit})
         dst = obj / 'main_main_0001.o'
         plain = [str(self.clang), *self.PLAIN[0], '-I', str(self.kit / 'runtime'), '-o', str(dst), str(src)]
@@ -323,15 +293,15 @@ class PgoBuildTest(unittest.TestCase):
                                      pgo=mg.pgo_use_flags(profile) if profile else ())
             return mg.compile_all(srcs, cmd_for, cache, 2, {}, salt=mg.pgo_salt('compiler', profile))[:2]
         with mock.patch.object(mg.subprocess, 'run', self.cc):
-            self.assertEqual(build(), (4, 0))        # no profile
+            self.assertEqual(build(), (4, 0))
             self.assertEqual(build(), (0, 4))
             self.add_profile()
-            self.assertEqual(build(), (4, 0))        # the kit brought one
+            self.assertEqual(build(), (4, 0))
             self.assertEqual(build(), (0, 4))
             self.add_profile(content=b'\xfflprofi\x81 counts of a longer session')
-            self.assertEqual(build(), (4, 0))        # and another
+            self.assertEqual(build(), (4, 0))
             self.add_profile(content=b'\xfflprofi\x81 counts of a longer session', record='other')
-            self.assertEqual(build(), (4, 0))        # left out: the flags of a kit without one
+            self.assertEqual(build(), (4, 0))
             self.assertEqual(build(), (0, 4))
         compiles = [c for c in self.cc.cmds if '-MF' in c]
         self.assertTrue(all('-O1' in c for c in compiles[:4] + compiles[-4:]))
@@ -354,7 +324,6 @@ class PgoToolTest(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def profdata(self, cmd, **kw):
-        """Stands in for llvm-profdata."""
         cmd = [str(c) for c in cmd]
         self.ran.append(cmd)
         if 'merge' in cmd:
@@ -376,7 +345,6 @@ class PgoToolTest(unittest.TestCase):
         self.assertEqual(record['version'], 'v111')
         self.assertEqual(record['recomp_tree'], 'a' * 40)
         self.assertEqual(record['tool'], 'LLVM version 23.1.5')
-        # what make_game.py works out for a kit with this checkout's recomp/: the profile fits such a kit
         with mock.patch.object(mg, 'KIT', ROOT):
             self.assertEqual(record['recomp_digest'], mg.recomp_digest())
             data = self.tmp / 'release' / 'data'
@@ -432,7 +400,7 @@ class PgoToolTest(unittest.TestCase):
 
 
 MSYS = Path(r'C:\msys64\ucrt64')
-TEXT_PROFILE = ':ir\nnx2navi_pgo_trial\n0\n1\n100\n\n'   # one function with one counter, as llvm-profdata reads text
+TEXT_PROFILE = ':ir\nnx2navi_pgo_trial\n0\n1\n100\n\n'
 
 
 @unittest.skipUnless((MSYS / 'bin' / 'clang.exe').is_file(), 'needs MSYS2 UCRT64 clang')
@@ -449,7 +417,7 @@ class RealCompilerTest(unittest.TestCase):
         said = mg.pgo_trial(bad, [[self.clang]], self.env, self.tmp / 'trial')
         self.assertIn('Error in reading profile', said)
         cut = self.tmp / 'cut.profdata'
-        cut.write_bytes(b'\xfflprofi\x81')   # a profile's first bytes and nothing after them
+        cut.write_bytes(b'\xfflprofi\x81')
         self.assertTrue(mg.pgo_trial(cut, [[self.clang]], self.env, self.tmp / 'trial'))
         self.assertTrue(mg.pgo_trial(self.tmp / 'missing.profdata', [[self.clang]], self.env, self.tmp / 'trial'))
         tool = shutil.which('llvm-profdata') or next(

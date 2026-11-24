@@ -1,18 +1,4 @@
 # needs: clang
-"""Build and run tests/save_zip_check.c: runtime/hle/save_zip.c, the zip of a shared save as the game's menu writes and
-reads it (runtime/hle/save_share.c), against Python's zlib and zipfile, which the launcher uses for the same zip
-(launcher/saves.py).
-
-- the C program's selftest: the manifest's JSON keys, round trips in memory, damaged and cut input
-- inflate: raw deflate streams zlib makes at every level and strategy (stored, fixed and dynamic blocks) inflate to
-  the same bytes, and a damaged one is refused
-- deflate: what the C deflate makes, zlib inflates to the same bytes
-- zip: a zip the C writer makes passes zipfile's testzip with the same members; zips zipfile makes (stored, deflated,
-  with data descriptors, the launcher's export) unzip in C to the same members with their CRCs; a link is marked
-- the launcher imports a zip the C writer made (launcher/saves.py import_zip)
-
-Usage: save_zip_check.py   (no game files)
-"""
 import io
 import json
 import os
@@ -32,7 +18,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -41,7 +26,6 @@ def compiler():
 
 
 class NoSeek(io.RawIOBase):
-    """A write-only stream zipfile cannot seek in: it writes data descriptors after the members."""
     def __init__(self):
         self.buf = bytearray()
 
@@ -113,7 +97,6 @@ def main():
         if raw:
             print(f'  {name}: {len(raw)} bytes, C deflate {out.stat().st_size}, zlib -9 '
                   f'{len(zlib.compress(raw, 9)) - 6}')
-    # a damaged stream: a flipped bit in a dynamic block, and one cut short
     packed = zlib.compressobj(9, zlib.DEFLATED, -15)
     stream = bytearray(packed.compress(data['text']) + packed.flush())
     for mutate in ('flip', 'cut'):
@@ -126,7 +109,6 @@ def main():
         r = run('inflate', work / 'bad.deflate', len(data['text']), work / 'out.bin')
         check(r.returncode != 0 or (work / 'out.bin').read_bytes() != data['text'], f'damaged stream ({mutate}) read')
 
-    # C writes, zipfile reads
     members = {'manifest.json': b'{"format": "nx2navi-save"}', 'save/option.sav': data['save'][:3000],
                'save/slot_00/progress.sav': data['save'], 'bug-report/nx2saria.log': data['text'],
                'save/empty.sav': b''}
@@ -142,7 +124,6 @@ def main():
         check(z.getinfo('save/slot_00/progress.sav').compress_type == zipfile.ZIP_DEFLATED, 'deflated member')
         check(z.getinfo('manifest.json').compress_type == zipfile.ZIP_STORED, 'small member stored')
 
-    # zipfile writes, C reads
     def unzip(path):
         out = work / 'unz'
         shutil.rmtree(out, ignore_errors=True)
@@ -177,7 +158,6 @@ def main():
         check(ok, f'C unzip of a zipfile zip ({how}): {str(got)[:200]}')
         if how != 'descriptors':
             check(isinstance(got, dict) and got['save/folder/'][3], f'folder entry ({how})')
-    # a link member, as a Unix zip tool stores one
     path = work / 'link.zip'
     with zipfile.ZipFile(path, 'w') as z:
         info = zipfile.ZipInfo('save/link.sav')
@@ -186,7 +166,6 @@ def main():
         z.writestr(info, '../../outside')
     got = unzip(path)
     check(isinstance(got, dict) and got['save/link.sav'][4], 'link marked')
-    # a damaged member: refused by CRC or inflate
     raw = bytearray((work / 'py-deflated.zip').read_bytes())
     at = raw.index(b'save/slot_00/progress.sav') + 40
     raw[at] ^= 0x21
@@ -195,7 +174,6 @@ def main():
     check(isinstance(got, str) and got.splitlines()[-1] == 'refused 2 save/slot_00/progress.sav',
           f'damaged zip read: {str(got)[:120]}')
 
-    # the launcher imports what the game's menu writes
     from launcher import saves
     manifest = json.dumps({'format': 'nx2navi-save', 'format_version': 1, 'title_id': '0400486024dec000',
                            'nx2navi': '0.6.1', 'exported': '2026-11-09T17:30:05Z', 'exported_by': 'game'}).encode()

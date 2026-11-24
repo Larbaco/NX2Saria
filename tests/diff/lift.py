@@ -1,19 +1,5 @@
 # needs: game, clang, py:capstone, py:unicorn, py:numpy, py:lz4
-"""Differential test of the lifter on the game's own instructions: lifted C against Unicorn, one instruction at a time.
-
-Samples distinct instruction words from the .text of each ExeFS module, one per opcode signature first, lifts each
-with the portable FP/SIMD lowering, runs it from random register state, and compares X0-X30, SP, NZCV, PC (for
-branches), V0-V31 and the scratch buffer (for loads and stores) with Unicorn as a Cortex-A57.
-
-Skipped: system instructions and exceptions, whose single step cannot be compared, and exclusives and ARMv8.1
-atomics, which atomic.py covers. Encodings the lifter rejects are counted per module and mnemonic; --coverage lifts
-every distinct word instead of testing.
-
-Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-
-Usage: lift.py [--exefs DIR] [--modules main,sdk,subsdk0] [--encodings N] [--cases K] [--seed S] [--jobs J]
-       lift.py --coverage
-"""
+# Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
 import argparse
 import os
 import platform
@@ -32,8 +18,9 @@ from common import BUF, BUF_SIZE, ROOT, Emu, build_harness, diff_state, dis, mne
 from lifter import Lifter, Unsupported, bits
 from nso import Nso
 
+DESCRIPTION = ("Differential test of the lifter on the game's own instructions: lifted C against Unicorn, one "
+               'instruction at a time.')
 BUF_MID = BUF + 0x10000
-# Test load addresses, below 2^39 and clear of BUF.
 BASES = {'main': 0x7000000000, 'subsdk0': 0x7008000000, 'sdk': 0x7010000000}
 
 
@@ -42,22 +29,20 @@ def is_mem(w):
 
 
 def classify(w):
-    """'skip' for instructions whose single-step behaviour cannot be compared."""
-    if (w & 0xFFC00000) == 0xD5000000:  # system: hints, barriers, MRS/MSR, cache maintenance
+    if (w & 0xFFC00000) == 0xD5000000:
         return 'skip'
     if (w & 0x3F000000) == 0x08000000 and (bits(w, 23, 1) == 0 or bits(w, 21, 1)):
-        return 'skip'  # exclusives need a paired load; CAS is ARMv8.1; both are covered by atomic.py
-    if (w & 0x3F200C00) == 0x38200000:  # LSE atomics, ARMv8.1: atomic.py
         return 'skip'
-    if (w & 0xFF000000) == 0xD4000000:  # SVC, BRK, HLT
+    if (w & 0x3F200C00) == 0x38200000:
         return 'skip'
-    if (w & 0xFFFF0000) == 0:  # UDF
+    if (w & 0xFF000000) == 0xD4000000:
+        return 'skip'
+    if (w & 0xFFFF0000) == 0:
         return 'skip'
     return 'ok'
 
 
 def class_keys(words):
-    """Opcode signature per word: register fields (Rd, Rn, Rm) cleared."""
     return words & np.uint32(0xFFE0FC00)
 
 
@@ -81,7 +66,6 @@ def to_test_body(ins, pc):
 
 
 def pick_module(name, nso, base, count, r, unsupported):
-    """Distinct words of .text, one per opcode signature first, lifted. Returns [(word, pc, body)]."""
     lo, size = nso.text
     words = np.frombuffer(bytes(nso.image[lo:lo + size]), dtype='<u4')
     uniq, first = np.unique(words, return_index=True)
@@ -113,8 +97,6 @@ def pick_module(name, nso, base, count, r, unsupported):
 
 
 def coverage(name, nso, base):
-    """Lift every distinct word of .text. Returns {kind mnemonic: [distinct words, occurrences]} of words the lifter
-    rejects (Unsupported) or turns into an undefined-instruction trap (rt_udf)."""
     lo, size = nso.text
     words = np.frombuffer(bytes(nso.image[lo:lo + size]), dtype='<u4')
     uniq, first, counts = np.unique(words, return_index=True, return_counts=True)
@@ -142,7 +124,7 @@ def coverage(name, nso, base):
 def make_case(r, w):
     if is_mem(w):
         x = [BUF_MID + r.randrange(0, 0x100, 8) for _ in range(31)]
-        if (bits(w, 21, 1) and bits(w, 10, 2) == 2) or (w & 0xBFA00000) == 0x0C800000:  # register offset
+        if (bits(w, 21, 1) and bits(w, 10, 2) == 2) or (w & 0xBFA00000) == 0x0C800000:
             rm = bits(w, 16, 5)
             if rm != bits(w, 5, 5) and rm < 31:
                 x[rm] = r.randrange(0, 0x100)
@@ -156,7 +138,7 @@ def make_case(r, w):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--exefs', type=Path, default=ROOT / 'build' / 'extracted' / 'v121' / 'exefs')
     ap.add_argument('--modules', default='main,sdk,subsdk0')
     ap.add_argument('--encodings', type=int, default=20000, help='per module')

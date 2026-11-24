@@ -1,8 +1,3 @@
-"""tools/check_platform.py on made-up runtime/ trees: a Win32 use behind a Windows-only preprocessor branch passes, an
-unguarded one fails, and the repository's own runtime/ passes. No game files; stdlib only.
-
-Run: python tests/check_platform_test.py
-"""
 import contextlib
 import io
 import sys
@@ -19,8 +14,6 @@ import check_platform  # noqa: E402
 
 class CheckPlatformTest(unittest.TestCase):
     def check(self, files, runtime=None):
-        """(exit code, output) of check_platform.py on a runtime/ folder holding files ({name: text}), or on
-        runtime."""
         with tempfile.TemporaryDirectory() as d:
             if runtime is None:
                 runtime = Path(d) / 'runtime'
@@ -52,7 +45,7 @@ class CheckPlatformTest(unittest.TestCase):
             'b.c': '#ifndef _WIN32\nint b;\n#endif\nvoid f(void *h) { CloseHandle(h); }\n',
             'c.c': '#ifdef _WIN32\nint c;\n#else\nstatic DWORD d;\n#endif\n',
             'd.c': '#ifdef _WIN32\nint d;\n#elif 1\nvoid g(void) { Sleep(1); }\n#endif\n',
-            'e.c': '#if defined(_WIN32) && X\nvoid h(void) { Sleep(1); }\n#endif\n',   # scanned: never let through
+            'e.c': '#if defined(_WIN32) && X\nvoid h(void) { Sleep(1); }\n#endif\n',
             'f.c': '#ifdef _WIN32\n#endif\n\n#include <windows.h>\n',
             'ok.c': '#ifdef _WIN32\nvoid f(void *h) { CloseHandle(h); }\n#endif\n',
         })

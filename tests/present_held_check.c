@@ -1,15 +1,10 @@
-// tests/present_held_check.py builds this: runtime/pacing/vk_present_held.h, the present that waits for held work, with one
-// presenting thread and three submitting threads. Every frame must reach the present callback exactly once and in
-// frame order, never two callbacks at once, and a submitting thread must never wait for the lock. "old" runs the
-// unlocked check-then-clear of 0.10.1 through the same harness and only prints what it sees, to show that the harness
-// catches the race.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "vk_present_held.h"
 
-#define FRAMES 200000         // at least; the stress goes on until both threads have put held presents out
+#define FRAMES 200000
 #define FRAMES_MOST (20 * FRAMES)
 #define SUBMITTERS 3
 #define PH_MAX 8
@@ -32,7 +27,6 @@ static void spin(uint32_t n) {
     for (volatile uint32_t i = 0; i < n; i++) {}
 }
 
-// vk_backend.c ph_out's stand-in: present_image's work is the spin, the window a second caller would fall into.
 static void present_cb(const PhJob *j, int why, void *arg) {
     (void)arg;
     if (__atomic_exchange_n(&inside, 1, __ATOMIC_ACQ_REL)) __atomic_add_fetch(&overlap, 1, __ATOMIC_RELAXED);
@@ -46,7 +40,6 @@ static void present_cb(const PhJob *j, int why, void *arg) {
     __atomic_store_n(&inside, 0, __ATOMIC_RELEASE);
 }
 
-// vk_backend.c ph_why_after: out when nothing is held any more, or PH_MAX submissions after it began to wait.
 static int why_after(const PhJob *j, void *arg) {
     (void)arg;
     if (!__atomic_load_n(&held, __ATOMIC_ACQUIRE)) return PH_AFTER;
@@ -60,7 +53,6 @@ static int hold_now(void *arg) {
 
 static PhState S = {.lock = PLAT_MUTEX_INIT};
 
-// ---- the 0.10.1 shape (vk_backend.c ph_flush before vk_present_held.h), for the harness's own check
 static struct { int on; PhJob job; } OLD;
 static void old_flush(int why) {
     if (!OLD.on) return;
@@ -87,10 +79,6 @@ static void submitter(void *arg) {
     }
 }
 
-// Held presents went out from a submitting thread (after the work or at PH_MAX) and from the presenting one (at the
-// next present), so the lock was in the way of both. How soon that happens is the scheduler's: the stress runs until it
-// has (FRAMES_MOST at the most), not for a fixed count. PH_MAX alone takes 8 submissions in a row that leave work held,
-// which a machine with few cores schedules rarely: steps() checks it.
 static int both_flushed(void) {
     return (__atomic_load_n(&S.out[PH_AFTER], __ATOMIC_RELAXED) || __atomic_load_n(&S.out[PH_CAPPED], __ATOMIC_RELAXED))
            && __atomic_load_n(&S.out[PH_NEXT], __ATOMIC_RELAXED);
@@ -106,14 +94,14 @@ static void stress(void) {
         PhJob j = {.frame = f};
         if (old_mode) {
             if (OLD.on) old_flush(PH_NEXT);
-            if (x % 2) __atomic_store_n(&held, 0, __ATOMIC_RELEASE);   // held_resume ran what it could
+            if (x % 2) __atomic_store_n(&held, 0, __ATOMIC_RELEASE);
             if (__atomic_load_n(&held, __ATOMIC_ACQUIRE)) {
                 OLD.job = j, OLD.job.since = __atomic_load_n(&seq, __ATOMIC_RELAXED);
                 OLD.on = 1;
             } else {
                 present_cb(&j, PH_NONE, NULL);
             }
-        } else {   // vk_backend.c vk_be_present's synchronous branch
+        } else {
             ph_flush_next(&S, present_cb, NULL);
             if (x % 2) __atomic_store_n(&held, 0, __ATOMIC_RELEASE);
             j.since = __atomic_load_n(&seq, __ATOMIC_RELAXED);
@@ -146,7 +134,6 @@ static void stress(void) {
           (unsigned long long)S.out[PH_NEXT]);
 }
 
-// ---- one thread, step by step
 static uint64_t seen[16], nseen;
 static int seen_why[16];
 static void record_cb(const PhJob *j, int why, void *arg) {
@@ -182,8 +169,6 @@ static void steps(void) {
     ph_present(&s, &b, hold_no, record_cb, NULL);
     CHECK(nseen == 2 && seen[0] == 1 && seen_why[0] == PH_NEXT && seen[1] == 2 && seen_why[1] == PH_NONE,
           "a present behind a held one puts the earlier one out first");
-    // PH_MAX submissions after it began to wait put a present out though work is still held (why_after, as
-    // vk_backend.c ph_why_after)
     nseen = 0;
     __atomic_store_n(&held, 1, __ATOMIC_RELEASE);
     PhJob c = {.frame = 3, .since = seq};
@@ -198,7 +183,6 @@ static void steps(void) {
     seq = 0;
 }
 
-// ---- the lock held elsewhere: a submitting thread does not wait, the presenting thread waits and is counted
 static PhState L = {.lock = PLAT_MUTEX_INIT};
 static volatile uint64_t try_ns;
 static volatile int32_t try_out = -1, waits_told;
@@ -218,9 +202,9 @@ static void present_thread(void *arg) {
 static void contended(void) {
     PhJob a = {.frame = 1};
     L.on_wait = on_wait;
-    ph_present(&L, &a, hold_yes, record_cb, NULL);   // armed
+    ph_present(&L, &a, hold_yes, record_cb, NULL);
     nseen = 0;
-    plat_mutex_lock(&L.lock);   // another thread puts a held present out
+    plat_mutex_lock(&L.lock);
     PlatThread *t = plat_thread_new(try_thread, NULL, "try");
     plat_thread_join(t);
     CHECK(try_out == 0 && nseen == 0 && ph_armed(&L), "a submitting thread put the present out past a held lock");
@@ -228,7 +212,7 @@ static void contended(void) {
     PlatThread *p = plat_thread_new(present_thread, NULL, "present");
     plat_sleep_ms(30);
     CHECK(nseen == 0, "the presenting thread went past a held lock");
-    __atomic_store_n(&L.on, 0, __ATOMIC_RELAXED);   // what the lock's holder did: the held present went out
+    __atomic_store_n(&L.on, 0, __ATOMIC_RELAXED);
     plat_mutex_unlock(&L.lock);
     plat_thread_join(p);
     CHECK(nseen == 1 && seen[0] == 3, "the presenting thread's present after the lock was let go");

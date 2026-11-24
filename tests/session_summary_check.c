@@ -1,6 +1,3 @@
-// runtime/session_summary_fmt.c on sample summaries (tests/session_summary_check.py): writes each case's JSON to
-// <dir>/<case>.json for the Python side, which parses it and checks keys, types and limits, and checks the value rules
-// (ss_setting, ss_os_name, ss_frametime) here.
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -76,9 +73,6 @@ int main(int argc, char **argv) {
     s = all_null();
     write_case("all_null", &s);
 
-    // Hostile strings: quotes, backslashes, line ends and other controls, invalid UTF-8, non-ASCII text, a C1
-    // control, a surrogate's encoding, over-long names and fatal lines, tokens outside the charset, and numbers past
-    // the limits.
     static char long_name[400], long_fatal[2000];
     memset(long_name, 'N', sizeof long_name - 1);
     for (size_t i = 0; i + 1 < sizeof long_fatal; i++) long_fatal[i] = "a\"\\\n\x01\xc3\xa9"[i % 7];
@@ -98,19 +92,16 @@ int main(int argc, char **argv) {
     s.fps_mean = 99999, s.fps_low_1pct = NAN, s.worst_ms = 1e12;
     write_case("hostile", &s);
 
-    // A fatal line from a path in a home folder, already short (log_privacy_str runs before), and the device-lost end.
     s = full();
     s.end = "device_lost";
     s.fatal = "vk: the GPU device was lost (seen at: queue submit). The run ends here; ~/Games/NX2Saria";
     s.has_frametime = 0;
     write_case("device_lost", &s);
 
-    // ss_format refuses a buffer too small, and writes a terminated string anyway.
     char small[64];
     s = full();
     CHECK(ss_format(&s, small, sizeof small) == -1 && strlen(small) < sizeof small, "a small buffer is refused");
 
-    // ss_setting: the list's spelling, ranges, "other", free text, NULL.
     char out[40];
     const char *r;
     r = ss_setting("FIFO", "mailbox|fifo|immediate", out, sizeof out);
@@ -135,7 +126,6 @@ int main(int argc, char **argv) {
     r = ss_setting("fs", "fsr|bilinear", out, sizeof out);
     CHECK(r && !strcmp(r, "other"), "a prefix of an item is not the item: %s", r ? r : "(null)");
 
-    // ss_os_name
     char os[128];
     ss_os_name("Windows 10.0.26100.4061", os, sizeof os);
     CHECK(!strcmp(os, "Windows 11 (build 26100)"), "Windows 11: %s", os);
@@ -148,8 +138,6 @@ int main(int argc, char **argv) {
     ss_os_name("Linux", os, sizeof os);
     CHECK(!strcmp(os, "Linux"), "bare Linux: %s", os);
 
-    // ss_frametime: perf.c's 0.25 ms bins. 1000 frames: 985 at 16.6 ms (bin 66), 10 at 33 ms (bin 132), 5 at 120 ms
-    // (bin 480). The slowest 1% is 10 frames: the 5 of bin 480 and 5 of bin 132, so the 1% low is 1e9 / 33.25 ms.
     static uint32_t hist[1024];
     hist[66] = 985, hist[132] = 10, hist[480] = 5;
     uint64_t sum = 985ull * 16600000 + 10ull * 33000000 + 5ull * 120000000;
@@ -158,12 +146,10 @@ int main(int argc, char **argv) {
     CHECK(fabs(mean - 1000 * 1e9 / sum) < 1e-9, "mean %f", mean);
     CHECK(fabs(low - 1e9 / 33250000.0) < 1e-9, "1%% low %f, want %f", low, 1e9 / 33250000.0);
     CHECK(fabs(worst - 120.0) < 1e-9, "worst %f", worst);
-    // under 100 frames the slowest one alone is the 1%
     memset(hist, 0, sizeof hist);
     hist[66] = 49, hist[200] = 1;
     ss_frametime(hist, 1024, 250000, 50, 49ull * 16600000 + 50000000, 50000000, &mean, &low, &worst);
     CHECK(fabs(low - 1e9 / 50250000.0) < 1e-9, "50 frames: 1%% low %f", low);
-    // a frame past the last bin lands in it
     memset(hist, 0, sizeof hist);
     hist[1023] = 1;
     ss_frametime(hist, 1024, 250000, 1, 900000000, 900000000, &mean, &low, &worst);

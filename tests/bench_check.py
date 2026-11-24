@@ -1,9 +1,3 @@
-"""tools/bench.py reads the lines runtime/diag/perf.c writes: lines made with the runtime's format strings (checked below to
-still be in perf.c) parse into frames, segments and windows, and the summary's numbers (1% low, p99, CPU- or GPU-bound
-shares, the run spread, MangoHud's matching stretch) come out as worked by hand. No game files.
-
-    python tests/bench_check.py
-"""
 import math
 import sys
 import tempfile
@@ -38,7 +32,6 @@ def close(a, b, eps=1e-6):
 
 def main():
     src = PERF_C.read_text(encoding='utf-8')
-    # the format strings the parser depends on must still be in the runtime, as written
     for piece in ('"perf: slow frame %llu: %.1f ms; blocked pipeline %.1f xlate %.1f texture %.1f astc %.1f fence %.1f '
                   'pacing %.1f "', '"drain %.1f handoff %.1f; replay %.1f%s"', "\"segment: '%s' starts at frame %llu, world %s s\"",
                   "\"segment: '%s' frames %llu-%llu, world %s to %s s: %llu frames in %.1f s, mean %.2f ms (%.1f fps), "
@@ -46,8 +39,6 @@ def main():
                   '"%.0f MiB, private %.0f MiB; bound: %s"'):
         check(piece in src, f'runtime/diag/perf.c still holds {piece}')
 
-    # 200 frames in the measured segment (frames 101-300): 196 cpu frames of 20 ms, 2 gpu frames of 40 ms (fence 30),
-    # 2 stall frames of 60 ms (pipeline 30); frames before and after the segment do not count
     lines = [SEG_START % ('measure', 100, '20.0')]
     for k in range(90, 311):
         if k in (150, 250):
@@ -70,14 +61,11 @@ def main():
     r = bench.run_summary(sel, wins)
     total = 196 * 20 + 2 * 40 + 2 * 60
     check(close(r['avg_fps'], 1000 * 200 / total), f'avg fps {r["avg_fps"]}')
-    # the slowest 1% of 200 frames is 2 frames: the two 60 ms frames
     check(close(r['low1_fps'], 1000 / 60), f'1% low {r["low1_fps"]}')
-    # p99 of 200 sorted values: position 197.01 between 40 (index 197) and 60 (index 198)
     check(close(r['p99_ms'], 40 + 20 * 0.01, 1e-9), f'p99 {r["p99_ms"]}')
     check(close(r['cpu_pct'], 98) and close(r['gpu_pct'], 1) and close(r['stall_pct'], 1), 'bound shares')
     check(r['over33'] == 4, 'frames over 33.3 ms')
 
-    # the bound rules at their edges
     f = lambda **k: {**dict.fromkeys(bench.FIELDS, 0.0), **k}
     check(bench.bound_of(f(ms=10, fence=5)) == 'gpu', 'fence half the frame is gpu')
     check(bench.bound_of(f(ms=10, fence=4.9)) == 'cpu', 'fence under half is cpu')
@@ -85,7 +73,6 @@ def main():
     check(bench.bound_of(f(ms=10, pacing=1.5)) == 'pace', 'pacing')
     check(bench.bound_of(f(ms=10), gpu_ms=8) == 'gpu', 'the GPU busy for 80% of the frame is gpu')
     check(bench.bound_of(f(ms=10), gpu_ms=7.9) == 'cpu', 'the GPU busy for under 80% is cpu')
-    # a window line at frame N gives its GPU time to frames N-59 to N; later frames have none
     fr = {k: f(frame=k, ms=10) for k in (60, 61, 120, 121)}
     bench.mark_bounds(fr, [{'frame': 60, 'gpu_ms': 9.0}, {'frame': 120, 'gpu_ms': 2.0}])
     check([fr[k]['bound'] for k in (60, 61, 120, 121)] == ['gpu', 'cpu', 'cpu', 'cpu'], 'frames take their window')
@@ -93,17 +80,14 @@ def main():
     bench.mark_bounds(fr, [{'frame': 60, 'gpu_ms': None}])
     check(fr[1]['bound'] == 'cpu', 'a window without timestamps')
 
-    # logs of 0.11.0 and older have no handoff field
     old = bench.SLOW_RE.search('perf: slow frame 7: 20.0 ms; blocked pipeline 0.0 xlate 0.0 texture 0.0 astc 0.0 fence 1.0 '
                                'pacing 0.0 drain 0.0; replay 12.0')
     check(old is not None and old[10] == '12.0', 'slow frame line without handoff')
 
-    # spread over runs
     m, lo, hi, pct = bench.spread([50.0, 55.0, 45.0])
     check(close(m, 50) and lo == 45 and hi == 55 and close(pct, 20), 'spread')
     check(math.isnan(bench.spread([])[0]), 'spread of nothing')
 
-    # MangoHud: a log in ms, its stretch matched to the game's from the end of the run
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / 'ocarina_2026.csv'
         p.write_text('os,cpu,gpu\nLinux,x,y\nfps,frametime,cpu_load\n' + '50,20.0,10\n' * 300 + '25,40.0,10\n' * 10)
@@ -116,15 +100,12 @@ def main():
         p.write_text('fps,frametime\n' + '50,20000\n' * 10)
         check(bench.mangohud_frames(p)[0] == 20.0, 'mangohud microseconds')
 
-    # the input script: untimed A presses, then the world-clock lines
     s = bench.make_script({'name': 'x', 'warmup_s': 10, 'measure_s': 30,
                            'moves': [[5, 'RSTICK', 20000, 0, 1.5], [6, 'LSTICK', 0, 32767, 2]]})
     check('240 A 4' in s and '@15000 RSTICK 20000 0 1500' in s and '@16000 LSTICK 0 32767 2000' in s and '@10000 MARK measure' in s
           and '@40000 MARK end' in s, 'script')
     check(bench.dbg_test({'dbg': [['@1000', 'warp A B'], [900, 'route 1 2']]}) == '@1000:warp A B;900:route 1 2', 'dbg test')
 
-    # --boot-map: the scene's warp becomes the boot map, its other steps stay, and the script presses nothing before
-    # the world clock
     scene = {'name': 'k', 'warmup_s': 14, 'measure_s': 40,
              'dbg': [['@1000', 'warp KokiriForest_Child ReturnFromDreamWorld'], ['@10000', 'freecam 1 1 2']]}
     where, rest = bench.boot_map_of(scene)

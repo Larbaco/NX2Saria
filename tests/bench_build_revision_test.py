@@ -1,4 +1,3 @@
-"""Bench identifies the build from its own output's final build-branch record."""
 import argparse
 import contextlib
 import datetime
@@ -81,7 +80,7 @@ class BuildRevisionTest(unittest.TestCase):
         summary = (out / 'summary.md').read_text()
         self.assertIn('Build commit: ' + self.first[:10], summary)
         self.assertIn('Checkout: HEAD ' + self.second[:10], summary)
-        meta.pop('build_commit')   # an older run is not silently assigned the current checkout's revision
+        meta.pop('build_commit')
         (out / 'meta.json').write_text(json.dumps(meta))
         with contextlib.redirect_stdout(io.StringIO()):
             bench.summarize(out)
