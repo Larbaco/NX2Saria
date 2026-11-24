@@ -90,7 +90,7 @@ class Sdl3ChoiceTest(unittest.TestCase):
         self.assertIsNone(sdl)
         self.assertIn('NX2SARIA_SDL3 is "bundled"', said)
         del os.environ['NX2SARIA_SDL3']
-        os.environ['NX2NAVI_SDL3'] = 'kit'
+        os.environ['NX2NAVI_SDL3'] = 'kit'   # the older spelling is read too (make_game.py setting_env)
         self.system = '3.4.20'
         self.assertEqual(stopped(mg.sdl3_choice, 'clang', {})[0].source, 'kit')
 
