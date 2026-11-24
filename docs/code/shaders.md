@@ -51,7 +51,7 @@ does from a translated one.
 Not part of this page, and left as they are: `runtime/shaders/ffx/` and `runtime/shaders/ffx3/` (the FidelityFX
 headers) and `runtime/shaders/smaa.glsl` (the SMAA reference implementation). They are unmodified copies, carry their
 own documentation as comments, and the comment check does not read them ([README.md](README.md#the-checks)). The
-licence notices at the head of `hdr_tonemap.frag`, `hdr_encode.comp`, `astc_decode.comp` and the 27 FSR 3.1 passes stay
+licence notices at the head of `hdr_tonemap.frag`, `hdr_encode.comp`, `astc_decode.comp` and the 26 FSR 3.1 passes stay
 in those files; `THIRD_PARTY_NOTICES.md` has their rows.
 
 ## `runtime/shaders/aa_common.glsl`
@@ -392,3 +392,309 @@ Binding 0: `ui`, the menu's image. Push constants: `vec4 p`. A pixel without cov
 ## `runtime/shaders/hdr_fullscreen.vert`
 
 One triangle over the whole target, for `runtime/shaders/hdr_ui.frag` (`runtime/vk/vk_hdr.c` `vk_hdr_ui_compose()`).
+
+## `runtime/shaders/color_grade.comp`
+
+Colour adjustment on the present (`runtime/vk/vk_color.c`): the game's picture, crop rectangle at offset, into an
+RGBA16F image the FSR 1 pass or the blit then scales to the window. Brightness, contrast around mid-grey (0.5),
+saturation against Rec. 709 luma (0.2126, 0.7152, 0.0722), then a power curve: the order and ranges of the colour
+profiles of issue #136. The result is clamped to 0..1.
+
+Bindings: 0 `src` (a sampler), 1 `dst` (`rgba16f`). Workgroups of 8x8. Push constants (`P`):
+
+| Field | Meaning |
+|---|---|
+| `ivec2 offset` | the crop rectangle's corner in `src` |
+| `ivec2 size` | its size, the size of `dst` |
+| `vec4 adj` | brightness (added), contrast, saturation, gamma (exponent) |
+
+## `runtime/shaders/fsr_easu.comp`
+
+FSR 1's edge-adaptive upscale (EASU) of the game's output to the swapchain size (`runtime/vk/vk_fsr.c`), and of the
+scene to the picture's size where the game's own upscaler ran (`runtime/vk/vk_tonemap.c`, with `SQUARE` set). It
+includes the two FidelityFX headers of `runtime/shaders/ffx/`, `ffx_a.h` and `ffx_fsr1.h`, which are unmodified. Each
+invocation writes four pixels of a 16x16 tile (a workgroup of 64 invocations), the layout the filter's own sample
+uses; the constants come from `FsrEasuConOffset`, so the game's crop rectangle can start anywhere in its image.
+
+Bindings: 0 `src` (a sampler), 1 `dst` (`rgba16f`). Push constants (`Params`):
+
+| Field | Meaning |
+|---|---|
+| `vec4 view` | crop width, crop height, source image width, source image height |
+| `vec4 out_` | output width, output height, crop x, crop y |
+
+`SQUARE` is specialization constant 0, which only `runtime/vk/vk_tonemap.c` sets: its source holds the square root of
+each linear value (the game's post pass stores the picture so) and its output is linear, so what the filter gives is
+squared. The filter runs on the stored values either way: square roots are the perceptual encoding it is made for,
+and the game's own upscaler filters them too. Unset (the present): the filtered value as it is.
+
+## `runtime/shaders/fsr_rcas.comp`
+
+FSR 1's robust contrast-adaptive sharpening (RCAS) of the EASU result (`runtime/vk/vk_fsr.c`), with the same two
+headers of `runtime/shaders/ffx/` and the same tile layout as `runtime/shaders/fsr_easu.comp`.
+
+Bindings: 0 `src`, 1 `dst` (`rgba16f`). Push constants (`Params`): `vec4 size`: width, height, sharpness in stops (0 =
+most), unused.
+
+## `runtime/shaders/dlaa_sharpen.comp`
+
+A second pass of RCAS over FSR 3.1's picture in its scaling modes (`runtime/vk/vk_dlaa.c` `fsr3_sharpen()`), with the
+two headers of `runtime/shaders/ffx/`. The picture is linear scene light without an upper bound, and RCAS limits its
+sharpening by each channel's distance from 0 and from 1: every texel is taken through c / (1 + max(c)) on the way in,
+which keeps hue and maps any light into 0..1, and through the inverse on the way out. The inverse divides by
+max(1 - max(c), 1 / 16384), so light up to 16,383 comes back as it went in.
+
+Bindings and push constants as `runtime/shaders/fsr_rcas.comp`: `vec4 size`: width, height, sharpness in stops (0 =
+most), unused.
+
+## `runtime/shaders/fallback_tonemap.spvasm`
+
+Scale and decode for the untranslatable scene upscaler (`runtime/vk/vk_exec_draw.c`
+`untranslated_dispatch_fallback()`). Its input is the post pass's picture with each channel stored as the square root
+of its linear value (the game's program 102 packs sqrt(composite) into RGB9E5), and its output is linear (the HUD is
+drawn over it, the frame's last pass encodes to sRGB). So: filter in the stored (sqrt) values, as the game's upscaler
+does, then square. The pass replaced a decode with the sRGB curve, which darkened mid-tones and lifted the darkest
+values.
+
+It is written in SPIR-V assembly and assembled with `spirv-as`: when it was written the build had no GLSL compiler.
+(It has one now, `glslc`, for the other shaders of this folder.) As GLSL it is:
+
+```glsl
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;
+layout(binding = 1, rgba16f) uniform writeonly image2D dst;
+layout(push_constant) uniform P { vec2 inv; float unused; float pad; ivec2 size; } pc;
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.size.x || p.y >= pc.size.y) return;
+    vec3 s = textureLod(src, (vec2(p) + 0.5) * pc.inv, 0.0).rgb;
+    imageStore(dst, p, vec4(s * s, 1.0));
+}
+```
+
+`src` is the stored picture, with linear filtering; `dst` is the pass output of `runtime/vk/vk_tonemap.c`, blitted
+into the target. The push constants sit at offsets 0 (`inv`), 8, 12 and 16 (`size`).
+
+## The FSR 3.1 passes
+
+`runtime/shaders/fsr3_options.h` and `runtime/shaders/fsr3fg_options.h` are included by the passes below and by
+nothing else: they are GLSL, with a C header's name. Each pass is a pass file of FSR 3.1 that includes one of the two
+option headers and then the unmodified headers of `runtime/shaders/ffx3/`; `tools/build_shaders.py` compiles it into
+`runtime/<name>_spv.h`. Each file starts with its licence notice, which stays in the code; `THIRD_PARTY_NOTICES.md`
+says what was changed in them. The feature: [frame-generation.md](../frame-generation.md) for frame generation,
+[presets.md](../presets.md) for the upscaler's modes.
+
+### `runtime/shaders/fsr3_options.h`
+
+The build options of the FSR 3.1 upscaler passes (`fsr3_*.comp`, recorded by `runtime/vk/vk_fsr3.c`), included after
+`#version` and the `#extension` lines, for the inputs `runtime/vk/vk_dlaa.c` hands over: linear HDR scene light, motion vectors at the render
+size and without the jitter, depth not inverted. Everything runs in 32-bit floats (no 16-bit arithmetic); the
+reprojection's Lanczos weights come from the 128-entry table `runtime/vk/vk_fsr3.c` `make_shared()` uploads.
+`FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING` is 0 unless the including file defined it first.
+
+### `runtime/shaders/fsr3fg_options.h`
+
+The build options of the FSR 3.1 frame generation passes (`fsr3fi_*.comp`, frame interpolation, and `fsr3of_*.comp`,
+optical flow; recorded by `runtime/vk/vk_fsr3fg.c`), for the inputs `runtime/vk/vk_dlaa.c` hands over: motion vectors
+at the render size and without the jitter, depth not inverted (0 at the near plane). Everything runs in 32-bit floats.
+The colour of an SDR swapchain image is sRGB-encoded UNORM, which the passes take from their constants (backbuffer
+transfer function 0), not from an option. It is included at the same place, after `#version` and the `#extension` lines.
+
+### The upscaler's passes
+
+Recorded by `runtime/vk/vk_fsr3.c`, with the options of `runtime/shaders/fsr3_options.h`:
+
+- `runtime/shaders/fsr3_prepare_inputs.comp`
+- `runtime/shaders/fsr3_luma_pyramid.comp`
+- `runtime/shaders/fsr3_shading_change_pyramid.comp`
+- `runtime/shaders/fsr3_shading_change.comp`
+- `runtime/shaders/fsr3_prepare_reactivity.comp`
+- `runtime/shaders/fsr3_luma_instability.comp`: the luma history it writes, at binding 7, is declared in this file
+  (`rw_luma_history`, with `StoreLumaHistory()`) as `rgba16f` instead of by the callbacks header, which names it
+  `rgba8`: the image (`IMG`, `I_LH0` and `I_LH1` in `runtime/vk/vk_fsr3.c`) is RGBA16F and holds luma above 1 in HDR,
+  which an `rgba8` store would clamp.
+- `runtime/shaders/fsr3_accumulate.comp`
+- `runtime/shaders/fsr3_accumulate_sharpen.comp`: the accumulate pass with sharpening on (it defines
+  `FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING` as 1 before the include).
+- `runtime/shaders/fsr3_rcas.comp`
+
+The two accumulate passes and `fsr3_rcas.comp` require `GL_EXT_shader_image_load_formatted`: the declaration of
+`rw_upscaled_output` needs it.
+
+### The frame generation passes
+
+Recorded by `runtime/vk/vk_fsr3fg.c`, with the options of `runtime/shaders/fsr3fg_options.h`. Frame interpolation:
+
+- `runtime/shaders/fsr3fi_setup.comp`
+- `runtime/shaders/fsr3fi_reconstruct_and_dilate.comp`
+- `runtime/shaders/fsr3fi_reconstruct_previous_depth.comp`
+- `runtime/shaders/fsr3fi_game_motion_vector_field.comp`
+- `runtime/shaders/fsr3fi_game_vector_field_inpainting_pyramid.comp`
+- `runtime/shaders/fsr3fi_optical_flow_vector_field.comp`
+- `runtime/shaders/fsr3fi_disocclusion_mask.comp`
+- `runtime/shaders/fsr3fi_interpolate.comp`
+- `runtime/shaders/fsr3fi_inpainting_pyramid.comp`
+- `runtime/shaders/fsr3fi_inpainting.comp`
+
+`fsr3fi_interpolate.comp` and `fsr3fi_inpainting.comp` require `GL_EXT_shader_image_load_formatted`: the declaration
+of `rw_output` needs it.
+
+Optical flow:
+
+- `runtime/shaders/fsr3of_prepare_luma.comp`
+- `runtime/shaders/fsr3of_luminance_pyramid.comp`
+- `runtime/shaders/fsr3of_scd_histogram.comp`
+- `runtime/shaders/fsr3of_scd_divergence.comp`
+- `runtime/shaders/fsr3of_search.comp`
+- `runtime/shaders/fsr3of_filter.comp`
+- `runtime/shaders/fsr3of_scale.comp`
+
+## `runtime/shaders/dlaa_mv.comp`
+
+Camera motion vectors for DLAA (`runtime/vk/vk_dlaa.c` `mv_pass()`): each pixel's depth is taken back to the world
+through this frame's view-projection and forward through last frame's; the vector is last frame's window position
+minus this frame's, in render pixels, without the jitter (DLSS's default convention). Objects that move on their own
+get only the camera's motion here: the per-object pass (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`) or the depth
+check below corrects theirs.
+
+The camera block is the game's scene uniform block (bound as c4 in the scene's vertex shaders): vec4 rows 3-6 are the
+view-projection, rows of a row-major 4x4 with OpenGL clip depth (-w..w). The replay's viewports have negative heights,
+so window y grows downwards from ndc y = +1, and depth is z_ndc * 0.5 + 0.5. The shader reads rows 3-6 of the two
+blocks at bindings 2 and 3, inverts the first and multiplies by the second. `mv_pass()` does not hand it the two
+cameras as they are: it works out last frame's view-projection times the inverse of this frame's in double precision
+and fills the first block with the identity and the second with that product.
+
+The bias mask. With `pc.bias` > 0 the pass also writes DLSS's bias mask (the characters' mask of
+`runtime/vk/vk_dlaa.c`): G-buffer target 0 carries an object class in green, above 64/255 for characters, creatures
+and what they hold (Link 253, others 125, held items 160; terrain 0, foliage 32). A pixel gets `pc.bias` when a
+character covers it now, or covered the place its surface came from last frame (the previous class mask, read through
+the motion vector, 3x3): there the history holds a moving character that the camera-only vector does not follow, which
+is the trail. `chars_out` keeps this frame's mask for the next; `chars_prev` is last frame's (`pc.prev_ok` 0: none).
+
+The depth check. Each pixel's view distance is also kept for the next frame (`depth_out`; `depth_prev` is last
+frame's, `pc.zprev_ok` 1 when it holds one). With `pc.zfit` > 0 (a frame without object motion and without the class
+buffer: Ocarina's) the vector is checked against it. The camera's motion predicts how far the surface was last frame
+at the place it came from; where last frame's depth there disagrees, the surface moved on its own. The commonest such
+surface is the character the camera follows, which stays where it is on screen: when last frame's depth at the same
+pixel agrees, the vector is zero instead. Either way such a pixel gets the bias mask (`pc.zmask`), so DLSS takes this
+frame's colour where its history holds something else (the trail behind a running Link). `pc.dz`: the projection's
+depth terms (rows 2 and 3, columns 2 and 3) that take ndc depth back to view distance.
+
+Bindings (workgroups of 8x8):
+
+| Binding | Name | What |
+|---|---|---|
+| 0 | `depth_tex` | this frame's depth |
+| 1 | `mv_out` | the vectors, `rg16f` |
+| 2 | `cur` | `vec4 r[16]`, std140: this frame's block |
+| 3 | `prev` | `vec4 r[16]`, std140: last frame's block |
+| 4 | `ids_tex` | G-buffer target 0, the classes |
+| 5 | `mask_out` | the bias mask, `r8` |
+| 6 | `chars_prev` | last frame's class mask, `r8` |
+| 7 | `chars_out` | this frame's class mask, `r8` |
+| 8 | `depth_prev` | last frame's view distances, `r32f` |
+| 9 | `depth_out` | this frame's view distances, `r32f` |
+
+Push constants (`P`; `MvPush` in `runtime/vk/vk_dlaa.c` has the same layout, std430, `dz` at offset 32):
+
+| Field | Meaning |
+|---|---|
+| `vec2 size` | render size in pixels |
+| `vec2 jitter` | this frame's jitter, pixels, as the scene was drawn (window x right, y down) |
+| `float bias` | the mask value for character pixels; 0: no mask (bindings 4-7 unused) |
+| `float prev_ok` | 1: `chars_prev` holds last frame's class mask at this size |
+| `float zfit` | 1: the depth check; 0: off |
+| `float zprev_ok` | 1: `depth_prev` holds last frame's view distances at this size |
+| `vec4 dz` | the projection's [2][2], [2][3], [3][2], [3][3] (row-major) |
+| `float zmask` | the depth check's mask value (0: the vectors are checked, no mask) |
+
+### `dist()`
+
+View distance from ndc depth; 0 for the sky and other points at or past the far plane (a denominator below 1e-12, or
+a distance of 1e7 and more).
+
+### `miss()`
+
+How far last frame's distance near window position `w` is from the distance expected there, relative: the closest of
+the 3x3 pixels around it, so a reprojection that lands a pixel across a silhouette (foliage, a roof's edge) is not
+taken for motion. 0 off screen (nothing to compare: the surface just came into view, DLSS handles that), 1e9 where
+last frame had only sky there.
+
+### `main()`
+
+- `win` is where this pixel's surface sits without the jitter: the pixel's centre minus `pc.jitter`.
+- The vector stays zero where the world point's w is within 1e-12 of zero or last frame's clip w is 1e-6 or less.
+- The depth check's tolerance, `TOL`, is 0.04. 4 %: the depth of a still surface reprojected through the camera lands
+  within about 1 % of last frame's (sub-pixel position and the depth buffer's precision); a character a step away from
+  the wall behind it is 10 % and more.
+- A pixel whose reprojected depth misses by more than `TOL` counts as moved; when the depth at its own pixel agrees
+  within `TOL`, it kept its place on screen (the followed character) and its vector is zero.
+- With the depth check on, `mask_out` gets moved * `pc.zmask`; with `pc.bias` > 0 the class mask is written after it
+  and replaces that value.
+
+## `runtime/shaders/link_motion.frag`
+
+The fragment shader of the per-object motion pass that checks the previous position's visibility
+(`runtime/vk/vk_exec_draw.c` `link_motion_fs()`). Its input `previous`, at location 15, is the previous clip position:
+`link_motion_fs()` patches that location in the compiled shader to the previous-position output of the game's vertex
+shader, finding it by `OpDecorate ... Location 15`, which no other input of the shader has.
+
+Binding 1, the block `Motion` (std140): `viewport` holds the size and the current jitter; `history` the previous
+jitter and the previous projection's clip.w coefficients. Binding 2, `previousDistance`: last frame's view distances.
+Output 0: the motion, the previous window position minus this fragment's (without the current jitter).
+
+### `main()`
+
+- A triangle seen from the other side last frame, or edge-on then, has no matching patch of visible surface: the
+  fragment is discarded unless the area of the previous window position's derivatives is above 0.05, the previous w is
+  positive and the previous position is inside the viewport.
+- The distance expected at the previous position is |(previous.w - history.w) / history.z|, compared with the one
+  `previousDistance` holds there.
+- The tolerance accounts for subpixel sampling on sloped triangles, and is capped so a nearby occluder still wins:
+  min(0.01 * expected, 0.0005 * expected + 0.75 * (|slope x| + |slope y|)), with the slope of the expected distance
+  taken over last frame's window.
+
+## `runtime/shaders/contact_shadow.comp`
+
+Screen-space contact shadows (`runtime/vk/vk_contact.c`). Each pixel of the game's lit scene colour marches a short way
+toward the sun through the linear depth target; when the ray passes behind something close in front of it, the pixel
+is in a contact shadow the shadow maps are too coarse to show, and its colour is darkened. What switches it on:
+[presets.md](../presets.md).
+
+Bindings (workgroups of 8x8): 0 `lin_depth`, the game's linear depth: view distance / far; 1 `scene`
+(`r11f_g11f_b10f`), the lit scene colour, darkened in place. Push constants (`Params`):
+
+| Field | Meaning |
+|---|---|
+| `vec4 proj` | projection x scale, y scale, far plane, strength (0..1) |
+| `vec4 light` | view-space direction toward the sun (xyz), march length in metres at 10 m (w) |
+| `vec4 size` | width, height, 1/width, 1/height |
+| `vec4 opt` | x: debug (1: write the shadow factor as grey) |
+
+### `view_pos()`, `to_uv()`
+
+`view_pos()`: the view-space point of a texture coordinate; `z` is the distance in front of the camera. `to_uv()` is
+its inverse.
+
+### `ign()`
+
+Interleaved gradient noise: a per-pixel start offset that hides the step pattern.
+fract(52.9829189 * fract(dot(px, (0.06711056, 0.00583715)))).
+
+### `main()`
+
+- Skipped: a depth of 0 or less, or 0.999 and more (nothing drawn, or the sky), and a distance above 80.
+- The surface's normal comes from the depth of its neighbours (the nearer of each pair, so an edge takes the side the
+  pixel is on), turned toward the camera. A surface turned away from the sun is already unlit in the game's own
+  shading: a march from it runs into the surface itself at once, and darkening it again turned a character with the
+  sun behind him brown and black. The march counts only on surfaces facing the sun, fading in over the first part of
+  that range: smoothstep(0.05, 0.3, n . light).
+- The march grows with distance, as one pixel covers more ground: its length is `light.w` * clamp(z / 10, 0.4, 3).
+  The thickness, 0.15 + 0.01 z, keeps thin blades from hiding the sky.
+- 16 steps (`STEPS`), the first at (0.25 + noise) of a step. The march ends when the point comes within 0.05 of the
+  camera's plane or leaves the screen.
+- `delta` is how far the scene at that pixel is in front of the ray point. A hit is a delta above 0.02 + 0.002 z and
+  below the thickness. A hit close to the pixel shadows more than one at the end: 1 - step / `STEPS`.
+- The darkening stands for the sunlight the pixel loses; the sky's and the bounced light stay, so even a full hit at
+  full strength keeps part of the colour: `MAX_DARK` is 0.6. It fades out between 40 and 80 of distance.
+- A factor of 0.999 and more writes nothing.
