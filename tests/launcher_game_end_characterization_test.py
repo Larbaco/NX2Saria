@@ -34,6 +34,7 @@ class GameEndCharacterizationTest(unittest.TestCase):
         self.run = mock.Mock()
         self.run.game_dir = str(self.game)
         self.run.running.return_value = False
+        self.run.code.return_value = 71
         self.run.end.return_value = app.GameEnd('the game ended with code 71', 'A fatal error.', '71', True)
         self.window.game_run = self.run
         self.telemetry = mock.patch.object(app.telemetry, 'enabled', return_value=True)
@@ -67,8 +68,14 @@ class GameEndCharacterizationTest(unittest.TestCase):
         self.assertIsNone(self.window.game_run)
         self.assertEqual(self.window.message, 'A fatal error.')
         self.assertEqual(self.events, ['restore', 'lift', 'focus', ('log', 'the game ended with code 71'),
-                                       ('crash', str(self.game)), ('note', str(self.game), '71'),
+                                       ('crash', str(self.game)),
+                                       ('log', "telemetry: crash log offer: waits for the launcher's main screen "
+                                               '(end: crash)'),
+                                       ('note', str(self.game), '71'),
                                        ('update', 'the game exited'), 'reports', ('screen', 'home', 3)])
+        self.assertEqual((self.run.kind, self.run.asked), ('crash', False))
+        self.assertTrue((self.game / 'logs' / 'crash-offer.json').is_file())
+        self.window.offer_crash_log.assert_called_once_with()
 
     def test_staged_update_short_circuits_reports_and_home(self):
         self.window.install_staged.side_effect = lambda why: self.events.append(('update', why)) or True
@@ -76,15 +83,19 @@ class GameEndCharacterizationTest(unittest.TestCase):
         self.assertEqual(self.events[-1], ('update', 'the game exited'))
         self.assertNotIn('reports', self.events)
         self.window.show.assert_not_called()
+        self.window.offer_crash_log.assert_not_called()
+        self.assertTrue((self.game / 'logs' / 'crash-offer.json').is_file())
 
     def test_reports_short_circuit_home_after_update_is_checked(self):
         self.window.after_game_reports.side_effect = lambda: self.events.append('reports') or True
         app.App.watch_game(self.window)
         self.assertEqual(self.events[-2:], [('update', 'the game exited'), 'reports'])
         self.window.show.assert_not_called()
+        self.window.offer_crash_log.assert_not_called()
 
     def test_disabled_reports_and_empty_note_do_not_synthesize_or_write(self):
         self.run.end.return_value = app.GameEnd('the game ended with code 0', '', '', False)
+        self.run.code.return_value = 0
         with mock.patch.object(app.telemetry, 'enabled', return_value=False), \
                 mock.patch.object(app.telemetry, 'synthesize_crash') as crash:
             app.App.watch_game(self.window)
@@ -93,6 +104,8 @@ class GameEndCharacterizationTest(unittest.TestCase):
         self.assertEqual(self.window.message, '')
         self.assertEqual(self.events, ['restore', 'lift', 'focus', ('log', 'the game ended with code 0'),
                                        ('update', 'the game exited'), 'reports', ('screen', 'home', 3)])
+        self.assertEqual((self.run.kind, self.run.asked), ('', False))
+        self.assertFalse((self.game / 'logs' / 'crash-offer.json').exists())
 
     def test_missing_run_restores_window_and_checks_update_and_reports(self):
         self.window.game_run = None
