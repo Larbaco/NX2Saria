@@ -1,16 +1,13 @@
-// The zip file of a shared save (save_zip.h). Little-endian fields as the zip format (PKWARE APPNOTE) lays them out;
-// deflate as RFC 1951 defines it.
 #include <stdlib.h>
 #include <string.h>
 
 #include "save_zip.h"
 
-// ---- CRC-32 (the zip polynomial, reflected), one table built on first use
 static uint32_t crc_table[256];
 static volatile int crc_ready;
 
 uint32_t sz_crc32(uint32_t crc, const void *data, size_t n) {
-    if (!crc_ready) {   // two threads may build it at once: they write the same values
+    if (!crc_ready) {
         for (uint32_t i = 0; i < 256; i++) {
             uint32_t c = i;
             for (int k = 0; k < 8; k++) c = c & 1 ? 0xedb88320u ^ (c >> 1) : c >> 1;
@@ -24,7 +21,6 @@ uint32_t sz_crc32(uint32_t crc, const void *data, size_t n) {
     return ~crc;
 }
 
-// ---- deflate tables shared by both directions: length codes 257..285 and distance codes 0..29
 static const uint16_t len_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
                                       31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
 static const uint8_t len_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
@@ -32,7 +28,6 @@ static const uint16_t dist_base[30] = {1,   2,   3,   4,   5,   7,    9,    13, 
                                        193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
 static const uint8_t dist_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
-// ---- inflate
 typedef struct {
     const uint8_t *in;
     size_t n, pos;
@@ -42,7 +37,6 @@ typedef struct {
     size_t cap, at;
 } Inflate;
 
-// need (0..16) bits, the first read in the lowest bit; past the end of the input: 0 and bad set.
 static unsigned get_bits(Inflate *s, int need) {
     while (s->bitcnt < need) {
         if (s->pos >= s->n) {
@@ -58,14 +52,11 @@ static unsigned get_bits(Inflate *s, int need) {
     return v;
 }
 
-// A canonical Huffman code: how many codes of each length, and the symbols in code order.
 typedef struct {
     uint16_t count[16];
     uint16_t symbol[288];
 } Huff;
 
-// The code of lengths[0..n) (0: the symbol is unused). 0 when usable: no length is over-subscribed (an incomplete
-// code is allowed, as a stream with a single distance code has one; a code it lacks then reads as damaged).
 static int huff_build(Huff *h, const uint8_t *lengths, int n) {
     uint16_t offs[16];
     memset(h->count, 0, sizeof h->count);
@@ -83,7 +74,6 @@ static int huff_build(Huff *h, const uint8_t *lengths, int n) {
     return 0;
 }
 
-// The next symbol of code h, the bits read one at a time (Huffman codes are packed from their first bit); -1 damaged.
 static int huff_decode(Inflate *s, const Huff *h) {
     int code = 0, first = 0, index = 0;
     for (int len = 1; len < 16; len++) {
@@ -98,7 +88,6 @@ static int huff_decode(Inflate *s, const Huff *h) {
     return -1;
 }
 
-// The symbols of one block until its end code.
 static int inflate_codes(Inflate *s, const Huff *lit, const Huff *dist) {
     for (;;) {
         int sym = huff_decode(s, lit);
@@ -116,12 +105,12 @@ static int inflate_codes(Inflate *s, const Huff *lit, const Huff *dist) {
         if (d < 0 || d >= 30) return -1;
         size_t back = dist_base[d] + get_bits(s, dist_extra[d]);
         if (s->bad || back > s->at || len > s->cap - s->at) return -1;
-        for (size_t i = 0; i < len; i++, s->at++) s->out[s->at] = s->out[s->at - back];   // overlapping on purpose
+        for (size_t i = 0; i < len; i++, s->at++) s->out[s->at] = s->out[s->at - back];
     }
 }
 
 static int inflate_stored(Inflate *s) {
-    s->bitbuf = 0, s->bitcnt = 0;   // the rest of the current byte
+    s->bitbuf = 0, s->bitcnt = 0;
     if (s->n - s->pos < 4) return -1;
     unsigned len = s->in[s->pos] | s->in[s->pos + 1] << 8, nlen = s->in[s->pos + 2] | s->in[s->pos + 3] << 8;
     s->pos += 4;
@@ -134,7 +123,7 @@ static int inflate_stored(Inflate *s) {
 static int inflate_fixed(Inflate *s) {
     static Huff lit, dist;
     static volatile int built;
-    if (!built) {   // two threads may build them at once: they write the same values
+    if (!built) {
         uint8_t l[288];
         int i = 0;
         for (; i < 144; i++) l[i] = 8;
@@ -157,7 +146,7 @@ static int inflate_dynamic(Inflate *s) {
     if (s->bad || nlen > 286 || ndist > 30) return -1;
     memset(lengths, 0, sizeof lengths);
     for (int i = 0; i < ncode; i++) lengths[order[i]] = (uint8_t)get_bits(s, 3);
-    if (s->bad || huff_build(&lit, lengths, 19)) return -1;   // the code lengths' own code, in lit for now
+    if (s->bad || huff_build(&lit, lengths, 19)) return -1;
     for (int i = 0; i < nlen + ndist;) {
         int sym = huff_decode(s, &lit);
         if (sym < 0) return -1;
@@ -178,7 +167,7 @@ static int inflate_dynamic(Inflate *s) {
         if (s->bad || i + repeat > nlen + ndist) return -1;
         while (repeat--) lengths[i++] = (uint8_t)value;
     }
-    if (!lengths[256]) return -1;   // a block without its end code
+    if (!lengths[256]) return -1;
     if (huff_build(&lit, lengths, nlen) || huff_build(&dist, lengths + nlen, ndist)) return -1;
     return inflate_codes(s, &lit, &dist);
 }
@@ -198,7 +187,6 @@ int sz_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t dst_n) {
     return s.at == dst_n ? 0 : -1;
 }
 
-// ---- deflate: greedy LZ77 over a 32 KiB window (hash chains of 3-byte keys), the fixed Huffman codes
 typedef struct {
     uint8_t *out;
     size_t at, cap;
@@ -217,14 +205,13 @@ static void put_bits(BitOut *b, uint32_t v, int n) {
     }
 }
 
-// A Huffman code goes out from its first bit: reversed into the LSB-first stream.
 static void put_code(BitOut *b, uint32_t code, int len) {
     uint32_t r = 0;
     for (int i = 0; i < len; i++) r |= ((code >> i) & 1u) << (len - 1 - i);
     put_bits(b, r, len);
 }
 
-static void put_literal(BitOut *b, int sym) {   // a literal/length symbol in the fixed code
+static void put_literal(BitOut *b, int sym) {
     if (sym < 144) put_code(b, 0x30u + (uint32_t)sym, 8);
     else if (sym < 256) put_code(b, 0x190u + (uint32_t)(sym - 144), 9);
     else if (sym < 280) put_code(b, (uint32_t)(sym - 256), 7);
@@ -244,11 +231,11 @@ static void put_match(BitOut *b, size_t len, size_t back) {
 
 #define WINDOW 32768u
 #define HASH_BITS 15
-#define CHAIN 48          // candidates tried per position: logs repeat a lot, saves little
+#define CHAIN 48
 #define MAX_MATCH 258
 
 uint8_t *sz_deflate(const uint8_t *src, size_t n, size_t *out_n) {
-    BitOut b = {.cap = n + n / 8 + 64};   // a literal takes at most 9 bits
+    BitOut b = {.cap = n + n / 8 + 64};
     b.out = malloc(b.cap);
     int32_t *head = malloc(sizeof(int32_t) << HASH_BITS), *prev = malloc(sizeof(int32_t) * WINDOW);
     if (!b.out || !head || !prev) {
@@ -256,8 +243,8 @@ uint8_t *sz_deflate(const uint8_t *src, size_t n, size_t *out_n) {
         return NULL;
     }
     for (size_t i = 0; i < (1u << HASH_BITS); i++) head[i] = -1;
-    put_bits(&b, 1, 1);   // the last block
-    put_bits(&b, 1, 2);   // fixed Huffman codes
+    put_bits(&b, 1, 1);
+    put_bits(&b, 1, 2);
 #define HASH(p) ((((uint32_t)(p)[0] << 10) ^ ((uint32_t)(p)[1] << 5) ^ (p)[2]) & ((1u << HASH_BITS) - 1))
     size_t i = 0;
     while (i < n) {
@@ -268,7 +255,7 @@ uint8_t *sz_deflate(const uint8_t *src, size_t n, size_t *out_n) {
             size_t limit = n - i < MAX_MATCH ? n - i : MAX_MATCH;
             for (int tries = 0; cand >= 0 && i - (size_t)cand <= WINDOW && tries < CHAIN; tries++) {
                 const uint8_t *a = src + cand, *c = src + i;
-                if (a[best] == c[best]) {   // only a longer match can win
+                if (a[best] == c[best]) {
                     size_t k = 0;
                     while (k < limit && a[k] == c[k]) k++;
                     if (k > best) {
@@ -277,14 +264,14 @@ uint8_t *sz_deflate(const uint8_t *src, size_t n, size_t *out_n) {
                     }
                 }
                 int32_t next = prev[cand & (WINDOW - 1)];
-                if (next >= cand) break;   // an older entry overwritten by a newer one
+                if (next >= cand) break;
                 cand = next;
             }
         }
         size_t step = best >= 3 ? best : 1;
         if (best >= 3) put_match(&b, best, back);
         else put_literal(&b, src[i]);
-        for (size_t k = 0; k < step; k++, i++)   // every position covered goes into the chains
+        for (size_t k = 0; k < step; k++, i++)
             if (n - i >= 3) {
                 uint32_t h = HASH(src + i);
                 prev[i & (WINDOW - 1)] = head[h];
@@ -293,9 +280,9 @@ uint8_t *sz_deflate(const uint8_t *src, size_t n, size_t *out_n) {
     }
 #undef HASH
     put_literal(&b, 256);
-    put_bits(&b, 0, 7);   // out to the byte
+    put_bits(&b, 0, 7);
     free(head), free(prev);
-    if (b.at > b.cap) {   // cannot happen with the bound above; kept as the guard put_bits relies on
+    if (b.at > b.cap) {
         free(b.out);
         return NULL;
     }
@@ -303,7 +290,6 @@ uint8_t *sz_deflate(const uint8_t *src, size_t n, size_t *out_n) {
     return b.out;
 }
 
-// ---- writing a zip
 static void put16(uint8_t *p, unsigned v) { p[0] = (uint8_t)v, p[1] = (uint8_t)(v >> 8); }
 static void put32(uint8_t *p, uint32_t v) { put16(p, v & 0xffff), put16(p + 2, v >> 16); }
 static unsigned get16(const uint8_t *p) { return p[0] | p[1] << 8; }
@@ -311,7 +297,7 @@ static uint32_t get32(const uint8_t *p) { return get16(p) | (uint32_t)get16(p + 
 
 static uint8_t *room(SzWriter *w, size_t k) {
     if (w->failed) return NULL;
-    if (w->n + k > 0xffffffffu) {   // offsets and sizes are 32-bit without the 64-bit extension
+    if (w->n + k > 0xffffffffu) {
         w->failed = 1;
         return NULL;
     }
@@ -365,14 +351,14 @@ void sz_writer_add(SzWriter *w, const char *name, const void *data, size_t n) {
     m->usize = (uint32_t)n;
     size_t packed_n = 0;
     uint8_t *packed = n >= 64 ? sz_deflate(data, n, &packed_n) : NULL;
-    if (packed && packed_n >= n) free(packed), packed = NULL;   // stored when deflate does not help
+    if (packed && packed_n >= n) free(packed), packed = NULL;
     m->method = packed ? 8 : 0;
     m->csize = (uint32_t)(packed ? packed_n : n);
     m->offset = (uint32_t)w->n;
     uint8_t *h = room(w, 30 + name_n);
     if (h) {
         put32(h, 0x04034b50);
-        put16(h + 4, 20);   // version needed: deflate
+        put16(h + 4, 20);
         put16(h + 6, 0);
         put16(h + 8, m->method);
         put16(h + 10, w->dos_time);
@@ -397,7 +383,7 @@ uint8_t *sz_writer_finish(SzWriter *w, size_t *n) {
         uint8_t *c = room(w, 46 + name_n);
         if (!c) break;
         put32(c, 0x02014b50);
-        put16(c + 4, 20);   // made by: MS-DOS attributes, version 2.0
+        put16(c + 4, 20);
         put16(c + 6, 20);
         put16(c + 8, 0);
         put16(c + 10, m->method);
@@ -407,11 +393,11 @@ uint8_t *sz_writer_finish(SzWriter *w, size_t *n) {
         put32(c + 20, m->csize);
         put32(c + 24, m->usize);
         put16(c + 28, (unsigned)name_n);
-        put16(c + 30, 0);   // extra
-        put16(c + 32, 0);   // comment
-        put16(c + 34, 0);   // disk
-        put16(c + 36, 0);   // internal attributes
-        put32(c + 38, 0);   // external attributes
+        put16(c + 30, 0);
+        put16(c + 32, 0);
+        put16(c + 34, 0);
+        put16(c + 36, 0);
+        put32(c + 38, 0);
         put32(c + 42, m->offset);
         memcpy(c + 46, m->name, name_n);
     }
@@ -436,11 +422,9 @@ uint8_t *sz_writer_finish(SzWriter *w, size_t *n) {
     return out;
 }
 
-// ---- reading a zip
 int sz_read_dir(const uint8_t *zip, size_t n, SzEntry **out, int *count) {
     *out = NULL, *count = 0;
     if (n < 22) return SZ_E_NOT_ZIP;
-    // the end record: its signature within the last 22 bytes plus the longest comment
     size_t e = n - 22, stop = n > 22 + 0xffff ? n - 22 - 0xffff : 0;
     while (get32(zip + e) != 0x06054b50 || 22 + get16(zip + e + 20) != n - e) {
         if (e == stop) return SZ_E_NOT_ZIP;
@@ -448,8 +432,8 @@ int sz_read_dir(const uint8_t *zip, size_t n, SzEntry **out, int *count) {
     }
     unsigned total = get16(zip + e + 10);
     uint32_t cd_n = get32(zip + e + 12), cd_at = get32(zip + e + 16);
-    if (get16(zip + e + 4) || get16(zip + e + 6) || get16(zip + e + 8) != total) return SZ_E_UNSUPPORTED;   // spanned
-    if (total == 0xffff || cd_n == 0xffffffffu || cd_at == 0xffffffffu) return SZ_E_UNSUPPORTED;   // the 64-bit zip
+    if (get16(zip + e + 4) || get16(zip + e + 6) || get16(zip + e + 8) != total) return SZ_E_UNSUPPORTED;
+    if (total == 0xffff || cd_n == 0xffffffffu || cd_at == 0xffffffffu) return SZ_E_UNSUPPORTED;
     if (cd_at > e || cd_n > e - cd_at) return SZ_E_DAMAGED;
     SzEntry *list = calloc(total ? total : 1, sizeof *list);
     if (!list) return SZ_E_MEMORY;
@@ -472,7 +456,7 @@ int sz_read_dir(const uint8_t *zip, size_t n, SzEntry **out, int *count) {
         if (next > cd_at + cd_n) r = SZ_E_DAMAGED;
         else if (flags & 1 || (en->method != 0 && en->method != 8) || name_n >= sizeof en->name ||
                  en->csize == 0xffffffffu || en->usize == 0xffffffffu || local == 0xffffffffu)
-            r = SZ_E_UNSUPPORTED;   // encrypted, another method, a long name, a 64-bit member
+            r = SZ_E_UNSUPPORTED;
         if (r) break;
         memcpy(en->name, c + 46, name_n);
         en->name[name_n] = 0;
@@ -481,7 +465,7 @@ int sz_read_dir(const uint8_t *zip, size_t n, SzEntry **out, int *count) {
             break;
         }
         en->is_dir = name_n && en->name[name_n - 1] == '/';
-        en->is_link = (made_by >> 8) == 3 && ((ext >> 16) & 0170000) == 0120000;   // Unix: S_IFLNK
+        en->is_link = (made_by >> 8) == 3 && ((ext >> 16) & 0170000) == 0120000;
         if (local > cd_at || cd_at - local < 30 || get32(zip + local) != 0x04034b50) {
             r = SZ_E_DAMAGED;
             break;
@@ -526,7 +510,6 @@ uint8_t *sz_extract(const uint8_t *zip, size_t n, const SzEntry *e, int *err) {
     return out;
 }
 
-// ---- the manifest's JSON
 static const char *ws(const char *p) {
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     return p;
@@ -543,8 +526,6 @@ static int hex4(const char *p) {
     return v;
 }
 
-// The string at p (its opening quote) into out (NULL: skipped); *cut set when it did not fit. The byte after its
-// closing quote, NULL when it is not a string.
 static const char *json_string(const char *p, char *out, size_t cap, int *cut) {
     if (*p++ != '"') return NULL;
     size_t k = 0;
@@ -578,7 +559,6 @@ static const char *json_string(const char *p, char *out, size_t cap, int *cut) {
     return p;
 }
 
-// Past one value: a string, an object or array (nested), or a number or literal.
 static const char *json_skip(const char *p) {
     if (*p == '"') return json_string(p, NULL, 0, NULL);
     if (*p == '{' || *p == '[') {
@@ -600,7 +580,6 @@ static const char *json_skip(const char *p) {
     return p > s ? p : NULL;
 }
 
-// The value of key at the top level of the object json, NULL when it has none.
 static const char *json_find(const char *json, const char *key) {
     const char *p = ws(json);
     if (*p++ != '{') return NULL;

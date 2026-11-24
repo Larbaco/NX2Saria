@@ -36,7 +36,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
 | 13 | `runtime/` top level | `runtime.md` | not yet extracted |
 | 14 | `runtime/gfx/` | `gfx.md` | not yet extracted |
-| 15 | `runtime/hle/` | `hle.md` | not yet extracted |
+| 15 | `runtime/hle/` | [hle.md](hle.md) | extracted |
 | 16 | `tools/` | [tools.md](tools.md) | started: the licence parts of the release scripts; the rest not yet extracted |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | started: `tests/shipped_notices_check.py`; the rest not yet extracted |
 | 18 | `runtime/shaders/` (not `ffx/` and `ffx3/`) | `shaders.md` | not yet extracted |

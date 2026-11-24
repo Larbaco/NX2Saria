@@ -1,33 +1,3 @@
-// Switch 2 movie playback: movie::VideoDecoder (subsdk0) answered by the host with dav1d.
-//
-// The title's movies are WebM with AV1 video only (Event/Movie/*.webm, 1920x1080 60 fps, 8-bit 4:2:0, limited
-// range BT.709); their sound is a separate stream the game plays alongside (Sound/Resource/Stream/<movie>.bwav),
-// so a movie that runs for its real length is also what makes the title sequence audible. The SDK's
-// nn::movie::MediaExtractor demuxes as it is; subsdk0's VideoDecoder sits on nn::codec::video (a video server this
-// host does not have), so the public VideoDecoder methods the game imports are replaced here. VideoFrame stays
-// subsdk0's own object; its layout (subsdk0 VideoFrame::SetBuffer / SetPixelPlaneData / SetTimeStamp /
-// SetEndOfStreamState, sizeof 0x90):
-//   +0x08 + 8 i  plane i data (plane 0 = the buffer of SetBuffer)   +0x28 + 8 i  plane i filled size
-//   +0x48        buffer capacity                                     +0x78        time stamp (TimeSpan, ns)
-//   +0x80        pixel format          +0x84 pixel storage type      +0x88        end of stream (byte)
-// nn::movie::Buffer (sdk): +0x00 data, +0x08 capacity, +0x10 filled size, +0x18 time stamp, +0x20 flags (8 = end
-// of stream, as the game sets it at main+0x3b60014).
-//
-// Decoding is asynchronous, as on the hardware: DecodeAsync queues a copy of the sample and returns; one host thread
-// per decoder runs dav1d and converts each picture to NV12 (the game's frame format: it sizes each frame buffer
-// width * height * 3 / 2 and reads two planes) and to RGBA for the window. Decoding on the caller's thread stalled
-// the game's movie loop (it also acquires frames) by up to 90 ms on heavy frames: visible stutter.
-// Back-pressure: while QREADY samples or pictures wait, DecodeAsync answers R_BUSY and the input-ready event is
-// clear; the game's decode step (main+0x3b5e600) treats any non-zero result as "try again" on that event.
-// AcquireVideoFrame answers 0x7b when nothing is ready (subsdk0 VideoDecoder::AcquireVideoFrame's own result).
-// The game draws the frame with its own shaders (a YUV compute pass). Each frame is debanded first (flat areas
-// averaged with sub-level precision), so the encoder's flattened gradients (skies, clouds) do not show as hard bands,
-// and written back to NV12 with a 4x4 ordered dither. With NX2SARIA_MOVIE_OVERLAY=1 the host instead shows the frame
-// over the game image (gfx_present.c gfx_movie_frame_own), converted here: BT.709 limited range, bilinear chroma,
-// the same dither. NX2SARIA_MOVIE_DEBAND=0 turns the deband off.
-// NX2SARIA_MOVIES=off skips movies instead (romfs.c movie_skipped); this title then quits, so for testing use
-// NX2SARIA_MOVIE_SKIP=<seconds>: a movie ends as if it had played to its end once its samples reach that time (the next
-// sample becomes the end-of-stream marker, later ones are dropped), and the game goes on as after a whole movie.
 #include <dav1d/dav1d.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -40,36 +10,31 @@
 #include "platform/platform.h"
 
 #define R_NO_FRAME 0x7bu
-#define R_BUSY 0x7du       // DecodeAsync while the queues are full: the game retries on its input-ready event
+#define R_BUSY 0x7du
 #define BUFFER_FLAG_EOS 0x8u
-#define QMAX 8       // decoded pictures held at most
-#define INMAX 8      // samples waiting for the decoder thread at most
-#define QREADY 4     // input-ready while fewer than this many samples and pictures wait
-#define NFRAMES 16   // registered VideoFrames
-#define CQMAX 2      // decoded pictures waiting for the convert thread at most
+#define QMAX 8
+#define INMAX 8
+#define QREADY 4
+#define NFRAMES 16
+#define CQMAX 2
 
 typedef struct { uint8_t *nv12, *rgba; int w, h; int64_t ts; int eos; } Picture;
 typedef struct { uint8_t *data; size_t size; int64_t ts; int eos; } Sample;
-typedef struct { Dav1dPicture pic; uint64_t gen; int64_t ts; int eos; } Decoded;   // for the convert thread
+typedef struct { Dav1dPicture pic; uint64_t gen; int64_t ts; int eos; } Decoded;
 typedef struct {
-    PlatMutex lock;          // queues, frames, flags
-    PlatMutex codec;         // dav1d: the decoder thread while it decodes, Flush / Finalize
-    PlatCond work;           // a sample arrived, or quit
+    PlatMutex lock;
+    PlatMutex codec;
+    PlatCond work;
     PlatThread *thread;
-    int run_index;           // which movie of the run this is, counted from 1 as decoders come up (for the log)
-    // The convert thread debands and converts what dav1d decoded while the decoder thread decodes the next picture:
-    // one after the other on the decoder thread the two took longer than the 16.7 ms a 60 fps movie frame has
+    int run_index;
     PlatThread *convert;
-    PlatCond conv;           // a decoded picture arrived, a slot freed, or quit
+    PlatCond conv;
     Decoded cq[CQMAX];
     int cqh, cqn;
-    // The convert thread's deband planes (16-bit Y, U and V, plane_room samples of luma), kept from picture to picture
-    // and made again only for a larger one: made per picture they were 6.2 MB of fresh pages each at 1080p, 60 times a
-    // second. finalize frees them once the convert thread is joined.
     uint16_t *y16, *u16, *v16;
     size_t plane_room;
     Dav1dContext *dav1d;
-    uint8_t in_ev[0x40], out_ev[0x40];   // nn::os::SystemEventType each
+    uint8_t in_ev[0x40], out_ev[0x40];
     int in_bound, out_bound;
     uint64_t frame[NFRAMES];
     int busy[NFRAMES], nframe;
@@ -78,36 +43,27 @@ typedef struct {
     Sample in[INMAX];
     int ih, in_n;
     int quit, eos_queued;
-    uint64_t generation;     // bumped by Flush: pictures of an older one are dropped
+    uint64_t generation;
     uint64_t decoded, shown;
-    int live;                // counted in movies_live: from Initialize, or a sample after a Flush, to the end-of-stream
-                             // picture, Finalize or the destructor
-    // The first shown picture's time stamp and when it was shown, for the pacing report's distance between the
-    // picture and real time; clock_on: they hold (cleared by Flush and Initialize)
+    int live;
     int64_t ts0;
     uint64_t shown0_ns;
     int clock_on;
-    // The game fetches pictures ahead into a list of its own (main+0x3b61df0) and lets go of each when the next one
-    // takes its place on screen (ReleaseVideoFrame), so the distance to real time is measured there too: the newest
-    // released picture's, and how far it moved since the first released one (the drift), in ns
     int64_t rel_lag, rel_lag0;
     int rel_on;
 } Video;
 
 static Video *video_of(void *obj) { return obj ? *(Video **)obj : NULL; }
-static int movies_live;   // decoders playing (Video.live); frame_rate.c movie_cap_hz holds the frame rate meanwhile
+static int movies_live;
 
 int ov_movie_live(void) { return __atomic_load_n(&movies_live, __ATOMIC_RELAXED) > 0; }
 
-static void set_live(Video *v, int live) {   // the guest's decode and acquire threads may race here
+static void set_live(Video *v, int live) {
     if (__atomic_exchange_n(&v->live, live, __ATOMIC_RELAXED) != live)
         __atomic_add_fetch(&movies_live, live ? 1 : -1, __ATOMIC_RELAXED);
 }
-// Time summed for the pacing report (one movie plays at a time): on the decoder thread waiting for the game's next
-// sample, dav1d_send_data and dav1d_get_picture; on the convert thread make_picture (deband and conversion)
-static uint64_t t_wait_ns, t_send_ns, t_get_ns, t_make_ns, n_made;   // n_made: pictures converted
+static uint64_t t_wait_ns, t_send_ns, t_get_ns, t_make_ns, n_made;
 
-// under v->lock
 static void update_events(Video *v) {
     int ready = v->qn < QREADY && v->in_n < QREADY && !v->eos_queued;
     if (v->in_bound) {
@@ -126,7 +82,6 @@ static void picture_free(Picture *p) {
     p->nv12 = p->rgba = NULL;
 }
 
-// under v->lock
 static void clear_queues(Video *v) {
     while (v->qn) {
         picture_free(&v->q[v->qh]);
@@ -141,14 +96,7 @@ static void clear_queues(Video *v) {
     v->eos_queued = 0;
 }
 
-// Deband (the approach of mpv's deband filter, our own code): the movies' flat gradients (skies, clouds) are encoded
-// as blocks of one level with hard contours between them. For each sample, four neighbours at a pseudo-random offset
-// of 4..16 samples (rotated per pixel, so no pattern repeats) are compared with it; when all lie within THRESH levels
-// the area is flat and the sample becomes their mean with 4 bits of fraction, else it keeps its value. Edges and
-// texture differ by more than that and stay as they are. Output: plane * 16.
 #define DEBAND_THRESH 3
-// The deband taps: radii 4..16 at golden-angle rotations, so every tap of a sample at least DEBAND_REACH away from
-// each edge lies inside the plane.
 #define DEBAND_REACH 16
 static int16_t deband_off[64][2];
 static volatile int32_t deband_ready;
@@ -160,7 +108,6 @@ static void deband_table(void) {
     }
     __atomic_store_n(&deband_ready, 1, __ATOMIC_RELEASE);
 }
-// One sample near an edge: a tap outside the plane keeps the sample as it is
 static inline uint16_t deband_edge(const uint8_t *src, int w, int h, int stride, int step, int x, int y) {
     int c = src[(size_t)y * stride + x * step];
     const int16_t *d = deband_off[(x * 7 + y * 13 + ((x ^ y) >> 2)) & 63];
@@ -174,16 +121,12 @@ static inline uint16_t deband_edge(const uint8_t *src, int w, int h, int stride,
     int s2 = src[(size_t)yc * stride + xc * step], s3 = src[(size_t)yd * stride + xd * step];
     int m0 = abs(s0 - c), m1 = abs(s1 - c), m2 = abs(s2 - c), m3 = abs(s3 - c);
     if (m0 > DEBAND_THRESH || m1 > DEBAND_THRESH || m2 > DEBAND_THRESH || m3 > DEBAND_THRESH) return (uint16_t)(c * 16);
-    return (uint16_t)((s0 + s1 + s2 + s3) * 4);   // the mean, * 16
+    return (uint16_t)((s0 + s1 + s2 + s3) * 4);
 }
-// Each sample becomes the mean of four taps around it (a rotated pair of mirrored offsets) when all four lie within
-// DEBAND_THRESH of it, else stays as it is; the result is * 16, keeping the mean's fraction. Samples away from the
-// edges, nearly all of them, skip the bounds tests and choose without a branch: 28 ms on one thread for a 1080p frame
-// became 16 ms, and in play the stripes no longer overran the 16.7 ms a 60 fps movie frame has.
 static void deband(const uint8_t *src, uint16_t *dst, int w, int h, int stride, int step, int y0, int y1) {
     deband_table();
     const int R = DEBAND_REACH;
-    ptrdiff_t ta[64], tb[64];   // each offset as a distance in the plane: (+dx, +dy) and (-dy, +dx); their mirrors negate
+    ptrdiff_t ta[64], tb[64];
     for (int i = 0; i < 64; i++) {
         ta[i] = (ptrdiff_t)deband_off[i][1] * stride + (ptrdiff_t)deband_off[i][0] * step;
         tb[i] = (ptrdiff_t)deband_off[i][0] * stride - (ptrdiff_t)deband_off[i][1] * step;
@@ -210,14 +153,10 @@ static void deband(const uint8_t *src, uint16_t *dst, int w, int h, int stride, 
     }
 }
 
-// Debanded planes (* 16) -> RGBA, BT.709 limited range. Chroma is interpolated bilinearly between the 4:2:0 samples
-// (centred between luma rows, co-sited with even columns); a 4x4 Bayer threshold is added before the final rounding
-// to 8 bits, which turns the remaining sub-level steps into fine noise instead of bands.
 static void to_rgba(const uint16_t *Y, const uint16_t *U, const uint16_t *V, uint8_t *out, int w, int h, int y0, int y1) {
     static const int bayer[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
     const int cw = w / 2, ch = h / 2;
     for (int y = y0; y < y1; y++) {
-        // the two chroma rows around this luma row, weighted 3:1 toward the nearer one
         int cy0 = (y - 1) >> 1, cy1 = cy0 + 1, wy1 = (y & 1) ? 1 : 3, wy0 = 4 - wy1;
         if (cy0 < 0) cy0 = 0;
         if (cy1 >= ch) cy1 = ch - 1;
@@ -225,14 +164,13 @@ static void to_rgba(const uint16_t *Y, const uint16_t *U, const uint16_t *V, uin
         const uint16_t *v0 = V + (size_t)cy0 * cw, *v1 = V + (size_t)cy1 * cw, *yr = Y + (size_t)y * w;
         uint8_t *o = out + (size_t)y * w * 4;
         for (int x = 0; x < w; x++) {
-            int cx0 = x >> 1, cx1 = (x & 1) && cx0 + 1 < cw ? cx0 + 1 : cx0;   // even: on the sample, odd: halfway
+            int cx0 = x >> 1, cx1 = (x & 1) && cx0 + 1 < cw ? cx0 + 1 : cx0;
             int wx1 = cx1 != cx0 ? 2 : 0, wx0 = 4 - wx1;
-            // chroma * 16 * 16 (plane * 16, weights summing to 16) -> >> 4: * 16
             int u = ((u0[cx0] * wx0 + u0[cx1] * wx1) * wy0 + (u1[cx0] * wx0 + u1[cx1] * wx1) * wy1) >> 4;
             int vv = ((v0[cx0] * wx0 + v0[cx1] * wx1) * wy0 + (v1[cx0] * wx0 + v1[cx1] * wx1) * wy1) >> 4;
-            int d = u - 128 * 16, e = vv - 128 * 16;     // * 16
-            int cc = (yr[x] - 16 * 16) * 298;            // * 16 * 256
-            int dith = bayer[y & 3][x & 3] * 256 + 128;  // < 1 output step in the * 4096 unit
+            int d = u - 128 * 16, e = vv - 128 * 16;
+            int cc = (yr[x] - 16 * 16) * 298;
+            int dith = bayer[y & 3][x & 3] * 256 + 128;
             int r = (cc + 459 * e + dith) >> 12;
             int g = (cc - 55 * d - 136 * e + dith) >> 12;
             int b = (cc + 541 * d + dith) >> 12;
@@ -244,20 +182,15 @@ static void to_rgba(const uint16_t *Y, const uint16_t *U, const uint16_t *V, uin
     }
 }
 
-// The overlay conversion runs in NSTRIPES horizontal stripes on short-lived threads, in two phases (deband every
-// plane, then convert), since the convert reads chroma rows of the neighbouring stripe. One thread took 27 ms per
-// 1080p frame: too slow for 60 fps.
 #define NSTRIPES 6
 typedef struct {
     int phase, y0, y1, w, h;
     uint8_t *nv12;
     uint16_t *Y16, *U16, *V16;
     uint8_t *rgba;
-    const uint8_t *py, *pu, *pv;   // phase 2: the decoder's 8-bit planes and their strides (luma, chroma)
+    const uint8_t *py, *pu, *pv;
     ptrdiff_t ys, cs;
 } Stripe;
-// The debanded planes back into the NV12 frame (the game converts it itself), with a 4x4 ordered dither: the
-// 4 fraction bits become texel-sized noise instead of bands.
 static void to_nv12(const Stripe *t) {
     static const int bayer[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
     int w = t->w;
@@ -283,7 +216,7 @@ static void stripe_run(void *arg) {
         deband(t->nv12, t->Y16, t->w, t->h, t->w, 1, t->y0, t->y1);
         deband(uv, t->U16, t->w / 2, t->h / 2, t->w, 2, t->y0 / 2, t->y1 / 2);
         deband(uv + 1, t->V16, t->w / 2, t->h / 2, t->w, 2, t->y0 / 2, t->y1 / 2);
-    } else if (t->phase == 2) {   // deband straight from the decoder's planes, so the NV12 rows can be written at once
+    } else if (t->phase == 2) {
         deband(t->py, t->Y16, t->w, t->h, t->ys, 1, t->y0, t->y1);
         deband(t->pu, t->U16, t->w / 2, t->h / 2, t->cs, 1, t->y0 / 2, t->y1 / 2);
         deband(t->pv, t->V16, t->w / 2, t->h / 2, t->cs, 1, t->y0 / 2, t->y1 / 2);
@@ -294,20 +227,14 @@ static void stripe_run(void *arg) {
         to_nv12(t);
     }
 }
-// The NSTRIPES - 1 helper threads are made once and kept. Made per call (two calls per picture, 30-60 pictures a
-// second) they were about 300 new threads a second for as long as a movie played, and every DLL in the process (the
-// GPU driver's, overlays and audio hooks) sets itself up for each new thread: a cost per thread, and with an AMD driver
-// on an RX 580 the process commit grew by about 300 MB a second during the title movie until the system ran out
-// (FATAL "movie: out of memory for a 1920x1080 frame" at 45.7 GB). One caller at a time (call_lock); a worker that
-// could not be started leaves its stripe to the caller.
 static struct {
-    PlatMutex call_lock;     // one run_stripes at a time (several decoders may exist)
-    PlatMutex lock;          // the fields below
+    PlatMutex call_lock;
+    PlatMutex lock;
     PlatCond go, done;
     Stripe job[NSTRIPES];
-    uint64_t gen;            // bumped per batch
-    int pending;             // helper stripes of the batch not finished
-    int nworkers;            // started helpers (stripes 1..nworkers); -1 not tried yet
+    uint64_t gen;
+    int pending;
+    int nworkers;
 } SP = {PLAT_MUTEX_INIT, PLAT_MUTEX_INIT, PLAT_COND_INIT, PLAT_COND_INIT, {{0}}, 0, 0, -1};
 
 static void stripe_worker(void *arg) {
@@ -333,7 +260,7 @@ static void run_stripes(Stripe base) {
             if (!plat_thread_spawn(stripe_worker, (void *)(intptr_t)i, "movie convert", 0)) break;
         if (SP.nworkers < NSTRIPES - 1) rt_log("movie: %d of %d convert threads started", SP.nworkers, NSTRIPES - 1);
     }
-    int rows = ((base.h + NSTRIPES - 1) / NSTRIPES + 1) & ~1;   // even: chroma rows split at the same places
+    int rows = ((base.h + NSTRIPES - 1) / NSTRIPES + 1) & ~1;
     Stripe st[NSTRIPES];
     for (int i = 0; i < NSTRIPES; i++) {
         st[i] = base;
@@ -347,23 +274,18 @@ static void run_stripes(Stripe base) {
     plat_cond_broadcast(&SP.go);
     plat_mutex_unlock(&SP.lock);
     stripe_run(&st[0]);
-    for (int i = SP.nworkers + 1; i < NSTRIPES; i++) stripe_run(&st[i]);   // helpers that could not start
+    for (int i = SP.nworkers + 1; i < NSTRIPES; i++) stripe_run(&st[i]);
     plat_mutex_lock(&SP.lock);
     while (SP.pending) plat_cond_wait(&SP.done, &SP.lock);
     plat_mutex_unlock(&SP.lock);
     plat_mutex_unlock(&SP.call_lock);
 }
 
-// Out of memory for a decoded frame: the frame is dropped (the game shows the previous one a little longer) and
-// the first drop of a run is logged. The game used to stop here; on a PC whose commit charge reached its limit
-// for a moment, that ended a run that the next second would have had memory for.
 static void movie_oom_log(int w, int h) {
     static volatile int32_t drops;
     if (plat_xchg32(&drops, 1) == 0) rt_log("movie: out of memory for a %dx%d frame: dropped (later drops not logged)", w, h);
 }
 
-// The Video's deband planes for a w x h picture (convert thread). 0: no memory for them; the frame is then dropped
-// as for any allocation of a picture, and no planes are kept.
 static int planes_for(Video *v, int w, int h) {
     size_t px = (size_t)w * h;
     if (px <= v->plane_room) return 1;
@@ -377,7 +299,6 @@ static int planes_for(Video *v, int w, int h) {
     return 0;
 }
 
-// One dav1d picture (8- or 10-bit 4:2:0) -> NV12 with 8-bit samples, and its RGBA; convert thread
 static int make_picture(Video *v, const Dav1dPicture *pic, Picture *p) {
     int w = pic->p.w, h = pic->p.h, hbd = pic->p.bpc > 8, sh = pic->p.bpc - 8;
     if (pic->p.layout != DAV1D_PIXEL_LAYOUT_I420) {
@@ -392,29 +313,24 @@ static int make_picture(Video *v, const Dav1dPicture *pic, Picture *p) {
                    pic->p.bpc, pic->seq_hdr->color_range ? "full" : "limited", pic->seq_hdr->mtrx, pic->seq_hdr->pri,
                    pic->seq_hdr->trc);
     }
-    // The host overlay (NX2SARIA_MOVIE_OVERLAY=1) takes an RGBA frame; without it the game converts the NV12 frame itself.
     static int overlay = -1;
     if (overlay < 0) {
         const char *e = cfg_get("NX2SARIA_MOVIE_OVERLAY");
         overlay = e && strcmp(e, "0");
     }
     uint8_t *o = malloc((size_t)w * h * 3 / 2), *rgba = overlay ? malloc((size_t)w * h * 4) : NULL;
-    if (!o || (overlay && !rgba)) {   // a frame the PC has no memory for is dropped, not the game
+    if (!o || (overlay && !rgba)) {
         free(o), free(rgba);
         movie_oom_log(w, h);
         return 0;
     }
     const ptrdiff_t ys = pic->stride[0], cs = pic->stride[1];
-    static int deband_on = -1;   // NX2SARIA_MOVIE_DEBAND=0 keeps the decoded planes
+    static int deband_on = -1;
     if (deband_on < 0) {
         const char *e = cfg_get("NX2SARIA_MOVIE_DEBAND");
         deband_on = !(e && !strcmp(e, "0"));
     }
     if (deband_on && !hbd && !rgba) {
-        // The usual case (8-bit, debanded, the game converts the frame): one pass per stripe debands the decoder's own
-        // planes and writes the dithered NV12 rows. Reading the decoder's planes instead of an NV12 copy of them gives
-        // the same samples, and nothing reads the frame while it is written, so each stripe finishes its rows alone:
-        // one round of threads per frame instead of two, and no single-threaded copy before it.
         if (!planes_for(v, w, h)) {
             free(o);
             movie_oom_log(w, h);
@@ -439,7 +355,6 @@ static int make_picture(Video *v, const Dav1dPicture *pic, Picture *p) {
             uv[(size_t)y * w + 2 * x + 1] = hbd ? (uint8_t)(((const uint16_t *)vv)[x] >> sh) : vv[x];
         }
     }
-    // debanded planes (NX2SARIA_MOVIE_DEBAND=0 keeps the decoded ones), then the overlay's RGBA or the dithered NV12
     if (!deband_on && !rgba) {
         *p = (Picture){o, NULL, w, h, pic->m.timestamp, 0};
         return 1;
@@ -465,7 +380,6 @@ static int make_picture(Video *v, const Dav1dPicture *pic, Picture *p) {
     return 1;
 }
 
-// Queues a decoded picture, waiting while the queue is full (the game acquires at the movie's pace); decoder thread
 static void deliver(Video *v, Picture p, uint64_t gen) {
     plat_mutex_lock(&v->lock);
     while (v->qn == QMAX && !v->quit && v->generation == gen) {
@@ -485,8 +399,6 @@ static void deliver(Video *v, Picture p, uint64_t gen) {
     plat_mutex_unlock(&v->lock);
 }
 
-// Queues a decoded picture (or the end-of-stream marker) for the convert thread, waiting while it has CQMAX;
-// decoder thread. On quit the picture is released here.
 static void hand_over(Video *v, Decoded d) {
     plat_mutex_lock(&v->lock);
     while (v->cqn == CQMAX && !v->quit) plat_cond_wait(&v->conv, &v->lock);
@@ -500,7 +412,6 @@ static void hand_over(Video *v, Decoded d) {
     plat_cond_broadcast(&v->conv);
     plat_mutex_unlock(&v->lock);
 }
-// Releases the pictures still waiting for the convert thread; under v->lock
 static void clear_converts(Video *v) {
     while (v->cqn) {
         Decoded *d = &v->cq[v->cqh];
@@ -566,8 +477,6 @@ static void decoder_thread(void *arg) {
         update_events(v);
         plat_mutex_unlock(&v->lock);
         plat_mutex_lock(&v->codec);
-        // a flush (ov_flush) between taking the sample and the codec: the sample belongs to the stream before it, and fed
-        // into the flushed decoder its picture would come out after the seek
         plat_mutex_lock(&v->lock);
         int stale = v->generation != gen;
         plat_mutex_unlock(&v->lock);
@@ -595,7 +504,7 @@ static void decoder_thread(void *arg) {
         }
         if (s.eos && v->dav1d) {
             drain(v, gen);
-            hand_over(v, (Decoded){.gen = gen, .ts = s.ts, .eos = 1});   // after the last picture, through the same queue
+            hand_over(v, (Decoded){.gen = gen, .ts = s.ts, .eos = 1});
         }
         plat_mutex_unlock(&v->codec);
         free(s.data);
@@ -615,14 +524,14 @@ static void stop_thread(Video *v) {
     if (v->convert) plat_thread_join(v->convert);
     v->thread = v->convert = NULL;
     plat_mutex_lock(&v->lock);
-    clear_converts(v);   // before dav1d_close: the pictures are the decoder's
+    clear_converts(v);
     v->quit = 0;
     plat_mutex_unlock(&v->lock);
 }
 
 static void finalize(Video *v) {
     stop_thread(v);
-    free(v->y16), free(v->u16), free(v->v16);   // the convert thread, their only user, has been joined
+    free(v->y16), free(v->u16), free(v->v16);
     v->y16 = v->u16 = v->v16 = NULL;
     v->plane_room = 0;
     plat_mutex_lock(&v->codec);
@@ -634,8 +543,6 @@ static void finalize(Video *v) {
     plat_mutex_unlock(&v->lock);
 }
 
-// ---- movie::VideoDecoder
-// VideoDecoder() / ~VideoDecoder(): the object's first 8 bytes hold the host record
 static void ov_ctor(Cpu *c) { *(Video **)arg_p(c, 0) = NULL; }
 static void ov_dtor(Cpu *c) {
     Video **slot = arg_p(c, 0);
@@ -643,18 +550,14 @@ static void ov_dtor(Cpu *c) {
     Video *v = *slot;
     finalize(v);
     set_live(v, 0);
-    // The decoder and convert threads are joined, so nothing signals the events now: they are destroyed and leave the
-    // kernel's table of system events before their memory goes (kernel.c kern_unbind_system_event). Kept, each
-    // decoder left two dead entries and their kernel handles, and a long session filled the table.
     if (v->in_bound) kern_unbind_system_event(c, (uint64_t)(uintptr_t)v->in_ev);
     if (v->out_bound) kern_unbind_system_event(c, (uint64_t)(uintptr_t)v->out_ev);
     free(v);
     *slot = NULL;
     gfx_movie_stop();
 }
-void vk_dump_movie_frame(int k, uint64_t shown);   // vk_dump.c (NX2SARIA_DUMP_MOVIE)
-static int movies_started;                          // decoders that came up this run (Video.run_index)
-// Result Initialize(void *memory, size_t size, MediaMimeType mime, VideoDecoderOutputFormat format, VideoCodecMode)
+void vk_dump_movie_frame(int k, uint64_t shown);
+static int movies_started;
 static void ov_initialize(Cpu *c) {
     Video **slot = arg_p(c, 0);
     if (!*slot) {
@@ -671,9 +574,6 @@ static void ov_initialize(Cpu *c) {
     v->clock_on = v->rel_on = 0;
     Dav1dSettings s;
     dav1d_default_settings(&s);
-    // Frame threading on (dav1d picks the delay): heavy stretches of the title movie took longer than a frame to
-    // decode one picture at a time (max_frame_delay 1) and the game's loop waited up to 94 ms for them. The delay
-    // costs nothing here, as decoding runs ahead on its own thread; end of stream drains the delayed pictures.
     s.n_threads = 8;
     s.max_frame_delay = 0;
     int r = dav1d_open(&v->dav1d, &s);
@@ -687,10 +587,7 @@ static void ov_initialize(Cpu *c) {
            v->run_index, dav1d_version(), (unsigned)arg_x(c, 3), (unsigned)arg_x(c, 4), (unsigned)arg_x(c, 5));
     ret_x(c, 0);
 }
-// Result Configure(const MediaProperty *, const void *configuration, size_t): the AV1 sequence header also comes
-// in band with the first key frame, which dav1d reads
 static void ov_ok(Cpu *c) { ret_x(c, 0); }
-// Result Finalize()
 static void ov_finalize(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     if (v) {
@@ -702,7 +599,6 @@ static void ov_finalize(Cpu *c) {
     gfx_movie_stop();
     ret_x(c, 0);
 }
-// Result RegisterVideoFrame(VideoFrame **frames, int count)
 static void ov_register(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     uint64_t *frames = arg_p(c, 1);
@@ -712,8 +608,6 @@ static void ov_register(Cpu *c) {
     memcpy(v->frame, frames, (size_t)n * sizeof *frames);
     memset(v->busy, 0, sizeof v->busy);
     v->nframe = n;
-    // Each frame buffer starts as NV12 black (Y 16, UV 128 in its last third). The game converts a frame it holds
-    // before a picture arrives; zeros there are YUV (0, 0, 0), green, in stripes where rows were partly written.
     for (int i = 0; i < n; i++) {
         uint8_t *fr = (uint8_t *)(uintptr_t)frames[i], *buf;
         uint64_t cap;
@@ -727,7 +621,6 @@ static void ov_register(Cpu *c) {
     plat_mutex_unlock(&v->lock);
     ret_x(c, 0);
 }
-// Result GetInputReadyEvent(SystemEventType **out) / GetOutputReadyEvent(SystemEventType **out)
 static void get_event(Cpu *c, int input) {
     Video *v = video_of(arg_p(c, 0));
     uint64_t *out = arg_p(c, 1);
@@ -748,13 +641,12 @@ static void get_event(Cpu *c, int input) {
 }
 static void ov_input_event(Cpu *c) { get_event(c, 1); }
 static void ov_output_event(Cpu *c) { get_event(c, 0); }
-// Result Flush(): samples and pictures not yet acquired are dropped (a seek or a restart follows)
 static void ov_flush(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     if (v) {
         plat_mutex_lock(&v->lock);
-        v->generation++;   // the decoder and convert threads drop what they are making
-        v->clock_on = v->rel_on = 0;   // a seek: the report's real-time reference starts again from the next picture
+        v->generation++;
+        v->clock_on = v->rel_on = 0;
         clear_queues(v);
         clear_converts(v);
         plat_mutex_unlock(&v->lock);
@@ -767,7 +659,6 @@ static void ov_flush(Cpu *c) {
     }
     ret_x(c, 0);
 }
-// Result DecodeAsync(const nn::movie::Buffer *sample): queued for the decoder thread
 static void ov_decode(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     const uint8_t *b = arg_p(c, 1);
@@ -781,28 +672,24 @@ static void ov_decode(Cpu *c) {
     uint32_t flags;
     memcpy(&data, b, 8), memcpy(&size, b + 0x10, 8), memcpy(&ts, b + 0x18, 8), memcpy(&flags, b + 0x20, 4);
     int eos = (flags & BUFFER_FLAG_EOS) != 0;
-    static int64_t skip_ns = -2;   // NX2SARIA_MOVIE_SKIP: -1 off
+    static int64_t skip_ns = -2;
     if (skip_ns == -2) {
         const char *e = cfg_get("NX2SARIA_MOVIE_SKIP");
         skip_ns = e && *e ? (int64_t)(atof(e) * 1e9) : -1;
         if (skip_ns >= 0) rt_log("movie: movies end after %.1f s (NX2SARIA_MOVIE_SKIP)", skip_ns / 1e9);
     }
     plat_mutex_lock(&v->lock);
-    // Finalize on another thread may have closed the decoder since the test above. finalize takes v->lock after it
-    // clears v->dav1d, so read here under v->lock it is either still set (the sample is queued before finalize's
-    // clear_queues, which drops it, and ov_finalize or the destructor then clears live) or already NULL: no sample
-    // makes a finalized decoder live again, which would hold the movie frame rate cap (frame_rate.c movie_cap_hz).
     if (!v->dav1d) {
         plat_mutex_unlock(&v->lock);
         ret_x(c, 0);
         return;
     }
-    if (skip_ns >= 0 && v->eos_queued) {   // after the early end: what the demuxer still sends is dropped
+    if (skip_ns >= 0 && v->eos_queued) {
         plat_mutex_unlock(&v->lock);
         ret_x(c, 0);
         return;
     }
-    if (skip_ns >= 0 && !eos && ts >= skip_ns) eos = 1, size = 0;   // the early end
+    if (skip_ns >= 0 && !eos && ts >= skip_ns) eos = 1, size = 0;
     if (v->in_n >= INMAX || ((v->qn >= QREADY || v->in_n >= QREADY) && !eos)) {
         update_events(v);
         plat_mutex_unlock(&v->lock);
@@ -812,7 +699,7 @@ static void ov_decode(Cpu *c) {
     Sample s = {NULL, 0, ts, eos};
     if (data && size) {
         s.data = malloc((size_t)size);
-        if (!s.data) {   // no memory for the sample now: the game is told to try again, as with a full queue
+        if (!s.data) {
             static volatile int32_t logged;
             if (plat_xchg32(&logged, 1) == 0)
                 rt_log("movie: out of memory for a %llu-byte sample: retried (later ones not logged)", (unsigned long long)size);
@@ -826,14 +713,13 @@ static void ov_decode(Cpu *c) {
     }
     v->in[(v->ih + v->in_n) % INMAX] = s;
     v->in_n++;
-    if (!eos && !v->eos_queued) set_live(v, 1);   // playing again after its end (a Flush clears eos_queued)
+    if (!eos && !v->eos_queued) set_live(v, 1);
     if (eos) v->eos_queued = 1;
     update_events(v);
     plat_cond_signal(&v->work);
     plat_mutex_unlock(&v->lock);
     ret_x(c, 0);
 }
-// Result AcquireVideoFrame(VideoFrame **out): the oldest decoded picture in a free registered frame
 static void ov_acquire(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     uint64_t *out = arg_p(c, 1);
@@ -859,9 +745,6 @@ static void ov_acquire(Cpu *c) {
     uint64_t ysz = (uint64_t)p.w * p.h, uvsz = ysz / 2;
     if (p.nv12 && buf && cap >= ysz + uvsz) {
         memcpy(buf, p.nv12, (size_t)(ysz + uvsz));
-        // The game's YUV pass reads this buffer on the GPU. A host write into pool storage is one the page write
-        // tracking may not see in time (a mirror or texture over it kept its older or still-empty bytes: frames
-        // with stripes of zeros, which NV12 shows as green), so the back end is told directly.
         nvn_guest_written((uint64_t)(uintptr_t)buf, ysz + uvsz);
         uint64_t uvp = (uint64_t)(uintptr_t)(buf + ysz);
         memcpy(fr + 0x10, &uvp, 8);
@@ -883,10 +766,9 @@ static void ov_acquire(Cpu *c) {
     if (p.nv12 && v->shown == 1) rt_log("movie: first frame %dx%d shown", p.w, p.h);
     if (p.nv12) vk_dump_movie_frame(v->run_index, v->shown);
     if (p.nv12 && !v->clock_on) v->ts0 = p.ts, v->shown0_ns = plat_now_ns(), v->clock_on = 1;
-    if (p.nv12) {   // pacing report every 600 frames (10 s): the gaps between acquisitions and their time stamps
+    if (p.nv12) {
         static uint64_t last_ns, sum_gap, max_gap, n;
         uint64_t now = plat_now_ns(), gap = last_ns ? now - last_ns : 0;
-        // how far the picture is behind the time since the first one (positive: the picture is late)
         int64_t lag = (int64_t)(now - v->shown0_ns) - (p.ts - v->ts0);
         sum_gap += gap, n++;
         if (gap > max_gap) max_gap = gap;
@@ -905,8 +787,8 @@ static void ov_acquire(Cpu *c) {
     }
     update_events(v);
     plat_mutex_unlock(&v->lock);
-    if (p.rgba) gfx_movie_frame_own(p.rgba, p.w, p.h), p.rgba = NULL;   // the overlay takes the buffer
-    if (p.eos) {   // how the movie kept time: the picture on screen against the clock, at its start and its end
+    if (p.rgba) gfx_movie_frame_own(p.rgba, p.w, p.h), p.rgba = NULL;
+    if (p.eos) {
         if (v->rel_on)
             rt_log("movie: end of stream after %llu pictures: on screen %.0f ms behind real time, %+.0f ms since its start",
                    (unsigned long long)v->shown, v->rel_lag / 1e6, (v->rel_lag - v->rel_lag0) / 1e6);
@@ -916,7 +798,6 @@ static void ov_acquire(Cpu *c) {
     *out = v->frame[f];
     ret_x(c, 0);
 }
-// Result ReleaseVideoFrame(VideoFrame *)
 static void ov_release(Cpu *c) {
     Video *v = video_of(arg_p(c, 0));
     uint64_t fr = arg_x(c, 1);
@@ -938,7 +819,6 @@ static void ov_release(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Skipping movies (NX2SARIA_MOVIES=off) leaves the subsdk0 decoder in place: the movie never opens, so it is not called.
 #define S(n) "_ZN5movie12VideoDecoder" n
 HOST_OVERRIDE(S("C1Ev"), ov_ctor);
 HOST_OVERRIDE(S("D1Ev"), ov_dtor);

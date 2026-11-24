@@ -1,9 +1,4 @@
 ﻿// Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// Message framing per the HIPC, CMIF and TIPC wire layouts.
-// In-process Horizon IPC: SVCs 0x15, 0x1F, 0x21, 0x22, the sm: service manager
-// and the service table. The SDK client code runs unchanged: requests are read from the calling thread's message
-// buffer (TLR, or the user buffer of 0x22) and answered in place. Unknown ports, services and commands stop with their
-// name and id instead of returning a fake success. Also --probe-ipc.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,8 +10,8 @@
 #include "nfp.h"
 #include "platform/platform.h"
 
-#define CMIF_IN_MAGIC 0x49434653u    // "SFCI"
-#define CMIF_OUT_MAGIC 0x4f434653u   // "SFCO"
+#define CMIF_IN_MAGIC 0x49434653u
+#define CMIF_OUT_MAGIC 0x4f434653u
 #define POINTER_BUFFER_SIZE 0x8000
 #define R_INVALID_SIZE 0xCA01u
 #define R_INVALID_ADDRESS 0xCC01u
@@ -24,14 +19,9 @@
 enum { T_CLOSE = 2, T_REQUEST = 4, T_CONTROL = 5, T_REQUEST_CTX = 6, T_CONTROL_CTX = 7, T_TIPC_CLOSE = 15,
        T_TIPC_BASE = 16 };
 
-// The application's lifecycle (as the system's applet manager runs it): one state-changed
-// event per applet, signalled while a message is waiting and cleared by the server once the queue drains (Horizon
-// does not clear it on a wait). An *application* learns it has focus through FocusStateChanged (15) followed by
-// GetCurrentFocusState == InFocus; ChangeIntoForeground (1) is the library-applet message and an application
-// ignores it, which is what parked nn::oe::InitializeApplet on the event.
 enum { AM_MSG_FOCUS_STATE_CHANGED = 15, AM_MSG_OPERATION_MODE_CHANGED = 30, AM_MSG_PERFORMANCE_MODE_CHANGED = 31 };
 enum { AM_FOCUS_IN = 1, AM_FOCUS_NOT_IN = 2, AM_FOCUS_BACKGROUND = 3 };
-#define AM_R_NO_MESSAGES 0x680u   // the "no messages" result this SDK checks for
+#define AM_R_NO_MESSAGES 0x680u
 static uint32_t g_applet_event, g_applet_event_w;
 static PlatMutex g_applet_lock = PLAT_MUTEX_INIT;
 static uint32_t g_applet_msgs[32];
@@ -66,8 +56,6 @@ static int applet_pop_message(uint32_t *out) {
 static IpcSession *stub_object(const char *name);
 static void applet_stub_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);
 
-// A stub object the applet proxy commands are answered on: the interfaces exist, their calls succeed.
-// The getters below each hand out one of those objects, which is what the SDK stores and dereferences.
 static void applet_proxy_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     if (rt_trace & RT_TRACE_IPC) rt_log("applet proxy: command %u", rq->cmd);
     static const struct { unsigned cmd; const char *name; } kinds[] = {
@@ -80,7 +68,7 @@ static void applet_proxy_handler(IpcSession *s, const IpcRequest *rq, IpcRespons
     };
     for (unsigned k = 0; k < sizeof kinds / sizeof *kinds; k++) {
         if (kinds[k].cmd != rq->cmd) continue;
-        IpcSession *root = s->root ? s->root : s;    // object ids belong to the client's whole domain
+        IpcSession *root = s->root ? s->root : s;
         IpcSession *o = stub_object(kinds[k].name);
         if (!o) { rs->result = IPC_R_UNKNOWN_COMMAND; return; }
         uint32_t id = ipc_domain_add(root, o);
@@ -94,19 +82,17 @@ static void applet_proxy_handler(IpcSession *s, const IpcRequest *rq, IpcRespons
     rs->result = 0;
 }
 
-// The interfaces themselves. Only the calls the game makes while booting are modelled: the common state getter
-// hands out the applet's state-changed event, and everything else reports success.
 static void applet_stub_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     if (rt_trace & RT_TRACE_IPC) rt_log("%s: command %u", s->name, rq->cmd);
     int common = !strcmp(s->name, "common state getter");
-    if (common && rq->cmd == 0) {              // GetEventHandle: the applet state-changed event
+    if (common && rq->cmd == 0) {
         if (!g_applet_event) ipc_applet_event_init();
         s->event = g_applet_event;
         rs->copy[rs->ncopy++] = s->event;
         rs->result = 0;
         return;
     }
-    if (common && rq->cmd == 1) {              // ReceiveMessage: the next queued applet message, else "no messages"
+    if (common && rq->cmd == 1) {
         uint32_t msg;
         if (applet_pop_message(&msg)) {
             if (rt_trace & RT_TRACE_IPC) rt_log("applet: ReceiveMessage -> %u", msg);
@@ -117,26 +103,26 @@ static void applet_stub_handler(IpcSession *s, const IpcRequest *rq, IpcResponse
         rs->result = AM_R_NO_MESSAGES;
         return;
     }
-    if (common && rq->cmd == 5) {              // GetOperationMode (matches the oe override)
+    if (common && rq->cmd == 5) {
         uint8_t mode = !ov_handheld();
         IPC_OUT(rs, mode);
         rs->result = 0;
         return;
     }
-    if (common && rq->cmd == 6) {              // GetPerformanceMode: boost when docked
+    if (common && rq->cmd == 6) {
         uint32_t mode = !ov_handheld();
         IPC_OUT(rs, mode);
         rs->result = 0;
         return;
     }
-    if (common && rq->cmd == 9) {              // GetCurrentFocusState
+    if (common && rq->cmd == 9) {
         uint8_t focus = g_applet_focus;
         IPC_OUT(rs, focus);
         rs->result = 0;
         return;
     }
-    if (!strcmp(s->name, "graphics scale controller") && rq->cmd == 10) {   // GetCurrentGraphicsScale
-        uint32_t scale[3] = {10, 0, 0};   // see ov_oe_scaling_parameters
+    if (!strcmp(s->name, "graphics scale controller") && rq->cmd == 10) {
+        uint32_t scale[3] = {10, 0, 0};
         IPC_OUT(rs, scale);
         rs->result = 0;
         return;
@@ -154,13 +140,9 @@ static IpcSession *stub_object(const char *name) {
     return o;
 }
 
-// Domain tables, their counts of their objects' references on them and their closed flags (IpcSession). Taken only for
-// sessions in a domain; never held across a handler or a close callback.
 static PlatMutex g_domains = PLAT_MUTEX_INIT;
 static volatile int32_t g_live;
 
-// The first free slot: a closed object's id is given out again, so a client that opens and closes objects in a loop
-// never runs out of the 32.
 unsigned ipc_domain_add(IpcSession *domain, IpcSession *object) {
     unsigned id = 0;
     plat_mutex_lock(&g_domains);
@@ -173,25 +155,22 @@ unsigned ipc_domain_add(IpcSession *domain, IpcSession *object) {
         object->held_root = domain;
         plat_inc32(&domain->refs);
         domain->subs++;
-        plat_inc32(&g_live);   // a live server object from here; its last reference counts it out
+        plat_inc32(&g_live);
         id = (unsigned)i + 1;
     }
     plat_mutex_unlock(&g_domains);
     return id;
 }
 
-// appletOE: the application-environment service. nn::oe::Initialize opens it; the calls that matter for
-// boot answer through symbol overrides (focus, performance, language), so a permissive handler that
-// reports success and writes nothing is enough until a command needs real data ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â then it is added here.
 static void applet_oe_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     if (rt_trace & RT_TRACE_IPC) rt_log("appletOE: command %u", rq->cmd);
-    if (rq->cmd == 0 || rq->cmd == 10) {   // OpenApplicationProxy: hand the client a domain object
+    if (rq->cmd == 0 || rq->cmd == 10) {
         IpcSession *proxy = calloc(1, sizeof *proxy);
         if (!proxy) { rs->result = IPC_R_UNKNOWN_COMMAND; return; }
         proxy->name = "applet proxy";
         proxy->handler = applet_proxy_handler;
         proxy->refs = 1;
-        uint32_t id = ipc_domain_add(s, proxy);   // the object's id inside the domain, written into the reply data
+        uint32_t id = ipc_domain_add(s, proxy);
         if (!id) { free(proxy); rs->result = IPC_R_UNKNOWN_COMMAND; return; }
         IPC_OUT(rs, id);
         rs->domain = 1;
@@ -200,9 +179,6 @@ static void applet_oe_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *
     rs->result = 0;
 }
 
-// aud:u: the Switch 2 audio entry point (nn::audio::CreateUserClientSessionByHipc). It hands out the Switch 1
-// managers as sub-objects (command ids inferred from the calls the SDK makes):
-// 2 -> IAudioRendererManager (the audren:u manager), 1 -> IAudioOutManager (not served by this host).
 static void aud_user_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     (void)s;
     if (rt_trace & RT_TRACE_IPC) rt_log("aud:u: command %u", rq->cmd);
@@ -222,11 +198,6 @@ static void csrng_fill(uint64_t addr, uint64_t size) {
     }
 }
 
-// csrng: the SDK's cryptographic random source. GenerateRandomBytes (0) is its one command; the host's generator fills
-// the output buffer. The SDK sends it as a B buffer (a contributor's trace: one B buffer, no others); a C buffer is
-// filled too, with its reply entry, for a caller that lets the buffer type be chosen. No start or session logged on
-// our own PCs opens the service, but the game imports the call, and without the service a request for it ended the
-// game ("sm: service csrng is not implemented").
 static void csrng_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     if (rt_trace & RT_TRACE_IPC)
         rt_log("csrng: command %u (x%u a%u b%u w%u c%u)", rq->cmd, rq->nx, rq->na, rq->nb, rq->nw, rq->nc);
@@ -240,7 +211,6 @@ static void csrng_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) 
     rs->result = 0;
 }
 
-// Services sm: hands out. Anything else is a named fatal.
 static const struct { const char *name; IpcHandler handler; } services[] = {
     {"audren:u", audren_manager_handler},
     {"nfp:user", nfp_user_manager_handler},
@@ -252,12 +222,11 @@ static const struct { const char *name; IpcHandler handler; } services[] = {
 };
 
 static volatile int64_t g_released, g_requests;
-static _Thread_local const Cpu *t_req;   // guest context of the request being served
+static _Thread_local const Cpu *t_req;
 
 long ipc_sessions_live(void) { return plat_cas32(&g_live, 0, 0); }
 uint64_t ipc_sessions_released(void) { return (uint64_t)plat_cas64(&g_released, 0, 0); }
 
-// ---- sessions
 uint32_t ipc_session_new(const char *name, IpcHandler handler, void *state, void (*close)(void *state)) {
     IpcSession *s = calloc(1, sizeof *s);
     if (!s) rt_fatal("ipc: session allocation");
@@ -271,12 +240,8 @@ static uint32_t session_clone(IpcSession *s) {
     return kern_handle_new(KERN_SESSION, s);
 }
 
-// kern_handle_hold's callback: a request's reference, dropped through ipc_handle_closed once the request is answered.
 static void session_hold(void *o) { plat_inc32(&((IpcSession *)o)->refs); }
 
-// Drops one reference on a session; sub: the one an object of a domain held on that domain. A session in no domain
-// takes no lock here. A domain whose remaining references are all its objects' has lost its client: its table lets the
-// objects go, and each object that nothing else holds is closed and lets go of the domain in turn.
 static void session_release(IpcSession *s, int sub) {
     IpcSession *drop[32];
     int ndrop = 0;
@@ -316,7 +281,6 @@ void ipc_handle_closed(int kind, void *obj) {
     session_release(obj, 0);
 }
 
-// ---- helpers for services
 static int readable(uint64_t a, uint64_t n) { return mem_host_readable(a, n); }
 
 void ipc_backtrace(void) {
@@ -363,7 +327,6 @@ void ipc_unimplemented(const IpcSession *s, const IpcRequest *rq) {
     rt_fatal("ipc: %s command %u is not implemented", s->name, rq->cmd);
 }
 
-// ---- HIPC framing
 static uint64_t static_addr(const uint32_t *d) {
     return d[1] | ((uint64_t)((d[0] >> 12) & 0xf) << 32) | ((uint64_t)((d[0] >> 6) & 0x3f) << 36);
 }
@@ -430,13 +393,13 @@ static void respond(uint32_t *m, int tipc, const IpcResponse *rs) {
     uint8_t *words = (uint8_t *)p, *payload;
     unsigned header = tipc ? 4 : 16;
     payload = tipc ? words : (uint8_t *)out + (((words - (uint8_t *)out) + 15) & ~15);
-    if (rs->domain && !tipc) {   // CMIF domain reply: 16-byte header with the objects appended, then SFCO
+    if (rs->domain && !tipc) {
         uint32_t dh[4] = {rs->domain_objects, 0, 0, 0};
         memcpy(payload, dh, 16);
         payload += 16;
     }
     unsigned used = (unsigned)(payload - words) + header + rs->data_size;
-    unsigned nwords = tipc ? (used + 3) / 4 : (used + 16 + 3) / 4;   // CMIF keeps alignment slack
+    unsigned nwords = tipc ? (used + 3) / 4 : (used + 16 + 3) / 4;
     if ((size_t)(words - (uint8_t *)out) + nwords * 4 > IPC_MSG_BYTES) rt_fatal("ipc: response exceeds the message buffer");
     if (tipc) memcpy(payload, &rs->result, 4);
     else {
@@ -449,17 +412,16 @@ static void respond(uint32_t *m, int tipc, const IpcResponse *rs) {
     memcpy(m, out, IPC_MSG_BYTES);
 }
 
-// CMIF control requests.
 static void control(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     switch (rq->cmd) {
-    case 0:   // ConvertCurrentObjectToDomain: the session answers domain-tagged requests from now on
+    case 0:
         plat_mutex_lock(&g_domains);
         s->is_domain = 1;
         s->root = s;
         if (s->nobjects == 0) { s->objects[0] = s; s->nobjects = 1; }
         plat_mutex_unlock(&g_domains);
         return;
-    case 1: { // CopyFromCurrentDomain(object id): a handle to that object of the domain (a closed id is a bad handle)
+    case 1: {
         uint32_t id = rq->data_size >= 4 ? *(const uint32_t *)(const void *)rq->data : 0;
         if (!id || id > (uint32_t)s->nobjects) { rs->result = IPC_R_UNKNOWN_COMMAND; return; }
         plat_mutex_lock(&g_domains);
@@ -470,8 +432,8 @@ static void control(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
         rs->move[rs->nmove++] = kern_handle_new(KERN_SESSION, o);
         return;
     }
-    case 3: { uint16_t n = POINTER_BUFFER_SIZE; IPC_OUT(rs, n); return; }   // QueryPointerBufferSize
-    case 2: case 4: rs->move[rs->nmove++] = session_clone(s); return;          // CloneCurrentObject(Ex)
+    case 3: { uint16_t n = POINTER_BUFFER_SIZE; IPC_OUT(rs, n); return; }
+    case 2: case 4: rs->move[rs->nmove++] = session_clone(s); return;
     default:
         ipc_backtrace();
         rt_fatal("ipc: %s control command %u is not implemented (domains are not served)", s->name, rq->cmd);
@@ -488,7 +450,7 @@ static void dispatch(IpcSession *s, uint32_t *m) {
     IpcResponse rs;
     memset(&rs, 0, sizeof rs);
     int tipc = rq.type >= T_TIPC_BASE;
-    IpcSession *target = s, *held = NULL;   // held: a domain object the request holds a reference on
+    IpcSession *target = s, *held = NULL;
     const uint8_t *bytes = (const uint8_t *)words, *end = bytes + ndata * 4;
     if (tipc) {
         rq.cmd = rq.type - T_TIPC_BASE;
@@ -496,15 +458,14 @@ static void dispatch(IpcSession *s, uint32_t *m) {
         rq.data_size = (uint32_t)(end - bytes);
     } else if (rq.type == T_REQUEST || rq.type == T_REQUEST_CTX || rq.type == T_CONTROL || rq.type == T_CONTROL_CTX) {
         const uint8_t *payload = (const uint8_t *)m + (((bytes - (const uint8_t *)m) + 15) & ~15);
-        IpcSession *dom = s->root ? s->root : s;   // ids belong to the client's domain, not to this object
+        IpcSession *dom = s->root ? s->root : s;
         if ((s->is_domain || dom->is_domain) && (rq.type == T_REQUEST || rq.type == T_REQUEST_CTX)) {
-            // Domain request: a 16-byte domain header names the object (1-based), then the usual SFCI payload.
             uint32_t dh[4];
             memcpy(dh, payload, 16);
             payload += 16;
             rs.domain = 1;
             uint32_t dcmd = dh[0] & 0xff, obj = dh[1];
-            if (dcmd == 2) {   // CloseVirtualHandle: the object leaves the domain (never the domain's own); no answer
+            if (dcmd == 2) {
                 IpcSession *o = NULL;
                 plat_mutex_lock(&g_domains);
                 if (obj >= 2 && obj <= (uint32_t)dom->nobjects && dom->objects[obj - 1] != dom) {
@@ -515,7 +476,7 @@ static void dispatch(IpcSession *s, uint32_t *m) {
                 if (o) session_release(o, 0);
                 return;
             }
-            if (obj == 0) obj = 1;   // this SDK addresses the domain's own object as 0
+            if (obj == 0) obj = 1;
             if (obj > (uint32_t)dom->nobjects) {
                 ipc_backtrace();
                 rt_fatal("ipc: %s domain object %u (of %d) does not exist [hdr %08x %08x %08x %08x] [msg %08x %08x %08x %08x]", s->name, obj, dom->nobjects, dh[0], dh[1], dh[2], dh[3], m[0], m[1], m[2], m[3]);
@@ -524,7 +485,7 @@ static void dispatch(IpcSession *s, uint32_t *m) {
             target = held = dom->objects[obj - 1];
             if (held) plat_inc32(&held->refs);
             plat_mutex_unlock(&g_domains);
-            if (!target) {   // an id the client closed
+            if (!target) {
                 rs.result = IPC_R_BAD_HANDLE;
                 respond(m, 0, &rs);
                 return;
@@ -559,11 +520,10 @@ static void dispatch(IpcSession *s, uint32_t *m) {
     respond(m, tipc, &rs);
 }
 
-// ---- sm: service manager (CMIF, and TIPC as the SDK's sm client speaks it since 12.0.0)
 static void sm_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     switch (rq->cmd) {
-    case 0: return;   // RegisterClient / Initialize (pid)
-    case 1: {         // GetServiceHandle(name)
+    case 0: return;
+    case 1: {
         char name[9] = {0};
         memcpy(name, ipc_arg(rq, 0, 8), 8);
         for (unsigned i = 0; i < sizeof services / sizeof *services; i++)
@@ -580,11 +540,10 @@ static void sm_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
     }
 }
 
-// ---- SVCs
 int ipc_svc(Cpu *c, uint32_t imm) {
     uint64_t *x = c->x;
     switch (imm) {
-    case 0x1F: {   // ConnectToNamedPort(x1 name -> w1 handle)
+    case 0x1F: {
         char name[13] = {0};
         const char *p = (const char *)(uintptr_t)x[1];
         if (!p || !readable(x[1], 1)) rt_fatal("ConnectToNamedPort: name at %#llx", (unsigned long long)x[1]);
@@ -598,11 +557,8 @@ int ipc_svc(Cpu *c, uint32_t imm) {
         x[1] = ipc_session_new("sm:", sm_handler, NULL, NULL);
         return 1;
     }
-    case 0x21: case 0x22: {   // SendSyncRequest(w0 handle) / WithUserBuffer(x0 buffer, x1 size, w2 handle)
+    case 0x21: case 0x22: {
         uint32_t h = (uint32_t)(imm == 0x21 ? x[0] : x[2]);
-        // The request holds a reference on the session until it is answered: a CloseHandle of the session on another
-        // thread meanwhile leaves the object, and its close callback (renderer_close frees the audio renderer the
-        // handler uses), to whichever drops the last reference.
         IpcSession *s = kern_handle_hold(h, KERN_SESSION, session_hold);
         if (!s) {
             rt_log("ipc: svc %#x on %#x, not a session handle", imm, h);
@@ -616,11 +572,11 @@ int ipc_svc(Cpu *c, uint32_t imm) {
         t_req = c;
         dispatch(s, m);
         t_req = outer;
-        ipc_handle_closed(KERN_SESSION, s);   // the request's reference
+        ipc_handle_closed(KERN_SESSION, s);
         x[0] = 0;
         return 1;
     }
-    case 0x15: {   // CreateTransferMemory(x1 address, x2 size, w3 permission -> w1 handle)
+    case 0x15: {
         if ((x[1] & 0xfff) || x[1] + x[2] < x[1] || x[1] + x[2] > RT_ADDRESS_LIMIT) {
             x[0] = R_INVALID_ADDRESS;
             return 1;
@@ -640,10 +596,6 @@ int ipc_svc(Cpu *c, uint32_t imm) {
     return 0;
 }
 
-// ---- --probe-ipc
-// Hand-built CMIF/TIPC requests in the guest main thread's TLR go through rt_svc, the entry the lifted SVC wrappers
-// use: sm: -> audren:u -> GetWorkBufferSize -> an audio renderer with the null mixer, whose frame event the probe
-// times while it sends RequestUpdate every frame. A child process checks the unknown-service fatal.
 #define PROBE_FRAMES 200
 #define PROBE_CHILD_ENV "NX2SARIA_PROBE_IPC_CHILD"
 #define PROBE_UNKNOWN_SERVICE "lm"
@@ -690,7 +642,7 @@ static void msg_build(uint32_t *m, const Msg *q) {
     uint32_t *p = m + 2;
     if (special) {
         *p++ = (q->pid ? 1u : 0u) | q->ncopy << 1;
-        if (q->pid) p += 2;   // the kernel fills the process id in
+        if (q->pid) p += 2;
         for (unsigned i = 0; i < q->ncopy; i++) *p++ = q->copy[i];
     }
     for (unsigned i = 0; i < q->na; i++) p = put_buffer(p, q->a[i]);
@@ -705,7 +657,7 @@ static void msg_build(uint32_t *m, const Msg *q) {
         uint32_t h[4] = {CMIF_IN_MAGIC, 0, q->cmd, 0};
         memcpy(payload, h, 16);
         if (q->size) memcpy(payload + 16, q->data, q->size);
-        ndata = (16 + 16 + q->size + 3) / 4;   // the 16-byte alignment pad is reserved in the data size
+        ndata = (16 + 16 + q->size + 3) / 4;
     }
     m[1] = ndata | (special ? 1u << 31 : 0);
 }
@@ -735,7 +687,6 @@ static void msg_parse(const uint32_t *m, int tipc, Reply *r) {
     r->data = payload + 16;
 }
 
-// One request on the TLR message buffer; the kernel result of SendSyncRequest, the service result in r->result.
 static uint32_t call(Cpu *c, uint32_t h, const Msg *q, Reply *r) {
     uint32_t *m = (uint32_t *)(uintptr_t)c->tpidrro;
     msg_build(m, q);
@@ -771,7 +722,6 @@ static uint32_t get_service(Cpu *c, uint32_t sm, const char *name, int tipc) {
     return r.nmove ? r.move[0] : 0;
 }
 
-// A NX2Saria-like renderer: 48 kHz, 240-sample (5 ms) frames, final mix plus submixes, two sinks, REV11.
 static const AudrenParameter g_param = {
     .sample_rate = 48000, .sample_count = 240, .mix_buffer_count = 24, .submix_count = 8, .voice_count = 192,
     .sink_count = 2, .effect_count = 12, .revision = AUDREN_REV(11)};
@@ -797,8 +747,8 @@ static void update_build(Update *u, int first) {
     memcpy(w, &h, sizeof h);
     w += sizeof h + h.behavior + h.memory_pools + h.voice_resources;
     for (int i = 0; i < p->voice_count; i++) {
-        AudrenVoiceIn v = {0};   // the client leaves the id of an unused slot zero
-        if (i == 0) {   // one PCM16 voice with a 100 ms buffer: consumed after 20 frames
+        AudrenVoiceIn v = {0};
+        if (i == 0) {
             v = (AudrenVoiceIn){.id = 0, .is_new = (uint8_t)first, .in_use = 1, .play_state = PLAY_STARTED,
                                 .sample_format = FMT_PCM16, .sample_rate = 48000, .channel_count = 1, .pitch = 1,
                                 .volume = 1, .mix_id = 0, .splitter_id = 0xffffffffu, .wave_buffer_count = 1};
@@ -840,7 +790,6 @@ static uint32_t request_update(Cpu *c, uint32_t ren, Update *u, uint64_t *frames
 
 static void probe_renderer(Cpu *c, uint32_t audren) {
     Reply r;
-    // GetWorkBufferSize(AudioRendererParameterInternal) -> u64
     uint32_t res = cmd(c, audren, 1, &g_param, sizeof g_param, &r);
     uint64_t work = 0;
     if (!res) memcpy(&work, r.data, 8);
@@ -850,7 +799,6 @@ static void probe_renderer(Cpu *c, uint32_t audren) {
     CHECK(!res && work >= 0x1000 && work < (256u << 20) && !(work & 0xfff), "GetWorkBufferSize");
     if (res || !work) return;
 
-    // OpenAudioRenderer(param, pad, work size, aruid; pid; copy transfer memory, current process)
     uint8_t *wb = mem_kernel_alloc(work, 0x1000);
     uint32_t tm = 0;
     res = sv(c, 0x15, 0, (uint64_t)(uintptr_t)wb, work, 0);
@@ -870,7 +818,7 @@ static void probe_renderer(Cpu *c, uint32_t audren) {
     if (!cmd(c, ren, 0, NULL, 0, &r)) memcpy(&rate, r.data, 4);
     if (!cmd(c, ren, 1, NULL, 0, &r)) memcpy(&count, r.data, 4);
     CHECK(rate == 48000 && count == 240, "GetSampleRate %d, GetSampleCount %d", rate, count);
-    res = cmd(c, ren, 7, NULL, 0, &r);   // QuerySystemEvent
+    res = cmd(c, ren, 7, NULL, 0, &r);
     uint32_t ev = !res && r.ncopy == 1 ? r.copy[0] : 0;
     CHECK(ev, "QuerySystemEvent: result %#x, %u copy handles", res, r.ncopy);
 
@@ -888,7 +836,6 @@ static void probe_renderer(Cpu *c, uint32_t audren) {
     if (!cmd(c, ren, 3, NULL, 0, &r)) memcpy(&state, r.data, 4);
     CHECK(state == 0, "GetState after Start: %u", state);
 
-    // Every frame, as the game's audio thread does: wait for the event, clear it, RequestUpdate.
     uint32_t hs[1] = {ev};
     sv(c, 0x17, ev, 0, 0, 0);
     uint64_t t0 = 0, t1 = 0, f0 = 0, f1 = 0, worst = 0, prev = 0;
@@ -952,7 +899,6 @@ static void probe_main(Cpu *c) {
     CHECK(pbs == POINTER_BUFFER_SIZE, "QueryPointerBufferSize %#x", pbs);
     CHECK(sv(c, 0x21, 0x0fff, 0, 0, 0) == IPC_R_BAD_HANDLE, "SendSyncRequest on a bad handle");
     if (audren) probe_renderer(c, audren);
-    // csrng: GenerateRandomBytes into a B buffer, as the SDK sends it; two requests give different bytes
     uint32_t csrng = get_service(c, sm, "csrng", 0);
     uint8_t *rnd = mem_kernel_alloc(64, 16);
     memset(rnd, 0, 64);
@@ -979,7 +925,6 @@ static void child_main(Cpu *c) {
     printf("child: GetServiceHandle(%s) returned\n", PROBE_UNKNOWN_SERVICE);
 }
 
-// Re-run this executable with the same arguments and PROBE_CHILD_ENV set; it must stop with the named fatal.
 static void probe_unknown_service(void) {
     static char out[65536];
     int code = plat_run_self(PROBE_CHILD_ENV, "1", out, sizeof out, 30000);
@@ -992,7 +937,6 @@ static void probe_unknown_service(void) {
     CHECK(code == 70 && line, "unknown service fatal (child output: %s)", out);
 }
 
-// ---- the game's own nn::audio client: main's PLT stubs -> lifted sdk -> SVCs -> this file
 #define SYM_INIT_PARAM "_ZN2nn5audio32InitializeAudioRendererParameterEPNS0_22AudioRendererParameterE"
 #define SYM_WORK_SIZE "_ZN2nn5audio30GetAudioRendererWorkBufferSizeERKNS0_22AudioRendererParameterE"
 #define SYM_OPEN "_ZN2nn5audio17OpenAudioRendererEPNS0_19AudioRendererHandleEPNS_2os11SystemEventERKNS0_22AudioRendererParameterEPvm"
@@ -1013,16 +957,6 @@ static uint64_t stub(const char *sym) {
     return a;
 }
 
-// Without nn::init::Start the SDK's own initialisation has not run; the probe sets up the two things the audio client
-// path reads (found by running it):
-// - the "current thread object" at TLR+0x1F8 is the kernel's zeroed placeholder. SdkMutex compares its lock tag with
-//   ThreadType+0x1B0 (sdk+0x13186c), which nnosInitialize sets to the thread's handle; a zero there makes every free
-//   mutex look owned by the caller (__cxa_guard_acquire in nn::sm::Initialize aborts);
-// - sdk's full DT_INIT needs nn::os initialised (its TLS slot constructor reaches ThreadManager), which is the boot
-//   sequence's job. The audio client only needs its two sf heap constructors: 16 KiB ExpHeaps on static buffers,
-//   stored at sdk+0xd37e90 and sdk+0xd3bec0 (CreateAudioRendererManagerByHipc reads the second). The 1.4.3 SDK creates
-//   that heap lazily; its OpenAudioRenderer takes nn::audio::detail::g_RendererResourceSemaphore first, which the
-//   constructor at sdk+0x221fb0 initializes (two renderers).
 static void sdk_prepare(Cpu *c) {
     Cpu *again;
     ST32(LD64(c->tpidrro + 0x1F8) + 0x1B0, kern_main_thread(&again));
@@ -1041,7 +975,7 @@ static void sdk_prepare(Cpu *c) {
 
 static void probe_sdk_client(Cpu *c) {
     unsigned trace = rt_trace;
-    rt_trace |= RT_TRACE_IPC;   // log the requests the SDK sends during set-up
+    rt_trace |= RT_TRACE_IPC;
     sdk_prepare(c);
     uint64_t requests0 = (uint64_t)plat_cas64(&g_requests, 0, 0);
     uint64_t released0 = ipc_sessions_released();
@@ -1059,7 +993,7 @@ static void probe_sdk_client(Cpu *c) {
     CHECK(work >= AUDREN_WORK_BUFFER_BYTES && work < (64u << 20), "SDK GetAudioRendererWorkBufferSize %#llx",
           (unsigned long long)work);
     uint8_t *wb = mem_kernel_alloc(work, 0x1000), *event = mem_kernel_alloc(0x100, 64);
-    uint64_t *handle = mem_kernel_alloc(0x40, 64);   // AudioRendererHandle: 16 bytes, passed in x0 and x1
+    uint64_t *handle = mem_kernel_alloc(0x40, 64);
     uint32_t r = (uint32_t)rt_call(c, stub(SYM_OPEN), 5, (uint64_t)(uintptr_t)handle, (uint64_t)(uintptr_t)event,
                                    (uint64_t)(uintptr_t)param, (uint64_t)(uintptr_t)wb, work);
     printf("sdk: OpenAudioRenderer -> %#x, renderers running %ld\n", r, audren_renderers_live());
@@ -1079,7 +1013,7 @@ static void probe_sdk_client(Cpu *c) {
         int f = (int)rt_call(c, stub(SYM_FRAMES), 1, (uint64_t)(uintptr_t)config);
         if (!i) t0 = now, f0 = f;
         t1 = now, f1 = f;
-        rt_trace = trace;   // the first update is logged, the rest is quiet
+        rt_trace = trace;
     }
     double period = (double)(t1 - t0) / (PROBE_FRAMES - 1) / 1e6;
     printf("sdk: %d x WaitSystemEvent + RequestUpdateAudioRenderer: %d failed, mean period %.3f ms, elapsed frames "
@@ -1093,8 +1027,6 @@ static void probe_sdk_client(Cpu *c) {
            "lifted client (sm: kept open by the SDK: %ld session)\n", audren_renderers_live(),
            (unsigned long long)(ipc_sessions_released() - released0), (unsigned long long)requests,
            ipc_sessions_live());
-    // The 1.2.1 SDK closes the renderer, device and manager sessions and keeps sm; the 1.4.3 SDK keeps the
-    // audren:u manager it created lazily, beside sm.
     CHECK(audren_renderers_live() == 0 && ipc_sessions_released() - released0 >= (RT_V143 ? 1u : 3u) &&
               ipc_sessions_live() == (RT_V143 ? 2 : 1),
           "SDK CloseAudioRenderer");
@@ -1125,8 +1057,6 @@ int probe_ipc(void) {
     return 0;
 }
 
-// Create the applet state-changed event at boot and queue the launch message: the application starts in focus
-// (the applet manager: SetFocusState(InFocus) -> FocusStateChanged for an application).
 void ipc_applet_event_init(void) {
     if (!g_applet_event) {
         g_applet_event_w = kern_event_new();

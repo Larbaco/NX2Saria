@@ -1,8 +1,3 @@
-// The Win32 front end of the software keyboard (swkbd.h): a modal window owned by the game window, run on the guest
-// thread that called. The text starts as the game's initial text, else a default name from the catalog (ui_text.c),
-// selected, so a controller can confirm it: A = OK, B = cancel (each after it was seen released); Enter / Esc and the
-// buttons work too.
-//   NX2SARIA_SWKBD_TEST=ok|cancel   open the window, then press OK / Cancel on the first timer tick
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,7 +12,7 @@
 #include "ui_text.h"
 #include "vk.h"
 
-enum { B_A = 0, B_B = 1, B_PLUS = 10 };   // input.h bits
+enum { B_A = 0, B_B = 1, B_PLUS = 10 };
 
 #define TIMER_ID 1
 #define TIMER_MS 16
@@ -27,9 +22,9 @@ typedef struct {
     WNDPROC edit_proc;
     uint16_t text[KB_LIMIT * 2 + 1];
     size_t n;
-    int result;                          // 0 open, 1 OK, -1 cancelled
-    uint64_t armed;                      // buttons seen released since the window opened
-    int test;                            // NX2SARIA_SWKBD_TEST: 1 press OK, -1 press Cancel
+    int result;
+    uint64_t armed;
+    int test;
 } Entry;
 
 static wchar_t *wide(const char *utf8, wchar_t *buf, int cap) {
@@ -71,7 +66,7 @@ static LRESULT CALLBACK entry_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         uint64_t b;
         int32_t lx, ly, rx, ry;
         input_poll_ui(&b, &lx, &ly, &rx, &ry);
-        uint64_t pressed = b & e->armed;   // down now, up at the previous tick
+        uint64_t pressed = b & e->armed;
         e->armed = ~b;
         if (pressed & (1ull << B_A | 1ull << B_PLUS)) finish(e, 1);
         else if (pressed & 1ull << B_B) finish(e, -1);
@@ -89,7 +84,6 @@ static HWND child(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD st
     return c;
 }
 
-// Shows the window and waits for the answer. Returns 1 with the text in out (n units), 0 when cancelled.
 int text_entry_run(const SwkbdRequest *req, uint16_t *out, size_t cap, size_t *n) {
     static const wchar_t cls[] = L"NX2SariaTextEntry";
     HINSTANCE inst = GetModuleHandleW(NULL);
@@ -102,8 +96,6 @@ int text_entry_run(const SwkbdRequest *req, uint16_t *out, size_t cap, size_t *n
     Entry e = {.req = req, .armed = 0};
     const char *test = cfg_get("NX2SARIA_SWKBD_TEST");
     if (test && *test) e.test = !strcmp(test, "cancel") ? -1 : 1;
-    // The process is per-monitor DPI aware: the font and the layout below are measured at the game window's DPI, the
-    // monitor the dialog opens on, not at the system DPI that plain SystemParametersInfo and AdjustWindowRectEx use.
     HWND owner = gfx_window_handle();
     UINT dpi = owner ? GetDpiForWindow(owner) : GetDpiForSystem();
     NONCLIENTMETRICSW ncm = {.cbSize = sizeof ncm};
@@ -162,7 +154,6 @@ int text_entry_run(const SwkbdRequest *req, uint16_t *out, size_t cap, size_t *n
         if (got <= 0) { quit = got == 0; finish(&e, -1); break; }
         if (msg.message == WM_KEYDOWN && (msg.wParam == VK_RETURN || msg.wParam == VK_ESCAPE) &&
             (msg.hwnd == e.wnd || IsChild(e.wnd, msg.hwnd))) {
-            // Enter on the Cancel button cancels; elsewhere it confirms
             finish(&e, msg.wParam == VK_ESCAPE || GetDlgCtrlID(msg.hwnd) == IDCANCEL ? -1 : 1);
             continue;
         }
@@ -171,7 +162,7 @@ int text_entry_run(const SwkbdRequest *req, uint16_t *out, size_t cap, size_t *n
         DispatchMessageW(&msg);
     }
     KillTimer(e.wnd, TIMER_ID);
-    if (owner) EnableWindow(owner, TRUE);   // before the window goes, so activation returns to the game window
+    if (owner) EnableWindow(owner, TRUE);
     DestroyWindow(e.wnd);
     if (owner) SetForegroundWindow(owner);
     DeleteObject(font);

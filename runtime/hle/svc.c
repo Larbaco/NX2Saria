@@ -1,7 +1,4 @@
 // Contains code Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-// The SVC entry of the lifted code: preemption checkpoint, trace, then the thread and
-// synchronization SVCs (kernel.c), IPC (ipc.c), memory (memory.c), Break, OutputDebugString, GetInfo and ExitProcess. The 21 SVCs
-// NX2Saria has but never reaches on its boot path stop with a named fatal, the caller and the guest backtrace.
 #include <stdio.h>
 #include <string.h>
 
@@ -15,7 +12,7 @@
 #define ST_FREE 0u
 #define ST_STACK 0xBu
 #define PERM_RW 3u
-#define PROGRAM_ID 0x0400486024dec000ull   // the game's title id (GetInfo 18); fs_host.c NX2SARIA_APPLICATION_ID is the same
+#define PROGRAM_ID 0x0400486024dec000ull
 
 static uint64_t g_svcs;
 void (*volatile svc_test_exit_hook)(unsigned code);
@@ -61,8 +58,6 @@ static __attribute__((noreturn)) void svc_fatal(Cpu *c, uint32_t imm, uint64_t p
     rt_fatal("svc #%#x %s is not implemented", imm, name);
 }
 
-// QueryMemory sees the guest main thread's stack, which memory.c does not know: Stack inside it, free ranges
-// around it clipped (the way memory.c clips moved stacks).
 static void main_stack_query(uint64_t a, RtMemoryInfo *r) {
     uint64_t mb, ms;
     kern_main_stack(&mb, &ms);
@@ -100,7 +95,6 @@ static uint64_t user_exception_context(void) {
     return (uint64_t)(uintptr_t)p;
 }
 
-// GetInfo(w1 id, w2 handle, x3 sub id -> x1)
 static void get_info(Cpu *c, uint64_t pc) {
     uint32_t id = (uint32_t)c->x[1];
     uint64_t v = 0;
@@ -110,19 +104,19 @@ static void get_info(Cpu *c, uint64_t pc) {
         return;
     }
     switch (id) {
-    case 0: v = 0x3f; break;                    // core mask: cores 0-5 (Switch 2 application cores; see kernel.c NCORE)
-    case 1: v = 0x0ffffffff0000000ull; break;   // priority mask
-    case 8: v = 0; break;                       // debugger attached
-    case 10: v = 0; break;                      // idle tick count
-    case 11:                                    // random entropy
+    case 0: v = 0x3f; break;
+    case 1: v = 0x0ffffffff0000000ull; break;
+    case 8: v = 0; break;
+    case 10: v = 0; break;
+    case 11:
         if (!plat_random(&v, sizeof v)) rt_fatal("GetInfo 11: no random bytes from the system");
         break;
     case 18: v = PROGRAM_ID; break;
-    case 20: v = user_exception_context(); break;   // the SDK keeps e.g. the dying message at +0x1C0
+    case 20: v = user_exception_context(); break;
     case 23: v = 1; break;
-    case 29:                                    // region the SDK records at nnosInitialize (address, then
+    case 29:
     case 30: v = 0; break;
-    case 33: v = 0x1000; break;   // VAMM control region size: mapped at 0x300000000 and made into a unit heap
+    case 33: v = 0x1000; break;
     default: {
         char why[64];
         snprintf(why, sizeof why, "GetInfo id %u (handle %#x, sub id %#llx)", id, (uint32_t)c->x[2],
@@ -142,7 +136,7 @@ void rt_svc(Cpu *c, uint32_t imm, uint64_t pc) {
         svc_body(c, imm, pc);
         return;
     }
-    void *t = c->thread;   // kern_host_track: the SVC counted in the thread's host depth (hostfn.c hostfn_tracked)
+    void *t = c->thread;
     int *d = kern_host_depth(t);
     __atomic_store_n(d, *d + 1, __ATOMIC_RELAXED);
     svc_body(c, imm, pc);
@@ -165,7 +159,7 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
     case 0x15: case 0x1F: case 0x21: case 0x22:
         if (ipc_svc(c, imm)) return;
         svc_fatal(c, imm, pc, "not handled by ipc.c");
-    case 0x01: {   // SetHeapSize(x1 size -> x1 address)
+    case 0x01: {
         uint64_t a = 0;
         uint32_t r = mem_set_heap_size(x[1], &a);
         x[0] = r;
@@ -174,11 +168,11 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
     }
     case 0x02: x[0] = mem_set_permission(x[0], x[1], (uint32_t)x[2]); return;
     case 0x03: x[0] = mem_set_attribute(x[0], x[1], (uint32_t)x[2], (uint32_t)x[3]); return;
-    case 0x04:   // MapMemory(x0 dst, x1 src, x2 size)
+    case 0x04:
         x[0] = on_main_stack(x[0], x[2]) ? KERN_R_INVALID_STATE_MEM : mem_map(x[0], x[1], x[2]);
         return;
     case 0x05: x[0] = mem_unmap(x[0], x[1], x[2]); return;
-    case 0x06: {   // QueryMemory(x0 MemoryInfo*, x2 address -> w1 page info)
+    case 0x06: {
         RtMemoryInfo mi;
         uint32_t r = mem_query(x[2], &mi);
         main_stack_query(x[2], &mi);
@@ -189,7 +183,7 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
     }
     case 0x2C: x[0] = mem_map_physical(x[0], x[1]); return;
     case 0x2D: x[0] = mem_unmap_physical(x[0], x[1]); return;
-    case 0x26: {   // Break(x0 reason, x1 info, x2 info size); bit 31 of the reason: notification only
+    case 0x26: {
         uint32_t result = 0;
         if (x[1] && x[2] >= 4 && readable(x[1], 4)) memcpy(&result, (const void *)(uintptr_t)x[1], 4);
         char at[160];
@@ -199,7 +193,7 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
             x[0] = R_OK;
             return;
         }
-        {   // the SDK keeps the abort text in the user exception context: show any readable run
+        {
             const char *ctx = (const char *)(uintptr_t)user_exception_context();
             char run[161];
             int n = 0;
@@ -216,7 +210,7 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
                 }
             }
         }
-        {   // the object the aborting code was working on: its first bytes carry the state machine's byte
+        {
             uint64_t obj = c->x[19];
             if (obj && readable(obj, 32)) {
                 const unsigned char *p = (const unsigned char *)(uintptr_t)obj;
@@ -228,7 +222,7 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
         }
         svc_fatal(c, imm, pc, "Break (the SDK aborted)");
     }
-    case 0x27: {   // OutputDebugString(x0 text, x1 size)
+    case 0x27: {
         uint64_t n = x[1];
         if (n > 65536) svc_fatal(c, imm, pc, "debug string longer than 64 KiB");
         if (n) {
@@ -239,12 +233,9 @@ static void svc_body(Cpu *c, uint32_t imm, uint64_t pc) {
         return;
     }
     case 0x29: get_info(c, pc); return;
-    case 0x07: {   // ExitProcess, as closing the window: the orderly end (gfx_present.c rt_exit_steps), exit code 0
-        // once, shared with the window's close: a close already ending the process keeps this thread there, and the
-        // exit line is that close's alone; this thread coming back would resume guest code after its ExitProcess, so it
-        // ends the process instead
+    case 0x07: {
         if (!rt_exit_begin()) plat_exit(0);
-        char at[160];   // after the guard, which also lets the line reach the log file past its cap (main.c log_sink)
+        char at[160];
         rt_log("guest ExitProcess at %s; exiting", ldr_describe(pc, at, sizeof at));
         rt_exit_steps(RT_EXIT_SETTINGS);
         fflush(NULL);

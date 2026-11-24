@@ -1,17 +1,3 @@
-// Amiibo tag encryption (amiibo_crypto.h): the player's keys file, decrypting and verifying a 540-byte NTAG215 dump,
-// and signing and encrypting it again after amiibo.c changed the figure's data.
-//
-// Two 80-byte master keys make the keys file: the data key, which encrypts and signs the figure's data, then the tag
-// key, which signs the parts of the tag that never change. Neither is used directly. Each dump derives its own AES key,
-// AES counter and HMAC key from each master key and from the tag's UID, salt and (for the data key) write counter, so
-// the same figure data encrypts differently on every tag and after every write.
-//
-// An AmiiboPlain keeps the tag's own byte layout with the two encrypted regions decrypted in place: everything outside
-// them, the two signatures included, sits where the tag has it. Encrypting a plain image that nobody changed gives back
-// the dump it came from, byte for byte.
-//
-// Key bytes, derived keys and decrypted data never reach the log. Buffers that held them are wiped before they go out
-// of scope (wipe, which the compiler cannot drop as a dead store).
 #include "amiibo_crypto.h"
 
 #include <stdlib.h>
@@ -22,49 +8,47 @@
 #include "platform/platform.h"
 #include "sha256.h"
 
-// ---- one master key, 80 bytes
 enum {
     MK_SIZE = 80,
-    MK_HMAC_KEY = 0x00,     // 16 bytes: the key of the derivation HMAC
-    MK_TYPE = 0x10,         // 14 bytes: a NUL-terminated name; it and its NUL start every derivation seed
-    MK_RESERVED = 0x1E,     // 1 byte, unused
-    MK_MAGIC_SIZE = 0x1F,   // how many of the 16 magic bytes the seed takes, at most 16
-    MK_MAGIC = 0x20,        // 16 bytes
-    MK_XOR_PAD = 0x30,      // 32 bytes, XORed with the tag's salt in the seed
+    MK_HMAC_KEY = 0x00,
+    MK_TYPE = 0x10,
+    MK_RESERVED = 0x1E,
+    MK_MAGIC_SIZE = 0x1F,
+    MK_MAGIC = 0x20,
+    MK_XOR_PAD = 0x30,
 };
 
-// ---- the tag (and the plain image, which has the same layout)
 enum {
-    T_UID = 0x000,          // 8 bytes: UID bytes 0-2, check byte 0, UID bytes 3-6; signed and part of the seed
-    T_HEADER = 0x010,       // 0xA5, not signed
-    T_COUNTER = 0x011,      // u16 BE: writes of the figure. Seeds the data key, so each write re-keys the data
-    T_VERSION = 0x013,      // format version, 0
-    T_SETTINGS = 0x014,     // first encrypted region, 0x20 bytes:
-    T_FLAGS = 0x014,        //   AMIIBO_FLAG_* in bits 4-5, the font region in bits 0-3
-    T_COUNTRY = 0x015,      //   country code of the console that registered the owner
-    T_CRC_COUNTER = 0x016,  //   u16 BE: changes of the console checksum below
-    T_SETUP_DATE = 0x018,   //   packed date, u16 BE: owner registration
-    T_WRITE_DATE = 0x01A,   //   packed date, u16 BE: last write
-    T_CONSOLE_CRC = 0x01C,  //   u32 BE checksum of the last console that wrote the figure
-    T_NICKNAME = 0x020,     //   10 UTF-16 BE code units, NUL-padded, not terminated when all 10 are used
-    T_TAG_HMAC = 0x034,     // 32 bytes: HMAC of the tag key over UID, model info and salt
-    T_MODEL = 0x054,        // 8 bytes model info, then 4 more signed bytes; part of the static signed block
-    T_SALT = 0x060,         // 32 bytes chosen at manufacture; seeds both keys
-    T_DATA_HMAC = 0x080,    // 32 bytes: HMAC of the data key over the header, the plain data and the static block
-    T_DATA = 0x0A0,         // second encrypted region, 0x168 bytes, up to 0x208:
-    T_MII = 0x0A0,          //   0x60 bytes: the owner's Mii and its checksum, kept raw
-    T_TITLE_ID = 0x100,     //   u64 BE: the program that created the application area
-    T_APP_COUNTER = 0x108,  //   u16 BE: writes of the application area
-    T_ACCESS_ID = 0x10A,    //   u32 BE: the owner of the application area
-    T_APP_AREA = 0x130,     //   AMIIBO_APP_AREA_SIZE bytes of game data
-    T_DATA_END = 0x208,     // dynamic lock bytes and the NTAG215 configuration follow, not signed
+    T_UID = 0x000,
+    T_HEADER = 0x010,
+    T_COUNTER = 0x011,
+    T_VERSION = 0x013,
+    T_SETTINGS = 0x014,
+    T_FLAGS = 0x014,
+    T_COUNTRY = 0x015,
+    T_CRC_COUNTER = 0x016,
+    T_SETUP_DATE = 0x018,
+    T_WRITE_DATE = 0x01A,
+    T_CONSOLE_CRC = 0x01C,
+    T_NICKNAME = 0x020,
+    T_TAG_HMAC = 0x034,
+    T_MODEL = 0x054,
+    T_SALT = 0x060,
+    T_DATA_HMAC = 0x080,
+    T_DATA = 0x0A0,
+    T_MII = 0x0A0,
+    T_TITLE_ID = 0x100,
+    T_APP_COUNTER = 0x108,
+    T_ACCESS_ID = 0x10A,
+    T_APP_AREA = 0x130,
+    T_DATA_END = 0x208,
 };
 
 #define SETTINGS_SIZE 0x20
 #define DATA_SIZE (T_DATA_END - T_DATA)
-#define STATIC_SIZE (T_SALT + 32 - T_MODEL)                       // model info, 4 bytes, salt: 0x2C
-#define TAG_SIGNED_SIZE (8 + STATIC_SIZE)                          // 0x34
-#define DATA_SIGNED_SIZE ((T_TAG_HMAC - T_COUNTER) + DATA_SIZE + 32 + TAG_SIGNED_SIZE)   // 0x1DF
+#define STATIC_SIZE (T_SALT + 32 - T_MODEL)
+#define TAG_SIGNED_SIZE (8 + STATIC_SIZE)
+#define DATA_SIGNED_SIZE ((T_TAG_HMAC - T_COUNTER) + DATA_SIZE + 32 + TAG_SIGNED_SIZE)
 #define SEED_MAX (14 + 16 + 16 + 32)
 
 _Static_assert(T_SETTINGS + SETTINGS_SIZE == T_TAG_HMAC, "settings run up to the tag signature");
@@ -76,14 +60,13 @@ _Static_assert(T_NICKNAME + 20 == T_TAG_HMAC && T_MII + 0x60 == T_TITLE_ID, "fie
 static PlatMutex g_keys_lock = PLAT_MUTEX_INIT;
 static uint8_t g_keys[AMIIBO_KEYS_SIZE];
 static bool g_have_keys;
-static uint32_t g_keys_gen;   // bumped by every change of the keys, so the self-test restores only what it replaced
+static uint32_t g_keys_gen;
 
 static void wipe(void *p, size_t n) {
     volatile uint8_t *v = p;
     while (n--) *v++ = 0;
 }
 
-// Equality without an early exit, so the time taken does not tell how many leading bytes of a signature matched.
 static bool same(const uint8_t *a, const uint8_t *b, size_t n) {
     uint8_t d = 0;
     for (size_t i = 0; i < n; i++) d |= (uint8_t)(a[i] ^ b[i]);
@@ -100,8 +83,6 @@ static void put32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24), p[1] = (uint8_t)(v >> 16), p[2] = (uint8_t)(v >> 8), p[3] = (uint8_t)v;
 }
 static void put64(uint8_t *p, uint64_t v) { put32(p, (uint32_t)(v >> 32)), put32(p + 4, (uint32_t)v); }
-
-// ---- keys
 
 static bool master_key_valid(const uint8_t *mk) {
     return memchr(mk + MK_TYPE, 0, 14) != NULL && mk[MK_MAGIC_SIZE] <= 16;
@@ -150,7 +131,6 @@ void amiibo_keys_clear(void) {
     plat_mutex_unlock(&g_keys_lock);
 }
 
-// A private copy of the keys, so the crypto runs outside the lock. False without keys.
 static bool keys_copy(uint8_t out[AMIIBO_KEYS_SIZE]) {
     plat_mutex_lock_shared(&g_keys_lock);
     bool have = g_have_keys;
@@ -159,13 +139,10 @@ static bool keys_copy(uint8_t out[AMIIBO_KEYS_SIZE]) {
     return have;
 }
 
-// ---- derivation
-
 typedef struct {
     uint8_t aes_key[16], aes_iv[16], hmac_key[16];
 } DerivedKey;
 
-// 64 bytes that tie the derived keys to this tag: the write counter, 14 zero bytes, the UID page twice, the salt.
 static void base_seed(const uint8_t *t, uint8_t seed[64]) {
     memset(seed, 0, 64);
     memcpy(seed, t + T_COUNTER, 2);
@@ -174,15 +151,11 @@ static void base_seed(const uint8_t *t, uint8_t seed[64]) {
     memcpy(seed + 32, t + T_SALT, 32);
 }
 
-// The seed is the master key's type string with its NUL, the first 16 - magic size bytes of the base seed followed by
-// the magic bytes (16 bytes together), base seed bytes 0x10-0x1F, and base seed bytes 0x20-0x3F XOR the pad. Two blocks
-// of HMAC(master HMAC key, u16 BE block number || seed) give 64 bytes, of which the first 48 are the derived AES key,
-// AES counter and HMAC key.
 static void derive(const uint8_t *mk, const uint8_t base[64], DerivedKey *dk) {
     uint8_t msg[2 + SEED_MAX], out[64];
     const uint8_t *nul = memchr(mk + MK_TYPE, 0, 14);
     size_t ms = mk[MK_MAGIC_SIZE];
-    if (!nul || ms > 16) {   // amiibo_keys_load refuses such keys; this only keeps the copies below in bounds
+    if (!nul || ms > 16) {
         memset(dk, 0, sizeof *dk);
         return;
     }
@@ -204,7 +177,6 @@ static void derive(const uint8_t *mk, const uint8_t base[64], DerivedKey *dk) {
     wipe(out, sizeof out);
 }
 
-// AES-128-CTR over both encrypted regions as one stream: the settings, then the data. Its own inverse.
 static void crypt_regions(const DerivedKey *dk, uint8_t *t) {
     uint8_t buf[SETTINGS_SIZE + DATA_SIZE];
     Aes128 aes;
@@ -218,7 +190,6 @@ static void crypt_regions(const DerivedKey *dk, uint8_t *t) {
     wipe(&aes, sizeof aes);
 }
 
-// The tag signature: UID page, then model info, the 4 bytes after it and the salt.
 static void sign_tag(const DerivedKey *tk, const uint8_t *t, uint8_t mac[32]) {
     uint8_t msg[TAG_SIGNED_SIZE];
     memcpy(msg, t + T_UID, 8);
@@ -226,8 +197,6 @@ static void sign_tag(const DerivedKey *tk, const uint8_t *t, uint8_t mac[32]) {
     hmac_sha256(tk->hmac_key, 16, msg, sizeof msg, mac);
 }
 
-// The data signature over the plain image: write counter, version and settings, the data, the tag signature, then the
-// tag-signed block (UID page, model info, salt).
 static void sign_data(const DerivedKey *dk, const uint8_t *t, uint8_t mac[32]) {
     uint8_t msg[DATA_SIGNED_SIZE];
     size_t n = 0;
@@ -244,7 +213,7 @@ static bool decrypt_with(const uint8_t *keys, const uint8_t *tag, AmiiboPlain *o
     AmiiboPlain p;
     uint8_t seed[64], mac[32];
     DerivedKey dk, tk;
-    memcpy(p.b, tag, AMIIBO_DUMP_SIZE);   // before out is cleared: out may be the tag itself
+    memcpy(p.b, tag, AMIIBO_DUMP_SIZE);
     memset(out, 0, sizeof *out);
     base_seed(p.b, seed);
     derive(keys, seed, &dk);
@@ -263,7 +232,6 @@ static bool decrypt_with(const uint8_t *keys, const uint8_t *tag, AmiiboPlain *o
     return ok;
 }
 
-// The tag signature first, since the data signature covers it; both over the plain bytes; then the encryption.
 static void encrypt_with(const uint8_t *keys, const AmiiboPlain *plain, uint8_t *tag) {
     AmiiboPlain p;
     uint8_t seed[64];
@@ -302,9 +270,6 @@ bool amiibo_encrypt(const AmiiboPlain *plain, uint8_t tag[AMIIBO_DUMP_SIZE]) {
     return true;
 }
 
-// ---- fields
-
-// Packed date: years since 2000 in bits 9-15, month in bits 5-8, day in bits 0-4.
 static void date_unpack(uint16_t v, uint16_t *year, uint8_t *month, uint8_t *day) {
     *year = (uint16_t)(2000 + (v >> 9));
     *month = (uint8_t)(v >> 5 & 0x0F);
@@ -316,7 +281,6 @@ static uint16_t date_pack(uint16_t year, uint8_t month, uint8_t day) {
     return (uint16_t)(y << 9 | (month & 0x0Fu) << 5 | (day & 0x1Fu));
 }
 
-// Appends cp as UTF-8 when it fits with room left for the NUL; returns the new length (n when it did not fit).
 static size_t utf8_put(char *out, size_t cap, size_t n, uint32_t cp) {
     uint8_t t[4];
     size_t len;
@@ -333,8 +297,6 @@ static size_t utf8_put(char *out, size_t cap, size_t n, uint32_t cp) {
     return n + len;
 }
 
-// One code point from the n bytes at s (n >= 1); returns the bytes it took. Malformed input reads as U+FFFD: a bad lead
-// or continuation byte takes 1 byte, a well-formed overlong, surrogate or out-of-range sequence takes all its bytes.
 static size_t utf8_get(const uint8_t *s, size_t n, uint32_t *cp) {
     uint32_t c = s[0], v, min;
     size_t len;
@@ -364,8 +326,6 @@ static size_t utf8_get(const uint8_t *s, size_t n, uint32_t *cp) {
     return len;
 }
 
-// 10 UTF-16 BE code units, up to the first zero unit, as NUL-terminated UTF-8. A surrogate without its partner reads
-// as U+FFFD. cap >= 31 always holds the whole name (at most 3 bytes per unit).
 static void nickname_decode(const uint8_t *b, char *out, size_t cap) {
     size_t n = 0;
     for (int i = 0; i < 10; i++) {
@@ -383,8 +343,6 @@ static void nickname_decode(const uint8_t *b, char *out, size_t cap) {
     out[n] = 0;
 }
 
-// UTF-8 (up to cap bytes or the NUL) as 10 UTF-16 BE code units, zero-padded. Characters past the 10th unit are
-// dropped, and a character needing a surrogate pair is dropped whole when only one unit is left.
 static void nickname_encode(const char *s, size_t cap, uint8_t *b) {
     const uint8_t *u = (const uint8_t *)s;
     size_t n = 0, i = 0;
@@ -425,7 +383,7 @@ void amiibo_plain_read(const AmiiboPlain *p, AmiiboFields *out) {
 void amiibo_plain_write(AmiiboPlain *p, const AmiiboFields *in) {
     const uint8_t known = AMIIBO_FLAG_REGISTERED | AMIIBO_FLAG_APP_AREA;
     uint8_t *b = p->b;
-    b[T_FLAGS] = (uint8_t)((b[T_FLAGS] & ~known) | (in->flags & known));   // the font region and other bits stay
+    b[T_FLAGS] = (uint8_t)((b[T_FLAGS] & ~known) | (in->flags & known));
     b[T_COUNTRY] = in->country_code;
     put16(b + T_COUNTER, in->write_counter);
     put16(b + T_SETUP_DATE, date_pack(in->setup_year, in->setup_month, in->setup_day));
@@ -437,8 +395,6 @@ void amiibo_plain_write(AmiiboPlain *p, const AmiiboFields *in) {
     put32(b + T_ACCESS_ID, in->access_id);
     memcpy(b + T_APP_AREA, in->app_area, sizeof in->app_area);
 }
-
-// ---- self-test. Every key here is made up from a constant pattern.
 
 static bool fail(const char *what) {
     rt_log("amiibo crypto selftest failed: %s", what);
@@ -452,12 +408,10 @@ static bool all_zero(const uint8_t *p, size_t n) {
 }
 
 static bool selftest_primitives(void) {
-    // FIPS-197 appendix C.1
     static const uint8_t fips_pt[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
                                         0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
     static const uint8_t fips_ct[16] = {0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
                                         0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
-    // SP 800-38A F.5.1, CTR-AES128: the counter carries out of the last byte between blocks 1 and 2
     static const uint8_t sp_key[16] = {0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
                                        0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c};
     static const uint8_t sp_iv[16] = {0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
@@ -472,13 +426,10 @@ static bool selftest_primitives(void) {
         0x98, 0x06, 0xf6, 0x6b, 0x79, 0x70, 0xfd, 0xff, 0x86, 0x17, 0x18, 0x7b, 0xb9, 0xff, 0xfd, 0xff,
         0x5a, 0xe4, 0xdf, 0x3e, 0xdb, 0xd5, 0xd3, 0x5e, 0x5b, 0x4f, 0x09, 0x02, 0x0d, 0xb0, 0x3e, 0xab,
         0x1e, 0x03, 0x1d, 0xda, 0x2f, 0xbe, 0x03, 0xd1, 0x79, 0x21, 0x70, 0xa0, 0xf3, 0x00, 0x9c, 0xee};
-    // key 10 11 .. 1f, counter ff .. ff fe, plaintext 00 01 .. 27 (2.5 blocks): the counter wraps through all 16
-    // bytes to zero after the second block
     static const uint8_t wrap_ct[40] = {
         0x44, 0xe2, 0x12, 0x1f, 0xc4, 0x9c, 0x71, 0x90, 0x06, 0xe2, 0xa0, 0x00, 0xb4, 0x0f, 0xf0, 0x66,
         0xea, 0x51, 0x3d, 0xc7, 0x13, 0x7b, 0xbf, 0x74, 0x97, 0x91, 0xf1, 0xb4, 0xe8, 0x7e, 0x84, 0x8f,
         0xcd, 0x82, 0x12, 0xda, 0x2a, 0xc9, 0xf7, 0x4b};
-    // RFC 4231 test cases 2 (short key) and 6 (131-byte key, hashed first)
     static const uint8_t hmac2[32] = {0x5b, 0xdc, 0xc1, 0x46, 0xbf, 0x60, 0x75, 0x4e, 0x6a, 0x04, 0x24,
                                       0x26, 0x08, 0x95, 0x75, 0xc7, 0x5a, 0x00, 0x3f, 0x08, 0x9d, 0x27,
                                       0x39, 0x83, 0x9d, 0xec, 0x58, 0xb9, 0x64, 0xec, 0x38, 0x43};
@@ -498,7 +449,7 @@ static bool selftest_primitives(void) {
     aes128_init(&aes, sp_key);
     aes128_ctr(&aes, sp_iv, sp_pt, buf, sizeof sp_pt);
     if (memcmp(buf, sp_ct, sizeof sp_ct)) return fail("AES-128-CTR SP 800-38A F.5.1");
-    aes128_ctr(&aes, sp_iv, buf, buf, sizeof sp_ct);   // in place, and its own inverse
+    aes128_ctr(&aes, sp_iv, buf, buf, sizeof sp_ct);
     if (memcmp(buf, sp_pt, sizeof sp_pt)) return fail("AES-128-CTR in place");
 
     for (int i = 0; i < 16; i++) key[i] = (uint8_t)(0x10 + i), iv[i] = 0xff;
@@ -516,8 +467,6 @@ static bool selftest_primitives(void) {
     return true;
 }
 
-// Two made-up master keys: a pattern, with type strings of two lengths and both magic sizes in use (14 for the data
-// key, so the write counter enters its seed; 16 for the tag key).
 static void selftest_keys(uint8_t k[AMIIBO_KEYS_SIZE]) {
     for (int i = 0; i < AMIIBO_KEYS_SIZE; i++) k[i] = (uint8_t)(i * 7 + 3);
     memcpy(k + MK_TYPE, "test data key", 14);
@@ -531,7 +480,7 @@ static void selftest_pattern(AmiiboPlain *p) {
 }
 
 static void selftest_fields(AmiiboFields *f) {
-    static const char name[] = "Zelda\xc3\xa9\xf0\x9f\x98\x80";   // ASCII, a 2-byte and a 4-byte character
+    static const char name[] = "Zelda\xc3\xa9\xf0\x9f\x98\x80";
     memset(f, 0, sizeof *f);
     f->flags = AMIIBO_FLAG_REGISTERED | AMIIBO_FLAG_APP_AREA;
     f->country_code = 0x31;
@@ -555,7 +504,6 @@ static bool fields_equal(const AmiiboFields *a, const AmiiboFields *b) {
            a->access_id == b->access_id && memcmp(a->app_area, b->app_area, sizeof a->app_area) == 0;
 }
 
-// The bytes amiibo_plain_write may change.
 static bool field_byte(int i) {
     return (i >= T_COUNTER && i < T_VERSION) || i == T_FLAGS || i == T_COUNTRY ||
            (i >= T_SETUP_DATE && i < T_CONSOLE_CRC) || (i >= T_NICKNAME && i < T_TAG_HMAC) ||
@@ -601,15 +549,13 @@ static bool selftest_plain(void) {
     if (!nickname_case("abcdefghi\xf0\x9f\x98\x80", "abcdefghi")) return fail("nickname surrogate pair at the end");
     if (!nickname_case("a\xff" "b", "a\xef\xbf\xbd" "b")) return fail("nickname invalid UTF-8");
     memset(&p, 0, sizeof p);
-    put16(p.b + T_NICKNAME, 0xD800);   // a lone high surrogate, then 'A'
+    put16(p.b + T_NICKNAME, 0xD800);
     put16(p.b + T_NICKNAME + 2, 0x0041);
     amiibo_plain_read(&p, &r);
     if (strcmp(r.nickname, "\xef\xbf\xbd" "A")) return fail("nickname lone surrogate");
     return true;
 }
 
-// The format with explicit keys: a known answer computed by an independent model of the format, round trips, and
-// single-byte changes that must break a signature.
 static bool selftest_tag(const uint8_t *keys) {
     static const uint8_t expect_tag_hmac[32] = {
         0x13, 0x98, 0x45, 0x32, 0x7c, 0xd0, 0xda, 0x1e, 0x1f, 0x6c, 0x81, 0xe9, 0x9f, 0x85, 0xca, 0xd4,
@@ -620,7 +566,6 @@ static bool selftest_tag(const uint8_t *keys) {
     static const uint8_t expect_sha[32] = {
         0x1a, 0xda, 0x4b, 0xe1, 0x0d, 0xc4, 0xea, 0x31, 0x9a, 0xbe, 0xc8, 0xe9, 0x10, 0x62, 0xb0, 0x10,
         0xbe, 0x66, 0xa7, 0xcc, 0x18, 0xc3, 0xa3, 0xcc, 0xb9, 0xa1, 0x4c, 0x51, 0xf7, 0xd5, 0x9f, 0x8a};
-    // a byte in each of: data, UID, tag signature, write counter, salt, settings, model info
     static const int flips[] = {0x150, 0x003, 0x040, 0x011, 0x060, 0x014, 0x055};
     uint8_t bad[AMIIBO_KEYS_SIZE], tag[AMIIBO_DUMP_SIZE], again[AMIIBO_DUMP_SIZE], digest[32];
     AmiiboPlain plain, back;
@@ -662,8 +607,6 @@ static bool selftest_tag(const uint8_t *keys) {
     return true;
 }
 
-// Replaces the loaded keys with k (have false: none) unless another caller changed them since *gen was taken; then
-// *gen is the new generation. False when the keys changed meanwhile, and nothing is replaced.
 static bool keys_swap(const uint8_t *k, bool have, uint32_t *gen) {
     plat_mutex_lock(&g_keys_lock);
     bool mine = g_keys_gen == *gen;
@@ -677,9 +620,6 @@ static bool keys_swap(const uint8_t *k, bool have, uint32_t *gen) {
     return mine;
 }
 
-// The public calls: without keys, then with the made-up keys, then the player's keys go back. While the made-up keys
-// are in place (well under a millisecond) a dump decrypted on another thread would fail and load without its data; the
-// caller, ov_probe.c under --probe-services, runs no game code that loads one.
 static bool selftest_public(const uint8_t *keys) {
     uint8_t saved[AMIIBO_KEYS_SIZE], tag[AMIIBO_DUMP_SIZE];
     bool saved_have, ok = true;

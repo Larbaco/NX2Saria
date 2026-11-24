@@ -1,8 +1,3 @@
-// Audio input for the nn::audio input-stream calls the game imports (the Ocarina can be played into a microphone):
-// each stream reads the default recording device through audio_capture.c, which SDL converts to the format the game
-// asks for. The calls are overridden in the game (HOST_OVERRIDE) because the audio service refuses input streams. A
-// stream that failed to open is unknown to every call here, so purging or closing it is safe; before, the game purged
-// a stream that never opened and crashed. NX2SARIA_MICROPHONE=0 refuses every input stream, as the game saw before.
 #include "audio_capture.h"
 #include "host.h"
 #include "ipc.h"
@@ -11,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BAD_INPUT 0x70899u   // nn::audio's invalid-argument result (module 153, description 900), as audio_mixer.c
+#define BAD_INPUT 0x70899u
 typedef struct {
     uint64_t key;
     MicCapture *mic;
@@ -19,8 +14,8 @@ typedef struct {
     uint64_t frames_read, next_log;
 } Input;
 static Input inputs[8];
-static const char input_name[] = "DefaultMicrophone";   // the name the game is given for the default device
-static int mic_on(void) {   // NX2SARIA_MICROPHONE (default 1)
+static const char input_name[] = "DefaultMicrophone";
+static int mic_on(void) {
     static int on = -1;
     if (on < 0) {
         on = rt_knob("MICROPHONE", "1") != 0;
