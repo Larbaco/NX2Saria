@@ -34,6 +34,129 @@ The notice of reports turned on (`launcher/telemetry.py` `Reporter.take_notice()
 screen. After a job the home screen always carries the job's message ("NX2Saria is now ..."), and taking the notice
 there would clear it and log it as told without showing it; it stays for the next start with a free message line.
 
+### `App.offer_crash_log()`
+
+Opens the question after an abnormal end ([telemetry.md](../telemetry.md#when-the-game-ends-with-an-error)) when one
+waits in the game folder (`launcher/crash_offer.py` `pending()`), and returns whether it opened. It opens only on the
+home screen, never while the question about session reports is open, while this launcher follows a game or another
+copy of the game runs (`launcher/saves.py` `game_running()`); in those cases the file stays and a later call asks.
+Three callers, which are the only places the question can appear:
+
+- `App.watch_game()`, after the game's end was told and the home screen is shown. A staged update that installs at
+  that moment returns before it, so the question waits for the launcher that starts after the update.
+- `App.start_reports()`, on the first home screen of a run, when no question about session reports is due. This is
+  the start that asks about an end the window did not watch (`play_only()`).
+- `App.question_end()`, after the question about session reports was answered, so that one comes first.
+
+The request is prepared when the question opens (`launcher/crash_offer.py` `prepare()`), and the same bytes are what
+*See What Is Sent* shows (`App.open_offer_sent()`) and what *Send the Log* posts. When it cannot be prepared (an empty
+log, a server that answered 410 to this version) nothing is shown, and the log line says why.
+
+`launcher.log` gets `telemetry: crash log offer: shown (end: <kind>; <start> + <end> lines, <bytes> bytes of log)`.
+
+### `App.offer_end()`
+
+The question's end: `send`, `don't send`, `closed` (Esc, B, the window's close) or `comment` (*Write a Comment*). It
+removes the waiting file first, so no end of the game is asked about twice. Everything but `send` is counted as
+declined and logged as `telemetry: crash log offer: declined (<how>; end: <kind>; <counts>)`. `send` posts on a thread
+(`launcher/telemetry.py` `Tasks`) and shows the result as the home screen's message.
+
+`App.on_close()` calls it with `leave=True` when the player closes the window over the question. A signal that ends
+the launcher is no answer, as for the question about session reports: the file stays and the next start asks. When
+any question was shown in the run, `App.on_close()` logs `telemetry: crash log offers in this run of the launcher:
+N shown, N sent, N declined, N failed`; each outcome line carries the same counts, so a window that was killed still
+left them. The counts exist to tell, from players' logs, whether a PC that crashes every minute makes the question a
+nuisance: it is asked at every such end.
+
+### `App.offer_guarded()`
+
+For `GUARD_SECONDS` (1 s) after the question opens, `App.activate()` and `App.back()` do nothing on it: the window
+comes to the front the moment the game dies, and a button still held for the game would otherwise choose *Send the
+Log*, which is the focused row. Moving the cursor is not guarded, and neither is closing the window, which sends
+nothing. The preview (`--screen crash`, the selftest) has no guard.
+
+### `App.crash_offer_desc()`
+
+The sentence of the game's end is shown without its last sentence (`launcher/game_session.py` `LOG_WHERE`, where the
+log is): with the longest fatal line the launcher shows (`FATAL_SHOWN`, 240 characters) the text would not fit the
+panel with it, and the question is about that very log. The home screen keeps the whole sentence.
+
+## `launcher/crash_offer.py`
+
+The crash log a player may send after an abnormal end: when one is due, what it holds and how it is sent. No Tk here.
+
+### `game_ended()`
+
+Called at every end of the game, by `App.watch_game()` and by `play_only()`. It never uses the network: for an end
+worth a question it writes `logs/crash-offer.json` in the game folder (the end's kind, the sentence for the player,
+and the size and modification time of the game's log) and the window asks later. It runs after the launcher added
+its own line to the game's log (`launcher/game_session.py` `note_exit_in_log()`), so the recorded size and time are
+the log's final ones.
+
+No file is written, and one line says why, when the end has no sentence (a normal end: no line either), when the game
+was asked to close (`launcher/game_session.py` `end_asked()`), when the setting `crash_log_offer` is `off`, and when
+there is no server (no line: nothing of session reports exists then).
+
+Lines: `telemetry: crash log offer: waits for the launcher's main screen (end: <kind>)`, and `... not made: <why>
+(end: <kind>)`.
+
+### `pending()`
+
+The waiting question, or `None`. The file is dropped, with a `telemetry: crash log offer: dropped: <why>` line, when
+the game's log no longer has the recorded size and time (the game ran again and moved that log away, or wrote to it),
+when the setting was switched off since, and when the file cannot be read. Size and time together are the identity of
+"the log of that session": the game starts a new `nx2saria.log` at each start and the launcher writes to it only once,
+before the stamp is taken.
+
+### `log_parts()`
+
+The start and the end of the game's log as lists of lines, and whether together they are the whole log.
+
+- The end is the last `TAIL_LINES` (200) lines within `TAIL_LIMIT` (56 KB), the last ones kept. Over 184 logs, 200
+  lines weighed 46 KB at the median and 58 KB at most, so the line count is the limit that usually applies; the
+  comment's 24 KB (`launcher/telemetry.py` `log_tail()`) holds about 107 lines.
+- The start runs from the first line to the line `patches:` inclusive, within `HEAD_LINES` (100) and `HEAD_LIMIT`
+  (16 KB). Over the same logs that line was line 84 at the median and line 94 at most, 11.6 KB and 13.5 KB. A log
+  without it (a crash before it) gives the start up to the caps.
+- The start stops where the end begins, by byte offset in the file, so no line is sent twice; a short log is all in
+  the end, and the start is empty.
+- Only `HEAD_READ` (128 KB) from the start and `TAIL_READ` (512 KB) from the end of the file are read: the log may
+  be 64 MiB.
+- Lines are split on line feeds only, as the server counts them, and each is written short and stripped of control
+  characters as a comment's log lines are.
+
+### `session_summary()`
+
+The session report that goes with the crash log: the pending one, else the one already sent or declined, but only
+when its file was written after the log began (`launcher/telemetry.py` `log_started()`). A game that was killed
+writes no summary, and the one on disk is then an earlier session's, which must not be attached to this crash.
+Nothing when Session Reports is *Off*, the rule of a comment.
+
+### `build()`
+
+The body, at most `BODY_LIMIT` (96 KB, the server's cap). JSON escapes can grow the log lines (each backslash of a
+Windows path becomes two bytes), so a body over the cap loses the oldest quarter of the end's lines until it fits.
+`text` is always empty: the player wrote nothing. The body has `kind` and `log_head`, which a comment's body never
+has, so a comment still works against a server older than crash logs.
+
+### `finish()`
+
+The server's answer. Nothing is tried again, whatever the answer: the question was asked once and its file is gone.
+A `400` means a server older than crash logs, or a launcher version that is not a published release (a development
+build); it sets `Offers.refused`, and `App.offer_crash_log()` shows no more questions in that run of the launcher,
+dropping what waits with `telemetry: crash log offer: not shown: the server refused one in this run`. A `410` closes
+reports for this launcher version, as for a session report.
+
+Lines: `telemetry: crash log sent (HTTP 201, <start> + <end> lines, <bytes> bytes of log, <bytes> bytes in all;
+<counts>)`, `telemetry: crash log not sent (HTTP 400): this server does not take it; not tried again, and no more
+offers in this run of the launcher (<counts>)`, `telemetry: crash log not sent (<answer>); not tried again
+(<counts>)`.
+
+### `log_state()`
+
+The line of a launcher's start, and of each change of the setting: `telemetry: crash log offer: on (Settings >
+Session Reports > Ask After a Crash)`, or `off`.
+
 ### `game_session.py`
 
 The game session tracks restarted copies, interprets exit codes and reads or annotates the game log.
@@ -57,6 +180,19 @@ returns the `GameEnd`, including its optional message, without a Tk dependency.
 and focuses the window before calling `finish_game()`, then shows any returned message, checks a waiting staged update,
 handles after-game reports and finally shows home. A staged update or report action that takes over still short-circuits
 the later steps. The consent and report policy are unchanged; the extraction only moves the end processing.
+
+### `launcher/game_session.py`: `end_kind()` and `end_asked()`
+
+`end_kind()` names an end that has a sentence for the player: `fatal`, `crash` and `device_lost` for the codes 70, 71
+and 72, `fatal` for a fatal line found after the game restarted itself, and `code <text>` for every other code, with
+the text `exit_code_text()` gives. An end without a sentence has no kind, and nothing is asked about it: the window's
+close button, the game's own quit and Alt+F4 all end the game with code 0.
+
+`end_asked()` is true for an end by SIGTERM, SIGINT or SIGHUP (`ASKED_SIGNALS`) when the log has no fatal line:
+someone asked the game to close, and that is no crash. SIGKILL, SIGSEGV, SIGABRT and, on Windows, Task Manager's End
+task (code 1) are not asked ends: a game that hung and was killed is worth its log. It must be called before the
+launcher's own line goes into the game's log, which ends the search for the fatal line (`launcher/build.py`
+`last_fatal()`); `finish_game()` and `play_only()` call both before `note_exit_in_log()`.
 
 ### `launcher/play.py`: Play preflight
 

@@ -32,7 +32,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 8 | `runtime/nvn/` | [nvn.md](nvn.md) | extracted |
 | 9 | `runtime/patches/` | [patches.md](patches.md) | extracted |
 | 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
-| 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports; the rest not yet extracted |
+| 11 | `launcher/` | [launcher.md](launcher.md) | started: when the window asks about session reports, and the crash log offered after an abnormal end; the rest not yet extracted |
 | 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
 | 13 | `runtime/` top level | [runtime.md](runtime.md) | started: `vram_warn.h`, `vram_warn.c`, `vram_fit.h` and what they need of `mem_budget.c`; the rest not yet extracted |
 | 14 | `runtime/gfx/` | [gfx.md](gfx.md) | extracted |

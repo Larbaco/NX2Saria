@@ -70,6 +70,33 @@ Builds and runs `tests/vram_fit_check.c` on `runtime/vram_fit.h`. No GPU, no gam
   performance at 4 GiB, never frame generation, only what the draft made heavier, nothing for a card the preset gives
   no upscaler, for 8 GiB or for an unknown card.
 
+## `tests/crash_log_offer_test.py`
+
+The crash log offered after an abnormal end (`launcher/crash_offer.py`, `launcher/game_session.py` `end_kind()` and
+`end_asked()`, and the window's question). It takes its fixtures from `tests/telemetry_launcher_test.py`: the local
+server that records requests, the made-up player's folders and the window. No test reaches the project's server.
+
+- `EndKindTest`, `AskedEndTest`: the names of the ends; SIGTERM, SIGINT and SIGHUP without a fatal line are asked
+  ends, and a kill, a fault, an abort and an exit code are not.
+- `GameEndedTest`, `PendingTest`: what an end leaves in `logs/crash-offer.json` without any request, the ends that
+  leave nothing and the line each writes, and the waiting file dropped when the log changed, the setting was switched
+  off or the file is broken.
+- `LogPartsTest`: the start up to `patches:` and the last 200 lines; a short log sent whole with no line twice; the
+  start cut where the end begins; the caps of both parts; a log far larger than what is read. Its "real width" case
+  uses lines of about 230 bytes, the measured mean, to show that 200 of them pass a comment's 24 KB and fit 56 KB.
+- `RequestTest`, `AnswerTest`: the body's keys, the report of that session and never an earlier one's or one the
+  player said no to, the body trimmed when JSON escapes grow it, and each answer of the server (201, 400, 410, 503, no
+  connection) with its log line and the counts. A comment still has its four keys and its 24 KB.
+- `OfferWindowTest`: the question with Send the Log focused, the bytes *See What Is Sent* shows being the bytes sent,
+  each way of not sending, the first second that takes no input, *Write a Comment*, the question about session
+  reports coming first, the places it never opens, the setting, a 400 that ends the offers of the run, the counts, and
+  the text whole inside its panel with the longest sentence. `open_offer()` moves `offer_opened` five seconds back so
+  the tests do not wait out the guard.
+
+`tests/launcher_lifecycle_test.py` has the end the window does not watch: a made-up game started as Steam starts it
+writes a log and ends with code 72, with SIGTERM or normally, with `NX2SARIA_TELEMETRY_URL` pointing at a server of
+the test that must receive nothing.
+
 ## `tests/telemetry_launcher_test.py`
 
 `UpdateStartBase` opens the window as the start after an update does (`--continue-update`, without `--selftest`) over a

@@ -4,10 +4,12 @@
 
 # Session reports and comments
 
-The launcher can send two things to the project's own server:
+The launcher can send three things to the project's own server:
 
 - **Session reports:** after you play, a short summary of how the game ran on your PC.
 - **Comments:** text you write in *Send a Comment*, sent when you press *Send*.
+- **Crash logs:** the start and the end of the game's log, sent when the game ended with an error and you press
+  *Send the Log*.
 
 ## When the launcher asks
 
@@ -41,8 +43,8 @@ the log. Nothing is sent while you play.
 
 You can switch session reports on and off at any time in **Settings → Session Reports**.
 
-A launcher built without a server address shows none of this: no question, no Session Reports screen and no
-*Send a Comment*.
+A launcher built without a server address shows none of this: no question, no Session Reports screen, no
+*Send a Comment* and no question after a crash.
 
 The server is a small program of this project on Cloudflare Workers with a Cloudflare D1 database. Its whole source is
 in the repository: [`telemetry/`](../telemetry/). No analytics service of anyone else is used.
@@ -94,28 +96,74 @@ The server adds the time the report arrived, and nothing about where it came fro
 
 A comment is sent only when you press *Send* on it, whether session reports are on or off.
 
+## When the game ends with an error
+
+When the game ends with a fatal error, a crash, a lost graphics device or any other exit code that is not a normal
+end, the launcher's main screen asks **Send the log of this crash?** under the sentence that says how the game ended,
+with four choices:
+
+- **Send the Log** sends the log lines described below, once. It is the selected button.
+- **Don't Send** sends nothing.
+- **See What Is Sent** shows the exact text that would go.
+- **Write a Comment** opens *Send a Comment* with *Attach the Last Log Lines* ticked, for telling what you were doing.
+  The crash log itself is then not sent: the comment goes as any other comment does.
+
+**Nothing is sent unless you choose *Send the Log*.** There is no countdown, and closing the question in any other way
+(Esc, B, the window's close button) is the same as *Don't Send*. For the first second after the question appears it
+takes no input, so that a button still held from the game does not answer it. It is asked once for each such end, with
+session reports on or off, and a log that could not be sent is not tried again.
+
+It is not asked when you closed the game yourself (the window's close button, the game's own quit, Alt+F4), nor on
+Linux when a signal asked the game to end (SIGTERM, SIGINT or SIGHUP: a logout, or another program stopping it) and
+its log has no fatal error. A game that was killed (Task Manager's *End task*, SIGKILL) is asked about, because a game
+that hung is worth a log.
+
+When the game was started without the launcher's window (Play in Steam, a shortcut), nothing is asked or sent at that
+moment: the question waits and appears the next time the launcher opens, if the game's log is still the one of that
+session. If you played again meanwhile, it is dropped without asking. The question never opens over an installation,
+an update or a rebuild, nor while the game runs. When the question about session reports is due at the same start,
+that one comes first.
+
+### What a crash log holds
+
+- **The start of the game's log:** from its first line to the line `patches:`, at most 100 lines and 16 KB. These
+  lines name your system, graphics card and driver, the options in use and the patches that are on; in the logs
+  measured they are about 84 lines and 12 KB.
+- **The end of the game's log:** its last 200 lines, at most 56 KB. 200 lines weigh about 46 KB, so the 200 lines are
+  the limit that usually applies; when the lines are longer than usual the 56 KB cut first, and fewer lines go, the
+  last ones kept.
+- **After a short session these two parts are the whole log.** When the log has no more lines than that, every line of
+  it is sent, each one once. The question and *See What Is Sent* say how many lines go.
+- In those lines your home folder, account name and computer name are written short as in the log ([log
+  privacy](log-privacy.md)). Other folder names, such as where the game is installed, stay as they are.
+- The report of that session, as above, when there is one, unless **Session Reports** is *Off*.
+- The `launcher_version` and the time, as with a report. No id of your installation, and no text of yours.
 ## What is not sent or not kept
 
 - **Your IP address is not kept.** Every connection to a server carries it, so the server sees it: it uses it at that
   moment, in memory, to limit abuse (at most 20 requests a minute from one address), and never writes it down. It
   keeps no country either. Cloudflare, which runs the server, handles the connection as it does for any website.
-- No files: no saves, no settings file, no whole log, no game files, no keys.
+- No files: no saves, no settings file, no game files, no keys.
+- **No log lines go unless you press the button that sends them:** *Send* on a comment with *Attach the Last Log
+  Lines* ticked, or *Send the Log* after a crash. A crash log of a short session can be the whole log, as described
+  above; a session report never holds log lines other than the error line.
 - **No id of your installation.** The launcher makes none, keeps none and sends none.
 - A session report holds no account name, computer name, folder name, e-mail, hardware serial number or mod name:
   the server refuses a report with a field the format does not have. A comment holds what you write and, when you attach them,
-  log lines as described above.
+  log lines as described above. A crash log holds log lines, in which the game writes the names of folders outside
+  your home folder as they are.
 
 ## How long it is kept
 
-Reports and comments are deleted by a daily cleanup once they are 180 days old. Only the project's maintainer can read
+Reports, comments and crash logs are deleted by a daily cleanup once they are 180 days old. Only the project's maintainer can read
 them, through a page protected by a secret key: counts by version, graphics card, system, options, patches and mods,
-frame rates, the most common errors and the comments.
+frame rates, the most common errors, the comments and the crash logs.
 
 ## Why nothing can be deleted on request
 
 A report has no id of your installation and the server keeps no IP address, so the server cannot tell which reports
-are yours: there is nothing it could look up and delete for you. Every report and comment is deleted when it is 180
-days old. The database service keeps its own restore history for a limited time (up to 30 days at Cloudflare);
+are yours: there is nothing it could look up and delete for you. Every report, comment and crash log is deleted
+when it is 180 days old. The database service keeps its own restore history for a limited time (up to 30 days at Cloudflare);
 deleted rows leave it as that history ages.
 
 A comment is the one thing that holds what you choose to put in it. It is sent exactly as written, so leave out
@@ -127,6 +175,9 @@ If you do not want to send reports, set **Settings → Session Reports** to *Off
 launcher asks. The next version of the
 launcher asks again once; choose *Don't Send* again to keep them off. If the project ever stops collecting, the
 server answers so and the launcher stops sending until its next version.
+
+If you do not want to be asked after a crash, set **Settings → Session Reports → Ask After a Crash** to *Off*. No
+crash log is ever sent without the question.
 
 ## Known limits
 
