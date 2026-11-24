@@ -743,8 +743,13 @@ nowhere else is skipped, and never deleted unless packed.
 
 ## `tests/part_file_check.py`
 
-Builds `tests/part_file_check.c` with the platform layer and runs it: `runtime/part_file.h`, a file written piece by
-piece gets its name only when it is complete. `part_file_check <folder>` runs the checks in that folder;
+Builds `tests/part_file_check.c` with the platform layer and runs it: `runtime/part_file.h`, which the runtime's
+detached threads write their files through (the flight recorder's dump). A file written piece by piece gets its name
+only when it is complete, so a game that closes under the writing thread leaves the older file or none, never one cut
+short. The C side checks the helper itself; the Python side then kills a process in the middle of a write, as the
+window's close ends the dump thread, and looks at what it left: the older file whole under its name, the half in the
+`.part` file. The build adds `stand_ins()` of `tests/platform_stand_ins.py` for what the platform layer calls outside
+it. No game files, no GPU. `part_file_check <folder>` runs the checks in that folder;
 `part_file_check <folder> hang` writes half of `<folder>/killed.tsv`, prints "writing" and sleeps: the Python side
 kills it there, as a closed game ends the thread that writes a dump. `rt_log()` in the C file takes the platform
 layer's lines.
@@ -754,3 +759,264 @@ layer's lines.
 - Given up (the writer met an error): the older file stays, the part goes.
 - A folder that is not there: nothing opens, and closing nothing is no success. A name that does not fit the path
   buffers.
+
+## `tests/pass_hooks_check.py`
+
+Builds and runs `tests/pass_hooks_check.c` on `runtime/vk/vk_pass_hooks.h`: which pass begin runs the frame's pass
+hooks (`runtime/vk/vk_exec.c` `vk_exec_pass_begin()`). A parallel group's hooks run once, at its first chunk's first
+pass: a pass that chunk begins again later must not put its own target back as the upscaler's light target after the
+hooks of later passes ran. No GPU, no game files, any Python.
+
+The C file's stand-ins: the hook as `vk_dlaa_pass` keeps the light target (the target of the last pass that ran it); a
+group as `vk_exec.c` keeps it (whether its first chunk began a pass); `pass_begin()` is a pass begin of a thread that
+records no chunk (group NULL), or of chunk `idx` of a group, into a target.
+
+- The rule itself.
+- One thread: a pass begun twice (after a barrier) changes nothing, the last pass of the stream keeps the light target.
+- A group whose chunks the workers record while the submitting thread waits for it: its passes begin in any order after
+  the first chunk's (the first chunk's pass again, after a texture lookup waited for its turn), and the pass after the
+  group comes after all of them.
+- The submitting thread goes on past the group: the scene pass after it begins once the group's first chunk began its
+  pass (`vk_exec_hooks_wait` let it through: the group's hooks ran), and that chunk begins its pass again after that
+  (late: after a lookup's turn, a barrier, a pass of the replay's own). The scene pass is later in the stream and keeps
+  the light target; the hooks running at the second begin gave the upscaler the earlier pass's image for a frame.
+- Two groups out and the pass after them: each first chunk begins its pass after the group before began its own
+  (`chunk_record`), and each begins it again out of order.
+- A first chunk whose first pass begin waited (a deferred lookup returns before the hooks): the hooks run at the begin
+  that goes through, which is the one that marks the group.
+
+## `tests/pb_torn_check.py`
+
+Checks how `pipeline-binaries.bin` keeps its whole records (`runtime/vk/vk_pipeline.c` `pb_index()` and `pb_keep()`,
+`NX2SARIA_PIPE_BINARIES=1`). `pb_init` keeps the whole records of a file that ends inside one (the process ended
+during an append, or a disk filled) or holds a malformed one, and cuts the file back to them; the walk must say where
+the last whole record ends, and `pb_keep()` must cut the file there. The check cuts the file's record layout and
+`pb_hash`, `pb_find`, `pb_insert`, `pb_index` and `pb_keep` out of `vk_pipeline.c`, writes files of whole records, one
+with a torn last record and one with a malformed record in the middle, and checks the offset and the index the walk
+gives, the length `pb_keep()` leaves on the disk, that a second walk reaches the end of the cut file, and that a
+record appended after the cut is read back. `plat_file_truncate` is a stand-in that cuts the file with the C library.
+No GPU, no game files, any Python; it needs the Vulkan headers of MSYS2 UCRT64 (`vulkan/vulkan.h`).
+
+## `tests/perf_bound_check.py`
+
+Builds and runs `tests/perf_bound_check.c` on `runtime/diag/perf_bound.h`: which side holds the frame back in the
+60-frame window line of the perf trace (`runtime/diag/perf.c` `perf_gpu_line()`): pace, gpu, serial or cpu. It needs a
+C compiler only: no Vulkan headers, no GPU and no game files.
+
+- Kokiri Forest on an RX 6700 (RADV, 2026-11-19, 0.19.0-rc.2): 33.6 ms frames, GPU busy 22.5 ms, idle waiting for the
+  next submission 9.6 ms, the game's threads waiting 17 ms for GPU fences. The old rule said cpu.
+- The same window without the idle split (no calibrated timestamps): the rule cannot see the turns, cpu as before.
+- A full GPU wins over serial. Pacing wins over everything.
+- The CPU alone: the GPU starves but nothing waits for it.
+- Threads wait for the GPU but the GPU always had work queued: not taking turns, and not full: cpu.
+- The edges are inclusive: a fifth starved and a quarter waiting.
+- Without timestamps the fence waits decide, as before.
+- An idle split with no interval (the first window of a run): no division by zero, cpu.
+
+## `tests/perf_summary_check.py`
+
+`tools/perf_summary.py` reads the present side of a log: lines made with the runtime's format strings give the present
+percentiles, the present thread's window averages and the render thread's hand-off share, and the lines of older logs
+(no hand-off share on the perf line, no present call or hand-off on the `present:` lines) still parse.
+
+The format strings are copied into the test and must be kept in step with the runtime:
+`runtime/vk/vk_backend.c` `present_main()`'s `TRACE=present` line and `present_window()`'s line, as the C source has
+them, and `runtime/diag/perf.c` `perf_present()`'s window line, its head to the shares (the test fills in the rest).
+`source_has()` checks that they are still the runtime's; the C sources split them over string literals, so adjacent
+literals on following lines are joined first. `c_fmt()` turns a C printf format with `%llu`, `%lld` and `%u` into
+Python's `%d`, `%%` kept.
+
+The sample: 100 presents of the new form with intervals 16.0..16.99 ms, then one of 40 ms; the present call 0.1..1.09
+ms; the hand-off 2.0 ms each but one of 30 ms. Of the 101 intervals p50 is the 51st smallest (16.50), p99 the 100th
+(16.99), max 40.
+
+## `tests/pgo_build_test.py`
+
+The profile-guided build of `tools/make_game.py` and `tools/pgo.py`, with a stand-in for the compiler process. No game
+files.
+
+Which flags a build compiles with: a kit without an execution profile (the flags and keys it always had), a kit with
+one that fits (the lifted code at -O2 and every compile with the profile), a record that names another `recomp/`, a
+record that is missing or names none, a profile the compiler refuses in the trial compile, `NX2SARIA_PGO=off`, and an
+instrumented build (`NX2SARIA_PGO=gen`). The object keys: the same profile in a kit at another place keeps them,
+another profile changes them. `tools/pgo.py`: the record a merge writes names the `recomp/` a kit compares, a game
+built from another `recomp/` stops the merge, and a release refuses a profile of another tree.
+`tools/check_content.py` refuses profiles in a commit.
+
+- `Compiler` stands in for `subprocess.run` in `make_game.py`: it records every command, answers `--version`, writes
+  the object and the dependency file of a compile, and refuses a command with `-fprofile-use=` when `refuse` is set.
+- `PgoBuildTest.add_profile()` puts a profile in the kit's `data/` with a record that names the kit's `recomp/`
+  ('fits'), another one ('other'), none ('empty'), or without a record (None). `PgoBuildTest.commands()` gives (the
+  lifted code's command, a runtime file's) with the flags, without the compiler and the paths (up to
+  `-I <runtime> -o <object> <source>`). `PgoBuildTest.make_real_recomp()` makes the test kit's `recomp/` this
+  checkout's, so that what `make_game.py` records in the kit is what `tools/pgo.py`, which reads the checkout,
+  compares it with.
+- Without a profile there is nothing to try: no compiler runs, `pgo_tag()` is empty (the compile step's key is what it
+  was) and `pgo_salt('compiler', None)` is `'compiler'` (so are the object keys: the flags and the compiler's id
+  alone, the key a kit before profiles gave).
+- A fitting profile: one trial compile by each compiler that will read the file, the fast one with its sysroot. A
+  source checkout takes the profile from `build/pgo`, but a release's `data/` comes first.
+- A record of another tree leaves the profile out, decided before any compiler runs; the same record fits once the
+  kit's `recomp/` is the one it names, and not after the lifter changed again.
+- A profile the compiler refuses is left out: one compile says so, not every compile of the build; the second
+  compiler's refusal counts too.
+- `--pgo off` (`PGO_MODE` 'off') leaves a fitting profile out; `NX2SARIA_PGO` with a value that is no mode is as
+  without it.
+- An instrumented build counts into the game folder: what the game was built from goes beside the counts, and
+  `tools/pgo.py` reads it back. Build tools without the profile runtime stop an instrumented build; with the runtime
+  there is nothing to say.
+- A launcher update puts the kit into another folder: the same profile there keeps every object. Another profile, or a
+  build that leaves it out, compiles again (four objects each time: no profile, the kit brought one, another, left
+  out).
+- `PgoToolTest.profdata()` stands in for llvm-profdata. The merge's record is what `make_game.py` works out for a kit
+  with this checkout's `recomp/`: the profile fits such a kit.
+- `RealCompilerTest` uses the real compiler when MSYS2 UCRT64's clang is installed (and an llvm-profdata, when one is
+  found): a file that is no profile (a profile's first bytes and nothing after them) is refused by the trial compile,
+  a real one is taken. `TEXT_PROFILE` is one function with one counter, as llvm-profdata reads text.
+
+## `tests/pipeline_cache_file_check.py`
+
+Builds and runs `tests/pipeline_cache_file_check.c` on `runtime/vk/vk_cache_file.h`: the read of `pipeline-cache.bin`
+(`runtime/vk/vk_pipeline.c` `cache_load()`) with 64-bit sizes. The C program makes a sparse file just over 2 GB in the
+folder given as `argv[1]` (`build/test/pipeline_cache_file`; it takes no disk space, and about 2 GB of memory for the
+seconds the read lasts), with a marker at its start and at its end, and the Python side removes it. `HEADER` (32) is
+the size of the header every pipeline cache starts with (`VkPipelineCacheHeaderVersionOne`). The file helper writes
+`head` at the start, `tail` as the last bytes, and a hole between them.
+
+- No file: a first run, which is not a refusal. A file of a header alone holds no pipeline: refused with its size. A
+  small file: read whole.
+- Just over 2 GB: a 32-bit tell measures it as negative. Under a limit it is refused before any read, and its real
+  size comes back for the log line; with no limit, and with a limit above its size, it is read whole.
+
+## `tests/pipeline_list_test.py`
+
+`tools/pipeline_list.py` on made-up game folders: records folded once, a key whose shader the folder's answers do not
+name left out, the compute variants taken, a list made before as an input, `--mesh-only`, a folder of another record
+layout left out, the file read back, and what `tools/prepare_shaders.py` takes from a list for its seed. Also
+`tools/check_content.py` refusing such files in a commit. No game files; stdlib only.
+
+`REC` (464) is a `KeyRec` of the runtime that wrote the test's files: three ids, two flags, the state. `answer()` makes
+a `shader-answers.bin` record: stage, code hash, input id, 147 bytes of answers, the pad byte. The file the tool
+writes is the layout the runtime reads as it is (`pipeline-keys.bin`). `PipelineList.test_seed_variants()`:
+`prepare_shaders.list_variants` gives the variants of shaders the game version has, once, with the id left to the
+runtime; the case is skipped on an `ImportError`, since its shader inventory needs Python 3.14's `compression.zstd`.
+
+## `tests/platform_bulk_write_test.c`
+
+`plat_mem_prepare_write` on Linux (`runtime/platform/linux.c`): every page of a prepared range counts as written, a
+reset leaves it clean, and a later store to one page is still seen. No game files. It is built and run by hand from
+the repository root, and exits 77 when the write watch is not available on this kernel:
+
+```sh
+clang -O2 -ffunction-sections -fdata-sections -Iruntime -c runtime/platform/linux.c -o /tmp/plat.o
+clang -O2 -Wall -Iruntime tests/platform_bulk_write_test.c /tmp/plat.o -Wl,--gc-sections -lpthread -ldl -o /tmp/bulk
+/tmp/bulk
+```
+
+## `tests/platform_dmabuf_test.c`
+
+Guest memory as a memfd's (`runtime/platform/linux.c`, `NX2SARIA_DMABUF`): a dma-buf of a watched range maps the very
+pages the CPU writes; a decommit inside it zeroes them in place (the dma-buf still sees the CPU's pages), one outside
+it reads zero when committed again; the write watch keeps working. No GPU, no game files. Built like
+`tests/platform_bulk_write_test.c`, with this file and `-o /tmp/dmabuf`; exit 77 means no `/dev/udmabuf` or no write
+watch here. `memfd_bytes()` is the guest memfd's allocated bytes.
+
+- The write watch is read and reset until a call has fewer than it could take.
+- A dma-buf of the first 8 MiB maps the guest's own pages; a write through it, as a GPU write, is seen by the guest and
+  not by the write watch.
+- Protection changes (a freeze, an armed lazy range) leave the dma-buf alone.
+- A decommit inside the dma-buf: zero in place, the same pages for both. One that straddles the dma-buf's end: zero
+  both sides when committed again. One outside any dma-buf: the pages leave the memfd and read zero.
+- A dma-buf over pages nothing committed yet allocates them; when it is gone they go back, the committed ones stay.
+- Outside the reservation, or not whole pages: no dma-buf.
+
+## `tests/platform_linux_test.py`
+
+Fast checks for Linux platform services; no display, game data or build tools required. The repository root goes on
+`sys.path` for `launcher/`, when the file is run as `python tests/platform_linux_test.py`.
+
+- `UserDirsTest`: the desktop's own Downloads, Desktop and Documents folders (`user-dirs.dirs`), which a desktop set
+  up in another language translates: the dump search and Export Save look there too (`launcher/winsys.py`
+  `known_folder()`). A folder set to the home folder is turned off; with no file there, none.
+- `OtherDrivesTest`: the dump search also looks on the disks mounted under the system's mount folders (a partition
+  shared with Windows), and the dump and folder rows open the desktop's chooser, which reaches them. Only local disks
+  mounted now count: an autofs placeholder is not listed (listing it would mount the disk) while the disk itself,
+  mounted, is; a placeholder not mounted now, a network share and another account's removable disk are left alone;
+  SteamOS's SD card counts; the mount folder itself is no drive below it. The search goes two levels into a drive (a
+  file three levels down is not looked at; the report counts home, the drive, its folder and the 2 below) and stops in
+  time.
+- The desktop's chooser: a name that is no UTF-8 comes back as it is; a cancelled zenity does not ask kdialog too; on
+  KDE its own comes first; a broken zenity (255) falls to kdialog. The chooser says in the log which it was and what
+  it gave. "All files" stays in the filter: the desktop's patterns are case-sensitive, and `GAME.NUP` would not match
+  `*.nup`.
+
+## `tests/platform_restart_mask_test.c`
+
+`plat_restart` on Linux (`runtime/platform/linux.c`): the game it starts may run on every processor this one could
+before `plat_cpu_reserve` took a core for the recording thread, whichever thread asks for the restart. No game files.
+Built like `tests/platform_bulk_write_test.c`, with this file and `-o /tmp/restart_mask`; exit 77 means this machine
+has no core `plat_cpu_reserve` would take. The test starts itself again through `plat_restart`; that copy (it sees
+`NX2SARIA_RESTART_WAIT`) only writes how many processors it may run on, and the test waits up to 5 s for what it
+wrote (-1 when it never came). The restart is asked for from a thread that existed before the core was taken, as the
+game's main thread does, and from the thread that holds the core.
+
+## `tests/platform_stand_ins.py`
+
+Not a test: the stand-ins the tests that link the platform layer alone build with (`tests/platform_stand_ins.c`), so
+they need neither the rest of the runtime nor SDL3's development files: the platform layer's own calls out are
+answered there. `stand_ins()` gives the compiler arguments that add the stand-ins to a build in the folder `work`: its
+include folder and source; `include()` those for the stand-in SDL3 header, written under `work`, the one SDL3 header
+`runtime/platform/linux.c` includes, with the calls it makes.
+
+`tests/platform_stand_ins.c` stands in for what the platform layer (`runtime/platform/linux.c`,
+`runtime/platform/win32.c`) calls outside it: the settings' environment read (`runtime/cfg/cfg.c` `cfg_env()`), as
+`cfg.c` has it for a name outside the settings' prefixes (the environment's own value), and, on Linux, SDL's clipboard
+(`plat_clipboard_set` / `plat_clipboard_get`): no clipboard, so a set fails and a get finds nothing.
+
+## `tests/play_gate_check.py`
+
+Builds and runs `tests/play_gate_check.c` on `runtime/vk/vk_play_gate.h`, the play gate of the background pipeline
+builds (`runtime/vk/vk_pipeline.c` `play_rest()`): they rest while the frame shown in play has `bg_build_play_draws`
+draws or more and was shown within half a second, never in a light moment (an area load, the boot screen's warm, a
+preparation) or with the setting at 0; and what the log's line "background builds paused in play: N frames, M builds
+deferred" counts. Without the differential tests' packages (an `ImportError`) it makes the same compiler choice
+without them.
+
+What the builders do at rest, and what it changes in the frame rate, shows only in a run: the start's line "background
+builds rest in play", the line above at each save in play, and [performance.md](../performance.md) ("Background builds
+in play") for a measurement with `tools/bench.py`. `LOG_LINES` are the log's lines a run is checked by, as the formats
+in the runtime's source; `log_lines()` returns 0 when each is in the runtime's source as its format string, adjacent
+string literals read as one.
+
+- The game in play: a frame of 2,850 draws shown 16 ms ago. Builds rest. At the threshold they rest, one draw under it
+  they go on: a menu, the pause screen, the title.
+- No frame shown for `PLAY_GATE_SHOWN_MS`: a load or a hang, not play. Builds go on.
+- A light moment whatever the frame: an area load, the boot screen waiting for the warm, a preparation.
+- The setting at 0: they build in every frame, as before. A setting of 1: every frame shown in play is heavy.
+- The counts: a session where two builders rest over three heavy frames with 5 queued builds, a third queued during
+  the rest, then a light frame lets them go on. A heavy frame while nobody rests yet is not counted; the first builder
+  finds the queue's 5 builds, the second finds them counted already; a light frame is not counted.
+- The line comes when the counts moved, and once for them. More ends than begins never leave a negative count of
+  builders at rest, which would count no frame again.
+
+## `tests/present_held_check.py`
+
+Builds `tests/present_held_check.c`: `runtime/pacing/vk_present_held.h`, the present that waits for held work, with
+one presenting thread and three submitting threads. Every frame must reach the present callback exactly once and in
+frame order, never two callbacks at once, and a submitting thread must never wait for the lock. The argument `old`
+runs the unlocked check-then-clear of 0.10.1 (`vk_backend.c` `ph_flush` before `vk_present_held.h`) through the same
+harness and only prints what it sees, to show that the harness catches the race.
+
+- The stand-in for `runtime/vk/vk_backend.c` `ph_out()`: `present_image`'s work is the spin, the window a second caller
+  would fall into. The stand-in for `ph_why_after()`: out when nothing is held any more, or `PH_MAX` submissions after
+  it began to wait.
+- `stress()`: `FRAMES` (200000) is the least; the stress goes on until both threads have put held presents out. Held
+  presents went out from a submitting thread (after the work or at `PH_MAX`) and from the presenting one (at the next
+  present), so the lock was in the way of both. How soon that happens is the scheduler's: the stress runs until it has
+  (`FRAMES_MOST` at the most), not for a fixed count. `PH_MAX` alone takes 8 submissions in a row that leave work
+  held, which a machine with few cores schedules rarely: `steps()` checks it. In the loop an odd step clears `held`
+  (`held_resume` ran what it could), and the other branch is `vk_be_present`'s synchronous one.
+- `steps()`: one thread, step by step. `PH_MAX` submissions after it began to wait put a present out though work is
+  still held.
+- `contended()`: the lock held elsewhere: a submitting thread does not wait, the presenting thread waits and is
+  counted (the present is armed, another thread holds the lock and puts the held present out).
