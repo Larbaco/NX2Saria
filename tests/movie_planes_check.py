@@ -197,7 +197,7 @@ def main():
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     src = (ROOT / 'runtime' / 'hle' / 'ov_movie2.c').read_text(encoding='utf-8')
-    body = cut(src, '#define DEBAND_THRESH', '\n// Queues a decoded picture, waiting while the queue is full')
+    body = cut(src, '#define DEBAND_THRESH', '\nstatic void deliver(')
     with tempfile.TemporaryDirectory(prefix='nx2navi-movie-planes-') as tmp:
         c = Path(tmp) / 'check.c'
         c.write_text(HARNESS % body, encoding='utf-8')
