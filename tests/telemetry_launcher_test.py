@@ -484,6 +484,9 @@ class WindowTest(WindowBase):
         self.assertEqual(self.app.screen, 'consent')
         self.assertEqual(self.label(), 'Send')                                # the default: Enter sends
         self.assertEqual(self.app.consent_desc()['title'], 'Help improve NX2Saria?')
+        left = self.app.question_deadline - time.monotonic()
+        self.assertTrue(telemetry.QUESTION_SECONDS - 20 < left <= telemetry.QUESTION_SECONDS, left)
+        self.app.question_deadline = time.monotonic() + telemetry.QUESTION_SECONDS
         self.assertIn(f'turn on in {telemetry.QUESTION_SECONDS} s or when you close this window', self.question_line())
         self.assertIn("Choose Don't Send to keep them off", self.question_line())
         self.assertEqual(self.server.hits, [])
