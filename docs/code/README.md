@@ -162,7 +162,9 @@ The licence lines of a run of comment lines (or of a docstring), by paragraph: a
 ("Permission is hereby granted", "THE SOFTWARE IS PROVIDED", an SPDX line, the zlib terms) is kept whole; a
 "Copyright (c) ..." notice is kept from the start of its sentence to the end of that sentence or the line that names
 `THIRD_PARTY_NOTICES.md`; the sentence may start on a line above, unless the notice's own line starts it ("Contains
-code", "Portions", "Copyright"). Empty comment lines next to a kept line are kept with it.
+code", "Portions", "Copyright"). A line that names a licence and that licence's file, as in "(MIT, ffx/LICENSE.txt)",
+is kept when the file is there, looked for beside the source and from the top of the repository; a path that leads
+nowhere keeps nothing. Empty comment lines next to a kept line are kept with it.
 
 #### `classify()`
 
