@@ -1001,8 +1001,10 @@ string literals read as one.
 
 ## `tests/present_held_check.py`
 
-Builds `tests/present_held_check.c`: `runtime/pacing/vk_present_held.h`, the present that waits for held work, with
-one presenting thread and three submitting threads. Every frame must reach the present callback exactly once and in
+Builds and runs `tests/present_held_check.c`, with `stand_ins()` of `tests/platform_stand_ins.py` for what the
+platform layer calls outside it: `runtime/pacing/vk_present_held.h`, the present that waits for held work, with one
+presenting thread and three submitting threads over 200,000 frames, in which each reason a held present goes out must
+occur. No GPU, no game files, any Python. Every frame must reach the present callback exactly once and in
 frame order, never two callbacks at once, and a submitting thread must never wait for the lock. The argument `old`
 runs the unlocked check-then-clear of 0.10.1 (`vk_backend.c` `ph_flush` before `vk_present_held.h`) through the same
 harness and only prints what it sees, to show that the harness catches the race.
@@ -1020,3 +1022,434 @@ harness and only prints what it sees, to show that the harness catches the race.
   still held.
 - `contended()`: the lock held elsewhere: a submitting thread does not wait, the presenting thread waits and is
   counted (the present is armed, another thread holds the lock and puts the held present out).
+
+## `tests/preset_check.py`
+
+Builds and runs `tests/preset_check.c`: the quality presets, `runtime/cfg/preset_pick.h` (the tier made-up hardware
+gets, the handheld names, what each tier sets) and `runtime/cfg/cfg.c`'s preset layer (`cfg_start`'s choice, the state
+file, the menu's calls), with stand-ins for what `cfg.c` links against (`tests/preset_check_stubs.h`). No GPU, no game
+files. The C program has three modes:
+
+- `pure`: `preset_pick.h` alone; prints "ok:" or "FAIL:" per check. The tier made-up hardware gets (the bench PC's RX
+  6700 with 10 GB, 16 threads and 32 GB is high); the three PCs [presets.md](../presets.md) names: the bench PC, a
+  laptop (its log: 6017 MiB, RAM 16087 MiB) and a player's RX 6650 XT with a Ryzen 5 4650G, whose integrated graphics
+  keep part of the 16 GB. Ultra is never recommended: any type, mesh shaders or not, up to 96 GiB of video memory, any
+  RAM and processors. What the GPU runs; the handheld names, as Linux's DMI tables and Windows' registry give them;
+  what each tier sets, over a spread of hardware (high nothing, no tier frame generation, DLSS and FSR 4 only below
+  high and only on the cards that run them, a frame-rate limit only on an integrated GPU or a handheld and never above
+  60); fingerprints.
+- `values <dir>`: every value any tier gives any key on any hardware, read by `cfg.c` as the settings file's and as a
+  Ctrl+F5 reload's; prints "FAIL:" for a value outside its setting's choices. The values do not depend on the
+  hardware, only whether a row applies. `cfg_load` logs a value outside its choices; then a reload of a file without
+  it and with it shows what a reload accepts (`cfg.c` `value_ok`).
+- `run <dir> ...`: `cfg_init` and `cfg_start` with the settings file and state file in `<dir>` and the hardware in
+  `NX2SARIA_TEST_HW` (with `NX2SARIA_TEST_TOOL` set, as a tool mode starts: `runtime/main.c` `game_run()`), then the
+  actions after it: `use=<tier>`, `chosen`, `set=<KEY>=<value>` (`cfg_set`, as the menu's Apply does), `save` (the
+  menu's save after its Apply), `ini=<text>` (the settings file's new text, for a reload after it), `reload`, `notice`
+  (the menu shows the notice when it is due), `handoff=<tier>` (the menu's Apply of a preset choice: the values
+  before, the keys set by hand reset, the switch), `device` (the game has chosen its Vulkan device,
+  `hw_detect_device_check`). It prints every line `cfg.c` logs ("log: ...") and what the readers get ("got: ..."),
+  among them the keys choosing the tier in use in the menu hands back (`runtime/ui/option_rows.cpp`
+  `opt_preset_handback()`, outside a draft): the keys it sets that the player sets to another value, the environment's
+  aside.
+
+What `tests/preset_check.py` `main()` runs through `run` (`run()` there starts in a folder of its own, or in one kept
+from an earlier run; `get()` reads what "got: <what> ..." says in the n-th report, 0 after the start, 1 after the
+first action):
+
+- The layer's place: the player's keys, the environment's first, win, the device profile next, then the preset, then
+  the table. The device profile's value wins over a tier's for one key through a test-only profile row
+  (`CFG_TEST_DECK_ROW`): the Steam Deck's value for a key Low also sets, with another value (`standin_filter` easu,
+  Low bilinear).
+- The bench PC: high, which sets nothing; the state file is written once, and not again while nothing changed (only
+  when its text changes, never `nx2saria.ini`; blank lines; a GPU missing a line).
+- A GTX 1650: low; a key of the settings file wins over the preset and makes it custom. An ordinary setting of the
+  environment beats the preset, is never handed back, and makes it custom.
+- The menu's switch: values and their log lines, restart-only ones pending, the version bumped.
+- A tier the player chose: kept, recorded as chosen on this PC, logged against the recommended one. New hardware: the
+  chosen tier gives way to the recommended one until the player chooses again (in the menu or by editing the line,
+  Ctrl+F5). A state file of the older form, its fingerprints in MiB, on the same PC. A tier in the environment wins
+  over the new-hardware rule. Ctrl+F5 after an edit of the preset line on new hardware: the player's choice here.
+- No probe (`preset_probe` = 0, or one that cannot run): the last probe's GPU, else nothing known (high). A probe that
+  never returns (a driver's crash): the probing mark stays, and later starts go by the last result.
+- RAM caps: an RTX 4060 with 12 GB is medium, through DLSS quality.
+- The laptop and its settings file: its own lines keep their values, and a preset chosen in the menu hands back
+  exactly the ones a tier sets on this card (`fps_limit`, `framegen` and `upscaler` are no preset's here).
+- The Steam Deck: low below the device profile.
+- A value that is no tier, and a reload of the preset line. Ctrl+F5 after the menu switched: the file's line against
+  the one in memory, not the tier at start.
+- A tool mode: no probe, the last probe's GPU, no state file written. A state file of garbage: read without harm, no
+  GPU taken from it.
+- The one-time notice (`cfg_preset_notice_due`, the state file's noticed line): due while the player never chose and
+  this PC gets another tier than high; once.
+- The menu's calls (`cfg_preset_use`, `cfg_preset_chosen`, `cfg_preset_custom`, `cfg_preset_use_from`,
+  `cfg_default_tier`, `cfg_preset_differs`); the menu's Apply of a preset choice: defaults of a tier, keys that
+  differ, and the log from the old values.
+- The menu's draft (`tests/preset_draft_check.cpp`, built by `build_draft()` with `runtime/ui/option_rows.cpp`,
+  `runtime/ui/ui_text.c`, `cfg.c` and Dear ImGui, whose objects are kept in `build/test/preset-imgui` between runs):
+  a staged tier's values in the rows (`opt_value`, `opt_get`, `opt_default`), the handback (only the keys the chosen
+  tier sets, to another value than the player's), and Apply (`opt_draft_apply`). Low, Ultra, Low again: Ultra hands
+  back the `game_res` = 1080 the player set, and Low gives it 1080 again. Apply removes the line but neither counts
+  nor lists it as a change, nor says it waits for a restart.
+
+## `tests/preset_check_stubs.h`
+
+Stand-ins for what `runtime/cfg/cfg.c` links against, for the quality preset tests: `tests/preset_check.c` (C) and
+`tests/preset_draft_check.cpp` (C++, with `runtime/ui/option_rows.cpp`). It defines them: include it in one file of a
+program, after `cfg.h`, `hw_detect.h` and `platform/platform.h`.
+
+`rt_log` prints "log: <line>"; `plat_file_write_atomic` prints "write: <path>" and writes the file in place; a thread
+(`plat_thread_spawn`) runs its function at once on the caller's, so a test sees what it wrote when the call returns.
+
+`hw_detect()` gives the hardware `NX2SARIA_TEST_HW` describes, "field=value" between commas: `name`, `vendor`,
+`device`, `driver`, `type` (discrete, integrated, cpu, other), `vram` (MiB), `mesh`, `cores`, `threads`, `ram` (MiB),
+`hand` (a handheld's name), `skip` (the probe does not run: the GPU fields stay empty for `cfg.c` to fill from the
+state file, which is what the real `hw_detect` leaves), `win` (FSR 4 counts), `crash` (the probe "crashes": the
+process ends with code 9 right after `before_probe`, as a driver's crash would end it). Without a name, no GPU. A
+`no_probe` reason from `cfg.c` skips the probe as the real one does; else `before_probe` runs first.
+
+## `tests/preset_draft_check.cpp`
+
+The quality preset in the settings menu's draft: `runtime/ui/option_rows.cpp` (`opt_value`, `opt_get`, `opt_default`,
+`opt_is_set`, `opt_preset_tier`, `opt_preset_handback`, `opt_draft_apply`) over `runtime/cfg/cfg.c` with made-up
+hardware, no window and no GPU. Built and run by `tests/preset_check.py`; `option_rows.cpp`'s rows draw with Dear
+ImGui, but nothing here draws. The stand-ins for what `cfg.c` links against are in `tests/preset_check_stubs.h`; the
+menu's skin, sounds and the renderer's restart questions, what `option_rows.cpp` and `ui_text.c` ask of the rest of
+the game, are stand-ins in the file. `PerfSizes` is only declared: it is `host.h`'s, a C-only header that pulls in
+`cpu.h`, and the stand-in for `perf_size` only passes a pointer on.
+
+`preset_draft_check <dir> <action>...` runs `cfg_init` and `cfg_start` with the settings file in `<dir>` and the
+hardware in `NX2SARIA_TEST_HW`, then each action:
+
+- `stage=<tier|recommended>`: what `runtime/ui/menu.cpp` `preset_stage()` does when the player picks that entry of the
+  Quality preset row: the preset key, then "" for each key `opt_preset_handback` hands back (`tier_of()` gives -1 for
+  recommended).
+- `set=<KEY>=<value>`: a row writing a key (`opt_apply`; "" unsets it).
+- `apply` / `discard`: `opt_draft_apply` / `opt_draft_discard`.
+
+After the start and after each action ("--- after <action>") it prints "got: ..." lines: the staged tier, the handback
+for every tier, and for each key of `cfg_preset_keys` what `opt_value`, `opt_get` and `opt_default` give.
+
+## `tests/private_paths_test.py`
+
+`tools/private_paths.py`: the account's folders written short in what the launcher and the build tools write for
+people (`launcher.log`, `crash.log`, Copy Report, the AppImage's `build.log`, the bug report zip), with the same rules
+as the game's log (`runtime/log_privacy_core.h`, `tests/log_privacy_check.py`).
+
+Windows and Linux rules on any system (an environment and a system given to `Shortener`), accents and spaces in the
+account's name, an account whose folder starts the same, a domain profile (the folder `<name>.CORP` keeps its
+suffix), the name alone inside a path but not inside another word nor in text without a path, the switch
+`NX2SARIA_LOG_SHORT_PATHS=0`, and the launcher's log and bug report zip. Many names in a long text: each one reads
+only the run around it (a bug report's 64 MiB log).
+
+## `tests/prompts_record_check.py`
+
+Builds `tests/prompts_record_check.c` with `runtime/input/input_map.c` and runs it on a temporary folder: the game
+folder's record of where its button prompts came from (`button-prompts.txt`; `runtime/input/input_map.c`
+`input_prompts_record()`, which `runtime/hle/romfs.c` `overlay_init()` logs as "button prompts: ...";
+`tools/make_game.py` `record_prompts()` writes the file). The reader gives its first line without the line end, cut
+short to the buffer (a line longer than the buffer ends inside it), and 0 for a folder without the record or with an
+empty one. No game files. The stand-ins are what `input_map.c` needs from the rest of the runtime; none of it is
+reached from `input_prompts_record()`. `runtime/simd_fp.h` `FOK` ors two compares on purpose, and clang 18 warns on
+it. The `--help` text is the string `DESCRIPTION`.
+
+## `tests/prp_file_check.py`
+
+Builds and runs `tests/prp_file_check.c` on `runtime/gfx/prp_file.h`: the layout of `shader-prepared.bin` with what
+the list was prepared from. The C side checks the parse and then writes a version 2 list into the folder given as
+`argv[1]`, whose head `tools/make_game.py` `prepared_from()` then reads, so the game's writer and the build's reader
+cannot drift apart. No game files, no GPU.
+
+- Version 2: the head, then three records. A cut last record is not counted. The head alone, or less: no list.
+- Version 1: records right after the 16 bytes, and nothing about where they came from.
+- Another version, record size or magic: not read.
+
+## `tests/rebrand_compat_test.py`
+
+Branding transitions preserve update discovery, private reports, shortcuts and existing installs. No game files.
+
+- The launcher renames a legacy settings file; with both there, `nx2saria.ini` is the file and `nx2navi.ini` is left as
+  it is; a fresh folder gets `nx2saria.ini`, nothing renamed.
+- Both update manifest names discover current payloads: the test uses the Windows manifest's two names, so the feed
+  looks as on Windows; Linux has a manifest of its own.
+- Both PGO build flags keep the runtime flush; `runtime/platform/linux.c` includes SDL3's clipboard header, for which
+  the stand-in `tests/platform_stand_ins.py` writes will do.
+
+## `tests/release_files_test.py`
+
+`tools/release_files.py`: what the release workflow (`.github/workflows/release.yml`) refuses before it attests and
+publishes, and the release page text. Standard library only, so the content guard workflow runs it. `release()` makes
+a folder with the files the Windows and Linux builds hand to the release workflow. A good release gets its sums, also
+on a second run over its own `SHA256SUMS.txt`; a pre-release's body holds "Pre-release" once, the notes' own line
+only, no second one on top.
+
+## `tests/replay_hazard_check.py`
+
+Builds and runs the replay hazard probes on the real runtime sources, on Linux, without game files or a GPU:
+`python tests/replay_hazard_check.py --vma-include <vma-dir> --work <scratch-dir> [--tsan]`. The `--help`
+description is the string `DESCRIPTION`.
+
+- `tests/usnap_order_check.c` (`runtime/vk/vk_usnap.c`): the order of uniform snapshot drops between replay chunks.
+  Barriers force a drop to run after a later chunk's lookup (stale) or before an earlier chunk's lookup (early); each
+  forced order must read the wrong value and each control the right one. With `--tsan` it is also built with
+  ThreadSanitizer, which reports nothing there: the barriers order every access, and the fault is the order itself.
+- `tests/vkmem_lifetime_check.c` (`runtime/vk/vk_memory.c`, AddressSanitizer): a pool record used across the pool's
+  finalize, and mirrors used while idle ones are evicted. The protocol as it is must hold; its controls, with the
+  protection taken out, must fail (a use after free, a use without a buffer).
+
+`vk_memory.c` includes the runtime's shader headers: build them first (`python tools/build_shaders.py`, into
+`runtime/`) or pass a build's folder that has them with `--spv-include`. The bench uses Clang 20; pass its path with
+`--cc` if needed.
+
+## `tests/romfs_check_test.py`
+
+`tools/romfs_check.py` on a small made-up game: damaged files are found, a damaged texture gets a stand-in with its
+own name inside, and a clean copy leaves nothing behind. No game data. `sarc()` writes a SARC archive: little endian,
+the file table, then the names, then the data.
+
+## `tests/romfs_packer_test.py`
+
+RomFS read-ahead and packing with synthetic files. In the layout case the read-ahead limit is lowered so the tiny
+files span several worker groups.
+
+## `tests/romfs_prompts_test.py`
+
+`tools/make_romfs_patches.py --prompts` and `tools/button_icons.py` on a RomFS made in the test, with no game files:
+each prompt names the label of the Xbox button that the pad layout presses; the shoulder buttons, triggers, Plus,
+Minus and the d-pad are drawn as on an Xbox controller; the PC prompts draw every button as its key or mouse button
+(the defaults or a `nx2navi.ini`'s `bind_` lines); the resource size table grows with the fonts; every other file and
+member stays byte for byte; the same input gives the same output; and a RomFS the tool does not recognise fails before
+it writes anything. Both game versions: 1.2.1 (`Common.Product.110`, 72x72 button guide images) and 1.4.3
+(`Common.Product.140`, 108x108). It runs with the Python 3.14 environment.
+
+Tables at the top: the face button each Switch button is in a pad layout ([controls.md](../controls.md),
+`runtime/input/input_map.c`), the label an Xbox pad prints on it, and the layout each overlay is made for
+(`runtime/input/input_map.c` `input_prompts_folder()`); the glyphs drawn as Xbox icons, with their advance (LB RB LT
+RT, Menu and View, the d-pad); the resource size table's name after its version, in both forms the tool takes.
+`IMAGE` (16384) is an R8 square up to 128 rows, two GOBs wide, block height 16: the size of the game's key images.
+
+The formats are written in the test from their layout, so the tools' readers are checked against an independent
+writer:
+
+- `bflan()`: a FLAN whose `pai1` section steps each pane's visibility from 0 at frame 0 to 1 at frame 1;
+  `visibility()` reads pane -> [(frame, value)] back.
+- `bntx()`: a BNTX of single-mip square textures, name -> (format, size, image), block height 1 << 4 GOBs;
+  `bntx_images()` reads it back, names without the `^` suffix.
+- `bflyt()`: a FLYT with one `txt1` section per pane (name -> text) after a `pan1` section.
+- `msbt()`: a UTF-16 MSBT: one `LBL1` group with every label, then `TXT2` (label -> text).
+- `restbl()`: a RESTBL keyed by the CRC32 of each path without `.zs` (path -> size).
+- `bfotf()`: a `.bfotf` as `tools/button_icons.py` `bfotf_encode()` writes it: 32-bit words XORed with the key; its
+  first word is the key XOR `MAGIC` (0x18029a7f).
+- `rect()`: a rectangle, counter-clockwise (filled, the CFF way) or clockwise (a counter). `cff_font()`: a CFF OpenType
+  font with a 1000-unit em: code point -> (advance, draw(pen)). Every button glyph gets a distinct rectangle and
+  advance, so a glyph that moved is found by its outline. The other characters the PC prompts' keys show
+  (`button_icons.PC_LABELS` of the defaults) are a block with a counter, each its own size. `PC_PANES` holds the
+  diamond's letters with the default keys.
+- `Romfs`: a RomFS (`romfs.bin`, `index.json`) holding the files `make_romfs_patches.py` reads (RomFS path -> contents
+  before compression), the originals kept to compare. An older version's resource size table is there too and is left
+  alone. The same font sits under another key: drawn once, stored under each archive's own key. The regional font and
+  the two tables are stored without a dictionary. `Romfs.read()` gives the overlay's file, decompressed. `glyph()`
+  gives (outline, advance) of the glyph of a code point.
+
+`PromptsTest.each()` yields (RomFS, style, overlay folder, summary) of every run of the styles. The face buttons name
+the Xbox label of the button pressed (Switch button -> the label of its button); text that only looks like a letter
+pane, and every other message, stays. In the Xbox icons the letters are holes in the key: LB is the key, L, and B with
+its two counters; RT is the key, R with its counter and T (four contours); d-pad up is the cross and the arrow (two).
+The text fonts and the archives' other members stay byte for byte; both archives hold the same font. The button guide
+images show the same icons, a margin around a white key; the 60 fps patch and the prompts touch only these members.
+The PC prompts hold the left stick's W A S D (0xE05E), and a key's label is a hole: E is the key, the block and its
+counter.
+
+## `tests/rt_knob_check.py`
+
+Builds and runs `runtime/diag/perf.c`'s `rt_knob` (cut out of the file with its warning table: `cut()` takes `perf.c`
+from the warning table's `#define` to the end of `rt_knob`) with stand-ins for the settings and the log. 0, 1 and
+`ab` read as before and log nothing; `false`, `off` and `no` in any case read as 0 and `true`, `on` and `yes` as 1,
+without a line; any other value, such as "0 ; a note" from the environment (the settings file's loader cuts that
+comment) or "enabled", reads as 1 and is logged once per switch, however often the switch is read. No GPU, no game
+files, any Python.
+
+## `tests/rtss_limit_check.py`
+
+Builds and runs the checks of `runtime/pacing/rtss_limit.c`, RivaTuner Statistics Server as the frame limiter
+([building.md](../building.md#checks) lists the scenarios). `tests/rtss_limit_check.c` builds
+`runtime/pacing/rtss_decide.h` alone, the parts that make no system call, on any system. `tests/rtss_worker_check.c`
+(Windows only, skipped elsewhere) compiles the real `rtss_limit.c` against a fake RTSS and runs each of its scenarios
+in a process of its own. The Python file checks statically that a crash and a fatal error (`runtime/main.c`
+`crash_handler()`, `runtime/dispatch.c` `fatal_end()`) leave RTSS's profile to the next start through
+`rtss_limit_crash`, which calls into RTSS's library only through the orderly restore and only when the state file
+holds no line of the run. No GPU, no game files, no RTSS, any Python.
+
+### `tests/rtss_limit_check.c`
+
+The first tables are RTSS's own settings (which of them hold the game's frames, and the log's text of them) and the
+kept-out reasons, for the log.
+
+- The fake `RTSSSharedMemoryV2`: the header and application entries written as RTSS lays them out
+  (`RTSS_SHARED_MEMORY_APP_ENTRY`: `dwFlags` after the 260-byte path). `parse()` checks `rtss_parse`: where the entry
+  is, and that a bad header, a short entry or an array past the memory finds nothing; entries of the smallest size,
+  ours the last that fits, are found, and past the memory's end nothing is read; with more than `RTSS_APPS_MAX`
+  entries the walk stops there.
+- The fake profile behind `RtssOps`: `refuse_above` (RTSS refuses a limit above this, in millihertz; 0 none), `holds`
+  (the limit the profile holds from this run; -1 none). RTSS as the worker sees it: polls 500 ms apart; while it runs,
+  lists the game and counts (`counting`) it measures a period of a second every second poll, with `frames` frames in
+  it (the frame rate); the game presents (`presenting`) and the newest host present is a millisecond before the poll,
+  else it stays where it was (0: none yet); `movie_mhz` is the rate a movie plays at (`rtss_limit_movie`). One poll
+  for a want is made as `rtss_limit.c` `worker()` makes it: the hooks library loads on the first poll that wants it
+  and stays.
+- `injection_delay()`: RTSS runs but has not hooked the game for 30 polls. The limit goes into the profile at the
+  second poll (the first sees the want new), with no second write. Once RTSS lists the game the game's limiter stands
+  aside only after RTSS has seen its Vulkan presents (flags 0x7 is another API's value), read the profile and measured
+  a period of its frames lately.
+- RTSS quits while it limits, and comes back: the profile stays for its return. Profiles under Program Files without
+  administrator rights: out for the run.
+- `refused()`: a limit out of RTSS's range is refused and kept by the game; the earlier limit of this run is cleared
+  to none; a limit in range goes to RTSS once it stays. Refused as the run's first write: the profile is the run's
+  from then on.
+- `frame_count()`: RTSS's own frame count. Each fresh period after a poll that stood aside is checked, and more than
+  1.05 times the limit for three of them in a row puts the profile back for the run. 69 fps at 60 (1.15 times) is
+  caught, 63 (1.05 times exactly) is not; a period RTSS no longer moves (the player lowered the limit and minimised
+  the window) counts neither way; no limit and not listed never count. Two periods over, then one under: the count
+  starts again. A want that changed while the poll ran: nothing decided, the count waits.
+- `unproven()`: RTSS lists the game with the limit in its profile and pictures go out, but never shows its hold: it
+  may hold the frames beside the game's limiter, so after `RTSS_UNPROVEN_POLLS` such polls in a row the profile goes
+  back once, for the run. Each sign that never comes counts; a minimised window, RTSS not hooked and no limit do not
+  count, and one poll that shows the hold starts the count again.
+- `idle()`: no picture went out for 200 ms (a minimised window, a frame hold) or none yet: RTSS has nothing to hold,
+  and the game's limiter takes the limit back until pictures go out again (a poll 199 ms after the last present is
+  not yet idle). Before the first picture nothing is written.
+- `kept_out()`: kept out and let in again: the first kept-out poll puts back what the run wrote, once; a limit
+  afterwards is written at once and is the run's first write again. Kept out from the start: the hooks library is
+  never wanted, and nothing is written or put back.
+- `churn()`: low latency switching on and off at every poll (a swapchain rebuild, the time before the first
+  swapchain): the want never stays two polls, so the profile keeps the limit written before, and the game's limiter
+  holds the frames while the want is new. From the start, the same flips write nothing. A flip every two polls is a
+  want that stays: each one acts.
+- `movie()`: under RTSS the want stays the play limit and the game's pacer holds the movie. At a limit of 144 the
+  profile keeps 144 through it, with no write; under the movie's rate (40) the profile has no limit for the movie's
+  length, so RTSS does not hold the movie below its rate, and gets 40 back at its end; at the movie's own rate (60,
+  the default limit) the profile keeps 60 through the movie, with no write: RTSS holds the movie beside the pacer, as
+  `rtss_target` says.
+- `unset_and_library()`: no want yet: nothing at all. The hooks library that does not load fails the run; while RTSS
+  is not running the library is not wanted. (A run whose exit put the profile back makes no decision: `rtss_limit.c`
+  `worker()` skips the poll, which the `restore_*` scenarios of `tests/rtss_worker_check.c` check.)
+- Two limiters: RTSS out of the game's limit (kept out, or a profile that cannot be written or a hooks library that
+  did not load), listed and a limit of RTSS's own; never for a limit the game hands RTSS.
+- The period the game's pacer keeps beside RTSS: the ceiling while RTSS holds and host presents go out, the limit's
+  own otherwise; never 0.
+- `saved()`: the state file (`rtss-profile.txt`): its lines, the file's text as the worker rewrites it, and what a
+  start does with a line that a run which did not close left behind. A line is found past a comment, a malformed line
+  and another profile's line, whatever the case of its letters. Rewritten: ours replaced, the other kept, the
+  malformed line and comments dropped, the header first. What a start does: run A made the profile and wrote 60/1, and
+  was killed: B finds 60/1 and removes the profile. A run that wrote 60/1 and then 144/1 ended between the line and
+  the profile's change, or after it: the profile holds 60/1 or 144/1, both the game's; anything else is the player's.
+- The profile's values for a limit: whole rates as they are, a fraction over 1000 where RTSS knows the denominator,
+  else rounded down, so "display" at 59.94 Hz never holds the game above the refresh.
+
+### `tests/rtss_worker_check.c`
+
+The real `runtime/pacing/rtss_limit.c` against a fake RivaTuner Statistics Server: the Win32 calls it makes go to the
+fakes in the file (its folder in the registry, its hooks library with the profile calls, the profile files, the shared
+memory `RTSSSharedMemoryV2`), and its worker thread polls when a scenario says so (`plat_sleep_ms()` on that thread
+signals that a poll ended and waits for the next one to be started). Each scenario
+(`rtss_worker_check <scenario>`) runs in a process of its own, since `rtss_limit.c`'s state lasts the process, with
+the state file (`rtss-profile.txt`) in a folder of its own beside the program (`rtss_state\<scenario>`, emptied
+first); the kill scenarios run two more processes of it (`--phase`), a run that is killed and the next start, which
+share the fake profile through a file there. Windows only. It prints the log and each failed check.
+
+The fakes:
+
+- The profiles: Global, and the game's own `Profiles\ocarina.exe.cfg`. `LoadProfile` copies one into the loaded copy
+  (Global for a name without its own), `SaveProfile` writes the loaded copy as the game's own. Each `[Framerate]` key
+  `rtss_limit.c` reads is a field (`limit` and `denom` are `FramerateLimit` and `FramerateLimitDenominator`: `Limit`
+  and `LimitDenominator` in the file); `stamp` is the file's write time, which every change moves on. Switches:
+  `no_denominator` (an RTSS that does not know `FramerateLimitDenominator`), `readonly` (`SaveProfile` does not reach
+  the file: no administrator rights), `refuse_over` (RTSS refuses a limit above this many frames a second; 0 none),
+  `no_library` (`LoadLibraryA` fails), `calls` (every call into the fake hooks library), `during_save` (runs inside
+  the next `SaveProfile`, once). `GetModuleFileNameA` is undefined again for `main()`: this program's own path, not
+  the game's.
+- The shared memory: the header and one application entry, this process's (listed) or another's. RTSS's clock and the
+  game's presents as `rtss_limit.c` reads them: each `poll()` comes 500 ms after the one before, RTSS measures a new
+  period of the game's frames at each (`counting`), and the game presents a millisecond before it unless a scenario
+  stops that (`presenting`).
+- The registry and file calls the thread that asks for a limit makes itself are counted: a present must make none.
+- `host.h` and `platform.h`, as far as `rtss_limit.c` uses them: `quiet` (the stress scenario: no lines kept or
+  printed); the state file next to the executable is the scenario's folder, with `state_readonly` (it cannot be
+  written), `state_unreadable` (it is there but does not read: another program holds it) and `no_exe_path` (the
+  executable's path is unknown: no state file at all); `state()` gives the state file as it is now, "" when there is
+  none; `pause_at_lock` stops the worker's next `plat_mutex_lock` before it takes the lock; `free_run` lets the worker
+  poll without waiting.
+- The scenarios' steps: `poll()` is one more poll of the worker, waited for; `ask()` is a want at a present (the first
+  one, which starts the worker, waits for its first poll, or for its end when it finds no RTSS); `settle()` is a new
+  want, then the polls it takes to reach the profile (`RTSS_SETTLE_POLLS`).
+
+The scenarios:
+
+- The exit puts the profile back (`rtss_limit_restore`) and the game presents on until the process ends: a want after
+  it (`frame_step_cap_ns` at a present after the restore) never reaches the profile, and the pacer paces again. The
+  same with the player's own profile: it keeps the player's limit. A want the worker read before the restore (144000)
+  and takes the lock with after it must not reach the profile. An exit before the first want, and one while RTSS was
+  kept out: a want after it does not reach the profile.
+- `NX2SARIA_RTSS=0` with a limit set in RTSS's Global profile: the worker only reads, never loads the hooks library,
+  and tells of the two limiters until the player clears that limit.
+- Low latency keeps RTSS out from the first present, with scanline sync set in the game's own profile (a negative line
+  counts from the bottom); once low latency is off, a limit starts RTSS's part as usual.
+- Frame generation keeps RTSS out, with no limit of RTSS's own: one limiter, and the line names frame generation.
+  Switched on while the worker polls without pause (`active_race()`; with no state file, since 400000 writes and
+  removals of it would take minutes): from the switch until the worker sees it, the game's limiter paces, never
+  RTSS's hold of the limit before (the worker's store for a want that changed after it read it must not count for the
+  new one). Switched on while the worker writes the first limit: RTSS holds that limit, but the game's limiter paces
+  the kept-out want, so the log must not say RTSS does the limiting; the next poll logs the kept-out line. A later
+  limit is held and logged as usual.
+- A limit of a fractional monitor (display at 59.94 and 143.856 Hz): an RTSS that knows the denominator holds it as it
+  is, one that does not holds it rounded down to whole frames, never above the refresh, and the log says what the
+  profile holds, not what was asked.
+- The first want comes at a present: the worker, not the present, reads RTSS's registry key and looks for its files.
+  No RTSS: the worker says so and ends, the game's limiter paces, and the exit has nothing to put back.
+- While RTSS lists the game, its settings for the game are logged once per change: Global's before the game has a
+  profile of its own, then the game's own with the limit it wrote, frame time limit, scanline sync and the modes.
+- The decisions as they stand, pinned against the real worker (`tests/rtss_limit_check.c` pins the same in
+  `rtss_decide.h`). Profiles under Program Files without administrator rights: the save does not stick, and RTSS is
+  out for the run; with a limit set in RTSS's Global profile RTSS still holds the game by its own setting, the log
+  tells of the two limiters and the menu keeps its administrator note. A hooks library that does not load, with a
+  limit in Global: the log tells of the two limiters; without one, the game limits for the run. RTSS refuses a limit
+  out of its range: the game keeps that one, the earlier limit of this run is cleared to none, and a limit in range
+  goes to RTSS again at once. RTSS lists the game but lets it run well over the limit: three fresh periods in a row
+  over 1.05 times the limit, each after a poll that stood aside, put the profile back and the game limits for the run;
+  1.05 times is not caught, a period RTSS no longer moves counts neither way while the game's limiter holds, 1.15
+  times is caught. RTSS lists the game before it has seen a Vulkan present, and asks the game to read its profile
+  again after each write: the game's limiter holds until both are done. RTSS never reads the profile again (its
+  update flag stays set): after 30 s the profile goes back, the menu says RTSS does not limit the game, and the game's
+  limiter holds for the run. No picture goes out (a minimised window): the game's limiter holds until pictures go out
+  again, and the profile stays as it is. RTSS quits while it limits and comes back: the profile stays for its return,
+  no write either way.
+- Low latency switching on and off at every poll (the want flips between a limit and kept out, as at each swapchain
+  rebuild): a want acts on the profile only once it stayed two polls, so the flips write and remove nothing, and the
+  game's limiter holds each kept-out want at once. A want that stays two polls each time does act, and the log numbers
+  each creation and removal so a play-test can count them.
+- The state file: the run's first write records the profile as it was, each later one the value written, and the
+  exit's restore removes the line and the file with it (`line_at_save` is the state file as `SaveProfile` found it).
+  Kept out: put back during the run, and the line goes with it. A state file that cannot be written: the run goes on
+  as before it, with a line in the log, and a crash puts the profile back as an orderly exit does. A put back during
+  the run that does not land (the profile went read-only): the line and the values found at the run's first write
+  stay; a later limit is the run's first write again and keeps the player's 30 to put back, not the game's 60 the
+  profile still holds, and the exit puts 30 back. The same where the run made the profile: a removal that does not
+  land is no removal; the line stays, and the exit removes the profile. A state file with another executable's line
+  that does not read is left as it is, with that line, and the run goes on as with a file that cannot be written.
+- A crash on RTSS's own thread, inside `SaveProfile` with the lock held, in a run whose state file could not be
+  written: `rtss_limit_crash` closes the run and returns at once, with no call into RTSS's library and no wait for the
+  lock that thread holds (`rtss_limit_restore` would try it for a second); nothing after it reaches the profile. A
+  crash with the line in the state file: no call into RTSS's library, the profile and the line stay for the next
+  start, and nothing after it reaches the profile.
+- A run killed while RTSS held its limit (`kill_first()`), and the next start (`kill_next`): the profile as before the
+  killed run, then the next run's own limit, and back again at its close. Variant 1: the player had a profile with
+  30/1. Variant 2: the player set 75 in RTSS between the two runs. Variant 3: the next start has frame generation on,
+  which keeps RTSS out, and still puts the profile back (the hooks library loaded for that alone) with no write of its
+  own. Variant 4: the next start has `NX2SARIA_RTSS=0`, which keeps the thread read-only: the log says what the file
+  holds, and the profile and the line stay for a start with RTSS let in. Variant 5: the run is killed inside the save
+  of its second limit, after the line took 144 and before the profile did: the next start finds the 60 before it and
+  removes the profile.
+- A movie at 60 under a limit of 144: the want stays 144 (`runtime/pacing/frame_rate.c` `frame_step_cap_ns()`) and
+  RTSS's profile keeps it with no write, while the game's pacer holds the movie at its rate; RTSS holds the game again
+  at its end. Under a limit of 40 the profile has no limit while the movie plays, so RTSS cannot space out the frames
+  the pacer sends at once after a late one, and gets 40 back at its end.
