@@ -1,15 +1,4 @@
 # needs: clang
-"""Build and run tests/library_path_check.c (Linux): runtime/platform/linux.c plat_library_path, which the game log's
-"libs:" line (runtime/main.c log_libs) names the loaded SDL with, against the system's loader. A library with a soname
-is built beside a program linked as the game is (-no-pie, runpath $ORIGIN), and the line must say "beside the game"
-with the folder's real path when the program runs from that folder, through a symbolic link to it, and when an empty
-LD_LIBRARY_PATH entry (the current folder) found the library, and "not beside the game" for a copy an LD_LIBRARY_PATH
-folder supplies; a library preloaded under its full file name still answers for its soname, and a name nothing
-loaded gives nothing. linux.c includes SDL3's headers: the system's, else the folder of tools/sdl3_pin.py's headers
-(toolchain/sdl3/include) or SDL3_INCLUDE. No game files.
-
-Usage: library_path_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -26,7 +15,6 @@ def compiler():
 
 
 def sdl3_include(cc):
-    """[] when the compiler finds SDL3's headers itself, else ['-I', folder] of the first folder that has them."""
     probe = subprocess.run([cc, '-E', '-x', 'c', '-', '-o', os.devnull], input='#include <SDL3/SDL_clipboard.h>\n',
                            capture_output=True, text=True)
     if probe.returncode == 0:
@@ -62,7 +50,7 @@ def main():
     lib_src.write_text('int probe_lib_value(void) { return 42; }\n', encoding='ascii')
     for folder in (game, other):
         subprocess.check_call([cc, '-shared', '-fPIC', f'-Wl,-soname,{SONAME}', str(lib_src), '-o', str(folder / SONAME)])
-    full_name = other / 'libprobe.so.0.9'   # a library under its full file name, as a distribution installs it
+    full_name = other / 'libprobe.so.0.9'
     shutil.copy2(other / SONAME, full_name)
     rt = ROOT / 'runtime'
     obj = work / 'linux.o'

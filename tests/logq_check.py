@@ -1,13 +1,4 @@
 # needs: clang
-"""Build and run tests/logq_check.c: the queue that hands log lines to the log thread (runtime/logq.c), with the
-platform layer linked and a destination of the test's own. No game files: the module layout the runtime includes is a
-stand-in written to the test's build folder.
-
-After its checks the program is run twice more as a process that logs to a file and ends at once, by an exit and as
-a fatal error does, while the log thread is still gathering its lines (ends): each file has to hold every line.
-
-Usage: logq_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -46,7 +37,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
-    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
+    plat += stand_ins(work)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
@@ -57,12 +48,10 @@ def main():
     return ends(exe, work, env) or failed
 
 
-END_LINES = 200   # tests/logq_check.c END_LINES
+END_LINES = 200
 
 
 def ends(exe, work, env):
-    """The end of a process whose lines the log thread is still gathering (tests/logq_check.c end_run): the exit code
-    is the one the process ended with, and its file holds every line it logged, the fatal line last."""
     bad = 0
     for how, code in (('exit', 0), ('fatal', 70)):
         path = work / f'end_{how}.log'
