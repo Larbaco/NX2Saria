@@ -38,6 +38,43 @@ draft. No GPU, no game files.
   at once, then none within a minute nor without a new write or refusal, and the wording of the `so far` and
   `this session` lines. Dear ImGui's objects are kept in `build/test/cheats-tab-imgui` between runs.
 
+## `tests/ui_text_ids_check.py`
+
+The text catalog of the menu, the overlay and the software keyboard (`runtime/ui/ui_text.h`, `runtime/ui/ui_text.c`):
+no id without a use, no string without an id. It reads the sources as text; no compiler, no game files.
+`tests/run.py` runs it with `--with-self-test` (the check, then the planted cases).
+
+- An id is used when a source under `runtime/` or `tools/` names it (not `runtime/third_party/`; in `ui_text.c`, a name
+  that is not a `[UI_...] =` designator of a table or of the `LANG_NAMES` and `SWKBD` macros, as in `all_langs[]`), or
+  when an entry of `ARITHMETIC` marked as showing text reaches it. A name in `docs/` or `tests/` is not a use. An
+  unused id fails the check: it goes with its strings in every language.
+- `ARITHMETIC` is every place that computes an id from another or compares ids by order: the file, the expression as
+  it stands in the code, the first and last id it can give, whether it shows their text, and what it is for. The bind,
+  key, gamepad and preset tier labels are reached this way; the `static_assert`s of `runtime/ui/binds_page.cpp` and
+  the loops of `runtime/hle/ov_probe.c` need the order but show nothing. An entry whose expression is no longer in its
+  file fails, and so does a line of C or C++ with `+`, `-`, `<`, `>`, `<=` or `>=` next to an id's name that no entry
+  holds, so new arithmetic has to be declared with its range. Comparisons with `UI_TEXT_COUNT` (the bound of the
+  tables) and `==` are not arithmetic. Arithmetic on a variable that holds an id (`label + 1`) has no id's name beside
+  the operator and is not seen: the tree has none (every conversion of a `UiTextId` to an integer in the C++ sources
+  was listed from the compiler's syntax tree when the check was written).
+- The tables `text_en`, `text_ru`, `text_pt_br` and `text_zh_hans`: a string for an id the header does not declare
+  fails, as do two strings for one id in one table (the compiler keeps the last without a word), a string in a
+  language for an id English has none for, and an id without an English string (it would show as nothing in every
+  language). A missing Russian, Brazilian Portuguese or Chinese string is allowed, since `ui_text_in()` shows the
+  English one; the summary line counts them per language.
+
+### `check()`
+
+Takes the header, the catalog source and the other sources as text, so the self-test plants its faults in copies in
+memory. Returns the problems and the counts of the summary line.
+
+### `self_test()`
+
+A planted id with strings in the four tables that nothing names; a string for an undeclared id; an id without its
+English string; a second string for one id; `UI_MENU_ON + k` in a source; a declared expression renamed in its file:
+each must fail with its own message. A dropped Brazilian Portuguese string must pass and raise that language's count
+by one.
+
 ## `tests/vram_warn_check.py`
 
 Builds and runs `tests/vram_warn_check.c` on `runtime/vram_warn.h` with the levels of `runtime/mem_budget.h`, a sample

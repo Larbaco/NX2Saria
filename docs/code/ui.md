@@ -3072,6 +3072,9 @@ language names; the Cancel of the confirmation boxes; the performance overlay; t
 capture note; the boot screen; the Picture rows.
 `UI_MENU_FIRST` to `UI_MENU_LAST_ID` carry English, Russian, Brazilian Portuguese and Simplified Chinese texts.
 
+An id is added and removed together with its strings in all four languages: when the last code that names it goes,
+the id and its strings go in the same change (`tests/ui_text_ids_check.py` fails on an id nothing uses).
+
 For a translator, what a text is for and what its printf arguments take:
 
 | Id | Note |
