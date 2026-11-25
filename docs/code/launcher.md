@@ -3,8 +3,7 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/context.py`,
-`launcher/game_session.py`, `launcher/gameart.py`, `launcher/gamefiles.py`, `launcher/gameini.py`, `launcher/jobs.py`,
+names. These files still keep their comments until their notes are here: `launcher/context.py`, `launcher/jobs.py`,
 `launcher/locks.py`, `launcher/mods.py`, `launcher/mods_job.py`, `launcher/native/common.h`,
 `launcher/native/nx2saria.c`, `launcher/native/res.rc`, `launcher/native/setup.c`, `launcher/net.py`,
 `launcher/paths.py`, `launcher/platform/__init__.py`, `launcher/platform/linux.py`, `launcher/saves.py`,
@@ -325,6 +324,67 @@ are shown with their known meanings. Requested Linux termination signals do not 
 excluded because the kernel also uses it when memory runs out. A size-capped game log cannot establish whether
 the game wrote its own exit line. A launcher-added exit note ends the search for an earlier session.
 
+### `exit_code_text()`
+
+The exit code as the game's log and Windows show it: hex for a Windows status, with its meaning when known. Off
+Windows a negative code is `subprocess`'s for a process a signal ended, shown with the signal's name.
+
+### `log_has_own_exit()`
+
+Whether the end of the current or legacy game log holds a line of the game's own end (`OWN_EXIT_LINES`). It is `None`
+when the log cannot be read, or when it was cut at its size cap (`LOG_CUT_LINE`) and so cannot tell. A line this
+launcher added for an earlier run's end (`note_exit_in_log()`) ends the search.
+
+### `note_exit_in_log()`
+
+Adds the exit code to the end of the game's log, so a log a player sends shows how the run ended even when the process
+died before it could write a line itself.
+
+### `log_is_new()`
+
+Whether the selected game log was written at or after `started` (`time.time()` before the game was started). A run
+that ends before it moves and opens its log (`runtime/main.c` `log_open()`) leaves the log of a run before it in
+place. FAT and exFAT drives keep a file's time to 2 s, hence the slack.
+
+### `shown_path()`
+
+A path inside the game folder as the player's system writes it, for the window's sentences: `logs\nx2saria.log` on
+Windows, `logs/nx2saria.log` elsewhere.
+
+### `game_end()`
+
+What the launcher says about an end of the game (`launcher/ui/app.py` `App.watch_game()`, `play_only()`): a `GameEnd`
+of the line for `launcher.log`, the sentence for the player (empty for none), the text `note_exit_in_log()` adds to
+the game's log (empty for none), and `alarm`: whether the end is worth a message box where no window shows the
+sentence. An alarm is a FATAL line, a code of `FATAL_CODES` or a Windows status; not 0, nor 1, which Task Manager's End
+task gives.
+
+`code` is the exit code of the run's last process, or `None` when it is not known, which happens only for a copy the
+game's own Restart started that could not be followed (`GameRun`). `started` is `time.time()` before the game was
+started, `restarted` whether it restarted itself on the way.
+
+### `GameRun`
+
+A Play of the game, followed through the copies its own Restart starts. The Restart (`runtime/gfx/gfx_present.c`
+`gfx_window_closed()`) starts the executable again (`runtime/platform/win32.c` `plat_restart()`) and ends the process
+before it with code 0, so the code the game really ended with is its last copy's: once the process followed has ended
+with 0 while the executable still runs, the copy is looked for (`launcher/winsys.py` `game_copy()`) and followed from
+then on. On Linux the Restart (`runtime/platform/linux.c` `plat_restart()`) spawns the copy as a child of the old
+process; `launcher/winsys.py` `start_game()` makes the launcher a child subreaper, so the copy becomes the launcher's
+child once the old process has ended and its code can be waited for.
+
+`proc` is the process followed, `None` while a copy could not be found (it ended before the next look, or the system
+did not show it): it is looked for again each second while the game still runs, and the end's code is not known if
+none is found. `started` is `time.time()` before the start (for `log_is_new()`).
+
+- `GameRun.alive()`: whether the process followed runs; nothing else is looked at. A `GameCopy` of
+  `launcher/winsys.py` whose exit code could not be read has ended all the same.
+- `GameRun.running()`: whether the game still runs, this launcher's process or another of the same executable
+  (`launcher/build.py` `game_running()`); asked once a second until it says no.
+- `GameRun.finished()`: the run is over. A copy the Restart started that ended before `GameRun.running()` looked for
+  it is the run's last process, and its code is the end's (`launcher/winsys.py` `game_finished()`).
+- `GameRun.end()`: `game_end()` for this run, once `GameRun.running()` said no.
+
 ### `finish_game()`
 
 Once `GameRun.running()` has confirmed that the followed game and any Restart copies have ended, `finish_game()`
@@ -350,6 +410,233 @@ someone asked the game to close, and that is no crash. SIGKILL, SIGSEGV, SIGABRT
 task (code 1) are not asked ends: a game that hung and was killed is worth its log. It must be called before the
 launcher's own line goes into the game's log, which ends the search for the fatal line (`launcher/build.py`
 `last_fatal()`); `finish_game()` and `play_only()` call both before `note_exit_in_log()`.
+
+## `launcher/gameart.py`
+
+The pictures of the game's Steam shortcut (`launcher/steam.py`), made from the player's own game: nothing ships.
+
+| Picture | What it is |
+|---|---|
+| `logo` | the title screen's logo with the Master Sword and the Hylian Shield (`Logo_USEU_00`), cut to its outline |
+| `hero` | the title screen's moonlit field, a frame of its first movie (`Event/Movie/Dm_Title_0005.webm`), 1920 x 620 |
+| `portrait` | that frame with the logo over it, 600 x 900 (the library's cover) |
+| `wide` | the same at 920 x 430 (the library's wide tile) |
+
+The textures come from the interface archive `UI/Layout2Archive/Title...bntx.zs` as `runtime/ui/menu_assets.c` reads
+them: a BNTX's BRTI records give format, size, block height and data; the level is block linear in the Switch 2 GOB
+layout (`runtime/gfx/tex_deswizzle.c` `tex_bl_copy()`); BC4 masks become white with the mask as alpha; ASTC 4x4 goes
+through the runtime's own decoder, `runtime/gfx/tex_astc.c`, built here into a library with the toolchain's clang (the
+launcher builds the game with it, so it is on every PC that has a game to add).
+
+The movie is WebM with AV1 video: the frames from the key frame before `TITLE_AT` up to it go into an IVF file for the
+toolchain's `dav1d.exe`, whose last picture (8-bit 4:2:0, limited range BT.709) becomes the background. Every picture
+is written as PNG with `launcher/ui/art.py` `png_bytes()`; nothing here needs an imaging package.
+
+- `TITLE_AT` (12.0) is seconds into the movie: the field under the full moon, as the title screen shows it first.
+- `RUNTIME_DIRS` are the runtime's folders by subsystem, the same list as `RUNTIME_DIRS` of `tools/build_game.py`
+  (`tests/runtime_dirs_check.py` compares the two): the headers of `tex_astc.c` include others by name from them.
+- `_MASTERS` are the EBML ids of the WebM elements that hold others: Segment, Cluster, BlockGroup, Tracks, TrackEntry
+  and Video.
+
+### `bntx_textures()`
+
+Each texture of a BNTX file: name, format, size, block height, data offset and size.
+
+### `deswizzle()`
+
+The first level as tightly packed rows of `row` bytes (`runtime/gfx/tex_deswizzle.c` `tex_bl_copy()`).
+
+### `bc4()`
+
+White with the mask as alpha (`runtime/ui/menu_assets.c` `bc4_decode()`).
+
+### `astc_library()`
+
+`runtime/gfx/tex_astc.c` of this release as a library in `data/cache`, built once per source with the toolchain.
+
+### `texture()`
+
+The named texture as an HxWx4 `uint8` array (BC4 or ASTC 4x4), or `None` when the file has no such texture.
+
+### `webm_frames()`
+
+`(time in ms, key frame, data)` of every block of a single-track WebM, and the video's width and height. An element of
+unknown size runs to the end of its parent. The blocks are SimpleBlock (`0xA3`, whose flags say key frame) and Block
+(`0xA1`).
+
+### `movie_frame()`
+
+The picture of the movie's data at `at_s` seconds, decoded by dav1d, or by ffmpeg on Linux. The conversion to RGB uses
+the BT.709 coefficients on limited-range values.
+
+### `resize()`
+
+`img` (HxWxC, `uint8` or float) at `w` x `h`: whole-pixel box averaging first when it shrinks by 2 or more, then
+bilinear. Returns `float32`.
+
+### `premultiplied_resize()`
+
+A resize with the colours weighted by alpha, so transparent texels add no dark fringe; `uint8` straight alpha out.
+
+### `trim()`, `place()`, `crop()` and `with_logo()`
+
+- `trim()`: the picture cut to the box of its visible texels, with `pad` texels around.
+- `place()`: `src` (`uint8` RGBA, straight alpha) over `dst` (`uint8` RGB) at `x`, `y`.
+- `crop()`: the largest `w`:`h` part of the frame centred near (`cx`, `cy`), given as fractions, scaled to `w` x `h`
+  (`uint8` RGB).
+- `with_logo()`: the background with the logo scaled to `width_share` of its width, centred at height `cy` (a
+  fraction).
+
+### `make()`
+
+`{name: HxWx4 uint8}` for `logo`, `hero`, `portrait` and `wide`, from the player's game; `ArtError` when the game's
+files or the tools to read them are not there. The moon sits right of the middle and high: every cut keeps it, and the
+hero keeps the horizon too.
+
+## `launcher/gamefiles.py`
+
+The player's game files, as far as the launcher reads them itself: finding a `.nup` dump, the game's Cetra Display
+font for the window (`runtime/ui/menu_assets.c` reads the same font for the in-game menu's titles) and the game's
+interface sounds for the window's sound effects (`runtime/ui/menu_sound.c` plays the same files in the in-game menu).
+
+They come from the built game's `romfs/` (`romfs.bin` and `index.json`, `tools/make_game.py`) or, before the first
+build, straight from the `.nup`. They are decoded once into `data/cache/fonts` and `data/cache/sounds`, which stay on
+the player's PC like the rest of what is built from their game. Nothing of the game ships with the launcher.
+
+- `.zs` files are zstd frames, most with one of the dictionaries of `Pack/ZsDic.pack.zs` (a SARC, compressed without a
+  dictionary; a frame names its dictionary by id).
+- A `.bfotf` font is an OpenType file behind an 8-byte header, every big-endian 32-bit word XORed with one key: the
+  first word is `0x7f9a0218` under it, the second the payload size.
+- A `.bwav` sound: "BWAV", a byte order mark, a version, a CRC32, a prefetch flag and the channel count (u16 at
+  `0x0e`), then `0x4c` bytes per channel from `0x10`: the codec (u16: 0 PCM16, 1 DSP-ADPCM), the pan (u16: 0 left,
+  1 right, 2 middle), the sample rate and the sample count (u32 each), 16 DSP coefficients (s16 from `+0x10`) and the
+  offset of the samples in the file (u32 at `+0x30`). DSP-ADPCM: 8-byte frames of a header byte (coefficient pair,
+  scale exponent) and 14 four-bit samples.
+
+`FONTS` maps a role to its RomFS path; the window sets all its text in Cetra Display. `SOUNDS` maps the window's sound
+effect (`launcher/ui/sound.py`) to the game's interface sound.
+
+The other drives' search (`find_dumps()` with `drives`) goes two folder levels below each drive's root
+(`D:\Games\NX2Saria`, a data disk's `Games/Switch`), `DRIVES_DEPTH`, through at most `FOLDERS_PER_LEVEL` folders of
+each, for at most `DRIVES_SECONDS` (5.0) in all. On a 1 TB NTFS partition two levels were 502 folders, listed in
+0.3 s; three levels were 3373 folders and 1.2 s.
+
+### `candidate_dirs()`
+
+The folders the dump is looked for in: `extra` first, then Downloads, Desktop and Documents (the desktop's own,
+translated or moved, and the English names), then the home folder.
+
+### `is_game_nup()`
+
+True when the file is a `.nup` holding the game (title `0400486024DEC000` or its update).
+
+### `find_dumps()`
+
+`.nup` files with the game in the usual places (the setup's folder first), then in the folders `drives` names (the
+mounted disks, `launcher/platform/linux.py` `mounted_drives()`) `DRIVES_DEPTH` levels deep, newest first. `report`, a
+dict, gets `folders` (how many were looked in) and `stopped` (true when the drives' search ran out of time).
+
+Its inner `look()` puts the game's `.nup` files of one folder into the result and returns that folder's first
+`FOLDERS_PER_LEVEL` folders, from the same listing. A folder with tens of thousands of entries is read one entry at a
+time, so the deadline holds inside it.
+
+### `RomfsImage`, `NupRomfs` and `open_romfs()`
+
+`RomfsImage` reads the built game's `romfs/romfs.bin` through its `index.json`; `NupRomfs` the RomFS of the game's
+update (or base) package inside a `.nup`. `open_romfs()` gives a reader for the built game, else the dump, else
+`None`.
+
+### `_zstd()`
+
+Python 3.14 has `compression.zstd`; before it the zstandard package is used.
+
+### `_dict_id()`
+
+The id a zstd dictionary carries (magic `0xEC30A437`, then the id).
+
+### `sarc_members()`
+
+`{name: bytes}` of a SARC archive.
+
+### `bfotf_to_otf()`
+
+The OpenType (or TrueType) bytes inside a `.bfotf` or `.bfttf`, or `None`.
+
+### `font_family()`
+
+The family name in an OpenType `name` table (name id 16, else 1), or `None`.
+
+### `cached_fonts()` and `extract_fonts()`
+
+`cached_fonts()` gives `{role: (path, family)}` of the fonts decoded earlier. `extract_fonts()` decodes the game's
+Cetra Display into `data/cache/fonts` and gives the same for the fonts found. A font file that already has the same
+bytes is not written again: a file this process registered as a font stays as it is.
+
+### `bwav_to_pcm()`
+
+A `.bwav` as `(sample rate, frames)`, the frames a list of `(left, right)` 16-bit samples, or `None` when it is no
+BWAV of one or two channels this reads. A middle-panned channel goes to both sides at 0.707 when it is the only one.
+
+### `pcm_to_wav()`
+
+A 16-bit stereo WAV of the frames, a list of `(left, right)` samples.
+
+### `cached_sounds()` and `extract_sounds()`
+
+`cached_sounds()` gives `{effect: path}` of the game's interface sounds decoded earlier. `extract_sounds()` decodes
+the game's select and back sounds into `data/cache/sounds` as WAV files and gives the same for the ones found.
+
+## `launcher/gameini.py`
+
+The game's own settings, `nx2saria.ini` (or the legacy `nx2navi.ini`) in the game folder.
+
+The file is read the way `runtime/cfg/cfg.c` reads it: a UTF-8 byte order mark is skipped, lines starting with `#`,
+`;` or `[` are not settings, a key is matched without regard to case and with or without a prefix (`NX2SARIA_`, or the
+older `NX2NAVI_` one), a value in double quotes loses them, an empty value leaves the setting as it was (its default,
+or an earlier line's value), and the last line with a value wins. For a key whose row in `runtime/cfg/cfg.c` has a set
+of values (`choices=True`: numbers, ranges, words), a blank followed by `;` or `#` starts a comment after a value that
+is not in double quotes, as `runtime/cfg/cfg.c` `cut_comment()` reads it; free text (a path, a name, the list of mods)
+keeps its whole value. Sections do not matter to the game; a key the file does not have yet goes under its section, as
+the game writes it.
+
+A change rewrites only the line it touches, through a temporary file: the other lines keep their bytes (the byte order
+mark, line ends, text that is not UTF-8). A file that exists but cannot be read is never rewritten, as
+`runtime/cfg/cfg.c` `cfg_save_to()` does not: rebuilding it from nothing would lose its lines.
+
+### `_path()`
+
+`nx2saria.ini` in the game folder. An `nx2navi.ini` there without one (the file's name in earlier releases) is renamed
+to it the first time the launcher looks, as the game does at its start (`runtime/cfg/cfg.c` `find_ini()`), so the
+folder keeps one settings file with every setting in it; where the rename fails, the old file is read and written
+under its name.
+
+- Something else by the legacy name that is not a file is left as it is, and read (and refused) as before.
+- The rename must not replace an existing file. On Windows `rename` refuses to; elsewhere `rename` would replace it,
+  so the file is hard-linked under the new name, which refuses an existing file too, and the old name is removed.
+
+### `_text()`
+
+The file's text with its own line ends (bytes that are not UTF-8 kept as surrogates), empty when the file does not
+exist. Any other error is raised.
+
+### `_setting()`
+
+`(key, value)` of a settings line, or `None`. With `choices` the key has a set of values, so its value ends at a
+comment (the first blank followed by `;` or `#` after the `=`, with `key = ; note` giving an empty value), unless it is
+in double quotes.
+
+### `get()`
+
+The value the file gives the key (empty when it gives none: the game's default applies); `choices` as in `_setting()`.
+Raises `OSError` when the file exists but cannot be read.
+
+### `put()`
+
+Writes `key = value`: on the key's last line that has a value as the game reads it (`choices` as in `_setting()`; else
+its last line) when the file has one, else under `[section]` (made at the end when the file has none). The line is
+written again whole, without a comment it had, as `runtime/cfg/cfg.c` `cfg_save_to()` writes it. Raises `OSError`,
+with the file unchanged, when it exists but cannot be read or the new one cannot be put in place. When the section's
+header is the file's last line and has no line end, it gets one before the new line goes under it.
 
 ## `launcher/mods_job.py`
 
