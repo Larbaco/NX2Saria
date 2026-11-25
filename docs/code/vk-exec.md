@@ -71,6 +71,8 @@ Vulkan-internal header of the graphics layer. Host code only; the guest never se
   - `has_present_id`: ... and the `presentId` feature: presents may carry a frame's number.
   - `has_anti_lag`: `VK_AMD_anti_lag` with its `antiLag` feature (`runtime/pacing/vk_lowlat.c`).
   - `lists_low_latency`: the driver lists one of the two, left out: the run started with the mode off.
+  - `low_latency2_rev`: the revision of `VK_NV_low_latency2` the driver reports, kept when the extension is enabled
+    and 0 otherwise (`runtime/vk/vk_device.c` `create_device()`; what it decides is in [pacing.md](pacing.md)).
   - `has_mesh_queries`: `meshShaderQueries`, kept while `NX2SARIA_GPU_PASSES` or `NX2SARIA_DUMP` is set.
   - `int mesh_fallback`: task and mesh programs run as compute passes and are drawn from buffers (`mesh_fallback`: auto
     as `runtime/vk/vk_mesh_path.h` decides; `runtime/vk/vk_exec_draw.c` "mesh fallback").

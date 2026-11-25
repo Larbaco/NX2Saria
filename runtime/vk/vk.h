@@ -61,6 +61,7 @@ typedef struct VkCtx {
         has_anti_lag,
         lists_low_latency,
         has_mesh_queries;
+    uint32_t low_latency2_rev;
     int mesh_fallback;
     int mesh_fallback_default;
     int mesh_emulation;
