@@ -1061,7 +1061,6 @@ int vk_mem_vram_live(uint64_t *used, uint64_t *budget) {
     return 1;
 }
 
-// ---------------------------------------------------------------- page write generations
 #define GEN_CHUNK_SHIFT 28
 #define GEN_PAGE_SHIFT 12
 #define GEN_CHUNKS (RT_ADDRESS_LIMIT >> GEN_CHUNK_SHIFT)
@@ -1414,7 +1413,6 @@ void vk_mem_snap_stats(uint64_t *checks, uint64_t *calls, uint64_t *untracked) {
     *untracked = __atomic_exchange_n(&n_snap_untracked, 0, __ATOMIC_RELAXED);
 }
 
-// ---------------------------------------------------------------- dirty census (NX2SARIA_TRACE=perf)
 #define DIRTY_UNSYNCED UINT64_MAX
 #define DIRTY_GAP 0x100000ull
 #define DIRTY_WIN 60
