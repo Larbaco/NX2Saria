@@ -3,8 +3,8 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/settings.py`,
-`launcher/toolchain.py`, `launcher/winsys.py`, and `launcher/build.py`.
+names. These files still keep their comments until their notes are here: `launcher/toolchain.py`,
+`launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -1799,6 +1799,64 @@ the bug report files) are passed over.
 Makes the save in a zip of `export_save()` the game's save (a whole save: every slot), backed up first as
 `import_save()` does. It returns the dict of `import_save()` with the zip's manifest under `manifest`. The CRC of each
 member is checked as it is read.
+
+## `launcher/settings.py`
+
+`data/launcher.json`: the player's choices and what the launcher remembers between runs.
+
+`DEFAULTS`, the keys with notes:
+
+| Key | Default | What it is |
+|---|---|---|
+| `game_dir` | empty | the built game; empty until the first install picks one |
+| `dump` | empty | the `.nup` (or the folder with `exefs/` and `romfs/`) the game was built from |
+| `auto_check` | on | look for a new version when the launcher opens, and every hour while it runs |
+| `auto_install` | on | install a downloaded update by itself whenever the game is not running |
+| `channel` | `stable` | `stable` or `preview` (GitHub pre-releases) |
+| `hide_while_playing` | on | hide the window while the game runs, show it again when it exits |
+| `warn_low_commit` | on | warn before Play only with a disabled or fixed-size Windows page file |
+| `keep_cache` | on | keep `build-cache/` (the lift and the objects) so an update recompiles only changes |
+| `save_export_dir` | empty | where Saves > Export Save writes its zip; empty: the Downloads folder |
+| `export_with_log` | on | Export Save adds the game's latest log and settings file (for a bug report) |
+| `theme` | `forest` | the colour scheme (`THEMES` of `launcher/ui/art.py`) |
+| `custom_background` | empty | the Custom scheme's backdrop colour, `#rrggbb`; empty: the first scheme's |
+| `custom_panel` | empty | the Custom scheme's colour of the panels and the title band |
+| `custom_buttons` | empty | the Custom scheme's colour of the buttons |
+| `background` | empty | the picture the player chose as the background; its fitted copy is `data/background.npy` |
+| `background_dim` | 40 | how much that picture is darkened, in percent |
+| `animations` | on | the cursor glides, screens slide in, sparks drift, and the leaf sprig bobs |
+| `sounds` | `low` | the game's select and back sounds: off, low (`DEFAULT_LEVEL` of `launcher/ui/sound.py`), medium, high |
+| `feed_repo` | empty | `owner/name` overriding `feed.json`, for testing another repository's releases |
+| `github_token` | empty | only for a private release repository; stored as plain text |
+| `last_seen` | empty | the newest version the player was told about |
+| `rolled_back` | empty | the last version that failed to start; it is never downloaded or installed by itself |
+| `telemetry` | empty | session reports (`launcher/telemetry.py`, [telemetry.md](../telemetry.md)): empty not asked yet, `on` or `off`; nothing is sent unless `on` |
+| `telemetry_closed` | empty | the launcher version the server told it takes no more reports (HTTP 410) |
+| `telemetry_asked` | empty | the launcher version whose question about session reports was answered or closed |
+| `telemetry_notice` | empty | `1`: reports were turned on by the question's countdown or by closing it; told once |
+
+- `UNLOGGED` are the keys whose changes `Settings.save()` does not log: bookkeeping of the update check rather than a
+  choice of the player.
+- `SECRET` are the keys whose values `Settings.save()` never writes into the log, only whether they are set: players
+  attach the log to public issues. `_shown()` gives a setting's value as it goes into the log.
+
+### `Settings`
+
+- `log`: `Settings.save()` writes a line there for each setting that changed since the last save.
+- `unreadable`: the file is there but is no JSON; a copy of it is kept as `launcher.json.bad`. That is a typo made by
+  hand, and the copy keeps what the player wrote before the next save replaces it with the defaults.
+- `saved`: what `launcher.json` holds, as far as this process knows.
+- The file is read as `utf-8-sig`: the docs ask players to edit the file by hand, and an editor may save it with a
+  byte order mark.
+
+### `Settings.changes()`
+
+`setting: <key> <before> -> <after>` for each setting that differs from the last save (or from what was read at the
+start), in the order of `DEFAULTS`.
+
+### `Settings.reset()`
+
+Default Settings: the choices go back to their defaults; the game folder, the dump and the history stay.
 
 ## `launcher/start.pyw`
 
