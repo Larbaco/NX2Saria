@@ -3276,8 +3276,9 @@ The setting and the upscaler:
   checks that DLSS is available.
 - `vk_dlaa_release()`: called by `runtime/vk/vk_device.c` `destroy_all()`, once the device is idle and before the
   allocator and the device go (Linux): releases the NGX features and parameters, frees every image, buffer, pipeline and
-  query pool DLAA made, resets its state for a later device and shuts NGX down for this one. Safe when NGX never came
-  up, when nothing was made, and more than once. Windows: does nothing.
+  query pool DLAA made except FSR 3.1's second sharpening pass (`SH`, `sharpen_init()`), resets its state for a later
+  device (`SH` not) and shuts NGX down for this one. Safe when NGX never came up, when nothing was made, and more than
+  once. Windows: does nothing.
 - `vk_dlaa_available()`: 1 when dlaa is wanted and its upscaler came up: NGX with DLSS (after `vk_dlaa_init()`), or
   FSR 3.1 loaded. A DLSS mode's smaller scene is then scaled up by it.
 - `vk_dlaa_active()`: 1 while DLSS or FSR 3.1 runs on the scene (the setting is on, the upscaler came up and has not
@@ -3780,8 +3781,11 @@ together with a DLSS feature's create). Nothing waits for them now:
 - Images only the replay uses go to `runtime/vk/vk_memory.c`'s deferred destruction (`vk_defer_image()`,
   `vk_defer_view()`), stamped with the submission being recorded, which comes after every submission that can name them;
 - A DLSS feature goes into `dead` with the fence of the last submission that created or evaluated it (`feat_fence`) and
-  is released once the GPU is past it, which is what NGX asks of a feature's release; on this thread, which makes every
-  NGX call (NGX is not thread safe);
+  is released once the GPU is past it, which is what NGX asks of a feature's release; on this thread, which makes
+  DLSS's creates and evaluations. NGX is not thread safe (its SDK header says so), and this thread is not the only one
+  that calls it: `vk_ngxfg_evaluate()` runs on the present thread (`runtime/gfx/gfx_present.c` `ng_record()`, from
+  `runtime/vk/vk_backend.c` `present_main()`), and `idle_release()` runs in `vk_dlaa_frame()`, the frame's
+  bookkeeping, on the presenting thread or whichever thread closes the frame;
 - An image frame generation can read at a present (a size's motion vectors, the HUD-less picture) goes into `dead`
   behind a present gate (`FG_LATE_PRESENTS`), and from there to the deferred destruction;
 - FSR contexts go into lists of their own in `runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_ffx4.cpp` (outside Windows FSR
@@ -4185,7 +4189,7 @@ with the SDK's public wrapper; it reports the number of devices still using NGX.
    object and the capability parameters' map: all before NGX goes.
 3. The sizes' images, the mask snapshots, the HUD-less picture, prebloom's images, the motion and mask pipelines and
    their buffers, the free camera's buffer and the timing's query pool. The reprojection blocks' buffer is mapped for
-   good: the destroy unmaps it.
+   good: the destroy unmaps it. FSR 3.1's second sharpening pass (`SH`) is not among them (`sharpen_init()`).
 4. The state (`D`, `R`, `T`, `F`, the swap image) goes back to its start values, so a new device starts clean.
 5. Without `N.device`, NGX never came up on this device (DLAA off, FSR 3.1, or its init failed), and there is nothing to
    shut down.
@@ -4297,8 +4301,8 @@ tell a target the game made anew from the ones it alternates between.
 ### `query_vram()`, `vk_dlaa_vram()`
 
 DLSS's own video memory, the features and their history (NGX's DLSS statistics callback with the capability parameters),
-for the log's VRAM breakdown; -1 until known (`query_vram()` asks). Asked on the replay thread, which makes every other
-NGX call, every 600 evaluations.
+for the log's VRAM breakdown; -1 until known (`query_vram()` asks). Asked on the replay thread, which makes DLSS's
+other calls, every 600 evaluations.
 
 ### `stale_sizes()`
 
@@ -4371,7 +4375,10 @@ pass.
 
 ### `sharpen_init()`
 
-It needs `mv_init()`: that one's sampler serves the texel fetches.
+It needs `mv_init()`: that one's sampler serves the texel fetches. `vk_dlaa_release()` neither destroys `SH`'s pipeline,
+layout and set layout nor sets `SH.ok` back to -1: they outlive the device (the validation layer names them at
+`vkDestroyDevice()`), and a second device in the same process would bind the first one's handles. The game makes one
+device per run.
 
 ### `vk_dlaa_fsr3_boost()`
 
@@ -4850,8 +4857,10 @@ What DLSS holds while nothing uses it (`NX2SARIA_DLSS_IDLE_FREE` 1 or 2, the def
 in the menu, the sizes kept their images and features for the rest of the run, since only an evaluation frees a size
 (`stale_sizes()`): at a 5120x2142 output that is the output, sharpening, mask, class and distance images, about 0.4 GiB,
 and about 0.5 GiB per feature. With frame generation off and DLSS on, the HUD-less picture stayed the same way. After
-`IDLE_FREE_PRESENTS` (600) presents without their use (`off_at` is `D.presents` when DLSS went off) they go here, on the
-replaying thread that makes every other NGX call, without waiting for the GPU: the last evaluation that used them is
+`IDLE_FREE_PRESENTS` (600) presents without their use (`off_at` is `D.presents` when DLSS went off) they go here, in
+`vk_dlaa_frame()` (the frame's bookkeeping, not the replaying thread that makes DLSS's evaluations; with DLSS off that
+thread makes no NGX call, but `vk_ngxfg_evaluate()` on the present thread may), without waiting for the GPU: the last
+evaluation that used them is
 that many presents back, and the CPU is never more than a few ahead. A feature made later is made with none alive, the
 case `release_kept()` leaves clean. What it costs: switching DLSS on again more than `IDLE_FREE_PRESENTS` presents after
 switching it off makes the size's images and feature again, which its first evaluation waits for, as at the first frame
