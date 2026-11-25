@@ -8010,33 +8010,30 @@ Pass marks (`runtime/vk/vk.h` `vk_pass_mark_begin()`) use words 2 and 3 of the s
 and the end of every render pass and dispatch, and a ring of records says what each mark was. The design: a mark per
 pass and dispatch, numbers in a ring of 4096, text only at the device loss.
 
-`vk_pass_mark_cmd` also runs on the recorder thread (`runtime/vk/vk_rec.c` `R_PassMark`), where `runtime/vk/vk.h`'s
-macro would turn the timestamp into a new packet for the part being recorded: a second producer on the ring, which
-corrupts it ("`vk_rec`: unknown packet" with `NX2SARIA_PASS_TIMES=1` on NVIDIA, where the recorder is on). The command
-goes straight into cb.
+The file undefines the `vkCmdWriteTimestamp` macro of `runtime/vk/vk.h` for itself. `vk_pass_mark_cmd()` also runs on
+the recorder thread (the `R_PassMark` packet of `runtime/vk/vk_rec.c`), where the macro would turn the timestamp into a
+new packet for the part being recorded: a second producer on the ring, which corrupts it ("`vk_rec`: unknown packet"
+with `NX2SARIA_PASS_TIMES=1` on NVIDIA, where the recorder is on). So there the command goes straight into the command
+buffer.
 
-- `words`: 0, 1: crumbs; 2, 3: pass marks; 4, 5: draw marks.
-- `vk_pass_marks_on`: Pass marks (below).
-- `pm_amd`: marks into words 2 and 3.
-- `pt_pool`: pass times (below): two timestamps per ring slot.
-- `pt_timed`: the slot's mark writes timestamps; cleared once they are read.
+The buffer's words: 0 and 1 the crumbs, 2 and 3 the pass marks (`pm_amd`: the marks go into them), 4 and 5 the draw
+marks. `pt_pool` is the pass times' query pool, two timestamps per ring slot; `pt_timed` says that a slot's mark writes
+timestamps, and is cleared once they are read.
 
 ### Pass marks
 
-- `ring`: Cost per pass or dispatch: about twenty stores into the ring and two commands, one at the start and one at the
-  end, each a marker write or a checkpoint. Per draw nothing, except that the branch of
-  `runtime/vk/vk_exec_draw.c` `prepare_draw()` that records changed pipeline state also notes the shaders of a pass's
-  first draw. A full barrier already precedes every pass and dispatch (`runtime/vk/vk_exec.c` `vk_exec_pass_begin()`,
-  `runtime/vk/vk_exec_draw.c` `op_dispatch()`), so the end-of-pipe write adds no wait.
-- `seq`: marks made; only the replay thread writes it.
+Cost per pass or dispatch: about twenty stores into the ring and two commands, one at the start and one at the end,
+each a marker write or a checkpoint. Per draw nothing, except that the branch of `runtime/vk/vk_exec_draw.c`
+`prepare_draw()` that records changed pipeline state also notes the shaders of a pass's first draw. A full barrier
+already precedes every pass and dispatch (`runtime/vk/vk_exec.c` `vk_exec_pass_begin()`, `runtime/vk/vk_exec_draw.c`
+`op_dispatch()`), so the end-of-pipe write adds no wait. `seq` counts the marks made; only the replay thread writes it.
 
-### `vk_pass_marks_want_nv()`
+### `vk_pass_marks_want_nv()`, `pass_marks_init()`
 
 `NX2SARIA_PASS_CRUMBS`: unset, buffer marks where `VK_AMD_buffer_marker` exists; 1, also NVIDIA checkpoints; 0, neither.
 
-### `pass_marks_init()`
-
-- Timestamp profiling needs pass labels, but no vendor breadcrumb extension.
+`NX2SARIA_GPU_PASSES` turns the marks' records on by itself: timestamp profiling needs the pass labels, but no vendor
+breadcrumb extension.
 
 ### Draw marks
 
@@ -8053,16 +8050,16 @@ numbered as they are recorded, by the replay thread and by its workers when a pa
 write one. The two marks the GPU names are exact either way. The numbers between them are in queue order only where one
 thread recorded the pass; with workers some of them belong to chunks that ran earlier, which the report says.
 
-- `VK_DRAW_MARKS`: power of two.
-- `dseq`: draw marks made; any recording thread takes the next number.
+The ring has `VK_DRAW_MARKS` slots, a power of two. `dseq` counts the draw marks made; any recording thread takes the
+next number.
 
 ### `vk_draw_mark()`
 
-- `if (!id) id = __atomic_add_fetch(&dseq, 1, __ATOMIC_RELAXED)`: 0 means no mark.
+A number that wraps to 0 is skipped: 0 means no mark.
 
 ### `vk_pass_mark_cmd()`
 
-- `if (end == 2)`: a draw mark (`vk_draw_mark`): the same two points, into its own words.
+`end` 2 is a draw mark (`vk_draw_mark()`): the same two points, into its own words.
 
 ### `NX2SARIA_GPU_PASSES=1`
 
@@ -8071,33 +8068,27 @@ GPU timestamps around them. Some presents later the results are summed by what t
 most expensive are logged in ms per frame. The timestamps run on the replay's command buffers, through the recorder like
 the marks.
 
-- `GP_LATER`: presents after the capture before the results are read: the GPU is done with them by then.
-- `GP_KIND_PART`: The gap ledger: what the timed frames' parts spend outside their passes and dispatches. A part
-  (`runtime/vk/vk_sync.c`: one command buffer of a submission) takes a slot of its own, kind `GP_KIND_PART`, with a
-  timestamp at its start and its end. A gap runs from the part's start or the end of a mark to the start of the next
-  mark or the part's end; `vk_gpu_gap_note` names the kinds of commands the replay records in the gap it is in (copies,
-  clears, the upscaler, the write-back merge). A gap nobody noted holds barriers and state only. The report sums the
-  gaps by the kinds noted in them. A pass split over two parts (`vk_sync_split`) keeps its own time, the wait for the
-  second part included, and makes no gap.
+`GP_LATER` is the presents after the capture before the results are read: the GPU is done with them by then.
+`gp_state` is 0 not set up, 1 on, -1 off; `gp_phase` 0 idle, 1 capturing, 2 waiting. Besides the timestamps of
+`gp_pool`, `gp_prims` counts the mesh primitives generated per pass (with `meshShaderQueries`) and `gp_stats` the
+fragment shader invocations per pass.
 
-  beside `VK_MARK_PASS` and `VK_MARK_DISPATCH`.
-- `GpGap`: query numbers in `gp_pool`; kinds: bits of `VK_GAP_*`.
-- `gp_in_mark`: between a mark's start and its end.
-- `gp_pool`: `gp_prims`: mesh primitives generated per pass (with `meshShaderQueries`).
-- `gp_stats`: fragment shader invocations per pass.
-- `gp_state`: state 0 not set up, 1 on, -1 off; phase 0 idle, 1 capturing, 2 waiting.
-- `vk_exec_mesh_counts()`: `runtime/vk/vk_exec_draw.c`.
+**The gap ledger**: what the timed frames' parts spend outside their passes and dispatches. A part
+(`runtime/vk/vk_sync.c`: one command buffer of a submission) takes a slot of its own, kind `GP_KIND_PART` (a value
+beside `VK_MARK_PASS` and `VK_MARK_DISPATCH`), with a timestamp at its start and its end. A gap (`GpGap`: its two query
+numbers in `gp_pool`, and its kinds as bits of `VK_GAP_*`) runs from the part's start or the end of a mark to the start
+of the next mark or the part's end; `gp_in_mark` says the replay is between a mark's start and its end.
+`vk_gpu_gap_note()` names the kinds of commands the replay records in the gap it is in (copies, clears, the upscaler,
+the write-back merge). A gap nobody noted holds barriers and state only. The report sums the gaps by the kinds noted in
+them. A pass split over two parts (`vk_sync_split`) keeps its own time, the wait for the second part included, and
+makes no gap.
 
 ### `gp_shader_hash()`
 
-The hash `NX2SARIA_SKIP_SHADERS` takes and the frame dump prints: FNV-1a over the shader's SPIR-V.
+The hash `NX2SARIA_SKIP_SHADERS` takes and the frame dump prints: FNV-1a over the shader's SPIR-V. The shader keeps
+it, so nothing is decoded here.
 
-- `uint64_t h = gfx_shader_spirv_fnv(s)`: kept by the shader: nothing is decoded here.
-
-### `gp_resolve()`
-
-- `GpRes`: q: query in `gp_pool`, `UINT32_MAX` until written.
-- `gp_nwaited`: atomic: the game's threads add.
+### `gp_resolve()`, `vk_gpu_passes_result()`, `vk_gpu_passes_waited()`
 
 Result points (`gpu_passes`): where in a submission's GPU time the results the CPU waits for are done. The replay notes
 a result (`vk_exec_note_results`: an event, a counter or occlusion report, a GPU write of unmirrored memory, a mirror
@@ -8106,18 +8097,17 @@ part's end) is when the GPU is done with it at the latest. The report compares t
 after a frame's first submission waited for (`vk_sync_recorded_wait`), with the submission's end: how much earlier the
 wait could end if it ended at the results instead of at the whole submission's completion.
 
+A `GpRes` has its query `q` in `gp_pool`, `UINT32_MAX` until the next timestamp is written (`gp_resolve()`).
+`gp_nwaited` is atomic: the game's threads add to it.
+
 ### `vk_gpu_gap_note()`
 
 The kinds of commands noted since the last mark ended (bits of `VK_GAP_*`), for a lost device's report: the next mark
 takes them as the commands recorded before it (`VkPassMark.gap`). Replay thread only, as the notes are.
 
-### `gp_begin()`
+### `gp_begin()`, `gp_end()`
 
-- `if (gp_part != UINT32_MAX) gp_gap_close(gp_n * 2)`: the gap before this mark ends at its start.
-
-### `gp_end()`
-
-- `if (gp_part != UINT32_MAX) gp_gap_from = i * 2 + 1, gp_gap_kinds = 0`: the next gap starts at this mark's end.
+Inside a timed part, the gap before a mark ends at the mark's start, and the next gap starts at the mark's end.
 
 ### `gp_tick()`
 
@@ -8126,35 +8116,29 @@ One timestamp of `gp_pool` in ticks; 0 when it is not there.
 ### `gp_report_gaps()`
 
 The gaps of the timed frames, summed by the kinds noted in them, and the parts' own time for comparison with the perf
-line's GPU time (which counts the mirror prologues too and leaves out the time between parts).
-
-- `for (int k = 0; k < n && k < 12; k++)`: the most expensive sets first.
+line's GPU time (which counts the mirror prologues too and leaves out the time between parts). The twelve most
+expensive sets of kinds are listed, the most expensive first.
 
 ### `gp_report_results()`
 
-The result points of the timed frames (`vk_gpu_passes_result`), for the submissions the game's wait waited for.
-
-- `for (uint32_t i = 0; i < gp_n; i++)`: the submission's parts: its first start, its last end.
+The result points of the timed frames (`vk_gpu_passes_result()`), for the submissions the game's wait waited for. A
+submission's span is its parts' first start to their last end.
 
 ### `gp_report()`
 
-- `if (l->kind == GP_KIND_PART)`: a part of a submission: for the gap ledger's line only.
-- A pass of many draws and its neighbours differ in the draw count: the sum is by targets and shaders alone.
-- The mesh workgroup counts of the indirect mesh draws (`runtime/vk/vk_exec_draw.c` `mesh_ring_entry()`).
+A part of a submission (`GP_KIND_PART`) counts for the gap ledger's line only. A pass of many draws and its neighbours
+differ in the draw count, so the sum is by targets and shaders alone. The report also has the mesh workgroup counts of
+the indirect mesh draws (`vk_exec_mesh_counts`; `runtime/vk/vk_exec_draw.c` `mesh_ring_entry()`).
 
 ### `set_at_frame()`
 
 `NX2SARIA_SET_AT=<frame>:<key>=<value>[;...]`: settings changed by a test run while the game plays, as the menu would.
 
-### `vk_pass_mark_begin()`
+### `vk_pass_mark_begin()`, `vk_pass_mark_end()`
 
-- `if (!id) id = ++seq`: 0 means no mark.
-- `m->gap = gap_now, gap_now = 0`: what was recorded between the mark before and this one.
-- Timed unless the slot's previous mark is still waiting to be read (its queries are not reset yet).
-
-### `vk_pass_mark_end()`
-
-- `gap_now = 0`: the gap after this mark starts empty.
+A number that wraps to 0 is skipped: 0 means no mark. The mark's `gap` is what was recorded between the mark before
+and this one (`vk_gpu_gap_note()`); the gap after a mark's end starts empty. With pass times the mark is timed unless
+the slot's previous mark is still waiting to be read (its queries are not reset yet).
 
 ### `shader_id()`
 
@@ -8163,8 +8147,9 @@ The first 8 bytes of the shader's input id (`runtime/gfx/gfx_shader.c`), the sta
 
 ### `describe_mark()`
 
-- The mesh draws among them: the RX 6000 losses whose marks named a pass were in passes that start with one, and whether
-  a pass held any (and how many took their count from the GPU) is what tells such a loss from another.
+The text names the mesh draws among a pass's draws: the RX 6000 losses whose marks named a pass were in passes that
+start with one, and whether a pass held any (and how many took their count from the GPU) is what tells such a loss from
+another.
 
 ### `nv_report()`
 
@@ -8186,34 +8171,29 @@ upscaler, write-backs), or what it recorded after the last mark of all.
 
 ### `draw_marks_report()`
 
-Words 4 and 5 (`vk_draw_mark`): the draws the GPU had not finished were recorded after the mark in word 5, so its
-shaders and those of the marks up to the one in word 4 are the candidates; up to `DRAW_MARK_LINES` of them are listed.
-
-- `if (reached < finished || reached - finished + 1 > n)`: the mark the GPU last reached, when the list left it out.
+Words 4 and 5 (`vk_draw_mark()`): the draws the GPU had not finished were recorded after the mark in word 5, so its
+shaders and those of the marks up to the one in word 4 are the candidates; up to `DRAW_MARK_LINES` of them are listed,
+and the mark the GPU last reached is added when the list left it out.
 
 ### Pass times
 
 (`NX2SARIA_PASS_TIMES=1`): GPU time per render pass and dispatch, for GPUs no vendor profiler supports (RGP covers RDNA
-only, so an RX 580 has none, and RenderDoc cannot capture this program). Every pass mark also writes a timestamp at its
-two points (`TOP_OF_PIPE` before the pass, `BOTTOM_OF_PIPE` after it), into the query slot pair of its ring slot.
-`pass_times_poll`, on the replay thread at each new mark, takes in the marks whose submission has finished, resets their
-slots on the host (`hostQueryReset`) and sums their time per kind of pass: its size, attachment formats and its first
-fragment (or compute) shader. Every 600 presented frames the log lists the passes with the most GPU time per frame.
-Passes overlap on the GPU, so the times are each pass's span, not its exclusive share; their order is what matters. A
-slot whose mark was not read yet when the ring comes round is not timed (`pt_timed` 2) for that turn.
+only, so an RX 580 has none, and a frame capture tool cannot capture this program). Every pass mark also writes a
+timestamp at its two points (`TOP_OF_PIPE` before the pass, `BOTTOM_OF_PIPE` after it), into the query slot pair of its
+ring slot. `pass_times_poll()`, on the replay thread at each new mark, takes in the marks whose submission has finished,
+resets their slots on the host (`hostQueryReset`) and sums their time per kind of pass: its size, attachment formats and
+its first fragment (or compute) shader. Every 600 presented frames the log lists the passes with the most GPU time per
+frame. Passes overlap on the GPU, so the times are each pass's span, not its exclusive share; their order is what
+matters. A slot whose mark was not read yet when the ring comes round is not timed (`pt_timed` 2) for that turn.
 
-- `PtSum`:
-  - `uint32_t vw, vh`: the largest viewport its draws set.
-- `pt_read`: the newest mark id taken in.
+A `PtSum` also keeps the largest viewport its draws set (`vw`, `vh`). `pt_read` is the newest mark id taken in.
 
 ### `pt_add()`
 
-- `pt_lost++`: table full: counted in the total only.
+When the table of `PT_SUMS` kinds is full, the mark is counted in the total only (`pt_lost`).
 
 ### `pass_times_poll()`
 
-Replay thread (`vk_pass_mark_begin`).
-
-- `if (!m->fence || m->fence > done) break`: its submission is still being recorded or running.
-- The submission finished: both timestamps are in, or one was never written (a pass whose end was not recorded), which
-  leaves that mark out.
+Replay thread (`vk_pass_mark_begin()`). It stops at the first mark whose submission is still being recorded or
+running. Once the submission finished, both timestamps are in, or one was never written (a pass whose end was not
+recorded), which leaves that mark out.
