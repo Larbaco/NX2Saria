@@ -27,6 +27,7 @@ void rt_fatal(const char *fmt, ...) {
     exit(3);
 }
 const char *bugcap_replay_dir(void) { return NULL; }
+void session_summary_header(const char *at) { (void)at; }
 int cfg_supported(const char *key) { (void)key; return 1; }
 void perf_size(PerfSizes *s, const char *name, uint64_t count, uint64_t limit, uint64_t bytes) {
     (void)s, (void)name, (void)count, (void)limit, (void)bytes;
