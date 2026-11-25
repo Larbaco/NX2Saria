@@ -3584,6 +3584,10 @@ game before resuming. Mod rebuilds use the shared completion policy and wait for
 Play or reporting the result. Sequenced game events identify the session. They mark confirmed spawn, window
 focus when observed and completion confirmed by `GameRun`.
 
+The main loop records `worker: game restart observed` when `GameRun.running()` first identifies a replacement
+copy. The restart stays in the same sequence and session. The worker keeps its lock and reports the final copy's
+exit through the original game-end event.
+
 `GameWindowLog` takes initial offsets from both possible game log paths, then reads bounded chunks. It
 tracks file identity and truncation so a stale focus line cannot end the opening state. The worker emits
 `game_window_ready` once per session upon seeing the game's focus-gained line. This signal comes from native

@@ -2,6 +2,7 @@ import json
 import http.server
 import threading
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -201,6 +202,64 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(started['session'], ended['session'])
         worker.stdin.close()
         self.assertEqual(worker.wait(timeout=15), 0)
+
+    def test_native_game_restart_retains_the_play_session_and_lock(self):
+        game = Path(self.tmp.name) / 'game'
+        game.mkdir()
+        exe = game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')
+        if sys.platform == 'win32':
+            fixture = os.environ.get('NX2_TEST_RESTART_GAME')
+            if not fixture:
+                self.skipTest('needs the synthetic Windows restart executable')
+            shutil.copyfile(fixture, exe)
+        elif sys.platform.startswith('linux'):
+            cc = shutil.which('cc')
+            if not cc:
+                self.skipTest('needs a compiler for the stand-in process')
+            subprocess.run([cc, str(ROOT / 'tests' / 'fixtures' / 'worker_restart_game.c'), '-o', str(exe)],
+                           check=True, timeout=15)
+        else:
+            self.skipTest('Linux or Windows native restart')
+        (self.root / 'data' / 'launcher.json').write_text(
+            json.dumps({'game_dir': str(game), 'warn_low_commit': False}))
+        worker, hello = self.start_worker()
+        self.assertEqual(hello['result']['lock'], 'held')
+        release = game / 'exit-restarted'
+        self.addCleanup(release.touch)
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+        worker.stdin.write('{"id":2,"method":"play"}\n')
+        worker.stdin.flush()
+        self.assertEqual(frames.get(timeout=10)['result']['status'], 'started')
+        started = frames.get(timeout=10)
+        self.assertEqual(started['event'], 'game_started')
+        log_file = self.root / 'data' / 'logs' / 'launcher.log'
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if (game / 'restarted').is_file() and 'worker: game restart observed' in log_file.read_text():
+                break
+            time.sleep(0.05)
+        self.assertTrue((game / 'restarted').is_file(), 'the stand-in did not start its second copy')
+        self.assertEqual(log_file.read_text().count('worker: game restart observed'), 1)
+        competitor = self.run_worker({'id': 3, 'method': 'hello', 'protocol': 1})
+        self.assertEqual(json.loads(competitor.stdout)['error']['code'], 'busy')
+        worker.stdin.write('{"id":4,"method":"inspect"}\n')
+        worker.stdin.flush()
+        self.assertEqual(frames.get(timeout=10)['id'], 4)
+        release.touch()
+        ended = frames.get(timeout=10)
+        self.assertEqual(ended['event'], 'game_ended')
+        self.assertEqual(ended['sequence'], started['sequence'] + 1)
+        self.assertEqual(ended['session'], started['session'])
+        self.assertEqual(ended['code'], 7)
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertIn('the game ended with code 7 after restarting itself', log_file.read_text())
 
     def test_play_refuses_external_game(self):
         game = Path(self.tmp.name) / 'game'
@@ -851,7 +910,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): pass\n"
-                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False)\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -892,7 +951,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): pass\n"
-                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False)\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -935,7 +994,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): raise OSError(\"synthetic failure\")\n"
-                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False)\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -982,7 +1041,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): time.sleep(.4)\n"
-                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False)\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "

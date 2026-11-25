@@ -306,7 +306,13 @@ def main(argv=None):
                             sequence += 1
                             emit({'event': 'play_failed', 'sequence': sequence, 'session': session,
                                   'reason': prepared.status})
-            if run and not run.running():
+            running = False
+            if run:
+                restarted = run.restarted
+                running = run.running()
+                if run.restarted and not restarted:
+                    ctx.log('worker: game restart observed')
+            if run and not running:
                 end = game_session.finish_game(run, ctx.log)
                 defer_crash_offer(ctx, run, end)
                 code = run.code()

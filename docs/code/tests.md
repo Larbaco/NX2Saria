@@ -5862,6 +5862,11 @@ It needs git on `PATH` (`prepare_sources` applies the patches with it) and `tool
 
 ## `tests/launcher_worker_test.py`
 
+`tests/fixtures/worker_restart_game.c` starts a second copy of its own executable and holds it open until
+the test releases it. The native restart test checks that the worker records one restart, retains its
+lock, emits no intermediate end and reports the second copy's exit code under the original Play session.
+Linux compiles only this stand-in. Windows accepts the compiled fixture through `NX2_TEST_RESTART_GAME`.
+
 Uses temporary launcher roots and child workers to check pre-validation without writes, including malformed settings,
 the versioned handshake, inspection, idle EOF, lock refusal and release, the unopenable-lock fallback, sanitized startup
 and inspection failures, CLI contention and both Steam behaviors while the worker owns the lock. The Steam test replaces
