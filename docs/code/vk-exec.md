@@ -26,6 +26,962 @@ with a line of code in a code span belongs to that line of the function or struc
 A file whose first lines hold a licence notice keeps that notice in the code; the rows of `THIRD_PARTY_NOTICES.md` say
 what each notice covers.
 
+## `runtime/vk/vk_backend.c`
+
+The Vulkan graphics back end: `gfx_vulkan_backend` wires the memory and texture layer (`runtime/vk/vk_memory.c`,
+`runtime/vk/vk_texture.c`), submission and fences (`runtime/vk/vk_sync.c`) and the present. Every entry starts the
+device on first use.
+
+Present: the game texture is resolved on the calling thread and its blit is handed to a present thread, so
+`nvnQueuePresentTexture` returns at once (section 5). Queue order does the rest: the submissions that wrote the texture
+are already on `gfx_queue`, and every call that may write or free GPU state the blit reads (submit, finish, pool and
+texture teardown, texel writes) first waits until the queued blit was submitted (`vk_present_drain`).
+
+Back-edge pacing: the present thread submits the blit at once, then holds the host present (`vkQueuePresentKHR`) until
+the frame's display time from the pacer (`runtime/nvn/nvn_api_obj.c`), so present-to-present intervals stay even
+whatever the replay took. The blit is already on the queue, so the wait blocks no submission. While a driver's low
+latency holds the frames where they start (`runtime/pacing/vk_lowlat.c`), the pacer's display time is the time of the
+game's present, and the host present goes out as soon as the blit is submitted.
+
+Asynchronous replay (`NX2SARIA_REPLAY_ASYNC`, default 0; 1 turns it on): `nvnQueueSubmitCommands` and
+`nvnQueuePresentTexture` only queue. Each item gets its timeline value at enqueue (`vk_sync_reserve`), in queue order;
+the replay thread runs the synchronous submit and present bodies in that order, so every value is signalled by the
+submission it was handed out for. The game runs at most one frame ahead: queueing present N waits until the replay
+thread handled present N-1. Calls that read or free GPU state that queued work may use drain the queue first
+(`replay_drain`), each cause counted.
+
+- `PresentJob`: `handoff_ns`: how long the presenting thread waited to hand this job over (`present_image`), for the
+  present lines. owed: the presenting thread left the frame's bookkeeping to the next holder of the submission lock
+  (`present_image`, `runtime/vk/vk_frame_owed.h`); the present thread makes sure it ran before the blit
+  (`present_frame_closed`).
+- `pcv`: job queued, job taken, job submitted.
+- `present_frame_closed()`: "a frame's bookkeeping in replay order".
+
+### `wait_until()`
+
+Sleeps on a high-resolution timer to 1 ms before at, then yields until at: the timer alone wakes up to ~0.5 ms late.
+
+### `pace_smooth()`
+
+- `pace_avg_ns`: the present thread's.
+
+`NX2SARIA_PACE_SMOOTH` (default 1; 0 = off): a picture goes out no sooner than seven eighths of the recent interval
+after the one before it. The game's frames reach the present thread in uneven steps although each costs about the same:
+with the replay on the submitting thread, work held for an event is replayed with the next frame, so pictures came 13 to
+31 ms apart around a mean of 22 ms in a village (5th to 95th percentile), which shows as judder at a frame rate that
+would look even. Only the early ones wait, a few milliseconds each, so the rate stays what it was; the recent interval
+is a moving average over about four pictures of intervals under 100 ms, so the floor follows a scene that gets lighter
+within a second. Not with frame generation, which paces its own presents.
+
+### `pace_shown()`
+
+- `if (interval_ns >= 100000000ull) return`: a load or a hitch is not the rate.
+
+### `present_window()`
+
+`NX2SARIA_TRACE=perf`: the present thread's own window of `PW_PRESENTS` presents. The render thread's perf lines time
+the game's side and the hand-off; these say where the present thread's time went: the blit and its submission, the wait
+for the picture's time (`pace_smooth`), and the present call, which takes the queue lock and in which an overlay with a
+frame limiter sleeps. With the presenting thread's wait to hand each picture over, which that time causes.
+
+### `present_main()`
+
+- `unsigned tr = rt_trace`: read once: the stamps and both lines below follow the same flags.
+- `if (j.owed) present_frame_closed(j.frame)`: `vk_dlaa_frame`'s state of this frame, before anything reads it.
+- `if (flight_on || vk_dump_white) vk_thumbs_frame(j.frame)`: `NX2SARIA_DUMP_WHITE` reads them too.
+- `vk_lowlat_present_frame(j.frame)`: the frame's number for the blit's submit and the present's markers.
+- `uint64_t f = vk_sync_submit(NULL, 0)`: a timeline value after the blit: deferred destruction waits for the blit too.
+- `perfmon_shown(t1)`: the overlay's frame times: the pictures as shown.
+- `NX2SARIA_TRACE=present`: one line per present: the host present's interval, the interval of the game's present calls
+  (when the host present went out before back-edge pacing), the wait and how far past its target it went; then how long
+  the present call took and how long the presenting thread waited to hand this picture over.
+- `vk_pipeline_autosave()`: starts the autosave thread once.
+
+### `fh_limit()`
+
+- `THIN_DRAWS`: `NX2SARIA_FRAME_HOLD_MS` (default 120; 0 = off): a frame whose draws were skipped because a shader or
+  pipeline was still building (`runtime/vk/vk_exec_draw.c` `pending_draws`) is not shown: the previous picture stays on
+  screen until a frame is complete again. Such a frame lacks what was skipped, which showed for a frame or two as a
+  black or unlit picture with the interface intact (a lighting pass), a light going out, or ground and walls missing and
+  then back. The game runs on meanwhile, so nothing waits. The hold comes from an allowance of this many milliseconds,
+  used up by the time held and filled again at an eighth of the clock's rate: a pipeline that takes longer, or a run of
+  them on a first visit with nothing recorded, shows its incomplete frames as before and does not freeze the picture.
+  Not with DLSS Frame Generation, which is told about every frame. The same hold covers a change of the scene's size (a
+  DLSS or FSR 3.1 mode picked in the menu, `runtime/vk/vk_dlaa.c` `vk_dlaa_resized_take()`): the first frames drawn into
+  the game's new, empty scene targets come out dark or black, so the previous picture stays for `RESIZE_HOLD` presents
+  from the first frame of the new size. That is once per change of a setting and does not use the allowance. It holds
+  with DLSS Frame Generation too: a present left out is a longer gap between two rendered frames to it (its constants
+  and tags are set at the host present, `runtime/gfx/gfx_present.c`), and a dark frame it is given comes out as several
+  generated ones. And it covers an area load (`runtime/vk/vk_exec_draw.c` `vk_exec_pool_loading()`): while the texture
+  pool still makes the area's textures, the frames show the ground and the walls as black stand-ins, so the picture
+  before the load stays for up to `LOAD_HOLD_NS`, also beside the allowance. And on Ocarina it covers the frame the game
+  leaves empty when it opens a screen over the scene (the Conversation Log over a line of dialogue): that frame clears
+  the picture and draws a few interface parts, and the screen with its backdrop follows one frame later, so one black
+  frame was shown. A frame of fewer than `THIN_DRAWS` draws right after one of `SCENE_DRAWS` or more is not shown; the
+  frames after it follow a frame of few draws and are.
+- `FH`: `frame_hold`, at the present, is the only writer of FH. The replay asks what is left of the allowance as it
+  records (`vk_frame_hold_left`, `runtime/vk/vk_exec_draw.c`), on whatever thread holds the submission lock, which need
+  not be the one that presents: so that reader works out the allowance from `limit_ns`, `left_ns`, `last_ns` and holding
+  (atomics) and writes nothing. When it refilled FH itself, a refill on the replaying thread beside one at the present
+  on another thread counted the same interval twice or not at all. A refill writes `left_ns` and `last_ns` as a pair
+  under a sequence word (seq, odd while it writes), so the reader does not pair a new `left_ns` with an old `last_ns`
+  either.
+
+`NX2SARIA_FRAME_HOLD_MS`, read once by whichever thread asks first; that one logs it.
+
+### `fh_left_at()`
+
+The allowance at now from the last refill (left at last): the time since used up while frames were held, filled again at
+an eighth of the clock's rate while they were not, never above the limit. Full before the first refill.
+
+### `frame_hold_refill()`
+
+`frame_hold` only; returns the limit.
+
+- `__atomic_thread_fence(__ATOMIC_RELEASE)`: a reader that sees either new field also sees the odd sequence.
+
+### `vk_frame_hold_left()`
+
+Whether a frame that skipped draws now would be held (`runtime/vk/vk_exec_draw.c`: a full-screen draw is skipped only
+then). Any thread; reads FH only. `left_ns` and `last_ns` come from one refill: a read that overlaps a refill is made
+again, and after `FH_READ_TRIES` such reads the last one is used (it can count one interval twice or not at all, for
+this one decision), so the reader never waits for the present. holding is stored at the present just after its refill; a
+read between the two applies the previous frame's holding to the few microseconds since that refill. The fields are
+loaded before the clock, so now is not before last.
+
+- `__atomic_thread_fence(__ATOMIC_ACQUIRE)`: the fields are read before the sequence is read again.
+
+### `frame_hold()`
+
+1: this frame is not shown. skipped: the draws it lacks; resized: its scene is the first of a new size.
+
+- `uint64_t d = vk_exec_frame.draws`: counted up over the run; set back with `NX2SARIA_TRACE=gfx`.
+- `if (FH.resize_left)`: beside the allowance: nothing below counts these frames.
+
+### A frame's bookkeeping in replay order (`runtime/vk/vk_frame_owed.h`)
+
+A present closes the frame for the replay (`frame_end`): the trace and conditional-render frame counts
+(`vk_exec_frame_log`, whose `vk_exec_cond_frame_end` moves the frame count the conditional draws go by), dynamic
+resolution's step, the DLSS state of the frame (`vk_dlaa_frame`: the mode and its LOD bias, the frame's points and the
+swap image, the idle releases), the motion tables (`vk_mvsurvey_frame`, `vk_mvprev_frame` swaps its two) and the GPU
+pass timing. The replay reads and writes all of it as it records, under the submission lock. With the replay on the
+submitting threads the game presents on one thread while another may be replaying, and running it at the present then
+reset it in the middle of that replay: a DLSS frame reset halfway (a shake, a frame without the upscaler), the motion
+tables swapped halfway (a ghost; with `NX2SARIA_MVPREV_CHECK=1` a write out of bounds), the conditional draws counted
+against the next frame. So it runs under the submission lock: at the present when the lock is free, else first thing in
+the next submission, on whichever thread makes it (`runtime/vk/vk_sync.c` submit, `vk_present_frames_owed`), or on the
+present thread before the frame's blit (`present_frame_closed`), whichever takes the lock first. The blit reads what
+`vk_dlaa_frame` closed (the inputs frame generation must not get across an upscaler or frame generation switch), so a
+frame's bookkeeping always comes before its blit, as in 0.10.1. The presenting thread never waits for another thread's
+replay for it; the present thread may, for a frame still owed, as it waits for the lock for the blit's submission a
+moment later anyway. Nothing in `frame_end` may wait for the present thread, submit or flush with a wait: the hand-off,
+`vk_texture_get` with its upload flush and `vk_present_drain` stay in `present_image`, outside the lock.
+`NX2SARIA_PRESENT_ORDER=0`: at the present, whatever another thread replays, as in 0.10.1.
+
+### `frame_end()`
+
+t: the presented texture, for the trace = gfx line.
+
+- The frame's draws for the play gate of the background pipeline builds
+  (`runtime/vk/vk_pipeline.c` `vk_pipeline_frame_note()`): the game's draws the replay recorded for it, the count
+  `frame_hold` tells a scene from a thin frame by. Read before `vk_exec_frame_log`, which sets the run's count back with
+  `NX2SARIA_TRACE=gfx`.
+- `dynres_frame()`: before `vk_dlaa_frame` reads the DLSS mode it may override.
+
+### `present_order_on()`
+
+- `fo_tex`: the newest frames' presented textures, by frame % `FO_TEX` (atomics).
+- `fo_owed_n`: presents that left it to a submission; frames a submission caught up (atomics).
+- `fo_blit_n`: frames the present thread caught up before their blits, and the time it took with the wait for the lock
+  (the present thread's; read by `order_log`: atomics).
+
+Read once; `present_image` runs one at a time.
+
+### `vk_present_frames_owed()`
+
+`runtime/vk/vk_sync.c` submit, `sub_lock` held, before its replay: the frames presented while another thread held the
+lock. Their time counts as this thread's replay time (`perf_replay`), as submit's own timing starts after this call: a
+DLSS release in `vk_dlaa_frame` (tens of milliseconds) then shows as replay in the frame-time and slow-frame lines, not
+unattributed.
+
+### `fo_blit_here()`
+
+The present thread, before it uses frame (`present_main`): `frame_end` of a frame the presenting thread left owed has
+run by then. When no submission came between, the present thread runs it itself, under `sub_lock`, waiting for a replay
+in progress. Not one of the game's threads, it waits for the same lock for the blit's submission a moment later anyway;
+a frame whose bookkeeping ran (the presenting thread got the lock, or a submission came first) takes no lock here.
+
+### `present_image()`
+
+- `order_log()`: after the held present's state (PH).
+
+The present after the frame count: resolves the image and hands the blit to the present thread. queued: when the game
+presented; value: the timeline value queued for this present (asynchronous replay), 0 for the next one (synchronous).
+
+- `if (!vram_probe) vram_probe = 1, perfmon_set_vram_game(vk_mem_device_used_mb)`: the overlay's "game" beside VRAM.
+- `int owed = 0`: the frame's bookkeeping may still be owed when the present thread takes it (`PresentJob.owed`).
+- `vk_sampler_aniso_live()`: `NX2SARIA_ANISO` changed in the menu: the surface textures' samplers take the new level.
+- `if (value)`: the queued value is still signalled, in order.
+- `vk_hdr_present_source(img, &j.image, &j.format)`: `NX2SARIA_HDR`: the float picture the game copied into it, same
+  size.
+- `vk_upload_flush(0)`: an upload `vk_texture_get` just recorded goes before the blit.
+- One present in waiting at most: the wait for the present thread to take the previous one is the hand-off
+  (`PERF_HANDOFF`), timed from under pl, where pending is read.
+
+### Registrations in submit order
+
+The console's GPU reads the texture and sampler pools as it runs a submission, right after the submit, so a draw sees
+the slots as they were at about its submit ([maxwell.md](../maxwell.md) 4.9). The replay takes longer than that, and
+writes the submission's bindless set as it goes; the set is read when the submission runs. A registration applied at
+once while a submission is being recorded (made by another of the game's threads, or by the game ahead of a replay on
+its own thread) therefore reaches that submission's draws, the ones recorded before it too: they sample the slot's next
+texture, which the game registered for a later frame. Ocarina registers a round of 30 to 60 streamed textures every four
+or five frames in a town. So a registration takes effect between submissions, in the order the game made it:
+
+- Replay on the submitting thread: one made while a submission is being recorded (`reg_replaying`, set by
+  `runtime/vk/vk_sync.c` submit around the replay) waits in regq, and so does any made behind it; the submitting thread
+  applies them once the submission has gone to the queue (`vk_reg_replay_end`). With no submission being recorded it is
+  applied at once.
+- Replay on its own thread: every one waits in regq and goes into the replay queue ahead of the next item queued
+  (`regs_queue_locked`), so the replay applies it where the game made it among its submits, as it does a release.
+
+A texture finalized while its own registration waits is released at once as before, and once more behind that
+registration (`RG_RELEASE`): `vk_texture_release` marks the slots the texture object registered, which the first call
+could not see. `NX2SARIA_REG_ORDER=0`: every registration at once, as before.
+
+- `RegItem`:
+  - `tex_t t`: `RG_TEX`, `RG_RELEASE`: a copy (the game may reuse the object's memory).
+  - `samp_par s`: `RG_SAMP`.
+- `regl`: regq and the order of what is applied at once; taken before the texture lock.
+- `reg_replaying`: atomic.
+- `reg_waited`: under regl: registrations that waited for a submission, and the times some did.
+
+### `reg_push()`
+
+Regl held.
+
+### `reg_add()`
+
+A registration from the game: applied now, or kept for its place among the submissions.
+
+- `else reg_apply(r, 1)`: under regl: in call order with the other threads' registrations.
+
+### `vk_reg_replay_begin()`
+
+`runtime/vk/vk_sync.c` submit, around the replay of a submission of the game's commands, under its submit lock.
+
+### `vk_reg_replay_end()`
+
+The submission has gone to the queue with its set: what waited is applied, before the next submission is recorded.
+
+- `reg_apply(regq, n)`: under regl: a registration made meanwhile comes after these.
+
+### Asynchronous replay
+
+- `ReplayItem`:
+  - `const tex_t *tex`: `RI_RELEASE`: a copy the item owns (the game may reuse the object's memory).
+  - `RegItem *regs`: `RI_REGS`: n registrations the item owns, in the order the game made them.
+- `RQ_CAP`: a frame queues 1 submit and 1 present, and up to a few hundred releases.
+- `rcv`: item queued, item taken, item done.
+- `dr_calls`: Under rl: calls, calls that waited and the time waited per cause, since the last `replay_log` line and
+  over the run.
+- `ck_reads`: `NX2SARIA_REPLAY_CHECK`: ReadTexels compared with a read after a full drain (under rl): checked,
+  differing, differing although no submission recorded a write to the texture in between, differing with the queue idle
+  at the first read.
+
+### `vk_replay_async()`
+
+- Off by default. Where the game waits for the GPU it overlaps the replay with the game threads (a GTX 1650 in one scene
+  went from 450-686 frames over 50 ms a minute to 10-13, issue `#88`), the only place a gain was measured. While it was
+  the default, a GTX 1660 Ti at the 60 fps cap with the GPU at 26 % reported uneven motion that 0.3.4 did not have
+  (`#659`). It adds up to a frame of latency.
+
+### `vk_be_gpu_wait()`
+
+With the replay on its own thread a submission's value covers its replay too, and the wait stays the fence's.
+
+### `vk_be_exec_wait()`
+
+The submit wait (`runtime/nvn/nvn_api_core.c` `NX2SARIA_SUBMIT_FINISH`): the GPU's only where the submission reads guest
+memory on the GPU (`vk_sync_recorded_wait`).
+
+### `gfx_replay_async()`
+
+The front end's view (`runtime/nvn/nvn_api_core.c`, `runtime/nvn/nvn_api_cmd.c`): replay is asynchronous only on this
+back end.
+
+### `gfx_event_signalling()`
+
+The front end's `nvnEventSignal`, before it writes (`runtime/vk/vk_exec_xfer.c` "events the CPU signals").
+
+### `gfx_replayed_submits()`
+
+The newest submit number (`nvn_submit_count`) whose replay is done: recording copies it used may be freed.
+
+### A present that waits for held work (event order, `runtime/vk/vk_exec.c`)
+
+On the console a present is queued behind its queue's work and goes out once the GPU has run the frame, including work
+that waited for an event. The replay holds such work (`runtime/vk/vk_exec.c`, "event order across the game's queues")
+until the wait holds, and the present went out at once: in Kokiri Forest dialogue (Saria), several presents a second
+came with the frame's whole submission held (4 held submissions, nothing drawn since the last present) and showed the
+picture from before, a flash of the whole picture; the frame was then drawn after its present, in the present thread's
+empty submission, next to the following frame. So with work held at a present, what can go on now goes first, in a
+submission of its own (`held_resume`); if work is still held, the present waits and goes out right after the submission
+that replays the last of it, at the next present, or after `PH_MAX` submissions at the latest. Only with the replay on
+the submitting thread, as the event order. `NX2SARIA_PRESENT_HELD=0`: every present goes out at once. The game presents
+from one thread while others submit, so the submission that puts a held present out may be another thread's, while the
+presenting thread goes on to its next present. `runtime/pacing/vk_present_held.h` keeps that whole: one lock (PH.lock)
+around arming, putting out and every synchronous present while held presents are on, so a held frame goes out once, in
+one piece and before the next one. A submitting thread only tries it and never waits; the presenting thread waits for it
+only while another thread is putting a held present out (counted, and timed as `PERF_DRAIN`). No path holds it across
+`held_resume`, which is a replay; `present_image`'s callees take `sub_lock` only by trying it.
+
+### `ph_lock_waited()`
+
+`perf_begin`'s clock is `plat_now_ns`'s.
+
+### `present_held_on()`
+
+- `ph_ran`: held work run at a present (`held_resume`), on any thread: atomic.
+- `ph_logged`: PH.lock: "went out" lines so far.
+- `ph_other`: held presents another thread's submission put out (written under PH.lock, atomic).
+
+### `held_resume()`
+
+The held work that can go on now, in a submission of its own (`vk_exec_record` syncs it like any other: `held_sync`).
+The present thread first finishes what it was handed: its empty submission replays held work and frees what it replayed
+(`vk_exec_record`), which this walk reads. A present `ph_out` handed it a moment ago is such a case.
+
+### `ph_out()`
+
+`runtime/pacing/vk_present_held.h`'s present callback, with PH.lock held: a held present (why `PH_AFTER`, `PH_CAPPED`,
+`PH_NEXT`) or one that did not wait (`PH_NONE`) goes to `present_image`.
+
+### `ph_why_before()`
+
+Asked with PH.lock held, after a submission that ran held work first (before) or after this thread's submission: whether
+the held present goes out now.
+
+### `ph_hold()`
+
+The presenting thread, PH.lock held: work is still held, so its present waits.
+
+### `submit_sync()`
+
+- `if (n && ph_armed(&PH))`: a present waits: what can go on goes first, then the present, then this submission.
+- `vk_exec_gate_wait(handles, n)`: a submission that begins with a wait for the CPU's signal: before its copies.
+- The submission stopped at a wait whose signal the CPU gave while it was being replayed (`runtime/vk/vk_exec_xfer.c`
+  "events the CPU signals"): it goes on now, in a submission of its own with copies taken after the signal, and that
+  submission's value is the one the game's fence stands for.
+- `if (n) ph_flush_try(&PH, ph_why_after, ph_out, NULL)`: at once unless a present waits.
+
+### `vk_sub_in_frame_publish()`
+
+- `sub_place_next`: this thread's next submission's place in its frame.
+
+`vk_sub_in_frame` is the replay's: `runtime/vk/vk_sync.c` submit sets it under the submission lock from the place the
+submitting thread noted for its submission (`vk_sub_in_frame_publish`), so another thread about to submit cannot change
+it under a replay in progress (`runtime/vk/vk_memory.c` `sub_place()` reads it there and on the replay workers).
+Submissions without commands of their own (held work, the present thread's blit) leave it as it was.
+
+### `replay_main()`
+
+- `int sub_idx = 0`: submissions since the last present, in queue order.
+- `vk_dlssg_submitted(frame)`: the frame's submissions were replayed before its present.
+
+### `wait_counted()`
+
+Rl held.
+
+### `core_away_unlocked()`
+
+A guest thread waiting for the replay gives its virtual core up, as around any blocking host wait (`NVN_BLOCKING`):
+`guest_read` (memcpy, pool invalidate), pool and texture finalize run without it, and a drain lasts up to a replay.
+Called and returning with rl held; rl is not held while the core is taken back.
+
+### `rq_room()`
+
+Rl held: the replay thread runs, and the queue has room for `room` items (waits while it has not).
+
+- Rl is dropped while the core is taken back, and another thread may fill the queue again meanwhile: check again.
+
+### `regs_queue_locked()`
+
+Rl held, with room for an item (`rq_room`): the registrations made since the last queued item go into the queue, to be
+applied before whatever is queued next ("registrations in submit order"). Taken and queued without letting go of rl, so
+two threads' lists keep their order.
+
+### `replay_enqueue()`
+
+Queues an item (waits while the queue is full) and returns its value, reserved under rl so values follow queue order.
+
+- `rq_room(2)`: the item, and the registrations made before it.
+- `it->value = it->kind == RI_RELEASE ? 0 : vk_sync_reserve()`: a release signals nothing.
+
+### `replay_drain()`
+
+Returns once every queued item was replayed and submitted. Back-end entries only: the replay thread never calls them.
+
+- `if (__atomic_load_n(&regn, __ATOMIC_RELAXED))`: this thread's own registrations are in: replayed too.
+
+### `replay_log()`
+
+What made the game wait for the replay: since the last line (every 1800 game frames), or over the run (at exit).
+
+### `order_log()`
+
+What the game's threads met of each other at the present (synchronous replay): presents whose frame bookkeeping went to
+the next submission because another thread held the submission lock, frames a submission caught up, frames the present
+thread caught up before their blits (`present_frame_closed`) and how long that took it, the wait for the lock included,
+held presents another thread's submission put out (`ph_out`), and the presenting thread's waits for PH.lock while one
+went out (`runtime/pacing/vk_present_held.h` `ph_lock()`). total: the run, at exit (`gfx_exit_log`); else
+`NX2SARIA_TRACE=perf` every 600 presents (`present_image`), the window since the last line, logged only when a count
+moved.
+
+- `static uint64_t last[7], last_frame`: `present_image`'s (one at a time): the counts at the last line.
+
+### `gfx_exit_log()`
+
+The run total, once: the game exits through `prof_write` (`runtime/boot.c` `_exit`, the window close), probes through
+`vk_backend_shutdown`.
+
+### `vk_be_present()`
+
+- `perf_present(frame)`: before `vk_exec_frame_log`, which resets the frame's exec counts the flight recorder reads.
+- `if (present_held_on())`: `present_held`.
+- `vk_present_drain()`: the present thread's empty submission may run held work: done before it is read.
+- `if (ph_armed(&PH)) held_resume(), ph_flush_next(&PH, ph_out, NULL)`: the last present still waits: out now.
+- `ph_present(&PH, &j, ph_hold, ph_out, NULL)`: waits for the held work, or goes out now.
+- `present_image(t, crop, at_ns, queued, frame, 0)`: only this thread presents: no lock.
+- Frame bound: the replay thread handled the previous present before this one is queued.
+
+### `vk_program_release()`
+
+`runtime/vk/vk_pipeline.c` drops a released program's pipelines here.
+
+### `vk_be_texture_register()`
+
+Both take effect between submissions ("registrations in submit order").
+
+### `vk_be_texture_release()`
+
+Asynchronous: the release is queued behind the submissions before it, so their replay still resolves the texture's slots
+to its image (a released slot follows another live texture at the storage), and the ones after it see it released, the
+order of the synchronous replay. `vk_texture_release` reads only the object's key fields: a copy.
+
+- Its own registration still waits for the submission being replayed: released again behind it, which marks the slot
+  that registration fills ("registrations in submit order").
+
+### `vk_be_submit()`
+
+Asynchronous: the handles (`nvn_submit_prepare_async` ran under the front end's submit lock) are copied and queued; the
+value returned is the one the replay will signal.
+
+- `vk_lowlat_submit_start()`: a frame's first submission: its simulation is over (nothing while low latency is off).
+- `sub_place_next = __atomic_load_n(&nvn_submits_in_frame, __ATOMIC_RELAXED)`: counted up after the submit returns.
+- `vk_usnap_take(handles, n)`: the uniform blocks as they are now: the game writes on once this returns.
+
+### `vk_be_read_texels()`
+
+ReadTexels with the replay queued: waits for the newest submission recorded to write the texture (replayed and
+completed), not for the whole queue. The readback copy goes through the upload batch on the same queue, after every
+submission the replay has submitted. Submissions still queued or being recorded run after the copy, as on hardware when
+the GPU has not reached them yet: the game only sees their texels after waiting on a sync, and every sync value covers
+replay and GPU, so a read the game synchronised sees them. `NX2SARIA_REPLAY_CHECK` compares with a full drain.
+
+- `vk_sync_fence_wait(f, UINT64_MAX)`: counts as a fence wait in perf.
+- `memcpy(again, dst, n)`: bytes between the rows stay the caller's.
+
+### `vk_be_guest_read()`
+
+A CPU read of GPU-written mirrored storage (memcpy, pool invalidate). With the replay queued it waits for the newest
+submission recorded to write the textures there, not for the whole queue: the write-back copy then runs after their
+renders, and clears `gpu_dirty` only for content that is on the queue. Submissions not replayed yet render after the
+copy, as on hardware when the GPU has not reached them; they mark the texture dirty again for a later read.
+
+### `synced_held_count()`
+
+After a fence wait: the value is done, so its replay is too; a later submission the replay records meanwhile marks its
+targets with a later fence, which `write_back_small` leaves alone. No drain. The count of such waits that came back
+while event-ordered work was still held (`runtime/vk/vk_exec.c`): a submission stopped at an event wait returns its
+value with its remainder held for a later replay, so the game may take a wait for that value as the whole submission
+done and reuse what the held part still reads. How often that happens decides whether the value should be signalled only
+after the remainder (audit finding F-2-05). The counts are atomic adds without a lock: the game's threads wait at the
+same time, and each line is logged by the thread whose add reached it. A wait for value 0 is left out: the window
+acquire's sync stands for no submission (`runtime/nvn/nvn_api_obj.c` `nvnWindowAcquireTexture` gives it fence 0), and
+such waits were half of the lines in two sessions of 2026-11-13.
+
+### `vk_be_frame_start()`
+
+A frame of the game starts. DLSS Frame Generation's low latency sleeps at the acquire (`runtime/vk/vk_dlssg.c`); the
+direct path (`runtime/pacing/vk_lowlat.c`) at the acquire or the pad read, whichever the game makes first in the frame.
+At most one of the two is in effect in a run, and each returns at once while it is not.
+
+### `vk_be_frame_paced()`
+
+The period `nvnQueuePresentTexture`'s pacer keeps (`GfxBackend.frame_paced`). At most one of the two holds the limit in
+a run: DLSS Frame Generation's Reflex, which leaves the pacer its ceiling, or a driver's low latency, which leaves it
+nothing. Each lets go of the limit when given 0 (a movie plays).
+
+## `runtime/vk/vk_device.c`
+
+Vulkan instance, physical device choice, logical device, VMA, timeline semaphore and the validation messenger. The VMA
+implementation is `runtime/vk/vk_vma.cpp` (VMA is `C++` only).
+
+- `vk_dpa`: The loader's `vkGetDeviceProcAddr` until Streamline is on the device (see `runtime/vk/vk.h`).
+- `g_gfx_queues`: queues the graphics family offers (`pick_device`).
+- `g_nqfam`: the device's queue families (`pick_device`): their flags and queue counts.
+- `lost_fence`: The fence `vk_device_lost_poll` asks about. Nothing submits with it, so its status is "not ready" for as
+  long as the device lives.
+- `MESA_CACHE_SIZE`: Mesa's drivers (RADV on Linux and the Steam Deck) keep a shader cache of their own beside our
+  pipeline cache, by default in ~/.cache and up to 1 GB: about 35 MB in a minute of the title screen. A Deck's /home is
+  small and the game usually sits on the SD card, so unless `MESA_SHADER_CACHE_DIR` names a folder, it goes to
+  mesa-cache beside the exe. That folder is ours alone, so its limit is raised to `MESA_CACHE_SIZE` unless
+  `MESA_SHADER_CACHE_MAX_SIZE` is set: the stage libraries the library warm builds in play live only in the driver's
+  cache (`runtime/vk/vk_pipeline.c`, "the play cache"), and a preparation of every shader variant does not fit in 1 GB,
+  so the rest would be compiled again in play.
+
+NVIDIA's driver keeps the pipelines it compiles in a disk cache of its own, by default one folder shared with every
+program (Linux ~/.cache/nvidia, Windows `%LOCALAPPDATA%\NVIDIA\GLCache`). On Linux one process adds at most
+`__GL_SHADER_DISK_CACHE_SIZE` to it (1 GiB unless set), and a start that finds more than that in several files deletes
+the later ones. nx2saria.exe --prepare-shaders builds the 42,142 variants of game 1.1.1 into it in one process: with the
+default limit it stored about 30,700 of them and the rest were compiled again by the first start after it. On Windows
+the same preparation stored them all, and a laptop's updates found the cache cold, 17 to 33% of the list still in it,
+with 1.6 GB in its folder (launcher.log, 2026-11-21): the driver's own folder gives the game no way to know who else
+opens it or with what limit. So unless the environment sets them, the cache goes to nvidia-cache beside the exe
+(`runtime/vk/nvidia_cache.h`), which nothing else writes, with a limit of 8 GiB, and on Windows with the cleanup off.
+The driver makes GLCache inside that folder but not the folder, so it is made here; pointed at a folder that is missing
+or not writable it caches nothing at all, so when that folder cannot be made or written no variable is set and the
+driver keeps its own folder and limit. Without NVIDIA's driver (Linux: no /proc/driver/nvidia/version, the test the
+AppImage's build makes for DLSS; Windows: no nvapi64.dll in System32) the variables do nothing and the folder would stay
+empty, so nothing is done. `nvidia_cache_dir` = 0 leaves all of it to the driver. Every call of `vk_driver_cache_env`
+happens before a driver can load, in the game, the preparations and the probes alike, so a start from the launcher, from
+Steam or from the exe itself sets the same.
+
+### `folder_error()`
+
+0 when dir takes a new file, else the system's error code. Linux asks the access rights, as it always has; Windows makes
+and deletes a file named after the process, since a directory's attributes say nothing of the rights on it and the
+launcher's preparation and a game may start together.
+
+- `snprintf(probe, sizeof probe, "%s\\.write-test-%u", dir, (unsigned)plat_process_id())`: another start may be here
+  too.
+- `plat_fs_unlink(probe)`: one an earlier start with this process id left.
+
+### `nvidia_cache_beside_exe()`
+
+- A restart inherits what this game set; those variables are the game's, not the player's (`runtime/vk/nvidia_cache.h`).
+- `int stale = nvc_stale(&plan, ours)`: set by this game before a restart and not wanted now.
+- `int refused = 0`: the variables the environment did not take.
+- `if (plan.set & ~refused) plat_setenv(NVC_MARK_VAR, mark)`: a restart will know these are the game's.
+
+### `mesa_submit_thread()`
+
+- `submit_thread_why`: `create_device` logs it on a Mesa driver.
+
+Mesa's Vulkan drivers on Linux (RADV, ANV, NVK) keep timeline semaphores as kernel sync objects, which cannot wait for a
+value not submitted yet. Their queues therefore submit on the calling thread and use a thread of the queue's own only
+for a submission that waits on such a value. Every other `vkQueueSubmit2`, the command stream's checks and the kernel's
+ioctl, runs on the replaying thread, once for every part the replay hands to the queue early
+(`runtime/vk/vk_exec.c` `maybe_split()`). `MESA_VK_ENABLE_SUBMIT_THREAD=1` sends every submission to the queue's thread:
+in Kokiri Forest on an RX 6800 XT (Mesa 26.2) the replay took 13.9 ms a frame with it and 15.0 ms without.
+`NX2SARIA_SUBMIT_THREAD` (default 1 on Linux, 0 on Windows) sets it unless the environment already sets it; 0 leaves the
+driver's own choice. Drivers that do not read the variable ignore it. `vk_driver_cache_env` calls this before any thread
+can load the driver.
+
+### `vk_driver_cache_env()`
+
+A driver may read these variables when it loads, and a thread can load the Vulkan driver before `create_instance`:
+`runtime/patches/widescreen.c`'s `wide_init` asks for the monitor's size (fullscreen with a monitor chosen and the
+picture at the window's size), and SDL's load of the Vulkan library there lists the instance extensions, which loads the
+drivers, while the prewarm thread may be in `create_instance`; setenv beside other threads' getenv is not safe either.
+The quality preset's probe (`runtime/cfg/hw_detect.c` `hw_detect()`, from `cfg_start` inside `mem_init`) therefore calls
+this first in a game run, main calls it again for a game run whose probe did not run, before any thread of the game
+starts, and `create_instance` calls it for the other modes. Every call happens before other threads exist or under
+`vk_init`'s lock, so the flag needs no atomics.
+
+### `create_instance()`
+
+- `vk_dlssg_early()`: DLSS Frame Generation: Streamline before any Vulkan call of the process (its slInit asks so).
+- DLSS Frame Generation: Streamline's plugins call its naming functions even when they say it is off.
+- Armed, not wanted: the menu switches HDR on during the run (`runtime/vk/vk_hdr.c`), and the extensions are fixed here.
+- `if (vk_hdr_armed() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))`: HDR10 surface formats.
+
+### `missing_required()`
+
+Name of the first missing required extension, or NULL.
+
+### `find_gfx_family()`
+
+Graphics+compute family that can present to the window.
+
+### `card_usable()`
+
+1 when the game can run on pd: Vulkan 1.3, the required extensions and a graphics+present queue family (the tests
+`pick_device` makes of each card it considers).
+
+### `vk_card_prepare_text()`
+
+- `GPUC_OTHER`: `runtime/vk/gpu_choice.h` has no Vulkan header: its `GPUC_*` kinds are VkPhysicalDeviceType's values,
+  which `pick_device`, the preset's probe (`runtime/cfg/hw_detect.c`) and the menu's row (ui/menu.cpp) copy into
+  `GpucCard.type` unchanged.
+- `g_gpu_choice_note`: The fatal error's note on how the card was chosen
+  (`runtime/vk/gpu_choice.h` `gpuc_choice_line()`), empty when it was not or the choice gives no cause to say so.
+  Written once, by `pick_device`, before the game runs.
+- `g_prepare_text`: The card the device was made on and how it was chosen
+  (`runtime/vk/gpu_choice.h` `gpuc_prepare_line()`), for the lines the preparation modes print
+  (`runtime/vk/vk_pipeline.c`): the preparation builds the driver's cache of this card, and the launcher's log is where
+  a player's report of a slow update is read. Written once, by `pick_device`, before anything reads it.
+
+### `cards_usable()`
+
+Which of the discrete cards the game can use (`runtime/vk/gpu_choice.h` `GpucCard.usable`), before the choice that needs
+it.
+
+### `pick_device()`
+
+First discrete GPU with Vulkan 1.3, the required extensions and a graphics+present queue (of one GPU listed by two
+drivers, the newer driver's listing); `NX2SARIA_GPU_INDEX` (index) or `NX2SARIA_GPU_NAME` (case-insensitive part of the
+name) overrides. The order the cards are listed in changes (`runtime/vk/gpu_choice.h`): with both set, a `gpu_index`
+that lists a card without the name is dropped and the name decides; a `gpu_index` alone that lists a card that is not a
+discrete one while a discrete one the game can use is listed counts as Auto. The shader preparation modes get their
+device here too, from the same settings, so they build the cache of the card the game takes.
+
+- `const char *e = cfg_get("NX2SARIA_GPU_INDEX")`: no fixed default: the best device when unset.
+- `uint32_t best_driver = 0`: the driver version of the best one so far.
+- The cards in the order the loader lists them now: the list for the log, and the names that tell whether a `gpu_index`
+  still lists the card it was written for.
+- `const int asked = want`: `gpu_index` as the settings give it: the lines below name it.
+- `const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX")`: set for this run, on purpose (`runtime/vk/gpu_choice.h`).
+- A position alone that lists a card that is not a discrete one gives way to a discrete card the game can use
+  (`runtime/vk/gpu_choice.h` `gpuc_legacy_alt()`), so which of them the game can use is asked here, and only then.
+- `gpuc_setting_line(cards, (int)n, want, name, from_env, line, sizeof line)`: what the settings hold.
+- A chosen card of another vendor while DLSS Frame Generation is on: the interposer cannot make its device
+  (`vk_dlssg_create_device`), and the settings ask for what only an NVIDIA card runs. Not usable, so the best usable one
+  is taken below, as for a card that is gone; where no NVIDIA card is usable either, the pass without a choice takes
+  what there is and the device is made without frame generation.
+- The same GPU listed again by another installed driver (a laptop with the vendor's processor graphics and its card has
+  both drivers list the card): the newer driver's listing. The older one, there to serve the processor graphics, was
+  reported to crash in its shader compiler with the card.
+- A chosen GPU that is not usable or no longer there (the menu's GPU row, an unplugged card, a driver that lists the
+  devices in another order): the best usable one instead, so the game still starts and the choice can be changed.
+- A card a `gpu_index` alone chose that is not a discrete one, while a discrete one the game can use is listed: the game
+  may be on the wrong card (`runtime/vk/gpu_choice.h`). The line follows "using gpu" below, the short form goes to a
+  fatal error's report.
+- `if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name))`: a `gpu_index` alone (`gpuc_choice_line`).
+- `for (uint32_t i = 0; i < nq; i++)`: a family that does transfer only (async DMA engine).
+- `vk_caps_driver(g_vk.phys)`: before `vk_mem_class_log`, which chooses the pools' storage by driver.
+- And by whether the device imports dma-bufs (`runtime/vk/vk_memory.c` "dma-buf imports").
+
+### `vram_heap_limits()`
+
+Heap limits for VMA where the GPU has more than one device-local heap. An RX 580 (8 GiB, AMD 23.10) shows a 6 GiB heap
+and a 2 GiB host-visible one; Windows granted the game 5.1 GiB of the first. VMA, asked for device-local memory, takes
+the first heap whatever its budget, and a save load put 5.6 GiB there while the second held 69 MiB: the next submit
+failed with `VK_ERROR_OUT_OF_DEVICE_MEMORY`. With a limit VMA counts a heap full at it and places what follows in the
+next memory type that allows it (the other device-local heap first), for every allocation: textures, render targets,
+VRAM mirrors, pools. The limit is each device-local heap's budget when the device is made (`VK_EXT_memory_budget`, what
+other programs leave) less a margin for memory VMA does not see (swapchain, FidelityFX): a tenth, at least 256 MiB.
+`NX2SARIA_VRAM_HEAP_LIMIT`: auto, 0 (no limits, the default) or a number of MiB for the largest device-local heap. The
+low-end GPU mode set auto up to 0.10.1.
+
+- `long mb = !e || !*e ? 0 : strcmp(e, "auto") ? atol(e) : -1`: unset: no limits.
+- `if (mb < 0 && (nlocal < 2 || !g_vk.has_memory_budget)) return 0`: auto: only where another heap can take the rest.
+- `if (budget <= margin * 2) continue`: too small to limit.
+
+### `fatal_note()`
+
+One line for a fatal error's report (`runtime/dispatch.h` `rt_fatal_note_add()`): the card, its driver, and the settings
+in effect that change how the game's memory behaves. A report often arrives as the end of a log alone, or as a picture
+of it, and the lines that say these things are at its start. No lock is taken: the failing thread may hold any. How the
+game's task and mesh programs are drawn (`create_device` decides it): natively, through the mesh fallback, the mesh
+emulation, or not at all. Every RX 6000 loss whose marks named a pass was in one that starts with a mesh draw.
+
+### `timed_alloc()`
+
+`NX2SARIA_TRACE=perf`: every device memory allocation VMA makes, timed as the "device memory allocations" work mark
+(`runtime/diag/perf.c` `mark_text()`). An area's first visit made 78 of them, 4.4 GB, in a frame of 421 ms of which
+about 180 ms showed in no mark; `runtime/vk/vk_headroom.c` measured 8-19 ms per 256 MiB block. VMA takes this one
+function from the allocator's create info and the others from its static table
+(`runtime/vk/vk_vma.cpp` `VMA_STATIC_VULKAN_FUNCTIONS()`). A failed attempt counts too, with its time and 0 bytes: VMA
+may then try again with a smaller block, and the failed call held the frame as well, so the mark's count can pass the
+number of allocations made.
+
+### `create_device()`
+
+- Pageable video memory (`NX2SARIA_VRAM_PAGEABLE`): past the budget Windows pages device memory out by the priority of
+  each allocation, textures (0.3) before render targets, VRAM mirrors and physical pools (1.0):
+  `runtime/vk/vk_texture.c` `image_alloc()`, `runtime/vk/vk_memory.c` `mirror_create()` and `alloc_physical()`. VMA
+  passes the priority with its flag (below). Without it the texture residency (`runtime/vk/vk_texture.c` "residency")
+  could not bring the use down to the budget.
+- The translator's SPIR-V declares fragment shader interlock whenever the host reports it
+  (`runtime/vk/vk_pipeline.c` `spirv_fixup()`).
+- NVN2 task and mesh programs (gameplay geometry) draw through `VK_EXT_mesh_shader`
+  (`runtime/vk/vk_exec_draw.c` `op_draw_mesh()`).
+- The foliage's far shadow cascades shade one fragment per 2x2 pixels
+  (`runtime/vk/vk_exec_draw.c` `mesh_shading_rate()`).
+- Guest shaders that use warp-wide operations after divergent code run with their threads reconverged
+  (`runtime/vk/vk_pipeline.c` `spirv_reconverge()`).
+- Compiled pipelines kept under the runtime's own keys (`runtime/vk/vk_pipeline.c` `pipe_create()`):
+  `VK_KHR_pipeline_binary`, which needs `VK_KHR_maintenance5` (core only from Vulkan 1.4; the instance asks for 1.3).
+  `NX2SARIA_PIPE_BINARIES=0` leaves both off.
+- Feedback loops (`runtime/vk/vk.h` `VkCtx.feedback`): the layout, and barriers inside dynamic rendering.
+- `vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40)`: NGX's; the eight slots after it stay for the eight below.
+- FSR 3.1 (`runtime/vk/vk_ffx.cpp`): its Vulkan back end looks vkGetBufferMemoryRequirements2KHR up by that name, which
+  resolves only with the extension enabled (the core function has no suffix); without it the back end called address 0.
+  Always asked for: FSR 3.1 can be switched on in the menu during a run.
+- DLSS Frame Generation (`runtime/vk/vk_dlssg.c`): Streamline's plugins look functions of extensions core in Vulkan 1.3
+  up by their suffixed names too, which resolve only with the extension itself enabled.
+- GPU timestamps on the CPU clock (`runtime/vk/vk_sync.c`): the perf line splits GPU idle time into waiting for a
+  submission or not.
+- `if (vk_hdr_armed() && has_ext(ep, ne, VK_EXT_HDR_METADATA_EXTENSION_NAME))`: the display's peak (`vk_hdr_metadata`).
+- GPU breadcrumbs for a lost device (`runtime/vk/vk_crumbs.c`): AMD's drivers and RADV report it.
+- Pass marks on NVIDIA (`runtime/vk/vk_crumbs.c`): checkpoints only with `NX2SARIA_PASS_CRUMBS=1`, since NVIDIA
+  documents a cost for the extension. NVIDIA's drivers report it, AMD's do not.
+- Guest memory imported as dma-bufs (`runtime/vk/vk_memory.c` "dma-buf imports"; `pick_device` checked the extensions).
+- Low latency without frame generation (`runtime/pacing/vk_lowlat.c`): NVIDIA's extension, which needs
+  `VK_KHR_present_id` enabled with it, or AMD's, whose calls need its feature. Each only where the driver lists it; a
+  driver lists one of them at most. Not on a device the DLSS Frame Generation proxies make (`vk_dlssg_create_device`):
+  that path's own low-latency plugin asks for what it needs there, and the direct path stays off for the run. And only
+  in a run that starts with `NX2SARIA_LOW_LATENCY` on: with it off the device is made exactly as before the mode
+  existed, and a driver that lists one of the two is only remembered (`lists_low_latency`), so the menu can say that
+  turning the setting on takes a restart.
+- Graphics pipeline library: chained last so it can be dropped again when `vk_caps_gpl` declines it.
+- The driver fills the chain with what it supports; the same chain then enables all of it (robustBufferAccess stays on:
+  guest shaders index constant buffers freely and out-of-range reads must stay harmless).
+- `if (g_vk.has_vrs)`: the rate is set per draw; no rate attachment and no per-primitive rates.
+- These two need features that are not enabled (multiview, primitive fragment shading rate).
+- Mesh queries for two diagnoses: `NX2SARIA_GPU_PASSES` (`runtime/vk/vk_crumbs.c`) and the dump's primitive counts
+  (`runtime/vk/vk_dump.c` `vk_dump_mesh_begin()`), which also need pipeline statistics and host query reset.
+- `}`: vkGetDeviceFaultInfoEXT needs the feature, not just the extension.
+- `mesh_fallback`: auto, 1 (on every device) or 0 (`runtime/vk/vk_mesh_path.h` says when auto takes it, and why on AMD's
+  driver for RDNA 1 and 2 and on Intel's; the RADV releases it takes it on, and the `vk: mesh path:` lines this function
+  writes for them, are on [vk-pipeline.md](vk-pipeline.md)). Without mesh shaders the mesh emulation
+  (`mesh_emulation` = 1) draws them
+  instead. `has_mesh_shader` keeps saying what the hardware has: the recorder thread (`runtime/vk/vk_rec.c`) goes by it,
+  not by how mesh programs are drawn.
+- Says `NX2SARIA_MESH_FALLBACK_BATCH`'s value and whether it is active here (`runtime/vk/vk_exec_draw.c`); `vk_ctx()` is
+  not ready yet, so the path and the device's default go as arguments.
+- The chain enables what the driver reported: a present carries a frame's number only with `presentId`, and
+  vkAntiLagUpdateAMD may be called only with `antiLag` (the extension alone stays enabled and unused without it).
+- Frame generation (`runtime/vk/vk_fg.cpp`) presents on a second queue of the graphics family and acquires on a third.
+  AMD's swapchain needs a present queue nothing else submits to (FidelityFX: the engine must not use it, or it can
+  deadlock); the image acquire queue needs no capability. Where the graphics family has one queue (AMD's Windows driver,
+  an RX 580), both come from another family: a queue of a family that can present for the present, and a second queue of
+  it, or of any other family, for the acquire (the present queue itself when there is none). Without them
+  `vk_fg_create_swapchain` gave up without a word: frame generation set in the menu did nothing.
+- `for (int pass = 0; pass < 2 && fg_pf == UINT32_MAX; pass++)`: compute families first, then the others.
+- `if (vk_dlssg_dpa())`: Streamline's, so its plugins hook every entry point the replay fetches.
+- `vk_mem_dmabuf_probe(g_vk.device, &g_vk.mem_props, vk_gpa_wanted_ctx(&g_vk))`: may turn shadow storage on.
+- `vk_mem_lazy_decide()`: the driver is known: the lazy write-back's default depends on it.
+- `static const VmaVulkanFunctions vf = {.vkAllocateMemory = timed_alloc}`: the rest from VMA's static table.
+
+### `destroy_all()`
+
+- `g_errors_total`: outlives the device so the probe can print it after `vk_shutdown`.
+
+- `if (g_vk.device) vk_dlaa_release()`: the DLSS features and NGX: the allocator and the device still live.
+- `if (g_vk.device) vk_fsr3_release()`: FSR 3.1's own passes and contexts, where they were made.
+- `if (g_vk.device) vk_lowlat_release()`: the sleep's semaphore: the device still lives.
+- `if (lost_fence) vkDestroyFence(g_vk.device, lost_fence, NULL)`: `vk_device_lost_poll`.
+
+### `device_fault_report()`
+
+The report of a lost device: the breadcrumbs, the pass marks, the video memory and the driver's fault information. Once
+per process, on the thread that saw the loss first (`vk_device_lost_check`).
+
+- `n.vendorBinarySize = 0`: the vendor binary is not fetched; its size alone is logged.
+- The faulting access lies in the precision-aligned range around the reported address.
+
+### The end of a run whose device is lost (`runtime/vk/vk.h` `vk_device_lost_check()`)
+
+A lost device stays lost: every later call on it fails or, worse, answers as if it had worked, and a driver that is
+called on from several threads after the loss can fault inside itself. So the first thread that sees the loss ends the
+run, and nothing else touches the device meanwhile: the paths that would read `vk_lost` and return, and a thread that
+gets the loss as a result of its own stops here for good. `LOST_EXIT_MS` bounds the end. The first thread writes the
+report and waits for a save commit (`runtime/hle/fs_host.c` `fs_save_crash_wait()`, 2 s at most); should it hang on a
+lock that a stopped thread holds, the watchdog (arg non-NULL) says so in one line and ends the process with the same
+code, and the lines already written are in the log (`rt_fatal_code` wrote them itself). The end is `plat_terminate`:
+`ExitProcess` would stop the watchdog too and then run every library's detach, and a driver's detach that hangs on a
+lost device would hold the process for good. A thread that stops here otherwise ends the process a little later, should
+the watchdog not have started.
+
+### `lost_wait_exit()`
+
+- `rt_log_ending()`: its line reaches the log file past its cap (`runtime/main.c` `log_sink()`).
+- `rt_log_sync()`: the queue's locks only tried (bounded): their holder may be the thread that hangs.
+
+### `vk_device_lost_check()`
+
+- `if (plat_xchg32(&vk_lost, 1)) lost_wait_exit(NULL)`: another thread is ending the run: this one stops here.
+- `char at[16]`: when the loss was seen, before the report that follows takes its time.
+
+### `vk_selftest()`
+
+- `vk_sync_signal_note(1)`: a host signal of the timeline is noted first (`runtime/vk/vk_sync.c` `timeline_beyond()`).
+
+### Probe-vkdevice (`runtime/host.h`)
+
+### `probe_vkdevice()`
+
+- `fatal_note()`: the line a fatal error or a crash would add to the log, to read it without one.
+
+### `vk_mesh_shader_native()`
+
+The GPU has mesh shaders (`runtime/vk/vk_exec.c` `vk_exec_tail_begin()`: the early tail runs only on such a card).
+
+## `runtime/vk/vk_caps.c`
+
+What the runtime branches on, logged once at device creation, and the fallbacks for GPUs other than the RX 9070.
+
+Fallbacks (each also forced on any GPU by an environment switch, to test it where the GPU does not need it):
+
+- No `shaderFloat64` (`NX2SARIA_VK_NO_FLOAT64=1` clears the feature before `vkCreateDevice`): the translator lowers FP64
+  to FP32 ("softfloat64"), so no shader declares Float64.
+- `minStorageBufferOffsetAlignment` above 4 (`NX2SARIA_VK_SSBO_ALIGN=<power of two>` raises it): the translator computes
+  storage offsets from the guest address rounded down to that alignment (the translator's unaligned storage path), and
+  `runtime/vk/vk_exec_draw.c` `ssbo_info()` binds the rounded-down address, so shader writes reach guest memory instead
+  of a copy.
+- No graphics pipeline library with fast linking (`NX2SARIA_GPL=0` forces it; it also defaults off on AMD's Windows
+  driver for RDNA 2 and older, see `vk_caps_gpl`): `vk_caps.gpl` = 0, the extension stays disabled, and pipelines are
+  built whole.
+- No 32-lane pin (no `subgroupSizeControl`, 32 outside min..max, or `NX2SARIA_VK_SUBGROUP_PIN=0`): stages run at the
+  device's `subgroupSize` (SPIR-V 1.3 without a required size) and the translator is told that size.
+  `NX2SARIA_VK_SUBGROUP=<n>` pins n instead of 32 where the driver allows it.
+
+The defaults (Float64, no storage rounding, 32 everywhere) leave the shader cache keys as they were
+(`runtime/gfx/gfx_shader.c`).
+
+- `gpl_lib`: the driver's `graphicsPipelineLibrary` (feature), ...FastLinking (property).
+- `gpl_off`: why gpl is off, for the boot report; NULL when it is on.
+- `summary`: `vk_caps_summary`: written once, in `vk_caps_init`, before any other thread reads it.
+- `gpu`: The card for the session summary (`runtime/session_summary.h` `vk_caps_gpu()`): stored once in `vk_caps_init`,
+  published by `gpu_known`.
+- `amd_proprietary`: AMD's own Windows driver (any branch): `runtime/gfx/gfx_shader.c` `patch_vec_index()`.
+
+### `vk_caps_vec_index_bug()`
+
+`runtime/gfx/gfx_shader.c` `patch_vec_index()`: the driver reads uniform vector components at computed indices wrongly
+(the translator's HasVectorIndexingBug, which is set for AMD's Windows drivers).
+
+### `vk_caps_driver()`
+
+- AMD split RDNA 1 and 2 off into a driver branch of their own; its `driverInfo` reads "26.10.1 (AMD proprietary shader
+  compiler)" where the RDNA 3 and 4 driver names LLPC.
+
+### `vk_caps_gpl()`
+
+`NX2SARIA_GPL=0` turns graphics pipeline libraries off and 1 turns them on; unset, they are on wherever the driver has
+fast linking, except on AMD's Windows driver for RDNA 2 and older (`vk_caps.amd_sc`: RX 400 to RX 6000). On an RX 6700
+XT the game ended with code 71 at every enemy killed, from 0.5 on, and no longer with gpl = 0; an RX 5700 XT showed the
+same ending (issue `#418`). Where in the driver it faults is not established: a kill draws its effects for the first
+time, which asks for a burst of new pipelines linked from stage libraries, and building them whole avoids it. The price
+there: with libraries off a pipeline the game needs for the first time is built whole by a worker while its draw is left
+out (`runtime/vk/vk_exec_draw.c`, "pipeline still building"), so new things appear some frames late, and the start waits
+for every recorded pipeline instead of 20 s at most (`runtime/vk/vk_pipeline.c` `prewarm_run()`). The same driver had
+libraries off before, for device losses at boot (issue `#5`), whose cause was GPU writes past 3D BC images
+(`runtime/vk/vk_exec.c`, "3D BC render targets"); it boots with them since that was fixed, so gpl = 1 is there to try on
+a newer driver. RDNA 4 under RADV is reported to hang the GPU at the title screen with GPL.
+
+### `vk_caps_init()`
+
+- Gathers (TLD4) pick their four texels with Maxwell's rounding; AMD and Intel round a coordinate that sits between two
+  texels the other way, which draws dark lines along object edges in shadow-map filtering ([maxwell.md](../maxwell.md)
+  2.10; seen on AMD). The translator biases gather coordinates by the host's sub-texel precision; NVIDIA rounds as
+  Maxwell does. `NX2SARIA_GATHER_BIAS=<bits>` forces it (0: off).
+- A register read before any write is an undefined load in SPIR-V, so function-local variables start at 0
+  ([maxwell.md](../maxwell.md) 3.12). Mesa folds undefined values freely; NVIDIA's compiler gives such a read a value of
+  another lane of the warp: Ocarina's clustered-light loop reads registers that only some paths write, and on an RTX
+  5090 the Great Fairy Fountain floor took an extra light term in 4x8-pixel tiles (one 32-lane warp each) and Link went
+  dark with green speckles. On with every setting: `runtime/vk/vk_dlaa.c` knows the game's FXAA by its zeroed SPIR-V
+  hash too, and the shader cache keys (which include this) stay the same whether DLSS is on or off, so shaders prepared
+  with one setting serve the other. `NX2SARIA_ZERO_LOCALS=0` turns it off.
+- bda: global accesses the translator finds no storage buffer for go through the device address table
+  (`runtime/vk/vk_gpa.c`).
+- `for (uint32_t h = 0; h < c->mem_props.memoryHeapCount; h++)`: the largest device-local heap: the card's own memory.
+
+## `runtime/vk/gpu_choice.h`
+
+The graphics card the settings choose (`gpu_index`, `gpu_name`) and what the log says about the choice:
+`runtime/vk/vk_device.c` `pick_device()` and `fatal_note()`, `runtime/cfg/hw_detect.c` `probe_gpu()`, ui/menu.cpp
+`row_gpu`. Header only, and plain enough for C and `C++`, so that `tests/gpu_choice_check.c` checks the rule and every
+line without a device.
+
+The order the cards are listed in is not fixed. Vulkan says nothing of it, and on Windows the loader follows the order
+of the system's graphics adapters, which the system's graphics settings for the program, a display on one card and the
+power source change. A laptop with an RTX 3050 and Intel UHD Graphics listed the Intel graphics first at one start and
+the NVIDIA card first at the next, with the game unchanged: `gpu_index` = 1, chosen in the menu while 1 was the NVIDIA
+card, then ran the game on the Intel graphics. Those share the system's memory, which on 16 GB leaves them about 7 GB;
+the video memory budget was used up at the first save load and the device was lost (exit code 72), at every start that
+loaded a save.
+
+So a position is no lasting choice. The menu writes the card's name beside it (`gpu_name`), and when `gpu_index` lists a
+card that does not have that name in its own, the name decides (`gpuc_index`).
+
+A `gpu_index` written alone, as every settings file from before the menu kept the name has it, is the weak case: it
+names whatever card is listed at that position now, and the game and the shader preparation both went to it, the
+preparation filling the Intel graphics' driver cache of the laptop above while the NVIDIA card's stayed cold. When that
+card is not a discrete one while a discrete one the game can use is listed, the position now counts as Auto
+(`gpuc_legacy_alt`), with a line in the log. Only the menu's choice of a card writes a name, so a card that is not a
+discrete one is kept on purpose by choosing it there. A `gpu_index` that the environment sets (`NX2SARIA_GPU_INDEX`) is
+set for that run on purpose and goes by its position; the log then warns when it puts the game on a card that is not a
+discrete one while a discrete one the game can use is listed (`gpuc_choice_line`). A card picked through `gpu_name` is
+the player's own choice and gets no such line. At each start the log also says what the two settings hold, agreeing or
+not (`gpuc_setting_line`), and the shader preparation says which card it builds the driver's cache for
+(`gpuc_prepare_line`).
+
+- `enum { GPUC_OTHER, ... }`: VkPhysicalDeviceType's values, so that this header needs no Vulkan header.
+- `GpucCard`:
+  - `const char *name`: the name the driver gives the card.
+  - `int type`: `GPUC_*`.
+  - `int usable`: the game can run on it: Vulkan 1.3, its extensions, a queue that presents. Read for discrete cards
+    only: `gpuc_legacy_alt`, `gpuc_choice_line` and `gpuc_prepare_line` look for one the game can use.
+- `gpuc_has()`: 1 when part is in s, upper and lower case alike: `gpu_name`'s match.
+- `gpuc_index()`: The position to go by, for `gpu_index` want (-1: unset) and `gpu_name` name (NULL or empty: unset)
+  over the n cards listed now: want, unless a name is set and the card at that position does not have it (the cards are
+  listed in another order than when `gpu_index` was written, or one of them is gone). Then -1, `*dropped` is 1 and the
+  name finds the card. Nothing is dropped while one of the two is unset.
+- `gpuc_legacy_applies()`: 1 when a `gpu_index` alone lists a card that is not a discrete one, the part of
+  `gpuc_legacy_alt` that needs no card's usable: want (-1: unset) over the n cards listed now lists a card that is not a
+  discrete one, no `gpu_name` is set (a name is the player's own choice of that card), and the index is not the
+  environment's (`from_env`: set for this run, on purpose). A caller that has to find out which cards the game can use
+  does so only when this is 1.
+- `gpuc_legacy_alt()`: The discrete card a `gpu_index` alone gives way to, or -1 when the position stands: the first
+  discrete card the game can use, when `gpuc_legacy_applies`. Nothing to give way for with Auto, a position past the
+  list, a discrete card at it, a name, an environment setting, or with no discrete card to use (the card at the position
+  is then the only one that runs the game).
+- `gpuc_resolve()`: The position the pick goes by for the settings want and name (as `gpuc_index` and `gpuc_legacy_alt`
+  take them), the one call for the device choice (`runtime/vk/vk_device.c` `pick_device()`) and the preset's probe
+  (`runtime/cfg/hw_detect.c` `probe_gpu()`), so that the preset is chosen for the card the game takes: `gpuc_index`'s
+  result, or -1 when a `gpu_index` alone gives way to a discrete card. `*dropped` is `gpuc_index`'s, `*alt`
+  `gpuc_legacy_alt`'s (-1: the position stands); the caller says either in the log.
+- `gpuc_shown()`: The card the settings pick as far as the list tells, for the menu's Graphics card row: the one
+  `gpu_index` lists when it has the name (or no name is set), else the first with the name; -1 for Auto, for a position
+  past the list, for a name that no card has (the game then takes the best card, as for Auto) and for a `gpu_index`
+  alone that gives way to a discrete card (`gpuc_legacy_alt`; `from_env`: the index is the environment's).
+- `gpuc_setting_line()`: The line at each start that says what the two settings hold over the cards listed now, agreeing
+  or not, with want and name as the settings file gives them (-1 and NULL or empty: unset), and `from_env` as for
+  `gpuc_legacy_alt`.
+- `gpuc_dropped_line()`: The line for a `gpu_index` that `gpuc_index` dropped, with the want it was given: what it
+  listed, and that the name decides.
+- `gpuc_legacy_line()`: The line for a `gpu_index` alone that gives way to Auto (`gpuc_legacy_alt`), with the want it
+  was given and the card alt it returned: what the position listed, and what to do to run on that card on purpose (the
+  settings file's `gpu_name` too, for a game that cannot open its menu).
+- `enum { GPUC_BY_AUTO, ... }`: How the card the game runs on was chosen, for `gpuc_prepare_line`.
+- `gpuc_prepare_line()`: The text the shader preparation modes print after "prepare-shaders: card: "
+  ("prepare-pipelines: card: " in that mode; `runtime/vk/vk_pipeline.c`): the card whose driver cache they build, picked
+  (an index into c) by how, which is a `GPUC_BY_*` value, with want and name as the settings give them. Said in the
+  launcher's log, where a player's report of a slow update is read: the preparation's own device lines are among sixty
+  others. Where the card is not a discrete one while a discrete one the game can use is listed (the player's own choice
+  of the card by its name, or an index in the environment), it also says that one's driver cache is not the one built.
+- `gpuc_choice_line()`: The card the settings picked (want, name: what the pick went by after `gpuc_index`, -1 and NULL
+  for Auto) is not a discrete card while one the game can use is listed, and it was chosen by a `gpu_index` alone: the
+  first such card is returned, line gets the warning for the log and note (NULL: none wanted) the short form for a fatal
+  error's report. A position says little over the cards' order changing from one start to the next. A `gpu_name`, which
+  the menu writes beside the position, is the player's own choice of that card, so it gets no warning at each start.
+  Returns -1 and empties both when there is nothing to say: Auto, a `gpu_name` set, a discrete card picked, or no
+  discrete card to use.
+
 ## `runtime/vk/vk_exec_probe.c`
 
 nx2saria.exe --probe-vkexec: the Vulkan replay, through `gfx_vulkan_backend`. Sync part: empty submissions get
