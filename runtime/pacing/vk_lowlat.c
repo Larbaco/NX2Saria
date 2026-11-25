@@ -19,6 +19,7 @@ enum { LL_NONE, LL_NV, LL_AMD };
 #define REPORTS 16
 #define PACE_WINDOW 60
 #define MODE_UNSET 0xffffffffu
+#define TIMINGS_REV 2u
 
 #define LOAD(p) __atomic_load_n(p, __ATOMIC_ACQUIRE)
 #define STORE(p, v) __atomic_store_n(p, v, __ATOMIC_RELEASE)
@@ -27,6 +28,8 @@ static struct {
     int kind;
     int why;
     int present_ids;
+    uint32_t rev;
+    int no_report_said;
     VkDevice dev;
     PFN_vkSetLatencySleepModeNV set_mode;
     PFN_vkLatencySleepNV sleep;
@@ -333,7 +336,10 @@ static void stats(uint64_t frame) {
     char limit[96], drv[320] = "";
     if (us) snprintf(limit, sizeof limit, "the driver holds frames to %.3f ms", us / 1000.0);
     else snprintf(limit, sizeof limit, "the game's own limiter holds the frame limit");
-    if (L.kind == LL_NV) nv_report(drv, sizeof drv);
+    if (L.kind == LL_NV && L.timings) nv_report(drv, sizeof drv);
+    else if (L.kind == LL_NV && !L.no_report_said++)
+        snprintf(drv, sizeof drv, "; no report from the driver: revision %u of VK_NV_low_latency2 gives its frame timings "
+                 "through another form of the call, which is not made (said once)", L.rev);
     rt_log("lowlat: frame %llu: %s; %llu frame starts held %.2f ms on average, %llu at the pad read and %llu at the "
            "image acquire; %llu not held, %llu sleeps not ended in time%s", (unsigned long long)frame, limit,
            (unsigned long long)n, n ? (double)ns / (double)n / 1e6 : 0.0, (unsigned long long)in,
@@ -379,7 +385,7 @@ int vk_lowlat_status(void) {
 void vk_lowlat_init(VkCtx *c) {
     int level = level_now();
     L.dev = c->device;
-    L.kind = LL_NONE, L.why = VK_LOWLAT_NO_DRIVER, L.present_ids = 0;
+    L.kind = LL_NONE, L.why = VK_LOWLAT_NO_DRIVER, L.present_ids = 0, L.rev = 0, L.no_report_said = 0;
     STORE(&L.failed, 0);
     STORE(&L.pace_bad, 0);
     if (vk_dlssg_dpa()) {
@@ -392,16 +398,20 @@ void vk_lowlat_init(VkCtx *c) {
         L.set_mode = (PFN_vkSetLatencySleepModeNV)vk_dpa(c->device, "vkSetLatencySleepModeNV");
         L.sleep = (PFN_vkLatencySleepNV)vk_dpa(c->device, "vkLatencySleepNV");
         L.marker = (PFN_vkSetLatencyMarkerNV)vk_dpa(c->device, "vkSetLatencyMarkerNV");
-        L.timings = (PFN_vkGetLatencyTimingsNV)vk_dpa(c->device, "vkGetLatencyTimingsNV");
+        L.rev = c->low_latency2_rev;
+        L.timings = L.rev >= TIMINGS_REV ? (PFN_vkGetLatencyTimingsNV)vk_dpa(c->device, "vkGetLatencyTimingsNV") : NULL;
         VkSemaphoreTypeCreateInfo st = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
                                         .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE, .initialValue = 0};
         VkSemaphoreCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &st};
-        if (L.set_mode && L.sleep && L.marker && L.timings && vkCreateSemaphore(c->device, &si, NULL, &L.sem) == VK_SUCCESS) {
+        if (L.set_mode && L.sleep && L.marker && (L.timings || L.rev < TIMINGS_REV) &&
+            vkCreateSemaphore(c->device, &si, NULL, &L.sem) == VK_SUCCESS) {
             L.present_ids = c->has_present_id;
             L.kind = LL_NV;
-            rt_log("lowlat: NVIDIA's low latency through VK_NV_low_latency2 (presents %s the frame's number): %s "
-                   "(NX2SARIA_LOW_LATENCY=%d)", L.present_ids ? "carry" : "do not carry",
-                   level == 2 ? "on with boost" : level ? "on" : "off", level);
+            rt_log("lowlat: NVIDIA's low latency through VK_NV_low_latency2 revision %u (presents %s the frame's number): %s "
+                   "(NX2SARIA_LOW_LATENCY=%d)%s", L.rev, L.present_ids ? "carry" : "do not carry",
+                   level == 2 ? "on with boost" : level ? "on" : "off", level,
+                   L.timings ? "" : "; the driver's frame timings are not asked for: this revision gives them through "
+                                    "another form of the call, so the frame lines come without the driver's report");
             return;
         }
         rt_log("lowlat: VK_NV_low_latency2 is enabled but its entry points or the sleep's semaphore are missing");
