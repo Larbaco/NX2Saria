@@ -4,7 +4,7 @@ The launcher: the window, the installation of the build tools and of the game, t
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
 names. These files still keep their comments until their notes are here: `launcher/context.py`,
-`launcher/settings.py`, `launcher/toolchain.py`, `launcher/ui/app.py`, `launcher/winsys.py`, and `launcher/build.py`.
+`launcher/settings.py`, `launcher/toolchain.py`, `launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -2098,6 +2098,235 @@ input.
 
 ## `launcher/ui/app.py`
 
+The launcher's window, laid out like the game's options menu ([launcher.md](../launcher.md#look)): a wooden title band
+with the leaf sprig and the port's name in the game's Cetra Display across the whole top (the window's own title bar:
+drag it to move the window, minimise and close at its right end), a list of rows on the left (a bronze label cell and
+a dark value cell each), a white glowing cursor on the selected row, filigree dividers between groups and a
+description box on the right that explains the selected row.
+
+The window is one Tk canvas at 1000 x 640 logical pixels, scaled to the display. The pictures come from
+`launcher/ui/art.py`; text, flat cells and the orange choices are canvas items. Screens:
+
+| Screen | What it holds |
+|---|---|
+| `first_run` | the dump, the install folder, three choices and Begin Installation |
+| `home` | Play, Updates, the game folder, Saves, Rebuild the Game, Customize Launcher, Settings |
+| `customize` | the colour scheme, the player's own background picture, animations and sounds; Add to Steam |
+| `color` | the Custom scheme's colour picker: a colour square, a hue bar and the hex code |
+| `saves` | Export Save (a zip for a bug report or another player), Import a Save (such a zip), a save folder |
+| `job` | the steps of an install, update or rebuild, with their progress, and Cancel; after a failure Try Again and Copy Report |
+| `settings` | the launcher's choices, the folders, the logs and Uninstall |
+| `reports` | session reports and comments (`launcher/telemetry.py`): Session Reports, See What Is Sent, Send a Comment |
+| `consent` | the question about session reports, at the first start of each new version while they are not on: Send (focused), Don't Send, See What Is Sent, and a countdown that turns them on |
+| `sent_view` | the exact JSON a session report sends, in a read-only text box in the description's place |
+| `comment` | Send a Comment: a text box for the comment, Attach the Last Log Lines, Send and Cancel |
+| `uninstall` | what to remove, then Uninstall or Cancel |
+
+`DEPTH` also knows the screens `mods`, `mod_order`, `udmabuf` and `crash_offer`.
+
+Mouse, keyboard (arrows, Enter or Space, Esc, F5) and an XInput gamepad (d-pad or stick, A, B, Y) all move the cursor.
+
+The look is the player's (Customize Launcher): `launcher/ui/art.py` `set_theme()` fills the palette every picture is
+drawn from, a picture of the player's own can replace the backdrop (`launcher/ui/picture.py`), and unless Animations
+is off the cursor glides between rows, a new screen slides in, sparks drift over the backdrop and the sprig bobs in
+the title band (`App.animate()`). `launcher/ui/sound.py` plays the game's own decide and cancel sounds, read from the
+player's game, for a choice and for going back.
+
+The import of `FATAL_TAIL` from `launcher/build.py` is for the tests; its `# noqa: F401` line stays.
+
+### The layout constants
+
+All in logical pixels unless said otherwise.
+
+| Constant | Value | What it is |
+|---|---|---|
+| `BAND` | (0, 1000, 56) | x0, x1, height: the whole top of the window, which is also its title bar |
+| `PIC_TOP` | 60 | the player's background picture starts under the band and its two lines |
+| `TITLE_BUTTONS` | min 908 to 954, close 954 to 1000 | x ranges on the band |
+| `PANEL` | (112, 60, 580) | x0, top, x1 |
+| `ROWS` | (140, 552, 96) | x0, x1, top |
+| `LABEL_W` | 222 | 54 % of the row |
+| `DESC` | (614, 336) | x, width |
+| `SPARKS` | 22 | the dust drifting over the backdrop |
+| `MODS_PAGE` | 7 | mods on a page of the Mods screen, beside its other rows |
+| `ORDER_PAGE` | 10 | mods on a page of the Load Order screen |
+| `PICKER_BOX` | (614, 100, 336, 452) | the box of the Custom scheme's picker (`App.draw_picker()`): x, top, width, height |
+| `SQUARE` | (667, 160, 897, 390) | the picker's colour square: x0, y0, x1, y1 (the hue bar has the same form) |
+| `DIMS` | 0, 20, 40, 60, 80 | Background Dimming, in percent |
+| `SENT_BOX`, `COMMENT_BOX` | | the text boxes of See What Is Sent and Send a Comment, in the description box's place (`PICKER_BOX`): x0, y0, x1, y1 |
+
+- `P` is the colour scheme in use, the `PALETTE` of `launcher/ui/art.py`, which `set_theme()` changes in place.
+- `FRAME_MS` is the time between two steps of the animations, 15 ms; they move by the time that really passed. On X11,
+  Tk blends every picture with transparency in software and reads the screen back to do it, so each step costs far
+  more than on Windows: the animations step half as often there (33 ms) and look the same.
+- `REPORT_VALUES` is the settings' `telemetry` as the Session Reports row shows it.
+- `FORCED_CHECK_PAUSE` (60) is the seconds after an update check before the Updates row or F5 starts another. Each
+  check is a request to GitHub, which allows 60 an hour for an address: a player who selected the row 25 times in 90
+  seconds used the allowance up, and every check of the next hour was refused.
+- `UPDATE_TAKES` says how long an update's rebuild takes, for the Updates row. No single figure holds: a version that
+  changed little compiles a few files and links, minutes; one that changed the lifter translates and compiles the
+  game's code again, and one that changed what the shaders are built with builds all of them into the graphics
+  driver's cache again (`tools/make_game.py` `warm_driver_cache()`). Players' updates took 24, 34 and 45 minutes where
+  the text said "a few minutes".
+
+### `Row`
+
+`parts`, for a row of kind `pair`, is `[(rect, label, callback)]`.
+
+### `measure()` and `fit()`
+
+`measure()` is `font.measure(text)`, remembered: the same labels are measured at every redraw (`App.fit_font()`,
+`fit()` and the rows' values), and on Linux each measure is a round trip to the X server's fonts that took 1 to 2 ms.
+A Font's name is never reused, so a font made again (`App.reload_fonts()`) is measured again. `fit()` shortens a text
+in the middle with an ellipsis so that it fits a width in pixels.
+
+### `partial_image_gb()` and `drop_partial_image()`
+
+`partial_image_gb()` is the size of what an install that was cut short left of the RomFS image
+(`romfs/romfs.bin.part`, up to 26 GB). The next install writes the image anew (`tools/make_game.py` `step_romfs()`),
+so that space is the install's to use: the first-run screen counts it as free. `drop_partial_image()` removes that
+file, so that it does not count against the free space an install asks for.
+
+### `App`
+
+The fields with notes:
+
+| Field | What it holds |
+|---|---|
+| `closed` | why the window was closed, once `App.on_close()` has run |
+| `bg` | the update fetched in the background and installed when the game is not running (`launcher/jobs.py` `BackgroundUpdate`); a checkout and the selftest have nothing to switch to |
+| `look_message` | why the last background picture was not taken, in Customize Launcher's descriptions |
+| `save_message` | the last import's result, shown in the import rows' descriptions |
+| `export_message` | the last Export Save result, shown in its description |
+| `steam_message` | the last Add to Steam result, shown in its description |
+| `mods_message` | what the last change on the Mods screen did, shown in its descriptions |
+| `mods_page` | the page of the Mods and Load Order screens |
+| `mods_failed` | the mods whose code a build before Play could not take in: Play no longer waits for them |
+| `steam_busy` | Add to Steam is making the pictures or writing Steam's files |
+| `pick` | the colour picker: `{'slot', 'h', 's', 'v'}` (HSV in 0..1) of the colour being picked |
+| `pick_drag` | `square` or `bar` while the mouse drags on the picker |
+| `hex_entry` | the box the hex code is typed into |
+| `look_after` | the redraw a picked colour waits for (`App.look_soon()`) |
+| `game_run` | the Play being followed (`launcher/game_session.py` `GameRun`), until `App.watch_game()` sees its end |
+| `reporter`, `tasks` | session reports and comments (`launcher/telemetry.py`): the requests run on threads, polled by `App.tick()` |
+| `question` | the question about session reports while it is open: `ask` (its answer counts) or `preview` (`--screen consent` and the selftest: nothing changes) |
+| `question_deadline` | `time.monotonic()` at which the open question turns reports on; `None` when stopped |
+| `question_left` | the seconds its countdown last drew |
+| `sent_return` | the screen See What Is Sent goes back to |
+| `sent_text` | the text See What Is Sent shows: the bytes a report sends |
+| `sent_example` | that text was made from an example, as the game has written no summary yet |
+| `session_sending` | a session report is on its way |
+| `comment_draft` | the comment as typed so far |
+| `comment_log` | Attach the Last Log Lines |
+| `comment_message` | the last Send's result |
+| `overlay` | the text box of See What Is Sent or Send a Comment |
+| `typing` | the comment's box has the keyboard |
+| `sprig_at`, `halo_k` | where `App.step_backdrop()` last put the sprig, and the halo's frame |
+| `lit` | the row drawn as the focused one (`App.render()`, `App.refocus()`) |
+| `moving` | `App.animate()` is stepping (Animations on, the window shown and in front) |
+| `framed` | whether the system's frame is there; on Windows the band is the title bar (`launcher/winsys.py` `frameless()`) |
+
+The look is the colour scheme, the player's background picture at the window's size (`None`: the scheme's own
+backdrop) and the sounds (none while the selftest draws the screens). The animations' state is the clock and the last
+step's time, the cursor's place on its way to the focused row, how far the screen still stands from its place after a
+change, the sparks, the sprig and its halo.
+
+### `App.set_icon()`
+
+The leaf sprig as the window's icon: Tk's photo icon everywhere, and on Windows the `.ico` set on the window itself,
+so the taskbar button shows the launcher's icon rather than Python's.
+
+### `App.load_fonts()` and `App.fit_font()`
+
+`App.load_fonts()` takes the game's Cetra Display when this PC has decoded it from the player's game
+(`data/cache/fonts`), else the system's interface font. Every text is in Cetra Display; only the build log keeps a
+monospaced face so its lines align. `App.fit_font()` gives the font, or the same face a few pixels smaller so that the
+text fits the width (down to `smallest` of its size).
+
+### `App.fonts_from_game()`
+
+Decodes the game's fonts and its interface sounds in the background, redraws with the fonts and takes up the sounds.
+
+Before the fonts are decoded again, the cached files are unregistered (`launcher/winsys.py` `unregister_font()`). They
+are registered by `App.load_fonts()` and were not usable, or this would not run: registered, Windows keeps them open,
+and decoding them again failed with "Permission denied" at every start, so a cache file that had gone bad was never
+replaced.
+
+### `App.animated()`
+
+Animations on (Customize Launcher); never while the selftest draws the screens, whose pictures must not depend on the
+moment they are taken.
+
+### `App.load_picture()` and `App.see_through()`
+
+`App.load_picture()` loads the player's background at the size of the window below the title band, when one is set
+and its kept copy is readable. A copy an older launcher kept for the whole window is made again from the picture when
+the file is still there, so no more of it is cut off than the new shape needs. `App.see_through()` says how solid the
+panel and the description box are: 0.8, a little see-through, over the player's own picture.
+
+### `App.draw_static()`
+
+- The sparks are made over the backdrop, under the panel and the band.
+- A soft green halo behind the sprig pulses while the animations run.
+- `sprig_at` and `halo_k` are reset: the sprig is drawn again at its place and first frame, and `App.step_backdrop()`
+  starts over.
+
+### `App.make_sparks()`
+
+The dust over the backdrop: `SPARKS` soft dots of three sizes, each with its own speed, sway and twinkle, at places of
+their own from the first frame on. None while Animations is off. A spark's numbers are in logical pixels: its speed
+upwards a second, how far it sways to each side and how fast.
+
+### `App.apply_look()` and `App.draw_title_buttons()`
+
+`App.apply_look()` draws everything again after the colour scheme, the background or Animations changed.
+`App.draw_title_buttons()` draws minimise and close at the band's right end, lit when the mouse is over them.
+
+### `App.move()`, `App.side()` and `App.back()`
+
+- On `sent_view`, up and down scroll the JSON; Back is the only row.
+- On a switch, left is On and right is Off. A switch or a choice that changed plays the select sound; a `pair` row
+  does not.
+- On the comment screen, B or Esc first leaves the comment's box.
+- On `consent`, Esc or B closes the question, which turns reports on as the screen says.
+
+`App.home_row()` gives the index of the home screen's row with a label, for coming back to it.
+
+### `App.on_click()` and `App.on_drag()`
+
+The band moves the window, like a title bar. Where the system does not help with that (`launcher/winsys.py`
+`start_drag()` returning false, on Linux), `App.on_drag()` moves the window itself.
+
+### `App.on_close()`
+
+Closes the window: the × of the title band or of the system's frame, Alt+F4, or a signal that ends the process
+(`main()`, `launcher/errors.py` `on_end_signals()`), whose handler ran at `time.monotonic()` `signalled`. The line it
+logs tells a closed window from one that died, whose log ends without it, and for a signal how long the close took.
+
+- The player closed the window over the open question: reports turn on, as the screen says. A signal that ends the
+  process is no answer: the next start asks again.
+- A background staging under way is cancelled: what it downloaded is resumed, and its unfinished folder replaced,
+  next time.
+
+### `App.start()`
+
+- After the stub went back from a version, that version goes into the setting `rolled_back`: it is never installed
+  again by itself.
+- A missing zstd module is told at once, not when Begin Installation stops at the build tools.
+- `launcher/jobs.py` `interrupted()` is asked before any job of this start leaves its own marker.
+- `python.old*` and `python.failed*` in the launcher's folder are removed: the Python an update replaced
+  (`launcher/native/nx2saria.c`).
+- After a rollback the stub passes the failed version's `--continue-update` on to this one: the game was never rebuilt
+  for the new version, so there is nothing to finish, and home tells why the version is back.
+- A game whose last update stopped in the compile also counts as installed (`launcher/build.py` `installed()`): the
+  start goes to home, where Play starts the build from before the update and Rebuild the Game finishes it, not to the
+  first-run screen and its dump.
+- When the launcher was stopped in a job, the message says so. `tools/make_game.py` keeps the old executable until the
+  new one is linked and records each finished step, so the game folder is playable and a rebuild goes on from there;
+  the player is told that it is due.
+- `--play` with a built game reaches here only for Play from Steam with a mod's code to build in first
+  (`play_only()`).
+
 ### `App.home_reports()`
 
 What a run of the launcher does about session reports, once, the first time the home screen of an installed game is up:
@@ -2115,6 +2344,11 @@ The starts that leave `App.start()` early (a staged update to install, Play from
 
 ### `App.start_reports()`
 
+Session reports on the first home screen of an installed game in a run of the launcher (never over the first run's
+screen or a job's): a summary left by a run this launcher did not watch (Steam, a shortcut, a crash) goes if reports
+are on; reports the question's countdown or its closing turned on are told once; and the first start of a new version
+asks while they are not on (`launcher/telemetry.py` `Reporter.question_due()`).
+
 With `after` set (the home screen came from a job's end) the question opens without its countdown
 (`App.open_question()` with `countdown=False`): a build takes minutes and the player may not be at the PC, and a
 countdown that ran out then would turn reports on for someone who never saw the question. The question waits instead;
@@ -2125,6 +2359,150 @@ job with a question due.
 The notice of reports turned on (`launcher/telemetry.py` `Reporter.take_notice()`) is taken only when no message is on
 screen. After a job the home screen always carries the job's message ("NX2Saria is now ..."), and taking the notice
 there would clear it and log it as told without showing it; it stays for the next start with a free message line.
+
+### `App.open_screen()`
+
+`--screen`: one of the session reports' screens at once, for looking at it or taking its picture
+([launcher.md](../launcher.md)). Nothing is sent by opening one. Without a server (`launcher/telemetry.py`
+`enabled()`) none opens.
+
+### `App.show()`
+
+Another screen slides into place: from the right when it lies deeper (`DEPTH`), from the left on the way back.
+
+### `App.log_first_run()`
+
+The first-run screen's folder and dump into `launcher.log`: the line that tells, in a log that ends here, that the
+window was up and what it offered.
+
+### `App.rows_first_run()` and `App.begin_install()`
+
+- The free space shown counts the partial image (`partial_image_gb()`), because Begin Installation removes it.
+- `App.begin_install()` tells a path too long for Windows there (`launcher/paths.py` `long_path_problem()`), not as a
+  missing file halfway through the build, and removes the partial image before the free space is measured.
+
+### `App.discord_row()`
+
+The game's `discord_rpc` setting (`runtime/discord_rpc.c`), kept in `nx2saria.ini` or an existing `nx2navi.ini` as the
+game's own menu keeps it; the game reads it when it starts. It is on unless the file says 0, as the game reads it
+(`cfg_bool`, default on); a settings file that is there but unreadable shows the game's default.
+
+It is not switched while the game runs, as the mods' switches are not (`App.switch_mod()`): the game writes the same
+file when a menu setting changes. Each side reads the file, changes its own lines and puts a new file in place, so of
+two changes in the same moment the second drops the first. The game reads this setting only when it starts, and its
+own menu switches it meanwhile.
+
+### `App.rows_home()`
+
+An update that stopped in the compile left no finished build on record, but the executable of the build before it: the
+Rebuild the Game row then says the rebuild is unfinished.
+
+### `App.rows_customize()`
+
+- After the scheme changed, the rows are made again: Background Color and Button Color are there only while the scheme
+  is Custom. The cursor stays on Color Scheme, the first row.
+- A change of the Sounds choice plays the select sound, so the new loudness is heard at once.
+
+### The Custom scheme's colour picker
+
+- `App.pick_step()`: hue by 5 degrees along the hue bar, saturation and brightness by 5 % (the arrows and the
+  gamepad).
+- `App.pick_changed()`: the picked colour into the settings and onto the screen: the picker at once, the launcher's
+  colours a moment later (`App.look_soon()`), so dragging over the square stays smooth. `final`: saved to
+  `launcher.json`.
+- `App.picker_at()`: the colour under the mouse at (`x`, `y`) on the square or the bar into the picker; it returns
+  which of the two it was (`part`: the one being dragged, which takes the mouse also outside it), or `None`.
+- `App.type_hex()`: a box over the Hex Code row to type a colour into, like `#3A7BD5`; Enter takes it, Esc leaves it.
+- `App.parse_hex()`: `(r, g, b)` in 0..255 of a typed hex code (`#3A7BD5`, `3A7BD5` or `#37D`), or `None`.
+- `App.draw_picker()`: the colour picker in the description box's place: the slot's name, the colour square of the
+  picked hue with a ring on the picked colour, the hue bar, and the colour itself with its hex code.
+
+### `App.steam_row()` and `App.add_to_steam()`
+
+Add to Steam: the game in the Steam library, started from there without the launcher (`launcher/steam.py`). Any
+exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
+instead of ending the launcher.
+
+### The Saves screen
+
+- `App.save_waiting()`: a save put into the game folder's saves folder (a shared zip, a save folder), waiting to be
+  imported.
+- `App.saves_row()`: the row of the screen that exports and imports saves; orange while a save waits in the saves
+  folder.
+- `App.export_save()`: an export with no save files comes from a game that stopped before its first save, and the
+  message says that the report files alone were exported.
+- `App.import_saves()`: Import a Save (`folder` false) takes what waits in the saves folder, else a zip the player
+  picks. Import a Save Folder (`folder` true) takes a folder the player picks; the saves folder itself takes what
+  waits there.
+- `App.imported_text()`: what an import did, for the import rows' descriptions.
+
+### `App.mod_list()` and `App.mods_row()`
+
+`App.mod_list()` gives the game folder's mods in the game's load order (empty before the game is installed or when the
+folder cannot be read). `App.mods_row()` is the row of the Mods screen; orange while a mod's code waits to be built
+into the game.
+
+### `App.staged_desc()`
+
+The Updates row of a release downloaded in the background (`launcher/jobs.py` `BackgroundUpdate.ready()`).
+
+### `App.check_done()`
+
+It calls `BackgroundUpdate.checked()` of `launcher/jobs.py`: the release found is staged at the next tick, also one
+whose staging failed before.
+
+### `App.watch_game()`
+
+Runs once a second while the game Play started runs, its Restart's copies too (`launcher/game_session.py`
+`GameRun.running()`); then the window comes back and the end goes into `launcher.log`, into the game's log when that
+has no line of it, and on home when there is something to tell (`launcher/game_session.py` `game_end()`). The window
+takes the keyboard focus when it comes back: the pad and the animations follow it (`launcher/winsys.py`
+`in_front()`).
+
+### `App.start_update()`, `App.install_staged()` and `App.background_event()`
+
+- `App.start_update()`, the Updates row: install the release staged in the background, have the one downloading
+  install once it is staged, or else download it here with its steps on screen (as when the background download
+  failed).
+- `App.install_staged()`: install the release staged in the background when nothing stops it
+  (`launcher/jobs.py` `BackgroundUpdate.install()`) and close for the restart into it; true when it was installed.
+- `App.background_event()`: a background staging started or ended (`launcher/jobs.py` `BackgroundUpdate.poll()`).
+  When it failed and the player had chosen to update, the release is downloaded on the job screen instead, where its
+  error and Try Again show.
+
+### Session reports and comments
+
+The screens of `launcher/telemetry.py` ([telemetry.md](../telemetry.md)).
+
+- `App.return_focus()`: the row to come back to on a screen: the label's, else home's Play or the reports screen's
+  first row.
+- `App.after_game_reports()`: after the game ended (`App.watch_game()`) or when the launcher opens (`App.start()`):
+  with session reports on, the pending summary goes in the background; else nothing is sent. The question about them
+  is asked by the start, not here. It always returns false (no screen opens). Without a server there is no question
+  and nothing is made or sent.
+- `App.send_pending()`: the pending session report, sent on a thread (`launcher/telemetry.py`
+  `Reporter.prepare_session()` refuses it unless reports are on).
+- `App.open_sent()`: See What Is Sent: the bytes the pending report would send (`body()` of `payload()` in
+  `launcher/telemetry.py`), or an example's when the game has written none.
+- `App.send_comment()`: Send on the comment screen. Pressing it is the player's consent for this comment: it goes also
+  with session reports off (`launcher/telemetry.py` `Reporter.prepare_feedback()`).
+
+### `App.open_question()`
+
+The question about session reports ([telemetry.md](../telemetry.md#when-the-launcher-asks)). The start opens it at the
+first start of a launcher version while reports are not on. Send is focused. It ends with Send or Don't Send; closing
+it (Esc, B, the window's close) and `QUESTION_SECONDS` without any input turn reports on as well, which the screen
+says in its first line, with the seconds left. Any input stops the countdown for good: a key, a button, the mouse
+moving over the window, opening See What Is Sent.
+
+- `App.question_touched()`: any input while the question is open; the countdown stops and does not start again.
+- `App.question_seconds()`: the whole seconds left on the open question's countdown; `None` when it is stopped.
+- `App.question_tick()`: from `App.tick()`; the countdown's end turns reports on, and each new second is drawn.
+- `App.set_waiting_aside()`: the summary that waited when the question was answered is never sent: the first report is
+  the one of the next session played.
+- `App.question_end()`: the question's end: `send`, `don't send`, `closed` or `timeout` (`launcher/telemetry.py`
+  `Reporter.answer_question()`). A preview changes nothing. After `closed` and `timeout` the notice that reports are on
+  is shown now, and once more at the next start (`App.start_reports()`).
 
 ### `App.offer_guarded()`
 
@@ -2172,6 +2550,138 @@ nuisance: it is asked at every such end.
 The sentence of the game's end is shown without its last sentence (`launcher/game_session.py` `LOG_WHERE`, where the
 log is): with the longest fatal line the launcher shows (`FATAL_SHOWN`, 240 characters) the text would not fit the
 panel with it, and the question is about that very log. The home screen keeps the whole sentence.
+
+### `App.open_overlay()`
+
+The text boxes are one Tk `Text` over the description box's place: that of `sent_view` (read-only, the JSON) or of
+`comment` (the comment being written). The window's own keys (arrows, Enter, Space, Esc) are not the box's: the
+window's tag is left out of the box's binding tags, so they reach only the box while it has the keyboard.
+
+- `App.comment_changed()`: each change of the comment: cut to `TEXT_LIMIT` characters, the count on its row and under
+  the box.
+- `App.set_typing()`: the cursor goes to Your Comment while the box has the keyboard.
+- `App.side_box()`: the description box's frame in its place (`PICKER_BOX`), for the screens that put a text box in
+  it.
+
+### The job screen
+
+- `App.rows_job()` reads the steps under the job's lock (`launcher/jobs.py` `Job.locked()`): each step as one change
+  of the worker left it, not a state with the value before it.
+- `App.job_focus()`: the cursor sits on the running step, or on Try Again after a failure.
+- `App.copy_report()` writes the account's folders short (`tools/private_paths.py`): a report is pasted into public
+  issues.
+- `App.job_finished()`: a job with `after` set to `play` built the mods' code in (`App.play()`), and the game starts.
+  The job's `note` is what the file check found (`launcher/jobs.py` `Job.note_scan()`).
+
+### `App.tick()` and `App.minute()`
+
+A drawing error must not stop either timer: it is logged, and the timer is set again. `App.minute()` runs once a
+minute, also while the window is hidden during play: it looks for a new version an hour after the last look (a new
+one then downloads in the background), and installs a staged release that waited for a copy of the game the launcher
+did not start to close.
+
+### `App.animate()`
+
+One step of everything that moves: the cursor on its way to the focused row and its breath, the screen sliding into
+place, the sparks and the sprig. Each moves by the time since the last step (the timer comes when Tk gets to it, 16 to
+50 ms apart), at most a tenth of a second's worth. With Animations off, while the window is hidden or minimised, and
+while another window is in front, nothing moves and the timer runs slowly (300 ms). The last covers a launcher left
+open behind the game (Hide Launcher While Playing off): drawing every 15 ms took about 0.6 of a CPU core from the game
+for a window nobody saw. A drawing error must not stop the timer.
+
+- `App.step_slide()`: the slide decays by `exp(-dt * 16)`, most of the way in a fifth of a second.
+- `App.step_cursor()`: one breath of the cursor takes 1.6 s; its glide closes by `1 - exp(-dt * 22)`, there in about
+  a tenth of a second.
+
+### `App.step_backdrop()`
+
+The sparks, the sprig and its halo, each touched only when it lands on another pixel or picture: they drift less than
+a pixel a step, and Tk draws an item again whenever it is moved or changed, also to where it was. On X11 that drawing
+blends each picture with what is under it in software, and the sparks moved at every step took two thirds of the
+window's processor time.
+
+- A spark goes up, swaying, and comes back in at the bottom once it is under the title band. Its twinkle is one of
+  three pictures (0, 1 or 2).
+- The sprig rises and sinks two pixels every 2.4 s while its halo pulses.
+
+### `App.render()`
+
+A screen that slides is drawn in place, then put where the slide has got to (`App.step_slide()`).
+
+### `App.draw_row_tagged()` and `App.refocus()`
+
+`App.draw_row_tagged()` draws row `i` with its items tagged `row<i>`, so that `App.refocus()` can draw it again alone.
+
+`App.refocus()`: the focus went from row `old` to the focused one on the same screen, and only those two rows, the
+cursor and the description are drawn again. The whole screen was drawn again for each row the mouse crossed, about
+55 ms on Linux, where Tk blends each picture with what is under it in software, so the cursor lagged behind the mouse.
+The whole screen is still drawn when it slides in, on a job's screen (its rows change as it runs) and with the colour
+picker open. The row drawn lit may not be `old`: a click or a cancelled chooser moves the focus without drawing it,
+so the row in `lit` is drawn again too.
+
+### `App.fit_rows()`
+
+The height of each row and the gap between rows (logical pixels) that end the rows above `bottom`. A screen with more
+rows than the window holds (Settings with every row, a job with every step) narrows its gaps first, then its dividers,
+and last makes its rows a little lower.
+
+### `App.draw_row()`
+
+A row of style `swatch` is a colour of the Custom scheme: a patch of it and its hex code. A row with an arrow shows
+its value centred in the cell's room left of the arrow.
+
+### `App.draw_cursor()`
+
+The cursor is drawn where it has got to and `App.animate()` takes it on to the row (`App.step_cursor()`); on a new
+screen, while one slides in and with Animations off it stands on the row at once. It does not glide while
+`App.animate()` stands still (another window in front): the cursor would stay behind on the old row.
+
+### `App.draw_desc()`
+
+- `fine` is paragraphs in the small font: a long explanation under its leading lines.
+- The block is measured by drawing it at a provisional top; then everything moves to the final top.
+- The top never goes up behind the screen's heading: a block's first lines are the ones to read.
+
+### `single_instance()`
+
+The launcher folder's lock (`launcher/locks.py`) for this window's life. It raises `Busy`, naming the holder, when
+another launcher or a command of `launcher/cli.py` still holds it after `wait` seconds (the launcher an update restart
+replaces may still be closing).
+
+### `tell()`
+
+A sentence for the player before the window is up: a message box that waits for OK. With no display and no toolkit it
+goes to the terminal that started the launcher.
+
+### `play_only()`
+
+`--play`, from the Steam shortcut (`launcher/steam.py`): the game starts from its folder with its console hidden, as
+Play starts it, and this process waits until it and the copies its own Restart starts have ended, so Steam shows the
+game as running all that time. `None` when there is no built game: the launcher's window opens instead.
+
+- The window or a command may run a job in the game folder meanwhile (a rebuild, an update's install, the mods'
+  build): the game started now would be the build that job is replacing, which then fails to replace it, and
+  `launcher/mods.py` `prepare()` would unpack into the folder the job reads. Such a job holds the launcher folder's
+  lock and leaves the `MARKER` of `launcher/jobs.py`. The lock is only tried, and let go at once: held, it would keep
+  the window from opening.
+- With a mod's code waiting, it returns `None`: the window builds the mods' code in, then starts the game
+  (`App.start()` with `--play`).
+- The end is told as Play's is (`App.watch_game()`), with no window: a box for an end worth one. The logs come first,
+  since the box waits for OK and Steam may end this process meanwhile.
+- The crash summary is made (`launcher/telemetry.py` `synthesize_crash()`) before the note ends the log's run; the
+  window sends it when it opens.
+
+### `main()`
+
+- A second window on the same folder would run its own jobs into the same game folder and settings. The first one may
+  be out of sight (hidden while the game runs), so the player is told who holds the folder.
+- `launcher/errors.py` `install()` takes the window's errors, and `finish()` there undoes it at the end.
+- The handler of an end signal does not close the window itself. Python runs it between two steps of whatever the
+  window was doing (a redraw, a timer): closing there would destroy the canvas under that code. The window closes
+  from the event loop instead (`root.after(0, ...)`), and the exit code is 128 plus the signal's number.
+- An idle window would act on the signals only at its next event, hence `launcher/errors.py` `wake_for_signals()`.
+- Uninstall, or the selftest, ends the window without `App.on_close()`; the log then gets `window ended on the
+  <screen> screen after <n> s`.
 
 ## `launcher/ui/art.py`
 
