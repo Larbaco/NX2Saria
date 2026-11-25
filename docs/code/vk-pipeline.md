@@ -50,7 +50,7 @@ every pipeline with that list; `VkPipeInfo.bindings` tells the replay which NVN 
 Fragment inputs the vertex stage does not write (stages are translated separately) get outputs added to the vertex
 module, as Vulkan rejects such pairs, initialised to (0, 0, 0, 1) as Maxwell reads an unwritten output
 ([maxwell.md](../maxwell.md) 1.2). The unwritten components of an output the vertex stage does write start at (0, 0, 0,
-1) in the translator (tools/xlate/patches/0006).
+1) in the translator (`tools/xlate/patches/0006-initialise-unlinked-vertex-outputs.patch`).
 
 **Pipeline key.** Everything Vulkan 1.3 can take as dynamic state is dynamic: viewports and scissors with count, depth
 bias, blend constants, stencil masks and references, cull mode, front face, topology (within its class), depth and
@@ -67,7 +67,7 @@ masks, vertex layout and sample count. The binding conventions are those of the 
 
 Set up on first use, under `P.lock`.
 
-- `enum { NP_16 = 1, NP_32 = 2, NP_64 = 4 }`: float widths in `P.nan_preserve` and `spirv_nan_preserve()`.
+`NP_16`, `NP_32`, `NP_64`: the float widths in `P.nan_preserve` and `spirv_nan_preserve()`.
 
 `P`:
 
@@ -75,21 +75,22 @@ Set up on first use, under `P.lock`.
 - `int push_stage`: `GFX_STAGE_*` whose set is pushed with independent layouts.
 - `int gpl`: draws whose pipeline is building get a fast-linked one (`vk_caps.gpl`).
 - `int mesh_lib`: mesh pipelines are linked from stage libraries too (`mesh_lib_init()`, `mesh_libs()`).
-- Mesh pipelines' share of the counts above: `m_links` fast links and their link time; of the `ready_mesh` pipelines a
-  draw missed, `m_ready_fast` became usable through a fast link, `m_ready_ms` after the miss in all; `m_lib_*`: [0]
-  their task and mesh libraries, [1] their fragment shader libraries (`lib_build()`).
+- `P.g`, the mesh pipelines' share of its counts: `m_links` fast links and their link time; of the `ready_mesh`
+  pipelines a draw missed, `m_ready_fast` became usable through a fast link, `m_ready_ms` after the miss in all;
+  `m_lib_*`: [0] their task and mesh libraries, [1] their fragment shader libraries (`lib_build()`).
 - `int vs_outs_all`: `NX2SARIA_VS_OUTS`: 0 union of paired fragment inputs, 1 (all) all 32 output locations.
 - `int wide_lines`: the device draws lines of other widths than 1 (`vk_pipeline_line_width()`).
 - `float line_w[2], line_gran`: its range of widths and their step.
 - `int cache_control`: `pipelineCreationCacheControl`: a create can ask for the pipeline caches only.
 - `int feedback`: `NX2SARIA_PIPE_FEEDBACK`: 1 count pipeline cache hits, 2 also log each compute and graphics build.
 - `uint64_t cache_loaded`: bytes of `pipeline-cache.bin` the driver took at boot.
-- `VkPipelineCache play`: what this run compiles (`pipeline-cache-play.bin`); `VK_NULL_HANDLE`: all goes into cache.
+- `VkPipelineCache play`: what this run compiles (`pipeline-cache-play.bin`); `VK_NULL_HANDLE`: all goes into
+  `P.cache`.
 - `uint64_t play_loaded`: bytes of `pipeline-cache-play.bin` the driver took at boot.
 - `uint64_t saved[2]`: the data size of cache [0] and play [1] that their files hold; 0: not known.
 - `volatile uint64_t held[2]`: the data size of cache [0] and play [1] when last asked (`cache_save_one()`,
   `cache_sizes_ask()`); 0: not asked yet (the memory report takes the loaded size).
-- `int fold`: the play file's content was merged into cache: saving cache removes the play file.
+- `int fold`: the play file's content was merged into `P.cache`: saving `P.cache` removes the play file.
 - `int base_at_exit`: the start found no `pipeline-cache.bin`: the save at exit writes it (`cache_load()`).
 - `volatile uint64_t play_made`: pipelines this run compiled into play.
 - `int pv_last`: `provokingVertexLast` enabled: NVN's default is the last vertex.
@@ -118,11 +119,11 @@ Set up on first use, under `P.lock`.
 
 `Pipe`:
 
-- `int building`: a background job owns info.pipeline (under `P.lock`).
+- `int building`: a background job owns `info.pipeline` (under `P.lock`).
 - `struct Job *job`: that job while building.
 - `const struct Layout *lay`: graphics: the layout it was entered with.
 - `VkPipeline fast`: GPL: the fast-linked pipeline, until the optimised one replaces it (`fast_retire()`).
-- `uint8_t link_queued`: a waiting draw queued its fast link to the workers (LibJob p), not yet run.
+- `uint8_t link_queued`: a waiting draw queued its fast link to the workers (`LibJob.p`), not yet run.
 - `uint8_t used`: compute: a dispatch of this run asked for it (`vk_pipeline_compute()`).
 - `uint8_t pre`: compute: built and kept by the boot prebuild (`lb_compute()`) or `bg_main()`.
 - `uint8_t optimised`: graphics: its pipeline is the whole build that replaced a fast link (`fast_retire()`).
@@ -135,15 +136,13 @@ Set up on first use, under `P.lock`.
 The memory report's clock for pipelines not used lately (`vk_pipeline_mem()`): wall minutes, plus one so that 0 stays
 "never". The autosave thread moves it every half second; a lookup stores it into its Pipe under `P.lock`, which the
 lookup holds anyway, so the per-draw cost is one compare. A pipeline that only the replay's memo of the previous draw
-served (`runtime/vk/vk_exec_draw.c`, PM) keeps an older minute: at most the one pipeline each replay context remembers.
+served (`PM` in `runtime/vk/vk_exec_draw.c`) keeps an older minute: at most the one pipeline each replay context
+remembers.
 
 ### `key_hash()`
 
 Hash of a pipeline table key, 8 bytes per step: a draw hashes its whole GKey, and byte-wise FNV over it cost more than
-the lookup. Only the in-memory table uses it; the key file keeps fnv.
-
-- `static __thread uint64_t mm_hash`: FNV-1a of the module `make_module()` last created on this thread (`PIPE_FEEDBACK`
-  2).
+the lookup. Only the in-memory table uses it; the key file keeps `fnv()`.
 
 ### `cache_path_init()`
 
@@ -175,35 +174,25 @@ payload {u32 count, count x {u32 key size, 32 key bytes}} naming its binaries. O
 memory; a pipeline's records are read from the file when it is created. `NX2SARIA_PIPE_BINARIES_MAX_MB` (default 1024, 0
 no limit): a larger file starts empty.
 
-`pb_seek`: 64-bit file offsets: long is 32 bits on Windows, and a file over 2 GB read as cut short.
+`pb_seek`, `pb_tell`: 64-bit file offsets: `long` is 32 bits on Windows, and a file over 2 GB read as cut short.
 
 - `#define PB_HEAD (4 + 4 + PB_KEY)`: a record's bytes after its size field and before its payload.
-- `typedef struct { uint64_t h, off; uint32_t size; } PbSlot`: off: file offset of the record's size field.
+- `PbSlot.off`: the file offset of the record's size field.
 
 `PB`:
 
-- `PlatMutex lock`: the index, the pending records and rf.
+- `PlatMutex lock`: the index, the pending records and `rf`.
 - `FILE *rf`: reads records.
 - `uint8_t *pend`: records not written yet; they follow the file's end in this order.
 - `uint64_t file_size`: bytes on disk.
-- `int no_capture[3]`: kind (`pipe_create()`) whose create refused the capture flag.
-- `static __thread int pb_last`: 1: the last `pipe_create()` on this thread made its pipeline from binaries.
-- `static __thread int cc_hit`: `compute_create()`'s last pipeline on this thread: 1 the pipeline cache held it
-  (`P.cache`: read from `pipeline-cache.bin`, or built into it earlier in this run) or it was made from pipeline
-  binaries, 0 not, -1 the driver did not say.
+- `int no_capture[3]`: the kinds (`pipe_create()`) whose create refused the capture flag.
 
-`own_cache`: A pipeline cache of this thread's own that its creates build into in place of `P.cache`; `VK_NULL_HANDLE`
-(every thread but the background builder of large compute shaders) for `P.cache` itself. A create into it does not hold
-`cache_rw`, so a build of minutes does not keep `pipeline-cache.bin` from being saved; `bg_merge()` moves its content
-into `P.cache`.
+Two values a thread keeps of its last create:
 
-`no_cache`: 1 on a thread whose creates take no pipeline cache of ours at all (the library warm in play, `lw_worker()`
-and `lw_probe()`): what it builds is wanted in the driver's own disk cache only. Built into `P.cache`, the 37,572 stage
-libraries of a warm grew it by 1.6 GB (2026-11-11: a save of 2026.7 MB in play, +1612 MB since the boot); the file was
-then over `NX2SARIA_PIPELINE_CACHE_MAX_MB`, so the next start dropped it whole and compiled the pipelines it had held.
-
-`cache_merges`: New content in `P.cache` that `P.stats` does not count, for `autosave_once()` to save: `bg_merge()`'s
-merges, and the compiles of pipelines built for the cache only (`lb_compute()` keep 0).
+- `pb_last`: 1 when the last `pipe_create()` on this thread made its pipeline from binaries.
+- `cc_hit`: `compute_create()`'s last pipeline on this thread: 1 the pipeline cache held it (`P.cache`: read from
+  `pipeline-cache.bin`, or built into it earlier in this run) or it was made from pipeline binaries, 0 not, -1 the
+  driver did not say.
 
 ### `pb_find()`
 
@@ -220,71 +209,72 @@ An empty file with this driver's header.
 
 ### `pb_index()`
 
-Indexes the records of f (len bytes) after its header: per record its type, key and offset. Returns the offset after the
-last whole record, which is len unless the file ends inside a record (an append the process did not finish) or holds a
-malformed one.
+Indexes the records of `f` (`len` bytes) after its header: per record its type, key and offset. Returns the offset
+after the last whole record, which is `len` unless the file ends inside a record (an append the process did not finish)
+or holds a malformed one.
 
 ### `pb_keep()`
 
-The length of the file at path (len bytes) to go on with after `pb_index()` found its whole records ending at good: len
-when they fill it. When it ends inside a record (the process ended during an append, or a disk filled) or holds a
-malformed one, the records from there on are dropped and the file is cut back to good, so that appends go on after the
-whole records before it. 0 when it cannot be cut, and the file starts empty.
+The length of the file at `path` (`len` bytes) to go on with after `pb_index()` found its whole records ending at
+`good`: `len` when they fill it. When it ends inside a record (the process ended during an append, or a disk filled) or
+holds a malformed one, the records from there on are dropped and the file is cut back to `good`, so that appends go on
+after the whole records before it. 0 when it cannot be cut, and the file starts empty.
 
 ### `pb_init()`
 
-Opens `pipeline-binaries.bin` and indexes its records (`cache_load()`, before `P.cache`).
+Opens `pipeline-binaries.bin` and indexes its records (`cache_load()`, before `P.cache`). Without one of the
+extension's functions or without the driver's global key the run goes on with `pipeline-cache.bin`.
 
-- A file that ends inside a record (the process ended during an append, or a disk filled) or holds a malformed record:
-  the whole records before it stay, and the file is cut back to them so that appends go on from there. Only when it
-  cannot be cut does it start empty.
-- `if (why || !f)`: start empty: the index is dropped and the file rewritten.
+The file starts empty (the index dropped, the file rewritten with this driver's header) when there is none, when its
+header names another driver, GPU or version, when it is over `NX2SARIA_PIPE_BINARIES_MAX_MB`, and when `pb_keep()`
+cannot cut it back to its whole records. A file that only ends inside a record or holds a malformed one keeps the
+whole records before it.
 
 ### `pb_read()`
 
 The payload of the record of (type, key), malloc'd (`*size` bytes), or NULL. Caller holds `PB.lock`.
 
-- `if (s->off >= PB.file_size)`: still pending, at its place in pend.
-- `} else`: rf is NULL only after `pb_flush()` could not open the file again.
-- `if (ok && t == type && k == ks && !memcmp(head + 8, key, ks))`: the key itself, not only its hash.
+A record whose offset is at or past `PB.file_size` is still pending and is read from its place in `PB.pend`; the others
+are read through `PB.rf`, which is NULL only after `pb_flush()` could not open the file again. The record counts only
+when its type and the key itself match, not only the key's hash.
 
 ### `pb_load()`
 
-The binaries stored for pipeline key k, created in bins (`*n` of them). 0 when none are stored or they fail.
+The binaries stored for pipeline key `k`, created in `bins` (`*n` of them). 0 when none are stored or they fail.
 
 ### `pb_put()`
 
-Appends one record to pend and the index. Caller holds `PB.lock`.
+Appends one record to `PB.pend` and the index. Caller holds `PB.lock`.
 
 ### `pb_capture()`
 
-Stores the binaries of pipeline p (created with its data captured) under pipeline key k, then frees the data. A binary
-whose key is stored already is not stored again.
-
-- `for (uint32_t i = 0; ok && i < nb; i++)`: each binary's key, and its data unless stored already.
-- `plat_mutex_unlock(&PB.lock)`: a 0 from `pb_put()`: another thread stored the same binary meanwhile.
-- `if (full) pb_flush()`: a cold boot captures thousands before the autosave thread runs: keep the buffer small.
+Stores the binaries of pipeline `p` (created with its data captured) under pipeline key `k`, then frees the data. For
+each binary it asks the key first, and the data only when no binary with that key is stored yet (`PB.blob_shared`
+counts the others). The lock is not held between that question and `pb_put()`, so a 0 from `pb_put()` means another
+thread stored the same binary meanwhile. A cold boot captures thousands of pipelines before the autosave thread runs:
+once 64 MiB are pending it calls `pb_flush()` itself, to keep the buffer small.
 
 ### `pb_flush()`
 
 Appends the pending records (the autosave thread every 2 s, and the save at exit).
 
-- Part of the append may be in the file (a full disk): the file is cut back to `file_size`, where the index places the
-  pending records, or the next append would land after those bytes. The read handle is closed meanwhile, since
-  `plat_file_truncate` opens the file alone.
+When the append fails, part of it may be in the file (a full disk): the file is cut back to `PB.file_size`, where the
+index places the pending records, or the next append would land after those bytes. The read handle is closed meanwhile,
+since `plat_file_truncate()` (`runtime/platform/platform.h`) opens the file alone. The pending records stay in memory
+and are tried again at the next flush.
 
 ### `cache_build_enter()`
 
 Takes `cache_rw` shared for a build into `P.cache`; while the save at exit waits for its copy, first waits for that.
 
-`cache_rw`: Builds into `P.cache` against reads of its data. Every create with `P.cache` holds this shared
+`cache_rw` keeps builds into `P.cache` apart from reads of its data. Every create with `P.cache` holds it shared
 (`pipe_create_in()`); a save holds it exclusively for the copy of the data and only takes it when no build is running.
 The Vulkan rules allow reading a cache created without `VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT` while
 pipelines are built into it, but Intel's Windows driver (101.8991 on an Arc 140V) crashed inside
 `vkGetPipelineCacheData` during the copy, reading through a null entry, with compute and library builds running beside
 the autosave. So no copy is made while a build runs, on any driver.
 
-`cache_saving_at_exit`: Set while the save at exit waits for `cache_rw`: the builds already in the driver finish, and
+`cache_saving_at_exit` is set while the save at exit waits for `cache_rw`: the builds already in the driver finish, and
 new ones wait in `cache_build_enter()` until the copy is made. Without it the boot's prewarm workers started builds back
 to back, no moment without one came within the save's 5 s, and the pipelines built in that run were not saved (a window
 closed during the prewarm, 2026-11-11). The autosave never sets it, so it never holds a build back.
@@ -315,17 +305,34 @@ and it is compiled, or at the exit of a run that started without `pipeline-cache
 Without the device feature, with pipeline binaries on, or with the setting 0, `P.play` stays `VK_NULL_HANDLE` and
 everything goes into `P.cache` as before.
 
-- `static int prep_mode`: a preparation mode (set before `ensure_init()`): no play cache.
+`prep_mode`: the run is a preparation mode (set before `ensure_init()`), which has no play cache.
 
 ### `pipe_create_in()`
 
-- `uint64_t t0 = perf_mark_begin()`: `NX2SARIA_TRACE=perf`: the create on any thread, its wait for `cache_rw` included.
-- Not in `P.cache` nor in the driver's own cache: from `P.play`, or compiled into it. A caller that asked for cached
-  pipelines only (its own `FAIL_ON_PIPELINE_COMPILE_REQUIRED`) gets the play cache's answer.
+One create, into the cache the thread and the run call for. With a play cache, a create that would go into `P.cache`
+first asks it with `VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`; a pipeline that is neither in `P.cache`
+nor in the driver's own cache then comes from `P.play`, or is compiled into it. A caller that asked for cached
+pipelines only (its own `FAIL_ON_PIPELINE_COMPILE_REQUIRED`) gets the play cache's answer. The `NX2SARIA_TRACE=perf`
+mark covers the create on any thread, its wait for `cache_rw` included.
 
-### Pipelines of a library that draws on our device
+Three values choose the cache:
 
-FSR 3.1: `runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr()`.
+- `own_cache`: a pipeline cache of this thread's own that its creates build into in place of `P.cache`;
+  `VK_NULL_HANDLE` (every thread but the background builder of large compute shaders) for `P.cache` itself. A create
+  into it does not hold `cache_rw`, so a build of minutes does not keep `pipeline-cache.bin` from being saved;
+  `bg_merge()` moves its content into `P.cache`.
+- `no_cache`: 1 on a thread whose creates take no pipeline cache of ours at all (the library warm in play,
+  `lw_worker()` and `lw_probe()`): what it builds is wanted in the driver's own disk cache only. Built into `P.cache`,
+  the 37,572 stage libraries of a warm grew it by 1.6 GB (2026-11-11: a save of 2026.7 MB in play, +1612 MB since the
+  boot); the file was then over `NX2SARIA_PIPELINE_CACHE_MAX_MB`, so the next start dropped it whole and compiled the
+  pipelines it had held.
+- `cache_merges`: new content in `P.cache` that `P.stats` does not count, for `autosave_once()` to save: `bg_merge()`'s
+  merges, the compiles of pipelines built for the cache only (`lb_compute()` with `keep` 0), and the creates of
+  `vk_pipeline_create_foreign()`.
+
+### `vk_pipeline_create_foreign()`, `vk_pipeline_foreign_counts()`
+
+The pipelines of a library that draws on our device (FSR 3.1: `runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr()`).
 
 Such a library creates its pipelines itself and passes no pipeline cache, so nothing of ours kept them: every context it
 made (one per render and output size, and one for frame generation) compiled its passes again unless the driver's own
@@ -335,26 +342,25 @@ disk cache still had them, which a renamed or updated exe on NVIDIA and a driver
 `P.cache` first without compiling, and compiled into the play cache when neither it nor the driver has the pipeline, so
 the file a run writes (`pipeline-cache-play.bin`, or `pipeline-cache.bin` without a play cache) holds it for the next
 start. Before the first pipeline of ours (`P.ready` 0) and with pipeline binaries on there is no cache to give: the
-create goes to the driver as the library asked. infos: n `VkComputePipelineCreateInfo` (compute 1) or
+create goes to the driver as the library asked. `infos`: `n` `VkComputePipelineCreateInfo` (`compute` 1) or
 `VkGraphicsPipelineCreateInfo`. Any thread.
 
-### `vk_pipeline_create_foreign()`
-
-- `if (!P.play)`: one cache: whether it held them is not known here; its save looks at the data's size.
-- A copy of the create info: the flags are ours to change, the library's struct is not.
+- Without a play cache there is one cache, and whether it held the pipelines is not known here: its save looks at the
+  data's size. `vk_pipeline_foreign_counts()` then gives them as made, neither from the cache nor compiled.
+- With a play cache each create info is copied: the flags are ours to change, the library's struct is not.
 - Flags given in a `VkPipelineCreateFlags2CreateInfo` replace the struct's own, so the question "without compiling"
   cannot be put through `hd->flags`: such a create goes to the play cache at once.
-- `__atomic_fetch_add(&cache_merges, 1, __ATOMIC_RELAXED)`: `autosave_once()`: the play file is due.
-- `else if (r == VK_SUCCESS) r = ri`: the first that failed, as a create of several reports one result.
+- A pipeline compiled into the play cache adds to `cache_merges`, so `autosave_once()` sees that the play file is due.
+- The result is that of the first create that failed, as a create of several reports one result.
 
 ### `pipe_create()`
 
-Creates one pipeline: kind 0 a graphics pipeline, 1 a graphics pipeline library, 2 a compute pipeline; ci
-its `Vk*PipelineCreateInfo`. With binaries on: from the stored binaries of its pipeline key when there are any, else
+Creates one pipeline: `kind` 0 a graphics pipeline, 1 a graphics pipeline library, 2 a compute pipeline; `ci` its
+`Vk*PipelineCreateInfo`. With binaries on: from the stored binaries of its pipeline key when there are any, else
 compiled with `P.cache` and its binaries captured. The create info is restored before returning.
 
-- `r = PIPE_CREATE(VK_NULL_HANDLE)`: a pipeline made from binaries takes no pipeline cache.
-- `if (capture && r < 0)`: the driver refuses the capture for this kind: create without it from now on.
+A pipeline made from binaries takes no pipeline cache. When the driver refuses a create with the capture flag, that
+kind is created without it from then on (`PB.no_capture`, with a log line) and its pipelines are not stored.
 
 ### `cache_cap()`, `cache_data_read()`
 
@@ -382,16 +388,18 @@ dropped it whole ("starting empty") and the session after compiled its pipelines
 pipelines left to background builds at 250-273 ms each). `pipeline-cache.bin` itself grows 14-28 MB at each fold (323 ->
 448 -> 461 -> 489 MB in four starts) and so crosses 512 MB in a few sessions (0.8.0: a 766 MB file dropped at a start).
 With the limit at 2048 MB the same files were read and folded: boot hits 84 %, nothing left to background builds, the
-boot 17 s instead of 24. `cache_cap()`: `NX2SARIA_PIPELINE_CACHE_MAX_MB` when set (0: no limit); unset, the machine's
-RAM / 32 between 1024 and 4096 MB (16 and 32 GB: 1024; 64 GB: 2048; 128 GB and more: 4096). Never below 1024: a full
-cache of the pipeline list is about 550 MB on an NVIDIA card, and a limit under what the files reach compiles everything
-past it again at every start, for good (RAM / 32 alone gave 509 MB on a 16 GB machine). The RAM and not the commit
-headroom at the boot, so the same file is not read on one start and refused on the next. Read once, at the start; every
-caller computes the same value, so the unlocked cache of it is harmless.
+boot 17 s instead of 24.
 
-- `static int cache_over_cap`: the last file `cache_data_read()` was asked for is over the limit.
-- `static int cache_foreign`: `pipeline-cache.bin` was written by another device or driver (a driver update).
-- (A file over the limit comes from before the limit was kept on the write side, or from a lower limit.)
+`cache_cap()`: `NX2SARIA_PIPELINE_CACHE_MAX_MB` when set (0: no limit); unset, the machine's RAM / 32 between 1024 and
+4096 MB (16 and 32 GB: 1024; 64 GB: 2048; 128 GB and more: 4096). Never below 1024: a full cache of the pipeline list
+is about 550 MB on an NVIDIA card, and a limit under what the files reach compiles everything past it again at every
+start, for good (RAM / 32 alone gave 509 MB on a 16 GB machine). The RAM and not the commit headroom at the boot, so
+the same file is not read on one start and refused on the next. Read once, at the start; every caller computes the same
+value, so the unlocked cache of it is harmless.
+
+- `cache_over_cap`: the last file `cache_data_read()` was asked for is over the limit. Such a file comes from before
+  the limit was kept on the write side, or from a lower limit.
+- `cache_foreign`: `pipeline-cache.bin` was written by another device or driver (a driver update).
 
 ### `cache_make()`
 
@@ -411,36 +419,47 @@ translator is as dead. After a deletion outside a preparation the run writes `pi
 One log line says what a start that reads the files did and how many MB they held. `NX2SARIA_PIPELINE_CACHE_STAMP`
 (default 1); 0 reads the files whichever translator wrote them and leaves the stamp as it is.
 
-- `if (plat_file_exists(P.cache_path) || plat_file_exists(play))`: held open elsewhere: read as before, unstamped.
-- The rule `cache_load()` then applies (`P.base_at_exit`): a start without `pipeline-cache.bin` writes it at its exit.
-- "vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>", then what the numbers need to be checked.
+- A file that is still there after the deletion is held open elsewhere: the files are read as before and the stamp is
+  kept.
+- The line also applies the rule `cache_load()` then sets `P.base_at_exit` by: a start without `pipeline-cache.bin`
+  writes it at its exit.
+- The line: `vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>`, then what the numbers need to be
+  checked (the files' translator when it differs, whether `pipeline-cache.bin` is written at the exit, the stamp's
+  path).
 
 ### `cache_load()`
 
-- `if (PB.on)`: the binaries carry compiled pipelines across runs; `P.cache` stays `VK_NULL_HANDLE`.
-- No `pipeline-cache.bin` after the stamp's check (deleted by it, or its run ended before writing the file again): the
-  save at exit writes it (`cache_save()`, `runtime/vk/vk_cache_stamp.h` `cache_base_at_exit()`).
-- `int base_over = cache_over_cap`: an oversized file is never read again: the play file takes its place at once.
-- The file holds this data when the driver took all of it: a save is due only once the cache has grown (`cache_save()`).
-  Without data read from the file the empty cache's own size counts as saved, as the play cache's does below: a run that
-  took nothing into it does not write a file of a header alone, which the next start would refuse as too short
-  (`cache_file_read`) while it no longer counts as missing (`P.base_at_exit`).
-- The play cache (see above `pipe_create_in()`).
-- `if (base_over && cache_over_cap)`: what one run builds is over the limit: nothing will ever replace either file.
-- Only a fold whose result fits: `pipeline-cache.bin` past the limit would be dropped whole at the next start
-  (`cache_data_read()`). The merge into `P.cache` is the one the kept play cache gets below anyway, so it is done here
-  once and its size asked; a play file mostly holds what the other already has (461.2 + 524.9 MB folded to 489.0 MB,
-  2026-11-12), so the size of the two files says little. The fold is written at the first autosave, after the boot's
-  prewarm and background builds have added to `P.cache`: it is taken only with room for a play file's worth of growth
-  (`fold_at`) under the limit, so that save is not refused (`cache_save()` keeps the play file meanwhile).
-- `fold = 0, psize = 0`: merged already: the branch for a kept play file below is skipped.
-- `fold = 0`: done.
-- Into `P.cache` now; the file is written by the first save, which then removes the play file. A run that ends before
-  that save finds both files as they were and merges again.
-- Kept as the play cache, so its file goes on holding what earlier runs made, and merged into `P.cache` in memory, where
-  the first create of `pipe_create_in()` finds its pipelines. Without the merge that create took them from the driver's
-  own cache when it had them, at 8 ms a pipeline against 0.4 ms from ours.
-- An empty play cache is not written (its data is a header): its size counts as saved, as a whole file's does.
+Reads the two cache files and decides what the run does with the play file, in this order:
+
+1. With pipeline binaries on (`PB.on`) the binaries carry compiled pipelines across runs: `P.cache` stays
+   `VK_NULL_HANDLE` and neither file is read.
+2. `cache_stamp_check()`. No `pipeline-cache.bin` after it (deleted by it, or the run that started without it ended
+   before writing the file again): the save at exit writes it (`P.base_at_exit`; `cache_save()`,
+   `runtime/vk/vk_cache_stamp.h` `cache_base_at_exit()`).
+3. `pipeline-cache.bin` into `P.cache`. An oversized file is never read again: the play file takes its place at once
+   (`base_over`). `P.saved[0]`: the file holds this data when the driver took all of it, so a save is due only once the
+   cache has grown (`cache_save()`). Without data read from the file the empty cache's own size counts as saved, as the
+   play cache's does in step 7: a run that took nothing into it does not write a file of a header alone, which the next
+   start would refuse as too short (`runtime/vk/vk_cache_file.h` `cache_file_read()`) while it no longer counts as
+   missing (`P.base_at_exit`).
+4. The play file ("The play cache"). When both files are over the limit, what one run builds is over it and nothing
+   will ever replace either file: the log says so and how to raise the limit.
+5. A fold with the play cache on (the play file reached `NX2SARIA_PIPELINE_CACHE_PLAY_MB`) is taken only when its
+   result fits: `pipeline-cache.bin` past the limit would be dropped whole at the next start (`cache_data_read()`). The
+   merge into `P.cache` is the one the kept play cache gets in step 7 anyway, so it is done here once and its size
+   asked; a play file mostly holds what the other already has (461.2 + 524.9 MB folded to 489.0 MB, 2026-11-12), so the
+   size of the two files says little. The fold is written at the first autosave, after the boot's prewarm and
+   background builds have added to `P.cache`: it is taken only with room for a play file's worth of growth (`fold_at`)
+   under the limit, so that save is not refused (`cache_save()` keeps the play file meanwhile). A fold not taken leaves
+   both files as they are and keeps the play cache, already merged, so step 7 is skipped for it.
+6. The other folds (a preparation, the setting 0, no `pipelineCreationCacheControl`, an oversized
+   `pipeline-cache.bin`): the play file is merged into `P.cache` now; the file is written by the first save, which then
+   removes the play file. A run that ends before that save finds both files as they were and merges again.
+7. A play file that is not folded is kept as the play cache, so its file goes on holding what earlier runs made, and
+   merged into `P.cache` in memory, where the first create of `pipe_create_in()` finds its pipelines. Without the merge
+   that create took them from the driver's own cache when it had them, at 8 ms a pipeline against 0.4 ms from ours.
+8. `P.saved[1]`: an empty play cache is not written (its data is a header): its size counts as saved, as a whole
+   file's does.
 
 ### `mesh_stages_init()`
 
@@ -463,10 +482,12 @@ off, 1 on every driver; unset, on every driver except NVIDIA's own, on which the
 widths the driver can preserve (`VkPhysicalDeviceFloatControlsProperties`) are declared, and nothing without 32-bit
 floats.
 
-- `const char *e = cfg_get("NX2SARIA_VK_NAN_PRESERVE")`: no fixed default: it depends on the driver, see above.
-- `NX2SARIA_VK_NAN_BITS`: 1 every driver, 0 none; unset: AMD's driver for RDNA 1 and 2 (`spirv_nan_bits()`).
+`NX2SARIA_VK_NAN_BITS` (`P.nan_bits`, `spirv_nan_bits()`): 1 every driver, 0 none; unset: AMD's driver for RDNA 1 and 2
+(`vk_caps.amd_sc`).
 
-### Stage libraries for mesh pipelines
+### `mesh_lib_init()`
+
+Stage libraries for mesh pipelines.
 
 `NX2SARIA_GPL_MESH`, default 1; 0: each mesh pipeline is built whole, as before.
 
@@ -523,35 +544,29 @@ optimiser (`noopt_flag_for()`): a fragment library shared with vertex pipelines 
   that boot); records written with dynamic vertex input still prebuild, each for the layout of the draw that recorded
   it. The RDNA 1 and 2 branch (`vk_caps.amd_sc`) is not measured and keeps dynamic vertex input.
 
-- `const char *dv = cfg_get("NX2SARIA_VK_DYN_VERTEX")`: no fixed default: it depends on the GPU, see above.
-- `NX2SARIA_VK_DYN_A2C=0`/1 forces dynamic alpha to coverage off or on. Default off on AMD's Windows driver branch for
-  RDNA 2 and older (`vk_caps.amd_sc`), which applies alpha to coverage while the dynamic state says off: on an RX 590
-  (24.9.1) NX2Saria, which never turns it on, drew Link and the NPCs with depth but no colour (black silhouettes) and
-  dithered other surfaces into checkerboards (issue #67, RX 470/570/580). Taken out of the dynamic state, it goes into
-  the pipeline key and the characters draw. With the texture pool marks it stays out of the dynamic state whatever the
-  setting: a marked fragment shader gets early fragment tests only in a pipeline that has alpha to coverage off
-  (`spirv_pool_mark()`), so the pipeline has to know.
-- `const char *da = cfg_get("NX2SARIA_VK_DYN_A2C")`: no fixed default: it depends on the driver, see above.
-- `pg_draws_min()`: the play gate's line at the start.
+`NX2SARIA_VK_DYN_A2C=0`/1 forces dynamic alpha to coverage off or on. Default off on AMD's Windows driver branch for
+RDNA 2 and older (`vk_caps.amd_sc`), which applies alpha to coverage while the dynamic state says off: on an RX 590
+(24.9.1) the game, which never turns it on, drew Link and the NPCs with depth but no colour (black silhouettes) and
+dithered other surfaces into checkerboards (issue #67, RX 470/570/580). Taken out of the dynamic state, it goes into
+the pipeline key and the characters draw. With the texture pool marks it stays out of the dynamic state whatever the
+setting: a marked fragment shader gets early fragment tests only in a pipeline that has alpha to coverage off
+(`spirv_pool_mark()`), so the pipeline has to know.
 
-### NVN -> Vulkan mappings
+After `cache_load()` it calls `pg_draws_min()` for the play gate's line at the start.
 
-### `compare_op()`
+### `compare_op()`, `stencil_op()`, `polygon_mode()`
 
-`NVN_DEPTH_FUNC_*` / `NVN_STENCIL_FUNC_*` are NEVER = 1 .. ALWAYS = 8 in `VkCompareOp` order.
+The NVN values map to Vulkan's by arithmetic:
 
-### `stencil_op()`
-
-`NVN_STENCIL_OP_*` are KEEP = 1 .. `DECR_WRAP` = 8 in `VkStencilOp` order.
-
-### `polygon_mode()`
-
-`NVN_POLYGON_MODE_POINT`/LINE/FILL = 0/1/2, `VkPolygonMode` FILL/LINE/POINT = 0/1/2.
+- `NVN_DEPTH_FUNC_*` / `NVN_STENCIL_FUNC_*` are NEVER = 1 .. ALWAYS = 8 in `VkCompareOp` order.
+- `NVN_STENCIL_OP_*` are KEEP = 1 .. `DECR_WRAP` = 8 in `VkStencilOp` order.
+- `NVN_POLYGON_MODE_POINT`/LINE/FILL = 0/1/2, `VkPolygonMode` FILL/LINE/POINT = 0/1/2. Without `fillModeNonSolid`
+  everything is FILL.
 
 ### `vk_pipeline_topology()`
 
-- `case NVN_DRAW_PRIMITIVE_QUAD_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP`: same triangles, same coverage.
-- `default: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST`: TRIANGLES; QUADS after the replay's index rewrite.
+A quad strip is drawn as a triangle strip: the same triangles, the same coverage. The default, a triangle list, is
+TRIANGLES, and QUADS after the replay's index rewrite.
 
 ### `topology_class()`
 
@@ -559,7 +574,7 @@ Topology class (a pipeline's static topology only fixes the class): 0 point, 1 l
 
 ### `vk_pipeline_tex_type()`
 
-- `default: return GFX_TEX_2D`: 2D, RECTANGLE.
+The default, `GFX_TEX_2D`, is for the 2D and RECTANGLE targets.
 
 ### `format_type()`
 
@@ -567,26 +582,20 @@ Numeric type of a colour format as a shader sees it: `GFX_TYPE_*`.
 
 ### `format_features()`
 
-Optimal-tiling (o = 1) or buffer (o = 0) features of a core format, cached.
+Optimal-tiling (`optimal` 1) or buffer (`optimal` 0) features of a core format, cached.
 
-### `widen()`
+### `vk_vertex_format()`, `widen()`
 
-3-component 8/16-bit formats are not vertex formats on every GPU: read 4 components.
+`vtx_formats` (`VtxFmt`) gives the vertex attribute format of each `NVNformat`, with the type a shader reads it as.
 
-`VtxFmt`: Vertex attribute formats by NVNformat.
-
-`vtx_formats`:
-
-- `*_UI2F` / `*_I2F`: integer data read as float; the 8- and 16-bit ones are Vulkan's SCALED formats.
-- 32-bit ones have no SCALED format: read as integers (values are not converted; logged when used).
+- `*_UI2F` / `*_I2F` (0x51 to 0x6C): integer data read as float; the 8- and 16-bit ones are Vulkan's SCALED formats.
+- The 32-bit ones have no SCALED format: read as integers (values are not converted; logged when used).
+- `widen()`: 3-component 8/16-bit formats are not vertex formats on every GPU: such a format is read with 4
+  components, and the log says so once.
 
 ### `target_format()`
 
-Attachment format of an NVN format (`tex_vk_format`: the format the images are created with).
-
-### Vertex input
-
-Pipeline state, or `vkCmdSetVertexInputEXT`.
+Attachment format of an NVN format (`tex_vk_format()`: the format the images are created with).
 
 ### `zero_format()`
 
@@ -597,17 +606,17 @@ sway, or they bend away from the parts that have one (the bulb).
 
 ### `vertex_input()`
 
-Attributes for the Locations the vertex shader reads; one without a usable NVN attribute reads `VK_PIPE_ZERO_BINDING`.
-
-### SPIR-V rewrites
+The vertex input, which is pipeline state or goes through `vkCmdSetVertexInputEXT`: attributes for the Locations the
+vertex shader reads; one without a usable NVN attribute reads `VK_PIPE_ZERO_BINDING`. An instance divisor above 1 is
+treated as 1 (logged once).
 
 ### `spirv_rebind()`
 
-Binding decorations b >= 1 become b + off (the fragment stage's share of set 0).
+Binding decorations b >= 1 become b + `off` (the fragment stage's share of set 0).
 
 ### `spirv_set()`
 
-DescriptorSet decorations become set (the fragment stage's resources move to set 1 with independent layouts).
+DescriptorSet decorations become `set` (the fragment stage's resources move to set 1 with independent layouts).
 
 ### `spirv_dual_source()`
 
@@ -619,12 +628,11 @@ Output at Location 1.
 
 ### `spirv_add_outputs()`
 
-Adds an Output variable for each Location of `missing` (type and width from io) to a module, declared in the entry point
-interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever the
-type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types are
-reused. NULL when the module does not have the expected layout.
-
-- `uint32_t bound = w[3], scalar[3] = {0, 0, 0}`: `GFX_TYPE_FLOAT`, SINT, UINT.
+Adds an Output variable for each Location of `missing` (type and width from `io`) to a module, declared in the entry
+point interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever
+the type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types
+are reused (`scalar[]` is indexed by `GFX_TYPE_FLOAT`, SINT, UINT). NULL when the module does not have the expected
+layout.
 
 ### `spirv_mesh_outputs()`
 
@@ -639,18 +647,17 @@ a float vector) becomes a Private one, the access chains through it Private poin
 function stores the value into it before anything else. NULL when nothing is to be done or the module does not have the
 expected layout.
 
-- `uint8_t *fill = calloc(old_bound, 1)`: 1: a filled variable, 2: an access chain through one.
-- The variables to fill, and the Private pointer types they and the chains through them need (pass 1).
-- `uint32_t vars[MAX_FILL], vtype[MAX_FILL], nvars = 0, priv[MAX_PRIV][2], npriv = 0`: priv: Input pointer type ->
-  Private.
-- The globals added before the first function: two constants, `gl_PointCoord`, and the Private pointer types not yet
-  declared (a filled variable's goes right before the variable, below; an access chain's is only used in a function).
-- `if (i == ep_at)`: the interface: filled variables out before SPIR-V 1.4 (Private is not listed), `gl_PointCoord` in.
-- `i += len`: Location, Flat and the like belong to Input variables.
-- `if (op == SPV_OP_VARIABLE && len >= 4 && a[1] < old_bound && fill[a[1]] == 1)`: its pointer type first.
-- `if (i + len == ann_end && pc_var)`: `gl_PointCoord`'s BuiltIn after the last decoration.
-- `if (op == OP_LABEL && in_entry && !stored)`: the entry's first block: its OpVariables, then the stores.
-- `for (uint32_t q = 0; q < c; q++) *p++ = comp[q]`: x y z w in order: (s, t, 0, 1) or (0, 0, 0, 1).
+How it goes through the module:
+
+1. Pass 1 finds the variables to fill and the Private pointer types they and the chains through them need (`priv`:
+   Input pointer type -> Private). `fill[id]` is 1 for a filled variable and 2 for an access chain through one.
+2. The globals added before the first function: two constants, `gl_PointCoord`, and the Private pointer types not yet
+   declared (a filled variable's goes right before the variable; an access chain's is only used in a function).
+3. The entry point's interface: filled variables out before SPIR-V 1.4 (Private is not listed), `gl_PointCoord` in.
+4. The decorations of a filled variable go: Location, Flat and the like belong to Input variables. `gl_PointCoord`'s
+   BuiltIn comes after the last decoration.
+5. In the entry function's first block, after its OpVariables, the stores: x y z w in order, (s, t, 0, 1) or
+   (0, 0, 0, 1), cut to the variable's width.
 
 ### `spirv_fixup()`
 
@@ -663,16 +670,14 @@ Two fixes for what the translator declares but a shader does not use (NULL: noth
   CreatePerVertexStructType): 9 distances exceed `maxCombinedClipAndCullDistances` (8 on the RX 9070). The translator
   never accesses CullDistance; the member goes when it is the struct's last and no access chain selects it.
 
-- `if (t < bound && t && elem[t] == cull_struct) k = 4`: arrayed per-vertex block.
-- `if (cull_ok && op == OP_TYPE_STRUCT && a[0] == cull_struct) o[on] = (l - 1) << 16 | op`: last member gone.
+An access chain into an arrayed per-vertex block has the member one index later. The struct loses its last member by
+its word count going down by one.
 
 ### `uses_subgroup_ops()`
 
-True when the module declares a `GroupNonUniform*` or SubgroupBallot-style capability (lane masks assume 32 lanes).
-
-- `if (op != 17) return 0`: OpCapability; capabilities come first, stop at the first other instruction.
-- `if ((cap >= 61 && cap <= 68) || cap == 4423 || cap == 4431) return 1`: `NonUniform*`, SubgroupBallotKHR,
-  SubgroupVoteKHR.
+True when the module declares a `GroupNonUniform*` capability (61 to 68), SubgroupBallotKHR (4423) or SubgroupVoteKHR
+(4431): lane masks assume 32 lanes. Capabilities come first, so it stops at the first instruction that is not an
+OpCapability.
 
 ### `spirv_reconverge()`
 
@@ -683,22 +688,17 @@ early through the operations on their own, with a ballot or scan that sees only 
 hands out output slots from one could give two primitives the same slot. This adds the extension and the mode for each
 entry point of a module that declares subgroup capabilities. NULL: nothing to change (or no memory).
 
-- `const uint32_t ext_words = (uint32_t)(sizeof ext + 3) / 4`: the string with its terminating zero, padded.
-
 ### `spirv_mesh_invariant()`
 
-Ocarina draws a fog sheet twice: a depth pre-pass, then a colour pass that discards where `gl_FragCoord.z` is behind the
+The game draws a fog sheet twice: a depth pre-pass, then a colour pass that discards where `gl_FragCoord.z` is behind the
 pre-pass's depth. Both are mesh pipelines with different mesh programs, so on Maxwell the sheet's positions match bit
-for bit, and the comparison relies on it. The translator marks a vertex shader's position Invariant (patch 0007), which
+for bit, and the comparison relies on it. The translator marks a vertex shader's position Invariant
+(`tools/xlate/patches/0007-position-always-invariant.patch`), which
 holds the driver to computing the same expression the same way in every pipeline; the mesh modules it makes
 (`tools/xlate/MeshSpirv.cs`) declare the position without it. This adds Invariant to the Position built-in of a MeshEXT
 module, as OpDecorate on a variable or OpMemberDecorate on a block member, right after its BuiltIn decoration. NULL:
 nothing to change (not a mesh module, no position, Invariant already there, or no memory). Once
 `tools/xlate/MeshSpirv.cs` declares it, this finds it there and changes nothing.
-
-- `uint64_t at = 0`: the word after the position's BuiltIn decoration.
-- `uint32_t target = 0, member = ~0u`: the decorated id, and its member for OpMemberDecorate.
-- `for (uint64_t i = 5; i < n;)`: already Invariant.
 
 ### `spirv_nan_preserve()`
 
@@ -713,8 +713,6 @@ and AMD GPUs drew Navi's sparkles but not her orb, whose light sits at her own c
 results without the mode. This adds the capability, the extension (the translator writes SPIR-V 1.3) and the mode for
 each entry point: 32-bit floats always, 16-bit and 64-bit ones where the module declares Float16 or Float64 and `widths`
 (`NP_*`) allows them. NULL: nothing to change (the module has the mode, or no 32-bit width is allowed, or no memory).
-
-- `const uint32_t ext_words = (uint32_t)(sizeof ext + 3) / 4`: the string with its terminating zero, padded.
 
 ### `spirv_nan_bits()`
 
@@ -732,44 +730,43 @@ with a constant operand whose bits are a NaN (an integer mask such as 0xffffffff
 becomes a select of the bits (issue #156: on an RX 9070 XT without the mode such a select between 1 and -1 gave 2^32).
 NULL: nothing to change (or no memory); `*tests` and `*selects` count what changed.
 
-- `uint32_t tu = 0, uvec[5] = {0}`: uint32 and its vectors by component count.
-- Ids that are not results of the instruction's second word, inside functions: first assignment wins anyway, as a
-  definition comes before its uses (OpPhi operands aside, which this never reads).
-- The declarations go right before the first function: uint32 and its vectors where missing, then the constants.
+- Inside functions the result type of an id is taken from the second word of every instruction but those without a
+  result: the first assignment wins anyway, as a definition comes before its uses (OpPhi operands aside, which this
+  never reads).
+- The declarations go right before the first function: uint32 and its vectors (by component count) where missing, then
+  the constants.
 
 ### `vk_pipeline_spirv_selftest()`
 
 `--selftest` (`runtime/main.c`): `spirv_nan_preserve()` on a small fragment module, without a device. Returns the number
 of failures.
 
-- `static const uint32_t head[] = {0x07230203, 0x00010300, 0, 5, 0, CAP, 1, CAP, 10}`: Shader, Float64.
-- `enum { NH = sizeof head / 4, NB = sizeof body / 4, EP_END = 8 }`: `EP_END`: body words up to the entry point's end.
-- widths: what the device allows; f64: the module declares Float64; w64: a 64-bit mode is expected.
-- `if (!f64) in[NH - 1] = 0`: Matrix in place of Float64.
-- `spirv_nan_bits()`: a scalar and a vec2 isnan, a select on a NaN constant; no uint32 type in the module.
+The module declares Shader and Float64. Three cases: every width allowed and Float64 declared (a 64-bit mode is
+expected), only 32 bits allowed with Float64 declared, and Matrix in place of Float64; then a call without the 32-bit
+width, which must change nothing. `spirv_nan_bits()` gets a module with a scalar and a vec2 isnan and a select on a NaN
+constant, and no uint32 type. With `NX2SARIA_SPV_MARK_TEST` it also runs `spirv_mark_list_test()`.
 
 ### `pin_subgroup32()`
 
-Chain {size 32} into a stage create info when the stage uses subgroup ops and the driver allows the pin.
+Chains the pinned subgroup size (`vk_caps.sg_size`, 32 unless `NX2SARIA_VK_SUBGROUP`) into a stage create info when
+the stage uses subgroup ops and the driver allows the pin.
 
 ### `local_size_x()`
 
-The x of a compute module's LocalSize (OpExecutionMode 17), 0 when it has none.
-
-- `if (op == 54) return 0`: OpFunction: the execution modes are all before it.
+The x of a module's LocalSize (OpExecutionMode 17), 0 when it has none. The execution modes are all before the first
+OpFunction, where it stops.
 
 ### `stage_sg()`
 
-`StageSg`: A task or mesh stage's subgroup requirements under `NX2SARIA_VK_MESH_SUBGROUPS` (`mesh_stages_init()`), from
+`StageSg`: a task or mesh stage's subgroup requirements under `NX2SARIA_VK_MESH_SUBGROUPS` (`mesh_stages_init()`), from
 its SPIR-V while the caller still has it: pin, 32 lanes (the task stage; the mesh stage takes `pin_subgroup32()` as
 before), and full, every subgroup of the workgroup full, where its width is a whole number of 32-lane subgroups.
 
 ### `stage_sg_apply()`
 
-Puts g on a stage's create info; rq must live as long as it. The mesh stage's pin is already chained
-(`pin_subgroup32()`).
-
-- `if (g.full && st->pNext)`: full subgroups only with the size pinned: the requirement is then a multiple of it.
+Puts `g` on a stage's create info; `rq` must live as long as it. The mesh stage's pin is already chained
+(`pin_subgroup32()`). Full subgroups are asked only with the size pinned: the requirement is then a multiple of it.
+The log counts the stages so far at the 1st, 10th, 100th and 1000th.
 
 ### `spirv_pool_rebind()`
 
@@ -778,21 +775,21 @@ their types) move to set 2, at the binding of their view kind (`runtime/vk/vk.h`
 for samplers; the kinds used are noted in `vk_pool_kinds_used` so the replay fills them. NULL: nothing to move (or no
 memory).
 
-- `int32_t *kind = malloc(bound * sizeof *kind)`: per id: image kind, 100 sampler, -1 other (types, then variables).
+- `kind[id]`: for a type, its image kind (sampled images only), 100 for a sampler, -1 other; + 1000 for a pool array
+  and a pointer to one, + 2000 for a pool variable.
 - Pool variables and their binding decorations are module declarations, all before the first function.
-- `if (op == OP_TYPE_IMAGE && len >= 9 && w[i + 1] < bound && w[i + 7] == 1)`: sampled image.
-- A translation carried over from a translator whose pool was `VK_POOL_TEX_CARRIED` long (`runtime/gfx/gfx_shader.c`,
-  carry) is a pool array too: left in its own set, its textures were never bound and the scene drew with empty images
-  until the background pass translated it again. It indexes the first `VK_POOL_TEX_CARRIED` entries of the larger
-  binding, which Vulkan allows.
-- `kind[w[i + 1]] = pool ? k + 1000 : -1`: + 1000: a pool array.
-- `kind[w[i + 2]] = kind[w[i + 1]] >= 1000 ? kind[w[i + 1]] + 1000 : -1`: + 2000: a pool variable.
+- A translation carried over from a translator whose pool was `VK_POOL_TEX_CARRIED` long (the carry of
+  `runtime/gfx/gfx_shader.c`) is a pool array too: left in its own set, its textures were never bound and the scene
+  drew with empty images until the background pass translated it again. It indexes the first `VK_POOL_TEX_CARRIED`
+  entries of the larger binding, which Vulkan allows.
 
-### Texture pool marks
+### `vk_pool_marks_enabled()`
+
+The texture pool marks.
 
 `NX2SARIA_TEX_DISUSE`, default on; `runtime/vk/vk_texture.c` "disuse" uses them.
 
-Ocarina samples nearly every texture through the bindless pool: a shader reads a handle from memory and indexes the pool
+The game samples nearly every texture through the bindless pool: a shader reads a handle from memory and indexes the pool
 array with it, so the CPU never learns which of the registered textures a frame samples, and every registered texture
 counts as in use (`runtime/vk/vk_texture.c` `idle()`). The game keeps the textures of the areas it has loaded
 registered, so none of them could go, and their memory, which the driver charges to the system's commit, grew to 6 GiB
@@ -805,11 +802,9 @@ not allow, no memory) is counted in `vk_pool_marks_missed`, which keeps `runtime
 disuse: an unmarked shader could sample a texture the marks call unused. `make_module()` logs the first few by stage,
 version, size, hash and reason.
 
-### `vk_pool_marks_enabled()`
-
-- `marks_on = rt_knob("TEX_DISUSE", "1") >= 1`: 2: marks and stand-ins, nothing freed (`runtime/vk/vk_texture.c`
-  "disuse").
-- `vkGetPhysicalDeviceFeatures(c->phys, &f)`: `runtime/vk/vk_device.c` enables every feature the GPU reports.
+`NX2SARIA_TEX_DISUSE` 2 is marks and stand-ins with nothing freed (`runtime/vk/vk_texture.c` "disuse"). Whether a
+stage may store comes from the GPU's features (`vertexPipelineStoresAndAtomics`, `fragmentStoresAndAtomics`):
+`runtime/vk/vk_device.c` enables every feature the GPU reports.
 
 ### `spirv_pool_mark()`
 
@@ -830,48 +825,54 @@ outside the entry function can run more than once with other slots: it notes the
 so a loop's last RING slots are all marked. `*status`: 1 marked, 0 no pool texture access to mark, -1 one that could not
 be marked (`*why` says what stopped it). NULL unless marked.
 
-- `uint32_t *bind = calloc(bound, sizeof *bind)`: per id: its Binding + 1 when its DescriptorSet is 2, else 0.
-- `uint64_t ann_end = 0, fn_start = 0, em_end = 0`: `em_end`: past the entry points and execution modes.
-- `uint32_t *rtype = calloc(bound, sizeof *rtype)`: per id: its result type, where the defer path needs it.
-- Per site: 0 stored in place; else deferred, bit 1 the index is signed (a bitcast), bit 2 a ring (in a loop or outside
-  the entry function).
-- `if (w[i + 1] <= 3) vertex_stage = 1`: Vertex, TessellationControl, TessellationEvaluation, Geometry.
-- `early = 0`: has them already.
-- `early = 0`: the guest's own storage buffers: its stores would change under early tests.
-- `if (op >= 19 && op <= 39 && l >= 2 && w[i + 1] < bound) is_type[w[i + 1]] = 1`: OpTypeVoid .. OpTypeForwardPointer.
-- Pool texture variables: set 2, a binding below `VK_POOL_KINDS` (`spirv_pool_rebind()`); one already at the marks
-  binding means the module was marked before.
-- `site_def = fn_start && !marked ? calloc((n - fn_start) / 5 + 1, 1) : NULL`: an access chain is 5 words or more.
-- `NX2SARIA_POOL_MARK_SHARED` (default 1): the module's ring sites share one ring and its count, and an access notes its
-  slot only when it differs from the slot noted just before it (consecutive repeats take no entry). With a ring per
-  site, a shader with many pool accesses in a loop (the castle moat's water: 69 shadow taps of one light's map per
-  iteration) carried 69 rings of 8 dynamically indexed words and stored up to 552 marks per fragment where it ended: the
-  water's draw took 7.4 ms per frame on an RTX 5080, 0.3 ms without the marks. The shared ring keeps the last RING runs
-  of slots, which for such a loop is one per light, where a site's ring held its last RING accesses, all the same slot.
-  It is not the union of what per-site rings held: an access order can push out a slot that a site's own ring kept. So a
-  shader that noted more than RING runs sets the overflow word at its exits (`VK_POOL_MARK_OVERFLOW`), and the read that
-  sees it counts every slot as sampled, for every use of the marks (`runtime/vk/vk_texture.c` `vk_pool_marks_read()`).
-- `uint64_t stores = deferred + rings`: what each way out stores: a variable, or a ring's entries in a loop.
-- `if (stores && (!exits || exits * (deferred + 3 * rings) > 8192))`: no way out to store at, or code that would grow.
-- `memset(site_def, 0, sites), deferred = rings = stores = 0`: too much.
+What it reads before the functions:
+
+- `bind[id]` is the id's Binding + 1, and `set2[id]` says its DescriptorSet is 2. Pool texture variables are those at
+  set 2 with a binding below `VK_POOL_KINDS` (`spirv_pool_rebind()`); a variable already at the marks binding means the
+  module was marked before, and nothing is done.
+- `em_end` is past the entry points and execution modes; `rtype[id]` an id's result type, where the deferred path
+  needs it (`is_type[]`: the ids of OpTypeVoid .. OpTypeForwardPointer).
+- The stage: execution models up to 3 (Vertex, TessellationControl, TessellationEvaluation, Geometry) need
+  `vertexPipelineStoresAndAtomics`, a fragment stage `fragmentStoresAndAtomics`.
+- `early` is given up when the module has EarlyFragmentTests already, and when it declares storage buffers of the
+  guest's own: its stores would change under early tests.
+
+The sites. `site_def` has a byte per pool access (an access chain is 5 words or more, which bounds their number): 0
+stored in place; else deferred, bit 1 the index is signed (a bitcast), bit 2 a ring (in a loop or outside the entry
+function). Only a fragment module with one entry point defers.
+
+`NX2SARIA_POOL_MARK_SHARED` (default 1): the module's ring sites share one ring and its count, and an access notes its
+slot only when it differs from the slot noted just before it (consecutive repeats take no entry). With a ring per
+site, a shader with many pool accesses in a loop (the castle moat's water: 69 shadow taps of one light's map per
+iteration) carried 69 rings of 8 dynamically indexed words and stored up to 552 marks per fragment where it ended: the
+water's draw took 7.4 ms per frame on an RTX 5080, 0.3 ms without the marks. The shared ring keeps the last RING runs
+of slots, which for such a loop is one per light, where a site's ring held its last RING accesses, all the same slot.
+It is not the union of what per-site rings held: an access order can push out a slot that a site's own ring kept. So a
+shader that noted more than RING runs sets the overflow word at its exits (`VK_POOL_MARK_OVERFLOW`), and the read that
+sees it counts every slot as sampled, for every use of the marks (`runtime/vk/vk_texture.c` `vk_pool_marks_read()`).
+
+`stores` is what each way out stores: a variable per deferred site, or a ring's entries in a loop. With no way out to
+store at, or when the code would grow too much (`exits * (deferred + 3 * rings)` over 8192), nothing is deferred and
+every site stores in place.
+
+The output:
+
 - From SPIR-V 1.4 on an entry point lists every global variable its functions use, not only the inputs and outputs (the
-  translator's mesh shaders are 1.4): each entry point gets the marks variable, a word more.
-- The mode, a word per entry point, decorations, at most 30 words of new types and the variable, 9 a site; deferred: a
-  word per entry point and variable, 80 words of types and constants, then per site its variables and the store of its
-  slot (ring: 10 + 29), and per way out 29 words a variable and 8 \* 29 a ring (its loop is 83).
-- deferred: the types, constants and variables (pv0: one per site; ra0, rc0: a ring and its count per ring site).
-- `for (uint64_t i = 5; i < ann_end;)`: the header up to the annotations' end: entry points widened, the mode added.
-- `uint32_t nv = 0, *at = o + p + l + 1`: the marks buffer, then pv0.., ra0.. and rc0..
-- `uint32_t k_def = 0, k_ring = 0, cur = 0`: cur: the label of the block being copied.
-- Marks[the slot, or the spare when none was noted] = 1.
-- more slots noted than the ring holds: the overflow word, else the spare (`VK_POOL_MARK_OVERFLOW`).
-- `if (op == OP_DEMOTE_TO_HELPER)`: not the block's end: every entry, without a loop.
-- The block ends here (a return, kill or terminate), so it can end in a loop over the entries noted: for (j = 0; j <
-  min(count, RING); j++) mark `ring[j]`.
-- `if (d)`: the slot noted for the stores at the end.
-- `if ((d & 4) && shared)`: the shared ring: a slot other than the last noted goes in, count + 1.
-- `} else if (d & 4)`: ring[count % RING] = slot, count + 1.
-- `uint32_t at = next++`: `marks[slot]` = 1, slot being the pool index of this access.
+  translator's mesh shaders are 1.4): each entry point gets the marks variable and the Private variables, a word each.
+- Its size: the mode, a word per entry point, decorations, at most 30 words of new types and the variable, 9 a site;
+  deferred: a word per entry point and variable, 80 words of types and constants, then per site its variables and the
+  store of its slot (ring: 10 + 29), and per way out 29 words a variable and 8 \* 29 a ring (its loop is 83).
+- The header up to the annotations' end is copied with the entry points widened and the mode added; then the marks
+  buffer's decorations and types, and for the deferred path the types, constants and variables (`pv0`: one per site;
+  `ra0`, `rc0`: a ring and its count per ring).
+- In the functions (`cur` is the label of the block being copied), before each way out: for each deferred variable,
+  Marks[the slot, or the spare when none was noted] = 1; for each ring, first the overflow word when more slots were
+  noted than the ring holds, else the spare (`VK_POOL_MARK_OVERFLOW`), then its entries. A demote to helper is not the
+  block's end, so every entry is stored, without a loop. At a return, kill or terminate the block ends, so it can end
+  in a loop over the entries noted: for (j = 0; j < min(count, RING); j++) mark `ring[j]`.
+- After each pool access: a deferred site notes its slot for the stores at the end. On the shared ring a slot other
+  than the last noted goes in, and the count goes up by one; on a site's own ring, ring[count % RING] = slot and the
+  count goes up by one. A site stored in place gets `marks[slot]` = 1, slot being the pool index of this access.
 
 ### `spirv_mark_list_test()`
 
@@ -879,21 +880,17 @@ be marked (`*why` says what stopped it). NULL unless marked.
 (`spirv_pool_rebind()`) and marked, and written to `<out>` when marked, for spirv-val. Prints the counts; 0 failures
 unless a file cannot be read or written.
 
-- Texture pool marks, below.
-
 ### `make_module()`
 
-`early_ok`: a fragment shader whose pipeline has no alpha to coverage (`spirv_pool_mark()`).
+The shader module of a translation, after the rewrites, in this order: `spirv_fixup()`, `spirv_pool_rebind()` and, with
+the marks on, `spirv_pool_mark()`, `spirv_reconverge()`, `spirv_nan_preserve()`, `spirv_nan_bits()`,
+`spirv_mesh_invariant()`. `early_ok`: a fragment shader whose pipeline has no alpha to coverage (`spirv_pool_mark()`).
 
-- `const uint32_t *orig_w = w`: for the log of a module the marks cannot take.
-- The hash is FNV-1a of the words `make_module()` got, as `vk_dump` hashes a shader's SPIR-V; it differs from the
-  translation's only where the pipeline patched the module first (added vertex outputs).
-
-### Descriptor layouts
-
-`Bindings`:
-
-- `int pool`: a stage indexes the texture or sampler pool (set 2, not in b / pb).
+- The log of a module the marks cannot take (the first 8) gives a hash: FNV-1a of the words `make_module()` got
+  (`orig_w`), as `vk_dump` hashes a shader's SPIR-V; it differs from the translation's only where the pipeline patched
+  the module first (added vertex outputs).
+- `mm_hash`: FNV-1a of the module `make_module()` last created on this thread, after the rewrites
+  (`NX2SARIA_PIPE_FEEDBACK` 2).
 
 ### `mesh_libs()`
 
@@ -902,7 +899,7 @@ stage-independent layout (`pipe_miss()`), which is how the rest of the file tell
 
 ### `no_libs()`
 
-1 for a mesh pipeline of layout l that has no stage libraries and so no fast link: every build of it is its whole build.
+1 for a mesh pipeline of layout `l` that has no stage libraries and so no fast link: every build of it is its whole build.
 A vertex pipeline is never one (`gpl_link()` itself refuses the shared layout the probe can give it).
 
 ### `origin_name()`
@@ -920,55 +917,57 @@ One past the highest binding a shader uses (1 with no resources: binding 0 is th
 
 ### `add_stage()`
 
-Adds a stage's resources with bindings b >= 1 moved by off; binding 0 (support buffer) is shared.
-
-- `if (r[i].pool)`: set 2 (`spirv_pool_rebind()`), bound by the replay from the pools.
+Adds a stage's resources to the binding list (`Bindings`: the Vulkan bindings in `b`, what feeds each in `pb`), with
+bindings b >= 1 moved by `off`; binding 0 (support buffer) is shared. A resource of the texture or sampler pool is not
+in the list: it is in set 2 (`spirv_pool_rebind()`), bound by the replay from the pools, and `Bindings.pool` says a
+stage indexes one.
 
 ### `module_binding_missing()`
 
 The first binding a module's resource variables use that the binding list b[0..n) lacks (module bindings >= 1 moved by
-off), or -1. A reflection that misses a resource would otherwise hand the driver an invalid layout. The module's Binding
+`off`), or -1. A reflection that misses a resource would otherwise hand the driver an invalid layout. The module's Binding
 decorations come from the list the shader keeps (`gfx_shader_bindings`), not from its SPIR-V: this runs on the drawing
 thread at every pipeline miss (`pipe_miss()`), where a compressed module would be decoded.
 
-- `int pooled = 0`: a pool array: set 2, not in this layout (`spirv_pool_rebind()`).
-- `if (tr[t].pool && tr[t].binding == (bind[i] & 0xffff)) pooled = 1`: `GfxShaderRes.binding` is 16 bits.
+A pool array is skipped: it is in set 2, not in this layout (`spirv_pool_rebind()`). Its binding is compared on the low
+16 bits, as `GfxShaderRes.binding` is 16 bits.
 
 ### `layout_covers()`
 
-Checks both stages of a graphics pipeline against its layout; 0 with why filled when one uses a missing binding.
+Checks both stages of a graphics pipeline against its layout; 0 with `why` filled when one uses a missing binding.
 
-### `make_tpl_bp()`
+### `make_tpl_bp()`, `make_tpl()`
 
 The update template of a set whose bindings are b[0..n): one entry per binding, in order, over the packed array the
-replay fills from the set's first descriptor, a `VkDescSlot` per descriptor. The bind point follows the stages (compute
+replay fills from the set's first descriptor, a `VkDescSlot` per descriptor. The bind point is the one given
+(`make_tpl_bp()`, for an emulated mesh layout) or follows the stages (`make_tpl()`; compute
 layouts hold the compute stage only). `VK_NULL_HANDLE` when templates are off, for an empty set, for a push set without
 `vkCmdPushDescriptorSetWithTemplateKHR` or when creation fails: the replay then writes the set with write structs.
 
 ### `bindings_sort()`
 
-Finds or creates the layout of a binding list (sorted here); NULL on failure. Caller holds `P.lock`. Sorts a binding
-list by binding and hashes it into `*h`; the descriptor total, or -1 when a binding repeats.
-
-- `for (uint32_t i = 1; i < B->n; i++)`: insertion sort by binding; the lists are short.
+Sorts a binding list by binding (an insertion sort; the lists are short) and hashes it into `*h`; the descriptor total,
+or -1 when a binding repeats.
 
 ### `layout_get()`
 
-- `VkDescriptorSetLayout sets3[3] = {l->set, vk_empty_set_layout(), vk_pool_set_layout()}`: set 2: the pools.
+Finds or creates the layout of a binding list (sorted here); NULL on failure. Caller holds `P.lock`. The pipeline
+layout has three sets: the list's, an empty one, and at set 2 the pools.
 
-### `mesh_emu_on()`
+### `mesh_emu_on()`, `layout_get_emu()`
 
-`NX2SARIA_MESH_EMULATION` (GPUs without `VK_EXT_mesh_shader`): the layout of an emulated mesh pipeline. The task and
-mesh stages' bindings are visible to the compute stage (they run as compute pipelines of this layout), the fragment
-stage's stay; push constants (`MESH_EMU_PC_BYTES`) for the compute stages and the generated vertex shader; set 0 gets a
-template per bind point. Caller holds `P.lock`.
+`NX2SARIA_MESH_EMULATION` (GPUs without `VK_EXT_mesh_shader`), decided with the mesh fallback at device creation
+(`runtime/vk/vk_mesh_path.h`).
 
-Decided with the mesh fallback at device creation (`runtime/vk/vk_mesh_path.h`).
+`layout_get_emu()`: the layout of an emulated mesh pipeline. The task and mesh stages' bindings are visible to the
+compute stage (they run as compute pipelines of this layout), the fragment stage's stay; push constants
+(`MESH_EMU_PC_BYTES`) for the compute stages and the generated vertex shader; set 0 gets a template per bind point.
+Caller holds `P.lock`.
 
-### `emu_bucket()`
+### `emu_get()`, `emu_find()`, `vk_pipeline_mesh_emu()`
 
-`MeshEmuEnt`: The compute pipelines of an emulated mesh pipeline, per (mesh, task, layout): made by the pipeline's build
-(`create_graphics()`, any thread) and found by its draws. ok 0: the stages could not be converted or built.
+`MeshEmuEnt`: the compute pipelines of an emulated mesh pipeline, per (mesh, task, layout): made by the pipeline's build
+(`create_graphics()`, any thread) and found by its draws. `ok` 0: the stages could not be converted or built.
 
 Each draw of an emulated mesh pipeline looks its entry up (`vk_pipeline_mesh_emu()`), so the lookup takes no lock: an
 entry is complete before it is published at its bucket's head (release) and is never removed. `emu_lock` only orders the
@@ -976,10 +975,8 @@ publishing. The build (two compute pipelines, up to seconds each in the driver o
 across the build, as before, it stopped every draw of the replay that looked up any entry meanwhile, 2.5 s of the replay
 thread's samples in a first 0.8.0 run in Kokiri Forest on an RX 580 (2026-11-11).
 
-### `emu_get()`
-
-- `uint32_t *r = c && toff ? spirv_rebind(c, cn, toff) : NULL`: the task stage's bindings follow the fragment stage's.
-- `MeshEmuEnt *had = emu_find(*head, ms, ts, layout)`: another build of the same stages published first: keep that.
+In the entry's layout the task stage's bindings follow the fragment stage's (`toff`). When another build of the same
+stages published its entry first, that one is kept and this build's pipelines are destroyed.
 
 ### `layout_pair()`
 
@@ -992,13 +989,13 @@ command buffer's pools. On success `*B` holds both lists, set 0 first, `VkPipeBi
 
 ### `vs_outs()`
 
-Adds fs's inputs (packed ones excepted) to vs's union; returns the union, types in io (the first type met wins).
-
 Vertex outputs with independent layouts: each vertex shader declares the union of the inputs of every fragment shader
 met with it (`pipeline-keys.bin` at the prewarm, then each pipeline built), so its module does not depend on the
 fragment shader of one pipeline. Unwritten ones read (0, 0, 0, 1) as before. `NX2SARIA_VS_OUTS=all` declares all 32.
 
-- `if (!VO.vs[j] && VO.n + 1 >= VS_OUTS_CAP * 3 / 4)`: full: this pair alone.
+`vs_outs()` adds `fs`'s inputs (packed ones excepted) to `vs`'s union and returns the union, types in `io` (the first
+type met wins; of one type, the widest). When the table (`VO`, `VS_OUTS_CAP` shaders) is three quarters full, a vertex
+shader not in it gets the outputs of this pair alone, logged once.
 
 ### `mesh_outs()`
 
@@ -1015,40 +1012,36 @@ The inputs of fragment shader fs that mesh shader ms does not write, which the f
 filled in (`spirv_fs_fill_inputs()`; `create_graphics()` works the same mask out for a whole build), and in `*points`
 whether they are filled as a point sprite's. 0 and no points when nothing is filled.
 
-### Pipeline cache table
-
 ### `pipe_add()`
 
 Stores a result (a failed one too, so it is not retried every draw). Caller holds `P.lock`.
 
-### Graphics pipelines
+### The graphics pipeline key
 
-`GKey`:
-
-- `typedef struct`: normalized: zero where the state is dynamic or unused.
+`GKey` is normalized: zero where the state is dynamic or unused.
 - `const GfxShader *vs, *fs, *ts`: ts: the task stage of a mesh draw.
 - `uint32_t color[8], depth, stencil`: `VkFormat`.
 - `uint8_t clamp, poly_mode, a2c, logic_op`: `logic_op`: `VkLogicOp` + 1 when enabled.
-- `uint8_t blend_en, dsb, fbl, pad`: dsb: an enabled target blends with a SRC1 factor; fbl: `VkPipeState.feedback`.
+- `uint8_t blend_en, dsb, fbl, pad`: `dsb`: an enabled target blends with a SRC1 factor; `fbl`: `VkPipeState.feedback`.
 - `uint8_t blend[8][6]`: src, dst, op, src alpha, dst alpha, alpha op (`VkBlendFactor` / `VkBlendOp`).
 - `uint8_t rate[17]`: per binding: 0 unused, 1 vertex, 2 instance.
 - `uint8_t indep`: `P.indep` when built: the probe draws through both layouts.
 
-### `is_src1()`
+### `is_src1()`, `uses_src1()`
 
 SRC1 blend factors read the fragment shader's second output (dual-source blending); the pipeline then needs a fragment
 module whose output 1 is Location 0, Index 1 (`spirv_dual_source()`).
 
-Runs per draw (`gkey_fill()`, `target_wmask()`): only the blend factors of blend-enabled targets are read until one is
-SRC1, which NX2Saria never sets (0 of 876 pipelines in the field and fight saves).
+`uses_src1()` runs per draw (`gkey_fill()`, `target_wmask()`): only the blend factors of blend-enabled targets are read
+until one is SRC1, which the game never sets (0 of 876 pipelines in the field and fight saves).
 
 ### `noopt_flag_for()`
 
 `NX2SARIA_VK_NOOPT=1`: pipelines built without the driver's optimiser, for a driver whose shader compiler crashes on one
-(the test switch for such a report); slower shaders, the same picture. mesh: only pipelines with task and mesh stages,
+(the test switch for such a report); slower shaders, the same picture. `mesh`: only pipelines with task and mesh stages,
 the terrain's and the foliage's. 0: none.
 
-Unset: mesh on AMD's Windows driver for RDNA 1 and 2 (`vk_caps.amd_sc`), 0 elsewhere. That driver loses the device ("No
+Unset: `mesh` on AMD's Windows driver for RDNA 1 and 2 (`vk_caps.amd_sc`), 0 elsewhere. That driver loses the device ("No
 fault detected", a timeout) minutes into play on RX 6600 to RX 6950 XT cards in every version from 0.6.0 to 0.9.2, with
 the pipeline library on or off and the lazy write-back on or off. Where the reports' pass marks name a pass the GPU was
 in, twelve logs of five reporters, it is a pass whose first draw is a mesh pipeline (mesh shader ba4302f1 with fragment
@@ -1076,7 +1069,7 @@ can be compared for a module or a state that changes between them.
 
 ### `fb_chain()`
 
-Chains fb into a create info's `pNext` (next: its current `pNext`). Returns what the create info's `pNext` becomes.
+Chains `fb` into a create info's `pNext` (`next`: its current `pNext`). Returns what the create info's `pNext` becomes.
 
 ### `fb_log()`
 
@@ -1084,7 +1077,7 @@ One line: per kind, builds that came from `pipeline-cache.bin` of all builds so 
 
 ### `target_wmask()`
 
-Colour write mask of target i: NVN's channel mask, zero for a target outside the fragment shader's output map (SPH
+Colour write mask of target `i`: NVN's channel mask, zero for a target outside the fragment shader's output map (SPH
 omap). Maxwell leaves such a target untouched; Vulkan writes undefined values, and on AMD they lit grass in front of
 Link as flat lime. Zeros are wrong too: the game's half-res transparency pass binds its linear depth (R32F) as target 7,
 samples it in the same draws and writes only targets 0-2, 4 and 5; zeroed, the depth that later passes rebuild from it
@@ -1094,19 +1087,19 @@ The same holds per component: a shader that writes a target's RGB and not its al
 while Vulkan writes undefined values, and AMD's driver writes whatever its export registers held (NaN and saturated
 pixels the bloom then spreads). Components outside the shader's omap are masked out, where it is known.
 
-- `if (i == 1 && s->fs && P.f_dual_src && uses_src1(s)) m = 0`: output 1 is the second blend source
-  (`spirv_dual_source()`).
+Target 1 gets mask 0 when the pipeline blends with a SRC1 factor: output 1 is then the second blend source
+(`spirv_dual_source()`).
 
 ### `gkey_fill()`
 
-- Mesh draws: no vertex input, the mesh stage declares its primitives (emulated point meshes draw point lists).
+A mesh draw has no vertex input in its key, and its topology class is the triangle one, as the mesh stage declares its
+primitives, or the point one for a draw of points (emulated point meshes draw point lists).
 
 ### `vs_union_missing()`
 
 Independent layouts: the outputs the vertex shader lacks from its union with `s->fs`'s inputs added (`vs_outs()`), types
-in fin. The vertex module (and its pre-rasterization library) depends on the vertex shader and this mask only.
-
-- `if (s->fs)`: a location another fragment shader reads as another type: this pair's type (rare).
+in `fin`. The vertex module (and its pre-rasterization library) depends on the vertex shader and this mask only. A
+location another fragment shader reads as another type takes this pair's type (rare, logged once).
 
 ### Water corrections
 
@@ -1133,12 +1126,12 @@ linked with one of the original.
 - `uint64_t mat, mat_set1`: the absorption material, and in its set 1 form.
 - `uint32_t mat_pointer, mat_distance`: the ids of the store its distance goes through.
 
-`water_mods`: The edited modules, by the hash of the module each stands for as it is built: a vertex translation, or a
-fragment module in its set 1 form. state: 0 empty, 1 made, -1 the edit refused the module (it is built as it is).
+`water_mods`: the edited modules, by the hash of the module each stands for as it is built: a vertex translation, or a
+fragment module in its set 1 form. `state`: 0 empty, 1 made, -1 the edit refused the module (it is built as it is).
 
 ### `water_module()`
 
-The edited module that stands for the module of hash `key`, or NULL. src: the translation it is made from at the first
+The edited module that stands for the module of hash `key`, or NULL. `src`: the translation it is made from at the first
 call (NULL: only look), whose SPIR-V is pinned for the edit only; a fragment translation is first put into its set 1
 form, which must be the module `key` names, as it is the form the pipeline builds.
 
@@ -1147,9 +1140,7 @@ form, which must be the module `key` names, as it is the form the pipeline build
 The water mode of a pipeline's shaders: 1 a coordinate pair whose two edited modules exist, 2 the absorption material
 whose edited module exists, else 0. The drawing thread asks it for every pipeline it links (`lib_keys()`): the modules'
 hashes are the ones the shaders keep (`gfx_shader_spirv_fnv`), and the SPIR-V is read only to make an edited module,
-once per profile.
-
-- The absorption correction is independent of the coordinate pair.
+once per profile. The absorption correction is independent of the coordinate pair.
 
 ### `water_pair_module()`
 
@@ -1164,7 +1155,7 @@ edited module as to any other. NULL in every other case. The module stays the ta
 
 ### `water_mode()`
 
-`water_projective_pair()` for a pipeline of key k. A coordinate pair blended with dual-source factors keeps its original
+`water_projective_pair()` for a pipeline of key `k`. A coordinate pair blended with dual-source factors keeps its original
 modules: `spirv_dual_source()` changes the fragment module before its set 1 form, which is then none the table holds.
 
 ### Line width
@@ -1180,17 +1171,18 @@ lines keeps 1 pixel: the mode can be dynamic state, which no pipeline key tells 
 
 ### `vk_pipeline_line_width()`
 
-- `if (w != 1.0f && w != logged)`: one line for each width in a row: the game uses one or two.
+Sets the width of a draw of lines, rounded to the device's step and held to its range. The log has one line for each
+width in a row: the game uses one or two.
 
 ### `task_off()`
 
-What a mesh pipeline's task stage bindings are moved by in layout l: past the mesh stage's in a stage-independent
+What a mesh pipeline's task stage bindings are moved by in layout `l`: past the mesh stage's in a stage-independent
 layout, where the two share set 0 (`mesh_pair_layout()`), and past the fragment stage's in the shared set
 (`pipe_miss()`).
 
 ### `mesh_dyn()`
 
-The dynamic states of a mesh pipeline into out (room for `P.n_dyn` + 1): `P.dyn` without the vertex input, its strides,
+The dynamic states of a mesh pipeline into `out` (room for `P.n_dyn` + 1): `P.dyn` without the vertex input, its strides,
 the topology and primitive restart, which a pipeline with a mesh stage must not list, and with the fragment shading rate
 where the device sets one per draw (`runtime/vk/vk_exec_draw.c` `mesh_shading_rate()`). Returns their number.
 
