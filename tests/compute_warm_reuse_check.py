@@ -7,7 +7,7 @@ import runtime_include
 root = Path(__file__).resolve().parents[1]
 source = (root / 'runtime/vk/vk_pipeline.c').read_text()
 start = source.index('typedef struct {\n    uint8_t code[32];\n    VkPipelineLayout layout;')
-end = source.index('// The layout of a compute shader in *B;', start)
+end = source.index('static Layout *compute_layout(', start)
 production = source[start:end]
 harness = r'''
 #include <windows.h>

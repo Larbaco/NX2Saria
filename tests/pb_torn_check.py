@@ -203,7 +203,7 @@ def cut(source, start, end):
 
 def main():
     src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8')
-    production = cut(src, '#define PB_MAX_BIN 8', '// Opens pipeline-binaries.bin')
+    production = cut(src, '#define PB_MAX_BIN 8', 'static void pb_init(VkCtx *c) {')
     work = ROOT / 'build' / 'test' / 'pb_torn'
     work.mkdir(parents=True, exist_ok=True)
     c = work / 'check.c'
