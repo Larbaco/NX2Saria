@@ -6169,54 +6169,41 @@ consecutive fence values; `fence_wait` and `fence_done` agree; completion callba
 completion thread; a guest-memory word a callback writes is visible once `fence_wait` returns; finish drains every
 submission; a present of a cleared `runtime/vk/vk_texture.c` image (layout GENERAL) reads back exactly through the
 swapchain capture. Clear part: a hand-built op stream (`SET_RT` to an RGBA8 and a D32 texture, whole-target clears, then
-scissored clears) through submit reads back exactly with `read_texels`. Pass marks part (`test_marks`): the GPU's buffer
-marks and the ring records name the last pass of a submission, and the device-lost report text says so.
-
-### `note()`
-
-Completion thread.
+scissored clears) through submit reads back exactly with `read_texels`. Draw part (`test_draw()`), pass marks part
+(`test_marks()`: the GPU's buffer marks and the ring records name the last pass of a submission, and the device-lost
+report text says so) and xfer part (`test_xfer()` and the tests after it) are described at their functions.
 
 ### `test_sync()`
 
-- An empty recording as the front end hands it over: {`OP_BEGIN`, `OP_END`}.
-- `vk_completion_add(prev + 1, note, (void *)(uintptr_t)(prev + 1))`: queued before the value exists, as
-  `runtime/vk/vk_exec.c` does.
-- A guest-memory word written by a completion callback is visible to the waiter.
-- Finish drains everything.
-- `uint64_t want = *first + (uint64_t)i + (i >= SUBMITS)`: the word submission sits between the two runs.
+1. `SUBMITS` submissions of an empty recording as the front end hands it over ({`OP_BEGIN`, `OP_END`}; every third with
+   no handle at all). Each one's callback (`note()`, which runs on the completion thread and counts a run on the
+   submitting thread as a failure) is queued before the value exists, as `runtime/vk/vk_exec.c` does. Every tenth is
+   waited for, and by then exactly its callbacks ran.
+2. One submission whose callback writes a guest-memory word: the word is visible to the waiter once `fence_wait`
+   returns.
+3. `TAIL` more, then `finish`, which drains everything.
+
+The callbacks must have run in submit order; the word submission sits between the two runs, which is why the expected
+value skips one after `SUBMITS`.
 
 ### `test_present()`
 
-- `vk_texture_gpu_written(&t)`: the clear below is its content, not the storage.
-- The exact colour check needs the bilinear blit: FSR's approximate reciprocals move a flat colour by 1/255.
-- `b->finish()`: the queued present is submitted and, with capture on, read back.
-- `uint32_t wv, black = 0xff000000u`: opaque black in both byte orders.
-- `int r[4]`: the picture's rectangle; black bars around it when the window's shape differs
-  (`runtime/gfx/gfx_present.c`).
-
-### Clear part
-
-A hand-built op stream through submit, read back with `read_texels`.
-
-- `SC_X`: Pixel of the RGBA8 target after the stream: the scissored second clear inside the rectangle, the first
-  elsewhere.
+The image is marked as GPU-written (`vk_texture_gpu_written`) so that the clear is its content, not the storage. The
+exact colour check needs the bilinear blit: FSR's approximate reciprocals move a flat colour by 1/255. `finish` submits
+the queued present and, with capture on, reads it back. The picture is compared inside its rectangle (`gfx_fit_rect`);
+around it, when the window's shape differs, the bars must be opaque black (`runtime/gfx/gfx_present.c`), which is the
+same word in both byte orders.
 
 ### `test_clear()`
 
-- `static tex_t color, depth`: payload texture pointers live as long as the submission.
-- `p = put(p, OP_CLEAR_COLOR, &c0, sizeof c0)`: whole target outside a pass: `vkCmdClearColorImage`.
-- `p = put(p, OP_CLEAR_DS, &d0, sizeof d0)`: `vkCmdClearDepthStencilImage`.
-- `p = put(p, OP_CLEAR_COLOR, &c1, sizeof c1)`: scissored: a pass and `vkCmdClearAttachments`.
-- `p = put(p, OP_SCISSOR, &full, sizeof full)`: leaves the replay's scissor unbounded for later submissions.
+The clear part: a hand-built op stream through submit, read back with `read_texels`. `SC_X`, `SC_Y`, `SC_W` and `SC_H`
+are the scissor rectangle: a pixel of the RGBA8 target after the stream holds the scissored second clear inside it and
+the first clear elsewhere.
 
-### Draw part
-
-The pipeline self-test, then a hand-built stream that clears an RGBA8 target, binds a census vertex + fragment pair and
-draws one triangle; a census compute shader is dispatched. The census (`probe_census_dir`, `tools/shader_census.py`) is
-read the way `vk_pipeline_selftest` reads it: a pair is a fragment shader and a vertex shader of the same source file.
-
-- `vk_exec_draw_shutdown()`: `runtime/vk/vk_exec_draw.c`: the stand-in resources; the device must be idle.
-- `vk_exec_xfer_shutdown()`: `runtime/vk/vk_exec_xfer.c`: the occlusion query pool; the device must be idle.
+The textures are static because the payload's texture pointers must live as long as the submission. The first colour
+clear covers the whole target outside a pass (`vkCmdClearColorImage`), the first depth clear likewise
+(`vkCmdClearDepthStencilImage`); the second pair is scissored, so it takes a pass and `vkCmdClearAttachments`. The last
+`OP_SCISSOR` leaves the replay's scissor unbounded for later submissions.
 
 ### `dr_prog()`
 
@@ -6224,38 +6211,39 @@ A program of one census shader as the game hands it to NVN: control section, cod
 
 ### `draw_prefix()`
 
-- `layouts_equal`: texels compared equal between the two layouts (0: not compared).
-- `ind_draw_texels`: indirect draws' texels compared, indirect dispatches run.
-
 The draw part's stream up to the draw: target cleared, viewport, program, three RGBA32F vertices at 0x80000 of the pool,
 identity uniforms at 0x90000.
 
-### Pass marks part
+### `test_marks()`
 
-(`runtime/vk/vk_crumbs.c`): one submission with a pass of 2 draws into the draw part's target, a dispatch and a pass of
-3 draws into a second target. Once its fence is done, the buffer marks must name the last pass as both started and
-finished, the ring records must hold what the three were, and `vk_pass_marks_format` (the text
+The pass marks part (`runtime/vk/vk_crumbs.c`): one submission with a pass of 2 draws into the draw part's target, a
+dispatch and a pass of 3 draws into a second target. Once its fence is done, the buffer marks must name the last pass as
+both started and finished, the ring records must hold what the three were, and `vk_pass_marks_format` (the text
 `runtime/vk/vk_device.c` `device_fault_report()` logs) must name it. Without `VK_AMD_buffer_marker` or with
 `NX2SARIA_PASS_CRUMBS=0` it is skipped: NVIDIA's checkpoints can only be read once the device is lost.
 
 ### `test_draw()`
 
+The draw part: the pipeline self-test, then a hand-built stream that clears an RGBA8 target, binds a census vertex +
+fragment pair and draws one triangle; a census compute shader is dispatched. The census (`probe_census_dir`,
+`tools/shader_census.py`) is read the way `vk_pipeline_selftest` reads it: a pair is a fragment shader and a vertex
+shader of the same source file. `layouts_equal` counts the texels compared equal between the two layouts (0: not
+compared); `ind_draw_texels` and `ind_dispatches` the indirect draws' texels compared and the indirect dispatches run.
+
 - Vertex data at 0x80000: three vertices of `DR_ATTRS` RGBA32F attributes, attribute 0 the position. Uniform data at
   0x90000: identity matrices back to back, so that a vertex shader multiplying the position by one passes it through.
-- `if (diff && vk_caps.gpl)`: the same draw through the shared set 0 layout: texel-equal.
+- With pipeline libraries (`vk_caps.gpl`) the same draw goes through the shared set 0 layout too and must be
+  texel-equal.
 - DrawElementsIndirect (`OP_DRAW_IDX_IND`) with the pair that drew: indices {0, 1, 2} at 0xA0000; the arguments are
   copied by the GPU (`COPY_B2B`, barrier) to 0xA0200 right before the draw, so the replay must read them on the GPU. {3,
   1, 0, 0, 0} draws the same triangle (texel-equal to the direct draw); count 0 draws nothing.
 - Compute: a few census compute shaders, one dispatch each, resources unbound (zero buffers and stand-in images).
 - DispatchComputeIndirect: group counts {1, 1, 1} copied by the GPU to 0xA0500 first.
 
-### Xfer part: copies, texture clear, event and counter through submit
-
-### `xf_tex()`
-
-Texture in the xfer pool at `off`.
-
 ### `test_xfer()`
+
+The xfer part: copies, a texture clear, an event and a counter through submit. `xf_tex()` makes a texture in the xfer
+pool at `off`.
 
 - Linear buffers: B2B source 0x0, target 0x1000 (4 KiB); texture source 0x2000, read-backs 0x6000 and 0xA000.
 - Samples passed: a reset, no draw, a report: {0, time} through the occlusion-query path.
@@ -6278,7 +6266,7 @@ the report wins), and 64 bytes in a CPU-invisible physical pool copied out with 
 texture to 32x32, each texel the 2x2 average within 1. Stencil: views of a D24S8 texture pick the stencil aspect in
 STENCIL mode and depth otherwise, and a stencil-aspect sampled view of the image is created.
 
-- `p_copy_t2t ds`: as `nvnCommandBufferDownsample` records it.
+The downsample's `p_copy_t2t` is filled as `nvnCommandBufferDownsample` records it.
 
 ### `test_mirror()`
 
@@ -6301,8 +6289,9 @@ that starts there, before and after the empty pool's Finalize.
 
 ### `probe_vkexec()`
 
-- `vk_hdr_off()`: the present checks read 8-bit swapchain pixels.
-- `vk_pipeline_shutdown()`: the pipelines and the draw part's stand-ins go before the device.
+HDR is turned off first (`vk_hdr_off`): the present checks read 8-bit swapchain pixels. At the end the pipelines, the
+draw part's stand-in resources (`runtime/vk/vk_exec_draw.c` `vk_exec_draw_shutdown()`) and the occlusion query pool
+(`runtime/vk/vk_exec_xfer.c` `vk_exec_xfer_shutdown()`) go before the device, which must be idle for both.
 
 ## `runtime/vk/vk_rec.c`
 
