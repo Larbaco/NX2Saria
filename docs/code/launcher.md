@@ -3,11 +3,10 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/context.py`, `launcher/saves.py`,
-`launcher/settings.py`, `launcher/start.pyw`, `launcher/steam.py`, `launcher/telemetry.py`, `launcher/toolchain.py`,
-`launcher/ui/__init__.py`, `launcher/ui/app.py`, `launcher/ui/art.py`, `launcher/ui/picture.py`,
-`launcher/ui/selftest.py`, `launcher/ui/sound.py`, `launcher/updater.py`, `launcher/versions.py`,
-`launcher/winsys.py`, and `launcher/build.py`.
+names. These files still keep their comments until their notes are here: `launcher/context.py`,
+`launcher/settings.py`, `launcher/telemetry.py`, `launcher/toolchain.py`, `launcher/ui/__init__.py`,
+`launcher/ui/app.py`, `launcher/ui/art.py`, `launcher/ui/picture.py`, `launcher/ui/selftest.py`,
+`launcher/ui/sound.py`, `launcher/updater.py`, `launcher/versions.py`, `launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -1553,6 +1552,352 @@ continue without blocking Play.
 `start()` returns `(GameRun, None)` after a successful spawn, `(None, error)` when the spawn raises `OSError`, or
 `(None, None)` when the player declines the memory warning. It logs the existing start, refusal or failure line. The
 Tk adapter owns the prompt, starting the existing rebuild job, select sound, window visibility and watch timer.
+
+## `launcher/saves.py`
+
+Importing a save into the built game, and the saves folder of the game folder
+([launcher.md](../launcher.md#sharing-a-save), [launcher.md](../launcher.md#importing-a-save-folder)).
+
+The game keeps its save in `<game>/profile/save/<account>/` (`runtime/hle/fs_host.c` `storage_init()`). The folder is
+named after the local account in `<game>/profile/account.uid`: 16 bytes, two little-endian 64-bit halves, the low one
+first; the name is the high half then the low half, 16 hex digits each (`runtime/hle/ov_system.c` `load_uid()`). A
+game that never ran has no account yet; the import makes one as the game would. Saves are committed through
+`<game>/profile/save-tx/`, where a finished commit (`ready-<n>`) is newer than `save/<account>`: an import clears that
+folder, so the game loads the imported save.
+
+`<game>/saves` is the player's side. Import Saves takes a save put there first (a shared save's zip, its files, or the
+folder that holds them); otherwise the player picks a zip or a folder. Before the save is replaced it is copied to
+`saves/backup <time>`, and a save taken from `saves/` moves to `saves/imported <time>`, so nothing is lost and nothing
+is imported twice.
+
+A shared save is one zip (`export_save()`, `import_zip()`): a player attaches it to a bug report, and whoever fixes it
+imports it to reach the same place in the game. The game's settings menu exports and imports the same zip; its import
+waits in `<game>/profile/save-import` for the game's next start.
+
+A save folder can come from a Switch save backup (the save's files), an emulator (nested folders named by user and
+title ids, gone down while each holds only one folder), another game folder of this port or its profile folder (the
+account folder inside).
+
+A whole save is `account.sav`, `option.sav` and the folders `slot_00` to `slot_05`, each with `progress.sav` and
+`caption.sav`. A folder with `progress.sav` at its top is one slot: it replaces that slot (the slot named by its
+folder, else `slot_00`) and the rest of the current save stays, as the game reads `progress.sav` only inside a slot
+folder.
+
+- `MAX_FILES` (4000) and `MAX_BYTES` (1 GiB): a save is a few files of a few MB; more is a folder picked by mistake.
+- `OURS` matches what this module writes into `saves/` (`backup <date>`, `imported <date>`).
+
+### The shared save's zip
+
+`NX2Saria-save-<date>_<time>[-bug-report].zip` holds the save and a manifest:
+
+| Member | What it is |
+|---|---|
+| `manifest.json` | `FORMAT`, `FORMAT_VERSION`, the game's title id and version, the port's version, the export time |
+| `save/...` | the save's files as the game keeps them (`account.sav`, `option.sav`, `slot_00/progress.sav`, ...) |
+| `bug-report/...` | with `bug_report`: the game's latest log and its settings file; an import leaves them out |
+
+The game's own menu writes and reads the same zip (`runtime/hle/save_share.c`), with the same manifest keys.
+
+- `PENDING` (`save-import`) is `profile/save-import`: what the game's menu took from a zip, imported at the game's
+  next start.
+- `SAVE_FILE` matches what makes a folder this game's save (`account.sav`, `option.sav`, `slot_NN/progress.sav`).
+- `PRIVATE_SETTINGS` are the settings whose values stay on the player's PC (`runtime/cfg/cfg_private.h` has the same
+  list): the menu's test hook, and what the co-op of versions up to 0.9.2 kept in the settings file, which a player's
+  file may still hold.
+
+### `_rmtree()`
+
+Deletes a folder, read-only files in it too (`shutil.rmtree` stops at them on Windows); what still fails stays.
+
+### `ensure_saves_dir()`
+
+`<game>/saves` with its `README.txt`, which is written again when it is missing or an older launcher's.
+
+### `account_dir()`
+
+The game's save folder for its local account, making the account as the game does when it has none.
+
+### `_fresh()` and `_fresh_file()`
+
+`folder/name`, or `folder/"name (2)"` and so on when that is taken (two imports in one second); `_fresh_file()` does
+the same for `<stem><suffix>`.
+
+### `find_save()`
+
+`(source folder, top-level names to leave out)` of the save in a folder, or `(None, ())` when it holds none.
+
+- `profile/save` or `save` inside it means another game folder, or its profile folder. A finished commit in the
+  `save-tx` beside it is newer than its account folder and is taken first.
+- Nested id folders are gone down, at most 8 levels, while the folder holds a single folder and no file.
+- A backup this module wrote keeps the replaced save's journal (`save-tx`) beside it, which is not part of the save
+  and is left out.
+
+### `_one_slot()`
+
+The slot folder the files belong in when the source is a single slot, `None` when it is a whole save.
+
+### `waiting()`
+
+`(source, names to leave out)` of a save put into `<game>/saves`, or `(None, ())`. A zip there (one of
+`export_save()`) comes first, the newest one; its source is the zip file.
+
+### `_files()`
+
+Relative paths of the files to import; `SaveError` when there are too many or too large to be a save.
+
+### `_ready()` and `_newest()`
+
+`_ready()` gives the newest finished commit (`ready-<n>`) in a `save-tx` folder, or `None`. `_newest()` gives the
+folder the game would load now, in the order of `runtime/hle/fs_host.c` `save_recover()`: a finished commit still
+waiting in `save-tx`, else the account folder, else an interrupted commit's new save, else the save it replaced.
+
+### `game_running()`
+
+`launcher/build.py` `game_running()`: on Windows, `ocarina.exe` cannot be opened for writing while it runs.
+
+### `profile_lock()`
+
+The game's own lock on its profile, held while the save is replaced. The game takes `<game>/profile/instance.lock`
+when it starts and keeps it until it ends (`runtime/hle/fs_host.c` `fs_host_lock_profile()`): on Windows by opening the
+file without sharing, elsewhere with `flock`. Taken here the same way, it says for certain whether the game runs
+(`SaveError` when it does), and a game started while it is held ends at once with its "another copy is running"
+message instead of mounting a save that is half replaced. `game_running()` alone, asked before the player picked a
+file, left the whole time of that dialog and of the copy for the game to start in. A lock file that cannot be opened
+for another reason locks nothing: the import goes on as before.
+
+- Windows: `CreateFileW` with read and write access, no sharing, made when missing, which is the call of
+  `runtime/platform/win32.c` `plat_lock_file()`. Error 32, `ERROR_SHARING_VIOLATION`, means the game has it open.
+- Elsewhere: `flock` with `LOCK_EX | LOCK_NB`, the call of `runtime/platform/linux.c` `plat_lock_file()`. A file
+  system without locks locks nothing.
+
+### `pending_import()`
+
+The save the game's menu took from a shared zip and left in `<game>/profile/save-import` for its next start
+(`runtime/hle/fs_host.c` `import_pending()`), or `None`.
+
+### `import_save()`
+
+Makes the save in a folder (`None`: the one waiting in `<game>/saves`) the game's save. The folder may also be a zip
+of `export_save()` (`import_zip()`). It returns `{'files', 'source', 'backup', 'slot'}`; `backup` is the folder the
+replaced save went to, or `None` when there was none.
+
+- The saves folder itself, picked in the dialog, means what waits in it, as the button takes it.
+- A shared save's zip put into `saves/` moves out once imported, as a folder does.
+- What was put into `saves/` moves out whole (`_put_away()`, into `saves/imported <stamp>`), so the next import does
+  not take any of it again. When the save sits in a folder that was put there (a game folder, an emulator's id
+  folders), that top folder moves.
+
+### `_replace()` and `_replace_held()`
+
+Copies the files of the source (relative paths) into the game's save: the whole save, or with `slot` only that slot
+folder and the rest of the current save kept. The save the game would load now goes to `saves/backup <stamp>` first.
+It returns `(account folder, backup folder or None)`. The game's profile lock is held meanwhile (`profile_lock()`):
+`SaveError` when the game runs.
+
+- With a slot, the rest of the save stays; a slot's files left at the top by mistake do not.
+- A save copied from read-only media keeps the attribute through `copy2`, and the game rewrites its files, so each
+  copied file is made writable.
+- The journal of the replaced save goes out of `save-tx` (the game would load a finished commit first, or complete an
+  interrupted one): what holds files moves into the backup, beside the save it was copied from, so a copy the backup's
+  own choice missed (an interrupted commit's other half) is kept too.
+- The imported save goes into place before the old one is deleted; a failed rename puts the old one back, and the
+  journal too: a finished commit waiting in `save-tx` is newer than the account folder, and without it the game would
+  load the older save although nothing was imported.
+- A save the game's menu took for its next start (`PENDING`) would replace this one then: it is removed, because this
+  import is the newer choice.
+
+### `_key_file()`
+
+Key files never go into a zip, wherever a stray one was copied (a save folder taken from another tool).
+
+### `default_export_dir()`
+
+The player's Downloads folder (where the system keeps it), else the Desktop, else the home folder.
+
+### `scrub_settings()`
+
+The bytes of the game's settings file for a bug report: every private setting that has a value reads
+`key = (set, not shown)`; everything else, comments and line ends included, stays byte for byte (`cfg_ini_scrub()` in
+`runtime/cfg/cfg_private.h` does the same for the game's own export).
+
+### `short_paths()`
+
+The bytes of a log or settings file with the account's folders written short (`tools/private_paths.py`); bytes that
+are not UTF-8 pass through as they are.
+
+### `_add_report_file()` and `_report_files()`
+
+A report file goes in under its current archive name, and the settings are scrubbed under either file name
+(`nx2saria.ini`, `nx2navi.ini`). Both the log and the settings have the account's folders written short: a log from a
+game run with `log_short_paths = 0`, or from a version before it, has them in full, and a report goes to people the
+player does not know. `_report_files()` takes the current files first and falls back to the old names without moving
+or overwriting them.
+
+### `_export_log()`
+
+The bug report of a game without a save (it stopped before its first one):
+`NX2Saria-log-<date>_<time>-bug-report.zip` with the game's latest log, `nx2saria.ini` and a manifest that counts no
+save files; `import_zip()` refuses it as a zip without a save. `SaveError` when the game has written no log either:
+then there is nothing to report with.
+
+### `export_save()`
+
+Writes the save the game would load now into one zip in `dest` (`default_export_dir()` when `None`), for a bug report
+or another player. `bug_report` adds the game's latest log and `nx2saria.ini`, and still writes those two when the
+game has no save yet (`_export_log()`): a game that stops before its first save is the one its player wants to report.
+Never a key file. It returns `{'path', 'files', 'extras'}` (`files` 0: no save; `extras`: the names of the bug report
+files that were there).
+
+- Without `account.uid` nothing is exported: `account_dir()` would make the account, which an export must not.
+- A running game may swap a commit in while its files are read (`runtime/hle/fs_host.c` `swap_in()`), so the read is
+  tried up to three times.
+
+### `_member_path()`
+
+The relative path of a zip member below `save/`, or `SaveError` when it could land outside the save.
+
+### `check_manifest()`
+
+`SaveError` unless the manifest is one of a save of this game that this version can read.
+
+### `read_zip()`
+
+The manifest of a zip of `export_save()` and its save files as `[(ZipInfo, relative Path)]`, checked: the manifest
+(`check_manifest()`), every path inside the save, no links, at most `ZIP_MAX_FILES` files and `ZIP_MAX_BYTES`, and
+among them the files of this game's save (`SAVE_FILE`). `SaveError` otherwise. Members outside `save/` (the manifest,
+the bug report files) are passed over.
+
+### `import_zip()`
+
+Makes the save in a zip of `export_save()` the game's save (a whole save: every slot), backed up first as
+`import_save()` does. It returns the dict of `import_save()` with the zip's manifest under `manifest`. The CRC of each
+member is checked as it is read.
+
+## `launcher/start.pyw`
+
+What `NX2Saria.exe` runs: `python\pythonw.exe app\<version>\launcher\start.pyw [arguments]`.
+
+The embeddable Python puts only its `._pth` entries on `sys.path`, so the release folder (the parent of `launcher/`)
+goes first here. A failure before the window is up is written to `data/logs/crash.log` and ends the process with exit
+code 86 (`STARTUP_FAILED`), which tells the stub to go back to the previous version (`launcher/native/nx2saria.c`
+`wWinMain()`). The stub waits six seconds for that code (`QUICK_MS`), so the failure is shown in a message box only
+when the stub has no version to go back to or no longer waits (`quiet_exit()`): a box holds the exit code back until
+the player closes it, and a new version that could not start then stayed the current one.
+
+`STUB_WAITS` is 5.0 s: the stub's wait for this process's exit code is `QUICK_MS`, 6 s (`launcher/native/nx2saria.c`
+`start_release()`), and an exit this long after the process was made still reaches it, with a second to spare for the
+exit itself.
+
+### `rollback_target()`
+
+The version the stub goes back to when this one ends with `STARTUP_FAILED`: the one `app/previous.txt` names, when it
+is another than this one and its folder holds a launcher. Empty when there is none.
+
+### `process_age()`
+
+Seconds since Windows made this process, which is when the stub began to wait for it, from two file times of 100 ns
+ticks. Infinite where that cannot be read, so that the failure is then shown rather than left to a stub that may have
+stopped waiting.
+
+### `quiet_exit()`
+
+True when a failed start ends without a message box: the stub goes back to the previous version on the exit code
+(`rollback_target()`), and that version's home screen says which version did not start. Not when Steam started this
+version without the stub (`--play`, the `PLAY_TEXT` of `launcher/steam.py`), and not once the stub has stopped waiting
+(`process_age()`): nobody acts on the exit code then, and without the box nothing would be seen.
+
+### `short_paths()`
+
+The text with the account's folders written short (`tools/private_paths.py`), or as it is when that module cannot
+load: the failure being reported may be the one that keeps it from loading.
+
+### `crash()`
+
+The failure into `data/logs/crash.log` and, with `box`, into a message box that waits for the player. The account's
+folders are written short in both: `crash.log` is attached to public issues.
+
+### `run()`
+
+The script's folder is `sys.path[0]`. It contains the package `launcher/platform/`, whose name would shadow Python's
+standard-library `platform` module for third-party packages on Linux (zstandard on Python 3.12, for example), so that
+folder is taken off the path first.
+
+## `launcher/steam.py`
+
+Add to Steam (Customize Launcher): the game as a non-Steam shortcut in the player's Steam library, with the port's
+leaf icon and the game's title screen and logo as its pictures (`launcher/gameart.py`).
+
+Steam keeps the shortcuts of each account in `<Steam>/userdata/<account id>/config/shortcuts.vdf`, a binary key-value
+file: a map is `0x00 name 0x00 ... 0x08`, a string `0x01 name 0x00 value 0x00`, a 32-bit integer
+`0x02 name 0x00 value` (`0x07` is a 64-bit one). The file is the map `shortcuts` holding one map per shortcut, named
+"0", "1", and so on. Each holds `appid`, `AppName`, `Exe`, `StartDir`, `icon`, `LaunchOptions` and Steam's own fields;
+the other shortcuts are read and written back as they are, and a shortcut of ours already there (by its name or its
+id) is updated in place. Its pictures go into `config/grid` named by the shortcut's id: `<id>p.png` the cover,
+`<id>.png` the wide tile, `<id>_hero.png` the background, `<id>_logo.png` the logo, and the icon file the shortcut
+names. The id is CRC-32 of `Exe` and `AppName` as Steam writes them, with the top bit set.
+
+Steam reads the file when it starts and writes it back when it closes, so a running Steam would neither see the new
+shortcut nor keep it. Windows asks Steam to close and starts it again; Linux asks the player to close Steam first.
+
+The shortcut starts the launcher's `pythonw.exe` on `data/steam_play.pyw`, which starts this launcher with `--play`:
+the game runs from its own folder with its console hidden, and the Python process waits for it, so Steam shows the
+game as running for as long as it is (the game's own Restart included). Starting `ocarina.exe` directly would open a
+console window beside the game, and `NX2Saria.exe` ends a few seconds after it started the launcher.
+
+### `vdf_load()`
+
+A binary VDF as a list of `[type, key, value]`; a map's value is such a list. Raises `SteamError` when malformed.
+
+### `appid()`
+
+The id Steam gives a shortcut: CRC-32 of its `Exe` and `AppName` fields with the top bit set (unsigned).
+
+### `add_shortcut()`
+
+`shortcuts.vdf` (empty bytes for none) with our shortcut added or updated; returns `(new bytes, id)`.
+
+- A shortcut already there keeps its `appid`, which keeps Steam's per-app playtime, collections and artwork.
+- The fields are sorted in Steam's order: `appid` and the strings first, then the switches and `tags`.
+
+### `find_steam()`, `steam_roots()` and `is_flatpak_root()`
+
+`find_steam()` gives `(Steam's folder, executable)` or `None`; on Linux it checks the native and the Flatpak data
+roots. `steam_roots()` gives the Linux Steam data roots that exist, for native and Flatpak installs.
+`is_flatpak_root()` says whether a root is inside the Steam Flatpak's private data folder
+(`.var/app/com.valvesoftware.Steam`).
+
+### `accounts()`
+
+The config folders of the accounts that signed in to Steam on this PC (`config/loginusers.vdf`), else of every account
+folder under `userdata`.
+
+### `added()`
+
+True when an account of this PC has our shortcut.
+
+### `steam_running()`
+
+On Linux it looks in procfs for the native launcher script, Steam's executable, its web helper or the Flatpak client.
+
+### `close_steam()`
+
+Asks Steam to close and waits for it; false when it is still running after `timeout` seconds. Once Steam is gone it
+waits 2 s more: Steam writes its files on the way out.
+
+### `add()`
+
+Adds the game to Steam (or updates its shortcut under the port's earlier name): the pictures from the player's game,
+the sprig icon, the shortcut in every account's `shortcuts.vdf`, Steam closed first and started again. Returns the
+sentence the launcher shows.
+
+- A checkout runs under its own interpreter, so `pythonw.exe` is looked for beside it when the launcher's Python
+  folder has none.
+- Steam comes back also when a file could not be written (the restart is in a `finally`), started detached
+  (`DETACHED_PROCESS`, `0x00000008`).
+
+### `_add_linux()`
+
+Writes one Linux non-Steam shortcut per account, with Steam closed, and a backup before each atomic update.
 
 ## `launcher/telemetry.py`
 
