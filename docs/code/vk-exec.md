@@ -7134,21 +7134,24 @@ replay holds), the completion queue and the submissions held back.
 ## `runtime/vk/vk_sync_hw.h`
 
 The newest value each of the replay's timelines may reach, and the test a value read from one of them must pass
-(`runtime/vk/vk_sync.c` "a lost device in the timelines' values"). Header only, so that `tests/sync_hw_check.c` checks
-it without a device.
+(the section "A lost device in the timelines' values" of `runtime/vk/vk_sync.c`). Header only, so that
+`tests/sync_hw_check.c` checks it without a device.
 
 A timeline semaphore changes only through signal operations, and each of them carries a value the program chose: for the
 replay's two timelines, the queue hand-overs of its submissions (`runtime/vk/vk_sync.c` `hold_flush_locked()`) and the
-host's own signals (`runtime/vk/vk_sync.c` `vk_sync_start()`'s restart, the lost-device probe,
-`runtime/vk/vk_device.c` `vk_selftest()`). A live device never reports a value above the newest of them. Each such value
+host's own signals (the restart in `runtime/vk/vk_sync.c` `vk_sync_start()`, the lost-device probe's in
+`probe_lost_advance()`, and the one of `runtime/vk/vk_device.c` `vk_selftest()`, noted through `vk_sync_signal_note()`).
+A live device never reports a value above the newest of them. Each such value
 is noted here before its signal can happen, so a value read above the note comes from a device that answers for work it
 never ran: after a timeout reset, Windows releases every waiter of a timeline, and the reports of AMD's RX 6000 cards
 (0.9.1, 0.9.2) ran the completion callbacks of submissions the GPU had not finished ("occlusion query slot ... not
 available after its fence") before any call returned `VK_ERROR_DEVICE_LOST`.
 
-- `sync_hw_raise()`: Raises the note `*hw` to v; never lowers it. Any thread.
-- `sync_hw_beyond()`: 1 when raw, read from a timeline whose signals were all noted in hw (read after raw), is above
-  every one of them.
+### `sync_hw_raise()`, `sync_hw_beyond()`
+
+`sync_hw_raise()` raises the note `*hw` to `v` and never lowers it; any thread may call it. `sync_hw_beyond()` is 1 when
+`raw`, read from a timeline whose signals were all noted in `hw`, is above every one of them. The caller reads `hw`
+after `raw`, so that a signal between the two reads cannot make a live device look lost.
 
 ## `runtime/vk/vk_pass_hooks.h`
 
@@ -7166,14 +7169,16 @@ back as the light target: the upscaler then took an earlier image of the frame f
 with the interface intact (Kakariko, DLSS Performance, 3 workers, 4 groups out: 51 and 52 such frames in two runs of 100
 s, none with the helpers off). So a group's hooks run once, at its first chunk's first pass.
 
-- `pass_hooks_due()`: `in_chunk`: the calling thread records a chunk of a parallel group; idx: the chunk's place in its
-  group; ran: the group's hooks ran already (its first chunk began a pass).
+### `pass_hooks_due()`
+
+`in_chunk`: the calling thread records a chunk of a parallel group; `idx`: the chunk's place in its group; `ran`: the
+group's hooks ran already (its first chunk began a pass). Outside a chunk every pass begin runs the hooks.
 
 ## `runtime/vk/vk_index_rewrite.h`
 
 Index lists for the NVN primitives Vulkan has no topology for, made from an indexed draw's own indices
-(`runtime/vk/vk_exec_draw.c` `op_draw_idx()`, `NX2SARIA_QUAD_INDEX`). Header only, so that `tests/index_rewrite_check.c`
-checks it without a device.
+(`runtime/vk/vk_exec_draw.c` `draw_idx_rewritten()`, `NX2SARIA_QUAD_INDEX`). Header only, so that
+`tests/index_rewrite_check.c` checks it without a device.
 
 The replay draws a quad list as a triangle list and a line loop as a line strip
 (`runtime/vk/vk_pipeline.c` `vk_pipeline_topology()`). For a draw without indices it makes the indices itself
@@ -7183,16 +7188,18 @@ line. These turn the game's indices into the list the Vulkan topology wants: two
 quad, as the non-indexed rewrite makes them, and the loop's first index again at its end. Indices are read at their size
 (1, 2 or 4 bytes, little-endian) and written as 32-bit ones; a base vertex stays the draw's.
 
-- `idx_quads()`: Indices of a quad list as triangles: out holds 6 * (count / 4); a trailing partial quad is left out, as
-  NVN draws no incomplete primitive. Returns how many were written.
-- `idx_loop()`: Indices of a line loop as a strip that comes back to its first vertex: out holds count + 1 (count >= 2).
-  Returns how many were written.
+### `idx_quads()`, `idx_loop()`
+
+`idx_quads()` writes the indices of a quad list as triangles: `out` holds 6 * (`count` / 4), and a trailing partial quad
+is left out, as NVN draws no incomplete primitive. `idx_loop()` writes the indices of a line loop as a strip that comes
+back to its first vertex: `out` holds `count` + 1, and the caller passes `count` >= 2. Both return how many indices
+they wrote.
 
 ## `runtime/vk/vk_oq_hold.h`
 
 The count a samples-passed report writes when the replay could not count all of its draws
-(`runtime/vk/vk_exec_xfer.c` `oq_cb()`, `NX2SARIA_OQ_HOLD`). Header only, so that `tests/oq_hold_check.c` checks it
-without a device.
+(`runtime/vk/vk_exec_xfer.c` `oq_report_count()`, `NX2SARIA_OQ_HOLD`). Header only, so that `tests/oq_hold_check.c`
+checks it without a device.
 
 A draw that finds every slot of the occlusion query ring still waiting for the completion thread is left uncounted, and
 the report after it says only what the other draws counted, at least 1. The game reads these counts as how much of an
@@ -7203,11 +7210,14 @@ frames a second. With the hold such a report writes the larger of what was count
 into the same record said: the previous frame's answer for that object. A record with no complete report remembered
 keeps the old rule.
 
-- `OQH_N`: records remembered, direct-mapped by address; a collision forgets the older one.
-- `oqh_slot()`:
-  - `uint64_t h = (addr >> 4) * 0x9E3779B97F4A7C15ull`: records are 16 bytes apart at least.
-- `oqh_note()`: A complete report of count into the record at addr.
-- `oqh_lost()`: The count to report into addr for a report that missed draws, of which the others counted `counted`.
+`OQH_N` records are remembered, direct-mapped by address (`oqh_slot()`): a collision forgets the older one. The slot
+hash drops the address's low four bits, as records are 16 bytes apart at least.
+
+### `oqh_note()`, `oqh_lost()`
+
+`oqh_note()` remembers a complete report of `count` into the record at `addr`. `oqh_lost()` gives the count to report
+into `addr` for a report that missed draws, of which the others counted `counted`. Neither remembers nor looks up a
+record at address 0.
 
 ## `runtime/vk/vk_target_frames.h`
 
@@ -7239,23 +7249,33 @@ frames on the target is one the game draws again and again, and its draws are sk
 other frame, however long ago the last one was. A target generated once never gets there; one generated again at every
 area load would after `TFR_STEADY` loads, by when its pipelines are recorded and prebuilt at the start.
 
-- `TfrTarget`: One render target of a pass: the image handle as a number, the subresource, the image's owner (0
-  unknown).
-- `tfr_find()`: The target's entry, or with make the entry it takes (the set's oldest, an empty one first); NULL without
-  make when it has none.
-- `tfr_note()`: The target is rendered in frame stamp.
-  - `if (e->owner != t->owner) e->owner = t->owner, e->n = 0`: another texture has the image now: its own count.
-- `tfr_before()`: The frame before stamp that last rendered the target, 0 for none.
-- `tfr_first()`: No frame before stamp rendered the target.
-- `tfr_steady()`: `TFR_STEADY` frames or more before stamp rendered the target under the owner it has now.
-- `tfr_pass_recent()`: Whether the pass with the `n_color` colour targets c and the depth target d (NULL: none) is one
-  the game renders frame after frame, so that a draw into it may be skipped in frame stamp and comes back in the next.
-  any 0: every target is recent (and the pass has one). any 1: a colour target is, or the depth target is while no
-  colour target is rendered for the first time: the game's item icon capture draws into a new colour target with the
-  per-frame depth buffer, once, and its draws skipped there stay missing from the icon until the item is captured again.
-  steady 1: a steady target counts as a recent one; `*by_steady` is set when only that made the answer 1.
-  - `if (i < n_color && tfr_first(t, stamp)) color_first = 1`: one never rendered is neither recent nor steady.
-  - `int r[2]`: without the steady rule, and with it.
+`TfrTarget` is one render target of a pass: the image handle as a number, the subresource, and the image's owner (0:
+unknown).
+
+### `tfr_find()`, `tfr_note()`
+
+`tfr_find()` returns the target's entry. With `make` it returns the entry the target takes when it has none (the set's
+oldest, an empty one first); without `make`, NULL. `tfr_note()` records that the target is rendered in frame `stamp`.
+When the entry's owner is not the target's, another texture has the image now and the count starts again for it.
+
+### `tfr_before()`, `tfr_first()`, `tfr_steady()`
+
+`tfr_before()` is the frame before `stamp` that last rendered the target, 0 for none; `tfr_first()` says that no frame
+before `stamp` did. `tfr_steady()` says that `TFR_STEADY` frames or more before `stamp` rendered the target under the
+owner it has now.
+
+### `tfr_pass_recent()`
+
+Whether the pass with the `n_color` colour targets `c` and the depth target `d` (NULL: none) is one the game renders
+frame after frame, so that a draw into it may be skipped in frame `stamp` and comes back in the next.
+
+- `any` 0: every target is recent (and the pass has one).
+- `any` 1: a colour target is, or the depth target is while no colour target is rendered for the first time. The game's
+  item icon capture draws into a new colour target with the per-frame depth buffer, once, and its draws skipped there
+  stay missing from the icon until the item is captured again. A colour target never rendered is neither recent nor
+  steady.
+- `steady` 1: a steady target counts as a recent one; `*by_steady` is set when only that made the answer 1. The
+  function works both answers out side by side (`r[0]` without the steady rule, `r[1]` with it).
 
 ## `runtime/vk/vk_frame_owed.h`
 
@@ -7266,7 +7286,7 @@ The replay reads and writes that state as it records, under the submission lock 
 With the replay on the submitting threads the game presents on one thread while another may be replaying, and running
 the bookkeeping then reset the state in the middle of that replay. The presenting thread does not wait for the replay:
 it marks its frame owed and runs the bookkeeping itself only when it gets the lock at once; otherwise the next thread to
-take the lock (`runtime/vk/vk_sync.c` submit) runs every owed frame's bookkeeping, in frame order, before its own
+take the lock (`runtime/vk/vk_sync.c` `submit()`) runs every owed frame's bookkeeping, in frame order, before its own
 replay. A frame caught up behind a later present runs as two presents with no submission between them always did.
 
 The present thread's blit of a frame reads what that frame's bookkeeping closed
@@ -7276,28 +7296,41 @@ owed may still be owed when the present thread takes it: `fo_close` runs what is
 a replay in progress as the present thread's own blit submission does a moment later. The present thread is not one of
 the game's threads.
 
-- `FrameOwed`:
-  - `uint64_t owed`: the newest presented frame (atomic: the presenting thread raises it, the lock's holder reads it).
-  - `uint64_t done`: the newest frame whose bookkeeping ran (the lock's holder writes it; atomic for `fo_ran`).
-- `fo_waiting()`: The lock's holder: whether a frame waits for its bookkeeping (one atomic load, for every submission).
-- `fo_run()`: The lock's holder: the bookkeeping of every frame presented since the last run, in frame order; returns
-  how many. done moves past a frame only once its bookkeeping returned (`fo_ran` reads it without the lock).
-- `fo_ran()`: Any thread: whether frame's bookkeeping ran; when it did, what it wrote is visible to the caller (the
-  release of done in `fo_run`).
-- `fo_present()`: The presenting thread, frame numbers rising (a smaller one than owed leaves it: that frame's
-  bookkeeping ran or is owed already). `try_run(arg)` takes the lock without waiting, runs `fo_run` under it and returns
-  1, or returns 0 when another thread holds it. Returns whether the bookkeeping ran here.
-- `fo_close()`: The present thread, before it uses a presented frame (its blit): when the frame's bookkeeping has not
-  run, `run_locked` (arg) takes the lock, waiting for it, and runs `fo_run` under it. Returns whether it had to;
-  afterwards `fo_ran(frame)`.
+`FrameOwed` holds two frame numbers. `owed` is the newest presented frame: the presenting thread raises it and the
+lock's holder reads it, so it is atomic. `done` is the newest frame whose bookkeeping ran: the lock's holder writes it,
+and it is atomic for `fo_ran()`.
+
+### `fo_waiting()`, `fo_run()`
+
+For the lock's holder. `fo_waiting()` says whether a frame waits for its bookkeeping; it is what every submission
+pays, two atomic loads. `fo_run()` runs the bookkeeping of every frame presented since the last run, in frame order,
+and returns how many. `done` moves past a frame only once its bookkeeping returned, because `fo_ran()` reads it without
+the lock.
+
+### `fo_ran()`
+
+Any thread: whether the frame's bookkeeping ran. When it did, what it wrote is visible to the caller (the release of
+`done` in `fo_run()`).
+
+### `fo_present()`
+
+For the presenting thread, with frame numbers rising: a smaller one than `owed` leaves `owed` as it is, as that frame's
+bookkeeping ran or is owed already. `try_run(arg)` takes the lock without waiting, runs `fo_run()` under it and returns
+1, or returns 0 when another thread holds it. Returns whether the bookkeeping ran here.
+
+### `fo_close()`
+
+For the present thread, before it uses a presented frame (its blit): when the frame's bookkeeping has not run,
+`run_locked(arg)` takes the lock, waiting for it, and runs `fo_run()` under it. Returns whether it had to; afterwards
+`fo_ran(frame)` holds.
 
 ## `runtime/vk/vk_evo_peek.h`
 
-A copy of the first held submission's wait of each event-ordered queue (`runtime/vk/vk_exec.c` "event order"), for the
-readers that do not hold the submission lock. Header only, so that `tests/evo_peek_check.c` checks it without a device.
+A copy of the first held submission's wait of each event-ordered queue (the section "Event order across the game's
+queues" of `runtime/vk/vk_exec.c`), for the readers that do not hold the submission lock. Header only, so that `tests/evo_peek_check.c` checks it without a device.
 
 `runtime/vk/vk_backend.c` `held_resume()` and `submit_sync()` ask `runtime/vk/vk_exec.c` `vk_exec_held_ready()` whether
-held work can go on, without the submission lock. Following the queue's first continuation (`runtime/vk/vk_exec.c` Cont)
+held work can go on, without the submission lock. Following the queue's first continuation (the `Cont` of `runtime/vk/vk_exec.c`)
 there read memory another submitting thread may free meanwhile (`runtime/vk/vk_exec.c` `evo_resume()`, `cont_free()`): a
 continuation's wait lies in its private copy of the recording, and an event's address read from a reused block points
 anywhere. So the holder of the lock publishes what the decision needs (whether work is held, the wait it stopped at, by
@@ -7305,21 +7338,24 @@ value, and when it stopped) each time a queue's first continuation or its stop c
 one publish (a sequence lock). A reader never waits for the writer: after `EVO_PEEK_TRIES` attempts that overlap a
 publish it answers "not ready", which is what losing the race to the writer answered before.
 
-- `EvoWait`: `p_wait_event`'s layout (`runtime/nvn/nvn_api.h`; `runtime/vk/vk_exec.c` checks the two agree): passed to
-  `vk_exec_event_met` as its payload.
-- `EvoPeekCopy`:
-  - `uint32_t has`: a continuation is held.
-  - `uint32_t has_at`: it stopped at a wait (else it has not started and goes on at once).
-  - `EvoWait w`: that wait.
-  - `uint64_t since`: `vk_exec_submit_seq` when it stopped.
-- `EvoPeek`:
-  - `uint32_t seq`: odd while a publish runs.
-- `evo_peek_publish()`: The writer: one at a time (`runtime/vk/vk_exec.c`: under the submission lock).
-  - `__atomic_thread_fence(__ATOMIC_RELEASE)`: a reader that sees any field below also sees the odd sequence.
-- `evo_peek_read()`: Any thread: 1 with `*out` a copy of one publish, 0 when every try overlapped a publish.
-  - `__atomic_thread_fence(__ATOMIC_ACQUIRE)`: the fields are read before the sequence is read again.
-- `evo_peek_ready()`: The decision `runtime/vk/vk_exec.c` `cont_ready()` makes for a continuation, from a copy: it can
-  go on when it has not started, its wait holds (met: `vk_exec_event_met`), or it has waited more than max submissions.
+`EvoWait` has the layout of `p_wait_event` (`runtime/nvn/nvn_api.h`; a static assertion in `runtime/vk/vk_exec.c`
+checks that the two agree), so it is passed to the event test as its payload. `EvoPeekCopy` is what one publish says:
+`has`, a continuation is held; `has_at`, it stopped at a wait (else it has not started and goes on at once); `w`, that
+wait; `since`, `vk_exec_submit_seq` when it stopped. `EvoPeek` is the shared copy; its `seq` is odd while a publish
+runs.
+
+### `evo_peek_publish()`, `evo_peek_read()`
+
+`evo_peek_publish()` is for the writer, one at a time (`runtime/vk/vk_exec.c` `peek_publish()` calls it under the
+submission lock). Its release fence after the odd sequence makes a reader that sees any field written after it also see
+the odd sequence. `evo_peek_read()` is for any thread: 1 with `*out` a copy of one publish, 0 when every try overlapped
+a publish. Its acquire fence makes the fields be read before the sequence is read again.
+
+### `evo_peek_ready()`
+
+The decision `runtime/vk/vk_exec.c` `cont_ready()` makes for a continuation, from a copy: it can go on when it has not
+started, its wait holds (`met`, which `vk_exec_held_ready()` gives as `vk_exec_event_met_now()`), or it has waited more
+than `max` submissions.
 
 ## `runtime/vk/vk_usnap.c`
 
