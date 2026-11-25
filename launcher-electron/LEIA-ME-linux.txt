@@ -4,18 +4,23 @@ Extraia o .tar.gz numa pasta onde você pode rodar programas.
 Dentro da pasta extraída, abra NX2Saria-Electron-Teste ou rode
 ./NX2Saria-Electron-Teste no terminal.
 
-Para este teste, atualize sua instalação pelo launcher instalado
-no canal Preview quando a 0.26.0-rc.2 estiver disponível. Feche esse
+Para atualizar para a 0.26.0, use o launcher instalado. Feche esse
 launcher antes de abrir o Electron, pois os dois usam o mesmo lock.
 O Electron usa o Python 3.14 e as ferramentas da instalação.
 
-1. Confira a detecção da instalação e clique em Jogar.
-2. Com a opção de ocultar ativada, veja se a janela some quando o
-   jogo abre e volta quando ele termina.
+1. Confira a detecção da instalação. Desmarque Ocultar o launcher
+   ao jogar e clique em Jogar. Confira se aparece Abrindo o jogo…
+   logo após o clique e se o launcher fica aberto quando o jogo
+   aparece.
+2. Feche o jogo, marque a opção novamente e clique em Jogar outra
+   vez. O launcher deve ficar visível até a janela do jogo receber
+   foco, se ocultar e voltar quando o jogo fechar. A opção deve
+   permanecer gravada ao reabrir o launcher.
 3. Com o jogo aberto, tente abrir uma segunda janela do Electron.
    Ela deve avisar que a instalação está ocupada.
 4. Feche a janela do primeiro launcher com o jogo aberto. O jogo
    deve continuar, e o worker deve acompanhar o encerramento.
+   O launcher que você fechou deve permanecer fechado após a partida.
 5. Se ocorrer uma recompilação de mods, confira o progresso e se o
    jogo abre depois. O teste também permite cancelar o trabalho.
 
@@ -24,6 +29,9 @@ Para copiar os logs, na instalação padrão procure:
 - ~/.local/share/nx2saria/data/logs/launcher.log
 - Na pasta do jogo, logs/nx2saria.log. Se for a pasta padrão, use
   ~/.local/share/nx2saria/game/logs/nx2saria.log.
+
+O launcher.log agora identifica o Electron como origem da execução
+e preserva a indicação de instalação feita pelo AppImage.
 
 Este build não instala atualizações nem envia relatórios. Depois
 de uma saída anormal, pode deixar o marcador local da oferta de log.

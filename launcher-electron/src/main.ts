@@ -52,6 +52,9 @@ app.whenReady().then(() => {
   function notifyPlayEnded(result: object) {
     if (!window.isDestroyed()) window.webContents.send('play-ended', { ...result, messageId: expectPlayMessage() });
   }
+  function settingsView(result: Inspection | null): Inspection | null {
+    return result && { ...result, hide_while_playing: worker?.handshake.lock === 'held' ? result.hide_while_playing : null };
+  }
   function playRefused(error: string) {
     return { error, messageId: expectPlayMessage() };
   }
@@ -111,7 +114,7 @@ app.whenReady().then(() => {
           if (frame.outcome !== 'resume') {
             playing = false;
             try { state = parseInspection(await active.request('inspect')); } catch { state = null; }
-            notifyPlayEnded({ state, error: frame.outcome === 'failed' ? 'job_failed' : 'job_cancelled' });
+            notifyPlayEnded({ state: settingsView(state), error: frame.outcome === 'failed' ? 'job_failed' : 'job_cancelled' });
           }
         } else if (frame.event === 'memory_required') {
           try {
@@ -148,14 +151,14 @@ app.whenReady().then(() => {
           gameSpawned = false;
           log?.write('play', `game_ended code=${frame.code ?? 'unknown'} alarm=${Boolean(frame.alarm)}`);
           try { state = parseInspection(await active.request('inspect')); } catch { state = null; }
-          notifyPlayEnded({ state, code: frame.code, alarm: frame.alarm, message: frame.message, outcome: 'game_ended' });
+          notifyPlayEnded({ state: settingsView(state), code: frame.code, alarm: frame.alarm, message: frame.message, outcome: 'game_ended' });
           if (frame.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
         }
       });
       state = parseInspection(await active.request('inspect'));
       if (active.handshake.lock === 'unavailable' && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'warning', message: 'Não foi possível bloquear a instalação. Evite abrir outro launcher ao mesmo tempo.' });
       if (active.handshake.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
-      return inspected(state, `result=${state.status}`);
+      return inspected(settingsView(state)!, `result=${state.status}`);
     } catch (error) {
       if (current) await current.close();
       if (worker === current) worker = null;
@@ -208,6 +211,21 @@ app.whenReady().then(() => {
     if (event.sender !== window.webContents || !worker || !playing) return { error: 'unavailable' };
     try { await worker.request('cancel_job'); return { cancelling: true }; }
     catch { return { error: 'unavailable' }; }
+  });
+  ipcMain.handle('set-hide-while-playing', async (event, value) => {
+    if (event.sender !== window.webContents || typeof value !== 'boolean' || playing || !worker ||
+        worker.handshake.lock !== 'held' || typeof state?.hide_while_playing !== 'boolean') throw new Error('Unavailable');
+    const active = worker;
+    try {
+      const result = await active.request('set_hide_while_playing', { value });
+      if (result?.hide_while_playing !== value || worker !== active) throw new Error('Save unsuccessful');
+      if (state) state.hide_while_playing = value;
+      log?.write('settings', `hide_while_playing=${value ? 'on' : 'off'}`);
+      return value;
+    } catch {
+      log?.write('settings', 'hide_while_playing=save_failed');
+      throw new Error('Save unsuccessful');
+    }
   });
   ipcMain.on('play-message-shown', (event, id, kind) => {
     if (event.sender !== window.webContents || pendingPlayMessage === null || id !== pendingPlayMessage ||

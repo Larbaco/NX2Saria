@@ -19,6 +19,11 @@ closes. The worker uses the shared mod rebuild job when Play requires rebuilding
 hide the launcher. The renderer then shows the game as running. A startup error replaces the opening status even
 when the game never reported focus.
 
+The home-screen checkbox uses the inspected `hide_while_playing` value for the selected installation.
+`main.ts` makes it editable only with a lock held by the worker. The renderer disables selection, Play
+and the checkbox during a pending save. It uses the acknowledged setting on success and restores the
+previous checkbox value with an error message on failure.
+
 `launcher-electron/ui-tests/worker-synthetic.cjs` exercises inspection, two synthetic games, hide and restore,
 reselection, cancellation that disables Play, refusal while a job marker is present and closing the window during a third game, which finishes while the worker records its end. It also kills the worker during a synthetic game and checks that the window returns, Play is disabled and the game finishes. The folder dialog is stubbed. It uses temporary files and a fake
 executable, and is not a real-game test.

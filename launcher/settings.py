@@ -81,15 +81,36 @@ class Settings(dict):
         return [f'setting: {k} {_shown(k, self.saved.get(k))} -> {_shown(k, self.get(k))}'
                 for k in DEFAULTS if k not in UNLOGGED and self.get(k) != self.saved.get(k)]
 
-    def save(self):
+    def _write(self, data):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + '.tmp')
-        tmp.write_text(json.dumps(dict(self), indent=1), encoding='utf-8')
+        tmp.write_text(json.dumps(data, indent=1), encoding='utf-8')
         os.replace(tmp, self.path)
+
+    def save(self):
+        self._write(dict(self))
         lines, self.saved = self.changes(), dict(self)
         if self.log:
             for line in lines:
                 self.log(line)
+
+    def save_hide_while_playing(self, value):
+        key = 'hide_while_playing'
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8-sig'))
+        except FileNotFoundError:
+            data = {}
+        if not isinstance(data, dict):
+            raise ValueError('settings are not an object')
+        previous = data.get(key, DEFAULTS[key])
+        if type(previous) is not bool:
+            previous = DEFAULTS[key]
+        if previous != value:
+            data[key] = value
+            self._write(data)
+            if self.log:
+                self.log(f'setting: {key} {_shown(key, previous)} -> {_shown(key, value)}')
+        self[key] = self.saved[key] = value
 
     def reset(self):
         """Default Settings: the choices go back to their defaults; the game folder, dump and history stay."""

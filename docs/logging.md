@@ -169,8 +169,8 @@ Files are under `runtime/` unless stated otherwise; the first three by number of
 | `dlaa times:` | GPU times of the DLAA passes | `vk_dlaa.c` |
 | `dlssg:` | DLSS Frame Generation through Streamline | `vk_dlssg.c` |
 | `ENTER` | Trace of a host override being entered (ov_system), no colon | `ov_system.c` |
-| `worker:` | Persistent launcher worker: startup, runtime and active app paths (shortened), lock, waiting update, inspection, Play, memory, spawn, first game window focus, disconnect reason, deferred crash-offer load failures and protocol outcomes | `launcher/worker.py` (outside `runtime/`) |
-| `electron:` | Development Electron launcher in `launcher-electron.log`: build hash, process ID, selection origin, brand and worker version, inspection, Play results, game window ready and exit codes, window visibility, lock refusal and the displayed game-end message kind, launcher exit; no paths | `launcher-electron/src/dev-log.ts` (outside `runtime/`) |
+| `worker:` | Persistent launcher worker: startup, runtime and active app paths (shortened), lock, waiting update, inspection, Play, memory, spawn, first game window focus, hide preference save failures, disconnect reason, deferred crash-offer load failures and protocol outcomes | `launcher/worker.py` (outside `runtime/`) |
+| `electron:` | Development Electron launcher in `launcher-electron.log`: build hash, process ID, selection origin, brand and worker version, inspection, hide preference save outcome, Play results, game window ready and exit codes, window visibility, lock refusal and the displayed game-end message kind, launcher exit; no paths | `launcher-electron/src/dev-log.ts` (outside `runtime/`) |
 | `err:` | Game error dialog | `ov_system.c` |
 | `evo:` | Changes of draw order over frames (vk_exec, debug) | `vk_exec.c` |
 | `exit:` | A fault while the process was ending | `main.c` |

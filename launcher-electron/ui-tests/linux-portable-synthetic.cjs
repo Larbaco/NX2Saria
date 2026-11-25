@@ -18,10 +18,13 @@ async function main() {
     await fs.mkdir(path.join(game, 'logs'));
     await fs.mkdir(path.join(root, 'data'));
     await fs.mkdir(path.join(root, 'app'));
+    await fs.writeFile(path.join(root, 'nx2saria-launcher'), '');
     await fs.cp(publishedApp, path.join(root, 'app', version), { recursive: true, verbatimSymlinks: true });
     await fs.symlink(path.resolve(publishedRuntime), path.join(root, 'python'), 'dir');
     await fs.writeFile(path.join(root, 'app', 'current.txt'), version);
-    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: true }));
+    const settingsFile = path.join(root, 'data', 'launcher.json');
+    const settings = { game_dir: game, hide_while_playing: true, telemetry: 'off' };
+    await fs.writeFile(settingsFile, JSON.stringify(settings));
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
     await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' '[host] gfx: window gained the focus at synthetic time' > logs/nx2saria.log\nsleep 2\nprintf '%s\\n' 'FATAL: portable synthetic failure' >> logs/nx2saria.log\nexit 71\n", { mode: 0o755 });
 
@@ -32,6 +35,13 @@ async function main() {
     });
     const page = await app.firstWindow();
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 15000 });
+    const hide = page.getByRole('checkbox', { name: 'Ocultar o launcher ao jogar' });
+    await hide.uncheck();
+    await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
+    assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), { ...settings, hide_while_playing: false });
+    await hide.check();
+    await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
+    assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), settings);
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('O jogo terminou com erro').waitFor({ timeout: 15000 });
     assert.match(await page.locator('#detail').textContent(), /code 71\): portable synthetic failure/);
@@ -39,7 +49,10 @@ async function main() {
     const marker = JSON.parse(await fs.readFile(path.join(game, 'logs', 'crash-offer.json'), 'utf8'));
     assert.equal(marker.kind, 'crash');
     const workerLog = await fs.readFile(path.join(logs, 'launcher.log'), 'utf8');
+    assert.match(workerLog, /\(AppImage install, started by Electron\)/);
     assert.match(workerLog, /worker: runtime=.*python\/bin\/python3 python=3\.14\./);
+    assert.match(workerLog, /setting: hide_while_playing on -> off/);
+    assert.match(workerLog, /setting: hide_while_playing off -> on/);
     await app.close();
     app = null;
     const electronLog = await fs.readFile(path.join(logs, 'launcher-electron.log'), 'utf8');

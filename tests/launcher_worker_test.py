@@ -1285,10 +1285,14 @@ class WorkerTest(unittest.TestCase):
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "runpy.run_module('launcher.worker',run_name='__main__')\n")
         result = subprocess.run([sys.executable, '-c', script, str(self.root)],
-                                input=json.dumps({'id': 1, 'method': 'hello', 'protocol': 1}) + '\n',
+                                input='{"id":1,"method":"hello","protocol":1}\n'
+                                      '{"id":2,"method":"set_hide_while_playing","value":false}\n',
                                 text=True, capture_output=True, cwd=ROOT, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['result']['lock'], 'unavailable')
+        hello, preference = map(json.loads, result.stdout.splitlines())
+        self.assertEqual(hello['result']['lock'], 'unavailable')
+        self.assertEqual(preference['error']['code'], 'preference_unavailable')
+        self.assertEqual((self.root / 'data' / 'launcher.json').read_text(), '{}')
         self.assertIn('lock=unavailable', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
 
     def test_steam_play_remains_available_when_idle_and_refuses_active_job(self):

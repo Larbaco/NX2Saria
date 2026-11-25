@@ -14,7 +14,9 @@ const assert = require('node:assert/strict');
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.mkdir(path.join(game, 'logs'), { recursive: true });
-    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: true }));
+    const settingsFile = path.join(root, 'data', 'launcher.json');
+    const initialSettings = { game_dir: game, hide_while_playing: true, telemetry: 'off', future_option: 'keep' };
+    await fs.writeFile(settingsFile, JSON.stringify(initialSettings));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), 'v1');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: 'test', steps: { compile: {} } }));
     const focus = "printf '%s\\n' '[host] gfx: window gained the focus at synthetic time'";
@@ -39,6 +41,21 @@ exit 2
     const page = await app.firstWindow();
     const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
+    const hide = page.getByRole('checkbox', { name: 'Ocultar o launcher ao jogar' });
+    await hide.waitFor({ timeout: 5000 });
+    assert.equal(await hide.isChecked(), true);
+    await fs.mkdir(settingsFile + '.tmp');
+    await hide.click();
+    await page.getByText('Não foi possível salvar a opção de ocultar.', { exact: false }).waitFor({ timeout: 5000 });
+    assert.equal(await hide.isChecked(), true);
+    assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), initialSettings);
+    await fs.rmdir(settingsFile + '.tmp');
+    await hide.uncheck();
+    await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
+    assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), { ...initialSettings, hide_while_playing: false });
+    await page.getByRole('button', { name: 'Selecionar instalação' }).click();
+    await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
+    assert.equal(await hide.isChecked(), false);
     for (let round = 0; round < 2; round++) {
       await page.getByRole('button', { name: 'Jogar' }).click();
       for (let tries = 0; tries < 60; tries++) {
@@ -52,13 +69,10 @@ exit 2
       assert.equal(await visible(), true, 'the launcher must stay visible after spawn while the game window is opening');
       assert.equal(await page.locator('#status').textContent(), 'Abrindo o jogo…');
       assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
+      assert.equal(await hide.isDisabled(), true);
       await fs.writeFile(path.join(game, 'window-can-open'), '');
-      let hidden = false;
-      for (let tries = 0; tries < 30; tries++) {
-        if (!await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())) { hidden = true; break; }
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      assert.equal(hidden, true);
+      await page.locator('#status').getByText('Jogo em execução').waitFor({ timeout: 5000 });
+      assert.equal(await visible(), round === 0);
       if (round === 0) {
         const staged = path.join(root, 'app', '999.0.0');
         await fs.mkdir(path.join(staged, 'launcher'), { recursive: true });
@@ -71,6 +85,11 @@ exit 2
       assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
       await page.waitForFunction(() => !document.querySelector('#play').disabled);
       await fs.rm(path.join(game, 'window-can-open'));
+      if (round === 0) {
+        await hide.check();
+        await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
+        assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), initialSettings);
+      }
     }
 
     await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' 'FATAL: synthetic end detail' > logs/nx2saria.log\nsleep 1\nexit 71\n", { mode: 0o755 });
@@ -163,8 +182,11 @@ exit 2
     assert.doesNotMatch(electronLog, /electron: start version=/);
     assert.match(electronLog, /electron: inspection result=ready/);
     assert.match(electronLog, /electron: window shown/);
-    assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 4);
-    assert.equal((electronLog.match(/electron: window restored/g) || []).length, 3);
+    assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 3);
+    assert.equal((electronLog.match(/electron: window restored/g) || []).length, 2);
+    assert.match(electronLog, /electron: settings hide_while_playing=off/);
+    assert.match(electronLog, /electron: settings hide_while_playing=on/);
+    assert.match(electronLog, /electron: settings hide_while_playing=save_failed/);
     assert.equal((electronLog.match(/electron: play window_ready/g) || []).length, 4);
     assert.equal((electronLog.match(/electron: play requested/g) || []).length, 7);
     assert.equal((electronLog.match(/electron: play result=started/g) || []).length, 5);

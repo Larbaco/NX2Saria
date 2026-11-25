@@ -308,6 +308,12 @@ A packaged worker imports `tools/private_paths.py` from the installed release. `
 `Shortener` directly, independent of the local log switch. This preserves shortening for report text and
 crash summaries on older installations even when their local logs include full paths.
 
+The worker's `set_hide_while_playing` request accepts only a boolean and requires the installation lock
+while idle. `settings.py` `Settings.save_hide_while_playing()` rereads the settings object and replaces
+only this key using the same atomic file replacement as the Tk launcher's save. Other fields, including
+ones unknown to this build, are preserved. The worker acknowledges the setting after saving it, and a
+failed write leaves its in-memory setting as it was. The usual `setting:` line records a changed value.
+
 `context.py` `install_kind()` describes the installation in the `launcher.log` header. It recognizes a checkout,
 an unpacked release, the Windows setup by its executable beside `app/`, and the Linux AppImage installation by its
 `nx2saria-launcher` script. The installed Linux launcher's header distinguishes the AppImage itself, which passes

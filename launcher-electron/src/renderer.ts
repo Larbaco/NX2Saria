@@ -1,15 +1,31 @@
-type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null };
+type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
 const playButton = document.querySelector<HTMLButtonElement>('#play')!;
 const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
+const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
+const settingError = document.querySelector<HTMLElement>('#setting-error')!;
 const messages: Record<string, string> = { ready: 'Instalação encontrada', not_ready: 'Jogo não está pronto', not_configured: 'Jogo não configurado', inspection_error: 'Não foi possível verificar' };
+let installation: Result | null = null;
+let selecting = false;
+let playing = false;
+let savingPreference = false;
+let playFailed = false;
+
+function updateControls() {
+  const busy = selecting || playing || savingPreference;
+  button.disabled = busy;
+  playButton.disabled = busy || playFailed || installation?.status !== 'ready' ||
+    installation.job_marker_present === true || installation.game_running === true;
+  hideWhilePlaying.disabled = busy || typeof installation?.hide_while_playing !== 'boolean';
+  if (!savingPreference) hideWhilePlaying.checked = installation?.hide_while_playing === true;
+}
+
 function showResult(result: Result | null) {
   if (!result) { statusElement.textContent = 'Nenhuma instalação selecionada'; detail.textContent = 'Use o instalador atual do NX2Saria para uma primeira instalação ou selecione a pasta de uma instalação existente.'; return; }
-  playButton.disabled = result.status !== 'ready' || result.job_marker_present === true || result.game_running === true;
   statusElement.textContent = messages[result.status] || 'Estado desconhecido';
   if (result.reason === 'worker_busy') { detail.textContent = 'Outra instância está usando a instalação. Se o jogo ainda estiver aberto, aguarde ele terminar.'; return; }
   if (result.reason === 'installation_required') { detail.textContent = 'Use o instalador atual do NX2Saria e selecione a pasta da instalação.'; return; }
@@ -17,14 +33,34 @@ function showResult(result: Result | null) {
   detail.textContent = (result.game_dir || result.root || 'Confira a instalação e tente novamente.') + (result.job_marker_present ? ' Há um registro de trabalho: ele pode estar em andamento ou ter sido interrompido.' : '') + (result.game_running === true ? ' O jogo já está em execução.' : '');
 }
 async function loadSelection(action: () => Promise<Result | null>) {
-  button.disabled = true;
-  playButton.disabled = true;
-  try { showResult(await action()); }
+  selecting = true;
+  installation = null;
+  playFailed = false;
+  settingError.textContent = '';
+  updateControls();
+  try { installation = await action(); showResult(installation); }
   catch { statusElement.textContent = 'Não foi possível verificar'; detail.textContent = 'Tente novamente.'; }
-  finally { button.disabled = false; }
+  finally { selecting = false; updateControls(); }
 }
 button.onclick = () => { void loadSelection(() => window.launcher.selectInstallation()); };
 void loadSelection(() => window.launcher.discoverInstallation());
+
+hideWhilePlaying.onchange = async () => {
+  const selected = installation;
+  if (!selected || hideWhilePlaying.disabled) return;
+  const value = hideWhilePlaying.checked;
+  savingPreference = true;
+  settingError.textContent = '';
+  updateControls();
+  try {
+    selected.hide_while_playing = await window.launcher.setHideWhilePlaying(value);
+  } catch {
+    settingError.textContent = 'Não foi possível salvar a opção de ocultar. Tente novamente.';
+  } finally {
+    savingPreference = false;
+    updateControls();
+  }
+};
 
 function showPlayFeedback(result: PlayFeedback) {
   let kind = 'could_not_start';
@@ -52,13 +88,17 @@ function showOpeningGame() {
 }
 
 playButton.onclick = async () => {
-  playButton.disabled = true;
-  button.disabled = true;
+  playing = true;
+  updateControls();
   showOpeningGame();
   try {
     const result = await window.launcher.play();
-    if (!result.started) { button.disabled = false; showPlayFeedback(result); }
-  } catch { button.disabled = false; showPlayFeedback({}); }
+    if (result.started) return;
+    showPlayFeedback(result);
+  } catch { showPlayFeedback({}); }
+  playing = false;
+  playFailed = true;
+  updateControls();
 };
 window.launcher.onGameWindowReady(() => {
   statusElement.textContent = 'Jogo em execução';
@@ -66,8 +106,9 @@ window.launcher.onGameWindowReady(() => {
 });
 window.launcher.onPlayEnded(result => {
   cancelJob.hidden = true;
-  button.disabled = false;
-  playButton.disabled = !result.state || result.state.status !== 'ready' || result.state.job_marker_present === true || result.state.game_running === true;
+  playing = false;
+  installation = result.state ?? null;
+  updateControls();
   showPlayFeedback(result);
 });
 

@@ -436,6 +436,20 @@ def main(argv=None):
                         emit({'event': 'game_started', 'sequence': sequence, 'session': session})
                 else:
                     emit({'id': request['id'], 'result': {'status': prepared.status}})
+            elif request.get('method') == 'set_hide_while_playing':
+                value = request.get('value')
+                if type(value) is not bool:
+                    error(request['id'], 'invalid_preference')
+                elif lock_state != 'held' or run or job or pending:
+                    error(request['id'], 'preference_unavailable')
+                else:
+                    try:
+                        ctx.settings.save_hide_while_playing(value)
+                    except (OSError, ValueError):
+                        action_log(ctx, counts, 'settings', 'hide save_failed')
+                        error(request['id'], 'preference_save_failed')
+                    else:
+                        emit({'id': request['id'], 'result': {'hide_while_playing': value}})
             elif request.get('method') == 'inspect':
                 try:
                     result = inspect_installation(root)

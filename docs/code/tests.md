@@ -5900,6 +5900,12 @@ unexecutable stand-in never starts and logs `could_not_start`. Neither row conta
 The synthetic window test holds a stand-in game after spawn and leaves the last game's focus line in place.
 It checks that the launcher remains visible with the opening status and Play disabled. It then lets the stand-in
 rotate the log and report focus, and checks that the launcher hides and restores after that session.
+The same test toggles the shared setting through the home-screen checkbox, reselects the installation
+to confirm persistence, and checks window visibility with the setting off and on. It also checks
+that the settings write preserves session-report consent and a field unknown to the worker.
+It makes the atomic-save temporary path unavailable once, then verifies that the checkbox rolls back
+and the settings file is preserved. The worker lock fallback test checks that the preference cannot
+be changed when the installation lock could not be opened.
 
 `launcher-electron/ui-tests/published-crash-offer-synthetic.py` drives the worker with a stand-in executable and
 the published 0.25.0 and 0.26.0-rc.1 app archives. The newer release receives a marker accepted by its own
