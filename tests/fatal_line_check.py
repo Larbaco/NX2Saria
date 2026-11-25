@@ -1,6 +1,11 @@
 # needs: exe
 # args: {exe}
-"""Run the game executable's busy crash probes and check that the FATAL line of a crash or a fatal error comes out
+import re
+import subprocess
+import sys
+import tempfile
+
+USAGE = """Run the game executable's busy crash probes and check that the FATAL line of a crash or a fatal error comes out
 whole, on a line of its own, while other threads log (runtime/main.c crash_handler, runtime/dispatch.c fatal_end).
 
   - --probe-crash-busy: four threads log without a pause and the main thread faults inside strlen.
@@ -14,10 +19,6 @@ No game files, no GPU, no window.
 
 Usage: fatal_line_check.py PATH_TO_GAME_EXE
 """
-import re
-import subprocess
-import sys
-import tempfile
 
 RUNS = 20
 CRASH_EXIT = 71
@@ -47,7 +48,7 @@ def fatal_lines(lines):
 
 def main():
     if len(sys.argv) != 2:
-        print(__doc__)
+        print(USAGE)
         return 2
     exe = sys.argv[1]
     fails = []
