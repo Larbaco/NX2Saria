@@ -274,7 +274,6 @@ static uint64_t pb_keep(const char *path, uint64_t good, uint64_t len) {
     return good;
 }
 
-// Opens pipeline-binaries.bin and indexes its records (cache_load, before P.cache).
 static void pb_init(VkCtx *c) {
     if (!c->has_pipeline_binary || !P.cache_path[0]) return;
 #define PBPROC(field, name) (PB.field = (void *)vk_dpa(c->device, name))
@@ -1494,8 +1493,6 @@ static uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missi
     return o;
 }
 
-// The locations a mesh module writes (its Output variables with a Location), and whether it draws points (execution
-// mode OutputPoints). 0 when the module cannot be read.
 static uint32_t spirv_mesh_outputs(const uint32_t *w, uint64_t n, int *points) {
     enum { OP_EXECUTION_MODE = 16, MODE_OUTPUT_POINTS = 27 };
     uint32_t bound = n >= 5 && w[3] < (1u << 22) ? w[3] : 0, mask = 0;
@@ -1666,12 +1663,6 @@ done:
     return o;
 }
 
-// Two fixes for what the translator declares but a shader does not use (NULL: nothing to change):
-//  - the fragment shader interlock capability and extension, which the translator adds to every fragment shader when the host
-//    reports interlock support (SpirvGenerator.cs) and vk_device.c does not enable; kept when the shader interlocks;
-//  - the CullDistance[1] member of gl_PerVertex next to ClipDistance[8] (Declarations.cs CreatePerVertexStructType):
-//    9 distances exceed maxCombinedClipAndCullDistances (8 on the RX 9070). The translator never accesses CullDistance; the
-//    member goes when it is the struct's last and no access chain selects it.
 static uint32_t *spirv_fixup(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     enum { OP_EXTENSION = 10, OP_CAPABILITY = 17, OP_MEMBER_NAME = 6, OP_EXECUTION_MODE = 16, OP_TYPE_ARRAY = 28,
            OP_TYPE_STRUCT = 30, OP_CONSTANT = 43, OP_MEMBER_DECORATE = 72, OP_ACCESS_CHAIN = 65, OP_IN_BOUNDS_ACCESS_CHAIN = 66,
@@ -1788,14 +1779,6 @@ static uint32_t *spirv_reconverge(const uint32_t *w, uint64_t n, uint64_t *out_n
     return o;
 }
 
-// Ocarina draws a fog sheet twice: a depth pre-pass, then a colour pass that discards where gl_FragCoord.z is behind
-// the pre-pass's depth. Both are mesh pipelines with different mesh programs, so on Maxwell the sheet's positions match
-// bit for bit, and the comparison relies on it. The translator marks a vertex shader's position Invariant (patch 0007),
-// which holds the driver to computing the same expression the same way in every pipeline; the mesh modules it makes
-// (tools/xlate/MeshSpirv.cs) declare the position without it. This adds Invariant to the Position built-in of a MeshEXT
-// module, as OpDecorate on a variable or OpMemberDecorate on a block member, right after its BuiltIn decoration. NULL:
-// nothing to change (not a mesh module, no position, Invariant already there, or no memory). Once MeshSpirv.cs
-// declares it, this finds it there and changes nothing.
 static uint32_t *spirv_mesh_invariant(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     enum { OP_MEMBER_DECORATE = 72, DEC_INVARIANT = 18, BUILTIN_POSITION = 0, MODEL_MESH = 5365 };
     if (n < 5) return NULL;
@@ -1835,18 +1818,6 @@ static uint32_t *spirv_mesh_invariant(const uint32_t *w, uint64_t n, uint64_t *o
     return o;
 }
 
-// Maxwell computes in IEEE 754, and the game's shaders rely on it: its compiler writes an unordered comparison as
-// `x > c || isnan(x)`, a normalisation of a zero-length vector gives an infinity that a later comparison sorts out, and
-// integer masks such as 0xffffffff travel through float moves and selects. The translator's own guards are isnan
-// tests as well (fragment outputs, min, max and clamp). Without the SignedZeroInfNanPreserve execution mode, SPIR-V
-// lets the driver assume that no float is NaN or infinite, and AMD's compilers act on it: on an RX 9070 XT a select
-// between 1 and the bits 0xffffffff, converted to float as a signed integer, gave 2^32 instead of -1 and blew the
-// shadow casters up into huge triangles (issue #156); RX 6000 cards drew Navi, and Link's skin next to her, with black
-// and white blocks (#41, #110); and AMD GPUs drew Navi's sparkles but not her orb, whose light sits at her own centre.
-// NVIDIA's driver keeps the IEEE results without the mode. This adds the capability, the extension (the translator
-// writes SPIR-V 1.3) and the mode for each entry point: 32-bit floats always, 16-bit and 64-bit ones where the module
-// declares Float16 or Float64 and `widths` (NP_*) allows them. NULL: nothing to change (the module has the mode, or no
-// 32-bit width is allowed, or no memory).
 static uint32_t *spirv_nan_preserve(const uint32_t *w, uint64_t n, uint32_t widths, uint64_t *out_n) {
     enum { OP_EXTENSION = 10, OP_EXECUTION_MODE = 16, OP_CAPABILITY = 17, CAP_FLOAT16 = 9, CAP_FLOAT64 = 10,
            CAP_PRESERVE = 4466, MODE_PRESERVE = 4461 };
@@ -4510,18 +4481,6 @@ static int gate_wait(const char *who, volatile int32_t *stop, double *took) {
     return 1;
 }
 
-// ---- the play gate (vk_play_gate.h, where the reasons are)
-// NX2SARIA_BG_BUILD_PLAY_DRAWS (default 600; 0: off): builds made ahead of their first use rest while the frame last
-// shown had this many draws or more and was shown within PLAY_GATE_SHOWN_MS. Those are the pool's low queue
-// (pipe_worker) when stage libraries are on, and the library warm (lw_worker). A pipeline a draw waits for never rests:
-// the draw queue and the libraries of waiting draws are not gated, and a draw that needs a low job moves it to the draw
-// queue (promote), which wakes a resting worker and gets the job's fast link first. Without stage libraries that draw
-// would wait for a whole build instead, so the low queue does not rest then. The stage library prebuild (lb_worker)
-// does not rest: its list starts with the compute shaders the game is about to dispatch, a compute pipeline not built
-// is built on the replay thread at its dispatch, and the large compute builds (bg_main, which hold a frame for seconds
-// when left to their dispatch) start only once it is done. Nothing rests during an area load, while the boot screen
-// waits for the warm (bf_waiting) or in a preparation. vk_backend.c frame_end gives each frame's draws
-// (vk_pipeline_frame_note); the start logs the setting, and save_with what the gate held back.
 static int bf_waiting(void);
 static struct {
     PlatMutex lock;
@@ -4608,12 +4567,6 @@ static void pg_log(void) {
     plat_mutex_unlock(&PG.lock);
 }
 
-// --probe-buildgate (host.h): the gate with this machine's commit and the settings in effect, without a device and
-// without a build. It prints what the settings and the system give, asks for sixteen ordinary builds and one large
-// one, and checks the answers against the same numbers: the builds admitted are those that fit with the earlier
-// ones' reservations, a refused one reserves nothing, and a builder's wait ends at once when its stop flag is set.
-// tests/build_gate_check.py runs it with build_free_mb at 0 (everything admitted) and at a value no machine has free
-// (everything refused).
 int vk_pipeline_probe_buildgate(void) {
     double took = 0, big = 0;
     int fails = 0, in = 0, want = 0;
@@ -5996,7 +5949,6 @@ static VkPipeline compute_create(const GfxShader *cs, const Layout *l, int cache
     return pipe;
 }
 
-// The layout of a compute shader in *B; NULL with *why on failure. Caller holds P.lock.
 static Layout *compute_layout(const GfxShader *cs, Bindings *B, const char **why) {
     Layout *l = NULL;
     if (gfx_shader_stage(cs) != GFX_STAGE_CS) *why = "not a compute shader";
