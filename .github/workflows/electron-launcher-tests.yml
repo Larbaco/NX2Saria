@@ -1,0 +1,83 @@
+name: Electron launcher tests
+
+on:
+  push:
+    branches: [electron-launcher]
+    paths:
+      - .github/workflows/electron-launcher-tests.yml
+      - launcher-electron/**
+      - launcher/**
+      - tests/launcher_worker_test.py
+      - tests/fixtures/worker_fake_game.c
+      - tests/fixtures/worker_restart_game.c
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    name: Launcher (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            uv_checksum: a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5
+          - runner: windows-2022
+            uv_checksum: edd61f7f5728a56cc62455386661860bdfc7bab65872f39b0c25bdcc1d8e1beb
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.13.9'
+          checksum: ${{ matrix.uv_checksum }}
+          enable-cache: false
+      - name: Python 3.14
+        run: |
+          uv python install -q 3.14.9
+          uv venv -q --managed-python --python 3.14.9 "$RUNNER_TEMP/electron-python"
+          if [[ "$RUNNER_OS" == 'Windows' ]]; then
+            cygpath -w "$RUNNER_TEMP/electron-python/Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$RUNNER_TEMP/electron-python/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Compile Windows stand-ins
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fake = Join-Path $env:RUNNER_TEMP 'worker-fake-game.exe'
+          $restart = Join-Path $env:RUNNER_TEMP 'worker-restart-game.exe'
+          gcc -static tests/fixtures/worker_fake_game.c -o $fake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gcc -static tests/fixtures/worker_restart_game.c -o $restart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "NX2_TEST_FAKE_GAME=$fake" >> $env:GITHUB_ENV
+          "NX2_TEST_RESTART_GAME=$restart" >> $env:GITHUB_ENV
+      - name: Worker tests
+        run: python tests/launcher_worker_test.py
+      - name: Node tests
+        working-directory: launcher-electron
+        run: |
+          npm ci
+          npm test
+      - name: Linux Electron window tests
+        if: runner.os == 'Linux'
+        working-directory: launcher-electron
+        run: |
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+          fi
+          xvfb-run -a npm run test:ui

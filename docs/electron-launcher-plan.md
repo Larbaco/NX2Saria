@@ -92,6 +92,7 @@ This section is a design proposal, not a claim that an implementation or test ex
 ### Evidence and acceptance
 
 - Automated synthetic cases cover current and legacy root selection; ready and missing installations; interrupted rebuild with a still-playable old executable; already-running game; failed start; process exit and restart; pre-play decisions; lock contention and worker failure. Use fakes and temporary directories, without private game data.
+- Run the worker and Node tests on native Linux and Windows CI runners. On Windows, compile only the stand-in executables required by the worker tests and supply them to the tests. Include the existing Xvfb Electron window suite on Linux. The test workflow runs only for launcher-related changes pushed to `electron-launcher`, uses pinned tool versions and read-only repository access, and does not package a release or build the game.
 - For Windows and Linux separately, record automated results and the owner's manual observation of detection, displayed state, starting and exiting the actual game. The owner conducts real-installation tests. Capture exact versions, environment and relevant sanitized logs, without keys or personal data.
 - This slice is accepted only once both platforms have the agreed evidence. It is not a release gate for the full replacement: install, update, migration and all other parity items remain outstanding.
 
