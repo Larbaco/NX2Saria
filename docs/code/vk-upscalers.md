@@ -1521,11 +1521,12 @@ The frame generation context's video memory, for the memory report (`runtime/vk/
 
 ## `runtime/vk/vk_fg_pose.inc`
 
-Included by `runtime/vk/vk_dlaa.c`: the final submitted pose inputs for owned player models. Replay workers change
+Included by `runtime/vk/vk_exec_draw.c`: the final submitted pose inputs for owned player models. Replay workers change
 history under the motion-list lock; the submitting thread selects and consumes it after the group finishes. Model and
 shape identities come from producer-side ownership records, never from a mesh fingerprint.
 
-`POSE_BANKS` (5): the uniform banks c3 through c7.
+`POSE_BANKS` (5): the uniform banks c3 through c7. `POSE_ROWS` (256): the mesh ranges remembered, each with two
+frames of history of up to `POSE_VIEWS` (8) views; a view's bank bytes are at most `POSE_BYTES` (128 KiB).
 
 ### `pose_owner()`
 
@@ -1536,19 +1537,29 @@ shape identities come from producer-side ownership records, never from a mesh fi
 
 The caller holds the motion-list lock while parallel replay workers record draws.
 
+A range is one owner's draw of one index buffer, count, index width and base vertex. A new one takes a row no draw
+matched for more than 2 frames, else a new row; with all `POSE_ROWS` in use it is not tracked (counted as a history
+capacity miss in `pose_status()`). Its `actor` is 1 for the body and 2 for attached equipment.
+
 ### `pose_previous()`
 
 - The same mesh is drawn into several depth targets. Only the resolve knows which view supplies FG.
 - Unused bindings retain the previous draw's values. Only the shader's vertex inputs identify this mesh.
 - The same instance can be submitted again in the same pass. A second instance of this mesh can use another palette, or
-  rewrite a palette at the same address between submissions.
+  rewrite a palette at the same address between submissions. A repeat that differs in anything (depth target, index
+  buffer, vertex buffers, bank addresses, sizes or bytes) marks the view ambiguous, and so does a bank whose snapshot is
+  not found.
+- The previous pose is returned only when it is last frame's selected view, not ambiguous, of the same depth size,
+  shader, index buffer, vertex buffers and bank sizes.
 
 ### `pose_rotation_trace_limit()`
 
 C6 holds a part's submitted transform. Translation is deliberately excluded: a fast jump does not itself make a vector
 unreliable. Only a positively identified sharp rotation opts in.
 
-- The threshold is `NX2SARIA_MOTION_GUARD_DEGREES`, `motion_guard_degrees` in the settings file too.
+- The threshold is `NX2SARIA_MOTION_GUARD_DEGREES`, `motion_guard_degrees` in the settings file too: 35 or 45, anything
+  else is 60 degrees a rendered frame. The limit is the trace at that angle, 1 + 2 cos(angle): 2.638, 2.414, 2.0. Read
+  once and logged (`motion policy: rotation guard threshold ...`).
 
 ### `pose_matrix_sharp()`
 
@@ -1556,13 +1567,19 @@ Two 3x4 matrices (rows of four floats) of one part or bone, this frame's and las
 rotations and the turn between them is past the guard threshold. `runtime/vk/vk_skin_motion.inc` asks it for each bone
 of a palette.
 
+- A plain rotation: the rows of the 3x3 part are orthonormal to within 0.005.
 - trace(R1 \* transpose(R0)) = 1 + 2 cos(angle). The selected threshold controls when this part needs visibility
   filtering; equipment retains its separate raw policy.
+
+`pose_sharp_rotation()` asks it for a part's c6 (at least 48 bytes, this frame's and the frame before's), and
+`pose_guard_needed()` answers 0 without asking for rigid equipment (`MOTION_OWNER_RIGID_EQUIPMENT`) and with
+`NX2SARIA_SELECTIVE_MOTION_RAW=1`.
 
 ### `pose_select()`
 
 - Selection preserves each part independently. No six-frame hold and no queue-wide drop: a risky body triangle cannot
   suppress the shield, sword, or another well-behaved part.
+- `NX2SARIA_MOTION_POLICY_TRACE=1`: a `motion policy:` line for each frame with a selected part.
 
 ### `pose_status()`
 
@@ -1578,7 +1595,7 @@ swapchain calls later, on its own present thread, for the frame id the configura
 `vk_fg_frame()` notes each frame's cut here under its id, and the callback looks it up. Without it every generated frame
 of a cut was blended from two unrelated pictures: an area load or a cutscene's cut flashed a frame of both.
 
-A ring of `FGR_SLOTS` frames; each slot holds the frame id and its cut as one atomic word, so a slot being rewritten
+A ring of `FGR_SLOTS` (32) frames; each slot holds the frame id and its cut as one atomic word, so a slot being rewritten
 never pairs an old id with a new frame's answer. An id the ring no longer holds (the callback fell that far behind, or
 the slot was never written) counts as a cut: a lost history costs one plain frame, a wrong one blends two. Own header so
 `tests/fg_reset_check.c` checks it without a GPU.
@@ -1614,7 +1631,7 @@ Own header so `tests/fg_stats_check.c` checks it without a GPU.
 
 - `FGS_PERIOD` (600): gameplay frames a line.
 - `FGS_IDLE` (3600): frames of any kind a line, when gameplay is rare.
-- `FGS_LINES` (60): lines written before only one period in `FGS_EVERY` is.
+- `FGS_LINES` (60): lines written before only one period in `FGS_EVERY` (10) is.
 
 `FgsOutcome`:
 
@@ -1630,7 +1647,7 @@ Own header so `tests/fg_stats_check.c` checks it without a GPU.
 
 - `n`: this period.
 - `total`: the run.
-- `presents0`: the screen's presents when the period started (`FgsLine.presents` is the difference).
+- `presents0`: the screen's presents when the period started (the line's presents are the difference).
 - `t0_ns`: when the period started.
 - `gpu_ms`: GPU time of the generated frames timed in this period, and how many.
 - `periods`: periods ended.
@@ -1653,7 +1670,8 @@ history starts at this frame.
 
 ### `fgs_gpu()`
 
-The GPU time one generated frame took (its preparation and its generation).
+The GPU time one generated frame took (its preparation and its generation). A time of 0 or less, or over 1000 ms, is
+not counted.
 
 ### `fgs_line()`
 
@@ -1668,9 +1686,9 @@ buffer on the game's queue, and around its generation, in the command list AMD's
 on its own thread. A frame counts once both are in: `prepare_end` - `prepare_begin` plus `generate_end` -
 `generate_begin`.
 
-A ring of `FGT_SLOTS` frames, four timestamps each, reset on the host after they are read (`hostQueryReset`), so nothing
-is recorded into AMD's command list but the two timestamps. A slot's state moves free -> prepared -> generated on the
-two threads by compare-and-swap; a slot still busy when its frame comes round again leaves that frame untimed, and a
+A ring of `FGT_SLOTS` (64) frames, four timestamps each, reset on the host after they are read (`hostQueryReset`), so
+nothing is recorded into AMD's command list but the two timestamps. A slot's state moves free -> preparing -> prepared
+-> generating -> generated -> resetting -> free on the two threads by compare-and-swap; a slot still busy when its frame comes round again leaves that frame untimed, and a
 prepared frame AMD never generated (generation off before its present) is let go `FGT_SLOTS` / 2 frames later.
 `NX2SARIA_FG_GPU_TIME=0` turns it off; without `hostQueryReset` or timestamps on the game's queue it stays off, and the
 generation is timed only where the present queue's family has timestamps too.
@@ -1693,7 +1711,9 @@ The GPU time of frame generation through AMD's libraries: `runtime/vk/vk_fg_time
 
 ### `fgt_init()`
 
-- The state is zeroed at the first use, or after `fgt_release()`.
+- The state is zeroed at the first use, after `fgt_release()`, or on another device; later calls return what the first
+  found.
+- A difference of two timestamps is masked to the valid bits of the queue family with the fewer of them.
 - The generation runs on a queue AMD's swapchain picks: the game's or the present queue, timed where both have
   timestamps.
 
@@ -4049,7 +4069,9 @@ characters by: there the mask covers the pixels whose depth the camera's motion 
 
 ### `perf_quality()`
 
-The quality setting DLSS is created with, from the scene's share of the output width.
+The quality setting DLSS is created with, from the scene's share of the output width: DLAA (`NGX_PERFQ_DLAA`, 5) for a
+scene as wide as the output or wider, quality (2) from 0.66, balanced (1) from 0.57, performance (0) from 0.49, ultra
+performance (3) below.
 
 ### `window_line()`
 
@@ -4228,10 +4250,18 @@ A size that is itself ranged with the mode's quality value is the mode's own siz
 
 ### `evaluate()`
 
-The evaluation of the upscaler on the armed scene, on the thread that replays the pass. In the order of the function:
+The evaluation of the upscaler on the armed scene, on the thread that replays the pass. `dst` is the target the
+upscaler's picture goes to, NULL for the light target itself (DLAA in place). `size_changed` is set here when the scene
+the upscaler runs on has another size than the last one; `vk_dlaa_resized_take()` reads it.
 
-`size_changed` is set here when the scene the upscaler runs on has another size than the last one;
-`vk_dlaa_resized_take()` reads it.
+What a failure does (`dl_fail()`): one log line with NGX's code and `D.failed`, which turns the upscaler and its inputs
+off for the rest of the run (`dl_active()`); nothing tries again at a later frame. It follows a work image that could
+not be made, a parameter object that could not be allocated, FSR 3.1 on a target that is not level 0 and layer 0 or
+FSR's own failure, a DLSS feature creation refused (after one second try, and only when released features were still in
+flight), and a DLSS evaluation refused on the frame's own feature. An evaluation refused on another size's feature is
+tried once more on the frame's own, in the same call.
+
+In the order of the function:
 
 - Once a frame while the upscaler or frame generation's inputs run, what the GPU is past goes (`upscalers_drain()`).
 - Without an upscaler (`D.fgo`): frame generation's inputs alone, at the same point of the frame (`fg_only_frame()`).
@@ -4253,7 +4283,11 @@ The evaluation of the upscaler on the armed scene, on the thread that replays th
   last frame, the characters' mask and the distances (`mv_pass()`), is from another moment.
 - Another size on another feature: its history is from another moment, a reset. The same size on another feature (the
   DLSS mode changed): a reset too.
-- Neither upscaler runs this frame: nothing is recorded, and `vk_dlaa_frame()` turns DLAA off at the next present.
+- Neither upscaler runs this frame (FSR 3.1 not read as this frame's, NGX not up): the function returns here, with
+  only the barrier and a new size's images recorded, and `vk_dlaa_frame()` turns DLAA off at the next present.
+- DLSS's parameter object (`D.params`) is allocated at the first DLSS evaluation and reused for every creation and
+  evaluation after it, so a name set once stays set until it is set again.
+- The jitter handed on is the one the scene's draws took (`D.ux`, `D.uy`), 0 when no draw of the frame was jittered.
 - `NX2SARIA_DLAA_JITTER_TEST=<x>,<y>` (test, read once): the upscaler is told the jitter the scene was drawn with times
   these two factors. NVIDIA's DLSS guide gives no sign for the offsets against the projection's shift and says to find
   it by trying (8.4.1: its development library negates, halves or doubles an axis by a key): the picture of a still
@@ -4261,16 +4295,23 @@ The evaluation of the upscaler on the armed scene, on the thread that replays th
   real jitter.
 - The edges are filled (`edge_fill()`) before the motion vectors read the depth.
 - `NX2SARIA_DLAA_MV=0`: zero motion (test).
-- No camera: the history cannot be moved along (2: kept as it is for a short gap, `mv_pass()`, `dlaa_cam_keep`).
+- No camera: the motion image is cleared to zero and the history cannot be moved along, a reset counted in `D.why[1]`
+  (2: kept as it is for a short gap, `mv_pass()`, `dlaa_cam_keep`).
 - NGX records into the command buffer itself: the recorder thread must have made every call so far (`rec_drain()`).
 - The free camera's probe (`fcam_probe()`) reads `mv_pass()`'s distances, behind its barrier.
-- FSR 3.1 or FSR 4 (`runtime/vk/vk_ffx.cpp` `vk_ffx_upscale()`) in DLSS's place: the same images, then the same blit. A
-  frame without a camera gives FSR its fixed values.
+- FSR 3.1 or FSR 4 (`runtime/vk/vk_ffx.cpp` `vk_ffx_upscale()`) in DLSS's place: the same images, the same jitter,
+  reset and frame time, then the same blit. A frame without a camera hands FSR a zeroed camera, for which it takes its
+  fixed values.
 - FrameTimeDeltaInMsec is taken once: the evaluation can run a second time (on the frame's own feature, after a
   refusal).
 - The feature is made for the size of its entry: this frame's own, or the larger one of the DLSS mode's, which was
   released since (`release_kept()`) and takes this frame's size as a sub-rectangle.
-- IsHDR | MVLowRes | AutoExposure: linear scene light, motion vectors at the render size, no exposure texture.
+- The creation's parameters: "CreationNodeMask" and "VisibilityNodeMask" 1 (one GPU), "Width" and "Height" the
+  feature's render size, "OutWidth" and "OutHeight" the output's, "PerfQualityValue" from `perf_quality()`,
+  "DLSS.Enable.Output.Subrects" 0, and the model hints below. The feature is `NGX_FEATURE_SUPERSAMPLING` (1), created
+  into the command buffer being recorded.
+- "DLSS.Feature.Create.Flags" is IsHDR | MVLowRes | AutoExposure (bits 0, 1 and 6): linear scene light, motion vectors
+  at the render size, no exposure texture. MVJittered (bit 2) is not set. DepthInverted (bit 3) is never set, whatever `proj_planes()` finds; DoSharpening (bit 5) is not set either.
 - The model per mode (`NVSDK_NGX_DLSS_Hint_Render_Preset`: 1 A ... 11 K, 12 L, 13 M), as NVIDIA recommends for DLSS 4.5
   (310.x): K (transformer) for DLAA, Quality and Balanced, M for Performance, L for Ultra Performance. M and L cost more
   on cards without FP8 (RTX 20/30). `dlss_preset` (`D.preset`, `preset_check()`) takes one model for every mode instead.
@@ -4281,12 +4322,22 @@ The evaluation of the upscaler on the armed scene, on the thread that replays th
 - The feature's fence is the submission being recorded: NGX records the creation into cb, and each evaluation too (a
   refusal as well, for all this side knows).
 - `NX2SARIA_DLSS_RANGE`: `range_note()` says which other render sizes the new feature runs.
+- The evaluation's inputs, each an `NgxResourceVK` of an image view (`res_image()`): "Color" the light target (its own
+  format, level and layer), "Depth" the scene depth with the depth aspect, "MotionVectors" the size's RG16F image, all
+  three read only and at the render size, and "Output" the size's RGBA16F image at the output size, the one marked
+  writable. The structs are locals of this call, set anew at every evaluation.
+- "Jitter.Offset.X" and "Y": the frame's jitter in render pixels (times `NX2SARIA_DLAA_JITTER_TEST`'s factors).
+  "MV.Scale.X" and "Y" are 1: the vectors are in render pixels already. "Sharpness" 0: DLSS does not sharpen.
+  "DLSS.Pre.Exposure" and "DLSS.Exposure.Scale" 1. "Reset" is `D.reset`: 1 starts a new history.
 - One bias mask: the reactive one (`NX2SARIA_DLSS_REACTIVE`, a test) where it ran, else the characters' (`mv_pass()`),
-  else none. The parameter object is reused, so it is cleared explicitly.
+  else none. The parameter object is reused, so it is cleared explicitly (set to NULL).
 - On the feature of a larger size, the render size is a part of what the feature was created for: it starts at the top
   left of the light target, the depth and the motion vectors, as it does in the bias mask.
-- The time since the previous evaluation, which DLSS weighs its history by; 60 fps before the first and after a gap (a
-  pause, a load), where no history carries over anyway.
+- "FrameTimeDeltaInMsec": the time since the previous evaluation in milliseconds, which DLSS weighs its history by;
+  16.67 (60 fps) before the first and after a gap of 100 ms or more (a pause, a load), where no history carries over
+  anyway.
+- The call is `NVSDK_NGX_VULKAN_EvaluateFeature` with the command buffer, the host's feature, the parameter object and
+  no progress callback.
 - DLSS refused this render size on the feature of another, inside the range it reported (`range_note()`). Every size has
   its own feature from here on, as with `NX2SARIA_DLSS_RANGE=0`, and this frame runs again on its own, which starts a
   new history.
@@ -4319,16 +4370,16 @@ picture the present reads. With HDR (`NX2SARIA_HDR` = 1) the game's picture stay
 which encodes it to PQ (`runtime/vk/vk_hdr.c` `vk_hdr_encode()`): DLSS's output is kept as RGBA16F for the same encode.
 The game's own HDR (native) encodes inside the game, which this cannot follow: no HUD-less picture there.
 
-`hudless()`: `dst` is the target DLSS's picture goes to, NULL for the light target itself (DLAA in place).
-
-`hudless_from()`: the same from any picture of that kind: `src` is the picture without the HUD, linear, w x h, in
+`hudless()` is `hudless_from()` for level 0, layer 0. `hudless_from()` takes any picture of that kind: `src` is the picture without the HUD, linear, w x h, in
 GENERAL, a format that can be blitted from: DLSS's output where the upscaler ran at the game's upscaler, the game's
 upscaler's output where it ran before the bloom (`vk_dlaa_upscaler()`). It takes a level and a layer of `src` as well:
 the game's own scaled picture where frame generation runs without an upscaler (`fg_only_frame()`).
 
 - A picture of another size is retired (`retire_hl()`): the presents of the last frames may still read it.
 - When the second image fails, the first image's view and what of the two images was made are destroyed at once
-  (`hl_destroy()`).
+  (`hl_destroy()`), a line is logged and `vk_dlaa_hudless_wanted` is cleared: frame generation sees the HUD.
+- The sRGB image has no view of its own after creation (`image2d()` makes one, destroyed at once): it is only blitted
+  into and copied from.
 
 ### Two frame shapes
 
@@ -4442,9 +4493,11 @@ other pass.
 
 ### `prebloom_upscaler()`
 
-At the game's upscaler, with the upscaler run before the bloom: notes the picture's size, and puts the composite drawn
-at the picture's size over the game's upscaler's output (2), or leaves that output, which is already made from DLSS's
-picture (1). The HUD-less picture for frame generation is the result either way.
+At the game's upscaler, with the upscaler run before the bloom (`vk_dlaa_upscaler()` has noted the picture's size): puts
+the composite drawn at the picture's size over the game's upscaler's output (2), or leaves that output, which is already
+made from DLSS's picture (1). The HUD-less picture for frame generation is the result either way. A frame of the second
+kind that drew no bloom composite after the upscaler leaves the game's picture as it is and makes no HUD-less picture
+(logged for the first 8).
 
 - The same size but for a picture size changed since the upscaler ran: scaled then, for that frame.
 
@@ -4578,7 +4631,7 @@ scene), and two frames later the scene can be black with the interface intact (U
 capturing every present over six mode changes, 2026-11-10: bad frames 3 and 5 presents after the change, with every
 other setting the same. `evaluate()` notes a scene of another size; `vk_dlaa_frame()` counts the presents since a
 setting last changed, so a game that draws two sizes in turn holds nothing. `setting_presents`: presents left in which
-that counts as a mode change. `vk_dlaa_frame()` sets and counts it down on the thread that runs the frame's bookkeeping,
+that counts as a mode change, `SETTING_PRESENTS` (60) after any setting changed (`cfg_version()`). `vk_dlaa_frame()` sets and counts it down on the thread that runs the frame's bookkeeping,
 `vk_dlaa_resized_take()` clears it at the present (`runtime/vk/vk_backend.c` `frame_hold()`): atomics.
 
 ### `vk_dlaa_resized_take()`
