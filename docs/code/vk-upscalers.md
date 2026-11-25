@@ -1004,11 +1004,15 @@ and its contexts are made with that version asked for by its id, so the loader c
 listed, or a context or a dispatch fails, `runtime/vk/vk_ffx.cpp`'s FSR 3.1 serves the frame as before.
 
 The inputs are the ones FSR 3.1 takes (`runtime/vk/vk_ffx.cpp`): the scene's light target in linear HDR, its D32F depth
-(not inverted, the far plane at infinity) and the camera motion vectors in render pixels from this frame to the previous
+(not inverted; the context has no infinite-depth flag and each dispatch gives the frame's near and far planes, the far
+one 1e8 for a projection without it) and the camera motion vectors in render pixels from this frame to the previous
 one. FSR 4 needs no reactive or transparency mask.
 
 AMD publishes the SDK's libraries for Windows only: in any other build FSR 4 is never listed, `runtime/vk/vk_ffx.cpp`'s
-FSR 3.1 path is all there is, and the SDK's headers are not read. The file defines `VK_FFX_NO_API` before it includes
+FSR 3.1 path is all there is, and the SDK's headers are not read. There the file is a set of stubs, and everything below
+describes the Windows code: `vk_ffx4_available()`, `vk_ffx4_upscale()`, `vk_ffx4_holds()`, `vk_ffx4_failed()`,
+`vk_ffx4_dead_take()`, `vk_ffx4_dead_fence()` and `vk_ffx4_vram()` return 0, `vk_ffx4_name()` returns "AMD FSR 4", the
+others do nothing, and the `vk_ffx4_api_*` functions are not defined. The file defines `VK_FFX_NO_API` before it includes
 `runtime/vk/vk_ffx.h`, which then leaves out the API declarations of the other set of headers.
 
 The state of the probe:
@@ -1021,7 +1025,7 @@ The state of the probe:
 - `g_failures`: contexts or dispatches that failed in a row.
 - `g_retry_ns`, `RETRY_NS` (2 seconds): after a context creation failed, FSR 3.1 serves the frames until the next try
   this much later: a save loading fills the video memory with the area's textures for a few frames, and three tries in
-  three frames there turned FSR 4 off.
+  three frames there turned FSR 4 off (when three failures in a row did; `FAIL_MAX` is 4 now).
 
 ### `beside_exe()`
 
@@ -1041,8 +1045,13 @@ The versions the loader lists for one kind of context on this device, in its ord
 ### `probe()`
 
 Asks the loader for the device's upscaler versions. Under `g_lock`; -1 before the device exists. A version's name is
-"4.1.2", or "4.1.2 \*" for a version the driver brings; the name is the library's memory, so it is copied, without the
-driver's mark.
+"4.1.2", or "4.1.2 \*" for a version the driver brings; the name is the library's memory, so it is copied (its first
+24 characters), without the driver's mark.
+
+In order: the loader (`load()`); `amd_fidelityfx_upscaler_vk.dll` beside the executable, or 0 without a line; the
+versions for `FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE`, at most 16; among them the one with the highest major number
+of 4 or more (the first listed of that major) gives `g_version` and `g_name`. The log gets the list either way, and
+when none is a 4.x what FSR 4 needs.
 
 ### `create()`
 
@@ -1062,6 +1071,10 @@ The descriptors a context was made from stay with it, as the API asks ("must rem
 `Made` of its own on the heap (zeroed, as the descriptors' `{}` were), so that a context let go of (`retire_up()`) keeps
 them until it is destroyed, once the GPU is past its last upscale (`g_dead`), while its slot already holds the next one.
 
+- The descriptors are chained from the upscale one: the Vulkan back end, then `ffxOverrideVersion` with `g_version`,
+  then `ffxCreateContextDescUpscaleVersion` with the `FFX_UPSCALER_VERSION` the headers were built for.
+- The back end is given `vkGetDeviceProcAddr` itself, not `runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr()`: FSR 4's
+  pipelines do not go through the runtime's pipeline caches.
 - The flags are HDR and auto exposure, with a finite far plane, as FSR 3.1's.
 - `NX2SARIA_FFX_DEBUG=1` (test): the library checks the values of each dispatch and says what it finds (`message()`).
 - The provider is asked for the version it runs: anything but a 4.x here means the loader gave another upscaler, and the
@@ -1090,9 +1103,9 @@ The context for a render size and an output size: the one made for them, else a 
 the least recently used one; the others of that output size go once they are not recent. What goes is let go of and
 destroyed once the GPU is past it (`retire_up()`): its work may be in flight.
 
-A creation that fails is tried once more after every context not in use has gone, FSR 3.1's idle ones too
-(`vk_ffx_trim_idle()`), and the GPU has finished with them and with those let go of before: what it lacked was most
-often video memory. The creation needs their memory now, so this is a wait for the GPU to pass them all, this file's and
+A creation that fails is tried once more after every context not in use (not among the recent ones) has gone, FSR 3.1's
+idle ones too (`vk_ffx_trim_idle()`), and the GPU has finished with them and with those let go of before: what it lacked
+was most often video memory. When nothing was let go of and nothing destroyed, it is not tried again. The creation needs their memory now, so this is a wait for the GPU to pass them all, this file's and
 FSR 3.1's (with `NX2SARIA_UPSCALER_IDLE_WAIT=1` for the device).
 
 ### `failed()`
@@ -1111,9 +1124,16 @@ them.
 
 ### `vk_ffx4_upscale()`
 
-- After a failure FSR 3.1 serves until the next try (`g_retry_ns`).
+- Returns 0, so that FSR 3.1 makes the frame, when FSR 4 is not available, is off (`g_off`), is waiting for its next
+  try, or the context or the dispatch fails.
+- After a context that could not be made FSR 3.1 serves until the next try (`g_retry_ns`, `RETRY_NS` later), for as long
+  as the failure count is not 0. A failed dispatch counts as a failure too (logged at most 8 times) but sets no wait; a
+  dispatch that works sets the count back to 0.
 - Every image is in GENERAL, which the back end reads as its unordered-access state, and is left there.
-- The sharpness slider (`NX2SARIA_SHARPNESS`) drives the upscaler's own sharpening, as for FSR 3.1.
+- The sharpness slider (`NX2SARIA_SHARPNESS`) drives the upscaler's own sharpening, as for FSR 3.1, without FSR 3.1's
+  extra sharpening at low render scales (`runtime/vk/vk_dlaa.c` `vk_dlaa_fsr3_boost()`).
+- The rest of the dispatch is FSR 3.1's on Windows (`runtime/vk/vk_ffx.cpp` `vk_ffx_upscale()`): a motion vector scale
+  of (1, 1), a pre-exposure of 1, the output alone as a UAV.
 - The frame's camera (`runtime/vk/vk_dlaa.c` `proj_planes()`), as FSR 3.1 gets it (`runtime/vk/vk_ffx.cpp`).
 - The context's fence is the submission being recorded, taken after the dispatch: it was recorded into cb (a refusal
   too, for all this side knows).
@@ -1121,11 +1141,13 @@ them.
 ### `vk_ffx4_api_file()`
 
 The loader's calls for `runtime/vk/vk_fg4.cpp` (`runtime/vk/vk_ffx4_api.h`), this one and the `vk_ffx4_api_*` functions
-after it.
+after it. `vk_ffx4_api_versions()` takes `g_lock` and loads the loader if nothing has yet (`load()`); the five API calls
+take no lock and return `FFX_API_RETURN_ERROR` while the loader's entry points are not there.
 
 ### `vk_ffx4_release()`
 
-Teardown and the probe: the device is idle.
+Teardown and the probe: the device is idle. Nothing without the loader; else every context is destroyed at once with its
+`Made`, and those let go of with them.
 
 ### `vk_ffx4_release_idle()`
 
@@ -3156,26 +3178,49 @@ the display adapter's VulkanDriverName, where the Vulkan loader itself finds the
 
 ### `core_load()`
 
-- The driver's NGX core; the dynamic loader finds it where the driver put it (`/usr/lib`, `/usr/lib/x86_64-linux-gnu`).
-- `NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements` is optional: it is frame generation's.
-- Linux: without `NVSDK_NGX_VULKAN_Shutdown1` the device cannot be taken back from NGX (`vk_dlaa_release()`), and the
-  process then segfaults after the Vulkan teardown (NVIDIA 615.78.08): DLAA stays off rather than run with a teardown
-  known to crash. The parameter maps are destroyed there too.
+Loads the driver's NGX core once (`N.tried`; a second call returns the first one's answer) and takes its entry points.
+On Windows the folder is `NGXCore\FullPath` or, without it, `ngx_dir_from_adapter()`'s; on Linux the dynamic loader
+finds `libnvidia-ngx.so.1` where the driver put it (`/usr/lib`, `/usr/lib/x86_64-linux-gnu`). The entry points, all
+`NVSDK_NGX_VULKAN_*`: `Init_Ext2`, `RequiredExtensions`, `GetCapabilityParameters`, `AllocateParameters`,
+`CreateFeature`, `EvaluateFeature` and `ReleaseFeature` are required on both systems, and a core without one of them
+leaves DLAA off with a log line. `DestroyParameters` is optional on Windows (`vtable_ok()` skips the destroy without
+it). `GetFeatureInstanceExtensionRequirements` is optional everywhere: it is frame generation's.
 
-`NgxDiscovery` is `NVSDK_NGX_FeatureDiscoveryInfo` with an application id (the layout of the SDK's struct, 64-bit), for
-the question which instance extensions frame generation wants. `NGX_FEATURE_FRAME_GENERATION` (11) is
-`NVSDK_NGX_Feature_FrameGeneration`.
+Linux also requires `Shutdown1` and `DestroyParameters`: without `NVSDK_NGX_VULKAN_Shutdown1` the device cannot be taken
+back from NGX (`vk_dlaa_release()`), and the process then segfaults after the Vulkan teardown (NVIDIA 615.78.08): DLAA
+stays off rather than run with a teardown known to crash. The parameter maps are destroyed there too.
 
 ### `fg_keep()`
 
-The names NGX lists are copied: its list may not outlive the call, and the device creation keeps the pointers.
+The names NGX lists are copied: its list may not outlive the call, and the device creation keeps the pointers. Room for
+16 names; a seventeenth is not asked for.
 
 ### `vk_dlaa_instance_exts()`
 
-- Frame generation's own instance extensions (`vk_ngxfg_evaluate()`). Its device extensions are not asked for: the
-  core's GetFeatureDeviceExtensionRequirements answered "not implemented" (`0xBAD00012`) with NVIDIA's 615 Linux driver,
-  and NGX's general list (`vk_dlaa_device_exts()`) served the feature.
-- The application id is the one `vk_dlaa_init()` gives NGX.
+NGX's own instance extensions (`NVSDK_NGX_VULKAN_RequiredExtensions`, the same call `vk_dlaa_device_exts()` takes the
+device's from), then, where NGX's frame generation may run (`vk_ngxfg_wanted()`) and the core has the entry point, frame
+generation's own (`vk_ngxfg_evaluate()`), each logged as `ngxfg: instance extension ...`. Nothing is asked when DLAA is
+not wanted or FSR 3.1 is the upscaler: the core is not loaded then.
+
+Frame generation's device extensions are not asked for: the core's GetFeatureDeviceExtensionRequirements answered "not
+implemented" (`0xBAD00012`) with NVIDIA's 615 Linux driver, and NGX's general list (`vk_dlaa_device_exts()`) served the
+feature.
+
+`NgxDiscovery` is `NVSDK_NGX_FeatureDiscoveryInfo` with an application id (the layout of the SDK's struct, 64-bit), for
+the question which instance extensions frame generation wants: the SDK version `NGX_VERSION_API` (0x15), the feature
+`NGX_FEATURE_FRAME_GENERATION` (11, `NVSDK_NGX_Feature_FrameGeneration`), identifier type 0 (an application id) with the
+id `vk_dlaa_init()` gives NGX, and "." as the data path.
+
+### `vk_dlaa_device_exts()`
+
+A device extension NGX asks for that the device lacks is logged and left out; DLAA is not turned off for it here.
+
+### `vtable_ok()`
+
+Sets an int (-12345), an unsigned (4000000000), a float (1.25) and a pointer under names of its own on a freshly
+allocated parameter object and reads each back through the slot `p_seti()`'s table gives its type. A value that does not
+come back means the core's vtable is laid out another way than the table assumes: DLAA stays off, with the four values
+read in the log.
 
 ### `utf8_to_wide()`
 
