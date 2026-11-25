@@ -4435,12 +4435,13 @@ into one packed array d, a `VkDescSlot` per descriptor in binding order, which a
 
 ### `base_viewport()`
 
-- `VkViewport v = {x, y + h, w, -h, ex->depth_range[0], ex->depth_range[1]}`: the y flip: negative height.
+The game's viewport times the pass scale (the whole pass when the game set none), at least 1x1, with the y flip: y at
+the bottom edge and a negative height.
 
 ### `draw_viewport()`
 
-- `if (ex->mark)`: `NX2SARIA_PASS_TIMES`: how much of the pass the draws cover.
-- `vk_dlaa_viewport(ex, &v)`: the scene's draws move by the DLAA jitter.
+`base_viewport()`, noted in the pass mark (`NX2SARIA_PASS_TIMES`: how much of the pass the draws cover) and moved by the
+DLAA jitter for the scene's draws (`vk_dlaa_viewport`).
 
 ### `slope_bias()`
 
@@ -4448,22 +4449,25 @@ The slope-scaled depth bias of a draw. The term is the bias per unit of depth sl
 a shadow map made k times larger on each side (`NX2SARIA_SHADOW_SCALE`, `runtime/vk/vk_texture.c` `shadow_scale_of()`,
 `pass_scale`) has 1/k of the slope across each of its texels: the game's factor alone gives k times less bias than it
 asked for on sloped surfaces, which is what shows as acne (stripes of self-shadow over slanted ground and walls). The
-constant term counts the depth format's smallest steps, which do not change with the size, and keeps its value.
-
-- `if (ex->pass_scale > 1)`: the log names each scale it meets, at most 8 times a run (replay workers record too).
+constant term counts the depth format's smallest steps, which do not change with the size, and keeps its value. The log
+names each scale it meets, at most 8 times a run (with atomics: the replay workers record too).
 
 ### `record_fixed()`
 
-- `NX2SARIA_DEPTH_BIAS_X` scales the constant term (diagnostic): NVN's units are tuned for the Switch's fixed-point
-  depth buffer, and this back end draws into a 32-bit float one, where the same constant means a far smaller offset. If
-  decals z-fight here, this multiplier says whether the offset is the reason.
+Records the dynamic state whose dirty bit is set: viewport, scissor, depth bias, blend constants, stencil masks and
+references.
+
+`NX2SARIA_DEPTH_BIAS_X` scales the constant term of the depth bias (diagnostic, environment only): NVN's units are tuned
+for the Switch's fixed-point depth buffer, and this back end draws into a 32-bit float one, where the same constant
+means a far smaller offset. If decals z-fight here, this multiplier says whether the offset is the reason.
 
 ### `bind_vertex_buffers()`
 
-- A stream whose range is the one its bound buffer was resolved from, with no pool or mirror change since (`vk_mem_gen`,
-  read before any resolve), resolves to that buffer again: most draws change one stream or none.
-- Most draws change no stream at all: with every range as it was bound and no pool or mirror change, the loop below
-  would take each buffer from B again and return at the compare after it.
+A stream whose range is the one its bound buffer was resolved from, with no pool or mirror change since (`vk_mem_gen`,
+read before any resolve), resolves to that buffer again: most draws change one stream or none. Most draws change no
+stream at all: with every range as it was bound and no pool or mirror change, the loop would take each buffer from
+`DrawCtx.B` again and return at the compare after it, so that case returns first. An unbound stream, and the zero
+binding (`VK_PIPE_ZERO_BINDING`), read the zero buffer.
 
 ### `foliage_shadow_cull()`
 
@@ -4475,34 +4479,27 @@ so this needs no other pipeline.
 
 ### `pipe_skip_mode()`
 
-`NX2SARIA_PIPE_SKIP`: which draws are skipped, rather than waited for, while their shaders or pipeline build. strict
-(0): only draws whose pass targets were all rendered in the previous presented frame; a pass with a target.
+`NX2SARIA_PIPE_SKIP`: which draws are skipped, rather than waited for, while their shaders or pipeline build.
 
-- That was not counts as one-shot and waits.
+- strict (0): only draws whose pass targets were all rendered in the previous presented frame; a pass with a target
+  that was not counts as one-shot and waits.
+- any (1), the default: also draws in a pass with at least one target rendered in the previous frame (a per-frame depth
+  buffer or g-buffer with a colour target the frame before did not use: half-resolution effect buffers in fights).
+  Passes with none (volumes, LUTs, shadow layers seen for the first time) still wait, and so do passes whose only recent
+  target is the depth buffer while a colour target is rendered for the first time (item icon captures). Full-screen
+  draws into such passes wait from their budget of 50 ms a presented frame (`frame_wait()`). It is the default because a
+  skipped full-screen draw is a lighting, fog or tone mapping pass that leaves its target as it was, which shows as a
+  black or unlit frame with the interface intact, and with the stage libraries in the driver's cache the wait is a
+  millisecond (`runtime/vk/vk_pipeline.c` `lw_start()` keeps them there). One that is skipped once its budget is spent
+  leaves a frame that is not shown (`runtime/vk/vk_backend.c` `frame_hold()`); where that cannot hold the picture any
+  longer, the draw waits on (`FULLSCREEN_LAST_MS`, `last_wait()`).
+- fullscreen (2): as any, and full-screen draws into such passes are skipped instead of waiting from their budget. A
+  full-screen pass whose stage libraries are cold in the driver cache took 86 ms on average (up to 194 ms) in a fight on
+  an RX 9070: three frames in a row each spent the 50 ms budget, and some of the draws were skipped after all. Skipping
+  costs the pass for the frames until the pipeline is ready. It was the default until the libraries were kept warm.
 
-Any (1): also draws in a pass with at least one target rendered in the previous frame (a per-frame depth.
-
-- Buffer or g-buffer with a colour target the frame before did not use: half-resolution effect buffers in fights).
-- Passes with none (volumes, LUTs, shadow layers seen for the first time) still wait, and so do passes whose only.
-- Recent target is the depth buffer while a colour target is rendered for the first time (item icon captures).
-- Full-screen draws into such passes wait from their budget of 50 ms a presented frame. The default: a skipped.
-- full-screen draw is a lighting, fog or tone mapping pass that leaves its target as it was, which shows as a black.
-- Or unlit frame with the interface intact, and with the stage libraries in the driver's cache the wait is a.
-- Millisecond (`runtime/vk/vk_pipeline.c` `lw_start()` keeps them there). One that is skipped once its budget is spent
-  leaves a frame.
-- That is not shown (`runtime/vk/vk_backend.c` `frame_hold()`); where that cannot hold the picture any longer, the draw
-  waits on.
-- (`FULLSCREEN_LAST_MS`).
-
-Fullscreen (2): as any, and full-screen draws into such passes are skipped instead of waiting from their.
-
-- budget. A full-screen pass whose stage libraries are cold in the driver cache took 86 ms on average (up to 194 ms).
-- In a fight on an RX 9070: three frames in a row each spent the 50 ms budget, and some of the draws were skipped.
-- After all. Skipping costs the pass for the frames until the pipeline is ready. It was the default until the.
-- Libraries were kept warm.
-
-Any other draw whose pipeline is missing waits for its fast link from a small budget per presented frame (`link_budget`)
-before it is skipped.
+Any other draw whose pipeline is missing waits for its fast link from a small budget per presented frame
+(`link_budget()`) before it is skipped. The mode is logged at start.
 
 ### `writers_wait_on()`
 
@@ -4528,35 +4525,40 @@ waited by this rule alone.
 1 when a draw with these stages waits because it writes memory (`writers_wait_on`). A stage that is NULL writes nothing:
 the program has none, or it is still being translated and has no reflection to ask yet.
 
-### `frame_wait()`
+### `frame_wait()`, `link_budget()`, `link_draw_ms()`
 
-`NX2SARIA_PIPE_LINK_MS` (default 6; 0 = off): how long the draws of one presented frame may wait, in all, for the fast
-link of a pipeline that is missing, `LINK_DRAW_MS` at most each. A draw into a per-frame pass used to be skipped at once
-and for as long as its pipeline built, also when its stage libraries were in the driver's cache and the link took under
-a millisecond: geometry seen for the first time (ground, a wall, a character) was missing for a frame or more and then
-appeared. With the libraries warm the wait ends within the budget and nothing is skipped; with them cold it runs out
-after a few draws and the rest are skipped as before, so a burst of cold pipelines costs a frame this much and no more.
-Measured on an RX 7900 XT, first walk through a village with no pipeline recorded: 2,349 draws skipped without the
-budget, with the libraries warm in both runs. `NX2SARIA_PIPE_LINK_DRAW_MS` (default 3): the wait for one pipeline,
-counted from its first miss and shared by all its draws (`prepare_draw_ex`), so a pipeline whose libraries the driver
-has to compile costs its first frame this much and the frames after it nothing; it was 3 ms for each draw, in every
-frame. A frame that has left a draw out already waits for no fast link either (`pending_draws`): it is held back or
-shown without that draw whatever its other pipelines do. The 3 ms are just under what a pipeline takes with its two
-shader libraries in the driver's cache: on a new install's first visits (RTX 5090, the libraries prepared, 67 pipelines
-the install's list did not hold) 44 were usable under 4 ms after their miss, 17 after 4 to 8 ms and 6 later, and of 87
-draws that waited 66 were skipped at the end of the wait, their frame then held back. 8 ms a pipeline and 16 ms a frame
-were tried for that. A scripted walk through a village with no pipeline recorded (610 missed) had the picture stand
-still 15 times against 50 and 15 frames over 25 ms against 17, but in play it felt worse to the player than the 3 ms it
-replaced, in two sessions on the same install: a frame that takes 10 to 14 ms longer showed more than one that is left
-out. The waits stay short; the settings take longer ones. `NX2SARIA_PIPE_FRAME_WAIT_MS` (default 50; 0 to 500): the wait
-pool of one presented frame. Its full-screen draws and its one-shot draws (`NX2SARIA_ONESHOT_BUDGET`) wait for their
-shaders and pipelines from it, each for what the ones before left, and are skipped once it is spent, so the pipelines of
-one frame hold the replay thread this long in all and no longer (beside the fast links' own small budget, `link_budget`,
-and `FULLSCREEN_LAST_MS`).
+`NX2SARIA_PIPE_LINK_MS` (default 6; 0 = off; `link_budget()`): how long the draws of one presented frame may wait, in
+all, for the fast link of a pipeline that is missing, `LINK_DRAW_MS` at most each. A draw into a per-frame pass used to
+be skipped at once and for as long as its pipeline built, also when its stage libraries were in the driver's cache and
+the link took under a millisecond: geometry seen for the first time (ground, a wall, a character) was missing for a
+frame or more and then appeared. With the libraries warm the wait ends within the budget and nothing is skipped; with
+them cold it runs out after a few draws and the rest are skipped as before, so a burst of cold pipelines costs a frame
+this much and no more. Measured on an RX 7900 XT, first walk through a village with no pipeline recorded: 2,349 draws
+skipped without the budget, with the libraries warm in both runs.
 
-### `pool_ms()`
+`NX2SARIA_PIPE_LINK_DRAW_MS` (default 3, 1 to 50; `link_draw_ms()`, `LINK_DRAW_MS`): the wait for one pipeline, counted
+from its first miss and shared by all its draws (`prepare_draw_ex()`), so a pipeline whose libraries the driver has to
+compile costs its first frame this much and the frames after it nothing; it was 3 ms for each draw, in every frame. A
+frame that has left a draw out already waits for no fast link either (`pending_draws`): it is held back or shown without
+that draw whatever its other pipelines do.
 
-The milliseconds of pool not used up since t0, when the caller began to draw on it; `UINT32_MAX` without a pool.
+The 3 ms are just under what a pipeline takes with its two shader libraries in the driver's cache: on a new install's
+first visits (RTX 5090, the libraries prepared, 67 pipelines the install's list did not hold) 44 were usable under 4 ms
+after their miss, 17 after 4 to 8 ms and 6 later, and of 87 draws that waited 66 were skipped at the end of the wait,
+their frame then held back. 8 ms a pipeline and 16 ms a frame were tried for that. A scripted walk through a village
+with no pipeline recorded (610 missed) had the picture stand still 15 times against 50 and 15 frames over 25 ms against
+17, but in play it felt worse to the player than the 3 ms it replaced, in two sessions on the same install: a frame that
+takes 10 to 14 ms longer showed more than one that is left out. The waits stay short; the settings take longer ones.
+
+`NX2SARIA_PIPE_FRAME_WAIT_MS` (default 50; 0 to 500; `frame_wait()`): the wait pool of one presented frame. Its
+full-screen draws and its one-shot draws (`NX2SARIA_ONESHOT_BUDGET`) wait for their shaders and pipelines from it, each
+for what the ones before left, and are skipped once it is spent, so the pipelines of one frame hold the replay thread
+this long in all and no longer (beside the fast links' own small budget, `link_budget()`, and `FULLSCREEN_LAST_MS`).
+
+### `pool_ms()`, `pool_charge()`
+
+`pool_ms()`: the milliseconds of pool not used up since t0, when the caller began to draw on it; `UINT32_MAX` without a
+pool. `pool_charge()` takes the time since t0 off the pool.
 
 ### `mesh_whole()`
 
@@ -4565,43 +4567,56 @@ the draw binds a mesh pipeline.
 
 ### `oneshot_ms()`
 
-What a one-shot draw with the state s may wait for its pipeline from pool.
-
-- `if (vk_pipeline_building_ms(s) > MESH_WAIT_MS) return 0`: a compile (`MESH_WAIT_MS`).
+What a one-shot draw with the state s may wait for its pipeline from pool: what the pool has left, for a mesh draw
+`MESH_WAIT_MS` at most, and nothing once its pipeline has been building for longer than that, which is a compile
+(`MESH_WAIT_MS`).
 
 ### Wait accounting
 
-What the replay thread spent on draws that found their pipeline or a shader missing Counted from the miss to the draw's
-bind or skip, the look-ahead scan included, by the kind of wait the draw was allowed; left: the draws skipped at the end
-of it. `draw_stats_tick` logs the sums with the skipped draws, so a session's log says how much time the pipelines cost
-on this thread and which rule spent it. writers: the draws into per-frame targets that took a one-shot wait because
-their shaders write memory (`draw_writes`); they are among the one-shot kinds' counts.
+What the replay thread spent on draws that found their pipeline or a shader missing (`WS`, `wait_note()`). Counted from
+the miss to the draw's bind or skip, the look-ahead scan included, by the kind of wait the draw was allowed (`WK_*`);
+`left`: the draws skipped at the end of it. `draw_stats_tick()` logs the sums with the skipped draws, so a session's log
+says how much time the pipelines cost on this thread and which rule spent it. `writers`: the draws into per-frame
+targets that took a one-shot wait because their shaders write memory (`draw_writes()`); they are among the one-shot
+kinds' counts.
 
-- `FULLSCREEN_LAST_MS`: How long the full-screen draws of a frame wait on for their pipelines, in all, once the frame's
-  wait pool is spent and the previous picture cannot be held any longer (`prepare_draw_ex`, `last_wait`). Every such
-  pipeline has a fast link (`runtime/vk/vk_pipeline.c` `gpl_feedback()`), so the wait is for stage libraries: a few
-  milliseconds from the driver's cache, and in the one case a player's session shows the draw had its pipeline 18 ms
-  into this wait. It was 500 ms for each draw while a pipeline with a feedback loop waited for its whole optimised
-  build; with the pool before it, a frame now waits under 100 ms for pipelines in all.
-- `sm_on`: The previous draw's shaders, kept while its program, bound pipeline state, the vertex and fragment stages'
-  first 32 texture and image handles and every slot's resolution (`vk_texture_slots_gen`, read unlocked: a registration
-  racing with it is ordered after this draw, as `answers_for`'s own check would order it) stay the same: `answers_for`
-  reads nothing else, so `shader_for` would return the same shaders. About 65% of field draws repeat them
-  (`NX2SARIA_BIND_STATS`). `NX2SARIA_SHADER_MEMO=0` turns it off; `=check` looks the shaders up on every hit too, and
-  every slot's texture type in `answers_for`, and stops on a difference. `tex_serial` (bumped by every texture and image
-  bind) equal to the key's means the handles were not rebound since they were compared, so the 1 KiB compare is skipped;
-  a rebind to the same handles still matches by the compare. The memo and its key (`MemoKey`) are `DrawCtx.SM`.
-- `pm_on`: the memo is `DrawCtx.PM`.
-- `vk_draw_skip_names`: Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped. ---- draw
-  accounting: why draws were not drawn Every draw `prepare_draw_ex` turns away is counted by reason, vertex and mesh
-  draws apart. The first draw of each kind skipped for each reason is logged with its program, and every
-  `DRAW_STATS_FRAMES` presented frames one line sums up the draws issued and skipped since the last line (only when
-  something was skipped). A black screen with draws skipped for "shader failed" or "pipeline failed" points at the
-  translator or the pipeline; draws issued and still nothing on screen point at the shaders' results (`NX2SARIA_DUMP`).
+### `last_wait()`
+
+`FULLSCREEN_LAST_MS` (40): how long the full-screen draws of a frame wait on for their pipelines, in all, once the
+frame's wait pool is spent and the previous picture cannot be held any longer (`prepare_draw_ex()`). Every such pipeline
+has a fast link (`runtime/vk/vk_pipeline.c` `gpl_feedback()`), so the wait is for stage libraries: a few milliseconds
+from the driver's cache, and in the one case a player's session shows the draw had its pipeline 18 ms into this wait. It
+was 500 ms for each draw while a pipeline with a feedback loop waited for its whole optimised build; with the pool
+before it, a frame now waits under 100 ms for pipelines in all.
+
+### `shader_memo_on()`, `memo_key()`, `memo_match()`
+
+The previous draw's shaders, kept while its program, bound pipeline state, the vertex and fragment stages' first 32
+texture and image handles and every slot's resolution (`vk_texture_slots_gen`, read unlocked: a registration racing with
+it is ordered after this draw, as `answers_for()`'s own check would order it) stay the same: `answers_for()` reads
+nothing else, so `shader_for()` would return the same shaders. About 65% of field draws repeat them
+(`NX2SARIA_BIND_STATS`). `NX2SARIA_SHADER_MEMO=0` turns it off; `=check` looks the shaders up on every hit too, and every
+slot's texture type in `answers_for()`, and stops on a difference. `tex_serial` (bumped by every texture and image bind)
+equal to the key's means the handles were not rebound since they were compared, so the 1 KiB compare is skipped; a
+rebind to the same handles still matches by the compare. The memo and its key (`MemoKey`) are `DrawCtx.SM`.
+
+### `pipe_memo_on()`
+
+`NX2SARIA_PIPE_MEMO`; the memo is `DrawCtx.PM` (`prepare_draw_ex()`).
+
+### Draw accounting: why draws were not drawn
+
+Every draw `prepare_draw_ex()` turns away is counted by reason (`DRS`, `vk_draw_skip_names`), vertex and mesh draws
+apart. The first draw of each kind skipped for each reason is logged with its program, and every `DRAW_STATS_FRAMES`
+(600) presented frames one line sums up the draws issued and skipped since the last line (only when something was
+skipped). A black screen with draws skipped for "shader failed" or "pipeline failed" points at the translator or the
+pipeline; draws issued and still nothing on screen point at the shaders' results (`NX2SARIA_DUMP`).
 
 ### `draw_stats_tick()`
 
-- `for (int k = 0; k < WK_N && o < (int)sizeof line - 320; k++)`: room for the two counts after the kinds.
+Every `DRAW_STATS_FRAMES` frames: the wait accounting line, then one line each for vertex and mesh draws with skips. The
+wait line stops adding kinds 320 bytes before its end, which leaves room for the two counts after the kinds (the steady
+targets and the writers).
 
 ### `vk_exec_pending_draws_take()`
 
@@ -4612,7 +4627,8 @@ the presenting thread, which with the replay on the submitting threads need not 
 
 ### `draw_skipped()`
 
-- `if (why == SK_PIPE_PENDING) perf_count(PERF_CNT_PIPE_SKIP)`: skipped draws only: a lookup that then waited is none.
+Counts a draw turned away, by reason; always returns 0. A draw skipped for a pending shader or pipeline adds to
+`pending_draws`. `PERF_CNT_PIPE_SKIP` counts skipped draws only: a lookup that then waited is none.
 
 ### `skip_prog_wanted()`
 
@@ -4632,14 +4648,9 @@ programs (their first dispatch) each, after every 200 programs first used.
 
 mesh: 0 a vertex program's draw, 1 a mesh program's, 2 a compute program's dispatch.
 
-mesh: a mesh draw (`op_draw_mesh`): the program's mesh and task stages stand in for the vertex stage, and nothing
-vertex-related (vertex buffers, motion vector bookkeeping of vertex shaders) is bound or noted. 2: a mesh draw of the
-mesh fallback (`mfb_draw`): the vertex stage is `DrawCtx.mfb_cur_vs`, in an ordinary pipeline without vertex input.
+### Mesh fallback: a list's depth-only draw is held while its colour draw waits for a pipeline
 
-### Mesh fallback
-
-A list's depth-only draw is held while its colour draw waits for a pipeline The game draws a culled list of grass or
-leaves twice from one indirect record: into the depth target alone, then into the colour targets. Each draw has modules
+The game draws a culled list of grass or leaves twice from one indirect record: into the depth target alone, then into the colour targets. Each draw has modules
 and a pipeline of its own, and the depth-only one, the smaller, is built first. Drawn without its colour draw it leaves
 the list's depth in the scene with nothing drawn over it: what lies behind fails the depth test there, and the sky's
 colour shows through the ground in the shape of the grass for as long as the colour draw's pipeline builds, seconds each
@@ -4659,9 +4670,7 @@ The list's colour draw was skipped for its modules or pipeline (waits 1), or was
 ### `mfb_hold_skip()`
 
 A held depth-only draw is left out, counted as a draw whose own pipeline is building: the frame lacks it for the same
-reason (`draw_skipped`, `runtime/vk/vk_backend.c` `frame_hold()`).
-
-- `if (!(n & (n - 1)))`: the first, then at powers of two.
+reason (`draw_skipped()`, `runtime/vk/vk_backend.c` `frame_hold()`). Logged at the first one, then at powers of two.
 
 ### `mfb_hold_colour()`
 
@@ -4671,84 +4680,97 @@ A colour target is bound (`OP_SET_RT`), whatever the draw's write masks are.
 
 What a fallback draw with state s writes: 1 a colour target, 2 depth and no colour, 0 neither.
 
-### `prepare_draw_ex()`
+### `prepare_draw_ex()`, `prepare_draw()`
 
-- `int fb = mesh == 2`: from here on mesh says what the draw is, and `!fb` that its pipeline is a mesh pipeline.
-- `if (ex->pass_noatt)`: no attachment: the pass covers this draw's viewport or scissor, reopened when it needs more.
-- A new pass may have another scale (`pass_scale`): the viewport, the scissor and the slope bias (`slope_bias`) follow
-  it.
-- `if (n_skip_prog && skip_prog_wanted(ex->prog->serial)) return draw_skipped(ex, mesh, SK_PROG_FILTER)`: -1 until read.
-- `uint32_t gen = memo ? vk_texture_slots_gen() : 0`: before `shader_for`, whose lookups may bump it.
-- A draw into a target the previous frame did not render (or into none) waits for a pending shader or pipeline: one-shot
-  draws (volumes and LUTs generated once, later only sampled) would leave their target empty for the session. A draw
-  into per-frame targets is skipped until they are ready and comes back next frame, unless its shaders write memory:
-  then it waits like a one-shot draw (`draw_writes`).
-- `int oneshot = -1, skip = pipe_skip_mode()`: -1: not looked up.
-- `int writer = 0`: the draw waits as one-shot by `draw_writes` alone.
-- `vk_exec_ahead(ex)`: the later draws' shaders and stage libraries are queued while this one waits or is skipped.
-- Only the stages that are here can say that they write: one still being translated has no reflection yet.
-- `if (!oneshot)`: skipped until ready.
-- From the frame's wait pool (`NX2SARIA_ONESHOT_BUDGET=0`: until each is translated); a shader the pool does not reach
-  stays at the front of the translators' queue, and the draw is skipped like a per-frame one.
-- `if (stutter_map_on)`: the shaders translated by now name it; one still translating is not known yet.
-- `if (vk_dlaa_skip_draw(ex, fs)) return draw_skipped(ex, mesh, SK_DLAA)`: The game's FXAA off, or its scaling replaced
-  by DLSS (`runtime/vk/vk_dlaa.c`).
-- `if (fb) memset(s.vattr, 0, sizeof s.vattr), memset(s.vstream, 0, sizeof s.vstream)`: whatever the last vertex draw
-  left.
-- `if (result) requested = s`: the mesh caller checks the state that selected its cache entry.
-- A draw of at most 6 vertices over half the render area or more (a full-screen triangle or quad, a tile) waits for its
-  pipeline: skipping it can leave a black tile. Those waits and the one-shot draws' come from the frame's wait pool
-  (`frame_wait`; `NX2SARIA_PIPE_SKIP=fullscreen` skips the full-screen draws instead, and with
-  `NX2SARIA_ONESHOT_BUDGET=0` a one-shot draw waits up to `ONESHOT_WAIT_MS` outside the pool). Everything else waits for
-  its fast link from the small budget of `link_budget` and is skipped while its pipeline is built.
-- `uint64_t *budget = NULL`: the per-frame budget a timed wait is charged to.
-- `int linking = 0`: the wait is the short one for a fast link (`link_budget`).
-- `int fullscreen = 0`: the wait is a full-screen draw's.
-- A frame that has left a draw out already is not shown, or is shown without that draw (`pending_draws`,
-  `runtime/vk/vk_backend.c` `frame_hold()`): a wait for another pipeline would only make it later.
-- The previous draw's pipeline while its state repeats (PM, `NX2SARIA_PIPE_MEMO=0` turns it off): the cache key is made
-  from the state alone, and a pipeline once found only changes from its fast link to its optimised build, read from the
-  info the cache entry keeps.
-- `uint64_t w0 = 0, m0 = 0`: m0: when the lookup missed (`wait_note`).
-- Nearly every draw finds its pipeline, so the first lookup waits for nothing and the clock is read only for a draw that
-  missed. A miss first has the rest of the submission read ahead (`vk_exec_ahead`: the stage libraries of the later
-  draws' pipelines build on the workers from here on), inside this draw's wait budget.
-- The fast link's wait is one for each pipeline, counted from its first miss (`link_budget`): what that left unbuilt is
-  a compile, and its later draws, in this frame and the next ones, wait for nothing.
-- A mesh pipeline without stage libraries that is known to be compiling gets no fast link, so the few milliseconds a
-  draw waits for one are lost in every frame that meets it until the compile ends, 0.2 to 1.1 s later (`MESH_WAIT_MS`).
-- Still pending after the wait any draw gets: a draw into targets that are not per-frame waits as one-shot, and so does
-  a draw into per-frame targets whose shaders write memory (`draw_writes`).
-- A full-screen draw still pending after its budget: skipped, it leaves the frame black or unlit. While the previous
-  picture can stay on screen in its place (`vk_frame_hold_left`) that is what happens; once that time is used up the
-  draw waits on, from the `FULLSCREEN_LAST_MS` of its frame, before such a frame is shown.
-- Also a one-shot draw skipped at the end of its wait, however short: its target may not be drawn again.
-- `if (fb && cx->mfb_list)`: the list's depth-only draw goes with its colour draw (`mfb_hold_role`).
-- `if (pending) return draw_skipped(ex, mesh, SK_PIPE_PENDING)`: a background worker is building it: skipped until it is
-  ready.
-- Only the dynamic states whose values changed (`vk_pipeline_set_dynamic_delta`); `NX2SARIA_DYN_DELTA=0` records them
-  all after every pipeline bind, as before.
-- An emulated mesh draw (`NX2SARIA_MESH_EMULATION`) binds a vertex pipeline: its topology, primitive restart and vertex
-  input are dynamic and are set as for any vertex draw.
-- `if (vk_draw_marks_on)`: `NX2SARIA_DRAW_CRUMBS`: a lost device then names these shaders
-  (`runtime/vk/vk_crumbs.c` `vk_draw_mark()`).
-- `vk_pipeline_line_width(ex->cb, &s, ex->line_width)`: a draw of lines: the game's width; else nothing.
-- `vk_dlaa_jitter_check(ex)`: a draw with another jitter than the viewport recorded last records it again.
-- The replay's binding path is the CPU cost the frame profile needs to separate from recording.
-- `if (vk_texture_deferred()) return 0`: a chunk's lookup waits for its turn: the op is replayed again.
+Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped. `prepare_draw()` is the vertex
+draw's call.
+
+`mesh` 1: a mesh draw (`op_draw_mesh()`): the program's mesh and task stages stand in for the vertex stage, and nothing
+vertex-related (vertex buffers, motion vector bookkeeping of vertex shaders) is bound or noted. 2: a mesh draw of the
+mesh fallback (`mfb_draw()`): the vertex stage is `DrawCtx.mfb_cur_vs`, in an ordinary pipeline without vertex input.
+Inside, `mesh` only says what the draw is, and `!fb` that its pipeline is a mesh pipeline. `result`: the mesh caller
+gets the pipeline info and the state that selected its cache entry, to check one against the other
+(`mesh_prepared_check()`).
+
+1. **The pass.** A pass without attachments covers this draw's viewport or scissor, and is reopened when the draw needs
+   more. A new pass may have another scale (`pass_scale`): the viewport, the scissor and the slope bias
+   (`slope_bias()`) follow it, so they are marked dirty. A draw with an empty scissor, with rendering disabled or
+   without a program is turned away, as is one whose program `NX2SARIA_SKIP_PROG` lists (`n_skip_prog` is -1 until the
+   list is read, so the first draw reads it).
+2. **The shaders.** The shader memo (`shader_memo_on()`) or `shader_for()` per stage; the slot generation is read before
+   `shader_for()`, whose lookups may bump it.
+3. **A shader still translating.** A draw into a target the previous frame did not render (or into none) waits for a
+   pending shader or pipeline: one-shot draws (volumes and LUTs generated once, later only sampled) would leave their
+   target empty for the session. A draw into per-frame targets is skipped until they are ready and comes back next
+   frame, unless its shaders write memory: then it waits like a one-shot draw (`draw_writes()`; `writer` says the draw
+   waits as one-shot by that rule alone). Only the stages that are here can say that they write: one still being
+   translated has no reflection yet. First `vk_exec_ahead` queues the later draws' shaders and stage libraries, while
+   this one waits or is skipped. The wait is from the frame's wait pool (`NX2SARIA_ONESHOT_BUDGET=0`: until each is
+   translated); a shader the pool does not reach stays at the front of the translators' queue, and the draw is skipped
+   like a per-frame one. The stutter map is told with the shaders translated by now, which name the miss; one still
+   translating is not known yet.
+4. **Filters.** A failed shader, `shader_skipped()`, and `vk_dlaa_skip_draw` (the game's FXAA off, or its scaling
+   replaced by DLSS, `runtime/vk/vk_dlaa.c`) turn the draw away.
+5. **The state.** `feedback_prepare()`, `foliage_shadow_cull()` for a mesh draw; a fallback draw clears the vertex
+   attributes and streams, which hold whatever the last vertex draw left.
+6. **Which wait the draw is allowed.** A draw of at most 6 vertices over half the render area or more (a full-screen
+   triangle or quad, a tile) waits for its pipeline: skipping it can leave a black tile. Those waits and the one-shot
+   draws' come from the frame's wait pool (`frame_wait()`; `NX2SARIA_PIPE_SKIP=fullscreen` skips the full-screen draws
+   instead, and with `NX2SARIA_ONESHOT_BUDGET=0` a one-shot draw waits up to `ONESHOT_WAIT_MS` outside the pool).
+   Everything else waits for its fast link from the small budget of `link_budget()` and is skipped while its pipeline is
+   built. A frame that has left a draw out already is not shown, or is shown without that draw (`pending_draws`,
+   `runtime/vk/vk_backend.c` `frame_hold()`): a wait for another pipeline's fast link would only make it later, so there
+   is none. `budget` is the per-frame budget a timed wait is charged to, `linking` says the wait is the short one for a
+   fast link and `fullscreen` that it is a full-screen draw's.
+7. **The pipeline.** The previous draw's pipeline while its state repeats (`DrawCtx.PM`, `NX2SARIA_PIPE_MEMO=0` turns it
+   off): the cache key is made from the state alone, and a pipeline once found only changes from its fast link to its
+   optimised build, read from the info the cache entry keeps. Otherwise the lookup:
+   - Nearly every draw finds its pipeline, so the first lookup waits for nothing and the clock is read only for a draw
+     that missed (`m0`: when the lookup missed, for `wait_note()`). A miss first has the rest of the submission read
+     ahead (`vk_exec_ahead`: the stage libraries of the later draws' pipelines build on the workers from here on),
+     inside this draw's wait budget.
+   - The fast link's wait is one for each pipeline, counted from its first miss (`vk_pipeline_building_ms`): what that
+     left unbuilt is a compile, and its later draws, in this frame and the next ones, wait for nothing.
+   - A mesh pipeline without stage libraries that is known to be compiling gets no fast link, so the few milliseconds a
+     draw waits for one are lost in every frame that meets it until the compile ends, 0.2 to 1.1 s later
+     (`MESH_WAIT_MS`, `mesh_whole()`): it does not wait.
+   - Still pending after the wait any draw gets: a draw into targets that are not per-frame waits as one-shot, and so
+     does a draw into per-frame targets whose shaders write memory (`draw_writes()`).
+   - A full-screen draw still pending after its budget: skipped, it leaves the frame black or unlit. While the previous
+     picture can stay on screen in its place (`vk_frame_hold_left`) that is what happens; once that time is used up the
+     draw waits on, from the `FULLSCREEN_LAST_MS` of its frame (`last_wait()`), before such a frame is shown.
+8. **The wait's log line** (200 a run at most): a wait of 2 ms or more, and also a one-shot draw skipped at the end of
+   its wait, however short: its target may not be drawn again.
+9. **The mesh fallback's hold.** The list's depth-only draw goes with its colour draw (`mfb_hold_role()`,
+   `mfb_hold_set()`, `mfb_hold_skip()`).
+10. **Still pending:** a background worker is building it, and the draw is skipped until it is ready. A failed pipeline,
+    and one that uses the pools with `NX2SARIA_POOL=0`, are skipped too.
+11. **Bind and dynamic state.** Only the dynamic states whose values changed are recorded
+    (`vk_pipeline_set_dynamic_delta`); `NX2SARIA_DYN_DELTA=0` records them all after every pipeline bind. An emulated
+    mesh draw (`NX2SARIA_MESH_EMULATION`) binds a vertex pipeline: its topology, primitive restart and vertex input are
+    dynamic and are set as for any vertex draw. With `NX2SARIA_DRAW_CRUMBS` the draw is marked, so a lost device then
+    names these shaders (`runtime/vk/vk_crumbs.c` `vk_draw_mark()`). `vk_pipeline_line_width` records the game's width
+    for a draw of lines, else nothing. `vk_dlaa_jitter_check`: a draw with another jitter than the viewport recorded
+    last records it again.
+12. **Resources.** `bind_resources()`, timed apart (`bind_ns`): the replay's binding path is the CPU cost the frame
+    profile needs to separate from recording. When a chunk's texture lookup has to wait for its turn
+    (`vk_texture_deferred`), 0 is returned and the op is replayed again.
+13. The feedback barrier and marks (`feedback_barrier()`, `feedback_written()`), the vertex buffers, the dump, HDR and
+    occlusion query hooks, and the count of draws issued.
 
 ### Looking ahead
 
-(`runtime/vk/vk_exec.c` `vk_exec_ahead()`): the binds and draws of ops the replay has not reached, applied to sx, a copy
-of the replay state. A draw looks its shaders up as `prepare_draw_ex` will (one not in memory is queued for its disk
-read or translation by that lookup) and names its state to `vk_pipeline_hint`. The last draw looked up is kept: one with
-the same program, texture binds and state repeats it, as most draws of a pass do. A mesh draw is looked up with its mesh
-and task stages where its pipeline will be a mesh pipeline with stage libraries (`vk_pipeline_mesh_libs`; never with the
-mesh fallback, which draws through vertex pipelines of its own).
+`runtime/vk/vk_exec.c` `vk_exec_ahead()` applies the binds and draws of ops the replay has not reached to sx, a copy of
+the replay state (`vk_exec_ahead_begin()`, `vk_exec_ahead_op()`). A draw looks its shaders up as `prepare_draw_ex()`
+will (one not in memory is queued for its disk read or translation by that lookup) and names its state to
+`vk_pipeline_hint`. The last draw looked up is kept (`AHL`): one with the same program, texture binds and state repeats
+it, as most draws of a pass do. A mesh draw is looked up with its mesh and task stages where its pipeline will be a mesh
+pipeline with stage libraries (`vk_pipeline_mesh_libs`; never with the mesh fallback, which draws through vertex
+pipelines of its own).
 
 ### `ahead_draw()`
 
-- `if (!has_vs) return`: a program without the stage this draw starts from: no libraries.
+A program without the stage this draw starts from gets no lookup: it has no libraries to build.
 
 ### Per-object motion
 
