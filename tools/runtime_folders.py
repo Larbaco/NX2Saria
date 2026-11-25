@@ -63,7 +63,7 @@ FOLDERS = {
     'ui': [
         'folder_pick.h', 'folder_pick_sdl.c', 'folder_pick_win.cpp', 'menu_assets.c', 'menu_assets.h',
         'menu_cursor.c', 'menu_mouse.c', 'menu_mouse_geom.h', 'menu_sound.c', 'menu_sound.h', 'quit_menu.c',
-        'quit_menu.h', 'quit_menu_core.h', 'quit_menu_text.c', 'ui_text.c', 'ui_text.h',
+        'quit_menu.h', 'quit_menu_core.h', 'quit_menu_text.c', 'quit_menu_text.h', 'ui_text.c', 'ui_text.h',
     ],
 }
 VK_EXTRA = ['boot_warm.h', 'fsr3_probe.c', 'fsr3fg_probe.c', 'gpu_choice.h', 'nvidia_cache.h', 'skin_pair.h', 'vk.h']

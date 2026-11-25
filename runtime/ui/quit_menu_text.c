@@ -4,7 +4,7 @@
 #include <string.h>
 #include <zstd.h>
 
-#include "quit_menu.h"
+#include "quit_menu_text.h"
 #include "quit_menu_core.h"
 #include "sarc.h"
 

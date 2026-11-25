@@ -2814,9 +2814,11 @@ Whether the pad read takes A away from the game, and whether this is the press t
 while the focus is on the entry. An A held since another entry is the game's; an A taken stays taken until it is let
 go, also when the focus has gone.
 
-## `runtime/ui/quit_menu_text.c`
+## `runtime/ui/quit_menu_text.h`, `runtime/ui/quit_menu_text.c`
 
-The labels in a message archive, free of the runtime for the test. `quit_menu_archive()`: a decompressed archive (a
+The labels in a message archive, free of the runtime for the test: the header names the message files and labels and
+includes nothing of the runtime (`runtime/ui/quit_menu.h`, which the runtime's files include, brings `runtime/cpu.h`
+for the host functions, and with it code the test's warnings refuse). `quit_menu_archive()`: a decompressed archive (a
 SARC) with the three labels of [quit-menu.md](../quit-menu.md) ("The texts") added to
 `LayoutMsg/SystemWindow_00.msbt`, their texts read from the same archive, and the archive laid out again
 (`runtime/hle/sarc.c` `sarc_rebuild()`). `quit_menu_build()`: the same on the compressed file, with the dictionary

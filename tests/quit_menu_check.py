@@ -51,7 +51,7 @@ def main():
     if os.name != 'nt':
         sanitize.append('-fsanitize=address')
     rt = ROOT / 'runtime'
-    subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror', *sanitize,
+    subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-Wbitwise-instead-of-logical', *sanitize,
                            *runtime_include.flags(rt), str(ROOT / 'tests' / 'quit_menu_check.c'),
                            str(rt / 'ui' / 'quit_menu_text.c'), str(rt / 'hle' / 'sarc.c'), '-o', str(exe), '-lzstd'],
                           env=env)
