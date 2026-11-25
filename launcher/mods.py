@@ -1,26 +1,3 @@
-"""The game's mods folder, for the launcher's Mods screen and Play.
-
-The game reads <game>/mods (mods_dir in nx2saria.ini names another folder; an existing nx2navi.ini remains supported): one
-folder per mod, each part of it where tools/mod_files.py says (runtime/patches/mods.c). The load order and the switches are
-the game's own settings, mods_order and mods_disabled in nx2saria.ini (or its existing nx2navi.ini), which this module writes as runtime/cfg/cfg.c does:
-the top mod wins a file two mods replace, and a mod nobody switched off is on.
-
-A mod as players download it often does not sit that way, so prepare() puts the mods folder in order before the game
-starts, and add() does the same for an archive or a folder the player picks:
-- an archive in the mods folder (.zip; .7z and .rar through the system's tar, which reads them on Windows 10 and 11)
-  is unpacked into a folder of its own name, unless that folder is there already. The archive stays: removing the
-  folder and the archive removes the mod, and switching it off keeps both;
-- a mod folder with nothing of a mod at its top and one folder inside, down to where the mod's parts are, gets that
-  folder's contents (an archive unpacked into a folder of its own name, holding the mod's folder);
-- a romfs, romfslite, exefs or cheats folder put straight into the mods folder becomes a mod of its own (the
-  Atmosphere layouts, atmosphere/, contents/ and the title's folder, already are one as they are).
-Nothing is deleted: files only move inside the mods folder, and a mod that holds several folders with mod files (a
-download with options to pick from) stays as it is, with a note.
-
-Mods that change the game's code (code cheats, ExeFS patches) need the game built with them (tools/make_game.py lift).
-code_waiting() names the enabled ones whose files the last build did not take in (build-cache/mod-code.json), and
-Play rebuilds the game first then. The build reads them from <game>/mods only.
-"""
 import errno
 import json
 import os
@@ -38,12 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import mod_files  # noqa: E402
 
 ARCHIVES = ('.zip', '.7z', '.rar')
-LOOSE_PARTS = ('romfs', 'romfslite', 'exefs', 'cheats')   # a mod's parts that are no mod when straight in mods/
-# what a folder holds at its top when a mod starts there (runtime/patches/mods.c find_root's places)
+LOOSE_PARTS = ('romfs', 'romfslite', 'exefs', 'cheats')
 MOD_TOP = {'romfs', 'romfslite', 'exefs', 'cheats', 'atmosphere', 'contents', mod_files.TITLE.lower()}
 UNWRAP_DEPTH = 4
 UNNAMED = 'Unnamed mod'
-STAND_INS = 'Damaged file stand-ins'   # the launcher's own (tools/romfs_check.py), shown as such
+STAND_INS = 'Damaged file stand-ins'
 TITLE_ID = re.compile(r'^[0-9A-Fa-f]{16}$')
 
 
@@ -51,10 +27,7 @@ class ModError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- the folder and the settings
-
 def mods_dir(game_dir):
-    """The mods folder the game reads: mods_dir in nx2saria.ini or an existing nx2navi.ini, else mods."""
     try:
         d = gameini.get(game_dir, 'MODS_DIR')
     except OSError:
@@ -78,22 +51,17 @@ def _names(game_dir, key):
 
 
 def _quoted(v):
-    """A value as runtime/cfg/cfg.c put_value writes it: quoted when the blanks at its ends or the quotes around it would
-    be lost."""
     if v and (v[0] in ' \t' or v[-1] in ' \t' or (len(v) >= 2 and v[0] == v[-1] == '"')):
         return f'"{v}"'
     return v
 
 
 def order(names, wanted):
-    """names in the game's order (runtime/patches/mods.c by_order): the ones wanted names first, in its order, then the rest by
-    name (byte order of their UTF-8, as strcmp)."""
     pos = {n: i for i, n in reversed(list(enumerate(wanted)))}
     return sorted(names, key=lambda n: (0, pos[n], b'') if n in pos else (1, 0, n.encode('utf-8', 'surrogateescape')))
 
 
 def set_enabled(game_dir, name, on):
-    """Switch a mod on or off for the game's next start (mods_disabled in the current or existing legacy settings file)."""
     off = [n for n in _names(game_dir, 'MODS_DISABLED') if n != name]
     if not on:
         off.append(name)
@@ -101,7 +69,6 @@ def set_enabled(game_dir, name, on):
 
 
 def move(game_dir, name, d):
-    """Move a mod d places up (negative) or down in the load order (mods_order in the current or existing legacy settings file)."""
     names = [m.name for m in scan(game_dir, details=False)]
     if name not in names:
         return
@@ -111,8 +78,6 @@ def move(game_dir, name, d):
     gameini.put(game_dir, 'mods', 'mods_order', _quoted('|'.join(names)))
 
 
-# ---------------------------------------------------------------- what a mod holds
-
 class Mod:
     def __init__(self, path):
         self.path, self.name = path, path.name
@@ -120,15 +85,15 @@ class Mod:
         self.romfs = mod_files.part(path, 'romfs') or mod_files.part(path, 'romfslite')
         self.exefs = mod_files.part(path, 'exefs')
         self.cheats = mod_files.part(path, 'cheats')
-        self.files = []          # RomFS paths it replaces, lower case, '/' separated (details)
-        self.patches = 0         # ExeFS patch files for this game's main
-        self.other_version = 0   # ExeFS patch files for another version
-        self.cheat_file = None   # its cheat file for this game's main
-        self.code_module = False   # subsdk* or main in its exefs: code the port cannot run
-        self.other_game = ''     # the title id of another game its Atmosphere folders name
-        self.several = []        # folders that each hold a mod (a download with options)
-        self.unsupported = ''    # why the last build could not take an ExeFS patch file of it
-        self.waiting = False     # code the last build did not take in
+        self.files = []
+        self.patches = 0
+        self.other_version = 0
+        self.cheat_file = None
+        self.code_module = False
+        self.other_game = ''
+        self.several = []
+        self.unsupported = ''
+        self.waiting = False
 
     @property
     def usable(self):
@@ -136,7 +101,6 @@ class Mod:
 
     @property
     def problem(self):
-        """Why the game leaves this mod off whatever its switch says (runtime/patches/mods.c scan_cb), '' when it does not."""
         if '|' in self.name:
             return 'Its folder name holds "|", which the load order list uses: rename the folder.'
         if self.code_module:
@@ -170,7 +134,6 @@ def _main_id(game_dir):
 
 
 def _same_build(hex_id, main_id):
-    """hex_id (trailing zeros may be left out) names main's build id; True when main's is unknown (runtime/patches/mods.c)."""
     if not main_id:
         return True
     h = hex_id.lower()
@@ -179,7 +142,6 @@ def _same_build(hex_id, main_id):
 
 
 def _pchtxt_build(data):
-    """The build id a pchtxt file names (its last @nsobid- line before @stop), '' when none."""
     found = ''
     for line in data.decode('utf-8-sig', errors='replace').splitlines():
         s = line.strip()
@@ -198,7 +160,6 @@ def _fnv(text):
 
 
 def _status(game_dir, name):
-    """{key: (kind, note)} of a build status file (build-cache/exefs.status, tools/exefs_patches.py)."""
     out = {}
     try:
         text = (Path(game_dir) / 'build-cache' / name).read_text(encoding='utf-8', errors='replace')
@@ -250,7 +211,6 @@ def _details(m, main_id, exefs_status):
 
 
 def _mod_folders_below(folder, depth=2):
-    """The folders under folder (down to depth levels) that hold a mod at their top."""
     out = []
     try:
         subs = sorted((d for d in folder.iterdir() if d.is_dir()), key=lambda d: d.name.lower())
@@ -272,7 +232,6 @@ def _is_mod_top(folder):
 
 
 def scan(game_dir, details=True):
-    """The mods of the mods folder in the game's load order, with their switches; with details what each holds."""
     folder = mods_dir(game_dir)
     mods = [Mod(p) for p in mod_files.mod_folders(folder)]
     off = set(_names(game_dir, 'MODS_DISABLED'))
@@ -292,8 +251,6 @@ def scan(game_dir, details=True):
 
 
 def overlaps(mods):
-    """{mod name: [(other mod name, files both replace, whether this one wins)]} among the enabled mods with RomFS
-    files: the mod higher in the load order wins a file two replace."""
     on = [m for m in mods if m.enabled and m.files]
     out = {m.name: [] for m in on}
     sets = {m.name: set(m.files) for m in on}
@@ -306,10 +263,7 @@ def overlaps(mods):
     return out
 
 
-# ---------------------------------------------------------------- the mods' code and the build
-
 def built_code(game_dir):
-    """{"<mod>/<path>": sha256} of the mods' code the last build took in (tools/make_game.py MOD_RECORD)."""
     try:
         return json.loads((Path(game_dir) / 'build-cache' / 'mod-code.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -317,8 +271,6 @@ def built_code(game_dir):
 
 
 def code_waiting(game_dir):
-    """The enabled mods whose code cheats or ExeFS patches the game was not built with (or with other ones). Only the
-    game folder's own mods folder is built from."""
     folder = Path(game_dir) / 'mods'
     if mods_dir(game_dir) != folder or not folder.is_dir():
         return []
@@ -335,10 +287,7 @@ def code_waiting(game_dir):
     return out
 
 
-# ---------------------------------------------------------------- putting downloads in order
-
 def _unique(folder, name, file=False):
-    """folder / name, or the first free "name 2", "name 3" ... (for a file "stem (2).txt" ...)."""
     p, k = folder / name, 2
     stem, suffix = (Path(name).stem, Path(name).suffix) if file else (name, '')
     while p.exists():
@@ -348,8 +297,6 @@ def _unique(folder, name, file=False):
 
 
 def _merge_into(src, dst):
-    """Move src's entries into dst (made when missing) and remove src: a folder dst holds already is merged into, and
-    a file of a name dst holds already moves in under a free name (a readme beside the wrapped folder)."""
     dst.mkdir(parents=True, exist_ok=True)
     for e in list(src.iterdir()):
         t = dst / e.name
@@ -361,8 +308,6 @@ def _merge_into(src, dst):
 
 
 def unwrap(folder):
-    """A mod folder with nothing of a mod at its top and one folder inside (files beside it, a readme, do not count),
-    down to UNWRAP_DEPTH levels until the mod starts: that folder's contents move up. True when it did."""
     inner = folder
     for _ in range(UNWRAP_DEPTH):
         if _is_mod_top(inner):
@@ -376,8 +321,6 @@ def unwrap(folder):
             return False
     if inner == folder:
         return False
-    # the chain's top folder may share its name with a folder of the mod (MyMod/romfs/romfs): moved aside first. The
-    # mod's folders go up first, then whatever lay beside them on the way down (a readme), so nothing stays behind
     top = next(p for p in [inner, *inner.parents] if p.parent == folder)
     aside = _unique(folder, '.unwrapping')
     top.rename(aside)
@@ -388,14 +331,10 @@ def unwrap(folder):
     return True
 
 
-# Names Windows keeps for devices, with or without an extension and in any case: a file called so is the device.
 WINDOWS_DEVICES = frozenset(('CON', 'PRN', 'AUX', 'NUL', *(f'{d}{n}' for d in ('COM', 'LPT') for n in '123456789¹²³')))
 
 
 def windows_name_problem(name):
-    """Why Windows cannot keep a file or folder under name, '' when it can: a device's name (CON, NUL.txt), a dot
-    or a space at its end (Windows drops them, so the file gets another name than the one the game asks for), or
-    a character Windows does not allow (a colon makes a hidden stream of another file)."""
     if name.split('.')[0].rstrip(' ').upper() in WINDOWS_DEVICES:
         return 'Windows keeps that name for a device'
     if name != name.rstrip('. '):
@@ -407,10 +346,6 @@ def windows_name_problem(name):
 
 
 def _safe_members(names, windows=None):
-    """ModError when a file of an archive (its member names) would land outside the archive's own folder, or, on
-    Windows (windows: None asks the system), under another name than its own or not at all (windows_name_problem):
-    unpacked all the same, such a file is missing where the game looks for it, with no word about it. The game
-    for Linux reads such names as they are, so there they pass."""
     if windows is None:
         windows = os.name == 'nt'
     for n in names:
@@ -431,7 +366,6 @@ def _tar():
 
 
 def unpack(archive, dest):
-    """Unpack an archive into dest (a new folder). ModError when it cannot be."""
     dest.mkdir(parents=True)
     try:
         if archive.suffix.lower() == '.zip':
@@ -439,7 +373,7 @@ def unpack(archive, dest):
                 with zipfile.ZipFile(archive) as z:
                     _safe_members(z.namelist())
                     full = net.space_problem(dest, sum(i.file_size for i in z.infolist()), 'its files')
-                    if full:   # told before a file is written, not as an error halfway through
+                    if full:
                         raise ModError(full)
                     z.extractall(dest)
             except (zipfile.BadZipFile, NotImplementedError, RuntimeError) as e:
@@ -466,7 +400,6 @@ def unpack(archive, dest):
 
 
 def prepare(game_dir, log=None):
-    """Put the mods folder in order for the game (see the top of this file). Returns what it did, one sentence each."""
     folder = mods_dir(game_dir)
     done = []
     if not folder.is_dir():
@@ -481,7 +414,7 @@ def prepare(game_dir, log=None):
         name = a.stem.strip().rstrip('.')
         target = folder / name
         why = windows_name_problem(name) if os.name == 'nt' and name else ''
-        if why:   # before exists(): Windows says a device's name exists in every folder
+        if why:
             note(f'{a.name} was not unpacked: no folder can be called {name} ({why}); rename the archive')
             continue
         if not name or target.exists():
@@ -502,7 +435,6 @@ def prepare(game_dir, log=None):
         note(f'{", ".join(p.name for p in loose)} moved into a mod folder of its own, {target.name}: rename it as you '
              'like.')
     for d in mod_files.mod_folders(folder):
-        # an Atmosphere layout straight in the mods folder is a mod as it is; a link is the player's own arrangement
         if d.name.lower() in MOD_TOP or d.is_symlink() or getattr(d, 'is_junction', lambda: False)():
             continue
         try:
@@ -513,15 +445,11 @@ def prepare(game_dir, log=None):
     return done
 
 
-STAGING = '.adding-mod'   # beside the mods folder: where add() puts a mod together before it moves in
-STAGING_STALE = 24 * 3600   # seconds after which a staging folder is one a stopped launcher left
+STAGING = '.adding-mod'
+STAGING_STALE = 24 * 3600
 
 
 def _staging(folder):
-    """A new, empty folder for add() to put a mod together in. It is beside the mods folder, not in it: the game
-    and the launcher take every folder of the mods folder for a mod, and beside it is the same disk, so the
-    finished mod moves in with one rename. The mods folder itself when nothing can be made beside it. What a
-    launcher that was stopped in the middle left there a day ago or longer is removed."""
     try:
         for old in folder.parent.glob(STAGING + '*'):
             if old.is_dir() and time.time() - old.stat().st_mtime > STAGING_STALE:
@@ -535,30 +463,21 @@ def _staging(folder):
 
 
 def _move_in(made, folder, name):
-    """Rename the finished mod folder made into the mods folder under name, or the first free name after it (looked
-    for now, not before the copy: a folder of that name may have come meanwhile). Returns where it is."""
     for attempt in range(3):
         target = _unique(folder, name)
         try:
             os.rename(made, target)
             return target
         except OSError as e:
-            if e.errno == errno.EXDEV:   # the mods folder is on another disk than its parent (a mount, a junction)
+            if e.errno == errno.EXDEV:
                 shutil.move(str(made), str(target))
                 return target
             if attempt == 2:
                 raise
-            time.sleep(0.3)   # a scanner still holds a file just written
+            time.sleep(0.3)
 
 
 def add(game_dir, src, log=None):
-    """Add an archive or a folder the player picked as a mod: unpacked or copied into the mods folder under its name
-    (a free one), in order for the game. Returns the new mod's folder.
-
-    The mod is put together in a folder beside the mods folder (_staging) and moves in only when it is complete. A
-    copy that stops halfway (a full disk, a file that cannot be read, the launcher closed) leaves nothing in the
-    mods folder: copied straight into it, the half that had arrived was a mod of its own, switched on, at the
-    game's next start."""
     src = Path(src)
     folder = ensure_mods_dir(game_dir)
     if src.is_dir():
@@ -580,14 +499,14 @@ def add(game_dir, src, log=None):
         made = stage / 'mod'
         if not src.is_dir():
             unpack(src, made)
-        elif src.name.lower() in MOD_TOP:   # the player picked the mod's romfs (or atmosphere) folder itself
+        elif src.name.lower() in MOD_TOP:
             made.mkdir()
             shutil.copytree(src, made / src.name.lower() if src.name.lower() in LOOSE_PARTS else made / src.name)
         else:
             shutil.copytree(src, made)
         unwrap(made)
         target = _move_in(made, folder, name)
-    finally:   # also on Ctrl+C and when the window closes: nothing half made stays
+    finally:
         shutil.rmtree(stage, ignore_errors=True)
     if log:
         log(f'mods: added {src} as {target.name}')
